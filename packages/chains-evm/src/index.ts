@@ -83,3 +83,11 @@ export {
   encodeErc20Transfer,
   encodeErc20TransferFrom,
 } from './erc20.js';
+export { zeroExSwapProvider } from './swap.js';
+export type {
+  SwapQuote,
+  SwapQuoteProvider,
+  SwapQuoteRequest,
+  SwapQuoteResult,
+  ZeroExConfig,
+} from './swap.js';
