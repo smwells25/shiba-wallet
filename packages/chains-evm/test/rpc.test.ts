@@ -3,6 +3,7 @@ import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { ENTRYPOINT_V07, type UserOperation } from '../src/userop.js';
 import {
   BundlerClient,
+  NodeClient,
   PaymasterClient,
   toRpcUserOperation,
   type JsonRpcTransport,
@@ -94,5 +95,43 @@ describe('PaymasterClient (ERC-7677)', () => {
     await expect(paymaster.getPaymasterStubData(op, 1n)).rejects.toThrow(
       /returned no paymaster data/,
     );
+  });
+});
+
+describe('NodeClient', () => {
+  const responses: Record<string, unknown> = {
+    eth_getBalance: '0xde0b6b3a7640000',
+    eth_getTransactionCount: '0x5',
+    eth_chainId: '0x2105',
+    eth_getBlockByNumber: { baseFeePerGas: '0x3b9aca00' },
+    eth_maxPriorityFeePerGas: '0x5f5e100',
+    eth_estimateGas: '0x5208',
+    eth_sendRawTransaction: '0xtxhash',
+  };
+  const calls: Array<{ method: string; params: unknown[] }> = [];
+  const node = new NodeClient(async (method, params) => {
+    calls.push({ method, params });
+    if (method in responses) return responses[method];
+    throw new Error(`unexpected ${method}`);
+  });
+
+  it('parses balances, nonces, and chain id as bigints', async () => {
+    expect(await node.getBalance('0xabc')).toBe(1_000_000_000_000_000_000n);
+    expect(await node.getTransactionCount('0xabc')).toBe(5n);
+    expect(await node.chainId()).toBe(8453n);
+    expect(calls.find((c) => c.method === 'eth_getTransactionCount')!.params[1]).toBe(
+      'pending',
+    );
+  });
+
+  it('suggests fees as 2x base fee plus priority', async () => {
+    const fees = await node.suggestFees();
+    expect(fees.maxPriorityFeePerGas).toBe(100_000_000n);
+    expect(fees.maxFeePerGas).toBe(2_000_000_000n + 100_000_000n);
+  });
+
+  it('estimates gas and broadcasts raw transactions', async () => {
+    expect(await node.estimateGas({ from: '0xabc', to: '0xdef', value: 1n })).toBe(21_000n);
+    expect(await node.sendRawTransaction('0x02f8...')).toBe('0xtxhash');
   });
 });

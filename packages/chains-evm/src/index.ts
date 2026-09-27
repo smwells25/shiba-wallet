@@ -9,6 +9,7 @@ export {
 export type { UserOperation } from './userop.js';
 export {
   BundlerClient,
+  NodeClient,
   PaymasterClient,
   httpTransport,
   toRpcUserOperation,
@@ -40,6 +41,14 @@ export { encodeFunctionCall, encodeSequence, selector } from './abi.js';
 export type { AbiValue } from './abi.js';
 export { createSimpleAccountSpec } from './simple-account.js';
 export type { SimpleAccountConfig } from './simple-account.js';
+export { rlpEncode, minimalBytes } from './rlp.js';
+export type { RlpInput } from './rlp.js';
+export { eip1559SigningHash, signEip1559 } from './eoa-tx.js';
+export type {
+  AccessListEntry,
+  Eip1559Transaction,
+  SignedEip1559,
+} from './eoa-tx.js';
 export {
   decodeAddress,
   decodeUint256,

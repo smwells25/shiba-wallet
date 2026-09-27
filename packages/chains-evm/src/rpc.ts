@@ -126,6 +126,68 @@ export class BundlerClient {
 }
 
 /**
+ * Plain node RPC client: the calls an EOA send flow needs. Deliberately
+ * tiny — anything richer (logs, tracing) belongs to a later phase.
+ */
+export class NodeClient {
+  constructor(private transport: JsonRpcTransport) {}
+
+  async getBalance(address: string): Promise<bigint> {
+    return BigInt(
+      (await this.transport('eth_getBalance', [address, 'latest'])) as string,
+    );
+  }
+
+  /** Pending-inclusive nonce, so consecutive sends do not collide. */
+  async getTransactionCount(address: string): Promise<bigint> {
+    return BigInt(
+      (await this.transport('eth_getTransactionCount', [address, 'pending'])) as string,
+    );
+  }
+
+  async chainId(): Promise<bigint> {
+    return BigInt((await this.transport('eth_chainId', [])) as string);
+  }
+
+  /**
+   * Suggests EIP-1559 fees: the latest block's base fee doubled (headroom
+   * for six consecutive full blocks) plus the node's suggested priority fee.
+   */
+  async suggestFees(): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }> {
+    const block = (await this.transport('eth_getBlockByNumber', [
+      'latest',
+      false,
+    ])) as { baseFeePerGas?: string };
+    if (!block?.baseFeePerGas) {
+      throw new Error('Node returned no baseFeePerGas; chain may not support EIP-1559');
+    }
+    const baseFee = BigInt(block.baseFeePerGas);
+    const priority = BigInt(
+      (await this.transport('eth_maxPriorityFeePerGas', [])) as string,
+    );
+    return { maxFeePerGas: baseFee * 2n + priority, maxPriorityFeePerGas: priority };
+  }
+
+  async estimateGas(tx: {
+    from: string;
+    to?: string;
+    value?: bigint;
+    data?: string;
+  }): Promise<bigint> {
+    const params: Record<string, string> = { from: tx.from };
+    if (tx.to) params.to = tx.to;
+    if (tx.value !== undefined) params.value = bigintToHex(tx.value);
+    if (tx.data) params.data = tx.data;
+    return BigInt((await this.transport('eth_estimateGas', [params])) as string);
+  }
+
+  /** Broadcasts raw signed bytes; resolves to the transaction hash. */
+  async sendRawTransaction(rawHex: string): Promise<string> {
+    return (await this.transport('eth_sendRawTransaction', [rawHex])) as string;
+  }
+}
+
+/**
  * ERC-7677 paymaster client. Sponsorship (or ERC-20 gas payment) context is
  * an opaque vendor-defined object passed through untouched, so switching
  * paymaster services is a URL + context change only.
