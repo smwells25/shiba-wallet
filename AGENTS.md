@@ -288,6 +288,52 @@ with ADRs D1–D7), offline end-to-end demo (examples/demo.mjs, run with
       nextCursor with 0 overlap, Solana entries incl. correctly-flagged
       failed spam txs.
 
+- [x] Candidate 3 — ERC-4337 smart-account send path in the app, behind an
+      explicit experimental toggle, OFF by default (EOA path untouched):
+      app/src/wallet/aa.ts (per-EVM-chain bundler URL + SimpleAccountFactory
+      config in AsyncStorage under shiba-wallet.aa-config.v1, empty by
+      default; save REFUSES to persist unless verification passes, so
+      configured == verified by construction — factory checks are exactly
+      scripts/testnet/aa-smoke.mjs verifyFactory (factory has code,
+      accountImplementation() has code, its entryPoint() == ENTRYPOINT_V07)
+      run against the configured node RPC, bundler check is
+      eth_supportedEntryPoints must include v0.7; also createAaClient
+      (SmartAccountClient + createSimpleAccountSpec, no paymaster — the
+      smart account pays its own gas), prepareAaSend (chain-id guard,
+      counterfactual sender via the spec's getAddress with an address-only
+      owner stand-in so no key material is resident at quote time,
+      deployment state, smart-account balance, fee from bundler
+      eth_estimateUserOperationGas over a stub-signed op, insufficient-funds
+      refusal against the SMART ACCOUNT balance), sendAa
+      (SmartAccountClient.sendCalls through the send.ts seam; signer
+      re-derived via WalletContext.signWith), waitForAaReceipt +
+      summarizeAaReceipt (defensive, bundler-dependent shape: nested
+      receipt.transactionHash per the ERC-4337 spec shape, flattened
+      top-level fallback, hex/bool success, strict 32-byte-hash pattern,
+      null — never a fabricated value — otherwise). SettingsScreen gained
+      an "Account Abstraction (experimental)" section (per-EVM-chain
+      bundler/factory fields, Verify & save with in-progress state,
+      "Not saved — verification failed" alerts, verified-✓ status lines
+      showing the implementation address and check date, Clear buttons).
+      SendScreen shows a "Send from smart account" toggle (default off,
+      EXPERIMENTAL tag, plain-language explanation, Max disabled on the AA
+      path) only when both endpoints are configured+verified; AA confirm
+      screen shows the counterfactual sender, ITS balance, deployed/"will
+      deploy with this send", bundler-estimated worst-case fee, no-paymaster
+      note; biometric gate unchanged; success screen shows the userOpHash
+      with a "Bundling…" receipt poll (120 s), then included/reverted state
+      and an etherscan link only when a real transactionHash was found in
+      the receipt. send.ts changed only at the marked SMART-ACCOUNT SEAM
+      comment. No packages/* changes. Verified offline with FAKE transports
+      only (nothing signed or broadcast live): app/scripts/check-aa.mjs
+      39/39 (config round-trip incl. corrupt storage, all four factory/
+      bundler reject cases persist nothing, counterfactual resolution, full
+      stub→estimate→sign→send pipeline yielding the userOpHash with real
+      seed-derived signature, receipt-shape matrix); tsc --noEmit clean;
+      expo export --platform android bundles (new strings confirmed in the
+      Hermes bytecode). Live ERC-4337 smoke remains candidate 1 (needs
+      bundler API key + funds).
+
 ## Next recommended tasks (phase 3 candidates)
 
 1. Run the testnet smoke once funds land; then the ERC-4337 smoke against
@@ -296,7 +342,10 @@ with ADRs D1–D7), offline end-to-end demo (examples/demo.mjs, run with
 2. ~~ERC-20 balance display + token management UI (AssetRegistry-backed)~~
    — DONE (see Phase 3 progress). Remaining slice: token sending (engine
    transfer calldata exists; needs send-flow UI + simulation).
-3. Wire the smart-account send path in the app behind a feature flag.
+3. ~~Wire the smart-account send path in the app behind a feature flag~~
+   — DONE (see Phase 3 progress, candidate 3). Remaining slices: exercise
+   it live against a real bundler (candidate 1), paymaster sponsorship
+   (ERC-7677 fields are ready on SmartAccountClient), AA-path Max button.
 4. Full simulation (asset diffs) and approval-revocation groundwork.
 5. WalletConnect v2 integration (Tier 1 feature 78).
 6. ~~Activity/history screen (Tier 1 feature 90)~~ — DONE (engine

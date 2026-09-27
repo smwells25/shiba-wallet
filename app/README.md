@@ -96,9 +96,10 @@ based route tree). Wallet state lives in `src/wallet/WalletContext.tsx`.
   the user flips an explicit "Send anyway" override; the final send is
   gated by local authentication (see below) and then signs and broadcasts
   through the engine (EVM: EIP-1559 EOA path via `signEip1559` +
-  `eth_sendRawTransaction`, with a marked seam in `src/wallet/send.ts`
-  where the ERC-4337 `SmartAccountClient` path plugs in once a bundler is
-  configured; BTC/DOGE: `signAndBroadcast`; SOL: `signTransaction` +
+  `eth_sendRawTransaction`, or — when the experimental smart-account
+  toggle is on — the ERC-4337 path in `src/wallet/aa.ts` through the
+  marked seam in `src/wallet/send.ts` (see "Account Abstraction" below);
+  BTC/DOGE: `signAndBroadcast`; SOL: `signTransaction` +
   `sendTransaction` with a fresh blockhash at send time). Success: txid /
   signature with a block-explorer link (etherscan.io, blockstream.info,
   solscan.io; Dogecoin shows the txid without a link because no explorer
@@ -139,9 +140,9 @@ based route tree). Wallet state lives in `src/wallet/WalletContext.tsx`.
   common QR libraries need react-native-svg and the copy button covers the
   shell's needs; revisit when a design pass happens.
 - **Settings** — per-chain RPC endpoint configuration (edit with validation,
-  reset to default), an entry point to the Tokens screen, reveal the seed
-  phrase behind a confirmation gate, and wipe the wallet behind a double
-  confirmation.
+  reset to default), the Account Abstraction section (below), an entry
+  point to the Tokens screen, reveal the seed phrase behind a confirmation
+  gate, and wipe the wallet behind a double confirmation.
 - **Tokens** — ERC-20 token management (Ethereum mainnet only in this
   phase). The tracked list is persisted in AsyncStorage as the JSON of
   core's `AssetRegistry` (CAIP-19 asset ids); it ships with exactly one
@@ -193,6 +194,46 @@ changes when it is read, never where it lives. Note that iOS FaceID does
 not work in Expo Go — a development build is needed to exercise the prompt
 there.
 
+## Account Abstraction (experimental, off by default)
+
+`src/wallet/aa.ts` implements the ERC-4337 smart-account send path behind
+an explicit per-send toggle. Nothing about the regular EOA flow changes
+while the toggle is off or the chain is unconfigured.
+
+- **Configuration** lives in the Settings section "Account Abstraction
+  (experimental)": a bundler URL and a SimpleAccountFactory address per
+  EVM chain, both empty by default, persisted in AsyncStorage (public
+  configuration, not secrets — same policy as RPC endpoints). Saving is
+  verification-gated and refuses to persist anything that fails, so a
+  stored value is always a verified one. The factory checks are exactly
+  the procedure in `docs/AA_STACK.md` as implemented by
+  `scripts/testnet/aa-smoke.mjs`: the factory must have code, its
+  `accountImplementation()` must have code, and that implementation's
+  `entryPoint()` must equal the pinned EntryPoint v0.7 — all read through
+  the configured node RPC. The bundler check requires
+  `eth_supportedEntryPoints` to include EntryPoint v0.7.
+- **Send flow**: when both endpoints are configured for the chain, the
+  Send screen offers a "Send from smart account" toggle (default off).
+  With it on, the confirm screen shows the counterfactual smart-account
+  address (resolved through the factory's `getAddress` view), that
+  account's own balance (it pays the amount and its own gas — there is no
+  paymaster in this pass), and whether the send will deploy the account.
+  The fee is the bundler's `eth_estimateUserOperationGas` estimate at the
+  node's suggested EIP-1559 fees, shown as a worst case. The biometric
+  gate applies as usual; the operation goes through
+  `SmartAccountClient.sendCalls` (chains-evm), and the success screen
+  shows the userOpHash while polling `eth_getUserOperationReceipt`
+  ("Bundling…"). The receipt shape is bundler-dependent, so it is
+  inspected defensively: an explorer link appears only when a real
+  transaction hash is found in the receipt, never a fabricated one.
+- Quoting never touches key material: the counterfactual address, nonce,
+  and gas estimate are computed with an address-only owner stand-in and
+  the account spec's stub signature; the real owner key is re-derived via
+  `WalletContext.signWith` only for the final send.
+- `scripts/check-aa.mjs` exercises all of this offline with fake
+  transports (config round-trip, every verification reject case, the full
+  stub → estimate → sign → send pipeline, receipt-shape handling).
+
 ## Crypto polyfill
 
 `@noble/hashes` (used by `@scure/bip39` for mnemonic entropy) requires
@@ -226,4 +267,5 @@ node scripts/test-units.mjs      # parseUnits + recipient-validation edge cases 
 node scripts/check-balances.mjs  # balance module against default endpoints (read-only)
 node scripts/check-tokens.mjs    # token store + ABI string decoder + live ERC-20 reads (read-only)
 node scripts/check-history.mjs   # history glue + live pagination proof (read-only)
+node scripts/check-aa.mjs        # ERC-4337 glue end-to-end with fake transports (offline)
 ```

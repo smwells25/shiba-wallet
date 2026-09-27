@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -35,6 +35,17 @@ import {
   type SendQuote,
   type SendResult,
 } from '../wallet/send';
+import {
+  createAaClient,
+  getAaConfig,
+  isAaConfigured,
+  prepareAaSend,
+  sendAa,
+  waitForAaReceipt,
+  type AaChainConfig,
+  type AaClientBundle,
+  type AaSendQuote,
+} from '../wallet/aa';
 import { BITCOIN, DOGECOIN } from '@shiba-wallet/chains-utxo';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Send'>;
@@ -66,9 +77,23 @@ export function SendScreen({ route, navigation }: Props) {
   const [amountText, setAmountText] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   const [maxBusy, setMaxBusy] = useState(false);
-  const [quote, setQuote] = useState<SendQuote | null>(null);
+  const [quote, setQuote] = useState<SendQuote | AaSendQuote | null>(null);
   const [overrideSimulation, setOverrideSimulation] = useState(false);
   const [result, setResult] = useState<SendResult | null>(null);
+
+  // ERC-4337 experimental path (see ../wallet/aa.ts). The toggle only
+  // renders when both bundler and factory are configured (= verified at
+  // save time) for this chain; it defaults to off, and with it off the EOA
+  // path below runs exactly as before.
+  const [aaConfig, setAaConfig] = useState<AaChainConfig | null>(null);
+  const [aaEnabled, setAaEnabled] = useState(false);
+  const aaBundle = useRef<AaClientBundle | null>(null);
+  const [aaResult, setAaResult] = useState<{
+    userOpHash: string;
+    receiptState: 'pending' | 'found' | 'timeout';
+    success: boolean | null;
+    txHash: string | null;
+  } | null>(null);
 
   useEffect(() => {
     navigation.setOptions({ title: account ? `Send ${account.symbol}` : 'Send' });
@@ -82,6 +107,21 @@ export function SendScreen({ route, navigation }: Props) {
       },
       () => {
         if (!cancelled) setEndpoint(null);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [route.params.chainId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getAaConfig(route.params.chainId).then(
+      (c) => {
+        if (!cancelled) setAaConfig(c);
+      },
+      () => {
+        if (!cancelled) setAaConfig(null);
       },
     );
     return () => {
@@ -115,6 +155,12 @@ export function SendScreen({ route, navigation }: Props) {
   const symbol = account.symbol;
   const isUtxo = network?.kind === 'esplora';
   const utxoNetwork = route.params.chainId === BITCOIN_CHAIN_ID ? BITCOIN : DOGECOIN;
+  // The smart-account toggle appears only when both AA endpoints are
+  // configured for this EVM chain — configured means verified, because the
+  // Settings save path refuses anything that fails verification.
+  const aaAvailable =
+    network?.kind === 'evm-jsonrpc' && aaConfig !== null && isAaConfigured(aaConfig);
+  const aaActive = aaAvailable && aaEnabled;
 
   const parseAmount = (): bigint => {
     const amount = parseUnits(amountText, decimals);
@@ -123,7 +169,10 @@ export function SendScreen({ route, navigation }: Props) {
   };
 
   const onMax = async () => {
-    if (!url) return;
+    // Max is EOA/UTXO/SOL arithmetic; the experimental smart-account path
+    // has its own balance and bundler-estimated fee, so Max is disabled
+    // there rather than showing a number computed for the wrong account.
+    if (!url || aaActive) return;
     setMaxBusy(true);
     setFormError(null);
     try {
@@ -171,8 +220,19 @@ export function SendScreen({ route, navigation }: Props) {
     }
     setPhase('quoting');
     try {
-      let next: SendQuote;
-      if (network.kind === 'evm-jsonrpc') {
+      let next: SendQuote | AaSendQuote;
+      if (aaActive && aaConfig?.bundlerUrl && aaConfig.factory) {
+        // Experimental ERC-4337 path: quote from the smart account through
+        // the bundler estimate (see ../wallet/aa.ts). The bundle is kept
+        // for the send + receipt poll so all three use the same transports.
+        const bundle = createAaClient({
+          nodeUrl: url,
+          bundlerUrl: aaConfig.bundlerUrl,
+          factory: aaConfig.factory,
+        });
+        aaBundle.current = bundle;
+        next = await prepareAaSend(bundle, account.address, validation.normalized, amount);
+      } else if (network.kind === 'evm-jsonrpc') {
         next = await prepareEvmSend(url, account.address, validation.normalized, amount);
       } else if (network.kind === 'solana-jsonrpc') {
         next = await prepareSolSend(url, account.address, validation.normalized, amount);
@@ -200,6 +260,40 @@ export function SendScreen({ route, navigation }: Props) {
     }
     setPhase('sending');
     try {
+      if (quote.kind === 'aa') {
+        const bundle = aaBundle.current;
+        if (!bundle) {
+          throw new Error('Smart-account session expired; go back and review again.');
+        }
+        const { userOpHash } = await signWith(route.params.chainId, (signer) =>
+          sendAa(bundle, signer, quote),
+        );
+        setAaResult({ userOpHash, receiptState: 'pending', success: null, txHash: null });
+        setPhase('success');
+        // Poll for the receipt in the background; the success screen shows
+        // "bundling…" until it lands (or the poll times out — the op may
+        // still be included later, the userOpHash stays the lookup key).
+        void waitForAaReceipt(bundle, userOpHash, { timeoutMs: 120_000, pollMs: 3_000 }).then(
+          ({ summary }) =>
+            setAaResult((prev) =>
+              prev && prev.userOpHash === userOpHash
+                ? {
+                    ...prev,
+                    receiptState: 'found',
+                    success: summary.success,
+                    txHash: summary.txHash,
+                  }
+                : prev,
+            ),
+          () =>
+            setAaResult((prev) =>
+              prev && prev.userOpHash === userOpHash
+                ? { ...prev, receiptState: 'timeout' }
+                : prev,
+            ),
+        );
+        return;
+      }
       const sent = await signWith(route.params.chainId, async (signer) => {
         if (quote.kind === 'evm') return sendEvm(url, signer, quote);
         if (quote.kind === 'sol') return sendSol(url, signer, quote);
@@ -218,6 +312,75 @@ export function SendScreen({ route, navigation }: Props) {
     styles.input,
     { color: theme.text, borderColor: theme.border, backgroundColor: theme.card },
   ];
+
+  // ------------------------------------------------ success (smart account)
+  if (phase === 'success' && aaResult) {
+    return (
+      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+        <Text style={[styles.successTitle, { color: theme.success }]}>Sent to bundler ✓</Text>
+        <Text style={[styles.label, { color: theme.textMuted }]}>UserOperation hash</Text>
+        <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          <Text selectable style={[styles.monoText, { color: theme.text }]}>
+            {aaResult.userOpHash}
+          </Text>
+        </View>
+        {aaResult.receiptState === 'pending' ? (
+          <View style={styles.center}>
+            <ActivityIndicator size="large" color={theme.accent} />
+            <Text style={[styles.hint, { color: theme.textMuted }]}>
+              Bundling… waiting for the UserOperation receipt.
+            </Text>
+          </View>
+        ) : null}
+        {aaResult.receiptState === 'timeout' ? (
+          <Text style={[styles.hint, { color: theme.textMuted }]}>
+            No receipt yet. The operation may still be included — keep the
+            UserOperation hash above to look it up later.
+          </Text>
+        ) : null}
+        {aaResult.receiptState === 'found' ? (
+          <>
+            {aaResult.success === false ? (
+              <WarningBox>
+                The bundler reports the operation was included but reverted
+                on-chain. The gas was still charged to the smart account.
+              </WarningBox>
+            ) : (
+              <Text style={[styles.simulationOk, { color: theme.success }]}>
+                Included on-chain{aaResult.success === true ? ' — succeeded.' : '.'}
+              </Text>
+            )}
+            {aaResult.txHash ? (
+              <>
+                <Text style={[styles.label, { color: theme.textMuted }]}>Transaction</Text>
+                <View
+                  style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border }]}
+                >
+                  <Text selectable style={[styles.monoText, { color: theme.text }]}>
+                    {aaResult.txHash}
+                  </Text>
+                </View>
+                <Button
+                  title="View on block explorer"
+                  variant="secondary"
+                  onPress={() =>
+                    void Linking.openURL(`https://etherscan.io/tx/${aaResult.txHash}`)
+                  }
+                />
+              </>
+            ) : (
+              <Text style={[styles.hint, { color: theme.textMuted }]}>
+                The bundler's receipt did not include a recognizable
+                transaction hash; look the UserOperation hash up in an
+                ERC-4337 explorer you trust.
+              </Text>
+            )}
+          </>
+        ) : null}
+        <Button title="Done" onPress={() => navigation.popToTop()} />
+      </ScrollView>
+    );
+  }
 
   // -------------------------------------------------------------- success
   if (phase === 'success' && result) {
@@ -247,8 +410,77 @@ export function SendScreen({ route, navigation }: Props) {
     );
   }
 
+  // ------------------------------------------------ confirm (smart account)
+  if ((phase === 'confirm' || phase === 'sending') && quote?.kind === 'aa' && network) {
+    return (
+      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+        <View
+          style={[
+            styles.mainnetBadge,
+            { backgroundColor: theme.dangerSurface, borderColor: theme.danger },
+          ]}
+        >
+          <Text style={[styles.mainnetBadgeText, { color: theme.danger }]}>
+            {network.label} Mainnet — real funds
+          </Text>
+        </View>
+
+        <View style={[styles.aaTag, { borderColor: theme.accent }]}>
+          <Text style={[styles.aaTagText, { color: theme.accent }]}>
+            EXPERIMENTAL · ERC-4337 smart account
+          </Text>
+        </View>
+
+        <Row label="To" value={quote.to} mono theme={theme} />
+        <Row label="Amount" value={`${exact(quote.amount, decimals)} ${symbol}`} theme={theme} />
+        <Row label="From smart account" value={quote.sender} mono theme={theme} />
+        <Row
+          label="Smart account balance"
+          value={`${exact(quote.senderBalance, decimals)} ${symbol}`}
+          theme={theme}
+        />
+        <Row
+          label="Deployment"
+          value={quote.deployed ? 'Already deployed' : 'Will deploy with this send'}
+          theme={theme}
+        />
+        <Row
+          label="Max network fee (bundler estimate)"
+          value={`${exact(quote.fee, decimals)} ${symbol}`}
+          theme={theme}
+        />
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          Worst case at {exact(quote.maxFeePerGas, 9)} gwei max fee ×{' '}
+          {(quote.callGasLimit + quote.verificationGasLimit + quote.preVerificationGas).toString()}{' '}
+          gas (bundler eth_estimateUserOperationGas). The smart account pays
+          its own gas from its own balance — no paymaster in this
+          experimental pass.
+        </Text>
+        <Row
+          label="Total (worst case)"
+          value={`${exact(quote.total, decimals)} ${symbol}`}
+          theme={theme}
+        />
+
+        {phase === 'sending' ? (
+          <View style={styles.center}>
+            <ActivityIndicator size="large" color={theme.accent} />
+            <Text style={[styles.hint, { color: theme.textMuted }]}>
+              Signing and submitting to the bundler…
+            </Text>
+          </View>
+        ) : (
+          <>
+            <Button title={`Send ${symbol} from smart account`} onPress={() => void onSend()} />
+            <Button title="Back" variant="secondary" onPress={() => setPhase('form')} />
+          </>
+        )}
+      </ScrollView>
+    );
+  }
+
   // -------------------------------------------------------------- confirm
-  if ((phase === 'confirm' || phase === 'sending') && quote && network) {
+  if ((phase === 'confirm' || phase === 'sending') && quote && quote.kind !== 'aa' && network) {
     const simulationFailed = quote.kind === 'evm' && !quote.simulation.ok;
     const sendBlocked = simulationFailed && !overrideSimulation;
     return (
@@ -357,6 +589,30 @@ export function SendScreen({ route, navigation }: Props) {
         </WarningBox>
       ) : null}
 
+      {aaAvailable ? (
+        <View
+          style={[styles.aaToggleBox, { backgroundColor: theme.card, borderColor: theme.border }]}
+        >
+          <View style={styles.overrideRow}>
+            <Switch value={aaEnabled} onValueChange={setAaEnabled} disabled={!url} />
+            <Text style={[styles.overrideLabel, { color: theme.text }]}>
+              Send from smart account
+            </Text>
+            <View style={[styles.aaTag, { borderColor: theme.accent }]}>
+              <Text style={[styles.aaTagText, { color: theme.accent }]}>EXPERIMENTAL</Text>
+            </View>
+          </View>
+          <Text style={[styles.hint, { color: theme.textMuted }]}>
+            Sends as an ERC-4337 UserOperation from your smart account — a
+            separate address controlled by this wallet's key — through the
+            bundler configured in Settings. The smart account pays the
+            amount and its own gas from its own balance (no paymaster in
+            this pass), so fund the smart account address first. The Max
+            button applies to the regular send only.
+          </Text>
+        </View>
+      ) : null}
+
       <Text style={[styles.label, { color: theme.textMuted }]}>Recipient</Text>
       <TextInput
         value={recipient}
@@ -396,7 +652,7 @@ export function SendScreen({ route, navigation }: Props) {
           title={maxBusy ? '…' : 'Max'}
           variant="secondary"
           onPress={() => void onMax()}
-          disabled={!url || maxBusy}
+          disabled={!url || maxBusy || aaActive}
           style={styles.maxButton}
         />
       </View>
@@ -535,6 +791,24 @@ const styles = StyleSheet.create({
   overrideLabel: {
     fontSize: 14,
     flex: 1,
+  },
+  aaToggleBox: {
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 14,
+    gap: 10,
+  },
+  aaTag: {
+    borderRadius: 6,
+    borderWidth: 1,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    alignSelf: 'center',
+  },
+  aaTagText: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.5,
   },
   successTitle: {
     fontSize: 26,

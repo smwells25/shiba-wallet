@@ -6,12 +6,22 @@ import { Button, WarningBox, WordGrid, screenStyle } from '../components';
 import {
   NetworkEndpoint,
   getAllEndpoints,
+  getEndpoint,
   resetEndpoint,
   setEndpointOverride,
 } from '../config/networks';
+import { DEFAULT_NETWORKS, type NetworkDefault } from '../config/defaults';
 import { useTheme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
 import { requireLocalAuth } from '../wallet/biometric';
+import {
+  clearAaBundlerUrl,
+  clearAaFactory,
+  getAaConfig,
+  setAaBundlerUrl,
+  setAaFactory,
+  type AaChainConfig,
+} from '../wallet/aa';
 
 /**
  * One chain's endpoint row: shows the effective URL (default or override)
@@ -99,6 +109,189 @@ function EndpointRow({
           <Button title="Edit" variant="secondary" onPress={beginEdit} />
         </View>
       )}
+    </View>
+  );
+}
+
+/**
+ * One editable AA field (bundler URL or factory address) with mandatory
+ * save-time verification: the save button runs the checks and the value is
+ * only persisted when they pass (../wallet/aa.ts refuses otherwise), so a
+ * displayed value is always a verified one.
+ */
+function AaField({
+  label,
+  placeholder,
+  value,
+  statusLine,
+  onSave,
+  onClear,
+}: {
+  label: string;
+  placeholder: string;
+  value: string | null;
+  /** Verification status for the stored value (shown when configured). */
+  statusLine: string | null;
+  /** Verifies and persists; throws with a plain message on any failure. */
+  onSave: (draft: string) => Promise<void>;
+  onClear: () => Promise<void>;
+}) {
+  const theme = useTheme();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [verifying, setVerifying] = useState(false);
+
+  const save = async () => {
+    setVerifying(true);
+    try {
+      await onSave(draft);
+      setEditing(false);
+    } catch (e) {
+      Alert.alert(
+        'Not saved — verification failed',
+        e instanceof Error ? e.message : 'Verification failed.',
+      );
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  return (
+    <View style={styles.aaField}>
+      <Text style={[styles.aaFieldLabel, { color: theme.textMuted }]}>{label}</Text>
+      {editing ? (
+        <View style={styles.endpointEditor}>
+          <TextInput
+            value={draft}
+            onChangeText={setDraft}
+            placeholder={placeholder}
+            placeholderTextColor={theme.textMuted}
+            autoCapitalize="none"
+            autoCorrect={false}
+            style={[
+              styles.endpointInput,
+              { color: theme.text, borderColor: theme.border, backgroundColor: theme.background },
+            ]}
+          />
+          {verifying ? (
+            <Text style={[styles.aaStatus, { color: theme.textMuted }]}>
+              Verifying before saving…
+            </Text>
+          ) : (
+            <View style={styles.endpointButtons}>
+              <Button title="Verify & save" onPress={() => void save()} style={styles.endpointButton} />
+              <Button
+                title="Cancel"
+                variant="secondary"
+                onPress={() => setEditing(false)}
+                style={styles.endpointButton}
+              />
+            </View>
+          )}
+        </View>
+      ) : (
+        <View style={styles.endpointEditor}>
+          <Text style={[styles.endpointUrl, { color: theme.textMuted }]} numberOfLines={2}>
+            {value ?? 'Not configured'}
+          </Text>
+          {value && statusLine ? (
+            <Text style={[styles.aaVerified, { color: theme.success }]}>{statusLine}</Text>
+          ) : null}
+          <View style={styles.endpointButtons}>
+            <Button
+              title="Edit"
+              variant="secondary"
+              onPress={() => {
+                setDraft(value ?? '');
+                setEditing(true);
+              }}
+              style={styles.endpointButton}
+            />
+            {value ? (
+              <Button
+                title="Clear"
+                variant="secondary"
+                onPress={() => void onClear()}
+                style={styles.endpointButton}
+              />
+            ) : null}
+          </View>
+        </View>
+      )}
+    </View>
+  );
+}
+
+/** AA configuration for one EVM chain: bundler URL + factory address. */
+function AaChainRow({ network }: { network: NetworkDefault }) {
+  const theme = useTheme();
+  const [config, setConfig] = useState<AaChainConfig | null>(null);
+
+  const reload = useCallback(() => {
+    getAaConfig(network.chainId).then(setConfig, () => setConfig(null));
+  }, [network.chainId]);
+
+  useEffect(reload, [reload]);
+
+  const shortDate = (iso: string | null) => (iso ? iso.slice(0, 10) : 'unknown date');
+
+  return (
+    <View style={[styles.endpointRow, { backgroundColor: theme.card, borderColor: theme.border }]}>
+      <View style={styles.endpointHeader}>
+        <Text style={[styles.endpointLabel, { color: theme.text }]}>{network.label}</Text>
+        <Text style={[styles.endpointTag, { color: theme.textMuted }]}>
+          {config && config.bundlerUrl && config.factory ? 'ready' : 'incomplete'}
+        </Text>
+      </View>
+      <AaField
+        label="Bundler URL (ERC-4337 RPC)"
+        placeholder="https://…"
+        value={config?.bundlerUrl ?? null}
+        statusLine={
+          config?.bundlerUrl
+            ? `Verified ✓ — eth_supportedEntryPoints includes EntryPoint v0.7 (checked ${shortDate(
+                config.bundlerVerifiedAt,
+              )})`
+            : null
+        }
+        onSave={async (draft) => {
+          await setAaBundlerUrl(network.chainId, draft);
+          reload();
+        }}
+        onClear={async () => {
+          await clearAaBundlerUrl(network.chainId);
+          reload();
+        }}
+      />
+      <AaField
+        label="SimpleAccountFactory address"
+        placeholder="0x…"
+        value={config?.factory ?? null}
+        statusLine={
+          config?.factory
+            ? `Verified ✓ — has code; implementation ${
+                config.factoryImplementation ?? 'unknown'
+              } has code and its entryPoint() is v0.7 (checked ${shortDate(
+                config.factoryVerifiedAt,
+              )})`
+            : null
+        }
+        onSave={async (draft) => {
+          const endpoint = await getEndpoint(network.chainId);
+          if (!endpoint?.url) {
+            throw new Error(
+              `No ${network.label} RPC endpoint is configured; the factory is ` +
+                'verified on-chain through it. Configure the endpoint above first.',
+            );
+          }
+          await setAaFactory(network.chainId, draft, endpoint.url);
+          reload();
+        }}
+        onClear={async () => {
+          await clearAaFactory(network.chainId);
+          reload();
+        }}
+      />
     </View>
   );
 }
@@ -220,6 +413,25 @@ export function SettingsScreen({ navigation }: Props) {
       </View>
 
       <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: theme.text }]}>
+          Account Abstraction (experimental)
+        </Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          Optional ERC-4337 setup per EVM chain: a bundler endpoint and a
+          SimpleAccountFactory address. Both are verified before saving —
+          the bundler must support EntryPoint v0.7, and the factory is
+          checked on-chain through your configured RPC endpoint (it must
+          have code, and its account implementation must point at EntryPoint
+          v0.7). When both are set, the Send screen offers an experimental
+          "Send from smart account" toggle. Off by default; nothing changes
+          for regular sends.
+        </Text>
+        {DEFAULT_NETWORKS.filter((n) => n.kind === 'evm-jsonrpc').map((network) => (
+          <AaChainRow key={network.chainId} network={network} />
+        ))}
+      </View>
+
+      <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: theme.text }]}>Tokens</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Track ERC-20 token balances on the Home screen (balances only —
@@ -315,5 +527,20 @@ const styles = StyleSheet.create({
   },
   endpointButton: {
     flex: 1,
+  },
+  aaField: {
+    gap: 8,
+  },
+  aaFieldLabel: {
+    fontSize: 12,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  aaStatus: {
+    fontSize: 13,
+  },
+  aaVerified: {
+    fontSize: 12,
+    lineHeight: 17,
   },
 });

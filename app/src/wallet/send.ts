@@ -482,12 +482,16 @@ export interface SendResult {
 /**
  * Signs and broadcasts an EOA EIP-1559 transfer through chains-evm.
  *
- * SMART-ACCOUNT SEAM: when a bundler endpoint is configured (phase 2 task
- * 3 pins the vendor config), this is the point where the flow forks — the
- * same quote's to/amount become a Call for SmartAccountClient.sendUserOp
- * (chains-evm), the signer stays the same seed-derived owner key, and the
- * quote gains paymaster fields. Everything before this function (recipient
- * validation, amount parsing, confirm UI) is path-agnostic by design.
+ * SMART-ACCOUNT SEAM: this is the point where the flow forks. The ERC-4337
+ * path is implemented in ./aa.ts (phase 3): when the user enables the
+ * experimental smart-account toggle on a chain with a verified bundler and
+ * factory, SendScreen quotes through prepareAaSend and submits through
+ * sendAa (SmartAccountClient.sendCalls in chains-evm) instead of calling
+ * this function — the recipient/amount come from the same validated form,
+ * and the signer stays the same seed-derived owner key. With the toggle
+ * off or the chain unconfigured, this EOA path runs unchanged. Everything
+ * before the fork (recipient validation, amount parsing) is path-agnostic
+ * by design.
  */
 export async function sendEvm(
   url: string,
