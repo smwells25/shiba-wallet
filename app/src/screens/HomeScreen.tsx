@@ -76,19 +76,21 @@ function BalanceCell({
 }
 
 /**
- * One tracked ERC-20 token under the Ethereum row: symbol, name, and its
+ * One tracked ERC-20 token under the Ethereum row: symbol, name, its
  * balance with the exact per-row loading/error/retry discipline of the
- * native rows (BalanceCell is shared). No Send link on purpose: tokens are
- * balance-display only in this phase.
+ * native rows (BalanceCell is shared), and a Send link into the send
+ * screen's token mode (phase 4 item 3).
  */
 function TokenRow({
   token,
   state,
   onRetry,
+  onSend,
 }: {
   token: FungibleAsset;
   state: BalanceState | undefined;
   onRetry: () => void;
+  onSend: () => void;
 }) {
   const theme = useTheme();
   return (
@@ -103,6 +105,14 @@ function TokenRow({
           {token.name}
         </Text>
         <Text style={[styles.tokenKind, { color: theme.textMuted }]}>ERC-20</Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Send ${token.symbol}`}
+          onPress={onSend}
+          hitSlop={8}
+        >
+          <Text style={[styles.sendLink, { color: theme.accent }]}>Send ↗</Text>
+        </Pressable>
       </View>
       <BalanceCell state={state} onRetry={onRetry} />
     </View>
@@ -193,6 +203,9 @@ export function HomeScreen({ navigation }: Props) {
                 token={token}
                 state={tokenBalances[id]}
                 onRetry={() => void refreshToken(id)}
+                onSend={() =>
+                  navigation.navigate('Send', { chainId: EVM_CHAIN_ID, tokenId: id })
+                }
               />
             );
           })}
@@ -231,9 +244,8 @@ export function HomeScreen({ navigation }: Props) {
           <Text style={[styles.footer, { color: theme.textMuted }]}>
             Account 0 addresses, derived on this device from your recovery
             phrase. Balances come from the RPC endpoints in Settings; pull
-            down to refresh. Tap a chain to receive, or use its Send link.
-            Token balances are display-only for now — sending tokens comes
-            in a later release.
+            down to refresh. Tap a chain to receive, or use its Send link —
+            tokens have their own Send link and pay their network fee in ETH.
           </Text>
         }
       />

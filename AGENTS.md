@@ -22,7 +22,7 @@ Non-negotiable requirements (from the Lead Chairperson):
    recovery on-chain, passkey signers.
 4. **Maximum flexibility.** No architectural lock-in; every feature must be
    addable later without rewrites. Chain support is pluggable (adapter
-   pattern). Staking is optional but valuable where it intersects AA.
+   pattern). Features like staking are valuable where it intersects AA.
 5. Deliverable for the Chairperson: a complete feature-universe analysis so
    leadership can choose where to invest.
 6. **Token and NFT support is required** (added by the Chairperson
@@ -482,9 +482,8 @@ person can actually live in", using only resources already in hand.
 2. Blockbook history provider in chains-utxo (Blockbook's address-txs
    API), so Dogecoin gets Activity parity the moment an endpoint is
    configured — and Bitcoin users can choose Blockbook backends too.
-3. ERC-20 token sending in the app: reuse the send flow with engine
-   transfer calldata, simulation pre-flight, and balance checks; tokens
-   stop being display-only.
+3. ~~ERC-20 token sending in the app~~ — DONE 2026-09-27 (see Phase 4
+   progress). Tokens are no longer display-only.
 4. QR support: show a QR on Receive and scan QR codes for WalletConnect
    pairing and send-recipient entry (expo-camera + a pure-JS QR encoder;
    verify Expo Go camera behavior honestly).
@@ -542,6 +541,43 @@ person can actually live in", using only resources already in hand.
       0x9858...da94 through the app glue (49 + 50 entries classified,
       0 uid overlap; endpoint masked, key only in git-ignored
       .dev-wallet/env).
+
+- [x] Task 3 — ERC-20 token sending (Ethereum mainnet, EOA path). New
+      module app/src/wallet/send-erc20.ts (own module, not send.ts, so the
+      import graph stays a DAG: it needs erc20.ts's fetchErc20Balance and
+      erc20.ts already imports from send.ts): prepareErc20Send (endpoint
+      chain-id check, token-balance check, ETH-balance-covers-fee check
+      with a plain-language error, eth_estimateGas on the engine's
+      encodeErc20Transfer calldata with a documented 100k fallback when
+      estimation itself reverts, simulateCall pre-flight), maxErc20Send
+      (max = full token balance since gas is paid in ETH; refuses when the
+      ETH balance cannot cover the worst-case fee), sendErc20 (reshapes
+      into an EvmSendQuote — value 0, to = token contract, data = transfer
+      calldata — and delegates to the existing sendEvm, so there is no
+      second signing path). ERC-20 return-value quirk handled honestly and
+      documented in erc20TransferReturnedFalse: a zero-word return from
+      the simulation means transfer() returned false (the tx would mine,
+      charge gas, move nothing) and blocks behind the same override switch
+      as a revert; USDT-style empty return data ("0x") is normal and never
+      treated as failure. SendScreen token mode (route param tokenId,
+      CAIP-19 id resolved against the tracked-token store): identical EVM
+      recipient validation, amounts parsed with the token's on-chain
+      decimals, fee displayed in ETH alongside the token amount, confirm
+      shows token amount + symbol / recipient / token contract / ETH fee /
+      both balances, mainnet badge and biometric gate unchanged, success
+      shows txid + etherscan link. Smart-account toggle hidden in token
+      mode with a note (AA token sends — batched approve+transfer — are a
+      later slice). Home token rows and the Tokens screen both link into
+      token mode; describeSendError gained token-aware branches so an ETH
+      fee shortfall is never titled with the token's symbol. Verified:
+      app/scripts/check-token-send.mjs 37/37, fully offline via a fake
+      JSON-RPC node behind global fetch (calldata equals hand-built ABI
+      bytes, fee-in-wei vs amount-in-token-units math, zero-word blocking
+      vs empty-return passing, max + insufficient-ETH refusal, offline
+      sign+broadcast asserting the raw tx targets the contract and carries
+      the calldata); tsc --noEmit clean; expo export --platform android
+      bundles with the new strings confirmed in the Hermes bytecode. No
+      real transaction was broadcast.
 
 Sequencing: 1+2 first (history completes the read side), then 3+4
 (write side + capture), then 5+6, with 7 riding alongside as engine

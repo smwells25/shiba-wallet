@@ -574,6 +574,16 @@ export async function sendSol(
  */
 export function describeSendError(error: unknown, symbol: string): { title: string; detail: string } {
   const detail = error instanceof Error ? error.message : String(error);
+  // Token sends (send-erc20.ts): the fee is paid in ETH, so an ETH
+  // shortfall must never be titled with the token's symbol. This also
+  // covers nodes rejecting a broadcast with "insufficient funds for
+  // gas * price + value" on a value-0 token transaction.
+  if (/not enough eth to pay the network fee/i.test(detail) || /insufficient funds for gas/i.test(detail)) {
+    return { title: 'Not enough ETH to pay the network fee.', detail };
+  }
+  if (/exceeds the token balance/i.test(detail)) {
+    return { title: `Not enough ${symbol}: the amount exceeds your token balance.`, detail };
+  }
   if (/insufficient funds/i.test(detail)) {
     return {
       title: `Not enough ${symbol} to cover this amount plus the network fee.`,

@@ -51,9 +51,10 @@ interface Preview {
  * auto-fill symbol/name/decimals via eth_call, confirm, done. Legacy
  * bytes32-metadata tokens fall back to manual symbol/name entry; decimals
  * always come from the chain because honest balance display depends on
- * them. Tokens are balance-display only in this phase — no send.
+ * them. Each tracked token row links into the send screen's token mode
+ * (phase 4 item 3).
  */
-export function TokensScreen(_props: Props) {
+export function TokensScreen({ navigation }: Props) {
   const theme = useTheme();
   const [tokens, setTokens] = useState<FungibleAsset[]>([]);
   const [address, setAddress] = useState('');
@@ -166,9 +167,9 @@ export function TokensScreen(_props: Props) {
       <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: theme.text }]}>Tracked tokens</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          ERC-20 balances shown on Home under Ethereum. Balances only for
-          now — sending tokens is not supported yet. Tokens arrive at your
-          Ethereum address.
+          ERC-20 balances shown on Home under Ethereum. Tokens arrive at
+          your Ethereum address, and Send starts a token transfer — the
+          network fee for a token send is paid in ETH.
         </Text>
         {tokens.length === 0 ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
@@ -189,12 +190,24 @@ export function TokensScreen(_props: Props) {
                   {shortAddress(token.assetId.reference)}
                 </Text>
               </View>
-              <Button
-                title="Remove"
-                variant="destructive"
-                onPress={() => onRemove(token)}
-                style={styles.removeButton}
-              />
+              <View style={styles.rowButtons}>
+                <Button
+                  title="Send"
+                  onPress={() =>
+                    navigation.navigate('Send', {
+                      chainId: EVM_CHAIN_ID,
+                      tokenId: formatAssetId(token.assetId),
+                    })
+                  }
+                  style={styles.removeButton}
+                />
+                <Button
+                  title="Remove"
+                  variant="destructive"
+                  onPress={() => onRemove(token)}
+                  style={styles.removeButton}
+                />
+              </View>
             </View>
           ))
         )}
@@ -335,6 +348,9 @@ const styles = StyleSheet.create({
   tokenAddress: {
     fontSize: 12,
     fontVariant: ['tabular-nums'],
+  },
+  rowButtons: {
+    gap: 6,
   },
   removeButton: {
     paddingVertical: 8,

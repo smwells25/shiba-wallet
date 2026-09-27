@@ -8,7 +8,11 @@ export type RootStackParamList = {
   // Main app (shown once a wallet exists)
   Home: undefined;
   Receive: { chainId: string };
-  Send: { chainId: string };
+  /**
+   * tokenId (a CAIP-19 id from the tracked-token store) switches the send
+   * screen into ERC-20 token mode; omitted, the chain's native coin is sent.
+   */
+  Send: { chainId: string; tokenId?: string };
   Activity: { chainId: string };
   Settings: undefined;
   Tokens: undefined;

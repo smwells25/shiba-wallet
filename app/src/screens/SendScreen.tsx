@@ -12,6 +12,8 @@ import {
   View,
 } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { formatAssetId } from '@shiba-wallet/core';
+import type { FungibleAsset } from '@shiba-wallet/core';
 import type { RootStackParamList } from '../navigation';
 import { Button, WarningBox, screenStyle } from '../components';
 import { getEndpoint, type NetworkEndpoint } from '../config/networks';
@@ -46,6 +48,13 @@ import {
   type AaClientBundle,
   type AaSendQuote,
 } from '../wallet/aa';
+import {
+  maxErc20Send,
+  prepareErc20Send,
+  sendErc20,
+  type Erc20SendQuote,
+} from '../wallet/send-erc20';
+import { listTokens } from '../wallet/tokens';
 import { BITCOIN, DOGECOIN } from '@shiba-wallet/chains-utxo';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Send'>;
@@ -65,19 +74,33 @@ function exact(amount: bigint, decimals: number): string {
  * EVM pre-flight simulation, biometric gate), success (txid + explorer
  * link). All amounts are bigints in base units; the two text inputs are
  * converted exactly through parseUnits and never touch floating point.
+ *
+ * ERC-20 token mode (route.params.tokenId set, phase 4 item 3): the same
+ * form/confirm/success flow sends a tracked token instead of the native
+ * coin. Recipient validation is identical to native EVM, the amount is
+ * parsed with the token's on-chain decimals, and the fee is quoted — and
+ * displayed — in ETH, because gas for a token transfer is paid in ETH.
+ * The smart-account toggle is hidden in token mode (see the note in the
+ * form); the send always takes the EOA path via send-erc20.ts.
  */
 export function SendScreen({ route, navigation }: Props) {
   const theme = useTheme();
   const { accounts, signWith } = useWallet();
   const account = accounts.find((a) => a.chainId === route.params.chainId);
+  const tokenId = route.params.tokenId;
+  const tokenMode = tokenId !== undefined;
 
   const [endpoint, setEndpoint] = useState<NetworkEndpoint | null | undefined>(undefined);
+  // undefined = still loading the token list; null = tokenId not tracked.
+  const [token, setToken] = useState<FungibleAsset | null | undefined>(
+    tokenMode ? undefined : null,
+  );
   const [phase, setPhase] = useState<Phase>('form');
   const [recipient, setRecipient] = useState('');
   const [amountText, setAmountText] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   const [maxBusy, setMaxBusy] = useState(false);
-  const [quote, setQuote] = useState<SendQuote | AaSendQuote | null>(null);
+  const [quote, setQuote] = useState<SendQuote | AaSendQuote | Erc20SendQuote | null>(null);
   const [overrideSimulation, setOverrideSimulation] = useState(false);
   const [result, setResult] = useState<SendResult | null>(null);
 
@@ -96,8 +119,33 @@ export function SendScreen({ route, navigation }: Props) {
   } | null>(null);
 
   useEffect(() => {
-    navigation.setOptions({ title: account ? `Send ${account.symbol}` : 'Send' });
-  }, [navigation, account]);
+    const title = token
+      ? `Send ${token.symbol}`
+      : account
+        ? `Send ${account.symbol}`
+        : 'Send';
+    navigation.setOptions({ title });
+  }, [navigation, account, token]);
+
+  // Token mode: resolve the CAIP-19 id against the tracked-token store. The
+  // store is the single source of the token's contract address, symbol and
+  // on-chain decimals (all verified when the token was added).
+  useEffect(() => {
+    if (!tokenId) return;
+    let cancelled = false;
+    listTokens().then(
+      (list) => {
+        if (cancelled) return;
+        setToken(list.find((t) => formatAssetId(t.assetId) === tokenId) ?? null);
+      },
+      () => {
+        if (!cancelled) setToken(null);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [tokenId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -141,25 +189,40 @@ export function SendScreen({ route, navigation }: Props) {
       </View>
     );
   }
-  if (endpoint === undefined) {
+  if (endpoint === undefined || (tokenMode && token === undefined)) {
     return (
       <View style={[screenStyle(theme), styles.center]}>
         <ActivityIndicator size="large" color={theme.accent} />
       </View>
     );
   }
+  if (tokenMode && token === null) {
+    return (
+      <View style={[screenStyle(theme), styles.center]}>
+        <Text style={{ color: theme.textMuted }}>
+          This token is no longer in your tracked list.
+        </Text>
+      </View>
+    );
+  }
 
   const network = endpoint?.network;
   const url = endpoint?.url ?? null;
-  const decimals = network?.decimals ?? 8;
-  const symbol = account.symbol;
+  // Token mode: amounts are in the token's on-chain decimals and carry the
+  // token's symbol; the fee stays in the native coin (see nativeDecimals).
+  const decimals = token ? token.decimals : network?.decimals ?? 8;
+  const symbol = token ? token.symbol : account.symbol;
+  // For displaying the ETH fee of a token send (EVM native decimals).
+  const nativeDecimals = network?.decimals ?? 18;
   const isUtxo = network?.kind === 'esplora';
   const utxoNetwork = route.params.chainId === BITCOIN_CHAIN_ID ? BITCOIN : DOGECOIN;
   // The smart-account toggle appears only when both AA endpoints are
   // configured for this EVM chain — configured means verified, because the
-  // Settings save path refuses anything that fails verification.
+  // Settings save path refuses anything that fails verification. Token
+  // mode hides it: ERC-20 sends through the smart account (batched
+  // approve+transfer) are a later slice, so tokens always take the EOA path.
   const aaAvailable =
-    network?.kind === 'evm-jsonrpc' && aaConfig !== null && isAaConfigured(aaConfig);
+    !tokenMode && network?.kind === 'evm-jsonrpc' && aaConfig !== null && isAaConfigured(aaConfig);
   const aaActive = aaAvailable && aaEnabled;
 
   const parseAmount = (): bigint => {
@@ -177,7 +240,19 @@ export function SendScreen({ route, navigation }: Props) {
     setFormError(null);
     try {
       let max: bigint;
-      if (network!.kind === 'evm-jsonrpc') {
+      if (token) {
+        // Token max = the full token balance: the fee is paid in ETH, so
+        // it never reduces the token amount. maxErc20Send refuses (with a
+        // plain "Not enough ETH" error) when the ETH balance cannot cover
+        // the worst-case fee for transferring that balance.
+        max = await maxErc20Send(
+          url,
+          account.address,
+          token.assetId.reference,
+          validation?.ok ? validation.normalized : undefined,
+        );
+        if (max <= 0n) throw new Error(`Your ${token.symbol} balance is zero.`);
+      } else if (network!.kind === 'evm-jsonrpc') {
         max = await maxEvmSend(
           url,
           account.address,
@@ -220,8 +295,22 @@ export function SendScreen({ route, navigation }: Props) {
     }
     setPhase('quoting');
     try {
-      let next: SendQuote | AaSendQuote;
-      if (aaActive && aaConfig?.bundlerUrl && aaConfig.factory) {
+      let next: SendQuote | AaSendQuote | Erc20SendQuote;
+      if (token) {
+        // ERC-20 token mode: EOA path only (the smart-account toggle is
+        // hidden in token mode). Quote checks the token balance, checks
+        // the ETH balance against the fee, and pre-flights the transfer
+        // calldata through eth_call.
+        next = await prepareErc20Send({
+          url,
+          from: account.address,
+          to: validation.normalized,
+          contract: token.assetId.reference,
+          amount,
+          symbol: token.symbol,
+          decimals: token.decimals,
+        });
+      } else if (aaActive && aaConfig?.bundlerUrl && aaConfig.factory) {
         // Experimental ERC-4337 path: quote from the smart account through
         // the bundler estimate (see ../wallet/aa.ts). The bundle is kept
         // for the send + receipt poll so all three use the same transports.
@@ -295,6 +384,9 @@ export function SendScreen({ route, navigation }: Props) {
         return;
       }
       const sent = await signWith(route.params.chainId, async (signer) => {
+        // Token transfer: value 0, to = token contract, data = transfer
+        // calldata — through the same sendEvm signing/broadcast path.
+        if (quote.kind === 'erc20') return sendErc20(url, signer, quote);
         if (quote.kind === 'evm') return sendEvm(url, signer, quote);
         if (quote.kind === 'sol') return sendSol(url, signer, quote);
         return sendUtxo(url, route.params.chainId, signer, quote);
@@ -479,8 +571,109 @@ export function SendScreen({ route, navigation }: Props) {
     );
   }
 
+  // ------------------------------------------------- confirm (ERC-20 token)
+  if ((phase === 'confirm' || phase === 'sending') && quote?.kind === 'erc20' && network) {
+    const simulationFailed = !quote.simulation.ok;
+    // A zero-word return blocks exactly like a revert: the transaction
+    // would be mined, charge the full fee, and move no tokens.
+    const blocked = (simulationFailed || quote.returnedFalse) && !overrideSimulation;
+    return (
+      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+        <View
+          style={[
+            styles.mainnetBadge,
+            { backgroundColor: theme.dangerSurface, borderColor: theme.danger },
+          ]}
+        >
+          <Text style={[styles.mainnetBadgeText, { color: theme.danger }]}>
+            {network.label} Mainnet — real funds
+          </Text>
+        </View>
+
+        <Row label="To" value={quote.to} mono theme={theme} />
+        <Row
+          label="Amount"
+          value={`${exact(quote.amount, quote.decimals)} ${quote.symbol}`}
+          theme={theme}
+        />
+        <Row label="Token contract" value={quote.contract} mono theme={theme} />
+        <Row
+          label="Max network fee (paid in ETH)"
+          value={`${exact(quote.fee, nativeDecimals)} ETH`}
+          theme={theme}
+        />
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          Worst case at {exact(quote.maxFeePerGas, 9)} gwei max fee ×{' '}
+          {quote.gasLimit.toString()} gas; the actual fee is usually lower,
+          and the unused part is not charged. The fee comes out of your ETH
+          balance — the full token amount reaches the recipient.
+          {quote.gasIsFallback
+            ? ' Gas estimation failed, so a conservative default gas limit is shown.'
+            : ''}
+        </Text>
+        <Row
+          label={`${quote.symbol} balance`}
+          value={`${exact(quote.tokenBalance, quote.decimals)} ${quote.symbol}`}
+          theme={theme}
+        />
+        <Row
+          label="ETH balance"
+          value={`${exact(quote.ethBalance, nativeDecimals)} ETH`}
+          theme={theme}
+        />
+
+        {!simulationFailed && !quote.returnedFalse ? (
+          <Text style={[styles.simulationOk, { color: theme.success }]}>
+            Pre-flight simulation passed (eth_call).
+          </Text>
+        ) : (
+          <View style={styles.simulationBlock}>
+            <WarningBox>
+              {simulationFailed
+                ? `Pre-flight simulation failed: ${
+                    quote.simulation.ok ? '' : quote.simulation.reason
+                  }. This transaction would very likely fail on-chain and still cost the fee.`
+                : 'The token contract reports the transfer would not go through: ' +
+                  'it returned false instead of reverting (some tokens do this ' +
+                  'when paused, blocklisted, or short of balance). Sending anyway ' +
+                  'would cost the full fee and move no tokens.'}
+            </WarningBox>
+            <View style={styles.overrideRow}>
+              <Switch value={overrideSimulation} onValueChange={setOverrideSimulation} />
+              <Text style={[styles.overrideLabel, { color: theme.text }]}>
+                Send anyway (I understand it will probably fail)
+              </Text>
+            </View>
+          </View>
+        )}
+
+        {phase === 'sending' ? (
+          <View style={styles.center}>
+            <ActivityIndicator size="large" color={theme.accent} />
+            <Text style={[styles.hint, { color: theme.textMuted }]}>Signing and broadcasting…</Text>
+          </View>
+        ) : (
+          <>
+            <Button
+              title={`Send ${quote.symbol}`}
+              onPress={() => void onSend()}
+              disabled={blocked}
+            />
+            <Button title="Back" variant="secondary" onPress={() => setPhase('form')} />
+          </>
+        )}
+      </ScrollView>
+    );
+  }
+
   // -------------------------------------------------------------- confirm
-  if ((phase === 'confirm' || phase === 'sending') && quote && quote.kind !== 'aa' && network) {
+  if (
+    (phase === 'confirm' || phase === 'sending') &&
+    quote &&
+    quote.kind !== 'aa' &&
+    quote.kind !== 'erc20' &&
+    network
+  ) {
     const simulationFailed = quote.kind === 'evm' && !quote.simulation.ok;
     const sendBlocked = simulationFailed && !overrideSimulation;
     return (
@@ -589,6 +782,21 @@ export function SendScreen({ route, navigation }: Props) {
         </WarningBox>
       ) : null}
 
+      {token ? (
+        <View
+          style={[styles.aaToggleBox, { backgroundColor: theme.card, borderColor: theme.border }]}
+        >
+          <Text style={[styles.hint, { color: theme.textMuted }]}>
+            Sending {token.symbol} (ERC-20 token, contract{' '}
+            {token.assetId.reference.slice(0, 10)}…{token.assetId.reference.slice(-8)}) from
+            your Ethereum address. The network fee is paid in ETH, not in{' '}
+            {token.symbol}. Smart-account sends are not available for tokens
+            yet — batching approve + transfer through the smart account is a
+            later release, so token sends always go from your regular address.
+          </Text>
+        </View>
+      ) : null}
+
       {aaAvailable ? (
         <View
           style={[styles.aaToggleBox, { backgroundColor: theme.card, borderColor: theme.border }]}
@@ -620,7 +828,7 @@ export function SendScreen({ route, navigation }: Props) {
           setRecipient(t);
           setFormError(null);
         }}
-        placeholder={`${symbol} address`}
+        placeholder={token ? 'Ethereum address' : `${symbol} address`}
         placeholderTextColor={theme.textMuted}
         autoCapitalize="none"
         autoCorrect={false}
