@@ -121,7 +121,7 @@ app/                       React Native app (later phase)
       tsc --noEmit clean; npx expo export --platform android bundles
       884 modules with engine code confirmed inside the Hermes bundle
 
-## Key decisions (rationale in docs/DECISIONS.md as they land)
+## Key decisions (ADRs D1–D7 live in docs/ARCHITECTURE.md section 7)
 
 - D1: Single BIP-39 mnemonic is the root of all assets, including the ERC-4337
   smart-account owner key. Smart accounts are counterfactual contracts whose
@@ -136,10 +136,33 @@ app/                       React Native app (later phase)
 
 - None currently. Network access for npm assumed; verify on first install.
 
-## Next recommended tasks
+## Phase 1 complete (2026-09-27)
 
-1. Finish core keyring + tests.
-2. Review and land the two delegated docs.
-3. EVM/ERC-4337 adapter with UserOperation building.
-4. UTXO adapter (BTC/DOGE), Solana adapter.
-5. Signing/tx-flow integration tests, then app shell.
+Engine (4 packages, 120 tests, every cryptographic path validated against
+official vectors or an independent implementation), leadership docs
+(FEATURE_UNIVERSE.md published as a shareable page for the Chairperson:
+https://claude.ai/artifact/JEfyMuPcMJ8YW5x3ZKitsw, plus ARCHITECTURE.md
+with ADRs D1–D7), offline end-to-end demo (examples/demo.mjs, run with
+`node examples/demo.mjs` after `npm run build`), and the Expo app shell.
+
+## Next recommended tasks (phase 2)
+
+1. Wire the app's Home screen to live balances: EVM eth_getBalance +
+   ERC-20 balanceOf via chains-evm decoders, Esplora getUtxos via
+   chains-utxo, Solana getBalance via chains-solana (needs RPC endpoint
+   configuration UX and sensible public defaults).
+2. Send flow in the app: amount entry, fee display, engine tx build/sign,
+   broadcast through the injected transports; EVM sends should offer the
+   smart-account path (SmartAccountClient) once a bundler endpoint is
+   configured.
+3. Pick and pin the ERC-4337 stack for launch chains: bundler/paymaster
+   vendor config (they are already injectable), the account implementation
+   to ship (SimpleAccount vs an ERC-7579 modular account per ADR D6), and
+   the factory addresses per chain (verify against live deployments).
+4. EIP-1559 EOA transaction building/signing in chains-evm (RLP, type-2)
+   for plain sends without a bundler dependency.
+5. SPL token transfers in chains-solana (associated token accounts).
+6. Transaction simulation + human-readable preview (Tier 1 feature 49).
+7. Biometric gating of secure-store reads in the app (expo-local-auth).
+8. Testnet smoke test end-to-end: fund the test wallet on a testnet and
+   broadcast one real transaction per chain family.
