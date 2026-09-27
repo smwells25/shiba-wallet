@@ -76,8 +76,21 @@ app/                       React Native app (later phase)
       key/address half; network adapters still to come below
 - [ ] EVM ERC-4337 adapter package (UserOperation build/sign, counterfactual
       CREATE2 account address, vendor-neutral bundler/paymaster clients)
-- [ ] Bitcoin/Dogecoin network adapter (UTXO selection, tx build/broadcast)
-- [ ] Solana network adapter (tx build/broadcast)
+- [x] Bitcoin/Dogecoin network adapter — packages/chains-utxo
+      (@shiba-wallet/chains-utxo): raw tx build/sign offline-pure (P2WPKH
+      BIP-143 for Bitcoin, legacy P2PKH sighash for Dogecoin, DER low-S
+      SIGHASH_ALL), greedy largest-first coin selection with sat/vB fees and
+      dust handling (546/294 sat, verified from Bitcoin Core policy.cpp),
+      address decode/encode (bech32 v0 + base58check; taproot rejected
+      clearly), injected Esplora-style transport (getUtxos/broadcastTx).
+      40 tests: signed txs byte-identical to bitcoinjs-lib for both chains;
+      Dogecoin prefixes 0x1e/0x16/0x9e verified from chainparams.cpp
+- [x] Solana network adapter (@shiba-wallet/chains-solana): legacy message
+      compile/serialize (compact-u16, header, account ordering), System
+      Program transfer, ed25519 signing, vendor-neutral RPC client
+      (getLatestBlockhash/getBalance/sendTransaction/getSignatureStatuses
+      polling); 27 tests, message bytes and signatures byte-identical to
+      @solana/web3.js 1.99.0
 - [x] Test suite w/ official vectors (SLIP-0010 both vectors, BIP-84
       addresses; EVM cross-checked vs ethers.js, Solana vs ed25519-hd-key;
       Dogecoin version byte 0x1e verified from dogecoin/dogecoin

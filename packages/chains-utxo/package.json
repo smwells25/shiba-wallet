@@ -1,0 +1,28 @@
+{
+  "name": "@shiba-wallet/chains-utxo",
+  "version": "0.1.0",
+  "description": "UTXO chain adapter: Bitcoin (P2WPKH) and Dogecoin (legacy P2PKH) transaction building, signing, coin selection, and vendor-neutral Esplora-style broadcast",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@noble/curves": "^2.0.1",
+    "@noble/hashes": "^2.0.1",
+    "@scure/base": "^2.0.0",
+    "@shiba-wallet/core": "0.1.0"
+  },
+  "devDependencies": {
+    "@scure/bip32": "^2.0.0",
+    "bitcoinjs-lib": "^6.1.7",
+    "typescript": "^5.6.0",
+    "vitest": "^3.0.0"
+  }
+}

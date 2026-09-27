@@ -1,0 +1,27 @@
+{
+  "name": "@shiba-wallet/chains-solana",
+  "version": "0.1.0",
+  "description": "Solana chain adapter: legacy transaction building, ed25519 signing, and vendor-neutral RPC submission",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@noble/curves": "^2.0.1",
+    "@noble/hashes": "^2.0.1",
+    "@scure/base": "^2.0.0",
+    "@shiba-wallet/core": "0.1.0"
+  },
+  "devDependencies": {
+    "@solana/web3.js": "^1.98.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.0.0"
+  }
+}
