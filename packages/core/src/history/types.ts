@@ -27,6 +27,19 @@ export interface HistoryEntry {
   fee?: bigint;
   /** True when the chain reports the transaction itself failed on-chain. */
   failed?: boolean;
+  /**
+   * Provider-unique id for this entry, for list keys and cross-page
+   * deduplication. Needed when one transaction produces several entries
+   * (an indexer can report a token transfer and a native movement from the
+   * same transaction). When absent, `id` is unique per entry.
+   */
+  uid?: string;
+  /**
+   * Symbol of the asset this entry moved, when it is not the chain's
+   * native unit (for example an ERC-20 symbol reported by an indexer).
+   * Display-only and backend-reported; absent for native-unit entries.
+   */
+  assetSymbol?: string;
 }
 
 export interface HistoryPage {

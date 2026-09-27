@@ -59,6 +59,12 @@ export {
   getErc20Transfers,
 } from './erc20-logs.js';
 export type { Erc20Transfer, Erc20TransferQuery } from './erc20-logs.js';
+export {
+  DEFAULT_TRANSFER_CATEGORIES,
+  indexerHistoryProvider,
+  verifyTransfersEndpoint,
+} from './indexer-history.js';
+export type { IndexerHistoryOptions, TransferCategory } from './indexer-history.js';
 export { decodeRevertReason, simulateCall } from './simulate.js';
 export type { SimulationRequest, SimulationResult } from './simulate.js';
 export { rlpEncode, minimalBytes } from './rlp.js';

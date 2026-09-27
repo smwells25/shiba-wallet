@@ -23,6 +23,12 @@ import {
   type AaChainConfig,
 } from '../wallet/aa';
 import { clearWcProjectId, getWcProjectId, setWcProjectId } from '../wallet/walletconnect';
+import {
+  clearIndexerUrl,
+  getIndexerConfig,
+  setIndexerUrl,
+  type IndexerConfig,
+} from '../wallet/indexer';
 
 /**
  * One chain's endpoint row: shows the effective URL (default or override)
@@ -300,6 +306,64 @@ function AaChainRow({ network }: { network: NetworkDefault }) {
   );
 }
 
+/**
+ * History-indexer configuration for one EVM chain. Reuses the AaField
+ * verify-before-save pattern: saving runs eth_chainId plus a one-transfer
+ * alchemy_getAssetTransfers probe (../wallet/indexer.ts), and nothing is
+ * persisted when either check fails.
+ */
+function IndexerChainRow({
+  network,
+  walletAddress,
+}: {
+  network: NetworkDefault;
+  walletAddress: string | null;
+}) {
+  const theme = useTheme();
+  const [config, setConfig] = useState<IndexerConfig | null>(null);
+
+  const reload = useCallback(() => {
+    getIndexerConfig(network.chainId).then(setConfig, () => setConfig(null));
+  }, [network.chainId]);
+
+  useEffect(reload, [reload]);
+
+  const shortDate = (iso: string | null) => (iso ? iso.slice(0, 10) : 'unknown date');
+
+  return (
+    <View style={[styles.endpointRow, { backgroundColor: theme.card, borderColor: theme.border }]}>
+      <View style={styles.endpointHeader}>
+        <Text style={[styles.endpointLabel, { color: theme.text }]}>{network.label}</Text>
+        <Text style={[styles.endpointTag, { color: theme.textMuted }]}>
+          {config?.url ? 'ready' : 'not set'}
+        </Text>
+      </View>
+      <AaField
+        label="History indexer URL (Transfers API)"
+        placeholder="https://…"
+        value={config?.url ?? null}
+        statusLine={
+          config?.url
+            ? `Verified ✓ — chain id matches and alchemy_getAssetTransfers ` +
+              `answered with a well-formed response (checked ${shortDate(config.verifiedAt)})`
+            : null
+        }
+        onSave={async (draft) => {
+          if (!walletAddress) {
+            throw new Error('No wallet address is available to verify the endpoint with.');
+          }
+          await setIndexerUrl(network.chainId, draft, walletAddress);
+          reload();
+        }}
+        onClear={async () => {
+          await clearIndexerUrl(network.chainId);
+          reload();
+        }}
+      />
+    </View>
+  );
+}
+
 type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
 
 /**
@@ -309,7 +373,7 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
  */
 export function SettingsScreen({ navigation }: Props) {
   const theme = useTheme();
-  const { revealMnemonic, wipe } = useWallet();
+  const { revealMnemonic, wipe, accounts } = useWallet();
   const [revealed, setRevealed] = useState<string | null>(null);
   const [endpoints, setEndpoints] = useState<NetworkEndpoint[]>([]);
   const [wcProjectId, setWcProjectIdState] = useState<string | null>(null);
@@ -419,6 +483,30 @@ export function SettingsScreen({ navigation }: Props) {
             key={endpoint.network.chainId}
             endpoint={endpoint}
             onChanged={reloadEndpoints}
+          />
+        ))}
+      </View>
+
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: theme.text }]}>
+          Ethereum history indexer
+        </Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          Transaction history on the Activity screen needs an indexer: a
+          standard JSON-RPC endpoint cannot list transactions by address.
+          Paste an endpoint that serves the Transfers API
+          (alchemy_getAssetTransfers). The URL usually contains your own
+          API key — it is stored only on this device and sent only to the
+          endpoint itself. Saving verifies the endpoint first and refuses
+          URLs for the wrong chain.
+        </Text>
+        {DEFAULT_NETWORKS.filter((n) => n.kind === 'evm-jsonrpc').map((network) => (
+          <IndexerChainRow
+            key={network.chainId}
+            network={network}
+            walletAddress={
+              accounts.find((a) => a.chainId === network.chainId)?.address ?? null
+            }
           />
         ))}
       </View>

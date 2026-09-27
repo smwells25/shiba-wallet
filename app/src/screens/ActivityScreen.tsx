@@ -65,6 +65,10 @@ function EntryRow({
   const theme = useTheme();
   const url = explorerTxUrl(chainId, entry.id);
 
+  // Token entries (EVM indexer) carry the backend-reported asset symbol;
+  // this pass renders them amount-less (em-dash below), so the symbol is
+  // display-only and the chain's native decimals never touch them.
+  const rowSymbol = entry.assetSymbol ?? symbol;
   const sign = entry.direction === 'in' ? '+' : entry.direction === 'out' ? '−' : '';
   const amountText =
     entry.amount === undefined ? '—' : `${sign}${formatUnits(entry.amount, decimals)}`;
@@ -110,7 +114,7 @@ function EntryRow({
         <Text style={[styles.amount, { color: amountColor }]} numberOfLines={1}>
           {amountText}
         </Text>
-        <Text style={[styles.amountSymbol, { color: theme.textMuted }]}>{symbol}</Text>
+        <Text style={[styles.amountSymbol, { color: theme.textMuted }]}>{rowSymbol}</Text>
         <View style={styles.chips}>
           {entry.failed ? <StatusChip label="failed" color={theme.danger} theme={theme} /> : null}
           {!entry.confirmed ? (
@@ -191,7 +195,9 @@ export function ActivityScreen({ navigation, route }: Props) {
     <View style={screenStyle(theme)}>
       <FlatList
         data={state.entries}
-        keyExtractor={(entry) => entry.id}
+        // uid distinguishes several entries born from one EVM transaction
+        // (e.g. a token transfer plus an internal native movement).
+        keyExtractor={(entry) => entry.uid ?? entry.id}
         renderItem={({ item }) => (
           <EntryRow
             entry={item}

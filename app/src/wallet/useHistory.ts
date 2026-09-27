@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { HistoryEntry } from '@shiba-wallet/core';
-import { getEndpoint } from '../config/networks';
-import { historySourceFor } from './history';
+import { getEndpoint, type NetworkEndpoint } from '../config/networks';
+import { historySourceFor, type HistorySource } from './history';
+import { getIndexerConfig } from './indexer';
 
 /**
  * State machine for one chain's activity list, with the same discipline as
@@ -40,6 +41,20 @@ function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : 'History fetch failed';
 }
 
+/**
+ * Resolves the chain's history source, re-reading configuration each time
+ * (like getEndpoint) so Settings edits take effect on the next reload. EVM
+ * chains additionally consult the history-indexer config from
+ * ./indexer.ts; a stored URL there passed save-time verification.
+ */
+async function sourceForEndpoint(endpoint: NetworkEndpoint): Promise<HistorySource> {
+  const indexerUrl =
+    endpoint.network.kind === 'evm-jsonrpc'
+      ? (await getIndexerConfig(endpoint.network.chainId)).url
+      : null;
+  return historySourceFor(endpoint.network.kind, endpoint.url, indexerUrl);
+}
+
 export function useHistory(chainId: string, address: string): HistoryHook {
   const [state, setState] = useState<HistoryState>({ status: 'loading' });
   const [refreshing, setRefreshing] = useState(false);
@@ -59,7 +74,8 @@ export function useHistory(chainId: string, address: string): HistoryHook {
         setState({ status: 'unavailable', note: 'No network configuration for this chain.' });
         return;
       }
-      const source = historySourceFor(endpoint.network.kind, endpoint.url);
+      const source = await sourceForEndpoint(endpoint);
+      if (gen !== generation.current) return;
       if (source.status === 'unavailable') {
         setState({ status: 'unavailable', note: source.note });
         return;
@@ -97,8 +113,9 @@ export function useHistory(chainId: string, address: string): HistoryHook {
       const endpoint = await getEndpoint(chainId);
       if (gen !== generation.current) return;
       const source = endpoint
-        ? historySourceFor(endpoint.network.kind, endpoint.url)
+        ? await sourceForEndpoint(endpoint)
         : ({ status: 'unavailable', note: '' } as const);
+      if (gen !== generation.current) return;
       if (source.status === 'unavailable') {
         // The endpoint was removed between pages; keep what is shown.
         setState((prev) =>
@@ -112,10 +129,12 @@ export function useHistory(chainId: string, address: string): HistoryHook {
       if (gen !== generation.current) return;
       setState((prev) => {
         if (prev.status !== 'ok') return prev;
-        // Cheap dedupe by id, in case a transaction confirmed between the
-        // first (mempool + confirmed) page and this confirmed-only page.
-        const seen = new Set(prev.entries.map((entry) => entry.id));
-        const fresh = page.entries.filter((entry) => !seen.has(entry.id));
+        // Cheap dedupe, in case a transaction confirmed between the first
+        // (mempool + confirmed) page and this confirmed-only page. Keyed
+        // by uid when present (one EVM transaction can yield several
+        // legitimate entries sharing its hash), by id otherwise.
+        const seen = new Set(prev.entries.map((entry) => entry.uid ?? entry.id));
+        const fresh = page.entries.filter((entry) => !seen.has(entry.uid ?? entry.id));
         return {
           status: 'ok',
           entries: [...prev.entries, ...fresh],

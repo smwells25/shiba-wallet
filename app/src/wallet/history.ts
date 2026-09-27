@@ -1,4 +1,8 @@
 import type { HistoryEntry, HistoryProvider } from '@shiba-wallet/core';
+import {
+  httpTransport as evmHttpTransport,
+  indexerHistoryProvider,
+} from '@shiba-wallet/chains-evm';
 import { esploraHistoryProvider } from '@shiba-wallet/chains-utxo';
 import {
   httpTransport as solanaHttpTransport,
@@ -44,15 +48,18 @@ export type HistorySource =
   | { status: 'unavailable'; note: string };
 
 /**
- * Ethereum has no history provider yet: a plain JSON-RPC node has no method
- * that lists transactions by address, so history needs an indexer or
- * explorer API. An ERC-20 log-based provider is planned; until it lands the
- * screen states the limitation honestly instead of showing fake data.
+ * A plain JSON-RPC node has no method that lists transactions by address,
+ * so Ethereum history needs an indexer endpoint (one serving Alchemy's
+ * Transfers API — alchemy_getAssetTransfers; see
+ * packages/chains-evm/src/indexer-history.ts for the verified shapes and
+ * limits). Until the user configures one in Settings, the screen states
+ * the limitation honestly instead of showing fake data.
  */
 export const EVM_HISTORY_NOTE =
-  'Ethereum transaction history is not available yet. A standard JSON-RPC ' +
-  'endpoint cannot list transactions by address; history needs an indexer ' +
-  'or explorer API, which a later release will add.';
+  'Ethereum transaction history needs an indexer endpoint. A standard ' +
+  'JSON-RPC endpoint cannot list transactions by address. Paste an ' +
+  'endpoint that serves the Transfers API (alchemy_getAssetTransfers) ' +
+  'under Settings → Ethereum history indexer.';
 
 const NO_ENDPOINT_NOTE =
   'No endpoint is configured for this chain, so its history cannot be ' +
@@ -61,15 +68,25 @@ const NO_ENDPOINT_NOTE =
 /**
  * Resolves the history source for one chain from its protocol family and
  * effective endpoint URL (override or default, as resolved by
- * src/config/networks.ts). Keyed on NetworkKind so the EVM branch can start
- * returning a provider the moment an indexer-backed one exists, without the
- * screen changing.
+ * src/config/networks.ts). The EVM branch additionally takes the
+ * configured history-indexer URL (from ./indexer.ts — a URL there passed
+ * save-time verification by construction); without one, EVM history stays
+ * honestly unavailable, because the regular RPC endpoint cannot serve it.
  */
-export function historySourceFor(kind: NetworkKind, url: string | null): HistorySource {
+export function historySourceFor(
+  kind: NetworkKind,
+  url: string | null,
+  evmIndexerUrl: string | null = null,
+): HistorySource {
   switch (kind) {
     case 'evm-jsonrpc':
-      // Deliberately unavailable even though an RPC URL exists; see note.
-      return { status: 'unavailable', note: EVM_HISTORY_NOTE };
+      // The RPC URL is deliberately unused here: history comes only from
+      // the dedicated indexer endpoint (see note on EVM_HISTORY_NOTE).
+      if (!evmIndexerUrl) return { status: 'unavailable', note: EVM_HISTORY_NOTE };
+      return {
+        status: 'available',
+        provider: indexerHistoryProvider(evmHttpTransport(evmIndexerUrl)),
+      };
     case 'esplora':
       // Bitcoin by default; Dogecoin once the user configures an endpoint
       // (its default URL is null because no public Esplora-compatible

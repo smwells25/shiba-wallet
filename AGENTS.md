@@ -468,23 +468,17 @@ with ADRs D1–D7), offline end-to-end demo (examples/demo.mjs, run with
    and a global session-request listener so approvals surface outside the
    Connections screen.
 6. ~~Activity/history screen (Tier 1 feature 90)~~ — DONE (engine
-   providers + app Activity screen; see Phase 3 progress). Remaining
-   slice: EVM history once an indexer-backed provider exists (the app
-   glue's evm-jsonrpc branch is the marked seam).
+   providers + app Activity screen; see Phase 3 progress). The remaining
+   EVM slice landed in phase 4 task 1 (indexer-backed provider wired to
+   the evm-jsonrpc seam; see Phase 4 progress).
 
 ## Phase 4 plan (approved to start 2026-09-27): the daily-driver phase
 
 Goal: close the gaps between "engine proven on-chain" and "a wallet a
 person can actually live in", using only resources already in hand.
 
-1. EVM transaction history via a configurable indexer endpoint. The
-   Alchemy endpoint already in use supports the alchemy_getAssetTransfers
-   namespace; build an engine provider behind the vendor-neutral
-   HistoryProvider interface (indexer endpoint + key are runtime
-   configuration pasted into Settings, never committed), wire the app's
-   Activity screen evm-jsonrpc seam to it, and keep the honest
-   unavailable state when unconfigured. VERIFY the API's request/response
-   shapes against Alchemy's documentation before coding.
+1. ~~EVM transaction history via a configurable indexer endpoint~~ —
+   DONE 2026-09-27 (see Phase 4 progress).
 2. Blockbook history provider in chains-utxo (Blockbook's address-txs
    API), so Dogecoin gets Activity parity the moment an endpoint is
    configured — and Bitcoin users can choose Blockbook backends too.
@@ -503,6 +497,51 @@ person can actually live in", using only resources already in hand.
    SwapQuoteProvider interface with one adapter compiled against a real
    aggregator's documented API but exercised via fakes until a key
    exists; no UI commitment yet.
+
+## Phase 4 progress
+
+- [x] Task 1 — EVM transaction history via a configurable indexer
+      endpoint. API shapes verified BEFORE coding against
+      www.alchemy.com/docs/reference/alchemy-getassettransfers (+ the
+      transfers-api-quickstart page: pageKey has a 10-minute TTL and is
+      omitted when exhausted) and confirmed with one live read-only probe
+      (uniqueId observed as "<hash>:log:<n>" / "<hash>:internal:<n>",
+      pageKey a UUID, rawContract.value exact hex). Engine:
+      packages/chains-evm/src/indexer-history.ts — indexerHistoryProvider
+      implements core's HistoryProvider over any injected JsonRpcTransport
+      serving alchemy_getAssetTransfers (vendor-named method, vendor-
+      neutral construction); two queries per page (fromAddress=me,
+      toAddress=me, all five categories, withMetadata for timestamps,
+      excludeZeroValue:false), merged newest-first, self-transfers deduped
+      by uniqueId; opaque cursor JSON-encodes the two directions' pageKeys
+      (an exhausted direction is never re-queried). PRECISION: amounts
+      come ONLY from rawContract.value (exact hex wei) — the API's `value`
+      is a float (live probe returned 4e-18) and is never used; no
+      rawContract.value → no amount, never an approximation. Token
+      categories (erc20/721/1155) map to amount-less entries carrying the
+      API's asset symbol; failed-tx detection is NOT available from this
+      API (documented — reverted txs simply never appear). Core
+      HistoryEntry gained two additive optional fields: uid (one EVM tx
+      can yield several entries — e.g. external + internal legs — so list
+      keys/dedupe use uid, explorer links keep id) and assetSymbol.
+      verifyTransfersEndpoint exported for save-time checks. App:
+      src/wallet/indexer.ts (AsyncStorage config, aa.ts verify-before-save
+      pattern: eth_chainId must match the chain AND a maxCount-0x1
+      transfers probe must return a well-formed response, else nothing
+      persists; the URL usually embeds the user's API key — on-device
+      runtime config only, never committed), Settings gained an "Ethereum
+      history indexer" section, history.ts's evm-jsonrpc seam now takes
+      the indexer URL (honest unavailable note, now pointing at Settings,
+      when unconfigured), useHistory re-reads the config each reload and
+      dedupes by uid, ActivityScreen keys rows by uid and shows the token
+      symbol with an em-dash amount for token entries. Verified: 13 new
+      engine tests (68 total in chains-evm, all suites 186 green),
+      engine tsc clean; app tsc --noEmit clean; expo export bundles;
+      app/scripts/check-indexer.mjs 19/19 — offline store discipline plus
+      LIVE two-page pagination for the standard test address
+      0x9858...da94 through the app glue (49 + 50 entries classified,
+      0 uid overlap; endpoint masked, key only in git-ignored
+      .dev-wallet/env).
 
 Sequencing: 1+2 first (history completes the read side), then 3+4
 (write side + capture), then 5+6, with 7 riding alongside as engine
