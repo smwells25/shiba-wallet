@@ -29,3 +29,4 @@ export { formatAssetId, parseAssetId } from './assets/caip19.js';
 export type { AssetId } from './assets/caip19.js';
 export { AssetRegistry } from './assets/assets.js';
 export type { Asset, FungibleAsset, NonFungibleAsset } from './assets/assets.js';
+export type { HistoryEntry, HistoryPage, HistoryProvider } from './history/types.js';

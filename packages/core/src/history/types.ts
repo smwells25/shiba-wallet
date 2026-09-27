@@ -1,0 +1,40 @@
+/**
+ * Chain-agnostic transaction history model. Providers live in the chain
+ * adapter packages (they need each chain's indexing infrastructure); core
+ * defines only the shape the app renders, so the history screen never
+ * contains chain-specific logic.
+ */
+
+export interface HistoryEntry {
+  /** Chain-native transaction id (txid, hash, or signature). */
+  id: string;
+  /** Unix seconds; null while unconfirmed or when the backend omits it. */
+  timestamp: number | null;
+  confirmed: boolean;
+  blockHeight?: number;
+  /**
+   * Direction relative to the queried address. "self" means every output
+   * or effect returns to the address (only the fee left the wallet).
+   */
+  direction: 'in' | 'out' | 'self';
+  /**
+   * Absolute net value change for the address in the chain's base unit,
+   * excluding the fee. Undefined when the backend cannot supply amounts
+   * without extra lookups the provider chose not to make.
+   */
+  amount?: bigint;
+  /** Network fee in base units, when known. Paid only on outgoing/self. */
+  fee?: bigint;
+  /** True when the chain reports the transaction itself failed on-chain. */
+  failed?: boolean;
+}
+
+export interface HistoryPage {
+  entries: HistoryEntry[];
+  /** Opaque cursor for the next (older) page; absent when exhausted. */
+  nextCursor?: string;
+}
+
+export interface HistoryProvider {
+  getHistory(address: string, cursor?: string): Promise<HistoryPage>;
+}

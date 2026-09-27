@@ -51,3 +51,4 @@ export { esploraTransport } from './transport.js';
 export type { UtxoTransport } from './transport.js';
 export { buildTransfer, signAndBroadcast } from './transfer.js';
 export type { BuiltTransfer, TransferParams } from './transfer.js';
+export { esploraHistoryProvider } from './history.js';

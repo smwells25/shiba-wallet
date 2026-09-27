@@ -41,3 +41,5 @@ export type {
   LatestBlockhash,
   SignatureStatus,
 } from './rpc.js';
+export { isValidSolanaAddress, solanaHistoryProvider } from './history.js';
+export type { SolanaHistoryOptions } from './history.js';
