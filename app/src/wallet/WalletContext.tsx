@@ -7,7 +7,8 @@ import React, {
   useState,
 } from 'react';
 import { createMnemonic, isValidMnemonic, mnemonicToSeed } from '@shiba-wallet/core';
-import { CHAINS } from './chains';
+import type { DerivedAccount } from '@shiba-wallet/core';
+import { CHAINS, chainByCaip2 } from './chains';
 import { deleteMnemonic, loadMnemonic, saveMnemonic } from './storage';
 
 /** One derived account-0 address for one chain, safe to keep in app state. */
@@ -41,6 +42,14 @@ interface WalletContextValue {
   importExisting: (mnemonic: string) => Promise<void>;
   /** Reads the mnemonic back from secure storage (Settings reveal). */
   revealMnemonic: () => Promise<string | null>;
+  /**
+   * Re-derives the account-0 signing key for one chain and hands it to fn
+   * for the duration of one signing operation. Keys are never kept
+   * resident: the seed is zeroed before this resolves, and the
+   * DerivedAccount (whose sign closure captures the private key) must not
+   * be stored by callers — use it and drop it.
+   */
+  signWith: <T>(chainId: string, fn: (account: DerivedAccount) => Promise<T>) => Promise<T>;
   /** Deletes the mnemonic from secure storage and resets to onboarding. */
   wipe: () => Promise<void>;
 }
@@ -139,6 +148,24 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   const revealMnemonic = useCallback(() => loadMnemonic(), []);
 
+  const signWith = useCallback(
+    async <T,>(chainId: string, fn: (account: DerivedAccount) => Promise<T>): Promise<T> => {
+      const chain = chainByCaip2(chainId);
+      if (!chain) throw new Error(`Unknown chain ${chainId}`);
+      const mnemonic = await loadMnemonic();
+      if (!mnemonic) throw new Error('No wallet found in secure storage');
+      const seed = mnemonicToSeed(mnemonic);
+      try {
+        // Same account/index the rest of the app displays (account 0).
+        const account = chain.provider.deriveAccount(seed, 0, 0);
+        return await fn(account);
+      } finally {
+        seed.fill(0);
+      }
+    },
+    [],
+  );
+
   const wipe = useCallback(async () => {
     await deleteMnemonic();
     setAccounts([]);
@@ -156,6 +183,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       confirmCreate,
       importExisting,
       revealMnemonic,
+      signWith,
       wipe,
     }),
     [
@@ -167,6 +195,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       confirmCreate,
       importExisting,
       revealMnemonic,
+      signWith,
       wipe,
     ],
   );

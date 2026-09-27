@@ -79,6 +79,39 @@ based route tree). Wallet state lives in `src/wallet/WalletContext.tsx`.
   receive. `scripts/check-balances.mjs` exercises the balance module
   against the default endpoints from Node (read-only, standard test
   mnemonic).
+- **Send** — per-chain send flow (entered from a Home row's Send link or the
+  Receive screen) in three phases inside one screen. Form: recipient input
+  validated live through engine code (EVM: EIP-55 via core's
+  `toChecksumAddress` — all-lowercase/all-uppercase accepted and normalized,
+  bad mixed-case checksums rejected; BTC/DOGE: chains-utxo's
+  `addressToScriptPubKey` with the exact network parameters, so validation
+  can never diverge from the script that gets signed; SOL: base58 decode to
+  32 bytes), amount entry converted exactly with `parseUnits` (pure bigint,
+  no floating point; see `scripts/test-units.mjs`), and a Max button that
+  accounts for fees (EVM: balance − gasLimit·maxFeePerGas; BTC: sweep fee
+  computed with the engine's size arithmetic and verified by iterating
+  `buildTransfer`; SOL: balance − fee). Confirm: recipient/amount/fee/total,
+  a "«chain» Mainnet — real funds" badge, and for EVM an `eth_call`
+  pre-flight simulation whose decoded revert reason blocks the send unless
+  the user flips an explicit "Send anyway" override; the final send is
+  gated by local authentication (see below) and then signs and broadcasts
+  through the engine (EVM: EIP-1559 EOA path via `signEip1559` +
+  `eth_sendRawTransaction`, with a marked seam in `src/wallet/send.ts`
+  where the ERC-4337 `SmartAccountClient` path plugs in once a bundler is
+  configured; BTC/DOGE: `signAndBroadcast`; SOL: `signTransaction` +
+  `sendTransaction` with a fresh blockhash at send time). Success: txid /
+  signature with a block-explorer link (etherscan.io, blockstream.info,
+  solscan.io; Dogecoin shows the txid without a link because no explorer
+  has been verified for it). Fee sources: EVM `NodeClient.suggestFees` +
+  `eth_estimateGas`; BTC/DOGE Esplora `GET /fee-estimates` (documented in
+  the Esplora HTTP API as an object of confirmation-target → sat/vB,
+  3-block target preferred); SOL `getFeeForMessage` (official RPC
+  reference; base64 message in, lamports out, null → flagged fallback of
+  5000 lamports per signature). Dogecoin with no configured endpoint still
+  validates addresses but shows "sending unavailable — no configured
+  endpoint". Engine errors (coin selection, dust, insufficient funds) are
+  translated to plain language with the exact engine message kept as
+  detail.
 - **Receive** — full-size, selectable, monospace address with a copy button
   (expo-clipboard) and a wrong-network warning. No QR in this phase: the
   common QR libraries need react-native-svg and the copy button covers the
@@ -98,6 +131,23 @@ and never sent over the network. All reads and writes go through
 material anywhere else. Screens keep only derived public data (addresses,
 paths) in React state; the 64-byte seed is zeroed immediately after address
 derivation.
+
+## Local authentication (biometric gating)
+
+Two actions are gated by `expo-local-authentication` through
+`src/wallet/biometric.ts`: the Settings seed-phrase reveal and the final
+send confirmation. The gate runs `authenticateAsync` only when
+`hasHardwareAsync()` and `isEnrolledAsync()` are both true; a device
+without a scanner, or with one but nothing enrolled, proceeds without a
+prompt — the gate is defense in depth on top of the OS device lock and the
+secure store's own access control, not the primary protection.
+`disableDeviceFallback` is `false`, so per the SDK 57 documentation the
+system falls back to the device passcode after several failed biometric
+attempts instead of locking the user out. The mnemonic continues to live
+only in expo-secure-store (`WHEN_UNLOCKED_THIS_DEVICE_ONLY`); the gate
+changes when it is read, never where it lives. Note that iOS FaceID does
+not work in Expo Go — a development build is needed to exercise the prompt
+there.
 
 ## Crypto polyfill
 
@@ -127,4 +177,7 @@ npm install          # once
 npm run typecheck    # tsc --noEmit
 npx expo start       # dev server
 npx expo export --platform android   # prove the bundle builds
+
+node scripts/test-units.mjs      # parseUnits + recipient-validation edge cases (offline)
+node scripts/check-balances.mjs  # balance module against default endpoints (read-only)
 ```

@@ -120,6 +120,28 @@ app/                       React Native app (later phase)
       from expo-crypto in app/src/polyfills.ts (first import). Verified:
       tsc --noEmit clean; npx expo export --platform android bundles
       884 modules with engine code confirmed inside the Hermes bundle
+- [x] Send flow in the app (phase 2, task 2) + biometric gating (task 7):
+      app/src/wallet/send.ts (pure engine glue: recipient validation via
+      engine code — EIP-55 through core toChecksumAddress, UTXO through
+      addressToScriptPubKey, SOL base58→32 bytes; fee quotes — EVM
+      suggestFees+estimateGas with endpoint chain-id verification, BTC/DOGE
+      Esplora GET /fee-estimates verified against the Esplora API docs, SOL
+      getFeeForMessage verified against solana.com/docs/rpc with a flagged
+      5000-lamports-per-signature fallback; max-amount helpers; EOA
+      sign+broadcast with a marked SmartAccountClient seam), parseUnits in
+      balances.ts (exact bigint, tested in app/scripts/test-units.mjs — 45
+      cases incl. EIP-55 vectors and taproot rejection), SendScreen
+      (form→confirm→success in one screen, "Mainnet — real funds" badge,
+      eth_call pre-flight blocks the EVM send unless explicitly overridden,
+      dust + insufficient-funds errors in plain language, explorer links
+      etherscan.io/blockstream.info/solscan.io, DOGE validates but shows
+      "sending unavailable" without an endpoint), expo-local-authentication
+      gating both the Settings seed reveal and the final send confirm (only
+      when hardware+enrollment exist; disableDeviceFallback:false so the OS
+      passcode fallback works; matrix in app/src/wallet/biometric.ts).
+      Verified: tsc --noEmit clean; expo export --platform android bundles
+      with the new strings confirmed inside the Hermes bytecode. No real
+      transaction was broadcast.
 
 ## Key decisions (ADRs D1–D7 live in docs/ARCHITECTURE.md section 7)
 
@@ -163,42 +185,49 @@ with ADRs D1–D7), offline end-to-end demo (examples/demo.mjs, run with
       signatures, wire) to web3.js + @solana/spl-token 0.4.15, with and
       without the create-ATA instruction
 
-## Next recommended tasks (phase 2)
+## Phase 2 scorecard (2026-09-27)
 
-- [x] (task 1, 2026-09-27) Live native balances on Home: app/src/config/
-      (verified public defaults — Ethereum ethereum-rpc.publicnode.com,
-      Bitcoin blockstream.info/api, Solana api.mainnet-beta.solana.com;
-      Dogecoin has no verified public Esplora-compatible API so it defaults
-      to a clean "unavailable" state — plus AsyncStorage user overrides),
-      app/src/wallet/balances.ts (thin calls into chains-evm httpTransport
-      eth_getBalance, chains-utxo esploraTransport getUtxos sum, and
-      chains-solana SolanaRpcClient.getBalance; one retry), per-row
-      loading/error/retry + pull-to-refresh on Home, endpoint edit/reset in
-      Settings. chains-evm/utxo/solana added to the app as file: deps with
-      an npm overrides entry for @shiba-wallet/core (see app/README.md).
-      Verified: tsc --noEmit clean, expo export bundles with engine RPC
-      code inside, app/scripts/check-balances.mjs answers live against the
-      defaults. ERC-20 balances not yet wired (native coins only this
-      pass).
+- [x] Task 1 — live native balances on Home (see checked entry above).
+      Remaining slice: ERC-20 balance display (decoders exist in
+      chains-evm; needs a token-list UI using core's AssetRegistry).
+- [x] Task 2 — send flow for all four chains (app/src/wallet/send.ts,
+      SendScreen with form/confirm/success, per-chain validation through
+      engine code, exact bigint parseUnits, fee quotes verified against
+      Esplora and Solana RPC docs, EVM pre-flight simulation with decoded
+      revert reasons, max buttons, mainnet warning badge). EVM sends take
+      the EOA path; the SmartAccountClient seam in send.ts is marked and
+      waits on a bundler endpoint (task 3 vendor config).
+- [x] Task 3 — AA stack selection recorded in docs/AA_STACK.md (EntryPoint
+      v0.7 pinned; SimpleAccount for testnet, ERC-7579 modular account as
+      production target; factory addresses are per-chain config with a
+      mandatory on-chain verification procedure; bundler/paymaster vendor
+      criteria set). Vendor endpoints themselves are still unconfigured.
+- [x] Task 4 — EIP-1559 EOA transactions in chains-evm (RLP encoder,
+      type-2 signing byte-identical with ethers.js, NodeClient with fee
+      suggestion/nonce/broadcast). 46 tests in chains-evm.
+- [x] Task 5 — SPL token transfers in chains-solana (see checked entry
+      above). 44 tests in chains-solana.
+- [~] Task 6 — first slice done: eth_call pre-flight with revert decoding
+      (Error(string), Panic codes, custom errors) in chains-evm, used by
+      the app's send flow. Full asset-diff simulation remains.
+- [x] Task 7 — biometric gating (expo-local-authentication) on the seed
+      reveal and send confirmation, passcode fallback enabled; matrix in
+      app/src/wallet/biometric.ts. Note: FaceID needs a dev build, not
+      Expo Go.
+- [ ] Task 8 — testnet smoke test: harness ready (scripts/testnet/
+      setup.mjs + smoke.mjs, endpoints verified, dev wallet generated,
+      dry-run clean). BLOCKED on faucet funds from the Chairperson
+      (addresses printed by setup.mjs) and, for the ERC-4337 leg, a
+      bundler API key. Dogecoin testnet additionally lacks any public
+      Esplora-compatible API (infrastructure blocker, skippable).
 
-1. Wire the app's Home screen to live balances: EVM eth_getBalance +
-   ERC-20 balanceOf via chains-evm decoders, Esplora getUtxos via
-   chains-utxo, Solana getBalance via chains-solana (needs RPC endpoint
-   configuration UX and sensible public defaults). — DONE for native
-   balances (see checked item above); ERC-20 display remains.
-2. Send flow in the app: amount entry, fee display, engine tx build/sign,
-   broadcast through the injected transports; EVM sends should offer the
-   smart-account path (SmartAccountClient) once a bundler endpoint is
-   configured.
-3. Pick and pin the ERC-4337 stack for launch chains: bundler/paymaster
-   vendor config (they are already injectable), the account implementation
-   to ship (SimpleAccount vs an ERC-7579 modular account per ADR D6), and
-   the factory addresses per chain (verify against live deployments).
-4. EIP-1559 EOA transaction building/signing in chains-evm (RLP, type-2)
-   for plain sends without a bundler dependency.
-5. ~~SPL token transfers in chains-solana (associated token accounts).~~
-   Done; see Phase 2 progress above.
-6. Transaction simulation + human-readable preview (Tier 1 feature 49).
-7. Biometric gating of secure-store reads in the app (expo-local-auth).
-8. Testnet smoke test end-to-end: fund the test wallet on a testnet and
-   broadcast one real transaction per chain family.
+## Next recommended tasks (phase 3 candidates)
+
+1. Run the testnet smoke once funds land; then the ERC-4337 smoke against
+   a real bundler (needs API key), including counterfactual deployment of
+   a SimpleAccount on Sepolia per docs/AA_STACK.md verification steps.
+2. ERC-20 balance display + token management UI (AssetRegistry-backed).
+3. Wire the smart-account send path in the app behind a feature flag.
+4. Full simulation (asset diffs) and approval-revocation groundwork.
+5. WalletConnect v2 integration (Tier 1 feature 78).
+6. Activity/history screen (Tier 1 feature 90, engine-side tx decoding).

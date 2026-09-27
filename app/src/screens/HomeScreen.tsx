@@ -97,6 +97,16 @@ export function HomeScreen({ navigation }: Props) {
         <Text style={[styles.address, { color: theme.textMuted }]}>
           {shortAddress(item.address)}
         </Text>
+        {/* Nested Pressable: taps here are consumed by the inner handler,
+            so the card's own tap (Receive) does not fire. */}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Send ${item.symbol}`}
+          onPress={() => navigation.navigate('Send', { chainId: item.chainId })}
+          hitSlop={8}
+        >
+          <Text style={[styles.sendLink, { color: theme.accent }]}>Send ↗</Text>
+        </Pressable>
       </View>
       <BalanceCell
         state={balances[item.chainId]}
@@ -124,7 +134,7 @@ export function HomeScreen({ navigation }: Props) {
           <Text style={[styles.footer, { color: theme.textMuted }]}>
             Account 0 addresses, derived on this device from your recovery
             phrase. Balances come from the RPC endpoints in Settings; pull
-            down to refresh. Tap a chain to receive.
+            down to refresh. Tap a chain to receive, or use its Send link.
           </Text>
         }
       />
@@ -168,6 +178,11 @@ const styles = StyleSheet.create({
   address: {
     fontSize: 13,
     fontVariant: ['tabular-nums'],
+  },
+  sendLink: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginTop: 2,
   },
   balanceCell: {
     alignItems: 'flex-end',

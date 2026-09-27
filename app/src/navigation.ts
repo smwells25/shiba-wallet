@@ -8,5 +8,6 @@ export type RootStackParamList = {
   // Main app (shown once a wallet exists)
   Home: undefined;
   Receive: { chainId: string };
+  Send: { chainId: string };
   Settings: undefined;
 };

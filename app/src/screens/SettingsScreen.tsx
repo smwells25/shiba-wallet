@@ -9,6 +9,7 @@ import {
 } from '../config/networks';
 import { useTheme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
+import { requireLocalAuth } from '../wallet/biometric';
 
 /**
  * One chain's endpoint row: shows the effective URL (default or override)
@@ -127,6 +128,15 @@ export function SettingsScreen() {
           text: 'Show it',
           style: 'destructive',
           onPress: async () => {
+            // Biometric gate (task 7): revealing the seed requires local
+            // authentication whenever the device has enrolled biometrics;
+            // devices without biometrics proceed (see wallet/biometric.ts
+            // for the full behavior matrix).
+            const auth = await requireLocalAuth('Reveal recovery phrase');
+            if (!auth.ok) {
+              Alert.alert('Not revealed', auth.message);
+              return;
+            }
             const mnemonic = await revealMnemonic();
             if (mnemonic) {
               setRevealed(mnemonic);

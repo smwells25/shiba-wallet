@@ -55,6 +55,11 @@ export function ReceiveScreen({ route, navigation }: Props) {
           setCopied(true);
         }}
       />
+      <Button
+        title={`Send ${account.symbol}`}
+        variant="secondary"
+        onPress={() => navigation.navigate('Send', { chainId: account.chainId })}
+      />
       <Text style={[styles.note, { color: theme.textMuted }]}>
         Only send {account.symbol} on the {account.name} network to this
         address. Assets sent on other networks may be lost.

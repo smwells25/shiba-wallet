@@ -17,6 +17,7 @@ import { ConfirmBackupScreen } from './src/screens/ConfirmBackupScreen';
 import { ImportScreen } from './src/screens/ImportScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { ReceiveScreen } from './src/screens/ReceiveScreen';
+import { SendScreen } from './src/screens/SendScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -104,6 +105,7 @@ function Root() {
               })}
             />
             <Stack.Screen name="Receive" component={ReceiveScreen} />
+            <Stack.Screen name="Send" component={SendScreen} />
             <Stack.Screen name="Settings" component={SettingsScreen} />
           </>
         )}

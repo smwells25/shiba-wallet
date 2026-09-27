@@ -98,3 +98,44 @@ export function formatUnits(amount: bigint, decimals: number, maxFractionDigits 
   const sign = negative ? '-' : '';
   return fraction ? `${sign}${whole}.${fraction}` : `${sign}${whole}`;
 }
+
+/**
+ * Parses a user-typed decimal coin amount into base units (wei/sat/lamports)
+ * as an exact bigint — the inverse of formatUnits, with the same discipline:
+ * pure bigint/string arithmetic, no floating point anywhere, so amounts like
+ * "1.000000000000000001" ETH survive to the last wei.
+ *
+ * Accepted: plain non-negative decimals ("1", "0.5", ".5", "5.", "12.3400").
+ * Rejected with a specific error: empty input, a lone ".", any character
+ * outside [0-9.], more than one decimal point, negative amounts, and more
+ * fractional digits than the asset has (silently rounding a payment amount
+ * would be lying to the user, so excess precision is an error, never a
+ * truncation). Exercised edge-by-edge in scripts/test-units.mjs.
+ */
+export function parseUnits(text: string, decimals: number): bigint {
+  if (!Number.isInteger(decimals) || decimals < 0) {
+    throw new Error(`Invalid decimals: ${decimals}`);
+  }
+  const trimmed = text.trim();
+  if (trimmed === '') throw new Error('Enter an amount');
+  if (trimmed.startsWith('-')) throw new Error('Amount cannot be negative');
+  if (!/^[0-9]*\.?[0-9]*$/.test(trimmed)) {
+    throw new Error('Amount must be a plain decimal number (digits and one "." only)');
+  }
+  const dot = trimmed.indexOf('.');
+  const whole = dot === -1 ? trimmed : trimmed.slice(0, dot);
+  const fraction = dot === -1 ? '' : trimmed.slice(dot + 1);
+  if (whole === '' && fraction === '') throw new Error('Enter an amount'); // lone "."
+  if (fraction.length > decimals) {
+    throw new Error(
+      `Too many decimal places: this asset supports at most ${decimals}, got ${fraction.length}`,
+    );
+  }
+  // Same multiplication-loop rationale as formatUnits above: avoid bigint
+  // exponentiation as a novel operation on Hermes.
+  let base = 1n;
+  for (let i = 0; i < decimals; i++) base *= 10n;
+  const wholePart = whole === '' ? 0n : BigInt(whole);
+  const fractionPart = fraction === '' ? 0n : BigInt(fraction.padEnd(decimals, '0'));
+  return wholePart * base + fractionPart;
+}
