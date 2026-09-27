@@ -55,6 +55,29 @@ export const DOGECOIN: UtxoNetwork = {
 /** Dogecoin mainnet WIF version byte, from chainparams.cpp as cited above. */
 export const DOGECOIN_WIF_VERSION = 0x9e;
 
+/**
+ * Bitcoin testnet (testnet3/testnet4) and signet share these parameters:
+ * PUBKEY_ADDRESS = 111 (0x6f), SCRIPT_ADDRESS = 196 (0xc4), bech32 HRP
+ * "tb", per bitcoin/bitcoin src/kernel/chainparams.cpp (CTestNetParams,
+ * CTestNet4Params, SigNetParams). Used by the testnet smoke test.
+ */
+export const BITCOIN_TESTNET: UtxoNetwork = {
+  name: 'Bitcoin testnet',
+  bech32Hrp: 'tb',
+  p2pkhVersion: 0x6f,
+  p2shVersion: 0xc4,
+};
+
+/**
+ * Dogecoin testnet: PUBKEY_ADDRESS = 113 (0x71, "n..."), SCRIPT_ADDRESS =
+ * 196 (0xc4), per dogecoin/dogecoin src/chainparams.cpp (CTestNetParams).
+ */
+export const DOGECOIN_TESTNET: UtxoNetwork = {
+  name: 'Dogecoin testnet',
+  p2pkhVersion: 0x71,
+  p2shVersion: 0xc4,
+};
+
 const b58c = base58check(sha256);
 
 /** OP_DUP OP_HASH160 <20-byte pubkey hash> OP_EQUALVERIFY OP_CHECKSIG */

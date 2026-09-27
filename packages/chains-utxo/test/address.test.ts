@@ -120,3 +120,20 @@ describe('rejections', () => {
     expect(() => addressToScriptPubKey(bad, BITCOIN)).toThrow(/must be 20 or 32 bytes/);
   });
 });
+
+describe('testnet networks', () => {
+  it('encodes and round-trips testnet addresses', async () => {
+    const { BITCOIN_TESTNET, DOGECOIN_TESTNET, addressToScriptPubKey, scriptPubKeyToAddress, p2pkhScript } = await import('../src/address.js');
+    const hash = new Uint8Array(20).fill(7);
+    // Bitcoin testnet native segwit: HRP tb, per chainparams.cpp.
+    const { bech32 } = await import('@scure/base');
+    const tbAddress = bech32.encode('tb', [0, ...bech32.toWords(hash)]);
+    expect(addressToScriptPubKey(tbAddress, BITCOIN_TESTNET).length).toBe(22);
+    // Dogecoin testnet p2pkh round-trip through version byte 0x71.
+    const script = p2pkhScript(hash);
+    const dogeTestnetAddr = scriptPubKeyToAddress(script, DOGECOIN_TESTNET);
+    expect(addressToScriptPubKey(dogeTestnetAddr, DOGECOIN_TESTNET)).toEqual(script);
+    // A mainnet address must be rejected on testnet.
+    expect(() => addressToScriptPubKey('bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu', BITCOIN_TESTNET)).toThrow();
+  });
+});

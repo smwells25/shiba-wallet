@@ -1,6 +1,8 @@
 export {
   BITCOIN,
   DOGECOIN,
+  BITCOIN_TESTNET,
+  DOGECOIN_TESTNET,
   DOGECOIN_WIF_VERSION,
   addressToScriptPubKey,
   scriptPubKeyToAddress,
