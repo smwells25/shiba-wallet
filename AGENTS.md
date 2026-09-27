@@ -264,6 +264,29 @@ with ADRs D1–D7), offline end-to-end demo (examples/demo.mjs, run with
         setup.mjs; the app can use the same transport once an endpoint
         + key UI slice is added.
 
+## Known untested remainder (recorded 2026-09-27, accepted by the Chairperson)
+
+- Dogecoin testnet BROADCAST has never been executed: every public
+  testnet-DOGE faucet tried was dead (faucet.doge.toys returns
+  "transfer error"; faucet.triangleplatform.com reports the service
+  suspended). Mitigations that bound the residual risk: the Dogecoin
+  signing path (legacy P2PKH sighash, version byte 0x71 testnet / 0x1e
+  mainnet) is byte-identical to bitcoinjs-lib in the chains-utxo test
+  suite; the Bitcoin path sharing the same code was broadcast-proven on
+  testnet3 twice; and the NOWNodes Blockbook read path (getUtxos) was
+  verified live on both Dogecoin mainnet and testnet. The armed
+  smoke-leg in scripts/testnet/smoke.mjs runs automatically if tDOGE
+  ever arrives at the dev address. Before any MAINNET Dogecoin send
+  ships to users, do one real broadcast (worst case: a tiny mainnet
+  self-send costing ~1 DOGE in fees).
+- ERC-4337 deployment ops through Alchemy's bundler specifically: the
+  bundler rejects deployment ops for the verified Sepolia factory with
+  AA13 although the EntryPoint accepts them (self-bundling covered it).
+  Retest with other bundlers/factories during vendor selection.
+- Live WalletConnect pairing (needs a phone running the app; project id
+  is shipped as default).
+- FaceID prompt behavior (needs a development build; Expo Go cannot).
+
 ## Phase 3 progress
 
 - [x] Task 2 — ERC-20 balance display + token management (EVM mainnet
