@@ -40,3 +40,11 @@ export { encodeFunctionCall, encodeSequence, selector } from './abi.js';
 export type { AbiValue } from './abi.js';
 export { createSimpleAccountSpec } from './simple-account.js';
 export type { SimpleAccountConfig } from './simple-account.js';
+export {
+  decodeAddress,
+  decodeUint256,
+  encodeErc20Approve,
+  encodeErc20BalanceOf,
+  encodeErc20Transfer,
+  encodeErc20TransferFrom,
+} from './erc20.js';
