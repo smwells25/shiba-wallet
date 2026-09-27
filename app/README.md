@@ -24,16 +24,27 @@ engine is consumed the way any external app would consume it:
      so imports made *from inside* `packages/core` (which resolve against the
      workspace-hoisted root `node_modules`) are found.
 
-Verified working: `npx expo export --platform android` bundles 884 modules,
+Verified working: `npx expo export --platform android` bundles successfully,
 and the produced Hermes bundle contains the engine code (checked by searching
-the bundle for engine-only strings). The other engine packages
-(`@shiba-wallet/chains-evm`, `chains-utxo`, `chains-solana`) are not needed by
-this phase (the shell only derives keys and addresses, which is core's job);
-when transaction flows land they should be added the same way. Note that they
-depend on `@shiba-wallet/core@0.1.0`, which is not on the npm registry, so
-when adding them either keep npm's link semantics happy with an `overrides`
-entry pointing at `file:../packages/core` or map them through
-`resolver.extraNodeModules` in `metro.config.js` instead of `file:` deps.
+the bundle for engine-only strings).
+
+Since the live-balances work, the other engine packages
+(`@shiba-wallet/chains-evm`, `chains-utxo`, `chains-solana`) are also `file:`
+dependencies. They declare `"@shiba-wallet/core": "0.1.0"`, which is not on
+the npm registry, so `app/package.json` carries an `overrides` entry:
+
+```json
+"overrides": { "@shiba-wallet/core": "file:../packages/core" }
+```
+
+npm applies the override to the chain packages' core dependency, resolving it
+to the local workspace package instead of the registry (the override spec
+matches the app's own direct `file:` dependency exactly, which npm requires
+when a package is both overridden and a direct dependency). No Metro changes
+were needed beyond the existing `watchFolders`/`nodeModulesPaths` setup:
+all three packages symlink into `app/node_modules/@shiba-wallet/` and their
+`@noble/*`/`@scure/*` deps resolve from the workspace-hoisted root
+`node_modules` that Metro already searches.
 
 After changing engine source, rebuild it (`npm run build` at the repo root)
 — the app consumes `packages/core/dist`, not `src`.
@@ -56,13 +67,25 @@ based route tree). Wallet state lives in `src/wallet/WalletContext.tsx`.
   validation via core's `isValidMnemonic` with specific error messages.
 - **Home** — the four launch chains (Ethereum, Bitcoin, Dogecoin, Solana)
   with the account-0 address of each, derived through core's
-  `ChainKeyProvider`s from the stored seed. Tap a chain to receive.
+  `ChainKeyProvider`s from the stored seed, plus each chain's live native
+  balance (per-row spinner, tap-to-retry error state, pull-to-refresh; one
+  chain failing never blanks the others). Balances are fetched through the
+  engine's injected transports (`src/wallet/balances.ts`) against the
+  endpoints configured in `src/config/` — verified public defaults, user
+  overrides in AsyncStorage (endpoints are public configuration, not
+  secrets, so they deliberately do not go through secure storage). Dogecoin
+  has no verified public Esplora-compatible API, so its default is
+  "unavailable" until the user configures an endpoint. Tap a chain to
+  receive. `scripts/check-balances.mjs` exercises the balance module
+  against the default endpoints from Node (read-only, standard test
+  mnemonic).
 - **Receive** — full-size, selectable, monospace address with a copy button
   (expo-clipboard) and a wrong-network warning. No QR in this phase: the
   common QR libraries need react-native-svg and the copy button covers the
   shell's needs; revisit when a design pass happens.
-- **Settings** — reveal the seed phrase behind a confirmation gate, and wipe
-  the wallet behind a double confirmation.
+- **Settings** — per-chain RPC endpoint configuration (edit with validation,
+  reset to default), reveal the seed phrase behind a confirmation gate, and
+  wipe the wallet behind a double confirmation.
 
 ## Seed storage (non-custodial invariant)
 

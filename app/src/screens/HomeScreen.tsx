@@ -1,10 +1,19 @@
 import React from 'react';
-import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  FlatList,
+  Pressable,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation';
 import { screenStyle } from '../components';
 import { useTheme } from '../theme';
 import { ChainAccount, useWallet } from '../wallet/WalletContext';
+import { BalanceState, useBalances } from '../wallet/useBalances';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Home'>;
 
@@ -13,10 +22,59 @@ function shortAddress(address: string): string {
   return `${address.slice(0, 10)}…${address.slice(-8)}`;
 }
 
-/** The four launch chains with their account-0 addresses. Tap to receive. */
+/**
+ * Right-hand side of a chain row: the native balance in coin units, a
+ * spinner while loading, a subtle tap-to-retry error state, or a muted
+ * "unavailable" marker for chains with no configured endpoint. Each chain's
+ * state is independent — one endpoint failing never blanks the others.
+ */
+function BalanceCell({
+  state,
+  onRetry,
+}: {
+  state: BalanceState | undefined;
+  onRetry: () => void;
+}) {
+  const theme = useTheme();
+
+  if (!state || state.status === 'loading') {
+    return <ActivityIndicator size="small" color={theme.textMuted} />;
+  }
+  if (state.status === 'ok') {
+    return (
+      <View style={styles.balanceCell}>
+        <Text style={[styles.balance, { color: theme.text }]} numberOfLines={1}>
+          {state.display}
+        </Text>
+        <Text style={[styles.balanceSymbol, { color: theme.textMuted }]}>{state.symbol}</Text>
+      </View>
+    );
+  }
+  if (state.status === 'unavailable') {
+    return (
+      <View style={styles.balanceCell}>
+        <Text style={[styles.balance, { color: theme.textMuted }]}>—</Text>
+        <Text style={[styles.balanceSymbol, { color: theme.textMuted }]}>no endpoint</Text>
+      </View>
+    );
+  }
+  // status === 'error': subtle, retryable. The full message would not fit a
+  // row; the row communicates "couldn't load" and offers a retry.
+  return (
+    <Pressable accessibilityRole="button" onPress={onRetry} hitSlop={8}>
+      <View style={styles.balanceCell}>
+        <Text style={[styles.balance, { color: theme.textMuted }]}>—</Text>
+        <Text style={[styles.balanceSymbol, { color: theme.danger }]}>retry</Text>
+      </View>
+    </Pressable>
+  );
+}
+
+/** The four launch chains: address, live native balance, tap to receive. */
 export function HomeScreen({ navigation }: Props) {
   const theme = useTheme();
   const { accounts } = useWallet();
+  const { balances, refreshing, refreshAll, refreshOne } = useBalances(accounts);
 
   const renderItem = ({ item }: { item: ChainAccount }) => (
     <Pressable
@@ -40,7 +98,10 @@ export function HomeScreen({ navigation }: Props) {
           {shortAddress(item.address)}
         </Text>
       </View>
-      <Text style={[styles.chevron, { color: theme.textMuted }]}>›</Text>
+      <BalanceCell
+        state={balances[item.chainId]}
+        onRetry={() => void refreshOne(item.chainId)}
+      />
     </Pressable>
   );
 
@@ -51,10 +112,19 @@ export function HomeScreen({ navigation }: Props) {
         keyExtractor={(item) => item.chainId}
         renderItem={renderItem}
         contentContainerStyle={styles.list}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => void refreshAll()}
+            tintColor={theme.textMuted}
+            colors={[theme.accent]}
+          />
+        }
         ListFooterComponent={
           <Text style={[styles.footer, { color: theme.textMuted }]}>
             Account 0 addresses, derived on this device from your recovery
-            phrase. Tap a chain to receive.
+            phrase. Balances come from the RPC endpoints in Settings; pull
+            down to refresh. Tap a chain to receive.
           </Text>
         }
       />
@@ -99,9 +169,18 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontVariant: ['tabular-nums'],
   },
-  chevron: {
-    fontSize: 26,
-    fontWeight: '300',
+  balanceCell: {
+    alignItems: 'flex-end',
+    gap: 2,
+    maxWidth: 140,
+  },
+  balance: {
+    fontSize: 16,
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+  },
+  balanceSymbol: {
+    fontSize: 12,
   },
   footer: {
     fontSize: 13,
