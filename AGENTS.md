@@ -214,12 +214,23 @@ with ADRs D1–D7), offline end-to-end demo (examples/demo.mjs, run with
       reveal and send confirmation, passcode fallback enabled; matrix in
       app/src/wallet/biometric.ts. Note: FaceID needs a dev build, not
       Expo Go.
-- [ ] Task 8 — testnet smoke test: harness ready (scripts/testnet/
-      setup.mjs + smoke.mjs, endpoints verified, dev wallet generated,
-      dry-run clean). BLOCKED on faucet funds from the Chairperson
-      (addresses printed by setup.mjs) and, for the ERC-4337 leg, a
-      bundler API key. Dogecoin testnet additionally lacks any public
-      Esplora-compatible API (infrastructure blocker, skippable).
+- [x] Task 8 — testnet smoke test RAN 2026-09-27 with real broadcasts,
+      engine-built transactions only:
+      * Sepolia: CONFIRMED on-chain, tx 0x45eb0026adcc1ec6ccad6e469c4023
+        cd8e321d5f217b43542dfcbd6f0a9a5295, block 11794658, status 0x1
+        (EIP-1559 self-send, 21000 gas).
+      * Bitcoin testnet3: accepted by the network, txid 1469f4cc214fcc52
+        66fb68070a920e33bfd7d07b66128088af5a9ba420cf4424 (P2WPKH
+        self-send, 282 sat fee @ 2 sat/vB; chained off the unconfirmed
+        faucet UTXO). The Chairperson's faucet used testnet3, so the
+        harness now checks every Bitcoin test network (BTC_ESPLORAS in
+        scripts/testnet/config.mjs) and spends where the coins are.
+      * Solana devnet: still unfunded — the RPC airdrop faucet 429s from
+        this IP; re-run smoke.mjs after funding via faucet.solana.com or
+        the solana CLI from another machine.
+      * ERC-4337 leg: pending the Alchemy Sepolia bundler API key the
+        Chairperson is obtaining.
+      * Dogecoin: blocked on infrastructure (no public Esplora API).
 
 ## Next recommended tasks (phase 3 candidates)
 

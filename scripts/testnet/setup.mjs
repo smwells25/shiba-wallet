@@ -24,7 +24,7 @@ import {
 
 const MNEMONIC_PATH = new URL('../../.dev-wallet/mnemonic.txt', import.meta.url);
 
-import { SEPOLIA_RPC, SIGNET_ESPLORA, SOLANA_DEVNET } from './config.mjs';
+import { BTC_ESPLORAS, SEPOLIA_RPC, SOLANA_DEVNET } from './config.mjs';
 
 /**
  * Testnet key providers. All testnets share SLIP-44 coin type 1 by
@@ -103,12 +103,14 @@ async function main() {
   } catch (e) {
     console.log(`  Sepolia ETH     query failed: ${e.message}`);
   }
-  try {
-    const utxos = await (await fetch(`${SIGNET_ESPLORA}/address/${btc.address}/utxo`)).json();
-    const sats = utxos.reduce((sum, u) => sum + BigInt(u.value), 0n);
-    console.log(`  Bitcoin signet  ${sats} sats (${utxos.length} utxos)`);
-  } catch (e) {
-    console.log(`  Bitcoin signet  query failed: ${e.message}`);
+  for (const { name, url } of BTC_ESPLORAS) {
+    try {
+      const utxos = await (await fetch(`${url}/address/${btc.address}/utxo`)).json();
+      const sats = utxos.reduce((sum, u) => sum + BigInt(u.value), 0n);
+      console.log(`  ${name.padEnd(16)} ${sats} sats (${utxos.length} utxos)`);
+    } catch (e) {
+      console.log(`  ${name.padEnd(16)} query failed: ${e.message}`);
+    }
   }
   console.log('  Dogecoin test   unqueryable: no public Esplora-compatible API found');
   try {

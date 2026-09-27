@@ -35,7 +35,7 @@ import {
   signTransaction as signSolTransaction,
   systemTransfer,
 } from '../../packages/chains-solana/dist/index.js';
-import { SEPOLIA_RPC, SIGNET_ESPLORA, SOLANA_DEVNET } from './config.mjs';
+import { BTC_ESPLORAS, SEPOLIA_RPC, SOLANA_DEVNET } from './config.mjs';
 
 const mnemonic = readFileSync(
   new URL('../../.dev-wallet/mnemonic.txt', import.meta.url),
@@ -45,10 +45,12 @@ const mnemonic = readFileSync(
 const registry = new ChainRegistry();
 registry.register(evmKeyProvider);
 registry.register(solanaKeyProvider);
+// One provider covers every Bitcoin test network: testnet3/testnet4 and
+// signet share address parameters and the SLIP-44 testnet coin type 1.
 registry.register(
   createUtxoKeyProvider({
-    chainId: 'bip122:signet',
-    name: 'Bitcoin signet',
+    chainId: 'bip122:btc-test',
+    name: 'Bitcoin test networks',
     coinType: 1,
     purpose: 84,
     bech32Hrp: 'tb',
@@ -95,25 +97,33 @@ async function sepoliaSmoke() {
   results.push(['Sepolia', `broadcast ${hash}, receipt not seen within 2 minutes`]);
 }
 
-async function signetSmoke() {
-  const account = keyring.getAccount('bip122:signet');
-  const transport = esploraTransport(SIGNET_ESPLORA);
-  const utxos = await transport.getUtxos(account.address);
-  if (utxos.length === 0) return results.push(['Bitcoin signet', 'skipped: unfunded']);
+async function bitcoinSmoke() {
+  const account = keyring.getAccount('bip122:btc-test');
+  // The same address exists on every Bitcoin test network; spend wherever
+  // the faucet actually delivered.
+  for (const { name, url } of BTC_ESPLORAS) {
+    const transport = esploraTransport(url);
+    const utxos = await transport.getUtxos(account.address);
+    if (utxos.length === 0) continue;
 
-  const feeEstimates = await (await fetch(`${SIGNET_ESPLORA}/fee-estimates`)).json();
-  const feeRate = Math.max(1, Math.ceil(feeEstimates['6'] ?? 1));
-  const total = utxos.reduce((sum, u) => sum + BigInt(u.value), 0n);
-  const built = buildTransfer({
-    network: BITCOIN_TESTNET,
-    fromAddress: account.address,
-    utxos,
-    toAddress: account.address,
-    amount: total / 2n,
-    feeRate,
-  });
-  const txid = await signAndBroadcast(built, account, transport);
-  results.push(['Bitcoin signet', `BROADCAST ${txid} (fee ${built.fee} sats @ ${feeRate} sat/vB)`]);
+    const feeEstimates = await (await fetch(`${url}/fee-estimates`)).json();
+    const feeRate = Math.max(1, Math.ceil(feeEstimates['6'] ?? 1));
+    const total = utxos.reduce((sum, u) => sum + BigInt(u.value), 0n);
+    const built = buildTransfer({
+      network: BITCOIN_TESTNET,
+      fromAddress: account.address,
+      utxos,
+      toAddress: account.address,
+      amount: total / 2n,
+      feeRate,
+    });
+    const txid = await signAndBroadcast(built, account, transport);
+    return results.push([
+      name,
+      `BROADCAST ${txid} (fee ${built.fee} sats @ ${feeRate} sat/vB, spent ${utxos.length} utxo(s))`,
+    ]);
+  }
+  results.push(['Bitcoin', 'skipped: unfunded on all checked test networks']);
 }
 
 async function solanaSmoke() {
@@ -145,7 +155,7 @@ async function solanaSmoke() {
 
 const runs = [
   ['Sepolia', sepoliaSmoke],
-  ['Bitcoin signet', signetSmoke],
+  ['Bitcoin', bitcoinSmoke],
   ['Solana devnet', solanaSmoke],
 ];
 for (const [name, run] of runs) {
