@@ -471,3 +471,40 @@ with ADRs D1–D7), offline end-to-end demo (examples/demo.mjs, run with
    providers + app Activity screen; see Phase 3 progress). Remaining
    slice: EVM history once an indexer-backed provider exists (the app
    glue's evm-jsonrpc branch is the marked seam).
+
+## Phase 4 plan (approved to start 2026-09-27): the daily-driver phase
+
+Goal: close the gaps between "engine proven on-chain" and "a wallet a
+person can actually live in", using only resources already in hand.
+
+1. EVM transaction history via a configurable indexer endpoint. The
+   Alchemy endpoint already in use supports the alchemy_getAssetTransfers
+   namespace; build an engine provider behind the vendor-neutral
+   HistoryProvider interface (indexer endpoint + key are runtime
+   configuration pasted into Settings, never committed), wire the app's
+   Activity screen evm-jsonrpc seam to it, and keep the honest
+   unavailable state when unconfigured. VERIFY the API's request/response
+   shapes against Alchemy's documentation before coding.
+2. Blockbook history provider in chains-utxo (Blockbook's address-txs
+   API), so Dogecoin gets Activity parity the moment an endpoint is
+   configured — and Bitcoin users can choose Blockbook backends too.
+3. ERC-20 token sending in the app: reuse the send flow with engine
+   transfer calldata, simulation pre-flight, and balance checks; tokens
+   stop being display-only.
+4. QR support: show a QR on Receive and scan QR codes for WalletConnect
+   pairing and send-recipient entry (expo-camera + a pure-JS QR encoder;
+   verify Expo Go camera behavior honestly).
+5. App-lock polish: PIN fallback config, auto-lock timer, balance
+   privacy toggle (hide amounts), clipboard hygiene for addresses.
+6. Sepolia testnet mode in the app behind a developer toggle, pinning
+   the verified AA config (bundler + factory) so the smart-account path
+   can be exercised on a phone without touching mainnet funds.
+7. Swap groundwork (engine only this phase): a vendor-neutral
+   SwapQuoteProvider interface with one adapter compiled against a real
+   aggregator's documented API but exercised via fakes until a key
+   exists; no UI commitment yet.
+
+Sequencing: 1+2 first (history completes the read side), then 3+4
+(write side + capture), then 5+6, with 7 riding alongside as engine
+work. Live-fire retests (Dogecoin broadcast, WC pairing, FaceID) happen
+opportunistically as inputs appear.
