@@ -41,6 +41,12 @@ export { encodeFunctionCall, encodeSequence, selector } from './abi.js';
 export type { AbiValue } from './abi.js';
 export { createSimpleAccountSpec } from './simple-account.js';
 export type { SimpleAccountConfig } from './simple-account.js';
+export {
+  TRANSFER_TOPIC,
+  addressTopic,
+  getErc20Transfers,
+} from './erc20-logs.js';
+export type { Erc20Transfer, Erc20TransferQuery } from './erc20-logs.js';
 export { decodeRevertReason, simulateCall } from './simulate.js';
 export type { SimulationRequest, SimulationResult } from './simulate.js';
 export { rlpEncode, minimalBytes } from './rlp.js';
