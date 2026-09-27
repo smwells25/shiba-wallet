@@ -228,8 +228,28 @@ with ADRs D1–D7), offline end-to-end demo (examples/demo.mjs, run with
       * Solana devnet: still unfunded — the RPC airdrop faucet 429s from
         this IP; re-run smoke.mjs after funding via faucet.solana.com or
         the solana CLI from another machine.
-      * ERC-4337 leg: pending the Alchemy Sepolia bundler API key the
-        Chairperson is obtaining.
+      * ERC-4337 leg: PASSED 2026-09-27 with the Chairperson's Alchemy
+        key (stored ONLY in git-ignored .dev-wallet/env — never commit
+        it; the same endpoint serves node + bundler methods, verified by
+        probe). SimpleAccountFactory-compatible factory
+        0x91E60e0613810449d098b0b5Ec8b51A0FE8c8985 passed the AA_STACK
+        on-chain verification (impl 0x68641de71cfea5a5d0d29712449ee254
+        bb1400c2, entryPoint() == v0.7). Smart account deployed at the
+        engine-predicted counterfactual address
+        0xB8370410CCFc0c8A6069a60ccFBeb6D2e2130fa2 via a SELF-BUNDLED
+        handleOps EIP-1559 tx from the dev EOA (tx 0x0e6d94bd80ecfa25b4
+        b8a5042572e20eea9499dd3f8a2829a96cc0893fa96921, block 11795645,
+        status 0x1) after Alchemy's off-chain simulation rejected the
+        deployment op with AA13 even though EntryPoint.handleOps
+        accepted it in eth_call (documented rundler strictness; ERC-4337
+        permits self-bundling). Post-deployment UserOperation THROUGH
+        Alchemy's bundler succeeded: userOpHash 0x4191228b0a53eabed473
+        06ff4b671cd13d65ade12268969409203b4664d7f8a8, receipt
+        success=true. Bundler quirks now handled: priority-fee floor
+        (>= 0.1 gwei regardless of chain fees) and a verification-gas
+        efficiency guard (used/limit >= 0.4, so padding must stay
+        modest); SmartAccountClient gained an optional gasPaddingPct
+        config. Recovery invariant D1 proven on a live network.
       * Dogecoin: blocked on infrastructure (no public Esplora API).
 
 ## Phase 3 progress

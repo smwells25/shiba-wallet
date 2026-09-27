@@ -62,6 +62,20 @@ export interface SmartAccountClientConfig {
   /** Optional ERC-7677 paymaster; absent means the account pays its own gas. */
   paymaster?: { transport: JsonRpcTransport; context?: unknown };
   spec: SmartAccountSpec;
+  /**
+   * Percentage padding applied on top of the bundler's gas estimates
+   * (100 = use estimates as returned). Bundler estimates are observed to
+   * be too tight in the wild for first-time deployments (send-time
+   * simulation fails AA13 OOG even though estimation succeeded), so
+   * production callers typically pad verification gas. Unused gas is not
+   * charged under ERC-4337 beyond the 10 percent unused-gas penalty
+   * introduced in EntryPoint v0.7.
+   */
+  gasPaddingPct?: {
+    verification?: number;
+    call?: number;
+    preVerification?: number;
+  };
 }
 
 /** getNonce(address,uint192) selector on the EntryPoint (nonce manager). */
@@ -150,13 +164,21 @@ export class SmartAccountClient {
     }
 
     const gas = await this.bundlerClient.estimateUserOperationGas(op);
+    const pad = (value: bigint, pct: number | undefined): bigint =>
+      pct === undefined || pct === 100 ? value : (value * BigInt(pct)) / 100n;
+    const padding = this.config.gasPaddingPct;
     op = {
       ...op,
-      callGasLimit: gas.callGasLimit,
-      verificationGasLimit: gas.verificationGasLimit,
-      preVerificationGas: gas.preVerificationGas,
+      callGasLimit: pad(gas.callGasLimit, padding?.call),
+      verificationGasLimit: pad(gas.verificationGasLimit, padding?.verification),
+      preVerificationGas: pad(gas.preVerificationGas, padding?.preVerification),
       ...(gas.paymasterVerificationGasLimit !== undefined
-        ? { paymasterVerificationGasLimit: gas.paymasterVerificationGasLimit }
+        ? {
+            paymasterVerificationGasLimit: pad(
+              gas.paymasterVerificationGasLimit,
+              padding?.verification,
+            ),
+          }
         : {}),
     };
 

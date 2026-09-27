@@ -119,6 +119,11 @@ async function main() {
     bundler,
     node,
     spec,
+    // Alchemy's bundler enforces BOTH directions: too-tight verification
+    // gas fails deployment simulation (AA13), while padding beyond ~2.5x
+    // of actual usage trips its efficiency guard ("Verification gas limit
+    // efficiency too low. Required: 0.4"). Keep padding modest.
+    gasPaddingPct: { verification: 110, call: 150, preVerification: 105 },
   });
 
   const sender = await client.getAddress(owner);
@@ -151,6 +156,14 @@ async function main() {
   }
 
   const fees = await nodeClient.suggestFees();
+  // Bundlers enforce their own priority-fee floors independent of the
+  // chain's fee market (Alchemy's rejected 0.001 gwei, demanding at least
+  // 0.1 gwei). Pad the node's suggestion up to a 0.15 gwei floor.
+  const minPriority = 150_000_000n;
+  if (fees.maxPriorityFeePerGas < minPriority) {
+    fees.maxFeePerGas += minPriority - fees.maxPriorityFeePerGas;
+    fees.maxPriorityFeePerGas = minPriority;
+  }
   console.log('Sending UserOperation (deploys the account, 0-value self-call)...');
   const { userOpHash } = await client.sendCalls(
     owner,
