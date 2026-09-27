@@ -140,9 +140,14 @@ based route tree). Wallet state lives in `src/wallet/WalletContext.tsx`.
   common QR libraries need react-native-svg and the copy button covers the
   shell's needs; revisit when a design pass happens.
 - **Settings** — per-chain RPC endpoint configuration (edit with validation,
-  reset to default), the Account Abstraction section (below), an entry
-  point to the Tokens screen, reveal the seed phrase behind a confirmation
-  gate, and wipe the wallet behind a double confirmation.
+  reset to default), the Account Abstraction section (below), the
+  WalletConnect section (project id + entry point to Connections, below),
+  an entry point to the Tokens screen, reveal the seed phrase behind a
+  confirmation gate, and wipe the wallet behind a double confirmation.
+- **Connections** — WalletConnect v2 (see "WalletConnect" below): paste-URI
+  pairing, the list of connected dApps with disconnect, and the approval
+  modal for session proposals, message/typed-data signing, and transaction
+  requests.
 - **Tokens** — ERC-20 token management (Ethereum mainnet only in this
   phase). The tracked list is persisted in AsyncStorage as the JSON of
   core's `AssetRegistry` (CAIP-19 asset ids); it ships with exactly one
@@ -234,6 +239,67 @@ while the toggle is off or the chain is unconfigured.
   transports (config round-trip, every verification reject case, the full
   stub → estimate → sign → send pipeline, receipt-shape handling).
 
+## WalletConnect (dApp connections)
+
+`src/wallet/walletconnect.ts` + `src/screens/ConnectionsScreen.tsx` let
+external dApps connect to the wallet over WalletConnect v2 — Ethereum
+mainnet (`eip155:1`) only in this pass.
+
+- **SDK**: `@reown/walletkit` (WalletConnect rebranded to Reown; the legacy
+  `@walletconnect/web3wallet` is deprecated on npm with a pointer to
+  WalletKit). Installed per the official React Native guide
+  (docs.walletconnect.com/wallets/react-native/installation.md, fetched
+  2026-09-27) together with `@walletconnect/react-native-compat`,
+  `@react-native-community/netinfo`, `react-native-get-random-values`,
+  `fast-text-encoding`, `expo-application`, and (dev types)
+  `@walletconnect/jsonrpc-types`. The compat shim must load before any
+  `@reown/*` module, so both are dynamically imported, in that order,
+  inside `initWalletConnect()` — app startup is untouched and nothing
+  WalletConnect-related evaluates until the user opens Connections with a
+  project id configured.
+- **Expo Go**: expected to work, because every native dependency resolves
+  inside Expo Go SDK 57 — `@react-native-community/netinfo` 12.0.1 and
+  `expo-application` are bundled in the Expo Go client (verified in
+  expo/expo `apps/expo-go/package.json`, sdk-57 branch), and
+  `react-native-get-random-values` installs nothing when
+  `crypto.getRandomValues` already exists (its `index.js` guard), which our
+  expo-crypto polyfill guarantees; its fallback path also uses Expo's own
+  `ExpoCrypto` module. Not yet verified against a live relay — that needs a
+  project id (see below).
+- **Configuration**: a relay project id (create free at dashboard.reown.com)
+  saved in Settings under "WalletConnect", persisted in AsyncStorage like
+  RPC endpoints (public configuration, not a secret). Without it the
+  Connections screen explains what is missing and the feature stays off.
+  The app ships with no id and never signs up for anything by itself.
+- **Supported methods**: `personal_sign` (EIP-191, the general
+  length-prefixed digest lives in `personalMessageDigest`, asserted
+  byte-identical to `ethers.hashMessage` and to the engine's
+  `toEthSignedMessageHash` for the 32-byte case), `eth_signTypedData_v4`
+  (digest via the engine's `typedDataDigest` in
+  `packages/chains-evm/src/eip712.ts`, asserted byte-identical to
+  `ethers.TypedDataEncoder.hash`; requests are declined when the domain
+  chainId is present and not 1, when the domain has unknown fields, or when
+  a declared `EIP712Domain` type deviates from the canonical field order —
+  refusing beats signing an ambiguous digest), and `eth_sendTransaction`
+  (routed through the same `prepareEvmSend`/`sendEvm` machinery as the Send
+  screen — endpoint chain-id verification, gas estimation with the dApp's
+  calldata, `eth_call` pre-flight simulation with the same
+  block-unless-overridden UI, and the biometric gate; dApp-supplied
+  gas/fee/nonce fields are deliberately ignored and re-quoted locally).
+  Everything else is answered with a proper WalletConnect error response
+  (`getSdkError` codes: 5000 user rejected, 5100 unsupported chain, 5101
+  unsupported method), never a timeout. Nothing is ever signed without the
+  approval modal plus the biometric gate.
+- **QR scanning is deferred** (paste the `wc:` URI instead): scanning needs
+  expo-camera (native module + camera permission), and the Receive screen
+  already deferred QR rendering to the same future design pass. `pair()`
+  behaves identically either way.
+- `scripts/check-wc.mjs` exercises the whole module offline: a fake
+  WalletKit client records approve/reject/respond calls, and a fake global
+  fetch answers JSON-RPC so the real quote/sign/broadcast path runs with
+  the broadcast transaction decoded and field-checked by ethers. No relay
+  connection is opened.
+
 ## Crypto polyfill
 
 `@noble/hashes` (used by `@scure/bip39` for mnemonic entropy) requires
@@ -268,4 +334,5 @@ node scripts/check-balances.mjs  # balance module against default endpoints (rea
 node scripts/check-tokens.mjs    # token store + ABI string decoder + live ERC-20 reads (read-only)
 node scripts/check-history.mjs   # history glue + live pagination proof (read-only)
 node scripts/check-aa.mjs        # ERC-4337 glue end-to-end with fake transports (offline)
+node scripts/check-wc.mjs        # WalletConnect glue with a fake client + fake fetch (offline)
 ```

@@ -22,6 +22,7 @@ import {
   setAaFactory,
   type AaChainConfig,
 } from '../wallet/aa';
+import { clearWcProjectId, getWcProjectId, setWcProjectId } from '../wallet/walletconnect';
 
 /**
  * One chain's endpoint row: shows the effective URL (default or override)
@@ -126,6 +127,7 @@ function AaField({
   statusLine,
   onSave,
   onClear,
+  saveLabel = 'Verify & save',
 }: {
   label: string;
   placeholder: string;
@@ -135,6 +137,8 @@ function AaField({
   /** Verifies and persists; throws with a plain message on any failure. */
   onSave: (draft: string) => Promise<void>;
   onClear: () => Promise<void>;
+  /** Button label; override when onSave does no network verification. */
+  saveLabel?: string;
 }) {
   const theme = useTheme();
   const [editing, setEditing] = useState(false);
@@ -179,7 +183,7 @@ function AaField({
             </Text>
           ) : (
             <View style={styles.endpointButtons}>
-              <Button title="Verify & save" onPress={() => void save()} style={styles.endpointButton} />
+              <Button title={saveLabel} onPress={() => void save()} style={styles.endpointButton} />
               <Button
                 title="Cancel"
                 variant="secondary"
@@ -308,12 +312,19 @@ export function SettingsScreen({ navigation }: Props) {
   const { revealMnemonic, wipe } = useWallet();
   const [revealed, setRevealed] = useState<string | null>(null);
   const [endpoints, setEndpoints] = useState<NetworkEndpoint[]>([]);
+  const [wcProjectId, setWcProjectIdState] = useState<string | null>(null);
 
   const reloadEndpoints = useCallback(() => {
     getAllEndpoints().then(setEndpoints, () => setEndpoints([]));
   }, []);
 
   useEffect(reloadEndpoints, [reloadEndpoints]);
+
+  const reloadWcProjectId = useCallback(() => {
+    getWcProjectId().then(setWcProjectIdState, () => setWcProjectIdState(null));
+  }, []);
+
+  useEffect(reloadWcProjectId, [reloadWcProjectId]);
 
   const onReveal = () => {
     Alert.alert(
@@ -429,6 +440,38 @@ export function SettingsScreen({ navigation }: Props) {
         {DEFAULT_NETWORKS.filter((n) => n.kind === 'evm-jsonrpc').map((network) => (
           <AaChainRow key={network.chainId} network={network} />
         ))}
+      </View>
+
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: theme.text }]}>WalletConnect</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          Lets external dApps connect to this wallet (Ethereum mainnet only
+          for now). Requires a relay project id — create one for free at
+          dashboard.reown.com. The id is public app configuration, not a
+          secret; no account or personal data from this wallet is involved.
+          If a connection was already opened this session, a changed id
+          takes effect after the app restarts.
+        </Text>
+        <AaField
+          label="Reown / WalletConnect project id"
+          placeholder="32-character id from dashboard.reown.com"
+          value={wcProjectId}
+          statusLine={wcProjectId ? 'Saved — used to reach the WalletConnect relay.' : null}
+          saveLabel="Save"
+          onSave={async (draft) => {
+            await setWcProjectId(draft);
+            reloadWcProjectId();
+          }}
+          onClear={async () => {
+            await clearWcProjectId();
+            reloadWcProjectId();
+          }}
+        />
+        <Button
+          title="Open connections"
+          variant="secondary"
+          onPress={() => navigation.navigate('Connections')}
+        />
       </View>
 
       <View style={styles.section}>

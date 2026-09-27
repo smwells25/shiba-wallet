@@ -334,6 +334,64 @@ with ADRs D1–D7), offline end-to-end demo (examples/demo.mjs, run with
       Hermes bytecode). Live ERC-4337 smoke remains candidate 1 (needs
       bundler API key + funds).
 
+- [x] Candidate 5 — WalletConnect v2 (Tier 1 feature 78), eip155:1 only
+      this pass. SDK reality verified before coding (2026-09-27):
+      WalletConnect rebranded to Reown; the current wallet-side SDK is
+      @reown/walletkit (1.6.0, published 2026-09-14) and the legacy
+      @walletconnect/web3wallet is deprecated on npm ("Web3Wallet is now
+      Reown WalletKit"). Installed per the official RN guide
+      (docs.walletconnect.com/wallets/react-native/installation.md +
+      usage.md — note docs.reown.com now 404s its old walletkit paths):
+      @walletconnect/react-native-compat 2.25.0 (must load before any
+      @reown/* module; both are dynamically imported in that order inside
+      initWalletConnect, so app startup and Node scripts never evaluate
+      them), netinfo 12.0.1, react-native-get-random-values,
+      fast-text-encoding, expo-application, @walletconnect/jsonrpc-types
+      (types), @noble/hashes (now a declared direct dep). Expo Go:
+      expected to work — netinfo 12.0.1 and expo-application are bundled
+      in the Expo Go SDK 57 client (verified in expo/expo
+      apps/expo-go/package.json, sdk-57 branch) and
+      react-native-get-random-values installs nothing when
+      crypto.getRandomValues exists (source-verified guard; our
+      expo-crypto polyfill loads first) — but UNVERIFIED against a live
+      relay: that needs a free Reown project id (dashboard.reown.com),
+      which the user must create (no service sign-ups) and save in
+      Settings → WalletConnect (AsyncStorage, aa.ts store pattern; the
+      feature is off with a plain explanation until then).
+      app/src/wallet/walletconnect.ts: pure logic (namespaces via the
+      SDK's buildApprovedNamespaces from the wallet's EOA, request
+      routing with proper getSdkError declines — 5000/5100/5101 — and
+      never a timeout, general EIP-191 digest checked against
+      ethers.hashMessage AND the engine's toEthSignedMessageHash,
+      EIP-712 via the engine's typedDataDigest with strict domain policy:
+      foreign domain chainId, unknown domain fields, or a
+      non-canonically-declared EIP712Domain type are declined rather than
+      ambiguously signed, eth_sendTransaction mapping that requires
+      `to` + our `from` and deliberately ignores dApp gas/fee/nonce)
+      plus the lazy SDK lifecycle. ConnectionsScreen: paste-URI pairing
+      (QR scanning deferred — needs expo-camera; same camera/design pass
+      as Receive's QR), active session list with peer metadata +
+      disconnect, approval modal for proposals (dApp name/url/chains/
+      methods) and requests (decoded message when printable UTF-8, typed
+      data with domain + pretty message, transactions in the send-confirm
+      presentation: mainnet badge, fee/total, eth_call simulation with
+      the block-unless-overridden switch); EVERY approval passes the
+      biometric gate, signing keys only via WalletContext.signWith.
+      eth_sendTransaction rides prepareEvmSend/sendEvm, which gained an
+      optional calldata parameter — the only send.ts change (backward
+      compatible; quote carries data through estimateGas, eth_call and
+      signEip1559). Settings gained the WalletConnect section; routes:
+      Connections in the native stack. No packages/* changes. Verified:
+      scripts/check-wc.mjs 83/83 offline (fake WalletKit client + fake
+      global fetch; no relay contact; digests byte-identical to ethers,
+      signatures recovered by ethers.verifyMessage/verifyTypedData,
+      broadcast raw tx decoded via ethers.Transaction.from and checked
+      field by field incl. calldata and recovered sender); check-aa.mjs
+      39/39 and test-units.mjs 45/45 still green; tsc --noEmit clean;
+      expo export --platform android bundles 1709 modules (5.3MB Hermes,
+      up from 884 — WalletKit's dependency tree) with the new strings
+      confirmed in the bytecode.
+
 ## Next recommended tasks (phase 3 candidates)
 
 1. Run the testnet smoke once funds land; then the ERC-4337 smoke against
@@ -347,7 +405,13 @@ with ADRs D1–D7), offline end-to-end demo (examples/demo.mjs, run with
    it live against a real bundler (candidate 1), paymaster sponsorship
    (ERC-7677 fields are ready on SmartAccountClient), AA-path Max button.
 4. Full simulation (asset diffs) and approval-revocation groundwork.
-5. WalletConnect v2 integration (Tier 1 feature 78).
+5. ~~WalletConnect v2 integration (Tier 1 feature 78)~~ — DONE for
+   eip155:1 (see Phase 3 progress, candidate 5). Remaining slices: a live
+   pairing test (needs a free Reown project id created by the user at
+   dashboard.reown.com and saved in Settings), QR scanning (expo-camera,
+   the shared camera/design pass), additional chains in the namespaces,
+   and a global session-request listener so approvals surface outside the
+   Connections screen.
 6. ~~Activity/history screen (Tier 1 feature 90)~~ — DONE (engine
    providers + app Activity screen; see Phase 3 progress). Remaining
    slice: EVM history once an indexer-backed provider exists (the app

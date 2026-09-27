@@ -12,4 +12,5 @@ export type RootStackParamList = {
   Activity: { chainId: string };
   Settings: undefined;
   Tokens: undefined;
+  Connections: undefined;
 };

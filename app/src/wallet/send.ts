@@ -6,6 +6,7 @@ import {
   signEip1559,
   simulateCall,
   toBytes,
+  toHex,
   type Eip1559Transaction,
   type SimulationResult,
 } from '@shiba-wallet/chains-evm';
@@ -161,6 +162,11 @@ export interface EvmSendQuote {
   total: bigint;
   /** eth_call pre-flight result; a failure blocks the send unless overridden. */
   simulation: SimulationResult;
+  /**
+   * Optional calldata (WalletConnect eth_sendTransaction requests carry
+   * contract-call data; the app's own plain transfers leave it unset).
+   */
+  data?: Uint8Array;
 }
 
 export interface UtxoSendQuote {
@@ -209,6 +215,7 @@ export async function prepareEvmSend(
   from: string,
   to: string,
   amount: bigint,
+  data?: Uint8Array,
 ): Promise<EvmSendQuote> {
   const transport = evmHttpTransport(url);
   const node = new NodeClient(transport);
@@ -228,11 +235,12 @@ export async function prepareEvmSend(
     );
   }
 
+  const dataHex = data && data.length > 0 ? toHex(data) : undefined;
   let gasLimit: bigint;
   try {
-    gasLimit = await node.estimateGas({ from, to, value: amount });
+    gasLimit = await node.estimateGas({ from, to, value: amount, data: dataHex });
   } catch {
-    gasLimit = await node.estimateGas({ from, to, value: 0n });
+    gasLimit = await node.estimateGas({ from, to, value: 0n, data: dataHex });
   }
 
   const fee = gasLimit * fees.maxFeePerGas;
@@ -243,7 +251,7 @@ export async function prepareEvmSend(
     );
   }
 
-  const simulation = await simulateCall(transport, { from, to, value: amount });
+  const simulation = await simulateCall(transport, { from, to, value: amount, data });
 
   return {
     kind: 'evm',
@@ -258,6 +266,7 @@ export async function prepareEvmSend(
     fee,
     total: amount + fee,
     simulation,
+    ...(data && data.length > 0 ? { data } : {}),
   };
 }
 
@@ -506,6 +515,7 @@ export async function sendEvm(
     gasLimit: quote.gasLimit,
     to: quote.to,
     value: quote.amount,
+    ...(quote.data && quote.data.length > 0 ? { data: quote.data } : {}),
   };
   const signed = signEip1559(tx, signer);
   const node = new NodeClient(evmHttpTransport(url));
