@@ -41,6 +41,8 @@ export { encodeFunctionCall, encodeSequence, selector } from './abi.js';
 export type { AbiValue } from './abi.js';
 export { createSimpleAccountSpec } from './simple-account.js';
 export type { SimpleAccountConfig } from './simple-account.js';
+export { decodeRevertReason, simulateCall } from './simulate.js';
+export type { SimulationRequest, SimulationResult } from './simulate.js';
 export { rlpEncode, minimalBytes } from './rlp.js';
 export type { RlpInput } from './rlp.js';
 export { eip1559SigningHash, signEip1559 } from './eoa-tx.js';
