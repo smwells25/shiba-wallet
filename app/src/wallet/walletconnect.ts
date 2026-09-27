@@ -58,24 +58,28 @@ const WC_CONFIG_KEY = 'shiba-wallet.wc-config.v1';
 
 /**
  * The relay project id is public client configuration (it identifies the
- * app to the WalletConnect relay, it is not a secret), so it lives in
- * AsyncStorage like RPC endpoints — never in the secure store. The user
- * creates one for free at https://dashboard.reown.com; this app ships with
- * none and the whole feature stays off until one is saved.
+ * app to the WalletConnect relay, it is not a secret — every dApp ships
+ * one in its frontend bundle), so it lives in AsyncStorage like RPC
+ * endpoints — never in the secure store. The default below is the
+ * project the Chairperson created at dashboard.reown.com for this app;
+ * a value saved in Settings overrides it, and clearing the field
+ * restores it.
  */
+export const DEFAULT_WC_PROJECT_ID = 'a6d5afbd869df1713ca48fa14fb3fcf8';
+
 export async function getWcProjectId(store: KeyValueStore = AsyncStorage): Promise<string | null> {
   try {
     const raw = await store.getItem(WC_CONFIG_KEY);
-    if (!raw) return null;
+    if (!raw) return DEFAULT_WC_PROJECT_ID;
     const parsed = JSON.parse(raw) as unknown;
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       const id = (parsed as { projectId?: unknown }).projectId;
-      return typeof id === 'string' && id !== '' ? id : null;
+      return typeof id === 'string' && id !== '' ? id : DEFAULT_WC_PROJECT_ID;
     }
-    return null;
+    return DEFAULT_WC_PROJECT_ID;
   } catch {
-    // Corrupt JSON or unavailable storage: behave as unconfigured.
-    return null;
+    // Corrupt JSON or unavailable storage: behave as default-configured.
+    return DEFAULT_WC_PROJECT_ID;
   }
 }
 

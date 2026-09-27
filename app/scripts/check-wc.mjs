@@ -44,6 +44,7 @@ import {
   decodeMessageForDisplay,
   describeProposal,
   disconnectWcSession,
+  DEFAULT_WC_PROJECT_ID,
   getWcProjectId,
   parseTypedDataV4,
   parseWcRequest,
@@ -148,7 +149,7 @@ function proposalParams(requiredChains, optionalChains = []) {
 console.log('check-wc: project id store');
 {
   const store = memoryStore();
-  check('unset id reads as null', (await getWcProjectId(store)) === null);
+  check('unset id reads as the shipped default', (await getWcProjectId(store)) === DEFAULT_WC_PROJECT_ID);
   const saved = await setWcProjectId('  0123456789abcdef0123456789abcdef  ', store);
   check('save trims', saved === '0123456789abcdef0123456789abcdef');
   check('round-trip', (await getWcProjectId(store)) === saved);
@@ -156,9 +157,9 @@ console.log('check-wc: project id store');
   await checkRejects('whitespace rejected', () => setWcProjectId('abc def', store), 'project id');
   await checkRejects('too short rejected', () => setWcProjectId('abc', store), 'project id');
   await clearWcProjectId(store);
-  check('clear works', (await getWcProjectId(store)) === null);
+  check('clear restores the shipped default', (await getWcProjectId(store)) === DEFAULT_WC_PROJECT_ID);
   store._map.set('shiba-wallet.wc-config.v1', '{not json');
-  check('corrupt JSON reads as unconfigured', (await getWcProjectId(store)) === null);
+  check('corrupt JSON falls back to the shipped default', (await getWcProjectId(store)) === DEFAULT_WC_PROJECT_ID);
 }
 
 console.log('check-wc: namespaces + proposals');
