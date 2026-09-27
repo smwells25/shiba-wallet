@@ -26,3 +26,13 @@ export {
   toHex,
   toWord,
 } from './encoding.js';
+export {
+  SmartAccountClient,
+  toEthSignedMessageHash,
+  withEthereumV,
+} from './smart-account.js';
+export type {
+  Call,
+  SmartAccountClientConfig,
+  SmartAccountSpec,
+} from './smart-account.js';
