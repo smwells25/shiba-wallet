@@ -55,6 +55,8 @@ import {
   type Erc20SendQuote,
 } from '../wallet/send-erc20';
 import { listTokens } from '../wallet/tokens';
+import { extractScannedAddress } from '../wallet/scan';
+import { QrScanner } from '../components/QrScanner';
 import { BITCOIN, DOGECOIN } from '@shiba-wallet/chains-utxo';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Send'>;
@@ -99,6 +101,7 @@ export function SendScreen({ route, navigation }: Props) {
   const [recipient, setRecipient] = useState('');
   const [amountText, setAmountText] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
+  const [scannerOpen, setScannerOpen] = useState(false);
   const [maxBusy, setMaxBusy] = useState(false);
   const [quote, setQuote] = useState<SendQuote | AaSendQuote | Erc20SendQuote | null>(null);
   const [overrideSimulation, setOverrideSimulation] = useState(false);
@@ -822,17 +825,42 @@ export function SendScreen({ route, navigation }: Props) {
       ) : null}
 
       <Text style={[styles.label, { color: theme.textMuted }]}>Recipient</Text>
-      <TextInput
-        value={recipient}
-        onChangeText={(t) => {
-          setRecipient(t);
+      <View style={styles.amountRow}>
+        <TextInput
+          value={recipient}
+          onChangeText={(t) => {
+            setRecipient(t);
+            setFormError(null);
+          }}
+          placeholder={token ? 'Ethereum address' : `${symbol} address`}
+          placeholderTextColor={theme.textMuted}
+          autoCapitalize="none"
+          autoCorrect={false}
+          style={[...inputStyle, styles.amountInput]}
+        />
+        <Button
+          title="Scan"
+          variant="secondary"
+          onPress={() => setScannerOpen(true)}
+          style={styles.maxButton}
+        />
+      </View>
+      {/*
+        Scanned payloads go through extractScannedAddress (strips only the
+        ACTIVE chain's own payment-URI scheme, conservatively — see
+        ../wallet/scan.ts) and then land in the recipient field, where the
+        exact same engine-backed validation as typed/pasted input runs.
+        Scanning can never bypass or widen validation.
+      */}
+      <QrScanner
+        visible={scannerOpen}
+        rationale={`Point the camera at a ${token ? 'Ethereum' : account.name} address QR code. The camera is only used to read the code.`}
+        onScanned={(data) => {
+          setScannerOpen(false);
+          setRecipient(extractScannedAddress(route.params.chainId, data));
           setFormError(null);
         }}
-        placeholder={token ? 'Ethereum address' : `${symbol} address`}
-        placeholderTextColor={theme.textMuted}
-        autoCapitalize="none"
-        autoCorrect={false}
-        style={inputStyle}
+        onClose={() => setScannerOpen(false)}
       />
       {validation && !validation.ok ? (
         <Text style={[styles.fieldError, { color: theme.danger }]}>{validation.error}</Text>

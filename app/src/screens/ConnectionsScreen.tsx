@@ -14,6 +14,7 @@ import {
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation';
 import { Button, WarningBox, screenStyle } from '../components';
+import { QrScanner } from '../components/QrScanner';
 import { getEndpoint } from '../config/networks';
 import { useTheme, type Theme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
@@ -62,13 +63,14 @@ type TxQuoteState =
   | { status: 'error'; message: string };
 
 /**
- * WalletConnect connections: paste-URI pairing, the active session list,
- * and the approval modal for session proposals and sign/transaction
- * requests. QR scanning is deliberately deferred: it needs expo-camera (a
- * native module plus a camera permission prompt), and this repo's Receive
- * screen already deferred QR rendering for the same reason — both belong
- * to one design pass. Pasting the URI exercises the identical SDK path
- * (walletKit.pair), so nothing about the protocol integration is blocked.
+ * WalletConnect connections: QR-scan or paste-URI pairing, the active
+ * session list, and the approval modal for session proposals and
+ * sign/transaction requests. Scanning (phase 4 item 4) goes through the
+ * shared QrScanner (expo-camera, bundled in Expo Go SDK 57 — see
+ * ../components/QrScanner.tsx for the verification notes) and feeds the
+ * exact same pairing path as pasting: validatePairingUri, then
+ * walletKit.pair. Pasting remains fully supported — scanning is only a
+ * convenience and a denied camera permission blocks nothing.
  *
  * Requests are handled while this screen is open (the SDK queues undelivered
  * requests, and pending ones are re-emitted on the next init); a global
@@ -89,6 +91,7 @@ export function ConnectionsScreen({ navigation }: Props) {
   const [initError, setInitError] = useState<string | null>(null);
   const [uri, setUri] = useState('');
   const [pairBusy, setPairBusy] = useState(false);
+  const [scannerOpen, setScannerOpen] = useState(false);
   const [sessions, setSessions] = useState<WcSessionSummary[]>([]);
   const [pending, setPending] = useState<PendingItem[]>([]);
   const [notices, setNotices] = useState<string[]>([]);
@@ -247,9 +250,12 @@ export function ConnectionsScreen({ navigation }: Props) {
     setActionBusy(false);
   }, []);
 
-  const onPair = async () => {
+  // One pairing path for both entry points: the paste field's Connect
+  // button and the QR scanner both come through here, so validation
+  // (validatePairingUri) and the SDK call are identical either way.
+  const pairWith = async (candidate: string) => {
     if (!kit) return;
-    const checked = validatePairingUri(uri);
+    const checked = validatePairingUri(candidate);
     if (!checked.ok) {
       Alert.alert('Invalid pairing URI', checked.error);
       return;
@@ -268,6 +274,8 @@ export function ConnectionsScreen({ navigation }: Props) {
       setPairBusy(false);
     }
   };
+
+  const onPair = () => pairWith(uri);
 
   const onApproveProposal = async (item: Extract<PendingItem, { type: 'proposal' }>) => {
     if (!kit || !ethAddress) return;
@@ -424,10 +432,15 @@ export function ConnectionsScreen({ navigation }: Props) {
           <View style={styles.section}>
             <Text style={[styles.sectionTitle, { color: theme.text }]}>Connect a dApp</Text>
             <Text style={[styles.hint, { color: theme.textMuted }]}>
-              In the dApp, choose WalletConnect and copy the pairing link
-              (wc:…), then paste it here. QR scanning arrives with the
-              camera/design pass.
+              In the dApp, choose WalletConnect, then scan its QR code — or
+              copy the pairing link (wc:…) and paste it here.
             </Text>
+            <Button
+              title="Scan QR code"
+              variant="secondary"
+              onPress={() => setScannerOpen(true)}
+              disabled={pairBusy}
+            />
             <TextInput
               value={uri}
               onChangeText={setUri}
@@ -491,6 +504,19 @@ export function ConnectionsScreen({ navigation }: Props) {
           ) : null}
         </>
       ) : null}
+
+      <QrScanner
+        visible={scannerOpen}
+        rationale="Point the camera at the dApp's WalletConnect QR code. The camera is only used to read the code."
+        onScanned={(data) => {
+          setScannerOpen(false);
+          // Show what was scanned in the field, then run the same
+          // validate-and-pair path as the Connect button.
+          setUri(data);
+          void pairWith(data);
+        }}
+        onClose={() => setScannerOpen(false)}
+      />
 
       <Modal visible={head !== null} animationType="slide" transparent>
         <View style={styles.modalBackdrop}>

@@ -484,9 +484,9 @@ person can actually live in", using only resources already in hand.
    configured — and Bitcoin users can choose Blockbook backends too.
 3. ~~ERC-20 token sending in the app~~ — DONE 2026-09-27 (see Phase 4
    progress). Tokens are no longer display-only.
-4. QR support: show a QR on Receive and scan QR codes for WalletConnect
-   pairing and send-recipient entry (expo-camera + a pure-JS QR encoder;
-   verify Expo Go camera behavior honestly).
+4. ~~QR support: show a QR on Receive and scan QR codes for WalletConnect
+   pairing and send-recipient entry~~ — DONE 2026-09-27 (see Phase 4
+   progress).
 5. App-lock polish: PIN fallback config, auto-lock timer, balance
    privacy toggle (hide amounts), clipboard hygiene for addresses.
 6. Sepolia testnet mode in the app behind a developer toggle, pinning
@@ -578,6 +578,46 @@ person can actually live in", using only resources already in hand.
       the calldata); tsc --noEmit clean; expo export --platform android
       bundles with the new strings confirmed in the Hermes bytecode. No
       real transaction was broadcast.
+
+- [x] Task 4 — QR support (render + scan), verified to work in Expo Go
+      SDK 57 BEFORE coding: react-native-svg 15.15.4 and expo-camera are
+      both bundled in the Expo Go client (expo/expo repo,
+      apps/expo-go/package.json, sdk-57 branch — same check as the WC
+      deps), and expo-camera 57.0.5's API (CameraView,
+      useCameraPermissions, barcodeScannerSettings {barcodeTypes:['qr']},
+      onBarcodeScanned → BarcodeScanningResult.data) was confirmed against
+      both docs.expo.dev/versions/v57.0.0/sdk/camera and the installed
+      package's own .d.ts; the deprecated expo-barcode-scanner is not
+      used. Receive renders the plain address (no invented URI — the
+      screen never built payment URIs) via react-native-qrcode-svg 6.3.26
+      (pure JS over react-native-svg, encoder = qrcode 1.5.4) on a white
+      quiet-zone card that stays white in dark mode. Scanning: shared
+      full-screen modal app/src/components/QrScanner.tsx (permission
+      requested only on open with a plain-language rationale; denial →
+      calm note, paste always works; once-per-open delivery guard).
+      SendScreen recipient row gained Scan in both native and token modes:
+      payloads go through app/src/wallet/scan.ts extractScannedAddress —
+      strips ONLY the active chain's scheme (ethereum: per EIP-681 incl.
+      pay-/@chain_id//function, verified at eips.ethereum.org/EIPS/eip-681;
+      bitcoin:/dogecoin: per BIP-21; solana: per Solana Pay; address cut
+      at '?'), everything else passes through untouched so the existing
+      engine-backed validation rejects it — scanning can never widen
+      validation. ConnectionsScreen gained Scan QR code feeding the exact
+      pasting path (validatePairingUri → pair via one shared pairWith).
+      app.json: expo-camera plugin with a plain NSCameraUsageDescription
+      rationale (dev builds; Expo Go uses its own manifest permission).
+      Verified: app/scripts/check-qr.mjs 31/31 offline — the exact
+      encoder call the screen uses (QRCode.create ecl 'M', per
+      react-native-qrcode-svg/src/genMatrix.js) round-tripped through the
+      independent jsqr decoder (devDependency, script-only) for all four
+      chains' derived addresses + a wc: URI, a corruption check, a
+      scan.ts↔send.ts chain-id drift pin, and 23 parsing edge cases;
+      tsc --noEmit clean; expo export --platform android bundles with the
+      new strings confirmed in the Hermes bytecode. Live camera scanning
+      cannot be exercised headless — on-device checklist is in the task
+      report (scan each chain's QR, a URI-wrapped QR, a wrong-chain QR
+      must show the normal validation error, WC pairing scan, permission
+      deny/re-allow flow).
 
 Sequencing: 1+2 first (history completes the read side), then 3+4
 (write side + capture), then 5+6, with 7 riding alongside as engine

@@ -19,6 +19,7 @@
     "@walletconnect/react-native-compat": "^2.25.0",
     "expo": "~57.0.25",
     "expo-application": "~57.0.3",
+    "expo-camera": "~57.0.5",
     "expo-clipboard": "~57.0.2",
     "expo-crypto": "~57.0.3",
     "expo-local-authentication": "~57.0.3",
@@ -28,11 +29,14 @@
     "react": "19.2.3",
     "react-native": "0.86.3",
     "react-native-get-random-values": "~1.11.0",
+    "react-native-qrcode-svg": "^6.3.26",
     "react-native-safe-area-context": "~5.7.0",
-    "react-native-screens": "~4.26.0"
+    "react-native-screens": "~4.26.0",
+    "react-native-svg": "15.15.4"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
+    "jsqr": "^1.4.0",
     "typescript": "~6.0.3"
   },
   "overrides": {

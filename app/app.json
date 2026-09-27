@@ -22,7 +22,13 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Shiba Wallet uses the camera only to scan QR codes: recipient addresses and WalletConnect pairing codes. No photos are taken or stored."
+        }
+      ]
     ]
   }
 }

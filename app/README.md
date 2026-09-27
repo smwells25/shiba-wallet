@@ -135,19 +135,21 @@ based route tree). Wallet state lives in `src/wallet/WalletContext.tsx`.
   `scripts/check-history.mjs` exercises the glue live against mainnet
   endpoints, including a two-page pagination proof (read-only, standard
   test mnemonic).
-- **Receive** — full-size, selectable, monospace address with a copy button
-  (expo-clipboard) and a wrong-network warning. No QR in this phase: the
-  common QR libraries need react-native-svg and the copy button covers the
-  shell's needs; revisit when a design pass happens.
+- **Receive** — a scannable QR code of the address (see "QR support"
+  below; the payload is the plain address, no invented URI scheme), plus
+  the full-size, selectable, monospace address with a copy button
+  (expo-clipboard) and a wrong-network warning. The QR sits on a white
+  card in both themes because the light-on-dark inversion breaks many
+  scanners.
 - **Settings** — per-chain RPC endpoint configuration (edit with validation,
   reset to default), the Account Abstraction section (below), the
   WalletConnect section (project id + entry point to Connections, below),
   an entry point to the Tokens screen, reveal the seed phrase behind a
   confirmation gate, and wipe the wallet behind a double confirmation.
-- **Connections** — WalletConnect v2 (see "WalletConnect" below): paste-URI
-  pairing, the list of connected dApps with disconnect, and the approval
-  modal for session proposals, message/typed-data signing, and transaction
-  requests.
+- **Connections** — WalletConnect v2 (see "WalletConnect" below): QR-scan
+  or paste-URI pairing, the list of connected dApps with disconnect, and
+  the approval modal for session proposals, message/typed-data signing,
+  and transaction requests.
 - **Tokens** — ERC-20 token management (Ethereum mainnet only in this
   phase). The tracked list is persisted in AsyncStorage as the JSON of
   core's `AssetRegistry` (CAIP-19 asset ids); it ships with exactly one
@@ -290,15 +292,62 @@ mainnet (`eip155:1`) only in this pass.
   (`getSdkError` codes: 5000 user rejected, 5100 unsupported chain, 5101
   unsupported method), never a timeout. Nothing is ever signed without the
   approval modal plus the biometric gate.
-- **QR scanning is deferred** (paste the `wc:` URI instead): scanning needs
-  expo-camera (native module + camera permission), and the Receive screen
-  already deferred QR rendering to the same future design pass. `pair()`
-  behaves identically either way.
+- **QR scanning** (phase 4 item 4): the Connections screen's "Scan QR
+  code" button reads the dApp's `wc:` code with the camera and feeds it
+  through the exact same path as pasting (`validatePairingUri`, then
+  `pair()`). Pasting remains fully supported.
 - `scripts/check-wc.mjs` exercises the whole module offline: a fake
   WalletKit client records approve/reject/respond calls, and a fake global
   fetch answers JSON-RPC so the real quote/sign/broadcast path runs with
   the broadcast transaction decoded and field-checked by ethers. No relay
   connection is opened.
+
+## QR support (phase 4 item 4)
+
+Rendering and scanning were both verified to work inside Expo Go SDK 57
+before any code was written (2026-09-27):
+
+- **Rendering**: `react-native-qrcode-svg` 6.3.26 (pure JavaScript; its
+  matrix comes from the `qrcode` npm package 1.5.4) drawn through
+  `react-native-svg`, which is pinned at 15.15.4 — the exact version
+  bundled in the Expo Go SDK 57 client. Verified in the expo/expo
+  repository, `apps/expo-go/package.json` on the `sdk-57` branch (the same
+  check used for the WalletConnect dependencies). The Receive screen's
+  payload is the plain address: this screen has never built payment URIs,
+  and a bare address is the most widely scannable form.
+- **Scanning**: `expo-camera` 57.0.5, which is also bundled in the Expo Go
+  SDK 57 client (same source), so no development build is needed. API
+  names were verified against both the SDK 57 documentation
+  (docs.expo.dev/versions/v57.0.0/sdk/camera) and the installed package's
+  own TypeScript declarations: `CameraView`, `useCameraPermissions`,
+  `barcodeScannerSettings={{ barcodeTypes: ['qr'] }}`, and
+  `onBarcodeScanned` delivering a `BarcodeScanningResult` whose `data` is
+  the decoded string. The deprecated `expo-barcode-scanner` package is not
+  used.
+
+The shared scanner lives in `src/components/QrScanner.tsx`: a full-screen
+modal that requests the camera permission only after the user opens it,
+with a plain-language rationale shown first. A denied permission (or a
+device without a camera) shows a calm note — pasting still works
+everywhere, so scanning is never a requirement. `app.json` carries the
+`expo-camera` config plugin with the iOS `NSCameraUsageDescription`
+rationale for development builds; inside Expo Go the host app's own
+permission entry applies instead.
+
+Scanned send recipients pass through `src/wallet/scan.ts`
+(`extractScannedAddress`), which strips a leading payment-URI scheme only
+when it belongs to the chain being sent on — `ethereum:` per EIP-681
+(including the optional `pay-` prefix and the `@chain_id` / `/function`
+suffixes), `bitcoin:`/`dogecoin:` per BIP-21, `solana:` per Solana Pay,
+with the address cut before any `?` query. Everything else, including a
+URI for the wrong chain, is passed through untouched so the send screen's
+existing engine-backed validation rejects it with its normal error;
+scanning can never widen what is accepted. `scripts/check-qr.mjs`
+exercises this parsing edge by edge and round-trips the exact encoder call
+the Receive screen uses (`QRCode.create(value, { errorCorrectionLevel:
+'M' })`, per `react-native-qrcode-svg/src/genMatrix.js`) through an
+independent decoder (`jsqr`, a devDependency used only by that script) for
+all four chains' derived addresses plus a WalletConnect pairing URI.
 
 ## Crypto polyfill
 
@@ -335,4 +384,5 @@ node scripts/check-tokens.mjs    # token store + ABI string decoder + live ERC-2
 node scripts/check-history.mjs   # history glue + live pagination proof (read-only)
 node scripts/check-aa.mjs        # ERC-4337 glue end-to-end with fake transports (offline)
 node scripts/check-wc.mjs        # WalletConnect glue with a fake client + fake fetch (offline)
+node scripts/check-qr.mjs        # QR encoder round-trip via jsqr + scanned-payload parsing (offline)
 ```
