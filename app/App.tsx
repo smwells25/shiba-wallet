@@ -19,6 +19,7 @@ import { HomeScreen } from './src/screens/HomeScreen';
 import { ReceiveScreen } from './src/screens/ReceiveScreen';
 import { SendScreen } from './src/screens/SendScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
+import { TokensScreen } from './src/screens/TokensScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -107,6 +108,7 @@ function Root() {
             <Stack.Screen name="Receive" component={ReceiveScreen} />
             <Stack.Screen name="Send" component={SendScreen} />
             <Stack.Screen name="Settings" component={SettingsScreen} />
+            <Stack.Screen name="Tokens" component={TokensScreen} />
           </>
         )}
       </Stack.Navigator>

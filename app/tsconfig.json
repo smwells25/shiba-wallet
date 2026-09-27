@@ -1,6 +1,12 @@
 {
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
-    "strict": true
+    "strict": true,
+    // Modules that scripts/*.mjs import under Node's type stripping need
+    // explicit .ts extensions on their relative imports (Node resolves
+    // specifiers literally). Legal because the base config sets noEmit and
+    // moduleResolution: bundler; Metro resolves the explicit extension too
+    // (proved by `npx expo export`).
+    "allowImportingTsExtensions": true
   }
 }

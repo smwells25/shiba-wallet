@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -8,12 +8,17 @@ import {
   Text,
   View,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { formatAssetId } from '@shiba-wallet/core';
+import type { FungibleAsset } from '@shiba-wallet/core';
 import type { RootStackParamList } from '../navigation';
 import { screenStyle } from '../components';
 import { useTheme } from '../theme';
+import { EVM_CHAIN_ID } from '../wallet/send';
 import { ChainAccount, useWallet } from '../wallet/WalletContext';
 import { BalanceState, useBalances } from '../wallet/useBalances';
+import { useTokenBalances } from '../wallet/useTokenBalances';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Home'>;
 
@@ -70,13 +75,59 @@ function BalanceCell({
   );
 }
 
+/**
+ * One tracked ERC-20 token under the Ethereum row: symbol, name, and its
+ * balance with the exact per-row loading/error/retry discipline of the
+ * native rows (BalanceCell is shared). No Send link on purpose: tokens are
+ * balance-display only in this phase.
+ */
+function TokenRow({
+  token,
+  state,
+  onRetry,
+}: {
+  token: FungibleAsset;
+  state: BalanceState | undefined;
+  onRetry: () => void;
+}) {
+  const theme = useTheme();
+  return (
+    <View style={[styles.tokenRow, { backgroundColor: theme.card, borderColor: theme.border }]}>
+      <View style={[styles.tokenBadge, { borderColor: theme.border }]}>
+        <Text style={[styles.tokenBadgeText, { color: theme.textMuted }]}>
+          {token.symbol.slice(0, 4)}
+        </Text>
+      </View>
+      <View style={styles.cardBody}>
+        <Text style={[styles.tokenName, { color: theme.text }]} numberOfLines={1}>
+          {token.name}
+        </Text>
+        <Text style={[styles.tokenKind, { color: theme.textMuted }]}>ERC-20</Text>
+      </View>
+      <BalanceCell state={state} onRetry={onRetry} />
+    </View>
+  );
+}
+
 /** The four launch chains: address, live native balance, tap to receive. */
 export function HomeScreen({ navigation }: Props) {
   const theme = useTheme();
   const { accounts } = useWallet();
   const { balances, refreshing, refreshAll, refreshOne } = useBalances(accounts);
+  const evmAccount = accounts.find((a) => a.chainId === EVM_CHAIN_ID);
+  const { tokens, tokenBalances, reloadTokens, refreshToken } = useTokenBalances(
+    evmAccount?.address,
+  );
 
-  const renderItem = ({ item }: { item: ChainAccount }) => (
+  // Re-read the token list whenever Home regains focus, so tokens added or
+  // removed on the Tokens screen appear without an app restart.
+  useFocusEffect(
+    useCallback(() => {
+      void reloadTokens();
+    }, [reloadTokens]),
+  );
+
+  const renderChainCard = ({ item }: { item: ChainAccount }) => (
     <Pressable
       accessibilityRole="button"
       onPress={() => navigation.navigate('Receive', { chainId: item.chainId })}
@@ -115,6 +166,39 @@ export function HomeScreen({ navigation }: Props) {
     </Pressable>
   );
 
+  // The Ethereum row carries its tracked ERC-20 tokens beneath it, plus the
+  // entry point to the token management screen.
+  const renderItem = ({ item }: { item: ChainAccount }) => {
+    const card = renderChainCard({ item });
+    if (item.chainId !== EVM_CHAIN_ID) return card;
+    return (
+      <View style={styles.evmGroup}>
+        {card}
+        <View style={styles.tokenSection}>
+          {tokens.map((token) => {
+            const id = formatAssetId(token.assetId);
+            return (
+              <TokenRow
+                key={id}
+                token={token}
+                state={tokenBalances[id]}
+                onRetry={() => void refreshToken(id)}
+              />
+            );
+          })}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Manage tokens"
+            onPress={() => navigation.navigate('Tokens')}
+            hitSlop={8}
+          >
+            <Text style={[styles.manageTokens, { color: theme.accent }]}>Manage tokens</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  };
+
   return (
     <View style={screenStyle(theme)}>
       <FlatList
@@ -125,7 +209,10 @@ export function HomeScreen({ navigation }: Props) {
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
-            onRefresh={() => void refreshAll()}
+            onRefresh={() => {
+              void refreshAll();
+              void reloadTokens();
+            }}
             tintColor={theme.textMuted}
             colors={[theme.accent]}
           />
@@ -135,6 +222,8 @@ export function HomeScreen({ navigation }: Props) {
             Account 0 addresses, derived on this device from your recovery
             phrase. Balances come from the RPC endpoints in Settings; pull
             down to refresh. Tap a chain to receive, or use its Send link.
+            Token balances are display-only for now — sending tokens comes
+            in a later release.
           </Text>
         }
       />
@@ -196,6 +285,45 @@ const styles = StyleSheet.create({
   },
   balanceSymbol: {
     fontSize: 12,
+  },
+  evmGroup: {
+    gap: 8,
+  },
+  tokenSection: {
+    marginLeft: 20,
+    gap: 8,
+  },
+  tokenRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 12,
+    gap: 12,
+  },
+  tokenBadge: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tokenBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  tokenName: {
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  tokenKind: {
+    fontSize: 12,
+  },
+  manageTokens: {
+    fontSize: 14,
+    fontWeight: '600',
+    paddingVertical: 2,
   },
   footer: {
     fontSize: 13,

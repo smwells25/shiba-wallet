@@ -10,4 +10,5 @@ export type RootStackParamList = {
   Receive: { chainId: string };
   Send: { chainId: string };
   Settings: undefined;
+  Tokens: undefined;
 };

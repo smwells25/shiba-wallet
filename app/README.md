@@ -117,8 +117,30 @@ based route tree). Wallet state lives in `src/wallet/WalletContext.tsx`.
   common QR libraries need react-native-svg and the copy button covers the
   shell's needs; revisit when a design pass happens.
 - **Settings** — per-chain RPC endpoint configuration (edit with validation,
-  reset to default), reveal the seed phrase behind a confirmation gate, and
-  wipe the wallet behind a double confirmation.
+  reset to default), an entry point to the Tokens screen, reveal the seed
+  phrase behind a confirmation gate, and wipe the wallet behind a double
+  confirmation.
+- **Tokens** — ERC-20 token management (Ethereum mainnet only in this
+  phase). The tracked list is persisted in AsyncStorage as the JSON of
+  core's `AssetRegistry` (CAIP-19 asset ids); it ships with exactly one
+  default, USDC, whose contract address was verified against Circle's
+  documentation, Etherscan, and the chain itself (see the comment on
+  `USDC_MAINNET` in `src/wallet/erc20.ts`). Adding a token takes a contract
+  address (EIP-55-validated through the same engine path as the send
+  screen), reads `symbol()`/`name()`/`decimals()` from the contract via
+  `eth_call` (calldata and uint256 decoding from `@shiba-wallet/chains-evm`;
+  the ABI `string` return type is decoded by a small app-side decoder in
+  `src/wallet/erc20.ts` that refuses to guess at legacy bytes32 metadata and
+  falls back to manual symbol/name entry instead — decimals always come
+  from the chain), and requires explicit confirmation before the token is
+  added. Duplicate CAIP-19 ids are rejected; any token, including USDC, can
+  be removed, and removals persist. Tracked token balances appear on Home
+  beneath the Ethereum row (`balanceOf` through the same transport, same
+  per-row loading/error/retry discipline, included in pull-to-refresh).
+  Tokens are balance-display only in this phase: there is deliberately no
+  token send UI, and the footer/labels say so. `scripts/check-tokens.mjs`
+  exercises the store, the string decoder's edge cases, and the live
+  metadata/balance reads from Node.
 
 ## Seed storage (non-custodial invariant)
 
@@ -180,4 +202,5 @@ npx expo export --platform android   # prove the bundle builds
 
 node scripts/test-units.mjs      # parseUnits + recipient-validation edge cases (offline)
 node scripts/check-balances.mjs  # balance module against default endpoints (read-only)
+node scripts/check-tokens.mjs    # token store + ABI string decoder + live ERC-20 reads (read-only)
 ```

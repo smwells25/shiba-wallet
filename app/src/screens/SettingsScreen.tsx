@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import type { RootStackParamList } from '../navigation';
 import { Button, WarningBox, WordGrid, screenStyle } from '../components';
 import {
   NetworkEndpoint,
@@ -101,12 +103,14 @@ function EndpointRow({
   );
 }
 
+type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
+
 /**
- * Settings: RPC endpoint configuration per chain, reveal the seed phrase
- * behind a confirmation gate, and wipe the wallet behind a double
- * confirmation.
+ * Settings: RPC endpoint configuration per chain, token management entry
+ * point, reveal the seed phrase behind a confirmation gate, and wipe the
+ * wallet behind a double confirmation.
  */
-export function SettingsScreen() {
+export function SettingsScreen({ navigation }: Props) {
   const theme = useTheme();
   const { revealMnemonic, wipe } = useWallet();
   const [revealed, setRevealed] = useState<string | null>(null);
@@ -213,6 +217,19 @@ export function SettingsScreen() {
             onChanged={reloadEndpoints}
           />
         ))}
+      </View>
+
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: theme.text }]}>Tokens</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          Track ERC-20 token balances on the Home screen (balances only —
+          sending tokens is not supported yet).
+        </Text>
+        <Button
+          title="Manage tokens"
+          variant="secondary"
+          onPress={() => navigation.navigate('Tokens')}
+        />
       </View>
 
       <View style={styles.section}>

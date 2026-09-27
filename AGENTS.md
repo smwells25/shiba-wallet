@@ -188,8 +188,8 @@ with ADRs D1–D7), offline end-to-end demo (examples/demo.mjs, run with
 ## Phase 2 scorecard (2026-09-27)
 
 - [x] Task 1 — live native balances on Home (see checked entry above).
-      Remaining slice: ERC-20 balance display (decoders exist in
-      chains-evm; needs a token-list UI using core's AssetRegistry).
+      The remaining ERC-20 balance-display slice landed in phase 3 task 2
+      (see Phase 3 progress).
 - [x] Task 2 — send flow for all four chains (app/src/wallet/send.ts,
       SendScreen with form/confirm/success, per-chain validation through
       engine code, exact bigint parseUnits, fee quotes verified against
@@ -232,12 +232,41 @@ with ADRs D1–D7), offline end-to-end demo (examples/demo.mjs, run with
         Chairperson is obtaining.
       * Dogecoin: blocked on infrastructure (no public Esplora API).
 
+## Phase 3 progress
+
+- [x] Task 2 — ERC-20 balance display + token management (EVM mainnet
+      only this pass): app/src/wallet/tokens.ts (tracked list persisted in
+      AsyncStorage via core AssetRegistry toJSON/fromJSON, CAIP-19 keyed,
+      injectable KeyValueStore so Node exercises the exact store code;
+      missing key = default [USDC], present key = user's list verbatim so
+      removing USDC sticks), app/src/wallet/erc20.ts (USDC_MAINNET
+      0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 verified 2026-09-27 from
+      Circle's contract-addresses docs page + Etherscan token page + live
+      eth_call symbol()="USDC"/decimals()=6/name()="USD Coin"; metadata
+      reads via engine encodeFunctionCall/decodeUint256; app-side ABI
+      string decoder with hand-rolled RFC-3629 UTF-8 validation that
+      throws on legacy bytes32 metadata instead of mis-decoding),
+      TokensScreen (add flow: EIP-55 validation reusing send.ts's
+      validateRecipient, auto-fill via eth_call, manual symbol/name
+      fallback for bytes32 tokens, decimals always from chain, confirm
+      before add, duplicates rejected, everything removable incl. USDC),
+      Home token rows under Ethereum (balanceOf via encodeErc20BalanceOf +
+      decodeUint256, same per-row retry discipline, in pull-to-refresh,
+      reloaded on focus). Tokens are display-only: no token send UI.
+      tsconfig gained allowImportingTsExtensions (Node type-stripping
+      needs explicit .ts on relative imports in Node-exercised modules).
+      Verified: tsc --noEmit clean; expo export --platform android bundles
+      (new strings confirmed in Hermes bytecode); scripts/check-tokens.mjs
+      27/27 (decoder edge cases, store semantics, live USDC reads).
+
 ## Next recommended tasks (phase 3 candidates)
 
 1. Run the testnet smoke once funds land; then the ERC-4337 smoke against
    a real bundler (needs API key), including counterfactual deployment of
    a SimpleAccount on Sepolia per docs/AA_STACK.md verification steps.
-2. ERC-20 balance display + token management UI (AssetRegistry-backed).
+2. ~~ERC-20 balance display + token management UI (AssetRegistry-backed)~~
+   — DONE (see Phase 3 progress). Remaining slice: token sending (engine
+   transfer calldata exists; needs send-flow UI + simulation).
 3. Wire the smart-account send path in the app behind a feature flag.
 4. Full simulation (asset diffs) and approval-revocation groundwork.
 5. WalletConnect v2 integration (Tier 1 feature 78).
