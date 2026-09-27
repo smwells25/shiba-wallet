@@ -112,6 +112,46 @@ export class SolanaRpcClient {
    * the base58 pubkey string plus an optional config object; the result is
    * { context, value } with value the lamport balance as a u64.
    */
+  /**
+   * getTokenAccountsByOwner with jsonParsed encoding. Reference
+   * (solana.com/docs/rpc/http/gettokenaccountsbyowner): positional params
+   * are the owner pubkey, a filter object ({ mint } or { programId }),
+   * and a config object; under jsonParsed each entry carries
+   * account.data.parsed.info.mint and .tokenAmount.amount (a base-10
+   * string, since raw amounts overflow doubles) plus .decimals.
+   */
+  async getTokenBalances(
+    owner: string,
+    filter: { mint: string } | { programId: string },
+    commitment?: Commitment,
+  ): Promise<Array<{ mint: string; amount: bigint; decimals: number }>> {
+    const config: Record<string, unknown> = { encoding: 'jsonParsed' };
+    if (commitment) config.commitment = commitment;
+    const result = (await this.transport('getTokenAccountsByOwner', [
+      owner,
+      filter,
+      config,
+    ])) as {
+      value: Array<{
+        account: {
+          data: {
+            parsed: {
+              info: { mint: string; tokenAmount: { amount: string; decimals: number } };
+            };
+          };
+        };
+      }>;
+    };
+    return result.value.map((entry) => {
+      const info = entry.account.data.parsed.info;
+      return {
+        mint: info.mint,
+        amount: BigInt(info.tokenAmount.amount),
+        decimals: info.tokenAmount.decimals,
+      };
+    });
+  }
+
   async getBalance(address: string, commitment?: Commitment): Promise<bigint> {
     const params: unknown[] = commitment ? [address, { commitment }] : [address];
     const result = (await this.transport('getBalance', params)) as { value: number };

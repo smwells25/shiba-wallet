@@ -154,3 +154,43 @@ describe('confirmTransaction', () => {
     ).rejects.toThrow(/timed out/);
   });
 });
+
+describe('getTokenBalances', () => {
+  it('queries jsonParsed token accounts and parses string amounts', async () => {
+    const calls: Array<{ method: string; params: unknown[] }> = [];
+    const client = new SolanaRpcClient(async (method, params) => {
+      calls.push({ method, params: params as unknown[] });
+      return {
+        value: [
+          {
+            account: {
+              data: {
+                parsed: {
+                  info: {
+                    mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+                    tokenAmount: { amount: '123456789012345678901', decimals: 6 },
+                  },
+                },
+              },
+            },
+          },
+        ],
+      };
+    });
+    const balances = await client.getTokenBalances(
+      'ownerPubkey',
+      { mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' },
+      'confirmed',
+    );
+    expect(balances).toEqual([
+      {
+        mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+        amount: 123456789012345678901n, // exceeds double precision: string parse matters
+        decimals: 6,
+      },
+    ]);
+    expect(calls[0]!.method).toBe('getTokenAccountsByOwner');
+    expect(calls[0]!.params[1]).toEqual({ mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' });
+    expect((calls[0]!.params[2] as { encoding: string }).encoding).toBe('jsonParsed');
+  });
+});
