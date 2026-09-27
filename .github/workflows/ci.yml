@@ -1,0 +1,54 @@
+# Continuous integration for the Shiba Wallet monorepo.
+#
+# Two jobs: the engine (workspace packages: build in dependency order,
+# then every package's vitest suite) and the mobile app (its own npm
+# tree; typecheck plus a Metro bundle to prove the app still assembles).
+# The app job does not launch simulators and no job touches networks
+# beyond npm installs — history/balance live checks are developer
+# scripts, deliberately not CI.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  engine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+
+  app:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            app/package-lock.json
+      # The app's file: dependencies point at the workspace packages'
+      # dist output, so the engine must be built first.
+      - run: npm ci
+      - run: npm run build
+      - run: npm ci
+        working-directory: app
+      - run: npx tsc --noEmit
+        working-directory: app
+      # test-units.mjs is fully offline; the other app scripts exercise
+      # live public endpoints and stay developer-run to keep CI reliable.
+      - run: node scripts/test-units.mjs
+        working-directory: app
+      - run: npx expo export --platform android
+        working-directory: app
