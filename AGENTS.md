@@ -62,18 +62,26 @@ app/                       React Native app (later phase)
 
 - [x] Repo initialized (git, main branch)
 - [x] Toolchain verified (Node 24.21.0 via nvm)
-- [x] docs/FEATURE_UNIVERSE.md — landed (99 features, 12 categories, tiered
-      strategy); pending CTO review
-- [ ] Asset/token layer in core (CAIP-19 asset types, token registry) — new
-      requirement, queued after keyring tests
-- [x] docs/ARCHITECTURE.md — landed (system layers, key management, AA design,
-      chain adapters, threat model, flexibility, ADRs D1–D7); pending review
-- [ ] packages/core keyring (BIP-39/32/44, hardened paths) — in progress (CTO)
-- [ ] Chain adapter interface + registry
-- [ ] EVM + ERC-4337 adapter
-- [ ] Bitcoin/Dogecoin adapter
-- [ ] Solana adapter
-- [ ] Test suite w/ official BIP vectors
+- [x] docs/FEATURE_UNIVERSE.md — landed and CTO-reviewed (99 features, 12
+      categories, tiered strategy; all cited standards verified real)
+- [x] Asset/token layer in core (CAIP-19 parse/format, AssetRegistry with
+      JSON persistence; ERC-20/721/1155 + SPL representable)
+- [x] docs/ARCHITECTURE.md — landed and CTO-reviewed (fixed Solana account
+      indexing: third segment increments per Phantom's documented
+      m/44'/501'/{index}'/0' convention; ADRs D1–D7 live in its section 7,
+      which supersedes the planned separate DECISIONS.md)
+- [x] packages/core keyring (BIP-39/32/44 + SLIP-0010 ed25519, hardened paths)
+- [x] Chain adapter interface + ChainRegistry (CAIP-2 keyed)
+- [x] Core key providers: EVM, Bitcoin (BIP-84), Dogecoin, Solana — offline
+      key/address half; network adapters still to come below
+- [ ] EVM ERC-4337 adapter package (UserOperation build/sign, counterfactual
+      CREATE2 account address, vendor-neutral bundler/paymaster clients)
+- [ ] Bitcoin/Dogecoin network adapter (UTXO selection, tx build/broadcast)
+- [ ] Solana network adapter (tx build/broadcast)
+- [x] Test suite w/ official vectors (SLIP-0010 both vectors, BIP-84
+      addresses; EVM cross-checked vs ethers.js, Solana vs ed25519-hd-key;
+      Dogecoin version byte 0x1e verified from dogecoin/dogecoin
+      chainparams.cpp) — 22 tests passing
 - [ ] React Native app shell
 
 ## Key decisions (rationale in docs/DECISIONS.md as they land)

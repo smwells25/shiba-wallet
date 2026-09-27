@@ -25,3 +25,7 @@ export {
 } from './chains/utxo.js';
 export type { UtxoChainConfig } from './chains/utxo.js';
 export { solanaKeyProvider } from './chains/solana.js';
+export { formatAssetId, parseAssetId } from './assets/caip19.js';
+export type { AssetId } from './assets/caip19.js';
+export { AssetRegistry } from './assets/assets.js';
+export type { Asset, FungibleAsset, NonFungibleAsset } from './assets/assets.js';

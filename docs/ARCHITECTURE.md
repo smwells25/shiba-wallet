@@ -98,14 +98,14 @@ Paths follow BIP-44 structure `m / purpose' / coin_type' / account' / change / a
 | Bitcoin (native SegWit, default) | `m/84'/0'/0'/0/x` | secp256k1 | BIP-84, P2WPKH `bc1q…` addresses |
 | Bitcoin (legacy, import compatibility) | `m/44'/0'/0'/0/x` | secp256k1 | BIP-44, P2PKH addresses |
 | Ethereum / all EVM chains | `m/44'/60'/0'/0/x` | secp256k1 | One key namespace for every EVM chain; the CAIP-2 chain id, not the path, distinguishes networks |
-| Solana | `m/44'/501'/0'/x'` | ed25519 | SLIP-0010; all segments hardened (see below). Index 0 gives `m/44'/501'/0'/0'`, matching the dominant ecosystem convention |
+| Solana | `m/44'/501'/x'/0'` | ed25519 | SLIP-0010; all segments hardened (see below). Account 0 gives `m/44'/501'/0'/0'`, matching the dominant ecosystem convention |
 | Dogecoin | `m/44'/3'/0'/0/x` | secp256k1 | BIP-44, P2PKH addresses |
 
 Notes on the table:
 
 - Bitcoin defaults to BIP-84 native SegWit for lower fees; the BIP-44 legacy path is retained so imported wallets created elsewhere are discoverable. Account discovery on import follows the BIP-44 gap-limit convention (scan addresses, stop after 20 consecutive unused).
 - EVM chains deliberately share the coin type 60 key namespace. Deriving per-chain keys for EVM networks would break the ecosystem-wide expectation that one address works across all EVM chains, and would break counterfactual smart-account address portability (section 3.1).
-- Solana uses ed25519, which BIP-32 does not support. Derivation follows SLIP-0010, under which ed25519 supports **only hardened** derivation — hence every path segment carries `'`. Additional Solana accounts increment the fourth segment (`m/44'/501'/0'/0'`, `m/44'/501'/0'/1'`, …), matching the convention used by the major Solana wallets so imports round-trip cleanly.
+- Solana uses ed25519, which BIP-32 does not support. Derivation follows SLIP-0010, under which ed25519 supports **only hardened** derivation — hence every path segment carries `'`. Additional Solana accounts increment the third segment, the BIP-44 account field (`m/44'/501'/0'/0'`, `m/44'/501'/1'/0'`, …), matching Phantom's documented convention (`m/44'/501'/{index}'/0'`) so imports round-trip cleanly.
 - Each `ChainAdapter` declares its own default path template and curve (section 4), so the keyring stays generic: it derives what an adapter asks for and applies no chain-specific logic itself.
 
 ### 2.3 Hardened vs. non-hardened derivation, and why it matters
