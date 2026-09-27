@@ -24,6 +24,8 @@ import {
 } from '../../packages/chains-evm/dist/index.js';
 import {
   BITCOIN_TESTNET,
+  DOGECOIN_TESTNET,
+  blockbookTransport,
   buildTransfer,
   esploraTransport,
   signAndBroadcast,
@@ -56,7 +58,30 @@ registry.register(
     bech32Hrp: 'tb',
   }),
 );
+registry.register(
+  createUtxoKeyProvider({
+    chainId: 'bip122:dogecoin-testnet',
+    name: 'Dogecoin testnet',
+    coinType: 1,
+    purpose: 44,
+    p2pkhVersion: 0x71,
+  }),
+);
 const keyring = HdKeyring.fromMnemonic(mnemonic, registry);
+
+/**
+ * Reads KEY=value lines from the git-ignored .dev-wallet/env file, where
+ * API keys live so they can never be committed.
+ */
+function devEnv(name) {
+  try {
+    const text = readFileSync(new URL('../../.dev-wallet/env', import.meta.url), 'utf8');
+    const line = text.split('\n').find((l) => l.startsWith(name + '='));
+    return line ? line.slice(name.length + 1).trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
 const results = [];
 
 async function sepoliaSmoke() {
@@ -145,7 +170,7 @@ async function solanaSmoke() {
     instructions: [instruction],
   });
   const signed = signSolTransaction(message, [account]);
-  const signature = await client.sendTransaction(signed.base64);
+  const signature = await client.sendTransaction(signed.wireBytes);
   const status = await client.confirmTransaction(signature, { timeoutMs: 60_000 });
   results.push([
     'Solana devnet',
@@ -153,9 +178,37 @@ async function solanaSmoke() {
   ]);
 }
 
+async function dogecoinSmoke() {
+  const key = devEnv('NOWNODES_KEY');
+  if (!key) return results.push(['Dogecoin testnet', 'skipped: no NOWNODES_KEY in .dev-wallet/env']);
+  const account = keyring.getAccount('bip122:dogecoin-testnet');
+  const transport = blockbookTransport('https://dogebook-testnet.nownodes.io', {
+    headers: { 'api-key': key },
+  });
+  const utxos = await transport.getUtxos(account.address);
+  if (utxos.length === 0) {
+    return results.push(['Dogecoin testnet', `skipped: unfunded (${account.address})`]);
+  }
+  const total = utxos.reduce((sum, u) => sum + BigInt(u.value), 0n);
+  // Dogecoin fees are far above Bitcoin's; recent relay norms are around
+  // 0.001 DOGE/kB minimum but wallets pay ~1 DOGE/kB on testnet to be
+  // safe. 1000 sat/vB approximates 0.01 DOGE/kB conservatively.
+  const built = buildTransfer({
+    network: DOGECOIN_TESTNET,
+    fromAddress: account.address,
+    utxos,
+    toAddress: account.address,
+    amount: total / 2n,
+    feeRate: 1000,
+  });
+  const txid = await signAndBroadcast(built, account, transport);
+  results.push(['Dogecoin testnet', `BROADCAST ${txid} (fee ${built.fee} base units)`]);
+}
+
 const runs = [
   ['Sepolia', sepoliaSmoke],
   ['Bitcoin', bitcoinSmoke],
+  ['Dogecoin testnet', dogecoinSmoke],
   ['Solana devnet', solanaSmoke],
 ];
 for (const [name, run] of runs) {

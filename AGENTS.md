@@ -225,9 +225,14 @@ with ADRs D1–D7), offline end-to-end demo (examples/demo.mjs, run with
         faucet UTXO). The Chairperson's faucet used testnet3, so the
         harness now checks every Bitcoin test network (BTC_ESPLORAS in
         scripts/testnet/config.mjs) and spends where the coins are.
-      * Solana devnet: still unfunded — the RPC airdrop faucet 429s from
-        this IP; re-run smoke.mjs after funding via faucet.solana.com or
-        the solana CLI from another machine.
+      * Solana devnet: PASSED 2026-09-27 after the Chairperson funded
+        5.5 SOL — engine-built System transfer broadcast and FINALIZED,
+        signature W4h7QK37Sv3JNK2frBfdh21Uw4asyRqdifKSANBLa8C1dFX4H3iS
+        LA8RiNP5E4vuXc7abZ36xNNjciE9srNrmfb; the network-returned
+        signature matched the locally computed txid. (Smoke-script bug
+        fixed on the way: SolanaRpcClient.sendTransaction takes wire
+        bytes, not the base64 string.) Sepolia and Bitcoin testnet3 legs
+        re-ran and passed again in the same run.
       * ERC-4337 leg: PASSED 2026-09-27 with the Chairperson's Alchemy
         key (stored ONLY in git-ignored .dev-wallet/env — never commit
         it; the same endpoint serves node + bundler methods, verified by
@@ -250,7 +255,14 @@ with ADRs D1–D7), offline end-to-end demo (examples/demo.mjs, run with
         efficiency guard (used/limit >= 0.4, so padding must stay
         modest); SmartAccountClient gained an optional gasPaddingPct
         config. Recovery invariant D1 proven on a live network.
-      * Dogecoin: blocked on infrastructure (no public Esplora API).
+      * Dogecoin: infrastructure UNBLOCKED 2026-09-27 — the Chairperson's
+        NOWNodes key (git-ignored .dev-wallet/env, NOWNODES_KEY) works
+        against dogebook.nownodes.io and dogebook-testnet.nownodes.io
+        through the engine's blockbookTransport (live getUtxos verified
+        on both). smoke.mjs gained a Dogecoin-testnet leg that runs
+        whenever testnet DOGE lands on the dev address printed by
+        setup.mjs; the app can use the same transport once an endpoint
+        + key UI slice is added.
 
 ## Phase 3 progress
 
