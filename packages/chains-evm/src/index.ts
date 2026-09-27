@@ -42,6 +42,18 @@ export type { AbiValue } from './abi.js';
 export { createSimpleAccountSpec } from './simple-account.js';
 export type { SimpleAccountConfig } from './simple-account.js';
 export {
+  domainSeparator,
+  encodeType,
+  hashStruct,
+  typeHash,
+  typedDataDigest,
+} from './eip712.js';
+export type {
+  TypedDataDomain,
+  TypedDataField,
+  TypedDataTypes,
+} from './eip712.js';
+export {
   TRANSFER_TOPIC,
   addressTopic,
   getErc20Transfers,
