@@ -107,7 +107,19 @@ app/                       React Native app (later phase)
       addresses; EVM cross-checked vs ethers.js, Solana vs ed25519-hd-key;
       Dogecoin version byte 0x1e verified from dogecoin/dogecoin
       chainparams.cpp) — 22 tests passing
-- [ ] React Native app shell
+- [x] React Native app shell — app/ (Expo SDK 57, TypeScript, React
+      Navigation native stack). Deliberately NOT a workspace member:
+      consumes @shiba-wallet/core via a file: dependency (npm symlink) plus
+      metro.config.js watchFolders/nodeModulesPaths (see app/README.md).
+      Screens: onboarding (generate mnemonic via core + backup warning +
+      2-word quiz, or import with validation), Home (account-0 addresses for
+      ETH/BTC/DOGE/SOL derived through core providers), Receive (full
+      address + copy), Settings (gated seed reveal, double-confirm wipe).
+      Mnemonic lives only in expo-secure-store
+      (WHEN_UNLOCKED_THIS_DEVICE_ONLY); crypto.getRandomValues polyfilled
+      from expo-crypto in app/src/polyfills.ts (first import). Verified:
+      tsc --noEmit clean; npx expo export --platform android bundles
+      884 modules with engine code confirmed inside the Hermes bundle
 
 ## Key decisions (rationale in docs/DECISIONS.md as they land)
 
