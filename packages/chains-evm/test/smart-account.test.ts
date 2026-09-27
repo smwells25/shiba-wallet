@@ -33,8 +33,8 @@ const FACTORY = '0x5555555555555555555555555555555555555555';
 
 /** A minimal fake account implementation exercising every spec hook. */
 const spec: SmartAccountSpec = {
-  getAddress: () => ACCOUNT_ADDRESS,
-  getFactoryArgs: () => ({ factory: FACTORY, factoryData: utf8ToBytes('init') }),
+  getAddress: async () => ACCOUNT_ADDRESS,
+  getFactoryArgs: async () => ({ factory: FACTORY, factoryData: utf8ToBytes('init') }),
   encodeCalls: (calls: Call[]) =>
     utf8ToBytes(calls.map((c) => `${c.to}:${c.value}`).join(',')),
   signUserOpHash: (owner, userOpHash) =>

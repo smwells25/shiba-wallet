@@ -36,3 +36,7 @@ export type {
   SmartAccountClientConfig,
   SmartAccountSpec,
 } from './smart-account.js';
+export { encodeFunctionCall, encodeSequence, selector } from './abi.js';
+export type { AbiValue } from './abi.js';
+export { createSimpleAccountSpec } from './simple-account.js';
+export type { SimpleAccountConfig } from './simple-account.js';

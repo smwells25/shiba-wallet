@@ -30,10 +30,13 @@ export interface Call {
 }
 
 export interface SmartAccountSpec {
-  /** Counterfactual (CREATE2) address for this owner; stable pre-deployment. */
-  getAddress(owner: DerivedAccount): string;
+  /**
+   * Counterfactual (CREATE2) address for this owner; stable pre-deployment.
+   * Async because implementations may resolve it via a factory view call.
+   */
+  getAddress(owner: DerivedAccount): Promise<string>;
   /** Factory address + calldata that deploy the account, for undeployed senders. */
-  getFactoryArgs(owner: DerivedAccount): { factory: string; factoryData: Uint8Array };
+  getFactoryArgs(owner: DerivedAccount): Promise<{ factory: string; factoryData: Uint8Array }>;
   /** Encodes one or more calls into the account's execute/executeBatch calldata. */
   encodeCalls(calls: Call[]): Uint8Array;
   /**
@@ -78,14 +81,14 @@ export class SmartAccountClient {
     }
   }
 
-  getAddress(owner: DerivedAccount): string {
+  getAddress(owner: DerivedAccount): Promise<string> {
     return this.config.spec.getAddress(owner);
   }
 
   /** True once the account contract exists on chain. */
   async isDeployed(owner: DerivedAccount): Promise<boolean> {
     const code = (await this.config.node('eth_getCode', [
-      this.getAddress(owner),
+      await this.getAddress(owner),
       'latest',
     ])) as string;
     return code !== undefined && code !== '0x' && code !== '0x0';
@@ -93,7 +96,7 @@ export class SmartAccountClient {
 
   /** Reads the account's ERC-4337 nonce (key 0) from the EntryPoint. */
   async getNonce(owner: DerivedAccount): Promise<bigint> {
-    const sender = this.getAddress(owner);
+    const sender = await this.getAddress(owner);
     const data = new Uint8Array(4 + 32 + 32);
     data.set(GET_NONCE_SELECTOR, 0);
     // address argument, left-padded to a 32-byte word
@@ -118,10 +121,10 @@ export class SmartAccountClient {
   ): Promise<{ userOpHash: string; userOp: UserOperation }> {
     const spec = this.config.spec;
     const deployed = await this.isDeployed(owner);
-    const factoryArgs = deployed ? undefined : spec.getFactoryArgs(owner);
+    const factoryArgs = deployed ? undefined : await spec.getFactoryArgs(owner);
 
     let op: UserOperation = {
-      sender: this.getAddress(owner),
+      sender: await this.getAddress(owner),
       nonce: await this.getNonce(owner),
       ...(factoryArgs
         ? { factory: factoryArgs.factory, factoryData: factoryArgs.factoryData }
