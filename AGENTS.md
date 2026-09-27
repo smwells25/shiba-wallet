@@ -74,8 +74,20 @@ app/                       React Native app (later phase)
 - [x] Chain adapter interface + ChainRegistry (CAIP-2 keyed)
 - [x] Core key providers: EVM, Bitcoin (BIP-84), Dogecoin, Solana — offline
       key/address half; network adapters still to come below
-- [ ] EVM ERC-4337 adapter package (UserOperation build/sign, counterfactual
-      CREATE2 account address, vendor-neutral bundler/paymaster clients)
+- [x] EVM ERC-4337 adapter (@shiba-wallet/chains-evm): EntryPoint v0.7
+      UserOperation packing + userOpHash (verified vs account-abstraction
+      v0.7.0 sources, cross-checked vs ethers AbiCoder), CREATE2
+      counterfactual addresses (vs ethers.getCreate2Address), vendor-neutral
+      BundlerClient + ERC-7677 PaymasterClient over injected transports,
+      SmartAccountClient orchestration (stub → estimate → final paymaster →
+      sign → send), SimpleAccount spec (EIP-191 owner sigs, execute /
+      executeBatch ABI byte-identical to ethers), minimal ABI encoder.
+      25 tests
+- [x] Feature Universe published as a shareable page for the Chairperson:
+      https://claude.ai/artifact/JEfyMuPcMJ8YW5x3ZKitsw (private until
+      shared; regenerate from docs/FEATURE_UNIVERSE.md if it changes).
+      Doc fix applied: features 10–11 assigned to Tier 2, Tier 2 list
+      corrected from "85–87" to "85, 87" (86 is Tier 3)
 - [x] Bitcoin/Dogecoin network adapter — packages/chains-utxo
       (@shiba-wallet/chains-utxo): raw tx build/sign offline-pure (P2WPKH
       BIP-143 for Bitcoin, legacy P2PKH sighash for Dogecoin, DER low-S
