@@ -1,0 +1,26 @@
+{
+  "name": "@shiba-wallet/chains-evm",
+  "version": "0.1.0",
+  "description": "EVM chain adapter: ERC-4337 smart accounts, UserOperation building/signing, vendor-neutral bundler and paymaster clients",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@noble/curves": "^2.0.1",
+    "@noble/hashes": "^2.0.1",
+    "@shiba-wallet/core": "0.1.0"
+  },
+  "devDependencies": {
+    "ethers": "^6.17.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.0.0"
+  }
+}
