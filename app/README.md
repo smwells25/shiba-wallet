@@ -112,6 +112,28 @@ based route tree). Wallet state lives in `src/wallet/WalletContext.tsx`.
   endpoint". Engine errors (coin selection, dust, insufficient funds) are
   translated to plain language with the exact engine message kept as
   detail.
+- **Activity** — per-chain transaction history (entered from a Home row's
+  Activity link), newest first. The engine's chain packages supply the
+  `HistoryProvider`s (Esplora for Bitcoin/Dogecoin, the standard RPC
+  signature listing with bounded per-entry enrichment for Solana);
+  `src/wallet/history.ts` is the thin glue that resolves the right provider
+  from the configured endpoint, and `src/wallet/useHistory.ts` applies the
+  same per-chain loading/error/retry discipline as `useBalances`. Each row
+  shows direction (received / sent / self, visually distinct), the amount in
+  coin units via the exact-bigint `formatUnits` (an em-dash when the
+  provider supplied no amount, which happens for Solana entries beyond the
+  enrichment bound), the fee where known, confirmed vs pending status, a
+  failed flag (Solana), and a relative-or-absolute time. Older pages load
+  through the provider's opaque `nextCursor` (infinite scroll plus an
+  explicit Load more button); tapping a row opens the same verified block
+  explorers the send flow links to. Ethereum shows an honest "unavailable"
+  state: a plain JSON-RPC endpoint cannot list transactions by address, so
+  EVM history waits on an indexer-backed provider (the glue is keyed on the
+  network kind so that provider can slot in without touching the screen).
+  Dogecoin is likewise unavailable until an endpoint is configured.
+  `scripts/check-history.mjs` exercises the glue live against mainnet
+  endpoints, including a two-page pagination proof (read-only, standard
+  test mnemonic).
 - **Receive** — full-size, selectable, monospace address with a copy button
   (expo-clipboard) and a wrong-network warning. No QR in this phase: the
   common QR libraries need react-native-svg and the copy button covers the
@@ -203,4 +225,5 @@ npx expo export --platform android   # prove the bundle builds
 node scripts/test-units.mjs      # parseUnits + recipient-validation edge cases (offline)
 node scripts/check-balances.mjs  # balance module against default endpoints (read-only)
 node scripts/check-tokens.mjs    # token store + ABI string decoder + live ERC-20 reads (read-only)
+node scripts/check-history.mjs   # history glue + live pagination proof (read-only)
 ```

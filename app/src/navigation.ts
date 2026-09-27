@@ -9,6 +9,7 @@ export type RootStackParamList = {
   Home: undefined;
   Receive: { chainId: string };
   Send: { chainId: string };
+  Activity: { chainId: string };
   Settings: undefined;
   Tokens: undefined;
 };

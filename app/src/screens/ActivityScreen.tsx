@@ -1,0 +1,320 @@
+import React, { useEffect } from 'react';
+import {
+  ActivityIndicator,
+  FlatList,
+  Linking,
+  Pressable,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import type { HistoryEntry } from '@shiba-wallet/core';
+import type { RootStackParamList } from '../navigation';
+import { Button, screenStyle } from '../components';
+import { Theme, useTheme } from '../theme';
+import { networkDefaultFor } from '../config/defaults';
+import { formatUnits } from '../wallet/balances';
+import { directionLabel, explorerTxUrl, formatTimestamp } from '../wallet/history';
+import { useHistory } from '../wallet/useHistory';
+import { useWallet } from '../wallet/WalletContext';
+
+type Props = NativeStackScreenProps<RootStackParamList, 'Activity'>;
+
+/**
+ * Small round badge carrying the direction glyph: down-arrow for received
+ * (success color), up-arrow for sent, loop for self-transfers (muted).
+ */
+function DirectionBadge({ entry, theme }: { entry: HistoryEntry; theme: Theme }) {
+  const glyph = entry.direction === 'in' ? '↓' : entry.direction === 'out' ? '↑' : '↺';
+  const color =
+    entry.direction === 'in' ? theme.success : entry.direction === 'out' ? theme.text : theme.textMuted;
+  return (
+    <View style={[styles.dirBadge, { borderColor: theme.border }]}>
+      <Text style={[styles.dirGlyph, { color }]}>{glyph}</Text>
+    </View>
+  );
+}
+
+function StatusChip({ label, color, theme }: { label: string; color: string; theme: Theme }) {
+  return (
+    <View style={[styles.chip, { borderColor: color, backgroundColor: theme.card }]}>
+      <Text style={[styles.chipText, { color }]}>{label}</Text>
+    </View>
+  );
+}
+
+/**
+ * One transaction row: direction badge, label + time + optional fee on the
+ * left, signed amount (em-dash when the provider supplied none) and status
+ * chips on the right. Tapping opens the chain's verified block explorer;
+ * rows stay inert when no explorer is verified (Dogecoin).
+ */
+function EntryRow({
+  entry,
+  chainId,
+  decimals,
+  symbol,
+}: {
+  entry: HistoryEntry;
+  chainId: string;
+  decimals: number;
+  symbol: string;
+}) {
+  const theme = useTheme();
+  const url = explorerTxUrl(chainId, entry.id);
+
+  const sign = entry.direction === 'in' ? '+' : entry.direction === 'out' ? '−' : '';
+  const amountText =
+    entry.amount === undefined ? '—' : `${sign}${formatUnits(entry.amount, decimals)}`;
+  const amountColor =
+    entry.failed || entry.amount === undefined
+      ? theme.textMuted
+      : entry.direction === 'in'
+        ? theme.success
+        : theme.text;
+
+  return (
+    <Pressable
+      accessibilityRole={url ? 'button' : undefined}
+      accessibilityLabel={`${directionLabel(entry.direction)} transaction`}
+      disabled={!url}
+      onPress={() => {
+        if (url) void Linking.openURL(url);
+      }}
+      style={({ pressed }) => [
+        styles.row,
+        {
+          backgroundColor: theme.card,
+          borderColor: theme.border,
+          opacity: pressed ? 0.8 : 1,
+        },
+      ]}
+    >
+      <DirectionBadge entry={entry} theme={theme} />
+      <View style={styles.rowBody}>
+        <Text style={[styles.rowTitle, { color: theme.text }]}>
+          {directionLabel(entry.direction)}
+        </Text>
+        <Text style={[styles.rowTime, { color: theme.textMuted }]}>
+          {formatTimestamp(entry.timestamp)}
+        </Text>
+        {entry.fee !== undefined ? (
+          <Text style={[styles.rowFee, { color: theme.textMuted }]}>
+            fee {formatUnits(entry.fee, decimals, decimals)} {symbol}
+          </Text>
+        ) : null}
+      </View>
+      <View style={styles.rowRight}>
+        <Text style={[styles.amount, { color: amountColor }]} numberOfLines={1}>
+          {amountText}
+        </Text>
+        <Text style={[styles.amountSymbol, { color: theme.textMuted }]}>{symbol}</Text>
+        <View style={styles.chips}>
+          {entry.failed ? <StatusChip label="failed" color={theme.danger} theme={theme} /> : null}
+          {!entry.confirmed ? (
+            <StatusChip label="pending" color={theme.warningText} theme={theme} />
+          ) : null}
+        </View>
+      </View>
+    </Pressable>
+  );
+}
+
+/** Newest-first transaction list for one chain, entered from a Home row. */
+export function ActivityScreen({ navigation, route }: Props) {
+  const theme = useTheme();
+  const { chainId } = route.params;
+  const { accounts } = useWallet();
+  const account = accounts.find((a) => a.chainId === chainId);
+  const network = networkDefaultFor(chainId);
+  const { state, refreshing, reload, loadMore } = useHistory(chainId, account?.address ?? '');
+
+  useEffect(() => {
+    navigation.setOptions({ title: account ? `${account.name} activity` : 'Activity' });
+  }, [navigation, account]);
+
+  if (!account || !network) {
+    return (
+      <View style={[screenStyle(theme), styles.center]}>
+        <Text style={[styles.note, { color: theme.textMuted }]}>Unknown chain.</Text>
+      </View>
+    );
+  }
+
+  if (state.status === 'loading') {
+    return (
+      <View style={[screenStyle(theme), styles.center]}>
+        <ActivityIndicator size="large" color={theme.accent} />
+      </View>
+    );
+  }
+
+  if (state.status === 'unavailable') {
+    return (
+      <View style={[screenStyle(theme), styles.center]}>
+        <Text style={[styles.unavailableMark, { color: theme.textMuted }]}>—</Text>
+        <Text style={[styles.note, { color: theme.textMuted }]}>{state.note}</Text>
+      </View>
+    );
+  }
+
+  if (state.status === 'error') {
+    return (
+      <View style={[screenStyle(theme), styles.center]}>
+        <Text style={[styles.note, { color: theme.danger }]}>{state.message}</Text>
+        <Button title="Retry" onPress={() => void reload()} style={styles.retry} />
+      </View>
+    );
+  }
+
+  // status === 'ok'
+  const footer = (
+    <View style={styles.footer}>
+      {state.loadMoreError ? (
+        <Text style={[styles.note, { color: theme.danger }]}>{state.loadMoreError}</Text>
+      ) : null}
+      {state.loadingMore ? (
+        <ActivityIndicator size="small" color={theme.textMuted} />
+      ) : state.nextCursor ? (
+        <Pressable accessibilityRole="button" onPress={() => void loadMore()} hitSlop={8}>
+          <Text style={[styles.loadMore, { color: theme.accent }]}>Load more</Text>
+        </Pressable>
+      ) : state.entries.length > 0 ? (
+        <Text style={[styles.note, { color: theme.textMuted }]}>End of history.</Text>
+      ) : null}
+    </View>
+  );
+
+  return (
+    <View style={screenStyle(theme)}>
+      <FlatList
+        data={state.entries}
+        keyExtractor={(entry) => entry.id}
+        renderItem={({ item }) => (
+          <EntryRow
+            entry={item}
+            chainId={chainId}
+            decimals={network.decimals}
+            symbol={network.symbol}
+          />
+        )}
+        contentContainerStyle={styles.list}
+        onEndReached={() => void loadMore()}
+        onEndReachedThreshold={0.4}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => void reload()}
+            tintColor={theme.textMuted}
+            colors={[theme.accent]}
+          />
+        }
+        ListEmptyComponent={
+          <Text style={[styles.note, { color: theme.textMuted }]}>
+            No transactions found for this address.
+          </Text>
+        }
+        ListFooterComponent={footer}
+      />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  center: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 32,
+    gap: 12,
+  },
+  list: {
+    padding: 16,
+    gap: 10,
+    flexGrow: 1,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 14,
+    gap: 12,
+  },
+  dirBadge: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dirGlyph: {
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  rowBody: {
+    flex: 1,
+    gap: 2,
+  },
+  rowTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  rowTime: {
+    fontSize: 12,
+  },
+  rowFee: {
+    fontSize: 12,
+    fontVariant: ['tabular-nums'],
+  },
+  rowRight: {
+    alignItems: 'flex-end',
+    gap: 2,
+    maxWidth: 150,
+  },
+  amount: {
+    fontSize: 15,
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+  },
+  amountSymbol: {
+    fontSize: 12,
+  },
+  chips: {
+    flexDirection: 'row',
+    gap: 4,
+  },
+  chip: {
+    borderRadius: 8,
+    borderWidth: 1,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+  },
+  chipText: {
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  note: {
+    fontSize: 13,
+    lineHeight: 19,
+    textAlign: 'center',
+  },
+  unavailableMark: {
+    fontSize: 32,
+  },
+  retry: {
+    minWidth: 140,
+  },
+  footer: {
+    alignItems: 'center',
+    paddingVertical: 12,
+    gap: 8,
+  },
+  loadMore: {
+    fontSize: 14,
+    fontWeight: '600',
+    paddingVertical: 4,
+  },
+});

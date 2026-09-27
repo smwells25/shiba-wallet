@@ -259,6 +259,35 @@ with ADRs D1–D7), offline end-to-end demo (examples/demo.mjs, run with
       (new strings confirmed in Hermes bytecode); scripts/check-tokens.mjs
       27/27 (decoder edge cases, store semantics, live USDC reads).
 
+- [x] Task 6 — Activity screen (app side; engine-side history providers
+      landed earlier in commit bbddf42): app/src/wallet/history.ts (thin
+      glue keyed on NetworkKind: Bitcoin → esploraHistoryProvider over the
+      configured Esplora endpoint, Dogecoin same shape but unavailable
+      until an endpoint is configured, Solana → solanaHistoryProvider over
+      the configured RPC with enrichLimit 8, Ethereum → explicit honest
+      "unavailable: needs an indexer/explorer" state with the branch ready
+      for the future log-based provider; also explorerTxUrl reusing the
+      send flow's verified explorers, directionLabel, Intl-free
+      formatTimestamp; no runtime cross-file imports so Node type-stripping
+      loads it directly), app/src/wallet/useHistory.ts (per-chain
+      loading/error/retry/unavailable discipline like useBalances,
+      generation counter, cursor pagination with in-flight serialization
+      and dedupe-by-txid across the Esplora mempool/confirmed page
+      boundary), ActivityScreen (newest-first FlatList: direction badge
+      in/out/self with distinct color/glyph, exact-bigint formatUnits
+      amounts with em-dash for unenriched entries, fee line, pending +
+      failed chips, relative/absolute time, infinite scroll plus explicit
+      Load more, pull-to-refresh, row tap opens etherscan/blockstream/
+      solscan — Dogecoin rows stay inert, no verified explorer), entered
+      from an Activity link on every Home chain row; route Activity
+      {chainId} in the native stack. Verified: tsc --noEmit clean; expo
+      export --platform android bundles (new strings confirmed in the
+      Hermes bytecode); scripts/check-history.mjs live against
+      blockstream.info/api + api.mainnet-beta.solana.com with the standard
+      test mnemonic: 25 BTC entries classified, page 2 fetched via
+      nextCursor with 0 overlap, Solana entries incl. correctly-flagged
+      failed spam txs.
+
 ## Next recommended tasks (phase 3 candidates)
 
 1. Run the testnet smoke once funds land; then the ERC-4337 smoke against
@@ -270,4 +299,7 @@ with ADRs D1–D7), offline end-to-end demo (examples/demo.mjs, run with
 3. Wire the smart-account send path in the app behind a feature flag.
 4. Full simulation (asset diffs) and approval-revocation groundwork.
 5. WalletConnect v2 integration (Tier 1 feature 78).
-6. Activity/history screen (Tier 1 feature 90, engine-side tx decoding).
+6. ~~Activity/history screen (Tier 1 feature 90)~~ — DONE (engine
+   providers + app Activity screen; see Phase 3 progress). Remaining
+   slice: EVM history once an indexer-backed provider exists (the app
+   glue's evm-jsonrpc branch is the marked seam).
