@@ -53,3 +53,4 @@ export { buildTransfer, signAndBroadcast } from './transfer.js';
 export type { BuiltTransfer, TransferParams } from './transfer.js';
 export { esploraHistoryProvider } from './history.js';
 export { blockbookTransport } from './blockbook.js';
+export { blockbookHistoryProvider } from './blockbook-history.js';
