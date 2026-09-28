@@ -1447,6 +1447,32 @@ moved 0xf4240 = 1,000,000 base units (1 USDC) from the wallet, and the
 ETH received, reconstructed as balance(after) − balance(before) + gas
 fee = 41,219,674,256,619 wei, equals the previewed amount to the wei.
 
+WALLETCONNECT DECLINE PATHS, PROVEN LIVE with Uniswap (same day):
+- Fresh pairing under the phase-6 namespace logic: Uniswap proposed 25
+  eip155 chains (incl. mainnet and Sepolia) and 21 methods; the sheet
+  showed "Will connect on Ethereum Sepolia (test network)", "Will
+  connect account Account 1 (0x772e…F44F)", and listed the other 24
+  chains as offered but not included. The settled session is
+  eip155:11155111 with 4 methods (now incl. wallet_switchEthereumChain;
+  the phase-5 session had 3 and was disconnected for this retest).
+- Network switching: Uniswap never sent wallet_switchEthereumChain for
+  chains outside the approved namespace (toggling its testnet mode and
+  picking Unichain Sepolia both produced a dApp-side "not supported"
+  with no request reaching the wallet). The dApp pre-filters by session
+  namespace, so the wallet's own switch-decline path stays covered by
+  check-wc only.
+- Wrong account: with Account 2 active, a Uniswap swap was declined
+  automatically with no approval sheet, notice: "Declined
+  eth_sendTransaction from Uniswap: This connection belongs to Account 1
+  (0x772e…F44F), but Account 2 (0xb699…81fE) is active…".
+- Paused session: with Account 1 active but the wallet in mainnet mode,
+  a Uniswap swap was declined automatically, notice: "…This dApp asked
+  for Ethereum Sepolia (test network); the wallet is in mainnet mode.
+  Turn on Sepolia test mode in Settings → Developer to use this
+  connection." Uniswap renders both declines as a generic "Swap failed
+  — try adjusting slippage" (dApp-side wording, outside our control).
+The wallet was returned to Account 1 in Sepolia test mode afterwards.
+
 Still pending (needs further dApp-triggered requests): the lock hold, queued
 requests, the paused-session and switch-chain declines, and the
 wrong-account decline after switching to Account 2. Fiat display could
