@@ -52,7 +52,7 @@ async function sourceForEndpoint(endpoint: NetworkEndpoint): Promise<HistorySour
     endpoint.network.kind === 'evm-jsonrpc'
       ? (await getIndexerConfig(endpoint.network.chainId)).url
       : null;
-  return historySourceFor(endpoint.network.kind, endpoint.url, indexerUrl);
+  return historySourceFor(endpoint.network.kind, endpoint.url, indexerUrl, endpoint.headers);
 }
 
 export function useHistory(chainId: string, address: string): HistoryHook {

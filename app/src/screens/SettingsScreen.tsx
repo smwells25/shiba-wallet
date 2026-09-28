@@ -33,6 +33,13 @@ import {
   type IndexerConfig,
 } from '../wallet/indexer';
 import { clearSwapApiKey, getSwapConfig, setSwapApiKey, type SwapConfig } from '../wallet/swap';
+import {
+  BLOCKBOOK_API_KEY_HEADER,
+  clearBlockbookConfig,
+  getBlockbookConfig,
+  setBlockbookEndpoint,
+  type BlockbookConfig,
+} from '../wallet/blockbook';
 import { EVM_CHAIN_ID } from '../wallet/send';
 
 /**
@@ -119,6 +126,164 @@ function EndpointRow({
             <Text style={[styles.endpointNote, { color: theme.textMuted }]}>{network.note}</Text>
           ) : null}
           <Button title="Edit" variant="secondary" onPress={beginEdit} />
+        </View>
+      )}
+    </View>
+  );
+}
+
+/**
+ * The endpoint row for a Blockbook-served chain (Dogecoin): base URL plus
+ * an optional API key, saved together behind mandatory verification — the
+ * save button runs a live UTXO query for the wallet's own address through
+ * the exact request the engine's transport makes, and nothing persists
+ * unless it answers with the Blockbook array shape
+ * (../wallet/blockbook.ts refuses otherwise). The API key is stored in
+ * AsyncStorage on this device only and is sent solely to the configured
+ * host, as the api-key request header (BLOCKBOOK_API_KEY_HEADER).
+ */
+function BlockbookRow({
+  endpoint,
+  walletAddress,
+  onChanged,
+}: {
+  endpoint: NetworkEndpoint;
+  walletAddress: string | null;
+  onChanged: () => void;
+}) {
+  const theme = useTheme();
+  const { network } = endpoint;
+  const [config, setConfig] = useState<BlockbookConfig | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [urlDraft, setUrlDraft] = useState('');
+  const [keyDraft, setKeyDraft] = useState('');
+  const [verifying, setVerifying] = useState(false);
+
+  const reload = useCallback(() => {
+    getBlockbookConfig(network.chainId).then(setConfig, () => setConfig(null));
+  }, [network.chainId]);
+
+  useEffect(reload, [reload]);
+
+  const beginEdit = () => {
+    setUrlDraft(config?.url ?? '');
+    setKeyDraft(config?.apiKey ?? '');
+    setEditing(true);
+  };
+
+  const save = async () => {
+    setVerifying(true);
+    try {
+      if (!walletAddress) {
+        throw new Error('No wallet address is available to verify the endpoint with.');
+      }
+      await setBlockbookEndpoint(network.chainId, urlDraft, keyDraft, walletAddress);
+      setEditing(false);
+      reload();
+      onChanged();
+    } catch (e) {
+      Alert.alert(
+        'Not saved — verification failed',
+        e instanceof Error ? e.message : 'Verification failed.',
+      );
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  const clear = async () => {
+    await clearBlockbookConfig(network.chainId);
+    setEditing(false);
+    reload();
+    onChanged();
+  };
+
+  return (
+    <View style={[styles.endpointRow, { backgroundColor: theme.card, borderColor: theme.border }]}>
+      <View style={styles.endpointHeader}>
+        <Text style={[styles.endpointLabel, { color: theme.text }]}>{network.label}</Text>
+        <Text style={[styles.endpointTag, { color: theme.textMuted }]}>
+          {config?.url ? 'blockbook' : 'not set'}
+        </Text>
+      </View>
+      {editing ? (
+        <View style={styles.endpointEditor}>
+          <Text style={[styles.aaFieldLabel, { color: theme.textMuted }]}>Blockbook base URL</Text>
+          <TextInput
+            value={urlDraft}
+            onChangeText={setUrlDraft}
+            placeholder="https://…"
+            placeholderTextColor={theme.textMuted}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="url"
+            style={[
+              styles.endpointInput,
+              { color: theme.text, borderColor: theme.border, backgroundColor: theme.background },
+            ]}
+          />
+          <Text style={[styles.aaFieldLabel, { color: theme.textMuted }]}>
+            API key (optional)
+          </Text>
+          <TextInput
+            value={keyDraft}
+            onChangeText={setKeyDraft}
+            placeholder="Provider API key, if required"
+            placeholderTextColor={theme.textMuted}
+            autoCapitalize="none"
+            autoCorrect={false}
+            style={[
+              styles.endpointInput,
+              { color: theme.text, borderColor: theme.border, backgroundColor: theme.background },
+            ]}
+          />
+          <Text style={[styles.endpointNote, { color: theme.textMuted }]}>
+            The key is stored only on this device and sent only to this
+            host, as the "{BLOCKBOOK_API_KEY_HEADER}" request header (the
+            header NOWNodes uses). Saving verifies the endpoint first with
+            a UTXO query for your own {network.symbol} address.
+          </Text>
+          {verifying ? (
+            <Text style={[styles.aaStatus, { color: theme.textMuted }]}>
+              Verifying before saving…
+            </Text>
+          ) : (
+            <View style={styles.endpointButtons}>
+              <Button title="Verify & save" onPress={() => void save()} style={styles.endpointButton} />
+              <Button
+                title="Cancel"
+                variant="secondary"
+                onPress={() => setEditing(false)}
+                style={styles.endpointButton}
+              />
+            </View>
+          )}
+        </View>
+      ) : (
+        <View style={styles.endpointEditor}>
+          <Text style={[styles.endpointUrl, { color: theme.textMuted }]} numberOfLines={2}>
+            {config?.url ?? 'Not configured'}
+          </Text>
+          {config?.url ? (
+            <Text style={[styles.aaVerified, { color: theme.success }]}>
+              Verified ✓ — /api/v2/utxo answered for your address (checked{' '}
+              {config.verifiedAt ? config.verifiedAt.slice(0, 10) : 'unknown date'}).{' '}
+              {config.apiKey ? 'API key set.' : 'No API key.'}
+            </Text>
+          ) : network.note ? (
+            <Text style={[styles.endpointNote, { color: theme.textMuted }]}>{network.note}</Text>
+          ) : null}
+          <View style={styles.endpointButtons}>
+            <Button title="Edit" variant="secondary" onPress={beginEdit} style={styles.endpointButton} />
+            {config?.url ? (
+              <Button
+                title="Clear"
+                variant="secondary"
+                onPress={() => void clear()}
+                style={styles.endpointButton}
+              />
+            ) : null}
+          </View>
         </View>
       )}
     </View>
@@ -624,17 +789,31 @@ export function SettingsScreen({ navigation }: Props) {
       <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: theme.text }]}>Network endpoints</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          Where balances are fetched from and, later, where transactions are
-          broadcast. Endpoints are public configuration — no keys or secrets.
-          Balances refresh with the new endpoint on the next pull-to-refresh.
+          Where balances are fetched from and where transactions are
+          broadcast. Endpoint URLs are public configuration; Dogecoin's
+          Blockbook endpoint may additionally need a provider API key,
+          which is stored only on this device and sent only to that host.
+          Balances refresh with the new endpoint on the next
+          pull-to-refresh.
         </Text>
-        {endpoints.map((endpoint) => (
-          <EndpointRow
-            key={endpoint.network.chainId}
-            endpoint={endpoint}
-            onChanged={reloadEndpoints}
-          />
-        ))}
+        {endpoints.map((endpoint) =>
+          endpoint.network.kind === 'blockbook' ? (
+            <BlockbookRow
+              key={endpoint.network.chainId}
+              endpoint={endpoint}
+              walletAddress={
+                accounts.find((a) => a.chainId === endpoint.forChainId)?.address ?? null
+              }
+              onChanged={reloadEndpoints}
+            />
+          ) : (
+            <EndpointRow
+              key={endpoint.network.chainId}
+              endpoint={endpoint}
+              onChanged={reloadEndpoints}
+            />
+          ),
+        )}
       </View>
 
       <View style={styles.section}>

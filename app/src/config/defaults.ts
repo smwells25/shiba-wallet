@@ -17,8 +17,15 @@ import { EVM_SEPOLIA } from './evm-chain.ts';
  * packages accept any injected transport URL.
  */
 
-/** Which engine client speaks to the endpoint. */
-export type NetworkKind = 'evm-jsonrpc' | 'esplora' | 'solana-jsonrpc';
+/**
+ * Which engine client speaks to the endpoint. 'blockbook' is a UTXO chain
+ * served by a Trezor Blockbook instance (chains-utxo blockbookTransport /
+ * blockbookHistoryProvider) instead of an Esplora one; its endpoint is
+ * configured in src/wallet/blockbook.ts (base URL + optional API key)
+ * rather than the plain URL-override map in ./networks.ts, because hosted
+ * Blockbook providers (NOWNodes) authenticate with an api-key header.
+ */
+export type NetworkKind = 'evm-jsonrpc' | 'esplora' | 'solana-jsonrpc' | 'blockbook';
 
 export interface NetworkDefault {
   /** CAIP-2 chain id, matching the core ChainKeyProvider's chainId. */
@@ -72,22 +79,24 @@ export const DEFAULT_NETWORKS: NetworkDefault[] = [
   {
     chainId: 'bip122:1a91e3dace36e2be3bf030a65679fe82',
     label: 'Dogecoin',
-    kind: 'esplora',
-    // No public Esplora-compatible Dogecoin API could be verified on
-    // 2026-09-27: dogechain.info and BlockCypher expose their own custom
-    // (non-Esplora) APIs, and Trezor's doge Blockbook instances speak the
-    // Blockbook API and sit behind a browser check. Rather than invent an
-    // adapter for an unverified API, the default is null and the Home
-    // screen shows a clean "unavailable" state. A self-hosted Esplora
-    // instance (github.com/Blockstream/esplora) pointed at a Dogecoin node,
-    // or any Esplora-compatible service, can be configured in Settings.
+    kind: 'blockbook',
+    // No public keyless Dogecoin API could be verified (2026-09-27:
+    // dogechain.info and BlockCypher expose custom non-standard APIs, and
+    // Trezor's public doge Blockbook sits behind a browser check), so the
+    // default stays null and the UI shows a clean "unavailable" state.
+    // Dogecoin's de-facto indexer API is Trezor's Blockbook (the engine's
+    // blockbookTransport was verified live against NOWNodes' hosted
+    // instances on 2026-09-27); the user configures a Blockbook base URL
+    // plus an optional API key in Settings (src/wallet/blockbook.ts) —
+    // hosted providers hand out per-user keys, which are runtime
+    // configuration, never shipped defaults.
     defaultUrl: null,
     decimals: 8,
     symbol: 'DOGE',
     note:
-      'No public Esplora-compatible Dogecoin API is known. Configure a ' +
-      'self-hosted or third-party Esplora-compatible endpoint to see your ' +
-      'DOGE balance.',
+      'No public keyless Dogecoin API is known. Configure a Blockbook ' +
+      'endpoint (base URL plus an API key if your provider requires one, ' +
+      'e.g. a NOWNodes Dogecoin Blockbook) in Settings to use DOGE.',
   },
   {
     chainId: 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp',

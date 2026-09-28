@@ -1,7 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { NetworkDefault } from './defaults';
-import { resolveActiveNetworks } from './defaults';
+import { networkDefaultFor, resolveActiveNetworks } from './defaults';
 import { loadPrefs } from './prefs';
+import { blockbookHeaders, getBlockbookConfig } from '../wallet/blockbook';
 
 /**
  * Per-chain RPC/REST endpoint configuration: verified public defaults (see
@@ -62,6 +63,13 @@ export interface NetworkEndpoint {
   url: string | null;
   /** True when the URL comes from a user override. */
   isOverride: boolean;
+  /**
+   * Extra request headers for the endpoint. Only 'blockbook' chains carry
+   * any: the configured API key as the api-key header (see
+   * ../wallet/blockbook.ts). Passed through to the engine transports by
+   * balances/history/send callers; absent for every other kind.
+   */
+  headers?: Record<string, string>;
 }
 
 /**
@@ -77,17 +85,34 @@ export async function getEndpoint(chainId: string): Promise<NetworkEndpoint | un
 /** Resolves every chain's effective endpoint (Settings list, Home refresh). */
 export async function getAllEndpoints(): Promise<NetworkEndpoint[]> {
   const [overrides, prefs] = await Promise.all([loadOverrides(), loadPrefs()]);
-  return resolveActiveNetworks(prefs.sepolia).map(({ slot, network }) => {
-    // Keyed by the ACTIVE chain id: mainnet and Sepolia overrides live
-    // under different keys and never mix.
-    const override = overrides[network.chainId];
-    return {
-      forChainId: slot,
-      network,
-      url: override ?? network.defaultUrl,
-      isOverride: override !== undefined,
-    };
-  });
+  return Promise.all(
+    resolveActiveNetworks(prefs.sepolia).map(async ({ slot, network }) => {
+      if (network.kind === 'blockbook') {
+        // Blockbook chains (Dogecoin) resolve from their own verified
+        // config store (URL + optional API key, ../wallet/blockbook.ts),
+        // not the plain URL-override map: a stored URL there passed the
+        // save-time UTXO-query verification by construction.
+        const config = await getBlockbookConfig(network.chainId);
+        const headers = blockbookHeaders(config.apiKey);
+        return {
+          forChainId: slot,
+          network,
+          url: config.url,
+          isOverride: config.url !== null,
+          ...(headers ? { headers } : {}),
+        };
+      }
+      // Keyed by the ACTIVE chain id: mainnet and Sepolia overrides live
+      // under different keys and never mix.
+      const override = overrides[network.chainId];
+      return {
+        forChainId: slot,
+        network,
+        url: override ?? network.defaultUrl,
+        isOverride: override !== undefined,
+      };
+    }),
+  );
 }
 
 /**
@@ -95,6 +120,12 @@ export async function getAllEndpoints(): Promise<NetworkEndpoint[]> {
  * surface the message; only http(s) URLs make sense for these transports.
  */
 export async function setEndpointOverride(chainId: string, url: string): Promise<void> {
+  if (networkDefaultFor(chainId)?.kind === 'blockbook') {
+    // Blockbook chains are configured (URL + API key, with save-time
+    // verification) through ../wallet/blockbook.ts; an override written
+    // here would be silently ignored by getAllEndpoints, so refuse loudly.
+    throw new Error('This chain uses a Blockbook endpoint; configure it in its own section.');
+  }
   const trimmed = url.trim().replace(/\/+$/, '');
   if (!/^https?:\/\/.+/.test(trimmed)) {
     throw new Error('Endpoint must be an http(s):// URL');

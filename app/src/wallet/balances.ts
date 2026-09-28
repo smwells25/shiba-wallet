@@ -1,5 +1,5 @@
 import { httpTransport as evmHttpTransport } from '@shiba-wallet/chains-evm';
-import { esploraTransport } from '@shiba-wallet/chains-utxo';
+import { blockbookTransport, esploraTransport } from '@shiba-wallet/chains-utxo';
 import { SolanaRpcClient, httpTransport as solanaHttpTransport } from '@shiba-wallet/chains-solana';
 import type { NetworkKind } from '../config/defaults';
 
@@ -36,6 +36,21 @@ async function fetchUtxoBalance(url: string, address: string): Promise<bigint> {
   return utxos.reduce((sum, u) => sum + u.value, 0n);
 }
 
+/**
+ * Same UTXO-sum balance through chains-utxo's Blockbook transport
+ * (GET /api/v2/utxo/{address} — Dogecoin's endpoint kind; see
+ * config/defaults.ts). `headers` carries the configured API key as the
+ * api-key header (wallet/blockbook.ts) for hosted providers like NOWNodes.
+ */
+async function fetchBlockbookBalance(
+  url: string,
+  address: string,
+  headers?: Record<string, string>,
+): Promise<bigint> {
+  const utxos = await blockbookTransport(url, headers ? { headers } : {}).getUtxos(address);
+  return utxos.reduce((sum, u) => sum + u.value, 0n);
+}
+
 /** Lamport balance via chains-solana's SolanaRpcClient.getBalance. */
 async function fetchSolanaBalance(url: string, address: string): Promise<bigint> {
   const client = new SolanaRpcClient(solanaHttpTransport(url));
@@ -48,11 +63,14 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
  * Fetches one chain's native balance in base units (wei/sat/lamports).
  * Retries once after a short delay: public endpoints flake, and a single
  * retry absorbs most transient failures without hammering anyone.
+ * `headers` is only meaningful for 'blockbook' endpoints (the API key
+ * header resolved by config/networks.ts); other kinds ignore it.
  */
 export async function fetchNativeBalance(
   kind: NetworkKind,
   url: string,
   address: string,
+  headers?: Record<string, string>,
   retryDelayMs = 750,
 ): Promise<bigint> {
   const attempt = (): Promise<bigint> => {
@@ -61,6 +79,8 @@ export async function fetchNativeBalance(
         return fetchEvmBalance(url, address);
       case 'esplora':
         return fetchUtxoBalance(url, address);
+      case 'blockbook':
+        return fetchBlockbookBalance(url, address, headers);
       case 'solana-jsonrpc':
         return fetchSolanaBalance(url, address);
     }

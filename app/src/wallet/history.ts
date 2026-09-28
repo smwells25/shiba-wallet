@@ -3,7 +3,7 @@ import {
   httpTransport as evmHttpTransport,
   indexerHistoryProvider,
 } from '@shiba-wallet/chains-evm';
-import { esploraHistoryProvider } from '@shiba-wallet/chains-utxo';
+import { blockbookHistoryProvider, esploraHistoryProvider } from '@shiba-wallet/chains-utxo';
 import {
   httpTransport as solanaHttpTransport,
   solanaHistoryProvider,
@@ -65,6 +65,11 @@ const NO_ENDPOINT_NOTE =
   'No endpoint is configured for this chain, so its history cannot be ' +
   'fetched. Configure one in Settings.';
 
+const NO_BLOCKBOOK_NOTE =
+  'No Blockbook endpoint is configured for this chain, so its history ' +
+  'cannot be fetched. Configure the base URL (plus an API key if your ' +
+  'provider requires one) under Settings → Network endpoints.';
+
 /**
  * Resolves the history source for one chain from its protocol family and
  * effective endpoint URL (override or default, as resolved by
@@ -72,11 +77,14 @@ const NO_ENDPOINT_NOTE =
  * configured history-indexer URL (from ./indexer.ts — a URL there passed
  * save-time verification by construction); without one, EVM history stays
  * honestly unavailable, because the regular RPC endpoint cannot serve it.
+ * `headers` is only meaningful for 'blockbook' endpoints: the configured
+ * API key as the api-key header, resolved by config/networks.ts.
  */
 export function historySourceFor(
   kind: NetworkKind,
   url: string | null,
   evmIndexerUrl: string | null = null,
+  headers?: Record<string, string>,
 ): HistorySource {
   switch (kind) {
     case 'evm-jsonrpc':
@@ -88,11 +96,18 @@ export function historySourceFor(
         provider: indexerHistoryProvider(evmHttpTransport(evmIndexerUrl)),
       };
     case 'esplora':
-      // Bitcoin by default; Dogecoin once the user configures an endpoint
-      // (its default URL is null because no public Esplora-compatible
-      // Dogecoin API has been verified — see src/config/defaults.ts).
+      // Bitcoin (Blockstream's public Esplora by default).
       if (!url) return { status: 'unavailable', note: NO_ENDPOINT_NOTE };
       return { status: 'available', provider: esploraHistoryProvider(url) };
+    case 'blockbook':
+      // Dogecoin, once the user configures a Blockbook endpoint in
+      // Settings (default URL is null — see src/config/defaults.ts). The
+      // engine's provider paginates with numeric Blockbook pages.
+      if (!url) return { status: 'unavailable', note: NO_BLOCKBOOK_NOTE };
+      return {
+        status: 'available',
+        provider: blockbookHistoryProvider(url, headers ? { headers } : {}),
+      };
     case 'solana-jsonrpc':
       if (!url) return { status: 'unavailable', note: NO_ENDPOINT_NOTE };
       return {

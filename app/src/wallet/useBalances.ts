@@ -71,6 +71,7 @@ export function useBalances(accounts: ChainAccount[]): BalancesHook {
           endpoint.network.kind,
           endpoint.url,
           account.address,
+          endpoint.headers,
         );
         if (generation.current === gen) {
           setChainState(account.chainId, {

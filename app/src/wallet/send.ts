@@ -14,6 +14,7 @@ import {
   BITCOIN,
   DOGECOIN,
   addressToScriptPubKey,
+  blockbookTransport,
   buildTransfer,
   dustThreshold,
   esploraTransport,
@@ -22,6 +23,7 @@ import {
   signAndBroadcast,
   type BuiltTransfer,
   type UtxoNetwork,
+  type UtxoTransport,
   type Utxo,
 } from '@shiba-wallet/chains-utxo';
 import {
@@ -34,6 +36,10 @@ import {
   type CompiledMessage,
 } from '@shiba-wallet/chains-solana';
 import { base58, base64 } from '@scure/base';
+// Explicit .ts extension: this module is loaded directly by Node scripts
+// under type stripping, which resolves relative specifiers literally.
+// balances.ts imports nothing from this module, so the graph stays a DAG.
+import { parseUnits } from './balances.ts';
 
 /**
  * Send-flow engine glue: recipient validation, fee quoting, max-amount
@@ -331,10 +337,111 @@ export async function fetchUtxoFeeRate(
 }
 
 /**
+ * Which backend a UTXO chain's endpoint speaks, with its extra headers.
+ * 'esplora' (Bitcoin's default) keeps the historical behavior; 'blockbook'
+ * (Dogecoin — config/defaults.ts) selects the engine's blockbookTransport
+ * and Blockbook's estimatefee. `headers` carries the configured API key as
+ * the api-key header (wallet/blockbook.ts) and is sent only to `url`.
+ * `fetchFn` is injectable for the offline checks (scripts/check-doge.mjs).
+ */
+export interface UtxoBackendOptions {
+  backend?: 'esplora' | 'blockbook';
+  headers?: Record<string, string>;
+  fetchFn?: typeof fetch;
+}
+
+function utxoTransportFor(url: string, options: UtxoBackendOptions): UtxoTransport {
+  const extras = {
+    ...(options.headers ? { headers: options.headers } : {}),
+    ...(options.fetchFn ? { fetchFn: options.fetchFn } : {}),
+  };
+  return options.backend === 'blockbook'
+    ? blockbookTransport(url, extras)
+    : esploraTransport(url);
+}
+
+/**
+ * Dogecoin fee-rate floor: 1000 sat/vB == 0.01 DOGE/kB, the same
+ * conservative norm scripts/testnet/smoke.mjs pays (Dogecoin Core's
+ * default relay minimum is 0.001 DOGE/kB; 0.01 DOGE/kB is the
+ * long-standing recommended rate wallets pay for reliable relay and
+ * inclusion). The live Blockbook estimate for a 6-block target sat almost
+ * exactly on this floor (0.01002934 DOGE/kB on 2026-09-28), so the floor
+ * only bites when the backend's estimator reports an implausibly low rate.
+ */
+const BLOCKBOOK_MIN_FEE_RATE_SAT_PER_VB = 1000;
+
+/**
+ * Confirmation target for Blockbook fee estimates: 6 blocks ≈ 6 minutes at
+ * Dogecoin's 1-minute block interval. Deliberately not the fastest target:
+ * the live probe showed the 2-block estimate spiking ~50x (0.507 DOGE/kB)
+ * while the 6-block estimate stayed at the 0.01 DOGE/kB norm.
+ */
+const BLOCKBOOK_FEE_TARGET_BLOCKS = 6;
+
+/**
+ * Fee rate from Blockbook's GET /api/v2/estimatefee/{blocks} endpoint.
+ * Shape verified from the Blockbook v0.4.0 sources (docs/api.md documents
+ * the API; the handler is server/public.go apiEstimateFee, routed at
+ * api/v2/estimatefee/): the response is {"result": "<decimal string>"},
+ * produced by AmountToDecimalString over the backend's estimatesmartfee
+ * feerate — which Bitcoin/Dogecoin Core document as coin units per
+ * kilobyte (BTC/kvB) — so `result` is COIN PER KILOBYTE as an exact
+ * decimal string (strings because Dogecoin amounts overflow doubles).
+ * Verified live 2026-09-28 against a Dogecoin-mainnet Blockbook:
+ * /api/v2/estimatefee/6 answered {"result":"0.01002934"}.
+ *
+ * Conversion, exact bigint end to end:
+ *   sat/kB  = parseUnits(result, 8)        (10^8 base units per coin)
+ *   sat/vB  = ceil(sat_per_kB / 1000)      (1 kB = 1000 bytes; Dogecoin is
+ *             pre-segwit legacy, so vsize == size and per-byte == per-vB)
+ * rounded UP so the paid rate is never below the estimate, then floored at
+ * BLOCKBOOK_MIN_FEE_RATE_SAT_PER_VB. The result fits comfortably in a
+ * number (even the spiked live estimate was ~50728 sat/vB).
+ */
+export async function fetchBlockbookFeeRate(
+  url: string,
+  options: Omit<UtxoBackendOptions, 'backend'> = {},
+): Promise<{ feeRate: number; target: number }> {
+  const base = url.replace(/\/+$/, '');
+  const fetchFn = options.fetchFn ?? fetch;
+  const target = BLOCKBOOK_FEE_TARGET_BLOCKS;
+  const response = await fetchFn(`${base}/api/v2/estimatefee/${target}`, {
+    ...(options.headers ? { headers: options.headers } : {}),
+  });
+  if (!response.ok) {
+    throw new Error(`Fee estimate fetch failed: HTTP ${response.status} from /api/v2/estimatefee`);
+  }
+  const body = (await response.json()) as { result?: unknown };
+  if (typeof body.result !== 'string') {
+    throw new Error('Endpoint returned no usable fee estimate (missing result string).');
+  }
+  let satPerKb: bigint;
+  try {
+    satPerKb = parseUnits(body.result, 8);
+  } catch {
+    throw new Error(`Endpoint returned an unusable fee estimate: "${body.result}"`);
+  }
+  const satPerVb = Number((satPerKb + 999n) / 1000n);
+  return { feeRate: Math.max(BLOCKBOOK_MIN_FEE_RATE_SAT_PER_VB, satPerVb), target };
+}
+
+function fetchFeeRateFor(
+  url: string,
+  options: UtxoBackendOptions,
+): Promise<{ feeRate: number; target: number }> {
+  return options.backend === 'blockbook'
+    ? fetchBlockbookFeeRate(url, { headers: options.headers, fetchFn: options.fetchFn })
+    : fetchUtxoFeeRate(url, options.fetchFn ?? fetch);
+}
+
+/**
  * UTXO quote: fetches the sender's UTXOs and a fee rate, then runs the
  * engine's buildTransfer (coin selection + dust rules) to get the exact
  * fee the signed transaction will pay. The BuiltTransfer is kept in the
  * quote and signed as-is at confirm time, so the fee shown is the fee paid.
+ * `options` selects the endpoint's backend (Esplora by default; Blockbook
+ * for Dogecoin) — see UtxoBackendOptions.
  */
 export async function prepareUtxoSend(
   url: string,
@@ -342,11 +449,12 @@ export async function prepareUtxoSend(
   fromAddress: string,
   to: string,
   amount: bigint,
+  options: UtxoBackendOptions = {},
 ): Promise<UtxoSendQuote> {
-  const transport = esploraTransport(url);
+  const transport = utxoTransportFor(url, options);
   const [utxos, { feeRate, target }] = await Promise.all([
     transport.getUtxos(fromAddress),
-    fetchUtxoFeeRate(url),
+    fetchFeeRateFor(url, options),
   ]);
   const balance = utxos.reduce((sum, u) => sum + u.value, 0n);
   // The engine dust-checks the change output inside coin selection; the
@@ -387,11 +495,12 @@ export async function maxUtxoSend(
   network: UtxoNetwork,
   fromAddress: string,
   to: string,
+  options: UtxoBackendOptions = {},
 ): Promise<{ amount: bigint; utxos: Utxo[] }> {
-  const transport = esploraTransport(url);
+  const transport = utxoTransportFor(url, options);
   const [utxos, { feeRate }] = await Promise.all([
     transport.getUtxos(fromAddress),
-    fetchUtxoFeeRate(url),
+    fetchFeeRateFor(url, options),
   ]);
   if (utxos.length === 0) throw new Error('No spendable coins on this address.');
   const total = utxos.reduce((sum, u) => sum + u.value, 0n);
@@ -541,19 +650,21 @@ export async function sendEvm(
 }
 
 /**
- * Signs the quoted BuiltTransfer and broadcasts it via the Esplora
- * transport. chains-utxo cross-checks the backend's txid against the
- * locally computed one. Explorer link only for Bitcoin: no Dogecoin
- * explorer has been verified for this wallet yet, so the txid is shown
- * without a link there.
+ * Signs the quoted BuiltTransfer and broadcasts it via the endpoint's
+ * transport (Esplora by default, Blockbook for Dogecoin — same backend
+ * `options` as the quote). chains-utxo cross-checks the backend's txid
+ * against the locally computed one. Explorer link only for Bitcoin: no
+ * Dogecoin explorer has been verified for this wallet yet, so the txid is
+ * shown without a link there.
  */
 export async function sendUtxo(
   url: string,
   chainId: string,
   signer: DerivedAccount,
   quote: UtxoSendQuote,
+  options: UtxoBackendOptions = {},
 ): Promise<SendResult> {
-  const txid = await signAndBroadcast(quote.built, signer, esploraTransport(url));
+  const txid = await signAndBroadcast(quote.built, signer, utxoTransportFor(url, options));
   const explorerUrl =
     chainId === BITCOIN_CHAIN_ID ? `https://blockstream.info/tx/${txid}` : null;
   return { txid, explorerUrl };

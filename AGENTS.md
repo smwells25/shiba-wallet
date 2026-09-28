@@ -890,9 +890,11 @@ to avoid app-file collisions between parallel agents.
    the AA flow showing "gas sponsored" vs self-paid, offline-verified
    with fakes; live once any paymaster endpoint is configured. Plus the
    AA-path Max button slice.
-3. Dogecoin completion in-app: Blockbook endpoint + API key
+3. ~~Dogecoin completion in-app: Blockbook endpoint + API key
    configuration (runtime only), wiring balances, send, and Activity for
-   DOGE through the engine's blockbookTransport/blockbookHistoryProvider.
+   DOGE through the engine's blockbookTransport/blockbookHistoryProvider~~
+   — DONE 2026-09-28 (see Phase 5 progress). No live DOGE broadcast was
+   made; the known-untested Dogecoin-broadcast remainder stands.
 4. Token-transfer history in Activity: wire the engine's
    getErc20Transfers (per tracked token, windowed) into the EVM Activity
    view alongside the indexer entries.
@@ -975,3 +977,71 @@ Wave 2 after wave 1 lands: items 2+4 (CTO app slices) and item 3
       ZEROX_KEY); live quotes light up as soon as a free key from
       dashboard.0x.org is saved in Settings → Swaps. No packages/*
       changes; send.ts unchanged.
+
+- [x] Item 3 — Dogecoin completion in-app via user-configured Blockbook
+      (2026-09-28): balances, sending and Activity all work for DOGE the
+      moment a Blockbook endpoint is saved in Settings; every state stays
+      honestly "unavailable" until then. Endpoint model: NetworkKind
+      gained 'blockbook' (app/src/config/defaults.ts; Dogecoin's kind,
+      default URL still null), resolved not from the plain URL-override
+      map but from a new config store app/src/wallet/blockbook.ts (base
+      URL + OPTIONAL API key in AsyncStorage under
+      shiba-wallet.blockbook.v1, keyed by CAIP-2; the key is sent only to
+      the configured host as the api-key request header —
+      BLOCKBOOK_API_KEY_HEADER constant, the header NOWNodes uses — and
+      setEndpointOverride now refuses blockbook chains loudly).
+      Verify-before-save (aa.ts discipline): saving runs a live GET
+      /api/v2/utxo/{the wallet's own DOGE address} — the exact request the
+      engine transport makes — and refuses to persist unless it answers
+      2xx with a JSON array, so configured == verified by construction;
+      Settings' Network endpoints section renders a dedicated Dogecoin
+      BlockbookRow (URL + key fields, Verify & save, verified-✓ status
+      with date, Clear). NetworkEndpoint gained an optional headers field
+      that networks.ts populates from the stored key and that balances
+      (fetchNativeBalance 'blockbook' case → blockbookTransport UTXO sum,
+      same retry/row discipline), history (historySourceFor 'blockbook'
+      case → blockbookHistoryProvider, numeric page cursors) and the send
+      flow all pass through. Sending: prepareUtxoSend / maxUtxoSend /
+      sendUtxo in app/src/wallet/send.ts take UtxoBackendOptions
+      ({ backend: 'esplora'|'blockbook', headers, fetchFn }; Bitcoin's
+      Esplora path is byte-for-byte the default) and SendScreen selects
+      the backend from the endpoint kind. Fees come from Blockbook's GET
+      /api/v2/estimatefee/{blocks}: the task brief cited docs/api.md
+      v0.4.0, but that file documents only the legacy v1 route, so the
+      shape was verified from the Blockbook v0.4.0 SOURCES instead
+      (server/public.go apiEstimateFee routed at api/v2/estimatefee/,
+      response {"result":"<decimal string>"} via AmountToDecimalString
+      over the backend estimatesmartfee feerate, which Bitcoin/Dogecoin
+      Core document as coin/kvB) — i.e. COIN PER KILOBYTE as an exact
+      decimal string — and confirmed live (Dogecoin mainnet, 2026-09-28:
+      /api/v2/estimatefee/6 → 0.01002934). Conversion is exact bigint:
+      sat/kB = parseUnits(result, 8), sat/vB = ceil(sat_per_kB / 1000)
+      (Dogecoin is pre-segwit, vsize == size), floored at 1000 sat/vB
+      (0.01 DOGE/kB — the smoke.mjs norm; the 6-block target is used
+      because the live 2-block estimate spikes ~50x). No explorer link is
+      invented for DOGE anywhere (send success and Activity rows stay
+      text-only, as before). Verified: app/scripts/check-doge.mjs 83/83 —
+      offline: store discipline incl. corrupt storage, all seven
+      verify-reject cases persist nothing, 12 fee-conversion cases pinning
+      the math above, full quote→sign→broadcast against a fake Blockbook
+      with the raw transaction independently decoded by bitcoinjs-lib
+      (outputs/change/fee/outpoints field by field, txid cross-check),
+      max-send total == balance, balance retry + history classification
+      and 2-page cursor pagination through the exact app glue; LIVE
+      (read-only, NOWNODES_KEY from git-ignored .dev-wallet/env, endpoint
+      masked in output): save-time verification passed against the real
+      host (and a wrong-key save was refused, persisting nothing), the
+      standard test mnemonic's DOGE address balance (0 DOGE) and 13
+      history entries fetched through the app glue, 2-page pagination at
+      pageSize 5 with zero overlap, live fee estimate 1003 sat/vB.
+      NO broadcast was made (the Dogecoin-broadcast remainder in "Known
+      untested remainder" stands). Regressions all green: test-units
+      45/45, check-aa 39/39, check-wc 83/83, check-token-send 37/37,
+      check-qr 31/31, check-tokens 27/27, check-devmode 69/69, check-swap
+      89/89, plus check-balances/check-history/check-indexer live runs;
+      tsc --noEmit clean; expo export --platform android bundles (6.3MB
+      Hermes) with the new strings confirmed in the bytecode (the
+      Settings-note string is UTF-16-stored because it contains "→", so
+      ASCII grep misses it; a UTF-16LE search finds it). No packages/*,
+      scripts/testnet/, aa.ts, swap.ts, walletconnect.ts or indexer.ts
+      changes.

@@ -279,8 +279,16 @@ export function SendScreen({ route, navigation }: Props) {
   const symbol = token ? token.symbol : isEvmKind ? evmChain.displaySymbol : account.symbol;
   // For displaying the ETH fee of a token send (EVM native decimals).
   const nativeDecimals = network?.decimals ?? 18;
-  const isUtxo = network?.kind === 'esplora';
+  const isUtxo = network?.kind === 'esplora' || network?.kind === 'blockbook';
   const utxoNetwork = route.params.chainId === BITCOIN_CHAIN_ID ? BITCOIN : DOGECOIN;
+  // Backend selection for the UTXO engine calls: Dogecoin's endpoint is a
+  // Blockbook instance (config/defaults.ts) whose optional API key rides
+  // along as the api-key header resolved by config/networks.ts; Bitcoin
+  // keeps the Esplora default.
+  const utxoOptions =
+    network?.kind === 'blockbook'
+      ? { backend: 'blockbook' as const, ...(endpoint?.headers ? { headers: endpoint.headers } : {}) }
+      : undefined;
   // The smart-account toggle appears only when both AA endpoints are
   // configured for this EVM chain — configured means verified, because the
   // Settings save path refuses anything that fails verification. Token
@@ -331,7 +339,13 @@ export function SendScreen({ route, navigation }: Props) {
         if (!validation?.ok) {
           throw new Error('Enter a valid recipient first — the max depends on it.');
         }
-        const swept = await maxUtxoSend(url, utxoNetwork, account.address, validation.normalized);
+        const swept = await maxUtxoSend(
+          url,
+          utxoNetwork,
+          account.address,
+          validation.normalized,
+          utxoOptions,
+        );
         max = swept.amount;
       }
       if (max <= 0n) throw new Error('Balance is too small to cover the network fee.');
@@ -403,7 +417,14 @@ export function SendScreen({ route, navigation }: Props) {
       } else if (network.kind === 'solana-jsonrpc') {
         next = await prepareSolSend(url, account.address, validation.normalized, amount);
       } else {
-        next = await prepareUtxoSend(url, utxoNetwork, account.address, validation.normalized, amount);
+        next = await prepareUtxoSend(
+          url,
+          utxoNetwork,
+          account.address,
+          validation.normalized,
+          amount,
+          utxoOptions,
+        );
       }
       setQuote(next);
       setOverrideSimulation(false);
@@ -466,7 +487,7 @@ export function SendScreen({ route, navigation }: Props) {
         if (quote.kind === 'erc20') return sendErc20(url, signer, quote);
         if (quote.kind === 'evm') return sendEvm(url, signer, quote, evmChain.explorerTxBase);
         if (quote.kind === 'sol') return sendSol(url, signer, quote);
-        return sendUtxo(url, route.params.chainId, signer, quote);
+        return sendUtxo(url, route.params.chainId, signer, quote, utxoOptions);
       });
       setResult(sent);
       setPhase('success');
