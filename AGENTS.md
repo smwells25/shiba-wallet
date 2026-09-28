@@ -1073,3 +1073,42 @@ Activity (indexer-enriched and logs-fallback), the Kernel-v3-first
 session-keys evaluation, and EAS device-build readiness. App
 verification stands at 538 offline script checks across ten suites;
 the engine at 187 tests.
+
+## Phase 6 plan (approved 2026-09-28): the depth phase
+
+1. Full asset-diff simulation (completes phase-2 task 6): an engine
+   provider over Alchemy's simulation namespace (verify the exact
+   method — alchemy_simulateAssetChanges — and response shapes from
+   docs first), configured like the history indexer (runtime URL, never
+   committed), surfaced on the EVM send/swap/WC confirm screens as
+   plain-language balance changes ("You send 0.1 ETH; you receive
+   ~3,412 USDC") alongside the existing eth_call gate, degrading
+   honestly when unconfigured.
+2. Prices + fiat display (Tier 1 features 44/89): a vendor-neutral
+   PriceProvider interface in a new @shiba-wallet/prices package with a
+   keyless CoinGecko adapter (verify current API docs + rate limits),
+   cached and rate-limit-respecting; app shows fiat values on Home rows
+   and confirm screens (secondary text, exact crypto stays primary),
+   fully respecting Hide amounts and degrading silently when
+   unavailable.
+3. Multi-account (Tier 1 feature 4): BIP-44 account-index switching in
+   the app (core derivation already supports the account parameter);
+   account list + add/rename in Settings, active account threaded
+   through balances/send/receive/activity/WC/AA; per-account AA
+   counterfactuals derive from each account's owner key (D1 holds per
+   account).
+4. Contacts (Tier 1 feature 73): per-chain named addresses,
+   engine-validated at save; send screens gain a contact picker and
+   show the name when a typed/scanned address matches; scanning an
+   unknown address offers save-as-contact; groundwork against address
+   poisoning (exact-match display only, no fuzzy matching ever).
+5. WalletConnect polish: a global session-request listener so approvals
+   surface as an overlay anywhere in the app (not only on the
+   Connections screen), and multi-chain namespaces offering both
+   mainnet and Sepolia scoped to the active-chain rule.
+6. Standing items as inputs appear: Dogecoin mainnet broadcast, live 0x
+   quotes, live paymaster sponsorship, EAS device build.
+
+Wave 1: item 1 (agent) + item 2's ENGINE package only (agent, no app
+files). Wave 2: item 2's app wiring + items 3–5 sequenced by file
+overlap. Subagents run on Opus per the Chairperson's credit directive.
