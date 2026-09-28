@@ -1,5 +1,6 @@
 import React from 'react';
 import { ScrollView, StyleSheet, Text } from 'react-native';
+import { usePreventScreenCapture } from 'expo-screen-capture';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation';
 import { Button, WarningBox, WordGrid, screenStyle } from '../components';
@@ -13,6 +14,10 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Backup'>;
  * passes the confirmation quiz) with the backup warning.
  */
 export function BackupScreen({ navigation }: Props) {
+  // The recovery phrase is on screen: block screenshots and screen
+  // recording while this screen is mounted (Android FLAG_SECURE; iOS
+  // best-effort per expo-screen-capture). Emulator-validation finding #3.
+  usePreventScreenCapture();
   const theme = useTheme();
   const { pendingMnemonic } = useWallet();
 

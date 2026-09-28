@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation';
+import { allowScreenCaptureAsync, preventScreenCaptureAsync } from 'expo-screen-capture';
 import { Button, WarningBox, WordGrid, screenStyle } from '../components';
 import {
   NetworkEndpoint,
@@ -413,6 +414,19 @@ export function SettingsScreen({ navigation }: Props) {
   const { sepolia, setSepolia, hideAmounts, setHideAmounts, autoLockMs, setAutoLockMs } =
     usePrefs();
   const [revealed, setRevealed] = useState<string | null>(null);
+
+  // Block screenshots while the revealed recovery phrase is on screen
+  // (and re-allow when it is hidden or the screen unmounts). Uses a
+  // dedicated key so other screens' guards are unaffected.
+  useEffect(() => {
+    if (revealed) {
+      preventScreenCaptureAsync('seed-reveal').catch(() => {});
+      return () => {
+        allowScreenCaptureAsync('seed-reveal').catch(() => {});
+      };
+    }
+    return undefined;
+  }, [revealed]);
   const [endpoints, setEndpoints] = useState<NetworkEndpoint[]>([]);
   const [wcProjectId, setWcProjectIdState] = useState<string | null>(null);
   // Auto-lock is only offered when a local-auth prompt would actually
@@ -693,8 +707,8 @@ export function SettingsScreen({ navigation }: Props) {
       <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: theme.text }]}>Tokens</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          Track ERC-20 token balances on the Home screen (balances only —
-          sending tokens is not supported yet).
+          Track ERC-20 tokens on the Home screen: balances, and sending
+          with the network fee paid in ETH.
         </Text>
         <Button
           title="Manage tokens"

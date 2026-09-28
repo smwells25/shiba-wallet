@@ -46,7 +46,11 @@ export function useBalances(accounts: ChainAccount[]): BalancesHook {
       setChainState(account.chainId, { status: 'loading' });
       try {
         const endpoints = await getAllEndpoints();
-        const endpoint = endpoints.find((e) => e.network.chainId === account.chainId);
+        // Accounts carry the stable SLOT id (e.g. 'eip155:1' even while
+        // Sepolia test mode swaps the network underneath), so the match
+        // must use forChainId — matching network.chainId broke EVM
+        // balances in test mode (emulator-validation finding #2).
+        const endpoint = endpoints.find((e) => e.forChainId === account.chainId);
         if (!endpoint) {
           setChainState(account.chainId, {
             status: 'unavailable',
