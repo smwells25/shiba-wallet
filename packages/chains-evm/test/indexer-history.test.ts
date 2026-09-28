@@ -292,3 +292,36 @@ describe('verifyTransfersEndpoint', () => {
     await expect(verifyTransfersEndpoint(transport, ME)).rejects.toThrow('malformed');
   });
 });
+
+describe('erc20 asset amounts', () => {
+  it('fills assetAmount/assetDecimals from rawContract for erc20 entries', async () => {
+    const transport: JsonRpcTransport = async (_m, params) => {
+      const filter = (params as [Record<string, unknown>])[0];
+      if (filter.toAddress) {
+        return {
+          transfers: [
+            {
+              hash: '0xtok', blockNum: '0x10', uniqueId: '0xtok:log:1',
+              category: 'erc20', from: '0x' + '22'.repeat(20),
+              to: '0x9858effd232b4033e47d90003d41ec34ecaeda94',
+              value: 1.5, asset: 'USDC',
+              rawContract: { value: '0x16e360', decimal: '0x6' },
+              metadata: { blockTimestamp: '2026-09-28T00:00:00.000Z' },
+            },
+          ],
+        };
+      }
+      return { transfers: [] };
+    };
+    const page = await indexerHistoryProvider(transport).getHistory(
+      '0x9858EfFD232B4033E47d90003D41EC34EcaEda94',
+    );
+    expect(page.entries[0]).toMatchObject({
+      assetSymbol: 'USDC',
+      assetAmount: 1_500_000n,
+      assetDecimals: 6,
+      direction: 'in',
+    });
+    expect(page.entries[0]!.amount).toBeUndefined();
+  });
+});

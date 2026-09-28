@@ -17,7 +17,7 @@ import { Theme, useTheme } from '../theme';
 import { networkDefaultFor } from '../config/defaults';
 import { maskAmount } from '../config/prefs';
 import { formatUnits } from '../wallet/balances';
-import { directionLabel, explorerTxUrl, formatTimestamp } from '../wallet/history';
+import { directionLabel, explorerTxUrl, timestampLabel } from '../wallet/history';
 import { EVM_CHAIN_ID } from '../wallet/send';
 import { useHistory } from '../wallet/useHistory';
 import { usePrefs } from '../wallet/PrefsContext';
@@ -74,17 +74,22 @@ function EntryRow({
   const theme = useTheme();
   const url = explorerTxUrl(chainId, entry.id, evmExplorerTxBase);
 
-  // Token entries (EVM indexer) carry the backend-reported asset symbol;
-  // this pass renders them amount-less (em-dash below), so the symbol is
-  // display-only and the chain's native decimals never touch them.
+  // Token entries carry the asset symbol; when the provider also knows
+  // the exact token amount and decimals (log data, indexer raw values),
+  // render it in the TOKEN's units — the chain's native decimals never
+  // touch non-native amounts. Otherwise fall back to the native amount
+  // or an em-dash.
   const rowSymbol = entry.assetSymbol ?? symbol;
   const sign = entry.direction === 'in' ? '+' : entry.direction === 'out' ? '−' : '';
   const amountText =
-    entry.amount === undefined
-      ? '—'
-      : maskAmount(`${sign}${formatUnits(entry.amount, decimals)}`, hidden);
+    entry.assetAmount !== undefined && entry.assetDecimals !== undefined
+      ? maskAmount(`${sign}${formatUnits(entry.assetAmount, entry.assetDecimals)}`, hidden)
+      : entry.amount === undefined
+        ? '—'
+        : maskAmount(`${sign}${formatUnits(entry.amount, decimals)}`, hidden);
+  const hasAmount = entry.assetAmount !== undefined || entry.amount !== undefined;
   const amountColor =
-    entry.failed || entry.amount === undefined
+    entry.failed || !hasAmount
       ? theme.textMuted
       : entry.direction === 'in'
         ? theme.success
@@ -113,7 +118,7 @@ function EntryRow({
           {directionLabel(entry.direction)}
         </Text>
         <Text style={[styles.rowTime, { color: theme.textMuted }]}>
-          {formatTimestamp(entry.timestamp)}
+          {timestampLabel(entry)}
         </Text>
         {entry.fee !== undefined ? (
           <Text style={[styles.rowFee, { color: theme.textMuted }]}>
@@ -211,6 +216,9 @@ export function ActivityScreen({ navigation, route }: Props) {
 
   return (
     <View style={screenStyle(theme)}>
+      {state.note ? (
+        <Text style={[styles.note, { color: theme.textMuted }]}>{state.note}</Text>
+      ) : null}
       <FlatList
         data={state.entries}
         // uid distinguishes several entries born from one EVM transaction

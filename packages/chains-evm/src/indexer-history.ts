@@ -81,7 +81,7 @@ interface RawTransfer {
   category: string;
   uniqueId?: string;
   asset?: string | null;
-  rawContract?: { value?: string | null };
+  rawContract?: { value?: string | null; decimal?: string | null };
   metadata?: { blockTimestamp?: string };
 }
 
@@ -159,11 +159,26 @@ function mapTransfer(transfer: RawTransfer, me: string): HistoryEntry {
   }
 
   // Exact base-unit amount from rawContract.value only (see the precision
-  // note above); token categories carry no amount this pass.
+  // note above). Native categories fill `amount`; erc20 transfers fill
+  // assetAmount/assetDecimals instead (their own base units, decimals
+  // from rawContract.decimal), so renderers can show exact token values.
   let amount: bigint | undefined;
+  let assetAmount: bigint | undefined;
+  let assetDecimals: number | undefined;
   const rawValue = transfer.rawContract?.value;
-  if (NATIVE_CATEGORIES.has(transfer.category) && rawValue && HEX_VALUE.test(rawValue)) {
-    amount = BigInt(rawValue);
+  if (rawValue && HEX_VALUE.test(rawValue)) {
+    if (NATIVE_CATEGORIES.has(transfer.category)) {
+      amount = BigInt(rawValue);
+    } else if (transfer.category === 'erc20') {
+      const rawDecimals = transfer.rawContract?.decimal;
+      if (rawDecimals && HEX_VALUE.test(rawDecimals)) {
+        const parsed = Number(BigInt(rawDecimals));
+        if (Number.isInteger(parsed) && parsed >= 0 && parsed <= 77) {
+          assetAmount = BigInt(rawValue);
+          assetDecimals = parsed;
+        }
+      }
+    }
   }
 
   const assetSymbol =
@@ -182,6 +197,9 @@ function mapTransfer(transfer: RawTransfer, me: string): HistoryEntry {
     direction,
     ...(amount !== undefined ? { amount } : {}),
     ...(assetSymbol !== undefined ? { assetSymbol } : {}),
+    ...(assetAmount !== undefined && assetDecimals !== undefined
+      ? { assetAmount, assetDecimals }
+      : {}),
   };
 }
 

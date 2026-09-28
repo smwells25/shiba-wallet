@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { HistoryEntry } from '@shiba-wallet/core';
 import { getEndpoint, type NetworkEndpoint } from '../config/networks';
 import { historySourceFor, type HistorySource } from './history';
+import { listTokens } from './tokens';
+import type { TrackedTokenRef } from './token-history';
 import { getIndexerConfig } from './indexer';
 
 /**
@@ -25,6 +27,8 @@ export type HistoryState =
       loadingMore: boolean;
       /** A load-more failure; the entries already shown are kept. */
       loadMoreError: string | null;
+      /** Source-level caveat (e.g. the tracked-token logs fallback). */
+      note?: string;
     };
 
 export interface HistoryHook {
@@ -47,12 +51,36 @@ function errorMessage(e: unknown): string {
  * chains additionally consult the history-indexer config from
  * ./indexer.ts; a stored URL there passed save-time verification.
  */
-async function sourceForEndpoint(endpoint: NetworkEndpoint): Promise<HistorySource> {
-  const indexerUrl =
-    endpoint.network.kind === 'evm-jsonrpc'
-      ? (await getIndexerConfig(endpoint.network.chainId)).url
-      : null;
-  return historySourceFor(endpoint.network.kind, endpoint.url, indexerUrl, endpoint.headers);
+async function sourceForEndpoint(
+  endpoint: NetworkEndpoint,
+  walletAddress: string,
+): Promise<HistorySource> {
+  const isEvm = endpoint.network.kind === 'evm-jsonrpc';
+  const indexerUrl = isEvm ? (await getIndexerConfig(endpoint.network.chainId)).url : null;
+  // Tracked tokens power the logs fallback when no indexer is configured
+  // (mainnet only: tracked tokens are mainnet assets and are hidden in
+  // Sepolia test mode, so the fallback naturally stays mainnet-scoped).
+  let evmTokenLogs: { walletAddress: string; tokens: TrackedTokenRef[] } | undefined;
+  if (isEvm && !indexerUrl && endpoint.network.chainId === 'eip155:1') {
+    const tokens = await listTokens();
+    if (tokens.length > 0) {
+      evmTokenLogs = {
+        walletAddress,
+        tokens: tokens.map((t) => ({
+          address: t.assetId.reference,
+          symbol: t.symbol,
+          decimals: t.decimals,
+        })),
+      };
+    }
+  }
+  return historySourceFor(
+    endpoint.network.kind,
+    endpoint.url,
+    indexerUrl,
+    endpoint.headers,
+    evmTokenLogs,
+  );
 }
 
 export function useHistory(chainId: string, address: string): HistoryHook {
@@ -74,7 +102,7 @@ export function useHistory(chainId: string, address: string): HistoryHook {
         setState({ status: 'unavailable', note: 'No network configuration for this chain.' });
         return;
       }
-      const source = await sourceForEndpoint(endpoint);
+      const source = await sourceForEndpoint(endpoint, address);
       if (gen !== generation.current) return;
       if (source.status === 'unavailable') {
         setState({ status: 'unavailable', note: source.note });
@@ -88,6 +116,7 @@ export function useHistory(chainId: string, address: string): HistoryHook {
         nextCursor: page.nextCursor,
         loadingMore: false,
         loadMoreError: null,
+        ...(source.status === 'available' && source.note ? { note: source.note } : {}),
       });
     } catch (e) {
       if (gen === generation.current) {
@@ -113,7 +142,7 @@ export function useHistory(chainId: string, address: string): HistoryHook {
       const endpoint = await getEndpoint(chainId);
       if (gen !== generation.current) return;
       const source = endpoint
-        ? await sourceForEndpoint(endpoint)
+        ? await sourceForEndpoint(endpoint, address)
         : ({ status: 'unavailable', note: '' } as const);
       if (gen !== generation.current) return;
       if (source.status === 'unavailable') {

@@ -40,6 +40,14 @@ export interface HistoryEntry {
    * Display-only and backend-reported; absent for native-unit entries.
    */
   assetSymbol?: string;
+  /**
+   * Exact amount of the non-native asset in ITS OWN base units, with its
+   * decimals, when the provider knows them (log data, indexer raw
+   * values). `amount` stays reserved for the chain's native unit;
+   * renderers should prefer assetAmount/assetDecimals when present.
+   */
+  assetAmount?: bigint;
+  assetDecimals?: number;
 }
 
 export interface HistoryPage {

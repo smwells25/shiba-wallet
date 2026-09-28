@@ -9,6 +9,8 @@ import {
   solanaHistoryProvider,
 } from '@shiba-wallet/chains-solana';
 import type { NetworkKind } from '../config/defaults';
+import { tokenLogsHistoryProvider } from './token-history.ts';
+import type { TrackedTokenRef } from './token-history.ts';
 
 /**
  * Transaction-history engine glue: resolves the right HistoryProvider for a
@@ -44,7 +46,7 @@ const SOLANA_ENRICH_LIMIT = 8;
 
 /** Whether history can be fetched for a chain right now, and how. */
 export type HistorySource =
-  | { status: 'available'; provider: HistoryProvider }
+  | { status: 'available'; provider: HistoryProvider; note?: string }
   | { status: 'unavailable'; note: string };
 
 /**
@@ -60,6 +62,12 @@ export const EVM_HISTORY_NOTE =
   'JSON-RPC endpoint cannot list transactions by address. Paste an ' +
   'endpoint that serves the Transfers API (alchemy_getAssetTransfers) ' +
   'under Settings → Ethereum history indexer.';
+
+/** Shown above the list when the tracked-token logs fallback is active. */
+export const TOKEN_LOGS_NOTE =
+  'Showing tracked-token transfers from recent blocks (no indexer is ' +
+  'configured). Native ETH history needs an indexer endpoint — see ' +
+  'Settings → Ethereum history indexer.';
 
 const NO_ENDPOINT_NOTE =
   'No endpoint is configured for this chain, so its history cannot be ' +
@@ -85,16 +93,32 @@ export function historySourceFor(
   url: string | null,
   evmIndexerUrl: string | null = null,
   headers?: Record<string, string>,
+  evmTokenLogs?: { walletAddress: string; tokens: TrackedTokenRef[] },
 ): HistorySource {
   switch (kind) {
     case 'evm-jsonrpc':
-      // The RPC URL is deliberately unused here: history comes only from
-      // the dedicated indexer endpoint (see note on EVM_HISTORY_NOTE).
-      if (!evmIndexerUrl) return { status: 'unavailable', note: EVM_HISTORY_NOTE };
-      return {
-        status: 'available',
-        provider: indexerHistoryProvider(evmHttpTransport(evmIndexerUrl)),
-      };
+      // Preferred: the dedicated indexer endpoint (full history). Without
+      // one, fall back to tracked-token Transfer logs over the regular
+      // RPC when the user tracks tokens (phase 5, item 4) — clearly
+      // labeled partial history — else stay honestly unavailable.
+      if (evmIndexerUrl) {
+        return {
+          status: 'available',
+          provider: indexerHistoryProvider(evmHttpTransport(evmIndexerUrl)),
+        };
+      }
+      if (url && evmTokenLogs && evmTokenLogs.tokens.length > 0) {
+        return {
+          status: 'available',
+          provider: tokenLogsHistoryProvider({
+            rpcUrl: url,
+            walletAddress: evmTokenLogs.walletAddress,
+            tokens: evmTokenLogs.tokens,
+          }),
+          note: TOKEN_LOGS_NOTE,
+        };
+      }
+      return { status: 'unavailable', note: EVM_HISTORY_NOTE };
     case 'esplora':
       // Bitcoin (Blockstream's public Esplora by default).
       if (!url) return { status: 'unavailable', note: NO_ENDPOINT_NOTE };
@@ -164,6 +188,21 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
  * Date getters rather than toLocaleDateString so the output does not depend
  * on the runtime's Intl support (Hermes vs Node) and stays testable.
  */
+/**
+ * Renderer label for an entry's time: confirmed entries whose provider
+ * has no timestamps (log-based token history) show their block instead
+ * of a misleading "pending".
+ */
+export function timestampLabel(
+  entry: { timestamp: number | null; confirmed: boolean; blockHeight?: number },
+  nowMs: number = Date.now(),
+): string {
+  if (entry.timestamp === null && entry.confirmed && entry.blockHeight !== undefined) {
+    return `block ${entry.blockHeight}`;
+  }
+  return formatTimestamp(entry.timestamp, nowMs);
+}
+
 export function formatTimestamp(timestamp: number | null, nowMs: number = Date.now()): string {
   if (timestamp === null) return 'pending';
   const seconds = Math.floor(nowMs / 1000) - timestamp;

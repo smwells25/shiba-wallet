@@ -895,9 +895,18 @@ to avoid app-file collisions between parallel agents.
    DOGE through the engine's blockbookTransport/blockbookHistoryProvider~~
    — DONE 2026-09-28 (see Phase 5 progress). No live DOGE broadcast was
    made; the known-untested Dogecoin-broadcast remainder stands.
-4. Token-transfer history in Activity: wire the engine's
-   getErc20Transfers (per tracked token, windowed) into the EVM Activity
-   view alongside the indexer entries.
+4. ~~Token-transfer history in Activity~~ — DONE 2026-09-28 (CTO).
+   Core HistoryEntry gained additive assetAmount/assetDecimals; the
+   indexer provider now fills them for erc20 entries from
+   rawContract.value/decimal (exact base units); a new tracked-token
+   logs fallback (app/src/wallet/token-history.ts over the engine's
+   getErc20Transfers, 9k-block windows, bounded 8-window lookback,
+   cursor paging) serves EVM Activity when no indexer is configured,
+   labeled with an explicit partial-history note; confirmed
+   timestamp-less log entries render "block N" instead of pending; the
+   Activity renderer prefers exact token amounts in the token's own
+   decimals. check-token-history.mjs 17/17; chains-evm 72 tests; tsc,
+   related scripts, and expo export green.
 5. ERC-7579 modular-account evaluation (Tier 2 moat groundwork): a
    plain-English docs/SESSION_KEYS.md comparing candidate 7579
    implementations for session keys and spending policies per AA_STACK
