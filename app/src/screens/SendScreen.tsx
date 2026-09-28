@@ -40,6 +40,7 @@ import {
 } from '../wallet/send';
 import {
   createAaClient,
+  maxAaSend,
   getAaConfig,
   isAaConfigured,
   prepareAaSend,
@@ -305,15 +306,34 @@ export function SendScreen({ route, navigation }: Props) {
   };
 
   const onMax = async () => {
-    // Max is EOA/UTXO/SOL arithmetic; the experimental smart-account path
-    // has its own balance and bundler-estimated fee, so Max is disabled
-    // there rather than showing a number computed for the wrong account.
-    if (!url || aaActive) return;
+    if (!url) return;
     setMaxBusy(true);
     setFormError(null);
     try {
       let max: bigint;
-      if (token) {
+      if (aaActive && aaConfig?.bundlerUrl && aaConfig.factory) {
+        // AA Max (phase 5): full smart-account balance under sponsorship,
+        // else balance minus the worst-case fee of a zero-value probe.
+        if (!validation?.ok) {
+          throw new Error('Enter a valid recipient first — the max depends on it.');
+        }
+        const bundle = createAaClient({
+          nodeUrl: url,
+          bundlerUrl: aaConfig.bundlerUrl,
+          factory: aaConfig.factory,
+          chainId: BigInt(evmChain.chainIdDecimal),
+          ...(aaConfig.paymasterUrl
+            ? {
+                paymaster: {
+                  url: aaConfig.paymasterUrl,
+                  contextJson: aaConfig.paymasterContext,
+                },
+              }
+            : {}),
+        });
+        max = await maxAaSend(bundle, account.address, validation.normalized);
+        if (max <= 0n) throw new Error('The smart account balance cannot cover the network fee.');
+      } else if (token) {
         // Token max = the full token balance: the fee is paid in ETH, so
         // it never reduces the token amount. maxErc20Send refuses (with a
         // plain "Not enough ETH" error) when the ETH balance cannot cover
@@ -400,6 +420,16 @@ export function SendScreen({ route, navigation }: Props) {
           // Active chain id (11155111 in Sepolia test mode): prepareAaSend
           // verifies the node endpoint reports exactly this chain.
           chainId: BigInt(evmChain.chainIdDecimal),
+          // Verified ERC-7677 paymaster, when configured: gas becomes
+          // sponsored and the fee rows below say so.
+          ...(aaConfig.paymasterUrl
+            ? {
+                paymaster: {
+                  url: aaConfig.paymasterUrl,
+                  contextJson: aaConfig.paymasterContext,
+                },
+              }
+            : {}),
         });
         aaBundle.current = bundle;
         next = await prepareAaSend(bundle, account.address, validation.normalized, amount);
@@ -626,16 +656,19 @@ export function SendScreen({ route, navigation }: Props) {
           theme={theme}
         />
         <Row
-          label="Max network fee (bundler estimate)"
-          value={`${exact(quote.fee, decimals)} ${symbol}`}
+          label={quote.sponsored ? 'Network fee' : 'Max network fee (bundler estimate)'}
+          value={quote.sponsored ? 'Sponsored — you pay 0' : `${exact(quote.fee, decimals)} ${symbol}`}
           theme={theme}
         />
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          Worst case at {exact(quote.maxFeePerGas, 9)} gwei max fee ×{' '}
-          {(quote.callGasLimit + quote.verificationGasLimit + quote.preVerificationGas).toString()}{' '}
-          gas (bundler eth_estimateUserOperationGas). The smart account pays
-          its own gas from its own balance — no paymaster in this
-          experimental pass.
+          {quote.sponsored
+            ? 'An ERC-7677 paymaster sponsors this operation\u2019s gas: the ' +
+              'smart account pays only the amount. The paymaster may still ' +
+              'decline at send time; that shows up as a bundler error, not a charge.'
+            : `Worst case at ${exact(quote.maxFeePerGas, 9)} gwei max fee \u00d7 ` +
+              `${(quote.callGasLimit + quote.verificationGasLimit + quote.preVerificationGas).toString()} ` +
+              'gas (bundler eth_estimateUserOperationGas). The smart account pays ' +
+              'its own gas from its own balance.'}
         </Text>
         <Row
           label="Total (worst case)"
@@ -956,7 +989,7 @@ export function SendScreen({ route, navigation }: Props) {
           title={maxBusy ? '…' : 'Max'}
           variant="secondary"
           onPress={() => void onMax()}
-          disabled={!url || maxBusy || aaActive}
+          disabled={!url || maxBusy}
           style={styles.maxButton}
         />
       </View>

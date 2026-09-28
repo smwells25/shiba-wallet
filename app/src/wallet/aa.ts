@@ -58,6 +58,12 @@ export interface AaChainConfig {
   factoryImplementation: string | null;
   /** ISO timestamp of the successful on-chain factory verification. */
   factoryVerifiedAt: string | null;
+  /** ERC-7677 paymaster endpoint; null means the account pays its gas. */
+  paymasterUrl: string | null;
+  /** Opaque vendor context as a JSON string ('' stored as null). */
+  paymasterContext: string | null;
+  /** ISO timestamp of the successful pm_getPaymasterStubData probe. */
+  paymasterVerifiedAt: string | null;
 }
 
 const EMPTY_CONFIG: AaChainConfig = {
@@ -66,6 +72,9 @@ const EMPTY_CONFIG: AaChainConfig = {
   factory: null,
   factoryImplementation: null,
   factoryVerifiedAt: null,
+  paymasterUrl: null,
+  paymasterContext: null,
+  paymasterVerifiedAt: null,
 };
 
 type ConfigMap = Record<string, Partial<AaChainConfig>>;
@@ -94,12 +103,16 @@ function normalizeEntry(entry: Partial<AaChainConfig> | undefined): AaChainConfi
   const str = (v: unknown): string | null => (typeof v === 'string' && v !== '' ? v : null);
   const bundlerUrl = str(entry?.bundlerUrl);
   const factory = str(entry?.factory);
+  const paymasterUrl = str(entry?.paymasterUrl);
   return {
     bundlerUrl,
     bundlerVerifiedAt: bundlerUrl ? str(entry?.bundlerVerifiedAt) : null,
     factory,
     factoryImplementation: factory ? str(entry?.factoryImplementation) : null,
     factoryVerifiedAt: factory ? str(entry?.factoryVerifiedAt) : null,
+    paymasterUrl,
+    paymasterContext: paymasterUrl ? str(entry?.paymasterContext) : null,
+    paymasterVerifiedAt: paymasterUrl ? str(entry?.paymasterVerifiedAt) : null,
   };
 }
 
@@ -287,12 +300,114 @@ export async function clearAaFactory(
 // Client construction and the AA send path
 // ---------------------------------------------------------------------------
 
+/**
+ * Probes an ERC-7677 paymaster endpoint with a well-formed
+ * pm_getPaymasterStubData request for a dummy operation. ACCEPTED: a
+ * JSON-RPC result, or a STRUCTURED JSON-RPC error other than
+ * method-not-found — real paymasters commonly reject a dummy op with a
+ * policy error, which still proves the endpoint speaks the 7677
+ * namespace. REJECTED: transport failures, non-JSON, or -32601
+ * (method not found: not a paymaster endpoint).
+ */
+export async function verifyAaPaymaster(
+  paymaster: JsonRpcTransport,
+  chainId: bigint,
+  context: unknown,
+): Promise<void> {
+  const dummyOp = {
+    sender: '0x' + '11'.repeat(20),
+    nonce: '0x0',
+    callData: '0x',
+    callGasLimit: '0x0',
+    verificationGasLimit: '0x0',
+    preVerificationGas: '0x0',
+    maxFeePerGas: '0x0',
+    maxPriorityFeePerGas: '0x0',
+    signature: '0x' + '00'.repeat(65),
+  };
+  try {
+    await paymaster('pm_getPaymasterStubData', [
+      dummyOp,
+      ENTRYPOINT_V07,
+      '0x' + chainId.toString(16),
+      context ?? null,
+    ]);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    if (/-32601|method not found/i.test(message)) {
+      throw new Error(
+        'The endpoint answered but does not serve pm_getPaymasterStubData — not an ERC-7677 paymaster.',
+      );
+    }
+    if (/^RPC error /.test(message)) {
+      // Structured JSON-RPC error (e.g. a policy rejection of the dummy
+      // op): the endpoint speaks the namespace. Accept.
+      return;
+    }
+    throw new Error(`Paymaster endpoint unreachable or not JSON-RPC: ${message}`);
+  }
+}
+
+/**
+ * Saves the paymaster endpoint (and optional vendor context JSON) for one
+ * chain after the probe above. Throws, persisting nothing, on any failure
+ * — including context that is not valid JSON.
+ */
+export async function setAaPaymaster(
+  chainId: string,
+  url: string,
+  contextJson: string,
+  options: { store?: KeyValueStore; transportFor?: TransportFactory } = {},
+): Promise<void> {
+  const store = options.store ?? AsyncStorage;
+  const transportFor = options.transportFor ?? httpTransport;
+  const trimmed = url.trim().replace(/\/+$/, '');
+  if (!URL_PATTERN.test(trimmed)) {
+    throw new Error('Paymaster endpoint must be an http(s):// URL');
+  }
+  const contextTrimmed = contextJson.trim();
+  let context: unknown = null;
+  if (contextTrimmed !== '') {
+    try {
+      context = JSON.parse(contextTrimmed);
+    } catch {
+      throw new Error('Paymaster context must be valid JSON (or left empty).');
+    }
+  }
+  const numericChainId = BigInt(EVM_CHAIN_ID.split(':')[1]!);
+  await verifyAaPaymaster(transportFor(trimmed), numericChainId, context);
+  const map = await loadConfigMap(store);
+  map[chainId] = {
+    ...map[chainId],
+    paymasterUrl: trimmed,
+    paymasterContext: contextTrimmed === '' ? null : contextTrimmed,
+    paymasterVerifiedAt: new Date().toISOString(),
+  };
+  await saveConfigMap(map, store);
+}
+
+/** Removes the paymaster configuration; sends go back to self-paid gas. */
+export async function clearAaPaymaster(
+  chainId: string,
+  store: KeyValueStore = AsyncStorage,
+): Promise<void> {
+  const map = await loadConfigMap(store);
+  if (map[chainId]) {
+    delete map[chainId]!.paymasterUrl;
+    delete map[chainId]!.paymasterContext;
+    delete map[chainId]!.paymasterVerifiedAt;
+    await saveConfigMap(map, store);
+  }
+}
+
 export interface AaClientBundle {
   client: SmartAccountClient;
   spec: SmartAccountSpec;
   node: JsonRpcTransport;
   bundler: JsonRpcTransport;
   chainId: bigint;
+  /** True when an ERC-7677 paymaster is configured on this bundle. */
+  sponsored: boolean;
 }
 
 /**
@@ -306,20 +421,36 @@ export function createAaClient(options: {
   factory: string;
   chainId?: bigint;
   transportFor?: TransportFactory;
+  /** Verified ERC-7677 paymaster configuration, when sponsorship is on. */
+  paymaster?: { url: string; contextJson: string | null };
 }): AaClientBundle {
   const transportFor = options.transportFor ?? httpTransport;
   const node = transportFor(options.nodeUrl);
   const bundler = transportFor(options.bundlerUrl);
   const chainId = options.chainId ?? BigInt(EVM_CHAIN_ID.split(':')[1]!);
   const spec = createSimpleAccountSpec({ factory: options.factory, node });
+  // Context was validated as JSON at save time; a parse failure here
+  // degrades to null rather than blocking sends.
+  let paymasterContext: unknown = null;
+  if (options.paymaster?.contextJson) {
+    try {
+      paymasterContext = JSON.parse(options.paymaster.contextJson);
+    } catch {
+      paymasterContext = null;
+    }
+  }
+  const paymasterTransport = options.paymaster ? transportFor(options.paymaster.url) : undefined;
   const client = new SmartAccountClient({
     chainId,
     entryPoint: ENTRYPOINT_V07,
     bundler,
     node,
     spec,
+    ...(paymasterTransport
+      ? { paymaster: { transport: paymasterTransport, context: paymasterContext } }
+      : {}),
   });
-  return { client, spec, node, bundler, chainId };
+  return { client, spec, node, bundler, chainId, sponsored: paymasterTransport !== undefined };
 }
 
 /**
@@ -360,6 +491,8 @@ export interface AaSendQuote {
   /** Worst case: (sum of the three gas limits) × maxFeePerGas. */
   fee: bigint;
   total: bigint;
+  /** True when an ERC-7677 paymaster sponsors the gas (user fee = 0). */
+  sponsored: boolean;
 }
 
 /**
@@ -411,12 +544,18 @@ export async function prepareAaSend(
   const gas = await new BundlerClient(bundle.bundler, ENTRYPOINT_V07).estimateUserOperationGas(op);
 
   const gasTotal = gas.callGasLimit + gas.verificationGasLimit + gas.preVerificationGas;
-  const fee = gasTotal * fees.maxFeePerGas;
+  const worstCaseGasCost = gasTotal * fees.maxFeePerGas;
+  // With a paymaster the sponsor pays the gas: the account only needs to
+  // cover the amount itself. Self-paid keeps the full worst-case check.
+  const fee = bundle.sponsored ? 0n : worstCaseGasCost;
   if (amount + fee > senderBalance) {
     throw new Error(
-      `Insufficient funds: the smart account pays its own gas (no paymaster), and sending ` +
-        `${amount} wei plus a worst-case fee of ${fee} wei exceeds its balance of ` +
-        `${senderBalance} wei. Fund the smart account address, not the owner address.`,
+      bundle.sponsored
+        ? `Insufficient funds: sending ${amount} wei exceeds the smart account's ` +
+          `balance of ${senderBalance} wei (gas is sponsored, but the amount is not).`
+        : `Insufficient funds: the smart account pays its own gas (no paymaster), and sending ` +
+          `${amount} wei plus a worst-case fee of ${fee} wei exceeds its balance of ` +
+          `${senderBalance} wei. Fund the smart account address, not the owner address.`,
     );
   }
 
@@ -434,7 +573,27 @@ export async function prepareAaSend(
     maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
     fee,
     total: amount + fee,
+    sponsored: bundle.sponsored,
   };
+}
+
+/**
+ * The largest amount the smart account can send right now (phase 5's
+ * AA Max slice): the full balance under sponsorship, else the balance
+ * minus the worst-case fee of a zero-value transfer to the same
+ * recipient (gas for a simple native transfer does not depend on the
+ * amount). Returns 0n when fees exceed the balance.
+ */
+export async function maxAaSend(
+  bundle: AaClientBundle,
+  ownerAddress: string,
+  to: string,
+): Promise<bigint> {
+  const probe = await prepareAaSend(bundle, ownerAddress, to, 0n);
+  if (bundle.sponsored) return probe.senderBalance;
+  const gasTotal = probe.callGasLimit + probe.verificationGasLimit + probe.preVerificationGas;
+  const worstCase = gasTotal * probe.maxFeePerGas;
+  return probe.senderBalance > worstCase ? probe.senderBalance - worstCase : 0n;
 }
 
 /**

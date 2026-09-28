@@ -24,6 +24,10 @@ import { ENTRYPOINT_V07, selector, toHex } from '@shiba-wallet/chains-evm';
 import {
   clearAaBundlerUrl,
   clearAaFactory,
+  clearAaPaymaster,
+  maxAaSend,
+  setAaPaymaster,
+  verifyAaPaymaster,
   createAaClient,
   getAaConfig,
   isAaConfigured,
@@ -460,6 +464,162 @@ check(
     );
   })(),
 );
+
+// ---------------------------------------------------------------------------
+// Phase 5, item 2: ERC-7677 paymaster config + sponsored quotes + AA Max
+// ---------------------------------------------------------------------------
+console.log('\ncheck-aa: paymaster configuration');
+await (async () => {
+  const pmStore = memoryStore();
+  const okTransport = () => async (method) => {
+    if (method === 'pm_getPaymasterStubData') {
+      return { paymaster: '0x' + '66'.repeat(20), paymasterData: '0x00' };
+    }
+    throw new Error(`unexpected ${method}`);
+  };
+  await setAaPaymaster(EVM_CHAIN_ID, 'https://pm.example/rpc/', '{"policyId":"p1"}', {
+    store: pmStore,
+    transportFor: okTransport,
+  });
+  const cfg = await getAaConfig(EVM_CHAIN_ID, pmStore);
+  check('paymaster url saved trimmed', cfg.paymasterUrl === 'https://pm.example/rpc');
+  check('paymaster context persisted', cfg.paymasterContext === '{"policyId":"p1"}');
+  check('paymaster verify timestamp set', typeof cfg.paymasterVerifiedAt === 'string');
+
+  // A structured policy error still verifies (endpoint speaks 7677).
+  const policyErrorTransport = () => async () => {
+    throw new Error('RPC error -32521: policy rejected this operation (pm_getPaymasterStubData)');
+  };
+  await setAaPaymaster(EVM_CHAIN_ID, 'https://pm2.example', '', {
+    store: pmStore,
+    transportFor: policyErrorTransport,
+  });
+  check('policy-error endpoint accepted', (await getAaConfig(EVM_CHAIN_ID, pmStore)).paymasterUrl === 'https://pm2.example');
+
+  // Rejections persist nothing.
+  const before = await getAaConfig(EVM_CHAIN_ID, pmStore);
+  await checkRejects(
+    'method-not-found endpoint refused',
+    () => setAaPaymaster(EVM_CHAIN_ID, 'https://not-pm.example', '', {
+      store: pmStore,
+      transportFor: () => async () => { throw new Error('RPC error -32601: method not found'); },
+    }),
+    'not an ERC-7677 paymaster',
+  );
+  await checkRejects(
+    'unreachable endpoint refused',
+    () => setAaPaymaster(EVM_CHAIN_ID, 'https://down.example', '', {
+      store: pmStore,
+      transportFor: () => async () => { throw new Error('fetch failed: ECONNREFUSED'); },
+    }),
+    'unreachable',
+  );
+  await checkRejects(
+    'invalid context JSON refused',
+    () => setAaPaymaster(EVM_CHAIN_ID, 'https://pm.example', 'not-json', {
+      store: pmStore,
+      transportFor: okTransport,
+    }),
+    'valid JSON',
+  );
+  await checkRejects(
+    'non-http url refused',
+    () => setAaPaymaster(EVM_CHAIN_ID, 'ftp://pm.example', '', { store: pmStore, transportFor: okTransport }),
+    'http(s)',
+  );
+  const after = await getAaConfig(EVM_CHAIN_ID, pmStore);
+  check('rejections persisted nothing', after.paymasterUrl === before.paymasterUrl
+    && after.paymasterContext === before.paymasterContext);
+
+  await clearAaPaymaster(EVM_CHAIN_ID, pmStore);
+  check('clear removes paymaster config', (await getAaConfig(EVM_CHAIN_ID, pmStore)).paymasterUrl === null);
+
+  // verifyAaPaymaster direct accept path.
+  let accepted = true;
+  try { await verifyAaPaymaster(async () => ({ ok: true }), 1n, null); } catch { accepted = false; }
+  check('verify accepts a result response', accepted);
+})();
+
+console.log('\ncheck-aa: sponsored quote, pipeline, and AA Max');
+await (async () => {
+  const FACTORY = '0x' + '55'.repeat(20);
+  const SENDER_WORD = '0x' + '00'.repeat(12) + 'ab'.repeat(20);
+  const pmCalls = [];
+  const transportFor = (url) => async (method, params) => {
+    if (url.includes('pm.example')) {
+      pmCalls.push(method);
+      if (method === 'pm_getPaymasterStubData' || method === 'pm_getPaymasterData') {
+        return { paymaster: '0x' + '66'.repeat(20), paymasterData: '0x01' };
+      }
+      throw new Error(`unexpected pm ${method}`);
+    }
+    if (url.includes('bundler')) {
+      if (method === 'eth_supportedEntryPoints') return [ENTRYPOINT_V07];
+      if (method === 'eth_estimateUserOperationGas') {
+        return { callGasLimit: '0x100', verificationGasLimit: '0x200', preVerificationGas: '0x300' };
+      }
+      if (method === 'eth_sendUserOperation') return '0x' + 'ab'.repeat(32);
+      throw new Error(`unexpected bundler ${method}`);
+    }
+    // node
+    if (method === 'eth_chainId') return '0x1';
+    if (method === 'eth_getCode') return '0x6001';
+    if (method === 'eth_call') {
+      const to = params[0].to;
+      if (to === FACTORY) return SENDER_WORD;
+      return '0x2'; // EntryPoint.getNonce
+    }
+    if (method === 'eth_getBalance') return '0xde0b6b3a7640000'; // 1 ETH
+    if (method === 'eth_getBlockByNumber') return { baseFeePerGas: '0x3b9aca00' };
+    if (method === 'eth_maxPriorityFeePerGas') return '0x5f5e100';
+    throw new Error(`unexpected node ${method}`);
+  };
+
+  const sponsored = createAaClient({
+    nodeUrl: 'https://node.example',
+    bundlerUrl: 'https://bundler.example',
+    factory: FACTORY,
+    chainId: 1n,
+    transportFor,
+    paymaster: { url: 'https://pm.example', contextJson: '{"policyId":"p1"}' },
+  });
+  check('bundle reports sponsorship', sponsored.sponsored === true);
+
+  const quote = await prepareAaSend(sponsored, '0x' + '11'.repeat(20), '0x' + '22'.repeat(20), 10n ** 17n);
+  check('sponsored quote has zero user fee', quote.fee === 0n && quote.sponsored === true);
+  check('sponsored total equals the amount', quote.total === 10n ** 17n);
+
+  // Nearly the whole balance passes under sponsorship (fee not charged).
+  const bigAmount = 10n ** 18n; // exactly the balance
+  const bigQuote = await prepareAaSend(sponsored, '0x' + '11'.repeat(20), '0x' + '22'.repeat(20), bigAmount);
+  check('sponsored balance check is amount-only', bigQuote.total === bigAmount);
+
+  const maxSponsored = await maxAaSend(sponsored, '0x' + '11'.repeat(20), '0x' + '22'.repeat(20));
+  check('sponsored max = full balance', maxSponsored === 10n ** 18n);
+
+  const selfPaid = createAaClient({
+    nodeUrl: 'https://node.example',
+    bundlerUrl: 'https://bundler.example',
+    factory: FACTORY,
+    chainId: 1n,
+    transportFor,
+  });
+  const maxSelf = await maxAaSend(selfPaid, '0x' + '11'.repeat(20), '0x' + '22'.repeat(20));
+  const gasTotal = 0x100n + 0x200n + 0x300n;
+  const worst = gasTotal * (2n * 1_000_000_000n + 100_000_000n);
+  check('self-paid max = balance minus worst-case fee', maxSelf === 10n ** 18n - worst);
+
+  // Sponsored pipeline: the engine's two-phase 7677 flow must hit the
+  // paymaster transport before and after estimation.
+  const seedOwner = (() => {
+    const seed = mnemonicToSeed('abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about');
+    return evmKeyProvider.deriveAccount(seed, 0, 0);
+  })();
+  pmCalls.length = 0;
+  await sendAa(sponsored, seedOwner, quote);
+  check('pipeline called stub then final paymaster data',
+    pmCalls[0] === 'pm_getPaymasterStubData' && pmCalls.includes('pm_getPaymasterData'));
+})();
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

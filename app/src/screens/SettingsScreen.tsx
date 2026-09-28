@@ -23,6 +23,8 @@ import {
   getAaConfig,
   setAaBundlerUrl,
   setAaFactory,
+  setAaPaymaster,
+  clearAaPaymaster,
   type AaChainConfig,
 } from '../wallet/aa';
 import { clearWcProjectId, getWcProjectId, setWcProjectId } from '../wallet/walletconnect';
@@ -506,6 +508,46 @@ function AaChainRow({ network }: { network: NetworkDefault }) {
           reload();
         }}
       />
+      <AaField
+        label="Paymaster URL (ERC-7677, optional)"
+        placeholder="https://…"
+        value={config?.paymasterUrl ?? null}
+        statusLine={
+          config?.paymasterUrl
+            ? `Verified ✓ — answers pm_getPaymasterStubData (checked ${shortDate(
+                config.paymasterVerifiedAt,
+              )}). Gas on smart-account sends is sponsored.`
+            : null
+        }
+        onSave={async (draft) => {
+          await setAaPaymaster(network.chainId, draft, config?.paymasterContext ?? '');
+          reload();
+        }}
+        onClear={async () => {
+          await clearAaPaymaster(network.chainId);
+          reload();
+        }}
+      />
+      {config?.paymasterUrl ? (
+        <AaField
+          label="Paymaster context (JSON, optional)"
+          placeholder='{"policyId":"…"}'
+          value={config?.paymasterContext ?? null}
+          statusLine={
+            config?.paymasterContext
+              ? 'Sent verbatim to the paymaster with each sponsorship request.'
+              : null
+          }
+          onSave={async (draft) => {
+            await setAaPaymaster(network.chainId, config.paymasterUrl!, draft);
+            reload();
+          }}
+          onClear={async () => {
+            await setAaPaymaster(network.chainId, config.paymasterUrl!, '');
+            reload();
+          }}
+        />
+      ) : null}
     </View>
   );
 }

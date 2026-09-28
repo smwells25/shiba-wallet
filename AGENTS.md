@@ -884,12 +884,21 @@ to avoid app-file collisions between parallel agents.
    SwapQuoteProvider/0x seam~~ — DONE 2026-09-28 (see Phase 5 progress).
    Fakes-verified end to end; live quotes activate whenever a free 0x
    key is pasted in Settings → Swaps.
-2. ERC-7677 paymaster sponsorship in the app (the plumbing already
-   exists in SmartAccountClient): Settings fields for a paymaster URL +
-   optional context JSON under the AA section, sponsored-send path in
-   the AA flow showing "gas sponsored" vs self-paid, offline-verified
-   with fakes; live once any paymaster endpoint is configured. Plus the
-   AA-path Max button slice.
+2. ~~ERC-7677 paymaster sponsorship + AA Max~~ — DONE 2026-09-28 (CTO).
+   AaChainConfig gained paymasterUrl/context/verifiedAt with
+   verify-before-save (a pm_getPaymasterStubData probe that accepts a
+   result or a structured policy error but refuses method-not-found,
+   unreachable endpoints, and invalid context JSON — all persisting
+   nothing); createAaClient threads the paymaster into
+   SmartAccountClient; sponsored quotes charge the user zero fee with an
+   amount-only balance check and an honest may-still-decline note;
+   Settings AA section gained the paymaster URL + context fields; the
+   AA path's Max button now works (full balance under sponsorship, else
+   balance minus a zero-value probe's worst-case fee). check-aa.mjs
+   57/57 incl. the stub-then-final 7677 pipeline order; full app
+   regression suite and bundle green. Live sponsorship activates when
+   any real paymaster endpoint (e.g. an Alchemy Gas Manager policy) is
+   pasted into Settings.
 3. ~~Dogecoin completion in-app: Blockbook endpoint + API key
    configuration (runtime only), wiring balances, send, and Activity for
    DOGE through the engine's blockbookTransport/blockbookHistoryProvider~~
@@ -1054,3 +1063,13 @@ Wave 2 after wave 1 lands: items 2+4 (CTO app slices) and item 3
       ASCII grep misses it; a UTF-16LE search finds it). No packages/*,
       scripts/testnet/, aa.ts, swap.ts, walletconnect.ts or indexer.ts
       changes.
+
+## Phase 5 complete (2026-09-28)
+
+All six items landed: the Swap screen on the 0x seam (live quotes one
+free API key away), ERC-7677 paymaster sponsorship + AA Max, Dogecoin
+completed in-app via configurable Blockbook, tracked-token history in
+Activity (indexer-enriched and logs-fallback), the Kernel-v3-first
+session-keys evaluation, and EAS device-build readiness. App
+verification stands at 538 offline script checks across ten suites;
+the engine at 187 tests.
