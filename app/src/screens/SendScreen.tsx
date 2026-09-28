@@ -59,6 +59,8 @@ import {
 import { listTokens } from '../wallet/tokens';
 import { extractScannedAddress } from '../wallet/scan';
 import { QrScanner } from '../components/QrScanner';
+import { BalanceChangePreview } from '../components/BalanceChangePreview';
+import { PREVIEW_AA_NOTE } from '../wallet/simulation';
 import { BITCOIN, DOGECOIN } from '@shiba-wallet/chains-utxo';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Send'>;
@@ -676,6 +678,12 @@ export function SendScreen({ route, navigation }: Props) {
           theme={theme}
         />
 
+        <BalanceChangePreview
+          url={url}
+          request={{ from: quote.sender, to: quote.to, value: quote.amount }}
+          note={PREVIEW_AA_NOTE}
+        />
+
         {phase === 'sending' ? (
           <View style={styles.center}>
             <ActivityIndicator size="large" color={theme.accent} />
@@ -733,6 +741,11 @@ export function SendScreen({ route, navigation }: Props) {
           label="ETH balance"
           value={`${exact(quote.ethBalance, nativeDecimals)} ETH`}
           theme={theme}
+        />
+
+        <BalanceChangePreview
+          url={url}
+          request={{ from: account.address, to: quote.contract, value: 0n, data: quote.data }}
         />
 
         {!simulationFailed && !quote.returnedFalse ? (
@@ -825,6 +838,13 @@ export function SendScreen({ route, navigation }: Props) {
           theme={theme}
         />
         <Row label="Balance" value={`${exact(quote.balance, decimals)} ${symbol}`} theme={theme} />
+
+        {quote.kind === 'evm' ? (
+          <BalanceChangePreview
+            url={url}
+            request={{ from: account.address, to: quote.to, value: quote.amount, data: quote.data }}
+          />
+        ) : null}
 
         {quote.kind === 'evm' ? (
           quote.simulation.ok ? (

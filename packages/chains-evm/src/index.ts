@@ -66,6 +66,28 @@ export {
 } from './indexer-history.js';
 export type { IndexerHistoryOptions, TransferCategory } from './indexer-history.js';
 export { decodeRevertReason, simulateCall } from './simulate.js';
+export {
+  APPROVAL_EVENT_TOPIC,
+  APPROVAL_FOR_ALL_EVENT_TOPIC,
+  MAX_UINT256,
+  NATIVE_TRANSFER_PSEUDO_ADDRESS,
+  SimulationUnsupportedError,
+  TRANSFER_BATCH_EVENT_TOPIC,
+  TRANSFER_EVENT_TOPIC,
+  TRANSFER_SINGLE_EVENT_TOPIC,
+  isMethodNotFoundError,
+  parseSimulationResult,
+  simulateAssetChanges,
+  verifySimulationSupport,
+} from './asset-diff.js';
+export type {
+  AssetChange,
+  AssetChangeDirection,
+  AssetDiffCall,
+  AssetDiffOptions,
+  AssetDiffResult,
+  SimulatedCallOutcome,
+} from './asset-diff.js';
 export type { SimulationRequest, SimulationResult } from './simulate.js';
 export { rlpEncode, minimalBytes } from './rlp.js';
 export type { RlpInput } from './rlp.js';

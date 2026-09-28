@@ -18,6 +18,7 @@ import { QrScanner } from '../components/QrScanner';
 import { getEndpoint } from '../config/networks';
 import { useTheme, type Theme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
+import { BalanceChangePreview } from '../components/BalanceChangePreview';
 import { usePrefs } from '../wallet/PrefsContext';
 import type { EvmChainProfile } from '../config/evm-chain';
 import { requireLocalAuth } from '../wallet/biometric';
@@ -61,7 +62,7 @@ type PendingItem =
 
 type TxQuoteState =
   | { status: 'loading' }
-  | { status: 'ready'; quote: EvmSendQuote; url: string }
+  | { status: 'ready'; quote: EvmSendQuote; url: string; from: string }
   | { status: 'error'; message: string };
 
 /**
@@ -249,10 +250,10 @@ export function ConnectionsScreen({ navigation }: Props) {
         tx.data.length > 0 ? tx.data : undefined,
         evmChainRef.current.caip2,
       );
-      return { quote, url: endpoint.url };
+      return { quote, url: endpoint.url, from: address };
     })().then(
       (r) => {
-        if (!cancelled) setTxQuote({ status: 'ready', quote: r.quote, url: r.url });
+        if (!cancelled) setTxQuote({ status: 'ready', quote: r.quote, url: r.url, from: r.from });
       },
       (e) => {
         if (!cancelled) {
@@ -797,6 +798,15 @@ function RequestBody({
             label="Total (worst case)"
             value={`${formatUnits(txQuote.quote.total, 18, 18)} ${evmChain.displaySymbol}`}
             theme={theme}
+          />
+          <BalanceChangePreview
+            url={txQuote.url}
+            request={{
+              from: txQuote.from,
+              to: txQuote.quote.to,
+              value: txQuote.quote.amount,
+              ...(txQuote.quote.data ? { data: txQuote.quote.data } : {}),
+            }}
           />
           {txQuote.quote.simulation.ok ? (
             <Text style={[styles.simulationOk, { color: theme.success }]}>

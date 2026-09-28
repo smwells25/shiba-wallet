@@ -19,6 +19,7 @@ import type { RootStackParamList } from '../navigation';
 import { Button, WarningBox, screenStyle } from '../components';
 import { getEndpoint, type NetworkEndpoint } from '../config/networks';
 import { useTheme, type Theme } from '../theme';
+import { BalanceChangePreview } from '../components/BalanceChangePreview';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
 import { requireLocalAuth } from '../wallet/biometric';
@@ -590,6 +591,16 @@ export function SwapScreen({ navigation }: Props) {
           lower, and the unused part is not charged.
         </Text>
 
+        <BalanceChangePreview
+          url={url}
+          request={{
+            from: account.address,
+            to: approveQuote.to,
+            value: approveQuote.amount,
+            ...(approveQuote.data ? { data: approveQuote.data } : {}),
+          }}
+        />
+
         {approveQuote.simulation.ok ? (
           <Text style={[styles.simulationOk, { color: theme.success }]}>
             Pre-flight simulation passed (eth_call).
@@ -684,6 +695,16 @@ export function SwapScreen({ navigation }: Props) {
             theme={theme}
           />
         ) : null}
+
+        <BalanceChangePreview
+          url={url}
+          request={{
+            from: account.address,
+            to: sendQuote.to,
+            value: sendQuote.amount,
+            ...(sendQuote.data ? { data: sendQuote.data } : {}),
+          }}
+        />
 
         {sendQuote.simulation.ok ? (
           <Text style={[styles.simulationOk, { color: theme.success }]}>

@@ -207,9 +207,10 @@ with ADRs D1–D7), offline end-to-end demo (examples/demo.mjs, run with
       suggestion/nonce/broadcast). 46 tests in chains-evm.
 - [x] Task 5 — SPL token transfers in chains-solana (see checked entry
       above). 44 tests in chains-solana.
-- [~] Task 6 — first slice done: eth_call pre-flight with revert decoding
-      (Error(string), Panic codes, custom errors) in chains-evm, used by
-      the app's send flow. Full asset-diff simulation remains.
+- [x] Task 6 — eth_call pre-flight with revert decoding (Error(string),
+      Panic codes, custom errors) in chains-evm, used by the app's send
+      flow; full asset-diff simulation completed in phase 6 item 1
+      (eth_simulateV1, see Phase 6 progress).
 - [x] Task 7 — biometric gating (expo-local-authentication) on the seed
       reveal and send confirmation, passcode fallback enabled; matrix in
       app/src/wallet/biometric.ts. Note: FaceID needs a dev build, not
@@ -1163,3 +1164,60 @@ overlap. Subagents run on Opus per the Chairperson's credit directive.
       instance (120 s TTL keyless), fiat as secondary text on Home and
       confirm screens, masked under Hide amounts, silent when missing,
       optional Demo key in Settings with verify-before-save.
+
+- [x] Item 1 — asset-diff simulation on the standard eth_simulateV1
+      (completes phase-2 task 6). Engine:
+      packages/chains-evm/src/asset-diff.ts — simulateAssetChanges sends
+      [{ blockStateCalls: [{ calls }], traceTransfers: true }, "latest"]
+      (calldata in the spec's `input` field; validation left at its
+      default false, i.e. eth_call semantics), per ethereum/execution-apis
+      src/eth/execute.yaml + src/schemas/execute.yaml. Every event topic0
+      is computed with @noble keccak256 from the canonical signature
+      (tests pin each against ethers id()); signatures and indexed fields
+      verified from the ERC-20/721/1155 texts in ethereum/ERCs. Decodes
+      the ETH pseudo-Transfer from 0xeeee…eeee, ERC-20 Transfer (3
+      topics, 32-byte data) vs ERC-721 Transfer (4 topics, empty data),
+      ERC-20 Approval (unlimited iff max uint256), ERC-721 Approval,
+      ApprovalForAll (strict ABI bool), ERC-1155 TransferSingle/Batch
+      (bounds-checked arrays). Only wallet-relevant changes are kept;
+      amounts are exact bigints from event words; logs of reverted calls
+      are discarded; known topics with non-standard shapes are skipped
+      and counted, never guessed. Method-not-found (-32601 or "Unsupported
+      method") and malformed top-level shapes raise
+      SimulationUnsupportedError; verifySimulationSupport exported.
+      App: app/src/wallet/simulation.ts (Node-loadable glue; its
+      transport keeps JSON-RPC error bodies on non-2xx because Alchemy
+      answers "Unsupported method" with HTTP 400) and
+      app/src/components/BalanceChangePreview.tsx, a "Balance changes
+      (preview)" card on the native, ERC-20 and smart-account send
+      confirms, the swap approve and swap confirms, and the WalletConnect
+      eth_sendTransaction approval. It simulates against the SAME
+      endpoint the quote used — no new setting (publicnode, 1rpc, drpc
+      and Alchemy serve the method; cloudflare-eth answers -32601 and
+      gets the honest "does not support eth_simulateV1" note). Token
+      metadata: tracked-token store first (matched on contract AND CAIP-2
+      id, so mainnet labels never leak onto Sepolia contracts), else
+      eth_call metadata (capped at 12 contracts); unreadable decimals show
+      raw base units labeled as such; untracked tokens are always marked
+      "(untracked token 0x…)" and on-chain symbols are sanitized
+      (control/bidi characters stripped) as anti-spoofing. Unlimited and
+      collection-wide approvals render in the warning style; Hide amounts
+      masks every amount. The eth_call revert gate is untouched — the
+      screen diffs are additive apart from carrying `from` in the WC
+      quote state — and the card never blocks or unblocks a send.
+      Limits, documented in code: a malicious contract can emit fake
+      events (mitigated by emitter-address labeling and the untracked
+      marker); batched AA calls would be simulated sequentially, not
+      atomically; approvals >= 2^128 below max are shown as "effectively
+      unlimited" (a local threshold, not a standard). Verified: 30 new
+      engine tests (chains-evm 102; engine total 335 across five
+      packages); app/scripts/check-simulation.mjs 49/49 offline; app
+      regressions green (test-units 45, check-aa 57, check-wc 83,
+      check-token-send 37, check-swap 89, check-devmode 69, check-qr 31,
+      check-tokens 27, check-doge 83, check-token-history 17); tsc clean;
+      expo export bundles with the new strings in the bytecode. Live
+      read-only probes through the app glue: mainnet ETH send, USDC
+      transfer, UNLIMITED USDC approval warning, and a revert reason on
+      publicnode; on Sepolia the deployed smart account 0xB837…0fa2 as
+      sender. Nothing was signed or broadcast. Not yet eyeballed on the
+      emulator (dark-mode styling pending).
