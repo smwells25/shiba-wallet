@@ -802,3 +802,44 @@ in test ETH).
 Remaining on emulator: WalletConnect live pairing only (needs a dApp
 wc: URI). Phone-only: real Secure Enclave/StrongBox, real camera
 optics, iOS FaceID, store builds.
+
+## Live WalletConnect pairing: PROVEN (2026-09-27, emulator)
+
+The last emulator checklist item is complete. With a real pairing URI
+from app.uniswap.org (provided by the Chairperson), the wallet paired
+over the real WalletConnect relay and established a session:
+
+- The Connections screen's paste path accepted the URI and Uniswap's
+  session proposal arrived and rendered (dApp name, URL, description,
+  requested chains/methods).
+- Approve connection produced a settled session listed under Active
+  connections: Uniswap - https://app.uniswap.org - eip155:11155111 -
+  3 methods - Disconnect. Sepolia test mode governed the namespace
+  exactly as designed.
+
+Debugging trail that made it work (all fixes committed or documented):
+- Metro lazy bundling produced "Requiring unknown module" errors at the
+  WC lazy-chunk boundary (module-id misalignment with the main bundle,
+  aggravated by exports-map fallback resolution in the WC dependency
+  tree). WORKAROUND for dev sessions: run Metro with EXPO_NO_METRO_LAZY=1
+  (single 2168-module bundle; no chunk boundaries). Follow-up for a
+  future slice: reproduce against a plain release bundle (lazy bundling
+  is a dev-server behavior) and consider eager-importing the WC stack.
+- Three pairing URIs expired during cold boots and debugging; URIs live
+  ~4-5 minutes, so the flow must be warm before requesting one.
+- adb `input text` drops characters under load on this emulator; the
+  reliable path for long strings is the ADBKeyboard IME (installed on
+  the AVD) driven by `am broadcast -a ADB_INPUT_TEXT --es msg '...'`,
+  proven byte-perfect with ?, &, =, @ intact. The Google IME was
+  restored after the test.
+- The Android keyguard on this AVD stopped accepting synthetic PIN
+  input after heavy uptime; the device credential was cleared with
+  `adb shell locksettings clear` (this also removed the fingerprint, so
+  the pairing approval exercised the documented no-enrollment
+  pass-through branch of the biometric gate rather than a prompt).
+
+EVERY emulator-checklist item is now validated. Remaining live checks
+are phone-only: real Secure Enclave/StrongBox, real camera optics, iOS
+FaceID, store builds, plus dApp-side request handling (personal_sign /
+typed data / transaction) which can now be exercised any time from the
+established session.
