@@ -788,7 +788,17 @@ Also implicitly proven: wallet + preferences fully persist across app
 restarts (SecureStore + AsyncStorage), and the Settings endpoint row
 switches to "Ethereum Sepolia" in test mode.
 
-Remaining on emulator: wrong-chain QR poster swap (needs an emulator
-restart to reload the virtual-scene poster), WalletConnect live pairing
-(needs a dApp wc: URI). Phone-only: real Secure Enclave/StrongBox, real
-camera optics, iOS FaceID, store builds.
+WRONG-CHAIN QR REJECTION, proven: the virtual-scene poster was swapped
+to a Bitcoin-address QR and the emulator restarted (AVD data persisted:
+the device PIN, fingerprint, wallet, and Sepolia mode all survived; the
+camera permission did not need re-granting). Scanning the Bitcoin QR on
+the Ethereum send screen filled the field verbatim and the standard
+validation error appeared ("An Ethereum address is 0x followed by
+exactly 40 hex characters.") — nothing auto-corrected, per the
+scanning-never-widens-validation design. The same frame also validated
+the Sepolia send-screen labeling ("Ethereum Sepolia · TESTNET", amounts
+in test ETH).
+
+Remaining on emulator: WalletConnect live pairing only (needs a dApp
+wc: URI). Phone-only: real Secure Enclave/StrongBox, real camera
+optics, iOS FaceID, store builds.
