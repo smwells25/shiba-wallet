@@ -36,6 +36,12 @@ import {
 } from '../wallet/indexer';
 import { clearSwapApiKey, getSwapConfig, setSwapApiKey, type SwapConfig } from '../wallet/swap';
 import {
+  clearPriceDemoKey,
+  getPriceConfig,
+  setPriceDemoKey,
+  type PriceConfig,
+} from '../wallet/prices';
+import {
   BLOCKBOOK_API_KEY_HEADER,
   clearBlockbookConfig,
   getBlockbookConfig,
@@ -620,8 +626,16 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
 export function SettingsScreen({ navigation }: Props) {
   const theme = useTheme();
   const { revealMnemonic, wipe, accounts } = useWallet();
-  const { sepolia, setSepolia, hideAmounts, setHideAmounts, autoLockMs, setAutoLockMs } =
-    usePrefs();
+  const {
+    sepolia,
+    setSepolia,
+    hideAmounts,
+    setHideAmounts,
+    autoLockMs,
+    setAutoLockMs,
+    showFiat,
+    setShowFiat,
+  } = usePrefs();
   const [revealed, setRevealed] = useState<string | null>(null);
 
   // Block screenshots while the revealed recovery phrase is on screen
@@ -683,6 +697,13 @@ export function SettingsScreen({ navigation }: Props) {
   }, []);
 
   useEffect(reloadSwapConfig, [reloadSwapConfig]);
+
+  const [priceConfig, setPriceConfigState] = useState<PriceConfig | null>(null);
+  const reloadPriceConfig = useCallback(() => {
+    getPriceConfig().then(setPriceConfigState, () => setPriceConfigState(null));
+  }, []);
+
+  useEffect(reloadPriceConfig, [reloadPriceConfig]);
 
   const onReveal = () => {
     Alert.alert(
@@ -825,6 +846,56 @@ export function SettingsScreen({ navigation }: Props) {
             phrase. Set up a device passcode and biometrics to enable
             auto-lock.
           </Text>
+        ) : null}
+      </View>
+
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: theme.text }]}>Prices</Text>
+        <View style={styles.toggleRow}>
+          <Text style={[styles.toggleLabel, { color: theme.text }]}>Show fiat values (USD)</Text>
+          <Switch value={showFiat} onValueChange={(v) => void setShowFiat(v)} />
+        </View>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          Shows an approximate US-dollar value next to balances and on the
+          send and swap confirmation screens. Prices are fetched from
+          CoinGecko (api.coingecko.com), which sees your IP address and
+          which assets are being priced — never your addresses or balances.
+          Turning this off stops all price requests. Prices are indicative
+          only; the exact crypto amount is always the one that counts, and
+          test-network assets are never priced.
+        </Text>
+        {showFiat ? (
+          <>
+            <Text style={[styles.hint, { color: theme.textMuted }]}>
+              Optional: a free CoinGecko Demo API key (from your CoinGecko
+              developer dashboard) gives a higher rate limit than keyless
+              requests. It is stored only on this device and sent only to
+              api.coingecko.com. Saving runs one live price request with the
+              key first, and nothing is saved if it fails. CoinGecko does not
+              offer a way to confirm a Demo key is genuine, so a pass means
+              the request with the key worked.
+            </Text>
+            <AaField
+              label="CoinGecko Demo API key (optional)"
+              placeholder="Demo API key from CoinGecko"
+              value={priceConfig?.demoApiKey ?? null}
+              statusLine={
+                priceConfig?.demoApiKey
+                  ? `Checked ✓ — a live price request with this key succeeded (${
+                      priceConfig.verifiedAt ? priceConfig.verifiedAt.slice(0, 10) : 'unknown date'
+                    })`
+                  : null
+              }
+              onSave={async (draft) => {
+                await setPriceDemoKey(draft);
+                reloadPriceConfig();
+              }}
+              onClear={async () => {
+                await clearPriceDemoKey();
+                reloadPriceConfig();
+              }}
+            />
+          </>
         ) : null}
       </View>
 

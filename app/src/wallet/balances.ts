@@ -120,6 +120,23 @@ export function formatUnits(amount: bigint, decimals: number, maxFractionDigits 
 }
 
 /**
+ * Inserts thousands separators into the whole part of a plain decimal
+ * string ("1234567.891" -> "1,234,567.891"). Pure string manipulation
+ * rather than Intl/toLocaleString, whose support on Hermes is limited; the
+ * fraction digits are never touched. Shared by the balance-change preview
+ * (./simulation.ts) and the fiat display (./prices.ts).
+ */
+export function groupThousands(decimal: string): string {
+  const negative = decimal.startsWith('-');
+  const body = negative ? decimal.slice(1) : decimal;
+  const dot = body.indexOf('.');
+  const whole = dot === -1 ? body : body.slice(0, dot);
+  const rest = dot === -1 ? '' : body.slice(dot);
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return `${negative ? '-' : ''}${grouped}${rest}`;
+}
+
+/**
  * Parses a user-typed decimal coin amount into base units (wei/sat/lamports)
  * as an exact bigint — the inverse of formatUnits, with the same discipline:
  * pure bigint/string arithmetic, no floating point anywhere, so amounts like

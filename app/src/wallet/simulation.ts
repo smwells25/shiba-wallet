@@ -11,7 +11,7 @@ import type {
 // Explicit .ts extensions: this module is imported by
 // scripts/check-simulation.mjs under Node's type stripping, which resolves
 // relative specifiers literally.
-import { formatUnits } from './balances.ts';
+import { formatUnits, groupThousands } from './balances.ts';
 import { fetchErc20Metadata, type Erc20Metadata } from './erc20.ts';
 import { maskAmount } from '../config/prefs.ts';
 
@@ -279,16 +279,12 @@ export function shortAddress(address: string): string {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
 
-/** Inserts thousands separators into the whole part of a plain decimal string. */
-export function groupThousands(decimal: string): string {
-  const negative = decimal.startsWith('-');
-  const body = negative ? decimal.slice(1) : decimal;
-  const dot = body.indexOf('.');
-  const whole = dot === -1 ? body : body.slice(0, dot);
-  const rest = dot === -1 ? '' : body.slice(dot);
-  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  return `${negative ? '-' : ''}${grouped}${rest}`;
-}
+/**
+ * Thousands separators: defined in ./balances.ts (shared with the fiat
+ * display in ./prices.ts) and re-exported here so existing importers keep
+ * working unchanged.
+ */
+export { groupThousands };
 
 /** Exact, full-precision amount with separators (never truncated). */
 function exactAmount(amount: bigint, decimals: number): string {

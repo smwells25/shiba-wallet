@@ -24,6 +24,8 @@ interface PrefsContextValue {
   sepolia: boolean;
   hideAmounts: boolean;
   autoLockMs: number | null;
+  /** Show fiat values (default on); off means no price request is made. */
+  showFiat: boolean;
   /**
    * The active EVM chain profile — THE config source screens use for
    * chain-id verification, explorer links, badges and AA prefill
@@ -33,6 +35,7 @@ interface PrefsContextValue {
   setSepolia: (on: boolean) => Promise<void>;
   setHideAmounts: (on: boolean) => Promise<void>;
   setAutoLockMs: (ms: number | null) => Promise<void>;
+  setShowFiat: (on: boolean) => Promise<void>;
 }
 
 const PrefsContext = createContext<PrefsContextValue | null>(null);
@@ -72,10 +75,12 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
       sepolia: prefs.sepolia,
       hideAmounts: prefs.hideAmounts,
       autoLockMs: prefs.autoLockMs,
+      showFiat: prefs.showFiat,
       evmChain: evmProfileFor(prefs.sepolia),
       setSepolia: (on) => patch({ sepolia: on }),
       setHideAmounts: (on) => patch({ hideAmounts: on }),
       setAutoLockMs: (ms) => patch({ autoLockMs: ms }),
+      setShowFiat: (on) => patch({ showFiat: on }),
     }),
     [ready, prefs, patch],
   );

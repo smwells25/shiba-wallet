@@ -1,8 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 /**
- * App preferences (phase 4, items 5 + 6): the Sepolia developer-mode flag,
- * the balance-privacy toggle, and the auto-lock threshold. All three are
+ * App preferences (phase 4, items 5 + 6; phase 6, item 2): the Sepolia
+ * developer-mode flag, the balance-privacy toggle, the auto-lock threshold,
+ * and the fiat-display toggle. All of them are
  * plain configuration, not secrets, so they live in AsyncStorage like the
  * endpoint overrides (config/networks.ts) — never in the secure store,
  * which holds only the mnemonic (wallet/storage.ts).
@@ -34,12 +35,20 @@ export interface AppPrefs {
    * localAuthAvailable() is true — Settings hides the option otherwise.
    */
   autoLockMs: number | null;
+  /**
+   * Show fiat (USD) values next to crypto amounts (phase 6, item 2).
+   * Default ON. Prices come from CoinGecko (wallet/prices.ts); turning this
+   * off stops every price request — the price hook checks it before any
+   * network call, so with it off CoinGecko is never contacted.
+   */
+  showFiat: boolean;
 }
 
 export const DEFAULT_PREFS: AppPrefs = {
   sepolia: false,
   hideAmounts: false,
   autoLockMs: null,
+  showFiat: true,
 };
 
 /** The selectable auto-lock thresholds: off, 1 minute, 5 minutes. */
@@ -61,6 +70,7 @@ function sanitize(parsed: unknown): AppPrefs {
     hideAmounts:
       typeof p.hideAmounts === 'boolean' ? p.hideAmounts : DEFAULT_PREFS.hideAmounts,
     autoLockMs: autoLockOk ? (p.autoLockMs as number | null) : DEFAULT_PREFS.autoLockMs,
+    showFiat: typeof p.showFiat === 'boolean' ? p.showFiat : DEFAULT_PREFS.showFiat,
   };
 }
 

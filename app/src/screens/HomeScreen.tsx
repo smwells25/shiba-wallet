@@ -21,6 +21,14 @@ import { usePrefs } from '../wallet/PrefsContext';
 import { maskAmount } from '../config/prefs';
 import { BalanceState, useBalances } from '../wallet/useBalances';
 import { useTokenBalances } from '../wallet/useTokenBalances';
+import { usePrices } from '../wallet/usePrices';
+import {
+  formatFiat,
+  nativePriceAssetId,
+  nativePriceIds,
+  tokenPriceAssetId,
+  type FiatDisplay,
+} from '../wallet/prices';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Home'>;
 
@@ -34,16 +42,21 @@ function shortAddress(address: string): string {
  * spinner while loading, a subtle tap-to-retry error state, or a muted
  * "unavailable" marker for chains with no configured endpoint. Each chain's
  * state is independent — one endpoint failing never blanks the others.
+ * The fiat value (phase 6 item 2) is secondary text under the exact crypto
+ * amount; when there is no price, nothing is rendered in its place.
  */
 function BalanceCell({
   state,
   onRetry,
   hidden = false,
+  fiat = null,
 }: {
   state: BalanceState | undefined;
   onRetry: () => void;
   /** Balance privacy (phase 4 item 5.2): mask the amount as ••••. */
   hidden?: boolean;
+  /** Formatted fiat value (already masked when hidden), or null for none. */
+  fiat?: FiatDisplay | null;
 }) {
   const theme = useTheme();
 
@@ -57,6 +70,16 @@ function BalanceCell({
           {maskAmount(state.display, hidden)}
         </Text>
         <Text style={[styles.balanceSymbol, { color: theme.textMuted }]}>{state.symbol}</Text>
+        {fiat ? (
+          <Text style={[styles.fiat, { color: theme.textMuted }]} numberOfLines={1}>
+            {fiat.text}
+          </Text>
+        ) : null}
+        {fiat?.staleNote ? (
+          <Text style={[styles.fiatStale, { color: theme.textMuted }]} numberOfLines={1}>
+            {fiat.staleNote}
+          </Text>
+        ) : null}
       </View>
     );
   }
@@ -92,12 +115,14 @@ function TokenRow({
   onRetry,
   onSend,
   hidden,
+  fiat,
 }: {
   token: FungibleAsset;
   state: BalanceState | undefined;
   onRetry: () => void;
   onSend: () => void;
   hidden: boolean;
+  fiat: FiatDisplay | null;
 }) {
   const theme = useTheme();
   return (
@@ -121,7 +146,7 @@ function TokenRow({
           <Text style={[styles.sendLink, { color: theme.accent }]}>Send ↗</Text>
         </Pressable>
       </View>
-      <BalanceCell state={state} onRetry={onRetry} hidden={hidden} />
+      <BalanceCell state={state} onRetry={onRetry} hidden={hidden} fiat={fiat} />
     </View>
   );
 }
@@ -130,7 +155,7 @@ function TokenRow({
 export function HomeScreen({ navigation }: Props) {
   const theme = useTheme();
   const { accounts } = useWallet();
-  const { hideAmounts, setHideAmounts, evmChain } = usePrefs();
+  const { hideAmounts, setHideAmounts, evmChain, sepolia, showFiat } = usePrefs();
   const { balances, refreshing, refreshAll, refreshOne } = useBalances(accounts);
   const evmAccount = accounts.find((a) => a.chainId === EVM_CHAIN_ID);
   // Tracked tokens are Ethereum-mainnet assets; in Sepolia test mode the
@@ -140,6 +165,26 @@ export function HomeScreen({ navigation }: Props) {
   const { tokens, tokenBalances, reloadTokens, refreshToken } = useTokenBalances(
     showTokens ? evmAccount?.address : undefined,
   );
+
+  // USD prices for the natives (all four in one request; null for the EVM
+  // slot in Sepolia test mode) and the tracked tokens on the ACTIVE chain
+  // (null for every token in test mode). The hook requests nothing while
+  // "Show fiat values" is off.
+  const priceIds = [
+    ...nativePriceIds(sepolia),
+    ...tokens.map((t) => (showTokens ? tokenPriceAssetId(t, evmChain.caip2) : null)),
+  ];
+  const { quotes, refresh: refreshPrices } = usePrices(priceIds);
+
+  /**
+   * Fiat for a loaded balance. The price id is re-derived from the network
+   * that actually produced the balance, so a Sepolia balance can never
+   * pick up a mainnet price even for one render across a mode flip.
+   */
+  const fiatFor = (state: BalanceState | undefined, priceId: string | null) =>
+    state?.status === 'ok' && priceId
+      ? formatFiat(quotes.get(priceId), state.amount, state.decimals, { hidden: hideAmounts })
+      : null;
 
   // Re-read the token list whenever Home regains focus, so tokens added or
   // removed on the Tokens screen appear without an app restart. Balances
@@ -218,6 +263,12 @@ export function HomeScreen({ navigation }: Props) {
         state={balances[item.chainId]}
         onRetry={() => void refreshOne(item.chainId)}
         hidden={hideAmounts}
+        fiat={(() => {
+          const state = balances[item.chainId];
+          return state?.status === 'ok'
+            ? fiatFor(state, nativePriceAssetId(item.chainId, state.networkChainId))
+            : null;
+        })()}
       />
     </Pressable>
   );
@@ -244,6 +295,11 @@ export function HomeScreen({ navigation }: Props) {
         <View style={styles.tokenSection}>
           {tokens.map((token) => {
             const id = formatAssetId(token.assetId);
+            const tokenState = tokenBalances[id];
+            const priceId =
+              tokenState?.status === 'ok' && tokenState.networkChainId === evmChain.caip2
+                ? tokenPriceAssetId(token, evmChain.caip2)
+                : null;
             return (
               <TokenRow
                 key={id}
@@ -254,6 +310,7 @@ export function HomeScreen({ navigation }: Props) {
                   navigation.navigate('Send', { chainId: EVM_CHAIN_ID, tokenId: id })
                 }
                 hidden={hideAmounts}
+                fiat={fiatFor(tokenState, priceId)}
               />
             );
           })}
@@ -300,6 +357,7 @@ export function HomeScreen({ navigation }: Props) {
             onRefresh={() => {
               void refreshAll();
               void reloadTokens();
+              void refreshPrices();
             }}
             tintColor={theme.textMuted}
             colors={[theme.accent]}
@@ -311,6 +369,9 @@ export function HomeScreen({ navigation }: Props) {
             phrase. Balances come from the RPC endpoints in Settings; pull
             down to refresh. Tap a chain to receive, or use its Send link —
             tokens have their own Send link and pay their network fee in ETH.
+            {showFiat
+              ? ' USD values are indicative prices from CoinGecko (Settings → Prices).'
+              : ''}
           </Text>
         }
       />
@@ -376,6 +437,14 @@ const styles = StyleSheet.create({
   },
   balanceSymbol: {
     fontSize: 12,
+  },
+  fiat: {
+    fontSize: 12,
+    fontVariant: ['tabular-nums'],
+  },
+  fiatStale: {
+    fontSize: 10,
+    fontStyle: 'italic',
   },
   evmGroup: {
     gap: 8,

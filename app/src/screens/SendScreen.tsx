@@ -61,6 +61,8 @@ import { extractScannedAddress } from '../wallet/scan';
 import { QrScanner } from '../components/QrScanner';
 import { BalanceChangePreview } from '../components/BalanceChangePreview';
 import { PREVIEW_AA_NOTE } from '../wallet/simulation';
+import { usePrices } from '../wallet/usePrices';
+import { fiatLine, formatFiat, nativePriceAssetId, tokenPriceAssetId } from '../wallet/prices';
 import { BITCOIN, DOGECOIN } from '@shiba-wallet/chains-utxo';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Send'>;
@@ -125,7 +127,7 @@ export function SendScreen({ route, navigation }: Props) {
   // explorer links, badges and the AA config key all come from it, so
   // Sepolia test mode switches every EVM-touching piece of this screen
   // at once and the two modes never mix.
-  const { evmChain } = usePrefs();
+  const { evmChain, hideAmounts } = usePrefs();
   const account = accounts.find((a) => a.chainId === route.params.chainId);
   const tokenId = route.params.tokenId;
   const tokenMode = tokenId !== undefined;
@@ -229,6 +231,24 @@ export function SendScreen({ route, navigation }: Props) {
     () => (recipient.trim() ? validateRecipient(route.params.chainId, recipient) : null),
     [route.params.chainId, recipient],
   );
+
+  // Fiat values on the confirm screens (phase 6 item 2): the native coin's
+  // price for amounts, fees and totals in the native coin, the token's
+  // price for token amounts. Ids come from the network that serves this
+  // screen, so on Sepolia both are null and nothing is priced or shown.
+  const activeNetworkId = endpoint?.network.chainId ?? null;
+  const nativePriceId = activeNetworkId
+    ? nativePriceAssetId(route.params.chainId, activeNetworkId)
+    : null;
+  const tokenPriceId = token && activeNetworkId ? tokenPriceAssetId(token, activeNetworkId) : null;
+  const { quotes: priceQuotes } = usePrices([nativePriceId, tokenPriceId]);
+  /** Secondary fiat line for an exact amount, or null (render nothing). */
+  const fiatOf = (priceId: string | null, amount: bigint, amountDecimals: number) =>
+    priceId
+      ? fiatLine(
+          formatFiat(priceQuotes.get(priceId), amount, amountDecimals, { hidden: hideAmounts }),
+        )
+      : null;
 
   if (!account) {
     return (
@@ -645,7 +665,12 @@ export function SendScreen({ route, navigation }: Props) {
         </View>
 
         <Row label="To" value={quote.to} mono theme={theme} />
-        <Row label="Amount" value={`${exact(quote.amount, decimals)} ${symbol}`} theme={theme} />
+        <Row
+          label="Amount"
+          value={`${exact(quote.amount, decimals)} ${symbol}`}
+          sub={fiatOf(nativePriceId, quote.amount, decimals)}
+          theme={theme}
+        />
         <Row label="From smart account" value={quote.sender} mono theme={theme} />
         <Row
           label="Smart account balance"
@@ -660,6 +685,7 @@ export function SendScreen({ route, navigation }: Props) {
         <Row
           label={quote.sponsored ? 'Network fee' : 'Max network fee (bundler estimate)'}
           value={quote.sponsored ? 'Sponsored — you pay 0' : `${exact(quote.fee, decimals)} ${symbol}`}
+          sub={quote.sponsored ? null : fiatOf(nativePriceId, quote.fee, decimals)}
           theme={theme}
         />
         <Text style={[styles.hint, { color: theme.textMuted }]}>
@@ -675,6 +701,7 @@ export function SendScreen({ route, navigation }: Props) {
         <Row
           label="Total (worst case)"
           value={`${exact(quote.total, decimals)} ${symbol}`}
+          sub={fiatOf(nativePriceId, quote.total, decimals)}
           theme={theme}
         />
 
@@ -715,12 +742,14 @@ export function SendScreen({ route, navigation }: Props) {
         <Row
           label="Amount"
           value={`${exact(quote.amount, quote.decimals)} ${quote.symbol}`}
+          sub={fiatOf(tokenPriceId, quote.amount, quote.decimals)}
           theme={theme}
         />
         <Row label="Token contract" value={quote.contract} mono theme={theme} />
         <Row
           label="Max network fee (paid in ETH)"
           value={`${exact(quote.fee, nativeDecimals)} ETH`}
+          sub={fiatOf(nativePriceId, quote.fee, nativeDecimals)}
           theme={theme}
         />
         <Text style={[styles.hint, { color: theme.textMuted }]}>
@@ -807,10 +836,16 @@ export function SendScreen({ route, navigation }: Props) {
         <NetworkBadge label={network.label} testnet={testnet} theme={theme} />
 
         <Row label="To" value={quote.to} mono theme={theme} />
-        <Row label="Amount" value={`${exact(quote.amount, decimals)} ${symbol}`} theme={theme} />
+        <Row
+          label="Amount"
+          value={`${exact(quote.amount, decimals)} ${symbol}`}
+          sub={fiatOf(nativePriceId, quote.amount, decimals)}
+          theme={theme}
+        />
         <Row
           label={quote.kind === 'evm' ? 'Max network fee' : 'Network fee'}
           value={`${exact(quote.fee, decimals)} ${symbol}`}
+          sub={fiatOf(nativePriceId, quote.fee, decimals)}
           theme={theme}
         />
         {quote.kind === 'utxo' ? (
@@ -835,6 +870,7 @@ export function SendScreen({ route, navigation }: Props) {
         <Row
           label={quote.kind === 'evm' ? 'Total (worst case)' : 'Total'}
           value={`${exact(quote.total, decimals)} ${symbol}`}
+          sub={fiatOf(nativePriceId, quote.total, decimals)}
           theme={theme}
         />
         <Row label="Balance" value={`${exact(quote.balance, decimals)} ${symbol}`} theme={theme} />
@@ -1038,11 +1074,14 @@ export function SendScreen({ route, navigation }: Props) {
 function Row({
   label,
   value,
+  sub = null,
   mono: monoFont,
   theme,
 }: {
   label: string;
   value: string;
+  /** Secondary line under the value (the fiat value); nothing when null. */
+  sub?: string | null;
   mono?: boolean;
   theme: ReturnType<typeof useTheme>;
 }) {
@@ -1059,6 +1098,7 @@ function Row({
       >
         {value}
       </Text>
+      {sub ? <Text style={[styles.rowSub, { color: theme.textMuted }]}>{sub}</Text> : null}
     </View>
   );
 }
@@ -1131,6 +1171,10 @@ const styles = StyleSheet.create({
   rowValue: {
     fontSize: 16,
     fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+  },
+  rowSub: {
+    fontSize: 13,
     fontVariant: ['tabular-nums'],
   },
   simulationOk: {

@@ -57,6 +57,9 @@ export function useTokenBalances(evmAddress: string | undefined): TokenBalancesH
             status: 'ok',
             display: formatUnits(amount, token.decimals),
             symbol: token.symbol,
+            amount,
+            decimals: token.decimals,
+            networkChainId: endpoint.network.chainId,
           });
         }
       } catch (e) {

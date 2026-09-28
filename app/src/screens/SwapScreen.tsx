@@ -52,6 +52,8 @@ import {
   type SwapConfig,
   type SwapQuoteView,
 } from '../wallet/swap';
+import { usePrices } from '../wallet/usePrices';
+import { fiatLine, formatFiat, nativePriceAssetId, tokenPriceAssetId } from '../wallet/prices';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Swap'>;
 
@@ -111,7 +113,7 @@ function NetworkBadge({ label, testnet, theme }: { label: string; testnet: boole
 export function SwapScreen({ navigation }: Props) {
   const theme = useTheme();
   const { accounts, signWith } = useWallet();
-  const { evmChain } = usePrefs();
+  const { evmChain, hideAmounts } = usePrefs();
   const account = accounts.find((a) => a.chainId === EVM_CHAIN_ID);
 
   const [endpoint, setEndpoint] = useState<NetworkEndpoint | null | undefined>(undefined);
@@ -222,6 +224,26 @@ export function SwapScreen({ navigation }: Props) {
   useEffect(() => {
     void reloadSellBalance();
   }, [reloadSellBalance]);
+
+  // Fiat values for the sell and buy amounts (phase 6 item 2). Ids are
+  // derived against the ACTIVE chain, so in Sepolia test mode both are null
+  // and nothing is priced or shown.
+  const priceIdOf = (a: SwapAsset | null): string | null =>
+    a === null
+      ? null
+      : a === 'native'
+        ? nativePriceAssetId(EVM_CHAIN_ID, evmChain.caip2)
+        : tokenPriceAssetId(a, evmChain.caip2);
+  const sellPriceId = priceIdOf(sellAsset);
+  const buyPriceId = priceIdOf(buyAsset);
+  const { quotes: priceQuotes } = usePrices([sellPriceId, buyPriceId]);
+  /** Secondary fiat line for an exact amount, or null (render nothing). */
+  const fiatOf = (priceId: string | null, amount: bigint, amountDecimals: number) =>
+    priceId
+      ? fiatLine(
+          formatFiat(priceQuotes.get(priceId), amount, amountDecimals, { hidden: hideAmounts }),
+        )
+      : null;
 
   if (!account) {
     return (
@@ -660,16 +682,19 @@ export function SwapScreen({ navigation }: Props) {
         <Row
           label="You sell"
           value={`${exact(quote.sellAmount, sellDecimals)} ${sellSymbol}`}
+          sub={fiatOf(sellPriceId, quote.sellAmount, sellDecimals)}
           theme={theme}
         />
         <Row
           label="You receive (estimated)"
           value={`${exact(quote.buyAmount, buyDecimals)} ${buySymbol}`}
+          sub={fiatOf(buyPriceId, quote.buyAmount, buyDecimals)}
           theme={theme}
         />
         <Row
           label="Guaranteed minimum"
           value={`${exact(quote.minBuyAmount, buyDecimals)} ${buySymbol}`}
+          sub={fiatOf(buyPriceId, quote.minBuyAmount, buyDecimals)}
           theme={theme}
         />
         <Text style={[styles.hint, { color: theme.textMuted }]}>
@@ -759,16 +784,19 @@ export function SwapScreen({ navigation }: Props) {
         <Row
           label="You sell"
           value={`${exact(quote.sellAmount, sellDecimals)} ${sellSymbol}`}
+          sub={fiatOf(sellPriceId, quote.sellAmount, sellDecimals)}
           theme={theme}
         />
         <Row
           label="You receive (estimated)"
           value={`${exact(quote.buyAmount, buyDecimals)} ${buySymbol}`}
+          sub={fiatOf(buyPriceId, quote.buyAmount, buyDecimals)}
           theme={theme}
         />
         <Row
           label="Guaranteed minimum"
           value={`${exact(quote.minBuyAmount, buyDecimals)} ${buySymbol}`}
+          sub={fiatOf(buyPriceId, quote.minBuyAmount, buyDecimals)}
           theme={theme}
         />
         <Text style={[styles.hint, { color: theme.textMuted }]}>
@@ -1009,11 +1037,14 @@ export function SwapScreen({ navigation }: Props) {
 function Row({
   label,
   value,
+  sub = null,
   mono: monoFont,
   theme,
 }: {
   label: string;
   value: string;
+  /** Secondary line under the value (the fiat value); nothing when null. */
+  sub?: string | null;
   mono?: boolean;
   theme: ReturnType<typeof useTheme>;
 }) {
@@ -1030,6 +1061,7 @@ function Row({
       >
         {value}
       </Text>
+      {sub ? <Text style={[styles.rowSub, { color: theme.textMuted }]}>{sub}</Text> : null}
     </View>
   );
 }
@@ -1108,6 +1140,10 @@ const styles = StyleSheet.create({
   rowValue: {
     fontSize: 16,
     fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+  },
+  rowSub: {
+    fontSize: 13,
     fontVariant: ['tabular-nums'],
   },
   simulationOk: {

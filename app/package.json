@@ -15,6 +15,7 @@
     "@shiba-wallet/chains-solana": "file:../packages/chains-solana",
     "@shiba-wallet/chains-utxo": "file:../packages/chains-utxo",
     "@shiba-wallet/core": "file:../packages/core",
+    "@shiba-wallet/prices": "file:../packages/prices",
     "@walletconnect/jsonrpc-types": "^1.0.4",
     "@walletconnect/react-native-compat": "^2.25.0",
     "expo": "~57.0.25",

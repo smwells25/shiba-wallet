@@ -9,7 +9,21 @@ import type { ChainAccount } from './WalletContext';
  */
 export type BalanceState =
   | { status: 'loading' }
-  | { status: 'ok'; display: string; symbol: string }
+  | {
+      status: 'ok';
+      display: string;
+      symbol: string;
+      /** Exact balance in base units (for the fiat value; display stays `display`). */
+      amount: bigint;
+      /** The asset's decimals, paired with `amount`. */
+      decimals: number;
+      /**
+       * CAIP-2 id of the network that produced this balance (the ACTIVE
+       * network: 'eip155:11155111' for the EVM slot in Sepolia test mode),
+       * so a price is only ever attached to the network it belongs to.
+       */
+      networkChainId: string;
+    }
   /** Endpoint answered badly or not at all; retryable. */
   | { status: 'error'; message: string }
   /** No endpoint configured for this chain (e.g. Dogecoin by default). */
@@ -78,6 +92,9 @@ export function useBalances(accounts: ChainAccount[]): BalancesHook {
             status: 'ok',
             display: formatUnits(amount, endpoint.network.decimals),
             symbol: endpoint.network.symbol,
+            amount,
+            decimals: endpoint.network.decimals,
+            networkChainId: endpoint.network.chainId,
           });
         }
       } catch (e) {
