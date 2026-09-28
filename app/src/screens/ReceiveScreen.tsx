@@ -70,6 +70,18 @@ export function ReceiveScreen({ route, navigation }: Props) {
         </Text>
       </View>
       <Text style={[styles.path, { color: theme.textMuted }]}>{account.path}</Text>
+      {/*
+        CLIPBOARD HYGIENE (phase 4, item 5.3): expo-clipboard is already
+        the copy mechanism here. Its API offers no sensitive-content flag,
+        no clipboard-history exclusion and no auto-expiry — verified
+        against docs.expo.dev/versions/v57.0.0/sdk/clipboard and the
+        installed 57.0.2 type definitions (SetStringOptions carries only
+        inputFormat), so none of those are pretended. What CAN be done
+        honestly: an address is public data (low sensitivity), and the
+        note below tells the user the clipboard is readable by other apps.
+        The seed phrase is never copyable anywhere in the app — see the
+        deliberate display-only note in SettingsScreen.
+      */}
       <Button
         title={copied ? 'Copied ✓' : 'Copy address'}
         onPress={async () => {
@@ -77,6 +89,11 @@ export function ReceiveScreen({ route, navigation }: Props) {
           setCopied(true);
         }}
       />
+      {copied ? (
+        <Text style={[styles.note, { color: theme.textMuted }]}>
+          Copied — note that the clipboard can be read by other apps.
+        </Text>
+      ) : null}
       <Button
         title={`Send ${account.symbol}`}
         variant="secondary"

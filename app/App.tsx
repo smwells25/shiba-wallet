@@ -1,6 +1,7 @@
 import React from 'react';
-import { ActivityIndicator, Pressable, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   DarkTheme,
   DefaultTheme,
@@ -11,6 +12,8 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import type { RootStackParamList } from './src/navigation';
 import { useTheme } from './src/theme';
 import { WalletProvider, useWallet } from './src/wallet/WalletContext';
+import { PrefsProvider, usePrefs } from './src/wallet/PrefsContext';
+import { LockGate } from './src/components/LockGate';
 import { WelcomeScreen } from './src/screens/WelcomeScreen';
 import { BackupScreen } from './src/screens/BackupScreen';
 import { ConfirmBackupScreen } from './src/screens/ConfirmBackupScreen';
@@ -26,6 +29,24 @@ import { ConnectionsScreen } from './src/screens/ConnectionsScreen';
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 /**
+ * Persistent orange TESTNET banner (phase 4, item 6), shown whenever the
+ * Settings Sepolia test mode is on. Anchored at the bottom of the window
+ * (respecting the home-indicator inset) so it never fights the native
+ * stack headers for the status-bar area, and rendered outside the
+ * navigator so it stays visible on every screen.
+ */
+function TestnetBanner() {
+  const insets = useSafeAreaInsets();
+  return (
+    <View style={[styles.testnetBanner, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+      <Text style={styles.testnetBannerText}>
+        TESTNET — Sepolia test mode is on. Amounts are test ETH, not real funds.
+      </Text>
+    </View>
+  );
+}
+
+/**
  * Renders the onboarding stack while no wallet exists and the main stack
  * once one does. Because the two sets are mutually exclusive, completing
  * onboarding (or wiping the wallet) switches stacks automatically — no
@@ -34,6 +55,7 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 function Root() {
   const theme = useTheme();
   const { status } = useWallet();
+  const { sepolia } = usePrefs();
 
   if (status === 'loading') {
     return (
@@ -63,8 +85,9 @@ function Root() {
   };
 
   return (
-    <NavigationContainer theme={navTheme}>
-      <Stack.Navigator>
+    <View style={styles.fill}>
+      <NavigationContainer theme={navTheme}>
+        <Stack.Navigator>
         {status === 'no-wallet' ? (
           <>
             <Stack.Screen
@@ -119,16 +142,45 @@ function Root() {
             />
           </>
         )}
-      </Stack.Navigator>
-    </NavigationContainer>
+        </Stack.Navigator>
+      </NavigationContainer>
+      {sepolia && status === 'ready' ? <TestnetBanner /> : null}
+    </View>
   );
 }
 
 export default function App() {
   return (
-    <WalletProvider>
-      <StatusBar style="auto" />
-      <Root />
-    </WalletProvider>
+    <SafeAreaProvider>
+      <PrefsProvider>
+        <WalletProvider>
+          <StatusBar style="auto" />
+          {/* LockGate sits inside both providers (it needs wallet status and
+              the auto-lock preference) and wraps the whole navigator so the
+              lock overlay covers every screen without resetting navigation. */}
+          <LockGate>
+            <Root />
+          </LockGate>
+        </WalletProvider>
+      </PrefsProvider>
+    </SafeAreaProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  fill: {
+    flex: 1,
+  },
+  testnetBanner: {
+    backgroundColor: '#e07800',
+    paddingTop: 8,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+  },
+  testnetBannerText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+});

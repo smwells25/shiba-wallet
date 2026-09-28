@@ -15,9 +15,12 @@ import type { RootStackParamList } from '../navigation';
 import { Button, screenStyle } from '../components';
 import { Theme, useTheme } from '../theme';
 import { networkDefaultFor } from '../config/defaults';
+import { maskAmount } from '../config/prefs';
 import { formatUnits } from '../wallet/balances';
 import { directionLabel, explorerTxUrl, formatTimestamp } from '../wallet/history';
+import { EVM_CHAIN_ID } from '../wallet/send';
 import { useHistory } from '../wallet/useHistory';
+import { usePrefs } from '../wallet/PrefsContext';
 import { useWallet } from '../wallet/WalletContext';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Activity'>;
@@ -56,14 +59,20 @@ function EntryRow({
   chainId,
   decimals,
   symbol,
+  hidden,
+  evmExplorerTxBase,
 }: {
   entry: HistoryEntry;
   chainId: string;
   decimals: number;
   symbol: string;
+  /** Balance privacy (phase 4 item 5.2): mask amounts and fees as ••••. */
+  hidden: boolean;
+  /** Active EVM chain's explorer (sepolia.etherscan.io in test mode). */
+  evmExplorerTxBase: string;
 }) {
   const theme = useTheme();
-  const url = explorerTxUrl(chainId, entry.id);
+  const url = explorerTxUrl(chainId, entry.id, evmExplorerTxBase);
 
   // Token entries (EVM indexer) carry the backend-reported asset symbol;
   // this pass renders them amount-less (em-dash below), so the symbol is
@@ -71,7 +80,9 @@ function EntryRow({
   const rowSymbol = entry.assetSymbol ?? symbol;
   const sign = entry.direction === 'in' ? '+' : entry.direction === 'out' ? '−' : '';
   const amountText =
-    entry.amount === undefined ? '—' : `${sign}${formatUnits(entry.amount, decimals)}`;
+    entry.amount === undefined
+      ? '—'
+      : maskAmount(`${sign}${formatUnits(entry.amount, decimals)}`, hidden);
   const amountColor =
     entry.failed || entry.amount === undefined
       ? theme.textMuted
@@ -106,7 +117,7 @@ function EntryRow({
         </Text>
         {entry.fee !== undefined ? (
           <Text style={[styles.rowFee, { color: theme.textMuted }]}>
-            fee {formatUnits(entry.fee, decimals, decimals)} {symbol}
+            fee {maskAmount(formatUnits(entry.fee, decimals, decimals), hidden)} {symbol}
           </Text>
         ) : null}
       </View>
@@ -131,9 +142,16 @@ export function ActivityScreen({ navigation, route }: Props) {
   const theme = useTheme();
   const { chainId } = route.params;
   const { accounts } = useWallet();
+  const { hideAmounts, evmChain } = usePrefs();
   const account = accounts.find((a) => a.chainId === chainId);
   const network = networkDefaultFor(chainId);
   const { state, refreshing, reload, loadMore } = useHistory(chainId, account?.address ?? '');
+  // The EVM slot's symbol/explorer follow the active chain profile
+  // (test ETH + sepolia.etherscan.io in Sepolia test mode). useHistory
+  // already resolves the endpoint and indexer config through the same
+  // active-chain translation in config/networks.ts.
+  const isEvmSlot = chainId === EVM_CHAIN_ID;
+  const symbol = isEvmSlot ? evmChain.displaySymbol : network?.symbol ?? '';
 
   useEffect(() => {
     navigation.setOptions({ title: account ? `${account.name} activity` : 'Activity' });
@@ -203,7 +221,9 @@ export function ActivityScreen({ navigation, route }: Props) {
             entry={item}
             chainId={chainId}
             decimals={network.decimals}
-            symbol={network.symbol}
+            symbol={symbol}
+            hidden={hideAmounts}
+            evmExplorerTxBase={evmChain.explorerTxBase}
           />
         )}
         contentContainerStyle={styles.list}

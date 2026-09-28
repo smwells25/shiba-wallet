@@ -34,6 +34,25 @@ export type LocalAuthOutcome =
   | { ok: true; gated: boolean }
   | { ok: false; message: string };
 
+/**
+ * True when a local-auth prompt would actually appear (hardware present
+ * AND biometrics enrolled). Used by the auto-lock feature (phase 4, item
+ * 5.1): on devices where this is false the auto-lock setting is hidden in
+ * Settings — requireLocalAuth would proceed ungated there, so an
+ * "auto-lock" would be an empty ritual. No custom PIN pad substitutes for
+ * it, deliberately: see the decision note in wallet/lock.ts.
+ */
+export async function localAuthAvailable(): Promise<boolean> {
+  try {
+    return (
+      (await LocalAuthentication.hasHardwareAsync()) &&
+      (await LocalAuthentication.isEnrolledAsync())
+    );
+  } catch {
+    return false;
+  }
+}
+
 export async function requireLocalAuth(promptMessage: string): Promise<LocalAuthOutcome> {
   let available = false;
   try {

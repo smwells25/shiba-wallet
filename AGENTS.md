@@ -487,11 +487,9 @@ person can actually live in", using only resources already in hand.
 4. ~~QR support: show a QR on Receive and scan QR codes for WalletConnect
    pairing and send-recipient entry~~ — DONE 2026-09-27 (see Phase 4
    progress).
-5. App-lock polish: PIN fallback config, auto-lock timer, balance
-   privacy toggle (hide amounts), clipboard hygiene for addresses.
-6. Sepolia testnet mode in the app behind a developer toggle, pinning
-   the verified AA config (bundler + factory) so the smart-account path
-   can be exercised on a phone without touching mainnet funds.
+5. ~~App-lock polish~~ — DONE 2026-09-27 (see Phase 4 progress).
+6. ~~Sepolia testnet mode behind a developer toggle~~ — DONE 2026-09-27
+   (see Phase 4 progress).
 7. Swap groundwork (engine only this phase): a vendor-neutral
    SwapQuoteProvider interface with one adapter compiled against a real
    aggregator's documented API but exercised via fakes until a key
@@ -619,7 +617,60 @@ person can actually live in", using only resources already in hand.
       must show the normal validation error, WC pairing scan, permission
       deny/re-allow flow).
 
+- [x] Task 2 — Blockbook history provider in chains-utxo
+      (blockbookHistoryProvider over GET /api/v2/address details=txs with
+      page/pageSize pagination, string values, isAddress filtering, same
+      in/out/self rules as the Esplora provider), live-verified against
+      Dogecoin mainnet through a keyed Blockbook instance. Committed in
+      09e1ec0.
+
+- [x] Task 7 — swap groundwork (engine only): vendor-neutral
+      SwapQuoteProvider + 0x Swap API v2 allowance-holder adapter
+      (documented headers/params/response cited from docs.0x.org, exact
+      bigint amounts, no-liquidity distinguished from errors, API key
+      strictly injected). Fakes-only until a key exists. Committed in
+      cdd7ee2.
+
+- [x] Tasks 5 + 6 — app lock and Sepolia developer mode. Item 5:
+      app/src/wallet/lock.ts (pure auto-lock state machine: background/
+      inactive flap-proof away-timer, lock-on-return iff threshold
+      reached, null threshold = off, backwards-clock clamped; documented
+      DELIBERATE NO-PIN DECISION — unlock is requireLocalAuth whose OS
+      passcode fallback is strictly stronger than any homemade JS PIN
+      pad; devices without biometrics hide the setting with a note),
+      LockGate overlay component (no navigation reset — screen state
+      survives), balance-privacy toggle masking amounts on Home/tokens/
+      Activity with a quick eye icon, clipboard notes where addresses
+      are copied. Item 6: app/src/config/evm-chain.ts is the ONE config
+      source for the active EVM chain (mainnet default; Sepolia profile
+      behind Settings → Developer): numeric chain id for send.ts/
+      indexer.ts/aa.ts endpoint verification, default RPC, explorer
+      base, WalletConnect namespace chain, TESTNET banner, and the
+      pinned live-verified ERC-4337 defaults (EntryPoint v0.7 +
+      factory 0x91E6...8985/impl 0x6864...00C2 from the on-chain smoke;
+      bundler URLs stay runtime config — they embed keys). Modes never
+      mix: every per-chain store is keyed by the active profile's CAIP-2
+      id, and chain-id verification refuses mismatched endpoints.
+      Prefs (dev mode, privacy, auto-lock threshold) in
+      app/src/config/prefs.ts + PrefsContext, AsyncStorage, injectable
+      store. Verified: scripts/check-devmode.mjs 69/69 (lock
+      transitions, masking, active-chain switching incl. fake-node
+      chain-id refusals both directions, AA prefill pinned equal to the
+      engine's ENTRYPOINT_V07); full regression suite all green
+      (test-units 45, check-aa 39, check-wc 83, check-token-send 37,
+      check-qr 31, check-tokens 27); tsc --noEmit clean; expo export
+      bundles. Session note: this task's agent was twice interrupted by
+      session rate limits; the CTO ran the final verification pass and
+      wrote this entry from the delivered code.
+
 Sequencing: 1+2 first (history completes the read side), then 3+4
 (write side + capture), then 5+6, with 7 riding alongside as engine
 work. Live-fire retests (Dogecoin broadcast, WC pairing, FaceID) happen
 opportunistically as inputs appear.
+
+## Phase 4 complete (2026-09-27)
+
+All seven items landed. Remaining live verification is on-device only
+(cameras, FaceID, WalletConnect relay pairing, Sepolia dev-mode walk-
+through) and is listed in the task reports plus the known untested
+remainder above.

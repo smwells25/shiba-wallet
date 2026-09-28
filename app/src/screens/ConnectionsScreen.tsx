@@ -18,6 +18,8 @@ import { QrScanner } from '../components/QrScanner';
 import { getEndpoint } from '../config/networks';
 import { useTheme, type Theme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
+import { usePrefs } from '../wallet/PrefsContext';
+import type { EvmChainProfile } from '../config/evm-chain';
 import { requireLocalAuth } from '../wallet/biometric';
 import { formatUnits } from '../wallet/balances';
 import {
@@ -80,6 +82,14 @@ type TxQuoteState =
 export function ConnectionsScreen({ navigation }: Props) {
   const theme = useTheme();
   const { accounts, signWith } = useWallet();
+  // Active EVM chain (config/evm-chain.ts): the WalletConnect namespace,
+  // request routing, chain-id verification, badge and explorer all follow
+  // it — eip155:11155111 while Sepolia test mode is on. Requests for the
+  // inactive chain are declined with UNSUPPORTED_CHAINS by parseWcRequest,
+  // so sessions from one mode are never served in the other.
+  const { evmChain } = usePrefs();
+  const evmChainRef = useRef<EvmChainProfile>(evmChain);
+  evmChainRef.current = evmChain;
   const ethAccount = accounts.find((a) => a.chainId === EVM_CHAIN_ID);
   const ethAddress = ethAccount?.address ?? null;
   const addressRef = useRef(ethAddress);
@@ -135,7 +145,14 @@ export function ConnectionsScreen({ navigation }: Props) {
     let client: WcClient | null = null;
 
     const onProposal = (event: { id: number; params: unknown }) => {
-      setPending((prev) => [...prev, { type: 'proposal', event, summary: describeProposal(event) }]);
+      setPending((prev) => [
+        ...prev,
+        {
+          type: 'proposal',
+          event,
+          summary: describeProposal(event, [evmChainRef.current.caip2]),
+        },
+      ]);
     };
     const onRequest = (event: WcRequestEvent) => {
       const address = addressRef.current;
@@ -148,7 +165,7 @@ export function ConnectionsScreen({ navigation }: Props) {
         return;
       }
       try {
-        const parsed = parseWcRequest(event, address);
+        const parsed = parseWcRequest(event, address, evmChainRef.current.caip2);
         setPending((prev) => [...prev, { type: 'request', event, parsed }]);
       } catch (e) {
         // Unsupported / malformed: answer with a proper error response
@@ -219,6 +236,9 @@ export function ConnectionsScreen({ navigation }: Props) {
     setOverrideSimulation(false);
     const { tx } = head.parsed;
     (async () => {
+      // getEndpoint translates the EVM slot to the active network
+      // (Sepolia in test mode); the quote then verifies the endpoint's
+      // eth_chainId against the same active profile.
       const endpoint = await getEndpoint(EVM_CHAIN_ID);
       if (!endpoint?.url) throw new Error('No Ethereum RPC endpoint is configured.');
       const quote = await prepareEvmSend(
@@ -227,6 +247,7 @@ export function ConnectionsScreen({ navigation }: Props) {
         tx.to,
         tx.valueWei,
         tx.data.length > 0 ? tx.data : undefined,
+        evmChainRef.current.caip2,
       );
       return { quote, url: endpoint.url };
     })().then(
@@ -286,7 +307,7 @@ export function ConnectionsScreen({ navigation }: Props) {
     }
     setActionBusy(true);
     try {
-      const outcome = await approveProposal(kit, item.event, ethAddress);
+      const outcome = await approveProposal(kit, item.event, ethAddress, [evmChain.caip2]);
       if (!outcome.approved) {
         Alert.alert('Connection rejected', outcome.reason);
       }
@@ -338,7 +359,9 @@ export function ConnectionsScreen({ navigation }: Props) {
       // then hand the transaction hash back to the dApp.
       if (txQuote?.status !== 'ready') return;
       const { quote, url } = txQuote;
-      const sent = await signWith(EVM_CHAIN_ID, (signer) => sendEvm(url, signer, quote));
+      const sent = await signWith(EVM_CHAIN_ID, (signer) =>
+        sendEvm(url, signer, quote, evmChain.explorerTxBase),
+      );
       await respondApproved(kit, item.event.topic, item.event.id, sent.txid);
       shift();
       Alert.alert('Transaction sent', sent.txid);
@@ -529,6 +552,7 @@ export function ConnectionsScreen({ navigation }: Props) {
                   summary={head.summary}
                   theme={theme}
                   busy={actionBusy}
+                  activeChain={evmChain.caip2}
                   onApprove={() => void onApproveProposal(head)}
                   onReject={() => void onRejectProposal(head)}
                 />
@@ -539,6 +563,7 @@ export function ConnectionsScreen({ navigation }: Props) {
                   dappName={sessions.find((s) => s.topic === head.event.topic)?.name ?? 'Unknown dApp'}
                   theme={theme}
                   busy={actionBusy}
+                  evmChain={evmChain}
                   txQuote={txQuote}
                   overrideSimulation={overrideSimulation}
                   setOverrideSimulation={setOverrideSimulation}
@@ -558,12 +583,15 @@ function ProposalBody({
   summary,
   theme,
   busy,
+  activeChain,
   onApprove,
   onReject,
 }: {
   summary: WcProposalSummary;
   theme: Theme;
   busy: boolean;
+  /** CAIP-2 id of the active EVM chain (mainnet or Sepolia test mode). */
+  activeChain: string;
   onApprove: () => void;
   onReject: () => void;
 }) {
@@ -596,7 +624,7 @@ function ProposalBody({
       {blocked ? (
         <WarningBox>
           The dApp requires {summary.unsupportedRequired.join(', ')}, which this
-          wallet does not support over WalletConnect yet (only eip155:1).
+          wallet does not support over WalletConnect right now (only {activeChain}).
           Approving will fail and the connection will be rejected properly.
         </WarningBox>
       ) : null}
@@ -617,6 +645,7 @@ function RequestBody({
   dappName,
   theme,
   busy,
+  evmChain,
   txQuote,
   overrideSimulation,
   setOverrideSimulation,
@@ -627,6 +656,8 @@ function RequestBody({
   dappName: string;
   theme: Theme;
   busy: boolean;
+  /** Active EVM chain profile (badge, amount labels, testnet state). */
+  evmChain: EvmChainProfile;
   txQuote: TxQuoteState | null;
   overrideSimulation: boolean;
   setOverrideSimulation: (v: boolean) => void;
@@ -713,21 +744,29 @@ function RequestBody({
   return (
     <>
       <Text style={[styles.modalTitle, { color: theme.text }]}>Transaction request</Text>
-      <View
-        style={[
-          styles.mainnetBadge,
-          { backgroundColor: theme.dangerSurface, borderColor: theme.danger },
-        ]}
-      >
-        <Text style={[styles.mainnetBadgeText, { color: theme.danger }]}>
-          Ethereum Mainnet — real funds
-        </Text>
-      </View>
+      {evmChain.testnet ? (
+        <View style={[styles.mainnetBadge, { backgroundColor: '#e07800', borderColor: '#e07800' }]}>
+          <Text style={[styles.mainnetBadgeText, { color: '#ffffff' }]}>
+            {evmChain.label} TESTNET — test funds only
+          </Text>
+        </View>
+      ) : (
+        <View
+          style={[
+            styles.mainnetBadge,
+            { backgroundColor: theme.dangerSurface, borderColor: theme.danger },
+          ]}
+        >
+          <Text style={[styles.mainnetBadgeText, { color: theme.danger }]}>
+            Ethereum Mainnet — real funds
+          </Text>
+        </View>
+      )}
       <Field label="From dApp" value={dappName} theme={theme} />
       <Field label="To" value={parsed.tx.to} monoValue theme={theme} />
       <Field
         label="Amount"
-        value={`${formatUnits(parsed.tx.valueWei, 18, 18)} ETH`}
+        value={`${formatUnits(parsed.tx.valueWei, 18, 18)} ${evmChain.displaySymbol}`}
         theme={theme}
       />
       {parsed.tx.data.length > 0 ? (
@@ -751,12 +790,12 @@ function RequestBody({
         <>
           <Field
             label="Max network fee"
-            value={`${formatUnits(txQuote.quote.fee, 18, 18)} ETH`}
+            value={`${formatUnits(txQuote.quote.fee, 18, 18)} ${evmChain.displaySymbol}`}
             theme={theme}
           />
           <Field
             label="Total (worst case)"
-            value={`${formatUnits(txQuote.quote.total, 18, 18)} ETH`}
+            value={`${formatUnits(txQuote.quote.total, 18, 18)} ${evmChain.displaySymbol}`}
             theme={theme}
           />
           {txQuote.quote.simulation.ok ? (

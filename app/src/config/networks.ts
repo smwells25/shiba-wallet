@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { NetworkDefault } from './defaults';
-import { DEFAULT_NETWORKS, networkDefaultFor } from './defaults';
+import { resolveActiveNetworks } from './defaults';
+import { loadPrefs } from './prefs';
 
 /**
  * Per-chain RPC/REST endpoint configuration: verified public defaults (see
@@ -10,6 +11,14 @@ import { DEFAULT_NETWORKS, networkDefaultFor } from './defaults';
  * public configuration, not secrets, and keeping them out of secure storage
  * preserves the invariant that src/wallet/storage.ts is the only module
  * touching the secure store (which holds only the mnemonic).
+ *
+ * SEPOLIA TEST MODE (phase 4, item 6): the resolvers below are the single
+ * place where the app's EVM "slot" ('eip155:1', the id accounts and routes
+ * carry) is translated to the ACTIVE EVM network. With the Settings
+ * developer toggle on, the Ethereum slot resolves to the Sepolia network
+ * (see resolveActiveNetworks in ./defaults.ts); overrides are keyed by the
+ * ACTIVE chain's CAIP-2 id, so a custom Sepolia RPC and a custom mainnet
+ * RPC are stored under different keys and can never bleed into each other.
  */
 
 const OVERRIDES_KEY = 'shiba-wallet.rpc-endpoints.v1';
@@ -42,6 +51,12 @@ async function saveOverrides(map: OverrideMap): Promise<void> {
 
 /** Resolved endpoint state for one chain, ready for display or fetching. */
 export interface NetworkEndpoint {
+  /**
+   * The stable slot id callers query by (an account/route chain id, e.g.
+   * 'eip155:1'). Equals network.chainId except for the EVM slot in Sepolia
+   * test mode, where network is the Sepolia entry.
+   */
+  forChainId: string;
   network: NetworkDefault;
   /** The URL balance fetches should use right now (override or default). */
   url: string | null;
@@ -49,25 +64,25 @@ export interface NetworkEndpoint {
   isOverride: boolean;
 }
 
-/** Resolves the effective endpoint for one chain. */
+/**
+ * Resolves the effective endpoint for one chain. Accepts either a slot id
+ * (the mainnet CAIP-2 ids accounts and routes carry) or the active
+ * network's own chain id (e.g. 'eip155:11155111' while Sepolia mode is on).
+ */
 export async function getEndpoint(chainId: string): Promise<NetworkEndpoint | undefined> {
-  const network = networkDefaultFor(chainId);
-  if (!network) return undefined;
-  const overrides = await loadOverrides();
-  const override = overrides[chainId];
-  return {
-    network,
-    url: override ?? network.defaultUrl,
-    isOverride: override !== undefined,
-  };
+  const all = await getAllEndpoints();
+  return all.find((e) => e.forChainId === chainId || e.network.chainId === chainId);
 }
 
 /** Resolves every chain's effective endpoint (Settings list, Home refresh). */
 export async function getAllEndpoints(): Promise<NetworkEndpoint[]> {
-  const overrides = await loadOverrides();
-  return DEFAULT_NETWORKS.map((network) => {
+  const [overrides, prefs] = await Promise.all([loadOverrides(), loadPrefs()]);
+  return resolveActiveNetworks(prefs.sepolia).map(({ slot, network }) => {
+    // Keyed by the ACTIVE chain id: mainnet and Sepolia overrides live
+    // under different keys and never mix.
     const override = overrides[network.chainId];
     return {
+      forChainId: slot,
       network,
       url: override ?? network.defaultUrl,
       isOverride: override !== undefined,

@@ -200,9 +200,18 @@ export type SendQuote = EvmSendQuote | UtxoSendQuote | SolSendQuote;
 
 /**
  * EVM quote: verifies the endpoint really is the expected chain (a user
- * override pointing at a testnet or the wrong chain must not produce a
- * signable mainnet transaction), fetches balance/nonce/fees, estimates
- * gas, and runs the eth_call pre-flight simulation.
+ * override pointing at the wrong chain must not produce a signable
+ * transaction), fetches balance/nonce/fees, estimates gas, and runs the
+ * eth_call pre-flight simulation.
+ *
+ * `expectedCaip2` is the ACTIVE EVM chain (config/evm-chain.ts): callers
+ * pass 'eip155:11155111' while Sepolia test mode is on, and the endpoint's
+ * eth_chainId must match it exactly — the mainnet/testnet states can never
+ * mix because a Sepolia endpoint fails a mainnet-mode quote and vice
+ * versa. The default keeps the historical mainnet behavior for existing
+ * callers and offline checks, which is fail-closed: a caller that forgets
+ * to pass the test-mode chain gets a refusal, never a wrong-chain
+ * signature.
  *
  * Fees per NodeClient.suggestFees (latest base fee doubled + node priority
  * fee); gas via eth_estimateGas. When estimateGas rejects because the
@@ -216,6 +225,7 @@ export async function prepareEvmSend(
   to: string,
   amount: bigint,
   data?: Uint8Array,
+  expectedCaip2: string = EVM_CHAIN_ID,
 ): Promise<EvmSendQuote> {
   const transport = evmHttpTransport(url);
   const node = new NodeClient(transport);
@@ -227,11 +237,12 @@ export async function prepareEvmSend(
     node.suggestFees(),
   ]);
 
-  const expected = BigInt(EVM_CHAIN_ID.split(':')[1]!);
+  const expected = BigInt(expectedCaip2.split(':')[1]!);
   if (chainId !== expected) {
     throw new Error(
-      `Endpoint is chain id ${chainId}, expected ${expected} (Ethereum mainnet). ` +
-        'Check the RPC endpoint in Settings.',
+      `Endpoint is chain id ${chainId}, expected ${expected}` +
+        `${expected === 1n ? ' (Ethereum mainnet)' : expected === 11155111n ? ' (Sepolia)' : ''}. ` +
+        'Check the RPC endpoint (and the Sepolia test mode toggle) in Settings.',
     );
   }
 
@@ -501,11 +512,17 @@ export interface SendResult {
  * off or the chain unconfigured, this EOA path runs unchanged. Everything
  * before the fork (recipient validation, amount parsing) is path-agnostic
  * by design.
+ *
+ * `explorerTxBase` comes from the active EVM chain profile
+ * (config/evm-chain.ts): sepolia.etherscan.io in Sepolia test mode. The
+ * default keeps the historical mainnet link for existing callers; null
+ * yields no link at all.
  */
 export async function sendEvm(
   url: string,
   signer: DerivedAccount,
   quote: EvmSendQuote,
+  explorerTxBase: string | null = 'https://etherscan.io/tx/',
 ): Promise<SendResult> {
   const tx: Eip1559Transaction = {
     chainId: quote.chainId,
@@ -520,7 +537,7 @@ export async function sendEvm(
   const signed = signEip1559(tx, signer);
   const node = new NodeClient(evmHttpTransport(url));
   const txid = await node.sendRawTransaction(signed.rawHex);
-  return { txid, explorerUrl: `https://etherscan.io/tx/${txid}` };
+  return { txid, explorerUrl: explorerTxBase ? `${explorerTxBase}${txid}` : null };
 }
 
 /**

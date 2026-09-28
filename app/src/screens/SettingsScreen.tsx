@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation';
 import { Button, WarningBox, WordGrid, screenStyle } from '../components';
@@ -10,10 +10,12 @@ import {
   resetEndpoint,
   setEndpointOverride,
 } from '../config/networks';
-import { DEFAULT_NETWORKS, type NetworkDefault } from '../config/defaults';
+import { type NetworkDefault } from '../config/defaults';
+import { AUTO_LOCK_CHOICES } from '../config/prefs';
 import { useTheme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
-import { requireLocalAuth } from '../wallet/biometric';
+import { usePrefs } from '../wallet/PrefsContext';
+import { localAuthAvailable, requireLocalAuth } from '../wallet/biometric';
 import {
   clearAaBundlerUrl,
   clearAaFactory,
@@ -131,6 +133,8 @@ function AaField({
   placeholder,
   value,
   statusLine,
+  prefill = null,
+  prefillNote = null,
   onSave,
   onClear,
   saveLabel = 'Verify & save',
@@ -140,6 +144,14 @@ function AaField({
   value: string | null;
   /** Verification status for the stored value (shown when configured). */
   statusLine: string | null;
+  /**
+   * Pinned default the editor starts from when no value is stored yet
+   * (phase 4 item 6: the verified Sepolia factory). Saving still runs the
+   * full verification — a prefill is a convenience, never a bypass.
+   */
+  prefill?: string | null;
+  /** Explanatory line shown under the editor when the prefill was used. */
+  prefillNote?: string | null;
   /** Verifies and persists; throws with a plain message on any failure. */
   onSave: (draft: string) => Promise<void>;
   onClear: () => Promise<void>;
@@ -183,6 +195,9 @@ function AaField({
               { color: theme.text, borderColor: theme.border, backgroundColor: theme.background },
             ]}
           />
+          {prefill && draft === prefill && prefillNote ? (
+            <Text style={[styles.aaVerified, { color: theme.textMuted }]}>{prefillNote}</Text>
+          ) : null}
           {verifying ? (
             <Text style={[styles.aaStatus, { color: theme.textMuted }]}>
               Verifying before saving…
@@ -212,7 +227,9 @@ function AaField({
               title="Edit"
               variant="secondary"
               onPress={() => {
-                setDraft(value ?? '');
+                // Start from the stored value, else the pinned prefill
+                // (the verified Sepolia defaults in test mode).
+                setDraft(value ?? prefill ?? '');
                 setEditing(true);
               }}
               style={styles.endpointButton}
@@ -232,9 +249,19 @@ function AaField({
   );
 }
 
-/** AA configuration for one EVM chain: bundler URL + factory address. */
+/**
+ * AA configuration for one EVM chain: bundler URL + factory address, keyed
+ * by the ACTIVE chain's CAIP-2 id (network.chainId is 'eip155:11155111'
+ * while Sepolia test mode is on, so mainnet and Sepolia AA setups never
+ * share a key). In Sepolia mode the factory editor is pre-filled with the
+ * pinned, previously-verified factory from config/evm-chain.ts — saving
+ * still runs the standard on-chain verification before anything persists.
+ * The bundler URL has no prefill on purpose: bundler endpoints embed the
+ * user's API key and stay runtime configuration, never shipped defaults.
+ */
 function AaChainRow({ network }: { network: NetworkDefault }) {
   const theme = useTheme();
+  const { evmChain } = usePrefs();
   const [config, setConfig] = useState<AaChainConfig | null>(null);
 
   const reload = useCallback(() => {
@@ -244,6 +271,7 @@ function AaChainRow({ network }: { network: NetworkDefault }) {
   useEffect(reload, [reload]);
 
   const shortDate = (iso: string | null) => (iso ? iso.slice(0, 10) : 'unknown date');
+  const prefill = network.chainId === evmChain.caip2 ? evmChain.aaPrefill : null;
 
   return (
     <View style={[styles.endpointRow, { backgroundColor: theme.card, borderColor: theme.border }]}>
@@ -277,6 +305,14 @@ function AaChainRow({ network }: { network: NetworkDefault }) {
         label="SimpleAccountFactory address"
         placeholder="0x…"
         value={config?.factory ?? null}
+        prefill={prefill?.factory ?? null}
+        prefillNote={
+          prefill
+            ? `Pinned Sepolia default (verified on-chain 2026-09-27; implementation ` +
+              `${prefill.implementation}, EntryPoint v0.7 ${prefill.entryPoint}). ` +
+              'Saving re-runs the full on-chain verification through your RPC endpoint.'
+            : null
+        }
         statusLine={
           config?.factory
             ? `Verified ✓ — has code; implementation ${
@@ -374,15 +410,43 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
 export function SettingsScreen({ navigation }: Props) {
   const theme = useTheme();
   const { revealMnemonic, wipe, accounts } = useWallet();
+  const { sepolia, setSepolia, hideAmounts, setHideAmounts, autoLockMs, setAutoLockMs } =
+    usePrefs();
   const [revealed, setRevealed] = useState<string | null>(null);
   const [endpoints, setEndpoints] = useState<NetworkEndpoint[]>([]);
   const [wcProjectId, setWcProjectIdState] = useState<string | null>(null);
+  // Auto-lock is only offered when a local-auth prompt would actually
+  // appear; see the note in the Privacy & security section below.
+  const [authAvailable, setAuthAvailable] = useState<boolean | null>(null);
 
   const reloadEndpoints = useCallback(() => {
     getAllEndpoints().then(setEndpoints, () => setEndpoints([]));
-  }, []);
+    // sepolia in the deps: flipping the developer toggle swaps the EVM row
+    // (and the AA/indexer sections keyed off it) immediately.
+  }, [sepolia]);
 
   useEffect(reloadEndpoints, [reloadEndpoints]);
+
+  useEffect(() => {
+    let cancelled = false;
+    localAuthAvailable().then(
+      (ok) => {
+        if (!cancelled) setAuthAvailable(ok);
+      },
+      () => {
+        if (!cancelled) setAuthAvailable(false);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // The EVM-dependent sections (history indexer, Account Abstraction) are
+  // keyed by the ACTIVE EVM network so their configuration lands under the
+  // active chain id — 'eip155:11155111' in Sepolia test mode. forChainId
+  // (the stable slot id) still links each row to its wallet account.
+  const evmEndpoints = endpoints.filter((e) => e.network.kind === 'evm-jsonrpc');
 
   const reloadWcProjectId = useCallback(() => {
     getWcProjectId().then(setWcProjectIdState, () => setWcProjectIdState(null));
@@ -464,11 +528,74 @@ export function SettingsScreen({ navigation }: Props) {
               them. Hide them again as soon as you are done.
             </WarningBox>
             <WordGrid words={revealed.split(' ')} />
+            {/*
+              CLIPBOARD HYGIENE (phase 4, item 5.3): there is deliberately
+              NO copy button here. The system clipboard is readable by
+              other apps (and, on some platforms, synced across devices or
+              kept in a clipboard history), and expo-clipboard exposes no
+              sensitive-content flag, history exclusion, or expiry
+              (verified against docs.expo.dev/versions/v57.0.0/sdk/clipboard
+              and the installed 57.0.2 type definitions: SetStringOptions
+              has only inputFormat). Writing it down on paper is the
+              recovery model; the seed phrase never belongs on the
+              clipboard.
+            */}
+            <Text style={[styles.hint, { color: theme.textMuted }]}>
+              These words are shown only — there is deliberately no copy
+              button, because anything on the clipboard can be read by
+              other apps. Write them down on paper.
+            </Text>
             <Button title="Hide recovery phrase" variant="secondary" onPress={() => setRevealed(null)} />
           </View>
         ) : (
           <Button title="Show recovery phrase" variant="secondary" onPress={onReveal} />
         )}
+      </View>
+
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: theme.text }]}>Privacy & security</Text>
+        <View style={styles.toggleRow}>
+          <Text style={[styles.toggleLabel, { color: theme.text }]}>Hide amounts</Text>
+          <Switch value={hideAmounts} onValueChange={(v) => void setHideAmounts(v)} />
+        </View>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          Masks every balance and activity amount as •••• (also toggleable
+          with the eye on the Home screen). Addresses stay visible.
+        </Text>
+        {authAvailable ? (
+          <>
+            <Text style={[styles.toggleLabel, { color: theme.text }]}>
+              Auto-lock after returning from background
+            </Text>
+            <View style={styles.endpointButtons}>
+              {AUTO_LOCK_CHOICES.map((choice) => (
+                <Button
+                  key={choice.label}
+                  title={autoLockMs === choice.ms ? `✓ ${choice.label}` : choice.label}
+                  variant={autoLockMs === choice.ms ? 'primary' : 'secondary'}
+                  onPress={() => void setAutoLockMs(choice.ms)}
+                  style={styles.endpointButton}
+                />
+              ))}
+            </View>
+            <Text style={[styles.hint, { color: theme.textMuted }]}>
+              When the app has been in the background at least this long, it
+              locks behind the same biometric prompt as sending (with your
+              device passcode as the system fallback). Screen state is kept —
+              locking never discards what you were doing.
+            </Text>
+          </>
+        ) : authAvailable === false ? (
+          <Text style={[styles.hint, { color: theme.textMuted }]}>
+            Auto-lock is unavailable on this device: no biometric hardware or
+            enrollment was found, so the unlock prompt could not appear. The
+            wallet deliberately does not substitute its own PIN screen — an
+            in-app PIN would be weaker than your device's own lock screen,
+            which already protects the secure storage holding your recovery
+            phrase. Set up a device passcode and biometrics to enable
+            auto-lock.
+          </Text>
+        ) : null}
       </View>
 
       <View style={styles.section}>
@@ -500,12 +627,12 @@ export function SettingsScreen({ navigation }: Props) {
           endpoint itself. Saving verifies the endpoint first and refuses
           URLs for the wrong chain.
         </Text>
-        {DEFAULT_NETWORKS.filter((n) => n.kind === 'evm-jsonrpc').map((network) => (
+        {evmEndpoints.map((e) => (
           <IndexerChainRow
-            key={network.chainId}
-            network={network}
+            key={e.network.chainId}
+            network={e.network}
             walletAddress={
-              accounts.find((a) => a.chainId === network.chainId)?.address ?? null
+              accounts.find((a) => a.chainId === e.forChainId)?.address ?? null
             }
           />
         ))}
@@ -525,16 +652,17 @@ export function SettingsScreen({ navigation }: Props) {
           "Send from smart account" toggle. Off by default; nothing changes
           for regular sends.
         </Text>
-        {DEFAULT_NETWORKS.filter((n) => n.kind === 'evm-jsonrpc').map((network) => (
-          <AaChainRow key={network.chainId} network={network} />
+        {evmEndpoints.map((e) => (
+          <AaChainRow key={e.network.chainId} network={e.network} />
         ))}
       </View>
 
       <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: theme.text }]}>WalletConnect</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          Lets external dApps connect to this wallet (Ethereum mainnet only
-          for now). Requires a relay project id — create one for free at
+          Lets external dApps connect to this wallet on the active EVM
+          chain (Ethereum mainnet, or Sepolia while test mode is on).
+          Requires a relay project id — create one for free at
           dashboard.reown.com. The id is public app configuration, not a
           secret; no account or personal data from this wallet is involved.
           If a connection was already opened this session, a changed id
@@ -573,6 +701,34 @@ export function SettingsScreen({ navigation }: Props) {
           variant="secondary"
           onPress={() => navigation.navigate('Tokens')}
         />
+      </View>
+
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: theme.text }]}>Developer</Text>
+        <View style={styles.toggleRow}>
+          <Text style={[styles.toggleLabel, { color: theme.text }]}>Sepolia test mode</Text>
+          <Switch value={sepolia} onValueChange={(v) => void setSepolia(v)} />
+        </View>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          Switches the app's EVM chain to the Sepolia test network (chain id
+          11155111): balances, sends, WalletConnect and the smart-account
+          path all run against Sepolia with test ETH, an orange TESTNET
+          banner replaces the mainnet warning, and explorer links go to
+          sepolia.etherscan.io. Sepolia keeps its own endpoint, indexer and
+          Account Abstraction configuration — nothing from mainnet is
+          reused, and turning the toggle off restores mainnet exactly as it
+          was. The Account Abstraction section pre-fills the verified
+          Sepolia SimpleAccountFactory; the bundler URL still has to be
+          pasted by you, because bundler endpoints contain your own API key.
+          Tracked ERC-20 tokens are mainnet assets and are hidden while
+          test mode is on.
+        </Text>
+        {sepolia ? (
+          <Text style={[styles.hint, { color: '#e07800' }]}>
+            Test mode is ON. Your addresses are the same on Sepolia as on
+            mainnet — but anything sent here is test ETH with no value.
+          </Text>
+        ) : null}
       </View>
 
       <View style={styles.section}>
@@ -673,5 +829,14 @@ const styles = StyleSheet.create({
   aaVerified: {
     fontSize: 12,
     lineHeight: 17,
+  },
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  toggleLabel: {
+    fontSize: 15,
+    fontWeight: '600',
   },
 });

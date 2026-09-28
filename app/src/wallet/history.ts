@@ -108,9 +108,21 @@ export function historySourceFor(
  * Block-explorer link for a transaction, or null when no explorer has been
  * verified for the chain (Dogecoin). Same explorers the send flow's success
  * screen links to: etherscan.io, blockstream.info, solscan.io.
+ *
+ * `evmExplorerTxBase` (phase 4, item 6) lets the caller substitute the
+ * active EVM chain profile's explorer (config/evm-chain.ts —
+ * sepolia.etherscan.io in Sepolia test mode) without this module reading
+ * configuration; when omitted, the historical mainnet link stands.
  */
-export function explorerTxUrl(chainId: string, txid: string): string | null {
-  if (chainId === EVM_CHAIN_ID) return `https://etherscan.io/tx/${txid}`;
+export function explorerTxUrl(
+  chainId: string,
+  txid: string,
+  evmExplorerTxBase?: string | null,
+): string | null {
+  if (chainId === EVM_CHAIN_ID) {
+    const base = evmExplorerTxBase === undefined ? 'https://etherscan.io/tx/' : evmExplorerTxBase;
+    return base ? `${base}${txid}` : null;
+  }
   if (chainId === BITCOIN_CHAIN_ID) return `https://blockstream.info/tx/${txid}`;
   if (chainId === SOLANA_CHAIN_ID) return `https://solscan.io/tx/${txid}`;
   return null;

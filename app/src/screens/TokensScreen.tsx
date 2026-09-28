@@ -15,6 +15,7 @@ import type { RootStackParamList } from '../navigation';
 import { Button, screenStyle } from '../components';
 import { getEndpoint } from '../config/networks';
 import { useTheme } from '../theme';
+import { usePrefs } from '../wallet/PrefsContext';
 import { EVM_CHAIN_ID } from '../wallet/send';
 import {
   fetchErc20Metadata,
@@ -56,6 +57,7 @@ interface Preview {
  */
 export function TokensScreen({ navigation }: Props) {
   const theme = useTheme();
+  const { evmChain } = usePrefs();
   const [tokens, setTokens] = useState<FungibleAsset[]>([]);
   const [address, setAddress] = useState('');
   const [lookingUp, setLookingUp] = useState(false);
@@ -161,6 +163,24 @@ export function TokensScreen({ navigation }: Props) {
   };
 
   const needsManualEntry = preview !== null && fetchedSymbol === '';
+
+  // Token management is a mainnet feature: the tracked list holds
+  // Ethereum-mainnet ERC-20s, and metadata/balance lookups would hit the
+  // Sepolia endpoint in test mode (wrong chain). State it plainly rather
+  // than half-working.
+  if (evmChain.testnet) {
+    return (
+      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+        <Text style={[styles.sectionTitle, { color: theme.text }]}>Tokens are mainnet-only</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          Sepolia test mode is on, and your tracked ERC-20 tokens are
+          Ethereum mainnet assets. Turn off test mode in Settings →
+          Developer to see and manage them again — the list itself is kept
+          and unchanged.
+        </Text>
+      </ScrollView>
+    );
+  }
 
   return (
     <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>

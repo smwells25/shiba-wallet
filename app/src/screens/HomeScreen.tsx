@@ -17,6 +17,8 @@ import { screenStyle } from '../components';
 import { useTheme } from '../theme';
 import { EVM_CHAIN_ID } from '../wallet/send';
 import { ChainAccount, useWallet } from '../wallet/WalletContext';
+import { usePrefs } from '../wallet/PrefsContext';
+import { maskAmount } from '../config/prefs';
 import { BalanceState, useBalances } from '../wallet/useBalances';
 import { useTokenBalances } from '../wallet/useTokenBalances';
 
@@ -36,9 +38,12 @@ function shortAddress(address: string): string {
 function BalanceCell({
   state,
   onRetry,
+  hidden = false,
 }: {
   state: BalanceState | undefined;
   onRetry: () => void;
+  /** Balance privacy (phase 4 item 5.2): mask the amount as ••••. */
+  hidden?: boolean;
 }) {
   const theme = useTheme();
 
@@ -49,7 +54,7 @@ function BalanceCell({
     return (
       <View style={styles.balanceCell}>
         <Text style={[styles.balance, { color: theme.text }]} numberOfLines={1}>
-          {state.display}
+          {maskAmount(state.display, hidden)}
         </Text>
         <Text style={[styles.balanceSymbol, { color: theme.textMuted }]}>{state.symbol}</Text>
       </View>
@@ -86,11 +91,13 @@ function TokenRow({
   state,
   onRetry,
   onSend,
+  hidden,
 }: {
   token: FungibleAsset;
   state: BalanceState | undefined;
   onRetry: () => void;
   onSend: () => void;
+  hidden: boolean;
 }) {
   const theme = useTheme();
   return (
@@ -114,7 +121,7 @@ function TokenRow({
           <Text style={[styles.sendLink, { color: theme.accent }]}>Send ↗</Text>
         </Pressable>
       </View>
-      <BalanceCell state={state} onRetry={onRetry} />
+      <BalanceCell state={state} onRetry={onRetry} hidden={hidden} />
     </View>
   );
 }
@@ -123,19 +130,35 @@ function TokenRow({
 export function HomeScreen({ navigation }: Props) {
   const theme = useTheme();
   const { accounts } = useWallet();
+  const { hideAmounts, setHideAmounts, evmChain } = usePrefs();
   const { balances, refreshing, refreshAll, refreshOne } = useBalances(accounts);
   const evmAccount = accounts.find((a) => a.chainId === EVM_CHAIN_ID);
+  // Tracked tokens are Ethereum-mainnet assets; in Sepolia test mode the
+  // token section is hidden entirely (fetching a mainnet contract's
+  // balanceOf against a Sepolia endpoint would be wrong-chain noise).
+  const showTokens = !evmChain.testnet;
   const { tokens, tokenBalances, reloadTokens, refreshToken } = useTokenBalances(
-    evmAccount?.address,
+    showTokens ? evmAccount?.address : undefined,
   );
 
   // Re-read the token list whenever Home regains focus, so tokens added or
-  // removed on the Tokens screen appear without an app restart.
+  // removed on the Tokens screen appear without an app restart. Balances
+  // also re-resolve their endpoints per refresh, so flipping the Sepolia
+  // toggle in Settings takes effect on the next focus/refresh.
   useFocusEffect(
     useCallback(() => {
-      void reloadTokens();
-    }, [reloadTokens]),
+      if (showTokens) void reloadTokens();
+    }, [reloadTokens, showTokens]),
   );
+
+  // Re-fetch the EVM balance whenever the active EVM chain flips
+  // (mainnet <-> Sepolia), so the row never shows the other mode's number.
+  React.useEffect(() => {
+    void refreshOne(EVM_CHAIN_ID);
+    // refreshOne is stable per accounts; keying on the active chain id is
+    // the point of this effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [evmChain.caip2]);
 
   const renderChainCard = ({ item }: { item: ChainAccount }) => (
     <Pressable
@@ -182,6 +205,7 @@ export function HomeScreen({ navigation }: Props) {
       <BalanceCell
         state={balances[item.chainId]}
         onRetry={() => void refreshOne(item.chainId)}
+        hidden={hideAmounts}
       />
     </Pressable>
   );
@@ -191,6 +215,17 @@ export function HomeScreen({ navigation }: Props) {
   const renderItem = ({ item }: { item: ChainAccount }) => {
     const card = renderChainCard({ item });
     if (item.chainId !== EVM_CHAIN_ID) return card;
+    if (!showTokens) {
+      return (
+        <View style={styles.evmGroup}>
+          {card}
+          <Text style={[styles.testnetNote, { color: theme.textMuted }]}>
+            Sepolia test mode — tracked tokens are mainnet assets and are
+            hidden until test mode is turned off in Settings.
+          </Text>
+        </View>
+      );
+    }
     return (
       <View style={styles.evmGroup}>
         {card}
@@ -206,6 +241,7 @@ export function HomeScreen({ navigation }: Props) {
                 onSend={() =>
                   navigation.navigate('Send', { chainId: EVM_CHAIN_ID, tokenId: id })
                 }
+                hidden={hideAmounts}
               />
             );
           })}
@@ -229,6 +265,23 @@ export function HomeScreen({ navigation }: Props) {
         keyExtractor={(item) => item.chainId}
         renderItem={renderItem}
         contentContainerStyle={styles.list}
+        ListHeaderComponent={
+          // Quick balance-privacy toggle (the same setting lives in
+          // Settings -> Privacy & security); the eye glyph masks every
+          // amount on this screen and on Activity as ••••.
+          <View style={styles.privacyRow}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={hideAmounts ? 'Show amounts' : 'Hide amounts'}
+              onPress={() => void setHideAmounts(!hideAmounts)}
+              hitSlop={8}
+            >
+              <Text style={[styles.privacyToggle, { color: theme.accent }]}>
+                {hideAmounts ? '👁 Show amounts' : '👁 Hide amounts'}
+              </Text>
+            </Pressable>
+          </View>
+        }
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -350,6 +403,20 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     paddingVertical: 2,
+  },
+  testnetNote: {
+    fontSize: 12,
+    lineHeight: 17,
+    marginLeft: 20,
+  },
+  privacyRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    paddingBottom: 4,
+  },
+  privacyToggle: {
+    fontSize: 13,
+    fontWeight: '600',
   },
   footer: {
     fontSize: 13,

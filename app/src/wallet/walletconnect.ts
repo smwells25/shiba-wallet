@@ -112,7 +112,16 @@ export async function clearWcProjectId(store: KeyValueStore = AsyncStorage): Pro
 // What this wallet supports (this pass)
 // ---------------------------------------------------------------------------
 
-export const WC_SUPPORTED_CHAINS = [EVM_CHAIN_ID]; // eip155:1 only
+/**
+ * The default supported chain set (Ethereum mainnet). While the Settings
+ * Sepolia test mode is on, the Connections screen passes
+ * [activeEvmChain.caip2] ('eip155:11155111') into the functions below
+ * instead — the wallet then builds eip155:11155111 namespaces and declines
+ * eip155:1 requests, so a session approved in one mode can never be
+ * served in the other (phase 4, item 6). Defaults keep the historical
+ * mainnet behavior for existing callers and scripts/check-wc.mjs.
+ */
+export const WC_SUPPORTED_CHAINS = [EVM_CHAIN_ID]; // eip155:1 by default
 export const WC_SUPPORTED_METHODS = [
   'personal_sign',
   'eth_signTypedData_v4',
@@ -147,6 +156,7 @@ export const WC_ERRORS = {
 export function buildWalletNamespaces(
   proposalParams: unknown,
   ethAddress: string,
+  supportedChains: string[] = WC_SUPPORTED_CHAINS,
 ): Record<string, unknown> {
   // buildApprovedNamespaces's parameter type is the sign-client proposal
   // struct; the runtime event delivers exactly that shape, so the cast only
@@ -155,10 +165,10 @@ export function buildWalletNamespaces(
     proposal: proposalParams as Parameters<typeof buildApprovedNamespaces>[0]['proposal'],
     supportedNamespaces: {
       eip155: {
-        chains: WC_SUPPORTED_CHAINS,
+        chains: supportedChains,
         methods: WC_SUPPORTED_METHODS,
         events: WC_SUPPORTED_EVENTS,
-        accounts: WC_SUPPORTED_CHAINS.map((chain) => `${chain}:${ethAddress}`),
+        accounts: supportedChains.map((chain) => `${chain}:${ethAddress}`),
       },
     },
   }) as unknown as Record<string, unknown>;
@@ -180,7 +190,10 @@ export interface WcProposalSummary {
 }
 
 /** Defensive read of a proposal event for the approval UI. */
-export function describeProposal(proposal: { id: number; params: unknown }): WcProposalSummary {
+export function describeProposal(
+  proposal: { id: number; params: unknown },
+  supportedChains: string[] = WC_SUPPORTED_CHAINS,
+): WcProposalSummary {
   const params = (proposal.params ?? {}) as {
     proposer?: { metadata?: { name?: unknown; url?: unknown; description?: unknown } };
     requiredNamespaces?: Record<string, { chains?: unknown; methods?: unknown }>;
@@ -216,7 +229,7 @@ export function describeProposal(proposal: { id: number; params: unknown }): WcP
     requiredChains: required.chains,
     optionalChains: optional.chains,
     methods: [...new Set([...required.methods, ...optional.methods])],
-    unsupportedRequired: required.chains.filter((c) => !WC_SUPPORTED_CHAINS.includes(c)),
+    unsupportedRequired: required.chains.filter((c) => !supportedChains.includes(c)),
   };
 }
 
@@ -301,8 +314,9 @@ const DOMAIN_FIELD_ORDER = ['name', 'version', 'chainId', 'verifyingContract', '
  * TypedDataEncoder in the engine's own tests). Throws with a plain-language
  * reason whenever signing would be unsafe or ambiguous:
  *
- *  - domain.chainId present but not 1: this wallet only serves eip155:1 in
- *    this pass, and silently signing another chain's domain is how replayed
+ *  - domain.chainId present but not the ACTIVE chain's id (`expectedChain`,
+ *    CAIP-2, default eip155:1 — 'eip155:11155111' while Sepolia test mode
+ *    is on): silently signing another chain's domain is how replayed
  *    permits happen. (Absent chainId is allowed — e.g. Snapshot-style
  *    off-chain domains legitimately omit it.)
  *  - domain keys outside the five EIP-712 fields, or a declared
@@ -312,7 +326,10 @@ const DOMAIN_FIELD_ORDER = ['name', 'version', 'chainId', 'verifyingContract', '
  *    so any divergence means the digest we compute could differ from what
  *    the dApp verifies against. Refusing is the only honest move.
  */
-export function parseTypedDataV4(json: string): WcTypedData {
+export function parseTypedDataV4(
+  json: string,
+  expectedChain: string = EVM_CHAIN_ID,
+): WcTypedData {
   let parsed: unknown;
   try {
     parsed = JSON.parse(json);
@@ -363,11 +380,11 @@ export function parseTypedDataV4(json: string): WcTypedData {
     } catch {
       throw new Error(`Unreadable domain chainId: ${String(domainIn.chainId)}`);
     }
-    const expected = BigInt(EVM_CHAIN_ID.split(':')[1]!);
+    const expected = BigInt(expectedChain.split(':')[1]!);
     if (chainId !== expected) {
       throw new Error(
         `This typed data is for chain id ${chainId}, but this wallet only signs ` +
-          `for Ethereum mainnet (chain id ${expected}) over WalletConnect in this pass.`,
+          `for the active chain (${expectedChain}) over WalletConnect.`,
       );
     }
   }
@@ -470,13 +487,23 @@ function requireArrayParams(params: unknown, method: string): unknown[] {
  * WcRequestRejection with the error the dApp should receive. The
  * walletAddress is the wallet's single EOA account; any request naming a
  * different signer is refused (a session only ever exposed this account).
+ *
+ * `activeChain` is the ACTIVE EVM chain's CAIP-2 id (config/evm-chain.ts):
+ * requests for any other chain — including eip155:1 while Sepolia test
+ * mode is on, and eip155:11155111 while it is off — are declined with
+ * UNSUPPORTED_CHAINS, so the two modes never serve each other's sessions.
  */
-export function parseWcRequest(event: WcRequestEvent, walletAddress: string): ParsedWcRequest {
+export function parseWcRequest(
+  event: WcRequestEvent,
+  walletAddress: string,
+  activeChain: string = EVM_CHAIN_ID,
+): ParsedWcRequest {
   const chainId = event.params?.chainId;
-  if (chainId !== EVM_CHAIN_ID) {
+  if (chainId !== activeChain) {
     throw new WcRequestRejection(
       WC_ERRORS.unsupportedChains.code,
-      `This wallet only serves ${EVM_CHAIN_ID} over WalletConnect (request was for ${chainId}).`,
+      `This wallet only serves ${activeChain} over WalletConnect right now ` +
+        `(request was for ${chainId}).`,
     );
   }
   const method = event.params?.request?.method;
@@ -531,7 +558,7 @@ export function parseWcRequest(event: WcRequestEvent, walletAddress: string): Pa
     requireOurAddress(p[0], 'signing address');
     const json = typeof p[1] === 'string' ? p[1] : JSON.stringify(p[1]);
     try {
-      return { kind: 'typed_data', typedData: parseTypedDataV4(json) };
+      return { kind: 'typed_data', typedData: parseTypedDataV4(json, activeChain) };
     } catch (e) {
       throw new WcRequestRejection(
         WC_ERRORS.userRejected.code,
@@ -657,10 +684,11 @@ export async function approveProposal(
   client: WcClient,
   proposal: { id: number; params: unknown },
   ethAddress: string,
+  supportedChains: string[] = WC_SUPPORTED_CHAINS,
 ): Promise<{ approved: true } | { approved: false; reason: string }> {
   let namespaces: Record<string, unknown>;
   try {
-    namespaces = buildWalletNamespaces(proposal.params, ethAddress);
+    namespaces = buildWalletNamespaces(proposal.params, ethAddress, supportedChains);
   } catch (e) {
     await client.rejectSession({ id: proposal.id, reason: WC_ERRORS.unsupportedChains });
     return {

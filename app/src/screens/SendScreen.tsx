@@ -17,8 +17,9 @@ import type { FungibleAsset } from '@shiba-wallet/core';
 import type { RootStackParamList } from '../navigation';
 import { Button, WarningBox, screenStyle } from '../components';
 import { getEndpoint, type NetworkEndpoint } from '../config/networks';
-import { useTheme } from '../theme';
+import { useTheme, type Theme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
+import { usePrefs } from '../wallet/PrefsContext';
 import { requireLocalAuth } from '../wallet/biometric';
 import { formatUnits, parseUnits } from '../wallet/balances';
 import {
@@ -71,6 +72,35 @@ function exact(amount: bigint, decimals: number): string {
 }
 
 /**
+ * The confirm-screen network badge. Mainnet keeps the red "real funds"
+ * warning; in Sepolia test mode (EVM only) an orange TESTNET badge
+ * replaces it, per phase 4 item 6.
+ */
+function NetworkBadge({ label, testnet, theme }: { label: string; testnet: boolean; theme: Theme }) {
+  if (testnet) {
+    return (
+      <View style={[styles.mainnetBadge, { backgroundColor: '#e07800', borderColor: '#e07800' }]}>
+        <Text style={[styles.mainnetBadgeText, { color: '#ffffff' }]}>
+          {label} TESTNET — test funds only
+        </Text>
+      </View>
+    );
+  }
+  return (
+    <View
+      style={[
+        styles.mainnetBadge,
+        { backgroundColor: theme.dangerSurface, borderColor: theme.danger },
+      ]}
+    >
+      <Text style={[styles.mainnetBadgeText, { color: theme.danger }]}>
+        {label} Mainnet — real funds
+      </Text>
+    </View>
+  );
+}
+
+/**
  * Send flow for one chain: form (recipient + amount + fee preview via
  * Review), confirm (recipient / amount / fee / total, mainnet warning,
  * EVM pre-flight simulation, biometric gate), success (txid + explorer
@@ -88,6 +118,11 @@ function exact(amount: bigint, decimals: number): string {
 export function SendScreen({ route, navigation }: Props) {
   const theme = useTheme();
   const { accounts, signWith } = useWallet();
+  // The active EVM chain profile (config/evm-chain.ts): chain-id checks,
+  // explorer links, badges and the AA config key all come from it, so
+  // Sepolia test mode switches every EVM-touching piece of this screen
+  // at once and the two modes never mix.
+  const { evmChain } = usePrefs();
   const account = accounts.find((a) => a.chainId === route.params.chainId);
   const tokenId = route.params.tokenId;
   const tokenMode = tokenId !== undefined;
@@ -163,11 +198,18 @@ export function SendScreen({ route, navigation }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [route.params.chainId]);
+    // evmChain.caip2 in the deps: flipping Sepolia test mode re-resolves
+    // the endpoint (getEndpoint translates the EVM slot to the active
+    // network) if this screen is somehow still mounted across the flip.
+  }, [route.params.chainId, evmChain.caip2]);
 
   useEffect(() => {
     let cancelled = false;
-    getAaConfig(route.params.chainId).then(
+    // AA configuration is keyed by the ACTIVE chain's CAIP-2 id (the
+    // endpoint's network.chainId — 'eip155:11155111' in Sepolia test
+    // mode), so mainnet and Sepolia AA setups are separate by key.
+    const aaKey = endpoint?.network.chainId ?? route.params.chainId;
+    getAaConfig(aaKey).then(
       (c) => {
         if (!cancelled) setAaConfig(c);
       },
@@ -178,7 +220,7 @@ export function SendScreen({ route, navigation }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [route.params.chainId]);
+  }, [route.params.chainId, endpoint]);
 
   const validation = useMemo(
     () => (recipient.trim() ? validateRecipient(route.params.chainId, recipient) : null),
@@ -208,13 +250,33 @@ export function SendScreen({ route, navigation }: Props) {
       </View>
     );
   }
+  if (tokenMode && evmChain.testnet) {
+    // Defensive: every token entry point is hidden in Sepolia test mode
+    // (tracked tokens are mainnet assets), and prepareErc20Send would
+    // refuse the Sepolia endpoint anyway. State this plainly instead of
+    // quoting a mainnet token against a testnet chain.
+    return (
+      <View style={[screenStyle(theme), styles.center]}>
+        <Text style={{ color: theme.textMuted, textAlign: 'center', padding: 24 }}>
+          Token sending is an Ethereum mainnet feature. Turn off Sepolia
+          test mode in Settings → Developer to send tokens.
+        </Text>
+      </View>
+    );
+  }
 
   const network = endpoint?.network;
   const url = endpoint?.url ?? null;
+  const isEvmKind = network?.kind === 'evm-jsonrpc';
+  // Orange TESTNET presentation whenever the active EVM chain is a
+  // testnet and this screen is on the EVM slot.
+  const testnet = isEvmKind && evmChain.testnet;
   // Token mode: amounts are in the token's on-chain decimals and carry the
   // token's symbol; the fee stays in the native coin (see nativeDecimals).
   const decimals = token ? token.decimals : network?.decimals ?? 8;
-  const symbol = token ? token.symbol : account.symbol;
+  // EVM native amounts are labeled per the active profile ("test ETH" on
+  // Sepolia) so a test send can never read like a real one.
+  const symbol = token ? token.symbol : isEvmKind ? evmChain.displaySymbol : account.symbol;
   // For displaying the ETH fee of a token send (EVM native decimals).
   const nativeDecimals = network?.decimals ?? 18;
   const isUtxo = network?.kind === 'esplora';
@@ -321,11 +383,23 @@ export function SendScreen({ route, navigation }: Props) {
           nodeUrl: url,
           bundlerUrl: aaConfig.bundlerUrl,
           factory: aaConfig.factory,
+          // Active chain id (11155111 in Sepolia test mode): prepareAaSend
+          // verifies the node endpoint reports exactly this chain.
+          chainId: BigInt(evmChain.chainIdDecimal),
         });
         aaBundle.current = bundle;
         next = await prepareAaSend(bundle, account.address, validation.normalized, amount);
       } else if (network.kind === 'evm-jsonrpc') {
-        next = await prepareEvmSend(url, account.address, validation.normalized, amount);
+        // The endpoint's eth_chainId must match the ACTIVE EVM chain
+        // (mainnet 1 / Sepolia 11155111) — the modes can never mix.
+        next = await prepareEvmSend(
+          url,
+          account.address,
+          validation.normalized,
+          amount,
+          undefined,
+          evmChain.caip2,
+        );
       } else if (network.kind === 'solana-jsonrpc') {
         next = await prepareSolSend(url, account.address, validation.normalized, amount);
       } else {
@@ -390,7 +464,7 @@ export function SendScreen({ route, navigation }: Props) {
         // Token transfer: value 0, to = token contract, data = transfer
         // calldata — through the same sendEvm signing/broadcast path.
         if (quote.kind === 'erc20') return sendErc20(url, signer, quote);
-        if (quote.kind === 'evm') return sendEvm(url, signer, quote);
+        if (quote.kind === 'evm') return sendEvm(url, signer, quote, evmChain.explorerTxBase);
         if (quote.kind === 'sol') return sendSol(url, signer, quote);
         return sendUtxo(url, route.params.chainId, signer, quote);
       });
@@ -459,7 +533,7 @@ export function SendScreen({ route, navigation }: Props) {
                   title="View on block explorer"
                   variant="secondary"
                   onPress={() =>
-                    void Linking.openURL(`https://etherscan.io/tx/${aaResult.txHash}`)
+                    void Linking.openURL(`${evmChain.explorerTxBase}${aaResult.txHash}`)
                   }
                 />
               </>
@@ -509,16 +583,7 @@ export function SendScreen({ route, navigation }: Props) {
   if ((phase === 'confirm' || phase === 'sending') && quote?.kind === 'aa' && network) {
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
-        <View
-          style={[
-            styles.mainnetBadge,
-            { backgroundColor: theme.dangerSurface, borderColor: theme.danger },
-          ]}
-        >
-          <Text style={[styles.mainnetBadgeText, { color: theme.danger }]}>
-            {network.label} Mainnet — real funds
-          </Text>
-        </View>
+        <NetworkBadge label={network.label} testnet={testnet} theme={theme} />
 
         <View style={[styles.aaTag, { borderColor: theme.accent }]}>
           <Text style={[styles.aaTagText, { color: theme.accent }]}>
@@ -582,16 +647,7 @@ export function SendScreen({ route, navigation }: Props) {
     const blocked = (simulationFailed || quote.returnedFalse) && !overrideSimulation;
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
-        <View
-          style={[
-            styles.mainnetBadge,
-            { backgroundColor: theme.dangerSurface, borderColor: theme.danger },
-          ]}
-        >
-          <Text style={[styles.mainnetBadgeText, { color: theme.danger }]}>
-            {network.label} Mainnet — real funds
-          </Text>
-        </View>
+        <NetworkBadge label={network.label} testnet={testnet} theme={theme} />
 
         <Row label="To" value={quote.to} mono theme={theme} />
         <Row
@@ -681,16 +737,7 @@ export function SendScreen({ route, navigation }: Props) {
     const sendBlocked = simulationFailed && !overrideSimulation;
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
-        <View
-          style={[
-            styles.mainnetBadge,
-            { backgroundColor: theme.dangerSurface, borderColor: theme.danger },
-          ]}
-        >
-          <Text style={[styles.mainnetBadgeText, { color: theme.danger }]}>
-            {network.label} Mainnet — real funds
-          </Text>
-        </View>
+        <NetworkBadge label={network.label} testnet={testnet} theme={theme} />
 
         <Row label="To" value={quote.to} mono theme={theme} />
         <Row label="Amount" value={`${exact(quote.amount, decimals)} ${symbol}`} theme={theme} />
@@ -773,9 +820,9 @@ export function SendScreen({ route, navigation }: Props) {
       contentContainerStyle={styles.content}
       keyboardShouldPersistTaps="handled"
     >
-      <Text style={[styles.networkLine, { color: theme.textMuted }]}>
-        {network ? `${network.label} · Mainnet` : 'Unknown network'} · from{' '}
-        {account.address.slice(0, 10)}…
+      <Text style={[styles.networkLine, { color: testnet ? '#e07800' : theme.textMuted }]}>
+        {network ? `${network.label} · ${testnet ? 'TESTNET' : 'Mainnet'}` : 'Unknown network'}{' '}
+        · from {account.address.slice(0, 10)}…
       </Text>
 
       {!url ? (
@@ -832,7 +879,7 @@ export function SendScreen({ route, navigation }: Props) {
             setRecipient(t);
             setFormError(null);
           }}
-          placeholder={token ? 'Ethereum address' : `${symbol} address`}
+          placeholder={token ? 'Ethereum address' : `${account.symbol} address`}
           placeholderTextColor={theme.textMuted}
           autoCapitalize="none"
           autoCorrect={false}

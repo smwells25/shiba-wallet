@@ -1,10 +1,15 @@
+// Explicit .ts extension: this module is loaded directly by Node scripts
+// under type stripping, which resolves relative specifiers literally.
+import { EVM_SEPOLIA } from './evm-chain.ts';
+
 /**
  * Default network endpoints, as pure data.
  *
- * This file deliberately has NO imports (React Native or otherwise) so it
- * can also be loaded directly by Node scripts (see scripts/check-balances.mjs,
- * which runs it under Node's native TypeScript type-stripping). Everything
- * that touches AsyncStorage lives in ./networks.ts.
+ * This file deliberately has no React Native imports (its only import is
+ * ./evm-chain.ts, which is pure data itself) so it can be loaded directly
+ * by Node scripts (see scripts/check-balances.mjs, which runs it under
+ * Node's native TypeScript type-stripping). Everything that touches
+ * AsyncStorage lives in ./networks.ts.
  *
  * Every default URL below was verified to answer real queries on 2026-09-27
  * (see the per-entry comments). Endpoints are configuration, not code
@@ -99,6 +104,49 @@ export const DEFAULT_NETWORKS: NetworkDefault[] = [
   },
 ];
 
+/**
+ * The Sepolia network entry used in place of the Ethereum row while the
+ * Settings "Sepolia test mode" toggle is on (phase 4, item 6). Derived
+ * from the EVM_SEPOLIA profile in ./evm-chain.ts — the single source for
+ * every Sepolia value — never duplicated by hand here. The distinct
+ * chainId keys a separate endpoint-override slot in ./networks.ts, so a
+ * custom Sepolia RPC never leaks into mainnet mode or vice versa.
+ */
+export const SEPOLIA_NETWORK: NetworkDefault = {
+  chainId: EVM_SEPOLIA.caip2,
+  label: EVM_SEPOLIA.label,
+  kind: 'evm-jsonrpc',
+  // Verified in scripts/testnet/config.mjs (eth_chainId returned 0xaa36a7
+  // on 2026-09-27) and re-verified at send time by the chain-id check.
+  defaultUrl: EVM_SEPOLIA.defaultRpcUrl,
+  decimals: 18,
+  symbol: EVM_SEPOLIA.displaySymbol,
+  note: 'Sepolia test network — balances and sends here are test ETH, not real funds.',
+};
+
 export function networkDefaultFor(chainId: string): NetworkDefault | undefined {
+  if (chainId === SEPOLIA_NETWORK.chainId) return SEPOLIA_NETWORK;
   return DEFAULT_NETWORKS.find((n) => n.chainId === chainId);
+}
+
+/**
+ * One chain "slot" of the app (the four launch chains, keyed by the
+ * mainnet CAIP-2 ids the accounts and routes carry) resolved to the
+ * network that is ACTIVE for it right now. Only the EVM slot ever swaps:
+ * with Sepolia test mode on, its network becomes SEPOLIA_NETWORK while
+ * `slot` stays 'eip155:1' so accounts, navigation params and per-slot UI
+ * keep matching. Pure so scripts/check-devmode.mjs can pin the mapping.
+ */
+export interface ActiveNetwork {
+  /** The stable slot id (always the mainnet CAIP-2 id from DEFAULT_NETWORKS). */
+  slot: string;
+  /** The network serving that slot under the current mode. */
+  network: NetworkDefault;
+}
+
+export function resolveActiveNetworks(sepolia: boolean): ActiveNetwork[] {
+  return DEFAULT_NETWORKS.map((n) => ({
+    slot: n.chainId,
+    network: n.kind === 'evm-jsonrpc' && sepolia ? SEPOLIA_NETWORK : n,
+  }));
 }

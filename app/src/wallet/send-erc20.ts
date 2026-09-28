@@ -146,6 +146,12 @@ export async function prepareErc20Send(request: Erc20SendRequest): Promise<Erc20
     node.suggestFees(),
   ]);
 
+  // DELIBERATELY pinned to mainnet (not the active-chain profile): the
+  // tracked-token store only holds Ethereum-mainnet ERC-20s, and the app
+  // hides every token entry point while Sepolia test mode is on. If a
+  // token quote is ever reached in test mode anyway, this check fails
+  // closed against the Sepolia endpoint instead of quoting a mainnet
+  // token on the wrong chain.
   const expected = BigInt(EVM_CHAIN_ID.split(':')[1]!);
   if (chainId !== expected) {
     throw new Error(
