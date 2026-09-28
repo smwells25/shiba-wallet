@@ -1127,3 +1127,39 @@ lock-in from the design.
 Wave 1: item 1 (agent) + item 2's ENGINE package only (agent, no app
 files). Wave 2: item 2's app wiring + items 3–5 sequenced by file
 overlap. Subagents run on Opus per the Chairperson's credit directive.
+
+## Phase 6 progress
+
+- [x] Item 2, engine half — new package packages/prices
+      (@shiba-wallet/prices, zero runtime dependencies, 115 tests).
+      PriceProvider interface over plain CAIP-19 string ids; a result
+      separates priced assets, failed lookups (rate-limited / http /
+      network / malformed) and unpriceable assets (absent, never a zero
+      price). Exact math: fiatValue(amount, decimals, price) is pure
+      bigint, rounds half away from zero once, never prints -0.00, and
+      flags belowPrecision so the UI can show "< $0.01". A small strict
+      JSON parser keeps vendor number literals verbatim (Map-based
+      objects, prototype-safe), so vendor digits never pass through a
+      float before the decimal math. CoinGecko adapter verified
+      2026-09-28 against docs.coingecko.com (demo/reference
+      authentication, endpoint-overview, simple-price, simple-token-price;
+      docs/errors-and-rate-limits): base https://api.coingecko.com/api/v3
+      serves Demo and keyless calls; the optional Demo key goes only in
+      the x-cg-demo-api-key header; /simple/price and
+      /simple/token_price/{platform} with include_last_updated_at and
+      precision=full (without it prices are rounded to ~5 significant
+      digits, observed live). Live keyless probes confirmed the coin ids
+      ethereum/bitcoin/dogecoin/solana and USDC by contract, and observed
+      two undocumented keyless limits: ONE contract per token_price
+      request (HTTP 400, error 10012) and a 429 after ~6 requests/minute
+      from one IP. Native ids match core's CAIP-2 ids (checked by the
+      CTO against packages/core chains/utxo.ts and chains/solana.ts);
+      testnet assets are deliberately unpriced. cachedPriceProvider adds
+      TTL caching (including "cannot price" answers), in-flight dedupe,
+      stale-on-error within maxStaleMs (flagged stale), and 429 backoff
+      (Retry-After if sent, else 60 s doubling to 10 min). Unverified:
+      the Demo-key path (no key available) and Retry-After on CoinGecko
+      429s (never observed). App wiring is wave 2: one shared cached
+      instance (120 s TTL keyless), fiat as secondary text on Home and
+      confirm screens, masked under Hide amounts, silent when missing,
+      optional Demo key in Settings with verify-before-save.
