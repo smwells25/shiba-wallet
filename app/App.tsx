@@ -57,7 +57,7 @@ function TestnetBanner() {
  */
 function Root() {
   const theme = useTheme();
-  const { status } = useWallet();
+  const { status, activeAccount } = useWallet();
   const { sepolia } = usePrefs();
 
   if (status === 'loading') {
@@ -89,7 +89,11 @@ function Root() {
 
   return (
     <View style={styles.fill}>
-      <NavigationContainer theme={navTheme}>
+      {/* Keyed on the active account (phase 6 item 3): switching accounts
+          remounts the whole navigator, back to Home, so no screen keeps a
+          quote, balance, history page or form prepared for the previous
+          account. Signing is additionally guarded in WalletContext.signWith. */}
+      <NavigationContainer key={`account-${activeAccount?.index ?? 0}`} theme={navTheme}>
         <Stack.Navigator>
         {status === 'no-wallet' ? (
           <>

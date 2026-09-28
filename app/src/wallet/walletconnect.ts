@@ -224,14 +224,15 @@ export const WC_SUPPORTED_EVENTS = ['accountsChanged', 'chainChanged'];
  * the codes the WC ecosystem expects — its equivalent of EIP-1193's 4001).
  * Values read from the installed utils src/errors.ts SDK_ERRORS table:
  * USER_REJECTED 5000, UNSUPPORTED_CHAINS 5100, UNSUPPORTED_METHODS 5101,
- * UNSUPPORTED_EVENTS 5102, UNSUPPORTED_NAMESPACE_KEY 5104,
- * USER_DISCONNECTED 6000.
+ * UNSUPPORTED_EVENTS 5102, UNSUPPORTED_ACCOUNTS 5103,
+ * UNSUPPORTED_NAMESPACE_KEY 5104, USER_DISCONNECTED 6000.
  */
 export const WC_ERRORS = {
   userRejected: getSdkError('USER_REJECTED'),
   unsupportedChains: getSdkError('UNSUPPORTED_CHAINS'),
   unsupportedMethods: getSdkError('UNSUPPORTED_METHODS'),
   unsupportedEvents: getSdkError('UNSUPPORTED_EVENTS'),
+  unsupportedAccounts: getSdkError('UNSUPPORTED_ACCOUNTS'),
   unsupportedNamespaceKey: getSdkError('UNSUPPORTED_NAMESPACE_KEY'),
   userDisconnected: getSdkError('USER_DISCONNECTED'),
 } as const;
@@ -792,8 +793,10 @@ function requireArrayParams(params: unknown, method: string): unknown[] {
 /**
  * Routes one session_request into a typed, validated shape, or throws
  * WcRequestRejection with the error the dApp should receive. The
- * walletAddress is the wallet's single EOA account; any request naming a
- * different signer is refused (a session only ever exposed this account).
+ * walletAddress is the account the session is bound to (WcController only
+ * calls this after checking that it is also the ACTIVE account); any
+ * request naming a different signer is refused (a session only ever
+ * exposed this one account).
  *
  * `activeChain` is the ACTIVE EVM chain's CAIP-2 id (config/evm-chain.ts):
  * requests for any other chain — including eip155:1 while Sepolia test
@@ -1004,6 +1007,82 @@ export function sessionChainsOf(session: unknown): string[] {
 }
 
 /**
+ * The EVM addresses a session's approved namespaces expose (from their
+ * CAIP-10 accounts, "eip155:<chain>:<address>"), deduplicated
+ * case-insensitively. This wallet approves every session with exactly one
+ * address — the account that was active at approval time — so this is the
+ * session's BOUND account. Empty when the session is unknown or malformed.
+ */
+export function sessionAddressesOf(session: unknown): string[] {
+  const s = (session ?? {}) as { namespaces?: Record<string, { accounts?: unknown }> };
+  const seen = new Map<string, string>();
+  for (const ns of Object.values(s.namespaces ?? {})) {
+    if (!Array.isArray(ns?.accounts)) continue;
+    for (const account of ns.accounts) {
+      if (typeof account !== 'string') continue;
+      const parts = account.split(':');
+      if (parts.length !== 3 || parts[0] !== 'eip155') continue;
+      const address = parts[2]!;
+      if (!isAddressShaped(address)) continue;
+      if (!seen.has(address.toLowerCase())) seen.set(address.toLowerCase(), address);
+    }
+  }
+  return [...seen.values()];
+}
+
+/** True when `address` is one of the session's bound addresses. */
+export function sessionBindsAddress(sessionAddresses: readonly string[], address: string): boolean {
+  const lower = address.toLowerCase();
+  return sessionAddresses.some((a) => a.toLowerCase() === lower);
+}
+
+/**
+ * The sentence shown (and sent to the dApp) when a request arrives for a
+ * session bound to an account other than the active one. `labelFor` turns
+ * an address into "Account 1 (0x9858…Eda94)" (or null when the address is
+ * not one of this wallet's accounts).
+ */
+export function accountMismatchMessage(
+  sessionAddresses: readonly string[],
+  activeAddress: string,
+  labelFor: (address: string) => string | null = () => null,
+): string {
+  const bound = sessionAddresses[0];
+  if (!bound) {
+    return (
+      "This connection's account could not be determined, so the request was declined. " +
+      'Disconnect and reconnect from the dApp.'
+    );
+  }
+  const boundLabel = labelFor(bound) ?? bound;
+  const activeLabel = activeAddress ? (labelFor(activeAddress) ?? activeAddress) : 'another account';
+  return (
+    `This connection belongs to ${boundLabel}, but ${activeLabel} is active, so the request ` +
+    `was declined. Switch back to ${boundLabel} to use this connection, or disconnect and ` +
+    'reconnect from the dApp with the active account.'
+  );
+}
+
+/**
+ * Plain-language note for a session bound to an account other than the
+ * active one (sessions survive an account switch; they are paused, not
+ * deleted), or null when the session belongs to the active account.
+ */
+export function sessionAccountNote(
+  sessionAddresses: readonly string[],
+  activeAddress: string | null,
+  labelFor: (address: string) => string | null = () => null,
+): string | null {
+  if (!activeAddress || sessionAddresses.length === 0) return null;
+  if (sessionBindsAddress(sessionAddresses, activeAddress)) return null;
+  const boundLabel = labelFor(sessionAddresses[0]!) ?? sessionAddresses[0]!;
+  return (
+    `This connection belongs to ${boundLabel}. Paused while another account is active: ` +
+    `its requests are declined until you switch back to ${boundLabel}.`
+  );
+}
+
+/**
  * Plain-language note for a session approved in the OTHER wallet mode
  * (sessions survive a mode switch; they are paused, not deleted), or null
  * when the session includes the active chain.
@@ -1156,6 +1235,8 @@ export interface WcSessionSummary {
   name: string;
   url: string;
   chains: string[];
+  /** The account address(es) the session is bound to (sessionAddressesOf). */
+  addresses: string[];
   methods: string[];
   /** Unix seconds, or null when the SDK did not report one. */
   expiry: number | null;
@@ -1191,6 +1272,7 @@ export function summarizeSessions(sessions: Record<string, unknown>): WcSessionS
       name: typeof s.peer?.metadata?.name === 'string' ? s.peer.metadata.name : 'Unknown dApp',
       url: typeof s.peer?.metadata?.url === 'string' ? s.peer.metadata.url : '',
       chains: [...chains],
+      addresses: sessionAddressesOf(session),
       methods: [...methods],
       expiry: typeof s.expiry === 'number' ? s.expiry : null,
     };

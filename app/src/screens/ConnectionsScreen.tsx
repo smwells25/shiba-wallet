@@ -180,9 +180,19 @@ export function ConnectionsScreen({ navigation }: Props) {
                     {session.chains.join(', ') || 'no chains'} ·{' '}
                     {session.methods.length} method{session.methods.length === 1 ? '' : 's'}
                   </Text>
+                  {session.accountLabel || session.addresses[0] ? (
+                    <Text style={[styles.cardLine, { color: theme.textMuted }]}>
+                      Account: {session.accountLabel ?? session.addresses[0]}
+                    </Text>
+                  ) : null}
                   {session.modeNote ? (
                     <Text style={[styles.cardLine, { color: theme.warningText }]}>
                       {session.modeNote}
+                    </Text>
+                  ) : null}
+                  {session.accountNote ? (
+                    <Text style={[styles.cardLine, { color: theme.warningText }]}>
+                      {session.accountNote}
                     </Text>
                   ) : null}
                   <Button

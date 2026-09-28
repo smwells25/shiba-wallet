@@ -38,7 +38,8 @@ export function BackupScreen({ navigation }: Props) {
         them can steal everything, and no one — including us — can recover
         them for you if they are lost. Write them down on paper, in order, and
         keep the paper offline. Do not screenshot them, do not store them in
-        notes or cloud storage, and never type them into a website.
+        notes or cloud storage, and never type them into a website. The same
+        words also back up every additional account you create later.
       </WarningBox>
       <WordGrid words={words} />
       <Button

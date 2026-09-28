@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -112,7 +112,7 @@ function NetworkBadge({ label, testnet, theme }: { label: string; testnet: boole
  */
 export function SwapScreen({ navigation }: Props) {
   const theme = useTheme();
-  const { accounts, signWith } = useWallet();
+  const { accounts, signWith, activeAccount } = useWallet();
   const { evmChain, hideAmounts } = usePrefs();
   const account = accounts.find((a) => a.chainId === EVM_CHAIN_ID);
 
@@ -141,6 +141,10 @@ export function SwapScreen({ navigation }: Props) {
   const [sendQuote, setSendQuote] = useState<EvmSendQuote | null>(null);
   const [overrideSimulation, setOverrideSimulation] = useState(false);
   const [result, setResult] = useState<SendResult | null>(null);
+  // The address the approve/swap transactions were prepared for (nonce,
+  // balance, simulation). signWith refuses to sign unless the active
+  // account's key controls exactly this address.
+  const preparedFrom = useRef<string | null>(null);
 
   useEffect(() => {
     navigation.setOptions({ title: 'Swap' });
@@ -391,6 +395,7 @@ export function SwapScreen({ navigation }: Props) {
           amount,
         );
         if (!sufficient) {
+          preparedFrom.current = account.address;
           const prepared = await prepareApproveSend(
             url,
             account.address,
@@ -405,6 +410,7 @@ export function SwapScreen({ navigation }: Props) {
           return;
         }
       }
+      preparedFrom.current = account.address;
       const prepared = await prepareSwapSend(url, account.address, quote, evmChain.caip2);
       setSendQuote(prepared);
       setOverrideSimulation(false);
@@ -428,7 +434,7 @@ export function SwapScreen({ navigation }: Props) {
     }
     setPhase('approving');
     try {
-      const sent = await signWith(EVM_CHAIN_ID, (signer) =>
+      const sent = await signWith(EVM_CHAIN_ID, preparedFrom.current ?? '', (signer) =>
         sendEvm(url, signer, approveQuote, evmChain.explorerTxBase),
       );
       setApproveTxid(sent.txid);
@@ -473,6 +479,7 @@ export function SwapScreen({ navigation }: Props) {
         setPhase('form');
         return;
       }
+      preparedFrom.current = account.address;
       const prepared = await prepareSwapSend(url, account.address, fresh, evmChain.caip2);
       setSendQuote(prepared);
       setOverrideSimulation(false);
@@ -504,6 +511,7 @@ export function SwapScreen({ navigation }: Props) {
           setPhase('form');
           return;
         }
+        preparedFrom.current = account.address;
         const prepared = await prepareSwapSend(url, account.address, view.result.quote, evmChain.caip2);
         setSendQuote(prepared);
         setOverrideSimulation(false);
@@ -528,7 +536,7 @@ export function SwapScreen({ navigation }: Props) {
     }
     setPhase('sending');
     try {
-      const sent = await signWith(EVM_CHAIN_ID, (signer) =>
+      const sent = await signWith(EVM_CHAIN_ID, preparedFrom.current ?? '', (signer) =>
         sendEvm(url, signer, sendQuote, evmChain.explorerTxBase),
       );
       setResult(sent);
@@ -588,6 +596,12 @@ export function SwapScreen({ navigation }: Props) {
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
         <Text style={[styles.stepTitle, { color: theme.text }]}>Step 1 of 2 — Approve</Text>
+        <Row
+          label="From account"
+          value={activeAccount?.name ?? '—'}
+          sub={preparedFrom.current}
+          theme={theme}
+        />
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Before the swap contract can take your {sellSymbol}, it needs a
           spending allowance. This approves exactly{' '}
@@ -676,6 +690,12 @@ export function SwapScreen({ navigation }: Props) {
         {sellAsset !== 'native' ? (
           <Text style={[styles.stepTitle, { color: theme.text }]}>Step 2 of 2 — Swap</Text>
         ) : null}
+        <Row
+          label="From account"
+          value={activeAccount?.name ?? '—'}
+          sub={preparedFrom.current}
+          theme={theme}
+        />
         {notice ? (
           <Text style={[styles.notice, { color: theme.accent }]}>{notice}</Text>
         ) : null}

@@ -15,6 +15,7 @@ import { WcApprovalSheet, txApprovalAllowed, type TxQuoteState } from '../compon
 import { requireLocalAuth } from './biometric';
 import { usePrefs } from './PrefsContext';
 import { useWallet } from './WalletContext';
+import { accountLabel } from './accounts';
 import { EVM_CHAIN_ID, describeSendError, sendEvm } from './send';
 import {
   approveProposal,
@@ -23,6 +24,7 @@ import {
   getWcUsed,
   initWalletConnect,
   respondApproved,
+  sessionAccountNote,
   sessionModeNote,
   setWcUsed,
   shouldStartWalletConnectAtLaunch,
@@ -51,14 +53,21 @@ import { WcController, type WcControllerSnapshot, type WcQueueItem } from './wc-
  *    no wallet is ready; queued items wait, untouched, until unlock;
  *  - EVERY approval passes requireLocalAuth, then re-claims the item from
  *    the controller (which refuses while locked or if the item is gone),
- *    then re-checks the item's chain against the active chain;
- *  - keys are only reached through WalletContext.signWith;
+ *    then re-checks the item's chain against the active chain and its
+ *    bound account against the active account;
+ *  - keys are only reached through WalletContext.signWith, which signs
+ *    only with the active account and only if that account controls
+ *    exactly the session's bound address (multi-account, phase 6 item 3);
  *  - nothing is declined because time passed.
  */
 
 export interface WcSessionView extends WcSessionSummary {
   /** Non-null when the session belongs to the other wallet mode (paused). */
   modeNote: string | null;
+  /** Non-null when the session is bound to a non-active account (paused). */
+  accountNote: string | null;
+  /** "Account 1 (0x9858…Eda94)" for the bound account, or null if unknown. */
+  accountLabel: string | null;
 }
 
 interface WalletConnectContextValue {
@@ -92,15 +101,25 @@ const emptySnapshot = () => EMPTY_SNAPSHOT;
 
 export function WalletConnectProvider({ children }: { children: React.ReactNode }) {
   const theme = useTheme();
-  const { status, accounts, signWith } = useWallet();
+  const { status, accounts, signWith, accountForEvmAddress } = useWallet();
   const { evmChain } = usePrefs();
   const { locked } = useAppLock();
 
+  // The ACTIVE account's EVM address: new sessions are approved with it,
+  // and only sessions bound to it are served.
   const ethAddress = accounts.find((a) => a.chainId === EVM_CHAIN_ID)?.address ?? null;
-  // The controller reads the live context through a ref, so an address or
-  // mode change is seen by the next event without re-attaching listeners.
-  const contextRef = useRef({ address: ethAddress, activeChain: evmChain.caip2 });
-  contextRef.current = { address: ethAddress, activeChain: evmChain.caip2 };
+  const labelFor = useCallback(
+    (address: string) => {
+      const account = accountForEvmAddress(address);
+      return account ? accountLabel(account.name, account.evmAddress) : null;
+    },
+    [accountForEvmAddress],
+  );
+  // The controller reads the live context through a ref, so an address,
+  // account or mode change is seen by the next event without re-attaching
+  // listeners.
+  const contextRef = useRef({ address: ethAddress, activeChain: evmChain.caip2, labelFor });
+  contextRef.current = { address: ethAddress, activeChain: evmChain.caip2, labelFor };
 
   // Hold approvals while locked AND while no wallet is ready.
   const hold = locked || status !== 'ready';
@@ -285,10 +304,12 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
         return;
       }
       if (!controller.begin(item.key)) return; // locked or gone meanwhile
-      const stale = controller.staleChainError(item);
+      const stale = controller.staleChainError(item) ?? controller.staleAccountError(item);
       if (stale) {
         // Release and immediately re-claim through decline() (same tick, so
-        // nothing can interleave) to answer with UNSUPPORTED_CHAINS.
+        // nothing can interleave) to answer with the stale error
+        // (UNSUPPORTED_CHAINS for a mode switch, UNSUPPORTED_ACCOUNTS for an
+        // account switch).
         controller.release(item.key);
         await controller.decline(item.key, stale);
         Alert.alert('Request declined', stale.message);
@@ -298,19 +319,26 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
         if (item.parsed.kind === 'personal_sign' || item.parsed.kind === 'typed_data') {
           const digest =
             item.parsed.kind === 'personal_sign' ? item.parsed.digest : item.parsed.typedData.digest;
-          const signature = await signWith(EVM_CHAIN_ID, async (signer) => signDigest(signer, digest));
+          // Signs only if the active account controls exactly the
+          // session's bound address (re-checked just above).
+          const signature = await signWith(EVM_CHAIN_ID, item.address, async (signer) =>
+            signDigest(signer, digest),
+          );
           await respondApproved(client, item.event.topic, item.event.id, signature);
           controller.complete(item.key);
           return;
         }
         // Transaction: sign + broadcast through the existing EOA machinery,
         // then hand the transaction hash back to the dApp.
-        if (txQuote?.status !== 'ready') {
+        if (
+          txQuote?.status !== 'ready' ||
+          txQuote.from.toLowerCase() !== item.address.toLowerCase()
+        ) {
           controller.release(item.key);
           return;
         }
         const { quote, url } = txQuote;
-        const sent = await signWith(EVM_CHAIN_ID, (signer) =>
+        const sent = await signWith(EVM_CHAIN_ID, item.address, (signer) =>
           sendEvm(url, signer, quote, evmChain.explorerTxBase),
         );
         // The transaction is on the network from here on. A failed relay
@@ -348,8 +376,13 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
 
   const sessions = useMemo<WcSessionView[]>(
     () =>
-      snapshot.sessions.map((s) => ({ ...s, modeNote: sessionModeNote(s.chains, evmChain.caip2) })),
-    [snapshot.sessions, evmChain.caip2],
+      snapshot.sessions.map((s) => ({
+        ...s,
+        modeNote: sessionModeNote(s.chains, evmChain.caip2),
+        accountNote: sessionAccountNote(s.addresses, ethAddress, labelFor),
+        accountLabel: s.addresses[0] ? labelFor(s.addresses[0]) : null,
+      })),
+    [snapshot.sessions, evmChain.caip2, ethAddress, labelFor],
   );
 
   const value = useMemo<WalletConnectContextValue>(
@@ -401,7 +434,11 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
             }
             busy={snapshot.busyKey === head.key}
             evmChain={evmChain}
-            address={ethAddress}
+            address={head.type === 'request' ? head.address : ethAddress}
+            accountLabel={(() => {
+              const shown = head.type === 'request' ? head.address : ethAddress;
+              return shown ? (labelFor(shown) ?? shown) : null;
+            })()}
             onApprove={(q, o) => void onApprove(head, q, o)}
             onReject={() => onReject(head)}
           />

@@ -128,7 +128,7 @@ function NetworkBadge({ label, testnet, theme }: { label: string; testnet: boole
  */
 export function SendScreen({ route, navigation }: Props) {
   const theme = useTheme();
-  const { accounts, signWith } = useWallet();
+  const { accounts, signWith, activeAccount } = useWallet();
   // The active EVM chain profile (config/evm-chain.ts): chain-id checks,
   // explorer links, badges and the AA config key all come from it, so
   // Sepolia test mode switches every EVM-touching piece of this screen
@@ -150,6 +150,10 @@ export function SendScreen({ route, navigation }: Props) {
   const [scannerOpen, setScannerOpen] = useState(false);
   const [maxBusy, setMaxBusy] = useState(false);
   const [quote, setQuote] = useState<SendQuote | AaSendQuote | Erc20SendQuote | null>(null);
+  // The address the quote was prepared for (the confirm screen's "From"
+  // account; the smart account's owner on the AA path). signWith refuses
+  // to sign unless the active account's key controls exactly this address.
+  const [quotedFrom, setQuotedFrom] = useState<string | null>(null);
   const [overrideSimulation, setOverrideSimulation] = useState(false);
   const [result, setResult] = useState<SendResult | null>(null);
   // Contacts (phase 6 item 4) for the ACTIVE network of this slot (the
@@ -399,11 +403,15 @@ export function SendScreen({ route, navigation }: Props) {
         if (!validation?.ok) {
           throw new Error('Enter a valid recipient first — the max depends on it.');
         }
+        if (!activeAccount) throw new Error('No active account.');
         const bundle = createAaClient({
           nodeUrl: url,
           bundlerUrl: aaConfig.bundlerUrl,
           factory: aaConfig.factory,
           chainId: BigInt(evmChain.chainIdDecimal),
+          // CREATE2 salt = the active account's index (ADR D8); the owner
+          // passed below is the same account's EOA.
+          accountIndex: activeAccount.index,
           ...(aaConfig.paymasterUrl
             ? {
                 paymaster: {
@@ -495,10 +503,14 @@ export function SendScreen({ route, navigation }: Props) {
         // Experimental ERC-4337 path: quote from the smart account through
         // the bundler estimate (see ../wallet/aa.ts). The bundle is kept
         // for the send + receipt poll so all three use the same transports.
+        if (!activeAccount) throw new Error('No active account.');
         const bundle = createAaClient({
           nodeUrl: url,
           bundlerUrl: aaConfig.bundlerUrl,
           factory: aaConfig.factory,
+          // CREATE2 salt = the active account's index (ADR D8): account 0
+          // keeps salt 0 and therefore its existing smart-account address.
+          accountIndex: activeAccount.index,
           // Active chain id (11155111 in Sepolia test mode): prepareAaSend
           // verifies the node endpoint reports exactly this chain.
           chainId: BigInt(evmChain.chainIdDecimal),
@@ -539,6 +551,7 @@ export function SendScreen({ route, navigation }: Props) {
         );
       }
       setQuote(next);
+      setQuotedFrom(account.address);
       setOverrideSimulation(false);
       setPhase('confirm');
     } catch (e) {
@@ -549,7 +562,7 @@ export function SendScreen({ route, navigation }: Props) {
   };
 
   const onSend = async () => {
-    if (!url || !quote) return;
+    if (!url || !quote || !quotedFrom) return;
     // Biometric gate (task 7): the final send confirmation requires local
     // authentication whenever the device has enrolled biometrics.
     const auth = await requireLocalAuth(`Approve sending ${amountText} ${symbol}`);
@@ -564,7 +577,7 @@ export function SendScreen({ route, navigation }: Props) {
         if (!bundle) {
           throw new Error('Smart-account session expired; go back and review again.');
         }
-        const { userOpHash } = await signWith(route.params.chainId, (signer) =>
+        const { userOpHash } = await signWith(route.params.chainId, quotedFrom, (signer) =>
           sendAa(bundle, signer, quote),
         );
         setAaResult({ userOpHash, receiptState: 'pending', success: null, txHash: null });
@@ -593,7 +606,7 @@ export function SendScreen({ route, navigation }: Props) {
         );
         return;
       }
-      const sent = await signWith(route.params.chainId, async (signer) => {
+      const sent = await signWith(route.params.chainId, quotedFrom, async (signer) => {
         // Token transfer: value 0, to = token contract, data = transfer
         // calldata — through the same sendEvm signing/broadcast path.
         if (quote.kind === 'erc20') return sendErc20(url, signer, quote);
@@ -734,6 +747,12 @@ export function SendScreen({ route, navigation }: Props) {
           sub={fiatOf(nativePriceId, quote.amount, decimals)}
           theme={theme}
         />
+        <Row
+          label="Owner account (signs)"
+          value={activeAccount?.name ?? '—'}
+          sub={quotedFrom}
+          theme={theme}
+        />
         <Row label="From smart account" value={quote.sender} mono theme={theme} />
         <Row
           label="Smart account balance"
@@ -801,6 +820,7 @@ export function SendScreen({ route, navigation }: Props) {
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={network.label} testnet={testnet} theme={theme} />
 
+        <Row label="From account" value={activeAccount?.name ?? '—'} sub={quotedFrom} theme={theme} />
         <Row label="To" value={quote.to} mono theme={theme} />
         <RecipientContactNotice match={contactMatchFor(quote.to)} address={quote.to} />
         <Row
@@ -899,6 +919,7 @@ export function SendScreen({ route, navigation }: Props) {
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={network.label} testnet={testnet} theme={theme} />
 
+        <Row label="From account" value={activeAccount?.name ?? '—'} sub={quotedFrom} theme={theme} />
         <Row label="To" value={quote.to} mono theme={theme} />
         <RecipientContactNotice match={contactMatchFor(quote.to)} address={quote.to} />
         <Row
@@ -997,7 +1018,7 @@ export function SendScreen({ route, navigation }: Props) {
     >
       <Text style={[styles.networkLine, { color: testnet ? '#e07800' : theme.textMuted }]}>
         {network ? `${network.label} · ${testnet ? 'TESTNET' : 'Mainnet'}` : 'Unknown network'}{' '}
-        · from {account.address.slice(0, 10)}…
+        · from {activeAccount ? `${activeAccount.name} ` : ''}({account.address.slice(0, 10)}…)
       </Text>
 
       {!url ? (

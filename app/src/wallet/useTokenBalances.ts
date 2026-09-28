@@ -119,5 +119,20 @@ export function useTokenBalances(evmAddress: string | undefined): TokenBalancesH
     };
   }, []);
 
+  // A different owner address (account switch) invalidates every
+  // in-flight balanceOf and every shown balance: bump the generation so
+  // late responses for the previous address are dropped, and clear the
+  // rows so no previous-account amount is ever shown under the new one.
+  // (App.tsx also remounts the navigator on a switch; this keeps the hook
+  // correct on its own.) Declared before the caller's focus effect, so the
+  // reload for the new address runs under the new generation.
+  const lastAddress = useRef(evmAddress);
+  useEffect(() => {
+    if (lastAddress.current === evmAddress) return;
+    lastAddress.current = evmAddress;
+    generation.current += 1;
+    setTokenBalances({});
+  }, [evmAddress]);
+
   return { tokens, tokenBalances, reloadTokens, refreshToken };
 }

@@ -3,6 +3,7 @@ import { BITCOIN, DOGECOIN, addressToScriptPubKey } from '@shiba-wallet/chains-u
 // Explicit .ts extensions: this module is imported by scripts/check-contacts.mjs
 // under Node's type stripping, which resolves relative specifiers literally.
 import type { KeyValueStore } from './tokens.ts';
+import { sanitizeDisplayName, type NameValidation } from './names.ts';
 import {
   BITCOIN_CHAIN_ID,
   DOGECOIN_CHAIN_ID,
@@ -158,41 +159,16 @@ export function exactMatchKey(networkId: string, raw: string): string | null {
 // ---------------------------------------------------------------------------
 
 /**
- * Characters removed from contact names:
- *  - C0/C1 control characters (U+0000–U+001F, U+007F–U+009F);
- *  - bidirectional formatting characters that can reorder or disguise the
- *    surrounding text: LRM/RLM (U+200E, U+200F), ALM (U+061C), the
- *    embeddings/overrides U+202A–U+202E, and the isolates U+2066–U+2069;
- *  - invisible characters that make two names look identical while being
- *    different strings: zero-width space U+200B, word joiner U+2060, and
- *    the byte-order mark U+FEFF. Zero-width (non-)joiners U+200C/U+200D
- *    are kept because emoji sequences and several scripts require them.
+ * Contact names use the app-wide display-name rules in ./names.ts: NFC
+ * normalization, removal of control, bidirectional-formatting and
+ * invisible characters (so a name cannot visually impersonate another or
+ * reorder the surrounding text), whitespace collapsing, trimming, and a
+ * length of 1–40 code points.
  */
-const STRIPPED_CHARS =
-  /[\u0000-\u001F\u007F-\u009F؜​‎‏‪-‮⁠⁦-⁩﻿]/g;
+export type { NameValidation } from './names.ts';
 
-export type NameValidation = { ok: true; name: string } | { ok: false; error: string };
-
-/**
- * Sanitizes a contact name: NFC-normalizes, strips the characters above,
- * collapses every whitespace run (including line/paragraph separators and
- * no-break spaces) to one space, trims, and enforces 1–40 code points.
- */
 export function sanitizeContactName(raw: string): NameValidation {
-  const cleaned = raw
-    .normalize('NFC')
-    .replace(STRIPPED_CHARS, '')
-    .replace(/\s+/gu, ' ')
-    .trim();
-  const length = Array.from(cleaned).length;
-  if (length === 0) return { ok: false, error: 'Enter a name for this contact.' };
-  if (length > MAX_CONTACT_NAME_LENGTH) {
-    return {
-      ok: false,
-      error: `Contact names can be at most ${MAX_CONTACT_NAME_LENGTH} characters (this one is ${length}).`,
-    };
-  }
-  return { ok: true, name: cleaned };
+  return sanitizeDisplayName(raw, MAX_CONTACT_NAME_LENGTH, 'contact');
 }
 
 // ---------------------------------------------------------------------------

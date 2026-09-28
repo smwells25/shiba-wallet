@@ -414,12 +414,21 @@ export interface AaClientBundle {
  * Builds the SmartAccountClient stack for one chain from verified
  * configuration. No paymaster: the account pays its own gas (an ERC-7677
  * paymaster is an additive config field on SmartAccountClient later).
+ *
+ * CREATE2 salt = the wallet account index (docs/ARCHITECTURE.md section
+ * 3.1 and ADR D8): account N's smart account is
+ * factory.getAddress(owner = account N's EOA, salt = N). Account 0 uses
+ * salt 0 — exactly the SimpleAccount spec's default that every version of
+ * this app used before multiple accounts existed — so its counterfactual
+ * address is unchanged. Omitting accountIndex means account 0.
  */
 export function createAaClient(options: {
   nodeUrl: string;
   bundlerUrl: string;
   factory: string;
   chainId?: bigint;
+  /** Wallet account index; also the CREATE2 salt. Defaults to 0. */
+  accountIndex?: number;
   transportFor?: TransportFactory;
   /** Verified ERC-7677 paymaster configuration, when sponsorship is on. */
   paymaster?: { url: string; contextJson: string | null };
@@ -428,7 +437,15 @@ export function createAaClient(options: {
   const node = transportFor(options.nodeUrl);
   const bundler = transportFor(options.bundlerUrl);
   const chainId = options.chainId ?? BigInt(EVM_CHAIN_ID.split(':')[1]!);
-  const spec = createSimpleAccountSpec({ factory: options.factory, node });
+  const accountIndex = options.accountIndex ?? 0;
+  if (!Number.isSafeInteger(accountIndex) || accountIndex < 0) {
+    throw new Error(`Invalid account index ${String(options.accountIndex)}.`);
+  }
+  const spec = createSimpleAccountSpec({
+    factory: options.factory,
+    node,
+    salt: BigInt(accountIndex),
+  });
   // Context was validated as JSON at save time; a parse failure here
   // degrades to null rather than blocking sends.
   let paymasterContext: unknown = null;

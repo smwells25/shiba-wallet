@@ -21,7 +21,7 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Receive'>;
 export function ReceiveScreen({ route, navigation }: Props) {
   const theme = useTheme();
   const { width } = useWindowDimensions();
-  const { accounts } = useWallet();
+  const { accounts, activeAccount } = useWallet();
   const account = accounts.find((a) => a.chainId === route.params.chainId);
   const [copied, setCopied] = useState(false);
   // Sized for phone screens: fill the width minus the padding, capped so
@@ -53,6 +53,11 @@ export function ReceiveScreen({ route, navigation }: Props) {
         <Text style={styles.badgeText}>{account.symbol}</Text>
       </View>
       <Text style={[styles.chainName, { color: theme.text }]}>{account.name}</Text>
+      {activeAccount ? (
+        <Text style={[styles.accountName, { color: theme.textMuted }]}>
+          {activeAccount.name}
+        </Text>
+      ) : null}
       {/*
         The QR payload is the plain address, nothing else. This screen has
         never built per-chain payment URIs (no amounts, no labels), and a
@@ -108,6 +113,11 @@ export function ReceiveScreen({ route, navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
+  accountName: {
+    fontSize: 15,
+    fontWeight: '600',
+    marginTop: -8,
+  },
   content: {
     padding: 24,
     alignItems: 'center',

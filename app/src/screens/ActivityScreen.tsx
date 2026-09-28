@@ -146,7 +146,7 @@ function EntryRow({
 export function ActivityScreen({ navigation, route }: Props) {
   const theme = useTheme();
   const { chainId } = route.params;
-  const { accounts } = useWallet();
+  const { accounts, activeAccount } = useWallet();
   const { hideAmounts, evmChain } = usePrefs();
   const account = accounts.find((a) => a.chainId === chainId);
   const network = networkDefaultFor(chainId);
@@ -244,6 +244,13 @@ export function ActivityScreen({ navigation, route }: Props) {
             tintColor={theme.textMuted}
             colors={[theme.accent]}
           />
+        }
+        ListHeaderComponent={
+          activeAccount ? (
+            <Text style={[styles.note, { color: theme.textMuted }]}>
+              {activeAccount.name} · {account.address}
+            </Text>
+          ) : null
         }
         ListEmptyComponent={
           <Text style={[styles.note, { color: theme.textMuted }]}>

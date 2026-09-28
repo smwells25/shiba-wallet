@@ -1347,3 +1347,54 @@ overlap. Subagents run on Opus per the Chairperson's credit directive.
       (picker modal, three-button recipient row on narrow screens).
       Dogecoin has no look-alike test vector (building one needs a ~58^4
       checksum search); it shares the tested string comparison.
+
+- [x] Item 3 — Multi-account (Tier 1 feature 4). One mapping function,
+      derivationArgsFor in app/src/wallet/accounts.ts, used by every
+      caller: user-facing Account N = EVM m/44'/60'/0'/0/N (MetaMask
+      eth-hd-keyring convention), Solana m/44'/501'/N'/0' (Phantom),
+      Bitcoin m/84'/0'/N'/0/0 and Dogecoin m/44'/3'/N'/0/0 (BIP-44 account
+      level). Account 0 is byte-identical to the previous derivation on
+      all four chains (address, path, public key), pinned as literals.
+      Vectors for the standard test mnemonic were cross-checked against
+      ethers HDNodeWallet (EVM accounts 1–2 re-derived by the CTO:
+      0x6Fac4D18c912343BF86fa7049364Dd4E424Ab9C0,
+      0xb6716976A3ebe8D39aCEB04372f22Ff8e6802D7A), bitcoinjs-lib 6.1.8
+      (Bitcoin, Dogecoin with pubKeyHash 0x1e) and ed25519-hd-key 2.0.0 +
+      @solana/web3.js 1.99.0 (Solana). Account store: versioned
+      AsyncStorage list of {index, name} plus the active index; indices
+      are never reused (hide, not delete; Account 1 and the active account
+      cannot be hidden); cap of 50. Security: signWith(chainId,
+      expectAddress, fn) derives the ACTIVE account's key and refuses
+      unless it controls exactly the address the operation was prepared
+      for; the navigator is keyed on the active account, so a switch
+      returns to Home and no screen keeps an old account's quote.
+      WalletConnect: requests are bound to the session's approved
+      address and declined with UNSUPPORTED_ACCOUNTS 5103 ("This
+      connection belongs to Account 1 (…)") after a switch — this also
+      closes a pre-existing gap where an eth_sendTransaction without a
+      `from` field would have been signed by whichever account was active;
+      approval re-checks the account (staleAccountError). AA: the owner is
+      the active account's EOA and the salt is the account index (per
+      ARCHITECTURE 3.1/D4); account 0 keeps salt 0 and its counterfactual
+      address byte-identical. UI: Home account switcher, Settings →
+      Accounts (add, rename, hide, show hidden, use), "From account" /
+      "Signing account" on every confirm and the WC sheet, Receive shows
+      the account name, backup and seed-reveal copy says one phrase backs
+      up all accounts. docs/ARCHITECTURE.md gained ADR D8. Verified:
+      check-accounts.mjs 111/111 offline; all fourteen app suites green,
+      tsc clean, expo export bundles (6.5MB) with the new strings, all
+      re-run by the CTO. No packages/* changes.
+      OPEN DECISION for the Chairperson (verified 2026-09-28 at
+      help.phantom.com "What derivation paths does Phantom support?"):
+      Phantom's default Bitcoin SegWit path is m/84'/0'/0'/0/{index}
+      (account number in the address segment, "all chains share the same
+      index"), whereas this wallet uses the BIP-44 account level
+      m/84'/0'/N'/0/0, which Bitcoin-native account wallets use. Account
+      1 is identical either way; Bitcoin accounts 2+ do not round-trip
+      with Phantom under the current mapping. EVM and Solana match
+      Phantom's defaults exactly. The mapping is one function and no
+      user has funded accounts 2+, so it can still change cheaply —
+      but it must be settled before release. Also recorded in D8: no
+      account discovery on import (re-add accounts in order to recover
+      them), and BIP-44's "no new account before the previous one has
+      history" rule is not enforced (would need network lookups).

@@ -53,6 +53,7 @@ export function WcApprovalSheet({
   busy,
   evmChain,
   address,
+  accountLabel,
   onApprove,
   onReject,
 }: {
@@ -61,8 +62,15 @@ export function WcApprovalSheet({
   busy: boolean;
   /** Active EVM chain profile (badge, amount labels, namespace decision). */
   evmChain: EvmChainProfile;
-  /** The wallet's EOA (account 0), or null when unavailable. */
+  /**
+   * The EVM address involved: for a proposal, the ACTIVE account's (the
+   * one the connection would be bound to); for a request, the session's
+   * bound account (equal to the active one, or the request is declined).
+   * Null when unavailable.
+   */
   address: string | null;
+  /** "Account 2 (0x6Fac…b9C0)" for `address`, shown on every approval. */
+  accountLabel: string | null;
   /** txQuote/override are null/false for everything but transactions. */
   onApprove: (txQuote: TxQuoteState | null, overrideSimulation: boolean) => void;
   onReject: () => void;
@@ -135,6 +143,7 @@ export function WcApprovalSheet({
               event={item.event}
               summary={item.summary}
               address={address}
+              accountLabel={accountLabel}
               theme={theme}
               busy={busy}
               activeChain={evmChain.caip2}
@@ -145,6 +154,7 @@ export function WcApprovalSheet({
             <RequestBody
               item={item}
               dappName={dappName}
+              accountLabel={accountLabel}
               theme={theme}
               busy={busy}
               evmChain={evmChain}
@@ -165,6 +175,7 @@ function ProposalBody({
   event,
   summary,
   address,
+  accountLabel,
   theme,
   busy,
   activeChain,
@@ -174,6 +185,7 @@ function ProposalBody({
   event: { id: number; params: unknown };
   summary: WcProposalSummary;
   address: string | null;
+  accountLabel: string | null;
   theme: Theme;
   busy: boolean;
   /** CAIP-2 id of the active EVM chain (mainnet or Sepolia test mode). */
@@ -210,6 +222,9 @@ function ProposalBody({
       {decision.ok ? (
         <>
           <Field label="Will connect on" value={describeChain(activeChain)} theme={theme} />
+          {accountLabel ? (
+            <Field label="Will connect account" value={accountLabel} theme={theme} />
+          ) : null}
           {decision.droppedChains.length > 0 ? (
             <Text style={[styles.hint, { color: theme.textMuted }]}>
               The dApp also offered {decision.droppedChains.map(describeChain).join(', ')}.
@@ -218,9 +233,11 @@ function ProposalBody({
             </Text>
           ) : null}
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            Approving shares your Ethereum address with this dApp and lets it
-            send signature and transaction requests. Every request still needs
-            your explicit approval here — nothing is ever signed automatically.
+            Approving shares this account's Ethereum address with this dApp and
+            lets it send signature and transaction requests. The connection
+            stays bound to this account: while another account is active, its
+            requests are declined. Every request still needs your explicit
+            approval here — nothing is ever signed automatically.
           </Text>
         </>
       ) : (
@@ -243,6 +260,7 @@ function ProposalBody({
 function RequestBody({
   item,
   dappName,
+  accountLabel,
   theme,
   busy,
   evmChain,
@@ -254,6 +272,8 @@ function RequestBody({
 }: {
   item: { event: WcRequestEvent; parsed: ParsedWcRequest };
   dappName: string;
+  /** The account that would sign ("Account 2 (0x6Fac…b9C0)"). */
+  accountLabel: string | null;
   theme: Theme;
   busy: boolean;
   /** Active EVM chain profile (badge, amount labels, testnet state). */
@@ -271,6 +291,7 @@ function RequestBody({
       <>
         <Text style={[styles.modalTitle, { color: theme.text }]}>Sign message</Text>
         <Field label="From dApp" value={dappName} theme={theme} />
+        {accountLabel ? <Field label="Signing account" value={accountLabel} theme={theme} /> : null}
         <Text style={[styles.fieldLabel, { color: theme.textMuted }]}>
           {parsed.messageText !== null ? 'Message' : 'Message (hex — not printable text)'}
         </Text>
@@ -302,6 +323,7 @@ function RequestBody({
       <>
         <Text style={[styles.modalTitle, { color: theme.text }]}>Sign typed data</Text>
         <Field label="From dApp" value={dappName} theme={theme} />
+        {accountLabel ? <Field label="Signing account" value={accountLabel} theme={theme} /> : null}
         {typedData.domain.name ? (
           <Field label="Signing domain" value={typedData.domain.name} theme={theme} />
         ) : null}
@@ -363,6 +385,7 @@ function RequestBody({
         </View>
       )}
       <Field label="From dApp" value={dappName} theme={theme} />
+      {accountLabel ? <Field label="Sending account" value={accountLabel} theme={theme} /> : null}
       <Field label="To" value={parsed.tx.to} monoValue theme={theme} />
       <Field
         label="Amount"

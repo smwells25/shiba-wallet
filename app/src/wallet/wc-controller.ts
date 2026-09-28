@@ -3,12 +3,15 @@
 import {
   WC_ERRORS,
   WcRequestRejection,
+  accountMismatchMessage,
   decideSwitchChain,
   declineProposal,
   describeProposal,
   parseWcRequest,
   respondApproved,
   respondRejected,
+  sessionAddressesOf,
+  sessionBindsAddress,
   sessionChainsOf,
   summarizeSessions,
   type ParsedWcRequest,
@@ -33,8 +36,11 @@ import {
  *    approval UI renders and nothing can be claimed for action — items
  *    stay queued, untouched, until unlock;
  *  - automatic answers that need no user decision and touch no key:
- *    malformed / unsupported / wrong-chain requests are declined with the
- *    matching SDK error at once (never left to time out), and
+ *    malformed / unsupported / wrong-chain requests, and requests for a
+ *    session bound to an account other than the active one (phase 6
+ *    item 3 — a session is bound to the EVM address it was approved
+ *    with), are declined with the matching SDK error at once (never left
+ *    to time out), and
  *    wallet_switchEthereumChain to the already-active chain is answered
  *    null (decideSwitchChain). These are answered even while locked: they
  *    reveal nothing and leaving them unanswered would block the SDK's own
@@ -75,6 +81,12 @@ export type WcQueueItem =
       parsed: ParsedWcRequest;
       /** The active chain the request was validated against on arrival. */
       chain: string;
+      /**
+       * The session's bound EVM address, which equalled the active
+       * account's address on arrival. Approval re-checks it (see
+       * staleAccountError) and the signer must control exactly it.
+       */
+      address: string;
     };
 
 export interface WcNotice {
@@ -96,10 +108,16 @@ export interface WcControllerSnapshot {
 }
 
 export interface WcControllerContext {
-  /** The wallet's EOA (account 0), or null when unavailable. */
+  /** The ACTIVE account's EVM address, or null when unavailable. */
   address: string | null;
   /** CAIP-2 id of the ACTIVE EVM chain (config/evm-chain.ts). */
   activeChain: string;
+  /**
+   * Display label for one of this wallet's addresses, e.g.
+   * "Account 1 (0x9858…Eda94)", or null for an unknown address. Used only
+   * in plain-language messages.
+   */
+  labelFor?: (address: string) => string | null;
 }
 
 const MAX_NOTICES = 5;
@@ -191,6 +209,15 @@ export class WcController {
     this.emit();
   }
 
+  /** The bound address(es) of the live session for `topic` (empty if unknown). */
+  sessionAddresses(topic: string): string[] {
+    try {
+      return sessionAddressesOf(this.client.getActiveSessions()[topic]);
+    } catch {
+      return [];
+    }
+  }
+
   /** Chains the live session for `topic` exposes (empty if unknown). */
   sessionChains(topic: string): string[] {
     try {
@@ -238,12 +265,30 @@ export class WcController {
   async onRequest(event: WcRequestEvent): Promise<void> {
     const key = `r:${event.id}`;
     if (this.queue.some((i) => i.key === key)) return; // at-least-once delivery
-    const { address, activeChain } = this.getContext();
+    const { address, activeChain, labelFor } = this.getContext();
     const method = event.params?.request?.method;
     const dapp = this.dappName(event.topic);
 
     if (!address) {
       await this.autoDecline(event, { code: -32603, message: 'Wallet account unavailable.' }, dapp);
+      return;
+    }
+
+    // Account binding: a session serves only the account it was approved
+    // with. After an account switch its requests are declined with a
+    // plain sentence naming the bound account — never signed by the
+    // active one, never left pending (the SDK would block every later
+    // request behind it).
+    const bound = this.sessionAddresses(event.topic);
+    if (!sessionBindsAddress(bound, address)) {
+      await this.autoDecline(
+        event,
+        {
+          code: WC_ERRORS.unsupportedAccounts.code,
+          message: accountMismatchMessage(bound, address, labelFor),
+        },
+        dapp,
+      );
       return;
     }
 
@@ -272,7 +317,7 @@ export class WcController {
       await this.autoDecline(event, rejection, dapp);
       return;
     }
-    this.queue.push({ type: 'request', key, event, parsed, chain: activeChain });
+    this.queue.push({ type: 'request', key, event, parsed, chain: activeChain, address });
     this.emit();
   }
 
@@ -379,6 +424,22 @@ export class WcController {
       message:
         'The wallet mode changed while this request was waiting, so it was declined. ' +
         'Send it again from the dApp.',
+    };
+  }
+
+  /**
+   * Re-checks a claimed request against the CURRENT active account: an
+   * account switch between arrival and approval must not let the wallet
+   * sign with an account the session is not bound to. Returns the decline
+   * to send, or null.
+   */
+  staleAccountError(item: WcQueueItem): { code: number; message: string } | null {
+    if (item.type !== 'request') return null;
+    const { address, labelFor } = this.getContext();
+    if (address && address.toLowerCase() === item.address.toLowerCase()) return null;
+    return {
+      code: WC_ERRORS.unsupportedAccounts.code,
+      message: accountMismatchMessage([item.address], address ?? '', labelFor),
     };
   }
 

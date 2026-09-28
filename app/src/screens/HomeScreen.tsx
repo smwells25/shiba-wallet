@@ -17,6 +17,7 @@ import { screenStyle } from '../components';
 import { useTheme } from '../theme';
 import { EVM_CHAIN_ID } from '../wallet/send';
 import { ChainAccount, useWallet } from '../wallet/WalletContext';
+import { AccountSwitcher } from '../components/AccountSwitcher';
 import { usePrefs } from '../wallet/PrefsContext';
 import { maskAmount } from '../config/prefs';
 import { BalanceState, useBalances } from '../wallet/useBalances';
@@ -154,7 +155,10 @@ function TokenRow({
 /** The four launch chains: address, live native balance, tap to receive. */
 export function HomeScreen({ navigation }: Props) {
   const theme = useTheme();
-  const { accounts } = useWallet();
+  // `accounts` holds the ACTIVE account's addresses (phase 6 item 3);
+  // switching accounts remounts the navigator (App.tsx), so this screen
+  // never shows one account's balances under another's name.
+  const { accounts, activeAccount } = useWallet();
   const { hideAmounts, setHideAmounts, evmChain, sepolia, showFiat } = usePrefs();
   const { balances, refreshing, refreshAll, refreshOne } = useBalances(accounts);
   const evmAccount = accounts.find((a) => a.chainId === EVM_CHAIN_ID);
@@ -335,20 +339,25 @@ export function HomeScreen({ navigation }: Props) {
         renderItem={renderItem}
         contentContainerStyle={styles.list}
         ListHeaderComponent={
-          // Quick balance-privacy toggle (the same setting lives in
-          // Settings -> Privacy & security); the eye glyph masks every
-          // amount on this screen and on Activity as ••••.
-          <View style={styles.privacyRow}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={hideAmounts ? 'Show amounts' : 'Hide amounts'}
-              onPress={() => void setHideAmounts(!hideAmounts)}
-              hitSlop={8}
-            >
-              <Text style={[styles.privacyToggle, { color: theme.accent }]}>
-                {hideAmounts ? '👁 Show amounts' : '👁 Hide amounts'}
-              </Text>
-            </Pressable>
+          <View style={styles.headerStack}>
+            {/* Account switcher (phase 6 item 3): active account name and
+                short EVM address; opens the account list. */}
+            <AccountSwitcher onManage={() => navigation.navigate('Settings')} />
+            {/* Quick balance-privacy toggle (the same setting lives in
+                Settings -> Privacy & security); the eye glyph masks every
+                amount on this screen and on Activity as ••••. */}
+            <View style={styles.privacyRow}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={hideAmounts ? 'Show amounts' : 'Hide amounts'}
+                onPress={() => void setHideAmounts(!hideAmounts)}
+                hitSlop={8}
+              >
+                <Text style={[styles.privacyToggle, { color: theme.accent }]}>
+                  {hideAmounts ? '👁 Show amounts' : '👁 Hide amounts'}
+                </Text>
+              </Pressable>
+            </View>
           </View>
         }
         refreshControl={
@@ -365,8 +374,9 @@ export function HomeScreen({ navigation }: Props) {
         }
         ListFooterComponent={
           <Text style={[styles.footer, { color: theme.textMuted }]}>
-            Account 0 addresses, derived on this device from your recovery
-            phrase. Balances come from the RPC endpoints in Settings; pull
+            {activeAccount ? `${activeAccount.name}'s` : 'Your'} addresses, derived on
+            this device from your recovery phrase (one phrase backs up every
+            account). Balances come from the RPC endpoints in Settings; pull
             down to refresh. Tap a chain to receive, or use its Send link —
             tokens have their own Send link and pay their network fee in ETH.
             {showFiat
@@ -489,6 +499,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 17,
     marginLeft: 20,
+  },
+  headerStack: {
+    gap: 8,
   },
   privacyRow: {
     flexDirection: 'row',

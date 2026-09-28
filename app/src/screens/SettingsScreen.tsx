@@ -4,6 +4,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation';
 import { allowScreenCaptureAsync, preventScreenCaptureAsync } from 'expo-screen-capture';
 import { Button, WarningBox, WordGrid, screenStyle } from '../components';
+import { AccountsSection } from '../components/AccountsSection';
 import {
   NetworkEndpoint,
   getAllEndpoints,
@@ -708,7 +709,7 @@ export function SettingsScreen({ navigation }: Props) {
   const onReveal = () => {
     Alert.alert(
       'Show recovery phrase?',
-      'Make sure no one can see your screen. Anyone who sees these words can steal your funds.',
+      'Make sure no one can see your screen. Anyone who sees these words can steal the funds of every account in this wallet.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -770,13 +771,20 @@ export function SettingsScreen({ navigation }: Props) {
 
   return (
     <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+      <AccountsSection />
+
       <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: theme.text }]}>Backup</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          One recovery phrase backs up ALL of your accounts — every account
+          in the list above, including hidden ones, on every chain.
+        </Text>
         {revealed ? (
           <View style={styles.revealBlock}>
             <WarningBox>
-              Never share these words. Shiba Wallet support will never ask for
-              them. Hide them again as soon as you are done.
+              Never share these words. They control every account in this
+              wallet, not just the active one. Shiba Wallet support will never
+              ask for them. Hide them again as soon as you are done.
             </WarningBox>
             <WordGrid words={revealed.split(' ')} />
             {/*
