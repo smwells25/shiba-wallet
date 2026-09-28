@@ -14,6 +14,7 @@ import { useTheme } from './src/theme';
 import { WalletProvider, useWallet } from './src/wallet/WalletContext';
 import { PrefsProvider, usePrefs } from './src/wallet/PrefsContext';
 import { LockGate } from './src/components/LockGate';
+import { WalletConnectProvider } from './src/wallet/WalletConnectContext';
 import { WelcomeScreen } from './src/screens/WelcomeScreen';
 import { BackupScreen } from './src/screens/BackupScreen';
 import { ConfirmBackupScreen } from './src/screens/ConfirmBackupScreen';
@@ -161,7 +162,13 @@ export default function App() {
               the auto-lock preference) and wraps the whole navigator so the
               lock overlay covers every screen without resetting navigation. */}
           <LockGate>
-            <Root />
+            {/* WalletConnect lives INSIDE LockGate: its approval sheet is an
+                in-tree overlay that the lock overlay covers, and it reads
+                the lock state to hold approvals until unlock. Mounted once,
+                so dApp requests surface on every screen. */}
+            <WalletConnectProvider>
+              <Root />
+            </WalletConnectProvider>
           </LockGate>
         </WalletProvider>
       </PrefsProvider>

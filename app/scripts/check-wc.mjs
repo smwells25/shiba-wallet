@@ -35,6 +35,7 @@ import {
 } from 'ethers';
 import {
   WC_ERRORS,
+  WC_SIGNING_METHODS,
   WC_SUPPORTED_CHAINS,
   WC_SUPPORTED_METHODS,
   WcRequestRejection,
@@ -58,8 +59,21 @@ import {
   validatePairingUri,
   wcError,
   wcResult,
+  decideProposal,
+  decideSwitchChain,
+  declineProposal,
+  describeChain,
+  getWcUsed,
+  modeMismatchMessage,
+  sessionChainsOf,
+  sessionModeNote,
+  setWcUsed,
+  shouldStartWalletConnectAtLaunch,
 } from '../src/wallet/walletconnect.ts';
+import { WcController } from '../src/wallet/wc-controller.ts';
+import { EVM_MAINNET, EVM_SEPOLIA } from '../src/config/evm-chain.ts';
 import { prepareEvmSend, sendEvm } from '../src/wallet/send.ts';
+import { spawnSync } from 'node:child_process';
 
 let passed = 0;
 let failed = 0;
@@ -172,8 +186,10 @@ console.log('check-wc: namespaces + proposals');
     JSON.stringify(ns.eip155.accounts),
   );
   check(
-    'approved methods are exactly the supported set',
-    WC_SUPPORTED_METHODS.every((m) => ns.eip155.methods.includes(m)),
+    'approved methods are exactly the signing set the dApp asked for',
+    WC_SIGNING_METHODS.every((m) => ns.eip155.methods.includes(m)) &&
+      ns.eip155.methods.length === WC_SIGNING_METHODS.length,
+    JSON.stringify(ns.eip155.methods),
   );
   await checkRejects(
     'required unsupported chain throws (buildApprovedNamespaces)',
@@ -580,6 +596,417 @@ console.log('check-wc: responses, disconnect, pairing URI');
   check('non-wc URI refused', validatePairingUri('http://x').ok === false);
   check('v1 URI refused', validatePairingUri('wc:abc@1?bridge=x').ok === false);
   check('supported chains constant is eip155:1 only', JSON.stringify(WC_SUPPORTED_CHAINS) === '["eip155:1"]');
+}
+
+// ======================================================================
+// Phase 6 item 5: active-chain namespace decisions, wallet_switchEthereumChain,
+// paused sessions, the app-level request queue (WcController), the lock
+// hold, and the launch-time start decision. All offline: the namespace
+// decisions run through the REAL @walletconnect/utils buildApprovedNamespaces;
+// the queue runs against a fake event-emitting WalletKit client.
+// ======================================================================
+
+const M = EVM_MAINNET.caip2; // eip155:1
+const S = EVM_SEPOLIA.caip2; // eip155:11155111
+const SIGN3 = ['personal_sign', 'eth_sendTransaction', 'eth_signTypedData_v4'];
+const EVENTS = ['accountsChanged', 'chainChanged'];
+
+/** Proposal params with explicit namespace objects (sign-client shape). */
+function proposalWith(requiredNamespaces, optionalNamespaces) {
+  return {
+    id: 99,
+    proposer: { publicKey: 'bb'.repeat(32), metadata: { name: 'Mode dApp', description: '', url: 'https://mode.example', icons: [] } },
+    requiredNamespaces,
+    optionalNamespaces,
+    relays: [{ protocol: 'irn' }],
+  };
+}
+const eip = (chains, methods = SIGN3, events = EVENTS) => ({ eip155: { chains, methods, events } });
+const accountsOf = (ns) => Object.values(ns).flatMap((n) => n.accounts ?? []);
+
+console.log('check-wc: namespace decisions under the active-chain rule');
+{
+  const MAINNET_SENTENCE =
+    'This dApp asked for Ethereum mainnet; the wallet is in Sepolia test mode. Switch modes in Settings → Developer to connect.';
+  const SEPOLIA_SENTENCE =
+    'This dApp asked for Ethereum Sepolia (test network); the wallet is in mainnet mode. Turn on Sepolia test mode in Settings → Developer to connect.';
+  check('mode sentence (mainnet asked, Sepolia active) is exact', modeMismatchMessage(M, S, 'connect') === MAINNET_SENTENCE);
+  check('mode sentence (Sepolia asked, mainnet active) is exact', modeMismatchMessage(S, M, 'connect') === SEPOLIA_SENTENCE);
+  check('describeChain names both modes', describeChain(M) === 'Ethereum mainnet' && describeChain(S).startsWith('Ethereum Sepolia'));
+
+  // 1. Required mainnet.
+  let d = decideProposal(proposalWith(eip([M]), {}), ADDRESS, M);
+  check('required eip155:1 in mainnet mode → approved on eip155:1 only', d.ok && JSON.stringify(accountsOf(d.namespaces)) === JSON.stringify([`${M}:${ADDRESS}`]));
+  d = decideProposal(proposalWith(eip([M]), {}), ADDRESS, S);
+  check('required eip155:1 in Sepolia mode → declined 5100', !d.ok && d.error.code === 5100);
+  check('  … with the exact mode sentence', !d.ok && d.reason === MAINNET_SENTENCE, d.reason);
+  check('  … and the SDK error message carries the same sentence', !d.ok && d.error.message === MAINNET_SENTENCE);
+
+  // 2. Required Sepolia.
+  d = decideProposal(proposalWith(eip([S]), {}), ADDRESS, M);
+  check('required Sepolia in mainnet mode → declined 5100 with turn-on sentence', !d.ok && d.error.code === 5100 && d.reason === SEPOLIA_SENTENCE, d.reason);
+  d = decideProposal(proposalWith(eip([S]), {}), ADDRESS, S);
+  check('required Sepolia in Sepolia mode → approved on Sepolia only', d.ok && JSON.stringify(accountsOf(d.namespaces)) === JSON.stringify([`${S}:${ADDRESS}`]));
+
+  // 3. Modern dApp: everything optional, both chains offered.
+  const both = proposalWith({}, eip([M, S]));
+  d = decideProposal(both, ADDRESS, M);
+  check('optional [1, Sepolia] in mainnet mode → only eip155:1 approved', d.ok && JSON.stringify(accountsOf(d.namespaces)) === JSON.stringify([`${M}:${ADDRESS}`]), JSON.stringify(d));
+  check('  … Sepolia reported as dropped', d.ok && JSON.stringify(d.droppedChains) === JSON.stringify([S]));
+  check('  … approved chains list is eip155:1 only', d.ok && JSON.stringify(d.namespaces.eip155.chains) === JSON.stringify([M]));
+  d = decideProposal(both, ADDRESS, S);
+  check('optional [1, Sepolia] in Sepolia mode → only Sepolia approved', d.ok && JSON.stringify(accountsOf(d.namespaces)) === JSON.stringify([`${S}:${ADDRESS}`]));
+  check('  … mainnet reported as dropped', d.ok && JSON.stringify(d.droppedChains) === JSON.stringify([M]));
+
+  // 4./5. Optional only the inactive chain → declined up front (the SDK
+  // builder would return {} and approve() would throw).
+  d = decideProposal(proposalWith({}, eip([M])), ADDRESS, S);
+  check('optional [1] only, Sepolia mode → declined 5100 with mode sentence', !d.ok && d.error.code === 5100 && d.reason === MAINNET_SENTENCE, d.reason);
+  d = decideProposal(proposalWith({}, eip([S])), ADDRESS, M);
+  check('optional [Sepolia] only, mainnet mode → declined 5100 with turn-on sentence', !d.ok && d.error.code === 5100 && d.reason === SEPOLIA_SENTENCE);
+  d = decideProposal(proposalWith({}, eip([M])), ADDRESS, M);
+  check('optional [1] only, mainnet mode → approved', d.ok && d.droppedChains.length === 0);
+
+  // 6. Required mainnet + optional Sepolia.
+  d = decideProposal(proposalWith(eip([M]), eip([S])), ADDRESS, S);
+  check('required 1 + optional Sepolia, Sepolia mode → declined (required wins)', !d.ok && d.error.code === 5100 && d.reason === MAINNET_SENTENCE);
+  d = decideProposal(proposalWith(eip([M]), eip([S])), ADDRESS, M);
+  check('required 1 + optional Sepolia, mainnet mode → eip155:1 only, Sepolia dropped', d.ok && accountsOf(d.namespaces).length === 1 && d.droppedChains[0] === S);
+
+  // 7./8. Chains neither mode serves.
+  d = decideProposal(proposalWith(eip(['eip155:137']), {}), ADDRESS, M);
+  check('required Polygon → 5100 unsupported sentence', !d.ok && d.error.code === 5100 && d.reason.includes('eip155:137') && d.reason.includes('does not support'), d.reason);
+  d = decideProposal(proposalWith({}, eip(['eip155:137', M])), ADDRESS, M);
+  check('optional [Polygon, 1] mainnet mode → eip155:1 only, Polygon dropped', d.ok && accountsOf(d.namespaces).length === 1 && d.droppedChains[0] === 'eip155:137');
+  d = decideProposal(proposalWith({}, eip(['eip155:137', M])), ADDRESS, S);
+  check('optional [Polygon, 1] Sepolia mode → declined 5100', !d.ok && d.error.code === 5100);
+
+  // 9.–11. Namespace keys, methods, events.
+  d = decideProposal(proposalWith({ solana: { chains: ['solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp'], methods: ['solana_signMessage'], events: [] } }, {}), ADDRESS, M);
+  check('required solana namespace → UNSUPPORTED_NAMESPACE_KEY 5104', !d.ok && d.error.code === 5104, JSON.stringify(d));
+  d = decideProposal(proposalWith(eip([M], [...SIGN3, 'eth_sign']), {}), ADDRESS, M);
+  check('required eth_sign → UNSUPPORTED_METHODS 5101', !d.ok && d.error.code === 5101 && d.reason.includes('eth_sign'));
+  d = decideProposal(proposalWith(eip([M], SIGN3, ['accountsChanged', 'message']), {}), ADDRESS, M);
+  check('required unknown event → UNSUPPORTED_EVENTS 5102', !d.ok && d.error.code === 5102);
+  d = decideProposal(proposalWith({}, { solana: { chains: ['solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp'], methods: [], events: [] } }), ADDRESS, M);
+  check('optional-only solana → declined 5100 (nothing Ethereum to connect)', !d.ok && d.error.code === 5100);
+
+  // 12. No namespaces at all → the builder's all-supported branch.
+  d = decideProposal(proposalWith({}, {}), ADDRESS, S);
+  check('empty proposal → active chain only', d.ok && JSON.stringify(accountsOf(d.namespaces)) === JSON.stringify([`${S}:${ADDRESS}`]));
+
+  // 13. Inline CAIP-2 namespace keys ("eip155:1": {...}).
+  const inline = proposalWith({ [M]: { methods: SIGN3, events: EVENTS } }, {});
+  d = decideProposal(inline, ADDRESS, S);
+  check('inline required "eip155:1" key, Sepolia mode → declined with mode sentence', !d.ok && d.reason === MAINNET_SENTENCE);
+  d = decideProposal(inline, ADDRESS, M);
+  check('inline required "eip155:1" key, mainnet mode → approved', d.ok);
+
+  // 14. wallet_switchEthereumChain only when the dApp asked for it.
+  d = decideProposal(proposalWith({}, eip([M], [...SIGN3, 'wallet_switchEthereumChain'])), ADDRESS, M);
+  check('switch method approved when requested', d.ok && d.namespaces.eip155.methods.includes('wallet_switchEthereumChain'));
+  d = decideProposal(proposalWith({}, eip([M])), ADDRESS, M);
+  check('switch method not added when not requested', d.ok && !d.namespaces.eip155.methods.includes('wallet_switchEthereumChain'));
+  check('supported set = signing methods + switch', JSON.stringify(WC_SUPPORTED_METHODS) === JSON.stringify([...WC_SIGNING_METHODS, 'wallet_switchEthereumChain']));
+
+  // 15./16. approveProposal / declineProposal wire the right codes.
+  const c1 = fakeClient();
+  const out = await approveProposal(c1, { id: 5, params: proposalWith({}, eip([M])) }, ADDRESS, S);
+  check('approveProposal (Sepolia mode, mainnet-only dApp) → approved:false with mode sentence', out.approved === false && out.reason === MAINNET_SENTENCE);
+  check('  … rejectSession sent 5100 with the sentence', c1.calls.reject[0]?.reason?.code === 5100 && c1.calls.reject[0]?.reason?.message === MAINNET_SENTENCE && c1.calls.approve.length === 0);
+  const c2 = fakeClient();
+  await approveProposal(c2, { id: 6, params: both }, ADDRESS, S);
+  check('approveProposal (both offered, Sepolia mode) approves Sepolia account only', JSON.stringify(accountsOf(c2.calls.approve[0]?.namespaces ?? {})) === JSON.stringify([`${S}:${ADDRESS}`]));
+  const c3 = fakeClient();
+  await declineProposal(c3, { id: 7, params: both }, ADDRESS, M);
+  check('declineProposal of a servable proposal → USER_REJECTED 5000', c3.calls.reject[0]?.reason?.code === 5000);
+  const c4 = fakeClient();
+  await declineProposal(c4, { id: 8, params: proposalWith(eip(['eip155:137']), {}) }, ADDRESS, M);
+  check('declineProposal of an unservable proposal → its specific code (5100)', c4.calls.reject[0]?.reason?.code === 5100);
+}
+
+console.log('check-wc: wallet_switchEthereumChain');
+{
+  const sw = (chainIdHex, envelope = M) => ({
+    id: 21,
+    topic: 't',
+    params: { chainId: envelope, request: { method: 'wallet_switchEthereumChain', params: [{ chainId: chainIdHex }] } },
+  });
+  let r = decideSwitchChain(sw('0x1'), M, [M]);
+  check('switch to the active chain (mainnet) → answer null', r.kind === 'answer' && r.result === null);
+  r = decideSwitchChain(sw('0xaa36a7', S), S, [S]);
+  check('switch to the active chain (Sepolia) → answer null', r.kind === 'answer' && r.result === null);
+  r = decideSwitchChain(sw('0xAA36A7', S), S, [S]);
+  check('upper-case hex accepted', r.kind === 'answer');
+  r = decideSwitchChain(sw('0x1', S), S, [S]);
+  check('switch to mainnet while in Sepolia mode → 5100', r.kind === 'decline' && r.error.code === 5100);
+  check('  … with the mode sentence', r.kind === 'decline' && r.error.message.startsWith('This dApp asked for Ethereum mainnet; the wallet is in Sepolia test mode.'), r.error?.message);
+  r = decideSwitchChain(sw('0xaa36a7'), M, [M]);
+  check('switch to Sepolia while in mainnet mode → 5100 turn-on sentence', r.kind === 'decline' && r.error.code === 5100 && r.error.message.includes('Turn on Sepolia test mode'));
+  r = decideSwitchChain(sw('0x89'), M, [M]);
+  check('switch to Polygon → 5100 unsupported', r.kind === 'decline' && r.error.code === 5100 && r.error.message.includes('eip155:137'));
+  r = decideSwitchChain(sw('0xaa36a7', M), S, [M]);
+  check('paused mainnet session asks for active Sepolia → declined, reconnect advice', r.kind === 'decline' && r.error.code === 5100 && r.error.message.includes('reconnect'));
+  r = decideSwitchChain({ id: 1, topic: 't', params: { chainId: M, request: { method: 'wallet_switchEthereumChain', params: [{ chainId: 1 }] } } }, M, [M]);
+  check('non-hex chainId → -32602', r.kind === 'decline' && r.error.code === -32602);
+  r = decideSwitchChain({ id: 1, topic: 't', params: { chainId: M, request: { method: 'wallet_switchEthereumChain', params: [] } } }, M, [M]);
+  check('missing params → -32602', r.kind === 'decline' && r.error.code === -32602);
+  check('wcResult(null) keeps an explicit null result', JSON.stringify(wcResult(4, null)) === '{"id":4,"jsonrpc":"2.0","result":null}');
+}
+
+console.log('check-wc: sessions persisted across a mode switch');
+{
+  const mainnetSession = { namespaces: { eip155: { accounts: [`${M}:${ADDRESS}`], methods: SIGN3 } } };
+  check('sessionChainsOf reads CAIP-10 accounts', JSON.stringify(sessionChainsOf(mainnetSession)) === JSON.stringify([M]));
+  check('mainnet session in mainnet mode → no pause note', sessionModeNote([M], M) === null);
+  const note = sessionModeNote([M], S);
+  check('mainnet session in Sepolia mode → paused note', typeof note === 'string' && note.includes('Paused') && note.includes('Settings → Developer'), note);
+  check('Sepolia session in mainnet mode → paused note', (sessionModeNote([S], M) ?? '').includes('mainnet mode'));
+  const msgHex = toHex(new TextEncoder().encode('hi'));
+  try {
+    parseWcRequest({ id: 1, topic: 't', params: { chainId: M, request: { method: 'personal_sign', params: [msgHex, ADDRESS] } } }, ADDRESS, S);
+    check('request from a paused mainnet session declined', false);
+  } catch (e) {
+    check('request from a paused mainnet session → 5100', e instanceof WcRequestRejection && e.code === 5100);
+    check('  … with "use this connection" mode sentence', e.message === 'This dApp asked for Ethereum mainnet; the wallet is in Sepolia test mode. Switch modes in Settings → Developer to use this connection.', e.message);
+  }
+}
+
+console.log('check-wc: launch-time start decision');
+{
+  check('no project id → stay lazy', shouldStartWalletConnectAtLaunch(null, true) === false);
+  check('empty project id → stay lazy', shouldStartWalletConnectAtLaunch('', true) === false);
+  check('project id, never used → stay lazy', shouldStartWalletConnectAtLaunch('abc12345', false) === false);
+  check('project id + used → start at launch', shouldStartWalletConnectAtLaunch('abc12345', true) === true);
+  const store = memoryStore();
+  check('used marker defaults to false', (await getWcUsed(store)) === false);
+  await setWcUsed(true, store);
+  check('used marker round-trip true', (await getWcUsed(store)) === true);
+  await setWcUsed(false, store);
+  check('used marker round-trip false', (await getWcUsed(store)) === false);
+  store._map.set('shiba-wallet.wc-used.v1', '{broken');
+  check('corrupt marker reads as false (lazy)', (await getWcUsed(store)) === false);
+
+  // Node scripts must never evaluate the SDK: load the two glue modules in
+  // a child process with a resolve hook that records every specifier.
+  const probe = `
+    import { registerHooks } from 'node:module';
+    const seen = [];
+    registerHooks({ resolve(spec, ctx, next) { seen.push(spec); return next(spec, ctx); } });
+    await import('./src/wallet/walletconnect.ts');
+    await import('./src/wallet/wc-controller.ts');
+    console.log(JSON.stringify(seen.filter((s) => /@reown\\/|react-native-compat|@walletconnect\\/core|@walletconnect\\/sign-client/.test(s))));
+  `;
+  const res = spawnSync(process.execPath, ['--input-type=module', '-e', probe], { cwd: process.cwd(), encoding: 'utf8' });
+  const lines = (res.stdout || '').trim().split('\n');
+  check(
+    'importing the glue modules never resolves @reown/*, the compat shim, core or sign-client',
+    res.status === 0 && lines[lines.length - 1] === '[]',
+    `status ${res.status}; stdout ${res.stdout}; stderr ${(res.stderr || '').slice(0, 300)}`,
+  );
+}
+
+console.log('check-wc: app-level request queue (WcController, fake WalletKit)');
+
+/** FAKE event-emitting WalletKit client (no relay, no network). */
+function fakeKit(sessions = {}) {
+  const handlers = new Map();
+  const calls = { approve: [], reject: [], respond: [], disconnect: [], pair: [] };
+  return {
+    calls,
+    sessions,
+    handlers,
+    pair: async (a) => void calls.pair.push(a),
+    approveSession: async (a) => void calls.approve.push(a),
+    rejectSession: async (a) => void calls.reject.push(a),
+    respondSessionRequest: async (a) => void calls.respond.push(a),
+    disconnectSession: async (a) => void calls.disconnect.push(a),
+    getActiveSessions() {
+      return this.sessions;
+    },
+    on(ev, fn) {
+      if (!handlers.has(ev)) handlers.set(ev, new Set());
+      handlers.get(ev).add(fn);
+    },
+    off(ev, fn) {
+      handlers.get(ev)?.delete(fn);
+    },
+    async fire(ev, payload) {
+      for (const fn of handlers.get(ev) ?? []) await fn(payload);
+    },
+  };
+}
+const session = (topic, chain, name = 'Uniswap') => ({
+  [topic]: {
+    topic,
+    peer: { metadata: { name, url: 'https://app.example' } },
+    namespaces: { eip155: { accounts: [`${chain}:${ADDRESS}`], methods: [...SIGN3, 'wallet_switchEthereumChain'] } },
+  },
+});
+const req = (id, method, params, chainId = M, topic = 'T1') => ({
+  id,
+  topic,
+  params: { chainId, request: { method, params } },
+});
+const signReq = (id, text, chainId = M, topic = 'T1') =>
+  req(id, 'personal_sign', [toHex(new TextEncoder().encode(text)), ADDRESS], chainId, topic);
+const tick = () => new Promise((r) => setTimeout(r, 0));
+
+{
+  // Wiring.
+  const kit = fakeKit(session('T1', M));
+  const ctx = { address: ADDRESS, activeChain: M };
+  const ctl = new WcController(kit, () => ctx);
+  const detach = ctl.attach();
+  const events = ['session_proposal', 'session_request', 'session_delete', 'session_request_expire', 'proposal_expire'];
+  check('attach registers all five SDK listeners', events.every((e) => kit.handlers.get(e)?.size === 1));
+  check('attach loads the session list', ctl.getSnapshot().sessions[0]?.name === 'Uniswap');
+  const snapA = ctl.getSnapshot();
+  check('snapshot identity is stable between changes', ctl.getSnapshot() === snapA);
+
+  // Ordering: proposal, then two requests, arrival order kept.
+  await kit.fire('session_proposal', { id: 500, params: proposalWith({}, eip([M])) });
+  await kit.fire('session_request', signReq(1, 'first'));
+  await kit.fire('session_request', req(2, 'eth_signTypedData_v4', [ADDRESS, JSON.stringify({ types: { EIP712Domain: [{ name: 'name', type: 'string' }], M: [{ name: 'x', type: 'string' }] }, primaryType: 'M', domain: { name: 'd' }, message: { x: 'y' } })]));
+  await kit.fire('session_request', signReq(1, 'first')); // at-least-once redelivery
+  let snap = ctl.getSnapshot();
+  check('snapshot changes after events', snap !== snapA);
+  check('queue keeps arrival order (proposal, r1, r2)', JSON.stringify(snap.queue.map((i) => i.key)) === JSON.stringify(['p:500', 'r:1', 'r:2']), JSON.stringify(snap.queue.map((i) => i.key)));
+  check('duplicate delivery of the same request id is ignored', snap.queue.length === 3);
+  check('head is the oldest item', snap.head?.key === 'p:500');
+  check('non-head items cannot be claimed', ctl.begin('r:1') === null && ctl.canAct('r:2') === false);
+  check('nothing was answered automatically', kit.calls.respond.length === 0 && kit.calls.reject.length === 0);
+
+  // One at a time: claim the head, others blocked while busy.
+  const claimed = ctl.begin('p:500');
+  check('head claim succeeds', claimed?.key === 'p:500' && ctl.getSnapshot().busyKey === 'p:500');
+  check('a second claim while busy fails', ctl.begin('p:500') === null);
+  ctl.release('p:500');
+  check('release keeps the item queued', ctl.getSnapshot().queue.length === 3 && ctl.getSnapshot().busyKey === null);
+  await ctl.decline('p:500');
+  check('declining the proposal sends USER_REJECTED 5000 and advances', kit.calls.reject[0]?.id === 500 && kit.calls.reject[0]?.reason?.code === 5000 && ctl.getSnapshot().head?.key === 'r:1');
+
+  // Approve r1 exactly as the provider does: claim, sign, respond, complete.
+  const item = ctl.begin('r:1');
+  const sig = signDigest(account, item.parsed.digest);
+  await respondApproved(kit, item.event.topic, item.event.id, sig);
+  ctl.complete('r:1');
+  check('approved signature recovers the wallet address', ethers.verifyMessage('first', kit.calls.respond[0].response.result).toLowerCase() === ADDRESS.toLowerCase());
+  check('after r1, head is r2', ctl.getSnapshot().head?.key === 'r:2');
+  await ctl.decline('r:2');
+  check('declining a request sends USER_REJECTED 5000', kit.calls.respond[1]?.response?.error?.code === 5000 && kit.calls.respond[1]?.response?.id === 2);
+  check('queue empty', ctl.getSnapshot().queue.length === 0 && ctl.getSnapshot().head === null);
+
+  detach();
+  check('detach removes every listener', events.every((e) => (kit.handlers.get(e)?.size ?? 0) === 0));
+}
+
+{
+  // Lock hold: requests arriving while locked wait, invisible and inert.
+  const kit = fakeKit(session('T1', M));
+  const ctx = { address: ADDRESS, activeChain: M };
+  const ctl = new WcController(kit, () => ctx, { locked: true });
+  ctl.attach();
+  await kit.fire('session_request', signReq(10, 'while locked'));
+  await kit.fire('session_proposal', { id: 600, params: proposalWith({}, eip([M])) });
+  let snap = ctl.getSnapshot();
+  check('locked: both items queued', snap.queue.length === 2);
+  check('locked: no head (approval UI cannot render)', snap.head === null && snap.locked === true);
+  check('locked: head cannot be claimed', ctl.canAct('r:10') === false && ctl.begin('r:10') === null);
+  check('locked: decline is refused too', (await ctl.decline('r:10')) === false);
+  await tick();
+  check('locked: nothing answered, nothing declined on its own', kit.calls.respond.length === 0 && kit.calls.reject.length === 0);
+  // Auto-answers that need no user decision still go out while locked.
+  await kit.fire('session_request', req(11, 'eth_sign', [ADDRESS, '0xdead']));
+  check('locked: unsupported method still declined at once with 5101', kit.calls.respond[0]?.response?.error?.code === 5101 && kit.calls.respond[0]?.response?.id === 11);
+  check('locked: that decline is not queued', ctl.getSnapshot().queue.length === 2);
+  ctl.setLocked(false);
+  snap = ctl.getSnapshot();
+  check('unlock: head is the first arrival (the locked-time request)', snap.head?.key === 'r:10' && snap.locked === false);
+  check('unlock: head is claimable', ctl.canAct('r:10'));
+  ctl.setLocked(true);
+  check('re-lock mid-queue hides the head again', ctl.getSnapshot().head === null && ctl.begin('r:10') === null);
+}
+
+{
+  // Automatic answers + notices.
+  const kit = fakeKit({ ...session('T1', M), ...session('T2', M, 'Paused dApp') });
+  const ctx = { address: ADDRESS, activeChain: M };
+  const ctl = new WcController(kit, () => ctx);
+  ctl.attach();
+  await kit.fire('session_request', req(30, 'wallet_switchEthereumChain', [{ chainId: '0x1' }]));
+  check('switch to active chain answered null without UI', kit.calls.respond[0]?.response?.result === null && kit.calls.respond[0]?.response?.id === 30 && ctl.getSnapshot().queue.length === 0);
+  check('  … and adds no notice', ctl.getSnapshot().notices.length === 0);
+  await kit.fire('session_request', req(31, 'wallet_switchEthereumChain', [{ chainId: '0xaa36a7' }]));
+  check('switch to Sepolia in mainnet mode declined 5100', kit.calls.respond[1]?.response?.error?.code === 5100);
+  check('  … with a plain-language notice naming the dApp', (ctl.getSnapshot().notices[0]?.text ?? '').includes('Uniswap') && ctl.getSnapshot().notices[0].text.includes('Turn on Sepolia test mode'));
+
+  // Mode switch: the user flips to Sepolia; the mainnet session is paused.
+  ctx.activeChain = S;
+  await kit.fire('session_request', signReq(32, 'old mode', M, 'T2'));
+  check('request from a mainnet session in Sepolia mode declined 5100', kit.calls.respond[2]?.response?.error?.code === 5100 && ctl.getSnapshot().queue.length === 0);
+  check('  … notice carries the mode sentence', (ctl.getSnapshot().notices[0]?.text ?? '').includes('Switch modes in Settings → Developer to use this connection'));
+  await kit.fire('session_request', req(33, 'wallet_switchEthereumChain', [{ chainId: '0xaa36a7' }], M, 'T2'));
+  check('paused session asking to switch to the active chain → 5100 reconnect', kit.calls.respond[3]?.response?.error?.code === 5100 && kit.calls.respond[3].response.error.message.includes('reconnect'));
+
+  // Stale-chain re-check at approval time.
+  ctx.activeChain = M;
+  await kit.fire('session_request', signReq(34, 'queued under mainnet'));
+  const item = ctl.begin('r:34');
+  check('same chain at approval → no stale error', ctl.staleChainError(item) === null);
+  ctx.activeChain = S;
+  const stale = ctl.staleChainError(item);
+  check('mode switched while queued → stale 5100', stale?.code === 5100);
+  ctl.release('r:34');
+  await ctl.decline('r:34', stale);
+  check('stale decline carries 5100 to the dApp', kit.calls.respond[4]?.response?.error?.code === 5100 && kit.calls.respond[4].response.id === 34);
+
+  // No wallet account → -32603 decline.
+  ctx.activeChain = M;
+  ctx.address = null;
+  await kit.fire('session_request', signReq(35, 'no account'));
+  check('no wallet account → -32603 decline, not queued', kit.calls.respond[5]?.response?.error?.code === -32603 && ctl.getSnapshot().queue.length === 0);
+  ctx.address = ADDRESS;
+
+  // Wrong signer → -32602 decline.
+  await kit.fire('session_request', req(36, 'personal_sign', ['0x68', '0x' + '11'.repeat(20)]));
+  check('foreign signer → -32602 decline', kit.calls.respond[6]?.response?.error?.code === -32602);
+  check('notices are capped', ctl.getSnapshot().notices.length <= 5);
+}
+
+{
+  // session_delete, expiries: items leave the queue without any response.
+  const kit = fakeKit({ ...session('T1', M), ...session('T2', M, 'Other') });
+  const ctx = { address: ADDRESS, activeChain: M };
+  const ctl = new WcController(kit, () => ctx);
+  ctl.attach();
+  await kit.fire('session_request', signReq(40, 'a', M, 'T1'));
+  await kit.fire('session_request', signReq(41, 'b', M, 'T2'));
+  await kit.fire('session_request', signReq(42, 'c', M, 'T1'));
+  ctl.begin('r:40');
+  delete kit.sessions.T1;
+  await kit.fire('session_delete', { id: 1, topic: 'T1' });
+  let snap = ctl.getSnapshot();
+  check('session_delete drops that session\'s queued requests (incl. the busy one)', JSON.stringify(snap.queue.map((i) => i.key)) === JSON.stringify(['r:41']) && snap.busyKey === null);
+  check('session_delete refreshes the session list', snap.sessions.length === 1 && snap.sessions[0].topic === 'T2');
+  check('session_delete notice names the dApp', (snap.notices[0]?.text ?? '').includes('Uniswap disconnected'));
+  check('session_delete sends no responses (the SDK already failed them)', kit.calls.respond.length === 0);
+  await kit.fire('session_request_expire', { id: 41 });
+  snap = ctl.getSnapshot();
+  check('session_request_expire drops the item without answering', snap.queue.length === 0 && kit.calls.respond.length === 0);
+  check('  … and says so', (snap.notices[0]?.text ?? '').includes('expired'));
+  await kit.fire('session_proposal', { id: 700, params: proposalWith({}, eip([M])) });
+  await kit.fire('proposal_expire', { id: 700 });
+  check('proposal_expire drops the proposal without a reject call', ctl.getSnapshot().queue.length === 0 && kit.calls.reject.length === 0);
+  await kit.fire('session_request_expire', { id: 999 });
+  check('expiry for an unknown id is a no-op', ctl.getSnapshot().queue.length === 0);
+
+  // Unservable proposal declined from the sheet carries its specific code.
+  ctx.activeChain = S;
+  await kit.fire('session_proposal', { id: 701, params: proposalWith({}, eip([M])) });
+  check('proposal summary flags nothing required (all optional) yet decision refuses', ctl.getSnapshot().head?.summary.unsupportedRequired.length === 0);
+  await ctl.decline('p:701');
+  check('declining an unservable proposal sends 5100 with the mode sentence', kit.calls.reject[0]?.reason?.code === 5100 && kit.calls.reject[0].reason.message.includes('Sepolia test mode'));
 }
 
 seed.fill(0);

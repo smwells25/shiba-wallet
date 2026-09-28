@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { AppState, StyleSheet, Text, View } from 'react-native';
 import { Button } from '../components';
 import { useTheme } from '../theme';
@@ -6,6 +6,19 @@ import { usePrefs } from '../wallet/PrefsContext';
 import { useWallet } from '../wallet/WalletContext';
 import { localAuthAvailable, requireLocalAuth } from '../wallet/biometric';
 import { INITIAL_LOCK_STATE, reduceLock, type LockState } from '../wallet/lock';
+
+/**
+ * Whether the lock overlay is currently up. Consumers that can surface
+ * sensitive, actionable UI on their own — the app-level WalletConnect
+ * approval sheet — read this and render nothing while it is true, so no
+ * approval can be seen or acted on behind (or, for native windows such as
+ * RN Modal, above) the lock screen. Defaults to false outside the gate.
+ */
+const LockStateContext = createContext<{ locked: boolean }>({ locked: false });
+
+export function useAppLock(): { locked: boolean } {
+  return useContext(LockStateContext);
+}
 
 /**
  * Auto-lock gate (phase 4, item 5.1): renders its children always — plus a
@@ -97,23 +110,28 @@ export function LockGate({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const locked = armed && lock.locked;
+  const lockValue = React.useMemo(() => ({ locked }), [locked]);
+
   return (
-    <View style={styles.fill}>
-      {children}
-      {armed && lock.locked ? (
-        <View style={[styles.overlay, { backgroundColor: theme.background }]}>
-          <Text style={[styles.title, { color: theme.text }]}>Shiba Wallet is locked</Text>
-          <Text style={[styles.hint, { color: theme.textMuted }]}>
-            The app locked itself after being in the background. Your keys
-            never left the device's secure storage.
-          </Text>
-          <Button title="Unlock" onPress={() => void unlock()} style={styles.button} />
-          {unlockError ? (
-            <Text style={[styles.error, { color: theme.danger }]}>{unlockError}</Text>
-          ) : null}
-        </View>
-      ) : null}
-    </View>
+    <LockStateContext.Provider value={lockValue}>
+      <View style={styles.fill}>
+        {children}
+        {locked ? (
+          <View style={[styles.overlay, { backgroundColor: theme.background }]}>
+            <Text style={[styles.title, { color: theme.text }]}>Shiba Wallet is locked</Text>
+            <Text style={[styles.hint, { color: theme.textMuted }]}>
+              The app locked itself after being in the background. Your keys
+              never left the device's secure storage.
+            </Text>
+            <Button title="Unlock" onPress={() => void unlock()} style={styles.button} />
+            {unlockError ? (
+              <Text style={[styles.error, { color: theme.danger }]}>{unlockError}</Text>
+            ) : null}
+          </View>
+        ) : null}
+      </View>
+    </LockStateContext.Provider>
   );
 }
 

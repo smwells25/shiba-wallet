@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { buildApprovedNamespaces, getSdkError } from '@walletconnect/utils';
+import { buildApprovedNamespaces, getSdkError, normalizeNamespaces } from '@walletconnect/utils';
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import type { DerivedAccount } from '@shiba-wallet/core';
@@ -16,11 +16,14 @@ import {
 // under Node's type stripping, which resolves relative specifiers literally.
 import { EVM_CHAIN_ID, validateRecipient } from './send.ts';
 import type { KeyValueStore } from './tokens.ts';
+import { EVM_MAINNET, EVM_SEPOLIA } from '../config/evm-chain.ts';
 
 /**
  * WalletConnect v2 glue (Tier 1 feature 78): lets external dApps connect to
- * this wallet, request signatures, and submit transactions — Ethereum
- * mainnet (eip155:1) only in this pass.
+ * this wallet, request signatures, and submit transactions — on the ACTIVE
+ * EVM chain only (Ethereum mainnet, or Sepolia while test mode is on; see
+ * config/evm-chain.ts). Requests are handled app-wide by
+ * WalletConnectContext, not only while the Connections screen is open.
  *
  * SDK choice (verified 2026-09-27): WalletConnect-the-company rebranded to
  * Reown, and the wallet-side SDK is @reown/walletkit (v1.6.0, published
@@ -45,9 +48,32 @@ import type { KeyValueStore } from './tokens.ts';
  *
  * SECURITY: nothing in this module signs anything by itself. Every signing
  * function takes a DerivedAccount that only WalletContext.signWith can
- * produce, and the Connections screen calls it strictly after the user has
- * seen the request and passed the biometric gate. There is no auto-sign
- * path, by construction.
+ * produce, and the app-level approval sheet (WalletConnectContext +
+ * components/WcApprovalSheet) calls it strictly after the user has seen
+ * the request and passed the biometric gate. There is no auto-sign path,
+ * by construction.
+ *
+ * SDK behavior this module relies on (read from the installed sources,
+ * @walletconnect/utils 2.25.0 and @walletconnect/sign-client 2.25.0 via
+ * their shipped source maps, dist/index.js.map → src/*.ts):
+ *  - utils src/namespaces.ts buildApprovedNamespaces: the wallet's
+ *    supportedNamespaces become the candidate session; the proposal's
+ *    requiredNamespaces must CONFORM to it (utils src/validators.ts
+ *    isConformingNamespaces: every required namespace key present, every
+ *    required chain present, every required method and event present, via
+ *    misc.ts hasOverlap which is really a subset test); optional chains
+ *    are intersected with supported chains; namespaces left with no chain
+ *    or account are deleted, so an all-unsupported optional-only proposal
+ *    yields {} rather than an error.
+ *  - sign-client src/controllers/engine.ts connect(): requiredNamespaces
+ *    are deprecated and the SDK moves them into optionalNamespaces before
+ *    sending, so modern dApps (e.g. Uniswap) arrive with required = {} and
+ *    every chain in optional. approve() rejects an empty namespaces object
+ *    (validators.ts isValidNamespaces → isValidObject requires keys).
+ *  - sign-client engine isValidRequest(): a session_request whose chainId
+ *    or method is not in the session's approved namespaces is answered
+ *    with an error by the SDK itself and never reaches this app. So a
+ *    method must be approved in the session for the app to see it.
  */
 
 // ---------------------------------------------------------------------------
@@ -109,38 +135,169 @@ export async function clearWcProjectId(store: KeyValueStore = AsyncStorage): Pro
 }
 
 // ---------------------------------------------------------------------------
+// Launch-time start decision (global request listener, phase 6 item 5)
+// ---------------------------------------------------------------------------
+
+/**
+ * "WalletConnect is in use on this device" marker. The SDK persists its
+ * sessions in its own storage, but the key layout there is internal to
+ * @walletconnect/core, so instead of peeking at it the app records its own
+ * marker: set when a pairing is attempted or the SDK reports at least one
+ * session, cleared when the SDK reports none. When set (and a project id
+ * exists) the SDK starts at app launch so requests surface on any screen;
+ * otherwise it stays lazy and starts when the Connections screen opens.
+ *
+ * A session created before this marker existed is picked up the first
+ * time the Connections screen opens (that starts the SDK, which reports
+ * the session and sets the marker for later launches).
+ */
+const WC_USED_KEY = 'shiba-wallet.wc-used.v1';
+
+export async function getWcUsed(store: KeyValueStore = AsyncStorage): Promise<boolean> {
+  try {
+    const raw = await store.getItem(WC_USED_KEY);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw) as unknown;
+    return (
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      (parsed as { used?: unknown }).used === true
+    );
+  } catch {
+    return false;
+  }
+}
+
+export async function setWcUsed(used: boolean, store: KeyValueStore = AsyncStorage): Promise<void> {
+  await store.setItem(WC_USED_KEY, JSON.stringify({ used }));
+}
+
+/**
+ * Start the SDK at launch only when it can have work to do: a project id
+ * is configured AND WalletConnect has been used (a session persists or a
+ * pairing was attempted). Every other launch leaves the SDK unevaluated.
+ */
+export function shouldStartWalletConnectAtLaunch(
+  projectId: string | null | undefined,
+  used: boolean,
+): boolean {
+  return typeof projectId === 'string' && projectId !== '' && used;
+}
+
+// ---------------------------------------------------------------------------
 // What this wallet supports (this pass)
 // ---------------------------------------------------------------------------
 
 /**
  * The default supported chain set (Ethereum mainnet). While the Settings
- * Sepolia test mode is on, the Connections screen passes
- * [activeEvmChain.caip2] ('eip155:11155111') into the functions below
+ * Sepolia test mode is on, the app-level WalletConnect provider passes
+ * the active chain ('eip155:11155111') into the functions below
  * instead — the wallet then builds eip155:11155111 namespaces and declines
  * eip155:1 requests, so a session approved in one mode can never be
  * served in the other (phase 4, item 6). Defaults keep the historical
  * mainnet behavior for existing callers and scripts/check-wc.mjs.
  */
 export const WC_SUPPORTED_CHAINS = [EVM_CHAIN_ID]; // eip155:1 by default
-export const WC_SUPPORTED_METHODS = [
+
+/** The methods that need the user's approval (and a signature). */
+export const WC_SIGNING_METHODS = [
   'personal_sign',
   'eth_signTypedData_v4',
   'eth_sendTransaction',
 ];
+
+/**
+ * Everything the wallet offers in a session. wallet_switchEthereumChain is
+ * offered so the dApp's switch requests reach the app (the SDK drops
+ * methods outside the session — see the module header) and get an honest
+ * answer: null when the requested chain is already the active one,
+ * UNSUPPORTED_CHAINS with a plain-language reason otherwise. It never
+ * changes the wallet's mode and never signs anything (decideSwitchChain).
+ * buildApprovedNamespaces only approves methods the dApp itself asked for,
+ * so dApps that did not request it never see it.
+ */
+export const WC_SUPPORTED_METHODS = [...WC_SIGNING_METHODS, 'wallet_switchEthereumChain'];
 export const WC_SUPPORTED_EVENTS = ['accountsChanged', 'chainChanged'];
 
 /**
  * WalletConnect SDK error payloads (from @walletconnect/utils getSdkError,
- * the codes the WC ecosystem expects — its equivalent of EIP-1193's 4001):
+ * the codes the WC ecosystem expects — its equivalent of EIP-1193's 4001).
+ * Values read from the installed utils src/errors.ts SDK_ERRORS table:
  * USER_REJECTED 5000, UNSUPPORTED_CHAINS 5100, UNSUPPORTED_METHODS 5101,
- * USER_DISCONNECTED 6000 (values confirmed against the installed package).
+ * UNSUPPORTED_EVENTS 5102, UNSUPPORTED_NAMESPACE_KEY 5104,
+ * USER_DISCONNECTED 6000.
  */
 export const WC_ERRORS = {
   userRejected: getSdkError('USER_REJECTED'),
   unsupportedChains: getSdkError('UNSUPPORTED_CHAINS'),
   unsupportedMethods: getSdkError('UNSUPPORTED_METHODS'),
+  unsupportedEvents: getSdkError('UNSUPPORTED_EVENTS'),
+  unsupportedNamespaceKey: getSdkError('UNSUPPORTED_NAMESPACE_KEY'),
   userDisconnected: getSdkError('USER_DISCONNECTED'),
 } as const;
+
+// ---------------------------------------------------------------------------
+// Plain-language chain / mode wording (the active-chain rule)
+// ---------------------------------------------------------------------------
+
+/** Human name for a CAIP-2 chain id; unknown chains show their id. */
+export function describeChain(caip2: string): string {
+  if (caip2 === EVM_MAINNET.caip2) return 'Ethereum mainnet';
+  if (caip2 === EVM_SEPOLIA.caip2) return 'Ethereum Sepolia (test network)';
+  return caip2;
+}
+
+/** The wallet mode a chain belongs to, or null for chains no mode serves. */
+function modeName(caip2: string): string | null {
+  if (caip2 === EVM_MAINNET.caip2) return 'mainnet mode';
+  if (caip2 === EVM_SEPOLIA.caip2) return 'Sepolia test mode';
+  return null;
+}
+
+/**
+ * The sentence shown (and sent to the dApp) when something asks for the
+ * chain of the OTHER wallet mode, e.g. "This dApp asked for Ethereum
+ * mainnet; the wallet is in Sepolia test mode. Switch modes in Settings →
+ * Developer to connect."
+ */
+export function modeMismatchMessage(
+  requestedChain: string,
+  activeChain: string,
+  purpose: 'connect' | 'use this connection',
+): string {
+  const active = modeName(activeChain) ?? activeChain;
+  const how =
+    requestedChain === EVM_SEPOLIA.caip2
+      ? `Turn on Sepolia test mode in Settings → Developer to ${purpose}.`
+      : `Switch modes in Settings → Developer to ${purpose}.`;
+  return `This dApp asked for ${describeChain(requestedChain)}; the wallet is in ${active}. ${how}`;
+}
+
+/** True when `chain` is the chain of the other (inactive) wallet mode. */
+function isOtherModeChain(chain: string, activeChain: string): boolean {
+  return chain !== activeChain && modeName(chain) !== null;
+}
+
+/**
+ * The sentence for a chain this wallet serves in neither mode, or the
+ * mode-mismatch sentence when the chain belongs to the other mode.
+ */
+function unsupportedChainMessage(
+  chains: string[],
+  activeChain: string,
+  purpose: 'connect' | 'use this connection',
+): string {
+  const otherMode = chains.find((c) => isOtherModeChain(c, activeChain));
+  if (otherMode && chains.every((c) => c === otherMode)) {
+    return modeMismatchMessage(otherMode, activeChain, purpose);
+  }
+  const unknown = chains.filter((c) => c !== activeChain);
+  return (
+    `This dApp requires ${unknown.map(describeChain).join(', ')}, which this wallet does ` +
+    'not support over WalletConnect. It connects on Ethereum mainnet, or on Sepolia ' +
+    `while test mode is on (currently: ${describeChain(activeChain)}).`
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Session proposals: namespace construction + display summary
@@ -231,6 +388,156 @@ export function describeProposal(
     methods: [...new Set([...required.methods, ...optional.methods])],
     unsupportedRequired: required.chains.filter((c) => !supportedChains.includes(c)),
   };
+}
+
+/**
+ * The wallet's answer to a session proposal under the active-chain rule:
+ * the wallet only ever approves the ACTIVE EVM chain (eip155:1, or
+ * eip155:11155111 while Sepolia test mode is on), never both.
+ *
+ *  - Required chains must all be the active chain. A required chain of the
+ *    other mode → UNSUPPORTED_CHAINS (5100) with the mode-switch sentence;
+ *    any other required chain → UNSUPPORTED_CHAINS with the unsupported
+ *    sentence.
+ *  - Required non-eip155 namespaces → UNSUPPORTED_NAMESPACE_KEY (5104);
+ *    required methods / events beyond WC_SUPPORTED_* →
+ *    UNSUPPORTED_METHODS (5101) / UNSUPPORTED_EVENTS (5102).
+ *  - Optional chains (where modern dApps put everything, see the header)
+ *    are intersected with the active chain; the others are reported in
+ *    `droppedChains` so the approval sheet can say what was left out.
+ *  - If nothing the dApp offered is the active chain, the proposal is
+ *    declined up front (the SDK builder would return {} and approve()
+ *    would throw) — with the mode-switch sentence when the dApp offered
+ *    the other mode's chain.
+ *  - A proposal with no namespaces at all gets the active chain (the
+ *    builder's documented "return all supported namespaces" branch).
+ *
+ * The final namespaces still come from the SDK's buildApprovedNamespaces
+ * (the documented approval path), then are re-checked: every approved
+ * account must be `${activeChain}:${ethAddress}` and every key 'eip155'.
+ */
+export type ProposalDecision =
+  | {
+      ok: true;
+      namespaces: Record<string, unknown>;
+      /** Chains the dApp offered that this session will NOT include. */
+      droppedChains: string[];
+    }
+  | {
+      ok: false;
+      /** SDK error for rejectSession (code + message). */
+      error: { code: number; message: string };
+      /** Plain-language explanation for the approval sheet. */
+      reason: string;
+    };
+
+export function decideProposal(
+  proposalParams: unknown,
+  ethAddress: string,
+  activeChain: string = EVM_CHAIN_ID,
+): ProposalDecision {
+  const params = (proposalParams ?? {}) as {
+    requiredNamespaces?: Parameters<typeof normalizeNamespaces>[0];
+    optionalNamespaces?: Parameters<typeof normalizeNamespaces>[0];
+  };
+  const reject = (
+    error: { code: number; message: string },
+    reason: string,
+  ): ProposalDecision => ({ ok: false, error: { code: error.code, message: reason }, reason });
+
+  let required: ReturnType<typeof normalizeNamespaces>;
+  let optional: ReturnType<typeof normalizeNamespaces>;
+  try {
+    required = normalizeNamespaces(params.requiredNamespaces ?? {});
+    optional = normalizeNamespaces(params.optionalNamespaces ?? {});
+  } catch {
+    return reject(WC_ERRORS.unsupportedChains, 'The connection request is malformed.');
+  }
+  const list = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+
+  const foreignRequired = Object.keys(required).filter((k) => k !== 'eip155');
+  if (foreignRequired.length > 0) {
+    return reject(
+      WC_ERRORS.unsupportedNamespaceKey,
+      `This dApp requires ${foreignRequired.join(', ')} accounts, which this wallet does not ` +
+        'offer over WalletConnect (Ethereum only for now).',
+    );
+  }
+
+  const requiredChains = list(required.eip155?.chains);
+  const badRequired = requiredChains.filter((c) => c !== activeChain);
+  if (badRequired.length > 0) {
+    return reject(
+      WC_ERRORS.unsupportedChains,
+      unsupportedChainMessage(badRequired, activeChain, 'connect'),
+    );
+  }
+  const badMethods = list(required.eip155?.methods).filter(
+    (m) => !WC_SUPPORTED_METHODS.includes(m),
+  );
+  if (badMethods.length > 0) {
+    return reject(
+      WC_ERRORS.unsupportedMethods,
+      `This dApp requires ${badMethods.join(', ')}, which this wallet does not support ` +
+        `(supported: ${WC_SUPPORTED_METHODS.join(', ')}).`,
+    );
+  }
+  const badEvents = list(required.eip155?.events).filter(
+    (e) => !WC_SUPPORTED_EVENTS.includes(e),
+  );
+  if (badEvents.length > 0) {
+    return reject(
+      WC_ERRORS.unsupportedEvents,
+      `This dApp requires the ${badEvents.join(', ')} event(s), which this wallet does not emit.`,
+    );
+  }
+
+  const optionalChains = list(optional.eip155?.chains);
+  const offered = [...new Set([...requiredChains, ...optionalChains])];
+  const anyNamespaces = Object.keys(required).length > 0 || Object.keys(optional).length > 0;
+  if (anyNamespaces && !offered.includes(activeChain)) {
+    if (offered.length === 0) {
+      return reject(
+        WC_ERRORS.unsupportedChains,
+        'This dApp did not ask for any Ethereum chain, so there is nothing this wallet can ' +
+          'connect over WalletConnect.',
+      );
+    }
+    return reject(WC_ERRORS.unsupportedChains, unsupportedChainMessage(offered, activeChain, 'connect'));
+  }
+
+  let namespaces: Record<string, unknown>;
+  try {
+    namespaces = buildWalletNamespaces(proposalParams, ethAddress, [activeChain]);
+  } catch (e) {
+    return reject(
+      WC_ERRORS.unsupportedChains,
+      e instanceof Error
+        ? `The connection could not be built: ${e.message}`
+        : 'The dApp requires chains or methods this wallet does not support.',
+    );
+  }
+
+  // Defense in depth: the approved session may only ever expose the active
+  // chain's account, whatever the builder returned.
+  const expectedAccount = `${activeChain}:${ethAddress}`;
+  const keys = Object.keys(namespaces);
+  const accounts = keys.flatMap((k) =>
+    list((namespaces[k] as { accounts?: unknown } | undefined)?.accounts),
+  );
+  if (
+    keys.length === 0 ||
+    keys.some((k) => k !== 'eip155') ||
+    accounts.length === 0 ||
+    accounts.some((a) => a !== expectedAccount)
+  ) {
+    return reject(
+      WC_ERRORS.unsupportedChains,
+      unsupportedChainMessage(offered.length ? offered : [activeChain], activeChain, 'connect'),
+    );
+  }
+  return { ok: true, namespaces, droppedChains: offered.filter((c) => c !== activeChain) };
 }
 
 // ---------------------------------------------------------------------------
@@ -500,10 +807,13 @@ export function parseWcRequest(
 ): ParsedWcRequest {
   const chainId = event.params?.chainId;
   if (chainId !== activeChain) {
+    // Typically a session approved in the other wallet mode (sessions
+    // persist across mode switches; they are paused, not deleted).
     throw new WcRequestRejection(
       WC_ERRORS.unsupportedChains.code,
-      `This wallet only serves ${activeChain} over WalletConnect right now ` +
-        `(request was for ${chainId}).`,
+      typeof chainId === 'string'
+        ? unsupportedChainMessage([chainId], activeChain, 'use this connection')
+        : 'The request did not name a chain.',
     );
   }
   const method = event.params?.request?.method;
@@ -622,6 +932,92 @@ export function parseWcRequest(
 }
 
 // ---------------------------------------------------------------------------
+// wallet_switchEthereumChain (answered without UI; never signs, never
+// changes the wallet's mode)
+// ---------------------------------------------------------------------------
+
+/**
+ * Decides a wallet_switchEthereumChain request. Semantics per EIP-3326
+ * (https://eips.ethereum.org/EIPS/eip-3326, checked 2026-09-28): params
+ * [{ chainId }] with chainId the integer id as a hex string "per the
+ * eth_chainId method"; the method "MUST return null if the request was
+ * successful, and an error otherwise". EIP-3326 defines no error codes
+ * (4902 is a MetaMask provider convention, not part of the EIP), so
+ * declines use the WalletConnect SDK's UNSUPPORTED_CHAINS (5100).
+ *
+ * Under the active-chain rule the wallet never switches modes on a dApp's
+ * say-so (that is a deliberate user action in Settings → Developer):
+ *  - target == active chain AND the session includes it → answer null
+ *    (already there; nothing changes);
+ *  - target == active chain but this session was approved for the other
+ *    mode → decline; the dApp must reconnect in the current mode;
+ *  - target is the other mode's chain → decline with the mode sentence;
+ *  - anything else → decline as unsupported.
+ */
+export type SwitchChainDecision =
+  | { kind: 'answer'; result: null }
+  | { kind: 'decline'; error: { code: number; message: string } };
+
+export function decideSwitchChain(
+  event: WcRequestEvent,
+  activeChain: string,
+  sessionChains: string[],
+): SwitchChainDecision {
+  const decline = (code: number, message: string): SwitchChainDecision => ({
+    kind: 'decline',
+    error: { code, message },
+  });
+  const params = event.params?.request?.params;
+  const first = Array.isArray(params) ? (params[0] as { chainId?: unknown } | undefined) : undefined;
+  const raw = first && typeof first === 'object' ? first.chainId : undefined;
+  if (typeof raw !== 'string' || !/^0x[0-9a-fA-F]+$/.test(raw)) {
+    return decline(-32602, 'wallet_switchEthereumChain: expected [{ chainId: "0x…" }].');
+  }
+  const target = `eip155:${BigInt(raw).toString(10)}`;
+  if (target === activeChain) {
+    if (sessionChains.includes(activeChain)) return { kind: 'answer', result: null };
+    return decline(
+      WC_ERRORS.unsupportedChains.code,
+      `This connection was approved for ${sessionChains.map(describeChain).join(', ') || 'another chain'}. ` +
+        `To use ${describeChain(activeChain)}, disconnect and reconnect from the dApp.`,
+    );
+  }
+  return decline(
+    WC_ERRORS.unsupportedChains.code,
+    unsupportedChainMessage([target], activeChain, 'use this connection'),
+  );
+}
+
+/** CAIP-2 chains a session's approved namespaces expose (from its accounts). */
+export function sessionChainsOf(session: unknown): string[] {
+  const s = (session ?? {}) as { namespaces?: Record<string, { accounts?: unknown }> };
+  const chains = new Set<string>();
+  for (const ns of Object.values(s.namespaces ?? {})) {
+    if (!Array.isArray(ns?.accounts)) continue;
+    for (const account of ns.accounts) {
+      if (typeof account !== 'string') continue;
+      const parts = account.split(':');
+      if (parts.length === 3) chains.add(`${parts[0]}:${parts[1]}`);
+    }
+  }
+  return [...chains];
+}
+
+/**
+ * Plain-language note for a session approved in the OTHER wallet mode
+ * (sessions survive a mode switch; they are paused, not deleted), or null
+ * when the session includes the active chain.
+ */
+export function sessionModeNote(sessionChains: string[], activeChain: string): string | null {
+  if (sessionChains.length === 0 || sessionChains.includes(activeChain)) return null;
+  const names = sessionChains.map(describeChain).join(', ');
+  return (
+    `Approved for ${names}. Paused while the wallet is in ${modeName(activeChain) ?? activeChain}: ` +
+    'its requests are declined until you switch modes back in Settings → Developer.'
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Signing (called only after user approval + biometric gate)
 // ---------------------------------------------------------------------------
 
@@ -642,11 +1038,17 @@ export function signDigest(account: DerivedAccount, digest: Uint8Array): string 
 export interface WcResponse {
   id: number;
   jsonrpc: '2.0';
-  result?: string;
+  /**
+   * Signature / transaction hash, or null (wallet_switchEthereumChain's
+   * success value). The SDK accepts null: sign-client respond() validates
+   * via utils validators.ts isValidResponse, which only requires that
+   * result or error is not undefined.
+   */
+  result?: string | null;
   error?: { code: number; message: string };
 }
 
-export function wcResult(id: number, result: string): WcResponse {
+export function wcResult(id: number, result: string | null): WcResponse {
   return { id, jsonrpc: '2.0', result };
 }
 
@@ -677,35 +1079,48 @@ export interface WcClient {
 }
 
 /**
- * Approves a proposal with this wallet's account, or — when the proposal
- * demands something unsupported — rejects it properly and reports why.
+ * Approves a proposal with this wallet's account on the ACTIVE chain, or —
+ * when the proposal cannot be served under the active-chain rule (see
+ * decideProposal) — rejects it with the matching SDK error and reports the
+ * plain-language reason. The decision is recomputed here, at approval
+ * time, so a mode switch between arrival and approval is honored.
  */
 export async function approveProposal(
   client: WcClient,
   proposal: { id: number; params: unknown },
   ethAddress: string,
-  supportedChains: string[] = WC_SUPPORTED_CHAINS,
+  activeChain: string = EVM_CHAIN_ID,
 ): Promise<{ approved: true } | { approved: false; reason: string }> {
-  let namespaces: Record<string, unknown>;
-  try {
-    namespaces = buildWalletNamespaces(proposal.params, ethAddress, supportedChains);
-  } catch (e) {
-    await client.rejectSession({ id: proposal.id, reason: WC_ERRORS.unsupportedChains });
-    return {
-      approved: false,
-      reason:
-        e instanceof Error
-          ? e.message
-          : 'The dApp requires chains or methods this wallet does not support.',
-    };
+  const decision = decideProposal(proposal.params, ethAddress, activeChain);
+  if (!decision.ok) {
+    await client.rejectSession({ id: proposal.id, reason: decision.error });
+    return { approved: false, reason: decision.reason };
   }
-  await client.approveSession({ id: proposal.id, namespaces });
+  await client.approveSession({ id: proposal.id, namespaces: decision.namespaces });
   return { approved: true };
 }
 
 /** Rejects a proposal as a user decision (USER_REJECTED). */
 export async function rejectProposal(client: WcClient, proposalId: number): Promise<void> {
   await client.rejectSession({ id: proposalId, reason: WC_ERRORS.userRejected });
+}
+
+/**
+ * Declines a proposal from the approval sheet: with the specific SDK error
+ * when the wallet cannot serve it (the sheet showed that reason), else as
+ * a plain user rejection.
+ */
+export async function declineProposal(
+  client: WcClient,
+  proposal: { id: number; params: unknown },
+  ethAddress: string,
+  activeChain: string = EVM_CHAIN_ID,
+): Promise<void> {
+  const decision = decideProposal(proposal.params, ethAddress, activeChain);
+  await client.rejectSession({
+    id: proposal.id,
+    reason: decision.ok ? WC_ERRORS.userRejected : decision.error,
+  });
 }
 
 /** Responds to a request the user declined. */
@@ -718,12 +1133,15 @@ export async function respondRejected(
   await client.respondSessionRequest({ topic, response: wcError(requestId, error) });
 }
 
-/** Responds with a successful result (signature hex or transaction hash). */
+/**
+ * Responds with a successful result (signature hex, transaction hash, or
+ * null for wallet_switchEthereumChain).
+ */
 export async function respondApproved(
   client: WcClient,
   topic: string,
   requestId: number,
-  result: string,
+  result: string | null,
 ): Promise<void> {
   await client.respondSessionRequest({ topic, response: wcResult(requestId, result) });
 }
