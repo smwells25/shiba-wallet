@@ -1398,3 +1398,41 @@ overlap. Subagents run on Opus per the Chairperson's credit directive.
       account discovery on import (re-add accounts in order to recover
       them), and BIP-44's "no new account before the previous one has
       history" rule is not enforced (would need network lookups).
+
+## Phase 6 emulator validation (2026-09-28, AVD "shiba", Expo Go, Sepolia mode)
+
+Fresh Metro (EXPO_NO_METRO_LAZY=1, cleared cache, 2194 modules) serving
+the phase-6 tree. PASSED, with screenshots reviewed at every step:
+
+- Account-0 invariant on a REAL wallet: after the multi-account change
+  the emulator wallet's Account 1 is 0x772eAA1d…C680F44F, and Sepolia
+  reports that exact address as the sender of the earlier live Uniswap
+  approval (tx 0xa41da70a…). Existing users see no address change.
+- Home: "Account 1 · 0x772e…F44F" switcher, one-phrase-backs-up-every-
+  account copy, live Sepolia balance, no fiat in test mode (by design).
+- Balance-change preview LIVE: the Sepolia send confirm showed "You send
+  0.00001 test ETH" from eth_simulateV1 on the default keyless
+  publicnode RPC, with the "From account" block, and the unchanged
+  "Pre-flight simulation passed (eth_call)" gate directly below. Nothing
+  was sent.
+- Multi-account: Add account created Account 2 with distinct addresses
+  on all four chains and switched Home to it; switching back restored
+  Account 1 intact. UX FINDING: adding took ~15 s on this software-GPU
+  emulator (seed stretching in JS); measure on a real phone and consider
+  a native PBKDF2 or a cached seed-in-session design if it is slow there.
+- Contacts: the picker is scoped to "Ethereum Sepolia contacts"; a
+  contact "Burn" = 0x…dEaD saved with its full address; typing the
+  look-alike 0x00…0fdead produced "This address looks similar to your
+  contact “Burn” but is DIFFERENT. Check every character." (no label);
+  typing the exact address in lowercase produced "SAVED CONTACT Burn"
+  with the full checksummed address.
+- WalletConnect: the Uniswap session from the phase-5 live test survived
+  all phase-6 changes and is listed as bound to "Account 1
+  (0x772e…F44F)"; the copy says requests appear on any screen.
+
+Still pending (needs the Chairperson to trigger requests from a dApp):
+the global request sheet appearing on Home, the lock hold, queued
+requests, the paused-session and switch-chain declines, and the
+wrong-account decline after switching to Account 2. Fiat display could
+not be eyeballed here: test mode prices nothing and the mainnet
+balances are zero (covered offline by check-prices 110/110).
