@@ -19,4 +19,6 @@ export type RootStackParamList = {
   Settings: undefined;
   Tokens: undefined;
   Connections: undefined;
+  /** Contacts management (phase 6 item 4); lists the active networks. */
+  Contacts: undefined;
 };

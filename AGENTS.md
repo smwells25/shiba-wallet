@@ -1311,3 +1311,39 @@ overlap. Subagents run on Opus per the Chairperson's credit directive.
       non-standard 4902. Emulator checklist (11 steps) pending: global
       sheet on Home, lock hold, relaunch-with-session, paused sessions,
       switch-chain, dApp-side disconnect, back button.
+
+- [x] Item 4 — Contacts (Tier 1 feature 73). app/src/wallet/contacts.ts
+      (Node-loadable store, AsyncStorage key shiba-wallet.contacts.v1, one
+      list per network id; the EVM list follows the active mode, so
+      Sepolia contacts never show in mainnet mode). Every save passes the
+      send flow's validateRecipient; EVM stored EIP-55, uppercase bech32
+      stored lowercase. EXACT matching only: EVM case-insensitive on the
+      full 20 bytes, Bitcoin/Dogecoin on the decoded output script byte
+      for byte, Solana on the base58 string. Anti-poisoning: a recipient
+      that matches shows the contact name AND the full address; a
+      non-matching address sharing the first 4 and last 4 characters with
+      a contact triggers a warning ("looks similar to your contact X but
+      is DIFFERENT") — prefix/suffix comparison is used only to warn,
+      never to label; saving a look-alike as a new contact requires an
+      explicit "Save anyway" and the send screen never offers it. Names:
+      1–40 code points with control, bidi mark/override/isolate, and
+      zero-width characters stripped (ZWJ kept for emoji); duplicate
+      addresses and duplicate names per network are refused. Damaged
+      entries are hidden with a flag; unreadable storage refuses writes
+      until an explicit Reset contacts. UI: app/src/components/Contacts.tsx
+      (recipient notice, picker modal, inline Save as contact) and
+      app/src/screens/ContactsScreen.tsx (per-network list, add with
+      Scan, rename, delete with confirmation), linked from Settings; the
+      Send screen (native + token) gained a Contacts button beside Scan,
+      the notice/warning on the form and all confirm screens, and Save as
+      contact after scans and on success screens. The subagent's App.tsx
+      route edit was blocked by the permission system; the CTO added the
+      route itself. Verified: check-contacts.mjs 110/110 offline; full app
+      regression green (check-wc 197, check-prices 110, check-simulation
+      49, check-swap 89, check-token-send 37, check-devmode 69, check-aa
+      57, check-qr 31, check-tokens 27, check-doge 83, check-token-history
+      17, test-units 45); tsc clean; expo export bundles with the Contacts
+      screen strings in the bytecode. Not yet exercised on the emulator
+      (picker modal, three-button recipient row on narrow screens).
+      Dogecoin has no look-alike test vector (building one needs a ~58^4
+      checksum search); it shares the tested string comparison.

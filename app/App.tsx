@@ -27,6 +27,7 @@ import { SwapScreen } from './src/screens/SwapScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 import { TokensScreen } from './src/screens/TokensScreen';
 import { ConnectionsScreen } from './src/screens/ConnectionsScreen';
+import { ContactsScreen } from './src/screens/ContactsScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -143,6 +144,7 @@ function Root() {
               component={ConnectionsScreen}
               options={{ title: 'WalletConnect' }}
             />
+            <Stack.Screen name="Contacts" component={ContactsScreen} />
           </>
         )}
         </Stack.Navigator>

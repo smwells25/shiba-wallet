@@ -1006,6 +1006,20 @@ export function SettingsScreen({ navigation }: Props) {
       </View>
 
       <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: theme.text }]}>Contacts</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          Named addresses for each chain, picked from the Send screen. A name
+          is shown only for an exact address match, always with the full
+          address; look-alike addresses get a warning instead.
+        </Text>
+        <Button
+          title="Manage contacts"
+          variant="secondary"
+          onPress={() => navigation.navigate('Contacts')}
+        />
+      </View>
+
+      <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: theme.text }]}>Tokens</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Track ERC-20 tokens on the Home screen: balances, and sending

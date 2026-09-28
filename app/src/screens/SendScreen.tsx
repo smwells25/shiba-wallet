@@ -59,6 +59,12 @@ import {
 import { listTokens } from '../wallet/tokens';
 import { extractScannedAddress } from '../wallet/scan';
 import { QrScanner } from '../components/QrScanner';
+import {
+  ContactPicker,
+  RecipientContactNotice,
+  SaveContactInline,
+} from '../components/Contacts';
+import { listContacts, matchRecipient, type Contact } from '../wallet/contacts';
 import { BalanceChangePreview } from '../components/BalanceChangePreview';
 import { PREVIEW_AA_NOTE } from '../wallet/simulation';
 import { usePrices } from '../wallet/usePrices';
@@ -146,6 +152,16 @@ export function SendScreen({ route, navigation }: Props) {
   const [quote, setQuote] = useState<SendQuote | AaSendQuote | Erc20SendQuote | null>(null);
   const [overrideSimulation, setOverrideSimulation] = useState(false);
   const [result, setResult] = useState<SendResult | null>(null);
+  // Contacts (phase 6 item 4) for the ACTIVE network of this slot (the
+  // endpoint's network.chainId — 'eip155:11155111' in Sepolia test mode),
+  // so a contact saved in one mode never labels a recipient in the other.
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [contactsOpen, setContactsOpen] = useState(false);
+  // The last scanned recipient candidate: on the form, "Save as contact"
+  // is offered only while the field still holds a freshly scanned address
+  // that is not already a contact. The success screen offers it for every
+  // non-contact recipient, however it was entered.
+  const [scannedRecipient, setScannedRecipient] = useState<string | null>(null);
 
   // ERC-4337 experimental path (see ../wallet/aa.ts). The toggle only
   // renders when both bundler and factory are configured (= verified at
@@ -231,6 +247,50 @@ export function SendScreen({ route, navigation }: Props) {
     () => (recipient.trim() ? validateRecipient(route.params.chainId, recipient) : null),
     [route.params.chainId, recipient],
   );
+
+  const contactsNetworkId = endpoint?.network.chainId ?? null;
+  const reloadContacts = useCallback(() => {
+    if (!contactsNetworkId) {
+      setContacts([]);
+      return;
+    }
+    listContacts(contactsNetworkId).then(setContacts, () => setContacts([]));
+  }, [contactsNetworkId]);
+  useEffect(reloadContacts, [reloadContacts]);
+  // Reload when returning from the Contacts screen (opened from the picker).
+  useEffect(() => navigation.addListener('focus', reloadContacts), [navigation, reloadContacts]);
+
+  /**
+   * Exact-match / look-alike classification of an address against the
+   * active network's contacts (see ../wallet/contacts.ts for the rules).
+   */
+  const contactMatchFor = (address: string) =>
+    contactsNetworkId
+      ? matchRecipient(contactsNetworkId, address, contacts)
+      : ({ kind: 'none' } as const);
+  const formMatch = validation?.ok ? contactMatchFor(validation.normalized) : null;
+
+  /**
+   * Success-screen contact line: an exact match shows the name with the
+   * full address, a look-alike shows the warning (useful after the fact:
+   * it flags a possibly poisoned address), and an unknown recipient gets
+   * the unobtrusive "Save as contact" link. A plain render function, not a
+   * nested component, so the inline name field keeps its state across
+   * re-renders.
+   */
+  const renderSuccessContact = (address: string) => {
+    if (!contactsNetworkId) return null;
+    const match = contactMatchFor(address);
+    if (match.kind !== 'none') return <RecipientContactNotice match={match} address={address} />;
+    return (
+      <SaveContactInline
+        key={address}
+        networkId={contactsNetworkId}
+        address={address}
+        onSaved={reloadContacts}
+      />
+    );
+  };
 
   // Fiat values on the confirm screens (phase 6 item 2): the native coin's
   // price for amounts, fees and totals in the native coin, the token's
@@ -619,6 +679,7 @@ export function SendScreen({ route, navigation }: Props) {
             )}
           </>
         ) : null}
+        {quote ? renderSuccessContact(quote.to) : null}
         <Button title="Done" onPress={() => navigation.popToTop()} />
       </ScrollView>
     );
@@ -647,6 +708,7 @@ export function SendScreen({ route, navigation }: Props) {
             transaction id up in an explorer you trust.
           </Text>
         )}
+        {quote ? renderSuccessContact(quote.to) : null}
         <Button title="Done" onPress={() => navigation.popToTop()} />
       </ScrollView>
     );
@@ -665,6 +727,7 @@ export function SendScreen({ route, navigation }: Props) {
         </View>
 
         <Row label="To" value={quote.to} mono theme={theme} />
+        <RecipientContactNotice match={contactMatchFor(quote.to)} address={quote.to} />
         <Row
           label="Amount"
           value={`${exact(quote.amount, decimals)} ${symbol}`}
@@ -739,6 +802,7 @@ export function SendScreen({ route, navigation }: Props) {
         <NetworkBadge label={network.label} testnet={testnet} theme={theme} />
 
         <Row label="To" value={quote.to} mono theme={theme} />
+        <RecipientContactNotice match={contactMatchFor(quote.to)} address={quote.to} />
         <Row
           label="Amount"
           value={`${exact(quote.amount, quote.decimals)} ${quote.symbol}`}
@@ -836,6 +900,7 @@ export function SendScreen({ route, navigation }: Props) {
         <NetworkBadge label={network.label} testnet={testnet} theme={theme} />
 
         <Row label="To" value={quote.to} mono theme={theme} />
+        <RecipientContactNotice match={contactMatchFor(quote.to)} address={quote.to} />
         <Row
           label="Amount"
           value={`${exact(quote.amount, decimals)} ${symbol}`}
@@ -1001,6 +1066,13 @@ export function SendScreen({ route, navigation }: Props) {
           onPress={() => setScannerOpen(true)}
           style={styles.maxButton}
         />
+        <Button
+          title="Contacts"
+          variant="secondary"
+          onPress={() => setContactsOpen(true)}
+          disabled={!contactsNetworkId}
+          style={styles.maxButton}
+        />
       </View>
       {/*
         Scanned payloads go through extractScannedAddress (strips only the
@@ -1014,10 +1086,33 @@ export function SendScreen({ route, navigation }: Props) {
         rationale={`Point the camera at a ${token ? 'Ethereum' : account.name} address QR code. The camera is only used to read the code.`}
         onScanned={(data) => {
           setScannerOpen(false);
-          setRecipient(extractScannedAddress(route.params.chainId, data));
+          const scanned = extractScannedAddress(route.params.chainId, data);
+          setRecipient(scanned);
+          setScannedRecipient(scanned);
           setFormError(null);
         }}
         onClose={() => setScannerOpen(false)}
+      />
+      {/*
+        Picking a contact only fills the recipient field: the address then
+        runs through the same validation as typed input, and the name is
+        shown only via the exact-match notice below (name + full address).
+      */}
+      <ContactPicker
+        visible={contactsOpen}
+        contacts={contacts}
+        networkLabel={network?.label ?? account.name}
+        onPick={(contact) => {
+          setContactsOpen(false);
+          setRecipient(contact.address);
+          setScannedRecipient(null);
+          setFormError(null);
+        }}
+        onClose={() => setContactsOpen(false)}
+        onManage={() => {
+          setContactsOpen(false);
+          navigation.navigate('Contacts');
+        }}
       />
       {validation && !validation.ok ? (
         <Text style={[styles.fieldError, { color: theme.danger }]}>{validation.error}</Text>
@@ -1026,6 +1121,21 @@ export function SendScreen({ route, navigation }: Props) {
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           {validation.note} Will send to {validation.normalized}
         </Text>
+      ) : null}
+      {validation?.ok && formMatch ? (
+        <RecipientContactNotice match={formMatch} address={validation.normalized} />
+      ) : null}
+      {validation?.ok &&
+      formMatch?.kind === 'none' &&
+      contactsNetworkId &&
+      scannedRecipient !== null &&
+      scannedRecipient === recipient ? (
+        <SaveContactInline
+          key={validation.normalized}
+          networkId={contactsNetworkId}
+          address={validation.normalized}
+          onSaved={reloadContacts}
+        />
       ) : null}
 
       <Text style={[styles.label, { color: theme.textMuted }]}>Amount ({symbol})</Text>
