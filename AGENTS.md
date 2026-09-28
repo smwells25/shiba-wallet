@@ -1258,3 +1258,56 @@ overlap. Subagents run on Opus per the Chairperson's credit directive.
       expo export bundles (6.4MB Hermes). Not yet eyeballed on the
       emulator (row layout, dark mode); the genuine-Demo-key path is
       untested (no key available).
+
+- [x] Item 5 — WalletConnect polish (commit cdb3fe9). Requests and
+      proposals surface on ANY screen: app/src/wallet/wc-controller.ts
+      (React-free queue: arrival order, duplicate-id suppression, no
+      visible or claimable item while locked, begin/release/complete/
+      decline, staleChainError re-check at approve time, notices),
+      app/src/wallet/WalletConnectContext.tsx (provider mounted once
+      inside LockGate; every approval = eth_call gate check for
+      transactions, requireLocalAuth, re-claim, active-chain re-check,
+      keys only via signWith), app/src/components/WcApprovalSheet.tsx
+      (the approval UIs moved verbatim from ConnectionsScreen, rendered
+      as an in-tree overlay rather than an RN Modal so LockGate's lock
+      screen always covers it; Android back is swallowed while it is up).
+      LockGate exposes useAppLock(). ConnectionsScreen is now pairing +
+      session list (+ "Paused" notes) + notices. This also fixes an
+      old-design bug: the SDK delivers each request once per process
+      and waits for an answer, so a request arriving while Connections
+      was closed was lost and blocked later ones until restart.
+      Namespaces under the active-chain rule (SDK semantics verified in
+      @walletconnect/utils 2.25.0 namespaces.ts/validators.ts,
+      sign-client 2.25.0 engine.ts, walletkit 1.6.0): only the active
+      profile's chain is ever approved (the SDK's buildApprovedNamespaces
+      result is re-checked so every account equals active:address);
+      a required, or optional-only, other-mode chain is declined with
+      5100 and a plain sentence pointing at Settings → Developer
+      (optional-only matters: the SDK moves requiredNamespaces into
+      optionalNamespaces, and Uniswap sends everything optional);
+      unsupported chains 5100, non-eip155 required 5104, unsupported
+      methods/events 5101/5102. wallet_switchEthereumChain (EIP-3326,
+      returns null) is answered automatically, never signs and never
+      changes the mode: null for the active chain on a session that has
+      it, 5100 otherwise; malformed params -32602. Sessions from the other
+      mode are paused (requests declined 5100), not deleted. Startup: the
+      SDK initializes at launch only when a project id exists AND a
+      "used" marker (shiba-wallet.wc-used.v1) is set; otherwise lazily
+      when Connections opens; compat-shim-first import order preserved;
+      a child-process check proves Node scripts never load @reown/*.
+      CTO review fix: when a transaction broadcasts but the relay reply
+      fails, the user is told "Transaction sent, dApp not notified" with
+      the txid and the item is completed (no false send-failure alert;
+      a retry could not double-spend anyway because the nonce is pinned
+      in the quote and signatures are deterministic). Verified:
+      check-wc.mjs 197/197 (was 83); committed tree re-verified by the
+      CTO in an isolated worktree (tsc clean, all twelve app suites
+      green; check-doge's 11 live checks run only where the git-ignored
+      .dev-wallet/env exists — 83/83 in the main tree); expo export
+      bundles. Known gaps filed: native Alerts and other screens'
+      QrScanner Modals can draw above the lock overlay; sessions survive
+      a wallet wipe (requests naming the old address are refused);
+      other-mode switch declines use 5100 rather than MetaMask's
+      non-standard 4902. Emulator checklist (11 steps) pending: global
+      sheet on Home, lock hold, relaunch-with-session, paused sessions,
+      switch-chain, dApp-side disconnect, back button.
