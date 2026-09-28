@@ -1221,3 +1221,40 @@ overlap. Subagents run on Opus per the Chairperson's credit directive.
       publicnode; on Sepolia the deployed smart account 0xB837…0fa2 as
       sender. Nothing was signed or broadcast. Not yet eyeballed on the
       emulator (dark-mode styling pending).
+
+- [x] Item 2, app half — fiat prices (commit e5caba6). The app consumes
+      @shiba-wallet/prices via a file: dependency (metro needed no
+      change). app/src/wallet/prices.ts: one shared
+      cachedPriceProvider(coinGeckoPriceProvider) (120 s TTL, 30 min max
+      stale), rebuilt when the key changes; native CAIP-19 ids built
+      with core's formatAssetId and each key provider's coin type,
+      tokens use their tracked-store ids verbatim; an asset is priced
+      only when it sits on a MAINNET network that is also the active
+      one (Sepolia-mode assets always get null, on top of the engine's
+      own testnet exclusion); guardedCoinGeckoFetch refuses to send the
+      x-cg-demo-api-key header anywhere but api.coingecko.com. New
+      "Show fiat values" preference (default on) with a plain disclosure
+      in Settings → Prices that CoinGecko sees the device IP and the
+      priced assets; when off, fetchPrices returns before any storage or
+      network access, and the hook waits for stored prefs so a stored
+      "off" is never overridden by the default. Display: "≈ $1,234.56"
+      secondary text on Home native + token rows, native/ERC-20/AA send
+      confirms (amount, fee, total; no fee line when sponsored), and the
+      swap review (sell, estimated receive, guaranteed minimum); "<
+      $0.01" for tiny values; nothing for missing prices or zero
+      balances; "price from N min ago" for stale or vendor-old quotes;
+      Hide amounts masks every fiat value as "≈ ••••". Optional Demo key
+      with a live check before saving. FINDING: CoinGecko answered HTTP
+      200 with a normal price for a made-up Demo key, and the Demo API
+      has no key-status endpoint, so the check proves the request works
+      rather than that the key is genuine; the UI says "Checked ✓ — a
+      live price request with this key succeeded", not "verified".
+      Verified: app/scripts/check-prices.mjs 110/110 offline (the suite
+      caught deliberately broken Sepolia and masking guards); one live
+      keyless probe priced all five assets; the committed tree was
+      re-verified by the CTO in an isolated git worktree (tsc clean,
+      check-prices 110, check-wc 83, check-simulation 49, check-swap 89,
+      check-token-send 37, check-devmode 69, check-aa 57, test-units 45);
+      expo export bundles (6.4MB Hermes). Not yet eyeballed on the
+      emulator (row layout, dark mode); the genuine-Demo-key path is
+      untested (no key available).
