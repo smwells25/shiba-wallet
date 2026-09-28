@@ -1490,8 +1490,7 @@ block 0xb41801, status 0x1, sender Account 1. The AVD now has device
 PIN 1234 and one enrolled fingerprint again.
 
 Still pending (needs a dApp that can send plain message-signing
-requests): queued
-requests, the paused-session and switch-chain declines, and the
-wrong-account decline after switching to Account 2. Fiat display could
+requests): two queued requests surfacing in arrival order, and a live
+wallet-side switch-chain decline (Uniswap pre-filters switches). Fiat display could
 not be eyeballed here: test mode prices nothing and the mainnet
 balances are zero (covered offline by check-prices 110/110).
