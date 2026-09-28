@@ -843,3 +843,34 @@ are phone-only: real Secure Enclave/StrongBox, real camera optics, iOS
 FaceID, store builds, plus dApp-side request handling (personal_sign /
 typed data / transaction) which can now be exercised any time from the
 established session.
+
+## GRAND FINALE: a real Uniswap swap driven through the wallet (2026-09-27)
+
+With the live WalletConnect session established, the Chairperson
+triggered a sepUSDC -> sepETH swap on app.uniswap.org. The wallet
+handled all three resulting requests end to end on the emulator:
+
+1. eth_sendTransaction (ERC-20 approval to Sepolia USDC
+   0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238): decoded, re-quoted
+   against the live Sepolia RPC, "Pre-flight simulation passed
+   (eth_call)", approved, engine-signed and broadcast. CONFIRMED
+   status 0x1, block 11797811, 55,725 gas
+   (0xa41da70aab0b1b84106a18ab1db3252e6d6ee8bf1a6833f7a804a6359e36b39c).
+2. eth_signTypedData_v4 (Permit2 PermitSingle, canonical verifying
+   contract 0x000000000022d473030f116ddee9f6b43ac78ba3): domain and
+   message rendered, signed via the engine's EIP-712 typedDataDigest,
+   signature returned over the relay — and later validated INSIDE the
+   swap's eth_call simulation.
+3. eth_sendTransaction (2,938-byte calldata to Uniswap's Sepolia
+   router 0x7E4f6c5e954Da5c61B3423D81E2277431Ac043f3): simulation
+   passed, approved, signed, broadcast. CONFIRMED status 0x1, block
+   11797821, 295,540 gas, 8 event logs
+   (0x2ce82c8f668edd00f4cd52875d9dfb5cdc5101d21ae9e29bba9e2128bd77f576).
+
+Every leg of Tier 1 feature 78 (WalletConnect) is now live-proven
+against a production dApp: pairing, session settlement, typed-data
+signing, and dApp transactions with simulation gating — on the Sepolia
+namespace under test mode, with test funds only. One dev-UX note:
+React Native's LogBox overlay intercepted taps during the flow
+(dev-mode only; absent from release builds); its warnings were
+dismissed via its own Dismiss control.
