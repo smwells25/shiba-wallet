@@ -752,3 +752,43 @@ NEW FINDINGS from this pass (to fix in the next slice):
 Emulator remains available: AVD "shiba"; remaining items are fingerprint
 enrollment -> auto-lock -> biometric-gated send, wrong-chain QR poster
 swap, and WalletConnect live pairing.
+
+## Emulator validation, third pass: findings fixed and biometric cycle proven
+
+All three earlier findings were FIXED and re-verified live on the
+emulator (commit 32bfd9e): Sepolia balances now fetch through the slot
+match (Home shows a live Sepolia balance under the TESTNET banner),
+Settings' token copy is current, and the seed screens block screenshots
+(adb screencap returns an empty file while the phrase is visible on the
+Backup screen or the Settings reveal, and works again after leaving —
+FLAG_SECURE proven both directions).
+
+FINDING #4, found and FIXED in the same pass: LockGate checked
+localAuthAvailable only at mount, so biometric enrollment performed
+while the JS session was alive (device Settings in another task) left
+auto-lock permanently inert until an app restart. The availability
+check is now keyed to the auto-lock setting so re-arming re-checks it.
+
+BIOMETRIC CYCLE, fully proven on the emulator (device PIN via adb
+locksettings, fingerprint enrolled through the real Android enrollment
+UI driven blind via uiautomator dumps — the enrollment screens are
+FLAG_SECURE — with simulated adb emu finger touches):
+- Pre-enrollment, the app correctly hid auto-lock with the no-PIN note.
+- Post-enrollment, the Auto-lock section appeared (Off / 1 min / 5 min)
+  and 1 min was selected; the choice persisted across an app restart.
+- After 70 seconds in the background, resuming showed the full-screen
+  "Shiba Wallet is locked" overlay with the designed copy.
+- Tapping Unlock raised the OS BiometricPrompt (proven by screencap
+  returning empty while it was up), and a simulated fingerprint
+  dismissed it straight back to the intact Home screen — screen state
+  preserved, exactly as designed. The send/seed biometric gates use the
+  same requireLocalAuth path just exercised.
+
+Also implicitly proven: wallet + preferences fully persist across app
+restarts (SecureStore + AsyncStorage), and the Settings endpoint row
+switches to "Ethereum Sepolia" in test mode.
+
+Remaining on emulator: wrong-chain QR poster swap (needs an emulator
+restart to reload the virtual-scene poster), WalletConnect live pairing
+(needs a dApp wc: URI). Phone-only: real Secure Enclave/StrongBox, real
+camera optics, iOS FaceID, store builds.

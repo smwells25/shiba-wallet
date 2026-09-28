@@ -40,6 +40,11 @@ export function LockGate({ children }: { children: React.ReactNode }) {
   const [unlockError, setUnlockError] = useState<string | null>(null);
   const unlockBusy = useRef(false);
 
+  // Availability is re-checked whenever the auto-lock setting changes,
+  // not only at mount: biometric enrollment can happen while this JS
+  // session is alive (device Settings in another task), and a
+  // mount-time-only check left the gate permanently inert until an app
+  // restart (emulator-validation finding #4).
   useEffect(() => {
     let cancelled = false;
     localAuthAvailable().then(
@@ -53,7 +58,7 @@ export function LockGate({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [autoLockMs]);
 
   const armed = status === 'ready' && available && autoLockMs !== null;
 
