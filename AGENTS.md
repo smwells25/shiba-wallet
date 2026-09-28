@@ -874,3 +874,42 @@ namespace under test mode, with test funds only. One dev-UX note:
 React Native's LogBox overlay intercepted taps during the flow
 (dev-mode only; absent from release builds); its warnings were
 dismissed via its own Dismiss control.
+
+## Phase 5 plan (approved 2026-09-27): the money phase
+
+Goal: revenue and differentiation on the proven foundation. Sequenced
+to avoid app-file collisions between parallel agents.
+
+1. Swap UI (Tier 1 feature 34, the revenue engine) on the engine's
+   SwapQuoteProvider/0x seam: a Swap screen (sell/buy token pickers from
+   the tracked list + ETH, exact-bigint amounts, quote display with
+   minBuyAmount and price impact honesty, slippage setting), Settings
+   section for the 0x API key (runtime config, never committed; the
+   feature stays off with a plain explanation until set), quote-to-send
+   pipeline reusing the existing EVM send machinery (simulation gate,
+   biometric, mainnet/testnet banners). Fakes-first verification like
+   check-aa; live quotes activate whenever a free 0x key is pasted.
+2. ERC-7677 paymaster sponsorship in the app (the plumbing already
+   exists in SmartAccountClient): Settings fields for a paymaster URL +
+   optional context JSON under the AA section, sponsored-send path in
+   the AA flow showing "gas sponsored" vs self-paid, offline-verified
+   with fakes; live once any paymaster endpoint is configured. Plus the
+   AA-path Max button slice.
+3. Dogecoin completion in-app: Blockbook endpoint + API key
+   configuration (runtime only), wiring balances, send, and Activity for
+   DOGE through the engine's blockbookTransport/blockbookHistoryProvider.
+4. Token-transfer history in Activity: wire the engine's
+   getErc20Transfers (per tracked token, windowed) into the EVM Activity
+   view alongside the indexer entries.
+5. ERC-7579 modular-account evaluation (Tier 2 moat groundwork): a
+   plain-English docs/SESSION_KEYS.md comparing candidate 7579
+   implementations for session keys and spending policies per AA_STACK
+   criteria, with verified sources, plus the SmartAccountSpec-level
+   interface sketch. Research + design only; no vendor lock.
+6. EAS development-build readiness: eas.json + docs so a physical-device
+   build (Secure Enclave/FaceID validation, store pipeline) is one
+   command once an Expo account is provided.
+
+Wave 1: item 1 (agent, app) + item 5 (CTO, docs/engine) in parallel.
+Wave 2 after wave 1 lands: items 2+4 (CTO app slices) and item 3
+(agent, app). Item 6 rides along as config-only.
