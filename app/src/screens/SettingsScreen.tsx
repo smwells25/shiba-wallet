@@ -32,6 +32,8 @@ import {
   setIndexerUrl,
   type IndexerConfig,
 } from '../wallet/indexer';
+import { clearSwapApiKey, getSwapConfig, setSwapApiKey, type SwapConfig } from '../wallet/swap';
+import { EVM_CHAIN_ID } from '../wallet/send';
 
 /**
  * One chain's endpoint row: shows the effective URL (default or override)
@@ -468,6 +470,13 @@ export function SettingsScreen({ navigation }: Props) {
 
   useEffect(reloadWcProjectId, [reloadWcProjectId]);
 
+  const [swapConfig, setSwapConfigState] = useState<SwapConfig | null>(null);
+  const reloadSwapConfig = useCallback(() => {
+    getSwapConfig().then(setSwapConfigState, () => setSwapConfigState(null));
+  }, []);
+
+  useEffect(reloadSwapConfig, [reloadSwapConfig]);
+
   const onReveal = () => {
     Alert.alert(
       'Show recovery phrase?',
@@ -714,6 +723,43 @@ export function SettingsScreen({ navigation }: Props) {
           title="Manage tokens"
           variant="secondary"
           onPress={() => navigation.navigate('Tokens')}
+        />
+      </View>
+
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: theme.text }]}>Swaps</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          Swapping (the Swap link on the Home screen) is priced by the 0x
+          aggregator and needs your own API key — create one for free at
+          dashboard.0x.org. The key is stored only on this device and sent
+          only to api.0x.org with quote requests; it is never bundled or
+          committed anywhere. Saving verifies the key first with one live
+          quote request (nothing is traded), and a rejected key is not
+          saved. The feature stays off until a key is saved here.
+        </Text>
+        <AaField
+          label="0x API key"
+          placeholder="API key from dashboard.0x.org"
+          value={swapConfig?.apiKey ?? null}
+          statusLine={
+            swapConfig?.apiKey
+              ? `Verified ✓ — a live quote request succeeded (checked ${
+                  swapConfig.verifiedAt ? swapConfig.verifiedAt.slice(0, 10) : 'unknown date'
+                })`
+              : null
+          }
+          onSave={async (draft) => {
+            const taker = accounts.find((a) => a.chainId === EVM_CHAIN_ID)?.address;
+            if (!taker) {
+              throw new Error('No Ethereum address is available to verify the key with.');
+            }
+            await setSwapApiKey(draft, taker);
+            reloadSwapConfig();
+          }}
+          onClear={async () => {
+            await clearSwapApiKey();
+            reloadSwapConfig();
+          }}
         />
       </View>
 

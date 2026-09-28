@@ -200,6 +200,18 @@ export function HomeScreen({ navigation }: Props) {
           >
             <Text style={[styles.sendLink, { color: theme.accent }]}>Activity</Text>
           </Pressable>
+          {/* Swaps are an EVM feature (0x, phase 5 item 1); the screen
+              itself explains and stays off until a key is configured. */}
+          {item.chainId === EVM_CHAIN_ID ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Swap"
+              onPress={() => navigation.navigate('Swap')}
+              hitSlop={8}
+            >
+              <Text style={[styles.sendLink, { color: theme.accent }]}>Swap</Text>
+            </Pressable>
+          ) : null}
         </View>
       </View>
       <BalanceCell

@@ -880,15 +880,10 @@ dismissed via its own Dismiss control.
 Goal: revenue and differentiation on the proven foundation. Sequenced
 to avoid app-file collisions between parallel agents.
 
-1. Swap UI (Tier 1 feature 34, the revenue engine) on the engine's
-   SwapQuoteProvider/0x seam: a Swap screen (sell/buy token pickers from
-   the tracked list + ETH, exact-bigint amounts, quote display with
-   minBuyAmount and price impact honesty, slippage setting), Settings
-   section for the 0x API key (runtime config, never committed; the
-   feature stays off with a plain explanation until set), quote-to-send
-   pipeline reusing the existing EVM send machinery (simulation gate,
-   biometric, mainnet/testnet banners). Fakes-first verification like
-   check-aa; live quotes activate whenever a free 0x key is pasted.
+1. ~~Swap UI (Tier 1 feature 34, the revenue engine) on the engine's
+   SwapQuoteProvider/0x seam~~ — DONE 2026-09-28 (see Phase 5 progress).
+   Fakes-verified end to end; live quotes activate whenever a free 0x
+   key is pasted in Settings → Swaps.
 2. ERC-7677 paymaster sponsorship in the app (the plumbing already
    exists in SmartAccountClient): Settings fields for a paymaster URL +
    optional context JSON under the AA section, sponsored-send path in
@@ -913,3 +908,70 @@ to avoid app-file collisions between parallel agents.
 Wave 1: item 1 (agent, app) + item 5 (CTO, docs/engine) in parallel.
 Wave 2 after wave 1 lands: items 2+4 (CTO app slices) and item 3
 (agent, app). Item 6 rides along as config-only.
+
+## Phase 5 progress
+
+- [x] Item 1 — Swap UI (Tier 1 feature 34) on the engine's
+      SwapQuoteProvider/0x seam (2026-09-28). New app/src/wallet/swap.ts
+      (RN-free glue like aa.ts): 0x API-key store in AsyncStorage under
+      shiba-wallet.swap-config.v1 with the verify-before-save discipline —
+      saving runs ONE live allowance-holder quote through the engine's
+      zeroExSwapProvider for a canonical pair (chain 1, 0.001 ETH via the
+      native sentinel into the verified USDC address, taker = the wallet
+      address, minimal params); HTTP 401/403 refuses with a key-rejected
+      message, any other failure refuses with a retryable message, and an
+      honest no-liquidity answer still verifies (auth passed). The native
+      sentinel 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE and the
+      no-approval-for-native rule were verified 2026-09-28 from
+      docs.0x.org/evm/0x-swap-api/additional-topics/
+      handling-native-tokens.md. Also in swap.ts: fetchSwapQuote (chain id
+      always the ACTIVE profile's, never hardcoded), describeSwapFailure
+      for the SwapQuoteResult union, isQuoteStale (60 s horizon),
+      validateSlippageBps (1–1000 bps), impliedRate (exact bigint,
+      truncating), estimateSwapFee (0x gas × our suggestFees max fee),
+      fetchErc20Allowance/checkAllowance (engine encodeFunctionCall +
+      decodeUint256, spender = the quote's transaction.to),
+      prepareApproveSend (engine encodeErc20Approve for EXACTLY the sell
+      amount — deliberately never unlimited, and the UI says so),
+      waitForAllowance (poll until the approve takes effect; the swap's
+      eth_call pre-flight needs mined state), and prepareSwapSend, which
+      reshapes the quoted {to, data, value} through the EXISTING
+      prepareEvmSend — no second signing or broadcast path exists.
+      SwapScreen (route Swap, entered from a Swap link on the Home EVM
+      row): off with a plain explanation until a key is saved; sell/buy
+      pickers over ETH + tracked tokens filtered to the ACTIVE chain (in
+      Sepolia test mode that yields none and the screen says why — note
+      recorded from the docs check: 0x's published supported-chain list at
+      docs.0x.org/docs/introduction/supported-chains.md covers mainnets
+      only and does NOT list Sepolia 11155111, contrary to the task
+      brief's assumption; nothing hardcodes mainnet, so test-mode quotes
+      go out with 11155111 and any error renders honestly); exact
+      parseUnits amounts with balance display and pre-quote refusal;
+      slippage 0.5% default / 1% / custom bps; quote review shows
+      buyAmount, minBuyAmount labeled as the guaranteed minimum (enforced
+      by the transaction itself), the implied rate, and the 0x gas
+      estimate alongside our own worst-case fee; no-liquidity and error
+      results rendered per the union. Execute reuses the send confirm
+      idioms end to end: mainnet/TESTNET badge, eth_call simulation gate
+      with the explicit override switch, biometric gate, success screen
+      with txid + active-profile explorer link. ERC-20 sells with a short
+      allowance get a two-step UX (Step 1 of 2 approve for the exact
+      amount with its own confirm/simulate/biometric pass, then a
+      post-approval re-quote and Step 2 of 2 swap confirm); quotes older
+      than 60 s at any execute point are refreshed and the user is told to
+      review the new numbers — stale calldata is never signed. Settings
+      gained a "Swaps" section (AaField pattern) documenting that the key
+      is stored on-device only and sent only to api.0x.org. Verified:
+      app/scripts/check-swap.mjs 89/89, fully offline (fake 0x endpoint
+      per the documented shapes incl. >2^53 exact-bigint amounts, fake
+      JSON-RPC node; approve and swap raw transactions decoded field by
+      field with ethers: exact-amount approve calldata, 0x calldata
+      verbatim to the 0x to-address, value carried, taker signature);
+      regressions all green — test-units 45/45, check-aa 39/39, check-wc
+      83/83, check-token-send 37/37, check-qr 31/31, check-tokens 27/27,
+      check-devmode 69/69; tsc --noEmit clean; expo export --platform
+      android bundles (6.3MB Hermes) with the new strings confirmed in
+      the bytecode. No key exists in the repo (.dev-wallet/env has no
+      ZEROX_KEY); live quotes light up as soon as a free key from
+      dashboard.0x.org is saved in Settings → Swaps. No packages/*
+      changes; send.ts unchanged.

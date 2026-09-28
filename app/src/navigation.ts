@@ -14,6 +14,8 @@ export type RootStackParamList = {
    */
   Send: { chainId: string; tokenId?: string };
   Activity: { chainId: string };
+  /** EVM-only swap flow (phase 5 item 1); the active EVM chain applies. */
+  Swap: undefined;
   Settings: undefined;
   Tokens: undefined;
   Connections: undefined;

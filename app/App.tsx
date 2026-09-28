@@ -22,6 +22,7 @@ import { HomeScreen } from './src/screens/HomeScreen';
 import { ReceiveScreen } from './src/screens/ReceiveScreen';
 import { SendScreen } from './src/screens/SendScreen';
 import { ActivityScreen } from './src/screens/ActivityScreen';
+import { SwapScreen } from './src/screens/SwapScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 import { TokensScreen } from './src/screens/TokensScreen';
 import { ConnectionsScreen } from './src/screens/ConnectionsScreen';
@@ -133,6 +134,7 @@ function Root() {
             <Stack.Screen name="Receive" component={ReceiveScreen} />
             <Stack.Screen name="Send" component={SendScreen} />
             <Stack.Screen name="Activity" component={ActivityScreen} />
+            <Stack.Screen name="Swap" component={SwapScreen} />
             <Stack.Screen name="Settings" component={SettingsScreen} />
             <Stack.Screen name="Tokens" component={TokensScreen} />
             <Stack.Screen
