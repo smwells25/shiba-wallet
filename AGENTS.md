@@ -721,3 +721,34 @@ Activity screens, fingerprint enrollment + auto-lock + biometric-gated
 send, Sepolia dev-mode walkthrough, WalletConnect live pairing (needs a
 dApp URI). Physical-phone-only remainder: real Secure Enclave/StrongBox
 behavior, real camera optics, iOS FaceID, store builds.
+
+## Emulator validation, continued (same session)
+
+Additional PASSES with screenshots reviewed:
+- Receive ETH: QR + full address + derivation path + copy/send buttons;
+  the on-screen QR was decoded from the screenshot with the independent
+  jsqr decoder and matched the displayed address exactly.
+- Activity: Bitcoin queried live Esplora and showed the correct empty
+  state for a fresh address; Ethereum showed the honest
+  indexer-required explanation.
+- Settings: recovery-phrase button present; Hide-amounts toggle state
+  synced from the Home eye tap; the auto-lock section correctly hides
+  itself on an unenrolled device with the documented no-PIN rationale;
+  endpoint, indexer, and AA sections render their full explanations
+  with correct not-set/incomplete statuses; the shipped WalletConnect
+  project id shows as saved.
+- Sepolia test mode toggle: TESTNET banner appears, mainnet-token rows
+  hide with an explanatory note, mode isolation visible.
+
+NEW FINDINGS from this pass (to fix in the next slice):
+1. Settings "Tokens" blurb still says token sending is not supported —
+   stale copy; token sending shipped in phase 4 item 3.
+2. In Sepolia test mode the Ethereum row shows "no endpoint" — check
+   whether the Sepolia profile's default RPC is threaded into the
+   balance fetch (config/evm-chain.ts documents a default; the
+   per-chain override store for eip155:11155111 starts empty).
+3. (Recorded earlier) Seed backup screen permits screenshots.
+
+Emulator remains available: AVD "shiba"; remaining items are fingerprint
+enrollment -> auto-lock -> biometric-gated send, wrong-chain QR poster
+swap, and WalletConnect live pairing.
