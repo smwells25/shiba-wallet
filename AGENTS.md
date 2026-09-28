@@ -1109,6 +1109,21 @@ the engine at 187 tests.
 6. Standing items as inputs appear: Dogecoin mainnet broadcast, live 0x
    quotes, live paymaster sponsorship, EAS device build.
 
+Item 1 re-scoped 2026-09-28 (CTO decision, before any code was written):
+the pre-coding docs check found that Alchemy's Transaction Simulation
+APIs, including alchemy_simulateAssetChanges, "will be deprecated on
+September 30th 2026" (notice on www.alchemy.com/docs/reference/simulation
+and the method page; no replacement named), and the method already fails
+on Sepolia with an internal error. Item 1 is therefore built on the
+standard eth_simulateV1 (ethereum/execution-apis src/eth/execute.yaml;
+the traceTransfers option "Adds ETH transfers as ERC20 transfer events to
+the logs" emitted from 0xeeee...eeee per src/schemas/execute.yaml),
+decoding ERC-20/721/1155 Transfer and Approval events in the engine.
+Read-only probes showed eth_simulateV1 answering on the app's default
+publicnode RPCs (mainnet and Sepolia) and on Alchemy, so no vendor key
+or extra endpoint setting is required. This also removes a vendor
+lock-in from the design.
+
 Wave 1: item 1 (agent) + item 2's ENGINE package only (agent, no app
 files). Wave 2: item 2's app wiring + items 3–5 sequenced by file
 overlap. Subagents run on Opus per the Chairperson's credit directive.
