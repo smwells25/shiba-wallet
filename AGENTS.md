@@ -1473,7 +1473,24 @@ WALLETCONNECT DECLINE PATHS, PROVEN LIVE with Uniswap (same day):
   — try adjusting slippage" (dApp-side wording, outside our control).
 The wallet was returned to Account 1 in Sepolia test mode afterwards.
 
-Still pending (needs further dApp-triggered requests): the lock hold, queued
+LOCK HOLD, PROVEN LIVE (same day): a fingerprint was re-enrolled on the
+AVD (locksettings set-pin 1234, the android.settings.FINGERPRINT_ENROLL
+flow driven through uiautomator, `adb emu finger touch 1` for the
+sensor); the Auto-lock section then appeared and 1 min was re-armed
+(Off then 1 min, which triggers LockGate's availability re-check). With
+the wallet backgrounded, the Chairperson confirmed a Uniswap swap. After
+163 s the wallet was resumed: ONLY the "Shiba Wallet is locked" screen
+showed, with no approval sheet visible or actionable. Unlock raised the
+OS BiometricPrompt (screencap empty, FLAG_SECURE), and after the
+simulated fingerprint the queued approval sheet appeared intact on
+Home. Approving raised the per-approval biometric gate (screencap empty
+again) before signing; broadcast tx
+0x3c55113b646015e7b394a2b3df7377b8abcd3c926dd5472ac8ec3a99c13d8437,
+block 0xb41801, status 0x1, sender Account 1. The AVD now has device
+PIN 1234 and one enrolled fingerprint again.
+
+Still pending (needs a dApp that can send plain message-signing
+requests): queued
 requests, the paused-session and switch-chain declines, and the
 wrong-account decline after switching to Account 2. Fiat display could
 not be eyeballed here: test mode prices nothing and the mainnet
