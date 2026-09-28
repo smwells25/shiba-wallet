@@ -1384,7 +1384,9 @@ overlap. Subagents run on Opus per the Chairperson's credit directive.
       check-accounts.mjs 111/111 offline; all fourteen app suites green,
       tsc clean, expo export bundles (6.5MB) with the new strings, all
       re-run by the CTO. No packages/* changes.
-      OPEN DECISION for the Chairperson (verified 2026-09-28 at
+      DECIDED 2026-09-28: the Chairperson chose the BIP-44 standard
+      account level for Bitcoin and Dogecoin (the mapping below is final;
+      ADR D8 updated). Original decision record (verified 2026-09-28 at
       help.phantom.com "What derivation paths does Phantom support?"):
       Phantom's default Bitcoin SegWit path is m/84'/0'/0'/0/{index}
       (account number in the address segment, "all chains share the same
@@ -1430,8 +1432,22 @@ the phase-6 tree. PASSED, with screenshots reviewed at every step:
   all phase-6 changes and is listed as bound to "Account 1
   (0x772e…F44F)"; the copy says requests appear on any screen.
 
-Still pending (needs the Chairperson to trigger requests from a dApp):
-the global request sheet appearing on Home, the lock hold, queued
+GLOBAL REQUEST SHEET + PREVIEW, PROVEN LIVE (same day): with the
+wallet sitting on Home, the Chairperson triggered a sepUSDC -> sepETH
+swap on app.uniswap.org. The WalletConnect transaction sheet surfaced
+over Home (not the Connections screen) showing Sending account
+"Account 1 (0x772e…F44F)", the Sepolia router 0x7E4f…043f3, fee, the
+balance-change preview ("You send 1 USDC (untracked token
+0x1c7D…7238)", "You receive 0.000041219674256619 test ETH") and
+"Pre-flight simulation passed (eth_call)". Approved and broadcast:
+tx 0x5ab4c38b409b0665a909aad2259d3a15e89c639258dec579a8be5ff9d0221714,
+block 0xb415da (11801050), status 0x1, sender 0x772e…f44f. The preview
+matched reality exactly on both legs: the receipt's USDC Transfer log
+moved 0xf4240 = 1,000,000 base units (1 USDC) from the wallet, and the
+ETH received, reconstructed as balance(after) − balance(before) + gas
+fee = 41,219,674,256,619 wei, equals the previewed amount to the wei.
+
+Still pending (needs further dApp-triggered requests): the lock hold, queued
 requests, the paused-session and switch-chain declines, and the
 wrong-account decline after switching to Account 2. Fiat display could
 not be eyeballed here: test mode prices nothing and the mainnet
