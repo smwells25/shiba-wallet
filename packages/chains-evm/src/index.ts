@@ -29,12 +29,15 @@ export {
 } from './encoding.js';
 export {
   SmartAccountClient,
+  eip191PrefixedMessage,
+  hashEip191Message,
   toEthSignedMessageHash,
   withEthereumV,
 } from './smart-account.js';
 export type {
   Call,
   SmartAccountClientConfig,
+  SmartAccountSignatureContext,
   SmartAccountSpec,
 } from './smart-account.js';
 export { encodeFunctionCall, encodeSequence, selector } from './abi.js';
@@ -46,8 +49,12 @@ export {
   ERC7579_CALLTYPE_SINGLE,
   ERC7579_EXECTYPE_DEFAULT,
   ERC7579_EXECTYPE_TRY,
+  KERNEL_EIP712_NAME,
   KERNEL_V3_3,
+  KERNEL_WRAPPER_TYPE_HASH,
   createKernelAccountSpec,
+  encodeKernelErc1271Signature,
+  kernelErc1271Digest,
   encodeErc7579Mode,
   encodeKernelExecute,
   encodeKernelInitData,
@@ -166,3 +173,101 @@ export type {
   NftValidAt,
   OwnedNft,
 } from './nft-indexer.js';
+export {
+  ERC20_ALLOWANCE_SIGNATURE,
+  IS_APPROVED_FOR_ALL_SELECTOR,
+  IS_APPROVED_FOR_ALL_SIGNATURE,
+  SET_APPROVAL_FOR_ALL_SELECTOR,
+  SET_APPROVAL_FOR_ALL_SIGNATURE,
+  blockWindows,
+  encodeErc20Allowance,
+  encodeErc20Revoke,
+  encodeIsApprovedForAll,
+  encodeSetApprovalForAll,
+  getErc20Allowance,
+  getErc20Approvals,
+  getLogsWindowed,
+  getOperatorApprovals,
+  isApprovedForAll,
+  topicToLowerAddress,
+  validateLog,
+  withCurrentAllowances,
+} from './approvals.js';
+export type {
+  ApprovalScanResult,
+  CurrentAllowance,
+  Erc20ApprovalQuery,
+  Erc20ApprovalRecord,
+  LogRangeQuery,
+  OperatorApprovalQuery,
+  OperatorApprovalRecord,
+  ValidLog,
+} from './approvals.js';
+export {
+  EIP7702_DELEGATION_LENGTH,
+  EIP7702_DELEGATION_PREFIX,
+  classifyRecipient,
+  findCodeDeploymentBlock,
+  isFirstInteraction,
+  parseDelegationIndicator,
+  riskSignals,
+} from './contract-risk.js';
+export type {
+  DeploymentSearchOptions,
+  DeploymentSearchResult,
+  FirstInteractionOptions,
+  FirstInteractionResult,
+  RecipientClass,
+  RiskInputs,
+  RiskSignal,
+  RiskSignalType,
+} from './contract-risk.js';
+export {
+  ERC1271_IS_VALID_SIGNATURE_SIGNATURE,
+  ERC1271_MAGIC_VALUE,
+  ERC1271_SELECTOR,
+  decodeIsValidSignatureResult,
+  encodeIsValidSignature,
+  isErc1271MagicValue,
+  isExecutionRevertError,
+  verifyContractSignature,
+} from './erc1271.js';
+export type { ContractSignatureCheck } from './erc1271.js';
+export {
+  ERC6492_MAGIC_SUFFIX,
+  ecrecoverMatches,
+  isErc6492Signature,
+  unwrapErc6492Signature,
+  verifyErc6492Signature,
+  verifyWithDeploylessValidator,
+  wrapErc6492Signature,
+} from './erc6492.js';
+export type {
+  Erc6492Parts,
+  UniversalVerificationPath,
+  UniversalVerificationResult,
+} from './erc6492.js';
+export {
+  ERC7739_PERSONAL_SIGN_TYPEHASH,
+  ERC7739_PERSONAL_SIGN_TYPES,
+  ERC7739_SUPPORT_MAGIC_V1,
+  ERC7739_SUPPORT_PROBE_HASH,
+  detectErc7739Support,
+  erc7739ContentsDescription,
+  erc7739ContentsNameProblem,
+  erc7739PersonalSignDigest,
+  erc7739PersonalSignRequest,
+  erc7739TypedDataSignDigest,
+  erc7739TypedDataSignRequest,
+  erc7739VerifierView,
+  readEip712Domain,
+  wrapErc7739TypedDataSignature,
+} from './erc7739.js';
+export type {
+  Erc7739AccountDomain,
+  Erc7739ContentsDescription,
+  Erc7739TypedData,
+  Erc7739VerifierView,
+} from './erc7739.js';
+export { signHashForSmartAccount } from './account-signatures.js';
+export type { SmartAccountSignature } from './account-signatures.js';

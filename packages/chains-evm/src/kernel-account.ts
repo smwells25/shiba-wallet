@@ -2,11 +2,13 @@ import { concatBytes } from '@noble/hashes/utils.js';
 import { toChecksumAddress, type DerivedAccount } from '@shiba-wallet/core';
 import { encodeFunctionCall, encodeSequence, type AbiValue } from './abi.js';
 import { keccak, toBytes, toHex, toWord } from './encoding.js';
+import { typedDataDigest } from './eip712.js';
 import type { JsonRpcTransport } from './rpc.js';
 import {
   toEthSignedMessageHash,
   withEthereumV,
   type Call,
+  type SmartAccountSignatureContext,
   type SmartAccountSpec,
 } from './smart-account.js';
 import { ENTRYPOINT_V07, computeCreate2Address } from './userop.js';
@@ -173,6 +175,77 @@ const ERC1967_PROXY_PREFIX = '0x603d3d8160223d3973';
 const ERC1967_PROXY_MIDDLE = '0x6009';
 const ERC1967_PROXY_WORD_1 = '0x5155f3363d3d373d3d363d7f360894a13ba1a3210667c828492db98dca3e2076';
 const ERC1967_PROXY_WORD_2 = '0xcc3735a920a3ca505d382bbc545af43d6000803e6038573d6000fd5b3d6000f3';
+
+/**
+ * ERC-1271 in Kernel v3.3 (phase 7 item 3). Sources, all at [K] tag v3.3:
+ *  - Kernel.isValidSignature(bytes32 hash, bytes data) returns
+ *    _verifySignature(hash, data) [src/Kernel.sol].
+ *  - _verifySignature [src/core/ValidationManager.sol] splits `data` with
+ *    ValidatorLib.decodeSignature [src/utils/ValidationTypeLib.sol]: first
+ *    byte 0x00 = root validator, signature = data[1:]; 0x01 = validator
+ *    mode, ValidationId = data[0:21] (0x01 || validator address), signature
+ *    = data[21:]; 0x02 = permission, data[5:]; anything else reverts. An
+ *    optional leading 32-byte MAGIC_VALUE_SIG_REPLAYABLE switches to a
+ *    chainId-0 domain; this engine never produces it.
+ *  - For a validator it calls validator.isValidSignatureWithSender(sender,
+ *    _toWrappedHash(hash), sig) where _toWrappedHash = solady EIP712
+ *    _hashTypedData(keccak256(abi.encode(KERNEL_WRAPPER_TYPE_HASH, hash))).
+ *    KERNEL_WRAPPER_TYPE_HASH = 0x1547321c…999c83 [src/types/Constants.sol],
+ *    which the tests recompute as keccak256("Kernel(bytes32 hash)"). The
+ *    domain is solady's EIP712Domain(string name,string version,uint256
+ *    chainId,address verifyingContract) [L src/utils/EIP712.sol] with name
+ *    "Kernel", version "0.3.3" (Kernel._domainNameAndVersion), the current
+ *    chain id and address(this) — the PROXY, i.e. the account address. So
+ *    the signed digest is bound to this account and chain: a defensive
+ *    rehash that blocks cross-account replay.
+ *  - ECDSAValidator.isValidSignatureWithSender accepts the owner's
+ *    signature over the wrapped hash raw OR over its EIP-191 form
+ *    [src/validator/ECDSAValidator.sol]. We sign the raw wrapped digest,
+ *    which is what the ZeroDev SDK does for EntryPoint v0.7 Kernels
+ *    (signTypedData over the "Kernel" struct) [S
+ *    packages/core/accounts/kernel/createKernelAccount.ts signMessage /
+ *    signTypedData, utils/ep0_7/hashKernelSignatureWrapper.ts].
+ *  - The SDK prefixes the signature with its plugin identifier,
+ *    VALIDATOR_TYPE.SECONDARY (0x01) || validator address, even for the root
+ *    ECDSA validator [S toKernelPluginManager.ts getIdentifier,
+ *    constants.ts VALIDATOR_TYPE]. Validator mode works for the root
+ *    validator because initialize() installs it with a validation config
+ *    (hook address(1)), so we use the same envelope for tool parity.
+ *  - Kernel v3.3 does NOT implement ERC-7739: there is no TypedDataSign /
+ *    PersonalSign handling and no 0x7739… support probe anywhere in [K]
+ *    src/. Its replay protection is the opaque Kernel(bytes32 hash)
+ *    wrapper above, so a third-party EIP-712 signer would display only a
+ *    hash; this wallet signs from its own UI, where the original request is
+ *    shown before the owner key is used.
+ */
+export const KERNEL_EIP712_NAME = 'Kernel';
+export const KERNEL_WRAPPER_TYPE_HASH = '0x1547321c374afde8a591d972a084b071c594c275e36724931ff96c25f2999c83';
+const KERNEL_WRAPPER_TYPES = { Kernel: [{ name: 'hash', type: 'bytes32' }] };
+
+/** The digest the owner key signs so Kernel v3.3 accepts `hash` via ERC-1271. */
+export function kernelErc1271Digest(
+  hash: Uint8Array,
+  context: SmartAccountSignatureContext,
+  version: string = KERNEL_V3_3.version,
+): Uint8Array {
+  if (hash.length !== 32) throw new Error(`hash must be 32 bytes, got ${hash.length}`);
+  return typedDataDigest(
+    {
+      name: KERNEL_EIP712_NAME,
+      version,
+      chainId: context.chainId,
+      verifyingContract: context.account,
+    },
+    KERNEL_WRAPPER_TYPES,
+    'Kernel',
+    { hash: toHex(hash) },
+  );
+}
+
+/** Kernel validator-mode ERC-1271 envelope: 0x01 || validator (20 bytes) || signature. */
+export function encodeKernelErc1271Signature(validator: string, signature: Uint8Array): Uint8Array {
+  return concatBytes(kernelValidatorId(validator), signature);
+}
 
 export interface KernelAccountConfig {
   /** Node RPC transport used for the factory getAddress view call. */
@@ -368,6 +441,11 @@ export function createKernelAccountSpec(config: KernelAccountConfig): SmartAccou
 
     stubSignature(): Uint8Array {
       return toBytes(KERNEL_STUB_SIGNATURE);
+    },
+
+    signErc1271(owner: DerivedAccount, hash: Uint8Array, context: SmartAccountSignatureContext): Uint8Array {
+      const ownerSignature = withEthereumV(owner.sign(kernelErc1271Digest(hash, context)));
+      return encodeKernelErc1271Signature(ecdsaValidator, ownerSignature);
     },
   };
 }

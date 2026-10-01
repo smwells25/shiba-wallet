@@ -50,6 +50,25 @@ export interface SmartAccountSpec {
    * simulate validation, so it must parse without reverting on length.
    */
   stubSignature(): Uint8Array;
+  /**
+   * Optional: the ERC-1271 signature bytes this account's isValidSignature
+   * accepts for `hash` once deployed (framework envelope, validator prefix,
+   * defensive rehashing and all). `hash` is what the verifier passes to
+   * isValidSignature, e.g. an EIP-191 message hash or an EIP-712 digest.
+   * Absent when the account implementation has no ERC-1271 support (the
+   * eth-infinitism SimpleAccount v0.7.0 sample has no isValidSignature).
+   * For an undeployed account, wrap the result with ERC-6492 (see
+   * signHashForSmartAccount in ./account-signatures.ts).
+   */
+  signErc1271?(owner: DerivedAccount, hash: Uint8Array, context: SmartAccountSignatureContext): Uint8Array;
+}
+
+/** Facts an account's ERC-1271 signing needs beyond the owner key. */
+export interface SmartAccountSignatureContext {
+  /** Chain the signature is for (accounts bind it into their rehash). */
+  chainId: bigint;
+  /** The smart account's own address (its EIP-712 verifyingContract). */
+  account: string;
 }
 
 export interface SmartAccountClientConfig {
@@ -241,6 +260,22 @@ function paymasterFields(result: {
 export function toEthSignedMessageHash(digest: Uint8Array): Uint8Array {
   if (digest.length !== 32) throw new Error('Digest must be 32 bytes');
   return keccak_256(concatBytes(utf8ToBytes('\x19Ethereum Signed Message:\n32'), digest));
+}
+
+/**
+ * EIP-191 version 0x45 ("personal_sign") prefixing of an arbitrary message:
+ * "\x19Ethereum Signed Message:\n" || decimal byte length || message.
+ */
+export function eip191PrefixedMessage(message: Uint8Array): Uint8Array {
+  return concatBytes(
+    utf8ToBytes(`\x19Ethereum Signed Message:\n${message.length}`),
+    message,
+  );
+}
+
+/** keccak256 of eip191PrefixedMessage(message): the hash personal_sign signs. */
+export function hashEip191Message(message: Uint8Array): Uint8Array {
+  return keccak_256(eip191PrefixedMessage(message));
 }
 
 /**
