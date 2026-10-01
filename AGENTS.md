@@ -1711,3 +1711,26 @@ recovers (27/27 when pointed at another mainnet RPC).
       SESSION_KEYS.md (Draft status, the Pimlico-not-OpenZeppelin
       attribution, Nexus adoption) and to this file's 7702 assumption
       were applied by the CTO the same day.
+
+- [x] Item 1 LIVE on Sepolia (2026-10-01, CTO run, dev wallet, test ETH
+      only): KERNEL SMOKE PASSED. Kernel v3.3 account
+      0xc995E49acA5C888F4FF1E50E8467E9fFc31CC5AC (index 0, owner = the
+      dev seed EOA 0x16DA2CAeaDa26516F919C6872F6C38AB378CaC5C) deployed
+      at the engine-predicted address; funded by tx 0x25ead6e4…86b1.
+      Op 1 (deployment + ERC-7579 batch): Alchemy's bundler REJECTED the
+      meta-factory deployment op with -32502 "account uses banned opcode:
+      CREATE2" (the same class of bundler strictness seen with the
+      SimpleAccount factory in phase 2), so the script self-bundled it
+      via EntryPoint.handleOps — tx 0xbd739aed…9179e, status 0x1,
+      UserOperationEvent success=true, userOpHash 0xb2ea250a…cfc753.
+      Post-deployment checks: rootValidator() = the ECDSA validator and
+      the validator's stored owner = the dev EOA (D1 holds on-chain).
+      Op 2 (deployed path, single execution) was ACCEPTED by Alchemy's
+      bundler: userOpHash 0xb2310097…259c0c, receipt success=true, tx
+      0x6538b6fc…9cdd9e. Follow-up probe launched the same day: the
+      direct-factory deployment path (KERNEL_DIRECT_FACTORY=1,
+      KERNEL_INDEX=1) to learn whether the bundler accepts Kernel
+      deployments at all without self-bundling — users cannot
+      self-bundle, so a bundler-acceptable deployment path (or a
+      different bundler vendor) is a production requirement to settle
+      during vendor selection.
