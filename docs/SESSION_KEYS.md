@@ -19,10 +19,15 @@ nothing else, so it cannot express "this key may only call this
 contract, under this cap, until Friday." ERC-7579 defines the minimal
 standard interface for accounts whose validation and execution behavior
 is extended by installable modules (validators, executors, hooks),
-reached final status on the EIP track in 2024, and is the module
-portability layer: modules written against it run on any compliant
-account (sources: eco.com's ERC-7579 explainer; docs.safe.global
-ERC-7579 overview).
+and is the module portability layer: modules written against it run on
+any compliant account (sources: eco.com's ERC-7579 explainer;
+docs.safe.global ERC-7579 overview). Correction (2026-10-01): an
+earlier version of this document said ERC-7579 had reached final status
+in 2024. That was wrong: eips.ethereum.org/EIPS/eip-7579 lists the ERC
+as Draft (created 2023-12-14), as does the ethereum/ERCs repository. It
+is widely deployed (Kernel v3, Nexus, Safe7579) but not yet finalized,
+so interface changes remain possible and the account adapter must stay
+pinned to a specific implementation release rather than "the standard".
 
 ## Candidate accounts (facts per Pimlico's account comparison,
 docs.pimlico.io/guides/how-to/accounts/comparison, fetched 2026-09-27)

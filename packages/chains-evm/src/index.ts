@@ -42,6 +42,22 @@ export type { AbiValue } from './abi.js';
 export { createSimpleAccountSpec } from './simple-account.js';
 export type { SimpleAccountConfig } from './simple-account.js';
 export {
+  ERC7579_CALLTYPE_BATCH,
+  ERC7579_CALLTYPE_SINGLE,
+  ERC7579_EXECTYPE_DEFAULT,
+  ERC7579_EXECTYPE_TRY,
+  KERNEL_V3_3,
+  createKernelAccountSpec,
+  encodeErc7579Mode,
+  encodeKernelExecute,
+  encodeKernelInitData,
+  kernelProxyInitCodeHash,
+  kernelValidatorId,
+  predictKernelAddress,
+  verifyKernelDeployment,
+} from './kernel-account.js';
+export type { KernelAccountConfig, KernelDeploymentCheck } from './kernel-account.js';
+export {
   domainSeparator,
   encodeType,
   hashStruct,
