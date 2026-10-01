@@ -322,8 +322,9 @@ export function maskUrlForDisplay(value: string): string {
   if (!/^https?:\/\//i.test(value)) return value;
   try {
     const url = new URL(value);
-    const rest = (url.pathname !== '/' && url.pathname !== '' ? '/…' : '') + (url.search ? '?…' : '');
-    return `${url.protocol}//${url.host}${rest}`;
+    const hasPath = url.pathname !== '/' && url.pathname !== '';
+    const rest = hasPath ? '/…' : url.search ? '/?…' : '';
+    return `${url.protocol}//${url.host}${rest}${hasPath && url.search ? '?…' : ''}`;
   } catch {
     const match = /^(https?:\/\/[^/?#]+)/i.exec(value);
     return match ? `${match[1]}/…` : 'https://…';
