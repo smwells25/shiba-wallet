@@ -261,6 +261,18 @@ export function HomeScreen({ navigation }: Props) {
               <Text style={[styles.sendLink, { color: theme.accent }]}>Swap</Text>
             </Pressable>
           ) : null}
+          {/* NFT gallery (phase 7 item 4) for the active EVM chain; the
+              screen explains itself until an NFT indexer is configured. */}
+          {item.chainId === EVM_CHAIN_ID ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="NFTs"
+              onPress={() => navigation.navigate('Nfts')}
+              hitSlop={8}
+            >
+              <Text style={[styles.sendLink, { color: theme.accent }]}>NFTs</Text>
+            </Pressable>
+          ) : null}
         </View>
       </View>
       <BalanceCell
@@ -428,6 +440,7 @@ const styles = StyleSheet.create({
   },
   linkRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 16,
     marginTop: 2,
   },

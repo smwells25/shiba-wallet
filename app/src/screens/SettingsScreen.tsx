@@ -35,6 +35,12 @@ import {
   setIndexerUrl,
   type IndexerConfig,
 } from '../wallet/indexer';
+import {
+  clearNftIndexerUrl,
+  getNftIndexerConfig,
+  setNftIndexerUrl,
+  type NftIndexerConfig,
+} from '../wallet/nfts';
 import { clearSwapApiKey, getSwapConfig, setSwapApiKey, type SwapConfig } from '../wallet/swap';
 import {
   clearPriceDemoKey,
@@ -617,6 +623,75 @@ function IndexerChainRow({
   );
 }
 
+/**
+ * NFT-indexer configuration for one EVM chain (phase 7 item 4), beside the
+ * history indexer and with the same verify-before-save UX: saving runs a
+ * one-entry getNFTsForOwner probe and binds the indexer's answer to this
+ * chain through the configured RPC endpoint (../wallet/nfts.ts); nothing
+ * is persisted when any check fails.
+ */
+function NftIndexerChainRow({
+  network,
+  walletAddress,
+}: {
+  network: NetworkDefault;
+  walletAddress: string | null;
+}) {
+  const theme = useTheme();
+  const [config, setConfig] = useState<NftIndexerConfig | null>(null);
+
+  const reload = useCallback(() => {
+    getNftIndexerConfig(network.chainId).then(setConfig, () => setConfig(null));
+  }, [network.chainId]);
+
+  useEffect(reload, [reload]);
+
+  const shortDate = (iso: string | null) => (iso ? iso.slice(0, 10) : 'unknown date');
+
+  return (
+    <View style={[styles.endpointRow, { backgroundColor: theme.card, borderColor: theme.border }]}>
+      <View style={styles.endpointHeader}>
+        <Text style={[styles.endpointLabel, { color: theme.text }]}>{network.label}</Text>
+        <Text style={[styles.endpointTag, { color: theme.textMuted }]}>
+          {config?.url ? 'ready' : 'not set'}
+        </Text>
+      </View>
+      <AaField
+        label="NFT indexer URL (NFT API base)"
+        placeholder="https://…/nft/v3/…"
+        value={config?.url ?? null}
+        statusLine={
+          config?.url
+            ? `Verified ✓ — getNFTsForOwner answered and its block ${
+                config.verifiedBlock ?? '?'
+              } matches ${network.label} (checked ${shortDate(config.verifiedAt)})`
+            : null
+        }
+        onSave={async (draft) => {
+          if (!walletAddress) {
+            throw new Error('No wallet address is available to verify the endpoint with.');
+          }
+          const endpoint = await getEndpoint(network.chainId);
+          if (!endpoint?.url) {
+            throw new Error(
+              `No ${network.label} RPC endpoint is configured; the indexer's network is ` +
+                'confirmed through it. Configure the endpoint above first.',
+            );
+          }
+          await setNftIndexerUrl(network.chainId, draft, walletAddress, endpoint.url, {
+            chainLabel: network.label,
+          });
+          reload();
+        }}
+        onClear={async () => {
+          await clearNftIndexerUrl(network.chainId);
+          reload();
+        }}
+      />
+    </View>
+  );
+}
+
 type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
 
 /**
@@ -952,6 +1027,32 @@ export function SettingsScreen({ navigation }: Props) {
         </Text>
         {evmEndpoints.map((e) => (
           <IndexerChainRow
+            key={e.network.chainId}
+            network={e.network}
+            walletAddress={
+              accounts.find((a) => a.chainId === e.forChainId)?.address ?? null
+            }
+          />
+        ))}
+      </View>
+
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: theme.text }]}>NFT indexer</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          The NFTs screen needs an indexer that lists the NFTs an address
+          owns (ERC-721 and ERC-1155). Paste the base URL of an endpoint that
+          serves Alchemy&apos;s NFT API v3 — it looks like
+          https://eth-mainnet.g.alchemy.com/nft/v3/your-key (Sepolia:
+          eth-sepolia). This is a separate URL from the history indexer
+          above, even when both use the same API key. It is stored only on
+          this device and sent only to that host. Saving checks that the
+          indexer answers and that it is indexing this network. NFT images
+          load from the indexer&apos;s image cache when possible, otherwise
+          from the NFT&apos;s own host or the public ipfs.io gateway, which
+          see your IP address.
+        </Text>
+        {evmEndpoints.map((e) => (
+          <NftIndexerChainRow
             key={e.network.chainId}
             network={e.network}
             walletAddress={

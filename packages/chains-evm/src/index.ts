@@ -129,3 +129,40 @@ export type {
   SwapQuoteResult,
   ZeroExConfig,
 } from './swap.js';
+export {
+  ERC721_OWNER_OF_SELECTOR,
+  ERC721_OWNER_OF_SIGNATURE,
+  ERC721_SAFE_TRANSFER_FROM_SELECTOR,
+  ERC721_SAFE_TRANSFER_FROM_SIGNATURE,
+  encodeErc721OwnerOf,
+  encodeErc721SafeTransferFrom,
+} from './erc721.js';
+export {
+  ERC1155_BALANCE_OF_SELECTOR,
+  ERC1155_BALANCE_OF_SIGNATURE,
+  ERC1155_SAFE_TRANSFER_FROM_SELECTOR,
+  ERC1155_SAFE_TRANSFER_FROM_SIGNATURE,
+  encodeErc1155BalanceOf,
+  encodeErc1155SafeTransferFrom,
+  substituteErc1155Id,
+} from './erc1155.js';
+export {
+  ALCHEMY_NFT_MAX_PAGE_SIZE,
+  NftIndexerHttpError,
+  alchemyNftOwnershipProvider,
+  mapAlchemyOwnedNft,
+  normalizeNftBaseUrl,
+  parseDecimalUint256,
+  verifyNftOwnershipEndpoint,
+} from './nft-indexer.js';
+export type {
+  AlchemyNftProviderOptions,
+  NftHttpFetch,
+  NftMediaRefs,
+  NftOwnershipPage,
+  NftOwnershipProvider,
+  NftOwnershipQuery,
+  NftStandard,
+  NftValidAt,
+  OwnedNft,
+} from './nft-indexer.js';

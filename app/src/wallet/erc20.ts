@@ -97,7 +97,7 @@ export class LegacyBytes32Error extends Error {
  * UTF-16 surrogate code points, and values above U+10FFFF all throw, so a
  * garbage symbol can never render as a plausible-looking string.
  */
-function utf8Decode(bytes: Uint8Array): string {
+export function utf8Decode(bytes: Uint8Array): string {
   let out = '';
   let i = 0;
   while (i < bytes.length) {

@@ -28,6 +28,8 @@ import { SettingsScreen } from './src/screens/SettingsScreen';
 import { TokensScreen } from './src/screens/TokensScreen';
 import { ConnectionsScreen } from './src/screens/ConnectionsScreen';
 import { ContactsScreen } from './src/screens/ContactsScreen';
+import { NftsScreen } from './src/screens/NftsScreen';
+import { NftDetailScreen } from './src/screens/NftDetailScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -149,6 +151,8 @@ function Root() {
               options={{ title: 'WalletConnect' }}
             />
             <Stack.Screen name="Contacts" component={ContactsScreen} />
+            <Stack.Screen name="Nfts" component={NftsScreen} options={{ title: 'NFTs' }} />
+            <Stack.Screen name="NftDetail" component={NftDetailScreen} options={{ title: 'NFT' }} />
           </>
         )}
         </Stack.Navigator>

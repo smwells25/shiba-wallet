@@ -12,7 +12,7 @@ import {
   View,
 } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { formatAssetId } from '@shiba-wallet/core';
+import { formatAssetId, nonFungibleTokenId, parseAssetId } from '@shiba-wallet/core';
 import type { FungibleAsset } from '@shiba-wallet/core';
 import type { RootStackParamList } from '../navigation';
 import { Button, WarningBox, screenStyle } from '../components';
@@ -57,6 +57,15 @@ import {
   type Erc20SendQuote,
 } from '../wallet/send-erc20';
 import { listTokens } from '../wallet/tokens';
+import {
+  describeNftSendError,
+  maxNft1155Send,
+  parseNftAmount,
+  prepareNftSend,
+  sendNft,
+  type NftSendQuote,
+} from '../wallet/send-nft';
+import { invalidateNftCache, standardLabel } from '../wallet/nfts';
 import { extractScannedAddress } from '../wallet/scan';
 import { QrScanner } from '../components/QrScanner';
 import {
@@ -137,6 +146,31 @@ export function SendScreen({ route, navigation }: Props) {
   const account = accounts.find((a) => a.chainId === route.params.chainId);
   const tokenId = route.params.tokenId;
   const tokenMode = tokenId !== undefined;
+  // NFT mode (phase 7 item 4): ERC-721 / ERC-1155 safeTransferFrom on the
+  // ACTIVE EVM chain. The route carries the CAIP-19 id (decimal token id);
+  // contract and token id are parsed from it through core, never from the
+  // display strings. The indexer balance only bounds the ERC-1155 input —
+  // the quote re-checks ownership on-chain.
+  const nftParams = route.params.nft;
+  const nftMode = nftParams !== undefined && !tokenMode;
+  const nftTarget = useMemo(() => {
+    if (!nftParams) return null;
+    try {
+      const parsed = parseAssetId(nftParams.assetId);
+      if (parsed.namespace !== nftParams.standard) return 'invalid' as const;
+      if (!/^[0-9]{1,78}$/.test(nftParams.balance)) return 'invalid' as const;
+      return {
+        chainId: parsed.chainId,
+        contract: parsed.reference,
+        tokenId: nonFungibleTokenId(parsed),
+        standard: nftParams.standard,
+        indexedBalance: BigInt(nftParams.balance),
+      };
+    } catch {
+      return 'invalid' as const;
+    }
+  }, [nftParams]);
+  const nft = nftMode && nftTarget !== 'invalid' ? nftTarget : null;
 
   const [endpoint, setEndpoint] = useState<NetworkEndpoint | null | undefined>(undefined);
   // undefined = still loading the token list; null = tokenId not tracked.
@@ -149,7 +183,9 @@ export function SendScreen({ route, navigation }: Props) {
   const [formError, setFormError] = useState<string | null>(null);
   const [scannerOpen, setScannerOpen] = useState(false);
   const [maxBusy, setMaxBusy] = useState(false);
-  const [quote, setQuote] = useState<SendQuote | AaSendQuote | Erc20SendQuote | null>(null);
+  const [quote, setQuote] = useState<
+    SendQuote | AaSendQuote | Erc20SendQuote | NftSendQuote | null
+  >(null);
   // The address the quote was prepared for (the confirm screen's "From"
   // account; the smart account's owner on the AA path). signWith refuses
   // to sign unless the active account's key controls exactly this address.
@@ -184,11 +220,13 @@ export function SendScreen({ route, navigation }: Props) {
   useEffect(() => {
     const title = token
       ? `Send ${token.symbol}`
-      : account
-        ? `Send ${account.symbol}`
-        : 'Send';
+      : nftMode
+        ? 'Send NFT'
+        : account
+          ? `Send ${account.symbol}`
+          : 'Send';
     navigation.setOptions({ title });
-  }, [navigation, account, token]);
+  }, [navigation, account, token, nftMode]);
 
   // Token mode: resolve the CAIP-19 id against the tracked-token store. The
   // store is the single source of the token's contract address, symbol and
@@ -352,6 +390,27 @@ export function SendScreen({ route, navigation }: Props) {
     );
   }
 
+  if (nftMode && nftTarget === 'invalid') {
+    return (
+      <View style={[screenStyle(theme), styles.center]}>
+        <Text style={{ color: theme.textMuted, textAlign: 'center', padding: 24 }}>
+          This NFT reference is not valid. Go back to the NFTs screen and try again.
+        </Text>
+      </View>
+    );
+  }
+  if (nft && nft.chainId !== evmChain.caip2) {
+    // The NFT was listed in the other network mode; never quote it here.
+    return (
+      <View style={[screenStyle(theme), styles.center]}>
+        <Text style={{ color: theme.textMuted, textAlign: 'center', padding: 24 }}>
+          This NFT belongs to the other network mode. Switch Sepolia test
+          mode in Settings → Developer to send it.
+        </Text>
+      </View>
+    );
+  }
+
   const network = endpoint?.network;
   const url = endpoint?.url ?? null;
   const isEvmKind = network?.kind === 'evm-jsonrpc';
@@ -382,7 +441,15 @@ export function SendScreen({ route, navigation }: Props) {
   // mode hides it: ERC-20 sends through the smart account (batched
   // approve+transfer) are a later slice, so tokens always take the EOA path.
   const aaAvailable =
-    !tokenMode && network?.kind === 'evm-jsonrpc' && aaConfig !== null && isAaConfigured(aaConfig);
+    !tokenMode &&
+    !nftMode &&
+    network?.kind === 'evm-jsonrpc' &&
+    aaConfig !== null &&
+    isAaConfigured(aaConfig);
+  /** NFT sends get NFT-specific error titles; everything else is unchanged. */
+  const describeError = (e: unknown) =>
+    nftMode ? describeNftSendError(e) : describeSendError(e, symbol);
+  const nftLabel = nftParams ? `${nftParams.name} (${nftParams.collection})` : '';
   const aaActive = aaAvailable && aaEnabled;
 
   const parseAmount = (): bigint => {
@@ -397,6 +464,14 @@ export function SendScreen({ route, navigation }: Props) {
     setFormError(null);
     try {
       let max: bigint;
+      if (nft) {
+        // ERC-1155 Max = the on-chain balance (gas is paid in ETH, so it
+        // never reduces the number of copies). ERC-721 has no amount field.
+        const held = await maxNft1155Send(url, account.address, nft.contract, nft.tokenId);
+        if (held <= 0n) throw new Error('This account holds none of this item on-chain.');
+        setAmountText(held.toString());
+        return;
+      }
       if (aaActive && aaConfig?.bundlerUrl && aaConfig.factory) {
         // AA Max (phase 5): full smart-account balance under sponsorship,
         // else balance minus the worst-case fee of a zero-value probe.
@@ -461,7 +536,7 @@ export function SendScreen({ route, navigation }: Props) {
       if (max <= 0n) throw new Error('Balance is too small to cover the network fee.');
       setAmountText(exact(max, decimals));
     } catch (e) {
-      const { title, detail } = describeSendError(e, symbol);
+      const { title, detail } = describeError(e);
       setFormError(`${title}\n${detail}`);
     } finally {
       setMaxBusy(false);
@@ -477,15 +552,32 @@ export function SendScreen({ route, navigation }: Props) {
     }
     let amount: bigint;
     try {
-      amount = parseAmount();
+      amount = nft
+        ? parseNftAmount(amountText, nft.standard, nft.indexedBalance)
+        : parseAmount();
     } catch (e) {
       setFormError(e instanceof Error ? e.message : 'Invalid amount.');
       return;
     }
     setPhase('quoting');
     try {
-      let next: SendQuote | AaSendQuote | Erc20SendQuote;
-      if (token) {
+      let next: SendQuote | AaSendQuote | Erc20SendQuote | NftSendQuote;
+      if (nft) {
+        // NFT mode: EOA path only, ACTIVE chain. The quote re-checks
+        // ownership on-chain, checks the ETH balance against the fee, and
+        // pre-flights the exact safeTransferFrom calldata via eth_call.
+        next = await prepareNftSend({
+          url,
+          from: account.address,
+          to: validation.normalized,
+          contract: nft.contract,
+          tokenId: nft.tokenId,
+          standard: nft.standard,
+          amount,
+          expectedCaip2: evmChain.caip2,
+          nftCaip2: nft.chainId,
+        });
+      } else if (token) {
         // ERC-20 token mode: EOA path only (the smart-account toggle is
         // hidden in token mode). Quote checks the token balance, checks
         // the ETH balance against the fee, and pre-flights the transfer
@@ -555,7 +647,7 @@ export function SendScreen({ route, navigation }: Props) {
       setOverrideSimulation(false);
       setPhase('confirm');
     } catch (e) {
-      const { title, detail } = describeSendError(e, symbol);
+      const { title, detail } = describeError(e);
       setFormError(`${title}\n${detail}`);
       setPhase('form');
     }
@@ -565,7 +657,11 @@ export function SendScreen({ route, navigation }: Props) {
     if (!url || !quote || !quotedFrom) return;
     // Biometric gate (task 7): the final send confirmation requires local
     // authentication whenever the device has enrolled biometrics.
-    const auth = await requireLocalAuth(`Approve sending ${amountText} ${symbol}`);
+    const auth = await requireLocalAuth(
+      nftMode && nftParams
+        ? `Approve sending ${quote.kind === 'nft' && quote.standard === 'erc1155' ? `${quote.amount.toString()} × ` : ''}${nftParams.name}`
+        : `Approve sending ${amountText} ${symbol}`,
+    );
     if (!auth.ok) {
       Alert.alert('Not sent', auth.message);
       return;
@@ -610,14 +706,21 @@ export function SendScreen({ route, navigation }: Props) {
         // Token transfer: value 0, to = token contract, data = transfer
         // calldata — through the same sendEvm signing/broadcast path.
         if (quote.kind === 'erc20') return sendErc20(url, signer, quote);
+        // NFT transfer: value 0, to = NFT contract, data = safeTransferFrom
+        // calldata — through the same sendEvm signing/broadcast path.
+        if (quote.kind === 'nft') return sendNft(url, signer, quote, evmChain.explorerTxBase);
         if (quote.kind === 'evm') return sendEvm(url, signer, quote, evmChain.explorerTxBase);
         if (quote.kind === 'sol') return sendSol(url, signer, quote);
         return sendUtxo(url, route.params.chainId, signer, quote, utxoOptions);
       });
       setResult(sent);
+      // The gallery's cached list is stale once an NFT left the account.
+      if (quote.kind === 'nft' && activeAccount) {
+        invalidateNftCache(activeAccount.index, evmChain.caip2);
+      }
       setPhase('success');
     } catch (e) {
-      const { title, detail } = describeSendError(e, symbol);
+      const { title, detail } = describeError(e);
       Alert.alert(title, detail);
       setPhase('confirm');
     }
@@ -905,12 +1008,96 @@ export function SendScreen({ route, navigation }: Props) {
     );
   }
 
+  // --------------------------------------------------- confirm (NFT, EOA)
+  if ((phase === 'confirm' || phase === 'sending') && quote?.kind === 'nft' && network) {
+    const simulationFailed = !quote.simulation.ok;
+    const blocked = simulationFailed && !overrideSimulation;
+    return (
+      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+        <NetworkBadge label={network.label} testnet={testnet} theme={theme} />
+
+        <Row label="From account" value={activeAccount?.name ?? '—'} sub={quotedFrom} theme={theme} />
+        <Row label="To" value={quote.to} mono theme={theme} />
+        <RecipientContactNotice match={contactMatchFor(quote.to)} address={quote.to} />
+        <Row label="NFT" value={nftParams?.name ?? '—'} sub={nftParams?.collection ?? null} theme={theme} />
+        <Row label="Token ID" value={quote.tokenId.toString()} mono theme={theme} />
+        <Row label="Contract" value={quote.contract} mono theme={theme} />
+        <Row label="Standard" value={standardLabel(quote.standard)} theme={theme} />
+        {quote.standard === 'erc1155' ? (
+          <Row
+            label="Copies to send"
+            value={`${quote.amount.toString()} of ${hideAmounts ? '••••' : quote.ownedBalance.toString()} held`}
+            theme={theme}
+          />
+        ) : null}
+        <Row
+          label={`Max network fee (paid in ${evmChain.displaySymbol})`}
+          value={`${exact(quote.fee, nativeDecimals)} ${evmChain.displaySymbol}`}
+          sub={fiatOf(nativePriceId, quote.fee, nativeDecimals)}
+          theme={theme}
+        />
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          Worst case at {exact(quote.maxFeePerGas, 9)} gwei max fee ×{' '}
+          {quote.gasLimit.toString()} gas; the actual fee is usually lower,
+          and the unused part is not charged. Sent with safeTransferFrom: if
+          the recipient is a contract that cannot accept NFTs, the transfer
+          reverts instead of locking the NFT away.
+          {quote.gasIsFallback
+            ? ' Gas estimation failed, so a conservative default gas limit is shown.'
+            : ''}
+        </Text>
+        <Row
+          label={`${evmChain.displaySymbol} balance`}
+          value={`${exact(quote.ethBalance, nativeDecimals)} ${evmChain.displaySymbol}`}
+          theme={theme}
+        />
+
+        <BalanceChangePreview
+          url={url}
+          request={{ from: account.address, to: quote.contract, value: 0n, data: quote.data }}
+        />
+
+        {!simulationFailed ? (
+          <Text style={[styles.simulationOk, { color: theme.success }]}>
+            Pre-flight simulation passed (eth_call).
+          </Text>
+        ) : (
+          <View style={styles.simulationBlock}>
+            <WarningBox>
+              Pre-flight simulation failed: {quote.simulation.ok ? '' : quote.simulation.reason}.
+              This transaction would very likely fail on-chain and still cost the fee.
+            </WarningBox>
+            <View style={styles.overrideRow}>
+              <Switch value={overrideSimulation} onValueChange={setOverrideSimulation} />
+              <Text style={[styles.overrideLabel, { color: theme.text }]}>
+                Send anyway (I understand it will probably fail)
+              </Text>
+            </View>
+          </View>
+        )}
+
+        {phase === 'sending' ? (
+          <View style={styles.center}>
+            <ActivityIndicator size="large" color={theme.accent} />
+            <Text style={[styles.hint, { color: theme.textMuted }]}>Signing and broadcasting…</Text>
+          </View>
+        ) : (
+          <>
+            <Button title="Send NFT" onPress={() => void onSend()} disabled={blocked} />
+            <Button title="Back" variant="secondary" onPress={() => setPhase('form')} />
+          </>
+        )}
+      </ScrollView>
+    );
+  }
+
   // -------------------------------------------------------------- confirm
   if (
     (phase === 'confirm' || phase === 'sending') &&
     quote &&
     quote.kind !== 'aa' &&
     quote.kind !== 'erc20' &&
+    quote.kind !== 'nft' &&
     network
   ) {
     const simulationFailed = quote.kind === 'evm' && !quote.simulation.ok;
@@ -1043,6 +1230,26 @@ export function SendScreen({ route, navigation }: Props) {
         </View>
       ) : null}
 
+      {nftMode && nft && nftParams ? (
+        <View
+          style={[styles.aaToggleBox, { backgroundColor: theme.card, borderColor: theme.border }]}
+        >
+          <Text style={[styles.overrideLabel, { color: theme.text }]}>{nftParams.name}</Text>
+          <Text style={[styles.hint, { color: theme.textMuted }]}>
+            {nftParams.collection} · {standardLabel(nft.standard)} · contract{' '}
+            {nft.contract.slice(0, 10)}…{nft.contract.slice(-8)} · token ID{' '}
+            {nft.tokenId.toString()}
+          </Text>
+          <Text style={[styles.hint, { color: theme.textMuted }]}>
+            Sending this NFT from your {evmChain.label} address with
+            safeTransferFrom. The network fee is paid in {evmChain.displaySymbol}.
+            Smart-account sends are not available for NFTs yet, so NFT sends
+            always go from your regular address. Ownership is re-checked
+            on-chain before you confirm.
+          </Text>
+        </View>
+      ) : null}
+
       {aaAvailable ? (
         <View
           style={[styles.aaToggleBox, { backgroundColor: theme.card, borderColor: theme.border }]}
@@ -1075,7 +1282,7 @@ export function SendScreen({ route, navigation }: Props) {
             setRecipient(t);
             setFormError(null);
           }}
-          placeholder={token ? 'Ethereum address' : `${account.symbol} address`}
+          placeholder={token || nftMode ? 'Ethereum address' : `${account.symbol} address`}
           placeholderTextColor={theme.textMuted}
           autoCapitalize="none"
           autoCorrect={false}
@@ -1104,7 +1311,7 @@ export function SendScreen({ route, navigation }: Props) {
       */}
       <QrScanner
         visible={scannerOpen}
-        rationale={`Point the camera at a ${token ? 'Ethereum' : account.name} address QR code. The camera is only used to read the code.`}
+        rationale={`Point the camera at a ${token || nftMode ? 'Ethereum' : account.name} address QR code. The camera is only used to read the code.`}
         onScanned={(data) => {
           setScannerOpen(false);
           const scanned = extractScannedAddress(route.params.chainId, data);
@@ -1159,27 +1366,35 @@ export function SendScreen({ route, navigation }: Props) {
         />
       ) : null}
 
-      <Text style={[styles.label, { color: theme.textMuted }]}>Amount ({symbol})</Text>
-      <View style={styles.amountRow}>
-        <TextInput
-          value={amountText}
-          onChangeText={(t) => {
-            setAmountText(t);
-            setFormError(null);
-          }}
-          placeholder="0.0"
-          placeholderTextColor={theme.textMuted}
-          keyboardType="decimal-pad"
-          style={[...inputStyle, styles.amountInput]}
-        />
-        <Button
-          title={maxBusy ? '…' : 'Max'}
-          variant="secondary"
-          onPress={() => void onMax()}
-          disabled={!url || maxBusy}
-          style={styles.maxButton}
-        />
-      </View>
+      {nft && nft.standard === 'erc721' ? null : (
+        <>
+          <Text style={[styles.label, { color: theme.textMuted }]}>
+            {nft
+              ? `Amount (copies — you hold ${hideAmounts ? '••••' : nft.indexedBalance.toString()})`
+              : `Amount (${symbol})`}
+          </Text>
+          <View style={styles.amountRow}>
+            <TextInput
+              value={amountText}
+              onChangeText={(t) => {
+                setAmountText(t);
+                setFormError(null);
+              }}
+              placeholder={nft ? '1' : '0.0'}
+              placeholderTextColor={theme.textMuted}
+              keyboardType={nft ? 'number-pad' : 'decimal-pad'}
+              style={[...inputStyle, styles.amountInput]}
+            />
+            <Button
+              title={maxBusy ? '…' : 'Max'}
+              variant="secondary"
+              onPress={() => void onMax()}
+              disabled={!url || maxBusy}
+              style={styles.maxButton}
+            />
+          </View>
+        </>
+      )}
 
       {formError ? (
         <Text style={[styles.fieldError, { color: theme.danger }]}>{formError}</Text>

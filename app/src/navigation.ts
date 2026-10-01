@@ -1,3 +1,5 @@
+import type { NftSendParams } from './wallet/send-nft';
+
 /** Route names and params for the single native stack. */
 export type RootStackParamList = {
   // Onboarding (shown while no wallet exists)
@@ -10,9 +12,11 @@ export type RootStackParamList = {
   Receive: { chainId: string };
   /**
    * tokenId (a CAIP-19 id from the tracked-token store) switches the send
-   * screen into ERC-20 token mode; omitted, the chain's native coin is sent.
+   * screen into ERC-20 token mode; nft (phase 7 item 4) switches it into
+   * NFT mode (ERC-721 / ERC-1155 safeTransferFrom on the active EVM chain);
+   * with neither, the chain's native coin is sent.
    */
-  Send: { chainId: string; tokenId?: string };
+  Send: { chainId: string; tokenId?: string; nft?: NftSendParams };
   Activity: { chainId: string };
   /** EVM-only swap flow (phase 5 item 1); the active EVM chain applies. */
   Swap: undefined;
@@ -21,4 +25,8 @@ export type RootStackParamList = {
   Connections: undefined;
   /** Contacts management (phase 6 item 4); lists the active networks. */
   Contacts: undefined;
+  /** NFT gallery for the active account on the active EVM chain (phase 7 item 4). */
+  Nfts: undefined;
+  /** One NFT, by CAIP-19 id (decimal token id), from the gallery's list. */
+  NftDetail: { assetId: string };
 };

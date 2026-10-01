@@ -27,6 +27,6 @@ export type { UtxoChainConfig } from './chains/utxo.js';
 export { solanaKeyProvider } from './chains/solana.js';
 export { formatAssetId, parseAssetId } from './assets/caip19.js';
 export type { AssetId } from './assets/caip19.js';
-export { AssetRegistry } from './assets/assets.js';
-export type { Asset, FungibleAsset, NonFungibleAsset } from './assets/assets.js';
+export { AssetRegistry, nonFungibleAssetId, nonFungibleTokenId } from './assets/assets.js';
+export type { Asset, FungibleAsset, NftNamespace, NonFungibleAsset } from './assets/assets.js';
 export type { HistoryEntry, HistoryPage, HistoryProvider } from './history/types.js';

@@ -27,6 +27,52 @@ export interface NonFungibleAsset {
 
 export type Asset = FungibleAsset | NonFungibleAsset;
 
+/** CAIP-19 namespaces of the EVM NFT standards the wallet can send. */
+export type NftNamespace = 'erc721' | 'erc1155';
+
+const MAX_UINT256 = (1n << 256n) - 1n;
+const DECIMAL_TOKEN_ID = /^(0|[1-9][0-9]{0,77})$/;
+
+/**
+ * Canonical CAIP-19 id for one EVM NFT: `{chainId}/{namespace}:{contract}/
+ * {tokenId}` with the token id written in decimal (the form used by the
+ * CAIP-19 erc721 example and by ERC-721/1155 indexers). Token ids are
+ * uint256 values, so they are taken as bigint and range-checked; a
+ * JavaScript number could not represent most real ids exactly.
+ */
+export function nonFungibleAssetId(
+  chainId: string,
+  namespace: NftNamespace,
+  contract: string,
+  tokenId: bigint,
+): AssetId {
+  if (tokenId < 0n || tokenId > MAX_UINT256) {
+    throw new Error('NFT token id must be a uint256');
+  }
+  const assetId: AssetId = { chainId, namespace, reference: contract, tokenId: tokenId.toString(10) };
+  formatAssetId(assetId); // validates every part
+  return assetId;
+}
+
+/**
+ * The exact token id of an NFT asset id. Only the canonical decimal form
+ * produced by nonFungibleAssetId is accepted (no sign, no leading zeros,
+ * no hex), so one token can never be addressed by two different ids.
+ */
+export function nonFungibleTokenId(assetId: AssetId | string): bigint {
+  const parsed = typeof assetId === 'string' ? parseAssetId(assetId) : assetId;
+  if (parsed.namespace !== 'erc721' && parsed.namespace !== 'erc1155') {
+    throw new Error(`Not an NFT asset namespace: ${parsed.namespace}`);
+  }
+  const raw = parsed.tokenId;
+  if (raw === undefined || !DECIMAL_TOKEN_ID.test(raw)) {
+    throw new Error(`NFT asset id needs a canonical decimal token id: ${raw ?? '(none)'}`);
+  }
+  const value = BigInt(raw);
+  if (value > MAX_UINT256) throw new Error('NFT token id must be a uint256');
+  return value;
+}
+
 /**
  * User- and app-curated asset list. Nothing here is a source of truth about
  * the chain: registering an asset only tells the wallet to track it. The
