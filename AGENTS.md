@@ -2050,3 +2050,10 @@ account in the app, smart-account WalletConnect sessions (5792 /
 1271-6492 signing) and the decline paths — the first needs only the
 emulator (Account 2's Kernel account is undeployed), the rest need a
 dApp session.
+
+- [x] PRODUCT FINDING RESOLVED (same day): Settings rows that show a
+      stored URL (bundler, paymaster, history indexer, NFT indexer) now
+      render maskUrlForDisplay(value) — scheme and host only, with "/…"
+      or "?…" for anything after — so an embedded API key is never on
+      screen; the stored value and the editor are unchanged. check-aa.mjs
+      71/71 (6 new masking checks); tsc clean.
