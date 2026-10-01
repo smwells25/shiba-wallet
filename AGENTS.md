@@ -2057,3 +2057,38 @@ dApp session.
       or "?…" for anything after — so an embedded API key is never on
       screen; the stored value and the editor are unchanged. check-aa.mjs
       71/71 (6 new masking checks); tsc clean.
+
+## Phase 7 complete (2026-10-01)
+
+All five build items landed and are pushed: Kernel v3.3 (ERC-7579) as a
+selectable smart-account type (engine spec + app), batching with ERC-5792
+over WalletConnect, smart-account signatures (ERC-1271/6492/7739 engine
++ smart-account-bound sessions), the NFT gallery and send (Chairperson
+requirement 6), and risk warnings plus the approvals manager; plus the
+framework comparison (docs/AA_FRAMEWORKS.md), the RPC fallback list, the
+Expo ESLint baseline, and the live-found fixes (bundler priority-fee
+floor, Settings URL masking). Engine: 445 tests across five packages.
+App: 19 offline suites, 1,531 checks (test-units 45, check-aa 71,
+check-aa-kernel 74, check-wc 197, check-wc-5792 89, check-token-send
+37, check-swap 89, check-devmode 71, check-qr 31, check-tokens 28,
+check-doge 83, check-token-history 17, check-simulation 49,
+check-prices 110, check-contacts 110, check-accounts 111, check-nfts
+120, check-rpc-fallback 67, check-approvals 99). Live on Sepolia: two
+Kernel accounts deployed and operated from the smoke harness, and the
+first in-app smart-account send through Alchemy's bundler, included
+on-chain.
+
+Open items carried forward:
+- Bundler vendor selection must require Kernel DEPLOYMENT acceptance
+  (Alchemy rejects both Kernel factory paths under ERC-7562); needs a
+  ZeroDev or Pimlico key from the Chairperson to test.
+- Mainnet readiness conditions C1–C3 for Kernel (audit of the shipped
+  version, bounty coverage, v3 support horizon) from AA_FRAMEWORKS.md.
+- Live smart-account WalletConnect sessions (5792, 1271/6492 signing)
+  and the undeployed-account rejection path in the app; live NFT send
+  (needs a test NFT); counsel review of (L)GPL/AGPL module use.
+- Follow-ups: cap the no-indexer token-history lookback to the
+  endpoint's answered depth; a Sepolia RPC fallback; ESLint burn-down
+  (44 errors); emulator pass over the NFT, approvals and risk screens.
+- Phase 8 headline: EIP-7702 (verify the v0.7 authorization path on
+  Sepolia first), then session keys and passkeys on the Kernel base.
