@@ -1766,3 +1766,36 @@ recovers (27/27 when pointed at another mainnet RPC).
       itself. The same strictness hit the SimpleAccount factory in
       phase 2 (AA13), so this is a property of the vendor, not of
       Kernel alone. Nothing on mainnet was touched.
+
+- [x] INFRA FINDING RESOLVED (commit 482a6c3): ordered keyless default
+      RPC fallbacks per chain, all live-verified 2026-10-01 and cited to
+      provider pages — Ethereum: ethereum-rpc.publicnode.com (documented
+      canonical, currently down, kept first so it recovers automatically)
+      then ethereum.publicnode.com; Sepolia:
+      ethereum-sepolia-rpc.publicnode.com (no second documented keyless
+      endpoint found); Bitcoin: blockstream.info/api then
+      mempool.space/api; Solana: api.mainnet.solana.com (now named first
+      on solana.com's clusters page), api.mainnet-beta.solana.com,
+      solana.publicnode.com; Dogecoin unchanged (not set).
+      app/src/config/endpoint-probe.ts probes candidates in order with a
+      4 s timeout and a chain-identity check per CAIP-2 namespace
+      (eth_chainId; Esplora /block-height/0 genesis hash; Solana
+      getGenesisHash), caches the choice in memory only, re-probes after
+      reportEndpointFailure, never returns a wrong-chain endpoint even as
+      a last resort, and never probes around a user override; Settings
+      shows "default (2 of 2: ethereum.publicnode.com)" plus a note when
+      the primary is unreachable. Rejected candidates recorded in the
+      file comments (key-required: ankr, drpc free plan; down:
+      rpc.sepolia.org, eth.llamarpc.com, solana-rpc.publicnode.com,
+      1rpc.io/sol; undocumented: ethereum-sepolia.publicnode.com).
+      Flags: ethereum.publicnode.com and solana.publicnode.com are
+      PublicNode page hostnames observed to accept JSON-RPC, not
+      documented RPC URLs (each probe still verifies chain identity);
+      mempool.space answers GET /fee-estimates in the right shape but
+      documents only /api/v1/fees/recommended; only Home balances switch
+      endpoints mid-session (other screens pick the healthy default at
+      lookup time and move after the next failure report, the 10 s
+      all-down window, or relaunch). Verified: check-rpc-fallback.mjs
+      67/67 offline (71 with --live); all 16 app suites green incl.
+      check-tokens 28/28 through the fallback; tsc clean; expo export
+      bundles.
