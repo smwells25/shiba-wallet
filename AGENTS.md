@@ -1494,3 +1494,53 @@ requests): two queued requests surfacing in arrival order, and a live
 wallet-side switch-chain decline (Uniswap pre-filters switches). Fiat display could
 not be eyeballed here: test mode prices nothing and the mainnet
 balances are zero (covered offline by check-prices 110/110).
+
+## Phase 7 plan (approved 2026-10-01): the AA-native phase
+
+Scope confirmed with the Chairperson after a standards survey (ERC-4337
+built and live-proven; ERC-7677 built; ERC-7579, ERC-5792, EIP-7702,
+ERC-1271/6492/7739 and ERC-7715 designed or unmentioned; see the
+2026-10-01 conversation record below).
+
+1. ERC-7579 modular smart accounts (Tier 1 feature 22): a second
+   SmartAccountSpec beside SimpleAccount, Kernel v3 first per
+   docs/SESSION_KEYS.md, factory addresses per-chain config with the
+   AA_STACK on-chain verification procedure, proven on Sepolia with
+   test ETH. Unlocks session keys and passkeys later.
+2. Batching (feature 17): smart-account token sends as one atomic
+   approve+transfer, and ERC-5792 wallet_sendCalls /
+   wallet_getCapabilities / wallet_getCallsStatus over WalletConnect
+   (Uniswap already requests them at pairing).
+3. Smart-account signatures: ERC-1271 validation, ERC-6492 for
+   counterfactual (undeployed) accounts, ERC-7739 replay-safe typed-data
+   wrapping, and WalletConnect sessions that bind the smart-account
+   address, so a 4337 user can use SIWE logins and sign orders. Without
+   this, a smart-account user cannot log in to dApps — a cliff, not
+   polish.
+4. NFT gallery and send (Chairperson requirement 6; features 40–41):
+   ERC-721/1155 ownership via a runtime-configured indexer (history
+   indexer pattern), metadata rendering, sends through the existing
+   confirm flow and balance-change preview.
+5. Risk warnings (feature 50) and approvals-manager groundwork (51):
+   unverified-contract and first-interaction warnings, token-approval
+   listing.
+6. Standing items as inputs appear: Dogecoin mainnet broadcast, live
+   0x quotes, live paymaster sponsorship, EAS device build.
+
+Also requested by the Chairperson (2026-10-01): docs/AA_FRAMEWORKS.md,
+a multi-dimensional comparison of smart-account frameworks
+(authentication, authorization, recovery, security and maturity, age,
+adoption and value secured, audits, formal verification, bug bounties,
+development activity, adopting wallets, vendor lock-in, upgradability
+risk, licensing and commercial constraints). It must land BEFORE item 1
+commits to Kernel, so the choice is evidence-based.
+
+EIP-7702 is queued as the phase 8 headline: it needs the EntryPoint
+v0.8 upgrade (AA_STACK.md), and whether Kernel v3 can serve as the 7702
+delegation target must be verified from ZeroDev's documentation first.
+
+Wave 1 (parallel, disjoint files): the frameworks doc (agent, docs/
+only), item 1's ENGINE half (agent, packages/chains-evm + scripts/testnet
+only, no app files), item 4 (agent, app/ only). Wave 2: item 1's app
+wiring, then items 2, 3 and 5 sequenced by file overlap. Subagents run on
+Opus per the Chairperson's credit directive.
