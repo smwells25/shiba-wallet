@@ -1544,3 +1544,114 @@ only), item 1's ENGINE half (agent, packages/chains-evm + scripts/testnet
 only, no app files), item 4 (agent, app/ only). Wave 2: item 1's app
 wiring, then items 2, 3 and 5 sequenced by file overlap. Subagents run on
 Opus per the Chairperson's credit directive.
+
+## Phase 7 progress
+
+- [x] Item 1, engine half — Kernel v3.3 (ERC-7579) SmartAccountSpec
+      (commit 07d5ba7). packages/chains-evm/src/kernel-account.ts:
+      createKernelAccountSpec with the ECDSA validator as root validator
+      and the seed-derived EOA as owner (D1 holds); KERNEL_V3_3 constants
+      (meta factory 0xd703aaE79538628d27099B8c4f621bE4CCd142d5, factory
+      0x2577507b78c2008Ff367261CB6285d44ba5eF2E9, kernel
+      0xd6CEDDe84be40893d153Be9d467CD6aD37875b28, ECDSA validator
+      0x845ADb2C711129d4f3966735eD98a9F09fC4cE57) from the kernel README
+      at tag v3.3 (commit cd697c7e, 2025-04-03 — the latest v3.x; main is
+      now Kernel v4 targeting EntryPoint v0.9, deliberately NOT used),
+      cross-checked against the ZeroDev SDK constants; verifyKernelDeployment
+      (the AA_STACK on-chain check for Kernel); predictKernelAddress (local
+      CREATE2 that the spec enforces against the factory's answer, so a
+      dishonest RPC cannot redirect funds). Confirmed read-only on Sepolia
+      and mainnet: code at all four addresses, factory.implementation(),
+      entrypoint() == v0.7, accountId() == kernel.advanced.v0.3.3,
+      metaFactory approved and staked (0.1 ETH / 86400 s), validator
+      isModuleType(1). Counterfactual address for the standard test owner
+      (index 0: 0xB67b8b7cCA718EAC64d2b59ba568585A9FC69a42) equals the
+      factory's getAddress, EntryPoint.getSenderAddress and ethers
+      CREATE2; proxy init-code hash equals the SDK's published value.
+      Validator routing via the nonce key (key 0 = root validator);
+      signature is a bare 65-byte EIP-191 ECDSA signature; the
+      gas-estimation stub uses the SDK's dummy signature because solady's
+      recover reverts on garbage. abi.ts gained fixedBytes and tuple
+      (additive). 20 new tests (chains-evm 136; engine 372 across five
+      packages); the CTO re-verified the Kernel-only commit in an isolated
+      worktree. scripts/testnet/kernel-smoke.mjs: dry run
+      (KERNEL_SMOKE_DRY_RUN=1) builds, signs (public test mnemonic) and
+      runs a deployment + ERC-7579 batch op through EntryPoint.handleOps
+      on Sepolia with a balance override — validation passed, execution
+      success=true, and a flipped signature byte reverts; the LIVE leg
+      (fund, deploy via the staked meta factory, two ops through the
+      bundler, SELF_BUNDLE_ON_REJECT fallback) has NOT been run yet —
+      command in docs/AA_STACK.md "Kernel v3". Unverified: whether
+      Alchemy's bundler accepts Kernel deployment ops through the meta
+      factory. FACT FIX: docs/SESSION_KEYS.md claimed ERC-7579 reached
+      final status in 2024; eips.ethereum.org lists it as Draft (created
+      2023-12-14), corrected with the consequence that the adapter stays
+      pinned to a release, not "the standard".
+
+- [x] Item 4 — NFT gallery and send, ERC-721 + ERC-1155 (commit
+      b1750f3; Chairperson requirement 6). Engine:
+      packages/chains-evm/src/nft-indexer.ts (vendor-neutral
+      NftOwnershipProvider + Alchemy NFT API v3 adapter over an injected
+      fetch; shapes verified at www.alchemy.com/docs/reference/
+      nft-api-endpoints/.../get-nf-ts-for-owner-v-3: GET
+      /nft/v3/{apiKey}/getNFTsForOwner with owner/withMetadata/pageSize
+      (max 100)/pageKey; ownedNfts[] with contract{address,name,symbol,
+      tokenType,isSpam}, tokenId (decimal string), tokenType, image{...},
+      raw{tokenUri,metadata}, balance; validAt{blockNumber,blockHash,
+      blockTimestamp}; pageKey null when done), exact bigint token ids
+      and 1155 balances, verifyNftOwnershipEndpoint; erc721.ts /
+      erc1155.ts (safeTransferFrom 3-arg and 5-arg, ownerOf, balanceOf,
+      the 1155 {id} substitution rule; selectors computed with keccak
+      from the ERC texts and pinned against ethers). Core gained
+      nonFungibleAssetId / nonFungibleTokenId (uint256 range-checked).
+      App: app/src/wallet/nfts.ts (NFT indexer config with
+      verify-before-save — the REST indexer has no chain id, so saving
+      checks its validAt block against the active chain's RPC by hash
+      when present, else by exact timestamp; a /v2/ node URL is refused
+      with a pointer to /nft/v3/; per-account+chain cache; grouping;
+      URI and image rules), NftsScreen + NftDetailScreen (linked from
+      the Home Ethereum row; honest unavailable state until configured),
+      Settings "NFT indexer" section, SendScreen NFT mode via
+      app/src/wallet/send-nft.ts (ownership re-checked on-chain at
+      quote time, calldata through the EXISTING sendEvm — no second
+      signing path; recipient validation, contacts notice/look-alike
+      warning, eth_call gate, BalanceChangePreview "You send NFT #…",
+      biometric gate all reused unchanged; 1155 amount bounded by the
+      holding; AA toggle hidden in NFT mode). Privacy/safety rules:
+      ipfs:// via https://ipfs.io/ipfs/ (the gateway sees the device IP
+      and requested CIDs — a production release should let the user
+      choose a gateway); data: URIs decoded locally; http(s) passed
+      through; ar://, javascript: and relative paths refused; images
+      fetched by the app with a 4 MiB cap and type-checked from their
+      bytes, shown as data: URIs; SVG NEVER rendered (scripts) —
+      placeholder instead; spam-flagged collections hidden behind a
+      toggle and never loaded from their original hosts (unique image
+      links can leak a holder's IP); metadata text capped at 512 KiB and
+      sanitized. Docs quirks recorded: the docs never state that one key
+      serves both /v2/ and /nft/v3/, so Settings has a separate NFT URL
+      field; validAt.blockHash is null on mainnet but present on Sepolia;
+      isSpam arrives as a JSON boolean; spam ERC-721 entries reported
+      with balances 2–41 whose ownerOf names another owner are skipped
+      and counted, not guessed. Verified: 14 engine tests; app/scripts/
+      check-nfts.mjs 120/120 offline (ids > 2^53, 1155 balances > 2^64,
+      all config reject cases persist nothing, SVG refusal, calldata ==
+      ethers, offline sign+broadcast decoded field by field for 721 on
+      mainnet and 1155 on Sepolia); all fourteen other app suites green;
+      tsc clean; expo export bundles (6.6MB Hermes) with the new strings.
+      Live read-only probes (key masked): vitalik.eth over two pages
+      incl. 2 ids > 2^53; the standard test address holds 9 NFTs on
+      Sepolia; a mainnet NFT URL saved in Sepolia mode is refused. Not
+      verified: on-device rendering (grid, detail, dark mode; GIF/WebP
+      on Android), a live NFT send (no test NFT yet), smart-account NFT
+      sends (later slice with batching).
+
+INFRA FINDING (2026-10-01): https://ethereum-rpc.publicnode.com — the
+app's DEFAULT mainnet RPC — fails the TLS handshake ("shutdown while in
+init") while https://ethereum.publicnode.com on the same Cloudflare IPs
+answers normally, i.e. a provider-side problem with the documented
+hostname, not a local one; publicnode's own page still documents
+ethereum-rpc.publicnode.com as canonical. The default was left as
+documented. Follow-up filed: give every chain an ordered fallback list
+of default RPCs so one dead hostname never blanks the Home screen.
+check-tokens.mjs's live step fails for the same reason until the host
+recovers (27/27 when pointed at another mainnet RPC).
