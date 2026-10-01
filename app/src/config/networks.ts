@@ -3,6 +3,11 @@ import type { NetworkDefault } from './defaults';
 import { networkDefaultFor, resolveActiveNetworks } from './defaults';
 import { loadPrefs } from './prefs';
 import { blockbookHeaders, getBlockbookConfig } from '../wallet/blockbook';
+import {
+  createDefaultEndpointResolver,
+  resolveNetworkUrl,
+  type DefaultChoice,
+} from './endpoint-probe';
 
 /**
  * Per-chain RPC/REST endpoint configuration: verified public defaults (see
@@ -20,7 +25,18 @@ import { blockbookHeaders, getBlockbookConfig } from '../wallet/blockbook';
  * (see resolveActiveNetworks in ./defaults.ts); overrides are keyed by the
  * ACTIVE chain's CAIP-2 id, so a custom Sepolia RPC and a custom mainnet
  * RPC are stored under different keys and can never bleed into each other.
+ *
+ * DEFAULT FALLBACK (2026-10-01): without an override, the URL is chosen
+ * from the network's ordered default candidates by ./endpoint-probe.ts —
+ * probed in order with a short timeout and a chain-identity check, the
+ * first healthy one used and cached in memory for the session (never in
+ * AsyncStorage). Callers that see a request fail through a default can
+ * call reportEndpointFailure() so the next resolution probes again. A user
+ * override always wins and is never probed around.
  */
+
+/** Session-lifetime, in-memory choice among each chain's default candidates. */
+const defaultResolver = createDefaultEndpointResolver();
 
 const OVERRIDES_KEY = 'shiba-wallet.rpc-endpoints.v1';
 
@@ -70,49 +86,81 @@ export interface NetworkEndpoint {
    * balances/history/send callers; absent for every other kind.
    */
   headers?: Record<string, string>;
+  /**
+   * Which default candidate is in use (position, total, whether the primary
+   * failed its probe). Present only when the URL is a default, i.e. no
+   * override is set and the network has default candidates.
+   */
+  defaultChoice?: DefaultChoice;
+}
+
+/** Resolves one active network (slot) to its effective endpoint. */
+async function resolveSlot(
+  slot: string,
+  network: NetworkDefault,
+  overrides: OverrideMap,
+): Promise<NetworkEndpoint> {
+  if (network.kind === 'blockbook') {
+    // Blockbook chains (Dogecoin) resolve from their own verified
+    // config store (URL + optional API key, ../wallet/blockbook.ts),
+    // not the plain URL-override map: a stored URL there passed the
+    // save-time UTXO-query verification by construction.
+    const config = await getBlockbookConfig(network.chainId);
+    const headers = blockbookHeaders(config.apiKey);
+    return {
+      forChainId: slot,
+      network,
+      url: config.url,
+      isOverride: config.url !== null,
+      ...(headers ? { headers } : {}),
+    };
+  }
+  // Keyed by the ACTIVE chain id: mainnet and Sepolia overrides live
+  // under different keys and never mix. An override is used as is;
+  // otherwise the first healthy default candidate is chosen.
+  const resolved = await resolveNetworkUrl(network, overrides[network.chainId], defaultResolver);
+  return {
+    forChainId: slot,
+    network,
+    url: resolved.url,
+    isOverride: resolved.isOverride,
+    ...(resolved.defaultChoice ? { defaultChoice: resolved.defaultChoice } : {}),
+  };
 }
 
 /**
  * Resolves the effective endpoint for one chain. Accepts either a slot id
  * (the mainnet CAIP-2 ids accounts and routes carry) or the active
  * network's own chain id (e.g. 'eip155:11155111' while Sepolia mode is on).
+ * Only the requested chain is resolved (and, if needed, probed).
  */
 export async function getEndpoint(chainId: string): Promise<NetworkEndpoint | undefined> {
-  const all = await getAllEndpoints();
-  return all.find((e) => e.forChainId === chainId || e.network.chainId === chainId);
+  const [overrides, prefs] = await Promise.all([loadOverrides(), loadPrefs()]);
+  const match = resolveActiveNetworks(prefs.sepolia).find(
+    (e) => e.slot === chainId || e.network.chainId === chainId,
+  );
+  return match ? resolveSlot(match.slot, match.network, overrides) : undefined;
 }
 
 /** Resolves every chain's effective endpoint (Settings list, Home refresh). */
 export async function getAllEndpoints(): Promise<NetworkEndpoint[]> {
   const [overrides, prefs] = await Promise.all([loadOverrides(), loadPrefs()]);
   return Promise.all(
-    resolveActiveNetworks(prefs.sepolia).map(async ({ slot, network }) => {
-      if (network.kind === 'blockbook') {
-        // Blockbook chains (Dogecoin) resolve from their own verified
-        // config store (URL + optional API key, ../wallet/blockbook.ts),
-        // not the plain URL-override map: a stored URL there passed the
-        // save-time UTXO-query verification by construction.
-        const config = await getBlockbookConfig(network.chainId);
-        const headers = blockbookHeaders(config.apiKey);
-        return {
-          forChainId: slot,
-          network,
-          url: config.url,
-          isOverride: config.url !== null,
-          ...(headers ? { headers } : {}),
-        };
-      }
-      // Keyed by the ACTIVE chain id: mainnet and Sepolia overrides live
-      // under different keys and never mix.
-      const override = overrides[network.chainId];
-      return {
-        forChainId: slot,
-        network,
-        url: override ?? network.defaultUrl,
-        isOverride: override !== undefined,
-      };
-    }),
+    resolveActiveNetworks(prefs.sepolia).map(({ slot, network }) =>
+      resolveSlot(slot, network, overrides),
+    ),
   );
+}
+
+/**
+ * Reports that a real request through a DEFAULT endpoint failed, so the
+ * next getEndpoint/getAllEndpoints call re-probes that chain's candidates
+ * from the top. `networkChainId` is the network's own CAIP-2 id
+ * (endpoint.network.chainId). No effect for overrides or when `url` is not
+ * the cached choice. Returns true when the cached choice was dropped.
+ */
+export function reportEndpointFailure(networkChainId: string, url: string): boolean {
+  return defaultResolver.reportFailure(networkChainId, url);
 }
 
 /**

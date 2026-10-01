@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getAllEndpoints } from '../config/networks';
+import { getAllEndpoints, getEndpoint, reportEndpointFailure } from '../config/networks';
 import { fetchNativeBalance, formatUnits } from './balances';
 import type { ChainAccount } from './WalletContext';
 
@@ -81,20 +81,48 @@ export function useBalances(accounts: ChainAccount[]): BalancesHook {
           }
           return;
         }
-        const amount = await fetchNativeBalance(
-          endpoint.network.kind,
-          endpoint.url,
-          account.address,
-          endpoint.headers,
-        );
+        let used = endpoint;
+        let amount: bigint;
+        try {
+          amount = await fetchNativeBalance(
+            endpoint.network.kind,
+            endpoint.url,
+            account.address,
+            endpoint.headers,
+          );
+        } catch (e) {
+          // A DEFAULT endpoint that fails a real request is dropped from the
+          // in-memory choice and the chain's candidates are probed again
+          // (config/endpoint-probe.ts). If that lands on a different healthy
+          // candidate, retry once through it; otherwise surface the error.
+          // User overrides are never switched away from.
+          if (endpoint.isOverride || !endpoint.defaultChoice) throw e;
+          if (!reportEndpointFailure(endpoint.network.chainId, endpoint.url)) throw e;
+          const next = await getEndpoint(account.chainId);
+          if (
+            !next?.url ||
+            next.url === endpoint.url ||
+            next.isOverride ||
+            next.network.chainId !== endpoint.network.chainId
+          ) {
+            throw e;
+          }
+          used = next;
+          amount = await fetchNativeBalance(
+            next.network.kind,
+            next.url,
+            account.address,
+            next.headers,
+          );
+        }
         if (generation.current === gen) {
           setChainState(account.chainId, {
             status: 'ok',
-            display: formatUnits(amount, endpoint.network.decimals),
-            symbol: endpoint.network.symbol,
+            display: formatUnits(amount, used.network.decimals),
+            symbol: used.network.symbol,
             amount,
-            decimals: endpoint.network.decimals,
-            networkChainId: endpoint.network.chainId,
+            decimals: used.network.decimals,
+            networkChainId: used.network.chainId,
           });
         }
       } catch (e) {

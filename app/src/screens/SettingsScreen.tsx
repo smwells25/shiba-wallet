@@ -13,6 +13,7 @@ import {
   setEndpointOverride,
 } from '../config/networks';
 import { type NetworkDefault } from '../config/defaults';
+import { describeDefaultChoice, describeDefaultFallbackNote } from '../config/endpoint-probe';
 import { AUTO_LOCK_CHOICES } from '../config/prefs';
 import { useTheme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
@@ -73,7 +74,15 @@ function EndpointRow({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
 
-  const { network, url, isOverride } = endpoint;
+  const { network, url, isOverride, defaultChoice } = endpoint;
+  // Which default candidate is active ("default (2 of 2: host)") and, when
+  // the primary failed its probe, a short plain-language note. In-memory
+  // state from config/networks.ts; nothing new is stored.
+  const tag = isOverride ? 'custom' : defaultChoice ? describeDefaultChoice(defaultChoice) : 'default';
+  const fallbackNote =
+    !isOverride && defaultChoice
+      ? describeDefaultFallbackNote(defaultChoice, network.defaultUrls)
+      : null;
 
   const beginEdit = () => {
     setDraft(url ?? '');
@@ -100,8 +109,8 @@ function EndpointRow({
     <View style={[styles.endpointRow, { backgroundColor: theme.card, borderColor: theme.border }]}>
       <View style={styles.endpointHeader}>
         <Text style={[styles.endpointLabel, { color: theme.text }]}>{network.label}</Text>
-        <Text style={[styles.endpointTag, { color: theme.textMuted }]}>
-          {isOverride ? 'custom' : 'default'}
+        <Text style={[styles.endpointTag, { color: theme.textMuted }]} numberOfLines={1}>
+          {tag}
         </Text>
       </View>
       {editing ? (
@@ -128,7 +137,7 @@ function EndpointRow({
               style={styles.endpointButton}
             />
           </View>
-          {(isOverride || network.defaultUrl) && (
+          {(isOverride || network.defaultUrls.length > 0) && (
             <Button title="Reset to default" variant="secondary" onPress={() => void reset()} />
           )}
         </View>
@@ -139,6 +148,9 @@ function EndpointRow({
           </Text>
           {!url && network.note ? (
             <Text style={[styles.endpointNote, { color: theme.textMuted }]}>{network.note}</Text>
+          ) : null}
+          {fallbackNote ? (
+            <Text style={[styles.endpointNote, { color: theme.textMuted }]}>{fallbackNote}</Text>
           ) : null}
           <Button title="Edit" variant="secondary" onPress={beginEdit} />
         </View>
@@ -990,7 +1002,9 @@ export function SettingsScreen({ navigation }: Props) {
           Blockbook endpoint may additionally need a provider API key,
           which is stored only on this device and sent only to that host.
           Balances refresh with the new endpoint on the next
-          pull-to-refresh.
+          pull-to-refresh. Without a custom endpoint, each chain uses the
+          first of its built-in public defaults that answers; if that one
+          stops answering, the next is tried automatically.
         </Text>
         {endpoints.map((endpoint) =>
           endpoint.network.kind === 'blockbook' ? (
@@ -1264,6 +1278,9 @@ const styles = StyleSheet.create({
   },
   endpointTag: {
     fontSize: 12,
+    flexShrink: 1,
+    marginLeft: 8,
+    textAlign: 'right',
   },
   endpointEditor: {
     gap: 10,

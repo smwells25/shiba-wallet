@@ -1,5 +1,6 @@
 // Exercises the app's balance module (src/wallet/balances.ts) against the
-// default public endpoints (src/config/defaults.ts), outside the app.
+// default public endpoints (src/config/defaults.ts), selected the way the
+// app selects them (src/config/endpoint-probe.ts), outside the app.
 //
 // It imports the actual TypeScript modules the app runs, via Node's native
 // type stripping (available unflagged since Node 23.6; the repo toolchain is
@@ -21,6 +22,7 @@ import {
 } from '@shiba-wallet/core';
 import { DEFAULT_NETWORKS } from '../src/config/defaults.ts';
 import { fetchNativeBalance, formatUnits } from '../src/wallet/balances.ts';
+import { createDefaultEndpointResolver, describeDefaultChoice } from '../src/config/endpoint-probe.ts';
 
 const TEST_MNEMONIC =
   'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
@@ -36,19 +38,26 @@ for (const provider of providers) {
 seed.fill(0);
 
 let failures = 0;
+const resolver = createDefaultEndpointResolver();
 
 for (const network of DEFAULT_NETWORKS) {
   const address = addressByChain.get(network.chainId);
   const prefix = `${network.label.padEnd(9)} ${String(address).padEnd(44)}`;
-  if (!network.defaultUrl) {
+  if (network.defaultUrls.length === 0) {
     console.log(`${prefix} unavailable (no default endpoint${network.note ? ': by design' : ''})`);
     continue;
   }
   try {
-    const amount = await fetchNativeBalance(network.kind, network.defaultUrl, address);
+    // The same default selection the app makes (config/networks.ts): the
+    // first candidate that passes the chain-identity probe, in order.
+    const choice = await resolver.resolve(network);
+    if (!choice.healthy || !choice.url) {
+      throw new Error(`no healthy default endpoint (primary: ${choice.primaryFailure})`);
+    }
+    const amount = await fetchNativeBalance(network.kind, choice.url, address);
     console.log(
       `${prefix} ${formatUnits(amount, network.decimals, network.decimals)} ${network.symbol}` +
-        `  (${amount} base units via ${network.defaultUrl})`,
+        `  (${amount} base units via ${choice.url}, ${describeDefaultChoice(choice)})`,
     );
   } catch (e) {
     failures += 1;

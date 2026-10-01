@@ -2,7 +2,9 @@
 // src/wallet/tokens.ts) outside the app: the ABI string decoder edge cases
 // offline, the token store against an in-memory KeyValueStore, and the
 // metadata + balanceOf reads against the live default Ethereum RPC
-// endpoint (read-only eth_call queries only; nothing is signed or sent).
+// endpoint, selected exactly as the app selects it (first healthy candidate
+// of the ordered default list; read-only eth_call queries only; nothing is
+// signed or sent).
 //
 // Like check-balances.mjs, it imports the actual TypeScript modules the app
 // runs via Node's native type stripping. Run from the app directory:
@@ -16,6 +18,7 @@
 import { evmKeyProvider, formatAssetId, mnemonicToSeed } from '@shiba-wallet/core';
 import { DEFAULT_NETWORKS } from '../src/config/defaults.ts';
 import { formatUnits } from '../src/wallet/balances.ts';
+import { createDefaultEndpointResolver, describeDefaultChoice } from '../src/config/endpoint-probe.ts';
 import {
   USDC_MAINNET,
   decodeAbiString,
@@ -202,8 +205,13 @@ check('corrupt storage falls back to the USDC default', fromCorrupt.length === 1
 
 console.log('\nLive RPC (read-only eth_call against the default endpoint):');
 const evmNetwork = DEFAULT_NETWORKS.find((n) => n.chainId === 'eip155:1');
-const url = evmNetwork.defaultUrl;
-console.log(`  endpoint: ${url}`);
+// The same default selection the app makes (config/networks.ts): the first
+// candidate that answers eth_chainId with 0x1, probed in order.
+const choice = await createDefaultEndpointResolver().resolve(evmNetwork);
+if (choice.primaryUnreachable) console.log(`  primary default unreachable: ${choice.primaryFailure}`);
+check('a healthy mainnet default endpoint was found', choice.healthy === true && choice.url !== null);
+const url = choice.url;
+console.log(`  endpoint: ${url}  [${describeDefaultChoice(choice)}]`);
 console.log(`  USDC:     ${usdcAddress}`);
 
 const metadata = await fetchErc20Metadata(url, usdcAddress);

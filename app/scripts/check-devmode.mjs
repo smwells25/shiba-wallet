@@ -204,6 +204,10 @@ check(
   'mainnet default RPC matches DEFAULT_NETWORKS (no drift)',
   EVM_MAINNET.defaultRpcUrl === DEFAULT_NETWORKS.find((n) => n.chainId === 'eip155:1').defaultUrl,
 );
+check(
+  'mainnet default RPC candidate list matches DEFAULT_NETWORKS (no drift)',
+  EVM_MAINNET.defaultRpcUrls === DEFAULT_NETWORKS.find((n) => n.chainId === 'eip155:1').defaultUrls,
+);
 check('mainnet explorer base', EVM_MAINNET.explorerTxBase === 'https://etherscan.io/tx/');
 check('sepolia explorer base', EVM_SEPOLIA.explorerTxBase === 'https://sepolia.etherscan.io/tx/');
 
@@ -232,6 +236,7 @@ check("prefill entry point equals the engine's ENTRYPOINT_V07", prefill.entryPoi
   check('sepolia mode: EVM slot serves eip155:11155111', evmSlot.network.chainId === 'eip155:11155111');
   check('sepolia slot id stays eip155:1 (accounts/routes unchanged)', evmSlot.slot === 'eip155:1');
   check('sepolia network default URL follows the profile', evmSlot.network.defaultUrl === EVM_SEPOLIA.defaultRpcUrl);
+  check('sepolia network candidate list follows the profile', evmSlot.network.defaultUrls === EVM_SEPOLIA.defaultRpcUrls);
   check('SEPOLIA_NETWORK is derived from the profile', SEPOLIA_NETWORK.chainId === EVM_SEPOLIA.caip2 && SEPOLIA_NETWORK.symbol === EVM_SEPOLIA.displaySymbol);
   const untouched = ['bip122:000000000019d6689c085ae165831e93', 'bip122:1a91e3dace36e2be3bf030a65679fe82', 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp'];
   check(

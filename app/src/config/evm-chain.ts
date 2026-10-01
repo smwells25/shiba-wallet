@@ -70,7 +70,13 @@ export interface EvmChainProfile {
   testnet: boolean;
   /** What amounts/fees are labeled as ("ETH" / "test ETH"). */
   displaySymbol: string;
-  /** Default public RPC endpoint (user-overridable in Settings). */
+  /**
+   * Ordered keyless public default RPC endpoints, primary first
+   * (user-overridable in Settings). config/networks.ts uses the first one
+   * that passes an eth_chainId probe matching this profile.
+   */
+  defaultRpcUrls: readonly string[];
+  /** The primary candidate (defaultRpcUrls[0]); not necessarily the one in use. */
   defaultRpcUrl: string;
   /** Verified block-explorer transaction-URL prefix. */
   explorerTxBase: string;
@@ -78,16 +84,46 @@ export interface EvmChainProfile {
   aaPrefill: EvmAaPrefill | null;
 }
 
+const MAINNET_RPC_DEFAULTS: readonly string[] = [
+  'https://ethereum-rpc.publicnode.com',
+  'https://ethereum.publicnode.com',
+];
+
+/**
+ * A single candidate on purpose. Checked 2026-10-01 and NOT added:
+ * https://ethereum-sepolia.publicnode.com answers eth_chainId 0xaa36a7 but
+ * is not referenced by the https://www.publicnode.com directory or by
+ * PublicNode's Ethereum page (so it is undocumented); https://sepolia.drpc.org
+ * answered "chain is not available on free plan"; https://rpc.sepolia.org
+ * returned HTTP 404; https://rpc.ankr.com/eth_sepolia requires an API key.
+ */
+const SEPOLIA_RPC_DEFAULTS: readonly string[] = ['https://ethereum-sepolia-rpc.publicnode.com'];
+
 export const EVM_MAINNET: EvmChainProfile = {
   caip2: 'eip155:1',
   chainIdDecimal: '1',
   label: 'Ethereum',
   testnet: false,
   displaySymbol: 'ETH',
-  // Same verified default as config/defaults.ts (single source for the
-  // Home/Settings default remains DEFAULT_NETWORKS; check-devmode.mjs
-  // asserts the two never drift apart).
-  defaultRpcUrl: 'https://ethereum-rpc.publicnode.com',
+  // Ordered fallback list (single source; config/defaults.ts derives the
+  // Ethereum row from it and check-devmode.mjs asserts no drift). Both are
+  // PublicNode (Allnodes), keyless:
+  //  1. https://ethereum-rpc.publicnode.com — the RPC endpoint documented on
+  //     PublicNode's Ethereum page https://ethereum.publicnode.com (linked
+  //     from the https://www.publicnode.com directory). Verified 2026-09-27
+  //     (eth_chainId 0x1, eth_getBalance answered). On 2026-10-01 it failed
+  //     its TLS handshake (AGENTS.md INFRA FINDING); it stays FIRST as the
+  //     documented canonical hostname so the app returns to it on its own
+  //     once it recovers (each app launch probes from the top).
+  //  2. https://ethereum.publicnode.com — verified live 2026-10-01:
+  //     eth_chainId 0x1, eth_getBalance, eth_blockNumber and
+  //     eth_maxPriorityFeePerGas answered. Caveat: PublicNode documents this
+  //     hostname as its Ethereum PAGE, not as an RPC URL; that it serves
+  //     JSON-RPC POSTs is observed behavior, not documented.
+  // (Earlier rejections, 2026-09-27: https://eth.llamarpc.com failed DNS and
+  // https://cloudflare-eth.com returned -32603 on eth_getBalance.)
+  defaultRpcUrls: MAINNET_RPC_DEFAULTS,
+  defaultRpcUrl: MAINNET_RPC_DEFAULTS[0],
   explorerTxBase: 'https://etherscan.io/tx/',
   aaPrefill: null,
 };
@@ -98,7 +134,13 @@ export const EVM_SEPOLIA: EvmChainProfile = {
   label: 'Ethereum Sepolia',
   testnet: true,
   displaySymbol: 'test ETH',
-  defaultRpcUrl: 'https://ethereum-sepolia-rpc.publicnode.com',
+  // https://ethereum-sepolia-rpc.publicnode.com is the Sepolia RPC endpoint
+  // documented on https://ethereum.publicnode.com; re-verified live
+  // 2026-10-01 (eth_chainId 0xaa36a7, eth_getBalance answered). It is the
+  // only candidate: no second keyless Sepolia endpoint documented by its
+  // provider was verified (see the note on SEPOLIA_RPC_DEFAULTS).
+  defaultRpcUrls: SEPOLIA_RPC_DEFAULTS,
+  defaultRpcUrl: SEPOLIA_RPC_DEFAULTS[0],
   explorerTxBase: 'https://sepolia.etherscan.io/tx/',
   aaPrefill: {
     factory: '0x91E60e0613810449d098b0b5Ec8b51A0FE8c8985',
