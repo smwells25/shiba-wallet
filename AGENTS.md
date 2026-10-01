@@ -1799,3 +1799,75 @@ recovers (27/27 when pointed at another mainnet RPC).
       67/67 offline (71 with --live); all 16 app suites green incl.
       check-tokens 28/28 through the fallback; tsc clean; expo export
       bundles.
+
+- [x] Items 3 and 5, engine halves (commit 8e56463; chains-evm 209
+      tests, engine 445). Item 3 — packages/chains-evm/src/erc1271.ts
+      (isValidSignature call, strict bytes4 decode, verifyContractSignature
+      with valid / no-code / rejected / reverted / malformed-return
+      outcomes), erc6492.ts (wrap/detect/strict unwrap; verification in
+      the ERC's order — envelope → simulated deploy + isValidSignature
+      via eth_simulateV1, deployed → ERC-1271 then a prepare retry, no
+      code → ecrecover; plus verifyWithDeploylessValidator for
+      caller-supplied bytecode so no third-party compiled bytecode is
+      pinned), erc7739.ts (TypedDataSign implicit/explicit and
+      PersonalSign builders returning the exact EIP-712 request so the UI
+      can show what is signed; a TypeScript port of the reference
+      verifier; detectErc7739Support; ERC-5267 readEip712Domain),
+      account-signatures.ts (signHashForSmartAccount: the account's
+      ERC-1271 envelope plus the ERC-6492 wrapper when undeployed;
+      REFUSES accounts without ERC-1271 so a raw owner signature is never
+      presented as the account's). SmartAccountSpec gained optional
+      signErc1271; Kernel implements it (envelope 0x01 || ECDSA validator
+      || 65-byte signature over Kernel's EIP-712 "Kernel(bytes32 hash)"
+      wrapper under the account's own domain — name "Kernel", version
+      "0.3.3", chain id, proxy address — same as the ZeroDev SDK).
+      Sources: ERC-1271/6492 (Final) and ERC-7739 (DRAFT) texts at pinned
+      ethereum/ERCs commits, Kernel v3.3 sources, solady at Kernel's pin,
+      ZeroDev SDK, account-abstraction v0.7.0; selectors/magic values/
+      typehashes recomputed with keccak and pinned against ethers; digests,
+      wrapped signatures and 6492 envelopes byte-identical to viem 2.57.2
+      (installed in the scratchpad only). FINDINGS: Kernel v3.3 does NOT
+      implement ERC-7739 (no TypedDataSign/PersonalSign anywhere; its own
+      wrapper blocks cross-account/chain replay but shows the owner only
+      a hash); SimpleAccount v0.7.0 has NO isValidSignature at all (its
+      spec leaves signErc1271 undefined). Live read-only check
+      (scripts/testnet/signature-check.mjs, Sepolia, public test
+      mnemonic, re-run by the CTO: ALL CHECKS PASSED): the counterfactual
+      Kernel account's 768-byte 6492-wrapped message signature validates
+      through our flow AND through ox 0.9.3's deployless validator
+      bytecode independently; wrong message, chain-id-1 binding and a
+      flipped byte are rejected; the 7739 probe against Kernel reverts;
+      isValidSignature on the deployed SimpleAccount reverts. Unverified:
+      ERC-7739 against a real 7739 account (none found deployed); explicit
+      mode only against our port (viem orders the type string main-type-
+      first, which our port would reject for non-alphabetically-first
+      main types). App wiring (item 3 app half): use signHashForSmartAccount
+      for personal_sign / eth_signTypedData_v4 when the WC session is bound
+      to the smart account, and always show the ORIGINAL request before
+      the owner key signs, because Kernel's wrapper exposes only a hash.
+      Item 5 — approvals.ts (getErc20Approvals: latest Approval per
+      spender by block/logIndex, revocations kept distinct from
+      never-seen, skipped/scanned counts; getErc20Allowance + 
+      withCurrentAllowances re-read live state per record — OpenZeppelin
+      v5 transferFrom and USDT lower allowances WITHOUT an Approval event,
+      so logs are history, not state; encodeErc20Revoke = approve(spender,
+      0); USDT's approve requires zeroing first, cited from its verified
+      source; getOperatorApprovals / isApprovedForAll / encodeSetApprovalForAll;
+      Permit2-style allowances are invisible to token logs — design
+      note), contract-risk.ts (classifyRecipient eoa / contract /
+      delegated-eoa with the EIP-7702 0xef0100||address 23-byte indicator
+      verified from the Final EIP; isFirstInteraction trusts a Transfer
+      log ONLY if non-zero AND eth_getTransactionByHash shows from == me,
+      because anyone can emit a fake Transfer naming the wallet — the
+      address-poisoning mechanism — capped by maxTxLookups; plain ETH
+      transfers are invisible to logs so known:false means unknown;
+      findCodeDeploymentBlock binary search, ~28 calls over 24M blocks;
+      riskSignals aggregator: unlimited-approval, operator-approval,
+      first-interaction-unknown, new-contract, delegated-eoa,
+      no-code-recipient-with-calldata, severity warning/notice, no
+      scores). Live probe (ethereum.publicnode.com): free endpoints
+      answer historical eth_getCode only to latest-64 (older → -32602
+      "Archive requests require a personal token"), so the app must treat
+      age as unknown and raise no signal on failure; the standard public
+      test address 0x9858…Da94 is EIP-7702-delegated on mainnet
+      (0xef0100 8a67b5020ee254ef48e3b6a04927f39baf7e408a).
