@@ -24,6 +24,7 @@ import { ENTRYPOINT_V07, selector, toHex } from '@shiba-wallet/chains-evm';
 import {
   applyPriorityFeeFloor,
   bundlerPriorityFeeFloor,
+  maskUrlForDisplay,
   clearAaBundlerUrl,
   clearAaFactory,
   clearAaPaymaster,
@@ -643,6 +644,19 @@ await (async () => {
     (await bundlerPriorityFeeFloor(async () => 'not-hex')) === null);
   check('the existing fake bundler (no such method) leaves the quote on the node suggestion',
     quote.maxPriorityFeePerGas === 100_000_000n);
+
+  // Stored endpoint URLs embed API keys; Settings must never render them.
+  console.log('\nstored URL display masking');
+  check('path key is elided', maskUrlForDisplay('https://eth-sepolia.g.alchemy.com/v2/SECRETKEY123')
+    === 'https://eth-sepolia.g.alchemy.com/…');
+  check('query key is elided', maskUrlForDisplay('https://rpc.example.com/?apikey=SECRET')
+    === 'https://rpc.example.com/?…');
+  check('bare host unchanged', maskUrlForDisplay('https://rpc.example.com') === 'https://rpc.example.com');
+  check('port kept', maskUrlForDisplay('http://10.0.2.2:8545/key') === 'http://10.0.2.2:8545/…');
+  check('non-URL values untouched', maskUrlForDisplay('0x2577507b78c2008Ff367261CB6285d44ba5eF2E9')
+    === '0x2577507b78c2008Ff367261CB6285d44ba5eF2E9');
+  check('malformed URL still never leaks past the host',
+    maskUrlForDisplay('https://host.example/%%%SECRET') === 'https://host.example/…');
 })();
 
 console.log(`\n${passed} passed, ${failed} failed`);

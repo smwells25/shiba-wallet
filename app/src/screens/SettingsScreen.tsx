@@ -32,6 +32,7 @@ import {
   setAaKernelFactory,
   setAaPaymaster,
   clearAaPaymaster,
+  maskUrlForDisplay,
   type AaAccountType,
   type AaChainConfig,
 } from '../wallet/aa';
@@ -418,7 +419,7 @@ function AaField({
       ) : (
         <View style={styles.endpointEditor}>
           <Text style={[styles.endpointUrl, { color: theme.textMuted }]} numberOfLines={2}>
-            {value ?? 'Not configured'}
+            {value ? maskUrlForDisplay(value) : 'Not configured'}
           </Text>
           {value && statusLine ? (
             <Text style={[styles.aaVerified, { color: theme.success }]}>{statusLine}</Text>

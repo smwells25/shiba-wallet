@@ -312,6 +312,25 @@ export async function verifyAaFactory(
  * bundler reported.
  */
 /**
+ * Display form of a stored endpoint URL. Bundler, paymaster and indexer
+ * URLs usually embed the user's API key in the path or query, so Settings
+ * shows only the scheme and host plus an elision for anything after it;
+ * the stored value is untouched. Non-URL values (addresses, JSON) are
+ * returned verbatim.
+ */
+export function maskUrlForDisplay(value: string): string {
+  if (!/^https?:\/\//i.test(value)) return value;
+  try {
+    const url = new URL(value);
+    const rest = (url.pathname !== '/' && url.pathname !== '' ? '/…' : '') + (url.search ? '?…' : '');
+    return `${url.protocol}//${url.host}${rest}`;
+  } catch {
+    const match = /^(https?:\/\/[^/?#]+)/i.exec(value);
+    return match ? `${match[1]}/…` : 'https://…';
+  }
+}
+
+/**
  * Asks the bundler for the lowest priority fee it will accept. Bundlers
  * enforce their own floors independently of the chain's fee market: on
  * 2026-10-01 Sepolia's node suggested 0.001 gwei and Alchemy's bundler
