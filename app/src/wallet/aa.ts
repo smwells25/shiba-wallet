@@ -311,6 +311,44 @@ export async function verifyAaFactory(
  * v0.7 (same refusal as scripts/testnet/aa-smoke.mjs). Returns the list the
  * bundler reported.
  */
+/**
+ * Asks the bundler for the lowest priority fee it will accept. Bundlers
+ * enforce their own floors independently of the chain's fee market: on
+ * 2026-10-01 Sepolia's node suggested 0.001 gwei and Alchemy's bundler
+ * refused the operation with "maxPriorityFeePerGas is 1000000 but must be
+ * at least 100000000". Alchemy documents rundler_maxPriorityFeePerGas as
+ * returning "a fee per gas that is an estimate of how much users should set
+ * as a priority fee in userOperations for Rundler endpoints"
+ * (alchemy.com docs, Bundler API reference, read 2026-10-01). The method is
+ * vendor-named, so it is tried best-effort: a bundler that does not serve
+ * it, or answers with anything but a hex quantity, yields null and the
+ * node's suggestion stands.
+ */
+export async function bundlerPriorityFeeFloor(bundler: JsonRpcTransport): Promise<bigint | null> {
+  try {
+    const result = await bundler('rundler_maxPriorityFeePerGas', []);
+    if (typeof result !== 'string' || !/^0x[0-9a-fA-F]+$/.test(result)) return null;
+    return BigInt(result);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Raises the fee pair to the bundler's priority-fee floor when the node's
+ * suggestion sits below it, keeping the base-fee allowance intact.
+ */
+export function applyPriorityFeeFloor(
+  fees: { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint },
+  floor: bigint | null,
+): { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint } {
+  if (floor === null || floor <= fees.maxPriorityFeePerGas) return fees;
+  return {
+    maxFeePerGas: fees.maxFeePerGas + (floor - fees.maxPriorityFeePerGas),
+    maxPriorityFeePerGas: floor,
+  };
+}
+
 export async function verifyAaBundler(bundler: JsonRpcTransport): Promise<string[]> {
   const supported = await new BundlerClient(bundler, ENTRYPOINT_V07).supportedEntryPoints();
   const ok =
@@ -870,15 +908,18 @@ export async function prepareAaCalls(
 
   const owner = addressOnlyOwner(ownerAddress);
   const sender = await bundle.client.getAddress(owner);
-  const [senderBalance, deployed, nonce, fees, tokenBalance] = await Promise.all([
-    nodeClient.getBalance(sender),
-    bundle.client.isDeployed(owner),
-    bundle.client.getNonce(owner),
-    nodeClient.suggestFees(),
-    options.tokenSpend
-      ? fetchTokenBalanceVia(bundle.node, options.tokenSpend.contract, sender)
-      : Promise.resolve(null),
-  ]);
+  const [senderBalance, deployed, nonce, suggestedFees, tokenBalance, priorityFloor] =
+    await Promise.all([
+      nodeClient.getBalance(sender),
+      bundle.client.isDeployed(owner),
+      bundle.client.getNonce(owner),
+      nodeClient.suggestFees(),
+      options.tokenSpend
+        ? fetchTokenBalanceVia(bundle.node, options.tokenSpend.contract, sender)
+        : Promise.resolve(null),
+      bundlerPriorityFeeFloor(bundle.bundler),
+    ]);
+  const fees = applyPriorityFeeFloor(suggestedFees, priorityFloor);
 
   if (options.tokenSpend && tokenBalance !== null && options.tokenSpend.amount > tokenBalance) {
     throw new Error(

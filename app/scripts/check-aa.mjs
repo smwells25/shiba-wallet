@@ -22,6 +22,8 @@
 import { evmKeyProvider, mnemonicToSeed } from '@shiba-wallet/core';
 import { ENTRYPOINT_V07, selector, toHex } from '@shiba-wallet/chains-evm';
 import {
+  applyPriorityFeeFloor,
+  bundlerPriorityFeeFloor,
   clearAaBundlerUrl,
   clearAaFactory,
   clearAaPaymaster,
@@ -619,6 +621,28 @@ await (async () => {
   await sendAa(sponsored, seedOwner, quote);
   check('pipeline called stub then final paymaster data',
     pmCalls[0] === 'pm_getPaymasterStubData' && pmCalls.includes('pm_getPaymasterData'));
+
+  // Bundler priority-fee floor (found live on Sepolia 2026-10-01: the node
+  // suggested 0.001 gwei, Alchemy's bundler required 0.1 gwei).
+  console.log('\npriority-fee floor');
+  const low = { maxFeePerGas: 2_001_000_000n, maxPriorityFeePerGas: 1_000_000n };
+  check('no floor leaves fees unchanged', applyPriorityFeeFloor(low, null) === low);
+  check('floor below suggestion leaves fees unchanged',
+    applyPriorityFeeFloor(low, 500_000n) === low);
+  const raised = applyPriorityFeeFloor(low, 100_000_000n);
+  check('floor above suggestion raises the priority fee to the floor',
+    raised.maxPriorityFeePerGas === 100_000_000n);
+  check('raising the priority fee raises maxFeePerGas by the same amount (base allowance kept)',
+    raised.maxFeePerGas === 2_001_000_000n + 99_000_000n);
+  check('floor from a bundler that serves rundler_maxPriorityFeePerGas',
+    (await bundlerPriorityFeeFloor(async (m) => (m === 'rundler_maxPriorityFeePerGas' ? '0x5f5e100' : null)))
+      === 100_000_000n);
+  check('no floor from a bundler that rejects the method',
+    (await bundlerPriorityFeeFloor(async () => { throw new Error('method not found'); })) === null);
+  check('no floor from a malformed answer',
+    (await bundlerPriorityFeeFloor(async () => 'not-hex')) === null);
+  check('the existing fake bundler (no such method) leaves the quote on the node suggestion',
+    quote.maxPriorityFeePerGas === 100_000_000n);
 })();
 
 console.log(`\n${passed} passed, ${failed} failed`);
