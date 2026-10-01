@@ -35,10 +35,10 @@ docs.pimlico.io/guides/how-to/accounts/comparison, fetched 2026-09-27)
 | Account | ERC-7579 | Adoption (accounts created, trailing 6 months) | Audits |
 |---|---|---|---|
 | Kernel v3 (ZeroDev) | yes | ~133k v3 (plus ~771k v2) | ChainLight, Kalos |
-| Nexus (Biconomy) | yes | (not listed) | Cyfrin, Spearbit |
+| Nexus (Biconomy) | yes | 78 Nexus accounts, plus ~224k deprecated Biconomy v2 (Pimlico's comparison page, read 2026-10-01, no as-of date stated) | Cyfrin, Spearbit |
 | Safe + Safe7579 adapter (Rhinestone) | yes | ~34k Safe | Safe: "secures over $100B+ in assets"; adapter exposes Rhinestone's audited module set |
 | LightAccount (Alchemy) | no | ~7.3M | QuantStamp |
-| SimpleAccount (reference) | no | ~1.5M | OpenZeppelin ("not a production-ready smart account") |
+| SimpleAccount (reference) | no | ~1.5M | OpenZeppelin (audits describe the samples as examples "used as a baseline"; the phrase "not a production-ready smart account" is Pimlico's assessment, not OpenZeppelin's — corrected 2026-10-01, see docs/AA_FRAMEWORKS.md section 18) |
 
 Session-key mechanics, verified against ZeroDev's permissions
 documentation (docs.zerodev.app/sdk/permissions/intro): Kernel's model
@@ -68,8 +68,11 @@ executors as of Q1 2026).
    is the trust argument for high-value accounts (multi-sig product,
    Feature Universe item 24); heavier, and the adapter adds a layer, so
    not the default consumer account.
-4. **SimpleAccount remains the testnet baseline** and proof rig; it is
-   explicitly not production-ready per its own audit framing.
+4. **SimpleAccount remains the testnet baseline** and proof rig. It is
+   a reference example rather than a product: Pimlico's comparison calls
+   it "not a production-ready smart account", while OpenZeppelin's audits
+   frame the samples as a baseline, and the v0.7 and v0.9 releases
+   implement no ERC-1271 (docs/AA_FRAMEWORKS.md, 2026-10-01).
 
 Selection gates before any code lands (same discipline as
 AA_STACK.md): pin exact contract versions and audit reports, verify

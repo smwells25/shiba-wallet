@@ -1535,9 +1535,13 @@ development activity, adopting wallets, vendor lock-in, upgradability
 risk, licensing and commercial constraints). It must land BEFORE item 1
 commits to Kernel, so the choice is evidence-based.
 
-EIP-7702 is queued as the phase 8 headline: it needs the EntryPoint
-v0.8 upgrade (AA_STACK.md), and whether Kernel v3 can serve as the 7702
-delegation target must be verified from ZeroDev's documentation first.
+EIP-7702 is queued as the phase 8 headline. CORRECTION (2026-10-01,
+from docs/AA_FRAMEWORKS.md): the assumption that 7702 needs the
+EntryPoint v0.8 upgrade is not supported by vendor documentation —
+Kernel v3.3, Nexus and Alchemy MAv2 all document 7702 delegation on
+EntryPoint v0.7, and Kernel v3.3 is a released 7702 delegate. How the
+authorization is submitted under v0.7 is still unverified and must be
+checked on Sepolia before phase 8 is scoped.
 
 Wave 1 (parallel, disjoint files): the frameworks doc (agent, docs/
 only), item 1's ENGINE half (agent, packages/chains-evm + scripts/testnet
@@ -1655,3 +1659,55 @@ documented. Follow-up filed: give every chain an ordered fallback list
 of default RPCs so one dead hostname never blanks the Home screen.
 check-tokens.mjs's live step fails for the same reason until the host
 recovers (27/27 when pointed at another mainnet RPC).
+
+- [x] docs/AA_FRAMEWORKS.md — the Chairperson's smart-account framework
+      comparison (about 10,700 words, 116 numbered references, all
+      fetched 2026-09-30/10-01; five parallel research agents under a
+      verbatim-quote sourcing rule, headline claims spot-checked by the
+      lead against primary sources; the CTO re-verified the Kernel
+      license — LICENSE.txt at tag v3.3 and the SPDX MIT header in
+      Kernel.sol — and the ZeroDev acquisition — zerodev.app's own
+      announcement, 2025-08-13). Frameworks: SimpleAccount, Safe (+
+      Safe4337Module + Safe7579), Kernel v3, Nexus, Alchemy MAv2,
+      Coinbase Smart Wallet, Etherspot; twelve dimensions plus added
+      ones. RECOMMENDATION: keep Kernel v3 on EntryPoint v0.7 as the
+      first ERC-7579 account (v0.7 match, MIT contracts and permission
+      plugins, released 7702 delegate on v0.7, third-party bundlers and
+      7677 paymasters documented, an independent permissionless.js
+      implementation to byte-test against, the largest native-7579
+      adoption on BundleBear); Sepolia work may proceed now, MAINNET
+      FUNDS WAIT ON three conditions — C1 an audit covering the exact
+      shipped version (published audits cover v3.0, the factory, and a
+      v3.1 increment; none found for v3.2/v3.3 or the 7702 change), C2
+      confirmation of bug-bounty coverage (none found), C3 a v3 support
+      horizon and v3→v4 migration statement (the repo's default branch
+      is an unreleased, unaudited Kernel v4 on EntryPoint v0.9; ZeroDev
+      was acquired by Offchain Labs in August 2025). Second source:
+      Nexus (stronger security process; ranked second because
+      development moved to a hosted product, a July 2026 undeployed-
+      account takeover fix, and AGPL beta Smart Sessions). Later option:
+      Safe (strongest core, $1M bounty, formal verification; but Safe7579
+      is outside the bounty, no v2.0.0 audit found, and Safe cannot be a
+      7702 target). Not default: Alchemy MAv2 (ERC-6900, conflicts with
+      D6), Coinbase Smart Wallet (EntryPoint v0.6, not modular),
+      Etherspot (thin audits, its 7702 path delegates to Kernel).
+      FINDINGS FOR THE CHAIRPERSON: (a) 7702 may not need EntryPoint
+      v0.8 (plan corrected above); (b) ADR D1 caveat — once social
+      recovery or a signer swap replaces the seed-derived owner, the
+      account address can no longer be recomputed from the seed, so the
+      wallet must persist each account's address and owner changes as
+      recovery metadata; (c) BundleBear labels 2.34M live 7702
+      delegations as pointing at "Crime" contracts, supporting D6's rule
+      that the wallet never signs dApp-requested authorizations; (d) an
+      open question for counsel on (L)GPL/AGPL contract use by a
+      closed-source app (Safe LGPL, MAv2 GPL, Smart Sessions and
+      Rhinestone modules AGPL). Thin evidence (section 20): value
+      secured (only Safe publishes a figure, and its two figures
+      conflict), first-mainnet dates, adoption methodology, Kernel
+      v3.3 audit/bounty, Safe7579 v2 audit, the claimed July 2026 Nexus
+      Pashov report, formal verification outside Safe/Coinbase, React
+      Native statements for Biconomy/Alchemy SDKs, module portability
+      across 7579 implementations. Section 18's corrections to
+      SESSION_KEYS.md (Draft status, the Pimlico-not-OpenZeppelin
+      attribution, Nexus adoption) and to this file's 7702 assumption
+      were applied by the CTO the same day.
