@@ -1871,3 +1871,52 @@ recovers (27/27 when pointed at another mainnet RPC).
       age as unknown and raise no signal on failure; the standard public
       test address 0x9858…Da94 is EIP-7702-delegated on mainnet
       (0xef0100 8a67b5020ee254ef48e3b6a04927f39baf7e408a).
+
+- [x] Item 5, app half (commit; the Settings "Token approvals" link is
+      in SettingsScreen.tsx and lands with the next commit because that
+      file was mid-edit by the AA builder). app/src/wallet/approvals.ts:
+      tracked ERC-20s by exact CAIP-2 match plus NFT collections from the
+      gallery cache (spam skipped and counted); 9,000-block windows newest
+      first, 4 contracts in parallel, 8 windows per step, a window counts
+      only if every query succeeded, the first endpoint refusal stops the
+      scan and is recorded verbatim; LIVE re-read (withCurrentAllowances /
+      isApprovedForAll) decides active vs could-not-confirm vs revoked —
+      logs never do; "Unlimited" only at exactly MAX_UINT256 (never
+      masked by Hide amounts; finite values are); Tether zero-first note
+      on mainnet USDT; revoke = approve(spender,0) / setApprovalForAll(op,
+      false) through prepareEvmSend + sendEvm (no second signing path),
+      with the erc20TransferReturnedFalse gate. ApprovalsScreen (route
+      Approvals; Home Ethereum row + Settings link): explainer, searched
+      range, refusal WarningBox, active / could-not-confirm / collapsed
+      revoked lists, spender = exact-match contact name WITH full address
+      or address + contract/EOA/delegated-EOA tag, revoke confirm with
+      network badge, From account, fee, BalanceChangePreview, eth_call
+      gate + override, biometric gate, txid + explorer. app/src/wallet/
+      risk.ts + components/RiskWarnings.tsx: gatherRiskFacts never throws
+      (classifyRecipient, bounded contract age, first interaction on
+      counterparty ?? to, approvals from preview changes with a top-level
+      approve/setApprovalForAll calldata fallback); computeRiskLines pure;
+      one-line drop-in `<RiskWarnings url wallet to data [counterparty]
+      [assetChanges] />` NOT yet placed in SendScreen/SwapScreen/
+      WcApprovalSheet (CTO follow-up after the AA builder lands). PRODUCT
+      CHOICE to review: NEW_CONTRACT_THRESHOLD_BLOCKS = 50,400 (7 days at
+      the ethereum.org 12 s slot; measured 12.05 s mainnet / 12.07 s
+      Sepolia) — a judgement, not a standard. Verified: check-approvals.mjs
+      99/99 offline (revoke calldata == ethers; offline revoke
+      sign+broadcast decoded for ERC-20 and operator revokes; 7702 tag;
+      evidence rules; archive-refused → no new-contract line); all 16
+      other suites green; tsc clean on these files; expo export bundles.
+      Live read-only probe: a real USDC approver's 3 approvals were all
+      spent to 0 and correctly listed as revoked/used up. NEW INFRA
+      FINDING: ethereum.publicnode.com refuses eth_getLogs with fromBlock
+      more than ~10,000 blocks behind head (-32602 "Archive requests
+      require a personal token"; Sepolia served 50,000), so on the
+      default mainnet endpoint the approvals manager sees ~30 hours and
+      says so — and token-history.ts's 8-window fallback will error on
+      page 2+ there. Follow-up: cap the fallback lookback to the
+      endpoint's answered depth and surface it honestly. Known limits
+      stated on screen: Permit2-style allowances, untracked tokens,
+      collections beyond the first NFT page, older than the searched
+      range; ERC-721 approve(address,uint256) shares the ERC-20 selector,
+      so the calldata fallback can over-warn on an NFT approve with
+      tokenId = max (the preview's changes avoid this when passed).
