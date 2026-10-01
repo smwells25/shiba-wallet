@@ -1920,3 +1920,76 @@ recovers (27/27 when pointed at another mainnet RPC).
       range; ERC-721 approve(address,uint256) shares the ERC-20 selector,
       so the calldata fallback can over-warn on an NFT approve with
       tokenId = max (the preview's changes avoid this when passed).
+
+- [x] Items 1–3, app halves (commit 9b0b568; ESLint config in 474f5dd
+      with a 44-error / 7-warning baseline to burn down). aa.ts: account
+      type 'simple' | 'kernel-v3.3' per EVM chain (older configs read as
+      simple); setAaKernelFactory = eth_chainId check + the engine's
+      verifyKernelDeployment against the pinned KERNEL_V3_3 (same
+      addresses on mainnet and Sepolia, pre-filled); createAaClient builds
+      the chosen spec, salt = account index, owner = active EOA for both
+      types; prepareAaCalls (any call list, checks the smart account's
+      token balance), prepareAaErc20Send / maxAaErc20Send (one transfer
+      call — a transfer from the smart account needs no approve); sendAa
+      refuses before signing if the signer's smart account is not the
+      quoted sender; describeAaError keeps the bundler's rejection text
+      verbatim; DRIVE-BY FIX: setAaPaymaster verified against mainnet's
+      chain id even when saving a Sepolia paymaster. swap.ts: aaSwapCalls
+      = [approve(spender = quote transaction.to, EXACT sell amount),
+      swap] for ERC-20 sells, [swap] for native; prepareAaSwap quotes the
+      batch; SwapScreen "Swap from smart account" toggle makes the smart
+      account the 0x taker and sends ONE UserOperation, listing every
+      call on confirm. SendScreen token mode gained the smart-account
+      toggle (NFT mode still not); the AA confirm shows the account type,
+      smart-account balances, the Kernel bundler note, a batch-aware
+      preview (BalanceChangePreview gained an additive `batch` prop that
+      simulates as the smart-account sender) and "Bundler gas estimate
+      passed". Settings AA section: type selector, Kernel pre-fill with
+      verified status, saving one type replaces the other with a warning.
+      WalletConnect: proposals offer "connect as EOA or smart account"
+      (warning before connecting that SimpleAccount cannot sign); bindings
+      keyed by chain + smart-account address, written BEFORE
+      approveSession; smart-account sessions sign personal_sign /
+      eth_signTypedData_v4 via signHashAsSmartAccount (ERC-1271 envelope,
+      ERC-6492 when undeployed) with the ORIGINAL content shown and a
+      validator note; eth_sendTransaction rides sendCalls with one call
+      and answers the bundle tx hash after inclusion (120 s), else -32603
+      naming the userOpHash (no ERC defines this); requests served only
+      while the binding's owner is the active account, unknown session
+      address fails closed (5103). ERC-5792 per EIP-5792 (Final,
+      ethereum/EIPs commit 5b0c8dce, 2025-10-07), offered only on
+      smart-account sessions: wallet_getCapabilities → {activeChainHex:
+      {atomic: {status: "supported"}}} ({} on EOA sessions, 4100 for an
+      address not in the session); wallet_sendCalls — version "2.0.0",
+      chainId hex without leading zeros (-32602 otherwise; non-active
+      chain 5710), from must equal the bound smart account (4100),
+      atomicRequired boolean, calls[{to,data,value}] (missing `to`
+      -32602, wallet policy), non-optional capabilities 5700, >16 calls
+      5740 (policy), duplicate app ids 5720, result {id} once the bundler
+      accepts (generated id = 32 random bytes || userOpHash);
+      wallet_getCallsStatus → {version,id,chainId,status 100/200/500,
+      atomic:true,receipts?} (unknown id 5730; receipts omitted rather
+      than guessed; receipt gasUsed is the bundle tx's gas — a judgement
+      call). Quirk recorded: the ERC's own example writes chainId "0x01"
+      against its normative no-leading-zeros rule; the rule is followed,
+      so such a dApp is refused. Verified offline: check-aa-kernel.mjs
+      74/74 (all Kernel save refusals persist nothing; sender
+      0xB67b…9a42 for the standard owner at index 0; full Kernel
+      stub→estimate→sign→send with the signature recovered by ethers;
+      token-send and swap batches decoded by ethers), check-wc-5792.mjs
+      89/89 (parse/refuse/response shapes; 1271/6492 signatures validated
+      by the engine verifier against a fake eth_simulateV1 whose Kernel
+      emulation recovers the owner; SimpleAccount refusal; declines);
+      all 19 app suites green (re-run by the CTO); tsc clean; expo export
+      bundles (6.8MB) with the new strings. NOT verified: anything live
+      (Sepolia run pending, steps recorded in the builder's report:
+      Kernel config save, the rejection path on an undeployed account,
+      the deployed path with the dev seed's 0xc995…C5AC, a smart-account
+      Uniswap session with 5792 or eth_sendTransaction, 1271/6492 signing
+      checked with scripts/testnet/signature-check.mjs, declines);
+      whether Uniswap uses 5792 or accepts 1271/6492; whether a 0x quote
+      accepts an undeployed taker; on Sepolia the in-app smart-account
+      token send and swap cannot be exercised (tokens are mainnet-only,
+      0x lists no Sepolia) — batching there is testable only via
+      wallet_sendCalls. RiskWarnings still to be placed in SendScreen,
+      SwapScreen and WcApprovalSheet (CTO).
