@@ -1993,3 +1993,60 @@ recovers (27/27 when pointed at another mainnet RPC).
       0x lists no Sepolia) — batching there is testable only via
       wallet_sendCalls. RiskWarnings still to be placed in SendScreen,
       SwapScreen and WcApprovalSheet (CTO).
+
+## Phase 7 live validation (2026-10-01, emulator, Sepolia)
+
+FIRST IN-APP SMART-ACCOUNT SEND, PROVEN LIVE. Setup: Settings → Account
+Abstraction → Ethereum Sepolia: the Alchemy Sepolia bundler URL passed
+"Verified ✓ — eth_supportedEntryPoints includes EntryPoint v0.7", the
+account type Kernel v3.3 was selected, and the pre-filled KernelFactory
+passed "Verified ✓ — factory, implementation 0xd6CE…5b28, meta factory
+and ECDSA validator have code; entrypoint() is v0.7; accountId() is
+kernel.advanced.v0.3.3; the meta factory approves the factory". Because
+Alchemy's bundler rejects Kernel deployment ops, the emulator wallet's
+Kernel account for Account 1 (owner 0x772e…F44F, index 0) was deployed
+from the dev EOA with the new scripts/testnet/kernel-deploy-for-owner.mjs
+(KernelFactory.createAccount is permissionless; the owner's key is not
+involved): account 0xD31c2C54F21684eE2026a6C41e391130BdEeD8FA, deployment
+tx 0x003e2271…e4f2, rootValidator() == the ECDSA validator, funded
+0.003 test ETH (tx 0x5d61035c…f9c5; a 21,000-gas transfer to a deployed
+Kernel account FAILS because its receive path runs code — the helper
+estimates gas). In the app, Send ETH with "Send from smart account" ON
+showed a confirm with "EXPERIMENTAL · ERC-4337 smart account · Kernel
+v3.3", OWNER ACCOUNT (SIGNS) Account 1, FROM SMART ACCOUNT 0xD31c…D8FA,
+balance 0.003, "Already deployed", a bundler gas estimate, the saved
+contact "Burn" notice, and the balance-change preview "You send 0.0001
+test ETH" simulated as the smart-account sender.
+BUG FOUND AND FIXED LIVE: the first attempt was refused by the bundler —
+"RPC error -32000: precheck failed: maxPriorityFeePerGas is 1000000 but
+must be at least 100000000 (eth_sendUserOperation)" — shown verbatim in
+the app. Sepolia's node suggests 0.001 gwei; the bundler's documented
+rundler_maxPriorityFeePerGas answered 0x5f5e100 = 0.1 gwei (live
+probe). aa.ts now asks the bundler for its floor best-effort
+(bundlerPriorityFeeFloor; method-not-found or a malformed answer → null)
+and applyPriorityFeeFloor raises the pair; check-aa.mjs 65/65 (8 new
+checks). NOTE: the search summary for Alchemy's docs mentioned the method
+as deprecated on 2026-09-30, but the fetched page showed no such notice —
+unverified; if it disappears, the helper degrades to the node suggestion
+and the bundler's verbatim error remains the fallback signal. Retry with
+the fix: max fee rose from 2.523 to 2.713 gwei on the confirm, the send
+passed the biometric gate, the success screen showed the userOpHash
+0x855de289bcc12e7ae159d038a8f61aad8e7ce4d091e6df65363772024e33f43b,
+"Bundling… waiting for the UserOperation receipt", then "Included
+on-chain — succeeded." with bundle tx
+0xe18921543ac17a0e7e9167bb6a3f07755dd5d80eb9ae281a5aa92b09fc066e9a;
+independently confirmed on Sepolia: block 0xb46f2e, status 0x1, to =
+EntryPoint v0.7, one UserOperationEvent with sender 0xD31c…D8FA.
+PRODUCT FINDING: the Settings AA section renders the full bundler URL,
+API key included, in plain text; it should show the host only (the
+history-indexer row has the same exposure). Filed as a follow-up.
+EMULATOR NOTES: React Native LogBox toasts ("Cannot connect to Expo
+CLI" when Metro runs with CI=1, plus a WalletConnect core log at pino
+level 50 whose text had rolled out of logcat before it was read)
+intercept taps near the bottom of the screen in dev builds; Metro must
+run WITHOUT CI=1 for file edits to be served (CI mode disables watch).
+Not yet exercised live: the rejection path for an undeployed smart
+account in the app, smart-account WalletConnect sessions (5792 /
+1271-6492 signing) and the decline paths — the first needs only the
+emulator (Account 2's Kernel account is undeployed), the rest need a
+dApp session.
