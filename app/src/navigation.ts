@@ -29,4 +29,6 @@ export type RootStackParamList = {
   Nfts: undefined;
   /** One NFT, by CAIP-19 id (decimal token id), from the gallery's list. */
   NftDetail: { assetId: string };
+  /** Token approvals manager for the active account on the active EVM chain (phase 7 item 5). */
+  Approvals: undefined;
 };

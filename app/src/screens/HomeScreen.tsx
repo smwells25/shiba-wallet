@@ -273,6 +273,18 @@ export function HomeScreen({ navigation }: Props) {
               <Text style={[styles.sendLink, { color: theme.accent }]}>NFTs</Text>
             </Pressable>
           ) : null}
+          {/* Token approvals manager (phase 7 item 5) for the active EVM
+              chain; the screen explains what it can and cannot see. */}
+          {item.chainId === EVM_CHAIN_ID ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Token approvals"
+              onPress={() => navigation.navigate('Approvals')}
+              hitSlop={8}
+            >
+              <Text style={[styles.sendLink, { color: theme.accent }]}>Approvals</Text>
+            </Pressable>
+          ) : null}
         </View>
       </View>
       <BalanceCell

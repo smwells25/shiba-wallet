@@ -30,6 +30,7 @@ import { ConnectionsScreen } from './src/screens/ConnectionsScreen';
 import { ContactsScreen } from './src/screens/ContactsScreen';
 import { NftsScreen } from './src/screens/NftsScreen';
 import { NftDetailScreen } from './src/screens/NftDetailScreen';
+import { ApprovalsScreen } from './src/screens/ApprovalsScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -153,6 +154,11 @@ function Root() {
             <Stack.Screen name="Contacts" component={ContactsScreen} />
             <Stack.Screen name="Nfts" component={NftsScreen} options={{ title: 'NFTs' }} />
             <Stack.Screen name="NftDetail" component={NftDetailScreen} options={{ title: 'NFT' }} />
+            <Stack.Screen
+              name="Approvals"
+              component={ApprovalsScreen}
+              options={{ title: 'Token approvals' }}
+            />
           </>
         )}
         </Stack.Navigator>
