@@ -131,7 +131,10 @@ export function ConnectionsScreen({ navigation }: Props) {
               copy the pairing link (wc:…) and paste it here. The wallet
               connects on {describeChain(evmChain.caip2)} (the active chain;
               change it in Settings → Developer). Requests from connected
-              dApps appear on whatever screen you are on.
+              dApps appear on whatever screen you are on. When a smart
+              account is set up for this chain (Settings → Account
+              Abstraction), the connection request lets you connect the
+              smart account instead of the regular account.
             </Text>
             <Button
               title="Scan QR code"

@@ -1,9 +1,11 @@
 // Explicit .ts extensions: this module is imported by scripts/check-wc.mjs
 // under Node's type stripping, which resolves relative specifiers literally.
 import {
+  ERC5792_ERRORS,
   WC_ERRORS,
   WcRequestRejection,
   accountMismatchMessage,
+  decideGetCapabilities,
   decideSwitchChain,
   declineProposal,
   describeProposal,
@@ -13,13 +15,19 @@ import {
   sessionAddressesOf,
   sessionBindsAddress,
   sessionChainsOf,
+  saveSmartBinding,
+  loadSmartBindings,
+  smartAccountMismatchMessage,
+  smartBindingKey,
   summarizeSessions,
   type ParsedWcRequest,
+  type WcSmartBinding,
   type WcClient,
   type WcProposalSummary,
   type WcRequestEvent,
   type WcSessionSummary,
 } from './walletconnect.ts';
+import type { KeyValueStore } from './tokens.ts';
 
 /**
  * App-wide WalletConnect request queue (phase 6, item 5). Pure TypeScript
@@ -65,6 +73,16 @@ import {
  * was therefore lost until an app restart AND blocked every later request.
  * The global listener removes that failure; this queue additionally keeps
  * proposals and requests in one ordered line and implements the lock hold.
+ *
+ * Smart-account sessions (phase 7 items 2 and 3): a session approved with
+ * the smart account's address has a WcSmartBinding (walletconnect.ts),
+ * loaded from storage at attach and written before such a session is
+ * approved. Its requests are served only while the binding's OWNER is the
+ * active account, `from` fields are checked against the smart-account
+ * address, and it additionally gets the ERC-5792 methods:
+ * wallet_getCapabilities and wallet_getCallsStatus are answered
+ * automatically (they reveal no key and sign nothing), wallet_sendCalls is
+ * queued for approval like a transaction.
  */
 
 export type WcQueueItem =
@@ -82,11 +100,14 @@ export type WcQueueItem =
       /** The active chain the request was validated against on arrival. */
       chain: string;
       /**
-       * The session's bound EVM address, which equalled the active
-       * account's address on arrival. Approval re-checks it (see
-       * staleAccountError) and the signer must control exactly it.
+       * The session's bound EVM address: the active account's EOA on
+       * arrival, or — for a smart-account session — the smart-account
+       * address (whose owner was the active EOA on arrival). Approval
+       * re-checks it (see staleAccountError).
        */
       address: string;
+      /** The smart-account binding, or null for an EOA session. */
+      smart: WcSmartBinding | null;
     };
 
 export interface WcNotice {
@@ -105,6 +126,8 @@ export interface WcControllerSnapshot {
   sessions: readonly WcSessionSummary[];
   /** Newest first, at most MAX_NOTICES. */
   notices: readonly WcNotice[];
+  /** Known smart-account bindings (for session labels). */
+  smartBindings: readonly WcSmartBinding[];
 }
 
 export interface WcControllerContext {
@@ -118,6 +141,17 @@ export interface WcControllerContext {
    * in plain-language messages.
    */
   labelFor?: (address: string) => string | null;
+  /**
+   * wallet_getCallsStatus lookup (provider-supplied: needs the batch store
+   * and the bundler). Absent → the request is declined as unknown.
+   */
+  lookupCallsStatus?: (args: {
+    id: string;
+    from: string;
+    dappUrl: string;
+  }) => Promise<{ result: unknown } | { error: { code: number; message: string } }>;
+  /** True when an app-provided wallet_sendCalls id was already used. */
+  callsIdKnown?: (args: { id: string; from: string; dappUrl: string }) => Promise<boolean>;
 }
 
 const MAX_NOTICES = 5;
@@ -133,17 +167,24 @@ export class WcController {
   noticeSeq = 0;
   listeners = new Set<() => void>();
   snapshotCache: WcControllerSnapshot | null = null;
+  /** Smart-account bindings keyed by smartBindingKey(chain, address). */
+  smartBindings = new Map<string, WcSmartBinding>();
+  /** Persistence for the bindings; null keeps them in memory only. */
+  bindingStore: KeyValueStore | null;
+  /** Resolves once stored bindings are loaded (requests wait for it). */
+  bindingsReady: Promise<void> = Promise.resolve();
 
   // No TS parameter properties: Node's strip-only type stripping (used by
   // scripts/check-wc.mjs) rejects them.
   constructor(
     client: WcClient,
     getContext: () => WcControllerContext,
-    options: { locked?: boolean } = {},
+    options: { locked?: boolean; bindingStore?: KeyValueStore | null } = {},
   ) {
     this.client = client;
     this.getContext = getContext;
     this.locked = options.locked ?? false;
+    this.bindingStore = options.bindingStore ?? null;
   }
 
   // ------------------------------------------------------------ store API
@@ -166,6 +207,7 @@ export class WcController {
         busyKey: this.busyKey,
         sessions: [...this.sessions],
         notices: [...this.notices],
+        smartBindings: [...this.smartBindings.values()],
       };
     }
     return this.snapshotCache;
@@ -181,7 +223,8 @@ export class WcController {
   /** Registers the SDK listeners; returns the detach function. */
   attach(): () => void {
     const onProposal = (e: { id: number; params: unknown }) => this.onProposal(e);
-    const onRequest = (e: WcRequestEvent) => void this.onRequest(e);
+    // Returns the routing promise (emitters ignore it; tests can await it).
+    const onRequest = (e: WcRequestEvent) => this.onRequest(e).catch(() => undefined);
     const onDelete = (e: { topic?: string }) => this.onSessionDelete(e);
     const onRequestExpire = (e: { id?: number }) => this.onRequestExpire(e);
     const onProposalExpire = (e: { id?: number }) => this.onProposalExpire(e);
@@ -190,6 +233,16 @@ export class WcController {
     this.client.on('session_delete', onDelete as never);
     this.client.on('session_request_expire', onRequestExpire as never);
     this.client.on('proposal_expire', onProposalExpire as never);
+    if (this.bindingStore) {
+      const store = this.bindingStore;
+      this.bindingsReady = loadSmartBindings(store).then((list) => {
+        for (const b of list) {
+          const key = smartBindingKey(b.chain, b.address);
+          if (!this.smartBindings.has(key)) this.smartBindings.set(key, b);
+        }
+        this.emit();
+      });
+    }
     this.refreshSessions();
     return () => {
       this.client.off('session_proposal', onProposal as never);
@@ -231,6 +284,42 @@ export class WcController {
     return this.sessions.find((s) => s.topic === topic)?.name ?? 'A dApp';
   }
 
+  /** The requesting dApp's URL from the live session (the ERC-5792 app scope). */
+  dappUrl(topic: string): string {
+    try {
+      const session = this.client.getActiveSessions()[topic] as
+        | { peer?: { metadata?: { url?: unknown } } }
+        | undefined;
+      const url = session?.peer?.metadata?.url;
+      return typeof url === 'string' ? url : '';
+    } catch {
+      return '';
+    }
+  }
+
+  /**
+   * Records a smart-account binding (in memory at once, then persisted).
+   * Called BEFORE approving a smart-account session, so requests that
+   * arrive right after settlement find it.
+   */
+  async rememberSmartBinding(binding: WcSmartBinding): Promise<void> {
+    this.smartBindings.set(smartBindingKey(binding.chain, binding.address), binding);
+    this.emit();
+    if (this.bindingStore) await saveSmartBinding(binding, this.bindingStore);
+  }
+
+  /** The smart-account binding of a session, or null (EOA or unknown). */
+  smartBindingFor(topic: string): WcSmartBinding | null {
+    const addresses = this.sessionAddresses(topic);
+    for (const chain of this.sessionChains(topic)) {
+      for (const address of addresses) {
+        const binding = this.smartBindings.get(smartBindingKey(chain, address));
+        if (binding) return binding;
+      }
+    }
+    return null;
+  }
+
   addNotice(text: string): void {
     this.noticeSeq += 1;
     this.notices = [{ id: this.noticeSeq, text }, ...this.notices].slice(0, MAX_NOTICES);
@@ -265,7 +354,12 @@ export class WcController {
   async onRequest(event: WcRequestEvent): Promise<void> {
     const key = `r:${event.id}`;
     if (this.queue.some((i) => i.key === key)) return; // at-least-once delivery
-    const { address, activeChain, labelFor } = this.getContext();
+    if (this.bindingStore) {
+      await this.bindingsReady;
+      if (this.queue.some((i) => i.key === key)) return; // redelivered while waiting
+    }
+    const context = this.getContext();
+    const { address, activeChain, labelFor } = context;
     const method = event.params?.request?.method;
     const dapp = this.dappName(event.topic);
 
@@ -278,9 +372,23 @@ export class WcController {
     // with. After an account switch its requests are declined with a
     // plain sentence naming the bound account — never signed by the
     // active one, never left pending (the SDK would block every later
-    // request behind it).
+    // request behind it). A smart-account session is served only while
+    // its OWNER is the active account.
     const bound = this.sessionAddresses(event.topic);
-    if (!sessionBindsAddress(bound, address)) {
+    const smart = sessionBindsAddress(bound, address) ? null : this.smartBindingFor(event.topic);
+    if (smart) {
+      if (smart.owner.toLowerCase() !== address.toLowerCase()) {
+        await this.autoDecline(
+          event,
+          {
+            code: WC_ERRORS.unsupportedAccounts.code,
+            message: smartAccountMismatchMessage(smart, address, labelFor),
+          },
+          dapp,
+        );
+        return;
+      }
+    } else if (!sessionBindsAddress(bound, address)) {
       await this.autoDecline(
         event,
         {
@@ -289,6 +397,75 @@ export class WcController {
         },
         dapp,
       );
+      return;
+    }
+    // The address requests must name: the smart account, or the EOA.
+    const boundAddress = smart ? smart.address : address;
+
+    // ERC-5792 read-only methods: answered without UI (no key, no state
+    // change). Chain first, exactly like every other request.
+    if (method === 'wallet_getCapabilities' || method === 'wallet_getCallsStatus') {
+      if (event.params?.chainId !== activeChain) {
+        await this.autoDecline(
+          event,
+          {
+            code: WC_ERRORS.unsupportedChains.code,
+            message: 'This connection serves only the active chain.',
+          },
+          dapp,
+        );
+        return;
+      }
+      if (method === 'wallet_getCapabilities') {
+        const answer = decideGetCapabilities(
+          event.params?.request?.params,
+          boundAddress,
+          activeChain,
+          smart !== null,
+        );
+        if ('error' in answer) {
+          await this.autoDecline(event, answer.error, dapp);
+          return;
+        }
+        try {
+          await respondApproved(this.client, event.topic, event.id, answer.result);
+        } catch {
+          // Session gone mid-answer.
+        }
+        return;
+      }
+      const params = event.params?.request?.params;
+      const id = Array.isArray(params) && typeof params[0] === 'string' ? params[0] : null;
+      if (id === null) {
+        await this.autoDecline(
+          event,
+          { code: ERC5792_ERRORS.invalidParams, message: 'wallet_getCallsStatus: expected [id].' },
+          dapp,
+        );
+        return;
+      }
+      const answer =
+        smart && context.lookupCallsStatus
+          ? await context
+              .lookupCallsStatus({ id, from: boundAddress, dappUrl: this.dappUrl(event.topic) })
+              .catch((e: unknown) => ({
+                error: { code: -32603, message: e instanceof Error ? e.message : 'Status lookup failed.' },
+              }))
+          : { error: { code: ERC5792_ERRORS.unknownBundle, message: 'Unknown bundle id.' } };
+      if ('error' in answer) {
+        // Status queries are routine polling: answered without a notice.
+        try {
+          await respondRejected(this.client, event.topic, event.id, answer.error);
+        } catch {
+          // Session gone.
+        }
+        return;
+      }
+      try {
+        await respondApproved(this.client, event.topic, event.id, answer.result);
+      } catch {
+        // Session gone mid-answer.
+      }
       return;
     }
 
@@ -308,7 +485,19 @@ export class WcController {
 
     let parsed: ParsedWcRequest;
     try {
-      parsed = parseWcRequest(event, address, activeChain);
+      parsed = parseWcRequest(
+        event,
+        boundAddress,
+        activeChain,
+        smart
+          ? {
+              smartAccount: {
+                accountType: smart.accountType,
+                signsMessages: smart.accountType === 'kernel-v3.3',
+              },
+            }
+          : {},
+      );
     } catch (e) {
       const rejection =
         e instanceof WcRequestRejection
@@ -317,7 +506,32 @@ export class WcController {
       await this.autoDecline(event, rejection, dapp);
       return;
     }
-    this.queue.push({ type: 'request', key, event, parsed, chain: activeChain, address });
+    if (parsed.kind === 'calls' && parsed.batch.id !== null && context.callsIdKnown) {
+      const known = await context
+        .callsIdKnown({ id: parsed.batch.id, from: boundAddress, dappUrl: this.dappUrl(event.topic) })
+        .catch(() => false);
+      if (known) {
+        await this.autoDecline(
+          event,
+          {
+            code: ERC5792_ERRORS.duplicateId,
+            message: 'There is already a batch submitted with this id.',
+          },
+          dapp,
+        );
+        return;
+      }
+    }
+    if (this.queue.some((i) => i.key === key)) return;
+    this.queue.push({
+      type: 'request',
+      key,
+      event,
+      parsed,
+      chain: activeChain,
+      address: boundAddress,
+      smart,
+    });
     this.emit();
   }
 
@@ -436,6 +650,13 @@ export class WcController {
   staleAccountError(item: WcQueueItem): { code: number; message: string } | null {
     if (item.type !== 'request') return null;
     const { address, labelFor } = this.getContext();
+    if (item.smart) {
+      if (address && address.toLowerCase() === item.smart.owner.toLowerCase()) return null;
+      return {
+        code: WC_ERRORS.unsupportedAccounts.code,
+        message: smartAccountMismatchMessage(item.smart, address ?? '', labelFor),
+      };
+    }
     if (address && address.toLowerCase() === item.address.toLowerCase()) return null;
     return {
       code: WC_ERRORS.unsupportedAccounts.code,

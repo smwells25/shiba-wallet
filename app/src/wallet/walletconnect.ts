@@ -220,6 +220,17 @@ export const WC_SUPPORTED_METHODS = [...WC_SIGNING_METHODS, 'wallet_switchEthere
 export const WC_SUPPORTED_EVENTS = ['accountsChanged', 'chainChanged'];
 
 /**
+ * ERC-5792 (Wallet Call API) methods this wallet implements, offered ONLY in
+ * sessions bound to a smart account (phase 7 item 2): an EOA has no atomic
+ * batch, so EOA sessions never advertise them. wallet_showCallsStatus is
+ * deliberately not offered (no in-app status screen for dApp batches yet).
+ */
+export const WC_5792_METHODS = ['wallet_getCapabilities', 'wallet_sendCalls', 'wallet_getCallsStatus'];
+
+/** Everything a smart-account-bound session offers. */
+export const WC_SMART_ACCOUNT_METHODS = [...WC_SUPPORTED_METHODS, ...WC_5792_METHODS];
+
+/**
  * WalletConnect SDK error payloads (from @walletconnect/utils getSdkError,
  * the codes the WC ecosystem expects — its equivalent of EIP-1193's 4001).
  * Values read from the installed utils src/errors.ts SDK_ERRORS table:
@@ -315,6 +326,7 @@ export function buildWalletNamespaces(
   proposalParams: unknown,
   ethAddress: string,
   supportedChains: string[] = WC_SUPPORTED_CHAINS,
+  methods: readonly string[] = WC_SUPPORTED_METHODS,
 ): Record<string, unknown> {
   // buildApprovedNamespaces's parameter type is the sign-client proposal
   // struct; the runtime event delivers exactly that shape, so the cast only
@@ -324,7 +336,7 @@ export function buildWalletNamespaces(
     supportedNamespaces: {
       eip155: {
         chains: supportedChains,
-        methods: WC_SUPPORTED_METHODS,
+        methods: [...methods],
         events: WC_SUPPORTED_EVENTS,
         accounts: supportedChains.map((chain) => `${chain}:${ethAddress}`),
       },
@@ -436,6 +448,11 @@ export function decideProposal(
   proposalParams: unknown,
   ethAddress: string,
   activeChain: string = EVM_CHAIN_ID,
+  /**
+   * The methods this connection would offer: WC_SUPPORTED_METHODS for an
+   * EOA connection, WC_SMART_ACCOUNT_METHODS for a smart-account one.
+   */
+  methods: readonly string[] = WC_SUPPORTED_METHODS,
 ): ProposalDecision {
   const params = (proposalParams ?? {}) as {
     requiredNamespaces?: Parameters<typeof normalizeNamespaces>[0];
@@ -474,14 +491,12 @@ export function decideProposal(
       unsupportedChainMessage(badRequired, activeChain, 'connect'),
     );
   }
-  const badMethods = list(required.eip155?.methods).filter(
-    (m) => !WC_SUPPORTED_METHODS.includes(m),
-  );
+  const badMethods = list(required.eip155?.methods).filter((m) => !methods.includes(m));
   if (badMethods.length > 0) {
     return reject(
       WC_ERRORS.unsupportedMethods,
       `This dApp requires ${badMethods.join(', ')}, which this wallet does not support ` +
-        `(supported: ${WC_SUPPORTED_METHODS.join(', ')}).`,
+        `for this kind of connection (supported: ${methods.join(', ')}).`,
     );
   }
   const badEvents = list(required.eip155?.events).filter(
@@ -510,7 +525,7 @@ export function decideProposal(
 
   let namespaces: Record<string, unknown>;
   try {
-    namespaces = buildWalletNamespaces(proposalParams, ethAddress, [activeChain]);
+    namespaces = buildWalletNamespaces(proposalParams, ethAddress, [activeChain], methods);
   } catch (e) {
     return reject(
       WC_ERRORS.unsupportedChains,
@@ -774,7 +789,8 @@ export type ParsedWcRequest =
       digest: Uint8Array;
     }
   | { kind: 'typed_data'; typedData: WcTypedData }
-  | { kind: 'transaction'; tx: WcTxParams };
+  | { kind: 'transaction'; tx: WcTxParams }
+  | { kind: 'calls'; batch: WcSendCalls };
 
 export interface WcTxParams {
   /** EIP-55 normalized recipient (contract or EOA). */
@@ -807,6 +823,12 @@ export function parseWcRequest(
   event: WcRequestEvent,
   walletAddress: string,
   activeChain: string = EVM_CHAIN_ID,
+  /**
+   * Set when the session is bound to a smart account (walletAddress is
+   * then the smart account): enables wallet_sendCalls, and refuses message
+   * signing for implementations without ERC-1271 (SimpleAccount).
+   */
+  options: { smartAccount?: { accountType: string; signsMessages: boolean } } = {},
 ): ParsedWcRequest {
   const chainId = event.params?.chainId;
   if (chainId !== activeChain) {
@@ -831,6 +853,28 @@ export function parseWcRequest(
       );
     }
   };
+
+  const smart = options.smartAccount;
+  if (
+    smart &&
+    !smart.signsMessages &&
+    (method === 'personal_sign' || method === 'eth_signTypedData_v4')
+  ) {
+    throw new WcRequestRejection(
+      WC_ERRORS.unsupportedMethods.code,
+      SIMPLE_ACCOUNT_SIGNING_REFUSAL,
+    );
+  }
+
+  if (method === 'wallet_sendCalls') {
+    if (!smart) {
+      throw new WcRequestRejection(
+        WC_ERRORS.unsupportedMethods.code,
+        'wallet_sendCalls is offered only on connections made with a smart account.',
+      );
+    }
+    return { kind: 'calls', batch: parseSendCalls(params, walletAddress, activeChain) };
+  }
 
   if (method === 'personal_sign') {
     // Convention (WalletConnect usage docs / MetaMask): params are
@@ -930,9 +974,16 @@ export function parseWcRequest(
   throw new WcRequestRejection(
     WC_ERRORS.unsupportedMethods.code,
     `Method ${String(method)} is not supported by this wallet over WalletConnect ` +
-      `(supported: ${WC_SUPPORTED_METHODS.join(', ')}).`,
+      `(supported: ${(smart ? WC_SMART_ACCOUNT_METHODS : WC_SUPPORTED_METHODS).join(', ')}).`,
   );
 }
+
+/** Why a SimpleAccount-bound connection never signs messages. */
+export const SIMPLE_ACCOUNT_SIGNING_REFUSAL =
+  'This connection uses a SimpleAccount smart account, which has no ERC-1271 support, so ' +
+  'it cannot sign messages or logins: a signature from its owner key would not be ' +
+  "accepted as the smart account's. Reconnect with a Kernel smart account or the regular " +
+  'account to sign.';
 
 // ---------------------------------------------------------------------------
 // wallet_switchEthereumChain (answered without UI; never signs, never
@@ -1118,16 +1169,17 @@ export interface WcResponse {
   id: number;
   jsonrpc: '2.0';
   /**
-   * Signature / transaction hash, or null (wallet_switchEthereumChain's
-   * success value). The SDK accepts null: sign-client respond() validates
-   * via utils validators.ts isValidResponse, which only requires that
-   * result or error is not undefined.
+   * Signature / transaction hash, null (wallet_switchEthereumChain's
+   * success value), or an ERC-5792 result object. The SDK accepts null:
+   * sign-client respond() validates via utils validators.ts
+   * isValidResponse, which only requires that result or error is not
+   * undefined.
    */
-  result?: string | null;
+  result?: unknown;
   error?: { code: number; message: string };
 }
 
-export function wcResult(id: number, result: string | null): WcResponse {
+export function wcResult(id: number, result: unknown): WcResponse {
   return { id, jsonrpc: '2.0', result };
 }
 
@@ -1169,8 +1221,10 @@ export async function approveProposal(
   proposal: { id: number; params: unknown },
   ethAddress: string,
   activeChain: string = EVM_CHAIN_ID,
+  /** WC_SMART_ACCOUNT_METHODS when ethAddress is a smart account. */
+  methods: readonly string[] = WC_SUPPORTED_METHODS,
 ): Promise<{ approved: true } | { approved: false; reason: string }> {
-  const decision = decideProposal(proposal.params, ethAddress, activeChain);
+  const decision = decideProposal(proposal.params, ethAddress, activeChain, methods);
   if (!decision.ok) {
     await client.rejectSession({ id: proposal.id, reason: decision.error });
     return { approved: false, reason: decision.reason };
@@ -1220,7 +1274,7 @@ export async function respondApproved(
   client: WcClient,
   topic: string,
   requestId: number,
-  result: string | null,
+  result: unknown,
 ): Promise<void> {
   await client.respondSessionRequest({ topic, response: wcResult(requestId, result) });
 }
@@ -1292,6 +1346,576 @@ export function validatePairingUri(uri: string): { ok: true; uri: string } | { o
     };
   }
   return { ok: true, uri: trimmed };
+}
+
+// ---------------------------------------------------------------------------
+// Smart-account-bound sessions (phase 7 item 3)
+// ---------------------------------------------------------------------------
+
+/**
+ * A session approved with the smart account's address instead of the EOA.
+ * The session's CAIP-10 accounts carry only the smart-account address, so
+ * the wallet records which owner, account index and implementation that
+ * address belongs to. Records are keyed by chain + smart-account address
+ * and written BEFORE the session is approved, so a request arriving right
+ * after settlement already finds its binding. They are public data (an
+ * address this wallet derived and its owner's address), never key
+ * material. A missing record fails closed: the session's address does not
+ * equal the active EOA, so its requests are declined as belonging to
+ * another account.
+ */
+export interface WcSmartBinding {
+  /** CAIP-2 chain the session was approved on. */
+  chain: string;
+  /** The smart-account address the session exposes. */
+  address: string;
+  /** The owner EOA (the active account's address at approval time). */
+  owner: string;
+  /** Wallet account index = CREATE2 salt of the smart account. */
+  accountIndex: number;
+  /** 'kernel-v3.3' or 'simple' (aa.ts AaAccountType). */
+  accountType: string;
+  /** Factory the address was derived from (re-checked before signing). */
+  factory: string;
+}
+
+const WC_SMART_BINDINGS_KEY = 'shiba-wallet.wc-smart-bindings.v1';
+
+export function smartBindingKey(chain: string, address: string): string {
+  return `${chain}:${address.toLowerCase()}`;
+}
+
+function reviveBinding(value: unknown): WcSmartBinding | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const v = value as Record<string, unknown>;
+  if (
+    typeof v.chain !== 'string' ||
+    typeof v.address !== 'string' ||
+    !isAddressShaped(v.address) ||
+    typeof v.owner !== 'string' ||
+    !isAddressShaped(v.owner) ||
+    typeof v.accountIndex !== 'number' ||
+    !Number.isSafeInteger(v.accountIndex) ||
+    v.accountIndex < 0 ||
+    (v.accountType !== 'kernel-v3.3' && v.accountType !== 'simple') ||
+    typeof v.factory !== 'string' ||
+    !isAddressShaped(v.factory)
+  ) {
+    return null;
+  }
+  return {
+    chain: v.chain,
+    address: v.address,
+    owner: v.owner,
+    accountIndex: v.accountIndex,
+    accountType: v.accountType,
+    factory: v.factory,
+  };
+}
+
+/** Every stored smart-account binding (malformed entries are skipped). */
+export async function loadSmartBindings(
+  store: KeyValueStore = AsyncStorage,
+): Promise<WcSmartBinding[]> {
+  try {
+    const raw = await store.getItem(WC_SMART_BINDINGS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return [];
+    return Object.values(parsed as Record<string, unknown>)
+      .map(reviveBinding)
+      .filter((b): b is WcSmartBinding => b !== null);
+  } catch {
+    return [];
+  }
+}
+
+/** Persists one binding (replacing any record for the same chain + address). */
+export async function saveSmartBinding(
+  binding: WcSmartBinding,
+  store: KeyValueStore = AsyncStorage,
+): Promise<void> {
+  let map: Record<string, unknown> = {};
+  try {
+    const raw = await store.getItem(WC_SMART_BINDINGS_KEY);
+    const parsed = raw ? (JSON.parse(raw) as unknown) : null;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      map = parsed as Record<string, unknown>;
+    }
+  } catch {
+    map = {};
+  }
+  map[smartBindingKey(binding.chain, binding.address)] = binding;
+  await store.setItem(WC_SMART_BINDINGS_KEY, JSON.stringify(map));
+}
+
+/**
+ * The sentence for a request on a smart-account session whose OWNER is not
+ * the active account.
+ */
+export function smartAccountMismatchMessage(
+  binding: WcSmartBinding,
+  activeAddress: string,
+  labelFor: (address: string) => string | null = () => null,
+): string {
+  const ownerLabel = labelFor(binding.owner) ?? binding.owner;
+  const activeLabel = activeAddress ? (labelFor(activeAddress) ?? activeAddress) : 'another account';
+  return (
+    `This connection belongs to the smart account ${binding.address} of ${ownerLabel}, but ` +
+    `${activeLabel} is active, so the request was declined. Switch back to ${ownerLabel} to use ` +
+    'this connection.'
+  );
+}
+
+/** "Smart account 0xB67b…9a42 (Kernel v3.3) of Account 1 (0x9858…Da94)". */
+export function smartBindingLabel(
+  binding: WcSmartBinding,
+  labelFor: (address: string) => string | null = () => null,
+): string {
+  const short = `${binding.address.slice(0, 6)}…${binding.address.slice(-4)}`;
+  const type = binding.accountType === 'kernel-v3.3' ? 'Kernel v3.3' : 'SimpleAccount';
+  return `Smart account ${short} (${type}) of ${labelFor(binding.owner) ?? binding.owner}`;
+}
+
+// ---------------------------------------------------------------------------
+// ERC-5792 Wallet Call API (phase 7 item 2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Source: EIP-5792 "Wallet Call API", status Final, ethereum/EIPs
+ * EIPS/eip-5792.md at commit 5b0c8dce4bc67d34082eff7950d44be928641207
+ * (2025-10-07; rendered at https://eips.ethereum.org/EIPS/eip-5792, read
+ * 2026-10-01). What is implemented, field by field:
+ *
+ * wallet_sendCalls, params [SendCallsParams]:
+ *  - version: string. The ERC defines no version list; its examples use
+ *    "2.0.0", the shape implemented here (atomicRequired / atomic status).
+ *    Any other value is refused with -32602 rather than guessed at.
+ *  - id?: app-provided batch id; "MUST be a unique string up to 4096 bytes
+ *    (8194 characters including leading 0x)"; duplicates "MUST" be
+ *    rejected with 5720 (checked per sender per app, the ERC's uniqueness
+ *    scope).
+ *  - from?: if provided the calls MUST come from it; anything but the
+ *    session's bound smart account → 4100 Unauthorized.
+ *  - chainId: hex, "0x prefix and no leading zeroes"; the error table lists
+ *    "leading zeros in chain id" as -32602, so "0x01" is refused (note: the
+ *    ERC's own example writes "0x01" — the normative text is followed).
+ *    A chain other than the active one → 5710 Unsupported chain id.
+ *  - atomicRequired: boolean, required. This wallet always executes the
+ *    batch atomically and contiguously (one UserOperation, one account
+ *    execute that reverts as a whole), so both values are served.
+ *  - calls[]: {to?, data?, value? (hex), capabilities?}. A call without
+ *    `to` (contract creation) is refused with -32602 (wallet policy).
+ *  - capabilities (top level and per call): a capability not supported and
+ *    not marked optional:true → 5700. This wallet supports none, so every
+ *    non-optional capability is refused and optional ones are ignored.
+ *  - Result: { id } (no capabilities object).
+ *  - The wallet "MUST NOT await for any calls to be finalized": the id is
+ *    returned once the bundler accepted the UserOperation.
+ *
+ * wallet_getCapabilities, params [address, chainIds?]: 4100 for an address
+ * that is not this session's; result keyed by hex chain id; only the
+ * ACTIVE chain is ever included, with { atomic: { status: "supported" } }
+ * for smart-account sessions; unsupported chains are omitted (never an
+ * error, per the ERC). EOA sessions get {} — the ERC reads an absent
+ * atomic capability as "no batching".
+ *
+ * wallet_getCallsStatus, params [id]: 5730 for an unknown id; result
+ * { version, id, chainId, status, atomic: true, receipts? } with status 100
+ * (pending), 200 (included, succeeded) or 500 (included, reverted — atomic,
+ * so only the gas charge took effect). receipts carry logs, status,
+ * blockHash, blockNumber, gasUsed, transactionHash; logs are the
+ * UserOperation's own logs (ERC-7769 eth_getUserOperationReceipt `logs`,
+ * "not including logs of other UserOperations in the same bundle", as
+ * ERC-5792 requires for bundler-submitted batches); the other fields come
+ * from the bundle transaction's receipt (`receipt`), and `status` is the
+ * UserOperation's success flag. Any malformed field → receipts omitted,
+ * never invented.
+ */
+export const ERC5792_VERSION = '2.0.0';
+
+/** ERC-5792 error codes (its "Error Codes" table). */
+export const ERC5792_ERRORS = {
+  invalidParams: -32602,
+  userRejected: 4001,
+  unauthorized: 4100,
+  unsupportedCapability: 5700,
+  unsupportedChain: 5710,
+  duplicateId: 5720,
+  unknownBundle: 5730,
+  bundleTooLarge: 5740,
+} as const;
+
+/**
+ * Wallet policy: the most calls one batch may carry (the ERC leaves the
+ * limit to the wallet and defines 5740 "Bundle too large"). Every call is
+ * listed on the approval sheet, so the list must stay reviewable.
+ */
+export const MAX_BATCH_CALLS = 16;
+const MAX_CALLS_ID_LENGTH = 8194;
+const HEX_CHAIN_ID = /^0x[1-9a-fA-F][0-9a-fA-F]*$/;
+
+export interface WcSendCalls {
+  version: string;
+  /** App-provided id, or null (the wallet generates one). */
+  id: string | null;
+  /** Normalized `from`, or null when the app left it out. */
+  from: string | null;
+  atomicRequired: boolean;
+  calls: WcTxParams[];
+  /** Optional capabilities the app sent that this wallet ignored. */
+  ignoredCapabilities: string[];
+}
+
+/** "0x1" / "0xaa36a7": the ERC's hex chain id for a CAIP-2 eip155 id. */
+export function hexChainIdOf(caip2: string): string {
+  return '0x' + BigInt(caip2.split(':')[1]!).toString(16);
+}
+
+function parseHexChainId(raw: unknown, method: string): bigint {
+  if (typeof raw !== 'string' || !HEX_CHAIN_ID.test(raw)) {
+    throw new WcRequestRejection(
+      ERC5792_ERRORS.invalidParams,
+      `${method}: chainId must be 0x-prefixed hex without leading zeros (got ${String(raw)}).`,
+    );
+  }
+  return BigInt(raw);
+}
+
+/** Collects ignored optional capabilities; throws 5700 for required ones. */
+function checkCapabilities(value: unknown, where: string, ignored: string[]): void {
+  if (value === undefined) return;
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new WcRequestRejection(ERC5792_ERRORS.invalidParams, `wallet_sendCalls: ${where} capabilities must be an object.`);
+  }
+  for (const [name, capability] of Object.entries(value as Record<string, unknown>)) {
+    const optional =
+      typeof capability === 'object' &&
+      capability !== null &&
+      (capability as { optional?: unknown }).optional === true;
+    if (!optional) {
+      throw new WcRequestRejection(
+        ERC5792_ERRORS.unsupportedCapability,
+        `This wallet does not support the "${name}" capability (${where}), and the dApp did ` +
+          'not mark it optional.',
+      );
+    }
+    ignored.push(name);
+  }
+}
+
+/**
+ * Parses and validates wallet_sendCalls params per ERC-5792 (see the
+ * section comment), for a session bound to `boundAddress` on `activeChain`.
+ * Throws WcRequestRejection with the ERC's error code on any refusal.
+ */
+export function parseSendCalls(
+  params: unknown,
+  boundAddress: string,
+  activeChain: string,
+): WcSendCalls {
+  const p = requireArrayParams(params, 'wallet_sendCalls');
+  const req = p[0];
+  if (typeof req !== 'object' || req === null || Array.isArray(req)) {
+    throw new WcRequestRejection(ERC5792_ERRORS.invalidParams, 'wallet_sendCalls: expected a params object.');
+  }
+  const r = req as Record<string, unknown>;
+  if (r.version !== ERC5792_VERSION) {
+    throw new WcRequestRejection(
+      ERC5792_ERRORS.invalidParams,
+      `wallet_sendCalls: version ${JSON.stringify(r.version)} is not supported; this wallet ` +
+        `implements ERC-5792 version ${ERC5792_VERSION}.`,
+    );
+  }
+  const chainId = parseHexChainId(r.chainId, 'wallet_sendCalls');
+  if (chainId !== BigInt(activeChain.split(':')[1]!)) {
+    throw new WcRequestRejection(
+      ERC5792_ERRORS.unsupportedChain,
+      `wallet_sendCalls asked for chain id ${chainId}; this connection serves only the ` +
+        `active chain (${describeChain(activeChain)}).`,
+    );
+  }
+  let from: string | null = null;
+  if (r.from !== undefined && r.from !== null) {
+    if (typeof r.from !== 'string' || !isAddressShaped(r.from) || r.from.toLowerCase() !== boundAddress.toLowerCase()) {
+      throw new WcRequestRejection(
+        ERC5792_ERRORS.unauthorized,
+        `wallet_sendCalls: from (${String(r.from)}) is not the account this connection is bound to.`,
+      );
+    }
+    from = r.from;
+  }
+  if (typeof r.atomicRequired !== 'boolean') {
+    throw new WcRequestRejection(
+      ERC5792_ERRORS.invalidParams,
+      'wallet_sendCalls: atomicRequired must be true or false.',
+    );
+  }
+  let id: string | null = null;
+  if (r.id !== undefined && r.id !== null) {
+    if (typeof r.id !== 'string' || r.id.length === 0 || r.id.length > MAX_CALLS_ID_LENGTH) {
+      throw new WcRequestRejection(
+        ERC5792_ERRORS.invalidParams,
+        `wallet_sendCalls: id must be a non-empty string of at most ${MAX_CALLS_ID_LENGTH} characters.`,
+      );
+    }
+    id = r.id;
+  }
+  const ignored: string[] = [];
+  checkCapabilities(r.capabilities, 'request', ignored);
+  if (!Array.isArray(r.calls) || r.calls.length === 0) {
+    throw new WcRequestRejection(ERC5792_ERRORS.invalidParams, 'wallet_sendCalls: calls must be a non-empty array.');
+  }
+  if (r.calls.length > MAX_BATCH_CALLS) {
+    throw new WcRequestRejection(
+      ERC5792_ERRORS.bundleTooLarge,
+      `wallet_sendCalls: ${r.calls.length} calls is more than this wallet reviews in one ` +
+        `batch (${MAX_BATCH_CALLS}).`,
+    );
+  }
+  const calls: WcTxParams[] = r.calls.map((raw, i) => {
+    const where = `call ${i + 1}`;
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+      throw new WcRequestRejection(ERC5792_ERRORS.invalidParams, `wallet_sendCalls: ${where} is not an object.`);
+    }
+    const c = raw as Record<string, unknown>;
+    checkCapabilities(c.capabilities, where, ignored);
+    if (typeof c.to !== 'string') {
+      throw new WcRequestRejection(
+        ERC5792_ERRORS.invalidParams,
+        `wallet_sendCalls: ${where} has no "to" (contract creation), which this wallet does not support.`,
+      );
+    }
+    const validated = validateRecipient(EVM_CHAIN_ID, c.to);
+    if (!validated.ok) {
+      throw new WcRequestRejection(ERC5792_ERRORS.invalidParams, `wallet_sendCalls: ${where}: ${validated.error}`);
+    }
+    let valueWei = 0n;
+    if (c.value !== undefined && c.value !== null) {
+      if (typeof c.value !== 'string' || !/^0x[0-9a-fA-F]+$/.test(c.value)) {
+        throw new WcRequestRejection(
+          ERC5792_ERRORS.invalidParams,
+          `wallet_sendCalls: ${where} value must be a 0x-prefixed hex string.`,
+        );
+      }
+      valueWei = BigInt(c.value);
+    }
+    let data: Uint8Array = new Uint8Array(0);
+    if (c.data !== undefined && c.data !== null && c.data !== '0x') {
+      if (typeof c.data !== 'string' || !isHexData(c.data)) {
+        throw new WcRequestRejection(ERC5792_ERRORS.invalidParams, `wallet_sendCalls: ${where} data is not valid hex.`);
+      }
+      data = toBytes(c.data);
+    }
+    return { to: validated.normalized, valueWei, data };
+  });
+  return { version: r.version, id, from, atomicRequired: r.atomicRequired, calls, ignoredCapabilities: ignored };
+}
+
+/**
+ * The answer to wallet_getCapabilities for a session bound to
+ * `boundAddress` (see the section comment). Never touches a key.
+ */
+export function decideGetCapabilities(
+  params: unknown,
+  boundAddress: string,
+  activeChain: string,
+  smartAccount: boolean,
+): { result: Record<string, unknown> } | { error: { code: number; message: string } } {
+  if (!Array.isArray(params) || params.length === 0 || typeof params[0] !== 'string' || !isAddressShaped(params[0])) {
+    return {
+      error: { code: ERC5792_ERRORS.invalidParams, message: 'wallet_getCapabilities: expected [address, chainIds?].' },
+    };
+  }
+  if (params[0].toLowerCase() !== boundAddress.toLowerCase()) {
+    return {
+      error: {
+        code: ERC5792_ERRORS.unauthorized,
+        message: 'wallet_getCapabilities: that address is not connected in this session.',
+      },
+    };
+  }
+  let queried: bigint[] | null = null;
+  if (params[1] !== undefined && params[1] !== null) {
+    if (!Array.isArray(params[1])) {
+      return {
+        error: { code: ERC5792_ERRORS.invalidParams, message: 'wallet_getCapabilities: chain ids must be an array.' },
+      };
+    }
+    try {
+      queried = params[1].map((c) => parseHexChainId(c, 'wallet_getCapabilities'));
+    } catch (e) {
+      return { error: { code: ERC5792_ERRORS.invalidParams, message: (e as Error).message } };
+    }
+  }
+  if (!smartAccount) return { result: {} };
+  const active = BigInt(activeChain.split(':')[1]!);
+  if (queried !== null && !queried.includes(active)) return { result: {} };
+  return { result: { [hexChainIdOf(activeChain)]: { atomic: { status: 'supported' } } } };
+}
+
+/** One submitted batch, for wallet_getCallsStatus and duplicate-id checks. */
+export interface WcCallsRecord {
+  id: string;
+  userOpHash: string;
+  /** CAIP-2 chain the batch was sent on. */
+  chain: string;
+  /** The smart account that sent it (the session's bound address). */
+  from: string;
+  /** The requesting dApp's URL (the ERC scopes ids per sender per app). */
+  dappUrl: string;
+  /** Date.now() at submission. */
+  createdAt: number;
+}
+
+const WC_CALLS_KEY = 'shiba-wallet.wc-calls.v1';
+/**
+ * Records are kept 7 days (the ERC asks for status "within 24 hours" at
+ * least) and capped, newest kept.
+ */
+const CALLS_RECORD_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_CALLS_RECORDS = 200;
+
+function callsRecordKey(from: string, dappUrl: string, id: string): string {
+  return `${from.toLowerCase()}|${dappUrl}|${id}`;
+}
+
+async function loadCallsMap(store: KeyValueStore): Promise<Record<string, WcCallsRecord>> {
+  try {
+    const raw = await store.getItem(WC_CALLS_KEY);
+    const parsed = raw ? (JSON.parse(raw) as unknown) : null;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const out: Record<string, WcCallsRecord> = {};
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      const r = v as Partial<WcCallsRecord> | null;
+      if (
+        r &&
+        typeof r.id === 'string' &&
+        typeof r.userOpHash === 'string' &&
+        typeof r.chain === 'string' &&
+        typeof r.from === 'string' &&
+        typeof r.dappUrl === 'string' &&
+        typeof r.createdAt === 'number'
+      ) {
+        out[k] = r as WcCallsRecord;
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/** The record for an id sent by `from` for the app at `dappUrl`, or null. */
+export async function findCallsRecord(
+  id: string,
+  from: string,
+  dappUrl: string,
+  store: KeyValueStore = AsyncStorage,
+  now: number = Date.now(),
+): Promise<WcCallsRecord | null> {
+  const record = (await loadCallsMap(store))[callsRecordKey(from, dappUrl, id)];
+  return record && now - record.createdAt <= CALLS_RECORD_TTL_MS ? record : null;
+}
+
+/** Stores a submitted batch (pruning expired and excess records). */
+export async function saveCallsRecord(
+  record: WcCallsRecord,
+  store: KeyValueStore = AsyncStorage,
+  now: number = Date.now(),
+): Promise<void> {
+  const map = await loadCallsMap(store);
+  map[callsRecordKey(record.from, record.dappUrl, record.id)] = record;
+  const kept = Object.entries(map)
+    .filter(([, r]) => now - r.createdAt <= CALLS_RECORD_TTL_MS)
+    .sort(([, a], [, b]) => b.createdAt - a.createdAt)
+    .slice(0, MAX_CALLS_RECORDS);
+  await store.setItem(WC_CALLS_KEY, JSON.stringify(Object.fromEntries(kept)));
+}
+
+/**
+ * A wallet-generated batch id: 32 random bytes (the ERC requires ids to be
+ * unpredictable) followed by the userOpHash, 64 bytes as 0x-hex — the shape
+ * of the ERC's own example id.
+ */
+export function generateCallsId(random32: Uint8Array, userOpHash: string): string {
+  if (random32.length !== 32) throw new Error('generateCallsId needs 32 random bytes');
+  if (!/^0x[0-9a-fA-F]{64}$/.test(userOpHash)) throw new Error('userOpHash must be 32 bytes of hex');
+  return toHex(random32) + userOpHash.slice(2).toLowerCase();
+}
+
+const HEX_QUANTITY = /^0x[0-9a-fA-F]+$/;
+const HASH32 = /^0x[0-9a-fA-F]{64}$/;
+
+/**
+ * Maps a bundler eth_getUserOperationReceipt result (ERC-7769 shape; null =
+ * not yet included) into the ERC-5792 GetCallsResult. Throws when a
+ * receipt is present but carries no recognizable success flag — the status
+ * would otherwise be a guess.
+ */
+export function callsStatusFromReceipt(record: WcCallsRecord, receipt: unknown): Record<string, unknown> {
+  const base = {
+    version: ERC5792_VERSION,
+    id: record.id,
+    chainId: hexChainIdOf(record.chain),
+    atomic: true,
+  };
+  if (receipt === null || receipt === undefined) return { ...base, status: 100 };
+  if (typeof receipt !== 'object') throw new Error('The bundler returned an unrecognized receipt.');
+  const r = receipt as Record<string, unknown>;
+  let success: boolean;
+  if (r.success === true || r.success === '0x1') success = true;
+  else if (r.success === false || r.success === '0x0') success = false;
+  else throw new Error('The bundler receipt has no recognizable success flag.');
+
+  const out: Record<string, unknown> = { ...base, status: success ? 200 : 500 };
+  const inner = r.receipt as Record<string, unknown> | undefined;
+  const logsRaw = r.logs;
+  if (
+    inner &&
+    typeof inner === 'object' &&
+    typeof inner.blockHash === 'string' &&
+    HASH32.test(inner.blockHash) &&
+    typeof inner.blockNumber === 'string' &&
+    HEX_QUANTITY.test(inner.blockNumber) &&
+    typeof inner.gasUsed === 'string' &&
+    HEX_QUANTITY.test(inner.gasUsed) &&
+    typeof inner.transactionHash === 'string' &&
+    HASH32.test(inner.transactionHash) &&
+    Array.isArray(logsRaw)
+  ) {
+    const logs: { address: string; data: string; topics: string[] }[] = [];
+    let logsOk = true;
+    for (const log of logsRaw) {
+      const l = log as Record<string, unknown> | null;
+      if (
+        !l ||
+        typeof l.address !== 'string' ||
+        !isAddressShaped(l.address) ||
+        typeof l.data !== 'string' ||
+        !/^0x([0-9a-fA-F]{2})*$/.test(l.data) ||
+        !Array.isArray(l.topics) ||
+        !l.topics.every((t) => typeof t === 'string' && HASH32.test(t))
+      ) {
+        logsOk = false;
+        break;
+      }
+      logs.push({ address: l.address, data: l.data, topics: l.topics as string[] });
+    }
+    if (logsOk) {
+      out.receipts = [
+        {
+          logs,
+          status: success ? '0x1' : '0x0',
+          blockHash: inner.blockHash,
+          blockNumber: inner.blockNumber,
+          gasUsed: inner.gasUsed,
+          transactionHash: inner.transactionHash,
+        },
+      ];
+    }
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------

@@ -612,15 +612,18 @@ export interface SendResult {
  * Signs and broadcasts an EOA EIP-1559 transfer through chains-evm.
  *
  * SMART-ACCOUNT SEAM: this is the point where the flow forks. The ERC-4337
- * path is implemented in ./aa.ts (phase 3): when the user enables the
- * experimental smart-account toggle on a chain with a verified bundler and
- * factory, SendScreen quotes through prepareAaSend and submits through
- * sendAa (SmartAccountClient.sendCalls in chains-evm) instead of calling
- * this function — the recipient/amount come from the same validated form,
- * and the signer stays the same seed-derived owner key. With the toggle
- * off or the chain unconfigured, this EOA path runs unchanged. Everything
- * before the fork (recipient validation, amount parsing) is path-agnostic
- * by design.
+ * path is implemented in ./aa.ts (phase 3; account types and batching in
+ * phase 7): when the user enables the experimental smart-account toggle on
+ * a chain with a verified bundler and factory, SendScreen quotes through
+ * prepareAaSend (native) or prepareAaErc20Send (tokens), SwapScreen through
+ * swap.ts prepareAaSwap (one atomic [approve, swap] batch), and
+ * WalletConnect smart-account sessions through prepareAaCalls — all
+ * submitted by sendAa (SmartAccountClient.sendCalls in chains-evm) instead
+ * of this function. The recipient/amount come from the same validated
+ * form, and the signer stays the same seed-derived owner key (the smart
+ * account's owner, ADR D1). With the toggle off or the chain unconfigured,
+ * this EOA path runs unchanged. Everything before the fork (recipient
+ * validation, amount parsing) is path-agnostic by design.
  *
  * `explorerTxBase` comes from the active EVM chain profile
  * (config/evm-chain.ts): sepolia.etherscan.io in Sepolia test mode. The

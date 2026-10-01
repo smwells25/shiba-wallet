@@ -32,10 +32,12 @@ import { fetchErc20Balance } from './erc20.ts';
  * can exercise this exact code under plain Node with a fake fetch. Amounts
  * are bigints: token amounts in the token's base units, fees in wei.
  *
- * SMART-ACCOUNT NOTE: the ERC-4337 path is deliberately out of scope for
- * token sends in this pass. Batching approve+transfer (or transfer alone)
- * through SmartAccountClient.sendCalls is a later slice; SendScreen hides
- * the smart-account toggle in token mode.
+ * SMART-ACCOUNT NOTE: this module is the EOA path only. Token sends FROM
+ * the smart account (phase 7 item 2) go through aa.ts prepareAaErc20Send:
+ * a single transfer(recipient, amount) call executed by the smart account
+ * via SmartAccountClient.sendCalls — a plain transfer needs no approve,
+ * because the smart account moves its own tokens. SendScreen chooses the
+ * path from its smart-account toggle.
  */
 
 /**

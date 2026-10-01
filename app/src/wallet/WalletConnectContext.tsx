@@ -9,28 +9,61 @@ import React, {
   useSyncExternalStore,
 } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { toHex } from '@shiba-wallet/chains-evm';
 import { useTheme } from '../theme';
 import { useAppLock } from '../components/LockGate';
-import { WcApprovalSheet, txApprovalAllowed, type TxQuoteState } from '../components/WcApprovalSheet';
+import {
+  WcApprovalSheet,
+  txApprovalAllowed,
+  type AaBundleLoader,
+  type ConnectAs,
+  type SmartAccountOption,
+  type TxQuoteState,
+} from '../components/WcApprovalSheet';
+import { getEndpoint } from '../config/networks';
 import { requireLocalAuth } from './biometric';
 import { usePrefs } from './PrefsContext';
 import { useWallet } from './WalletContext';
 import { accountLabel } from './accounts';
 import { EVM_CHAIN_ID, describeSendError, sendEvm } from './send';
 import {
+  aaAccountTypeSignsMessages,
+  createAaClientFromConfig,
+  describeAaError,
+  fetchUserOpReceipt,
+  getAaConfig,
+  isAaConfigured,
+  resolveAaSender,
+  sendAa,
+  signHashAsSmartAccount,
+  waitForAaReceipt,
+} from './aa';
+import {
+  ERC5792_ERRORS,
+  WC_SMART_ACCOUNT_METHODS,
+  WC_SUPPORTED_METHODS,
   approveProposal,
+  callsStatusFromReceipt,
   disconnectWcSession,
+  findCallsRecord,
+  generateCallsId,
   getWcProjectId,
   getWcUsed,
   initWalletConnect,
   respondApproved,
+  respondRejected,
+  saveCallsRecord,
   sessionAccountNote,
   sessionModeNote,
   setWcUsed,
   shouldStartWalletConnectAtLaunch,
   signDigest,
+  smartBindingKey,
+  smartBindingLabel,
   type WcClient,
   type WcSessionSummary,
+  type WcSmartBinding,
 } from './walletconnect';
 import { WcController, type WcControllerSnapshot, type WcQueueItem } from './wc-controller';
 
@@ -59,6 +92,18 @@ import { WcController, type WcControllerSnapshot, type WcQueueItem } from './wc-
  *    only with the active account and only if that account controls
  *    exactly the session's bound address (multi-account, phase 6 item 3);
  *  - nothing is declined because time passed.
+ *
+ * Smart-account connections (phase 7 items 2 and 3): when the active chain
+ * has a verified AA configuration, the proposal sheet offers "connect as
+ * the smart account". The binding (owner, account index, type, factory) is
+ * recorded BEFORE the session is approved. Its requests: personal_sign /
+ * eth_signTypedData_v4 are signed through aa.ts signHashAsSmartAccount
+ * (ERC-1271 envelope, ERC-6492 when undeployed; refused for SimpleAccount),
+ * eth_sendTransaction and wallet_sendCalls are sent as ONE UserOperation
+ * via sendAa, gated by the bundler estimate instead of eth_call. The signer
+ * is always the OWNER EOA through signWith (expectAddress = owner), and the
+ * smart-account address is re-derived from the current configuration and
+ * compared with the binding before anything is signed.
  */
 
 export interface WcSessionView extends WcSessionSummary {
@@ -95,13 +140,14 @@ const EMPTY_SNAPSHOT: WcControllerSnapshot = {
   busyKey: null,
   sessions: [],
   notices: [],
+  smartBindings: [],
 };
 const noopSubscribe = () => () => {};
 const emptySnapshot = () => EMPTY_SNAPSHOT;
 
 export function WalletConnectProvider({ children }: { children: React.ReactNode }) {
   const theme = useTheme();
-  const { status, accounts, signWith, accountForEvmAddress } = useWallet();
+  const { status, accounts, signWith, accountForEvmAddress, activeAccount } = useWallet();
   const { evmChain } = usePrefs();
   const { locked } = useAppLock();
 
@@ -115,11 +161,89 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
     },
     [accountForEvmAddress],
   );
+  /**
+   * The ACTIVE chain's verified smart-account bundle for one account index
+   * (null when no complete AA configuration or RPC endpoint exists).
+   */
+  const loadAaBundle = useCallback<AaBundleLoader>(
+    async (accountIndex: number) => {
+      const config = await getAaConfig(evmChain.caip2);
+      if (!isAaConfigured(config)) return null;
+      const endpoint = await getEndpoint(EVM_CHAIN_ID);
+      if (!endpoint?.url) return null;
+      return {
+        bundle: createAaClientFromConfig(config, {
+          nodeUrl: endpoint.url,
+          chainId: BigInt(evmChain.chainIdDecimal),
+          accountIndex,
+        }),
+        url: endpoint.url,
+      };
+    },
+    [evmChain.caip2, evmChain.chainIdDecimal],
+  );
+
+  const activeIndex = activeAccount?.index ?? null;
+  const smartOption = useCallback(async (): Promise<SmartAccountOption | null> => {
+    if (activeIndex === null || !ethAddress) return null;
+    const loaded = await loadAaBundle(activeIndex);
+    if (!loaded) return null;
+    const address = await resolveAaSender(loaded.bundle, ethAddress);
+    return {
+      address,
+      accountType: loaded.bundle.accountType,
+      signsMessages: aaAccountTypeSignsMessages(loaded.bundle.accountType),
+    };
+  }, [activeIndex, ethAddress, loadAaBundle]);
+
+  /** ERC-5792 wallet_getCallsStatus: batch store + one bundler lookup. */
+  const lookupCallsStatus = useCallback(
+    async (args: { id: string; from: string; dappUrl: string }) => {
+      const record = await findCallsRecord(args.id, args.from, args.dappUrl);
+      if (!record) {
+        return {
+          error: { code: ERC5792_ERRORS.unknownBundle, message: 'This bundle id is unknown.' },
+        };
+      }
+      const config = await getAaConfig(record.chain);
+      if (!config.bundlerUrl) {
+        return {
+          error: {
+            code: -32603,
+            message: 'No bundler is configured for that chain any more, so the status is unknown.',
+          },
+        };
+      }
+      const receipt = await fetchUserOpReceipt(config.bundlerUrl, record.userOpHash);
+      return { result: callsStatusFromReceipt(record, receipt) };
+    },
+    [],
+  );
+  const callsIdKnown = useCallback(
+    async (args: { id: string; from: string; dappUrl: string }) =>
+      (await findCallsRecord(args.id, args.from, args.dappUrl)) !== null,
+    [],
+  );
+
   // The controller reads the live context through a ref, so an address,
   // account or mode change is seen by the next event without re-attaching
   // listeners.
-  const contextRef = useRef({ address: ethAddress, activeChain: evmChain.caip2, labelFor });
-  contextRef.current = { address: ethAddress, activeChain: evmChain.caip2, labelFor };
+  const contextRef = useRef({
+    address: ethAddress,
+    activeChain: evmChain.caip2,
+    labelFor,
+    lookupCallsStatus,
+    callsIdKnown,
+    activeIndex,
+  });
+  contextRef.current = {
+    address: ethAddress,
+    activeChain: evmChain.caip2,
+    labelFor,
+    lookupCallsStatus,
+    callsIdKnown,
+    activeIndex,
+  };
 
   // Hold approvals while locked AND while no wallet is ready.
   const hold = locked || status !== 'ready';
@@ -201,7 +325,12 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
         // cancelled mid-init simply picks the same client up next time.
         if (cancelled || startedProjectIdRef.current !== null) return;
         startedProjectIdRef.current = projectId;
-        const ctl = new WcController(c, () => contextRef.current, { locked: holdRef.current });
+        const ctl = new WcController(c, () => contextRef.current, {
+          locked: holdRef.current,
+          // Smart-account bindings persist next to the app's other
+          // WalletConnect state (public data only).
+          bindingStore: AsyncStorage,
+        });
         detachRef.current = ctl.attach();
         setClient(c);
         setController(ctl);
@@ -259,8 +388,169 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
 
   // ------------------------------------------------------------ approvals
 
+  /**
+   * Approval of a request on a smart-account session (after the biometric
+   * gate, the re-claim and the chain/account re-checks above).
+   */
+  const approveSmartRequest = useCallback(
+    async (
+      item: Extract<WcQueueItem, { type: 'request' }>,
+      smart: WcSmartBinding,
+      txQuote: TxQuoteState | null,
+    ): Promise<void> => {
+      if (!controller || !client) return;
+      const declineWith = async (message: string, code = -32603) => {
+        controller.release(item.key);
+        await controller.decline(item.key, { code, message });
+        Alert.alert('Request declined', message);
+      };
+      try {
+        if (item.parsed.kind === 'personal_sign' || item.parsed.kind === 'typed_data') {
+          const loaded = await loadAaBundle(smart.accountIndex);
+          if (
+            !loaded ||
+            loaded.bundle.accountType !== smart.accountType ||
+            loaded.bundle.factory.toLowerCase() !== smart.factory.toLowerCase()
+          ) {
+            await declineWith(
+              'The smart-account settings changed since this connection was made, so the ' +
+                'connected smart account cannot sign. Reconnect the dApp.',
+            );
+            return;
+          }
+          const digest =
+            item.parsed.kind === 'personal_sign' ? item.parsed.digest : item.parsed.typedData.digest;
+          // The OWNER key signs; signHashAsSmartAccount refuses unless the
+          // owner's smart account is exactly the session's bound address.
+          const signature = await signWith(EVM_CHAIN_ID, smart.owner, (signer) =>
+            signHashAsSmartAccount(loaded.bundle, signer, digest, smart.address),
+          );
+          await respondApproved(client, item.event.topic, item.event.id, toHex(signature.signature));
+          controller.complete(item.key);
+          return;
+        }
+
+        if (
+          txQuote?.status !== 'ready-aa' ||
+          txQuote.quote.sender.toLowerCase() !== smart.address.toLowerCase() ||
+          txQuote.owner.toLowerCase() !== smart.owner.toLowerCase()
+        ) {
+          controller.release(item.key);
+          return;
+        }
+        const { quote, bundle } = txQuote;
+        const dappUrl = controller.dappUrl(item.event.topic);
+
+        if (item.parsed.kind === 'calls') {
+          const batch = item.parsed.batch;
+          if (
+            batch.id !== null &&
+            (await findCallsRecord(batch.id, smart.address, dappUrl)) !== null
+          ) {
+            await declineWith('There is already a batch submitted with this id.', ERC5792_ERRORS.duplicateId);
+            return;
+          }
+          const { userOpHash } = await signWith(EVM_CHAIN_ID, smart.owner, (signer) =>
+            sendAa(bundle, signer, quote),
+          );
+          // ERC-5792: the id is returned once the bundler accepted the
+          // operation; inclusion is NOT awaited.
+          const random = new Uint8Array(32);
+          globalThis.crypto.getRandomValues(random);
+          const id = batch.id ?? generateCallsId(random, userOpHash);
+          await saveCallsRecord({
+            id,
+            userOpHash,
+            chain: item.chain,
+            from: smart.address,
+            dappUrl,
+            createdAt: Date.now(),
+          }).catch(() => undefined);
+          try {
+            await respondApproved(client, item.event.topic, item.event.id, { id });
+          } catch {
+            controller.complete(item.key);
+            Alert.alert(
+              'Batch sent, dApp not notified',
+              `The operation was submitted (UserOperation ${userOpHash}), but the reply to the ` +
+                'dApp failed. Check it in an ERC-4337 explorer before retrying anything.',
+            );
+            return;
+          }
+          controller.complete(item.key);
+          Alert.alert('Batch sent to the bundler', `UserOperation ${userOpHash}`);
+          return;
+        }
+
+        if (item.parsed.kind !== 'transaction') {
+          controller.release(item.key);
+          return;
+        }
+        // eth_sendTransaction: ONE call through the smart account. The dApp
+        // expects a transaction hash, so wait for inclusion and answer with
+        // the bundle transaction's hash — never with the userOpHash, which
+        // eth_getTransactionReceipt would not find.
+        const { userOpHash } = await signWith(EVM_CHAIN_ID, smart.owner, (signer) =>
+          sendAa(bundle, signer, quote),
+        );
+        let txHash: string | null = null;
+        try {
+          const { summary } = await waitForAaReceipt(bundle, userOpHash, {
+            timeoutMs: 120_000,
+            pollMs: 3_000,
+          });
+          txHash = summary.txHash;
+        } catch {
+          txHash = null;
+        }
+        if (!txHash) {
+          await respondRejected(client, item.event.topic, item.event.id, {
+            code: -32603,
+            message:
+              `Submitted as UserOperation ${userOpHash}, but no transaction hash was ` +
+              'available within two minutes. It may still be included.',
+          }).catch(() => undefined);
+          controller.complete(item.key);
+          Alert.alert(
+            'Submitted, not yet included',
+            `UserOperation ${userOpHash} was accepted by the bundler but not included within ` +
+              'two minutes, so the dApp was told no transaction hash is available yet. Look the ' +
+              'UserOperation hash up in an ERC-4337 explorer before retrying anything.',
+          );
+          return;
+        }
+        try {
+          await respondApproved(client, item.event.topic, item.event.id, txHash);
+        } catch {
+          controller.complete(item.key);
+          Alert.alert(
+            'Transaction sent, dApp not notified',
+            `The operation was included (${txHash}), but the reply to the dApp failed.`,
+          );
+          return;
+        }
+        controller.complete(item.key);
+        Alert.alert('Transaction sent', txHash);
+      } catch (e) {
+        controller.release(item.key);
+        const { title, detail } =
+          describeAaError(e, {
+            accountType: smart.accountType === 'kernel-v3.3' ? 'kernel-v3.3' : 'simple',
+            deployed: txQuote?.status === 'ready-aa' ? txQuote.quote.deployed : null,
+          }) ?? describeSendError(e, 'ETH');
+        Alert.alert(title, detail);
+      }
+    },
+    [controller, client, signWith, loadAaBundle],
+  );
+
   const onApprove = useCallback(
-    async (item: WcQueueItem, txQuote: TxQuoteState | null, overrideSimulation: boolean) => {
+    async (
+      item: WcQueueItem,
+      txQuote: TxQuoteState | null,
+      overrideSimulation: boolean,
+      connectAs: ConnectAs = 'eoa',
+    ) => {
       if (!controller || !client) return;
       if (!controller.canAct(item.key)) return;
       const address = contextRef.current.address;
@@ -274,11 +564,36 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
         }
         if (!controller.begin(item.key)) return; // locked or gone meanwhile
         try {
+          const activeChain = contextRef.current.activeChain;
+          let connectAddress = address;
+          let methods = WC_SUPPORTED_METHODS;
+          if (connectAs === 'smart') {
+            // Re-derive the smart account from the CURRENT configuration
+            // (never from what the sheet displayed) and record the binding
+            // before approving, so the first request already finds it.
+            const index = contextRef.current.activeIndex;
+            const loaded = index === null ? null : await loadAaBundle(index);
+            if (!loaded || index === null) {
+              throw new Error('No verified smart-account configuration exists for the active chain.');
+            }
+            connectAddress = await resolveAaSender(loaded.bundle, address);
+            const binding: WcSmartBinding = {
+              chain: activeChain,
+              address: connectAddress,
+              owner: address,
+              accountIndex: index,
+              accountType: loaded.bundle.accountType,
+              factory: loaded.bundle.factory,
+            };
+            await controller.rememberSmartBinding(binding);
+            methods = WC_SMART_ACCOUNT_METHODS;
+          }
           const outcome = await approveProposal(
             client,
             item.event,
-            address,
-            contextRef.current.activeChain,
+            connectAddress,
+            activeChain,
+            methods,
           );
           if (!outcome.approved) Alert.alert('Connection rejected', outcome.reason);
         } catch (e) {
@@ -292,12 +607,19 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
         return;
       }
 
-      if (item.parsed.kind === 'transaction' && !txApprovalAllowed(txQuote, overrideSimulation)) {
+      if (
+        (item.parsed.kind === 'transaction' || item.parsed.kind === 'calls') &&
+        !txApprovalAllowed(txQuote, overrideSimulation)
+      ) {
         return;
       }
       const dapp = controller.dappName(item.event.topic);
       const promptTitle =
-        item.parsed.kind === 'transaction' ? `Approve transaction for ${dapp}` : `Sign for ${dapp}`;
+        item.parsed.kind === 'transaction'
+          ? `Approve transaction for ${dapp}`
+          : item.parsed.kind === 'calls'
+            ? `Approve batch for ${dapp}`
+            : `Sign for ${dapp}`;
       const auth = await requireLocalAuth(promptTitle);
       if (!auth.ok) {
         Alert.alert('Not approved', auth.message);
@@ -315,7 +637,15 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
         Alert.alert('Request declined', stale.message);
         return;
       }
+      if (item.smart) {
+        await approveSmartRequest(item, item.smart, txQuote);
+        return;
+      }
       try {
+        if (item.parsed.kind === 'calls') {
+          controller.release(item.key);
+          return; // batches exist only on smart-account sessions
+        }
         if (item.parsed.kind === 'personal_sign' || item.parsed.kind === 'typed_data') {
           const digest =
             item.parsed.kind === 'personal_sign' ? item.parsed.digest : item.parsed.typedData.digest;
@@ -363,7 +693,7 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
         Alert.alert(title, detail);
       }
     },
-    [controller, client, signWith, evmChain.explorerTxBase],
+    [controller, client, signWith, evmChain.explorerTxBase, loadAaBundle, approveSmartRequest],
   );
 
   const onReject = useCallback(
@@ -374,16 +704,36 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
     [controller],
   );
 
-  const sessions = useMemo<WcSessionView[]>(
-    () =>
-      snapshot.sessions.map((s) => ({
+  const sessions = useMemo<WcSessionView[]>(() => {
+    const bindings = new Map(
+      snapshot.smartBindings.map((b) => [smartBindingKey(b.chain, b.address), b] as const),
+    );
+    return snapshot.sessions.map((s) => {
+      let smart: WcSmartBinding | null = null;
+      for (const chain of s.chains) {
+        for (const a of s.addresses) smart = smart ?? bindings.get(smartBindingKey(chain, a)) ?? null;
+      }
+      if (smart) {
+        const ownerLabel = labelFor(smart.owner) ?? smart.owner;
+        return {
+          ...s,
+          modeNote: sessionModeNote(s.chains, evmChain.caip2),
+          accountNote:
+            ethAddress && smart.owner.toLowerCase() !== ethAddress.toLowerCase()
+              ? `This connection belongs to the smart account of ${ownerLabel}. Paused while ` +
+                `another account is active: its requests are declined until you switch back.`
+              : null,
+          accountLabel: smartBindingLabel(smart, labelFor),
+        };
+      }
+      return {
         ...s,
         modeNote: sessionModeNote(s.chains, evmChain.caip2),
         accountNote: sessionAccountNote(s.addresses, ethAddress, labelFor),
         accountLabel: s.addresses[0] ? labelFor(s.addresses[0]) : null,
-      })),
-    [snapshot.sessions, evmChain.caip2, ethAddress, labelFor],
-  );
+      };
+    });
+  }, [snapshot.sessions, snapshot.smartBindings, evmChain.caip2, ethAddress, labelFor]);
 
   const value = useMemo<WalletConnectContextValue>(
     () => ({
@@ -436,10 +786,14 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
             evmChain={evmChain}
             address={head.type === 'request' ? head.address : ethAddress}
             accountLabel={(() => {
-              const shown = head.type === 'request' ? head.address : ethAddress;
+              // Smart-account requests are labeled with their OWNER account.
+              const shown =
+                head.type === 'request' ? (head.smart ? head.smart.owner : head.address) : ethAddress;
               return shown ? (labelFor(shown) ?? shown) : null;
             })()}
-            onApprove={(q, o) => void onApprove(head, q, o)}
+            smartOption={smartOption}
+            loadAaBundle={loadAaBundle}
+            onApprove={(q, o, c) => void onApprove(head, q, o, c)}
             onReject={() => onReject(head)}
           />
         ) : null}

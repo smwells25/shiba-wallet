@@ -20,13 +20,19 @@ import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
 import { localAuthAvailable, requireLocalAuth } from '../wallet/biometric';
 import {
+  AA_ACCOUNT_TYPES,
+  KERNEL_BUNDLER_NOTE,
+  KERNEL_PREFILL,
+  aaAccountTypeLabel,
   clearAaBundlerUrl,
   clearAaFactory,
   getAaConfig,
   setAaBundlerUrl,
   setAaFactory,
+  setAaKernelFactory,
   setAaPaymaster,
   clearAaPaymaster,
+  type AaAccountType,
   type AaChainConfig,
 } from '../wallet/aa';
 import { clearWcProjectId, getWcProjectId, setWcProjectId } from '../wallet/walletconnect';
@@ -445,35 +451,53 @@ function AaField({
 }
 
 /**
- * AA configuration for one EVM chain: bundler URL + factory address, keyed
- * by the ACTIVE chain's CAIP-2 id (network.chainId is 'eip155:11155111'
- * while Sepolia test mode is on, so mainnet and Sepolia AA setups never
- * share a key). In Sepolia mode the factory editor is pre-filled with the
- * pinned, previously-verified factory from config/evm-chain.ts — saving
- * still runs the standard on-chain verification before anything persists.
- * The bundler URL has no prefill on purpose: bundler endpoints embed the
- * user's API key and stay runtime configuration, never shipped defaults.
+ * AA configuration for one EVM chain: bundler URL + account type + factory
+ * address, keyed by the ACTIVE chain's CAIP-2 id (network.chainId is
+ * 'eip155:11155111' while Sepolia test mode is on, so mainnet and Sepolia
+ * AA setups never share a key). The account type (phase 7 item 1) selects
+ * which factory editor and which on-chain verification run: SimpleAccount
+ * (docs/AA_STACK.md procedure; pre-filled in Sepolia mode with the pinned
+ * factory from config/evm-chain.ts) or Kernel v3.3 (engine
+ * verifyKernelDeployment; pre-filled on both networks with the engine's
+ * KERNEL_V3_3 factory). Saving always re-runs the verification before
+ * anything persists, and saving one type replaces the other. The bundler
+ * URL has no prefill on purpose: bundler endpoints embed the user's API
+ * key and stay runtime configuration, never shipped defaults.
  */
 function AaChainRow({ network }: { network: NetworkDefault }) {
   const theme = useTheme();
   const { evmChain } = usePrefs();
   const [config, setConfig] = useState<AaChainConfig | null>(null);
+  // The type whose editor is shown; starts at the stored type.
+  const [selectedType, setSelectedType] = useState<AaAccountType | null>(null);
 
   const reload = useCallback(() => {
-    getAaConfig(network.chainId).then(setConfig, () => setConfig(null));
+    getAaConfig(network.chainId).then(
+      (c) => {
+        setConfig(c);
+        setSelectedType((prev) => prev ?? (c.factory ? c.accountType : 'kernel-v3.3'));
+      },
+      () => setConfig(null),
+    );
   }, [network.chainId]);
 
   useEffect(reload, [reload]);
 
   const shortDate = (iso: string | null) => (iso ? iso.slice(0, 10) : 'unknown date');
-  const prefill = network.chainId === evmChain.caip2 ? evmChain.aaPrefill : null;
+  const simplePrefill = network.chainId === evmChain.caip2 ? evmChain.aaPrefill : null;
+  const type: AaAccountType = selectedType ?? 'kernel-v3.3';
+  // The stored factory belongs to the selected type only when the types match.
+  const storedForType = config?.factory && config.accountType === type ? config : null;
+  const otherTypeStored = config?.factory && config.accountType !== type ? config.accountType : null;
 
   return (
     <View style={[styles.endpointRow, { backgroundColor: theme.card, borderColor: theme.border }]}>
       <View style={styles.endpointHeader}>
         <Text style={[styles.endpointLabel, { color: theme.text }]}>{network.label}</Text>
         <Text style={[styles.endpointTag, { color: theme.textMuted }]}>
-          {config && config.bundlerUrl && config.factory ? 'ready' : 'incomplete'}
+          {config && config.bundlerUrl && config.factory
+            ? `ready · ${aaAccountTypeLabel(config.accountType)}`
+            : 'incomplete'}
         </Text>
       </View>
       <AaField
@@ -496,43 +520,117 @@ function AaChainRow({ network }: { network: NetworkDefault }) {
           reload();
         }}
       />
-      <AaField
-        label="SimpleAccountFactory address"
-        placeholder="0x…"
-        value={config?.factory ?? null}
-        prefill={prefill?.factory ?? null}
-        prefillNote={
-          prefill
-            ? `Pinned Sepolia default (verified on-chain 2026-09-27; implementation ` +
-              `${prefill.implementation}, EntryPoint v0.7 ${prefill.entryPoint}). ` +
-              'Saving re-runs the full on-chain verification through your RPC endpoint.'
-            : null
-        }
-        statusLine={
-          config?.factory
-            ? `Verified ✓ — has code; implementation ${
-                config.factoryImplementation ?? 'unknown'
-              } has code and its entryPoint() is v0.7 (checked ${shortDate(
-                config.factoryVerifiedAt,
-              )})`
-            : null
-        }
-        onSave={async (draft) => {
-          const endpoint = await getEndpoint(network.chainId);
-          if (!endpoint?.url) {
-            throw new Error(
-              `No ${network.label} RPC endpoint is configured; the factory is ` +
-                'verified on-chain through it. Configure the endpoint above first.',
-            );
+      <Text style={[styles.aaFieldLabel, { color: theme.textMuted }]}>Smart-account type</Text>
+      <View style={styles.endpointButtons}>
+        {AA_ACCOUNT_TYPES.map((t) => (
+          <Button
+            key={t}
+            title={t === type ? `✓ ${aaAccountTypeLabel(t)}` : aaAccountTypeLabel(t)}
+            variant={t === type ? 'primary' : 'secondary'}
+            onPress={() => setSelectedType(t)}
+            style={styles.endpointButton}
+          />
+        ))}
+      </View>
+      {type === 'kernel-v3.3' ? (
+        <Text style={[styles.endpointNote, { color: theme.textMuted }]}>
+          Kernel v3.3 is an ERC-7579 modular account with this account&apos;s key as
+          its owner (ECDSA validator). It supports message signing for dApps
+          (ERC-1271; ERC-6492 before it is deployed). {KERNEL_BUNDLER_NOTE}
+        </Text>
+      ) : (
+        <Text style={[styles.endpointNote, { color: theme.textMuted }]}>
+          SimpleAccount (the eth-infinitism v0.7 sample) sends and batches calls,
+          but it has no ERC-1271 support, so it cannot sign messages or logins
+          for dApps.
+        </Text>
+      )}
+      {otherTypeStored ? (
+        <Text style={[styles.endpointNote, { color: theme.warningText }]}>
+          This network is currently set up as {aaAccountTypeLabel(otherTypeStored)}. Saving a{' '}
+          {aaAccountTypeLabel(type)} factory replaces that setup (a different smart-account
+          address; funds at the old one stay there).
+        </Text>
+      ) : null}
+      {type === 'kernel-v3.3' ? (
+        <AaField
+          key="kernel-v3.3"
+          label="KernelFactory address (Kernel v3.3)"
+          placeholder="0x…"
+          value={storedForType?.factory ?? null}
+          prefill={KERNEL_PREFILL.factory}
+          prefillNote={
+            `Pinned Kernel v3.3 deployment from the wallet engine (the same addresses on ` +
+            `mainnet and Sepolia): implementation ${KERNEL_PREFILL.implementation}, meta ` +
+            `factory ${KERNEL_PREFILL.metaFactory}, ECDSA validator ` +
+            `${KERNEL_PREFILL.ecdsaValidator}. Saving re-runs the full on-chain ` +
+            'verification through your RPC endpoint.'
           }
-          await setAaFactory(network.chainId, draft, endpoint.url);
-          reload();
-        }}
-        onClear={async () => {
-          await clearAaFactory(network.chainId);
-          reload();
-        }}
-      />
+          statusLine={
+            storedForType
+              ? `Verified ✓ — factory, implementation ${
+                  storedForType.factoryImplementation ?? 'unknown'
+                }, meta factory and ECDSA validator have code; entrypoint() is v0.7; ` +
+                `accountId() is ${storedForType.kernelAccountId ?? 'unknown'}; the meta factory ` +
+                `approves the factory (checked ${shortDate(storedForType.factoryVerifiedAt)})`
+              : null
+          }
+          onSave={async (draft) => {
+            const endpoint = await getEndpoint(network.chainId);
+            if (!endpoint?.url) {
+              throw new Error(
+                `No ${network.label} RPC endpoint is configured; the Kernel deployment is ` +
+                  'verified on-chain through it. Configure the endpoint above first.',
+              );
+            }
+            await setAaKernelFactory(network.chainId, draft, endpoint.url);
+            reload();
+          }}
+          onClear={async () => {
+            await clearAaFactory(network.chainId);
+            reload();
+          }}
+        />
+      ) : (
+        <AaField
+          key="simple"
+          label="SimpleAccountFactory address"
+          placeholder="0x…"
+          value={storedForType?.factory ?? null}
+          prefill={simplePrefill?.factory ?? null}
+          prefillNote={
+            simplePrefill
+              ? `Pinned Sepolia default (verified on-chain 2026-09-27; implementation ` +
+                `${simplePrefill.implementation}, EntryPoint v0.7 ${simplePrefill.entryPoint}). ` +
+                'Saving re-runs the full on-chain verification through your RPC endpoint.'
+              : null
+          }
+          statusLine={
+            storedForType
+              ? `Verified ✓ — has code; implementation ${
+                  storedForType.factoryImplementation ?? 'unknown'
+                } has code and its entryPoint() is v0.7 (checked ${shortDate(
+                  storedForType.factoryVerifiedAt,
+                )})`
+              : null
+          }
+          onSave={async (draft) => {
+            const endpoint = await getEndpoint(network.chainId);
+            if (!endpoint?.url) {
+              throw new Error(
+                `No ${network.label} RPC endpoint is configured; the factory is ` +
+                  'verified on-chain through it. Configure the endpoint above first.',
+              );
+            }
+            await setAaFactory(network.chainId, draft, endpoint.url);
+            reload();
+          }}
+          onClear={async () => {
+            await clearAaFactory(network.chainId);
+            reload();
+          }}
+        />
+      )}
       <AaField
         label="Paymaster URL (ERC-7677, optional)"
         placeholder="https://…"
@@ -1081,14 +1179,15 @@ export function SettingsScreen({ navigation }: Props) {
           Account Abstraction (experimental)
         </Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          Optional ERC-4337 setup per EVM chain: a bundler endpoint and a
-          SimpleAccountFactory address. Both are verified before saving —
-          the bundler must support EntryPoint v0.7, and the factory is
-          checked on-chain through your configured RPC endpoint (it must
-          have code, and its account implementation must point at EntryPoint
-          v0.7). When both are set, the Send screen offers an experimental
-          "Send from smart account" toggle. Off by default; nothing changes
-          for regular sends.
+          Optional ERC-4337 setup per EVM chain: a bundler endpoint, a
+          smart-account type (Kernel v3.3 or SimpleAccount) and its factory.
+          Everything is verified before saving — the bundler must support
+          EntryPoint v0.7, and the factory is checked on-chain through your
+          configured RPC endpoint. When set, the Send and Swap screens offer
+          an experimental "from smart account" toggle (token sends and swaps
+          run as one atomic batch), and WalletConnect can connect dApps to
+          the smart account. Off by default; nothing changes for regular
+          sends.
         </Text>
         {evmEndpoints.map((e) => (
           <AaChainRow key={e.network.chainId} network={e.network} />
@@ -1152,6 +1251,20 @@ export function SettingsScreen({ navigation }: Props) {
           title="Manage tokens"
           variant="secondary"
           onPress={() => navigation.navigate('Tokens')}
+        />
+      </View>
+
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: theme.text }]}>Token approvals</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          See which contracts may move your tracked tokens and NFT collections
+          without asking you again, and revoke them. Revoking is an ordinary
+          transaction with a normal network fee.
+        </Text>
+        <Button
+          title="Token approvals"
+          variant="secondary"
+          onPress={() => navigation.navigate('Approvals')}
         />
       </View>
 

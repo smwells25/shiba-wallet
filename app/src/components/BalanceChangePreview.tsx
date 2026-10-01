@@ -37,10 +37,18 @@ export interface PreviewRequest {
 export function BalanceChangePreview({
   url,
   request,
+  batch,
   note,
 }: {
   url: string | null;
   request: PreviewRequest;
+  /**
+   * Optional: the full list of calls of a smart-account batch, all from
+   * `request.from` (phase 7 item 2). When given it replaces the single
+   * request; the engine simulates the calls in order in one block
+   * (eth_simulateV1), each seeing the previous call's state.
+   */
+  batch?: PreviewRequest[];
   /** Optional extra context line (e.g. the smart-account note). */
   note?: string;
 }) {
@@ -48,8 +56,12 @@ export function BalanceChangePreview({
   const { hideAmounts, evmChain } = usePrefs();
   const [state, setState] = useState<PreviewState | null>(null);
 
-  const dataHex = request.data && request.data.length > 0 ? toHex(request.data) : '0x';
-  const key = `${url ?? ''}|${evmChain.caip2}|${request.from}|${request.to}|${request.value}|${dataHex}`;
+  const requests = batch && batch.length > 0 ? batch : [request];
+  const key =
+    `${url ?? ''}|${evmChain.caip2}|${request.from}|` +
+    requests
+      .map((r) => `${r.from}>${r.to}:${r.value}:${r.data && r.data.length > 0 ? toHex(r.data) : '0x'}`)
+      .join(',');
 
   useEffect(() => {
     let cancelled = false;
@@ -64,14 +76,12 @@ export function BalanceChangePreview({
       return runBalancePreview({
         url,
         wallet: request.from,
-        calls: [
-          {
-            from: request.from,
-            to: request.to,
-            value: request.value,
-            ...(request.data && request.data.length > 0 ? { data: request.data } : {}),
-          },
-        ],
+        calls: requests.map((r) => ({
+          from: r.from,
+          to: r.to,
+          value: r.value,
+          ...(r.data && r.data.length > 0 ? { data: r.data } : {}),
+        })),
         chainCaip2: evmChain.caip2,
         trackedTokens,
       });

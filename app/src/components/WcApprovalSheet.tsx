@@ -17,11 +17,26 @@ import { useTheme, type Theme } from '../theme';
 import { formatUnits } from '../wallet/balances';
 import { EVM_CHAIN_ID, describeSendError, prepareEvmSend, type EvmSendQuote } from '../wallet/send';
 import {
+  KERNEL_BUNDLER_NOTE,
+  PREVIEW_AA_BATCH_NOTE,
+  aaAccountTypeLabel,
+  describeAaError,
+  prepareAaCalls,
+  type AaAccountType,
+  type AaClientBundle,
+  type AaSendQuote,
+} from '../wallet/aa';
+import { PREVIEW_AA_NOTE } from '../wallet/simulation';
+import {
+  WC_SMART_ACCOUNT_METHODS,
+  WC_SUPPORTED_METHODS,
   decideProposal,
   describeChain,
   type ParsedWcRequest,
   type WcProposalSummary,
   type WcRequestEvent,
+  type WcSmartBinding,
+  type WcTxParams,
 } from '../wallet/walletconnect';
 import type { WcQueueItem } from '../wallet/wc-controller';
 
@@ -30,7 +45,29 @@ const mono = Platform.select({ ios: 'Menlo', default: 'monospace' });
 export type TxQuoteState =
   | { status: 'loading' }
   | { status: 'ready'; quote: EvmSendQuote; url: string; from: string }
+  /**
+   * Smart-account session (phase 7): the transaction or ERC-5792 batch
+   * quoted as ONE UserOperation. Reaching this state means the bundler's
+   * gas estimate (its simulation of the whole operation) passed — the AA
+   * path's pre-flight gate.
+   */
+  | { status: 'ready-aa'; quote: AaSendQuote; bundle: AaClientBundle; url: string; owner: string }
   | { status: 'error'; message: string };
+
+/** What the proposal sheet offers when a verified smart account exists. */
+export interface SmartAccountOption {
+  address: string;
+  accountType: AaAccountType;
+  signsMessages: boolean;
+}
+
+/** How the user chose to connect a proposal. */
+export type ConnectAs = 'eoa' | 'smart';
+
+/** Loads the ACTIVE chain's verified smart-account bundle for an account index. */
+export type AaBundleLoader = (
+  accountIndex: number,
+) => Promise<{ bundle: AaClientBundle; url: string } | null>;
 
 /**
  * The app-level WalletConnect approval sheet (phase 6, item 5): the
@@ -54,6 +91,8 @@ export function WcApprovalSheet({
   evmChain,
   address,
   accountLabel,
+  smartOption,
+  loadAaBundle,
   onApprove,
   onReject,
 }: {
@@ -71,8 +110,18 @@ export function WcApprovalSheet({
   address: string | null;
   /** "Account 2 (0x6Fac…b9C0)" for `address`, shown on every approval. */
   accountLabel: string | null;
-  /** txQuote/override are null/false for everything but transactions. */
-  onApprove: (txQuote: TxQuoteState | null, overrideSimulation: boolean) => void;
+  /**
+   * Proposals only: resolves the active account's smart account when a
+   * verified AA configuration exists for the active chain (else null).
+   */
+  smartOption: () => Promise<SmartAccountOption | null>;
+  /** Smart-account requests: builds the bundle the quote runs through. */
+  loadAaBundle: AaBundleLoader;
+  /**
+   * txQuote/override are null/false for everything but transactions;
+   * connectAs is set for proposals only.
+   */
+  onApprove: (txQuote: TxQuoteState | null, overrideSimulation: boolean, connectAs?: ConnectAs) => void;
   onReject: () => void;
 }) {
   const theme = useTheme();
@@ -87,9 +136,14 @@ export function WcApprovalSheet({
   // Transaction requests need a fee quote (the same machinery as the Send
   // screen: chain-id verification, estimateGas with the dApp's calldata,
   // eth_call simulation) before the user can see what they would approve.
+  // On a smart-account session, transactions and ERC-5792 batches are
+  // quoted as one UserOperation through the bundler estimate instead.
   useEffect(() => {
     setOverrideSimulation(false);
-    if (item.type !== 'request' || item.parsed.kind !== 'transaction') {
+    if (
+      item.type !== 'request' ||
+      (item.parsed.kind !== 'transaction' && item.parsed.kind !== 'calls')
+    ) {
       setTxQuote(null);
       return;
     }
@@ -99,6 +153,62 @@ export function WcApprovalSheet({
     }
     let cancelled = false;
     setTxQuote({ status: 'loading' });
+    if (item.smart) {
+      const smart = item.smart;
+      const txs: WcTxParams[] =
+        item.parsed.kind === 'calls' ? item.parsed.batch.calls : [item.parsed.tx];
+      (async (): Promise<TxQuoteState> => {
+        const loaded = await loadAaBundle(smart.accountIndex);
+        if (!loaded) {
+          throw new Error(
+            'No verified smart-account configuration exists for the active chain any more ' +
+              '(Settings → Account Abstraction).',
+          );
+        }
+        if (
+          loaded.bundle.accountType !== smart.accountType ||
+          loaded.bundle.factory.toLowerCase() !== smart.factory.toLowerCase()
+        ) {
+          throw new Error(
+            'The smart-account settings changed since this connection was made, so this ' +
+              'request cannot be sent from the connected smart account. Reconnect the dApp.',
+          );
+        }
+        const quote = await prepareAaCalls(
+          loaded.bundle,
+          smart.owner,
+          txs.map((t) => ({ to: t.to, value: t.valueWei, data: t.data })),
+        );
+        if (quote.sender.toLowerCase() !== smart.address.toLowerCase()) {
+          throw new Error(
+            `The configured smart account is ${quote.sender}, not the connected ${smart.address}. ` +
+              'Reconnect the dApp.',
+          );
+        }
+        return { status: 'ready-aa', quote, bundle: loaded.bundle, url: loaded.url, owner: smart.owner };
+      })().then(
+        (r) => {
+          if (!cancelled) setTxQuote(r);
+        },
+        (e) => {
+          if (!cancelled) {
+            const { title, detail } =
+              describeAaError(e, { accountType: smart.accountType as AaAccountType, deployed: null }) ?? {
+                title: 'The bundler could not estimate this operation (it would fail or cannot be sent).',
+                detail: e instanceof Error ? e.message : String(e),
+              };
+            setTxQuote({ status: 'error', message: `${title}\n${detail}` });
+          }
+        },
+      );
+      return () => {
+        cancelled = true;
+      };
+    }
+    if (item.parsed.kind !== 'transaction') {
+      setTxQuote({ status: 'error', message: 'Batches are only served on smart-account connections.' });
+      return;
+    }
     const { tx } = item.parsed;
     (async () => {
       // getEndpoint translates the EVM slot to the active network
@@ -147,12 +257,14 @@ export function WcApprovalSheet({
               theme={theme}
               busy={busy}
               activeChain={evmChain.caip2}
-              onApprove={() => onApprove(null, false)}
+              smartOption={smartOption}
+              onApprove={(connectAs) => onApprove(null, false, connectAs)}
               onReject={onReject}
             />
           ) : (
             <RequestBody
               item={item}
+              smart={item.smart}
               dappName={dappName}
               accountLabel={accountLabel}
               theme={theme}
@@ -179,6 +291,7 @@ function ProposalBody({
   theme,
   busy,
   activeChain,
+  smartOption,
   onApprove,
   onReject,
 }: {
@@ -190,14 +303,42 @@ function ProposalBody({
   busy: boolean;
   /** CAIP-2 id of the active EVM chain (mainnet or Sepolia test mode). */
   activeChain: string;
-  onApprove: () => void;
+  smartOption: () => Promise<SmartAccountOption | null>;
+  onApprove: (connectAs: ConnectAs) => void;
   onReject: () => void;
 }) {
+  // Smart-account choice (phase 7 item 3): offered only when a verified AA
+  // configuration exists for the active chain. undefined = still resolving.
+  const [smart, setSmart] = useState<SmartAccountOption | null | undefined>(undefined);
+  const [smartError, setSmartError] = useState<string | null>(null);
+  const [connectAs, setConnectAs] = useState<ConnectAs>('eoa');
+  useEffect(() => {
+    let cancelled = false;
+    smartOption().then(
+      (option) => {
+        if (!cancelled) setSmart(option);
+      },
+      (e) => {
+        if (!cancelled) {
+          setSmart(null);
+          setSmartError(e instanceof Error ? e.message : String(e));
+        }
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [event.id, activeChain, address]);
+  const asSmart = connectAs === 'smart' && smart;
   // Recomputed against the CURRENT active chain, so the sheet always shows
   // what approving would actually do right now.
   const decision = useMemo(
-    () => decideProposal(event.params, address ?? '', activeChain),
-    [event, address, activeChain],
+    () =>
+      asSmart
+        ? decideProposal(event.params, smart.address, activeChain, WC_SMART_ACCOUNT_METHODS)
+        : decideProposal(event.params, address ?? '', activeChain, WC_SUPPORTED_METHODS),
+    [event, address, activeChain, asSmart, smart],
   );
   return (
     <>
@@ -219,10 +360,66 @@ function ProposalBody({
         value={summary.methods.join(', ') || 'none specified'}
         theme={theme}
       />
+      {smart === undefined ? (
+        <Text style={[styles.hint, { color: theme.textMuted }]}>Checking for a smart account…</Text>
+      ) : smart ? (
+        <>
+          <Text style={[styles.fieldLabel, { color: theme.textMuted }]}>Connect as</Text>
+          <Button
+            title={connectAs === 'eoa' ? '✓ Regular account (EOA)' : 'Regular account (EOA)'}
+            variant={connectAs === 'eoa' ? 'primary' : 'secondary'}
+            onPress={() => setConnectAs('eoa')}
+            disabled={busy}
+          />
+          <Button
+            title={
+              connectAs === 'smart'
+                ? `✓ Smart account (${aaAccountTypeLabel(smart.accountType)})`
+                : `Smart account (${aaAccountTypeLabel(smart.accountType)})`
+            }
+            variant={connectAs === 'smart' ? 'primary' : 'secondary'}
+            onPress={() => setConnectAs('smart')}
+            disabled={busy}
+          />
+          {connectAs === 'smart' ? (
+            <>
+              <Field label="Smart account address" value={smart.address} monoValue theme={theme} />
+              <Text style={[styles.hint, { color: theme.textMuted }]}>
+                The dApp sees the smart account (it may not be deployed yet — that is
+                fine; it deploys with its first transaction). Transactions and
+                batches (ERC-5792) run as UserOperations paid from the smart
+                account. {smart.signsMessages
+                  ? 'Messages and logins are signed with ERC-1271 by the smart account ' +
+                    '(ERC-6492-wrapped while it is not deployed); dApps that only accept ' +
+                    'plain account signatures will reject them.'
+                  : ''}
+              </Text>
+              {!smart.signsMessages ? (
+                <WarningBox>
+                  This smart account type (SimpleAccount) cannot sign messages: it has no
+                  ERC-1271 support. Logins (sign-in with Ethereum) and every message or
+                  typed-data signature request from this dApp will be refused. Connect with
+                  the regular account if the dApp needs signatures.
+                </WarningBox>
+              ) : null}
+            </>
+          ) : null}
+        </>
+      ) : smartError ? (
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          Smart account unavailable for this connection: {smartError}
+        </Text>
+      ) : null}
       {decision.ok ? (
         <>
           <Field label="Will connect on" value={describeChain(activeChain)} theme={theme} />
-          {accountLabel ? (
+          {asSmart ? (
+            <Field
+              label="Will connect"
+              value={`Smart account ${smart.address}${accountLabel ? ` (owner: ${accountLabel})` : ''}`}
+              theme={theme}
+            />
+          ) : accountLabel ? (
             <Field label="Will connect account" value={accountLabel} theme={theme} />
           ) : null}
           {decision.droppedChains.length > 0 ? (
@@ -247,7 +444,11 @@ function ProposalBody({
         <ActivityIndicator color={theme.accent} />
       ) : decision.ok ? (
         <>
-          <Button title="Approve connection" onPress={onApprove} />
+          <Button
+            title="Approve connection"
+            onPress={() => onApprove(asSmart ? 'smart' : 'eoa')}
+            disabled={smart === undefined}
+          />
           <Button title="Reject" variant="secondary" onPress={onReject} />
         </>
       ) : (
@@ -259,6 +460,7 @@ function ProposalBody({
 
 function RequestBody({
   item,
+  smart,
   dappName,
   accountLabel,
   theme,
@@ -271,6 +473,8 @@ function RequestBody({
   onReject,
 }: {
   item: { event: WcRequestEvent; parsed: ParsedWcRequest };
+  /** Set for a smart-account session. */
+  smart: WcSmartBinding | null;
   dappName: string;
   /** The account that would sign ("Account 2 (0x6Fac…b9C0)"). */
   accountLabel: string | null;
@@ -300,6 +504,7 @@ function RequestBody({
             {parsed.messageText ?? parsed.messageHex}
           </Text>
         </View>
+        {smart ? <SmartSigningNote smart={smart} theme={theme} /> : null}
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Signing proves account ownership to the dApp (EIP-191). It costs
           nothing and moves no funds, but only sign messages from dApps you
@@ -342,6 +547,7 @@ function RequestBody({
             {JSON.stringify(typedData.message, null, 2)}
           </Text>
         </View>
+        {smart ? <SmartSigningNote smart={smart} theme={theme} /> : null}
         <WarningBox>
           Typed-data signatures can authorize on-chain actions later (token
           permits, orders). Only approve if you understand what this dApp
@@ -359,7 +565,24 @@ function RequestBody({
     );
   }
 
-  // Transaction request — the same confirm presentation as the Send screen.
+  if (smart || parsed.kind === 'calls') {
+    return (
+      <SmartAccountTxBody
+        parsed={parsed}
+        smart={smart}
+        dappName={dappName}
+        accountLabel={accountLabel}
+        theme={theme}
+        busy={busy}
+        evmChain={evmChain}
+        txQuote={txQuote}
+        onApprove={onApprove}
+        onReject={onReject}
+      />
+    );
+  }
+
+  // Transaction request (EOA session) — the same confirm presentation as the Send screen.
   const quoteReady = txQuote?.status === 'ready';
   const simulationFailed = quoteReady && !txQuote.quote.simulation.ok;
   const approveBlocked = !quoteReady || (simulationFailed && !overrideSimulation);
@@ -386,19 +609,8 @@ function RequestBody({
       )}
       <Field label="From dApp" value={dappName} theme={theme} />
       {accountLabel ? <Field label="Sending account" value={accountLabel} theme={theme} /> : null}
-      <Field label="To" value={parsed.tx.to} monoValue theme={theme} />
-      <Field
-        label="Amount"
-        value={`${formatUnits(parsed.tx.valueWei, 18, 18)} ${evmChain.displaySymbol}`}
-        theme={theme}
-      />
-      {parsed.tx.data.length > 0 ? (
-        <Field
-          label={`Calldata (${parsed.tx.data.length} bytes)`}
-          value={truncateHex(parsed.tx.data)}
-          monoValue
-          theme={theme}
-        />
+      {parsed.kind === 'transaction' ? (
+        <TxFields tx={parsed.tx} evmChain={evmChain} theme={theme} />
       ) : null}
       {txQuote?.status === 'loading' ? (
         <View style={styles.center}>
@@ -470,8 +682,222 @@ function RequestBody({
  * refuses even if a stale render let the press through).
  */
 export function txApprovalAllowed(txQuote: TxQuoteState | null, overrideSimulation: boolean): boolean {
+  // Smart-account path: a ready quote means the bundler's estimate (its
+  // simulation of the whole operation) passed; there is no override.
+  if (txQuote?.status === 'ready-aa') return true;
   if (txQuote?.status !== 'ready') return false;
   return txQuote.quote.simulation.ok || overrideSimulation;
+}
+
+/** To / amount / calldata rows for one call. */
+function TxFields({
+  tx,
+  evmChain,
+  theme,
+  index,
+}: {
+  tx: WcTxParams;
+  evmChain: EvmChainProfile;
+  theme: Theme;
+  /** "Call 2 of 3" prefix for batches. */
+  index?: { n: number; of: number };
+}) {
+  const prefix = index ? `Call ${index.n} of ${index.of} · ` : '';
+  return (
+    <>
+      <Field label={`${prefix}To`} value={tx.to} monoValue theme={theme} />
+      <Field
+        label={`${prefix}Amount`}
+        value={`${formatUnits(tx.valueWei, 18, 18)} ${evmChain.displaySymbol}`}
+        theme={theme}
+      />
+      {tx.data.length > 0 ? (
+        <Field
+          label={`${prefix}Calldata (${tx.data.length} bytes)`}
+          value={truncateHex(tx.data)}
+          monoValue
+          theme={theme}
+        />
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * The note on message/typed-data requests of a smart-account session: the
+ * ORIGINAL request is shown above, because Kernel's ERC-1271 wrapper means
+ * the owner key itself signs only a hash.
+ */
+function SmartSigningNote({ smart, theme }: { smart: WcSmartBinding; theme: Theme }) {
+  return (
+    <Text style={[styles.hint, { color: theme.textMuted }]}>
+      Signed by your smart account {smart.address} through its validator (ERC-1271
+      {smart.accountType === 'kernel-v3.3' ? '; ERC-6492-wrapped if the account is not deployed yet' : ''}).
+      Your account key signs Kernel&apos;s wrapper — a hash of this exact request bound to
+      the smart account and this chain — so a hardware or external signer would show only
+      that hash. What you are approving is the content shown above.
+    </Text>
+  );
+}
+
+/**
+ * Smart-account transaction / ERC-5792 batch approval: every call listed,
+ * the bundler-estimated fee, deployment state, the batch simulated as the
+ * smart account in the balance-change preview. The bundler estimate is the
+ * gate: approval is possible only once it succeeded.
+ */
+function SmartAccountTxBody({
+  parsed,
+  smart,
+  dappName,
+  accountLabel,
+  theme,
+  busy,
+  evmChain,
+  txQuote,
+  onApprove,
+  onReject,
+}: {
+  parsed: ParsedWcRequest;
+  smart: WcSmartBinding | null;
+  dappName: string;
+  accountLabel: string | null;
+  theme: Theme;
+  busy: boolean;
+  evmChain: EvmChainProfile;
+  txQuote: TxQuoteState | null;
+  onApprove: () => void;
+  onReject: () => void;
+}) {
+  const txs: WcTxParams[] =
+    parsed.kind === 'calls' ? parsed.batch.calls : parsed.kind === 'transaction' ? [parsed.tx] : [];
+  const batch = parsed.kind === 'calls';
+  const ready = txQuote?.status === 'ready-aa' ? txQuote : null;
+  return (
+    <>
+      <Text style={[styles.modalTitle, { color: theme.text }]}>
+        {batch ? `Batch request (${txs.length} call${txs.length === 1 ? '' : 's'})` : 'Transaction request'}
+      </Text>
+      {evmChain.testnet ? (
+        <View style={[styles.mainnetBadge, { backgroundColor: '#e07800', borderColor: '#e07800' }]}>
+          <Text style={[styles.mainnetBadgeText, { color: '#ffffff' }]}>
+            {evmChain.label} TESTNET — test funds only
+          </Text>
+        </View>
+      ) : (
+        <View
+          style={[
+            styles.mainnetBadge,
+            { backgroundColor: theme.dangerSurface, borderColor: theme.danger },
+          ]}
+        >
+          <Text style={[styles.mainnetBadgeText, { color: theme.danger }]}>
+            Ethereum Mainnet — real funds
+          </Text>
+        </View>
+      )}
+      <Field label="From dApp" value={dappName} theme={theme} />
+      {smart ? (
+        <>
+          <Field label="Sending smart account" value={smart.address} monoValue theme={theme} />
+          {accountLabel ? <Field label="Owner (signs)" value={accountLabel} theme={theme} /> : null}
+        </>
+      ) : null}
+      {batch ? (
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          The dApp asked for {txs.length} call{txs.length === 1 ? '' : 's'} (ERC-5792
+          wallet_sendCalls{parsed.kind === 'calls' && parsed.batch.atomicRequired ? ', atomic required' : ''}).
+          They run in this order as ONE smart-account operation: all succeed, or none take
+          effect.
+          {parsed.kind === 'calls' && parsed.batch.ignoredCapabilities.length > 0
+            ? ` Optional capabilities this wallet does not support were ignored: ${parsed.batch.ignoredCapabilities.join(', ')}.`
+            : ''}
+        </Text>
+      ) : null}
+      {txs.map((tx, i) => (
+        <TxFields
+          key={`${i}-${tx.to}`}
+          tx={tx}
+          evmChain={evmChain}
+          theme={theme}
+          {...(batch ? { index: { n: i + 1, of: txs.length } } : {})}
+        />
+      ))}
+      {txQuote?.status === 'loading' ? (
+        <View style={styles.center}>
+          <ActivityIndicator color={theme.accent} />
+          <Text style={[styles.hint, { color: theme.textMuted }]}>
+            Asking the bundler to estimate the operation…
+          </Text>
+        </View>
+      ) : null}
+      {txQuote?.status === 'error' ? <WarningBox>{txQuote.message}</WarningBox> : null}
+      {ready ? (
+        <>
+          <Field
+            label="Deployment"
+            value={ready.quote.deployed ? 'Already deployed' : 'Will deploy with this operation'}
+            theme={theme}
+          />
+          {!ready.quote.deployed && ready.quote.accountType === 'kernel-v3.3' ? (
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{KERNEL_BUNDLER_NOTE}</Text>
+          ) : null}
+          <Field
+            label={ready.quote.sponsored ? 'Network fee' : 'Max network fee (bundler estimate)'}
+            value={
+              ready.quote.sponsored
+                ? 'Sponsored — the smart account pays 0'
+                : `${formatUnits(ready.quote.fee, 18, 18)} ${evmChain.displaySymbol}`
+            }
+            theme={theme}
+          />
+          <Field
+            label="Total from the smart account (worst case)"
+            value={`${formatUnits(ready.quote.total, 18, 18)} ${evmChain.displaySymbol}`}
+            theme={theme}
+          />
+          <Field
+            label="Smart account balance"
+            value={`${formatUnits(ready.quote.senderBalance, 18, 18)} ${evmChain.displaySymbol}`}
+            theme={theme}
+          />
+          <BalanceChangePreview
+            url={ready.url}
+            request={{
+              from: ready.quote.sender,
+              to: ready.quote.calls[0]!.to,
+              value: ready.quote.calls[0]!.value,
+              data: ready.quote.calls[0]!.data,
+            }}
+            batch={ready.quote.calls.map((c) => ({
+              from: ready.quote.sender,
+              to: c.to,
+              value: c.value,
+              data: c.data,
+            }))}
+            note={ready.quote.calls.length > 1 ? PREVIEW_AA_BATCH_NOTE : PREVIEW_AA_NOTE}
+          />
+          <Text style={[styles.simulationOk, { color: theme.success }]}>
+            Bundler gas estimate passed (eth_estimateUserOperationGas simulated the operation).
+          </Text>
+          {!batch ? (
+            <Text style={[styles.hint, { color: theme.textMuted }]}>
+              The dApp expects a transaction hash, so after approving the wallet waits (up to
+              two minutes) for the bundler to include the operation.
+            </Text>
+          ) : null}
+        </>
+      ) : null}
+      {busy ? (
+        <ActivityIndicator color={theme.accent} />
+      ) : (
+        <>
+          <Button title={batch ? 'Approve & send batch' : 'Approve & send'} onPress={onApprove} disabled={!ready} />
+          <Button title="Reject" variant="secondary" onPress={onReject} />
+        </>
+      )}
+    </>
+  );
 }
 
 function truncateHex(data: Uint8Array): string {

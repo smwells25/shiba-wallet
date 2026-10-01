@@ -39,10 +39,16 @@ import {
   type SendResult,
 } from '../wallet/send';
 import {
-  createAaClient,
+  KERNEL_BUNDLER_NOTE,
+  PREVIEW_AA_BATCH_NOTE,
+  aaAccountTypeLabel,
+  createAaClientFromConfig,
+  describeAaError,
+  maxAaErc20Send,
   maxAaSend,
   getAaConfig,
   isAaConfigured,
+  prepareAaErc20Send,
   prepareAaSend,
   sendAa,
   waitForAaReceipt,
@@ -132,8 +138,10 @@ function NetworkBadge({ label, testnet, theme }: { label: string; testnet: boole
  * coin. Recipient validation is identical to native EVM, the amount is
  * parsed with the token's on-chain decimals, and the fee is quoted — and
  * displayed — in ETH, because gas for a token transfer is paid in ETH.
- * The smart-account toggle is hidden in token mode (see the note in the
- * form); the send always takes the EOA path via send-erc20.ts.
+ * With the smart-account toggle on (phase 7 item 2), a token send is ONE
+ * transfer call executed by the smart account (aa.ts prepareAaErc20Send):
+ * the token balance and the gas are checked against the smart account,
+ * and the bundler's gas estimate is the pre-flight gate.
  */
 export function SendScreen({ route, navigation }: Props) {
   const theme = useTheme();
@@ -438,10 +446,9 @@ export function SendScreen({ route, navigation }: Props) {
   // The smart-account toggle appears only when both AA endpoints are
   // configured for this EVM chain — configured means verified, because the
   // Settings save path refuses anything that fails verification. Token
-  // mode hides it: ERC-20 sends through the smart account (batched
-  // approve+transfer) are a later slice, so tokens always take the EOA path.
+  // mode offers it too (one transfer call from the smart account); NFT mode
+  // still hides it (smart-account NFT sends are a later slice).
   const aaAvailable =
-    !tokenMode &&
     !nftMode &&
     network?.kind === 'evm-jsonrpc' &&
     aaConfig !== null &&
@@ -451,6 +458,24 @@ export function SendScreen({ route, navigation }: Props) {
     nftMode ? describeNftSendError(e) : describeSendError(e, symbol);
   const nftLabel = nftParams ? `${nftParams.name} (${nftParams.collection})` : '';
   const aaActive = aaAvailable && aaEnabled;
+
+  /**
+   * The smart-account bundle for this screen: the ACTIVE chain's verified
+   * configuration (account type, factory, Kernel addresses, paymaster),
+   * CREATE2 salt = the active account's index (ADR D8), owner = the same
+   * account's EOA (passed at quote time).
+   */
+  const buildAaBundle = (): AaClientBundle => {
+    if (!url || !aaConfig) throw new Error('Smart-account settings are not loaded.');
+    if (!activeAccount) throw new Error('No active account.');
+    return createAaClientFromConfig(aaConfig, {
+      nodeUrl: url,
+      // Active chain id (11155111 in Sepolia test mode): the quote verifies
+      // the node endpoint reports exactly this chain.
+      chainId: BigInt(evmChain.chainIdDecimal),
+      accountIndex: activeAccount.index,
+    });
+  };
 
   const parseAmount = (): bigint => {
     const amount = parseUnits(amountText, decimals);
@@ -472,32 +497,27 @@ export function SendScreen({ route, navigation }: Props) {
         setAmountText(held.toString());
         return;
       }
-      if (aaActive && aaConfig?.bundlerUrl && aaConfig.factory) {
+      if (aaActive) {
         // AA Max (phase 5): full smart-account balance under sponsorship,
-        // else balance minus the worst-case fee of a zero-value probe.
+        // else balance minus the worst-case fee of a zero-value probe. In
+        // token mode: the smart account's full token balance, refused when
+        // its ETH cannot cover the fee.
         if (!validation?.ok) {
           throw new Error('Enter a valid recipient first — the max depends on it.');
         }
-        if (!activeAccount) throw new Error('No active account.');
-        const bundle = createAaClient({
-          nodeUrl: url,
-          bundlerUrl: aaConfig.bundlerUrl,
-          factory: aaConfig.factory,
-          chainId: BigInt(evmChain.chainIdDecimal),
-          // CREATE2 salt = the active account's index (ADR D8); the owner
-          // passed below is the same account's EOA.
-          accountIndex: activeAccount.index,
-          ...(aaConfig.paymasterUrl
-            ? {
-                paymaster: {
-                  url: aaConfig.paymasterUrl,
-                  contextJson: aaConfig.paymasterContext,
-                },
-              }
-            : {}),
-        });
-        max = await maxAaSend(bundle, account.address, validation.normalized);
-        if (max <= 0n) throw new Error('The smart account balance cannot cover the network fee.');
+        const bundle = buildAaBundle();
+        if (token) {
+          max = await maxAaErc20Send(bundle, account.address, {
+            contract: token.assetId.reference,
+            recipient: validation.normalized,
+            symbol: token.symbol,
+            decimals: token.decimals,
+          });
+          if (max <= 0n) throw new Error(`The smart account's ${token.symbol} balance is zero.`);
+        } else {
+          max = await maxAaSend(bundle, account.address, validation.normalized);
+          if (max <= 0n) throw new Error('The smart account balance cannot cover the network fee.');
+        }
       } else if (token) {
         // Token max = the full token balance: the fee is paid in ETH, so
         // it never reduces the token amount. maxErc20Send refuses (with a
@@ -577,11 +597,27 @@ export function SendScreen({ route, navigation }: Props) {
           expectedCaip2: evmChain.caip2,
           nftCaip2: nft.chainId,
         });
+      } else if (aaActive) {
+        // Experimental ERC-4337 path: quote from the smart account through
+        // the bundler estimate (see ../wallet/aa.ts) — a native transfer,
+        // or in token mode ONE transfer call executed by the smart account
+        // (no approve: the account moves its own tokens). The bundle is kept
+        // for the send + receipt poll so all three use the same transports.
+        const bundle = buildAaBundle();
+        aaBundle.current = bundle;
+        next = token
+          ? await prepareAaErc20Send(bundle, account.address, {
+              contract: token.assetId.reference,
+              recipient: validation.normalized,
+              amount,
+              symbol: token.symbol,
+              decimals: token.decimals,
+            })
+          : await prepareAaSend(bundle, account.address, validation.normalized, amount);
       } else if (token) {
-        // ERC-20 token mode: EOA path only (the smart-account toggle is
-        // hidden in token mode). Quote checks the token balance, checks
-        // the ETH balance against the fee, and pre-flights the transfer
-        // calldata through eth_call.
+        // ERC-20 token mode, EOA path. Quote checks the token balance,
+        // checks the ETH balance against the fee, and pre-flights the
+        // transfer calldata through eth_call.
         next = await prepareErc20Send({
           url,
           from: account.address,
@@ -591,34 +627,6 @@ export function SendScreen({ route, navigation }: Props) {
           symbol: token.symbol,
           decimals: token.decimals,
         });
-      } else if (aaActive && aaConfig?.bundlerUrl && aaConfig.factory) {
-        // Experimental ERC-4337 path: quote from the smart account through
-        // the bundler estimate (see ../wallet/aa.ts). The bundle is kept
-        // for the send + receipt poll so all three use the same transports.
-        if (!activeAccount) throw new Error('No active account.');
-        const bundle = createAaClient({
-          nodeUrl: url,
-          bundlerUrl: aaConfig.bundlerUrl,
-          factory: aaConfig.factory,
-          // CREATE2 salt = the active account's index (ADR D8): account 0
-          // keeps salt 0 and therefore its existing smart-account address.
-          accountIndex: activeAccount.index,
-          // Active chain id (11155111 in Sepolia test mode): prepareAaSend
-          // verifies the node endpoint reports exactly this chain.
-          chainId: BigInt(evmChain.chainIdDecimal),
-          // Verified ERC-7677 paymaster, when configured: gas becomes
-          // sponsored and the fee rows below say so.
-          ...(aaConfig.paymasterUrl
-            ? {
-                paymaster: {
-                  url: aaConfig.paymasterUrl,
-                  contextJson: aaConfig.paymasterContext,
-                },
-              }
-            : {}),
-        });
-        aaBundle.current = bundle;
-        next = await prepareAaSend(bundle, account.address, validation.normalized, amount);
       } else if (network.kind === 'evm-jsonrpc') {
         // The endpoint's eth_chainId must match the ACTIVE EVM chain
         // (mainnet 1 / Sepolia 11155111) — the modes can never mix.
@@ -647,7 +655,10 @@ export function SendScreen({ route, navigation }: Props) {
       setOverrideSimulation(false);
       setPhase('confirm');
     } catch (e) {
-      const { title, detail } = describeError(e);
+      const { title, detail } =
+        (aaActive && aaConfig
+          ? describeAaError(e, { accountType: aaConfig.accountType, deployed: null })
+          : null) ?? describeError(e);
       setFormError(`${title}\n${detail}`);
       setPhase('form');
     }
@@ -720,7 +731,10 @@ export function SendScreen({ route, navigation }: Props) {
       }
       setPhase('success');
     } catch (e) {
-      const { title, detail } = describeError(e);
+      const { title, detail } =
+        (quote.kind === 'aa'
+          ? describeAaError(e, { accountType: quote.accountType, deployed: quote.deployed })
+          : null) ?? describeError(e);
       Alert.alert(title, detail);
       setPhase('confirm');
     }
@@ -838,18 +852,43 @@ export function SendScreen({ route, navigation }: Props) {
 
         <View style={[styles.aaTag, { borderColor: theme.accent }]}>
           <Text style={[styles.aaTagText, { color: theme.accent }]}>
-            EXPERIMENTAL · ERC-4337 smart account
+            EXPERIMENTAL · ERC-4337 smart account · {aaAccountTypeLabel(quote.accountType)}
           </Text>
         </View>
 
         <Row label="To" value={quote.to} mono theme={theme} />
         <RecipientContactNotice match={contactMatchFor(quote.to)} address={quote.to} />
-        <Row
-          label="Amount"
-          value={`${exact(quote.amount, decimals)} ${symbol}`}
-          sub={fiatOf(nativePriceId, quote.amount, decimals)}
-          theme={theme}
-        />
+        {quote.token ? (
+          <>
+            <Row
+              label="Amount"
+              value={`${exact(quote.token.amount, quote.token.decimals)} ${quote.token.symbol}`}
+              sub={fiatOf(tokenPriceId, quote.token.amount, quote.token.decimals)}
+              theme={theme}
+            />
+            <Row label="Token contract" value={quote.token.contract} mono theme={theme} />
+            {quote.tokenSpend ? (
+              <Row
+                label={`Smart account ${quote.token.symbol} balance`}
+                value={`${exact(quote.tokenSpend.balance, quote.token.decimals)} ${quote.token.symbol}`}
+                theme={theme}
+              />
+            ) : null}
+            <Text style={[styles.hint, { color: theme.textMuted }]}>
+              One transfer call executed by the smart account: it sends its
+              own {quote.token.symbol}, so no approval is needed. Gas is paid
+              in {evmChain.displaySymbol} by the smart account (or the
+              paymaster, when sponsored).
+            </Text>
+          </>
+        ) : (
+          <Row
+            label="Amount"
+            value={`${exact(quote.amount, nativeDecimals)} ${evmChain.displaySymbol}`}
+            sub={fiatOf(nativePriceId, quote.amount, nativeDecimals)}
+            theme={theme}
+          />
+        )}
         <Row
           label="Owner account (signs)"
           value={activeAccount?.name ?? '—'}
@@ -858,8 +897,8 @@ export function SendScreen({ route, navigation }: Props) {
         />
         <Row label="From smart account" value={quote.sender} mono theme={theme} />
         <Row
-          label="Smart account balance"
-          value={`${exact(quote.senderBalance, decimals)} ${symbol}`}
+          label={`Smart account ${evmChain.displaySymbol} balance`}
+          value={`${exact(quote.senderBalance, nativeDecimals)} ${evmChain.displaySymbol}`}
           theme={theme}
         />
         <Row
@@ -867,10 +906,17 @@ export function SendScreen({ route, navigation }: Props) {
           value={quote.deployed ? 'Already deployed' : 'Will deploy with this send'}
           theme={theme}
         />
+        {!quote.deployed && quote.accountType === 'kernel-v3.3' ? (
+          <Text style={[styles.hint, { color: theme.textMuted }]}>{KERNEL_BUNDLER_NOTE}</Text>
+        ) : null}
         <Row
           label={quote.sponsored ? 'Network fee' : 'Max network fee (bundler estimate)'}
-          value={quote.sponsored ? 'Sponsored — you pay 0' : `${exact(quote.fee, decimals)} ${symbol}`}
-          sub={quote.sponsored ? null : fiatOf(nativePriceId, quote.fee, decimals)}
+          value={
+            quote.sponsored
+              ? 'Sponsored — you pay 0'
+              : `${exact(quote.fee, nativeDecimals)} ${evmChain.displaySymbol}`
+          }
+          sub={quote.sponsored ? null : fiatOf(nativePriceId, quote.fee, nativeDecimals)}
           theme={theme}
         />
         <Text style={[styles.hint, { color: theme.textMuted }]}>
@@ -884,17 +930,26 @@ export function SendScreen({ route, navigation }: Props) {
               'its own gas from its own balance.'}
         </Text>
         <Row
-          label="Total (worst case)"
-          value={`${exact(quote.total, decimals)} ${symbol}`}
-          sub={fiatOf(nativePriceId, quote.total, decimals)}
+          label={quote.token ? `Total ${evmChain.displaySymbol} (worst case)` : 'Total (worst case)'}
+          value={`${exact(quote.total, nativeDecimals)} ${evmChain.displaySymbol}`}
+          sub={fiatOf(nativePriceId, quote.total, nativeDecimals)}
           theme={theme}
         />
 
         <BalanceChangePreview
           url={url}
-          request={{ from: quote.sender, to: quote.to, value: quote.amount }}
-          note={PREVIEW_AA_NOTE}
+          request={{
+            from: quote.sender,
+            to: quote.calls[0]!.to,
+            value: quote.calls[0]!.value,
+            data: quote.calls[0]!.data,
+          }}
+          batch={quote.calls.map((c) => ({ from: quote.sender, to: c.to, value: c.value, data: c.data }))}
+          note={quote.calls.length > 1 ? PREVIEW_AA_BATCH_NOTE : PREVIEW_AA_NOTE}
         />
+        <Text style={[styles.simulationOk, { color: theme.success }]}>
+          Bundler gas estimate passed (eth_estimateUserOperationGas simulated the operation).
+        </Text>
 
         {phase === 'sending' ? (
           <View style={styles.center}>
@@ -905,7 +960,10 @@ export function SendScreen({ route, navigation }: Props) {
           </View>
         ) : (
           <>
-            <Button title={`Send ${symbol} from smart account`} onPress={() => void onSend()} />
+            <Button
+              title={`Send ${quote.token ? quote.token.symbol : symbol} from smart account`}
+              onPress={() => void onSend()}
+            />
             <Button title="Back" variant="secondary" onPress={() => setPhase('form')} />
           </>
         )}
@@ -1222,10 +1280,12 @@ export function SendScreen({ route, navigation }: Props) {
           <Text style={[styles.hint, { color: theme.textMuted }]}>
             Sending {token.symbol} (ERC-20 token, contract{' '}
             {token.assetId.reference.slice(0, 10)}…{token.assetId.reference.slice(-8)}) from
-            your Ethereum address. The network fee is paid in ETH, not in{' '}
-            {token.symbol}. Smart-account sends are not available for tokens
-            yet — batching approve + transfer through the smart account is a
-            later release, so token sends always go from your regular address.
+            {aaActive ? ' your smart account' : ' your Ethereum address'}. The network
+            fee is paid in ETH, not in {token.symbol}.
+            {aaAvailable
+              ? ' With "Send from smart account" on, the smart account sends its own ' +
+                `${token.symbol} in one transfer call (no approval needed).`
+              : ''}
           </Text>
         </View>
       ) : null}
@@ -1264,12 +1324,13 @@ export function SendScreen({ route, navigation }: Props) {
             </View>
           </View>
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            Sends as an ERC-4337 UserOperation from your smart account — a
-            separate address controlled by this wallet's key — through the
+            Sends as an ERC-4337 UserOperation from your smart account
+            ({aaConfig ? aaAccountTypeLabel(aaConfig.accountType) : 'smart account'}) — a
+            separate address controlled by this account&apos;s key — through the
             bundler configured in Settings. The smart account pays the
-            amount and its own gas from its own balance (no paymaster in
-            this pass), so fund the smart account address first. The Max
-            button applies to the regular send only.
+            amount{token ? ` (its own ${token.symbol})` : ''} and its gas from
+            its own balance unless a paymaster sponsors the gas, so fund the
+            smart account address first. Max uses the smart account&apos;s balance.
           </Text>
         </View>
       ) : null}

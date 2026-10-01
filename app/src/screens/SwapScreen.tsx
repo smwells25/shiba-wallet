@@ -45,6 +45,7 @@ import {
   getSwapConfig,
   impliedRate,
   isQuoteStale,
+  prepareAaSwap,
   prepareApproveSend,
   prepareSwapSend,
   validateSlippageBps,
@@ -52,6 +53,22 @@ import {
   type SwapConfig,
   type SwapQuoteView,
 } from '../wallet/swap';
+import {
+  KERNEL_BUNDLER_NOTE,
+  PREVIEW_AA_BATCH_NOTE,
+  aaAccountTypeLabel,
+  createAaClientFromConfig,
+  describeAaError,
+  getAaConfig,
+  isAaConfigured,
+  resolveAaSender,
+  sendAa,
+  waitForAaReceipt,
+  type AaChainConfig,
+  type AaClientBundle,
+  type AaSendQuote,
+} from '../wallet/aa';
+import { PREVIEW_AA_NOTE } from '../wallet/simulation';
 import { usePrices } from '../wallet/usePrices';
 import { fiatLine, formatFiat, nativePriceAssetId, tokenPriceAssetId } from '../wallet/prices';
 
@@ -66,6 +83,8 @@ type Phase =
   | 'approving'
   | 'confirm'
   | 'sending'
+  | 'aa-confirm'
+  | 'aa-sending'
   | 'success';
 
 /** 'native' is the chain's own coin (ETH); tokens come from the tracked list. */
@@ -107,6 +126,13 @@ function NetworkBadge({ label, testnet, theme }: { label: string; testnet: boole
  * the same machinery. Quotes older than ~60 s are refreshed — never acted
  * on — and the refresh is said out loud.
  *
+ * SMART-ACCOUNT MODE (phase 7 item 2): with a verified AA configuration for
+ * the active chain, a "Swap from smart account" toggle quotes with the
+ * SMART ACCOUNT as the 0x taker and executes ONE UserOperation: for ERC-20
+ * sells the atomic batch [approve(exact sell amount), swap], for native
+ * sells [swap] (swap.ts aaSwapCalls). Balances are the smart account's;
+ * the fee is the bundler's estimate, which is also the pre-flight gate.
+ *
  * The whole feature is off with a plain explanation until a 0x API key is
  * verified and saved in Settings → Swaps.
  */
@@ -143,8 +169,22 @@ export function SwapScreen({ navigation }: Props) {
   const [result, setResult] = useState<SendResult | null>(null);
   // The address the approve/swap transactions were prepared for (nonce,
   // balance, simulation). signWith refuses to sign unless the active
-  // account's key controls exactly this address.
+  // account's key controls exactly this address. On the smart-account path
+  // this is the OWNER EOA (the key that signs the UserOperation).
   const preparedFrom = useRef<string | null>(null);
+
+  // Smart-account mode (see the component comment).
+  const [aaConfig, setAaConfig] = useState<AaChainConfig | null>(null);
+  const [aaEnabled, setAaEnabled] = useState(false);
+  const [aaSender, setAaSender] = useState<string | null>(null);
+  const [aaQuote, setAaQuote] = useState<AaSendQuote | null>(null);
+  const aaBundle = useRef<AaClientBundle | null>(null);
+  const [aaResult, setAaResult] = useState<{
+    userOpHash: string;
+    receiptState: 'pending' | 'found' | 'timeout';
+    success: boolean | null;
+    txHash: string | null;
+  } | null>(null);
 
   useEffect(() => {
     navigation.setOptions({ title: 'Swap' });
@@ -202,7 +242,65 @@ export function SwapScreen({ navigation }: Props) {
     };
   }, [evmChain.caip2]);
 
+  useEffect(() => {
+    let cancelled = false;
+    getAaConfig(evmChain.caip2).then(
+      (c) => {
+        if (!cancelled) setAaConfig(c);
+      },
+      () => {
+        if (!cancelled) setAaConfig(null);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [evmChain.caip2]);
+
   const url = endpoint?.url ?? null;
+  const aaAvailable = aaConfig !== null && isAaConfigured(aaConfig) && url !== null;
+  const aaActive = aaAvailable && aaEnabled;
+
+  // Resolve the smart-account address when the toggle goes on: it is the
+  // 0x taker and the holder whose balances count on this path. The toggle
+  // handler clears the previous address; nothing is set synchronously here.
+  useEffect(() => {
+    if (!aaActive || !url || !aaConfig || !activeAccount || !account) {
+      aaBundle.current = null;
+      return;
+    }
+    let cancelled = false;
+    Promise.resolve()
+      .then(() => {
+        const bundle = createAaClientFromConfig(aaConfig, {
+          nodeUrl: url,
+          chainId: BigInt(evmChain.chainIdDecimal),
+          accountIndex: activeAccount.index,
+        });
+        aaBundle.current = bundle;
+        return resolveAaSender(bundle, account.address);
+      })
+      .then(
+        (sender) => {
+          if (!cancelled) setAaSender(sender);
+        },
+        (e) => {
+          if (!cancelled) {
+            setAaSender(null);
+            setFormError(
+              `Could not resolve the smart-account address: ${e instanceof Error ? e.message : String(e)}`,
+            );
+          }
+        },
+      );
+    return () => {
+      cancelled = true;
+    };
+  }, [aaActive, url, aaConfig, activeAccount, account, evmChain.chainIdDecimal]);
+
+  // The 0x taker and balance holder: the smart account on the AA path.
+  const holder = aaActive ? aaSender : (account?.address ?? null);
+
   const symbolOf = (a: SwapAsset): string => (a === 'native' ? evmChain.displaySymbol : a.symbol);
   const decimalsOf = (a: SwapAsset): number => (a === 'native' ? 18 : a.decimals);
   const addressOf = (a: SwapAsset): string =>
@@ -212,18 +310,21 @@ export function SwapScreen({ navigation }: Props) {
   // Sell-side balance, refreshed whenever the sell asset (or endpoint)
   // changes; used for the display line and the pre-quote refusal.
   const reloadSellBalance = useCallback(async () => {
-    if (!url || !account) return;
+    if (!url || !holder) {
+      setSellBalance(null);
+      return;
+    }
     setSellBalance(null);
     try {
       const balance =
         sellAsset === 'native'
-          ? await fetchNativeBalance('evm-jsonrpc', url, account.address)
-          : await fetchErc20Balance(url, sellAsset.assetId.reference, account.address);
+          ? await fetchNativeBalance('evm-jsonrpc', url, holder)
+          : await fetchErc20Balance(url, sellAsset.assetId.reference, holder);
       setSellBalance(balance);
     } catch {
       setSellBalance(null);
     }
-  }, [url, account, sellAsset]);
+  }, [url, holder, sellAsset]);
 
   useEffect(() => {
     void reloadSellBalance();
@@ -294,6 +395,9 @@ export function SwapScreen({ navigation }: Props) {
 
   const requote = async (): Promise<SwapQuoteView | null> => {
     if (!url || !buyAsset) return null;
+    if (!holder) {
+      throw new Error('The smart-account address is not resolved yet; try again in a moment.');
+    }
     const amount = parseUnits(amountText, sellDecimals);
     const view = await fetchSwapQuote({
       apiKey,
@@ -302,7 +406,9 @@ export function SwapScreen({ navigation }: Props) {
       sellToken: addressOf(sellAsset),
       buyToken: addressOf(buyAsset),
       sellAmount: amount,
-      taker: account.address,
+      // The wallet address, or the smart account on the AA path (it holds
+      // the sell asset and executes the call).
+      taker: holder,
       slippageBps: currentSlippageBps(),
     });
     setQuoteView(view);
@@ -384,6 +490,30 @@ export function SwapScreen({ navigation }: Props) {
       return;
     }
     setPhase('preparing');
+    if (aaActive) {
+      try {
+        const bundle = aaBundle.current;
+        if (!bundle) throw new Error('Smart-account session expired; go back and quote again.');
+        preparedFrom.current = account.address;
+        const prepared = await prepareAaSwap(
+          bundle,
+          account.address,
+          sellAsset === 'native'
+            ? null
+            : { token: sellAsset.assetId.reference, symbol: sellAsset.symbol },
+          quote,
+        );
+        setAaQuote(prepared);
+        setPhase('aa-confirm');
+      } catch (e) {
+        const { title, detail } =
+          (aaConfig ? describeAaError(e, { accountType: aaConfig.accountType, deployed: null }) : null) ??
+          describeSendError(e, sellSymbol);
+        setFormError(`${title}\n${detail}`);
+        setPhase('review');
+      }
+      return;
+    }
     try {
       if (sellAsset !== 'native') {
         const amount = quote.sellAmount;
@@ -548,10 +678,274 @@ export function SwapScreen({ navigation }: Props) {
     }
   };
 
+  /**
+   * Smart-account execute: ONE UserOperation carrying the whole batch. A
+   * stale quote is refreshed (with the smart account as taker) and
+   * re-prepared, and the user reviews again; otherwise biometric gate, then
+   * the owner key signs through signWith (expectAddress = the owner EOA the
+   * operation was prepared for).
+   */
+  const onAaSwap = async () => {
+    if (!url || !aaQuote || !quoteView || !quote) return;
+    const bundle = aaBundle.current;
+    if (!bundle) {
+      Alert.alert('Not sent', 'Smart-account session expired; go back and quote again.');
+      return;
+    }
+    if (isQuoteStale(quoteView.quotedAt)) {
+      setPhase('preparing');
+      try {
+        const view = await requote();
+        if (!view || !view.result.ok) {
+          setFormError(
+            view && view.result.ok === false
+              ? describeSwapFailure(view.result)
+              : 'The quote refresh failed.',
+          );
+          setPhase('form');
+          return;
+        }
+        preparedFrom.current = account.address;
+        const prepared = await prepareAaSwap(
+          bundle,
+          account.address,
+          sellAsset === 'native'
+            ? null
+            : { token: sellAsset.assetId.reference, symbol: sellAsset.symbol },
+          view.result.quote,
+        );
+        setAaQuote(prepared);
+        setNotice(
+          'The quote was older than 60 seconds, so it was refreshed and ' +
+            're-estimated. Review the updated numbers, then confirm again.',
+        );
+        setPhase('aa-confirm');
+      } catch (e) {
+        const { title, detail } =
+          describeAaError(e, { accountType: bundle.accountType, deployed: null }) ??
+          describeSendError(e, sellSymbol);
+        setFormError(`${title}\n${detail}`);
+        setPhase('review');
+      }
+      return;
+    }
+    const auth = await requireLocalAuth(
+      `Swap ${exact(quote.sellAmount, sellDecimals)} ${sellSymbol} for ${buySymbol} from your smart account`,
+    );
+    if (!auth.ok) {
+      Alert.alert('Not sent', auth.message);
+      return;
+    }
+    setPhase('aa-sending');
+    try {
+      const { userOpHash } = await signWith(EVM_CHAIN_ID, preparedFrom.current ?? '', (signer) =>
+        sendAa(bundle, signer, aaQuote),
+      );
+      setAaResult({ userOpHash, receiptState: 'pending', success: null, txHash: null });
+      setPhase('success');
+      void waitForAaReceipt(bundle, userOpHash, { timeoutMs: 120_000, pollMs: 3_000 }).then(
+        ({ summary }) =>
+          setAaResult((prev) =>
+            prev && prev.userOpHash === userOpHash
+              ? { ...prev, receiptState: 'found', success: summary.success, txHash: summary.txHash }
+              : prev,
+          ),
+        () =>
+          setAaResult((prev) =>
+            prev && prev.userOpHash === userOpHash ? { ...prev, receiptState: 'timeout' } : prev,
+          ),
+      );
+    } catch (e) {
+      const { title, detail } =
+        describeAaError(e, { accountType: aaQuote.accountType, deployed: aaQuote.deployed }) ??
+        describeSendError(e, sellSymbol);
+      Alert.alert(title, detail);
+      setPhase('aa-confirm');
+    }
+  };
+
   const inputStyle = [
     styles.input,
     { color: theme.text, borderColor: theme.border, backgroundColor: theme.card },
   ];
+
+  // ------------------------------------------- success (smart account)
+  if (phase === 'success' && aaResult) {
+    return (
+      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+        <Text style={[styles.successTitle, { color: theme.success }]}>Swap sent to bundler ✓</Text>
+        {quote ? (
+          <Text style={[styles.hint, { color: theme.textMuted }]}>
+            Selling {exact(quote.sellAmount, sellDecimals)} {sellSymbol} from your smart account
+            for at least {exact(quote.minBuyAmount, buyDecimals)} {buySymbol} (guaranteed
+            minimum after slippage), as one operation.
+          </Text>
+        ) : null}
+        <Text style={[styles.label, { color: theme.textMuted }]}>UserOperation hash</Text>
+        <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          <Text selectable style={[styles.monoText, { color: theme.text }]}>
+            {aaResult.userOpHash}
+          </Text>
+        </View>
+        {aaResult.receiptState === 'pending' ? (
+          <View style={styles.center}>
+            <ActivityIndicator size="large" color={theme.accent} />
+            <Text style={[styles.hint, { color: theme.textMuted }]}>
+              Bundling… waiting for the UserOperation receipt.
+            </Text>
+          </View>
+        ) : null}
+        {aaResult.receiptState === 'timeout' ? (
+          <Text style={[styles.hint, { color: theme.textMuted }]}>
+            No receipt yet. The operation may still be included — keep the
+            UserOperation hash above to look it up later.
+          </Text>
+        ) : null}
+        {aaResult.receiptState === 'found' ? (
+          aaResult.success === false ? (
+            <WarningBox>
+              The bundler reports the operation was included but reverted
+              on-chain: none of the batch took effect, and the gas was still
+              charged to the smart account.
+            </WarningBox>
+          ) : (
+            <Text style={[styles.simulationOk, { color: theme.success }]}>
+              Included on-chain{aaResult.success === true ? ' — succeeded.' : '.'}
+            </Text>
+          )
+        ) : null}
+        {aaResult.txHash ? (
+          <Button
+            title="View on block explorer"
+            variant="secondary"
+            onPress={() => void Linking.openURL(`${evmChain.explorerTxBase}${aaResult.txHash}`)}
+          />
+        ) : null}
+        <Button title="Done" onPress={() => navigation.popToTop()} />
+      </ScrollView>
+    );
+  }
+
+  // ------------------------------------ smart-account confirm (one batch)
+  if ((phase === 'aa-confirm' || phase === 'aa-sending') && aaQuote && quote) {
+    const batch = aaQuote.calls.length > 1;
+    return (
+      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+        <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
+        <Text style={[styles.stepTitle, { color: theme.text }]}>
+          Smart-account swap · {aaAccountTypeLabel(aaQuote.accountType)}
+        </Text>
+        {notice ? <Text style={[styles.notice, { color: theme.accent }]}>{notice}</Text> : null}
+        <Row
+          label="Owner account (signs)"
+          value={activeAccount?.name ?? '—'}
+          sub={account.address}
+          theme={theme}
+        />
+        <Row label="From smart account" value={aaQuote.sender} mono theme={theme} />
+        <Row
+          label="You sell"
+          value={`${exact(quote.sellAmount, sellDecimals)} ${sellSymbol}`}
+          sub={fiatOf(sellPriceId, quote.sellAmount, sellDecimals)}
+          theme={theme}
+        />
+        <Row
+          label="You receive (estimated)"
+          value={`${exact(quote.buyAmount, buyDecimals)} ${buySymbol}`}
+          sub={fiatOf(buyPriceId, quote.buyAmount, buyDecimals)}
+          theme={theme}
+        />
+        <Row
+          label="Guaranteed minimum"
+          value={`${exact(quote.minBuyAmount, buyDecimals)} ${buySymbol}`}
+          sub={fiatOf(buyPriceId, quote.minBuyAmount, buyDecimals)}
+          theme={theme}
+        />
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          {batch
+            ? `One operation, two calls, all-or-nothing: (1) approve exactly ` +
+              `${exact(quote.sellAmount, sellDecimals)} ${sellSymbol} — not unlimited — for the ` +
+              `swap contract, (2) the swap. If the swap would fail, the approval is undone ` +
+              'with it.'
+            : 'One operation with a single call: the swap (selling the native coin needs no approval).'}
+        </Text>
+        {aaQuote.calls.map((c, i) => (
+          <Row
+            key={`${i}-${c.to}`}
+            label={`Call ${i + 1} of ${aaQuote.calls.length}${batch && i === 0 ? ' — approve' : ' — swap'}`}
+            value={c.to}
+            sub={`${c.data.length} bytes of calldata${c.value > 0n ? `, value ${exact(c.value, 18)} ${evmChain.displaySymbol}` : ''}`}
+            mono
+            theme={theme}
+          />
+        ))}
+        {aaQuote.tokenSpend ? (
+          <Row
+            label={`Smart account ${sellSymbol} balance`}
+            value={`${exact(aaQuote.tokenSpend.balance, sellDecimals)} ${sellSymbol}`}
+            theme={theme}
+          />
+        ) : null}
+        <Row
+          label={`Smart account ${evmChain.displaySymbol} balance`}
+          value={`${exact(aaQuote.senderBalance, 18)} ${evmChain.displaySymbol}`}
+          theme={theme}
+        />
+        <Row
+          label="Deployment"
+          value={aaQuote.deployed ? 'Already deployed' : 'Will deploy with this swap'}
+          theme={theme}
+        />
+        {!aaQuote.deployed && aaQuote.accountType === 'kernel-v3.3' ? (
+          <Text style={[styles.hint, { color: theme.textMuted }]}>{KERNEL_BUNDLER_NOTE}</Text>
+        ) : null}
+        <Row
+          label={aaQuote.sponsored ? 'Network fee' : 'Max network fee (bundler estimate)'}
+          value={
+            aaQuote.sponsored
+              ? 'Sponsored — you pay 0'
+              : `${exact(aaQuote.fee, 18)} ${evmChain.displaySymbol}`
+          }
+          theme={theme}
+        />
+        <BalanceChangePreview
+          url={url}
+          request={{
+            from: aaQuote.sender,
+            to: aaQuote.calls[0]!.to,
+            value: aaQuote.calls[0]!.value,
+            data: aaQuote.calls[0]!.data,
+          }}
+          batch={aaQuote.calls.map((c) => ({
+            from: aaQuote.sender,
+            to: c.to,
+            value: c.value,
+            data: c.data,
+          }))}
+          note={batch ? PREVIEW_AA_BATCH_NOTE : PREVIEW_AA_NOTE}
+        />
+        <Text style={[styles.simulationOk, { color: theme.success }]}>
+          Bundler gas estimate passed (eth_estimateUserOperationGas simulated the operation).
+        </Text>
+        {phase === 'aa-sending' ? (
+          <View style={styles.center}>
+            <ActivityIndicator size="large" color={theme.accent} />
+            <Text style={[styles.hint, { color: theme.textMuted }]}>
+              Signing and submitting to the bundler…
+            </Text>
+          </View>
+        ) : (
+          <>
+            <Button
+              title={`Swap ${sellSymbol} for ${buySymbol} from smart account`}
+              onPress={() => void onAaSwap()}
+            />
+            <Button title="Back" variant="secondary" onPress={() => setPhase('review')} />
+          </>
+        )}
+      </ScrollView>
+    );
+  }
 
   // -------------------------------------------------------------- success
   if (phase === 'success' && result) {
@@ -904,8 +1298,35 @@ export function SwapScreen({ navigation }: Props) {
     >
       <Text style={[styles.networkLine, { color: evmChain.testnet ? '#e07800' : theme.textMuted }]}>
         {evmChain.label} · {evmChain.testnet ? 'TESTNET' : 'Mainnet'} · powered by 0x · from{' '}
-        {account.address.slice(0, 10)}…
+        {aaActive ? `smart account ${aaSender ? `${aaSender.slice(0, 10)}…` : '(resolving…)'}` : `${account.address.slice(0, 10)}…`}
       </Text>
+
+      {aaAvailable && aaConfig ? (
+        <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border, gap: 8 }]}>
+          <View style={styles.overrideRow}>
+            <Switch
+              value={aaEnabled}
+              onValueChange={(v) => {
+                // The taker (and therefore the quote) changes with the path.
+                setAaEnabled(v);
+                setAaSender(null);
+                setQuoteView(null);
+                setAaQuote(null);
+                setFormError(null);
+              }}
+            />
+            <Text style={[styles.overrideLabel, { color: theme.text }]}>
+              Swap from smart account (experimental)
+            </Text>
+          </View>
+          <Text style={[styles.hint, { color: theme.textMuted }]}>
+            Swaps the smart account&apos;s own funds ({aaAccountTypeLabel(aaConfig.accountType)})
+            as ONE operation: for a token sale, approve exactly the amount and swap in a single
+            all-or-nothing batch — no separate approval step. Gas comes from the smart account
+            (or the paymaster when sponsored).
+          </Text>
+        </View>
+      ) : null}
 
       {!url ? (
         <WarningBox>Swapping unavailable — no configured Ethereum endpoint.</WarningBox>

@@ -8,6 +8,7 @@ import {
   toBytes,
   toHex,
   zeroExSwapProvider,
+  type Call,
   type SwapQuote,
   type SwapQuoteResult,
 } from '@shiba-wallet/chains-evm';
@@ -15,6 +16,7 @@ import {
 // under Node's type stripping, which resolves relative specifiers literally
 // (same pattern as aa.ts, erc20.ts and send-erc20.ts).
 import { prepareEvmSend, type EvmSendQuote } from './send.ts';
+import { prepareAaCalls, type AaClientBundle, type AaSendQuote } from './aa.ts';
 import { USDC_MAINNET } from './erc20.ts';
 import { formatUnits } from './balances.ts';
 import type { KeyValueStore } from './tokens.ts';
@@ -457,4 +459,56 @@ export async function prepareSwapSend(
     toBytes(quote.transaction.data),
     expectedCaip2,
   );
+}
+
+// ---------------------------------------------------------------------------
+// Smart-account swaps (phase 7 item 2): ONE atomic batch
+// ---------------------------------------------------------------------------
+
+/**
+ * The calls a smart-account swap executes as ONE UserOperation, in order:
+ *  - ERC-20 sell: [approve(spender = the quote's transaction.to, exactly
+ *    the sell amount), the quoted 0x call];
+ *  - native sell: [the quoted 0x call] (native ETH needs no approval per
+ *    the 0x docs cited at NATIVE_TOKEN_ADDRESS).
+ * The approve is included for every ERC-20 sell, even when an allowance
+ * already exists: approve() SETS the allowance, so the batch leaves exactly
+ * the sell amount approved for the swap to consume — never more, and
+ * never an unlimited allowance. Both calls run in the account's single
+ * execute, so if the swap reverts the approve is undone with it.
+ *
+ * The quote must have been requested with the SMART ACCOUNT as taker (it
+ * holds the sell asset and executes the call).
+ */
+export function aaSwapCalls(sellToken: string | null, quote: SwapQuote): Call[] {
+  const swapCall: Call = {
+    to: quote.transaction.to,
+    value: quote.transaction.value,
+    data: toBytes(quote.transaction.data),
+  };
+  if (sellToken === null) return [swapCall];
+  return [
+    { to: sellToken, value: 0n, data: encodeErc20Approve(quote.transaction.to, quote.sellAmount) },
+    swapCall,
+  ];
+}
+
+/**
+ * Smart-account swap quote: the batch above through the shared AA quote
+ * (prepareAaCalls) — chain-id check, smart-account native balance against
+ * value + worst-case fee (fee 0 when sponsored), the smart account's token
+ * balance against the sell amount for ERC-20 sells, and the bundler's
+ * eth_estimateUserOperationGas as the pre-flight gate (a reverting swap
+ * fails estimation with the bundler's message).
+ */
+export async function prepareAaSwap(
+  bundle: AaClientBundle,
+  ownerAddress: string,
+  sell: { token: string; symbol: string } | null,
+  quote: SwapQuote,
+): Promise<AaSendQuote> {
+  return prepareAaCalls(bundle, ownerAddress, aaSwapCalls(sell?.token ?? null, quote), {
+    displayTo: quote.transaction.to,
+    ...(sell ? { tokenSpend: { contract: sell.token, amount: quote.sellAmount, symbol: sell.symbol } } : {}),
+  });
 }
