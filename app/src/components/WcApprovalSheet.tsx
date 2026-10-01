@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { Button, WarningBox } from '../components';
 import { BalanceChangePreview } from './BalanceChangePreview';
+import { RiskWarnings } from './RiskWarnings';
 import { getEndpoint } from '../config/networks';
 import type { EvmChainProfile } from '../config/evm-chain';
 import { useTheme, type Theme } from '../theme';
@@ -642,6 +643,7 @@ function RequestBody({
               ...(txQuote.quote.data ? { data: txQuote.quote.data } : {}),
             }}
           />
+          <RiskWarnings url={txQuote.url} wallet={txQuote.from} to={txQuote.quote.to} data={txQuote.quote.data} />
           {txQuote.quote.simulation.ok ? (
             <Text style={[styles.simulationOk, { color: theme.success }]}>
               Pre-flight simulation passed (eth_call).
@@ -876,6 +878,12 @@ function SmartAccountTxBody({
               data: c.data,
             }))}
             note={ready.quote.calls.length > 1 ? PREVIEW_AA_BATCH_NOTE : PREVIEW_AA_NOTE}
+          />
+          <RiskWarnings
+            url={ready.url}
+            wallet={ready.quote.sender}
+            to={ready.quote.calls[0]!.to}
+            data={ready.quote.calls[0]!.data}
           />
           <Text style={[styles.simulationOk, { color: theme.success }]}>
             Bundler gas estimate passed (eth_estimateUserOperationGas simulated the operation).

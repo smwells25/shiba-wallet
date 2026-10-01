@@ -81,6 +81,7 @@ import {
 } from '../components/Contacts';
 import { listContacts, matchRecipient, type Contact } from '../wallet/contacts';
 import { BalanceChangePreview } from '../components/BalanceChangePreview';
+import { RiskWarnings } from '../components/RiskWarnings';
 import { PREVIEW_AA_NOTE } from '../wallet/simulation';
 import { usePrices } from '../wallet/usePrices';
 import { fiatLine, formatFiat, nativePriceAssetId, tokenPriceAssetId } from '../wallet/prices';
@@ -947,6 +948,12 @@ export function SendScreen({ route, navigation }: Props) {
           batch={quote.calls.map((c) => ({ from: quote.sender, to: c.to, value: c.value, data: c.data }))}
           note={quote.calls.length > 1 ? PREVIEW_AA_BATCH_NOTE : PREVIEW_AA_NOTE}
         />
+        <RiskWarnings
+          url={url}
+          wallet={quote.sender}
+          to={quote.calls[0]!.to}
+          data={quote.calls[0]!.data}
+        />
         <Text style={[styles.simulationOk, { color: theme.success }]}>
           Bundler gas estimate passed (eth_estimateUserOperationGas simulated the operation).
         </Text>
@@ -1020,6 +1027,13 @@ export function SendScreen({ route, navigation }: Props) {
         <BalanceChangePreview
           url={url}
           request={{ from: account.address, to: quote.contract, value: 0n, data: quote.data }}
+        />
+        <RiskWarnings
+          url={url}
+          wallet={account.address}
+          to={quote.contract}
+          counterparty={quote.to}
+          data={quote.data}
         />
 
         {!simulationFailed && !quote.returnedFalse ? (
@@ -1113,6 +1127,13 @@ export function SendScreen({ route, navigation }: Props) {
         <BalanceChangePreview
           url={url}
           request={{ from: account.address, to: quote.contract, value: 0n, data: quote.data }}
+        />
+        <RiskWarnings
+          url={url}
+          wallet={account.address}
+          to={quote.contract}
+          counterparty={quote.to}
+          data={quote.data}
         />
 
         {!simulationFailed ? (
@@ -1211,6 +1232,9 @@ export function SendScreen({ route, navigation }: Props) {
             url={url}
             request={{ from: account.address, to: quote.to, value: quote.amount, data: quote.data }}
           />
+        ) : null}
+        {quote.kind === 'evm' ? (
+          <RiskWarnings url={url} wallet={account.address} to={quote.to} data={quote.data} />
         ) : null}
 
         {quote.kind === 'evm' ? (

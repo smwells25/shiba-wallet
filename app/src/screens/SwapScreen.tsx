@@ -20,6 +20,7 @@ import { Button, WarningBox, screenStyle } from '../components';
 import { getEndpoint, type NetworkEndpoint } from '../config/networks';
 import { useTheme, type Theme } from '../theme';
 import { BalanceChangePreview } from '../components/BalanceChangePreview';
+import { RiskWarnings } from '../components/RiskWarnings';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
 import { requireLocalAuth } from '../wallet/biometric';
@@ -924,6 +925,7 @@ export function SwapScreen({ navigation }: Props) {
           }))}
           note={batch ? PREVIEW_AA_BATCH_NOTE : PREVIEW_AA_NOTE}
         />
+        <RiskWarnings url={url} wallet={aaQuote.sender} to={aaQuote.calls[0]!.to} data={aaQuote.calls[0]!.data} />
         <Text style={[styles.simulationOk, { color: theme.success }]}>
           Bundler gas estimate passed (eth_estimateUserOperationGas simulated the operation).
         </Text>
@@ -1030,6 +1032,7 @@ export function SwapScreen({ navigation }: Props) {
             ...(approveQuote.data ? { data: approveQuote.data } : {}),
           }}
         />
+        <RiskWarnings url={url} wallet={account.address} to={approveQuote.to} data={approveQuote.data} />
 
         {approveQuote.simulation.ok ? (
           <Text style={[styles.simulationOk, { color: theme.success }]}>
@@ -1144,6 +1147,7 @@ export function SwapScreen({ navigation }: Props) {
             ...(sendQuote.data ? { data: sendQuote.data } : {}),
           }}
         />
+        <RiskWarnings url={url} wallet={account.address} to={sendQuote.to} data={sendQuote.data} />
 
         {sendQuote.simulation.ok ? (
           <Text style={[styles.simulationOk, { color: theme.success }]}>
