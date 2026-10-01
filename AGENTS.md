@@ -1734,3 +1734,35 @@ recovers (27/27 when pointed at another mainnet RPC).
       self-bundle, so a bundler-acceptable deployment path (or a
       different bundler vendor) is a production requirement to settle
       during vendor selection.
+
+- [x] Direct-factory probe (same day): KERNEL SMOKE PASSED again for
+      index 1 (0x959E8dF4f03033134A791f887209B75aeb13D95a; funding tx
+      0x090033cb…22e0; self-bundled deployment tx 0x59fa02d3…7583f; op
+      2 ACCEPTED by the bundler, userOpHash 0xe8c4dc02…65cb0c). But
+      Alchemy's bundler rejected the deployment op on BOTH Kernel paths,
+      for two different ERC-7562 reasons (rules quoted from
+      eips.ethereum.org/EIPS/eip-7562, 2026-10-01):
+      * meta-factory path: -32502 "account uses banned opcode: CREATE2".
+        OP-031: "CREATE2 is allowed exactly once in the deployment frame
+        and must deploy code for the sender address"; EREP-060/061: a
+        staked factory may use CREATE2 itself, and may employ a utility
+        contract only for CREATE. Kernel's staked meta factory delegates
+        the CREATE2 to the inner KernelFactory (a utility contract under
+        this reading), which rundler rejects.
+      * direct-factory path: -32502 "Sender storage at (address:
+        0x845a…ce57 [the ECDSA validator] slot …) accessed during
+        deployment. Factory (or None) must be staked". STO-021/022:
+        access to the account's associated storage in a non-entity
+        contract during deployment is allowed only if the account
+        already exists or the factory is staked — the direct
+        KernelFactory is unstaked (only the meta factory is).
+      CONSEQUENCE: with Alchemy's bundler, Kernel v3.3 accounts can be
+      USED once deployed (op 2 accepted both times) but cannot be
+      DEPLOYED through it; users cannot self-bundle. Bundler vendor
+      selection must therefore test deployment acceptance explicitly.
+      Candidates to test: ZeroDev's own bundler and Pimlico (both need
+      an API key — INPUT NEEDED from the Chairperson, free tiers exist),
+      or deploying our own staked factory that performs the CREATE2
+      itself. The same strictness hit the SimpleAccount factory in
+      phase 2 (AA13), so this is a property of the vendor, not of
+      Kernel alone. Nothing on mainnet was touched.
