@@ -2517,3 +2517,117 @@ self-sponsored type-0x04 transaction built by the app (the engine smoke
 had only broadcast one for its revocation). The in-app 7702 cycle —
 upgrade via a bundled UserOperation, status display, revoke via a
 self-paid set-code transaction — is now fully proven on Sepolia.
+
+- [x] Item 3, engine half — passkey (WebAuthn / P-256) signer on Kernel
+      v3.3 (commit 6efcf5f; 26 new tests, chains-evm 300, engine 536).
+      packages/chains-evm/src/kernel-webauthn.ts, pinned to
+      WebAuthnValidator v0.0.3 ("V0_0_3_PATCHED")
+      0x7ab16Ff354AcB328452F1D445b3Ddee9a91e9e69 (SDK cd7c05b5
+      plugins/passkey/index.ts for Kernel 0.3.0–0.3.3; identical 4,739-byte
+      runtime code on Sepolia and mainnet, keccak 0x726d987a…9c9eea, which
+      the engine verifies before use; isModuleType(1) true on both;
+      Sourcify PARTIAL match on Sepolia only (solc 0.8.30), mainnet bound
+      by code-hash equality; logic equals kernel-7579-plugins e418592b).
+      SECURITY FINDING (from source, no public advisory found):
+      validators v0.0.1 (0xD990…Aa06) and v0.0.2 (0xbA45…90Fd) return the
+      raw P-256 result and skip the flag/type/challenge checks when
+      responseTypeLocation == uint256.max, so ANY old assertion from the
+      passkey would validate ANY operation; v0.0.3 returns false on that
+      path (Sepolia simulation: "dummyReplay" → AA24). The engine never
+      supports the older versions. AUDIT: the v3.1 incremental audit
+      (kernel/audits/v_3_1_incremental_audit.pdf, 2024-05-27..06-09) had
+      WebAuthnValidator.sol at ae10aa0f — the UNPATCHED code — in scope
+      with no WebAuthn findings; Kalos' "WebAuthn/P256 Plugin" report
+      (2024-02-22) covers the Kernel v2 P256Validator; no audit of v0.0.3
+      found → unaudited for mainnet (adds to C1). P-256 path:
+      usePrecompiled=true calls 0x100, else Daimo's P256Verifier
+      0xc2b78104907F722DABAc4C69f826a522B2754De4 (same code both chains);
+      RIP-7212 (Final) defines 0x100 at 3,450 gas; on Ethereum L1 it is
+      EIP-7951 (Final, 6,900 gas) shipped in Fusaka per EIP-7607 (Sepolia
+      2025-10-14, mainnet 2025-12-03) — VERIFIED on-chain on both chains
+      (valid signature → 0x…01, corrupted → 0x; eth_estimateGas ≈30.8k);
+      ERC-7562 OP-062 allows the precompile during validation; the SDK's
+      network list marks 1 and 11155111 supported; detectP256Precompile
+      probes 0x100 per chain. Envelope (validator source; byte-pinned
+      against @zerodev/passkey-validator 5.6.0, @zerodev/webauthn-key
+      5.5.0, viem 2.57.2 in the scratchpad): abi.encode(bytes
+      authenticatorData, string clientDataJSON, uint256
+      responseTypeLocation(=1), uint256 r, uint256 s, bool usePrecompiled);
+      challenge = the RAW userOpHash base64url without padding at FIXED
+      offset 23 (clientDataJSON must begin exactly
+      {"type":"webauthn.get","challenge":"); signed message =
+      sha256(authData || sha256(clientDataJSON)); UP and UV required; BS
+      only with BE; s > n/2 rejected (engine normalizes low-s); origin,
+      rpIdHash and the counter are NOT checked on-chain. Install data =
+      abi.encode((x,y), bytes32 authenticatorIdHash); onInstall reverts
+      AlreadyInitialized → one passkey per account per validator contract;
+      nonce key 0x00|0x01|validator|uint16 (= the SDK's). D1-PRESERVING
+      DESIGN (accepted): the passkey is an ADDITIONAL regular validator —
+      root stays the seed's ECDSA validator, address unchanged — installed
+      by a root-signed self-call installModule(1, validator, address(0) ||
+      abi.encode(validatorData, 0x, execute selector)) which grants
+      `execute` atomically (the layout Kernel's own tests use; pinned
+      against ethers; Kernel computes the validation nonce itself so the
+      install can ride in the deployment op); uninstall =
+      uninstallValidation(vId, 0x, 0x) + grantAccess(vId, execute, false)
+      — NOT uninstallModule, which never calls onUninstall and would make
+      a reinstall revert. D1 CAVEAT: `execute` allows self-calls, which
+      pass onlyEntryPointOrSelfOrRoot, so a stolen passkey could call
+      changeRootValidator and evict the seed (the simulation proved a
+      passkey-signed self-call is accepted); the engine's spec refuses
+      passkey calls to the account itself but that guard is CLIENT-SIDE
+      ONLY; the seed can always remove the passkey (uninstallValidation)
+      or invalidateNonce (which breaks the wallet's 0x01-prefixed ERC-1271
+      envelope); an on-chain guarantee needs a self-call-blocking hook
+      installed with the passkey — no audited deployed one was found
+      (open item). API: p256PublicKeyFromSpki / FromSec1 (on-curve
+      checked), webAuthnAuthenticatorIdHash, encodeWebAuthnValidatorData,
+      checkWebAuthnAssertion (every on-chain check replicated, fails
+      closed), encodeWebAuthnSignatureFromAssertion, normalizeP256LowS,
+      webAuthnStubSignature(usePrecompiled) (the SDK hard-codes false,
+      costing ~315–330k more gas per op — could trip bundler efficiency
+      floors), webAuthnNonceKey, encodePasskeyInstall / passkeyInstallCall,
+      passkeyUninstallCalls, readPasskeyValidatorState,
+      verifyWebAuthnValidatorDeployment, detectP256Precompile,
+      signErc1271WithPasskey (0x01||validator||envelope over Kernel's
+      EIP-712 wrapper), kernelPasskeySpec + passkeySignerAccount —
+      signUserOpHash is synchronous in SmartAccountSpec, so the spec
+      returns a placeholder and spec.routeBundler(bundler) signs at
+      eth_sendUserOperation (recomputes the userOpHash from the exact op,
+      refuses mismatches, wrong sender/nonce key, a factory or a 7702
+      field, verifies the assertion locally, then substitutes the real
+      signature; refuses any other request still carrying the
+      placeholder); spec.routeNode routes the nonce key;
+      spec.signer.sign() always throws so the seed can never sign through
+      this path. FOLLOW-UP: let SmartAccountClient await signUserOpHash
+      (two-line backward-compatible change in smart-account.ts) to remove
+      the placeholder and transport routing. SEPOLIA: simulation only
+      (install + use + uninstall is three ops, beyond the one-op budget)
+      against the real EntryPoint v0.7, Kernel v3.3, validator, 0x100 and
+      Daimo, for the public test mnemonic (deploy + install in one op)
+      and for dev account index 2: ACCEPTED install, passkey op via the
+      precompile, isValidSignature 0x1626ba7e (501-byte passkey ERC-1271
+      signature), passkey op via Daimo, the self-call, uninstall;
+      REJECTED wrong challenge (AA24), dummy-location replay (AA24),
+      passkey op after uninstall (AA23). Gas (index 2 run): passkey op
+      actualGasUsed 289,040 via the precompile vs 604,792 via Daimo
+      (handleOps tx 208,880 vs 524,632; one verification 30.8k vs
+      ~368–377k) — Daimo costs 314–332k more per op. APP CONTRACT:
+      assert(challenge: 32 bytes) → { authenticatorData, clientDataJSON
+      (exact signed UTF-8), signature (DER), credentialId? }; the native
+      layer must run a WebAuthn assertion with the raw challenge bytes,
+      allowCredentials = the registered id, userVerification "required",
+      the app's rpId, ES256 only; registration must supply the public key
+      as SPKI DER (Android getPublicKey()) or SEC1 — the engine does not
+      parse COSE, so iOS needs a COSE→SEC1 step; the app calls
+      detectP256Precompile per chain, uses signErc1271WithPasskey for dApp
+      signatures (signHashForSmartAccount has no synchronous signErc1271
+      here), plans for one passkey per account, and needs a development
+      build (not Expo Go). UNVERIFIED: no audit of v0.0.3; mainnet
+      bytecode not reproduced by compilation; bundler acceptance of
+      passkey ops (precompile during validation, stub-based estimation)
+      on ZeroDev/Alchemy untested live; clientDataJSON field order on the
+      iOS/Android native APIs (type first, challenge at offset 23) — the
+      engine fails closed before submission; a real clientDataJSON longer
+      than the 244-byte stub needs gas padding. Also committed:
+      scripts/testnet/fund.mjs (dev-EOA top-up helper with estimated gas).
