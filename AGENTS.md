@@ -2338,3 +2338,59 @@ engine half (agent) in parallel; item 5's fee-helper generalization
       the wallet type with the expiry rule, requests go through the same
       grant screen, unsupported types get an ERC-1193 error, and the
       7710 limitation is stated openly.
+
+- [x] Item 1, app half — "Upgrade this account" (commit de71517;
+      check-7702.mjs 111/111; all 20 app suites green; tsc clean; expo
+      export bundles 6.9MB with the new strings). app/src/wallet/
+      delegation.ts (readAccountDelegation → plain / kernel-v3.3 / other
+      (with delegate) / contract, eth_chainId-checked, cached per
+      chain+address, invalidated after an upgrade op, a revoke or a
+      tuple-carrying op; prepareSetCodeTx / sendSetCodeTx / waitForSetCode
+      for the self-sponsored type-0x04 tx to self with tuple nonce = tx
+      nonce + 1 and gas setCodeIntrinsicGas(1) + 40,000 = 86,000, via
+      NodeClient, deliberately with NO eth_call gate — explained on
+      screen). DESIGN DEVIATION (accepted by the CTO): the kernel-7702
+      type is recorded PER OWNER ADDRESS (eip7702Owners in the chain's AA
+      config), not chain-wide, because a chain-wide setting would make
+      another account's next smart-account send sign a tuple its user
+      never asked for (D6); effectiveAaAccountType(config, owner) returns
+      kernel-7702 only for upgraded owners; revoking removes the owner and
+      that account reverts to the chain's previous type. Quoting uses a
+      stub tuple (viem 2.57.2's dummy r/s/yParity) so no key is loaded at
+      quote time; the real tuple is signed inside sendAa after the
+      biometric gate, only on the first op, and only for a quote that
+      announced the upgrade (a revoke between quote and send, or a direct
+      client.sendCalls, is refused); a foreign delegate is refused at
+      quote time ("revoke first"). UpgradeAccountScreen (Home Ethereum
+      row "Upgrade" / "Upgraded ✓", Settings link): explanation, chain,
+      delegate in full, the 21,000-gas receive caveat, live status, and
+      the actions "Upgrade with the next smart-account send" (default
+      when a verified bundler exists; cancellable while pending),
+      "Upgrade now with a transaction", "Use this upgraded account" (for
+      an address already delegated on-chain, e.g. after a restore), and
+      "Revoke upgrade" (confirm with badge, fee, nonces, warning;
+      biometric; txid + receipt poll; status re-read). "Account N ·
+      upgraded (Kernel v3.3)" labels on Send From rows, the WC sheet,
+      Receive and Home; a foreign delegate gets a Home warning. The
+      delegated-eoa risk signal is suppressed only for the wallet's own
+      addresses on the pinned delegate. D6 ENFORCEMENT (each refusal
+      tested): tuples are signed only in delegation.ts sendSetCodeTx and
+      the gated kernel-7702 path, for the pinned delegate or zero, on the
+      active chain, after requireLocalAuth; WalletConnect
+      eth_sendTransaction with authorizationList / authorization_list
+      (even empty) or type 0x4 → declined 5000 with EIP7702_WC_REFUSAL
+      (fields per execution-apis GenericTransaction, submit.yaml /
+      transaction.yaml at d24f58b5); wallet_sendCalls capabilities whose
+      name or fields mention authorization / 7702 / delegation → 5700
+      even if optional (covers ERC-7902's eip7702Auth, Draft, ERCs
+      8b4d4631); any method name mentioning authorization or 7702 (e.g.
+      wallet_signAuthorization) → 5101; WalletConnect smart-account
+      connections pass no owner, so a dApp can never reach the tuple
+      path; personal_sign / typed data cannot yield a tuple signature
+      (different digest prefixes). Swap's smart-account toggle also uses
+      the 7702 path for upgraded accounts. NOT verified live (emulator
+      checklist in the builder's report, 9 steps): ZeroDev accepting the
+      viem-style stub tuple at estimation (highest risk; the error would
+      show verbatim with an "Upgrade now" hint), the 21k receive caveat on
+      a 7702 address, the 40k execution buffer, dApps that try ERC-1271
+      before ECDSA on an upgraded EOA. Mainnet gated on C1.
