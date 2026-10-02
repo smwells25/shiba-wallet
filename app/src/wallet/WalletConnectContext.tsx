@@ -18,6 +18,7 @@ import {
   txApprovalAllowed,
   type AaBundleLoader,
   type ConnectAs,
+  type MessageSigner,
   type SmartAccountOption,
   type TxQuoteState,
 } from '../components/WcApprovalSheet';
@@ -74,6 +75,8 @@ import {
   type WcSmartBinding,
 } from './walletconnect';
 import { WcController, type WcControllerSnapshot, type WcQueueItem } from './wc-controller';
+import { makePasskeyAssert, passkeyRecordForAccount, signHashWithPasskey } from './passkeys';
+import { loadPasskeyNative } from './passkey-native';
 
 /**
  * App-level WalletConnect (phase 6, item 5): owns the WalletKit client,
@@ -409,6 +412,7 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
       item: Extract<WcQueueItem, { type: 'request' }>,
       smart: WcSmartBinding,
       txQuote: TxQuoteState | null,
+      signer: MessageSigner = 'owner',
     ): Promise<void> => {
       if (!controller || !client) return;
       const declineWith = async (message: string, code = -32603) => {
@@ -511,6 +515,35 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
           }
           const digest =
             item.parsed.kind === 'personal_sign' ? item.parsed.digest : item.parsed.typedData.digest;
+          if (signer === 'passkey') {
+            // Phase 8 item 3: the user chose this device's passkey. Only a
+            // passkey installed on exactly the bound Kernel account (on this
+            // chain) signs; the owner key is not used.
+            if (smart.accountType !== 'kernel-v3.3') {
+              await declineWith('Only Kernel smart accounts can sign with a passkey.');
+              return;
+            }
+            const record = await passkeyRecordForAccount(item.chain, smart.address);
+            if (!record || record.localStatus !== 'installed') {
+              await declineWith('No passkey is installed on the connected smart account on this device.');
+              return;
+            }
+            const { gate, native } = await loadPasskeyNative();
+            if (!gate.ok || !native) {
+              await declineWith(gate.ok ? 'The passkey module is not available.' : gate.reason);
+              return;
+            }
+            const passkeySignature = await signHashWithPasskey({
+              record,
+              assert: makePasskeyAssert(native, record),
+              hash: digest,
+              chainId: loaded.bundle.chainId,
+              expectedAccount: smart.address,
+            });
+            await respondApproved(client, item.event.topic, item.event.id, toHex(passkeySignature));
+            controller.complete(item.key);
+            return;
+          }
           // The OWNER key signs; signHashAsSmartAccount refuses unless the
           // owner's smart account is exactly the session's bound address.
           const signature = await signWith(EVM_CHAIN_ID, smart.owner, (signer) =>
@@ -641,6 +674,7 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
       txQuote: TxQuoteState | null,
       overrideSimulation: boolean,
       connectAs: ConnectAs = 'eoa',
+      messageSigner: MessageSigner = 'owner',
     ) => {
       if (!controller || !client) return;
       if (!controller.canAct(item.key)) return;
@@ -732,7 +766,7 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
         return;
       }
       if (item.smart) {
-        await approveSmartRequest(item, item.smart, txQuote);
+        await approveSmartRequest(item, item.smart, txQuote, messageSigner);
         return;
       }
       try {
@@ -900,7 +934,7 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
             })()}
             smartOption={smartOption}
             loadAaBundle={loadAaBundle}
-            onApprove={(q, o, c) => void onApprove(head, q, o, c)}
+            onApprove={(q, o, c, signer) => void onApprove(head, q, o, c, signer)}
             onReject={() => onReject(head)}
           />
         ) : null}

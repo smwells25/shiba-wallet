@@ -41,4 +41,6 @@ export type RootStackParamList = {
   RecoverAccount: undefined;
   /** The guardian side: review, approve and submit a recovery request as the active account. */
   ApproveRecovery: undefined;
+  /** Passkey signer (phase 8 item 3) for the active account's deployed Kernel account, active EVM chain. */
+  Passkey: undefined;
 };

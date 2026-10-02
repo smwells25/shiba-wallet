@@ -25,6 +25,7 @@ import { useTokenBalances } from '../wallet/useTokenBalances';
 import { useAccountDelegation } from '../wallet/useDelegation';
 import { useSessionEligibility } from '../wallet/useSessionEligibility';
 import { useRecoveryInfo } from '../wallet/useRecoveryInfo';
+import { usePasskeyInfo } from '../wallet/usePasskeyInfo';
 import { shortAccountAddress } from '../wallet/accounts';
 import { delegationLabelSuffix, FOREIGN_DELEGATE_WARNING } from '../wallet/delegation';
 import { usePrices } from '../wallet/usePrices';
@@ -178,6 +179,10 @@ export function HomeScreen({ navigation }: Props) {
   // account the active account owns; a recovered account gets a label; a
   // recovery in progress gets a "continue" line.
   const recovery = useRecoveryInfo(evmAccount?.address, activeAccount?.index ?? null);
+  // Passkey signer (phase 8 item 3): linked only for a deployed Kernel v3.3
+  // account the active account owns; the screen shows the development-build
+  // note when the native module or the rpId is missing.
+  const passkey = usePasskeyInfo(evmAccount?.address, activeAccount?.index ?? null);
   // Tracked tokens are Ethereum-mainnet assets; in Sepolia test mode the
   // token section is hidden entirely (fetching a mainnet contract's
   // balanceOf against a Sepolia endpoint would be wrong-chain noise).
@@ -326,6 +331,18 @@ export function HomeScreen({ navigation }: Props) {
               hitSlop={8}
             >
               <Text style={[styles.sendLink, { color: theme.accent }]}>Guardians</Text>
+            </Pressable>
+          ) : null}
+          {item.chainId === EVM_CHAIN_ID && passkey.eligible ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Passkey"
+              onPress={() => navigation.navigate('Passkey')}
+              hitSlop={8}
+            >
+              <Text style={[styles.sendLink, { color: theme.accent }]}>
+                {passkey.record ? 'Passkey ✓' : 'Passkey'}
+              </Text>
             </Pressable>
           ) : null}
           {/* Token approvals manager (phase 7 item 5) for the active EVM

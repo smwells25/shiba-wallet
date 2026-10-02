@@ -36,6 +36,7 @@ import { SessionsScreen } from './src/screens/SessionsScreen';
 import { GuardiansScreen } from './src/screens/GuardiansScreen';
 import { RecoverAccountScreen } from './src/screens/RecoverAccountScreen';
 import { ApproveRecoveryScreen } from './src/screens/ApproveRecoveryScreen';
+import { PasskeyScreen } from './src/screens/PasskeyScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -181,6 +182,7 @@ function Root() {
               component={ApproveRecoveryScreen}
               options={{ title: 'Approve a recovery' }}
             />
+            <Stack.Screen name="Passkey" component={PasskeyScreen} options={{ title: 'Passkey' }} />
           </>
         )}
         </Stack.Navigator>

@@ -65,6 +65,8 @@ import {
 } from '../wallet/blockbook';
 import { EVM_CHAIN_ID } from '../wallet/send';
 import { exportAllRecordsText, loadRecoveryRecords } from '../wallet/recovery';
+import { passkeyGateNow } from '../wallet/passkey-native';
+import { PASSKEY_AUDIT_NOTE, PASSKEY_EXPLANATION, PASSKEY_SELF_CALL_RISK } from '../wallet/passkeys';
 
 /**
  * One chain's endpoint row: shows the effective URL (default or override)
@@ -974,7 +976,9 @@ export function SettingsScreen({ navigation }: Props) {
       'This deletes the recovery phrase from this device. The app returns to onboarding. Session ' +
         'keys and the session list are deleted too, but sessions granted on-chain stay active until ' +
         'they expire — revoke them first (Settings → Session keys) if you still can. Recovery records ' +
-        'and recovered-account links are deleted from this device; guardians stay installed on-chain.',
+        'and recovered-account links are deleted from this device; guardians stay installed on-chain. ' +
+        'Passkey details are deleted from this device too, but an installed passkey stays installed in ' +
+        'your smart account — remove it first (Settings → Passkey) if you no longer want it.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -1299,6 +1303,20 @@ export function SettingsScreen({ navigation }: Props) {
           variant="secondary"
           onPress={() => navigation.navigate('ApproveRecovery')}
         />
+      </View>
+
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: theme.text }]}>Passkey (device biometrics signer)</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{PASSKEY_EXPLANATION}</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{PASSKEY_SELF_CALL_RISK}</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          Needs a deployed Kernel v3.3 smart account (not an EIP-7702 upgrade). {PASSKEY_AUDIT_NOTE}
+        </Text>
+        {(() => {
+          const gate = passkeyGateNow();
+          return gate.ok ? null : <WarningBox>{gate.reason}</WarningBox>;
+        })()}
+        <Button title="Passkey for this account" variant="secondary" onPress={() => navigation.navigate('Passkey')} />
       </View>
 
       <View style={styles.section}>

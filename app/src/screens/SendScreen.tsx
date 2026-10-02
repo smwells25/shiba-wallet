@@ -55,6 +55,8 @@ import {
   prepareAaSend,
   sendAa,
   waitForAaReceipt,
+  aaErc20TransferCalls,
+  resolveAaSender,
   type AaChainConfig,
   type AaClientBundle,
   type AaSendQuote,
@@ -92,6 +94,15 @@ import { Eip7702QuoteNotice } from '../components/DelegationViews';
 import { usePrices } from '../wallet/usePrices';
 import { fiatLine, formatFiat, nativePriceAssetId, tokenPriceAssetId } from '../wallet/prices';
 import { BITCOIN, DOGECOIN } from '@shiba-wallet/chains-utxo';
+import { usePasskeyInfo } from '../wallet/usePasskeyInfo';
+import { loadPasskeyNative } from '../wallet/passkey-native';
+import {
+  createPasskeyBundle,
+  makePasskeyAssert,
+  preparePasskeyCalls,
+  sendPasskeyCalls,
+  type PasskeyBundle,
+} from '../wallet/passkeys';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Send'>;
 
@@ -225,6 +236,14 @@ export function SendScreen({ route, navigation }: Props) {
   const [aaConfig, setAaConfig] = useState<AaChainConfig | null>(null);
   const [aaEnabled, setAaEnabled] = useState(false);
   const aaBundle = useRef<AaClientBundle | null>(null);
+  // Passkey signer (phase 8 item 3): offered on smart-account sends when this
+  // device installed a passkey on the active account's Kernel account. Off
+  // by default; the owner key stays the default signer.
+  const [passkeySigner, setPasskeySigner] = useState(false);
+  const passkeyInfo = usePasskeyInfo(
+    route.params.chainId === EVM_CHAIN_ID ? (account?.address ?? null) : null,
+    activeAccount?.index ?? null,
+  );
   const [aaResult, setAaResult] = useState<{
     userOpHash: string;
     receiptState: 'pending' | 'found' | 'timeout';
@@ -477,6 +496,27 @@ export function SendScreen({ route, navigation }: Props) {
     nftMode ? describeNftSendError(e) : describeSendError(e, symbol);
   const nftLabel = nftParams ? `${nftParams.name} (${nftParams.collection})` : '';
   const aaActive = aaAvailable && aaEnabled;
+  // The passkey signs only for a Kernel v3.3 smart account (not SimpleAccount,
+  // not an EIP-7702 upgrade) whose passkey this device installed.
+  const passkeyRecord = aaType === 'kernel-v3.3' ? passkeyInfo.record : null;
+  const passkeyActive = aaActive && passkeySigner && passkeyRecord !== null;
+
+  /**
+   * The passkey-signing bundle over the same verified configuration: the
+   * smart account must be the one the passkey was installed in, and the
+   * native passkey module must be present with a configured rpId (the gate).
+   */
+  const buildPasskeyBundle = async (): Promise<PasskeyBundle> => {
+    if (!passkeyRecord) throw new Error('No passkey is installed for this account on this network.');
+    const base = buildAaBundle();
+    const sender = await resolveAaSender(base, account.address);
+    if (sender.toLowerCase() !== passkeyRecord.account.toLowerCase()) {
+      throw new Error(`The passkey belongs to ${passkeyRecord.account}, not this smart account (${sender}).`);
+    }
+    const { gate, native } = await loadPasskeyNative();
+    if (!gate.ok || !native) throw new Error(gate.ok ? 'The passkey module is not available.' : gate.reason);
+    return createPasskeyBundle(base, passkeyRecord, makePasskeyAssert(native, passkeyRecord));
+  };
 
   /**
    * The smart-account bundle for this screen: the ACTIVE chain's verified
@@ -526,6 +566,29 @@ export function SendScreen({ route, navigation }: Props) {
         // its ETH cannot cover the fee.
         if (!validation?.ok) {
           throw new Error('Enter a valid recipient first — the max depends on it.');
+        }
+        if (passkeyActive) {
+          // Passkey path: the passkey's own quote (nonce key, stub, padding)
+          // prices the fee; tokens use the full token balance.
+          const pbundle = await buildPasskeyBundle();
+          const pkAccount = pbundle.passkey.record.account;
+          if (token) {
+            max = await maxAaErc20Send(pbundle, pkAccount, {
+              contract: token.assetId.reference,
+              recipient: validation.normalized,
+              symbol: token.symbol,
+              decimals: token.decimals,
+            });
+            if (max <= 0n) throw new Error(`The smart account's ${token.symbol} balance is zero.`);
+          } else {
+            const probe = await preparePasskeyCalls(pbundle, [
+              { to: validation.normalized, value: 0n, data: new Uint8Array(0) },
+            ]);
+            max = probe.senderBalance > probe.fee ? probe.senderBalance - probe.fee : 0n;
+            if (max <= 0n) throw new Error('The smart account balance cannot cover the network fee.');
+          }
+          setAmountText(exact(max, decimals));
+          return;
         }
         const bundle = buildAaBundle();
         if (token) {
@@ -625,6 +688,36 @@ export function SendScreen({ route, navigation }: Props) {
         // or in token mode ONE transfer call executed by the smart account
         // (no approve: the account moves its own tokens). The bundle is kept
         // for the send + receipt poll so all three use the same transports.
+        if (passkeyActive) {
+          // Passkey-signed operation from the SAME smart account: quoted with
+          // the passkey nonce key and stub signature (passkeys.ts).
+          const pbundle = await buildPasskeyBundle();
+          aaBundle.current = pbundle;
+          next = token
+            ? await preparePasskeyCalls(
+                pbundle,
+                aaErc20TransferCalls(token.assetId.reference, validation.normalized, amount),
+                {
+                  tokenSpend: { contract: token.assetId.reference, amount, symbol: token.symbol },
+                  displayTo: validation.normalized,
+                  token: {
+                    contract: token.assetId.reference,
+                    recipient: validation.normalized,
+                    amount,
+                    symbol: token.symbol,
+                    decimals: token.decimals,
+                  },
+                },
+              )
+            : await preparePasskeyCalls(pbundle, [
+                { to: validation.normalized, value: amount, data: new Uint8Array(0) },
+              ]);
+          setQuote(next);
+          setQuotedFrom(account.address);
+          setOverrideSimulation(false);
+          setPhase('confirm');
+          return;
+        }
         const bundle = buildAaBundle();
         aaBundle.current = bundle;
         next = token
@@ -688,6 +781,41 @@ export function SendScreen({ route, navigation }: Props) {
 
   const onSend = async () => {
     if (!url || !quote || !quotedFrom) return;
+    if (quote.kind === 'aa' && quote.passkey) {
+      // Passkey-signed: no app-level biometric gate and no owner key. The
+      // platform passkey prompt that runs at submission IS the user
+      // verification, and the validator rejects assertions without the UV
+      // flag on-chain.
+      const bundle = aaBundle.current as PasskeyBundle | null;
+      if (!bundle?.passkey) {
+        Alert.alert('Not sent', 'Passkey session expired; go back and review again.');
+        return;
+      }
+      setPhase('sending');
+      try {
+        const { userOpHash } = await sendPasskeyCalls(bundle, quote);
+        setAaResult({ userOpHash, receiptState: 'pending', success: null, txHash: null });
+        setPhase('success');
+        void waitForAaReceipt(bundle, userOpHash, { timeoutMs: 120_000, pollMs: 3_000 }).then(
+          ({ summary }) =>
+            setAaResult((prev) =>
+              prev && prev.userOpHash === userOpHash
+                ? { ...prev, receiptState: 'found', success: summary.success, txHash: summary.txHash }
+                : prev,
+            ),
+          () =>
+            setAaResult((prev) =>
+              prev && prev.userOpHash === userOpHash ? { ...prev, receiptState: 'timeout' } : prev,
+            ),
+        );
+      } catch (e) {
+        const { title, detail } =
+          describeAaError(e, { accountType: 'kernel-v3.3', deployed: true }) ?? describeError(e);
+        Alert.alert(title, detail);
+        setPhase('confirm');
+      }
+      return;
+    }
     // Biometric gate (task 7): the final send confirmation requires local
     // authentication whenever the device has enrolled biometrics.
     const auth = await requireLocalAuth(
@@ -915,12 +1043,21 @@ export function SendScreen({ route, navigation }: Props) {
             theme={theme}
           />
         )}
-        <Row
-          label="Owner account (signs)"
-          value={fromName}
-          sub={quotedFrom}
-          theme={theme}
-        />
+        {quote.passkey ? (
+          <Row
+            label="Signer"
+            value="This phone's passkey (platform prompt follows)"
+            sub={`An additional signer on this smart account; your recovery phrase is not used. Owner account: ${fromName}`}
+            theme={theme}
+          />
+        ) : (
+          <Row
+            label="Owner account (signs)"
+            value={fromName}
+            sub={quotedFrom}
+            theme={theme}
+          />
+        )}
         <Row
           label={aaSenderLabel(quote)}
           value={quote.sender}
@@ -1002,7 +1139,11 @@ export function SendScreen({ route, navigation }: Props) {
         ) : (
           <>
             <Button
-              title={`Send ${quote.token ? quote.token.symbol : symbol} from smart account`}
+              title={
+                quote.passkey
+                  ? `Sign with passkey and send ${quote.token ? quote.token.symbol : symbol}`
+                  : `Send ${quote.token ? quote.token.symbol : symbol} from smart account`
+              }
               onPress={() => void onSend()}
             />
             <Button title="Back" variant="secondary" onPress={() => setPhase('form')} />
@@ -1398,6 +1539,22 @@ export function SendScreen({ route, navigation }: Props) {
                 (token ? ` (its own ${token.symbol})` : '') +
                 ' and its gas from its own balance unless a paymaster sponsors the gas, so fund ' +
                 'the smart account address first. Max uses the smart account\u2019s balance.'}
+          </Text>
+        </View>
+      ) : null}
+
+      {aaActive && passkeyRecord ? (
+        <View
+          style={[styles.aaToggleBox, { backgroundColor: theme.card, borderColor: theme.border }]}
+        >
+          <View style={styles.overrideRow}>
+            <Switch value={passkeySigner} onValueChange={setPasskeySigner} disabled={!url} />
+            <Text style={[styles.overrideLabel, { color: theme.text }]}>Sign with passkey</Text>
+          </View>
+          <Text style={[styles.hint, { color: theme.textMuted }]}>
+            Signs with this phone{'\u2019'}s passkey instead of your account key. The smart account (the
+            sender) and its address stay the same, and it pays the gas from its own balance as
+            usual. Off by default; the account key signs otherwise.
           </Text>
         </View>
       ) : null}

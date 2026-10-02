@@ -50,6 +50,8 @@ import {
   type WcTxParams,
 } from '../wallet/walletconnect';
 import type { WcQueueItem } from '../wallet/wc-controller';
+import { passkeyRecordForAccount } from '../wallet/passkeys';
+import { passkeyGateNow } from '../wallet/passkey-native';
 
 const mono = Platform.select({ ios: 'Menlo', default: 'monospace' });
 
@@ -88,6 +90,13 @@ export interface SmartAccountOption {
 
 /** How the user chose to connect a proposal. */
 export type ConnectAs = 'eoa' | 'smart';
+
+/**
+ * Who signs a message request on a Kernel smart-account session (phase 8
+ * item 3): the owner key (default) or this device's passkey installed on
+ * that smart account.
+ */
+export type MessageSigner = 'owner' | 'passkey';
 
 /** Loads the ACTIVE chain's verified smart-account bundle for an account index. */
 export type AaBundleLoader = (
@@ -146,10 +155,16 @@ export function WcApprovalSheet({
    * txQuote/override are null/false for everything but transactions;
    * connectAs is set for proposals only.
    */
-  onApprove: (txQuote: TxQuoteState | null, overrideSimulation: boolean, connectAs?: ConnectAs) => void;
+  onApprove: (
+    txQuote: TxQuoteState | null,
+    overrideSimulation: boolean,
+    connectAs?: ConnectAs,
+    signer?: MessageSigner,
+  ) => void;
   onReject: () => void;
 }) {
   const theme = useTheme();
+  const [messageSigner, setMessageSigner] = useState<MessageSigner>('owner');
   const [txQuote, setTxQuote] = useState<TxQuoteState | null>(null);
   const [overrideSimulation, setOverrideSimulation] = useState(false);
   // ERC-7715: the grant being reviewed — the dApp's, or a narrowed copy
@@ -357,7 +372,9 @@ export function WcApprovalSheet({
               setOverrideSimulation={setOverrideSimulation}
               permissionGrant={permissionGrant}
               setPermissionGrant={setPermissionGrant}
-              onApprove={() => onApprove(txQuote, overrideSimulation)}
+              messageSigner={messageSigner}
+              setMessageSigner={setMessageSigner}
+              onApprove={() => onApprove(txQuote, overrideSimulation, undefined, messageSigner)}
               onReject={onReject}
             />
           )}
@@ -555,6 +572,8 @@ function RequestBody({
   setOverrideSimulation,
   permissionGrant,
   setPermissionGrant,
+  messageSigner,
+  setMessageSigner,
   onApprove,
   onReject,
 }: {
@@ -574,6 +593,9 @@ function RequestBody({
   /** ERC-7715 only: the grant under review and its (narrowing-only) setter. */
   permissionGrant: SessionKeyGrant | null;
   setPermissionGrant: (grant: SessionKeyGrant) => void;
+  /** Message requests on Kernel smart-account sessions: owner key (default) or passkey. */
+  messageSigner: MessageSigner;
+  setMessageSigner: (signer: MessageSigner) => void;
   onApprove: () => void;
   onReject: () => void;
 }) {
@@ -613,6 +635,9 @@ function RequestBody({
           </Text>
         </View>
         {smart ? <SmartSigningNote smart={smart} theme={theme} /> : null}
+        {smart ? (
+          <PasskeySignerChoice smart={smart} theme={theme} signer={messageSigner} setSigner={setMessageSigner} />
+        ) : null}
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Signing proves account ownership to the dApp (EIP-191). It costs
           nothing and moves no funds, but only sign messages from dApps you
@@ -656,6 +681,9 @@ function RequestBody({
           </Text>
         </View>
         {smart ? <SmartSigningNote smart={smart} theme={theme} /> : null}
+        {smart ? (
+          <PasskeySignerChoice smart={smart} theme={theme} signer={messageSigner} setSigner={setMessageSigner} />
+        ) : null}
         <WarningBox>
           Typed-data signatures can authorize on-chain actions later (token
           permits, orders). Only approve if you understand what this dApp
@@ -837,6 +865,61 @@ function TxFields({
  * ORIGINAL request is shown above, because Kernel's ERC-1271 wrapper means
  * the owner key itself signs only a hash.
  */
+/**
+ * Signer choice for a message request on a Kernel smart-account session:
+ * shown only when this device installed a passkey on exactly the session's
+ * smart account (on its chain) and the passkey gate is open. The account
+ * key stays the default.
+ */
+function PasskeySignerChoice({
+  smart,
+  theme,
+  signer,
+  setSigner,
+}: {
+  smart: WcSmartBinding;
+  theme: Theme;
+  signer: MessageSigner;
+  setSigner: (s: MessageSigner) => void;
+}) {
+  const [available, setAvailable] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    if (smart.accountType !== 'kernel-v3.3' || !passkeyGateNow().ok) return;
+    passkeyRecordForAccount(smart.chain, smart.address).then(
+      (r) => {
+        if (!cancelled) setAvailable(r !== null && r.localStatus === 'installed');
+      },
+      () => undefined,
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [smart.accountType, smart.chain, smart.address]);
+  if (!available) return null;
+  return (
+    <View style={{ gap: 6 }}>
+      <Text style={[styles.fieldLabel, { color: theme.textMuted }]}>Sign with</Text>
+      <Button
+        title={signer === 'owner' ? '✓ Account key (default)' : 'Account key (default)'}
+        variant={signer === 'owner' ? 'primary' : 'secondary'}
+        onPress={() => setSigner('owner')}
+      />
+      <Button
+        title={signer === 'passkey' ? '✓ This phone’s passkey' : 'This phone’s passkey'}
+        variant={signer === 'passkey' ? 'primary' : 'secondary'}
+        onPress={() => setSigner('passkey')}
+      />
+      {signer === 'passkey' ? (
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          The passkey signs as the smart account (ERC-1271 through the WebAuthn validator). A passkey
+          prompt follows the approval.
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
 function SmartSigningNote({ smart, theme }: { smart: WcSmartBinding; theme: Theme }) {
   return (
     <Text style={[styles.hint, { color: theme.textMuted }]}>

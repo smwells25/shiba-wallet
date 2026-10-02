@@ -1346,6 +1346,13 @@ export interface AaSendQuote {
    * screens say so.
    */
   recovered?: boolean;
+  /**
+   * True when the operation is signed by the account's PASSKEY (phase 8
+   * item 3, ./passkeys.ts preparePasskeyCalls): the passkey nonce key and
+   * stub signature were used for the estimate, and only sendPasskeyCalls may
+   * submit it. sendAa (the owner-key path) refuses such a quote.
+   */
+  passkey?: boolean;
 }
 
 /** Convenience alias: a quote for any list of calls. */
@@ -1634,6 +1641,9 @@ export async function sendAa(
   owner: DerivedAccount,
   quote: AaSendQuote,
 ): Promise<{ userOpHash: string }> {
+  if (quote.passkey) {
+    throw new Error('This operation was prepared for the passkey signer. Nothing was signed; review it again.');
+  }
   const sender = await bundle.client.getAddress(owner);
   if (sender.toLowerCase() !== quote.sender.toLowerCase()) {
     throw new Error(

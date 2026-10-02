@@ -15,6 +15,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { forgetAllSessions } from './sessions';
 import { addAaSentListener } from './aa';
 import { recoveryRecordListener, wipeRecoveryData } from './recovery';
+import { resetPasskeys } from './passkeys';
 import {
   addAccount as addAccountToStore,
   defaultAccountsState,
@@ -320,6 +321,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     // wallet. Nothing on-chain changes. Settings offers the record export
     // before this runs.
     await wipeRecoveryData(AsyncStorage).catch(() => undefined);
+    // Passkey details (phase 8 item 3) are public metadata only (the private
+    // key lives in the platform authenticator); they go with the wallet. An
+    // installed passkey stays installed on-chain — Settings says so.
+    await resetPasskeys(AsyncStorage).catch(() => undefined);
     await deleteMnemonic();
     await resetAccounts().catch(() => undefined);
     setDerived({});
