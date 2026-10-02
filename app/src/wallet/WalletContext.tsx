@@ -13,6 +13,8 @@ import { chainByCaip2 } from './chains';
 import { deleteMnemonic, loadMnemonic, saveMnemonic, sessionKeyVault } from './storage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { forgetAllSessions } from './sessions';
+import { addAaSentListener } from './aa';
+import { recoveryRecordListener, wipeRecoveryData } from './recovery';
 import {
   addAccount as addAccountToStore,
   defaultAccountsState,
@@ -145,6 +147,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     queue.current = run.catch(() => undefined);
     return run;
   }, []);
+
+  // Recovery records (phase 8 item 4): a Kernel v3.3 account's record is
+  // started on its first accepted smart-account operation, whichever screen
+  // sent it (aa.ts notifies after the bundler accepted; public data only).
+  useEffect(() => addAaSentListener(recoveryRecordListener(AsyncStorage)), []);
 
   // On launch, check secure storage for an existing wallet.
   useEffect(() => {
@@ -308,6 +315,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     // secure storage with the list (best-effort; on-chain grants are not
     // affected — the Sessions screen warns about that before a wipe).
     await forgetAllSessions(AsyncStorage, sessionKeyVault).catch(() => undefined);
+    // Recovery records, recoveries in progress and recovered-account
+    // attachments are local bookkeeping (no key material); they go with the
+    // wallet. Nothing on-chain changes. Settings offers the record export
+    // before this runs.
+    await wipeRecoveryData(AsyncStorage).catch(() => undefined);
     await deleteMnemonic();
     await resetAccounts().catch(() => undefined);
     setDerived({});

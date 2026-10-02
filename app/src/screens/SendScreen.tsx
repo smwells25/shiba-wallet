@@ -43,6 +43,7 @@ import {
   KERNEL_BUNDLER_NOTE,
   PREVIEW_AA_BATCH_NOTE,
   aaAccountTypeLabel,
+  aaSenderLabel,
   createAaClientFromConfig,
   describeAaError,
   effectiveAaAccountType,
@@ -921,7 +922,7 @@ export function SendScreen({ route, navigation }: Props) {
           theme={theme}
         />
         <Row
-          label={quote.eip7702 ? 'From (your own address)' : 'From smart account'}
+          label={aaSenderLabel(quote)}
           value={quote.sender}
           mono
           theme={theme}

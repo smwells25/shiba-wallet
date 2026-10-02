@@ -12,6 +12,7 @@ import {
   createKernelAccountSpec,
   createSimpleAccountSpec,
   decodeUint256,
+  kernelRecoveredAccountSpec,
   encodeErc20BalanceOf,
   encodeErc20Transfer,
   encodeFunctionCall,
@@ -77,6 +78,17 @@ import { assertWalletDelegate, invalidateAccountDelegation } from './delegation.
  *    account's next smart-account send sign an authorization its user never
  *    asked for, which ADR D6 forbids. Revoking removes the owner, so the
  *    effective type returns to the chain's type (the previous one).
+ *  - A RECOVERED Kernel v3.3 account (phase 8 item 4): a deployed Kernel
+ *    account whose root owner was changed to one of this wallet's EOAs by a
+ *    guardian recovery. Its address is not the CREATE2 result of that owner
+ *    (the salt commits to the ORIGINAL owner; engine kernel-recovery.ts), so
+ *    it cannot be derived from the seed. Like the 7702 type it is recorded
+ *    PER OWNER (recoveredAccounts), written only by ./recovery.ts after the
+ *    engine's verifyKernelAccountForOwner passed, and createAaClientFromConfig
+ *    then builds the engine's kernelRecoveredAccountSpec (which re-reads the
+ *    on-chain owner before it returns the address). The bundle's
+ *    accountType stays 'kernel-v3.3' (same encoding and signatures) and
+ *    `recovered` carries the address so screens can label it.
  *
  * KNOWN BUNDLER LIMITATION (AGENTS.md phase 7, live Sepolia probes
  * 2026-10-01): Alchemy's bundler rejected Kernel v3.3 DEPLOYMENT
@@ -191,6 +203,24 @@ export interface AaChainConfig {
    * stay as they were and apply again when an owner is removed.
    */
   eip7702Owners: string[];
+  /**
+   * Recovered Kernel v3.3 accounts (phase 8 item 4), one per owner EOA:
+   * smart-account sends by `owner` on this chain use `account` through the
+   * engine's kernelRecoveredAccountSpec. Written only by ./recovery.ts
+   * (setRecoveredAccount) after an on-chain ownership check. Configurations
+   * saved before this field existed read as an empty list.
+   */
+  recoveredAccounts: RecoveredAccountLink[];
+}
+
+/** One recovered account attached to one of the wallet's owner EOAs. */
+export interface RecoveredAccountLink {
+  /** The wallet's owner EOA (EIP-55). */
+  owner: string;
+  /** The recovered Kernel account (EIP-55); not derivable from the seed. */
+  account: string;
+  /** ISO timestamp of the attachment. */
+  attachedAt: string;
 }
 
 const EMPTY_CONFIG: AaChainConfig = {
@@ -207,7 +237,29 @@ const EMPTY_CONFIG: AaChainConfig = {
   paymasterContext: null,
   paymasterVerifiedAt: null,
   eip7702Owners: [],
+  recoveredAccounts: [],
 };
+
+const ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/;
+
+function normalizeRecoveredLinks(value: unknown): RecoveredAccountLink[] {
+  if (!Array.isArray(value)) return [];
+  const out: RecoveredAccountLink[] = [];
+  for (const entry of value as unknown[]) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const e = entry as Record<string, unknown>;
+    if (typeof e.owner !== 'string' || !ADDRESS_PATTERN.test(e.owner)) continue;
+    if (typeof e.account !== 'string' || !ADDRESS_PATTERN.test(e.account)) continue;
+    // One link per owner; a later duplicate is dropped.
+    if (out.some((l) => l.owner.toLowerCase() === (e.owner as string).toLowerCase())) continue;
+    out.push({
+      owner: toChecksumAddress(toBytes(e.owner.toLowerCase())),
+      account: toChecksumAddress(toBytes(e.account.toLowerCase())),
+      attachedAt: typeof e.attachedAt === 'string' ? e.attachedAt : '',
+    });
+  }
+  return out;
+}
 
 type ConfigMap = Record<string, Partial<AaChainConfig>>;
 
@@ -258,6 +310,7 @@ function normalizeEntry(entry: Partial<AaChainConfig> | undefined): AaChainConfi
     paymasterContext: paymasterUrl ? str(entry?.paymasterContext) : null,
     paymasterVerifiedAt: paymasterUrl ? str(entry?.paymasterVerifiedAt) : null,
     eip7702Owners: owners,
+    recoveredAccounts: normalizeRecoveredLinks(entry?.recoveredAccounts),
   };
 }
 
@@ -285,17 +338,31 @@ export function effectiveAaAccountType(
   config: AaChainConfig,
   owner?: string | null,
 ): AaAccountType {
-  return isEip7702Owner(config, owner) ? 'kernel-7702' : config.accountType;
+  if (isEip7702Owner(config, owner)) return 'kernel-7702';
+  if (recoveredAccountFor(config, owner)) return 'kernel-v3.3';
+  return config.accountType;
+}
+
+/**
+ * The recovered Kernel account attached to `owner` on this chain (phase 8
+ * item 4), or null. Tolerates configurations without the field.
+ */
+export function recoveredAccountFor(config: AaChainConfig, owner: string | null | undefined): string | null {
+  if (!owner) return null;
+  const lower = owner.toLowerCase();
+  return (config.recoveredAccounts ?? []).find((l) => l.owner.toLowerCase() === lower)?.account ?? null;
 }
 
 /**
  * True when both endpoints are configured (and therefore verified). A
  * Kernel configuration additionally needs its validator on record (always
  * written together with the factory by setAaKernelFactory). For an owner
- * upgraded with EIP-7702 only the bundler is needed (there is no factory).
+ * upgraded with EIP-7702, or one with an attached recovered account, only
+ * the bundler is needed (there is no factory involved).
  */
 export function isAaConfigured(config: AaChainConfig, owner?: string | null): boolean {
   if (isEip7702Owner(config, owner)) return config.bundlerUrl !== null;
+  if (recoveredAccountFor(config, owner)) return config.bundlerUrl !== null;
   if (config.bundlerUrl === null || config.factory === null) return false;
   if (config.accountType === 'kernel-v3.3') return config.kernelValidator !== null;
   return true;
@@ -649,6 +716,11 @@ export async function setAccountEip7702(
   if (!/^0x[0-9a-fA-F]{40}$/.test(owner)) throw new Error(`Not an EVM address: ${owner}`);
   eip155ChainIdOf(chainId);
   const map = await loadConfigMap(store);
+  if (enabled && recoveredAccountFor(normalizeEntry(map[chainId]), owner)) {
+    // One smart account per owner and chain: an owner that controls a
+    // recovered Kernel account keeps using it.
+    throw new Error(RECOVERED_7702_CONFLICT);
+  }
   const current = normalizeEntry(map[chainId]).eip7702Owners.filter(
     (a) => a.toLowerCase() !== owner.toLowerCase(),
   );
@@ -658,6 +730,64 @@ export async function setAccountEip7702(
   };
   await saveConfigMap(map, store);
   return normalizeEntry(map[chainId]);
+}
+
+/** Refusal when one owner would get both a 7702 upgrade and a recovered account. */
+export const RECOVERED_7702_CONFLICT =
+  'This account already controls a recovered Kernel account on this network, and smart-account ' +
+  'sends from it use that account. An account can use one smart account per network: use another ' +
+  'account for the EIP-7702 upgrade, or for the recovered account.';
+
+/**
+ * Attaches (account = an address) or detaches (account = null) the
+ * recovered Kernel account of one owner EOA on one chain. Signs nothing and
+ * reads nothing: it MUST be called only by ./recovery.ts after the engine's
+ * verifyKernelAccountForOwner confirmed on-chain that `owner` is the
+ * account's current root owner (the "Use this recovered account" rule).
+ * Refuses an owner that is upgraded with EIP-7702 on this chain.
+ */
+export async function setRecoveredAccount(
+  chainId: string,
+  owner: string,
+  account: string | null,
+  store: KeyValueStore = AsyncStorage,
+): Promise<AaChainConfig> {
+  if (!ADDRESS_PATTERN.test(owner)) throw new Error(`Not an EVM address: ${owner}`);
+  if (account !== null && !ADDRESS_PATTERN.test(account)) throw new Error(`Not an EVM address: ${account}`);
+  eip155ChainIdOf(chainId);
+  const map = await loadConfigMap(store);
+  const entry = normalizeEntry(map[chainId]);
+  if (account !== null && isEip7702Owner(entry, owner)) throw new Error(RECOVERED_7702_CONFLICT);
+  const others = entry.recoveredAccounts.filter((l) => l.owner.toLowerCase() !== owner.toLowerCase());
+  map[chainId] = {
+    ...map[chainId],
+    recoveredAccounts:
+      account === null
+        ? others
+        : [
+            ...others,
+            {
+              owner: toChecksumAddress(toBytes(owner.toLowerCase())),
+              account: toChecksumAddress(toBytes(account.toLowerCase())),
+              attachedAt: new Date().toISOString(),
+            },
+          ],
+  };
+  await saveConfigMap(map, store);
+  return normalizeEntry(map[chainId]);
+}
+
+/** Wipe support: detaches every recovered account on every chain. */
+export async function clearAllRecoveredAccounts(store: KeyValueStore = AsyncStorage): Promise<void> {
+  const map = await loadConfigMap(store);
+  let changed = false;
+  for (const key of Object.keys(map)) {
+    if (map[key]?.recoveredAccounts !== undefined) {
+      delete map[key]!.recoveredAccounts;
+      changed = true;
+    }
+  }
+  if (changed) await saveConfigMap(map, store);
 }
 
 // ---------------------------------------------------------------------------
@@ -789,6 +919,17 @@ export interface AaClientBundle {
    * a quote that announced the upgrade on the confirm screen.
    */
   eip7702?: { delegate: string; gate: { allowAuthorization: boolean } };
+  /**
+   * Kernel bundles: the deployment addresses the spec was built with (used
+   * to start the account's recovery record, ./recovery.ts).
+   */
+  kernel?: AaKernelAddresses;
+  /**
+   * Set for a recovered Kernel account (phase 8 item 4): the attached
+   * address, which is not derivable from the owner's seed. The spec is the
+   * engine's kernelRecoveredAccountSpec.
+   */
+  recovered?: { account: string };
 }
 
 /**
@@ -857,6 +998,12 @@ export function createAaClient(options: {
   accountType?: AaAccountType;
   /** Kernel deployment addresses; defaults to the pinned KERNEL_V3_3 values. */
   kernel?: Partial<AaKernelAddresses>;
+  /**
+   * A recovered Kernel v3.3 account attached to the owner (accountType must
+   * be 'kernel-v3.3'): the spec becomes the engine's
+   * kernelRecoveredAccountSpec for this address.
+   */
+  recoveredAccount?: string;
 }): AaClientBundle {
   if (options.accountType === 'kernel-7702') return createKernel7702Bundle(options);
   const transportFor = options.transportFor ?? httpTransport;
@@ -868,19 +1015,33 @@ export function createAaClient(options: {
     throw new Error(`Invalid account index ${String(options.accountIndex)}.`);
   }
   const accountType = options.accountType ?? 'simple';
+  if (options.recoveredAccount !== undefined && accountType !== 'kernel-v3.3') {
+    throw new Error('A recovered account is a Kernel v3.3 account.');
+  }
+  const kernelAddresses: AaKernelAddresses = {
+    metaFactory:
+      options.kernel?.metaFactory === undefined ? KERNEL_PREFILL.metaFactory : options.kernel.metaFactory,
+    implementation: options.kernel?.implementation ?? KERNEL_PREFILL.implementation,
+    ecdsaValidator: options.kernel?.ecdsaValidator ?? KERNEL_PREFILL.ecdsaValidator,
+  };
   const spec =
     accountType === 'kernel-v3.3'
-      ? createKernelAccountSpec({
-          node,
-          index: BigInt(accountIndex),
-          factory: options.factory,
-          implementation: options.kernel?.implementation ?? KERNEL_PREFILL.implementation,
-          metaFactory:
-            options.kernel?.metaFactory === undefined
-              ? KERNEL_PREFILL.metaFactory
-              : options.kernel.metaFactory,
-          ecdsaValidator: options.kernel?.ecdsaValidator ?? KERNEL_PREFILL.ecdsaValidator,
-        })
+      ? options.recoveredAccount !== undefined
+        ? // The engine's spec returns the stored address only after reading
+          // the ECDSA validator's owner and checking it is the signing key.
+          kernelRecoveredAccountSpec({
+            node,
+            account: options.recoveredAccount,
+            ecdsaValidator: kernelAddresses.ecdsaValidator,
+          })
+        : createKernelAccountSpec({
+            node,
+            index: BigInt(accountIndex),
+            factory: options.factory,
+            implementation: kernelAddresses.implementation,
+            metaFactory: kernelAddresses.metaFactory,
+            ecdsaValidator: kernelAddresses.ecdsaValidator,
+          })
       : createSimpleAccountSpec({
           factory: options.factory,
           node,
@@ -917,6 +1078,10 @@ export function createAaClient(options: {
     accountType,
     factory: options.factory,
     accountIndex,
+    ...(accountType === 'kernel-v3.3' ? { kernel: kernelAddresses } : {}),
+    ...(options.recoveredAccount !== undefined
+      ? { recovered: { account: toChecksumAddress(toBytes(options.recoveredAccount.toLowerCase())) } }
+      : {}),
   };
 }
 
@@ -1002,8 +1167,10 @@ export function createAaClientFromConfig(
     accountIndex: number;
     /**
      * The owner EOA. When it was upgraded with EIP-7702 on this chain
-     * (eip7702Owners), the bundle is 'kernel-7702'; otherwise, or when
-     * omitted, the chain's factory type. WalletConnect smart-account
+     * (eip7702Owners), the bundle is 'kernel-7702'; when a recovered Kernel
+     * account is attached to it (recoveredAccounts), the bundle uses that
+     * account; otherwise, or when omitted, the chain's factory type.
+     * WalletConnect smart-account
      * connections omit it on purpose: they never run the 7702 path, so a
      * dApp session can never cause an authorization to be signed (D6).
      */
@@ -1022,6 +1189,30 @@ export function createAaClientFromConfig(
       chainId: options.chainId,
       accountIndex: options.accountIndex,
       accountType: 'kernel-7702',
+      ...(config.paymasterUrl
+        ? { paymaster: { url: config.paymasterUrl, contextJson: config.paymasterContext } }
+        : {}),
+      ...(options.transportFor ? { transportFor: options.transportFor } : {}),
+    });
+  }
+  const recovered = recoveredAccountFor(config, options.ownerAddress);
+  if (recovered) {
+    if (!config.bundlerUrl) {
+      throw new Error('No bundler is configured for this network (Settings → Account Abstraction).');
+    }
+    return createAaClient({
+      nodeUrl: options.nodeUrl,
+      bundlerUrl: config.bundlerUrl,
+      factory: config.factory ?? KERNEL_PREFILL.factory,
+      chainId: options.chainId,
+      accountIndex: options.accountIndex,
+      accountType: 'kernel-v3.3',
+      recoveredAccount: recovered,
+      kernel: {
+        metaFactory: KERNEL_PREFILL.metaFactory,
+        implementation: KERNEL_PREFILL.implementation,
+        ecdsaValidator: KERNEL_PREFILL.ecdsaValidator,
+      },
       ...(config.paymasterUrl
         ? { paymaster: { url: config.paymasterUrl, contextJson: config.paymasterContext } }
         : {}),
@@ -1149,6 +1340,12 @@ export interface AaSendQuote {
    * screen must say so); false means it is already delegated to `delegate`.
    */
   eip7702?: { upgrade: boolean; delegate: string };
+  /**
+   * True when the sender is a RECOVERED Kernel account (phase 8 item 4):
+   * its address is not derivable from the owner's seed, and the confirm
+   * screens say so.
+   */
+  recovered?: boolean;
 }
 
 /** Convenience alias: a quote for any list of calls. */
@@ -1291,7 +1488,15 @@ export async function prepareAaCalls(
       : {}),
     ...(options.token ? { token: options.token } : {}),
     ...(eip7702 ? { eip7702 } : {}),
+    ...(bundle.recovered ? { recovered: true } : {}),
   };
+}
+
+/** The confirm-screen label of the smart-account sender row. */
+export function aaSenderLabel(quote: Pick<AaSendQuote, 'eip7702' | 'recovered'>): string {
+  if (quote.eip7702) return 'From (your own address)';
+  if (quote.recovered) return 'From recovered smart account (not found from your recovery phrase alone)';
+  return 'From smart account';
 }
 
 /** The AA quote for a plain native transfer (one call, no calldata). */
@@ -1373,6 +1578,49 @@ export async function maxAaSend(
 }
 
 /**
+ * What sendAa reports once the bundler accepted an operation. Public data
+ * only: the owner's address and BIP-32 path, never the DerivedAccount (whose
+ * sign closure captures the private key).
+ */
+export interface AaSentEvent {
+  bundle: AaClientBundle;
+  owner: { address: string; path: string };
+  quote: AaSendQuote;
+  userOpHash: string;
+}
+
+export type AaSentListener = (event: AaSentEvent) => void | Promise<void>;
+
+const sentListeners = new Set<AaSentListener>();
+
+/**
+ * Subscribes to accepted smart-account operations (every sendAa caller:
+ * Send, Swap, Sessions, Guardians, WalletConnect). Used to start a Kernel
+ * account's recovery record on its first use (./recovery.ts). Returns the
+ * unsubscribe function.
+ */
+export function addAaSentListener(listener: AaSentListener): () => void {
+  sentListeners.add(listener);
+  return () => {
+    sentListeners.delete(listener);
+  };
+}
+
+/** Best-effort fan-out: a failing listener never affects the send. */
+function notifyAaSent(event: AaSentEvent): void {
+  for (const listener of [...sentListeners]) {
+    try {
+      const result = listener(event);
+      if (result && typeof (result as Promise<void>).catch === 'function') {
+        (result as Promise<void>).catch(() => undefined);
+      }
+    } catch {
+      // Listeners are bookkeeping; the operation was already accepted.
+    }
+  }
+}
+
+/**
  * Signs and submits the quoted calls as one UserOperation through
  * SmartAccountClient.sendCalls (stub → estimate → sign → send; the client
  * re-runs its own estimation so the submitted gas limits are fresh).
@@ -1405,6 +1653,7 @@ export async function sendAa(
       maxFeePerGas: quote.maxFeePerGas,
       maxPriorityFeePerGas: quote.maxPriorityFeePerGas,
     });
+    notifyAaSent({ bundle, owner: { address: owner.address, path: owner.path }, quote, userOpHash });
     return { userOpHash };
   } finally {
     if (bundle.eip7702) {

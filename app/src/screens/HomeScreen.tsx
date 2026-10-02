@@ -24,6 +24,8 @@ import { BalanceState, useBalances } from '../wallet/useBalances';
 import { useTokenBalances } from '../wallet/useTokenBalances';
 import { useAccountDelegation } from '../wallet/useDelegation';
 import { useSessionEligibility } from '../wallet/useSessionEligibility';
+import { useRecoveryInfo } from '../wallet/useRecoveryInfo';
+import { shortAccountAddress } from '../wallet/accounts';
 import { delegationLabelSuffix, FOREIGN_DELEGATE_WARNING } from '../wallet/delegation';
 import { usePrices } from '../wallet/usePrices';
 import {
@@ -172,6 +174,10 @@ export function HomeScreen({ navigation }: Props) {
   // Session keys (phase 8 item 2): linked only when the active account has
   // a deployed Kernel account or an active EIP-7702 upgrade.
   const sessionsEligible = useSessionEligibility(evmAccount?.address, activeAccount?.index ?? null);
+  // Guardians (phase 8 item 4): linked only for a deployed Kernel v3.3
+  // account the active account owns; a recovered account gets a label; a
+  // recovery in progress gets a "continue" line.
+  const recovery = useRecoveryInfo(evmAccount?.address, activeAccount?.index ?? null);
   // Tracked tokens are Ethereum-mainnet assets; in Sepolia test mode the
   // token section is hidden entirely (fetching a mainnet contract's
   // balanceOf against a Sepolia endpoint would be wrong-chain noise).
@@ -309,6 +315,19 @@ export function HomeScreen({ navigation }: Props) {
               <Text style={[styles.sendLink, { color: theme.accent }]}>Sessions</Text>
             </Pressable>
           ) : null}
+          {/* Guardians (phase 8 item 4): only for a deployed Kernel v3.3
+              account (never an EIP-7702 upgrade, which guardians cannot
+              protect). */}
+          {item.chainId === EVM_CHAIN_ID && recovery.guardiansEligible ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Guardians"
+              onPress={() => navigation.navigate('Guardians')}
+              hitSlop={8}
+            >
+              <Text style={[styles.sendLink, { color: theme.accent }]}>Guardians</Text>
+            </Pressable>
+          ) : null}
           {/* Token approvals manager (phase 7 item 5) for the active EVM
               chain; the screen explains what it can and cannot see. */}
           {item.chainId === EVM_CHAIN_ID ? (
@@ -433,6 +452,29 @@ export function HomeScreen({ navigation }: Props) {
                 </Text>
               </Pressable>
             ) : null}
+            {activeAccount && recovery.recoveredAccount ? (
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => navigation.navigate('Guardians')}
+                hitSlop={8}
+              >
+                <Text style={[styles.delegationLine, { color: theme.text }]}>
+                  {activeAccount.name} · recovered account {shortAccountAddress(recovery.recoveredAccount)} on{' '}
+                  {evmChain.label} (not found from your recovery phrase alone; keep its record backed up)
+                </Text>
+              </Pressable>
+            ) : null}
+            {activeAccount && recovery.recoveryInProgress ? (
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => navigation.navigate('RecoverAccount')}
+                hitSlop={8}
+              >
+                <Text style={[styles.delegationLine, { color: theme.accent }]}>
+                  Recovering an account with guardians — tap to continue
+                </Text>
+              </Pressable>
+            ) : null}
             {/* Quick balance-privacy toggle (the same setting lives in
                 Settings -> Privacy & security); the eye glyph masks every
                 amount on this screen and on Activity as ••••. */}
@@ -463,6 +505,17 @@ export function HomeScreen({ navigation }: Props) {
           />
         }
         ListFooterComponent={
+          <View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Recover an account with guardians"
+            onPress={() => navigation.navigate('RecoverAccount')}
+            hitSlop={8}
+          >
+            <Text style={[styles.manageTokens, styles.recoverLink, { color: theme.accent }]}>
+              Lost a recovery phrase? Recover an account with guardians
+            </Text>
+          </Pressable>
           <Text style={[styles.footer, { color: theme.textMuted }]}>
             {activeAccount ? `${activeAccount.name}'s` : 'Your'} addresses, derived on
             this device from your recovery phrase (one phrase backs up every
@@ -473,6 +526,7 @@ export function HomeScreen({ navigation }: Props) {
               ? ' USD values are indicative prices from CoinGecko (Settings → Prices).'
               : ''}
           </Text>
+          </View>
         }
       />
     </View>
@@ -612,6 +666,10 @@ const styles = StyleSheet.create({
   privacyToggle: {
     fontSize: 13,
     fontWeight: '600',
+  },
+  recoverLink: {
+    textAlign: 'center',
+    marginTop: 12,
   },
   footer: {
     fontSize: 13,

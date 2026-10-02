@@ -35,4 +35,10 @@ export type RootStackParamList = {
   UpgradeAccount: undefined;
   /** Session keys (phase 8 item 2) on the active account's Kernel account, active EVM chain. */
   Sessions: undefined;
+  /** Guardians / social recovery (phase 8 item 4) for the active account's Kernel account. */
+  Guardians: undefined;
+  /** Recover a Kernel account with guardians (new owner = the active account), or restore a record. */
+  RecoverAccount: undefined;
+  /** The guardian side: review, approve and submit a recovery request as the active account. */
+  ApproveRecovery: undefined;
 };

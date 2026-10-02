@@ -6,6 +6,9 @@ import type { DerivedAccount } from '@shiba-wallet/core';
 import {
   ERC7715_CALLS_PERMISSION_TYPE,
   Erc7715RequestError,
+  KERNEL_RECOVERY_MODULES,
+  KERNEL_RECOVERY_SELECTOR,
+  WEIGHTED_ECDSA_VALIDATOR_NAME,
   grantFromErc7715Request,
   toBytes,
   toHex,
@@ -872,6 +875,42 @@ export const EIP7702_WC_REFUSAL =
 
 const EIP7702_HINT = /authori[sz]ation|7702|delegat/i;
 
+/**
+ * Guardian approvals and recovery operations are never served to dApps
+ * (phase 8 item 4): a guardian's approval hands control of SOMEONE ELSE'S
+ * account to a new owner, so it is produced only by the wallet's own
+ * "Approve a recovery" screen, from a request the wallet re-derived and
+ * showed in full. Over WalletConnect the wallet refuses: typed data whose
+ * domain is the guardian validator (name "WeightedECDSAValidator" or
+ * verifyingContract = KERNEL_RECOVERY_MODULES.weightedEcdsaValidator; the
+ * engine's guardianApprovalTypedData domain), and any transaction or batch
+ * call to the guardian validator or the RecoveryAction, or carrying the
+ * doRecovery selector (approve / approveWithSig / veto / renew / doRecovery).
+ */
+export const GUARDIAN_WC_REFUSAL =
+  'This wallet never approves or submits a guardian recovery for a dApp. Approving a recovery hands ' +
+  'control of an account to a new owner; use Settings → Guardians → Approve a recovery in the wallet, ' +
+  'after confirming with the account holder.';
+
+/** True when a call targets the guardian modules or carries the doRecovery selector. */
+export function touchesGuardianModules(to: string, data: Uint8Array): boolean {
+  const lower = to.toLowerCase();
+  if (
+    lower === KERNEL_RECOVERY_MODULES.weightedEcdsaValidator.toLowerCase() ||
+    lower === KERNEL_RECOVERY_MODULES.recoveryAction.toLowerCase()
+  ) {
+    return true;
+  }
+  return data.length >= 4 && toHex(data.slice(0, 4)).toLowerCase() === KERNEL_RECOVERY_SELECTOR.toLowerCase();
+}
+
+/** True when EIP-712 typed data is a guardian approval (or anything else under the guardian validator's domain). */
+export function isGuardianTypedData(domain: TypedDataDomain): boolean {
+  if (domain.name === WEIGHTED_ECDSA_VALIDATOR_NAME) return true;
+  const vc = domain.verifyingContract;
+  return typeof vc === 'string' && vc.toLowerCase() === KERNEL_RECOVERY_MODULES.weightedEcdsaValidator.toLowerCase();
+}
+
 /** True when a transaction-like object asks for an EIP-7702 set-code transaction. */
 export function requestsEip7702Authorization(tx: Record<string, unknown>): boolean {
   if ('authorizationList' in tx && tx.authorizationList !== undefined) return true;
@@ -1051,14 +1090,19 @@ export function parseWcRequest(
     }
     requireOurAddress(p[0], 'signing address');
     const json = typeof p[1] === 'string' ? p[1] : JSON.stringify(p[1]);
+    let typedData: WcTypedData;
     try {
-      return { kind: 'typed_data', typedData: parseTypedDataV4(json, activeChain) };
+      typedData = parseTypedDataV4(json, activeChain);
     } catch (e) {
       throw new WcRequestRejection(
         WC_ERRORS.userRejected.code,
         e instanceof Error ? e.message : 'Unreadable typed data.',
       );
     }
+    if (isGuardianTypedData(typedData.domain)) {
+      throw new WcRequestRejection(WC_ERRORS.userRejected.code, GUARDIAN_WC_REFUSAL);
+    }
+    return { kind: 'typed_data', typedData };
   }
 
   if (method === 'eth_sendTransaction') {
@@ -1103,6 +1147,9 @@ export function parseWcRequest(
         throw new WcRequestRejection(-32602, 'eth_sendTransaction: data is not valid hex.');
       }
       data = toBytes(dataRaw);
+    }
+    if (touchesGuardianModules(validated.normalized, data)) {
+      throw new WcRequestRejection(WC_ERRORS.userRejected.code, GUARDIAN_WC_REFUSAL);
     }
     // dApp-supplied gas/gasPrice/maxFeePerGas/nonce are deliberately
     // ignored: the app re-quotes through its own machinery (endpoint
@@ -1957,6 +2004,9 @@ export function parseSendCalls(
         throw new WcRequestRejection(ERC5792_ERRORS.invalidParams, `wallet_sendCalls: ${where} data is not valid hex.`);
       }
       data = toBytes(c.data);
+    }
+    if (touchesGuardianModules(validated.normalized, data)) {
+      throw new WcRequestRejection(WC_ERRORS.userRejected.code, GUARDIAN_WC_REFUSAL);
     }
     return { to: validated.normalized, valueWei, data };
   });

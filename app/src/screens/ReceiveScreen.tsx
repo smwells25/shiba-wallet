@@ -17,6 +17,8 @@ import { useWallet } from '../wallet/WalletContext';
 import { EVM_CHAIN_ID } from '../wallet/send';
 import { useAccountDelegation } from '../wallet/useDelegation';
 import { delegationLabelSuffix } from '../wallet/delegation';
+import { useRecoveryInfo } from '../wallet/useRecoveryInfo';
+import { RECOVERED_NOT_DERIVABLE_NOTE } from '../wallet/recovery';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Receive'>;
 
@@ -31,6 +33,12 @@ export function ReceiveScreen({ route, navigation }: Props) {
   // on the EVM slot, so the user knows which code runs at this address.
   const delegation = useAccountDelegation(
     route.params.chainId === EVM_CHAIN_ID ? (account?.address ?? null) : null,
+  );
+  // A recovered Kernel account (phase 8 item 4) attached to this account:
+  // named here so the user knows its address is not this EOA's.
+  const recovery = useRecoveryInfo(
+    route.params.chainId === EVM_CHAIN_ID ? (account?.address ?? null) : null,
+    activeAccount?.index ?? null,
   );
   // Sized for phone screens: fill the width minus the padding, capped so
   // tablets don't render a poster. The 16px white padding around the code
@@ -84,6 +92,18 @@ export function ReceiveScreen({ route, navigation }: Props) {
         </Text>
       </View>
       <Text style={[styles.path, { color: theme.textMuted }]}>{account.path}</Text>
+      {recovery.recoveredAccount ? (
+        <View style={[styles.addressBox, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          <Text style={[styles.note, { color: theme.text }]}>
+            This account also controls a recovered smart account. The QR code above is this account’s own
+            address, not the recovered one:
+          </Text>
+          <Text selectable style={[styles.address, { color: theme.text }]}>
+            {recovery.recoveredAccount}
+          </Text>
+          <Text style={[styles.note, { color: theme.textMuted }]}>{RECOVERED_NOT_DERIVABLE_NOTE}</Text>
+        </View>
+      ) : null}
       {/*
         CLIPBOARD HYGIENE (phase 4, item 5.3): expo-clipboard is already
         the copy mechanism here. Its API offers no sensitive-content flag,

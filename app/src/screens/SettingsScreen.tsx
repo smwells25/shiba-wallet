@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { Alert, ScrollView, Share, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation';
 import { allowScreenCaptureAsync, preventScreenCaptureAsync } from 'expo-screen-capture';
@@ -64,6 +64,7 @@ import {
   type BlockbookConfig,
 } from '../wallet/blockbook';
 import { EVM_CHAIN_ID } from '../wallet/send';
+import { exportAllRecordsText, loadRecoveryRecords } from '../wallet/recovery';
 
 /**
  * One chain's endpoint row: shows the effective URL (default or override)
@@ -932,12 +933,48 @@ export function SettingsScreen({ navigation }: Props) {
   };
 
   const onWipe = () => {
+    // Recovery records (phase 8 item 4) are the only way a restored wallet
+    // finds an account whose owner changed, and they live only on this
+    // device: offer the export first. Wiping removes nothing on-chain.
+    loadRecoveryRecords().then(
+      ({ entries }) => {
+        const text = exportAllRecordsText(entries);
+        if (!text) {
+          confirmWipe();
+          return;
+        }
+        Alert.alert(
+          'Export your recovery records first?',
+          `This device holds ${entries.length} recovery record(s). They contain no secrets, but a wallet ` +
+            'restored from a recovery phrase needs them to find accounts whose owner changed. Wiping deletes ' +
+            'them from this device (nothing on-chain changes: guardians stay installed).',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Export',
+              onPress: () => {
+                Share.share({ message: text, title: 'Recovery records' }).then(
+                  () => confirmWipe(),
+                  () => confirmWipe(),
+                );
+              },
+            },
+            { text: 'Continue without exporting', style: 'destructive', onPress: confirmWipe },
+          ],
+        );
+      },
+      () => confirmWipe(),
+    );
+  };
+
+  const confirmWipe = () => {
     // Double confirmation: wiping is irreversible without the paper backup.
     Alert.alert(
       'Wipe wallet?',
       'This deletes the recovery phrase from this device. The app returns to onboarding. Session ' +
         'keys and the session list are deleted too, but sessions granted on-chain stay active until ' +
-        'they expire — revoke them first (Settings → Session keys) if you still can.',
+        'they expire — revoke them first (Settings → Session keys) if you still can. Recovery records ' +
+        'and recovered-account links are deleted from this device; guardians stay installed on-chain.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -1235,6 +1272,32 @@ export function SettingsScreen({ navigation }: Props) {
           title="Sessions"
           variant="secondary"
           onPress={() => navigation.navigate('Sessions')}
+        />
+      </View>
+
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: theme.text }]}>Guardians (social recovery)</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          Let people you choose replace the key of your deployed Kernel smart account if you lose your
+          recovery phrase. This is a trade-off, not a safety guarantee: enough guardians together could
+          also take the account, and guardians can sign messages as the account from the moment they are
+          installed (with no delay and no veto). Not available for an account upgraded with EIP-7702. The
+          guardian modules have no published audit of their deployed versions.
+        </Text>
+        <Button
+          title="Guardians for this account"
+          variant="secondary"
+          onPress={() => navigation.navigate('Guardians')}
+        />
+        <Button
+          title="Recover an account with guardians"
+          variant="secondary"
+          onPress={() => navigation.navigate('RecoverAccount')}
+        />
+        <Button
+          title="Approve a recovery (as a guardian)"
+          variant="secondary"
+          onPress={() => navigation.navigate('ApproveRecovery')}
         />
       </View>
 

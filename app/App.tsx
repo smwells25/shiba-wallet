@@ -33,6 +33,9 @@ import { NftDetailScreen } from './src/screens/NftDetailScreen';
 import { ApprovalsScreen } from './src/screens/ApprovalsScreen';
 import { UpgradeAccountScreen } from './src/screens/UpgradeAccountScreen';
 import { SessionsScreen } from './src/screens/SessionsScreen';
+import { GuardiansScreen } from './src/screens/GuardiansScreen';
+import { RecoverAccountScreen } from './src/screens/RecoverAccountScreen';
+import { ApproveRecoveryScreen } from './src/screens/ApproveRecoveryScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -167,6 +170,17 @@ function Root() {
               options={{ title: 'Upgrade this account' }}
             />
             <Stack.Screen name="Sessions" component={SessionsScreen} options={{ title: 'Sessions' }} />
+            <Stack.Screen name="Guardians" component={GuardiansScreen} options={{ title: 'Guardians' }} />
+            <Stack.Screen
+              name="RecoverAccount"
+              component={RecoverAccountScreen}
+              options={{ title: 'Recover an account' }}
+            />
+            <Stack.Screen
+              name="ApproveRecovery"
+              component={ApproveRecoveryScreen}
+              options={{ title: 'Approve a recovery' }}
+            />
           </>
         )}
         </Stack.Navigator>

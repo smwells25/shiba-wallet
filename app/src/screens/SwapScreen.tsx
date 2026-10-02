@@ -58,6 +58,7 @@ import {
   KERNEL_BUNDLER_NOTE,
   PREVIEW_AA_BATCH_NOTE,
   aaAccountTypeLabel,
+  aaSenderLabel,
   createAaClientFromConfig,
   describeAaError,
   effectiveAaAccountType,
@@ -851,7 +852,7 @@ export function SwapScreen({ navigation }: Props) {
           theme={theme}
         />
         <Row
-          label={aaQuote.eip7702 ? 'From (your own address)' : 'From smart account'}
+          label={aaSenderLabel(aaQuote)}
           value={aaQuote.sender}
           mono
           theme={theme}
