@@ -90,14 +90,125 @@ const MAINNET_RPC_DEFAULTS: readonly string[] = [
 ];
 
 /**
- * A single candidate on purpose. Checked 2026-10-01 and NOT added:
- * https://ethereum-sepolia.publicnode.com answers eth_chainId 0xaa36a7 but
- * is not referenced by the https://www.publicnode.com directory or by
- * PublicNode's Ethereum page (so it is undocumented); https://sepolia.drpc.org
- * answered "chain is not available on free plan"; https://rpc.sepolia.org
- * returned HTTP 404; https://rpc.ankr.com/eth_sepolia requires an API key.
+ * Sepolia default RPC candidates, in order (config/networks.ts uses the
+ * first one whose eth_chainId probe answers 0xaa36a7). Fallbacks 2-4 were
+ * added on 2026-10-02. Each one is listed by its own provider as a public,
+ * keyless endpoint (the documentation page and the exact line are quoted
+ * below), and each was probed live on 2026-10-02 from the development
+ * machine: eth_chainId returned 0xaa36a7, eth_blockNumber was within one
+ * block of the primary's answer at the same moment, and eth_simulateV1
+ * (the balance-change preview's method, see wallet/simulation.ts) was
+ * called with traceTransfers. A candidate that does not support
+ * eth_simulateV1 would only make the preview show its "does not support
+ * eth_simulateV1" note; the send flow's eth_call gate does not depend on
+ * it. All of these are shared public services that can rate-limit; users
+ * can always set their own endpoint in Settings.
+ *
+ *  1. https://ethereum-sepolia-rpc.publicnode.com — PublicNode (Allnodes);
+ *     the Sepolia RPC endpoint documented on https://ethereum.publicnode.com
+ *     and in the https://www.publicnode.com directory. Verified 2026-09-27
+ *     and 2026-10-01; on 2026-10-02 eth_simulateV1 is SUPPORTED (the result
+ *     carried the traceTransfers ETH log from 0xeeee...eeee).
+ *  2. https://eth-sepolia-testnet.api.pocket.network — Pocket Network
+ *     Foundation. Source: https://api.pocket.network/ ("Free Public RPC
+ *     Endpoints / No API key required. Just copy and start building."),
+ *     which lists "Ethereum Sepolia Testnet HTTPS Endpoint:
+ *     https://eth-sepolia-testnet.api.pocket.network". Terms as stated on
+ *     https://docs.pocket.network/foundation/api-portal/: "No API key, no
+ *     account, no rate limit negotiation — just endpoints", and on
+ *     https://pocket.network/support-public-rpc/: "rate limits are
+ *     generous" (no number is published). Requests are routed to
+ *     independent node operators ("Suppliers") on Pocket's network.
+ *     eth_simulateV1: SUPPORTED (traceTransfers ETH log present).
+ *  3. https://0xrpc.io/sep — 0xRPC, a donation-funded community service.
+ *     Source: https://0xrpc.io (served from https://0xrpc.github.io/),
+ *     which lists "Ethereum Sepolia Testnet (Full, 128 state with all
+ *     blocks) https://0xrpc.io/sep" and states "Our endpoints are rate
+ *     limited with less than 10 ~ 20 calls allowed per second". Its update
+ *     log on the same page records past outages and disabled chains, which
+ *     is why it is not ranked higher. eth_simulateV1: SUPPORTED
+ *     (traceTransfers ETH log present).
+ *  4. https://public.1rpc.io/sepolia — Automata 1RPC. Source:
+ *     https://docs.1rpc.io/using-the-web3-api/networks ("Public endpoints
+ *     use https://public.1rpc.io/<network>"; its public-endpoints table
+ *     lists "Ethereum Sepolia https://public.1rpc.io/sepolia EVM JSON-RPC
+ *     11155111"). Ranked last because it rate-limited quickly in the live
+ *     probe (HTTP 429, -32005 "rate limit exceeded", once worded "Rate
+ *     limit exceeded on Nodies public endpoints", which suggests it relays
+ *     to Nodies at least some of the time), and because
+ *     https://docs.1rpc.io/using-the-web3-api/errors states "Default daily
+ *     usage quota per user: 200" without saying whether that applies to
+ *     the keyless public endpoints. eth_simulateV1: INTERMITTENT. Over
+ *     eight calls on 2026-10-02 it returned the traceTransfers ETH log
+ *     twice, HTTP 429 three times, a non-JSON body once, Nodies' "Method
+ *     not available on this plan: eth_simulateV1" once, and no answer
+ *     within 8 s once, so the balance-change preview will often be
+ *     unavailable while this candidate is in use.
+ *
+ * Checked and NOT added (2026-10-01 unless dated 2026-10-02):
+ *  - https://ethereum-sepolia.publicnode.com answers eth_chainId 0xaa36a7
+ *    (again on 2026-10-02) but is not referenced by the
+ *    https://www.publicnode.com directory or by PublicNode's Ethereum page,
+ *    so it is undocumented, and the documented primary is already first.
+ *  - https://sepolia.drpc.org answered "chain is not available on free
+ *    plan, please upgrade to paid plan" (unchanged on 2026-10-02).
+ *  - https://rpc.sepolia.org returned HTTP 404 (unchanged on 2026-10-02);
+ *    https://rpc2.sepolia.org did not answer within 8 s (2026-10-02).
+ *  - https://rpc.ankr.com/eth_sepolia requires an API key (unchanged on
+ *    2026-10-02: "Unauthorized: You must authenticate your request with an
+ *    API key").
+ *  - 2026-10-02: https://sepolia.gateway.tenderly.co is documented on
+ *    https://docs.tenderly.co/node-rpc/rpc-reference ("Ethereum Sepolia
+ *    11155111 https://sepolia.gateway.tenderly.co"; without an access key
+ *    "requests go to the public Tenderly RPC endpoint, which carries public
+ *    endpoint limits"), but every TLS handshake to it (and to
+ *    mainnet.gateway.tenderly.co) failed from the development machine, so
+ *    it could not be verified. Retry before adding it.
+ *  - 2026-10-02: https://ethereum-sepolia-public.nodies.app (Nodies) passed
+ *    the chain and block checks, but eth_simulateV1 is UNSUPPORTED ("Method
+ *    not available on this plan"), and the URL appears only in the data
+ *    behind the https://nodies.app home page, which
+ *    https://docs.nodies.app/rpc-services/public-endpoints points to
+ *    ("Visit https://nodies.app to grab one of our public endpoints"), not
+ *    as visible text. Candidate 4 appears to relay to it anyway.
+ *  - 2026-10-02: https://1rpc.io/sepolia answers, but the documented public
+ *    form is https://public.1rpc.io/sepolia (candidate 4).
+ *  - 2026-10-02: https://ethereum-sepolia.gateway.tatum.io answers keyless,
+ *    but Tatum's reference docs (https://docs.tatum.io/docs/plans-limits)
+ *    describe only API-key plans, and keyless use is described only in a
+ *    blog post (https://tatum.io/blog/tatum-in-postman: "you'll just be
+ *    limited to 5 requests per minute"), far too low for a wallet.
+ *  - 2026-10-02: https://api.zan.top/eth-sepolia answers keyless, but ZAN's
+ *    documented Sepolia URL is https://api.zan.top/node/v1/eth/sepolia/{apiKey}
+ *    (https://docs.zan.top/docs/adding-rpc-nodes-to-metamask).
+ *  - 2026-10-02: https://sepolia.rpc.thirdweb.com and
+ *    https://rpc.sepolia.ethpandaops.io answer (ethpandaops did not finish
+ *    eth_simulateV1 within 8 s) but no provider page documenting them as
+ *    public keyless endpoints was found. https://sepolia.rpc.sentio.xyz
+ *    answers, but Sentio documents only account-created, billed RPC nodes
+ *    (https://www.sentio.xyz/docs/rpc-nodes).
+ *  - 2026-10-02: the "Open RPC Endpoints" listed in the eth-clients/sepolia
+ *    README (https://github.com/eth-clients/sepolia) are all unusable:
+ *    rpc.sepolia.online and www.sepoliarpc.space fail DNS,
+ *    rpc.bordel.wtf/sepolia returns HTTP 404, and rpc.sepolia.org and
+ *    rpc-sepolia.rockx.com are covered in this list.
+ *  - 2026-10-02, not reachable or no longer offered:
+ *    https://eth-sepolia.public.blastapi.io (HTTP 403, "Blast API is no
+ *    longer available"), https://eth-sepolia.api.onfinality.io/public
+ *    (HTTP 429 asking for an API key), https://lb.routeme.sh/rpc/evm/11155111
+ *    (HTTP 429 asking to sign up), https://endpoints.omniatech.io/v1/eth/sepolia/public
+ *    (HTTP 521), https://eth-sepolia.blockpi.network/v1/rpc/public ("unknown
+ *    host"); DNS failures for ethereum-sepolia.therpc.io,
+ *    eth-sepolia-public.unifra.io, public.stackup.sh,
+ *    ethereum-sepolia.rpc.subquery.network and rpc-sepolia.rockx.com; a
+ *    connection reset from rpc.notadegen.com.
  */
-const SEPOLIA_RPC_DEFAULTS: readonly string[] = ['https://ethereum-sepolia-rpc.publicnode.com'];
+const SEPOLIA_RPC_DEFAULTS: readonly string[] = [
+  'https://ethereum-sepolia-rpc.publicnode.com',
+  'https://eth-sepolia-testnet.api.pocket.network',
+  'https://0xrpc.io/sep',
+  'https://public.1rpc.io/sepolia',
+];
 
 export const EVM_MAINNET: EvmChainProfile = {
   caip2: 'eip155:1',
@@ -134,11 +245,12 @@ export const EVM_SEPOLIA: EvmChainProfile = {
   label: 'Ethereum Sepolia',
   testnet: true,
   displaySymbol: 'test ETH',
-  // https://ethereum-sepolia-rpc.publicnode.com is the Sepolia RPC endpoint
-  // documented on https://ethereum.publicnode.com; re-verified live
-  // 2026-10-01 (eth_chainId 0xaa36a7, eth_getBalance answered). It is the
-  // only candidate: no second keyless Sepolia endpoint documented by its
-  // provider was verified (see the note on SEPOLIA_RPC_DEFAULTS).
+  // Ordered fallback list (single source; config/defaults.ts derives
+  // SEPOLIA_NETWORK from it). The primary is the PublicNode endpoint
+  // documented on https://ethereum.publicnode.com; three keyless fallbacks,
+  // each documented by its own provider, were added on 2026-10-02. Sources,
+  // live probe results and the rejected candidates are in the note on
+  // SEPOLIA_RPC_DEFAULTS above.
   defaultRpcUrls: SEPOLIA_RPC_DEFAULTS,
   defaultRpcUrl: SEPOLIA_RPC_DEFAULTS[0],
   explorerTxBase: 'https://sepolia.etherscan.io/tx/',

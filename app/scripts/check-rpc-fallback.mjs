@@ -4,7 +4,8 @@
 // against a fake fetch. No network request leaves the process.
 //
 // Covered: first candidate down -> second used; a wrong-chain candidate is
-// skipped and never used, not even as a last resort; a user override
+// skipped and never used, not even as a last resort (including Sepolia
+// candidates that answer with mainnet's chain id); a user override
 // bypasses probing entirely; the choice is cached in memory, and a reported
 // request failure drops it so the next resolution re-probes from the top
 // (a recovered primary takes over again); a hanging candidate is abandoned
@@ -16,6 +17,10 @@
 //   export PATH="$HOME/.nvm/versions/node/v24.21.0/bin:$PATH"
 //   node scripts/check-rpc-fallback.mjs           # offline only
 //   node scripts/check-rpc-fallback.mjs --live    # plus live candidate probes
+//
+// The --live pass also probes every Sepolia candidate for head freshness
+// (eth_blockNumber against the freshest candidate) and records whether it
+// serves eth_simulateV1 (used by the balance-change preview).
 
 import { EVM_MAINNET, EVM_SEPOLIA } from '../src/config/evm-chain.ts';
 import { DEFAULT_NETWORKS, SEPOLIA_NETWORK, networkDefaultFor } from '../src/config/defaults.ts';
@@ -96,8 +101,9 @@ function fakeFetch(behaviors) {
 }
 
 // ---------------------------------------------------------------------------
-// 1. Candidate lists (pinned; every entry live-verified 2026-10-01 per the
-//    comments in defaults.ts / evm-chain.ts)
+// 1. Candidate lists (pinned; every entry live-verified 2026-10-01, and the
+//    Sepolia fallbacks 2026-10-02, per the comments in defaults.ts /
+//    evm-chain.ts)
 // ---------------------------------------------------------------------------
 
 console.log('default candidate lists:');
@@ -110,9 +116,32 @@ check(
   ]),
 );
 check(
-  'Sepolia EVM: ethereum-sepolia-rpc.publicnode.com only',
-  same(EVM_SEPOLIA.defaultRpcUrls, ['https://ethereum-sepolia-rpc.publicnode.com']),
+  'Sepolia EVM: publicnode primary, then Pocket, 0xRPC, 1RPC public',
+  same(EVM_SEPOLIA.defaultRpcUrls, [
+    'https://ethereum-sepolia-rpc.publicnode.com',
+    'https://eth-sepolia-testnet.api.pocket.network',
+    'https://0xrpc.io/sep',
+    'https://public.1rpc.io/sepolia',
+  ]),
 );
+{
+  // Candidates rejected in evm-chain.ts must not creep back in silently.
+  const rejected = [
+    'https://ethereum-sepolia.publicnode.com',
+    'https://sepolia.drpc.org',
+    'https://rpc.sepolia.org',
+    'https://rpc2.sepolia.org',
+    'https://rpc.ankr.com/eth_sepolia',
+  ];
+  check(
+    'Sepolia EVM: none of the recorded rejected candidates is listed',
+    EVM_SEPOLIA.defaultRpcUrls.every((u) => !rejected.includes(u)),
+  );
+  check(
+    'Sepolia EVM: no candidate is shared with the mainnet list',
+    EVM_SEPOLIA.defaultRpcUrls.every((u) => !EVM_MAINNET.defaultRpcUrls.includes(u)),
+  );
+}
 check(
   'Bitcoin Esplora: blockstream.info then mempool.space',
   same(BTC.defaultUrls, ['https://blockstream.info/api', 'https://mempool.space/api']),
@@ -308,7 +337,98 @@ const [ETH1, ETH2] = EVM_MAINNET.defaultRpcUrls;
   const main = await resolver.resolve(ETH);
   const sep = await resolver.resolve(SEPOLIA_NETWORK);
   check('mainnet and Sepolia resolve independently', main.url === ETH1 && sep.url === SEP);
-  check('Sepolia single candidate: tag says 1 of 1', describeDefaultChoice(sep) === 'default (1 of 1: ethereum-sepolia-rpc.publicnode.com)');
+  check(
+    'Sepolia primary in use: tag says 1 of 4',
+    describeDefaultChoice(sep) === 'default (1 of 4: ethereum-sepolia-rpc.publicnode.com)',
+    describeDefaultChoice(sep),
+  );
+}
+{
+  // Sepolia ordering: primary down -> the second candidate (Pocket).
+  const [SEP1, SEP2, SEP3, SEP4] = SEPOLIA_NETWORK.defaultUrls;
+  const { fn, calls } = fakeFetch({
+    [SEP1]: 'down',
+    [SEP2]: { evmChainId: '0xaa36a7' },
+    [SEP3]: { evmChainId: '0xaa36a7' },
+    [SEP4]: { evmChainId: '0xaa36a7' },
+  });
+  const resolver = createDefaultEndpointResolver({ fetchFn: fn });
+  const choice = await resolver.resolve(SEPOLIA_NETWORK);
+  check('Sepolia: primary down -> second candidate chosen', choice.url === SEP2 && choice.index === 1 && choice.healthy);
+  check('Sepolia: probing stopped at the first healthy candidate, in order', same(calls, [SEP1, SEP2]));
+  check(
+    'Sepolia: Settings tag names the Pocket fallback',
+    describeDefaultChoice(choice) === 'default (2 of 4: eth-sepolia-testnet.api.pocket.network)',
+    describeDefaultChoice(choice),
+  );
+  const note = describeDefaultFallbackNote(choice, SEPOLIA_NETWORK.defaultUrls);
+  check('Sepolia: fallback note names the publicnode primary', note !== null && note.includes('ethereum-sepolia-rpc.publicnode.com'), note);
+}
+{
+  // Sepolia wrong-chain refusal: a candidate answering with MAINNET's
+  // chain id (0x1) is skipped and never used, even when it is the only
+  // one that answers at all.
+  const [SEP1, SEP2, SEP3, SEP4] = SEPOLIA_NETWORK.defaultUrls;
+  {
+    const { fn, calls } = fakeFetch({
+      [SEP1]: { evmChainId: '0x1' },
+      [SEP2]: { evmChainId: '0xaa36a7' },
+      [SEP3]: { evmChainId: '0xaa36a7' },
+      [SEP4]: { evmChainId: '0xaa36a7' },
+    });
+    const choice = await createDefaultEndpointResolver({ fetchFn: fn }).resolve(SEPOLIA_NETWORK);
+    check('Sepolia: a primary answering 0x1 (mainnet) is skipped for the next candidate', choice.url === SEP2 && choice.healthy);
+    check('Sepolia: the mainnet-answer reason is recorded', /identifies as 1, expected 11155111/.test(choice.primaryFailure ?? ''), choice.primaryFailure);
+    check('Sepolia: only the first two candidates were probed', same(calls, [SEP1, SEP2]));
+  }
+  {
+    const { fn, calls } = fakeFetch({
+      [SEP1]: 'down',
+      [SEP2]: { evmChainId: '0x1' },
+      [SEP3]: 'hang',
+      [SEP4]: { evmChainId: '0xaa36a7' },
+    });
+    const choice = await createDefaultEndpointResolver({ fetchFn: fn, timeoutMs: 50 }).resolve(SEPOLIA_NETWORK);
+    check('Sepolia: down + mainnet-answering + hanging -> fourth candidate chosen', choice.url === SEP4 && choice.index === 3 && choice.healthy);
+    check('Sepolia: all four probed strictly in order', same(calls, [SEP1, SEP2, SEP3, SEP4]));
+    check('Sepolia: tag says 4 of 4: public.1rpc.io', describeDefaultChoice(choice) === 'default (4 of 4: public.1rpc.io)', describeDefaultChoice(choice));
+  }
+  {
+    const { fn } = fakeFetch({
+      [SEP1]: { evmChainId: '0x1' },
+      [SEP2]: { evmChainId: '0x1' },
+      [SEP3]: 'down',
+      [SEP4]: { evmChainId: '0x1' },
+    });
+    const choice = await createDefaultEndpointResolver({ fetchFn: fn }).resolve(SEPOLIA_NETWORK);
+    check(
+      'Sepolia: only mainnet answers + one unreachable -> the unreachable one, flagged unhealthy',
+      choice.url === SEP3 && !choice.healthy,
+    );
+    check('Sepolia: a mainnet-answering candidate is never returned', ![SEP1, SEP2, SEP4].includes(choice.url));
+  }
+  {
+    const behaviors = Object.fromEntries(SEPOLIA_NETWORK.defaultUrls.map((u) => [u, { evmChainId: '0x1' }]));
+    const choice = await createDefaultEndpointResolver({ fetchFn: fakeFetch(behaviors).fn }).resolve(SEPOLIA_NETWORK);
+    check('Sepolia: every candidate answering mainnet -> url null', choice.url === null && !choice.healthy);
+  }
+  {
+    // A reported failure on the Pocket fallback re-probes from the top.
+    const behaviors = {
+      [SEP1]: 'down',
+      [SEP2]: { evmChainId: '0xaa36a7' },
+      [SEP3]: { evmChainId: '0xaa36a7' },
+      [SEP4]: { evmChainId: '0xaa36a7' },
+    };
+    const { fn, calls } = fakeFetch(behaviors);
+    const resolver = createDefaultEndpointResolver({ fetchFn: fn });
+    await resolver.resolve(SEPOLIA_NETWORK);
+    behaviors[SEP2] = 'down';
+    check('Sepolia: reportFailure drops the cached Pocket choice', resolver.reportFailure(SEPOLIA_NETWORK.chainId, SEP2) === true);
+    const next = await resolver.resolve(SEPOLIA_NETWORK);
+    check('Sepolia: re-probe falls through to the third candidate (0xRPC)', next.url === SEP3 && next.index === 2);
+    check('Sepolia: the re-probe started again at the primary', same(calls, [SEP1, SEP2, SEP1, SEP2, SEP3]));
+  }
 }
 {
   // Other chain kinds go through the same ordering.
@@ -377,6 +497,104 @@ if (process.argv.includes('--live')) {
       console.log(`  ${network.label.padEnd(17)} ${url.padEnd(45)} ${result.ok ? 'healthy' : `${result.kind}: ${result.reason}`}`);
     }
     check(`${network.label}: at least one live default is healthy`, healthy > 0);
+  }
+
+  // Sepolia detail: every candidate must identify as Sepolia when it
+  // answers (never as another chain), healthy candidates must be near the
+  // freshest head, and eth_simulateV1 support is recorded. The expected
+  // simulation status is what evm-chain.ts documents (2026-10-02); a
+  // difference is printed as a note rather than failing, because a
+  // provider can change its method list at any time.
+  console.log('\nlive Sepolia candidate detail (read-only):');
+  const EXPECTED_SIMULATE = {
+    'https://ethereum-sepolia-rpc.publicnode.com': 'supported',
+    'https://eth-sepolia-testnet.api.pocket.network': 'supported',
+    'https://0xrpc.io/sep': 'supported',
+    'https://public.1rpc.io/sepolia': 'intermittent',
+  };
+  check(
+    'every Sepolia candidate has a documented eth_simulateV1 status',
+    SEPOLIA_NETWORK.defaultUrls.every((u) => EXPECTED_SIMULATE[u] !== undefined),
+  );
+  const liveRpc = async (url, method, params = []) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8_000);
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+        signal: controller.signal,
+      });
+      const text = await response.text();
+      let body;
+      try {
+        body = JSON.parse(text);
+      } catch {
+        return { status: response.status, error: `non-JSON body (HTTP ${response.status})` };
+      }
+      if (body.error) return { status: response.status, error: `${body.error.code}: ${body.error.message}` };
+      return { status: response.status, result: body.result };
+    } catch (e) {
+      return { status: 0, error: e instanceof Error ? e.message : String(e) };
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  const heads = new Map();
+  for (const url of SEPOLIA_NETWORK.defaultUrls) {
+    const probe = await probeEndpoint('evm-jsonrpc', url, SEPOLIA_NETWORK.chainId);
+    check(`Sepolia ${endpointHost(url)}: never answers as another chain`, probe.ok || probe.kind !== 'wrong-chain', JSON.stringify(probe));
+    if (!probe.ok) {
+      console.log(`  ${endpointHost(url).padEnd(40)} unreachable: ${probe.reason}`);
+      continue;
+    }
+    const head = await liveRpc(url, 'eth_blockNumber');
+    if (typeof head.result === 'string') heads.set(url, BigInt(head.result));
+    // The same shape wallet/simulation.ts sends: one plain ETH transfer
+    // with traceTransfers, so a supporting node returns the ETH
+    // pseudo-Transfer log from 0xeeee...eeee.
+    const sim = await liveRpc(url, 'eth_simulateV1', [
+      {
+        blockStateCalls: [
+          {
+            calls: [
+              {
+                from: '0x0000000000000000000000000000000000000001',
+                to: '0x000000000000000000000000000000000000dEaD',
+                value: '0x1',
+              },
+            ],
+          },
+        ],
+        traceTransfers: true,
+      },
+      'latest',
+    ]);
+    let simStatus;
+    if (Array.isArray(sim.result)) {
+      const logs = sim.result[0]?.calls?.[0]?.logs ?? [];
+      const traced = logs.some((l) => String(l.address).toLowerCase() === '0x' + 'e'.repeat(40));
+      simStatus = traced ? 'supported' : 'answered without the traceTransfers log';
+    } else if (sim.status === 429 || /rate limit/i.test(sim.error ?? '')) {
+      simStatus = `rate-limited (${sim.error})`;
+    } else {
+      simStatus = `unsupported or failed (${sim.error})`;
+    }
+    const expected = EXPECTED_SIMULATE[url];
+    // 'intermittent' means any outcome is consistent with the documentation.
+    const matches = expected === 'intermittent' || (expected !== undefined && simStatus.startsWith(expected));
+    console.log(
+      `  ${endpointHost(url).padEnd(40)} head ${head.result ?? head.error}  eth_simulateV1: ${simStatus}` +
+        (matches ? '' : `  [note: documented as "${expected}"]`),
+    );
+  }
+  if (heads.size > 0) {
+    const freshest = [...heads.values()].reduce((a, b) => (a > b ? a : b));
+    for (const [url, head] of heads) {
+      const lag = freshest - head;
+      check(`Sepolia ${endpointHost(url)}: head within 5 blocks of the freshest candidate`, lag <= 5n, `${lag} blocks behind`);
+    }
   }
 }
 
