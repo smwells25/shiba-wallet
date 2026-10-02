@@ -2978,8 +2978,11 @@ run again from a fresh pairing, with the Chairperson driving Uniswap:
   The pre-restart Uniswap session was no longer listed on the Connections
   screen after the cold boot ("No dApps are connected"); whether the
   dApp side dropped it or the SDK's persisted session failed to reload
-  was not investigated (follow-up: check WalletKit session persistence
-  across process restarts on Android).
+  was answered the same day: with the new session live, Expo Go was
+  force-stopped and relaunched and the Uniswap session was still listed,
+  so WalletKit persistence across an app process restart works; the
+  earlier loss was on the dApp side (Uniswap replaces its wallet session
+  when a new pairing is made).
 - USDC -> EURC swap, sheet surfaced on Home: to = the Sepolia Universal
   Router 0x7E4f6c5e954Da5c61B3423D81E2277431Ac043f3 (same as the phase-6
   swaps), calldata selector 0x3593564c = execute(bytes,bytes[],uint256)
@@ -3015,3 +3018,90 @@ Emulator lessons from the restart (dev-only, not app code):
   again not be read in full before it rotated out; it did not affect the
   flow. The Google keyboard pops up over the sheet after pasting a URI
   and must be hidden before scrolling the sheet.
+
+## Phase 8 burn-down (approved 2026-10-02, running before phase 9)
+
+Approved sequence: burn down the carried-forward follow-ups first, then
+scope phase 9 (hardening and release readiness). Wave 1 ran four agents
+on disjoint files; the ESLint burn-down runs after them because it
+touches files everywhere.
+
+- [x] Token-history log-depth cap (commit 90d3f94). The no-indexer
+      tracked-token history (app/src/wallet/token-history.ts) now stops
+      paging when the endpoint refuses an older eth_getLogs window,
+      reports the deepest block it actually answered, and the Activity
+      screen says "History older than block N is not available from the
+      current endpoint" with the endpoint's refusal text quoted verbatim
+      and a pointer to the history indexer setting. Live on
+      ethereum.publicnode.com (read-only, 2026-10-02): windows 8,999 and
+      9,999 blocks behind the head are served; 10,100 and 17,999 are
+      refused with HTTP 403 and JSON-RPC error -32602 "Archive requests
+      require a personal token…", so the app sees exactly one 9,000-block
+      window there. Two further bugs fixed on the way: the engine
+      httpTransport threw "RPC HTTP error 403" before reading the body
+      (the app-side tokenLogsTransport keeps the JSON-RPC error on
+      non-2xx responses; the engine transport is unchanged), and Load
+      more dropped the partial-history note after page 1. No retry and
+      no window halving (a halved window would still be refused; the
+      refusal depends on distance from the head). A failed window is
+      discarded whole so the "older than block N" sentence stays exact;
+      any error ends paging and pull-to-refresh starts over. Verified:
+      check-token-history.mjs 48/48 offline (was 17) plus a --live pass;
+      all app suites green; tsc clean; expo export bundles. Not
+      eyeballed on the emulator (endpoint-text line, dark mode).
+- [x] Awaited signUserOpHash (commit 8d6c357). SmartAccountSpec.
+      signUserOpHash may return a Promise and receives
+      UserOpSigningContext {userOp, entryPoint, chainId}; SmartAccountClient
+      awaits it after estimation and the final paymaster data. The
+      passkey spec (kernel-webauthn.ts) signs inside that call: before
+      any prompt it refuses a bare hash, a foreign EntryPoint or chain id,
+      a wrong sender or nonce key, a factory, an eip7702Auth field, a hash
+      that does not equal getUserOpHash(op), and — new — calldata the
+      spec's own encodeCalls did not produce (so a hand-built self-call
+      cannot bypass the self-call refusal). routeBundler, the passkey
+      routeNode, submittedSignature, PASSKEY_PENDING_SIGNATURE_PREFIX and
+      userOperationFromRpc are removed; the estimation stub is unchanged.
+      New optional SmartAccountSpec.getNonceKey(owner): the client reads
+      EntryPoint.getNonce(sender, key) directly (refuses keys >= 2^192 and
+      answers whose key bits differ); the session-key spec adopts it and
+      keeps routeNode as a compatibility pass-through (sessions.ts still
+      calls it). The guardian recovery spec deliberately stays on
+      routeNode because that path also enforces the exact
+      guardian-approved nonce — moving it needs an extra exact-nonce
+      check (follow-up). App: passkeys.ts uses plain transports; the
+      authenticator prompt runs inside the spec. Verified: engine 595
+      tests (chains-evm 359, was 352; total was 588); check-passkeys
+      125/125 (was 121); check-aa-kernel 74, check-sessions 99, check-aa
+      74, check-7702 111, check-recovery 145; tsc clean; expo export
+      bundles; passkey-smoke dry run passed (it signs ops itself, so it
+      only proves the exports). Still nothing live for passkeys.
+- [x] Sepolia default RPC fallbacks (commit 05d58e9; the list lives in
+      app/src/config/evm-chain.ts, not defaults.ts). Order: 
+      ethereum-sepolia-rpc.publicnode.com (primary, unchanged), then
+      https://eth-sepolia-testnet.api.pocket.network (api.pocket.network:
+      "No API key required", URL listed on the page; eth_simulateV1
+      supported), https://0xrpc.io/sep (0xrpc.io lists it; states a
+      10–20 calls/s limit; simulateV1 supported; third because its log
+      records outages), https://public.1rpc.io/sepolia
+      (docs.1rpc.io/using-the-web3-api/networks lists it; simulateV1
+      intermittent — 429s and "not available on this plan" relayed from
+      Nodies — so last; whether its 200/day quota applies to public
+      endpoints is unverified). All three re-probed by the CTO (chain id
+      0xaa36a7). Rejected with reasons in the file comment: tenderly
+      (documented, but every TLS handshake failed from this machine —
+      retry later), nodies (no simulateV1 on its plan, URL not visible
+      text), drpc/ankr/ZAN/Sentio (key or plan), Tatum (5 req/min, blog
+      only), thirdweb and ethpandaops (no provider page naming them as
+      public), rpc.sepolia.org / rpc2.sepolia.org and the chainlist and
+      eth-clients README entries (dead). Worst case with every candidate
+      hanging is now about 16 s before a visible error. Verified:
+      check-rpc-fallback.mjs 85/85 offline (was 67), 98/98 with --live;
+      check-devmode 71/71 (primary pin holds); tsc clean; expo export
+      bundles with the URLs in the bytecode.
+- [ ] Recovery UX: record export as a .json file and an owner-rotation
+      screen (agent running).
+- [ ] ESLint burn-down (44 errors, 7 warnings at the start of the wave:
+      28 react/no-unescaped-entities, hook-dependency rules, unused vars,
+      array-type) — after the slices above land.
+- Dropped: WalletKit session persistence (proven to work, see the
+  retest record above).
