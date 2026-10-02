@@ -2500,3 +2500,20 @@ UserOperationEvent sender is Account 2's EOA, and eth_getCode(Account
 2) = 0xef0100d6cedde84be40893d153be9d467cd6ad37875b28. Home then showed
 "Account 2 · upgraded (Kernel v3.3) on Ethereum Sepolia" and the row
 link "Upgraded ✓".
+
+REVOKE, PROVEN LIVE (same session): Upgrade → "Upgraded to Kernel v3.3"
+→ Revoke upgrade. The confirm showed "New code at your address: None —
+the delegation is removed (zero address)", "EIP-7702 set-code (type
+0x04) to yourself, 0 test ETH", "Transaction nonce 1; authorization
+nonce 2 (transaction nonce + 1, because you send it yourself); chain id
+11155111", worst case 86,000 gas (46,000 intrinsic incl. 25,000 for the
+authorization + 40,000 for the call), the no-pre-flight explanation and
+the balance. After the biometric gate: tx
+0x1287e768f04b039934090660f74616dd8fff2c2e6b36da2eb667369f83c9594f,
+then "Included — status: Regular account (no code)". Independently
+confirmed: "blockNumber":"0xb4749a" "gasUsed":"0x8fc0" "status":"0x1" "type":"0x4" ; the transaction's authorizationList carries the
+zero-address tuple; eth_getCode(Account 2) = 0x. This was the FIRST live
+self-sponsored type-0x04 transaction built by the app (the engine smoke
+had only broadcast one for its revocation). The in-app 7702 cycle —
+upgrade via a bundled UserOperation, status display, revoke via a
+self-paid set-code transaction — is now fully proven on Sepolia.
