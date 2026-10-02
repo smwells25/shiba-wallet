@@ -345,10 +345,41 @@ export function maskUrlForDisplay(value: string): string {
  * node's suggestion stands.
  */
 export async function bundlerPriorityFeeFloor(bundler: JsonRpcTransport): Promise<bigint | null> {
+  const rundler = await rundlerPriorityFee(bundler);
+  if (rundler !== null) return rundler;
+  return pimlicoPriorityFee(bundler);
+}
+
+function isHexQuantity(value: unknown): value is string {
+  return typeof value === 'string' && /^0x[0-9a-fA-F]+$/.test(value);
+}
+
+async function rundlerPriorityFee(bundler: JsonRpcTransport): Promise<bigint | null> {
   try {
     const result = await bundler('rundler_maxPriorityFeePerGas', []);
-    if (typeof result !== 'string' || !/^0x[0-9a-fA-F]+$/.test(result)) return null;
-    return BigInt(result);
+    return isHexQuantity(result) ? BigInt(result) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Pimlico-compatible bundlers (ZeroDev's RPC serves this method too, as a
+ * 2026-10-01 probe showed) document pimlico_getUserOperationGasPrice as
+ * returning "the gas prices that must be used for the user operation you
+ * are bundling with Pimlico bundlers", with slow / standard / fast tiers
+ * of hex maxFeePerGas and maxPriorityFeePerGas (docs.pimlico.io, Bundler
+ * endpoints reference, read 2026-10-01). The standard tier's priority fee
+ * is used as the floor.
+ */
+async function pimlicoPriorityFee(bundler: JsonRpcTransport): Promise<bigint | null> {
+  try {
+    const result = (await bundler('pimlico_getUserOperationGasPrice', [])) as
+      | { standard?: { maxPriorityFeePerGas?: unknown } }
+      | null
+      | undefined;
+    const value = result?.standard?.maxPriorityFeePerGas;
+    return isHexQuantity(value) ? BigInt(value) : null;
   } catch {
     return null;
   }

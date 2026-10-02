@@ -642,6 +642,22 @@ await (async () => {
     (await bundlerPriorityFeeFloor(async () => { throw new Error('method not found'); })) === null);
   check('no floor from a malformed answer',
     (await bundlerPriorityFeeFloor(async () => 'not-hex')) === null);
+  check('floor from a Pimlico-compatible bundler (standard tier) when rundler is absent',
+    (await bundlerPriorityFeeFloor(async (m) => {
+      if (m === 'rundler_maxPriorityFeePerGas') throw new Error('-32601');
+      if (m === 'pimlico_getUserOperationGasPrice') {
+        return { slow: { maxPriorityFeePerGas: '0x1' }, standard: { maxPriorityFeePerGas: '0x119fb8' }, fast: { maxPriorityFeePerGas: '0x2' } };
+      }
+      return null;
+    })) === 0x119fb8n);
+  check('rundler answer wins when both are served',
+    (await bundlerPriorityFeeFloor(async (m) =>
+      m === 'rundler_maxPriorityFeePerGas' ? '0x5f5e100' : { standard: { maxPriorityFeePerGas: '0x1' } },
+    )) === 100_000_000n);
+  check('malformed Pimlico tier yields no floor',
+    (await bundlerPriorityFeeFloor(async (m) =>
+      m === 'rundler_maxPriorityFeePerGas' ? null : { standard: { maxPriorityFeePerGas: 12 } },
+    )) === null);
   check('the existing fake bundler (no such method) leaves the quote on the node suggestion',
     quote.maxPriorityFeePerGas === 100_000_000n);
 
