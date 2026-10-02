@@ -9,8 +9,10 @@ import {
   Text,
   View,
 } from 'react-native';
+import type { KernelPermissionInstall, SessionKeyGrant } from '@shiba-wallet/chains-evm';
 import { Button, WarningBox } from '../components';
 import { BalanceChangePreview } from './BalanceChangePreview';
+import { GrantReview } from './SessionGrantViews';
 import { RiskWarnings } from './RiskWarnings';
 import { getEndpoint } from '../config/networks';
 import type { EvmChainProfile } from '../config/evm-chain';
@@ -29,9 +31,17 @@ import {
 } from '../wallet/aa';
 import { PREVIEW_AA_NOTE } from '../wallet/simulation';
 import {
-  WC_SMART_ACCOUNT_METHODS,
+  ERC7715_LIMITATION_NOTE,
+  SESSIONS_AUDIT_NOTE,
+  SESSIONS_INSTALL_MODE_NOTE,
+  SESSION_EXPIRY_PRESETS,
+  narrowGrant,
+  prepareSessionInstall,
+} from '../wallet/sessions';
+import {
   WC_SUPPORTED_METHODS,
   decideProposal,
+  smartAccountMethodsFor,
   describeChain,
   type ParsedWcRequest,
   type WcProposalSummary,
@@ -53,6 +63,20 @@ export type TxQuoteState =
    * path's pre-flight gate.
    */
   | { status: 'ready-aa'; quote: AaSendQuote; bundle: AaClientBundle; url: string; owner: string }
+  /**
+   * ERC-7715 permission request (phase 8 item 2): the explicit, root-signed
+   * session install for `grant` (possibly narrowed by the user), quoted as
+   * ONE UserOperation — the bundler estimate passed.
+   */
+  | {
+      status: 'ready-permission';
+      quote: AaSendQuote;
+      bundle: AaClientBundle;
+      url: string;
+      owner: string;
+      install: KernelPermissionInstall;
+      grant: SessionKeyGrant;
+    }
   | { status: 'error'; message: string };
 
 /** What the proposal sheet offers when a verified smart account exists. */
@@ -128,6 +152,14 @@ export function WcApprovalSheet({
   const theme = useTheme();
   const [txQuote, setTxQuote] = useState<TxQuoteState | null>(null);
   const [overrideSimulation, setOverrideSimulation] = useState(false);
+  // ERC-7715: the grant being reviewed — the dApp's, or a narrowed copy
+  // when the dApp allowed adjustment. Re-quoted whenever it changes.
+  const requestedGrant =
+    item.type === 'request' && item.parsed.kind === 'permissions' ? item.parsed.grant : null;
+  const [permissionGrant, setPermissionGrant] = useState<SessionKeyGrant | null>(requestedGrant);
+  const permissionGrantKey = permissionGrant
+    ? `${permissionGrant.validUntil}:${permissionGrant.calls.map((c) => `${c.target}/${c.selector}`).join(',')}`
+    : '';
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => true);
@@ -141,6 +173,55 @@ export function WcApprovalSheet({
   // quoted as one UserOperation through the bundler estimate instead.
   useEffect(() => {
     setOverrideSimulation(false);
+    if (item.type === 'request' && item.parsed.kind === 'permissions') {
+      const smart = item.smart;
+      const grant = permissionGrant;
+      if (!smart || !grant) {
+        setTxQuote({ status: 'error', message: 'Permission requests are served only on Kernel smart-account connections.' });
+        return;
+      }
+      let cancelled = false;
+      setTxQuote({ status: 'loading' });
+      (async (): Promise<TxQuoteState> => {
+        const loaded = await loadAaBundle(smart.accountIndex);
+        if (!loaded) {
+          throw new Error(
+            'No verified smart-account configuration exists for the active chain any more ' +
+              '(Settings → Account Abstraction).',
+          );
+        }
+        if (
+          loaded.bundle.accountType !== 'kernel-v3.3' ||
+          loaded.bundle.accountType !== smart.accountType ||
+          loaded.bundle.factory.toLowerCase() !== smart.factory.toLowerCase()
+        ) {
+          throw new Error(
+            'The smart-account settings changed since this connection was made, so no session can be ' +
+              'installed into the connected account. Reconnect the dApp.',
+          );
+        }
+        const { install, quote } = await prepareSessionInstall(loaded.bundle, smart.owner, smart.address, grant);
+        return {
+          status: 'ready-permission',
+          quote,
+          bundle: loaded.bundle,
+          url: loaded.url,
+          owner: smart.owner,
+          install,
+          grant,
+        };
+      })().then(
+        (r) => {
+          if (!cancelled) setTxQuote(r);
+        },
+        (e) => {
+          if (!cancelled) setTxQuote({ status: 'error', message: e instanceof Error ? e.message : String(e) });
+        },
+      );
+      return () => {
+        cancelled = true;
+      };
+    }
     if (
       item.type !== 'request' ||
       (item.parsed.kind !== 'transaction' && item.parsed.kind !== 'calls')
@@ -243,7 +324,7 @@ export function WcApprovalSheet({
     // The item key identifies the request; the chain and address are part
     // of what the quote was computed for.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item.key, address, evmChain.caip2]);
+  }, [item.key, address, evmChain.caip2, permissionGrantKey]);
 
   return (
     <View style={styles.backdrop}>
@@ -274,6 +355,8 @@ export function WcApprovalSheet({
               txQuote={txQuote}
               overrideSimulation={overrideSimulation}
               setOverrideSimulation={setOverrideSimulation}
+              permissionGrant={permissionGrant}
+              setPermissionGrant={setPermissionGrant}
               onApprove={() => onApprove(txQuote, overrideSimulation)}
               onReject={onReject}
             />
@@ -337,7 +420,7 @@ function ProposalBody({
   const decision = useMemo(
     () =>
       asSmart
-        ? decideProposal(event.params, smart.address, activeChain, WC_SMART_ACCOUNT_METHODS)
+        ? decideProposal(event.params, smart.address, activeChain, smartAccountMethodsFor(smart.accountType))
         : decideProposal(event.params, address ?? '', activeChain, WC_SUPPORTED_METHODS),
     [event, address, activeChain, asSmart, smart],
   );
@@ -470,6 +553,8 @@ function RequestBody({
   txQuote,
   overrideSimulation,
   setOverrideSimulation,
+  permissionGrant,
+  setPermissionGrant,
   onApprove,
   onReject,
 }: {
@@ -486,10 +571,32 @@ function RequestBody({
   txQuote: TxQuoteState | null;
   overrideSimulation: boolean;
   setOverrideSimulation: (v: boolean) => void;
+  /** ERC-7715 only: the grant under review and its (narrowing-only) setter. */
+  permissionGrant: SessionKeyGrant | null;
+  setPermissionGrant: (grant: SessionKeyGrant) => void;
   onApprove: () => void;
   onReject: () => void;
 }) {
   const { parsed } = item;
+
+  if (parsed.kind === 'permissions') {
+    return (
+      <PermissionRequestBody
+        parsed={parsed}
+        smart={smart}
+        dappName={dappName}
+        accountLabel={accountLabel}
+        theme={theme}
+        busy={busy}
+        evmChain={evmChain}
+        txQuote={txQuote}
+        grant={permissionGrant ?? parsed.grant}
+        setGrant={setPermissionGrant}
+        onApprove={onApprove}
+        onReject={onReject}
+      />
+    );
+  }
 
   if (parsed.kind === 'personal_sign') {
     return (
@@ -686,7 +793,7 @@ function RequestBody({
 export function txApprovalAllowed(txQuote: TxQuoteState | null, overrideSimulation: boolean): boolean {
   // Smart-account path: a ready quote means the bundler's estimate (its
   // simulation of the whole operation) passed; there is no override.
-  if (txQuote?.status === 'ready-aa') return true;
+  if (txQuote?.status === 'ready-aa' || txQuote?.status === 'ready-permission') return true;
   if (txQuote?.status !== 'ready') return false;
   return txQuote.quote.simulation.ok || overrideSimulation;
 }
@@ -902,6 +1009,165 @@ function SmartAccountTxBody({
         <>
           <Button title={batch ? 'Approve & send batch' : 'Approve & send'} onPress={onApprove} disabled={!ready} />
           <Button title="Reject" variant="secondary" onPress={onReject} />
+        </>
+      )}
+    </>
+  );
+}
+
+/**
+ * ERC-7715 wallet_requestExecutionPermissions approval (phase 8 item 2): the
+ * SAME plain-language grant review as the Sessions screen, the dApp's name,
+ * the honest ERC-7710 limitation, narrowing only when the dApp set
+ * isAdjustmentAllowed (otherwise: grant exactly as shown, or decline), and
+ * the explicit install quoted through the bundler like any smart-account
+ * operation.
+ */
+function PermissionRequestBody({
+  parsed,
+  smart,
+  dappName,
+  accountLabel,
+  theme,
+  busy,
+  evmChain,
+  txQuote,
+  grant,
+  setGrant,
+  onApprove,
+  onReject,
+}: {
+  parsed: Extract<ParsedWcRequest, { kind: 'permissions' }>;
+  smart: WcSmartBinding | null;
+  dappName: string;
+  accountLabel: string | null;
+  theme: Theme;
+  busy: boolean;
+  evmChain: EvmChainProfile;
+  txQuote: TxQuoteState | null;
+  grant: SessionKeyGrant;
+  setGrant: (grant: SessionKeyGrant) => void;
+  onApprove: () => void;
+  onReject: () => void;
+}) {
+  const requested = parsed.grant;
+  const [keep, setKeep] = useState<boolean[]>(() => requested.calls.map(() => true));
+  const [adjustError, setAdjustError] = useState<string | null>(null);
+  const ready = txQuote?.status === 'ready-permission' ? txQuote : null;
+  // Read once per sheet (lazy initializer keeps render pure).
+  const [nowSeconds] = useState(() => Math.floor(Date.now() / 1000));
+  const shorter = SESSION_EXPIRY_PRESETS.filter((p) => nowSeconds + p.seconds < requested.validUntil);
+  const apply = (next: { keep?: boolean[]; validUntil?: number }) => {
+    try {
+      const k = next.keep ?? keep;
+      const narrowed = narrowGrant(requested, { keep: k, validUntil: next.validUntil ?? grant.validUntil });
+      setKeep(k);
+      setAdjustError(null);
+      setGrant(narrowed);
+    } catch (e) {
+      setAdjustError(e instanceof Error ? e.message : String(e));
+    }
+  };
+  return (
+    <>
+      <Text style={[styles.modalTitle, { color: theme.text }]}>Session permission request</Text>
+      {evmChain.testnet ? (
+        <View style={[styles.mainnetBadge, { backgroundColor: '#e07800', borderColor: '#e07800' }]}>
+          <Text style={[styles.mainnetBadgeText, { color: '#ffffff' }]}>
+            {evmChain.label} TESTNET — test funds only
+          </Text>
+        </View>
+      ) : (
+        <View style={[styles.mainnetBadge, { backgroundColor: theme.dangerSurface, borderColor: theme.danger }]}>
+          <Text style={[styles.mainnetBadgeText, { color: theme.danger }]}>Ethereum Mainnet — real funds</Text>
+        </View>
+      )}
+      <Field label="From dApp" value={dappName} theme={theme} />
+      <Text style={[styles.hint, { color: theme.textMuted }]}>
+        {dappName} asks for a session key it holds ({grant.sessionKey}) to act for your smart account
+        without asking you again, within the limits below, until the session expires (ERC-7715
+        wallet_requestExecutionPermissions).
+      </Text>
+      {smart ? <Field label="Smart account" value={smart.address} monoValue theme={theme} /> : null}
+      {accountLabel ? <Field label="Owner (signs the install)" value={accountLabel} theme={theme} /> : null}
+      <WarningBox>{ERC7715_LIMITATION_NOTE}</WarningBox>
+      <GrantReview
+        grant={grant}
+        account={smart?.address ?? ''}
+        symbol={evmChain.displaySymbol}
+        sessionKeyHolder={dappName}
+        permissionId={ready ? `0x${[...ready.install.permissionId].map((b) => b.toString(16).padStart(2, '0')).join('')}` : null}
+      />
+      {parsed.isAdjustmentAllowed ? (
+        <>
+          <Text style={[styles.fieldLabel, { color: theme.textMuted }]}>Narrow this grant (optional)</Text>
+          {requested.calls.map((c, i) => (
+            <Button
+              key={`k${i}`}
+              title={`${keep[i] ? '✓ Keep' : '✗ Drop'} allowed call ${i + 1} (${c.target.slice(0, 6)}…${c.target.slice(-4)})`}
+              variant={keep[i] ? 'primary' : 'secondary'}
+              onPress={() => apply({ keep: keep.map((v, j) => (j === i ? !v : v)) })}
+              disabled={busy}
+            />
+          ))}
+          <Button
+            title={grant.validUntil === requested.validUntil ? '✓ Expiry as requested' : 'Expiry as requested'}
+            variant={grant.validUntil === requested.validUntil ? 'primary' : 'secondary'}
+            onPress={() => apply({ validUntil: requested.validUntil })}
+            disabled={busy}
+          />
+          {shorter.map((p) => (
+            <Button
+              key={p.seconds}
+              title={`Expire in ${p.label} instead`}
+              variant="secondary"
+              onPress={() => apply({ validUntil: Math.floor(Date.now() / 1000) + p.seconds })}
+              disabled={busy}
+            />
+          ))}
+          {adjustError ? <WarningBox>{adjustError}</WarningBox> : null}
+        </>
+      ) : (
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          The dApp does not allow changes (isAdjustmentAllowed is false): grant exactly what is shown,
+          or decline.
+        </Text>
+      )}
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{SESSIONS_INSTALL_MODE_NOTE}</Text>
+      {!evmChain.testnet ? <WarningBox>{SESSIONS_AUDIT_NOTE}</WarningBox> : null}
+      <Text style={[styles.hint, { color: theme.textMuted }]}>
+        You can revoke this session at any time in Settings → Session keys. The wallet answers the dApp
+        only after the install is included on-chain (up to two minutes).
+      </Text>
+      {txQuote?.status === 'loading' ? (
+        <View style={styles.center}>
+          <ActivityIndicator color={theme.accent} />
+          <Text style={[styles.hint, { color: theme.textMuted }]}>Reading the account and asking the bundler…</Text>
+        </View>
+      ) : null}
+      {txQuote?.status === 'error' ? <WarningBox>{txQuote.message}</WarningBox> : null}
+      {ready ? (
+        <>
+          <Field
+            label={ready.quote.sponsored ? 'Network fee' : 'Max network fee (bundler estimate)'}
+            value={
+              ready.quote.sponsored
+                ? 'Sponsored — the smart account pays 0'
+                : `${formatUnits(ready.quote.fee, 18, 18)} ${evmChain.displaySymbol}`
+            }
+            theme={theme}
+          />
+          <Text style={[styles.simulationOk, { color: theme.success }]}>
+            Bundler gas estimate passed (eth_estimateUserOperationGas simulated the install).
+          </Text>
+        </>
+      ) : null}
+      {busy ? (
+        <ActivityIndicator color={theme.accent} />
+      ) : (
+        <>
+          <Button title="Grant & install" onPress={onApprove} disabled={!ready} />
+          <Button title="Decline" variant="secondary" onPress={onReject} />
         </>
       )}
     </>

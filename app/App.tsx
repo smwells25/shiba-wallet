@@ -32,6 +32,7 @@ import { NftsScreen } from './src/screens/NftsScreen';
 import { NftDetailScreen } from './src/screens/NftDetailScreen';
 import { ApprovalsScreen } from './src/screens/ApprovalsScreen';
 import { UpgradeAccountScreen } from './src/screens/UpgradeAccountScreen';
+import { SessionsScreen } from './src/screens/SessionsScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -165,6 +166,7 @@ function Root() {
               component={UpgradeAccountScreen}
               options={{ title: 'Upgrade this account' }}
             />
+            <Stack.Screen name="Sessions" component={SessionsScreen} options={{ title: 'Sessions' }} />
           </>
         )}
         </Stack.Navigator>

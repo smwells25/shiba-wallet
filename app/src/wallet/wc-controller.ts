@@ -6,6 +6,7 @@ import {
   WcRequestRejection,
   accountMismatchMessage,
   decideGetCapabilities,
+  decideSupportedExecutionPermissions,
   decideSwitchChain,
   declineProposal,
   describeProposal,
@@ -459,6 +460,30 @@ export class WcController {
         } catch {
           // Session gone.
         }
+        return;
+      }
+      try {
+        await respondApproved(this.client, event.topic, event.id, answer.result);
+      } catch {
+        // Session gone mid-answer.
+      }
+      return;
+    }
+
+    // ERC-7715 discovery (phase 8 item 2): answered without UI on Kernel
+    // smart-account sessions, declined (5101) everywhere else.
+    if (method === 'wallet_getSupportedExecutionPermissions') {
+      if (event.params?.chainId !== activeChain) {
+        await this.autoDecline(
+          event,
+          { code: WC_ERRORS.unsupportedChains.code, message: 'This connection serves only the active chain.' },
+          dapp,
+        );
+        return;
+      }
+      const answer = decideSupportedExecutionPermissions(smart, activeChain);
+      if ('error' in answer) {
+        await this.autoDecline(event, answer.error, dapp);
         return;
       }
       try {

@@ -23,6 +23,7 @@ import { maskAmount } from '../config/prefs';
 import { BalanceState, useBalances } from '../wallet/useBalances';
 import { useTokenBalances } from '../wallet/useTokenBalances';
 import { useAccountDelegation } from '../wallet/useDelegation';
+import { useSessionEligibility } from '../wallet/useSessionEligibility';
 import { delegationLabelSuffix, FOREIGN_DELEGATE_WARNING } from '../wallet/delegation';
 import { usePrices } from '../wallet/usePrices';
 import {
@@ -168,6 +169,9 @@ export function HomeScreen({ navigation }: Props) {
   // item 1): shown under the account switcher so the user always knows
   // which code runs at the address.
   const delegation = useAccountDelegation(evmAccount?.address);
+  // Session keys (phase 8 item 2): linked only when the active account has
+  // a deployed Kernel account or an active EIP-7702 upgrade.
+  const sessionsEligible = useSessionEligibility(evmAccount?.address, activeAccount?.index ?? null);
   // Tracked tokens are Ethereum-mainnet assets; in Sepolia test mode the
   // token section is hidden entirely (fetching a mainnet contract's
   // balanceOf against a Sepolia endpoint would be wrong-chain noise).
@@ -291,6 +295,18 @@ export function HomeScreen({ navigation }: Props) {
               <Text style={[styles.sendLink, { color: theme.accent }]}>
                 {delegation.status?.kind === 'kernel-v3.3' ? 'Upgraded ✓' : 'Upgrade'}
               </Text>
+            </Pressable>
+          ) : null}
+          {/* Session keys (phase 8 item 2): only for a deployed Kernel
+              account or an upgraded (EIP-7702) account. */}
+          {item.chainId === EVM_CHAIN_ID && sessionsEligible ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Sessions"
+              onPress={() => navigation.navigate('Sessions')}
+              hitSlop={8}
+            >
+              <Text style={[styles.sendLink, { color: theme.accent }]}>Sessions</Text>
             </Pressable>
           ) : null}
           {/* Token approvals manager (phase 7 item 5) for the active EVM

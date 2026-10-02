@@ -4,9 +4,14 @@ import { keccak_256 } from '@noble/hashes/sha3.js';
 import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import type { DerivedAccount } from '@shiba-wallet/core';
 import {
+  ERC7715_CALLS_PERMISSION_TYPE,
+  Erc7715RequestError,
+  grantFromErc7715Request,
   toBytes,
   toHex,
   typedDataDigest,
+  type Erc7715PermissionRequest,
+  type SessionKeyGrant,
   withEthereumV,
   type TypedDataDomain,
   type TypedDataField,
@@ -229,6 +234,50 @@ export const WC_5792_METHODS = ['wallet_getCapabilities', 'wallet_sendCalls', 'w
 
 /** Everything a smart-account-bound session offers. */
 export const WC_SMART_ACCOUNT_METHODS = [...WC_SUPPORTED_METHODS, ...WC_5792_METHODS];
+
+/**
+ * ERC-7715 methods this wallet serves (phase 8 item 2; method names from
+ * ERC-7715, Draft, ethereum/ERCs ERCS/erc-7715.md at 2adc3783 — see
+ * ./sessions.ts for the shapes). Offered ONLY on sessions bound to a Kernel
+ * v3.3 smart account, because only Kernel has the permission system the
+ * grants are installed into. wallet_revokeExecutionPermission and
+ * wallet_getGrantedExecutionPermissions are not offered in this slice
+ * (revocation happens in the wallet's Sessions screen).
+ */
+export const WC_7715_METHODS = ['wallet_getSupportedExecutionPermissions', 'wallet_requestExecutionPermissions'];
+
+/** Everything a session bound to a Kernel v3.3 smart account offers. */
+export const WC_KERNEL_SMART_ACCOUNT_METHODS = [...WC_SMART_ACCOUNT_METHODS, ...WC_7715_METHODS];
+
+/** The methods a smart-account connection of this account type offers. */
+export function smartAccountMethodsFor(accountType: string): string[] {
+  return accountType === 'kernel-v3.3' ? WC_KERNEL_SMART_ACCOUNT_METHODS : WC_SMART_ACCOUNT_METHODS;
+}
+
+/**
+ * Error codes for the ERC-7715 methods. ERC-7715: "If the request is
+ * malformed or the wallet is unable/unwilling to grant permissions, wallet
+ * MUST return an error with a code as defined in ERC-1193." EIP-1193
+ * (Final, ethereum/EIPs EIPS/eip-1193.md, "Provider Errors") defines 4001
+ * User Rejected Request, 4100 Unauthorized, 4200 Unsupported Method, 4900
+ * Disconnected and 4901 Chain Disconnected, and nothing for a malformed or
+ * unenforceable request. Mapping (a judgement where the table is silent):
+ *  - the user declines → 4001;
+ *  - `from` is not the connected account → 4100;
+ *  - a permission or rule type the wallet cannot enforce → 4200 (the
+ *    closest table entry: the wallet does not support what was requested);
+ *  - the request names a chain other than the active one → 4901;
+ *  - malformed, or refused by the engine's grant rules → -32602 (JSON-RPC
+ *    2.0 Invalid params, as for this wallet's other methods), because
+ *    EIP-1193's table has no entry for it.
+ */
+export const ERC7715_ERRORS = {
+  userRejected: 4001,
+  unauthorized: 4100,
+  unsupported: 4200,
+  chainDisconnected: 4901,
+  invalidParams: -32602,
+} as const;
 
 /**
  * WalletConnect SDK error payloads (from @walletconnect/utils getSdkError,
@@ -862,7 +911,19 @@ export type ParsedWcRequest =
     }
   | { kind: 'typed_data'; typedData: WcTypedData }
   | { kind: 'transaction'; tx: WcTxParams }
-  | { kind: 'calls'; batch: WcSendCalls };
+  | { kind: 'calls'; batch: WcSendCalls }
+  /**
+   * ERC-7715 wallet_requestExecutionPermissions (Kernel smart-account
+   * sessions only): the dApp's request, the grant the engine mapped it to
+   * (grantFromErc7715Request, validated against the bound account), and
+   * whether the dApp lets the wallet narrow it.
+   */
+  | {
+      kind: 'permissions';
+      request: Erc7715PermissionRequest;
+      grant: SessionKeyGrant;
+      isAdjustmentAllowed: boolean;
+    };
 
 export interface WcTxParams {
   /** EIP-55 normalized recipient (contract or EOA). */
@@ -1050,11 +1111,115 @@ export function parseWcRequest(
     return { kind: 'transaction', tx: { to: validated.normalized, valueWei, data } };
   }
 
+  if (method === 'wallet_requestExecutionPermissions') {
+    if (!smart || smart.accountType !== 'kernel-v3.3') {
+      throw new WcRequestRejection(WC_ERRORS.unsupportedMethods.code, ERC7715_KERNEL_ONLY_REFUSAL);
+    }
+    return parseExecutionPermissionsRequest(params, walletAddress, activeChain);
+  }
+
   throw new WcRequestRejection(
     WC_ERRORS.unsupportedMethods.code,
     `Method ${String(method)} is not supported by this wallet over WalletConnect ` +
-      `(supported: ${(smart ? WC_SMART_ACCOUNT_METHODS : WC_SUPPORTED_METHODS).join(', ')}).`,
+      `(supported: ${(smart ? smartAccountMethodsFor(smart.accountType) : WC_SUPPORTED_METHODS).join(', ')}).`,
   );
+}
+
+/**
+ * wallet_getSupportedExecutionPermissions (ERC-7715 at 2adc3783, params []):
+ * "The wallet SHOULD include an object keyed on supported permission types
+ * including `ruleTypes` (`string[]`) that can be applied to the
+ * permission", typed Record<"permission-type", { chainIds: `0x${string}`[];
+ * ruleTypes: string[] }>. QUIRK: the ERC's own JSON example spells the field
+ * "rulesTypes"; the normative type definition ("ruleTypes") is followed.
+ * Only the wallet's own type (the engine's ERC7715_CALLS_PERMISSION_TYPE),
+ * only the active chain, and only the "expiry" rule (which is mandatory:
+ * open-ended sessions are refused). Answered without UI: it reveals nothing
+ * and signs nothing. Kernel smart-account sessions only.
+ */
+export function decideSupportedExecutionPermissions(
+  smart: { accountType: string } | null,
+  activeChain: string,
+): { result: Record<string, unknown> } | { error: { code: number; message: string } } {
+  if (!smart || smart.accountType !== 'kernel-v3.3') {
+    return { error: { code: WC_ERRORS.unsupportedMethods.code, message: ERC7715_KERNEL_ONLY_REFUSAL } };
+  }
+  return {
+    result: {
+      [ERC7715_CALLS_PERMISSION_TYPE]: {
+        chainIds: [hexChainIdOf(activeChain)],
+        ruleTypes: ['expiry'],
+      },
+    },
+  };
+}
+
+/** Why ERC-7715 methods are refused outside Kernel smart-account connections. */
+export const ERC7715_KERNEL_ONLY_REFUSAL =
+  'Execution permissions (ERC-7715) are offered only on connections made with a Kernel v3.3 smart ' +
+  'account: session permissions are installed into that account’s code.';
+
+/**
+ * Parses wallet_requestExecutionPermissions params (ERC-7715: an array of
+ * PermissionRequest) for a session bound to the Kernel account
+ * `walletAddress`. This wallet grants ONE permission per request (wallet
+ * policy: every grant gets its own review and its own install). The engine's
+ * grantFromErc7715Request does the mapping and runs validateSessionKeyGrant
+ * (wildcard targets, self-calls, open-ended or expired windows are refused,
+ * with the engine's message). Error codes: ERC7715_ERRORS.
+ */
+export function parseExecutionPermissionsRequest(
+  params: unknown,
+  walletAddress: string,
+  activeChain: string,
+  now: number = Math.floor(Date.now() / 1000),
+): Extract<ParsedWcRequest, { kind: 'permissions' }> {
+  const method = 'wallet_requestExecutionPermissions';
+  if (!Array.isArray(params) || params.length === 0) {
+    throw new WcRequestRejection(ERC7715_ERRORS.invalidParams, `${method}: expected [PermissionRequest].`);
+  }
+  if (params.length > 1) {
+    throw new WcRequestRejection(
+      ERC7715_ERRORS.invalidParams,
+      `${method}: this wallet grants one permission per request (got ${params.length}); send them one at a time.`,
+    );
+  }
+  const raw = params[0];
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new WcRequestRejection(ERC7715_ERRORS.invalidParams, `${method}: the permission request must be an object.`);
+  }
+  const r = raw as Record<string, unknown>;
+  const activeId = BigInt(activeChain.split(':')[1]!);
+  if (typeof r.chainId === 'string' && /^0x[0-9a-fA-F]+$/.test(r.chainId) && BigInt(r.chainId) !== activeId) {
+    throw new WcRequestRejection(
+      ERC7715_ERRORS.chainDisconnected,
+      `${method}: chain ${r.chainId} is not this connection's chain (${describeChain(activeChain)}).`,
+    );
+  }
+  if (r.from !== undefined && r.from !== null) {
+    if (typeof r.from !== 'string' || r.from.toLowerCase() !== walletAddress.toLowerCase()) {
+      throw new WcRequestRejection(
+        ERC7715_ERRORS.unauthorized,
+        `${method}: from (${String(r.from)}) is not the account this connection is bound to.`,
+      );
+    }
+  }
+  try {
+    const { grant, isAdjustmentAllowed } = grantFromErc7715Request(r as unknown as Erc7715PermissionRequest, {
+      chainId: activeId,
+      account: walletAddress,
+      now,
+    });
+    return { kind: 'permissions', request: r as unknown as Erc7715PermissionRequest, grant, isAdjustmentAllowed };
+  } catch (e) {
+    if (e instanceof Erc7715RequestError) {
+      throw new WcRequestRejection(
+        e.reason === 'unsupported' ? ERC7715_ERRORS.unsupported : ERC7715_ERRORS.invalidParams,
+        e.message,
+      );
+    }
+    throw new WcRequestRejection(ERC7715_ERRORS.invalidParams, e instanceof Error ? e.message : String(e));
+  }
 }
 
 /** Why a SimpleAccount-bound connection never signs messages. */

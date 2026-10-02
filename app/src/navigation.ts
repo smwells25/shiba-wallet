@@ -33,4 +33,6 @@ export type RootStackParamList = {
   Approvals: undefined;
   /** EIP-7702 "Upgrade this account" for the active account on the active EVM chain (phase 8 item 1). */
   UpgradeAccount: undefined;
+  /** Session keys (phase 8 item 2) on the active account's Kernel account, active EVM chain. */
+  Sessions: undefined;
 };

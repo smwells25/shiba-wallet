@@ -42,8 +42,13 @@ import {
   waitForAaReceipt,
 } from './aa';
 import {
+  buildErc7715Response,
+  finalizeSessionInstall,
+  installSession,
+} from './sessions';
+import {
   ERC5792_ERRORS,
-  WC_SMART_ACCOUNT_METHODS,
+  ERC7715_ERRORS,
   WC_SUPPORTED_METHODS,
   approveProposal,
   callsStatusFromReceipt,
@@ -61,6 +66,7 @@ import {
   setWcUsed,
   shouldStartWalletConnectAtLaunch,
   signDigest,
+  smartAccountMethodsFor,
   smartBindingKey,
   smartBindingLabel,
   type WcClient,
@@ -411,6 +417,85 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
         Alert.alert('Request declined', message);
       };
       try {
+        if (item.parsed.kind === 'permissions') {
+          // ERC-7715 (phase 8 item 2): install the reviewed grant with ONE
+          // root-signed operation (the OWNER key signs, through signWith with
+          // expectAddress = the binding's owner), wait for inclusion, read the
+          // permission back from the chain, and only then answer the dApp.
+          if (
+            txQuote?.status !== 'ready-permission' ||
+            txQuote.quote.sender.toLowerCase() !== smart.address.toLowerCase() ||
+            txQuote.owner.toLowerCase() !== smart.owner.toLowerCase() ||
+            smart.accountType !== 'kernel-v3.3'
+          ) {
+            controller.release(item.key);
+            return;
+          }
+          const { quote, bundle, install, grant } = txQuote;
+          const { record, userOpHash } = await installSession({
+            quote,
+            install,
+            grant,
+            chain: item.chain,
+            account: smart.address,
+            owner: smart.owner,
+            accountIndex: smart.accountIndex,
+            accountKind: 'kernel-v3.3',
+            label: controller.dappName(item.event.topic),
+            source: 'erc7715',
+            dappUrl: controller.dappUrl(item.event.topic) || null,
+            // The dApp holds the session key (ERC-7715 `to`); the wallet stores none.
+            sessionPrivateKey: null,
+            store: AsyncStorage,
+            vault: null,
+            submit: (q) => signWith(EVM_CHAIN_ID, smart.owner, (signer) => sendAa(bundle, signer, q)),
+          });
+          let finished: Awaited<ReturnType<typeof finalizeSessionInstall>> | null = null;
+          try {
+            finished = await finalizeSessionInstall(bundle, record, AsyncStorage);
+          } catch {
+            finished = null;
+          }
+          if (!finished || finished.record.localStatus !== 'installed') {
+            const why = finished
+              ? finished.receipt.success === false
+                ? 'the install operation reverted'
+                : `the permission could not be confirmed on-chain (${finished.status.kind})`
+              : 'it was not included within two minutes';
+            await respondRejected(client, item.event.topic, item.event.id, {
+              code: -32603,
+              message: `The session install was submitted as UserOperation ${userOpHash}, but ${why}.`,
+            }).catch(() => undefined);
+            controller.complete(item.key);
+            Alert.alert(
+              'Session not confirmed',
+              `UserOperation ${userOpHash}: ${why}. The dApp was told so. Check Settings → Session keys; ` +
+                'revoke the session there if it shows as active.',
+            );
+            return;
+          }
+          const response = buildErc7715Response(finished.record, {
+            isAdjustmentAllowed: item.parsed.isAdjustmentAllowed,
+            installTransactionHash: finished.receipt.txHash,
+          });
+          try {
+            // ERC-7715: "An array of PermissionResponse objects is the final
+            // `result` field".
+            await respondApproved(client, item.event.topic, item.event.id, [response]);
+          } catch {
+            controller.complete(item.key);
+            Alert.alert(
+              'Session granted, dApp not notified',
+              'The session is installed (see Settings → Session keys), but the reply to the dApp failed. ' +
+                'Revoke it there if the dApp cannot use it.',
+            );
+            return;
+          }
+          controller.complete(item.key);
+          Alert.alert('Session granted', `Installed for ${controller.dappName(item.event.topic)}. Revoke it any time in Settings → Session keys.`);
+          return;
+        }
+
         if (item.parsed.kind === 'personal_sign' || item.parsed.kind === 'typed_data') {
           const loaded = await loadAaBundle(smart.accountIndex);
           if (
@@ -592,7 +677,8 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
               factory: loaded.bundle.factory,
             };
             await controller.rememberSmartBinding(binding);
-            methods = WC_SMART_ACCOUNT_METHODS;
+            // Kernel connections also offer the ERC-7715 methods (phase 8 item 2).
+            methods = smartAccountMethodsFor(loaded.bundle.accountType);
           }
           const outcome = await approveProposal(
             client,
@@ -614,7 +700,7 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
       }
 
       if (
-        (item.parsed.kind === 'transaction' || item.parsed.kind === 'calls') &&
+        (item.parsed.kind === 'transaction' || item.parsed.kind === 'calls' || item.parsed.kind === 'permissions') &&
         !txApprovalAllowed(txQuote, overrideSimulation)
       ) {
         return;
@@ -625,7 +711,9 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
           ? `Approve transaction for ${dapp}`
           : item.parsed.kind === 'calls'
             ? `Approve batch for ${dapp}`
-            : `Sign for ${dapp}`;
+            : item.parsed.kind === 'permissions'
+              ? `Grant a session to ${dapp}`
+              : `Sign for ${dapp}`;
       const auth = await requireLocalAuth(promptTitle);
       if (!auth.ok) {
         Alert.alert('Not approved', auth.message);
@@ -648,9 +736,9 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
         return;
       }
       try {
-        if (item.parsed.kind === 'calls') {
+        if (item.parsed.kind === 'calls' || item.parsed.kind === 'permissions') {
           controller.release(item.key);
-          return; // batches exist only on smart-account sessions
+          return; // batches and permissions exist only on smart-account sessions
         }
         if (item.parsed.kind === 'personal_sign' || item.parsed.kind === 'typed_data') {
           const digest =
@@ -705,6 +793,14 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
   const onReject = useCallback(
     (item: WcQueueItem) => {
       if (!controller) return;
+      if (item.type === 'request' && item.parsed.kind === 'permissions') {
+        // ERC-7715 answers with ERC-1193 codes: 4001 User Rejected Request.
+        void controller.decline(item.key, {
+          code: ERC7715_ERRORS.userRejected,
+          message: 'The user declined the permission request.',
+        });
+        return;
+      }
       void controller.decline(item.key);
     },
     [controller],

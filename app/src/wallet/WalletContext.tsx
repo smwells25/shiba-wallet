@@ -10,7 +10,9 @@ import React, {
 import { createMnemonic, isValidMnemonic, mnemonicToSeed } from '@shiba-wallet/core';
 import type { DerivedAccount } from '@shiba-wallet/core';
 import { chainByCaip2 } from './chains';
-import { deleteMnemonic, loadMnemonic, saveMnemonic } from './storage';
+import { deleteMnemonic, loadMnemonic, saveMnemonic, sessionKeyVault } from './storage';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { forgetAllSessions } from './sessions';
 import {
   addAccount as addAccountToStore,
   defaultAccountsState,
@@ -302,6 +304,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   );
 
   const wipe = useCallback(async () => {
+    // Session keys (phase 8 item 2) are key material too: delete them from
+    // secure storage with the list (best-effort; on-chain grants are not
+    // affected — the Sessions screen warns about that before a wipe).
+    await forgetAllSessions(AsyncStorage, sessionKeyVault).catch(() => undefined);
     await deleteMnemonic();
     await resetAccounts().catch(() => undefined);
     setDerived({});

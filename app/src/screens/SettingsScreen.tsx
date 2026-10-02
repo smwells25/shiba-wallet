@@ -935,7 +935,9 @@ export function SettingsScreen({ navigation }: Props) {
     // Double confirmation: wiping is irreversible without the paper backup.
     Alert.alert(
       'Wipe wallet?',
-      'This deletes the recovery phrase from this device. The app returns to onboarding.',
+      'This deletes the recovery phrase from this device. The app returns to onboarding. Session ' +
+        'keys and the session list are deleted too, but sessions granted on-chain stay active until ' +
+        'they expire — revoke them first (Settings → Session keys) if you still can.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -1217,6 +1219,22 @@ export function SettingsScreen({ navigation }: Props) {
           title="Upgrade this account"
           variant="secondary"
           onPress={() => navigation.navigate('UpgradeAccount')}
+        />
+      </View>
+
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: theme.text }]}>Session keys</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          Let a separate key on this device (or a dApp, over WalletConnect) make only the calls you
+          list, until a deadline you choose. Your Kernel account enforces the limits on-chain, and you
+          can revoke a session at any time. Needs a deployed Kernel v3.3 smart account or an upgraded
+          account. Sessions and their keys are not part of the recovery phrase: they do not survive a
+          wipe or a restore, so revoke them before wiping.
+        </Text>
+        <Button
+          title="Sessions"
+          variant="secondary"
+          onPress={() => navigation.navigate('Sessions')}
         />
       </View>
 
