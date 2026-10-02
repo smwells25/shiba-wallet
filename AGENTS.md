@@ -2964,3 +2964,54 @@ listed under the phase 7 completion (log-depth cap, Sepolia RPC fallback,
 ESLint burn-down 44 → 18 remaining in touched files, record export as a
 .json file, an owner-rotation screen); standing items (Dogecoin mainnet
 broadcast, live 0x quotes, live paymaster, EAS build, counsel review).
+
+## Live WalletConnect retest after the environment restart (2026-10-02, emulator, Sepolia)
+
+The host session restarted, which took down the emulator, Metro and the
+scratchpad worktree. Everything was rebuilt and the full dApp cycle was
+run again from a fresh pairing, with the Chairperson driving Uniswap:
+
+- Fresh pairing: Uniswap proposed 24 eip155 chains and 21 methods; the
+  sheet offered "Connect as regular account (EOA) / smart account (Kernel
+  v3.3)"; the EOA was kept. The session settled as eip155:11155111,
+  4 methods, bound to Account 1 (0x772e…F44F), after the biometric gate.
+  The pre-restart Uniswap session was no longer listed on the Connections
+  screen after the cold boot ("No dApps are connected"); whether the
+  dApp side dropped it or the SDK's persisted session failed to reload
+  was not investigated (follow-up: check WalletKit session persistence
+  across process restarts on Android).
+- USDC -> EURC swap, sheet surfaced on Home: to = the Sepolia Universal
+  Router 0x7E4f6c5e954Da5c61B3423D81E2277431Ac043f3 (same as the phase-6
+  swaps), calldata selector 0x3593564c = execute(bytes,bytes[],uint256)
+  (recomputed with keccak before approving), 1306 bytes, 0 ETH, max fee
+  0.000384 test ETH; preview "You send 1 USDC (untracked token
+  0x1c7D…7238)" and "You receive 0.991829 EURC (untracked token
+  0x0821…94D4)"; "Pre-flight simulation passed (eth_call)". The EURC
+  contract was checked against Circle's EURC contract-addresses page
+  before approval: Ethereum Sepolia EURC is
+  0x08210F9170F89Ab7658F0B5E3fF39b0E03C594D4, matching the preview's
+  prefix and suffix. No approval or Permit2 typed-data request preceded
+  the swap this time (the earlier Permit2 allowance was still valid).
+- Result: tx 0x5396a4935274947f7be7ead1804aabd3a47082bc06c193d30073fd01b54e5fe2,
+  block 11829583, status 0x1, 166,330 gas, 3 logs. Receipt Transfer
+  logs: USDC 1,000,000 base units out of the wallet and EURC 991,829
+  base units into the wallet, i.e. the preview matched reality exactly
+  on both legs again.
+
+Emulator lessons from the restart (dev-only, not app code):
+- After a cold boot the AVD shows "PIN is required after device
+  restarts" and credential-encrypted storage stays locked, so Expo Go
+  cannot even be resolved by the package manager ("unable to resolve
+  Intent"). `adb shell locksettings verify --old 1234` unlocks the user
+  (dumpsys user then reports RUNNING_UNLOCKED); the keyguard bouncer then
+  accepts digits tapped on the keypad only after `adb emu finger touch 1`
+  has opened it (typed `input text` was ignored).
+- Metro died when the background task that had started it was stopped;
+  start it with `nohup … & disown` from the worktree. With CI=1 it logs
+  a "Cannot connect to Expo CLI" LogBox warning on the device.
+- LogBox toasts sit exactly over the approval sheet's "Approve & send"
+  button; tapping one opens LogBox (Dismiss closes it). The WalletConnect
+  core log at pino level 50 (time 1790951061342, context "core…") could
+  again not be read in full before it rotated out; it did not affect the
+  flow. The Google keyboard pops up over the sheet after pasting a URI
+  and must be hidden before scrolling the sheet.
