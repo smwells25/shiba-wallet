@@ -24,6 +24,7 @@ import { requireLocalAuth } from '../wallet/biometric';
 import { formatUnits, parseUnits } from '../wallet/balances';
 import {
   BITCOIN_CHAIN_ID,
+  EVM_CHAIN_ID,
   describeSendError,
   maxEvmSend,
   maxSolSend,
@@ -44,6 +45,7 @@ import {
   aaAccountTypeLabel,
   createAaClientFromConfig,
   describeAaError,
+  effectiveAaAccountType,
   maxAaErc20Send,
   maxAaSend,
   getAaConfig,
@@ -83,6 +85,9 @@ import { listContacts, matchRecipient, type Contact } from '../wallet/contacts';
 import { BalanceChangePreview } from '../components/BalanceChangePreview';
 import { RiskWarnings } from '../components/RiskWarnings';
 import { PREVIEW_AA_NOTE } from '../wallet/simulation';
+import { useAccountDelegation } from '../wallet/useDelegation';
+import { delegationLabelSuffix, invalidateAccountDelegation } from '../wallet/delegation';
+import { Eip7702QuoteNotice } from '../components/DelegationViews';
 import { usePrices } from '../wallet/usePrices';
 import { fiatLine, formatFiat, nativePriceAssetId, tokenPriceAssetId } from '../wallet/prices';
 import { BITCOIN, DOGECOIN } from '@shiba-wallet/chains-utxo';
@@ -294,6 +299,15 @@ export function SendScreen({ route, navigation }: Props) {
     };
   }, [route.params.chainId, endpoint]);
 
+  // EIP-7702 status of the sending account (phase 8 item 1): the "From"
+  // rows read "Account 1 · upgraded (Kernel v3.3)" when it runs Kernel.
+  const delegation = useAccountDelegation(
+    route.params.chainId === EVM_CHAIN_ID ? (account?.address ?? null) : null,
+  );
+  const fromName = activeAccount
+    ? `${activeAccount.name}${delegationLabelSuffix(delegation.status)}`
+    : '—';
+
   const validation = useMemo(
     () => (recipient.trim() ? validateRecipient(route.params.chainId, recipient) : null),
     [route.params.chainId, recipient],
@@ -453,7 +467,10 @@ export function SendScreen({ route, navigation }: Props) {
     !nftMode &&
     network?.kind === 'evm-jsonrpc' &&
     aaConfig !== null &&
-    isAaConfigured(aaConfig);
+    isAaConfigured(aaConfig, account.address);
+  // 'kernel-7702' for an account upgraded through "Upgrade this account",
+  // else the chain's configured type.
+  const aaType = aaConfig ? effectiveAaAccountType(aaConfig, account.address) : null;
   /** NFT sends get NFT-specific error titles; everything else is unchanged. */
   const describeError = (e: unknown) =>
     nftMode ? describeNftSendError(e) : describeSendError(e, symbol);
@@ -475,6 +492,9 @@ export function SendScreen({ route, navigation }: Props) {
       // the node endpoint reports exactly this chain.
       chainId: BigInt(evmChain.chainIdDecimal),
       accountIndex: activeAccount.index,
+      // An owner upgraded with EIP-7702 gets the 'kernel-7702' bundle (the
+      // account at its own address); everyone else the chain's type.
+      ownerAddress: account.address,
     });
   };
 
@@ -657,8 +677,8 @@ export function SendScreen({ route, navigation }: Props) {
       setPhase('confirm');
     } catch (e) {
       const { title, detail } =
-        (aaActive && aaConfig
-          ? describeAaError(e, { accountType: aaConfig.accountType, deployed: null })
+        (aaActive && aaType
+          ? describeAaError(e, { accountType: aaType, deployed: null })
           : null) ?? describeError(e);
       setFormError(`${title}\n${detail}`);
       setPhase('form');
@@ -694,7 +714,10 @@ export function SendScreen({ route, navigation }: Props) {
         // "bundling…" until it lands (or the poll times out — the op may
         // still be included later, the userOpHash stays the lookup key).
         void waitForAaReceipt(bundle, userOpHash, { timeoutMs: 120_000, pollMs: 3_000 }).then(
-          ({ summary }) =>
+          ({ summary }) => {
+            // The operation carried the EIP-7702 upgrade: re-read the
+            // account's status now that it is included.
+            if (quote.eip7702?.upgrade) invalidateAccountDelegation(quote.sender);
             setAaResult((prev) =>
               prev && prev.userOpHash === userOpHash
                 ? {
@@ -704,7 +727,8 @@ export function SendScreen({ route, navigation }: Props) {
                     txHash: summary.txHash,
                   }
                 : prev,
-            ),
+            );
+          },
           () =>
             setAaResult((prev) =>
               prev && prev.userOpHash === userOpHash
@@ -892,21 +916,30 @@ export function SendScreen({ route, navigation }: Props) {
         )}
         <Row
           label="Owner account (signs)"
-          value={activeAccount?.name ?? '—'}
+          value={fromName}
           sub={quotedFrom}
           theme={theme}
         />
-        <Row label="From smart account" value={quote.sender} mono theme={theme} />
+        <Row
+          label={quote.eip7702 ? 'From (your own address)' : 'From smart account'}
+          value={quote.sender}
+          mono
+          theme={theme}
+        />
         <Row
           label={`Smart account ${evmChain.displaySymbol} balance`}
           value={`${exact(quote.senderBalance, nativeDecimals)} ${evmChain.displaySymbol}`}
           theme={theme}
         />
-        <Row
-          label="Deployment"
-          value={quote.deployed ? 'Already deployed' : 'Will deploy with this send'}
-          theme={theme}
-        />
+        {quote.eip7702 ? (
+          <Eip7702QuoteNotice eip7702={quote.eip7702} noun="send" />
+        ) : (
+          <Row
+            label="Deployment"
+            value={quote.deployed ? 'Already deployed' : 'Will deploy with this send'}
+            theme={theme}
+          />
+        )}
         {!quote.deployed && quote.accountType === 'kernel-v3.3' ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>{KERNEL_BUNDLER_NOTE}</Text>
         ) : null}
@@ -988,7 +1021,7 @@ export function SendScreen({ route, navigation }: Props) {
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={network.label} testnet={testnet} theme={theme} />
 
-        <Row label="From account" value={activeAccount?.name ?? '—'} sub={quotedFrom} theme={theme} />
+        <Row label="From account" value={fromName} sub={quotedFrom} theme={theme} />
         <Row label="To" value={quote.to} mono theme={theme} />
         <RecipientContactNotice match={contactMatchFor(quote.to)} address={quote.to} />
         <Row
@@ -1088,7 +1121,7 @@ export function SendScreen({ route, navigation }: Props) {
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={network.label} testnet={testnet} theme={theme} />
 
-        <Row label="From account" value={activeAccount?.name ?? '—'} sub={quotedFrom} theme={theme} />
+        <Row label="From account" value={fromName} sub={quotedFrom} theme={theme} />
         <Row label="To" value={quote.to} mono theme={theme} />
         <RecipientContactNotice match={contactMatchFor(quote.to)} address={quote.to} />
         <Row label="NFT" value={nftParams?.name ?? '—'} sub={nftParams?.collection ?? null} theme={theme} />
@@ -1185,7 +1218,7 @@ export function SendScreen({ route, navigation }: Props) {
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={network.label} testnet={testnet} theme={theme} />
 
-        <Row label="From account" value={activeAccount?.name ?? '—'} sub={quotedFrom} theme={theme} />
+        <Row label="From account" value={fromName} sub={quotedFrom} theme={theme} />
         <Row label="To" value={quote.to} mono theme={theme} />
         <RecipientContactNotice match={contactMatchFor(quote.to)} address={quote.to} />
         <Row
@@ -1348,13 +1381,22 @@ export function SendScreen({ route, navigation }: Props) {
             </View>
           </View>
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            Sends as an ERC-4337 UserOperation from your smart account
-            ({aaConfig ? aaAccountTypeLabel(aaConfig.accountType) : 'smart account'}) — a
-            separate address controlled by this account&apos;s key — through the
-            bundler configured in Settings. The smart account pays the
-            amount{token ? ` (its own ${token.symbol})` : ''} and its gas from
-            its own balance unless a paymaster sponsors the gas, so fund the
-            smart account address first. Max uses the smart account&apos;s balance.
+            {aaType === 'kernel-7702'
+              ? 'Sends as an ERC-4337 UserOperation from this account itself, upgraded with ' +
+                'EIP-7702 to Kernel v3.3 (same address), through the bundler configured in ' +
+                'Settings. It pays the amount and its gas from its own balance unless a ' +
+                'paymaster sponsors the gas.' +
+                (delegation.status?.kind === 'plain'
+                  ? ' This account is not upgraded yet: the first such send carries the upgrade, ' +
+                    'and the confirm screen says so.'
+                  : '')
+              : `Sends as an ERC-4337 UserOperation from your smart account (${
+                  aaType ? aaAccountTypeLabel(aaType) : 'smart account'
+                }) — a separate address controlled by this account\u2019s key — through the ` +
+                'bundler configured in Settings. The smart account pays the amount' +
+                (token ? ` (its own ${token.symbol})` : '') +
+                ' and its gas from its own balance unless a paymaster sponsors the gas, so fund ' +
+                'the smart account address first. Max uses the smart account\u2019s balance.'}
           </Text>
         </View>
       ) : null}

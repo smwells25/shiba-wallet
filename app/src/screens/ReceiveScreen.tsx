@@ -14,6 +14,9 @@ import type { RootStackParamList } from '../navigation';
 import { Button, screenStyle } from '../components';
 import { useTheme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
+import { EVM_CHAIN_ID } from '../wallet/send';
+import { useAccountDelegation } from '../wallet/useDelegation';
+import { delegationLabelSuffix } from '../wallet/delegation';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Receive'>;
 
@@ -24,6 +27,11 @@ export function ReceiveScreen({ route, navigation }: Props) {
   const { accounts, activeAccount } = useWallet();
   const account = accounts.find((a) => a.chainId === route.params.chainId);
   const [copied, setCopied] = useState(false);
+  // EIP-7702 status (phase 8 item 1): "Account 1 · upgraded (Kernel v3.3)"
+  // on the EVM slot, so the user knows which code runs at this address.
+  const delegation = useAccountDelegation(
+    route.params.chainId === EVM_CHAIN_ID ? (account?.address ?? null) : null,
+  );
   // Sized for phone screens: fill the width minus the padding, capped so
   // tablets don't render a poster. The 16px white padding around the code
   // is the QR quiet zone, kept white in dark mode too so scanners lock on.
@@ -56,6 +64,7 @@ export function ReceiveScreen({ route, navigation }: Props) {
       {activeAccount ? (
         <Text style={[styles.accountName, { color: theme.textMuted }]}>
           {activeAccount.name}
+          {delegationLabelSuffix(delegation.status)}
         </Text>
       ) : null}
       {/*

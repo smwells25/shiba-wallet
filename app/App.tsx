@@ -31,6 +31,7 @@ import { ContactsScreen } from './src/screens/ContactsScreen';
 import { NftsScreen } from './src/screens/NftsScreen';
 import { NftDetailScreen } from './src/screens/NftDetailScreen';
 import { ApprovalsScreen } from './src/screens/ApprovalsScreen';
+import { UpgradeAccountScreen } from './src/screens/UpgradeAccountScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -158,6 +159,11 @@ function Root() {
               name="Approvals"
               component={ApprovalsScreen}
               options={{ title: 'Token approvals' }}
+            />
+            <Stack.Screen
+              name="UpgradeAccount"
+              component={UpgradeAccountScreen}
+              options={{ title: 'Upgrade this account' }}
             />
           </>
         )}

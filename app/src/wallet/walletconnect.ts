@@ -779,6 +779,78 @@ export class WcRequestRejection extends Error {
   }
 }
 
+// ---------------------------------------------------------------------------
+// ADR D6: no EIP-7702 authorizations for dApps
+// ---------------------------------------------------------------------------
+
+/**
+ * EIP-7702 (Final, ethereum/EIPs eip-7702.md at bbc3f958, "Interaction with
+ * applications and wallets"): "Applications must not expect that they can
+ * suggest the user sign an authorization, and therefore it is the duty of
+ * the wallet to not provide an interface to do so. There is no safe way to
+ * provide this interface." The wallet signs authorizations only in its own
+ * "Upgrade this account" flow (./delegation.ts, ./aa.ts kernel-7702).
+ *
+ * How a dApp could ask for one over WalletConnect, each refused explicitly:
+ *  - eth_sendTransaction with an authorization list: the transaction object
+ *    is execution-apis' GenericTransaction (ethereum/execution-apis
+ *    src/eth/submit.yaml; src/schemas/transaction.yaml at d24f58b5,
+ *    2026-07-24), which has `authorizationList` ("EIP-7702 authorization
+ *    list") and `type` (0x4 is EIP-7702's SET_CODE_TX_TYPE). Refused when
+ *    `authorizationList` (or the snake_case `authorization_list`) is present
+ *    at all, or `type` is 4 in any spelling — even an empty list.
+ *  - wallet_sendCalls with ERC-7902's `eip7702Auth` capability (ERC-7902
+ *    "Wallet Capabilities for Account Abstraction", Draft, ethereum/ERCs
+ *    ERCS/erc-7902.md at 8b4d4631: "requests the Wallet Application to
+ *    provide an EIP-7702 authorization tuple"), or any capability whose name
+ *    or field names mention an authorization, 7702 or a delegation — refused
+ *    even when marked optional (5792 would let an optional one be ignored;
+ *    the wallet answers explicitly instead). A call object carrying an
+ *    authorization list is refused the same way.
+ *  - A dedicated signing method: no standard one exists in the sources
+ *    above; any method name mentioning an authorization or 7702 gets this
+ *    refusal instead of the generic unsupported-method one.
+ * personal_sign and eth_signTypedData_v4 cannot yield a tuple signature:
+ * the tuple digest is keccak256(0x05 || rlp([chain_id, address, nonce])),
+ * while personal_sign hashes "\x19Ethereum Signed Message:\n…" and EIP-712
+ * hashes 0x19 0x01 || …, so their digests differ by construction.
+ */
+export const EIP7702_WC_REFUSAL =
+  'This wallet never signs EIP-7702 authorizations (account delegations) for dApps: a delegation ' +
+  'gives the delegate contract full control of the account, and EIP-7702 itself says there is no ' +
+  'safe way for a wallet to offer this to applications. Use Upgrade this account in the wallet ' +
+  'instead.';
+
+const EIP7702_HINT = /authori[sz]ation|7702|delegat/i;
+
+/** True when a transaction-like object asks for an EIP-7702 set-code transaction. */
+export function requestsEip7702Authorization(tx: Record<string, unknown>): boolean {
+  if ('authorizationList' in tx && tx.authorizationList !== undefined) return true;
+  if ('authorization_list' in tx && tx.authorization_list !== undefined) return true;
+  const type = tx.type;
+  if (type !== undefined && type !== null) {
+    try {
+      if (BigInt(type as string | number) === 4n) return true;
+    } catch {
+      // Unreadable type: not a set-code request (other checks handle it).
+    }
+  }
+  return false;
+}
+
+/**
+ * A capability asks for an authorization when its name, or a field name
+ * inside it (any depth), mentions one. Field VALUES are not scanned, so a
+ * URL or note that merely contains such a word is not refused.
+ */
+function capabilityMentions7702(name: string, value: unknown, depth = 0): boolean {
+  if (EIP7702_HINT.test(name)) return true;
+  if (depth > 4 || typeof value !== 'object' || value === null) return false;
+  return Object.entries(value as Record<string, unknown>).some(([k, v]) =>
+    capabilityMentions7702(k, v, depth + 1),
+  );
+}
+
 export type ParsedWcRequest =
   | {
       kind: 'personal_sign';
@@ -853,6 +925,10 @@ export function parseWcRequest(
       );
     }
   };
+
+  if (typeof method === 'string' && EIP7702_HINT.test(method)) {
+    throw new WcRequestRejection(WC_ERRORS.unsupportedMethods.code, EIP7702_WC_REFUSAL);
+  }
 
   const smart = options.smartAccount;
   if (
@@ -931,6 +1007,9 @@ export function parseWcRequest(
       throw new WcRequestRejection(-32602, 'eth_sendTransaction: expected a transaction object.');
     }
     const t = tx as Record<string, unknown>;
+    if (requestsEip7702Authorization(t)) {
+      throw new WcRequestRejection(WC_ERRORS.userRejected.code, EIP7702_WC_REFUSAL);
+    }
     if (t.from !== undefined) requireOurAddress(t.from, 'sender');
     if (typeof t.to !== 'string') {
       // No `to` means contract deployment; this wallet does not deploy
@@ -1589,6 +1668,10 @@ function checkCapabilities(value: unknown, where: string, ignored: string[]): vo
     throw new WcRequestRejection(ERC5792_ERRORS.invalidParams, `wallet_sendCalls: ${where} capabilities must be an object.`);
   }
   for (const [name, capability] of Object.entries(value as Record<string, unknown>)) {
+    if (capabilityMentions7702(name, capability)) {
+      // D6, even when marked optional (see EIP7702_WC_REFUSAL).
+      throw new WcRequestRejection(ERC5792_ERRORS.unsupportedCapability, EIP7702_WC_REFUSAL);
+    }
     const optional =
       typeof capability === 'object' &&
       capability !== null &&
@@ -1679,6 +1762,9 @@ export function parseSendCalls(
       throw new WcRequestRejection(ERC5792_ERRORS.invalidParams, `wallet_sendCalls: ${where} is not an object.`);
     }
     const c = raw as Record<string, unknown>;
+    if (requestsEip7702Authorization(c)) {
+      throw new WcRequestRejection(ERC5792_ERRORS.unsupportedCapability, EIP7702_WC_REFUSAL);
+    }
     checkCapabilities(c.capabilities, where, ignored);
     if (typeof c.to !== 'string') {
       throw new WcRequestRejection(

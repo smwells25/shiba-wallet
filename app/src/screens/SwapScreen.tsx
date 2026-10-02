@@ -60,6 +60,7 @@ import {
   aaAccountTypeLabel,
   createAaClientFromConfig,
   describeAaError,
+  effectiveAaAccountType,
   getAaConfig,
   isAaConfigured,
   resolveAaSender,
@@ -70,6 +71,7 @@ import {
   type AaSendQuote,
 } from '../wallet/aa';
 import { PREVIEW_AA_NOTE } from '../wallet/simulation';
+import { Eip7702QuoteNotice } from '../components/DelegationViews';
 import { usePrices } from '../wallet/usePrices';
 import { fiatLine, formatFiat, nativePriceAssetId, tokenPriceAssetId } from '../wallet/prices';
 
@@ -259,7 +261,11 @@ export function SwapScreen({ navigation }: Props) {
   }, [evmChain.caip2]);
 
   const url = endpoint?.url ?? null;
-  const aaAvailable = aaConfig !== null && isAaConfigured(aaConfig) && url !== null;
+  const aaAvailable =
+    aaConfig !== null && isAaConfigured(aaConfig, account?.address) && url !== null;
+  // 'kernel-7702' for an account upgraded with EIP-7702 (the account at its
+  // own address), else the chain's configured type.
+  const aaType = aaConfig ? effectiveAaAccountType(aaConfig, account?.address) : null;
   const aaActive = aaAvailable && aaEnabled;
 
   // Resolve the smart-account address when the toggle goes on: it is the
@@ -277,6 +283,7 @@ export function SwapScreen({ navigation }: Props) {
           nodeUrl: url,
           chainId: BigInt(evmChain.chainIdDecimal),
           accountIndex: activeAccount.index,
+          ownerAddress: account.address,
         });
         aaBundle.current = bundle;
         return resolveAaSender(bundle, account.address);
@@ -508,7 +515,7 @@ export function SwapScreen({ navigation }: Props) {
         setPhase('aa-confirm');
       } catch (e) {
         const { title, detail } =
-          (aaConfig ? describeAaError(e, { accountType: aaConfig.accountType, deployed: null }) : null) ??
+          (aaType ? describeAaError(e, { accountType: aaType, deployed: null }) : null) ??
           describeSendError(e, sellSymbol);
         setFormError(`${title}\n${detail}`);
         setPhase('review');
@@ -843,7 +850,12 @@ export function SwapScreen({ navigation }: Props) {
           sub={account.address}
           theme={theme}
         />
-        <Row label="From smart account" value={aaQuote.sender} mono theme={theme} />
+        <Row
+          label={aaQuote.eip7702 ? 'From (your own address)' : 'From smart account'}
+          value={aaQuote.sender}
+          mono
+          theme={theme}
+        />
         <Row
           label="You sell"
           value={`${exact(quote.sellAmount, sellDecimals)} ${sellSymbol}`}
@@ -892,11 +904,15 @@ export function SwapScreen({ navigation }: Props) {
           value={`${exact(aaQuote.senderBalance, 18)} ${evmChain.displaySymbol}`}
           theme={theme}
         />
-        <Row
-          label="Deployment"
-          value={aaQuote.deployed ? 'Already deployed' : 'Will deploy with this swap'}
-          theme={theme}
-        />
+        {aaQuote.eip7702 ? (
+          <Eip7702QuoteNotice eip7702={aaQuote.eip7702} noun="swap" />
+        ) : (
+          <Row
+            label="Deployment"
+            value={aaQuote.deployed ? 'Already deployed' : 'Will deploy with this swap'}
+            theme={theme}
+          />
+        )}
         {!aaQuote.deployed && aaQuote.accountType === 'kernel-v3.3' ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>{KERNEL_BUNDLER_NOTE}</Text>
         ) : null}
@@ -1324,7 +1340,7 @@ export function SwapScreen({ navigation }: Props) {
             </Text>
           </View>
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            Swaps the smart account&apos;s own funds ({aaAccountTypeLabel(aaConfig.accountType)})
+            Swaps the smart account&apos;s own funds ({aaAccountTypeLabel(aaType ?? aaConfig.accountType)})
             as ONE operation: for a token sale, approve exactly the amount and swap in a single
             all-or-nothing batch — no separate approval step. Gas comes from the smart account
             (or the paymaster when sponsored).

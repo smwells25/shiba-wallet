@@ -3,6 +3,7 @@ import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { toHex, type AssetChange } from '@shiba-wallet/chains-evm';
 import { useTheme } from '../theme';
 import { usePrefs } from '../wallet/PrefsContext';
+import { useWallet } from '../wallet/WalletContext';
 import { listTokens } from '../wallet/tokens';
 import { tokensForChain } from '../wallet/approvals';
 import { computeRiskLines, gatherRiskFacts, type RiskLine } from '../wallet/risk';
@@ -54,13 +55,20 @@ export function RiskWarnings({
 }) {
   const theme = useTheme();
   const { evmChain } = usePrefs();
+  const { accountList } = useWallet();
+  // The wallet's own EVM addresses: a recipient among them that is upgraded
+  // to the wallet's pinned Kernel delegate is expected, not a risk.
+  const ownAddresses = accountList
+    .map((a) => a.evmAddress)
+    .filter((a): a is string => typeof a === 'string');
+  const ownKey = ownAddresses.join(',').toLowerCase();
   const [lines, setLines] = useState<RiskLine[] | null>(null);
 
   const dataHex = data === undefined ? '0x' : typeof data === 'string' ? data.toLowerCase() : toHex(data);
   const changesKey = assetChanges
     ? assetChanges.map((c) => JSON.stringify(c, (_k, v) => (typeof v === 'bigint' ? v.toString() : v))).join(';')
     : String(assetChanges);
-  const key = `${url ?? ''}|${evmChain.caip2}|${wallet}|${to}|${counterparty ?? ''}|${dataHex}|${changesKey}`;
+  const key = `${url ?? ''}|${evmChain.caip2}|${wallet}|${to}|${counterparty ?? ''}|${dataHex}|${changesKey}|${ownKey}`;
 
   useEffect(() => {
     let cancelled = false;
@@ -80,6 +88,7 @@ export function RiskWarnings({
         data: dataHex,
         ...(assetChanges !== undefined ? { assetChanges } : {}),
         chainCaip2: evmChain.caip2,
+        ownAddresses,
         trackedTokens: tokensForChain(tracked, evmChain.caip2).map((t) => ({
           address: t.address,
           symbol: t.symbol,

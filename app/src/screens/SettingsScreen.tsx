@@ -546,6 +546,14 @@ function AaChainRow({ network }: { network: NetworkDefault }) {
           for dApps.
         </Text>
       )}
+      {config && config.eip7702Owners.length > 0 ? (
+        <Text style={[styles.endpointNote, { color: theme.textMuted }]}>
+          {config.eip7702Owners.length === 1 ? 'One account uses' : `${config.eip7702Owners.length} accounts use`}{' '}
+          its own address as the smart account on this network (EIP-7702, Kernel v3.3; see
+          Upgrade this account). Those accounts need only the bundler; the type below applies to
+          every other account.
+        </Text>
+      ) : null}
       {otherTypeStored ? (
         <Text style={[styles.endpointNote, { color: theme.warningText }]}>
           This network is currently set up as {aaAccountTypeLabel(otherTypeStored)}. Saving a{' '}
@@ -1193,6 +1201,23 @@ export function SettingsScreen({ navigation }: Props) {
         {evmEndpoints.map((e) => (
           <AaChainRow key={e.network.chainId} network={e.network} />
         ))}
+      </View>
+
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: theme.text }]}>
+          Upgrade this account (EIP-7702)
+        </Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          Turns the active account into a Kernel v3.3 smart account at the same
+          address, on the active network, and shows its current status. You can
+          undo it at any time. The wallet only ever delegates to the pinned
+          Kernel v3.3 contract and never signs an account delegation for a dApp.
+        </Text>
+        <Button
+          title="Upgrade this account"
+          variant="secondary"
+          onPress={() => navigation.navigate('UpgradeAccount')}
+        />
       </View>
 
       <View style={styles.section}>

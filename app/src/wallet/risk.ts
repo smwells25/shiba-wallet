@@ -20,6 +20,7 @@ import {
 // scripts/check-approvals.mjs under Node's type stripping, which resolves
 // relative specifiers literally.
 import { groupThousands, simulationTransport } from './simulation.ts';
+import { WALLET_7702_DELEGATE } from './delegation.ts';
 
 /**
  * Risk warnings for EVM confirm screens (phase 7, item 5, app half). The
@@ -216,6 +217,30 @@ export interface RiskFacts {
   firstInteractionTokens?: string[];
   /** findCodeDeploymentBlock result with the chain threshold; absent when unknown. */
   contractAge?: { result: DeploymentSearchResult; thresholdBlocks: bigint };
+  /**
+   * True when `to` is one of the wallet's OWN accounts delegated (EIP-7702)
+   * to the wallet's pinned Kernel v3.3 delegate — the expected result of
+   * "Upgrade this account", so the delegated-eoa signal is not raised. It
+   * stays for every other address and for a foreign delegate on an own
+   * account (see isExpectedOwnDelegation).
+   */
+  expectedOwnDelegation?: boolean;
+}
+
+/**
+ * True only when `to` is the sending wallet or another of the wallet's own
+ * EVM addresses AND its delegation indicator names exactly the pinned
+ * Kernel v3.3 delegate (./delegation.ts WALLET_7702_DELEGATE).
+ */
+export function isExpectedOwnDelegation(
+  to: string,
+  recipientClass: RecipientClass | undefined,
+  ownAddresses: readonly string[],
+): boolean {
+  if (recipientClass?.kind !== 'delegated-eoa') return false;
+  if (recipientClass.delegate.toLowerCase() !== WALLET_7702_DELEGATE.toLowerCase()) return false;
+  const lower = to.toLowerCase();
+  return ownAddresses.some((a) => a.toLowerCase() === lower);
 }
 
 export type RiskTone = 'warning' | 'notice';
@@ -268,7 +293,10 @@ export function computeRiskLines(facts: RiskFacts): RiskLine[] {
       ? { contractAge: facts.contractAge }
       : {}),
   });
-  const lines: RiskLine[] = signals.map((s) => {
+  const kept = facts.expectedOwnDelegation
+    ? signals.filter((s) => s.type !== 'delegated-eoa')
+    : signals;
+  const lines: RiskLine[] = kept.map((s) => {
     let text = s.message;
     if (s.type === 'first-interaction-unknown' && facts.firstInteraction) {
       text = `${text} ${firstInteractionScope(facts.firstInteraction, facts.firstInteractionTokens ?? [])}`;
@@ -316,6 +344,12 @@ export interface GatherRiskOptions {
   trackedTokens: RiskTokenRef[];
   /** Injectable for scripts; defaults to simulationTransport(url). */
   transport?: JsonRpcTransport;
+  /**
+   * The wallet's other own EVM addresses (the sending `wallet` always
+   * counts). A recipient among them that is delegated to the wallet's
+   * pinned Kernel delegate raises no delegated-eoa signal.
+   */
+  ownAddresses?: readonly string[];
 }
 
 async function attempt<T>(fn: () => Promise<T>): Promise<T | undefined> {
@@ -350,6 +384,11 @@ export async function gatherRiskFacts(options: GatherRiskOptions): Promise<RiskF
     const recipientClass = await attempt(() => classifyRecipient(transport, options.to));
     if (!recipientClass) return;
     facts.recipientClass = recipientClass;
+    if (
+      isExpectedOwnDelegation(options.to, recipientClass, [options.wallet, ...(options.ownAddresses ?? [])])
+    ) {
+      facts.expectedOwnDelegation = true;
+    }
     if (recipientClass.kind !== 'contract' || threshold === undefined) return;
     const contractAge = await attempt(async () => {
       const head = BigInt((await transport('eth_blockNumber', [])) as string);

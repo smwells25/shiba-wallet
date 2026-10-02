@@ -7,6 +7,8 @@ import {
   KERNEL_V3_3,
   NodeClient,
   SmartAccountClient,
+  KERNEL_V3_3_7702_DELEGATE,
+  createKernel7702AccountSpec,
   createKernelAccountSpec,
   createSimpleAccountSpec,
   decodeUint256,
@@ -14,12 +16,14 @@ import {
   encodeErc20Transfer,
   encodeFunctionCall,
   httpTransport,
+  readDelegationStatus,
   signHashForSmartAccount,
   toBytes,
   toHex,
   verifyKernelDeployment,
   type Call,
   type JsonRpcTransport,
+  type SignedEip7702Authorization,
   type SmartAccountSignature,
   type SmartAccountSpec,
   type UserOperation,
@@ -28,6 +32,7 @@ import {
 // under Node's type stripping, which resolves relative specifiers literally.
 import { EVM_CHAIN_ID, validateRecipient } from './send.ts';
 import type { KeyValueStore } from './tokens.ts';
+import { assertWalletDelegate, invalidateAccountDelegation } from './delegation.ts';
 
 /**
  * ERC-4337 smart-account glue for the app (experimental, off by default):
@@ -61,6 +66,17 @@ import type { KeyValueStore } from './tokens.ts';
  * D1) and the CREATE2 salt is the account index (ADR D8). Everything after
  * createAaClient — quoting, sending, receipts — is type-agnostic: it goes
  * through the spec the bundle carries.
+ *  - 'kernel-7702' (phase 8 item 1): the EOA ITSELF becomes the smart
+ *    account at the same address, delegated with EIP-7702 to the pinned
+ *    Kernel v3.3 implementation (engine createKernel7702AccountSpec). It
+ *    has no factory. Unlike the two types above it is not a per-chain
+ *    choice: delegation belongs to one EOA, so it is recorded per OWNER
+ *    ADDRESS (eip7702Owners) by the "Upgrade this account" flow, and only
+ *    for those owners does createAaClientFromConfig build it. Every other
+ *    account keeps the chain's type. A chain-wide setting would let another
+ *    account's next smart-account send sign an authorization its user never
+ *    asked for, which ADR D6 forbids. Revoking removes the owner, so the
+ *    effective type returns to the chain's type (the previous one).
  *
  * KNOWN BUNDLER LIMITATION (AGENTS.md phase 7, live Sepolia probes
  * 2026-10-01): Alchemy's bundler rejected Kernel v3.3 DEPLOYMENT
@@ -77,19 +93,27 @@ const AA_CONFIG_KEY = 'shiba-wallet.aa-config.v1';
 /** Builds a JSON-RPC transport for a URL; injectable for offline tests. */
 export type TransportFactory = (url: string) => JsonRpcTransport;
 
-/** The smart-account implementations the app can configure per chain. */
-export type AaAccountType = 'simple' | 'kernel-v3.3';
+/** The factory-deployed smart-account implementations configurable per chain. */
+export type AaFactoryAccountType = 'simple' | 'kernel-v3.3';
 
-export const AA_ACCOUNT_TYPES: readonly AaAccountType[] = ['simple', 'kernel-v3.3'];
+/**
+ * Every smart-account type a bundle can carry: the per-chain factory types,
+ * plus 'kernel-7702' for an owner upgraded through the EIP-7702 flow.
+ */
+export type AaAccountType = AaFactoryAccountType | 'kernel-7702';
+
+/** The per-chain choices offered in Settings (kernel-7702 is per account, not here). */
+export const AA_ACCOUNT_TYPES: readonly AaFactoryAccountType[] = ['simple', 'kernel-v3.3'];
 
 /** Plain names for the account types (Settings, confirm screens, WC sheet). */
 export function aaAccountTypeLabel(type: AaAccountType): string {
+  if (type === 'kernel-7702') return 'Kernel v3.3 via EIP-7702 (your own address)';
   return type === 'kernel-v3.3' ? 'Kernel v3.3 (ERC-7579)' : 'SimpleAccount (v0.7 sample)';
 }
 
 /** True when the account type can sign messages for dApps (ERC-1271). */
 export function aaAccountTypeSignsMessages(type: AaAccountType): boolean {
-  return type === 'kernel-v3.3';
+  return type === 'kernel-v3.3' || type === 'kernel-7702';
 }
 
 /**
@@ -134,7 +158,7 @@ export interface AaChainConfig {
    * Which implementation `factory` deploys. Configurations saved before
    * account types existed have no stored type and read as 'simple'.
    */
-  accountType: AaAccountType;
+  accountType: AaFactoryAccountType;
   /**
    * EIP-55 checksummed factory: the SimpleAccountFactory ('simple') or the
    * KernelFactory, i.e. the CREATE2 deployer ('kernel-v3.3').
@@ -160,6 +184,13 @@ export interface AaChainConfig {
   paymasterContext: string | null;
   /** ISO timestamp of the successful pm_getPaymasterStubData probe. */
   paymasterVerifiedAt: string | null;
+  /**
+   * Owner EOAs (EIP-55, as derived) whose smart-account sends on this chain
+   * use 'kernel-7702' — written only by the "Upgrade this account" flow
+   * (setAccountEip7702). Independent of the factory fields above, which
+   * stay as they were and apply again when an owner is removed.
+   */
+  eip7702Owners: string[];
 }
 
 const EMPTY_CONFIG: AaChainConfig = {
@@ -175,6 +206,7 @@ const EMPTY_CONFIG: AaChainConfig = {
   paymasterUrl: null,
   paymasterContext: null,
   paymasterVerifiedAt: null,
+  eip7702Owners: [],
 };
 
 type ConfigMap = Record<string, Partial<AaChainConfig>>;
@@ -204,8 +236,13 @@ function normalizeEntry(entry: Partial<AaChainConfig> | undefined): AaChainConfi
   const bundlerUrl = str(entry?.bundlerUrl);
   const factory = str(entry?.factory);
   const paymasterUrl = str(entry?.paymasterUrl);
-  const accountType: AaAccountType =
+  const accountType: AaFactoryAccountType =
     factory !== null && entry?.accountType === 'kernel-v3.3' ? 'kernel-v3.3' : 'simple';
+  const owners = Array.isArray(entry?.eip7702Owners)
+    ? (entry.eip7702Owners as unknown[]).filter(
+        (a): a is string => typeof a === 'string' && /^0x[0-9a-fA-F]{40}$/.test(a),
+      )
+    : [];
   const kernel = accountType === 'kernel-v3.3';
   return {
     bundlerUrl,
@@ -220,6 +257,7 @@ function normalizeEntry(entry: Partial<AaChainConfig> | undefined): AaChainConfi
     paymasterUrl,
     paymasterContext: paymasterUrl ? str(entry?.paymasterContext) : null,
     paymasterVerifiedAt: paymasterUrl ? str(entry?.paymasterVerifiedAt) : null,
+    eip7702Owners: owners,
   };
 }
 
@@ -232,12 +270,32 @@ export async function getAaConfig(
   return normalizeEntry(map[chainId]) ?? { ...EMPTY_CONFIG };
 }
 
+/** True when `owner` was upgraded (EIP-7702) for smart-account sends on this chain. */
+export function isEip7702Owner(config: AaChainConfig, owner: string | null | undefined): boolean {
+  if (!owner) return false;
+  const lower = owner.toLowerCase();
+  return config.eip7702Owners.some((a) => a.toLowerCase() === lower);
+}
+
+/**
+ * The account type a smart-account send by `owner` uses on this chain:
+ * 'kernel-7702' for an upgraded owner, else the chain's factory type.
+ */
+export function effectiveAaAccountType(
+  config: AaChainConfig,
+  owner?: string | null,
+): AaAccountType {
+  return isEip7702Owner(config, owner) ? 'kernel-7702' : config.accountType;
+}
+
 /**
  * True when both endpoints are configured (and therefore verified). A
  * Kernel configuration additionally needs its validator on record (always
- * written together with the factory by setAaKernelFactory).
+ * written together with the factory by setAaKernelFactory). For an owner
+ * upgraded with EIP-7702 only the bundler is needed (there is no factory).
  */
-export function isAaConfigured(config: AaChainConfig): boolean {
+export function isAaConfigured(config: AaChainConfig, owner?: string | null): boolean {
+  if (isEip7702Owner(config, owner)) return config.bundlerUrl !== null;
   if (config.bundlerUrl === null || config.factory === null) return false;
   if (config.accountType === 'kernel-v3.3') return config.kernelValidator !== null;
   return true;
@@ -574,6 +632,34 @@ export async function clearAaFactory(
   }
 }
 
+/**
+ * Records (enabled) or removes (disabled) an owner EOA as upgraded with
+ * EIP-7702 for smart-account sends on one chain. Called only by the
+ * "Upgrade this account" flow: "Upgrade with the next smart-account send",
+ * a confirmed "Upgrade now" transaction, a revocation, or cancelling a
+ * pending upgrade. Signs nothing. Removing the owner restores the chain's
+ * factory type for that account (the fields were never touched).
+ */
+export async function setAccountEip7702(
+  chainId: string,
+  owner: string,
+  enabled: boolean,
+  store: KeyValueStore = AsyncStorage,
+): Promise<AaChainConfig> {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(owner)) throw new Error(`Not an EVM address: ${owner}`);
+  eip155ChainIdOf(chainId);
+  const map = await loadConfigMap(store);
+  const current = normalizeEntry(map[chainId]).eip7702Owners.filter(
+    (a) => a.toLowerCase() !== owner.toLowerCase(),
+  );
+  map[chainId] = {
+    ...map[chainId],
+    eip7702Owners: enabled ? [...current, toChecksumAddress(toBytes(owner.toLowerCase()))] : current,
+  };
+  await saveConfigMap(map, store);
+  return normalizeEntry(map[chainId]);
+}
+
 // ---------------------------------------------------------------------------
 // Client construction and the AA send path
 // ---------------------------------------------------------------------------
@@ -690,11 +776,51 @@ export interface AaClientBundle {
   sponsored: boolean;
   /** The implementation this bundle's spec builds operations for. */
   accountType: AaAccountType;
-  /** The configured factory (SimpleAccountFactory or KernelFactory). */
+  /**
+   * The configured factory (SimpleAccountFactory or KernelFactory). For
+   * 'kernel-7702' there is no factory: this is the delegate address.
+   */
   factory: string;
-  /** Wallet account index = CREATE2 salt. */
+  /** Wallet account index = CREATE2 salt (unused by 'kernel-7702'). */
   accountIndex: number;
+  /**
+   * 'kernel-7702' only. `gate.allowAuthorization` is the D6 switch: the
+   * spec refuses to sign an authorization tuple unless sendAa opened it for
+   * a quote that announced the upgrade on the confirm screen.
+   */
+  eip7702?: { delegate: string; gate: { allowAuthorization: boolean } };
 }
+
+/**
+ * Dummy authorization signature used ONLY for gas estimation of an
+ * operation that will carry a tuple, so no key is needed at quote time (the
+ * real tuple is signed after the biometric gate). The values are viem
+ * 2.57.2's, account-abstraction/actions/bundler/prepareUserOperation.ts
+ * (r = 0xffff…f000…0, s = 0x7aaa…a, yParity 1), which the ZeroDev SDK goes
+ * through for its estimates. s is below secp256k1n/2.
+ */
+export const EIP7702_STUB_R = '0xfffffffffffffffffffffffffffffff000000000000000000000000000000000';
+export const EIP7702_STUB_S = '0x7aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+
+export function stubEip7702Authorization(
+  chainId: bigint,
+  delegate: string,
+  nonce: bigint,
+): SignedEip7702Authorization {
+  return {
+    chainId,
+    address: delegate,
+    nonce,
+    yParity: 1,
+    r: toBytes(EIP7702_STUB_R),
+    s: toBytes(EIP7702_STUB_S),
+  };
+}
+
+/** Refusal when an authorization would be signed outside an announced upgrade (D6). */
+export const EIP7702_UNANNOUNCED_REFUSAL =
+  'EIP-7702 policy: signing this operation would also upgrade the account, but the upgrade was ' +
+  'not shown when it was reviewed. Nothing was signed; review it again.';
 
 /** Kernel-specific deployment addresses (all verified at save time). */
 export interface AaKernelAddresses {
@@ -732,6 +858,7 @@ export function createAaClient(options: {
   /** Kernel deployment addresses; defaults to the pinned KERNEL_V3_3 values. */
   kernel?: Partial<AaKernelAddresses>;
 }): AaClientBundle {
+  if (options.accountType === 'kernel-7702') return createKernel7702Bundle(options);
   const transportFor = options.transportFor ?? httpTransport;
   const node = transportFor(options.nodeUrl);
   const bundler = transportFor(options.bundlerUrl);
@@ -794,6 +921,74 @@ export function createAaClient(options: {
 }
 
 /**
+ * The 'kernel-7702' bundle: the engine's createKernel7702AccountSpec for the
+ * ACTIVE chain id (the engine checks eth_chainId against it before signing
+ * a tuple, and refuses chain id 0) and the pinned delegate (the engine's
+ * default, KERNEL_V3_3_7702_DELEGATE; redelegation from a foreign delegate
+ * stays refused — allowRedelegation is never set). The spec is wrapped so
+ * it signs a tuple only while sendAa holds the gate open for a quote that
+ * announced the upgrade (D6).
+ */
+function createKernel7702Bundle(options: {
+  nodeUrl: string;
+  bundlerUrl: string;
+  chainId?: bigint;
+  accountIndex?: number;
+  transportFor?: TransportFactory;
+  paymaster?: { url: string; contextJson: string | null };
+}): AaClientBundle {
+  const transportFor = options.transportFor ?? httpTransport;
+  const node = transportFor(options.nodeUrl);
+  const bundler = transportFor(options.bundlerUrl);
+  const chainId = options.chainId ?? BigInt(EVM_CHAIN_ID.split(':')[1]!);
+  const delegate = KERNEL_V3_3_7702_DELEGATE;
+  assertWalletDelegate(delegate);
+  const engineSpec = createKernel7702AccountSpec({ node, chainId });
+  const gate = { allowAuthorization: false };
+  const spec: SmartAccountSpec = {
+    ...engineSpec,
+    async getEip7702Authorization(owner: DerivedAccount) {
+      const status = await readDelegationStatus(node, owner.address);
+      if (status.kind === 'none' && !gate.allowAuthorization) {
+        throw new Error(EIP7702_UNANNOUNCED_REFUSAL);
+      }
+      return engineSpec.getEip7702Authorization!(owner);
+    },
+  };
+  let paymasterContext: unknown = null;
+  if (options.paymaster?.contextJson) {
+    try {
+      paymasterContext = JSON.parse(options.paymaster.contextJson);
+    } catch {
+      paymasterContext = null;
+    }
+  }
+  const paymasterTransport = options.paymaster ? transportFor(options.paymaster.url) : undefined;
+  const client = new SmartAccountClient({
+    chainId,
+    entryPoint: ENTRYPOINT_V07,
+    bundler,
+    node,
+    spec,
+    ...(paymasterTransport
+      ? { paymaster: { transport: paymasterTransport, context: paymasterContext } }
+      : {}),
+  });
+  return {
+    client,
+    spec,
+    node,
+    bundler,
+    chainId,
+    sponsored: paymasterTransport !== undefined,
+    accountType: 'kernel-7702',
+    factory: delegate,
+    accountIndex: options.accountIndex ?? 0,
+    eip7702: { delegate, gate },
+  };
+}
+
+/**
  * createAaClient from a stored (= verified) configuration: the one place the
  * screens and the WalletConnect provider turn AaChainConfig into a bundle,
  * so the account type, Kernel addresses and paymaster are always threaded
@@ -805,9 +1000,34 @@ export function createAaClientFromConfig(
     nodeUrl: string;
     chainId: bigint;
     accountIndex: number;
+    /**
+     * The owner EOA. When it was upgraded with EIP-7702 on this chain
+     * (eip7702Owners), the bundle is 'kernel-7702'; otherwise, or when
+     * omitted, the chain's factory type. WalletConnect smart-account
+     * connections omit it on purpose: they never run the 7702 path, so a
+     * dApp session can never cause an authorization to be signed (D6).
+     */
+    ownerAddress?: string;
     transportFor?: TransportFactory;
   },
 ): AaClientBundle {
+  if (isEip7702Owner(config, options.ownerAddress)) {
+    if (!config.bundlerUrl) {
+      throw new Error('No bundler is configured for this network (Settings → Account Abstraction).');
+    }
+    return createAaClient({
+      nodeUrl: options.nodeUrl,
+      bundlerUrl: config.bundlerUrl,
+      factory: KERNEL_V3_3_7702_DELEGATE,
+      chainId: options.chainId,
+      accountIndex: options.accountIndex,
+      accountType: 'kernel-7702',
+      ...(config.paymasterUrl
+        ? { paymaster: { url: config.paymasterUrl, contextJson: config.paymasterContext } }
+        : {}),
+      ...(options.transportFor ? { transportFor: options.transportFor } : {}),
+    });
+  }
   if (!isAaConfigured(config) || !config.bundlerUrl || !config.factory) {
     throw new Error('Smart-account settings are incomplete for this network (Settings → Account Abstraction).');
   }
@@ -923,6 +1143,12 @@ export interface AaSendQuote {
   tokenSpend?: AaTokenSpend & { balance: bigint };
   /** Present for a smart-account ERC-20 send. */
   token?: AaTokenTransfer;
+  /**
+   * 'kernel-7702' only. upgrade = true means the account is still a plain
+   * EOA and THIS operation carries the EIP-7702 authorization (the confirm
+   * screen must say so); false means it is already delegated to `delegate`.
+   */
+  eip7702?: { upgrade: boolean; delegate: string };
 }
 
 /** Convenience alias: a quote for any list of calls. */
@@ -959,10 +1185,27 @@ export async function prepareAaCalls(
 
   const owner = addressOnlyOwner(ownerAddress);
   const sender = await bundle.client.getAddress(owner);
+  // EIP-7702 account: "deployed" means delegated to the wallet's Kernel
+  // delegate; a plain EOA gets the tuple on this operation (first op only).
+  let eip7702: AaSendQuote['eip7702'];
+  if (bundle.eip7702) {
+    const status = await readDelegationStatus(bundle.node, sender);
+    if (status.kind === 'contract') {
+      throw new Error(`${sender} holds contract code that is not an EIP-7702 delegation.`);
+    }
+    if (status.kind === 'delegated' && status.delegate.toLowerCase() !== bundle.eip7702.delegate.toLowerCase()) {
+      throw new Error(
+        `This account is delegated to ${status.delegate}, not the wallet's Kernel delegate ` +
+          `${bundle.eip7702.delegate}. The wallet does not replace another delegation; revoke it ` +
+          'first (Upgrade this account → Revoke).',
+      );
+    }
+    eip7702 = { upgrade: status.kind === 'none', delegate: bundle.eip7702.delegate };
+  }
   const [senderBalance, deployed, nonce, suggestedFees, tokenBalance, priorityFloor] =
     await Promise.all([
       nodeClient.getBalance(sender),
-      bundle.client.isDeployed(owner),
+      eip7702 ? Promise.resolve(!eip7702.upgrade) : bundle.client.isDeployed(owner),
       bundle.client.getNonce(owner),
       nodeClient.suggestFees(),
       options.tokenSpend
@@ -980,7 +1223,18 @@ export async function prepareAaCalls(
     );
   }
 
-  const factoryArgs = deployed ? undefined : await bundle.spec.getFactoryArgs(owner);
+  const factoryArgs = deployed || eip7702 ? undefined : await bundle.spec.getFactoryArgs(owner);
+  // The tuple travels only while the account is still plain. For the
+  // estimate it is the dummy-signed stub (viem's values); the authority's
+  // nonce is its current one, because the bundler's transaction carries it.
+  const stubAuth =
+    eip7702?.upgrade === true
+      ? stubEip7702Authorization(
+          bundle.chainId,
+          eip7702.delegate,
+          BigInt((await bundle.node('eth_getTransactionCount', [sender, 'pending'])) as string),
+        )
+      : undefined;
   const op: UserOperation = {
     sender,
     nonce,
@@ -994,6 +1248,7 @@ export async function prepareAaCalls(
     maxFeePerGas: fees.maxFeePerGas,
     maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
     signature: bundle.spec.stubSignature(),
+    ...(stubAuth ? { eip7702Auth: stubAuth } : {}),
   };
   const gas = await new BundlerClient(bundle.bundler, ENTRYPOINT_V07).estimateUserOperationGas(op);
 
@@ -1035,6 +1290,7 @@ export async function prepareAaCalls(
       ? { tokenSpend: { ...options.tokenSpend, balance: tokenBalance } }
       : {}),
     ...(options.token ? { token: options.token } : {}),
+    ...(eip7702 ? { eip7702 } : {}),
   };
 }
 
@@ -1137,11 +1393,25 @@ export async function sendAa(
         `${quote.sender}. Nothing was signed; review the send again.`,
     );
   }
-  const { userOpHash } = await bundle.client.sendCalls(owner, quote.calls, {
-    maxFeePerGas: quote.maxFeePerGas,
-    maxPriorityFeePerGas: quote.maxPriorityFeePerGas,
-  });
-  return { userOpHash };
+  if (bundle.eip7702 && !quote.eip7702) {
+    throw new Error('This operation was prepared for another account type. Nothing was signed.');
+  }
+  // D6: the authorization tuple may be signed only for a quote whose
+  // confirm screen announced the upgrade; the wrapped spec refuses it
+  // otherwise. The gate is closed again whatever happens.
+  if (bundle.eip7702) bundle.eip7702.gate.allowAuthorization = quote.eip7702?.upgrade === true;
+  try {
+    const { userOpHash } = await bundle.client.sendCalls(owner, quote.calls, {
+      maxFeePerGas: quote.maxFeePerGas,
+      maxPriorityFeePerGas: quote.maxPriorityFeePerGas,
+    });
+    return { userOpHash };
+  } finally {
+    if (bundle.eip7702) {
+      bundle.eip7702.gate.allowAuthorization = false;
+      if (quote.eip7702?.upgrade) invalidateAccountDelegation(sender);
+    }
+  }
 }
 
 /**
@@ -1205,6 +1475,15 @@ export function describeAaError(
   context: { accountType: AaAccountType; deployed: boolean | null },
 ): { title: string; detail: string } | null {
   const detail = error instanceof Error ? error.message : String(error);
+  if (context.accountType === 'kernel-7702' && context.deployed === false && /^RPC error /.test(detail)) {
+    return {
+      title: 'The bundler refused the operation that upgrades your account.',
+      detail:
+        `${detail}\n\nThe bundler's message is shown exactly as returned. Not every bundler ` +
+        'accepts EIP-7702 authorizations (ZeroDev’s did on Sepolia, 2026-10-01). You can upgrade ' +
+        'with a transaction instead (Upgrade this account → Upgrade now), then send again.',
+    };
+  }
   if (
     context.accountType === 'kernel-v3.3' &&
     context.deployed !== true &&

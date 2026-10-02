@@ -26,6 +26,8 @@ import { requireLocalAuth } from './biometric';
 import { usePrefs } from './PrefsContext';
 import { useWallet } from './WalletContext';
 import { accountLabel } from './accounts';
+import { useAccountDelegation } from './useDelegation';
+import { delegationLabelSuffix } from './delegation';
 import { EVM_CHAIN_ID, describeSendError, sendEvm } from './send';
 import {
   aaAccountTypeSignsMessages,
@@ -154,6 +156,10 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
   // The ACTIVE account's EVM address: new sessions are approved with it,
   // and only sessions bound to it are served.
   const ethAddress = accounts.find((a) => a.chainId === EVM_CHAIN_ID)?.address ?? null;
+  // EIP-7702 status of the active account (phase 8 item 1): the approval
+  // sheet labels it "Account 1 (…) · upgraded (Kernel v3.3)" when it runs
+  // Kernel, so the user knows which code acts for the dApp.
+  const activeDelegation = useAccountDelegation(ethAddress);
   const labelFor = useCallback(
     (address: string) => {
       const account = accountForEvmAddress(address);
@@ -789,7 +795,12 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
               // Smart-account requests are labeled with their OWNER account.
               const shown =
                 head.type === 'request' ? (head.smart ? head.smart.owner : head.address) : ethAddress;
-              return shown ? (labelFor(shown) ?? shown) : null;
+              if (!shown) return null;
+              const suffix =
+                ethAddress && shown.toLowerCase() === ethAddress.toLowerCase()
+                  ? delegationLabelSuffix(activeDelegation.status)
+                  : '';
+              return `${labelFor(shown) ?? shown}${suffix}`;
             })()}
             smartOption={smartOption}
             loadAaBundle={loadAaBundle}

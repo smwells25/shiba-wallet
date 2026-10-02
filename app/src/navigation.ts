@@ -31,4 +31,6 @@ export type RootStackParamList = {
   NftDetail: { assetId: string };
   /** Token approvals manager for the active account on the active EVM chain (phase 7 item 5). */
   Approvals: undefined;
+  /** EIP-7702 "Upgrade this account" for the active account on the active EVM chain (phase 8 item 1). */
+  UpgradeAccount: undefined;
 };

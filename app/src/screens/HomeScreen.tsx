@@ -22,6 +22,8 @@ import { usePrefs } from '../wallet/PrefsContext';
 import { maskAmount } from '../config/prefs';
 import { BalanceState, useBalances } from '../wallet/useBalances';
 import { useTokenBalances } from '../wallet/useTokenBalances';
+import { useAccountDelegation } from '../wallet/useDelegation';
+import { delegationLabelSuffix, FOREIGN_DELEGATE_WARNING } from '../wallet/delegation';
 import { usePrices } from '../wallet/usePrices';
 import {
   formatFiat,
@@ -162,6 +164,10 @@ export function HomeScreen({ navigation }: Props) {
   const { hideAmounts, setHideAmounts, evmChain, sepolia, showFiat } = usePrefs();
   const { balances, refreshing, refreshAll, refreshOne } = useBalances(accounts);
   const evmAccount = accounts.find((a) => a.chainId === EVM_CHAIN_ID);
+  // EIP-7702 status of the active account on the active EVM chain (phase 8
+  // item 1): shown under the account switcher so the user always knows
+  // which code runs at the address.
+  const delegation = useAccountDelegation(evmAccount?.address);
   // Tracked tokens are Ethereum-mainnet assets; in Sepolia test mode the
   // token section is hidden entirely (fetching a mainnet contract's
   // balanceOf against a Sepolia endpoint would be wrong-chain noise).
@@ -273,6 +279,20 @@ export function HomeScreen({ navigation }: Props) {
               <Text style={[styles.sendLink, { color: theme.accent }]}>NFTs</Text>
             </Pressable>
           ) : null}
+          {/* EIP-7702 account upgrade (phase 8 item 1) for the active
+              account on the active EVM chain. */}
+          {item.chainId === EVM_CHAIN_ID ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Upgrade this account"
+              onPress={() => navigation.navigate('UpgradeAccount')}
+              hitSlop={8}
+            >
+              <Text style={[styles.sendLink, { color: theme.accent }]}>
+                {delegation.status?.kind === 'kernel-v3.3' ? 'Upgraded ✓' : 'Upgrade'}
+              </Text>
+            </Pressable>
+          ) : null}
           {/* Token approvals manager (phase 7 item 5) for the active EVM
               chain; the screen explains what it can and cannot see. */}
           {item.chainId === EVM_CHAIN_ID ? (
@@ -367,6 +387,36 @@ export function HomeScreen({ navigation }: Props) {
             {/* Account switcher (phase 6 item 3): active account name and
                 short EVM address; opens the account list. */}
             <AccountSwitcher onManage={() => navigation.navigate('Settings')} />
+            {activeAccount && delegation.status?.kind === 'kernel-v3.3' ? (
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => navigation.navigate('UpgradeAccount')}
+                hitSlop={8}
+              >
+                <Text style={[styles.delegationLine, { color: theme.success }]}>
+                  {activeAccount.name}
+                  {delegationLabelSuffix(delegation.status)} on {evmChain.label}
+                </Text>
+              </Pressable>
+            ) : null}
+            {activeAccount &&
+            (delegation.status?.kind === 'other' || delegation.status?.kind === 'contract') ? (
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => navigation.navigate('UpgradeAccount')}
+                hitSlop={8}
+                style={[
+                  styles.delegationWarning,
+                  { backgroundColor: theme.warningSurface, borderColor: theme.warningBorder },
+                ]}
+              >
+                <Text style={[styles.delegationLine, { color: theme.warningText }]}>
+                  ⚠ {activeAccount.name}
+                  {delegationLabelSuffix(delegation.status)} on {evmChain.label}.{' '}
+                  {delegation.status.kind === 'other' ? FOREIGN_DELEGATE_WARNING : ''} Tap to review.
+                </Text>
+              </Pressable>
+            ) : null}
             {/* Quick balance-privacy toggle (the same setting lives in
                 Settings -> Privacy & security); the eye glyph masks every
                 amount on this screen and on Activity as ••••. */}
@@ -527,6 +577,16 @@ const styles = StyleSheet.create({
   },
   headerStack: {
     gap: 8,
+  },
+  delegationLine: {
+    fontSize: 13,
+    fontWeight: '600',
+    lineHeight: 18,
+  },
+  delegationWarning: {
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 8,
   },
   privacyRow: {
     flexDirection: 'row',
