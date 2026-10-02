@@ -22,6 +22,7 @@ import {
   guardianSignatureExposure,
   guardianUninstallCalls,
   kernelGuardianRecoverySpec,
+  ownerRotationCalls,
   parseGuardianRecoveryRequest,
   parseRecoveryMetadata,
   predictKernelAddress,
@@ -51,6 +52,7 @@ import {
   type KernelGuardianRecord,
   type KernelGuardianSet,
   type KernelGuardianState,
+  type KernelOwnerRecord,
   type KernelOwnerState,
   type KernelRecoveryMetadata,
   type KernelRecoveryModules,
@@ -65,10 +67,15 @@ import {
   bundlerPriorityFeeFloor,
   clearAllRecoveredAccounts,
   eip155ChainIdOf,
+  isEip7702Owner,
+  moveRecoveredAccountLink,
   prepareAaCalls,
+  recoveredAccountFor,
   resolveAaSender,
   setRecoveredAccount,
   summarizeAaReceipt,
+  ROTATION_TARGET_HAS_OTHER_ACCOUNT,
+  type AaChainConfig,
   type AaClientBundle,
   type AaReceiptSummary,
   type AaSendQuote,
@@ -569,6 +576,88 @@ export function parseRecordText(text: string): KernelRecoveryMetadata {
     throw new Error('The recovery record is not valid JSON.');
   }
   return parseRecoveryMetadata(parsed);
+}
+
+
+// ---------------------------------------------------------------------------
+// Record files (.json) — the screens write and read them with expo-file-system,
+// expo-sharing and expo-document-picker (components/RecordFileActions.tsx);
+// the naming and parsing rules live here so scripts/check-recovery.mjs runs
+// them under Node.
+// ---------------------------------------------------------------------------
+
+/** MIME type of an exported record file and the only type the import picker offers. */
+export const RECORD_FILE_MIME_TYPE = 'application/json';
+/** iOS Uniform Type Identifier for JSON (Apple's public.json). */
+export const RECORD_FILE_UTI = 'public.json';
+/**
+ * Largest record file the import accepts, in bytes. A record with the
+ * maximum guardian list and a long owner history is a few kilobytes; the
+ * cap only stops the app from reading an unrelated large file into memory.
+ */
+export const RECORD_FILE_MAX_BYTES = 64 * 1024;
+/** Sub-directory of the app's cache directory that holds export files while they are shared. */
+export const RECORD_EXPORT_DIRECTORY = 'recovery-record-export';
+
+/** Readable network names for file names; other chains use their CAIP-2 id with ":" replaced. */
+const RECORD_FILE_CHAIN_LABELS: Readonly<Record<string, string>> = {
+  'eip155:1': 'ethereum',
+  'eip155:11155111': 'sepolia',
+};
+
+/**
+ * The export file name rule: product, network, the account's short form
+ * (first 4 and last 4 hex characters of the checksummed address) and the UTC
+ * date, e.g. "shiba-recovery-record_sepolia_0xD31c-D8FA_2026-10-02.json".
+ * Only [A-Za-z0-9._-] are used, so every file system and share target
+ * accepts it.
+ */
+export const RECORD_FILE_NAME_PATTERN =
+  /^shiba-recovery-record_[a-z0-9-]+_0x[0-9a-fA-F]{4}-[0-9a-fA-F]{4}_[0-9]{4}-[0-9]{2}-[0-9]{2}\.json$/;
+
+export function recordExportFileName(meta: KernelRecoveryMetadata, date: Date = new Date()): string {
+  const chain = RECORD_FILE_CHAIN_LABELS[meta.chainId] ?? meta.chainId.replace(':', '-');
+  const account = checksum(meta.account);
+  const name = `shiba-recovery-record_${chain}_${account.slice(0, 6)}-${account.slice(-4)}_${date.toISOString().slice(0, 10)}.json`;
+  if (!RECORD_FILE_NAME_PATTERN.test(name)) throw new Error(`Unexpected export file name ${name}`);
+  return name;
+}
+
+/**
+ * The exact text written into an export file: the canonical JSON of the
+ * engine's serializeRecoveryMetadata (via recordExport, which round-trips it
+ * through the strict parser first). No header and no trailing newline, so
+ * the file is the record and nothing else.
+ */
+export function recordFileContents(meta: KernelRecoveryMetadata): string {
+  return recordExport(meta).json;
+}
+
+/**
+ * Checks a picked file before its text enters the EXISTING import path
+ * (parseRecordText → the engine's strict parseRecoveryMetadata, which
+ * re-checks the CREATE2 lineage and every field). A file must look like a
+ * JSON file (".json" name or the application/json type), be at most
+ * RECORD_FILE_MAX_BYTES, and contain exactly one JSON object (an optional
+ * UTF-8 byte-order mark and surrounding whitespace are allowed) — a share
+ * text with a header, or two records in one file, is refused here rather
+ * than guessed at. Returns the text to import and the parsed record.
+ */
+export function parseRecordFile(
+  text: string,
+  info: { name?: string | null; size?: number | null; mimeType?: string | null } = {},
+): { text: string; metadata: KernelRecoveryMetadata } {
+  const named = typeof info.name === 'string' && info.name.toLowerCase().endsWith('.json');
+  const typed = typeof info.mimeType === 'string' && info.mimeType.toLowerCase().split(';')[0]!.trim() === RECORD_FILE_MIME_TYPE;
+  if (!named && !typed) throw new Error('Choose a recovery record file: a .json file exported by Shiba Wallet.');
+  if ((typeof info.size === 'number' && info.size > RECORD_FILE_MAX_BYTES) || utf8Length(text) > RECORD_FILE_MAX_BYTES) {
+    throw new Error(`This file is larger than ${RECORD_FILE_MAX_BYTES / 1024} KiB, so it is not a recovery record.`);
+  }
+  const body = (text.charCodeAt(0) === 0xfeff ? text.slice(1) : text).trim();
+  if (body === '' || extractFirstJsonObject(body) !== body) {
+    throw new Error('This file is not a recovery record: it must contain exactly one JSON record and nothing else.');
+  }
+  return { text: body, metadata: parseRecordText(body) };
 }
 
 
@@ -2432,4 +2521,593 @@ export async function searchOwnedKernelAccounts(
   const latest = BigInt((await node('eth_blockNumber', [])) as string);
   const lookback = BigInt(lookbackBlocks);
   return findKernelAccountsByOwner(node, owner, { fromBlock: latest > lookback ? latest - lookback : 0n, toBlock: latest });
+}
+
+
+// ---------------------------------------------------------------------------
+// Owner rotation ("Change owner"): the owner hands the account to another of
+// this wallet's keys
+// ---------------------------------------------------------------------------
+//
+// The script-only flow of scripts/testnet/kernel-rotate-owner.mjs, in the
+// app. The CURRENT owner (the active account, through signWith after the
+// biometric gate) signs one root operation from the account that runs the
+// engine's ownerRotationCalls — ECDSAValidator.onUninstall("") then
+// onInstall(bytes20 newOwner), the same two calls RecoveryAction makes, proven
+// live on Sepolia by the engine's recovery smoke — optionally followed by the
+// engine's guardianUninstallCalls (the script's REMOVE_GUARDIANS option).
+//
+// The new owner is ALWAYS the EVM key of one of this wallet's own accounts
+// (m/44'/60'/0'/0/N): handing the account to a key the wallet does not hold
+// would lose it, and the point of the flow (typically after a guardian
+// recovery) is to make the account usable from an account of this seed.
+//
+// Recording: the owner change cannot be written before submission (the engine
+// requires a transaction or UserOperation hash on every owner change), so it is
+// written the moment the bundler accepts the operation, with the userOpHash
+// and no transaction hash; that "pending" tail is completed (transaction hash,
+// block) or undone once the chain answers (finalizeOwnerRotation, which is
+// idempotent and is also offered for rotations interrupted by an app restart:
+// listPendingOwnerRotations). The aa.ts attachment moves only after the
+// engine's verifyKernelAccountForOwner confirmed the new owner on-chain.
+
+/** One of this wallet's accounts as an owner candidate (EVM key m/44'/60'/0'/0/index). */
+export interface WalletOwnerAccount {
+  index: number;
+  name: string;
+  address: string;
+  /** BIP-32 path of the EVM key, recorded in the owner history. */
+  path: string;
+}
+
+/**
+ * BIP-32 path of an account's EVM key: m/44'/60'/0'/0/N (accounts.ts
+ * derivationArgsFor maps EVM account N to account 0, address index N, the
+ * MetaMask convention; ADR D8). check-recovery.mjs pins it to the core
+ * evmKeyProvider's own path.
+ */
+export function evmAccountPath(index: number): string {
+  if (!Number.isSafeInteger(index) || index < 0) throw new Error(`Invalid account index ${String(index)}.`);
+  return `m/44'/60'/0'/0/${index}`;
+}
+
+export const OWNER_ROTATION_EXPLANATION: readonly string[] = [
+  'This changes the key that signs for this smart account (its owner). The account keeps the same ' +
+    'address, balance, tokens and history; only the key that controls it changes.',
+  'The new owner can only be one of this wallet’s own accounts, so this wallet keeps control. After the ' +
+    'change, switch to that account to use the smart account.',
+  'Guardians stay exactly as they are unless you also choose to remove them below.',
+];
+
+export const OWNER_ROTATION_OLD_KEY_WARNING =
+  'The current owner key stops working for this account immediately: once the change is included, ' +
+  'operations signed by it are refused. Nobody can undo this except the new owner (by changing the ' +
+  'owner again) or enough guardians (by a recovery).';
+
+export const OWNER_ROTATION_SIMPLE_REFUSAL =
+  'Changing the owner needs a Kernel v3.3 account: this network’s smart-account type is SimpleAccount, ' +
+  'which has no owner validator to change.';
+
+export const OWNER_ROTATION_7702_REFUSAL =
+  'This account is an EIP-7702-upgraded address: its key is the address itself and cannot be replaced. ' +
+  'Only a Kernel smart account (a separate contract address) can change its owner.';
+
+export const OWNER_ROTATION_UNDEPLOYED_REFUSAL =
+  'Your Kernel smart account is not deployed yet, so it has no owner on-chain to change. Send one ' +
+  'smart-account transaction first (it deploys the account).';
+
+export const OWNER_ROTATION_NOT_OWNER_REFUSAL =
+  'This wallet’s active account is not the current owner of that Kernel account, so it cannot change ' +
+  'its owner. Switch to the account that owns it.';
+
+export const OWNER_ROTATION_SAME_OWNER =
+  'That account is already the owner. Choose a different account as the new owner.';
+
+export const OWNER_ROTATION_FOREIGN_TARGET =
+  'Only one of this wallet’s own accounts can become the new owner: the wallet must hold the new key, ' +
+  'or the smart account would be lost. Nothing was signed.';
+
+export const OWNER_ROTATION_GUARDIAN_TARGET =
+  'That account is one of this account’s guardians. A guardian cannot also be the owner (it would hold ' +
+  'a vote over its own replacement). Remove it from the guardians first, or choose another account.';
+
+export const OWNER_ROTATION_7702_TARGET =
+  'That account is upgraded with EIP-7702 on this network, so its smart-account sends use its own ' +
+  'address and could not use this account. Choose another account, or revoke its upgrade first.';
+
+export const OWNER_ROTATION_NO_RECORD =
+  'This account has no recovery record on this device, so nothing was signed: after the change the ' +
+  'address can no longer be found from the new owner’s key alone, and the record is what keeps it ' +
+  'findable. A recovered account needs its record first (Recover an account with guardians → paste its ' +
+  'record, or its address and original owner).';
+
+export const OWNER_ROTATION_RECORD_STALE =
+  'The recovery record on this device does not list the current on-chain owner as the latest owner, so ' +
+  'the owner history would be wrong. Update the record (import a current backup) first. Nothing was signed.';
+
+export const OWNER_ROTATION_NO_GUARDIANS =
+  'There are no guardians installed on this account, so there is nothing to remove.';
+
+/**
+ * Local refusals for a chosen new owner (no network requests): it must be
+ * one of this wallet's accounts, differ from the current owner, not be a
+ * guardian, not be an EIP-7702-upgraded owner on this chain, and not already
+ * use a different recovered account (aa.ts keeps one smart account per owner
+ * and chain). Null when acceptable.
+ */
+export function checkOwnerRotationTarget(args: {
+  /** Null before the account is known: the account-specific checks are skipped. */
+  account: string | null;
+  currentOwner: string;
+  newOwner: string;
+  walletOwners: readonly WalletOwnerAccount[];
+  guardians: readonly KernelGuardian[] | null;
+  config: AaChainConfig;
+}): string | null {
+  if (!ADDRESS.test(args.newOwner)) return `Not an EVM address: ${args.newOwner}`;
+  if (!args.walletOwners.some((w) => same(w.address, args.newOwner))) return OWNER_ROTATION_FOREIGN_TARGET;
+  if (same(args.newOwner, args.currentOwner)) return OWNER_ROTATION_SAME_OWNER;
+  if (args.account !== null && same(args.newOwner, args.account)) return OWNER_ROTATION_FOREIGN_TARGET;
+  if ((args.guardians ?? []).some((g) => same(g.address, args.newOwner))) return OWNER_ROTATION_GUARDIAN_TARGET;
+  if (isEip7702Owner(args.config, args.newOwner)) return OWNER_ROTATION_7702_TARGET;
+  const linked = recoveredAccountFor(args.config, args.newOwner);
+  if (linked !== null && (args.account === null || !same(linked, args.account))) return ROTATION_TARGET_HAS_OTHER_ACCOUNT;
+  return null;
+}
+
+/**
+ * Whether the new owner needs an aa.ts attachment to use the account: false
+ * only when the chain's configured Kernel factory would derive exactly this
+ * address for the new owner at its own account index (for example when the
+ * owner is rotated back to the account's original owner), true otherwise.
+ * Also returns the new owner's OWN factory smart-account address, which the
+ * attachment hides from smart-account sends while it is in place.
+ */
+export function ownerRotationAttachment(args: {
+  account: string;
+  newOwner: WalletOwnerAccount;
+  metadata: KernelRecoveryMetadata;
+  config: AaChainConfig;
+}): { attach: boolean; newOwnerOwnSmartAccount: string | null } {
+  const d = args.metadata.deployment;
+  const kernelFactory = args.config.accountType === 'kernel-v3.3' && args.config.factory !== null ? args.config.factory : null;
+  if (kernelFactory === null) return { attach: true, newOwnerOwnSmartAccount: null };
+  const own = predictKernelAddress(args.newOwner.address, {
+    index: BigInt(args.newOwner.index),
+    factory: kernelFactory,
+    implementation: d.implementation,
+    ecdsaValidator: d.ecdsaValidator,
+  });
+  if (same(own, args.account)) return { attach: false, newOwnerOwnSmartAccount: null };
+  return { attach: true, newOwnerOwnSmartAccount: own };
+}
+
+export type OwnerRotationResolution =
+  | { ok: true; account: string; kind: 'factory' | 'recovered'; owner: string; state: KernelGuardianState }
+  | { ok: false; reason: string };
+
+/**
+ * Eligibility for "Change owner": the same on-chain checks as the Guardians
+ * screen (resolveGuardianAccount: chain id, a deployed Kernel v3.3 proxy with
+ * the ECDSA root validator, owned by `ownerAddress`; refuses SimpleAccount,
+ * EIP-7702 upgrades, undeployed and foreign-owned accounts), with the refusal
+ * texts worded for an owner change. Read-only.
+ */
+export async function resolveOwnerRotationAccount(
+  bundle: AaClientBundle,
+  ownerAddress: string,
+): Promise<OwnerRotationResolution> {
+  const r = await resolveGuardianAccount(bundle, ownerAddress);
+  if (r.ok) return r;
+  const translated: Record<string, string> = {
+    [GUARDIAN_SIMPLE_REFUSAL]: OWNER_ROTATION_SIMPLE_REFUSAL,
+    [GUARDIAN_7702_REFUSAL]: OWNER_ROTATION_7702_REFUSAL,
+    [GUARDIAN_UNDEPLOYED_REFUSAL]: OWNER_ROTATION_UNDEPLOYED_REFUSAL,
+    [GUARDIAN_NOT_OWNER_REFUSAL]: OWNER_ROTATION_NOT_OWNER_REFUSAL,
+  };
+  return { ok: false, reason: translated[r.reason] ?? r.reason };
+}
+
+export interface OwnerRotationQuote {
+  account: string;
+  kind: 'factory' | 'recovered';
+  /** The current owner EOA (the active account): it signs. */
+  currentOwner: string;
+  newOwner: WalletOwnerAccount;
+  removeGuardians: boolean;
+  /** The guardian set on-chain when quoted (null when none). */
+  guardians: KernelGuardianSet | null;
+  /** The exact calls (engine ownerRotationCalls, then guardianUninstallCalls when removing). */
+  calls: Call[];
+  quote: AaSendQuote;
+  /** True when the new owner needs an aa.ts attachment to use the account. */
+  attach: boolean;
+  /** The new owner's own factory smart account, hidden from its sends while attached. */
+  newOwnerOwnSmartAccount: string | null;
+}
+
+/**
+ * Quotes the owner change as ONE root-signed operation. Order: local target
+ * checks (no network request), then the on-chain eligibility, the recovery
+ * record (started for a factory account like the Guardians screen does;
+ * required for a recovered one; its latest owner must be the on-chain owner),
+ * the on-chain guardian check, the engine's ownerRotationCalls (which refuses
+ * the zero address, the account itself and guardians again), the optional
+ * guardian removal, and finally the bundler estimate (prepareAaCalls) as the
+ * pre-flight gate. Signs nothing.
+ */
+export async function prepareOwnerRotationQuote(
+  bundle: AaClientBundle,
+  args: {
+    ownerAddress: string;
+    /** The active account's index and EVM path (to start a factory account's record). */
+    ownerIndex: number;
+    ownerPath: string | null;
+    newOwner: WalletOwnerAccount;
+    walletOwners: readonly WalletOwnerAccount[];
+    removeGuardians: boolean;
+    chain: string;
+    config: AaChainConfig;
+    store?: KeyValueStore;
+  },
+): Promise<OwnerRotationQuote> {
+  const store = args.store ?? AsyncStorage;
+  if (!args.walletOwners.some((w) => same(w.address, args.newOwner.address))) throw new Error(OWNER_ROTATION_FOREIGN_TARGET);
+  if (same(args.newOwner.address, args.ownerAddress)) throw new Error(OWNER_ROTATION_SAME_OWNER);
+  const early = checkOwnerRotationTarget({
+    account: null,
+    currentOwner: args.ownerAddress,
+    newOwner: args.newOwner.address,
+    walletOwners: args.walletOwners,
+    guardians: null,
+    config: args.config,
+  });
+  // The account is not known yet: only the account-independent refusals
+  // apply here (a link to another account is re-checked below).
+  if (early !== null && early !== ROTATION_TARGET_HAS_OTHER_ACCOUNT) throw new Error(early);
+  const resolution = await resolveOwnerRotationAccount(bundle, args.ownerAddress);
+  if (!resolution.ok) throw new Error(resolution.reason);
+  const { account, state } = resolution;
+  let entry: RecoveryRecordEntry | null;
+  if (resolution.kind === 'factory') {
+    if (!bundle.kernel) throw new Error('The Kernel configuration is incomplete. Check Settings → Account Abstraction.');
+    entry = (
+      await ensureFactoryKernelRecord({
+        chain: args.chain,
+        account,
+        accountIndex: args.ownerIndex,
+        owner: args.ownerAddress,
+        ownerPath: args.ownerPath,
+        factory: bundle.factory,
+        implementation: bundle.kernel.implementation,
+        ecdsaValidator: bundle.kernel.ecdsaValidator,
+        store,
+      })
+    ).entry;
+  } else {
+    entry = await getRecoveryRecord(args.chain, account, store);
+  }
+  if (!entry) throw new Error(OWNER_ROTATION_NO_RECORD);
+  if (!same(currentOwnerOf(entry.metadata), resolution.owner)) throw new Error(OWNER_ROTATION_RECORD_STALE);
+  const refusal = checkOwnerRotationTarget({
+    account,
+    currentOwner: resolution.owner,
+    newOwner: args.newOwner.address,
+    walletOwners: args.walletOwners,
+    guardians: state.set?.guardians ?? null,
+    config: args.config,
+  });
+  if (refusal !== null) throw new Error(refusal);
+  const calls: Call[] = [
+    ...ownerRotationCalls(args.newOwner.address, {
+      account,
+      ecdsaValidator: entry.metadata.deployment.ecdsaValidator,
+      guardians: state.set?.guardians,
+    }),
+  ];
+  const guardiansPresent = state.validationInstalled || state.validatorInitialized || state.recoveryRouted;
+  if (args.removeGuardians) {
+    if (!guardiansPresent) throw new Error(OWNER_ROTATION_NO_GUARDIANS);
+    calls.push(...guardianUninstallCalls(account));
+  }
+  const { attach, newOwnerOwnSmartAccount } = ownerRotationAttachment({
+    account,
+    newOwner: args.newOwner,
+    metadata: entry.metadata,
+    config: args.config,
+  });
+  const quote = await quoteRootOperation(bundle, args.ownerAddress, account, calls);
+  return {
+    account,
+    kind: resolution.kind,
+    currentOwner: checksum(resolution.owner),
+    newOwner: { ...args.newOwner, address: checksum(args.newOwner.address) },
+    removeGuardians: args.removeGuardians,
+    guardians: state.set,
+    calls,
+    quote,
+    attach,
+    newOwnerOwnSmartAccount,
+  };
+}
+
+/** The record with the owner change appended (and the guardians cleared when they are removed too). */
+function recordWithRotation(
+  meta: KernelRecoveryMetadata,
+  rotation: Pick<OwnerRotationQuote, 'newOwner' | 'removeGuardians'>,
+  hashes: { txHash: string | null; userOpHash: string | null; blockNumber: string | null },
+  recordedAt: number,
+): KernelRecoveryMetadata {
+  const base = rotation.removeGuardians ? recordGuardians(meta, null) : meta;
+  return recordOwnerChange(base, {
+    owner: checksum(rotation.newOwner.address),
+    source: 'owner-rotation',
+    txHash: hashes.txHash,
+    userOpHash: hashes.userOpHash,
+    blockNumber: hashes.blockNumber,
+    derivationPath: BIP32_PATH.test(rotation.newOwner.path) ? rotation.newOwner.path : null,
+    recordedAt,
+  });
+}
+
+/**
+ * Submits a quoted owner change (owner-signed through `submit`; in the app:
+ * biometric gate → signWith(current owner) → sendAa). The quoted calls must
+ * be exactly the rotation's and the record's latest owner must still be the
+ * current owner, else nothing is signed. When the bundler accepts, the record
+ * immediately gets the owner change with the userOpHash (no transaction hash
+ * yet: the pending tail finalizeOwnerRotation completes or undoes). A failure
+ * to save the record after acceptance is returned, not thrown, because the
+ * operation is already on its way.
+ */
+export async function submitOwnerRotation(args: {
+  rotation: OwnerRotationQuote;
+  chain: string;
+  store?: KeyValueStore;
+  submit: (quote: AaSendQuote) => Promise<{ userOpHash: string }>;
+  now?: number;
+}): Promise<{ userOpHash: string; previous: KernelRecoveryMetadata; entry: RecoveryRecordEntry | null; recordError: string | null }> {
+  const store = args.store ?? AsyncStorage;
+  const r = args.rotation;
+  if (!sameCalls(r.quote.calls, r.calls)) {
+    throw new Error('The quoted operation is not the owner change it claims to be. Nothing was signed.');
+  }
+  const previousEntry = await getRecoveryRecord(args.chain, r.account, store);
+  if (!previousEntry) throw new Error(OWNER_ROTATION_NO_RECORD);
+  if (!same(currentOwnerOf(previousEntry.metadata), r.currentOwner)) throw new Error(OWNER_ROTATION_RECORD_STALE);
+  const expected = [
+    ...ownerRotationCalls(r.newOwner.address, {
+      account: r.account,
+      ecdsaValidator: previousEntry.metadata.deployment.ecdsaValidator,
+      guardians: r.guardians?.guardians,
+    }),
+    ...(r.removeGuardians ? guardianUninstallCalls(r.account) : []),
+  ];
+  if (!sameCalls(r.calls, expected)) {
+    throw new Error('The owner change does not match the engine’s owner-rotation calls. Nothing was signed.');
+  }
+  const { userOpHash } = await args.submit(r.quote);
+  try {
+    const next = recordWithRotation(
+      previousEntry.metadata,
+      r,
+      { txHash: null, userOpHash: userOpHash.toLowerCase(), blockNumber: null },
+      Math.floor((args.now ?? Date.now()) / 1000),
+    );
+    return { userOpHash, previous: previousEntry.metadata, entry: await saveRecoveryMetadata(next, store), recordError: null };
+  } catch (e) {
+    return { userOpHash, previous: previousEntry.metadata, entry: null, recordError: message(e) };
+  }
+}
+
+export type OwnerRotationOutcome =
+  /** The new owner owns the account on-chain; the attachment and the record are updated. */
+  | { state: 'done'; txHash: string | null; blockNumber: string | null; recordCheck: { ok: boolean; problems: string[] } }
+  /** The previous owner still owns it and the operation is not known to have failed. */
+  | { state: 'pending' }
+  /** The operation reverted, or the pending change was abandoned: the record is restored. */
+  | { state: 'failed'; detail: string }
+  /** The account is owned by neither: nothing was changed locally. */
+  | { state: 'other-owner'; owner: string }
+  /** The new owner owns it, but the engine's ownership check failed: nothing was attached. */
+  | { state: 'unverified'; problems: string[] };
+
+/**
+ * Settles an owner change from the chain; safe to call any number of times.
+ *  - New owner on-chain: verifyKernelAccountForOwner must pass; then the
+ *    aa.ts attachment moves (aa.ts moveRecoveredAccountLink: the previous
+ *    owner's link to this account is removed; the new owner is attached
+ *    unless its own factory derivation yields the address) and the record's
+ *    pending tail gets the transaction hash and block (from the receipt, else
+ *    the ECDSA validator's OwnerRegistered log in recent blocks). A record
+ *    whose save failed earlier gets the change appended now.
+ *  - Previous owner on-chain and the receipt says the operation failed (or
+ *    `abandon` is set): the pending tail is undone — the saved previous
+ *    record when given, else the tail is dropped and the guardians are re-read
+ *    from the chain.
+ *  - Previous owner on-chain otherwise: still pending.
+ */
+export async function finalizeOwnerRotation(args: {
+  node: JsonRpcTransport;
+  chain: string;
+  account: string;
+  previousOwner: string;
+  newOwner: WalletOwnerAccount;
+  removeGuardians: boolean;
+  userOpHash: string | null;
+  receipt?: AaReceiptSummary | null;
+  previous?: KernelRecoveryMetadata | null;
+  config: AaChainConfig;
+  abandon?: boolean;
+  store?: KeyValueStore;
+  aaStore?: KeyValueStore;
+  now?: number;
+}): Promise<OwnerRotationOutcome> {
+  const store = args.store ?? AsyncStorage;
+  const aaStore = args.aaStore ?? store;
+  const reported = await new NodeClient(args.node).chainId();
+  if (`eip155:${reported}` !== args.chain) throw new Error(`The RPC endpoint is chain ${reported}, not ${args.chain}. Nothing was changed.`);
+  const entry = await getRecoveryRecord(args.chain, args.account, store);
+  const ecdsaValidator = entry?.metadata.deployment.ecdsaValidator ?? KERNEL_V3_3.ecdsaValidator;
+  const onChain = await readKernelOwner(args.node, args.account, ecdsaValidator);
+  const tail = entry ? entry.metadata.owners[entry.metadata.owners.length - 1]! : null;
+  const isPendingTail = (t: KernelOwnerRecord | null): boolean =>
+    t !== null &&
+    t.source === 'owner-rotation' &&
+    t.txHash === null &&
+    same(t.owner, args.newOwner.address) &&
+    (args.userOpHash === null || t.userOpHash === null || t.userOpHash === args.userOpHash.toLowerCase());
+
+  if (same(onChain.owner, args.newOwner.address)) {
+    const check = await verifyKernelAccountForOwner(args.node, args.account, args.newOwner.address, {
+      ...(entry ? { implementation: entry.metadata.deployment.implementation } : {}),
+      ecdsaValidator,
+    });
+    if (!check.ok) return { state: 'unverified', problems: check.problems };
+    if (args.abandon) throw new Error('The owner change is already included on-chain; it cannot be abandoned.');
+    let txHash = args.receipt?.txHash ? args.receipt.txHash.toLowerCase() : null;
+    let blockNumber: string | null = null;
+    if (txHash) {
+      const r = (await args.node('eth_getTransactionReceipt', [txHash]).catch(() => null)) as { blockNumber?: string } | null;
+      if (r && typeof r.blockNumber === 'string') blockNumber = BigInt(r.blockNumber).toString(10);
+    } else {
+      const found = await findRecoveryTransaction(args.node, args.account, args.newOwner.address, { ecdsaValidator }).catch(() => null);
+      if (found) {
+        txHash = found.txHash;
+        blockNumber = found.blockNumber;
+      }
+    }
+    if (entry) {
+      const meta = entry.metadata;
+      if (isPendingTail(tail)) {
+        if (txHash) {
+          const owners = [...meta.owners.slice(0, -1), { ...tail!, txHash, blockNumber }];
+          await saveRecoveryMetadata({ ...meta, owners }, store);
+        }
+      } else if (!same(currentOwnerOf(meta), args.newOwner.address) && (txHash || args.userOpHash)) {
+        await saveRecoveryMetadata(
+          recordWithRotation(
+            meta,
+            { newOwner: args.newOwner, removeGuardians: args.removeGuardians },
+            { txHash, userOpHash: args.userOpHash ? args.userOpHash.toLowerCase() : null, blockNumber },
+            Math.floor((args.now ?? Date.now()) / 1000),
+          ),
+          store,
+        );
+      }
+    }
+    const saved = await getRecoveryRecord(args.chain, args.account, store);
+    const { attach } = saved
+      ? ownerRotationAttachment({ account: args.account, newOwner: args.newOwner, metadata: saved.metadata, config: args.config })
+      : { attach: true };
+    await moveRecoveredAccountLink(args.chain, { account: args.account, from: args.previousOwner, to: args.newOwner.address, attach }, aaStore);
+    const recordCheck = saved ? await verifyRecoveryMetadataOnChain(args.node, saved.metadata) : { ok: false, problems: ['no recovery record on this device'] };
+    return { state: 'done', txHash, blockNumber, recordCheck };
+  }
+
+  if (same(onChain.owner, args.previousOwner)) {
+    const failed = args.receipt?.success === false;
+    if (!failed && !args.abandon) return { state: 'pending' };
+    if (entry && isPendingTail(tail)) {
+      if (args.previous && same(currentOwnerOf(args.previous), args.previousOwner)) {
+        await saveRecoveryMetadata(args.previous, store);
+      } else {
+        // Without the saved previous record, drop the pending owner entry and
+        // re-read the guardians from the chain (the pending change may have
+        // cleared them in the record).
+        await saveRecoveryMetadata({ ...entry.metadata, owners: entry.metadata.owners.slice(0, -1) }, store);
+        await syncRecordGuardiansFromChain(args.node, args.chain, args.account, store);
+      }
+    }
+    return {
+      state: 'failed',
+      detail: failed
+        ? 'The operation was included but reverted: the owner did not change. The recovery record was restored.'
+        : 'The pending owner change was forgotten on this device. The owner did not change.',
+    };
+  }
+  return { state: 'other-owner', owner: onChain.owner };
+}
+
+/**
+ * Waits for the rotation's receipt (bundler eth_getUserOperationReceipt via
+ * the bundle's client), then settles it with finalizeOwnerRotation. A timeout
+ * settles from the chain alone (usually "pending").
+ */
+export async function waitAndFinalizeOwnerRotation(args: {
+  bundle: Pick<AaClientBundle, 'client' | 'node'>;
+  rotation: OwnerRotationQuote;
+  userOpHash: string;
+  chain: string;
+  previous: KernelRecoveryMetadata | null;
+  config: AaChainConfig;
+  store?: KeyValueStore;
+  aaStore?: KeyValueStore;
+  timeoutMs?: number;
+  pollMs?: number;
+}): Promise<{ receipt: AaReceiptSummary | null; outcome: OwnerRotationOutcome }> {
+  let receipt: AaReceiptSummary | null = null;
+  try {
+    const raw = await args.bundle.client.waitForReceipt(args.userOpHash, {
+      timeoutMs: args.timeoutMs ?? 120_000,
+      pollMs: args.pollMs ?? 3_000,
+    });
+    receipt = summarizeAaReceipt(raw);
+  } catch {
+    receipt = null;
+  }
+  const outcome = await finalizeOwnerRotation({
+    node: args.bundle.node,
+    chain: args.chain,
+    account: args.rotation.account,
+    previousOwner: args.rotation.currentOwner,
+    newOwner: args.rotation.newOwner,
+    removeGuardians: args.rotation.removeGuardians,
+    userOpHash: args.userOpHash,
+    receipt,
+    previous: args.previous,
+    config: args.config,
+    ...(args.store ? { store: args.store } : {}),
+    ...(args.aaStore ? { aaStore: args.aaStore } : {}),
+  });
+  return { receipt, outcome };
+}
+
+export interface PendingOwnerRotation {
+  chain: string;
+  account: string;
+  previousOwner: string;
+  newOwner: WalletOwnerAccount;
+  userOpHash: string | null;
+}
+
+/**
+ * Owner changes this device recorded but never settled (the app was closed
+ * before the receipt arrived): records on `chain` whose latest owner entry is
+ * an 'owner-rotation' without a transaction hash, naming one of this wallet's
+ * accounts. The Change-owner screen settles them with finalizeOwnerRotation.
+ */
+export async function listPendingOwnerRotations(
+  chain: string,
+  walletOwners: readonly WalletOwnerAccount[],
+  store: KeyValueStore = AsyncStorage,
+): Promise<PendingOwnerRotation[]> {
+  const { entries } = await loadRecoveryRecords(store);
+  const out: PendingOwnerRotation[] = [];
+  for (const e of entries) {
+    if (e.metadata.chainId !== chain) continue;
+    const owners = e.metadata.owners;
+    const tail = owners[owners.length - 1]!;
+    if (owners.length < 2 || tail.source !== 'owner-rotation' || tail.txHash !== null) continue;
+    const newOwner = walletOwners.find((w) => same(w.address, tail.owner));
+    if (!newOwner) continue;
+    out.push({
+      chain,
+      account: e.metadata.account,
+      previousOwner: owners[owners.length - 2]!.owner,
+      newOwner,
+      userOpHash: tail.userOpHash,
+    });
+  }
+  return out;
 }

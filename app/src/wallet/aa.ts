@@ -777,6 +777,70 @@ export async function setRecoveredAccount(
   return normalizeEntry(map[chainId]);
 }
 
+/**
+ * Refusal when the new owner of an owner rotation already has a different
+ * recovered Kernel account attached on this chain (one smart account per
+ * owner and chain).
+ */
+export const ROTATION_TARGET_HAS_OTHER_ACCOUNT =
+  'That account already uses another recovered Kernel account on this network, and an account can ' +
+  'use one smart account per network. Choose another account as the new owner, or detach the other ' +
+  'recovered account first.';
+
+/**
+ * Moves a Kernel account's attachment after an owner rotation (phase 8
+ * follow-up: the in-app "Change owner" flow), in ONE storage write:
+ *  - the previous owner's link is removed when it pointed at `account`
+ *    (its key no longer signs for it);
+ *  - when `attach` is true, `to` gets the link (the address is not the
+ *    CREATE2 result of `to`); when false, `to` derives the address from the
+ *    seed by itself, so a link of `to` to this same account is removed.
+ * Signs nothing and reads nothing: it MUST be called only by ./recovery.ts
+ * after the engine's verifyKernelAccountForOwner confirmed on-chain that
+ * `to` is the account's current root owner. Refuses (writing nothing) to
+ * attach to an owner upgraded with EIP-7702 on this chain, or to one that
+ * already has a different recovered account attached.
+ */
+export async function moveRecoveredAccountLink(
+  chainId: string,
+  args: { account: string; from: string; to: string; attach: boolean },
+  store: KeyValueStore = AsyncStorage,
+): Promise<AaChainConfig> {
+  for (const a of [args.account, args.from, args.to]) {
+    if (!ADDRESS_PATTERN.test(a)) throw new Error(`Not an EVM address: ${a}`);
+  }
+  eip155ChainIdOf(chainId);
+  const map = await loadConfigMap(store);
+  const entry = normalizeEntry(map[chainId]);
+  const lower = (a: string) => a.toLowerCase();
+  const existingTo = recoveredAccountFor(entry, args.to);
+  if (args.attach) {
+    if (isEip7702Owner(entry, args.to)) throw new Error(RECOVERED_7702_CONFLICT);
+    if (existingTo !== null && lower(existingTo) !== lower(args.account)) throw new Error(ROTATION_TARGET_HAS_OTHER_ACCOUNT);
+  }
+  const kept = entry.recoveredAccounts.filter((l) => {
+    const pointsHere = lower(l.account) === lower(args.account);
+    if (pointsHere && lower(l.owner) === lower(args.from)) return false;
+    if (lower(l.owner) === lower(args.to) && pointsHere) return false;
+    return true;
+  });
+  map[chainId] = {
+    ...map[chainId],
+    recoveredAccounts: args.attach
+      ? [
+          ...kept,
+          {
+            owner: toChecksumAddress(toBytes(lower(args.to))),
+            account: toChecksumAddress(toBytes(lower(args.account))),
+            attachedAt: new Date().toISOString(),
+          },
+        ]
+      : kept,
+  };
+  await saveConfigMap(map, store);
+  return normalizeEntry(map[chainId]);
+}
+
 /** Wipe support: detaches every recovered account on every chain. */
 export async function clearAllRecoveredAccounts(store: KeyValueStore = AsyncStorage): Promise<void> {
   const map = await loadConfigMap(store);

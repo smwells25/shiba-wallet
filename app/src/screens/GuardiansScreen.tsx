@@ -16,6 +16,7 @@ import {
   ShareActions,
   recoveryLayout as styles,
 } from '../components/RecoveryViews';
+import { RecordFileExportButton } from '../components/RecordFileActions';
 import { useTheme } from '../theme';
 import { getEndpoint } from '../config/networks';
 import { useWallet } from '../wallet/WalletContext';
@@ -415,6 +416,7 @@ export function GuardiansScreen({ navigation }: Props) {
         <Text style={[styles.title, { color: theme.text }]}>Back up the recovery record</Text>
         <Text style={[styles.hint, { color: theme.text }]}>{RECOVERY_RECORD_NOTE}</Text>
         <PayloadQr value={exp.qrValue} caption={`Recovery record for ${entry.metadata.account} (${exp.bytes} bytes)`} />
+        <RecordFileExportButton metadata={entry.metadata} />
         <ShareActions text={exp.shareText} shareTitle="Recovery record" />
         <Button
           title="I saved it somewhere other than this phone"
@@ -810,6 +812,17 @@ export function GuardiansScreen({ navigation }: Props) {
             </Text>
           )}
           <Button title="Refresh" variant="secondary" onPress={reload} />
+        </>
+      ) : null}
+      {owner ? (
+        <>
+          <Text style={[styles.sectionTitle, { color: theme.text }]}>Owner key</Text>
+          <Text style={[styles.hint, { color: theme.textMuted }]}>
+            {resolution?.ok && resolution.kind === 'recovered'
+              ? 'This recovered account is controlled by this account’s key. You can hand it to another of your accounts (for example the one you normally use); the address stays the same.'
+              : 'Hand this Kernel account to the key of another of your accounts. The address stays the same; the current key stops working for it. Unfinished owner changes are also finished there.'}
+          </Text>
+          <Button title="Change owner…" variant="secondary" onPress={() => navigation.navigate('OwnerRotation')} />
         </>
       ) : null}
     </ScrollView>

@@ -14,6 +14,7 @@ import {
   WeightProgress,
   recoveryLayout as styles,
 } from '../components/RecoveryViews';
+import { RecordFileExportButton, pickRecordFile } from '../components/RecordFileActions';
 import { useTheme } from '../theme';
 import { getEndpoint } from '../config/networks';
 import { useWallet } from '../wallet/WalletContext';
@@ -34,6 +35,7 @@ import {
   findRecoveryTransaction,
   formatDuration,
   getRecoveryProgress,
+  parseRecordFile,
   parseRecordText,
   prepareApproveWithSig,
   prepareRecoveryStart,
@@ -192,7 +194,12 @@ export function RecoverAccountScreen({ navigation }: Props) {
     );
   };
 
-  const onCheck = async () => {
+  /**
+   * Checks the lost account. `recordText` overrides the pasted record (the
+   * "Import from file" button passes the file's text here), so a file goes
+   * through exactly the same strict parse and review as pasted text.
+   */
+  const onCheck = async (recordText: string = recordInput) => {
     if (!node || !owner) return;
     setError(null);
     setCandidate(null);
@@ -201,15 +208,15 @@ export function RecoverAccountScreen({ navigation }: Props) {
     try {
       let meta: KernelRecoveryMetadata | null = null;
       let account = accountInput.trim();
-      if (recordInput.trim() !== '') {
-        meta = parseRecordText(recordInput);
+      if (recordText.trim() !== '') {
+        meta = parseRecordText(recordText);
         account = meta.account;
         // A record whose account one of THIS wallet's accounts already owns
         // is a restore: review and attach it instead of recovering.
         const owned = accountList
           .filter((a) => a.evmAddress)
           .map((a) => ({ index: a.index, address: a.evmAddress!, path: `m/44'/60'/0'/0/${a.index}` }));
-        const review = await reviewRecordImport(node, recordInput, owned);
+        const review = await reviewRecordImport(node, recordText, owned);
         if (review.ownerAccount) {
           setImportReview(review);
           setPhase('import-review');
@@ -230,6 +237,25 @@ export function RecoverAccountScreen({ navigation }: Props) {
       setPhase('candidate');
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      setPhase('start');
+    }
+  };
+
+  /**
+   * "Import from file": the system document picker (JSON files only), then
+   * recovery.ts parseRecordFile (one JSON record per file, size cap, the
+   * engine's strict parser), then the same check as a pasted record.
+   */
+  const onImportFile = async () => {
+    setError(null);
+    try {
+      const picked = await pickRecordFile();
+      if (!picked) return;
+      const { text } = parseRecordFile(picked.text, { name: picked.name, size: picked.size, mimeType: picked.mimeType });
+      setRecordInput(text);
+      await onCheck(text);
+    } catch (e) {
+      setError(`The file was not imported: ${e instanceof Error ? e.message : String(e)}`);
       setPhase('start');
     }
   };
@@ -421,6 +447,7 @@ export function RecoverAccountScreen({ navigation }: Props) {
               Back up the updated recovery record now (it lists the new owner):
             </Text>
             <PayloadQr value={exp.qrValue} caption="Recovery record" />
+            {attachedMeta ? <RecordFileExportButton metadata={attachedMeta} /> : null}
             <ShareActions text={exp.shareText} shareTitle="Recovery record" />
           </>
         ) : (
@@ -428,6 +455,11 @@ export function RecoverAccountScreen({ navigation }: Props) {
             No recovery record exists for this account on this device. Write down its address somewhere safe.
           </Text>
         )}
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          To hand this account to another of your accounts (for example the one you normally use), use Change owner. The
+          address stays the same.
+        </Text>
+        <Button title="Change owner…" variant="secondary" onPress={() => navigation.navigate('OwnerRotation')} />
         <Button title="Done" onPress={() => navigation.navigate('Home')} />
       </ScrollView>
     );
@@ -677,6 +709,12 @@ export function RecoverAccountScreen({ navigation }: Props) {
         placeholder="Paste or scan the recovery record"
         rationale="Scan the recovery record QR code you saved."
       />
+      <Button
+        title="Import from file (.json)"
+        variant="secondary"
+        disabled={!node || !owner || phase === 'checking'}
+        onPress={() => void onImportFile()}
+      />
       <Text style={[styles.hint, { color: theme.textMuted }]}>
         No record? Optional: the account’s ORIGINAL owner address, so the wallet can rebuild its record.
       </Text>
@@ -699,7 +737,7 @@ export function RecoverAccountScreen({ navigation }: Props) {
         <Button
           title="Check the account"
           disabled={!node || !owner || (accountInput.trim() === '' && recordInput.trim() === '')}
-          onPress={() => void onCheck()}
+          onPress={() => void onCheck(recordInput)}
         />
       )}
       <Text style={[styles.sectionTitle, { color: theme.text }]}>Already recovered elsewhere?</Text>

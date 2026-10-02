@@ -43,4 +43,9 @@ export type RootStackParamList = {
   ApproveRecovery: undefined;
   /** Passkey signer (phase 8 item 3) for the active account's deployed Kernel account, active EVM chain. */
   Passkey: undefined;
+  /**
+   * Change the owner key of the active account's deployed Kernel v3.3 account
+   * (factory-derived or recovered) to another account of this wallet.
+   */
+  OwnerRotation: undefined;
 };
