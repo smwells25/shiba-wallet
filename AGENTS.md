@@ -2773,3 +2773,85 @@ self-paid set-code transaction — is now fully proven on Sepolia.
       the owner history); owner's veto screen behind the biometric gate;
       restore screen "Use this recovered account" via record / log scan /
       pasted address, attaching only after verifyKernelAccountForOwner.
+
+- [x] Item 4, app half — guardians and social recovery (commit ad5ed20;
+      check-recovery.mjs 145/145; all 22 app suites green, 1,856 checks;
+      tsc clean; expo export bundles 7.4MB). app/src/wallet/recovery.ts:
+      the engine's secret-free RecoveryMetadata per account+chain in
+      AsyncStorage, re-parsed strictly on every read, created on a Kernel
+      account's first accepted op (via an aa.ts addAaSentListener hook,
+      public data only), when the Guardians screen opens, or rebuilt from
+      the original owner; written BEFORE any guardian change and restored
+      if the bundler refuses; exported as QR (ECL L; a 2,900-byte record
+      round-trips offline, larger falls back to text) / share text / copy;
+      verified with verifyRecoveryMetadataOnChain; imported on restore and
+      attached only after verifyKernelAccountForOwner. GuardiansScreen
+      (Settings + Home link when eligible): eligible = a deployed Kernel
+      v3.3 account this wallet owns (factory or recovered); SimpleAccount,
+      7702 upgrades (the engine's exact text, pinned), undeployed and
+      foreign owners refused; contact picker with exact-match display;
+      weights; threshold; delay default 48 h (0 only behind a "no veto"
+      acknowledgement; test networks also offer 10 min); install / renew /
+      remove / veto all through the normal confirm (bundler estimate,
+      biometric, signWith(owner), sendAa); backup prompt after install or
+      renew; status card from readGuardianState with a record-vs-chain
+      check and "update from chain". EXPOSURE WARNING mandatory on the
+      form, confirm and status card, number from guardianSignatureExposure
+      (a 2-of-2 reads "ONE guardian alone…" naming the guardians; a 3-of-5
+      says 2; a sentence explains the repeated-signer problem), plus
+      findings (1) and (2) stated in plain words; setups are never called
+      "safe"; no-audit note; on mainnet Review is blocked until the user
+      acknowledges the unaudited modules and unmet C1–C3. DOCS-EXAMPLE
+      HAZARD (finding 4) closed: installs only through the engine's
+      guardianInstallCalls with the pinned WeightedECDSAValidator;
+      assertGuardianModulesSafe refuses any setup whose guardian module is
+      the owner's root validator; the first install call is byte-checked;
+      guardian-side requests naming any validator other than the pinned
+      ECDSA owner validator are refused. RECOVERY FLOW (lost phrase, new
+      wallet): "use a fresh account" adds "Recovered account"; enter the
+      account address / record / original owner; on-chain check (every
+      verifyKernelAccountForOwner problem except owner mismatch blocks;
+      guardians must be active); prepareGuardianRecovery → request as QR +
+      text (incl. the EIP-712 typed data for guardians on other wallets);
+      approvals pasted/scanned and checked with verifyGuardianApproval with
+      a weight bar; with a delay, approveWithSig txs sent from the new
+      account's own address (the new wallet pays — explained), then a
+      countdown; once the chain shows the new owner, "Use this recovered
+      account" attaches after the owner check and appends the
+      guardian-recovery entry (tx found via the OwnerRegistered log or
+      pasted); the account is labelled everywhere "not found from your
+      recovery phrase alone"; the same screen scans recent blocks for
+      accounts this wallet already owns. GUARDIAN SIDE ("Approve a
+      recovery"): request re-derived; account, new owner, current owner
+      and proposal id shown in full; plain warning; confirm dialog +
+      biometric; approval out as QR/text or straight into a recovery in
+      progress on the same device; a guardian can submit the final op (the
+      account pays). WalletConnect refuses typed data under the guardian
+      validator's domain and any transaction / wallet_sendCalls targeting
+      the guardian modules or carrying the doRecovery selector. aa.ts:
+      per-owner recoveredAccounts link (set only by setRecoveredAccount;
+      createAaClientFromConfig then builds kernelRecoveredAccountSpec; an
+      owner cannot have both a 7702 upgrade and a recovered link);
+      aaSenderLabel; wipe clears recovery data after an "Export your
+      recovery records first?" prompt. DEVIATIONS (source-grounded): (1) a
+      GUARDIAN must submit the final recovery op — WeightedECDSAValidator
+      (cd697c7e, lines 203–252) needs a guardian's EIP-191 signature over
+      the userOpHash on both paths without a paymaster, so the new wallet
+      sends only approveWithSig and the paymaster path (no signature) is
+      deliberately unused; (2) the validator emits no approval events, so
+      the owner's veto works from a watch list (paste/scan a request or
+      proposal id → live countdown; guardians must tell the owner); (3)
+      after a veto the same new owner gets a new proposal id by moving to
+      the next guardian-lane parallel key (up to 16) — supported by the
+      engine's key layout but a non-zero lane has never run live. New
+      helpers: scripts/testnet/guardian-approve.mjs (dev-seed guardian
+      addresses; signs an approval for a pasted request after checking the
+      on-chain set) and kernel-rotate-owner.mjs (rotate the owner back and
+      optionally remove guardians). NOT verified live: everything in the
+      app (bundler acceptance, the 10-min delay, veto, lane-1 recovery,
+      OwnerRegistered lookup ranges); WC smart-account sessions never use
+      the recovered account (they bind the owner's factory address);
+      record export is share text, not a .json file (needs expo-sharing /
+      expo-file-system); no owner-rotation screen (script only).
+      Emulator checklist (8 steps, uses the dev seed's index-2 account
+      and guardian keys at indices 5 and 6) in the builder's report.
