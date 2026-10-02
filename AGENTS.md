@@ -2148,3 +2148,25 @@ is NOT served (-32601) while pimlico_getUserOperationGasPrice IS).
 Wave 1: item 1 (engine + Sepolia verification, agent) and item 2's
 engine half (agent) in parallel; item 5's fee-helper generalization
 (CTO). Wave 2: app flows for 1 and 2, then 3 and 4. Subagents on Opus.
+
+## Phase 8 progress
+
+- [x] Item 5, first result — ZeroDev bundler DEPLOYMENT ACCEPTANCE,
+      PROVEN LIVE (2026-10-01): kernel-smoke.mjs against
+      https://rpc.zerodev.app/api/v3/{project}/chain/11155111 (default
+      provider), KERNEL_INDEX=2, KERNEL_FUND_ETH=0.004, NO self-bundle
+      fallback: the deployment op through Kernel's staked meta factory was
+      ACCEPTED by eth_sendUserOperation (userOpHash 0x2e5d4ca7…0777f),
+      account 0x1D723b78e1D0D84Fd0531e2686285fb1B6414106 deployed at the
+      engine-predicted address (funding tx 0xf9aa021d…93f6), and op 2 on
+      the deployed path was accepted as well (0x3ea04337…cf6847). Same
+      engine bytes that Alchemy rejects under its ERC-7562 reading. The
+      ZeroDev endpoint's supported EntryPoints include v0.6, v0.7 and the
+      two 0x4337… addresses. Consequence: Kernel deployments require a
+      bundler that accepts them (ZeroDev proven; Pimlico untested);
+      Alchemy remains usable for already-deployed accounts. The app's
+      per-chain bundler URL is runtime config, so a user pastes the
+      ZeroDev URL (it embeds the project id, which the Settings row now
+      masks). Fee note: ZeroDev does not serve rundler_maxPriorityFeePerGas
+      (-32601) but does serve pimlico_getUserOperationGasPrice, so the
+      app's floor helper must learn that method (item 5 follow-up).
