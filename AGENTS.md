@@ -2464,3 +2464,39 @@ engine half (agent) in parallel; item 5's fee-helper generalization
       wallet's 7715 type; the GasPolicy budget; the engine signing
       function's key copy cannot be zeroed (only the app's buffers are).
       Emulator checklist (9 steps) in the builder's report.
+
+## Phase 8 live validation (2026-10-01, emulator, Sepolia)
+
+FIRST IN-APP EIP-7702 UPGRADE, PROVEN LIVE. Setup: the Sepolia bundler
+was switched in Settings to ZeroDev (URL embeds the project id; the
+Settings row masks it after the reload) and reads "ready · Kernel
+v3.3"; the emulator's Account 2 EOA 0xb6997390e1E3CDE9BF035Af75830Ae00C29781fE
+was funded 0.0015 test ETH from the dev EOA (tx 0x8f30910c…6f30,
+scripts/testnet/fund.mjs). Emulator hygiene learned: Metro now runs from
+an ISOLATED git worktree of HEAD (scratchpad/wt-app, node_modules and
+engine dist symlinked, a worktree-only metro.config.js override adding
+the real checkout to watchFolders/nodeModulesPaths), so in-progress
+agent edits can never be served to the device; the Expo floating dev
+button overlaps the Home "Switch" control (tap its left edge); LogBox
+toasts and the Expo dev menu intercept taps near the bottom and top
+right. Flow: Home → Upgrade showed the designed explanation, the
+delegate in full, the 21,000-gas receive caveat and "Regular account
+(no code)"; "Upgrade with the next smart-account send" → CONTINUE →
+"Cancel pending upgrade" appeared. Send ETH with the smart-account
+toggle: the confirm read "EXPERIMENTAL · ERC-4337 smart account ·
+Kernel v3.3 via EIP-7702 (your own address)", OWNER ACCOUNT (SIGNS)
+Account 2, FROM (YOUR OWN ADDRESS) = the same EOA, balance 0.0015,
+"This send also upgrades your account (EIP-7702 delegation to Kernel
+v3.3)…" with the delegate 0xd6CE…5b28 in full, the preview "You send
+0.0001 test ETH", and "Bundler gas estimate passed" — i.e. ZeroDev
+ACCEPTED the viem-style stub tuple at estimation (the highest-risk
+unknown, now resolved). After the biometric gate: userOpHash
+0x621fb8fe841ddffe2f9fa551bf759c6fc319a1a89313d228e963795e751fd96e,
+"Bundling…", then "Included on-chain — succeeded." with bundle tx
+0xbd14fbeb79ed95b2b43876b5d56cb1521ed5c0d6092704cc647706053da4a7ec.
+Independently confirmed: the bundle tx is type 0x4, block 0xb4748b,
+status 0x1, its authorizationList names the Kernel delegate, the
+UserOperationEvent sender is Account 2's EOA, and eth_getCode(Account
+2) = 0xef0100d6cedde84be40893d153be9d467cd6ad37875b28. Home then showed
+"Account 2 · upgraded (Kernel v3.3) on Ethereum Sepolia" and the row
+link "Upgraded ✓".
