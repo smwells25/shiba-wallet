@@ -2170,3 +2170,73 @@ engine half (agent) in parallel; item 5's fee-helper generalization
       masks). Fee note: ZeroDev does not serve rundler_maxPriorityFeePerGas
       (-32601) but does serve pimlico_getUserOperationGasPrice, so the
       app's floor helper must learn that method (item 5 follow-up).
+
+- [x] Item 1, engine half — EIP-7702 to Kernel v3.3 (commit 68d7383;
+      17 new tests, chains-evm 226, engine 462). The three questions,
+      answered from sources: (1) EIP-7702 (Final, ethereum/EIPs
+      eip-7702.md at bbc3f958): tx type 0x04; tuple [chain_id, address,
+      nonce, y_parity, r, s] signed over keccak(0x05 || rlp([chain_id,
+      address, nonce])), low-s; code becomes 0xef0100 || address; a
+      self-sponsored tx needs tuple nonce = tx nonce + 1; delegating to
+      the zero address clears the code; 25,000 gas per tuple. (2) Kernel
+      v3.3 as delegate (tag v3.3, cd697c7e): the delegate IS the
+      implementation 0xd6CEDDe84be40893d153Be9d467CD6aD37875b28 (the
+      SDK's KERNEL_7702_DELEGATION_ADDRESS); NO initialization is needed
+      or possible (initialize() reverts AlreadyInitialized when the code
+      starts with 0xef0100); VALIDATION_TYPE_7702 = 0x00 and a
+      never-initialized delegated EOA has an all-zero root validator, so
+      Kernel accepts ops whose EIP-191 signature over the userOpHash
+      recovers to the EOA itself; ERC-1271 signatures are 0x00 || raw
+      ECDSA over the Kernel(bytes32 hash) wrapper with the EOA as the
+      verifying contract; ZeroDev's quickstart has a doc bug (passes the
+      version constant KERNEL_V3_3 as contractAddress). (3) EntryPoint
+      v0.7 contains no 7702 code (v0.7.0 at 7af70c89): a delegated EOA
+      is just a sender with code, so BOTH a self-sent type-0x04 tx and a
+      UserOperation carrying eip7702Auth {chainId, address, nonce,
+      yParity, r, s} (per ERC-4337's 7702 section / ERC-7769 Draft,
+      Alchemy's eth_sendUserOperation schema and viem 2.57.2) work on
+      v0.7; only the 0x7702 initCode marker, senderCreator
+      initEip7702Sender and the EIP-712 userOpHash need v0.8 (v0.8.0 at
+      4cbc0607, Eip7702Support.sol). CAVEAT: on v0.7 the userOpHash does
+      not commit to the delegate, so the spec signs tuples only for the
+      pinned Kernel address and refuses to replace a foreign delegation
+      unless allowRedelegation is set. Engine: src/eip7702.ts
+      (tuple sign/verify — refuses chain id 0 and nonces ≥ 2^64−1,
+      low-s check, recovery; type-0x04 build/sign — refuses an empty
+      list or missing `to`; revokeDelegationAuthorization,
+      selfSponsoredAuthorizationNonce, setCodeIntrinsicGas,
+      toRpcEip7702Auth, readDelegationStatus), createKernel7702AccountSpec
+      + KERNEL_V3_3_7702_DELEGATE, optional
+      SmartAccountSpec.getEip7702Authorization (the client then uses no
+      factory and attaches the tuple), UserOperation.eip7702Auth sent on
+      the wire. Tests pin the digest against ethers hashAuthorization,
+      (yParity, r, s) against Wallet.authorizeSync, and type-4 bytes
+      against ethers signTransaction. LIVE ON SEPOLIA (dev seed index 7,
+      test EOA 0xFDF5b9520E15306980F660f6CC5DB90570B92F14, funded
+      0.0015): a UserOperation carrying the tuple was accepted by
+      ZeroDev's bundler (userOpHash 0x24543f93…7471; local v0.7 hash
+      matched the bundler's), bundle tx 0x5504de27…4e03 is type 0x4 to
+      EntryPoint v0.7 with our tuple in its authorization list, block
+      11826010, status 0x1, UserOperationEvent sender = the EOA,
+      success; while delegated eth_getCode = 0xef0100d6ce…5b28,
+      entrypoint() = v0.7, isValidSignature = 0x1626ba7e, a third-party
+      initialize() reverts; revoked by a self type-4 tx (zero-address
+      tuple, nonce 2) 0xb56e13b9…cab2, block 11826011, 36,800 gas;
+      eth_getCode = 0x afterwards (re-confirmed by the CTO, along with
+      the bundle tx type 0x4 / status 0x1); leftover swept back
+      (0xcecb1940…bbca). Alchemy accepted eip7702Auth for ESTIMATION
+      only (nothing sent there). Unverified: sending the op to Alchemy;
+      a live self-sponsored delegation tx (built and ethers-checked, not
+      broadcast — the same builder did the live revocation); which
+      upstream ZeroDev routed through; behaviour after re-delegation; no
+      audit of Kernel v3.3's 7702 changes (C1). Smoke:
+      scripts/testnet/eip7702-smoke.mjs (EIP7702_SMOKE_DRY_RUN=1, or
+      BUNDLER_URL=ZeroDev + PROBE_BUNDLER_URL=Alchemy live; URLs
+      redacted). App design note recorded in the builder's report:
+      "Your address stays the same…", status from readDelegationStatus
+      (plain / upgraded / delegated elsewhere → warning + revoke),
+      revocation always available as a self type-4 tx (~37k gas, needs
+      ETH, cannot be sponsored), D6 enforced (tuples only from this
+      flow, pinned delegate, single chain, after the biometric gate).
+      FUNDS: the dev EOA 0x16DA…C5C is down to ~0.002 Sepolia ETH and
+      needs a top-up before further live runs.
