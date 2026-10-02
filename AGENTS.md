@@ -3152,8 +3152,49 @@ touches files everywhere.
       kernel-rotate-owner.mjs). Emulator checklist (8 steps) in the
       builder's report; "Change owner" links on Home/Receive were out of
       the agent's file scope.
-- [ ] ESLint burn-down (44 errors, 7 warnings at the start of the wave:
-      28 react/no-unescaped-entities, hook-dependency rules, unused vars,
-      array-type) — after the slices above land.
+- [x] ESLint burn-down (commit 5a3b2ed): npx expo lint went from 51
+      problems (44 errors, 7 warnings) to 0. Per rule: 28
+      react/no-unescaped-entities (entities substituted in place, every
+      decoded JSX string byte-identical — checked by extracting the
+      decoded JSXText from HEAD and the working tree), 10
+      react-hooks/set-state-in-effect and 6 react-hooks/refs (React
+      Compiler rules in eslint-plugin-react-hooks 7.1.1 — synchronous
+      "reset then load" state resets moved from effects into render with
+      the adjust-state-on-prop-change pattern keyed on exactly the old
+      effect deps, in SwapScreen, SendScreen contacts, ApprovalsScreen,
+      NftsScreen, LockGate (reset to INITIAL_LOCK_STATE only when
+      disarmed, same condition; the overlay rule is unchanged),
+      BalanceChangePreview, RiskWarnings, NftImage, WcApprovalSheet (new
+      pure initialTxQuote), usePrices (idsRef replaced by a useMemo on
+      idsKey); refs read in render (SwapScreen preparedFrom) paired with
+      display state, the signing path untouched; refs written during
+      render in WalletContext / WalletConnectContext moved to a
+      no-deps useLayoutEffect, which keeps the old per-render semantics
+      including a narrow pre-existing clobber window noted in the
+      builder's report), 1 exhaustive-deps (SettingsScreen reloadEndpoints:
+      `sepolia` moved from the callback deps to the effect as an explicit
+      trigger), 3 unused vars removed, 2 array-type nits. One new
+      single-line disable with a reason (ApprovalsScreen load(): the rule
+      ignores await boundaries). Behavioural note: screens that used to
+      show one stale frame between render and effect no longer do. Eight
+      older exhaustive-deps disables remain (some without the `--
+      reason` form; WcApprovalSheet.tsx:477 has none) — follow-up. Plain
+      `npx eslint .` still reports Buffer no-undef in scripts/*.mjs, which
+      expo lint does not cover — follow-up. Verified: lint 0/0, tsc clean,
+      all 23 suites with unchanged counts, expo export bundles with seven
+      apostrophe/quote strings found byte-identical in the Hermes
+      bytecode; the CTO re-ran lint and tsc before committing. EMULATOR
+      PASS at 5a3b2ed (Expo Go, Sepolia mode, Metro in watch mode from
+      the isolated worktree): Home renders with live balance and every
+      row link; Guardians shows the new "Owner key" section; the Change
+      owner screen lists Account 2 as the only target and its confirm
+      shows both owners in full, the derivation path, the two-call
+      operation and a passed bundler estimate; the Send ETH confirm shows
+      the SAVED CONTACT "Burn" notice, fee math and the eth_simulateV1
+      preview (nothing sent); the auto-lock cycle (HOME, 75 s, resume)
+      showed "Shiba Wallet is locked" and the fingerprint unlock returned
+      to Home — i.e. the LockGate, BalanceChangePreview and contacts hook
+      changes behave as before. Expo Go started normally with the three
+      new native modules imported statically.
 - Dropped: WalletKit session persistence (proven to work, see the
   retest record above).
