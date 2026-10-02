@@ -2855,3 +2855,112 @@ self-paid set-code transaction — is now fully proven on Sepolia.
       expo-file-system); no owner-rotation screen (script only).
       Emulator checklist (8 steps, uses the dev seed's index-2 account
       and guardian keys at indices 5 and 6) in the builder's report.
+
+- [x] Item 3, app half — passkey signer, gated behind a development
+      build (commit 4a6c8ef; check-passkeys.mjs 121/121; all 23 app
+      suites green, 1,977 checks; tsc clean; expo export bundles 7.5MB;
+      Expo Go startup unaffected — the native module is reached only
+      through a lazy require after requireOptionalNativeModule returns
+      non-null, confirmed in the unminified export). Library:
+      react-native-passkeys 0.4.2 (Expo module, peer expo >=53, MIT;
+      github.com/peterferguson/react-native-passkeys) — Expo has no
+      first-party passkey module (llms.txt); rejected: react-native-passkey
+      3.6.2 (bare RN), expo-passkey 0.3.15 (better-auth peers),
+      expo-passkeys 0.1.11 (peer expo ^52, stale). API facts from the
+      installed source: create()/get() take and return WebAuthn-JSON with
+      base64url binary fields; both platforms return attestationObject;
+      QUIRK: the typings say publicKey is SPKI, true on Android
+      (Credential Manager) but iOS (ios/PublicKey.swift) returns the raw
+      64-byte x||y — so the app takes the key from attestationObject →
+      authData → COSE_Key → SEC1 (ES256 only; RFC 9052 §7, RFC 9053
+      §7.1.1, WebAuthn L3 §§6.1/6.5.1/6.5.1.1) and only cross-checks
+      publicKey (91-byte SPKI, 65-byte SEC1 or 64-byte raw must match).
+      Requirements: iOS 15 / Android API ≥ 28, compileSdk ≥ 34 — already
+      met by SDK 57 (iOS 16.4, compileSdk 36); needs a development build.
+      rpId: app.json ios.associatedDomains =
+      ["webcredentials:passkey-domain-not-configured.invalid"] (a reserved
+      .invalid placeholder, NOT an invented domain), mirrored as
+      PASSKEY_RP_ID in app/src/config/passkey.ts (the check script fails
+      if they disagree); passkeyGate refuses the placeholder, reserved
+      names and Expo Go, and every entry point says "Passkeys need a
+      development build with a configured rpId…". INPUT NEEDED from the
+      Chairperson before device testing: a domain they control, hosting
+      the iOS AASA file (webcredentials → <TeamID>.<bundleId>) and Android
+      assetlinks.json (handle_all_urls + get_login_creds); app.json still
+      lacks ios.bundleIdentifier / android.package. Note: Expo's v57
+      app-config page documents associatedDomains in the applinks: form;
+      the webcredentials: form comes from the library README (Apple's own
+      doc not fetched). Files: app/src/wallet/passkeys.ts (gate; strict
+      base64url, minimal CBOR, authData and COSE→SEC1; registration and
+      assertion decoding with rpIdHash checked both ways and clientDataJSON
+      as exact UTF-8; makePasskeyAssert implementing the engine's assert
+      contract; PUBLIC-ONLY credential records in AsyncStorage
+      shiba-wallet.passkeys.v1 — the private key lives in the platform
+      authenticator; eligibility = a deployed Kernel v3.3 account with an
+      ECDSA root owned by this wallet; install / remove / forget /
+      reconcile; createPasskeyBundle, preparePasskeyCalls, sendPasskeyCalls
+      on the engine's routeNode/routeBundler path with NO signWith;
+      signHashWithPasskey for ERC-1271), passkey-native.ts (the only, lazy
+      importer), usePasskeyInfo.ts, PasskeyScreen.tsx (Settings section,
+      Home "Passkey / Passkey ✓" link: additional-signer explanation,
+      no-audit note, the self-call caveat as a risk statement, one passkey
+      per account; Add = native registration → passkeyInstallCall through
+      the normal owner-signed confirm; Test = a 0-value call to the owner
+      EOA signed by the passkey (a literal self-send is impossible — the
+      engine refuses passkey calls to the account); Remove =
+      passkeyUninstallCalls through the normal confirm, also works without
+      a record or the native module), a "Sign with passkey" toggle on
+      Kernel smart-account sends (no separate app biometric gate there —
+      the passkey prompt IS user verification; WalletConnect keeps its
+      gate), an optional passkey signer for personal_sign / typed data on
+      Kernel smart-account sessions (owner key stays default), fixtures/
+      webauthn-validator-v0.0.3.runtime.hex (public runtime code, keccak
+      checked in-script against the pin), docs/DEVICE_BUILDS.md Passkeys
+      section with the rpId setup and device checklist. Passkey ops: no
+      paymaster, padding 110% verification / 115% preVerification (the
+      validator runs the full P-256 check even for the stub; a real
+      clientDataJSON may be longer). Engine follow-up proposed (not
+      needed now): signUserOpHash may return a Promise and sendCalls
+      awaits it (two lines in smart-account.ts; wrappers may need a type
+      widening). NOT verified: anything on a device (iOS/Android
+      clientDataJSON order — the engine fails closed; real clientDataJSON
+      length vs padding; bundler acceptance of passkey ops via the
+      precompile; the iOS raw-key path; Credential Manager; whether
+      Android needs an asset_statements manifest entry — not added;
+      excludeCredentials); WebAuthnValidator v0.0.3 unaudited (C1). Also
+      flagged: npx expo install --check wants expo 57.0.26 and expo-camera
+      57.0.6 (pre-existing, unchanged).
+
+## Phase 8 complete (2026-10-02)
+
+All six items landed: EIP-7702 (engine + app, upgrade and revoke proven
+live in the app), session keys (engine + app, live engine proof),
+passkeys (engine + app, simulation proof; device test pending a
+development build and an rpId domain), guardians / social recovery
+(engine + app, live engine proof), the bundler-floor generalization and
+the ZeroDev deployment-acceptance proof, plus the live validations.
+Engine: 588 tests across five packages. App: 23 offline suites, 1,977
+checks. Live on Sepolia this phase: Kernel deployment through ZeroDev,
+EIP-7702 delegation in a UserOperation and revocation (engine and
+in-app), an enable-mode session key install/use/reject/revoke cycle,
+and a guardian install/recover/rotate-back cycle.
+
+Findings for the Chairperson gathered this phase (all recorded above):
+the ZeroDev weighted guardian validator lets a repeated signer satisfy
+the threshold (proven live) and lets guardians sign as the account
+immediately; the older WebAuthn validators v0.0.1/v0.0.2 accept replayed
+assertions; the permission, recovery and v0.0.3 WebAuthn modules have no
+published audit; ERC-7715 responses cannot be produced compliantly
+without an ERC-7710 delegation manager; following ZeroDev's single-
+guardian docs example could overwrite the owner. Mainnet remains gated
+on C1–C3. A responsible disclosure of the guardian-validator findings to
+ZeroDev / Offchain Labs is recommended and awaits the Chairperson's
+decision.
+
+Carried forward: emulator runs of the session, guardian and (dev-build)
+passkey flows; the dApp-side 7715 and smart-account WalletConnect
+sessions; the awaited-signUserOpHash engine refactor; the follow-ups
+listed under the phase 7 completion (log-depth cap, Sepolia RPC fallback,
+ESLint burn-down 44 → 18 remaining in touched files, record export as a
+.json file, an owner-rotation screen); standing items (Dogecoin mainnet
+broadcast, live 0x quotes, live paymaster, EAS build, counsel review).
