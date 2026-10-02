@@ -3,6 +3,7 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -242,16 +243,10 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
 
   // The controller reads the live context through a ref, so an address,
   // account or mode change is seen by the next event without re-attaching
-  // listeners.
-  const contextRef = useRef({
-    address: ethAddress,
-    activeChain: evmChain.caip2,
-    labelFor,
-    lookupCallsStatus,
-    callsIdKnown,
-    activeIndex,
-  });
-  contextRef.current = {
+  // listeners. The ref is refreshed after every commit (refs must not be
+  // written while rendering); a layout effect runs before any passive
+  // effect or later event can read it.
+  const liveContext = {
     address: ethAddress,
     activeChain: evmChain.caip2,
     labelFor,
@@ -259,11 +254,17 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
     callsIdKnown,
     activeIndex,
   };
+  const contextRef = useRef(liveContext);
+  useLayoutEffect(() => {
+    contextRef.current = liveContext;
+  });
 
   // Hold approvals while locked AND while no wallet is ready.
   const hold = locked || status !== 'ready';
   const holdRef = useRef(hold);
-  holdRef.current = hold;
+  useLayoutEffect(() => {
+    holdRef.current = hold;
+  });
 
   const [projectId, setProjectId] = useState<string | null | undefined>(undefined);
   const [startRequested, setStartRequested] = useState(false);

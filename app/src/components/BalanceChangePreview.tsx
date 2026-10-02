@@ -63,9 +63,17 @@ export function BalanceChangePreview({
       .map((r) => `${r.from}>${r.to}:${r.value}:${r.data && r.data.length > 0 ? toHex(r.data) : '0x'}`)
       .join(',');
 
+  // A new simulation input clears the shown result while rendering (React's
+  // "adjust state when a prop changes" pattern), so the card goes back to
+  // its loading state before the effect below starts the new simulation.
+  const [shownKey, setShownKey] = useState(key);
+  if (shownKey !== key) {
+    setShownKey(key);
+    setState(null);
+  }
+
   useEffect(() => {
     let cancelled = false;
-    setState(null);
     (async () => {
       let trackedTokens: Awaited<ReturnType<typeof listTokens>> = [];
       try {

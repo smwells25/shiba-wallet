@@ -49,14 +49,35 @@ export function NftImage({
   const [decodeFailed, setDecodeFailed] = useState(false);
   const extraKey = extraCandidates.join('\n');
 
-  useEffect(() => {
+  // When the image inputs change, the shown state is reset while rendering
+  // (React's "adjust state when a prop changes" pattern): a cached thumbnail
+  // is shown at once, anything else goes back to the loading state with the
+  // decode-failure flag cleared. The effect below only loads.
+  const [shownInputs, setShownInputs] = useState({ key, variant, extraKey });
+  if (shownInputs.key !== key || shownInputs.variant !== variant || shownInputs.extraKey !== extraKey) {
+    setShownInputs({ key, variant, extraKey });
     if (variant === 'thumb' && thumbCache.has(key)) {
       setState(thumbCache.get(key)!);
-      return;
+    } else {
+      setState(null);
+      setDecodeFailed(false);
     }
+  }
+
+  useEffect(() => {
     let cancelled = false;
-    setState(null);
-    setDecodeFailed(false);
+    if (variant === 'thumb' && thumbCache.has(key)) {
+      // Normally the render above already showed this cached thumbnail and
+      // this update is a no-op (same object). It still matters when another
+      // image finished loading the same thumbnail after that render.
+      const cachedNow = thumbCache.get(key)!;
+      void Promise.resolve(cachedNow).then((result) => {
+        if (!cancelled) setState(result);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
     const candidates = [...imageCandidates(nft, variant)];
     for (const extra of extraCandidates) if (!candidates.includes(extra)) candidates.push(extra);
     loadNftImage(candidates).then(

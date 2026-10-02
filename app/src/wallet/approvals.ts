@@ -218,7 +218,7 @@ const erc20Key = (r: Erc20ApprovalRecord) => `${r.token.toLowerCase()}|${r.spend
 const operatorKey = (r: OperatorApprovalRecord) =>
   `${r.collection.toLowerCase()}|${r.operator.toLowerCase()}`;
 
-async function runLimited<T>(tasks: Array<() => Promise<T>>, limit: number): Promise<T[]> {
+async function runLimited<T>(tasks: (() => Promise<T>)[], limit: number): Promise<T[]> {
   const results: T[] = new Array(tasks.length);
   let next = 0;
   const worker = async () => {
@@ -255,7 +255,7 @@ async function scanStep(scan: ApprovalScan, options: ApprovalScanOptions): Promi
   for (let i = 0; i < windows && next.scannedFromBlock > 0n; i++) {
     const toBlock = next.scannedFromBlock - 1n;
     const fromBlock = toBlock + 1n > windowBlocks ? toBlock + 1n - windowBlocks : 0n;
-    const tasks: Array<() => Promise<{ error?: string }>> = [
+    const tasks: (() => Promise<{ error?: string }>)[] = [
       ...next.tokens.map((token) => async () => {
         try {
           const result = await getErc20Approvals(options.transport, {

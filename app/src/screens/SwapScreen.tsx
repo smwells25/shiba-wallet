@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -176,6 +176,14 @@ export function SwapScreen({ navigation }: Props) {
   // account's key controls exactly this address. On the smart-account path
   // this is the OWNER EOA (the key that signs the UserOperation).
   const preparedFrom = useRef<string | null>(null);
+  // The same address as state, for display on the confirm screens (a ref
+  // must not be read while rendering). Both are written together by
+  // markPreparedFrom; the signing path keeps reading the ref.
+  const [preparedFromShown, setPreparedFromShown] = useState<string | null>(null);
+  const markPreparedFrom = (address: string) => {
+    preparedFrom.current = address;
+    setPreparedFromShown(address);
+  };
 
   // Smart-account mode (see the component comment).
   const [aaConfig, setAaConfig] = useState<AaChainConfig | null>(null);
@@ -317,27 +325,35 @@ export function SwapScreen({ navigation }: Props) {
   const assetKey = (a: SwapAsset): string => (a === 'native' ? 'native' : formatAssetId(a.assetId));
 
   // Sell-side balance, refreshed whenever the sell asset (or endpoint)
-  // changes; used for the display line and the pre-quote refusal.
-  const reloadSellBalance = useCallback(async () => {
-    if (!url || !holder) {
-      setSellBalance(null);
-      return;
-    }
+  // changes; used for the display line and the pre-quote refusal. The shown
+  // balance is cleared while rendering as soon as one of its inputs changes
+  // (React's "adjust state when a prop changes" pattern), so no frame ever
+  // shows the previous asset's balance; the effect below then fetches the
+  // new one.
+  const [sellBalanceInputs, setSellBalanceInputs] = useState({ url, holder, sellAsset });
+  if (
+    sellBalanceInputs.url !== url ||
+    sellBalanceInputs.holder !== holder ||
+    sellBalanceInputs.sellAsset !== sellAsset
+  ) {
+    setSellBalanceInputs({ url, holder, sellAsset });
     setSellBalance(null);
-    try {
-      const balance =
-        sellAsset === 'native'
-          ? await fetchNativeBalance('evm-jsonrpc', url, holder)
-          : await fetchErc20Balance(url, sellAsset.assetId.reference, holder);
-      setSellBalance(balance);
-    } catch {
-      setSellBalance(null);
-    }
-  }, [url, holder, sellAsset]);
+  }
 
   useEffect(() => {
-    void reloadSellBalance();
-  }, [reloadSellBalance]);
+    if (!url || !holder) return;
+    void (async () => {
+      try {
+        const balance =
+          sellAsset === 'native'
+            ? await fetchNativeBalance('evm-jsonrpc', url, holder)
+            : await fetchErc20Balance(url, sellAsset.assetId.reference, holder);
+        setSellBalance(balance);
+      } catch {
+        setSellBalance(null);
+      }
+    })();
+  }, [url, holder, sellAsset]);
 
   // Fiat values for the sell and buy amounts (phase 6 item 2). Ids are
   // derived against the ACTIVE chain, so in Sepolia test mode both are null
@@ -503,7 +519,7 @@ export function SwapScreen({ navigation }: Props) {
       try {
         const bundle = aaBundle.current;
         if (!bundle) throw new Error('Smart-account session expired; go back and quote again.');
-        preparedFrom.current = account.address;
+        markPreparedFrom(account.address);
         const prepared = await prepareAaSwap(
           bundle,
           account.address,
@@ -534,7 +550,7 @@ export function SwapScreen({ navigation }: Props) {
           amount,
         );
         if (!sufficient) {
-          preparedFrom.current = account.address;
+          markPreparedFrom(account.address);
           const prepared = await prepareApproveSend(
             url,
             account.address,
@@ -549,7 +565,7 @@ export function SwapScreen({ navigation }: Props) {
           return;
         }
       }
-      preparedFrom.current = account.address;
+      markPreparedFrom(account.address);
       const prepared = await prepareSwapSend(url, account.address, quote, evmChain.caip2);
       setSendQuote(prepared);
       setOverrideSimulation(false);
@@ -618,7 +634,7 @@ export function SwapScreen({ navigation }: Props) {
         setPhase('form');
         return;
       }
-      preparedFrom.current = account.address;
+      markPreparedFrom(account.address);
       const prepared = await prepareSwapSend(url, account.address, fresh, evmChain.caip2);
       setSendQuote(prepared);
       setOverrideSimulation(false);
@@ -650,7 +666,7 @@ export function SwapScreen({ navigation }: Props) {
           setPhase('form');
           return;
         }
-        preparedFrom.current = account.address;
+        markPreparedFrom(account.address);
         const prepared = await prepareSwapSend(url, account.address, view.result.quote, evmChain.caip2);
         setSendQuote(prepared);
         setOverrideSimulation(false);
@@ -714,7 +730,7 @@ export function SwapScreen({ navigation }: Props) {
           setPhase('form');
           return;
         }
-        preparedFrom.current = account.address;
+        markPreparedFrom(account.address);
         const prepared = await prepareAaSwap(
           bundle,
           account.address,
@@ -1012,14 +1028,14 @@ export function SwapScreen({ navigation }: Props) {
         <Row
           label="From account"
           value={activeAccount?.name ?? '—'}
-          sub={preparedFrom.current}
+          sub={preparedFromShown}
           theme={theme}
         />
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Before the swap contract can take your {sellSymbol}, it needs a
           spending allowance. This approves exactly{' '}
           {exact(quote.sellAmount, sellDecimals)} {sellSymbol} — the amount you
-          are swapping, not an unlimited allowance — for this swap's contract.
+          are swapping, not an unlimited allowance — for this swap&apos;s contract.
           The swap itself is a second transaction you confirm afterwards.
         </Text>
         <Row
@@ -1107,7 +1123,7 @@ export function SwapScreen({ navigation }: Props) {
         <Row
           label="From account"
           value={activeAccount?.name ?? '—'}
-          sub={preparedFrom.current}
+          sub={preparedFromShown}
           theme={theme}
         />
         {notice ? (

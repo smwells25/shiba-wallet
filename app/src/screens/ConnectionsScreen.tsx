@@ -93,7 +93,7 @@ export function ConnectionsScreen({ navigation }: Props) {
           requires a project id. Create one for free at dashboard.reown.com
           (no personal data from this wallet is involved — the id only
           identifies the app to the relay), then save it in Settings under
-          "WalletConnect".
+          &quot;WalletConnect&quot;.
         </Text>
         <Button title="Open Settings" onPress={() => navigation.navigate('Settings')} />
       </ScrollView>

@@ -83,7 +83,7 @@ export function QrScanner({
           <View style={styles.messageBox}>
             <Text style={[styles.message, { color: theme.textMuted }]}>
               Camera access is turned off for this app in the system
-              settings. That's fine — scanning is only a convenience. Close
+              settings. That&apos;s fine — scanning is only a convenience. Close
               this and paste the text instead, or enable the camera in your
               device settings and come back.
             </Text>

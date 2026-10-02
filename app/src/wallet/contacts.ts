@@ -102,10 +102,6 @@ function validationChainFor(networkId: string): string | null {
   return null;
 }
 
-function isEvmNetwork(networkId: string): boolean {
-  return validationChainFor(networkId) === EVM_CHAIN_ID;
-}
-
 export type ContactAddressValidation =
   | { ok: true; address: string }
   | { ok: false; error: string };

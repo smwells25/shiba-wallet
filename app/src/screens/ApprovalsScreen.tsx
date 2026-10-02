@@ -192,10 +192,32 @@ export function ApprovalsScreen({ navigation }: Props) {
     }
   }, [owner, accountIndex, evmChain.caip2, evmChain.testnet]);
 
-  useEffect(() => {
+  // When the account or the active chain changes, the screen starts over:
+  // the list goes back to loading, address tags are dropped and any open
+  // revoke flow returns to the list. That reset happens while rendering
+  // (React's "adjust state when a prop changes" pattern), keyed on exactly
+  // the inputs that give `load` a new identity; the effect only starts the
+  // asynchronous load.
+  const [loadInputs, setLoadInputs] = useState({
+    owner,
+    accountIndex,
+    caip2: evmChain.caip2,
+    testnet: evmChain.testnet,
+  });
+  if (
+    loadInputs.owner !== owner ||
+    loadInputs.accountIndex !== accountIndex ||
+    loadInputs.caip2 !== evmChain.caip2 ||
+    loadInputs.testnet !== evmChain.testnet
+  ) {
+    setLoadInputs({ owner, accountIndex, caip2: evmChain.caip2, testnet: evmChain.testnet });
     setState({ status: 'loading' });
     setTags({});
     setPhase('list');
+  }
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- load() sets state only after its first await (the endpoint lookup), never synchronously, and this rule does not treat await as an asynchronous boundary.
     void load();
   }, [load]);
 

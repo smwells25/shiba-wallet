@@ -75,13 +75,19 @@ export function LockGate({ children }: { children: React.ReactNode }) {
 
   const armed = status === 'ready' && available && autoLockMs !== null;
 
+  // Disarming (threshold set to off, wallet wiped) also clears any pending
+  // timer so a later re-arm starts fresh. The reset runs while rendering
+  // whenever the arming inputs change and the gate ends up disarmed (React's
+  // "adjust state when a prop changes" pattern); the effect below only
+  // manages the AppState subscription.
+  const [armedFor, setArmedFor] = useState({ armed, autoLockMs });
+  if (armedFor.armed !== armed || armedFor.autoLockMs !== autoLockMs) {
+    setArmedFor({ armed, autoLockMs });
+    if (!armed) setLock(INITIAL_LOCK_STATE);
+  }
+
   useEffect(() => {
-    if (!armed) {
-      // Disarming (threshold set to off, wallet wiped) also clears any
-      // pending timer so a later re-arm starts fresh.
-      setLock(INITIAL_LOCK_STATE);
-      return;
-    }
+    if (!armed) return;
     const subscription = AppState.addEventListener('change', (nextStatus) => {
       setLock((prev) =>
         reduceLock(prev, { type: 'app-state', status: nextStatus, now: Date.now() }, autoLockMs),
@@ -122,7 +128,7 @@ export function LockGate({ children }: { children: React.ReactNode }) {
             <Text style={[styles.title, { color: theme.text }]}>Shiba Wallet is locked</Text>
             <Text style={[styles.hint, { color: theme.textMuted }]}>
               The app locked itself after being in the background. Your keys
-              never left the device's secure storage.
+              never left the device&apos;s secure storage.
             </Text>
             <Button title="Unlock" onPress={() => void unlock()} style={styles.button} />
             {unlockError ? (

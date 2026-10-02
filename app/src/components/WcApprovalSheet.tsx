@@ -81,6 +81,37 @@ export type TxQuoteState =
     }
   | { status: 'error'; message: string };
 
+/**
+ * The quote state a request starts in, decided synchronously from the
+ * request and the current account: null when the item needs no quote, an
+ * error for the refusals that need no network call, otherwise loading (the
+ * quote effect then fills in the result). The branches mirror the quote
+ * effect in WcApprovalSheet one for one; keep the two in step.
+ */
+function initialTxQuote(
+  item: WcQueueItem,
+  address: string | null,
+  permissionGrant: SessionKeyGrant | null,
+): TxQuoteState | null {
+  if (item.type === 'request' && item.parsed.kind === 'permissions') {
+    if (!item.smart || !permissionGrant) {
+      return { status: 'error', message: 'Permission requests are served only on Kernel smart-account connections.' };
+    }
+    return { status: 'loading' };
+  }
+  if (
+    item.type !== 'request' ||
+    (item.parsed.kind !== 'transaction' && item.parsed.kind !== 'calls')
+  ) {
+    return null;
+  }
+  if (!address) return { status: 'error', message: 'Wallet account unavailable.' };
+  if (!item.smart && item.parsed.kind !== 'transaction') {
+    return { status: 'error', message: 'Batches are only served on smart-account connections.' };
+  }
+  return { status: 'loading' };
+}
+
 /** What the proposal sheet offers when a verified smart account exists. */
 export interface SmartAccountOption {
   address: string;
@@ -186,17 +217,37 @@ export function WcApprovalSheet({
   // eth_call simulation) before the user can see what they would approve.
   // On a smart-account session, transactions and ERC-5792 batches are
   // quoted as one UserOperation through the bundler estimate instead.
-  useEffect(() => {
+  //
+  // Whenever the inputs of the quote change (another item, account, chain
+  // or a narrowed grant), the simulation override switch is cleared and the
+  // quote restarts from initialTxQuote. That happens while rendering
+  // (React's "adjust state when a prop changes" pattern, which also covers
+  // the first render); the effect below only runs the asynchronous quote.
+  const [quotedInputs, setQuotedInputs] = useState<{
+    itemKey: string;
+    address: string | null;
+    caip2: string;
+    grantKey: string;
+  } | null>(null);
+  if (
+    quotedInputs === null ||
+    quotedInputs.itemKey !== item.key ||
+    quotedInputs.address !== address ||
+    quotedInputs.caip2 !== evmChain.caip2 ||
+    quotedInputs.grantKey !== permissionGrantKey
+  ) {
+    setQuotedInputs({ itemKey: item.key, address, caip2: evmChain.caip2, grantKey: permissionGrantKey });
     setOverrideSimulation(false);
+    setTxQuote(initialTxQuote(item, address, permissionGrant));
+  }
+
+  useEffect(() => {
     if (item.type === 'request' && item.parsed.kind === 'permissions') {
       const smart = item.smart;
       const grant = permissionGrant;
-      if (!smart || !grant) {
-        setTxQuote({ status: 'error', message: 'Permission requests are served only on Kernel smart-account connections.' });
-        return;
-      }
+      // initialTxQuote already showed the refusal.
+      if (!smart || !grant) return;
       let cancelled = false;
-      setTxQuote({ status: 'loading' });
       (async (): Promise<TxQuoteState> => {
         const loaded = await loadAaBundle(smart.accountIndex);
         if (!loaded) {
@@ -237,19 +288,15 @@ export function WcApprovalSheet({
         cancelled = true;
       };
     }
+    // No quote needed, or a refusal initialTxQuote already showed.
     if (
       item.type !== 'request' ||
       (item.parsed.kind !== 'transaction' && item.parsed.kind !== 'calls')
     ) {
-      setTxQuote(null);
       return;
     }
-    if (!address) {
-      setTxQuote({ status: 'error', message: 'Wallet account unavailable.' });
-      return;
-    }
+    if (!address) return;
     let cancelled = false;
-    setTxQuote({ status: 'loading' });
     if (item.smart) {
       const smart = item.smart;
       const txs: WcTxParams[] =
@@ -302,10 +349,8 @@ export function WcApprovalSheet({
         cancelled = true;
       };
     }
-    if (item.parsed.kind !== 'transaction') {
-      setTxQuote({ status: 'error', message: 'Batches are only served on smart-account connections.' });
-      return;
-    }
+    // Batches outside smart-account sessions: initialTxQuote showed the refusal.
+    if (item.parsed.kind !== 'transaction') return;
     const { tx } = item.parsed;
     (async () => {
       // getEndpoint translates the EVM slot to the active network
@@ -531,7 +576,7 @@ function ProposalBody({
             </Text>
           ) : null}
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            Approving shares this account's Ethereum address with this dApp and
+            Approving shares this account&apos;s Ethereum address with this dApp and
             lets it send signature and transaction requests. The connection
             stays bound to this account: while another account is active, its
             requests are declined. Every request still needs your explicit

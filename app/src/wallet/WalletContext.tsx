@@ -3,6 +3,7 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -227,8 +228,15 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   const revealMnemonic = useCallback(() => loadMnemonic(), []);
 
+  // Mirror of `derived` for the async account actions below. It is updated
+  // after every commit (refs must not be written while rendering); a layout
+  // effect runs before any passive effect or later event can read it.
+  // ensureDerived also writes it directly so a caller sees fresh entries
+  // before the state update has rendered.
   const derivedRef = useRef(derived);
-  derivedRef.current = derived;
+  useLayoutEffect(() => {
+    derivedRef.current = derived;
+  });
 
   /** Derives public data for indices not derived yet (e.g. after an add). */
   const ensureDerived = useCallback(async (indices: number[]) => {

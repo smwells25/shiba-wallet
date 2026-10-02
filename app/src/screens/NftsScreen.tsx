@@ -101,10 +101,17 @@ export function NftsScreen({ navigation }: Props) {
   );
 
   // A mode flip (mainnet <-> Sepolia) while this screen sits under
-  // Settings must never show the other network's list, even briefly.
+  // Settings must never show the other network's list, even briefly. The
+  // list goes back to loading while rendering (React's "adjust state when a
+  // prop changes" pattern), and the effect drops any response still in
+  // flight for the previous network.
+  const [listChain, setListChain] = useState(evmChain.caip2);
+  if (listChain !== evmChain.caip2) {
+    setListChain(evmChain.caip2);
+    setState({ status: 'loading' });
+  }
   useEffect(() => {
     generation.current += 1;
-    setState({ status: 'loading' });
   }, [evmChain.caip2]);
 
   useFocusEffect(

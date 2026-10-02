@@ -276,7 +276,7 @@ function BlockbookRow({
           />
           <Text style={[styles.endpointNote, { color: theme.textMuted }]}>
             The key is stored only on this device and sent only to this
-            host, as the "{BLOCKBOOK_API_KEY_HEADER}" request header (the
+            host, as the &quot;{BLOCKBOOK_API_KEY_HEADER}&quot; request header (the
             header NOWNodes uses). Saving verifies the endpoint first with
             a UTXO query for your own {network.symbol} address.
           </Text>
@@ -856,11 +856,15 @@ export function SettingsScreen({ navigation }: Props) {
 
   const reloadEndpoints = useCallback(() => {
     getAllEndpoints().then(setEndpoints, () => setEndpoints([]));
-    // sepolia in the deps: flipping the developer toggle swaps the EVM row
-    // (and the AA/indexer sections keyed off it) immediately.
-  }, [sepolia]);
+  }, []);
 
-  useEffect(reloadEndpoints, [reloadEndpoints]);
+  // sepolia is a deliberate trigger here even though the effect body does not
+  // read it: flipping the developer toggle must reload the endpoint list at
+  // once so the EVM row (and the AA and indexer sections keyed off it) swap
+  // to the active network immediately.
+  useEffect(() => {
+    reloadEndpoints();
+  }, [reloadEndpoints, sepolia]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1086,7 +1090,7 @@ export function SettingsScreen({ navigation }: Props) {
             Auto-lock is unavailable on this device: no biometric hardware or
             enrollment was found, so the unlock prompt could not appear. The
             wallet deliberately does not substitute its own PIN screen — an
-            in-app PIN would be weaker than your device's own lock screen,
+            in-app PIN would be weaker than your device&apos;s own lock screen,
             which already protects the secure storage holding your recovery
             phrase. Set up a device passcode and biometrics to enable
             auto-lock.
@@ -1148,7 +1152,7 @@ export function SettingsScreen({ navigation }: Props) {
         <Text style={[styles.sectionTitle, { color: theme.text }]}>Network endpoints</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Where balances are fetched from and where transactions are
-          broadcast. Endpoint URLs are public configuration; Dogecoin's
+          broadcast. Endpoint URLs are public configuration; Dogecoin&apos;s
           Blockbook endpoint may additionally need a provider API key,
           which is stored only on this device and sent only to that host.
           Balances refresh with the new endpoint on the next
@@ -1236,7 +1240,7 @@ export function SettingsScreen({ navigation }: Props) {
           Everything is verified before saving — the bundler must support
           EntryPoint v0.7, and the factory is checked on-chain through your
           configured RPC endpoint. When set, the Send and Swap screens offer
-          an experimental "from smart account" toggle (token sends and swaps
+          an experimental &quot;from smart account&quot; toggle (token sends and swaps
           run as one atomic batch), and WalletConnect can connect dApps to
           the smart account. Off by default; nothing changes for regular
           sends.
@@ -1437,7 +1441,7 @@ export function SettingsScreen({ navigation }: Props) {
           <Switch value={sepolia} onValueChange={(v) => void setSepolia(v)} />
         </View>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          Switches the app's EVM chain to the Sepolia test network (chain id
+          Switches the app&apos;s EVM chain to the Sepolia test network (chain id
           11155111): balances, sends, WalletConnect and the smart-account
           path all run against Sepolia with test ETH, an orange TESTNET
           banner replaces the mainnet warning, and explorer links go to
@@ -1461,7 +1465,7 @@ export function SettingsScreen({ navigation }: Props) {
       <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: theme.text }]}>Danger zone</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          Wiping removes the recovery phrase from this device's secure
+          Wiping removes the recovery phrase from this device&apos;s secure
           storage. Your written backup remains the only way to restore the
           wallet.
         </Text>

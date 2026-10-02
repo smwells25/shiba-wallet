@@ -341,7 +341,19 @@ export function SendScreen({ route, navigation }: Props) {
     }
     listContacts(contactsNetworkId).then(setContacts, () => setContacts([]));
   }, [contactsNetworkId]);
-  useEffect(reloadContacts, [reloadContacts]);
+  // Load the list whenever the network changes. Losing the network clears
+  // the list while rendering (React's "adjust state when a prop changes"
+  // pattern) rather than inside the effect; the effect only does the
+  // asynchronous load.
+  const [contactsLoadedFor, setContactsLoadedFor] = useState(contactsNetworkId);
+  if (contactsLoadedFor !== contactsNetworkId) {
+    setContactsLoadedFor(contactsNetworkId);
+    if (!contactsNetworkId) setContacts([]);
+  }
+  useEffect(() => {
+    if (!contactsNetworkId) return;
+    listContacts(contactsNetworkId).then(setContacts, () => setContacts([]));
+  }, [contactsNetworkId]);
   // Reload when returning from the Contacts screen (opened from the picker).
   useEffect(() => navigation.addListener('focus', reloadContacts), [navigation, reloadContacts]);
 
@@ -468,7 +480,6 @@ export function SendScreen({ route, navigation }: Props) {
   const symbol = token ? token.symbol : isEvmKind ? evmChain.displaySymbol : account.symbol;
   // For displaying the ETH fee of a token send (EVM native decimals).
   const nativeDecimals = network?.decimals ?? 18;
-  const isUtxo = network?.kind === 'esplora' || network?.kind === 'blockbook';
   const utxoNetwork = route.params.chainId === BITCOIN_CHAIN_ID ? BITCOIN : DOGECOIN;
   // Backend selection for the UTXO engine calls: Dogecoin's endpoint is a
   // Blockbook instance (config/defaults.ts) whose optional API key rides
@@ -494,7 +505,6 @@ export function SendScreen({ route, navigation }: Props) {
   /** NFT sends get NFT-specific error titles; everything else is unchanged. */
   const describeError = (e: unknown) =>
     nftMode ? describeNftSendError(e) : describeSendError(e, symbol);
-  const nftLabel = nftParams ? `${nftParams.name} (${nftParams.collection})` : '';
   const aaActive = aaAvailable && aaEnabled;
   // The passkey signs only for a Kernel v3.3 smart account (not SimpleAccount,
   // not an EIP-7702 upgrade) whose passkey this device installed.
@@ -956,7 +966,7 @@ export function SendScreen({ route, navigation }: Props) {
               </>
             ) : (
               <Text style={[styles.hint, { color: theme.textMuted }]}>
-                The bundler's receipt did not include a recognizable
+                The bundler&apos;s receipt did not include a recognizable
                 transaction hash; look the UserOperation hash up in an
                 ERC-4337 explorer you trust.
               </Text>

@@ -172,8 +172,8 @@ export function AccountsSection() {
       <Text style={[styles.hint, { color: theme.textMuted }]}>
         Every account comes from your one recovery phrase, so the phrase backs
         up all of them. Account addresses follow the common conventions:
-        Ethereum m/44'/60'/0'/0/N (as MetaMask), Solana m/44'/501'/N'/0' (as
-        Phantom), Bitcoin m/84'/0'/N'/0/0 and Dogecoin m/44'/3'/N'/0/0. After
+        Ethereum m/44&apos;/60&apos;/0&apos;/0/N (as MetaMask), Solana m/44&apos;/501&apos;/N&apos;/0&apos; (as
+        Phantom), Bitcoin m/84&apos;/0&apos;/N&apos;/0/0 and Dogecoin m/44&apos;/3&apos;/N&apos;/0/0. After
         restoring the phrase on a new device, add accounts again in the same
         order to get the same addresses back.
       </Text>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PriceQuote } from '@shiba-wallet/prices';
 import { usePrefs } from './PrefsContext';
 import { fetchPrices } from './prices';
@@ -34,11 +34,17 @@ export function usePrices(assetIds: readonly (string | null | undefined)[]): Pri
   const generation = useRef(0);
 
   // A stable key for the id set, so a new array with the same ids does not
-  // retrigger the effect.
-  const ids = [...new Set(assetIds.filter((id): id is string => typeof id === 'string'))].sort();
-  const idsKey = ids.join('|');
-  const idsRef = useRef(ids);
-  idsRef.current = ids;
+  // retrigger the effect. The memoized array is rebuilt from the key, so its
+  // identity changes exactly when the set of ids changes.
+  const idsKey = JSON.stringify(
+    [...new Set(assetIds.filter((id): id is string => typeof id === 'string'))].sort(),
+  );
+  const ids = useMemo(() => JSON.parse(idsKey) as string[], [idsKey]);
+
+  // Turning fiat display off clears the stored quotes while rendering, so
+  // turning it back on starts empty instead of showing old prices until the
+  // new answer arrives.
+  if (!enabled && quotes !== EMPTY) setQuotes(EMPTY);
 
   const refresh = useCallback(async () => {
     const gen = ++generation.current;
@@ -46,18 +52,25 @@ export function usePrices(assetIds: readonly (string | null | undefined)[]): Pri
       setQuotes(EMPTY);
       return;
     }
-    const next = await fetchPrices(idsRef.current, { enabled });
+    const next = await fetchPrices(ids, { enabled });
     if (generation.current === gen) setQuotes(next);
-  }, [enabled]);
+  }, [enabled, ids]);
 
+  // Requests the current id set whenever it or the enabled flag changes.
+  // This repeats refresh's request inline because refresh also clears the
+  // quotes synchronously when disabled, which an effect must not do.
   useEffect(() => {
-    void refresh();
+    const gen = ++generation.current;
+    if (enabled) {
+      void (async () => {
+        const next = await fetchPrices(ids, { enabled });
+        if (generation.current === gen) setQuotes(next);
+      })();
+    }
     return () => {
       generation.current += 1;
     };
-    // idsKey stands in for the id array's contents.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refresh, idsKey]);
+  }, [enabled, ids]);
 
   return { quotes: enabled ? quotes : EMPTY, refresh };
 }

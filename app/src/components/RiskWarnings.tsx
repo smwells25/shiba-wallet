@@ -70,9 +70,17 @@ export function RiskWarnings({
     : String(assetChanges);
   const key = `${url ?? ''}|${evmChain.caip2}|${wallet}|${to}|${counterparty ?? ''}|${dataHex}|${changesKey}|${ownKey}`;
 
+  // New inputs clear the shown lines while rendering (React's "adjust state
+  // when a prop changes" pattern), so the card goes back to its loading
+  // state before the effect below gathers the new facts.
+  const [shownKey, setShownKey] = useState(key);
+  if (shownKey !== key) {
+    setShownKey(key);
+    setLines(null);
+  }
+
   useEffect(() => {
     let cancelled = false;
-    setLines(null);
     (async () => {
       let tracked: Awaited<ReturnType<typeof listTokens>> = [];
       try {
