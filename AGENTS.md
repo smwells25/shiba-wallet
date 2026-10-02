@@ -2240,3 +2240,101 @@ engine half (agent) in parallel; item 5's fee-helper generalization
       flow, pinned delegate, single chain, after the biometric gate).
       FUNDS: the dev EOA 0x16DA…C5C is down to ~0.002 Sepolia ETH and
       needs a top-up before further live runs.
+
+- [x] Item 2, engine half — session keys on Kernel v3.3 permission
+      plugins (commit; 48 new tests, chains-evm 274, engine 510).
+      packages/chains-evm/src/kernel-permissions.ts: SessionKeyGrant
+      (allowed calls: target, selector | null, per-call value cap,
+      parameter rules; validAfter; MANDATORY validUntil; optional
+      gasBudgetWei and rateLimit; serialize/parse), validateSessionKeyGrant
+      refuses empty call lists, wildcard (zero-address) targets, duplicate
+      target/selector pairs, rules without a selector, multi-param rules
+      other than oneOf, expired / open-ended / out-of-uint48 windows, and
+      — SECURITY-CRITICAL — any self-call with calldata or value, because
+      a self-call passes Kernel's onlyEntryPointOrSelfOrRoot and could
+      install a sudo permission or upgrade the account. Mapping: policies
+      [call, timestamp, gas?, rateLimit?] + ECDSASigner with flag 0x0002
+      SKIP_SIGNATURE (deliberately not the SDK default 0x0000) so a session
+      key can never produce an ERC-1271 signature for the account.
+      computePermissionId, permissionValidationId, sessionNonceKey
+      (default/enable mode, parallel key), encodePermissionInstall
+      (enable-mode EIP-712 "Enable" digest + typed data for the root owner,
+      and explicit root-signed installValidations + grantAccess calls),
+      signPermissionEnable, encodeEnableModeSignature, signWithSessionKey
+      (0xff || EIP-191 signature), sessionStubSignature,
+      encodePermissionRevoke (uninstallValidation with policyCount+1 empty
+      deinit entries), readKernelPermissionState, readSessionSigner,
+      prepareKernelPermissionInstall (validates offline first; refuses
+      permission ids already used — policies keep a "Deprecated" status),
+      kernelSessionSpec (a SmartAccountSpec that signs ONLY with the
+      session key, refuses the owner key and undeployed accounts, checks
+      calls against the grant locally before signing; routeNode rewrites
+      only the client's getNonce(account, 0) to the permission nonce key —
+      a cleaner optional nonce-key hook on SmartAccountSpec is a follow-up
+      for smart-account.ts), createSessionKeyAccount /
+      generateSessionPrivateKey (noble), grantToErc7715Request /
+      grantFromErc7715Request. Sources: Kernel v3.3 (cd697c7e)
+      ValidationManager.sol / Kernel.sol / ValidationTypeLib.sol /
+      Constants.sol (ENABLE_TYPE_HASH recomputed from the type string);
+      ZeroDev SDK cd7c05b5 plugins/permission; deployed module addresses
+      from the SDK constants, identical code on Sepolia and mainnet:
+      ECDSASigner 0x6A6F069E2a08c2468e7724Ab3250CdBFBA14D4FF, CallPolicy
+      v0.0.4 0x9a52283276A0ec8740DF50bF01B28A80D880eaf2 (v0.0.5 has code
+      but no verified source — not used), TimestampPolicy
+      0xB9f8f524bE6EcD8C945b1b87f9ae5C192FdCE20F, GasPolicy
+      0xaeFC5AbC67FfD258abD0A3E54f65E70326F84b23, RateLimitPolicy
+      0xf63d4139B25c836334edD76641356c6b74C86873, SudoPolicy
+      0x67b436caD8a6D025DF6C82C5BB43fbF11fC5B9B7. Source binding: the
+      current kernel-7579-plugins master (332deed6) is a 2026 rewrite that
+      no longer contains the deployed policies; ECDSASigner, CallPolicy,
+      GasPolicy, RateLimitPolicy and SudoPolicy are Sourcify full matches
+      on chain 1; TimestampPolicy is verified nowhere and was reproduced
+      byte for byte by compiling plugins commit d4855f5 against kernel
+      49842d56 with solc 0.8.24 (via-IR, runs 200, paris, no CBOR).
+      Tests byte-compare against @zerodev/permissions 5.6.3 + @zerodev/sdk
+      5.5.10 + viem 2.57.2 (scratchpad-only installs): permission id,
+      validation id, validatorData, enable digest, install/grantAccess/
+      uninstall calldata, both nonce keys, userOpHash, session signature,
+      stub and enable envelope — all identical. LIVE ON SEPOLIA (account
+      index 2, ZeroDev bundler): a fresh session key 0x059942bb…01df with
+      permission id 0xd0b4b7b7 (grant: 0-wei empty self-call + ≤1 wei to
+      the owner, 600 s) installed AND used in one enable-mode op (bundle
+      tx 0xab442884…d686f, block 11826061, status 0x1 — re-confirmed by
+      the CTO); on-chain state showed hook, ECDSASigner with flag 0x0002,
+      policies [call, timestamp]; disallowed calls rejected at estimation
+      (InvalidCallData for a different target, CallViolatesValueRule for
+      2 wei) after the engine's local refusal; root-signed revocation
+      (tx 0x1c8fcf04…240e0, block 11826063, status 0x1 — re-confirmed)
+      cleared hook/signer/policies; afterwards the session key is rejected
+      (AA23) and replaying the enable signature fails EnableNotApproved.
+      Smoke: scripts/testnet/session-key-smoke.mjs (SESSION_SMOKE_DRY_RUN=1
+      ran six eth_simulateV1 stages and passed; CTO re-ran the dry run).
+      FINDINGS FOR THE CHAIRPERSON: (a) no published audit covers the
+      permission policies or ECDSASigner — ZeroDev's audits link 404s, the
+      "kalos_v3_plugins.pdf" is the factory assessment, and the v3.1
+      incremental covers WebAuthn/weighted validators and the
+      SpendingLimit hook — so the plugins count as UNAUDITED for mainnet
+      (adds to C1); (b) the plugins repo LICENSE is MIT but the verified
+      SudoPolicy source carries SPDX UNLICENSED; (c) ERC-7715 (Draft,
+      ERCs 2adc3783) now names the method wallet_requestExecutionPermissions
+      and its response REQUIRES an ERC-7710 delegationManager, which
+      Kernel's permission validator is not — so only the request shape
+      can be mapped, a compliant response cannot be produced, and the
+      wallet uses its own permission type shiba-wallet:contract-calls
+      (native-token-allowance refused: CallPolicy caps per call, not
+      cumulatively). Caveats: GasPolicy, RateLimitPolicy, parameter rules
+      and paymaster interplay encoded and SDK-pinned but not run live;
+      enable-mode acceptance by Alchemy/Pimlico untested; a null selector
+      also matches calldata starting with 0x00000000 (documented); do NOT
+      use invalidateNonce as "revoke all" — it would break the wallet's
+      ERC-1271 envelope; an unused enable signature cannot be cancelled
+      before its validUntil. App design note recorded: generate session
+      keys on-device into SecureStore, prefer explicit root-signed install
+      when the wallet itself uses the session, show every allowed call in
+      plain language with the expiry behind the biometric gate, persist
+      grants per account+chain with on-chain status and a Revoke button,
+      warn that grants do not survive a seed restore; 7715 over
+      WalletConnect: wallet_getSupportedExecutionPermissions returns only
+      the wallet type with the expiry rule, requests go through the same
+      grant screen, unsupported types get an ERC-1193 error, and the
+      7710 limitation is stated openly.
