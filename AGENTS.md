@@ -2092,3 +2092,59 @@ Open items carried forward:
   (44 errors); emulator pass over the NFT, approvals and risk screens.
 - Phase 8 headline: EIP-7702 (verify the v0.7 authorization path on
   Sepolia first), then session keys and passkeys on the Kernel base.
+
+## Phase 8 plan (approved 2026-10-01): the programmable-account phase
+
+Inputs received the same day: a ZeroDev project id (stored ONLY in the
+git-ignored .dev-wallet/env as ZERODEV_PROJECT_ID — never commit it;
+URL format https://rpc.zerodev.app/api/v3/{projectId}/chain/{chainId}
+per docs.zerodev.app/meta-infra/rpcs, which also documents a
+?provider= selector with ULTRA_RELAY / ALCHEMY / GELATO / PIMLICO and
+says the RPCs "support all standard methods defined in the ERC-4337
+spec"; read-only probe: Sepolia answers eth_chainId 0xaa36a7,
+eth_supportedEntryPoints includes v0.7, rundler_maxPriorityFeePerGas
+is NOT served (-32601) while pimlico_getUserOperationGasPrice IS).
+
+1. EIP-7702 for the plain EOA (Tier 2 feature 23; the "acquisition
+   weapon"): verify from ZeroDev's documentation and on Sepolia how a
+   7702 delegation to Kernel v3.3 is authorized under EntryPoint v0.7
+   (the frameworks doc found 7702 on v0.7 documented but the submission
+   path unverified); engine support for the EIP-7702 authorization
+   (type-4 transaction and/or the UserOperation field the bundler
+   expects); app "Upgrade this account" flow that turns Account N's EOA
+   into a Kernel account AT THE SAME ADDRESS with a plain explanation, a
+   visible delegation status, and a revocation path (delegate to the
+   zero address). D6 stands: the wallet never signs a dApp-requested
+   authorization; BundleBear's 2.34M "Crime" delegations are the
+   reason.
+2. Session keys (Tier 2 feature 18) on Kernel's permission plugins
+   (signer + policies: call, gas, timestamp, rate limit) per
+   docs/SESSION_KEYS.md: engine install/revoke of a scoped session
+   validator, app UI to grant a dApp a bounded session (contract,
+   spending cap, expiry), and ERC-7715 wallet_grantPermissions over
+   WalletConnect as the dApp-facing entry point. Pin to the ZeroDev
+   permissions release and audit status; MIT.
+3. Passkey signer (feature 21): Kernel's WebAuthn validator in the
+   engine (P-256 signature envelope, verified against the validator
+   source) and the app flow behind a development build (passkeys need
+   native modules; Expo Go cannot) — engine + design first, device test
+   when the EAS build exists.
+4. Social recovery / guardians (feature 20): Kernel recovery module
+   evaluation and engine support, plus the recovery metadata the
+   frameworks doc requires once an owner can change (persist each
+   account's address and owner history; D1 caveat).
+5. Bundler vendor selection: record ZeroDev's deployment-acceptance
+   result from the smoke; generalize the app's fee-floor helper to the
+   methods each vendor serves (rundler_maxPriorityFeePerGas,
+   pimlico_getUserOperationGasPrice); per-chain bundler choice stays
+   runtime config.
+6. Follow-ups and standing items: cap the no-indexer token-history
+   lookback to the endpoint's answered log depth; a Sepolia RPC
+   fallback; ESLint burn-down; emulator pass over the NFT, approvals and
+   risk screens; live smart-account WalletConnect sessions; Dogecoin
+   mainnet broadcast; live 0x quotes; live paymaster; EAS build;
+   counsel on (L)GPL/AGPL modules.
+
+Wave 1: item 1 (engine + Sepolia verification, agent) and item 2's
+engine half (agent) in parallel; item 5's fee-helper generalization
+(CTO). Wave 2: app flows for 1 and 2, then 3 and 4. Subagents on Opus.

@@ -238,7 +238,12 @@ async function main() {
   if (!DRY_RUN) {
     // Fund the account so it pays its own gas (no paymaster here).
     const balance = await nodeClient.getBalance(sender);
-    const target = 30_000_000_000_000_000n; // 0.03 ETH
+    // Funding target in ETH; override with KERNEL_FUND_ETH when the dev EOA
+    // is running low (0.004 covers a deployment op and two single ops at
+    // typical Sepolia gas prices).
+    const fundEth = process.env.KERNEL_FUND_ETH ?? '0.03';
+    const [fundWhole, fundFrac = ''] = fundEth.split('.');
+    const target = BigInt(fundWhole) * 10n ** 18n + BigInt((fundFrac + '0'.repeat(18)).slice(0, 18));
     if (balance < target) {
       const fund = signEip1559(
         {
