@@ -2394,3 +2394,73 @@ engine half (agent) in parallel; item 5's fee-helper generalization
       show verbatim with an "Upgrade now" hint), the 21k receive caveat on
       a 7702 address, the 40k execution buffer, dApps that try ERC-1271
       before ECDSA on an upgraded EOA. Mainnet gated on C1.
+
+- [x] Item 2, app half — session keys in the app (commit eafc3a0;
+      check-sessions.mjs 99/99; all 21 app suites green, 1,711 checks;
+      tsc clean; expo export bundles 7.0MB). Keys: generated on-device
+      (engine generateSessionPrivateKey), stored ONLY via storage.ts
+      sessionKeyVault in expo-secure-store WHEN_UNLOCKED_THIS_DEVICE_ONLY
+      (same class as the mnemonic), one entry per
+      chain.account.permissionId (key pattern constrained by
+      expo-secure-store 57.0.4's typings); AsyncStorage
+      (shiba-wallet.sessions.v1) holds only public data (grant with the
+      session ADDRESS, permission id, policy count, label, createdAt,
+      install mode, userOpHashes); corrupt list → empty + flag, writes
+      refused until "Reset session list"; key and record saved before
+      the install is submitted so a bundler refusal leaves a "failed"
+      record whose on-chain status governs forgetting. Use: sendSessionCalls
+      runs the engine's assertCallsAllowed FIRST (an out-of-grant call is
+      refused with zero RPC calls and no key read), loads the key (must
+      derive to the grant's address), builds a separate SmartAccountClient
+      with kernelSessionSpec + spec.routeNode(node); signWith / the owner
+      key / the mnemonic are never on this path (a test asserts the source
+      has no such import); the session op's nonce carries the permission
+      key and its 0xff||65-byte signature recovers to the session address.
+      Install and revoke are owner-signed through the normal AA confirm
+      (bundler estimate gate, biometric, signWith(owner), sendAa); install
+      uses only the engine's explicit installCalls — enable mode is NOT
+      used and the caveat is shown; prepareSessionInstall refuses a quote
+      that would also carry an EIP-7702 upgrade (D6). Revoke →
+      permissionRevokeCall; key deleted from the vault as soon as the
+      bundler accepts, record "revoking" → "revoked" after receipt and
+      on-chain re-read. Status via readKernelPermissionState /
+      readSessionSigner: active (+expired flag) / revoked / not-installed
+      / unknown. Eligibility: deployed Kernel v3.3 account, or an EOA
+      whose 7702 delegation to the wallet's delegate is active on-chain;
+      SimpleAccount, undeployed, or pending upgrade → refused in plain
+      words. GrantReview shows every allowed call in plain language
+      (full target + contact name, function via the engine's selector(),
+      per-call cap "per call, not a total"; approve / setApprovalForAll
+      warn that the approval outlives the session); engine refusals shown
+      verbatim with no network calls. SessionsScreen (Home link, Settings
+      section): wipe/restore warning, "revoke everything you no longer
+      recognise", and on mainnet the no-published-audit note; wipe
+      deletes session keys and the list. ERC-7715 (ERCs 2adc3783, still
+      latest): offered only on Kernel smart-account connections
+      (smartAccountMethodsFor; EOA/SimpleAccount → 5101);
+      wallet_getSupportedExecutionPermissions → only
+      shiba-wallet:contract-calls {chainIds:[active], ruleTypes:['expiry']}
+      (the ERC's type says ruleTypes, its example says rulesTypes — the
+      type definition is followed); wallet_requestExecutionPermissions →
+      grantFromErc7715Request → the same GrantReview with the dApp name,
+      narrowing only when isAdjustmentAllowed, multi-grant requests
+      refused, "Only dApps that understand Kernel session keys can use
+      this" stated on the sheet, install through the same explicit path,
+      the dApp holds the key (the ERC's `to`), answer only after inclusion
+      and read-back: [PermissionResponse] with context = the Kernel
+      validation id, dependencies [], a shiba-wallet:kernelPermission
+      object, and NO delegationManager (Kernel is not an ERC-7710
+      manager; a made-up address would misroute dApp transactions).
+      Error codes (judgement where EIP-1193 is silent): decline 4001,
+      foreign from 4100, unsupported type/rule (incl.
+      native-token-allowance, missing expiry) 4200, wrong chain 4901,
+      malformed / engine-refused -32602, install not confirmed in time
+      -32603 naming the userOpHash. wallet_revokeExecutionPermission and
+      wallet_getGrantedExecutionPermissions are not offered. NOT verified
+      live (highest risk first): the explicit root-signed install path
+      and a successful default-mode session op (the engine's live proof
+      used enable mode; default mode was exercised only in estimation
+      rejections); sessions on a 7702-delegated EOA; any dApp using the
+      wallet's 7715 type; the GasPolicy budget; the engine signing
+      function's key copy cannot be zeroed (only the app's buffers are).
+      Emulator checklist (9 steps) in the builder's report.
