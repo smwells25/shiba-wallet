@@ -27,6 +27,7 @@ import {
   type P256PublicKey,
   type PasskeyValidatorState,
   type SmartAccountSpec,
+  type UserOpSigningContext,
   type WebAuthnAssertion,
 } from '@shiba-wallet/chains-evm';
 import type { DerivedAccount } from '@shiba-wallet/core';
@@ -1324,11 +1325,13 @@ export interface PasskeyBundle extends AaClientBundle {
  * The AaClientBundle for passkey-signed operations on `record.account`: the
  * engine's kernelPasskeySpec wrapped so the shared quote code
  * (prepareAaCalls, which resolves the sender from an address-only stand-in)
- * can drive it, plus the engine's transport routing — routeNode (the passkey
- * nonce key) and routeBundler (the passkey prompt runs at
- * eth_sendUserOperation, after estimation; SmartAccountSpec.signUserOpHash is
- * synchronous). No paymaster: passkey operations are paid by the account
- * (sponsorship together with a passkey was not tested).
+ * can drive it. The node and bundler transports are used as they are: the
+ * wrapper forwards the engine's getNonceKey (the passkey nonce key, which
+ * SmartAccountClient reads), and SmartAccountClient awaits the engine's
+ * asynchronous signUserOpHash, which runs the passkey prompt after gas
+ * estimation and checks the operation and the assertion before returning.
+ * No paymaster: passkey operations are paid by the account (sponsorship
+ * together with a passkey was not tested).
  */
 export function createPasskeyBundle(
   base: Pick<AaClientBundle, 'node' | 'bundler' | 'chainId' | 'accountIndex'>,
@@ -1357,12 +1360,16 @@ export function createPasskeyBundle(
     getFactoryArgs: () => engine.getFactoryArgs(engine.signer),
     encodeCalls: (calls: Call[]) => engine.encodeCalls(calls),
     // The engine refuses every signer but spec.signer (whose sign() throws),
-    // so the seed key can never sign here.
-    signUserOpHash: (owner: DerivedAccount, hash: Uint8Array) => engine.signUserOpHash(owner, hash),
+    // so the seed key can never sign here. The context (the exact operation)
+    // must be forwarded: the engine refuses to sign a bare hash.
+    signUserOpHash: (owner: DerivedAccount, hash: Uint8Array, context?: UserOpSigningContext) =>
+      engine.signUserOpHash(owner, hash, context),
     stubSignature: () => engine.stubSignature(),
+    // Routes the EntryPoint nonce read (quote and send) to the passkey validator.
+    getNonceKey: () => engine.getNonceKey(),
   };
-  const node = engine.routeNode(base.node);
-  const bundler = engine.routeBundler(base.bundler);
+  const node = base.node;
+  const bundler = base.bundler;
   const client = new SmartAccountClient({
     chainId: base.chainId,
     entryPoint: ENTRYPOINT_V07,
@@ -1416,23 +1423,25 @@ export async function preparePasskeyCalls(
 /**
  * Submits a passkey quote: SmartAccountClient.sendCalls with the passkey
  * signer stand-in (spec.signer, which cannot sign by itself); the platform
- * prompt runs inside the routed bundler at submission, and the engine checks
- * the assertion against the installed key before forwarding. signWith, the
- * mnemonic and the owner key are not reachable from here.
+ * prompt runs inside the engine spec's signUserOpHash after gas estimation,
+ * and the engine checks the operation and the assertion against the
+ * installed key before the client submits. signWith, the mnemonic and the
+ * owner key are not reachable from here. `signature` is the passkey envelope
+ * that was submitted.
  */
 export async function sendPasskeyCalls(
   bundle: PasskeyBundle,
   quote: AaSendQuote,
-): Promise<{ userOpHash: string; signature: Uint8Array | undefined }> {
+): Promise<{ userOpHash: string; signature: Uint8Array }> {
   if (!quote.passkey) throw new Error('This operation was not prepared for the passkey signer. Nothing was signed.');
   if (!same(quote.sender, bundle.passkey.record.account)) {
     throw new Error('The operation was prepared for another account. Nothing was signed.');
   }
-  const { userOpHash } = await bundle.client.sendCalls(bundle.passkey.spec.signer, quote.calls, {
+  const { userOpHash, userOp } = await bundle.client.sendCalls(bundle.passkey.spec.signer, quote.calls, {
     maxFeePerGas: quote.maxFeePerGas,
     maxPriorityFeePerGas: quote.maxPriorityFeePerGas,
   });
-  return { userOpHash, signature: bundle.passkey.spec.submittedSignature(userOpHash) };
+  return { userOpHash, signature: userOp.signature };
 }
 
 /** The "Test passkey" operation: one zero-value call to the owner EOA (a call to the account itself is refused by design). */

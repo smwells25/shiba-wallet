@@ -39,6 +39,7 @@ export type {
   SmartAccountClientConfig,
   SmartAccountSignatureContext,
   SmartAccountSpec,
+  UserOpSigningContext,
 } from './smart-account.js';
 export { encodeFunctionCall, encodeSequence, selector } from './abi.js';
 export type { AbiValue } from './abi.js';
@@ -368,7 +369,6 @@ export {
   P256_HALF_N,
   P256_N,
   P256_VERIFY_PRECOMPILE,
-  PASSKEY_PENDING_SIGNATURE_PREFIX,
   WEBAUTHN_CLIENT_DATA_PREFIX,
   WEBAUTHN_DUMMY_RESPONSE_TYPE_LOCATION,
   WEBAUTHN_RESPONSE_TYPE_LOCATION,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hashMessage, recoverAddress } from 'ethers';
+import { Interface, hashMessage, recoverAddress } from 'ethers';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import {
@@ -168,6 +168,103 @@ describe('SmartAccountClient pipeline', () => {
     // with an independent implementation.
     const recovered = recoverAddress(hashMessage(digest), toHex(userOp.signature));
     expect(recovered).toBe(owner.address);
+  });
+});
+
+describe('SmartAccountClient asynchronous signing and nonce keys', () => {
+  it('awaits an async signUserOpHash, after estimation, with the exact operation as context', async () => {
+    const { calls, node, bundler } = makeTransports({ deployed: true, sponsored: false });
+    const seen: Array<{ hash: string; context: unknown; callsSoFar: string[] }> = [];
+    const asyncSpec: SmartAccountSpec = {
+      ...spec,
+      signUserOpHash: async (owner, userOpHash, context) => {
+        seen.push({ hash: toHex(userOpHash), context, callsSoFar: calls.map((c) => c.method) });
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        return withEthereumV(owner.sign(toEthSignedMessageHash(userOpHash)));
+      },
+    };
+    const client = new SmartAccountClient({ chainId: 1n, entryPoint: ENTRYPOINT_V07, bundler, node, spec: asyncSpec });
+    const owner = ownerAccount();
+    const { userOp } = await client.sendCalls(owner, [], FEES);
+    expect(seen).toHaveLength(1);
+    // Signing happened after estimation and before submission.
+    expect(seen[0]!.callsSoFar).toEqual(['eth_getCode', 'eth_call', 'eth_estimateUserOperationGas']);
+    const sent = calls.find((c) => c.method === 'eth_sendUserOperation')!;
+    expect((sent.params[0] as { signature: string }).signature).toBe(toHex(userOp.signature));
+    const digest = getUserOpHash(userOp, ENTRYPOINT_V07, 1n);
+    expect(seen[0]!.hash).toBe(toHex(digest));
+    const context = seen[0]!.context as { userOp: UserOperation; entryPoint: string; chainId: bigint };
+    expect(context.entryPoint).toBe(ENTRYPOINT_V07);
+    expect(context.chainId).toBe(1n);
+    expect(toHex(getUserOpHash(context.userOp, ENTRYPOINT_V07, 1n))).toBe(toHex(digest));
+    expect(recoverAddress(hashMessage(digest), toHex(userOp.signature))).toBe(owner.address);
+  });
+
+  it('a rejected async signature submits nothing', async () => {
+    const { calls, node, bundler } = makeTransports({ deployed: true, sponsored: false });
+    const client = new SmartAccountClient({
+      chainId: 1n,
+      entryPoint: ENTRYPOINT_V07,
+      bundler,
+      node,
+      spec: { ...spec, signUserOpHash: async () => Promise.reject(new Error('user cancelled')) },
+    });
+    await expect(client.sendCalls(ownerAccount(), [], FEES)).rejects.toThrow(/user cancelled/);
+    expect(calls.map((c) => c.method)).not.toContain('eth_sendUserOperation');
+  });
+
+  it('reads the nonce for getNonceKey and refuses an answer for another key', async () => {
+    const key = 0x010203040506070809101112131415161718192021222324n; // 24 bytes, < 2^192
+    const reads: string[] = [];
+    let answerKey = key;
+    const node: JsonRpcTransport = async (method, params) => {
+      if (method !== 'eth_call') throw new Error(`unexpected ${method}`);
+      const data = (params[0] as { data: string }).data;
+      reads.push(data);
+      return '0x' + ((answerKey << 64n) | 9n).toString(16).padStart(64, '0');
+    };
+    const bundler: JsonRpcTransport = async () => {
+      throw new Error('unexpected');
+    };
+    const client = new SmartAccountClient({
+      chainId: 1n,
+      entryPoint: ENTRYPOINT_V07,
+      bundler,
+      node,
+      spec: { ...spec, getNonceKey: () => key },
+    });
+    expect(await client.getNonce(ownerAccount())).toBe((key << 64n) | 9n);
+    // getNonce(address,uint192): selector, the address word, then the key word.
+    const iface = new Interface(['function getNonce(address sender, uint192 key)']);
+    expect(reads[0]).toBe(iface.encodeFunctionData('getNonce', [ACCOUNT_ADDRESS, key]));
+    answerKey = key + 1n;
+    await expect(client.getNonce(ownerAccount())).rejects.toThrow(/different key/);
+    const tooBig = new SmartAccountClient({
+      chainId: 1n,
+      entryPoint: ENTRYPOINT_V07,
+      bundler,
+      node,
+      spec: { ...spec, getNonceKey: () => 1n << 192n },
+    });
+    await expect(tooBig.getNonce(ownerAccount())).rejects.toThrow(/uint192/);
+  });
+
+  it('without getNonceKey the read is key 0, byte-identical to before', async () => {
+    const reads: string[] = [];
+    const node: JsonRpcTransport = async (_method, params) => {
+      reads.push((params[0] as { data: string }).data);
+      return '0x05';
+    };
+    const client = new SmartAccountClient({
+      chainId: 1n,
+      entryPoint: ENTRYPOINT_V07,
+      bundler: async () => null,
+      node,
+      spec,
+    });
+    expect(await client.getNonce(ownerAccount())).toBe(5n);
+    const iface = new Interface(['function getNonce(address sender, uint192 key)']);
+    expect(reads[0]).toBe(iface.encodeFunctionData('getNonce', [ACCOUNT_ADDRESS, 0n]));
   });
 });
 

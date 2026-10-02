@@ -694,7 +694,22 @@ console.log('check-passkeys: passkey-signed operation (the owner key is never us
     s <= p256.Point.Fn.ORDER / 2n && p256.verify(new Uint8Array([...toBytes(word(r)), ...toBytes(word(s))]), msg, pub, { prehash: false }));
   check('Node crypto verifies the authenticator\'s DER signature over the same data',
     nodeVerify('sha256', new Uint8Array([...toBytes(authData), ...sha256(Buffer.from(cdj, 'utf8'))]), createPublicKey({ key: Buffer.from(auth.spki), format: 'der', type: 'spki' }), Buffer.from(auth.lastAssertion.der)));
-  check('spec.submittedSignature returns the envelope that went on the wire', signature && toHex(signature) === toHex(op.signature));
+  check('sendPasskeyCalls returns the envelope that went on the wire (the client\'s signed userOp)', signature && toHex(signature) === toHex(op.signature));
+  check('no transport routing: the passkey bundle uses the base node and bundler as they are',
+    pbundle.node === bundle.node && pbundle.bundler === bundle.bundler);
+  check('the bundle spec forwards the engine nonce key (getNonceKey = webAuthnNonceKey(validator))',
+    typeof pbundle.spec.getNonceKey === 'function' && pbundle.spec.getNonceKey() === webAuthnNonceKey(VALIDATOR));
+  {
+    const getsNow = auth.calls.get;
+    const e = await caught(() => pbundle.spec.signUserOpHash(pbundle.passkey.spec.signer, hash));
+    check('the bundle spec refuses to sign a bare hash (no operation context), with no prompt',
+      e && /bare hash/.test(e.message) && auth.calls.get === getsNow, e?.message);
+    const e2 = await caught(() => pbundle.spec.signUserOpHash(pbundle.passkey.spec.signer, hash, {
+      userOp: { ...op, factory: KERNEL_V3_3.factory, factoryData: new Uint8Array([1]) }, entryPoint: ENTRYPOINT_V07, chainId: 1n,
+    }));
+    check('the bundle spec refuses an operation that would deploy the account, with no prompt',
+      e2 && /cannot deploy/.test(e2.message) && auth.calls.get === getsNow, e2?.message);
+  }
   check('the OWNER key was never used on the passkey path', ownerSignCount === signsBefore);
   const passkeysSrc = readFileSync(new URL('../src/wallet/passkeys.ts', import.meta.url), 'utf8');
   check('passkeys.ts has no route to the owner key (no signWith, mnemonic, storage or secure-store import)',

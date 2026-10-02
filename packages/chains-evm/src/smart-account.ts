@@ -44,8 +44,19 @@ export interface SmartAccountSpec {
    * Signs the userOpHash the way the account's validation expects (raw hash,
    * EIP-191 wrapped, EIP-1271 envelope...). Given the owner so it can use
    * owner.sign.
+   *
+   * May return the signature directly or a Promise of it: SmartAccountClient
+   * awaits the result, so signers that need a user interaction (a passkey
+   * prompt, a hardware device) can sign here instead of at the transport.
+   * SmartAccountClient also passes `context`, the exact operation the hash
+   * was computed from, so a spec can check what it is about to sign; specs
+   * that do not need it may ignore the argument.
    */
-  signUserOpHash(owner: DerivedAccount, userOpHash: Uint8Array): Uint8Array;
+  signUserOpHash(
+    owner: DerivedAccount,
+    userOpHash: Uint8Array,
+    context?: UserOpSigningContext,
+  ): Uint8Array | Promise<Uint8Array>;
   /**
    * Placeholder signature of the correct length for gas estimation; bundlers
    * simulate validation, so it must parse without reverting on length.
@@ -72,6 +83,28 @@ export interface SmartAccountSpec {
    * (ERC-7769: a tuple is needed only to CHANGE the delegation).
    */
   getEip7702Authorization?(owner: DerivedAccount): Promise<SignedEip7702Authorization | undefined>;
+  /**
+   * Optional: the uint192 EntryPoint nonce key this account's operations
+   * use. Kernel, for example, routes an operation to a non-root validator
+   * (a session-key permission, a passkey) through the high bits of the
+   * nonce. When present, SmartAccountClient reads
+   * EntryPoint.getNonce(sender, key) instead of key 0 and refuses a result
+   * whose key part differs. Absent means key 0, the previous behaviour.
+   */
+  getNonceKey?(owner: DerivedAccount): bigint;
+}
+
+/**
+ * What SmartAccountClient hands to signUserOpHash besides the hash: the
+ * complete operation (with the estimation stub still in its signature
+ * field, which the userOpHash does not cover) and the EntryPoint and chain
+ * id the hash was computed for. A spec can recompute the hash from it and
+ * refuse to sign anything it did not expect.
+ */
+export interface UserOpSigningContext {
+  userOp: UserOperation;
+  entryPoint: string;
+  chainId: bigint;
 }
 
 /** Facts an account's ERC-1271 signing needs beyond the owner key. */
@@ -138,20 +171,33 @@ export class SmartAccountClient {
     return code !== undefined && code !== '0x' && code !== '0x0';
   }
 
-  /** Reads the account's ERC-4337 nonce (key 0) from the EntryPoint. */
+  /**
+   * Reads the account's ERC-4337 nonce from the EntryPoint, for the spec's
+   * nonce key (getNonceKey) or key 0 when the spec has none.
+   */
   async getNonce(owner: DerivedAccount): Promise<bigint> {
     const sender = await this.getAddress(owner);
+    const key = this.config.spec.getNonceKey ? this.config.spec.getNonceKey(owner) : 0n;
+    if (key < 0n || key >= 1n << 192n) throw new Error('Nonce key must be a uint192');
     const data = new Uint8Array(4 + 32 + 32);
     data.set(GET_NONCE_SELECTOR, 0);
     // address argument, left-padded to a 32-byte word
     const addressBytes = hexToBytesStrict(sender);
     data.set(addressBytes, 4 + 12);
-    // uint192 key argument stays zero
+    // uint192 key argument, left-padded to a 32-byte word (all zero for key 0)
+    for (let i = 0, k = key; k > 0n; i++, k >>= 8n) data[4 + 32 + 31 - i] = Number(k & 0xffn);
     const result = (await this.config.node('eth_call', [
       { to: this.config.entryPoint, data: bytesToHexStrict(data) },
       'latest',
     ])) as string;
-    return BigInt(result);
+    const nonce = BigInt(result);
+    // The EntryPoint returns sequence | (key << 64). A node that answers for
+    // a different key would make the operation validate against the wrong
+    // validator (or not at all), so a keyed read is checked.
+    if (key !== 0n && nonce >> 64n !== key) {
+      throw new Error('EntryPoint.getNonce returned a nonce for a different key');
+    }
+    return nonce;
   }
 
   /**
@@ -228,7 +274,14 @@ export class SmartAccountClient {
     }
 
     const hash = getUserOpHash(op, this.config.entryPoint, this.config.chainId);
-    op = { ...op, signature: spec.signUserOpHash(owner, hash) };
+    // Awaited: a spec may sign asynchronously (for example behind a passkey
+    // prompt). The context is the exact operation the hash covers.
+    const signature = await spec.signUserOpHash(owner, hash, {
+      userOp: op,
+      entryPoint: this.config.entryPoint,
+      chainId: this.config.chainId,
+    });
+    op = { ...op, signature };
 
     const userOpHash = await this.bundlerClient.sendUserOperation(op);
     return { userOpHash, userOp: op };

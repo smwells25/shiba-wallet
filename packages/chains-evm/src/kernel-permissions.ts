@@ -1088,10 +1088,18 @@ export interface KernelSessionSpec extends SmartAccountSpec {
   permissionId: Uint8Array;
   nonceKey: bigint;
   /**
-   * Wraps the node transport so SmartAccountClient's EntryPoint
-   * getNonce(account, 0) read uses this session's nonce key instead (the
-   * returned value is key << 64 | sequence, i.e. the full nonce). Every other
-   * request passes through untouched. Use it as SmartAccountClient's `node`.
+   * The session's nonce key (SmartAccountSpec.getNonceKey), so
+   * SmartAccountClient reads EntryPoint.getNonce(account, nonceKey) directly
+   * and checks the key part of the answer.
+   */
+  getNonceKey(): bigint;
+  /**
+   * Compatibility wrapper, no longer needed with SmartAccountClient (which
+   * now uses getNonceKey). It rewrites an EntryPoint getNonce(account, 0)
+   * read into a read for this session's nonce key (the returned value is
+   * key << 64 | sequence, i.e. the full nonce) and passes every other request
+   * through untouched, so it remains correct for callers that wrap this spec
+   * in an object without forwarding getNonceKey.
    */
   routeNode(node: JsonRpcTransport): JsonRpcTransport;
 }
@@ -1099,8 +1107,9 @@ export interface KernelSessionSpec extends SmartAccountSpec {
 /**
  * A SmartAccountSpec that signs with the SESSION key through Kernel's
  * permission path, so SmartAccountClient.sendCalls works unchanged:
- *   new SmartAccountClient({ ..., spec, node: spec.routeNode(node) })
+ *   new SmartAccountClient({ ..., spec, node })
  *   client.sendCalls(sessionKeyAccount, calls, fees)
+ * The client takes the session's nonce key from getNonceKey.
  * The "owner" passed to the client must be the session key's
  * DerivedAccount (see createSessionKeyAccount); anything else is refused, so
  * the seed-derived owner can never sign through this spec. The account must
@@ -1138,6 +1147,10 @@ export function kernelSessionSpec(config: KernelSessionSpecConfig): KernelSessio
   return {
     permissionId,
     nonceKey,
+
+    getNonceKey(): bigint {
+      return nonceKey;
+    },
 
     async getAddress(signer: DerivedAccount): Promise<string> {
       requireSessionKey(signer);

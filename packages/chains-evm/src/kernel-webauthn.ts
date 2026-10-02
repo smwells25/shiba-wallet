@@ -9,9 +9,14 @@ import {
   kernelErc1271Digest,
   kernelValidatorId,
 } from './kernel-account.js';
-import type { JsonRpcTransport, RpcUserOperation } from './rpc.js';
-import type { Call, SmartAccountSignatureContext, SmartAccountSpec } from './smart-account.js';
-import { ENTRYPOINT_V07, getUserOpHash, type UserOperation } from './userop.js';
+import type { JsonRpcTransport } from './rpc.js';
+import type {
+  Call,
+  SmartAccountSignatureContext,
+  SmartAccountSpec,
+  UserOpSigningContext,
+} from './smart-account.js';
+import { ENTRYPOINT_V07, getUserOpHash } from './userop.js';
 
 /**
  * Passkey (WebAuthn, P-256) signer for Kernel v3.3 through ZeroDev's
@@ -163,7 +168,6 @@ const VALIDATION_TYPE_VALIDATOR = 0x01;
 const MODULE_TYPE_VALIDATOR = 1n;
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const EXECUTE_SELECTOR = encodeFunctionCall('execute(bytes32,bytes)', []).slice(0, 4);
-const GET_NONCE_SIGNATURE = 'getNonce(address,uint192)';
 
 /**
  * SubjectPublicKeyInfo DER prefix for an uncompressed P-256 key: SEQUENCE {
@@ -724,16 +728,6 @@ export async function signErc1271WithPasskey(
 // SmartAccountSpec
 // ---------------------------------------------------------------------------
 
-/**
- * Prefix of the placeholder signature the spec hands to SmartAccountClient
- * (keccak256("shiba-wallet.kernel-webauthn.pending-assertion")). The
- * placeholder carries the userOpHash; routeBundler replaces it with the real
- * passkey signature and refuses to forward any request that still contains it.
- */
-export const PASSKEY_PENDING_SIGNATURE_PREFIX = toHex(
-  keccak(utf8ToBytes('shiba-wallet.kernel-webauthn.pending-assertion')),
-);
-
 export interface KernelPasskeySpecConfig {
   /** The DEPLOYED Kernel v3.3 account that has this passkey installed. */
   account: string;
@@ -743,7 +737,9 @@ export interface KernelPasskeySpecConfig {
    * The platform passkey prompt. Receives the 32-byte challenge (the
    * userOpHash) and must return one assertion whose clientDataJSON challenge
    * is base64url(challenge), with user verification required. Called only
-   * from routeBundler, after gas estimation, right before submission.
+   * from signUserOpHash, which SmartAccountClient.sendCalls invokes after gas
+   * estimation (and after the final paymaster data, if any), right before
+   * submission.
    */
   assert: (challenge: Uint8Array) => Promise<WebAuthnAssertion>;
   /** Whether the chain has the P256VERIFY precompile (detectP256Precompile). */
@@ -764,23 +760,22 @@ export interface KernelPasskeySpec extends SmartAccountSpec {
    * key can never sign through this path.
    */
   signer: DerivedAccount;
+  /** The passkey nonce key (SmartAccountSpec.getNonceKey); SmartAccountClient reads the nonce for it. */
+  getNonceKey(): bigint;
   /**
-   * Wraps the node transport so SmartAccountClient's EntryPoint
-   * getNonce(account, 0) read uses the passkey nonce key; everything else
-   * passes through. Use as SmartAccountClient's `node`.
+   * Prompts for the passkey and returns the validator envelope. Requires the
+   * signing context SmartAccountClient passes (the exact operation) and
+   * refuses, before any prompt, unless: the EntryPoint and chain id are the
+   * configured ones; the operation's sender is the passkey account; its nonce
+   * routes to the passkey validator; it carries no factory (no deployment)
+   * and no EIP-7702 authorization; its callData was produced by this spec's
+   * encodeCalls (so the self-call guard ran on it); and the userOpHash
+   * recomputed from the operation equals the hash being signed. After the
+   * prompt, the assertion is checked like the validator checks it (flags,
+   * challenge at the fixed offset, signature against publicKey) and s is
+   * normalized to the low half.
    */
-  routeNode(node: JsonRpcTransport): JsonRpcTransport;
-  /**
-   * Wraps the bundler transport. On eth_sendUserOperation it recomputes the
-   * userOpHash from the exact operation being submitted, requires it to equal
-   * the hash in the placeholder, calls `assert`, checks the assertion
-   * (flags, challenge, low s, signature against publicKey), substitutes the
-   * envelope and forwards. Any other request containing the placeholder is
-   * refused. Use as SmartAccountClient's `bundler`.
-   */
-  routeBundler(bundler: JsonRpcTransport): JsonRpcTransport;
-  /** The envelope actually submitted for a userOpHash (hex), after routeBundler sent it. */
-  submittedSignature(userOpHash: string): Uint8Array | undefined;
+  signUserOpHash(owner: DerivedAccount, userOpHash: Uint8Array, context?: UserOpSigningContext): Promise<Uint8Array>;
 }
 
 /** DerivedAccount stand-in for a passkey: identifies the key, never signs. */
@@ -792,7 +787,7 @@ export function passkeySignerAccount(account: string, publicKey: P256PublicKey, 
     publicKey: p256PublicKeyToSec1(publicKey),
     address: toChecksumAddress(toBytes(account)),
     sign: () => {
-      throw new Error('A passkey signs only through its platform prompt (KernelPasskeySpec.routeBundler)');
+      throw new Error('A passkey signs only through its platform prompt (KernelPasskeySpec.signUserOpHash)');
     },
   };
 }
@@ -801,14 +796,14 @@ export function passkeySignerAccount(account: string, publicKey: P256PublicKey, 
  * A SmartAccountSpec that signs UserOperations with a passkey through the
  * WebAuthnValidator on a deployed Kernel v3.3 account:
  *   const spec = kernelPasskeySpec({ account, publicKey, assert, usePrecompiled, chainId });
- *   const client = new SmartAccountClient({ ..., spec,
- *     node: spec.routeNode(node), bundler: spec.routeBundler(bundler) });
- *   const { userOpHash } = await client.sendCalls(spec.signer, calls, fees);
- *   spec.submittedSignature(userOpHash) // the envelope that went on the wire
- * SmartAccountSpec.signUserOpHash is synchronous while a passkey prompt is
- * not, so signing happens in routeBundler; the client's returned `userOp`
- * still holds the placeholder signature. Calls to the account itself are
- * refused before encoding (see the D1 note at the top of this file).
+ *   const client = new SmartAccountClient({ ..., spec, node, bundler });
+ *   const { userOpHash, userOp } = await client.sendCalls(spec.signer, calls, fees);
+ *   userOp.signature // the passkey envelope that went on the wire
+ * The client takes the passkey nonce key from getNonceKey, estimates gas
+ * with the stub signature (estimation cannot prompt the user), and awaits
+ * signUserOpHash, which runs the passkey prompt. Calls to the account
+ * itself are refused before encoding (see the D1 note at the top of this
+ * file).
  */
 export function kernelPasskeySpec(config: KernelPasskeySpecConfig): KernelPasskeySpec {
   if (!/^0x[0-9a-fA-F]{40}$/.test(config.account)) throw new Error('account must be an address');
@@ -818,8 +813,9 @@ export function kernelPasskeySpec(config: KernelPasskeySpecConfig): KernelPasske
   const nonceKey = webAuthnNonceKey(validator, { parallelKey: config.parallelKey });
   const signer = passkeySignerAccount(config.account, config.publicKey, config.chainId);
   const signerKey = toHex(signer.publicKey);
-  const pendingPrefix = toBytes(PASSKEY_PENDING_SIGNATURE_PREFIX);
-  const submitted = new Map<string, Uint8Array>();
+  // callData values this spec produced, i.e. that passed the self-call guard
+  // in encodeCalls. signUserOpHash signs only operations carrying one of them.
+  const encodedCallData = new Set<string>();
   const same = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
 
   const requireSigner = (owner: DerivedAccount): void => {
@@ -832,6 +828,10 @@ export function kernelPasskeySpec(config: KernelPasskeySpecConfig): KernelPasske
     validator,
     nonceKey,
     signer,
+
+    getNonceKey(): bigint {
+      return nonceKey;
+    },
 
     async getAddress(owner: DerivedAccount): Promise<string> {
       requireSigner(owner);
@@ -850,116 +850,47 @@ export function kernelPasskeySpec(config: KernelPasskeySpecConfig): KernelPasske
           );
         }
       }
-      return encodeKernelExecute(calls);
+      const callData = encodeKernelExecute(calls);
+      encodedCallData.add(toHex(callData).toLowerCase());
+      return callData;
     },
 
-    signUserOpHash(owner: DerivedAccount, userOpHash: Uint8Array): Uint8Array {
+    async signUserOpHash(
+      owner: DerivedAccount,
+      userOpHash: Uint8Array,
+      context?: UserOpSigningContext,
+    ): Promise<Uint8Array> {
       requireSigner(owner);
       if (userOpHash.length !== 32) throw new Error('userOpHash must be 32 bytes');
-      return concatBytes(pendingPrefix, userOpHash);
+      if (!context) {
+        throw new Error(
+          'A passkey signs only with the operation it covers (SmartAccountClient.sendCalls passes it); refusing a bare hash',
+        );
+      }
+      if (!same(context.entryPoint, entryPoint)) throw new Error('The operation targets a different EntryPoint');
+      if (context.chainId !== config.chainId) throw new Error('The operation is for a different chain');
+      const op = context.userOp;
+      if (!same(op.sender, config.account)) throw new Error('Operation sender is not the passkey account');
+      if (op.nonce >> 64n !== nonceKey) throw new Error('Operation nonce does not route to the passkey validator');
+      if (op.factory) throw new Error('A passkey operation cannot deploy the account');
+      if (op.eip7702Auth) throw new Error('A passkey operation cannot carry an EIP-7702 authorization');
+      if (!encodedCallData.has(toHex(op.callData).toLowerCase())) {
+        throw new Error(
+          "The operation's callData was not produced by this passkey spec's encodeCalls; refusing to sign",
+        );
+      }
+      if (toHex(getUserOpHash(op, entryPoint, config.chainId)) !== toHex(userOpHash)) {
+        throw new Error('The operation changed after its hash was computed; refusing to sign');
+      }
+      const assertion = await config.assert(userOpHash.slice());
+      return encodeWebAuthnSignatureFromAssertion(assertion, userOpHash, {
+        usePrecompiled: config.usePrecompiled,
+        publicKey: config.publicKey,
+      });
     },
 
     stubSignature(): Uint8Array {
       return webAuthnStubSignature(config.usePrecompiled);
     },
-
-    routeNode(node: JsonRpcTransport): JsonRpcTransport {
-      const keyZeroRead = toHex(
-        encodeFunctionCall(GET_NONCE_SIGNATURE, [
-          { kind: 'address', value: config.account },
-          { kind: 'uint256', value: 0n },
-        ]),
-      );
-      const routed = toHex(
-        encodeFunctionCall(GET_NONCE_SIGNATURE, [
-          { kind: 'address', value: config.account },
-          { kind: 'uint256', value: nonceKey },
-        ]),
-      );
-      return async (method, params) => {
-        if (method === 'eth_call') {
-          const tx = params[0] as { to?: string; data?: string } | undefined;
-          if (tx?.to && same(tx.to, entryPoint) && typeof tx.data === 'string' && tx.data.toLowerCase() === keyZeroRead) {
-            const result = (await node(method, [{ ...tx, data: routed }, ...params.slice(1)])) as string;
-            if (BigInt(result) >> 64n !== nonceKey) {
-              throw new Error('EntryPoint.getNonce returned a nonce for a different key');
-            }
-            return result;
-          }
-        }
-        return node(method, params);
-      };
-    },
-
-    routeBundler(bundler: JsonRpcTransport): JsonRpcTransport {
-      const prefixHex = PASSKEY_PENDING_SIGNATURE_PREFIX.slice(2).toLowerCase();
-      return async (method, params) => {
-        if (method !== 'eth_sendUserOperation') {
-          if (JSON.stringify(params ?? []).toLowerCase().includes(prefixHex)) {
-            throw new Error(`Refusing to send ${method} with an unsigned passkey placeholder`);
-          }
-          return bundler(method, params);
-        }
-        const rpcOp = params[0] as RpcUserOperation;
-        const opEntryPoint = params[1] as string;
-        if (!rpcOp || typeof rpcOp.signature !== 'string') throw new Error('eth_sendUserOperation without an operation');
-        if (typeof opEntryPoint !== 'string' || !same(opEntryPoint, entryPoint)) {
-          throw new Error('eth_sendUserOperation targets a different EntryPoint');
-        }
-        const placeholder = toBytes(rpcOp.signature);
-        if (
-          placeholder.length !== 64 ||
-          toHex(placeholder.slice(0, 32)).toLowerCase() !== PASSKEY_PENDING_SIGNATURE_PREFIX.toLowerCase()
-        ) {
-          throw new Error('This bundler route submits only operations signed through this passkey spec');
-        }
-        const claimed = placeholder.slice(32);
-        const op = userOperationFromRpc(rpcOp);
-        if (!same(op.sender, config.account)) throw new Error('Operation sender is not the passkey account');
-        if (op.nonce >> 64n !== nonceKey) throw new Error('Operation nonce does not route to the passkey validator');
-        if (op.factory) throw new Error('A passkey operation cannot deploy the account');
-        if (rpcOp.eip7702Auth) throw new Error('A passkey operation cannot carry an EIP-7702 authorization');
-        const userOpHash = getUserOpHash(op, entryPoint, config.chainId);
-        if (toHex(userOpHash) !== toHex(claimed)) {
-          throw new Error('The operation changed after its hash was computed; refusing to sign');
-        }
-        const assertion = await config.assert(userOpHash.slice());
-        const signature = encodeWebAuthnSignatureFromAssertion(assertion, userOpHash, {
-          usePrecompiled: config.usePrecompiled,
-          publicKey: config.publicKey,
-        });
-        const result = await bundler(method, [{ ...rpcOp, signature: toHex(signature) }, ...params.slice(1)]);
-        submitted.set(toHex(userOpHash).toLowerCase(), signature);
-        return result;
-      };
-    },
-
-    submittedSignature(userOpHash: string): Uint8Array | undefined {
-      return submitted.get(userOpHash.toLowerCase());
-    },
-  };
-}
-
-/** Inverse of toRpcUserOperation for the fields that enter the v0.7 userOpHash. */
-function userOperationFromRpc(r: RpcUserOperation): UserOperation {
-  return {
-    sender: r.sender,
-    nonce: BigInt(r.nonce),
-    ...(r.factory ? { factory: r.factory, factoryData: toBytes(r.factoryData ?? '0x') } : {}),
-    callData: toBytes(r.callData),
-    callGasLimit: BigInt(r.callGasLimit),
-    verificationGasLimit: BigInt(r.verificationGasLimit),
-    preVerificationGas: BigInt(r.preVerificationGas),
-    maxFeePerGas: BigInt(r.maxFeePerGas),
-    maxPriorityFeePerGas: BigInt(r.maxPriorityFeePerGas),
-    ...(r.paymaster
-      ? {
-          paymaster: r.paymaster,
-          paymasterVerificationGasLimit: BigInt(r.paymasterVerificationGasLimit ?? '0x0'),
-          paymasterPostOpGasLimit: BigInt(r.paymasterPostOpGasLimit ?? '0x0'),
-          paymasterData: toBytes(r.paymasterData ?? '0x'),
-        }
-      : {}),
-    signature: toBytes(r.signature),
   };
 }

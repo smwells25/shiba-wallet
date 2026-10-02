@@ -719,14 +719,15 @@ describe('kernelSessionSpec through SmartAccountClient (fake transports)', () =>
       }
       throw new Error(`unexpected bundler ${method}`);
     };
+    // A plain node: SmartAccountClient takes the nonce key from spec.getNonceKey.
     const client = new SmartAccountClient({
       chainId: CHAIN_ID,
       entryPoint: ENTRYPOINT_V07,
       bundler,
-      node: spec.routeNode(node),
+      node,
       spec,
     });
-    return { client, spec, inst, sent, estimated, nonceKeys, enableSignature, o };
+    return { client, spec, inst, sent, estimated, nonceKeys, enableSignature, o, node, bundler };
   }
   const fees = { maxFeePerGas: 2_000_000_000n, maxPriorityFeePerGas: 150_000_000n };
 
@@ -787,6 +788,24 @@ describe('kernelSessionSpec through SmartAccountClient (fake transports)', () =>
   it('undeployed accounts are refused', async () => {
     const h = harness(false);
     await expect(h.spec.getFactoryArgs(session())).rejects.toThrow(/not deployed/);
+  });
+
+  it('getNonceKey is the session nonce key; the routeNode compatibility wrapper still rewrites a key-0 read', async () => {
+    const h = harness(false);
+    expect(h.spec.getNonceKey()).toBe(sessionNonceKey(h.inst.permissionId));
+    // A caller that wraps the spec without forwarding getNonceKey still gets
+    // the session nonce through routeNode, as before.
+    const { getNonceKey: _dropped, ...withoutHook } = h.spec;
+    void _dropped;
+    const client = new SmartAccountClient({
+      chainId: CHAIN_ID,
+      entryPoint: ENTRYPOINT_V07,
+      bundler: h.bundler,
+      node: h.spec.routeNode(h.node),
+      spec: withoutHook,
+    });
+    expect(await client.getNonce(session())).toBe((sessionNonceKey(h.inst.permissionId) << 64n) + 5n);
+    expect(h.nonceKeys).toEqual([sessionNonceKey(h.inst.permissionId)]);
   });
 
   it('routeNode passes every other request through untouched', async () => {

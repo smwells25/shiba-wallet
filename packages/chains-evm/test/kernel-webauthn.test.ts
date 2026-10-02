@@ -7,7 +7,6 @@ import {
   KERNEL_WEBAUTHN_VALIDATOR,
   P256_HALF_N,
   P256_N,
-  PASSKEY_PENDING_SIGNATURE_PREFIX,
   base64UrlEncode,
   checkWebAuthnAssertion,
   detectP256Precompile,
@@ -397,7 +396,7 @@ describe('kernelPasskeySpec through SmartAccountClient (fake transports)', () =>
   const fees = { maxFeePerGas: 2_000_000_000n, maxPriorityFeePerGas: 150_000_000n };
   const TARGET = '0x000000000000000000000000000000000000dEaD';
 
-  function harness(options: { tamper?: boolean; badAssertion?: boolean } = {}) {
+  function harness(options: { badAssertion?: boolean; nodeKeyOffset?: bigint } = {}) {
     const pk = syntheticPasskey();
     const challenges: Uint8Array[] = [];
     const spec = kernelPasskeySpec({
@@ -417,13 +416,13 @@ describe('kernelPasskeySpec through SmartAccountClient (fake transports)', () =>
         const data = (params[0] as { data: string }).data;
         const key = BigInt('0x' + data.slice(10 + 64, 10 + 128));
         nonceKeys.push(key);
-        return '0x' + ((key << 64n) + 7n).toString(16).padStart(64, '0');
+        return '0x' + (((key + (options.nodeKeyOffset ?? 0n)) << 64n) + 7n).toString(16).padStart(64, '0');
       }
       throw new Error(`unexpected node ${method}`);
     };
     const estimated: Array<Record<string, string>> = [];
     const sent: Array<Record<string, string>> = [];
-    const rawBundler: JsonRpcTransport = async (method, params) => {
+    const bundler: JsonRpcTransport = async (method, params) => {
       if (method === 'eth_estimateUserOperationGas') {
         estimated.push(params[0] as Record<string, string>);
         return { callGasLimit: '0x10000', verificationGasLimit: '0x30000', preVerificationGas: '0x10000' };
@@ -434,21 +433,31 @@ describe('kernelPasskeySpec through SmartAccountClient (fake transports)', () =>
       }
       throw new Error(`unexpected bundler ${method}`);
     };
-    const routed = spec.routeBundler(rawBundler);
-    const bundler: JsonRpcTransport = options.tamper
-      ? async (method, params) => {
-          if (method === 'eth_sendUserOperation') {
-            const op = params[0] as Record<string, string>;
-            return routed(method, [{ ...op, callGasLimit: '0x20000' }, ...params.slice(1)]);
-          }
-          return routed(method, params);
-        }
-      : routed;
-    const client = new SmartAccountClient({ chainId: SDK.chainId, entryPoint: ENTRYPOINT_V07, bundler, node: spec.routeNode(node), spec });
+    // Plain transports: the nonce key comes from spec.getNonceKey and the
+    // passkey prompt runs inside signUserOpHash, which the client awaits.
+    const client = new SmartAccountClient({ chainId: SDK.chainId, entryPoint: ENTRYPOINT_V07, bundler, node, spec });
     return { pk, spec, client, challenges, nonceKeys, estimated, sent };
   }
 
-  it('routes the nonce key, estimates with the stub, asks the passkey for the userOpHash, sends a verifying envelope', async () => {
+  /** A well-formed passkey operation for direct signUserOpHash calls (callData from the spec itself). */
+  function passkeyOp(h: ReturnType<typeof harness>, overrides: Partial<UserOperation> = {}): UserOperation {
+    return {
+      sender: ACCOUNT,
+      nonce: (webAuthnNonceKey() << 64n) + 7n,
+      callData: h.spec.encodeCalls([{ to: TARGET, value: 0n, data: new Uint8Array(0) }]),
+      callGasLimit: 0x10000n,
+      verificationGasLimit: 0x30000n,
+      preVerificationGas: 0x10000n,
+      maxFeePerGas: fees.maxFeePerGas,
+      maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+      signature: webAuthnStubSignature(true),
+      ...overrides,
+    };
+  }
+
+  const contextFor = (userOp: UserOperation) => ({ userOp, entryPoint: ENTRYPOINT_V07, chainId: SDK.chainId });
+
+  it('reads the passkey nonce key, estimates with the stub, asks the passkey for the userOpHash, sends a verifying envelope', async () => {
     const h = harness();
     const calls = [{ to: TARGET, value: 1n, data: new Uint8Array(0) }];
     const { userOp } = await h.client.sendCalls(h.spec.signer, calls, fees);
@@ -456,29 +465,25 @@ describe('kernelPasskeySpec through SmartAccountClient (fake transports)', () =>
     expect(userOp.nonce).toBe((webAuthnNonceKey() << 64n) + 7n);
     expect(h.estimated[0]!.signature).toBe(toHex(webAuthnStubSignature(true)));
     expect(h.sent).toHaveLength(1);
-    const sentOp: UserOperation = {
-      ...userOp,
-      signature: toBytes(h.sent[0]!.signature!),
-    };
-    const hash = getUserOpHash(sentOp, ENTRYPOINT_V07, SDK.chainId);
+    const hash = getUserOpHash(userOp, ENTRYPOINT_V07, SDK.chainId);
     expect(h.challenges.map(toHex)).toEqual([toHex(hash)]);
-    expect(h.sent[0]!.signature!.toLowerCase().includes(PASSKEY_PENDING_SIGNATURE_PREFIX.slice(2))).toBe(false);
-    const verdict = independentlyVerify(toBytes(h.sent[0]!.signature!), hash, h.pk.publicKey);
+    // The client's returned operation carries the real envelope, the same bytes that went on the wire.
+    expect(toHex(userOp.signature)).toBe(h.sent[0]!.signature);
+    const verdict = independentlyVerify(userOp.signature, hash, h.pk.publicKey);
     expect(verdict.ok).toBe(true);
     expect(verdict.usePrecompiled).toBe(true);
-    expect(toHex(h.spec.submittedSignature(toHex(hash))!)).toBe(h.sent[0]!.signature);
     // callData is a plain Kernel execute of the call.
     const decoded = kernelIface.decodeFunctionData('execute', h.sent[0]!.callData!);
     expect((decoded[1] as string).toLowerCase().startsWith(TARGET.toLowerCase())).toBe(true);
   });
 
-  it('refuses an operation that changed after hashing, and never forwards it', async () => {
-    const h = harness({ tamper: true });
+  it('refuses a node answer for a different nonce key before estimating or prompting', async () => {
+    const h = harness({ nodeKeyOffset: 1n });
     await expect(h.client.sendCalls(h.spec.signer, [{ to: TARGET, value: 0n, data: new Uint8Array(0) }], fees)).rejects.toThrow(
-      /changed after its hash/,
+      /different key/,
     );
+    expect(h.estimated).toHaveLength(0);
     expect(h.challenges).toHaveLength(0);
-    expect(h.sent).toHaveLength(0);
   });
 
   it('refuses an assertion over the wrong challenge before sending', async () => {
@@ -489,22 +494,85 @@ describe('kernelPasskeySpec through SmartAccountClient (fake transports)', () =>
     expect(h.sent).toHaveLength(0);
   });
 
-  it('refuses self-calls, foreign owners and a placeholder leaking to other methods', async () => {
+  it('signUserOpHash signs a well-formed operation directly', async () => {
+    const h = harness();
+    const op = passkeyOp(h);
+    const hash = getUserOpHash(op, ENTRYPOINT_V07, SDK.chainId);
+    const sig = await h.spec.signUserOpHash(h.spec.signer, hash, contextFor(op));
+    expect(independentlyVerify(sig, hash, h.pk.publicKey).ok).toBe(true);
+    expect(h.challenges.map(toHex)).toEqual([toHex(hash)]);
+  });
+
+  it('signUserOpHash refuses, before any prompt, every operation the passkey must not sign', async () => {
+    const h = harness();
+    const sign = (op: UserOperation, context: Partial<ReturnType<typeof contextFor>> = {}, hash?: Uint8Array) =>
+      h.spec.signUserOpHash(h.spec.signer, hash ?? getUserOpHash(op, ENTRYPOINT_V07, SDK.chainId), {
+        ...contextFor(op),
+        ...context,
+      });
+    const good = passkeyOp(h);
+    const goodHash = getUserOpHash(good, ENTRYPOINT_V07, SDK.chainId);
+    // No operation context: a bare hash is never signed.
+    await expect(h.spec.signUserOpHash(h.spec.signer, goodHash)).rejects.toThrow(/refusing a bare hash/);
+    // Wrong EntryPoint or chain.
+    await expect(sign(good, { entryPoint: '0x0000000071727De22E5E9d8BAf0edAc6f37da033' })).rejects.toThrow(
+      /different EntryPoint/,
+    );
+    await expect(sign(good, { chainId: 1n })).rejects.toThrow(/different chain/);
+    // Wrong sender.
+    await expect(sign(passkeyOp(h, { sender: '0x000000000000000000000000000000000000bEEF' }))).rejects.toThrow(
+      /sender is not the passkey account/,
+    );
+    // Nonce on key 0 (the root validator) or another validator's key.
+    await expect(sign(passkeyOp(h, { nonce: 7n }))).rejects.toThrow(/does not route to the passkey validator/);
+    // A deployment (factory) or an EIP-7702 authorization.
+    await expect(
+      sign(passkeyOp(h, { factory: '0x2577507b78c2008Ff367261CB6285d44ba5eF2E9', factoryData: new Uint8Array([1]) })),
+    ).rejects.toThrow(/cannot deploy the account/);
+    await expect(
+      sign(
+        passkeyOp(h, {
+          eip7702Auth: {
+            chainId: SDK.chainId,
+            address: '0xd6CEDDe84be40893d153Be9d467CD6aD37875b28',
+            nonce: 0n,
+            yParity: 0,
+            r: new Uint8Array(32).fill(1),
+            s: new Uint8Array(32).fill(1),
+          },
+        }),
+      ),
+    ).rejects.toThrow(/EIP-7702 authorization/);
+    // callData the spec did not encode: a hand-built Kernel execute that calls
+    // the account itself never passed the self-call guard.
+    const selfCall = toBytes(
+      kernelIface.encodeFunctionData('execute', [
+        '0x' + '00'.repeat(32),
+        solidityPacked(['address', 'uint256', 'bytes'], [ACCOUNT, 0n, '0x']),
+      ]),
+    );
+    await expect(sign(passkeyOp(h, { callData: selfCall }))).rejects.toThrow(/not produced by this passkey spec/);
+    // The operation changed after its hash was computed.
+    await expect(sign(passkeyOp(h, { callGasLimit: 0x20000n }), {}, goodHash)).rejects.toThrow(/changed after its hash/);
+    // Foreign signer.
+    const foreign = passkeySignerAccount(ACCOUNT, syntheticPasskey().publicKey, SDK.chainId);
+    await expect(h.spec.signUserOpHash(foreign, goodHash, contextFor(good))).rejects.toThrow(/refusing another key/);
+    expect(h.challenges).toHaveLength(0);
+  });
+
+  it('refuses self-calls and foreign owners; the signer stand-in never signs', async () => {
     const h = harness();
     expect(() => h.spec.encodeCalls([{ to: ACCOUNT.toLowerCase(), value: 0n, data: new Uint8Array(0) }])).toThrow(
       /may not call the account itself/,
     );
+    await expect(
+      h.client.sendCalls(h.spec.signer, [{ to: ACCOUNT, value: 0n, data: new Uint8Array(0) }], fees),
+    ).rejects.toThrow(/may not call the account itself/);
     const foreign = passkeySignerAccount(ACCOUNT, syntheticPasskey().publicKey, SDK.chainId);
     await expect(h.spec.getAddress(foreign)).rejects.toThrow(/refusing another key/);
     expect(() => h.spec.signer.sign(new Uint8Array(32))).toThrow(/platform prompt/);
-    const placeholder = h.spec.signUserOpHash(h.spec.signer, new Uint8Array(32));
-    const routed = h.spec.routeBundler(async () => 'forwarded');
-    await expect(routed('eth_estimateUserOperationGas', [{ signature: toHex(placeholder) }, ENTRYPOINT_V07])).rejects.toThrow(
-      /unsigned passkey placeholder/,
-    );
-    await expect(routed('eth_sendUserOperation', [{ signature: '0x1234' }, ENTRYPOINT_V07])).rejects.toThrow(
-      /only operations signed through this passkey spec/,
-    );
     await expect(h.spec.getFactoryArgs(h.spec.signer)).rejects.toThrow(/not deployed/);
+    expect(h.sent).toHaveLength(0);
+    expect(h.challenges).toHaveLength(0);
   });
 });
