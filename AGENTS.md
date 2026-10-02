@@ -3098,8 +3098,60 @@ touches files everywhere.
       check-rpc-fallback.mjs 85/85 offline (was 67), 98/98 with --live;
       check-devmode 71/71 (primary pin holds); tsc clean; expo export
       bundles with the URLs in the bytecode.
-- [ ] Recovery UX: record export as a .json file and an owner-rotation
-      screen (agent running).
+- [x] Recovery UX (commit ebcb704): record export as a .json file and
+      an in-app owner-change flow. New deps via expo install, all bundled
+      in Expo Go SDK 57 (verified in expo/expo sdk-57
+      apps/expo-go/package.json, the v57 docs pages and the installed
+      Expo Go APK's module list): expo-file-system ~57.0.7 (new
+      File/Paths API), expo-sharing ~57.0.22 (its auto-added app.json
+      plugin entry was reverted — it only matters for receiving shares),
+      expo-document-picker ~57.0.3. app/src/components/RecordFileActions.tsx
+      is the only importer of the native modules: export writes the
+      engine's canonical JSON to Paths.cache/recovery-record-export/
+      shiba-recovery-record_<chain>_<0xABCD-WXYZ>_<date>.json and opens
+      the share sheet (mimeType application/json, UTI public.json); the
+      file is deleted 60 s after the sheet closes (judgement call: on
+      Android shareAsync resolves on the chooser result and an uploader
+      may still be reading), immediately on failure, and on the next
+      export; import picks application/json, reads the text, deletes the
+      picker's cache copy, and parseRecordFile (recovery.ts) requires a
+      .json name or JSON type, caps 64 KiB, allows a BOM, requires exactly
+      one JSON object, then runs the EXISTING strict parser path. Owner
+      change (OwnerRotationScreen, route OwnerRotation; entry points:
+      GuardiansScreen "Owner key" section, RecoverAccountScreen attached
+      phase): target = the seed-derived EVM EOA of any of this wallet's
+      accounts (hidden included); refusals (each tested): undeployed,
+      SimpleAccount, EIP-7702 upgrade, foreign owner, same owner, not one
+      of this wallet's accounts, a guardian, a 7702-upgraded target, a
+      target already linked to another account, no record, record owner
+      differing from chain, "remove guardians" with none installed; calls
+      re-checked against the engine's ownerRotationCalls (+
+      guardianUninstallCalls) before signing; normal AA confirm (both
+      owners in full, "old key stops working at once", fee, bundler
+      estimate, biometric, signWith(current owner), sendAa). The record
+      entry (source owner-rotation, userOpHash, BIP-32 path) is appended
+      after the bundler accepts; finalizeOwnerRotation re-reads the owner
+      on-chain, requires verifyKernelAccountForOwner, fills tx hash and
+      block (receipt, else the OwnerRegistered log), and moves the
+      recoveredAccounts link in one storage write (aa.ts
+      moveRecoveredAccountLink; a link is skipped when the new owner's own
+      factory index derives the same address, e.g. rotating back); a
+      revert or Forget restores the previous record; interrupted changes
+      show as "Unfinished owner changes" with Check and finish / Forget.
+      Verified: check-recovery.mjs 209/209 (was 145: 19 file checks incl.
+      byte-identical round trip and tampered-file refusal, 46 rotation
+      checks incl. calldata vs ethers encoding of onUninstall/onInstall
+      and the recovered owner signature); all 23 suites green at HEAD;
+      tsc clean; expo export bundles 7.6MB with the new strings and the
+      ExpoSharing/ExpoDocumentPicker/FileSystemFile module names. NOT
+      verified: anything on a device (share targets reading after the
+      sheet closes, iOS UTI/filter behaviour, Android file managers
+      reporting .json as application/json, Expo Go startup with the
+      statically imported modules — the CTO reloads the emulator next),
+      a live in-app owner change (the same calls ran live via
+      kernel-rotate-owner.mjs). Emulator checklist (8 steps) in the
+      builder's report; "Change owner" links on Home/Receive were out of
+      the agent's file scope.
 - [ ] ESLint burn-down (44 errors, 7 warnings at the start of the wave:
       28 react/no-unescaped-entities, hook-dependency rules, unused vars,
       array-type) — after the slices above land.
