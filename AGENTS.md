@@ -2631,3 +2631,145 @@ self-paid set-code transaction — is now fully proven on Sepolia.
       engine fails closed before submission; a real clientDataJSON longer
       than the 244-byte stub needs gas padding. Also committed:
       scripts/testnet/fund.mjs (dev-EOA top-up helper with estimated gas).
+
+- [x] Item 4, engine half — social recovery with guardians on Kernel
+      v3.3 (commit ac3be34; 52 new tests, chains-evm 352, engine 588).
+      MECHANISM (ZeroDev's own Kernel v3 recovery, sources: kernel v3.3
+      cd697c7e WeightedECDSAValidator / ECDSAValidator / Kernel /
+      ValidationManager / SelectorManager / HookManager / Constants; SDK
+      cd7c05b5 weighted-ecdsa + weighted-r1-k1 plugins,
+      getValidatorPluginInstallModuleData, test/v0.7/
+      recoveryKernelAccount.test.ts; kernel-7579-plugins ca4a820
+      actions/recovery/src/RecoveryAction.sol; docs.zerodev.app/advanced/
+      account-recovery/sdk-recovery): guardians live in
+      WeightedECDSAValidator 0xeD89244160CfE273800B58b1B534031699dFeEEE
+      installed as a SECONDARY validator (installModule(1, …)) whose only
+      allowed selector is doRecovery(address,bytes) 0xac39fd0f, routed to
+      RecoveryAction 0xe884C2868CC82c16177eC73a93f7D9E6F3A5DC6E
+      (installModule(3, …); runs in the account's context, callable only
+      from the EntryPoint); doRecovery(ECDSA validator, bytes20 newOwner)
+      = onUninstall("") then onInstall(newOwner) — ECDSAValidator has no
+      other setter. Guardians sign EIP-712 Approve(bytes32
+      callDataAndNonceHash) under ("WeightedECDSAValidator","0.0.3",
+      chain, validator), recovered raw (no EIP-191); proposal id =
+      keccak256(abi.encode(sender, callData, nonce)); op signature =
+      approvals || one guardian's EIP-191 signature over the userOpHash;
+      own nonce lane 0x00||0x01||validator||parallelKey. Delay > 0:
+      guardians first approveWithSig on-chain (anyone may submit), the op
+      is valid only after the delay (AA22 before), and ONLY the account
+      (root-signed veto(hash)) can reject during it; delay 0 = no veto.
+      On-chain binding: the weighted validator is a Sourcify full match
+      on chain 1 and a runtime match on Sepolia, source byte-identical to
+      the v3.3 file, eip712Domain = ("WeightedECDSAValidator","0.0.3");
+      RecoveryAction is verified nowhere but identical on both chains and
+      reproduced from ca4a820 (solc 0.8.24, runs 200, paris; metadata hash
+      differs). AUDITS: Kalos "Recovery Plugin and Weighted ECDSA" v1.0
+      (2023-12-12) and v2.0 (2024-02-06) cover KERNEL V2 code (kernel
+      90fa72ed / eaaac83a); the v3 port and the v3 RecoveryAction appear
+      in no published report; the v3.1 incremental audit's "Weighted
+      Validator" is a DIFFERENT contract (plugins WeightedValidator.sol at
+      91f8fcb) → the deployed v3 modules are UNAUDITED (adds to C1).
+      FINDINGS FOR THE CHAIRPERSON (trust model): (1) enough guardian
+      weight can set the owner to any key, and doRecovery accepts any
+      validator, so guardians can also replace the guardian list; (2)
+      guardians can sign messages AS THE ACCOUNT immediately — Kernel's
+      isValidSignature accepts any installed validator and ignores the
+      selector allowlist — so Permit2 permits, orders and logins need no
+      delay and no veto; (3) A SINGLE GUARDIAN CAN SATISFY A 2-OF-2: the
+      deployed weighted validator checks the threshold BEFORE signer
+      order, so the last signature may repeat an earlier signer — a group
+      passes if its weight plus its heaviest member's weight reaches the
+      threshold, equal-weight k-of-n is effectively (k−1)-of-n, and any
+      guardian holding at least half the threshold can sign alone; PROVEN
+      LIVE ("one guardian's signature repeated twice" → VALID on the real
+      account); no wallet-side encoding can fix it, so
+      guardianSignatureExposure(set) computes the true minimum for the UI;
+      (4) following ZeroDev's docs example (a single guardian registered
+      with the ECDSA validator) on an account whose root is that same
+      validator would OVERWRITE THE OWNER with the guardian (same
+      validation id) — reasoned from source, not executed; (5) recovery
+      cannot protect an EIP-7702-upgraded EOA (its own key can always
+      re-delegate) — prepareGuardianInstall refuses such accounts; (6)
+      @zerodev/weighted-ecdsa-validator 5.4.4 maps the validator to Kernel
+      "0.3.0 || 0.3.1" while the repo says 0.3.0–0.3.3. ENGINE
+      (kernel-recovery.ts): guardian-set validation and sorted encoding,
+      install / removal (uninstallValidation, revoke access,
+      uninstallModule(3)) / renew calls; refusals — threshold 0 or above
+      total weight (renew has no on-chain check, so this is its only
+      guard), duplicate guardians (case-insensitive), the account itself
+      or the current owner as guardian (a lost or stolen key must not hold
+      a vote), the zero address or the 0xff…ff list-end marker, weights
+      outside 1..2^24−1, total weight above uint24, delay above uint48, a
+      new owner that is zero / the account / a guardian; JSON-safe
+      recovery request with every field re-derived on parse; approval
+      assembly drops the submitter's own approval and rejects outsiders,
+      duplicates, short weight and the immediate path when a delay is set;
+      kernelGuardianRecoverySpec (refuses if the guardian nonce moved after
+      approvals); approveWithSig / veto / proposal reads;
+      ownerRotationCalls; readKernelOwner / readGuardianState;
+      kernelRecoveredAccountSpec (uses a stored address only after the
+      on-chain owner matches the signing key); findKernelAccountsByOwner
+      over OwnerRegistered logs filtered by verifyKernelAccountForOwner
+      (implementation slot, ECDSA root, owner match) because anyone can
+      forge those events. RECOVERY METADATA (the ADR D1 answer): after a
+      rotation the address cannot be derived from any seed (the CREATE2
+      salt commits to the ORIGINAL owner), so each account keeps a
+      secret-free record — version, CAIP-2, account, type kernel-v3.3,
+      deployment facts (factory, implementation, ECDSA validator, index,
+      original owner), owner history oldest-first (owner, source:
+      deployment / guardian-recovery / owner-rotation, tx and/or
+      userOpHash, block, BIP-32 path when this seed derives it, recorded
+      at), guardians with labels, threshold, delay and install tx;
+      createRecoveryMetadata refuses an address that is not the CREATE2
+      result of the original owner + index; serialize/parse use canonical
+      JSON and re-check every invariant; verifyRecoveryMetadataOnChain
+      reports mismatches. Re-attach after restore: the backed-up record
+      (verified on-chain), else an OwnerRegistered scan (free-RPC log
+      limits apply), else a pasted address — always only after
+      verifyKernelAccountForOwner (the 7702 "Use this upgraded account"
+      pattern). Tests byte-identical to the SDK for set encoding, both
+      installModule calls, renew, doRecovery calldata, nonce key, proposal
+      hash, approval digest, the full signature and the estimation stub;
+      removal / veto / approveWithSig calldata vs viem; ethers recovers
+      every guardian signature; threshold and refusal matrix; exposure
+      model; end-to-end SmartAccountClient run; metadata round trip. LIVE
+      ON SEPOLIA (account index 2, ZeroDev bundler, two fresh guardians
+      1+1, threshold 2): install (userOp 0x53705b9c…6045, tx
+      0x3101b858…05c1, block 11826469) → guardian recovery to the dev
+      seed's index 9 0xc687f25121C46e6Fd2892fFda0425D1A775e6166 (userOp
+      0x8ac47b12…08da, tx 0xd49ee8af…e302, block 11826470) → the new
+      owner rotates back and removes the guardians (userOp
+      0xdf436c25…f048, tx 0x99e107fc…0272, block 11826471); all status
+      0x1 with UserOperationEvent success; OwnerRegistered emitted for the
+      new owner then the dev EOA again; the old owner refused (AA24 in
+      simulation; bundler -32507 AA24 at submission); afterwards the
+      original owner simulates as accepted and a guardian op fails
+      InvalidValidator; end state verified by the CTO with the engine's
+      readers. An earlier attempt ran the same three ops before stopping
+      on a bad negative test; its cleanup (signed by the index-9 key)
+      restored the account (txs 0x8cad5d90…, 0xeaa6afcc…, 0xebcdc301…),
+      paid from the account's EntryPoint deposit. LESSON: a wrong owner
+      signature PASSES bundler gas estimation (the validator returns a
+      failure code instead of reverting), so the rejection shows only at
+      submission. Dry run (RECOVERY_SMOKE_DRY_RUN=1, 29 checks) also
+      proves the delay (AA22 before, accepted after) and the owner's
+      veto. Funds: the dev EOA spent a 0.001 top-up (now ~0.0017); the
+      account went 0.00225 → 0.00159. UNVERIFIED: finding (4); delay and
+      veto only in simulation; with a paymaster attached an approved
+      delayed proposal executes with NO signature (per source); Alchemy /
+      Pimlico acceptance; weights other than 1/1 live. APP DESIGN NOTE:
+      setup only for deployed Kernel accounts (not 7702), delay picker
+      defaulting > 0 (e.g. 48 h so the owner can veto), a MANDATORY
+      plain-language exposure warning from guardianSignatureExposure ("N
+      guardians together — or one, if a guardian holds at least half the
+      threshold weight — can sign messages as this account immediately,
+      with no delay and no veto"), the no-published-audit note, metadata
+      written before submission with an off-device backup prompt; status
+      screen (readGuardianState, Remove, Renew); recovery flow on a new
+      device (new owner key from the new seed, prepareGuardianRecovery
+      request shared by QR/file, approvals checked with
+      verifyGuardianApproval, submit as a guardian or show approveWithSig
+      progress + countdown, then kernelRecoveredAccountSpec and append to
+      the owner history); owner's veto screen behind the biometric gate;
+      restore screen "Use this recovered account" via record / log scan /
+      pasted address, attaching only after verifyKernelAccountForOwner.
