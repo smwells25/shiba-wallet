@@ -49,9 +49,12 @@ export {
   ERC7579_CALLTYPE_SINGLE,
   ERC7579_EXECTYPE_DEFAULT,
   ERC7579_EXECTYPE_TRY,
+  KERNEL_7702_SIGNATURE_PREFIX,
   KERNEL_EIP712_NAME,
   KERNEL_V3_3,
+  KERNEL_V3_3_7702_DELEGATE,
   KERNEL_WRAPPER_TYPE_HASH,
+  createKernel7702AccountSpec,
   createKernelAccountSpec,
   encodeKernelErc1271Signature,
   kernelErc1271Digest,
@@ -63,7 +66,11 @@ export {
   predictKernelAddress,
   verifyKernelDeployment,
 } from './kernel-account.js';
-export type { KernelAccountConfig, KernelDeploymentCheck } from './kernel-account.js';
+export type {
+  Kernel7702AccountConfig,
+  KernelAccountConfig,
+  KernelDeploymentCheck,
+} from './kernel-account.js';
 export {
   domainSeparator,
   encodeType,
@@ -115,6 +122,30 @@ export type { SimulationRequest, SimulationResult } from './simulate.js';
 export { rlpEncode, minimalBytes } from './rlp.js';
 export type { RlpInput } from './rlp.js';
 export { eip1559SigningHash, signEip1559 } from './eoa-tx.js';
+export {
+  EIP7702_AUTH_MAGIC,
+  EIP7702_PER_AUTH_BASE_COST,
+  EIP7702_PER_EMPTY_ACCOUNT_COST,
+  EIP7702_SET_CODE_TX_TYPE,
+  ZERO_ADDRESS,
+  eip7702AuthorizationDigest,
+  eip7702SigningHash,
+  readDelegationStatus,
+  recoverEip7702Authority,
+  revokeDelegationAuthorization,
+  selfSponsoredAuthorizationNonce,
+  setCodeIntrinsicGas,
+  signEip7702Authorization,
+  signEip7702Transaction,
+  toRpcEip7702Auth,
+} from './eip7702.js';
+export type {
+  DelegationStatus,
+  Eip7702Authorization,
+  Eip7702Transaction,
+  RpcEip7702Auth,
+  SignedEip7702Authorization,
+} from './eip7702.js';
 export type {
   AccessListEntry,
   Eip1559Transaction,

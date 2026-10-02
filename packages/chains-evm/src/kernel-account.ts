@@ -5,6 +5,11 @@ import { keccak, toBytes, toHex, toWord } from './encoding.js';
 import { typedDataDigest } from './eip712.js';
 import type { JsonRpcTransport } from './rpc.js';
 import {
+  readDelegationStatus,
+  signEip7702Authorization,
+  type SignedEip7702Authorization,
+} from './eip7702.js';
+import {
   toEthSignedMessageHash,
   withEthereumV,
   type Call,
@@ -449,6 +454,150 @@ export function createKernelAccountSpec(config: KernelAccountConfig): SmartAccou
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// Kernel v3.3 as an EIP-7702 delegate (the EOA itself becomes the account)
+// ---------------------------------------------------------------------------
+
+/**
+ * Delegate address for EIP-7702: the Kernel v3.3 IMPLEMENTATION itself,
+ * not a dedicated 7702 contract. Sources: the ZeroDev SDK [S]
+ * packages/core/constants.ts KERNEL_7702_DELEGATION_ADDRESS =
+ * 0xd6CEDDe84be40893d153Be9d467CD6aD37875b28, and [S]
+ * accounts/kernel/createKernelAccount.ts signAuthorization, which signs the
+ * tuple for `accountImplementationAddress` and refuses an eip7702Auth whose
+ * address differs from it. Kernel's EntryPoint is an immutable in the
+ * implementation's bytecode [K src/Kernel.sol "IEntryPoint public immutable
+ * entrypoint"], so a delegated EOA is bound to EntryPoint v0.7 exactly like
+ * a proxy-deployed Kernel v3.3 account.
+ */
+export const KERNEL_V3_3_7702_DELEGATE = KERNEL_V3_3.implementation;
+
+export interface Kernel7702AccountConfig {
+  /** Node RPC used for eth_chainId, eth_getCode and the authority nonce. */
+  node: JsonRpcTransport;
+  /** Chain the authorization is bound to; checked against eth_chainId before signing. */
+  chainId: bigint;
+  /** Delegate contract. Defaults to KERNEL_V3_3_7702_DELEGATE. */
+  delegate?: string;
+  /**
+   * Allow replacing a delegation to a DIFFERENT contract. Default false:
+   * EIP-7702 "Storage management" warns that changing delegates is
+   * security-critical (storage layouts can collide), so the wallet refuses
+   * unless the caller explicitly opts in.
+   */
+  allowRedelegation?: boolean;
+}
+
+/**
+ * SmartAccountSpec for an EOA delegated to Kernel v3.3 via EIP-7702: the
+ * sender is the EOA's own address, there is no factory and NO
+ * initialization, and the EOA key validates operations directly.
+ *
+ * Why no initialization — all at [K] tag v3.3 (commit cd697c7e):
+ *  - Kernel.initialize() reverts AlreadyInitialized when
+ *    bytes3(address(this).code) == EIP7702_PREFIX (0xef0100) [src/Kernel.sol
+ *    initialize; src/types/Constants.sol EIP7702_PREFIX]. On a delegated
+ *    EOA, address(this).code is the 23-byte delegation indicator (EIP-7702:
+ *    only CODESIZE/CODECOPY see the delegate's code), so initialize can
+ *    never run there — which also removes the EIP-7702 "front running
+ *    initialization" risk for this delegate.
+ *  - VALIDATION_TYPE_7702 = 0x00, the same byte as VALIDATION_TYPE_ROOT
+ *    [src/types/Constants.sol]. validateUserOp decodes the nonce key; type
+ *    ROOT substitutes vs.rootValidator, which on a never-initialized
+ *    delegated EOA is bytes21(0), whose type byte is 0x00 = 7702
+ *    [src/Kernel.sol validateUserOp; src/utils/ValidationTypeLib.sol
+ *    decodeNonce/getType]. _validateUserOp then accepts iff
+ *    ECDSA.recover(toEthSignedMessageHash(userOpHash), signature) ==
+ *    address(this) [src/core/ValidationManager.sol _validateUserOp,
+ *    _verify7702Signature]: the EOA key signs the EIP-191 form of the
+ *    userOpHash, 65 bytes, no validator prefix. The root type skips the
+ *    hook/selector checks, so callData is execute(...) directly.
+ *  - The ZeroDev SDK does the same: signerTo7702Validator.ts signs
+ *    signMessage({ raw: userOpHash }) with nonce key 0 and the same stub
+ *    signature as the ECDSA validator; createKernelAccount returns no
+ *    factory/factoryData for 7702 accounts and the EOA address as the
+ *    account address [S accounts/utils/signerTo7702Validator.ts,
+ *    accounts/kernel/createKernelAccount.ts generateInitCode/getFactoryArgs].
+ *  - ERC-1271: decodeSignature maps a leading 0x00 byte to "sudo" (root),
+ *    and the root id bytes21(0) is type 7702, so isValidSignature accepts
+ *    0x00 || ECDSA signature over the Kernel(bytes32 hash) EIP-712 wrapper
+ *    (domain verifyingContract = the EOA) recovered RAW, without EIP-191
+ *    [src/utils/ValidationTypeLib.sol decodeSignature;
+ *    src/core/ValidationManager.sol _verifySignature/_verify7702Signature].
+ *    The SDK's 7702 identifier is VALIDATOR_TYPE.EIP7702 = "0x00" || "0x"
+ *    [S constants.ts, toKernelPluginManager.ts getIdentifier].
+ *
+ * How the authorization reaches the chain under EntryPoint v0.7: v0.7 has
+ * no 7702 code at all (no 7702 reference in eth-infinitism
+ * account-abstraction v0.7.0 contracts/core; v0.8.0 adds Eip7702Support.sol
+ * and the 0x7702 initCode marker). A delegated EOA is simply a sender with
+ * code. The tuple is therefore delivered either by a type-0x04 transaction
+ * the EOA sends itself (./eip7702.ts) or as the op's `eip7702Auth`, which
+ * the bundler places in the authorization list of its own type-0x04 bundle
+ * transaction (ERC-4337 "Support for EIP-7702 authorizations"). In the
+ * second case the v0.7 userOpHash does NOT commit to the delegate (the v0.8
+ * marker exists to add exactly that), so this spec only ever signs tuples
+ * for the configured, pinned delegate, and refuses to replace a foreign one.
+ */
+export function createKernel7702AccountSpec(config: Kernel7702AccountConfig): SmartAccountSpec {
+  const delegate = config.delegate ?? KERNEL_V3_3_7702_DELEGATE;
+  return {
+    async getAddress(owner: DerivedAccount): Promise<string> {
+      return toChecksumAddress(toBytes(owner.address));
+    },
+
+    async getFactoryArgs(): Promise<{ factory: string; factoryData: Uint8Array }> {
+      throw new Error('An EIP-7702 Kernel account has no factory; the delegation is an authorization tuple');
+    },
+
+    async getEip7702Authorization(owner: DerivedAccount): Promise<SignedEip7702Authorization | undefined> {
+      const status = await readDelegationStatus(config.node, owner.address);
+      if (status.kind === 'contract') {
+        throw new Error(`${owner.address} holds contract code that is not a delegation indicator`);
+      }
+      if (status.kind === 'delegated') {
+        if (status.delegate.toLowerCase() === delegate.toLowerCase()) return undefined;
+        if (!config.allowRedelegation) {
+          throw new Error(
+            `${owner.address} is delegated to ${status.delegate}, not ${delegate}; ` +
+              'refusing to replace another delegation without allowRedelegation',
+          );
+        }
+      }
+      const chainId = BigInt((await config.node('eth_chainId', [])) as string);
+      if (chainId !== config.chainId) {
+        throw new Error(`Node chain id ${chainId} does not match the configured chain id ${config.chainId}`);
+      }
+      // The bundler's transaction carries the tuple, so the authority's own
+      // nonce is used as-is (it is not the transaction sender).
+      const nonce = BigInt(
+        (await config.node('eth_getTransactionCount', [owner.address, 'pending'])) as string,
+      );
+      return signEip7702Authorization({ chainId: config.chainId, address: delegate, nonce }, owner);
+    },
+
+    encodeCalls(calls: Call[]): Uint8Array {
+      return encodeKernelExecute(calls);
+    },
+
+    signUserOpHash(owner: DerivedAccount, userOpHash: Uint8Array): Uint8Array {
+      return withEthereumV(owner.sign(toEthSignedMessageHash(userOpHash)));
+    },
+
+    stubSignature(): Uint8Array {
+      return toBytes(KERNEL_STUB_SIGNATURE);
+    },
+
+    signErc1271(owner: DerivedAccount, hash: Uint8Array, context: SmartAccountSignatureContext): Uint8Array {
+      const ownerSignature = withEthereumV(owner.sign(kernelErc1271Digest(hash, context)));
+      return concatBytes(new Uint8Array([KERNEL_7702_SIGNATURE_PREFIX]), ownerSignature);
+    },
+  };
+}
+
+/** ERC-1271 envelope byte for Kernel's root/7702 path (decodeSignature case 0) [K]. */
+export const KERNEL_7702_SIGNATURE_PREFIX = 0x00;
 
 export interface KernelDeploymentCheck {
   implementation: string;

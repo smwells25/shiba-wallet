@@ -2,6 +2,7 @@ import { keccak_256 } from '@noble/hashes/sha3.js';
 import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import type { DerivedAccount } from '@shiba-wallet/core';
 import { getUserOpHash, type UserOperation } from './userop.js';
+import type { SignedEip7702Authorization } from './eip7702.js';
 import {
   BundlerClient,
   PaymasterClient,
@@ -61,6 +62,16 @@ export interface SmartAccountSpec {
    * signHashForSmartAccount in ./account-signatures.ts).
    */
   signErc1271?(owner: DerivedAccount, hash: Uint8Array, context: SmartAccountSignatureContext): Uint8Array;
+  /**
+   * Optional, EIP-7702 accounts only (the sender IS the owner EOA, delegated
+   * to the account implementation). When present, the account has no
+   * factory: SmartAccountClient never calls getFactoryArgs, and instead
+   * attaches whatever this returns as the operation's `eip7702Auth` tuple —
+   * a signed authorization while the EOA is not yet delegated, undefined
+   * once eth_getCode already shows the expected delegation indicator
+   * (ERC-7769: a tuple is needed only to CHANGE the delegation).
+   */
+  getEip7702Authorization?(owner: DerivedAccount): Promise<SignedEip7702Authorization | undefined>;
 }
 
 /** Facts an account's ERC-1271 signing needs beyond the owner key. */
@@ -153,7 +164,12 @@ export class SmartAccountClient {
     fees: { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint },
   ): Promise<{ userOpHash: string; userOp: UserOperation }> {
     const spec = this.config.spec;
-    const deployed = await this.isDeployed(owner);
+    // EIP-7702 senders are EOAs: no factory ever; the delegation (if not yet
+    // in place) travels as the op's eip7702Auth tuple instead.
+    const eip7702Auth = spec.getEip7702Authorization
+      ? await spec.getEip7702Authorization(owner)
+      : undefined;
+    const deployed = spec.getEip7702Authorization ? true : await this.isDeployed(owner);
     const factoryArgs = deployed ? undefined : await spec.getFactoryArgs(owner);
 
     let op: UserOperation = {
@@ -169,6 +185,7 @@ export class SmartAccountClient {
       maxFeePerGas: fees.maxFeePerGas,
       maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
       signature: spec.stubSignature(),
+      ...(eip7702Auth ? { eip7702Auth } : {}),
     };
 
     // ERC-7677 two-phase flow: stub data makes gas estimation realistic,

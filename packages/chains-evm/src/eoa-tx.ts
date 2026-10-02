@@ -52,6 +52,15 @@ function baseFields(tx: Eip1559Transaction): RlpInput[] {
   ];
 }
 
+/**
+ * The nine EIP-1559 payload fields as RLP input, in order. Exported for the
+ * EIP-7702 set-code transaction (./eip7702.ts), whose payload starts with
+ * exactly these fields and appends the authorization list.
+ */
+export function eip1559PayloadFields(tx: Eip1559Transaction): RlpInput[] {
+  return baseFields(tx);
+}
+
 /** The digest the sender signs. */
 export function eip1559SigningHash(tx: Eip1559Transaction): Uint8Array {
   return keccak_256(concatBytes(TX_TYPE_2, rlpEncode(baseFields(tx))));
@@ -91,7 +100,8 @@ export function signEip1559(tx: Eip1559Transaction, account: DerivedAccount): Si
   return { raw, rawHex: toHex(raw), txHash: toHex(keccak_256(raw)) };
 }
 
-function stripLeadingZeros(bytes: Uint8Array): Uint8Array {
+/** Strips leading zero bytes (RLP integers are minimal big-endian). */
+export function stripLeadingZeros(bytes: Uint8Array): Uint8Array {
   let start = 0;
   while (start < bytes.length && bytes[start] === 0) start++;
   return bytes.slice(start);

@@ -1,5 +1,6 @@
 import { bigintToHex, toBytes, toHex } from './encoding.js';
 import type { UserOperation } from './userop.js';
+import { toRpcEip7702Auth, type RpcEip7702Auth } from './eip7702.js';
 
 /**
  * Vendor-neutral JSON-RPC plumbing. The wallet injects a transport (usually
@@ -53,10 +54,13 @@ export interface RpcUserOperation {
   paymasterPostOpGasLimit?: string;
   paymasterData?: string;
   signature: string;
+  /** EIP-7702 authorization tuple, when the operation carries one (see ./eip7702.ts). */
+  eip7702Auth?: RpcEip7702Auth;
 }
 
 export function toRpcUserOperation(op: UserOperation): RpcUserOperation {
   return {
+    ...(op.eip7702Auth ? { eip7702Auth: toRpcEip7702Auth(op.eip7702Auth) } : {}),
     sender: op.sender,
     nonce: bigintToHex(op.nonce),
     ...(op.factory ? { factory: op.factory } : {}),

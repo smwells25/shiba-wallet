@@ -7,6 +7,7 @@ import {
   toBytes,
   toWord,
 } from './encoding.js';
+import type { SignedEip7702Authorization } from './eip7702.js';
 
 /**
  * ERC-4337 UserOperation support targeting EntryPoint v0.7
@@ -48,6 +49,16 @@ export interface UserOperation {
   paymasterPostOpGasLimit?: bigint;
   paymasterData?: Uint8Array;
   signature: Uint8Array;
+  /**
+   * Optional EIP-7702 authorization tuple sent ALONGSIDE the operation (the
+   * `eip7702Auth` member of eth_sendUserOperation / eth_estimateUserOperationGas,
+   * ERC-4337 "Support for EIP-7702 authorizations"): the bundler adds it to
+   * the authorization list of a type-0x04 bundle transaction. It is not part
+   * of the PackedUserOperation and, under EntryPoint v0.7, not part of the
+   * userOpHash either (only v0.8+ binds the delegate into the hash, via the
+   * 0x7702 initCode marker). See ./eip7702.ts and ./kernel-account.ts.
+   */
+  eip7702Auth?: SignedEip7702Authorization;
 }
 
 export function packInitCode(op: UserOperation): Uint8Array {
