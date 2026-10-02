@@ -197,6 +197,14 @@ export function ActivityScreen({ navigation, route }: Props) {
   }
 
   // status === 'ok'
+  // The tracked-token logs fallback reports how far back it searched; when
+  // paging stopped short of block 0 (endpoint refusal or the wallet's own
+  // lookback bound), the end of the list is the end of the SEARCHED range,
+  // not the end of history.
+  const coverage = state.coverage;
+  const rangeLimited =
+    coverage !== undefined && (coverage.stop === 'refused' || coverage.stop === 'lookback-limit');
+  const nothingAnswered = coverage !== undefined && coverage.answeredFromBlock === null;
   const footer = (
     <View style={styles.footer}>
       {state.loadMoreError ? (
@@ -209,7 +217,9 @@ export function ActivityScreen({ navigation, route }: Props) {
           <Text style={[styles.loadMore, { color: theme.accent }]}>Load more</Text>
         </Pressable>
       ) : state.entries.length > 0 ? (
-        <Text style={[styles.note, { color: theme.textMuted }]}>End of history.</Text>
+        <Text style={[styles.note, { color: theme.textMuted }]}>
+          {rangeLimited ? 'End of the searched blocks (see the note above).' : 'End of history.'}
+        </Text>
       ) : null}
     </View>
   );
@@ -218,6 +228,11 @@ export function ActivityScreen({ navigation, route }: Props) {
     <View style={screenStyle(theme)}>
       {state.note ? (
         <Text style={[styles.note, { color: theme.textMuted }]}>{state.note}</Text>
+      ) : null}
+      {state.noteDetail ? (
+        <Text selectable style={[styles.noteDetail, { color: theme.textMuted }]}>
+          {state.noteDetail}
+        </Text>
       ) : null}
       <FlatList
         data={state.entries}
@@ -254,7 +269,11 @@ export function ActivityScreen({ navigation, route }: Props) {
         }
         ListEmptyComponent={
           <Text style={[styles.note, { color: theme.textMuted }]}>
-            No transactions found for this address.
+            {nothingAnswered
+              ? 'No blocks could be searched with the current endpoint.'
+              : coverage
+                ? 'No tracked-token transfers found in the searched blocks.'
+                : 'No transactions found for this address.'}
           </Text>
         }
         ListFooterComponent={footer}
@@ -341,6 +360,13 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
     textAlign: 'center',
+  },
+  noteDetail: {
+    fontSize: 12,
+    lineHeight: 17,
+    textAlign: 'center',
+    fontStyle: 'italic',
+    paddingTop: 4,
   },
   unavailableMark: {
     fontSize: 32,

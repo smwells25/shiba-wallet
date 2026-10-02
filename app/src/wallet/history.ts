@@ -1,4 +1,4 @@
-import type { HistoryEntry, HistoryProvider } from '@shiba-wallet/core';
+import type { HistoryEntry, HistoryPage, HistoryProvider } from '@shiba-wallet/core';
 import {
   httpTransport as evmHttpTransport,
   indexerHistoryProvider,
@@ -9,8 +9,8 @@ import {
   solanaHistoryProvider,
 } from '@shiba-wallet/chains-solana';
 import type { NetworkKind } from '../config/defaults';
-import { tokenLogsHistoryProvider } from './token-history.ts';
-import type { TrackedTokenRef } from './token-history.ts';
+import { tokenLogsCoverageOf, tokenLogsHistoryProvider } from './token-history.ts';
+import type { TokenLogsCoverage, TrackedTokenRef } from './token-history.ts';
 
 /**
  * Transaction-history engine glue: resolves the right HistoryProvider for a
@@ -68,6 +68,89 @@ export const TOKEN_LOGS_NOTE =
   'Showing tracked-token transfers from recent blocks (no indexer is ' +
   'configured). Native ETH history needs an indexer endpoint — see ' +
   'Settings → Ethereum history indexer.';
+
+/** Where the coverage notes send the user for full history. */
+const INDEXER_POINTER =
+  'A history indexer (Settings → Ethereum history indexer) gives full ' +
+  'history, including native ETH.';
+
+/**
+ * The partial-history note for the tracked-token logs fallback, written
+ * from what the endpoint actually answered (token-history.ts coverage),
+ * plus the endpoint's own refusal text, verbatim, as a separate detail
+ * line when paging stopped on a refused window. Block numbers are printed
+ * raw so they can be compared with the "block N" labels on the rows.
+ */
+export function tokenLogsCoverageNote(coverage: TokenLogsCoverage): {
+  note: string;
+  detail: string | null;
+} {
+  const head = coverage.headBlock.toString();
+  const detail = coverage.refusal
+    ? (coverage.refusal.code !== undefined
+        ? `The endpoint's response (JSON-RPC error ${coverage.refusal.code}): `
+        : "The endpoint's response: ") + coverage.refusal.message
+    : null;
+  if (coverage.stop === 'refused') {
+    if (coverage.answeredFromBlock === null) {
+      const window = `${coverage.refusal?.fromBlock ?? '?'}–${coverage.refusal?.toBlock ?? head}`;
+      return {
+        note:
+          'No token history is available from the current endpoint: it did not ' +
+          `answer the search of the most recent blocks (${window}). ` +
+          INDEXER_POINTER +
+          ' Pull down to try again.',
+        detail,
+      };
+    }
+    const from = coverage.answeredFromBlock.toString();
+    return {
+      note:
+        `Showing tracked-token transfers from block ${from} to ${head} (no indexer ` +
+        `is configured). History older than block ${from} is not available from ` +
+        'the current endpoint, which refused to search further back. ' +
+        INDEXER_POINTER,
+      detail,
+    };
+  }
+  if (coverage.stop === 'lookback-limit' && coverage.answeredFromBlock !== null) {
+    const from = coverage.answeredFromBlock.toString();
+    return {
+      note:
+        `Showing tracked-token transfers from block ${from} to ${head} (no indexer ` +
+        `is configured). Without an indexer the wallet searches only the most ` +
+        `recent ${coverage.lookbackBlocks.toString()} blocks, so older history is ` +
+        'not shown. ' +
+        INDEXER_POINTER,
+      detail,
+    };
+  }
+  // Still paging, or block 0 reached: the general note stands.
+  return { note: TOKEN_LOGS_NOTE, detail };
+}
+
+/** The source-level note fields the Activity list shows above its rows. */
+export interface HistoryNotes {
+  note?: string;
+  /** Verbatim endpoint text, shown under the note. */
+  noteDetail?: string;
+  /** Present when the page came from the tracked-token logs fallback. */
+  coverage?: TokenLogsCoverage;
+}
+
+/**
+ * Note fields after a page arrives: a page from the logs fallback replaces
+ * the note with its coverage-aware wording; any other page keeps the
+ * previous note (the source's static caveat, if any). Pure, so
+ * scripts/check-token-history.mjs exercises the exact transition
+ * useHistory applies on reload and on load-more.
+ */
+export function historyNotesAfterPage(previous: HistoryNotes, page: HistoryPage): HistoryNotes {
+  const coverage = tokenLogsCoverageOf(page);
+  if (!coverage) return previous;
+  const { note, detail } = tokenLogsCoverageNote(coverage);
+  return { note, ...(detail !== null ? { noteDetail: detail } : {}), coverage };
+}
 
 const NO_ENDPOINT_NOTE =
   'No endpoint is configured for this chain, so its history cannot be ' +

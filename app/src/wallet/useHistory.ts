@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { HistoryEntry } from '@shiba-wallet/core';
 import { getEndpoint, type NetworkEndpoint } from '../config/networks';
-import { historySourceFor, type HistorySource } from './history';
+import {
+  historyNotesAfterPage,
+  historySourceFor,
+  type HistoryNotes,
+  type HistorySource,
+} from './history';
 import { listTokens } from './tokens';
 import type { TrackedTokenRef } from './token-history';
 import { getIndexerConfig } from './indexer';
@@ -29,6 +34,13 @@ export type HistoryState =
       loadMoreError: string | null;
       /** Source-level caveat (e.g. the tracked-token logs fallback). */
       note?: string;
+      /** The endpoint's own refusal text, verbatim, shown under the note. */
+      noteDetail?: string;
+      /**
+       * Block range answered so far by the tracked-token logs fallback
+       * (token-history.ts); absent for other sources.
+       */
+      coverage?: HistoryNotes['coverage'];
     };
 
 export interface HistoryHook {
@@ -110,13 +122,14 @@ export function useHistory(chainId: string, address: string): HistoryHook {
       }
       const page = await source.provider.getHistory(address);
       if (gen !== generation.current) return;
+      const notes = historyNotesAfterPage(source.note ? { note: source.note } : {}, page);
       setState({
         status: 'ok',
         entries: page.entries,
         nextCursor: page.nextCursor,
         loadingMore: false,
         loadMoreError: null,
-        ...(source.status === 'available' && source.note ? { note: source.note } : {}),
+        ...notes,
       });
     } catch (e) {
       if (gen === generation.current) {
@@ -164,12 +177,25 @@ export function useHistory(chainId: string, address: string): HistoryHook {
         // legitimate entries sharing its hash), by id otherwise.
         const seen = new Set(prev.entries.map((entry) => entry.uid ?? entry.id));
         const fresh = page.entries.filter((entry) => !seen.has(entry.uid ?? entry.id));
+        // The note fields carry over (a logs-fallback page updates them
+        // with the range answered so far, including a refusal that ended
+        // paging); without this the partial-history caveat would vanish
+        // after the first "Load more".
+        const notes = historyNotesAfterPage(
+          {
+            ...(prev.note !== undefined ? { note: prev.note } : {}),
+            ...(prev.noteDetail !== undefined ? { noteDetail: prev.noteDetail } : {}),
+            ...(prev.coverage !== undefined ? { coverage: prev.coverage } : {}),
+          },
+          page,
+        );
         return {
           status: 'ok',
           entries: [...prev.entries, ...fresh],
           nextCursor: page.nextCursor,
           loadingMore: false,
           loadMoreError: null,
+          ...notes,
         };
       });
     } catch (e) {
