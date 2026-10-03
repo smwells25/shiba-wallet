@@ -123,3 +123,5 @@ that is already deployed and holds a little test ETH.
    passkey from the system password manager and try Test (plain "no
    matching passkey" message); on iOS repeat steps 3–5 to confirm the
    library's raw x||y public-key field matches the attestation key.
+
+See also the device-only conditions W2–W4 and W18–W19 in docs/THREAT_MODEL.md section 5, which a development build is expected to re-validate.

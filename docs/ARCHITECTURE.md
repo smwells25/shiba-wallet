@@ -1,5 +1,8 @@
 # System Architecture
 
+> Implementation status and open risks are tracked in docs/THREAT_MODEL.md; where that document and this one differ, section 8 of the threat model lists the discrepancies and the code is the reference.
+
+
 **Status:** Draft for engineering review
 **Audience:** Engineers building and maintaining the wallet. No prior context is assumed.
 **Related documents:** `docs/DECISIONS.md` (canonical Architecture Decision Records), `docs/FEATURE_UNIVERSE.md` (feature landscape for leadership), `AGENTS.md` (project state).

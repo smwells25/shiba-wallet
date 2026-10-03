@@ -1991,8 +1991,9 @@ recovers (27/27 when pointed at another mainnet RPC).
       accepts an undeployed taker; on Sepolia the in-app smart-account
       token send and swap cannot be exercised (tokens are mainnet-only,
       0x lists no Sepolia) — batching there is testable only via
-      wallet_sendCalls. RiskWarnings still to be placed in SendScreen,
-      SwapScreen and WcApprovalSheet (CTO).
+      wallet_sendCalls. RiskWarnings was placed in SendScreen, SwapScreen and
+      WcApprovalSheet in commit be0656e (noted 2026-10-02 by the threat
+      model review; this entry previously said it was still pending).
 
 ## Phase 7 live validation (2026-10-01, emulator, Sepolia)
 
@@ -3238,3 +3239,81 @@ Waves: 1 + 2 + 4 first (no inputs, disjoint files), then 5 + 6, with 3
 whenever the Expo account and identifiers arrive. Subagents on Opus.
 
 ## Phase 9 progress
+
+- [x] Item 1 — owner-change bundler refusal: ROOT CAUSE FOUND AND FIXED
+      (commit 37d3b89; engine 602 tests, check-recovery 216, check-passkeys
+      126, check-aa 74). Not specific to the owner change and not an
+      app-vs-script difference: Rundler (Alchemy's bundler; the error text
+      is Rundler's) estimates verificationGasLimit with the operation's
+      fees set to zero (rundler v0.7
+      crates/contracts/contracts/v0_7/src/VerificationGasEstimationHelper.sol,
+      _setFeesFields), so the account's EntryPoint deposit top-up
+      (missingAccountFunds) never runs in estimation; at real fees
+      EntryPoint v0.7 _validateAccountPrepayment requires the top-up
+      whenever the deposit is below the prefund, the extra gas is not in
+      the limit, and the tracer reports -32502 "Simulation ran out of gas
+      for entity: account". Measured live on Sepolia with the dev seed's
+      index-2 Kernel account: refused at Alchemy's own estimate (113,373)
+      and at 91,249 when a top-up was needed, accepted at 125,000 / 150,000
+      / 190,000, refused at 200,000+ with "-32602 Verification gas limit
+      efficiency too low. Required: 0.4" (about 77.6k used), and accepted
+      at 91,249 when the deposit already covered the prefund; a plain
+      0-value call failed the same way. The app and script ops were
+      field-identical apart from the script's padding. FIX: opt-in
+      SmartAccountClientConfig.depositTopUpVerificationGas — when there is
+      no paymaster and balanceOf(sender) on the EntryPoint is below the
+      required prefund, the headroom is added to the signed
+      verificationGasLimit after gasPaddingPct (unreadable deposit → plain
+      estimate); new engine exports requiredPrefund, needsDepositTopUp,
+      withDepositTopUpHeadroom, client.getEntryPointDeposit. App:
+      AA_DEPOSIT_TOPUP_VERIFICATION_GAS = 40,000 (a measured judgement:
+      ZeroDev's estimate becomes 131,249 and Alchemy's 153,373, above the
+      highest refused value and below the efficiency floor) on every
+      client (aa.ts both clients, recovery.ts, sessions.ts, passkeys.ts);
+      AaSendQuote carries depositTopUpHeadroom so the confirm fee and the
+      balance check equal the signed op, and the passkey quote pads the
+      plain estimate before adding it back. Fixed app path proven live
+      through Alchemy directly: rotation idx0→idx9 (no top-up needed) tx
+      0x30c4a28c…11a9 block 11832342, rotation back idx9→idx0 WITH a
+      top-up at 153,373 ACCEPTED, tx 0xb5499272…8a00f block 11832343,
+      Deposited emitted during validation; final owner read back =
+      0x16DA…C5C, no guardians. Funds: the account spent about 0.0016
+      test ETH over 14 diagnostic ops; the dev EOA sent it 0.0006 and now
+      holds about 0.0011 (top-up needed before further live runs).
+      UNVERIFIED: the exact threshold (between 113,373 and 125,000); which
+      bundler the emulator actually had saved (the error text and fee
+      match Alchemy's Rundler, not ZeroDev's Alto-style answers); Pimlico /
+      UltraRelay with the headroom; deployment ops with a zero deposit.
+      Emulator re-run of the in-app owner change: see below.
+- [x] Item 2 — docs/THREAT_MODEL.md (first edition, evidence at 860e552;
+      about 9–10k words of prose): leadership summary with three
+      conclusions (plain-account features are the first mainnet
+      candidates but not yet; smart-account features stay testnet-only;
+      the remaining large risk is showing the user something misleading),
+      ten ranked assets, trust-boundary diagram and an AsyncStorage key
+      inventory, a network-services table, 66 threats T-01..T-66 with
+      mitigation evidence and residual risk, a mainnet checklist merging
+      C1–C3 with W1–W20, a findings register (F-01..F-51 from this file
+      plus N-01..N-11 new from the code), review guidance, a list of
+      twelve doc-vs-code discrepancies, and what could not be
+      substantiated. NEW FINDINGS N-01..N-11 for the Chairperson, headline
+      ones: N-01 the phrase is stored in expo-secure-store WITHOUT
+      requireAuthentication, so the biometric prompt is an app-level gate
+      only and phones without enrolled biometrics get no prompt (contrary
+      to ARCHITECTURE 2.4/5.1/D7's envelope-encryption description); N-06
+      the dApp name/URL on the WalletConnect sheet is self-reported (no
+      Verify API); N-07 Permit/Permit2 typed data is shown as raw JSON
+      without a spender/amount summary; N-10 one RPC is the only source of
+      truth for simulation, the eth_call gate, balances and risk facts
+      (ARCHITECTURE 5.4 describes cross-checks and fee clamps that do not
+      exist). Other discrepancies: no wallet passcode (recorded decision),
+      BIP-39 passphrase supported by core but never passed by the app,
+      secrets are JS strings and derived keys are not zeroed, caret
+      ranges rather than exact pins, docs/DECISIONS.md cited but absent,
+      ARCHITECTURE 2.2 vs D8 on import discovery. Could not substantiate:
+      hardware backing of secure-store on real phones, passkey cloud sync,
+      Expo's default android.allowBackup, iOS screen-capture blocking in
+      release builds, release builds being free of LogBox/dev menu.
+      Cross-references added to ARCHITECTURE.md, DEVICE_BUILDS.md and
+      AA_FRAMEWORKS.md. The git history was searched for key-bearing URLs:
+      none (only the public test mnemonic).

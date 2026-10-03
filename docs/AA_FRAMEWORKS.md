@@ -777,3 +777,5 @@ All URLs were fetched on 2026-09-30 or 2026-10-01. "Code" means source files rea
 114. Thirdweb contracts license: https://raw.githubusercontent.com/thirdweb-dev/contracts/main/LICENSE.md
 115. Base webauthn-sol: https://raw.githubusercontent.com/base/webauthn-sol/main/README.md
 116. ethereum.org, Modular Account: https://ethereum.org/developers/tools/modular-account
+
+The conditions C1–C3 above are merged with the wallet's own mainnet conditions in docs/THREAT_MODEL.md section 5.
