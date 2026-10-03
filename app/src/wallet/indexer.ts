@@ -7,6 +7,7 @@ import {
 // Explicit .ts extension: this module is imported by scripts/check-indexer.mjs
 // under Node's type stripping, which resolves relative specifiers literally.
 import type { KeyValueStore } from './tokens.ts';
+import { assertSecureEndpointUrl } from '../config/endpoint-url.ts';
 import type { TransportFactory } from './aa.ts';
 
 /**
@@ -73,12 +74,11 @@ export async function getIndexerConfig(
   };
 }
 
-const URL_PATTERN = /^https?:\/\/.+/;
-
 /**
  * Verifies and saves an indexer URL for one chain; throws (persisting
  * nothing) when any check fails. Checks, in order:
- *  1. the URL is well-formed http(s);
+ *  1. the URL is https:// (plain http:// only for a loopback development
+ *     host; ../config/endpoint-url.ts), before any request is made;
  *  2. eth_chainId on the endpoint matches the chain being configured, so a
  *     pasted testnet URL cannot silently serve wrong-chain history (the
  *     same guard the send flow applies to RPC endpoints; Alchemy-style
@@ -95,10 +95,7 @@ export async function setIndexerUrl(
 ): Promise<void> {
   const store = options.store ?? AsyncStorage;
   const transportFor = options.transportFor ?? httpTransport;
-  const trimmed = url.trim().replace(/\/+$/, '');
-  if (!URL_PATTERN.test(trimmed)) {
-    throw new Error('Indexer endpoint must be an http(s):// URL');
-  }
+  const trimmed = assertSecureEndpointUrl(url);
   const expected = BigInt(chainId.split(':')[1] ?? '');
   const transport = transportFor(trimmed);
   const actual = await new NodeClient(transport).chainId();

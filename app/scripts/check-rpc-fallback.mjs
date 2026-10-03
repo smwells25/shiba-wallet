@@ -32,6 +32,7 @@ import {
   probeEndpoint,
   resolveNetworkUrl,
 } from '../src/config/endpoint-probe.ts';
+import { assertSecureEndpointUrl } from '../src/config/endpoint-url.ts';
 
 let passed = 0;
 let failed = 0;
@@ -170,6 +171,24 @@ check('Sepolia row list is the Sepolia profile list (no drift)', SEPOLIA_NETWORK
   );
   const urls = all.flatMap((n) => n.defaultUrls);
   check('every candidate is https:// with no trailing slash', urls.every((u) => /^https:\/\/[^\s]+[^/]$/.test(u)));
+  // The same rule user-entered endpoints must pass (src/config/endpoint-url.ts):
+  // every built-in default is https (no loopback http exception is used by
+  // a default) and passes the shared helper unchanged.
+  check(
+    'every default candidate passes assertSecureEndpointUrl unchanged',
+    urls.length > 0 && urls.every((u) => {
+      try {
+        return assertSecureEndpointUrl(u) === u;
+      } catch {
+        return false;
+      }
+    }),
+  );
+  check(
+    'no default candidate uses plain http:// (not even loopback)',
+    urls.every((u) => u.startsWith('https://')) &&
+      [...EVM_MAINNET.defaultRpcUrls, ...EVM_SEPOLIA.defaultRpcUrls].every((u) => u.startsWith('https://')),
+  );
   check('no candidate carries a key-like query or path secret', urls.every((u) => !/[?#]|\/v[23]\/|key/i.test(u)));
   check('no duplicate candidates within a chain', all.every((n) => new Set(n.defaultUrls).size === n.defaultUrls.length));
 }

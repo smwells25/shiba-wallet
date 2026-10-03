@@ -112,9 +112,46 @@ console.log('== Offline: indexer config store ==');
       },
     });
   } catch (e) {
-    threw = /http\(s\)/.test(e.message);
+    threw = /^Endpoints must use https:\/\//.test(e.message);
   }
   check('malformed URL refused offline', threw);
+
+  // Plain http:// (not a loopback host): refused before any request, so
+  // the URL's embedded API key never travels in clear text; nothing saved.
+  let transportsBuilt = 0;
+  let httpMessage = null;
+  try {
+    await setIndexerUrl(EVM_CHAIN_ID, 'http://indexer.example/v2/KEY', TEST_ADDRESS, {
+      store,
+      transportFor: () => {
+        transportsBuilt += 1;
+        return goodTransport();
+      },
+    });
+  } catch (e) {
+    httpMessage = e.message;
+  }
+  check(
+    'plain http:// indexer refused with the https sentence',
+    httpMessage ===
+      'Endpoints must use https:// (plain http:// is accepted only for localhost or 10.0.2.2 during development).',
+    String(httpMessage),
+  );
+  check('plain http:// indexer: no transport was created', transportsBuilt === 0);
+  check(
+    'plain http:// indexer: stored config unchanged',
+    (await getIndexerConfig(EVM_CHAIN_ID, store)).url === 'https://indexer.example/v2/KEY',
+  );
+
+  // Loopback development exception: http://localhost is verified and saved.
+  await setIndexerUrl(EVM_CHAIN_ID, 'http://localhost:8545/', TEST_ADDRESS, {
+    store,
+    transportFor: goodTransport,
+  });
+  check(
+    'loopback http://localhost indexer accepted after verification',
+    (await getIndexerConfig(EVM_CHAIN_ID, store)).url === 'http://localhost:8545',
+  );
 
   await clearIndexerUrl(EVM_CHAIN_ID, store);
   const cleared = await getIndexerConfig(EVM_CHAIN_ID, store);

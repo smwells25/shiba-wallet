@@ -47,6 +47,7 @@ import {
 } from '../src/wallet/swap.ts';
 import { sendEvm } from '../src/wallet/send.ts';
 import { USDC_MAINNET } from '../src/wallet/erc20.ts';
+import { assertSecureEndpointUrl } from '../src/config/endpoint-url.ts';
 
 let passed = 0;
 let failed = 0;
@@ -262,6 +263,18 @@ check('exactly one verification request was made', zeroExCalls.length === 1);
   check('canonical pair: 0.001 ETH sell amount', p.get('sellAmount') === '1000000000000000');
   check('taker is the wallet address', p.get('taker') === TAKER);
   check('minimal params: no slippageBps on the verification request', p.get('slippageBps') === null);
+  // Swap settings take only an API key, never a URL: the key is sent to
+  // the engine's fixed 0x base, which must be https (the endpoint rule in
+  // src/config/endpoint-url.ts) so the key never travels in clear text.
+  check(
+    'the key goes only to https://api.0x.org (fixed base, https)',
+    call.url.protocol === 'https:' && call.url.host === 'api.0x.org',
+    call.url.href,
+  );
+  check(
+    'the 0x base passes the shared endpoint URL rule unchanged',
+    assertSecureEndpointUrl(call.url.origin) === 'https://api.0x.org',
+  );
 }
 
 for (const status of [401, 403]) {

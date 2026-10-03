@@ -6,6 +6,8 @@ import type { NetworkDefault } from './defaults.ts';
 import { networkDefaultFor, resolveActiveNetworks } from './defaults.ts';
 import { loadPrefs } from './prefs.ts';
 import { blockbookHeaders, getBlockbookConfig } from '../wallet/blockbook.ts';
+import type { KeyValueStore } from '../wallet/tokens.ts';
+import { assertSecureEndpointUrl } from './endpoint-url.ts';
 import {
   createDefaultEndpointResolver,
   resolveNetworkUrl,
@@ -56,9 +58,9 @@ const OVERRIDES_KEY = 'shiba-wallet.rpc-endpoints.v1';
 
 type OverrideMap = Record<string, string>;
 
-async function loadOverrides(): Promise<OverrideMap> {
+async function loadOverrides(store: KeyValueStore = AsyncStorage): Promise<OverrideMap> {
   try {
-    const raw = await AsyncStorage.getItem(OVERRIDES_KEY);
+    const raw = await store.getItem(OVERRIDES_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as unknown;
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
@@ -76,8 +78,8 @@ async function loadOverrides(): Promise<OverrideMap> {
   }
 }
 
-async function saveOverrides(map: OverrideMap): Promise<void> {
-  await AsyncStorage.setItem(OVERRIDES_KEY, JSON.stringify(map));
+async function saveOverrides(map: OverrideMap, store: KeyValueStore = AsyncStorage): Promise<void> {
+  await store.setItem(OVERRIDES_KEY, JSON.stringify(map));
 }
 
 /** Resolved endpoint state for one chain, ready for display or fetching. */
@@ -240,23 +242,27 @@ export async function withEndpoint<T>(
 }
 
 /**
- * Sets a user override. Throws on obviously invalid input so Settings can
- * surface the message; only http(s) URLs make sense for these transports.
+ * Sets a user override. Throws on invalid input so Settings can surface
+ * the message: the URL must be https:// (plain http:// only for a loopback
+ * development host; see ./endpoint-url.ts), checked before anything is
+ * stored. `options.store` exists for the offline check scripts.
  */
-export async function setEndpointOverride(chainId: string, url: string): Promise<void> {
+export async function setEndpointOverride(
+  chainId: string,
+  url: string,
+  options: { store?: KeyValueStore } = {},
+): Promise<void> {
+  const store = options.store ?? AsyncStorage;
   if (networkDefaultFor(chainId)?.kind === 'blockbook') {
     // Blockbook chains are configured (URL + API key, with save-time
     // verification) through ../wallet/blockbook.ts; an override written
     // here would be silently ignored by getAllEndpoints, so refuse loudly.
     throw new Error('This chain uses a Blockbook endpoint; configure it in its own section.');
   }
-  const trimmed = url.trim().replace(/\/+$/, '');
-  if (!/^https?:\/\/.+/.test(trimmed)) {
-    throw new Error('Endpoint must be an http(s):// URL');
-  }
-  const overrides = await loadOverrides();
-  overrides[chainId] = trimmed;
-  await saveOverrides(overrides);
+  const normalized = assertSecureEndpointUrl(url);
+  const overrides = await loadOverrides(store);
+  overrides[chainId] = normalized;
+  await saveOverrides(overrides, store);
 }
 
 /** Removes the override so the chain returns to its verified default. */

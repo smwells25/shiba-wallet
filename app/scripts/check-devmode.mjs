@@ -46,6 +46,12 @@ import {
   parseWcRequest,
 } from '../src/wallet/walletconnect.ts';
 import { getAaConfig, setAaFactory } from '../src/wallet/aa.ts';
+import {
+  INSECURE_ENDPOINT_MESSAGE,
+  LOOPBACK_HOSTS,
+  assertSecureEndpointUrl,
+} from '../src/config/endpoint-url.ts';
+import { setEndpointOverride } from '../src/config/networks.ts';
 
 let passed = 0;
 let failed = 0;
@@ -490,7 +496,7 @@ console.log('aa prefill (sepolia key, verified before save):');
   const verification = await setAaFactory(
     EVM_SEPOLIA.caip2,
     prefill.factory,
-    'http://offline.fake/sepolia',
+    'https://offline.fake/sepolia',
     { store, transportFor: () => fakeNode },
   );
   check(
@@ -502,6 +508,101 @@ console.log('aa prefill (sepolia key, verified before save):');
   check('implementation recorded from the chain, not asserted', sepoliaConfig.factoryImplementation === impl);
   const mainnetConfig = await getAaConfig('eip155:1', store);
   check('mainnet AA config stays untouched (no mode mixing)', mainnetConfig.factory === null && mainnetConfig.bundlerUrl === null);
+}
+
+// ---------------------------------------------------------------------------
+// Endpoint URL rule (src/config/endpoint-url.ts): https:// only, plain
+// http:// only for loopback development hosts; the RPC override setter
+// applies it before storing anything.
+// ---------------------------------------------------------------------------
+console.log('\nendpoint URL rule (https only, loopback http for development):');
+{
+  check(
+    'refusal sentence is the documented one',
+    INSECURE_ENDPOINT_MESSAGE ===
+      'Endpoints must use https:// (plain http:// is accepted only for localhost or 10.0.2.2 during development).',
+  );
+  check(
+    'loopback list is exactly localhost, 127.0.0.1, ::1, 10.0.2.2',
+    JSON.stringify(LOOPBACK_HOSTS) === JSON.stringify(['localhost', '127.0.0.1', '::1', '10.0.2.2']),
+  );
+  const accepted = [
+    [' https://rpc.example/v2/KEY/ ', 'https://rpc.example/v2/KEY'],
+    ['HTTPS://rpc.example', 'https://rpc.example'],
+    ['https://rpc.example:8443/path?x=1', 'https://rpc.example:8443/path?x=1'],
+    ['http://localhost:8545', 'http://localhost:8545'],
+    ['http://LOCALHOST:8545/', 'http://LOCALHOST:8545'],
+    ['http://127.0.0.1:8545', 'http://127.0.0.1:8545'],
+    ['http://[::1]:8545', 'http://[::1]:8545'],
+    ['http://10.0.2.2:8545', 'http://10.0.2.2:8545'],
+    ['http://user:pass@localhost:8545', 'http://user:pass@localhost:8545'],
+  ];
+  for (const [input, expected] of accepted) {
+    let got;
+    try {
+      got = assertSecureEndpointUrl(input);
+    } catch (e) {
+      got = `threw: ${e.message}`;
+    }
+    check(`accepted: ${JSON.stringify(input)}`, got === expected, String(got));
+  }
+  const refusedHttp = [
+    'http://rpc.example',
+    'http://192.168.1.20:8545',
+    'http://10.0.2.3:8545',
+    'http://127.0.0.2:8545',
+    'http://localhost.example.com',
+    'http://localhost@rpc.example',
+    'http://[::2]:8545',
+    'ftp://rpc.example',
+    'ws://localhost:8545',
+    'rpc.example',
+    'not-a-url',
+    '',
+  ];
+  for (const input of refusedHttp) {
+    let message = null;
+    try {
+      assertSecureEndpointUrl(input);
+    } catch (e) {
+      message = e.message;
+    }
+    check(`refused with the https sentence: ${JSON.stringify(input)}`, message === INSECURE_ENDPOINT_MESSAGE, String(message));
+  }
+  const refusedMalformed = ['https://', 'https:///path', 'https://rpc.example:99999', 'https://rpc .example', 'https://[::1'];
+  for (const input of refusedMalformed) {
+    let message = null;
+    try {
+      assertSecureEndpointUrl(input);
+    } catch (e) {
+      message = e.message;
+    }
+    check(
+      `malformed https URL refused with its own message: ${JSON.stringify(input)}`,
+      message !== null && message !== INSECURE_ENDPOINT_MESSAGE,
+      String(message),
+    );
+  }
+
+  // setEndpointOverride (config/networks.ts) stores nothing for an http URL.
+  const store = memoryStore();
+  let message = null;
+  try {
+    await setEndpointOverride('eip155:1', 'http://rpc.example', { store });
+  } catch (e) {
+    message = e.message;
+  }
+  check('RPC override: plain http:// refused with the https sentence', message === INSECURE_ENDPOINT_MESSAGE, String(message));
+  check('RPC override: nothing stored after the refusal', (await store.getItem('shiba-wallet.rpc-endpoints.v1')) === null);
+  await setEndpointOverride('eip155:1', 'https://rpc.example/', { store });
+  await setEndpointOverride('bip122:000000000019d6689c085ae165831e93', 'http://10.0.2.2:3002/api', { store });
+  const stored = JSON.parse((await store.getItem('shiba-wallet.rpc-endpoints.v1')) ?? '{}');
+  check(
+    'RPC override: https saved normalized, loopback http (10.0.2.2) saved',
+    stored['eip155:1'] === 'https://rpc.example' &&
+      stored['bip122:000000000019d6689c085ae165831e93'] === 'http://10.0.2.2:3002/api',
+    JSON.stringify(stored),
+  );
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

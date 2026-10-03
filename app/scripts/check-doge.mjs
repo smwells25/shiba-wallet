@@ -164,6 +164,22 @@ console.log('\n== Blockbook config store ==');
   await clearBlockbookConfig(DOGECOIN_CHAIN_ID, store);
   const cleared = await getBlockbookConfig(DOGECOIN_CHAIN_ID, store);
   check('clear removes the config', cleared.url === null && cleared.verifiedAt === null);
+
+  // Loopback development exception: a local Blockbook over plain http://.
+  let localUrl = null;
+  await setBlockbookEndpoint(DOGECOIN_CHAIN_ID, 'http://10.0.2.2:9130/', '', account.address, {
+    store,
+    fetchFn: async (url) => {
+      localUrl = url;
+      return jsonResponse([]);
+    },
+  });
+  const local = await getBlockbookConfig(DOGECOIN_CHAIN_ID, store);
+  check(
+    'loopback http://10.0.2.2 (Android emulator host) is accepted and verified',
+    local.url === 'http://10.0.2.2:9130' && localUrl === `http://10.0.2.2:9130/api/v2/utxo/${account.address}`,
+  );
+  await clearBlockbookConfig(DOGECOIN_CHAIN_ID, store);
 }
 
 // ---------------------------------------------------------------------------
@@ -185,9 +201,43 @@ console.log('\n== Verify-before-save ==');
         store,
         fetchFn: async () => jsonResponse([]),
       }),
-    /http\(s\):\/\//,
+    /^Endpoints must use https:\/\//,
   );
   await nothingPersisted('non-http URL');
+
+  // Plain http:// is refused before any request (no fetch call at all), so
+  // nothing is persisted and no API key is ever sent in clear text.
+  {
+    let fetches = 0;
+    await checkRejects(
+      'plain http:// URL refused (not a loopback host)',
+      () =>
+        setBlockbookEndpoint(DOGECOIN_CHAIN_ID, 'http://blockbook.example', FAKE_KEY, account.address, {
+          store,
+          fetchFn: async () => {
+            fetches += 1;
+            return jsonResponse([]);
+          },
+        }),
+      /^Endpoints must use https:\/\/ \(plain http:\/\/ is accepted only for localhost or 10\.0\.2\.2 during development\)\.$/,
+    );
+    check('plain http:// URL: no request was made', fetches === 0);
+    await nothingPersisted('plain http:// URL');
+    await checkRejects(
+      'http://localhost@evil host trick refused (the host is the part after @)',
+      () =>
+        setBlockbookEndpoint(DOGECOIN_CHAIN_ID, 'http://localhost@blockbook.example', FAKE_KEY, account.address, {
+          store,
+          fetchFn: async () => {
+            fetches += 1;
+            return jsonResponse([]);
+          },
+        }),
+      /^Endpoints must use https:\/\//,
+    );
+    check('userinfo trick: no request was made', fetches === 0);
+    await nothingPersisted('userinfo trick');
+  }
 
   await checkRejects(
     'missing wallet address refused',

@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // Explicit .ts extension: this module is imported by scripts/check-doge.mjs
 // under Node's type stripping, which resolves relative specifiers literally.
 import type { KeyValueStore } from './tokens.ts';
+import { assertSecureEndpointUrl } from '../config/endpoint-url.ts';
 
 /**
  * Per-chain Blockbook endpoint configuration (Dogecoin in this pass): the
@@ -86,12 +87,11 @@ export async function getBlockbookConfig(
   };
 }
 
-const URL_PATTERN = /^https?:\/\/.+/;
-
 /**
  * Verifies and saves a Blockbook endpoint (URL + optional API key) for one
  * chain; throws (persisting nothing) when any check fails. Checks:
- *  1. the URL is well-formed http(s);
+ *  1. the URL is https:// (plain http:// only for a loopback development
+ *     host; ../config/endpoint-url.ts), before any request is made;
  *  2. a live GET {url}/api/v2/utxo/{walletAddress} — the exact request the
  *     engine's blockbookTransport.getUtxos makes for balances and coin
  *     selection, with the API key attached — answers HTTP 2xx with a JSON
@@ -109,11 +109,8 @@ export async function setBlockbookEndpoint(
 ): Promise<void> {
   const store = options.store ?? AsyncStorage;
   const fetchFn = options.fetchFn ?? fetch;
-  const trimmedUrl = url.trim().replace(/\/+$/, '');
+  const trimmedUrl = assertSecureEndpointUrl(url);
   const trimmedKey = apiKey.trim();
-  if (!URL_PATTERN.test(trimmedUrl)) {
-    throw new Error('Blockbook endpoint must be an http(s):// URL');
-  }
   if (!walletAddress) {
     throw new Error('No wallet address is available to verify the endpoint with.');
   }

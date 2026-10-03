@@ -101,6 +101,9 @@ const MAINNET = 'eip155:1';
 const SEPOLIA = 'eip155:11155111';
 const NFT_BASE = 'https://nft.fake/nft/v3/KEY';
 const RPC = 'https://rpc.fake/';
+// A developer's local NFT API over plain http:// on a loopback host (the one
+// allowed exception to the https rule).
+const LOCAL_NFT_BASE = 'http://127.0.0.1:8080/nft/v3/KEY';
 const TINY_PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]);
 const SVG_TEXT = '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>';
 const SVG_BYTES = new TextEncoder().encode(SVG_TEXT);
@@ -240,7 +243,7 @@ function headersOf(map) {
 
 globalThis.fetch = async (url, init = {}) => {
   requests.push({ url, init });
-  if (url.startsWith(NFT_BASE) || url.startsWith('https://nft.fake/')) {
+  if (url.startsWith(NFT_BASE) || url.startsWith('https://nft.fake/') || url.startsWith(LOCAL_NFT_BASE)) {
     if (indexer.status !== 200) return { ok: false, status: indexer.status, headers: headersOf({}), json: async () => ({ error: { message: 'Must be authenticated!' } }) };
     const key = new URL(url).searchParams.get('pageKey') ?? 'first';
     return { ok: true, status: 200, headers: headersOf({}), json: async () => indexer.pages[key] };
@@ -288,7 +291,21 @@ console.log('config store (verify-before-save):');
   const nothing = async () => JSON.stringify(store.data);
 
   const before = await nothing();
-  await rejects('non-http URL refused', () => setNftIndexerUrl(MAINNET, 'ftp://x', ME, RPC, { store }), /http\(s\)/);
+  await rejects('non-http URL refused', () => setNftIndexerUrl(MAINNET, 'ftp://x', ME, RPC, { store }), /^Endpoints must use https:\/\//);
+  {
+    const sentBefore = requests.length;
+    await rejects(
+      'plain http:// NFT indexer refused with the https sentence',
+      () => setNftIndexerUrl(MAINNET, 'http://nft.fake/nft/v3/KEY', ME, RPC, { store }),
+      /^Endpoints must use https:\/\/ \(plain http:\/\/ is accepted only for localhost or 10\.0\.2\.2 during development\)\.$/,
+    );
+    await rejects(
+      'plain http:// RPC URL for the chain check refused',
+      () => setNftIndexerUrl(MAINNET, NFT_BASE, ME, 'http://rpc.fake/', { store }),
+      /^Endpoints must use https:\/\//,
+    );
+    check('http refusals made no request at all', requests.length === sentBefore);
+  }
   indexer = { ...defaultIndexer(), status: 401 };
   await rejects('HTTP 401 (bad key) refused', () => setNftIndexerUrl(MAINNET, NFT_BASE, ME, RPC, { store }), /API key/);
   indexer = { status: 200, pages: { first: { jsonrpc: '2.0', result: '0x1' } } };
@@ -325,6 +342,18 @@ console.log('config store (verify-before-save):');
   check('modes stay separate (two keys)', sep.url !== null && main.url !== null);
   await clearNftIndexerUrl(SEPOLIA, store);
   check('clear removes only that chain', (await getNftIndexerConfig(SEPOLIA, store)).url === null && (await getNftIndexerConfig(MAINNET, store)).url === NFT_BASE);
+  // Loopback development exception: a local NFT API over http:// verifies
+  // and saves like any other.
+  {
+    const local = memoryStore();
+    indexer = defaultIndexer();
+    node = defaultNode();
+    await setNftIndexerUrl(MAINNET, `${LOCAL_NFT_BASE}/`, ME, RPC, { store: local });
+    check(
+      'loopback http://127.0.0.1 NFT indexer accepted after verification',
+      (await getNftIndexerConfig(MAINNET, local)).url === LOCAL_NFT_BASE,
+    );
+  }
   const corrupt = memoryStore({ 'shiba-wallet.nft-indexer.v1': '{not json' });
   check('corrupt storage reads as unconfigured', (await getNftIndexerConfig(MAINNET, corrupt)).url === null);
 

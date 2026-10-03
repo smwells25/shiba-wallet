@@ -34,6 +34,7 @@ import {
 // under Node's type stripping, which resolves relative specifiers literally.
 import { EVM_CHAIN_ID, validateRecipient } from './send.ts';
 import type { KeyValueStore } from './tokens.ts';
+import { assertSecureEndpointUrl } from '../config/endpoint-url.ts';
 import { assertWalletDelegate, invalidateAccountDelegation } from './delegation.ts';
 import {
   FeatureNotAllowedError,
@@ -611,8 +612,6 @@ export async function verifyAaBundler(bundler: JsonRpcTransport): Promise<string
 // Setters: verify first, refuse to persist on any failure
 // ---------------------------------------------------------------------------
 
-const URL_PATTERN = /^https?:\/\/.+/;
-
 /**
  * Saves a bundler URL for one chain after a successful
  * eth_supportedEntryPoints check against that URL. Throws (persisting
@@ -628,10 +627,9 @@ export async function setAaBundlerUrl(
   assertAnyAaTypeAllowed(chainId);
   const store = options.store ?? AsyncStorage;
   const transportFor = options.transportFor ?? httpTransport;
-  const trimmed = url.trim().replace(/\/+$/, '');
-  if (!URL_PATTERN.test(trimmed)) {
-    throw new Error('Bundler endpoint must be an http(s):// URL');
-  }
+  // https:// only (loopback http:// allowed for development); checked
+  // before any request, so a refused URL persists nothing.
+  const trimmed = assertSecureEndpointUrl(url);
   const supported = await verifyAaBundler(transportFor(trimmed));
   const map = await loadConfigMap(store);
   map[chainId] = {
@@ -659,6 +657,9 @@ export async function setAaFactory(
   assertFeatureAllowed('simple-account', chainId);
   const store = options.store ?? AsyncStorage;
   const transportFor = options.transportFor ?? httpTransport;
+  // The node URL is the app's configured RPC endpoint: checked for https
+  // before any request, then passed on unchanged.
+  assertSecureEndpointUrl(nodeUrl);
   const validated = validateRecipient(EVM_CHAIN_ID, factoryRaw);
   if (!validated.ok) throw new Error(validated.error);
   const verification = await verifyAaFactory(transportFor(nodeUrl), validated.normalized);
@@ -706,6 +707,8 @@ export async function setAaKernelFactory(
   assertFeatureAllowed('kernel-smart-account', chainId);
   const store = options.store ?? AsyncStorage;
   const transportFor = options.transportFor ?? httpTransport;
+  // Same https check on the node URL as setAaFactory, before any request.
+  assertSecureEndpointUrl(nodeUrl);
   const validated = validateRecipient(EVM_CHAIN_ID, factoryRaw);
   if (!validated.ok) throw new Error(validated.error);
   const expectedChainId = eip155ChainIdOf(chainId);
@@ -996,10 +999,7 @@ export async function setAaPaymaster(
   assertFeatureAllowed('paymaster', chainId);
   const store = options.store ?? AsyncStorage;
   const transportFor = options.transportFor ?? httpTransport;
-  const trimmed = url.trim().replace(/\/+$/, '');
-  if (!URL_PATTERN.test(trimmed)) {
-    throw new Error('Paymaster endpoint must be an http(s):// URL');
-  }
+  const trimmed = assertSecureEndpointUrl(url);
   const contextTrimmed = contextJson.trim();
   let context: unknown = null;
   if (contextTrimmed !== '') {

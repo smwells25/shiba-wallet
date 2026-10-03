@@ -15,6 +15,7 @@ import {
 } from '../config/networks';
 import { type NetworkDefault } from '../config/defaults';
 import { describeDefaultChoice, describeDefaultFallbackNote } from '../config/endpoint-probe';
+import { INSECURE_ENDPOINT_MESSAGE } from '../config/endpoint-url';
 import { AUTO_LOCK_CHOICES } from '../config/prefs';
 import {
   FEATURE_READINESS,
@@ -1306,7 +1307,8 @@ export function SettingsScreen({ navigation }: Props) {
           Balances refresh with the new endpoint on the next
           pull-to-refresh. Without a custom endpoint, each chain uses the
           first of its built-in public defaults that answers; if that one
-          stops answering, the next is tried automatically.
+          stops answering, the next is tried automatically.{' '}
+          {INSECURE_ENDPOINT_MESSAGE}
         </Text>
         {endpoints.map((endpoint) =>
           endpoint.network.kind === 'blockbook' ? (
@@ -1339,7 +1341,7 @@ export function SettingsScreen({ navigation }: Props) {
           (alchemy_getAssetTransfers). The URL usually contains your own
           API key — it is stored only on this device and sent only to the
           endpoint itself. Saving verifies the endpoint first and refuses
-          URLs for the wrong chain.
+          URLs for the wrong chain. {INSECURE_ENDPOINT_MESSAGE}
         </Text>
         {evmEndpoints.map((e) => (
           <IndexerChainRow
@@ -1365,7 +1367,7 @@ export function SettingsScreen({ navigation }: Props) {
           indexer answers and that it is indexing this network. NFT images
           load from the indexer&apos;s image cache when possible, otherwise
           from the NFT&apos;s own host or the public ipfs.io gateway, which
-          see your IP address.
+          see your IP address. {INSECURE_ENDPOINT_MESSAGE}
         </Text>
         {evmEndpoints.map((e) => (
           <NftIndexerChainRow
@@ -1410,7 +1412,7 @@ export function SettingsScreen({ navigation }: Props) {
           an experimental &quot;from smart account&quot; toggle (token sends and swaps
           run as one atomic batch), and WalletConnect can connect dApps to
           the smart account. Off by default; nothing changes for regular
-          sends.
+          sends. {INSECURE_ENDPOINT_MESSAGE}
         </Text>
         {evmEndpoints.map((e) => (
           <AaChainRow key={e.network.chainId} network={e.network} />

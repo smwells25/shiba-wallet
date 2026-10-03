@@ -15,6 +15,7 @@ import { formatAssetId, nonFungibleAssetId } from '@shiba-wallet/core';
 // Explicit .ts extensions: this module is imported by scripts/check-nfts.mjs
 // under Node's type stripping, which resolves relative specifiers literally.
 import type { KeyValueStore } from './tokens.ts';
+import { assertSecureEndpointUrl } from '../config/endpoint-url.ts';
 import type { TransportFactory } from './aa.ts';
 import { utf8Decode } from './erc20.ts';
 import { STRIPPED_NAME_CHARS } from './names.ts';
@@ -91,8 +92,6 @@ export async function getNftIndexerConfig(
   return { url, verifiedAt: text(entry?.verifiedAt), verifiedBlock: text(entry?.verifiedBlock) };
 }
 
-const URL_PATTERN = /^https?:\/\/[^\s]+$/;
-
 /**
  * Confirms that an indexer answer valid at `validAt` belongs to the chain
  * served by `node` (the active chain's RPC). Throws a plain-language error
@@ -149,7 +148,9 @@ export async function confirmIndexerChain(
 
 /**
  * Verifies and saves the NFT indexer URL for one chain; throws (persisting
- * nothing) when any check fails: well-formed http(s) URL, a well-formed
+ * nothing) when any check fails: an https:// URL (plain http:// only for a
+ * loopback development host; ../config/endpoint-url.ts — checked for both
+ * the indexer and `rpcUrl` before any request), a well-formed
  * single-entry getNFTsForOwner answer for the wallet's own address with a
  * validAt block, and the chain binding above against `rpcUrl` (the active
  * chain's configured RPC endpoint).
@@ -168,10 +169,10 @@ export async function setNftIndexerUrl(
 ): Promise<void> {
   const store = options.store ?? AsyncStorage;
   const transportFor = options.transportFor ?? httpTransport;
-  const trimmed = normalizeNftBaseUrl(url);
-  if (!URL_PATTERN.test(trimmed)) {
-    throw new Error('NFT indexer endpoint must be an http(s):// URL');
-  }
+  const trimmed = assertSecureEndpointUrl(normalizeNftBaseUrl(url));
+  // The RPC URL is only checked here (it is the app's configured endpoint
+  // and is passed on unchanged).
+  assertSecureEndpointUrl(rpcUrl);
   const provider = alchemyNftOwnershipProvider(trimmed, {
     ...(options.fetchFn ? { fetchFn: options.fetchFn } : {}),
   });

@@ -39,6 +39,7 @@ import {
   sendAa,
   setAaBundlerUrl,
   setAaFactory,
+  setAaKernelFactory,
   summarizeAaReceipt,
   verifyAaFactory,
   waitForAaReceipt,
@@ -246,8 +247,54 @@ check(
 await checkRejects(
   'non-http(s) bundler URL is refused before any RPC',
   () => setAaBundlerUrl(AA_CHAIN, 'ftp://x', { store }),
-  'http(s)',
+  'Endpoints must use https://',
 );
+
+// Plain http:// endpoints (not loopback) are refused before any transport
+// is built, so an API key in the URL never travels in clear text and the
+// stored configuration is unchanged.
+{
+  const HTTPS_SENTENCE = 'Endpoints must use https:// (plain http:// is accepted only for localhost or 10.0.2.2 during development).';
+  let transportsBuilt = 0;
+  const counting = () => {
+    transportsBuilt += 1;
+    return fakeBundler();
+  };
+  await checkRejects(
+    'plain http:// bundler URL is refused with the https sentence',
+    () => setAaBundlerUrl(AA_CHAIN, 'http://bundler.example/rpc', { store, transportFor: counting }),
+    HTTPS_SENTENCE,
+  );
+  await checkRejects(
+    'plain http:// private-network bundler (192.168.x.x) is refused too',
+    () => setAaBundlerUrl(AA_CHAIN, 'http://192.168.1.20:4337', { store, transportFor: counting }),
+    HTTPS_SENTENCE,
+  );
+  await checkRejects(
+    'plain http:// node URL for the SimpleAccount factory check is refused',
+    () => setAaFactory(AA_CHAIN, FACTORY_INPUT, 'http://node.example', { store, transportFor: counting }),
+    HTTPS_SENTENCE,
+  );
+  await checkRejects(
+    'plain http:// node URL for the Kernel factory check is refused',
+    () => setAaKernelFactory(AA_CHAIN, '0x2577507b78c2008Ff367261CB6285d44ba5eF2E9', 'http://node.example', { store, transportFor: counting }),
+    HTTPS_SENTENCE,
+  );
+  check('http refusals built no transport (no request was possible)', transportsBuilt === 0);
+  const unchanged = await getAaConfig(AA_CHAIN, store);
+  check(
+    'http refusals persisted nothing (previous bundler URL kept)',
+    unchanged.bundlerUrl === 'https://bundler.example/rpc' && unchanged.factory === null,
+  );
+
+  // Loopback development exception: a local bundler over http:// on ::1.
+  const loopStore = memoryStore();
+  await setAaBundlerUrl(AA_CHAIN, 'http://[::1]:4337/', { store: loopStore, transportFor: () => fakeBundler() });
+  check(
+    'loopback http://[::1] bundler accepted after verification',
+    (await getAaConfig(AA_CHAIN, loopStore)).bundlerUrl === 'http://[::1]:4337',
+  );
+}
 
 const verification = await setAaFactory(AA_CHAIN, FACTORY_INPUT, 'https://node.example', {
   store,
@@ -537,11 +584,22 @@ await (async () => {
   await checkRejects(
     'non-http url refused',
     () => setAaPaymaster(AA_CHAIN, 'ftp://pm.example', '', { store: pmStore, transportFor: okTransport }),
-    'http(s)',
+    'Endpoints must use https://',
+  );
+  await checkRejects(
+    'plain http:// paymaster refused with the https sentence',
+    () => setAaPaymaster(AA_CHAIN, 'http://pm.example/rpc', '', { store: pmStore, transportFor: okTransport }),
+    'Endpoints must use https:// (plain http:// is accepted only for localhost or 10.0.2.2 during development).',
   );
   const after = await getAaConfig(AA_CHAIN, pmStore);
   check('rejections persisted nothing', after.paymasterUrl === before.paymasterUrl
     && after.paymasterContext === before.paymasterContext);
+  // Loopback development exception for a local paymaster.
+  await setAaPaymaster(AA_CHAIN, 'http://127.0.0.1:3000', '', { store: pmStore, transportFor: okTransport });
+  check(
+    'loopback http://127.0.0.1 paymaster accepted after the probe',
+    (await getAaConfig(AA_CHAIN, pmStore)).paymasterUrl === 'http://127.0.0.1:3000',
+  );
 
   await clearAaPaymaster(AA_CHAIN, pmStore);
   check('clear removes paymaster config', (await getAaConfig(AA_CHAIN, pmStore)).paymasterUrl === null);
