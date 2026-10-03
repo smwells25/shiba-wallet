@@ -16,7 +16,16 @@ import {
 } from '@shiba-wallet/chains-evm';
 // Explicit .ts extensions: this module is imported by scripts/check-nfts.mjs
 // under Node's type stripping, which resolves relative specifiers literally.
-import { describeSendError, sendEvm, type EvmSendQuote, type SendResult } from './send.ts';
+import {
+  chainHasL1DataFee,
+  describeSendError,
+  opStackFeeTotal,
+  quoteOpStackFees,
+  sendEvm,
+  type EvmSendQuote,
+  type OpStackFees,
+  type SendResult,
+} from './send.ts';
 
 /**
  * NFT send flow (phase 7 item 4): quoting and sign+broadcast for ERC-721
@@ -85,12 +94,17 @@ export interface NftSendQuote {
   gasLimit: bigint;
   maxFeePerGas: bigint;
   maxPriorityFeePerGas: bigint;
-  /** Worst-case fee in wei: gasLimit * maxFeePerGas. */
+  /**
+   * Worst-case fee in wei: gasLimit * maxFeePerGas, plus the OP-stack L1
+   * data fee reserve and operator fee on chains that have them (`opStack`).
+   */
   fee: bigint;
   data: Uint8Array;
   /** eth_call pre-flight; a failure blocks unless explicitly overridden. */
   simulation: SimulationResult;
   gasIsFallback: boolean;
+  /** OP-stack fee parts (Base Sepolia), included in `fee`; absent elsewhere. */
+  opStack?: OpStackFees;
 }
 
 export interface NftSendRequest {
@@ -186,7 +200,7 @@ export async function prepareNftSend(request: NftSendRequest): Promise<NftSendQu
   if (nftCaip2 !== expectedCaip2) {
     throw new Error(
       `This NFT is on ${nftCaip2}, but the wallet is on ${expectedCaip2}. ` +
-        'Switch the Sepolia test mode in Settings → Developer to match.',
+        'Choose the matching test network (or Off for mainnet) in Settings → Developer.',
     );
   }
   const transport = evmHttpTransport(url);
@@ -203,7 +217,7 @@ export async function prepareNftSend(request: NftSendRequest): Promise<NftSendQu
   if (chainId !== expected) {
     throw new Error(
       `Endpoint is chain id ${chainId}, expected ${expected}. ` +
-        'Check the RPC endpoint (and the Sepolia test mode toggle) in Settings.',
+        'Check the RPC endpoint (and the test network choice under Settings → Developer) in Settings.',
     );
   }
 
@@ -225,7 +239,21 @@ export async function prepareNftSend(request: NftSendRequest): Promise<NftSendQu
     gasLimit = NFT_TRANSFER_GAS_FALLBACK;
     gasIsFallback = true;
   }
-  const fee = gasLimit * fees.maxFeePerGas;
+  // OP-stack chains only: the L1 data fee of the exact unsigned transaction
+  // sendNft will sign, plus the operator fee (send.ts quoteOpStackFees).
+  const opStack = chainHasL1DataFee(chainId)
+    ? await quoteOpStackFees(transport, {
+        chainId,
+        nonce,
+        maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+        maxFeePerGas: fees.maxFeePerGas,
+        gasLimit,
+        to: contract,
+        value: 0n,
+        data,
+      })
+    : undefined;
+  const fee = gasLimit * fees.maxFeePerGas + opStackFeeTotal(opStack);
   if (fee > ethBalance) {
     throw new Error(
       `Not enough ETH to pay the network fee: the worst-case fee is ${fee} wei ` +
@@ -253,6 +281,7 @@ export async function prepareNftSend(request: NftSendRequest): Promise<NftSendQu
     data,
     simulation,
     gasIsFallback,
+    ...(opStack ? { opStack } : {}),
   };
 }
 

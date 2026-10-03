@@ -514,10 +514,22 @@ export function groupNftsByCollection(nfts: OwnedNft[]): NftCollectionGroup[] {
  * etherscan.io/nft/0x57f1…ea85/8468… and sepolia.etherscan.io/nft/
  * 0xff78…3220/1, covering ERC-721 and ERC-1155 tokens). Unknown chains get
  * no link rather than a guessed one.
+ *
+ * Base Sepolia (phase 11 item 5): the explorer host sepolia.basescan.org is
+ * the one Base documents ("Block explorer | basescan.org |
+ * sepolia.basescan.org", https://docs.base.org/get-started/connect-to-base,
+ * read 2026-10-03). The /nft/{contract}/{token id} path — like the /tx/ and
+ * /address/ paths used elsewhere — is the Etherscan-family convention
+ * BaseScan shares, not something Base documents. A headless request on
+ * 2026-10-03 for /nft/{address}/1 returned BaseScan's NFT page template
+ * (a "Token ID" field, site name "Base Sepolia Network Explorer"), while
+ * /tx/ pages answered with a Cloudflare challenge; the path has not been
+ * checked against a real indexed Base Sepolia NFT.
  */
 const NFT_EXPLORER_BASE: Record<string, string> = {
   'eip155:1': 'https://etherscan.io/nft/',
   'eip155:11155111': 'https://sepolia.etherscan.io/nft/',
+  'eip155:84532': 'https://sepolia.basescan.org/nft/',
 };
 
 export function nftExplorerUrl(chainId: string, nft: Pick<OwnedNft, 'contract' | 'tokenId'>): string | null {

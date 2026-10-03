@@ -177,7 +177,7 @@ check('isFeatureAllowed: blocked feature allowed on Sepolia, not cleared on main
 check('isFeatureAllowed accepts a testnet flag', isFeatureAllowed('passkeys', true) && !isFeatureAllowed('passkeys', false));
 check('readinessReason returns the table text', readinessReason('session-keys') === featureReadiness('session-keys').reason);
 check('readinessRefusal = reason + the test-mode hint', readinessRefusal('passkeys') === `${featureReadiness('passkeys').reason} ${READINESS_TESTNET_HINT}`);
-check('the hint points at Settings → Developer', /Sepolia test mode in Settings → Developer/.test(READINESS_TESTNET_HINT));
+check('the hint points at Settings → Developer', /Turn on a test network \(Ethereum Sepolia or Base Sepolia\) in Settings → Developer/.test(READINESS_TESTNET_HINT));
 check('the hint names Base Sepolia as well', READINESS_TESTNET_HINT.includes('Base Sepolia'));
 const thrown = await caught(() => assertFeatureAllowed('kernel-smart-account', MAINNET));
 check('assertFeatureAllowed throws FeatureNotAllowedError with the feature id', thrown instanceof FeatureNotAllowedError && thrown.featureId === 'kernel-smart-account' && isRefusal(thrown));
@@ -226,7 +226,7 @@ function countingTransports() {
   // Base Sepolia: the same functions, keyed under eip155:84532, with a
   // fake node answering Base Sepolia's chain id; the Sepolia entry is not
   // touched, and a Base Sepolia save through a Sepolia node is refused.
-  await setAaBundlerUrl(BASE_SEPOLIA, 'https://bundler-base.example', { store: sep, transportFor: () => fakeBundler() });
+  await setAaBundlerUrl(BASE_SEPOLIA, 'https://bundler-base.example', { store: sep, transportFor: () => fakeBundler({ chainIdHex: '0x14a34' }) });
   await setAaKernelFactory(BASE_SEPOLIA, KERNEL_PREFILL.factory, 'https://node.example', { store: sep, transportFor: () => fakeKernelNode({ chainIdHex: '0x14a34' }) });
   const baseCfg = await getAaConfig(BASE_SEPOLIA, sep);
   check('Base Sepolia: bundler + Kernel factory save and the smart account is available', baseCfg.chain === BASE_SEPOLIA && isAaConfigured(baseCfg) && baseCfg.accountType === 'kernel-v3.3' && baseCfg.bundlerUrl === 'https://bundler-base.example');

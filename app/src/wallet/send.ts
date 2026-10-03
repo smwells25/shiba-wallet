@@ -2,12 +2,17 @@ import type { DerivedAccount } from '@shiba-wallet/core';
 import { toChecksumAddress } from '@shiba-wallet/core';
 import {
   NodeClient,
+  decodeUint256,
+  encodeFunctionCall,
   httpTransport as evmHttpTransport,
+  minimalBytes,
+  rlpEncode,
   signEip1559,
   simulateCall,
   toBytes,
   toHex,
   type Eip1559Transaction,
+  type JsonRpcTransport,
   type SimulationResult,
 } from '@shiba-wallet/chains-evm';
 import {
@@ -42,6 +47,8 @@ import { base58, base64 } from '@scure/base';
 import { parseUnits } from './balances.ts';
 // Type-free helper only; endpoint-probe.ts has no React Native imports.
 import { endpointHost, isEndpointFailure } from '../config/endpoint-probe.ts';
+// Pure data with no imports (see its file comment), so no cycle.
+import { evmProfileByCaip2 } from '../config/evm-chain.ts';
 
 /**
  * Send-flow engine glue: recipient validation, fee quoting, max-amount
@@ -165,7 +172,11 @@ export interface EvmSendQuote {
   gasLimit: bigint;
   maxFeePerGas: bigint;
   maxPriorityFeePerGas: bigint;
-  /** Worst-case fee: gasLimit * maxFeePerGas. Actual fee is usually lower. */
+  /**
+   * Worst-case fee: gasLimit * maxFeePerGas, plus — on OP-stack chains only
+   * — the reserved layer 1 data fee and the worst-case operator fee
+   * (`opStack` below). Actual fee is usually lower.
+   */
   fee: bigint;
   total: bigint;
   /** eth_call pre-flight result; a failure blocks the send unless overridden. */
@@ -175,6 +186,180 @@ export interface EvmSendQuote {
    * contract-call data; the app's own plain transfers leave it unset).
    */
   data?: Uint8Array;
+  /**
+   * OP-stack fee parts (Base Sepolia), already included in `fee` and
+   * `total`. Absent on chains without an L1 data fee (Ethereum mainnet and
+   * Sepolia), whose quotes are unchanged.
+   */
+  opStack?: OpStackFees;
+}
+
+// ---------------------------------------------------------------------------
+// OP-stack fees (layer 1 data fee and operator fee) — phase 11 item 5
+// ---------------------------------------------------------------------------
+
+/**
+ * Why a wallet must account for the L1 data fee, with sources (all read
+ * 2026-10-03):
+ *
+ *  - docs.optimism.io, "Transaction fees on OP Mainnet"
+ *    (https://docs.optimism.io/op-stack/transactions/fees): "OP Mainnet
+ *    transaction fees are composed of an Execution gas fee, an L1 data
+ *    fee, and after the Isthmus upgrade, an operator fee" and "totalFee =
+ *    operatorFee + gasUsed * (baseFee + priorityFee) + l1Fee". Of the L1
+ *    data fee: "This fee is deducted directly from the address that sent
+ *    the transaction" and "It is currently not possible to limit the
+ *    maximum L1 Data Fee that a transaction is willing to pay." Of the
+ *    operator fee: "Pre-execution validation: Account must have enough ETH
+ *    to cover worst-case gas + L1 data fees + worst-case operator fee".
+ *  - op-geth (ethereum-optimism/op-geth, branch optimism at commit
+ *    b355734b), core/state_transition.go, buyGas(): the balance the sender
+ *    must hold is `balanceCheck = GasLimit * GasFeeCap`, then
+ *    `balanceCheck.Add(balanceCheck, l1Cost)` and
+ *    `balanceCheck.Add(balanceCheck, operatorCost.ToBig())` (lines 299–308),
+ *    then `balanceCheck.Add(balanceCheck, st.msg.Value)` (line 310), and a
+ *    smaller balance fails with ErrInsufficientFunds "have … want …"
+ *    (lines 328–329). So a Max send that leaves exactly gasLimit ×
+ *    maxFeePerGas behind is refused: the L1 cost must be left behind too.
+ *  - The GasPriceOracle predeploy 0x420000000000000000000000000000000000000F
+ *    (ethereum-optimism/optimism, develop at c8e4ba85,
+ *    packages/contracts-bedrock/src/L2/GasPriceOracle.sol, version 1.6.0 —
+ *    the version Base Sepolia's oracle reports): getL1Fee(bytes _data)
+ *    takes the "Unsigned fully RLP-encoded transaction" and, since Fjord,
+ *    computes the fee from its FastLZ-compressed size plus 68 bytes "to
+ *    account for unsigned tx" (the signature the node will see).
+ *    getL1FeeUpperBound(uint256 _unsignedTxSize) is the Fjord addition the
+ *    specs (ethereum-optimism/specs, specs/protocol/fjord/predeploys.md)
+ *    describe as "provided for callers who wish to estimate L1 transaction
+ *    costs in the write path, and is much more gas efficient than
+ *    getL1Fee" — i.e. for contracts paying gas on-chain, using a
+ *    worst-case compression bound ("covers 99.99% txs"). The specs add:
+ *    "Users can continue to use the getL1Fee method to estimate the L1 fee
+ *    for a given transaction". A wallet's eth_call costs nothing, so this
+ *    module calls getL1Fee with the EXACT unsigned transaction it is about
+ *    to sign (the same choice viem 2.57.2's op-stack estimateL1Fee makes,
+ *    which also serializes an unsigned EIP-1559 transaction for getL1Fee),
+ *    and getOperatorFee(gasLimit) for the operator fee (0 on Base Sepolia
+ *    on 2026-10-03: L1Block operatorFeeScalar and operatorFeeConstant both
+ *    read 0, but the chain can change them, so the oracle is asked).
+ *
+ * Headroom (a judgement, not a standard): the L1 data fee follows the
+ * Ethereum base fee and blob base fee relayed to the L2, "each fluctuates
+ * at most by 12.5% between updates" (the docs page above), and it cannot
+ * be capped by the transaction. The quote therefore RESERVES the oracle
+ * estimate plus L1_DATA_FEE_HEADROOM_PERCENT (rounded up) — enough for
+ * about three consecutive maximal increases (1.125^3 ≈ 1.42) plus the
+ * small difference between "unsigned size + 68" and the signed bytes. The
+ * reserve is what the fee, total and Max figures use; anything not charged
+ * stays in the account. If the fee rises further before inclusion, the
+ * node refuses the transaction for insufficient funds and nothing is
+ * spent; the user reviews again.
+ */
+export const OP_STACK_GAS_PRICE_ORACLE = '0x420000000000000000000000000000000000000F';
+
+/** Headroom reserved on top of GasPriceOracle.getL1Fee (see above). */
+export const L1_DATA_FEE_HEADROOM_PERCENT = 50n;
+
+export interface OpStackFees {
+  /** GasPriceOracle.getL1Fee(unsigned transaction) at quote time, in wei. */
+  l1DataFeeEstimate: bigint;
+  /**
+   * What the quote reserves for the L1 data fee: the estimate plus
+   * L1_DATA_FEE_HEADROOM_PERCENT, rounded up. Included in `fee`.
+   */
+  l1DataFee: bigint;
+  /** GasPriceOracle.getOperatorFee(gasLimit): worst-case operator fee. Included in `fee`. */
+  operatorFee: bigint;
+  /** Byte length of the unsigned transaction the oracle priced. */
+  unsignedTxBytes: number;
+}
+
+/** True when the chain with this numeric id has an OP-stack L1 data fee (config/evm-chain.ts). */
+export function chainHasL1DataFee(chainId: bigint): boolean {
+  return evmProfileByCaip2(`eip155:${chainId}`)?.l1DataFee === true;
+}
+
+/**
+ * The unsigned EIP-1559 transaction as GasPriceOracle.getL1Fee expects it:
+ * 0x02 || rlp([chainId, nonce, maxPriorityFeePerGas, maxFeePerGas,
+ * gasLimit, to, value, data, accessList]) — the payload whose keccak256 the
+ * sender signs (EIP-1559; the same nine fields, in the same order, as the
+ * engine's eoa-tx.ts baseFields, which signEip1559 uses). The engine does
+ * not export the bytes themselves, only their hash, so they are rebuilt
+ * here from its RLP encoder; scripts/check-base.mjs pins the result
+ * against ethers' Transaction.unsignedSerialized.
+ */
+export function serializeUnsignedEip1559(tx: Eip1559Transaction): Uint8Array {
+  const fields = [
+    minimalBytes(tx.chainId),
+    minimalBytes(tx.nonce),
+    minimalBytes(tx.maxPriorityFeePerGas),
+    minimalBytes(tx.maxFeePerGas),
+    minimalBytes(tx.gasLimit),
+    tx.to ? toBytes(tx.to) : new Uint8Array(0),
+    minimalBytes(tx.value),
+    tx.data ?? new Uint8Array(0),
+    (tx.accessList ?? []).map((entry) => [toBytes(entry.address), entry.storageKeys.map(toBytes)]),
+  ];
+  const body = rlpEncode(fields);
+  const out = new Uint8Array(1 + body.length);
+  out[0] = 0x02;
+  out.set(body, 1);
+  return out;
+}
+
+async function oracleUint(transport: JsonRpcTransport, data: Uint8Array, what: string): Promise<bigint> {
+  let result: unknown;
+  try {
+    result = await transport('eth_call', [{ to: OP_STACK_GAS_PRICE_ORACLE, data: toHex(data) }, 'latest']);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Could not read the ${what} from the network's GasPriceOracle, so the full fee of this ` +
+        `transaction is unknown. Nothing was signed. (${detail})`,
+    );
+  }
+  if (typeof result !== 'string') {
+    throw new Error(`The GasPriceOracle answered the ${what} request with no value. Nothing was signed.`);
+  }
+  return decodeUint256(result);
+}
+
+/**
+ * Asks the OP-stack GasPriceOracle for the L1 data fee of `tx` (unsigned,
+ * exactly as it will be signed) and the worst-case operator fee for its
+ * gas limit, and applies the headroom. Any failure refuses the quote: a
+ * fee the wallet cannot see must not be left out of the total.
+ */
+export async function quoteOpStackFees(
+  transport: JsonRpcTransport,
+  tx: Eip1559Transaction,
+): Promise<OpStackFees> {
+  const unsigned = serializeUnsignedEip1559(tx);
+  const [l1DataFeeEstimate, operatorFee] = await Promise.all([
+    oracleUint(
+      transport,
+      encodeFunctionCall('getL1Fee(bytes)', [{ kind: 'bytes', value: unsigned }]),
+      'layer 1 data fee',
+    ),
+    oracleUint(
+      transport,
+      encodeFunctionCall('getOperatorFee(uint256)', [{ kind: 'uint256', value: tx.gasLimit }]),
+      'operator fee',
+    ),
+  ]);
+  const headroom = (l1DataFeeEstimate * L1_DATA_FEE_HEADROOM_PERCENT + 99n) / 100n;
+  return {
+    l1DataFeeEstimate,
+    l1DataFee: l1DataFeeEstimate + headroom,
+    operatorFee,
+    unsignedTxBytes: unsigned.length,
+  };
+}
+
+/** The OP-stack part of a quote's fee (0 when the chain has none). */
+export function opStackFeeTotal(fees: OpStackFees | undefined): bigint {
+  return fees ? fees.l1DataFee + fees.operatorFee : 0n;
 }
 
 export interface UtxoSendQuote {
@@ -247,10 +432,16 @@ export async function prepareEvmSend(
 
   const expected = BigInt(expectedCaip2.split(':')[1]!);
   if (chainId !== expected) {
+    const expectedName =
+      expected === 1n
+        ? 'Ethereum mainnet'
+        : expected === 11155111n
+          ? 'Sepolia'
+          : evmProfileByCaip2(`eip155:${expected}`)?.label;
     throw new Error(
       `Endpoint is chain id ${chainId}, expected ${expected}` +
-        `${expected === 1n ? ' (Ethereum mainnet)' : expected === 11155111n ? ' (Sepolia)' : ''}. ` +
-        'Check the RPC endpoint (and the Sepolia test mode toggle) in Settings.',
+        `${expectedName ? ` (${expectedName})` : ''}. ` +
+        'Check the RPC endpoint (and the test network choice under Settings → Developer) in Settings.',
     );
   }
 
@@ -262,7 +453,22 @@ export async function prepareEvmSend(
     gasLimit = await node.estimateGas({ from, to, value: 0n, data: dataHex });
   }
 
-  const fee = gasLimit * fees.maxFeePerGas;
+  // OP-stack chains only (config/evm-chain.ts l1DataFee): price the exact
+  // unsigned transaction sendEvm will sign. Other chains make no extra call.
+  const opStack = chainHasL1DataFee(chainId)
+    ? await quoteOpStackFees(transport, {
+        chainId,
+        nonce,
+        maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+        maxFeePerGas: fees.maxFeePerGas,
+        gasLimit,
+        to,
+        value: amount,
+        ...(data && data.length > 0 ? { data } : {}),
+      })
+    : undefined;
+
+  const fee = gasLimit * fees.maxFeePerGas + opStackFeeTotal(opStack);
   if (amount + fee > balance) {
     throw new Error(
       `Insufficient funds: sending ${amount} wei plus a worst-case fee of ${fee} wei ` +
@@ -286,21 +492,50 @@ export async function prepareEvmSend(
     total: amount + fee,
     simulation,
     ...(data && data.length > 0 ? { data } : {}),
+    ...(opStack ? { opStack } : {}),
   };
 }
 
 /**
  * The maximum sendable amount for an EVM account: balance minus the
- * worst-case fee (gasLimit * maxFeePerGas) for a plain transfer.
+ * worst-case fee (gasLimit * maxFeePerGas) for a plain transfer, and on
+ * OP-stack chains also minus the reserved L1 data fee and the worst-case
+ * operator fee, because op-geth requires the sender to hold all of them
+ * plus the value (see the OP-stack section above). Which chain applies is
+ * decided by the endpoint's own eth_chainId; the quote that follows a Max
+ * tap re-verifies the chain against the active profile anyway.
  */
 export async function maxEvmSend(url: string, from: string, to?: string): Promise<bigint> {
-  const node = new NodeClient(evmHttpTransport(url));
-  const [balance, fees] = await Promise.all([node.getBalance(from), node.suggestFees()]);
+  const transport = evmHttpTransport(url);
+  const node = new NodeClient(transport);
+  const [balance, fees, chainId] = await Promise.all([
+    node.getBalance(from),
+    node.suggestFees(),
+    node.chainId(),
+  ]);
   // Value does not change a transfer's intrinsic gas; estimate with 0 so
   // the call cannot fail for lack of funds. Falls back to the sender
   // itself when no recipient is typed yet (an EOA-to-EOA transfer).
-  const gasLimit = await node.estimateGas({ from, to: to ?? from, value: 0n });
-  const max = balance - gasLimit * fees.maxFeePerGas;
+  const recipient = to ?? from;
+  const gasLimit = await node.estimateGas({ from, to: recipient, value: 0n });
+  let opStackFee = 0n;
+  if (chainHasL1DataFee(chainId)) {
+    // The value is priced at the full balance: the sent amount is at most
+    // that, so its RLP encoding is never longer and the estimate never low.
+    const nonce = await node.getTransactionCount(from);
+    opStackFee = opStackFeeTotal(
+      await quoteOpStackFees(transport, {
+        chainId,
+        nonce,
+        maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+        maxFeePerGas: fees.maxFeePerGas,
+        gasLimit,
+        to: recipient,
+        value: balance,
+      }),
+    );
+  }
+  const max = balance - gasLimit * fees.maxFeePerGas - opStackFee;
   return max > 0n ? max : 0n;
 }
 

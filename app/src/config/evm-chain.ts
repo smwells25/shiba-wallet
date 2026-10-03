@@ -106,7 +106,10 @@ export interface EvmChainProfile {
    * fee on top of gas × price, charged from the sender's balance
    * (https://docs.base.org/specifications/transactions/network-fees: "Every
    * Base transaction consists of two costs: an L2 (execution) fee and an L1
-   * (security) fee"). The send flow's fee figures do not include it yet.
+   * (security) fee"). When true, the EOA send quotes in wallet/send.ts ask
+   * the GasPriceOracle predeploy for it (getL1Fee on the exact unsigned
+   * transaction, plus getOperatorFee) and include it in the fee, the total
+   * and Max; see the OP-stack section of send.ts for the sources.
    */
   l1DataFee: boolean;
 }
@@ -413,17 +416,20 @@ const BASE_SEPOLIA_RPC_DEFAULTS: readonly string[] = [
  *    https://docs.0x.org/docs/introduction/supported-chains, lists Base
  *    8453 but no Base Sepolia, checked 2026-10-03); tracked ERC-20 tokens
  *    (mainnet assets, hidden in every test mode); fiat prices (test assets
- *    are never priced); NFT explorer links, the risk module's new-contract
- *    age check and readable recovery-file names have no Base Sepolia entry
- *    and fall back to "none" / the CAIP-2 id.
+ *    are never priced). Base Sepolia entries exist for NFT explorer links
+ *    (wallet/nfts.ts), the risk module's new-contract threshold (302,400
+ *    two-second blocks, wallet/risk.ts) and recovery-record file names
+ *    ("base-sepolia", wallet/recovery.ts) since phase 11 item 5.
  *  - L1 data fee: see l1DataFee. A live GasPriceOracle getL1Fee probe
  *    (2026-10-03) put it at 5,895,253,350 wei (about 5.9 gwei)
  *    for a 112-byte transaction, about 5% of a 21,000-gas transfer's L2
  *    fee at the time. op-geth's buyGas balance check adds the L1 cost to
  *    gas limit × max fee + value (ethereum-optimism/op-geth, branch
  *    optimism, core/state_transition.go, "balanceCheck.Add(balanceCheck,
- *    l1Cost)"), so a Max send that leaves exactly gas × max fee is expected
- *    to be refused for insufficient funds (reasoned from source, not run).
+ *    l1Cost)"), so a Max send that left exactly gas × max fee would be
+ *    refused for insufficient funds; since phase 11 item 5 the quotes and
+ *    Max in wallet/send.ts include it (a second live probe on 2026-10-03:
+ *    6,222,960,213 wei for a 47-byte unsigned transfer, 2.6% of the fee).
  */
 export const EVM_BASE_SEPOLIA: EvmChainProfile = {
   caip2: 'eip155:84532',

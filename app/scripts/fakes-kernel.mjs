@@ -175,11 +175,19 @@ export function fakeKernelNode({
   return transport;
 }
 
-/** Fake bundler: v0.7 supported, fixed gas estimate, records the submitted op. */
-export function fakeBundler({ estimateError = null, receipt = null, sendError = null } = {}) {
+/**
+ * Fake bundler: v0.7 supported, fixed gas estimate, records the submitted op.
+ * It answers eth_chainId (ERC-7769) with `chainIdHex`, Ethereum Sepolia
+ * (0xaa36a7) by default because most suites save their bundler under
+ * Sepolia; pass '0x14a34' for Base Sepolia or '0x1' for mainnet. Saving a
+ * bundler (aa.ts setAaBundlerUrl) refuses a chain id that differs from the
+ * chain being configured.
+ */
+export function fakeBundler({ estimateError = null, receipt = null, sendError = null, chainIdHex = '0xaa36a7' } = {}) {
   const calls = [];
   const transport = async (method, params) => {
     calls.push({ method, params });
+    if (method === 'eth_chainId') return chainIdHex;
     if (method === 'eth_supportedEntryPoints') return [ENTRYPOINT_V07];
     if (method === 'eth_estimateUserOperationGas') {
       transport.lastEstimated = params[0];

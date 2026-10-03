@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -8,6 +8,7 @@ import {
   StyleSheet,
   Text,
   View,
+  type ViewToken,
 } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { HistoryEntry } from '@shiba-wallet/core';
@@ -23,6 +24,16 @@ import { useHistory } from '../wallet/useHistory';
 import { usePrefs } from '../wallet/PrefsContext';
 import { useWallet } from '../wallet/WalletContext';
 import { OfflineNotice } from '../wallet/connectivity';
+import {
+  createActivityDecoder,
+  renderActivitySentence,
+  walletAddressesFor,
+  type ActivityDecoder,
+  type DecodedActivity,
+} from '../wallet/activity-sentences';
+import { listContacts, type Contact } from '../wallet/contacts';
+import { listTokens } from '../wallet/tokens';
+import { getAaConfig } from '../wallet/aa';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Activity'>;
 
@@ -62,6 +73,7 @@ function EntryRow({
   symbol,
   hidden,
   evmExplorerTxBase,
+  sentence,
 }: {
   entry: HistoryEntry;
   chainId: string;
@@ -71,6 +83,12 @@ function EntryRow({
   hidden: boolean;
   /** Active EVM chain's explorer (sepolia.etherscan.io in test mode). */
   evmExplorerTxBase: string;
+  /**
+   * Plain-English description decoded from the transaction and its receipt
+   * (wallet/activity-sentences.ts), already masked for Hide amounts; null
+   * while unknown or when decoding failed — the row then looks as before.
+   */
+  sentence: string | null;
 }) {
   const theme = useTheme();
   const url = explorerTxUrl(chainId, entry.id, evmExplorerTxBase);
@@ -106,6 +124,7 @@ function EntryRow({
     <Pressable
       accessibilityRole={url ? 'button' : undefined}
       accessibilityLabel={
+        (sentence ? `${sentence}. ` : '') +
         `${directionLabel(entry.direction)} transaction, ${spokenAmount}, ${timestampLabel(entry)}` +
         (spokenStatus ? `, ${spokenStatus}` : '')
       }
@@ -128,6 +147,9 @@ function EntryRow({
         <Text style={[styles.rowTitle, { color: theme.text }]}>
           {directionLabel(entry.direction)}
         </Text>
+        {sentence ? (
+          <Text style={[styles.rowSentence, { color: theme.text }]}>{sentence}</Text>
+        ) : null}
         <Text style={[styles.rowTime, { color: theme.textMuted }]}>
           {timestampLabel(entry)}
         </Text>
@@ -153,6 +175,112 @@ function EntryRow({
   );
 }
 
+/**
+ * Decoded sentences for the EVM rows the user can see. A decoder is built
+ * once the wallet's addresses (EOA plus a Kernel or recovered smart account
+ * when configured), tracked tokens and contacts are loaded; it then decodes
+ * the visible rows' transactions in bounded batches (at most
+ * MAX_DECODES_PER_CALL new decodes per batch) through the active endpoint.
+ * Failures leave rows unchanged; a pull-to-refresh lets failed rows be
+ * tried again. Rendering happens on every render, so Hide amounts and
+ * contact names apply without new requests.
+ */
+function useActivitySentences(options: {
+  enabled: boolean;
+  chainCaip2: string;
+  chainIdDecimal: string;
+  eoa: string | null;
+  accountIndex: number | null;
+  refreshing: boolean;
+}): {
+  /** The decoded transaction for a row id, or undefined. */
+  lookup: (id: string) => DecodedActivity | undefined;
+  contacts: Contact[];
+  /** Changes whenever new decodes arrived (for memoization). */
+  version: number;
+  onViewableItemsChanged: (info: { viewableItems: ViewToken[] }) => void;
+} {
+  const { enabled, chainCaip2, chainIdDecimal, eoa, accountIndex, refreshing } = options;
+  const setupKey =
+    enabled && eoa && accountIndex !== null ? `${chainCaip2}|${chainIdDecimal}|${eoa}|${accountIndex}` : null;
+  const [setup, setSetup] = useState<{ key: string; decoder: ActivityDecoder; contacts: Contact[] } | null>(null);
+  const [version, setVersion] = useState(0);
+  const [visibleIds, setVisibleIds] = useState<string[]>([]);
+  // A decoder built for another chain/account is never used.
+  const current = setup && setup.key === setupKey ? setup : null;
+  const decoder = current?.decoder ?? null;
+
+  useEffect(() => {
+    if (!setupKey || !eoa || accountIndex === null) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [tokens, savedContacts, aa] = await Promise.all([
+          listTokens(),
+          listContacts(chainCaip2),
+          getAaConfig(chainCaip2).catch(() => null),
+        ]);
+        if (cancelled) return;
+        setSetup({
+          key: setupKey,
+          contacts: savedContacts,
+          decoder: createActivityDecoder({
+            chainCaip2,
+            evmChainId: BigInt(chainIdDecimal),
+            wallet: walletAddressesFor(eoa, accountIndex, aa),
+            trackedTokens: tokens,
+          }),
+        });
+      } catch {
+        // No decoder: rows stay as they are.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [setupKey, chainCaip2, chainIdDecimal, eoa, accountIndex]);
+
+  // A pull-to-refresh retries rows whose decode failed earlier.
+  useEffect(() => {
+    if (refreshing) decoder?.reset();
+  }, [refreshing, decoder]);
+
+  // Keyed by the joined ids: viewability callbacks hand out a fresh array
+  // each time, but only a different set of rows needs a new batch.
+  const visibleKey = visibleIds.join(',');
+  useEffect(() => {
+    const ids = visibleKey ? visibleKey.split(',') : [];
+    if (!decoder || ids.length === 0) return;
+    let cancelled = false;
+    void decoder.decodeEntries(ids).then((decoded) => {
+      if (!cancelled && decoded.size > 0) setVersion((v) => v + 1);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [decoder, visibleKey, refreshing]);
+
+  // FlatList requires a stable callback for onViewableItemsChanged (the
+  // state setter is stable, so no dependencies).
+  const onViewableItemsChanged = useCallback((info: { viewableItems: ViewToken[] }) => {
+    const ids = info.viewableItems
+      .map((v) => (v.item as HistoryEntry | undefined)?.id)
+      .filter((id): id is string => typeof id === 'string');
+    setVisibleIds((prev) => {
+      const next = [...new Set(ids)];
+      return next.join(',') === prev.join(',') ? prev : next;
+    });
+  }, []);
+
+  const lookup = useCallback(
+    (id: string) => (decoder ? decoder.cachedFor([id]).get(id) : undefined),
+    [decoder],
+  );
+  return { lookup, contacts: current?.contacts ?? EMPTY_CONTACTS, version, onViewableItemsChanged };
+}
+
+const EMPTY_CONTACTS: Contact[] = [];
+
 /** Newest-first transaction list for one chain, entered from a Home row. */
 export function ActivityScreen({ navigation, route }: Props) {
   const theme = useTheme();
@@ -168,6 +296,31 @@ export function ActivityScreen({ navigation, route }: Props) {
   // active-chain translation in config/networks.ts.
   const isEvmSlot = chainId === EVM_CHAIN_ID;
   const symbol = isEvmSlot ? evmChain.displaySymbol : network?.symbol ?? '';
+  const sentences = useActivitySentences({
+    enabled: isEvmSlot,
+    chainCaip2: evmChain.caip2,
+    chainIdDecimal: evmChain.chainIdDecimal,
+    eoa: isEvmSlot ? account?.address ?? null : null,
+    accountIndex: activeAccount?.index ?? null,
+    refreshing,
+  });
+  // Rendered on every render (cheap: cached decodes only), so Hide amounts
+  // and contact names apply at once.
+  const sentenceOptions = {
+    nativeSymbol: evmChain.displaySymbol,
+    hidden: hideAmounts,
+    contacts: sentences.contacts,
+    networkId: evmChain.caip2,
+  };
+  const sentenceFor = (id: string): string | null => {
+    const decoded = sentences.lookup(id);
+    if (!decoded) return null;
+    try {
+      return renderActivitySentence(decoded, sentenceOptions);
+    } catch {
+      return null;
+    }
+  };
 
   useEffect(() => {
     navigation.setOptions({ title: account ? `${account.name} activity` : 'Activity' });
@@ -282,8 +435,12 @@ export function ActivityScreen({ navigation, route }: Props) {
             symbol={symbol}
             hidden={hideAmounts}
             evmExplorerTxBase={evmChain.explorerTxBase}
+            sentence={isEvmSlot ? sentenceFor(item.id) : null}
           />
         )}
+        onViewableItemsChanged={isEvmSlot ? sentences.onViewableItemsChanged : undefined}
+        // New decodes, Hide amounts and contact edits re-render the visible rows.
+        extraData={`${sentences.version}|${hideAmounts}|${sentences.contacts.length}`}
         contentContainerStyle={styles.list}
         onEndReached={() => void loadMore()}
         onEndReachedThreshold={0.4}
@@ -356,6 +513,10 @@ const styles = StyleSheet.create({
   rowTitle: {
     fontSize: 15,
     fontWeight: '600',
+  },
+  rowSentence: {
+    fontSize: 13,
+    lineHeight: 18,
   },
   rowTime: {
     fontSize: 12,

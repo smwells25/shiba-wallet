@@ -10,7 +10,16 @@ import {
 // Explicit .ts extensions: this module is imported by
 // scripts/check-token-send.mjs under Node's type stripping, which resolves
 // relative specifiers literally (same pattern as erc20.ts and tokens.ts).
-import { EVM_CHAIN_ID, sendEvm, type EvmSendQuote, type SendResult } from './send.ts';
+import {
+  EVM_CHAIN_ID,
+  chainHasL1DataFee,
+  opStackFeeTotal,
+  quoteOpStackFees,
+  sendEvm,
+  type EvmSendQuote,
+  type OpStackFees,
+  type SendResult,
+} from './send.ts';
 import { fetchErc20Balance } from './erc20.ts';
 
 /**
@@ -101,7 +110,11 @@ export interface Erc20SendQuote {
   gasLimit: bigint;
   maxFeePerGas: bigint;
   maxPriorityFeePerGas: bigint;
-  /** Worst-case fee in WEI: gasLimit * maxFeePerGas. Never token units. */
+  /**
+   * Worst-case fee in WEI: gasLimit * maxFeePerGas (plus the OP-stack L1
+   * data fee reserve and operator fee on a chain that has them). Never
+   * token units.
+   */
   fee: bigint;
   /** transfer(recipient, amount) calldata from encodeErc20Transfer. */
   data: Uint8Array;
@@ -111,6 +124,13 @@ export interface Erc20SendQuote {
   returnedFalse: boolean;
   /** True when gasLimit is ERC20_TRANSFER_GAS_FALLBACK (estimation reverted). */
   gasIsFallback: boolean;
+  /**
+   * OP-stack fee parts, included in `fee`. Never present today: token
+   * quotes are pinned to Ethereum mainnet (see prepareErc20Send), which has
+   * no L1 data fee; the hook keys on the verified chain id so a future
+   * OP-stack token send cannot silently leave the fee out.
+   */
+  opStack?: OpStackFees;
 }
 
 export interface Erc20SendRequest {
@@ -182,7 +202,19 @@ export async function prepareErc20Send(request: Erc20SendRequest): Promise<Erc20
     gasIsFallback = true;
   }
 
-  const fee = gasLimit * fees.maxFeePerGas;
+  const opStack = chainHasL1DataFee(chainId)
+    ? await quoteOpStackFees(transport, {
+        chainId,
+        nonce,
+        maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+        maxFeePerGas: fees.maxFeePerGas,
+        gasLimit,
+        to: contract,
+        value: 0n,
+        data,
+      })
+    : undefined;
+  const fee = gasLimit * fees.maxFeePerGas + opStackFeeTotal(opStack);
   if (fee > ethBalance) {
     throw new Error(
       `Not enough ETH to pay the network fee: the worst-case fee is ${fee} wei ` +
@@ -213,6 +245,7 @@ export async function prepareErc20Send(request: Erc20SendRequest): Promise<Erc20
     simulation,
     returnedFalse,
     gasIsFallback,
+    ...(opStack ? { opStack } : {}),
   };
 }
 

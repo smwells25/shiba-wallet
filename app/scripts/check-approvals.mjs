@@ -586,6 +586,17 @@ node.codes[DELEGATED.toLowerCase()] = '0xef0100' + DELEGATE_TARGET.slice(2);
   const old = await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: ROUTER, data: '0x12345678', chainCaip2: MAINNET, trackedTokens: [] });
   check('contract older than the threshold -> no "new contract" line', old.contractAge?.result.atOrBefore === true && !computeRiskLines(old).some((l) => l.type === 'new-contract'));
 
+  // Base Sepolia: 7 days at 2-second blocks = 302,400 blocks (risk.ts).
+  check('Base Sepolia threshold is 302,400 blocks (7 days of 2-second blocks)', NEW_CONTRACT_THRESHOLD_BLOCKS['eip155:84532'] === 302_400n && 7n * 86_400n / 2n === 302_400n);
+  calls.length = 0;
+  const baseOld = await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: ROUTER, data: '0x12345678', chainCaip2: 'eip155:84532', trackedTokens: [] });
+  check(
+    'Base Sepolia: a 60,000-block-old contract (about 33 hours there) is still "new"',
+    computeRiskLines(baseOld).some((l) => l.type === 'new-contract' && /deployed only 60000 blocks ago/.test(l.text)),
+    JSON.stringify(computeRiskLines(baseOld).map((l) => l.text)),
+  );
+  check('Base Sepolia: age search starts 302,400 blocks back', calls.some((c) => c.method === 'eth_getCode' && c.params[1] === '0x' + (HEAD - 302_400n).toString(16)));
+
   const otherChain = await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: ROUTER, data: '0x12345678', chainCaip2: 'eip155:999', trackedTokens: [] });
   check('chain without a threshold -> no age check at all', otherChain.contractAge === undefined);
 }

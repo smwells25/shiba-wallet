@@ -43,6 +43,7 @@ import {
   isFeatureAllowed,
   type FeatureId,
 } from '../config/readiness.ts';
+import { evmProfileByCaip2 } from '../config/evm-chain.ts';
 
 /**
  * ERC-4337 smart-account glue for the app (experimental, off by default):
@@ -533,11 +534,6 @@ export async function verifyAaFactory(
 }
 
 /**
- * Bundler verification: eth_supportedEntryPoints must include EntryPoint
- * v0.7 (same refusal as scripts/testnet/aa-smoke.mjs). Returns the list the
- * bundler reported.
- */
-/**
  * Display form of a stored endpoint URL. Bundler, paymaster and indexer
  * URLs usually embed the user's API key in the path or query, so Settings
  * shows only the scheme and host plus an elision for anything after it;
@@ -626,6 +622,66 @@ export function applyPriorityFeeFloor(
   };
 }
 
+/** Plain chain name for messages ("Base Sepolia (chain id 84532)"). */
+function chainNameForMessage(chainId: bigint): string {
+  const profile = evmProfileByCaip2(`eip155:${chainId}`);
+  return profile ? `${profile.label} (chain id ${chainId})` : `chain id ${chainId}`;
+}
+
+/**
+ * Bundler chain check: the bundler's eth_chainId must equal the chain the
+ * URL is being saved for. ERC-7769 ("JSON-RPC API for ERC-4337", Draft;
+ * ethereum/ERCs ERCS/erc-7769.md at commit 365b4c02, section "RPC methods
+ * (eth namespace)", heading "eth_chainId": "Returns EIP-155 Chain ID.")
+ * defines this method for bundlers, and ZeroDev's bundler answered it for
+ * both test networks on 2026-10-03 (0xaa36a7 for Ethereum Sepolia, 0x14a34
+ * for Base Sepolia). Without this check a bundler URL for one chain could
+ * be saved under another chain's key; that would fail safe (the
+ * UserOperation signature commits to the chain id, so nothing could be
+ * executed on the wrong chain), but every send would then fail with a
+ * confusing bundler error instead of a clear refusal at save time.
+ *
+ * A bundler that does not answer eth_chainId with a hex quantity is
+ * refused too: the wallet cannot confirm which chain it serves.
+ */
+export async function verifyAaBundlerChain(
+  bundler: JsonRpcTransport,
+  expectedChainId: bigint,
+): Promise<void> {
+  let result: unknown;
+  try {
+    result = await bundler('eth_chainId', []);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      'The bundler did not answer eth_chainId, so the wallet cannot confirm which ' +
+        `network it serves. Nothing was saved. (${detail})`,
+    );
+  }
+  if (!isHexQuantity(result)) {
+    throw new Error(
+      'The bundler answered eth_chainId with something that is not a chain id ' +
+        `(${JSON.stringify(result)}), so the wallet cannot confirm which network it ` +
+        'serves. Nothing was saved.',
+    );
+  }
+  const reported = BigInt(result);
+  if (reported !== expectedChainId) {
+    throw new Error(
+      `This bundler serves ${chainNameForMessage(reported)}, but you are saving it for ` +
+        `${chainNameForMessage(expectedChainId)}. Nothing was saved. Paste the bundler URL ` +
+        `for ${evmProfileByCaip2(`eip155:${expectedChainId}`)?.label ?? `chain id ${expectedChainId}`} ` +
+        '(bundler URLs are per network; for example a ZeroDev URL ends in ' +
+        `/chain/${expectedChainId}).`,
+    );
+  }
+}
+
+/**
+ * Bundler verification: eth_supportedEntryPoints must include EntryPoint
+ * v0.7 (same refusal as scripts/testnet/aa-smoke.mjs). Returns the list the
+ * bundler reported.
+ */
 export async function verifyAaBundler(bundler: JsonRpcTransport): Promise<string[]> {
   const supported = await new BundlerClient(bundler, ENTRYPOINT_V07).supportedEntryPoints();
   const ok =
@@ -647,10 +703,12 @@ export async function verifyAaBundler(bundler: JsonRpcTransport): Promise<string
 // ---------------------------------------------------------------------------
 
 /**
- * Saves a bundler URL for one chain after a successful
- * eth_supportedEntryPoints check against that URL. Throws (persisting
- * nothing) when the URL is malformed, unreachable, or lacks v0.7 support.
- * Returns the bundler's supported entry points for display.
+ * Saves a bundler URL for one chain after two checks against that URL: its
+ * eth_chainId must equal the chain being configured (verifyAaBundlerChain)
+ * and eth_supportedEntryPoints must include v0.7. Throws (persisting
+ * nothing) when the URL is malformed, unreachable, serves another chain, or
+ * lacks v0.7 support. Returns the bundler's supported entry points for
+ * display.
  */
 export async function setAaBundlerUrl(
   chainId: string,
@@ -664,7 +722,9 @@ export async function setAaBundlerUrl(
   // https:// only (loopback http:// allowed for development); checked
   // before any request, so a refused URL persists nothing.
   const trimmed = assertSecureEndpointUrl(url);
-  const supported = await verifyAaBundler(transportFor(trimmed));
+  const bundler = transportFor(trimmed);
+  await verifyAaBundlerChain(bundler, eip155ChainIdOf(chainId));
+  const supported = await verifyAaBundler(bundler);
   const map = await loadConfigMap(store);
   map[chainId] = {
     ...map[chainId],
@@ -1767,6 +1827,25 @@ export async function prepareAaCalls(
       };
 
   const amount = calls.reduce((sum, c) => sum + c.value, 0n);
+  // OP-stack chains (Base Sepolia): NO separate layer 1 data fee is added
+  // here, unlike the EOA quotes in send.ts. The bundler's EOA sends the
+  // handleOps transaction and pays its L1 data fee; the account repays the
+  // bundler through preVerificationGas, which bundlers price to include it
+  // (Pimlico's permissionless.js FAQ, docs.pimlico.io/references/
+  // permissionless/faqs, read 2026-10-03: "The preVerificationGas accounts
+  // for: Gas overhead that can't be calculated onchain; L1 data costs when
+  // operating on L2 networks"). ERC-4337 itself (Final, section "Estimating
+  // preVerificationGas") leaves the method open ("depends on non-permanent
+  // network properties such as operation and data gas pricing"), and the
+  // EntryPoint's prefund is gas limits × maxFeePerGas, so the figure below
+  // is already the account's worst case. ZeroDev does not document its
+  // formula. A read-only comparison on 2026-10-03 (the same counterfactual
+  // Kernel deployment op estimated by ZeroDev on both test networks, with a
+  // balance state override) gave preVerificationGas 51,428 on Ethereum
+  // Sepolia and 56,811 on Base Sepolia — about 5,400 gas more on Base, more
+  // than the GasPriceOracle's L1 fee for the op's bytes expressed in gas
+  // at its maxFeePerGas (about 1,000 gas). That is consistent with the L1
+  // data cost being priced in, not a proof of ZeroDev's formula.
   const gasTotal = gas.callGasLimit + gas.verificationGasLimit + gas.preVerificationGas;
   const worstCaseGasCost = gasTotal * fees.maxFeePerGas;
   // With a paymaster the sponsor pays the gas: the account only needs to

@@ -23,6 +23,7 @@
 export const APP_SCRIPTS = {
   'test-units.mjs': { kind: 'offline', summary: 'counts' },
   'check-7702.mjs': { kind: 'offline', summary: 'counts' },
+  'check-activity.mjs': { kind: 'offline', summary: 'counts' },
   'check-aa.mjs': { kind: 'offline', summary: 'counts' },
   'check-aa-kernel.mjs': { kind: 'offline', summary: 'counts' },
   'check-aa-urls.mjs': { kind: 'offline', summary: 'counts' },
@@ -33,11 +34,13 @@ export const APP_SCRIPTS = {
   'check-failover.mjs': { kind: 'offline', summary: 'counts' },
   'check-nfts.mjs': { kind: 'offline', summary: 'counts' },
   'check-passkeys.mjs': { kind: 'offline', summary: 'counts' },
+  'check-proof.mjs': { kind: 'offline', summary: 'counts' },
   'check-qr.mjs': { kind: 'offline', summary: 'counts' },
   'check-readiness.mjs': { kind: 'offline', summary: 'counts' },
   'check-recovery.mjs': { kind: 'offline', summary: 'counts' },
   'check-sessions.mjs': { kind: 'offline', summary: 'counts' },
   'check-settings-protection.mjs': { kind: 'offline', summary: 'counts' },
+  'check-siwe.mjs': { kind: 'offline', summary: 'counts' },
   'check-simulation.mjs': { kind: 'offline', summary: 'counts' },
   'check-storage.mjs': { kind: 'offline', summary: 'counts' },
   'check-swap.mjs': { kind: 'offline', summary: 'counts' },
@@ -46,6 +49,9 @@ export const APP_SCRIPTS = {
   'check-wc.mjs': { kind: 'offline', summary: 'counts' },
   'check-wc-5792.mjs': { kind: 'offline', summary: 'counts' },
 
+  // Offline: OP-stack L1 data fee in the EOA send quotes (fake GasPriceOracle);
+  // --live adds a read-only getL1Fee quote on Base Sepolia.
+  'check-base.mjs': { kind: 'flag-live', summary: 'counts' },
   'check-prices.mjs': { kind: 'flag-live', summary: 'counts' },
   'check-rpc-fallback.mjs': { kind: 'flag-live', summary: 'counts' },
   'check-token-history.mjs': { kind: 'flag-live', summary: 'counts' },

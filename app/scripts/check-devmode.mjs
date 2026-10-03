@@ -288,6 +288,7 @@ const URL = 'http://offline.fake/rpc';
 
 let scenario = { chainId: '0x1' };
 let lastRawTx = null;
+let oracleCalls = 0;
 
 function rpcResult(method, params) {
   switch (method) {
@@ -304,6 +305,14 @@ function rpcResult(method, params) {
     case 'eth_estimateGas':
       return '0x5208'; // 21000
     case 'eth_call':
+      // The OP-stack GasPriceOracle predeploy (send.ts asks it on Base
+      // Sepolia only): getL1Fee(bytes) 0x49948e0e → 1000 wei,
+      // getOperatorFee(uint256) 0x275aedd2 → 0. scripts/check-base.mjs
+      // covers the fee math in depth.
+      if (params[0].to?.toLowerCase() === '0x420000000000000000000000000000000000000f') {
+        oracleCalls += 1;
+        return '0x' + (params[0].data.startsWith('0x49948e0e') ? 1000n : 0n).toString(16).padStart(64, '0');
+      }
       return '0x';
     case 'eth_sendRawTransaction':
       lastRawTx = params[0];
@@ -807,8 +816,18 @@ console.log('\n== endpoints follow the choice; overrides never cross test networ
 console.log('\n== send-flow chain-id checks between the two test networks ==');
 {
   scenario = { chainId: '0x14a34' };
+  oracleCalls = 0;
   const baseQuote = await prepareEvmSend(URL, FROM, TO, 1000n, undefined, EVM_BASE_SEPOLIA.caip2);
   check('Base Sepolia-mode quote accepts a Base Sepolia node', baseQuote.chainId === 84532n);
+  check(
+    'Base Sepolia-mode quote asks the GasPriceOracle and adds the L1 data fee reserve (1000 + 50%)',
+    oracleCalls === 2 && baseQuote.opStack?.l1DataFee === 1500n && baseQuote.fee === 21000n * 3n * GWEI + 1500n,
+  );
+  scenario = { chainId: '0xaa36a7' };
+  oracleCalls = 0;
+  const sepNoOracle = await prepareEvmSend(URL, FROM, TO, 1000n, undefined, EVM_SEPOLIA.caip2);
+  check('Sepolia-mode quote makes no oracle call and has no L1 data fee', oracleCalls === 0 && sepNoOracle.opStack === undefined && sepNoOracle.fee === 21000n * 3n * GWEI);
+  scenario = { chainId: '0x14a34' };
   await checkRejects('Sepolia-mode quote refuses a Base Sepolia node', () => prepareEvmSend(URL, FROM, TO, 1000n, undefined, EVM_SEPOLIA.caip2), /chain id 84532, expected 11155111/);
   await checkRejects('mainnet-mode quote refuses a Base Sepolia node', () => prepareEvmSend(URL, FROM, TO, 1000n), /chain id 84532, expected 1\b/);
   scenario = { chainId: '0xaa36a7' };

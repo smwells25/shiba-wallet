@@ -75,6 +75,8 @@ import {
   WC_REQUOTED_NOTE,
   quoteWcTransaction,
   requoteWcTransactionIfMoved,
+  siweOriginFor,
+  siweSheetState,
 } from '../src/wallet/walletconnect.ts';
 import { forgetDefaultEndpointChoices } from '../src/config/networks.ts';
 import { DEFAULT_NETWORKS } from '../src/config/defaults.ts';
@@ -1152,6 +1154,103 @@ console.log('check-wc: WalletConnect Verify (verifyContext, threat-model N-06)')
   check('sheet: the switch resets for each new item', /if \(identityKey !== item\.key\) \{\s*setIdentityKey\(item\.key\);\s*setIdentityAck\(false\);/.test(sheet));
   check('provider re-checks the switch before acting (defense in depth)', /if \(!identityApprovalAllowed\(item\.identity, identityAcknowledged\)\) return;/.test(provider));
   check('provider passes the switch state through', /onApprove=\{\(q, o, c, signer, ack\) => void onApprove\(head, q, o, c, signer, ack\)\}/.test(provider));
+}
+
+
+console.log('check-wc: Sign-In with Ethereum on the approval sheet (EIP-4361, phase 11 item 3)');
+{
+  const vc = (validation, origin) => ({ verified: { verifyUrl: 'https://verify.walletconnect.org', validation, origin } });
+  const now = Date.now();
+  const iso = (ms) => new Date(ms).toISOString();
+  const siwe = ({ domain = 'app.example', address = ADDRESS, chainId = 1, exp = now + 600_000 } = {}) =>
+    `${domain} wants you to sign in with your Ethereum account:\n${address}\n\nLog in to Example\n\n` +
+    `URI: https://${domain}/login\nVersion: 1\nChain ID: ${chainId}\nNonce: n0nce12345\nIssued At: ${iso(now - 60_000)}` +
+    `\nExpiration Time: ${iso(exp)}`;
+  const kit = fakeKit(session('T1', M)); // peer metadata url = https://app.example
+  const ctx = { address: ADDRESS, activeChain: M };
+  const ctl = new WcController(kit, () => ctx);
+  ctl.attach();
+  const texts = [
+    siwe(),
+    siwe({ domain: 'bank.example' }),
+    siwe(),
+    siwe({ chainId: 11155111, exp: now - 60_000 }),
+    `bank.example wants you to sign in with your Ethereum account — click to claim`,
+    'hello',
+  ];
+  await kit.fire('session_request', { ...signReq(900, texts[0]), verifyContext: vc('VALID', 'https://app.example') });
+  await kit.fire('session_request', { ...signReq(901, texts[1]), verifyContext: vc('VALID', 'https://app.example') });
+  await kit.fire('session_request', { ...signReq(902, texts[2]), verifyContext: vc('INVALID', 'https://evil.example') });
+  await kit.fire('session_request', signReq(903, texts[3]));
+  await kit.fire('session_request', signReq(904, texts[4]));
+  await kit.fire('session_request', signReq(905, texts[5]));
+  const q = ctl.getSnapshot().queue;
+  check('SIWE requests are queued like any personal_sign — never auto-declined, even with warnings', q.length === 6 && kit.calls.respond.length === 0 && kit.calls.reject.length === 0);
+  check('digest unchanged: every queued SIWE digest = ethers.hashMessage(text)', q.every((it, i) => toHex(it.parsed.digest) === ethers.hashMessage(texts[i])));
+  const states = q.map((it) => siweSheetState(it, now));
+  check('matching verified origin → SIWE card, title "Sign in to app.example", no warnings', states[0].kind === 'siwe' && states[0].summary.title === 'Sign in to app.example' && states[0].summary.warnings.length === 0);
+  check('  card rows carry the account, chain, statement, URI and nonce', states[0].kind === 'siwe' && ['Account', 'Network', 'Statement', 'URI', 'Nonce'].every((l) => states[0].summary.rows.some((r) => r.label === l)) && states[0].summary.rows.find((r) => r.label === 'Network').value === 'Ethereum mainnet (chain ID 1)');
+  check('domain ≠ verified origin → domain warning on the sheet', states[1].kind === 'siwe' && /for bank\.example, but the request came from app\.example \(confirmed by WalletConnect\)/.test(states[1].summary.warnings[0] ?? ''));
+  check('Verify mismatch → bound against the ATTESTED origin (evil.example), not the claim', states[2].kind === 'siwe' && /came from evil\.example \(confirmed by WalletConnect\)/.test(states[2].summary.warnings[0] ?? ''));
+  check('no verifyContext → bound against the session metadata URL (labelled self-reported; matches → note only)', siweOriginFor(q[3].identity)?.source === 'metadata' && states[3].kind === 'siwe' && !states[3].summary.warnings.some((w) => /request came from/.test(w)));
+  check('  … and chain + expiry warnings still raised', states[3].kind === 'siwe' && states[3].summary.warnings.length === 2 && /Ethereum Sepolia/.test(states[3].summary.warnings[0]) && /expired/.test(states[3].summary.warnings[1]));
+  check('imitation of the sign-in phrase → malformed warning', states[4].kind === 'malformed' && /does not follow the Sign-In with Ethereum format/.test(states[4].warnings[0]));
+  check('ordinary message → no card', states[5].kind === 'none');
+  const smartState = siweSheetState({ ...q[0], smart: { address: ADDRESS } }, now);
+  // Gate (coordinator decision on the EIP-4361 MUST-reject): a site mismatch
+  // or userinfo@ domain puts Sign behind the existing risk switch, through the
+  // item's identity verdict; other SIWE warnings stay informational.
+  check('matching sign-in: not gated', !q[0].identity.requiresAcknowledgement && q[0].identity.siweGate === undefined && identityApprovalAllowed(q[0].identity, false));
+  check('domain ≠ verified origin: GATED (status stays verified, reason attached)', q[1].identity.status === 'verified' && q[1].identity.requiresAcknowledgement && /This sign-in is for bank\.example, not the site that asked for it/.test(q[1].identity.siweGate ?? ''));
+  check('  Sign disabled until acknowledged, allowed once acknowledged', !identityApprovalAllowed(q[1].identity, false) && identityApprovalAllowed(q[1].identity, true));
+  check('Verify mismatch + SIWE for the claimed site: gated (attested origin differs)', q[2].identity.requiresAcknowledgement && q[2].identity.siweGate !== undefined);
+  check('chain + expiry warnings only: NOT gated', !q[3].identity.requiresAcknowledgement);
+  check('malformed imitation and plain messages: NOT gated', !q[4].identity.requiresAcknowledgement && !q[5].identity.requiresAcknowledgement);
+  const more = [
+    ['scheme mismatch', siwe().replace('app.example wants', 'http://app.example wants'), vc('VALID', 'https://app.example')],
+    ['port mismatch', siwe({ domain: 'app.example:8443' }), vc('VALID', 'https://app.example')],
+    ['userinfo@ domain', siwe().replace('app.example wants', 'login@app.example wants'), vc('VALID', 'https://app.example')],
+    ['domain ≠ metadata URL (no Verify answer)', siwe({ domain: 'other.example' }), undefined],
+  ];
+  let id = 910;
+  for (const [name, text, verifyContext] of more) {
+    await kit.fire('session_request', { ...signReq(id, text), ...(verifyContext ? { verifyContext } : {}) });
+    const it = ctl.getSnapshot().queue.find((x) => x.key === `r:${id}`);
+    check(`${name}: queued (not declined) and GATED`, it !== undefined && it.identity.requiresAcknowledgement && typeof it.identity.siweGate === 'string' && !identityApprovalAllowed(it.identity, false));
+    id += 1;
+  }
+  check('still nothing auto-declined (no response or rejection sent)', kit.calls.respond.length === 0 && kit.calls.reject.length === 0);
+  {
+    // Acknowledged → signs exactly as before (provider path re-enacted: the
+    // re-check, then signDigest over the unchanged EIP-191 digest).
+    // Arrival order: answer the head (r:900, ungated) first, as the user would.
+    const head = ctl.begin('r:900');
+    await respondApproved(kit, head.event.topic, head.event.id, signDigest(account, head.parsed.digest));
+    ctl.complete('r:900');
+    const item = ctl.begin('r:901');
+    check('acknowledged gated item can be claimed and passes the provider re-check', item !== null && identityApprovalAllowed(item.identity, true));
+    const sig = signDigest(account, item.parsed.digest);
+    await respondApproved(kit, item.event.topic, item.event.id, sig);
+    ctl.complete('r:901');
+    check('  digest unchanged (= ethers.hashMessage) and the signature recovers the session account', toHex(item.parsed.digest) === ethers.hashMessage(texts[1]) && ethers.verifyMessage(texts[1], kit.calls.respond.at(-1).response.result) === ADDRESS);
+  }
+  const providerSrc = readFileSync(new URL('../src/wallet/WalletConnectContext.tsx', import.meta.url), 'utf8');
+  const iGate = providerSrc.indexOf('if (!identityApprovalAllowed(item.identity, identityAcknowledged)) return;');
+  const iAuth = providerSrc.indexOf('requireLocalAuth(', iGate);
+  const iSignDigest = providerSrc.indexOf('signDigest(signer, digest)');
+  check('provider: the identity re-check (which now carries the SIWE gate) runs before auth and before signing', iGate > 0 && iAuth > iGate && iSignDigest > iGate);
+  const ctlSrc = readFileSync(new URL('../src/wallet/wc-controller.ts', import.meta.url), 'utf8');
+  check('controller: queued request identity = applySiweGate(identity, siweSheetState(...))', /identity: applySiweGate\(identity, siwe\)/.test(ctlSrc));
+  const sheetSrc = readFileSync(new URL('../src/components/WcApprovalSheet.tsx', import.meta.url), 'utf8');
+  check('sheet: the gate reason is shown with the risk switch', /\{identity\.siweGate \? <WarningBox>\{identity\.siweGate\}<\/WarningBox> : null\}/.test(sheetSrc));
+  check('smart-account session → the ERC-1271 / ERC-6492 note on the card', smartState.kind === 'siwe' && smartState.summary.notes.some((n) => /ERC-1271 smart-account signature \(ERC-6492-wrapped/.test(n)));
+  check('non-personal_sign items → no card', siweSheetState({ parsed: { kind: 'typed_data' }, address: ADDRESS, chain: M, smart: null }, now).kind === 'none');
+  check('siweOriginFor: verified → verify source; scam / unverified → metadata', siweOriginFor({ status: 'verified', origin: 'https://a.example', claimedUrl: 'https://b.example' })?.source === 'verify' && siweOriginFor({ status: 'scam', origin: 'https://a.example', claimedUrl: 'https://b.example' })?.url === 'https://b.example' && siweOriginFor(undefined) === null);
+
+  const sheet = readFileSync(new URL('../src/components/WcApprovalSheet.tsx', import.meta.url), 'utf8');
+  check('sheet: personal_sign renders PersonalSignBody, which computes siweSheetState and the card', /<PersonalSignBody\b/.test(sheet) && /siweSheetState\(\{ parsed, identity: item\.identity/.test(sheet) && /<SiweSummaryCard state=\{siwe\}/.test(sheet));
+  check('sheet: the exact message stays visible below the card', /Message \(exactly what is signed\)/.test(sheet));
+  check('sheet: the Sign button depends only on the risk switch (which carries the SIWE gate), never on the card itself', !/disabled=\{[^}]*siwe/.test(sheet));
 }
 
 

@@ -48,4 +48,9 @@ export type RootStackParamList = {
    * (factory-derived or recovered) to another account of this wallet.
    */
   OwnerRotation: undefined;
+  /**
+   * Proof of address ownership (phase 11 item 3): sign a challenge the user
+   * holds with the active account (EOA or its Kernel smart account).
+   */
+  ProveOwnership: undefined;
 };

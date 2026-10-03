@@ -66,7 +66,12 @@ import { WALLET_7702_DELEGATE } from './delegation.ts';
  * sometimes go empty"). Measured 2026-10-01 over the latest 10,000 blocks
  * via the app's default publicnode endpoints: 12.05 s/block on mainnet and
  * 12.07 s/block on Sepolia. Used only to phrase block counts as approximate
- * days for the user; nothing is decided from it.
+ * days for the user; nothing is decided from it. It describes Ethereum L1
+ * chains only: Base produces a block every 2 seconds (see
+ * NEW_CONTRACT_THRESHOLD_BLOCKS), but the only phrasing that uses this
+ * constant, the first-interaction notice, never runs on Base Sepolia,
+ * because it needs tracked ERC-20 tokens and those are mainnet assets
+ * hidden on every test network.
  */
 export const SECONDS_PER_BLOCK_ESTIMATE = 12;
 
@@ -83,6 +88,20 @@ export const SECONDS_PER_BLOCK_ESTIMATE = 12;
  * should be revisited with real-world data. Chains not listed get no
  * new-contract check at all.
  *
+ * Base Sepolia (phase 11 item 5): the same 7 days, at Base's 2-second
+ * blocks: 7 x 86,400 s / 2 s = 302,400 blocks. Sources (read 2026-10-03):
+ * docs.base.org "Transaction Ordering"
+ * (https://docs.base.org/specifications/transactions/transaction-ordering:
+ * Flashblocks "reduce effective block times from 2 seconds to 200
+ * milliseconds through preconfirmations" — the 200 ms preconfirmations do
+ * not change the block number, which still advances every 2 seconds) and
+ * "Network Fees" (https://docs.base.org/specifications/transactions/network-fees:
+ * "18 blocks × 2 seconds = 36 seconds"); measured live the same day over
+ * the latest 10,000 Base Sepolia blocks via the app's default endpoint:
+ * exactly 2.0 s/block. Free endpoints usually refuse historical
+ * eth_getCode this far back, which gives "unknown" and no signal, exactly
+ * as on Ethereum.
+ *
  * The search runs from (head - threshold) to head: if code already exists
  * at the start, the contract is older than the threshold and no signal is
  * raised (the engine reports atOrBefore). On free endpoints the very first
@@ -91,6 +110,7 @@ export const SECONDS_PER_BLOCK_ESTIMATE = 12;
 export const NEW_CONTRACT_THRESHOLD_BLOCKS: Readonly<Record<string, bigint>> = {
   'eip155:1': 50_400n,
   'eip155:11155111': 50_400n,
+  'eip155:84532': 302_400n,
 };
 
 /** eth_getLogs window size (token-history.ts's 9,000-block window). */

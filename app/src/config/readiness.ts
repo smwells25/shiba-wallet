@@ -95,8 +95,8 @@ export interface FeatureReadiness {
 
 /** The sentence every refusal and every gated screen ends with. */
 export const READINESS_TESTNET_HINT =
-  'Turn on Sepolia test mode in Settings → Developer to use this feature (Base Sepolia, the other ' +
-  'test network there, works too).';
+  'Turn on a test network (Ethereum Sepolia or Base Sepolia) in Settings → Developer to use this ' +
+  'feature.';
 
 /** Shown in Settings above the list, so the advisory entries are not misread. */
 export const READINESS_INTRO =

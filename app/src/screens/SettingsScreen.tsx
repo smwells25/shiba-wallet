@@ -17,7 +17,8 @@ import { type NetworkDefault } from '../config/defaults';
 import { describeDefaultChoice, describeDefaultFallbackNote } from '../config/endpoint-probe';
 import { INSECURE_ENDPOINT_MESSAGE } from '../config/endpoint-url';
 import { AUTO_LOCK_CHOICES } from '../config/prefs';
-import { EVM_TEST_PROFILES, type TestNetworkId } from '../config/evm-chain';
+import { EVM_PROFILES, EVM_TEST_PROFILES, type TestNetworkId } from '../config/evm-chain';
+
 import {
   FEATURE_READINESS,
   READINESS_INTRO,
@@ -87,6 +88,18 @@ import { EVM_CHAIN_ID } from '../wallet/send';
 import { exportAllRecordsText, loadRecoveryRecords } from '../wallet/recovery';
 import { passkeyGateNow } from '../wallet/passkey-native';
 import { PASSKEY_AUDIT_NOTE, PASSKEY_EXPLANATION, PASSKEY_SELF_CALL_RISK } from '../wallet/passkeys';
+
+/**
+ * The chains where the pinned Kernel v3.3 addresses were checked on-chain
+ * (config/evm-chain.ts kernelV33Verified), as a plain list for the AA
+ * pre-fill note: "Ethereum mainnet, Ethereum Sepolia and Base Sepolia".
+ */
+const KERNEL_VERIFIED_CHAINS_TEXT = (() => {
+  const names = EVM_PROFILES.filter((p) => p.kernelV33Verified).map((p) =>
+    p.testnet ? p.label : `${p.label} mainnet`,
+  );
+  return names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : names.join('');
+})();
 
 /**
  * Status line for a stored endpoint URL that fails the https rule on read
@@ -686,7 +699,7 @@ function AaChainRow({ network }: { network: NetworkDefault }) {
           prefill={KERNEL_PREFILL.factory}
           prefillNote={
             `Pinned Kernel v3.3 deployment from the wallet engine (the same addresses on ` +
-            `mainnet and Sepolia): implementation ${KERNEL_PREFILL.implementation}, meta ` +
+            `${KERNEL_VERIFIED_CHAINS_TEXT}, each checked on-chain): implementation ${KERNEL_PREFILL.implementation}, meta ` +
             `factory ${KERNEL_PREFILL.metaFactory}, ECDSA validator ` +
             `${KERNEL_PREFILL.ecdsaValidator}. Saving re-runs the full on-chain ` +
             'verification through your RPC endpoint.'
@@ -1448,9 +1461,10 @@ export function SettingsScreen({ navigation }: Props) {
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Optional ERC-4337 setup per EVM chain: a bundler endpoint, a
           smart-account type (Kernel v3.3 or SimpleAccount) and its factory.
-          Everything is verified before saving — the bundler must support
-          EntryPoint v0.7, and the factory is checked on-chain through your
-          configured RPC endpoint. When set, the Send and Swap screens offer
+          Everything is verified before saving — the bundler must answer
+          eth_chainId with this network&apos;s chain id and support EntryPoint
+          v0.7, and the factory is checked on-chain through your configured
+          RPC endpoint. When set, the Send and Swap screens offer
           an experimental &quot;from smart account&quot; toggle (token sends and swaps
           run as one atomic batch), and WalletConnect can connect dApps to
           the smart account. Off by default; nothing changes for regular
@@ -1582,6 +1596,20 @@ export function SettingsScreen({ navigation }: Props) {
       </View>
 
       <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: theme.text }]}>Prove address ownership</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          Sign a challenge you were given (or your own statement) with this account or its smart
+          account, and share a proof anyone can check. Website logins are not signed here — they go
+          through WalletConnect.
+        </Text>
+        <Button
+          title="Prove ownership"
+          variant="secondary"
+          onPress={() => navigation.navigate('ProveOwnership')}
+        />
+      </View>
+
+      <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: theme.text }]}>Tokens</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Track ERC-20 tokens on the Home screen: balances, and sending
@@ -1687,12 +1715,14 @@ export function SettingsScreen({ navigation }: Props) {
           </Text>
         ) : null}
         {evmChain.l1DataFee ? (
-          <Text style={[styles.hint, { color: '#e07800' }]}>
+          <Text style={[styles.hint, { color: theme.textMuted }]}>
             {evmChain.label} is a layer-2 network: every transaction also pays a
-            small layer-1 data fee that the fee shown on confirm screens does
-            not include yet, and Max sends of ETH may be refused for that
-            reason. Leave a little ETH behind. Swaps are not offered here (0x
-            does not support Base Sepolia).
+            layer 1 data fee for publishing its data on Ethereum. Send confirm
+            screens show it as a separate line — the network&apos;s fee-oracle
+            estimate plus 50% headroom, because this fee cannot be capped — and
+            include it in the max network fee, the total and Max. Smart-account
+            sends pay it through the bundler&apos;s gas estimate instead. Swaps
+            are not offered here (0x does not support Base Sepolia).
           </Text>
         ) : null}
       </View>

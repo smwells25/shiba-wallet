@@ -12,6 +12,8 @@ import {
   describeProposal,
   describeVerifyContext,
   parseWcRequest,
+  applySiweGate,
+  siweSheetState,
   respondApproved,
   respondRejected,
   sessionAddressesOf,
@@ -561,6 +563,16 @@ export class WcController {
       }
     }
     if (this.queue.some((i) => i.key === key)) return;
+    const identity = describeVerifyContext(
+      (event as { verifyContext?: unknown }).verifyContext,
+      this.dappUrl(event.topic),
+    );
+    // Sign-In with Ethereum (EIP-4361): a sign-in for a site other than the
+    // request origin needs the risk switch (walletconnect.ts applySiweGate).
+    const siwe = siweSheetState(
+      { parsed, identity, address: boundAddress, chain: activeChain, smart },
+      Date.now(),
+    );
     this.queue.push({
       type: 'request',
       key,
@@ -569,10 +581,7 @@ export class WcController {
       chain: activeChain,
       address: boundAddress,
       smart,
-      identity: describeVerifyContext(
-        (event as { verifyContext?: unknown }).verifyContext,
-        this.dappUrl(event.topic),
-      ),
+      identity: applySiweGate(identity, siwe),
     });
     this.emit();
   }

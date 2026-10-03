@@ -142,6 +142,13 @@ export function ReceiveScreen({ route, navigation }: Props) {
         variant="secondary"
         onPress={() => navigation.navigate('Send', { chainId: account.chainId })}
       />
+      {account.chainId === EVM_CHAIN_ID ? (
+        <Button
+          title="Prove you own this address"
+          variant="secondary"
+          onPress={() => navigation.navigate('ProveOwnership')}
+        />
+      ) : null}
       <Text style={[styles.note, { color: theme.textMuted }]}>
         Only send {account.symbol} on the {account.name} network to this
         address. Assets sent on other networks may be lost.

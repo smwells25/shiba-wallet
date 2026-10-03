@@ -43,6 +43,8 @@ import {
   sendSol,
   sendUtxo,
   validateRecipient,
+  L1_DATA_FEE_HEADROOM_PERCENT,
+  type OpStackFees,
   type SendQuote,
   type SendResult,
 } from '../wallet/send';
@@ -451,8 +453,8 @@ export function SendScreen({ route, navigation }: Props) {
     return (
       <View style={[screenStyle(theme), styles.center]}>
         <Text style={{ color: theme.textMuted, textAlign: 'center', padding: 24 }}>
-          Token sending is an Ethereum mainnet feature. Turn off Sepolia
-          test mode in Settings → Developer to send tokens.
+          Token sending is an Ethereum mainnet feature. Choose Off (mainnet)
+          under Settings → Developer to send tokens.
         </Text>
       </View>
     );
@@ -1387,7 +1389,8 @@ export function SendScreen({ route, navigation }: Props) {
         />
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Worst case at {exact(quote.maxFeePerGas, 9)} gwei max fee ×{' '}
-          {quote.gasLimit.toString()} gas; the actual fee is usually lower,
+          {quote.gasLimit.toString()} gas
+          {quote.opStack ? ', plus the layer 1 data fee below' : ''}; the actual fee is usually lower,
           and the unused part is not charged. Sent with safeTransferFrom: if
           the recipient is a contract that cannot accept NFTs, the transfer
           reverts instead of locking the NFT away.
@@ -1395,6 +1398,7 @@ export function SendScreen({ route, navigation }: Props) {
             ? ' Gas estimation failed, so a conservative default gas limit is shown.'
             : ''}
         </Text>
+        <OpStackFeeRows fees={quote.opStack} symbol={evmChain.displaySymbol} theme={theme} />
         <Row
           label={`${evmChain.displaySymbol} balance`}
           value={`${exact(quote.ethBalance, nativeDecimals)} ${evmChain.displaySymbol}`}
@@ -1496,9 +1500,13 @@ export function SendScreen({ route, navigation }: Props) {
         {quote.kind === 'evm' ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
             Worst case at {exact(quote.maxFeePerGas, 9)} gwei max fee ×{' '}
-            {quote.gasLimit.toString()} gas; the actual fee is usually lower,
+            {quote.gasLimit.toString()} gas
+            {quote.opStack ? ', plus the layer 1 data fee below' : ''}; the actual fee is usually lower,
             and the unused part is not charged.
           </Text>
+        ) : null}
+        {quote.kind === 'evm' ? (
+          <OpStackFeeRows fees={quote.opStack} symbol={symbol} theme={theme} />
         ) : null}
         <Row
           label={quote.kind === 'evm' ? 'Total (worst case)' : 'Total'}
@@ -1825,6 +1833,41 @@ export function SendScreen({ route, navigation }: Props) {
         anything is signed or sent.
       </Text>
     </ScrollView>
+  );
+}
+
+/**
+ * OP-stack fee lines (Base Sepolia; send.ts quoteOpStackFees): the layer 1
+ * data fee reserve and, when the chain charges one, the operator fee. Both
+ * are already part of the max fee and total shown on the same screen.
+ * Renders nothing on chains without them, so Ethereum mainnet and Sepolia
+ * confirm screens are unchanged.
+ */
+function OpStackFeeRows({
+  fees,
+  symbol,
+  theme,
+}: {
+  fees: OpStackFees | undefined;
+  symbol: string;
+  theme: ReturnType<typeof useTheme>;
+}) {
+  if (!fees) return null;
+  return (
+    <>
+      <Row label="Layer 1 data fee (estimate)" value={`${exact(fees.l1DataFee, 18)} ${symbol}`} theme={theme} />
+      {fees.operatorFee > 0n ? (
+        <Row label="Operator fee (worst case)" value={`${exact(fees.operatorFee, 18)} ${symbol}`} theme={theme} />
+      ) : null}
+      <Text style={[styles.hint, { color: theme.textMuted }]}>
+        This is a layer-2 network: every transaction also pays for publishing
+        its data on Ethereum. The network&apos;s fee oracle estimates{' '}
+        {exact(fees.l1DataFeeEstimate, 18)} {symbol} for this transaction;{' '}
+        {L1_DATA_FEE_HEADROOM_PERCENT.toString()}% more is reserved because
+        this fee follows Ethereum&apos;s fees and cannot be capped. It is
+        included in the max network fee and the total.
+      </Text>
+    </>
   );
 }
 

@@ -601,10 +601,16 @@ export const RECORD_FILE_MAX_BYTES = 64 * 1024;
 /** Sub-directory of the app's cache directory that holds export files while they are shared. */
 export const RECORD_EXPORT_DIRECTORY = 'recovery-record-export';
 
-/** Readable network names for file names; other chains use their CAIP-2 id with ":" replaced. */
+/**
+ * Readable network names for file names; other chains use their CAIP-2 id
+ * with ":" replaced. Base Sepolia (the second test-network profile,
+ * config/evm-chain.ts) is "base-sepolia", so its records are never confused
+ * with Ethereum Sepolia's "sepolia" ones.
+ */
 const RECORD_FILE_CHAIN_LABELS: Readonly<Record<string, string>> = {
   'eip155:1': 'ethereum',
   'eip155:11155111': 'sepolia',
+  'eip155:84532': 'base-sepolia',
 };
 
 /**

@@ -46,7 +46,7 @@ import {
   waitForAaReceipt,
 } from '../src/wallet/aa.ts';
 import { EVM_CHAIN_ID } from '../src/wallet/send.ts';
-import { EVM_SEPOLIA } from '../src/config/evm-chain.ts';
+import { EVM_BASE_SEPOLIA, EVM_SEPOLIA } from '../src/config/evm-chain.ts';
 
 // Smart accounts and paymasters are 'testnet-only' in the mainnet readiness
 // table (src/config/readiness.ts, phase 9 item 6), so the configuration
@@ -156,16 +156,26 @@ function fakeNode({
   return transport;
 }
 
-/** Fake bundler transport; records the submitted RpcUserOperation. */
+/**
+ * Fake bundler transport; records the submitted RpcUserOperation. Answers
+ * eth_chainId (ERC-7769) with `chainIdHex` — Sepolia by default, the chain
+ * AA_CHAIN saves under; `null` makes it refuse the method like a bundler
+ * that does not serve it.
+ */
 function fakeBundler({
   supported = [ENTRYPOINT_V07],
   receipt = null,
   receiptAfterPolls = 0,
+  chainIdHex = '0xaa36a7',
 } = {}) {
   const calls = [];
   let polls = 0;
   const transport = async (method, params) => {
     calls.push({ method, params });
+    if (method === 'eth_chainId') {
+      if (chainIdHex === null) throw new Error('RPC error -32601: Method not found (eth_chainId)');
+      return chainIdHex;
+    }
     if (method === 'eth_supportedEntryPoints') return supported;
     if (method === 'eth_estimateUserOperationGas') {
       return {
@@ -244,6 +254,65 @@ check(
   'failed bundler save persisted nothing (previous URL kept)',
   config.bundlerUrl === 'https://bundler.example/rpc',
 );
+check(
+  'the saved bundler was asked eth_chainId before eth_supportedEntryPoints',
+  goodBundler.calls[0]?.method === 'eth_chainId' && goodBundler.calls[1]?.method === 'eth_supportedEntryPoints',
+  JSON.stringify(goodBundler.calls.map((c) => c.method)),
+);
+
+// Bundler chain check (ERC-7769 eth_chainId), both directions between the
+// two test networks and against mainnet. Every refusal persists nothing.
+{
+  const BASE = EVM_BASE_SEPOLIA.caip2;
+  const chainStore = memoryStore();
+  await setAaBundlerUrl(BASE, 'https://bundler.example/base', {
+    store: chainStore,
+    transportFor: () => fakeBundler({ chainIdHex: '0x14a34' }),
+  });
+  check('Base Sepolia bundler (eth_chainId 0x14a34) saves under Base Sepolia', (await getAaConfig(BASE, chainStore)).bundlerUrl === 'https://bundler.example/base');
+  await checkRejects(
+    'Sepolia bundler saved under Base Sepolia is refused with a plain sentence',
+    () => setAaBundlerUrl(BASE, 'https://bundler.example/sepolia', { store: chainStore, transportFor: () => fakeBundler({ chainIdHex: '0xaa36a7' }) }),
+    'This bundler serves Ethereum Sepolia (chain id 11155111), but you are saving it for Base Sepolia (chain id 84532). Nothing was saved.',
+  );
+  check('… and Base Sepolia keeps its previous bundler', (await getAaConfig(BASE, chainStore)).bundlerUrl === 'https://bundler.example/base');
+  const sepStore = memoryStore();
+  await checkRejects(
+    'Base Sepolia bundler saved under Ethereum Sepolia is refused',
+    () => setAaBundlerUrl(AA_CHAIN, 'https://bundler.example/base', { store: sepStore, transportFor: () => fakeBundler({ chainIdHex: '0x14a34' }) }),
+    'This bundler serves Base Sepolia (chain id 84532), but you are saving it for Ethereum Sepolia (chain id 11155111). Nothing was saved.',
+  );
+  await checkRejects(
+    'a mainnet bundler saved under Ethereum Sepolia is refused',
+    () => setAaBundlerUrl(AA_CHAIN, 'https://bundler.example/main', { store: sepStore, transportFor: () => fakeBundler({ chainIdHex: '0x1' }) }),
+    'This bundler serves Ethereum (chain id 1), but you are saving it for Ethereum Sepolia',
+  );
+  await checkRejects(
+    'a mainnet bundler saved under Base Sepolia is refused, naming the URL to paste',
+    () => setAaBundlerUrl(BASE, 'https://bundler.example/main', { store: sepStore, transportFor: () => fakeBundler({ chainIdHex: '0x1' }) }),
+    'Paste the bundler URL for Base Sepolia (bundler URLs are per network; for example a ZeroDev URL ends in /chain/84532).',
+  );
+  await checkRejects(
+    'an unknown chain id is named by number',
+    () => setAaBundlerUrl(AA_CHAIN, 'https://bundler.example/other', { store: sepStore, transportFor: () => fakeBundler({ chainIdHex: '0x2105' }) }),
+    'This bundler serves chain id 8453, but',
+  );
+  await checkRejects(
+    'a bundler that does not answer eth_chainId is refused',
+    () => setAaBundlerUrl(AA_CHAIN, 'https://bundler.example/nochain', { store: sepStore, transportFor: () => fakeBundler({ chainIdHex: null }) }),
+    'The bundler did not answer eth_chainId, so the wallet cannot confirm which network it serves. Nothing was saved.',
+  );
+  await checkRejects(
+    'a malformed eth_chainId answer is refused',
+    () => setAaBundlerUrl(AA_CHAIN, 'https://bundler.example/odd', { store: sepStore, transportFor: () => fakeBundler({ chainIdHex: 'sepolia' }) }),
+    'is not a chain id',
+  );
+  const wrong = fakeBundler({ chainIdHex: '0x14a34' });
+  await setAaBundlerUrl(AA_CHAIN, 'https://bundler.example/x', { store: sepStore, transportFor: () => wrong }).catch(() => {});
+  check('a chain mismatch stops before eth_supportedEntryPoints', !wrong.calls.some((c) => c.method === 'eth_supportedEntryPoints'));
+  const after = await getAaConfig(AA_CHAIN, sepStore);
+  check('every chain refusal persisted nothing', after.bundlerUrl === null);
+}
 
 await checkRejects(
   'non-http(s) bundler URL is refused before any RPC',
@@ -875,7 +944,7 @@ await (async () => {
   await checkRejects(
     'mainnet paymaster save refused',
     () => setAaPaymaster(EVM_CHAIN_ID, 'https://pm.example', '', { store: gateStore, transportFor: counting }),
-    'Turn on Sepolia test mode',
+    'Turn on a test network (Ethereum Sepolia or Base Sepolia)',
   );
   const after = await getAaConfig(EVM_CHAIN_ID, gateStore);
   check(

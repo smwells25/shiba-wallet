@@ -63,6 +63,8 @@ import {
   requoteWcTransactionIfMoved,
   smartAccountMethodsFor,
   describeChain,
+  siweSheetState,
+  type SiweSheetState,
   type ParsedWcRequest,
   type WcProposalSummary,
   type WcRequestEvent,
@@ -708,7 +710,15 @@ function RequestBody({
   onApprove,
   onReject,
 }: {
-  item: { event: WcRequestEvent; parsed: ParsedWcRequest; address: string };
+  item: {
+    event: WcRequestEvent;
+    parsed: ParsedWcRequest;
+    address: string;
+    /** CAIP-2 id of the active chain the request was validated against. */
+    chain: string;
+    /** WalletConnect Verify result for this request (SIWE domain binding). */
+    identity?: WcDappIdentity;
+  };
   /** Set for a smart-account session. */
   smart: WcSmartBinding | null;
   dappName: string;
@@ -756,36 +766,20 @@ function RequestBody({
 
   if (parsed.kind === 'personal_sign') {
     return (
-      <>
-        <Text style={[styles.modalTitle, { color: theme.text }]}>Sign message</Text>
-        <Field label="From dApp" value={dappName} theme={theme} />
-        {accountLabel ? <Field label="Signing account" value={accountLabel} theme={theme} /> : null}
-        <Text style={[styles.fieldLabel, { color: theme.textMuted }]}>
-          {parsed.messageText !== null ? 'Message' : 'Message (hex — not printable text)'}
-        </Text>
-        <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border }]}>
-          <Text selectable style={[styles.monoText, { color: theme.text }]}>
-            {parsed.messageText ?? parsed.messageHex}
-          </Text>
-        </View>
-        {smart ? <SmartSigningNote smart={smart} theme={theme} /> : null}
-        {smart ? (
-          <PasskeySignerChoice smart={smart} theme={theme} signer={messageSigner} setSigner={setMessageSigner} />
-        ) : null}
-        <Text style={[styles.hint, { color: theme.textMuted }]}>
-          Signing proves account ownership to the dApp (EIP-191). It costs
-          nothing and moves no funds, but only sign messages from dApps you
-          trust.
-        </Text>
-        {busy ? (
-          <ActivityIndicator color={theme.accent} />
-        ) : (
-          <>
-            <Button title="Sign" onPress={onApprove} disabled={approveLocked} />
-            <Button title="Reject" variant="secondary" onPress={onReject} />
-          </>
-        )}
-      </>
+      <PersonalSignBody
+        item={item}
+        parsed={parsed}
+        smart={smart}
+        dappName={dappName}
+        accountLabel={accountLabel}
+        theme={theme}
+        busy={busy}
+        messageSigner={messageSigner}
+        setMessageSigner={setMessageSigner}
+        approveLocked={approveLocked}
+        onApprove={onApprove}
+        onReject={onReject}
+      />
     );
   }
 
@@ -1058,6 +1052,134 @@ function PasskeySignerChoice({
           prompt follows the approval.
         </Text>
       ) : null}
+    </View>
+  );
+}
+
+/**
+ * personal_sign approval (EIP-191). When the message is a Sign-In with
+ * Ethereum (EIP-4361) request, a summary card with the site, account,
+ * chain, statement, URI, nonce, times and resources comes first, with
+ * warnings for a domain that does not match the requesting origin, a
+ * different account or chain, an expired or not-yet-valid sign-in, and a
+ * message that only imitates the format (logic in wallet/siwe.ts and
+ * walletconnect.ts siweSheetState). Informational only: the exact message
+ * stays below, the digest and the signing path are unchanged, and the Sign
+ * button is never disabled by the card.
+ */
+function PersonalSignBody({
+  item,
+  parsed,
+  smart,
+  dappName,
+  accountLabel,
+  theme,
+  busy,
+  messageSigner,
+  setMessageSigner,
+  approveLocked,
+  onApprove,
+  onReject,
+}: {
+  item: { address: string; chain: string; identity?: WcDappIdentity };
+  parsed: Extract<ParsedWcRequest, { kind: 'personal_sign' }>;
+  smart: WcSmartBinding | null;
+  dappName: string;
+  accountLabel: string | null;
+  theme: Theme;
+  busy: boolean;
+  messageSigner: MessageSigner;
+  setMessageSigner: (signer: MessageSigner) => void;
+  approveLocked: boolean;
+  onApprove: () => void;
+  onReject: () => void;
+}) {
+  const [nowMs] = useState(() => Date.now());
+  const siwe: SiweSheetState = useMemo(
+    () => siweSheetState({ parsed, identity: item.identity, address: item.address, chain: item.chain, smart }, nowMs),
+    [parsed, item.identity, item.address, item.chain, smart, nowMs],
+  );
+  return (
+    <>
+      <Text style={[styles.modalTitle, { color: theme.text }]}>
+        {siwe.kind === 'siwe' ? siwe.summary.title : 'Sign message'}
+      </Text>
+      <Field label="From dApp" value={dappName} theme={theme} />
+      {accountLabel ? <Field label="Signing account" value={accountLabel} theme={theme} /> : null}
+      {siwe.kind === 'siwe' ? <SiweSummaryCard state={siwe} theme={theme} /> : null}
+      {siwe.kind === 'malformed' ? siwe.warnings.map((w) => <WarningBox key={w}>{w}</WarningBox>) : null}
+      <Text style={[styles.fieldLabel, { color: theme.textMuted }]}>
+        {parsed.messageText !== null ? 'Message (exactly what is signed)' : 'Message (hex — not printable text)'}
+      </Text>
+      <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border }]}>
+        <Text selectable style={[styles.monoText, { color: theme.text }]}>
+          {parsed.messageText ?? parsed.messageHex}
+        </Text>
+      </View>
+      {smart ? <SmartSigningNote smart={smart} theme={theme} /> : null}
+      {smart ? (
+        <PasskeySignerChoice smart={smart} theme={theme} signer={messageSigner} setSigner={setMessageSigner} />
+      ) : null}
+      <Text style={[styles.hint, { color: theme.textMuted }]}>
+        Signing proves account ownership to the dApp (EIP-191). It costs
+        nothing and moves no funds, but only sign messages from dApps you
+        trust.
+      </Text>
+      {busy ? (
+        <ActivityIndicator color={theme.accent} />
+      ) : (
+        <>
+          <Button title="Sign" onPress={onApprove} disabled={approveLocked} />
+          <Button title="Reject" variant="secondary" onPress={onReject} />
+        </>
+      )}
+    </>
+  );
+}
+
+/** The Sign-In with Ethereum card (EIP-4361): every field, then warnings and notes. */
+function SiweSummaryCard({
+  state,
+  theme,
+}: {
+  state: Extract<SiweSheetState, { kind: 'siwe' }>;
+  theme: Theme;
+}) {
+  const { summary } = state;
+  return (
+    <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border, gap: 10 }]}>
+      <Text style={[styles.summaryTitle, { color: theme.text }]}>Sign-In with Ethereum (EIP-4361)</Text>
+      {summary.rows.map((row) => (
+        <View key={row.label} style={[styles.fieldRow, { borderColor: theme.border }]}>
+          <Text style={[styles.fieldLabel, { color: theme.textMuted }]}>{row.label}</Text>
+          <Text
+            selectable
+            style={[styles.fieldValue, { color: theme.text }, row.mono ? { fontFamily: mono, fontSize: 13 } : null]}
+          >
+            {row.value}
+          </Text>
+        </View>
+      ))}
+      {summary.resources.length > 0 ? (
+        <View style={[styles.fieldRow, { borderColor: theme.border }]}>
+          <Text style={[styles.fieldLabel, { color: theme.textMuted }]}>
+            Resources ({summary.resources.length})
+          </Text>
+          {summary.resources.map((r, i) => (
+            <Text key={`${i}-${r}`} selectable style={[styles.monoText, { color: theme.text }]}>
+              • {r}
+            </Text>
+          ))}
+        </View>
+      ) : null}
+      {summary.warnings.map((w) => (
+        <WarningBox key={w}>{w}</WarningBox>
+      ))}
+      {summary.notes.map((n) => (
+        <Text key={n} style={[styles.hint, { color: theme.textMuted }]}>
+          {n}
+        </Text>
+      ))}
     </View>
   );
 }
@@ -1421,12 +1543,14 @@ function IdentityBanner({
   setAcknowledged: (v: boolean) => void;
   theme: Theme;
 }) {
-  if (identity.status === 'verified') {
-    return <Text style={[styles.simulationOk, { color: theme.success }]}>{identity.message}</Text>;
-  }
   return (
     <>
-      <WarningBox>{identity.message}</WarningBox>
+      {identity.status === 'verified' ? (
+        <Text style={[styles.simulationOk, { color: theme.success }]}>{identity.message}</Text>
+      ) : (
+        <WarningBox>{identity.message}</WarningBox>
+      )}
+      {identity.siweGate ? <WarningBox>{identity.siweGate}</WarningBox> : null}
       {identity.requiresAcknowledgement ? (
         <View style={styles.overrideRow}>
           <Switch value={acknowledged} onValueChange={setAcknowledged} />

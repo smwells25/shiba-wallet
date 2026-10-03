@@ -26,6 +26,13 @@ import { EVM_CHAIN_ID, prepareEvmSend, validateRecipient, type EvmSendQuote } fr
 import type { KeyValueStore } from './tokens.ts';
 import { EVM_MAINNET, evmProfileByCaip2 } from '../config/evm-chain.ts';
 import { getEndpoint, withEndpoint } from '../config/networks.ts';
+import {
+  classifySiweBytes,
+  describeSiweMessage,
+  malformedSiweWarnings,
+  type SiweMessage,
+  type SiweSummary,
+} from './siwe.ts';
 
 /**
  * WalletConnect v2 glue (Tier 1 feature 78): lets external dApps connect to
@@ -439,6 +446,13 @@ export interface WcDappIdentity {
   requiresAcknowledgement: boolean;
   /** One plain sentence for the approval sheet. */
   message: string;
+  /**
+   * Set by applySiweGate when a personal_sign request is a Sign-In with
+   * Ethereum message for a site other than the request origin (EIP-4361
+   * MUST-reject case): the reason, shown above the risk switch. Its
+   * presence also sets requiresAcknowledgement.
+   */
+  siweGate?: string;
 }
 
 function hostOf(url: string): string {
@@ -769,6 +783,89 @@ export function decodeMessageForDisplay(message: Uint8Array): string | null {
   } catch {
     return null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Sign-In with Ethereum (EIP-4361) summary for personal_sign (phase 11 item 3)
+// ---------------------------------------------------------------------------
+
+/**
+ * What the approval sheet shows above a personal_sign message:
+ *  - 'none': the message does not mention the sign-in phrase;
+ *  - 'malformed': it mentions it but does not conform to the EIP-4361 ABNF
+ *    (or is not printable text) — the EIP's "SHOULD warn" case;
+ *  - 'siwe': a conforming message with its summary card and warnings.
+ * Informational only: the digest, the signing path and the buttons are
+ * unchanged, and nothing is ever declined because of it.
+ */
+export type SiweSheetState =
+  | { kind: 'none' }
+  | { kind: 'malformed'; warnings: string[] }
+  | { kind: 'siwe'; message: SiweMessage; summary: SiweSummary };
+
+/**
+ * The origin the sign-in's domain is bound against: the Verify-attested
+ * origin when WalletConnect confirmed or contradicted the dApp's claim
+ * ('verified' / 'mismatch'), otherwise the URL the session's peer metadata
+ * gives (self-reported, labelled as such on the card).
+ */
+export function siweOriginFor(identity: WcDappIdentity | undefined): { url: string; source: 'verify' | 'metadata' } | null {
+  if (!identity) return null;
+  if ((identity.status === 'verified' || identity.status === 'mismatch') && identity.origin) {
+    return { url: identity.origin, source: 'verify' };
+  }
+  return identity.claimedUrl ? { url: identity.claimedUrl, source: 'metadata' } : null;
+}
+
+/**
+ * Folds the SIWE domain gate into the request's identity verdict, so the
+ * SAME risk switch governs it everywhere it is already enforced: the sheet's
+ * approve buttons (identityApprovalAllowed) and the provider's re-check
+ * before any signing (WalletConnectContext onApprove). The gate depends
+ * only on the message and the origin, not on the clock, so computing it
+ * once when the request is queued (wc-controller.ts) is stable.
+ */
+export function applySiweGate(identity: WcDappIdentity, state: SiweSheetState): WcDappIdentity {
+  if (state.kind !== 'siwe' || state.summary.gate === null) return identity;
+  return { ...identity, requiresAcknowledgement: true, siweGate: state.summary.gate };
+}
+
+function chainIdOfCaip2(caip2: string): bigint | null {
+  const m = /^eip155:([0-9]{1,78})$/.exec(caip2);
+  return m ? BigInt(m[1]) : null;
+}
+
+export function siweSheetState(
+  item: {
+    parsed: ParsedWcRequest;
+    identity?: WcDappIdentity;
+    /** The session's bound address (EOA or smart account). */
+    address: string;
+    /** CAIP-2 id of the active chain the request was validated against. */
+    chain: string;
+    smart: { address: string } | null;
+  },
+  nowMs: number,
+): SiweSheetState {
+  if (item.parsed.kind !== 'personal_sign') return { kind: 'none' };
+  const classified = classifySiweBytes(item.parsed.messageBytes, item.parsed.messageText);
+  if (classified.kind === 'none') return { kind: 'none' };
+  if (classified.kind === 'malformed') {
+    return { kind: 'malformed', warnings: malformedSiweWarnings(classified.reason, classified.printable) };
+  }
+  const summary = describeSiweMessage(classified.message, {
+    origin: siweOriginFor(item.identity),
+    sessionAddress: item.address,
+    activeChainId: chainIdOfCaip2(item.chain) ?? -1n,
+    chainName: (id) => {
+      const caip2 = `eip155:${id}`;
+      const name = describeChain(caip2);
+      return name === caip2 ? null : name;
+    },
+    nowMs,
+    smartAccount: item.smart ? { address: item.smart.address } : null,
+  });
+  return { kind: 'siwe', message: classified.message, summary };
 }
 
 // ---------------------------------------------------------------------------

@@ -285,7 +285,7 @@ console.log('check-aa-kernel: Base Sepolia (eip155:84532), the second test chain
   const store = memoryStore();
   await setAaBundlerUrl(SEPOLIA, BUNDLER_URL, { store, transportFor: () => fakeBundler() });
   await setAaKernelFactory(SEPOLIA, KERNEL_PREFILL.factory, NODE_URL, { store, transportFor: () => sepNode() });
-  await setAaBundlerUrl(BASE, 'https://bundler-base.example', { store, transportFor: () => fakeBundler() });
+  await setAaBundlerUrl(BASE, 'https://bundler-base.example', { store, transportFor: () => fakeBundler({ chainIdHex: '0x14a34' }) });
   const result = await setAaKernelFactory(BASE, KERNEL_PREFILL.factory, NODE_URL, { store, transportFor: () => baseNode() });
   const cfg = await getAaConfig(BASE, store);
   check('Base Sepolia: the pinned Kernel factory saves after every on-chain check', cfg.chain === BASE && cfg.accountType === 'kernel-v3.3' && same(cfg.factory, KERNEL_V3_3.factory) && result.accountId === 'kernel.advanced.v0.3.3');
@@ -299,6 +299,13 @@ console.log('check-aa-kernel: Base Sepolia (eip155:84532), the second test chain
   await checkRejects('a Base Sepolia node is refused for the Sepolia key', () => setAaKernelFactory(SEPOLIA, KERNEL_PREFILL.factory, NODE_URL, { store: rejectStore, transportFor: () => baseNode() }), 'expected 11155111');
   await checkRejects('a Base MAINNET node (0x2105) is refused for the Base Sepolia key', () => setAaKernelFactory(BASE, KERNEL_PREFILL.factory, NODE_URL, { store: rejectStore, transportFor: () => baseNode({ chainIdHex: '0x2105' }) }), 'expected 84532');
   await checkRejects('Base Sepolia: an unapproved factory is refused like on Sepolia', () => setAaKernelFactory(BASE, KERNEL_PREFILL.factory, NODE_URL, { store: rejectStore, transportFor: () => baseNode({ approved: false }) }), 'has not approved');
+  // Bundler chain check (ERC-7769 eth_chainId): the shared fakeBundler
+  // answers Sepolia unless told otherwise.
+  await checkRejects('a Sepolia bundler is refused for the Base Sepolia key', () => setAaBundlerUrl(BASE, BUNDLER_URL, { store: rejectStore, transportFor: () => fakeBundler() }), 'This bundler serves Ethereum Sepolia (chain id 11155111), but you are saving it for Base Sepolia (chain id 84532). Nothing was saved.');
+  await checkRejects('a Base Sepolia bundler is refused for the Sepolia key', () => setAaBundlerUrl(SEPOLIA, BUNDLER_URL, { store: rejectStore, transportFor: () => fakeBundler({ chainIdHex: '0x14a34' }) }), 'This bundler serves Base Sepolia (chain id 84532), but you are saving it for Ethereum Sepolia (chain id 11155111).');
+  await checkRejects('a mainnet bundler is refused for the Base Sepolia key', () => setAaBundlerUrl(BASE, BUNDLER_URL, { store: rejectStore, transportFor: () => fakeBundler({ chainIdHex: '0x1' }) }), 'This bundler serves Ethereum (chain id 1)');
+  await checkRejects('a Base MAINNET bundler (0x2105) is refused for the Base Sepolia key', () => setAaBundlerUrl(BASE, BUNDLER_URL, { store: rejectStore, transportFor: () => fakeBundler({ chainIdHex: '0x2105' }) }), 'This bundler serves chain id 8453, but you are saving it for Base Sepolia');
+  await checkRejects('a mainnet bundler key is refused by readiness before any request', () => setAaBundlerUrl(MAINNET, BUNDLER_URL, { store: rejectStore, transportFor: () => { throw new Error('no request expected'); } }), 'only on test networks');
   check('the refused cross-chain saves persisted nothing', (await rejectStore.getItem('shiba-wallet.aa-config.v1')) === null);
   await checkRejects('Base MAINNET (eip155:8453) is not a test network: the save is refused before any request', () => setAaKernelFactory('eip155:8453', KERNEL_PREFILL.factory, NODE_URL, { store: rejectStore, transportFor: () => { throw new Error('no request expected'); } }), 'only on test networks');
 
