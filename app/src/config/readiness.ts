@@ -174,8 +174,10 @@ export const FEATURE_READINESS: readonly FeatureReadiness[] = [
     title: 'Sending Dogecoin',
     status: 'blocked',
     reason:
-      'This wallet has never broadcast a real Dogecoin transaction. One real mainnet broadcast ' +
-      '(about 1 DOGE in fees) must succeed before Dogecoin sending is cleared for real funds.',
+      'The engine-built Dogecoin send path was proven with one real mainnet self-send on ' +
+      '2026-10-03 (txid 2f05331b…a6fd, block 6399309). Dogecoin sending still shares the ' +
+      'conditions every regular-account feature waits on: the phrase is not yet tied to ' +
+      'biometric authentication by default and there has been no real-phone build.',
     evidence: ['W6', 'F-41', 'W1', 'W2'],
     enforced: false,
   },

@@ -267,6 +267,9 @@ with ADRs D1–D7), offline end-to-end demo (examples/demo.mjs, run with
 
 ## Known untested remainder (recorded 2026-09-27, accepted by the Chairperson)
 
+- RESOLVED 2026-10-03 (see the Dogecoin mainnet demonstration record
+  at the end of this file): one real MAINNET self-send was broadcast and
+  confirmed. Original entry kept for history:
 - Dogecoin testnet BROADCAST has never been executed: every public
   testnet-DOGE faucet tried was dead (faucet.doge.toys returns
   "transfer error"; faucet.triangleplatform.com reports the service
@@ -3945,3 +3948,22 @@ once a development build exists.
       preference not relay policy. UNVERIFIED until the demonstration
       broadcast: live relay behaviour, NOWNodes' backend/peer
       -dustlimit/-harddustlimit/-minrelaytxfee settings.
+- [x] DOGECOIN MAINNET BROADCAST, PROVEN LIVE (2026-10-03). The
+      Chairperson funded the dev wallet's mainnet address
+      DEQ788Pe98Z97Le6feBa2P49JL7ETGSMNf with 10.69 DOGE. Dry run
+      (doge-mainnet-demo.mjs): host Blockbook over Dogecoin Core,
+      chain/genesis checks passed, quote at 1003 sat/vB (estimatefee/6
+      with the 1000 floor), engine-built 1 DOGE self-send, 226 bytes, fee
+      0.00226678 DOGE, change 9.68773322 DOGE, all 25 bitcoinjs decode
+      checks passed. Broadcast with DOGE_MAINNET_BROADCAST=1 and the txid
+      confirmed on stdin: accepted by Blockbook's POST /api/v2/sendtx/
+      (route now verified live), seen in the mempool at 03:14:09Z,
+      confirmed 1 at 03:16:47Z in block 6399309 (hash
+      d842c822b43996fbf089a0210be84cbb4207118a6c9c82622e51c7b047327d69);
+      the CTO re-read the transaction independently from the Blockbook
+      host: outputs 100000000 and 968773322 koinu, fees 226678, size
+      226. txid 2f05331b4e731e153636bdf92965882a79d2412eb3a5e3639e0380145465a6fd. This closes the
+      "Known untested remainder" Dogecoin item (W6 met, F-41 fixed; the
+      readiness row for dogecoin-send now cites only the shared
+      regular-account conditions W1/W2). The dev wallet keeps about 10.69
+      DOGE at that address for future demonstrations.
