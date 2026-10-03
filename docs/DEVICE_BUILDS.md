@@ -1,43 +1,172 @@
-# Physical-Device Builds (Phase 5, Item 6)
+# Physical-Device Builds
 
-Everything phone-only in the validation record — real Secure
-Enclave/StrongBox key storage, FaceID via expo-local-authentication,
-real camera optics, and store submission — needs a development build of
-the app rather than Expo Go. The configuration for that is now in
-place; the only missing ingredient is an Expo account login.
+First written for phase 5 item 6; revised 2026-10-02 for phase 9 item 3.
+The end-to-end build, submission and update procedure now lives in
+`docs/RELEASE.md`; this document covers what a build on a real phone is
+for, what to test on it, and the platform facts behind those tests.
+
+Everything phone-only in the validation record (real Secure
+Enclave/StrongBox key storage, Face ID through expo-local-authentication
+and the protected phrase class, real camera optics, passkeys, and the
+release-only behaviour a store build must show) needs a development,
+preview or store build rather than Expo Go.
 
 ## What exists
 
-- `app/eas.json` with three profiles per the EAS documentation
-  (docs.expo.dev/eas/json, verified 2026-09-28):
-  `development` (developmentClient, internal distribution — installs on
-  a registered device with the dev server), `preview` (internal
-  shareable build), `production` (store build).
-- `app/app.json` already carries the native configuration a build needs:
-  the expo-secure-store plugin, and expo-camera with the plain-language
-  NSCameraUsageDescription rationale (which replaces Expo Go's own
-  permission string on device builds).
+- `app/eas.json` with five build profiles, checked against the EAS
+  documentation (docs.expo.dev/eas/json) and validated offline with EAS
+  CLI's own `@expo/eas-json` library on 2026-10-02 (details in
+  `docs/RELEASE.md` section 4):
+  - `base`: pins Node 24.21.0; not built on its own.
+  - `development`: development client, internal distribution. Android
+    APK for phones and emulators; iOS build for registered iPhones.
+  - `development-simulator`: the same for the iOS Simulator (no Apple
+    account needed).
+  - `preview`: release mode without developer tools, internal
+    distribution, Android as an APK.
+  - `production`: store builds (Android App Bundle, iOS archive) with
+    remote build-number management.
+- `app/app.json` audited for device and store builds (`docs/RELEASE.md`
+  section 3): the expo-secure-store and expo-local-authentication plugins
+  write a plain `NSFaceIDUsageDescription`; expo-camera keeps its QR-only
+  `NSCameraUsageDescription` and no longer requests the microphone;
+  `android.allowBackup` is `false`; unused storage and audio permissions
+  are blocked.
 
-## What a human must do (one-time)
+## What is still missing before the first build
 
-1. Create or use an Expo account and log in: `npx eas-cli@latest login`.
-2. From `app/`: `npx eas-cli@latest build --profile development
-   --platform ios` (or `android`). iOS device builds additionally need an
-   Apple Developer account for signing; EAS walks through credentials
-   interactively.
-3. Install the produced build on the phone, run `npx expo start` from
-   `app/`, and scan the dev-server QR from the build.
+1. An Expo account, the iOS bundle identifier and the Android package
+   name (inputs from the Chairperson; `docs/RELEASE.md` section 2).
+2. `expo-dev-client`, which the development profiles require
+   (`npx expo install expo-dev-client` in `app/`).
+3. A post-install hook that builds the engine packages on EAS servers,
+   because their `dist/` folders are not committed (`docs/RELEASE.md`
+   section 2, step 3).
+4. For iOS device builds, a paid Apple Developer Program membership
+   (enrolled as an organization, which Apple requires of wallet apps) and
+   each test iPhone registered with `npx eas-cli@latest device:create`.
 
-## What to re-validate on the first device build
+An Android development build can also be made locally without any account
+(`npx expo run:android --device` after installing `expo-dev-client`;
+docs.expo.dev/develop/development-builds/introduction), which this machine
+can do with the Android SDK installed for the emulator work.
 
-In priority order, from the recorded emulator-validation gaps:
-FaceID prompt behavior on the seed reveal, send confirm, and auto-lock
-unlock (the OS passcode fallback matrix); StrongBox/Secure Enclave
-key storage (expo-secure-store WHEN_UNLOCKED_THIS_DEVICE_ONLY on real
-hardware); camera scanning with real optics against paper and screen
-QRs; WalletConnect pairing by scanning a real dApp's QR (the paste path
-is already live-proven); and the release-mode absence of dev-only
-behaviors (LogBox, the EXPO_NO_METRO_LAZY dev-server workaround).
+## What to re-validate on the first device builds
+
+In priority order. The W-numbers are the mainnet-readiness conditions in
+`docs/THREAT_MODEL.md` section 5.
+
+On a **development** build (real phones, iOS and Android):
+
+1. **W2, biometric prompts.** Face ID / fingerprint on the seed reveal,
+   send confirm, WalletConnect approvals and auto-lock unlock, and the OS
+   passcode fallback (expo-local-authentication with
+   `disableDeviceFallback: false`). On iOS, check that the Face ID prompt
+   shows the `NSFaceIDUsageDescription` text from `app/app.json`.
+2. **The protected phrase class on iOS** (never run anywhere yet): Settings
+   → Recovery phrase protection → Protect with biometrics; one prompt per
+   reveal and per approval; then re-enrol Face ID on a throwaway wallet
+   and confirm the app shows the unreadable-phrase message rather than "no
+   wallet" (`docs/THREAT_MODEL.md` 3.2.4–3.2.5).
+3. **W3, secure storage on real hardware.** Persistence across restarts and
+   updates; whether keys are StrongBox- or TEE-backed on Android cannot be
+   read from the app itself, so record the phone model and Android
+   version and treat hardware backing as unverified unless a platform tool
+   shows it.
+4. **Camera:** scanning paper and on-screen QR codes with real optics, a
+   wrong-chain QR (must show the normal validation error), and pairing
+   with a real dApp's WalletConnect QR.
+5. **Passkeys:** the checklist in the Passkeys section below (needs the
+   rpId domain).
+
+On a **preview** build (release mode; the closest thing to a store build
+that can be installed directly):
+
+6. **W4, release-only behaviour.** No LogBox toasts, no dev menu on shake,
+   no Metro connection; the app starts without a dev server. Screen
+   capture blocking per the next section, on both platforms.
+7. **W18, Android backup.** With `android:allowBackup="false"`, run the
+   cloud-backup and device-to-device tests from
+   developer.android.com/identity/data/testingbackup and confirm that
+   neither the secure-store entries nor AsyncStorage (contacts, endpoint
+   keys) are carried to the restored install.
+8. **W19, still open:** the Import screen (where the phrase is typed) has
+   no capture block, and there is no app-switcher privacy cover (findings
+   N-04, N-05). These need app changes before they can be re-validated.
+
+## Screenshot and screen-recording blocking in release builds
+
+The app blocks capture on the two screens that display the recovery
+phrase: `app/src/screens/BackupScreen.tsx` calls
+`usePreventScreenCapture()` for as long as the screen is mounted, and
+`app/src/screens/SettingsScreen.tsx` calls
+`preventScreenCaptureAsync('seed-reveal')` while the revealed phrase is
+shown and `allowScreenCaptureAsync('seed-reveal')` when it is hidden or
+the screen unmounts. Both screens render the phrase inline, not in a
+React Native `Modal` (which on Android would be a separate window).
+Facts below are from the installed `expo-screen-capture` 57.0.3 sources
+and the SDK 57 documentation
+(docs.expo.dev/versions/v57.0.0/sdk/screen-capture).
+
+**Release builds behave the same as Expo Go and development builds.**
+Neither native implementation checks the build type (no debug or
+`BuildConfig` branches in `ScreenCaptureModule.kt` or
+`ScreenCaptureModule.swift`), and no config plugin is involved. The
+Android behaviour was proven in Expo Go on the emulator (`AGENTS.md`,
+third emulator pass: `adb screencap` returned an empty file while the
+phrase was shown). Seeing it in a release build on real phones is still
+what W4 asks for.
+
+**Android: what is prevented.** `preventScreenCapture` adds
+`WindowManager.LayoutParams.FLAG_SECURE` to the current activity's window,
+and `allowScreenCapture` clears it. While the flag is set, the window's
+contents are excluded from screenshots and screen recordings, including
+recordings by other apps through the `android.media.projection` API that
+the Expo docs mention, and, per the Expo docs, "app switcher protection
+is automatically provided by `preventScreenCaptureAsync()` using the
+FLAG_SECURE window flag, which shows a blank screen in the recent apps
+preview". The flag applies to the whole activity window, so while it is
+set the entire app (not only the phrase) is protected.
+
+**Android: what is not prevented.** A second camera pointed at the
+screen; malware with root access; and, by our reading, accessibility
+services, which read the view hierarchy rather than the window's pixels
+(not tested). Other windows (system dialogs, any React Native `Modal`)
+do not inherit the flag. The flag is removed as soon as the screen hides
+the phrase.
+
+**iOS: what is done.** The Expo docs state: "On iOS, this prevents screen
+recordings and screenshots, and is only available on iOS 11+ (recordings)
+and iOS 13+ (screenshots)." In the source:
+
+- *Screenshots:* the module moves the key window's layer inside the layer
+  of a `UITextField` with `isSecureTextEntry = true`. iOS leaves
+  secure-text-entry content out of screenshots, so the screenshot shows a
+  blank area instead of the phrase. This relies on how UIKit renders
+  secure text fields, not on an Apple API for blocking screenshots (there
+  is none), so a future iOS version could change it.
+- *Recordings and mirroring:* if `UIScreen.main.isCaptured` is true when
+  blocking starts, or becomes true later
+  (`UIScreen.capturedDidChangeNotification`), the module places an opaque
+  black view over the window's first subview, and removes it when capture
+  stops.
+
+**iOS: what is not prevented.** The user is not stopped from taking the
+screenshot; it simply does not contain the protected content. The
+app-switcher snapshot is **not** covered: on iOS that needs the separate
+`enableAppSwitcherProtectionAsync()`, which the app never calls (finding
+N-05). Content presented in a different window would not be covered (not
+checked). A second camera, and a jailbroken device, are out of reach of
+any app.
+
+**How to test on devices** (from the Expo page): on the Android Emulator,
+`adb shell input keyevent 120` triggers a screenshot; on the iOS
+Simulator, Device → Trigger Screenshot. On real phones, take a screenshot
+and start a screen recording while the Backup screen and the Settings
+reveal are visible, then check the saved images and video, and check the
+app-switcher preview on both platforms.
+
+**Nothing on iOS has been observed yet**, in any build type.
 
 ## Passkeys (phase 8, item 3)
 
@@ -79,7 +208,8 @@ never resolves), and the feature refuses to run while it is set.
    entry for sharing credentials between an app and a website; whether
    passkeys alone need it is not verified, and the app does not add it.
 4. Make a new development build (the associated-domains entitlement and
-   the native module are compiled in).
+   the native module are compiled in). The identifiers in steps 2 and 3
+   are the same inputs `docs/RELEASE.md` section 2 asks for.
 
 Platform minimums: Expo SDK 57 already requires iOS 16.4 and compiles
 Android against SDK 36 (docs.expo.dev/versions/v57.0.0), above the
