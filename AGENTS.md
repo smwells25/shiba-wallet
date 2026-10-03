@@ -3448,3 +3448,76 @@ whenever the Expo account and identifiers arrive. Subagents on Opus.
       and 1 and the document should be updated; sendAa in general is not
       gated (screens never reach it on mainnet; full gating would need
       check-wc-5792 changes). Not eyeballed on a device.
+- [x] Item 5 — resilience and UX polish (commit e2bc5bb; new
+      check-failover.mjs 70 checks incl. mutation tests; check-tokens 23
+      offline / 28 with --live; the CTO's isolated-worktree run of the
+      offline runner: 2,319 app checks across 26 suites, lint and tsc
+      clean, ALL GREEN; the agent's run also bundled 7.3MB with the new
+      strings). ONE failover rule: runWithEndpointFailover in
+      app/src/config/endpoint-probe.ts — on a transport-level failure of a
+      DEFAULT endpoint (isEndpointFailure: fetch TypeErrors, aborts,
+      timeouts, SyntaxError, HTTP 401/403/404/408/425/429/5xx, JSON-RPC
+      -32005 / rate-limit text; NOT HTTP 400, reverts, insufficient funds,
+      archive-depth refusals or app-level errors) it reports the failure,
+      re-resolves the chain and repeats the operation ONCE on the new
+      candidate only if it is a different URL that passed the identity
+      probe, is not an override and is on the same network; never a third
+      attempt; overrides are never reported, re-resolved or probed around.
+      networks.ts: callWithFailover / withEndpoint (resolve at call time,
+      return the endpoint that answered, NoEndpointError when none) and
+      forgetDefaultEndpointChoices on reconnect; networks.ts now uses .ts
+      import extensions so Node loads it. Used by: useBalances
+      (loadNativeBalance; the hook takes activeEvmChainId so a mode flip
+      reloads all four rows — a deliberate trade-off that removed a lint
+      disable), useHistory (loadHistoryPage: Esplora, Solana and the
+      logs fallback; the indexer path is never failed over), every EOA
+      quote and Max in SendScreen (native, ERC-20, NFT, UTXO, Solana),
+      Swap (sell balance, fee estimate, allowance+prepare as one wrapped
+      call, allowance polls follow the healthy endpoint via
+      waitForAllowance's URL function + onPollError), Approvals (scan,
+      live re-read, Search older, revoke quote), useDelegation (its url is
+      the endpoint that answered). QUOTE PINNING: send.ts
+      quoteEndpointChange + QUOTE_ENDPOINT_CHANGED_TITLE ("Please review
+      again"); Send, Swap (approve / swap / smart-account swap) and the
+      approvals revoke re-resolve just before the biometric gate and
+      refuse with a host-only sentence ("Nothing was signed or sent…") if
+      the endpoint moved, returning to the form; sends always go out
+      through the quoted URL; the balance-change preview and risk facts
+      use the quote's URL by design (THREAT_MODEL T-21) — the preview
+      reports transport failures as a calm "unreachable" note
+      (simulation.ts onEndpointFailure / unreachable /
+      PREVIEW_UNREACHABLE_NOTE) and the pin check then forces a re-quote;
+      AA quotes are pinned to the endpoint resolved at quote time (bundler
+      vs node errors are indistinguishable); NFT/history indexers are
+      user configuration and never failed over. connectivity.ts: useOffline
+      / OfflineNotice (@react-native-community/netinfo 12.0.1,
+      useNetInfoInstance with reachabilityShouldRun off so no probe to
+      clients3.google.com; reads isConnected only; informs, never blocks)
+      and describeNetworkError; send.ts describeSendError gained a
+      transport-failure branch ("Could not reach the network endpoint.
+      Check your connection.") after all existing branches. Screens: calm
+      error + muted detail + Retry/Try again on Activity (Load more keeps
+      the list), NFTs (a failed Load more no longer replaces the gallery),
+      NftDetail, Tokens, Approvals, Connections (Try again calls
+      ensureStarted), Swap (sell balance "could not be loaded right now");
+      offline notice on Home/Send/Swap/Tokens/Approvals/Activity/NFTs/
+      Connections; accessibility roles/labels/hints/live regions on Home,
+      Send, Swap, Receive, QrScanner (spinner while permission loads),
+      Contacts, ContactsScreen, Activity rows (read as one sentence),
+      NFT tiles; RefreshControl tint colours added where missing; no
+      hard-coded light colours found in the owned files (Receive's white
+      QR card and the orange TESTNET badge are intentional). ESLint
+      disables: HomeScreen:230, NftDetailScreen:76 and useDelegation:83
+      removed by fixing the code; BalanceChangePreview, RiskWarnings and
+      NftImage converted to the reasoned form (true reasons: callers
+      pass inline objects keyed by a serialized key); WcApprovalSheet's
+      two left for the security slice. Strings asserted by scripts were
+      kept verbatim. FOLLOW-UPS outside the agent's files:
+      useTokenBalances.ts (Home token rows) has no failover yet (about
+      three lines with withEndpoint); WalletConnect transaction quotes are
+      neither failed over nor pinned; UpgradeAccountScreen should pin its
+      quote's URL like Send; components.tsx Button lacks
+      accessibilityState; Home chain cards nest Pressables (VoiceOver
+      grouping to check on a device). Nothing eyeballed on a device
+      (offline notice placement, TalkBack/VoiceOver, NetInfo accuracy on
+      real phones).
