@@ -4691,3 +4691,56 @@ emulator, 6 after. Subagents on Opus.
       the EntryPoint deposit (as the post-check always did); other screens
       call describeAaError without sender/bundlerUrl and keep the generic
       wording. Not re-run on the emulator yet.
+- [x] Item 6 — emulator pass over NFTs, approvals, risk warnings and
+      dark mode (2026-10-03; NOTE: Metro was still serving the worktree
+      at 357c7fe, nine commits behind main, so the pass describes that
+      tree; nothing sent; keys typed only via ADBKeyboard and every dump
+      redacted). PASSED: NFT indexer verify-before-save against the active
+      chain ("Verified ✓ — getNFTsForOwner answered and its block …
+      matches Ethereum Sepolia"), the /v2/ URL refusal with the pointer to
+      /nft/v3/, the empty gallery state, the offline notice + calm error +
+      Retry with wifi/data off, the honest "NFTs need an indexer" state
+      after Clear, the mainnet approvals range note and the archive
+      refusal warning box, the EIP-7702 delegated-recipient risk line, the
+      look-alike contact warning and the exact-match label, dark mode
+      across 30+ screens with no unreadable text or hard-coded light
+      surfaces. COULD NOT EXERCISE: NFT tiles/detail/spam toggle/Send-NFT
+      (no account holds a Sepolia NFT; minting would mean sending),
+      approval rows/revoke confirm/Search older (see F1), the
+      first-interaction and new-contract risk lines (F2). FINDINGS (fix
+      agent dispatched for F1–F4, F6, F7, F9, F10, D1, A1, A2): F1 (high)
+      in Sepolia mode the approvals manager scans only tracked tokens and
+      tokens are mainnet-only, so the live effectively-unlimited Sepolia
+      USDC → Permit2 allowance from the swaps is invisible, and the empty
+      state says "configure an NFT indexer" even when one is configured;
+      F2 (medium) risk checks in test mode: first-interaction is searched
+      only over tracked tokens (none on Sepolia), and the 50,400-block
+      new-contract lookback starts in pruned state on publicnode ("state
+      at block … is pruned"; backends inconsistent), so a 150-block-old
+      contract got no warning and a never-used contract shows no risk card
+      at all; F3 a recipient that rejects ETH (Permit2) surfaces "RPC error
+      3: execution reverted (eth_estimateGas)" under "The transaction could
+      not be sent." (nothing attempted); F4 the approvals warning shows the
+      vendor's raw text incl. a third-party advertisement, mainnet searches
+      only ~30 hours and offers no Search older after the refusal; F5 the
+      preview misses WETH deposits (Deposit event, not Transfer); F6 the
+      Mainnet readiness copy still says the phrase "is not yet tied to
+      biometric authentication by the phone's secure storage" while the
+      protection section says it is protected, and the cards show internal
+      ids (W1, N-01…) to users; F7 the NFTs "Open Settings" button lands at
+      the top of Settings (the section is ~8 screens down); F8 the gallery
+      queries only the EOA, never the Kernel smart account, without saying
+      so; F9 the offline detail line is a raw Java exception and absent
+      from the accessibility tree; F10 NFT indexer Clear has no
+      confirmation; F11 Home's links shift after async eligibility loads
+      (a tap aimed at Approvals opened Guardians). DARK MODE D1: white text
+      on the lighter dark-theme orange has roughly 2.3:1 contrast on primary
+      buttons, the test-networks chips and the selected type button.
+      ACCESSIBILITY A1: the Settings switches (Hide amounts, Show fiat
+      values, test mode) have no accessibility label (NAF in dumps); A2
+      decorative glyphs ("—", "ⓘ") read as text; A3 Activity lacks the
+      network · account header; A4 (dev only) the Expo Tools button
+      overlapped the header gear in dark mode. Incident handled: a swipe
+      over the open keyboard glide-typed into the "New account name" field;
+      cleared, Add account never tapped. End state: light mode, Account 1,
+      Sepolia, NFT indexer saved, Google IME restored, balance unchanged.
