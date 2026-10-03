@@ -9,10 +9,23 @@
  * before contacting the bundler if that simulation reverts.
  *
  * Environment variables:
- *   BUNDLER_URL   Sepolia endpoint serving the eth_sendUserOperation
+ *   CHAIN_ID      optional; 11155111 (Ethereum Sepolia, the default) or
+ *                 84532 (Base Sepolia, phase 10 item 3). Any other value is
+ *                 refused. The node's eth_chainId must match it, and every
+ *                 chain-bound value (userOpHash, self-bundled transaction)
+ *                 uses it. The Kernel v3.3 addresses and EntryPoint v0.7
+ *                 were verified read-only on Base Sepolia on 2026-10-03
+ *                 (app/src/config/evm-chain.ts EVM_BASE_SEPOLIA).
+ *   BUNDLER_URL   endpoint for CHAIN_ID serving the eth_sendUserOperation
  *                 namespace (the dev Alchemy URL serves node and bundler
- *                 methods). Probed with eth_supportedEntryPoints first.
- *   NODE_URL      optional; defaults to the public Sepolia RPC.
+ *                 methods on Sepolia; for Base Sepolia use the ZeroDev
+ *                 project URL https://rpc.zerodev.app/api/v3/<project>/chain/84532,
+ *                 which accepted Kernel deployment ops on Sepolia).
+ *                 Probed with eth_supportedEntryPoints first.
+ *   NODE_URL      optional; defaults to the public RPC of CHAIN_ID
+ *                 (Sepolia: scripts/testnet/config.mjs SEPOLIA_RPC; Base
+ *                 Sepolia: https://base-sepolia-rpc.publicnode.com, the
+ *                 app's first default candidate).
  *   KERNEL_INDEX  optional account index (CREATE2 salt); default 0.
  *   KERNEL_DIRECT_FACTORY=1
  *                 optional; use KernelFactory.createAccount directly as the
@@ -35,8 +48,20 @@
  *     set -a; . .dev-wallet/env; set +a
  *     BUNDLER_URL="$ALCHEMY_SEPOLIA" NODE_URL="$ALCHEMY_SEPOLIA" \
  *       SELF_BUNDLE_ON_REJECT=1 node scripts/testnet/kernel-smoke.mjs
- *   Dry run (anyone, read-only):
+ *   Live on Base Sepolia (needs test ETH on the dev EOA on Base Sepolia;
+ *   the dev EOA held 0 there on 2026-10-03, so this has NOT been run):
+ *     set -a; . .dev-wallet/env; set +a
+ *     CHAIN_ID=84532 KERNEL_FUND_ETH=0.004 \
+ *       BUNDLER_URL="https://rpc.zerodev.app/api/v3/$ZERODEV_PROJECT_ID/chain/84532" \
+ *       node scripts/testnet/kernel-smoke.mjs
+ *   Dry run (anyone, read-only; add CHAIN_ID=84532 for Base Sepolia):
  *     KERNEL_SMOKE_DRY_RUN=1 node scripts/testnet/kernel-smoke.mjs
+ *
+ * Base Sepolia is an OP-stack L2: each transaction also pays an L1 data fee
+ * from the sender's balance (docs.base.org/specifications/transactions/
+ * network-fees). The funding transfer below is unaffected (the fee is taken
+ * on top of the transferred value), and the bundler prices the L1 fee into
+ * preVerificationGas for UserOperations.
  */
 import { readFileSync } from 'node:fs';
 import { keccak_256 } from '@noble/hashes/sha3.js';
@@ -67,7 +92,21 @@ import { SEPOLIA_RPC } from './config.mjs';
 
 const DRY_RUN = process.env.KERNEL_SMOKE_DRY_RUN === '1';
 const BUNDLER_URL = process.env.BUNDLER_URL;
-const NODE_URL = process.env.NODE_URL ?? SEPOLIA_RPC;
+/** The test chains this smoke supports, with their default public RPC. */
+const CHAINS = {
+  '11155111': { name: 'Sepolia', rpc: SEPOLIA_RPC },
+  // Base Sepolia: PublicNode's documented endpoint (https://base.publicnode.com),
+  // the first default candidate of the app's Base Sepolia profile.
+  '84532': { name: 'Base Sepolia', rpc: 'https://base-sepolia-rpc.publicnode.com' },
+};
+const CHAIN_ID_TEXT = process.env.CHAIN_ID ?? '11155111';
+if (!Object.hasOwn(CHAINS, CHAIN_ID_TEXT)) {
+  console.error(`CHAIN_ID must be one of ${Object.keys(CHAINS).join(', ')} (got ${CHAIN_ID_TEXT}).`);
+  process.exit(1);
+}
+const CHAIN = CHAINS[CHAIN_ID_TEXT];
+const EXPECTED_CHAIN_ID = BigInt(CHAIN_ID_TEXT);
+const NODE_URL = process.env.NODE_URL ?? CHAIN.rpc;
 const INDEX = BigInt(process.env.KERNEL_INDEX ?? '0');
 const DIRECT_FACTORY = process.env.KERNEL_DIRECT_FACTORY === '1';
 const SELF_BUNDLE = process.env.SELF_BUNDLE_ON_REJECT === '1';
@@ -76,7 +115,7 @@ const PUBLIC_TEST_MNEMONIC =
 
 if (!DRY_RUN && !BUNDLER_URL) {
   console.error(
-    'Set BUNDLER_URL (Sepolia bundler RPC), or KERNEL_SMOKE_DRY_RUN=1 for a read-only dry run.',
+    `Set BUNDLER_URL (${CHAIN.name} bundler RPC), or KERNEL_SMOKE_DRY_RUN=1 for a read-only dry run.`,
   );
   process.exit(1);
 }
@@ -132,7 +171,7 @@ async function simulate(op, from, overrides) {
   const data = toHex(encodeHandleOps(op, from));
   const call = { from, to: ENTRYPOINT_V07, data, gas: '0x989680' };
   await node('eth_call', overrides ? [call, 'latest', overrides] : [call, 'latest']);
-  const userOpHash = toHex(getUserOpHash(op, ENTRYPOINT_V07, 11155111n));
+  const userOpHash = toHex(getUserOpHash(op, ENTRYPOINT_V07, EXPECTED_CHAIN_ID));
   try {
     const sim = await node('eth_simulateV1', [
       { blockStateCalls: [{ ...(overrides ? { stateOverrides: overrides } : {}), calls: [call] }] },
@@ -164,7 +203,10 @@ async function main() {
   console.log(`${DRY_RUN ? 'DRY RUN (public test mnemonic). ' : ''}Owner EOA: ${owner.address}`);
 
   const chainId = await nodeClient.chainId();
-  if (chainId !== 11155111n) throw new Error(`Not Sepolia: chain id ${chainId}`);
+  if (chainId !== EXPECTED_CHAIN_ID) {
+    throw new Error(`Not ${CHAIN.name}: the node reports chain id ${chainId}, expected ${EXPECTED_CHAIN_ID}`);
+  }
+  console.log(`Chain: ${CHAIN.name} (${chainId})`);
 
   const deployment = await verifyKernelDeployment(node, {
     metaFactory: DIRECT_FACTORY ? null : KERNEL_V3_3.metaFactory,
@@ -286,7 +328,7 @@ async function main() {
     );
     if (result.executed === false) throw new Error('Simulated execution reported success=false');
     console.log('\nDRY RUN PASSED: engine-built Kernel op validates (and executes) against the');
-    console.log('real EntryPoint v0.7 and Kernel v3.3 contracts on Sepolia. Nothing was broadcast.');
+    console.log(`real EntryPoint v0.7 and Kernel v3.3 contracts on ${CHAIN.name}. Nothing was broadcast.`);
     return;
   }
 
@@ -333,7 +375,7 @@ async function main() {
 
   console.log(`\nKERNEL SMOKE PASSED: ERC-7579 Kernel v3.3 account ${sender} deployed at the`);
   console.log('engine-predicted address, root validator owned by the dev seed EOA (D1),');
-  console.log('batch and single executions confirmed on Sepolia.');
+  console.log(`batch and single executions confirmed on ${CHAIN.name}.`);
 }
 
 /** RPC (hex string) UserOperation -> engine UserOperation. */
@@ -394,7 +436,7 @@ async function selfBundle(op, owner, fees) {
   );
   const tx = signEip1559(
     {
-      chainId: 11155111n,
+      chainId: EXPECTED_CHAIN_ID,
       nonce: await nodeClient.getTransactionCount(owner.address),
       maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
       maxFeePerGas: fees.maxFeePerGas,
@@ -408,7 +450,7 @@ async function selfBundle(op, owner, fees) {
   const hash = await nodeClient.sendRawTransaction(tx.rawHex);
   console.log(`Self-bundled handleOps transaction: ${hash}`);
   const receipt = await waitForTx(hash);
-  const userOpHash = toHex(getUserOpHash(op, ENTRYPOINT_V07, 11155111n));
+  const userOpHash = toHex(getUserOpHash(op, ENTRYPOINT_V07, EXPECTED_CHAIN_ID));
   const success = userOpEventSuccess(receipt.logs, userOpHash);
   console.log(`handleOps status ${receipt.status}; UserOperationEvent success=${success}`);
   if (receipt.status !== '0x1' || success !== true) throw new Error('Self-bundled op failed');

@@ -1,4 +1,4 @@
-import { EVM_SEPOLIA } from './evm-chain.ts';
+import { EVM_TEST_PROFILES } from './evm-chain.ts';
 
 /**
  * Chairperson decision (2026-10-02): the plain-feature rows ('blocked' but
@@ -95,12 +95,14 @@ export interface FeatureReadiness {
 
 /** The sentence every refusal and every gated screen ends with. */
 export const READINESS_TESTNET_HINT =
-  'Turn on Sepolia test mode in Settings → Developer to use this feature.';
+  'Turn on Sepolia test mode in Settings → Developer to use this feature (Base Sepolia, the other ' +
+  'test network there, works too).';
 
 /** Shown in Settings above the list, so the advisory entries are not misread. */
 export const READINESS_INTRO =
   'What this build allows with real funds on a main network, and why. Features marked “Test ' +
-  'networks only” are switched off outside Sepolia test mode and cannot be switched on. Features ' +
+  'networks only” are switched off outside the test networks (Sepolia, Base Sepolia) and cannot be ' +
+  'switched on. Features ' +
   'marked “Not yet cleared” still work on mainnet in this build, but the open items listed for ' +
   'them have not been closed, so use them with amounts you can afford to lose. Undoing something ' +
   'set up earlier (revoking, removing, vetoing) always stays available.';
@@ -275,12 +277,15 @@ export const FEATURE_READINESS: readonly FeatureReadiness[] = [
 ];
 
 /**
- * The CAIP-2 ids this wallet treats as test networks. Only the Sepolia
- * profile exists in the app today (config/evm-chain.ts). Any other id,
- * including an unknown or malformed one, counts as a main network, so a new
- * chain is gated until it is added here deliberately.
+ * The CAIP-2 ids this wallet treats as test networks: exactly the
+ * test-network profiles in config/evm-chain.ts (EVM_TEST_PROFILES —
+ * Ethereum Sepolia eip155:11155111 and, since phase 10 item 3, Base Sepolia
+ * eip155:84532). A profile is listed there only with `testnet: true`
+ * (scripts/check-readiness.mjs asserts both). Any other id, including an
+ * unknown or malformed one and Base MAINNET eip155:8453, counts as a main
+ * network, so a new chain is gated until it is added deliberately.
  */
-export const TEST_NETWORK_CHAINS: readonly string[] = [EVM_SEPOLIA.caip2];
+export const TEST_NETWORK_CHAINS: readonly string[] = EVM_TEST_PROFILES.map((p) => p.caip2);
 
 /** True only for a CAIP-2 id in TEST_NETWORK_CHAINS. */
 export function isTestNetwork(caip2: string): boolean {

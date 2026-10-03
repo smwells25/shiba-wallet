@@ -1,7 +1,10 @@
 /**
- * The active-EVM-chain profiles: Ethereum mainnet (the default) and the
- * Sepolia test network behind the Settings "Developer" toggle (phase 4,
- * item 6). This file is pure data with NO imports, like ./defaults.ts, so
+ * The active-EVM-chain profiles: Ethereum mainnet (the default) and two
+ * test networks chosen under Settings → Developer: Ethereum Sepolia (phase
+ * 4, item 6) and Base Sepolia (phase 10, item 3, the second test profile,
+ * which proves that a new EVM chain — smart accounts included — is a data
+ * entry here rather than a code change). This file is pure data with NO
+ * imports, like ./defaults.ts, so
  * Node scripts (scripts/check-devmode.mjs) can load it directly under
  * type stripping and pin every value.
  *
@@ -9,16 +12,17 @@
  * chain are we on" — the numeric chain id that send.ts verifies endpoints
  * against, the default RPC URL, explorer links, the WalletConnect
  * namespace chain, the mainnet/testnet badge, and the pinned ERC-4337
- * defaults — reads one of these two profiles, resolved through
- * evmProfileFor(sepolia) (storage-backed via config/prefs.ts +
+ * defaults — reads one of these profiles, resolved through
+ * evmProfileFor(prefs.testNetwork) (storage-backed via config/prefs.ts +
  * wallet/PrefsContext). Screens must never hardcode a second copy of any
  * of these values.
  *
  * The two modes never mix by construction: every per-chain store in the
  * app (endpoint overrides, AA bundler/factory config, history-indexer
  * URLs) is keyed by the ACTIVE profile's CAIP-2 id, so Sepolia
- * configuration lives under "eip155:11155111" and mainnet configuration
- * under "eip155:1"; flipping the toggle switches which keys are read, and
+ * configuration lives under "eip155:11155111", Base Sepolia configuration
+ * under "eip155:84532" and mainnet configuration under "eip155:1";
+ * changing the Developer choice switches which keys are read, and
  * the endpoint chain-id verification in send.ts / indexer.ts / aa.ts
  * refuses any endpoint whose eth_chainId does not match the active
  * profile.
@@ -66,8 +70,15 @@ export interface EvmChainProfile {
   chainIdDecimal: string;
   /** Human name for Settings rows and the send screen's network line. */
   label: string;
-  /** True for Sepolia: test funds, orange banner, testnet badge. */
+  /** True for the test networks: test funds, orange banner, testnet badge. */
   testnet: boolean;
+  /**
+   * The wording for this profile's mode in plain-language messages
+   * ("mainnet mode", "Sepolia test mode", "Base Sepolia test mode").
+   */
+  modeLabel: string;
+  /** The text of the orange TESTNET banner, or null on a main network. */
+  bannerText: string | null;
   /** What amounts/fees are labeled as ("ETH" / "test ETH"). */
   displaySymbol: string;
   /**
@@ -82,6 +93,22 @@ export interface EvmChainProfile {
   explorerTxBase: string;
   /** Pinned, verified ERC-4337 defaults, or null (mainnet: none pinned). */
   aaPrefill: EvmAaPrefill | null;
+  /**
+   * True when the pinned Kernel v3.3 addresses (the engine's KERNEL_V3_3)
+   * were checked on this chain with the same on-chain checks
+   * verifyKernelDeployment runs. Saving the Kernel factory in Settings
+   * still re-runs those checks live; this flag only records that the
+   * pre-fill is known to be right here.
+   */
+  kernelV33Verified: boolean;
+  /**
+   * True for OP-stack L2s (Base): every transaction also pays an L1 data
+   * fee on top of gas × price, charged from the sender's balance
+   * (https://docs.base.org/specifications/transactions/network-fees: "Every
+   * Base transaction consists of two costs: an L2 (execution) fee and an L1
+   * (security) fee"). The send flow's fee figures do not include it yet.
+   */
+  l1DataFee: boolean;
 }
 
 const MAINNET_RPC_DEFAULTS: readonly string[] = [
@@ -237,6 +264,12 @@ export const EVM_MAINNET: EvmChainProfile = {
   defaultRpcUrl: MAINNET_RPC_DEFAULTS[0],
   explorerTxBase: 'https://etherscan.io/tx/',
   aaPrefill: null,
+  modeLabel: 'mainnet mode',
+  bannerText: null,
+  // The KERNEL_V3_3 constants were confirmed read-only on mainnet in phase 7
+  // item 1 (AGENTS.md); mainnet use stays gated by config/readiness.ts.
+  kernelV33Verified: true,
+  l1DataFee: false,
 };
 
 export const EVM_SEPOLIA: EvmChainProfile = {
@@ -259,9 +292,185 @@ export const EVM_SEPOLIA: EvmChainProfile = {
     implementation: '0x68641DE71cfEa5a5d0D29712449Ee254bb1400C2',
     entryPoint: '0x0000000071727De22E5E9d8BAf0edAc6f37da032',
   },
+  modeLabel: 'Sepolia test mode',
+  bannerText: 'TESTNET — Sepolia test mode is on. Amounts are test ETH, not real funds.',
+  // Confirmed read-only on Sepolia in phase 7 item 1 and live-proven since.
+  kernelV33Verified: true,
+  l1DataFee: false,
 };
 
-/** The active EVM chain for the given developer-mode flag. */
-export function evmProfileFor(sepolia: boolean): EvmChainProfile {
-  return sepolia ? EVM_SEPOLIA : EVM_MAINNET;
+/**
+ * Base Sepolia default RPC candidates, in order (config/networks.ts uses the
+ * first one whose eth_chainId probe answers 0x14a34 = 84532). All three were
+ * probed live on 2026-10-03 from the development machine: eth_chainId
+ * 0x14a34, the same eth_blockNumber at the same moment, eth_getBalance,
+ * eth_estimateGas, eth_maxPriorityFeePerGas and eth_getBlockByNumber
+ * answered, eth_sendRawTransaction is served (a deliberately malformed
+ * one-byte payload was refused with -32602 "failed to decode signed
+ * transaction", so nothing could be broadcast), and eth_simulateV1 with
+ * traceTransfers returned the ETH pseudo-Transfer log from
+ * 0xeeee...eeee, so the balance-change preview works on all three.
+ *
+ *  1. https://base-sepolia-rpc.publicnode.com — PublicNode (Allnodes). Its
+ *     Base page https://base.publicnode.com lists it as the "Testnet" /
+ *     "Sepolia" RPC endpoint (page data: "platform":"base-sepolia-rpc",
+ *     "endpoint":"https://base-sepolia-rpc.publicnode.com"). Caveat: that
+ *     record (and the Base mainnet one) also carries
+ *     "showDeprecatedMessage":true with "deprecatedOn" 2024-02-19, which the
+ *     page does not explain (that date matches the Base Goerli shutdown, not
+ *     this endpoint); the endpoint answered every probe and the page showed
+ *     live traffic for it. Ranked FIRST because it serves eth_getLogs over
+ *     the app's 9,000-block windows (token-history.ts, approvals.ts,
+ *     risk.ts and the recovery owner scan all use them).
+ *  2. https://sepolia.base.org — the chain operator's own endpoint,
+ *     documented on https://docs.base.org/base-chain/quickstart/connecting-to-base
+ *     ("| RPC endpoint | `https://mainnet.base.org` | `https://sepolia.base.org` |",
+ *     "| Chain ID | `8453` | `84532` |", "| Currency | ETH | ETH |"). Ranked
+ *     second only because it refuses eth_getLogs over more than 1,000
+ *     blocks (-32614 "eth_getLogs is limited to a 1,000 range", observed
+ *     2026-10-03), which would break the 9,000-block log windows above;
+ *     every other method the app uses answered. The same page names a
+ *     separate "Transaction submission" endpoint,
+ *     https://sepolia-sequencer.base.org, with the note "Use the
+ *     transaction submission endpoint only to send transactions. Use the RPC
+ *     endpoint for all other requests." It is NOT a candidate here: it
+ *     answers eth_chainId with HTTP 403 / -32601 "rpc method is not allowed",
+ *     so it cannot pass the chain-identity probe, and the app sends and reads
+ *     through one endpoint. Sending through the RPC endpoints above is
+ *     served (see the malformed-payload probe) but no real transaction has
+ *     been broadcast on Base Sepolia by this wallet yet.
+ *  3. https://base-sepolia-testnet.api.pocket.network — Pocket Network
+ *     Foundation. https://api.pocket.network/ lists "Base Sepolia Testnet
+ *     RPC" — "Public Base Sepolia testnet JSON-RPC endpoint by Pocket
+ *     Network. No API key required; fair-use limits apply." —
+ *     "endpointURL": "https://base-sepolia-testnet.api.pocket.network".
+ *     Served the 9,000-block eth_getLogs window.
+ *
+ * Checked and NOT added (2026-10-03):
+ *  - https://public.1rpc.io/base-sepolia: HTTP 400 "unknown network" (the
+ *    1RPC networks page https://docs.1rpc.io/using-the-web3-api/networks
+ *    lists only https://public.1rpc.io/base for Base).
+ *  - https://base-sepolia.drpc.org answered eth_chainId 0x14a34 and
+ *    eth_simulateV1, but no dRPC page documenting it as a keyless public
+ *    endpoint was checked, and dRPC's free plan refused Ethereum Sepolia
+ *    earlier (see SEPOLIA_RPC_DEFAULTS), so it was left out.
+ */
+const BASE_SEPOLIA_RPC_DEFAULTS: readonly string[] = [
+  'https://base-sepolia-rpc.publicnode.com',
+  'https://sepolia.base.org',
+  'https://base-sepolia-testnet.api.pocket.network',
+];
+
+/**
+ * Base Sepolia (phase 10, item 3), Base's test network: an OP-stack L2 that
+ * settles to Ethereum Sepolia. Facts and sources:
+ *
+ *  - chain id 84532 (0x14a34), native currency ETH, explorer
+ *    https://sepolia.basescan.org: the network table on
+ *    https://docs.base.org/base-chain/quickstart/connecting-to-base (quoted
+ *    on BASE_SEPOLIA_RPC_DEFAULTS above), fetched 2026-10-03; viem's chain
+ *    definition (wevm/viem src/chains/definitions/baseSepolia.ts) agrees
+ *    (id 84532, symbol ETH, explorer https://sepolia.basescan.org). The
+ *    transaction-page path /tx/<hash> follows the Etherscan-family
+ *    convention the other profiles use; the explorer answered automated
+ *    requests with a Cloudflare challenge (HTTP 403), so that path itself
+ *    could not be fetched headlessly.
+ *  - ERC-4337 / Kernel, checked read-only on 2026-10-03 against this
+ *    chain's RPC (https://sepolia.base.org and publicnode): EntryPoint v0.7
+ *    0x0000000071727De22E5E9d8BAf0edAc6f37da032 has code byte-identical to
+ *    Ethereum Sepolia's; the engine's verifyKernelDeployment passed for the
+ *    pinned KERNEL_V3_3 addresses (code at the KernelFactory, the Kernel
+ *    v3.3 implementation, the ECDSA validator and the meta factory;
+ *    factory.implementation() is the pinned implementation; entrypoint() is
+ *    v0.7; accountId() is "kernel.advanced.v0.3.3"; the meta factory
+ *    approves the factory; the validator reports isModuleType(1)), and
+ *    EntryPoint.getDepositInfo(meta factory) shows it staked with 0.1 ETH
+ *    and an 86,400 s unstake delay, the same as on Ethereum Sepolia. The
+ *    factory, meta factory and ECDSA validator runtime code is
+ *    byte-identical to Ethereum Sepolia's; the Kernel implementation (and
+ *    the guardian WeightedECDSAValidator) differ in exactly two places, the
+ *    cached EIP-712 chain id (0x014a34 vs 0xaa36a7) and the cached domain
+ *    separator, which were recomputed for each chain and match — i.e. the
+ *    same code compiled with solady's chain-id immutables. The session-key
+ *    signer and policies, RecoveryAction, WebAuthnValidator v0.0.3 and
+ *    Daimo's P256Verifier are byte-identical too, and the secp256r1
+ *    precompile at 0x100 answers (the engine's detectP256Precompile returned
+ *    true; Base documents P256VERIFY "introduced Fjord", 6,900 gas since the
+ *    Azul upgrade, at https://docs.base.org/specifications/base-protocol/execution/precompiles).
+ *  - SimpleAccount: the Ethereum Sepolia SimpleAccountFactory
+ *    0x91E6…8985 and its implementation also have byte-identical code here,
+ *    but the full AA_STACK verification (entryPoint() of the implementation)
+ *    was not run on this chain, so it is NOT pre-filled: aaPrefill is null
+ *    and the Settings factory field starts empty for SimpleAccount. Kernel
+ *    v3.3 is the smart-account type to use here (its pre-fill comes from
+ *    the engine constants, verified above).
+ *  - Bundlers: the ZeroDev project URL for chain 84532 answered eth_chainId
+ *    0x14a34 and eth_supportedEntryPoints including v0.7, and served
+ *    pimlico_getUserOperationGasPrice (rundler_maxPriorityFeePerGas: not
+ *    served), probed 2026-10-03. Bundler URLs embed keys, so none is
+ *    shipped; each test network keeps its own saved bundler.
+ *  - Not available here: 0x swap quotes (0x's supported-chain list,
+ *    https://docs.0x.org/docs/introduction/supported-chains, lists Base
+ *    8453 but no Base Sepolia, checked 2026-10-03); tracked ERC-20 tokens
+ *    (mainnet assets, hidden in every test mode); fiat prices (test assets
+ *    are never priced); NFT explorer links, the risk module's new-contract
+ *    age check and readable recovery-file names have no Base Sepolia entry
+ *    and fall back to "none" / the CAIP-2 id.
+ *  - L1 data fee: see l1DataFee. A live GasPriceOracle getL1Fee probe
+ *    (2026-10-03) put it at 5,895,253,350 wei (about 5.9 gwei)
+ *    for a 112-byte transaction, about 5% of a 21,000-gas transfer's L2
+ *    fee at the time. op-geth's buyGas balance check adds the L1 cost to
+ *    gas limit × max fee + value (ethereum-optimism/op-geth, branch
+ *    optimism, core/state_transition.go, "balanceCheck.Add(balanceCheck,
+ *    l1Cost)"), so a Max send that leaves exactly gas × max fee is expected
+ *    to be refused for insufficient funds (reasoned from source, not run).
+ */
+export const EVM_BASE_SEPOLIA: EvmChainProfile = {
+  caip2: 'eip155:84532',
+  chainIdDecimal: '84532',
+  label: 'Base Sepolia',
+  testnet: true,
+  displaySymbol: 'test ETH',
+  defaultRpcUrls: BASE_SEPOLIA_RPC_DEFAULTS,
+  defaultRpcUrl: BASE_SEPOLIA_RPC_DEFAULTS[0],
+  explorerTxBase: 'https://sepolia.basescan.org/tx/',
+  aaPrefill: null,
+  modeLabel: 'Base Sepolia test mode',
+  bannerText: 'TESTNET — Base Sepolia test mode is on. Amounts are test ETH, not real funds.',
+  kernelV33Verified: true,
+  l1DataFee: true,
+};
+
+/** The test-network profiles, in the order Settings → Developer lists them. */
+export const EVM_TEST_PROFILES: readonly EvmChainProfile[] = [EVM_SEPOLIA, EVM_BASE_SEPOLIA];
+
+/** Every EVM profile the app knows (mainnet first). */
+export const EVM_PROFILES: readonly EvmChainProfile[] = [EVM_MAINNET, ...EVM_TEST_PROFILES];
+
+/** The CAIP-2 id of a test-network profile (the stored Developer choice). */
+export type TestNetworkId = 'eip155:11155111' | 'eip155:84532';
+
+/** The profile with this CAIP-2 id, or undefined for a chain the app has no profile for. */
+export function evmProfileByCaip2(caip2: string): EvmChainProfile | undefined {
+  return EVM_PROFILES.find((p) => p.caip2 === caip2);
+}
+
+/** True when `caip2` names one of the test-network profiles above. */
+export function isTestProfileId(caip2: unknown): caip2 is TestNetworkId {
+  return typeof caip2 === 'string' && EVM_TEST_PROFILES.some((p) => p.caip2 === caip2);
+}
+
+/**
+ * The active EVM chain. `selection` is the stored Developer choice
+ * (prefs.testNetwork): null for mainnet, or a test profile's CAIP-2 id. A
+ * boolean is still accepted for callers written before the second test
+ * network existed: false is mainnet and true is Sepolia (the only test
+ * network then). An unrecognised string — which config/prefs.ts never
+ * stores — resolves to Sepolia rather than mainnet, so a damaged value can
+ * never move a test-mode user onto real funds.
+ */
+export function evmProfileFor(selection: boolean | string | null): EvmChainProfile {
+  if (selection === false || selection === null) return EVM_MAINNET;
+  if (selection === true) return EVM_SEPOLIA;
+  return EVM_TEST_PROFILES.find((p) => p.caip2 === selection) ?? EVM_SEPOLIA;
 }

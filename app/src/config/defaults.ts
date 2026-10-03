@@ -1,6 +1,6 @@
 // Explicit .ts extension: this module is loaded directly by Node scripts
 // under type stripping, which resolves relative specifiers literally.
-import { EVM_MAINNET, EVM_SEPOLIA } from './evm-chain.ts';
+import { EVM_BASE_SEPOLIA, EVM_MAINNET, EVM_SEPOLIA } from './evm-chain.ts';
 
 /**
  * Default network endpoints, as pure data.
@@ -177,8 +177,9 @@ export const DEFAULT_NETWORKS: NetworkDefault[] = [
 ];
 
 /**
- * The Sepolia network entry used in place of the Ethereum row while the
- * Settings "Sepolia test mode" toggle is on (phase 4, item 6). Derived
+ * The Sepolia network entry used in place of the Ethereum row while
+ * Sepolia is the chosen test network in Settings → Developer (phase 4,
+ * item 6). Derived
  * from the EVM_SEPOLIA profile in ./evm-chain.ts — the single source for
  * every Sepolia value — never duplicated by hand here. The distinct
  * chainId keys a separate endpoint-override slot in ./networks.ts, so a
@@ -197,8 +198,29 @@ export const SEPOLIA_NETWORK: NetworkDefault = {
   note: 'Sepolia test network — balances and sends here are test ETH, not real funds.',
 };
 
+/**
+ * The Base Sepolia network entry used in place of the Ethereum row while
+ * Base Sepolia is the chosen test network (phase 10, item 3). Derived from
+ * the EVM_BASE_SEPOLIA profile in ./evm-chain.ts exactly like
+ * SEPOLIA_NETWORK; its distinct chainId keys its own endpoint-override slot.
+ */
+export const BASE_SEPOLIA_NETWORK: NetworkDefault = {
+  chainId: EVM_BASE_SEPOLIA.caip2,
+  label: EVM_BASE_SEPOLIA.label,
+  kind: 'evm-jsonrpc',
+  defaultUrls: EVM_BASE_SEPOLIA.defaultRpcUrls,
+  defaultUrl: EVM_BASE_SEPOLIA.defaultRpcUrls[0],
+  decimals: 18,
+  symbol: EVM_BASE_SEPOLIA.displaySymbol,
+  note: 'Base Sepolia test network — balances and sends here are test ETH, not real funds.',
+};
+
+/** The network entries of the test-network profiles, in EVM_TEST_PROFILES order. */
+export const TEST_EVM_NETWORKS: readonly NetworkDefault[] = [SEPOLIA_NETWORK, BASE_SEPOLIA_NETWORK];
+
 export function networkDefaultFor(chainId: string): NetworkDefault | undefined {
-  if (chainId === SEPOLIA_NETWORK.chainId) return SEPOLIA_NETWORK;
+  const test = TEST_EVM_NETWORKS.find((n) => n.chainId === chainId);
+  if (test) return test;
   return DEFAULT_NETWORKS.find((n) => n.chainId === chainId);
 }
 
@@ -206,9 +228,10 @@ export function networkDefaultFor(chainId: string): NetworkDefault | undefined {
  * One chain "slot" of the app (the four launch chains, keyed by the
  * mainnet CAIP-2 ids the accounts and routes carry) resolved to the
  * network that is ACTIVE for it right now. Only the EVM slot ever swaps:
- * with Sepolia test mode on, its network becomes SEPOLIA_NETWORK while
- * `slot` stays 'eip155:1' so accounts, navigation params and per-slot UI
- * keep matching. Pure so scripts/check-devmode.mjs can pin the mapping.
+ * with a test network chosen, its network becomes that test network's
+ * entry (SEPOLIA_NETWORK or BASE_SEPOLIA_NETWORK) while `slot` stays
+ * 'eip155:1' so accounts, navigation params and per-slot UI keep matching.
+ * Pure so scripts/check-devmode.mjs can pin the mapping.
  */
 export interface ActiveNetwork {
   /** The stable slot id (always the mainnet CAIP-2 id from DEFAULT_NETWORKS). */
@@ -217,9 +240,22 @@ export interface ActiveNetwork {
   network: NetworkDefault;
 }
 
-export function resolveActiveNetworks(sepolia: boolean): ActiveNetwork[] {
+/**
+ * The EVM network entry for a Developer choice: null / false for mainnet,
+ * a test profile's CAIP-2 id for that test network, and true (the value
+ * older callers pass, from before the second test network) for Sepolia.
+ * An unrecognised string resolves to Sepolia, matching evmProfileFor.
+ */
+function evmNetworkFor(selection: boolean | string | null): NetworkDefault | null {
+  if (selection === false || selection === null) return null;
+  if (selection === true) return SEPOLIA_NETWORK;
+  return TEST_EVM_NETWORKS.find((n) => n.chainId === selection) ?? SEPOLIA_NETWORK;
+}
+
+export function resolveActiveNetworks(selection: boolean | string | null): ActiveNetwork[] {
+  const testNetwork = evmNetworkFor(selection);
   return DEFAULT_NETWORKS.map((n) => ({
     slot: n.chainId,
-    network: n.kind === 'evm-jsonrpc' && sepolia ? SEPOLIA_NETWORK : n,
+    network: n.kind === 'evm-jsonrpc' && testNetwork ? testNetwork : n,
   }));
 }

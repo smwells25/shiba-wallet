@@ -25,13 +25,14 @@ import {
  * preserves the invariant that src/wallet/storage.ts is the only module
  * touching the secure store (which holds only the mnemonic).
  *
- * SEPOLIA TEST MODE (phase 4, item 6): the resolvers below are the single
- * place where the app's EVM "slot" ('eip155:1', the id accounts and routes
- * carry) is translated to the ACTIVE EVM network. With the Settings
- * developer toggle on, the Ethereum slot resolves to the Sepolia network
- * (see resolveActiveNetworks in ./defaults.ts); overrides are keyed by the
- * ACTIVE chain's CAIP-2 id, so a custom Sepolia RPC and a custom mainnet
- * RPC are stored under different keys and can never bleed into each other.
+ * TEST NETWORKS (phase 4, item 6; phase 10, item 3): the resolvers below
+ * are the single place where the app's EVM "slot" ('eip155:1', the id
+ * accounts and routes carry) is translated to the ACTIVE EVM network. With
+ * a test network chosen in Settings → Developer, the Ethereum slot resolves
+ * to that network (Sepolia or Base Sepolia; see resolveActiveNetworks in
+ * ./defaults.ts); overrides are keyed by the ACTIVE chain's CAIP-2 id, so a
+ * custom Sepolia, Base Sepolia or mainnet RPC is stored under its own key
+ * and can never bleed into another mode.
  *
  * DEFAULT FALLBACK (2026-10-01): without an override, the URL is chosen
  * from the network's ordered default candidates by ./endpoint-probe.ts —
@@ -181,7 +182,8 @@ async function resolveSlot(
 /**
  * Resolves the effective endpoint for one chain. Accepts either a slot id
  * (the mainnet CAIP-2 ids accounts and routes carry) or the active
- * network's own chain id (e.g. 'eip155:11155111' while Sepolia mode is on).
+ * network's own chain id (e.g. 'eip155:11155111' while Sepolia is the test
+ * network, 'eip155:84532' while Base Sepolia is).
  * Only the requested chain is resolved (and, if needed, probed).
  * `options.store` (endpoint overrides, the Blockbook config and the
  * preferences all live in it; AsyncStorage in the app) exists for the
@@ -193,7 +195,7 @@ export async function getEndpoint(
 ): Promise<NetworkEndpoint | undefined> {
   const store = options.store ?? AsyncStorage;
   const [overrides, prefs] = await Promise.all([loadOverrides(store), loadPrefs(store)]);
-  const match = resolveActiveNetworks(prefs.sepolia).find(
+  const match = resolveActiveNetworks(prefs.testNetwork).find(
     (e) => e.slot === chainId || e.network.chainId === chainId,
   );
   return match ? resolveSlot(match.slot, match.network, overrides, store) : undefined;
@@ -206,7 +208,7 @@ export async function getAllEndpoints(
   const store = options.store ?? AsyncStorage;
   const [overrides, prefs] = await Promise.all([loadOverrides(store), loadPrefs(store)]);
   return Promise.all(
-    resolveActiveNetworks(prefs.sepolia).map(({ slot, network }) =>
+    resolveActiveNetworks(prefs.testNetwork).map(({ slot, network }) =>
       resolveSlot(slot, network, overrides, store),
     ),
   );

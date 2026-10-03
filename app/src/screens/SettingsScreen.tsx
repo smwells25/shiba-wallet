@@ -17,6 +17,7 @@ import { type NetworkDefault } from '../config/defaults';
 import { describeDefaultChoice, describeDefaultFallbackNote } from '../config/endpoint-probe';
 import { INSECURE_ENDPOINT_MESSAGE } from '../config/endpoint-url';
 import { AUTO_LOCK_CHOICES } from '../config/prefs';
+import { EVM_TEST_PROFILES, type TestNetworkId } from '../config/evm-chain';
 import {
   FEATURE_READINESS,
   READINESS_INTRO,
@@ -950,7 +951,9 @@ export function SettingsScreen({ navigation }: Props) {
   const { revealMnemonic, wipe, accounts } = useWallet();
   const {
     sepolia,
-    setSepolia,
+    testNetwork,
+    setTestNetwork,
+    evmChain,
     hideAmounts,
     setHideAmounts,
     autoLockMs,
@@ -982,13 +985,14 @@ export function SettingsScreen({ navigation }: Props) {
     getAllEndpoints().then(setEndpoints, () => setEndpoints([]));
   }, []);
 
-  // sepolia is a deliberate trigger here even though the effect body does not
-  // read it: flipping the developer toggle must reload the endpoint list at
-  // once so the EVM row (and the AA and indexer sections keyed off it) swap
-  // to the active network immediately.
+  // testNetwork is a deliberate trigger here even though the effect body does
+  // not read it: changing the developer test-network choice (including
+  // Sepolia ↔ Base Sepolia, where the on/off `sepolia` flag stays true) must
+  // reload the endpoint list at once so the EVM row (and the AA and indexer
+  // sections keyed off it) swap to the active network immediately.
   useEffect(() => {
     reloadEndpoints();
-  }, [reloadEndpoints, sepolia]);
+  }, [reloadEndpoints, testNetwork]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1643,28 +1647,52 @@ export function SettingsScreen({ navigation }: Props) {
 
       <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: theme.text }]}>Developer</Text>
-        <View style={styles.toggleRow}>
-          <Text style={[styles.toggleLabel, { color: theme.text }]}>Sepolia test mode</Text>
-          <Switch value={sepolia} onValueChange={(v) => void setSepolia(v)} />
+        <Text style={[styles.toggleLabel, { color: theme.text }]}>Test network</Text>
+        <View style={styles.endpointButtons}>
+          {[
+            { label: 'Off (mainnet)', value: null },
+            ...EVM_TEST_PROFILES.map((p) => ({ label: p.label, value: p.caip2 as TestNetworkId })),
+          ].map((choice) => (
+            <Button
+              key={choice.label}
+              title={testNetwork === choice.value ? `✓ ${choice.label}` : choice.label}
+              variant={testNetwork === choice.value ? 'primary' : 'secondary'}
+              onPress={() => void setTestNetwork(choice.value)}
+              style={styles.endpointButton}
+            />
+          ))}
         </View>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          Switches the app&apos;s EVM chain to the Sepolia test network (chain id
-          11155111): balances, sends, WalletConnect and the smart-account
-          path all run against Sepolia with test ETH, an orange TESTNET
-          banner replaces the mainnet warning, and explorer links go to
-          sepolia.etherscan.io. Sepolia keeps its own endpoint, indexer and
-          Account Abstraction configuration — nothing from mainnet is
-          reused, and turning the toggle off restores mainnet exactly as it
-          was. The Account Abstraction section pre-fills the verified
-          Sepolia SimpleAccountFactory; the bundler URL still has to be
-          pasted by you, because bundler endpoints contain your own API key.
-          Tracked ERC-20 tokens are mainnet assets and are hidden while
-          test mode is on.
+          Switches the app&apos;s EVM chain to a test network — Ethereum
+          Sepolia (chain id 11155111) or Base Sepolia (chain id 84532), each
+          paid in test ETH: balances, sends, WalletConnect and the
+          smart-account path all run against the chosen network, an orange
+          TESTNET banner replaces the mainnet warning, and explorer links go
+          to sepolia.etherscan.io or sepolia.basescan.org. Each network keeps
+          its own endpoint, indexer and Account Abstraction configuration —
+          nothing is shared between mainnet and the test networks or between
+          the two test networks, and choosing Off restores mainnet exactly as
+          it was. The Account Abstraction section pre-fills the verified
+          Sepolia SimpleAccountFactory on Sepolia and the Kernel v3.3
+          factory on both; the bundler URL still has to be pasted by you for
+          each network, because bundler endpoints contain your own API key.
+          Tracked ERC-20 tokens are mainnet assets and are hidden while a test
+          network is chosen.
         </Text>
         {sepolia ? (
           <Text style={[styles.hint, { color: '#e07800' }]}>
-            Test mode is ON. Your addresses are the same on Sepolia as on
-            mainnet — but anything sent here is test ETH with no value.
+            Test mode is ON ({evmChain.label}). Your addresses are the same on
+            {' '}{evmChain.label} as on mainnet — but anything sent here is test
+            ETH with no value.
+          </Text>
+        ) : null}
+        {evmChain.l1DataFee ? (
+          <Text style={[styles.hint, { color: '#e07800' }]}>
+            {evmChain.label} is a layer-2 network: every transaction also pays a
+            small layer-1 data fee that the fee shown on confirm screens does
+            not include yet, and Max sends of ETH may be refused for that
+            reason. Leave a little ETH behind. Swaps are not offered here (0x
+            does not support Base Sepolia).
           </Text>
         ) : null}
       </View>

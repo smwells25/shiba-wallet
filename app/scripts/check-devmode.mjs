@@ -29,10 +29,21 @@ import {
   maskAmount,
   savePrefs,
 } from '../src/config/prefs.ts';
-import { EVM_MAINNET, EVM_SEPOLIA, evmProfileFor } from '../src/config/evm-chain.ts';
 import {
+  EVM_BASE_SEPOLIA,
+  EVM_MAINNET,
+  EVM_PROFILES,
+  EVM_SEPOLIA,
+  EVM_TEST_PROFILES,
+  evmProfileByCaip2,
+  evmProfileFor,
+  isTestProfileId,
+} from '../src/config/evm-chain.ts';
+import {
+  BASE_SEPOLIA_NETWORK,
   DEFAULT_NETWORKS,
   SEPOLIA_NETWORK,
+  networkDefaultFor,
   resolveActiveNetworks,
 } from '../src/config/defaults.ts';
 import { EVM_CHAIN_ID, prepareEvmSend, sendEvm } from '../src/wallet/send.ts';
@@ -41,11 +52,16 @@ import {
   WcRequestRejection,
   WC_ERRORS,
   buildWalletNamespaces,
+  describeChain,
   describeProposal,
+  modeMismatchMessage,
   parseTypedDataV4,
   parseWcRequest,
 } from '../src/wallet/walletconnect.ts';
 import { getAaConfig, setAaFactory } from '../src/wallet/aa.ts';
+import { getIndexerConfig, setIndexerUrl } from '../src/wallet/indexer.ts';
+import { getNftIndexerConfig } from '../src/wallet/nfts.ts';
+import { CONTACT_NETWORK_IDS, addContact, listContacts, validateContactAddress } from '../src/wallet/contacts.ts';
 import {
   INSECURE_ENDPOINT_MESSAGE,
   LOOPBACK_HOSTS,
@@ -661,6 +677,240 @@ console.log('\n== RPC override load-time https rule ==');
   } finally {
     globalThis.fetch = realFetch;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 10 item 3: the second test profile (Base Sepolia, eip155:84532), the
+// Developer test-network choice and its migration from the old boolean, and
+// mode isolation between the two test networks across every per-chain store
+// (endpoints, send chain-id checks, WalletConnect, AA, indexer, contacts).
+// ---------------------------------------------------------------------------
+console.log('\n== Base Sepolia profile and the test-network choice ==');
+{
+  const B = EVM_BASE_SEPOLIA;
+  check('Base Sepolia: CAIP-2 eip155:84532, chain id 84532', B.caip2 === 'eip155:84532' && B.chainIdDecimal === '84532');
+  check('Base Sepolia: label, testnet flag, test ETH', B.label === 'Base Sepolia' && B.testnet === true && B.displaySymbol === 'test ETH');
+  check('Base Sepolia: explorer sepolia.basescan.org/tx/', B.explorerTxBase === 'https://sepolia.basescan.org/tx/');
+  check(
+    'Base Sepolia: the three verified keyless RPC candidates, publicnode first',
+    JSON.stringify(B.defaultRpcUrls) === JSON.stringify([
+      'https://base-sepolia-rpc.publicnode.com',
+      'https://sepolia.base.org',
+      'https://base-sepolia-testnet.api.pocket.network',
+    ]) && B.defaultRpcUrl === B.defaultRpcUrls[0],
+  );
+  check('Base Sepolia: the transaction-submission-only sequencer URL is not a candidate', !B.defaultRpcUrls.some((u) => u.includes('sequencer')));
+  check('Base Sepolia: no SimpleAccount pre-fill (not verified there); Kernel v3.3 verified', B.aaPrefill === null && B.kernelV33Verified === true);
+  check('Base Sepolia: flagged as paying an L1 data fee (OP-stack); Ethereum profiles are not', B.l1DataFee === true && !EVM_SEPOLIA.l1DataFee && !EVM_MAINNET.l1DataFee);
+  check('Base Sepolia: banner and mode wording name Base Sepolia', B.bannerText?.includes('Base Sepolia') && B.modeLabel === 'Base Sepolia test mode');
+  check('mainnet has no banner; Sepolia keeps its wording', EVM_MAINNET.bannerText === null && EVM_SEPOLIA.modeLabel === 'Sepolia test mode');
+  check('test profiles listed Sepolia then Base Sepolia', EVM_TEST_PROFILES.map((p) => p.caip2).join() === 'eip155:11155111,eip155:84532');
+  check('EVM_PROFILES = mainnet + test profiles', EVM_PROFILES.length === 3 && EVM_PROFILES[0] === EVM_MAINNET);
+  check('evmProfileFor(Base Sepolia id) / (Sepolia id) / null', evmProfileFor('eip155:84532') === B && evmProfileFor('eip155:11155111') === EVM_SEPOLIA && evmProfileFor(null) === EVM_MAINNET);
+  check('evmProfileFor: an unknown id stays on a test network (Sepolia), never mainnet', evmProfileFor('eip155:999') === EVM_SEPOLIA);
+  check('evmProfileByCaip2 finds all three and nothing else', evmProfileByCaip2('eip155:84532') === B && evmProfileByCaip2('eip155:1') === EVM_MAINNET && evmProfileByCaip2('eip155:8453') === undefined);
+  check('isTestProfileId', isTestProfileId('eip155:84532') && isTestProfileId('eip155:11155111') && !isTestProfileId('eip155:1') && !isTestProfileId(null));
+
+  // Network entries.
+  check('BASE_SEPOLIA_NETWORK is derived from the profile', BASE_SEPOLIA_NETWORK.chainId === B.caip2 && BASE_SEPOLIA_NETWORK.defaultUrls === B.defaultRpcUrls && BASE_SEPOLIA_NETWORK.symbol === B.displaySymbol && BASE_SEPOLIA_NETWORK.kind === 'evm-jsonrpc' && BASE_SEPOLIA_NETWORK.decimals === 18);
+  check('networkDefaultFor knows both test networks', networkDefaultFor('eip155:84532') === BASE_SEPOLIA_NETWORK && networkDefaultFor('eip155:11155111') === SEPOLIA_NETWORK);
+  const baseMode = resolveActiveNetworks('eip155:84532');
+  const mainnetMode = resolveActiveNetworks(null);
+  const evmSlot = baseMode.find((e) => e.slot === 'eip155:1');
+  check('Base Sepolia mode: the EVM slot (id stays eip155:1) serves eip155:84532', evmSlot.network === BASE_SEPOLIA_NETWORK);
+  check('Base Sepolia mode: Bitcoin, Dogecoin (Blockbook) and Solana are unchanged', baseMode.filter((e) => e.slot !== 'eip155:1').every((e) => e.network === mainnetMode.find((m) => m.slot === e.slot).network));
+  check('resolveActiveNetworks(true) is still Sepolia (legacy callers)', resolveActiveNetworks(true).find((e) => e.slot === 'eip155:1').network === SEPOLIA_NETWORK);
+}
+
+console.log('\n== preference migration: the old boolean and the new choice ==');
+{
+  check('default: mainnet (testNetwork null, sepolia false)', DEFAULT_PREFS.testNetwork === null && DEFAULT_PREFS.sepolia === false);
+  const legacy = async (raw) => {
+    const store = memoryStore();
+    await store.setItem('shiba-wallet.prefs.v1', JSON.stringify(raw));
+    return loadPrefs(store);
+  };
+  let p = await legacy({ sepolia: true, hideAmounts: true, autoLockMs: null, showFiat: true });
+  check('old install with sepolia:true and no testNetwork reads as Sepolia', p.testNetwork === 'eip155:11155111' && p.sepolia === true && p.hideAmounts === true);
+  p = await legacy({ sepolia: false });
+  check('old install with sepolia:false reads as mainnet', p.testNetwork === null && p.sepolia === false);
+  p = await legacy({ testNetwork: 'eip155:84532', sepolia: true });
+  check('stored Base Sepolia choice reads back', p.testNetwork === 'eip155:84532' && p.sepolia === true);
+  p = await legacy({ testNetwork: 'eip155:84532', sepolia: false });
+  check('the choice wins over a contradicting boolean (sepolia re-derived)', p.testNetwork === 'eip155:84532' && p.sepolia === true);
+  p = await legacy({ testNetwork: null, sepolia: true });
+  check('an explicit null choice means mainnet', p.testNetwork === null && p.sepolia === false);
+  p = await legacy({ testNetwork: 'eip155:999', sepolia: true });
+  check('an unknown stored id with sepolia:true stays in test mode (Sepolia)', p.testNetwork === 'eip155:11155111' && p.sepolia === true);
+  p = await legacy({ testNetwork: 'eip155:1' });
+  check('a stored mainnet id is not a test network: mainnet', p.testNetwork === null && p.sepolia === false);
+
+  const store = memoryStore();
+  let s = await savePrefs({ testNetwork: 'eip155:84532' }, store);
+  check('choosing Base Sepolia sets the flag', s.testNetwork === 'eip155:84532' && s.sepolia === true);
+  check('…and persists both fields', JSON.parse(await store.getItem('shiba-wallet.prefs.v1')).testNetwork === 'eip155:84532');
+  s = await savePrefs({ sepolia: true }, store);
+  check('the old setter (sepolia:true) keeps the chosen Base Sepolia', s.testNetwork === 'eip155:84532');
+  s = await savePrefs({ sepolia: false }, store);
+  check('the old setter (sepolia:false) returns to mainnet', s.testNetwork === null && s.sepolia === false);
+  s = await savePrefs({ sepolia: true }, store);
+  check('the old setter (sepolia:true) from mainnet picks Sepolia', s.testNetwork === 'eip155:11155111');
+  s = await savePrefs({ testNetwork: 'eip155:84532', sepolia: false }, store);
+  check('a patch with both fields: the choice wins', s.testNetwork === 'eip155:84532' && s.sepolia === true);
+  s = await savePrefs({ testNetwork: null }, store);
+  check('choosing Off returns to mainnet', s.testNetwork === null && s.sepolia === false);
+  s = await savePrefs({ hideAmounts: false }, store);
+  check('an unrelated patch keeps the choice', s.testNetwork === null);
+}
+
+console.log('\n== endpoints follow the choice; overrides never cross test networks ==');
+{
+  const prior = globalThis.fetch;
+  const requested = [];
+  // Every URL containing "base" answers as Base Sepolia, everything else as
+  // Ethereum Sepolia; nothing leaves the process.
+  globalThis.fetch = async (url, init) => {
+    requested.push(String(url));
+    const body = JSON.parse(init.body);
+    const result = body.method === 'eth_chainId' ? (String(url).includes('base') ? '0x14a34' : '0xaa36a7') : null;
+    return { ok: true, status: 200, json: async () => ({ jsonrpc: '2.0', id: body.id, result }), text: async () => JSON.stringify({ jsonrpc: '2.0', id: body.id, result }) };
+  };
+  try {
+    const store = memoryStore();
+    await savePrefs({ testNetwork: 'eip155:84532' }, store);
+    const ep = await getEndpoint('eip155:1', { store });
+    check('Base Sepolia mode: the Ethereum slot resolves to eip155:84532', ep?.forChainId === 'eip155:1' && ep?.network.chainId === 'eip155:84532');
+    check('…through the first default candidate (chain id verified)', ep?.url === 'https://base-sepolia-rpc.publicnode.com' && ep?.isOverride === false && ep?.defaultChoice?.healthy === true);
+    check('…and asking for eip155:84532 directly works too', (await getEndpoint('eip155:84532', { store }))?.network.chainId === 'eip155:84532');
+    check('…while Ethereum Sepolia is NOT reachable in Base Sepolia mode', (await getEndpoint('eip155:11155111', { store })) === undefined);
+
+    await setEndpointOverride('eip155:11155111', 'https://sepolia-override.example', { store });
+    const noLeak = await getEndpoint('eip155:1', { store });
+    check('a Sepolia override does not apply in Base Sepolia mode', noLeak?.isOverride === false && noLeak?.url === 'https://base-sepolia-rpc.publicnode.com');
+    await setEndpointOverride('eip155:84532', 'https://base-override.example', { store });
+    const own = await getEndpoint('eip155:1', { store });
+    check('a Base Sepolia override applies in Base Sepolia mode', own?.isOverride === true && own?.url === 'https://base-override.example');
+    await savePrefs({ testNetwork: 'eip155:11155111' }, store);
+    const sep = await getEndpoint('eip155:1', { store });
+    check('switching to Sepolia uses the Sepolia override, not the Base one', sep?.network.chainId === 'eip155:11155111' && sep?.url === 'https://sepolia-override.example');
+    await savePrefs({ testNetwork: null }, store);
+    const main = await getEndpoint('eip155:1', { store });
+    check('Off: mainnet ignores both test overrides', main?.network.chainId === 'eip155:1' && main?.isOverride === false);
+    const all = await getAllEndpoints({ store });
+    check('getAllEndpoints in mainnet mode lists no test network', !all.some((e) => e.network.testnet || e.network.chainId === 'eip155:84532' || e.network.chainId === 'eip155:11155111'));
+    check('no request reached an override URL while it was not active', !requested.some((u) => u.includes('override.example')));
+  } finally {
+    globalThis.fetch = prior;
+  }
+}
+
+console.log('\n== send-flow chain-id checks between the two test networks ==');
+{
+  scenario = { chainId: '0x14a34' };
+  const baseQuote = await prepareEvmSend(URL, FROM, TO, 1000n, undefined, EVM_BASE_SEPOLIA.caip2);
+  check('Base Sepolia-mode quote accepts a Base Sepolia node', baseQuote.chainId === 84532n);
+  await checkRejects('Sepolia-mode quote refuses a Base Sepolia node', () => prepareEvmSend(URL, FROM, TO, 1000n, undefined, EVM_SEPOLIA.caip2), /chain id 84532, expected 11155111/);
+  await checkRejects('mainnet-mode quote refuses a Base Sepolia node', () => prepareEvmSend(URL, FROM, TO, 1000n), /chain id 84532, expected 1\b/);
+  scenario = { chainId: '0xaa36a7' };
+  await checkRejects('Base Sepolia-mode quote refuses a Sepolia node', () => prepareEvmSend(URL, FROM, TO, 1000n, undefined, EVM_BASE_SEPOLIA.caip2), /chain id 11155111, expected 84532/);
+  scenario = { chainId: '0x14a34' };
+  const sent = await sendEvm(URL, signer, baseQuote, EVM_BASE_SEPOLIA.explorerTxBase);
+  check('sendEvm on Base Sepolia links to sepolia.basescan.org', sent.explorerUrl === `https://sepolia.basescan.org/tx/${sent.txid}`);
+  check('explorerTxUrl override goes to sepolia.basescan.org', explorerTxUrl('eip155:1', TXID, EVM_BASE_SEPOLIA.explorerTxBase) === `https://sepolia.basescan.org/tx/${TXID}`);
+  scenario = { chainId: '0x1' };
+}
+
+console.log('\n== WalletConnect follows the Base Sepolia profile ==');
+{
+  const BASE = EVM_BASE_SEPOLIA.caip2;
+  check('Base Sepolia mode accepts an eip155:84532 request', parseWcRequest(signEvent(BASE), WALLET, BASE).kind === 'personal_sign');
+  const declined = (event, active) => {
+    try {
+      parseWcRequest(event, WALLET, active);
+      return false;
+    } catch (e) {
+      return e instanceof WcRequestRejection && e.code === WC_ERRORS.unsupportedChains.code;
+    }
+  };
+  check('Sepolia mode declines an eip155:84532 request (UNSUPPORTED_CHAINS)', declined(signEvent(BASE), EVM_SEPOLIA.caip2));
+  check('Base Sepolia mode declines an eip155:11155111 request', declined(signEvent('eip155:11155111'), BASE));
+  check('Base Sepolia mode declines an eip155:1 request', declined(signEvent('eip155:1'), BASE));
+  const proposal = {
+    id: 9,
+    requiredNamespaces: {},
+    optionalNamespaces: { eip155: { chains: ['eip155:1', 'eip155:11155111', BASE, 'eip155:8453'], methods: ['personal_sign'], events: ['chainChanged'] } },
+  };
+  const ns = buildWalletNamespaces(proposal, WALLET, [BASE]);
+  check('approved namespace carries ONLY eip155:84532 accounts in Base Sepolia mode', JSON.stringify(ns.eip155?.accounts) === JSON.stringify([`${BASE}:${WALLET}`]) && JSON.stringify(ns.eip155?.chains) === JSON.stringify([BASE]));
+  check('describeChain names Base Sepolia; Sepolia wording unchanged', describeChain(BASE) === 'Base Sepolia (test network)' && describeChain('eip155:11155111') === 'Ethereum Sepolia (test network)' && describeChain('eip155:8453') === 'eip155:8453');
+  check(
+    'mode-mismatch sentence for a Base Sepolia dApp in Sepolia mode',
+    modeMismatchMessage(BASE, 'eip155:11155111', 'connect') ===
+      'This dApp asked for Base Sepolia (test network); the wallet is in Sepolia test mode. Turn on Base Sepolia test mode in Settings → Developer to connect.',
+  );
+  check(
+    'mode-mismatch sentence for a Sepolia dApp is unchanged',
+    modeMismatchMessage('eip155:11155111', 'eip155:1', 'connect') ===
+      'This dApp asked for Ethereum Sepolia (test network); the wallet is in mainnet mode. Turn on Sepolia test mode in Settings → Developer to connect.',
+  );
+  const typed = JSON.stringify({ types: { Mail: [{ name: 'contents', type: 'string' }] }, primaryType: 'Mail', domain: { name: 'App', chainId: 84532 }, message: { contents: 'hi' } });
+  check('typed data for chain 84532 signs in Base Sepolia mode', parseTypedDataV4(typed, BASE).domain.chainId === 84532n);
+  let refused = false;
+  try {
+    parseTypedDataV4(typed, EVM_SEPOLIA.caip2);
+  } catch {
+    refused = true;
+  }
+  check('typed data for chain 84532 is refused in Sepolia mode', refused);
+}
+
+console.log('\n== per-chain stores keyed by CAIP-2: AA, history indexer, contacts ==');
+{
+  const BASE = EVM_BASE_SEPOLIA.caip2;
+  const store = memoryStore();
+  // A SimpleAccount save under the Sepolia key leaves Base Sepolia empty.
+  const sel = (signature) => toHex(encodeFunctionCall(signature, []));
+  const pad32 = (address) => '0x' + '0'.repeat(24) + address.slice(2).toLowerCase();
+  const same = (a, b) => a.toLowerCase() === b.toLowerCase();
+  const fakeSimpleNode = (chainIdHex) => async (method, params) => {
+    if (method === 'eth_chainId') return chainIdHex;
+    if (method === 'eth_getCode') return same(params[0], prefill.factory) || same(params[0], prefill.implementation) ? '0x6001' : '0x';
+    if (method === 'eth_call') {
+      const [{ to, data }] = params;
+      if (same(to, prefill.factory) && data === sel('accountImplementation()')) return pad32(prefill.implementation);
+      if (same(to, prefill.implementation) && data === sel('entryPoint()')) return pad32(ENTRYPOINT_V07);
+    }
+    throw new Error(`unexpected ${method}`);
+  };
+  await setAaFactory(EVM_SEPOLIA.caip2, prefill.factory, 'https://offline.fake/sepolia', { store, transportFor: () => fakeSimpleNode('0xaa36a7') });
+  const baseAa = await getAaConfig(BASE, store);
+  check('AA: a Sepolia save leaves the Base Sepolia config empty', baseAa.chain === BASE && baseAa.factory === null && baseAa.bundlerUrl === null && baseAa.factoryVerifiedAt === null);
+
+  // History indexer: verify-before-save checks eth_chainId against the key.
+  const indexerStore = memoryStore();
+  await checkRejects(
+    'indexer: a Sepolia endpoint is refused for the Base Sepolia key',
+    () => setIndexerUrl(BASE, 'https://indexer.example', WALLET, { store: indexerStore, transportFor: () => async (m) => (m === 'eth_chainId' ? '0xaa36a7' : null) }),
+    /chain id 11155111, expected 84532/,
+  );
+  await checkRejects(
+    'indexer: a Base Sepolia endpoint is refused for the Sepolia key',
+    () => setIndexerUrl(EVM_SEPOLIA.caip2, 'https://indexer.example', WALLET, { store: indexerStore, transportFor: () => async (m) => (m === 'eth_chainId' ? '0x14a34' : null) }),
+    /chain id 84532, expected 11155111/,
+  );
+  check('indexer: nothing persisted by the refusals', (await getIndexerConfig(BASE, indexerStore)).url === null && (await getIndexerConfig(EVM_SEPOLIA.caip2, indexerStore)).url === null);
+  check('NFT indexer: Base Sepolia starts unconfigured', (await getNftIndexerConfig(BASE, memoryStore())).url === null);
+
+  // Contacts: Base Sepolia is a contact network of its own.
+  const contactStore = memoryStore();
+  check('contacts: eip155:84532 is a contact network', CONTACT_NETWORK_IDS.includes(BASE));
+  check('contacts: EVM addresses validate on Base Sepolia (EIP-55 stored)', validateContactAddress(BASE, '0x000000000000000000000000000000000000dead').ok === true);
+  await addContact(BASE, 'Burn', '0x000000000000000000000000000000000000dEaD', { store: contactStore });
+  check('contacts: saved under Base Sepolia only', (await listContacts(BASE, contactStore)).length === 1 && (await listContacts(EVM_SEPOLIA.caip2, contactStore)).length === 0 && (await listContacts('eip155:1', contactStore)).length === 0);
+  check('contacts: Base mainnet (8453) is still not a contact network', validateContactAddress('eip155:8453', '0x000000000000000000000000000000000000dead').ok === false);
+
+  // Blockbook (Dogecoin) is not affected and still refuses plain overrides.
+  await checkRejects('Blockbook chains still refuse a plain RPC override', () => setEndpointOverride('bip122:1a91e3dace36e2be3bf030a65679fe82', 'https://doge.example', { store: memoryStore() }), /Blockbook/);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

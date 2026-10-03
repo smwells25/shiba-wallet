@@ -52,8 +52,8 @@ interface NetworkSection {
  */
 export function ContactsScreen(_props: Props) {
   const theme = useTheme();
-  const { sepolia } = usePrefs();
-  const networks = useMemo(() => resolveActiveNetworks(sepolia), [sepolia]);
+  const { sepolia, testNetwork, evmChain } = usePrefs();
+  const networks = useMemo(() => resolveActiveNetworks(testNetwork), [testNetwork]);
 
   const [sections, setSections] = useState<NetworkSection[]>([]);
   const [corrupt, setCorrupt] = useState(false);
@@ -210,7 +210,7 @@ export function ContactsScreen(_props: Props) {
         the full address. Addresses that merely look similar to a contact
         get a warning instead — a common scam sends you tiny amounts from a
         look-alike address, hoping you copy it later.
-        {sepolia ? ' Sepolia test mode is on: the Ethereum list below is your Sepolia contacts.' : ''}
+        {sepolia ? ` ${evmChain.modeLabel} is on: the Ethereum list below is your ${evmChain.label} contacts.` : ''}
       </Text>
 
       {unreadable ? (

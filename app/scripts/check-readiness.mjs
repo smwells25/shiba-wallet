@@ -34,7 +34,7 @@ import {
   readinessReason,
   readinessRefusal,
 } from '../src/config/readiness.ts';
-import { EVM_MAINNET, EVM_SEPOLIA } from '../src/config/evm-chain.ts';
+import { EVM_BASE_SEPOLIA, EVM_MAINNET, EVM_SEPOLIA, EVM_TEST_PROFILES } from '../src/config/evm-chain.ts';
 import {
   KERNEL_PREFILL,
   aaReadinessBlock,
@@ -85,6 +85,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, '..', '..');
 const MAINNET = EVM_MAINNET.caip2;
 const SEPOLIA = EVM_SEPOLIA.caip2;
+const BASE_SEPOLIA = EVM_BASE_SEPOLIA.caip2;
 const isRefusal = (e) => e instanceof Error && e.name === 'FeatureNotAllowedError' && e.message.endsWith(READINESS_TESTNET_HINT);
 
 // ---------------------------------------------------------------------------
@@ -162,7 +163,14 @@ for (const f of FEATURE_READINESS.filter((x) => x.enforced)) {
 // ---------------------------------------------------------------------------
 console.log('check-readiness: helpers');
 // ---------------------------------------------------------------------------
-check('only Sepolia is a test network', TEST_NETWORK_CHAINS.length === 1 && isTestNetwork(SEPOLIA) && !isTestNetwork(MAINNET));
+check('exactly Sepolia and Base Sepolia are test networks', TEST_NETWORK_CHAINS.length === 2 && isTestNetwork(SEPOLIA) && isTestNetwork(BASE_SEPOLIA) && !isTestNetwork(MAINNET), TEST_NETWORK_CHAINS.join());
+check('Base Sepolia is eip155:84532', BASE_SEPOLIA === 'eip155:84532');
+check('the test-network list is exactly the test profiles in evm-chain.ts', TEST_NETWORK_CHAINS.join() === EVM_TEST_PROFILES.map((p) => p.caip2).join());
+check('every test profile is flagged testnet (and mainnet is not)', EVM_TEST_PROFILES.every((p) => p.testnet === true) && EVM_MAINNET.testnet === false);
+check('Base MAINNET (eip155:8453) is not a test network', !isTestNetwork('eip155:8453'));
+check('isFeatureAllowed: testnet-only features allowed on Base Sepolia', ['guardians', 'session-keys', 'passkeys', 'kernel-smart-account', 'eip7702-upgrade', 'paymaster'].every((f) => isFeatureAllowed(f, BASE_SEPOLIA)));
+check('readinessGate / aaReadinessBlock clear on Base Sepolia', readinessGate('guardians', BASE_SEPOLIA) === null && aaReadinessBlock(BASE_SEPOLIA, 'kernel-v3.3') === null && aaReadinessBlock(BASE_SEPOLIA, 'kernel-7702') === null);
+check('eip155Caip2(84532) is Base Sepolia', eip155Caip2(84532n) === BASE_SEPOLIA);
 check('unknown or malformed chain ids count as main networks (fail closed)', !isTestNetwork('eip155:8453') && !isTestNetwork('') && !isTestNetwork('bip122:1a91e3dace36e2be3bf030a65679fe82'));
 check('isFeatureAllowed: testnet-only feature allowed on Sepolia, refused on mainnet', isFeatureAllowed('guardians', SEPOLIA) && !isFeatureAllowed('guardians', MAINNET));
 check('isFeatureAllowed: blocked feature allowed on Sepolia, not cleared on mainnet', isFeatureAllowed('eoa-send', SEPOLIA) && !isFeatureAllowed('eoa-send', MAINNET));
@@ -170,6 +178,7 @@ check('isFeatureAllowed accepts a testnet flag', isFeatureAllowed('passkeys', tr
 check('readinessReason returns the table text', readinessReason('session-keys') === featureReadiness('session-keys').reason);
 check('readinessRefusal = reason + the test-mode hint', readinessRefusal('passkeys') === `${featureReadiness('passkeys').reason} ${READINESS_TESTNET_HINT}`);
 check('the hint points at Settings → Developer', /Sepolia test mode in Settings → Developer/.test(READINESS_TESTNET_HINT));
+check('the hint names Base Sepolia as well', READINESS_TESTNET_HINT.includes('Base Sepolia'));
 const thrown = await caught(() => assertFeatureAllowed('kernel-smart-account', MAINNET));
 check('assertFeatureAllowed throws FeatureNotAllowedError with the feature id', thrown instanceof FeatureNotAllowedError && thrown.featureId === 'kernel-smart-account' && isRefusal(thrown));
 check('assertFeatureAllowed is silent where allowed', (await caught(() => assertFeatureAllowed('kernel-smart-account', SEPOLIA))) === null);
@@ -214,6 +223,21 @@ function countingTransports() {
   // The same complete configuration under the mainnet key (as if stored
   // before this build) reads as unavailable, so the send / swap screens
   // hide their toggles and WalletConnect offers no smart-account connection.
+  // Base Sepolia: the same functions, keyed under eip155:84532, with a
+  // fake node answering Base Sepolia's chain id; the Sepolia entry is not
+  // touched, and a Base Sepolia save through a Sepolia node is refused.
+  await setAaBundlerUrl(BASE_SEPOLIA, 'https://bundler-base.example', { store: sep, transportFor: () => fakeBundler() });
+  await setAaKernelFactory(BASE_SEPOLIA, KERNEL_PREFILL.factory, 'https://node.example', { store: sep, transportFor: () => fakeKernelNode({ chainIdHex: '0x14a34' }) });
+  const baseCfg = await getAaConfig(BASE_SEPOLIA, sep);
+  check('Base Sepolia: bundler + Kernel factory save and the smart account is available', baseCfg.chain === BASE_SEPOLIA && isAaConfigured(baseCfg) && baseCfg.accountType === 'kernel-v3.3' && baseCfg.bundlerUrl === 'https://bundler-base.example');
+  const sepAfter = await getAaConfig(SEPOLIA, sep);
+  check('…the Sepolia entry is unchanged by the Base Sepolia saves', sepAfter.bundlerUrl === 'https://bundler.example' && sepAfter.accountType === 'kernel-v3.3');
+  const crossed = await caught(() => setAaKernelFactory(BASE_SEPOLIA, KERNEL_PREFILL.factory, 'https://node.example', { store: sep, transportFor: () => fakeKernelNode({ chainIdHex: '0xaa36a7' }) }));
+  check('…a Base Sepolia Kernel save through a Sepolia node is refused (chain id check)', crossed instanceof Error && !isRefusal(crossed) && /expected 84532/.test(crossed.message), crossed?.message);
+  const baseUpgraded = await setAccountEip7702(BASE_SEPOLIA, OWNER_0, true, sep);
+  check('Base Sepolia: the 7702 upgrade record saves (test network)', isAaConfigured(baseUpgraded, OWNER_0));
+  await setAccountEip7702(BASE_SEPOLIA, OWNER_0, false, sep);
+
   const raw = JSON.parse(await sep.getItem('shiba-wallet.aa-config.v1'));
   const legacy = memoryStore();
   await legacy.setItem('shiba-wallet.aa-config.v1', JSON.stringify({ [MAINNET]: raw[SEPOLIA] }));

@@ -11,7 +11,7 @@ import {
   SOLANA_CHAIN_ID,
   validateRecipient,
 } from './send.ts';
-import { EVM_SEPOLIA } from '../config/evm-chain.ts';
+import { EVM_TEST_PROFILES } from '../config/evm-chain.ts';
 
 /**
  * Contacts (Tier 1 feature 73): per-chain named addresses.
@@ -72,13 +72,16 @@ export interface Contact {
   createdAt: string;
 }
 
+/** CAIP-2 ids of the EVM test networks (Sepolia, Base Sepolia; config/evm-chain.ts). */
+const EVM_TEST_NETWORK_IDS: readonly string[] = EVM_TEST_PROFILES.map((p) => p.caip2);
+
 /**
  * The network ids contacts can be saved for: the four launch chains plus
- * the Sepolia test network (the EVM slot while test mode is on).
+ * the EVM test networks (the EVM slot while a test network is chosen).
  */
 export const CONTACT_NETWORK_IDS: readonly string[] = [
   EVM_CHAIN_ID,
-  EVM_SEPOLIA.caip2,
+  ...EVM_TEST_NETWORK_IDS,
   BITCOIN_CHAIN_ID,
   DOGECOIN_CHAIN_ID,
   SOLANA_CHAIN_ID,
@@ -87,11 +90,11 @@ export const CONTACT_NETWORK_IDS: readonly string[] = [
 /**
  * Maps a network id to the chain id validateRecipient expects. EVM address
  * syntax and EIP-55 checksums are identical on every EVM chain, and the
- * send flow validates Sepolia recipients through the EVM slot id
- * ('eip155:1') as well, so both EVM networks share that path.
+ * send flow validates test-network recipients through the EVM slot id
+ * ('eip155:1') as well, so every EVM network shares that path.
  */
 function validationChainFor(networkId: string): string | null {
-  if (networkId === EVM_CHAIN_ID || networkId === EVM_SEPOLIA.caip2) return EVM_CHAIN_ID;
+  if (networkId === EVM_CHAIN_ID || EVM_TEST_NETWORK_IDS.includes(networkId)) return EVM_CHAIN_ID;
   if (
     networkId === BITCOIN_CHAIN_ID ||
     networkId === DOGECOIN_CHAIN_ID ||

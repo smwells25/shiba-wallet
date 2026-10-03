@@ -4250,3 +4250,79 @@ on Opus. The emulator is driven by ONE agent at a time.
       installed false afterwards. Bug 1 is closed: with no hot update and
       prompt answers inside the 30 s hold, the grant is two prompts and
       the success state survives.
+- [x] Item 3 — Base Sepolia (eip155:84532) as a second test-network
+      profile with AA (commit below; check-devmode 182 (was 110),
+      check-rpc-fallback 105 (87; 126 with --live incl. all three Base
+      candidates), check-aa-kernel 92 (76), check-readiness 127 (115);
+      offline runner ALL GREEN, app 3,108 checks across 30 suites; nothing
+      signed or broadcast). FACTS (2026-10-03): docs.base.org
+      "Connecting to Base" lists RPC https://sepolia.base.org, chain id
+      84532, currency ETH, explorer sepolia.basescan.org (its /tx/ path
+      could not be fetched — Cloudflare 403 — so the Etherscan-style
+      suffix is a convention, not confirmed). Default RPC list, in order:
+      base-sepolia-rpc.publicnode.com (listed on base.publicnode.com; its
+      page data carries an unexplained showDeprecatedMessage flag dated
+      2024-02-19 but every probe answered), sepolia.base.org,
+      base-sepolia-testnet.api.pocket.network ("No API key required;
+      fair-use limits apply"); all three answer chain id 0x14a34, balance,
+      gas, fees and eth_simulateV1 with transfer tracing; publicnode is
+      first because sepolia.base.org refuses eth_getLogs over more than
+      1,000 blocks, which would break the app's 9,000-block log windows.
+      Rejected: public.1rpc.io/base-sepolia ("unknown network"),
+      sepolia-sequencer.base.org (send-only), base-sepolia.drpc.org
+      (keyless use not documented). Kernel v3.3 on Base Sepolia: the
+      engine's verifyKernelDeployment passed on two endpoints; the meta
+      factory is staked (0.1 ETH / 86,400 s); EntryPoint v0.7, factory,
+      meta factory, ECDSA validator, the session signer and policies,
+      RecoveryAction, WebAuthnValidator v0.0.3 and Daimo's verifier are
+      byte-identical to Ethereum Sepolia; the Kernel implementation and
+      the guardian validator differ in exactly 35 bytes (cached EIP-712
+      chain id and domain separator — recomputed and matching). CREATE2
+      gives the same account address on every chain: the dev owner's
+      index-0 Kernel counterfactual on Base Sepolia is
+      0xc995E49acA5C888F4FF1E50E8467E9fFc31CC5AC (same as Sepolia),
+      factory getAddress == engine prediction, not deployed there.
+      SimpleAccount factory code identical but the AA_STACK check was not
+      run there → no SimpleAccount pre-fill. P-256 precompile at 0x100:
+      true (Base docs: P256VERIFY added in Fjord, 6,900 gas since Azul).
+      ZeroDev bundler for chain 84532: eth_chainId 0x14a34,
+      eth_supportedEntryPoints incl. v0.7, pimlico_getUserOperationGasPrice
+      served, rundler_maxPriorityFeePerGas not. 0x lists Base 8453 but no
+      Base Sepolia (swaps not offered there; Settings says so).
+      WalletConnect namespaces: only the active profile's chain, so Base
+      Sepolia sessions approve eip155:84532 only; other-mode sessions pause.
+      CODE: evm-chain.ts EVM_BASE_SEPOLIA with the cited candidate list,
+      EVM_TEST_PROFILES / EVM_PROFILES, TestNetworkId, evmProfileByCaip2,
+      isTestProfileId, profile fields modeLabel / bannerText /
+      kernelV33Verified / l1DataFee; evmProfileFor(storedChoice) — true
+      still means Sepolia, an unknown id falls back to Sepolia, never
+      mainnet; defaults.ts BASE_SEPOLIA_NETWORK / TEST_EVM_NETWORKS;
+      networks.ts resolves from prefs.testNetwork; prefs.ts testNetwork
+      (null = mainnet) with `sepolia` always derived from it and the
+      migration sepolia:true → Sepolia; PrefsContext exposes testNetwork /
+      setTestNetwork (setSepolia kept) and evmChain from it; contacts.ts
+      accepts any test-network id (it hard-coded Sepolia); readiness.ts
+      TEST_NETWORK_CHAINS from the test profiles (Base mainnet 8453 stays
+      mainnet); walletconnect.ts chain / mode names and the mismatch
+      sentence from the profiles (Sepolia strings byte-identical);
+      Settings → Developer is now a choice Off / Ethereum Sepolia / Base
+      Sepolia with an L1-data-fee warning and a no-swaps note, and the
+      endpoint-reload effect keys on testNetwork; App.tsx's banner renders
+      evmChain.bannerText (CTO); kernel-smoke.mjs gained
+      CHAIN_ID=11155111|84532 (dry run on 84532 passed through the real
+      EntryPoint; the live leg needs test ETH on the dev EOA there — it
+      holds 0). Also fixed by the CTO: walletconnect.ts's guardian
+      request text now names the real button. FOLLOW-UPS: (1) Base is an
+      OP-stack L2 — the app's EOA fee figures omit the L1 data fee, so a
+      Max ETH send is expected to be refused by op-geth's balance check
+      (from source, not run); fix in send.ts; (2) setAaBundlerUrl checks
+      only eth_supportedEntryPoints, so a Sepolia bundler could be saved
+      under the Base key (fails safe: the signature is chain-bound);
+      ERC-7769 defines eth_chainId for bundlers and ZeroDev answers it —
+      add the check (fakes-kernel.mjs's fakeBundler needs eth_chainId);
+      (3) no Base entries yet for the risk module's new-contract
+      threshold, NFT explorer links or recovery-file names; (4) some copy
+      still says "Sepolia" ("Turn off Sepolia…", the Kernel pre-fill
+      note); (5) nothing live on Base Sepolia yet (needs test ETH on the
+      dev EOA 0x16DA…C5C there, then the kernel-smoke command in its
+      header).

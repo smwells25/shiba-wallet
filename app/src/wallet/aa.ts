@@ -140,9 +140,11 @@ export function aaAccountTypeSignsMessages(type: AaAccountType): boolean {
 /**
  * The pinned Kernel v3.3 deployment the Settings editor pre-fills, taken
  * from the engine's KERNEL_V3_3 constants (the same addresses on Ethereum
- * mainnet and Sepolia; see packages/chains-evm/src/kernel-account.ts for
- * their sources and the read-only on-chain confirmation). Saving still runs
- * verifyKernelDeployment against the configured RPC endpoint.
+ * mainnet, Sepolia and Base Sepolia; see packages/chains-evm/src/
+ * kernel-account.ts for their sources and the read-only on-chain
+ * confirmation, and config/evm-chain.ts EVM_BASE_SEPOLIA for the Base
+ * Sepolia checks of 2026-10-03). Saving still runs verifyKernelDeployment
+ * against the configured RPC endpoint.
  */
 export const KERNEL_PREFILL = {
   factory: KERNEL_V3_3.factory,

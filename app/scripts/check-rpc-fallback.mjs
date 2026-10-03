@@ -22,8 +22,8 @@
 // (eth_blockNumber against the freshest candidate) and records whether it
 // serves eth_simulateV1 (used by the balance-change preview).
 
-import { EVM_MAINNET, EVM_SEPOLIA } from '../src/config/evm-chain.ts';
-import { DEFAULT_NETWORKS, SEPOLIA_NETWORK, networkDefaultFor } from '../src/config/defaults.ts';
+import { EVM_BASE_SEPOLIA, EVM_MAINNET, EVM_SEPOLIA } from '../src/config/evm-chain.ts';
+import { BASE_SEPOLIA_NETWORK, DEFAULT_NETWORKS, SEPOLIA_NETWORK, networkDefaultFor } from '../src/config/defaults.ts';
 import {
   createDefaultEndpointResolver,
   describeDefaultChoice,
@@ -144,6 +144,29 @@ check(
   );
 }
 check(
+  'Base Sepolia EVM: publicnode primary, then sepolia.base.org, then Pocket (phase 10 item 3)',
+  same(EVM_BASE_SEPOLIA.defaultRpcUrls, [
+    'https://base-sepolia-rpc.publicnode.com',
+    'https://sepolia.base.org',
+    'https://base-sepolia-testnet.api.pocket.network',
+  ]),
+);
+{
+  // Checked and rejected in evm-chain.ts (2026-10-03): 1RPC answers
+  // "unknown network"; the sequencer URL is transaction-submission only and
+  // refuses eth_chainId; dRPC's keyless status was not documented.
+  const rejected = [
+    'https://public.1rpc.io/base-sepolia',
+    'https://sepolia-sequencer.base.org',
+    'https://base-sepolia.drpc.org',
+  ];
+  check('Base Sepolia EVM: none of the recorded rejected candidates is listed', EVM_BASE_SEPOLIA.defaultRpcUrls.every((u) => !rejected.includes(u)));
+  check(
+    'Base Sepolia EVM: no candidate is shared with the mainnet or Sepolia lists',
+    EVM_BASE_SEPOLIA.defaultRpcUrls.every((u) => !EVM_MAINNET.defaultRpcUrls.includes(u) && !EVM_SEPOLIA.defaultRpcUrls.includes(u)),
+  );
+}
+check(
   'Bitcoin Esplora: blockstream.info then mempool.space',
   same(BTC.defaultUrls, ['https://blockstream.info/api', 'https://mempool.space/api']),
 );
@@ -158,8 +181,10 @@ check(
 check('Dogecoin: still no default (empty list, null primary)', DOGE.defaultUrls.length === 0 && DOGE.defaultUrl === null);
 check('Ethereum row list is the mainnet profile list (no drift)', ETH.defaultUrls === EVM_MAINNET.defaultRpcUrls);
 check('Sepolia row list is the Sepolia profile list (no drift)', SEPOLIA_NETWORK.defaultUrls === EVM_SEPOLIA.defaultRpcUrls);
+check('Base Sepolia row list is the Base Sepolia profile list (no drift)', BASE_SEPOLIA_NETWORK.defaultUrls === EVM_BASE_SEPOLIA.defaultRpcUrls);
+check('networkDefaultFor(eip155:84532) is the Base Sepolia row', networkDefaultFor('eip155:84532') === BASE_SEPOLIA_NETWORK);
 {
-  const all = [...DEFAULT_NETWORKS, SEPOLIA_NETWORK];
+  const all = [...DEFAULT_NETWORKS, SEPOLIA_NETWORK, BASE_SEPOLIA_NETWORK];
   check(
     'every defaultUrl equals defaultUrls[0] (or null when empty)',
     all.every((n) => n.defaultUrl === (n.defaultUrls[0] ?? null)),
@@ -167,7 +192,8 @@ check('Sepolia row list is the Sepolia profile list (no drift)', SEPOLIA_NETWORK
   check(
     'profile defaultRpcUrl equals defaultRpcUrls[0]',
     EVM_MAINNET.defaultRpcUrl === EVM_MAINNET.defaultRpcUrls[0] &&
-      EVM_SEPOLIA.defaultRpcUrl === EVM_SEPOLIA.defaultRpcUrls[0],
+      EVM_SEPOLIA.defaultRpcUrl === EVM_SEPOLIA.defaultRpcUrls[0] &&
+      EVM_BASE_SEPOLIA.defaultRpcUrl === EVM_BASE_SEPOLIA.defaultRpcUrls[0],
   );
   const urls = all.flatMap((n) => n.defaultUrls);
   check('every candidate is https:// with no trailing slash', urls.every((u) => /^https:\/\/[^\s]+[^/]$/.test(u)));
@@ -187,7 +213,7 @@ check('Sepolia row list is the Sepolia profile list (no drift)', SEPOLIA_NETWORK
   check(
     'no default candidate uses plain http:// (not even loopback)',
     urls.every((u) => u.startsWith('https://')) &&
-      [...EVM_MAINNET.defaultRpcUrls, ...EVM_SEPOLIA.defaultRpcUrls].every((u) => u.startsWith('https://')),
+      [...EVM_MAINNET.defaultRpcUrls, ...EVM_SEPOLIA.defaultRpcUrls, ...EVM_BASE_SEPOLIA.defaultRpcUrls].every((u) => u.startsWith('https://')),
   );
   check('no candidate carries a key-like query or path secret', urls.every((u) => !/[?#]|\/v[23]\/|key/i.test(u)));
   check('no duplicate candidates within a chain', all.every((n) => new Set(n.defaultUrls).size === n.defaultUrls.length));
@@ -209,6 +235,14 @@ console.log('probeEndpoint:');
   check('EVM: a Sepolia node is wrong-chain for mainnet', !wrong.ok && wrong.kind === 'wrong-chain', JSON.stringify(wrong));
   const wrong2 = await probeEndpoint('evm-jsonrpc', U, 'eip155:11155111', { fetchFn: fakeFetch({ [U]: { evmChainId: '0x1' } }).fn });
   check('EVM: a mainnet node is wrong-chain for Sepolia', !wrong2.ok && wrong2.kind === 'wrong-chain');
+  const base = await probeEndpoint('evm-jsonrpc', U, 'eip155:84532', { fetchFn: fakeFetch({ [U]: { evmChainId: '0x14a34' } }).fn });
+  check('EVM: eth_chainId 0x14a34 passes for eip155:84532 (Base Sepolia)', base.ok === true);
+  const sepForBase = await probeEndpoint('evm-jsonrpc', U, 'eip155:84532', { fetchFn: fakeFetch({ [U]: { evmChainId: '0xaa36a7' } }).fn });
+  check('EVM: a Sepolia node is wrong-chain for Base Sepolia', !sepForBase.ok && sepForBase.kind === 'wrong-chain' && /identifies as 11155111, expected 84532/.test(sepForBase.reason), JSON.stringify(sepForBase));
+  const baseForSep = await probeEndpoint('evm-jsonrpc', U, 'eip155:11155111', { fetchFn: fakeFetch({ [U]: { evmChainId: '0x14a34' } }).fn });
+  check('EVM: a Base Sepolia node is wrong-chain for Sepolia', !baseForSep.ok && baseForSep.kind === 'wrong-chain' && /identifies as 84532, expected 11155111/.test(baseForSep.reason), JSON.stringify(baseForSep));
+  const baseMain = await probeEndpoint('evm-jsonrpc', U, 'eip155:84532', { fetchFn: fakeFetch({ [U]: { evmChainId: '0x2105' } }).fn });
+  check('EVM: a Base MAINNET node (0x2105 = 8453) is wrong-chain for Base Sepolia', !baseMain.ok && baseMain.kind === 'wrong-chain');
   for (const behavior of ['down', 'http500', 'rpc-error', 'malformed']) {
     const r = await probeEndpoint('evm-jsonrpc', U, 'eip155:1', { fetchFn: fakeFetch({ [U]: behavior }).fn });
     check(`EVM: '${behavior}' is unreachable (not usable)`, !r.ok && r.kind === 'unreachable', JSON.stringify(r));
@@ -450,6 +484,47 @@ const [ETH1, ETH2] = EVM_MAINNET.defaultRpcUrls;
   }
 }
 {
+  // Base Sepolia ordering and wrong-chain refusal (phase 10 item 3): a
+  // candidate answering with ANOTHER TEST NETWORK's chain id is skipped and
+  // never used; candidates are probed strictly in order.
+  const [BS1, BS2, BS3] = BASE_SEPOLIA_NETWORK.defaultUrls;
+  {
+    const { fn, calls } = fakeFetch({
+      [BS1]: { evmChainId: '0xaa36a7' },
+      [BS2]: { evmChainId: '0x14a34' },
+      [BS3]: { evmChainId: '0x14a34' },
+    });
+    const choice = await createDefaultEndpointResolver({ fetchFn: fn }).resolve(BASE_SEPOLIA_NETWORK);
+    check('Base Sepolia: a primary answering Sepolia (0xaa36a7) is skipped for sepolia.base.org', choice.url === BS2 && choice.healthy && choice.index === 1);
+    check('Base Sepolia: the Sepolia-answer reason is recorded', /identifies as 11155111, expected 84532/.test(choice.primaryFailure ?? ''), choice.primaryFailure);
+    check('Base Sepolia: only the first two candidates were probed', same(calls, [BS1, BS2]));
+    check('Base Sepolia: Settings tag names sepolia.base.org', describeDefaultChoice(choice) === 'default (2 of 3: sepolia.base.org)', describeDefaultChoice(choice));
+  }
+  {
+    const { fn, calls } = fakeFetch({ [BS1]: 'down', [BS2]: 'hang', [BS3]: { evmChainId: '0x14a34' } });
+    const choice = await createDefaultEndpointResolver({ fetchFn: fn, timeoutMs: 50 }).resolve(BASE_SEPOLIA_NETWORK);
+    check('Base Sepolia: down + hanging -> third candidate (Pocket) chosen', choice.url === BS3 && choice.index === 2 && choice.healthy);
+    check('Base Sepolia: all three probed strictly in order', same(calls, [BS1, BS2, BS3]));
+  }
+  {
+    const { fn } = fakeFetch({ [BS1]: { evmChainId: '0xaa36a7' }, [BS2]: 'down', [BS3]: { evmChainId: '0x1' } });
+    const choice = await createDefaultEndpointResolver({ fetchFn: fn }).resolve(BASE_SEPOLIA_NETWORK);
+    check('Base Sepolia: only other chains answer + one unreachable -> the unreachable one, unhealthy', choice.url === BS2 && !choice.healthy);
+  }
+  {
+    // One resolver, both test networks: choices are cached under separate keys.
+    const behaviors = {
+      [BS1]: { evmChainId: '0x14a34' },
+      [SEPOLIA_NETWORK.defaultUrls[0]]: { evmChainId: '0xaa36a7' },
+    };
+    const resolver = createDefaultEndpointResolver({ fetchFn: fakeFetch(behaviors).fn });
+    const b = await resolver.resolve(BASE_SEPOLIA_NETWORK);
+    const sp = await resolver.resolve(SEPOLIA_NETWORK);
+    check('Sepolia and Base Sepolia resolve independently', b.url === BS1 && sp.url === SEPOLIA_NETWORK.defaultUrls[0]);
+    check('reportFailure on Base Sepolia leaves the Sepolia choice cached', resolver.reportFailure(BASE_SEPOLIA_NETWORK.chainId, BS1) === true && resolver.peek(SEPOLIA_NETWORK.chainId)?.url === SEPOLIA_NETWORK.defaultUrls[0] && resolver.peek(BASE_SEPOLIA_NETWORK.chainId) === undefined);
+  }
+}
+{
   // Other chain kinds go through the same ordering.
   const [B1, B2] = BTC.defaultUrls;
   const [S1, S2, S3] = SOL.defaultUrls;
@@ -504,7 +579,7 @@ check('endpointHost strips scheme and path', endpointHost('https://mempool.space
 
 if (process.argv.includes('--live')) {
   console.log('\nlive candidate probes (read-only):');
-  for (const network of [...DEFAULT_NETWORKS, SEPOLIA_NETWORK]) {
+  for (const network of [...DEFAULT_NETWORKS, SEPOLIA_NETWORK, BASE_SEPOLIA_NETWORK]) {
     if (network.defaultUrls.length === 0) {
       console.log(`  ${network.label}: no defaults (by design)`);
       continue;
@@ -518,23 +593,23 @@ if (process.argv.includes('--live')) {
     check(`${network.label}: at least one live default is healthy`, healthy > 0);
   }
 
-  // Sepolia detail: every candidate must identify as Sepolia when it
-  // answers (never as another chain), healthy candidates must be near the
-  // freshest head, and eth_simulateV1 support is recorded. The expected
-  // simulation status is what evm-chain.ts documents (2026-10-02); a
-  // difference is printed as a note rather than failing, because a
-  // provider can change its method list at any time.
-  console.log('\nlive Sepolia candidate detail (read-only):');
+  // Test-network detail (Sepolia, and Base Sepolia since phase 10 item 3):
+  // every candidate must identify as its own chain when it answers (never
+  // as another chain), healthy candidates must be near the freshest head,
+  // and eth_simulateV1 support is recorded. The expected simulation status
+  // is what evm-chain.ts documents (Sepolia 2026-10-02, Base Sepolia
+  // 2026-10-03); a difference is printed as a note rather than failing,
+  // because a provider can change its method list at any time. Base
+  // Sepolia makes a block every 2 s, so its head tolerance is wider.
   const EXPECTED_SIMULATE = {
     'https://ethereum-sepolia-rpc.publicnode.com': 'supported',
     'https://eth-sepolia-testnet.api.pocket.network': 'supported',
     'https://0xrpc.io/sep': 'supported',
     'https://public.1rpc.io/sepolia': 'intermittent',
+    'https://base-sepolia-rpc.publicnode.com': 'supported',
+    'https://sepolia.base.org': 'supported',
+    'https://base-sepolia-testnet.api.pocket.network': 'supported',
   };
-  check(
-    'every Sepolia candidate has a documented eth_simulateV1 status',
-    SEPOLIA_NETWORK.defaultUrls.every((u) => EXPECTED_SIMULATE[u] !== undefined),
-  );
   const liveRpc = async (url, method, params = []) => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8_000);
@@ -560,59 +635,66 @@ if (process.argv.includes('--live')) {
       clearTimeout(timer);
     }
   };
-  const heads = new Map();
-  for (const url of SEPOLIA_NETWORK.defaultUrls) {
-    const probe = await probeEndpoint('evm-jsonrpc', url, SEPOLIA_NETWORK.chainId);
-    check(`Sepolia ${endpointHost(url)}: never answers as another chain`, probe.ok || probe.kind !== 'wrong-chain', JSON.stringify(probe));
-    if (!probe.ok) {
-      console.log(`  ${endpointHost(url).padEnd(40)} unreachable: ${probe.reason}`);
-      continue;
-    }
-    const head = await liveRpc(url, 'eth_blockNumber');
-    if (typeof head.result === 'string') heads.set(url, BigInt(head.result));
-    // The same shape wallet/simulation.ts sends: one plain ETH transfer
-    // with traceTransfers, so a supporting node returns the ETH
-    // pseudo-Transfer log from 0xeeee...eeee.
-    const sim = await liveRpc(url, 'eth_simulateV1', [
-      {
-        blockStateCalls: [
-          {
-            calls: [
-              {
-                from: '0x0000000000000000000000000000000000000001',
-                to: '0x000000000000000000000000000000000000dEaD',
-                value: '0x1',
-              },
-            ],
-          },
-        ],
-        traceTransfers: true,
-      },
-      'latest',
-    ]);
-    let simStatus;
-    if (Array.isArray(sim.result)) {
-      const logs = sim.result[0]?.calls?.[0]?.logs ?? [];
-      const traced = logs.some((l) => String(l.address).toLowerCase() === '0x' + 'e'.repeat(40));
-      simStatus = traced ? 'supported' : 'answered without the traceTransfers log';
-    } else if (sim.status === 429 || /rate limit/i.test(sim.error ?? '')) {
-      simStatus = `rate-limited (${sim.error})`;
-    } else {
-      simStatus = `unsupported or failed (${sim.error})`;
-    }
-    const expected = EXPECTED_SIMULATE[url];
-    // 'intermittent' means any outcome is consistent with the documentation.
-    const matches = expected === 'intermittent' || (expected !== undefined && simStatus.startsWith(expected));
-    console.log(
-      `  ${endpointHost(url).padEnd(40)} head ${head.result ?? head.error}  eth_simulateV1: ${simStatus}` +
-        (matches ? '' : `  [note: documented as "${expected}"]`),
+  for (const [network, headTolerance] of [[SEPOLIA_NETWORK, 5n], [BASE_SEPOLIA_NETWORK, 15n]]) {
+    console.log(`\nlive ${network.label} candidate detail (read-only):`);
+    check(
+      `every ${network.label} candidate has a documented eth_simulateV1 status`,
+      network.defaultUrls.every((u) => EXPECTED_SIMULATE[u] !== undefined),
     );
-  }
-  if (heads.size > 0) {
-    const freshest = [...heads.values()].reduce((a, b) => (a > b ? a : b));
-    for (const [url, head] of heads) {
-      const lag = freshest - head;
-      check(`Sepolia ${endpointHost(url)}: head within 5 blocks of the freshest candidate`, lag <= 5n, `${lag} blocks behind`);
+    const heads = new Map();
+    for (const url of network.defaultUrls) {
+      const probe = await probeEndpoint('evm-jsonrpc', url, network.chainId);
+      check(`${network.label} ${endpointHost(url)}: never answers as another chain`, probe.ok || probe.kind !== 'wrong-chain', JSON.stringify(probe));
+      if (!probe.ok) {
+        console.log(`  ${endpointHost(url).padEnd(40)} unreachable: ${probe.reason}`);
+        continue;
+      }
+      const head = await liveRpc(url, 'eth_blockNumber');
+      if (typeof head.result === 'string') heads.set(url, BigInt(head.result));
+      // The same shape wallet/simulation.ts sends: one plain ETH transfer
+      // with traceTransfers, so a supporting node returns the ETH
+      // pseudo-Transfer log from 0xeeee...eeee.
+      const sim = await liveRpc(url, 'eth_simulateV1', [
+        {
+          blockStateCalls: [
+            {
+              calls: [
+                {
+                  from: '0x0000000000000000000000000000000000000001',
+                  to: '0x000000000000000000000000000000000000dEaD',
+                  value: '0x1',
+                },
+              ],
+            },
+          ],
+          traceTransfers: true,
+        },
+        'latest',
+      ]);
+      let simStatus;
+      if (Array.isArray(sim.result)) {
+        const logs = sim.result[0]?.calls?.[0]?.logs ?? [];
+        const traced = logs.some((l) => String(l.address).toLowerCase() === '0x' + 'e'.repeat(40));
+        simStatus = traced ? 'supported' : 'answered without the traceTransfers log';
+      } else if (sim.status === 429 || /rate limit/i.test(sim.error ?? '')) {
+        simStatus = `rate-limited (${sim.error})`;
+      } else {
+        simStatus = `unsupported or failed (${sim.error})`;
+      }
+      const expected = EXPECTED_SIMULATE[url];
+      // 'intermittent' means any outcome is consistent with the documentation.
+      const matches = expected === 'intermittent' || (expected !== undefined && simStatus.startsWith(expected));
+      console.log(
+        `  ${endpointHost(url).padEnd(40)} head ${head.result ?? head.error}  eth_simulateV1: ${simStatus}` +
+          (matches ? '' : `  [note: documented as "${expected}"]`),
+      );
+    }
+    if (heads.size > 0) {
+      const freshest = [...heads.values()].reduce((a, b) => (a > b ? a : b));
+      for (const [url, head] of heads) {
+        const lag = freshest - head;
+        check(`${network.label} ${endpointHost(url)}: head within ${headTolerance} blocks of the freshest candidate`, lag <= headTolerance, `${lag} blocks behind`);
+      }
     }
   }
 }

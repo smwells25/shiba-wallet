@@ -48,6 +48,7 @@ import {
   signHashAsSmartAccount,
 } from '../src/wallet/aa.ts';
 import { aaSwapCalls, prepareAaSwap } from '../src/wallet/swap.ts';
+import { EVM_BASE_SEPOLIA } from '../src/config/evm-chain.ts';
 import { personalMessageDigest } from '../src/wallet/walletconnect.ts';
 import {
   KERNEL_ACCOUNT_0,
@@ -268,6 +269,56 @@ console.log('check-aa-kernel: Kernel stub -> estimate -> sign -> send');
 
   // A signer whose smart account differs from the quote is refused before signing.
   await checkRejects('sendAa refuses a signer whose smart account is not the quoted sender', () => sendAa(bundle, owner1, quote), 'Nothing was signed');
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-aa-kernel: Base Sepolia (eip155:84532), the second test chain');
+// ---------------------------------------------------------------------------
+// Phase 10 item 3: the same Kernel v3.3 addresses were verified read-only on
+// Base Sepolia (config/evm-chain.ts EVM_BASE_SEPOLIA); here the save path and
+// the full pipeline run against a fake node answering Base Sepolia's chain
+// id 0x14a34, and the two test chains refuse each other's endpoints.
+{
+  const BASE = EVM_BASE_SEPOLIA.caip2;
+  const baseNode = (opts = {}) => fakeKernelNode({ chainIdHex: '0x14a34', ...opts });
+  check('profile: Base Sepolia records Kernel v3.3 as verified and pre-fills no SimpleAccount factory', EVM_BASE_SEPOLIA.kernelV33Verified === true && EVM_BASE_SEPOLIA.aaPrefill === null);
+  const store = memoryStore();
+  await setAaBundlerUrl(SEPOLIA, BUNDLER_URL, { store, transportFor: () => fakeBundler() });
+  await setAaKernelFactory(SEPOLIA, KERNEL_PREFILL.factory, NODE_URL, { store, transportFor: () => sepNode() });
+  await setAaBundlerUrl(BASE, 'https://bundler-base.example', { store, transportFor: () => fakeBundler() });
+  const result = await setAaKernelFactory(BASE, KERNEL_PREFILL.factory, NODE_URL, { store, transportFor: () => baseNode() });
+  const cfg = await getAaConfig(BASE, store);
+  check('Base Sepolia: the pinned Kernel factory saves after every on-chain check', cfg.chain === BASE && cfg.accountType === 'kernel-v3.3' && same(cfg.factory, KERNEL_V3_3.factory) && result.accountId === 'kernel.advanced.v0.3.3');
+  check('Base Sepolia: implementation / meta factory / validator recorded', same(cfg.factoryImplementation, KERNEL_V3_3.implementation) && same(cfg.kernelMetaFactory, KERNEL_V3_3.metaFactory) && same(cfg.kernelValidator, KERNEL_V3_3.ecdsaValidator));
+  check('Base Sepolia: configured with its own bundler', isAaConfigured(cfg) && cfg.bundlerUrl === 'https://bundler-base.example');
+  const sep = await getAaConfig(SEPOLIA, store);
+  check('Sepolia keeps its own bundler and Kernel config', sep.bundlerUrl === BUNDLER_URL && sep.accountType === 'kernel-v3.3' && isAaConfigured(sep));
+
+  const rejectStore = memoryStore();
+  await checkRejects('a Sepolia node is refused for the Base Sepolia key', () => setAaKernelFactory(BASE, KERNEL_PREFILL.factory, NODE_URL, { store: rejectStore, transportFor: () => sepNode() }), 'expected 84532');
+  await checkRejects('a Base Sepolia node is refused for the Sepolia key', () => setAaKernelFactory(SEPOLIA, KERNEL_PREFILL.factory, NODE_URL, { store: rejectStore, transportFor: () => baseNode() }), 'expected 11155111');
+  await checkRejects('a Base MAINNET node (0x2105) is refused for the Base Sepolia key', () => setAaKernelFactory(BASE, KERNEL_PREFILL.factory, NODE_URL, { store: rejectStore, transportFor: () => baseNode({ chainIdHex: '0x2105' }) }), 'expected 84532');
+  await checkRejects('Base Sepolia: an unapproved factory is refused like on Sepolia', () => setAaKernelFactory(BASE, KERNEL_PREFILL.factory, NODE_URL, { store: rejectStore, transportFor: () => baseNode({ approved: false }) }), 'has not approved');
+  check('the refused cross-chain saves persisted nothing', (await rejectStore.getItem('shiba-wallet.aa-config.v1')) === null);
+  await checkRejects('Base MAINNET (eip155:8453) is not a test network: the save is refused before any request', () => setAaKernelFactory('eip155:8453', KERNEL_PREFILL.factory, NODE_URL, { store: rejectStore, transportFor: () => { throw new Error('no request expected'); } }), 'only on test networks');
+
+  // Full pipeline with chain id 84532: the counterfactual address is the
+  // same CREATE2 result as on every chain, and the owner signs the v0.7
+  // userOpHash bound to 84532 (not to 1 or 11155111).
+  const node = baseNode();
+  const bundler = fakeBundler();
+  const bundle = createAaClientFromConfig(kernelConfig, { nodeUrl: NODE_URL, chainId: 84532n, accountIndex: 0, transportFor: (url) => (url === NODE_URL ? node : bundler) });
+  check('Base Sepolia: the counterfactual sender is 0xB67b…9a42 (CREATE2 is chain-independent)', (await resolveAaSender(bundle, OWNER_0)) === KERNEL_ACCOUNT_0);
+  const RECIPIENT = ethers.getAddress('0x' + 'bb'.repeat(20));
+  const quote = await prepareAaSend(bundle, OWNER_0, RECIPIENT, 777n);
+  check('Base Sepolia: the quote is for the Kernel account and will deploy', quote.sender === KERNEL_ACCOUNT_0 && quote.deployed === false);
+  await sendAa(bundle, owner, quote);
+  const op = bundler.lastOp;
+  const hash84532 = getUserOpHash(fromRpcOp(op), ENTRYPOINT_V07, 84532n);
+  check('Base Sepolia: the owner signed the userOpHash for chain 84532 (ethers recovers the owner)', ethers.verifyMessage(hash84532, op.signature) === OWNER_0);
+  check('…and NOT the Sepolia-bound hash (chain binding)', ethers.verifyMessage(getUserOpHash(fromRpcOp(op), ENTRYPOINT_V07, 11155111n), op.signature) !== OWNER_0);
+  const wrongNodeBundle = createAaClientFromConfig(kernelConfig, { nodeUrl: NODE_URL, chainId: 84532n, accountIndex: 0, transportFor: (url) => (url === NODE_URL ? sepNode() : fakeBundler()) });
+  await checkRejects('Base Sepolia: a quote through a Sepolia node is refused (chain-id guard)', () => prepareAaSend(wrongNodeBundle, OWNER_0, RECIPIENT, 777n), '84532');
 }
 
 // ---------------------------------------------------------------------------

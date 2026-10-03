@@ -43,18 +43,20 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 
 /**
  * Persistent orange TESTNET banner (phase 4, item 6), shown whenever the
- * Settings Sepolia test mode is on. Anchored at the bottom of the window
+ * Settings test mode is on (Ethereum Sepolia or Base Sepolia). Anchored at the bottom of the window
  * (respecting the home-indicator inset) so it never fights the native
  * stack headers for the status-bar area, and rendered outside the
  * navigator so it stays visible on every screen.
  */
 function TestnetBanner() {
   const insets = useSafeAreaInsets();
+  // The active test profile carries its own banner sentence (Ethereum
+  // Sepolia or Base Sepolia); the Sepolia wording is kept verbatim.
+  const { evmChain } = usePrefs();
+  const text = evmChain.bannerText ?? 'TESTNET — Sepolia test mode is on. Amounts are test ETH, not real funds.';
   return (
     <View style={[styles.testnetBanner, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-      <Text style={styles.testnetBannerText}>
-        TESTNET — Sepolia test mode is on. Amounts are test ETH, not real funds.
-      </Text>
+      <Text style={styles.testnetBannerText}>{text}</Text>
     </View>
   );
 }

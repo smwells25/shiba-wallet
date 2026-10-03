@@ -24,7 +24,7 @@ import {
 // under Node's type stripping, which resolves relative specifiers literally.
 import { EVM_CHAIN_ID, prepareEvmSend, validateRecipient, type EvmSendQuote } from './send.ts';
 import type { KeyValueStore } from './tokens.ts';
-import { EVM_MAINNET, EVM_SEPOLIA } from '../config/evm-chain.ts';
+import { EVM_MAINNET, evmProfileByCaip2 } from '../config/evm-chain.ts';
 import { getEndpoint, withEndpoint } from '../config/networks.ts';
 
 /**
@@ -305,18 +305,19 @@ export const WC_ERRORS = {
 // Plain-language chain / mode wording (the active-chain rule)
 // ---------------------------------------------------------------------------
 
-/** Human name for a CAIP-2 chain id; unknown chains show their id. */
+/**
+ * Human name for a CAIP-2 chain id; unknown chains show their id. Every
+ * profile in config/evm-chain.ts is named (mainnet, Sepolia, Base Sepolia).
+ */
 export function describeChain(caip2: string): string {
   if (caip2 === EVM_MAINNET.caip2) return 'Ethereum mainnet';
-  if (caip2 === EVM_SEPOLIA.caip2) return 'Ethereum Sepolia (test network)';
-  return caip2;
+  const profile = evmProfileByCaip2(caip2);
+  return profile ? `${profile.label} (test network)` : caip2;
 }
 
 /** The wallet mode a chain belongs to, or null for chains no mode serves. */
 function modeName(caip2: string): string | null {
-  if (caip2 === EVM_MAINNET.caip2) return 'mainnet mode';
-  if (caip2 === EVM_SEPOLIA.caip2) return 'Sepolia test mode';
-  return null;
+  return evmProfileByCaip2(caip2)?.modeLabel ?? null;
 }
 
 /**
@@ -331,9 +332,10 @@ export function modeMismatchMessage(
   purpose: 'connect' | 'use this connection',
 ): string {
   const active = modeName(activeChain) ?? activeChain;
+  const requested = evmProfileByCaip2(requestedChain);
   const how =
-    requestedChain === EVM_SEPOLIA.caip2
-      ? `Turn on Sepolia test mode in Settings → Developer to ${purpose}.`
+    requested?.testnet
+      ? `Turn on ${requested.modeLabel} in Settings → Developer to ${purpose}.`
       : `Switch modes in Settings → Developer to ${purpose}.`;
   return `This dApp asked for ${describeChain(requestedChain)}; the wallet is in ${active}. ${how}`;
 }
@@ -359,8 +361,8 @@ function unsupportedChainMessage(
   const unknown = chains.filter((c) => c !== activeChain);
   return (
     `This dApp requires ${unknown.map(describeChain).join(', ')}, which this wallet does ` +
-    'not support over WalletConnect. It connects on Ethereum mainnet, or on Sepolia ' +
-    `while test mode is on (currently: ${describeChain(activeChain)}).`
+    'not support over WalletConnect. It connects on Ethereum mainnet, or on the chosen test ' +
+    `network (Sepolia or Base Sepolia) while test mode is on (currently: ${describeChain(activeChain)}).`
   );
 }
 
@@ -1001,7 +1003,7 @@ const EIP7702_HINT = /authori[sz]ation|7702|delegat/i;
  */
 export const GUARDIAN_WC_REFUSAL =
   'This wallet never approves or submits a guardian recovery for a dApp. Approving a recovery hands ' +
-  'control of an account to a new owner; use Settings → Guardians → Approve a recovery in the wallet, ' +
+  'control of an account to a new owner; use Settings → Guardians (social recovery) → Approve a recovery (as a guardian) in the wallet, ' +
   'after confirming with the account holder.';
 
 /** True when a call targets the guardian modules or carries the doRecovery selector. */

@@ -7,7 +7,7 @@ import React, {
   useState,
 } from 'react';
 import { AppPrefs, DEFAULT_PREFS, loadPrefs, savePrefs } from '../config/prefs';
-import { evmProfileFor, type EvmChainProfile } from '../config/evm-chain';
+import { evmProfileFor, type EvmChainProfile, type TestNetworkId } from '../config/evm-chain';
 
 /**
  * React side of the app preferences (config/prefs.ts): one provider so
@@ -21,7 +21,10 @@ import { evmProfileFor, type EvmChainProfile } from '../config/evm-chain';
 interface PrefsContextValue {
   /** False until the stored preferences finished loading. */
   ready: boolean;
+  /** True while any test network is chosen (see AppPrefs.sepolia). */
   sepolia: boolean;
+  /** The chosen test network's CAIP-2 id, or null for mainnet. */
+  testNetwork: TestNetworkId | null;
   hideAmounts: boolean;
   autoLockMs: number | null;
   /** Show fiat values (default on); off means no price request is made. */
@@ -29,10 +32,13 @@ interface PrefsContextValue {
   /**
    * The active EVM chain profile — THE config source screens use for
    * chain-id verification, explorer links, badges and AA prefill
-   * (config/evm-chain.ts). Derived from `sepolia`.
+   * (config/evm-chain.ts). Derived from `testNetwork`.
    */
   evmChain: EvmChainProfile;
+  /** Legacy on/off: on keeps the chosen test network (Sepolia if none), off = mainnet. */
   setSepolia: (on: boolean) => Promise<void>;
+  /** Chooses the test network (null = mainnet). */
+  setTestNetwork: (network: TestNetworkId | null) => Promise<void>;
   setHideAmounts: (on: boolean) => Promise<void>;
   setAutoLockMs: (ms: number | null) => Promise<void>;
   setShowFiat: (on: boolean) => Promise<void>;
@@ -73,11 +79,13 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
     () => ({
       ready,
       sepolia: prefs.sepolia,
+      testNetwork: prefs.testNetwork,
       hideAmounts: prefs.hideAmounts,
       autoLockMs: prefs.autoLockMs,
       showFiat: prefs.showFiat,
-      evmChain: evmProfileFor(prefs.sepolia),
+      evmChain: evmProfileFor(prefs.testNetwork),
       setSepolia: (on) => patch({ sepolia: on }),
+      setTestNetwork: (network) => patch({ testNetwork: network }),
       setHideAmounts: (on) => patch({ hideAmounts: on }),
       setAutoLockMs: (ms) => patch({ autoLockMs: ms }),
       setShowFiat: (on) => patch({ showFiat: on }),
