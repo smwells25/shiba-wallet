@@ -3855,3 +3855,43 @@ role; THREAT_MODEL rows F-44/F-55/T-23 after e51a33e; the intermittent
 "Error: undefined" warning; device-only validations (W2–W4, W18–W19,
 FaceID, StrongBox, TalkBack/VoiceOver, iOS protected-storage behaviour)
 once a development build exists.
+- [x] Dogecoin mainnet demonstration script (commit f84f6e8;
+      scripts/testnet/doge-mainnet-demo.mjs; documented in
+      THREAT_MODEL.md 7.5 as the one script allowed to touch mainnet
+      funds, bounded to a few DOGE, and in the README's scripts/testnet
+      row). Dev wallet mainnet address DEQ788Pe98Z97Le6feBa2P49JL7ETGSMNf
+      (m/44'/3'/0'/0/0 via core dogecoinKeyProvider; the script refuses
+      if the derivation differs). DRY RUN by default: the app's own
+      prepareUtxoSend (backend blockbook over dogebook.nownodes.io, api-key
+      header never printed) quotes a 1 DOGE self-send, chains-utxo signs
+      it (signed twice, bytes asserted identical so the dry-run txid is
+      the broadcast txid), bitcoinjs-lib 6.1.8 decodes it independently
+      (25 checks: txid, size, version 2 / locktime 0, outpoint, scriptSig
+      <sig> <pubkey> with hash160 == address, SIGHASH_ALL low-S verified
+      over bitcoinjs's own sighash, outputs re-encoded with version 0x1e
+      to the dev address only, inputs − outputs == fee). Rails: GET /api
+      must report coin "Dogecoin", chain "main", in sync; block-index/0
+      must equal the CAIP-2 genesis 1a91e3dace36e2be3bf030a65679fe82;
+      fee <= 2 DOGE and <= 5% of the amount; change >= 0.01 DOGE; every
+      input and output bound to the dev address; broadcast only with
+      DOGE_MAINNET_BROADCAST=1 plus the exact txid typed on stdin, through
+      the app's sendUtxo → engine signAndBroadcast → blockbookTransport
+      (POST /api/v2/sendtx/ per Blockbook docs/api.md and master
+      openapi.yaml — unverified live until a broadcast), then polls
+      /api/v2/tx/{txid} every 15 s for up to 20 minutes. Live dry run
+      2026-10-02: host runs Blockbook 0.6.0 over Dogecoin Core 1.14.9,
+      estimatefee/6 = 0.01002525, balance 0 → printed the funding
+      instruction. Offline --fake-utxos (10 DOGE): txid 4c1232fc…41f0,
+      225 bytes, fee 0.00226678 DOGE at 1003 sat/vB quoted, change
+      8.99773322, all 25 decode checks passed. Command once ~5 DOGE
+      arrive: `npm run build && node scripts/testnet/doge-mainnet-demo.mjs`
+      (review), then `DOGE_MAINNET_BROADCAST=1 node
+      scripts/testnet/doge-mainnet-demo.mjs`. FINDING (engine bug,
+      fix in progress): chains-utxo applies Bitcoin Core's dust (546 base
+      units for P2PKH) to Dogecoin, but Dogecoin Core 1.14.9 (policy.h /
+      policy.cpp / dogecoin-fees.cpp at v1.14.9) has a hard dust limit of
+      0.001 DOGE (non-standard below it) and a soft limit of 0.01 DOGE
+      (each output below it adds 0.01 DOGE to the required fee), so the
+      app's Dogecoin send could create change between 546 and 1,000,000
+      base units that nodes reject or surcharge — reasoned from source,
+      not yet observed live.
