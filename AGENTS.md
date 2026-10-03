@@ -3614,3 +3614,38 @@ whenever the Expo account and identifiers arrive. Subagents on Opus.
       whether Verify returns VALID/isScam over the live relay in RN,
       whether 30 s always covers approval-to-signing (else one extra
       prompt). Emulator checklist (8 steps) in the builder's report.
+- [x] Settings "Recovery phrase protection" section (commit d037fd9;
+      check-settings-protection.mjs 50 checks; GitHub Actions run for
+      d037fd9 success): status copy per storage state (protected since a
+      date, unreadable → PHRASE_UNREADABLE_MESSAGE, standard by reason:
+      no-strong-biometrics / not-attempted / cancelled / platform-refused /
+      verify-failed / reverted / policy-off), the "Protect with
+      biometrics" button only when canProtectNow, a confirm dialog that
+      states the invalidation trade-off before upgradePhraseProtection(),
+      outcome alerts, status re-read on focus / after the button / after a
+      reveal, and the reveal flow shows the protection status instead of
+      "No recovery phrase found" when revealMnemonic() returns null. Copy
+      lives in app/src/wallet/phrase-protection-copy.ts so the check
+      script pins every string and runs the real vault against an
+      in-memory store. EMULATOR, PROVEN LIVE in Expo Go (AVD with PIN +
+      fingerprint, Metro from the worktree at d037fd9): the existing
+      wallet opened normally on the new vault code; Settings showed both
+      new sections ("Recovery phrase protection" with the not-attempted
+      copy and the button; "Mainnet readiness" with "Sending from your
+      regular account — Not yet cleared" and its reason); tapping Protect
+      showed the confirm dialog, then the two Android system prompts
+      "Protect your recovery phrase with biometrics" and "Confirm your
+      protected recovery phrase" (simulated fingerprint each), then the
+      alert "Recovery phrase protected" and the status "protected by
+      biometrics (since 2026-10-03)" — so expo-secure-store's
+      requireAuthentication works inside Expo Go on Android (previously
+      unverified). Afterwards Show recovery phrase raised exactly ONE
+      system prompt ("Reveal recovery phrase") and the 12 words rendered
+      with no further prompt (the CTO's check filtered the UI dump so the
+      words were never printed), and a force-stop relaunch reached Home
+      (Account 1) with NO prompt, i.e. the public account cache works.
+      The emulator wallet's phrase is now in protected storage: adding or
+      removing the AVD's fingerprint will make it unreadable (the written
+      phrase for that wallet is not recorded anywhere; it is a test
+      wallet). Not yet eyeballed: the unreadable state and the section's
+      dark-mode layout.
