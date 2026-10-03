@@ -1,6 +1,13 @@
 import { EVM_SEPOLIA } from './evm-chain.ts';
 
 /**
+ * Chairperson decision (2026-10-02): the plain-feature rows ('blocked' but
+ * not enforced) stay ADVISORY on purpose. This wallet is a prototype whose
+ * point is to show that these features work inside an account-abstraction
+ * wallet, so plain sends, tokens, NFTs, swaps, WalletConnect and Dogecoin
+ * keep working on mainnet while Settings states what has not been cleared.
+ * Smart-account features remain enforced testnet-only until C1–C3 clear.
+ *
  * Mainnet readiness switchboard (phase 9 item 6; docs/THREAT_MODEL.md
  * checklist item W9).
  *

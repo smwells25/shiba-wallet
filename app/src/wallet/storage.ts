@@ -159,7 +159,8 @@ const PROTECTED_SESSION_KEY_PREFIX = 'shiba-wallet.session-key.v2.';
  *    button);
  *  - 'off': never (an already protected phrase stays readable).
  *
- * DECISION (CTO, 2026-10-02, pending the Chairperson's review): 'opt-in'.
+ * DECISION (Chairperson, 2026-10-02): 'opt-in' — users are not forced into
+ * biometrics; protection is a choice made from Settings.
  * The invalidation rule above means that adding a fingerprint or resetting
  * Face ID makes this phone unable to open an automatically protected phrase,
  * and the user must restore from the written backup. Moving every existing

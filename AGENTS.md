@@ -3833,11 +3833,18 @@ expo-splash-screen and supportsTablet decisions, the ZeroDev disclosure
 decision, a 0x key, a paymaster policy, about 1 DOGE for the mainnet
 broadcast.
 
-Decisions pending the Chairperson: (a) PHRASE_PROTECTION_POLICY opt-in
-(current) vs automatic; (b) whether the advisory plain-feature rows
-(EOA send, tokens, NFTs, swap, WalletConnect, Dogecoin send) stay
-advisory or become enforced (which would make the wallet testnet-only
-end to end until W1–W4/W13/W17–W20 clear).
+DECIDED by the Chairperson (2026-10-02): (a) PHRASE_PROTECTION_POLICY
+stays 'opt-in' — users must not be forced into biometrics; (b) the
+plain-feature readiness rows (EOA send, tokens, NFTs, swap,
+WalletConnect, Dogecoin send) stay ADVISORY: all of those features are
+required, and the wallet's purpose is to show they can work inside an
+account-abstraction wallet, so they keep working on mainnet with the
+Settings copy stating what is not yet cleared. Dogecoin needs only a
+prototype-level demonstration, not extensive testing: the one real
+broadcast (a tiny self-send, about 1 DOGE in fees) remains the way to
+show it works end to end and runs automatically from
+scripts/testnet/smoke.mjs as soon as DOGE lands on the dev address
+printed by scripts/testnet/setup.mjs.
 
 Open follow-ups (no inputs needed): in-app privacy-policy link once a URL
 exists; load-time filtering of previously saved http endpoints;
