@@ -4230,3 +4230,23 @@ on Opus. The emulator is driven by ONE agent at a time.
       says "Settings → Guardians → Approve a recovery" (the button is
       "Approve a recovery (as a guardian)" in "Guardians (social
       recovery)"). Not re-run on the emulator yet.
+- [x] Session grant RE-RUN on the emulator after the fixes (2026-10-03,
+      Metro on the isolated worktree at 357c7fe with real dist copies and
+      a resolver mapping @shiba-wallet/* to them — an engine rebuild in the
+      main checkout can no longer reach the device): Sessions → Grant a
+      new session (target = the owner EOA, 10 minutes) → review (permission
+      id 0xa87766a6, session key 0x61555a7eD6f3Ce0c730a76f15aBe26D7984EF28C,
+      bundler estimate passed) → Grant session: exactly TWO system prompts
+      answered promptly, and the Sessions screen stayed put showing
+      "Session install sent to the bundler", userOp
+      0x4b74e1d9aad1a0ad7651cbaf5076a4376a1e8d2a254312494ae38ad9e21e71d7,
+      "Included on-chain — succeeded. Status: Active." (the CTO read
+      readKernelPermissionState: installed, 2 policies). Done → card
+      "Active" with Test / Revoke / Refresh status → Revoke → "One call to
+      your own account: uninstallValidation…", "Bundler gas estimate
+      passed." → Revoke session: ONE prompt → userOp
+      0x7908d933076b3aec091ca4ba476162d1b8acd85b6d8c1b4c51cd58c2a3b532cf,
+      "Included on-chain — succeeded. Status: Revoked."; on-chain
+      installed false afterwards. Bug 1 is closed: with no hot update and
+      prompt answers inside the 30 s hold, the grant is two prompts and
+      the success state survives.
