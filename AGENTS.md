@@ -3691,3 +3691,71 @@ whenever the Expo account and identifiers arrive. Subagents on Opus.
       new 13 (ARCHITECTURE said "automatic") and 14 (CONTRIBUTING said
       check-tokens is "live") — both fixed by the CTO in the same commit.
       check-readiness (which parses the document) still 115/115.
+- [x] Item 3, the part that needs no account (commits 2d04238, 6345dd8
+      and the dev-client commit below). app/eas.json: cli.version >=
+      19.1.0, appVersionSource remote, a base profile pinning Node 24.21.0
+      (EAS sdk-57 images default to Node 22.23.x), profiles development
+      (dev client, internal, Android APK, iOS device), development-simulator
+      (iOS simulator), preview (internal, APK), production (store,
+      autoIncrement, Android app bundle; submit to the Play internal track
+      as a draft); validated offline with @expo/eas-json 24.9.0 (eas
+      config/build need a login). app.json: android.allowBackup false
+      (Expo's default is true per @expo/config-plugins 57.0.9; the
+      secure-store plugin's backup rules already limit the backup to
+      shared preferences minus SecureStore, so AsyncStorage's RKStorage
+      database was probably excluded already — W18 still needs a bmgr
+      device test), blockedPermissions RECORD_AUDIO / READ_MEDIA_IMAGES
+      (requested by expo-screen-capture's manifest; Play restricts it and
+      the app never uses the screenshot listener) / READ_EXTERNAL_STORAGE
+      / WRITE_EXTERNAL_STORAGE (DETECT_SCREEN_CAPTURE deliberately kept),
+      expo-camera microphonePermission false + recordAudioAndroid false,
+      one plain Face ID sentence through the expo-secure-store and
+      expo-local-authentication plugins (resulting iOS usage strings:
+      camera and Face ID only); identifiers/owner left unset.
+      docs/RELEASE.md (prerequisites, eas-cli commands per profile, the
+      device checklist, pre-release checklist, versioning, rollback via
+      update channels — expo-updates NOT installed; adopting it is a
+      security decision: code signing needs the EAS Production/Enterprise
+      plans and Apple 2.5.2 applies), docs/STORE_LISTING.md (listing
+      draft, policy citations, data-safety / privacy-nutrition drafts for
+      counsel), docs/PRIVACY.md (what leaves the device and to whom,
+      on-device inventory, controls), DEVICE_BUILDS.md (expo-screen-capture
+      57.0.3 behaves the same in release builds: Android FLAG_SECURE incl.
+      the recents preview; iOS screenshots via a secure-text-field layer
+      — a UIKit rendering property, not an Apple API — recordings/
+      mirroring via a black overlay only during capture; the app switcher
+      is NOT covered because enableAppSwitcherProtectionAsync is never
+      called (N-05); nothing on iOS observed). expo-doctor: 20/21 (the
+      known patch drift expo 57.0.25 vs ~57.0.26, expo-camera 57.0.5 vs
+      ~57.0.6 — unchanged). FINDINGS FOR THE CHAIRPERSON: (1) Apple
+      guideline 3.1.5(i) allows wallet apps only from developers enrolled
+      as an organization (the brief's (iii) is the exchanges clause,
+      relevant to the 0x swap — counsel); (2) Google Play states
+      non-custodial wallets are out of scope of its crypto policy (answer
+      16329703); how the Financial Features declaration expresses that is
+      unverified; (3) the WalletConnect SDK sent telemetry by default
+      (@walletconnect/core 2.25.0 posts an init event with client id, user
+      agent and project id to pulse.walletconnect.org) — FIXED in 6345dd8
+      with telemetryEnabled: false, pinned by check-wc (233); (4) two build
+      blockers FIXED in the next commit: expo-dev-client installed
+      (development profiles need it) and the app/package.json hook
+      eas-build-post-install = "cd .. && npm ci --ignore-scripts && npm run
+      build" because packages/*/dist are git-ignored (whether the EAS
+      upload includes the monorepo root is unverified); (5) app changes
+      still needed: an in-app privacy-policy link (Apple 5.1.1(i)) and
+      refusing http:// endpoints (for a clean encrypted-in-transit answer).
+      PLACEHOLDERS the Chairperson must fill: Expo account (+ owner), iOS
+      bundle identifier, Android package name, Apple organization
+      enrollment + Team ID + App Store Connect app id, Google Play
+      organization account + app + service-account key, the passkey rpId
+      domain, privacy-policy and support URLs, publisher legal name and
+      contact, counsel's encryption-export answer (usesNonExemptEncryption
+      unset), the final app name after a trademark check on "Shiba",
+      distribution countries and whether swaps ship at launch, a real
+      WalletConnect metadata URL (replacing shiba-wallet.example),
+      screenshots/artwork, whether to install expo-splash-screen
+      (splash-icon.png is unused in SDK 57 without it), supportsTablet.
+      UNVERIFIED: any EAS build or submission, a real build's merged
+      manifest, removing SYSTEM_ALERT_WINDOW (from Expo's template), phased
+      release behaviour, iOS backup of ordinary app data, a network capture
+      of a release build.
