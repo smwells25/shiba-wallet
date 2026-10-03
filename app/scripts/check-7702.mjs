@@ -519,6 +519,21 @@ console.log('check-7702: delegated-eoa risk signal');
   check('a foreign-delegated recipient → warning stays', has(strangerForeign));
 }
 
+// Phase 11 item 2 (bug A): the 7702 quote shares prepareAaCalls, so an
+// unfunded EOA gets the wallet's funding message before any bundler call.
+{
+  const node = fake7702Node({ chainIdHex: '0xaa36a7', balance: 0n });
+  const { bundle, bundler } = bundle7702({ node });
+  let err = null;
+  try {
+    await prepareAaSend(bundle, OWNER_0, ethers.getAddress(RECIPIENT), 1000n);
+  } catch (e) {
+    err = e;
+  }
+  check('7702: unfunded upgrade quote refused with the funding message naming the EOA', err?.name === 'AaFundingError' && err.sender === OWNER_0 && err.message.includes(`Fund the smart account address ${OWNER_0}`), String(err));
+  check('7702: zero bundler calls before the refusal (no stub-tuple estimate)', bundler.calls.length === 0, JSON.stringify(bundler.calls.map((c) => c.method)));
+}
+
 console.log('');
 console.log(`check-7702: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

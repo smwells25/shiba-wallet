@@ -42,7 +42,7 @@ import {
 } from '../wallet/phrase-protection-copy';
 import {
   AA_ACCOUNT_TYPES,
-  KERNEL_BUNDLER_NOTE,
+  kernelDeploymentNote,
   KERNEL_PREFILL,
   aaAccountTypeLabel,
   clearAaBundlerUrl,
@@ -665,7 +665,7 @@ function AaChainRow({ network }: { network: NetworkDefault }) {
         <Text style={[styles.endpointNote, { color: theme.textMuted }]}>
           Kernel v3.3 is an ERC-7579 modular account with this account&apos;s key as
           its owner (ECDSA validator). It supports message signing for dApps
-          (ERC-1271; ERC-6492 before it is deployed). {KERNEL_BUNDLER_NOTE}
+          (ERC-1271; ERC-6492 before it is deployed). {kernelDeploymentNote(config?.bundlerUrl ?? null)}
         </Text>
       ) : (
         <Text style={[styles.endpointNote, { color: theme.textMuted }]}>

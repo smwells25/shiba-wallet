@@ -11,6 +11,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { formatAssetId, nonFungibleTokenId, parseAssetId } from '@shiba-wallet/core';
 import type { FungibleAsset } from '@shiba-wallet/core';
@@ -49,10 +50,16 @@ import {
   type SendResult,
 } from '../wallet/send';
 import {
-  KERNEL_BUNDLER_NOTE,
   PREVIEW_AA_BATCH_NOTE,
   aaAccountTypeLabel,
+  aaSendApprovalPrompt,
   aaSenderLabel,
+  kernelDeploymentNote,
+  loadSmartAccountAddress,
+  retitleQuoteFailure,
+  showsSmartAccountAddressOnSend,
+  smartAccountAddressLabel,
+  smartAccountDeploymentNote,
   createAaClientFromConfig,
   describeAaError,
   effectiveAaAccountType,
@@ -69,6 +76,7 @@ import {
   type AaChainConfig,
   type AaClientBundle,
   type AaSendQuote,
+  type SmartAccountAddressInfo,
 } from '../wallet/aa';
 import {
   maxErc20Send,
@@ -371,6 +379,60 @@ export function SendScreen({ route, navigation }: Props) {
   }, [contactsNetworkId]);
   // Reload when returning from the Contacts screen (opened from the picker).
   useEffect(() => navigation.addListener('focus', reloadContacts), [navigation, reloadContacts]);
+
+  // The smart account's own address (counterfactual until its first send
+  // deploys it), shown beside the "Send from smart account" toggle so a new
+  // account can be funded before it is used. Read-only and node-only
+  // (../wallet/aa.ts loadSmartAccountAddress, cached per account + chain).
+  // The state carries the key it was read for, and the form shows it only
+  // while that key is still current.
+  const aaOwner = route.params.chainId === EVM_CHAIN_ID ? (account?.address ?? null) : null;
+  const aaNodeUrl = endpoint?.network.kind === 'evm-jsonrpc' ? endpoint.url : null;
+  const aaAccountIndex = activeAccount?.index ?? null;
+  const aaAddressKey =
+    !nftMode && aaConfig && aaOwner && aaNodeUrl && aaAccountIndex !== null &&
+    showsSmartAccountAddressOnSend(aaConfig, aaOwner)
+      ? `${evmChain.chainIdDecimal}|${aaAccountIndex}|${aaOwner}|${aaNodeUrl}`
+      : null;
+  const [aaAddressState, setAaAddressState] = useState<{
+    key: string;
+    info: SmartAccountAddressInfo | null;
+    error: string | null;
+  } | null>(null);
+  const [aaAddressCopied, setAaAddressCopied] = useState(false);
+  useEffect(() => {
+    if (!aaAddressKey || !aaConfig || !aaOwner || !aaNodeUrl || aaAccountIndex === null) return;
+    let cancelled = false;
+    loadSmartAccountAddress(aaConfig, {
+      nodeUrl: aaNodeUrl,
+      chainId: BigInt(evmChain.chainIdDecimal),
+      accountIndex: aaAccountIndex,
+      ownerAddress: aaOwner,
+    }).then(
+      (info) => {
+        if (!cancelled) setAaAddressState({ key: aaAddressKey, info, error: null });
+      },
+      (e: unknown) => {
+        if (!cancelled) {
+          setAaAddressState({
+            key: aaAddressKey,
+            info: null,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [aaAddressKey, aaConfig, aaOwner, aaNodeUrl, aaAccountIndex, evmChain.chainIdDecimal]);
+  const aaAddressView = aaAddressState && aaAddressState.key === aaAddressKey ? aaAddressState : null;
+  const aaAddressInfo = aaAddressView?.info ?? null;
+  useEffect(() => {
+    if (!aaAddressCopied) return;
+    const t = setTimeout(() => setAaAddressCopied(false), 2000);
+    return () => clearTimeout(t);
+  }, [aaAddressCopied]);
 
   /**
    * Exact-match / look-alike classification of an address against the
@@ -707,7 +769,11 @@ export function SendScreen({ route, navigation }: Props) {
       if (max <= 0n) throw new Error('Balance is too small to cover the network fee.');
       setAmountText(exact(max, decimals));
     } catch (e) {
-      const { title, detail } = describeError(e);
+      const { title, detail } = retitleQuoteFailure(
+        (aaActive && aaType
+          ? describeAaError(e, { accountType: aaType, deployed: null, bundlerUrl: aaConfig?.bundlerUrl ?? null })
+          : null) ?? describeError(e),
+      );
       setFormError(`${title}\n${detail}`);
     } finally {
       setMaxBusy(false);
@@ -852,10 +918,13 @@ export function SendScreen({ route, navigation }: Props) {
       setOverrideSimulation(false);
       setPhase('confirm');
     } catch (e) {
-      const { title, detail } =
+      // Nothing has been signed or sent while a quote is prepared: the
+      // generic failure title says so (retitleQuoteFailure).
+      const { title, detail } = retitleQuoteFailure(
         (aaActive && aaType
-          ? describeAaError(e, { accountType: aaType, deployed: null })
-          : null) ?? describeError(e);
+          ? describeAaError(e, { accountType: aaType, deployed: null, bundlerUrl: aaConfig?.bundlerUrl ?? null })
+          : null) ?? describeError(e),
+      );
       setFormError(`${title}\n${detail}`);
       setPhase('form');
     }
@@ -921,7 +990,9 @@ export function SendScreen({ route, navigation }: Props) {
     const auth = await requireLocalAuth(
       nftMode && nftParams
         ? `Approve sending ${quote.kind === 'nft' && quote.standard === 'erc1155' ? `${quote.amount.toString()} × ` : ''}${nftParams.name}`
-        : `Approve sending ${amountText} ${symbol}`,
+        : quote.kind === 'aa'
+          ? aaSendApprovalPrompt(quote, `${amountText} ${symbol}`)
+          : `Approve sending ${amountText} ${symbol}`,
     );
     if (!auth.ok) {
       Alert.alert('Not sent', auth.message);
@@ -987,7 +1058,12 @@ export function SendScreen({ route, navigation }: Props) {
     } catch (e) {
       const { title, detail } =
         (quote.kind === 'aa'
-          ? describeAaError(e, { accountType: quote.accountType, deployed: quote.deployed })
+          ? describeAaError(e, {
+              accountType: quote.accountType,
+              deployed: quote.deployed,
+              sender: quote.sender,
+              bundlerUrl: aaConfig?.bundlerUrl ?? null,
+            })
           : null) ?? describeError(e);
       Alert.alert(title, detail);
       setPhase('confirm');
@@ -1179,7 +1255,9 @@ export function SendScreen({ route, navigation }: Props) {
           />
         )}
         {!quote.deployed && quote.accountType === 'kernel-v3.3' ? (
-          <Text style={[styles.hint, { color: theme.textMuted }]}>{KERNEL_BUNDLER_NOTE}</Text>
+          <Text style={[styles.hint, { color: theme.textMuted }]}>
+            {kernelDeploymentNote(aaConfig?.bundlerUrl ?? null)}
+          </Text>
         ) : null}
         <Row
           label={quote.sponsored ? 'Network fee' : 'Max network fee (bundler estimate)'}
@@ -1665,6 +1743,34 @@ export function SendScreen({ route, navigation }: Props) {
                 ' and its gas from its own balance unless a paymaster sponsors the gas, so fund ' +
                 'the smart account address first. Max uses the smart account\u2019s balance.'}
           </Text>
+          {aaAddressInfo ? (
+            <>
+              <Row
+                label={`${smartAccountAddressLabel(aaAddressInfo)} address`}
+                value={aaAddressInfo.address}
+                sub={smartAccountDeploymentNote(aaAddressInfo.deployed)}
+                mono
+                theme={theme}
+              />
+              <Button
+                title={aaAddressCopied ? 'Copied \u2713' : 'Copy smart-account address'}
+                variant="secondary"
+                onPress={async () => {
+                  await Clipboard.setStringAsync(aaAddressInfo.address);
+                  setAaAddressCopied(true);
+                }}
+              />
+              {aaAddressCopied ? (
+                <Text accessibilityLiveRegion="polite" style={[styles.hint, { color: theme.textMuted }]}>
+                  Copied {'\u2014'} note that the clipboard can be read by other apps.
+                </Text>
+              ) : null}
+            </>
+          ) : aaAddressView?.error ? (
+            <Text style={[styles.hint, { color: theme.textMuted }]}>
+              The smart-account address could not be read: {aaAddressView.error}
+            </Text>
+          ) : null}
         </View>
       ) : null}
 

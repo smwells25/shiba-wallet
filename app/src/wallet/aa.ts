@@ -1702,6 +1702,275 @@ export interface AaSendQuote {
 /** Convenience alias: a quote for any list of calls. */
 export type AaCallsQuote = AaSendQuote;
 
+// ---------------------------------------------------------------------------
+// Funding, quote-failure wording, approval prompt and bundler-host notes
+// (phase 11 item 2 follow-ups: bugs A, B and C of the in-app Kernel
+// deployment run on 2026-10-03)
+// ---------------------------------------------------------------------------
+
+/** Alert/form title for a smart account that cannot pay for the operation. */
+export const AA_FUNDING_TITLE = 'Your smart account needs funds first.';
+
+/**
+ * Title for any failure while a quote is being prepared (review step). Nothing
+ * has been signed or sent at that point, so "could not be sent" would be
+ * wrong.
+ */
+export const QUOTE_FAILED_TITLE = 'The quote could not be prepared.';
+
+/** The generic title describeSendError (./send.ts) uses for unrecognized errors. */
+const GENERIC_SEND_FAILURE_TITLE = 'The transaction could not be sent.';
+
+/**
+ * Re-titles a described error for the quote (review) step: the generic
+ * "could not be sent" title becomes QUOTE_FAILED_TITLE; specific titles
+ * (insufficient funds, unreachable endpoint, …) are kept, and the detail is
+ * never changed.
+ */
+export function retitleQuoteFailure(described: { title: string; detail: string }): {
+  title: string;
+  detail: string;
+} {
+  return described.title === GENERIC_SEND_FAILURE_TITLE
+    ? { title: QUOTE_FAILED_TITLE, detail: described.detail }
+    : described;
+}
+
+/**
+ * Thrown when the smart account cannot pay for an operation (the wallet's
+ * own check, or a bundler AA21 "didn't pay prefund" answer). `sender` is the
+ * smart account that needs the funds.
+ */
+export class AaFundingError extends Error {
+  sender: string;
+  // No TS parameter properties: Node's strip-only type stripping rejects them.
+  constructor(sender: string, message: string) {
+    super(message);
+    this.sender = sender;
+    this.name = 'AaFundingError';
+  }
+}
+
+/**
+ * True for the EntryPoint's AA21 failure code ("didn't pay prefund"): the
+ * account's balance plus its EntryPoint deposit cannot cover the operation's
+ * prefund (account-abstraction v0.7.0 EntryPoint._validateAccountPrepayment).
+ */
+export function isPrefundError(message: string): boolean {
+  return /\bAA21\b/.test(message);
+}
+
+/**
+ * The plain-language funding message. It always names the smart account's
+ * full address, because that address (not the owner's) is the one to fund,
+ * and a new account's address appears nowhere else until it is used. Amounts
+ * are exact wei. `fee` null means the fee is not known yet (the check ran
+ * before the bundler estimate).
+ */
+export function aaFundingMessage(p: {
+  sender: string;
+  amount: bigint;
+  fee: bigint | null;
+  balance: bigint;
+  sponsored: boolean;
+}): string {
+  const fund =
+    `Fund the smart account address ${p.sender} (not the owner address), then review again. ` +
+    'A smart account can receive funds before it is deployed; the first send deploys it.';
+  if (p.sponsored) {
+    return (
+      `Insufficient funds: sending ${p.amount} wei exceeds the balance of ${p.balance} wei held by ` +
+      `the smart account ${p.sender} (gas is sponsored, but the amount is not). ${fund}`
+    );
+  }
+  const feePart = p.fee === null ? 'its network fee' : `a worst-case fee of ${p.fee} wei`;
+  return (
+    'Insufficient funds: the smart account pays its own gas (no paymaster), and sending ' +
+    `${p.amount} wei plus ${feePart} exceeds the balance of ${p.balance} wei held by the smart ` +
+    `account ${p.sender}. ${fund}`
+  );
+}
+
+/** Neutral confirm-screen sentence for a Kernel deployment through any non-Alchemy bundler. */
+export const KERNEL_DEPLOYMENT_NEUTRAL_NOTE = 'Deployment goes through the configured bundler.';
+
+/**
+ * True when the configured bundler is an Alchemy endpoint (host g.alchemy.com
+ * or a subdomain of it, e.g. eth-sepolia.g.alchemy.com). The host is taken
+ * from maskUrlForDisplay's output, never from the full URL, so the API key
+ * in the path or query is never inspected or passed along.
+ */
+export function isAlchemyBundlerUrl(bundlerUrl: string | null | undefined): boolean {
+  if (!bundlerUrl) return false;
+  const match = /^https?:\/\/([^/?#]+)/i.exec(maskUrlForDisplay(bundlerUrl));
+  if (!match) return false;
+  const host = match[1]!.toLowerCase().replace(/:\d+$/, '').replace(/\.$/, '');
+  return host === 'g.alchemy.com' || host.endsWith('.g.alchemy.com');
+}
+
+/**
+ * The confirm-screen note for an operation that deploys a Kernel account:
+ * the Alchemy limitation (KERNEL_BUNDLER_NOTE) only when the configured
+ * bundler is Alchemy's, otherwise the neutral sentence.
+ */
+export function kernelDeploymentNote(bundlerUrl: string | null | undefined): string {
+  return isAlchemyBundlerUrl(bundlerUrl) ? KERNEL_BUNDLER_NOTE : KERNEL_DEPLOYMENT_NEUTRAL_NOTE;
+}
+
+/**
+ * The biometric prompt title for a smart-account send, naming the amount
+ * and asset like the regular-address path ("Approve sending 0.0001 test
+ * ETH") plus where it comes from. `amountWithSymbol` is the amount as the
+ * user typed it followed by the asset symbol.
+ */
+export function aaSendApprovalPrompt(
+  quote: Pick<AaSendQuote, 'eip7702' | 'recovered'>,
+  amountWithSymbol: string,
+): string {
+  const from = quote.eip7702
+    ? 'your upgraded account'
+    : quote.recovered
+      ? 'your recovered smart account'
+      : 'your smart account';
+  return `Approve sending ${amountWithSymbol} from ${from}`;
+}
+
+// ---------------------------------------------------------------------------
+// Smart-account address for display (Send form, Receive)
+// ---------------------------------------------------------------------------
+
+/** The smart-account address of one owner on one chain, for display. */
+export interface SmartAccountAddressInfo {
+  /** EIP-55 address (counterfactual until deployed). */
+  address: string;
+  /** True when eth_getCode at the address is non-empty. */
+  deployed: boolean;
+  accountType: AaAccountType;
+  /** True for a recovered Kernel account attached to the owner. */
+  recovered: boolean;
+}
+
+/** Deployment state line under a displayed smart-account address. */
+export const SMART_ACCOUNT_NOT_DEPLOYED_NOTE = 'Not deployed yet — the first send deploys it.';
+export const SMART_ACCOUNT_DEPLOYED_NOTE = 'Deployed.';
+
+export function smartAccountDeploymentNote(deployed: boolean): string {
+  return deployed ? SMART_ACCOUNT_DEPLOYED_NOTE : SMART_ACCOUNT_NOT_DEPLOYED_NOTE;
+}
+
+/** Row label for a displayed smart-account address. */
+export function smartAccountAddressLabel(info: Pick<SmartAccountAddressInfo, 'accountType' | 'recovered'>): string {
+  if (info.recovered) return 'Recovered smart account (Kernel v3.3)';
+  if (info.accountType === 'kernel-v3.3') return 'Smart account (Kernel v3.3)';
+  if (info.accountType === 'simple') return 'Smart account (SimpleAccount)';
+  return 'Smart account';
+}
+
+/**
+ * Send form: true when the smart-account toggle is offered (isAaConfigured)
+ * and the smart account has an address of its own. An EIP-7702 upgraded
+ * owner sends from its own address, so there is nothing extra to show.
+ */
+export function showsSmartAccountAddressOnSend(config: AaChainConfig, owner: string | null | undefined): boolean {
+  return Boolean(owner) && isAaConfigured(config, owner) && !isEip7702Owner(config, owner);
+}
+
+/**
+ * Receive: true only when the chain's smart-account configuration is
+ * complete (and allowed on this network) and the owner's account type is a
+ * factory-deployed Kernel v3.3. Not for SimpleAccount, not for an EIP-7702
+ * upgrade (same address as the EOA), and not for a recovered account (the
+ * Receive screen already names that one with its own note).
+ */
+export function showsSmartAccountOnReceive(config: AaChainConfig, owner: string | null | undefined): boolean {
+  return (
+    Boolean(owner) &&
+    isAaConfigured(config, owner) &&
+    !isEip7702Owner(config, owner) &&
+    recoveredAccountFor(config, owner) === null &&
+    config.accountType === 'kernel-v3.3'
+  );
+}
+
+const smartAccountAddressCache = new Map<string, SmartAccountAddressInfo>();
+
+/** Forgets cached display info for `address` (all owners/chains), or everything. */
+export function forgetSmartAccountAddress(address?: string): void {
+  if (address === undefined) {
+    smartAccountAddressCache.clear();
+    return;
+  }
+  const lower = address.toLowerCase();
+  for (const [key, info] of smartAccountAddressCache) {
+    if (info.address.toLowerCase() === lower) smartAccountAddressCache.delete(key);
+  }
+}
+
+/**
+ * Reads the owner's smart-account address and deployment state for display.
+ * Read-only and node-only: eth_chainId (must equal `chainId`), the spec's
+ * getAddress (for Kernel, the factory's answer checked against the local
+ * CREATE2 prediction), then eth_getCode. No bundler call, no key. Cached per
+ * chain + account index + owner + configured factory/type for the session;
+ * the entry is dropped when an operation from that address is accepted
+ * (sendAa), so "not deployed yet" updates after the deploying send. Returns
+ * null for an EIP-7702 upgraded owner (same address as the EOA).
+ */
+export async function loadSmartAccountAddress(
+  config: AaChainConfig,
+  options: {
+    nodeUrl: string;
+    chainId: bigint;
+    accountIndex: number;
+    ownerAddress: string;
+    transportFor?: TransportFactory;
+    /** Bypass the cache. */
+    force?: boolean;
+  },
+): Promise<SmartAccountAddressInfo | null> {
+  if (isEip7702Owner(config, options.ownerAddress)) return null;
+  const recovered = recoveredAccountFor(config, options.ownerAddress);
+  const key = [
+    config.chain ?? '',
+    options.chainId.toString(),
+    String(options.accountIndex),
+    options.ownerAddress.toLowerCase(),
+    config.accountType,
+    (config.factory ?? '').toLowerCase(),
+    (recovered ?? '').toLowerCase(),
+  ].join('|');
+  if (!options.force) {
+    const cached = smartAccountAddressCache.get(key);
+    if (cached) return cached;
+  }
+  const bundle = createAaClientFromConfig(config, {
+    nodeUrl: options.nodeUrl,
+    chainId: options.chainId,
+    accountIndex: options.accountIndex,
+    ownerAddress: options.ownerAddress,
+    ...(options.transportFor ? { transportFor: options.transportFor } : {}),
+  });
+  const endpointChain = await new NodeClient(bundle.node).chainId();
+  if (endpointChain !== options.chainId) {
+    throw new Error(
+      `Endpoint is chain id ${endpointChain}, expected ${options.chainId}. Check the RPC endpoint in Settings.`,
+    );
+  }
+  const address = toChecksumAddress(
+    toBytes((await resolveAaSender(bundle, options.ownerAddress)).toLowerCase()),
+  );
+  const code = await bundle.node('eth_getCode', [address, 'latest']);
+  const deployed = typeof code === 'string' && !/^0x0*$/i.test(code);
+  const info: SmartAccountAddressInfo = {
+    address,
+    deployed,
+    accountType: bundle.accountType,
+    recovered: recovered !== null,
+  };
+  smartAccountAddressCache.set(key, info);
+  return info;
+}
+
 /**
  * Builds the AA quote for any list of calls: verifies the node endpoint's
  * chain id, resolves the counterfactual sender via the spec's getAddress,
@@ -1750,18 +2019,17 @@ export async function prepareAaCalls(
     }
     eip7702 = { upgrade: status.kind === 'none', delegate: bundle.eip7702.delegate };
   }
-  const [senderBalance, deployed, nonce, suggestedFees, tokenBalance, priorityFloor] =
-    await Promise.all([
-      nodeClient.getBalance(sender),
-      eip7702 ? Promise.resolve(!eip7702.upgrade) : bundle.client.isDeployed(owner),
-      bundle.client.getNonce(owner),
-      nodeClient.suggestFees(),
-      options.tokenSpend
-        ? fetchTokenBalanceVia(bundle.node, options.tokenSpend.contract, sender)
-        : Promise.resolve(null),
-      bundlerPriorityFeeFloor(bundle.bundler),
-    ]);
-  const fees = applyPriorityFeeFloor(suggestedFees, priorityFloor);
+  // Node reads only: the bundler is not contacted until the wallet's own
+  // funding check below has passed.
+  const [senderBalance, deployed, nonce, suggestedFees, tokenBalance] = await Promise.all([
+    nodeClient.getBalance(sender),
+    eip7702 ? Promise.resolve(!eip7702.upgrade) : bundle.client.isDeployed(owner),
+    bundle.client.getNonce(owner),
+    nodeClient.suggestFees(),
+    options.tokenSpend
+      ? fetchTokenBalanceVia(bundle.node, options.tokenSpend.contract, sender)
+      : Promise.resolve(null),
+  ]);
 
   if (options.tokenSpend && tokenBalance !== null && options.tokenSpend.amount > tokenBalance) {
     throw new Error(
@@ -1770,6 +2038,29 @@ export async function prepareAaCalls(
         'Smart-account sends spend the smart account’s tokens, not the owner address’s.',
     );
   }
+
+  const amount = calls.reduce((sum, c) => sum + c.value, 0n);
+  // Funding pre-check, BEFORE any bundler call. A new smart account starts
+  // with a zero balance, and the bundler's estimate of an operation the
+  // account cannot pay for fails with a raw "AA21 didn't pay prefund"
+  // error that names neither the account nor the remedy. This check is
+  // strictly weaker than the worst-case check after the estimate (which
+  // adds the gas cost): self-paid, the account must hold MORE than the
+  // amount, because any non-zero fee on top would exceed the balance;
+  // sponsored, it must hold at least the amount. So it never refuses an
+  // operation the full check would accept.
+  const cannotPay = bundle.sponsored
+    ? amount > senderBalance
+    : suggestedFees.maxFeePerGas > 0n && amount >= senderBalance;
+  if (cannotPay) {
+    throw new AaFundingError(
+      sender,
+      aaFundingMessage({ sender, amount, fee: null, balance: senderBalance, sponsored: bundle.sponsored }),
+    );
+  }
+
+  const priorityFloor = await bundlerPriorityFeeFloor(bundle.bundler);
+  const fees = applyPriorityFeeFloor(suggestedFees, priorityFloor);
 
   const factoryArgs = deployed || eip7702 ? undefined : await bundle.spec.getFactoryArgs(owner);
   // The tuple travels only while the account is still plain. For the
@@ -1798,7 +2089,24 @@ export async function prepareAaCalls(
     signature: bundle.spec.stubSignature(),
     ...(stubAuth ? { eip7702Auth: stubAuth } : {}),
   };
-  const estimated = await new BundlerClient(bundle.bundler, ENTRYPOINT_V07).estimateUserOperationGas(op);
+  let estimated: Awaited<ReturnType<BundlerClient['estimateUserOperationGas']>>;
+  try {
+    estimated = await new BundlerClient(bundle.bundler, ENTRYPOINT_V07).estimateUserOperationGas(op);
+  } catch (e) {
+    // The pre-check above cannot see the gas, so an account holding a
+    // little more than the amount can still fail the bundler's simulation
+    // with AA21. Say what it means and which address to fund, keeping the
+    // bundler's words.
+    const raw = e instanceof Error ? e.message : String(e);
+    if (isPrefundError(raw)) {
+      throw new AaFundingError(
+        sender,
+        `${aaFundingMessage({ sender, amount, fee: null, balance: senderBalance, sponsored: bundle.sponsored })}` +
+          `\n\nThe bundler's message: ${raw}`,
+      );
+    }
+    throw e;
+  }
   // Mirror the bundle client's deposit top-up headroom so the confirm
   // screen's worst-case fee and the balance check use the limit that will
   // actually be signed (sendCalls re-estimates and applies the same rule,
@@ -1826,7 +2134,6 @@ export async function prepareAaCalls(
         ),
       };
 
-  const amount = calls.reduce((sum, c) => sum + c.value, 0n);
   // OP-stack chains (Base Sepolia): NO separate layer 1 data fee is added
   // here, unlike the EOA quotes in send.ts. The bundler's EOA sends the
   // handleOps transaction and pays its L1 data fee; the account repays the
@@ -1852,13 +2159,15 @@ export async function prepareAaCalls(
   // cover the amount itself. Self-paid keeps the full worst-case check.
   const fee = bundle.sponsored ? 0n : worstCaseGasCost;
   if (amount + fee > senderBalance) {
-    throw new Error(
-      bundle.sponsored
-        ? `Insufficient funds: sending ${amount} wei exceeds the smart account's ` +
-          `balance of ${senderBalance} wei (gas is sponsored, but the amount is not).`
-        : `Insufficient funds: the smart account pays its own gas (no paymaster), and sending ` +
-          `${amount} wei plus a worst-case fee of ${fee} wei exceeds its balance of ` +
-          `${senderBalance} wei. Fund the smart account address, not the owner address.`,
+    throw new AaFundingError(
+      sender,
+      aaFundingMessage({
+        sender,
+        amount,
+        fee: bundle.sponsored ? null : fee,
+        balance: senderBalance,
+        sponsored: bundle.sponsored,
+      }),
     );
   }
 
@@ -2056,6 +2365,8 @@ export async function sendAa(
       maxFeePerGas: quote.maxFeePerGas,
       maxPriorityFeePerGas: quote.maxPriorityFeePerGas,
     });
+    // The deploying operation changes "not deployed yet": re-read next time.
+    forgetSmartAccountAddress(sender);
     notifyAaSent({ bundle, owner: { address: owner.address, path: owner.path }, quote, userOpHash });
     return { userOpHash };
   } finally {
@@ -2119,14 +2430,39 @@ export const PREVIEW_AA_BATCH_NOTE =
 
 /**
  * Plain-language error for the AA path, keeping the bundler's message
- * verbatim as the detail. A rejected Kernel deployment gets a title that
- * says so and the known-limitation note (no self-bundling fallback).
+ * verbatim as the detail. A smart account that cannot pay (the wallet's
+ * own check, or a bundler AA21 "didn't pay prefund") gets the funding title
+ * and a message naming the address to fund. A rejected Kernel deployment
+ * gets a title that says so and the known-limitation note (no
+ * self-bundling fallback) — the Alchemy note only when `bundlerUrl` is an
+ * Alchemy endpoint (omitted: the note is kept, as before).
  */
 export function describeAaError(
   error: unknown,
-  context: { accountType: AaAccountType; deployed: boolean | null },
+  context: {
+    accountType: AaAccountType;
+    deployed: boolean | null;
+    /** The smart account (quote sender), used to name it in an AA21 message. */
+    sender?: string | null;
+    /** The configured bundler URL; only its masked host is inspected. */
+    bundlerUrl?: string | null;
+  },
 ): { title: string; detail: string } | null {
   const detail = error instanceof Error ? error.message : String(error);
+  if (error instanceof AaFundingError) return { title: AA_FUNDING_TITLE, detail };
+  if (isPrefundError(detail)) {
+    const sender = context.sender ?? null;
+    return {
+      title: AA_FUNDING_TITLE,
+      detail: sender
+        ? `The smart account ${sender} cannot pay for this operation's gas (its balance and ` +
+          `EntryPoint deposit are too small). Fund the smart account address ${sender} (not the ` +
+          `owner address), then try again.\n\nThe bundler's message: ${detail}`
+        : 'The smart account cannot pay for this operation\'s gas (its balance and EntryPoint ' +
+          'deposit are too small). Fund the smart account address shown on the Send screen (not ' +
+          `the owner address), then try again.\n\nThe bundler's message: ${detail}`,
+    };
+  }
   if (context.accountType === 'kernel-7702' && context.deployed === false && /^RPC error /.test(detail)) {
     return {
       title: 'The bundler refused the operation that upgrades your account.',
@@ -2143,7 +2479,12 @@ export function describeAaError(
   ) {
     return {
       title: 'The bundler refused to deploy your Kernel smart account.',
-      detail: `${detail}\n\n${KERNEL_BUNDLER_NOTE}`,
+      detail:
+        context.bundlerUrl === undefined || isAlchemyBundlerUrl(context.bundlerUrl)
+          ? `${detail}\n\n${KERNEL_BUNDLER_NOTE}`
+          : `${detail}\n\nThe configured bundler refused the operation that deploys the account; ` +
+            'its error is shown exactly as it was returned. A bundler that accepts Kernel ' +
+            'deployments is needed for the first operation.',
     };
   }
   return null;

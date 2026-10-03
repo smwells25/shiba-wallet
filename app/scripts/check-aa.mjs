@@ -21,7 +21,14 @@
 
 import { evmKeyProvider, mnemonicToSeed } from '@shiba-wallet/core';
 import { ENTRYPOINT_V07, selector, toHex } from '@shiba-wallet/chains-evm';
+import { readFileSync } from 'node:fs';
 import {
+  AA_FUNDING_TITLE,
+  AaFundingError,
+  QUOTE_FAILED_TITLE,
+  aaSendApprovalPrompt,
+  describeAaError,
+  retitleQuoteFailure,
   applyPriorityFeeFloor,
   bundlerPriorityFeeFloor,
   maskUrlForDisplay,
@@ -45,7 +52,7 @@ import {
   verifyAaFactory,
   waitForAaReceipt,
 } from '../src/wallet/aa.ts';
-import { EVM_CHAIN_ID } from '../src/wallet/send.ts';
+import { EVM_CHAIN_ID, describeSendError } from '../src/wallet/send.ts';
 import { EVM_BASE_SEPOLIA, EVM_SEPOLIA } from '../src/config/evm-chain.ts';
 
 // Smart accounts and paymasters are 'testnet-only' in the mainnet readiness
@@ -974,6 +981,72 @@ await (async () => {
     legacy.bundlerUrl !== null && legacy.factory !== null && !isAaConfigured(legacy) && hasCompleteAaSettings(legacy),
   );
   check('a hand-built configuration without a chain counts as gated', !isAaConfigured({ ...legacy, chain: null }));
+})();
+
+console.log('\ncheck-aa: funding check before the bundler, quote titles, approval prompt (phase 11 item 2)');
+await (async () => {
+  // A: the wallet's own funding check runs before any bundler call.
+  const { bundle: empty, bundler: emptyBundler } = makeBundle({ senderBalance: 0n });
+  let err = null;
+  try {
+    await prepareAaSend(empty, owner.address, RECIPIENT, AMOUNT);
+  } catch (e) {
+    err = e;
+  }
+  check('unfunded smart account: AaFundingError naming the smart-account address', err instanceof AaFundingError && same(err.sender, SENDER) && err.message.includes(err.sender), String(err));
+  check('…and telling the user to fund that address, not the owner', /Fund the smart account address 0x[0-9a-fA-F]{40} \(not the owner address\)/.test(err?.message ?? ''));
+  check('…with ZERO bundler calls (no estimate, no fee-floor probe)', emptyBundler.calls.length === 0, JSON.stringify(emptyBundler.calls.map((c) => c.method)));
+  const { bundle: exact, bundler: exactBundler } = makeBundle({ senderBalance: AMOUNT });
+  await checkRejects('self-paid: a balance equal to the amount cannot also pay gas (refused pre-estimate)', () => prepareAaSend(exact, owner.address, RECIPIENT, AMOUNT), 'Fund the smart account address');
+  check('…still zero bundler calls', exactBundler.calls.length === 0);
+  const { bundle: probeEmpty, bundler: probeBundler } = makeBundle({ senderBalance: 0n });
+  await checkRejects('AA Max on an empty smart account: the funding message, no bundler call', () => maxAaSend(probeEmpty, owner.address, RECIPIENT), 'Fund the smart account address');
+  check('…zero bundler calls for the Max probe', probeBundler.calls.length === 0);
+  const { bundle: short } = makeBundle({ senderBalance: AMOUNT + 1n });
+  let postErr = null;
+  try {
+    await prepareAaSend(short, owner.address, RECIPIENT, AMOUNT);
+  } catch (e) {
+    postErr = e;
+  }
+  check('amount + 1 wei passes the pre-check; the post-estimate check names the worst-case fee and the address', postErr instanceof AaFundingError && postErr.message.includes('a worst-case fee of') && postErr.message.includes(postErr.sender));
+  check('describeAaError gives both the funding title', describeAaError(err, { accountType: 'simple', deployed: false })?.title === AA_FUNDING_TITLE && describeAaError(postErr, { accountType: 'simple', deployed: false })?.title === 'Your smart account needs funds first.');
+
+  // Sponsored: only the amount must be covered, and the pre-check runs
+  // before both the bundler and the paymaster.
+  const seen = [];
+  const sponsoredBundle = createAaClient({
+    nodeUrl: 'https://node.example',
+    bundlerUrl: 'https://bundler.example',
+    factory: FACTORY_INPUT,
+    paymaster: { url: 'https://pm.example', contextJson: null },
+    transportFor: (url) => {
+      if (url === 'https://node.example') return fakeNode({ senderBalance: 10n });
+      return async (method) => {
+        seen.push(`${url} ${method}`);
+        throw new Error(`unexpected ${method}`);
+      };
+    },
+  });
+  await checkRejects('sponsored: an amount above the balance is refused before bundler and paymaster', () => prepareAaSend(sponsoredBundle, owner.address, RECIPIENT, 11n), 'gas is sponsored, but the amount is not');
+  check('…zero bundler/paymaster calls', seen.length === 0, seen.join(', '));
+
+  // Estimation-failure title: nothing was sent while quoting.
+  const generic = describeSendError(new Error('RPC error -32500: something odd (eth_estimateUserOperationGas)'), 'test ETH');
+  check('describeSendError still says "could not be sent" (send-time wording unchanged)', generic.title === 'The transaction could not be sent.');
+  const retitled = retitleQuoteFailure(generic);
+  check('quote step: "The quote could not be prepared." with the detail unchanged', retitled.title === 'The quote could not be prepared.' && QUOTE_FAILED_TITLE === retitled.title && retitled.detail === generic.detail);
+  const specific = describeSendError(new Error('Amount is below the dust limit'), 'test ETH');
+  check('specific titles are kept on the quote step', retitleQuoteFailure(specific).title === specific.title);
+  const sendSource = readFileSync(new URL('../src/screens/SendScreen.tsx', import.meta.url), 'utf8');
+  check('SendScreen re-titles quote failures (review and Max) through retitleQuoteFailure', (sendSource.match(/retitleQuoteFailure\(/g) ?? []).length >= 2);
+
+  // C: the smart-account biometric prompt names the amount and asset.
+  check('prompt: "Approve sending 0.0001 test ETH from your smart account"', aaSendApprovalPrompt({}, '0.0001 test ETH') === 'Approve sending 0.0001 test ETH from your smart account');
+  check('prompt for a token send from the smart account', aaSendApprovalPrompt({ eip7702: undefined, recovered: undefined }, '1.5 USDC') === 'Approve sending 1.5 USDC from your smart account');
+  check('prompt for an EIP-7702 upgraded account', aaSendApprovalPrompt({ eip7702: { upgrade: false, delegate: '0x' + '11'.repeat(20) } }, '0.0001 test ETH') === 'Approve sending 0.0001 test ETH from your upgraded account');
+  check('prompt for a recovered smart account', aaSendApprovalPrompt({ recovered: true }, '2 test ETH') === 'Approve sending 2 test ETH from your recovered smart account');
+  check('SendScreen passes the smart-account quote through aaSendApprovalPrompt with the typed amount and symbol', sendSource.includes("quote.kind === 'aa'\n          ? aaSendApprovalPrompt(quote, `${amountText} ${symbol}`)"));
 })();
 
 console.log(`\n${passed} passed, ${failed} failed`);

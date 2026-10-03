@@ -19,6 +19,16 @@ import { useAccountDelegation } from '../wallet/useDelegation';
 import { delegationLabelSuffix } from '../wallet/delegation';
 import { useRecoveryInfo } from '../wallet/useRecoveryInfo';
 import { RECOVERED_NOT_DERIVABLE_NOTE } from '../wallet/recovery';
+import { usePrefs } from '../wallet/PrefsContext';
+import { getEndpoint } from '../config/networks';
+import {
+  getAaConfig,
+  loadSmartAccountAddress,
+  showsSmartAccountOnReceive,
+  smartAccountAddressLabel,
+  smartAccountDeploymentNote,
+  type SmartAccountAddressInfo,
+} from '../wallet/aa';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Receive'>;
 
@@ -29,6 +39,8 @@ export function ReceiveScreen({ route, navigation }: Props) {
   const { accounts, activeAccount } = useWallet();
   const account = accounts.find((a) => a.chainId === route.params.chainId);
   const [copied, setCopied] = useState(false);
+  const [smartCopied, setSmartCopied] = useState(false);
+  const { evmChain } = usePrefs();
   // EIP-7702 status (phase 8 item 1): "Account 1 · upgraded (Kernel v3.3)"
   // on the EVM slot, so the user knows which code runs at this address.
   const delegation = useAccountDelegation(
@@ -45,6 +57,42 @@ export function ReceiveScreen({ route, navigation }: Props) {
   // is the QR quiet zone, kept white in dark mode too so scanners lock on.
   const qrSize = Math.min(Math.round(width - 48 * 2), 260);
 
+  // The active account's Kernel v3.3 smart account (phase 11 item 2): a
+  // separate address, counterfactual until its first send deploys it, shown
+  // as a second row with its own QR only when the active EVM chain's
+  // smart-account settings are complete and the type is Kernel
+  // (../wallet/aa.ts showsSmartAccountOnReceive). Read-only and node-only
+  // (loadSmartAccountAddress, cached per account + chain); if it cannot be
+  // read, the row is simply not shown. The state carries the key it was
+  // read for, so a switched account or network never shows a stale address.
+  const smartOwner = route.params.chainId === EVM_CHAIN_ID ? (account?.address ?? null) : null;
+  const smartIndex = activeAccount?.index ?? null;
+  const smartKey =
+    smartOwner && smartIndex !== null ? `${evmChain.chainIdDecimal}|${smartIndex}|${smartOwner}` : null;
+  const [smart, setSmart] = useState<{ key: string; info: SmartAccountAddressInfo } | null>(null);
+  useEffect(() => {
+    if (!smartKey || !smartOwner || smartIndex === null) return;
+    let cancelled = false;
+    (async () => {
+      const endpoint = await getEndpoint(EVM_CHAIN_ID);
+      if (!endpoint?.url || endpoint.network.kind !== 'evm-jsonrpc') return;
+      // AA settings are keyed by the ACTIVE network's CAIP-2 id.
+      const config = await getAaConfig(endpoint.network.chainId);
+      if (!showsSmartAccountOnReceive(config, smartOwner)) return;
+      const info = await loadSmartAccountAddress(config, {
+        nodeUrl: endpoint.url,
+        chainId: BigInt(evmChain.chainIdDecimal),
+        accountIndex: smartIndex,
+        ownerAddress: smartOwner,
+      });
+      if (!cancelled && info) setSmart({ key: smartKey, info });
+    })().catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [smartKey, smartOwner, smartIndex, evmChain.chainIdDecimal]);
+  const smartInfo = smart && smart.key === smartKey ? smart.info : null;
+
   useEffect(() => {
     navigation.setOptions({ title: account ? `Receive ${account.symbol}` : 'Receive' });
   }, [navigation, account]);
@@ -54,6 +102,12 @@ export function ReceiveScreen({ route, navigation }: Props) {
     const t = setTimeout(() => setCopied(false), 2000);
     return () => clearTimeout(t);
   }, [copied]);
+
+  useEffect(() => {
+    if (!smartCopied) return;
+    const t = setTimeout(() => setSmartCopied(false), 2000);
+    return () => clearTimeout(t);
+  }, [smartCopied]);
 
   if (!account) {
     return (
@@ -137,6 +191,57 @@ export function ReceiveScreen({ route, navigation }: Props) {
           Copied — note that the clipboard can be read by other apps.
         </Text>
       ) : null}
+      {smartInfo ? (
+        <View
+          style={[
+            styles.addressBox,
+            styles.smartBox,
+            { backgroundColor: theme.card, borderColor: theme.border },
+          ]}
+        >
+          <Text style={[styles.smartTitle, { color: theme.text }]}>
+            {smartAccountAddressLabel(smartInfo)}
+          </Text>
+          <Text style={[styles.note, { color: theme.textMuted }]}>
+            A separate address controlled by this account{'\u2019'}s key. Funds sent here are
+            spent with {'\u201c'}Send from smart account{'\u201d'}, and the smart account pays
+            its own gas from them.
+          </Text>
+          <View
+            style={styles.qrBox}
+            accessible
+            accessibilityRole="image"
+            accessibilityLabel="QR code of your smart-account address"
+          >
+            <QRCode
+              value={smartInfo.address}
+              size={Math.min(qrSize, 200)}
+              backgroundColor="#ffffff"
+              color="#000000"
+            />
+          </View>
+          <Text selectable style={[styles.address, { color: theme.text }]}>
+            {smartInfo.address}
+          </Text>
+          <Text style={[styles.note, { color: theme.textMuted }]}>
+            {smartAccountDeploymentNote(smartInfo.deployed)}
+          </Text>
+          <Button
+            title={smartCopied ? 'Copied ✓' : 'Copy smart-account address'}
+            variant="secondary"
+            style={styles.stretch}
+            onPress={async () => {
+              await Clipboard.setStringAsync(smartInfo.address);
+              setSmartCopied(true);
+            }}
+          />
+          {smartCopied ? (
+            <Text accessibilityLiveRegion="polite" style={[styles.note, { color: theme.textMuted }]}>
+              Copied — note that the clipboard can be read by other apps.
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
       <Button
         title={`Send ${account.symbol}`}
         variant="secondary"
@@ -207,6 +312,17 @@ const styles = StyleSheet.create({
     // 'monospace' only exists on Android; iOS ships Menlo.
     fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }),
     fontVariant: ['tabular-nums'],
+  },
+  smartBox: {
+    alignItems: 'center',
+    gap: 12,
+  },
+  stretch: {
+    alignSelf: 'stretch',
+  },
+  smartTitle: {
+    fontSize: 16,
+    fontWeight: '700',
   },
   path: {
     fontSize: 13,

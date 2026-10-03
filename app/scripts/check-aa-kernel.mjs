@@ -27,9 +27,23 @@ import {
   isErc6492Signature,
 } from '@shiba-wallet/chains-evm';
 import { ethers } from 'ethers';
+import { readFileSync } from 'node:fs';
 import {
+  AA_FUNDING_TITLE,
+  AaFundingError,
+  KERNEL_BUNDLER_NOTE,
+  KERNEL_DEPLOYMENT_NEUTRAL_NOTE,
   KERNEL_PREFILL,
   aaErc20TransferCalls,
+  forgetSmartAccountAddress,
+  isAlchemyBundlerUrl,
+  isPrefundError,
+  kernelDeploymentNote,
+  loadSmartAccountAddress,
+  showsSmartAccountAddressOnSend,
+  showsSmartAccountOnReceive,
+  smartAccountAddressLabel,
+  smartAccountDeploymentNote,
   clearAaFactory,
   createAaClient,
   createAaClientFromConfig,
@@ -479,6 +493,182 @@ console.log('check-aa-kernel: error wording and multi-call quotes');
   const exec = decodeKernelExecute(bundler.lastOp.callData);
   check('three calls submitted in order as one batch', exec.callType === 1 && exec.calls.length === 3 && exec.calls[1].data === '0x12345678' && exec.calls[2].value === 2n);
   await checkRejects('an empty call list is refused', () => prepareAaCalls(bundle, OWNER_0, []), 'no calls');
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-aa-kernel: unfunded counterfactual account (phase 11 item 2, bug A)');
+// ---------------------------------------------------------------------------
+{
+  const fullSepoliaKernel = {
+    ...kernelConfig,
+    chain: SEPOLIA,
+    eip7702Owners: [],
+    recoveredAccounts: [],
+    bundlerUrlIgnoredReason: null,
+    paymasterUrlIgnoredReason: null,
+  };
+  // A brand-new Kernel account: balance 0, no code. The wallet's own check
+  // must refuse before ANY bundler call, naming the address to fund.
+  const emptyNode = sepNode({ balance: 0n });
+  const emptyBundler = fakeBundler();
+  const emptyBundle = createAaClientFromConfig(fullSepoliaKernel, {
+    nodeUrl: NODE_URL,
+    chainId: 11155111n,
+    accountIndex: 0,
+    ownerAddress: OWNER_0,
+    transportFor: (url) => (url === NODE_URL ? emptyNode : emptyBundler),
+  });
+  let fundingError = null;
+  try {
+    await prepareAaSend(emptyBundle, OWNER_0, RECIPIENT, 100_000_000_000_000n);
+  } catch (e) {
+    fundingError = e;
+  }
+  check('unfunded account: the quote is refused with an AaFundingError', fundingError instanceof AaFundingError, String(fundingError));
+  check('the funding error names the counterfactual smart-account address', fundingError?.sender === KERNEL_ACCOUNT_0 && fundingError.message.includes(KERNEL_ACCOUNT_0));
+  check('the message says to fund the smart account (not the owner)', /Fund the smart account address 0x[0-9a-fA-F]{40} \(not the owner address\)/.test(fundingError?.message ?? ''));
+  check('ZERO bundler calls before the refusal (no estimate, no fee-floor probe)', emptyBundler.calls.length === 0, JSON.stringify(emptyBundler.calls.map((c) => c.method)));
+  const described = describeAaError(fundingError, { accountType: 'kernel-v3.3', deployed: null });
+  check('describeAaError: funding title, message kept as the detail', described?.title === AA_FUNDING_TITLE && described.detail === fundingError.message);
+  check('the raw AA21 wording never appears for the pre-check', !described.detail.includes('AA21'));
+
+  // Token send from an unfunded account: the gas still needs ETH.
+  const tokenBalances = { [`${USDC.toLowerCase()}|${KERNEL_ACCOUNT_0.toLowerCase()}`]: 5_000_000n };
+  const tNode = sepNode({ balance: 0n, tokenBalances });
+  const tBundler = fakeBundler();
+  const tBundle = createAaClientFromConfig(fullSepoliaKernel, {
+    nodeUrl: NODE_URL,
+    chainId: 11155111n,
+    accountIndex: 0,
+    transportFor: (url) => (url === NODE_URL ? tNode : tBundler),
+  });
+  await checkRejects('token send from a smart account with 0 ETH: funding message before the bundler', () => prepareAaErc20Send(tBundle, OWNER_0, { contract: USDC, recipient: RECIPIENT, amount: 1n, symbol: 'USDC', decimals: 6 }), `Fund the smart account address ${KERNEL_ACCOUNT_0}`);
+  check('…with zero bundler calls', tBundler.calls.length === 0);
+
+  // Balance above the amount but below the gas: the pre-check passes, the
+  // bundler answers AA21 anyway → mapped to the same funding message.
+  const aa21 = "RPC error -32500: validation reverted: AA21 didn't pay prefund (eth_estimateUserOperationGas)";
+  const lowNode = sepNode({ balance: 200n });
+  const aa21Bundler = fakeBundler({ estimateError: aa21 });
+  const aa21Bundle = createAaClientFromConfig(fullSepoliaKernel, {
+    nodeUrl: NODE_URL,
+    chainId: 11155111n,
+    accountIndex: 0,
+    transportFor: (url) => (url === NODE_URL ? lowNode : aa21Bundler),
+  });
+  let aa21Error = null;
+  try {
+    await prepareAaSend(aa21Bundle, OWNER_0, RECIPIENT, 100n);
+  } catch (e) {
+    aa21Error = e;
+  }
+  check('balance > amount passes the pre-check and reaches the bundler estimate', aa21Bundler.calls.some((c) => c.method === 'eth_estimateUserOperationGas'));
+  check('an AA21 estimate failure becomes an AaFundingError naming the address', aa21Error instanceof AaFundingError && aa21Error.sender === KERNEL_ACCOUNT_0 && aa21Error.message.includes(`Fund the smart account address ${KERNEL_ACCOUNT_0}`));
+  check("…keeping the bundler's own words", aa21Error?.message.endsWith(`The bundler's message: ${aa21}`));
+  const d21 = describeAaError(aa21Error, { accountType: 'kernel-v3.3', deployed: false });
+  check('describeAaError maps it to the funding title (not a deployment refusal)', d21?.title === AA_FUNDING_TITLE);
+
+  // A raw AA21 (e.g. from sendCalls' re-estimate at send time) is mapped by
+  // describeAaError itself, with the quote's sender.
+  const raw = new Error(aa21);
+  const dRaw = describeAaError(raw, { accountType: 'kernel-v3.3', deployed: false, sender: KERNEL_ACCOUNT_0 });
+  check('raw AA21 + sender: funding title, address named, bundler message verbatim', dRaw?.title === AA_FUNDING_TITLE && dRaw.detail.includes(`Fund the smart account address ${KERNEL_ACCOUNT_0}`) && dRaw.detail.endsWith(aa21));
+  const dNoSender = describeAaError(raw, { accountType: 'simple', deployed: true });
+  check('raw AA21 without a sender: still the funding title (generic address wording)', dNoSender?.title === AA_FUNDING_TITLE && dNoSender.detail.includes('shown on the Send screen'));
+  const d7702 = describeAaError(raw, { accountType: 'kernel-7702', deployed: false, sender: OWNER_0 });
+  check('AA21 wins over the EIP-7702 upgrade-refusal wording', d7702?.title === AA_FUNDING_TITLE);
+  check('isPrefundError matches AA21 only (not AA13 / AA210-like tokens)', isPrefundError(aa21) && !isPrefundError('AA13 initCode failed') && !isPrefundError('AA210'));
+
+  // The ordering does not change a funded quote.
+  const fundedBundler = fakeBundler();
+  const fundedBundle = createAaClientFromConfig(fullSepoliaKernel, {
+    nodeUrl: NODE_URL,
+    chainId: 11155111n,
+    accountIndex: 0,
+    transportFor: (url) => (url === NODE_URL ? sepNode() : fundedBundler),
+  });
+  const funded = await prepareAaSend(fundedBundle, OWNER_0, RECIPIENT, 777n);
+  check('a funded account still quotes (estimate after the pre-check)', funded.sender === KERNEL_ACCOUNT_0 && funded.deployed === false && fundedBundler.calls.some((c) => c.method === 'eth_estimateUserOperationGas'));
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-aa-kernel: smart-account address on Send and Receive (bug A)');
+// ---------------------------------------------------------------------------
+{
+  const base = {
+    ...kernelConfig,
+    chain: SEPOLIA,
+    eip7702Owners: [],
+    recoveredAccounts: [],
+    bundlerUrlIgnoredReason: null,
+    paymasterUrlIgnoredReason: null,
+  };
+  check('Receive: complete Sepolia Kernel config → smart-account row shown', showsSmartAccountOnReceive(base, OWNER_0));
+  check('Send: complete Sepolia Kernel config → address shown by the toggle', showsSmartAccountAddressOnSend(base, OWNER_0));
+  check('Receive: no row without a bundler (incomplete config)', !showsSmartAccountOnReceive({ ...base, bundlerUrl: null }, OWNER_0));
+  check('Receive: no row for SimpleAccount (Kernel only)', !showsSmartAccountOnReceive({ ...base, accountType: 'simple' }, OWNER_0));
+  check('Send: SimpleAccount still shows its address by the toggle', showsSmartAccountAddressOnSend({ ...base, accountType: 'simple' }, OWNER_0));
+  check('Receive/Send: an EIP-7702 upgraded owner has no separate address', !showsSmartAccountOnReceive({ ...base, eip7702Owners: [OWNER_0] }, OWNER_0) && !showsSmartAccountAddressOnSend({ ...base, eip7702Owners: [OWNER_0] }, OWNER_0));
+  check('Receive: a recovered account is not repeated (Receive names it already)', !showsSmartAccountOnReceive({ ...base, recoveredAccounts: [{ owner: OWNER_0, account: '0x' + '42'.repeat(20) }] }, OWNER_0));
+  check('Receive: mainnet (readiness-gated) shows nothing', !showsSmartAccountOnReceive({ ...base, chain: MAINNET }, OWNER_0));
+  check('Receive: no owner → nothing', !showsSmartAccountOnReceive(base, null));
+
+  forgetSmartAccountAddress();
+  const calls = [];
+  const node = sepNode({ calls });
+  const bundler = fakeBundler();
+  const transportFor = (url) => (url === NODE_URL ? node : bundler);
+  const info = await loadSmartAccountAddress(base, { nodeUrl: NODE_URL, chainId: 11155111n, accountIndex: 0, ownerAddress: OWNER_0, transportFor });
+  check('loadSmartAccountAddress: the counterfactual Kernel address for owner 0, index 0', info?.address === KERNEL_ACCOUNT_0, info?.address);
+  check('…not deployed (empty eth_getCode)', info?.deployed === false && info.accountType === 'kernel-v3.3' && info.recovered === false);
+  check('…node only: zero bundler calls', bundler.calls.length === 0);
+  check('…eth_chainId checked and eth_getCode read', calls.some((c) => c.method === 'eth_chainId') && calls.some((c) => c.method === 'eth_getCode' && same(c.params[0], KERNEL_ACCOUNT_0)));
+  check('label "Smart account (Kernel v3.3)"', smartAccountAddressLabel(info) === 'Smart account (Kernel v3.3)');
+  check('state line "Not deployed yet — the first send deploys it."', smartAccountDeploymentNote(false) === 'Not deployed yet — the first send deploys it.' && smartAccountDeploymentNote(true) === 'Deployed.');
+  const before = calls.length;
+  const again = await loadSmartAccountAddress(base, { nodeUrl: NODE_URL, chainId: 11155111n, accountIndex: 0, ownerAddress: OWNER_0, transportFor });
+  check('cached per account + chain: the second read makes no request', again === info && calls.length === before);
+  const other = await loadSmartAccountAddress(base, { nodeUrl: NODE_URL, chainId: 11155111n, accountIndex: 1, ownerAddress: owner1.address, transportFor });
+  check('another account index is a separate entry (its own address)', other?.address === predictKernelAddress(owner1.address, { index: 1n }) && calls.length > before);
+
+  // After the deploying operation is accepted, sendAa drops the entry.
+  const deployedNode = sepNode({ deployedAccounts: new Set([KERNEL_ACCOUNT_0]) });
+  const sendBundler = fakeBundler();
+  const sendBundle = createAaClientFromConfig(base, { nodeUrl: NODE_URL, chainId: 11155111n, accountIndex: 0, transportFor: (url) => (url === NODE_URL ? sepNode() : sendBundler) });
+  const q = await prepareAaSend(sendBundle, OWNER_0, RECIPIENT, 5n);
+  await sendAa(sendBundle, owner, q);
+  const after = await loadSmartAccountAddress(base, { nodeUrl: NODE_URL, chainId: 11155111n, accountIndex: 0, ownerAddress: OWNER_0, transportFor: (url) => (url === NODE_URL ? deployedNode : bundler) });
+  check('an accepted operation from the account invalidates the cache (re-read → deployed)', after?.deployed === true && after.address === KERNEL_ACCOUNT_0);
+
+  forgetSmartAccountAddress();
+  await checkRejects('a node on another chain is refused (no address shown from the wrong network)', () => loadSmartAccountAddress(base, { nodeUrl: NODE_URL, chainId: 11155111n, accountIndex: 0, ownerAddress: OWNER_0, transportFor: () => fakeKernelNode({ chainIdHex: '0x1' }) }), 'expected 11155111');
+  check('an EIP-7702 owner gets null (same address as the account itself)', (await loadSmartAccountAddress({ ...base, eip7702Owners: [OWNER_0] }, { nodeUrl: NODE_URL, chainId: 11155111n, accountIndex: 0, ownerAddress: OWNER_0, transportFor })) === null);
+  check('recovered label', smartAccountAddressLabel({ accountType: 'kernel-v3.3', recovered: true }) === 'Recovered smart account (Kernel v3.3)' && smartAccountAddressLabel({ accountType: 'simple', recovered: false }) === 'Smart account (SimpleAccount)');
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-aa-kernel: deployment note depends on the bundler host (bug B)');
+// ---------------------------------------------------------------------------
+{
+  const ALCHEMY = 'https://eth-sepolia.g.alchemy.com/v2/SECRETKEY123';
+  const ZERODEV = 'https://rpc.zerodev.app/api/v3/SECRETPROJECT/chain/11155111';
+  check('Alchemy bundler host → the Alchemy limitation note', kernelDeploymentNote(ALCHEMY) === KERNEL_BUNDLER_NOTE);
+  check('ZeroDev bundler → neutral sentence', kernelDeploymentNote(ZERODEV) === 'Deployment goes through the configured bundler.' && KERNEL_DEPLOYMENT_NEUTRAL_NOTE === 'Deployment goes through the configured bundler.');
+  check('no bundler URL → neutral sentence', kernelDeploymentNote(null) === KERNEL_DEPLOYMENT_NEUTRAL_NOTE);
+  check('bare g.alchemy.com and a port/userinfo are Alchemy', isAlchemyBundlerUrl('https://g.alchemy.com/v2/k') && isAlchemyBundlerUrl('https://user:pw@base-sepolia.g.alchemy.com:443/v2/k'));
+  check('look-alike hosts are not Alchemy', !isAlchemyBundlerUrl('https://evil-g.alchemy.com/v2/k') && !isAlchemyBundlerUrl('https://g.alchemy.com.attacker.example/v2/k') && !isAlchemyBundlerUrl('https://alchemy.com/v2/k'));
+  check('"g.alchemy.com" in the path or query does not count (host only)', !isAlchemyBundlerUrl('https://bundler.example/g.alchemy.com/v2/k') && !isAlchemyBundlerUrl('https://bundler.example/?u=https://x.g.alchemy.com'));
+  const source = readFileSync(new URL('../src/wallet/aa.ts', import.meta.url), 'utf8');
+  const body = source.slice(source.indexOf('export function isAlchemyBundlerUrl'), source.indexOf('export function kernelDeploymentNote'));
+  check('the host check parses maskUrlForDisplay(...) output, never the raw URL', body.includes('maskUrlForDisplay(bundlerUrl)') && !/new URL\(/.test(body));
+  const sendSource = readFileSync(new URL('../src/screens/SendScreen.tsx', import.meta.url), 'utf8');
+  check('SendScreen confirm uses kernelDeploymentNote(configured bundler), not the constant', sendSource.includes('kernelDeploymentNote(aaConfig?.bundlerUrl ?? null)') && !sendSource.includes('KERNEL_BUNDLER_NOTE'));
+  const rejection = new Error('RPC error -32502: account uses banned opcode: CREATE2 (eth_sendUserOperation)');
+  const zd = describeAaError(rejection, { accountType: 'kernel-v3.3', deployed: false, bundlerUrl: ZERODEV });
+  check('deployment refusal through a non-Alchemy bundler: no Alchemy note, message verbatim', zd?.title.includes('refused to deploy') && zd.detail.startsWith(rejection.message) && !zd.detail.includes('Alchemy'));
+  const al = describeAaError(rejection, { accountType: 'kernel-v3.3', deployed: false, bundlerUrl: ALCHEMY });
+  check('deployment refusal through Alchemy: the Alchemy note', al?.detail.endsWith(KERNEL_BUNDLER_NOTE));
+  check('the API key never appears in any wording', !JSON.stringify([zd, al, kernelDeploymentNote(ALCHEMY)]).includes('SECRET'));
 }
 
 console.log('');
