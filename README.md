@@ -51,7 +51,7 @@ code and accepted by real public networks:
 | `packages/chains-utxo` | Bitcoin/Dogecoin transaction building and signing (BIP-143 and legacy sighash), coin selection with verified dust rules, Esplora and Blockbook transports and history providers |
 | `packages/chains-solana` | Message compilation and signing, System and SPL token transfers (PDA/ATA derivation), RPC client, history provider |
 | `app/` | Expo app: onboarding with quiz-verified backup, balances (native + ERC-20), send flows (native, token, experimental ERC-4337 path), per-chain activity, WalletConnect v2, biometric gating |
-| `scripts/testnet/` | Live smoke tests: per-chain self-sends and the ERC-4337 deployment/bundler run |
+| `scripts/testnet/` | Live smoke tests: per-chain self-sends and the ERC-4337 deployment/bundler run, plus the one Dogecoin mainnet demonstration (`doge-mainnet-demo.mjs`, dry run by default; see docs/THREAT_MODEL.md section 7.5) |
 | `AGENTS.md` | Persistent project state: status, decisions, phase plans, and the honestly recorded untested remainder |
 
 ## Development
