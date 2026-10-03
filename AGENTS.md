@@ -3284,7 +3284,26 @@ whenever the Expo account and identifiers arrive. Subagents on Opus.
       bundler the emulator actually had saved (the error text and fee
       match Alchemy's Rundler, not ZeroDev's Alto-style answers); Pimlico /
       UltraRelay with the headroom; deployment ops with a zero deposit.
-      Emulator re-run of the in-app owner change: see below.
+      EMULATOR RE-RUN, PROVEN LIVE both directions (2026-10-02, Expo Go,
+      Sepolia, fresh Metro bundle of 37d3b89): Account 1 → Account 2 for
+      the Kernel account 0xD31c…D8FA — the confirm's bundler estimate
+      now carried the headroom (max fee 0.000494 test ETH versus 0.000383
+      before the fix), biometric gate, "Owner change sent to the bundler",
+      userOpHash 0x888511f7aee083b050198ac719f56cc5f58d0094699fa996021949906f412c73,
+      then "Included — the owner is now Account 2 (checked on-chain)";
+      the CTO read the owner back independently as Account 2
+      (0xb699…81fE). "Switch to Account 2" worked; from Account 2 the
+      Guardians screen showed the account under its new owner and the
+      rotate-back to Account 1 (userOpHash
+      0x3ff73fcfb249d14faaf04e357881fa0040410c43be8587b96fa748f99dd93711)
+      was included, with "Switch to Account 1" returning the wallet to its
+      starting state; final owner read back by the CTO: 0x772eAA1d3BEf14C0BD5cee980b90dB3FC680F44F. The
+      "Back up the recovery record" prompt appeared after each change.
+      Emulator lesson: while agents rebuild packages/*/dist, Metro in
+      watch mode can serve a half-built engine (Home lost its account
+      label and the Guardians screen its Owner-key section, logcat showed
+      "Error: undefined"); a Metro restart with --clear fixed it —
+      restart Metro after any engine rebuild.
 - [x] Item 2 — docs/THREAT_MODEL.md (first edition, evidence at 860e552;
       about 9–10k words of prose): leadership summary with three
       conclusions (plain-account features are the first mainnet
@@ -3317,3 +3336,64 @@ whenever the Expo account and identifiers arrive. Subagents on Opus.
       Cross-references added to ARCHITECTURE.md, DEVICE_BUILDS.md and
       AA_FRAMEWORKS.md. The git history was searched for key-bearing URLs:
       none (only the public test mnemonic).
+- [x] Item 4 — CI and test hardening (commit 1e37343). Root `npm test`
+      = scripts/ci/run.mjs (plain Node, no dependencies, imports nothing
+      from the code under test): engine build + vitest across the five
+      packages, every app/scripts/*.mjs classified in scripts/ci/suites.mjs
+      (the runner refuses to start if a script is unclassified), expo lint
+      with --max-warnings 0, app tsc, and an Android expo export as a
+      bundle smoke; it parses each script's own summary line (three
+      formats exist) and fails on any failed count, a missing summary, a
+      non-zero exit, a timeout (process group killed) or — in offline
+      mode — any network attempt. Offline mode preloads
+      scripts/ci/offline-guard.mjs via NODE_OPTIONS=--import into every
+      child: blocks fetch and net.Socket connects to anything but
+      loopback and makes .dev-wallet/ look absent, so check-doge and
+      check-indexer run their offline sections (72 / 11) and the
+      live-only suites (check-tokens, check-balances, check-history) are
+      skipped; `npm run test:live` runs everything with keys. Measured:
+      32 steps, 602 engine tests, 2,074 app checks across 23 suites, about
+      80 s warm (100 s from a fresh clone; bundle 22–35 s). Options after
+      `--`: --mode, --only, --skip-bundle, --verbose, --logs-dir; env
+      SHIBA_CI_SKIP_BUNDLE, SHIBA_CI_TIMEOUT_SCALE. Workflow
+      .github/workflows/ci.yml (replaces the old two-job file that ran
+      only test-units): one job, Node 24, npm cache keyed on both
+      lockfiles, `npm ci --ignore-scripts` at root and in app (npm 11
+      recreates the file: symlinks before the engine build, so no
+      workaround), the secret scan over HEAD, then `npm test`; logs
+      uploaded only on failure; no secrets; contents: read;
+      persist-credentials false; SHA-pinned actions (checkout v7.0.1,
+      setup-node v7.0.0, upload-artifact v7.0.1); 30-min timeout;
+      cancel-in-progress; repository variable SHIBA_CI_SKIP_BUNDLE=1
+      turns the bundle step off. Validated with @action-validator/cli
+      0.6.0. Pre-commit secret scan: scripts/githooks/pre-commit →
+      secret-scan.mjs (Node 14+): Alchemy /v2/ and /nft/v3/ keys (20+
+      chars — the real key is 26, not 32), ZeroDev UUIDs in
+      rpc.zerodev.app URLs or ZERODEV_PROJECT_ID=, NOWNodes values, 12+
+      consecutive BIP-39 words in any case (checksum-decoded with
+      node:crypto; the all-repeated-byte test vectors are allowed), 0x +
+      64 hex within 40 chars of key/priv/secret (32+ leading zeros =
+      storage slots ignored), and every literal .dev-wallet value from the
+      checkout and the main checkout via git-common-dir; findings print
+      only the first 4 characters and the length; a missing node or
+      wordlist refuses the commit. Allow list: REOWN_PROJECT_ID (name and
+      value; equals DEFAULT_WC_PROJECT_ID in walletconnect.ts) and two
+      disposable test keys already public in history (SESSION_PRIVATE_KEY
+      in kernel-permissions.test.ts, the synthetic P-256 SDK.secret in
+      kernel-webauthn.test.ts). HEAD scan clean (280 files); the hook was
+      proven to refuse staged fakes (13 findings), a force-staged
+      .dev-wallet/env and a real commit, on Node 24 and 14. Enabled on the
+      CTO's checkout with `git config core.hooksPath scripts/githooks`
+      (`npm run hooks:install`); the commit 1e37343 itself passed through
+      it. docs/CONTRIBUTING.md and README document the commands. npm
+      audit: root 11 findings (8 moderate, 3 high) all in test-only
+      cross-check tools (@solana/web3.js 1.99 chain: bigint-buffer, jayson,
+      stream-json, uuid; vitest), app 14 (9 moderate, 5 high) all in the
+      Expo CLI/config tooling chain (node-forge, uuid via xcode); the only
+      offered fixes are breaking (web3.js 3, vitest 5, expo 44), so none
+      applied. FINDING: check-tokens runs an unconditional live eth_call
+      section after its offline checks, so its offline checks are not in
+      CI — move the live section behind --live (follow-up). First GitHub
+      Actions runs on the public repo: 12b311c and 1e37343 both completed
+      with conclusion success (github.com/smwells25/shiba-wallet/actions,
+      runs 37081746661 and 37082671263).
