@@ -4367,3 +4367,40 @@ threshold, NFT explorer links and recovery-file names; remaining
 WcApprovalSheet; the Home chain cards' nested Pressables; the
 intermittent "Error: undefined" warning; an owner-rotation screen for
 the recovered-account case is now covered by Change owner.
+
+## Phase 11 plan (approved 2026-10-03): programmable policies and proof
+
+Inputs noted the same day: no physical phone yet (the Chairperson is
+obtaining one; the device-build track waits); the Chairperson may send
+0.001 MAINNET ETH to the dev EOA 0x16DA2CAeaDa26516F919C6872F6C38AB378CaC5C
+so Base Sepolia faucets (which check a mainnet balance) will pay out.
+RULE: that mainnet ETH is never spent — no script in the repo sends
+mainnet ETH (every ETH script is testnet-only) and the threat model's
+dev-seed rule gets a second bounded exception recorded next to the
+Dogecoin one. Base Sepolia test ETH at the same address unlocks the
+live Kernel deployment there (item 5).
+
+1. Spending limits and programmable policies (feature 19, "only with
+   AA", designed only): find the audited, deployed Kernel v3.3 hook or
+   policy that enforces account-level limits (the v3.1 incremental audit
+   mentioned a SpendingLimit hook — verify source, audit scope and
+   deployment), engine support, and an app screen behind test mode.
+2. In-app counterfactual deployment, live: a fresh account's first
+   smart-account send deploys its Kernel account through ZeroDev from
+   the app (feature 14 is engine-proven only). CTO on the emulator.
+3. Sign-In with Ethereum and proof of ownership (features 76, 85):
+   EIP-4361 parsing and a summary on the WalletConnect sheet; a one-tap
+   "prove I own this address" screen with ERC-1271 for smart accounts.
+4. Activity decoded into sentences (feature 90): known calls and logs
+   (ERC-20 transfer/approve, Uniswap swaps, Permit2, smart-account ops)
+   rendered as plain sentences.
+5. Base follow-ups: the L1 data fee in Base sends, a bundler eth_chainId
+   check in setAaBundlerUrl, Base-specific copy and entries, and the
+   live Kernel deployment on Base Sepolia when test ETH lands.
+6. Emulator pass over the screens never eyeballed: NFTs, approvals,
+   risk warnings, dark mode.
+
+Waves: 1, 3, 4, 5 in parallel (disjoint files), 2 by the CTO on the
+emulator, 6 after. Subagents on Opus.
+
+## Phase 11 progress
