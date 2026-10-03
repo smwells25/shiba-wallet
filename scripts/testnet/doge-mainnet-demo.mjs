@@ -90,7 +90,6 @@ import {
 } from '../../packages/core/dist/index.js';
 import {
   DOGECOIN,
-  DUST_P2PKH,
   addressToScriptPubKey,
   blockbookTransport,
   serializeTransaction,
@@ -132,8 +131,9 @@ const MAX_FEE_PERCENT = 5n;
  *     makes the transaction non-standard ("dust"), so it is not relayed.
  *   src/dogecoin-fees.cpp GetDogecoinDustFee: every output below the soft
  *     limit adds the soft limit (0.01 DOGE) to the minimum relay fee.
- * The engine's generic DUST_P2PKH (546 sat, Bitcoin Core's number) is far
- * below both, so this script enforces the Dogecoin soft limit on change.
+ * The engine applies the same soft limit to Dogecoin outputs itself since
+ * the per-chain dust policy landed in packages/chains-utxo (dust.ts); this
+ * script re-checks the change output independently as a second guard.
  */
 const DOGE_SOFT_DUST_LIMIT = COIN / 100n; // 1,000,000 base units = 0.01 DOGE
 
@@ -367,7 +367,7 @@ if (built.tx.outputs.length > 2) fail('unexpected extra outputs.');
 if (change && change.value < DOGE_SOFT_DUST_LIMIT) {
   fail(
     `change ${doge(change.value)} is below Dogecoin's soft dust limit of ${doge(DOGE_SOFT_DUST_LIMIT)} ` +
-      `(the engine's generic floor is ${DUST_P2PKH} base units; Dogecoin's is higher).`,
+      `(the engine's own Dogecoin policy should have folded it into the fee; refusing as a second guard).`,
   );
 }
 

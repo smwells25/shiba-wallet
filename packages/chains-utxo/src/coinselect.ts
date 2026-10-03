@@ -1,4 +1,5 @@
 import { isP2wpkhScript } from './address.js';
+import { BITCOIN_CORE_DUST_POLICY, type DustPolicy } from './dust.js';
 import { varIntSize } from './encoding.js';
 import type { TransactionOutput } from './tx.js';
 
@@ -19,23 +20,20 @@ export interface Utxo {
 
 export type InputKind = 'p2pkh' | 'p2wpkh';
 
-/**
- * Dust thresholds, verified against bitcoin/bitcoin src/policy/policy.cpp
- * (GetDustThreshold): an output is dust when spending it would cost more in
- * fees than it is worth, at the default dust relay rate of 3000 sat/kvB.
- * The source comments give the resulting numbers directly:
- *   "182*dustRelayFee/1000 ... 546 satoshis" for a legacy P2PKH output, and
- *   "98*dustRelayFee/1000 ... 294 satoshis" for a segwit P2WPKH output.
- * Dogecoin relays with different (higher) dust economics, but 546 sat is
- * the conservative floor this wallet enforces for all legacy outputs; the
- * backend's own policy governs actual relay.
- */
-export const DUST_P2PKH = 546n;
-export const DUST_P2WPKH = 294n;
+// The dust constants live in dust.ts (with their source citations) and are
+// re-exported here so existing imports from this module keep working.
+export { DUST_P2PKH, DUST_P2WPKH } from './dust.js';
 
-/** Dust threshold for the script an output would be locked to. */
-export function dustThreshold(scriptPubKey: Uint8Array): bigint {
-  return isP2wpkhScript(scriptPubKey) ? DUST_P2WPKH : DUST_P2PKH;
+/**
+ * Dust threshold for the script an output would be locked to, under the
+ * given chain policy (Bitcoin Core's 546 / 294 when none is given, which is
+ * what every existing caller without a policy has always received).
+ */
+export function dustThreshold(
+  scriptPubKey: Uint8Array,
+  policy: DustPolicy = BITCOIN_CORE_DUST_POLICY,
+): bigint {
+  return isP2wpkhScript(scriptPubKey) ? policy.p2wpkh : policy.legacy;
 }
 
 /**
@@ -95,6 +93,12 @@ export interface CoinSelectionParams {
   inputKind: InputKind;
   /** Where change would go; decides the change output's size and dust floor. */
   changeScriptPubKey: Uint8Array;
+  /**
+   * The chain's dust policy (UtxoNetwork.dustPolicy). Defaults to Bitcoin
+   * Core's thresholds; Dogecoin must pass DOGECOIN_CORE_DUST_POLICY, which
+   * buildTransfer does automatically from the network.
+   */
+  dustPolicy?: DustPolicy;
 }
 
 export interface CoinSelectionResult {
@@ -122,7 +126,7 @@ export function selectCoins(params: CoinSelectionParams): CoinSelectionResult {
   const { utxos, outputs, feeRate, inputKind, changeScriptPubKey } = params;
   const target = outputs.reduce((sum, o) => sum + o.value, 0n);
   const outputScripts = outputs.map((o) => o.scriptPubKey);
-  const changeDust = dustThreshold(changeScriptPubKey);
+  const changeDust = dustThreshold(changeScriptPubKey, params.dustPolicy);
 
   const sorted = [...utxos].sort((a, b) => (b.value > a.value ? 1 : b.value < a.value ? -1 : 0));
   const selected: Utxo[] = [];

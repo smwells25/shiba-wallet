@@ -22,6 +22,13 @@ export {
   feeForVsize,
   selectCoins,
 } from './coinselect.js';
+export {
+  BITCOIN_CORE_DUST_POLICY,
+  DOGECOIN_CORE_DUST_POLICY,
+  DOGECOIN_HARD_DUST_LIMIT,
+  DOGECOIN_SOFT_DUST_LIMIT,
+} from './dust.js';
+export type { DustPolicy } from './dust.js';
 export type {
   CoinSelectionParams,
   CoinSelectionResult,

@@ -1,5 +1,6 @@
 import { addressToScriptPubKey, isP2pkhScript, isP2wpkhScript, type UtxoNetwork } from './address.js';
-import { selectCoins, type InputKind, type Utxo } from './coinselect.js';
+import { dustThreshold, selectCoins, type InputKind, type Utxo } from './coinselect.js';
+import { BITCOIN_CORE_DUST_POLICY } from './dust.js';
 import { bytesToHex } from './encoding.js';
 import {
   serializeTransaction,
@@ -59,10 +60,31 @@ export function buildTransfer(params: TransferParams): BuiltTransfer {
   else if (isP2pkhScript(inputScript)) inputKind = 'p2pkh';
   else throw new Error('Can only spend from P2WPKH or P2PKH addresses');
 
-  const outputs = [{ value: amount, scriptPubKey: addressToScriptPubKey(toAddress, network) }];
+  // The chain's dust policy governs both outputs: the recipient output is
+  // refused here if it would be dust, and coin selection folds would-be
+  // dust change into the fee. Networks without a policy get Bitcoin Core's.
+  const dustPolicy = network.dustPolicy ?? BITCOIN_CORE_DUST_POLICY;
+  const toScriptPubKey = addressToScriptPubKey(toAddress, network);
+  const recipientDust = dustThreshold(toScriptPubKey, dustPolicy);
+  if (amount < recipientDust) {
+    throw new Error(
+      `Amount is below the ${network.name} dust limit: the smallest output this wallet ` +
+        `will create is ${formatCoins(recipientDust)} (${recipientDust} base units), and ` +
+        `nodes would not relay a transaction with a smaller output at a normal fee.`,
+    );
+  }
+
+  const outputs = [{ value: amount, scriptPubKey: toScriptPubKey }];
   const changeScriptPubKey = addressToScriptPubKey(params.changeAddress ?? fromAddress, network);
 
-  const selection = selectCoins({ utxos, outputs, feeRate, inputKind, changeScriptPubKey });
+  const selection = selectCoins({
+    utxos,
+    outputs,
+    feeRate,
+    inputKind,
+    changeScriptPubKey,
+    dustPolicy,
+  });
 
   return {
     inputKind,
@@ -79,6 +101,13 @@ export function buildTransfer(params: TransferParams): BuiltTransfer {
       locktime: params.locktime ?? 0,
     },
   };
+}
+
+/** Base units to a whole-coin decimal string (8 decimals, trailing zeros trimmed). */
+function formatCoins(baseUnits: bigint): string {
+  const whole = baseUnits / 100_000_000n;
+  const fraction = (baseUnits % 100_000_000n).toString().padStart(8, '0').replace(/0+$/, '');
+  return fraction ? `${whole}.${fraction}` : `${whole}`;
 }
 
 /**

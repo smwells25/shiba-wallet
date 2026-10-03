@@ -22,6 +22,8 @@ import { readFileSync } from 'node:fs';
 import { dogecoinKeyProvider, mnemonicToSeed } from '@shiba-wallet/core';
 import {
   DOGECOIN,
+  DOGECOIN_HARD_DUST_LIMIT,
+  DOGECOIN_SOFT_DUST_LIMIT,
   addressToScriptPubKey,
   blockbookHistoryProvider,
   dsha256,
@@ -38,6 +40,7 @@ import {
 } from '../src/wallet/blockbook.ts';
 import {
   DOGECOIN_CHAIN_ID,
+  describeSendError,
   fetchBlockbookFeeRate,
   maxUtxoSend,
   prepareUtxoSend,
@@ -513,6 +516,118 @@ console.log('\n== Send path (offline fake Blockbook) ==');
   const outputTotal = tx.outs.reduce((s, o) => s + BigInt(o.value), 0n);
   check('decoded: inputs − outputs = the quoted fee exactly', inputTotal - outputTotal === quote.fee);
   check('decoded: input carries a signature script', tx.ins[0].script.length > 0);
+}
+
+// ---------------------------------------------------------------------------
+// Dogecoin dust policy through the app's own send glue. Dogecoin Core
+// 1.14.9 (src/policy/policy.h) uses a 0.01 DOGE soft dust limit (each
+// output below it costs an extra 0.01 DOGE fee, src/dogecoin-fees.cpp) and
+// a 0.001 DOGE hard limit (non-standard, never relayed). The engine treats
+// the soft limit as Dogecoin's dust threshold for recipient and change
+// outputs, so these quotes must never contain an output below 0.01 DOGE.
+// The fee rate is pinned at the 1000 sat/vB floor ("0.01" DOGE/kB) so the
+// arithmetic is exact: a 1-in 2-out P2PKH tx is 226 bytes, 1-in 1-out 192.
+// ---------------------------------------------------------------------------
+
+console.log('\n== Dogecoin dust policy (offline fake Blockbook) ==');
+{
+  const fakeFor = (utxoValues) => async (url) => {
+    if (url === `${FAKE_URL}/api/v2/utxo/${account.address}`) {
+      return jsonResponse(
+        utxoValues.map((v, i) => ({ txid: (i + 1).toString(16).padStart(2, '0').repeat(32), vout: i, value: String(v) })),
+      );
+    }
+    if (url === `${FAKE_URL}/api/v2/estimatefee/6`) return jsonResponse({ result: '0.01' });
+    throw new Error(`unexpected fetch: ${url}`);
+  };
+  const opts = (utxoValues) => ({ backend: 'blockbook', headers: blockbookHeaders(FAKE_KEY), fetchFn: fakeFor(utxoValues) });
+  const quoteFor = (amount, utxoValues) =>
+    prepareUtxoSend(FAKE_URL, DOGECOIN, account.address, recipient.address, amount, opts(utxoValues));
+  const allOutputsAtOrAboveLimit = (q) => q.built.tx.outputs.every((o) => o.value >= DOGECOIN_SOFT_DUST_LIMIT);
+  const DUST_TITLE = 'Amount is below the dust limit — the network would refuse to relay it.';
+  const titleOf = async (fn) => {
+    try {
+      await fn();
+      return null;
+    } catch (e) {
+      return describeSendError(e, 'DOGE');
+    }
+  };
+
+  check('engine constants: soft 0.01 DOGE, hard 0.001 DOGE', DOGECOIN_SOFT_DUST_LIMIT === 1000000n && DOGECOIN_HARD_DUST_LIMIT === 100000n);
+
+  const ONE_DOGE = 100000000n;
+  const big = [500n * ONE_DOGE];
+
+  for (const [label, amount] of [
+    ['one koinu below 0.01 DOGE', 999999n],
+    ['0.006 DOGE (above the old 546-sat floor)', 600000n],
+    ['the 0.001 DOGE hard limit', 100000n],
+  ]) {
+    const described = await titleOf(() => quoteFor(amount, big));
+    check(
+      `recipient ${label} refused; describeSendError gives the plain dust title`,
+      described?.title === DUST_TITLE && /dust/i.test(described.detail),
+      JSON.stringify(described),
+    );
+  }
+
+  const atLimit = await quoteFor(DOGECOIN_SOFT_DUST_LIMIT, big);
+  check('recipient of exactly 0.01 DOGE is accepted', atLimit.built.tx.outputs[0].value === DOGECOIN_SOFT_DUST_LIMIT);
+  check('…and its change output (if any) is not below 0.01 DOGE', allOutputsAtOrAboveLimit(atLimit));
+
+  const amount = ONE_DOGE;
+  const keep = await quoteFor(amount, [amount + 226000n + DOGECOIN_SOFT_DUST_LIMIT]);
+  check(
+    'change of exactly 0.01 DOGE is kept (fee = 226 bytes × 1000)',
+    keep.built.tx.outputs.length === 2 && keep.built.tx.outputs[1].value === DOGECOIN_SOFT_DUST_LIMIT && keep.fee === 226000n,
+  );
+
+  const below = await quoteFor(amount, [amount + 226000n + DOGECOIN_SOFT_DUST_LIMIT - 1n]);
+  check(
+    'change one koinu below 0.01 DOGE is folded into the fee',
+    below.built.tx.outputs.length === 1 && below.fee === 226000n + 999999n && below.total === below.balance,
+  );
+
+  const gap = await quoteFor(amount, [amount + 226000n + 600000n]);
+  check(
+    'change of 0.006 DOGE (the old 546..999,999 gap) is folded into the fee',
+    gap.built.tx.outputs.length === 1 && gap.fee === 826000n && gap.total === gap.balance,
+  );
+
+  // Max-send across many coins: a single output, never sub-limit change.
+  const coins = [123456789n, 2000000n, 1500000n, 98765432n];
+  const swept = await maxUtxoSend(FAKE_URL, DOGECOIN, account.address, recipient.address, opts(coins));
+  const maxQuote = await quoteFor(swept.amount, coins);
+  check(
+    'max send: one output, no change, amount + fee = balance',
+    maxQuote.built.tx.outputs.length === 1 && maxQuote.total === maxQuote.balance && allOutputsAtOrAboveLimit(maxQuote),
+  );
+
+  // A balance that covers the fee but would leave under 0.01 DOGE to send:
+  // 1,100,000 koinu − 192,000 fee = 908,000 < 1,000,000.
+  const tiny = await titleOf(() => maxUtxoSend(FAKE_URL, DOGECOIN, account.address, recipient.address, opts([1100000n])));
+  check(
+    'max send with less than 0.01 DOGE left after the fee surfaces the dust title',
+    tiny?.title === DUST_TITLE,
+    JSON.stringify(tiny),
+  );
+  const exact = await maxUtxoSend(FAKE_URL, DOGECOIN, account.address, recipient.address, opts([1192000n]));
+  check('max send leaving exactly 0.01 DOGE after the fee is allowed', exact.amount === DOGECOIN_SOFT_DUST_LIMIT);
+
+  // Sweep: every quote the app can produce keeps all outputs >= 0.01 DOGE.
+  let sweepOk = true;
+  let quoted = 0;
+  for (let a = DOGECOIN_SOFT_DUST_LIMIT; a < 226000000n; a += 3999991n) {
+    try {
+      const q = await quoteFor(a, coins);
+      quoted += 1;
+      if (!allOutputsAtOrAboveLimit(q) || q.total + (q.built.tx.outputs[1]?.value ?? 0n) !== q.built.tx.inputs.reduce((s, i) => s + i.value, 0n)) sweepOk = false;
+    } catch (e) {
+      if (!/insufficient/i.test(String(e))) sweepOk = false;
+    }
+  }
+  check(`sweep of ${quoted} quotes: no output below 0.01 DOGE, value conserved`, sweepOk && quoted > 40);
 }
 
 // ---------------------------------------------------------------------------

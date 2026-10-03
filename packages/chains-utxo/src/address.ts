@@ -1,5 +1,6 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { base58check, bech32, bech32m } from '@scure/base';
+import { BITCOIN_CORE_DUST_POLICY, DOGECOIN_CORE_DUST_POLICY, type DustPolicy } from './dust.js';
 import { concatBytes } from './encoding.js';
 
 /**
@@ -25,6 +26,12 @@ export interface UtxoNetwork {
   p2pkhVersion: number;
   /** base58check leading version byte for pay-to-script-hash addresses. */
   p2shVersion: number;
+  /**
+   * The chain's dust policy (see dust.ts): the smallest output the wallet
+   * will create. Optional so that custom network objects keep working;
+   * when absent, Bitcoin Core's thresholds (546 / 294) apply.
+   */
+  dustPolicy?: DustPolicy;
 }
 
 /**
@@ -38,6 +45,7 @@ export const BITCOIN: UtxoNetwork = {
   bech32Hrp: 'bc',
   p2pkhVersion: 0x00,
   p2shVersion: 0x05,
+  dustPolicy: BITCOIN_CORE_DUST_POLICY,
 };
 
 /**
@@ -50,6 +58,7 @@ export const DOGECOIN: UtxoNetwork = {
   name: 'Dogecoin',
   p2pkhVersion: 0x1e,
   p2shVersion: 0x16,
+  dustPolicy: DOGECOIN_CORE_DUST_POLICY,
 };
 
 /** Dogecoin mainnet WIF version byte, from chainparams.cpp as cited above. */
@@ -66,16 +75,20 @@ export const BITCOIN_TESTNET: UtxoNetwork = {
   bech32Hrp: 'tb',
   p2pkhVersion: 0x6f,
   p2shVersion: 0xc4,
+  dustPolicy: BITCOIN_CORE_DUST_POLICY,
 };
 
 /**
  * Dogecoin testnet: PUBKEY_ADDRESS = 113 (0x71, "n..."), SCRIPT_ADDRESS =
  * 196 (0xc4), per dogecoin/dogecoin src/chainparams.cpp (CTestNetParams).
+ * The dust limits are global policy defaults in Dogecoin Core (not chain
+ * parameters), so testnet nodes apply the same ones as mainnet.
  */
 export const DOGECOIN_TESTNET: UtxoNetwork = {
   name: 'Dogecoin testnet',
   p2pkhVersion: 0x71,
   p2shVersion: 0xc4,
+  dustPolicy: DOGECOIN_CORE_DUST_POLICY,
 };
 
 const b58c = base58check(sha256);

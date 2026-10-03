@@ -461,9 +461,12 @@ export async function prepareUtxoSend(
   const balance = utxos.reduce((sum, u) => sum + u.value, 0n);
   // The engine dust-checks the change output inside coin selection; the
   // recipient output is checked here, before building, because a sub-dust
-  // payment would be refused by the network's relay policy.
+  // payment would be refused by the network's relay policy. The threshold
+  // is the chain's own (UtxoNetwork.dustPolicy): Bitcoin Core's 546 / 294
+  // sat, Dogecoin Core's 0.01 DOGE soft limit. buildTransfer applies the
+  // same rule, so this check only gives the earlier, shorter message.
   const toScript = addressToScriptPubKey(to, network);
-  const dust = dustThreshold(toScript);
+  const dust = dustThreshold(toScript, network.dustPolicy);
   if (amount < dust) {
     throw new Error(
       `Amount is below the dust limit for this address type (${dust} sat): ` +
@@ -513,16 +516,22 @@ export async function maxUtxoSend(
   const sweepFee = feeForVsize(estimateVsize(inputKind, utxos.length, [toScript]), feeRate);
 
   let amount = total - sweepFee;
+  let lastError: unknown;
   // Verification loop: candidate must build. Steps down at most a few
   // satoshis around integer fee-rounding boundaries.
   for (let i = 0; i < 8 && amount > 0n; i++) {
     try {
       buildTransfer({ network, fromAddress, utxos, toAddress: to, amount, feeRate });
       return { amount, utxos };
-    } catch {
+    } catch (e) {
+      lastError = e;
       amount -= 1n;
     }
   }
+  // A balance that covers the fee but would leave less than the chain's
+  // dust limit (0.01 DOGE on Dogecoin) fails on the dust rule, not the fee:
+  // pass the engine's dust message on so describeSendError names it.
+  if (lastError instanceof Error && /dust/i.test(lastError.message)) throw lastError;
   throw new Error('Balance is too small to cover the network fee.');
 }
 
