@@ -4062,3 +4062,47 @@ on Opus. The emulator is driven by ONE agent at a time.
       Follow-up: createAaClient's send-time paymaster transport still
       uses httpTransport, so a policy refusal during a send shows the
       HTTP status, not the policy text.
+- [x] Item 5 — hardening leftovers (commit below; engine 627 tests,
+      chains-evm 369; app 30 suites; offline runner ALL GREEN; the
+      paymaster app fix from item 2 and its send-time follow-up are in the
+      same commit because they share aa.ts). (1) Stored http endpoints are
+      ignored on read: every reader (networks.ts getEndpoint /
+      getAllEndpoints with an injectable store, getBlockbookConfig,
+      getIndexerConfig, getNftIndexerConfig with ignoredUrlReason,
+      getAaConfig with bundlerUrlIgnoredReason / paymasterUrlIgnoredReason;
+      the AA node URL is never stored, it comes from networks.ts) runs
+      assertSecureEndpointUrl and treats a failing value as not configured
+      without deleting it; Settings shows "A saved URL is not used:
+      <reason>" per section (AaField ignoredReason prop) and Clear / Reset
+      to default appear for ignored values; the other aa.ts setters write
+      back the raw entry so an ignored URL survives unrelated saves.
+      DECISION TO NOTE: an ignored http RPC override falls back to the
+      public default endpoints (what "not configured" means for an
+      override) rather than leaving the chain without an endpoint. Tests:
+      check-devmode 110 (+8), check-doge +10, check-indexer +7, check-nfts
+      131 (+7), new check-aa-urls.mjs 21 (offline in suites.mjs). (2) The
+      guardian recovery spec (kernel-recovery.ts) gained getNonceKey (the
+      guardian lane) and signUserOpHash now refuses a nonce that differs
+      from the approved one ("…the approvals are void — collect new
+      ones"), a missing context, a wrong EntryPoint / chain / sender, or a
+      hash that is not getUserOpHash(op); routeNode stays as a
+      pass-through that also checks the exact nonce on keyed reads so the
+      early refusal before estimation is kept (recovery.ts unchanged);
+      three new vitest cases, byte-pinned tests unchanged (55/55),
+      check-recovery 231. (3) TestNetworksOnlyCard moved into
+      app/src/components.tsx replacing eight copies across the seven
+      screens (style parity checked by comparing style values, not on
+      screen); WarningBox keeps no accessibility role (the RN docs define
+      "alert" only as "important text" with no platform behaviour to
+      cite). (4) THREAT_MODEL.md: header row-update line; T-23 and F-55
+      ("Mostly fixed", open: nested Pressables on Home chain cards);
+      F-44's true count is six eslint-disable-next-line comments, two
+      without reasons in WcApprovalSheet.tsx (lines 414 and 562,
+      exhaustive-deps) — still open; T-29 / N-08 / section 3.4 updated for
+      the https rule and the read-time filter; allowBackup false noted
+      (bmgr test still W18). Send-time follow-up from item 2 applied by the
+      CTO: createAaClient / the 7702 client build their paymaster
+      transport with paymasterProbeTransport unless a factory is injected,
+      so a policy refusal during a send shows the policy text. Not
+      eyeballed on the emulator: the Settings warning lines, the card
+      swap, the ignored-URL states.

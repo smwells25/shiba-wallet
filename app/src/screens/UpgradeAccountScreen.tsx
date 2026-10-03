@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation';
-import { Button, WarningBox, screenStyle } from '../components';
+import { Button, TestNetworksOnlyCard, WarningBox, screenStyle } from '../components';
 import { useTheme, type Theme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
@@ -42,7 +42,7 @@ import {
   type SetCodeQuote,
 } from '../wallet/delegation';
 import { useAccountDelegation } from '../wallet/useDelegation';
-import { readinessGate, type FeatureReadiness } from '../config/readiness';
+import { readinessGate } from '../config/readiness';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'UpgradeAccount'>;
 
@@ -373,7 +373,7 @@ export function UpgradeAccountScreen({ navigation }: Props) {
         {evmChain.label}
         {evmChain.testnet ? ' · TESTNET' : ''} · chain id {evmChain.chainIdDecimal}
       </Text>
-      {gate ? <ReadinessCard feature={gate.feature} hint={gate.hint} theme={theme} /> : null}
+      {gate ? <TestNetworksOnlyCard feature={gate.feature} hint={gate.hint} bodyStyle={styles.body} hintStyle={styles.hint} /> : null}
       <Row label="Account" value={accountName} sub={address} theme={theme} />
       <Text style={[styles.body, { color: theme.text }]}>{UPGRADE_EXPLANATION}</Text>
       <Row label="Kernel v3.3 delegate" value={WALLET_7702_DELEGATE} mono theme={theme} />
@@ -473,20 +473,6 @@ export function UpgradeAccountScreen({ navigation }: Props) {
   );
 }
 
-/**
- * Mainnet readiness card (config/readiness.ts): why this feature is limited
- * to test networks, and where test mode is turned on.
- */
-function ReadinessCard({ feature, hint, theme }: { feature: FeatureReadiness; hint: string; theme: Theme }) {
-  return (
-    <View style={[styles.readiness, { backgroundColor: theme.card, borderColor: theme.border }]}>
-      <Text style={[styles.readinessTitle, { color: theme.text }]}>{feature.title}: test networks only</Text>
-      <Text style={[styles.body, { color: theme.text }]}>{feature.reason}</Text>
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{hint}</Text>
-    </View>
-  );
-}
-
 function NetworkBadge({ label, testnet, theme }: { label: string; testnet: boolean; theme: Theme }) {
   if (testnet) {
     return (
@@ -554,6 +540,4 @@ const styles = StyleSheet.create({
   rowLabel: { fontSize: 12, fontWeight: '600' },
   rowValue: { fontSize: 15 },
   rowSub: { fontSize: 12, lineHeight: 17 },
-  readiness: { borderWidth: 1, borderRadius: 10, padding: 12, gap: 6 },
-  readinessTitle: { fontSize: 15, fontWeight: '700' },
 });

@@ -31,6 +31,7 @@ import {
   maxAaSend,
   setAaPaymaster,
   verifyAaPaymaster,
+  paymasterProbeTransport,
   createAaClient,
   getAaConfig,
   isAaConfigured,
@@ -608,6 +609,110 @@ await (async () => {
   let accepted = true;
   try { await verifyAaPaymaster(async () => ({ ok: true }), 1n, null); } catch { accepted = false; }
   check('verify accepts a result response', accepted);
+})();
+
+// ---------------------------------------------------------------------------
+// Phase 10, item 2: ZeroDev's paymaster refusal shapes (observed live on
+// Sepolia 2026-10-02 with scripts/testnet/paymaster-probe.mjs). The project
+// RPC answers HTTP 400 with a bare {"error":"<text>"} body, not a JSON-RPC
+// error object, both for a policy refusal and for an unknown method. The
+// engine's httpTransport hid that body, so a reachable ERC-7677 endpoint was
+// reported as "unreachable or not JSON-RPC".
+// ---------------------------------------------------------------------------
+console.log('\ncheck-aa: paymaster probe transport (ZeroDev refusal shapes)');
+await (async () => {
+  const ZERODEV_POLICY_REFUSAL =
+    'userOp did not match any gas sponsoring policies or (no ERC20 gas token data present)';
+  const ZERODEV_UNSUPPORTED = 'Unsupported method: pm_getPaymasterStubData. See available methods at';
+  const fakeFetch = (status, body) => async () => ({
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => {
+      if (typeof body === 'string') throw new SyntaxError('Unexpected token');
+      return body;
+    },
+  });
+  const via = (status, body) => (url) => paymasterProbeTransport(url, fakeFetch(status, body));
+
+  // The transport itself keeps the server's words.
+  const policyMessage = await paymasterProbeTransport('https://pm.example', fakeFetch(400, { error: ZERODEV_POLICY_REFUSAL }))(
+    'pm_getPaymasterStubData',
+    [],
+  ).then(() => 'resolved', (e) => e.message);
+  check(
+    'HTTP 400 bare-string error keeps the policy text verbatim',
+    policyMessage === `RPC error (no code): ${ZERODEV_POLICY_REFUSAL} (pm_getPaymasterStubData)`,
+    policyMessage,
+  );
+  const objectMessage = await paymasterProbeTransport(
+    'https://pm.example',
+    fakeFetch(400, { jsonrpc: '2.0', id: 1, error: { code: -32601, message: 'Method not found' } }),
+  )('pm_getPaymasterStubData', []).then(() => 'resolved', (e) => e.message);
+  check(
+    'HTTP 400 JSON-RPC error object keeps code and message',
+    objectMessage === 'RPC error -32601: Method not found (pm_getPaymasterStubData)',
+    objectMessage,
+  );
+  const okResult = await paymasterProbeTransport(
+    'https://pm.example',
+    fakeFetch(200, { jsonrpc: '2.0', id: 1, result: { paymaster: '0x' + '66'.repeat(20), paymasterData: '0x' } }),
+  )('pm_getPaymasterStubData', []);
+  check('HTTP 200 result is returned', okResult?.paymaster === '0x' + '66'.repeat(20));
+
+  // Save-time verification with those shapes.
+  const store = memoryStore();
+  await setAaPaymaster(AA_CHAIN, 'https://zd.example/api/v3/p/chain/11155111', '', {
+    store,
+    transportFor: via(400, { error: ZERODEV_POLICY_REFUSAL }),
+  });
+  check(
+    'ZeroDev "no matching gas sponsoring policy" refusal is accepted as a structured policy error',
+    (await getAaConfig(AA_CHAIN, store)).paymasterUrl === 'https://zd.example/api/v3/p/chain/11155111',
+  );
+  const before = await getAaConfig(AA_CHAIN, store);
+  await checkRejects(
+    'ZeroDev "Unsupported method" text (HTTP 400, no code) is refused as not a paymaster',
+    () => setAaPaymaster(AA_CHAIN, 'https://zd-bundler-only.example', '', {
+      store,
+      transportFor: via(400, { error: ZERODEV_UNSUPPORTED }),
+    }),
+    'not an ERC-7677 paymaster',
+  );
+  await checkRejects(
+    'HTTP 502 with a non-JSON body is still refused as unreachable',
+    () => setAaPaymaster(AA_CHAIN, 'https://gateway-down.example', '', {
+      store,
+      transportFor: via(502, '<html>Bad gateway</html>'),
+    }),
+    'unreachable',
+  );
+  await checkRejects(
+    'HTTP 200 without a result or error is refused',
+    () => setAaPaymaster(AA_CHAIN, 'https://odd.example', '', {
+      store,
+      transportFor: via(200, { jsonrpc: '2.0', id: 1 }),
+    }),
+    'unreachable',
+  );
+  const after = await getAaConfig(AA_CHAIN, store);
+  check('refused shapes persisted nothing', after.paymasterUrl === before.paymasterUrl);
+
+  // The DEFAULT transport (no transportFor) is the body-preserving one: with
+  // httpTransport this exact answer was refused as "unreachable".
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = fakeFetch(400, { error: ZERODEV_POLICY_REFUSAL });
+  try {
+    const defaultStore = memoryStore();
+    await setAaPaymaster(AA_CHAIN, 'https://zd-default.example', '', { store: defaultStore });
+    check(
+      'setAaPaymaster default transport accepts the ZeroDev policy refusal',
+      (await getAaConfig(AA_CHAIN, defaultStore)).paymasterUrl === 'https://zd-default.example',
+    );
+  } catch (e) {
+    check('setAaPaymaster default transport accepts the ZeroDev policy refusal', false, e.message);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 })();
 
 console.log('\ncheck-aa: sponsored quote, pipeline, and AA Max');

@@ -61,6 +61,28 @@ export interface NftIndexerConfig {
   verifiedAt: string | null;
   /** Decimal block number the save-time chain binding was checked at. */
   verifiedBlock: string | null;
+  /**
+   * Non-null when a URL is stored but fails the https rule on read
+   * (../config/endpoint-url.ts): the reason, for Settings' status line.
+   * The stored URL is then NOT used (`url` reads as null, so the gallery
+   * shows the unconfigured state) and stays stored until the user clears it.
+   */
+  ignoredUrlReason: string | null;
+}
+
+/**
+ * Applies the https rule to a stored URL. Values saved before the rule
+ * existed (dev/emulator installs only) may be plain http://; those are
+ * reported as ignored rather than used or silently deleted.
+ */
+function checkStoredUrl(stored: string | null): { url: string | null; ignoredUrlReason: string | null } {
+  if (stored === null) return { url: null, ignoredUrlReason: null };
+  try {
+    assertSecureEndpointUrl(stored);
+    return { url: stored, ignoredUrlReason: null };
+  } catch (e) {
+    return { url: null, ignoredUrlReason: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 type ConfigMap = Record<string, { url?: unknown; verifiedAt?: unknown; verifiedBlock?: unknown }>;
@@ -87,9 +109,16 @@ export async function getNftIndexerConfig(
 ): Promise<NftIndexerConfig> {
   const map = await loadConfigMap(store);
   const entry = map[chainId];
-  const url = typeof entry?.url === 'string' && entry.url !== '' ? entry.url : null;
+  const { url, ignoredUrlReason } = checkStoredUrl(
+    typeof entry?.url === 'string' && entry.url !== '' ? entry.url : null,
+  );
   const text = (v: unknown) => (url && typeof v === 'string' && v !== '' ? v : null);
-  return { url, verifiedAt: text(entry?.verifiedAt), verifiedBlock: text(entry?.verifiedBlock) };
+  return {
+    url,
+    verifiedAt: text(entry?.verifiedAt),
+    verifiedBlock: text(entry?.verifiedBlock),
+    ignoredUrlReason,
+  };
 }
 
 /**

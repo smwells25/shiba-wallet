@@ -4,7 +4,7 @@ import { ActivityIndicator, Alert, Linking, Platform, ScrollView, StyleSheet, Te
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { KERNEL_WEBAUTHN_VALIDATOR } from '@shiba-wallet/chains-evm';
 import type { RootStackParamList } from '../navigation';
-import { Button, WarningBox, screenStyle } from '../components';
+import { Button, TestNetworksOnlyCard, WarningBox, screenStyle } from '../components';
 import { useTheme, type Theme } from '../theme';
 import { getEndpoint } from '../config/networks';
 import { useWallet } from '../wallet/WalletContext';
@@ -22,7 +22,7 @@ import {
   type AaSendQuote,
 } from '../wallet/aa';
 import { loadPasskeyNative } from '../wallet/passkey-native';
-import { readinessGate, type FeatureReadiness } from '../config/readiness';
+import { readinessGate } from '../config/readiness';
 import {
   PASSKEY_AUDIT_NOTE,
   PASSKEY_EXPLANATION,
@@ -575,7 +575,7 @@ export function PasskeyScreen({ navigation }: Props) {
   const somethingOnChain = status?.kind === 'active' || status?.kind === 'other' || status?.kind === 'partial';
   return (
     <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
-      {readiness ? <ReadinessCard feature={readiness.feature} hint={readiness.hint} theme={theme} /> : null}
+      {readiness ? <TestNetworksOnlyCard feature={readiness.feature} hint={readiness.hint} /> : null}
       <Text style={[styles.title, { color: theme.text }]}>Passkey (device biometrics signer)</Text>
       <Text style={[styles.hint, { color: theme.text }]}>{PASSKEY_EXPLANATION}</Text>
       {gate && !gate.ok ? <WarningBox>{gate.reason}</WarningBox> : null}
@@ -658,20 +658,6 @@ async function loadPasskeyContext(
   return { bundle, resolution: await resolvePasskeyAccount(bundle, owner) };
 }
 
-/**
- * Mainnet readiness card (config/readiness.ts): why this feature is limited
- * to test networks, and where test mode is turned on.
- */
-function ReadinessCard({ feature, hint, theme }: { feature: FeatureReadiness; hint: string; theme: Theme }) {
-  return (
-    <View style={[styles.readiness, { backgroundColor: theme.card, borderColor: theme.border }]}>
-      <Text style={[styles.readinessTitle, { color: theme.text }]}>{feature.title}: test networks only</Text>
-      <Text style={[styles.readinessBody, { color: theme.text }]}>{feature.reason}</Text>
-      <Text style={[styles.readinessHint, { color: theme.textMuted }]}>{hint}</Text>
-    </View>
-  );
-}
-
 function NetworkBadge({ label, testnet, theme }: { label: string; testnet: boolean; theme: Theme }) {
   if (testnet) {
     return (
@@ -734,8 +720,4 @@ const styles = StyleSheet.create({
   rowLabel: { fontSize: 12, fontWeight: '600' },
   rowValue: { fontSize: 15 },
   rowSub: { fontSize: 12, lineHeight: 17 },
-  readiness: { borderWidth: 1, borderRadius: 10, padding: 12, gap: 6 },
-  readinessTitle: { fontSize: 15, fontWeight: '700' },
-  readinessBody: { fontSize: 14, lineHeight: 20 },
-  readinessHint: { fontSize: 13, lineHeight: 19 },
 });

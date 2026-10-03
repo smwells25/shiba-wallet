@@ -3,7 +3,7 @@ import { ActivityIndicator, Alert, Linking, ScrollView, Text, View } from 'react
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { BundlerClient, ENTRYPOINT_V07, httpTransport, toHex, type JsonRpcTransport } from '@shiba-wallet/chains-evm';
 import type { RootStackParamList } from '../navigation';
-import { Button, WarningBox, screenStyle } from '../components';
+import { Button, TestNetworksOnlyCard, WarningBox, screenStyle } from '../components';
 import { RecipientContactNotice } from '../components/Contacts';
 import {
   GuardianSetView,
@@ -15,7 +15,7 @@ import {
   recoveryLayout as styles,
 } from '../components/RecoveryViews';
 import { useTheme } from '../theme';
-import { readinessGate, type FeatureReadiness } from '../config/readiness';
+import { readinessGate } from '../config/readiness';
 import { getEndpoint } from '../config/networks';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
@@ -383,7 +383,7 @@ export function ApproveRecoveryScreen({ navigation }: Props) {
         : review.proposal.status === 'approved' && review.proposal.validAfter <= now);
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
-        {readiness ? <ReadinessCard feature={readiness.feature} hint={readiness.hint} /> : null}
+        {readiness ? <TestNetworksOnlyCard feature={readiness.feature} hint={readiness.hint} style={styles.card} titleStyle={styles.ok} bodyStyle={styles.hint} hintStyle={styles.hint} /> : null}
         <RecoveryNetworkBadge label={evmChain.label} testnet={evmChain.testnet} />
         <Text style={[styles.title, { color: theme.text }]}>Recovery request</Text>
         <WarningBox>{APPROVER_WARNING}</WarningBox>
@@ -447,7 +447,7 @@ export function ApproveRecoveryScreen({ navigation }: Props) {
 
   return (
     <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-      {readiness ? <ReadinessCard feature={readiness.feature} hint={readiness.hint} /> : null}
+      {readiness ? <TestNetworksOnlyCard feature={readiness.feature} hint={readiness.hint} style={styles.card} titleStyle={styles.ok} bodyStyle={styles.hint} hintStyle={styles.hint} /> : null}
       <Text style={[styles.title, { color: theme.text }]}>Approve a recovery (as a guardian)</Text>
       <Text style={[styles.hint, { color: theme.text }]}>
         Someone who named you as a guardian lost access to their account and asks you to make a new key its owner. Paste
@@ -493,17 +493,3 @@ export function ApproveRecoveryScreen({ navigation }: Props) {
   );
 }
 
-/**
- * Mainnet readiness card (config/readiness.ts): why this feature is limited
- * to test networks, and where test mode is turned on.
- */
-function ReadinessCard({ feature, hint }: { feature: FeatureReadiness; hint: string }) {
-  const theme = useTheme();
-  return (
-    <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-      <Text style={[styles.ok, { color: theme.text }]}>{feature.title}: test networks only</Text>
-      <Text style={[styles.hint, { color: theme.text }]}>{feature.reason}</Text>
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{hint}</Text>
-    </View>
-  );
-}

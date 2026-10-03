@@ -18,8 +18,9 @@ import {
   type Call,
   type SmartAccountSignatureContext,
   type SmartAccountSpec,
+  type UserOpSigningContext,
 } from './smart-account.js';
-import { ENTRYPOINT_V07 } from './userop.js';
+import { ENTRYPOINT_V07, getUserOpHash } from './userop.js';
 
 /**
  * Social recovery (guardians) for Kernel v3.3 accounts whose root validator
@@ -824,9 +825,18 @@ export interface KernelGuardianRecoverySpecConfig {
 export interface KernelGuardianRecoverySpec extends SmartAccountSpec {
   nonceKey: bigint;
   /**
-   * Node wrapper for SmartAccountClient: its EntryPoint getNonce(account, 0)
-   * read is answered from the guardian nonce key, and REFUSES unless the
-   * result is exactly the nonce the guardians approved.
+   * The guardian validator's nonce lane (SmartAccountSpec.getNonceKey), so
+   * SmartAccountClient reads EntryPoint.getNonce(account, nonceKey)
+   * directly. The exact approved nonce is enforced in signUserOpHash.
+   */
+  getNonceKey(): bigint;
+  /**
+   * Compatibility wrapper, no longer needed with SmartAccountClient (which
+   * uses getNonceKey). It rewrites an EntryPoint getNonce(account, 0) read
+   * into a read for the guardian nonce key, and for both that rewritten read
+   * and a direct keyed read it REFUSES unless the result is exactly the
+   * nonce the guardians approved — an early refusal before any gas
+   * estimation, on top of the check at signing time.
    */
   routeNode(node: JsonRpcTransport): JsonRpcTransport;
 }
@@ -834,10 +844,19 @@ export interface KernelGuardianRecoverySpec extends SmartAccountSpec {
 /**
  * SmartAccountSpec for the guardian-signed recovery operation, so
  * SmartAccountClient.sendCalls works unchanged:
- *   client = new SmartAccountClient({ ..., spec, node: spec.routeNode(node) })
+ *   client = new SmartAccountClient({ ..., spec, node })
  *   client.sendCalls(submitterGuardian, [recoveryCall(request)], fees)
  * The op's callData is doRecovery(...) itself (not execute): Kernel's
  * fallback routes it. Only the request's exact call is accepted.
+ *
+ * The guardians approved ONE exact nonce (it is inside the signed
+ * callDataAndNonceHash), so signing refuses any operation whose nonce is
+ * not that nonce: if the account's guardian nonce has moved (another
+ * recovery executed, or the lane was used), the approvals are void and
+ * submitting would only waste the submitter's effort. signUserOpHash also
+ * requires the operation context and checks that the hash it is asked to
+ * sign is the hash of that operation, for this account, EntryPoint and the
+ * request's chain.
  */
 export function kernelGuardianRecoverySpec(config: KernelGuardianRecoverySpecConfig): KernelGuardianRecoverySpec {
   const request = parseGuardianRecoveryRequest(config.request);
@@ -871,8 +890,32 @@ export function kernelGuardianRecoverySpec(config: KernelGuardianRecoverySpecCon
       }
       return toBytes(request.callData);
     },
-    signUserOpHash(signer: DerivedAccount, userOpHash: Uint8Array): Uint8Array {
+    getNonceKey(): bigint {
+      return nonceKey;
+    },
+    signUserOpHash(signer: DerivedAccount, userOpHash: Uint8Array, context?: UserOpSigningContext): Uint8Array {
       requireSubmitter(signer);
+      if (!context) {
+        throw new Error('A guardian recovery is signed only with its operation, to check the approved nonce');
+      }
+      const op = context.userOp;
+      if (!sameAddress(context.entryPoint, entryPoint)) {
+        throw new Error(`This recovery is for EntryPoint ${entryPoint}; refusing ${context.entryPoint}`);
+      }
+      if (context.chainId !== BigInt(request.chainId)) {
+        throw new Error(`This recovery is for chain ${request.chainId}; refusing chain ${context.chainId}`);
+      }
+      if (!sameAddress(op.sender, request.account)) {
+        throw new Error(`This recovery is for account ${request.account}; refusing sender ${op.sender}`);
+      }
+      if (op.nonce !== nonce) {
+        throw new Error(
+          `The operation's nonce is ${op.nonce}, not the approved ${nonce}; the approvals are void — collect new ones`,
+        );
+      }
+      if (toHex(getUserOpHash(op, context.entryPoint, context.chainId)) !== toHex(userOpHash)) {
+        throw new Error('The hash to sign is not the hash of the given operation');
+      }
       return encodeGuardianSignature(approvals, signGuardianUserOpHash(signer, userOpHash));
     },
     stubSignature(): Uint8Array {
@@ -894,7 +937,8 @@ export function kernelGuardianRecoverySpec(config: KernelGuardianRecoverySpecCon
       return async (method, params) => {
         if (method === 'eth_call') {
           const tx = params[0] as { to?: string; data?: string } | undefined;
-          if (tx?.to && sameAddress(tx.to, entryPoint) && typeof tx.data === 'string' && tx.data.toLowerCase() === keyZeroRead) {
+          const data = typeof tx?.data === 'string' ? tx.data.toLowerCase() : null;
+          if (tx?.to && sameAddress(tx.to, entryPoint) && (data === keyZeroRead || data === routed)) {
             const result = (await node(method, [{ ...tx, data: routed }, ...params.slice(1)])) as string;
             if (BigInt(result) !== nonce) {
               throw new Error(

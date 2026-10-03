@@ -88,6 +88,16 @@ import { passkeyGateNow } from '../wallet/passkey-native';
 import { PASSKEY_AUDIT_NOTE, PASSKEY_EXPLANATION, PASSKEY_SELF_CALL_RISK } from '../wallet/passkeys';
 
 /**
+ * Status line for a stored endpoint URL that fails the https rule on read
+ * (saved before the rule existed): the app does not use it, and the user
+ * removes it explicitly. `reason` is the stored value's refusal message
+ * from config/endpoint-url.ts.
+ */
+function ignoredUrlStatus(reason: string, removeHint: string): string {
+  return `A saved URL is not used: ${reason} ${removeHint}`;
+}
+
+/**
  * One chain's endpoint row: shows the effective URL (default or override)
  * and expands into an inline editor with save / reset-to-default. Inline
  * TextInput rather than Alert.prompt because the latter is iOS-only.
@@ -166,7 +176,7 @@ function EndpointRow({
               style={styles.endpointButton}
             />
           </View>
-          {(isOverride || network.defaultUrls.length > 0) && (
+          {(isOverride || endpoint.ignoredReason !== undefined || network.defaultUrls.length > 0) && (
             <Button title="Reset to default" variant="secondary" onPress={() => void reset()} />
           )}
         </View>
@@ -177,6 +187,14 @@ function EndpointRow({
           </Text>
           {!url && network.note ? (
             <Text style={[styles.endpointNote, { color: theme.textMuted }]}>{network.note}</Text>
+          ) : null}
+          {endpoint.ignoredReason ? (
+            <Text style={[styles.endpointNote, { color: theme.warningText }]}>
+              {ignoredUrlStatus(
+                endpoint.ignoredReason,
+                'The default endpoint is used instead; Edit, then Reset to default, removes it.',
+              )}
+            </Text>
           ) : null}
           {fallbackNote ? (
             <Text style={[styles.endpointNote, { color: theme.textMuted }]}>{fallbackNote}</Text>
@@ -326,12 +344,16 @@ function BlockbookRow({
               {config.verifiedAt ? config.verifiedAt.slice(0, 10) : 'unknown date'}).{' '}
               {config.apiKey ? 'API key set.' : 'No API key.'}
             </Text>
+          ) : config?.ignoredUrlReason ? (
+            <Text style={[styles.endpointNote, { color: theme.warningText }]}>
+              {ignoredUrlStatus(config.ignoredUrlReason, 'Clear removes it.')}
+            </Text>
           ) : network.note ? (
             <Text style={[styles.endpointNote, { color: theme.textMuted }]}>{network.note}</Text>
           ) : null}
           <View style={styles.endpointButtons}>
             <Button title="Edit" variant="secondary" onPress={beginEdit} style={styles.endpointButton} />
-            {config?.url ? (
+            {config?.url || config?.ignoredUrlReason ? (
               <Button
                 title="Clear"
                 variant="secondary"
@@ -390,6 +412,7 @@ function AaField({
   placeholder,
   value,
   statusLine,
+  ignoredReason = null,
   prefill = null,
   prefillNote = null,
   onSave,
@@ -402,6 +425,12 @@ function AaField({
   value: string | null;
   /** Verification status for the stored value (shown when configured). */
   statusLine: string | null;
+  /**
+   * Set when a URL is stored but fails the https rule on read, so `value`
+   * is null: the refusal reason, shown as a warning status line with the
+   * Clear button (the only way the stored value is removed).
+   */
+  ignoredReason?: string | null;
   /**
    * Pinned default the editor starts from when no value is stored yet
    * (phase 4 item 6: the verified Sepolia factory). Saving still runs the
@@ -486,6 +515,11 @@ function AaField({
           {value && statusLine ? (
             <Text style={[styles.aaVerified, { color: theme.success }]}>{statusLine}</Text>
           ) : null}
+          {!value && ignoredReason ? (
+            <Text style={[styles.aaVerified, { color: theme.warningText }]}>
+              {ignoredUrlStatus(ignoredReason, 'Clear removes it.')}
+            </Text>
+          ) : null}
           <View style={styles.endpointButtons}>
             <Button
               title="Edit"
@@ -499,7 +533,7 @@ function AaField({
               }}
               style={styles.endpointButton}
             />
-            {value ? (
+            {value || ignoredReason ? (
               <Button
                 title="Clear"
                 variant="secondary"
@@ -583,6 +617,7 @@ function AaChainRow({ network }: { network: NetworkDefault }) {
         label="Bundler URL (ERC-4337 RPC)"
         placeholder="https://…"
         value={config?.bundlerUrl ?? null}
+        ignoredReason={config?.bundlerUrlIgnoredReason ?? null}
         locked={!anyTypeAllowed}
         statusLine={
           config?.bundlerUrl
@@ -725,6 +760,7 @@ function AaChainRow({ network }: { network: NetworkDefault }) {
         label="Paymaster URL (ERC-7677, optional)"
         placeholder="https://…"
         value={config?.paymasterUrl ?? null}
+        ignoredReason={config?.paymasterUrlIgnoredReason ?? null}
         locked={paymasterGate !== null}
         statusLine={
           config?.paymasterUrl
@@ -809,6 +845,7 @@ function IndexerChainRow({
         label="History indexer URL (Transfers API)"
         placeholder="https://…"
         value={config?.url ?? null}
+        ignoredReason={config?.ignoredUrlReason ?? null}
         statusLine={
           config?.url
             ? `Verified ✓ — chain id matches and alchemy_getAssetTransfers ` +
@@ -868,6 +905,7 @@ function NftIndexerChainRow({
         label="NFT indexer URL (NFT API base)"
         placeholder="https://…/nft/v3/…"
         value={config?.url ?? null}
+        ignoredReason={config?.ignoredUrlReason ?? null}
         statusLine={
           config?.url
             ? `Verified ✓ — getNFTsForOwner answered and its block ${

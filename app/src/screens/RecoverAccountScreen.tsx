@@ -3,7 +3,7 @@ import { ActivityIndicator, Alert, ScrollView, Text, TextInput, View } from 'rea
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { httpTransport, type JsonRpcTransport, type KernelRecoveryMetadata } from '@shiba-wallet/chains-evm';
 import type { RootStackParamList } from '../navigation';
-import { Button, WarningBox, screenStyle } from '../components';
+import { Button, TestNetworksOnlyCard, WarningBox, screenStyle } from '../components';
 import {
   GuardianSetView,
   InfoRow,
@@ -16,7 +16,7 @@ import {
 } from '../components/RecoveryViews';
 import { RecordFileExportButton, pickRecordFile } from '../components/RecordFileActions';
 import { useTheme } from '../theme';
-import { readinessGate, type FeatureReadiness } from '../config/readiness';
+import { readinessGate } from '../config/readiness';
 import { getEndpoint } from '../config/networks';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
@@ -98,7 +98,7 @@ export function RecoverAccountScreen({ navigation }: Props) {
   // record and forgetting a recovery stay available; recovery.ts refuses
   // starting a recovery, sending approvals and attaching too.
   const readiness = readinessGate('guardians', chain);
-  const readinessCard = readiness ? <ReadinessCard feature={readiness.feature} hint={readiness.hint} /> : null;
+  const readinessCard = readiness ? <TestNetworksOnlyCard feature={readiness.feature} hint={readiness.hint} style={styles.card} titleStyle={styles.ok} bodyStyle={styles.hint} hintStyle={styles.hint} /> : null;
 
   const [node, setNode] = useState<JsonRpcTransport | null>(null);
   const [setupError, setSetupError] = useState<string | null>(null);
@@ -800,17 +800,3 @@ function StageLine({ stage, secondsLeft }: { stage: RecoveryStage; secondsLeft: 
   return <Text style={[styles.ok, { color }]}>{text}</Text>;
 }
 
-/**
- * Mainnet readiness card (config/readiness.ts): why this feature is limited
- * to test networks, and where test mode is turned on.
- */
-function ReadinessCard({ feature, hint }: { feature: FeatureReadiness; hint: string }) {
-  const theme = useTheme();
-  return (
-    <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-      <Text style={[styles.ok, { color: theme.text }]}>{feature.title}: test networks only</Text>
-      <Text style={[styles.hint, { color: theme.text }]}>{feature.reason}</Text>
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{hint}</Text>
-    </View>
-  );
-}

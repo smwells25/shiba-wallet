@@ -14,7 +14,7 @@ import {
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { parseSessionKeyGrant, toHex, type KernelPermissionInstall, type SessionKeyGrant } from '@shiba-wallet/chains-evm';
 import type { RootStackParamList } from '../navigation';
-import { Button, WarningBox, screenStyle } from '../components';
+import { Button, TestNetworksOnlyCard, WarningBox, screenStyle } from '../components';
 import { ContactPicker, RecipientContactNotice } from '../components/Contacts';
 import { GrantReview } from '../components/SessionGrantViews';
 import { useTheme, type Theme } from '../theme';
@@ -35,7 +35,7 @@ import {
 } from '../wallet/aa';
 import { findExactContact, listContacts, matchRecipient, type Contact } from '../wallet/contacts';
 import { sessionKeyVault } from '../wallet/storage';
-import { readinessGate, type FeatureReadiness } from '../config/readiness';
+import { readinessGate } from '../config/readiness';
 import {
   SESSIONS_AUDIT_NOTE,
   SESSIONS_INSTALL_MODE_NOTE,
@@ -696,7 +696,7 @@ export function SessionsScreen({ navigation }: Props) {
   // ------------------------------------------------------------ list
   return (
     <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
-      {readiness ? <ReadinessCard feature={readiness.feature} hint={readiness.hint} theme={theme} /> : null}
+      {readiness ? <TestNetworksOnlyCard feature={readiness.feature} hint={readiness.hint} /> : null}
       {header}
       <WarningBox>{SESSIONS_WIPE_WARNING}</WarningBox>
       {!owner ? <Text style={[styles.error, { color: theme.danger }]}>No Ethereum address for this account.</Text> : null}
@@ -821,20 +821,6 @@ async function loadSessionContext(
   return { bundle, resolution: await resolveSessionAccount(bundle, owner), contactsNetworkId: endpoint.network.chainId };
 }
 
-/**
- * Mainnet readiness card (config/readiness.ts): why this feature is limited
- * to test networks, and where test mode is turned on.
- */
-function ReadinessCard({ feature, hint, theme }: { feature: FeatureReadiness; hint: string; theme: Theme }) {
-  return (
-    <View style={[styles.readiness, { backgroundColor: theme.card, borderColor: theme.border }]}>
-      <Text style={[styles.readinessTitle, { color: theme.text }]}>{feature.title}: test networks only</Text>
-      <Text style={[styles.readinessBody, { color: theme.text }]}>{feature.reason}</Text>
-      <Text style={[styles.readinessHint, { color: theme.textMuted }]}>{hint}</Text>
-    </View>
-  );
-}
-
 function NetworkBadge({ label, testnet, theme }: { label: string; testnet: boolean; theme: Theme }) {
   if (testnet) {
     return (
@@ -900,8 +886,4 @@ const styles = StyleSheet.create({
   rowLabel: { fontSize: 12, fontWeight: '600' },
   rowValue: { fontSize: 15 },
   rowSub: { fontSize: 12, lineHeight: 17 },
-  readiness: { borderWidth: 1, borderRadius: 10, padding: 12, gap: 6 },
-  readinessTitle: { fontSize: 15, fontWeight: '700' },
-  readinessBody: { fontSize: 14, lineHeight: 20 },
-  readinessHint: { fontSize: 13, lineHeight: 19 },
 });

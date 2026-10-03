@@ -336,6 +336,88 @@ describe('recovery request and approval assembly', () => {
     nonceAnswer = SDK.nonce + 1n;
     await expect(client.sendCalls(G2, [recoveryCall(request)], fees)).rejects.toThrow(/approvals are void/);
   });
+
+  it('exposes the guardian lane through getNonceKey', () => {
+    const spec = kernelGuardianRecoverySpec({ request, approvals: [], submitter: G2.address });
+    expect(spec.getNonceKey()).toBe(SDK.nonceKey);
+    expect(spec.getNonceKey()).toBe(BigInt(request.nonce) >> 64n);
+    expect(spec.getNonceKey()).toBe(guardianNonceKey(KERNEL_RECOVERY_MODULES, 0));
+  });
+
+  it('works through the getNonceKey hook alone and refuses a moved nonce at signing', async () => {
+    const digest = toBytes(request.approvalDigest);
+    const { approvals } = assembleGuardianApprovals(request, SDK_SET, [signGuardianApproval(G3, digest), signGuardianApproval(G1, digest)], G2.address);
+    const spec = kernelGuardianRecoverySpec({ request, approvals, submitter: G2.address });
+    let nonceAnswer = SDK.nonce;
+    let sends = 0;
+    // A plain node, NOT wrapped in routeNode: the client must ask for the
+    // guardian key itself (getNonceKey).
+    const node: JsonRpcTransport = async (method, params) => {
+      if (method === 'eth_call') {
+        const tx = params[0] as { to: string; data: string };
+        expect(tx.data.toLowerCase()).toBe(
+          toHex(encodeFunctionCall('getNonce(address,uint192)', [{ kind: 'address', value: ACCOUNT }, { kind: 'uint256', value: SDK.nonceKey }])),
+        );
+        return '0x' + nonceAnswer.toString(16).padStart(64, '0');
+      }
+      if (method === 'eth_getCode') return '0x60';
+      throw new Error(`unexpected node call ${method}`);
+    };
+    const bundler: JsonRpcTransport = async (method) => {
+      if (method === 'eth_estimateUserOperationGas') {
+        return { callGasLimit: '0x186a0', verificationGasLimit: '0x493e0', preVerificationGas: '0xea60' };
+      }
+      if (method === 'eth_sendUserOperation') {
+        sends += 1;
+        return SDK.userOpHash;
+      }
+      throw new Error(`unexpected bundler call ${method}`);
+    };
+    const client = new SmartAccountClient({ chainId: CHAIN_ID, entryPoint: ENTRYPOINT_V07, bundler, node, spec });
+    const fees = { maxFeePerGas: 3000000000n, maxPriorityFeePerGas: 1000000000n };
+    const { userOp } = await client.sendCalls(G2, [recoveryCall(request)], fees);
+    expect(userOp.nonce).toBe(SDK.nonce);
+    expect(toHex(userOp.signature)).toBe(SDK.signature);
+    expect(sends).toBe(1);
+    // The guardian lane advanced (same key, next sequence): signing refuses.
+    nonceAnswer = SDK.nonce + 1n;
+    await expect(client.sendCalls(G2, [recoveryCall(request)], fees)).rejects.toThrow(/nonce is .*not the approved .*approvals are void/);
+    expect(sends).toBe(1);
+  });
+
+  it('signUserOpHash refuses a wrong nonce, a bare hash and a mismatched context', () => {
+    const spec = kernelGuardianRecoverySpec({ request, approvals: [], submitter: G2.address });
+    const op: UserOperation = {
+      sender: ACCOUNT,
+      nonce: SDK.nonce,
+      callData: toBytes(request.callData),
+      callGasLimit: 100_000n,
+      verificationGasLimit: 300_000n,
+      preVerificationGas: 60_000n,
+      maxFeePerGas: 3000000000n,
+      maxPriorityFeePerGas: 1000000000n,
+      signature: new Uint8Array(0),
+    };
+    const ctx = (o: UserOperation) => ({ userOp: o, entryPoint: ENTRYPOINT_V07, chainId: CHAIN_ID });
+    const hashOf = (o: UserOperation) => getUserOpHash(o, ENTRYPOINT_V07, CHAIN_ID);
+    // The approved nonce signs.
+    expect(spec.signUserOpHash(G2, hashOf(op), ctx(op))).toBeInstanceOf(Uint8Array);
+    // Any other nonce is refused, on the guardian lane or off it.
+    const later = { ...op, nonce: SDK.nonce + 1n };
+    expect(() => spec.signUserOpHash(G2, hashOf(later), ctx(later))).toThrow(/approvals are void/);
+    const keyZero = { ...op, nonce: SDK.nonce & ((1n << 64n) - 1n) };
+    expect(() => spec.signUserOpHash(G2, hashOf(keyZero), ctx(keyZero))).toThrow(/approvals are void/);
+    // No context: the nonce cannot be checked, so nothing is signed.
+    expect(() => spec.signUserOpHash(G2, hashOf(op))).toThrow(/signed only with its operation/);
+    // A hash that is not the context operation's hash.
+    expect(() => spec.signUserOpHash(G2, hashOf(later), ctx(op))).toThrow(/not the hash of the given operation/);
+    // Another sender, chain or EntryPoint.
+    expect(() => spec.signUserOpHash(G2, hashOf(op), { ...ctx(op), userOp: { ...op, sender: G1.address } })).toThrow(/refusing sender/);
+    expect(() => spec.signUserOpHash(G2, hashOf(op), { ...ctx(op), chainId: 1n })).toThrow(/refusing chain/);
+    expect(() => spec.signUserOpHash(G2, hashOf(op), { ...ctx(op), entryPoint: G1.address })).toThrow(/refusing/);
+    // The submitter rule still comes first.
+    expect(() => spec.signUserOpHash(G1, hashOf(op), ctx(op))).toThrow(/submitted by guardian/);
+  });
 });
 
 describe('guardian set validation', () => {

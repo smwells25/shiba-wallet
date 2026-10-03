@@ -44,9 +44,31 @@ export interface BlockbookConfig {
   apiKey: string | null;
   /** ISO timestamp of the successful save-time verification. */
   verifiedAt: string | null;
+  /**
+   * Non-null when a URL is stored but fails the https rule on read
+   * (../config/endpoint-url.ts): the reason, for Settings' status line.
+   * The stored URL is then NOT used (`url`, `apiKey` and `verifiedAt` read
+   * as null) and stays stored until the user clears it in Settings.
+   */
+  ignoredUrlReason: string | null;
 }
 
 type ConfigMap = Record<string, { url?: unknown; apiKey?: unknown; verifiedAt?: unknown }>;
+
+/**
+ * Applies the https rule to a stored URL. Values saved before the rule
+ * existed (dev/emulator installs only) may be plain http://; those are
+ * reported as ignored rather than used or silently deleted.
+ */
+function checkStoredUrl(stored: string | null): { url: string | null; ignoredUrlReason: string | null } {
+  if (stored === null) return { url: null, ignoredUrlReason: null };
+  try {
+    assertSecureEndpointUrl(stored);
+    return { url: stored, ignoredUrlReason: null };
+  } catch (e) {
+    return { url: null, ignoredUrlReason: e instanceof Error ? e.message : String(e) };
+  }
+}
 
 async function loadConfigMap(store: KeyValueStore): Promise<ConfigMap> {
   try {
@@ -75,7 +97,9 @@ export async function getBlockbookConfig(
 ): Promise<BlockbookConfig> {
   const map = await loadConfigMap(store);
   const entry = map[chainId];
-  const url = typeof entry?.url === 'string' && entry.url !== '' ? entry.url : null;
+  const { url, ignoredUrlReason } = checkStoredUrl(
+    typeof entry?.url === 'string' && entry.url !== '' ? entry.url : null,
+  );
   return {
     url,
     apiKey:
@@ -84,6 +108,7 @@ export async function getBlockbookConfig(
       url && typeof entry?.verifiedAt === 'string' && entry.verifiedAt !== ''
         ? entry.verifiedAt
         : null,
+    ignoredUrlReason,
   };
 }
 

@@ -57,6 +57,7 @@ import {
   sendNft,
 } from '../src/wallet/send-nft.ts';
 import { describeAssetChanges, runBalancePreview } from '../src/wallet/simulation.ts';
+import { INSECURE_ENDPOINT_MESSAGE } from '../src/config/endpoint-url.ts';
 
 let passed = 0;
 let failed = 0;
@@ -360,6 +361,34 @@ console.log('config store (verify-before-save):');
   // The chain-binding helper on its own: no hash and no timestamp.
   await rejects('neither hash nor timestamp -> cannot confirm', () => confirmIndexerChain({ blockNumber: 1n, blockHash: null, blockTimestamp: null }, async (m) => (m === 'eth_getBlockByNumber' ? { hash: '0x', timestamp: '0x1' } : '0x5'), 'X'), /cannot be confirmed/);
   globalThis.__store = store;
+}
+
+// ---------------------------------------------------------------------------
+// 1b. Load-time https rule (phase 10 item 5): an NFT indexer URL stored
+// before the setter refused plain http:// is not used on read — the
+// gallery reads as unconfigured and requests nothing — and the stored
+// value stays until Clear.
+// ---------------------------------------------------------------------------
+
+console.log('config store (load-time https rule):');
+{
+  const LEGACY = 'http://nft.example/nft/v3/KEY';
+  const legacyJson = JSON.stringify({ [MAINNET]: { url: LEGACY, verifiedAt: '2026-10-01T00:00:00.000Z', verifiedBlock: '1' } });
+  const store = memoryStore({ 'shiba-wallet.nft-indexer.v1': legacyJson });
+  const read = await getNftIndexerConfig(MAINNET, store);
+  check('stored plain http:// NFT indexer reads as not configured', read.url === null && read.verifiedAt === null && read.verifiedBlock === null, JSON.stringify(read));
+  check('the refusal reason is the https sentence', read.ignoredUrlReason === INSECURE_ENDPOINT_MESSAGE, String(read.ignoredUrlReason));
+  check('the stored value is left in storage', store.data['shiba-wallet.nft-indexer.v1'] === legacyJson);
+  clearNftCache();
+  const before = requests.length;
+  const loaded = await loadNfts({ chainId: MAINNET, accountIndex: 0, owner: ME, store });
+  check('the gallery shows the unconfigured state', loaded.status === 'unconfigured');
+  check('nothing was requested from the ignored URL', requests.slice(before).every((r) => !String(r.url).startsWith('http://nft.example')) && requests.length === before);
+  await clearNftIndexerUrl(MAINNET, store);
+  const cleared = await getNftIndexerConfig(MAINNET, store);
+  check('Clear removes the ignored value and its reason', cleared.url === null && cleared.ignoredUrlReason === null);
+  const loopStore = memoryStore({ 'shiba-wallet.nft-indexer.v1': JSON.stringify({ [MAINNET]: { url: LOCAL_NFT_BASE } }) });
+  check('stored loopback http:// NFT indexer is still used', (await getNftIndexerConfig(MAINNET, loopStore)).url === LOCAL_NFT_BASE);
 }
 
 // ---------------------------------------------------------------------------

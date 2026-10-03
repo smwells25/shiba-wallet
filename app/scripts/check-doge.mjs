@@ -50,6 +50,8 @@ import {
 import { fetchNativeBalance, formatUnits } from '../src/wallet/balances.ts';
 import { historySourceFor } from '../src/wallet/history.ts';
 import { DEFAULT_NETWORKS } from '../src/config/defaults.ts';
+import { getEndpoint } from '../src/config/networks.ts';
+import { INSECURE_ENDPOINT_MESSAGE } from '../src/config/endpoint-url.ts';
 
 let passed = 0;
 let failed = 0;
@@ -183,6 +185,65 @@ console.log('\n== Blockbook config store ==');
     local.url === 'http://10.0.2.2:9130' && localUrl === `http://10.0.2.2:9130/api/v2/utxo/${account.address}`,
   );
   await clearBlockbookConfig(DOGECOIN_CHAIN_ID, store);
+}
+
+// ---------------------------------------------------------------------------
+// Load-time https rule (phase 10 item 5): a URL stored before the setter
+// refused plain http:// is NOT used on read — the chain reads as not
+// configured, the reason is reported for Settings, the stored value stays
+// in storage until Clear, and nothing is fetched from it.
+// ---------------------------------------------------------------------------
+
+console.log('\n== Blockbook load-time https rule ==');
+{
+  const realFetch = globalThis.fetch;
+  let fetches = 0;
+  globalThis.fetch = async () => {
+    fetches += 1;
+    throw new Error('no network in this check');
+  };
+  try {
+    const store = memoryStore();
+    const legacy = JSON.stringify({
+      [DOGECOIN_CHAIN_ID]: { url: 'http://blockbook.example', apiKey: FAKE_KEY, verifiedAt: '2026-09-28T00:00:00.000Z' },
+    });
+    store.map.set('shiba-wallet.blockbook.v1', legacy);
+    const read = await getBlockbookConfig(DOGECOIN_CHAIN_ID, store);
+    check(
+      'stored plain http:// URL reads as not configured (url, key and date null)',
+      read.url === null && read.apiKey === null && read.verifiedAt === null,
+      JSON.stringify(read),
+    );
+    check('the refusal reason is the https sentence', read.ignoredUrlReason === INSECURE_ENDPOINT_MESSAGE, String(read.ignoredUrlReason));
+    check('the stored value is left in storage (not deleted silently)', store.map.get('shiba-wallet.blockbook.v1') === legacy);
+
+    const endpoint = await getEndpoint(DOGECOIN_CHAIN_ID, { store });
+    check(
+      'networks.ts: the Dogecoin endpoint has no URL and no api-key header',
+      endpoint?.url === null && endpoint?.isOverride === false && endpoint?.headers === undefined,
+      JSON.stringify(endpoint),
+    );
+    check('networks.ts: the reason reaches the endpoint for Settings', endpoint?.ignoredReason === INSECURE_ENDPOINT_MESSAGE);
+
+    await clearBlockbookConfig(DOGECOIN_CHAIN_ID, store);
+    const cleared = await getBlockbookConfig(DOGECOIN_CHAIN_ID, store);
+    check('Clear removes the ignored value and its reason', cleared.url === null && cleared.ignoredUrlReason === null);
+
+    store.map.set('shiba-wallet.blockbook.v1', JSON.stringify({ [DOGECOIN_CHAIN_ID]: { url: 'http://10.0.2.2:9130', verifiedAt: 'x' } }));
+    const loop = await getBlockbookConfig(DOGECOIN_CHAIN_ID, store);
+    check('stored loopback http://10.0.2.2 is still used', loop.url === 'http://10.0.2.2:9130' && loop.ignoredUrlReason === null);
+
+    store.map.set('shiba-wallet.blockbook.v1', JSON.stringify({ [DOGECOIN_CHAIN_ID]: { url: `${FAKE_URL}/`, apiKey: FAKE_KEY } }));
+    const https = await getBlockbookConfig(DOGECOIN_CHAIN_ID, store);
+    check('stored https URL is used exactly as stored', https.url === `${FAKE_URL}/` && https.apiKey === FAKE_KEY && https.ignoredUrlReason === null);
+
+    store.map.set('shiba-wallet.blockbook.v1', JSON.stringify({ [DOGECOIN_CHAIN_ID]: { url: 'https://' } }));
+    const broken = await getBlockbookConfig(DOGECOIN_CHAIN_ID, store);
+    check('stored malformed https URL is ignored with its own message', broken.url === null && /incomplete/.test(broken.ignoredUrlReason ?? ''));
+    check('no request was made by any read', fetches === 0, `fetches: ${fetches}`);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 }
 
 // ---------------------------------------------------------------------------

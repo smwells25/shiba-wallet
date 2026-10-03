@@ -78,6 +78,27 @@ async function loadOverrides(store: KeyValueStore = AsyncStorage): Promise<Overr
   }
 }
 
+/**
+ * Splits a stored override into the URL the app may use and, when the
+ * stored value fails today's https rule (./endpoint-url.ts), the reason it
+ * is ignored. Overrides saved before the rule existed (dev/emulator installs
+ * only) can hold a plain http:// URL; such a value is treated as "no
+ * override" — the chain falls back to its verified defaults — and is left
+ * in storage untouched, so Settings can show why it is not used and the
+ * user removes it explicitly with "Reset to default".
+ */
+function checkStoredOverride(stored: string | undefined): { url?: string; ignoredReason?: string } {
+  if (stored === undefined) return {};
+  try {
+    // The stored value is used exactly as saved; the check only decides
+    // whether it may be used at all.
+    assertSecureEndpointUrl(stored);
+    return { url: stored };
+  } catch (e) {
+    return { ignoredReason: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 async function saveOverrides(map: OverrideMap, store: KeyValueStore = AsyncStorage): Promise<void> {
   await store.setItem(OVERRIDES_KEY, JSON.stringify(map));
 }
@@ -108,6 +129,13 @@ export interface NetworkEndpoint {
    * override is set and the network has default candidates.
    */
   defaultChoice?: DefaultChoice;
+  /**
+   * Set when a stored endpoint (an RPC override, or the Blockbook URL for
+   * Blockbook chains) exists but fails the https rule on read: the reason,
+   * for Settings' status line. The stored value is NOT used — `url` is the
+   * default (or null) — and it stays stored until the user clears it.
+   */
+  ignoredReason?: string;
 }
 
 /** Resolves one active network (slot) to its effective endpoint. */
@@ -115,13 +143,15 @@ async function resolveSlot(
   slot: string,
   network: NetworkDefault,
   overrides: OverrideMap,
+  store: KeyValueStore,
 ): Promise<NetworkEndpoint> {
   if (network.kind === 'blockbook') {
     // Blockbook chains (Dogecoin) resolve from their own verified
     // config store (URL + optional API key, ../wallet/blockbook.ts),
     // not the plain URL-override map: a stored URL there passed the
     // save-time UTXO-query verification by construction.
-    const config = await getBlockbookConfig(network.chainId);
+    // getBlockbookConfig already applies the https rule on read.
+    const config = await getBlockbookConfig(network.chainId, store);
     const headers = blockbookHeaders(config.apiKey);
     return {
       forChainId: slot,
@@ -129,18 +159,22 @@ async function resolveSlot(
       url: config.url,
       isOverride: config.url !== null,
       ...(headers ? { headers } : {}),
+      ...(config.ignoredUrlReason ? { ignoredReason: config.ignoredUrlReason } : {}),
     };
   }
   // Keyed by the ACTIVE chain id: mainnet and Sepolia overrides live
-  // under different keys and never mix. An override is used as is;
-  // otherwise the first healthy default candidate is chosen.
-  const resolved = await resolveNetworkUrl(network, overrides[network.chainId], defaultResolver);
+  // under different keys and never mix. An override that passes the https
+  // rule is used as is; otherwise (none stored, or an old http:// value
+  // that is now ignored) the first healthy default candidate is chosen.
+  const override = checkStoredOverride(overrides[network.chainId]);
+  const resolved = await resolveNetworkUrl(network, override.url, defaultResolver);
   return {
     forChainId: slot,
     network,
     url: resolved.url,
     isOverride: resolved.isOverride,
     ...(resolved.defaultChoice ? { defaultChoice: resolved.defaultChoice } : {}),
+    ...(override.ignoredReason ? { ignoredReason: override.ignoredReason } : {}),
   };
 }
 
@@ -149,21 +183,31 @@ async function resolveSlot(
  * (the mainnet CAIP-2 ids accounts and routes carry) or the active
  * network's own chain id (e.g. 'eip155:11155111' while Sepolia mode is on).
  * Only the requested chain is resolved (and, if needed, probed).
+ * `options.store` (endpoint overrides, the Blockbook config and the
+ * preferences all live in it; AsyncStorage in the app) exists for the
+ * offline check scripts.
  */
-export async function getEndpoint(chainId: string): Promise<NetworkEndpoint | undefined> {
-  const [overrides, prefs] = await Promise.all([loadOverrides(), loadPrefs()]);
+export async function getEndpoint(
+  chainId: string,
+  options: { store?: KeyValueStore } = {},
+): Promise<NetworkEndpoint | undefined> {
+  const store = options.store ?? AsyncStorage;
+  const [overrides, prefs] = await Promise.all([loadOverrides(store), loadPrefs(store)]);
   const match = resolveActiveNetworks(prefs.sepolia).find(
     (e) => e.slot === chainId || e.network.chainId === chainId,
   );
-  return match ? resolveSlot(match.slot, match.network, overrides) : undefined;
+  return match ? resolveSlot(match.slot, match.network, overrides, store) : undefined;
 }
 
 /** Resolves every chain's effective endpoint (Settings list, Home refresh). */
-export async function getAllEndpoints(): Promise<NetworkEndpoint[]> {
-  const [overrides, prefs] = await Promise.all([loadOverrides(), loadPrefs()]);
+export async function getAllEndpoints(
+  options: { store?: KeyValueStore } = {},
+): Promise<NetworkEndpoint[]> {
+  const store = options.store ?? AsyncStorage;
+  const [overrides, prefs] = await Promise.all([loadOverrides(store), loadPrefs(store)]);
   return Promise.all(
     resolveActiveNetworks(prefs.sepolia).map(({ slot, network }) =>
-      resolveSlot(slot, network, overrides),
+      resolveSlot(slot, network, overrides, store),
     ),
   );
 }
@@ -265,11 +309,19 @@ export async function setEndpointOverride(
   await saveOverrides(overrides, store);
 }
 
-/** Removes the override so the chain returns to its verified default. */
-export async function resetEndpoint(chainId: string): Promise<void> {
-  const overrides = await loadOverrides();
+/**
+ * Removes the override so the chain returns to its verified default. Also
+ * the way to remove a stored override that is ignored because it fails the
+ * https rule. `options.store` exists for the offline check scripts.
+ */
+export async function resetEndpoint(
+  chainId: string,
+  options: { store?: KeyValueStore } = {},
+): Promise<void> {
+  const store = options.store ?? AsyncStorage;
+  const overrides = await loadOverrides(store);
   if (chainId in overrides) {
     delete overrides[chainId];
-    await saveOverrides(overrides);
+    await saveOverrides(overrides, store);
   }
 }

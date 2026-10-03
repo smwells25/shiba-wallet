@@ -1,6 +1,7 @@
 import React from 'react';
-import { Pressable, StyleSheet, Text, View, ViewStyle } from 'react-native';
+import { Pressable, StyleSheet, Text, TextStyle, View, ViewStyle } from 'react-native';
 import { Theme, useTheme } from './theme';
+import type { FeatureReadiness } from './config/readiness';
 
 /** Primary / secondary / destructive button built from plain components. */
 export function Button({
@@ -76,6 +77,50 @@ export function WarningBox({ children }: { children: React.ReactNode }) {
   );
 }
 
+/**
+ * The "test networks only" card shown by the smart-account feature screens
+ * (guardians, recovery, owner change, session keys, passkeys, the EIP-7702
+ * upgrade) when the mainnet readiness table (config/readiness.ts) does not
+ * allow the feature on the active network: the feature's title, the plain
+ * reason, and the hint pointing at Settings → Developer.
+ *
+ * The screens had grown their own copies with slightly different
+ * typography. The optional style props let each screen keep its existing
+ * look exactly; without them the card uses the session-key and passkey
+ * screens' look.
+ */
+export function TestNetworksOnlyCard({
+  feature,
+  hint,
+  style,
+  titleStyle,
+  bodyStyle,
+  hintStyle,
+}: {
+  feature: FeatureReadiness;
+  hint: string;
+  style?: ViewStyle;
+  titleStyle?: TextStyle;
+  bodyStyle?: TextStyle;
+  hintStyle?: TextStyle;
+}) {
+  const theme = useTheme();
+  return (
+    <View
+      style={[
+        style ?? styles.readinessCard,
+        { backgroundColor: theme.card, borderColor: theme.border },
+      ]}
+    >
+      <Text style={[titleStyle ?? styles.readinessTitle, { color: theme.text }]}>
+        {feature.title}: test networks only
+      </Text>
+      <Text style={[bodyStyle ?? styles.readinessBody, { color: theme.text }]}>{feature.reason}</Text>
+      <Text style={[hintStyle ?? styles.readinessHint, { color: theme.textMuted }]}>{hint}</Text>
+    </View>
+  );
+}
+
 /** Numbered two-column grid of mnemonic words. */
 export function WordGrid({ words }: { words: string[] }) {
   const theme = useTheme();
@@ -118,6 +163,24 @@ const styles = StyleSheet.create({
   warningText: {
     fontSize: 14,
     lineHeight: 20,
+  },
+  readinessCard: {
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 12,
+    gap: 6,
+  },
+  readinessTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  readinessBody: {
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  readinessHint: {
+    fontSize: 13,
+    lineHeight: 19,
   },
   grid: {
     flexDirection: 'row',

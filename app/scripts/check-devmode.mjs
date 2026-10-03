@@ -51,7 +51,12 @@ import {
   LOOPBACK_HOSTS,
   assertSecureEndpointUrl,
 } from '../src/config/endpoint-url.ts';
-import { setEndpointOverride } from '../src/config/networks.ts';
+import {
+  getAllEndpoints,
+  getEndpoint,
+  resetEndpoint,
+  setEndpointOverride,
+} from '../src/config/networks.ts';
 
 let passed = 0;
 let failed = 0;
@@ -603,6 +608,59 @@ console.log('\nendpoint URL rule (https only, loopback http for development):');
       stored['bip122:000000000019d6689c085ae165831e93'] === 'http://10.0.2.2:3002/api',
     JSON.stringify(stored),
   );
+}
+
+// ---------------------------------------------------------------------------
+// Load-time https rule for RPC overrides (phase 10 item 5): an override
+// stored before setEndpointOverride refused plain http:// is NOT used — the
+// chain resolves to its verified defaults as if no override existed — the
+// reason is reported on the endpoint for Settings, the stored value stays
+// until "Reset to default", and nothing is ever requested from it.
+// ---------------------------------------------------------------------------
+console.log('\n== RPC override load-time https rule ==');
+{
+  const realFetch = globalThis.fetch;
+  const seen = [];
+  // Answers the default-candidate probe (eth_chainId 0x1, Esplora genesis,
+  // Solana genesis) for any URL, recording every request.
+  globalThis.fetch = async (url, init) => {
+    seen.push(String(url));
+    const body = init?.body ? JSON.parse(init.body) : null;
+    const result = body?.method === 'eth_chainId' ? '0x1' : body?.method === 'getGenesisHash' ? '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d' : null;
+    if (body) return { ok: true, status: 200, json: async () => ({ jsonrpc: '2.0', id: body.id, result }), text: async () => '' };
+    return { ok: true, status: 200, json: async () => ({}), text: async () => '000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f' };
+  };
+  try {
+    const store = memoryStore();
+    const legacy = JSON.stringify({ 'eip155:1': 'http://rpc.example' });
+    await store.setItem('shiba-wallet.rpc-endpoints.v1', legacy);
+    const mainnetDefaults = DEFAULT_NETWORKS.find((n) => n.chainId === 'eip155:1').defaultUrls;
+    const ep = await getEndpoint('eip155:1', { store });
+    check(
+      'stored plain http:// override is not used: the chain resolves to a verified default',
+      ep?.isOverride === false && mainnetDefaults.includes(ep?.url),
+      JSON.stringify({ url: ep?.url, isOverride: ep?.isOverride }),
+    );
+    check('the refusal reason reaches the endpoint for Settings', ep?.ignoredReason === INSECURE_ENDPOINT_MESSAGE, String(ep?.ignoredReason));
+    check('nothing was requested from the ignored URL', !seen.some((u) => u.startsWith('http://rpc.example')), seen.join(', '));
+    check('the stored value is left in storage', (await store.getItem('shiba-wallet.rpc-endpoints.v1')) === legacy);
+    const all = await getAllEndpoints({ store });
+    check(
+      'getAllEndpoints: only the affected chain carries the reason',
+      all.filter((e) => e.ignoredReason !== undefined).map((e) => e.network.chainId).join(',') === 'eip155:1',
+    );
+    await resetEndpoint('eip155:1', { store });
+    const reset = await getEndpoint('eip155:1', { store });
+    check('Reset to default removes the ignored value and its reason', reset?.ignoredReason === undefined && JSON.parse((await store.getItem('shiba-wallet.rpc-endpoints.v1')) ?? '{}')['eip155:1'] === undefined);
+
+    await store.setItem('shiba-wallet.rpc-endpoints.v1', JSON.stringify({ 'eip155:1': 'http://10.0.2.2:8545', 'bip122:000000000019d6689c085ae165831e93': 'https://esplora.example/api/' }));
+    const loop = await getEndpoint('eip155:1', { store });
+    check('stored loopback http://10.0.2.2 override is still used', loop?.isOverride === true && loop?.url === 'http://10.0.2.2:8545' && loop?.ignoredReason === undefined);
+    const btc = await getEndpoint('bip122:000000000019d6689c085ae165831e93', { store });
+    check('stored https override is used exactly as stored', btc?.isOverride === true && btc?.url === 'https://esplora.example/api/' && btc?.ignoredReason === undefined);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -4,7 +4,7 @@ import { ActivityIndicator, Alert, Linking, ScrollView, Switch, Text, View } fro
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { KernelRecoveryMetadata } from '@shiba-wallet/chains-evm';
 import type { RootStackParamList } from '../navigation';
-import { Button, WarningBox, screenStyle } from '../components';
+import { Button, TestNetworksOnlyCard, WarningBox, screenStyle } from '../components';
 import {
   GuardianSetView,
   InfoRow,
@@ -15,7 +15,7 @@ import {
 } from '../components/RecoveryViews';
 import { RecordFileExportButton } from '../components/RecordFileActions';
 import { useTheme } from '../theme';
-import { readinessGate, type FeatureReadiness } from '../config/readiness';
+import { readinessGate } from '../config/readiness';
 import { getEndpoint } from '../config/networks';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
@@ -488,7 +488,7 @@ export function OwnerRotationScreen({ navigation }: Props) {
   // ------------------------------------------------------------ overview
   return (
     <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-      {readiness ? <ReadinessCard feature={readiness.feature} hint={readiness.hint} /> : null}
+      {readiness ? <TestNetworksOnlyCard feature={readiness.feature} hint={readiness.hint} style={styles.card} titleStyle={styles.ok} bodyStyle={styles.hint} hintStyle={styles.hint} /> : null}
       <Text style={[styles.title, { color: theme.text }]}>Change the owner key</Text>
       {header}
       {OWNER_ROTATION_EXPLANATION.map((line) => (
@@ -620,17 +620,3 @@ function outcomeText(o: OwnerRotationOutcome, newName: string): string {
   }
 }
 
-/**
- * Mainnet readiness card (config/readiness.ts): why this feature is limited
- * to test networks, and where test mode is turned on.
- */
-function ReadinessCard({ feature, hint }: { feature: FeatureReadiness; hint: string }) {
-  const theme = useTheme();
-  return (
-    <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-      <Text style={[styles.ok, { color: theme.text }]}>{feature.title}: test networks only</Text>
-      <Text style={[styles.hint, { color: theme.text }]}>{feature.reason}</Text>
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{hint}</Text>
-    </View>
-  );
-}

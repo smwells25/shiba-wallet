@@ -206,6 +206,15 @@ export interface AaChainConfig {
   /** ISO timestamp of the successful pm_getPaymasterStubData probe. */
   paymasterVerifiedAt: string | null;
   /**
+   * Non-null when a bundler URL is stored but fails the https rule on read
+   * (../config/endpoint-url.ts): the reason, for Settings' status line. The
+   * stored URL is then NOT used (`bundlerUrl` reads as null, so the chain
+   * counts as not configured) and stays stored until the user clears it.
+   */
+  bundlerUrlIgnoredReason: string | null;
+  /** The same for the paymaster URL (`paymasterUrl` then reads as null). */
+  paymasterUrlIgnoredReason: string | null;
+  /**
    * Owner EOAs (EIP-55, as derived) whose smart-account sends on this chain
    * use 'kernel-7702' — written only by the "Upgrade this account" flow
    * (setAccountEip7702). Independent of the factory fields above, which
@@ -253,6 +262,8 @@ const EMPTY_CONFIG: AaChainConfig = {
   paymasterUrl: null,
   paymasterContext: null,
   paymasterVerifiedAt: null,
+  bundlerUrlIgnoredReason: null,
+  paymasterUrlIgnoredReason: null,
   eip7702Owners: [],
   recoveredAccounts: [],
   chain: null,
@@ -301,11 +312,30 @@ async function saveConfigMap(map: ConfigMap, store: KeyValueStore): Promise<void
   await store.setItem(AA_CONFIG_KEY, JSON.stringify(map));
 }
 
+/**
+ * Applies the https rule to a stored endpoint URL. Values saved before the
+ * rule existed (dev/emulator installs only) may be plain http://; those are
+ * reported as ignored rather than used or silently deleted. The setters
+ * below write back the RAW stored entry (`...map[chainId]`), never this
+ * normalized view, so an ignored URL stays stored until a Clear.
+ */
+function checkStoredUrl(stored: string | null): { url: string | null; ignoredReason: string | null } {
+  if (stored === null) return { url: null, ignoredReason: null };
+  try {
+    assertSecureEndpointUrl(stored);
+    return { url: stored, ignoredReason: null };
+  } catch (e) {
+    return { url: null, ignoredReason: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 function normalizeEntry(entry: Partial<AaChainConfig> | undefined, chain: string): AaChainConfig {
   const str = (v: unknown): string | null => (typeof v === 'string' && v !== '' ? v : null);
-  const bundlerUrl = str(entry?.bundlerUrl);
+  const bundler = checkStoredUrl(str(entry?.bundlerUrl));
+  const bundlerUrl = bundler.url;
   const factory = str(entry?.factory);
-  const paymasterUrl = str(entry?.paymasterUrl);
+  const paymaster = checkStoredUrl(str(entry?.paymasterUrl));
+  const paymasterUrl = paymaster.url;
   const accountType: AaFactoryAccountType =
     factory !== null && entry?.accountType === 'kernel-v3.3' ? 'kernel-v3.3' : 'simple';
   const owners = Array.isArray(entry?.eip7702Owners)
@@ -327,6 +357,8 @@ function normalizeEntry(entry: Partial<AaChainConfig> | undefined, chain: string
     paymasterUrl,
     paymasterContext: paymasterUrl ? str(entry?.paymasterContext) : null,
     paymasterVerifiedAt: paymasterUrl ? str(entry?.paymasterVerifiedAt) : null,
+    bundlerUrlIgnoredReason: bundler.ignoredReason,
+    paymasterUrlIgnoredReason: paymaster.ignoredReason,
     eip7702Owners: owners,
     recoveredAccounts: normalizeRecoveredLinks(entry?.recoveredAccounts),
     chain,
@@ -944,6 +976,11 @@ export async function clearAllRecoveredAccounts(store: KeyValueStore = AsyncStor
  * policy error, which still proves the endpoint speaks the 7677
  * namespace. REJECTED: transport failures, non-JSON, or -32601
  * (method not found: not a paymaster endpoint).
+ *
+ * Method-not-found is recognised by code or by text, because ZeroDev's
+ * project RPC answers an unknown method with HTTP 400 and the bare body
+ * {"error":"Unsupported method: <name>. See available methods at"} (no
+ * JSON-RPC code; observed live 2026-10-02).
  */
 export async function verifyAaPaymaster(
   paymaster: JsonRpcTransport,
@@ -970,7 +1007,7 @@ export async function verifyAaPaymaster(
     ]);
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
-    if (/-32601|method not found/i.test(message)) {
+    if (/-32601|method not found|unsupported method/i.test(message)) {
       throw new Error(
         'The endpoint answered but does not serve pm_getPaymasterStubData — not an ERC-7677 paymaster.',
       );
@@ -982,6 +1019,61 @@ export async function verifyAaPaymaster(
     }
     throw new Error(`Paymaster endpoint unreachable or not JSON-RPC: ${message}`);
   }
+}
+
+/**
+ * JSON-RPC over fetch for the paymaster save-time probe. The engine's
+ * httpTransport throws "RPC HTTP error <status>" on any non-2xx answer and
+ * drops the body, but paymasters put their policy refusals in exactly such
+ * answers. ZeroDev's project RPC (observed live 2026-10-02 on Sepolia,
+ * scripts/testnet/paymaster-probe.mjs) answers pm_getPaymasterStubData for
+ * a project without a gas policy with HTTP 400 and the bare body
+ * {"error":"userOp did not match any gas sponsoring policies or (no ERC20
+ * gas token data present)"} — a string, not a JSON-RPC error object. With
+ * httpTransport that refusal surfaced as "Paymaster endpoint unreachable or
+ * not JSON-RPC", which was wrong: the endpoint is reachable and serves the
+ * method. This transport keeps the server's words:
+ *   - {"error": {code, message}} (any HTTP status) -> "RPC error <code>: <message> (<method>)"
+ *   - {"error": "<text>"}        (any HTTP status) -> "RPC error (no code): <text> (<method>)"
+ *   - any other non-2xx answer                     -> "RPC HTTP error <status> for <method>"
+ * so verifyAaPaymaster can tell a policy refusal (accepted: the endpoint
+ * speaks ERC-7677) from method-not-found or an unreachable endpoint.
+ * `fetchFn` is resolved at call time so offline checks can replace
+ * globalThis.fetch.
+ */
+export function paymasterProbeTransport(url: string, fetchFn?: typeof fetch): JsonRpcTransport {
+  let id = 0;
+  return async (method, params) => {
+    const doFetch = fetchFn ?? globalThis.fetch;
+    const response = await doFetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method, params }),
+    });
+    let body: unknown = null;
+    try {
+      body = await response.json();
+    } catch {
+      body = null;
+    }
+    const error = body && typeof body === 'object' ? (body as { error?: unknown }).error : undefined;
+    if (typeof error === 'string') {
+      throw new Error(`RPC error (no code): ${error} (${method})`);
+    }
+    if (error && typeof error === 'object') {
+      const { code, message } = error as { code?: unknown; message?: unknown };
+      throw new Error(
+        `RPC error ${typeof code === 'number' ? code : '(no code)'}: ${
+          typeof message === 'string' ? message : 'unknown error'
+        } (${method})`,
+      );
+    }
+    if (!response.ok) throw new Error(`RPC HTTP error ${response.status} for ${method}`);
+    if (!body || typeof body !== 'object' || !('result' in body)) {
+      throw new Error(`RPC response without a result for ${method}`);
+    }
+    return (body as { result: unknown }).result;
+  };
 }
 
 /**
@@ -998,7 +1090,9 @@ export async function setAaPaymaster(
   // Mainnet readiness: refused before any request, persisting nothing.
   assertFeatureAllowed('paymaster', chainId);
   const store = options.store ?? AsyncStorage;
-  const transportFor = options.transportFor ?? httpTransport;
+  // Body-preserving transport: see paymasterProbeTransport for why the
+  // engine's httpTransport cannot be used for this probe.
+  const transportFor = options.transportFor ?? ((u: string) => paymasterProbeTransport(u));
   const trimmed = assertSecureEndpointUrl(url);
   const contextTrimmed = contextJson.trim();
   let context: unknown = null;
@@ -1225,7 +1319,12 @@ export function createAaClient(options: {
       paymasterContext = null;
     }
   }
-  const paymasterTransport = options.paymaster ? transportFor(options.paymaster.url) : undefined;
+  // The paymaster transport keeps the server's own words on non-2xx answers
+  // (a ZeroDev policy refusal is an HTTP 400 with a bare {"error": text}
+  // body), so a refusal during a send shows the policy text rather than
+  // "RPC HTTP error 400". An injected factory (tests) is used as given.
+  const paymasterFactory: TransportFactory = transportFor === httpTransport ? paymasterProbeTransport : transportFor;
+  const paymasterTransport = options.paymaster ? paymasterFactory(options.paymaster.url) : undefined;
   const client = new SmartAccountClient({
     chainId,
     entryPoint: ENTRYPOINT_V07,
@@ -1297,7 +1396,12 @@ function createKernel7702Bundle(options: {
       paymasterContext = null;
     }
   }
-  const paymasterTransport = options.paymaster ? transportFor(options.paymaster.url) : undefined;
+  // The paymaster transport keeps the server's own words on non-2xx answers
+  // (a ZeroDev policy refusal is an HTTP 400 with a bare {"error": text}
+  // body), so a refusal during a send shows the policy text rather than
+  // "RPC HTTP error 400". An injected factory (tests) is used as given.
+  const paymasterFactory: TransportFactory = transportFor === httpTransport ? paymasterProbeTransport : transportFor;
+  const paymasterTransport = options.paymaster ? paymasterFactory(options.paymaster.url) : undefined;
   const client = new SmartAccountClient({
     chainId,
     entryPoint: ENTRYPOINT_V07,

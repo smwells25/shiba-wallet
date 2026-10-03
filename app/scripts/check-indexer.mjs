@@ -19,6 +19,7 @@ import { readFileSync } from 'node:fs';
 import { historySourceFor, directionLabel, formatTimestamp } from '../src/wallet/history.ts';
 import { clearIndexerUrl, getIndexerConfig, setIndexerUrl } from '../src/wallet/indexer.ts';
 import { formatUnits } from '../src/wallet/balances.ts';
+import { INSECURE_ENDPOINT_MESSAGE } from '../src/config/endpoint-url.ts';
 
 const EVM_CHAIN_ID = 'eip155:1';
 // Account 0 of "abandon ... about" — public knowledge, real history.
@@ -167,6 +168,35 @@ console.log('== Offline: indexer config store ==');
   check('no indexer -> honest unavailable state', withoutUrl.status === 'unavailable');
   const withUrl = historySourceFor('evm-jsonrpc', null, 'https://indexer.example/v2/KEY');
   check('indexer configured -> provider available', withUrl.status === 'available');
+}
+
+// ---------------------------------------------------------------------------
+// Load-time https rule (phase 10 item 5): an indexer URL stored before the
+// setter refused plain http:// is not used on read; the reason is reported
+// for Settings and the stored value stays until Clear.
+// ---------------------------------------------------------------------------
+console.log('\n== Indexer load-time https rule ==');
+{
+  const store = memoryStore();
+  const legacy = JSON.stringify({ [EVM_CHAIN_ID]: { url: 'http://indexer.example/v2/KEY', verifiedAt: '2026-09-27T00:00:00.000Z' } });
+  store.map.set('shiba-wallet.evm-indexer.v1', legacy);
+  const read = await getIndexerConfig(EVM_CHAIN_ID, store);
+  check('stored plain http:// indexer reads as not configured', read.url === null && read.verifiedAt === null, JSON.stringify(read));
+  check('the refusal reason is the https sentence', read.ignoredUrlReason === INSECURE_ENDPOINT_MESSAGE, String(read.ignoredUrlReason));
+  check('the stored value is left in storage', store.map.get('shiba-wallet.evm-indexer.v1') === legacy);
+  check(
+    'history falls back to the honest unavailable state',
+    historySourceFor('evm-jsonrpc', 'https://node.example', read.url).status === 'unavailable',
+  );
+  await clearIndexerUrl(EVM_CHAIN_ID, store);
+  const cleared = await getIndexerConfig(EVM_CHAIN_ID, store);
+  check('Clear removes the ignored value and its reason', cleared.url === null && cleared.ignoredUrlReason === null);
+  store.map.set('shiba-wallet.evm-indexer.v1', JSON.stringify({ [EVM_CHAIN_ID]: { url: 'http://127.0.0.1:8545' } }));
+  const loop = await getIndexerConfig(EVM_CHAIN_ID, store);
+  check('stored loopback http://127.0.0.1 is still used', loop.url === 'http://127.0.0.1:8545' && loop.ignoredUrlReason === null);
+  store.map.set('shiba-wallet.evm-indexer.v1', JSON.stringify({ [EVM_CHAIN_ID]: { url: 'http://localhost@indexer.example' } }));
+  const trick = await getIndexerConfig(EVM_CHAIN_ID, store);
+  check('stored http://localhost@host (host is after @) is ignored', trick.url === null && trick.ignoredUrlReason === INSECURE_ENDPOINT_MESSAGE);
 }
 
 // ---------------------------------------------------------------------------

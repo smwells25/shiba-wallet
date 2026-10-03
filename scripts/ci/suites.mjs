@@ -25,6 +25,7 @@ export const APP_SCRIPTS = {
   'check-7702.mjs': { kind: 'offline', summary: 'counts' },
   'check-aa.mjs': { kind: 'offline', summary: 'counts' },
   'check-aa-kernel.mjs': { kind: 'offline', summary: 'counts' },
+  'check-aa-urls.mjs': { kind: 'offline', summary: 'counts' },
   'check-accounts.mjs': { kind: 'offline', summary: 'counts' },
   'check-approvals.mjs': { kind: 'offline', summary: 'counts' },
   'check-contacts.mjs': { kind: 'offline', summary: 'counts' },
