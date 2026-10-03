@@ -4002,3 +4002,63 @@ Waves: 1 + 2 + 4 first (disjoint, no inputs), then 3 and 5. Subagents
 on Opus. The emulator is driven by ONE agent at a time.
 
 ## Phase 10 progress
+- [x] Item 4 — leadership deliverable refresh (commit 2915130).
+      docs/FEATURE_UNIVERSE.md section 15 "Implementation status
+      (2026-10-03)": four statuses (Proven live / Built, verified offline
+      / Designed / Not started) with the evidence entry for each of the
+      99 features (saying in-app vs app code from a script vs engine),
+      summary by tier — Proven live 31 (T1 25, T2 6), Built 14 (9/5),
+      Designed 2 (1/1), Not started 52 (5/32/15) — and what separates
+      built from proven live (inputs, a real-phone build, in-app runs of
+      engine-proven flows). Conventions: emulator-only features count as
+      proven live when exercised on the emulator; dates follow this file
+      (US Eastern) except block-timestamp dates marked UTC. Phase 10 items
+      1 and 2 were not counted. docs/DEMO.md: presenter's walkthrough
+      (three up-front warnings, preparation, nine steps in order, rough
+      edges, what the demo cannot show) quoting screen copy from the
+      code. WARNING recorded there and here: the emulator wallet's phrase
+      is in biometric-protected storage and is NOT written down anywhere
+      — never wipe the AVD "shiba" or add/remove its fingerprint, or
+      Account 1 (owner of Kernel account 0xD31c…D8FA and the Uniswap
+      session) is lost; the onboarding step of the demo runs on a second
+      disposable emulator. Shareable page regenerated: the Chairperson's
+      artifact https://claude.ai/artifact/JEfyMuPcMJ8YW5x3ZKitsw is now
+      version 2 ("Status update 3 Oct 2026"): every feature card carries
+      a status chip and a dated status line with the evidence, a new
+      "Implementation status" section with tiles, the tier table and the
+      status definitions, a Status filter group, and header stats
+      (31 proven live, 14 built). Built by a scratchpad script
+      (build-fu.py) that parses section 15 and injects it into the saved
+      page, so it can be regenerated from the markdown again.
+- [x] Item 2 — paymaster probe (scripts/testnet/paymaster-probe.mjs; app
+      fix pending commit with the hardening slice because both touched
+      aa.ts): the ZeroDev Sepolia RPC serves ERC-7677
+      pm_getPaymasterStubData / pm_getPaymasterData (and ZeroDev's own
+      zd_sponsorUserOperation; pm_sponsorUserOperation is unsupported),
+      but every sponsorship call answers HTTP 400 with the bare JSON
+      body {"error": "userOp did not match any gas sponsoring policies or
+      (no ERC20 gas token data present)"} because the project has no gas
+      policy (docs: setup-project and sponsor-gas/evm say a Gas Policy
+      must be set in the dashboard — "Sponsor all transactions" or a
+      rate-limited policy; UltraRelay's documented network list does not
+      include Ethereum Sepolia, yet ?provider=ULTRA_RELAY answers with gas
+      limits and NO paymaster fields, which is not a valid 7677 answer;
+      GELATO fails TLS on ZeroDev's side; ALCHEMY/PIMLICO give the same
+      policy refusal). No sponsored op was sent; the live guard refused
+      correctly; account 0x1D72…4106 unchanged (0.00055 ETH + 0.00033
+      deposit). INPUT NEEDED: a gas policy for the project's Sepolia
+      network on dashboard.zerodev.app, then `PAYMASTER_LIVE=1 node
+      scripts/testnet/paymaster-probe.mjs` (checks the account's balance
+      and deposit do not move, the UserOperationEvent's paymaster and the
+      paymaster's deposit). Alternative: Alchemy Gas Manager (ERC-7677
+      with context {"policyId"}; Sepolia supported) — also needs a policy
+      created on its dashboard. APP BUG FOUND AND FIXED: setAaPaymaster
+      refused the ZeroDev URL as "unreachable" because the engine's
+      httpTransport drops the body on non-2xx; aa.ts gained
+      paymasterProbeTransport (keeps {"error": text} bodies as "RPC error
+      (no code): <text>", error objects as "RPC error <code>: <message>")
+      as the default for the save-time check, and verifyAaPaymaster treats
+      "unsupported method" text as method-not-found; check-aa 99 (+9).
+      Follow-up: createAaClient's send-time paymaster transport still
+      uses httpTransport, so a policy refusal during a send shows the
+      HTTP status, not the policy text.
