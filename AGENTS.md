@@ -4654,3 +4654,40 @@ emulator, 6 after. Subagents on Opus.
       dump of the open editor printed the full URL to the agent's local
       tool output once before it added a redacting wrapper — it did not
       enter the transcript or any file; no rotation needed.
+- [x] Item 2 bug fixes (commit below; check-aa 131, check-aa-kernel 146,
+      check-7702 120; offline runner ALL GREEN in the CTO's worktree).
+      aa.ts prepareAaCalls: node reads → token check → a new funding
+      pre-check (self-paid: amount >= balance refused; sponsored: amount >
+      balance; strictly weaker than the post-estimate worst-case check so
+      it never refuses what that accepts; the bundler fee-floor lookup is
+      now sequential after it, one extra round trip) → bundler estimate;
+      an AA21 estimate failure (EntryPoint _validateAccountPrepayment) is
+      re-thrown as AaFundingError with the bundler's words appended;
+      describeAaError gains sender/bundlerUrl context, the funding title
+      "Your smart account needs funds first." wins over the 7702 and
+      Kernel wordings and names the address ("Fund the smart account
+      address 0x… (not the owner address)… A smart account can receive
+      funds before it is deployed; the first send deploys it."); quote
+      and Max failures are retitled "The quote could not be prepared."
+      (retitleQuoteFailure — also on the EOA quote paths, since nothing
+      was sent); isAlchemyBundlerUrl parses only the masked host (g.alchemy.com
+      or a subdomain) and kernelDeploymentNote returns the Alchemy note or
+      "Deployment goes through the configured bundler." (used on the Send
+      confirm and, by the CTO, in the Settings AA note); aaSendApprovalPrompt
+      → "Approve sending 0.0001 test ETH from your smart account" (or
+      "…from your upgraded account" / "…from your recovered smart
+      account") — the agent notes the prompt already named the amount
+      before, so the run's "Send ETH" was probably the header title;
+      showsSmartAccountAddressOnSend / showsSmartAccountOnReceive
+      (readiness-gated, factory Kernel owner only, not 7702, not
+      recovered), loadSmartAccountAddress (node only: eth_chainId, the
+      spec's getAddress, eth_getCode; cached per chain + index + owner +
+      factory/type; forgotten after sendAa accepts an op so "Not deployed
+      yet — the first send deploys it." refreshes). SendScreen: a
+      "Smart account (Kernel v3.3) address" row under the toggle with the
+      full address, the deployment note and "Copy smart-account address";
+      ReceiveScreen: a second box on the EVM slot with its own QR (200 px),
+      the address, the note and a copy button. Known: the pre-check ignores
+      the EntryPoint deposit (as the post-check always did); other screens
+      call describeAaError without sender/bundlerUrl and keep the generic
+      wording. Not re-run on the emulator yet.
