@@ -3967,3 +3967,38 @@ once a development build exists.
       readiness row for dogecoin-send now cites only the shared
       regular-account conditions W1/W2). The dev wallet keeps about 10.69
       DOGE at that address for future demonstrations.
+
+## Phase 10 plan (approved 2026-10-03): show the AA features working in the app
+
+The engine has proven session keys, guardians, passkeys and EIP-7702
+live, but several flows have only run through scripts, not the app's
+own screens. For a prototype whose purpose is to demonstrate AA, that
+gap matters more than remaining polish.
+
+1. Session keys and guardians, live in-app on the emulator: grant,
+   use and revoke a session from the Sessions screen; set up guardians
+   with the dev seed's guardian keys (indices 5 and 6), run a recovery
+   to another of the wallet's accounts and a veto through the app's
+   screens, rotate back with Change owner.
+2. Gas sponsorship, live: probe whether the ZeroDev project serves an
+   ERC-7677 paymaster for Sepolia; if so, a sponsored send in the app;
+   if not, it becomes an input (a sponsorship policy).
+3. A second EVM chain profile (Base Sepolia) with AA included: verify
+   the Kernel addresses there, bundler via the existing project, the
+   readiness switchboard treating it as a test network.
+4. Leadership deliverable refresh: a status matrix over the 99 features
+   in FEATURE_UNIVERSE.md (proven live / built / designed / not
+   started), the shareable artifact page regenerated, and a
+   plain-English docs/DEMO.md walkthrough for presenting each AA
+   feature on the emulator in order.
+5. Hardening leftovers from phase 9: load-time filtering of old http
+   endpoints, the guardian recovery spec's nonce hook, the shared
+   test-networks card, the threat-model rows touched by the last
+   commits.
+6. Device build track alongside, whenever the Expo account and
+   identifiers arrive: FaceID, StrongBox, passkeys, TalkBack.
+
+Waves: 1 + 2 + 4 first (disjoint, no inputs), then 3 and 5. Subagents
+on Opus. The emulator is driven by ONE agent at a time.
+
+## Phase 10 progress
