@@ -394,7 +394,20 @@ export function ApproveRecoveryScreen({ navigation }: Props) {
         {match && match.kind !== 'none' ? <RecipientContactNotice match={match} address={review.request.newOwner} /> : null}
         <InfoRow label="Proposal id" value={review.request.callDataAndNonceHash} monoValue />
         <InfoRow label="Chain id · guardian nonce" value={`${review.request.chainId} · ${review.request.nonce}`} />
-        <GuardianSetView set={review.set} />
+        <GuardianSetView
+          set={review.set}
+          labelFor={(address) => {
+            // This wallet's own accounts by name ("you" for the signing one),
+            // other guardians by their position in the on-chain set.
+            if (guardianAddress && address.toLowerCase() === guardianAddress.toLowerCase()) {
+              return `You (${activeAccount?.name ?? 'this account'})`;
+            }
+            const mine = accountList.find((a) => a.evmAddress?.toLowerCase() === address.toLowerCase());
+            if (mine) return `${mine.name} (this wallet)`;
+            const position = review.set.guardians.findIndex((g) => g.address.toLowerCase() === address.toLowerCase());
+            return `Guardian ${position + 1}`;
+          }}
+        />
         <Text style={[styles.ok, { color: theme.text }]}>
           {proposalStatusText(review.proposal, review.set.threshold, now)}
         </Text>

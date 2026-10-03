@@ -61,6 +61,7 @@ import {
   ownerRotationCalls,
   predictKernelAddress,
   prepareGuardianInstall,
+  recordOwnerChange,
   selector,
   toBytes,
   serializeRecoveryMetadata,
@@ -83,6 +84,8 @@ import {
 import {
   DEFAULT_GUARDIAN_DELAY_SECONDS,
   DELAY_PRESETS,
+  GUARDIANS_AUDIT_NOTE,
+  GUARDIANS_TRUST_LINES,
   GUARDIAN_7702_REFUSAL,
   GUARDIAN_NOT_OWNER_REFUSAL,
   GUARDIAN_ROOT_VALIDATOR_HAZARD,
@@ -143,7 +146,9 @@ import {
   readGuardianStatus,
   readProposalView,
   readRecoveryStage,
+  mergeRecoveryMetadata,
   rebuildRecoveryRecord,
+  rebuildRecoveryRecordFromChain,
   recordExport,
   recordExportFileName,
   recordFileContents,
@@ -162,6 +167,8 @@ import {
   submitGuardianRecovery,
   submitOwnerRotation,
   syncRecordGuardiansFromChain,
+  userOpReceiptBlock,
+  applyRecordImport,
   validateGuardianSetForAccount,
   waitAndFinalizeOwnerRotation,
   wipeRecoveryData,
@@ -539,6 +546,8 @@ console.log('check-recovery: guardian set form and engine refusals (verbatim)');
 
 // ---------------------------------------------------------------------------
 console.log('check-recovery: the mandatory exposure warning');
+check('copy: no developer file paths in the audit note shown to users', !/packages\/|\.ts\b|Engine notes/.test(GUARDIANS_AUDIT_NOTE));
+check('copy: the trust lines do not point at a delay "below" (they render after the delay picker)', GUARDIANS_TRUST_LINES.every((l) => !/delay below|delay above/.test(l)) && GUARDIANS_TRUST_LINES.some((l) => /recovery delay protects only the change of owner/.test(l)));
 // ---------------------------------------------------------------------------
 {
   const two = describeGuardianExposure(set2of2(), (a) => (same(a, gA.address) ? 'Alice' : null));
@@ -687,6 +696,15 @@ console.log('check-recovery: recovery on a new wallet (no delay)');
   const payload = encodeRecoveryRequestPayload(start.request);
   const parsed = parseRecoveryRequestPayload(recoveryRequestShareText(start.request));
   check('request payload / share text parse back to the same request', JSON.stringify(parsed.request) === JSON.stringify(start.request) && parsed.approvals.length === 0);
+  // Phase 10 copy check: the share text names the path that exists in the
+  // app (SettingsScreen's "Guardians (social recovery)" section and its
+  // "Approve a recovery (as a guardian)" button).
+  const settingsSrc = readFileSync(new URL('../src/screens/SettingsScreen.tsx', import.meta.url), 'utf8');
+  const shareText = recoveryRequestShareText(start.request);
+  check('share text points to Settings → Guardians (social recovery) → Approve a recovery (as a guardian), which exists',
+    shareText.includes('Settings → Guardians (social recovery) → Approve a recovery (as a guardian)') &&
+      settingsSrc.includes('Guardians (social recovery)</Text>') &&
+      /title="Approve a recovery \(as a guardian\)"[\s\S]{0,120}navigate\('ApproveRecovery'\)/.test(settingsSrc));
   const tampered = JSON.parse(payload);
   tampered.request.callData = tampered.request.callData.slice(0, -2) + 'ff';
   const tErr = await caught(() => parseRecoveryRequestPayload(JSON.stringify(tampered)));
@@ -862,6 +880,131 @@ console.log('check-recovery: recovery with a delay (approveWithSig, countdown, f
   node.get(ACCOUNT).proposals.set(start.request.callDataAndNonceHash.toLowerCase(), { status: 0, validAfter: 0, weight: 0 });
   node.get(ACCOUNT).guardianSeq = 3n;
   check('guardian nonce moved → stage stale (approvals void)', (await readRecoveryStage(node, progress, 5_000)).stage.kind === 'stale');
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-recovery: a rebuilt record never replaces a richer one (phase 10 bug 2)');
+// ---------------------------------------------------------------------------
+{
+  // The emulator run: Account 1 owned the Kernel account and its record
+  // listed the guardians; the recovering side (Account 2, same device)
+  // rebuilt a record from the original owner — with no guardians — and the
+  // attach REPLACED Account 1's record, so both sides then reported
+  // "guardians are configured on-chain but not in the record".
+  const node = fakeGuardianNode();
+  const chainSet = set2of2(600);
+  node.add(ACCOUNT, { owner: OWNER_0, guardians: chainSet });
+  const store = memoryStore();
+  await store.setItem('shiba-wallet.aa-config.v1', JSON.stringify({ [M]: { bundlerUrl: 'https://bundler.example', bundlerVerifiedAt: 'x', accountType: 'kernel-v3.3', factory: KERNEL_V3_3.factory, kernelValidator: VALIDATOR, factoryImplementation: KERNEL_V3_3.implementation } }));
+  const INSTALL_TX = '0x' + 'ab'.repeat(32);
+  const created = await ensureFactoryKernelRecord({ chain: M, account: ACCOUNT, accountIndex: 0, owner: OWNER_0, ownerPath: owner.path, factory: KERNEL_V3_3.factory, implementation: KERNEL_V3_3.implementation, ecdsaValidator: VALIDATOR, store });
+  const ownerSide = await saveRecoveryMetadata(
+    {
+      ...created.entry.metadata,
+      guardians: { weightedEcdsaValidator: W, recoveryAction: RA, guardians: [{ address: gA.address, weight: 1, label: 'Alice' }, { address: gB.address, weight: 1, label: 'Bob' }], threshold: 2, delaySeconds: 600, installTxHash: INSTALL_TX },
+    },
+    store,
+  );
+  check('owner side: the record lists the labelled guardians and matches the chain', (await verifyRecoveryMetadataOnChain(node, ownerSide.metadata)).ok);
+  const labelsOf = (m) => Object.fromEntries((m.guardians?.guardians ?? []).map((g) => [g.address.toLowerCase(), g.label ?? null]));
+
+  // The rebuild itself.
+  const plain = rebuildRecoveryRecord({ chainId: CHAIN_ID, account: ACCOUNT, originalOwner: OWNER_0, recordedAt: 2 });
+  check('(the old input) a plain rebuild has no guardians', plain.guardians === null);
+  const elsewhere = await rebuildRecoveryRecordFromChain({ node, chainId: CHAIN_ID, account: ACCOUNT, originalOwner: OWNER_0, recordedAt: 2, store: memoryStore() });
+  check('rebuild on another device: the guardian set comes from the chain (no labels to know)', elsewhere.guardians?.guardians.length === 2 && elsewhere.guardians.threshold === 2 && elsewhere.guardians.delaySeconds === 600 && Object.values(labelsOf(elsewhere)).every((l) => l === null));
+  check('…so it verifies on-chain instead of reporting guardians missing from the record', (await verifyRecoveryMetadataOnChain(node, elsewhere)).ok);
+  const here = await rebuildRecoveryRecordFromChain({ node, chainId: CHAIN_ID, account: ACCOUNT, originalOwner: OWNER_0, recordedAt: 2, store });
+  check('rebuild on the owner’s device: labels, install tx and the owner’s derivation path are kept', labelsOf(here)[gA.address.toLowerCase()] === 'Alice' && labelsOf(here)[gB.address.toLowerCase()] === 'Bob' && here.guardians.installTxHash === INSTALL_TX && here.owners[0].derivationPath === owner.path);
+  check('a rebuild saves nothing by itself', JSON.stringify((await getRecoveryRecord(M, ACCOUNT, store)).metadata) === JSON.stringify(ownerSide.metadata));
+
+  // The recovery completes; the recovering side attaches with the record
+  // rebuilt elsewhere (the worst case: no labels).
+  node.get(ACCOUNT).owner = newOwner.address;
+  const RECOVERY_TX = '0x' + 'e2'.repeat(32);
+  const attached = await attachRecoveredAccount({ node, chain: M, account: ACCOUNT, owner: newOwner.address, ownerPath: newOwner.path, metadata: elsewhere, change: { txHash: RECOVERY_TX, userOpHash: null, blockNumber: '100' }, store, aaStore: store });
+  const after = (await getRecoveryRecord(M, ACCOUNT, store)).metadata;
+  check('attach MERGED into the existing record: guardians and their labels kept, install tx kept', attached.historyUpdated && labelsOf(after)[gA.address.toLowerCase()] === 'Alice' && after.guardians.installTxHash === INSTALL_TX);
+  check('…owner history appended (guardian recovery) with the original owner’s path kept', after.owners.length === 2 && after.owners[0].derivationPath === owner.path && after.owners[1].source === 'guardian-recovery' && same(after.owners[1].owner, newOwner.address) && after.owners[1].txHash === RECOVERY_TX);
+  check('…and it verifies on-chain (no "guardians are configured on-chain but not in the record")', (await verifyRecoveryMetadataOnChain(node, after)).ok, JSON.stringify(await verifyRecoveryMetadataOnChain(node, after)));
+  await attachRecoveredAccount({ node, chain: M, account: ACCOUNT, owner: newOwner.address, ownerPath: newOwner.path, metadata: plain, change: { txHash: RECOVERY_TX, userOpHash: null, blockNumber: '100' }, store, aaStore: store });
+  const again = (await getRecoveryRecord(M, ACCOUNT, store)).metadata;
+  check('attaching again with a plain rebuild changes nothing (no duplicate history, labels kept)', JSON.stringify(again) === JSON.stringify(after));
+
+  // An imported backup never replaces a richer record either.
+  const importNode = fakeGuardianNode();
+  importNode.add(ACCOUNT, { owner: OWNER_0, guardians: chainSet });
+  const importStore = memoryStore();
+  await saveRecoveryMetadata(ownerSide.metadata, importStore);
+  const review = await reviewRecordImport(importNode, recordExport(plain).json, [{ index: 0, address: OWNER_0, path: owner.path }]);
+  const imported = await applyRecordImport({ node: importNode, review, store: importStore, aaStore: importStore });
+  check('importing a thinner backup keeps the device’s labelled guardian record', !imported.attached && labelsOf(imported.entry.metadata)[gB.address.toLowerCase()] === 'Bob' && imported.entry.metadata.guardians.installTxHash === INSTALL_TX);
+
+  // mergeRecoveryMetadata rules.
+  const other = predictKernelAddress(OWNER_0, { index: 1n });
+  const otherMeta = rebuildRecoveryRecord({ chainId: CHAIN_ID, account: other, originalOwner: OWNER_0, index: 1, recordedAt: 1 });
+  check('merge refuses records of different accounts', /different accounts/.test((await caught(() => mergeRecoveryMetadata(ownerSide.metadata, otherMeta)))?.message ?? ''));
+  const none = { validationInstalled: false, recoveryAllowed: false, recoveryRouted: false, validatorInitialized: false, set: null, active: false };
+  check('the chain decides: no guardians on-chain → none in the merged record', mergeRecoveryMetadata(ownerSide.metadata, plain, { chainGuardians: none }).guardians === null);
+  check('an unread chain keeps the recorded set (never guessed)', mergeRecoveryMetadata(ownerSide.metadata, plain, { chainGuardians: null }).guardians?.guardians.length === 2);
+  const X = '0x' + '71'.repeat(20);
+  const Y = '0x' + '72'.repeat(20);
+  const withX = recordOwnerChange(plain, { owner: X, source: 'owner-rotation', txHash: '0x' + '01'.repeat(32), userOpHash: null, blockNumber: null, derivationPath: null, recordedAt: 3 });
+  const withY = recordOwnerChange(plain, { owner: Y, source: 'owner-rotation', txHash: '0x' + '02'.repeat(32), userOpHash: null, blockNumber: null, derivationPath: null, recordedAt: 3 });
+  check('diverged histories: the existing one is kept by default', same(mergeRecoveryMetadata(withX, withY).owners[1].owner, X));
+  check('…unless only the incoming one ends at the owner read from the chain', same(mergeRecoveryMetadata(withX, withY, { currentOwner: Y }).owners[1].owner, Y));
+  check('a longer incoming history extends a shorter existing one', mergeRecoveryMetadata(plain, withX).owners.length === 2);
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-recovery: the install result is read at the including block (phase 10 bug 3)');
+// ---------------------------------------------------------------------------
+{
+  // The success screen said "does not match the chain yet" while the status
+  // card read a moment later said "Matches the chain ✓": the receipt came
+  // from the bundler's node, the read from the wallet's lagging RPC.
+  const INCLUSION = 0x2000n;
+  const pre = fakeGuardianNode();
+  pre.add(ACCOUNT, { owner: OWNER_0 });
+  const post = fakeGuardianNode();
+  post.add(ACCOUNT, { owner: OWNER_0, guardians: set2of2() });
+  const makeLagging = () => {
+    let head = INCLUSION - 3n;
+    let polls = 0;
+    const t = async (method, params) => {
+      if (method === 'eth_blockNumber') {
+        polls += 1;
+        if (polls > 2) head = INCLUSION + 1n;
+        return '0x' + head.toString(16);
+      }
+      if (method === 'eth_call') {
+        if (params[1] === 'latest') return pre(method, params); // a backend still behind
+        if (BigInt(params[1]) > head) throw new Error('RPC error -32000: header not found');
+        return post(method, [params[0], 'latest']);
+      }
+      return post(method, params);
+    };
+    t.polls = () => polls;
+    return t;
+  };
+  const guardianRecord = { weightedEcdsaValidator: W, recoveryAction: RA, guardians: set2of2().guardians, threshold: 2, delaySeconds: DEFAULT_GUARDIAN_DELAY_SECONDS, installTxHash: null };
+  const seedRecord = async () => {
+    const st = memoryStore();
+    const c = await ensureFactoryKernelRecord({ chain: M, account: ACCOUNT, accountIndex: 0, owner: OWNER_0, ownerPath: owner.path, factory: KERNEL_V3_3.factory, implementation: KERNEL_V3_3.implementation, ecdsaValidator: VALIDATOR, store: st });
+    await saveRecoveryMetadata({ ...c.entry.metadata, guardians: guardianRecord }, st); // as written before submission
+    return st;
+  };
+  const BUNDLE_TX = '0x' + 'cb'.repeat(32);
+  const lagging = makeLagging();
+  const st = await seedRecord();
+  const withBlock = fakeBundler({ receipt: { success: true, receipt: { transactionHash: BUNDLE_TX, blockNumber: '0x' + INCLUSION.toString(16) } } });
+  const fin = await finalizeGuardianOperation({ bundle: kernelBundle(lagging, withBlock), userOpHash: '0x' + 'aa'.repeat(32), chain: M, account: ACCOUNT, kind: 'install', store: st, timeoutMs: 1000, pollMs: 1 });
+  check('after the receipt, the state is read at the including block: matches, guardians active, install tx recorded', fin.matches && fin.state.active && (await getRecoveryRecord(M, ACCOUNT, st)).metadata.guardians.installTxHash === BUNDLE_TX && lagging.polls() >= 3);
+  const st2 = await seedRecord();
+  const noBlock = fakeBundler({ receipt: { success: true, receipt: { transactionHash: BUNDLE_TX } } });
+  const old = await finalizeGuardianOperation({ bundle: kernelBundle(makeLagging(), noBlock), userOpHash: '0x' + 'aa'.repeat(32), chain: M, account: ACCOUNT, kind: 'install', store: st2, timeoutMs: 1000, pollMs: 1 });
+  check('control: a receipt without a block falls back to "latest" (the run’s symptom: no match)', !old.matches && !old.state.active);
+  check('userOpReceiptBlock: nested (ERC-4337 shape), flattened, and junk → null', userOpReceiptBlock({ receipt: { blockNumber: '0x10' } }) === 16n && userOpReceiptBlock({ blockNumber: '0x11' }) === 17n && userOpReceiptBlock({ receipt: { blockNumber: 16 } }) === null && userOpReceiptBlock(null) === null && userOpReceiptBlock({ receipt: { blockNumber: '0xzz' } }) === null);
 }
 
 // ---------------------------------------------------------------------------

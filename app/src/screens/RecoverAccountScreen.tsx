@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, ScrollView, Text, TextInput, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { httpTransport, type JsonRpcTransport, type KernelRecoveryMetadata } from '@shiba-wallet/chains-evm';
+import { httpTransport, type JsonRpcTransport, type KernelGuardianSet, type KernelRecoveryMetadata } from '@shiba-wallet/chains-evm';
 import type { RootStackParamList } from '../navigation';
 import { Button, TestNetworksOnlyCard, WarningBox, screenStyle } from '../components';
 import {
@@ -41,7 +41,7 @@ import {
   prepareApproveWithSig,
   prepareRecoveryStart,
   readRecoveryStage,
-  rebuildRecoveryRecord,
+  rebuildRecoveryRecordFromChain,
   recordExport,
   recoveryApprovalProgress,
   recoveryRequestShareText,
@@ -86,7 +86,7 @@ type Phase = 'start' | 'checking' | 'candidate' | 'import-review' | 'progress' |
  */
 export function RecoverAccountScreen({ navigation }: Props) {
   const theme = useTheme();
-  const { accounts, activeAccount, accountList, addAccount, switchAccount, signWith } = useWallet();
+  const { accounts, activeAccount, accountList, accountForEvmAddress, addAccount, switchAccount, signWith } = useWallet();
   const { evmChain } = usePrefs();
   const evm = accounts.find((a) => a.chainId === EVM_CHAIN_ID) ?? null;
   const owner = evm?.address ?? null;
@@ -231,7 +231,11 @@ export function RecoverAccountScreen({ navigation }: Props) {
         }
       }
       if (!meta && originalOwnerInput.trim() !== '') {
-        meta = rebuildRecoveryRecord({
+        // The rebuilt record takes the guardian set from the chain and keeps
+        // the owner history and guardian labels of any record of this
+        // account already on this device (recovery.ts mergeRecoveryMetadata).
+        meta = await rebuildRecoveryRecordFromChain({
+          node,
           chainId,
           account,
           originalOwner: originalOwnerInput.trim(),
@@ -507,8 +511,7 @@ export function RecoverAccountScreen({ navigation }: Props) {
   if (phase === 'progress' && progress?.request && progress.set) {
     const p = recoveryApprovalProgress(progress);
     const payload = encodeRecoveryRequestPayload(progress.request, progress.approvals);
-    const labelFor = (a: string) =>
-      progress.metadata?.guardians?.guardians.find((g) => g.address.toLowerCase() === a.toLowerCase())?.label ?? null;
+    const labelFor = (a: string) => guardianLabel(progress.metadata, progress.set!, a);
     const secondsLeft = stage?.kind === 'waiting' ? Math.max(0, stage.validAfter - now) : null;
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
@@ -547,7 +550,7 @@ export function RecoverAccountScreen({ navigation }: Props) {
             <WeightProgress weight={p.weight} threshold={p.threshold} />
             {p.approvers.map((g) => (
               <Text key={g.address} style={[styles.hint, { color: theme.text }]}>
-                ✓ {labelFor(g.address) ?? 'Guardian'} {g.address} (weight {g.weight})
+                ✓ {labelFor(g.address)} {g.address} (weight {g.weight})
               </Text>
             ))}
             <Text style={[styles.sectionTitle, { color: theme.text }]}>1. Send this request to your guardians</Text>
@@ -666,11 +669,18 @@ export function RecoverAccountScreen({ navigation }: Props) {
         <RecoveryNetworkBadge label={evmChain.label} testnet={evmChain.testnet} />
         <Text style={[styles.title, { color: theme.text }]}>Recover this account?</Text>
         <InfoRow label="Account to recover" value={candidate.account} monoValue />
-        <InfoRow label="Current owner (not this wallet)" value={candidate.currentOwner} monoValue />
+        <InfoRow
+          label={(() => {
+            const mine = accountForEvmAddress(candidate.currentOwner);
+            return mine ? `Current owner (this wallet’s ${mine.name})` : 'Current owner (not this wallet)';
+          })()}
+          value={candidate.currentOwner}
+          monoValue
+        />
         {ownerRow}
         <GuardianSetView
           set={candidate.set}
-          labelFor={(a) => candidateMeta?.guardians?.guardians.find((g) => g.address.toLowerCase() === a.toLowerCase())?.label ?? null}
+          labelFor={(a) => guardianLabel(candidateMeta, candidate.set, a)}
         />
         <Text style={[styles.hint, { color: theme.text }]}>
           {candidate.set.delaySeconds > 0
@@ -800,3 +810,14 @@ function StageLine({ stage, secondsLeft }: { stage: RecoveryStage; secondsLeft: 
   return <Text style={[styles.ok, { color }]}>{text}</Text>;
 }
 
+/**
+ * A guardian's name on the recovering side: the label from the account's
+ * recovery record when it has one (rebuilt and backed-up records carry the
+ * owner's labels), else its position in the on-chain set ("Guardian 1").
+ */
+function guardianLabel(meta: KernelRecoveryMetadata | null, set: KernelGuardianSet, address: string): string {
+  const recorded = meta?.guardians?.guardians.find((g) => g.address.toLowerCase() === address.toLowerCase())?.label;
+  if (recorded) return recorded;
+  const position = set.guardians.findIndex((g) => g.address.toLowerCase() === address.toLowerCase());
+  return position >= 0 ? `Guardian ${position + 1}` : 'Guardian';
+}

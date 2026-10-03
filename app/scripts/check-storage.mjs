@@ -36,6 +36,7 @@ import {
   PHRASE_PROTECTION_POLICY,
   PHRASE_TICKET_TTL_MS,
   PHRASE_UNREADABLE_MESSAGE,
+  PROMPTS,
   PhraseAccessError,
   VAULT_META_KEY,
   createKeyVault,
@@ -679,6 +680,52 @@ console.log('check-storage: session-key vault');
 }
 
 // ---------------------------------------------------------------------------
+console.log('check-storage: a session-key write leaves the wallet as it was (phase 10 bug 1)');
+// The phase 10 emulator run lost the session grant's success screen between
+// the "Protect the new session key" and "Approve signing" prompts. The cause
+// was a dev-server hot update (see AGENTS.md), not the vault — these checks
+// pin that a protected session-key write changes nothing the wallet's state
+// is derived from (phrase location, vault meta, the phrase copies, the
+// public account cache) and does not consume the approval's held phrase.
+{
+  const ID = '11155111.0xd31c2c54f21684ee2026a6c41e391130bdeed8fa.2daf71ee';
+  const KEY = '0x' + '5a'.repeat(32);
+  const shim = makeShim();
+  const c = clock();
+  const vault = createKeyVault(shim, { now: c.now });
+  await vault.saveNewPhrase(PHRASE);
+  await vault.upgrade();
+  const entries = [{ chainId: 'eip155:1', address: '0x772eAA1d3BEf14C0BD5cee980b90dB3FC680F44F', path: "m/44'/60'/0'/0/0" }];
+  await vault.savePublicAccount(0, entries);
+  shim.take();
+  const snapshot = () =>
+    JSON.stringify(
+      [...shim.items.entries()].filter(([k]) => !k.includes('session-key')).sort(([a], [b]) => (a < b ? -1 : 1)),
+    );
+  const before = snapshot();
+  const locationBefore = await vault.phraseLocation();
+  const gate = await vault.openPhraseForApproval('Approve granting this session');
+  c.t += 5_000;
+  await vault.sessionKeys.save(ID, KEY);
+  c.t += 5_000;
+  const signed = await vault.readPhrase(PROMPTS.signFallback);
+  const prompts = shim.take();
+  check('grant prompts: approve, then protect the session key, and the signing read reuses the approval (2 in total)', gate.kind === 'authenticated' && signed === PHRASE && JSON.stringify(prompts) === JSON.stringify(['Approve granting this session', PROMPTS.sessionKeyWrite]), JSON.stringify(prompts));
+  check('the session-key write changes no phrase copy, vault meta or public account entry', snapshot() === before);
+  check('…and the phrase location stays protected', locationBefore === 'protected' && (await vault.phraseLocation()) === 'protected');
+  check('…and the account cache still answers the same addresses', JSON.stringify(await vault.loadPublicAccount(0)) === JSON.stringify(entries));
+  // The emulator saw a THIRD prompt: its driver took ~56 s between the
+  // approval and the signing read, past the 30 s single-use hold.
+  await vault.openPhraseForApproval('Approve granting this session');
+  c.t += 20_000;
+  await vault.sessionKeys.save(ID.replace('2daf71ee', '2daf71ef'), KEY);
+  c.t += PHRASE_TICKET_TTL_MS;
+  await vault.readPhrase(PROMPTS.signFallback);
+  const slow = shim.take();
+  check('a grant slower than the 30 s hold asks for the phrase again (3 prompts, as observed on the emulator)', JSON.stringify(slow) === JSON.stringify(['Approve granting this session', PROMPTS.sessionKeyWrite, PROMPTS.signFallback]), JSON.stringify(slow));
+}
+
+// ---------------------------------------------------------------------------
 console.log('check-storage: concurrency (Android allows one prompt at a time)');
 {
   const shim = makeShim();
@@ -714,6 +761,24 @@ console.log('check-storage: source rules');
   check('activate stores standard first, then attempts protection', ctxSrc.indexOf('await saveNewPhrase(mnemonic)') < ctxSrc.indexOf('await upgradePhraseProtectionIfAutomatic()'));
   check('the held phrase is dropped when the app leaves the foreground', /AppState\.addEventListener[\s\S]{0,120}dropPhraseTicket\(\)/.test(ctxSrc));
   check('no console logging in storage.ts', !/console\.\w+\(/.test(storageSrc));
+  // Phase 10 bug 1: nothing a vault write does may reach the navigator.
+  // The navigator unmounts only when `status` changes (App.tsx renders a
+  // spinner while 'loading' and swaps stacks on 'no-wallet') or when the
+  // active account index changes (the NavigationContainer key).
+  const appSrc = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
+  const regions = [...ctxSrc.matchAll(/\n  (?:const (\w+) = useCallback\(|useEffect\()/g)].map((m) => ({ at: m.index, name: m[1] ?? 'effect' }));
+  const statusWrites = [...ctxSrc.matchAll(/setStatus\(/g)].map((m) => m.index).filter((i) => !ctxSrc.slice(i - 30, i).includes('[status, '));
+  const owners = statusWrites.map((i) => {
+    const region = regions.filter((r) => r.at < i).pop();
+    if (!region) return 'outside';
+    if (region.name !== 'effect') return region.name;
+    const next = regions.find((r) => r.at > region.at)?.at ?? ctxSrc.length;
+    return ctxSrc.slice(region.at, next).includes('await phraseLocation()') ? 'launch' : 'other effect';
+  });
+  check('WalletContext changes `status` only at launch, on activate (create/import) and on wipe', owners.length > 0 && owners.every((o) => o === 'launch' || o === 'activate' || o === 'wipe'), JSON.stringify(owners));
+  check('storage.ts offers no subscription a write could notify the UI through', !/export (?:function|const) (?:subscribe|on[A-Z]\w*|add\w*Listener)/.test(storageSrc));
+  check('WalletContext uses the session-key vault only to delete keys on wipe', (ctxSrc.replace(/^\s*\/\/.*$/gm, '').match(/sessionKeyVault/g) ?? []).length === 2 && /forgetAllSessions\(AsyncStorage, sessionKeyVault\)/.test(ctxSrc));
+  check('App.tsx keys the navigator on the active account index only', /<NavigationContainer key=\{`account-\$\{activeAccount\?\.index \?\? 0\}`\}/.test(appSrc) && (appSrc.match(/key=\{/g) ?? []).length === 1);
 }
 
 console.log(`\ncheck-storage: ${passed} passed, ${failed} failed`);

@@ -45,6 +45,7 @@ import {
   AA_DEPOSIT_TOPUP_VERIFICATION_GAS,
 } from './aa.ts';
 import { formatUnits, parseUnits } from './balances.ts';
+import { readAtInclusionBlock } from './recovery.ts';
 import { WALLET_7702_DELEGATE } from './delegation.ts';
 import { EVM_CHAIN_ID, validateRecipient } from './send.ts';
 import type { KeyValueStore } from './tokens.ts';
@@ -605,7 +606,15 @@ export function describeAllowedCall(
       call.valueLimit === 0n
         ? `Call ${who} with no data and no ${context.symbol}`
         : `Send up to ${cap} per call to ${who}`;
-    details.push('No contract function: only a plain transfer with empty calldata.');
+    // The account's CallPolicy keys an empty-calldata call as function
+    // 0x00000000, so calldata that merely STARTS with four zero bytes
+    // matches the same entry (engine: kernel-permissions.ts
+    // SessionAllowedCall.selector). Said plainly rather than overstated.
+    details.push(
+      'No contract function: meant for a plain transfer with empty calldata. The account enforces this as ' +
+        'function 0x00000000, so a call whose data begins with 0x00000000 would also be allowed. That matters ' +
+        'only if the target is a contract.',
+    );
   } else {
     const known = KNOWN_BY_SELECTOR.get(call.selector.toLowerCase());
     const fn = known ? `${known.signature} (${call.selector})` : `function ${call.selector}`;
@@ -788,6 +797,42 @@ export async function installSession(args: {
 }
 
 /**
+ * An operation of this session that was sent to the bundler but not yet
+ * settled locally (install accepted, record still 'installing'; revoke
+ * accepted, record still 'revoking'), or null. The Sessions screen reads it
+ * from the STORED record, so the sent operation and its outcome stay
+ * visible even when the screen that sent it is gone (navigated away,
+ * remounted, or the app restarted while waiting) — phase 10 item 1, bug 1.
+ */
+export function pendingSessionOperation(record: SessionRecord): { kind: 'install' | 'revoke'; userOpHash: string } | null {
+  if (record.localStatus === 'installing' && record.installUserOpHash) {
+    return { kind: 'install', userOpHash: record.installUserOpHash };
+  }
+  if (record.localStatus === 'revoking' && record.revokeUserOpHash) {
+    return { kind: 'revoke', userOpHash: record.revokeUserOpHash };
+  }
+  return null;
+}
+
+/** The record's local lifecycle in plain words (shown with its operation hashes). */
+export function sessionLocalStatusText(record: SessionRecord): string {
+  switch (record.localStatus) {
+    case 'installing':
+      return record.installUserOpHash
+        ? 'Install sent to the bundler; waiting for the receipt.'
+        : 'Install not sent yet (or the app stopped before the bundler answered).';
+    case 'installed':
+      return 'Install included and read back from the chain.';
+    case 'failed':
+      return 'Install refused or reverted.';
+    case 'revoking':
+      return 'Revocation sent to the bundler; waiting for the receipt.';
+    case 'revoked':
+      return 'Revocation included and read back from the chain.';
+  }
+}
+
+/**
  * Waits for the install operation's receipt, then reads the permission back
  * from the chain; the record becomes 'installed' only when the receipt
  * succeeded AND the on-chain state shows the grant's session key.
@@ -804,7 +849,11 @@ export async function finalizeSessionInstall(
     pollMs: options.pollMs ?? 3_000,
   });
   const receipt = summarizeAaReceipt(raw);
-  const status = await readSessionStatus(bundle.node, record);
+  // Status as of the including block (the wallet's RPC may lag the
+  // bundler's node by a block or two; see recovery.ts readAtInclusionBlock).
+  const status = await readAtInclusionBlock(bundle.node, raw, (n) => definiteSessionStatus(n, record), {
+    ...(options.pollMs !== undefined ? { pollMs: options.pollMs } : {}),
+  }).catch(() => readSessionStatus(bundle.node, record));
   const next =
     receipt.success === true && status.kind === 'active'
       ? await updateRecord(record, { localStatus: 'installed' }, store)
@@ -860,6 +909,17 @@ export async function readSessionStatus(
   } catch (e) {
     return { kind: 'unknown', reason: e instanceof Error ? e.message : String(e) };
   }
+}
+
+/**
+ * readSessionStatus for readAtInclusionBlock: an 'unknown' answer (which is
+ * how a read the node could not serve yet shows up) is thrown so the read
+ * is retried; after the wait, the last answer is used as it is.
+ */
+async function definiteSessionStatus(node: JsonRpcTransport, record: SessionRecord): Promise<SessionChainStatus> {
+  const status = await readSessionStatus(node, record);
+  if (status.kind === 'unknown') throw new Error(status.reason);
+  return status;
 }
 
 export function sessionStatusText(status: SessionChainStatus): string {
@@ -1038,7 +1098,9 @@ export async function finalizeSessionRevoke(
     pollMs: options.pollMs ?? 3_000,
   });
   const receipt = summarizeAaReceipt(raw);
-  const status = await readSessionStatus(bundle.node, record);
+  const status = await readAtInclusionBlock(bundle.node, raw, (n) => definiteSessionStatus(n, record), {
+    ...(options.pollMs !== undefined ? { pollMs: options.pollMs } : {}),
+  }).catch(() => readSessionStatus(bundle.node, record));
   const next =
     receipt.success === true && status.kind === 'revoked'
       ? await updateRecord(record, { localStatus: 'revoked' }, store)

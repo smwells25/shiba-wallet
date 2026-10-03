@@ -48,6 +48,7 @@ import {
   installSession,
   loadSessionsFor,
   newSessionKey,
+  pendingSessionOperation,
   prepareSessionInstall,
   prepareSessionRevoke,
   readSessionStatus,
@@ -55,6 +56,7 @@ import {
   resolveSessionAccount,
   revokeSession,
   sendSessionCalls,
+  sessionLocalStatusText,
   sessionRecordKey,
   sessionStatusText,
   sessionTestCall,
@@ -162,6 +164,10 @@ export function SessionsScreen({ navigation }: Props) {
   }, [owner, activeAccount, evmChain.caip2, evmChain.chainIdDecimal]);
   useEffect(setup, [setup]);
 
+  // Operations this screen instance is already waiting for (its own sends,
+  // and ones resumed from the stored list below), by userOpHash.
+  const waitingFor = useRef(new Set<string>());
+  const reloadRef = useRef<() => void>(() => undefined);
   const reloadList = useCallback(() => {
     if (!account) return;
     loadSessionsFor(evmChain.caip2, account).then(
@@ -173,11 +179,29 @@ export function SessionsScreen({ navigation }: Props) {
           const key = sessionRecordKey(r.chain, r.account, r.permissionId);
           setStatuses((prev) => ({ ...prev, [key]: 'loading' }));
           void readSessionStatus(bundle.node, r).then((st) => setStatuses((prev) => ({ ...prev, [key]: st })));
+          // An install or revocation that was sent but never settled — the
+          // screen that sent it was closed or remounted while it waited (the
+          // phase 10 emulator run lost the install's success screen that
+          // way) — is resumed from the stored record, so its hash and outcome
+          // are never lost.
+          const op = pendingSessionOperation(r);
+          if (op && !waitingFor.current.has(op.userOpHash)) {
+            waitingFor.current.add(op.userOpHash);
+            const settle = op.kind === 'install' ? finalizeSessionInstall : finalizeSessionRevoke;
+            void settle(bundle, r, AsyncStorage).then(
+              () => reloadRef.current(),
+              // Not included yet (or unreadable): "Refresh status" tries again.
+              () => waitingFor.current.delete(op.userOpHash),
+            );
+          }
         }
       },
       () => setListFlags({ corrupt: true, unreadable: true }),
     );
   }, [account, bundle, evmChain.caip2]);
+  useEffect(() => {
+    reloadRef.current = reloadList;
+  }, [reloadList]);
   useEffect(reloadList, [reloadList]);
 
   useEffect(() => {
@@ -257,6 +281,7 @@ export function SessionsScreen({ navigation }: Props) {
         submit: (q) => signWith(EVM_CHAIN_ID, owner, (signer) => sendAa(bundle, signer, q)),
       });
       discardPending();
+      waitingFor.current.add(userOpHash);
       setProgress({ kind: 'install', userOpHash, state: 'pending', txHash: null, detail: null });
       setPhase('progress');
       void finalizeSessionInstall(bundle, record, AsyncStorage).then(
@@ -366,6 +391,7 @@ export function SessionsScreen({ navigation }: Props) {
         submit: (q) => signWith(EVM_CHAIN_ID, owner, (signer) => sendAa(bundle, signer, q)),
       });
       setRevokeTarget(null);
+      waitingFor.current.add(userOpHash);
       setProgress({ kind: 'revoke', userOpHash, state: 'pending', txHash: null, detail: null });
       setPhase('progress');
       void finalizeSessionRevoke(bundle, record, AsyncStorage).then(
@@ -755,6 +781,14 @@ export function SessionsScreen({ navigation }: Props) {
                 >
                   {status === undefined || status === 'loading' ? 'Reading status…' : sessionStatusText(status)}
                 </Text>
+                <Text style={[styles.hint, { color: theme.textMuted }]}>{sessionLocalStatusText(r)}</Text>
+                {pendingSessionOperation(r) ? <ActivityIndicator color={theme.accent} /> : null}
+                {r.installUserOpHash ? (
+                  <Row label="Install UserOperation hash" value={r.installUserOpHash} mono theme={theme} />
+                ) : null}
+                {r.revokeUserOpHash ? (
+                  <Row label="Revocation UserOperation hash" value={r.revokeUserOpHash} mono theme={theme} />
+                ) : null}
                 <GrantReview
                   grant={grant}
                   account={r.account}

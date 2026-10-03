@@ -209,8 +209,8 @@ export const GUARDIANS_TRUST_LINES: readonly string[] = [
     'guardian list itself as part of a recovery.',
   'Guardians can sign messages AS THIS ACCOUNT from the moment they are installed — token permits ' +
     '(for example Permit2), off-chain orders and sign-in requests — with no delay and no veto, because ' +
-    'the account accepts message signatures from every installed module. The delay below protects ' +
-    'only the change of owner.',
+    'the account accepts message signatures from every installed module. The recovery delay protects ' +
+    'only the change of owner, not these signatures.',
   'Choose guardians who would never collude, keep their keys apart from yours, and never add the key ' +
     'that controls this account (the wallet refuses it).',
 ];
@@ -219,8 +219,7 @@ export const GUARDIANS_AUDIT_NOTE =
   'The guardian modules (ZeroDev WeightedECDSAValidator 0.0.3 and RecoveryAction for Kernel v3) have ' +
   'no published audit of the deployed versions: the published Kalos reports cover the Kernel v2 ' +
   'plugins, and the v3.1 incremental audit covers a different contract. ZeroDev’s own npm package ' +
-  'lists the validator for Kernel 0.3.0–0.3.1, while its repository says 0.3.0–0.3.3. Engine notes: ' +
-  'packages/chains-evm kernel-recovery.ts.';
+  'lists the validator for Kernel 0.3.0–0.3.1, while its repository says 0.3.0–0.3.3.';
 
 /** The mainnet condition (AGENTS.md: mainnet funds on Kernel wait on C1–C3). */
 export const GUARDIANS_MAINNET_CONDITION =
@@ -427,7 +426,8 @@ export async function getRecoveryRecord(
 
 const UNREADABLE_RECORDS =
   'The saved recovery records could not be read, so nothing was changed. Export what you can from a ' +
-  'backup, then use “Reset recovery records” in Settings → Guardians (on-chain state is not affected).';
+  'backup, then use “Reset recovery records” on the Guardians screen (Settings → Guardians (social recovery) → ' +
+  'Guardians for this account). On-chain state is not affected.';
 
 async function writeRecordEntry(entry: RecoveryRecordEntry | null, key: string, store: KeyValueStore): Promise<void> {
   const read = await readRawMap(store, RECOVERY_RECORDS_KEY);
@@ -798,6 +798,167 @@ export function rebuildRecoveryRecord(args: {
   throw new Error(
     `${args.account} is not the Kernel v3.3 account of ${args.originalOwner} at any index from 0 to 49.`,
   );
+}
+
+/**
+ * Combines two records of the SAME account (same chain, address and
+ * CREATE2 lineage) without losing what either one knows. Used wherever a
+ * record arrives from outside the device's own bookkeeping — a record
+ * rebuilt from the original owner, one carried by a recovery in progress,
+ * or an imported backup — so it can never replace a richer record already
+ * stored for that account (phase 10 item 1, bug 2: a rebuilt record with no
+ * guardians replaced the owner's record that listed them, and both sides
+ * then reported "guardians are configured on-chain but not in the record").
+ *
+ *  - Owner history: when one list is a prefix of the other (compared by
+ *    owner address), the longer one wins; entries both lists share keep the
+ *    existing record's values and take any field the existing record lacks
+ *    (transaction, UserOperation, block, derivation path) from the incoming
+ *    one. When the lists diverge, the existing history is kept, unless only
+ *    the incoming one ends at `currentOwner` (the owner just read from the
+ *    chain).
+ *  - Guardian set: the chain decides when `chainGuardians` is given — the
+ *    active on-chain set, or none when nothing is configured on-chain. A
+ *    partly installed or unread state keeps the existing record's set (else
+ *    the incoming one).
+ *  - Guardian labels: the existing record's labels first, then the incoming
+ *    record's for addresses the existing record has no label for.
+ *  - The install transaction is kept only for a set equal to the one it
+ *    installed.
+ *
+ * Throws when the two records describe different accounts or lineages.
+ */
+export function mergeRecoveryMetadata(
+  existing: KernelRecoveryMetadata | null,
+  incoming: KernelRecoveryMetadata,
+  options: { chainGuardians?: KernelGuardianState | null; currentOwner?: string | null } = {},
+): KernelRecoveryMetadata {
+  if (existing) {
+    const lineage = (m: KernelRecoveryMetadata) =>
+      JSON.stringify([m.chainId, m.account.toLowerCase(), m.accountType, Object.values(m.deployment).map((v) => v.toLowerCase())]);
+    if (lineage(existing) !== lineage(incoming)) {
+      throw new Error('The two recovery records describe different accounts; nothing was merged.');
+    }
+  }
+  const base = existing ?? incoming;
+  const owners = existing ? mergeOwnerHistory(existing.owners, incoming.owners, options.currentOwner ?? null) : incoming.owners;
+
+  const labels: Record<string, string> = {};
+  for (const g of incoming.guardians?.guardians ?? []) if (g.label) labels[g.address.toLowerCase()] = g.label;
+  for (const g of existing?.guardians?.guardians ?? []) if (g.label) labels[g.address.toLowerCase()] = g.label;
+  const installTxFor = (set: KernelGuardianSet): string | null => {
+    for (const record of [existing?.guardians ?? null, incoming.guardians]) {
+      if (record && sameSet(set, record) && record.installTxHash) return record.installTxHash;
+    }
+    return null;
+  };
+  const relabel = (record: KernelGuardianRecord | null): KernelGuardianRecord | null =>
+    record
+      ? {
+          ...record,
+          guardians: record.guardians.map((g) => {
+            const label = labels[g.address.toLowerCase()];
+            return { address: g.address, weight: g.weight, ...(label !== undefined ? { label } : {}) };
+          }),
+        }
+      : null;
+
+  const chain = options.chainGuardians ?? null;
+  let guardians: KernelGuardianRecord | null;
+  if (chain && chain.active && chain.set) {
+    guardians = guardianRecordFrom(chain.set, labels, installTxFor(chain.set));
+  } else if (chain && !chain.validatorInitialized && !chain.validationInstalled) {
+    guardians = null;
+  } else {
+    guardians = relabel(existing?.guardians ?? incoming.guardians);
+  }
+  return parseRecoveryMetadata(serializeRecoveryMetadata({ ...base, owners, guardians }));
+}
+
+function mergeOwnerHistory(
+  existing: readonly KernelOwnerRecord[],
+  incoming: readonly KernelOwnerRecord[],
+  currentOwner: string | null,
+): KernelOwnerRecord[] {
+  let k = 0;
+  while (k < existing.length && k < incoming.length && same(existing[k]!.owner, incoming[k]!.owner)) k += 1;
+  const common = existing.slice(0, k).map((e, i) => {
+    const o = incoming[i]!;
+    return {
+      ...e,
+      txHash: e.txHash ?? o.txHash,
+      userOpHash: e.userOpHash ?? o.userOpHash,
+      blockNumber: e.blockNumber ?? o.blockNumber,
+      derivationPath: e.derivationPath ?? o.derivationPath,
+    };
+  });
+  if (k === existing.length) return [...common, ...incoming.slice(k)];
+  if (k === incoming.length) return [...common, ...existing.slice(k)];
+  const incomingIsCurrent =
+    currentOwner !== null &&
+    same(incoming[incoming.length - 1]!.owner, currentOwner) &&
+    !same(existing[existing.length - 1]!.owner, currentOwner);
+  return [...common, ...(incomingIsCurrent ? incoming : existing).slice(k)];
+}
+
+/**
+ * The guardian state for a record merge, or null when it cannot be read
+ * (the merge then keeps the recorded set rather than guessing).
+ */
+async function guardianStateOrNull(node: JsonRpcTransport, account: string): Promise<KernelGuardianState | null> {
+  try {
+    return await readGuardianState(node, account);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Saves `incoming` merged into the account's stored record
+ * (mergeRecoveryMetadata), with the guardian set read from the chain. The
+ * path for records that come from outside this device's own bookkeeping.
+ */
+export async function saveMergedRecoveryMetadata(
+  node: JsonRpcTransport,
+  incoming: KernelRecoveryMetadata,
+  store: KeyValueStore = AsyncStorage,
+  options: { currentOwner?: string | null } = {},
+): Promise<RecoveryRecordEntry> {
+  const existing = await getRecoveryRecord(incoming.chainId, incoming.account, store);
+  const chainGuardians = await guardianStateOrNull(node, incoming.account);
+  const merged = mergeRecoveryMetadata(existing?.metadata ?? null, incoming, {
+    chainGuardians,
+    currentOwner: options.currentOwner ?? null,
+  });
+  return saveRecoveryMetadata(merged, store);
+}
+
+/**
+ * rebuildRecoveryRecord for the "Recover an account" screen: the rebuilt
+ * record gets the guardian set from the chain (it is otherwise empty, and
+ * the recovery itself proves guardians are installed), merged with any
+ * record of the same account already on this device so its owner history
+ * and guardian labels are kept. Nothing is saved here.
+ */
+export async function rebuildRecoveryRecordFromChain(args: {
+  node: JsonRpcTransport;
+  chainId: bigint;
+  account: string;
+  originalOwner: string;
+  index?: number;
+  recordedAt: number;
+  store?: KeyValueStore;
+}): Promise<KernelRecoveryMetadata> {
+  const rebuilt = rebuildRecoveryRecord({
+    chainId: args.chainId,
+    account: args.account,
+    originalOwner: args.originalOwner,
+    ...(args.index !== undefined ? { index: args.index } : {}),
+    recordedAt: args.recordedAt,
+  });
+  const existing = await getRecoveryRecord(rebuilt.chainId, rebuilt.account, args.store ?? AsyncStorage).catch(() => null);
+  const chainGuardians = await guardianStateOrNull(args.node, rebuilt.account);
+  return mergeRecoveryMetadata(existing?.metadata ?? null, rebuilt, { chainGuardians });
 }
 
 // ---------------------------------------------------------------------------
@@ -1244,6 +1405,74 @@ export async function submitGuardianOperation(args: {
 }
 
 /**
+ * The block that included a UserOperation, from an
+ * eth_getUserOperationReceipt result: `receipt.blockNumber` (the ERC-4337
+ * shape nests the including transaction's receipt), else a top-level
+ * `blockNumber` (some bundlers flatten it). A hex quantity only; anything
+ * else yields null rather than a guessed block.
+ */
+export function userOpReceiptBlock(raw: unknown): bigint | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const r = raw as Record<string, unknown>;
+  const inner = typeof r.receipt === 'object' && r.receipt !== null ? (r.receipt as Record<string, unknown>).blockNumber : undefined;
+  for (const candidate of [inner, r.blockNumber]) {
+    if (typeof candidate === 'string' && /^0x[0-9a-fA-F]{1,16}$/.test(candidate)) return BigInt(candidate);
+  }
+  return null;
+}
+
+/** A transport whose eth_call reads at 'latest' are pinned to `block`. */
+function pinnedToBlock(node: JsonRpcTransport, block: bigint): JsonRpcTransport {
+  const tag = `0x${block.toString(16)}`;
+  return (method, params) =>
+    method === 'eth_call' && Array.isArray(params) && params[1] === 'latest'
+      ? node(method, [params[0], tag])
+      : node(method, params);
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Runs `read` (eth_call based) against the state as of the block that
+ * included a UserOperation (userOpReceiptBlock). Waits, up to `timeoutMs`,
+ * until the node reports that block, then reads with every 'latest'
+ * eth_call pinned to it, retrying while the node cannot serve it yet (a
+ * load-balanced endpoint may route a call to a backend that is behind).
+ * Without a block in the receipt, or after the timeout, it reads at
+ * 'latest' — the previous behaviour, so the result is never worse.
+ */
+export async function readAtInclusionBlock<T>(
+  node: JsonRpcTransport,
+  rawReceipt: unknown,
+  read: (node: JsonRpcTransport) => Promise<T>,
+  options: { timeoutMs?: number; pollMs?: number } = {},
+): Promise<T> {
+  const block = userOpReceiptBlock(rawReceipt);
+  if (block === null) return read(node);
+  const deadline = Date.now() + (options.timeoutMs ?? 30_000);
+  const pollMs = options.pollMs ?? 1_500;
+  const pinned = pinnedToBlock(node, block);
+  for (;;) {
+    let head: bigint | null = null;
+    try {
+      head = BigInt((await node('eth_blockNumber', [])) as string);
+    } catch {
+      head = null;
+    }
+    if (head !== null && head >= block) {
+      try {
+        return await read(pinned);
+      } catch {
+        // The node knows the block but this backend could not serve it yet.
+      }
+    }
+    if (Date.now() >= deadline) break;
+    await sleep(pollMs);
+  }
+  return read(node);
+}
+
+/**
  * Waits for the operation's receipt, re-reads the guardian state and, when
  * the chain matches the record, writes the bundle transaction hash as the
  * guardians' install transaction. Returns whether the record matches.
@@ -1263,7 +1492,15 @@ export async function finalizeGuardianOperation(args: {
     pollMs: args.pollMs ?? 3_000,
   });
   const receipt = summarizeAaReceipt(raw);
-  const state = await readGuardianState(args.bundle.node, args.account);
+  // Read the state AS OF the including block, not whatever 'latest' the
+  // node happens to serve: the bundler reports the receipt as soon as ITS
+  // node has the block, and the wallet's RPC (often a load-balanced public
+  // endpoint) can still be a block or two behind — which made the success
+  // screen say "does not match the chain yet" while the status card read a
+  // moment later said "Matches the chain ✓" (phase 10 item 1, bug 3).
+  const state = await readAtInclusionBlock(args.bundle.node, raw, (n) => readGuardianState(n, args.account), {
+    ...(args.pollMs !== undefined ? { pollMs: args.pollMs } : {}),
+  });
   const entry = await getRecoveryRecord(args.chain, args.account, args.store);
   let matches = false;
   if (entry) {
@@ -1544,7 +1781,8 @@ export function recoveryRequestShareText(request: GuardianRecoveryRequest, appro
     `Chain id: ${request.chainId}\nProposal id: ${request.callDataAndNonceHash}\n\n` +
     'Approving hands control of this account to the new owner. Confirm with the account holder in ' +
     'person or on a channel you trust before you approve.\n\n' +
-    'Shiba Wallet: Settings → Guardians → Approve a recovery, then paste everything below.\n\n' +
+    'Shiba Wallet: Settings → Guardians (social recovery) → Approve a recovery (as a guardian), then paste ' +
+    'everything below.\n\n' +
     encodeRecoveryRequestPayload(request, approvals) +
     '\n\nOther wallets: sign this EIP-712 typed data (eth_signTypedData_v4) with the guardian address ' +
     'and send back the signature:\n' +
@@ -2453,7 +2691,11 @@ export async function attachRecoveredAccount(args: {
   } else {
     historyUpdated = true;
   }
-  const entry = historyUpdated ? await saveRecoveryMetadata(meta, store) : await saveRecoveryMetadata(args.metadata, store);
+  // Merged into any record of this account already on the device (never
+  // replacing a richer one), with the guardian set read from the chain.
+  const entry = await saveMergedRecoveryMetadata(args.node, historyUpdated ? meta : args.metadata, store, {
+    currentOwner: check.ok ? args.owner : null,
+  });
   return { check, entry, historyUpdated };
 }
 
@@ -2537,7 +2779,11 @@ export async function applyRecordImport(args: {
     });
     return { entry: result.entry!, attached: true };
   }
-  return { entry: await saveRecoveryMetadata(review.metadata, store), attached: false };
+  // An imported backup never replaces a richer record of the same account.
+  return {
+    entry: await saveMergedRecoveryMetadata(args.node, review.metadata, store, { currentOwner: review.onChainOwner }),
+    attached: false,
+  };
 }
 
 /**

@@ -60,6 +60,7 @@ import {
   narrowGrant,
   newSessionKey,
   parseSelectorInput,
+  pendingSessionOperation,
   prepareSessionInstall,
   prepareSessionRevoke,
   readSessionStatus,
@@ -68,6 +69,7 @@ import {
   revokeSession,
   saveSessionRecord,
   sendSessionCalls,
+  sessionLocalStatusText,
   sessionTestCall,
   sessionVaultId,
   validateGrantForAccount,
@@ -311,6 +313,7 @@ const engineMessage = (grant) => {
 
   const d = describeAllowedCall(g.calls[0], { symbol: 'ETH', account: ACCOUNT, nameFor: (a) => (same(a, RECIPIENT) ? 'Burn' : null) });
   check('plain language: plain transfer names the contact WITH the full address and the per-call cap', d.title === `Send up to 0.001 ETH per call to Burn (${RECIPIENT})` && d.details.some((l) => /per call, not a total/.test(l)));
+  check('plain language: a no-function entry says calldata beginning with 0x00000000 also matches (engine CallPolicy keying)', d.details.some((l) => /begins with 0x00000000 would also be allowed/.test(l)) && !d.details.some((l) => /only a plain transfer/.test(l)));
   const approveDesc = describeAllowedCall({ target: RECIPIENT, selector: toHex(selector('approve(address,uint256)')), valueLimit: 0n }, { symbol: 'ETH', account: ACCOUNT });
   check('plain language: approve() is named and carries a lasting-power warning', /approve\(address,uint256\)/.test(approveDesc.title) && /ANY spender/.test(approveDesc.warning ?? ''));
 }
@@ -409,6 +412,54 @@ let installRecord;
     installSession({ ...p2, grant: g2, chain: M, account: ACCOUNT, owner: OWNER_0, accountIndex: 0, accountKind: 'kernel-v3.3', label: 'Manual', source: 'manual', sessionPrivateKey: newSessionKey().privateKey, store: store2, vault: vault2, submit: async () => ({ userOpHash: '0x' }) }),
   );
   check('a session key that does not match the grant is refused; nothing stored', /does not match/.test(e3?.message ?? '') && vault2.map.size === 0);
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-sessions: a sent install survives the screen (phase 10 bug 1) and is read at its block');
+// ---------------------------------------------------------------------------
+{
+  // The emulator run lost the grant's success screen although the install
+  // was sent. The Sessions screen now reads the sent operation from the
+  // STORED record (pendingSessionOperation) and resumes waiting for it.
+  const sent = { ...installRecord, localStatus: 'installing' };
+  const s2 = memoryStore();
+  await saveSessionRecord(sent, s2);
+  const reloaded = (await loadSessions(s2)).records[0];
+  const pending = pendingSessionOperation(reloaded);
+  check('a freshly mounted screen finds the sent install in the stored record (kind + userOpHash)', pending?.kind === 'install' && pending.userOpHash === installRecord.installUserOpHash);
+  check('its plain-language line says it was sent and is waiting', /sent to the bundler; waiting for the receipt/.test(sessionLocalStatusText(reloaded)));
+  check('a record that never reached the bundler is not "pending"', pendingSessionOperation({ ...sent, installUserOpHash: null }) === null && /not sent yet/.test(sessionLocalStatusText({ ...sent, installUserOpHash: null })));
+  check('settled records are not pending', pendingSessionOperation(installRecord) === null && pendingSessionOperation({ ...installRecord, localStatus: 'revoking', revokeUserOpHash: TX_HASH })?.kind === 'revoke');
+
+  // Read at the including block: the wallet's RPC lags the bundler's node.
+  const INCLUSION = 0x1000n;
+  const pre = fakeSessionNode(); // what a lagging backend still serves at 'latest'
+  const post = fakeSessionNode(); // the state after the including block
+  post.install(sent.permissionId, sessionKey.address, sent.policyCount);
+  let head = INCLUSION - 2n;
+  let polls = 0;
+  const lagging = async (method, params) => {
+    if (method === 'eth_blockNumber') {
+      polls += 1;
+      if (polls > 2) head = INCLUSION;
+      return '0x' + head.toString(16);
+    }
+    if (method === 'eth_call') {
+      if (params[1] === 'latest') return pre(method, params);
+      if (BigInt(params[1]) > head) throw new Error('RPC error -32000: header not found');
+      return post(method, [params[0], 'latest']);
+    }
+    return post(method, params);
+  };
+  const withBlock = fakeBundler({ receipt: { success: true, receipt: { transactionHash: TX_HASH, blockNumber: '0x' + INCLUSION.toString(16) } } });
+  const resumed = await finalizeSessionInstall(kernelBundle(lagging, withBlock), reloaded, s2, { timeoutMs: 1000, pollMs: 1 });
+  check('resumed finalize reads the status AT the including block (lagging node) → installed / active', resumed.status.kind === 'active' && resumed.record.localStatus === 'installed' && polls >= 3, JSON.stringify(resumed.status));
+  check('…and the stored record is settled, so the screen stops waiting', pendingSessionOperation((await loadSessions(s2)).records[0]) === null);
+  const s3 = memoryStore();
+  await saveSessionRecord(sent, s3);
+  const noBlock = fakeBundler({ receipt: { success: true, receipt: { transactionHash: TX_HASH } } });
+  const old = await finalizeSessionInstall(kernelBundle(lagging, noBlock), sent, s3, { timeoutMs: 1000, pollMs: 1 });
+  check('control: without a block in the receipt the read is at "latest" (the lagging answer: not installed)', old.status.kind === 'not-installed' && old.record.localStatus === 'installing');
 }
 
 // ---------------------------------------------------------------------------

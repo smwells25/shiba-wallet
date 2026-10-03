@@ -51,6 +51,7 @@ import {
   finalizeGuardianOperation,
   formatDuration,
   getRecoveryRecord,
+  loadRecoveryRecords,
   markRecordExported,
   prepareGuardianInstallQuote,
   prepareGuardianRemoveQuote,
@@ -60,6 +61,7 @@ import {
   readProposalView,
   recordExport,
   removeWatchedProposal,
+  resetRecoveryRecords,
   resolveGuardianAccount,
   submitGuardianOperation,
   syncRecordGuardiansFromChain,
@@ -114,6 +116,7 @@ export function GuardiansScreen({ navigation }: Props) {
   const [setupError, setSetupError] = useState<string | null>(null);
   const [entry, setEntry] = useState<RecoveryRecordEntry | null>(null);
   const [recordError, setRecordError] = useState<string | null>(null);
+  const [recordsUnreadable, setRecordsUnreadable] = useState(false);
   const [status, setStatus] = useState<GuardianStatus | null>(null);
   const [proposals, setProposals] = useState<ProposalView[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -191,14 +194,16 @@ export function GuardiansScreen({ navigation }: Props) {
         // Shown on screen; the chain status is still read below.
         recErr = `The recovery record could not be read or started: ${err instanceof Error ? err.message : String(err)}`;
       }
+      const unreadable = (await loadRecoveryRecords()).unreadable;
       const st = await readGuardianStatus(bundle.node, r.account, e);
       const views = await Promise.all(
         (e?.watched ?? []).map((w) => readProposalView(bundle.node, r.account, w, st.state.set?.threshold ?? null)),
       );
-      return { e, st, views, recErr };
+      return { e, st, views, recErr, unreadable };
     })().then(
-      ({ e, st, views, recErr }) => {
+      ({ e, st, views, recErr, unreadable }) => {
         setRecordError(recErr);
+        setRecordsUnreadable(unreadable);
         setEntry(e);
         setStatus(st);
         setProposals(views);
@@ -356,7 +361,7 @@ export function GuardiansScreen({ navigation }: Props) {
                       ? null
                       : matches
                         ? 'The recovery record matches the chain.'
-                        : 'The recovery record does not match the chain yet; use “Update record from chain” on the Guardians screen.',
+                        : 'The recovery record does not match the chain as of the including block; use “Update record from chain” in the Recovery record section.',
                 }
               : prev,
           ),
@@ -726,6 +731,23 @@ export function GuardiansScreen({ navigation }: Props) {
       {resolution === null && !setupError && owner ? <ActivityIndicator color={theme.accent} /> : null}
       {resolution && !resolution.ok ? <WarningBox>{resolution.reason}</WarningBox> : null}
       {recordError ? <WarningBox>{recordError}</WarningBox> : null}
+      {recordsUnreadable ? (
+        <Button
+          title="Reset recovery records"
+          variant="destructive"
+          onPress={() =>
+            Alert.alert(
+              'Reset recovery records?',
+              'The unreadable records on this device are cleared. Nothing on-chain changes: guardians stay ' +
+                'installed and owners stay as they are. Records you backed up off-device can be imported again.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Reset', style: 'destructive', onPress: () => void resetRecoveryRecords().then(reload, reload) },
+              ],
+            )
+          }
+        />
+      ) : null}
       {resolution?.ok ? (
         <>
           <Text style={[styles.sectionTitle, { color: theme.text }]}>Guardians</Text>
@@ -819,7 +841,8 @@ export function GuardiansScreen({ navigation }: Props) {
             </>
           ) : (
             <Text style={[styles.hint, { color: theme.textMuted }]}>
-              No record for this account on this device. Import it on the Recover screen (Settings → Guardians).
+              No record for this account on this device. Import it on the Recover screen (Settings → Guardians (social
+              recovery) → Recover an account with guardians).
             </Text>
           )}
           <Button title="Refresh" variant="secondary" onPress={reload} />
