@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Alert, ScrollView, Share, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useFocusEffect } from '@react-navigation/native';
 import type { RootStackParamList } from '../navigation';
 import { allowScreenCaptureAsync, preventScreenCaptureAsync } from 'expo-screen-capture';
 import { Button, WarningBox, WordGrid, screenStyle } from '../components';
@@ -27,6 +28,15 @@ import { useTheme, type Theme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
 import { localAuthAvailable, requireLocalAuth } from '../wallet/biometric';
+import { storageProtection, upgradePhraseProtection, type StorageProtection } from '../wallet/storage';
+import {
+  PROTECT_BUTTON_TITLE,
+  PROTECT_CONFIRM_MESSAGE,
+  PROTECT_CONFIRM_TITLE,
+  describeProtectionStatus,
+  describeRevealFailure,
+  describeUpgradeOutcome,
+} from '../wallet/phrase-protection-copy';
 import {
   AA_ACCOUNT_TYPES,
   KERNEL_BUNDLER_NOTE,
@@ -982,6 +992,39 @@ export function SettingsScreen({ navigation }: Props) {
 
   useEffect(reloadPriceConfig, [reloadPriceConfig]);
 
+  // Where the recovery phrase is kept (wallet/storage.ts). Re-read on
+  // focus, after "Protect with biometrics" and after a reveal, because a
+  // biometric change elsewhere on the phone can change it at any time.
+  const [protection, setProtection] = useState<StorageProtection | null>(null);
+  const [protecting, setProtecting] = useState(false);
+  const reloadProtection = useCallback(() => {
+    storageProtection().then(setProtection, () => setProtection(null));
+  }, []);
+  useFocusEffect(reloadProtection);
+
+  const onProtect = () => {
+    Alert.alert(PROTECT_CONFIRM_TITLE, PROTECT_CONFIRM_MESSAGE, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Protect',
+        onPress: async () => {
+          setProtecting(true);
+          try {
+            const result = await upgradePhraseProtection().catch((e: unknown) => ({
+              outcome: 'failed' as const,
+              detail: e instanceof Error ? e.message : null,
+            }));
+            const { title, message } = describeUpgradeOutcome(result);
+            Alert.alert(title, message);
+          } finally {
+            setProtecting(false);
+            reloadProtection();
+          }
+        },
+      },
+    ]);
+  };
+
   const onReveal = () => {
     Alert.alert(
       'Show recovery phrase?',
@@ -1004,14 +1047,22 @@ export function SettingsScreen({ navigation }: Props) {
             const mnemonic = await revealMnemonic();
             if (mnemonic) {
               setRevealed(mnemonic);
+              reloadProtection();
             } else {
-              Alert.alert('Not available', 'No recovery phrase found in secure storage.');
+              // Explain why from a fresh status read (e.g. a biometric
+              // change made the protected copy unreadable).
+              const status = await storageProtection();
+              setProtection(status);
+              const { title, message } = describeRevealFailure(status);
+              Alert.alert(title, message);
             }
           },
         },
       ],
     );
   };
+
+  const protectionView = protection ? describeProtectionStatus(protection) : null;
 
   const onWipe = () => {
     // Recovery records (phase 8 item 4) are the only way a restored wallet
@@ -1126,6 +1177,28 @@ export function SettingsScreen({ navigation }: Props) {
           <Button title="Show recovery phrase" variant="secondary" onPress={onReveal} />
         )}
       </View>
+
+      {protectionView?.text ? (
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: theme.text }]}>Recovery phrase protection</Text>
+          {protectionView.warning ? (
+            <WarningBox>{protectionView.text}</WarningBox>
+          ) : (
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{protectionView.text}</Text>
+          )}
+          {protectionView.note ? (
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{protectionView.note}</Text>
+          ) : null}
+          {protectionView.showProtectButton ? (
+            <Button
+              title={protecting ? 'Protecting…' : PROTECT_BUTTON_TITLE}
+              variant="secondary"
+              disabled={protecting}
+              onPress={onProtect}
+            />
+          ) : null}
+        </View>
+      ) : null}
 
       <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: theme.text }]}>Privacy & security</Text>

@@ -36,6 +36,7 @@ export const APP_SCRIPTS = {
   'check-readiness.mjs': { kind: 'offline', summary: 'counts' },
   'check-recovery.mjs': { kind: 'offline', summary: 'counts' },
   'check-sessions.mjs': { kind: 'offline', summary: 'counts' },
+  'check-settings-protection.mjs': { kind: 'offline', summary: 'counts' },
   'check-simulation.mjs': { kind: 'offline', summary: 'counts' },
   'check-storage.mjs': { kind: 'offline', summary: 'counts' },
   'check-swap.mjs': { kind: 'offline', summary: 'counts' },
