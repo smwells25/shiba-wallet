@@ -3795,5 +3795,56 @@ whenever the Expo account and identifiers arrive. Subagents on Opus.
       logging under the ReactNativeJS tag; WalletConnect's logger forwards
       at error level. Shortlist: a line of a multi-line warning (the
       preceding logcat line is the clue), a dependency stringifying an
-      Error("undefined"), Expo Go's own native code. Capture in progress:
-      `adb logcat -v long -s ReactNativeJS:V` around a relaunch.
+      Error("undefined"), Expo Go's own native code. A clean relaunch with
+      `adb logcat -c` then `adb logcat -d -v long` captured 4,881 lines and
+      only ONE ReactNativeJS entry (the "Running main" line): the warning
+      did not recur, so it is intermittent (earlier it appeared once per
+      launch during long sessions with WalletConnect sessions live). Not
+      blocking; next time it shows, read the logcat line BEFORE it (the
+      agent's first hypothesis) or temporarily wrap console.warn in
+      index.ts to print the caller's stack.
+
+## Phase 9 status (2026-10-02, end of the autonomous run)
+
+Landed and pushed, CI green on every push: item 1 (deposit-headroom fix,
+proven live in-app both directions), item 2 (threat model, second
+edition), item 4 (CI, offline runner, pre-commit secret scan), item 5
+(resilience, offline notice, accessibility, lint-disable cleanup, plus
+the four follow-ups), item 6 (readiness switchboard; smart-account
+features enforced testnet-only, plain features advisory pending the
+Chairperson), the three threat-model quick wins (opt-in
+biometric-protected storage proven live in Expo Go, Permit/Permit2
+summaries, WalletConnect identity verification), the Settings
+protection section, the WalletConnect telemetry switch-off, https-only
+endpoints, and item 3's input-free part (EAS profiles, store-ready
+app.json, release/store/privacy documents, expo-dev-client, the EAS
+engine-build hook). Engine: 602 tests. App: 29 offline suites, 2,875
+checks, lint 0, tsc clean, bundle 7.4MB.
+
+Waiting on inputs (item 3 remainder, item 7): Expo account + owner, iOS
+bundle identifier, Android package name, Apple organization enrollment
+(Team ID, App Store Connect app id), Google Play organization account +
+service-account key, the passkey rpId domain, privacy-policy and support
+URLs, publisher legal name and contact, counsel on encryption export /
+(L)GPL-AGPL modules / the 3.1.5 exchange clause for swaps, the final
+app name after a trademark check, distribution countries, whether swaps
+ship at launch, a real WalletConnect metadata URL, screenshots/artwork,
+expo-splash-screen and supportsTablet decisions, the ZeroDev disclosure
+decision, a 0x key, a paymaster policy, about 1 DOGE for the mainnet
+broadcast.
+
+Decisions pending the Chairperson: (a) PHRASE_PROTECTION_POLICY opt-in
+(current) vs automatic; (b) whether the advisory plain-feature rows
+(EOA send, tokens, NFTs, swap, WalletConnect, Dogecoin send) stay
+advisory or become enforced (which would make the wallet testnet-only
+end to end until W1–W4/W13/W17–W20 clear).
+
+Open follow-ups (no inputs needed): in-app privacy-policy link once a URL
+exists; load-time filtering of previously saved http endpoints;
+enforcing dogecoin-send if the plain rows are enforced; the guardian
+recovery spec's exact-nonce move to getNonceKey; moving the
+test-networks-only card into components.tsx; WarningBox accessibility
+role; THREAT_MODEL rows F-44/F-55/T-23 after e51a33e; the intermittent
+"Error: undefined" warning; device-only validations (W2–W4, W18–W19,
+FaceID, StrongBox, TalkBack/VoiceOver, iOS protected-storage behaviour)
+once a development build exists.
