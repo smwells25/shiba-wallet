@@ -59,6 +59,7 @@ import {
   generateCallsId,
   getWcProjectId,
   getWcUsed,
+  identityApprovalAllowed,
   initWalletConnect,
   respondApproved,
   respondRejected,
@@ -676,9 +677,15 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
       overrideSimulation: boolean,
       connectAs: ConnectAs = 'eoa',
       messageSigner: MessageSigner = 'owner',
+      identityAcknowledged = false,
     ) => {
       if (!controller || !client) return;
       if (!controller.canAct(item.key)) return;
+      // WalletConnect Verify (N-06): a scam-flagged or origin-mismatched
+      // proposal or request is approvable only after the explicit risk
+      // switch. Re-checked here (defense in depth: the sheet also disables
+      // its approve buttons).
+      if (!identityApprovalAllowed(item.identity, identityAcknowledged)) return;
       const address = contextRef.current.address;
       if (!address) return;
 
@@ -935,7 +942,7 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
             })()}
             smartOption={smartOption}
             loadAaBundle={loadAaBundle}
-            onApprove={(q, o, c, signer) => void onApprove(head, q, o, c, signer)}
+            onApprove={(q, o, c, signer, ack) => void onApprove(head, q, o, c, signer, ack)}
             onReject={() => onReject(head)}
           />
         ) : null}

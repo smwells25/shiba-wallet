@@ -69,11 +69,15 @@ import {
   sessionModeNote,
   setWcUsed,
   shouldStartWalletConnectAtLaunch,
+  IDENTITY_RISK_SWITCH_LABEL,
+  describeVerifyContext,
+  identityApprovalAllowed,
 } from '../src/wallet/walletconnect.ts';
 import { WcController } from '../src/wallet/wc-controller.ts';
 import { EVM_MAINNET, EVM_SEPOLIA } from '../src/config/evm-chain.ts';
 import { prepareEvmSend, sendEvm } from '../src/wallet/send.ts';
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 
 let passed = 0;
 let failed = 0;
@@ -1008,6 +1012,76 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
   await ctl.decline('p:701');
   check('declining an unservable proposal sends 5100 with the mode sentence', kit.calls.reject[0]?.reason?.code === 5100 && kit.calls.reject[0].reason.message.includes('Sepolia test mode'));
 }
+
+console.log('check-wc: WalletConnect Verify (verifyContext, threat-model N-06)');
+{
+  // Shapes per @walletconnect/types 2.25.0 Verify.Context and sign-client
+  // 2.25.0 engine.ts getVerifyContext.
+  const vc = (validation, origin, isScam) => ({
+    verified: { verifyUrl: 'https://verify.walletconnect.org', validation, origin, ...(isScam === undefined ? {} : { isScam }) },
+  });
+  const valid = describeVerifyContext(vc('VALID', 'https://app.uniswap.org'), 'https://app.uniswap.org');
+  check('VALID → verified, no switch, "origin matches" with the origin', valid.status === 'verified' && !valid.requiresAcknowledgement && /Verified by WalletConnect: origin matches \(https:\/\/app\.uniswap\.org\)/.test(valid.message));
+  check('VALID says it is not a safety verdict', /not that the dApp is safe/.test(valid.message));
+  const unknown = describeVerifyContext(vc('UNKNOWN', 'https://app.uniswap.org'), 'https://app.uniswap.org');
+  check('UNKNOWN → unverified, no switch, self-reported origin NOT presented as evidence', unknown.status === 'unverified' && !unknown.requiresAcknowledgement && unknown.origin === '' && /^UNVERIFIED — the dApp’s origin could not be confirmed/.test(unknown.message));
+  const missing = describeVerifyContext(undefined, 'https://x.example');
+  check('missing verifyContext → unverified', missing.status === 'unverified');
+  const garbage = describeVerifyContext({ verified: 'yes' }, 'https://x.example');
+  check('malformed verifyContext → unverified (never verified by accident)', garbage.status === 'unverified');
+  const odd = describeVerifyContext(vc('MAYBE', 'https://x.example'), 'https://x.example');
+  check('unknown validation string → unverified', odd.status === 'unverified');
+  const mismatch = describeVerifyContext(vc('INVALID', 'https://evil.example'), 'https://app.uniswap.org');
+  check('INVALID → mismatch with the switch', mismatch.status === 'mismatch' && mismatch.requiresAcknowledgement);
+  check('INVALID message names claimed and actual hosts', mismatch.message === 'MISMATCH — the request claims app.uniswap.org but came from evil.example: likely phishing.', mismatch.message);
+  const scam = describeVerifyContext(vc('VALID', 'https://drainer.example', true), 'https://drainer.example');
+  check('isScam wins even when the origin matches', scam.status === 'scam' && scam.requiresAcknowledgement && /^Flagged as a scam by WalletConnect/.test(scam.message));
+  const scamUnknown = describeVerifyContext(vc('UNKNOWN', 'https://drainer.example', true), 'https://drainer.example');
+  check('isScam with UNKNOWN validation still flagged', scamUnknown.status === 'scam');
+  const notScam = describeVerifyContext(vc('VALID', 'https://a.example', false), 'https://a.example');
+  check('isScam false → verified', notScam.status === 'verified');
+  check('risk gate: scam blocked until acknowledged', !identityApprovalAllowed(scam, false) && identityApprovalAllowed(scam, true));
+  check('risk gate: mismatch blocked until acknowledged', !identityApprovalAllowed(mismatch, false) && identityApprovalAllowed(mismatch, true));
+  check('risk gate: verified / unverified never blocked', identityApprovalAllowed(valid, false) && identityApprovalAllowed(unknown, false));
+  check('risk gate: an item without identity is not blocked (older queue items)', identityApprovalAllowed(undefined, false));
+  check('switch label', IDENTITY_RISK_SWITCH_LABEL === 'I understand the risk — let me approve anyway');
+
+  // Through the controller: the identity is attached to queued items.
+  const kit = fakeKit(session('T1', M));
+  const ctx = { address: ADDRESS, activeChain: M };
+  const ctl = new WcController(kit, () => ctx);
+  ctl.attach();
+  const prop = proposalWith({}, eip([M]));
+  prop.proposer = { metadata: { name: 'Uniswap', url: 'https://app.uniswap.org' } };
+  await kit.fire('session_proposal', { id: 700, params: prop, verifyContext: vc('INVALID', 'https://evil.example') });
+  await kit.fire('session_request', { ...signReq(70, 'hello'), verifyContext: vc('VALID', 'https://app.example') });
+  await kit.fire('session_request', { ...signReq(71, 'scam'), verifyContext: vc('VALID', 'https://app.example', true) });
+  await kit.fire('session_request', signReq(72, 'no context'));
+  const q = ctl.getSnapshot().queue;
+  check('proposal item carries identity (claimed URL = proposer metadata)', q[0]?.identity?.status === 'mismatch' && q[0].identity.claimedUrl === 'https://app.uniswap.org' && /claims app\.uniswap\.org but came from evil\.example/.test(q[0].identity.message));
+  check('request item carries identity (claimed URL = session peer metadata)', q[1]?.identity?.status === 'verified' && q[1].identity.claimedUrl === 'https://app.example');
+  check('scam-flagged request carries the scam identity', q[2]?.identity?.status === 'scam' && q[2].identity.requiresAcknowledgement);
+  check('request without verifyContext → unverified', q[3]?.identity?.status === 'unverified');
+  check('identity never auto-declines anything (the user decides)', kit.calls.respond.length === 0 && kit.calls.reject.length === 0 && q.length === 4);
+
+  // UI wiring (source checks; the sheet is React Native and cannot run here).
+  const sheet = readFileSync(new URL('../src/components/WcApprovalSheet.tsx', import.meta.url), 'utf8');
+  const provider = readFileSync(new URL('../src/wallet/WalletConnectContext.tsx', import.meta.url), 'utf8');
+  check('sheet renders the identity banner for every item', /<IdentityBanner identity=\{item\.identity\}/.test(sheet));
+  check('sheet: the risk switch is the same Switch pattern as the simulation override', /requiresAcknowledgement \? \(\s*<View style=\{styles\.overrideRow\}>\s*<Switch value=\{acknowledged\}/.test(sheet));
+  const approveButtons = [
+    /disabled=\{smart === undefined \|\| approveLocked\}/,
+    /<Button title="Sign" onPress=\{onApprove\} disabled=\{approveLocked\} \/>[\s\S]*<Button title="Sign" onPress=\{onApprove\} disabled=\{approveLocked\} \/>/,
+    /disabled=\{approveBlocked \|\| approveLocked\}/,
+    /onPress=\{onApprove\} disabled=\{!ready \|\| approveLocked\} \/>\s*<Button title="Reject"/,
+    /title="Grant & install" onPress=\{onApprove\} disabled=\{!ready \|\| approveLocked\}/,
+  ];
+  check('sheet: every approve button (connect, sign ×2, send, smart send, grant) honours the switch', approveButtons.every((r) => r.test(sheet)));
+  check('sheet: the switch resets for each new item', /if \(identityKey !== item\.key\) \{\s*setIdentityKey\(item\.key\);\s*setIdentityAck\(false\);/.test(sheet));
+  check('provider re-checks the switch before acting (defense in depth)', /if \(!identityApprovalAllowed\(item\.identity, identityAcknowledged\)\) return;/.test(provider));
+  check('provider passes the switch state through', /onApprove=\{\(q, o, c, signer, ack\) => void onApprove\(head, q, o, c, signer, ack\)\}/.test(provider));
+}
+
 
 seed.fill(0);
 

@@ -37,8 +37,10 @@ export const APP_SCRIPTS = {
   'check-recovery.mjs': { kind: 'offline', summary: 'counts' },
   'check-sessions.mjs': { kind: 'offline', summary: 'counts' },
   'check-simulation.mjs': { kind: 'offline', summary: 'counts' },
+  'check-storage.mjs': { kind: 'offline', summary: 'counts' },
   'check-swap.mjs': { kind: 'offline', summary: 'counts' },
   'check-token-send.mjs': { kind: 'offline', summary: 'counts' },
+  'check-typed-data.mjs': { kind: 'offline', summary: 'counts' },
   'check-wc.mjs': { kind: 'offline', summary: 'counts' },
   'check-wc-5792.mjs': { kind: 'offline', summary: 'counts' },
 

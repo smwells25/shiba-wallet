@@ -1,4 +1,5 @@
 import * as LocalAuthentication from 'expo-local-authentication';
+import { openPhraseForApproval } from './storage';
 
 /**
  * Local-authentication gate for the two sensitive actions in the app: the
@@ -23,11 +24,42 @@ import * as LocalAuthentication from 'expo-local-authentication';
  *
  * Proceeding without a prompt on unequipped devices is intentional: the
  * gate is defense in depth on top of the OS device lock and secure-store
- * access control (the mnemonic itself stays in expo-secure-store with
- * WHEN_UNLOCKED_THIS_DEVICE_ONLY), not the primary protection, and a
- * device without biometrics must still be able to use the wallet.
+ * access control, not the primary protection, and a device without
+ * biometrics must still be able to use the wallet.
  * Note: iOS FaceID does not work in Expo Go; a development build is
  * required to exercise the prompt there.
+ *
+ * PROTECTED PHRASE (threat-model N-01, ./storage.ts): when the recovery
+ * phrase is held in biometric-protected secure storage, reading it raises
+ * the SYSTEM prompt by itself. Showing this module's prompt first and then
+ * the system prompt would ask twice for one operation. So requireLocalAuth
+ * first asks ./storage.ts openPhraseForApproval(promptMessage):
+ *
+ *   - protected phrase opened (one system prompt, the user's verification)
+ *     → { ok: true, gated: true }; the opened phrase is held for at most
+ *     30 s, for one use, by the signing call that follows (signWith,
+ *     revealMnemonic), which then does not prompt again;
+ *   - system prompt cancelled → { ok: false }, as before;
+ *   - anything else (standard storage, nothing to open, a lockout, an
+ *     invalidated key) → this module's own prompt, exactly as before.
+ *
+ * Every call site keeps calling requireLocalAuth unchanged (defense in
+ * depth: the app-level gate still exists, it is just satisfied by the
+ * system prompt when one is unavoidable anyway). Two consequences, both
+ * deliberate: (1) with a protected phrase the approval is biometric-only —
+ * the system prompt of a protected secure-store item has no PIN fallback
+ * on either platform; if it fails for a reason other than a cancel (e.g. a
+ * lockout) the ordinary prompt with the passcode fallback still unlocks the
+ * screen, but signing needs the biometric; (2) gates that do not sign (the
+ * lock screen) also open the phrase briefly; the held copy is dropped after
+ * 30 s or when the app goes to the background.
+ *
+ * Existing installs are moved into protected storage at their first
+ * approval after the update (policy 'automatic' in ./storage.ts): that
+ * approval shows the protection prompts instead (Android: two — the
+ * protected write and the read-back check; iOS: one). If the user cancels
+ * them, the phrase stays where it was and the ordinary prompt is shown for
+ * the action they started.
  */
 
 export type LocalAuthOutcome =
@@ -54,6 +86,14 @@ export async function localAuthAvailable(): Promise<boolean> {
 }
 
 export async function requireLocalAuth(promptMessage: string): Promise<LocalAuthOutcome> {
+  try {
+    const vault = await openPhraseForApproval(promptMessage);
+    if (vault.kind === 'authenticated') return { ok: true, gated: true };
+    if (vault.kind === 'cancelled') return { ok: false, message: 'Authentication cancelled.' };
+  } catch {
+    // Fall through to the ordinary prompt.
+  }
+
   let available = false;
   try {
     const hasHardware = await LocalAuthentication.hasHardwareAsync();

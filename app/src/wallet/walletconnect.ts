@@ -396,6 +396,117 @@ export function buildWalletNamespaces(
   }) as unknown as Record<string, unknown>;
 }
 
+// ---------------------------------------------------------------------------
+// dApp identity: WalletConnect Verify (threat-model finding N-06)
+// ---------------------------------------------------------------------------
+
+/**
+ * WalletKit 1.6.0 passes the sign-client's events through unchanged
+ * (@reown/walletkit src/controllers/engine.ts onSessionProposal /
+ * onSessionRequest: `this.client.events.emit(..., event)`), and
+ * @walletconnect/sign-client 2.25.0 attaches a `verifyContext` to every
+ * session_proposal and session_request (src/controllers/engine.ts; type
+ * Verify.Context in @walletconnect/types 2.25.0
+ * dist/types/core/verify.d.ts: { verified: { origin: string; validation:
+ * "UNKNOWN" | "VALID" | "INVALID"; verifyUrl: string; isScam?: boolean } }).
+ *
+ * How the sign-client fills it (engine.ts getVerifyContext): it starts as
+ * validation "UNKNOWN" with origin = the dApp's OWN metadata.url; then asks
+ * the Verify server (core.verify.resolve) for the attested origin of this
+ * message. If that answers, origin becomes the attested origin, isScam is
+ * copied from the server, and validation is "VALID" when the attested
+ * origin equals new URL(metadata.url).origin, else "INVALID". Any failure
+ * leaves "UNKNOWN". For a proposal, metadata is the proposer's; for a
+ * request, the session peer's.
+ *
+ * So: VALID proves the message came from the site the dApp names (not that
+ * the site is honest); INVALID means it names one site but came from
+ * another; UNKNOWN proves nothing (the origin shown is self-reported); and
+ * isScam is the Verify server's own scam flag.
+ */
+export type WcIdentityStatus = 'verified' | 'unverified' | 'mismatch' | 'scam';
+
+export interface WcDappIdentity {
+  status: WcIdentityStatus;
+  /** The attested origin (VALID / INVALID / scam), or '' when unknown. */
+  origin: string;
+  /** The URL the dApp claims in its metadata. */
+  claimedUrl: string;
+  /** Approving needs the explicit "I understand the risk" switch. */
+  requiresAcknowledgement: boolean;
+  /** One plain sentence for the approval sheet. */
+  message: string;
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host || url;
+  } catch {
+    return url;
+  }
+}
+
+export const IDENTITY_RISK_SWITCH_LABEL = 'I understand the risk — let me approve anyway';
+
+/** Reads a delivered verifyContext defensively (any shape may arrive). */
+export function describeVerifyContext(verifyContext: unknown, claimedUrl: string): WcDappIdentity {
+  const verified =
+    typeof verifyContext === 'object' && verifyContext !== null
+      ? ((verifyContext as { verified?: unknown }).verified as Record<string, unknown> | undefined)
+      : undefined;
+  const validation = typeof verified?.validation === 'string' ? verified.validation : 'UNKNOWN';
+  const origin = typeof verified?.origin === 'string' ? verified.origin : '';
+  const isScam = verified?.isScam === true;
+  const claimed = claimedUrl || '(no URL)';
+  if (isScam) {
+    return {
+      status: 'scam',
+      origin,
+      claimedUrl,
+      requiresAcknowledgement: true,
+      message:
+        `Flagged as a scam by WalletConnect${origin ? ` (origin ${origin})` : ''}. Do not approve ` +
+        'anything from it unless you are certain this warning is wrong.',
+    };
+  }
+  if (validation === 'INVALID') {
+    return {
+      status: 'mismatch',
+      origin,
+      claimedUrl,
+      requiresAcknowledgement: true,
+      message:
+        `MISMATCH — the request claims ${hostOf(claimed)} but came from ${origin ? hostOf(origin) : 'a different site'}: ` +
+        'likely phishing.',
+    };
+  }
+  if (validation === 'VALID') {
+    return {
+      status: 'verified',
+      origin,
+      claimedUrl,
+      requiresAcknowledgement: false,
+      message:
+        `Verified by WalletConnect: origin matches (${origin || hostOf(claimed)}). This confirms where ` +
+        'the request came from, not that the dApp is safe.',
+    };
+  }
+  return {
+    status: 'unverified',
+    origin: '',
+    claimedUrl,
+    requiresAcknowledgement: false,
+    message:
+      'UNVERIFIED — the dApp’s origin could not be confirmed. Its name and URL are what the dApp ' +
+      'says about itself.',
+  };
+}
+
+/** True unless the identity needs the risk switch and it is off. */
+export function identityApprovalAllowed(identity: WcDappIdentity | undefined, acknowledged: boolean): boolean {
+  return !identity?.requiresAcknowledgement || acknowledged;
+}
+
 export interface WcProposalSummary {
   id: number;
   /** dApp metadata, straight from the proposer (display only, unverified). */

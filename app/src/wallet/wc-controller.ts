@@ -10,6 +10,7 @@ import {
   decideSwitchChain,
   declineProposal,
   describeProposal,
+  describeVerifyContext,
   parseWcRequest,
   respondApproved,
   respondRejected,
@@ -24,6 +25,7 @@ import {
   type ParsedWcRequest,
   type WcSmartBinding,
   type WcClient,
+  type WcDappIdentity,
   type WcProposalSummary,
   type WcRequestEvent,
   type WcSessionSummary,
@@ -92,6 +94,8 @@ export type WcQueueItem =
       key: string;
       event: { id: number; params: unknown };
       summary: WcProposalSummary;
+      /** WalletConnect Verify result for the proposer (walletconnect.ts describeVerifyContext). */
+      identity: WcDappIdentity;
     }
   | {
       type: 'request';
@@ -109,6 +113,11 @@ export type WcQueueItem =
       address: string;
       /** The smart-account binding, or null for an EOA session. */
       smart: WcSmartBinding | null;
+      /**
+       * WalletConnect Verify result for THIS request (the SDK resolves it per
+       * message, against the session peer's claimed URL).
+       */
+      identity: WcDappIdentity;
     };
 
 export interface WcNotice {
@@ -338,11 +347,15 @@ export class WcController {
     const key = `p:${event.id}`;
     if (this.queue.some((i) => i.key === key)) return; // at-least-once delivery
     const { activeChain } = this.getContext();
+    const summary = describeProposal(event, [activeChain]);
     this.queue.push({
       type: 'proposal',
       key,
       event,
-      summary: describeProposal(event, [activeChain]),
+      summary,
+      // The SDK delivers verifyContext beside id/params (sign-client 2.25.0
+      // engine.ts onSessionProposal); it is read defensively.
+      identity: describeVerifyContext((event as { verifyContext?: unknown }).verifyContext, summary.url),
     });
     this.emit();
   }
@@ -556,6 +569,10 @@ export class WcController {
       chain: activeChain,
       address: boundAddress,
       smart,
+      identity: describeVerifyContext(
+        (event as { verifyContext?: unknown }).verifyContext,
+        this.dappUrl(event.topic),
+      ),
     });
     this.emit();
   }

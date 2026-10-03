@@ -8,16 +8,34 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import { AppState } from 'react-native';
+import * as SecureStore from 'expo-secure-store';
 import { createMnemonic, isValidMnemonic, mnemonicToSeed } from '@shiba-wallet/core';
 import type { DerivedAccount } from '@shiba-wallet/core';
-import { chainByCaip2 } from './chains';
-import { deleteMnemonic, loadMnemonic, saveMnemonic, sessionKeyVault } from './storage';
+import { CHAINS, chainByCaip2 } from './chains';
+import {
+  bindSecureStore,
+  deleteMnemonic,
+  deletePublicAccounts,
+  dropPhraseTicket,
+  loadPublicAccount,
+  nativeSecureStoreBackend,
+  phraseLocation,
+  PROMPTS,
+  readPhrase,
+  saveNewPhrase,
+  savePublicAccount,
+  sessionKeyVault,
+  upgradePhraseProtectionIfAutomatic,
+  type PublicChainEntry,
+} from './storage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { forgetAllSessions } from './sessions';
 import { addAaSentListener } from './aa';
 import { recoveryRecordListener, wipeRecoveryData } from './recovery';
 import { resetPasskeys } from './passkeys';
 import {
+  MAX_ACCOUNTS,
   addAccount as addAccountToStore,
   defaultAccountsState,
   deriveChainAccounts,
@@ -33,6 +51,12 @@ import {
 } from './accounts';
 
 export type { ChainAccount } from './accounts';
+
+// The one place the native secure-store module is handed to ./storage.ts,
+// which owns every read and write of key material (see its header). Done at
+// module load so the vault exists before any screen (e.g. the Sessions
+// screen's sessionKeyVault) can use it.
+bindSecureStore(nativeSecureStoreBackend(SecureStore));
 
 export type WalletStatus = 'loading' | 'no-wallet' | 'ready';
 
@@ -126,6 +150,47 @@ function derivePublic(mnemonic: string, indices: number[]): Record<number, Chain
 
 const EVM_SLOT = 'eip155:1';
 
+/** Public data for the secure-storage account cache (no key material). */
+function toPublicEntries(accounts: ChainAccount[]): PublicChainEntry[] {
+  return accounts.map(({ chainId, address, path }) => ({ chainId, address, path }));
+}
+
+/**
+ * Rebuilds ChainAccount rows from cached public entries, in launch-chain
+ * order with the current display metadata. null unless every launch chain
+ * is present (an incomplete entry is re-derived instead of half-shown).
+ */
+function hydratePublic(entries: PublicChainEntry[] | null): ChainAccount[] | null {
+  if (!entries) return null;
+  const out: ChainAccount[] = [];
+  for (const { provider, symbol, accent } of CHAINS) {
+    const entry = entries.find((e) => e.chainId === provider.chainId);
+    if (!entry) return null;
+    out.push({
+      chainId: provider.chainId,
+      name: provider.name,
+      symbol,
+      accent,
+      address: entry.address,
+      path: entry.path,
+    });
+  }
+  return out;
+}
+
+/** Best-effort write of the public cache; a failure only costs a later re-derivation. */
+async function cachePublic(derived: Record<number, ChainAccount[]>): Promise<void> {
+  for (const [index, accounts] of Object.entries(derived)) {
+    await savePublicAccount(Number(index), toPublicEntries(accounts)).catch(() => undefined);
+  }
+}
+
+/** Every index the cache can hold (accounts are hidden, never deleted, so indices stay below MAX_ACCOUNTS). */
+const ALL_CACHE_INDICES = Array.from({ length: MAX_ACCOUNTS }, (_, i) => i);
+
+const PROMPT_LOAD_ACCOUNTS = 'Unlock Shiba Wallet to show your accounts';
+const PROMPT_NEW_ACCOUNT = 'Unlock your recovery phrase to create the account';
+
 export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = useState<WalletStatus>('loading');
   const [accountsState, setAccountsState] = useState<AccountsState | null>(null);
@@ -155,22 +220,77 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   // sent it (aa.ts notifies after the bundler accepted; public data only).
   useEffect(() => addAaSentListener(recoveryRecordListener(AsyncStorage)), []);
 
+  // A phrase held by the approval gate (./storage.ts) never outlives the
+  // app's time in the foreground. Only 'background' counts: iOS reports
+  // 'inactive' while its own Face ID prompt is up, and dropping the phrase
+  // that prompt just opened would only cause a second prompt.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'background') dropPhraseTicket();
+    });
+    return () => sub.remove();
+  }, []);
+
   // On launch, check secure storage for an existing wallet.
+  //  - Standard storage: read the phrase (no prompt) and derive, as before.
+  //  - Protected storage: draw the accounts from the public cache, so the
+  //    app starts without a biometric prompt; only an account missing from
+  //    the cache needs the phrase (one system prompt).
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const mnemonic = await loadMnemonic();
+        const location = await phraseLocation();
         if (cancelled) return;
-        if (mnemonic && isValidMnemonic(mnemonic)) {
+        if (location === 'none') {
+          setStatus('no-wallet');
+          return;
+        }
+        if (location === 'standard') {
+          const mnemonic = await readPhrase(PROMPT_LOAD_ACCOUNTS);
+          if (cancelled) return;
+          if (!mnemonic || !isValidMnemonic(mnemonic)) {
+            setStatus('no-wallet');
+            return;
+          }
           const state = await loadAccounts();
           if (cancelled) return;
-          setDerived(derivePublic(mnemonic, state.accounts.map((a) => a.index)));
+          const fresh = derivePublic(mnemonic, state.accounts.map((a) => a.index));
+          setDerived(fresh);
           commitAccounts(state);
           setStatus('ready');
-        } else {
-          setStatus('no-wallet');
+          void cachePublic(fresh);
+          return;
         }
+        const state = await loadAccounts();
+        if (cancelled) return;
+        const fromCache: Record<number, ChainAccount[]> = {};
+        const missing: number[] = [];
+        for (const { index } of state.accounts) {
+          const rows = hydratePublic(await loadPublicAccount(index));
+          if (rows) fromCache[index] = rows;
+          else missing.push(index);
+        }
+        if (missing.length > 0) {
+          // Rare (the cache is written whenever addresses are derived). If
+          // the prompt is cancelled or the phrase cannot be opened, the
+          // wallet still opens with the cached accounts; a missing one is
+          // derived again when it is next switched to.
+          try {
+            const mnemonic = await readPhrase(PROMPT_LOAD_ACCOUNTS);
+            if (mnemonic && isValidMnemonic(mnemonic)) {
+              const fresh = derivePublic(mnemonic, missing);
+              Object.assign(fromCache, fresh);
+              void cachePublic(fresh);
+            }
+          } catch {
+            // Shown later: signing reports why the phrase cannot be opened.
+          }
+        }
+        if (cancelled) return;
+        setDerived(fromCache);
+        commitAccounts(state);
+        setStatus('ready');
       } catch {
         // Secure storage unavailable (e.g. locked device edge case): fall
         // back to onboarding rather than crash. Nothing is deleted.
@@ -194,13 +314,24 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   const activate = useCallback(
     async (mnemonic: string) => {
-      await saveMnemonic(mnemonic);
+      // Standard storage first, then (policy 'automatic') the move into
+      // biometric-protected storage: the two-step order means a cancelled
+      // or refused protection prompt can never cost the phrase. Android
+      // shows two system prompts here (protected write + read-back check),
+      // iOS one (the read-back). Any outcome other than success leaves the
+      // wallet working from standard storage, and Settings shows why.
+      await saveNewPhrase(mnemonic);
+      // A cache left by a previous wallet must never label this one.
+      await deletePublicAccounts(ALL_CACHE_INDICES);
+      const fresh = derivePublic(mnemonic, [0]);
+      await cachePublic(fresh);
+      await upgradePhraseProtectionIfAutomatic();
       // A new or imported wallet starts with the default list (Account 1 =
       // index 0). Further accounts of an imported phrase reappear with
       // their original keys when added again, because indices are handed
       // out in order.
       const state = await resetAccounts().catch(() => defaultAccountsState());
-      setDerived(derivePublic(mnemonic, [0]));
+      setDerived(fresh);
       commitAccounts(state);
       setPendingMnemonic(null);
       setStatus('ready');
@@ -226,7 +357,17 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     [activate],
   );
 
-  const revealMnemonic = useCallback(() => loadMnemonic(), []);
+  // Uses the phrase the Settings approval prompt just opened (no second
+  // prompt). Returns null when it cannot be opened (cancelled, or the
+  // protected copy became unreadable — Settings' storage-protection row
+  // then explains the latter).
+  const revealMnemonic = useCallback(async () => {
+    try {
+      return await readPhrase('Reveal recovery phrase');
+    } catch {
+      return null;
+    }
+  }, []);
 
   // Mirror of `derived` for the async account actions below. It is updated
   // after every commit (refs must not be written while rendering); a layout
@@ -240,11 +381,23 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   /** Derives public data for indices not derived yet (e.g. after an add). */
   const ensureDerived = useCallback(async (indices: number[]) => {
-    const missing = indices.filter((i) => derivedRef.current[i] === undefined);
+    let missing = indices.filter((i) => derivedRef.current[i] === undefined);
     if (missing.length === 0) return;
-    const mnemonic = await loadMnemonic();
-    if (!mnemonic) throw new Error('No wallet found in secure storage');
-    const fresh = derivePublic(mnemonic, missing);
+    // The public cache first (no prompt), then the phrase for the rest.
+    const cached: Record<number, ChainAccount[]> = {};
+    for (const index of missing) {
+      const rows = hydratePublic(await loadPublicAccount(index));
+      if (rows) cached[index] = rows;
+    }
+    missing = missing.filter((i) => cached[i] === undefined);
+    let fresh: Record<number, ChainAccount[]> = {};
+    if (missing.length > 0) {
+      const mnemonic = await readPhrase(PROMPT_NEW_ACCOUNT);
+      if (!mnemonic) throw new Error('No wallet found in secure storage');
+      fresh = derivePublic(mnemonic, missing);
+      await cachePublic(fresh);
+    }
+    Object.assign(fresh, cached);
     setDerived((prev) => ({ ...prev, ...fresh }));
     derivedRef.current = { ...derivedRef.current, ...fresh };
   }, []);
@@ -304,7 +457,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       const chain = chainByCaip2(chainId);
       if (!chain) throw new Error(`Unknown chain ${chainId}`);
       const index = activeIndexRef.current;
-      const mnemonic = await loadMnemonic();
+      // The phrase the approval prompt just opened, or (protected storage,
+      // nothing held) one system prompt. Throws PhraseAccessError with a
+      // plain-language message when it cannot be opened.
+      const mnemonic = await readPhrase(PROMPTS.signFallback);
       if (!mnemonic) throw new Error('No wallet found in secure storage');
       const seed = mnemonicToSeed(mnemonic);
       try {
@@ -334,6 +490,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     // installed passkey stays installed on-chain — Settings says so.
     await resetPasskeys(AsyncStorage).catch(() => undefined);
     await deleteMnemonic();
+    // The public account cache (addresses only) goes with the wallet.
+    await deletePublicAccounts(ALL_CACHE_INDICES);
     await resetAccounts().catch(() => undefined);
     setDerived({});
     commitAccounts(null);

@@ -9,7 +9,12 @@ import {
   Text,
   View,
 } from 'react-native';
-import type { KernelPermissionInstall, SessionKeyGrant } from '@shiba-wallet/chains-evm';
+import {
+  classifyRecipient,
+  type KernelPermissionInstall,
+  type RecipientClass,
+  type SessionKeyGrant,
+} from '@shiba-wallet/chains-evm';
 import { Button, WarningBox } from '../components';
 import { BalanceChangePreview } from './BalanceChangePreview';
 import { GrantReview } from './SessionGrantViews';
@@ -18,6 +23,16 @@ import { getEndpoint } from '../config/networks';
 import type { EvmChainProfile } from '../config/evm-chain';
 import { useTheme, type Theme } from '../theme';
 import { formatUnits } from '../wallet/balances';
+import { usePrefs } from '../wallet/PrefsContext';
+import { listTokens } from '../wallet/tokens';
+import { listContacts, matchRecipient, type Contact } from '../wallet/contacts';
+import {
+  spenderRiskWarnings,
+  summarizeTypedData,
+  type TrackedTokenRef,
+  type TypedDataSummary,
+} from '../wallet/typed-data-summary';
+import { RecipientContactNotice } from './Contacts';
 import { EVM_CHAIN_ID, describeSendError, prepareEvmSend, type EvmSendQuote } from '../wallet/send';
 import {
   KERNEL_BUNDLER_NOTE,
@@ -29,7 +44,7 @@ import {
   type AaClientBundle,
   type AaSendQuote,
 } from '../wallet/aa';
-import { PREVIEW_AA_NOTE } from '../wallet/simulation';
+import { PREVIEW_AA_NOTE, simulationTransport } from '../wallet/simulation';
 import {
   ERC7715_LIMITATION_NOTE,
   SESSIONS_AUDIT_NOTE,
@@ -39,15 +54,19 @@ import {
   prepareSessionInstall,
 } from '../wallet/sessions';
 import {
+  IDENTITY_RISK_SWITCH_LABEL,
   WC_SUPPORTED_METHODS,
   decideProposal,
+  identityApprovalAllowed,
   smartAccountMethodsFor,
   describeChain,
   type ParsedWcRequest,
   type WcProposalSummary,
   type WcRequestEvent,
   type WcSmartBinding,
+  type WcDappIdentity,
   type WcTxParams,
+  type WcTypedData,
 } from '../wallet/walletconnect';
 import type { WcQueueItem } from '../wallet/wc-controller';
 import { passkeyRecordForAccount } from '../wallet/passkeys';
@@ -191,10 +210,21 @@ export function WcApprovalSheet({
     overrideSimulation: boolean,
     connectAs?: ConnectAs,
     signer?: MessageSigner,
+    /** The WalletConnect Verify risk switch (required for scam / mismatch). */
+    identityAcknowledged?: boolean,
   ) => void;
   onReject: () => void;
 }) {
   const theme = useTheme();
+  // WalletConnect Verify (N-06): scam-flagged or origin-mismatched items
+  // need this switch before any approve button works. Cleared per item.
+  const [identityAck, setIdentityAck] = useState(false);
+  const [identityKey, setIdentityKey] = useState(item.key);
+  if (identityKey !== item.key) {
+    setIdentityKey(item.key);
+    setIdentityAck(false);
+  }
+  const approveLocked = !identityApprovalAllowed(item.identity, identityAck);
   const [messageSigner, setMessageSigner] = useState<MessageSigner>('owner');
   const [txQuote, setTxQuote] = useState<TxQuoteState | null>(null);
   const [overrideSimulation, setOverrideSimulation] = useState(false);
@@ -390,6 +420,7 @@ export function WcApprovalSheet({
     <View style={styles.backdrop}>
       <View style={[styles.card, { backgroundColor: theme.background, borderColor: theme.border }]}>
         <ScrollView key={item.key} contentContainerStyle={styles.content}>
+          <IdentityBanner identity={item.identity} acknowledged={identityAck} setAcknowledged={setIdentityAck} theme={theme} />
           {item.type === 'proposal' ? (
             <ProposalBody
               event={item.event}
@@ -400,7 +431,8 @@ export function WcApprovalSheet({
               busy={busy}
               activeChain={evmChain.caip2}
               smartOption={smartOption}
-              onApprove={(connectAs) => onApprove(null, false, connectAs)}
+              approveLocked={approveLocked}
+              onApprove={(connectAs) => onApprove(null, false, connectAs, undefined, identityAck)}
               onReject={onReject}
             />
           ) : (
@@ -419,7 +451,8 @@ export function WcApprovalSheet({
               setPermissionGrant={setPermissionGrant}
               messageSigner={messageSigner}
               setMessageSigner={setMessageSigner}
-              onApprove={() => onApprove(txQuote, overrideSimulation, undefined, messageSigner)}
+              approveLocked={approveLocked}
+              onApprove={() => onApprove(txQuote, overrideSimulation, undefined, messageSigner, identityAck)}
               onReject={onReject}
             />
           )}
@@ -438,6 +471,7 @@ function ProposalBody({
   busy,
   activeChain,
   smartOption,
+  approveLocked,
   onApprove,
   onReject,
 }: {
@@ -450,6 +484,8 @@ function ProposalBody({
   /** CAIP-2 id of the active EVM chain (mainnet or Sepolia test mode). */
   activeChain: string;
   smartOption: () => Promise<SmartAccountOption | null>;
+  /** True while the WalletConnect Verify risk switch is required and off. */
+  approveLocked: boolean;
   onApprove: (connectAs: ConnectAs) => void;
   onReject: () => void;
 }) {
@@ -593,7 +629,7 @@ function ProposalBody({
           <Button
             title="Approve connection"
             onPress={() => onApprove(asSmart ? 'smart' : 'eoa')}
-            disabled={smart === undefined}
+            disabled={smart === undefined || approveLocked}
           />
           <Button title="Reject" variant="secondary" onPress={onReject} />
         </>
@@ -619,10 +655,11 @@ function RequestBody({
   setPermissionGrant,
   messageSigner,
   setMessageSigner,
+  approveLocked,
   onApprove,
   onReject,
 }: {
-  item: { event: WcRequestEvent; parsed: ParsedWcRequest };
+  item: { event: WcRequestEvent; parsed: ParsedWcRequest; address: string };
   /** Set for a smart-account session. */
   smart: WcSmartBinding | null;
   dappName: string;
@@ -641,6 +678,8 @@ function RequestBody({
   /** Message requests on Kernel smart-account sessions: owner key (default) or passkey. */
   messageSigner: MessageSigner;
   setMessageSigner: (signer: MessageSigner) => void;
+  /** True while the WalletConnect Verify risk switch is required and off. */
+  approveLocked: boolean;
   onApprove: () => void;
   onReject: () => void;
 }) {
@@ -659,6 +698,7 @@ function RequestBody({
         txQuote={txQuote}
         grant={permissionGrant ?? parsed.grant}
         setGrant={setPermissionGrant}
+        approveLocked={approveLocked}
         onApprove={onApprove}
         onReject={onReject}
       />
@@ -692,7 +732,7 @@ function RequestBody({
           <ActivityIndicator color={theme.accent} />
         ) : (
           <>
-            <Button title="Sign" onPress={onApprove} />
+            <Button title="Sign" onPress={onApprove} disabled={approveLocked} />
             <Button title="Reject" variant="secondary" onPress={onReject} />
           </>
         )}
@@ -707,6 +747,8 @@ function RequestBody({
         <Text style={[styles.modalTitle, { color: theme.text }]}>Sign typed data</Text>
         <Field label="From dApp" value={dappName} theme={theme} />
         {accountLabel ? <Field label="Signing account" value={accountLabel} theme={theme} /> : null}
+        <TypedDataSummaryCard typedData={typedData} signer={item.address} evmChain={evmChain} theme={theme} />
+        <Text style={[styles.fieldLabel, { color: theme.textMuted }]}>Exactly what is signed</Text>
         {typedData.domain.name ? (
           <Field label="Signing domain" value={typedData.domain.name} theme={theme} />
         ) : null}
@@ -738,7 +780,7 @@ function RequestBody({
           <ActivityIndicator color={theme.accent} />
         ) : (
           <>
-            <Button title="Sign" onPress={onApprove} />
+            <Button title="Sign" onPress={onApprove} disabled={approveLocked} />
             <Button title="Reject" variant="secondary" onPress={onReject} />
           </>
         )}
@@ -757,6 +799,7 @@ function RequestBody({
         busy={busy}
         evmChain={evmChain}
         txQuote={txQuote}
+        approveLocked={approveLocked}
         onApprove={onApprove}
         onReject={onReject}
       />
@@ -850,7 +893,7 @@ function RequestBody({
         <ActivityIndicator color={theme.accent} />
       ) : (
         <>
-          <Button title="Approve & send" onPress={onApprove} disabled={approveBlocked} />
+          <Button title="Approve & send" onPress={onApprove} disabled={approveBlocked || approveLocked} />
           <Button title="Reject" variant="secondary" onPress={onReject} />
         </>
       )}
@@ -992,6 +1035,7 @@ function SmartAccountTxBody({
   busy,
   evmChain,
   txQuote,
+  approveLocked,
   onApprove,
   onReject,
 }: {
@@ -1003,6 +1047,7 @@ function SmartAccountTxBody({
   busy: boolean;
   evmChain: EvmChainProfile;
   txQuote: TxQuoteState | null;
+  approveLocked: boolean;
   onApprove: () => void;
   onReject: () => void;
 }) {
@@ -1135,7 +1180,7 @@ function SmartAccountTxBody({
         <ActivityIndicator color={theme.accent} />
       ) : (
         <>
-          <Button title={batch ? 'Approve & send batch' : 'Approve & send'} onPress={onApprove} disabled={!ready} />
+          <Button title={batch ? 'Approve & send batch' : 'Approve & send'} onPress={onApprove} disabled={!ready || approveLocked} />
           <Button title="Reject" variant="secondary" onPress={onReject} />
         </>
       )}
@@ -1162,6 +1207,7 @@ function PermissionRequestBody({
   txQuote,
   grant,
   setGrant,
+  approveLocked,
   onApprove,
   onReject,
 }: {
@@ -1175,6 +1221,7 @@ function PermissionRequestBody({
   txQuote: TxQuoteState | null;
   grant: SessionKeyGrant;
   setGrant: (grant: SessionKeyGrant) => void;
+  approveLocked: boolean;
   onApprove: () => void;
   onReject: () => void;
 }) {
@@ -1294,11 +1341,164 @@ function PermissionRequestBody({
         <ActivityIndicator color={theme.accent} />
       ) : (
         <>
-          <Button title="Grant & install" onPress={onApprove} disabled={!ready} />
+          <Button title="Grant & install" onPress={onApprove} disabled={!ready || approveLocked} />
           <Button title="Decline" variant="secondary" onPress={onReject} />
         </>
       )}
     </>
+  );
+}
+
+/**
+ * WalletConnect Verify result (threat-model N-06; see walletconnect.ts
+ * describeVerifyContext). Verified origins get a calm line; everything else
+ * uses the warning style, and scam / mismatch add the explicit risk switch
+ * that unlocks the approve buttons (same pattern as the simulation
+ * override).
+ */
+function IdentityBanner({
+  identity,
+  acknowledged,
+  setAcknowledged,
+  theme,
+}: {
+  identity: WcDappIdentity;
+  acknowledged: boolean;
+  setAcknowledged: (v: boolean) => void;
+  theme: Theme;
+}) {
+  if (identity.status === 'verified') {
+    return <Text style={[styles.simulationOk, { color: theme.success }]}>{identity.message}</Text>;
+  }
+  return (
+    <>
+      <WarningBox>{identity.message}</WarningBox>
+      {identity.requiresAcknowledgement ? (
+        <View style={styles.overrideRow}>
+          <Switch value={acknowledged} onValueChange={setAcknowledged} />
+          <Text style={[styles.overrideLabel, { color: theme.text }]}>{IDENTITY_RISK_SWITCH_LABEL}</Text>
+        </View>
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * Decoded summary of an EIP-712 request (threat-model N-07; logic in
+ * wallet/typed-data-summary.ts). Informational only: it never blocks or
+ * unblocks signing, and the full raw message stays below it. Spenders are
+ * shown with the contacts exact-match rule (RecipientContactNotice: name
+ * plus full address for an exact match, the look-alike warning otherwise)
+ * and checked with the engine's classifyRecipient on the active chain's
+ * endpoint; a failed lookup raises nothing.
+ */
+function TypedDataSummaryCard({
+  typedData,
+  signer,
+  evmChain,
+  theme,
+}: {
+  typedData: WcTypedData;
+  signer: string;
+  evmChain: EvmChainProfile;
+  theme: Theme;
+}) {
+  const { hideAmounts } = usePrefs();
+  const [tracked, setTracked] = useState<TrackedTokenRef[]>([]);
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [classes, setClasses] = useState<Record<string, RecipientClass | null>>({});
+  const [nowSec] = useState(() => Math.floor(Date.now() / 1000));
+
+  useEffect(() => {
+    let cancelled = false;
+    listTokens().then(
+      (list) => {
+        if (!cancelled) setTracked(list);
+      },
+      () => undefined,
+    );
+    listContacts(evmChain.caip2).then(
+      (list) => {
+        if (!cancelled) setContacts(list);
+      },
+      () => undefined,
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [evmChain.caip2]);
+
+  const summary: TypedDataSummary = useMemo(
+    () =>
+      summarizeTypedData(typedData, {
+        signer,
+        nowSec,
+        chainCaip2: evmChain.caip2,
+        trackedTokens: tracked,
+        hidden: hideAmounts,
+      }),
+    [typedData, signer, nowSec, evmChain.caip2, tracked, hideAmounts],
+  );
+
+  const spenderKey = summary.spenders.join(',');
+  useEffect(() => {
+    if (!spenderKey) return;
+    let cancelled = false;
+    (async () => {
+      const endpoint = await getEndpoint(EVM_CHAIN_ID);
+      const out: Record<string, RecipientClass | null> = {};
+      if (!endpoint?.url) return out;
+      const transport = simulationTransport(endpoint.url);
+      for (const spender of spenderKey.split(',')) {
+        try {
+          out[spender.toLowerCase()] = await classifyRecipient(transport, spender);
+        } catch {
+          out[spender.toLowerCase()] = null;
+        }
+      }
+      return out;
+    })().then(
+      (result) => {
+        if (!cancelled) setClasses(result);
+      },
+      () => undefined,
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [spenderKey, evmChain.caip2]);
+
+  const networkWarnings = spenderRiskWarnings(summary.spenders, classes);
+  return (
+    <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border, gap: 10 }]}>
+      <Text style={[styles.summaryTitle, { color: theme.text }]}>{summary.title}</Text>
+      <Text style={[styles.hint, { color: theme.text }]}>{summary.explanation}</Text>
+      {summary.rows.map((row, i) => (
+        <View key={`${i}-${row.label}`} style={[styles.fieldRow, { borderColor: theme.border }]}>
+          <Text style={[styles.fieldLabel, { color: theme.textMuted }]}>{row.label}</Text>
+          <Text
+            selectable
+            style={[
+              styles.fieldValue,
+              { color: row.emphasis ? theme.danger : theme.text },
+              row.mono ? { fontFamily: mono, fontSize: 13 } : null,
+            ]}
+          >
+            {row.value}
+          </Text>
+        </View>
+      ))}
+      {summary.spenders.map((spender) => (
+        <RecipientContactNotice
+          key={spender}
+          match={matchRecipient(evmChain.caip2, spender, contacts)}
+          address={spender}
+        />
+      ))}
+      {[...summary.warnings, ...networkWarnings].map((w) => (
+        <WarningBox key={w}>{w}</WarningBox>
+      ))}
+    </View>
   );
 }
 
@@ -1367,6 +1567,10 @@ const styles = StyleSheet.create({
   },
   modalTitle: {
     fontSize: 20,
+    fontWeight: '700',
+  },
+  summaryTitle: {
+    fontSize: 16,
     fontWeight: '700',
   },
   fieldRow: {
