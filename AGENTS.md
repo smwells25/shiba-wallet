@@ -4760,3 +4760,93 @@ emulator, 6 after. Subagents on Opus.
       Nothing signed. Emulator lesson: never press BACK in a loop without
       checking the screen — three blind presses left the app for the
       launcher twice this session.
+- [x] Item 6 findings fixed (commit above; check-approvals 147,
+      check-readiness 156, check-devmode 195, check-failover 128,
+      check-token-send 47, check-token-history 49; offline runner ALL
+      GREEN in the CTO's worktree, app 3,639 checks). F1: tokens.ts
+      KNOWN_TEST_NETWORK_TOKENS (Sepolia USDC 0x1c7D…7238, Sepolia EURC
+      0x0821…94D4, Base Sepolia USDC 0x036CbD53842c5426634e7929541eC2318f3dCF7e
+      — Circle's USDC/EURC contract-address pages, live symbol/decimals
+      reads; EURC has no Base Sepolia entry) scanned by approvals.ts next
+      to the tracked store (the tracked store stays mainnet-only because
+      Home, Activity, Swap, Send, the WC sheet and the preview assume
+      mainnet assets — reason written in tokens.ts); the empty-state copy
+      never asks for an indexer that is configured. F2: first-interaction
+      searches the known tokens too and, with an indexer, one
+      alchemy_getAssetTransfers query for native ETH (from the wallet,
+      external + internal, matched in the app); when nothing can be
+      searched the card says so; contract age probes shallower depths
+      (16,384 → 32 blocks) when the 50,400-block search is refused, warns
+      on a young contract (the 150-block case is a test) and otherwise
+      says "Contract age could not be checked on this endpoint" plus the
+      served depth; every send to an address with an endpoint gets a
+      recipient line (contract / regular account / could not be checked)
+      — the card is now shown on every EOA send and WC transaction,
+      noisier by design; approxDuration uses 2 s blocks on Base Sepolia.
+      F3: GasEstimateRevertError → "The quote could not be prepared." (==
+      aa.ts QUOTE_FAILED_TITLE) with "The recipient contract rejected a
+      plain ETH transfer during estimation (execution reverted). Nothing
+      was sent." F4/F9: endpoint-probe sanitizeEndpointMessage (code +
+      first sentence, strips Java class names, "Get one at…" and URLs)
+      used by the approvals note, the token-history detail and
+      describeNetworkFailure → {title, detail, technical}; the
+      TechnicalDetail component ("Technical detail: …", accessible) on
+      Approvals and NFTs; "Search older with another endpoint" re-runs a
+      refused window through the next default candidate (never around an
+      override; stops when that one refuses too). F6: readiness.ts stays
+      pure — readinessDisplayReason(feature, protected | unprotected |
+      unknown) swaps the shared PLAIN_BLOCKERS clause; Settings derives
+      the state from storageProtection(); checklist ids moved to a
+      collapsed "Details for reviewers" line. F7: Settings route param
+      `section` (network-endpoints | history-indexer | nft-indexer) with
+      remembered positions; NFTs' button is "Open NFT indexer settings".
+      F10: every Clear / Reset to default asks first. D1: palettes moved
+      to src/theme-palette.ts (tested) with onAccent / onDanger /
+      testnetFill / onTestnetFill; dark mode uses dark text (#101216) on
+      the orange: primary buttons 2.34 → 8.02:1, destructive 3.49 → 5.38,
+      TESTNET badge 3.06 → 6.12 (WCAG 2.2 SC 1.4.3); light mode unchanged.
+      A1/A2: switches and choice buttons announce role and state; ⚠ / ⓘ
+      hidden with "Warning:" / "Note:" prefixes; "—" reads "not
+      available". LEFT OPEN: light-mode contrast still fails 4.5:1 (white
+      on accent 3.11, white on TESTNET orange 3.06, orange text 2.86,
+      accent text 2.90) — a product decision on the light palette; the
+      hard-coded white-on-#e07800 TESTNET badges in Swap, Passkey,
+      UpgradeAccount, Sessions, RecoveryViews and WcApprovalSheet (switch
+      to theme.testnetFill / onTestnetFill); Activity, Swap, Connections
+      and Tokens do not yet show the technical line; the native-ETH
+      search is fake-tested only; F5 (WETH Deposit events), F8 (gallery
+      ignores the smart account), F11 (Home links shift after async
+      loads) and A3 (Activity header) not addressed. Not re-run on the
+      emulator.
+
+## Phase 11 status (2026-10-03, end of the autonomous run)
+
+Items 1 to 6 are landed and pushed, CI green on every push. Proven live
+this phase: in-app counterfactual Kernel deployment through ZeroDev
+(item 2). Built and verified offline: SIWE summaries with the
+domain-mismatch gate and the Prove-ownership screen (item 3, eyeballed
+on the emulator), activity sentences from a real transaction decoder
+(item 4), Base layer-1 data fees, the bundler chain-id check and the
+Base entries (item 5), the spending-limit engine with its
+hook-incompatibility finding (item 1 — on-chain limits cannot be offered
+honestly; the app-side policy screen is not started), and the fixes
+from the emulator pass (item 6). Engine: 691 tests. App: 34 offline
+suites, 3,639 checks, lint 0, tsc clean. The shareable feature page is
+at version 6 (31 proven live, 15 built).
+
+Findings for the Chairperson gathered this phase: ZeroDev's spending
+limit hook is incompatible with Kernel >= 3.1 (adds to the disclosure
+decision); the emulator's Sepolia bundler had been Alchemy, not ZeroDev,
+until item 2 switched it; light-mode button contrast is below WCAG AA.
+
+Waiting on inputs: Base Sepolia test ETH at the dev EOA for the live
+Kernel deployment there (CHAIN_ID=84532 kernel-smoke.mjs); the ZeroDev
+gas policy for live sponsorship; a physical phone / Expo account for the
+device track; the ZeroDev disclosure decision (now three findings).
+
+Follow-ups (no inputs): the app-side spending policy screen; light-mode
+palette contrast; the remaining hard-coded TESTNET badges; technical
+detail lines on Activity/Swap/Connections/Tokens; F5, F8, F11, A3; a
+live SIWE login with a real dApp; the WcApprovalSheet L1-fee line and
+the 7702 set-code L1 fee on Base; Base copy leftovers; the two
+unreasoned eslint disables in WcApprovalSheet.
