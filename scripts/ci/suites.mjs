@@ -32,6 +32,7 @@ export const APP_SCRIPTS = {
   'check-nfts.mjs': { kind: 'offline', summary: 'counts' },
   'check-passkeys.mjs': { kind: 'offline', summary: 'counts' },
   'check-qr.mjs': { kind: 'offline', summary: 'counts' },
+  'check-readiness.mjs': { kind: 'offline', summary: 'counts' },
   'check-recovery.mjs': { kind: 'offline', summary: 'counts' },
   'check-sessions.mjs': { kind: 'offline', summary: 'counts' },
   'check-simulation.mjs': { kind: 'offline', summary: 'counts' },

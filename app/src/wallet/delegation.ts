@@ -11,6 +11,7 @@ import {
   signEip7702Transaction,
   type JsonRpcTransport,
 } from '@shiba-wallet/chains-evm';
+import { assertFeatureAllowed, eip155Caip2 } from '../config/readiness.ts';
 
 /**
  * EIP-7702 "Upgrade this account" glue for the app (phase 8 item 1, app
@@ -318,6 +319,10 @@ export async function prepareSetCodeTx(options: {
   expectedChainId: bigint;
   transportFor?: TransportFactory;
 }): Promise<SetCodeQuote> {
+  // Mainnet readiness (config/readiness.ts): an upgrade is refused before
+  // any request where it is not allowed. A revocation is never gated, so an
+  // upgrade made earlier can always be undone.
+  if (options.action === 'upgrade') assertFeatureAllowed('eip7702-upgrade', eip155Caip2(options.expectedChainId));
   const node = (options.transportFor ?? httpTransport)(options.url);
   const client = new NodeClient(node);
   const chainId = await client.chainId();
@@ -391,6 +396,12 @@ export async function sendSetCodeTx(
   explorerTxBase: string | null,
   options: { transportFor?: TransportFactory } = {},
 ): Promise<{ txid: string; explorerUrl: string | null }> {
+  // Mainnet readiness: checked again before signing. Only a tuple naming the
+  // zero address (a revocation) passes on a gated network, whatever the
+  // quote's action field says.
+  if (quote.action === 'upgrade' || quote.delegate.toLowerCase() !== ZERO_ADDRESS.toLowerCase()) {
+    assertFeatureAllowed('eip7702-upgrade', eip155Caip2(quote.chainId));
+  }
   if (signer.address.toLowerCase() !== quote.from.toLowerCase()) {
     throw new Error(
       `This signer is ${signer.address}, but the transaction was prepared for ${quote.from}. ` +

@@ -90,6 +90,9 @@ seed.fill(0);
 const MAINNET = 'eip155:1';
 const SEPOLIA = 'eip155:11155111';
 const NODE_URL = 'https://node.example';
+// Smart accounts are configurable only on test networks (phase 9 item 6),
+// so the Kernel save path is exercised against a fake Sepolia node.
+const sepNode = (opts = {}) => fakeKernelNode({ chainIdHex: '0xaa36a7', ...opts });
 const BUNDLER_URL = 'https://bundler.example';
 
 // ---------------------------------------------------------------------------
@@ -117,12 +120,12 @@ console.log('check-aa-kernel: Kernel verify-before-save');
 // ---------------------------------------------------------------------------
 {
   const store = memoryStore();
-  await setAaBundlerUrl(MAINNET, BUNDLER_URL, { store, transportFor: () => fakeBundler() });
-  const result = await setAaKernelFactory(MAINNET, KERNEL_PREFILL.factory, NODE_URL, {
+  await setAaBundlerUrl(SEPOLIA, BUNDLER_URL, { store, transportFor: () => fakeBundler() });
+  const result = await setAaKernelFactory(SEPOLIA, KERNEL_PREFILL.factory, NODE_URL, {
     store,
-    transportFor: () => fakeKernelNode(),
+    transportFor: () => sepNode(),
   });
-  const cfg = await getAaConfig(MAINNET, store);
+  const cfg = await getAaConfig(SEPOLIA, store);
   check('Kernel factory saves after every on-chain check passes', cfg.accountType === 'kernel-v3.3' && same(cfg.factory, KERNEL_V3_3.factory));
   check('implementation, meta factory, validator and accountId recorded', same(cfg.factoryImplementation, KERNEL_V3_3.implementation) && same(cfg.kernelMetaFactory, KERNEL_V3_3.metaFactory) && same(cfg.kernelValidator, KERNEL_V3_3.ecdsaValidator) && cfg.kernelAccountId === 'kernel.advanced.v0.3.3' && result.accountId === 'kernel.advanced.v0.3.3');
   check('Kernel config with a bundler counts as configured', isAaConfigured(cfg));
@@ -142,23 +145,23 @@ console.log('check-aa-kernel: Kernel verify-before-save');
     }
     throw new Error(`unexpected ${method}`);
   };
-  await setAaFactory(MAINNET, SIMPLE_FACTORY, NODE_URL, { store, transportFor: () => simpleNode });
-  const switched = await getAaConfig(MAINNET, store);
+  await setAaFactory(SEPOLIA, SIMPLE_FACTORY, NODE_URL, { store, transportFor: () => simpleNode });
+  const switched = await getAaConfig(SEPOLIA, store);
   check('saving a SimpleAccountFactory switches the type and clears the Kernel fields', switched.accountType === 'simple' && switched.kernelMetaFactory === null && switched.kernelValidator === null && switched.kernelAccountId === null);
-  await clearAaFactory(MAINNET, store);
-  const cleared = await getAaConfig(MAINNET, store);
+  await clearAaFactory(SEPOLIA, store);
+  const cleared = await getAaConfig(SEPOLIA, store);
   check('clearing the factory clears the type too', cleared.factory === null && cleared.accountType === 'simple' && !isAaConfigured(cleared));
 
   // Legacy (pre-phase-7) stored entry without a type reads as SimpleAccount.
   const legacy = memoryStore();
-  await legacy.setItem('shiba-wallet.aa-config.v1', JSON.stringify({ [MAINNET]: { bundlerUrl: BUNDLER_URL, factory: SIMPLE_FACTORY } }));
-  const legacyCfg = await getAaConfig(MAINNET, legacy);
+  await legacy.setItem('shiba-wallet.aa-config.v1', JSON.stringify({ [SEPOLIA]: { bundlerUrl: BUNDLER_URL, factory: SIMPLE_FACTORY } }));
+  const legacyCfg = await getAaConfig(SEPOLIA, legacy);
   check('a stored config without accountType reads as simple (backward compatible)', legacyCfg.accountType === 'simple' && isAaConfigured(legacyCfg));
 
   // Every refusal persists nothing.
   const rejectStore = memoryStore();
   const cases = [
-    ['wrong chain id on the RPC endpoint', { chainIdHex: '0xaa36a7' }, 'expected 1'],
+    ['wrong chain id on the RPC endpoint', { chainIdHex: '0x1' }, 'expected 11155111'],
     ['KernelFactory without code', { codeAt: { [KERNEL_V3_3.factory.toLowerCase()]: false } }, 'KernelFactory'],
     ['implementation without code', { codeAt: { [KERNEL_V3_3.implementation.toLowerCase()]: false } }, 'Kernel implementation'],
     ['ECDSA validator without code', { codeAt: { [KERNEL_V3_3.ecdsaValidator.toLowerCase()]: false } }, 'ECDSA validator'],
@@ -172,22 +175,30 @@ console.log('check-aa-kernel: Kernel verify-before-save');
   for (const [name, opts, part] of cases) {
     await checkRejects(
       `refused: ${name}`,
-      () => setAaKernelFactory(MAINNET, KERNEL_PREFILL.factory, NODE_URL, { store: rejectStore, transportFor: () => fakeKernelNode(opts) }),
+      () => setAaKernelFactory(SEPOLIA, KERNEL_PREFILL.factory, NODE_URL, { store: rejectStore, transportFor: () => sepNode(opts) }),
       part,
     );
   }
   await checkRejects(
     'refused before any RPC: bad EIP-55 checksum',
-    () => setAaKernelFactory(MAINNET, '0x2577507b78c2008Ff367261CB6285d44ba5eF2e9', NODE_URL, { store: rejectStore, transportFor: () => fakeKernelNode() }),
+    () => setAaKernelFactory(SEPOLIA, '0x2577507b78c2008Ff367261CB6285d44ba5eF2e9', NODE_URL, { store: rejectStore, transportFor: () => sepNode() }),
     'checksum',
   );
-  const after = await getAaConfig(MAINNET, rejectStore);
+  const after = await getAaConfig(SEPOLIA, rejectStore);
   check('every refused Kernel save persisted nothing', after.factory === null && after.kernelValidator === null && (await rejectStore.getItem('shiba-wallet.aa-config.v1')) === null);
 
-  // Sepolia: same pinned addresses, chain id 11155111 checked.
-  const sepStore = memoryStore();
-  await setAaKernelFactory(SEPOLIA, KERNEL_PREFILL.factory, NODE_URL, { store: sepStore, transportFor: () => fakeKernelNode({ chainIdHex: '0xaa36a7' }) });
-  check('Sepolia Kernel config saves under eip155:11155111 with the same pinned factory', (await getAaConfig(SEPOLIA, sepStore)).accountType === 'kernel-v3.3' && (await getAaConfig(MAINNET, sepStore)).factory === null);
+  // Mainnet: the Kernel account is 'testnet-only' in the readiness table
+  // (src/config/readiness.ts), so the same save is refused before any RPC
+  // and persists nothing, while Sepolia keeps working (above).
+  let mainnetRequests = 0;
+  const mainStore = memoryStore();
+  await checkRejects(
+    'mainnet Kernel factory save refused with the readiness reason',
+    () => setAaKernelFactory(MAINNET, KERNEL_PREFILL.factory, NODE_URL, { store: mainStore, transportFor: () => { mainnetRequests += 1; return fakeKernelNode(); } }),
+    'only on test networks',
+  );
+  check('the refused mainnet save made no request and persisted nothing', mainnetRequests === 0 && (await mainStore.getItem('shiba-wallet.aa-config.v1')) === null);
+  check('the Sepolia Kernel config never appears under the mainnet key', (await getAaConfig(MAINNET, store)).factory === null);
 }
 
 // ---------------------------------------------------------------------------

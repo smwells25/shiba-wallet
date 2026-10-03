@@ -197,7 +197,13 @@ const ZERO = '0x0000000000000000000000000000000000000000';
 const HOOK_ONLY_ENTRYPOINT = '0xFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF';
 const LIST_END = '0xffffffffffffffffffffffffffffffffffffffff';
 const ERC1967_SLOT = '0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc';
-const M = 'eip155:1';
+// Guardians, guardian recovery and owner changes are 'testnet-only' in the
+// mainnet readiness table (src/config/readiness.ts, phase 9 item 6), so
+// every flow here runs on Sepolia; the mainnet refusals are checked at the
+// end and in check-readiness.mjs. (The record-file section keeps mainnet
+// records: export and import are not gated.)
+const M = 'eip155:11155111';
+const CHAIN_ID = 11155111n;
 const W = KERNEL_RECOVERY_MODULES.weightedEcdsaValidator;
 const RA = KERNEL_RECOVERY_MODULES.recoveryAction;
 const VALIDATOR = KERNEL_V3_3.ecdsaValidator;
@@ -225,7 +231,7 @@ const wB = new ethers.Wallet('0x' + '22'.repeat(32));
  * transaction plumbing (estimate, nonce, raw broadcast, receipts, logs).
  * State is changed by the test to emulate inclusion.
  */
-function fakeGuardianNode({ chainIdHex = '0x1' } = {}) {
+function fakeGuardianNode({ chainIdHex = '0xaa36a7' } = {}) {
   const accounts = new Map(); // lower address -> state
   const calls = [];
   const raw = [];
@@ -343,7 +349,7 @@ function kernelBundle(node, bundler, { accountType = 'kernel-v3.3', recoveredAcc
     nodeUrl: 'https://node.example',
     bundlerUrl: 'https://bundler.example',
     factory: KERNEL_V3_3.factory,
-    chainId: 1n,
+    chainId: CHAIN_ID,
     accountIndex: 0,
     accountType,
     ...(recoveredAccount ? { recoveredAccount } : {}),
@@ -444,9 +450,9 @@ console.log('check-recovery: recovery metadata (create / export / import / verif
   check('reset makes the store usable again', (await saveRecoveryMetadata(meta, corrupt)).metadata.account === ACCOUNT);
 
   // Rebuild from the original owner (restore without a backup).
-  const rebuilt = rebuildRecoveryRecord({ chainId: 1n, account: ACCOUNT, originalOwner: OWNER_0, recordedAt: 1 });
+  const rebuilt = rebuildRecoveryRecord({ chainId: CHAIN_ID, account: ACCOUNT, originalOwner: OWNER_0, recordedAt: 1 });
   check('rebuild without a known index finds index 0', rebuilt.deployment.index === '0' && rebuilt.account === ACCOUNT);
-  const rebuildErr = await caught(() => rebuildRecoveryRecord({ chainId: 1n, account: ACCOUNT, originalOwner: newOwner.address, recordedAt: 1 }));
+  const rebuildErr = await caught(() => rebuildRecoveryRecord({ chainId: CHAIN_ID, account: ACCOUNT, originalOwner: newOwner.address, recordedAt: 1 }));
   check('rebuild with the wrong original owner is refused', rebuildErr && /at any index from 0 to 49/.test(rebuildErr.message));
 }
 
@@ -466,7 +472,7 @@ console.log('check-recovery: first-use listener (aa.ts send fan-out)');
   const s2 = memoryStore();
   await recoveryRecordListener(s2)({ bundle: kernelBundle(node, bundler, { accountType: 'kernel-7702' }), owner: { address: OWNER_0, path: owner.path }, quote: { sender: OWNER_0 }, userOpHash: '0x' + 'ab'.repeat(32) });
   check('EIP-7702 bundle → no record (no CREATE2 lineage; guardians cannot protect it)', (await loadRecoveryRecords(s2)).entries.length === 0);
-  await recoveryRecordListener(s2)({ bundle: createAaClient({ nodeUrl: 'n', bundlerUrl: 'bundler', factory: '0x91E60e0613810449d098b0b5Ec8b51A0FE8c8985', chainId: 1n, transportFor: () => node }), owner: { address: OWNER_0, path: owner.path }, quote: { sender: ACCOUNT }, userOpHash: '0x' + 'ab'.repeat(32) });
+  await recoveryRecordListener(s2)({ bundle: createAaClient({ nodeUrl: 'n', bundlerUrl: 'bundler', factory: '0x91E60e0613810449d098b0b5Ec8b51A0FE8c8985', chainId: CHAIN_ID, transportFor: () => node }), owner: { address: OWNER_0, path: owner.path }, quote: { sender: ACCOUNT }, userOpHash: '0x' + 'ab'.repeat(32) });
   check('SimpleAccount bundle → no record', (await loadRecoveryRecords(s2)).entries.length === 0);
   await recoveryRecordListener(s2)({ bundle: kernelBundle(node, bundler, { recoveredAccount: ACCOUNT }), owner: { address: OWNER_0, path: owner.path }, quote: { sender: ACCOUNT }, userOpHash: '0x' + 'ab'.repeat(32) });
   check('recovered-account bundle → no new record (it is attached with its own)', (await loadRecoveryRecords(s2)).entries.length === 0);
@@ -483,7 +489,7 @@ console.log('check-recovery: eligibility refusals');
   check('deployed Kernel v3.3 account owned by this EOA → eligible, guardians not installed', ok.ok && ok.account === ACCOUNT && ok.kind === 'factory' && ok.state.validatorInitialized === false, JSON.stringify(ok, (k, v) => (typeof v === 'bigint' ? v.toString() : v)));
   const undeployed = await resolveGuardianAccount(kernelBundle(fakeGuardianNode(), bundler), OWNER_0);
   check('undeployed Kernel account → refusal', !undeployed.ok && undeployed.reason === GUARDIAN_UNDEPLOYED_REFUSAL);
-  const simple = createAaClient({ nodeUrl: 'n', bundlerUrl: 'bundler', factory: '0x91E60e0613810449d098b0b5Ec8b51A0FE8c8985', chainId: 1n, transportFor: (u) => (u.includes('bundler') ? bundler : deployed) });
+  const simple = createAaClient({ nodeUrl: 'n', bundlerUrl: 'bundler', factory: '0x91E60e0613810449d098b0b5Ec8b51A0FE8c8985', chainId: CHAIN_ID, transportFor: (u) => (u.includes('bundler') ? bundler : deployed) });
   const s = await resolveGuardianAccount(simple, OWNER_0);
   check('SimpleAccount → refusal', !s.ok && s.reason === GUARDIAN_SIMPLE_REFUSAL);
   const delegated = fakeGuardianNode();
@@ -605,7 +611,7 @@ let installedRecordStore;
     submit: (q) => sendAa(bundle, owner, q),
   });
   const sent = bundler.lastOp;
-  const signer = ethers.verifyMessage(ethers.getBytes(toHex(getUserOpHash({ ...sent, nonce: BigInt(sent.nonce), callData: toBytes(sent.callData), callGasLimit: BigInt(sent.callGasLimit), verificationGasLimit: BigInt(sent.verificationGasLimit), preVerificationGas: BigInt(sent.preVerificationGas), maxFeePerGas: BigInt(sent.maxFeePerGas), maxPriorityFeePerGas: BigInt(sent.maxPriorityFeePerGas), signature: toBytes(sent.signature) }, ENTRYPOINT_V07, 1n))), sent.signature);
+  const signer = ethers.verifyMessage(ethers.getBytes(toHex(getUserOpHash({ ...sent, nonce: BigInt(sent.nonce), callData: toBytes(sent.callData), callGasLimit: BigInt(sent.callGasLimit), verificationGasLimit: BigInt(sent.verificationGasLimit), preVerificationGas: BigInt(sent.preVerificationGas), maxFeePerGas: BigInt(sent.maxFeePerGas), maxPriorityFeePerGas: BigInt(sent.maxPriorityFeePerGas), signature: toBytes(sent.signature) }, ENTRYPOINT_V07, CHAIN_ID))), sent.signature);
   check('install op signed by the OWNER key (EIP-191 over the userOpHash, recovered by ethers)', same(signer, OWNER_0) && typeof userOpHash === 'string' && entry.metadata.guardians.guardians.some((g) => g.label === 'Alice'));
   node.get(ACCOUNT).guardians = set;
   const fin = await finalizeGuardianOperation({ bundle, userOpHash, chain: M, account: ACCOUNT, kind: 'install', store, timeoutMs: 1000, pollMs: 1 });
@@ -651,9 +657,9 @@ console.log('check-recovery: recovery on a new wallet (no delay)');
 {
   const node = fakeGuardianNode();
   node.add(ACCOUNT, { owner: OWNER_0, guardians: set2of2(0) });
-  const start = await prepareRecoveryStart(node, { chainId: 1n, account: ACCOUNT.toLowerCase(), newOwner: newOwner.address });
+  const start = await prepareRecoveryStart(node, { chainId: CHAIN_ID, account: ACCOUNT.toLowerCase(), newOwner: newOwner.address });
   const nonce = guardianNonceKey() << 64n;
-  const engineRequest = buildGuardianRecoveryRequest({ chainId: 1n, account: ACCOUNT, newOwner: newOwner.address, nonce, guardians: set2of2(0).guardians });
+  const engineRequest = buildGuardianRecoveryRequest({ chainId: CHAIN_ID, account: ACCOUNT, newOwner: newOwner.address, nonce, guardians: set2of2(0).guardians });
   check('request built from the chain equals the engine buildGuardianRecoveryRequest', start.kind === 'recoverable' && JSON.stringify(start.request) === JSON.stringify(engineRequest) && start.currentOwner === OWNER_0);
   check('doRecovery calldata equals the engine encodeRecoveryCallData', start.request.callData === toHex(encodeRecoveryCallData(newOwner.address)));
   const dec = new ethers.Interface(['function doRecovery(address validator, bytes data)']).decodeFunctionData('doRecovery', start.request.callData);
@@ -662,19 +668,19 @@ console.log('check-recovery: recovery on a new wallet (no delay)');
   // Refusals.
   const none = fakeGuardianNode();
   none.add(ACCOUNT, { owner: OWNER_0 });
-  const noGuardians = await caught(() => prepareRecoveryStart(none, { chainId: 1n, account: ACCOUNT, newOwner: newOwner.address }));
+  const noGuardians = await caught(() => prepareRecoveryStart(none, { chainId: CHAIN_ID, account: ACCOUNT, newOwner: newOwner.address }));
   check('no guardians installed → engine refusal', noGuardians && /has no active guardian recovery/.test(noGuardians.message), noGuardians?.message);
   const eoa = fakeGuardianNode();
   eoa.add(ACCOUNT, { code: '0xef0100' + KERNEL_V3_3.implementation.slice(2), owner: OWNER_0, guardians: set2of2(0) });
-  const e7702 = await caught(() => prepareRecoveryStart(eoa, { chainId: 1n, account: ACCOUNT, newOwner: newOwner.address }));
+  const e7702 = await caught(() => prepareRecoveryStart(eoa, { chainId: CHAIN_ID, account: ACCOUNT, newOwner: newOwner.address }));
   check('EIP-7702 EOA → not recoverable', e7702 && /EIP-7702-delegated EOA/.test(e7702.message));
   const impl = fakeGuardianNode();
   impl.add(ACCOUNT, { owner: OWNER_0, guardians: set2of2(0), implementation: '0x' + '12'.repeat(20) });
-  const eImpl = await caught(() => prepareRecoveryStart(impl, { chainId: 1n, account: ACCOUNT, newOwner: newOwner.address }));
+  const eImpl = await caught(() => prepareRecoveryStart(impl, { chainId: CHAIN_ID, account: ACCOUNT, newOwner: newOwner.address }));
   check('foreign implementation → not recoverable', eImpl && /implementation is/.test(eImpl.message));
-  const asGuardian = await caught(() => prepareRecoveryStart(node, { chainId: 1n, account: ACCOUNT, newOwner: gA.address }));
+  const asGuardian = await caught(() => prepareRecoveryStart(node, { chainId: CHAIN_ID, account: ACCOUNT, newOwner: gA.address }));
   check('new owner = a guardian → engine refusal', asGuardian && /must not be one of the guardians/.test(asGuardian.message));
-  const mine = await prepareRecoveryStart(node, { chainId: 1n, account: ACCOUNT, newOwner: OWNER_0 });
+  const mine = await prepareRecoveryStart(node, { chainId: CHAIN_ID, account: ACCOUNT, newOwner: OWNER_0 });
   check('already the owner → "already-owner" (attach instead)', mine.kind === 'already-owner');
 
   // Payload round trip, QR, tampering.
@@ -697,18 +703,20 @@ console.log('check-recovery: recovery on a new wallet (no delay)');
   check('typed data for other wallets hashes (ethers) to the engine approval digest', ethersDigest === start.request.approvalDigest);
 
   // Guardian side: review and approve.
-  const review = await reviewRecoveryRequest(node, { text: payload, activeChainId: 1n, guardianAddress: gA.address });
+  const review = await reviewRecoveryRequest(node, { text: payload, activeChainId: CHAIN_ID, guardianAddress: gA.address });
   check('guardian review: A is a guardian, owner and proposal read from the chain', review.guardian?.address === gA.address && review.currentOwner === OWNER_0 && review.proposal.status === 'ongoing' && review.nonceMatches);
   const { signature: sigA, payload: approvalA } = signRecoveryApproval(gA, review);
   const recovered = ethers.verifyTypedData(typed.domain, { Approve: typed.types.Approve }, typed.message, toHex(sigA));
   check('guardian approval signature recovered by ethers (EIP-712) to the guardian', recovered === wA.address && same(recovered, gA.address));
-  const outsiderReview = await reviewRecoveryRequest(node, { text: payload, activeChainId: 1n, guardianAddress: outsider.address });
+  const outsiderReview = await reviewRecoveryRequest(node, { text: payload, activeChainId: CHAIN_ID, guardianAddress: outsider.address });
   const notGuardian = await caught(() => signRecoveryApproval(outsider, outsiderReview));
   check('a non-guardian cannot sign (nothing signed)', outsiderReview.guardian === null && notGuardian && /is not a guardian/.test(notGuardian.message));
-  const wrongChain = await caught(() => reviewRecoveryRequest(node, { text: payload, activeChainId: 11155111n, guardianAddress: gA.address }));
-  check('request for another chain refused', wrongChain && /Switch networks first/.test(wrongChain.message));
-  const otherValidator = buildGuardianRecoveryRequest({ chainId: 1n, account: ACCOUNT, newOwner: newOwner.address, nonce, ecdsaValidator: W });
-  const odd = await caught(() => reviewRecoveryRequest(node, { text: encodeRecoveryRequestPayload(otherValidator), activeChainId: 1n, guardianAddress: gA.address }));
+  // A Sepolia request reviewed while the wallet is on mainnet: the
+  // readiness gate refuses first (guardians are testnet-only).
+  const wrongChain = await caught(() => reviewRecoveryRequest(node, { text: payload, activeChainId: 1n, guardianAddress: gA.address }));
+  check('request for another chain refused (mainnet: by the readiness gate)', wrongChain && /only on test networks/.test(wrongChain.message), wrongChain?.message);
+  const otherValidator = buildGuardianRecoveryRequest({ chainId: CHAIN_ID, account: ACCOUNT, newOwner: newOwner.address, nonce, ecdsaValidator: W });
+  const odd = await caught(() => reviewRecoveryRequest(node, { text: encodeRecoveryRequestPayload(otherValidator), activeChainId: CHAIN_ID, guardianAddress: gA.address }));
   check('request whose doRecovery targets a non-owner validator refused', odd?.message === REQUEST_NOT_ROOT_REFUSAL);
 
   // New wallet: collect approvals.
@@ -735,7 +743,7 @@ console.log('check-recovery: recovery on a new wallet (no delay)');
   const outsiderSig = toHex(rawOutsider);
   const eOut = await caught(() => addApprovalToProgress(progress, outsiderSig));
   check('approval from a non-guardian refused by verifyGuardianApproval', eOut && /who is not a guardian/.test(eOut.message), eOut?.message);
-  const otherReq = buildGuardianRecoveryRequest({ chainId: 1n, account: ACCOUNT, newOwner: gC.address, nonce, guardians: set2of2(0).guardians });
+  const otherReq = buildGuardianRecoveryRequest({ chainId: CHAIN_ID, account: ACCOUNT, newOwner: gC.address, nonce, guardians: set2of2(0).guardians });
   const eOther = await caught(() => addApprovalToProgress(progress, JSON.stringify({ ...JSON.parse(approvalA), callDataAndNonceHash: otherReq.callDataAndNonceHash })));
   check('approval for a different proposal refused', eOther && /different proposal/.test(eOther.message));
   check('claimed guardian must match the signer', (await caught(() => addApprovalToProgress({ ...progress, approvals: [] }, JSON.stringify({ ...JSON.parse(approvalA), guardian: gB.address }))))?.message.includes('claims to be from'));
@@ -756,29 +764,29 @@ console.log('check-recovery: recovery on a new wallet (no delay)');
   // Guardian B submits the final operation.
   const bundler = fakeBundler();
   const subPayload = encodeRecoveryRequestPayload(progress.request, progress.approvals);
-  const reviewB = await reviewRecoveryRequest(node, { text: subPayload, activeChainId: 1n, guardianAddress: gB.address });
+  const reviewB = await reviewRecoveryRequest(node, { text: subPayload, activeChainId: CHAIN_ID, guardianAddress: gB.address });
   check('submission payload carries A’s verified approval', reviewB.approvals.length === 1 && same(reviewB.approvals[0].guardian.address, gA.address) && reviewB.invalidApprovals.length === 0);
-  const lone = await caught(() => prepareGuardianSubmission({ node, bundler, chainId: 1n, request: progress.request, approvals: [], submitter: gB.address }));
+  const lone = await caught(() => prepareGuardianSubmission({ node, bundler, chainId: CHAIN_ID, request: progress.request, approvals: [], submitter: gB.address }));
   check('submitter alone below threshold → engine refusal verbatim', lone?.message === 'Approvals carry weight 1, below the threshold 2', lone?.message);
-  const notG = await caught(() => prepareGuardianSubmission({ node, bundler, chainId: 1n, request: progress.request, approvals: reviewB.approvals.map((a) => a.signature), submitter: outsider.address }));
+  const notG = await caught(() => prepareGuardianSubmission({ node, bundler, chainId: CHAIN_ID, request: progress.request, approvals: reviewB.approvals.map((a) => a.signature), submitter: outsider.address }));
   check('a non-guardian cannot submit', notG && /only a guardian can submit/.test(notG.message));
-  const quote = await prepareGuardianSubmission({ node, bundler, chainId: 1n, request: progress.request, approvals: reviewB.approvals.map((a) => a.signature), submitter: gB.address });
+  const quote = await prepareGuardianSubmission({ node, bundler, chainId: CHAIN_ID, request: progress.request, approvals: reviewB.approvals.map((a) => a.signature), submitter: gB.address });
   const engineAssembled = assembleGuardianApprovals(progress.request, start.set, [sigA], gB.address);
   check('approvals assembly equals the engine assembleGuardianApprovals', quote.approvals.length === 1 && toHex(quote.approvals[0]) === toHex(engineAssembled.approvals[0]));
-  const { userOpHash } = await submitGuardianRecovery({ quote, node, bundler, chainId: 1n, signer: gB });
+  const { userOpHash } = await submitGuardianRecovery({ quote, node, bundler, chainId: CHAIN_ID, signer: gB });
   const op = bundler.lastOp;
   check('recovery op: sender = account, nonce = the approved guardian-lane nonce, callData = doRecovery (engine)', same(op.sender, ACCOUNT) && BigInt(op.nonce) === nonce && op.callData === progress.request.callData && !op.factory);
   const sig = ethers.getBytes(op.signature);
   const engineOp = { sender: op.sender, nonce: BigInt(op.nonce), callData: toBytes(op.callData), callGasLimit: BigInt(op.callGasLimit), verificationGasLimit: BigInt(op.verificationGasLimit), preVerificationGas: BigInt(op.preVerificationGas), maxFeePerGas: BigInt(op.maxFeePerGas), maxPriorityFeePerGas: BigInt(op.maxPriorityFeePerGas), signature: new Uint8Array(0) };
-  const opHash = getUserOpHash(engineOp, ENTRYPOINT_V07, 1n);
+  const opHash = getUserOpHash(engineOp, ENTRYPOINT_V07, CHAIN_ID);
   check('op signature = A’s approval || B’s EIP-191 signature over the userOpHash (ethers)', sig.length === 130 && ethers.hexlify(sig.slice(0, 65)) === toHex(sigA) && same(ethers.verifyMessage(opHash, ethers.hexlify(sig.slice(65))), wB.address) && typeof userOpHash === 'string');
-  const wrongSigner = await caught(() => submitGuardianRecovery({ quote, node, bundler, chainId: 1n, signer: gA }));
+  const wrongSigner = await caught(() => submitGuardianRecovery({ quote, node, bundler, chainId: CHAIN_ID, signer: gA }));
   check('submission refuses a signer other than the quoted guardian', wrongSigner && /prepared for guardian/.test(wrongSigner.message));
 
   // After inclusion: attach only after the on-chain owner check.
   const aaStore = memoryStore();
   await aaStore.setItem('shiba-wallet.aa-config.v1', JSON.stringify({ [M]: { bundlerUrl: 'https://bundler.example', bundlerVerifiedAt: 'x', accountType: 'kernel-v3.3', factory: KERNEL_V3_3.factory, kernelValidator: VALIDATOR, factoryImplementation: KERNEL_V3_3.implementation } }));
-  const meta = rebuildRecoveryRecord({ chainId: 1n, account: ACCOUNT, originalOwner: OWNER_0, index: 0, recordedAt: 1 });
+  const meta = rebuildRecoveryRecord({ chainId: CHAIN_ID, account: ACCOUNT, originalOwner: OWNER_0, index: 0, recordedAt: 1 });
   const early = await caught(() => attachRecoveredAccount({ node, chain: M, account: ACCOUNT, owner: newOwner.address, ownerPath: newOwner.path, metadata: meta, store: aaStore, aaStore }));
   check('before the owner changed on-chain: NOT attached (verifyKernelAccountForOwner)', early && /^Not attached: owner is /.test(early.message) && (await getAaConfig(M, aaStore)).recoveredAccounts.length === 0, early?.message);
   node.get(ACCOUNT).owner = newOwner.address;
@@ -793,7 +801,7 @@ console.log('check-recovery: recovery on a new wallet (no delay)');
   const cfg = await getAaConfig(M, aaStore);
   check('attached after the owner check; owner history appended (guardian-recovery, tx + userOpHash, path)', attached.historyUpdated && cfg.recoveredAccounts.length === 1 && cfg.recoveredAccounts[0].account === ACCOUNT && attached.entry.metadata.owners.length === 2 && attached.entry.metadata.owners[1].source === 'guardian-recovery' && attached.entry.metadata.owners[1].txHash === bundleTx && attached.entry.metadata.owners[1].derivationPath === "m/44'/60'/0'/0/9");
   check('the updated record verifies on-chain (owner + guardians)', (await verifyRecoveryMetadataOnChain(node, { ...attached.entry.metadata, guardians: { weightedEcdsaValidator: W, recoveryAction: RA, guardians: set2of2(0).guardians, threshold: 2, delaySeconds: 0, installTxHash: null } })).ok);
-  const recBundle = createAaClientFromConfig(cfg, { nodeUrl: 'https://node.example', chainId: 1n, accountIndex: 9, ownerAddress: newOwner.address, transportFor: (u) => (u.includes('bundler') ? fakeBundler() : node) });
+  const recBundle = createAaClientFromConfig(cfg, { nodeUrl: 'https://node.example', chainId: CHAIN_ID, accountIndex: 9, ownerAddress: newOwner.address, transportFor: (u) => (u.includes('bundler') ? fakeBundler() : node) });
   check('smart-account sends by the new owner use the recovered account (not its own CREATE2 address)', recBundle.recovered?.account === ACCOUNT && (await resolveAaSender(recBundle, newOwner.address)) === ACCOUNT && !same(predictKernelAddress(newOwner.address, { index: 9n }), ACCOUNT));
   const conflict = await caught(() => setAccountEip7702(M, newOwner.address, true, aaStore));
   check('an owner with a recovered account cannot also opt into the 7702 upgrade', conflict?.message === RECOVERED_7702_CONFLICT);
@@ -807,14 +815,14 @@ console.log('check-recovery: recovery with a delay (approveWithSig, countdown, f
 {
   const node = fakeGuardianNode();
   node.add(ACCOUNT, { owner: OWNER_0, guardians: set2of2(3600) });
-  const start = await prepareRecoveryStart(node, { chainId: 1n, account: ACCOUNT, newOwner: newOwner.address });
+  const start = await prepareRecoveryStart(node, { chainId: CHAIN_ID, account: ACCOUNT, newOwner: newOwner.address });
   let progress = { chain: M, ownerIndex: 9, newOwner: newOwner.address, account: ACCOUNT, request: start.request, set: start.set, approvals: [], approveTxHash: null, metadata: null, createdAt: 1, updatedAt: 1 };
-  const review = await reviewRecoveryRequest(node, { text: encodeRecoveryRequestPayload(start.request), activeChainId: 1n, guardianAddress: gA.address });
+  const review = await reviewRecoveryRequest(node, { text: encodeRecoveryRequestPayload(start.request), activeChainId: CHAIN_ID, guardianAddress: gA.address });
   progress = addApprovalToProgress(progress, signRecoveryApproval(gA, review).payload).progress;
   check('stage with weight 1 of 2: collecting', (await readRecoveryStage(node, progress, 1)).stage.kind === 'collecting');
   const short = await caught(() => prepareApproveWithSig(node, { progress, from: newOwner.address }));
   check('approveWithSig refused below the threshold', short && /below the threshold 2/.test(short.message));
-  const reviewB = await reviewRecoveryRequest(node, { text: encodeRecoveryRequestPayload(start.request), activeChainId: 1n, guardianAddress: gB.address });
+  const reviewB = await reviewRecoveryRequest(node, { text: encodeRecoveryRequestPayload(start.request), activeChainId: CHAIN_ID, guardianAddress: gB.address });
   progress = addApprovalToProgress(progress, toHex(signRecoveryApproval(gB, reviewB).signature)).progress;
   check('stage with weight 2 of 2: ready to send the approvals on-chain', (await readRecoveryStage(node, progress, 1)).stage.kind === 'ready-to-approve');
   const wrongFrom = await caught(() => prepareApproveWithSig(node, { progress, from: OWNER_0 }));
@@ -824,32 +832,32 @@ console.log('check-recovery: recovery with a delay (approveWithSig, countdown, f
   check('approveWithSig calldata equals the engine encodeApproveWithSig', toHex(q.data) === toHex(expectedCall.data) && same(q.to, W) && q.gasLimit === 120_000n);
   const txid = await sendApproveWithSig(node, newOwner, q);
   const tx = ethers.Transaction.from(node.raw[node.raw.length - 1]);
-  check('raw tx (ethers): from the NEW OWNER’s EOA, to the validator, 0 value, the approvals calldata', same(tx.from, newOwner.address) && same(tx.to, W) && tx.value === 0n && tx.data === toHex(expectedCall.data) && tx.chainId === 1n && typeof txid === 'string');
+  check('raw tx (ethers): from the NEW OWNER’s EOA, to the validator, 0 value, the approvals calldata', same(tx.from, newOwner.address) && same(tx.to, W) && tx.value === 0n && tx.data === toHex(expectedCall.data) && tx.chainId === CHAIN_ID && typeof txid === 'string');
   const wrongSigner = await caught(() => sendApproveWithSig(node, owner, q));
   check('approveWithSig signer must be the quoted EOA', wrongSigner && /Nothing was signed/.test(wrongSigner.message));
   node.get(ACCOUNT).proposals.set(start.request.callDataAndNonceHash.toLowerCase(), { status: 1, validAfter: 5_000, weight: 2 });
   const waiting = await readRecoveryStage(node, progress, 1_400);
   check('stage after approval: waiting with a countdown', waiting.stage.kind === 'waiting' && waiting.stage.secondsLeft === 3_600);
   const bundler = fakeBundler();
-  const early = await caught(() => prepareGuardianSubmission({ node, bundler, chainId: 1n, request: start.request, approvals: [], submitter: gA.address, now: 1_400 }));
+  const early = await caught(() => prepareGuardianSubmission({ node, bundler, chainId: CHAIN_ID, request: start.request, approvals: [], submitter: gA.address, now: 1_400 }));
   check('final op refused before the delay is over', early && /delay is not over/.test(early.message));
   check('stage after the delay: ready to submit', (await readRecoveryStage(node, progress, 5_000)).stage.kind === 'ready-to-submit');
-  const quote = await prepareGuardianSubmission({ node, bundler, chainId: 1n, request: start.request, approvals: progress.approvals.map((a) => toBytes(a)), submitter: gA.address, now: 5_000 });
+  const quote = await prepareGuardianSubmission({ node, bundler, chainId: CHAIN_ID, request: start.request, approvals: progress.approvals.map((a) => toBytes(a)), submitter: gA.address, now: 5_000 });
   check('approved proposal: the operation carries NO approvals', quote.approvals.length === 0);
-  await submitGuardianRecovery({ quote, node, bundler, chainId: 1n, signer: gA });
+  await submitGuardianRecovery({ quote, node, bundler, chainId: CHAIN_ID, signer: gA });
   const op = bundler.lastOp;
   const engineOp = { sender: op.sender, nonce: BigInt(op.nonce), callData: toBytes(op.callData), callGasLimit: BigInt(op.callGasLimit), verificationGasLimit: BigInt(op.verificationGasLimit), preVerificationGas: BigInt(op.preVerificationGas), maxFeePerGas: BigInt(op.maxFeePerGas), maxPriorityFeePerGas: BigInt(op.maxPriorityFeePerGas), signature: new Uint8Array(0) };
-  check('final op signature: 65 bytes, the guardian’s EIP-191 signature over the userOpHash (ethers)', ethers.getBytes(op.signature).length === 65 && same(ethers.verifyMessage(getUserOpHash(engineOp, ENTRYPOINT_V07, 1n), op.signature), wA.address));
+  check('final op signature: 65 bytes, the guardian’s EIP-191 signature over the userOpHash (ethers)', ethers.getBytes(op.signature).length === 65 && same(ethers.verifyMessage(getUserOpHash(engineOp, ENTRYPOINT_V07, CHAIN_ID), op.signature), wA.address));
   node.get(ACCOUNT).proposals.set(start.request.callDataAndNonceHash.toLowerCase(), { status: 2, validAfter: 5_000, weight: 2 });
   check('vetoed proposal → stage vetoed', (await readRecoveryStage(node, progress, 5_000)).stage.kind === 'vetoed');
-  const restart = await prepareRecoveryStart(node, { chainId: 1n, account: ACCOUNT, newOwner: newOwner.address });
+  const restart = await prepareRecoveryStart(node, { chainId: CHAIN_ID, account: ACCOUNT, newOwner: newOwner.address });
   check('after a veto, a new request moves to the next guardian lane (parallel key 1): a fresh proposal id', restart.kind === 'recoverable' && BigInt(restart.request.nonce) >> 64n === guardianNonceKey(KERNEL_RECOVERY_MODULES, 1) && restart.request.callDataAndNonceHash !== start.request.callDataAndNonceHash);
   const lane1 = { ...progress, request: restart.request, approvals: [] };
   check('the new lane starts collecting (its own nonce, not the vetoed one)', (await readRecoveryStage(node, lane1, 5_000)).stage.kind === 'collecting');
   node.get(ACCOUNT).proposals.set(restart.request.callDataAndNonceHash.toLowerCase(), { status: 1, validAfter: 5_000, weight: 2 });
   const lane1Bundler = fakeBundler();
-  const lane1Quote = await prepareGuardianSubmission({ node, bundler: lane1Bundler, chainId: 1n, request: restart.request, approvals: [], submitter: gB.address, now: 6_000 });
-  await submitGuardianRecovery({ quote: lane1Quote, node, bundler: lane1Bundler, chainId: 1n, signer: gB });
+  const lane1Quote = await prepareGuardianSubmission({ node, bundler: lane1Bundler, chainId: CHAIN_ID, request: restart.request, approvals: [], submitter: gB.address, now: 6_000 });
+  await submitGuardianRecovery({ quote: lane1Quote, node, bundler: lane1Bundler, chainId: CHAIN_ID, signer: gB });
   check('the final op on lane 1 carries the lane-1 nonce (engine spec routes the nonce read)', BigInt(lane1Bundler.lastOp.nonce) === BigInt(restart.request.nonce) && lane1Bundler.lastOp.callData === restart.request.callData);
   node.get(ACCOUNT).proposals.set(start.request.callDataAndNonceHash.toLowerCase(), { status: 0, validAfter: 0, weight: 0 });
   node.get(ACCOUNT).guardianSeq = 3n;
@@ -862,7 +870,7 @@ console.log('check-recovery: wipe (nothing on-chain) and the export offer');
 {
   const node = fakeGuardianNode();
   const store = memoryStore();
-  const meta = rebuildRecoveryRecord({ chainId: 1n, account: ACCOUNT, originalOwner: OWNER_0, index: 0, recordedAt: 1 });
+  const meta = rebuildRecoveryRecord({ chainId: CHAIN_ID, account: ACCOUNT, originalOwner: OWNER_0, index: 0, recordedAt: 1 });
   await saveRecoveryMetadata(meta, store);
   await saveRecoveryProgress({ chain: M, ownerIndex: 9, newOwner: newOwner.address, account: null, request: null, set: null, approvals: [], approveTxHash: null, metadata: null, createdAt: 1, updatedAt: 1 }, store);
   await store.setItem('shiba-wallet.aa-config.v1', JSON.stringify({ [M]: { recoveredAccounts: [{ owner: newOwner.address, account: ACCOUNT, attachedAt: 'x' }] } }));
@@ -880,7 +888,10 @@ console.log('check-recovery: wipe (nothing on-chain) and the export offer');
 console.log('check-recovery: WalletConnect never approves or submits a recovery');
 // ---------------------------------------------------------------------------
 {
-  const ev = (method, params) => ({ id: 1, topic: 't', params: { chainId: M, request: { method, params } } });
+  // WalletConnect parsing is not gated by the readiness table, and these
+  // refusals must hold on mainnet too, so this section keeps chain 1.
+  const WC_M = 'eip155:1';
+  const ev = (method, params) => ({ id: 1, topic: 't', params: { chainId: WC_M, request: { method, params } } });
   const rej = (fn) => {
     try {
       fn();
@@ -889,6 +900,8 @@ console.log('check-recovery: WalletConnect never approves or submits a recovery'
       return e instanceof WcRequestRejection ? e : null;
     }
   };
+  // parseWcRequest below runs with its default (mainnet) chain; WalletConnect
+  // parsing is not gated, so this request stays on chain 1.
   const request = buildGuardianRecoveryRequest({ chainId: 1n, account: ACCOUNT, newOwner: newOwner.address, nonce: guardianNonceKey() << 64n });
   const typed = JSON.parse(approvalTypedDataJson(request));
   const r1 = rej(() => parseWcRequest(ev('eth_signTypedData_v4', [gA.address, JSON.stringify(typed)]), gA.address));
@@ -901,7 +914,7 @@ console.log('check-recovery: WalletConnect never approves or submits a recovery'
     parseWcRequest(
       ev('wallet_sendCalls', [{ version: '2.0.0', from: ACCOUNT, chainId: '0x1', atomicRequired: true, calls: [{ to: RA, data: '0x' }] }]),
       ACCOUNT,
-      M,
+      WC_M,
       { smartAccount: { accountType: 'kernel-v3.3', signsMessages: true } },
     ),
   );
@@ -1029,7 +1042,7 @@ console.log('check-recovery: owner rotation ("Change owner")');
     check('undeployed account → refusal worded for an owner change', und?.message === OWNER_ROTATION_UNDEPLOYED_REFUSAL, und?.message);
     const deployed = fakeGuardianNode();
     deployed.add(ACCOUNT, { owner: OWNER_0 });
-    const simple = createAaClient({ nodeUrl: 'n', bundlerUrl: 'bundler', factory: '0x91E60e0613810449d098b0b5Ec8b51A0FE8c8985', chainId: 1n, transportFor: (u) => (u.includes('bundler') ? bundler : deployed) });
+    const simple = createAaClient({ nodeUrl: 'n', bundlerUrl: 'bundler', factory: '0x91E60e0613810449d098b0b5Ec8b51A0FE8c8985', chainId: CHAIN_ID, transportFor: (u) => (u.includes('bundler') ? bundler : deployed) });
     const sErr = await caught(() => prepareOwnerRotationQuote(simple, rotateArgs(store, config)));
     check('SimpleAccount → refusal', sErr?.message === OWNER_ROTATION_SIMPLE_REFUSAL);
     const delegated = fakeGuardianNode();
@@ -1047,7 +1060,7 @@ console.log('check-recovery: owner rotation ("Change owner")');
     );
     check('recovered account without a recovery record → refused (nothing signed)', noRec?.message === OWNER_ROTATION_NO_RECORD);
     const staleStore = await freshStores();
-    await saveRecoveryMetadata(rebuildRecoveryRecord({ chainId: 1n, account: ACCOUNT, originalOwner: OWNER_0, index: 0, recordedAt: 1 }), staleStore);
+    await saveRecoveryMetadata(rebuildRecoveryRecord({ chainId: CHAIN_ID, account: ACCOUNT, originalOwner: OWNER_0, index: 0, recordedAt: 1 }), staleStore);
     const stale = await caught(() =>
       prepareOwnerRotationQuote(kernelBundle(recNode, bundler, { recoveredAccount: ACCOUNT }), rotateArgs(staleStore, config, { ownerAddress: newOwner.address, ownerIndex: 9, ownerPath: newOwner.path, newOwner: W0 })),
     );
@@ -1098,7 +1111,7 @@ console.log('check-recovery: owner rotation ("Change owner")');
     const sentOp = fromRpc(bundler.lastOp);
     check(`${label}: SUBMITTED op has verificationGasLimit ${expectedVgl} (call 0x111, pre-verification 0x333 unchanged), signed by the current owner over that exact op`,
       sentOp.verificationGasLimit === expectedVgl && sentOp.callGasLimit === 0x111n && sentOp.preVerificationGas === 0x333n &&
-      same(ethers.verifyMessage(getUserOpHash(sentOp, ENTRYPOINT_V07, 1n), bundler.lastOp.signature), OWNER_0));
+      same(ethers.verifyMessage(getUserOpHash(sentOp, ENTRYPOINT_V07, CHAIN_ID), bundler.lastOp.signature), OWNER_0));
     check(`${label}: the deposit was read for the smart account itself (quote and send)`, depositReads.length === 2 && depositReads.every((a) => same(a, ACCOUNT)));
   }
 
@@ -1135,7 +1148,7 @@ console.log('check-recovery: owner rotation ("Change owner")');
 
     const sub = await submitOwnerRotation({ rotation, chain: M, store, submit: (q) => sendAa(bundle, owner, q), now: 1_800_000_000_000 });
     const op = fromRpc(bundler.lastOp);
-    check('the operation is signed by the CURRENT owner key (EIP-191 over the userOpHash, ethers)', same(ethers.verifyMessage(getUserOpHash(op, ENTRYPOINT_V07, 1n), bundler.lastOp.signature), OWNER_0));
+    check('the operation is signed by the CURRENT owner key (EIP-191 over the userOpHash, ethers)', same(ethers.verifyMessage(getUserOpHash(op, ENTRYPOINT_V07, CHAIN_ID), bundler.lastOp.signature), OWNER_0));
     const tail = sub.entry.metadata.owners.at(-1);
     check('after acceptance the record lists the new owner: owner-rotation, userOpHash, no tx yet, BIP-32 path', sub.recordError === null && sub.entry.metadata.owners.length === 2 && tail.owner === newOwner.address && tail.source === 'owner-rotation' && tail.userOpHash === sub.userOpHash.toLowerCase() && tail.txHash === null && tail.derivationPath === "m/44'/60'/0'/0/9" && tail.recordedAt === 1_800_000_000);
     const pend = await listPendingOwnerRotations(M, walletOwners, store);
@@ -1154,7 +1167,7 @@ console.log('check-recovery: owner rotation ("Change owner")');
     check('owner history: the owner-rotation entry got the bundle tx hash and block 100', after.metadata.owners.length === 2 && afterTail.txHash === '0x' + 'ce'.repeat(32) && afterTail.blockNumber === '100' && afterTail.userOpHash === sub.userOpHash.toLowerCase());
     const cfg = await getAaConfig(M, store);
     check('attachment moved: Account 10 → the account; the previous owner has none', cfg.recoveredAccounts.length === 1 && same(cfg.recoveredAccounts[0].owner, newOwner.address) && same(cfg.recoveredAccounts[0].account, ACCOUNT));
-    const recBundle = createAaClientFromConfig(cfg, { nodeUrl: 'https://node.example', chainId: 1n, accountIndex: 9, ownerAddress: newOwner.address, transportFor: (u) => (u.includes('bundler') ? fakeBundler() : node) });
+    const recBundle = createAaClientFromConfig(cfg, { nodeUrl: 'https://node.example', chainId: CHAIN_ID, accountIndex: 9, ownerAddress: newOwner.address, transportFor: (u) => (u.includes('bundler') ? fakeBundler() : node) });
     check('smart-account sends by the new owner now use this account', (await resolveAaSender(recBundle, newOwner.address)) === ACCOUNT);
     check('nothing pending any more', (await listPendingOwnerRotations(M, walletOwners, store)).length === 0);
     const again = await finalizeOwnerRotation({ node, chain: M, account: ACCOUNT, previousOwner: OWNER_0, newOwner: W9, removeGuardians: false, userOpHash: sub.userOpHash, receipt: null, config, store });
@@ -1166,10 +1179,10 @@ console.log('check-recovery: owner rotation ("Change owner")');
     const back = await prepareOwnerRotationQuote(recBundle, rotateArgs(store, cfg, { ownerAddress: newOwner.address, ownerIndex: 9, ownerPath: newOwner.path, newOwner: W0 }));
     check('rotating back: recovered kind, no attachment needed (Account 1 derives this address)', back.kind === 'recovered' && back.attach === false && back.newOwnerOwnSmartAccount === null);
     const backBundler = fakeBundler({ receipt: { success: true, receipt: { transactionHash: '0x' + 'cf'.repeat(32) } } });
-    const backBundle = createAaClientFromConfig(cfg, { nodeUrl: 'https://node.example', chainId: 1n, accountIndex: 9, ownerAddress: newOwner.address, transportFor: (u) => (u.includes('bundler') ? backBundler : node) });
+    const backBundle = createAaClientFromConfig(cfg, { nodeUrl: 'https://node.example', chainId: CHAIN_ID, accountIndex: 9, ownerAddress: newOwner.address, transportFor: (u) => (u.includes('bundler') ? backBundler : node) });
     const back2 = await prepareOwnerRotationQuote(backBundle, rotateArgs(store, cfg, { ownerAddress: newOwner.address, ownerIndex: 9, ownerPath: newOwner.path, newOwner: W0 }));
     const backSub = await submitOwnerRotation({ rotation: back2, chain: M, store, submit: (q) => sendAa(backBundle, newOwner, q) });
-    check('rotation back signed by the recovered account’s current owner (Account 10)', same(ethers.verifyMessage(getUserOpHash(fromRpc(backBundler.lastOp), ENTRYPOINT_V07, 1n), backBundler.lastOp.signature), newOwner.address));
+    check('rotation back signed by the recovered account’s current owner (Account 10)', same(ethers.verifyMessage(getUserOpHash(fromRpc(backBundler.lastOp), ENTRYPOINT_V07, CHAIN_ID), backBundler.lastOp.signature), newOwner.address));
     node.get(ACCOUNT).owner = OWNER_0;
     const backOut = await waitAndFinalizeOwnerRotation({ bundle: backBundle, rotation: back2, userOpHash: backSub.userOpHash, chain: M, previous: backSub.previous, config: cfg, store, timeoutMs: 1000, pollMs: 1 });
     const hist = (await getRecoveryRecord(M, ACCOUNT, store)).metadata.owners;
@@ -1258,6 +1271,53 @@ function rasterize(modules, scale, quiet) {
     }
   }
   return { rgba, px };
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-recovery: mainnet readiness gate (phase 9 item 6)');
+// ---------------------------------------------------------------------------
+{
+  const node = fakeGuardianNode({ chainIdHex: '0x1' });
+  const bundler = fakeBundler();
+  const mainnet = createAaClient({
+    nodeUrl: 'https://node.example',
+    bundlerUrl: 'https://bundler.example',
+    factory: KERNEL_V3_3.factory,
+    chainId: 1n,
+    accountIndex: 0,
+    accountType: 'kernel-v3.3',
+    transportFor: (url) => (url.includes('bundler') ? bundler : node),
+  });
+  const gated = (e) => /only on test networks/.test(e?.message ?? '');
+  const MAIN = 'eip155:1';
+  const store = memoryStore();
+  let submitted = false;
+  const submit = async () => {
+    submitted = true;
+    return { userOpHash: '0x' + '00'.repeat(32) };
+  };
+  const results = [
+    ['prepareGuardianInstallQuote', await caught(() => prepareGuardianInstallQuote(mainnet, OWNER_0, ACCOUNT, {}, {}))],
+    ['prepareGuardianRenewQuote', await caught(() => prepareGuardianRenewQuote(mainnet, OWNER_0, ACCOUNT, {}, {}))],
+    ['submitGuardianOperation (install)', await caught(() => submitGuardianOperation({ operation: { kind: 'install', calls: [], quote: { calls: [] } }, chain: MAIN, store, submit }))],
+    ['prepareRecoveryStart', await caught(() => prepareRecoveryStart(node, { chainId: 1n, account: ACCOUNT, newOwner: newOwner.address }))],
+    ['prepareApproveWithSig', await caught(() => prepareApproveWithSig(node, { progress: { chain: MAIN }, from: newOwner.address }))],
+    ['sendApproveWithSig', await caught(() => sendApproveWithSig(node, newOwner, { chainId: 1n, from: newOwner.address }))],
+    ['reviewRecoveryRequest', await caught(() => reviewRecoveryRequest(node, { text: '{}', activeChainId: 1n, guardianAddress: gA.address }))],
+    ['signRecoveryApproval', await caught(() => Promise.resolve().then(() => signRecoveryApproval(gA, { request: { chainId: '1' }, guardian: { address: gA.address } })))],
+    ['prepareGuardianSubmission', await caught(() => prepareGuardianSubmission({ node, bundler, chainId: 1n, request: {}, approvals: [], submitter: gA.address }))],
+    ['submitGuardianRecovery', await caught(() => submitGuardianRecovery({ quote: { submitter: gA.address }, node, bundler, chainId: 1n, signer: gA }))],
+    ['attachRecoveredAccount', await caught(() => attachRecoveredAccount({ node, chain: MAIN, account: ACCOUNT, owner: newOwner.address, ownerPath: null, metadata: null, store, aaStore: store }))],
+    ['prepareOwnerRotationQuote', await caught(() => prepareOwnerRotationQuote(mainnet, { ownerAddress: OWNER_0, ownerIndex: 0, ownerPath: null, newOwner: { address: newOwner.address, index: 9, path: null }, walletOwners: [], removeGuardians: false, chain: MAIN, config: {}, store }))],
+    ['submitOwnerRotation', await caught(() => submitOwnerRotation({ rotation: { calls: [], quote: { calls: [] } }, chain: MAIN, store, submit }))],
+  ];
+  for (const [name, e] of results) check(`mainnet ${name} refused with the readiness reason`, gated(e), e?.message);
+  check('…with ZERO node or bundler calls, nothing stored and nothing submitted', node.calls.length === 0 && bundler.calls.length === 0 && store._map.size === 0 && !submitted, `${node.calls.length}/${bundler.calls.length}/${store._map.size}`);
+  // Undo paths stay open on mainnet: removing guardians and vetoing are not
+  // gated (whatever else they fail on with this bare fake, it is not the gate).
+  const remove = await caught(() => prepareGuardianRemoveQuote(mainnet, OWNER_0, ACCOUNT));
+  const veto = await caught(() => prepareVetoQuote(mainnet, OWNER_0, ACCOUNT, '0x' + '12'.repeat(32)));
+  check('mainnet guardian removal and veto are NOT refused by the readiness gate', !gated(remove) && !gated(veto), `${remove?.message} / ${veto?.message}`);
 }
 
 console.log(`\ncheck-recovery: ${passed} passed, ${failed} failed`);

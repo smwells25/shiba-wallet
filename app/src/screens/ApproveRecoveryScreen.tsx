@@ -15,6 +15,7 @@ import {
   recoveryLayout as styles,
 } from '../components/RecoveryViews';
 import { useTheme } from '../theme';
+import { readinessGate, type FeatureReadiness } from '../config/readiness';
 import { getEndpoint } from '../config/networks';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
@@ -68,6 +69,10 @@ export function ApproveRecoveryScreen({ navigation }: Props) {
   const guardianAddress = evm?.address ?? null;
   const chainId = BigInt(evmChain.chainIdDecimal);
   const symbol = evmChain.displaySymbol;
+  // Mainnet readiness (config/readiness.ts): guardian recovery is
+  // test-network only, so reviewing, approving and submitting a request are
+  // switched off here; recovery.ts refuses them too.
+  const readiness = readinessGate('guardians', evmChain.caip2);
 
   const [node, setNode] = useState<JsonRpcTransport | null>(null);
   const [nodeError, setNodeError] = useState<string | null>(null);
@@ -378,6 +383,7 @@ export function ApproveRecoveryScreen({ navigation }: Props) {
         : review.proposal.status === 'approved' && review.proposal.validAfter <= now);
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+        {readiness ? <ReadinessCard feature={readiness.feature} hint={readiness.hint} /> : null}
         <RecoveryNetworkBadge label={evmChain.label} testnet={evmChain.testnet} />
         <Text style={[styles.title, { color: theme.text }]}>Recovery request</Text>
         <WarningBox>{APPROVER_WARNING}</WarningBox>
@@ -415,11 +421,18 @@ export function ApproveRecoveryScreen({ navigation }: Props) {
         ) : (
           <Text style={[styles.hint, { color: theme.text }]}>Your guardian weight: {g.weight}</Text>
         )}
-        {canApprove ? <Button title="Approve (sign as guardian)" variant="destructive" onPress={onApprove} /> : null}
+        {canApprove ? (
+          <Button title="Approve (sign as guardian)" variant="destructive" onPress={onApprove} disabled={readiness !== null} />
+        ) : null}
         {canSubmit ? (
           <>
             <Text style={[styles.hint, { color: theme.textMuted }]}>{GUARDIAN_SUBMITS_NOTE}</Text>
-            <Button title="Submit the recovery" variant="secondary" onPress={() => void onSubmitQuote()} />
+            <Button
+              title="Submit the recovery"
+              variant="secondary"
+              onPress={() => void onSubmitQuote()}
+              disabled={readiness !== null}
+            />
           </>
         ) : null}
         {delay > 0 && review.proposal.status === 'approved' && review.proposal.validAfter > now ? (
@@ -434,6 +447,7 @@ export function ApproveRecoveryScreen({ navigation }: Props) {
 
   return (
     <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      {readiness ? <ReadinessCard feature={readiness.feature} hint={readiness.hint} /> : null}
       <Text style={[styles.title, { color: theme.text }]}>Approve a recovery (as a guardian)</Text>
       <Text style={[styles.hint, { color: theme.text }]}>
         Someone who named you as a guardian lost access to their account and asks you to make a new key its owner. Paste
@@ -451,7 +465,11 @@ export function ApproveRecoveryScreen({ navigation }: Props) {
       {phase === 'reviewing' ? (
         <ActivityIndicator color={theme.accent} />
       ) : (
-        <Button title="Review request" disabled={!node || !input.trim()} onPress={() => void onReview(input)} />
+        <Button
+          title="Review request"
+          disabled={!node || !input.trim() || readiness !== null}
+          onPress={() => void onReview(input)}
+        />
       )}
       {local.length > 0 ? (
         <>
@@ -461,6 +479,7 @@ export function ApproveRecoveryScreen({ navigation }: Props) {
               key={`${p.chain}|${p.newOwner}`}
               title={`Review the request for ${p.account}`}
               variant="secondary"
+              disabled={readiness !== null}
               onPress={() => {
                 const text = encodeRecoveryRequestPayload(p.request!, p.approvals);
                 setInput(text);
@@ -471,5 +490,20 @@ export function ApproveRecoveryScreen({ navigation }: Props) {
         </>
       ) : null}
     </ScrollView>
+  );
+}
+
+/**
+ * Mainnet readiness card (config/readiness.ts): why this feature is limited
+ * to test networks, and where test mode is turned on.
+ */
+function ReadinessCard({ feature, hint }: { feature: FeatureReadiness; hint: string }) {
+  const theme = useTheme();
+  return (
+    <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+      <Text style={[styles.ok, { color: theme.text }]}>{feature.title}: test networks only</Text>
+      <Text style={[styles.hint, { color: theme.text }]}>{feature.reason}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{hint}</Text>
+    </View>
   );
 }

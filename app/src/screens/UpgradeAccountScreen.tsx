@@ -36,6 +36,7 @@ import {
   type SetCodeQuote,
 } from '../wallet/delegation';
 import { useAccountDelegation } from '../wallet/useDelegation';
+import { readinessGate, type FeatureReadiness } from '../config/readiness';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'UpgradeAccount'>;
 
@@ -96,6 +97,10 @@ export function UpgradeAccountScreen({ navigation }: Props) {
   const bundlerReady = config?.bundlerUrl != null;
   const status = delegation.status;
   const accountName = activeAccount?.name ?? 'This account';
+  // Mainnet readiness (config/readiness.ts): the upgrade is test-network
+  // only. Status reads, cancelling a pending upgrade and revoking stay
+  // available; delegation.ts and aa.ts refuse the upgrade itself too.
+  const gate = readinessGate('eip7702-upgrade', evmChain.caip2);
 
   const onUpgradeWithSend = () => {
     if (!address) return;
@@ -332,6 +337,7 @@ export function UpgradeAccountScreen({ navigation }: Props) {
         {evmChain.label}
         {evmChain.testnet ? ' · TESTNET' : ''} · chain id {evmChain.chainIdDecimal}
       </Text>
+      {gate ? <ReadinessCard feature={gate.feature} hint={gate.hint} theme={theme} /> : null}
       <Row label="Account" value={accountName} sub={address} theme={theme} />
       <Text style={[styles.body, { color: theme.text }]}>{UPGRADE_EXPLANATION}</Text>
       <Row label="Kernel v3.3 delegate" value={WALLET_7702_DELEGATE} mono theme={theme} />
@@ -377,7 +383,7 @@ export function UpgradeAccountScreen({ navigation }: Props) {
               <Button
                 title="Upgrade with the next smart-account send"
                 onPress={onUpgradeWithSend}
-                disabled={!bundlerReady}
+                disabled={!bundlerReady || gate !== null}
               />
               <Text style={[styles.hint, { color: theme.textMuted }]}>
                 {bundlerReady
@@ -392,7 +398,7 @@ export function UpgradeAccountScreen({ navigation }: Props) {
             title="Upgrade now with a transaction"
             variant="secondary"
             onPress={() => void onQuote('upgrade')}
-            disabled={phase === 'quoting' || !delegation.url}
+            disabled={phase === 'quoting' || !delegation.url || gate !== null}
           />
           <Text style={[styles.hint, { color: theme.textMuted }]}>
             Sends one transaction from this account; it needs a little {evmChain.displaySymbol} for
@@ -407,7 +413,12 @@ export function UpgradeAccountScreen({ navigation }: Props) {
             This account is upgraded on-chain, but smart-account sends do not use it yet on this
             device.
           </Text>
-          <Button title="Use this upgraded account for smart-account sends" variant="secondary" onPress={onUseUpgraded} />
+          <Button
+            title="Use this upgraded account for smart-account sends"
+            variant="secondary"
+            onPress={onUseUpgraded}
+            disabled={gate !== null}
+          />
         </View>
       ) : null}
 
@@ -423,6 +434,20 @@ export function UpgradeAccountScreen({ navigation }: Props) {
         </View>
       ) : null}
     </ScrollView>
+  );
+}
+
+/**
+ * Mainnet readiness card (config/readiness.ts): why this feature is limited
+ * to test networks, and where test mode is turned on.
+ */
+function ReadinessCard({ feature, hint, theme }: { feature: FeatureReadiness; hint: string; theme: Theme }) {
+  return (
+    <View style={[styles.readiness, { backgroundColor: theme.card, borderColor: theme.border }]}>
+      <Text style={[styles.readinessTitle, { color: theme.text }]}>{feature.title}: test networks only</Text>
+      <Text style={[styles.body, { color: theme.text }]}>{feature.reason}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{hint}</Text>
+    </View>
   );
 }
 
@@ -493,4 +518,6 @@ const styles = StyleSheet.create({
   rowLabel: { fontSize: 12, fontWeight: '600' },
   rowValue: { fontSize: 15 },
   rowSub: { fontSize: 12, lineHeight: 17 },
+  readiness: { borderWidth: 1, borderRadius: 10, padding: 12, gap: 6 },
+  readinessTitle: { fontSize: 15, fontWeight: '700' },
 });

@@ -15,7 +15,15 @@ import {
 import { type NetworkDefault } from '../config/defaults';
 import { describeDefaultChoice, describeDefaultFallbackNote } from '../config/endpoint-probe';
 import { AUTO_LOCK_CHOICES } from '../config/prefs';
-import { useTheme } from '../theme';
+import {
+  FEATURE_READINESS,
+  READINESS_INTRO,
+  READINESS_STATUS_LABEL,
+  READINESS_TESTNET_HINT,
+  readinessGate,
+  type FeatureReadiness,
+} from '../config/readiness';
+import { useTheme, type Theme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
 import { localAuthAvailable, requireLocalAuth } from '../wallet/biometric';
@@ -333,6 +341,39 @@ function BlockbookRow({
  * only persisted when they pass (../wallet/aa.ts refuses otherwise), so a
  * displayed value is always a verified one.
  */
+/**
+ * One feature of the mainnet readiness table (config/readiness.ts): its
+ * status chip, the plain reason, the checklist ids behind it, and whether
+ * this build enforces the status.
+ */
+function ReadinessRow({ feature, theme }: { feature: FeatureReadiness; theme: Theme }) {
+  const chip =
+    feature.status === 'mainnet-ok'
+      ? { color: theme.success, border: theme.success, background: theme.card }
+      : feature.status === 'testnet-only'
+        ? { color: '#ffffff', border: '#e07800', background: '#e07800' }
+        : { color: theme.warningText, border: theme.warningBorder, background: theme.warningSurface };
+  return (
+    <View style={[styles.endpointRow, { backgroundColor: theme.card, borderColor: theme.border }]}>
+      <View style={styles.endpointHeader}>
+        <Text style={[styles.endpointLabel, styles.readinessTitle, { color: theme.text }]}>{feature.title}</Text>
+        <View style={[styles.readinessChip, { borderColor: chip.border, backgroundColor: chip.background }]}>
+          <Text style={[styles.readinessChipText, { color: chip.color }]}>{READINESS_STATUS_LABEL[feature.status]}</Text>
+        </View>
+      </View>
+      <Text style={[styles.hint, { color: theme.text }]}>{feature.reason}</Text>
+      <Text style={[styles.endpointNote, { color: theme.textMuted }]}>
+        {feature.status === 'mainnet-ok'
+          ? 'Cleared by the checklist.'
+          : feature.enforced
+            ? 'Switched off on main networks in this build; it works in Sepolia test mode.'
+            : 'Still works on mainnet in this build; not yet cleared for real funds.'}{' '}
+        Checklist and findings: {feature.evidence.join(', ')}.
+      </Text>
+    </View>
+  );
+}
+
 function AaField({
   label,
   placeholder,
@@ -343,6 +384,7 @@ function AaField({
   onSave,
   onClear,
   saveLabel = 'Verify & save',
+  locked = false,
 }: {
   label: string;
   placeholder: string;
@@ -362,6 +404,12 @@ function AaField({
   onClear: () => Promise<void>;
   /** Button label; override when onSave does no network verification. */
   saveLabel?: string;
+  /**
+   * True when the mainnet readiness table does not allow this setting on
+   * this network: Edit is switched off (Clear still works). The setters
+   * refuse too, so this is presentation only.
+   */
+  locked?: boolean;
 }) {
   const theme = useTheme();
   const [editing, setEditing] = useState(false);
@@ -431,6 +479,7 @@ function AaField({
             <Button
               title="Edit"
               variant="secondary"
+              disabled={locked}
               onPress={() => {
                 // Start from the stored value, else the pinned prefill
                 // (the verified Sepolia defaults in test mode).
@@ -493,21 +542,37 @@ function AaChainRow({ network }: { network: NetworkDefault }) {
   // The stored factory belongs to the selected type only when the types match.
   const storedForType = config?.factory && config.accountType === type ? config : null;
   const otherTypeStored = config?.factory && config.accountType !== type ? config.accountType : null;
+  // Mainnet readiness (config/readiness.ts): smart accounts and paymasters
+  // are test-network only. The setters in aa.ts refuse on such a network;
+  // here the editors are locked and the reason is shown.
+  const typeGate = readinessGate(type === 'simple' ? 'simple-account' : 'kernel-smart-account', network.chainId);
+  const kernelGate = readinessGate('kernel-smart-account', network.chainId);
+  const simpleGate = readinessGate('simple-account', network.chainId);
+  const paymasterGate = readinessGate('paymaster', network.chainId);
+  const anyTypeAllowed = kernelGate === null || simpleGate === null;
 
   return (
     <View style={[styles.endpointRow, { backgroundColor: theme.card, borderColor: theme.border }]}>
       <View style={styles.endpointHeader}>
         <Text style={[styles.endpointLabel, { color: theme.text }]}>{network.label}</Text>
         <Text style={[styles.endpointTag, { color: theme.textMuted }]}>
-          {config && config.bundlerUrl && config.factory
-            ? `ready · ${aaAccountTypeLabel(config.accountType)}`
-            : 'incomplete'}
+          {!anyTypeAllowed
+            ? 'test networks only'
+            : config && config.bundlerUrl && config.factory
+              ? `ready · ${aaAccountTypeLabel(config.accountType)}`
+              : 'incomplete'}
         </Text>
       </View>
+      {typeGate ? (
+        <Text style={[styles.endpointNote, { color: theme.warningText }]}>
+          {typeGate.feature.reason} {typeGate.hint}
+        </Text>
+      ) : null}
       <AaField
         label="Bundler URL (ERC-4337 RPC)"
         placeholder="https://…"
         value={config?.bundlerUrl ?? null}
+        locked={!anyTypeAllowed}
         statusLine={
           config?.bundlerUrl
             ? `Verified ✓ — eth_supportedEntryPoints includes EntryPoint v0.7 (checked ${shortDate(
@@ -570,6 +635,7 @@ function AaChainRow({ network }: { network: NetworkDefault }) {
           label="KernelFactory address (Kernel v3.3)"
           placeholder="0x…"
           value={storedForType?.factory ?? null}
+          locked={kernelGate !== null}
           prefill={KERNEL_PREFILL.factory}
           prefillNote={
             `Pinned Kernel v3.3 deployment from the wallet engine (the same addresses on ` +
@@ -609,6 +675,7 @@ function AaChainRow({ network }: { network: NetworkDefault }) {
           label="SimpleAccountFactory address"
           placeholder="0x…"
           value={storedForType?.factory ?? null}
+          locked={simpleGate !== null}
           prefill={simplePrefill?.factory ?? null}
           prefillNote={
             simplePrefill
@@ -647,6 +714,7 @@ function AaChainRow({ network }: { network: NetworkDefault }) {
         label="Paymaster URL (ERC-7677, optional)"
         placeholder="https://…"
         value={config?.paymasterUrl ?? null}
+        locked={paymasterGate !== null}
         statusLine={
           config?.paymasterUrl
             ? `Verified ✓ — answers pm_getPaymasterStubData (checked ${shortDate(
@@ -668,6 +736,7 @@ function AaChainRow({ network }: { network: NetworkDefault }) {
           label="Paymaster context (JSON, optional)"
           placeholder='{"policyId":"…"}'
           value={config?.paymasterContext ?? null}
+          locked={paymasterGate !== null}
           statusLine={
             config?.paymasterContext
               ? 'Sent verbatim to the paymaster with each sponsorship request.'
@@ -678,7 +747,13 @@ function AaChainRow({ network }: { network: NetworkDefault }) {
             reload();
           }}
           onClear={async () => {
-            await setAaPaymaster(network.chainId, config.paymasterUrl!, '');
+            // On a network where sponsorship is not allowed (mainnet
+            // readiness) this save is refused; clear the paymaster URL instead.
+            try {
+              await setAaPaymaster(network.chainId, config.paymasterUrl!, '');
+            } catch (e) {
+              Alert.alert('Not saved', e instanceof Error ? e.message : String(e));
+            }
             reload();
           }}
         />
@@ -1231,8 +1306,27 @@ export function SettingsScreen({ navigation }: Props) {
       </View>
 
       <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: theme.text }]}>Mainnet readiness</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{READINESS_INTRO}</Text>
+        {FEATURE_READINESS.map((f) => (
+          <ReadinessRow key={f.id} feature={f} theme={theme} />
+        ))}
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          The item ids (C1–C3, W1–W20 and the finding numbers) refer to the project&apos;s threat
+          model, docs/THREAT_MODEL.md, section 5 (mainnet-readiness checklist) and section 6
+          (findings). {READINESS_TESTNET_HINT}
+        </Text>
+      </View>
+
+      <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: theme.text }]}>
           Account Abstraction (experimental)
+        </Text>
+        <Text style={[styles.hint, { color: theme.warningText }]}>
+          Smart accounts, their modules and gas sponsorship are limited to test networks (see
+          Mainnet readiness above): on a main network these settings cannot be saved and the
+          smart-account options do not appear on the Send, Swap and WalletConnect screens.
+          Clearing a setting saved earlier still works.
         </Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Optional ERC-4337 setup per EVM chain: a bundler endpoint, a
@@ -1572,5 +1666,19 @@ const styles = StyleSheet.create({
   toggleLabel: {
     fontSize: 15,
     fontWeight: '600',
+  },
+  readinessTitle: {
+    flexShrink: 1,
+  },
+  readinessChip: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingVertical: 3,
+    paddingHorizontal: 10,
+    marginLeft: 8,
+  },
+  readinessChipText: {
+    fontSize: 12,
+    fontWeight: '700',
   },
 });

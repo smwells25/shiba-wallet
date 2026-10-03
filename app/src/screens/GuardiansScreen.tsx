@@ -18,6 +18,7 @@ import {
 } from '../components/RecoveryViews';
 import { RecordFileExportButton } from '../components/RecordFileActions';
 import { useTheme } from '../theme';
+import { readinessGate, type FeatureReadiness } from '../config/readiness';
 import { getEndpoint } from '../config/networks';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
@@ -102,6 +103,10 @@ export function GuardiansScreen({ navigation }: Props) {
   const owner = evm?.address ?? null;
   const ownerPath = evm?.path ?? null;
   const symbol = evmChain.displaySymbol;
+  // Mainnet readiness (config/readiness.ts): guardians are test-network
+  // only. Status reads, removing guardians, vetoing and the recovery record
+  // stay available; recovery.ts refuses setting up or changing guardians too.
+  const readiness = readinessGate('guardians', evmChain.caip2);
   const chain = evmChain.caip2;
 
   const [bundle, setBundle] = useState<AaClientBundle | null>(null);
@@ -714,6 +719,7 @@ export function GuardiansScreen({ navigation }: Props) {
   const configured = status?.state.validatorInitialized === true;
   return (
     <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      {readiness ? <ReadinessCard feature={readiness.feature} hint={readiness.hint} /> : null}
       {header}
       {!owner ? <Text style={[styles.error, { color: theme.danger }]}>No Ethereum address for this account.</Text> : null}
       {setupError ? <Text style={[styles.error, { color: theme.danger }]}>{setupError}</Text> : null}
@@ -728,7 +734,7 @@ export function GuardiansScreen({ navigation }: Props) {
             <>
               <Text style={[styles.hint, { color: theme.text }]}>No guardians are set up for this account.</Text>
               <Text style={[styles.hint, { color: theme.textMuted }]}>{GUARDIANS_TRADE_OFF}</Text>
-              <Button title="Set up guardians" onPress={() => startForm(false)} />
+              <Button title="Set up guardians" onPress={() => startForm(false)} disabled={readiness !== null} />
             </>
           ) : null}
           {status && configured && set ? (
@@ -741,7 +747,12 @@ export function GuardiansScreen({ navigation }: Props) {
               <GuardianSetView set={set} labelFor={labelFor} />
               <GuardianExposureWarning set={set} labelFor={labelFor} />
               <Text style={[styles.hint, { color: theme.textMuted }]}>{GUARDIANS_AUDIT_NOTE}</Text>
-              <Button title="Change guardians (renew)" variant="secondary" onPress={() => startForm(true)} />
+              <Button
+                title="Change guardians (renew)"
+                variant="secondary"
+                onPress={() => startForm(true)}
+                disabled={readiness !== null}
+              />
               <Button title="Remove guardians" variant="destructive" onPress={() => void onRemoveQuote()} />
             </>
           ) : null}
@@ -857,4 +868,19 @@ async function loadGuardianContext(
     };
   }
   return { bundle, resolution: await resolveGuardianAccount(bundle, owner), contactsNetworkId: endpoint.network.chainId };
+}
+
+/**
+ * Mainnet readiness card (config/readiness.ts): why this feature is limited
+ * to test networks, and where test mode is turned on.
+ */
+function ReadinessCard({ feature, hint }: { feature: FeatureReadiness; hint: string }) {
+  const theme = useTheme();
+  return (
+    <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+      <Text style={[styles.ok, { color: theme.text }]}>{feature.title}: test networks only</Text>
+      <Text style={[styles.hint, { color: theme.text }]}>{feature.reason}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{hint}</Text>
+    </View>
+  );
 }

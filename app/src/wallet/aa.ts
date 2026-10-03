@@ -35,6 +35,13 @@ import {
 import { EVM_CHAIN_ID, validateRecipient } from './send.ts';
 import type { KeyValueStore } from './tokens.ts';
 import { assertWalletDelegate, invalidateAccountDelegation } from './delegation.ts';
+import {
+  FeatureNotAllowedError,
+  assertFeatureAllowed,
+  eip155Caip2,
+  isFeatureAllowed,
+  type FeatureId,
+} from '../config/readiness.ts';
 
 /**
  * ERC-4337 smart-account glue for the app (experimental, off by default):
@@ -212,6 +219,14 @@ export interface AaChainConfig {
    * saved before this field existed read as an empty list.
    */
   recoveredAccounts: RecoveredAccountLink[];
+  /**
+   * The CAIP-2 id this configuration was read for. Set by getAaConfig and
+   * by every function here that returns a configuration; never read from
+   * storage. isAaConfigured uses it for the mainnet readiness gate
+   * (config/readiness.ts), and a configuration without it (null, e.g. one
+   * built by hand) counts as gated.
+   */
+  chain: string | null;
 }
 
 /** One recovered account attached to one of the wallet's owner EOAs. */
@@ -239,6 +254,7 @@ const EMPTY_CONFIG: AaChainConfig = {
   paymasterVerifiedAt: null,
   eip7702Owners: [],
   recoveredAccounts: [],
+  chain: null,
 };
 
 const ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/;
@@ -284,7 +300,7 @@ async function saveConfigMap(map: ConfigMap, store: KeyValueStore): Promise<void
   await store.setItem(AA_CONFIG_KEY, JSON.stringify(map));
 }
 
-function normalizeEntry(entry: Partial<AaChainConfig> | undefined): AaChainConfig {
+function normalizeEntry(entry: Partial<AaChainConfig> | undefined, chain: string): AaChainConfig {
   const str = (v: unknown): string | null => (typeof v === 'string' && v !== '' ? v : null);
   const bundlerUrl = str(entry?.bundlerUrl);
   const factory = str(entry?.factory);
@@ -312,6 +328,7 @@ function normalizeEntry(entry: Partial<AaChainConfig> | undefined): AaChainConfi
     paymasterVerifiedAt: paymasterUrl ? str(entry?.paymasterVerifiedAt) : null,
     eip7702Owners: owners,
     recoveredAccounts: normalizeRecoveredLinks(entry?.recoveredAccounts),
+    chain,
   };
 }
 
@@ -321,7 +338,7 @@ export async function getAaConfig(
   store: KeyValueStore = AsyncStorage,
 ): Promise<AaChainConfig> {
   const map = await loadConfigMap(store);
-  return normalizeEntry(map[chainId]) ?? { ...EMPTY_CONFIG };
+  return normalizeEntry(map[chainId], chainId) ?? { ...EMPTY_CONFIG, chain: chainId };
 }
 
 /** True when `owner` was upgraded (EIP-7702) for smart-account sends on this chain. */
@@ -355,18 +372,66 @@ export function recoveredAccountFor(config: AaChainConfig, owner: string | null 
 }
 
 /**
- * True when both endpoints are configured (and therefore verified). A
+ * True when the account type is allowed on the configuration's network by
+ * the mainnet readiness table (config/readiness.ts) AND both endpoints are
+ * configured (and therefore verified). A
  * Kernel configuration additionally needs its validator on record (always
  * written together with the factory by setAaKernelFactory). For an owner
  * upgraded with EIP-7702, or one with an attached recovered account, only
  * the bundler is needed (there is no factory involved).
  */
 export function isAaConfigured(config: AaChainConfig, owner?: string | null): boolean {
+  // Mainnet readiness (phase 9 item 6): on a network where this account
+  // type is not allowed, the smart account reads as unavailable, so the
+  // send, swap and WalletConnect screens (and the eligibility hooks behind
+  // the Home links) hide their smart-account options without any change of
+  // their own.
+  if (aaReadinessBlock(config.chain, effectiveAaAccountType(config, owner)) !== null) return false;
+  return hasCompleteAaSettings(config, owner);
+}
+
+/**
+ * The settings half of isAaConfigured, WITHOUT the readiness gate. Used by
+ * createAaClientFromConfig, so a configuration stored before the gate
+ * existed can still build a client for the undo paths (revoking a session
+ * key, removing a passkey or guardians, vetoing), which are never gated.
+ * Every path that starts a gated feature checks readiness itself.
+ */
+export function hasCompleteAaSettings(config: AaChainConfig, owner?: string | null): boolean {
   if (isEip7702Owner(config, owner)) return config.bundlerUrl !== null;
   if (recoveredAccountFor(config, owner)) return config.bundlerUrl !== null;
   if (config.bundlerUrl === null || config.factory === null) return false;
   if (config.accountType === 'kernel-v3.3') return config.kernelValidator !== null;
   return true;
+}
+
+/** The readiness features (config/readiness.ts) a smart-account type relies on. */
+export function aaTypeFeatures(type: AaAccountType): FeatureId[] {
+  if (type === 'simple') return ['simple-account'];
+  if (type === 'kernel-7702') return ['kernel-smart-account', 'eip7702-upgrade'];
+  return ['kernel-smart-account'];
+}
+
+/**
+ * The first readiness feature that keeps `type` from being used on `chain`,
+ * or null when it is allowed there. A null chain (a configuration that did
+ * not come from getAaConfig) is treated as gated.
+ */
+export function aaReadinessBlock(chain: string | null, type: AaAccountType): FeatureId | null {
+  for (const feature of aaTypeFeatures(type)) {
+    if (chain === null || !isFeatureAllowed(feature, chain)) return feature;
+  }
+  return null;
+}
+
+/**
+ * Throws the readiness refusal when no smart-account type at all may be
+ * used on `chain` (the bundler setting serves every type).
+ */
+function assertAnyAaTypeAllowed(chain: string): void {
+  if (!isFeatureAllowed('kernel-smart-account', chain) && !isFeatureAllowed('simple-account', chain)) {
+    throw new FeatureNotAllowedError('kernel-smart-account');
+  }
 }
 
 /** Numeric EIP-155 chain id of a CAIP-2 'eip155:<n>' id; throws otherwise. */
@@ -559,6 +624,8 @@ export async function setAaBundlerUrl(
   url: string,
   options: { store?: KeyValueStore; transportFor?: TransportFactory } = {},
 ): Promise<string[]> {
+  // Mainnet readiness: refused before any request, persisting nothing.
+  assertAnyAaTypeAllowed(chainId);
   const store = options.store ?? AsyncStorage;
   const transportFor = options.transportFor ?? httpTransport;
   const trimmed = url.trim().replace(/\/+$/, '');
@@ -588,6 +655,8 @@ export async function setAaFactory(
   nodeUrl: string,
   options: { store?: KeyValueStore; transportFor?: TransportFactory } = {},
 ): Promise<FactoryVerification> {
+  // Mainnet readiness: refused before any request, persisting nothing.
+  assertFeatureAllowed('simple-account', chainId);
   const store = options.store ?? AsyncStorage;
   const transportFor = options.transportFor ?? httpTransport;
   const validated = validateRecipient(EVM_CHAIN_ID, factoryRaw);
@@ -633,6 +702,8 @@ export async function setAaKernelFactory(
   nodeUrl: string,
   options: { store?: KeyValueStore; transportFor?: TransportFactory } = {},
 ): Promise<{ implementation: string; accountId: string }> {
+  // Mainnet readiness: refused before any request, persisting nothing.
+  assertFeatureAllowed('kernel-smart-account', chainId);
   const store = options.store ?? AsyncStorage;
   const transportFor = options.transportFor ?? httpTransport;
   const validated = validateRecipient(EVM_CHAIN_ID, factoryRaw);
@@ -716,13 +787,16 @@ export async function setAccountEip7702(
 ): Promise<AaChainConfig> {
   if (!/^0x[0-9a-fA-F]{40}$/.test(owner)) throw new Error(`Not an EVM address: ${owner}`);
   eip155ChainIdOf(chainId);
+  // Mainnet readiness: recording an upgrade is refused where the upgrade is
+  // not allowed; removing one (cancel or revoke) always works.
+  if (enabled) assertFeatureAllowed('eip7702-upgrade', chainId);
   const map = await loadConfigMap(store);
-  if (enabled && recoveredAccountFor(normalizeEntry(map[chainId]), owner)) {
+  if (enabled && recoveredAccountFor(normalizeEntry(map[chainId], chainId), owner)) {
     // One smart account per owner and chain: an owner that controls a
     // recovered Kernel account keeps using it.
     throw new Error(RECOVERED_7702_CONFLICT);
   }
-  const current = normalizeEntry(map[chainId]).eip7702Owners.filter(
+  const current = normalizeEntry(map[chainId], chainId).eip7702Owners.filter(
     (a) => a.toLowerCase() !== owner.toLowerCase(),
   );
   map[chainId] = {
@@ -730,7 +804,7 @@ export async function setAccountEip7702(
     eip7702Owners: enabled ? [...current, toChecksumAddress(toBytes(owner.toLowerCase()))] : current,
   };
   await saveConfigMap(map, store);
-  return normalizeEntry(map[chainId]);
+  return normalizeEntry(map[chainId], chainId);
 }
 
 /** Refusal when one owner would get both a 7702 upgrade and a recovered account. */
@@ -757,7 +831,7 @@ export async function setRecoveredAccount(
   if (account !== null && !ADDRESS_PATTERN.test(account)) throw new Error(`Not an EVM address: ${account}`);
   eip155ChainIdOf(chainId);
   const map = await loadConfigMap(store);
-  const entry = normalizeEntry(map[chainId]);
+  const entry = normalizeEntry(map[chainId], chainId);
   if (account !== null && isEip7702Owner(entry, owner)) throw new Error(RECOVERED_7702_CONFLICT);
   const others = entry.recoveredAccounts.filter((l) => l.owner.toLowerCase() !== owner.toLowerCase());
   map[chainId] = {
@@ -775,7 +849,7 @@ export async function setRecoveredAccount(
           ],
   };
   await saveConfigMap(map, store);
-  return normalizeEntry(map[chainId]);
+  return normalizeEntry(map[chainId], chainId);
 }
 
 /**
@@ -812,7 +886,7 @@ export async function moveRecoveredAccountLink(
   }
   eip155ChainIdOf(chainId);
   const map = await loadConfigMap(store);
-  const entry = normalizeEntry(map[chainId]);
+  const entry = normalizeEntry(map[chainId], chainId);
   const lower = (a: string) => a.toLowerCase();
   const existingTo = recoveredAccountFor(entry, args.to);
   if (args.attach) {
@@ -839,7 +913,7 @@ export async function moveRecoveredAccountLink(
       : kept,
   };
   await saveConfigMap(map, store);
-  return normalizeEntry(map[chainId]);
+  return normalizeEntry(map[chainId], chainId);
 }
 
 /** Wipe support: detaches every recovered account on every chain. */
@@ -918,6 +992,8 @@ export async function setAaPaymaster(
   contextJson: string,
   options: { store?: KeyValueStore; transportFor?: TransportFactory } = {},
 ): Promise<void> {
+  // Mainnet readiness: refused before any request, persisting nothing.
+  assertFeatureAllowed('paymaster', chainId);
   const store = options.store ?? AsyncStorage;
   const transportFor = options.transportFor ?? httpTransport;
   const trimmed = url.trim().replace(/\/+$/, '');
@@ -1313,7 +1389,7 @@ export function createAaClientFromConfig(
       ...(options.transportFor ? { transportFor: options.transportFor } : {}),
     });
   }
-  if (!isAaConfigured(config) || !config.bundlerUrl || !config.factory) {
+  if (!hasCompleteAaSettings(config) || !config.bundlerUrl || !config.factory) {
     throw new Error('Smart-account settings are incomplete for this network (Settings → Account Abstraction).');
   }
   return createAaClient({
@@ -1773,6 +1849,9 @@ export async function sendAa(
   if (quote.passkey) {
     throw new Error('This operation was prepared for the passkey signer. Nothing was signed; review it again.');
   }
+  // Mainnet readiness: an operation that would sign an EIP-7702
+  // authorization is refused where the upgrade is not allowed.
+  if (quote.eip7702?.upgrade) assertFeatureAllowed('eip7702-upgrade', eip155Caip2(bundle.chainId));
   const sender = await bundle.client.getAddress(owner);
   if (sender.toLowerCase() !== quote.sender.toLowerCase()) {
     throw new Error(

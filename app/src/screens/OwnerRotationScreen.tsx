@@ -15,6 +15,7 @@ import {
 } from '../components/RecoveryViews';
 import { RecordFileExportButton } from '../components/RecordFileActions';
 import { useTheme } from '../theme';
+import { readinessGate, type FeatureReadiness } from '../config/readiness';
 import { getEndpoint } from '../config/networks';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
@@ -88,6 +89,10 @@ export function OwnerRotationScreen({ navigation }: Props) {
   const ownerPath = evm?.path ?? null;
   const symbol = evmChain.displaySymbol;
   const chain = evmChain.caip2;
+  // Mainnet readiness (config/readiness.ts): owner changes are test-network
+  // only. Status reads and finishing an owner change already sent stay
+  // available; recovery.ts refuses a new owner change too.
+  const readiness = readinessGate('owner-rotation', chain);
 
   const [bundle, setBundle] = useState<AaClientBundle | null>(null);
   const [config, setConfig] = useState<AaChainConfig | null>(null);
@@ -483,6 +488,7 @@ export function OwnerRotationScreen({ navigation }: Props) {
   // ------------------------------------------------------------ overview
   return (
     <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      {readiness ? <ReadinessCard feature={readiness.feature} hint={readiness.hint} /> : null}
       <Text style={[styles.title, { color: theme.text }]}>Change the owner key</Text>
       {header}
       {OWNER_ROTATION_EXPLANATION.map((line) => (
@@ -560,6 +566,7 @@ export function OwnerRotationScreen({ navigation }: Props) {
                     title={chosen ? 'Chosen' : 'Make this the new owner'}
                     variant={chosen ? 'primary' : 'secondary'}
                     onPress={() => setTarget(w)}
+                    disabled={readiness !== null}
                   />
                 ) : null}
               </View>
@@ -586,7 +593,7 @@ export function OwnerRotationScreen({ navigation }: Props) {
               <Text style={[styles.hint, { color: theme.textMuted }]}>Reading the account and asking the bundler…</Text>
             </View>
           ) : (
-            <Button title="Review" disabled={!target} onPress={() => void onReview()} />
+            <Button title="Review" disabled={!target || readiness !== null} onPress={() => void onReview()} />
           )}
         </>
       ) : null}
@@ -611,4 +618,19 @@ function outcomeText(o: OwnerRotationOutcome, newName: string): string {
     case 'unverified':
       return `The ownership check failed, so nothing was attached: ${o.problems.join('; ')}.`;
   }
+}
+
+/**
+ * Mainnet readiness card (config/readiness.ts): why this feature is limited
+ * to test networks, and where test mode is turned on.
+ */
+function ReadinessCard({ feature, hint }: { feature: FeatureReadiness; hint: string }) {
+  const theme = useTheme();
+  return (
+    <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+      <Text style={[styles.ok, { color: theme.text }]}>{feature.title}: test networks only</Text>
+      <Text style={[styles.hint, { color: theme.text }]}>{feature.reason}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{hint}</Text>
+    </View>
+  );
 }

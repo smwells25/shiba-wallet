@@ -124,7 +124,12 @@ const ZERO = '0x0000000000000000000000000000000000000000';
 const seed = mnemonicToSeed(TEST_MNEMONIC);
 const owner = evmKeyProvider.deriveAccount(seed, 0, 0);
 seed.fill(0);
-const M = 'eip155:1';
+// Session keys are 'testnet-only' in the mainnet readiness table
+// (src/config/readiness.ts, phase 9 item 6), so every flow here runs on
+// Sepolia; the mainnet refusals are checked at the end and in
+// check-readiness.mjs.
+const M = 'eip155:11155111';
+const CHAIN_ID = 11155111n;
 const ACCOUNT = KERNEL_ACCOUNT_0;
 const RECIPIENT = '0x000000000000000000000000000000000000dEaD';
 const TX_HASH = '0x' + 'cd'.repeat(32);
@@ -152,7 +157,7 @@ function fakeVault() {
  * status, ECDSASigner.signer) and EntryPoint getNonce per key. State is
  * flipped by the test to emulate inclusion of an install or a revocation.
  */
-function fakeSessionNode({ deployed = true, codeOverride = {}, chainIdHex = '0x1' } = {}) {
+function fakeSessionNode({ deployed = true, codeOverride = {}, chainIdHex = '0xaa36a7' } = {}) {
   const base = fakeKernelNode({ chainIdHex, deployedAccounts: deployed ? new Set([ACCOUNT]) : new Set(), codeAt: codeOverride });
   const state = { currentNonce: 1, permissions: new Map(), seen: new Set(), failReads: false };
   const calls = [];
@@ -218,7 +223,7 @@ function kernelBundle(node, bundler, accountType = 'kernel-v3.3') {
     nodeUrl: 'https://node.example',
     bundlerUrl: 'https://bundler.example',
     factory: KERNEL_V3_3.factory,
-    chainId: 1n,
+    chainId: CHAIN_ID,
     accountIndex: 0,
     accountType,
     transportFor: (url) => (url.includes('bundler') ? bundler : node),
@@ -238,7 +243,7 @@ console.log('check-sessions: which account a session can live in');
     nodeUrl: 'n',
     bundlerUrl: 'bundler',
     factory: '0x91E60e0613810449d098b0b5Ec8b51A0FE8c8985',
-    chainId: 1n,
+    chainId: CHAIN_ID,
     transportFor: (u) => (u.includes('bundler') ? fakeBundler() : fakeSessionNode()),
   });
   const s = await resolveSessionAccount(simple, OWNER_0);
@@ -251,8 +256,8 @@ console.log('check-sessions: which account a session can live in');
   const plainNode = async (method, params) => (method === 'eth_getCode' && same(params[0], OWNER_0) ? '0x' : delegated(method, params));
   const notUp = await resolveSessionAccount(kernelBundle(plainNode, fakeBundler(), 'kernel-7702'), OWNER_0);
   check('EIP-7702 owner not yet delegated on-chain → plain refusal', !notUp.ok && notUp.reason === SESSION_NOT_UPGRADED_REFUSAL);
-  const wrongChain = await resolveSessionAccount(kernelBundle(fakeSessionNode({ chainIdHex: '0xaa36a7' }), fakeBundler()), OWNER_0);
-  check('endpoint on another chain → refusal naming both chain ids', !wrongChain.ok && /11155111.*expected 1/.test(wrongChain.reason));
+  const wrongChain = await resolveSessionAccount(kernelBundle(fakeSessionNode({ chainIdHex: '0x1' }), fakeBundler()), OWNER_0);
+  check('endpoint on another chain → refusal naming both chain ids', !wrongChain.ok && /\b1\b.*expected 11155111/.test(wrongChain.reason), wrongChain.reason);
 }
 
 // ---------------------------------------------------------------------------
@@ -333,7 +338,7 @@ const grant = buildManualGrant({
 let installRecord;
 {
   const { install, quote } = await prepareSessionInstall(bundle, OWNER_0, ACCOUNT, grant, { now: NOW });
-  const independent = encodePermissionInstall(grant, { chainId: 1n, account: ACCOUNT, currentNonce: 1, validationNonce: 0, now: NOW });
+  const independent = encodePermissionInstall(grant, { chainId: CHAIN_ID, account: ACCOUNT, currentNonce: 1, validationNonce: 0, now: NOW });
   check('install payload = engine encodePermissionInstall for the on-chain nonces (permission id, calls)',
     toHex(install.permissionId) === toHex(independent.permissionId) &&
       install.installCalls.length === 2 &&
@@ -368,13 +373,13 @@ let installRecord;
   const decoded = decodeKernelExecute(op.callData);
   check('submitted op executes exactly the engine installCalls (decoded by ethers)',
     submitted === 1 && decoded.calls.length === 2 && decoded.calls.every((c, i) => same(c.to, ACCOUNT) && c.data === toHex(install.installCalls[i].data)));
-  const hash = getUserOpHash(op, ENTRYPOINT_V07, 1n);
+  const hash = getUserOpHash(op, ENTRYPOINT_V07, CHAIN_ID);
   const recovered = ethers.recoverAddress(ethers.hashMessage(hash), toHex(op.signature));
   check('install op is ROOT-signed: signature recovers (ethers) to the owner EOA', same(recovered, OWNER_0) && op.nonce === 0n);
   check('record: installing, explicit, keyHeld, userOpHash recorded', record.localStatus === 'installing' && record.installMode === 'explicit' && record.keyHeld && record.installUserOpHash === userOpHash && record.permissionId === toHex(install.permissionId));
 
   const vaultId = sessionVaultId(M, ACCOUNT, record.permissionId);
-  check('vault id is "<chain decimal>.<account>.<pid>" (expo-secure-store key alphabet)', vaultId === `1.${ACCOUNT.toLowerCase()}.${record.permissionId.slice(2)}` && /^[0-9A-Za-z._-]+$/.test(vaultId));
+  check('vault id is "<chain decimal>.<account>.<pid>" (expo-secure-store key alphabet)', vaultId === `11155111.${ACCOUNT.toLowerCase()}.${record.permissionId.slice(2)}` && /^[0-9A-Za-z._-]+$/.test(vaultId));
   check('the private key is in the vault under that id', vault.map.get(vaultId)?.toLowerCase() === sessionKeyHex);
   const raw = store._map.get(SESSIONS_KEY) ?? '';
   check('AsyncStorage-shaped store never contains the private key (with or without 0x)', raw.length > 0 && !raw.toLowerCase().includes(sessionKeyHex.slice(2)));
@@ -439,7 +444,7 @@ console.log('check-sessions: session-signed operation (owner never involved)');
   const pidKey = sessionNonceKey(installRecord.permissionId);
   check('op nonce uses the permission nonce key (key << 64), default mode', op.nonce >> 64n === pidKey && op.nonce >> 64n !== 0n);
   check('op signature = 0xff || 65 bytes', op.signature.length === 66 && op.signature[0] === 0xff);
-  const hash = getUserOpHash(op, ENTRYPOINT_V07, 1n);
+  const hash = getUserOpHash(op, ENTRYPOINT_V07, CHAIN_ID);
   const signer = ethers.recoverAddress(ethers.hashMessage(hash), toHex(op.signature.slice(1)));
   check('signature recovers (ethers) to the SESSION key address', same(signer, sessionKey.address), signer);
   check('…and NOT to the owner EOA', !same(signer, OWNER_0));
@@ -505,7 +510,7 @@ console.log('check-sessions: revocation');
   const op = fromRpcOp(bundler.lastOp);
   check('submitted revoke op executes uninstallValidation, root-signed by the owner',
     decodeKernelExecute(op.callData).calls[0].data === ethersData &&
-      same(ethers.recoverAddress(ethers.hashMessage(getUserOpHash(op, ENTRYPOINT_V07, 1n)), toHex(op.signature)), OWNER_0));
+      same(ethers.recoverAddress(ethers.hashMessage(getUserOpHash(op, ENTRYPOINT_V07, CHAIN_ID)), toHex(op.signature)), OWNER_0));
   check('after the bundler accepted it: key deleted from the vault, record revoking', vault.map.size === 0 && record.localStatus === 'revoking' && !record.keyHeld && record.revokeUserOpHash === userOpHash);
   node.uninstall(record.permissionId);
   const fin = await finalizeSessionRevoke(bundle, record, store, { timeoutMs: 1000, pollMs: 10 });
@@ -559,7 +564,7 @@ const event = (id, method, params, chainId = M, topic = 'T1') => ({ id, topic, p
     validAfter: 0,
     validUntil: NOW + 900,
   };
-  const request = grantToErc7715Request(dappGrant, { chainId: 1n, account: ACCOUNT, isAdjustmentAllowed: false });
+  const request = grantToErc7715Request(dappGrant, { chainId: CHAIN_ID, account: ACCOUNT, isAdjustmentAllowed: false });
   const parsed = parseWcRequest(event(1, 'wallet_requestExecutionPermissions', [request]), ACCOUNT, M, kernelSmart);
   check('request → parsed permissions with the engine-mapped grant (session key = the dApp’s `to`)',
     parsed.kind === 'permissions' && parsed.grant.sessionKey === dappKey.address && parsed.grant.calls.length === 2 &&
@@ -579,14 +584,14 @@ const event = (id, method, params, chainId = M, topic = 'T1') => ({ id, topic, p
   check('unknown permission type → 4200', unknownType?.code === 4200 && /not supported/.test(unknownType.message));
   const noExpiry = rej(() => parseWcRequest(event(4, 'wallet_requestExecutionPermissions', [{ ...request, rules: [] }]), ACCOUNT, M, kernelSmart));
   check('missing expiry rule → 4200 (open-ended sessions refused)', noExpiry?.code === 4200 && /expiry rule is required/.test(noExpiry.message));
-  const selfReq = grantToErc7715Request({ ...dappGrant, calls: [{ target: '0x' + '44'.repeat(20), selector: null, valueLimit: 0n }] }, { chainId: 1n });
+  const selfReq = grantToErc7715Request({ ...dappGrant, calls: [{ target: '0x' + '44'.repeat(20), selector: null, valueLimit: 0n }] }, { chainId: CHAIN_ID });
   selfReq.permission.data.calls[0].target = ACCOUNT;
   selfReq.permission.data.calls[0].selector = '0x12345678';
   const selfRej = rej(() => parseWcRequest(event(5, 'wallet_requestExecutionPermissions', [selfReq]), ACCOUNT, M, kernelSmart));
   check('self-call grant → -32602 with the engine’s exact text', selfRej?.code === -32602 && /may call the account itself only/.test(selfRej.message));
   const fromRej = rej(() => parseWcRequest(event(6, 'wallet_requestExecutionPermissions', [{ ...request, from: OWNER_0 }]), ACCOUNT, M, kernelSmart));
   check('`from` other than the bound smart account → 4100', fromRej?.code === 4100);
-  const chainRej = rej(() => parseWcRequest(event(7, 'wallet_requestExecutionPermissions', [{ ...request, chainId: '0xaa36a7' }]), ACCOUNT, M, kernelSmart));
+  const chainRej = rej(() => parseWcRequest(event(7, 'wallet_requestExecutionPermissions', [{ ...request, chainId: '0x1' }]), ACCOUNT, M, kernelSmart));
   check('request chainId other than the active chain → 4901', chainRej?.code === 4901);
   const twoRej = rej(() => parseWcRequest(event(8, 'wallet_requestExecutionPermissions', [request, request]), ACCOUNT, M, kernelSmart));
   check('more than one PermissionRequest → -32602 (one grant per request)', twoRej?.code === -32602);
@@ -618,7 +623,7 @@ const event = (id, method, params, chainId = M, topic = 'T1') => ({ id, topic, p
   const fin = await finalizeSessionInstall(kb, record, s, { timeoutMs: 1000, pollMs: 10 });
   const response = buildErc7715Response(fin.record, { isAdjustmentAllowed: false, installTransactionHash: fin.receipt.txHash });
   check('response echoes the granted request: chainId, from = Kernel account, to = dApp session key',
-    response.chainId === '0x1' && response.from === ACCOUNT && response.to === dappKey.address);
+    response.chainId === '0xaa36a7' && response.from === ACCOUNT && response.to === dappKey.address);
   check('response permission = wallet type with the granted calls; expiry rule = validUntil',
     response.permission.type === ERC7715_CALLS_PERMISSION_TYPE && response.permission.isAdjustmentAllowed === false &&
       response.permission.data.calls.length === 2 && response.rules[0].type === 'expiry' && response.rules[0].data.timestamp === NOW + 900);
@@ -666,7 +671,7 @@ console.log('check-sessions: controller routing');
   const last = (kit) => kit.calls.respond[kit.calls.respond.length - 1]?.response;
   const request = grantToErc7715Request(
     { sessionKey: ethers.Wallet.createRandom().address, calls: [{ target: RECIPIENT, selector: null, valueLimit: 1n }], validAfter: 0, validUntil: NOW + 600 },
-    { chainId: 1n },
+    { chainId: CHAIN_ID },
   );
 
   const kit = fakeKit(session('T1', ACCOUNT));
@@ -705,6 +710,33 @@ console.log('check-sessions: controller routing');
 // prepareAaCalls is imported to keep the quote path visible in this suite's
 // dependency list (the install quote goes through it).
 void prepareAaCalls;
+
+// ---------------------------------------------------------------------------
+console.log('check-sessions: mainnet readiness gate (phase 9 item 6)');
+// ---------------------------------------------------------------------------
+{
+  const node = fakeSessionNode({ chainIdHex: '0x1' });
+  const bundler = fakeBundler();
+  const mainnetBundle = createAaClient({
+    nodeUrl: 'https://node.example',
+    bundlerUrl: 'https://bundler.example',
+    factory: KERNEL_V3_3.factory,
+    chainId: 1n,
+    accountIndex: 0,
+    accountType: 'kernel-v3.3',
+    transportFor: (url) => (url.includes('bundler') ? bundler : node),
+  });
+  const before = node.calls.length;
+  const e1 = await caught(() => prepareSessionInstall(mainnetBundle, OWNER_0, ACCOUNT, { sessionKey: OWNER_0, calls: [], validAfter: 0, validUntil: 1 }));
+  check('mainnet prepareSessionInstall refused with the readiness reason and zero network calls', /only on test networks/.test(e1?.message ?? '') && node.calls.length === before, e1?.message);
+  const store = memoryStore();
+  const vault = fakeVault();
+  let submitted = false;
+  const e2 = await caught(() => installSession({ quote: { calls: [] }, install: { installCalls: [] }, grant: {}, chain: 'eip155:1', account: ACCOUNT, owner: OWNER_0, accountIndex: 0, accountKind: 'kernel-v3.3', label: 'x', source: 'manual', sessionPrivateKey: newSessionKey().privateKey, store, vault, submit: async () => { submitted = true; return { userOpHash: '0x' }; } }));
+  check('mainnet installSession refused before storing, vaulting or submitting', /only on test networks/.test(e2?.message ?? '') && !submitted && vault.map.size === 0 && (await store.getItem(SESSIONS_KEY)) === null);
+  const e3 = await caught(() => sendSessionCalls({ bundle: mainnetBundle, record: { chain: 'eip155:1', grant: '{}', keyHeld: true, localStatus: 'installed' }, calls: [], vault }));
+  check('mainnet sendSessionCalls refused before the vault is read or any request', /only on test networks/.test(e3?.message ?? '') && vault.loads === 0 && node.calls.length === before);
+}
 
 console.log(`\ncheck-sessions: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

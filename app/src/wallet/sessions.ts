@@ -48,6 +48,7 @@ import { formatUnits, parseUnits } from './balances.ts';
 import { WALLET_7702_DELEGATE } from './delegation.ts';
 import { EVM_CHAIN_ID, validateRecipient } from './send.ts';
 import type { KeyValueStore } from './tokens.ts';
+import { assertFeatureAllowed, eip155Caip2 } from '../config/readiness.ts';
 
 /**
  * Session keys for the app (phase 8 item 2, app half), on the engine's
@@ -671,6 +672,9 @@ export async function prepareSessionInstall(
   grant: SessionKeyGrant,
   options: { now?: number } = {},
 ): Promise<{ install: KernelPermissionInstall; quote: AaSendQuote }> {
+  // Mainnet readiness (config/readiness.ts): refused before any request
+  // where session keys are not allowed.
+  assertFeatureAllowed('session-keys', eip155Caip2(bundle.chainId));
   validateSessionKeyGrant(grant, { account, ...(options.now !== undefined ? { now: options.now } : {}) });
   const reported = await new NodeClient(bundle.node).chainId();
   if (reported !== bundle.chainId) {
@@ -719,6 +723,8 @@ export async function installSession(args: {
   vault: SessionKeyVault | null;
   submit: (quote: AaSendQuote) => Promise<{ userOpHash: string }>;
 }): Promise<{ record: SessionRecord; userOpHash: string }> {
+  // Mainnet readiness: checked again before anything is stored or signed.
+  assertFeatureAllowed('session-keys', args.chain);
   const permissionId = toHex(args.install.permissionId).toLowerCase();
   const calls = args.quote.calls;
   if (
@@ -901,6 +907,10 @@ export async function sendSessionCalls(args: {
   now?: number;
 }): Promise<{ userOpHash: string; client: SmartAccountClient }> {
   const { record, bundle } = args;
+  // Mainnet readiness: using a session key is refused where session keys
+  // are not allowed (revoking one never is), before the vault is read.
+  assertFeatureAllowed('session-keys', record.chain);
+  assertFeatureAllowed('session-keys', eip155Caip2(bundle.chainId));
   const grant = parseSessionKeyGrant(record.grant);
   assertCallsAllowed(grant, args.calls, args.now ?? Math.floor(Date.now() / 1000));
   if (!record.keyHeld) {

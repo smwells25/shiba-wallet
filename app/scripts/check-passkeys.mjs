@@ -138,7 +138,12 @@ const b64u = (bytes) => Buffer.from(bytes).toString('base64url'); // Node's enco
 const sha256 = (bytes) => new Uint8Array(createHash('sha256').update(bytes).digest());
 
 const RP_ID = 'wallet.shiba-test-domain.com'; // a syntactically real domain for the fakes; never contacted
-const CHAIN = 'eip155:1';
+// Passkeys are 'testnet-only' in the mainnet readiness table
+// (src/config/readiness.ts, phase 9 item 6), so every flow here runs on
+// Sepolia; the mainnet refusals are checked at the end and in
+// check-readiness.mjs.
+const CHAIN = 'eip155:11155111';
+const CHAIN_ID = 11155111n;
 const ACCOUNT = KERNEL_ACCOUNT_0;
 const VALIDATOR = KERNEL_WEBAUTHN_VALIDATOR.address;
 
@@ -282,7 +287,7 @@ check(
   toHex(keccak_256(toBytes(VALIDATOR_CODE))) === KERNEL_WEBAUTHN_VALIDATOR.runtimeCodeHash && toBytes(VALIDATOR_CODE).length === 4739,
 );
 
-function fakePasskeyNode({ deployed = true, rootOwner = OWNER_0, precompile = true, chainIdHex = '0x1', delegated7702 = false } = {}) {
+function fakePasskeyNode({ deployed = true, rootOwner = OWNER_0, precompile = true, chainIdHex = '0xaa36a7', delegated7702 = false } = {}) {
   const codeAt = delegated7702 ? { [ACCOUNT.toLowerCase()]: true } : {};
   const base = fakeKernelNode({ chainIdHex, deployedAccounts: deployed ? new Set([ACCOUNT]) : new Set(), codeAt });
   const state = { validationNonce: 0, hook: ZERO, executeAllowed: false, validNonceFrom: 0, key: null };
@@ -355,7 +360,7 @@ function hashingBundler({ receipt = { success: true, receipt: { transactionHash:
     }
     if (method === 'eth_sendUserOperation') {
       transport.lastOp = params[0];
-      return toHex(getUserOpHash(fromRpcOp(params[0]), ENTRYPOINT_V07, 1n));
+      return toHex(getUserOpHash(fromRpcOp(params[0]), ENTRYPOINT_V07, CHAIN_ID));
     }
     if (method === 'eth_getUserOperationReceipt') return receipt;
     throw new Error(`fake bundler: unexpected method ${method}`);
@@ -370,7 +375,7 @@ function kernelBundle(node, bundler, accountType = 'kernel-v3.3') {
     nodeUrl: 'https://node.invalid',
     bundlerUrl: 'https://bundler.invalid',
     factory: accountType === 'simple' ? '0x91E60e0613810449d098b0b5Ec8b51A0FE8c8985' : KERNEL_V3_3.factory,
-    chainId: 1n,
+    chainId: CHAIN_ID,
     accountIndex: 0,
     accountType,
     transportFor: (url) => (url.includes('bundler') ? bundler : node),
@@ -567,8 +572,8 @@ console.log('check-passkeys: eligibility');
   check('EIP-7702 upgrade → plain refusal', !k7702.ok && k7702.reason === PASSKEY_7702_REFUSAL);
   const foreign = await resolvePasskeyAccount(kernelBundle(fakePasskeyNode({ rootOwner: '0x000000000000000000000000000000000000bEEF' }), hashingBundler()), OWNER_0);
   check('another current owner → plain refusal', !foreign.ok && foreign.reason === PASSKEY_NOT_OWNER_REFUSAL);
-  const wrongChain = await resolvePasskeyAccount(kernelBundle(fakePasskeyNode({ chainIdHex: '0xaa36a7' }), hashingBundler()), OWNER_0);
-  check('endpoint on another chain → refusal naming both chain ids', !wrongChain.ok && /11155111/.test(wrongChain.reason));
+  const wrongChain = await resolvePasskeyAccount(kernelBundle(fakePasskeyNode({ chainIdHex: '0x1' }), hashingBundler()), OWNER_0);
+  check('endpoint on another chain → refusal naming both chain ids', !wrongChain.ok && /11155111/.test(wrongChain.reason) && /\b1\b/.test(wrongChain.reason), wrongChain.reason);
 }
 
 // ---------------------------------------------------------------------------
@@ -615,7 +620,7 @@ const bundle = kernelBundle(node, bundler);
   const op = fromRpcOp(bundler.lastOp);
   const decoded = decodeKernelExecute(op.callData);
   check('submitted op executes exactly the install call (decoded by ethers)', decoded.calls.length === 1 && decoded.calls[0].data === toHex(engineCall.data) && same(decoded.calls[0].to, ACCOUNT));
-  const hash = getUserOpHash(op, ENTRYPOINT_V07, 1n);
+  const hash = getUserOpHash(op, ENTRYPOINT_V07, CHAIN_ID);
   check('install op is ROOT-signed: ethers recovers the owner EOA; nonce key 0',
     same(ethers.recoverAddress(ethers.hashMessage(hash), toHex(op.signature)), OWNER_0) && op.nonce >> 64n === 0n && ownerSignCount === signsBefore + 1);
   const raw = store._map.get(PASSKEYS_KEY);
@@ -679,7 +684,7 @@ console.log('check-passkeys: passkey-signed operation (the owner key is never us
 
   const { userOpHash, signature } = await sendPasskeyCalls(pbundle, quote);
   const op = fromRpcOp(bundler.lastOp);
-  const hash = getUserOpHash(op, ENTRYPOINT_V07, 1n);
+  const hash = getUserOpHash(op, ENTRYPOINT_V07, CHAIN_ID);
   check('one prompt, one submission, bundler hash = recomputed userOpHash', auth.calls.get === getsBefore + 1 && bundler.sends() === sendsBefore + 1 && userOpHash === toHex(hash));
   check('submitted op: sender = the smart account, nonce key = webAuthnNonceKey(validator), no factory',
     op.sender === ACCOUNT && op.nonce >> 64n === webAuthnNonceKey(VALIDATOR) && !op.factory);
@@ -710,7 +715,7 @@ console.log('check-passkeys: passkey-signed operation (the owner key is never us
     check('the bundle spec refuses to sign a bare hash (no operation context), with no prompt',
       e && /bare hash/.test(e.message) && auth.calls.get === getsNow, e?.message);
     const e2 = await caught(() => pbundle.spec.signUserOpHash(pbundle.passkey.spec.signer, hash, {
-      userOp: { ...op, factory: KERNEL_V3_3.factory, factoryData: new Uint8Array([1]) }, entryPoint: ENTRYPOINT_V07, chainId: 1n,
+      userOp: { ...op, factory: KERNEL_V3_3.factory, factoryData: new Uint8Array([1]) }, entryPoint: ENTRYPOINT_V07, chainId: CHAIN_ID,
     }));
     check('the bundle spec refuses an operation that would deploy the account, with no prompt',
       e2 && /cannot deploy/.test(e2.message) && auth.calls.get === getsNow, e2?.message);
@@ -737,7 +742,7 @@ console.log('check-passkeys: passkey-signed operation (the owner key is never us
   check('self-call refused (the engine\'s client-side D1 guard)', /may not call the account itself/.test((await caught(() => preparePasskeyCalls(pbundle, [{ to: ACCOUNT, value: 0n, data: new Uint8Array(0) }])))?.message ?? ''));
   check('the passkey bundle refuses to quote for another address', /own smart account/.test((await caught(() => pbundle.client.getAddress({ ...owner })))?.message ?? ''));
   check('an owner-signed quote cannot be sent through the passkey path', /not prepared for the passkey/.test((await caught(() => sendPasskeyCalls(pbundle, { ...quote, passkey: undefined })))?.message ?? ''));
-  check('createPasskeyBundle refuses a record from another chain', /another network/.test((() => { try { createPasskeyBundle({ ...bundle, chainId: 11155111n }, record, async () => null); return ''; } catch (e) { return e.message; } })()));
+  check('createPasskeyBundle refuses a record from another chain', /another network/.test((() => { try { createPasskeyBundle({ ...bundle, chainId: 1n }, record, async () => null); return ''; } catch (e) { return e.message; } })()));
   check('createPasskeyBundle refuses a record that is not installed', /not installed/.test((() => { try { createPasskeyBundle(bundle, { ...record, localStatus: 'failed' }, async () => null); return ''; } catch (e) { return e.message; } })()));
 }
 
@@ -748,14 +753,14 @@ console.log('check-passkeys: ERC-1271 signature for dApps (smart-account session
   const { auth } = shared;
   auth.mode = 'normal';
   const hash = toBytes(ethers.hashMessage('Sign in to example dApp'));
-  const sig = await signHashWithPasskey({ record, assert: makePasskeyAssert(auth, record), hash, chainId: 1n, expectedAccount: ACCOUNT });
+  const sig = await signHashWithPasskey({ record, assert: makePasskeyAssert(auth, record), hash, chainId: CHAIN_ID, expectedAccount: ACCOUNT });
   check('layout: 0x01 || WebAuthn validator || envelope', sig[0] === 0x01 && same(toHex(sig.slice(1, 21)), VALIDATOR));
   const [ad, cdj, , r, s] = abi.decode(['bytes', 'string', 'uint256', 'uint256', 'uint256', 'bool'], toHex(sig.slice(21)));
-  const digest = kernelErc1271Digest(hash, { chainId: 1n, account: ACCOUNT });
+  const digest = kernelErc1271Digest(hash, { chainId: CHAIN_ID, account: ACCOUNT });
   check('challenge = Kernel\'s EIP-712 wrapper of the hash for this account', cdj.includes(`"challenge":"${b64u(digest)}"`));
   check('noble verifies the ERC-1271 envelope', p256.verify(new Uint8Array([...toBytes(word(r)), ...toBytes(word(s))]), sha256(new Uint8Array([...toBytes(ad), ...sha256(Buffer.from(cdj, 'utf8'))])), new Uint8Array([4, ...toBytes(record.publicKey.x), ...toBytes(record.publicKey.y)]), { prehash: false }));
-  check('refused for a session bound to another account', /Nothing was signed/.test((await caught(() => signHashWithPasskey({ record, assert: makePasskeyAssert(auth, record), hash, chainId: 1n, expectedAccount: OWNER_0 })))?.message ?? ''));
-  check('refused on another chain', /another network/.test((await caught(() => signHashWithPasskey({ record, assert: makePasskeyAssert(auth, record), hash, chainId: 11155111n, expectedAccount: ACCOUNT })))?.message ?? ''));
+  check('refused for a session bound to another account', /Nothing was signed/.test((await caught(() => signHashWithPasskey({ record, assert: makePasskeyAssert(auth, record), hash, chainId: CHAIN_ID, expectedAccount: OWNER_0 })))?.message ?? ''));
+  check('refused on another chain (mainnet: the readiness gate refuses first)', /only on test networks/.test((await caught(() => signHashWithPasskey({ record, assert: makePasskeyAssert(auth, record), hash, chainId: 1n, expectedAccount: ACCOUNT })))?.message ?? ''));
 }
 
 // ---------------------------------------------------------------------------
@@ -776,7 +781,7 @@ console.log('check-passkeys: status, removal and forgetting');
   const signsBefore = ownerSignCount;
   const { userOpHash, record: removing } = await removePasskey({ chain: CHAIN, account: ACCOUNT, quote, store, submit: (q) => sendAa(bundle, owner, q) });
   const op = fromRpcOp(bundler.lastOp);
-  check('removal is ROOT-signed by the owner (ethers recover)', same(ethers.recoverAddress(ethers.hashMessage(getUserOpHash(op, ENTRYPOINT_V07, 1n)), toHex(op.signature)), OWNER_0) && ownerSignCount === signsBefore + 1);
+  check('removal is ROOT-signed by the owner (ethers recover)', same(ethers.recoverAddress(ethers.hashMessage(getUserOpHash(op, ENTRYPOINT_V07, CHAIN_ID)), toHex(op.signature)), OWNER_0) && ownerSignCount === signsBefore + 1);
   check('record marked removing with the userOpHash', removing?.localStatus === 'removing' && removing.removeUserOpHash === userOpHash);
   const early = await finalizePasskeyRemove(bundle, CHAIN, ACCOUNT, userOpHash, store, { timeoutMs: 10, pollMs: 1 });
   check('not forgotten while the chain still shows the key', !early.forgotten && (await loadPasskeys(store)).records.length === 1);
@@ -810,6 +815,34 @@ console.log('check-passkeys: store discipline');
   raw.records[key] = { ...record, validator: '0xbA45a2BFb8De3D24cA9D7F1B551E14dFF5d690Fd' };
   await s.setItem(PASSKEYS_KEY, JSON.stringify(raw));
   check('a record naming another validator (e.g. the unpatched v0.0.2) is dropped', (await loadPasskeys(s)).records.length === 0);
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-passkeys: mainnet readiness gate (phase 9 item 6)');
+// ---------------------------------------------------------------------------
+{
+  const node = fakePasskeyNode({ chainIdHex: '0x1' });
+  const bundler = hashingBundler();
+  const mainnet = createAaClient({
+    nodeUrl: 'https://node.invalid',
+    bundlerUrl: 'https://bundler.invalid',
+    factory: KERNEL_V3_3.factory,
+    chainId: 1n,
+    accountIndex: 0,
+    accountType: 'kernel-v3.3',
+    transportFor: (url) => (url.includes('bundler') ? bundler : node),
+  });
+  const reg = { publicKey: { x: 1n, y: 2n }, credentialId: new Uint8Array([1, 2, 3]), backupEligible: false };
+  const e1 = await caught(() => preparePasskeyInstall(mainnet, OWNER_0, ACCOUNT, reg));
+  check('mainnet preparePasskeyInstall refused with the readiness reason and zero network calls', /only on test networks/.test(e1?.message ?? '') && node.calls.length === 0, e1?.message);
+  const store = memoryStore();
+  let submitted = false;
+  const e2 = await caught(() => installPasskey({ plan: { quote: { calls: [] }, call: null, usePrecompiled: true }, registration: reg, chain: 'eip155:1', account: ACCOUNT, owner: OWNER_0, accountIndex: 0, rpId: RP_ID, store, submit: async () => { submitted = true; return { userOpHash: '0x' }; } }));
+  check('mainnet installPasskey refused before storing or submitting', /only on test networks/.test(e2?.message ?? '') && !submitted && (await store.getItem(PASSKEYS_KEY)) === null);
+  const fakePasskeyBundle = { ...mainnet, passkey: { record: { account: ACCOUNT }, spec: {} } };
+  const e3 = await caught(() => preparePasskeyCalls(fakePasskeyBundle, [{ to: OWNER_0, value: 0n, data: new Uint8Array(0) }]));
+  const e4 = await caught(() => sendPasskeyCalls(fakePasskeyBundle, { passkey: true, sender: ACCOUNT, calls: [] }));
+  check('mainnet passkey-signed quote and send refused with zero network calls', /only on test networks/.test(e3?.message ?? '') && /only on test networks/.test(e4?.message ?? '') && node.calls.length === 0 && bundler.calls.length === 0);
 }
 
 console.log(`\ncheck-passkeys: ${passed} passed, ${failed} failed`);

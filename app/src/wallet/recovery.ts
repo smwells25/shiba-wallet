@@ -62,6 +62,7 @@ import {
 import { toChecksumAddress, type DerivedAccount } from '@shiba-wallet/core';
 // Explicit .ts extensions: this module is imported by scripts/check-recovery.mjs
 // under Node's type stripping, which resolves relative specifiers literally.
+import { assertFeatureAllowed, eip155Caip2 } from '../config/readiness.ts';
 import {
   AA_DEPOSIT_TOPUP_VERIFICATION_GAS,
   applyPriorityFeeFloor,
@@ -1109,6 +1110,9 @@ export async function prepareGuardianInstallQuote(
   set: KernelGuardianSet,
   labels: Record<string, string>,
 ): Promise<GuardianOperationQuote> {
+  // Mainnet readiness (config/readiness.ts): refused before any request
+  // where guardians are not allowed.
+  assertFeatureAllowed('guardians', eip155Caip2(bundle.chainId));
   validateGuardianSet(set, { account, owner: ownerAddress });
   assertGuardianModulesSafe(KERNEL_RECOVERY_MODULES, bundle.kernel?.ecdsaValidator);
   const reported = await new NodeClient(bundle.node).chainId();
@@ -1141,6 +1145,9 @@ export async function prepareGuardianRenewQuote(
   set: KernelGuardianSet,
   labels: Record<string, string>,
 ): Promise<GuardianOperationQuote> {
+  // Mainnet readiness (config/readiness.ts): refused before any request
+  // where guardians are not allowed.
+  assertFeatureAllowed('guardians', eip155Caip2(bundle.chainId));
   const call = guardianRenewCall(set, { account, owner: ownerAddress });
   const state = await readGuardianState(bundle.node, account);
   if (!state.validatorInitialized) {
@@ -1208,6 +1215,9 @@ export async function submitGuardianOperation(args: {
   submit: (quote: AaSendQuote) => Promise<{ userOpHash: string }>;
 }): Promise<{ userOpHash: string; entry: RecoveryRecordEntry | null }> {
   const op = args.operation;
+  // Mainnet readiness: setting up or changing guardians is refused where
+  // guardians are not allowed; removing them and vetoing never are.
+  if (op.kind === 'install' || op.kind === 'renew') assertFeatureAllowed('guardians', args.chain);
   if (!sameCalls(op.quote.calls, op.calls)) {
     throw new Error('The quoted operation is not the guardian operation it claims to be. Nothing was signed.');
   }
@@ -1751,6 +1761,9 @@ export async function prepareRecoveryStart(
   node: JsonRpcTransport,
   args: { chainId: bigint; account: string; newOwner: string; metadata?: KernelRecoveryMetadata | null },
 ): Promise<RecoveryCandidate> {
+  // Mainnet readiness (config/readiness.ts): refused before any request
+  // where guardians are not allowed.
+  assertFeatureAllowed('guardians', eip155Caip2(args.chainId));
   const validated = validateRecipient(EVM_CHAIN_ID, args.account);
   if (!validated.ok) throw new Error(validated.error);
   const account = validated.normalized;
@@ -1972,6 +1985,9 @@ export async function prepareApproveWithSig(
   args: { progress: RecoveryProgress; from: string },
 ): Promise<ApproveWithSigQuote> {
   const { progress } = args;
+  // Mainnet readiness (config/readiness.ts): refused before any request
+  // where guardians are not allowed.
+  assertFeatureAllowed('guardians', progress.chain);
   if (!progress.request || !progress.set || !progress.account) throw new Error('Create the recovery request first.');
   if (!same(args.from, progress.newOwner)) {
     throw new Error('Send the approvals from the account that becomes the new owner. Switch to it first.');
@@ -2029,6 +2045,7 @@ export async function sendApproveWithSig(
   signer: DerivedAccount,
   quote: ApproveWithSigQuote,
 ): Promise<string> {
+  assertFeatureAllowed('guardians', eip155Caip2(quote.chainId));
   if (!same(signer.address, quote.from)) {
     throw new Error(`This signer is ${signer.address}, but the transaction was prepared for ${quote.from}. Nothing was signed.`);
   }
@@ -2121,6 +2138,9 @@ export async function reviewRecoveryRequest(
   node: JsonRpcTransport,
   args: { text: string; activeChainId: bigint; guardianAddress: string },
 ): Promise<GuardianRequestReview> {
+  // Mainnet readiness (config/readiness.ts): refused before any request
+  // where guardians are not allowed.
+  assertFeatureAllowed('guardians', eip155Caip2(args.activeChainId));
   const { request, approvals } = parseRecoveryRequestPayload(args.text);
   if (BigInt(request.chainId) !== args.activeChainId) {
     throw new Error(`This request is for chain ${request.chainId}; the wallet is on chain ${args.activeChainId}. Switch networks first.`);
@@ -2169,6 +2189,8 @@ export function signRecoveryApproval(
   signer: DerivedAccount,
   review: GuardianRequestReview,
 ): { signature: Uint8Array; payload: string } {
+  // Mainnet readiness: a guardian approval is never signed where guardians are not allowed.
+  assertFeatureAllowed('guardians', eip155Caip2(BigInt(review.request.chainId)));
   if (!review.guardian || !same(review.guardian.address, signer.address)) {
     throw new Error(`${signer.address} is not a guardian of ${review.request.account}. Nothing was signed.`);
   }
@@ -2219,6 +2241,9 @@ export async function prepareGuardianSubmission(args: {
   submitter: string;
   now?: number;
 }): Promise<GuardianSubmissionQuote> {
+  // Mainnet readiness (config/readiness.ts): refused before any request
+  // where guardians are not allowed.
+  assertFeatureAllowed('guardians', eip155Caip2(args.chainId));
   const request = parseGuardianRecoveryRequest(args.request);
   assertSupportedRequest(request);
   const client = new NodeClient(args.node);
@@ -2311,6 +2336,7 @@ export async function submitGuardianRecovery(args: {
   chainId: bigint;
   signer: DerivedAccount;
 }): Promise<{ userOpHash: string; client: SmartAccountClient }> {
+  assertFeatureAllowed('guardians', eip155Caip2(args.chainId));
   if (!same(args.signer.address, args.quote.submitter)) {
     throw new Error(`This recovery was prepared for guardian ${args.quote.submitter}. Nothing was signed.`);
   }
@@ -2396,6 +2422,9 @@ export async function attachRecoveredAccount(args: {
   aaStore?: KeyValueStore;
   now?: number;
 }): Promise<{ check: KernelAccountOwnershipCheck; entry: RecoveryRecordEntry | null; historyUpdated: boolean }> {
+  // Mainnet readiness: a recovered account is attached only where the
+  // feature that produced it is allowed, before any request.
+  assertFeatureAllowed(args.change?.source === 'owner-rotation' ? 'owner-rotation' : 'guardians', args.chain);
   const store = args.store ?? AsyncStorage;
   const reported = await new NodeClient(args.node).chainId();
   if (`eip155:${reported}` !== args.chain) throw new Error(`The RPC endpoint is chain ${reported}, not ${args.chain}. Nothing was attached.`);
@@ -2755,6 +2784,10 @@ export async function prepareOwnerRotationQuote(
     store?: KeyValueStore;
   },
 ): Promise<OwnerRotationQuote> {
+  // Mainnet readiness (config/readiness.ts): refused before any request
+  // where owner changes are not allowed.
+  assertFeatureAllowed('owner-rotation', args.chain);
+  assertFeatureAllowed('owner-rotation', eip155Caip2(bundle.chainId));
   const store = args.store ?? AsyncStorage;
   if (!args.walletOwners.some((w) => same(w.address, args.newOwner.address))) throw new Error(OWNER_ROTATION_FOREIGN_TARGET);
   if (same(args.newOwner.address, args.ownerAddress)) throw new Error(OWNER_ROTATION_SAME_OWNER);
@@ -2871,6 +2904,8 @@ export async function submitOwnerRotation(args: {
   submit: (quote: AaSendQuote) => Promise<{ userOpHash: string }>;
   now?: number;
 }): Promise<{ userOpHash: string; previous: KernelRecoveryMetadata; entry: RecoveryRecordEntry | null; recordError: string | null }> {
+  // Mainnet readiness: checked again before anything is stored or signed.
+  assertFeatureAllowed('owner-rotation', args.chain);
   const store = args.store ?? AsyncStorage;
   const r = args.rotation;
   if (!sameCalls(r.quote.calls, r.calls)) {

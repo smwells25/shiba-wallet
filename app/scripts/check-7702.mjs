@@ -398,7 +398,21 @@ const EXPLORER = 'https://sepolia.etherscan.io/tx/';
   await checkRejects('upgrade refused when already upgraded', () => prepareSetCodeTx({ url: NODE_URL, from: OWNER_0, action: 'upgrade', expectedChainId: 11155111n, transportFor: () => receiptNode }), 'already upgraded');
   const foreignNode = fake7702Node({ chainIdHex: '0xaa36a7', code: { [OWNER_0.toLowerCase()]: indicator(FOREIGN) } });
   await checkRejects('upgrade refused over a foreign delegation (revoke first)', () => prepareSetCodeTx({ url: NODE_URL, from: OWNER_0, action: 'upgrade', expectedChainId: 11155111n, transportFor: () => foreignNode }), 'Revoke that delegation first');
-  await checkRejects('quote refused on the wrong chain', () => prepareSetCodeTx({ url: NODE_URL, from: OWNER_0, action: 'upgrade', expectedChainId: 1n, transportFor }), 'expected 1');
+  await checkRejects('quote refused on the wrong chain', () => prepareSetCodeTx({ url: NODE_URL, from: OWNER_0, action: 'upgrade', expectedChainId: 11155111n, transportFor: () => fake7702Node({ chainIdHex: '0x1' }) }), 'expected 11155111');
+  // Mainnet readiness (phase 9 item 6): the upgrade is 'testnet-only', so a
+  // mainnet upgrade quote is refused before any request; a revocation is not.
+  {
+    let requests = 0;
+    const counting = () => { requests += 1; return transportFor(); };
+    await checkRejects('mainnet upgrade quote refused with the readiness reason', () => prepareSetCodeTx({ url: NODE_URL, from: OWNER_0, action: 'upgrade', expectedChainId: 1n, transportFor: counting }), 'only on test networks');
+    check('…before any request', requests === 0);
+    await checkRejects('mainnet upgrade send refused before signing', () => sendSetCodeTx(NODE_URL, owner, { ...quote, chainId: 1n }, EXPLORER, { transportFor: counting }), 'only on test networks');
+    await checkRejects('a mainnet quote relabelled as a revocation but naming the Kernel delegate is still refused', () => sendSetCodeTx(NODE_URL, owner, { ...quote, chainId: 1n, action: 'revoke' }, EXPLORER, { transportFor: counting }), 'only on test networks');
+    check('…and neither made a request', requests === 0);
+    await checkRejects('setAccountEip7702 refuses to record a mainnet upgrade', () => setAccountEip7702(MAINNET, OWNER_0, true, memoryStore()), 'only on test networks');
+    const mstore = memoryStore();
+    check('…but removing a mainnet upgrade record always works', (await setAccountEip7702(MAINNET, OWNER_0, false, mstore)).eip7702Owners.length === 0);
+  }
   await checkRejects('quote refused when ETH cannot cover the worst-case fee (not sponsorable)', () => prepareSetCodeTx({ url: NODE_URL, from: OWNER_0, action: 'upgrade', expectedChainId: 11155111n, transportFor: () => fake7702Node({ chainIdHex: '0xaa36a7', balance: 1000n }) }), 'Not enough ETH to pay the network fee');
 }
 

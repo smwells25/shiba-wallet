@@ -16,6 +16,7 @@ import {
 } from '../components/RecoveryViews';
 import { RecordFileExportButton, pickRecordFile } from '../components/RecordFileActions';
 import { useTheme } from '../theme';
+import { readinessGate, type FeatureReadiness } from '../config/readiness';
 import { getEndpoint } from '../config/networks';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
@@ -92,6 +93,12 @@ export function RecoverAccountScreen({ navigation }: Props) {
   const chain = evmChain.caip2;
   const chainId = BigInt(evmChain.chainIdDecimal);
   const symbol = evmChain.displaySymbol;
+  // Mainnet readiness (config/readiness.ts): guardian recovery is
+  // test-network only. Reading status, searching recent blocks, importing a
+  // record and forgetting a recovery stay available; recovery.ts refuses
+  // starting a recovery, sending approvals and attaching too.
+  const readiness = readinessGate('guardians', chain);
+  const readinessCard = readiness ? <ReadinessCard feature={readiness.feature} hint={readiness.hint} /> : null;
 
   const [node, setNode] = useState<JsonRpcTransport | null>(null);
   const [setupError, setSetupError] = useState<string | null>(null);
@@ -505,6 +512,7 @@ export function RecoverAccountScreen({ navigation }: Props) {
     const secondsLeft = stage?.kind === 'waiting' ? Math.max(0, stage.validAfter - now) : null;
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        {readinessCard}
         <Text style={[styles.title, { color: theme.text }]}>Recovering {progress.account}</Text>
         {ownerRow}
         <InfoRow label="Proposal id" value={progress.request.callDataAndNonceHash} monoValue />
@@ -530,7 +538,7 @@ export function RecoverAccountScreen({ navigation }: Props) {
               autoCapitalize="none"
               style={[styles.input, { color: theme.text, borderColor: theme.border }]}
             />
-            <Button title="Use this recovered account" onPress={() => void onAttach()} />
+            <Button title="Use this recovered account" onPress={() => void onAttach()} disabled={readiness !== null} />
           </>
         ) : null}
 
@@ -564,7 +572,7 @@ export function RecoverAccountScreen({ navigation }: Props) {
           <>
             <Text style={[styles.sectionTitle, { color: theme.text }]}>3. Send the approvals on-chain</Text>
             <Text style={[styles.hint, { color: theme.textMuted }]}>{NEW_WALLET_PAYS_NOTE}</Text>
-            <Button title="Review the approval transaction" onPress={() => void onApproveQuote()} />
+            <Button title="Review the approval transaction" onPress={() => void onApproveQuote()} disabled={readiness !== null} />
           </>
         ) : null}
 
@@ -603,6 +611,7 @@ export function RecoverAccountScreen({ navigation }: Props) {
     const ownerAccount = accountList.find((a) => a.index === importReview.ownerAccount?.index);
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+        {readinessCard}
         <Text style={[styles.title, { color: theme.text }]}>Restore from a recovery record</Text>
         <InfoRow label="Account" value={importReview.metadata.account} monoValue />
         <InfoRow label="Owner on-chain" value={ownerAccount ? `${ownerAccount.name} (this wallet)` : 'unknown'} sub={importReview.onChainOwner} />
@@ -616,6 +625,7 @@ export function RecoverAccountScreen({ navigation }: Props) {
         <Button
           title={importReview.needsAttach ? 'Use this recovered account' : 'Save the record'}
           onPress={() => void onApplyImport()}
+          disabled={importReview.needsAttach && readiness !== null}
         />
         <Button title="Back" variant="secondary" onPress={() => setPhase('start')} />
       </ScrollView>
@@ -626,6 +636,7 @@ export function RecoverAccountScreen({ navigation }: Props) {
     if (candidate.kind === 'already-owner') {
       return (
         <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+          {readinessCard}
           <Text style={[styles.title, { color: theme.text }]}>This account is already yours</Text>
           <Text style={[styles.hint, { color: theme.text }]}>
             {ownerName} already owns {candidate.account} on-chain (checked: Kernel v3.3 proxy, owner validator, owner).
@@ -633,6 +644,7 @@ export function RecoverAccountScreen({ navigation }: Props) {
           </Text>
           <Button
             title="Use this recovered account"
+            disabled={readiness !== null}
             onPress={() => {
               if (!node || !owner) return;
               attachRecoveredAccount({ node, chain, account: candidate.account, owner, ownerPath: evm?.path ?? null, metadata: candidateMeta }).then(
@@ -650,6 +662,7 @@ export function RecoverAccountScreen({ navigation }: Props) {
     }
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+        {readinessCard}
         <RecoveryNetworkBadge label={evmChain.label} testnet={evmChain.testnet} />
         <Text style={[styles.title, { color: theme.text }]}>Recover this account?</Text>
         <InfoRow label="Account to recover" value={candidate.account} monoValue />
@@ -671,7 +684,7 @@ export function RecoverAccountScreen({ navigation }: Props) {
             original owner address), go back and add it.
           </Text>
         ) : null}
-        <Button title="Create the recovery request" onPress={() => void onCreateRequest()} />
+        <Button title="Create the recovery request" onPress={() => void onCreateRequest()} disabled={readiness !== null} />
         <Button title="Back" variant="secondary" onPress={() => setPhase('start')} />
       </ScrollView>
     );
@@ -680,6 +693,7 @@ export function RecoverAccountScreen({ navigation }: Props) {
   // ------------------------------------------------------------ start
   return (
     <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      {readinessCard}
       <Text style={[styles.title, { color: theme.text }]}>Recover an account with guardians</Text>
       <Text style={[styles.hint, { color: theme.text }]}>
         For a Kernel smart account whose recovery phrase is lost: its guardians can make a key of THIS wallet the new
@@ -690,7 +704,12 @@ export function RecoverAccountScreen({ navigation }: Props) {
       {progress && !progress.request ? (
         <Text style={[styles.ok, { color: theme.success }]}>This account was added for the recovery. Continue below.</Text>
       ) : (
-        <Button title="Use a fresh account for this (recommended)" variant="secondary" onPress={onFreshAccount} />
+        <Button
+          title="Use a fresh account for this (recommended)"
+          variant="secondary"
+          onPress={onFreshAccount}
+          disabled={readiness !== null}
+        />
       )}
       <Text style={[styles.sectionTitle, { color: theme.text }]}>The lost account</Text>
       <TextInput
@@ -736,7 +755,7 @@ export function RecoverAccountScreen({ navigation }: Props) {
       ) : (
         <Button
           title="Check the account"
-          disabled={!node || !owner || (accountInput.trim() === '' && recordInput.trim() === '')}
+          disabled={!node || !owner || (accountInput.trim() === '' && recordInput.trim() === '') || readiness !== null}
           onPress={() => void onCheck(recordInput)}
         />
       )}
@@ -779,4 +798,19 @@ function StageLine({ stage, secondsLeft }: { stage: RecoveryStage; secondsLeft: 
         ? theme.danger
         : theme.text;
   return <Text style={[styles.ok, { color }]}>{text}</Text>;
+}
+
+/**
+ * Mainnet readiness card (config/readiness.ts): why this feature is limited
+ * to test networks, and where test mode is turned on.
+ */
+function ReadinessCard({ feature, hint }: { feature: FeatureReadiness; hint: string }) {
+  const theme = useTheme();
+  return (
+    <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+      <Text style={[styles.ok, { color: theme.text }]}>{feature.title}: test networks only</Text>
+      <Text style={[styles.hint, { color: theme.text }]}>{feature.reason}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{hint}</Text>
+    </View>
+  );
 }

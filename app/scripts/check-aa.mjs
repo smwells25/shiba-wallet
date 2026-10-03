@@ -34,6 +34,7 @@ import {
   createAaClient,
   getAaConfig,
   isAaConfigured,
+  hasCompleteAaSettings,
   prepareAaSend,
   sendAa,
   setAaBundlerUrl,
@@ -43,6 +44,14 @@ import {
   waitForAaReceipt,
 } from '../src/wallet/aa.ts';
 import { EVM_CHAIN_ID } from '../src/wallet/send.ts';
+import { EVM_SEPOLIA } from '../src/config/evm-chain.ts';
+
+// Smart accounts and paymasters are 'testnet-only' in the mainnet readiness
+// table (src/config/readiness.ts, phase 9 item 6), so the configuration
+// store is exercised under the Sepolia key, where they are allowed. The
+// mainnet refusals are checked at the end of this file and in
+// check-readiness.mjs.
+const AA_CHAIN = EVM_SEPOLIA.caip2;
 
 let passed = 0;
 let failed = 0;
@@ -193,7 +202,7 @@ function ownerAccount() {
 console.log('AA config store (in-memory KeyValueStore, exact app store code):');
 
 const store = memoryStore();
-const fresh = await getAaConfig(EVM_CHAIN_ID, store);
+const fresh = await getAaConfig(AA_CHAIN, store);
 check(
   'fresh store: everything null, not configured',
   fresh.bundlerUrl === null &&
@@ -203,7 +212,7 @@ check(
 );
 
 const goodBundler = fakeBundler();
-const supported = await setAaBundlerUrl(EVM_CHAIN_ID, ' https://bundler.example/rpc/ ', {
+const supported = await setAaBundlerUrl(AA_CHAIN, ' https://bundler.example/rpc/ ', {
   store,
   transportFor: () => goodBundler,
 });
@@ -211,7 +220,7 @@ check(
   'bundler URL saves after eth_supportedEntryPoints includes v0.7',
   supported.length === 1 && supported[0] === ENTRYPOINT_V07,
 );
-let config = await getAaConfig(EVM_CHAIN_ID, store);
+let config = await getAaConfig(AA_CHAIN, store);
 check(
   'saved bundler URL is trimmed of whitespace and trailing slashes',
   config.bundlerUrl === 'https://bundler.example/rpc',
@@ -222,13 +231,13 @@ check('bundler verification timestamp recorded', typeof config.bundlerVerifiedAt
 await checkRejects(
   'bundler without v0.7 support is refused',
   () =>
-    setAaBundlerUrl(EVM_CHAIN_ID, 'https://bad.example', {
+    setAaBundlerUrl(AA_CHAIN, 'https://bad.example', {
       store,
       transportFor: () => fakeBundler({ supported: ['0x' + '99'.repeat(20)] }),
     }),
   'does not support EntryPoint v0.7',
 );
-config = await getAaConfig(EVM_CHAIN_ID, store);
+config = await getAaConfig(AA_CHAIN, store);
 check(
   'failed bundler save persisted nothing (previous URL kept)',
   config.bundlerUrl === 'https://bundler.example/rpc',
@@ -236,15 +245,15 @@ check(
 
 await checkRejects(
   'non-http(s) bundler URL is refused before any RPC',
-  () => setAaBundlerUrl(EVM_CHAIN_ID, 'ftp://x', { store }),
+  () => setAaBundlerUrl(AA_CHAIN, 'ftp://x', { store }),
   'http(s)',
 );
 
-const verification = await setAaFactory(EVM_CHAIN_ID, FACTORY_INPUT, 'https://node.example', {
+const verification = await setAaFactory(AA_CHAIN, FACTORY_INPUT, 'https://node.example', {
   store,
   transportFor: () => fakeNode(),
 });
-config = await getAaConfig(EVM_CHAIN_ID, store);
+config = await getAaConfig(AA_CHAIN, store);
 check(
   'factory saves after all three on-chain checks pass',
   config.factory !== null && isAaConfigured(config),
@@ -265,7 +274,7 @@ const rejectStore = memoryStore();
 await checkRejects(
   'factory with no code is refused (check 1)',
   () =>
-    setAaFactory(EVM_CHAIN_ID, FACTORY_INPUT, 'https://node.example', {
+    setAaFactory(AA_CHAIN, FACTORY_INPUT, 'https://node.example', {
       store: rejectStore,
       transportFor: () => fakeNode({ factoryHasCode: false }),
     }),
@@ -274,7 +283,7 @@ await checkRejects(
 await checkRejects(
   'implementation with no code is refused (check 2)',
   () =>
-    setAaFactory(EVM_CHAIN_ID, FACTORY_INPUT, 'https://node.example', {
+    setAaFactory(AA_CHAIN, FACTORY_INPUT, 'https://node.example', {
       store: rejectStore,
       transportFor: () => fakeNode({ implHasCode: false }),
     }),
@@ -283,7 +292,7 @@ await checkRejects(
 await checkRejects(
   'implementation with the wrong entryPoint() is refused (check 3)',
   () =>
-    setAaFactory(EVM_CHAIN_ID, FACTORY_INPUT, 'https://node.example', {
+    setAaFactory(AA_CHAIN, FACTORY_INPUT, 'https://node.example', {
       store: rejectStore,
       transportFor: () => fakeNode({ entryPoint: '0x' + '88'.repeat(20) }),
     }),
@@ -293,7 +302,7 @@ await checkRejects(
   'factory address with a bad EIP-55 checksum is refused before any RPC',
   () =>
     setAaFactory(
-      EVM_CHAIN_ID,
+      AA_CHAIN,
       // USDC's address with the last-but-one character's case flipped —
       // the same known-bad checksum fixture check-tokens.mjs uses.
       '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eb48',
@@ -302,7 +311,7 @@ await checkRejects(
     ),
   'checksum',
 );
-const rejected = await getAaConfig(EVM_CHAIN_ID, rejectStore);
+const rejected = await getAaConfig(AA_CHAIN, rejectStore);
 check(
   'every refused factory save persisted nothing',
   rejected.factory === null && rejected.factoryImplementation === null,
@@ -312,16 +321,16 @@ check(
 const standalone = await verifyAaFactory(fakeNode(), FACTORY_INPUT);
 check('standalone verifyAaFactory returns the implementation', same(standalone.implementation, IMPL));
 
-await clearAaFactory(EVM_CHAIN_ID, store);
-await clearAaBundlerUrl(EVM_CHAIN_ID, store);
-config = await getAaConfig(EVM_CHAIN_ID, store);
+await clearAaFactory(AA_CHAIN, store);
+await clearAaBundlerUrl(AA_CHAIN, store);
+config = await getAaConfig(AA_CHAIN, store);
 check(
   'clear removes both fields and their verification records',
   config.bundlerUrl === null && config.factory === null && !isAaConfigured(config),
 );
 
 const corrupt = { getItem: async () => '{not json', setItem: async () => {} };
-const fromCorrupt = await getAaConfig(EVM_CHAIN_ID, corrupt);
+const fromCorrupt = await getAaConfig(AA_CHAIN, corrupt);
 check('corrupt storage behaves as unconfigured', !isAaConfigured(fromCorrupt));
 
 // ---------------------------------------------------------------------------
@@ -480,11 +489,11 @@ await (async () => {
     }
     throw new Error(`unexpected ${method}`);
   };
-  await setAaPaymaster(EVM_CHAIN_ID, 'https://pm.example/rpc/', '{"policyId":"p1"}', {
+  await setAaPaymaster(AA_CHAIN, 'https://pm.example/rpc/', '{"policyId":"p1"}', {
     store: pmStore,
     transportFor: okTransport,
   });
-  const cfg = await getAaConfig(EVM_CHAIN_ID, pmStore);
+  const cfg = await getAaConfig(AA_CHAIN, pmStore);
   check('paymaster url saved trimmed', cfg.paymasterUrl === 'https://pm.example/rpc');
   check('paymaster context persisted', cfg.paymasterContext === '{"policyId":"p1"}');
   check('paymaster verify timestamp set', typeof cfg.paymasterVerifiedAt === 'string');
@@ -493,17 +502,17 @@ await (async () => {
   const policyErrorTransport = () => async () => {
     throw new Error('RPC error -32521: policy rejected this operation (pm_getPaymasterStubData)');
   };
-  await setAaPaymaster(EVM_CHAIN_ID, 'https://pm2.example', '', {
+  await setAaPaymaster(AA_CHAIN, 'https://pm2.example', '', {
     store: pmStore,
     transportFor: policyErrorTransport,
   });
-  check('policy-error endpoint accepted', (await getAaConfig(EVM_CHAIN_ID, pmStore)).paymasterUrl === 'https://pm2.example');
+  check('policy-error endpoint accepted', (await getAaConfig(AA_CHAIN, pmStore)).paymasterUrl === 'https://pm2.example');
 
   // Rejections persist nothing.
-  const before = await getAaConfig(EVM_CHAIN_ID, pmStore);
+  const before = await getAaConfig(AA_CHAIN, pmStore);
   await checkRejects(
     'method-not-found endpoint refused',
-    () => setAaPaymaster(EVM_CHAIN_ID, 'https://not-pm.example', '', {
+    () => setAaPaymaster(AA_CHAIN, 'https://not-pm.example', '', {
       store: pmStore,
       transportFor: () => async () => { throw new Error('RPC error -32601: method not found'); },
     }),
@@ -511,7 +520,7 @@ await (async () => {
   );
   await checkRejects(
     'unreachable endpoint refused',
-    () => setAaPaymaster(EVM_CHAIN_ID, 'https://down.example', '', {
+    () => setAaPaymaster(AA_CHAIN, 'https://down.example', '', {
       store: pmStore,
       transportFor: () => async () => { throw new Error('fetch failed: ECONNREFUSED'); },
     }),
@@ -519,7 +528,7 @@ await (async () => {
   );
   await checkRejects(
     'invalid context JSON refused',
-    () => setAaPaymaster(EVM_CHAIN_ID, 'https://pm.example', 'not-json', {
+    () => setAaPaymaster(AA_CHAIN, 'https://pm.example', 'not-json', {
       store: pmStore,
       transportFor: okTransport,
     }),
@@ -527,15 +536,15 @@ await (async () => {
   );
   await checkRejects(
     'non-http url refused',
-    () => setAaPaymaster(EVM_CHAIN_ID, 'ftp://pm.example', '', { store: pmStore, transportFor: okTransport }),
+    () => setAaPaymaster(AA_CHAIN, 'ftp://pm.example', '', { store: pmStore, transportFor: okTransport }),
     'http(s)',
   );
-  const after = await getAaConfig(EVM_CHAIN_ID, pmStore);
+  const after = await getAaConfig(AA_CHAIN, pmStore);
   check('rejections persisted nothing', after.paymasterUrl === before.paymasterUrl
     && after.paymasterContext === before.paymasterContext);
 
-  await clearAaPaymaster(EVM_CHAIN_ID, pmStore);
-  check('clear removes paymaster config', (await getAaConfig(EVM_CHAIN_ID, pmStore)).paymasterUrl === null);
+  await clearAaPaymaster(AA_CHAIN, pmStore);
+  check('clear removes paymaster config', (await getAaConfig(AA_CHAIN, pmStore)).paymasterUrl === null);
 
   // verifyAaPaymaster direct accept path.
   let accepted = true;
@@ -677,6 +686,62 @@ await (async () => {
     === '0x2577507b78c2008Ff367261CB6285d44ba5eF2E9');
   check('malformed URL still never leaks past the host',
     maskUrlForDisplay('https://host.example/%%%SECRET') === 'https://host.example/…');
+})();
+
+// ---------------------------------------------------------------------------
+// Phase 9 item 6: mainnet readiness refusals (persist nothing, no request)
+// ---------------------------------------------------------------------------
+console.log('\ncheck-aa: mainnet readiness gate');
+await (async () => {
+  const gateStore = memoryStore();
+  let requests = 0;
+  const counting = () => async () => {
+    requests += 1;
+    throw new Error('no request expected');
+  };
+  await checkRejects(
+    'mainnet bundler save refused with the readiness reason',
+    () => setAaBundlerUrl(EVM_CHAIN_ID, 'https://bundler.example/rpc', { store: gateStore, transportFor: counting }),
+    'only on test networks',
+  );
+  await checkRejects(
+    'mainnet SimpleAccount factory save refused',
+    () => setAaFactory(EVM_CHAIN_ID, FACTORY_INPUT, 'https://node.example', { store: gateStore, transportFor: counting }),
+    'only on test networks',
+  );
+  await checkRejects(
+    'mainnet paymaster save refused',
+    () => setAaPaymaster(EVM_CHAIN_ID, 'https://pm.example', '', { store: gateStore, transportFor: counting }),
+    'Turn on Sepolia test mode',
+  );
+  const after = await getAaConfig(EVM_CHAIN_ID, gateStore);
+  check(
+    'mainnet refusals persisted nothing and made no request',
+    after.bundlerUrl === null && after.factory === null && after.paymasterUrl === null && requests === 0,
+  );
+  // A complete Sepolia configuration copied under the mainnet key (as if
+  // saved before the gate existed) still reads as NOT configured there.
+  const sepCfg = await getAaConfig(AA_CHAIN, store);
+  check('getAaConfig records the chain it was read for', sepCfg.chain === AA_CHAIN && after.chain === EVM_CHAIN_ID);
+  const legacyMainnet = memoryStore();
+  await legacyMainnet.setItem(
+    'shiba-wallet.aa-config.v1',
+    JSON.stringify({
+      [EVM_CHAIN_ID]: {
+        bundlerUrl: 'https://bundler.example/rpc',
+        bundlerVerifiedAt: 'x',
+        factory: FACTORY_INPUT,
+        factoryImplementation: IMPL,
+        factoryVerifiedAt: 'x',
+      },
+    }),
+  );
+  const legacy = await getAaConfig(EVM_CHAIN_ID, legacyMainnet);
+  check(
+    'a complete mainnet configuration stored before the gate reads as unavailable',
+    legacy.bundlerUrl !== null && legacy.factory !== null && !isAaConfigured(legacy) && hasCompleteAaSettings(legacy),
+  );
+  check('a hand-built configuration without a chain counts as gated', !isAaConfigured({ ...legacy, chain: null }));
 })();
 
 console.log(`\n${passed} passed, ${failed} failed`);

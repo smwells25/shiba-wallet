@@ -47,6 +47,7 @@ import {
 import { utf8Decode } from './erc20.ts';
 import type { KeyValueStore } from './tokens.ts';
 import { PASSKEY_RP_ID_PLACEHOLDER, PASSKEY_RP_NAME } from '../config/passkey.ts';
+import { assertFeatureAllowed, eip155Caip2 } from '../config/readiness.ts';
 
 /**
  * Passkey signer for the app (phase 8 item 3, app half), on the engine's
@@ -1114,6 +1115,9 @@ export async function preparePasskeyInstall(
   account: string,
   registration: Pick<PasskeyRegistration, 'publicKey' | 'credentialId'>,
 ): Promise<PasskeyInstallPlan> {
+  // Mainnet readiness (config/readiness.ts): refused before any request
+  // where passkeys are not allowed. Removing a passkey is never gated.
+  assertFeatureAllowed('passkeys', eip155Caip2(bundle.chainId));
   await verifyWebAuthnValidatorDeployment(bundle.node);
   const state = await readPasskeyValidatorState(bundle.node, account);
   const status = classifyPasskeyState(state, null);
@@ -1156,6 +1160,8 @@ export async function installPasskey(args: {
   store: KeyValueStore;
   submit: (quote: AaSendQuote) => Promise<{ userOpHash: string }>;
 }): Promise<{ record: PasskeyRecord; userOpHash: string }> {
+  // Mainnet readiness: checked again before anything is stored or signed.
+  assertFeatureAllowed('passkeys', args.chain);
   const expected = passkeyInstallCall(
     args.account,
     args.registration.publicKey,
@@ -1413,6 +1419,9 @@ export async function preparePasskeyCalls(
   calls: Call[],
   options: { tokenSpend?: AaTokenSpend; displayTo?: string; token?: AaTokenTransfer } = {},
 ): Promise<AaSendQuote> {
+  // Mainnet readiness: passkey-signed operations are refused before any
+  // request where passkeys are not allowed.
+  assertFeatureAllowed('passkeys', eip155Caip2(bundle.chainId));
   const base = await prepareAaCalls(bundle, bundle.passkey.record.account, calls, options);
   // The engine pads the bundler's estimate first and adds the deposit
   // top-up headroom afterwards, so the quote does the same: pad the plain
@@ -1444,6 +1453,7 @@ export async function sendPasskeyCalls(
   bundle: PasskeyBundle,
   quote: AaSendQuote,
 ): Promise<{ userOpHash: string; signature: Uint8Array }> {
+  assertFeatureAllowed('passkeys', eip155Caip2(bundle.chainId));
   if (!quote.passkey) throw new Error('This operation was not prepared for the passkey signer. Nothing was signed.');
   if (!same(quote.sender, bundle.passkey.record.account)) {
     throw new Error('The operation was prepared for another account. Nothing was signed.');
@@ -1474,6 +1484,8 @@ export async function signHashWithPasskey(args: {
   chainId: bigint;
   expectedAccount: string;
 }): Promise<Uint8Array> {
+  // Mainnet readiness: no passkey signature for a dApp where passkeys are not allowed.
+  assertFeatureAllowed('passkeys', eip155Caip2(args.chainId));
   if (!same(args.record.account, args.expectedAccount)) {
     throw new Error(`The passkey belongs to ${args.record.account}, not the connected ${args.expectedAccount}. Nothing was signed.`);
   }
