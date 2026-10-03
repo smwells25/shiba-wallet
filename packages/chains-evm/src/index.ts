@@ -31,7 +31,10 @@ export {
   SmartAccountClient,
   eip191PrefixedMessage,
   hashEip191Message,
+  needsDepositTopUp,
+  requiredPrefund,
   toEthSignedMessageHash,
+  withDepositTopUpHeadroom,
   withEthereumV,
 } from './smart-account.js';
 export type {

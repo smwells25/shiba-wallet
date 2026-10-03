@@ -10,7 +10,10 @@ import {
 } from '@shiba-wallet/core';
 import {
   SmartAccountClient,
+  needsDepositTopUp,
+  requiredPrefund,
   toEthSignedMessageHash,
+  withDepositTopUpHeadroom,
   withEthereumV,
   type Call,
   type SmartAccountSpec,
@@ -306,5 +309,157 @@ describe('waitForReceipt', () => {
     const receipt = await client.waitForReceipt('0xhash', { timeoutMs: 5_000, pollMs: 1 });
     expect(receipt).toEqual({ done: true });
     expect(attempts).toBe(3);
+  });
+});
+
+describe('EntryPoint deposit top-up headroom', () => {
+  // Estimates from makeTransports: call 0x111, verification 0x222, pre 0x333.
+  const ESTIMATED_TOTAL = 0x111n + 0x222n + 0x333n;
+  const balanceOfSelector = toHex(keccak_256(utf8ToBytes('balanceOf(address)')).slice(0, 4));
+  const getNonceSelector = toHex(keccak_256(utf8ToBytes('getNonce(address,uint192)')).slice(0, 4));
+
+  function base(): UserOperation {
+    return {
+      sender: ACCOUNT_ADDRESS,
+      nonce: 0n,
+      callData: new Uint8Array(0),
+      callGasLimit: 10n,
+      verificationGasLimit: 20n,
+      preVerificationGas: 30n,
+      maxFeePerGas: 7n,
+      maxPriorityFeePerGas: 1n,
+      signature: new Uint8Array(0),
+    };
+  }
+
+  it('requiredPrefund follows EntryPoint v0.7 _getRequiredPrefund', () => {
+    expect(requiredPrefund(base())).toBe(60n * 7n);
+    expect(
+      requiredPrefund({ ...base(), paymasterVerificationGasLimit: 5n, paymasterPostOpGasLimit: 4n }),
+    ).toBe(69n * 7n);
+  });
+
+  it('needsDepositTopUp mirrors `bal > requiredPrefund ? 0 : requiredPrefund - bal` and skips paymaster ops', () => {
+    const op = base();
+    expect(needsDepositTopUp(op, 0n)).toBe(true);
+    expect(needsDepositTopUp(op, 419n)).toBe(true);
+    // Equal: missingAccountFunds = 420 - 420 = 0, so no top-up call happens.
+    expect(needsDepositTopUp(op, 420n)).toBe(false);
+    expect(needsDepositTopUp({ ...op, paymaster: '0x' + '66'.repeat(20) }, 0n)).toBe(false);
+    expect(withDepositTopUpHeadroom(op, 0n, 40_000n)).toBe(40_020n);
+    expect(withDepositTopUpHeadroom(op, 420n, 40_000n)).toBe(20n);
+    expect(withDepositTopUpHeadroom(op, 0n, 0n)).toBe(20n);
+  });
+
+  function transportsWithDeposit(deposit: bigint) {
+    const t = makeTransports({ deployed: true, sponsored: false });
+    const reads: string[] = [];
+    const node: JsonRpcTransport = async (method, params) => {
+      if (method === 'eth_call') {
+        const data = (params[0] as { data: string }).data;
+        reads.push(data.slice(0, 10));
+        if (data.startsWith(balanceOfSelector)) {
+          // the sender argument is the account itself
+          expect(data.slice(-40)).toBe(ACCOUNT_ADDRESS.slice(2));
+          return '0x' + deposit.toString(16);
+        }
+        if (data.startsWith(getNonceSelector)) return '0x05';
+      }
+      return t.node(method, params);
+    };
+    return { ...t, node, reads };
+  }
+
+  it('adds the headroom to the SIGNED operation when the deposit does not cover the prefund', async () => {
+    const { node, bundler, calls, reads } = transportsWithDeposit(0n);
+    const client = new SmartAccountClient({
+      chainId: 1n,
+      entryPoint: ENTRYPOINT_V07,
+      bundler,
+      node,
+      spec,
+      depositTopUpVerificationGas: 40_000n,
+    });
+    const owner = ownerAccount();
+    expect(client.depositTopUpVerificationGas).toBe(40_000n);
+    const { userOp } = await client.sendCalls(owner, [], FEES);
+    expect(userOp.verificationGasLimit).toBe(0x222n + 40_000n);
+    expect(reads).toEqual([getNonceSelector, balanceOfSelector]);
+    // The submitted operation is the one with the headroom, and the
+    // signature covers it.
+    const sent = calls.find((c) => c.method === 'eth_sendUserOperation')!.params[0] as {
+      verificationGasLimit: string;
+    };
+    expect(BigInt(sent.verificationGasLimit)).toBe(0x222n + 40_000n);
+    const recovered = recoverAddress(
+      hashMessage(getUserOpHash(userOp, ENTRYPOINT_V07, 1n)),
+      toHex(userOp.signature),
+    );
+    expect(recovered).toBe(owner.address);
+  });
+
+  it('leaves the estimate unchanged when the deposit already covers the prefund', async () => {
+    const { node, bundler } = transportsWithDeposit(ESTIMATED_TOTAL * FEES.maxFeePerGas);
+    const client = new SmartAccountClient({
+      chainId: 1n,
+      entryPoint: ENTRYPOINT_V07,
+      bundler,
+      node,
+      spec,
+      depositTopUpVerificationGas: 40_000n,
+    });
+    const { userOp } = await client.sendCalls(ownerAccount(), [], FEES);
+    expect(userOp.verificationGasLimit).toBe(0x222n);
+  });
+
+  it('decides on the padded limits (gasPaddingPct applies first)', async () => {
+    // Deposit exactly covers the UNPADDED prefund but not the padded one.
+    const { node, bundler } = transportsWithDeposit(ESTIMATED_TOTAL * FEES.maxFeePerGas);
+    const client = new SmartAccountClient({
+      chainId: 1n,
+      entryPoint: ENTRYPOINT_V07,
+      bundler,
+      node,
+      spec,
+      gasPaddingPct: { verification: 200 },
+      depositTopUpVerificationGas: 40_000n,
+    });
+    const { userOp } = await client.sendCalls(ownerAccount(), [], FEES);
+    expect(userOp.verificationGasLimit).toBe(0x222n * 2n + 40_000n);
+  });
+
+  it('never reads the deposit for paymaster-sponsored operations', async () => {
+    const t = makeTransports({ deployed: true, sponsored: true });
+    const client = new SmartAccountClient({
+      chainId: 1n,
+      entryPoint: ENTRYPOINT_V07,
+      bundler: t.bundler,
+      node: t.node,
+      paymaster: { transport: t.paymaster },
+      spec,
+      depositTopUpVerificationGas: 40_000n,
+    });
+    const { userOp } = await client.sendCalls(ownerAccount(), [], FEES);
+    expect(userOp.verificationGasLimit).toBe(0x222n);
+    expect(t.calls.filter((c) => c.method === 'eth_call')).toHaveLength(1); // getNonce only
+  });
+
+  it('falls back to the estimate when the deposit cannot be read', async () => {
+    const t = makeTransports({ deployed: true, sponsored: false });
+    const node: JsonRpcTransport = async (method, params) => {
+      const data = method === 'eth_call' ? (params[0] as { data: string }).data : '';
+      if (data.startsWith(balanceOfSelector)) throw new Error('node refused');
+      return t.node(method, params);
+    };
+    const client = new SmartAccountClient({
+      chainId: 1n,
+      entryPoint: ENTRYPOINT_V07,
+      bundler: t.bundler,
+      node,
+      spec,
+      depositTopUpVerificationGas: 40_000n,
+    });
+    const { userOp } = await client.sendCalls(ownerAccount(), [], FEES);
+    expect(userOp.verificationGasLimit).toBe(0x222n);
   });
 });

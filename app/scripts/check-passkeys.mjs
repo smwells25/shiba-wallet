@@ -63,7 +63,7 @@ import { ethers } from 'ethers';
 // independent verifier next to Node's crypto.
 import { p256 } from '../../node_modules/@noble/curves/nist.js';
 import { keccak_256 } from '../../node_modules/@noble/hashes/sha3.js';
-import { createAaClient, sendAa } from '../src/wallet/aa.ts';
+import { AA_DEPOSIT_TOPUP_VERIFICATION_GAS, createAaClient, sendAa } from '../src/wallet/aa.ts';
 import { PASSKEY_RP_ID, PASSKEY_RP_ID_PLACEHOLDER } from '../src/config/passkey.ts';
 import {
   PASSKEYS_KEY,
@@ -666,8 +666,13 @@ console.log('check-passkeys: passkey-signed operation (the owner key is never us
   const est = fromRpcOp(bundler.lastEstimated);
   check('estimate used the passkey nonce key and the engine stub with usePrecompiled = true',
     est.nonce >> 64n === webAuthnNonceKey() && abi.decode(['bytes', 'string', 'uint256', 'uint256', 'uint256', 'bool'], toHex(est.signature))[5] === true);
-  check('gas padding applied to the quote (verification ×1.10, preVerification ×1.15) and the fee',
-    quote.verificationGasLimit === (0x20000n * BigInt(PASSKEY_GAS_PADDING.verification)) / 100n &&
+  // The fake node answers the EntryPoint deposit read with a zero word, so
+  // the deposit is below the prefund and the top-up headroom applies: the
+  // quote is the padded estimate plus the headroom, in the engine's order.
+  check('deposit top-up headroom applied to the quote (fake deposit below the prefund)',
+    quote.depositTopUpHeadroom === AA_DEPOSIT_TOPUP_VERIFICATION_GAS);
+  check('gas padding applied to the quote (verification ×1.10 plus the headroom, preVerification ×1.15) and the fee',
+    quote.verificationGasLimit === (0x20000n * BigInt(PASSKEY_GAS_PADDING.verification)) / 100n + AA_DEPOSIT_TOPUP_VERIFICATION_GAS &&
       quote.preVerificationGas === (0x30000n * BigInt(PASSKEY_GAS_PADDING.preVerification)) / 100n &&
       quote.fee === (quote.callGasLimit + quote.verificationGasLimit + quote.preVerificationGas) * quote.maxFeePerGas);
   check('sendAa (owner path) refuses a passkey quote', /passkey signer/.test((await caught(() => sendAa(bundle, owner, quote)))?.message ?? ''));

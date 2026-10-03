@@ -42,6 +42,7 @@ import {
   type AaSendQuote,
   type AaTokenSpend,
   type AaTokenTransfer,
+  AA_DEPOSIT_TOPUP_VERIFICATION_GAS,
 } from './aa.ts';
 import { utf8Decode } from './erc20.ts';
 import type { KeyValueStore } from './tokens.ts';
@@ -1377,6 +1378,11 @@ export function createPasskeyBundle(
     node,
     spec,
     gasPaddingPct: { ...PASSKEY_GAS_PADDING },
+    // Same deposit top-up headroom as the owner-signed clients in aa.ts: a
+    // bundler's estimate omits the EntryPoint deposit top-up that validation
+    // performs at real fees, so the signed verification gas needs this margin
+    // whenever the account's deposit is below the required prefund.
+    depositTopUpVerificationGas: AA_DEPOSIT_TOPUP_VERIFICATION_GAS,
   });
   return {
     client,
@@ -1408,7 +1414,12 @@ export async function preparePasskeyCalls(
   options: { tokenSpend?: AaTokenSpend; displayTo?: string; token?: AaTokenTransfer } = {},
 ): Promise<AaSendQuote> {
   const base = await prepareAaCalls(bundle, bundle.passkey.record.account, calls, options);
-  const verificationGasLimit = pad(base.verificationGasLimit, PASSKEY_GAS_PADDING.verification);
+  // The engine pads the bundler's estimate first and adds the deposit
+  // top-up headroom afterwards, so the quote does the same: pad the plain
+  // estimate, then add back the headroom prepareAaCalls already included.
+  const headroom = base.depositTopUpHeadroom ?? 0n;
+  const verificationGasLimit =
+    pad(base.verificationGasLimit - headroom, PASSKEY_GAS_PADDING.verification) + headroom;
   const preVerificationGas = pad(base.preVerificationGas, PASSKEY_GAS_PADDING.preVerification);
   const fee = (base.callGasLimit + verificationGasLimit + preVerificationGas) * base.maxFeePerGas;
   if (base.amount + fee > base.senderBalance) {

@@ -608,7 +608,11 @@ await (async () => {
     transportFor,
   });
   const maxSelf = await maxAaSend(selfPaid, '0x' + '11'.repeat(20), '0x' + '22'.repeat(20));
-  const gasTotal = 0x100n + 0x200n + 0x300n;
+  // This fake node answers every EntryPoint eth_call with 0x2, so the
+  // EntryPoint deposit reads as 2 wei: the account must top up its deposit
+  // during validation and the quote carries aa.ts's
+  // AA_DEPOSIT_TOPUP_VERIFICATION_GAS (40,000) on the verification limit.
+  const gasTotal = 0x100n + 0x200n + 40_000n + 0x300n;
   const worst = gasTotal * (2n * 1_000_000_000n + 100_000_000n);
   check('self-paid max = balance minus worst-case fee', maxSelf === 10n ** 18n - worst);
 

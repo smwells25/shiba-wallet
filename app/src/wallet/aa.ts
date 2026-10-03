@@ -22,6 +22,7 @@ import {
   toBytes,
   toHex,
   verifyKernelDeployment,
+  withDepositTopUpHeadroom,
   type Call,
   type JsonRpcTransport,
   type SignedEip7702Authorization,
@@ -946,6 +947,33 @@ export async function setAaPaymaster(
   await saveConfigMap(map, store);
 }
 
+/**
+ * Extra verificationGasLimit for a self-paid smart-account operation whose
+ * account must top up its EntryPoint deposit during validation (the
+ * engine's SmartAccountClientConfig.depositTopUpVerificationGas; applied
+ * only when the deposit is below the operation's required prefund).
+ *
+ * Found live on 2026-10-02: the in-app "Change owner" on the emulator was
+ * refused by Alchemy's bundler with -32502 "Simulation ran out of gas for
+ * entity: account" although eth_estimateUserOperationGas had passed.
+ * Rundler (Alchemy's bundler) estimates verification gas with the fees
+ * zeroed, so the account's deposit top-up is not in its estimate; when the
+ * real fees require a top-up, its send-time simulation flags the account.
+ * Measured on Sepolia with a Kernel v3.3 account (the failure is not
+ * specific to owner changes — a plain 0-value call failed the same way):
+ * refused at 91,249 (the ZeroDev/Pimlico estimate) and 113,373 (Alchemy's
+ * own estimate) while a top-up was needed; accepted at 125,000, 150,000 and
+ * 190,000 with a top-up, and at 91,249 without one. 40,000 lifts both
+ * estimates past the highest refused value with margin (131,249 /
+ * 153,373) while staying under Rundler's verification-gas efficiency floor
+ * (used / limit >= 0.4; the measured use with a top-up was about 77,600
+ * gas). It is a measured judgement for Kernel v3.3 on these bundlers, not a
+ * standard value. Unused verification gas is not charged (EntryPoint
+ * v0.7's 10 percent penalty covers only call and postOp gas), so it raises
+ * only the worst-case prefund the account must hold.
+ */
+export const AA_DEPOSIT_TOPUP_VERIFICATION_GAS = 40_000n;
+
 /** Removes the paymaster configuration; sends go back to self-paid gas. */
 export async function clearAaPaymaster(
   chainId: string,
@@ -1128,6 +1156,7 @@ export function createAaClient(options: {
     bundler,
     node,
     spec,
+    depositTopUpVerificationGas: AA_DEPOSIT_TOPUP_VERIFICATION_GAS,
     ...(paymasterTransport
       ? { paymaster: { transport: paymasterTransport, context: paymasterContext } }
       : {}),
@@ -1199,6 +1228,7 @@ function createKernel7702Bundle(options: {
     bundler,
     node,
     spec,
+    depositTopUpVerificationGas: AA_DEPOSIT_TOPUP_VERIFICATION_GAS,
     ...(paymasterTransport
       ? { paymaster: { transport: paymasterTransport, context: paymasterContext } }
       : {}),
@@ -1366,6 +1396,14 @@ export interface AaTokenTransfer {
 export interface AaSendQuote {
   kind: 'aa';
   /**
+   * The deposit top-up headroom already included in verificationGasLimit
+   * (0 when the account's EntryPoint deposit covers the prefund, when a
+   * paymaster sponsors the operation, or when the deposit could not be
+   * read). Wrappers that pad the limits again must pad the estimate
+   * without this margin and add it back, as the engine does.
+   */
+  depositTopUpHeadroom?: bigint;
+  /**
    * Every call of the operation, in execution order. One call is encoded as
    * the account's single execute; several as one atomic batch (Kernel
    * ERC-7579 batch mode / SimpleAccount executeBatch — either way the whole
@@ -1518,7 +1556,33 @@ export async function prepareAaCalls(
     signature: bundle.spec.stubSignature(),
     ...(stubAuth ? { eip7702Auth: stubAuth } : {}),
   };
-  const gas = await new BundlerClient(bundle.bundler, ENTRYPOINT_V07).estimateUserOperationGas(op);
+  const estimated = await new BundlerClient(bundle.bundler, ENTRYPOINT_V07).estimateUserOperationGas(op);
+  // Mirror the bundle client's deposit top-up headroom so the confirm
+  // screen's worst-case fee and the balance check use the limit that will
+  // actually be signed (sendCalls re-estimates and applies the same rule,
+  // and, like here, keeps the plain estimate when the deposit read fails).
+  // Clients built without the headroom (none configured) are mirrored as
+  // such: no deposit read, the plain estimate.
+  const headroom = bundle.client.depositTopUpVerificationGas;
+  const deposit =
+    bundle.sponsored || headroom === 0n
+      ? null
+      : await bundle.client.getEntryPointDeposit(sender).catch(() => null);
+  const gas = deposit === null
+    ? estimated
+    : {
+        ...estimated,
+        verificationGasLimit: withDepositTopUpHeadroom(
+          {
+            ...op,
+            callGasLimit: estimated.callGasLimit,
+            verificationGasLimit: estimated.verificationGasLimit,
+            preVerificationGas: estimated.preVerificationGas,
+          },
+          deposit,
+          headroom,
+        ),
+      };
 
   const amount = calls.reduce((sum, c) => sum + c.value, 0n);
   const gasTotal = gas.callGasLimit + gas.verificationGasLimit + gas.preVerificationGas;
@@ -1547,6 +1611,7 @@ export async function prepareAaCalls(
     deployed,
     callGasLimit: gas.callGasLimit,
     verificationGasLimit: gas.verificationGasLimit,
+    depositTopUpHeadroom: gas.verificationGasLimit - estimated.verificationGasLimit,
     preVerificationGas: gas.preVerificationGas,
     maxFeePerGas: fees.maxFeePerGas,
     maxPriorityFeePerGas: fees.maxPriorityFeePerGas,

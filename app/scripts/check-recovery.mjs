@@ -69,6 +69,7 @@ import {
 } from '@shiba-wallet/chains-evm';
 import { ethers } from 'ethers';
 import {
+  AA_DEPOSIT_TOPUP_VERIFICATION_GAS,
   RECOVERED_7702_CONFLICT,
   ROTATION_TARGET_HAS_OTHER_ACCOUNT,
   createAaClient,
@@ -1058,6 +1059,47 @@ console.log('check-recovery: owner rotation ("Change owner")');
     const gStore = await freshStores();
     const gErr = await caught(() => prepareOwnerRotationQuote(kernelBundle(guarded, bundler), rotateArgs(gStore, config)));
     check('a new owner that is a guardian on-chain → refused', gErr?.message === OWNER_ROTATION_GUARDIAN_TARGET);
+  }
+
+  // Deposit top-up headroom (live finding, 2026-10-02): the emulator's
+  // "Change owner" was refused by Alchemy's bundler (Rundler) with -32502
+  // "Simulation ran out of gas for entity: account" after its own estimate
+  // passed, because Rundler estimates verification gas with zero fees (no
+  // EntryPoint deposit top-up), while the real operation had to top up the
+  // deposit during validation. Pins the submitted operation's shape: the
+  // headroom (aa.ts AA_DEPOSIT_TOPUP_VERIFICATION_GAS) is on the signed
+  // verificationGasLimit exactly when the deposit is below the prefund.
+  check('the deposit top-up headroom is 40,000 verification gas', AA_DEPOSIT_TOPUP_VERIFICATION_GAS === 40_000n);
+  for (const [label, deposit, expectHeadroom] of [
+    ['deposit below the prefund (account tops up during validation)', 0n, true],
+    ['deposit already covers the prefund', 10n ** 18n, false],
+  ]) {
+    const inner = fakeGuardianNode();
+    inner.add(ACCOUNT, { owner: OWNER_0 });
+    const depositReads = [];
+    const node = async (method, params) => {
+      if (method === 'eth_call' && same(params[0].to, ENTRYPOINT_V07) && params[0].data.startsWith(sel('balanceOf(address)'))) {
+        const [who] = abi.decode(['address'], '0x' + params[0].data.slice(10));
+        depositReads.push(who);
+        return word(deposit);
+      }
+      return inner(method, params);
+    };
+    const bundler = fakeBundler();
+    const bundle = kernelBundle(node, bundler);
+    const store = await freshStores();
+    const config = await getAaConfig(M, store);
+    const rotation = await prepareOwnerRotationQuote(bundle, rotateArgs(store, config));
+    const expectedVgl = 0x222n + (expectHeadroom ? AA_DEPOSIT_TOPUP_VERIFICATION_GAS : 0n);
+    check(`${label}: quote verificationGasLimit ${expectedVgl}, worst-case fee includes it`,
+      rotation.quote.verificationGasLimit === expectedVgl &&
+      rotation.quote.fee === (0x111n + expectedVgl + 0x333n) * rotation.quote.maxFeePerGas);
+    await submitOwnerRotation({ rotation, chain: M, store, submit: (q) => sendAa(bundle, owner, q) });
+    const sentOp = fromRpc(bundler.lastOp);
+    check(`${label}: SUBMITTED op has verificationGasLimit ${expectedVgl} (call 0x111, pre-verification 0x333 unchanged), signed by the current owner over that exact op`,
+      sentOp.verificationGasLimit === expectedVgl && sentOp.callGasLimit === 0x111n && sentOp.preVerificationGas === 0x333n &&
+      same(ethers.verifyMessage(getUserOpHash(sentOp, ENTRYPOINT_V07, 1n), bundler.lastOp.signature), OWNER_0));
+    check(`${label}: the deposit was read for the smart account itself (quote and send)`, depositReads.length === 2 && depositReads.every((a) => same(a, ACCOUNT)));
   }
 
   // The happy path: factory account → Account 10 (attachment needed), then back.

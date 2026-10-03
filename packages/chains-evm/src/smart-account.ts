@@ -139,10 +139,80 @@ export interface SmartAccountClientConfig {
     call?: number;
     preVerification?: number;
   };
+  /**
+   * Extra verificationGasLimit added ONLY when the operation has no
+   * paymaster and the sender's EntryPoint deposit is below the
+   * operation's required prefund, i.e. when the account itself must send
+   * missingAccountFunds to the EntryPoint during validation (EntryPoint
+   * v0.7 _validateAccountPrepayment passes a non-zero missingAccountFunds
+   * exactly when balanceOf(sender) < requiredPrefund). Absent or 0n means
+   * no adjustment (the previous behaviour).
+   *
+   * Why: Rundler (Alchemy's bundler) estimates verification gas with the
+   * operation's gas fees zeroed (VerificationGasEstimationHelper
+   * _setFeesFields sets gasFees to 0 when there is no paymaster), so the
+   * deposit top-up never runs during estimation and is not in the
+   * estimate; when the real fees require a top-up at submission, its
+   * validation tracer reports "Simulation ran out of gas for entity:
+   * account" (-32502). Measured on Sepolia on 2026-10-02 for Kernel v3.3:
+   * the same operation was refused at verificationGasLimit 91,249 and
+   * 113,373 (Rundler's own estimate) and accepted at 125,000, 150,000 and
+   * 190,000 while a top-up was needed, and accepted at 91,249 when the
+   * deposit already covered the prefund. Verification gas is not subject
+   * to EntryPoint v0.7's 10 percent unused-gas penalty (that applies to
+   * callGasLimit + paymasterPostOpGasLimit), so the headroom only raises
+   * the worst-case prefund, not the fee actually charged. Bundlers also
+   * enforce a minimum verification-gas efficiency (Rundler: used / limit
+   * >= 0.4), so the headroom must stay modest.
+   */
+  depositTopUpVerificationGas?: bigint;
+}
+
+/**
+ * EntryPoint v0.7 _getRequiredPrefund: (verificationGasLimit + callGasLimit
+ * + paymasterVerificationGasLimit + paymasterPostOpGasLimit +
+ * preVerificationGas) * maxFeePerGas.
+ */
+export function requiredPrefund(op: UserOperation): bigint {
+  return (
+    (op.verificationGasLimit +
+      op.callGasLimit +
+      (op.paymasterVerificationGasLimit ?? 0n) +
+      (op.paymasterPostOpGasLimit ?? 0n) +
+      op.preVerificationGas) *
+    op.maxFeePerGas
+  );
+}
+
+/**
+ * True when validating `op` makes the account send a non-zero
+ * missingAccountFunds to the EntryPoint: no paymaster, and the sender's
+ * deposit is below the required prefund (EntryPoint v0.7
+ * _validateAccountPrepayment computes `bal > requiredPrefund ? 0 :
+ * requiredPrefund - bal`, which is non-zero exactly when bal <
+ * requiredPrefund; Kernel v3.3 calls the EntryPoint only `if
+ * missingAccountFunds`).
+ */
+export function needsDepositTopUp(op: UserOperation, deposit: bigint): boolean {
+  if (op.paymaster) return false;
+  return deposit < requiredPrefund(op);
+}
+
+/**
+ * The verificationGasLimit to submit: `op`'s own, plus `headroom` when the
+ * operation will top up the EntryPoint deposit during validation (see
+ * SmartAccountClientConfig.depositTopUpVerificationGas). Pure, so quotes
+ * and the client agree on the same number.
+ */
+export function withDepositTopUpHeadroom(op: UserOperation, deposit: bigint, headroom: bigint): bigint {
+  if (headroom <= 0n || !needsDepositTopUp(op, deposit)) return op.verificationGasLimit;
+  return op.verificationGasLimit + headroom;
 }
 
 /** getNonce(address,uint192) selector on the EntryPoint (nonce manager). */
 const GET_NONCE_SELECTOR = keccak_256(utf8ToBytes('getNonce(address,uint192)')).slice(0, 4);
+/** balanceOf(address) selector on the EntryPoint (StakeManager deposit). */
+const BALANCE_OF_SELECTOR = keccak_256(utf8ToBytes('balanceOf(address)')).slice(0, 4);
 
 export class SmartAccountClient {
   private bundlerClient: BundlerClient;
@@ -198,6 +268,26 @@ export class SmartAccountClient {
       throw new Error('EntryPoint.getNonce returned a nonce for a different key');
     }
     return nonce;
+  }
+
+  /**
+   * The configured deposit top-up verification headroom (0n when unset), so
+   * callers that quote an operation separately can apply the same rule.
+   */
+  get depositTopUpVerificationGas(): bigint {
+    return this.config.depositTopUpVerificationGas ?? 0n;
+  }
+
+  /** The sender's EntryPoint deposit (StakeManager balanceOf), in wei. */
+  async getEntryPointDeposit(sender: string): Promise<bigint> {
+    const data = new Uint8Array(4 + 32);
+    data.set(BALANCE_OF_SELECTOR, 0);
+    data.set(hexToBytesStrict(sender), 4 + 12);
+    const result = (await this.config.node('eth_call', [
+      { to: this.config.entryPoint, data: bytesToHexStrict(data) },
+      'latest',
+    ])) as string;
+    return BigInt(result);
   }
 
   /**
@@ -263,6 +353,21 @@ export class SmartAccountClient {
           }
         : {}),
     };
+
+    // Self-paid operations that must top up the EntryPoint deposit during
+    // validation get the configured verification headroom (see
+    // depositTopUpVerificationGas for the evidence). Decided on the padded
+    // limits, before signing, so the signed operation carries it.
+    // If the deposit cannot be read, the operation goes out as estimated
+    // (the previous behaviour); a bundler refusal then still arrives
+    // verbatim as the error.
+    const topUpHeadroom = this.config.depositTopUpVerificationGas ?? 0n;
+    if (!this.paymasterClient && topUpHeadroom > 0n) {
+      const deposit = await this.getEntryPointDeposit(op.sender).catch(() => null);
+      if (deposit !== null) {
+        op = { ...op, verificationGasLimit: withDepositTopUpHeadroom(op, deposit, topUpHeadroom) };
+      }
+    }
 
     if (this.paymasterClient) {
       const finalData = await this.paymasterClient.getPaymasterData(

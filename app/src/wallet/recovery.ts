@@ -63,6 +63,7 @@ import { toChecksumAddress, type DerivedAccount } from '@shiba-wallet/core';
 // Explicit .ts extensions: this module is imported by scripts/check-recovery.mjs
 // under Node's type stripping, which resolves relative specifiers literally.
 import {
+  AA_DEPOSIT_TOPUP_VERIFICATION_GAS,
   applyPriorityFeeFloor,
   bundlerPriorityFeeFloor,
   clearAllRecoveredAccounts,
@@ -2324,6 +2325,9 @@ export async function submitGuardianRecovery(args: {
     bundler: args.bundler,
     node: spec.routeNode(args.node),
     spec,
+    // Same deposit top-up headroom as every other self-paid smart-account
+    // operation (aa.ts AA_DEPOSIT_TOPUP_VERIFICATION_GAS explains why).
+    depositTopUpVerificationGas: AA_DEPOSIT_TOPUP_VERIFICATION_GAS,
   });
   const { userOpHash } = await client.sendCalls(args.signer, [recoveryCall(args.quote.request)], {
     maxFeePerGas: args.quote.maxFeePerGas,

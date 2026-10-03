@@ -42,6 +42,7 @@ import {
   type AaClientBundle,
   type AaReceiptSummary,
   type AaSendQuote,
+  AA_DEPOSIT_TOPUP_VERIFICATION_GAS,
 } from './aa.ts';
 import { formatUnits, parseUnits } from './balances.ts';
 import { WALLET_7702_DELEGATE } from './delegation.ts';
@@ -943,6 +944,11 @@ export async function sendSessionCalls(args: {
     bundler: bundle.bundler,
     node: spec.routeNode(bundle.node),
     spec,
+    // Same deposit top-up headroom as the owner-signed clients in aa.ts: a
+    // bundler's estimate omits the EntryPoint deposit top-up that validation
+    // performs at real fees, so the signed verification gas needs this margin
+    // whenever the account's deposit is below the required prefund.
+    depositTopUpVerificationGas: AA_DEPOSIT_TOPUP_VERIFICATION_GAS,
   });
   const { userOpHash } = await client.sendCalls(sessionAccount, args.calls, fees);
   return { userOpHash, client };
