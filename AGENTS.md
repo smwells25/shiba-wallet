@@ -3653,3 +3653,41 @@ whenever the Expo account and identifiers arrive. Subagents on Opus.
       showed "Not sent — Authentication cancelled." with nothing
       broadcast. Not yet eyeballed: the unreadable state and the
       section's dark-mode layout.
+- [x] Resilience follow-ups (commit e51a33e; check-failover 115, check-wc
+      232; offline runner ALL GREEN in the CTO's worktree): Home token rows
+      resolve the endpoint at call time and fail over once
+      (useTokenBalances loadTokenBalance); the set-code quote carries its
+      URL and sendSetCodeTx refuses any other, UpgradeAccountScreen quotes
+      through withEndpoint and re-resolves before the biometric gate
+      (refusal with QUOTE_ENDPOINT_CHANGED_TITLE, back to the overview);
+      WalletConnect eth_sendTransaction quotes go through the failover
+      rule (walletconnect.ts quoteWcTransaction) and at approval a moved
+      endpoint re-quotes automatically with WC_REQUOTED_NOTE ("The network
+      endpoint changed; the fee was re-quoted."), re-running the eth_call
+      gate, preview and risk warnings on the new URL, with a second pin
+      check after the biometric prompt that returns the request to the
+      sheet rather than declining; AA quotes stay pinned as before;
+      components.tsx Button exposes accessibilityState (disabled,
+      selected) plus optional accessibilityLabel/Hint, and Swap's chips
+      pass selected. Mutation-tested (four deliberate breaks each failed
+      the new checks). Not on a device: the re-quote note/busy state, the
+      Upgrade refusal alert, TalkBack/VoiceOver reading of chip state; a
+      failed re-quote offers only Reject (matches existing behaviour).
+- [x] THREAT_MODEL.md second edition (evidence at 02f6154): new
+      secure-store inventory and per-platform behaviour, the opt-in policy
+      and migration machine, invalidation rule; threat rows T-01/02/08/09/
+      11/13/21/23/25/26/30/16/28/40/50/56/58/62/64 updated; checklist W1
+      partially met (opt-in), W9 met (68b6292), W10 met (1e37343 + green
+      runs; caveat: npm audit ran once by hand, not in CI), W11/W12 partly
+      met (3194031; not exercised with a live dApp/relay), W15 met
+      (37d3b89); findings F-36 fixed, F-44 mostly fixed, N-01 implemented
+      as opt-in (still open while W1 is partial), N-06/N-07 mitigated
+      (unverified live), N-10 still open (failover is availability, not a
+      second-source cross-check); new F-52..F-57 (check-tokens in CI,
+      npm audit, switchboard residuals, failover gaps, protected-storage
+      limits, half-built engine via Metro); section 7.2 names npm test /
+      test:live / the secret scan / hooks:install / CI as the reproduction
+      entry points with current counts; section 8 items 1, 2, 6 resolved,
+      new 13 (ARCHITECTURE said "automatic") and 14 (CONTRIBUTING said
+      check-tokens is "live") — both fixed by the CTO in the same commit.
+      check-readiness (which parses the document) still 115/115.

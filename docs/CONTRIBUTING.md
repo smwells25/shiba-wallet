@@ -136,6 +136,4 @@ new suite should end with the line `N passed, M failed` (optionally prefixed
 with its name) and exit non-zero when anything failed, and any live section
 should run only behind `--live`.
 
-`check-tokens.mjs` is currently classified `live`: it has an offline section
-followed by an unconditional live section, so it runs only in live mode
-until that section is moved behind `--live`.
+`check-tokens.mjs` is classified `flag-live`: its offline checks (the ABI decoder and the token store) run in every mode, and `--live` adds the eth_call reads of USDC against the default mainnet RPC, so `npm test` covers it offline and `npm run test:live` covers the live section.
