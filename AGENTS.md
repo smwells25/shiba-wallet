@@ -4326,3 +4326,44 @@ on Opus. The emulator is driven by ONE agent at a time.
       note); (5) nothing live on Base Sepolia yet (needs test ETH on the
       dev EOA 0x16DA…C5C there, then the kernel-smoke command in its
       header).
+
+## Phase 10 status (2026-10-03, end of the autonomous run)
+
+Items 1 to 5 are landed and pushed, CI green on every push (last:
+b0c95f0). Proven live through the app's own screens this phase: session
+keys (grant, use by the session key alone, revoke — twice, the second
+time after the fixes with two prompts and the success state intact) and
+guardians (setup with the exposure warning, a recovery request from
+another account with pasted approvals and the on-chain delay, the
+owner's veto, a second recovery on guardian lane 1 executed after the
+delay, attach, owner change back, removal). Delivered without a live
+run: the Base Sepolia test profile with the Kernel stack verified on the
+chain; the paymaster probe (ZeroDev serves ERC-7677 but the project has
+no gas policy — INPUT NEEDED: "Sponsor all transactions" for the
+project's Sepolia network on dashboard.zerodev.app, then
+PAYMASTER_LIVE=1 node scripts/testnet/paymaster-probe.mjs); the
+leadership refresh (FEATURE_UNIVERSE section 15 — 31 proven live, 14
+built, 2 designed, 52 not started — DEMO.md, and the shareable page at
+version 4); the hardening leftovers. Engine: 627 tests. App: 30 offline
+suites, 3,108 checks, lint 0, tsc clean.
+
+Standing emulator rules added this phase: never wipe AVD "shiba" or
+change its fingerprint (the wallet's phrase is in protected storage and
+written nowhere); never run an engine build in the main checkout during
+an emulator run — the Metro worktree now serves real dist copies through
+a resolver (<scratchpad>/wt-app/app/metro.config.js) so a rebuild cannot
+reach the device, but the rule stands for other worktrees.
+
+Waiting on inputs: the ZeroDev gas policy (live sponsorship); test ETH on
+the dev EOA on Base Sepolia (a Kernel deployment there via
+CHAIN_ID=84532 kernel-smoke.mjs); the Expo account and identifiers plus
+the passkey rpId domain (device build track, item 6); everything listed
+under the phase 9 status.
+
+Follow-ups (no inputs): the Base L1 data fee in send.ts; a bundler
+eth_chainId check in setAaBundlerUrl; Base entries for the risk
+threshold, NFT explorer links and recovery-file names; remaining
+"Sepolia"-specific copy; the two unreasoned eslint disables in
+WcApprovalSheet; the Home chain cards' nested Pressables; the
+intermittent "Error: undefined" warning; an owner-rotation screen for
+the recovered-account case is now covered by Change owner.
