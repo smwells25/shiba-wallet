@@ -4106,3 +4106,82 @@ on Opus. The emulator is driven by ONE agent at a time.
       so a policy refusal during a send shows the policy text. Not
       eyeballed on the emulator: the Settings warning lines, the card
       swap, the ignored-URL states.
+- [x] Item 1 — SESSION KEYS AND GUARDIANS, PROVEN LIVE IN-APP
+      (2026-10-03, emulator, Expo Go, Sepolia, Kernel account 0xD31c…D8FA
+      owned by Account 1; Metro --clear at 028b558; nonce 3 → 9; every
+      hash checked on-chain by the agent). SESSION KEYS: Sessions →
+      grant (allowed call: owner EOA 0x772e…F44F, no function, cap 0;
+      expiry 10 min) — review showed the per-call-cap note, the expiry
+      "enforced on-chain by the account", "A session key can never sign
+      messages or logins for your account (ERC-1271 is switched off for
+      it)", session key 0xb5d6Ed3A6C1baE5E0bd7F751A5d7F6169DbeC74C,
+      permission id 0x2daf71ee, "Install operation: 2 calls to your own
+      account (installValidations, grantAccess)", bundler estimate passed;
+      install userOp 0x8fca341a…b4f6, tx 0xb62e5573…b47d, block 11837098
+      (readKernelPermissionState: installed, ECDSASigner flag 2, policies
+      [CallPolicy, TimestampPolicy]); "Test this session" signed by the
+      SESSION key only (nonce key 0x02‖2daf71ee, 66-byte 0xff signature
+      recovering to the session address, no owner prompt): userOp
+      0x8a4d92e8…a7d01, tx 0xb1d7b2c8…ea62, block 11837121, "Included
+      on-chain — succeeded"; Revoke (owner, uninstallValidation): userOp
+      0x06f9bb74…46e8d, tx 0x6270f7c0…8422, block 11837135, state cleared
+      (executeAllowed stays true — harmless with no validator); Forget →
+      "None on this device". GUARDIANS: setup with dev-seed indices 5
+      (0x69F0EC265702D0891b0AEF8e79ddDC3277ef7E8a) and 6
+      (0xCCB4A33b8918ccd1a5C349E46EAc53229788b107), 1/1, threshold 2,
+      delay 10 min (test networks); the exposure warning rendered ("ONE
+      guardian alone can sign messages as this account immediately…") and
+      the unaudited-module note; install (2 installModule calls): userOp
+      0x1112154e…acba6, tx 0x3c311673…b666, block 11837168,
+      readGuardianState active/2/600 s. Recovery request #1 from Account
+      2 (proposal 0xb5c98984…550c, lane 0), both approvals signed with
+      guardian-approve.mjs and pasted (weight bar 1→2 of 2),
+      approveWithSig sent by Account 2: tx 0xe6fccaf5…e3bf, block
+      11837206, "Approved on-chain… can execute in 9 min"; VETO by
+      Account 1 (paste id → "APPROVED by guardians: it can execute in 7
+      min… Veto it now"): userOp 0x40dd663c…c5d1d, tx 0x05672d39…86ae,
+      block 11837220, proposal rejected, Account 2's screen "The current
+      owner VETOED this recovery". Recovery #2 (proposal 0x896a23e4…9a4f,
+      GUARDIAN LANE 1 — first live non-zero lane): approveWithSig tx
+      0xf6e203d9…b2c0, block 11837243; countdown "9 min → 4 min → Ready";
+      the final op was submitted by guardian 5 from a scratch script
+      copying the app's prepareGuardianSubmission / submitGuardianRecovery
+      (the guardian keys are not in the emulator wallet): userOp
+      0xe7417f16…221b, tx 0x4129e51f…ab8f, block 11837294, owner =
+      Account 2; app: "Recovered: this wallet's account is now the owner"
+      → "Use this recovered account" → attached; Change owner back to
+      Account 1 (signed by Account 2): userOp 0xff80c2ab…02a1, tx
+      0x2150a265…b2ef, block 11837307; Remove guardians (3 calls): userOp
+      0xc5cd6bfa…cbb6, tx 0xf23e3bcc…cc4e, block 11837317. Observation:
+      ZeroDev's gas ESTIMATE accepted the guardian op ~9.5 min before
+      validAfter (validAfter travels in validation data) — not submitted
+      early. Top-up: Account 1's EOA sent 0.004 test ETH to the smart
+      account in-app (tx 0x33c1a535…2a7c; the dev EOA holds only 0.00108).
+      Final state: owner Account 1, no guardians, no permission, balance
+      0.00399 + deposit 0.000356. Funds: smart account 0.00202 over 8
+      ops, Account 1 EOA 0.004028, Account 2 EOA 0.000249, dev EOA 0.
+      PROMPT COUNTS with protected storage: session grant 3 (approve,
+      protect the new session key, sign with the phrase), session test 2
+      (approve, use the session key), everything else 1. BUGS FOUND (fix
+      agent dispatched): (1) the session grant left the Sessions screen
+      for Home between the 2nd and 3rd prompt, so the userOpHash and
+      success screen never showed although the op was sent (logcat:
+      "WalletConnect Core is already initialized… Init() was called 2
+      times" at that instant; suspected root-navigator or provider
+      remount); (2) the recovery record rebuilt on the recovering side
+      (from the original owner) has no guardians and replaced Account 1's
+      record, so both sides showed "guardians are configured on-chain but
+      not in the record" until removal; (3) the guardian install success
+      text says the record "does not match the chain yet" while the
+      status card says "Matches the chain ✓" (timing). COPY: the delay
+      picker sits above the text that says "The delay below"; the audit
+      note leaks "Engine notes: packages/chains-evm kernel-recovery.ts";
+      "Current owner (not this wallet)" shown when it is this wallet's
+      account; guardian labels show as "Guardian" on the recovering
+      side; the session review's "only a plain transfer with empty
+      calldata" overstates a null selector (it also matches calldata
+      starting with 0x00000000); the shared request text points to
+      "Settings → Guardians → Approve a recovery" (path unverified).
+      Minor: Google-keyboard stray text in the paste field; Home briefly
+      omits Guardians/Passkey links after a fresh bundle (async
+      eligibility). Screenshots in the scratchpad p10/ folder.
