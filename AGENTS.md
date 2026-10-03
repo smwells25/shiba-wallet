@@ -4469,3 +4469,133 @@ emulator, 6 after. Subagents on Opus.
       dev account and the public mnemonic. Note: the dev EOA now holds
       0.0511 Sepolia ETH (topped up externally). The app half (a
       client-side policy screen) is not started.
+- [x] Items 3, 4 and 5 (commit f9bfdc2; offline runner ALL GREEN in the
+      CTO's worktree: engine 691, app 3,459 checks across 34 suites).
+      ITEM 5 — Base follow-ups: OP-stack facts (docs.optimism.io
+      transaction fees: totalFee = operatorFee + gasUsed × (baseFee +
+      priorityFee) + l1Fee; the L1 data fee "is deducted directly from
+      the address that sent the transaction" and cannot be capped;
+      op-geth core/state_transition.go buyGas adds l1Cost and the operator
+      cost to the balance check; GasPriceOracle 1.6.0 getL1Fee(bytes)
+      takes the unsigned RLP transaction and adds 68 signature bytes; Base
+      docs: "Use getL1Fee with the complete serialized transaction for an
+      exact value before signing"); send.ts quoteOpStackFees on profiles
+      with l1DataFee: serializeUnsignedEip1559 (pinned against ethers'
+      unsignedSerialized), getL1Fee on the exact unsigned bytes plus
+      getOperatorFee(gasLimit) (currently 0 on Base Sepolia; isFjord,
+      isIsthmus, isJovian all true), reserve = estimate + 50% headroom
+      (L1_DATA_FEE_HEADROOM_PERCENT — a judgement, not a standard, because
+      the fee follows L1 and cannot be capped), fee/total and the balance
+      check include it, Max subtracts it and chooses the chain from the
+      endpoint's eth_chainId, any oracle failure refuses the quote;
+      send-nft.ts wired the same; send-erc20.ts inert (tokens pinned to
+      mainnet); mainnet/Sepolia make no oracle call with byte-identical
+      quotes (tested); SendScreen shows "Layer 1 data fee (estimate)" and
+      an operator-fee row when non-zero on the native and NFT confirms.
+      Smart accounts unchanged: Pimlico's FAQ says preVerificationGas
+      "accounts for … L1 data costs when operating on L2 networks"
+      (ZeroDev undocumented; a read-only estimate of the same Kernel op
+      gave preVerificationGas 51,428 on Sepolia vs 56,811 on Base Sepolia,
+      consistent with L1 pricing but not a proof). setAaBundlerUrl now
+      calls verifyAaBundlerChain (eth_chainId per ERC-7769, ERCs 365b4c02)
+      before eth_supportedEntryPoints and refuses a mismatch with nothing
+      saved ("This bundler serves Ethereum Sepolia (chain id 11155111),
+      but you are saving it for Base Sepolia…"); ZeroDev answered 0xaa36a7
+      and 0x14a34 on the two URLs, each refused under the other.
+      Base entries: risk.ts eip155:84532 302,400 blocks (7 days at 2 s,
+      docs.base.org; measured 2.0 s over 10,000 blocks), nfts.ts
+      sepolia.basescan.org/nft/ (host from Base's docs; the path is the
+      Etherscan-family convention), recovery.ts file names; readiness hint
+      "Turn on a test network (Ethereum Sepolia or Base Sepolia)…", AA
+      pre-fill note lists the verified chains. Live probe: a 47-byte
+      unsigned transfer → getL1Fee 6,222,960,213 wei (= getL1FeeUpperBound
+      at that size), L2 worst case 231,000,000,000 wei, L1 estimate ~2.6% of
+      the total. check-base.mjs 64 offline / 69 live (flag-live).
+      UNVERIFIED: whether 50% headroom suffices for a live Max send (needs
+      Base Sepolia test ETH); WcApprovalSheet shows the reserve inside
+      fee/total without a separate L1 line; delegation.ts's set-code tx
+      ignores the L1 fee on Base; copy leftovers in delegation.ts:340,
+      the ReadinessRow text and NftDetailScreen's "Switch Sepolia test
+      mode". ITEM 3 — SIWE (EIP-4361 Final, ERCs faa49e07): app/src/wallet/
+      siwe.ts strict ABNF parser (field order, LF only, ASCII statement,
+      RFC 3339 times with range/leap checks, RFC 3986 URIs, EIP-55
+      checksum, 16 KiB / 64 resources wallet limits), classifySiweBytes,
+      checkSiweOrigin per the EIP's algorithm (https assumed, host, scheme,
+      default ports), describeSiweMessage; walletconnect.ts siweSheetState
+      compares the domain with the Verify-attested origin when Verify
+      answered, else the session metadata URL (labelled self-reported);
+      WcApprovalSheet PersonalSignBody + SiweSummaryCard ("Sign in to
+      <host>", rows for site, account, network, statement, URI, version,
+      nonce, issued/expiry absolute + relative, not-before, request id,
+      resources; the exact message stays visible). Warnings: account not
+      the session's, chain not active (smart-account note), expired, not
+      yet valid, no origin, the sign-in phrase without conformance, not
+      printable. GATE (CTO decision): a host/scheme/port mismatch or a
+      userinfo@ domain sets requiresAcknowledgement on the item's identity
+      (wc-controller applySiweGate), so Sign stays off until the existing
+      "I understand the risk" switch is on — honouring the EIP's MUST-reject
+      by default without auto-declining; the provider's pre-sign re-check
+      covers it (source-order check). check-siwe 114 (the EIP's three
+      examples verbatim, ox 0.9.3 Siwe cross-checks, 30 malformed messages
+      still signable with digest == ethers.hashMessage), check-wc 265.
+      PROOF OF OWNERSHIP: app/src/wallet/proof.ts screenProofChallenge
+      (refuses empty, > 2,000 chars, control/lone-surrogate/bidi/zero-width
+      characters, 0x-hex, EIP-712 in any form, transaction JSON, 7702
+      tuples/authorizationList, and SIWE text that is malformed, for a site
+      the user did not type, with userinfo, or naming another account),
+      makeEoaProof (EIP-191), makeSmartAccountProof (aa.ts
+      signHashAsSmartAccount → ERC-1271, ERC-6492 while undeployed),
+      proofVerifyNote; ProveOwnershipScreen (route ProveOwnership; links on
+      Receive's EVM slot and a Settings section): challenge + optional
+      Site, Paste / "Write one for me", screened → requireLocalAuth →
+      signWith, proof view with Copy and Share; check-proof 65 (ethers
+      verifyMessage; engine verifyErc6492Signature / verifyContractSignature
+      against the fake eth_simulateV1). Unverified: no live dApp SIWE
+      request yet; a 7702-upgraded EOA's EIP-191 proof may be rejected by
+      verifiers that try ERC-1271 first; recovered accounts not offered;
+      a sign-in with no origin at all only warns (could be gated). ITEM 4
+      — activity sentences: packages/chains-evm/src/activity-decode.ts
+      (selectors/topics recomputed with keccak and pinned against ethers:
+      ERC-20 transfer/approve/transferFrom, ERC-721/1155 transfers,
+      setApprovalForAll, Permit2 approve/permit + Approval/Permit events
+      (Uniswap/permit2 cc56ad0f), EntryPoint v0.7 handleOps +
+      UserOperationEvent/AccountDeployed/UserOperationRevertReason, EIP-7702
+      authorization lists via recoverEip7702Authority, Universal Router
+      execute with command names where the dev and main Commands.sol
+      branches agree (0x40-set bytes shown as UNKNOWN, 0x80 allow-revert)
+      and V4_SWAP actions (v4-periphery Actions.sol 9969eec4; TAKE rules
+      and MSG_SENDER = address(1) from V4Router/BaseActionsRouter/
+      ActionConstants), Kernel v3.3 execute(bytes32,bytes) single/batch and
+      SimpleAccount execute/executeBatch; wallet movements through the
+      preview's asset-diff decoder; pinned sourced labels (Sepolia
+      Universal Router 2.1.2/2.1.1, v4 PoolManager, Permit2 on mainnet /
+      Sepolia / Base Sepolia, Sepolia USDC/EURC, mainnet USDC, EntryPoint
+      and the Kernel modules on mainnet and Sepolia) accepted only at the
+      pinned addresses. Sentence rules: 7702 authorizations first
+      ("Revoked the account upgrade (EIP-7702)" / "Upgraded…" only when the
+      account sent it and the nonce proves it took effect, else
+      "Authorized…"), handleOps described by the wallet's own ops
+      ("Smart-account operation: sent 0.0001 ETH to Burn"; failed ops with
+      the reason; Kernel try-mode note), failed txs from calldata ("Failed:
+      tried to …; only the network fee was paid"), approvals ("Approved USDC
+      for Permit2 (unlimited)"), swaps ("Swapped 1 USDC for 0.991829 EURC
+      on Uniswap"), else received/sent per the logs; exact bigints, the
+      preview's token-name rule, contacts' exact matches, "yourself",
+      short addresses; Hide amounts masks amounts. Fixtures: seven real
+      Sepolia transactions stored verbatim with their sentences pinned
+      (0x5396… is the 2026-10-02 USDC→EURC swap on Sepolia — the brief's
+      suspicion that it was the Dogecoin txid was wrong; the Dogecoin txid
+      is 2f05331b…). App: activity-sentences.ts (withEndpoint failover, at
+      most 8 decodes per batch, 300-entry cache keyed by network + wallet
+      set + hash, failures never cached, wallet set = EOA + the Kernel
+      counterfactual when Kernel is the chain's type + a recovered account),
+      ActivityScreen shows the sentence above the time/fee line and screen
+      readers hear it first; check-activity 53. Known limits: ETH received
+      inside a swap call is invisible in logs ("for ETH" without an
+      amount; the row's indexer amount still shows it), ETH refunds inside
+      calls invisible, the 2.1.2 router's Commands.sol branch unconfirmed,
+      publicnode's Sepolia endpoint returned null receipts for mined txs on
+      about half of requests (treated as not yet available, never cached),
+      SimpleAccount addresses not in the wallet set, mainnet Universal
+      Router addresses not pinned, Sepolia Activity has rows only with an
+      indexer configured. Nothing eyeballed on a device.

@@ -511,7 +511,7 @@ The record used here runs to phase 10 item 1 (session keys and guardians through
 | 73 | Address book and contacts | 1 | Proven live | In-app on the emulator, 2026-09-28: per-network contacts, picker, exact-match labelling with the full address (phase 6 emulator validation; `check-contacts.mjs`). |
 | 74 | Name-service resolution (ENS and peers) | 2 | Not started | None recorded. |
 | 75 | Wallet handles | 2 | Not started | None recorded. |
-| 76 | Sign-In with Ethereum (ERC-4361) | 2 | Built, verified offline | The signing paths SIWE needs exist: EIP-191 `personal_sign` and smart-account ERC-1271 / ERC-6492 signatures over WalletConnect (`check-wc.mjs`, `check-wc-5792.mjs`; phase 7 item 3). No SIWE-specific message display and no live SIWE login recorded. |
+| 76 | Sign-In with Ethereum (ERC-4361) | 2 | Built, verified offline | EIP-4361 messages are parsed strictly and summarised on the WalletConnect sheet with the domain checked against the request origin, a domain mismatch gated behind the risk switch, and ERC-1271 / ERC-6492 signatures for smart-account sessions (phase 11 item 3; `check-siwe.mjs`, `check-wc.mjs`). No live SIWE login with a real dApp recorded. |
 | 77 | Attestations and reputation | 3 | Not started | None recorded. |
 | 78 | WalletConnect v2 | 1 | Proven live | In-app with Uniswap on Sepolia: pairing and a full swap (approval, Permit2 signature, swap) on 2026-09-27; the global approval sheet over Home and the decline paths on 2026-09-28; a fresh pairing and swap after a restart on 2026-10-02. Smart-account sessions, ERC-5792 and ERC-7715 over WalletConnect are built and verified offline only. |
 | 79 | In-app dApp browser | 2 | Not started | None recorded. |
@@ -520,12 +520,12 @@ The record used here runs to phase 10 item 1 (session keys and guardians through
 | 82 | Testnet and developer mode | 2 | Proven live | Sepolia test mode toggle on the emulator, 2026-09-27, and every Sepolia run since (phase 4 items 5 and 6; emulator validation). |
 | 83 | Notifications infrastructure and inbox | 2 | Not started | None recorded. |
 | 84 | Tax reporting | 3 | Not started | None recorded. |
-| 85 | Proof of address ownership | 2 | Not started | No dedicated flow; manual message signing (feature 7) is the only route. |
+| 85 | Proof of address ownership | 2 | Built, verified offline | Prove ownership screen (phase 11 item 3): a user-held challenge signed with EIP-191 for the account or ERC-1271 (ERC-6492 while undeployed) for its Kernel smart account, with a how-to-verify note; refuses typed data, transactions, EIP-7702 tuples and sign-in messages for sites the user did not type (`check-proof.mjs`). Not run on a device. |
 | 86 | Optional outbound address screening | 3 | Not started | None recorded. |
 | 87 | Transaction notes and receipts | 2 | Not started | None recorded. |
 | 88 | Guided onboarding and education | 1 | Built, verified offline | Basic version only: the first-run flow of feature 1 plus plain-language explanations on every screen. The guided flow this feature describes (passkey creation, counterfactual address, sponsored first transaction) is not assembled, and no test suite covers onboarding copy. |
 | 89 | Fiat-first display and jargon abstraction | 1 | Built, verified offline | Fiat values as secondary text on Home and confirm screens, masked by Hide amounts (phase 6 item 2, app half; `check-prices.mjs`). Not eyeballed: test mode prices nothing and the mainnet balances are zero. Exact crypto stays primary by design. |
-| 90 | Human-readable activity history | 1 | Proven live | Bitcoin Activity on the emulator, 2026-09-27; history read live through the app's code for Bitcoin and Solana (phase 3 task 6), Ethereum via an indexer (phase 4 task 1), Dogecoin via Blockbook (phase 5 item 3). Partial: entries show direction, amount and status, not decoded sentences. |
+| 90 | Human-readable activity history | 1 | Proven live | Bitcoin Activity on the emulator, 2026-09-27; history read live through the app's code for Bitcoin and Solana (phase 3 task 6), Ethereum via an indexer (phase 4 task 1), Dogecoin via Blockbook (phase 5 item 3). Each EVM row now also carries a decoded sentence ("Swapped 1 USDC for 0.991829 EURC on Uniswap", approvals, smart-account operations, EIP-7702 upgrades and revokes) from the engine's transaction decoder over pinned real Sepolia transactions (phase 11 item 4; `check-activity.mjs`), verified offline; not yet seen on a device. |
 | 91 | Localisation | 2 | Not started | None recorded. |
 | 92 | Accessibility | 2 | Built, verified offline | Accessibility roles, labels and hints on the main screens (phase 9 item 5 and follow-ups); lint and typecheck green. No TalkBack or VoiceOver run. |
 | 93 | Push notifications and alerts | 1 | Not started | None recorded. |
@@ -541,9 +541,9 @@ The record used here runs to phase 10 item 1 (session keys and guardians through
 | Status | Tier 1 | Tier 2 | Tier 3 | Total |
 |---|---|---|---|---|
 | Proven live | 25 | 6 | 0 | 31 |
-| Built, verified offline | 9 | 5 | 0 | 14 |
+| Built, verified offline | 9 | 6 | 0 | 15 |
 | Designed | 1 | 1 | 0 | 2 |
-| Not started | 5 | 32 | 15 | 52 |
+| Not started | 5 | 31 | 15 | 51 |
 | **Total** | **40** | **44** | **15** | **99** |
 
 Of the 31 features proven live, the account-abstraction ones split into two groups. Smart-account sends (13), Kernel modularity (22), the EIP-7702 upgrade and revoke (23), WalletConnect (78) and the balance-change preview (49) have been proven through the app's own screens. Session keys (18) and guardian recovery (20) have now also been proven through the app's screens (phase 10 item 1); counterfactual deployment (14) and on-chain batching (17) remain proven at engine level only.
