@@ -4404,3 +4404,68 @@ Waves: 1, 3, 4, 5 in parallel (disjoint files), 2 by the CTO on the
 emulator, 6 after. Subagents on Opus.
 
 ## Phase 11 progress
+- [x] Item 1, engine half — spending limits (commit 1a5d3c0; 39 new
+      vitest cases, chains-evm 408, engine 691 at the agent's run; no
+      funds spent). FINDING FOR THE CHAIRPERSON: no deployed, audited
+      module can enforce an account-wide spending limit on Kernel v3.3.
+      ZeroDev's SpendingLimit hook 0xb6D6B30C9E1A28E8044F4cCB48A63A423Ee3D70E
+      (the SDK's SPENDING_LIMIT_HOOK_V07 in @zerodev/hooks 5.2.2–5.3.4;
+      source kernel-7579-plugins hooks/spendlingLimits/src/SpendingLimit.sol,
+      added c26ed2e, last d9aaeaa, since deleted from the repo in
+      335a67c; Sepolia Etherscan exact match to d9aaeaa, mainnet identical
+      code but unverified anywhere; the v3.1 incremental audit covered
+      commit 9dc7fcd with two minor findings, and the deployed code is the
+      one-line post-audit fix — so the deployed code is not the audited
+      commit) implements the Kernel v3.0 interface postCheck(bytes,bool,bytes)
+      (0xaacbd72a) while Kernel v3.1–v3.3 call postCheck(bytes)
+      (0x173bf7da), with no fallback, so every operation through it
+      reverts — PROVEN in the dry run (eth_simulateV1 against the real
+      Sepolia contracts, dev account index 2): install succeeds and reads
+      back, a within-limit op fails with UserOperationEvent success=false
+      and empty revert data, preCheck succeeds, postCheck(bytes) reverts,
+      the v3.0-style postCheck works and enforces ExceedsAllowance — the
+      hook's own lifetime rule is real but unreachable from v3.3. Also
+      from source: a Kernel hook belongs to one validator (no account-wide
+      hook; installModule(4,…) only calls onInstall); the ECDSA root
+      validator is itself a hook type, so onlyEntryPointOrSelfOrRoot lets
+      the owner EOA call execute / installModule / uninstallModule directly
+      in a plain transaction, bypassing any validation hook, and
+      uninstallModule(4, hook) clears the root hook immediately with no
+      delay (A7/A8 of the dry run proved both); the deployed ECDSAValidator
+      reverts AlreadyInitialized on re-install (the v3.3 repo file does
+      not), so attaching a hook to the root needs onUninstall then
+      installModule. Rhinestone's ERC20SpendingLimitPolicy /
+      ValueLimitPolicy are per-session cumulative caps inside the
+      AGPL-3.0 Smart Sessions validator (policies MIT; Cantina review of
+      a6fc609c; deployed bytecode vs audited commit unverified), not
+      account-level; Rhinestone's core hooks are AGPL and have no spending
+      hook; ZeroDev's CallPolicy caps each call (a batch of three 1-wei
+      calls passed under a "1 wei" cap in the dry run — session caps are
+      not budgets) and RateLimitPolicy counts operations. DESIGN: the app
+      may offer a CLIENT-SIDE policy only (per-token rolling-window caps
+      checked before signing from the simulation preview), labelled as
+      enforced by this app alone (anyone with the phrase, and session keys
+      or passkeys used elsewhere, are not bound); do not offer on-chain
+      limits until ZeroDev ships a hook for Kernel >= 3.1 with its own
+      source match and audit (C1–C3), and even then the owner's direct
+      transactions bypass it. Recommendation: report the postCheck
+      mismatch to ZeroDev together with the guardian-validator findings
+      (the SDK still points users at a hook that cannot work on Kernel
+      0.3.1–0.3.3) — awaiting the Chairperson's disclosure decision.
+      ENGINE: packages/chains-evm/src/kernel-spending.ts — hook constants
+      (address, code hash, source and audited commits), encoders
+      byte-identical to @zerodev/hooks 5.3.4 and viem 2.57.2,
+      prepareRootSpendingLimitInstall (refuses the deployed hook via
+      assessHookInterface → SpendingLimitHookIncompatibleError; checks the
+      ECDSA root and owner, no existing root hook, no stale list, tokens
+      answer balanceOf), readSpendingLimitHookState,
+      checkSpendingAgainstHook mirroring the hook's rule,
+      balanceDeltasFromAssetChanges / outflowsFromDeltas,
+      validateSpendingPolicy / evaluateSpendingPolicy (enforcement
+      'client-side'; windows 60 s – 366 days), refusals (empty, zero or
+      out-of-range, malformed, the account as a token, duplicates,
+      unknown tokens, > 8 entries); scripts/testnet/spending-limit-smoke.mjs
+      is dry-run only (SPENDING_SMOKE_DRY_RUN=0 refused), passes for the
+      dev account and the public mnemonic. Note: the dev EOA now holds
+      0.0511 Sepolia ETH (topped up externally). The app half (a
+      client-side policy screen) is not started.
