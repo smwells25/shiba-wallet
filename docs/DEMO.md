@@ -1,0 +1,275 @@
+# Presenting the Wallet: an Account-Abstraction Demo on the Android Emulator
+
+**Audience:** whoever presents the prototype to leadership, partners or reviewers, including someone who has never run the project.
+**Purpose:** a step-by-step walkthrough that shows each account-abstraction feature working in the app, in a sensible order, with what to tap, what the audience should see, what each step proves, and what to do when something is missing.
+**Evidence base:** every "what it proves" statement points at a run recorded in `AGENTS.md`. The status of each feature across the whole feature map is in `docs/FEATURE_UNIVERSE.md` section 15.
+
+Everything in this walkthrough runs on the **Sepolia test network** with test ETH, except where a step says otherwise. No step needs real money, and the one real-money item (the Dogecoin mainnet demonstration) is shown from its recorded result rather than repeated.
+
+---
+
+## Before you start: three warnings
+
+1. **Do not wipe the wallet on the demo emulator, and do not add or remove a fingerprint on it.** The emulator wallet's recovery phrase is stored in biometric-protected storage, and `AGENTS.md` records that the written phrase for that wallet is not kept anywhere ("Settings 'Recovery phrase protection' section"). Changing the fingerprint enrollment makes the phrase permanently unreadable; wiping deletes it. Either would lose Account 1, which owns the deployed Kernel smart account and the WalletConnect session this demo relies on. Show onboarding on a second, disposable emulator instead (see step 1).
+2. **Two flows in this walkthrough have not yet been rehearsed live through the app's screens.** Session keys (step 6) and guardians (step 7) are proven live on Sepolia through engine scripts, and their screens are built and tested offline, but their first in-app live run is phase 10 item 1, which was in progress when this document was written. Check the "Phase 10 progress" section of `AGENTS.md` before presenting; if those runs found problems, follow what it says over this document. Other phase 10 work was also editing these screens while this was written, so if a quoted label differs slightly on screen, trust the screen.
+3. **Bitcoin, Solana and Dogecoin in the app use their main networks.** Sepolia test mode only switches the Ethereum side. Anything you broadcast on those three chains from the app spends real coins. Step 9 explains how to show them without broadcasting.
+
+---
+
+## Preparation
+
+Allow about an hour the first time, mostly for funding and for a rehearsal run.
+
+### The machine and the emulator
+
+- Use the Mac that holds the project at `/Users/sean/Documents/mobile-wallet`. Every terminal command below starts from that folder and assumes this line has been run first, because the shell's default Node is too old:
+
+  ```
+  export PATH="$HOME/.nvm/versions/node/v24.21.0/bin:$PATH"
+  ```
+
+- The emulator is the Android Virtual Device named **`shiba`** (Pixel 7 profile, Android 14 with Google APIs). Start it from Android Studio's Device Manager, or with `~/Library/Android/sdk/emulator/emulator -avd shiba`.
+- The device PIN is **1234** and one fingerprint is enrolled. To "touch" the fingerprint sensor, run `adb emu finger touch 1` in a terminal. After a cold boot the emulator says "PIN is required after device restarts"; `AGENTS.md` records that `adb shell locksettings verify --old 1234` unlocks the user storage, after which the PIN typed on the on-screen keypad is accepted (open the keypad with a finger touch first).
+- The wallet runs inside **Expo Go**, which is already installed on the emulator.
+
+### Metro, the development server
+
+The app is served to Expo Go by Metro. The record's lessons, all from `AGENTS.md`:
+
+- **Serve a clean copy of the code.** During phase 8 the team ran Metro from an isolated git worktree of the committed code (its own checkout of `HEAD`, with `node_modules` and the engine's built `dist` folders linked from the main checkout, and a worktree-only Metro configuration pointing back at the main checkout), so that edits other people were making could never reach the device mid-demo. That worktree lived in a temporary scratchpad and its exact Metro override is not committed. If nobody else is editing the repository on presentation day, running Metro from the main checkout is equivalent; otherwise create a fresh worktree of the commit you intend to show.
+- **Build the engine first, then start Metro with a cleared cache:**
+
+  ```
+  npm run build
+  cd app
+  EXPO_NO_METRO_LAZY=1 npx expo start --clear
+  ```
+
+  `EXPO_NO_METRO_LAZY=1` produces one bundle with no lazy chunks; without it, the WalletConnect code failed to load with "Requiring unknown module". Do **not** set `CI=1`: it disables file watching and puts a "Cannot connect to Expo CLI" warning on the device. With the emulator running, press `a` in the Metro terminal to open the app in Expo Go.
+- If you rebuild the engine (`npm run build`) while Metro is running, restart Metro with `--clear`. A half-built engine once made Home lose its account label.
+- Start Metro so that it survives the terminal that launched it (the record used `nohup … & disown`); Metro died once when the task that started it was stopped.
+
+### What the emulator wallet should look like
+
+Open the app and check, before the audience arrives:
+
+- **Settings → Developer → Sepolia test mode** is on. An orange TESTNET banner shows, and Home's Ethereum row reads "Ethereum Sepolia".
+- **Home** shows "Account 1 · 0x772e…F44F". The full address is `0x772eAA1d3BEf14C0BD5cee980b90dB3FC680F44F`. Account 2 exists (`0xb6997390e1E3CDE9BF035Af75830Ae00C29781fE`).
+- **Settings → Account Abstraction → Ethereum Sepolia** has a verified bundler, the account type **Kernel v3.3**, and the verified Kernel factory. The record says the Sepolia bundler was switched to **ZeroDev** for the EIP-7702 run (phase 8 live validation), but a later investigation could not confirm which bundler was saved at that point (phase 9 item 1, "UNVERIFIED"), so look: the row masks the URL to its host, and the host should be `rpc.zerodev.app`. ZeroDev is the vendor proven to accept everything in this walkthrough; Alchemy's bundler refuses Kernel deployments. To change it, paste `https://rpc.zerodev.app/api/v3/<project id>/chain/11155111`, where the project id is `ZERODEV_PROJECT_ID` in the git-ignored `.dev-wallet/env`. Never show that file or the full URL on screen.
+- Account 1's **Kernel smart account** is `0xD31c2C54F21684eE2026a6C41e391130BdEeD8FA`, already deployed, owned by Account 1 (owner read back on-chain after the phase 9 owner-change test).
+- **Settings → Contacts** has the Sepolia contact "Burn" for `0x000000000000000000000000000000000000dEaD`. It makes a safe, recognisable recipient for every send in this demo.
+- **Account 2's EIP-7702 status** is "Regular account (no code)" (it was upgraded and revoked on 2026-10-01). Open Home → Upgrade on Account 2 to confirm.
+
+### Funds (Sepolia test ETH)
+
+Test ETH is free but must be in the right places. Check balances on Home (pull down to refresh) and on `sepolia.etherscan.io`.
+
+| Who | Address | Needs | Used for |
+|---|---|---|---|
+| Account 1 (EOA) | `0x772e…F44F` | about 0.002 | Plain send, WalletConnect swap gas |
+| Account 1's Kernel account | `0xD31c…D8FA` | about 0.003 | Smart-account send, session install/test/revoke, guardian install, recovery gas |
+| Account 2 (EOA) | `0xb699…81fE` | about 0.002 | EIP-7702 upgrade and revoke; sending the guardians' approvals during recovery |
+
+The project's dev wallet (the git-ignored `.dev-wallet/mnemonic.txt`, address `0x16DA2CAeaDa26516F919C6872F6C38AB378CaC5C`) is the usual source. It was down to about 0.0011 Sepolia ETH at the last record, so top it up from a Sepolia faucet first. Then send from it with:
+
+```
+TO=0xD31c2C54F21684eE2026a6C41e391130BdEeD8FA ETH=0.003 node scripts/testnet/fund.mjs
+```
+
+The script estimates gas, which matters for the Kernel account: a plain 21,000-gas transfer to a deployed Kernel account fails because receiving runs contract code (phase 7 live validation).
+
+For the WalletConnect swap you also need a little **Sepolia USDC** in Account 1 (`0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238`). The earlier runs swapped 1 USDC at a time. Get it from a Sepolia USDC faucet before the day.
+
+### Guardian keys
+
+The phase 10 plan uses two keys of the dev seed, at derivation indices 5 and 6, as guardians that "someone else" holds. Print their addresses with:
+
+```
+npm run build
+node scripts/testnet/guardian-approve.mjs addresses
+```
+
+`guardian-approve.mjs` can **sign** a guardian approval for a request the app shares (`GUARDIAN_INDEX=5 node scripts/testnet/guardian-approve.mjs approve request.txt`), but it cannot **submit** the final recovery operation. The guardian contract accepts that final operation only with a guardian's signature, and the app's own screen says a guardian submits it from their wallet ("A guardian submits the recovery"). So at least one guardian must be an account inside the emulator wallet. The plan in step 7 therefore uses one dev-seed guardian (index 5, played by the script) and one in-wallet guardian (a new Account 3). Add Account 3 in Settings → Accounts before the demo; adding an account takes about 15 seconds on this emulator.
+
+### A WalletConnect link
+
+The WalletConnect step needs a fresh `wc:` pairing link from `app.uniswap.org` on a laptop browser, switched to the Sepolia test network. Links expire after about four to five minutes, so request it only when the wallet is already on the Connections screen. Typing a long link with `adb shell input text` drops characters; the record's reliable method is the ADBKeyboard input method already installed on the emulator: switch to it, then `adb shell am broadcast -a ADB_INPUT_TEXT --es msg '<the wc: link>'`, and switch back to the Google keyboard afterwards. Scanning the QR code with the emulator camera also works (the camera shows a virtual scene with a poster you can replace), but needs more setup.
+
+### A rehearsal
+
+Run the whole walkthrough once the day before. It surfaces funding gaps and any changed copy, and it lets you pre-run the slow parts (the guardian delay in step 7 is at least ten minutes).
+
+---
+
+## The walkthrough
+
+Each step lists what to tap, what the audience sees, what it proves, and the fallback if something is missing. Quoted text is copied from the app's source code at the time of writing.
+
+### Step 1. Onboarding, and one phrase for many chains
+
+**Do this on a second, disposable emulator, never on `shiba`** (see the warnings). Any new Android Virtual Device with Expo Go works; open the same Metro project in it.
+
+- Tap **Create a new wallet**. The welcome screen says: "A non-custodial multi-chain wallet. One seed phrase, generated and stored only on this device, controls Ethereum, Bitcoin, Dogecoin and Solana accounts."
+- The backup screen ("Your recovery phrase") shows 12 words and a warning that begins "These 12 words are the only backup of your wallet." Point out that a screenshot here comes back blank: the screen blocks screen capture.
+- Tap **I wrote the words down**, then answer the two-word quiz on "Confirm your backup".
+- Home lists four chains with addresses all derived from that one phrase, and live balances fetched from public endpoints.
+
+**What it proves:** keys are generated on the device, one phrase backs up every chain and every account, and the backup screen cannot be screenshotted. Run on the emulator on 2026-09-27 (`AGENTS.md` "Emulator validation"; screenshot blocking in the "third pass").
+
+**Fallback:** if a second emulator is not available, switch back to `shiba` and show Home there: the footer says the addresses are "derived on this device from your recovery phrase (one phrase backs up every account)". Show Account 2 via the account switcher to make the "many accounts, one phrase" point.
+
+### Step 2. A plain send with the balance-change preview and risk checks
+
+On `shiba`, Account 1, Sepolia test mode.
+
+- Home → Ethereum Sepolia row → **Send ↗**. Tap **Contacts** and pick "Burn". Enter 0.00001 and continue.
+- The confirm screen shows the orange badge "Ethereum Sepolia TESTNET — test funds only", the "SAVED CONTACT Burn" notice with the full address, the fee and worst-case total, and a **"Balance changes (preview)"** card reading "You send 0.00001 test ETH", followed by "Pre-flight simulation passed (eth_call)."
+- A **"Risk checks"** card appears only when a check finds something, with the footnote "Checked with public on-chain data only. No warning here does not mean a transaction is safe." To make it appear on purpose, type a fresh address instead of the contact: the first-interaction notice ("No earlier token transfers from you to this address were found in recent history…") is the most likely line. Whether it shows depends on what the endpoint returns, so treat it as a bonus rather than a promise.
+- Show the anti-poisoning check too: type the Burn address with one character in the middle changed, keeping the first four and last four characters. The form warns 'This address looks similar to your contact "Burn" but is DIFFERENT. Check every character.' and does not label it (seen on 2026-09-28).
+- Approve with the fingerprint (`adb emu finger touch 1`). With protected storage, exactly one system prompt appears, titled "Approve sending 0.00001 test ETH".
+
+**What it proves:** every send is simulated before signing and shown as plain balance changes (preview matched the chain to the wei on 2026-09-28 and 2026-10-02, phase 6 emulator validation and the WalletConnect retest); contacts and look-alike warnings work in-app (2026-09-28); one biometric prompt both unlocks the protected phrase and approves (2026-10-02). The risk checks are built and tested offline; no recorded run shows a risk line on screen yet.
+
+**Fallback:** if Account 1 has no test ETH, cancel at the biometric prompt; the confirm screen is the point. Cancelling shows "Not sent — Authentication cancelled." and nothing is broadcast.
+
+### Step 3. The smart-account send (Kernel v3.3, ERC-4337)
+
+- Home → Ethereum Sepolia → **Send ↗**, recipient "Burn", amount 0.0001, and turn on **Send from smart account** (marked EXPERIMENTAL; it appears only when the bundler and factory are configured and verified).
+- The confirm screen shows "EXPERIMENTAL · ERC-4337 smart account · Kernel v3.3", **Owner account (signs)** Account 1, **From smart account** `0xD31c…D8FA`, the smart account's own balance, **Deployment: Already deployed**, a "Max network fee (bundler estimate)", the balance-change preview simulated as the smart account, and "Bundler gas estimate passed (eth_estimateUserOperationGas simulated the operation)."
+- Approve with the fingerprint. The success screen shows the UserOperation hash, "Bundling… waiting for the UserOperation receipt.", then "Included on-chain — succeeded." with a link to the bundle transaction on Sepolia Etherscan.
+
+**What to say:** the seed-derived key signs, but the account that pays and sends is a smart contract; a bundler carries the operation to the chain; the address of that contract was computable from the seed before it was deployed.
+
+**What it proves:** proven live in-app on Sepolia on 2026-10-01 (phase 7 live validation, bundle transaction `0xe1892154…6e9a`). Smart accounts are enforced test-network-only (Settings → Mainnet readiness).
+
+**Fallbacks:** "precheck failed: maxPriorityFeePerGas…" was fixed on 2026-10-01; if a bundler error appears, the app shows it verbatim, so read it out and check the Settings bundler row. If the smart account is out of test ETH, fund it with `fund.mjs` (preparation).
+
+### Step 4. EIP-7702: upgrade a regular address in place, then undo it
+
+Switch to **Account 2** (Home → account switcher). Its address has no code.
+
+- Home → Ethereum row → **Upgrade**. The screen explains: "Your address stays the same. Your account will run ZeroDev Kernel v3.3 code (contract 0xd6CE…5b28), which enables batching, sponsored gas and, later, session keys. Your recovery phrase still controls everything. You can undo this at any time." The delegate address is shown in full, with a note about receiving (a plain 21,000-gas transfer to an upgraded address may fail). Current status: "Regular account (no code)".
+- Tap **Upgrade with the next smart-account send**, then **Continue** ("Nothing is signed now…"). A **Cancel pending upgrade** button appears.
+- Go back to Home → **Send ↗**, recipient "Burn", 0.0001, turn on **Send from smart account**. The confirm reads "Kernel v3.3 via EIP-7702 (your own address)", **From (your own address)** equal to Account 2's own address, and a warning box "This send also upgrades your account (EIP-7702 delegation to Kernel v3.3)…" with the delegate in full. The bundler estimate passes. Approve.
+- After inclusion, Home shows "Account 2 · upgraded (Kernel v3.3) on Ethereum Sepolia" and the row link reads **Upgraded ✓**.
+- Now undo it: **Upgraded ✓** → **Revoke upgrade**. The confirm explains the new code is "None — the delegation is removed (zero address)", that this is a type 0x04 transaction to yourself, the transaction and authorization nonces, a worst case of 86,000 gas, and why there is no pre-flight simulation. Approve; the screen ends with "Included — status: Regular account (no code)".
+
+**What it proves:** an existing address gains smart-account powers without moving funds, and the user can always take them away again. Both directions proven live in-app on Sepolia on 2026-10-01 (phase 8 live validation; upgrade bundle `0xbd14fbeb…a7ec`, revoke `0x1287e768…594f`). Also say: the wallet only ever delegates to the pinned Kernel contract and refuses any dApp's request to sign a delegation (ADR D6).
+
+**Fallback:** Account 2 needs test ETH for both the operation and the self-paid revoke. **Always finish with the revoke**: step 7 needs Account 2 as a regular account, and the app refuses to give one account both an upgrade and a recovered account.
+
+### Step 5. WalletConnect with Uniswap: the global approval sheet
+
+Switch back to **Account 1**.
+
+- Settings → WalletConnect → **Open connections**. If an old Uniswap session is listed you can use it; otherwise get a fresh `wc:` link (preparation), paste it, and tap **Connect**.
+- The connection sheet shows the dApp's name and URL, an identity line, "Will connect on Ethereum Sepolia (test network)", "Will connect account Account 1 (0x772e…F44F)", the chains offered but not included, and a **Connect as** choice between "Regular account (EOA)" and "Smart account (Kernel v3.3)". Keep the regular account (that is the path proven live), tap **Approve connection**, and pass the fingerprint.
+- Go back to **Home**. On the laptop, ask Uniswap to swap 1 USDC for ETH (or EURC). The request appears **on top of Home**, not on the Connections screen: "Transaction request" with the sending account, the router contract, the fee, the balance-change preview ("You send 1 USDC (untracked token 0x1c7D…7238)", "You receive …"), and "Pre-flight simulation passed (eth_call)". Tap **Approve & send**.
+
+**The identity line** reads one of "Verified by WalletConnect: origin matches (…)", "UNVERIFIED — the dApp's origin could not be confirmed…", "MISMATCH — … likely phishing" or "Flagged as a scam by WalletConnect…". For a mismatch or a scam, every approve button stays disabled until "I understand the risk — let me approve anyway" is switched on. Which verdict Uniswap gets over the live relay has **not** been observed yet (THREAT_MODEL W12), so say what it shows rather than predicting it.
+
+**The Permit2 summary** appears only when Uniswap asks for a Permit2 signature. It then shows a card titled "Token approval (Permit2 PermitSingle)" with the spender, token, amount (with "Unlimited" spelled out when it is unlimited) and "Signature usable until", above the raw typed data. In the 2026-10-02 retest no Permit2 request came, because the earlier USDC permit was still valid. To provoke one, sell a token you have not sold through Uniswap before, such as the EURC received in that retest; this is likely to trigger an approval transaction and then a Permit2 signature, but it has not been rehearsed. The summary has been verified offline only (THREAT_MODEL W11).
+
+**What it proves:** a production dApp works with the wallet end to end: pairing, typed-data signing, and transactions gated by simulation, on Sepolia, on 2026-09-27, 2026-09-28 and 2026-10-02 ("Grand finale", phase 6 emulator validation, the WalletConnect retest). The sheet surfaces on any screen and waits behind the lock screen (lock hold proven 2026-09-28).
+
+**Fallbacks:** if the link expires during pairing, request a new one. If a LogBox toast covers **Approve & send**, tap the toast's Dismiss first (see rough edges). If the swap is declined automatically, check that Account 1 (the account the session belongs to) is active and test mode is on: the wallet declines on purpose otherwise, and Uniswap shows that as a generic "Swap failed".
+
+### Step 6. Session keys: grant, use, revoke
+
+Account 1, whose Kernel account is deployed. **Not yet rehearsed in-app; see warning 2.**
+
+- Home → Ethereum row → **Sessions**. The list starts with a warning that sessions are enforced on-chain but the session keys live only on this device ("…Revoke sessions you no longer need before wiping, and revoke everything you no longer recognise.").
+- Tap **Grant a new session**. The form explains: "A session key is a new key on this device that may make ONLY the calls you list, until it expires. Your account enforces the limits on-chain. Each value cap is per call, not a total." For the allowed call, **Pick from contacts** → "Burn", leave the function empty and the cap at 0, choose **10 minutes**, and tap **Review**.
+- The review lists every allowed call in plain words and the expiry. Confirm: the install is an ordinary smart-account operation signed by your account key, with "Bundler gas estimate passed" and the fingerprint.
+- Back on the list, the session shows **Active** and "key on this device". Tap **Test this session (allowed call 1)**. The dialog says: "The SESSION key (not your account key) signs one operation…". Tap **Send test** and pass the fingerprint; the result screen reports inclusion.
+- Tap **Revoke** and approve. The status becomes **Revoked**, and the session key is deleted from the device as soon as the bundler accepts the revocation.
+
+**What to say:** this is consent that behaves like a phone app permission: one approval, then zero pop-ups inside a fence the account itself enforces. A session key cannot touch anything outside its list, and it cannot sign messages as the account.
+
+**What it proves:** the same cycle (install, use, refusal outside the grant, revocation, refusal after revocation) ran live on Sepolia through the engine on 2026-10-02 UTC (phase 8 item 2, engine half). The app screens are built and pass 99 offline checks (`check-sessions.mjs`). The policies are unaudited, so session keys are test-network-only.
+
+**Fallbacks:** if the Sessions link is missing, the account is not eligible (the Kernel account must be deployed and the Kernel type selected for Sepolia). If the install is refused, read the bundler's message aloud (it is shown verbatim) and fall back to describing the engine run; `scripts/testnet/session-key-smoke.mjs` with `SESSION_SMOKE_DRY_RUN=1` replays the stages in simulation without spending anything.
+
+### Step 7. Guardians: setup, the exposure warning, recovery, veto and owner change
+
+**Not yet rehearsed in-app; see warning 2.** This is the longest step. It is described here as the screens and the record imply; rehearse it first and pre-run the waits.
+
+**Setup (Account 1).**
+
+- Home → Ethereum row → **Guardians** → **Set up guardians**. The form opens with: "Guardians are a trade-off, not a safety guarantee. They let people you choose replace the key that controls this account if you lose your recovery phrase — which also means that, together, they could take the account without you."
+- Guardian 1: the dev seed's index-5 address (from `guardian-approve.mjs addresses`), label "Alice (external)", weight 1. Guardian 2: Account 3's Ethereum address, label "Bob (this phone)", weight 1. Threshold 2. Delay: **10 minutes (test networks only)**.
+- **The exposure warning** appears as soon as the list is complete. For two guardians of weight 1 with threshold 2 it reads: "ONE guardian alone can sign messages as this account immediately, with no delay and no veto: any guardian holding at least half the threshold weight can — here …", followed by a sentence explaining that the deployed guardian contract lets the last signature repeat an earlier signer. Stop here and explain it: this is a real finding about ZeroDev's deployed module, proven live, and no wallet setting can fix it. The wallet never calls a guardian setup "safe".
+- Tap **Review**, confirm (owner-signed operation, bundler estimate, fingerprint). After inclusion, the app asks you to back up the recovery record ("Back up the recovery record"); show the record's QR or the .json export, and explain that once an owner changes, the account can no longer be found from a recovery phrase alone.
+
+**Start a recovery (Account 2 plays the person who lost their phrase).**
+
+- Switch to Account 2. Home footer → "Lost a recovery phrase? Recover an account with guardians". The screen recommends **Use a fresh account for this (recommended)**, which adds a new "Recovered account"; recovering into the existing Account 2 keeps the demo shorter, but rehearse whichever you choose. Enter Account 1's Kernel account address `0xD31c…D8FA`, tap **Check the account**, review "Recover this account?", then tap **Create the recovery request**.
+- The progress screen shows "Recovering 0xD31c…", the proposal id, and "1. Send this request to your guardians" with a QR code and share text. Copy the share text to the laptop (save it as `request.txt`).
+- External guardian: run `GUARDIAN_INDEX=5 node scripts/testnet/guardian-approve.mjs approve request.txt` and paste the printed approval into "2. Add each approval you receive" → **Add approval**.
+- In-app guardian: switch to Account 3 → Settings → Guardians → **Approve a recovery (as a guardian)**. Under "Recoveries in progress on this device", open the request. The review shows a warning that begins "Approving hands control of this account to the new owner shown below…", the account, its current owner, the **PROPOSED NEW OWNER** in full, and the guardian's weight. Tap **Approve (sign as guardian)**, pass the fingerprint, then **Add it to the recovery in progress on this device**.
+- Switch back to Account 2. The weight bar is full; "3. Send the approvals on-chain" explains that this account pays the fee. Tap **Review the approval transaction** and approve. A countdown starts.
+
+**Veto (Account 1, during the delay).**
+
+- Switch to Account 1 → Guardians. Under "Recovery proposals (veto)", paste the request text and tap **Watch this proposal**. The card shows the proposed new owner, the time left before it can execute, and a **Veto** button. Explain why watching is manual: the guardian contract announces nothing, so the owner relies on guardians telling them.
+- Tap **Veto** and approve. The proposal is dead.
+
+**A recovery that goes through, then the owner change back.**
+
+- On Account 2, the recovery screen now offers **Start over**. Start a new request (the wallet moves to the next guardian lane, so the proposal id differs), collect both approvals again, send them on-chain, and wait out the 10 minutes.
+- Switch to Account 3 → Approve a recovery → open the request → **Submit the recovery**. The account pays this operation's gas. The screen shows "Recovery submitted to the bundler", then inclusion.
+- Switch to Account 2 → the recovery screen → **Use this recovered account**. Home now labels Account 2 with "recovered account 0xD31c… on Ethereum Sepolia (not found from your recovery phrase alone; keep its record backed up)".
+- Hand it back: Account 2 → Guardians → "Owner key" → **Change owner…** → pick Account 1 → **Change owner** and approve. The result reads "Included — the owner is now Account 1 (checked on-chain)" (wording per the phase 9 run, which showed it for Account 2).
+- Clean up: Account 1 → Guardians → **Remove guardians**, so the account is back to its starting state.
+
+**What it proves:** guardian install, recovery to a new owner, and rotation back ran live on Sepolia through the engine on 2026-10-02 UTC (phase 8 item 4, engine half); the delay and the veto were proven in simulation only. The in-app owner change ran live in both directions on 2026-10-02 (phase 9 item 1). The rest of the in-app flow is built and passes 231 offline checks (`check-recovery.mjs`). Moving to a second guardian lane after a veto has never run live (phase 8 item 4, app half). The guardian modules are unaudited, and the two findings above are why guardians stay test-network-only.
+
+**Fallbacks and shortcuts:**
+
+- To save time, pre-run the second proposal before the audience arrives so its 10 minutes have already passed, and show only **Submit the recovery** and the attach live.
+- If the veto is not wanted, choose **No delay (no veto)** at setup: the app then requires the acknowledgement "No delay means enough guardians can replace your key in a single operation, and you cannot veto it. I understand there will be no veto." and Account 3 can submit as soon as both approvals are in.
+- If something leaves the account with the wrong owner, `scripts/testnet/kernel-rotate-owner.mjs` can rotate a Kernel account back from a dev-seed key (see its header; it defaults to a different account, so pass `KERNEL_ACCOUNT`). It cannot sign for emulator-wallet keys, so the in-app **Change owner…** is the route for this account.
+- Account 2 needs test ETH to send the approvals on-chain; the Kernel account needs test ETH for the final operation.
+
+### Step 8. The mainnet readiness switchboard and protected storage
+
+- Settings → **Mainnet readiness**. The introduction explains the two kinds of status. Walk down the list: "Sending from your regular account", "Tokens (ERC-20)", "NFTs", "Swaps", "Connecting to apps (WalletConnect)" and "Sending Dogecoin" are **Not yet cleared** (they still work on mainnet in this prototype, by the Chairperson's decision, with the reasons shown); the Kernel smart account, the EIP-7702 upgrade, session keys, passkeys, guardians, owner changes, SimpleAccount and gas sponsorship are **Test networks only**. Each row cites its open items, such as C1 (audit of the shipped Kernel version), from `docs/THREAT_MODEL.md` section 5.
+- Make the enforcement visible: Settings → Developer → turn **Sepolia test mode** off. Open Home → Ethereum → **Upgrade**: the screen now shows a card "Upgrade this account (EIP-7702): test networks only" with the reason and "Turn on Sepolia test mode in Settings → Developer to use this feature.", and the start buttons are disabled. The smart-account toggle has disappeared from Send. Turn test mode back on.
+- Settings → **Recovery phrase protection**. On the demo emulator it already reads "protected by biometrics (since 2026-10-03)" (the date of the original switch, as recorded). Explain the opt-in: the button "Protect with biometrics" asks for confirmation with the trade-off ("If you ever add or remove a fingerprint or face, or turn off the screen lock, this phone will no longer be able to open the phrase and you will need your written backup.") and then moves the phrase into storage that the phone unlocks only with a strong biometric. To show the button itself, use the disposable emulator from step 1 after enrolling a fingerprint there.
+- Settings → Backup → **Show recovery phrase** raises exactly one system prompt ("Reveal recovery phrase"). Do **not** do this on a projected screen: it displays the real phrase of the demo wallet.
+
+**What it proves:** smart-account features cannot be switched on outside test networks, by design and with no override (phase 9 item 6); the protected storage works in Expo Go on Android (proven 2026-10-02, "Settings 'Recovery phrase protection' section").
+
+### Step 9. Dogecoin, Bitcoin and Solana, and the mainnet Dogecoin demonstration
+
+These chains run on their main networks in the app, so show the flows to the confirm screen and stop.
+
+- **Bitcoin and Solana:** Home → Bitcoin (or Solana) → **Send ↗**, recipient a valid address of that chain, any amount. With a zero balance the app refuses with a plain insufficient-funds message; with funds, the confirm screen shows the red badge "Bitcoin Mainnet — real funds" and the fee. Do not approve. Both chains' engine-built transactions were accepted live on their test networks on 2026-09-27 by script (Bitcoin testnet3 and Solana devnet; phase 2 task 8).
+- **Dogecoin:** Dogecoin needs a Blockbook endpoint. Until one is saved, Home shows the honest "no endpoint" state and sending says it is unavailable. To configure it, Settings → Network endpoints → Dogecoin: the NOWNodes URL `https://dogebook.nownodes.io` and the `NOWNODES_KEY` from `.dev-wallet/env`; saving verifies the endpoint live before storing anything. Do not type the key on a projected screen.
+- **The mainnet demonstration:** on 2026-10-03 the dev wallet sent itself 1 DOGE on the Dogecoin main network, built and signed by the same functions the Send screen uses, confirmed in block 6399309 (txid `2f05331b4e731e153636bdf92965882a79d2412eb3a5e3639e0380145465a6fd`, fee 0.00226678 DOGE). Show it on any Dogecoin block explorer, and if you want a live element, run the script in its default dry-run mode, which quotes, signs and independently decodes a fresh self-send and stops without broadcasting:
+
+  ```
+  npm run build
+  node scripts/testnet/doge-mainnet-demo.mjs
+  ```
+
+  Broadcasting needs `DOGE_MAINNET_BROADCAST=1` plus typing the exact txid; do not do that in a presentation.
+
+**What it proves:** one wallet, one phrase, four chain families with very different transaction formats, each proven with a live broadcast (three on test networks, Dogecoin on mainnet). The Dogecoin send has not yet been broadcast from the Send screen itself, and the emulator wallet holds no DOGE (about 10.69 DOGE remain in the dev wallet at `DEQ788Pe98Z97Le6feBa2P49JL7ETGSMNf`).
+
+---
+
+## Known rough edges (development builds only)
+
+- **LogBox toasts.** React Native's development warnings appear as toasts at the bottom of the screen and can sit exactly over the approval sheet's **Approve & send** button. Tapping one opens LogBox; its **Dismiss** control closes it. Release builds do not have LogBox. A "Cannot connect to Expo CLI" toast means Metro was started with `CI=1`.
+- **The Expo floating button** overlaps Home's account **Switch** control. Tap the left edge of Switch. The Expo developer menu can also catch taps near the top right.
+- **Adding an account takes about 15 seconds** on this software-rendered emulator (the seed is stretched in JavaScript). Add accounts before the audience arrives. It has not been measured on a real phone.
+- **The keyboard covers the WalletConnect sheet** after pasting a link; hide it before scrolling.
+- **An intermittent "Error: undefined" warning** sometimes appears in the logs during long sessions; it has never affected a flow.
+- **WalletConnect links expire** in four to five minutes; keep the wallet on the Connections screen before requesting one.
+- **After a cold boot** the emulator asks for the PIN before Expo Go can even start (see preparation).
+- **Uniswap's error wording** for transactions the wallet declined on purpose (wrong account, wrong network mode) is a generic "Swap failed — try adjusting slippage"; that text comes from Uniswap, not the wallet.
+
+## What this demo cannot show
+
+Passkeys need a development build and a domain for the passkey relying party, neither of which exists yet, so the Passkey screen will explain that it needs a development build; describe the engine's simulation proof instead (phase 8 item 3). Gas sponsorship needs a paymaster policy (phase 10 item 2 was probing for one). Live swap quotes inside the wallet's own Swap screen need a 0x API key. Face ID, hardware-backed storage and screen readers need real phones.

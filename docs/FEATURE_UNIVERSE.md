@@ -406,3 +406,148 @@ Every feature above that carries the phrase "uniquely possible with AA" — roug
 ---
 
 *Document ends. Feature count: 99 distinct features across 12 categories.*
+
+---
+
+## 15. Implementation status (2026-10-03)
+
+This section was added after the analysis above and does not change it. It records, for each of the 99 features, how far the prototype has actually got, using only the evidence recorded in `AGENTS.md` (the project's running log of every phase, test run and live validation) and the documents it cites. Nothing here is a plan or an estimate.
+
+### How to read the status column
+
+There are exactly four status values.
+
+- **Proven live** means a real run against a live network or live service is recorded in `AGENTS.md`, with the network and the date. The evidence cell says whether the run went through the app's own screens ("in-app"), through the app's own code driven from a script ("app code, script"), or through the engine alone from a test script ("engine"). These are different levels of proof, and the difference matters: an engine proof shows the cryptography and the contracts work; an in-app proof shows a user could do it.
+- **Built, verified offline** means the code exists and is covered by the project's offline test suites (the engine's vitest tests and the app's check scripts), but no live run is recorded.
+- **Designed** means only a design document or an engine interface exists.
+- **Not started** means nothing has been built or designed beyond the analysis in this document.
+
+Three conventions apply throughout.
+
+1. Where only part of a feature exists, the status describes the part that exists, and the evidence cell names what is missing. A "Proven live" status with the word "partial" therefore does not mean the whole feature as described above is finished.
+2. A few features have no network component at all (for example the backup quiz, contacts or the app lock). For these, "Proven live" means the feature was exercised in the running app on the Android emulator, with screenshots reviewed, as recorded in `AGENTS.md`. That is the strongest evidence such a feature can have before a real-phone build exists.
+3. Dates are the ones `AGENTS.md` gives. That log mostly uses US Eastern local dates, so a run late in the evening can carry the previous day's date compared with UTC. Where `AGENTS.md` gives no date for a live run, the date below is taken from the Sepolia block timestamp and marked "UTC".
+
+Nothing in this table means "ready for real funds". The mainnet-readiness switchboard (`app/src/config/readiness.ts`) and the checklist in `docs/THREAT_MODEL.md` section 5 still list no feature as cleared for mainnet: every smart-account feature is enforced test-network-only until conditions C1 to C3 (an audit of the shipped Kernel version and modules, bug-bounty coverage, a support horizon) are met, and the plain-account features run on mainnet only as an advisory "not yet cleared" prototype, by the Chairperson's decision of 2026-10-02.
+
+The record used here runs to the approved phase 10 plan. Phase 10 items 1 and 2 (session keys and guardians through the app's screens, live gas sponsorship) were in progress when this section was written and are not counted; their results will appear under "Phase 10 progress" in `AGENTS.md`.
+
+### Status of all 99 features
+
+| # | Feature | Tier | Status | Evidence |
+|---|---|---|---|---|
+| 1 | Seed generation and first-run onboarding | 1 | Proven live | In-app on the Android emulator, 2026-09-27: create-wallet flow, 12-word backup screen with warning, 2-word quiz, Home with live balances from real RPCs (`AGENTS.md` "Emulator validation"). |
+| 2 | Seed and wallet import | 1 | Built, verified offline | Import screen with phrase validation (`AGENTS.md` Status, React Native app shell). Not recorded on the emulator. No account discovery on import, by decision (ADR D8 in `docs/ARCHITECTURE.md`; phase 6 item 3). |
+| 3 | HD derivation engine | 1 | Proven live | Official BIP-32/39/44 and SLIP-0010 vectors (Status); seed-derived keys signed live broadcasts on Sepolia, Bitcoin testnet3 and Solana devnet on 2026-09-27 (phase 2 task 8) and on Dogecoin mainnet on 2026-10-03 (phase 9, Dogecoin broadcast); multi-account paths cross-checked against ethers, bitcoinjs-lib and ed25519-hd-key (phase 6 item 3). |
+| 4 | Multi-account management | 1 | Proven live | In-app on the emulator, 2026-09-28: Account 2 added with distinct addresses on all four chains, switching back and forth (phase 6 emulator validation). Account 2 was then used live on Sepolia for the in-app EIP-7702 upgrade (2026-10-01) and the in-app owner change (2026-10-02). Partial: no colours or per-account privacy settings. |
+| 5 | Secure on-device key storage | 1 | Built, verified offline | Phrase in `expo-secure-store`; opt-in biometric-protected storage (`check-storage.mjs`), whose prompts were seen in Expo Go on the Android emulator on 2026-10-02 ("Security quick wins", Settings protection entry). Hardware backing (Secure Enclave, StrongBox) is unverified: the emulator uses a software keystore and no real-phone build exists (THREAT_MODEL W2, W3). |
+| 6 | Per-chain transaction construction and signing | 1 | Proven live | Engine-built transactions accepted live: Sepolia EIP-1559 and Bitcoin testnet3 P2WPKH and Solana devnet transfer, all 2026-09-27 (phase 2 task 8, scripts); Dogecoin mainnet self-send 2026-10-03 (app code, script). In-app on Sepolia: WalletConnect transactions 2026-09-27 and 2026-09-28, smart-account send 2026-10-01. Bitcoin, Solana and Dogecoin sends have not been broadcast from the Send screen itself (the app uses their main networks only). |
+| 7 | Message and typed-data signing | 1 | Proven live | In-app: an EIP-712 Permit2 signature for Uniswap over WalletConnect, Sepolia, 2026-09-27 ("Grand finale"). Engine: ERC-1271 / ERC-6492 smart-account signatures validated live (read-only) on Sepolia by `signature-check.mjs` (phase 7 items 3 and 5, engine halves). Partial: plain `personal_sign` never exercised with a live dApp; smart-account signing in-app not live; BIP-322 not built. |
+| 8 | Fee management | 1 | Proven live | EIP-1559 fee quotes behind the live Sepolia sends (2026-09-27 onward); Blockbook fee estimate behind the Dogecoin mainnet send (2026-10-03); the bundler priority-fee floor fix proven in-app on Sepolia, 2026-10-01 (phase 7 live validation). Partial: no replace-by-fee, child-pays-for-parent, speed tiers or cancellation. |
+| 9 | Receive: addresses, QR codes, payment URIs | 1 | Proven live | In-app on the emulator, 2026-09-27: the Receive QR was decoded from a screenshot with an independent decoder and matched the address ("Emulator validation, continued"). Scanning parses EIP-681 / BIP-21 / Solana Pay (phase 4 task 4). Partial: Receive shows the plain address; payment URIs with amounts are not generated. |
+| 10 | Watch-only accounts | 2 | Not started | None recorded. |
+| 11 | Hardware wallet pairing | 2 | Not started | None recorded. |
+| 12 | Single private-key import | 1 | Not started | The import screen accepts recovery phrases only. |
+| 13 | ERC-4337 smart accounts | 1 | Proven live | In-app: first smart-account send (Kernel v3.3) through a bundler, included on Sepolia, 2026-10-01 (phase 7 live validation). Engine: SimpleAccount UserOperation through Alchemy, Sepolia, 2026-09-27 (phase 2 task 8); Kernel smoke 2026-10-01 (phase 7 item 1). Testnet-only by the readiness switchboard (C1–C3). |
+| 14 | Counterfactual deployment | 1 | Proven live | Engine: SimpleAccount deployed at the predicted address, Sepolia, 2026-09-27 (self-bundled); Kernel v3.3 deployed at the predicted address through ZeroDev's bundler, Sepolia, 2026-10-01 (phase 8 item 5). The app predicts and displays the counterfactual address, but a deployment operation sent from the app has not run live (the emulator wallet's Kernel account was deployed by `kernel-deploy-for-owner.mjs`). |
+| 15 | Gas sponsorship (verifying paymasters) | 1 | Built, verified offline | ERC-7677 paymaster support with verify-before-save in Settings (phase 5 item 2; `check-aa.mjs`). No live sponsorship yet (THREAT_MODEL W8; phase 10 item 2 in progress). |
+| 16 | Pay gas in any token | 1 | Not started | None recorded beyond the generic ERC-7677 paymaster hook (feature 15). |
+| 17 | Transaction batching and ERC-5792 | 1 | Proven live | Engine: a deployment plus ERC-7579 batch operation on Sepolia, 2026-10-01 (phase 7 item 1, Kernel smoke), and the guardian clean-up operation (owner rotation plus guardian removal in one operation), 2026-10-02 UTC (phase 8 item 4). In-app batching (smart-account approve-and-swap) and ERC-5792 `wallet_sendCalls` over WalletConnect are built and verified offline only (`check-aa-kernel.mjs`, `check-wc-5792.mjs`; phase 7 items 1–3, app halves). |
+| 18 | Session keys | 2 | Proven live | Engine only: a session key installed, used, refused outside its grant and revoked on Sepolia, block 11826061, 2026-10-02 UTC (phase 8 item 2, engine half, enable mode). The app's Sessions screen is built and verified offline (`check-sessions.mjs`; phase 8 item 2, app half); its in-app live run is phase 10 item 1, not yet recorded. |
+| 19 | Spending limits and programmable policies | 2 | Designed | `docs/SESSION_KEYS.md` and `docs/ARCHITECTURE.md` (ERC-7579 hooks). Session grants carry per-call value caps (feature 18), but no account-level policy exists. |
+| 20 | Social recovery via guardians | 2 | Proven live | Engine only: guardian install, guardian recovery to a new owner and rotation back, Sepolia blocks 11826469–11826471, 2026-10-02 UTC (phase 8 item 4, engine half); delay and veto proven in simulation only. In-app: the owner-change leg was proven live in both directions on 2026-10-02 (phase 9 item 1, THREAT_MODEL W15); guardian setup, recovery and veto through the app's screens are built and verified offline (`check-recovery.mjs`) and are phase 10 item 1. Findings: one guardian can satisfy a 2-of-2; guardians can sign as the account immediately; modules unaudited. |
+| 21 | Passkey and biometric signers | 2 | Built, verified offline | Engine and app built (phase 8 item 3; `check-passkeys.mjs`); install, use and removal accepted in simulation against the real Sepolia contracts. Not device-proven: needs a development build and an rpId domain from the Chairperson. WebAuthnValidator v0.0.3 unaudited (C1). |
+| 22 | Modular accounts (ERC-7579) | 1 | Proven live | Kernel v3.3 used in-app on Sepolia, 2026-10-01 (phase 7 live validation); modules installed live from scripts: the session permission validator and the guardian validator plus RecoveryAction (phase 8 items 2 and 4, 2026-10-02 UTC). |
+| 23 | EIP-7702 for existing EOAs | 2 | Proven live | In-app on Sepolia, 2026-10-01: upgrade carried in a UserOperation through ZeroDev and revocation by a self-paid type-0x04 transaction, both independently confirmed on-chain (phase 8 live validation). Engine: Sepolia block 11826010, 2026-10-02 UTC (phase 8 item 1). Testnet-only (C1–C3). |
+| 24 | Multi-signature accounts | 2 | Not started | None recorded (the weighted guardian validator serves recovery only). |
+| 25 | Automated and scheduled transactions | 2 | Not started | None recorded. |
+| 26 | Parallel operations (2D nonces) | 1 | Built, verified offline | Engine only: nonce-key support (`getNonceKey`, session and guardian lanes; phase 8 burn-down "Awaited signUserOpHash"). Non-zero nonce keys ran live for validator routing in the session-key and guardian scripts, but no user-facing parallel queue exists. |
+| 27 | Bundler and AA infrastructure strategy | 1 | Proven live | Vendor-neutral bundler client with per-chain runtime configuration; Alchemy's bundler live on Sepolia 2026-09-27 and in-app 2026-10-01; ZeroDev's bundler accepted Kernel deployments, Sepolia, 2026-10-01 (phase 8 item 5), and carried the in-app EIP-7702 upgrade. Partial: no redundant providers or inclusion monitoring; vendor selection still open. |
+| 28 | Chain-adapter plugin architecture | 1 | Proven live | CAIP-2-keyed chain registry and adapters (Status); all four chain families broadcast live through it (features 6 and 32). |
+| 29 | EVM networks and Layer 2s | 1 | Proven live | Sepolia sends and smart-account operations from 2026-09-27 onward; Ethereum mainnet reads only (balances, token metadata, simulations), no mainnet transaction. Partial: no Layer 2 profile yet (Base Sepolia is phase 10 item 3). |
+| 30 | Bitcoin support | 1 | Proven live | P2WPKH self-send accepted on Bitcoin testnet3, 2026-09-27, by script (phase 2 task 8). Not broadcast from the app (its Bitcoin network is mainnet). Partial: Taproot and BIP-86 are rejected, not supported. |
+| 31 | Solana support | 1 | Proven live | System transfer finalized on Solana devnet, 2026-09-27, by script (phase 2 task 8). SPL token transfers are engine-only and verified offline, byte-identical to web3.js (phase 2 task 5); the app has no SPL send. |
+| 32 | Dogecoin support | 1 | Proven live | Mainnet self-send confirmed in block 6399309, 2026-10-03, txid `2f05331b…a6fd`, built by the app's own `prepareUtxoSend` / `sendUtxo` code from `doge-mainnet-demo.mjs` (app code, script; THREAT_MODEL W6 met). Not yet broadcast from the Send screen; balances and history through a user-configured Blockbook endpoint were verified live read-only (phase 5 item 3). |
+| 33 | Custom network addition | 2 | Not started | Users can override the endpoint of a built-in chain (https only), but cannot add a new network. |
+| 34 | In-wallet swaps | 1 | Built, verified offline | Swap screen on the 0x seam (phase 5 item 1; `check-swap.mjs`). No live 0x quote: needs a 0x API key (THREAT_MODEL W7). Swaps through Uniswap over WalletConnect are proven live under feature 78, not here. |
+| 35 | Cross-chain bridging | 2 | Not started | None recorded. |
+| 36 | Cross-chain intents (ERC-7683) | 3 | Not started | None recorded. |
+| 37 | Token discovery and curated lists | 1 | Not started | Tokens are tracked manually (default USDC); no automatic discovery for fungible tokens. NFT discovery through an indexer is under feature 40. |
+| 38 | Custom token addition | 1 | Proven live | Add-by-contract with on-chain metadata; live USDC metadata reads through the app's code on Ethereum mainnet, 2026-09-27 (phase 3 task 2, `check-tokens.mjs`), and the USDC row on the emulator's Home the same day. The add screen itself is not recorded on the emulator. |
+| 39 | Spam and scam asset filtering | 1 | Built, verified offline | NFT spam flag from the indexer, hidden behind a toggle (phase 7 item 4); untracked-token marker and symbol sanitising in previews (phase 6 item 1). Partial: no token reputation list. |
+| 40 | NFT gallery | 2 | Built, verified offline | Gallery and detail screens (phase 7 item 4; `check-nfts.mjs`); the indexer data path ran live read-only on Ethereum mainnet and Sepolia on 2026-10-01, but the screens have not been seen on a device or the emulator. |
+| 41 | NFT actions: send, sell, mint | 2 | Built, verified offline | ERC-721 and ERC-1155 send, decoded field by field offline (phase 7 item 4). No live NFT send (needs a test NFT). Partial: sell and mint not started. |
+| 42 | Bitcoin-native assets (Ordinals, Runes) | 3 | Not started | None recorded. |
+| 43 | Solana asset ecosystem (Token-2022, compressed NFTs) | 2 | Not started | Classic SPL only, engine-only (feature 31). |
+| 44 | Price and market data feeds | 1 | Proven live | `@shiba-wallet/prices` with a keyless CoinGecko adapter; a live keyless probe priced all five assets through the app's code, 2026-09-28 (phase 6 item 2). The fiat display has not been eyeballed on the emulator. |
+| 45 | Token-bound accounts (ERC-6551) | 3 | Not started | None recorded. |
+| 46 | Seed backup UX and verification | 1 | Proven live | In-app on the emulator, 2026-09-27: backup warning, word quiz, and screenshot blocking proven both ways (empty `adb screencap` while the phrase is shown; "Emulator validation, third pass"). Partial: no periodic recovery drills or steel-backup guidance. |
+| 47 | Encrypted cloud backup | 2 | Not started | None recorded (the exportable recovery record of feature 20 contains no secrets and is not a phrase backup). |
+| 48 | Inheritance and dead-man switch | 2 | Not started | None recorded. |
+| 49 | Transaction simulation and preview | 1 | Proven live | In-app on Sepolia, 2026-09-28: the `eth_simulateV1` balance-change preview on a WalletConnect swap matched the receipt to the wei (phase 6 emulator validation); matched again on 2026-10-02 (WalletConnect retest). Mainnet read-only probes (phase 6 item 1). |
+| 50 | Risk warnings and phishing protection | 1 | Built, verified offline | Risk checks on every EVM confirm screen (phase 7 item 5; commit `be0656e`; `check-approvals.mjs`); WalletConnect identity verification (phase 9 "Security quick wins"; `check-wc.mjs`). No live dApp has shown a Verify verdict yet (THREAT_MODEL W12). Partial: no threat-intelligence feed. |
+| 51 | Token approval management and revocation | 2 | Proven live | Listing only: a live read-only scan through the app's code on Ethereum mainnet listed a real approver's three approvals correctly as used up (phase 7 item 5, app half). Revocation is built and verified offline; no revoke has been broadcast. |
+| 52 | App-level security | 1 | Proven live | In-app on the emulator: fingerprint-gated auto-lock with screen state preserved, 2026-09-27 ("third pass"); lock held over a queued WalletConnect request, 2026-09-28; one-prompt send approval with protected storage, 2026-10-02. |
+| 53 | Duress and decoy wallet | 2 | Not started | None recorded. |
+| 54 | Address-poisoning defences | 2 | Proven live | In-app on the emulator, 2026-09-28: a look-alike of a saved contact produced the "looks similar … but is DIFFERENT" warning, the exact address the contact label (phase 6 emulator validation). |
+| 55 | MPC as an optional signer | 3 | Not started | Deliberately deferred in this document. |
+| 56 | Audits, open source and bug bounty | 1 | Designed | The repository is public under Apache-2.0 with green CI (phase 9 item 4), and `docs/THREAT_MODEL.md` section 7 gives external reviewers a reproduction guide. No audit has been commissioned and no bounty exists. |
+| 57 | Native staking | 2 | Not started | None recorded. |
+| 58 | Ethereum liquid staking | 2 | Not started | None recorded. |
+| 59 | Sponsored staking flows | 2 | Not started | None recorded. |
+| 60 | Gas paid from staking yield | 2 | Not started | None recorded. |
+| 61 | Lending and borrowing | 3 | Not started | None recorded. |
+| 62 | Yield vaults (ERC-4626) | 3 | Not started | None recorded. |
+| 63 | Dollar-cost averaging | 2 | Not started | None recorded. |
+| 64 | Portfolio automation and rebalancing | 3 | Not started | None recorded. |
+| 65 | Fiat on-ramp | 1 | Not started | None recorded. |
+| 66 | Fiat off-ramp | 2 | Not started | None recorded. |
+| 67 | P2P payments and requests | 2 | Not started | Contacts exist (feature 73); payment requests do not. |
+| 68 | Payment links and QR invoices | 2 | Not started | Payment URIs are parsed when scanned, never generated (feature 9). |
+| 69 | Subscriptions via session keys | 2 | Not started | None recorded. |
+| 70 | Merchant acceptance toolkit | 3 | Not started | None recorded. |
+| 71 | Non-custodial debit card | 3 | Not started | None recorded. |
+| 72 | Offline, NFC and tap-to-pay | 3 | Not started | None recorded. |
+| 73 | Address book and contacts | 1 | Proven live | In-app on the emulator, 2026-09-28: per-network contacts, picker, exact-match labelling with the full address (phase 6 emulator validation; `check-contacts.mjs`). |
+| 74 | Name-service resolution (ENS and peers) | 2 | Not started | None recorded. |
+| 75 | Wallet handles | 2 | Not started | None recorded. |
+| 76 | Sign-In with Ethereum (ERC-4361) | 2 | Built, verified offline | The signing paths SIWE needs exist: EIP-191 `personal_sign` and smart-account ERC-1271 / ERC-6492 signatures over WalletConnect (`check-wc.mjs`, `check-wc-5792.mjs`; phase 7 item 3). No SIWE-specific message display and no live SIWE login recorded. |
+| 77 | Attestations and reputation | 3 | Not started | None recorded. |
+| 78 | WalletConnect v2 | 1 | Proven live | In-app with Uniswap on Sepolia: pairing and a full swap (approval, Permit2 signature, swap) on 2026-09-27; the global approval sheet over Home and the decline paths on 2026-09-28; a fresh pairing and swap after a restart on 2026-10-02. Smart-account sessions, ERC-5792 and ERC-7715 over WalletConnect are built and verified offline only. |
+| 79 | In-app dApp browser | 2 | Not started | None recorded. |
+| 80 | Deep links and mobile SDK | 2 | Not started | None recorded. |
+| 81 | Public wallet API / embedded wallet | 3 | Not started | None recorded. |
+| 82 | Testnet and developer mode | 2 | Proven live | Sepolia test mode toggle on the emulator, 2026-09-27, and every Sepolia run since (phase 4 items 5 and 6; emulator validation). |
+| 83 | Notifications infrastructure and inbox | 2 | Not started | None recorded. |
+| 84 | Tax reporting | 3 | Not started | None recorded. |
+| 85 | Proof of address ownership | 2 | Not started | No dedicated flow; manual message signing (feature 7) is the only route. |
+| 86 | Optional outbound address screening | 3 | Not started | None recorded. |
+| 87 | Transaction notes and receipts | 2 | Not started | None recorded. |
+| 88 | Guided onboarding and education | 1 | Built, verified offline | Basic version only: the first-run flow of feature 1 plus plain-language explanations on every screen. The guided flow this feature describes (passkey creation, counterfactual address, sponsored first transaction) is not assembled, and no test suite covers onboarding copy. |
+| 89 | Fiat-first display and jargon abstraction | 1 | Built, verified offline | Fiat values as secondary text on Home and confirm screens, masked by Hide amounts (phase 6 item 2, app half; `check-prices.mjs`). Not eyeballed: test mode prices nothing and the mainnet balances are zero. Exact crypto stays primary by design. |
+| 90 | Human-readable activity history | 1 | Proven live | Bitcoin Activity on the emulator, 2026-09-27; history read live through the app's code for Bitcoin and Solana (phase 3 task 6), Ethereum via an indexer (phase 4 task 1), Dogecoin via Blockbook (phase 5 item 3). Partial: entries show direction, amount and status, not decoded sentences. |
+| 91 | Localisation | 2 | Not started | None recorded. |
+| 92 | Accessibility | 2 | Built, verified offline | Accessibility roles, labels and hints on the main screens (phase 9 item 5 and follow-ups); lint and typecheck green. No TalkBack or VoiceOver run. |
+| 93 | Push notifications and alerts | 1 | Not started | None recorded. |
+| 94 | Widgets and watch companion | 2 | Not started | None recorded. |
+| 95 | In-app support and diagnostics | 2 | Not started | Calm error states and an offline notice exist (phase 9 item 5), but no support flow or stuck-transaction fixer. |
+| 96 | Unified portfolio dashboard | 2 | Not started | Home lists per-chain balances with optional fiat per row; there is no aggregated net-worth view. |
+| 97 | Performance and profit/loss tracking | 2 | Not started | None recorded. |
+| 98 | Price alerts and watchlists | 2 | Not started | None recorded. |
+| 99 | Portfolio insights and risk overview | 3 | Not started | None recorded. |
+
+### Summary by tier
+
+| Status | Tier 1 | Tier 2 | Tier 3 | Total |
+|---|---|---|---|---|
+| Proven live | 25 | 6 | 0 | 31 |
+| Built, verified offline | 9 | 5 | 0 | 14 |
+| Designed | 1 | 1 | 0 | 2 |
+| Not started | 5 | 32 | 15 | 52 |
+| **Total** | **40** | **44** | **15** | **99** |
+
+Of the 31 features proven live, the account-abstraction ones split into two groups. Smart-account sends (13), Kernel modularity (22), the EIP-7702 upgrade and revoke (23), WalletConnect (78) and the balance-change preview (49) have been proven through the app's own screens. Session keys (18) and guardian recovery (20) have been proven live only through engine scripts so far, with the app screens built and tested offline; counterfactual deployment (14) and on-chain batching (17) are likewise proven at engine level.
+
+### What separates "built" from "proven live"
+
+For the features that are built but not yet proven live, the remaining gap is almost never more code. It is one of three things. First, **inputs only the Chairperson can provide**: a 0x API key turns on live swap quotes (34); a paymaster sponsorship policy turns on live gas sponsorship (15, phase 10 item 2); a test NFT allows a live NFT send (41); a passkey rpId domain plus an Expo account and app identifiers allow a development build. Second, **a real-phone development build**, which Expo Go cannot replace: passkeys (21), hardware-backed key storage (5), Face ID, TalkBack and VoiceOver (92) can only be proven on devices. Third, **live runs through the app's screens** of flows whose engine is already proven: session keys and guardians (phase 10 item 1, needing only the emulator and test ETH), plus a live dApp that sends plain message-signing and smart-account requests (7, 76, 78). Separately from all of these, "proven live" on a test network is not the same as cleared for real funds: every smart-account feature stays test-network-only until an audit of the deployed Kernel v3.3 and its modules, bug-bounty coverage and a support horizon exist (conditions C1 to C3), and the plain-account features still wait on the real-phone checks W2 to W4 in `docs/THREAT_MODEL.md` section 5.
