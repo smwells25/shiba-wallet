@@ -3895,3 +3895,53 @@ once a development build exists.
       app's Dogecoin send could create change between 546 and 1,000,000
       base units that nodes reject or surcharge — reasoned from source,
       not yet observed live.
+- [x] Dogecoin dust policy fix (commit above; chains-utxo tests 48 →
+      70, engine 624; check-doge 92 offline; re-verified by the CTO in
+      the isolated worktree incl. check-token-send 37 and tsc). Verified
+      from dogecoin/dogecoin v1.14.9: amount.h COIN = 100000000;
+      policy.h:23 RECOMMENDED_MIN_TX_FEE = COIN / 100; policy.h:70
+      DEFAULT_DUST_LIMIT = RECOMMENDED_MIN_TX_FEE (soft, 0.01 DOGE =
+      1,000,000 koinu, "evaluated when considering whether a transaction
+      output is required to pay additional fee"); policy.h:81
+      DEFAULT_HARD_DUST_LIMIT = DEFAULT_DUST_LIMIT / 10 (0.001 DOGE,
+      "will not be accepted to the mempool and thus not relayed");
+      policy.cpp:109 IsStandardTx rejects outputs IsDust(hard) with
+      reason "dust"; transaction.h:169 IsDust is strict (<);
+      dogecoin-fees.cpp:97 GetDogecoinDustFee adds the soft limit per
+      output below it, applied on relay from peers (validation.cpp:799
+      with fLimitFree true; DEFAULT_LIMITFREERELAY = 0 → "rate limited
+      free transaction"), while local sendrawtransaction uses fLimitFree
+      false — so an underpaying tx can enter the first node's mempool and
+      then fail to propagate. Limits are global defaults (init.cpp), same
+      on testnet. Fee floor: validation.h:59 DEFAULT_MIN_RELAY_TX_FEE =
+      RECOMMENDED_MIN_TX_FEE / 10 = 0.001 DOGE/kB (the app's 1000 sat/vB
+      floor equals DEFAULT_BLOCK_MIN_TX_FEE, the miners' inclusion
+      minimum, policy.h:32 / miner.cpp:103 — unchanged and correct;
+      send.ts already describes the relay minimum as 0.001). Engine:
+      packages/chains-utxo/src/dust.ts (DustPolicy {legacy, p2wpkh};
+      DUST_P2PKH 546 / DUST_P2WPKH 294 unchanged as BITCOIN_CORE_DUST_POLICY;
+      DOGECOIN_SOFT_DUST_LIMIT 1,000,000n, DOGECOIN_HARD_DUST_LIMIT
+      100,000n, DOGECOIN_CORE_DUST_POLICY using the soft limit for every
+      script type; the engine never creates an output below it so no
+      surcharge logic is needed); UtxoNetwork.dustPolicy (absent =
+      Bitcoin Core); coinselect dustThreshold(script, policy) backward
+      compatible; buildTransfer refuses a recipient output below the
+      chain's threshold on every chain ("Amount is below the Dogecoin
+      dust limit: the smallest output this wallet will create is 0.01
+      (1000000 base units)…") and folds sub-threshold change into the
+      fee as before (strict <: exactly 0.01 is kept). App send.ts:
+      prepareUtxoSend's recipient pre-check passes network.dustPolicy
+      (it used Bitcoin's 546 for Dogecoin before) and maxUtxoSend
+      re-throws the engine's dust error when the remainder would be
+      sub-limit; describeSendError unchanged. Tests: dust-policy.test.ts
+      (recipient refusals at 999,999 / 100,000 / 546 / 1 koinu, exactly
+      1,000,000 accepted, testnet same; change kept at the limit, folded
+      one below and in the old 546–999,999 gap; a 300-build sweep with
+      no sub-limit output and value conserved; a folded-change signed tx
+      decoded by bitcoinjs; four Bitcoin raw signed txs pinned byte for
+      byte against the f84f6e8 engine; a network without dustPolicy
+      behaves like BITCOIN). Not adopted: Dogecoin Core's wallet
+      heuristic of change >= discard + 2× minTxFee (~0.03 DOGE), a wallet
+      preference not relay policy. UNVERIFIED until the demonstration
+      broadcast: live relay behaviour, NOWNodes' backend/peer
+      -dustlimit/-harddustlimit/-minrelaytxfee settings.
