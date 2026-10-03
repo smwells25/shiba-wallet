@@ -30,7 +30,13 @@ import { useWallet } from './WalletContext';
 import { accountLabel } from './accounts';
 import { useAccountDelegation } from './useDelegation';
 import { delegationLabelSuffix } from './delegation';
-import { EVM_CHAIN_ID, describeSendError, sendEvm } from './send';
+import {
+  EVM_CHAIN_ID,
+  QUOTE_ENDPOINT_CHANGED_TITLE,
+  describeSendError,
+  quoteEndpointChange,
+  sendEvm,
+} from './send';
 import {
   aaAccountTypeSignsMessages,
   createAaClientFromConfig,
@@ -804,6 +810,26 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
           return;
         }
         const { quote, url } = txQuote;
+        // Quote pinning, last check after the biometric gate: the sheet
+        // re-quoted before the gate if the endpoint had moved, but the wallet
+        // can move again while the OS prompt is up. Never sign a quote from
+        // another endpoint; return the request to the sheet, whose next
+        // Approve re-quotes on the endpoint now in use.
+        let currentUrl: string | null = null;
+        try {
+          currentUrl = (await getEndpoint(EVM_CHAIN_ID))?.url ?? null;
+        } catch {
+          currentUrl = null;
+        }
+        const endpointChanged = quoteEndpointChange(url, currentUrl);
+        if (endpointChanged) {
+          controller.release(item.key);
+          Alert.alert(
+            QUOTE_ENDPOINT_CHANGED_TITLE,
+            `${endpointChanged} The dApp's request is still waiting: tap Approve again to re-quote it.`,
+          );
+          return;
+        }
         const sent = await signWith(EVM_CHAIN_ID, item.address, (signer) =>
           sendEvm(url, signer, quote, evmChain.explorerTxBase),
         );

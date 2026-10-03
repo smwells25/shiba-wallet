@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   BackHandler,
@@ -33,7 +33,7 @@ import {
   type TypedDataSummary,
 } from '../wallet/typed-data-summary';
 import { RecipientContactNotice } from './Contacts';
-import { EVM_CHAIN_ID, describeSendError, prepareEvmSend, type EvmSendQuote } from '../wallet/send';
+import { EVM_CHAIN_ID, describeSendError, type EvmSendQuote } from '../wallet/send';
 import {
   KERNEL_BUNDLER_NOTE,
   PREVIEW_AA_BATCH_NOTE,
@@ -55,9 +55,12 @@ import {
 } from '../wallet/sessions';
 import {
   IDENTITY_RISK_SWITCH_LABEL,
+  WC_REQUOTED_NOTE,
   WC_SUPPORTED_METHODS,
   decideProposal,
   identityApprovalAllowed,
+  quoteWcTransaction,
+  requoteWcTransactionIfMoved,
   smartAccountMethodsFor,
   describeChain,
   type ParsedWcRequest,
@@ -76,7 +79,13 @@ const mono = Platform.select({ ios: 'Menlo', default: 'monospace' });
 
 export type TxQuoteState =
   | { status: 'loading' }
-  | { status: 'ready'; quote: EvmSendQuote; url: string; from: string }
+  /**
+   * Regular-account transaction: `url` is the endpoint that produced the
+   * quote (after any failover); the preview, the risk checks and the send
+   * all use it. `note` is set after an automatic re-quote at approval time
+   * (WC_REQUOTED_NOTE).
+   */
+  | { status: 'ready'; quote: EvmSendQuote; url: string; from: string; note?: string }
   /**
    * Smart-account session (phase 7): the transaction or ERC-5792 batch
    * quoted as ONE UserOperation. Reaching this state means the bundler's
@@ -382,22 +391,11 @@ export function WcApprovalSheet({
     // Batches outside smart-account sessions: initialTxQuote showed the refusal.
     if (item.parsed.kind !== 'transaction') return;
     const { tx } = item.parsed;
-    (async () => {
-      // getEndpoint translates the EVM slot to the active network
-      // (Sepolia in test mode); the quote then verifies the endpoint's
-      // eth_chainId against the same active profile.
-      const endpoint = await getEndpoint(EVM_CHAIN_ID);
-      if (!endpoint?.url) throw new Error('No Ethereum RPC endpoint is configured.');
-      const quote = await prepareEvmSend(
-        endpoint.url,
-        address,
-        tx.to,
-        tx.valueWei,
-        tx.data.length > 0 ? tx.data : undefined,
-        evmChain.caip2,
-      );
-      return { quote, url: endpoint.url, from: address };
-    })().then(
+    // The EVM slot resolves to the active network (Sepolia in test mode);
+    // the quote verifies the endpoint's eth_chainId against the same active
+    // profile, fails over once on a transport failure of a default
+    // endpoint, and names the endpoint that answered.
+    quoteWcTransaction(tx, address, evmChain.caip2).then(
       (r) => {
         if (!cancelled) setTxQuote({ status: 'ready', quote: r.quote, url: r.url, from: r.from });
       },
@@ -415,6 +413,57 @@ export function WcApprovalSheet({
     // of what the quote was computed for.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.key, address, evmChain.caip2, permissionGrantKey]);
+
+  // Approval-time quote pinning for regular-account transactions: the
+  // quote is one endpoint's answer, and the wallet may have moved to
+  // another endpoint (a failover elsewhere, or a Settings change) while the
+  // sheet was open. The dApp's request is still pending, so instead of
+  // refusing, the sheet re-quotes on the endpoint now in use, shows the
+  // refreshed numbers with WC_REQUOTED_NOTE and clears the simulation
+  // override (it was given for the old simulation); the user then approves
+  // the new quote, whose eth_call gate, balance-change preview and risk
+  // checks all ran against its own endpoint. Nothing is signed in between.
+  // The provider re-checks once more after the biometric gate.
+  const [requoting, setRequoting] = useState(false);
+  // The item on screen, for dropping a re-quote that finishes after the
+  // sheet moved on to another request.
+  const currentItemKey = useRef(item.key);
+  useEffect(() => {
+    currentItemKey.current = item.key;
+  }, [item.key]);
+  const approveRequest = async () => {
+    if (
+      txQuote?.status === 'ready' &&
+      item.type === 'request' &&
+      item.parsed.kind === 'transaction' &&
+      !item.smart
+    ) {
+      const key = item.key;
+      const { tx } = item.parsed;
+      setRequoting(true);
+      try {
+        const result = await requoteWcTransactionIfMoved(txQuote, tx, evmChain.caip2);
+        if (currentItemKey.current !== key) return;
+        if (result.moved) {
+          setOverrideSimulation(false);
+          setTxQuote({ status: 'ready', ...result.next, note: WC_REQUOTED_NOTE });
+          return;
+        }
+      } catch (e) {
+        if (currentItemKey.current !== key) return;
+        const { title, detail } = describeSendError(e, 'ETH');
+        setOverrideSimulation(false);
+        setTxQuote({
+          status: 'error',
+          message: `The network endpoint changed and a fresh quote could not be prepared.\n${title}\n${detail}`,
+        });
+        return;
+      } finally {
+        setRequoting(false);
+      }
+    }
+    onApprove(txQuote, overrideSimulation, undefined, messageSigner, identityAck);
+  };
 
   return (
     <View style={styles.backdrop}>
@@ -442,7 +491,7 @@ export function WcApprovalSheet({
               dappName={dappName}
               accountLabel={accountLabel}
               theme={theme}
-              busy={busy}
+              busy={busy || requoting}
               evmChain={evmChain}
               txQuote={txQuote}
               overrideSimulation={overrideSimulation}
@@ -452,7 +501,7 @@ export function WcApprovalSheet({
               messageSigner={messageSigner}
               setMessageSigner={setMessageSigner}
               approveLocked={approveLocked}
-              onApprove={() => onApprove(txQuote, overrideSimulation, undefined, messageSigner, identityAck)}
+              onApprove={() => void approveRequest()}
               onReject={onReject}
             />
           )}
@@ -847,6 +896,11 @@ function RequestBody({
       {txQuote?.status === 'error' ? <WarningBox>{txQuote.message}</WarningBox> : null}
       {quoteReady ? (
         <>
+          {txQuote.note ? (
+            <Text accessibilityLiveRegion="polite" style={[styles.hint, { color: theme.textMuted }]}>
+              {txQuote.note}
+            </Text>
+          ) : null}
           <Field
             label="Max network fee"
             value={`${formatUnits(txQuote.quote.fee, 18, 18)} ${evmChain.displaySymbol}`}

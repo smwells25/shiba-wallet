@@ -12,6 +12,7 @@ import {
   type JsonRpcTransport,
 } from '@shiba-wallet/chains-evm';
 import { assertFeatureAllowed, eip155Caip2 } from '../config/readiness.ts';
+import { quoteEndpointChange } from './send.ts';
 
 /**
  * EIP-7702 "Upgrade this account" glue for the app (phase 8 item 1, app
@@ -299,6 +300,13 @@ export interface SetCodeQuote {
   balance: bigint;
   /** Status when quoted. */
   statusBefore: AccountDelegation;
+  /**
+   * The RPC endpoint this quote came from. The nonce, fees, balance and
+   * status above are that endpoint's answers, so the transaction must be
+   * signed for and sent through the same URL (quote pinning, phase 9 item 5
+   * follow-up; sendSetCodeTx refuses any other URL).
+   */
+  url: string;
 }
 
 /**
@@ -378,6 +386,7 @@ export async function prepareSetCodeTx(options: {
     fee,
     balance,
     statusBefore,
+    url: options.url,
   };
 }
 
@@ -387,7 +396,10 @@ export async function prepareSetCodeTx(options: {
  * WalletContext.signWith(expectAddress = quote.from). Refuses before
  * signing when the signer is not the quoted EOA, the delegate is not one the
  * wallet allows (D6), the tuple nonce is not tx nonce + 1, or the endpoint
- * moved to another chain. Invalidates the status cache for the account.
+ * moved to another chain. Also refuses when `url` is not the endpoint the
+ * quote came from (the screen re-resolves the endpoint before the biometric
+ * gate and sends through quote.url; this is the last line of defense).
+ * Invalidates the status cache for the account.
  */
 export async function sendSetCodeTx(
   url: string,
@@ -402,6 +414,10 @@ export async function sendSetCodeTx(
   if (quote.action === 'upgrade' || quote.delegate.toLowerCase() !== ZERO_ADDRESS.toLowerCase()) {
     assertFeatureAllowed('eip7702-upgrade', eip155Caip2(quote.chainId));
   }
+  // Quote pinning: a quote is one endpoint's answer and is never sent
+  // through another endpoint.
+  const endpointMoved = quoteEndpointChange(quote.url, url);
+  if (endpointMoved) throw new Error(endpointMoved);
   if (signer.address.toLowerCase() !== quote.from.toLowerCase()) {
     throw new Error(
       `This signer is ${signer.address}, but the transaction was prepared for ${quote.from}. ` +

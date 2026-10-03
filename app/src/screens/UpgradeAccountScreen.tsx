@@ -17,7 +17,13 @@ import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
 import { requireLocalAuth } from '../wallet/biometric';
 import { formatUnits } from '../wallet/balances';
-import { EVM_CHAIN_ID, describeSendError } from '../wallet/send';
+import {
+  EVM_CHAIN_ID,
+  QUOTE_ENDPOINT_CHANGED_TITLE,
+  describeSendError,
+  quoteEndpointChange,
+} from '../wallet/send';
+import { getEndpoint, withEndpoint } from '../config/networks';
 import { getAaConfig, isEip7702Owner, setAccountEip7702, type AaChainConfig } from '../wallet/aa';
 import {
   FOREIGN_DELEGATE_WARNING,
@@ -148,12 +154,22 @@ export function UpgradeAccountScreen({ navigation }: Props) {
     setError(null);
     setPhase('quoting');
     try {
-      const next = await prepareSetCodeTx({
-        url: delegation.url,
-        from: address,
-        action,
-        expectedChainId: chainId,
-      });
+      // The endpoint is resolved now and the quote runs through the shared
+      // failover rule (config/networks.ts withEndpoint): a failing default
+      // is reported and the whole quote is prepared again on the next
+      // healthy candidate. The quote records the endpoint that answered
+      // (quote.url) and is only ever sent through it.
+      const { value: next, switched } = await withEndpoint(EVM_CHAIN_ID, (ep) =>
+        prepareSetCodeTx({
+          url: ep.url,
+          from: address,
+          action,
+          expectedChainId: chainId,
+        }),
+      );
+      // The status line was read through the endpoint that just failed;
+      // read it again through the healthy one.
+      if (switched) delegation.refresh();
       setQuote(next);
       setPhase('confirm');
     } catch (e) {
@@ -164,8 +180,28 @@ export function UpgradeAccountScreen({ navigation }: Props) {
   };
 
   const onConfirm = async () => {
-    if (!quote || !delegation.url) return;
-    const url = delegation.url;
+    if (!quote) return;
+    // Quote pinning (same rule as the Send screen): the quote is one
+    // endpoint's answer, and useAccountDelegation can move to another
+    // endpoint after a failover while this screen is open. Re-resolve just
+    // before the biometric gate; if the wallet would now use a different
+    // endpoint, refuse and go back for a fresh quote — never patch it.
+    let currentUrl: string | null = null;
+    try {
+      currentUrl = (await getEndpoint(EVM_CHAIN_ID))?.url ?? null;
+    } catch {
+      currentUrl = null;
+    }
+    const endpointChanged = quoteEndpointChange(quote.url, currentUrl);
+    if (endpointChanged) {
+      Alert.alert(QUOTE_ENDPOINT_CHANGED_TITLE, endpointChanged);
+      setQuote(null);
+      setPhase('overview');
+      return;
+    }
+    // Everything below (signing, broadcast, receipt poll) uses the quote's
+    // own endpoint.
+    const url = quote.url;
     const auth = await requireLocalAuth(
       quote.action === 'upgrade' ? 'Approve upgrading this account' : 'Approve undoing the upgrade',
     );

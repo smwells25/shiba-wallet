@@ -19,7 +19,16 @@
 //  - quote pinning (send.ts quoteEndpointChange): a quote whose endpoint is
 //    no longer the one in use is refused with a plain sentence;
 //  - the balance-change preview stays on the quote's endpoint and only
-//    reports its failure (simulation.ts onEndpointFailure).
+//    reports its failure (simulation.ts onEndpointFailure);
+//  - (follow-ups) Home token rows (useTokenBalances.ts loadTokenBalance)
+//    fail over like the native row; the Upgrade screen's set-code quote
+//    carries its endpoint and is refused through any other one
+//    (delegation.ts prepareSetCodeTx / sendSetCodeTx + the screen's pin
+//    check before the biometric gate); WalletConnect eth_sendTransaction
+//    quotes fail over and, when the endpoint moved before approval, are
+//    re-quoted on the new endpoint (walletconnect.ts quoteWcTransaction /
+//    requoteWcTransactionIfMoved) whose eth_call gate and preview then run
+//    there.
 //
 // Like check-rpc-fallback.mjs it imports the actual TypeScript modules via
 // Node's native type stripping. Run from the app directory:
@@ -42,6 +51,15 @@ import { loadHistoryPage } from '../src/wallet/useHistory.ts';
 import { prepareEvmSend, quoteEndpointChange } from '../src/wallet/send.ts';
 import { waitForAllowance } from '../src/wallet/swap.ts';
 import { runBalancePreview } from '../src/wallet/simulation.ts';
+import { loadTokenBalance } from '../src/wallet/useTokenBalances.ts';
+import { WALLET_7702_DELEGATE, prepareSetCodeTx, sendSetCodeTx } from '../src/wallet/delegation.ts';
+import {
+  WC_REQUOTED_NOTE,
+  quoteWcTransaction,
+  requoteWcTransactionIfMoved,
+} from '../src/wallet/walletconnect.ts';
+import { evmKeyProvider, mnemonicToSeed } from '@shiba-wallet/core';
+import { readFileSync } from 'node:fs';
 
 let passed = 0;
 let failed = 0;
@@ -521,6 +539,258 @@ console.log('\nBalance-change preview stays on the quote\'s endpoint:');
   });
   check('other preview errors are not reported as endpoint failures', state.status === 'error' && !state.unreachable && reported.length === 0, state);
 }
+
+// ---------------------------------------------------------------------------
+// 3. Follow-ups: token rows, the Upgrade screen, WalletConnect quotes
+// ---------------------------------------------------------------------------
+
+const USDC = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
+const word = (n) => `0x${n.toString(16).padStart(64, '0')}`;
+
+console.log('\nToken balance (useTokenBalances.ts loadTokenBalance):');
+{
+  forgetDefaultEndpointChoices();
+  const primary = dyingPrimary();
+  const calls = installFake({
+    rpc: { [ETH_A]: primary.handler, [ETH_B]: evmNode({ eth_call: () => word(1_234_567n) }) },
+  });
+  const load = await loadTokenBalance(USDC, WALLET, { retryDelayMs: 0 }).catch((error) => ({ status: 'threw', error }));
+  check('token balance loads although the chosen default died mid-session', load.status === 'ok', load);
+  check('the amount is the second candidate\'s balanceOf answer', load.status === 'ok' && load.amount === 1_234_567n);
+  check('the result names the endpoint that answered', load.status === 'ok' && load.endpoint.url === ETH_B);
+  check(
+    'the row\'s network is the answering endpoint\'s network',
+    load.status === 'ok' && load.endpoint.network.chainId === ETH_CHAIN,
+  );
+  check(
+    'the balanceOf call reached the second candidate exactly once',
+    calls.filter((c) => c.url === ETH_B && c.method === 'eth_call').length === 1,
+  );
+  check('the dead default was reported (the wallet now uses the fallback)', (await getEndpoint(ETH_CHAIN))?.url === ETH_B);
+}
+{
+  forgetDefaultEndpointChoices();
+  installFake({ rpc: { [ETH_A]: (m) => (m === 'eth_chainId' ? '0x1' : dead()), [ETH_B]: (m) => (m === 'eth_chainId' ? '0x1' : dead()) } });
+  const error = await rejects(loadTokenBalance(USDC, WALLET, { retryDelayMs: 0 }));
+  check('token row: both candidates failing surfaces a retryable error (no loop)', isEndpointFailure(error), error);
+}
+{
+  // An answer (a revert from balanceOf) is not a transport failure: no
+  // switch, the row shows the error for its own retry button.
+  forgetDefaultEndpointChoices();
+  const calls = installFake({
+    rpc: {
+      [ETH_A]: evmNode({
+        eth_call: () => {
+          throw new Error('fake node: execution reverted');
+        },
+      }),
+      [ETH_B]: evmNode(),
+    },
+  });
+  const error = await rejects(loadTokenBalance(USDC, WALLET, { retryDelayMs: 0 }));
+  check('token row: a non-transport error is surfaced, not failed over', error !== null && !calls.some((c) => c.url === ETH_B && c.method === 'eth_call'));
+}
+
+console.log('\nUpgrade screen quote pinning (delegation.ts set-code quote):');
+const TEST_MNEMONIC =
+  'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+const seed = mnemonicToSeed(TEST_MNEMONIC);
+const owner = evmKeyProvider.deriveAccount(seed, 0, 0);
+const delegatedCode = `0xef0100${WALLET_7702_DELEGATE.slice(2).toLowerCase()}`;
+{
+  // A revocation quote (never readiness-gated, so it runs on mainnet ids):
+  // made through withEndpoint while the primary dies -> the whole quote
+  // comes from the second candidate and records it.
+  forgetDefaultEndpointChoices();
+  const primary = dyingPrimary();
+  installFake({
+    rpc: {
+      [ETH_A]: primary.handler,
+      [ETH_B]: evmNode({ eth_getCode: () => delegatedCode, eth_getTransactionCount: () => '0x3' }),
+    },
+  });
+  const outcome = await withEndpoint(ETH_CHAIN, (ep) =>
+    prepareSetCodeTx({ url: ep.url, from: owner.address, action: 'revoke', expectedChainId: 1n }),
+  );
+  check('set-code quote fails over to the second candidate', outcome.switched && outcome.endpoint.url === ETH_B);
+  check('the quote records the endpoint it came from', outcome.value.url === ETH_B);
+  check('the quote\'s nonce is the second candidate\'s', outcome.value.nonce === 3n && outcome.value.authorizationNonce === 4n);
+}
+{
+  // Quote on the primary; then the wallet moves to the fallback (a failure
+  // elsewhere in the app). The screen's pin check and sendSetCodeTx itself
+  // both refuse; nothing is signed or broadcast.
+  forgetDefaultEndpointChoices();
+  const primary = dyingPrimary();
+  const node = evmNode({ eth_getCode: () => delegatedCode });
+  let primaryAnswersQuote = true;
+  const calls = installFake({
+    rpc: {
+      [ETH_A]: (method, params) => (primaryAnswersQuote ? node(method, params) : primary.handler(method, params)),
+      [ETH_B]: evmNode({ eth_getCode: () => delegatedCode, eth_sendRawTransaction: () => `0x${'42'.repeat(32)}` }),
+    },
+  });
+  const start = await getEndpoint(ETH_CHAIN);
+  const quote = await prepareSetCodeTx({ url: start.url, from: owner.address, action: 'revoke', expectedChainId: 1n });
+  check('the screen quotes on the primary', quote.url === ETH_A);
+  primaryAnswersQuote = false;
+  primary.kill();
+  reportEndpointFailure(ETH_CHAIN, ETH_A);
+  const atConfirm = await getEndpoint(ETH_CHAIN);
+  check('meanwhile the wallet moved to the fallback', atConfirm?.url === ETH_B);
+  const refusal = quoteEndpointChange(quote.url, atConfirm?.url);
+  check(
+    'the screen\'s pin check refuses, naming both hosts and nothing else',
+    typeof refusal === 'string' && refusal.includes('ethereum-rpc.publicnode.com') && refusal.includes('ethereum.publicnode.com') && !refusal.includes('https://'),
+    refusal,
+  );
+  const sendError = await rejects(sendSetCodeTx(ETH_B, owner, quote, null));
+  check(
+    'sendSetCodeTx refuses to send a quote through another endpoint',
+    sendError instanceof Error && /Nothing was signed or sent/.test(sendError.message),
+    sendError,
+  );
+  check('nothing was broadcast anywhere', !calls.some((c) => c.method === 'eth_sendRawTransaction'));
+  check('the refusal happened before any request to the new endpoint', !calls.some((c) => c.url === ETH_B && c.method !== 'eth_chainId'));
+}
+{
+  // Same endpoint at send time: the pinned send goes through the quote's URL.
+  forgetDefaultEndpointChoices();
+  const txid = `0x${'42'.repeat(32)}`;
+  const calls = installFake({
+    rpc: { [ETH_A]: evmNode({ eth_getCode: () => delegatedCode, eth_sendRawTransaction: () => txid }), [ETH_B]: evmNode() },
+  });
+  const start = await getEndpoint(ETH_CHAIN);
+  const quote = await prepareSetCodeTx({ url: start.url, from: owner.address, action: 'revoke', expectedChainId: 1n });
+  check('unchanged endpoint -> no refusal at confirm', quoteEndpointChange(quote.url, (await getEndpoint(ETH_CHAIN))?.url) === null);
+  const sent = await sendSetCodeTx(quote.url, owner, quote, null);
+  check('the revocation is sent through the quote\'s endpoint', sent.txid === txid && calls.some((c) => c.url === ETH_A && c.method === 'eth_sendRawTransaction'));
+}
+{
+  const screen = readFileSync(new URL('../src/screens/UpgradeAccountScreen.tsx', import.meta.url), 'utf8');
+  const confirmStart = screen.indexOf('const onConfirm = async');
+  const confirm = screen.slice(confirmStart, screen.indexOf('if (!address) {', confirmStart));
+  const pin = confirm.indexOf('quoteEndpointChange(quote.url, currentUrl)');
+  const gate = confirm.indexOf('requireLocalAuth(');
+  check('UpgradeAccountScreen: the pin check runs before the biometric gate', pin > 0 && gate > pin);
+  check(
+    'UpgradeAccountScreen: a moved endpoint shows the shared title and returns to the overview',
+    /Alert\.alert\(QUOTE_ENDPOINT_CHANGED_TITLE, endpointChanged\);\s*setQuote\(null\);\s*setPhase\('overview'\);\s*return;/.test(confirm),
+  );
+  check('UpgradeAccountScreen: signs, sends and polls through quote.url only', /const url = quote\.url;/.test(confirm) && !/delegation\.url/.test(confirm));
+  check('UpgradeAccountScreen: quotes through withEndpoint (failover)', /withEndpoint\(EVM_CHAIN_ID, \(ep\) =>\s*prepareSetCodeTx\(\{\s*url: ep\.url,/.test(screen));
+}
+
+console.log('\nWalletConnect eth_sendTransaction quotes (walletconnect.ts):');
+const DAPP_TX = {
+  to: RECIPIENT,
+  valueWei: 1000n,
+  data: new Uint8Array([0xa9, 0x05, 0x9c, 0xbb, ...new Array(64).fill(0x11)]),
+};
+const DAPP_DATA_HEX = `0x${Buffer.from(DAPP_TX.data).toString('hex')}`;
+{
+  forgetDefaultEndpointChoices();
+  const primary = dyingPrimary();
+  const calls = installFake({
+    rpc: { [ETH_A]: primary.handler, [ETH_B]: evmNode({ eth_getTransactionCount: () => '0x9' }) },
+  });
+  const quoted = await quoteWcTransaction(DAPP_TX, WALLET, ETH_CHAIN).catch((error) => ({ error }));
+  check('a dApp transaction quote fails over when the first endpoint fails', quoted.url === ETH_B, quoted.url ?? quoted.error);
+  check('the quote is entirely the second candidate\'s (nonce)', quoted.quote?.nonce === 9n);
+  check('the dApp calldata is carried into the quote', `0x${Buffer.from(quoted.quote?.data ?? []).toString('hex')}` === DAPP_DATA_HEX);
+  check('the eth_call gate ran on the second candidate', calls.some((c) => c.url === ETH_B && c.method === 'eth_call') && quoted.quote?.simulation.ok === true);
+  check('the sender is the session account', quoted.from === WALLET);
+}
+{
+  // Re-quote on move: quoted on the primary, then the wallet moves to the
+  // fallback before the user approves. The sheet's approval-time check
+  // re-quotes on the fallback instead of refusing.
+  forgetDefaultEndpointChoices();
+  const primary = dyingPrimary();
+  let primaryServes = true;
+  const healthyPrimary = evmNode({ eth_getTransactionCount: () => '0x7', eth_maxPriorityFeePerGas: () => '0x5f5e100' });
+  const calls = installFake({
+    rpc: {
+      [ETH_A]: (method, params) => (primaryServes ? healthyPrimary(method, params) : primary.handler(method, params)),
+      [ETH_B]: evmNode({ eth_getTransactionCount: () => '0x8', eth_maxPriorityFeePerGas: () => '0x77359400' }),
+    },
+  });
+  const first = await quoteWcTransaction(DAPP_TX, WALLET, ETH_CHAIN);
+  check('the request is first quoted on the primary', first.url === ETH_A && first.quote.nonce === 7n);
+  const unchanged = await requoteWcTransactionIfMoved(first, DAPP_TX, ETH_CHAIN);
+  check('approval with the same endpoint: no re-quote', unchanged.moved === false);
+  primaryServes = false;
+  primary.kill();
+  reportEndpointFailure(ETH_CHAIN, ETH_A);
+  const before = calls.length;
+  const moved = await requoteWcTransactionIfMoved(first, DAPP_TX, ETH_CHAIN);
+  check('approval after a move: re-quoted automatically (not refused)', moved.moved === true);
+  check('the fresh quote names the new endpoint', moved.moved && moved.next.url === ETH_B);
+  check('the fresh quote\'s numbers are the new endpoint\'s (nonce, fee)', moved.moved && moved.next.quote.nonce === 8n && moved.next.quote.fee !== first.quote.fee);
+  check('the fresh quote keeps the dApp\'s request (to, value, calldata, sender)', moved.moved && moved.next.quote.to === first.quote.to && moved.next.quote.amount === 1000n && moved.next.from === WALLET && `0x${Buffer.from(moved.next.quote.data ?? []).toString('hex')}` === DAPP_DATA_HEX);
+  const requoteCalls = calls.slice(before);
+  check('the re-quote\'s eth_call gate ran against the new endpoint', requoteCalls.some((c) => c.url === ETH_B && c.method === 'eth_call') && moved.next.quote.simulation.ok === true);
+  check('nothing from the old endpoint was used for the re-quote', !requoteCalls.some((c) => c.url === ETH_A && c.method !== 'eth_chainId'));
+  check('the one-line note is the agreed sentence', WC_REQUOTED_NOTE === 'The network endpoint changed; the fee was re-quoted.');
+  // The balance-change preview runs on the URL the sheet holds, which is now
+  // the fresh quote's.
+  if (moved.moved) {
+    const previewStart = calls.length;
+    await runBalancePreview({
+      url: moved.next.url,
+      wallet: WALLET,
+      calls: [{ from: WALLET, to: moved.next.quote.to, value: moved.next.quote.amount, data: moved.next.quote.data }],
+      chainCaip2: ETH_CHAIN,
+      trackedTokens: [],
+    });
+    const previewCalls = calls.slice(previewStart);
+    check('the balance-change preview runs against the final quoted endpoint', previewCalls.length > 0 && previewCalls.every((c) => c.url === ETH_B), previewCalls.map((c) => c.url));
+  } else {
+    check('the balance-change preview runs against the final quoted endpoint', false, 'no re-quote happened');
+  }
+}
+{
+  // Moved, and the fresh quote cannot be made (every endpoint dead): the
+  // error surfaces for the sheet to show; nothing is reused.
+  forgetDefaultEndpointChoices();
+  const node = evmNode();
+  let alive = true;
+  installFake({
+    rpc: {
+      [ETH_A]: (m, p) => (alive ? node(m, p) : dead()),
+      [ETH_B]: (m, p) => (m === 'eth_chainId' ? '0x1' : dead()),
+    },
+  });
+  const first = await quoteWcTransaction(DAPP_TX, WALLET, ETH_CHAIN);
+  alive = false;
+  reportEndpointFailure(ETH_CHAIN, ETH_A);
+  const error = await rejects(requoteWcTransactionIfMoved(first, DAPP_TX, ETH_CHAIN));
+  check('a failed re-quote surfaces its error (the old quote is never reused)', isEndpointFailure(error), error);
+}
+{
+  const sheet = readFileSync(new URL('../src/components/WcApprovalSheet.tsx', import.meta.url), 'utf8');
+  const provider = readFileSync(new URL('../src/wallet/WalletConnectContext.tsx', import.meta.url), 'utf8');
+  const approve = sheet.slice(sheet.indexOf('const approveRequest = async'));
+  check('sheet: the EOA quote goes through quoteWcTransaction', /quoteWcTransaction\(tx, address, evmChain\.caip2\)/.test(sheet) && !/prepareEvmSend\(/.test(sheet));
+  check(
+    'sheet: approval re-checks the endpoint before handing over to the provider',
+    approve.indexOf('requoteWcTransactionIfMoved(') > 0 && approve.indexOf('requoteWcTransactionIfMoved(') < approve.indexOf('onApprove(txQuote'),
+  );
+  check(
+    'sheet: a moved endpoint shows the fresh quote with the note and clears the override, without approving',
+    /if \(result\.moved\) \{\s*setOverrideSimulation\(false\);\s*setTxQuote\(\{ status: 'ready', \.\.\.result\.next, note: WC_REQUOTED_NOTE \}\);\s*return;/.test(approve),
+  );
+  check('sheet: the note is rendered on the transaction confirm', /\{txQuote\.note \? \(/.test(sheet));
+  const txBranch = provider.slice(provider.indexOf('const { quote, url } = txQuote;'));
+  check(
+    'provider: after the biometric gate, the quote\'s endpoint is re-checked before signing',
+    txBranch.indexOf('quoteEndpointChange(url, currentUrl)') > 0 && txBranch.indexOf('quoteEndpointChange(url, currentUrl)') < txBranch.indexOf('signWith('),
+  );
+  check('provider: a moved endpoint releases the request back to the sheet (not declined)', /if \(endpointChanged\) \{\s*controller\.release\(item\.key\);/.test(txBranch));
+}
+
+seed.fill(0);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

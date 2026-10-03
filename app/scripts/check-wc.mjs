@@ -72,7 +72,12 @@ import {
   IDENTITY_RISK_SWITCH_LABEL,
   describeVerifyContext,
   identityApprovalAllowed,
+  WC_REQUOTED_NOTE,
+  quoteWcTransaction,
+  requoteWcTransactionIfMoved,
 } from '../src/wallet/walletconnect.ts';
+import { forgetDefaultEndpointChoices } from '../src/config/networks.ts';
+import { DEFAULT_NETWORKS } from '../src/config/defaults.ts';
 import { WcController } from '../src/wallet/wc-controller.ts';
 import { EVM_MAINNET, EVM_SEPOLIA } from '../src/config/evm-chain.ts';
 import { prepareEvmSend, sendEvm } from '../src/wallet/send.ts';
@@ -545,6 +550,70 @@ console.log('check-wc: eth_sendTransaction end-to-end (fake fetch, real machiner
     );
   } finally {
     globalThis.fetch = realFetch;
+  }
+}
+
+console.log('check-wc: eth_sendTransaction quote through the endpoint resolver (failover + pinning)');
+{
+  // The approval sheet no longer calls prepareEvmSend with a URL it looked
+  // up itself: quoteWcTransaction resolves the active EVM endpoint, fails
+  // over once on a transport failure of a default endpoint, and names the
+  // endpoint that answered. (The failover and re-quote-on-move paths are
+  // covered in depth by check-failover.mjs; this pins the WalletConnect
+  // shape: calldata, sender, endpoint, and the unchanged-endpoint answer.)
+  const [primaryUrl, fallbackUrl] = DEFAULT_NETWORKS.find((n) => n.chainId === 'eip155:1').defaultUrls;
+  const to = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8';
+  const calldata = '0xa9059cbb' + '33'.repeat(64);
+  const seen = [];
+  let primaryAlive = true;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    const { id, method, params } = JSON.parse(init.body);
+    seen.push({ url, method, data: params?.[0]?.data ?? null });
+    // The primary answers its first identity probe, then dies for good (its
+    // re-probe after the failure report fails too).
+    if (url === primaryUrl && (!primaryAlive || method !== 'eth_chainId')) {
+      primaryAlive = false;
+      throw new TypeError('fetch failed (simulated)');
+    }
+    if (url !== primaryUrl && url !== fallbackUrl) throw new TypeError(`fetch failed (no fake for ${url})`);
+    const result = {
+      eth_chainId: '0x1',
+      eth_getBalance: '0x' + (10n ** 18n).toString(16),
+      eth_getTransactionCount: '0x4',
+      eth_getBlockByNumber: { baseFeePerGas: '0x3b9aca00' },
+      eth_maxPriorityFeePerGas: '0x3b9aca00',
+      eth_estimateGas: '0xc350',
+      eth_call: '0x',
+    }[method];
+    if (result === undefined) throw new Error(`fake node: unexpected method ${method}`);
+    const text = JSON.stringify({ jsonrpc: '2.0', id, result });
+    return { ok: true, status: 200, json: async () => JSON.parse(text), text: async () => text };
+  };
+  try {
+    forgetDefaultEndpointChoices();
+    const tx = { to, valueWei: 777n, data: new Uint8Array(Buffer.from(calldata.slice(2), 'hex')) };
+    const quoted = await quoteWcTransaction(tx, ADDRESS, 'eip155:1');
+    check('dApp tx quote: answered by the healthy endpoint after the default failed', quoted.url === fallbackUrl, quoted.url);
+    check('dApp tx quote: sender is the session account', quoted.from === ADDRESS);
+    check('dApp tx quote: carries the dApp calldata, recipient and value', toHex(quoted.quote.data) === calldata && quoted.quote.to === to && quoted.quote.amount === 777n);
+    check(
+      'dApp tx quote: estimateGas and the eth_call gate saw the calldata on the answering endpoint',
+      seen.some((c) => c.url === fallbackUrl && c.method === 'eth_estimateGas' && c.data === calldata) &&
+        seen.some((c) => c.url === fallbackUrl && c.method === 'eth_call' && c.data === calldata),
+    );
+    check('dApp tx quote: dApp gas/fee/nonce fields are still ignored (nonce from the node)', quoted.quote.nonce === 4n);
+    const again = await requoteWcTransactionIfMoved(quoted, tx, 'eip155:1');
+    check('approval with an unchanged endpoint: no re-quote', again.moved === false);
+    check('re-quote note text', WC_REQUOTED_NOTE === 'The network endpoint changed; the fee was re-quoted.');
+    await checkRejects(
+      'dApp tx quote: a wrong active chain is still refused by the endpoint check',
+      () => quoteWcTransaction(tx, ADDRESS, 'eip155:11155111'),
+      'chain',
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+    forgetDefaultEndpointChoices();
   }
 }
 

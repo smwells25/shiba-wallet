@@ -1546,6 +1546,7 @@ export function SwapScreen({ navigation }: Props) {
             key={assetKey(a)}
             title={assetKey(a) === assetKey(sellAsset) ? `✓ ${symbolOf(a)}` : symbolOf(a)}
             variant={assetKey(a) === assetKey(sellAsset) ? 'primary' : 'secondary'}
+            selected={assetKey(a) === assetKey(sellAsset)}
             onPress={() => {
               setSellAsset(a);
               setAmountText('');
@@ -1589,6 +1590,7 @@ export function SwapScreen({ navigation }: Props) {
             key={assetKey(a)}
             title={buyAsset && assetKey(a) === assetKey(buyAsset) ? `✓ ${symbolOf(a)}` : symbolOf(a)}
             variant={buyAsset && assetKey(a) === assetKey(buyAsset) ? 'primary' : 'secondary'}
+            selected={buyAsset !== null && assetKey(a) === assetKey(buyAsset)}
             onPress={() => {
               setBuyAsset(a);
               setFormError(null);
@@ -1623,6 +1625,7 @@ export function SwapScreen({ navigation }: Props) {
                 : `${bps / 100}%`
             }
             variant={slippageMode === 'preset' && presetBps === bps ? 'primary' : 'secondary'}
+            selected={slippageMode === 'preset' && presetBps === bps}
             onPress={() => {
               setSlippageMode('preset');
               setPresetBps(bps);
@@ -1634,6 +1637,7 @@ export function SwapScreen({ navigation }: Props) {
         <Button
           title={slippageMode === 'custom' ? '✓ Custom' : 'Custom'}
           variant={slippageMode === 'custom' ? 'primary' : 'secondary'}
+          selected={slippageMode === 'custom'}
           onPress={() => {
             setSlippageMode('custom');
             setFormError(null);

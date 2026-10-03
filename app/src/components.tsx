@@ -8,21 +8,42 @@ export function Button({
   onPress,
   variant = 'primary',
   disabled = false,
+  selected,
+  accessibilityLabel,
+  accessibilityHint,
   style,
 }: {
   title: string;
   onPress: () => void;
   variant?: 'primary' | 'secondary' | 'destructive';
   disabled?: boolean;
+  /**
+   * For buttons used as choice chips (one of several options): whether this
+   * option is the chosen one. Exposed to screen readers through
+   * accessibilityState. Leave undefined for ordinary action buttons, so no
+   * selection state is announced for them.
+   */
+  selected?: boolean;
+  /** Spoken label when the visible title is not enough on its own. */
+  accessibilityLabel?: string;
+  accessibilityHint?: string;
   style?: ViewStyle;
 }) {
   const theme = useTheme();
   const background =
     variant === 'primary' ? theme.accent : variant === 'destructive' ? theme.danger : 'transparent';
   const color = variant === 'secondary' ? theme.accent : '#ffffff';
+  // Choice chips mark the chosen option with a leading "✓" for sighted
+  // users. Screen readers get the selected state instead, so the mark is
+  // left out of the spoken label rather than read aloud as "check mark".
+  const spokenLabel =
+    accessibilityLabel ?? (selected !== undefined ? title.replace(/^✓\s*/, '') : undefined);
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityState={{ disabled, ...(selected !== undefined ? { selected } : {}) }}
+      {...(spokenLabel !== undefined ? { accessibilityLabel: spokenLabel } : {})}
+      {...(accessibilityHint !== undefined ? { accessibilityHint } : {})}
       onPress={onPress}
       disabled={disabled}
       style={({ pressed }) => [

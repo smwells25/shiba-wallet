@@ -22,9 +22,10 @@ import {
 } from '@shiba-wallet/chains-evm';
 // Explicit .ts extensions: this module is imported by scripts/check-wc.mjs
 // under Node's type stripping, which resolves relative specifiers literally.
-import { EVM_CHAIN_ID, validateRecipient } from './send.ts';
+import { EVM_CHAIN_ID, prepareEvmSend, validateRecipient, type EvmSendQuote } from './send.ts';
 import type { KeyValueStore } from './tokens.ts';
 import { EVM_MAINNET, EVM_SEPOLIA } from '../config/evm-chain.ts';
+import { getEndpoint, withEndpoint } from '../config/networks.ts';
 
 /**
  * WalletConnect v2 glue (Tier 1 feature 78): lets external dApps connect to
@@ -1386,6 +1387,65 @@ export const SIMPLE_ACCOUNT_SIGNING_REFUSAL =
   'it cannot sign messages or logins: a signature from its owner key would not be ' +
   "accepted as the smart account's. Reconnect with a Kernel smart account or the regular " +
   'account to sign.';
+
+// ---------------------------------------------------------------------------
+// eth_sendTransaction quotes on regular-account sessions: endpoint failover
+// and quote pinning (phase 9 item 5 follow-up)
+// ---------------------------------------------------------------------------
+
+/** One-line note shown on the approval sheet after an automatic re-quote. */
+export const WC_REQUOTED_NOTE = 'The network endpoint changed; the fee was re-quoted.';
+
+/** A dApp transaction quoted for the wallet's own account, with its endpoint. */
+export interface WcEoaTxQuote {
+  quote: EvmSendQuote;
+  /** The endpoint that produced every number in `quote`; the send goes through it. */
+  url: string;
+  /** The session's bound account (the sender). */
+  from: string;
+}
+
+/**
+ * Quotes a dApp's eth_sendTransaction for the wallet's own account through
+ * the endpoint resolved NOW, with the shared failover rule
+ * (config/networks.ts withEndpoint): a failing default endpoint is reported
+ * and the whole quote — chain-id check, fees, gas estimate with the dApp's
+ * calldata, eth_call simulation — is prepared again on the next healthy
+ * candidate. The result names the endpoint that answered, so the approval
+ * sheet's balance-change preview and risk checks run against it and the
+ * send goes out through it. `activeCaip2` is the active EVM profile's id,
+ * which prepareEvmSend verifies the endpoint against.
+ */
+export async function quoteWcTransaction(
+  tx: WcTxParams,
+  from: string,
+  activeCaip2: string,
+): Promise<WcEoaTxQuote> {
+  const outcome = await withEndpoint(EVM_CHAIN_ID, (ep) =>
+    prepareEvmSend(ep.url, from, tx.to, tx.valueWei, tx.data.length > 0 ? tx.data : undefined, activeCaip2),
+  );
+  return { quote: outcome.value, url: outcome.endpoint.url, from };
+}
+
+/**
+ * Approval-time endpoint check for a quoted dApp transaction. Re-resolves
+ * the EVM endpoint; when it is still the quote's, returns { moved: false }
+ * and the approval may proceed. When the wallet would now use another
+ * endpoint (a failover elsewhere in the app, or a Settings change), the
+ * quote is NOT patched: the dApp's request is still pending, so a complete
+ * fresh quote is prepared through quoteWcTransaction (which may itself fail
+ * over) and returned for the user to review before anything is signed.
+ * Errors from the fresh quote are thrown (the sheet shows them).
+ */
+export async function requoteWcTransactionIfMoved(
+  current: WcEoaTxQuote,
+  tx: WcTxParams,
+  activeCaip2: string,
+): Promise<{ moved: false } | { moved: true; next: WcEoaTxQuote }> {
+  const now = (await getEndpoint(EVM_CHAIN_ID))?.url ?? null;
+  if (now === current.url) return { moved: false };
+  return { moved: true, next: await quoteWcTransaction(tx, current.from, activeCaip2) };
+}
 
 // ---------------------------------------------------------------------------
 // wallet_switchEthereumChain (answered without UI; never signs, never
