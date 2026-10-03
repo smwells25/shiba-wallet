@@ -14,8 +14,9 @@ import {
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation';
 import { Button, WarningBox, screenStyle } from '../components';
-import { callWithFailover, getEndpoint, withEndpoint } from '../config/networks';
-import { OfflineNotice, describeNetworkError } from '../wallet/connectivity';
+import { callWithFailover, getEndpoint, withEndpoint, type NetworkEndpoint } from '../config/networks';
+import { endpointHost, findAlternateDefaultUrl, otherDefaultCandidates } from '../config/endpoint-probe';
+import { OfflineNotice, TechnicalDetail, describeNetworkError } from '../wallet/connectivity';
 import { useTheme, type Theme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
@@ -35,14 +36,18 @@ import { classifyAddresses, type AddressTag } from '../wallet/risk';
 import { BalanceChangePreview } from '../components/BalanceChangePreview';
 import {
   APPROVALS_EXPLAINER,
-  APPROVALS_SCOPE_NOTE,
   NFT_UNCONFIGURED_NOTE,
-  NOTHING_TO_CHECK_NOTE,
   NO_ENDPOINT_NOTE,
   REVOKE_ERC20_NOTE,
   REVOKE_OPERATOR_NOTE,
-  TESTNET_TOKENS_NOTE,
+  SEARCH_OLDER_ELSEWHERE_TITLE,
+  alternateSearchNote,
+  approvalTokensForChain,
+  approvalsScopeNote,
   approvalsTransport,
+  knownTokenRefsForChain,
+  nothingToCheckNote,
+  testnetTokensNote,
   approvedAddress,
   collectionsFromNfts,
   describeApprovalAmount,
@@ -57,7 +62,6 @@ import {
   sendRevoke,
   spenderDisplay,
   startApprovalScan,
-  tokensForChain,
   zeroFirstNoteFor,
   type ApprovalItem,
   type ApprovalScan,
@@ -71,10 +75,29 @@ const mono = Platform.select({ ios: 'Menlo', default: 'monospace' });
 type ListState =
   | { status: 'loading' }
   | { status: 'no-endpoint' }
-  | { status: 'nothing'; notes: string[] }
-  /** `title`: the calm sentence; `message`: the raw error, shown muted. */
-  | { status: 'error'; message: string; title: string }
-  | { status: 'ok'; scan: ApprovalScan; items: ApprovalItem[]; notes: string[] };
+  | { status: 'nothing'; notes: string[]; nftIndexerConfigured: boolean }
+  /**
+   * `title`: the calm sentence; `message`: a plain detail sentence;
+   * `technical`: the cleaned endpoint text for the muted detail line.
+   */
+  | { status: 'error'; message: string; title: string; technical: string | null }
+  | {
+      status: 'ok';
+      scan: ApprovalScan;
+      items: ApprovalItem[];
+      notes: string[];
+      /** The endpoint the scan ran on (decides whether another default exists). */
+      endpoint: NetworkEndpoint;
+      /**
+       * Set once the older search moved to another built-in default
+       * endpoint: later "Search older blocks" taps keep using it.
+       */
+      logsUrl?: string;
+      /** The result note of the last alternate-endpoint search. */
+      alternateNote?: string;
+      /** The other endpoint refused too (or none answered): stop offering it. */
+      alternateRefused?: boolean;
+    };
 
 type Phase = 'list' | 'quoting' | 'confirm' | 'sending' | 'success';
 
@@ -137,8 +160,12 @@ export function ApprovalsScreen({ navigation }: Props) {
       } catch {
         trackedTokens = [];
       }
-      const tokens = tokensForChain(trackedTokens, evmChain.caip2);
-      if (evmChain.testnet) notes.push(TESTNET_TOKENS_NOTE);
+      // Tracked tokens plus the test-network tokens the wallet knows
+      // (tokens.ts KNOWN_TEST_NETWORK_TOKENS), so the Sepolia USDC →
+      // Permit2 allowance a swap leaves behind is listed.
+      const tokens = approvalTokensForChain(trackedTokens, evmChain.caip2);
+      if (evmChain.testnet) notes.push(testnetTokensNote(evmChain.label, knownTokenRefsForChain(evmChain.caip2)));
+      let nftIndexerConfigured = true;
 
       let collections: ReturnType<typeof collectionsFromNfts>['collections'] = [];
       if (accountIndex !== null) {
@@ -149,6 +176,7 @@ export function ApprovalsScreen({ navigation }: Props) {
             owner,
           });
           if (nfts.status === 'unconfigured') {
+            nftIndexerConfigured = false;
             notes.push(NFT_UNCONFIGURED_NOTE);
           } else {
             const fromNfts = collectionsFromNfts(nfts.nfts);
@@ -167,16 +195,13 @@ export function ApprovalsScreen({ navigation }: Props) {
             }
           }
         } catch (e) {
-          notes.push(
-            `NFT collections are not checked: the NFT list could not be loaded (${
-              e instanceof Error ? e.message : String(e)
-            }).`,
-          );
+          const why = describeNetworkError(e, 'the NFT list');
+          notes.push(`NFT collections are not checked: the NFT list could not be loaded (${why.detail.replace(/\.$/, '')}).`);
         }
       }
       if (gen !== generation.current) return;
       if (tokens.length === 0 && collections.length === 0) {
-        setState({ status: 'nothing', notes });
+        setState({ status: 'nothing', notes, nftIndexerConfigured });
         return;
       }
 
@@ -200,7 +225,7 @@ export function ApprovalsScreen({ navigation }: Props) {
       });
       if (gen !== generation.current) return;
       setUrl(used.url);
-      setState({ status: 'ok', scan, items, notes });
+      setState({ status: 'ok', scan, items, notes, endpoint: used });
       const transport = approvalsTransport(used.url);
 
       // Address tags load after the list is visible (one eth_getCode each).
@@ -209,11 +234,11 @@ export function ApprovalsScreen({ navigation }: Props) {
       if (gen === generation.current) setTags(nextTags);
     } catch (e) {
       if (gen === generation.current) {
-        const { title, detail } = describeNetworkError(e, 'your approvals');
-        setState({ status: 'error', message: detail, title });
+        const { title, detail, technical } = describeNetworkError(e, 'your approvals');
+        setState({ status: 'error', message: detail, title, technical });
       }
     }
-  }, [owner, accountIndex, evmChain.caip2, evmChain.testnet]);
+  }, [owner, accountIndex, evmChain.caip2, evmChain.testnet, evmChain.label]);
 
   // When the account or the active chain changes, the screen starts over:
   // the list goes back to loading, address tags are dropped and any open
@@ -258,18 +283,82 @@ export function ApprovalsScreen({ navigation }: Props) {
     const gen = generation.current;
     setExtending(true);
     try {
-      // Resolved now, with the shared failover rule. Block ranges are chain
-      // data, so continuing on another candidate of the same chain is sound.
-      const { value, endpoint: used } = await withEndpoint(EVM_CHAIN_ID, async (ep) => {
-        const extendTransport = approvalsTransport(ep.url);
-        const extended = await extendApprovalScan(state.scan, { transport: extendTransport });
-        return { scan: extended, items: await readLiveApprovals(extendTransport, extended) };
-      });
-      const { scan, items } = value;
-      const transport = approvalsTransport(used.url);
+      let scan: ApprovalScan;
+      let items: ApprovalItem[];
+      let transport: ReturnType<typeof approvalsTransport>;
+      if (state.logsUrl) {
+        // The older search already moved to another built-in default
+        // (Search older with another endpoint): logs keep coming from it,
+        // current allowances are still read through the wallet's endpoint.
+        scan = await extendApprovalScan(state.scan, { transport: approvalsTransport(state.logsUrl) });
+        transport = approvalsTransport(url);
+        items = await readLiveApprovals(transport, scan);
+      } else {
+        // Resolved now, with the shared failover rule. Block ranges are chain
+        // data, so continuing on another candidate of the same chain is sound.
+        const { value, endpoint: used } = await withEndpoint(EVM_CHAIN_ID, async (ep) => {
+          const extendTransport = approvalsTransport(ep.url);
+          const extended = await extendApprovalScan(state.scan, { transport: extendTransport });
+          return { scan: extended, items: await readLiveApprovals(extendTransport, extended) };
+        });
+        ({ scan, items } = value);
+        transport = approvalsTransport(used.url);
+        if (gen !== generation.current) return;
+        setUrl(used.url);
+      }
       if (gen !== generation.current) return;
-      setUrl(used.url);
       setState({ ...state, scan, items });
+      const missing = [...new Set(items.map((i) => approvedAddress(i)))].filter(
+        (a) => !(a.toLowerCase() in tags),
+      );
+      if (missing.length > 0) {
+        const more = await classifyAddresses(transport, missing);
+        if (gen === generation.current) setTags((prev) => ({ ...prev, ...more }));
+      }
+    } catch (e) {
+      const { title, detail } = describeNetworkError(e, 'older approvals');
+      Alert.alert('Search failed', `${title}\n\n${detail}`);
+    } finally {
+      setExtending(false);
+    }
+  };
+
+  /**
+   * After an archive-depth refusal: re-runs the refused window (and the
+   * rest of that step) through another of the network's built-in default
+   * endpoints, verified to be the same chain first (endpoint-probe.ts
+   * findAlternateDefaultUrl). Read-only: revoke quotes and sends keep using
+   * the wallet's own endpoint. Never offered around a user override.
+   */
+  const onSearchOlderElsewhere = async () => {
+    if (state.status !== 'ok' || !url || extending) return;
+    const gen = generation.current;
+    setExtending(true);
+    try {
+      const network = state.endpoint.network;
+      const alternate = await findAlternateDefaultUrl(network, state.logsUrl ?? url, state.endpoint.isOverride);
+      if (gen !== generation.current) return;
+      if (!alternate) {
+        setState({
+          ...state,
+          alternateNote: 'No other built-in endpoint answered for this network right now.',
+          alternateRefused: true,
+        });
+        return;
+      }
+      const scan = await extendApprovalScan(state.scan, { transport: approvalsTransport(alternate) });
+      const transport = approvalsTransport(url);
+      const items = await readLiveApprovals(transport, scan);
+      if (gen !== generation.current) return;
+      const refusedAgain = scan.refused !== null && scan.scannedFromBlock === state.scan.scannedFromBlock;
+      setState({
+        ...state,
+        scan,
+        items,
+        ...(refusedAgain ? {} : { logsUrl: alternate }),
+        alternateNote: alternateSearchNote(endpointHost(alternate), refusedAgain),
+        alternateRefused: refusedAgain,
+      });
       const missing = [...new Set(items.map((i) => approvedAddress(i)))].filter(
         (a) => !(a.toLowerCase() in tags),
       );
@@ -484,13 +573,13 @@ export function ApprovalsScreen({ navigation }: Props) {
   // ---------------------------------------------------------------- list
   const header = (
     <View style={styles.headerBlock}>
-      <Text style={[styles.networkLine, { color: evmChain.testnet ? '#e07800' : theme.textMuted }]}>
+      <Text style={[styles.networkLine, { color: evmChain.testnet ? theme.testnetFill : theme.textMuted }]}>
         {evmChain.label} · {evmChain.testnet ? 'TESTNET' : 'Mainnet'}
         {activeAccount ? ` · ${activeAccount.name}` : ''}
       </Text>
       <OfflineNotice />
       <Text style={[styles.body, { color: theme.text }]}>{APPROVALS_EXPLAINER}</Text>
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{APPROVALS_SCOPE_NOTE}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{approvalsScopeNote(evmChain.testnet)}</Text>
     </View>
   );
 
@@ -525,7 +614,10 @@ export function ApprovalsScreen({ navigation }: Props) {
         {state.status === 'no-endpoint' ? (
           <>
             <Text style={[styles.body, { color: theme.text }]}>{NO_ENDPOINT_NOTE}</Text>
-            <Button title="Open Settings" onPress={() => navigation.navigate('Settings')} />
+            <Button
+              title="Open network endpoint settings"
+              onPress={() => navigation.navigate('Settings', { section: 'network-endpoints' })}
+            />
           </>
         ) : null}
         {state.status === 'nothing' ? (
@@ -535,7 +627,9 @@ export function ApprovalsScreen({ navigation }: Props) {
                 {n}
               </Text>
             ))}
-            <Text style={[styles.body, { color: theme.text }]}>{NOTHING_TO_CHECK_NOTE}</Text>
+            <Text style={[styles.body, { color: theme.text }]}>
+              {nothingToCheckNote({ testnet: evmChain.testnet, nftIndexerConfigured: state.nftIndexerConfigured })}
+            </Text>
             {!evmChain.testnet ? (
               <Button title="Manage tokens" variant="secondary" onPress={() => navigation.navigate('Tokens')} />
             ) : null}
@@ -546,9 +640,8 @@ export function ApprovalsScreen({ navigation }: Props) {
             <Text style={[styles.body, { color: theme.text }]}>
               {state.title}
             </Text>
-            <Text selectable style={[styles.hint, { color: theme.textMuted }]}>
-              {state.message}
-            </Text>
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{state.message}</Text>
+            <TechnicalDetail text={state.technical} />
             <Button title="Try again" onPress={() => void onRefresh()} />
           </>
         ) : null}
@@ -557,7 +650,13 @@ export function ApprovalsScreen({ navigation }: Props) {
   }
 
   const { active, unconfirmed, revoked } = partitionApprovals(state.items);
-  const refused = refusedNote(state.scan);
+  // Another built-in default endpoint exists (never around an override):
+  // after a refusal the screen offers to search older blocks through it.
+  const alternateAvailable =
+    !state.alternateRefused &&
+    otherDefaultCandidates(state.endpoint.network.defaultUrls, state.logsUrl ?? url ?? null, state.endpoint.isOverride)
+      .length > 0;
+  const refused = refusedNote(state.scan, { alternateAvailable });
 
   const renderItem = (item: ApprovalItem, withRevoke: boolean) => {
     const who = display(approvedAddress(item));
@@ -615,6 +714,18 @@ export function ApprovalsScreen({ navigation }: Props) {
       ))}
       <Text style={[styles.hint, { color: theme.textMuted }]}>{scannedRangeNote(state.scan)}</Text>
       {refused ? <WarningBox>{refused}</WarningBox> : null}
+      {state.alternateNote ? (
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{state.alternateNote}</Text>
+      ) : null}
+      {refused && alternateAvailable && !state.scan.exhausted ? (
+        <Button
+          title={extending ? 'Searching…' : SEARCH_OLDER_ELSEWHERE_TITLE}
+          variant="secondary"
+          disabled={extending}
+          accessibilityHint="Searches the refused older blocks through another built-in endpoint for this network"
+          onPress={() => void onSearchOlderElsewhere()}
+        />
+      ) : null}
       {state.scan.skippedLogs > 0 ? (
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           {state.scan.skippedLogs} approval event{state.scan.skippedLogs === 1 ? '' : 's'} had a
@@ -671,8 +782,8 @@ export function ApprovalsScreen({ navigation }: Props) {
 
 function NetworkBadge({ label, testnet, theme }: { label: string; testnet: boolean; theme: Theme }) {
   return testnet ? (
-    <View style={[styles.badge, { backgroundColor: '#e07800', borderColor: '#e07800' }]}>
-      <Text style={[styles.badgeText, { color: '#ffffff' }]}>{label} TESTNET — test funds only</Text>
+    <View style={[styles.badge, { backgroundColor: theme.testnetFill, borderColor: theme.testnetFill }]}>
+      <Text style={[styles.badgeText, { color: theme.onTestnetFill }]}>{label} TESTNET — test funds only</Text>
     </View>
   ) : (
     <View style={[styles.badge, { backgroundColor: theme.dangerSurface, borderColor: theme.danger }]}>
@@ -699,6 +810,8 @@ function Row({
       <Text style={[styles.rowLabel, { color: theme.textMuted }]}>{label}</Text>
       <Text
         selectable
+        // "—" is a visual placeholder; screen readers hear "not available".
+        {...(value === '—' ? { accessibilityLabel: 'not available' } : {})}
         style={[styles.rowValue, { color: theme.text }, monoFont ? { fontFamily: mono, fontSize: 13 } : null]}
       >
         {value}

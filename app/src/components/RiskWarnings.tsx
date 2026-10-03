@@ -5,7 +5,8 @@ import { useTheme } from '../theme';
 import { usePrefs } from '../wallet/PrefsContext';
 import { useWallet } from '../wallet/WalletContext';
 import { listTokens } from '../wallet/tokens';
-import { tokensForChain } from '../wallet/approvals';
+import { approvalTokensForChain } from '../wallet/approvals';
+import { getIndexerConfig } from '../wallet/indexer';
 import { computeRiskLines, gatherRiskFacts, type RiskLine } from '../wallet/risk';
 
 export const RISK_TITLE = 'Risk checks';
@@ -27,8 +28,10 @@ export const RISK_FOOTNOTE =
  * preview's changes; without them, direct approve / setApprovalForAll calls
  * are decoded from the calldata (see wallet/risk.ts). Purely informational:
  * it never blocks or unblocks anything — the eth_call gate stays the only
- * gate. Renders nothing when no signal applies or when every check failed
- * (a failed check is "unknown", never a warning). The chain is the ACTIVE
+ * gate. With an endpoint the card always shows at least what the
+ * recipient is (contract / regular account), and says plainly what could
+ * not be checked (a failed check is "unknown", never a warning); without
+ * one it shows only calldata-derived approval warnings, or nothing. The chain is the ACTIVE
  * EVM chain from preferences. The look-alike contact warning is not
  * repeated here; it stays with RecipientContactNotice.
  */
@@ -88,6 +91,14 @@ export function RiskWarnings({
       } catch {
         tracked = [];
       }
+      // The active chain's history indexer, when configured, lets the
+      // first-interaction check also cover plain ETH transfers.
+      let indexerUrl: string | null = null;
+      try {
+        indexerUrl = (await getIndexerConfig(evmChain.caip2)).url;
+      } catch {
+        indexerUrl = null;
+      }
       const facts = await gatherRiskFacts({
         url,
         wallet,
@@ -97,7 +108,9 @@ export function RiskWarnings({
         ...(assetChanges !== undefined ? { assetChanges } : {}),
         chainCaip2: evmChain.caip2,
         ownAddresses,
-        trackedTokens: tokensForChain(tracked, evmChain.caip2).map((t) => ({
+        indexerUrl,
+        // Tracked tokens plus the known test-network tokens (tokens.ts).
+        trackedTokens: approvalTokensForChain(tracked, evmChain.caip2).map((t) => ({
           address: t.address,
           symbol: t.symbol,
         })),
@@ -135,16 +148,41 @@ export function RiskWarnings({
           // Same visible warning style as BalanceChangePreview's warning lines.
           <View
             key={`${i}-${line.type}`}
-            style={[styles.warning, { backgroundColor: theme.warningSurface, borderColor: theme.warningBorder }]}
+            style={[styles.warning, styles.row, { backgroundColor: theme.warningSurface, borderColor: theme.warningBorder }]}
           >
-            <Text style={[styles.line, styles.bold, { color: theme.warningText }]}>⚠ {line.text}</Text>
+            {/* The glyph is decoration; the tone is spoken in the label instead. */}
+            <Text
+              accessibilityElementsHidden
+              importantForAccessibility="no"
+              style={[styles.line, styles.bold, { color: theme.warningText }]}
+            >
+              ⚠
+            </Text>
+            <Text
+              accessibilityLabel={`Warning: ${line.text}`}
+              style={[styles.line, styles.bold, styles.lineText, { color: theme.warningText }]}
+            >
+              {line.text}
+            </Text>
           </View>
         ) : (
           <View
             key={`${i}-${line.type}`}
-            style={[styles.notice, { backgroundColor: theme.card, borderColor: theme.border }]}
+            style={[styles.notice, styles.row, { backgroundColor: theme.card, borderColor: theme.border }]}
           >
-            <Text style={[styles.line, { color: theme.text }]}>ⓘ {line.text}</Text>
+            <Text
+              accessibilityElementsHidden
+              importantForAccessibility="no"
+              style={[styles.line, { color: theme.text }]}
+            >
+              ⓘ
+            </Text>
+            <Text
+              accessibilityLabel={`Note: ${line.text}`}
+              style={[styles.line, styles.lineText, { color: theme.text }]}
+            >
+              {line.text}
+            </Text>
           </View>
         ),
       )}
@@ -172,6 +210,13 @@ const styles = StyleSheet.create({
   },
   bold: {
     fontWeight: '700',
+  },
+  row: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  lineText: {
+    flex: 1,
   },
   muted: {
     fontSize: 12,

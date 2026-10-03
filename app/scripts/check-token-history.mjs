@@ -209,8 +209,12 @@ const twoTokens = [
     note.includes('History older than block 91001 is not available from the current endpoint'));
   check('depth: note points at the history indexer in Settings',
     note.includes('Settings → Ethereum history indexer') && note.includes('full history'));
-  check('depth: detail shows the endpoint text verbatim',
-    detail === `The endpoint's response (JSON-RPC error -32602): ${REFUSAL_TEXT}`);
+  // F4 (phase 11 item 6): the recorded refusal stays verbatim (above), but
+  // the user sees only the code and first sentence — no link, no advert.
+  check('depth: detail shows the code and first sentence only',
+    detail === "The endpoint's response: JSON-RPC error -32602: Archive requests require a personal token.", detail);
+  check('depth: detail carries no URL and no "Get one at" advertisement',
+    !/https?:|www\.|get one at/i.test(detail), detail);
   // The hook's transition: load-more keeps entries and swaps in the depth note.
   const afterFirst = historyNotesAfterPage({ note: TOKEN_LOGS_NOTE }, first);
   check('depth: page-1 notes keep the general caveat', afterFirst.note === TOKEN_LOGS_NOTE
@@ -238,7 +242,8 @@ const twoTokens = [
   check('first-window refusal: plain note naming the window',
     note.startsWith('No token history is available from the current endpoint')
     && note.includes('(91001–100000)') && note.includes('Settings → Ethereum history indexer'));
-  check('first-window refusal: verbatim detail', detail.endsWith(REFUSAL_TEXT));
+  check('first-window refusal: cleaned detail (code + first sentence)',
+    detail.endsWith('JSON-RPC error -32602: Archive requests require a personal token.') && !/allnodes/i.test(detail), detail);
 }
 
 // (c) Any error counts (not only a recognised wording): a network failure
@@ -256,7 +261,7 @@ const twoTokens = [
     && cov.answeredFromBlock === 91_001n && cov.refusal.message === 'fetch failed'
     && cov.refusal.code === undefined);
   check('network error detail has no invented code',
-    tokenLogsCoverageNote(cov).detail === "The endpoint's response: fetch failed");
+    tokenLogsCoverageNote(cov).detail === "The endpoint's response: fetch failed.");
 }
 
 // (d) A window counts only if EVERY query succeeded: one token refused, the

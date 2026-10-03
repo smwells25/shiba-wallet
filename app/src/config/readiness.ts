@@ -114,9 +114,32 @@ export const READINESS_STATUS_LABEL: Readonly<Record<ReadinessStatus, string>> =
   blocked: 'Not yet cleared',
 };
 
-const PLAIN_BLOCKERS =
-  'the recovery phrase is not yet tied to biometric authentication by the phone’s secure ' +
-  'storage, and the wallet has not yet been tested as a real build on real phones';
+/**
+ * The shared clause of the plain-feature reasons. The table text uses the
+ * neutral wording, true for every install (biometric protection of the
+ * phrase is opt-in, docs/THREAT_MODEL.md W1 "Partially met (opt-in)"); the
+ * Settings section substitutes the wording that matches THIS phone's
+ * storageProtection() result through readinessDisplayReason below, so a
+ * user who protected the phrase is never told it is unprotected. Kept as a
+ * constant so the substitution is exact.
+ */
+export const PLAIN_BLOCKERS =
+  'biometric protection of the recovery phrase is opt-in rather than the default, and the wallet ' +
+  'has not yet been tested as a real build on real phones';
+
+/** The clause when this phone's phrase IS protected by biometrics. */
+export const PLAIN_BLOCKERS_PROTECTED =
+  'your recovery phrase is protected by biometrics on this phone, but that protection and the ' +
+  'wallet itself have not yet been tested as a real build on real phones';
+
+/** The clause when this phone's phrase is NOT protected by biometrics. */
+export const PLAIN_BLOCKERS_UNPROTECTED =
+  'your recovery phrase on this phone is not protected by biometrics (Settings → Recovery phrase ' +
+  'protection can turn that on where the phone supports it), and the wallet has not yet been ' +
+  'tested as a real build on real phones';
+
+/** What Settings knows about this phone's phrase storage. */
+export type PhraseProtectionState = 'protected' | 'unprotected' | 'unknown';
 
 /** The readiness table, in the order Settings lists it. */
 export const FEATURE_READINESS: readonly FeatureReadiness[] = [
@@ -178,8 +201,7 @@ export const FEATURE_READINESS: readonly FeatureReadiness[] = [
     reason:
       'The engine-built Dogecoin send path was proven with one real mainnet self-send on ' +
       '2026-10-03 (txid 2f05331b…a6fd, block 6399309). Dogecoin sending still shares the ' +
-      'conditions every regular-account feature waits on: the phrase is not yet tied to ' +
-      'biometric authentication by default and there has been no real-phone build.',
+      `conditions every regular-account feature waits on: ${PLAIN_BLOCKERS}.`,
     evidence: ['W6', 'F-41', 'W1', 'W2'],
     enforced: false,
   },
@@ -308,6 +330,23 @@ export function isFeatureAllowed(featureId: FeatureId, network: string | boolean
   const entry = featureReadiness(featureId);
   const testnet = typeof network === 'boolean' ? network : isTestNetwork(network);
   return testnet || entry.status === 'mainnet-ok';
+}
+
+/**
+ * The reason as Settings shows it on THIS phone (pure: the caller passes
+ * what storageProtection() reported). Only the shared phrase clause
+ * changes; every other word is the table's.
+ */
+export function readinessDisplayReason(feature: FeatureReadiness, phrase: PhraseProtectionState): string {
+  if (phrase === 'unknown') return feature.reason;
+  return feature.reason
+    .split(PLAIN_BLOCKERS)
+    .join(phrase === 'protected' ? PLAIN_BLOCKERS_PROTECTED : PLAIN_BLOCKERS_UNPROTECTED);
+}
+
+/** The reviewer-facing line with the checklist ids (collapsed by default in Settings). */
+export function readinessEvidenceLine(feature: FeatureReadiness): string {
+  return `Checklist and findings: ${feature.evidence.join(', ')}.`;
 }
 
 /** The plain-English reason for a feature's status. */

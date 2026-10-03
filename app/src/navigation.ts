@@ -1,5 +1,11 @@
 import type { NftSendParams } from './wallet/send-nft';
 
+/**
+ * Settings sections another screen can open directly (phase 11 item 6
+ * finding F7): Settings scrolls to the section once it has been laid out.
+ */
+export type SettingsSectionId = 'network-endpoints' | 'history-indexer' | 'nft-indexer';
+
 /** Route names and params for the single native stack. */
 export type RootStackParamList = {
   // Onboarding (shown while no wallet exists)
@@ -20,7 +26,8 @@ export type RootStackParamList = {
   Activity: { chainId: string };
   /** EVM-only swap flow (phase 5 item 1); the active EVM chain applies. */
   Swap: undefined;
-  Settings: undefined;
+  /** `section`: scroll to that section on open (e.g. the NFT indexer from the NFTs screen). */
+  Settings: { section?: SettingsSectionId } | undefined;
   Tokens: undefined;
   Connections: undefined;
   /** Contacts management (phase 6 item 4); lists the active networks. */

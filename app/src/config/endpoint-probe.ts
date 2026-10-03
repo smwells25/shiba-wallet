@@ -532,3 +532,143 @@ export async function runWithEndpointFailover<E extends FailoverTarget, T>(
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// User-facing endpoint error text (phase 11 item 6 follow-ups F4 and F9)
+// ---------------------------------------------------------------------------
+
+/** Longest technical detail shown to a user; anything longer is cut with "…". */
+export const ENDPOINT_MESSAGE_MAX_LENGTH = 200;
+
+/**
+ * Reduces an endpoint's error text to what a user can act on, for display
+ * only (the raw text is never changed where it is recorded):
+ *
+ *  - the JSON-RPC error code is kept ("JSON-RPC error -32602: …"), taken
+ *    from `code` or from the engine's "RPC error <code>: <message> (<method>)"
+ *    wording;
+ *  - Java / Kotlin exception class names that React Native's Android
+ *    networking puts in front of a message ("java.net.UnknownHostException:")
+ *    are removed: the class name means nothing to a user;
+ *  - everything from "Get one at" onwards is dropped, and so is every URL:
+ *    providers append advertisements to their refusals (publicnode's
+ *    archive refusal ends "Get one at: https://www.allnodes.com/publicnode",
+ *    live probe 2026-10-02 recorded in ../wallet/token-history.ts), and the
+ *    wallet does not show third-party advertising;
+ *  - only the first sentence is kept, ended with a full stop, and the
+ *    result is capped at ENDPOINT_MESSAGE_MAX_LENGTH characters.
+ *
+ * Returns '' when nothing readable is left.
+ */
+export function sanitizeEndpointMessage(raw: string, code?: number): string {
+  let text = String(raw ?? '');
+  let foundCode = code;
+  const rpc = /^\s*RPC error (-?\d+|\?):\s*/.exec(text);
+  if (rpc) {
+    if (foundCode === undefined && rpc[1] !== '?') foundCode = Number(rpc[1]);
+    text = text.slice(rpc[0].length);
+  }
+  // A trailing "(eth_getLogs)" method tag from the engine transports.
+  text = text.replace(/\s*\((?:eth|net|web3|alchemy|pimlico|rundler|wallet)_[A-Za-z0-9_]+\)\s*$/, '');
+  // Java / Kotlin exception class prefixes, e.g. "java.net.SocketTimeoutException: ".
+  text = text.replace(/\b(?:[a-z_][\w$]*\.)+[A-Z][\w$]*(?:Exception|Error)\b:?\s*/g, '');
+  // Advertisements and links.
+  text = text.replace(/\bget (?:one|a key|yours|it) (?:at|from)\b[\s\S]*$/i, '');
+  text = text.replace(/\b(?:https?|wss?):\/\/\S+/gi, '');
+  text = text.replace(/\bwww\.\S+/gi, '');
+  text = text.replace(/\s+/g, ' ').trim();
+  // First sentence only: a full stop, question or exclamation mark
+  // followed by a space ends it (dots inside host names do not).
+  const end = /[.!?](?=\s)/.exec(text);
+  if (end) text = text.slice(0, end.index + 1);
+  text = text.replace(/[\s:;,–—-]+$/, '').trim();
+  if (text !== '' && !/[.!?]$/.test(text)) text += '.';
+  if (text.length > ENDPOINT_MESSAGE_MAX_LENGTH) {
+    text = `${text.slice(0, ENDPOINT_MESSAGE_MAX_LENGTH - 1).trimEnd()}…`;
+  }
+  if (foundCode !== undefined && Number.isFinite(foundCode)) {
+    return text === '' ? `JSON-RPC error ${foundCode}.` : `JSON-RPC error ${foundCode}: ${text}`;
+  }
+  return text;
+}
+
+/** The plain sentence shown when a request got no answer at all. */
+export const NO_ANSWER_SENTENCE =
+  'The request got no answer from the network endpoint. This usually means the phone has no ' +
+  'internet connection right now, or the endpoint is down.';
+
+/**
+ * A calm sentence for a failed network read (pure; ../wallet/connectivity.ts
+ * describeNetworkError wraps it for the screens):
+ *  - title: one sentence naming `what` could not be loaded;
+ *  - detail: a plain sentence — never raw exception text. For a
+ *    transport-level failure (isEndpointFailure) it is NO_ANSWER_SENTENCE;
+ *    for an answer from the endpoint it is the endpoint's first sentence,
+ *    cleaned by sanitizeEndpointMessage;
+ *  - technical: the cleaned raw text for a muted, accessible detail line,
+ *    or null when it would only repeat `detail` or nothing readable is left.
+ */
+export function describeNetworkFailure(
+  error: unknown,
+  what: string,
+): { title: string; detail: string; technical: string | null } {
+  const raw = error instanceof Error ? error.message : String(error);
+  const code =
+    error !== null && typeof error === 'object' && typeof (error as { code?: unknown }).code === 'number'
+      ? ((error as { code: number }).code)
+      : undefined;
+  const technical = sanitizeEndpointMessage(raw, code);
+  if (isEndpointFailure(error)) {
+    return {
+      title: `Could not reach the network endpoint, so ${what} could not be loaded. Check your connection and try again.`,
+      detail: NO_ANSWER_SENTENCE,
+      technical: technical === '' ? null : technical,
+    };
+  }
+  return {
+    title: `${what.charAt(0).toUpperCase()}${what.slice(1)} could not be loaded.`,
+    detail: technical === '' ? 'The endpoint answered with an error.' : technical,
+    technical: null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Another default candidate for a deeper read (phase 11 item 6 follow-up F4)
+// ---------------------------------------------------------------------------
+
+/**
+ * The OTHER default candidates of a network, in the order to try them for a
+ * read the current one refused (for example older logs): the candidates
+ * listed after `currentUrl` first, then the ones before it. Empty when the
+ * current endpoint is a user override (overrides are never worked around:
+ * the user chose that endpoint) or when the network has no other default.
+ */
+export function otherDefaultCandidates(
+  defaultUrls: readonly string[],
+  currentUrl: string | null,
+  isOverride: boolean,
+): string[] {
+  if (isOverride) return [];
+  const index = currentUrl === null ? -1 : defaultUrls.indexOf(currentUrl);
+  const after = defaultUrls.slice(index + 1);
+  const before = index > 0 ? defaultUrls.slice(0, index) : [];
+  return [...after, ...before].filter((u) => u !== currentUrl);
+}
+
+/**
+ * The first of otherDefaultCandidates that passes the same chain-identity
+ * probe as the default choice (probeEndpoint), or null. Used only for
+ * READ-ONLY searches of chain history; quotes and sends never move to it.
+ */
+export async function findAlternateDefaultUrl(
+  network: Pick<NetworkDefault, 'kind' | 'chainId' | 'defaultUrls'>,
+  currentUrl: string | null,
+  isOverride: boolean,
+  options: { fetchFn?: FetchLike; timeoutMs?: number } = {},
+): Promise<string | null> {
+  for (const candidate of otherDefaultCandidates(network.defaultUrls, currentUrl, isOverride)) {
+    const result = await probeEndpoint(network.kind, candidate, network.chainId, options);
+    if (result.ok) return candidate;
+  }
+  return null;
+}

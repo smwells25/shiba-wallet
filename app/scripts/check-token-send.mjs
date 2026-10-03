@@ -23,7 +23,15 @@ import {
   prepareErc20Send,
   sendErc20,
 } from '../src/wallet/send-erc20.ts';
-import { describeSendError } from '../src/wallet/send.ts';
+import {
+  ESTIMATE_REVERT_TITLE,
+  GasEstimateRevertError,
+  PLAIN_TRANSFER_REJECTED_SENTENCE,
+  describeSendError,
+  maxEvmSend,
+  prepareEvmSend,
+} from '../src/wallet/send.ts';
+import { QUOTE_FAILED_TITLE, retitleQuoteFailure } from '../src/wallet/aa.ts';
 
 let passed = 0;
 let failed = 0;
@@ -404,6 +412,70 @@ check(
   'recipient appears only as the padded calldata word',
   lastRawTx.includes(TO.toLowerCase().slice(2).padStart(64, '0')),
 );
+
+// ---------------------------------------------------------------------------
+// F3 (phase 11 item 6): a recipient contract that rejects plain ETH. Permit2
+// has no payable receive, so eth_estimateGas reverts; the quote must say so
+// in plain words under the quote-step title, never "could not be sent".
+// ---------------------------------------------------------------------------
+
+console.log('estimate revert (F3):');
+{
+  scenario = defaultScenario();
+  scenario.estimateGasError = 'execution reverted';
+  const PERMIT2 = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
+  let thrown = null;
+  try {
+    await prepareEvmSend(URL, FROM, PERMIT2, 10n ** 14n);
+  } catch (e) {
+    thrown = e;
+  }
+  check('plain ETH quote to a rejecting contract throws GasEstimateRevertError', thrown instanceof GasEstimateRevertError, String(thrown));
+  check('…flagged as a plain transfer, the node text kept as the message', thrown?.plainTransfer === true && /execution reverted/.test(thrown?.message ?? ''));
+  const described = describeSendError(thrown, 'ETH');
+  check('title is "The quote could not be prepared."', described.title === 'The quote could not be prepared.' && described.title === ESTIMATE_REVERT_TITLE, described.title);
+  check('the title equals aa.ts QUOTE_FAILED_TITLE (one convention)', ESTIMATE_REVERT_TITLE === QUOTE_FAILED_TITLE);
+  check(
+    'detail is the plain sentence',
+    described.detail ===
+      'The recipient contract rejected a plain ETH transfer during estimation (execution reverted). Nothing was sent.' &&
+      described.detail === PLAIN_TRANSFER_REJECTED_SENTENCE,
+    described.detail,
+  );
+  check('no raw "RPC error" in what the user reads', !/RPC error/.test(described.title + described.detail));
+  check('retitleQuoteFailure keeps it unchanged', retitleQuoteFailure(described).title === ESTIMATE_REVERT_TITLE);
+
+  let maxThrown = null;
+  try {
+    await maxEvmSend(URL, FROM, PERMIT2);
+  } catch (e) {
+    maxThrown = e;
+  }
+  check('Max to a rejecting contract gets the same plain explanation', describeSendError(maxThrown, 'ETH').detail === PLAIN_TRANSFER_REJECTED_SENTENCE);
+
+  scenario.estimateGasError = 'execution reverted: Not allowed';
+  let withData = null;
+  try {
+    await prepareEvmSend(URL, FROM, PERMIT2, 0n, new Uint8Array([0x12, 0x34, 0x56, 0x78]));
+  } catch (e) {
+    withData = e;
+  }
+  check(
+    'with calldata: the contract-call sentence carries the revert reason',
+    describeSendError(withData, 'ETH').detail ===
+      'The contract rejected this transaction during estimation (execution reverted: Not allowed). Nothing was sent.',
+    describeSendError(withData, 'ETH').detail,
+  );
+
+  scenario.estimateGasError = 'insufficient funds for gas * price + value';
+  let funds = null;
+  try {
+    await prepareEvmSend(URL, FROM, TO, 10n ** 14n);
+  } catch (e) {
+    funds = e;
+  }
+  check('a non-revert estimate failure keeps its own title', !(funds instanceof GasEstimateRevertError) && describeSendError(funds, 'ETH').title === 'Not enough ETH to pay the network fee.', String(funds));
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

@@ -23,7 +23,9 @@ import { groupNftsByCollection } from './nfts.ts';
 import { simulationTransport } from './simulation.ts';
 import { approxDuration, type AddressTag } from './risk.ts';
 import { findExactContact, type Contact } from './contacts.ts';
+import { knownTokensForChain } from './tokens.ts';
 import { maskAmount } from '../config/prefs.ts';
+import { sanitizeEndpointMessage } from '../config/endpoint-probe.ts';
 
 /**
  * Token-approvals manager (phase 7, item 5, app half): lists the approvals
@@ -31,8 +33,11 @@ import { maskAmount } from '../config/prefs.ts';
  * revoke transactions. Built on the engine's approvals.ts over plain
  * JSON-RPC against the chain's configured endpoint.
  *
- * DISCOVERY (logs). For every TRACKED ERC-20 token on the active chain the
- * engine reads Approval(owner, spender, value) logs; for every NFT
+ * DISCOVERY (logs). For every TRACKED ERC-20 token on the active chain,
+ * plus the tokens the wallet KNOWS on a test network (tokens.ts
+ * KNOWN_TEST_NETWORK_TOKENS: Sepolia USDC and EURC, Base Sepolia USDC —
+ * the tracked list holds mainnet assets only), the engine reads
+ * Approval(owner, spender, value) logs; for every NFT
  * collection in the NFT gallery's list (nfts.ts, loaded through the same
  * per-account cache) it reads ApprovalForAll(owner, operator, approved)
  * logs. Windows are 9,000 blocks (token-history.ts's size; the engine probe
@@ -100,17 +105,60 @@ export const APPROVALS_SCOPE_NOTE =
   'Only tokens you track (Manage tokens) and NFT collections in your NFT gallery are checked. ' +
   'Approvals held inside other contracts (for example Permit2-style allowance managers) do not ' +
   'appear here.';
+/** The scope sentence on a test network, where the known test-network tokens are checked. */
+export const TESTNET_APPROVALS_SCOPE_NOTE =
+  'On a test network the wallet checks the test-network tokens it knows and NFT collections in ' +
+  'your NFT gallery. Approvals held inside other contracts (for example the allowances Permit2 ' +
+  'keeps for each app) do not appear here; the approval that lets Permit2 itself spend a token ' +
+  'does.';
 export const NO_ENDPOINT_NOTE =
   'Approvals cannot be checked: no RPC endpoint is configured for this network.';
-export const TESTNET_TOKENS_NOTE =
-  'Sepolia test mode: your tracked tokens are mainnet assets and are hidden here, so only NFT ' +
-  'collections in your Sepolia NFT gallery are checked.';
 export const NFT_UNCONFIGURED_NOTE =
   'NFT collections are not checked: configure an NFT indexer in Settings → NFT indexer to include ' +
   'collection-wide (operator) approvals.';
-export const NOTHING_TO_CHECK_NOTE =
-  'There is nothing to check yet: add tokens in Manage tokens, or configure an NFT indexer, and ' +
-  'the approvals you granted on them will be listed here.';
+
+/** The scope sentence for the active network. */
+export function approvalsScopeNote(testnet: boolean): string {
+  return testnet ? TESTNET_APPROVALS_SCOPE_NOTE : APPROVALS_SCOPE_NOTE;
+}
+
+/**
+ * The test-network note naming exactly the known tokens being checked, or
+ * saying there are none on this network. Never mentions NFT indexer setup
+ * (that is NFT_UNCONFIGURED_NOTE's job, shown only when none is configured).
+ */
+export function testnetTokensNote(networkLabel: string, known: readonly ApprovalTokenRef[]): string {
+  const hidden = 'Your tracked tokens are mainnet assets and are hidden on test networks.';
+  if (known.length === 0) {
+    return `${hidden} The wallet knows no tokens on ${networkLabel}, so only NFT collections are checked.`;
+  }
+  return (
+    `${hidden} Checked instead on ${networkLabel}: ${known.map((t) => t.symbol).join(', ')} ` +
+    `(${known.map((t) => t.address).join(', ')}), the test-network tokens the wallet knows.`
+  );
+}
+
+/**
+ * The empty-state sentence when there is nothing to scan. It never tells
+ * the user to configure an NFT indexer that is already configured, and it
+ * offers Manage tokens only on mainnet (tracked tokens are mainnet assets).
+ */
+export function nothingToCheckNote(options: { testnet: boolean; nftIndexerConfigured: boolean }): string {
+  const { testnet, nftIndexerConfigured } = options;
+  if (testnet) {
+    return nftIndexerConfigured
+      ? 'There is nothing to check yet: the wallet knows no tokens on this test network and your ' +
+          'NFT gallery lists no collections.'
+      : 'There is nothing to check yet: the wallet knows no tokens on this test network. Configure ' +
+          'an NFT indexer (Settings → NFT indexer) to include NFT collections.';
+  }
+  return nftIndexerConfigured
+    ? 'There is nothing to check yet: you track no tokens on this network and your NFT gallery ' +
+        'lists no collections. Add tokens in Manage tokens and the approvals you granted on them ' +
+        'will be listed here.'
+    : 'There is nothing to check yet: add tokens in Manage tokens, or configure an NFT indexer ' +
+        '(Settings → NFT indexer), and the approvals you granted on them will be listed here.';
+}
 export const ZERO_FIRST_NOTE =
   'Tether USD only lets an allowance change from one non-zero amount to another after it has ' +
   'been set to zero. Revoking sets it to zero, so it always works; to approve a different ' +
@@ -144,6 +192,27 @@ export function tokensForChain(tokens: FungibleAsset[], chainCaip2: string): App
   return tokens
     .filter((t) => t.assetId.chainId === chainCaip2 && t.assetId.namespace === 'erc20')
     .map((t) => ({ address: t.assetId.reference, symbol: t.symbol, decimals: t.decimals }));
+}
+
+/** The known test-network tokens on `chainCaip2` (tokens.ts), as scan inputs. */
+export function knownTokenRefsForChain(chainCaip2: string): ApprovalTokenRef[] {
+  return tokensForChain(knownTokensForChain(chainCaip2), chainCaip2);
+}
+
+/**
+ * Every ERC-20 to scan on `chainCaip2`: the tracked tokens on that chain,
+ * then the known test-network tokens not already tracked (deduplicated by
+ * contract address, case-insensitively; the tracked entry wins).
+ */
+export function approvalTokensForChain(tracked: FungibleAsset[], chainCaip2: string): ApprovalTokenRef[] {
+  const out = tokensForChain(tracked, chainCaip2);
+  const seen = new Set(out.map((t) => t.address.toLowerCase()));
+  for (const known of knownTokenRefsForChain(chainCaip2)) {
+    if (seen.has(known.address.toLowerCase())) continue;
+    seen.add(known.address.toLowerCase());
+    out.push(known);
+  }
+  return out;
 }
 
 /**
@@ -359,20 +428,43 @@ export function scannedRangeNote(scan: ApprovalScan): string {
   if (count <= 0n) return 'No blocks could be searched yet.';
   return (
     `Searched approval events in blocks ${scan.scannedFromBlock}–${scan.headBlock} ` +
-    `(the last ${groupThousands(count.toString())} blocks, ${approxDuration(count)}).` +
+    `(the last ${groupThousands(count.toString())} blocks, ${approxDuration(count, scan.chainCaip2)}).` +
     (scan.exhausted ? ' That is the whole history of this network.' : '')
   );
 }
 
-/** The plain-language explanation of a refused window. */
-export function refusedNote(scan: ApprovalScan): string | null {
+/**
+ * The plain-language explanation of a refused window. The endpoint's own
+ * text is shown only as its JSON-RPC code and first sentence, without links
+ * or the provider's advertising (config/endpoint-probe.ts
+ * sanitizeEndpointMessage). `alternateAvailable`: another built-in default
+ * endpoint exists, so the screen offers "Search older with another
+ * endpoint".
+ */
+export function refusedNote(scan: ApprovalScan, options: { alternateAvailable?: boolean } = {}): string | null {
   if (!scan.refused) return null;
+  const reason = sanitizeEndpointMessage(scan.refused.message);
   return (
     `This RPC endpoint refused to search older blocks (${scan.refused.fromBlock}–` +
-    `${scan.refused.toBlock}): ${scan.refused.message}. Approvals granted before the searched ` +
-    'range are NOT shown. Free public endpoints keep only recent logs; an archive-capable ' +
-    'endpoint (Settings → Network endpoints) can search further back.'
+    `${scan.refused.toBlock})${reason ? ` (${reason.replace(/\.$/, '')})` : ''}. Approvals ` +
+    'granted before the searched range are NOT shown. Free public endpoints keep only recent ' +
+    'logs; ' +
+    (options.alternateAvailable
+      ? 'you can try the search with another built-in endpoint below, or set an archive-capable ' +
+        'endpoint (Settings → Network endpoints) to search further back.'
+      : 'an archive-capable endpoint (Settings → Network endpoints) can search further back.')
   );
+}
+
+/** Button title for the alternate-endpoint search. */
+export const SEARCH_OLDER_ELSEWHERE_TITLE = 'Search older with another endpoint';
+
+/** Note after the alternate endpoint answered (or refused) the older search. */
+export function alternateSearchNote(host: string, refusedAgain: boolean): string {
+  return refusedAgain
+    ? `The other built-in endpoint (${host}) also refused to search further back.`
+    : `Older blocks were searched through another built-in endpoint (${host}). Current allowances ` +
+        'are still read live.';
 }
 
 // ---------------------------------------------------------------------------

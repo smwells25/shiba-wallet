@@ -22,6 +22,7 @@
 import { evmKeyProvider, mnemonicToSeed, toChecksumAddress } from '@shiba-wallet/core';
 import { ENTRYPOINT_V07, encodeFunctionCall, toBytes, toHex } from '@shiba-wallet/chains-evm';
 import { INITIAL_LOCK_STATE, reduceLock } from '../src/wallet/lock.ts';
+import { contrastRatio, darkTheme, lightTheme, relativeLuminance } from '../src/theme-palette.ts';
 import {
   AUTO_LOCK_CHOICES,
   DEFAULT_PREFS,
@@ -930,6 +931,33 @@ console.log('\n== per-chain stores keyed by CAIP-2: AA, history indexer, contact
 
   // Blockbook (Dogecoin) is not affected and still refuses plain overrides.
   await checkRejects('Blockbook chains still refuse a plain RPC override', () => setEndpointOverride('bip122:1a91e3dace36e2be3bf030a65679fe82', 'https://doge.example', { store: memoryStore() }), /Blockbook/);
+}
+
+// D1 (phase 11 item 6): text on filled controls meets WCAG 2.2 SC 1.4.3
+// "Contrast (Minimum)", 4.5:1 for normal-size text (button labels are 16 px
+// semibold, not large text), computed from the exact theme values.
+console.log('theme contrast (D1):');
+{
+  check('luminance helper: white = 1, black = 0', relativeLuminance('#ffffff') === 1 && relativeLuminance('#000000') === 0);
+  check('ratio helper: black on white = 21:1', Math.abs(contrastRatio('#000000', '#ffffff') - 21) < 1e-9);
+  const before = contrastRatio('#ffffff', '#f0942f');
+  check('the finding reproduced: white on the old dark-mode primary was about 2.3:1', before > 2.2 && before < 2.4, before.toFixed(2));
+  const pairs = [
+    ['dark primary button label (onAccent on accent)', darkTheme.onAccent, darkTheme.accent],
+    ['dark selected chip / type button (same primary fill)', darkTheme.onAccent, darkTheme.accent],
+    ['dark destructive button label (onDanger on danger)', darkTheme.onDanger, darkTheme.danger],
+    ['dark "test networks only" chip and TESTNET badge', darkTheme.onTestnetFill, darkTheme.testnetFill],
+    ['dark secondary button label (accent on background)', darkTheme.accent, darkTheme.background],
+    ['dark secondary button label (accent on card)', darkTheme.accent, darkTheme.card],
+  ];
+  for (const [name, fg, bg] of pairs) {
+    const ratio = contrastRatio(fg, bg);
+    check(`${name} >= 4.5:1`, ratio >= 4.5, `${fg} on ${bg}: ${ratio.toFixed(2)}:1`);
+  }
+  check('light mode unchanged: white on #d97a1a and on the TESTNET orange',
+    lightTheme.accent === '#d97a1a' && lightTheme.onAccent === '#ffffff' && lightTheme.onDanger === '#ffffff' &&
+      lightTheme.testnetFill === '#e07800' && lightTheme.onTestnetFill === '#ffffff' && lightTheme.danger === '#c62828');
+  check('dark accent kept (only the text on it changed)', darkTheme.accent === '#f0942f');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -2,7 +2,7 @@ import { createElement, useEffect, useRef } from 'react';
 import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { useNetInfoInstance, type NetInfoConfiguration } from '@react-native-community/netinfo';
 import { forgetDefaultEndpointChoices } from '../config/networks';
-import { isEndpointFailure } from '../config/endpoint-probe';
+import { describeNetworkFailure } from '../config/endpoint-probe';
 import { useTheme } from '../theme';
 
 /**
@@ -43,21 +43,42 @@ export const OFFLINE_NOTE =
   'still try: this check is not always right.';
 
 /**
- * A calm sentence for a failed network read, plus the raw message as
- * detail (shown muted, for diagnosis). `what` names the thing that could
- * not be loaded, e.g. "the token details". Transport-level failures (see
- * endpoint-probe.ts isEndpointFailure) point at the connection; anything
- * else is an answer from the endpoint and is described as such.
+ * A calm sentence for a failed network read. `title` names the thing that
+ * could not be loaded (`what`, e.g. "the token details"); `detail` is a
+ * plain sentence — never a raw exception: for a transport-level failure
+ * (endpoint-probe.ts isEndpointFailure) it says the request got no answer,
+ * otherwise it is the endpoint's own first sentence with links and
+ * advertisements removed (sanitizeEndpointMessage). `technical`, when not
+ * null, is the cleaned raw text for a muted detail line (TechnicalDetail
+ * below). The logic lives in config/endpoint-probe.ts describeNetworkFailure
+ * so the offline scripts can pin it.
  */
-export function describeNetworkError(error: unknown, what: string): { title: string; detail: string } {
-  const detail = error instanceof Error ? error.message : String(error);
-  if (isEndpointFailure(error)) {
-    return {
-      title: `Could not reach the network endpoint, so ${what} could not be loaded. Check your connection and try again.`,
-      detail,
-    };
-  }
-  return { title: `${what.charAt(0).toUpperCase()}${what.slice(1)} could not be loaded.`, detail };
+export function describeNetworkError(
+  error: unknown,
+  what: string,
+): { title: string; detail: string; technical: string | null } {
+  return describeNetworkFailure(error, what);
+}
+
+/**
+ * The muted technical line under a calm error: selectable, and exposed to
+ * screen readers as one element ("Technical detail: …") so it is in the
+ * accessibility tree rather than skipped. Renders nothing for null/empty.
+ */
+export function TechnicalDetail({ text }: { text: string | null | undefined }) {
+  const theme = useTheme();
+  if (!text) return null;
+  return createElement(
+    Text,
+    {
+      selectable: true,
+      accessible: true,
+      accessibilityRole: 'text',
+      accessibilityLabel: `Technical detail: ${text}`,
+      style: [styles.technical, { color: theme.textMuted }],
+    },
+    text,
+  );
 }
 
 /**
@@ -110,5 +131,9 @@ const styles = StyleSheet.create({
   text: {
     fontSize: 13,
     lineHeight: 18,
+  },
+  technical: {
+    fontSize: 12,
+    lineHeight: 17,
   },
 });

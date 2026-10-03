@@ -1,8 +1,8 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { Alert, ScrollView, Share, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Alert, Pressable, ScrollView, Share, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
-import type { RootStackParamList } from '../navigation';
+import type { RootStackParamList, SettingsSectionId } from '../navigation';
 import { allowScreenCaptureAsync, preventScreenCaptureAsync } from 'expo-screen-capture';
 import { Button, WarningBox, WordGrid, screenStyle } from '../components';
 import { AccountsSection } from '../components/AccountsSection';
@@ -24,8 +24,11 @@ import {
   READINESS_INTRO,
   READINESS_STATUS_LABEL,
   READINESS_TESTNET_HINT,
+  readinessDisplayReason,
+  readinessEvidenceLine,
   readinessGate,
   type FeatureReadiness,
+  type PhraseProtectionState,
 } from '../config/readiness';
 import { useTheme, type Theme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
@@ -191,7 +194,15 @@ function EndpointRow({
             />
           </View>
           {(isOverride || endpoint.ignoredReason !== undefined || network.defaultUrls.length > 0) && (
-            <Button title="Reset to default" variant="secondary" onPress={() => void reset()} />
+            <Button
+              title="Reset to default"
+              variant="secondary"
+              onPress={() =>
+                isOverride || endpoint.ignoredReason !== undefined
+                  ? confirmClear(`custom ${network.label} endpoint`, () => void reset())
+                  : void reset()
+              }
+            />
           )}
         </View>
       ) : (
@@ -371,7 +382,8 @@ function BlockbookRow({
               <Button
                 title="Clear"
                 variant="secondary"
-                onPress={() => void clear()}
+                accessibilityLabel={`Clear the ${network.label} Blockbook endpoint`}
+                onPress={() => confirmClear(`${network.label} Blockbook endpoint and API key`, () => void clear())}
                 style={styles.endpointButton}
               />
             ) : null}
@@ -393,12 +405,23 @@ function BlockbookRow({
  * status chip, the plain reason, the checklist ids behind it, and whether
  * this build enforces the status.
  */
-function ReadinessRow({ feature, theme }: { feature: FeatureReadiness; theme: Theme }) {
+function ReadinessRow({
+  feature,
+  phrase,
+  theme,
+}: {
+  feature: FeatureReadiness;
+  /** This phone's phrase storage, so the reason never contradicts the protection section. */
+  phrase: PhraseProtectionState;
+  theme: Theme;
+}) {
+  // The checklist ids are for reviewers: collapsed behind one line.
+  const [showDetails, setShowDetails] = useState(false);
   const chip =
     feature.status === 'mainnet-ok'
       ? { color: theme.success, border: theme.success, background: theme.card }
       : feature.status === 'testnet-only'
-        ? { color: '#ffffff', border: '#e07800', background: '#e07800' }
+        ? { color: theme.onTestnetFill, border: theme.testnetFill, background: theme.testnetFill }
         : { color: theme.warningText, border: theme.warningBorder, background: theme.warningSurface };
   return (
     <View style={[styles.endpointRow, { backgroundColor: theme.card, borderColor: theme.border }]}>
@@ -408,16 +431,45 @@ function ReadinessRow({ feature, theme }: { feature: FeatureReadiness; theme: Th
           <Text style={[styles.readinessChipText, { color: chip.color }]}>{READINESS_STATUS_LABEL[feature.status]}</Text>
         </View>
       </View>
-      <Text style={[styles.hint, { color: theme.text }]}>{feature.reason}</Text>
+      <Text style={[styles.hint, { color: theme.text }]}>{readinessDisplayReason(feature, phrase)}</Text>
       <Text style={[styles.endpointNote, { color: theme.textMuted }]}>
         {feature.status === 'mainnet-ok'
           ? 'Cleared by the checklist.'
           : feature.enforced
-            ? 'Switched off on main networks in this build; it works in Sepolia test mode.'
-            : 'Still works on mainnet in this build; not yet cleared for real funds.'}{' '}
-        Checklist and findings: {feature.evidence.join(', ')}.
+            ? 'Switched off on main networks in this build; it works on the test networks.'
+            : 'Still works on mainnet in this build; not yet cleared for real funds.'}
       </Text>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded: showDetails }}
+        accessibilityLabel="Details for reviewers"
+        onPress={() => setShowDetails((v) => !v)}
+        hitSlop={8}
+      >
+        <Text style={[styles.endpointNote, { color: theme.accent }]}>
+          Details for reviewers {showDetails ? '(hide)' : '(show)'}
+        </Text>
+      </Pressable>
+      {showDetails ? (
+        <Text style={[styles.endpointNote, { color: theme.textMuted }]}>{readinessEvidenceLine(feature)}</Text>
+      ) : null}
     </View>
+  );
+}
+
+/**
+ * Asks before a stored endpoint, key or address is removed (phase 11 item 6
+ * finding F10): Clear is one tap away from Edit, and getting a verified
+ * value back means pasting and verifying it again.
+ */
+function confirmClear(what: string, onConfirm: () => void) {
+  Alert.alert(
+    `Clear the ${what}?`,
+    'It is removed from this phone. To use it again you will need to paste it and verify it again.',
+    [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Clear', style: 'destructive', onPress: onConfirm },
+    ],
   );
 }
 
@@ -551,7 +603,8 @@ function AaField({
               <Button
                 title="Clear"
                 variant="secondary"
-                onPress={() => void onClear()}
+                accessibilityLabel={`Clear ${label}`}
+                onPress={() => confirmClear(label, () => void onClear())}
                 style={styles.endpointButton}
               />
             ) : null}
@@ -656,6 +709,7 @@ function AaChainRow({ network }: { network: NetworkDefault }) {
             key={t}
             title={t === type ? `✓ ${aaAccountTypeLabel(t)}` : aaAccountTypeLabel(t)}
             variant={t === type ? 'primary' : 'secondary'}
+            selected={t === type}
             onPress={() => setSelectedType(t)}
             style={styles.endpointButton}
           />
@@ -959,8 +1013,35 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
  * point, reveal the seed phrase behind a confirmation gate, and wipe the
  * wallet behind a double confirmation.
  */
-export function SettingsScreen({ navigation }: Props) {
+export function SettingsScreen({ navigation, route }: Props) {
   const theme = useTheme();
+
+  // Section anchors (F7): a screen can open Settings at a section
+  // (route param `section`). Each anchored section reports its y offset in
+  // the scroll content; while a section is pending, every layout pass of
+  // that section scrolls to it again, because sections above it (endpoint
+  // lists, status lines) finish loading after the first pass and push it
+  // down. The user's first drag ends the pending state.
+  const scrollRef = useRef<ScrollView>(null);
+  const pendingSection = useRef<SettingsSectionId | null>(route.params?.section ?? null);
+  const requestedSection = route.params?.section ?? null;
+  const sectionOffsets = useRef<Partial<Record<SettingsSectionId, number>>>({});
+  const scrollToSection = useCallback((y: number) => {
+    scrollRef.current?.scrollTo({ y: Math.max(0, y - 8), animated: true });
+  }, []);
+  useEffect(() => {
+    pendingSection.current = requestedSection;
+    // Already laid out (Settings was open and got new params): scroll now.
+    const known = requestedSection ? sectionOffsets.current[requestedSection] : undefined;
+    if (known !== undefined) scrollToSection(known);
+  }, [requestedSection, scrollToSection]);
+  const onSectionLayout = useCallback(
+    (id: SettingsSectionId, y: number) => {
+      sectionOffsets.current[id] = y;
+      if (pendingSection.current === id) scrollToSection(y);
+    },
+    [scrollToSection],
+  );
   const { revealMnemonic, wipe, accounts } = useWallet();
   const {
     sepolia,
@@ -1057,6 +1138,13 @@ export function SettingsScreen({ navigation }: Props) {
     storageProtection().then(setProtection, () => setProtection(null));
   }, []);
   useFocusEffect(reloadProtection);
+  // The readiness reasons name this phone's phrase storage (F6).
+  const phraseState: PhraseProtectionState =
+    protection?.phrase === 'protected'
+      ? 'protected'
+      : protection?.phrase === 'standard' || protection?.phrase === 'unreadable'
+        ? 'unprotected'
+        : 'unknown';
 
   const onProtect = () => {
     Alert.alert(PROTECT_CONFIRM_TITLE, PROTECT_CONFIRM_MESSAGE, [
@@ -1193,7 +1281,14 @@ export function SettingsScreen({ navigation }: Props) {
   };
 
   return (
-    <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+    <ScrollView
+      ref={scrollRef}
+      style={screenStyle(theme)}
+      contentContainerStyle={styles.content}
+      onScrollBeginDrag={() => {
+        pendingSection.current = null;
+      }}
+    >
       <AccountsSection />
 
       <View style={styles.section}>
@@ -1260,7 +1355,13 @@ export function SettingsScreen({ navigation }: Props) {
         <Text style={[styles.sectionTitle, { color: theme.text }]}>Privacy & security</Text>
         <View style={styles.toggleRow}>
           <Text style={[styles.toggleLabel, { color: theme.text }]}>Hide amounts</Text>
-          <Switch value={hideAmounts} onValueChange={(v) => void setHideAmounts(v)} />
+          <Switch
+            accessibilityLabel="Hide amounts"
+            accessibilityRole="switch"
+            accessibilityState={{ checked: hideAmounts }}
+            value={hideAmounts}
+            onValueChange={(v) => void setHideAmounts(v)}
+          />
         </View>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Masks every balance and activity amount as •••• (also toggleable
@@ -1277,6 +1378,7 @@ export function SettingsScreen({ navigation }: Props) {
                   key={choice.label}
                   title={autoLockMs === choice.ms ? `✓ ${choice.label}` : choice.label}
                   variant={autoLockMs === choice.ms ? 'primary' : 'secondary'}
+                  selected={autoLockMs === choice.ms}
                   onPress={() => void setAutoLockMs(choice.ms)}
                   style={styles.endpointButton}
                 />
@@ -1306,7 +1408,13 @@ export function SettingsScreen({ navigation }: Props) {
         <Text style={[styles.sectionTitle, { color: theme.text }]}>Prices</Text>
         <View style={styles.toggleRow}>
           <Text style={[styles.toggleLabel, { color: theme.text }]}>Show fiat values (USD)</Text>
-          <Switch value={showFiat} onValueChange={(v) => void setShowFiat(v)} />
+          <Switch
+            accessibilityLabel="Show fiat values (USD)"
+            accessibilityRole="switch"
+            accessibilityState={{ checked: showFiat }}
+            value={showFiat}
+            onValueChange={(v) => void setShowFiat(v)}
+          />
         </View>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Shows an approximate US-dollar value next to balances and on the
@@ -1352,7 +1460,7 @@ export function SettingsScreen({ navigation }: Props) {
         ) : null}
       </View>
 
-      <View style={styles.section}>
+      <View style={styles.section} onLayout={(e) => onSectionLayout('network-endpoints', e.nativeEvent.layout.y)}>
         <Text style={[styles.sectionTitle, { color: theme.text }]}>Network endpoints</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Where balances are fetched from and where transactions are
@@ -1385,7 +1493,7 @@ export function SettingsScreen({ navigation }: Props) {
         )}
       </View>
 
-      <View style={styles.section}>
+      <View style={styles.section} onLayout={(e) => onSectionLayout('history-indexer', e.nativeEvent.layout.y)}>
         <Text style={[styles.sectionTitle, { color: theme.text }]}>
           Ethereum history indexer
         </Text>
@@ -1409,7 +1517,7 @@ export function SettingsScreen({ navigation }: Props) {
         ))}
       </View>
 
-      <View style={styles.section}>
+      <View style={styles.section} onLayout={(e) => onSectionLayout('nft-indexer', e.nativeEvent.layout.y)}>
         <Text style={[styles.sectionTitle, { color: theme.text }]}>NFT indexer</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           The NFTs screen needs an indexer that lists the NFTs an address
@@ -1439,12 +1547,12 @@ export function SettingsScreen({ navigation }: Props) {
         <Text style={[styles.sectionTitle, { color: theme.text }]}>Mainnet readiness</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>{READINESS_INTRO}</Text>
         {FEATURE_READINESS.map((f) => (
-          <ReadinessRow key={f.id} feature={f} theme={theme} />
+          <ReadinessRow key={f.id} feature={f} phrase={phraseState} theme={theme} />
         ))}
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          The item ids (C1–C3, W1–W20 and the finding numbers) refer to the project&apos;s threat
-          model, docs/THREAT_MODEL.md, section 5 (mainnet-readiness checklist) and section 6
-          (findings). {READINESS_TESTNET_HINT}
+          The ids under “Details for reviewers” (C1–C3, W1–W20 and the finding numbers) refer to the
+          project&apos;s threat model, docs/THREAT_MODEL.md, section 5 (mainnet-readiness checklist)
+          and section 6 (findings). {READINESS_TESTNET_HINT}
         </Text>
       </View>
 
@@ -1685,6 +1793,8 @@ export function SettingsScreen({ navigation }: Props) {
               key={choice.label}
               title={testNetwork === choice.value ? `✓ ${choice.label}` : choice.label}
               variant={testNetwork === choice.value ? 'primary' : 'secondary'}
+              selected={testNetwork === choice.value}
+              accessibilityHint="Chooses which network the app's Ethereum account uses"
               onPress={() => void setTestNetwork(choice.value)}
               style={styles.endpointButton}
             />
@@ -1708,7 +1818,7 @@ export function SettingsScreen({ navigation }: Props) {
           network is chosen.
         </Text>
         {sepolia ? (
-          <Text style={[styles.hint, { color: '#e07800' }]}>
+          <Text style={[styles.hint, { color: theme.testnetFill }]}>
             Test mode is ON ({evmChain.label}). Your addresses are the same on
             {' '}{evmChain.label} as on mainnet — but anything sent here is test
             ETH with no value.

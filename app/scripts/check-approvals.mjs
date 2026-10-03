@@ -55,7 +55,16 @@ import {
   tokensForChain,
   zeroFirstNoteFor,
   approvalsTransport,
+  SEARCH_OLDER_ELSEWHERE_TITLE,
+  alternateSearchNote,
+  approvalTokensForChain,
+  approvalsScopeNote,
+  knownTokenRefsForChain,
+  nothingToCheckNote,
+  testnetTokensNote,
 } from '../src/wallet/approvals.ts';
+import { KNOWN_TEST_NETWORK_TOKENS, knownTokensForChain } from '../src/wallet/tokens.ts';
+import { findAlternateDefaultUrl, otherDefaultCandidates } from '../src/config/endpoint-probe.ts';
 import {
   ERC20_APPROVE_SELECTOR_HEX,
   FIRST_INTERACTION_FALLBACK_BLOCKS,
@@ -66,6 +75,8 @@ import {
   classifyAddresses,
   computeRiskLines,
   gatherRiskFacts,
+  CONTRACT_AGE_UNKNOWN_LINE,
+  searchNativeInteraction,
 } from '../src/wallet/risk.ts';
 import { describeAssetChanges } from '../src/wallet/simulation.ts';
 import { USDC_MAINNET } from '../src/wallet/erc20.ts';
@@ -318,6 +329,31 @@ console.log('inputs:');
   const mainnetTokens = tokensForChain([USDC_MAINNET], MAINNET);
   check('tracked USDC is a mainnet approval token', mainnetTokens.length === 1 && mainnetTokens[0].address === USDC && mainnetTokens[0].decimals === 6);
   check('Sepolia: mainnet tokens never scanned (tokens hidden in test mode)', tokensForChain([USDC_MAINNET], SEPOLIA).length === 0);
+  // F1: the test-network tokens the wallet knows (Circle's docs + live reads).
+  const sep = approvalTokensForChain([USDC_MAINNET], SEPOLIA);
+  check('Sepolia scan tokens = known USDC + EURC (Circle addresses), never the mainnet USDC',
+    sep.length === 2 &&
+      sep[0].address === '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238' && sep[0].symbol === 'USDC' && sep[0].decimals === 6 &&
+      sep[1].address === '0x08210F9170F89Ab7658F0B5E3fF39b0E03C594D4' && sep[1].symbol === 'EURC' && sep[1].decimals === 6,
+    JSON.stringify(sep));
+  const base = approvalTokensForChain([], 'eip155:84532');
+  check('Base Sepolia scan tokens = known USDC 0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+    base.length === 1 && base[0].address === '0x036CbD53842c5426634e7929541eC2318f3dCF7e' && base[0].decimals === 6);
+  check('mainnet scan tokens = tracked only (no known list on mainnet)', JSON.stringify(approvalTokensForChain([USDC_MAINNET], MAINNET)) === JSON.stringify(mainnetTokens) && knownTokensForChain(MAINNET).length === 0);
+  check('known list addresses are EIP-55 checksummed', Object.values(KNOWN_TEST_NETWORK_TOKENS).flat().every((t) => getAddress(t.assetId.reference) === t.assetId.reference));
+  check('known tokens carry their own CAIP-2 chain', Object.entries(KNOWN_TEST_NETWORK_TOKENS).every(([chain, list]) => list.every((t) => t.assetId.chainId === chain && t.assetId.namespace === 'erc20')));
+  const trackedSepUsdc = { ...USDC_MAINNET, assetId: { chainId: SEPOLIA, namespace: 'erc20', reference: '0x1c7d4b196cb0c7b01d743fbc6116a902379c7238' }, symbol: 'MyUSDC' };
+  const merged = approvalTokensForChain([trackedSepUsdc], SEPOLIA);
+  check('a tracked entry for a known contract is not scanned twice (tracked wins)', merged.length === 2 && merged[0].symbol === 'MyUSDC');
+  // Notes: never tell the user to configure an indexer that is configured.
+  const nftOn = { nftIndexerConfigured: true };
+  check('empty state with an NFT indexer configured never asks to configure one',
+    !/configure an NFT indexer/i.test(nothingToCheckNote({ testnet: true, ...nftOn })) && !/configure an NFT indexer/i.test(nothingToCheckNote({ testnet: false, ...nftOn })));
+  check('empty state without an NFT indexer points at Settings → NFT indexer', /Settings → NFT indexer/.test(nothingToCheckNote({ testnet: true, nftIndexerConfigured: false })) && /Settings → NFT indexer/.test(nothingToCheckNote({ testnet: false, nftIndexerConfigured: false })));
+  check('test-network empty state never offers Manage tokens', !/Manage tokens/.test(nothingToCheckNote({ testnet: true, nftIndexerConfigured: false })));
+  const tnote = testnetTokensNote('Ethereum Sepolia', knownTokenRefsForChain(SEPOLIA));
+  check('test-network note names the known tokens and addresses, not the NFT indexer', /USDC, EURC/.test(tnote) && tnote.includes('0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238') && !/NFT indexer/.test(tnote), tnote);
+  check('scope note on a test network mentions Permit2 honestly', /Permit2/.test(approvalsScopeNote(true)) && approvalsScopeNote(false).startsWith('Only tokens you track'));
   const nft = (contract, spam, name) => ({
     contract, tokenId: 1n, standard: 'erc721', balance: 1n, spam, collectionName: name, contractName: null,
     name: null, description: null, media: {}, tokenUri: null,
@@ -424,9 +460,49 @@ check('newer results kept (USDC/ROUTER found)', scan.erc20.some((r) => r.spender
 check('approval in the refused range NOT invented (USDC/DRAINER at head-12000 absent)', !scan.erc20.some((r) => r.spender === DRAINER));
 const note = refusedNote(scan);
 check('refused note says older approvals are not shown and points to Settings', /NOT shown/.test(note) && /Settings → Network endpoints/.test(note));
+// F4: the endpoint's code and first sentence only — no link, no advertisement.
+check('refused note keeps the JSON-RPC code and first sentence', note.includes('JSON-RPC error -32602: Archive requests require a personal token'), note);
+check('refused note drops the provider advertisement and URL', !/allnodes|https?:|get one at/i.test(note), note);
+check('without another default endpoint the note does not offer one', !/another built-in endpoint/.test(note));
+check('with another default endpoint the note offers it', /another built-in endpoint below/.test(refusedNote(scan, { alternateAvailable: true })));
 const before = scan.scannedFromBlock;
 scan = await extendApprovalScan(scan, { transport });
 check('extending against the same endpoint stays refused, range unchanged', scan.scannedFromBlock === before && scan.refused !== null);
+// "Search older with another endpoint": the refused window is re-run
+// through another default candidate that serves older logs.
+{
+  const archive = async (method, params) => {
+    const saved = node.depth;
+    node.depth = null; // this endpoint keeps full history
+    try {
+      return rpcResult(method, params);
+    } catch (e) {
+      throw new Error(e.message);
+    } finally {
+      node.depth = saved;
+    }
+  };
+  const elsewhere = await extendApprovalScan(scan, { transport: archive });
+  check('alternate endpoint: the refused window is searched again from the same block', elsewhere.refused === null && elsewhere.scannedFromBlock < before);
+  check('alternate endpoint: the older approval is now found (USDC/DRAINER at head-12000)', elsewhere.erc20.some((r) => r.spender === DRAINER && r.token === USDC));
+  check('alternate notes', SEARCH_OLDER_ELSEWHERE_TITLE === 'Search older with another endpoint' && /another built-in endpoint \(b\.example\)/.test(alternateSearchNote('b.example', false)) && /also refused/.test(alternateSearchNote('b.example', true)));
+}
+// Which candidate is "another": after the current one first, never around an override.
+{
+  const list = ['https://a.example', 'https://b.example', 'https://c.example'];
+  check('other candidates: after the current first, then before', JSON.stringify(otherDefaultCandidates(list, 'https://b.example', false)) === JSON.stringify(['https://c.example', 'https://a.example']));
+  check('other candidates: none around a user override', otherDefaultCandidates(list, 'https://b.example', true).length === 0);
+  check('other candidates: a single default has no alternative', otherDefaultCandidates(['https://only.example'], 'https://only.example', false).length === 0);
+  const probeFetch = async (url) => ({
+    ok: true,
+    status: 200,
+    text: async () => JSON.stringify({ jsonrpc: '2.0', id: 1, result: url.startsWith('https://c.') ? '0x5' : '0x1' }),
+  });
+  const alt = await findAlternateDefaultUrl({ kind: 'evm-jsonrpc', chainId: MAINNET, defaultUrls: list }, 'https://a.example', false, { fetchFn: probeFetch });
+  check('alternate: the first other candidate that proves the same chain', alt === 'https://b.example', String(alt));
+  const wrongChainOnly = await findAlternateDefaultUrl({ kind: 'evm-jsonrpc', chainId: MAINNET, defaultUrls: ['https://a.example', 'https://c.example'] }, 'https://a.example', false, { fetchFn: probeFetch });
+  check('alternate: a candidate answering for another chain is never used', wrongChainOnly === null);
+}
 node.depth = 0n;
 await checkRejects('unusable endpoint (head unreadable) throws', () => startApprovalScan({ transport: async () => 'nope', owner: ME, chainCaip2: MAINNET, tokens: TOKENS, collections: [] }), /malformed/);
 const none = await startApprovalScan({ transport, owner: ME, chainCaip2: MAINNET, tokens: TOKENS, collections: [] });
@@ -440,6 +516,26 @@ node.depth = null;
   node = short;
   const s = await startApprovalScan({ transport, owner: ME, chainCaip2: SEPOLIA, tokens: [], collections: COLLECTIONS });
   check('scan reaching block 0 is marked exhausted', s.exhausted && s.scannedFromBlock === 0n && /whole history/.test(scannedRangeNote(s)));
+}
+
+// F1 end to end: on Sepolia the known USDC is scanned, so the live
+// effectively-unlimited USDC → Permit2 allowance a Uniswap swap leaves
+// behind is listed as active (Permit2: one CREATE2 address on every chain,
+// engine activity-decode.ts).
+{
+  node = defaultNode();
+  node.chainId = '0xaa36a7';
+  const SEP_USDC = '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238';
+  const PERMIT2 = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
+  node.logs = [approvalLog(SEP_USDC, PERMIT2, MAX_UINT256, HEAD - 40_000n, 40)];
+  node.allowances[allowanceKey(SEP_USDC, PERMIT2)] = MAX_UINT256;
+  const tokens = approvalTokensForChain([USDC_MAINNET], SEPOLIA);
+  const s = await startApprovalScan({ transport, owner: ME, chainCaip2: SEPOLIA, tokens, collections: [] });
+  const live = partitionApprovals(await readLiveApprovals(transport, s));
+  const permit2 = live.active.find((i) => i.kind === 'erc20' && i.spender === PERMIT2);
+  check('Sepolia: the USDC → Permit2 allowance is found through the known token list', permit2 !== undefined && permit2.contract === SEP_USDC);
+  check('…and shown as "Unlimited USDC" (live allowance = max uint256)', permit2 && isUnlimitedNow(permit2) && describeApprovalAmount(permit2, false) === 'Unlimited USDC');
+  check('…within the default 72,000-block step (40,000 blocks back)', s.scannedFromBlock <= HEAD - 40_000n);
 }
 
 // ---------------------------------------------------------------------------
@@ -556,14 +652,19 @@ node.codes[DELEGATED.toLowerCase()] = '0xef0100' + DELEGATE_TARGET.slice(2);
 {
   const facts = await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: DELEGATED, chainCaip2: MAINNET, trackedTokens: [] });
   const lines = computeRiskLines(facts);
-  check('delegated EOA -> notice naming the delegate', lines.length === 1 && lines[0].type === 'delegated-eoa' && lines[0].tone === 'notice' && lines[0].text.includes(getAddress(DELEGATE_TARGET)));
-  check('no tracked tokens -> no first-interaction search, no notice', facts.firstInteraction === undefined && !calls.some((c) => c.method === 'eth_getLogs' && Array.isArray(c.params[0].address)));
+  check('delegated EOA -> notice naming the delegate', lines.some((l) => l.type === 'delegated-eoa' && l.tone === 'notice' && l.text.includes(getAddress(DELEGATE_TARGET))));
+  check('delegated EOA -> no second class line repeating it', !lines.some((l) => l.type === 'recipient-class'));
+  check('no tokens and no indexer -> no search, but an honest "could not be checked" line', facts.firstInteraction === undefined && !calls.some((c) => c.method === 'eth_getLogs' && Array.isArray(c.params[0].address)) && lines.some((l) => l.type === 'first-interaction-unchecked' && /could not be checked/.test(l.text) && /history indexer/.test(l.text)), lines.map((l) => l.text).join(' | '));
 }
 {
   const facts = await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: DRAINER, data: '0xa9059cbb' + '00'.repeat(64), chainCaip2: MAINNET, trackedTokens: [] });
   check('calldata to an address with no code -> warning', computeRiskLines(facts).some((l) => l.type === 'no-code-recipient-with-calldata' && l.tone === 'warning'));
   const plainSend = await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: DRAINER, chainCaip2: MAINNET, trackedTokens: [] });
-  check('plain ETH send to an EOA -> no lines', computeRiskLines(plainSend).length === 0);
+  const plainLines = computeRiskLines(plainSend);
+  check('plain ETH send to an EOA -> no warnings, only notices', plainLines.every((l) => l.tone === 'notice'));
+  check('plain ETH send to an EOA -> the card still says what the recipient is', plainLines.some((l) => l.type === 'recipient-class' && /regular account with no contract code/.test(l.text) && l.text.includes(DRAINER)));
+  const brokenClass = await gatherRiskFacts({ transport: async () => { throw new Error('down'); }, url: RPC, wallet: ME, to: DRAINER, chainCaip2: MAINNET, trackedTokens: [] });
+  check('classification failed -> a line saying it could not be checked (never silent)', computeRiskLines(brokenClass).some((l) => l.type === 'recipient-class' && /could not be checked on this endpoint/.test(l.text)));
 }
 
 // Contract age: archive unavailable -> never "new contract".
@@ -638,11 +739,85 @@ node.codes[DELEGATED.toLowerCase()] = '0xef0100' + DELEGATE_TARGET.slice(2);
   check('fallback notice states the smaller range', computeRiskLines(shallow).some((l) => l.text.includes('the last 9,000 blocks, about 30 hours')));
   node.depth = 0n;
   const blind = await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: DRAINER, chainCaip2: MAINNET, trackedTokens: TRACKED });
-  check('every search refused -> no first-interaction notice (never a guess)', blind.firstInteraction === undefined && computeRiskLines(blind).length === 0);
+  const blindLines = computeRiskLines(blind);
+  check('every search refused -> no "first time" claim, an honest could-not-check line instead', blind.firstInteraction === undefined && !blindLines.some((l) => l.type === 'first-interaction-unknown') && blindLines.some((l) => l.type === 'first-interaction-unchecked' && /refused the token-transfer search/.test(l.text)), blindLines.map((l) => l.text).join(' | '));
   node.depth = null;
 
   const self = await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: ME, chainCaip2: MAINNET, trackedTokens: TRACKED });
   check('self-send -> no first-interaction search', self.firstInteraction === undefined);
+}
+
+// F2 (phase 11 item 6): risk checks on test networks.
+{
+  // (a) Contract age when the endpoint refuses the 50,400-block depth.
+  node = defaultNode();
+  node.chainId = '0xaa36a7';
+  node.codes[ROUTER.toLowerCase()] = '0x6080604052';
+  node.deployedAt[ROUTER.toLowerCase()] = HEAD - 150n; // the emulator case: about 150 blocks old
+  node.depth = 256n; // pruned beyond 256 blocks
+  calls = [];
+  const young = await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: ROUTER, data: '0x12345678', chainCaip2: SEPOLIA, trackedTokens: [] });
+  const youngLines = computeRiskLines(young);
+  check('pruned endpoint: the shallow probe finds a 150-block-old contract -> "new contract" warning',
+    youngLines.some((l) => l.type === 'new-contract' && l.tone === 'warning' && /deployed only 150 blocks ago/.test(l.text)), youngLines.map((l) => l.text).join(' | '));
+  check('pruned endpoint: the full-depth search was tried first',
+    calls.some((c) => c.method === 'eth_getCode' && c.params[1] === '0x' + (HEAD - 50_400n).toString(16)));
+  check('pruned endpoint: the search then ran inside the served depth (256 blocks)',
+    calls.some((c) => c.method === 'eth_getCode' && c.params[1] === '0x' + (HEAD - 256n).toString(16)));
+
+  node.deployedAt[ROUTER.toLowerCase()] = HEAD - 5_000n; // older than the served depth
+  const atLeast = await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: ROUTER, data: '0x12345678', chainCaip2: SEPOLIA, trackedTokens: [] });
+  const atLeastLine = computeRiskLines(atLeast).find((l) => l.type === 'contract-age-unknown');
+  check('older than the served depth -> one neutral age line, never "new contract"',
+    atLeastLine && atLeastLine.tone === 'notice' && atLeastLine.text.startsWith(CONTRACT_AGE_UNKNOWN_LINE) &&
+      /at least the last 256 blocks \(about 51 minutes\)/.test(atLeastLine.text) && !computeRiskLines(atLeast).some((l) => l.type === 'new-contract'),
+    atLeastLine?.text);
+
+  node.depth = 0n; // no historical state at all
+  const none = await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: ROUTER, data: '0x12345678', chainCaip2: SEPOLIA, trackedTokens: [] });
+  const noneLines = computeRiskLines(none);
+  check('no historical state -> exactly "Contract age could not be checked on this endpoint."',
+    noneLines.some((l) => l.type === 'contract-age-unknown' && l.text === 'Contract age could not be checked on this endpoint.'));
+  check('a never-used contract recipient always gets a card with its classification',
+    noneLines.some((l) => l.type === 'recipient-class' && /goes to a contract/.test(l.text) && l.text.includes(ROUTER)));
+  node.depth = null;
+
+  // (b) First interaction over the known Sepolia tokens.
+  node = defaultNode();
+  node.chainId = '0xaa36a7';
+  calls = [];
+  const SEP_USDC = '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238';
+  const sepTokens = approvalTokensForChain([USDC_MAINNET], SEPOLIA).map((t) => ({ address: t.address, symbol: t.symbol }));
+  const sepFacts = await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: DRAINER, chainCaip2: SEPOLIA, trackedTokens: sepTokens });
+  const q = calls.find((c) => c.method === 'eth_getLogs');
+  check('Sepolia first-interaction search covers the known USDC and EURC', q && Array.isArray(q.params[0].address) && q.params[0].address.includes(SEP_USDC.toLowerCase()) && q.params[0].address.length === 2, JSON.stringify(q?.params[0].address));
+  const sepNotice = computeRiskLines(sepFacts).find((l) => l.type === 'first-interaction-unknown');
+  check('Sepolia notice names USDC, EURC and says ETH needs an indexer', sepNotice && /USDC, EURC transfers/.test(sepNotice.text) && /without a history indexer/.test(sepNotice.text), sepNotice?.text);
+
+  // (c) Native ETH through the history indexer.
+  const indexerCalls = [];
+  const indexer = (transfers, pageKey) => async (method, params) => {
+    indexerCalls.push({ method, params });
+    if (method !== 'alchemy_getAssetTransfers') throw new Error('unexpected ' + method);
+    return { transfers, ...(pageKey ? { pageKey } : {}) };
+  };
+  const sentToDrainer = { from: ME.toLowerCase(), to: DRAINER.toLowerCase(), category: 'external', hash: hash(90) };
+  const sentElsewhere = { from: ME.toLowerCase(), to: ROUTER.toLowerCase(), category: 'external', hash: hash(91) };
+  const known = await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: DRAINER, chainCaip2: SEPOLIA, trackedTokens: sepTokens, indexerTransport: indexer([sentElsewhere, sentToDrainer]) });
+  check('an earlier ETH transfer listed by the indexer -> known, no first-interaction line', known.nativeInteraction?.known === true && !computeRiskLines(known).some((l) => /^first-interaction/.test(l.type)));
+  const query = indexerCalls[0]?.params[0];
+  check('indexer query: fromAddress = the wallet, external + internal, newest first, 1,000 max', query && query.fromAddress === ME && query.toAddress === undefined && JSON.stringify(query.category) === '["external","internal"]' && query.order === 'desc' && query.maxCount === '0x3e8' && query.excludeZeroValue === false, JSON.stringify(query));
+  const complete = await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: DRAINER, chainCaip2: SEPOLIA, trackedTokens: [], indexerTransport: indexer([sentElsewhere]) });
+  const completeLine = computeRiskLines(complete).find((l) => l.type === 'first-interaction-unknown');
+  check('none found over the whole sent history -> notice says every ETH transfer was searched', completeLine && /every ETH transfer you sent, through your history indexer/.test(completeLine.text) && !/without a history indexer/.test(completeLine.text), completeLine?.text);
+  const partial = await searchNativeInteraction(indexer([sentElsewhere, sentElsewhere], 'next-page'), ME, DRAINER);
+  check('more pages exist -> the scope says only the latest N were searched', partial.complete === false && partial.checkedTransfers === 2);
+  const spoofIn = await searchNativeInteraction(indexer([{ from: DRAINER.toLowerCase(), to: ME.toLowerCase(), category: 'external' }]), ME, DRAINER);
+  check('a transfer FROM the counterparty is not evidence of sending to it', spoofIn.known === false);
+  const failedIndexer = await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: DRAINER, chainCaip2: SEPOLIA, trackedTokens: [], indexerTransport: async () => { throw new Error('indexer down'); } });
+  const failedLine = computeRiskLines(failedIndexer).find((l) => /^first-interaction/.test(l.type));
+  check('indexer down and no tokens -> "could not be checked", naming the indexer', failedLine?.type === 'first-interaction-unchecked' && /history indexer did not answer/.test(failedLine.text), failedLine?.text);
+  await checkRejects('a malformed indexer answer is an error, not "no transfers"', () => searchNativeInteraction(async () => ({ nope: true }), ME, DRAINER), /no transfers array/);
 }
 
 // Ordering: warnings before notices.
@@ -655,10 +830,11 @@ node.codes[DELEGATED.toLowerCase()] = '0xef0100' + DELEGATE_TARGET.slice(2);
     chainCaip2: MAINNET, trackedTokens: [],
   });
   const lines = computeRiskLines(facts);
-  check('warnings first, then notices', lines.map((l) => l.tone).join(',') === 'warning,notice', lines.map((l) => l.type).join(','));
+  check('warnings first, then notices', lines.map((l) => l.tone).join(',') === 'warning,notice,notice', lines.map((l) => l.type).join(','));
 }
 
-check('approximate durations', approxDuration(9000n) === 'about 30 hours' && approxDuration(72000n) === 'about 10 days' && approxDuration(1n) === 'about 1 hour');
+check('approximate durations', approxDuration(9000n) === 'about 30 hours' && approxDuration(72000n) === 'about 10 days' && approxDuration(1n) === 'about 1 minute' && approxDuration(64n) === 'about 13 minutes' && approxDuration(300n) === 'about 1 hour');
+check('Base Sepolia durations use 2-second blocks', approxDuration(9000n, 'eip155:84532') === 'about 5 hours' && approxDuration(9000n, 'eip155:11155111') === 'about 30 hours');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

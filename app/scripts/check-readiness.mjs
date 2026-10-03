@@ -34,6 +34,13 @@ import {
   readinessReason,
   readinessRefusal,
 } from '../src/config/readiness.ts';
+import {
+  PLAIN_BLOCKERS,
+  PLAIN_BLOCKERS_PROTECTED,
+  PLAIN_BLOCKERS_UNPROTECTED,
+  readinessDisplayReason,
+  readinessEvidenceLine,
+} from '../src/config/readiness.ts';
 import { EVM_BASE_SEPOLIA, EVM_MAINNET, EVM_SEPOLIA, EVM_TEST_PROFILES } from '../src/config/evm-chain.ts';
 import {
   KERNEL_PREFILL,
@@ -301,6 +308,32 @@ console.log('check-readiness: module gates refuse on mainnet with zero network c
   check('none of them made a node or bundler request, read the vault, stored or submitted anything', nodeCalls.n === 0 && bundler.calls.length === 0 && vault.loads === 0 && store._map.size === 0 && !submitted, `${nodeCalls.n}/${bundler.calls.length}/${vault.loads}/${store._map.size}`);
   const revoke = await caught(() => prepareSetCodeTx({ url: 'https://node.example', from: OWNER_0, action: 'revoke', expectedChainId: 1n, transportFor: () => countedNode }));
   check('a mainnet 7702 REVOCATION quote is not refused by the gate (undo always available)', !isRefusal(revoke), revoke?.message);
+}
+
+// F6 (phase 11 item 6): the plain-feature reasons follow THIS phone's phrase
+// storage, and the checklist ids live in a reviewer line, not the reason.
+{
+  const plainIds = ['eoa-send', 'tokens', 'nft', 'swap', 'dogecoin-send'];
+  for (const id of plainIds) {
+    const f = featureReadiness(id);
+    const prot = readinessDisplayReason(f, 'protected');
+    const unprot = readinessDisplayReason(f, 'unprotected');
+    check(`${id}: the table reason uses the neutral phrase clause`, f.reason.includes(PLAIN_BLOCKERS));
+    check(`${id}: protected phone -> never says the phrase is unprotected or untied`,
+      prot.includes(PLAIN_BLOCKERS_PROTECTED) && !/not yet tied|not protected by biometrics|opt-in rather than/.test(prot), prot);
+    check(`${id}: unprotected phone -> says so and points at the protection section`,
+      unprot.includes(PLAIN_BLOCKERS_UNPROTECTED) && /Settings → Recovery phrase protection/.test(unprot), unprot);
+    check(`${id}: unknown -> the table text unchanged`, readinessDisplayReason(f, 'unknown') === f.reason);
+    check(`${id}: display reasons keep one to three sentences`,
+      [prot, unprot].every((r) => r.endsWith('.') && r.split(/(?<=\.)\s+/).filter(Boolean).length <= 3));
+  }
+  check('no reason anywhere carries the old "not yet tied to biometric" wording',
+    FEATURE_READINESS.every((f) => !/not yet tied to biometric/.test(f.reason)));
+  check('features without the phrase clause are unchanged by the substitution',
+    readinessDisplayReason(featureReadiness('walletconnect'), 'protected') === featureReadiness('walletconnect').reason);
+  check('no reason shows checklist ids to the user (W1, N-01, C1 …)',
+    FEATURE_READINESS.every((f) => !/\b(?:C[1-3]|W\d{1,2}|[NF]-\d{2})\b/.test(readinessDisplayReason(f, 'protected'))));
+  check('the reviewer line carries the ids', readinessEvidenceLine(featureReadiness('eoa-send')) === 'Checklist and findings: W1, W2, W3, W4, W13, W17, W18, W19, W20, N-01.');
 }
 
 console.log(`\ncheck-readiness: ${passed} passed, ${failed} failed`);

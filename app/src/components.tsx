@@ -33,7 +33,8 @@ export function Button({
   const theme = useTheme();
   const background =
     variant === 'primary' ? theme.accent : variant === 'destructive' ? theme.danger : 'transparent';
-  const color = variant === 'secondary' ? theme.accent : '#ffffff';
+  const color =
+    variant === 'secondary' ? theme.accent : variant === 'destructive' ? theme.onDanger : theme.onAccent;
   // Choice chips mark the chosen option with a leading "✓" for sighted
   // users. Screen readers get the selected state instead, so the mark is
   // left out of the spoken label rather than read aloud as "check mark".

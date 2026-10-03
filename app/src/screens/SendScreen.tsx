@@ -141,8 +141,8 @@ function exact(amount: bigint, decimals: number): string {
 function NetworkBadge({ label, testnet, theme }: { label: string; testnet: boolean; theme: Theme }) {
   if (testnet) {
     return (
-      <View style={[styles.mainnetBadge, { backgroundColor: '#e07800', borderColor: '#e07800' }]}>
-        <Text style={[styles.mainnetBadgeText, { color: '#ffffff' }]}>
+      <View style={[styles.mainnetBadge, { backgroundColor: theme.testnetFill, borderColor: theme.testnetFill }]}>
+        <Text style={[styles.mainnetBadgeText, { color: theme.onTestnetFill }]}>
           {label} TESTNET — test funds only
         </Text>
       </View>
@@ -1656,7 +1656,7 @@ export function SendScreen({ route, navigation }: Props) {
       contentContainerStyle={styles.content}
       keyboardShouldPersistTaps="handled"
     >
-      <Text style={[styles.networkLine, { color: testnet ? '#e07800' : theme.textMuted }]}>
+      <Text style={[styles.networkLine, { color: testnet ? theme.testnetFill : theme.textMuted }]}>
         {network ? `${network.label} · ${testnet ? 'TESTNET' : 'Mainnet'}` : 'Unknown network'}{' '}
         · from {activeAccount ? `${activeAccount.name} ` : ''}({account.address.slice(0, 10)}…)
       </Text>
@@ -1996,6 +1996,8 @@ function Row({
       <Text style={[styles.rowLabel, { color: theme.textMuted }]}>{label}</Text>
       <Text
         selectable
+        // "—" is a visual placeholder; screen readers hear "not available".
+        {...(value === '—' ? { accessibilityLabel: 'not available' } : {})}
         style={[
           styles.rowValue,
           { color: theme.text },

@@ -450,7 +450,11 @@ export async function prepareEvmSend(
   try {
     gasLimit = await node.estimateGas({ from, to, value: amount, data: dataHex });
   } catch {
-    gasLimit = await node.estimateGas({ from, to, value: 0n, data: dataHex });
+    try {
+      gasLimit = await node.estimateGas({ from, to, value: 0n, data: dataHex });
+    } catch (error) {
+      throw asEstimateRevert(error, dataHex === undefined);
+    }
   }
 
   // OP-stack chains only (config/evm-chain.ts l1DataFee): price the exact
@@ -517,7 +521,12 @@ export async function maxEvmSend(url: string, from: string, to?: string): Promis
   // the call cannot fail for lack of funds. Falls back to the sender
   // itself when no recipient is typed yet (an EOA-to-EOA transfer).
   const recipient = to ?? from;
-  const gasLimit = await node.estimateGas({ from, to: recipient, value: 0n });
+  let gasLimit: bigint;
+  try {
+    gasLimit = await node.estimateGas({ from, to: recipient, value: 0n });
+  } catch (error) {
+    throw asEstimateRevert(error, true);
+  }
   let opStackFee = 0n;
   if (chainHasL1DataFee(chainId)) {
     // The value is priced at the full balance: the sent amount is at most
@@ -979,11 +988,77 @@ export function quoteEndpointChange(
 // ---------------------------------------------------------------------------
 
 /**
+ * Title for a quote whose gas estimate reverted. Nothing was signed or sent,
+ * so it uses the quote-step wording of aa.ts QUOTE_FAILED_TITLE (phase 11
+ * item 2 bug fixes); the string is repeated here because aa.ts imports this
+ * module.
+ */
+export const ESTIMATE_REVERT_TITLE = 'The quote could not be prepared.';
+
+/** The plain sentence for a plain ETH transfer the recipient refused. */
+export const PLAIN_TRANSFER_REJECTED_SENTENCE =
+  'The recipient contract rejected a plain ETH transfer during estimation (execution reverted). ' +
+  'Nothing was sent.';
+
+/**
+ * Thrown when eth_estimateGas reverts while a quote is prepared: the
+ * recipient (or called contract) refused the transaction in simulation, so
+ * no gas figure exists and nothing was attempted. Example: Permit2 has no
+ * payable receive function, so a plain ETH transfer to it reverts (emulator
+ * pass finding F3, 2026-10-03). `plainTransfer` is true for a value-only
+ * transfer with no calldata. The node's own text stays in `message`.
+ */
+export class GasEstimateRevertError extends Error {
+  plainTransfer: boolean;
+  /** The revert reason after "execution reverted:", when the node sent one. */
+  reason: string | null;
+  // No TS parameter properties: Node's strip-only type stripping rejects them.
+  constructor(message: string, plainTransfer: boolean, reason: string | null) {
+    super(message);
+    this.name = 'GasEstimateRevertError';
+    this.plainTransfer = plainTransfer;
+    this.reason = reason;
+  }
+}
+
+/**
+ * Wraps an eth_estimateGas failure: a revert becomes GasEstimateRevertError,
+ * anything else (an unreachable endpoint, insufficient funds) is returned
+ * unchanged so its own branch in describeSendError applies.
+ */
+function asEstimateRevert(error: unknown, plainTransfer: boolean): unknown {
+  if (isEndpointFailure(error)) return error;
+  const message = error instanceof Error ? error.message : String(error);
+  if (!/revert/i.test(message)) return error;
+  const reason = /execution reverted:\s*([^()]+?)\s*(?:\(|$)/i.exec(message)?.[1]?.trim() ?? null;
+  return new GasEstimateRevertError(message, plainTransfer, reason && reason !== '' ? reason : null);
+}
+
+/** The plain sentence for a GasEstimateRevertError (detail line of the quote failure). */
+export function estimateRevertSentence(error: GasEstimateRevertError): string {
+  if (error.plainTransfer) {
+    return error.reason
+      ? `The recipient contract rejected a plain ETH transfer during estimation (execution reverted: ${error.reason}). Nothing was sent.`
+      : PLAIN_TRANSFER_REJECTED_SENTENCE;
+  }
+  return (
+    `The contract rejected this transaction during estimation (execution reverted${
+      error.reason ? `: ${error.reason}` : ''
+    }). Nothing was sent.`
+  );
+}
+
+/**
  * Turns engine/RPC errors into plain language for the send screen, keeping
  * the original message as detail because it names the exact protocol-level
  * failure (dust threshold, insufficient funds arithmetic, node rejection).
  */
 export function describeSendError(error: unknown, symbol: string): { title: string; detail: string } {
+  // A reverted gas estimate is a quote-step failure (nothing was attempted),
+  // explained in one plain sentence rather than the node's "RPC error 3".
+  if (error instanceof GasEstimateRevertError || (error as { name?: unknown } | null)?.name === 'GasEstimateRevertError') {
+    return { title: ESTIMATE_REVERT_TITLE, detail: estimateRevertSentence(error as GasEstimateRevertError) };
+  }
   const detail = error instanceof Error ? error.message : String(error);
   // Token sends (send-erc20.ts): the fee is paid in ETH, so an ETH
   // shortfall must never be titled with the token's symbol. This also

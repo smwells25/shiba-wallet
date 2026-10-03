@@ -16,7 +16,7 @@ import type { RootStackParamList } from '../navigation';
 import { Button, screenStyle } from '../components';
 import { useTheme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
-import { OfflineNotice } from '../wallet/connectivity';
+import { OfflineNotice, TechnicalDetail, describeNetworkError } from '../wallet/connectivity';
 import { usePrefs } from '../wallet/PrefsContext';
 import { EVM_CHAIN_ID } from '../wallet/send';
 import { NftImage } from '../components/NftImage';
@@ -36,7 +36,8 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Nfts'>;
 type LoadState =
   | { status: 'loading' }
   | { status: 'unconfigured' }
-  | { status: 'error'; message: string }
+  /** `detail`: a plain sentence; `technical`: cleaned endpoint text for the muted line. */
+  | { status: 'error'; detail: string; technical: string | null }
   | { status: 'ok'; nfts: OwnedNft[]; nextCursor?: string; skipped: number };
 
 type Row =
@@ -64,7 +65,7 @@ export function NftsScreen({ navigation }: Props) {
   const [loadingMore, setLoadingMore] = useState(false);
   // A failed "Load more" keeps the items already shown (it used to replace
   // the whole gallery with the error state) and offers a retry below them.
-  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
+  const [loadMoreError, setLoadMoreError] = useState<{ detail: string; technical: string | null } | null>(null);
   const [showSpam, setShowSpam] = useState(false);
   // Generation counter: a response from a superseded load (account or mode
   // switch, refresh) never overwrites a newer one.
@@ -95,7 +96,8 @@ export function NftsScreen({ navigation }: Props) {
         );
       } catch (e) {
         if (gen === generation.current) {
-          setState({ status: 'error', message: e instanceof Error ? e.message : String(e) });
+          const { detail, technical } = describeNetworkError(e, 'your NFTs');
+          setState({ status: 'error', detail, technical });
         }
       } finally {
         if (gen === generation.current) setRefreshing(false);
@@ -140,7 +142,8 @@ export function NftsScreen({ navigation }: Props) {
       });
     } catch (e) {
       if (gen === generation.current) {
-        setLoadMoreError(e instanceof Error ? e.message : String(e));
+        const { detail, technical } = describeNetworkError(e, 'more NFTs');
+        setLoadMoreError({ detail, technical });
       }
     } finally {
       setLoadingMore(false);
@@ -169,7 +172,7 @@ export function NftsScreen({ navigation }: Props) {
 
   const header = (
     <View style={styles.headerBlock}>
-      <Text style={[styles.networkLine, { color: evmChain.testnet ? '#e07800' : theme.textMuted }]}>
+      <Text style={[styles.networkLine, { color: evmChain.testnet ? theme.testnetFill : theme.textMuted }]}>
         {evmChain.label} · {evmChain.testnet ? 'TESTNET' : 'Mainnet'}
         {activeAccount ? ` · ${activeAccount.name}` : ''}
       </Text>
@@ -214,7 +217,10 @@ export function NftsScreen({ navigation }: Props) {
           address owns. Add an NFT indexer URL for {evmChain.label} in
           Settings → NFT indexer to see your collection here.
         </Text>
-        <Button title="Open Settings" onPress={() => navigation.navigate('Settings')} />
+        <Button
+          title="Open NFT indexer settings"
+          onPress={() => navigation.navigate('Settings', { section: 'nft-indexer' })}
+        />
       </View>
     );
   }
@@ -227,9 +233,8 @@ export function NftsScreen({ navigation }: Props) {
           Your NFTs could not be loaded right now. Check your connection and
           try again.
         </Text>
-        <Text selectable style={[styles.hint, { color: theme.textMuted }]}>
-          {state.message}
-        </Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{state.detail}</Text>
+        <TechnicalDetail text={state.technical} />
         <Button title="Retry" variant="secondary" onPress={() => void load(true)} />
       </View>
     );
@@ -314,9 +319,8 @@ export function NftsScreen({ navigation }: Props) {
               <Text style={[styles.hint, { color: theme.text }]}>
                 More NFTs could not be loaded. The items above are unchanged.
               </Text>
-              <Text selectable style={[styles.hint, { color: theme.textMuted }]}>
-                {loadMoreError}
-              </Text>
+              <Text style={[styles.hint, { color: theme.textMuted }]}>{loadMoreError.detail}</Text>
+              <TechnicalDetail text={loadMoreError.technical} />
             </>
           ) : null}
           {state.nextCursor ? (

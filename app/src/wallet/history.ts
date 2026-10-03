@@ -11,6 +11,7 @@ import {
 import type { NetworkKind } from '../config/defaults';
 import { tokenLogsCoverageOf, tokenLogsHistoryProvider } from './token-history.ts';
 import type { TokenLogsCoverage, TrackedTokenRef } from './token-history.ts';
+import { sanitizeEndpointMessage } from '../config/endpoint-probe.ts';
 
 /**
  * Transaction-history engine glue: resolves the right HistoryProvider for a
@@ -77,8 +78,9 @@ const INDEXER_POINTER =
 /**
  * The partial-history note for the tracked-token logs fallback, written
  * from what the endpoint actually answered (token-history.ts coverage),
- * plus the endpoint's own refusal text, verbatim, as a separate detail
- * line when paging stopped on a refused window. Block numbers are printed
+ * plus the endpoint's own refusal (JSON-RPC code and first sentence, links
+ * and advertising removed) as a separate detail line when paging stopped
+ * on a refused window. Block numbers are printed
  * raw so they can be compared with the "block N" labels on the rows.
  */
 export function tokenLogsCoverageNote(coverage: TokenLogsCoverage): {
@@ -86,10 +88,15 @@ export function tokenLogsCoverageNote(coverage: TokenLogsCoverage): {
   detail: string | null;
 } {
   const head = coverage.headBlock.toString();
+  // The endpoint's own words, reduced to its JSON-RPC code and first
+  // sentence with links and provider advertising removed
+  // (endpoint-probe.ts sanitizeEndpointMessage); publicnode's refusal ends
+  // with "Get one at: https://www.allnodes.com/publicnode".
+  const cleaned = coverage.refusal
+    ? sanitizeEndpointMessage(coverage.refusal.message, coverage.refusal.code)
+    : '';
   const detail = coverage.refusal
-    ? (coverage.refusal.code !== undefined
-        ? `The endpoint's response (JSON-RPC error ${coverage.refusal.code}): `
-        : "The endpoint's response: ") + coverage.refusal.message
+    ? `The endpoint's response: ${cleaned === '' ? 'no readable reason.' : cleaned}`
     : null;
   if (coverage.stop === 'refused') {
     if (coverage.answeredFromBlock === null) {

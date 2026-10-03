@@ -130,3 +130,89 @@ export async function removeToken(
   if (removed) await saveTokenRegistry(registry, store);
   return removed;
 }
+
+// ---------------------------------------------------------------------------
+// Known test-network tokens (phase 11 item 6 follow-up F1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Tokens the wallet KNOWS on each test network, independent of the
+ * tracked list. They are read-only reference data for the approvals manager
+ * and the first-interaction risk check (approvals.ts, risk.ts): on a test
+ * network the tracked list (mainnet assets only, see listTokens) offers
+ * nothing to search, so without these the live Sepolia USDC → Permit2
+ * allowance from the Uniswap swaps was invisible (emulator pass finding F1,
+ * 2026-10-03). They are not shown on Home and cannot be sent from the token
+ * screens; nothing about the tracked list changes.
+ *
+ * Every address was checked against the issuer's documentation AND the
+ * chain:
+ *  - Circle, "USDC contract addresses"
+ *    (https://developers.circle.com/stablecoins/usdc-contract-addresses,
+ *    fetched 2026-10-03): Ethereum Sepolia
+ *    0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238 and Base Sepolia
+ *    0x036CbD53842c5426634e7929541eC2318f3dCF7e;
+ *  - Circle, "EURC contract addresses"
+ *    (https://developers.circle.com/stablecoins/eurc-contract-addresses,
+ *    fetched 2026-10-03): Ethereum Sepolia
+ *    0x08210F9170F89Ab7658F0B5E3fF39b0E03C594D4 (also recorded in AGENTS.md,
+ *    2026-10-02 WalletConnect retest);
+ *  - live eth_call reads on 2026-10-03 (ethereum-sepolia-rpc.publicnode.com
+ *    and sepolia.base.org, which answered eth_chainId 0x14a34): symbol() and
+ *    name() "USDC" / "EURC", decimals() 6 for all three.
+ * Circle lists no EURC on Base Sepolia on the page fetched, so none is
+ * listed here.
+ *
+ * WHY THE TRACKED LIST STAYS MAINNET-ONLY. The store is keyed by CAIP-19
+ * ids, so it could hold test-network tokens, but listTokens() is consumed
+ * by Home's token rows (useTokenBalances.ts), Activity, Swap, Send, the
+ * WalletConnect sheet and the balance-change preview, and every one of
+ * them assumes Ethereum mainnet assets (prices, the 0x swap list, mainnet
+ * balances). Letting test-network tokens into it would need changes in each
+ * of those, several outside this slice; a separate read-only list keeps
+ * the change honest and small.
+ */
+export const KNOWN_TEST_NETWORK_TOKENS: Readonly<Record<string, readonly FungibleAsset[]>> = {
+  'eip155:11155111': [
+    {
+      kind: 'fungible',
+      assetId: {
+        chainId: 'eip155:11155111',
+        namespace: 'erc20',
+        reference: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238',
+      },
+      symbol: 'USDC',
+      name: 'USDC',
+      decimals: 6,
+    },
+    {
+      kind: 'fungible',
+      assetId: {
+        chainId: 'eip155:11155111',
+        namespace: 'erc20',
+        reference: '0x08210F9170F89Ab7658F0B5E3fF39b0E03C594D4',
+      },
+      symbol: 'EURC',
+      name: 'EURC',
+      decimals: 6,
+    },
+  ],
+  'eip155:84532': [
+    {
+      kind: 'fungible',
+      assetId: {
+        chainId: 'eip155:84532',
+        namespace: 'erc20',
+        reference: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+      },
+      symbol: 'USDC',
+      name: 'USDC',
+      decimals: 6,
+    },
+  ],
+};
+
+/** The known tokens on one CAIP-2 chain (empty for mainnet and unknown chains). */
+export function knownTokensForChain(chainCaip2: string): FungibleAsset[] {
+  return [...(KNOWN_TEST_NETWORK_TOKENS[chainCaip2] ?? [])];
+}

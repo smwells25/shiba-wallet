@@ -37,7 +37,13 @@
 //   node scripts/check-failover.mjs
 
 import { DEFAULT_NETWORKS } from '../src/config/defaults.ts';
-import { isEndpointFailure, runWithEndpointFailover } from '../src/config/endpoint-probe.ts';
+import {
+  NO_ANSWER_SENTENCE,
+  describeNetworkFailure,
+  isEndpointFailure,
+  runWithEndpointFailover,
+  sanitizeEndpointMessage,
+} from '../src/config/endpoint-probe.ts';
 import {
   NoEndpointError,
   callWithFailover,
@@ -791,6 +797,37 @@ const DAPP_DATA_HEX = `0x${Buffer.from(DAPP_TX.data).toString('hex')}`;
 }
 
 seed.fill(0);
+
+// F4 / F9 (phase 11 item 6): what a user reads from an endpoint error.
+console.log('endpoint error text (F4, F9):');
+{
+  const ad = 'RPC error -32602: Archive requests require a personal token. Get one at: https://www.allnodes.com/publicnode (eth_getLogs)';
+  check('publicnode refusal -> code + first sentence, no advert, no URL',
+    sanitizeEndpointMessage(ad) === 'JSON-RPC error -32602: Archive requests require a personal token.', sanitizeEndpointMessage(ad));
+  check('code passed separately is kept',
+    sanitizeEndpointMessage('Archive requests require a personal token. Get one at: https://x.example', -32602) === 'JSON-RPC error -32602: Archive requests require a personal token.');
+  check('"Get one at" removed even inside the first sentence',
+    sanitizeEndpointMessage('Rate limited, get one at https://vendor.example/pricing') === 'Rate limited.');
+  check('bare URLs and www links removed', !/https?:|www\./.test(sanitizeEndpointMessage('Upgrade at www.vendor.example or https://vendor.example now')));
+  const java = 'java.net.UnknownHostException: Unable to resolve host "eth-sepolia.g.alchemy.com": No address associated with hostname';
+  const cleanedJava = sanitizeEndpointMessage(java);
+  check('Java exception class removed, the readable part kept',
+    !/java\.|Exception/.test(cleanedJava) && cleanedJava.startsWith('Unable to resolve host'), cleanedJava);
+  check('only the first sentence is kept', sanitizeEndpointMessage('First thing. Second thing.') === 'First thing.');
+  check('long text capped', sanitizeEndpointMessage('x'.repeat(500)).length <= 200);
+  check('nothing readable -> empty string', sanitizeEndpointMessage('https://only.example') === '');
+
+  const offline = new TypeError('Network request failed');
+  const d = describeNetworkFailure(offline, 'your NFTs');
+  check('offline: calm title naming the thing', d.title.startsWith('Could not reach the network endpoint, so your NFTs could not be loaded'));
+  check('offline: the detail is a plain sentence, not the exception', d.detail === NO_ANSWER_SENTENCE);
+  check('offline: technical line is the cleaned text', d.technical === 'Network request failed.');
+  const javaTimeout = Object.assign(new Error('java.net.SocketTimeoutException: timeout'), {});
+  const t = describeNetworkFailure(javaTimeout, 'your NFTs');
+  check('a raw Java timeout never reaches the user verbatim', t.detail === NO_ANSWER_SENTENCE && t.technical !== null && !/java\.|Exception/.test(t.technical), JSON.stringify(t));
+  const answer = describeNetworkFailure(new Error(ad), 'older approvals');
+  check('an endpoint answer: detail is its cleaned first sentence', answer.title === 'Older approvals could not be loaded.' && answer.detail === 'JSON-RPC error -32602: Archive requests require a personal token.' && answer.technical === null);
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
