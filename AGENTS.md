@@ -3397,3 +3397,54 @@ whenever the Expo account and identifiers arrive. Subagents on Opus.
       Actions runs on the public repo: 12b311c and 1e37343 both completed
       with conclusion success (github.com/smwells25/shiba-wallet/actions,
       runs 37081746661 and 37082671263).
+- [x] Item 6 — mainnet readiness switchboard (commit 68b6292;
+      check-readiness.mjs 115 new checks; check-aa 81, check-aa-kernel 76,
+      check-7702 118, check-sessions 102, check-passkeys 129,
+      check-recovery 231; re-verified by the CTO in an isolated worktree
+      incl. the offline app runner ALL GREEN, tsc and lint clean).
+      app/src/config/readiness.ts: one table, feature → status
+      ('mainnet-ok' | 'testnet-only' | 'blocked') → plain reason →
+      THREAT_MODEL.md evidence ids; helpers isFeatureAllowed,
+      readinessReason, readinessRefusal, assertFeatureAllowed
+      (FeatureNotAllowedError), readinessGate, isTestNetwork (only
+      eip155:11155111 counts; unknown chains are mainnet); NO developer
+      override by design. Statuses: NO feature is mainnet-ok today —
+      every one cites an unmet C/W item (check-readiness parses the
+      threat model and would fail if a feature claimed mainnet-ok with an
+      unmet item). Enforced (testnet-only): simple-account,
+      kernel-smart-account, eip7702-upgrade, session-keys, passkeys,
+      guardians, owner-rotation, paymaster. Advisory only ("blocked",
+      shown in Settings but still running on mainnet — a Chairperson
+      decision): eoa-send (W1–W4, W13, W17–W20, N-01), tokens (+N-10), nft
+      (+F-47), swap (W7), walletconnect (W11, W12, N-06, N-07),
+      dogecoin-send (W6/F-41; enforcing it needs one line in send.ts or
+      SendScreen, outside the agent's scope — follow-up once the plain
+      rows are decided). Gates fire before any network request: aa.ts
+      isAaConfigured is false where the owner's account type is not
+      allowed (AaChainConfig gained `chain`; a config without it counts
+      as gated), which hides the Send/Swap smart-account toggles, the
+      session/passkey/recovery eligibility hooks and WalletConnect's
+      smart-account offer (all read through loadAaBundle) without editing
+      those files; hasCompleteAaSettings keeps the undo paths working;
+      setAaBundlerUrl / setAaFactory / setAaKernelFactory / setAaPaymaster
+      / setAccountEip7702(true) refuse and persist nothing; sendAa refuses
+      a quote carrying a 7702 upgrade; delegation.ts prepareSetCodeTx
+      refuses upgrades and sendSetCodeTx accepts only zero-address
+      tuples; sessions.ts (prepare/install/sendSessionCalls before the
+      vault read), passkeys.ts (prepare/install/prepare calls/send/
+      signHash), recovery.ts (guardian install/renew quotes and submits,
+      recovery start, approveWithSig, review/sign/submit, attach, owner
+      rotation quote/submit) all refuse with the reason. Undo paths are
+      deliberately open: revoke/cancel upgrade, revoke/forget session,
+      remove/forget passkey, remove guardians, veto, finish an owner
+      change already sent, clear settings. Screens: the seven feature
+      screens show a "test networks only" card with the reason and the
+      Settings → Developer hint and disable their start buttons; Settings
+      gained a "Mainnet readiness" section (status chip, reason,
+      enforced-or-advisory, evidence ids) and a gating note in the AA
+      section whose editors lock on gated chains (Clear still works).
+      Notes: the card component is duplicated per screen (could move to
+      components.tsx); THREAT_MODEL.md W10 and W15 are now met by items 4
+      and 1 and the document should be updated; sendAa in general is not
+      gated (screens never reach it on mainnet; full gating would need
+      check-wc-5792 changes). Not eyeballed on a device.
