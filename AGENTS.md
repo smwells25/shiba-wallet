@@ -4599,3 +4599,58 @@ emulator, 6 after. Subagents on Opus.
       SimpleAccount addresses not in the wallet set, mainnet Universal
       Router addresses not pinned, Sepolia Activity has rows only with an
       indexer configured. Nothing eyeballed on a device.
+- [x] Item 2 — IN-APP COUNTERFACTUAL KERNEL DEPLOYMENT, PROVEN LIVE
+      (2026-10-03, emulator, Expo Go, Sepolia; Metro untouched; nothing
+      self-bundled). Setup: the emulator's Sepolia bundler row showed the
+      ALCHEMY URL (contrary to the phase 8 note that it had been switched
+      — the phase 9 "UNVERIFIED" remark was right); Clear removed only the
+      URL (account type stayed Kernel v3.3), the ZeroDev URL was typed via
+      ADBKeyboard (never printed) and Verify & save gave "https://
+      rpc.zerodev.app/…", "Verified ✓ … (checked 2026-10-03)", "ready ·
+      Kernel v3.3". Settings → Accounts → Add account (one prompt "Unlock
+      your recovery phrase to create the account") → Account 3 =
+      0x3C1C7d5198F59B1FC1a5bA1B0BD43315d84514eE (m/44'/60'/0'/0/2). Its
+      Kernel counterfactual, computed with predictKernelAddress and
+      spec.getAddress against the factory: 0xBe46D8523cF55eA13903Adfd72587A38800E9E59,
+      code 0x, balance 0. Funding: Account 1 EOA → 0.0025 test ETH to the
+      counterfactual (one prompt "Approve sending 0.0025 test ETH"; tx
+      0xe0d1ea4a925b5b97fc9d10ba6780b79748618e84b81e5a4a9c761e7cf82afe46,
+      block 11838399, status 0x1; code still 0x). Deployment send from
+      Account 3 (smart-account toggle on, 0.0001 test ETH to Account 1's
+      EOA): the confirm showed OWNER ACCOUNT (SIGNS) Account 3, FROM SMART
+      ACCOUNT 0xBe46…9E59, balance 0.0025, DEPLOYMENT "Will deploy with
+      this send", max fee 0.001127572960505705 (2.4109 gwei × 467,705 gas,
+      bundler estimate), the preview "You send 0.0001 test ETH" simulated
+      as the smart account, "Bundler gas estimate passed"; one prompt
+      ("Send ETH"); "Sent to bundler ✓", userOpHash
+      0x0de93cee598618cbca700413fd202828d02f97d84b8720a16357671ad73d650e,
+      "Bundling…", "Included on-chain — succeeded.", bundle tx
+      0x1bb1b8ab71aeb6bb680ab13a134d293f943d47f0df99e44fcabe694cac36069b.
+      Independently verified on publicnode: block 11838420, status 0x1,
+      to EntryPoint v0.7 handleOps, 321,911 gas; AccountDeployed with the
+      matching userOpHash, sender 0xBe46…9E59, factory = the meta factory
+      0xd703…42d5 (the handleOps input carries the meta factory, the
+      KernelFactory 0x2577…E2E9 and the owner — the initCode path);
+      UserOperationEvent sender 0xBe46…9E59, nonce 0, success, actualGasCost
+      458,756,313,552,258 wei, actualGasUsed 325,329; eth_getCode at
+      block−1 = 0x, now the 61-byte ERC-1967 proxy with the implementation
+      slot = Kernel 0xd6CE…5b28; readKernelOwner: ECDSA root, owner =
+      Account 3's EOA. Feature 14 is now proven in-app. End state: Account
+      1 active (0.00373 test ETH), ZeroDev saved for Sepolia; Account 3's
+      smart account holds 0.001272 + 0.000669 EntryPoint deposit (the
+      top-up headroom); 3 prompts total. BUGS (fix agent dispatched):
+      (A) an unfunded new smart account cannot learn its own address
+      in-app — prepareAaCalls runs the bundler estimate before the wallet's
+      insufficient-funds check, so Review shows a raw "RPC error -32500:
+      … AA21 didn't pay prefund (eth_estimateUserOperationGas)" under the
+      title "The transaction could not be sent." (nothing was sent) and the
+      counterfactual address appears nowhere (form, Receive, Home); (B) the
+      confirm always shows the Alchemy "rejects Kernel DEPLOYMENT
+      operations" note even with ZeroDev configured; (C) the smart-account
+      path's biometric title is just "Send ETH" while the EOA path's names
+      the amount. Emulator notes: the first Verify & save tap after ADB
+      typing was swallowed; two quick toggle taps cancel out. Secret
+      handling: the URL was typed only via ADBKeyboard; one uiautomator
+      dump of the open editor printed the full URL to the agent's local
+      tool output once before it added a redacting wrapper — it did not
+      enter the transcript or any file; no rotation needed.
