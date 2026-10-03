@@ -99,8 +99,7 @@ export function NftImage({
     return () => {
       cancelled = true;
     };
-    // nft identity is captured by key; extraKey covers extraCandidates.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `key` identifies the NFT (chain, contract, token id) and `extraKey` is the joined extraCandidates. NftDetailScreen builds extraCandidates inline (a new array every render), and a gallery reload hands over a new nft object for the same token; listing either would reload the image without any input having changed.
   }, [key, variant, extraKey]);
 
   if (state === null) {

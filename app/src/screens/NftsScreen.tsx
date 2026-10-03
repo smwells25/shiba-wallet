@@ -13,9 +13,10 @@ import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { OwnedNft } from '@shiba-wallet/chains-evm';
 import type { RootStackParamList } from '../navigation';
-import { Button, WarningBox, screenStyle } from '../components';
+import { Button, screenStyle } from '../components';
 import { useTheme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
+import { OfflineNotice } from '../wallet/connectivity';
 import { usePrefs } from '../wallet/PrefsContext';
 import { EVM_CHAIN_ID } from '../wallet/send';
 import { NftImage } from '../components/NftImage';
@@ -61,6 +62,9 @@ export function NftsScreen({ navigation }: Props) {
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  // A failed "Load more" keeps the items already shown (it used to replace
+  // the whole gallery with the error state) and offers a retry below them.
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
   const [showSpam, setShowSpam] = useState(false);
   // Generation counter: a response from a superseded load (account or mode
   // switch, refresh) never overwrites a newer one.
@@ -123,6 +127,7 @@ export function NftsScreen({ navigation }: Props) {
   const onLoadMore = async () => {
     if (!owner || accountIndex === null || loadingMore) return;
     setLoadingMore(true);
+    setLoadMoreError(null);
     const gen = generation.current;
     try {
       const result = await loadMoreNfts({ chainId: evmChain.caip2, accountIndex, owner });
@@ -135,7 +140,7 @@ export function NftsScreen({ navigation }: Props) {
       });
     } catch (e) {
       if (gen === generation.current) {
-        setState({ status: 'error', message: e instanceof Error ? e.message : String(e) });
+        setLoadMoreError(e instanceof Error ? e.message : String(e));
       }
     } finally {
       setLoadingMore(false);
@@ -168,6 +173,7 @@ export function NftsScreen({ navigation }: Props) {
         {evmChain.label} · {evmChain.testnet ? 'TESTNET' : 'Mainnet'}
         {activeAccount ? ` · ${activeAccount.name}` : ''}
       </Text>
+      <OfflineNotice />
       {state.status === 'ok' && state.skipped > 0 ? (
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           {state.skipped} item{state.skipped === 1 ? '' : 's'} from the indexer{' '}
@@ -178,7 +184,11 @@ export function NftsScreen({ navigation }: Props) {
       ) : null}
       {state.status === 'ok' && spamItems > 0 ? (
         <View style={styles.spamToggle}>
-          <Switch value={showSpam} onValueChange={setShowSpam} />
+          <Switch
+            accessibilityLabel="Show items flagged as spam"
+            value={showSpam}
+            onValueChange={setShowSpam}
+          />
           <Text style={[styles.spamLabel, { color: theme.text }]}>
             Show {spamItems} item{spamItems === 1 ? '' : 's'} flagged as spam
           </Text>
@@ -213,7 +223,13 @@ export function NftsScreen({ navigation }: Props) {
     return (
       <View style={[screenStyle(theme), styles.padded]}>
         {header}
-        <WarningBox>Could not load NFTs: {state.message}</WarningBox>
+        <Text style={[styles.body, { color: theme.text }]}>
+          Your NFTs could not be loaded right now. Check your connection and
+          try again.
+        </Text>
+        <Text selectable style={[styles.hint, { color: theme.textMuted }]}>
+          {state.message}
+        </Text>
         <Button title="Retry" variant="secondary" onPress={() => void load(true)} />
       </View>
     );
@@ -248,7 +264,12 @@ export function NftsScreen({ navigation }: Props) {
             <Pressable
               key={assetId}
               accessibilityRole="button"
-              accessibilityLabel={nftDisplayName(nft)}
+              accessibilityLabel={
+                nft.standard === 'erc1155'
+                  ? `${nftDisplayName(nft)}, ${hideAmounts ? 'amount hidden' : `${nft.balance.toString()} copies`}`
+                  : nftDisplayName(nft)
+              }
+              accessibilityHint="Opens the NFT details"
               onPress={() => navigation.navigate('NftDetail', { assetId })}
               style={({ pressed }) => [styles.tile, { opacity: pressed ? 0.75 : 1 }]}
             >
@@ -288,11 +309,25 @@ export function NftsScreen({ navigation }: Props) {
       }
       ListFooterComponent={
         <View style={styles.footer}>
+          {loadMoreError ? (
+            <>
+              <Text style={[styles.hint, { color: theme.text }]}>
+                More NFTs could not be loaded. The items above are unchanged.
+              </Text>
+              <Text selectable style={[styles.hint, { color: theme.textMuted }]}>
+                {loadMoreError}
+              </Text>
+            </>
+          ) : null}
           {state.nextCursor ? (
             loadingMore ? (
               <ActivityIndicator color={theme.accent} />
             ) : (
-              <Button title="Load more" variant="secondary" onPress={() => void onLoadMore()} />
+              <Button
+                title={loadMoreError ? 'Try again' : 'Load more'}
+                variant="secondary"
+                onPress={() => void onLoadMore()}
+              />
             )
           ) : null}
           <Text style={[styles.hint, { color: theme.textMuted }]}>
@@ -305,7 +340,15 @@ export function NftsScreen({ navigation }: Props) {
         </View>
       }
       refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} />
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={() => {
+            setLoadMoreError(null);
+            void load(true);
+          }}
+          tintColor={theme.textMuted}
+          colors={[theme.accent]}
+        />
       }
     />
   );

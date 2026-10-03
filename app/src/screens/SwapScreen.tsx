@@ -4,6 +4,7 @@ import {
   Alert,
   Linking,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Switch,
@@ -17,7 +18,15 @@ import type { FungibleAsset } from '@shiba-wallet/core';
 import type { SwapQuote } from '@shiba-wallet/chains-evm';
 import type { RootStackParamList } from '../navigation';
 import { Button, WarningBox, screenStyle } from '../components';
-import { getEndpoint, type NetworkEndpoint } from '../config/networks';
+import {
+  callWithFailover,
+  getEndpoint,
+  reportEndpointFailure,
+  withEndpoint,
+  type NetworkEndpoint,
+  type UsableEndpoint,
+} from '../config/networks';
+import { OfflineNotice } from '../wallet/connectivity';
 import { useTheme, type Theme } from '../theme';
 import { BalanceChangePreview } from '../components/BalanceChangePreview';
 import { RiskWarnings } from '../components/RiskWarnings';
@@ -29,7 +38,9 @@ import { fetchErc20Balance } from '../wallet/erc20';
 import { listTokens } from '../wallet/tokens';
 import {
   EVM_CHAIN_ID,
+  QUOTE_ENDPOINT_CHANGED_TITLE,
   describeSendError,
+  quoteEndpointChange,
   sendEvm,
   type EvmSendQuote,
   type SendResult,
@@ -158,6 +169,10 @@ export function SwapScreen({ navigation }: Props) {
   const [presetBps, setPresetBps] = useState<number>(DEFAULT_SLIPPAGE_BPS);
   const [customBpsText, setCustomBpsText] = useState('');
   const [sellBalance, setSellBalance] = useState<bigint | null>(null);
+  // The sell-side balance read failed (shown as a sentence with Retry);
+  // bumping sellBalanceTry re-runs the read.
+  const [sellBalanceFailed, setSellBalanceFailed] = useState(false);
+  const [sellBalanceTry, setSellBalanceTry] = useState(0);
   const [formError, setFormError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -169,6 +184,10 @@ export function SwapScreen({ navigation }: Props) {
   const [approveQuote, setApproveQuote] = useState<EvmSendQuote | null>(null);
   const [approveTxid, setApproveTxid] = useState<string | null>(null);
   const [sendQuote, setSendQuote] = useState<EvmSendQuote | null>(null);
+  // The endpoint URL the current approve or swap quote was prepared
+  // through; it is signed and broadcast only through this URL, and only
+  // while the wallet would still use it (send.ts quoteEndpointChange).
+  const [quotedUrl, setQuotedUrl] = useState<string | null>(null);
   const [overrideSimulation, setOverrideSimulation] = useState(false);
   const [result, setResult] = useState<SendResult | null>(null);
   // The address the approve/swap transactions were prepared for (nonce,
@@ -191,6 +210,9 @@ export function SwapScreen({ navigation }: Props) {
   const [aaSender, setAaSender] = useState<string | null>(null);
   const [aaQuote, setAaQuote] = useState<AaSendQuote | null>(null);
   const aaBundle = useRef<AaClientBundle | null>(null);
+  // The node URL the smart-account bundle was built with (its quotes come
+  // from it, so the send is pinned to it like the EOA path).
+  const aaBundleUrl = useRef<string | null>(null);
   const [aaResult, setAaResult] = useState<{
     userOpHash: string;
     receiptState: 'pending' | 'found' | 'timeout';
@@ -270,6 +292,10 @@ export function SwapScreen({ navigation }: Props) {
   }, [evmChain.caip2]);
 
   const url = endpoint?.url ?? null;
+  // The EOA confirm screens' preview and risk checks read the URL the shown
+  // quote came from; the smart-account confirm keeps `url`, which is the
+  // URL its bundle was built from (a change rebuilds the bundle).
+  const confirmUrl = quotedUrl ?? url;
   const aaAvailable =
     aaConfig !== null && isAaConfigured(aaConfig, account?.address) && url !== null;
   // 'kernel-7702' for an account upgraded with EIP-7702 (the account at its
@@ -283,6 +309,7 @@ export function SwapScreen({ navigation }: Props) {
   useEffect(() => {
     if (!aaActive || !url || !aaConfig || !activeAccount || !account) {
       aaBundle.current = null;
+      aaBundleUrl.current = null;
       return;
     }
     let cancelled = false;
@@ -295,6 +322,7 @@ export function SwapScreen({ navigation }: Props) {
           ownerAddress: account.address,
         });
         aaBundle.current = bundle;
+        aaBundleUrl.current = url;
         return resolveAaSender(bundle, account.address);
       })
       .then(
@@ -338,22 +366,33 @@ export function SwapScreen({ navigation }: Props) {
   ) {
     setSellBalanceInputs({ url, holder, sellAsset });
     setSellBalance(null);
+    setSellBalanceFailed(false);
   }
 
   useEffect(() => {
     if (!url || !holder) return;
+    let cancelled = false;
     void (async () => {
       try {
-        const balance =
+        // Resolved at call time with the shared failover rule, so a dead
+        // default endpoint does not leave the balance line blank.
+        const { value: balance } = await withEndpoint(EVM_CHAIN_ID, (ep) =>
           sellAsset === 'native'
-            ? await fetchNativeBalance('evm-jsonrpc', url, holder)
-            : await fetchErc20Balance(url, sellAsset.assetId.reference, holder);
-        setSellBalance(balance);
+            ? fetchNativeBalance('evm-jsonrpc', ep.url, holder)
+            : fetchErc20Balance(ep.url, sellAsset.assetId.reference, holder),
+        );
+        if (!cancelled) setSellBalance(balance);
       } catch {
-        setSellBalance(null);
+        if (!cancelled) {
+          setSellBalance(null);
+          setSellBalanceFailed(true);
+        }
       }
     })();
-  }, [url, holder, sellAsset]);
+    return () => {
+      cancelled = true;
+    };
+  }, [url, holder, sellAsset, sellBalanceTry]);
 
   // Fiat values for the sell and buy amounts (phase 6 item 2). Ids are
   // derived against the ACTIVE chain, so in Sepolia test mode both are null
@@ -438,8 +477,9 @@ export function SwapScreen({ navigation }: Props) {
     });
     setQuoteView(view);
     if (view.result.ok) {
+      const quoted = view.result.quote;
       try {
-        const fee = await estimateSwapFee(url, view.result.quote);
+        const { value: fee } = await withEndpoint(EVM_CHAIN_ID, (ep) => estimateSwapFee(ep.url, quoted));
         setFeeInfo({ zeroExGas: fee.zeroExGas, worstCaseFee: fee.worstCaseFee });
       } catch {
         setFeeInfo(null);
@@ -448,6 +488,62 @@ export function SwapScreen({ navigation }: Props) {
       setFeeInfo(null);
     }
     return view;
+  };
+
+  /**
+   * The node endpoint to prepare an approve or swap transaction through,
+   * resolved NOW (failover elsewhere or a Settings change may have moved
+   * it since this screen opened). The screen follows it.
+   */
+  const currentEndpoint = async (): Promise<UsableEndpoint> => {
+    const fresh = await getEndpoint(EVM_CHAIN_ID);
+    if (!fresh || fresh.url === null) {
+      setEndpoint(fresh ?? null);
+      throw new Error('No Ethereum endpoint is configured. Set one in Settings → Network endpoints.');
+    }
+    if (fresh.network.chainId !== evmChain.caip2) {
+      throw new Error('The network changed while this screen was open. Start the swap again.');
+    }
+    if (fresh.url !== url) setEndpoint(fresh);
+    return { ...fresh, url: fresh.url };
+  };
+
+  /**
+   * Prepares through `start` with the shared failover rule; the whole
+   * preparation runs again from scratch on the next healthy candidate when
+   * a default endpoint fails. Returns the value and the URL that produced
+   * it (the URL the transaction must later be sent through).
+   */
+  const prepareVia = async <T,>(
+    start: UsableEndpoint,
+    operation: (ep: UsableEndpoint) => Promise<T>,
+  ): Promise<{ value: T; url: string }> => {
+    const outcome = await callWithFailover(start, operation);
+    if (outcome.switched) setEndpoint(outcome.endpoint);
+    return { value: outcome.value, url: outcome.endpoint.url };
+  };
+
+  /**
+   * Quote pinning before any signature: null when `pinned` is still the
+   * URL the wallet would use, else the plain refusal to show.
+   */
+  const pinnedEndpointProblem = async (pinned: string): Promise<string | null> => {
+    let current: string | null = null;
+    try {
+      current = (await getEndpoint(EVM_CHAIN_ID))?.url ?? null;
+    } catch {
+      current = null;
+    }
+    return quoteEndpointChange(pinned, current);
+  };
+
+  /** Each allowance poll asks the endpoint the wallet would use right now. */
+  const allowancePollUrl = async (): Promise<string> => {
+    const ep = await getEndpoint(EVM_CHAIN_ID);
+    if (!ep || ep.url === null || ep.network.chainId !== evmChain.caip2) {
+      throw new Error('No usable Ethereum endpoint for this network right now.');
+    }
+    return ep.url;
   };
 
   const onGetQuote = async () => {
@@ -540,35 +636,43 @@ export function SwapScreen({ navigation }: Props) {
       return;
     }
     try {
-      if (sellAsset !== 'native') {
-        const amount = quote.sellAmount;
-        const { sufficient } = await checkAllowance(
-          url,
-          sellAsset.assetId.reference,
-          account.address,
-          quote.transaction.to,
-          amount,
-        );
-        if (!sufficient) {
-          markPreparedFrom(account.address);
-          const prepared = await prepareApproveSend(
-            url,
-            account.address,
+      const start = await currentEndpoint();
+      // The allowance check and the transaction it leads to come from the
+      // same endpoint (one failover-wrapped preparation).
+      const { value: next, url: preparedUrl } = await prepareVia(start, async (ep) => {
+        if (sellAsset !== 'native') {
+          const amount = quote.sellAmount;
+          const { sufficient } = await checkAllowance(
+            ep.url,
             sellAsset.assetId.reference,
+            account.address,
             quote.transaction.to,
-            amount, // exactly the sell amount — never unlimited
-            evmChain.caip2,
+            amount,
           );
-          setApproveQuote(prepared);
-          setOverrideSimulation(false);
-          setPhase('approve');
-          return;
+          if (!sufficient) {
+            const prepared = await prepareApproveSend(
+              ep.url,
+              account.address,
+              sellAsset.assetId.reference,
+              quote.transaction.to,
+              amount, // exactly the sell amount — never unlimited
+              evmChain.caip2,
+            );
+            return { kind: 'approve' as const, prepared };
+          }
         }
-      }
+        const prepared = await prepareSwapSend(ep.url, account.address, quote, evmChain.caip2);
+        return { kind: 'swap' as const, prepared };
+      });
       markPreparedFrom(account.address);
-      const prepared = await prepareSwapSend(url, account.address, quote, evmChain.caip2);
-      setSendQuote(prepared);
+      setQuotedUrl(preparedUrl);
       setOverrideSimulation(false);
+      if (next.kind === 'approve') {
+        setApproveQuote(next.prepared);
+        setPhase('approve');
+        return;
+      }
+      setSendQuote(next.prepared);
       setPhase('confirm');
     } catch (e) {
       const { title, detail } = describeSendError(e, sellSymbol);
@@ -579,7 +683,15 @@ export function SwapScreen({ navigation }: Props) {
 
   /** Step 1 of 2 (token sells only): sign+broadcast the exact approve. */
   const onApprove = async () => {
-    if (!url || !approveQuote || !quote || sellAsset === 'native') return;
+    if (!quotedUrl || !approveQuote || !quote || sellAsset === 'native') return;
+    const approveUrl = quotedUrl;
+    const changed = await pinnedEndpointProblem(approveUrl);
+    if (changed) {
+      Alert.alert(QUOTE_ENDPOINT_CHANGED_TITLE, changed);
+      setApproveQuote(null);
+      setPhase('review');
+      return;
+    }
     const auth = await requireLocalAuth(
       `Approve ${exact(quote.sellAmount, sellDecimals)} ${sellSymbol} for the swap contract`,
     );
@@ -590,15 +702,22 @@ export function SwapScreen({ navigation }: Props) {
     setPhase('approving');
     try {
       const sent = await signWith(EVM_CHAIN_ID, preparedFrom.current ?? '', (signer) =>
-        sendEvm(url, signer, approveQuote, evmChain.explorerTxBase),
+        sendEvm(approveUrl, signer, approveQuote, evmChain.explorerTxBase),
       );
       setApproveTxid(sent.txid);
+      // Polls follow the endpoint the wallet would use NOW: a default that
+      // fails a poll is reported, so the next poll goes to a healthy one.
       const confirmed = await waitForAllowance(
-        url,
+        allowancePollUrl,
         sellAsset.assetId.reference,
         account.address,
         quote.transaction.to,
         quote.sellAmount,
+        {
+          onPollError: (_error, pollUrl) => {
+            if (pollUrl) reportEndpointFailure(evmChain.caip2, pollUrl);
+          },
+        },
       );
       if (!confirmed) {
         Alert.alert(
@@ -634,8 +753,12 @@ export function SwapScreen({ navigation }: Props) {
         setPhase('form');
         return;
       }
+      const start = await currentEndpoint();
+      const { value: prepared, url: preparedUrl } = await prepareVia(start, (ep) =>
+        prepareSwapSend(ep.url, account.address, fresh, evmChain.caip2),
+      );
       markPreparedFrom(account.address);
-      const prepared = await prepareSwapSend(url, account.address, fresh, evmChain.caip2);
+      setQuotedUrl(preparedUrl);
       setSendQuote(prepared);
       setOverrideSimulation(false);
       setNotice(
@@ -652,7 +775,7 @@ export function SwapScreen({ navigation }: Props) {
 
   /** Final step: sign+broadcast the 0x transaction via the existing path. */
   const onSwap = async () => {
-    if (!url || !sendQuote || !quoteView || !quote) return;
+    if (!quotedUrl || !sendQuote || !quoteView || !quote) return;
     if (isQuoteStale(quoteView.quotedAt)) {
       setPhase('preparing');
       try {
@@ -666,8 +789,13 @@ export function SwapScreen({ navigation }: Props) {
           setPhase('form');
           return;
         }
+        const refreshed = view.result.quote;
+        const start = await currentEndpoint();
+        const { value: prepared, url: preparedUrl } = await prepareVia(start, (ep) =>
+          prepareSwapSend(ep.url, account.address, refreshed, evmChain.caip2),
+        );
         markPreparedFrom(account.address);
-        const prepared = await prepareSwapSend(url, account.address, view.result.quote, evmChain.caip2);
+        setQuotedUrl(preparedUrl);
         setSendQuote(prepared);
         setOverrideSimulation(false);
         setNotice(
@@ -682,6 +810,14 @@ export function SwapScreen({ navigation }: Props) {
       }
       return;
     }
+    const swapUrl = quotedUrl;
+    const changed = await pinnedEndpointProblem(swapUrl);
+    if (changed) {
+      Alert.alert(QUOTE_ENDPOINT_CHANGED_TITLE, changed);
+      setSendQuote(null);
+      setPhase('review');
+      return;
+    }
     const auth = await requireLocalAuth(
       `Swap ${exact(quote.sellAmount, sellDecimals)} ${sellSymbol} for ${buySymbol}`,
     );
@@ -692,7 +828,7 @@ export function SwapScreen({ navigation }: Props) {
     setPhase('sending');
     try {
       const sent = await signWith(EVM_CHAIN_ID, preparedFrom.current ?? '', (signer) =>
-        sendEvm(url, signer, sendQuote, evmChain.explorerTxBase),
+        sendEvm(swapUrl, signer, sendQuote, evmChain.explorerTxBase),
       );
       setResult(sent);
       setPhase('success');
@@ -752,6 +888,14 @@ export function SwapScreen({ navigation }: Props) {
         setFormError(`${title}\n${detail}`);
         setPhase('review');
       }
+      return;
+    }
+    const bundleUrl = aaBundleUrl.current;
+    const changed = bundleUrl ? await pinnedEndpointProblem(bundleUrl) : null;
+    if (changed) {
+      Alert.alert(QUOTE_ENDPOINT_CHANGED_TITLE, changed);
+      setAaQuote(null);
+      setPhase('review');
       return;
     }
     const auth = await requireLocalAuth(
@@ -1057,7 +1201,7 @@ export function SwapScreen({ navigation }: Props) {
         </Text>
 
         <BalanceChangePreview
-          url={url}
+          url={confirmUrl}
           request={{
             from: account.address,
             to: approveQuote.to,
@@ -1065,7 +1209,7 @@ export function SwapScreen({ navigation }: Props) {
             ...(approveQuote.data ? { data: approveQuote.data } : {}),
           }}
         />
-        <RiskWarnings url={url} wallet={account.address} to={approveQuote.to} data={approveQuote.data} />
+        <RiskWarnings url={confirmUrl} wallet={account.address} to={approveQuote.to} data={approveQuote.data} />
 
         {approveQuote.simulation.ok ? (
           <Text style={[styles.simulationOk, { color: theme.success }]}>
@@ -1079,7 +1223,11 @@ export function SwapScreen({ navigation }: Props) {
               transaction would very likely fail on-chain and still cost the fee.
             </WarningBox>
             <View style={styles.overrideRow}>
-              <Switch value={overrideSimulation} onValueChange={setOverrideSimulation} />
+              <Switch
+                accessibilityLabel="Send anyway, although the pre-flight simulation failed"
+                value={overrideSimulation}
+                onValueChange={setOverrideSimulation}
+              />
               <Text style={[styles.overrideLabel, { color: theme.text }]}>
                 Send anyway (I understand it will probably fail)
               </Text>
@@ -1172,7 +1320,7 @@ export function SwapScreen({ navigation }: Props) {
         ) : null}
 
         <BalanceChangePreview
-          url={url}
+          url={confirmUrl}
           request={{
             from: account.address,
             to: sendQuote.to,
@@ -1180,7 +1328,7 @@ export function SwapScreen({ navigation }: Props) {
             ...(sendQuote.data ? { data: sendQuote.data } : {}),
           }}
         />
-        <RiskWarnings url={url} wallet={account.address} to={sendQuote.to} data={sendQuote.data} />
+        <RiskWarnings url={confirmUrl} wallet={account.address} to={sendQuote.to} data={sendQuote.data} />
 
         {sendQuote.simulation.ok ? (
           <Text style={[styles.simulationOk, { color: theme.success }]}>
@@ -1194,7 +1342,11 @@ export function SwapScreen({ navigation }: Props) {
               transaction would very likely fail on-chain and still cost the fee.
             </WarningBox>
             <View style={styles.overrideRow}>
-              <Switch value={overrideSimulation} onValueChange={setOverrideSimulation} />
+              <Switch
+                accessibilityLabel="Send anyway, although the pre-flight simulation failed"
+                value={overrideSimulation}
+                onValueChange={setOverrideSimulation}
+              />
               <Text style={[styles.overrideLabel, { color: theme.text }]}>
                 Send anyway (I understand it will probably fail)
               </Text>
@@ -1230,7 +1382,9 @@ export function SwapScreen({ navigation }: Props) {
           <Text style={[styles.notice, { color: theme.accent }]}>{notice}</Text>
         ) : null}
         {formError ? (
-          <Text style={[styles.fieldError, { color: theme.danger }]}>{formError}</Text>
+          <Text accessibilityLiveRegion="polite" style={[styles.fieldError, { color: theme.danger }]}>
+            {formError}
+          </Text>
         ) : null}
         <Row
           label="You sell"
@@ -1342,6 +1496,7 @@ export function SwapScreen({ navigation }: Props) {
         <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border, gap: 8 }]}>
           <View style={styles.overrideRow}>
             <Switch
+              accessibilityLabel="Swap from smart account"
               value={aaEnabled}
               onValueChange={(v) => {
                 // The taker (and therefore the quote) changes with the path.
@@ -1364,6 +1519,8 @@ export function SwapScreen({ navigation }: Props) {
           </Text>
         </View>
       ) : null}
+
+      <OfflineNotice />
 
       {!url ? (
         <WarningBox>Swapping unavailable — no configured Ethereum endpoint.</WarningBox>
@@ -1405,8 +1562,25 @@ export function SwapScreen({ navigation }: Props) {
       </View>
       <Text style={[styles.hint, { color: theme.textMuted }]}>
         Balance:{' '}
-        {sellBalance === null ? '…' : `${formatUnits(sellBalance, sellDecimals)} ${sellSymbol}`}
+        {sellBalance !== null
+          ? `${formatUnits(sellBalance, sellDecimals)} ${sellSymbol}`
+          : sellBalanceFailed
+            ? 'could not be loaded right now.'
+            : '…'}
       </Text>
+      {sellBalanceFailed ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Retry loading the balance"
+          onPress={() => {
+            setSellBalanceFailed(false);
+            setSellBalanceTry((n) => n + 1);
+          }}
+          hitSlop={8}
+        >
+          <Text style={[styles.hint, { color: theme.accent }]}>Retry</Text>
+        </Pressable>
+      ) : null}
 
       <Text style={[styles.label, { color: theme.textMuted }]}>You receive</Text>
       <View style={styles.choiceRow}>
@@ -1431,6 +1605,7 @@ export function SwapScreen({ navigation }: Props) {
           setAmountText(t);
           setFormError(null);
         }}
+        accessibilityLabel={`Amount of ${sellSymbol} to sell`}
         placeholder="0.0"
         placeholderTextColor={theme.textMuted}
         keyboardType="decimal-pad"
@@ -1474,6 +1649,7 @@ export function SwapScreen({ navigation }: Props) {
               setCustomBpsText(t);
               setFormError(null);
             }}
+            accessibilityLabel="Custom maximum slippage in basis points"
             placeholder="basis points, e.g. 75 (= 0.75%)"
             placeholderTextColor={theme.textMuted}
             keyboardType="number-pad"
@@ -1486,7 +1662,9 @@ export function SwapScreen({ navigation }: Props) {
       ) : null}
 
       {formError ? (
-        <Text style={[styles.fieldError, { color: theme.danger }]}>{formError}</Text>
+        <Text accessibilityLiveRegion="polite" style={[styles.fieldError, { color: theme.danger }]}>
+            {formError}
+          </Text>
       ) : null}
 
       {phase === 'quoting' ? (

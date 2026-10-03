@@ -1,0 +1,526 @@
+// Mid-session endpoint failover checks (phase 9 item 5), entirely OFFLINE:
+// every request goes to a fake fetch installed on globalThis, so nothing
+// leaves the process.
+//
+// Covered:
+//  - the pure rule (src/config/endpoint-probe.ts runWithEndpointFailover):
+//    a failing DEFAULT endpoint is reported and the operation repeated ONCE
+//    on the next healthy candidate; overrides are never probed around or
+//    reported; answers (reverts, insufficient funds, archive refusals) are
+//    not failures; no retry onto the same URL, an unhealthy candidate, an
+//    override or another network; never a third attempt;
+//  - the error classifier isEndpointFailure;
+//  - the app's real call paths through the app's real resolver
+//    (src/config/networks.ts): native balances (useBalances.ts
+//    loadNativeBalance), history (useHistory.ts loadHistoryPage, Esplora and
+//    the tracked-token logs fallback), an EVM send quote (prepareEvmSend via
+//    callWithFailover) that comes ENTIRELY from the second candidate, and
+//    the swap allowance poll that follows the healthy endpoint;
+//  - quote pinning (send.ts quoteEndpointChange): a quote whose endpoint is
+//    no longer the one in use is refused with a plain sentence;
+//  - the balance-change preview stays on the quote's endpoint and only
+//    reports its failure (simulation.ts onEndpointFailure).
+//
+// Like check-rpc-fallback.mjs it imports the actual TypeScript modules via
+// Node's native type stripping. Run from the app directory:
+//
+//   export PATH="$HOME/.nvm/versions/node/v24.21.0/bin:$PATH"
+//   node scripts/check-failover.mjs
+
+import { DEFAULT_NETWORKS } from '../src/config/defaults.ts';
+import { isEndpointFailure, runWithEndpointFailover } from '../src/config/endpoint-probe.ts';
+import {
+  NoEndpointError,
+  callWithFailover,
+  forgetDefaultEndpointChoices,
+  getEndpoint,
+  reportEndpointFailure,
+  withEndpoint,
+} from '../src/config/networks.ts';
+import { loadNativeBalance } from '../src/wallet/useBalances.ts';
+import { loadHistoryPage } from '../src/wallet/useHistory.ts';
+import { prepareEvmSend, quoteEndpointChange } from '../src/wallet/send.ts';
+import { waitForAllowance } from '../src/wallet/swap.ts';
+import { runBalancePreview } from '../src/wallet/simulation.ts';
+
+let passed = 0;
+let failed = 0;
+
+function check(name, condition, detail = '') {
+  if (condition) {
+    passed += 1;
+    console.log(`  ok   ${name}`);
+  } else {
+    failed += 1;
+    console.error(`  FAIL ${name}${detail ? ` — ${detail}` : ''}`);
+  }
+}
+
+async function rejects(promise) {
+  try {
+    await promise;
+    return null;
+  } catch (e) {
+    return e;
+  }
+}
+
+const ETH_CHAIN = 'eip155:1';
+const BTC_CHAIN = 'bip122:000000000019d6689c085ae165831e93';
+const DOGE_CHAIN = 'bip122:1a91e3dace36e2be3bf030a65679fe82';
+const ETH = DEFAULT_NETWORKS.find((n) => n.chainId === ETH_CHAIN);
+const BTC = DEFAULT_NETWORKS.find((n) => n.chainId === BTC_CHAIN);
+const [ETH_A, ETH_B] = ETH.defaultUrls;
+const [BTC_A, BTC_B] = BTC.defaultUrls;
+const BTC_GENESIS = '000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f';
+const WALLET = '0x9858EfFD232B4033E47d90003D41EC34EcaEda94';
+const RECIPIENT = '0x000000000000000000000000000000000000dEaD';
+const BTC_ADDRESS = 'bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu';
+
+check('mainnet ETH has two default candidates to fail over between', ETH_A && ETH_B && ETH_A !== ETH_B);
+check('Bitcoin has two default candidates to fail over between', BTC_A && BTC_B && BTC_A !== BTC_B);
+
+// ---------------------------------------------------------------------------
+// 1. The pure rule
+// ---------------------------------------------------------------------------
+
+console.log('runWithEndpointFailover (pure rule):');
+
+const choice = (url, healthy = true) => ({ url, index: 0, total: 2, healthy, primaryUnreachable: false });
+const target = (url, extra = {}) => ({
+  url,
+  isOverride: false,
+  defaultChoice: choice(url),
+  network: { chainId: ETH_CHAIN },
+  ...extra,
+});
+const netFail = () => new TypeError('Network request failed');
+
+function harness(next) {
+  const log = { reports: [], reResolves: 0, attempts: [] };
+  const deps = {
+    report: (chainId, url) => {
+      log.reports.push(`${chainId} ${url}`);
+      return true;
+    },
+    reResolve: async () => {
+      log.reResolves += 1;
+      return next;
+    },
+  };
+  return { log, deps };
+}
+
+{
+  const { log, deps } = harness(target('https://b.example'));
+  const outcome = await runWithEndpointFailover(
+    target('https://a.example'),
+    async (ep) => {
+      log.attempts.push(ep.url);
+      if (ep.url === 'https://a.example') throw netFail();
+      return `answer from ${ep.url}`;
+    },
+    deps,
+  );
+  check('a failing default is reported once', log.reports.length === 1 && log.reports[0] === `${ETH_CHAIN} https://a.example`, log.reports);
+  check('the operation is repeated on the next healthy candidate', log.attempts.join(',') === 'https://a.example,https://b.example');
+  check('the outcome is the second candidate\'s answer', outcome.value === 'answer from https://b.example');
+  check('the outcome names the endpoint that answered', outcome.endpoint.url === 'https://b.example' && outcome.switched === true);
+}
+
+{
+  const { log, deps } = harness(target('https://b.example'));
+  const error = await rejects(
+    runWithEndpointFailover(
+      target('https://a.example'),
+      async (ep) => {
+        log.attempts.push(ep.url);
+        throw new TypeError(`fetch failed (${ep.url})`);
+      },
+      deps,
+    ),
+  );
+  check('retry ONCE only: two attempts when both candidates fail', log.attempts.length === 2, log.attempts);
+  check('the retry\'s own error is surfaced', error instanceof TypeError && error.message.includes('b.example'));
+  check('the second failure is reported too (next call re-probes)', log.reports.length === 2);
+}
+
+{
+  const { log, deps } = harness(target('https://b.example'));
+  const error = await rejects(
+    runWithEndpointFailover(
+      target('https://my-node.example', { isOverride: true, defaultChoice: undefined }),
+      async (ep) => {
+        log.attempts.push(ep.url);
+        throw netFail();
+      },
+      deps,
+    ),
+  );
+  check('override: the original error surfaces', error instanceof TypeError);
+  check('override: never reported and never re-resolved (no probing around it)', log.reports.length === 0 && log.reResolves === 0);
+  check('override: one attempt only', log.attempts.length === 1);
+}
+
+{
+  const { log, deps } = harness(target('https://b.example'));
+  const answer = new Error('Insufficient funds: sending 5 wei plus a worst-case fee of 1 wei exceeds the balance of 0 wei');
+  const error = await rejects(
+    runWithEndpointFailover(target('https://a.example'), async () => {
+      throw answer;
+    }, deps),
+  );
+  check('an answer (insufficient funds) is not a failure: surfaced unchanged', error === answer);
+  check('an answer is never reported', log.reports.length === 0 && log.reResolves === 0);
+}
+
+for (const [label, next] of [
+  ['the same URL', target('https://a.example')],
+  ['an unhealthy candidate', target('https://b.example', { defaultChoice: choice('https://b.example', false) })],
+  ['an override', target('https://b.example', { isOverride: true })],
+  ['another network (mode flipped)', target('https://b.example', { network: { chainId: 'eip155:11155111' } })],
+  ['nothing', undefined],
+]) {
+  const { log, deps } = harness(next);
+  const first = netFail();
+  const error = await rejects(
+    runWithEndpointFailover(target('https://a.example'), async (ep) => {
+      log.attempts.push(ep.url);
+      throw first;
+    }, deps),
+  );
+  check(`no retry when re-resolution yields ${label}`, error === first && log.attempts.length === 1, log.attempts);
+}
+
+console.log('\nisEndpointFailure (classifier):');
+const abort = new Error('The operation was aborted');
+abort.name = 'AbortError';
+const rateLimited = new Error('limit exceeded');
+rateLimited.code = -32005;
+for (const [label, error, expected] of [
+  ['React Native fetch failure', new TypeError('Network request failed'), true],
+  ['Node fetch failure', new TypeError('fetch failed'), true],
+  ['abort', abort, true],
+  ['timeout wording', new Error('no answer within 4000 ms (timed out)'), true],
+  ['HTML instead of JSON', new SyntaxError('Unexpected token < in JSON'), true],
+  ['engine HTTP 503', new Error('RPC HTTP error 503 for eth_getBalance'), true],
+  ['engine HTTP 429', new Error('RPC HTTP error 429 for eth_call'), true],
+  ['Esplora HTTP 502', new Error('UTXO fetch failed: HTTP 502 for bc1q…'), true],
+  ['JSON-RPC rate limit code', rateLimited, true],
+  ['JSON-RPC rate limit text', new Error('RPC error -32005: daily request count exceeded (eth_call)'), true],
+  ['HTTP 400 (an answer)', new Error('RPC HTTP error 400 for eth_simulateV1'), false],
+  ['archive refusal (a depth answer)', new Error('RPC error -32602: Archive requests require a personal token (eth_getLogs)'), false],
+  ['revert', new Error('RPC error 3: execution reverted (eth_estimateGas)'), false],
+  ['insufficient funds', new Error('Insufficient funds: …'), false],
+  ['a TypeError that is a bug, not the network', new TypeError("Cannot read properties of undefined (reading 'x')"), false],
+  ['null', null, false],
+  ['a string', 'fetch failed', false],
+]) {
+  check(`${label} -> ${expected}`, isEndpointFailure(error) === expected);
+}
+
+// ---------------------------------------------------------------------------
+// 2. The app's call paths through the app's resolver (networks.ts)
+// ---------------------------------------------------------------------------
+
+/**
+ * Fake network. `rpc[base]` decides each JSON-RPC answer for an EVM base URL
+ * (return a value, or throw to simulate a dead endpoint); `rest[base]` the
+ * same for Esplora paths. Every request is recorded.
+ */
+function installFake({ rpc = {}, rest = {} }) {
+  const calls = [];
+  globalThis.fetch = async (url, init = {}) => {
+    const body = init.body ? JSON.parse(init.body) : null;
+    calls.push({ url, method: body?.method ?? init.method ?? 'GET' });
+    const rpcBase = Object.keys(rpc).find((b) => url === b);
+    if (rpcBase) {
+      const result = rpc[rpcBase](body.method, body.params);
+      const text = JSON.stringify({ jsonrpc: '2.0', id: body.id, result });
+      return { ok: true, status: 200, json: async () => JSON.parse(text), text: async () => text };
+    }
+    const restBase = Object.keys(rest).find((b) => url.startsWith(`${b}/`));
+    if (restBase) {
+      const result = rest[restBase](url.slice(restBase.length));
+      const text = typeof result === 'string' ? result : JSON.stringify(result);
+      return { ok: true, status: 200, json: async () => JSON.parse(text), text: async () => text };
+    }
+    throw new TypeError(`fetch failed (no fake for ${url})`);
+  };
+  return calls;
+}
+
+/** A healthy mainnet node; `overrides` replaces individual methods. */
+function evmNode(overrides = {}) {
+  return (method, params) => {
+    if (method in overrides) return overrides[method](params);
+    switch (method) {
+      case 'eth_chainId':
+        return '0x1';
+      case 'eth_getBalance':
+        return '0xde0b6b3a7640000'; // 1 ETH
+      case 'eth_getTransactionCount':
+        return '0x7';
+      case 'eth_blockNumber':
+        return '0x1000000';
+      case 'eth_getBlockByNumber':
+        return { baseFeePerGas: '0x3b9aca00', number: '0x1000000' };
+      case 'eth_maxPriorityFeePerGas':
+        return '0x5f5e100';
+      case 'eth_estimateGas':
+        return '0x5208';
+      case 'eth_call':
+        return '0x';
+      case 'eth_getLogs':
+        return [];
+      default:
+        throw new Error(`fake node: unexpected ${method}`);
+    }
+  };
+}
+const dead = () => {
+  throw new TypeError('fetch failed (simulated dead endpoint)');
+};
+
+/** Primary answers the chain-id probe once, then dies for everything. */
+function dyingPrimary(overrides = {}) {
+  let alive = true;
+  const node = evmNode(overrides);
+  return {
+    kill: () => {
+      alive = false;
+    },
+    handler: (method, params) => {
+      if (!alive) dead();
+      if (method === 'eth_chainId') return node(method, params);
+      alive = false; // the first real request finds it dead
+      return dead();
+    },
+  };
+}
+
+console.log('\nNative balance (useBalances.ts loadNativeBalance):');
+{
+  forgetDefaultEndpointChoices();
+  const primary = dyingPrimary();
+  const calls = installFake({
+    rpc: { [ETH_A]: primary.handler, [ETH_B]: evmNode({ eth_getBalance: () => '0x2a' }) },
+  });
+  const load = await loadNativeBalance(ETH_CHAIN, WALLET, { retryDelayMs: 0 });
+  check('balance loads although the chosen default died mid-session', load.status === 'ok', load);
+  check('the amount is the second candidate\'s answer', load.status === 'ok' && load.amount === 42n);
+  check('the result names the endpoint that answered', load.status === 'ok' && load.endpoint.url === ETH_B);
+  const balanceCalls = calls.filter((c) => c.method === 'eth_getBalance').map((c) => c.url);
+  check(
+    'requests: primary (its own one-off retry included), then exactly one more endpoint',
+    balanceCalls.filter((u) => u === ETH_A).length >= 1 && balanceCalls.filter((u) => u === ETH_B).length === 1,
+    balanceCalls,
+  );
+  const now = await getEndpoint(ETH_CHAIN);
+  check('the wallet now uses the healthy candidate for later calls', now?.url === ETH_B);
+}
+{
+  forgetDefaultEndpointChoices();
+  installFake({ rpc: { [ETH_A]: (m) => (m === 'eth_chainId' ? '0x1' : dead()), [ETH_B]: (m) => (m === 'eth_chainId' ? '0x1' : dead()) } });
+  const error = await rejects(loadNativeBalance(ETH_CHAIN, WALLET, { retryDelayMs: 0 }));
+  check('both candidates failing: a retryable error surfaces (no endless loop)', isEndpointFailure(error), error);
+}
+
+console.log('\nHistory (useHistory.ts loadHistoryPage):');
+{
+  forgetDefaultEndpointChoices();
+  let primaryAlive = true;
+  const calls = installFake({
+    rest: {
+      [BTC_A]: (path) => {
+        if (path === '/block-height/0' && primaryAlive) return BTC_GENESIS;
+        primaryAlive = false;
+        throw new TypeError('Network request failed');
+      },
+      [BTC_B]: (path) => (path === '/block-height/0' ? BTC_GENESIS : []),
+    },
+  });
+  const load = await loadHistoryPage(BTC_CHAIN, BTC_ADDRESS);
+  check('Bitcoin history loads after the chosen default died', load.status === 'ok', load);
+  check(
+    'the page came from the second candidate',
+    calls.some((c) => c.url === `${BTC_B}/address/${BTC_ADDRESS}/txs`),
+    calls.map((c) => c.url),
+  );
+}
+{
+  // EVM without an indexer + tracked tokens (the default USDC) = the
+  // tracked-token logs fallback over the node endpoint.
+  forgetDefaultEndpointChoices();
+  const primary = dyingPrimary();
+  const calls = installFake({ rpc: { [ETH_A]: primary.handler, [ETH_B]: evmNode() } });
+  const load = await loadHistoryPage(ETH_CHAIN, WALLET);
+  check('logs-fallback history loads after the chosen default died', load.status === 'ok', load);
+  check(
+    'eth_blockNumber and eth_getLogs were answered by the second candidate',
+    calls.some((c) => c.url === ETH_B && c.method === 'eth_blockNumber') &&
+      calls.some((c) => c.url === ETH_B && c.method === 'eth_getLogs'),
+  );
+  check('the logs-fallback note is kept', load.status === 'ok' && typeof load.note === 'string' && load.note.length > 0);
+}
+
+console.log('\nSend quote (prepareEvmSend through callWithFailover):');
+let quotedOn = null;
+{
+  forgetDefaultEndpointChoices();
+  // The primary answers the probe AND the balance, then fails the nonce
+  // read: a half-answered quote that must be thrown away, not patched.
+  let alive = true;
+  const primaryNode = evmNode({ eth_getBalance: () => '0x1111' });
+  const calls = installFake({
+    rpc: {
+      [ETH_A]: (method, params) => {
+        if (!alive) dead();
+        if (method === 'eth_getTransactionCount') {
+          alive = false;
+          dead();
+        }
+        return primaryNode(method, params);
+      },
+      [ETH_B]: evmNode({ eth_getBalance: () => '0xde0b6b3a7640000', eth_getTransactionCount: () => '0x9' }),
+    },
+  });
+  const start = await getEndpoint(ETH_CHAIN);
+  check('the screen starts on the primary', start?.url === ETH_A);
+  const outcome = await callWithFailover({ ...start, url: start.url }, (ep) =>
+    prepareEvmSend(ep.url, WALLET, RECIPIENT, 1000n),
+  );
+  const quote = outcome.value;
+  quotedOn = outcome.endpoint.url;
+  check('the quote is prepared on the second candidate', outcome.switched && quotedOn === ETH_B);
+  check('balance comes from the second candidate (nothing from the failed attempt)', quote.balance === 10n ** 18n);
+  check('nonce comes from the second candidate', quote.nonce === 9n);
+  check('the primary\'s half answer (balance 0x1111) is not in the quote', quote.balance !== 0x1111n);
+  check('the pre-flight simulation ran on the second candidate', calls.some((c) => c.url === ETH_B && c.method === 'eth_call'));
+
+  console.log('\nQuote pinning (send.ts quoteEndpointChange):');
+  const current = await getEndpoint(ETH_CHAIN);
+  check('same endpoint at send time -> no refusal', quoteEndpointChange(quotedOn, current?.url) === null);
+  const refusal = quoteEndpointChange(ETH_A, current?.url);
+  check(
+    'a quote from another endpoint is refused, naming both hosts',
+    typeof refusal === 'string' && refusal.includes('ethereum-rpc.publicnode.com') && refusal.includes('ethereum.publicnode.com'),
+    refusal,
+  );
+  check('the refusal says nothing was signed or sent and asks for a fresh quote', /Nothing was signed or sent/.test(refusal) && /fresh quote/.test(refusal));
+  check('no endpoint at send time is refused too', /use no endpoint at all/.test(quoteEndpointChange(ETH_B, null) ?? ''));
+  check('the refusal never prints a full URL (overrides can embed keys)', !refusal.includes('https://'));
+}
+{
+  // A quote made on the primary; meanwhile another screen's request fails
+  // and the wallet moves to the fallback: the old quote must be refused.
+  forgetDefaultEndpointChoices();
+  const primary = dyingPrimary();
+  installFake({ rpc: { [ETH_A]: primary.handler, [ETH_B]: evmNode() } });
+  const atQuote = await getEndpoint(ETH_CHAIN);
+  primary.kill();
+  reportEndpointFailure(ETH_CHAIN, atQuote.url);
+  const atSend = await getEndpoint(ETH_CHAIN);
+  check('after a failover elsewhere the wallet uses the fallback', atSend?.url === ETH_B);
+  check('the stale quote is refused at send time', quoteEndpointChange(atQuote.url, atSend?.url) !== null);
+}
+
+console.log('\nOverrides through the app path (never probed around):');
+{
+  forgetDefaultEndpointChoices();
+  const calls = installFake({ rpc: { [ETH_A]: evmNode(), [ETH_B]: evmNode() } });
+  const override = {
+    forChainId: ETH_CHAIN,
+    network: ETH,
+    url: 'https://my-own-node.example/rpc',
+    isOverride: true,
+  };
+  const error = await rejects(
+    callWithFailover(override, (ep) => prepareEvmSend(ep.url, WALLET, RECIPIENT, 1n)),
+  );
+  check('an override that fails surfaces its error', isEndpointFailure(error), error);
+  check(
+    'no default candidate was contacted (no probe, no retry elsewhere)',
+    calls.every((c) => c.url.startsWith('https://my-own-node.example')),
+    calls.map((c) => c.url),
+  );
+}
+
+console.log('\nwithEndpoint without a URL:');
+{
+  forgetDefaultEndpointChoices();
+  installFake({});
+  const error = await rejects(withEndpoint(DOGE_CHAIN, async () => 'never'));
+  check('a chain with no endpoint throws NoEndpointError (shown as "not configured")', error instanceof NoEndpointError, error);
+}
+
+console.log('\nSwap allowance poll (swap.ts waitForAllowance with a resolving URL):');
+{
+  forgetDefaultEndpointChoices();
+  const primary = dyingPrimary();
+  const allowance = `0x${(5000n).toString(16).padStart(64, '0')}`;
+  const calls = installFake({ rpc: { [ETH_A]: primary.handler, [ETH_B]: evmNode({ eth_call: () => allowance }) } });
+  const reported = [];
+  const ok = await waitForAllowance(
+    async () => (await getEndpoint(ETH_CHAIN)).url,
+    '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+    WALLET,
+    RECIPIENT,
+    5000n,
+    {
+      timeoutMs: 5_000,
+      pollMs: 1,
+      sleepFn: async () => {},
+      onPollError: (_e, url) => {
+        if (url) {
+          reported.push(url);
+          reportEndpointFailure(ETH_CHAIN, url);
+        }
+      },
+    },
+  );
+  check('the poll confirms through the healthy candidate', ok === true);
+  check('the dead endpoint\'s failed poll was reported', reported.length === 1 && reported[0] === ETH_A, reported);
+  check('the confirming read went to the second candidate', calls.some((c) => c.url === ETH_B && c.method === 'eth_call'));
+}
+
+console.log('\nBalance-change preview stays on the quote\'s endpoint:');
+{
+  const calls = installFake({});
+  const reported = [];
+  const state = await runBalancePreview({
+    url: ETH_A,
+    wallet: WALLET,
+    calls: [{ from: WALLET, to: RECIPIENT, value: 1n }],
+    chainCaip2: ETH_CHAIN,
+    trackedTokens: [],
+    onEndpointFailure: (url) => reported.push(url),
+  });
+  check('an unreachable endpoint gives the calm "unreachable" error state', state.status === 'error' && state.unreachable === true, state);
+  check('its failure is reported with the quote\'s URL', reported.length === 1 && reported[0] === ETH_A);
+  check('the preview never tried another endpoint', calls.every((c) => c.url === ETH_A));
+}
+{
+  installFake({
+    rpc: {
+      [ETH_A]: () => {
+        throw new Error('fake node: something unexpected');
+      },
+    },
+  });
+  // The fake throws inside the handler, which surfaces as a rejected fetch
+  // with a plain Error: not a transport failure.
+  const reported = [];
+  const state = await runBalancePreview({
+    url: ETH_A,
+    wallet: WALLET,
+    calls: [{ from: WALLET, to: RECIPIENT, value: 1n }],
+    chainCaip2: ETH_CHAIN,
+    trackedTokens: [],
+    onEndpointFailure: (url) => reported.push(url),
+  });
+  check('other preview errors are not reported as endpoint failures', state.status === 'error' && !state.unreachable && reported.length === 0, state);
+}
+
+console.log(`\n${passed} passed, ${failed} failed`);
+if (failed > 0) process.exit(1);

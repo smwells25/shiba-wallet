@@ -1,16 +1,19 @@
 // Exercises the app's ERC-20 token modules (src/wallet/erc20.ts and
 // src/wallet/tokens.ts) outside the app: the ABI string decoder edge cases
-// offline, the token store against an in-memory KeyValueStore, and the
-// metadata + balanceOf reads against the live default Ethereum RPC
-// endpoint, selected exactly as the app selects it (first healthy candidate
-// of the ordered default list; read-only eth_call queries only; nothing is
-// signed or sent).
+// offline, the token store against an in-memory KeyValueStore, and — only
+// with --live — the metadata + balanceOf reads against the live default
+// Ethereum RPC endpoint, selected exactly as the app selects it (first
+// healthy candidate of the ordered default list; read-only eth_call queries
+// only; nothing is signed or sent). Without --live the script makes no
+// network request, so CI runs its offline checks (scripts/ci/suites.mjs
+// classifies it flag-live).
 //
 // Like check-balances.mjs, it imports the actual TypeScript modules the app
 // runs via Node's native type stripping. Run from the app directory:
 //
 //   export PATH="$HOME/.nvm/versions/node/v24.21.0/bin:$PATH"
-//   node scripts/check-tokens.mjs
+//   node scripts/check-tokens.mjs           # offline checks only
+//   node scripts/check-tokens.mjs --live    # plus the live eth_call reads
 //
 // The balance query uses the address derived from the standard BIP-39 test
 // mnemonic ("abandon ... about"), whose addresses are public knowledge.
@@ -203,34 +206,38 @@ const corrupt = {
 const fromCorrupt = await listTokens(corrupt);
 check('corrupt storage falls back to the USDC default', fromCorrupt.length === 1 && fromCorrupt[0].symbol === 'USDC');
 
-console.log('\nLive RPC (read-only eth_call against the default endpoint):');
-const evmNetwork = DEFAULT_NETWORKS.find((n) => n.chainId === 'eip155:1');
-// The same default selection the app makes (config/networks.ts): the first
-// candidate that answers eth_chainId with 0x1, probed in order.
-const choice = await createDefaultEndpointResolver().resolve(evmNetwork);
-if (choice.primaryUnreachable) console.log(`  primary default unreachable: ${choice.primaryFailure}`);
-check('a healthy mainnet default endpoint was found', choice.healthy === true && choice.url !== null);
-const url = choice.url;
-console.log(`  endpoint: ${url}  [${describeDefaultChoice(choice)}]`);
-console.log(`  USDC:     ${usdcAddress}`);
+if (process.argv.includes('--live')) {
+  console.log('\nLive RPC (read-only eth_call against the default endpoint):');
+  const evmNetwork = DEFAULT_NETWORKS.find((n) => n.chainId === 'eip155:1');
+  // The same default selection the app makes (config/networks.ts): the first
+  // candidate that answers eth_chainId with 0x1, probed in order.
+  const choice = await createDefaultEndpointResolver().resolve(evmNetwork);
+  if (choice.primaryUnreachable) console.log(`  primary default unreachable: ${choice.primaryFailure}`);
+  check('a healthy mainnet default endpoint was found', choice.healthy === true && choice.url !== null);
+  const url = choice.url;
+  console.log(`  endpoint: ${url}  [${describeDefaultChoice(choice)}]`);
+  console.log(`  USDC:     ${usdcAddress}`);
 
-const metadata = await fetchErc20Metadata(url, usdcAddress);
-console.log(`  symbol()=${metadata.symbol} name()=${metadata.name} decimals()=${metadata.decimals}`);
-check('on-chain symbol() is "USDC"', metadata.symbol === 'USDC');
-check('on-chain name() is "USD Coin"', metadata.name === 'USD Coin');
-check('on-chain decimals() is 6', metadata.decimals === 6);
+  const metadata = await fetchErc20Metadata(url, usdcAddress);
+  console.log(`  symbol()=${metadata.symbol} name()=${metadata.name} decimals()=${metadata.decimals}`);
+  check('on-chain symbol() is "USDC"', metadata.symbol === 'USDC');
+  check('on-chain name() is "USD Coin"', metadata.name === 'USD Coin');
+  check('on-chain decimals() is 6', metadata.decimals === 6);
 
-const TEST_MNEMONIC =
-  'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
-const seed = mnemonicToSeed(TEST_MNEMONIC);
-const account = evmKeyProvider.deriveAccount(seed, 0, 0);
-seed.fill(0);
-const balance = await fetchErc20Balance(url, usdcAddress, account.address);
-console.log(
-  `  balanceOf(${account.address}) = ${balance} base units` +
-    ` = ${formatUnits(balance, metadata.decimals, metadata.decimals)} USDC`,
-);
-check('balanceOf answers with a bigint', typeof balance === 'bigint');
+  const TEST_MNEMONIC =
+    'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+  const seed = mnemonicToSeed(TEST_MNEMONIC);
+  const account = evmKeyProvider.deriveAccount(seed, 0, 0);
+  seed.fill(0);
+  const balance = await fetchErc20Balance(url, usdcAddress, account.address);
+  console.log(
+    `  balanceOf(${account.address}) = ${balance} base units` +
+      ` = ${formatUnits(balance, metadata.decimals, metadata.decimals)} USDC`,
+  );
+  check('balanceOf answers with a bigint', typeof balance === 'bigint');
+} else {
+  console.log('\nLive RPC section skipped (run with --live to read USDC from the default endpoint).');
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

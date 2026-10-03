@@ -13,7 +13,8 @@ import { formatAssetId } from '@shiba-wallet/core';
 import type { FungibleAsset } from '@shiba-wallet/core';
 import type { RootStackParamList } from '../navigation';
 import { Button, screenStyle } from '../components';
-import { getEndpoint } from '../config/networks';
+import { NoEndpointError, withEndpoint } from '../config/networks';
+import { OfflineNotice, describeNetworkError } from '../wallet/connectivity';
 import { useTheme } from '../theme';
 import { usePrefs } from '../wallet/PrefsContext';
 import { EVM_CHAIN_ID } from '../wallet/send';
@@ -90,17 +91,20 @@ export function TokensScreen({ navigation }: Props) {
     }
     setLookingUp(true);
     try {
-      const endpoint = await getEndpoint(EVM_CHAIN_ID);
-      if (!endpoint?.url) {
-        setLookupError('No Ethereum RPC endpoint configured. Set one in Settings first.');
-        return;
-      }
-      const metadata = await fetchErc20Metadata(endpoint.url, validation.normalized);
+      // Resolved now, with the shared failover rule (config/networks.ts).
+      const { value: metadata } = await withEndpoint(EVM_CHAIN_ID, (ep) =>
+        fetchErc20Metadata(ep.url, validation.normalized),
+      );
       setPreview({ address: validation.normalized, metadata });
       setManualSymbol('');
       setManualName('');
     } catch (e) {
-      setLookupError(e instanceof Error ? e.message : 'Token lookup failed.');
+      if (e instanceof NoEndpointError) {
+        setLookupError('No Ethereum RPC endpoint configured. Set one in Settings first.');
+      } else {
+        const { title, detail } = describeNetworkError(e, 'the token details');
+        setLookupError(`${title}\n${detail}`);
+      }
     } finally {
       setLookingUp(false);
     }
@@ -241,6 +245,7 @@ export function TokensScreen({ navigation }: Props) {
           is added. Anyone can deploy a token with any name — verify the
           contract address from a source you trust.
         </Text>
+        <OfflineNotice />
         <TextInput
           value={address}
           onChangeText={(text) => {
@@ -248,6 +253,7 @@ export function TokensScreen({ navigation }: Props) {
             setPreview(null);
             setLookupError(null);
           }}
+          accessibilityLabel="Token contract address"
           placeholder="0x…"
           placeholderTextColor={theme.textMuted}
           autoCapitalize="none"
@@ -258,7 +264,9 @@ export function TokensScreen({ navigation }: Props) {
           ]}
         />
         {lookupError ? (
-          <Text style={[styles.error, { color: theme.danger }]}>{lookupError}</Text>
+          <Text accessibilityLiveRegion="polite" style={[styles.error, { color: theme.danger }]}>
+            {lookupError}
+          </Text>
         ) : null}
         {lookingUp ? (
           <ActivityIndicator size="small" color={theme.textMuted} />
@@ -285,6 +293,7 @@ export function TokensScreen({ navigation }: Props) {
                 <TextInput
                   value={manualSymbol}
                   onChangeText={setManualSymbol}
+                  accessibilityLabel="Token symbol"
                   placeholder="Symbol (e.g. MKR)"
                   placeholderTextColor={theme.textMuted}
                   autoCapitalize="characters"
@@ -298,6 +307,7 @@ export function TokensScreen({ navigation }: Props) {
                 <TextInput
                   value={manualName}
                   onChangeText={setManualName}
+                  accessibilityLabel="Token name (optional)"
                   placeholder="Name (optional)"
                   placeholderTextColor={theme.textMuted}
                   autoCorrect={false}

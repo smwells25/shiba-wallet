@@ -49,6 +49,13 @@ import type { NetworkDefault, NetworkKind } from './defaults.ts';
  *    cached only briefly (failureRetryMs) so concurrent screens do not
  *    each wait through every timeout, and is re-probed after that.
  *
+ * CALL-TIME FAILOVER (phase 9 item 5): runWithEndpointFailover at the end
+ * of this file is the one rule every network-using path applies (through
+ * config/networks.ts callWithFailover / withEndpoint): a request that fails
+ * at the transport level through a DEFAULT endpoint is reported and
+ * repeated once on the next healthy candidate; overrides are never probed
+ * around.
+ *
  * This module has no React Native imports so the Node scripts can run the
  * exact code the app runs against a fake fetch.
  */
@@ -372,4 +379,156 @@ export function describeDefaultFallbackNote(
     'fallback default is in use. The primary is tried again on the next ' +
     'app launch or whenever the fallback fails.'
   );
+}
+
+// ---------------------------------------------------------------------------
+// Call-time failover (phase 9 item 5)
+// ---------------------------------------------------------------------------
+
+/**
+ * The parts of a resolved endpoint the failover runner needs. NetworkEndpoint
+ * in ./networks.ts satisfies it; the runner is generic so the offline checks
+ * can drive it with plain objects.
+ */
+export interface FailoverTarget {
+  url: string | null;
+  isOverride: boolean;
+  defaultChoice?: DefaultChoice;
+  network: { chainId: string };
+}
+
+/** A target whose URL is known to be set. */
+export type WithUrl<E extends FailoverTarget> = E & { url: string };
+
+/** What a failover-wrapped call produced, and through which endpoint. */
+export interface FailoverOutcome<E extends FailoverTarget, T> {
+  value: T;
+  /** The endpoint that answered (the second candidate when `switched`). */
+  endpoint: WithUrl<E>;
+  /** True when the first endpoint failed and the call was repeated on another one. */
+  switched: boolean;
+}
+
+export interface FailoverDeps<E extends FailoverTarget> {
+  /** Resolves the chain's endpoint again (after the failure was reported). */
+  reResolve: () => Promise<E | undefined>;
+  /** Reports a failed request (networks.ts reportEndpointFailure). */
+  report: (networkChainId: string, url: string) => boolean;
+  /** Which errors count as "the endpoint failed" (default: isEndpointFailure). */
+  isFailure?: (error: unknown) => boolean;
+}
+
+/** HTTP statuses that say "this endpoint cannot serve you right now". */
+function isEndpointHttpStatus(status: number): boolean {
+  return (
+    status === 401 ||
+    status === 403 ||
+    status === 404 ||
+    status === 408 ||
+    status === 425 ||
+    status === 429 ||
+    status >= 500
+  );
+}
+
+/**
+ * Decides whether an error means the ENDPOINT failed (so another default
+ * candidate might succeed) rather than that the endpoint answered and the
+ * answer was unwelcome. Deliberately conservative: only transport-level
+ * failures and explicit rate limiting count.
+ *
+ * Counted as endpoint failures:
+ *  - fetch rejections: React Native's fetch throws TypeError("Network
+ *    request failed"), Node's undici TypeError("fetch failed");
+ *  - aborts and timeouts;
+ *  - SyntaxError (an HTML error page where JSON was expected);
+ *  - an HTTP status in the engine transports' messages ("RPC HTTP error
+ *    503 for eth_call", "UTXO fetch failed: HTTP 502 …") that signals an
+ *    unavailable or refusing service: 401, 403, 404, 408, 425, 429, 5xx;
+ *  - JSON-RPC rate limiting: code -32005 or wording such as "rate limit"
+ *    or "too many requests".
+ *
+ * NOT counted (the endpoint answered): reverts, "insufficient funds",
+ * other JSON-RPC errors (including archive-depth refusals, which
+ * token-history.ts and approvals.ts report verbatim as a depth limit),
+ * HTTP 400, and every error the app's own code throws after reading an
+ * answer. Retrying those elsewhere would only repeat the same answer.
+ */
+export function isEndpointFailure(error: unknown): boolean {
+  if (error === null || typeof error !== 'object') return false;
+  const e = error as { name?: unknown; message?: unknown; code?: unknown };
+  const name = typeof e.name === 'string' ? e.name : '';
+  const message = typeof e.message === 'string' ? e.message : '';
+  if (name === 'AbortError' || name === 'TimeoutError') return true;
+  if (error instanceof SyntaxError) return true;
+  if (error instanceof TypeError && /network request failed|fetch failed|failed to fetch|load failed/i.test(message)) {
+    return true;
+  }
+  if (/\b(timed out|timeout|aborted)\b/i.test(message)) return true;
+  if (e.code === -32005) return true;
+  if (/RPC error -32005\b/.test(message)) return true;
+  if (/rate.?limit|too many requests/i.test(message)) return true;
+  const http = /\bHTTP (?:error )?(\d{3})\b/.exec(message);
+  if (http && isEndpointHttpStatus(Number(http[1]))) return true;
+  return false;
+}
+
+/**
+ * Runs `operation` against `endpoint`; when it fails with an endpoint
+ * failure on a DEFAULT endpoint, reports the failure (which drops the
+ * cached choice), resolves the chain again and repeats the operation ONCE
+ * on the newly chosen candidate — only when that candidate is a different
+ * URL that passed its chain-identity probe. Every other case surfaces the
+ * original error unchanged:
+ *
+ *  - a user override is never probed around and never reported (rule
+ *    shared with resolveNetworkUrl above);
+ *  - errors that are answers, not failures (see isEndpointFailure);
+ *  - the re-resolution lands on the same URL, on an unhealthy candidate, on
+ *    an override, or on a different network (the Sepolia toggle flipped
+ *    mid-call);
+ *  - the retry itself fails (its failure is reported too, so the next call
+ *    probes again, but there is no third attempt).
+ *
+ * The operation receives the endpoint it runs against and must build
+ * everything from it (a quote prepared on the second candidate is entirely
+ * that candidate's answer; nothing from the failed attempt is reused). The
+ * outcome names the endpoint that answered so callers can pin it.
+ */
+export async function runWithEndpointFailover<E extends FailoverTarget, T>(
+  endpoint: WithUrl<E>,
+  operation: (endpoint: WithUrl<E>) => Promise<T>,
+  deps: FailoverDeps<E>,
+): Promise<FailoverOutcome<E, T>> {
+  const isFailure = deps.isFailure ?? isEndpointFailure;
+  try {
+    return { value: await operation(endpoint), endpoint, switched: false };
+  } catch (error) {
+    if (endpoint.isOverride || !endpoint.defaultChoice) throw error;
+    if (!isFailure(error)) throw error;
+    deps.report(endpoint.network.chainId, endpoint.url);
+    let next: E | undefined;
+    try {
+      next = await deps.reResolve();
+    } catch {
+      throw error;
+    }
+    if (
+      !next ||
+      next.url === null ||
+      next.isOverride ||
+      next.defaultChoice?.healthy !== true ||
+      next.network.chainId !== endpoint.network.chainId ||
+      next.url === endpoint.url
+    ) {
+      throw error;
+    }
+    const second = next as WithUrl<E>;
+    try {
+      return { value: await operation(second), endpoint: second, switched: true };
+    } catch (retryError) {
+      if (isFailure(retryError)) deps.report(second.network.chainId, second.url);
+      throw retryError;
+    }
+  }
 }

@@ -18,6 +18,7 @@ import { useTheme } from '../theme';
 import { EVM_CHAIN_ID } from '../wallet/send';
 import { ChainAccount, useWallet } from '../wallet/WalletContext';
 import { AccountSwitcher } from '../components/AccountSwitcher';
+import { OfflineNotice } from '../wallet/connectivity';
 import { usePrefs } from '../wallet/PrefsContext';
 import { maskAmount } from '../config/prefs';
 import { BalanceState, useBalances } from '../wallet/useBalances';
@@ -92,7 +93,11 @@ function BalanceCell({
   }
   if (state.status === 'unavailable') {
     return (
-      <View style={styles.balanceCell}>
+      <View
+        style={styles.balanceCell}
+        accessible
+        accessibilityLabel="Balance unavailable: no endpoint is configured for this chain"
+      >
         <Text style={[styles.balance, { color: theme.textMuted }]}>—</Text>
         <Text style={[styles.balanceSymbol, { color: theme.textMuted }]}>no endpoint</Text>
       </View>
@@ -101,7 +106,13 @@ function BalanceCell({
   // status === 'error': subtle, retryable. The full message would not fit a
   // row; the row communicates "couldn't load" and offers a retry.
   return (
-    <Pressable accessibilityRole="button" onPress={onRetry} hitSlop={8}>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel="Balance could not be loaded. Retry"
+      accessibilityHint="Asks the network endpoint for this balance again"
+      onPress={onRetry}
+      hitSlop={8}
+    >
       <View style={styles.balanceCell}>
         <Text style={[styles.balance, { color: theme.textMuted }]}>—</Text>
         <Text style={[styles.balanceSymbol, { color: theme.danger }]}>retry</Text>
@@ -166,7 +177,9 @@ export function HomeScreen({ navigation }: Props) {
   // never shows one account's balances under another's name.
   const { accounts, activeAccount } = useWallet();
   const { hideAmounts, setHideAmounts, evmChain, sepolia, showFiat } = usePrefs();
-  const { balances, refreshing, refreshAll, refreshOne } = useBalances(accounts);
+  // The active EVM chain is passed so a mode flip (mainnet <-> Sepolia)
+  // re-fetches the EVM row (useBalances handles it).
+  const { balances, refreshing, refreshAll, refreshOne } = useBalances(accounts, evmChain.caip2);
   const evmAccount = accounts.find((a) => a.chainId === EVM_CHAIN_ID);
   // EIP-7702 status of the active account on the active EVM chain (phase 8
   // item 1): shown under the account switcher so the user always knows
@@ -221,18 +234,10 @@ export function HomeScreen({ navigation }: Props) {
     }, [reloadTokens, showTokens]),
   );
 
-  // Re-fetch the EVM balance whenever the active EVM chain flips
-  // (mainnet <-> Sepolia), so the row never shows the other mode's number.
-  React.useEffect(() => {
-    void refreshOne(EVM_CHAIN_ID);
-    // refreshOne is stable per accounts; keying on the active chain id is
-    // the point of this effect.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [evmChain.caip2]);
-
   const renderChainCard = ({ item }: { item: ChainAccount }) => (
     <Pressable
       accessibilityRole="button"
+      accessibilityHint={`Opens the ${item.name} receive screen`}
       onPress={() => navigation.navigate('Receive', { chainId: item.chainId })}
       style={({ pressed }) => [
         styles.card,
@@ -439,9 +444,11 @@ export function HomeScreen({ navigation }: Props) {
             {/* Account switcher (phase 6 item 3): active account name and
                 short EVM address; opens the account list. */}
             <AccountSwitcher onManage={() => navigation.navigate('Settings')} />
+            <OfflineNotice />
             {activeAccount && delegation.status?.kind === 'kernel-v3.3' ? (
               <Pressable
                 accessibilityRole="button"
+                accessibilityHint="Opens the account upgrade screen"
                 onPress={() => navigation.navigate('UpgradeAccount')}
                 hitSlop={8}
               >
@@ -455,6 +462,7 @@ export function HomeScreen({ navigation }: Props) {
             (delegation.status?.kind === 'other' || delegation.status?.kind === 'contract') ? (
               <Pressable
                 accessibilityRole="button"
+                accessibilityHint="Opens the account upgrade screen to review this"
                 onPress={() => navigation.navigate('UpgradeAccount')}
                 hitSlop={8}
                 style={[
@@ -472,6 +480,7 @@ export function HomeScreen({ navigation }: Props) {
             {activeAccount && recovery.recoveredAccount ? (
               <Pressable
                 accessibilityRole="button"
+                accessibilityHint="Opens the guardians screen"
                 onPress={() => navigation.navigate('Guardians')}
                 hitSlop={8}
               >
@@ -484,6 +493,7 @@ export function HomeScreen({ navigation }: Props) {
             {activeAccount && recovery.recoveryInProgress ? (
               <Pressable
                 accessibilityRole="button"
+                accessibilityHint="Continues the recovery in progress"
                 onPress={() => navigation.navigate('RecoverAccount')}
                 hitSlop={8}
               >
@@ -499,6 +509,7 @@ export function HomeScreen({ navigation }: Props) {
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={hideAmounts ? 'Show amounts' : 'Hide amounts'}
+                accessibilityHint="Masks or reveals every amount on this screen and on Activity"
                 onPress={() => void setHideAmounts(!hideAmounts)}
                 hitSlop={8}
               >

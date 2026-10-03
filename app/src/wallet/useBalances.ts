@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getAllEndpoints, getEndpoint, reportEndpointFailure } from '../config/networks';
-import { fetchNativeBalance, formatUnits } from './balances';
+// Explicit .ts extensions: scripts/check-failover.mjs imports
+// loadNativeBalance from this module under Node's type stripping.
+import { callWithFailover, getEndpoint, type NetworkEndpoint } from '../config/networks.ts';
+import { fetchNativeBalance, formatUnits } from './balances.ts';
 import type { ChainAccount } from './WalletContext';
 
 /**
@@ -39,12 +41,48 @@ export interface BalancesHook {
   refreshOne: (chainId: string) => Promise<void>;
 }
 
+/** One chain's native balance, or why there is none. */
+export type NativeBalanceLoad =
+  | { status: 'ok'; amount: bigint; endpoint: NetworkEndpoint }
+  | { status: 'unavailable'; note?: string };
+
+/**
+ * Fetches one chain's native balance through the endpoint resolved NOW
+ * (override, or the current default choice), with the shared failover
+ * rule: a failing default is reported and the request repeated once on the
+ * next healthy candidate (config/networks.ts callWithFailover). Errors that
+ * survive that are thrown for the caller's retryable error state.
+ * React-free so scripts/check-failover.mjs runs the exact code.
+ */
+export async function loadNativeBalance(
+  slotChainId: string,
+  address: string,
+  options: { retryDelayMs?: number } = {},
+): Promise<NativeBalanceLoad> {
+  // Accounts carry the stable SLOT id (e.g. 'eip155:1' even while Sepolia
+  // test mode swaps the network underneath); getEndpoint matches slots
+  // first — matching network.chainId broke EVM balances in test mode
+  // (emulator-validation finding #2).
+  const endpoint = await getEndpoint(slotChainId);
+  if (!endpoint) return { status: 'unavailable', note: 'No network configuration for this chain.' };
+  if (endpoint.url === null) {
+    return { status: 'unavailable', ...(endpoint.network.note ? { note: endpoint.network.note } : {}) };
+  }
+  const outcome = await callWithFailover({ ...endpoint, url: endpoint.url }, (ep) =>
+    fetchNativeBalance(ep.network.kind, ep.url, address, ep.headers, options.retryDelayMs),
+  );
+  return { status: 'ok', amount: outcome.value, endpoint: outcome.endpoint };
+}
+
 /**
  * Fetches native balances for the given accounts. Endpoints are re-resolved
  * from config on every pass, so edits made in Settings take effect on the
- * next refresh without an app restart.
+ * next refresh without an app restart. `activeEvmChainId` is the ACTIVE EVM
+ * network (config/evm-chain.ts caip2): when it flips (mainnet <-> Sepolia)
+ * the rows are fetched again so the EVM row never shows the other mode's
+ * number.
  */
-export function useBalances(accounts: ChainAccount[]): BalancesHook {
+export function useBalances(accounts: ChainAccount[], activeEvmChainId?: string): BalancesHook {
   const [balances, setBalances] = useState<Record<string, BalanceState>>({});
   const [refreshing, setRefreshing] = useState(false);
   // Bump on unmount so late responses from an unmounted screen are dropped.
@@ -59,72 +97,21 @@ export function useBalances(accounts: ChainAccount[]): BalancesHook {
       const gen = generation.current;
       setChainState(account.chainId, { status: 'loading' });
       try {
-        const endpoints = await getAllEndpoints();
-        // Accounts carry the stable SLOT id (e.g. 'eip155:1' even while
-        // Sepolia test mode swaps the network underneath), so the match
-        // must use forChainId — matching network.chainId broke EVM
-        // balances in test mode (emulator-validation finding #2).
-        const endpoint = endpoints.find((e) => e.forChainId === account.chainId);
-        if (!endpoint) {
-          setChainState(account.chainId, {
-            status: 'unavailable',
-            note: 'No network configuration for this chain.',
-          });
+        const load = await loadNativeBalance(account.chainId, account.address);
+        if (generation.current !== gen) return;
+        if (load.status === 'unavailable') {
+          setChainState(account.chainId, { status: 'unavailable', note: load.note });
           return;
         }
-        if (!endpoint.url) {
-          if (generation.current === gen) {
-            setChainState(account.chainId, {
-              status: 'unavailable',
-              note: endpoint.network.note,
-            });
-          }
-          return;
-        }
-        let used = endpoint;
-        let amount: bigint;
-        try {
-          amount = await fetchNativeBalance(
-            endpoint.network.kind,
-            endpoint.url,
-            account.address,
-            endpoint.headers,
-          );
-        } catch (e) {
-          // A DEFAULT endpoint that fails a real request is dropped from the
-          // in-memory choice and the chain's candidates are probed again
-          // (config/endpoint-probe.ts). If that lands on a different healthy
-          // candidate, retry once through it; otherwise surface the error.
-          // User overrides are never switched away from.
-          if (endpoint.isOverride || !endpoint.defaultChoice) throw e;
-          if (!reportEndpointFailure(endpoint.network.chainId, endpoint.url)) throw e;
-          const next = await getEndpoint(account.chainId);
-          if (
-            !next?.url ||
-            next.url === endpoint.url ||
-            next.isOverride ||
-            next.network.chainId !== endpoint.network.chainId
-          ) {
-            throw e;
-          }
-          used = next;
-          amount = await fetchNativeBalance(
-            next.network.kind,
-            next.url,
-            account.address,
-            next.headers,
-          );
-        }
-        if (generation.current === gen) {
-          setChainState(account.chainId, {
-            status: 'ok',
-            display: formatUnits(amount, used.network.decimals),
-            symbol: used.network.symbol,
-            amount,
-            decimals: used.network.decimals,
-            networkChainId: used.network.chainId,
-          });
-        }
+        const used = load.endpoint;
+        setChainState(account.chainId, {
+          status: 'ok',
+          display: formatUnits(load.amount, used.network.decimals),
+          symbol: used.network.symbol,
+          amount: load.amount,
+          decimals: used.network.decimals,
+          networkChainId: used.network.chainId,
+        });
       } catch (e) {
         if (generation.current === gen) {
           setChainState(account.chainId, {
@@ -156,14 +143,18 @@ export function useBalances(accounts: ChainAccount[]): BalancesHook {
     [accounts, fetchChain],
   );
 
-  // Initial load, re-run if the account set changes (e.g. wallet re-import).
+  // Initial load, re-run if the account set changes (e.g. wallet re-import)
+  // or the active EVM network flips (mainnet <-> Sepolia): a flip reloads
+  // every row, so the EVM row never shows the other mode's number. Flips
+  // are rare and deliberate (Settings → Developer), so reloading the three
+  // unaffected rows too is a fair price for one simple rule.
   useEffect(() => {
     generation.current += 1;
     void Promise.allSettled(accounts.map((account) => fetchChain(account)));
     return () => {
       generation.current += 1;
     };
-  }, [accounts, fetchChain]);
+  }, [accounts, fetchChain, activeEvmChainId]);
 
   return { balances, refreshing, refreshAll, refreshOne };
 }

@@ -14,6 +14,7 @@ import type {
 import { formatUnits, groupThousands } from './balances.ts';
 import { fetchErc20Metadata, type Erc20Metadata } from './erc20.ts';
 import { maskAmount } from '../config/prefs.ts';
+import { isEndpointFailure } from '../config/endpoint-probe.ts';
 
 /**
  * Balance-change preview (asset-diff simulation) for the EVM confirm
@@ -72,6 +73,15 @@ export function revertedNote(reason: string): string {
 export function errorNote(message: string): string {
   return `Balance-change preview failed: ${message}`;
 }
+
+/**
+ * Shown instead of errorNote when the endpoint did not answer at all. The
+ * preview stays tied to the endpoint the quote came from (it never moves
+ * to another one on its own), so the sentence says what to do.
+ */
+export const PREVIEW_UNREACHABLE_NOTE =
+  'Balance-change preview unavailable: the RPC endpoint this quote came from ' +
+  'did not answer. Try again, or go back and review again for a fresh quote.';
 
 // ---------------------------------------------------------------------------
 // Transport
@@ -221,7 +231,8 @@ export async function resolveTokenMeta(
 
 export type PreviewState =
   | { status: 'unavailable'; note: string }
-  | { status: 'error'; message: string }
+  /** `unreachable`: the endpoint did not answer (transport failure). */
+  | { status: 'error'; message: string; unreachable?: boolean }
   | { status: 'reverted'; reason: string }
   | { status: 'ok'; changes: AssetChange[]; meta: TokenMetaMap; skippedLogs: number };
 
@@ -238,6 +249,14 @@ export async function runBalancePreview(options: {
   trackedTokens: FungibleAsset[];
   fetchFn?: typeof fetch;
   fetchMetadata?: (url: string, contract: string) => Promise<Erc20Metadata>;
+  /**
+   * Called with the URL when the endpoint failed at the transport level
+   * (endpoint-probe.ts isEndpointFailure). The app reports it as a default-
+   * endpoint failure, so the next resolution re-probes; the preview itself
+   * is NOT retried elsewhere, because it must describe the quote's own
+   * endpoint (the send screen then refuses a quote whose endpoint changed).
+   */
+  onEndpointFailure?: (url: string) => void;
 }): Promise<PreviewState> {
   if (!options.url) return { status: 'unavailable', note: PREVIEW_NO_ENDPOINT_NOTE };
   try {
@@ -259,7 +278,13 @@ export async function runBalancePreview(options: {
         note: error.reason === 'method-not-found' ? PREVIEW_UNSUPPORTED_NOTE : PREVIEW_MALFORMED_NOTE,
       };
     }
-    return { status: 'error', message: error instanceof Error ? error.message : String(error) };
+    const unreachable = isEndpointFailure(error);
+    if (unreachable) options.onEndpointFailure?.(options.url);
+    return {
+      status: 'error',
+      message: error instanceof Error ? error.message : String(error),
+      ...(unreachable ? { unreachable: true } : {}),
+    };
   }
 }
 

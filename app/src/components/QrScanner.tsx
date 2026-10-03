@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { Modal, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Modal, StyleSheet, Text, View } from 'react-native';
 // expo-camera 57.0.5 (SDK 57). API names verified against BOTH the SDK 57
 // docs (docs.expo.dev/versions/v57.0.0/sdk/camera, fetched 2026-09-27) and
 // this installed package's own typings (node_modules/expo-camera/build/
@@ -60,8 +60,17 @@ export function QrScanner({
       <View style={[styles.container, { backgroundColor: theme.background }]}>
         <Text style={[styles.rationale, { color: theme.text }]}>{rationale}</Text>
 
-        {permission === null ? null : permission.granted ? (
-          <View style={styles.cameraBox}>
+        {permission === null ? (
+          // Permission status is still being read: a spinner, not a blank.
+          <View style={styles.messageBox}>
+            <ActivityIndicator size="large" color={theme.accent} />
+          </View>
+        ) : permission.granted ? (
+          <View
+            style={styles.cameraBox}
+            accessible
+            accessibilityLabel="Camera viewfinder. Point the camera at a QR code; it is read automatically."
+          >
             <CameraView
               style={StyleSheet.absoluteFill}
               facing="back"

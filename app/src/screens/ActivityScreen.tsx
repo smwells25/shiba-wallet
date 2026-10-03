@@ -22,6 +22,7 @@ import { EVM_CHAIN_ID } from '../wallet/send';
 import { useHistory } from '../wallet/useHistory';
 import { usePrefs } from '../wallet/PrefsContext';
 import { useWallet } from '../wallet/WalletContext';
+import { OfflineNotice } from '../wallet/connectivity';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Activity'>;
 
@@ -95,10 +96,20 @@ function EntryRow({
         ? theme.success
         : theme.text;
 
+  // Screen readers get the whole row as one sentence (the label replaces
+  // the children's text), so it must carry the amount, time and status.
+  const spokenAmount = !hasAmount ? 'no amount' : hidden ? 'amount hidden' : `${amountText} ${rowSymbol}`;
+  const spokenStatus = [entry.failed ? 'failed' : null, !entry.confirmed ? 'pending' : null]
+    .filter(Boolean)
+    .join(', ');
   return (
     <Pressable
       accessibilityRole={url ? 'button' : undefined}
-      accessibilityLabel={`${directionLabel(entry.direction)} transaction`}
+      accessibilityLabel={
+        `${directionLabel(entry.direction)} transaction, ${spokenAmount}, ${timestampLabel(entry)}` +
+        (spokenStatus ? `, ${spokenStatus}` : '')
+      }
+      accessibilityHint={url ? 'Opens the transaction in the block explorer' : undefined}
       disabled={!url}
       onPress={() => {
         if (url) void Linking.openURL(url);
@@ -188,9 +199,18 @@ export function ActivityScreen({ navigation, route }: Props) {
   }
 
   if (state.status === 'error') {
+    // A calm sentence first; the endpoint's own message stays available as
+    // muted detail for anyone diagnosing it.
     return (
       <View style={[screenStyle(theme), styles.center]}>
-        <Text style={[styles.note, { color: theme.danger }]}>{state.message}</Text>
+        <OfflineNotice />
+        <Text style={[styles.note, { color: theme.text }]}>
+          The history could not be loaded right now. Check your connection
+          and try again.
+        </Text>
+        <Text selectable style={[styles.noteDetail, { color: theme.textMuted }]}>
+          {state.message}
+        </Text>
         <Button title="Retry" onPress={() => void reload()} style={styles.retry} />
       </View>
     );
@@ -208,13 +228,27 @@ export function ActivityScreen({ navigation, route }: Props) {
   const footer = (
     <View style={styles.footer}>
       {state.loadMoreError ? (
-        <Text style={[styles.note, { color: theme.danger }]}>{state.loadMoreError}</Text>
+        <>
+          <Text style={[styles.note, { color: theme.text }]}>
+            Older entries could not be loaded. The entries above are unchanged.
+          </Text>
+          <Text selectable style={[styles.noteDetail, { color: theme.textMuted }]}>
+            {state.loadMoreError}
+          </Text>
+        </>
       ) : null}
       {state.loadingMore ? (
         <ActivityIndicator size="small" color={theme.textMuted} />
       ) : state.nextCursor ? (
-        <Pressable accessibilityRole="button" onPress={() => void loadMore()} hitSlop={8}>
-          <Text style={[styles.loadMore, { color: theme.accent }]}>Load more</Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityHint="Loads older transactions"
+          onPress={() => void loadMore()}
+          hitSlop={8}
+        >
+          <Text style={[styles.loadMore, { color: theme.accent }]}>
+            {state.loadMoreError ? 'Try again' : 'Load more'}
+          </Text>
         </Pressable>
       ) : state.entries.length > 0 ? (
         <Text style={[styles.note, { color: theme.textMuted }]}>
@@ -226,6 +260,7 @@ export function ActivityScreen({ navigation, route }: Props) {
 
   return (
     <View style={screenStyle(theme)}>
+      <OfflineNotice style={styles.notice} />
       {state.note ? (
         <Text style={[styles.note, { color: theme.textMuted }]}>{state.note}</Text>
       ) : null}
@@ -367,6 +402,10 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontStyle: 'italic',
     paddingTop: 4,
+  },
+  notice: {
+    marginHorizontal: 16,
+    marginTop: 8,
   },
   unavailableMark: {
     fontSize: 32,

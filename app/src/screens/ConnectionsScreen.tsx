@@ -8,6 +8,7 @@ import { useTheme } from '../theme';
 import { usePrefs } from '../wallet/PrefsContext';
 import { describeChain, validatePairingUri } from '../wallet/walletconnect';
 import { useWalletConnect, type WcSessionView } from '../wallet/WalletConnectContext';
+import { OfflineNotice } from '../wallet/connectivity';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Connections'>;
 
@@ -115,11 +116,22 @@ export function ConnectionsScreen({ navigation }: Props) {
         </View>
       ) : null}
 
+      <OfflineNotice />
+
       {wc.initError ? (
-        <WarningBox>
-          WalletConnect could not start: {wc.initError} Check the project id in
-          Settings and the network connection, then reopen this screen.
-        </WarningBox>
+        <>
+          <WarningBox>
+            WalletConnect could not start: {wc.initError} Check the project id in
+            Settings and the network connection, then reopen this screen.
+          </WarningBox>
+          {/* ensureStarted re-runs a failed start (WalletConnectContext). */}
+          <Button
+            title="Try again"
+            variant="secondary"
+            onPress={ensureStarted}
+            disabled={wc.initBusy}
+          />
+        </>
       ) : null}
 
       {wc.client ? (
@@ -145,6 +157,7 @@ export function ConnectionsScreen({ navigation }: Props) {
             <TextInput
               value={uri}
               onChangeText={setUri}
+              accessibilityLabel="WalletConnect pairing link"
               placeholder="wc:…"
               placeholderTextColor={theme.textMuted}
               autoCapitalize="none"

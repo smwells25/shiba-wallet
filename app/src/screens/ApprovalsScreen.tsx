@@ -14,13 +14,20 @@ import {
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation';
 import { Button, WarningBox, screenStyle } from '../components';
-import { getEndpoint } from '../config/networks';
+import { callWithFailover, getEndpoint, withEndpoint } from '../config/networks';
+import { OfflineNotice, describeNetworkError } from '../wallet/connectivity';
 import { useTheme, type Theme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
 import { requireLocalAuth } from '../wallet/biometric';
 import { formatUnits } from '../wallet/balances';
-import { EVM_CHAIN_ID, describeSendError, type SendResult } from '../wallet/send';
+import {
+  EVM_CHAIN_ID,
+  QUOTE_ENDPOINT_CHANGED_TITLE,
+  describeSendError,
+  quoteEndpointChange,
+  type SendResult,
+} from '../wallet/send';
 import { listTokens } from '../wallet/tokens';
 import { loadNfts } from '../wallet/nfts';
 import { listContacts, type Contact } from '../wallet/contacts';
@@ -65,7 +72,8 @@ type ListState =
   | { status: 'loading' }
   | { status: 'no-endpoint' }
   | { status: 'nothing'; notes: string[] }
-  | { status: 'error'; message: string }
+  /** `title`: the calm sentence; `message`: the raw error, shown muted. */
+  | { status: 'error'; message: string; title: string }
   | { status: 'ok'; scan: ApprovalScan; items: ApprovalItem[]; notes: string[] };
 
 type Phase = 'list' | 'quoting' | 'confirm' | 'sending' | 'success';
@@ -97,6 +105,9 @@ export function ApprovalsScreen({ navigation }: Props) {
   const [phase, setPhase] = useState<Phase>('list');
   const [revoke, setRevoke] = useState<RevokeQuote | null>(null);
   const [quotedFrom, setQuotedFrom] = useState<string | null>(null);
+  // The endpoint URL the revoke quote came from; the revoke is sent only
+  // through it, and only while the wallet would still use it.
+  const [quotedUrl, setQuotedUrl] = useState<string | null>(null);
   const [overrideSimulation, setOverrideSimulation] = useState(false);
   const [result, setResult] = useState<SendResult | null>(null);
 
@@ -115,7 +126,7 @@ export function ApprovalsScreen({ navigation }: Props) {
         (list) => gen === generation.current && setContacts(list),
         () => undefined,
       );
-      if (!rpcUrl) {
+      if (!endpoint || !rpcUrl) {
         setState({ status: 'no-endpoint' });
         return;
       }
@@ -169,17 +180,28 @@ export function ApprovalsScreen({ navigation }: Props) {
         return;
       }
 
-      const transport = approvalsTransport(rpcUrl);
-      const scan = await startApprovalScan({
-        transport,
-        owner,
-        chainCaip2: evmChain.caip2,
-        tokens,
-        collections,
+      // Shared failover rule (config/networks.ts): when the default
+      // endpoint does not answer at all (the scan's first eth_blockNumber
+      // throws), the whole scan runs again on the next healthy candidate.
+      // Window refusals are answers, recorded by the scan as before.
+      const {
+        value: { scan, items },
+        endpoint: used,
+      } = await callWithFailover({ ...endpoint, url: rpcUrl }, async (ep) => {
+        const scanTransport = approvalsTransport(ep.url);
+        const started = await startApprovalScan({
+          transport: scanTransport,
+          owner,
+          chainCaip2: evmChain.caip2,
+          tokens,
+          collections,
+        });
+        return { scan: started, items: await readLiveApprovals(scanTransport, started) };
       });
-      const items = await readLiveApprovals(transport, scan);
       if (gen !== generation.current) return;
+      setUrl(used.url);
       setState({ status: 'ok', scan, items, notes });
+      const transport = approvalsTransport(used.url);
 
       // Address tags load after the list is visible (one eth_getCode each).
       const addresses = [...new Set(items.map((i) => approvedAddress(i)))];
@@ -187,7 +209,8 @@ export function ApprovalsScreen({ navigation }: Props) {
       if (gen === generation.current) setTags(nextTags);
     } catch (e) {
       if (gen === generation.current) {
-        setState({ status: 'error', message: e instanceof Error ? e.message : String(e) });
+        const { title, detail } = describeNetworkError(e, 'your approvals');
+        setState({ status: 'error', message: detail, title });
       }
     }
   }, [owner, accountIndex, evmChain.caip2, evmChain.testnet]);
@@ -235,10 +258,17 @@ export function ApprovalsScreen({ navigation }: Props) {
     const gen = generation.current;
     setExtending(true);
     try {
-      const transport = approvalsTransport(url);
-      const scan = await extendApprovalScan(state.scan, { transport });
-      const items = await readLiveApprovals(transport, scan);
+      // Resolved now, with the shared failover rule. Block ranges are chain
+      // data, so continuing on another candidate of the same chain is sound.
+      const { value, endpoint: used } = await withEndpoint(EVM_CHAIN_ID, async (ep) => {
+        const extendTransport = approvalsTransport(ep.url);
+        const extended = await extendApprovalScan(state.scan, { transport: extendTransport });
+        return { scan: extended, items: await readLiveApprovals(extendTransport, extended) };
+      });
+      const { scan, items } = value;
+      const transport = approvalsTransport(used.url);
       if (gen !== generation.current) return;
+      setUrl(used.url);
       setState({ ...state, scan, items });
       const missing = [...new Set(items.map((i) => approvedAddress(i)))].filter(
         (a) => !(a.toLowerCase() in tags),
@@ -248,7 +278,8 @@ export function ApprovalsScreen({ navigation }: Props) {
         if (gen === generation.current) setTags((prev) => ({ ...prev, ...more }));
       }
     } catch (e) {
-      Alert.alert('Search failed', e instanceof Error ? e.message : String(e));
+      const { title, detail } = describeNetworkError(e, 'older approvals');
+      Alert.alert('Search failed', `${title}\n\n${detail}`);
     } finally {
       setExtending(false);
     }
@@ -258,7 +289,13 @@ export function ApprovalsScreen({ navigation }: Props) {
     if (!url || !owner) return;
     setPhase('quoting');
     try {
-      const next = await prepareRevoke({ url, from: owner, item, expectedCaip2: evmChain.caip2 });
+      // Quoted through the endpoint the wallet would use NOW, with the
+      // shared failover rule; the quote is pinned to the URL that answered.
+      const { value: next, endpoint: used } = await withEndpoint(EVM_CHAIN_ID, (ep) =>
+        prepareRevoke({ url: ep.url, from: owner, item, expectedCaip2: evmChain.caip2 }),
+      );
+      setUrl(used.url);
+      setQuotedUrl(used.url);
       setRevoke(next);
       setQuotedFrom(owner);
       setOverrideSimulation(false);
@@ -271,7 +308,21 @@ export function ApprovalsScreen({ navigation }: Props) {
   };
 
   const onConfirmRevoke = async () => {
-    if (!url || !revoke || !quotedFrom) return;
+    if (!quotedUrl || !revoke || !quotedFrom) return;
+    const revokeUrl = quotedUrl;
+    let currentUrl: string | null = null;
+    try {
+      currentUrl = (await getEndpoint(EVM_CHAIN_ID))?.url ?? null;
+    } catch {
+      currentUrl = null;
+    }
+    const changed = quoteEndpointChange(revokeUrl, currentUrl);
+    if (changed) {
+      Alert.alert(QUOTE_ENDPOINT_CHANGED_TITLE, changed);
+      setRevoke(null);
+      setPhase('list');
+      return;
+    }
     const what =
       revoke.item.kind === 'erc20'
         ? `${revoke.item.symbol} allowance`
@@ -284,7 +335,7 @@ export function ApprovalsScreen({ navigation }: Props) {
     setPhase('sending');
     try {
       const sent = await signWith(EVM_CHAIN_ID, quotedFrom, (signer) =>
-        sendRevoke(url, signer, revoke, evmChain.explorerTxBase),
+        sendRevoke(revokeUrl, signer, revoke, evmChain.explorerTxBase),
       );
       setResult(sent);
       setPhase('success');
@@ -383,7 +434,7 @@ export function ApprovalsScreen({ navigation }: Props) {
         />
 
         <BalanceChangePreview
-          url={url ?? null}
+          url={quotedUrl}
           request={{ from: quotedFrom, to: item.contract, value: 0n, data: quote.data }}
         />
 
@@ -403,7 +454,11 @@ export function ApprovalsScreen({ navigation }: Props) {
                   'and leave the allowance unchanged.'}
             </WarningBox>
             <View style={styles.overrideRow}>
-              <Switch value={overrideSimulation} onValueChange={setOverrideSimulation} />
+              <Switch
+                accessibilityLabel="Send anyway, although the pre-flight simulation failed"
+                value={overrideSimulation}
+                onValueChange={setOverrideSimulation}
+              />
               <Text style={[styles.overrideLabel, { color: theme.text }]}>
                 Send anyway (I understand it will probably fail)
               </Text>
@@ -433,6 +488,7 @@ export function ApprovalsScreen({ navigation }: Props) {
         {evmChain.label} · {evmChain.testnet ? 'TESTNET' : 'Mainnet'}
         {activeAccount ? ` · ${activeAccount.name}` : ''}
       </Text>
+      <OfflineNotice />
       <Text style={[styles.body, { color: theme.text }]}>{APPROVALS_EXPLAINER}</Text>
       <Text style={[styles.hint, { color: theme.textMuted }]}>{APPROVALS_SCOPE_NOTE}</Text>
     </View>
@@ -450,7 +506,12 @@ export function ApprovalsScreen({ navigation }: Props) {
   }
 
   const refreshControl = (
-    <RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} tintColor={theme.accent} />
+    <RefreshControl
+      refreshing={refreshing}
+      onRefresh={() => void onRefresh()}
+      tintColor={theme.accent}
+      colors={[theme.accent]}
+    />
   );
 
   if (state.status !== 'ok') {
@@ -482,7 +543,12 @@ export function ApprovalsScreen({ navigation }: Props) {
         ) : null}
         {state.status === 'error' ? (
           <>
-            <WarningBox>Approvals could not be loaded: {state.message}</WarningBox>
+            <Text style={[styles.body, { color: theme.text }]}>
+              {state.title}
+            </Text>
+            <Text selectable style={[styles.hint, { color: theme.textMuted }]}>
+              {state.message}
+            </Text>
             <Button title="Try again" onPress={() => void onRefresh()} />
           </>
         ) : null}
@@ -588,7 +654,11 @@ export function ApprovalsScreen({ navigation }: Props) {
 
       {revoked.length > 0 ? (
         <View style={styles.revokedToggle}>
-          <Switch value={showRevoked} onValueChange={setShowRevoked} />
+          <Switch
+            accessibilityLabel="Show revoked or used-up approvals"
+            value={showRevoked}
+            onValueChange={setShowRevoked}
+          />
           <Text style={[styles.overrideLabel, { color: theme.text }]}>
             Show {revoked.length} revoked or used-up approval{revoked.length === 1 ? '' : 's'}
           </Text>

@@ -53,6 +53,8 @@ export function NftDetailScreen({ route, navigation }: Props) {
       ? getCachedNft(activeAccount.index, evmChain.caip2, owner, assetId)
       : null;
   const [metadata, setMetadata] = useState<MetadataLoad | null>(null);
+  // Bumped by "Try again" after a failed metadata read.
+  const [metadataTry, setMetadataTry] = useState(0);
 
   useEffect(() => {
     navigation.setOptions({ title: nft ? nftDisplayName(nft) : 'NFT' });
@@ -72,9 +74,10 @@ export function NftDetailScreen({ route, navigation }: Props) {
     return () => {
       cancelled = true;
     };
-    // The NFT identity is the asset id.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [assetId]);
+    // `nft` is the gallery cache's own object for this asset id (the same
+    // reference on every render until the gallery reloads), so this runs
+    // once per NFT, again after a gallery reload, and on "Try again".
+  }, [nft, metadataTry]);
 
   if (!nft) {
     return (
@@ -140,9 +143,19 @@ export function NftDetailScreen({ route, navigation }: Props) {
         <Text style={[styles.hint, { color: theme.textMuted }]}>Reading the token&apos;s metadata…</Text>
       ) : null}
       {metadata && !metadata.ok ? (
-        <Text style={[styles.hint, { color: theme.textMuted }]}>
-          Metadata unavailable — {metadata.detail}
-        </Text>
+        <>
+          <Text style={[styles.hint, { color: theme.textMuted }]}>
+            Metadata unavailable — {metadata.detail}
+          </Text>
+          <Button
+            title="Try again"
+            variant="secondary"
+            onPress={() => {
+              setMetadata(null);
+              setMetadataTry((n) => n + 1);
+            }}
+          />
+        </>
       ) : null}
       {nft.metadataMissing && !nft.tokenUri ? (
         <Text style={[styles.hint, { color: theme.textMuted }]}>

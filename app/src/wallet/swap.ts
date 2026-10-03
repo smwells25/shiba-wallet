@@ -411,22 +411,39 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
  * plainly instead of proceeding into a doomed simulation.
  */
 export async function waitForAllowance(
-  url: string,
+  url: string | (() => Promise<string>),
   token: string,
   owner: string,
   spender: string,
   min: bigint,
-  options: { timeoutMs?: number; pollMs?: number; sleepFn?: (ms: number) => Promise<void> } = {},
+  options: {
+    timeoutMs?: number;
+    pollMs?: number;
+    sleepFn?: (ms: number) => Promise<void>;
+    /**
+     * Called with each failed poll's error and the URL it went to (null
+     * when resolving the URL itself failed). The app reports default-
+     * endpoint failures here, so the next poll's URL resolution moves to a
+     * healthy candidate (phase 9 item 5).
+     */
+    onPollError?: (error: unknown, url: string | null) => void;
+  } = {},
 ): Promise<boolean> {
   const timeoutMs = options.timeoutMs ?? 120_000;
   const pollMs = options.pollMs ?? 3_000;
   const sleepFn = options.sleepFn ?? sleep;
   const deadline = Date.now() + timeoutMs;
   for (;;) {
+    // A function URL is resolved on every poll: the allowance is chain
+    // state, so any healthy endpoint of the same chain gives a valid answer,
+    // and a dead one must not stall the whole waiting window.
+    let pollUrl: string | null = null;
     try {
-      if ((await fetchErc20Allowance(url, token, owner, spender)) >= min) return true;
-    } catch {
+      pollUrl = typeof url === 'string' ? url : await url();
+      if ((await fetchErc20Allowance(pollUrl, token, owner, spender)) >= min) return true;
+    } catch (error) {
       // Transient RPC failures just mean "not confirmed yet" here.
+      options.onPollError?.(error, pollUrl);
     }
     if (Date.now() >= deadline) return false;
     await sleepFn(pollMs);

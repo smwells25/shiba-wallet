@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { HistoryEntry } from '@shiba-wallet/core';
-import { getEndpoint, type NetworkEndpoint } from '../config/networks';
+import type { HistoryEntry, HistoryPage } from '@shiba-wallet/core';
+// Explicit .ts extensions: scripts/check-failover.mjs imports
+// loadHistoryPage from this module under Node's type stripping.
+import { callWithFailover, getEndpoint, type NetworkEndpoint } from '../config/networks.ts';
 import {
   historyNotesAfterPage,
   historySourceFor,
   type HistoryNotes,
   type HistorySource,
-} from './history';
-import { listTokens } from './tokens';
-import type { TrackedTokenRef } from './token-history';
-import { getIndexerConfig } from './indexer';
+} from './history.ts';
+import { listTokens } from './tokens.ts';
+import type { TrackedTokenRef } from './token-history.ts';
+import { getIndexerConfig } from './indexer.ts';
 
 /**
  * State machine for one chain's activity list, with the same discipline as
@@ -66,7 +68,7 @@ function errorMessage(e: unknown): string {
 async function sourceForEndpoint(
   endpoint: NetworkEndpoint,
   walletAddress: string,
-): Promise<HistorySource> {
+): Promise<{ source: HistorySource; viaIndexer: boolean }> {
   const isEvm = endpoint.network.kind === 'evm-jsonrpc';
   const indexerUrl = isEvm ? (await getIndexerConfig(endpoint.network.chainId)).url : null;
   // Tracked tokens power the logs fallback when no indexer is configured
@@ -86,13 +88,62 @@ async function sourceForEndpoint(
       };
     }
   }
-  return historySourceFor(
-    endpoint.network.kind,
-    endpoint.url,
-    indexerUrl,
-    endpoint.headers,
-    evmTokenLogs,
-  );
+  return {
+    source: historySourceFor(
+      endpoint.network.kind,
+      endpoint.url,
+      indexerUrl,
+      endpoint.headers,
+      evmTokenLogs,
+    ),
+    viaIndexer: indexerUrl !== null,
+  };
+}
+
+/** One page of a chain's history, or why there is none. */
+export type HistoryPageLoad =
+  | { status: 'unavailable'; note: string }
+  | { status: 'ok'; page: HistoryPage; note?: string };
+
+/**
+ * Fetches one history page (the first when `cursor` is undefined) through
+ * the endpoint resolved NOW, with the shared failover rule
+ * (config/networks.ts callWithFailover): a failing DEFAULT node endpoint is
+ * reported and the page is fetched once more through the next healthy
+ * candidate. A configured history indexer is user configuration, like an
+ * override, so it is never failed over, and its failures are never charged
+ * to the node endpoint. Cursors are chain data (a txid, a signature, a
+ * block number, a Blockbook page), so later pages may come from a
+ * different candidate of the same chain. React-free so
+ * scripts/check-failover.mjs runs the exact code.
+ */
+export async function loadHistoryPage(
+  chainId: string,
+  address: string,
+  cursor?: string,
+): Promise<HistoryPageLoad> {
+  const endpoint = await getEndpoint(chainId);
+  if (!endpoint) return { status: 'unavailable', note: 'No network configuration for this chain.' };
+  const first = await sourceForEndpoint(endpoint, address);
+  if (first.source.status === 'unavailable') return { status: 'unavailable', note: first.source.note };
+  const firstSource = first.source;
+  if (first.viaIndexer || endpoint.url === null) {
+    const page = await firstSource.provider.getHistory(address, cursor);
+    return { status: 'ok', page, ...(firstSource.note ? { note: firstSource.note } : {}) };
+  }
+  const outcome = await callWithFailover({ ...endpoint, url: endpoint.url }, async (ep) => {
+    // The first attempt reuses the source built above; a retry builds a
+    // fresh one from the new candidate so nothing of the failed one is kept.
+    const source = ep.url === endpoint.url ? firstSource : (await sourceForEndpoint(ep, address)).source;
+    if (source.status === 'unavailable') throw new Error(source.note);
+    const page = await source.provider.getHistory(address, cursor);
+    return { page, note: source.note };
+  });
+  return {
+    status: 'ok',
+    page: outcome.value.page,
+    ...(outcome.value.note ? { note: outcome.value.note } : {}),
+  };
 }
 
 export function useHistory(chainId: string, address: string): HistoryHook {
@@ -108,21 +159,14 @@ export function useHistory(chainId: string, address: string): HistoryHook {
     setRefreshing(true);
     setState((prev) => (prev.status === 'ok' ? prev : { status: 'loading' }));
     try {
-      const endpoint = await getEndpoint(chainId);
+      const load = await loadHistoryPage(chainId, address);
       if (gen !== generation.current) return;
-      if (!endpoint) {
-        setState({ status: 'unavailable', note: 'No network configuration for this chain.' });
+      if (load.status === 'unavailable') {
+        setState({ status: 'unavailable', note: load.note });
         return;
       }
-      const source = await sourceForEndpoint(endpoint, address);
-      if (gen !== generation.current) return;
-      if (source.status === 'unavailable') {
-        setState({ status: 'unavailable', note: source.note });
-        return;
-      }
-      const page = await source.provider.getHistory(address);
-      if (gen !== generation.current) return;
-      const notes = historyNotesAfterPage(source.note ? { note: source.note } : {}, page);
+      const { page } = load;
+      const notes = historyNotesAfterPage(load.note ? { note: load.note } : {}, page);
       setState({
         status: 'ok',
         entries: page.entries,
@@ -152,13 +196,9 @@ export function useHistory(chainId: string, address: string): HistoryHook {
     if (!cursor) return;
     loadingMoreRef.current = true;
     try {
-      const endpoint = await getEndpoint(chainId);
+      const load = await loadHistoryPage(chainId, address, cursor);
       if (gen !== generation.current) return;
-      const source = endpoint
-        ? await sourceForEndpoint(endpoint, address)
-        : ({ status: 'unavailable', note: '' } as const);
-      if (gen !== generation.current) return;
-      if (source.status === 'unavailable') {
+      if (load.status === 'unavailable') {
         // The endpoint was removed between pages; keep what is shown.
         setState((prev) =>
           prev.status === 'ok'
@@ -167,8 +207,7 @@ export function useHistory(chainId: string, address: string): HistoryHook {
         );
         return;
       }
-      const page = await source.provider.getHistory(address, cursor);
-      if (gen !== generation.current) return;
+      const { page } = load;
       setState((prev) => {
         if (prev.status !== 'ok') return prev;
         // Cheap dedupe, in case a transaction confirmed between the first

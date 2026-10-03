@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getEndpoint } from '../config/networks';
+import { callWithFailover, getEndpoint } from '../config/networks';
 import { usePrefs } from './PrefsContext';
 import { EVM_CHAIN_ID } from './send';
 import {
@@ -29,7 +29,7 @@ export interface DelegationState {
  */
 export function useAccountDelegation(address: string | null | undefined): DelegationState {
   const { evmChain } = usePrefs();
-  const chainId = BigInt(evmChain.chainIdDecimal);
+  const chainIdDecimal = evmChain.chainIdDecimal;
   const [url, setUrl] = useState<string | null>(null);
   const [status, setStatus] = useState<AccountDelegation | null>(null);
   const [loading, setLoading] = useState(true);
@@ -47,25 +47,35 @@ export function useAccountDelegation(address: string | null | undefined): Delega
     let cancelled = false;
     const force = forceRef.current;
     forceRef.current = false;
+    const chainId = BigInt(chainIdDecimal);
     (async () => {
       setLoading(true);
       setError(null);
       const endpoint = await getEndpoint(EVM_CHAIN_ID);
       const resolved = endpoint?.url ?? null;
       if (cancelled) return;
-      setUrl(resolved);
-      if (!resolved) {
+      if (!endpoint || !resolved) {
+        setUrl(null);
         setStatus(null);
         setError('No RPC endpoint is configured for this network.');
         return;
       }
       const cached = force ? undefined : cachedAccountDelegation(resolved, address, chainId);
       if (cached) {
+        setUrl(resolved);
         setStatus(cached);
         return;
       }
-      const next = await readAccountDelegation(resolved, address, { chainId, force });
-      if (!cancelled) setStatus(next);
+      // Shared failover rule (config/networks.ts): a failing default is
+      // reported and the read repeated once on the next healthy candidate;
+      // `url` then names the endpoint that actually answered.
+      const outcome = await callWithFailover({ ...endpoint, url: resolved }, (ep) =>
+        readAccountDelegation(ep.url, address, { chainId, force }),
+      );
+      if (!cancelled) {
+        setUrl(outcome.endpoint.url);
+        setStatus(outcome.value);
+      }
     })()
       .catch((e: unknown) => {
         if (!cancelled) {
@@ -79,9 +89,7 @@ export function useAccountDelegation(address: string | null | undefined): Delega
     return () => {
       cancelled = true;
     };
-    // chainId is derived from evmChain.chainIdDecimal.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [address, evmChain.chainIdDecimal, nonce]);
+  }, [address, chainIdDecimal, nonce]);
 
   const refresh = useCallback(() => {
     forceRef.current = true;

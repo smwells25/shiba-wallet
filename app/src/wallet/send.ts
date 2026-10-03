@@ -40,6 +40,8 @@ import { base58, base64 } from '@scure/base';
 // under type stripping, which resolves relative specifiers literally.
 // balances.ts imports nothing from this module, so the graph stays a DAG.
 import { parseUnits } from './balances.ts';
+// Type-free helper only; endpoint-probe.ts has no React Native imports.
+import { endpointHost, isEndpointFailure } from '../config/endpoint-probe.ts';
 
 /**
  * Send-flow engine glue: recipient validation, fee quoting, max-amount
@@ -695,6 +697,40 @@ export async function sendSol(
 }
 
 // ---------------------------------------------------------------------------
+// Quote endpoint pinning (phase 9 item 5)
+// ---------------------------------------------------------------------------
+
+/** Alert title when a quote's endpoint is no longer the one in use. */
+export const QUOTE_ENDPOINT_CHANGED_TITLE = 'Please review again';
+
+/**
+ * A quote is the answer of ONE endpoint: its nonce, fees, balance and
+ * pre-flight simulation all came from the URL it was prepared with, and the
+ * send must go out through that same URL. Endpoint failover (config/
+ * networks.ts callWithFailover) can move the wallet to another default
+ * endpoint while a confirm screen is open, and the user can change an
+ * override in Settings. In both cases the quote is never patched or mixed:
+ * the screen re-resolves the endpoint just before signing, and this
+ * function returns the plain refusal to show when it differs from the
+ * quote's (null when they match, so the send may proceed through
+ * `quotedUrl`). Only host names are shown: an override URL can embed an
+ * API key.
+ */
+export function quoteEndpointChange(
+  quotedUrl: string,
+  currentUrl: string | null | undefined,
+): string | null {
+  if (currentUrl === quotedUrl) return null;
+  const now = currentUrl ? endpointHost(currentUrl) : null;
+  return (
+    `This quote came from ${endpointHost(quotedUrl)}, but the wallet would now ` +
+    (now ? `use ${now}` : 'use no endpoint at all') +
+    ' for this network. Nothing was signed or sent. Review the transaction ' +
+    'again to get a fresh quote from the current endpoint.'
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Error translation
 // ---------------------------------------------------------------------------
 
@@ -729,6 +765,14 @@ export function describeSendError(error: unknown, symbol: string): { title: stri
   }
   if (/blockhash/i.test(detail)) {
     return { title: 'The network quote expired. Please review and try again.', detail };
+  }
+  if (isEndpointFailure(error)) {
+    // Transport-level failure (no answer, refused, rate limited): say so
+    // plainly instead of implying the transaction itself was rejected.
+    return {
+      title: 'Could not reach the network endpoint. Check your connection.',
+      detail,
+    };
   }
   return { title: 'The transaction could not be sent.', detail };
 }

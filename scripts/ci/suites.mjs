@@ -29,6 +29,7 @@ export const APP_SCRIPTS = {
   'check-approvals.mjs': { kind: 'offline', summary: 'counts' },
   'check-contacts.mjs': { kind: 'offline', summary: 'counts' },
   'check-devmode.mjs': { kind: 'offline', summary: 'counts' },
+  'check-failover.mjs': { kind: 'offline', summary: 'counts' },
   'check-nfts.mjs': { kind: 'offline', summary: 'counts' },
   'check-passkeys.mjs': { kind: 'offline', summary: 'counts' },
   'check-qr.mjs': { kind: 'offline', summary: 'counts' },
@@ -44,15 +45,13 @@ export const APP_SCRIPTS = {
   'check-prices.mjs': { kind: 'flag-live', summary: 'counts' },
   'check-rpc-fallback.mjs': { kind: 'flag-live', summary: 'counts' },
   'check-token-history.mjs': { kind: 'flag-live', summary: 'counts' },
+  // Offline: ABI decoder and token store; --live adds the eth_call reads of
+  // USDC against the default mainnet RPC.
+  'check-tokens.mjs': { kind: 'flag-live', summary: 'counts' },
 
   'check-doge.mjs': { kind: 'env-live', summary: 'counts' },
   'check-indexer.mjs': { kind: 'env-live', summary: 'counts' },
 
-  // check-tokens has an offline section (ABI decoder, token store) followed
-  // by an UNCONDITIONAL live section (eth_call against the default mainnet
-  // RPC), so it cannot run offline without editing the script. It runs in
-  // live mode only until its live section is gated behind --live.
-  'check-tokens.mjs': { kind: 'live', summary: 'counts' },
   'check-balances.mjs': { kind: 'live', summary: 'exit' },
   'check-history.mjs': { kind: 'live', summary: 'exit' },
 

@@ -1,13 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { toHex } from '@shiba-wallet/chains-evm';
 import { useTheme, type Theme } from '../theme';
 import { usePrefs } from '../wallet/PrefsContext';
 import { listTokens } from '../wallet/tokens';
+import { reportEndpointFailure } from '../config/networks';
 import {
   PREVIEW_FOOTNOTE,
   PREVIEW_NO_CHANGES,
   PREVIEW_TITLE,
+  PREVIEW_UNREACHABLE_NOTE,
   describeAssetChanges,
   errorNote,
   revertedNote,
@@ -33,6 +35,13 @@ export interface PreviewRequest {
  * degrades to a muted note when no endpoint is configured or the endpoint
  * does not serve eth_simulateV1. Amounts respect the Hide amounts
  * preference; toggling it re-renders without re-simulating.
+ *
+ * Endpoint failures (phase 9 item 5): the preview never moves to another
+ * endpoint on its own — it must describe the quote's endpoint. A transport
+ * failure is reported (config/networks.ts reportEndpointFailure), the card
+ * says so calmly and offers "Try again" against the same URL, and the send
+ * screen refuses to sign if the wallet has meanwhile moved to another
+ * endpoint (send.ts quoteEndpointChange).
  */
 export function BalanceChangePreview({
   url,
@@ -55,10 +64,12 @@ export function BalanceChangePreview({
   const theme = useTheme();
   const { hideAmounts, evmChain } = usePrefs();
   const [state, setState] = useState<PreviewState | null>(null);
+  // Bumped by "Try again"; part of the key so the effect runs again.
+  const [attempt, setAttempt] = useState(0);
 
   const requests = batch && batch.length > 0 ? batch : [request];
   const key =
-    `${url ?? ''}|${evmChain.caip2}|${request.from}|` +
+    `${attempt}|${url ?? ''}|${evmChain.caip2}|${request.from}|` +
     requests
       .map((r) => `${r.from}>${r.to}:${r.value}:${r.data && r.data.length > 0 ? toHex(r.data) : '0x'}`)
       .join(',');
@@ -92,6 +103,7 @@ export function BalanceChangePreview({
         })),
         chainCaip2: evmChain.caip2,
         trackedTokens,
+        onEndpointFailure: (failedUrl) => reportEndpointFailure(evmChain.caip2, failedUrl),
       });
     })().then((next) => {
       if (!cancelled) setState(next);
@@ -99,8 +111,7 @@ export function BalanceChangePreview({
     return () => {
       cancelled = true;
     };
-    // `key` captures every input of the simulation.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `key` serializes every input of the simulation (attempt, url, chain, sender and each request's to/value/data). Callers pass `request` and `batch` as inline objects, new on every render, so listing them would re-simulate without any input having changed.
   }, [key]);
 
   const lines = useMemo(
@@ -128,7 +139,19 @@ export function BalanceChangePreview({
         </View>
       ) : null}
       {state?.status === 'error' ? (
-        <Text style={[styles.line, { color: theme.danger }]}>{errorNote(state.message)}</Text>
+        <>
+          <Text style={[styles.line, { color: state.unreachable ? theme.text : theme.danger }]}>
+            {state.unreachable ? PREVIEW_UNREACHABLE_NOTE : errorNote(state.message)}
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Try the balance-change preview again"
+            onPress={() => setAttempt((n) => n + 1)}
+            hitSlop={8}
+          >
+            <Text style={[styles.retry, { color: theme.accent }]}>Try again</Text>
+          </Pressable>
+        </>
       ) : null}
       {state?.status === 'reverted' ? (
         <Text style={[styles.line, { color: theme.danger }]}>{revertedNote(state.reason)}</Text>
@@ -186,6 +209,10 @@ const styles = StyleSheet.create({
   },
   bold: {
     fontWeight: '700',
+  },
+  retry: {
+    fontSize: 14,
+    fontWeight: '600',
   },
   muted: {
     fontSize: 12,

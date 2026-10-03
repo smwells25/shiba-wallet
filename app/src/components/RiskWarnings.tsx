@@ -114,8 +114,7 @@ export function RiskWarnings({
     return () => {
       cancelled = true;
     };
-    // `key` captures every input of the checks.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `key` serializes every input of the checks (url, chain, wallet, to, counterparty, calldata, the asset changes and the wallet's own addresses). ownAddresses is a new array on every render and callers may pass assetChanges inline, so listing them would re-run the network checks without any input having changed.
   }, [key]);
 
   if (lines === null) {

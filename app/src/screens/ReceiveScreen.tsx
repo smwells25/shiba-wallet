@@ -65,7 +65,11 @@ export function ReceiveScreen({ route, navigation }: Props) {
 
   return (
     <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
-      <View style={[styles.badge, { backgroundColor: account.accent }]}>
+      <View
+        style={[styles.badge, { backgroundColor: account.accent }]}
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+      >
         <Text style={styles.badgeText}>{account.symbol}</Text>
       </View>
       <Text style={[styles.chainName, { color: theme.text }]}>{account.name}</Text>
@@ -81,7 +85,12 @@ export function ReceiveScreen({ route, navigation }: Props) {
         bare address is what every major wallet's scanner accepts for all
         four chains — inventing a URI here would only narrow compatibility.
       */}
-      <View style={styles.qrBox}>
+      <View
+        style={styles.qrBox}
+        accessible
+        accessibilityRole="image"
+        accessibilityLabel={`QR code of your ${account.name} address`}
+      >
         <QRCode value={account.address} size={qrSize} backgroundColor="#ffffff" color="#000000" />
       </View>
       <View
@@ -124,7 +133,7 @@ export function ReceiveScreen({ route, navigation }: Props) {
         }}
       />
       {copied ? (
-        <Text style={[styles.note, { color: theme.textMuted }]}>
+        <Text accessibilityLiveRegion="polite" style={[styles.note, { color: theme.textMuted }]}>
           Copied — note that the clipboard can be read by other apps.
         </Text>
       ) : null}

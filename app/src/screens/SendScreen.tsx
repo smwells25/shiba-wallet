@@ -16,7 +16,12 @@ import { formatAssetId, nonFungibleTokenId, parseAssetId } from '@shiba-wallet/c
 import type { FungibleAsset } from '@shiba-wallet/core';
 import type { RootStackParamList } from '../navigation';
 import { Button, WarningBox, screenStyle } from '../components';
-import { getEndpoint, type NetworkEndpoint } from '../config/networks';
+import {
+  callWithFailover,
+  getEndpoint,
+  type NetworkEndpoint,
+  type UsableEndpoint,
+} from '../config/networks';
 import { useTheme, type Theme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
@@ -25,6 +30,7 @@ import { formatUnits, parseUnits } from '../wallet/balances';
 import {
   BITCOIN_CHAIN_ID,
   EVM_CHAIN_ID,
+  QUOTE_ENDPOINT_CHANGED_TITLE,
   describeSendError,
   maxEvmSend,
   maxSolSend,
@@ -32,6 +38,7 @@ import {
   prepareEvmSend,
   prepareSolSend,
   prepareUtxoSend,
+  quoteEndpointChange,
   sendEvm,
   sendSol,
   sendUtxo,
@@ -95,6 +102,7 @@ import { usePrices } from '../wallet/usePrices';
 import { fiatLine, formatFiat, nativePriceAssetId, tokenPriceAssetId } from '../wallet/prices';
 import { BITCOIN, DOGECOIN } from '@shiba-wallet/chains-utxo';
 import { usePasskeyInfo } from '../wallet/usePasskeyInfo';
+import { OfflineNotice } from '../wallet/connectivity';
 import { loadPasskeyNative } from '../wallet/passkey-native';
 import {
   createPasskeyBundle,
@@ -216,6 +224,11 @@ export function SendScreen({ route, navigation }: Props) {
   // account; the smart account's owner on the AA path). signWith refuses
   // to sign unless the active account's key controls exactly this address.
   const [quotedFrom, setQuotedFrom] = useState<string | null>(null);
+  // The endpoint URL the quote was prepared through. The send goes out
+  // through exactly this URL, and only while it is still the URL the
+  // wallet would use (send.ts quoteEndpointChange); the confirm screen's
+  // preview and risk checks read the same URL.
+  const [quotedUrl, setQuotedUrl] = useState<string | null>(null);
   const [overrideSimulation, setOverrideSimulation] = useState(false);
   const [result, setResult] = useState<SendResult | null>(null);
   // Contacts (phase 6 item 4) for the ACTIVE network of this slot (the
@@ -485,10 +498,47 @@ export function SendScreen({ route, navigation }: Props) {
   // Blockbook instance (config/defaults.ts) whose optional API key rides
   // along as the api-key header resolved by config/networks.ts; Bitcoin
   // keeps the Esplora default.
-  const utxoOptions =
-    network?.kind === 'blockbook'
-      ? { backend: 'blockbook' as const, ...(endpoint?.headers ? { headers: endpoint.headers } : {}) }
+  const utxoOptionsFor = (ep: NetworkEndpoint | null | undefined) =>
+    ep?.network.kind === 'blockbook'
+      ? { backend: 'blockbook' as const, ...(ep.headers ? { headers: ep.headers } : {}) }
       : undefined;
+  const utxoOptions = utxoOptionsFor(endpoint);
+  // The URL the confirm screen's preview and risk checks use: the quote's.
+  const confirmUrl = quotedUrl ?? url;
+
+  /**
+   * The endpoint to quote through, resolved NOW (another screen's failure
+   * report may have moved the wallet to another default since this screen
+   * opened; Settings may have changed an override). The form follows it.
+   */
+  const currentEndpoint = async (): Promise<UsableEndpoint> => {
+    const fresh = await getEndpoint(route.params.chainId);
+    if (!fresh || fresh.url === null) {
+      setEndpoint(fresh ?? null);
+      throw new Error('No endpoint is configured for this network. Set one in Settings → Network endpoints.');
+    }
+    if (fresh.network.chainId !== network?.chainId) {
+      setEndpoint(fresh);
+      throw new Error('The network changed while this screen was open. Review the details and try again.');
+    }
+    if (fresh.url !== url) setEndpoint(fresh);
+    return { ...fresh, url: fresh.url };
+  };
+
+  /**
+   * Runs an EOA quote (or Max) through `start` with the shared failover rule
+   * (config/networks.ts callWithFailover): a failing default endpoint is
+   * reported and the whole operation runs again, from scratch, on the next
+   * healthy candidate. Returns the value with the endpoint that produced it.
+   */
+  const viaFailover = async <T,>(
+    start: UsableEndpoint,
+    operation: (ep: UsableEndpoint) => Promise<T>,
+  ): Promise<{ value: T; used: UsableEndpoint }> => {
+    const outcome = await callWithFailover(start, operation);
+    if (outcome.switched) setEndpoint(outcome.endpoint);
+    return { value: outcome.value, used: outcome.endpoint };
+  };
   // The smart-account toggle appears only when both AA endpoints are
   // configured for this EVM chain — configured means verified, because the
   // Settings save path refuses anything that fails verification. Token
@@ -516,9 +566,9 @@ export function SendScreen({ route, navigation }: Props) {
    * smart account must be the one the passkey was installed in, and the
    * native passkey module must be present with a configured rpId (the gate).
    */
-  const buildPasskeyBundle = async (): Promise<PasskeyBundle> => {
+  const buildPasskeyBundle = async (nodeUrl: string | null = url): Promise<PasskeyBundle> => {
     if (!passkeyRecord) throw new Error('No passkey is installed for this account on this network.');
-    const base = buildAaBundle();
+    const base = buildAaBundle(nodeUrl);
     const sender = await resolveAaSender(base, account.address);
     if (sender.toLowerCase() !== passkeyRecord.account.toLowerCase()) {
       throw new Error(`The passkey belongs to ${passkeyRecord.account}, not this smart account (${sender}).`);
@@ -534,11 +584,11 @@ export function SendScreen({ route, navigation }: Props) {
    * CREATE2 salt = the active account's index (ADR D8), owner = the same
    * account's EOA (passed at quote time).
    */
-  const buildAaBundle = (): AaClientBundle => {
-    if (!url || !aaConfig) throw new Error('Smart-account settings are not loaded.');
+  const buildAaBundle = (nodeUrl: string | null = url): AaClientBundle => {
+    if (!nodeUrl || !aaConfig) throw new Error('Smart-account settings are not loaded.');
     if (!activeAccount) throw new Error('No active account.');
     return createAaClientFromConfig(aaConfig, {
-      nodeUrl: url,
+      nodeUrl,
       // Active chain id (11155111 in Sepolia test mode): the quote verifies
       // the node endpoint reports exactly this chain.
       chainId: BigInt(evmChain.chainIdDecimal),
@@ -560,11 +610,14 @@ export function SendScreen({ route, navigation }: Props) {
     setMaxBusy(true);
     setFormError(null);
     try {
+      const start = await currentEndpoint();
       let max: bigint;
       if (nft) {
         // ERC-1155 Max = the on-chain balance (gas is paid in ETH, so it
         // never reduces the number of copies). ERC-721 has no amount field.
-        const held = await maxNft1155Send(url, account.address, nft.contract, nft.tokenId);
+        const { value: held } = await viaFailover(start, (ep) =>
+          maxNft1155Send(ep.url, account.address, nft.contract, nft.tokenId),
+        );
         if (held <= 0n) throw new Error('This account holds none of this item on-chain.');
         setAmountText(held.toString());
         return;
@@ -580,7 +633,7 @@ export function SendScreen({ route, navigation }: Props) {
         if (passkeyActive) {
           // Passkey path: the passkey's own quote (nonce key, stub, padding)
           // prices the fee; tokens use the full token balance.
-          const pbundle = await buildPasskeyBundle();
+          const pbundle = await buildPasskeyBundle(start.url);
           const pkAccount = pbundle.passkey.record.account;
           if (token) {
             max = await maxAaErc20Send(pbundle, pkAccount, {
@@ -600,7 +653,7 @@ export function SendScreen({ route, navigation }: Props) {
           setAmountText(exact(max, decimals));
           return;
         }
-        const bundle = buildAaBundle();
+        const bundle = buildAaBundle(start.url);
         if (token) {
           max = await maxAaErc20Send(bundle, account.address, {
             contract: token.assetId.reference,
@@ -618,33 +671,34 @@ export function SendScreen({ route, navigation }: Props) {
         // it never reduces the token amount. maxErc20Send refuses (with a
         // plain "Not enough ETH" error) when the ETH balance cannot cover
         // the worst-case fee for transferring that balance.
-        max = await maxErc20Send(
-          url,
-          account.address,
-          token.assetId.reference,
-          validation?.ok ? validation.normalized : undefined,
-        );
+        max = (
+          await viaFailover(start, (ep) =>
+            maxErc20Send(
+              ep.url,
+              account.address,
+              token.assetId.reference,
+              validation?.ok ? validation.normalized : undefined,
+            ),
+          )
+        ).value;
         if (max <= 0n) throw new Error(`Your ${token.symbol} balance is zero.`);
-      } else if (network!.kind === 'evm-jsonrpc') {
-        max = await maxEvmSend(
-          url,
-          account.address,
-          validation?.ok ? validation.normalized : undefined,
-        );
-      } else if (network!.kind === 'solana-jsonrpc') {
-        max = await maxSolSend(url, account.address);
+      } else if (start.network.kind === 'evm-jsonrpc') {
+        max = (
+          await viaFailover(start, (ep) =>
+            maxEvmSend(ep.url, account.address, validation?.ok ? validation.normalized : undefined),
+          )
+        ).value;
+      } else if (start.network.kind === 'solana-jsonrpc') {
+        max = (await viaFailover(start, (ep) => maxSolSend(ep.url, account.address))).value;
       } else {
         // UTXO max depends on the recipient's output size, so it needs a
         // valid recipient first.
         if (!validation?.ok) {
           throw new Error('Enter a valid recipient first — the max depends on it.');
         }
-        const swept = await maxUtxoSend(
-          url,
-          utxoNetwork,
-          account.address,
-          validation.normalized,
-          utxoOptions,
+        const normalized = validation.normalized;
+        const { value: swept } = await viaFailover(start, (ep) =>
+          maxUtxoSend(ep.url, utxoNetwork, account.address, normalized, utxoOptionsFor(ep)),
         );
         max = swept.amount;
       }
@@ -676,32 +730,44 @@ export function SendScreen({ route, navigation }: Props) {
     }
     setPhase('quoting');
     try {
+      const start = await currentEndpoint();
+      const recipientAddress = validation.normalized;
       let next: SendQuote | AaSendQuote | Erc20SendQuote | NftSendQuote;
+      // The URL the quote comes from; the send must go out through it.
+      let quoteUrl = start.url;
       if (nft) {
         // NFT mode: EOA path only, ACTIVE chain. The quote re-checks
         // ownership on-chain, checks the ETH balance against the fee, and
         // pre-flights the exact safeTransferFrom calldata via eth_call.
-        next = await prepareNftSend({
-          url,
-          from: account.address,
-          to: validation.normalized,
-          contract: nft.contract,
-          tokenId: nft.tokenId,
-          standard: nft.standard,
-          amount,
-          expectedCaip2: evmChain.caip2,
-          nftCaip2: nft.chainId,
-        });
+        const quoted = await viaFailover(start, (ep) =>
+          prepareNftSend({
+            url: ep.url,
+            from: account.address,
+            to: recipientAddress,
+            contract: nft.contract,
+            tokenId: nft.tokenId,
+            standard: nft.standard,
+            amount,
+            expectedCaip2: evmChain.caip2,
+            nftCaip2: nft.chainId,
+          }),
+        );
+        next = quoted.value;
+        quoteUrl = quoted.used.url;
       } else if (aaActive) {
         // Experimental ERC-4337 path: quote from the smart account through
         // the bundler estimate (see ../wallet/aa.ts) — a native transfer,
         // or in token mode ONE transfer call executed by the smart account
         // (no approve: the account moves its own tokens). The bundle is kept
         // for the send + receipt poll so all three use the same transports.
+        // The smart-account paths are not failed over: their errors can come
+        // from the bundler as well as the node, and charging a bundler
+        // refusal to the node endpoint would be wrong. They quote through
+        // the endpoint resolved just now and are pinned to it like the rest.
         if (passkeyActive) {
           // Passkey-signed operation from the SAME smart account: quoted with
           // the passkey nonce key and stub signature (passkeys.ts).
-          const pbundle = await buildPasskeyBundle();
+          const pbundle = await buildPasskeyBundle(start.url);
           aaBundle.current = pbundle;
           next = token
             ? await preparePasskeyCalls(
@@ -724,11 +790,12 @@ export function SendScreen({ route, navigation }: Props) {
               ]);
           setQuote(next);
           setQuotedFrom(account.address);
+          setQuotedUrl(quoteUrl);
           setOverrideSimulation(false);
           setPhase('confirm');
           return;
         }
-        const bundle = buildAaBundle();
+        const bundle = buildAaBundle(start.url);
         aaBundle.current = bundle;
         next = token
           ? await prepareAaErc20Send(bundle, account.address, {
@@ -743,40 +810,43 @@ export function SendScreen({ route, navigation }: Props) {
         // ERC-20 token mode, EOA path. Quote checks the token balance,
         // checks the ETH balance against the fee, and pre-flights the
         // transfer calldata through eth_call.
-        next = await prepareErc20Send({
-          url,
-          from: account.address,
-          to: validation.normalized,
-          contract: token.assetId.reference,
-          amount,
-          symbol: token.symbol,
-          decimals: token.decimals,
-        });
-      } else if (network.kind === 'evm-jsonrpc') {
+        const quoted = await viaFailover(start, (ep) =>
+          prepareErc20Send({
+            url: ep.url,
+            from: account.address,
+            to: recipientAddress,
+            contract: token.assetId.reference,
+            amount,
+            symbol: token.symbol,
+            decimals: token.decimals,
+          }),
+        );
+        next = quoted.value;
+        quoteUrl = quoted.used.url;
+      } else if (start.network.kind === 'evm-jsonrpc') {
         // The endpoint's eth_chainId must match the ACTIVE EVM chain
         // (mainnet 1 / Sepolia 11155111) — the modes can never mix.
-        next = await prepareEvmSend(
-          url,
-          account.address,
-          validation.normalized,
-          amount,
-          undefined,
-          evmChain.caip2,
+        const quoted = await viaFailover(start, (ep) =>
+          prepareEvmSend(ep.url, account.address, recipientAddress, amount, undefined, evmChain.caip2),
         );
-      } else if (network.kind === 'solana-jsonrpc') {
-        next = await prepareSolSend(url, account.address, validation.normalized, amount);
+        next = quoted.value;
+        quoteUrl = quoted.used.url;
+      } else if (start.network.kind === 'solana-jsonrpc') {
+        const quoted = await viaFailover(start, (ep) =>
+          prepareSolSend(ep.url, account.address, recipientAddress, amount),
+        );
+        next = quoted.value;
+        quoteUrl = quoted.used.url;
       } else {
-        next = await prepareUtxoSend(
-          url,
-          utxoNetwork,
-          account.address,
-          validation.normalized,
-          amount,
-          utxoOptions,
+        const quoted = await viaFailover(start, (ep) =>
+          prepareUtxoSend(ep.url, utxoNetwork, account.address, recipientAddress, amount, utxoOptionsFor(ep)),
         );
+        next = quoted.value;
+        quoteUrl = quoted.used.url;
       }
       setQuote(next);
       setQuotedFrom(account.address);
+      setQuotedUrl(quoteUrl);
       setOverrideSimulation(false);
       setPhase('confirm');
     } catch (e) {
@@ -790,7 +860,25 @@ export function SendScreen({ route, navigation }: Props) {
   };
 
   const onSend = async () => {
-    if (!url || !quote || !quotedFrom) return;
+    if (!quote || !quotedFrom || !quotedUrl) return;
+    // Quote pinning: the quote is one endpoint's answer. If the wallet would
+    // now use a different endpoint (failover elsewhere in the app, or a
+    // Settings change), refuse and ask for a fresh quote — never patch it.
+    let currentUrl: string | null = null;
+    try {
+      currentUrl = (await getEndpoint(route.params.chainId))?.url ?? null;
+    } catch {
+      currentUrl = null;
+    }
+    const endpointChanged = quoteEndpointChange(quotedUrl, currentUrl);
+    if (endpointChanged) {
+      Alert.alert(QUOTE_ENDPOINT_CHANGED_TITLE, endpointChanged);
+      setQuote(null);
+      setQuotedUrl(null);
+      setPhase('form');
+      return;
+    }
+    const sendUrl = quotedUrl;
     if (quote.kind === 'aa' && quote.passkey) {
       // Passkey-signed: no app-level biometric gate and no owner key. The
       // platform passkey prompt that runs at submission IS the user
@@ -880,13 +968,13 @@ export function SendScreen({ route, navigation }: Props) {
       const sent = await signWith(route.params.chainId, quotedFrom, async (signer) => {
         // Token transfer: value 0, to = token contract, data = transfer
         // calldata — through the same sendEvm signing/broadcast path.
-        if (quote.kind === 'erc20') return sendErc20(url, signer, quote);
+        if (quote.kind === 'erc20') return sendErc20(sendUrl, signer, quote);
         // NFT transfer: value 0, to = NFT contract, data = safeTransferFrom
         // calldata — through the same sendEvm signing/broadcast path.
-        if (quote.kind === 'nft') return sendNft(url, signer, quote, evmChain.explorerTxBase);
-        if (quote.kind === 'evm') return sendEvm(url, signer, quote, evmChain.explorerTxBase);
-        if (quote.kind === 'sol') return sendSol(url, signer, quote);
-        return sendUtxo(url, route.params.chainId, signer, quote, utxoOptions);
+        if (quote.kind === 'nft') return sendNft(sendUrl, signer, quote, evmChain.explorerTxBase);
+        if (quote.kind === 'evm') return sendEvm(sendUrl, signer, quote, evmChain.explorerTxBase);
+        if (quote.kind === 'sol') return sendSol(sendUrl, signer, quote);
+        return sendUtxo(sendUrl, route.params.chainId, signer, quote, utxoOptions);
       });
       setResult(sent);
       // The gallery's cached list is stale once an NFT left the account.
@@ -1119,7 +1207,7 @@ export function SendScreen({ route, navigation }: Props) {
         />
 
         <BalanceChangePreview
-          url={url}
+          url={confirmUrl}
           request={{
             from: quote.sender,
             to: quote.calls[0]!.to,
@@ -1130,7 +1218,7 @@ export function SendScreen({ route, navigation }: Props) {
           note={quote.calls.length > 1 ? PREVIEW_AA_BATCH_NOTE : PREVIEW_AA_NOTE}
         />
         <RiskWarnings
-          url={url}
+          url={confirmUrl}
           wallet={quote.sender}
           to={quote.calls[0]!.to}
           data={quote.calls[0]!.data}
@@ -1210,11 +1298,11 @@ export function SendScreen({ route, navigation }: Props) {
         />
 
         <BalanceChangePreview
-          url={url}
+          url={confirmUrl}
           request={{ from: account.address, to: quote.contract, value: 0n, data: quote.data }}
         />
         <RiskWarnings
-          url={url}
+          url={confirmUrl}
           wallet={account.address}
           to={quote.contract}
           counterparty={quote.to}
@@ -1238,7 +1326,11 @@ export function SendScreen({ route, navigation }: Props) {
                   'would cost the full fee and move no tokens.'}
             </WarningBox>
             <View style={styles.overrideRow}>
-              <Switch value={overrideSimulation} onValueChange={setOverrideSimulation} />
+              <Switch
+                accessibilityLabel="Send anyway, although the pre-flight simulation failed"
+                value={overrideSimulation}
+                onValueChange={setOverrideSimulation}
+              />
               <Text style={[styles.overrideLabel, { color: theme.text }]}>
                 Send anyway (I understand it will probably fail)
               </Text>
@@ -1310,11 +1402,11 @@ export function SendScreen({ route, navigation }: Props) {
         />
 
         <BalanceChangePreview
-          url={url}
+          url={confirmUrl}
           request={{ from: account.address, to: quote.contract, value: 0n, data: quote.data }}
         />
         <RiskWarnings
-          url={url}
+          url={confirmUrl}
           wallet={account.address}
           to={quote.contract}
           counterparty={quote.to}
@@ -1332,7 +1424,11 @@ export function SendScreen({ route, navigation }: Props) {
               This transaction would very likely fail on-chain and still cost the fee.
             </WarningBox>
             <View style={styles.overrideRow}>
-              <Switch value={overrideSimulation} onValueChange={setOverrideSimulation} />
+              <Switch
+                accessibilityLabel="Send anyway, although the pre-flight simulation failed"
+                value={overrideSimulation}
+                onValueChange={setOverrideSimulation}
+              />
               <Text style={[styles.overrideLabel, { color: theme.text }]}>
                 Send anyway (I understand it will probably fail)
               </Text>
@@ -1414,12 +1510,12 @@ export function SendScreen({ route, navigation }: Props) {
 
         {quote.kind === 'evm' ? (
           <BalanceChangePreview
-            url={url}
+            url={confirmUrl}
             request={{ from: account.address, to: quote.to, value: quote.amount, data: quote.data }}
           />
         ) : null}
         {quote.kind === 'evm' ? (
-          <RiskWarnings url={url} wallet={account.address} to={quote.to} data={quote.data} />
+          <RiskWarnings url={confirmUrl} wallet={account.address} to={quote.to} data={quote.data} />
         ) : null}
 
         {quote.kind === 'evm' ? (
@@ -1435,7 +1531,11 @@ export function SendScreen({ route, navigation }: Props) {
                 the fee.
               </WarningBox>
               <View style={styles.overrideRow}>
-                <Switch value={overrideSimulation} onValueChange={setOverrideSimulation} />
+                <Switch
+                accessibilityLabel="Send anyway, although the pre-flight simulation failed"
+                value={overrideSimulation}
+                onValueChange={setOverrideSimulation}
+              />
                 <Text style={[styles.overrideLabel, { color: theme.text }]}>
                   Send anyway (I understand it will probably fail)
                 </Text>
@@ -1474,6 +1574,8 @@ export function SendScreen({ route, navigation }: Props) {
         {network ? `${network.label} · ${testnet ? 'TESTNET' : 'Mainnet'}` : 'Unknown network'}{' '}
         · from {activeAccount ? `${activeAccount.name} ` : ''}({account.address.slice(0, 10)}…)
       </Text>
+
+      <OfflineNotice />
 
       {!url ? (
         <WarningBox>
@@ -1524,7 +1626,12 @@ export function SendScreen({ route, navigation }: Props) {
           style={[styles.aaToggleBox, { backgroundColor: theme.card, borderColor: theme.border }]}
         >
           <View style={styles.overrideRow}>
-            <Switch value={aaEnabled} onValueChange={setAaEnabled} disabled={!url} />
+            <Switch
+              accessibilityLabel="Send from smart account"
+              value={aaEnabled}
+              onValueChange={setAaEnabled}
+              disabled={!url}
+            />
             <Text style={[styles.overrideLabel, { color: theme.text }]}>
               Send from smart account
             </Text>
@@ -1558,7 +1665,12 @@ export function SendScreen({ route, navigation }: Props) {
           style={[styles.aaToggleBox, { backgroundColor: theme.card, borderColor: theme.border }]}
         >
           <View style={styles.overrideRow}>
-            <Switch value={passkeySigner} onValueChange={setPasskeySigner} disabled={!url} />
+            <Switch
+              accessibilityLabel="Sign with passkey"
+              value={passkeySigner}
+              onValueChange={setPasskeySigner}
+              disabled={!url}
+            />
             <Text style={[styles.overrideLabel, { color: theme.text }]}>Sign with passkey</Text>
           </View>
           <Text style={[styles.hint, { color: theme.textMuted }]}>
@@ -1577,6 +1689,7 @@ export function SendScreen({ route, navigation }: Props) {
             setRecipient(t);
             setFormError(null);
           }}
+          accessibilityLabel="Recipient address"
           placeholder={token || nftMode ? 'Ethereum address' : `${account.symbol} address`}
           placeholderTextColor={theme.textMuted}
           autoCapitalize="none"
@@ -1675,6 +1788,7 @@ export function SendScreen({ route, navigation }: Props) {
                 setAmountText(t);
                 setFormError(null);
               }}
+              accessibilityLabel={nft ? 'Number of copies' : `Amount in ${symbol}`}
               placeholder={nft ? '1' : '0.0'}
               placeholderTextColor={theme.textMuted}
               keyboardType={nft ? 'number-pad' : 'decimal-pad'}
@@ -1692,7 +1806,9 @@ export function SendScreen({ route, navigation }: Props) {
       )}
 
       {formError ? (
-        <Text style={[styles.fieldError, { color: theme.danger }]}>{formError}</Text>
+        <Text accessibilityLiveRegion="polite" style={[styles.fieldError, { color: theme.danger }]}>
+          {formError}
+        </Text>
       ) : null}
 
       {phase === 'quoting' ? (

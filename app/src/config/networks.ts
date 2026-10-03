@@ -1,13 +1,18 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { NetworkDefault } from './defaults';
-import { networkDefaultFor, resolveActiveNetworks } from './defaults';
-import { loadPrefs } from './prefs';
-import { blockbookHeaders, getBlockbookConfig } from '../wallet/blockbook';
+// Explicit .ts extensions: scripts/check-failover.mjs loads this module
+// directly under Node's type stripping, which resolves relative specifiers
+// literally (Metro accepts both forms).
+import type { NetworkDefault } from './defaults.ts';
+import { networkDefaultFor, resolveActiveNetworks } from './defaults.ts';
+import { loadPrefs } from './prefs.ts';
+import { blockbookHeaders, getBlockbookConfig } from '../wallet/blockbook.ts';
 import {
   createDefaultEndpointResolver,
   resolveNetworkUrl,
+  runWithEndpointFailover,
   type DefaultChoice,
-} from './endpoint-probe';
+  type FailoverOutcome,
+} from './endpoint-probe.ts';
 
 /**
  * Per-chain RPC/REST endpoint configuration: verified public defaults (see
@@ -33,6 +38,15 @@ import {
  * AsyncStorage). Callers that see a request fail through a default can
  * call reportEndpointFailure() so the next resolution probes again. A user
  * override always wins and is never probed around.
+ *
+ * CALL-TIME FAILOVER (phase 9 item 5): every network-using path resolves
+ * its endpoint when it makes the call (getEndpoint, or withEndpoint below)
+ * and runs the request through callWithFailover, the single place where a
+ * failed DEFAULT endpoint is reported and the request is repeated once on
+ * the next healthy candidate (endpoint-probe.ts runWithEndpointFailover).
+ * Quotes are never patched across endpoints: a quote names the endpoint
+ * that produced it, and the send paths refuse to sign when the wallet would
+ * now use a different one (send.ts quoteEndpointChange).
  */
 
 /** Session-lifetime, in-memory choice among each chain's default candidates. */
@@ -161,6 +175,68 @@ export async function getAllEndpoints(): Promise<NetworkEndpoint[]> {
  */
 export function reportEndpointFailure(networkChainId: string, url: string): boolean {
   return defaultResolver.reportFailure(networkChainId, url);
+}
+
+/**
+ * Forgets every in-memory default choice, so the next resolution probes
+ * each chain's candidates from the top. Called when the device regains
+ * connectivity (../wallet/connectivity.ts): choices made while offline say
+ * nothing about which endpoint is healthy now.
+ */
+export function forgetDefaultEndpointChoices(): void {
+  defaultResolver.clear();
+}
+
+/** An endpoint whose URL is set (the only kind a request can use). */
+export type UsableEndpoint = NetworkEndpoint & { url: string };
+
+/** Thrown by withEndpoint when the chain has no endpoint to call. */
+export class NoEndpointError extends Error {
+  /** The resolved (URL-less) endpoint, when the chain is known at all. */
+  readonly endpoint: NetworkEndpoint | undefined;
+  constructor(endpoint: NetworkEndpoint | undefined) {
+    super(
+      endpoint
+        ? `No endpoint is configured for ${endpoint.network.label}.`
+        : 'No network configuration for this chain.',
+    );
+    this.name = 'NoEndpointError';
+    this.endpoint = endpoint;
+  }
+}
+
+/**
+ * Runs `operation` through `endpoint` with the shared failover rule: a
+ * DEFAULT endpoint that fails at the transport level is reported and the
+ * operation is repeated once on the next healthy candidate; an override is
+ * used as is. The outcome names the endpoint that answered — callers that
+ * build a quote must keep that endpoint and send through it.
+ */
+export function callWithFailover<T>(
+  endpoint: UsableEndpoint,
+  operation: (endpoint: UsableEndpoint) => Promise<T>,
+  options: { isFailure?: (error: unknown) => boolean } = {},
+): Promise<FailoverOutcome<NetworkEndpoint, T>> {
+  return runWithEndpointFailover<NetworkEndpoint, T>(endpoint, operation, {
+    reResolve: () => getEndpoint(endpoint.forChainId),
+    report: reportEndpointFailure,
+    ...(options.isFailure ? { isFailure: options.isFailure } : {}),
+  });
+}
+
+/**
+ * Resolves the chain's endpoint NOW (override or current default choice)
+ * and runs `operation` through callWithFailover. Throws NoEndpointError
+ * when the chain has no usable URL.
+ */
+export async function withEndpoint<T>(
+  chainId: string,
+  operation: (endpoint: UsableEndpoint) => Promise<T>,
+  options: { isFailure?: (error: unknown) => boolean } = {},
+): Promise<FailoverOutcome<NetworkEndpoint, T>> {
+  const endpoint = await getEndpoint(chainId);
+  if (!endpoint || endpoint.url === null) throw new NoEndpointError(endpoint);
+  return callWithFailover(endpoint as UsableEndpoint, operation, options);
 }
 
 /**

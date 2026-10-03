@@ -90,6 +90,7 @@ export function ContactPicker({
               <Pressable
                 key={contact.address}
                 accessibilityRole="button"
+                accessibilityHint="Uses this contact's address as the recipient"
                 onPress={() => onPick(contact)}
                 style={({ pressed }) => [
                   styles.contactBox,
@@ -179,6 +180,7 @@ export function SaveContactInline({
           setName(t);
           setError(null);
         }}
+        accessibilityLabel="Contact name"
         placeholder="Name"
         placeholderTextColor={theme.textMuted}
         autoCorrect={false}

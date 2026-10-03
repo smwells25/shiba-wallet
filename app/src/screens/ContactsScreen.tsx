@@ -247,6 +247,7 @@ export function ContactsScreen(_props: Props) {
                     <>
                       <TextInput
                         value={renameText}
+                        accessibilityLabel={`New name for ${contact.name}`}
                         onChangeText={(t) => {
                           setRenameText(t);
                           setRenameError(null);
@@ -342,6 +343,7 @@ export function ContactsScreen(_props: Props) {
             setName(t);
             setAddError(null);
           }}
+          accessibilityLabel="Contact name"
           placeholder="Name"
           placeholderTextColor={theme.textMuted}
           autoCorrect={false}
@@ -355,6 +357,7 @@ export function ContactsScreen(_props: Props) {
               setAddress(t);
               setAddError(null);
             }}
+            accessibilityLabel={`${addNetwork?.network.label ?? ''} address`}
             placeholder={`${addNetwork?.network.label ?? ''} address`}
             placeholderTextColor={theme.textMuted}
             autoCapitalize="none"
