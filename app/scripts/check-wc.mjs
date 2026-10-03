@@ -1135,6 +1135,9 @@ console.log('check-wc: WalletConnect Verify (verifyContext, threat-model N-06)')
 
   // UI wiring (source checks; the sheet is React Native and cannot run here).
   const sheet = readFileSync(new URL('../src/components/WcApprovalSheet.tsx', import.meta.url), 'utf8');
+  const glue = readFileSync(new URL('../src/wallet/walletconnect.ts', import.meta.url), 'utf8');
+  check('the SDK core is created with telemetryEnabled: false (no init event to pulse.walletconnect.org)',
+    /new Core\(\{\s*projectId,\s*telemetryEnabled:\s*false\s*\}\)/.test(glue));
   const provider = readFileSync(new URL('../src/wallet/WalletConnectContext.tsx', import.meta.url), 'utf8');
   check('sheet renders the identity banner for every item', /<IdentityBanner identity=\{item\.identity\}/.test(sheet));
   check('sheet: the risk switch is the same Switch pattern as the simulation override', /requiresAcknowledgement \? \(\s*<View style=\{styles\.overrideRow\}>\s*<Switch value=\{acknowledged\}/.test(sheet));

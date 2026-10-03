@@ -2423,7 +2423,12 @@ export async function initWalletConnect(projectId: string): Promise<WcClient> {
       import('@reown/walletkit'),
       import('@walletconnect/core'),
     ]);
-    const core = new Core({ projectId });
+    // telemetryEnabled defaults to true in @walletconnect/core 2.25.0, in
+    // which case the core posts an init event (client id, user agent,
+    // project id) to pulse.walletconnect.org. The wallet makes no analytics
+    // calls of its own, so the SDK's are switched off too; docs/PRIVACY.md
+    // relies on this line.
+    const core = new Core({ projectId, telemetryEnabled: false });
     const kit = await WalletKit.init({
       core,
       metadata: {
