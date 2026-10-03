@@ -4185,3 +4185,48 @@ on Opus. The emulator is driven by ONE agent at a time.
       Minor: Google-keyboard stray text in the paste field; Home briefly
       omits Guardians/Passkey links after a fresh bundle (async
       eligibility). Screenshots in the scratchpad p10/ folder.
+- [x] Item 1 bug fixes (commit acf5145; check-storage 269, check-sessions
+      110, check-recovery 254; CTO-verified in the isolated worktree).
+      ROOT CAUSE OF BUG 1 (not app code): a Metro hot update. The
+      hardening agent ran `npm run build` in the main checkout at
+      17:27:04Z while the session grant was between its 2nd and 3rd
+      prompts; the Metro worktree's packages/*/dist are symlinks into the
+      main checkout and its metro.config.js watches the main checkout, so
+      the rebuilt dist re-evaluated chains-evm and every importer up to
+      App.tsx (same JS process 25300, no "Running main": a hot update, not
+      a reload), re-ran bindSecureStore, reset the WalletConnect init
+      cache ("Init() was called 2 times" at 17:27:21Z from the module-level
+      `let cachedInit` line) and remounted the navigator onto Home; the
+      in-flight install finished in the unmounted screen's code. No
+      production remount path exists (status changes only at launch,
+      activate and wipe; the navigator key is the account index; LockGate
+      is an overlay; AppState background only drops the held phrase — all
+      pinned by new source checks). The third prompt was the 30 s
+      single-use phrase hold expiring (56 s between approval and signing
+      at the driver's pace); done promptly a grant is 2 prompts, and the
+      session-key write and the phrase read cannot share one prompt (two
+      Keystore items). EMULATOR RULE, standing: never run an engine build
+      in the main checkout while an emulator run is in progress; at the
+      next Metro restart, give the worktree real copies of packages/*/dist
+      and map @shiba-wallet/* to them (extraNodeModules) so the main
+      checkout can leave watchFolders. Fixes anyway: sessions.ts
+      pendingSessionOperation / sessionLocalStatusText, SessionsScreen
+      shows install and revoke userOpHashes with a local status, resumes an
+      unsettled operation once per screen instance and offers "Refresh
+      status"; finalizeSessionInstall / finalizeSessionRevoke and the
+      guardian finalize read state AT THE INCLUDING BLOCK (readAtInclusionBlock:
+      wait until the node reports the receipt's block, pin eth_calls to it,
+      retry while it lags; fallback to latest without a block number) —
+      the bundler's receipt arrives before the public RPC has the block,
+      which caused bug 3; recovery.ts mergeRecoveryMetadata (refuses
+      different accounts; owner history: longer-prefix wins else the
+      existing one unless only the incoming ends at the chain's owner;
+      guardian set from the chain, labels kept, install tx kept only for
+      an identical set) with saveMergedRecoveryMetadata and
+      rebuildRecoveryRecordFromChain used by attach, import and the
+      Recover screen — bug 2. Copy fixed as listed in item 1; plus a
+      "Reset recovery records" button that the unreadable-store message
+      promised. Left for the file owner: walletconnect.ts ~line 1004 still
+      says "Settings → Guardians → Approve a recovery" (the button is
+      "Approve a recovery (as a guardian)" in "Guardians (social
+      recovery)"). Not re-run on the emulator yet.
