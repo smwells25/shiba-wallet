@@ -3759,3 +3759,41 @@ whenever the Expo account and identifiers arrive. Subagents on Opus.
       manifest, removing SYSTEM_ALERT_WINDOW (from Expo's template), phased
       release behaviour, iOS backup of ordinary app data, a network capture
       of a release build.
+- [x] https-only endpoints (commit dd14e69; offline runner ALL GREEN in
+      the CTO's worktree): app/src/config/endpoint-url.ts
+      assertSecureEndpointUrl (regex parse, not `new URL`, because RN's
+      URL has been incomplete) returns the trimmed, trailing-slash-free,
+      scheme-lowercased URL or throws INSECURE_ENDPOINT_MESSAGE
+      "Endpoints must use https:// (plain http:// is accepted only for
+      localhost or 10.0.2.2 during development)."; loopback = exactly
+      localhost / 127.0.0.1 / [::1] / 10.0.2.2, host read after the last
+      "@" (http://localhost@rpc.example is refused; 192.168.x.x, 10.0.2.3,
+      127.0.0.2, localhost.example.com, [::2] refused); malformed https
+      (no host, bad port, spaces/control characters) get their own
+      messages. Called before any network verification in
+      setEndpointOverride (networks.ts, which gained an injectable store),
+      setBlockbookEndpoint, setIndexerUrl, setNftIndexerUrl (+ its rpcUrl),
+      setAaBundlerUrl, setAaPaymaster, and the node URL in setAaFactory /
+      setAaKernelFactory (after the readiness check); swap.ts and
+      prices.ts take keys for fixed https bases (asserted); WalletConnect
+      pairing URIs untouched. Settings shows the sentence once in each of
+      the four endpoint sections. GAP: only setters are guarded; URLs
+      saved before this change are not re-checked on read (nothing is
+      released, so only dev/emulator installs could hold one) — a
+      load-time filter is a small follow-up. Suites: check-devmode 102
+      (was 71), check-aa 90 (81), check-doge 79 offline (72),
+      check-indexer 15 offline (11), check-nfts 124 (120), check-swap 91
+      (89), check-rpc-fallback 87 (85; every default candidate passes the
+      helper).
+- [ ] Stray "W ReactNativeJS: Error: undefined" at launch (Expo Go,
+      emulator): ruled out by code reading — no console.* calls in
+      app/src, App.tsx, index.ts or packages/*/src; RN 0.86.3 prints an
+      undefined unhandled rejection as an E line "Uncaught (in promise…)";
+      the console polyfill prints Error objects as "[Error: …]", so a W
+      line reading exactly "Error: undefined" must be console.warn of
+      that string (an Error("undefined") stringified) or native Android
+      logging under the ReactNativeJS tag; WalletConnect's logger forwards
+      at error level. Shortlist: a line of a multi-line warning (the
+      preceding logcat line is the clue), a dependency stringifying an
+      Error("undefined"), Expo Go's own native code. Capture in progress:
+      `adb logcat -v long -s ReactNativeJS:V` around a relaunch.
