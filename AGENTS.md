@@ -3521,3 +3521,96 @@ whenever the Expo account and identifiers arrive. Subagents on Opus.
       grouping to check on a device). Nothing eyeballed on a device
       (offline notice placement, TalkBack/VoiceOver, NetInfo accuracy on
       real phones).
+- [x] Security quick wins from the threat model (commit 3194031; new
+      check-storage.mjs 260 and check-typed-data.mjs 106, check-wc 224;
+      offline runner green; GitHub Actions run for 3194031 success incl.
+      the bundle export — the CTO's worktree export step fails only
+      because Metro cannot resolve the worktree's symlinked node_modules,
+      an environment artefact). N-01 — biometric-protected phrase storage
+      (app/src/wallet/storage.ts, now Node-loadable with an injected
+      secure-store backend bound once by WalletContext): expo-secure-store
+      57.0.4 facts from its sources — Android requireAuthentication = an
+      AES-256-GCM Keystore key with setUserAuthenticationRequired(true),
+      every read and write shows a BiometricPrompt with a CryptoObject,
+      BIOMETRIC_STRONG only, no PIN fallback (negative button is Cancel),
+      an invalidated key makes reads return null; iOS = SecAccessControl
+      .biometryCurrentSet (reads and updates prompt, creation does not;
+      NSFaceIDUsageDescription is required — the expo-secure-store plugin
+      already writes a default one for dev/store builds, Expo Go on iOS
+      lacks it). INVALIDATION RULE: adding/removing a fingerprint or face
+      or turning off the screen lock (Android), adding/removing a finger
+      or re-enrolling Face ID (iOS) permanently invalidates the entry and
+      the user must restore from the written backup. Entries: standard
+      shiba-wallet.mnemonic.v1 (unchanged), protected
+      shiba-wallet.mnemonic.v2 under keychain service
+      shiba-wallet.protected, meta shiba-wallet.vault-meta.v1 (a protected
+      item's existence cannot be checked without a prompt; corrupt meta
+      with no standard copy counts as protected, never as "no wallet"),
+      public account cache shiba-wallet.public-account.v1.N (addresses and
+      paths only, so launch needs no prompt). A new wallet never silently
+      replaces a readable different one. Migration: locate standard copy →
+      eligibility (strong biometrics) → write protected → read back and
+      compare (mismatch/cancel/null → delete protected, stop) → set meta →
+      delete standard (if that fails, the next protected read deletes the
+      standard copy only if identical); an unreadable protected copy with a
+      standard copy present falls back; every outcome recorded with the
+      platform's verbatim error. POLICY DECISION (CTO 2026-10-02, pending
+      the Chairperson): PHRASE_PROTECTION_POLICY = 'opt-in' (the agent had
+      built 'automatic'); the move is a Settings button that states the
+      invalidation trade-off; 'automatic' and 'off' remain one constant
+      away and are tested. Session keys: new keys follow the phrase's
+      protection; existing keys stay until revoked/expired. One prompt per
+      operation: biometric.ts requireLocalAuth first opens the protected
+      phrase (that system prompt is the verification) and holds it for one
+      use / at most 30 s / dropped on background (not on iOS "inactive",
+      which its own Face ID prompt triggers); other cases use the existing
+      expo-local-authentication prompt with passcode fallback; no call
+      sites changed. Honest limits: protected approvals are biometric-only
+      (lockout → signing waits; the lock screen still unlocks by passcode);
+      two prompts for a session test op, a session install on Android, and
+      the Android migration (write + read-back); phones without strong
+      biometrics stay standard with no gate; the phrase remains a JS string
+      (N-03); THREAT_MODEL.md's key inventory needs the new entries
+      (follow-up). storageProtection() status shape and
+      upgradePhraseProtection() are consumed by the Settings section
+      (separate commit). N-07 — app/src/wallet/typed-data-summary.ts, a
+      card above the raw JSON on the WalletConnect sheet (raw JSON and the
+      generic warning kept; the summary never declines; digest and domain
+      policy unchanged): EIP-2612 Permit (token = verifyingContract),
+      DAI-style permit (allowed = unlimited, expiry 0 = never), Uniswap
+      Permit2 PermitSingle/PermitBatch/PermitTransferFrom/
+      PermitBatchTransferFrom and Witness variants (Uniswap/permit2
+      cc56ad0f; canonical 0x000000000022D473030F116dDEE9F6B43aC78BA3 from
+      Permit2Lib.sol, same 9,152-byte code on mainnet and Sepolia; a
+      Permit2-shaped message under another domain/contract gets a "likely
+      phishing" warning), generic fallback listing type, domain, contract
+      and every field (addresses checksummed in full, bytes truncated,
+      control/bidi characters stripped); schemas recognised only when the
+      request's own types match the canonical definitions field for field;
+      amounts in the tracked token's decimals (CAIP-2 rule) else raw base
+      units labelled; "Unlimited" only at exactly max uint256 / max uint160
+      (Permit2), never masked; absolute UTC + relative expiries (Permit2
+      expiration 0 = "only in the block where it is used"); warnings for
+      unlimited, > 30 days or never, owner ≠ signer, spender without code
+      or with a 7702 delegation (classifyRecipient on the active endpoint;
+      lookup failure raises nothing); spenders through
+      RecipientContactNotice. N-06 — WalletKit 1.6.0 passes sign-client
+      2.25.0's Verify.Context through unchanged (starts UNKNOWN with origin
+      = metadata.url; a Verify answer sets the attested origin and isScam;
+      VALID iff origins match): walletconnect.ts describeVerifyContext +
+      identityApprovalAllowed, every wc-controller item carries
+      `identity`; the sheet shows "Verified by WalletConnect: origin
+      matches", "UNVERIFIED — …", "MISMATCH — the request claims X but
+      came from Y: likely phishing" or "Flagged as a scam by
+      WalletConnect…" (scam wins even when origins match); for scam or
+      mismatch every approve button (connect, sign ×2, send, smart send,
+      grant) is disabled until "I understand the risk — let me approve
+      anyway" is on, re-checked in WalletConnectContext; nothing is
+      auto-declined. docs/ARCHITECTURE.md 2.4, 5.1, 5.3 (items 2 and 4) and
+      D7 rewritten to match the code. UNVERIFIED: requireAuthentication
+      inside Expo Go on Android (expected to work), everything on iOS
+      (invalidated reads, Face ID disabled for the app, Expo Go's refusal
+      text), hardware enforcement on the emulator (software Keystore),
+      whether Verify returns VALID/isScam over the live relay in RN,
+      whether 30 s always covers approval-to-signing (else one extra
+      prompt). Emulator checklist (8 steps) in the builder's report.
