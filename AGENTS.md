@@ -3647,5 +3647,9 @@ whenever the Expo account and identifiers arrive. Subagents on Opus.
       The emulator wallet's phrase is now in protected storage: adding or
       removing the AVD's fingerprint will make it unreadable (the written
       phrase for that wallet is not recorded anywhere; it is a test
-      wallet). Not yet eyeballed: the unreadable state and the section's
-      dark-mode layout.
+      wallet). A Sepolia send confirm then raised exactly ONE system
+      prompt, titled "Approve sending 0.00001 test ETH" (the
+      protected-phrase prompt doubles as the approval), and cancelling it
+      showed "Not sent — Authentication cancelled." with nothing
+      broadcast. Not yet eyeballed: the unreadable state and the
+      section's dark-mode layout.
