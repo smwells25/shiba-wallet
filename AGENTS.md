@@ -4744,3 +4744,19 @@ emulator, 6 after. Subagents on Opus.
       over the open keyboard glide-typed into the "New account name" field;
       cleared, Add account never tapped. End state: light mode, Account 1,
       Sepolia, NFT indexer saved, Google IME restored, balance unchanged.
+- [x] Emulator eyeball of the phase 11 app surfaces at HEAD (2026-10-03;
+      Metro worktree moved to 4e47586 with fresh real dist copies, 2,282
+      modules): Receive's EVM slot shows the new "Smart account (Kernel
+      v3.3)" box (explanation, 0xD31c…D8FA in full, "Deployed.", "Copy
+      smart-account address") and the "Prove you own this address"
+      button; the Prove ownership screen renders its copy ("Sign a
+      challenge that someone gave you…", "Only sign challenges you hold
+      yourself. Never paste something a stranger sends you. Logins to
+      websites go through WalletConnect…"), the "This account / Smart
+      account" choice, the network and address, the challenge field with
+      Paste and "Write one for me", and the optional Site field; the Send
+      form with the smart-account toggle on shows "SMART ACCOUNT (KERNEL
+      V3.3) ADDRESS", the address, "Deployed." and the copy button.
+      Nothing signed. Emulator lesson: never press BACK in a loop without
+      checking the screen — three blind presses left the app for the
+      launcher twice this session.
