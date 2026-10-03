@@ -3198,3 +3198,43 @@ touches files everywhere.
       new native modules imported statically.
 - Dropped: WalletKit session persistence (proven to work, see the
   retest record above).
+
+## Phase 9 plan (approved 2026-10-02): hardening and release readiness
+
+Goal: a feature-complete testnet wallet that can pass a store review and
+a security review without surprises. Items, in order:
+
+1. Close the in-app owner-change bundler refusal (ZeroDev -32502
+   "Simulation ran out of gas for entity: account" at submission after a
+   passed estimate; owner unchanged on-chain): root cause, fix, live
+   re-run on the emulator in both directions.
+2. Threat model document (docs/THREAT_MODEL.md): assets, trust
+   boundaries, key storage per platform, every caveat collected so far
+   (passkey self-call, guardian exposure, D6, unaudited modules, RPC /
+   gateway / relay privacy), each with its mitigation or an explicit
+   open item; mapped to a mainnet-readiness checklist merging C1–C3 with
+   the wallet's own conditions.
+3. Release engineering: verify eas.json profiles, app.json identifiers,
+   store listings and privacy disclosures (CoinGecko sees the IP, the
+   IPFS gateway, the WalletConnect relay, RPC providers), screenshot
+   prevention in release builds. INPUT NEEDED: an Expo account and the
+   bundle id / package name.
+4. CI and test hardening: one `npm test` running engine vitest, all app
+   suites offline, lint, tsc and the bundle export, wired to GitHub
+   Actions on the public repo; dependency audit; a pre-commit secret scan.
+5. Resilience and UX polish: mid-session endpoint failover on every
+   screen (only Home switches today), offline states, accessibility
+   labels, dark-mode pass over the newer screens, the eight leftover
+   eslint-disable comments.
+6. Mainnet gating switchboard: per-feature readiness flags with honest
+   in-app copy (Kernel accounts, guardians, session keys and passkeys
+   testnet-only until C1–C3 clear; EOA sends, tokens, NFTs, swaps and
+   WalletConnect are mainnet candidates); the one real Dogecoin broadcast
+   if approved (about 1 DOGE in fees).
+7. Standing inputs as they appear: 0x key, paymaster policy, counsel on
+   (L)GPL/AGPL modules, the ZeroDev disclosure decision.
+
+Waves: 1 + 2 + 4 first (no inputs, disjoint files), then 5 + 6, with 3
+whenever the Expo account and identifiers arrive. Subagents on Opus.
+
+## Phase 9 progress
