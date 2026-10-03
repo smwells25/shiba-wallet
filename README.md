@@ -59,14 +59,33 @@ code and accepted by real public networks:
 Requires Node.js ≥ 20 (the team uses 24.x via nvm).
 
 ```sh
-npm install        # workspace dependencies (engine packages)
-npm run build      # build every package, core first
-npm test           # every package's vitest suite
-cd app && npm install && npx tsc --noEmit   # the mobile app has its own tree
+npm ci                    # workspace dependencies (engine packages)
+(cd app && npm ci)        # the mobile app has its own dependency tree
+npm test                  # everything, offline (what CI runs)
 ```
 
 API keys and the development wallet live only in the git-ignored
 `.dev-wallet/` directory; nothing sensitive is tracked.
+
+### Tests, CI and the pre-commit hook
+
+`npm test` runs `scripts/ci/run.mjs` in offline mode: the engine build and
+vitest for all five packages, every offline app script suite (network and
+`.dev-wallet/` blocked), `expo lint` with zero warnings allowed, the app's
+`tsc --noEmit`, and an Android bundle export as a smoke test. It prints pass
+and fail counts per step. `npm run test:live` adds the live suites for
+local use. GitHub Actions (`.github/workflows/ci.yml`) runs the same
+offline command on every push and pull request, after a secret scan of the
+whole tree; it uses no secrets.
+
+Enable the pre-commit secret scan once per clone:
+
+```sh
+git config core.hooksPath scripts/githooks
+```
+
+See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for every command, option
+and scan rule.
 
 ## Testing philosophy
 

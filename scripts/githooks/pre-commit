@@ -1,0 +1,34 @@
+#!/bin/sh
+# Pre-commit hook: refuse commits whose staged changes contain something that
+# looks like a secret (API keys in URLs, ZeroDev project ids, NOWNodes keys,
+# BIP-39 recovery phrases, private keys, or any value from the local,
+# git-ignored .dev-wallet/ directory). The checks themselves live in
+# scripts/githooks/secret-scan.mjs, which documents each rule and the allow
+# list.
+#
+# One-time setup per clone (see docs/CONTRIBUTING.md):
+#
+#   git config core.hooksPath scripts/githooks
+#
+# The scan needs `node` (any version from 14 on) and the root node_modules
+# (`npm ci`), because it reads the BIP-39 wordlist from @scure/bip39. If
+# either is missing the hook refuses the commit rather than skipping the
+# scan.
+
+root=$(git rev-parse --show-toplevel) || exit 1
+
+if ! command -v node >/dev/null 2>&1; then
+  # Git GUIs often start hooks without the shell's PATH; try nvm's default.
+  for candidate in "$HOME"/.nvm/versions/node/*/bin; do
+    [ -x "$candidate/node" ] && PATH="$candidate:$PATH"
+  done
+  export PATH
+fi
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "pre-commit: node was not found, so the secret scan cannot run." >&2
+  echo "Install Node (see README.md) or put it on PATH, then commit again." >&2
+  exit 1
+fi
+
+exec node "$root/scripts/githooks/secret-scan.mjs" --staged

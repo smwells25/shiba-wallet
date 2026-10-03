@@ -1,11 +1,26 @@
-# Continuous integration for the Shiba Wallet monorepo.
+# Continuous integration for the Shiba Wallet monorepo (public repository).
 #
-# Two jobs: the engine (workspace packages: build in dependency order,
-# then every package's vitest suite) and the mobile app (its own npm
-# tree; typecheck plus a Metro bundle to prove the app still assembles).
-# The app job does not launch simulators and no job touches networks
-# beyond npm installs — history/balance live checks are developer
-# scripts, deliberately not CI.
+# One job runs every automated check through the same command developers
+# use locally, `npm test`, which starts scripts/ci/run.mjs in OFFLINE mode:
+# engine build + vitest for the five packages, every app script suite with
+# the network and the .dev-wallet directory blocked, expo lint, the app's
+# tsc --noEmit, and an Android bundle export as a smoke test. Live suites
+# never run here, and the workflow needs no secrets: none are configured and
+# none may be added (live checks are for developer machines only, via
+# `npm run test:live`).
+#
+# Before the tests, the whole checked-out tree goes through the same secret
+# scan as the pre-commit hook, so a commit made without the hook is still
+# caught before it is merged.
+#
+# The bundle export can be switched off without editing this file by setting
+# the repository variable SHIBA_CI_SKIP_BUNDLE to 1 (Settings → Secrets and
+# variables → Actions → Variables). Measured on a developer machine it took
+# about 25 s with a warm Metro cache and 35 s from a fresh checkout with an
+# empty cache (the whole offline run about 100 s), so it is on by default.
+#
+# Third-party actions are pinned to full commit SHAs (the tag each SHA
+# belongs to is noted beside it) so a moved tag cannot change what runs.
 
 name: CI
 
@@ -13,42 +28,63 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch or pull request cancels the older run.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Read-only token: the job only checks out code and uploads its own logs.
+permissions:
+  contents: read
 
 jobs:
-  engine:
+  test:
+    name: npm test (offline)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SHIBA_CI_SKIP_BUNDLE: ${{ vars.SHIBA_CI_SKIP_BUNDLE || '0' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-      - run: npm run build
-      - run: npm test
+          persist-credentials: false
 
-  app:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: npm
+          # The app is not a workspace member and has its own lockfile, so
+          # both lockfiles key the npm download cache.
           cache-dependency-path: |
             package-lock.json
             app/package-lock.json
-      # The app's file: dependencies point at the workspace packages'
-      # dist output, so the engine must be built first.
-      - run: npm ci
-      - run: npm run build
-      - run: npm ci
+
+      # Install scripts are disabled: nothing in either tree needs one to
+      # build or test (verified locally from a fresh checkout), and skipping
+      # them keeps third-party code from running at install time.
+      - name: Install engine dependencies (root workspaces)
+        run: npm ci --ignore-scripts
+
+      # The app's engine dependencies are file: links (app/node_modules/
+      # @shiba-wallet/* -> ../packages/*), so this works before the engine is
+      # built; the runner builds it first.
+      - name: Install app dependencies
+        run: npm ci --ignore-scripts
         working-directory: app
-      - run: npx tsc --noEmit
-        working-directory: app
-      # test-units.mjs is fully offline; the other app scripts exercise
-      # live public endpoints and stay developer-run to keep CI reliable.
-      - run: node scripts/test-units.mjs
-        working-directory: app
-      - run: npx expo export --platform android
-        working-directory: app
+
+      - name: Secret scan of the checked-out tree
+        run: node scripts/githooks/secret-scan.mjs --tree HEAD
+
+      - name: npm test (offline)
+        run: npm test -- --logs-dir "$RUNNER_TEMP/ci-logs"
+
+      - name: Upload step logs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-logs
+          path: ${{ runner.temp }}/ci-logs
+          if-no-files-found: ignore
+          retention-days: 7
