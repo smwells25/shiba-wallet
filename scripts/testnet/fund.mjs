@@ -4,6 +4,8 @@
  * up test accounts during live validation.
  *
  * Usage: TO=0x... ETH=0.0015 [NODE_URL=...] node scripts/testnet/fund.mjs
+ *   NODE_URL may point at Ethereum Sepolia (default) or Base Sepolia
+ *   (https://base-sepolia-rpc.publicnode.com); other chains are refused.
  */
 import { readFileSync } from 'node:fs';
 import { ChainRegistry, HdKeyring, evmKeyProvider } from '../../packages/core/dist/index.js';
@@ -26,7 +28,10 @@ function parseEth(text) {
 const node = httpTransport(NODE_URL);
 const nodeClient = new NodeClient(node);
 const chainId = await nodeClient.chainId();
-if (chainId !== 11155111n) throw new Error(`Not Sepolia: chain id ${chainId}`);
+// Test networks only: Ethereum Sepolia by default, Base Sepolia when the
+// node reports it. Anything else (a mainnet in particular) is refused.
+const ALLOWED_TEST_CHAINS = [11155111n, 84532n];
+if (!ALLOWED_TEST_CHAINS.includes(chainId)) throw new Error(`Not a supported test network: chain id ${chainId}`);
 
 const mnemonic = readFileSync(new URL('../../.dev-wallet/mnemonic.txt', import.meta.url), 'utf8').trim();
 const registry = new ChainRegistry();
