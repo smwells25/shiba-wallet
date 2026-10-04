@@ -5507,3 +5507,83 @@ WcApprovalSheet.
       subscription install to confirm the dates and prompt count, the
       file hand-over, a Max send on Base to see the trim sentence, the
       re-saved AA rows' chain-id line.
+- [x] EMULATOR VERIFICATION OF THE FIXES at cc71223 (2026-10-04; Metro
+      worktree moved to cc71223, engine built inside the worktree, 2,293
+      modules; no repo files edited; every hash verified on-chain). (A) AA
+      rows: both showed "…Saved before the chain-id check existed: save it
+      again…"; re-saved Sepolia reads "Verified ✓ — the bundler reported
+      chain id 11155111 (Ethereum Sepolia) and eth_supportedEntryPoints
+      includes EntryPoint v0.7 (checked 2026-10-04)", Base the same with
+      84532 (Base Sepolia); local and UTC days coincided, so the
+      local-date change was not distinguishable; the dark-mode TESTNET
+      banner now draws dark text on orange. (B) SUBSCRIPTIONS: the review
+      opens at the top with the batch warning box FIRST, then the
+      sentence, "The subscription starts when you tap Start subscription,
+      not when this screen opened…", then the bullets; the fee budget
+      follows the payment count (capped each time, with the "Lowered to
+      what your account can spare…" note). THE CLOCK NOW STARTS AT THE
+      TAP: #2 (1 hour × 2) reviewed 16:05:32 UTC "Expires … 18:05:32",
+      Start tapped 16:07:41, final terms "from 2026-10-04 16:07 UTC …
+      nothing after 2026-10-04 18:07 UTC", on-chain nextSlotAt = 16:07:39
+      and validUntil = 18:07:39; the permission id changed on the re-quote
+      (0x505c5fad → 0x987c424b) with the same session key 0x9E9C…6a2B;
+      2 prompts confirmed in logcat ("Approve this subscription", "Protect
+      the new session key with biometrics"); install userOp
+      0x746df6a1…7231e3, tx 0x428133a2…7e5f, block 11843182; title
+      "Subscription to 0x69F0…7E8a", newest first, per-card Refresh
+      status. Hand-over: 2 prompts, the new clipboard warning text; "Share
+      as a file (.json)" opened the system chooser (screencap blocked) but
+      the emulator had no usable target, so Copy was used; the Mac
+      pasteboard held 851 bytes 23 s after the copy and 0 bytes at 70 s —
+      indirect proof of the 60 s overwrite (adb cannot read the emulator
+      clipboard; the temp file's deletion could not be observed); card
+      "Key handed to the merchant … and deleted from this device."; keeper
+      import + pull userOp 0xd8cb5080…95ab70, tx 0x219c50ee…714b, block
+      11843205 (merchant +1,000 wei; card "1 of 2 payments taken.", "Next
+      payment: not before 2026-10-04 17:07 UTC.", fee budget equal to the
+      keeper's figure); revoke confirm "…This device no longer holds the
+      subscription key (it was handed to the merchant); once the
+      revocation is included on-chain, the merchant's copy stops working.",
+      1 prompt, userOp 0x8dfc8aaf…7b98ab, tx 0xefc21c0e…d4a1, block
+      11843214; pull --unchecked refused "AA23 reverted 0x". Subscription
+      #1 (2 min × 2) also showed tap-time dates (15:52 → 15:56) but its
+      4-minute window expired before a hand-over and pull were possible
+      (install tx 0x653abc27…1e3e block 11843115; revoke tx 0x28ce9b80…1c7a
+      block 11843138). (C) SPENDING LIMITS: the pre-Send line "This send
+      would go over the limit for test ETH (0.0002 test ETH per 1 hour):
+      already spent 0 test ETH, this send 0.00025 test ETH. Tapping Send
+      will stop it; raise or remove the limit first." appears on the
+      confirm; raising the cap prompts "Loosen your spending limit" and a
+      cancel leaves the cap unchanged ("Not saved: this change raises the
+      limit, and the device check did not pass…"); lowering needs no
+      prompt; Remove under Hide amounts masks the cap and prompts "Remove
+      your spending limit". (D) RISK CARD: "This transaction goes to one
+      of your own accounts in this wallet: Account 2 (0xb699…81fE)." and
+      "…Account 1's smart account (0xD31c…D8FA)."; no first-time or
+      contract-age warning. (E) BASE HOME: "< 0.000001" (label "Balance
+      less than 0.000001 test ETH"), the note names Base Sepolia, no Swap
+      link, Sessions / Guardians / Passkey links shown. (F) BASE MAX from
+      Account 2 after a 90 s wait: the fee FELL, so no trim sentence
+      (as designed; the trim itself stays unobserved live); amount + fee =
+      balance − 346,121,259 wei; 1 prompt; tx 0x03af26b3…6179, block
+      47681945, status 1; receipt l1Fee 5,983,421,007 wei = 6.6% above the
+      oracle estimate and 71% of the reserve; success screen "This is one
+      of your own accounts in this wallet: Account 1."; Home refreshed
+      within 3 s without a pull. Funds: one top-up dev EOA → Kernel
+      0.003 Sepolia ETH (tx 0x4362bc42…bc9c, block 11843107; dev EOA
+      ~0.042 left); Kernel account now 0.002052 + 0.000553 deposit;
+      merchant 8,000 wei; Base: Account 1's EOA ~0.0081, Account 2 dust.
+      REMAINING FINDINGS (small; follow-ups): (1) the period choices are
+      only "2 minutes (testing)", 1 hour, 1 day, 7 days, 30 days — no
+      custom period, and 2 min × 2 is too short to hand over and pull;
+      (2) the fee-budget cap keeps nothing back for the install's own
+      fee, and Review offered Start with an install max fee (0.001895)
+      above the balance (0.001427) — only the EntryPoint deposit made it
+      payable, with no warning; (3) an expired, never-handed-over card
+      still offers the hand-over; (4) records created before the fix keep
+      the title "Subscription: Subscription"; (5) "Copied ✓" stays after
+      the clipboard was emptied. Emulator/IME notes: the first Verify &
+      save tap after ADBKeyboard typing is swallowed; switching IMEs
+      mid-form injected a stray digit (keep ADBKeyboard on through Save).
+      End state: Ethereum Sepolia, Account 1, light mode, Google IME, no
+      policy, every subscription revoked; Metro still serving cc71223.
