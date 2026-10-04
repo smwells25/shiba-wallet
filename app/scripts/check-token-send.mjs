@@ -32,6 +32,12 @@ import {
   prepareEvmSend,
 } from '../src/wallet/send.ts';
 import { QUOTE_FAILED_TITLE, retitleQuoteFailure } from '../src/wallet/aa.ts';
+import {
+  flushSpendingWrites,
+  installSpendingRecorder,
+  listSpendRecords,
+  saveSpendingPolicy,
+} from '../src/wallet/spending-policy.ts';
 
 let passed = 0;
 let failed = 0;
@@ -128,6 +134,7 @@ function rpcResult(method, params) {
       throw { code: -32000, message: `unexpected eth_call data ${data.slice(0, 10)}` };
     }
     case 'eth_sendRawTransaction':
+      if (s.sendRawError) throw { code: -32000, message: s.sendRawError };
       lastRawTx = params[0];
       return s.txid;
     default:
@@ -412,6 +419,45 @@ check(
   'recipient appears only as the padded calldata word',
   lastRawTx.includes(TO.toLowerCase().slice(2).padStart(64, '0')),
 );
+
+// Phase 12 item 3: the app-enforced spending policy records an ACCEPTED token
+// send (sendErc20 -> sendEvm -> addEvmSentListener) from its calldata, and
+// nothing for a send the node refused.
+{
+  const mem = new Map();
+  const store = { getItem: async (k) => mem.get(k) ?? null, setItem: async (k, v) => void mem.set(k, v) };
+  const scope = { chain: 'eip155:1', owner: signer.address };
+  await saveSpendingPolicy(
+    scope,
+    { token: CONTRACT, symbol: SYMBOL, decimals: DECIMALS, cap: 10n ** 12n, windowSeconds: 86400 },
+    [CONTRACT],
+    { store },
+  );
+  const off = installSpendingRecorder(store);
+  scenario = defaultScenario();
+  await sendErc20(URL, signer, quote);
+  await new Promise((r) => setTimeout(r, 10));
+  await flushSpendingWrites();
+  let records = (await listSpendRecords(scope, store)).records;
+  check(
+    'spending limits: accepted token send recorded (1 USDC, txid ref)',
+    records.length === 1 && records[0].amount === 1000000n && records[0].token === CONTRACT && records[0].ref === scenario.txid,
+    JSON.stringify(records, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)),
+  );
+  scenario.sendRawError = 'replacement transaction underpriced';
+  let refused = false;
+  try {
+    await sendErc20(URL, signer, quote);
+  } catch {
+    refused = true;
+  }
+  await new Promise((r) => setTimeout(r, 10));
+  await flushSpendingWrites();
+  records = (await listSpendRecords(scope, store)).records;
+  check('spending limits: refused token send not recorded', refused && records.length === 1);
+  off();
+  scenario = defaultScenario();
+}
 
 // ---------------------------------------------------------------------------
 // F3 (phase 11 item 6): a recipient contract that rejects plain ETH. Permit2

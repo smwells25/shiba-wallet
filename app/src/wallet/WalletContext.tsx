@@ -34,6 +34,7 @@ import { forgetAllSessions } from './sessions';
 import { addAaSentListener } from './aa';
 import { recoveryRecordListener, wipeRecoveryData } from './recovery';
 import { resetPasskeys } from './passkeys';
+import { installSpendingRecorder, resetSpendingLimits } from './spending-policy';
 import {
   MAX_ACCOUNTS,
   addAccount as addAccountToStore,
@@ -219,6 +220,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   // started on its first accepted smart-account operation, whichever screen
   // sent it (aa.ts notifies after the bundler accepted; public data only).
   useEffect(() => addAaSentListener(recoveryRecordListener(AsyncStorage)), []);
+
+  // App-enforced spending limits (phase 12 item 3): record what left the
+  // account, but only after the node (sendEvm) or the bundler (sendAa)
+  // accepted the send; failed sends are never recorded.
+  useEffect(() => installSpendingRecorder(AsyncStorage), []);
 
   // A phrase held by the approval gate (./storage.ts) never outlives the
   // app's time in the foreground. Only 'background' counts: iOS reports
@@ -489,6 +495,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     // key lives in the platform authenticator); they go with the wallet. An
     // installed passkey stays installed on-chain — Settings says so.
     await resetPasskeys(AsyncStorage).catch(() => undefined);
+    // Spending limits and their record are per-address settings of this
+    // wallet; they go with it.
+    await resetSpendingLimits(AsyncStorage).catch(() => undefined);
     await deleteMnemonic();
     // The public account cache (addresses only) goes with the wallet.
     await deletePublicAccounts(ALL_CACHE_INDICES);

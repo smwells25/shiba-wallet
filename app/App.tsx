@@ -39,6 +39,7 @@ import { ApproveRecoveryScreen } from './src/screens/ApproveRecoveryScreen';
 import { OwnerRotationScreen } from './src/screens/OwnerRotationScreen';
 import { PasskeyScreen } from './src/screens/PasskeyScreen';
 import { ProveOwnershipScreen } from './src/screens/ProveOwnershipScreen';
+import { SpendingLimitsScreen } from './src/screens/SpendingLimitsScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -189,6 +190,11 @@ function Root() {
             <Stack.Screen name="Passkey" component={PasskeyScreen} options={{ title: 'Passkey' }} />
             <Stack.Screen name="OwnerRotation" component={OwnerRotationScreen} options={{ title: 'Change owner' }} />
             <Stack.Screen name="ProveOwnership" component={ProveOwnershipScreen} options={{ title: 'Prove ownership' }} />
+            <Stack.Screen
+              name="SpendingLimits"
+              component={SpendingLimitsScreen}
+              options={{ title: 'Spending limits' }}
+            />
           </>
         )}
         </Stack.Navigator>

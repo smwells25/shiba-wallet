@@ -864,6 +864,49 @@ export interface SendResult {
 }
 
 /**
+ * What sendEvm reports once the node accepted a transaction
+ * (eth_sendRawTransaction returned its hash). Public data only: the sender
+ * address, never the DerivedAccount.
+ */
+export interface EvmSentEvent {
+  from: string;
+  quote: EvmSendQuote;
+  txid: string;
+}
+
+export type EvmSentListener = (event: EvmSentEvent) => void | Promise<void>;
+
+const evmSentListeners = new Set<EvmSentListener>();
+
+/**
+ * Subscribes to accepted EOA transactions (every sendEvm caller: native,
+ * ERC-20 and NFT sends, swaps, revokes, WalletConnect). Used by the
+ * app-enforced spending policy (./spending-policy.ts) to record what left
+ * the account. Never called for a send the node refused. Returns the
+ * unsubscribe function.
+ */
+export function addEvmSentListener(listener: EvmSentListener): () => void {
+  evmSentListeners.add(listener);
+  return () => {
+    evmSentListeners.delete(listener);
+  };
+}
+
+/** Best-effort fan-out: a failing listener never affects the send. */
+function notifyEvmSent(event: EvmSentEvent): void {
+  for (const listener of [...evmSentListeners]) {
+    try {
+      const result = listener(event);
+      if (result && typeof (result as Promise<void>).catch === 'function') {
+        (result as Promise<void>).catch(() => undefined);
+      }
+    } catch {
+      // Listeners are bookkeeping; the transaction was already accepted.
+    }
+  }
+}
+
+/**
  * Signs and broadcasts an EOA EIP-1559 transfer through chains-evm.
  *
  * SMART-ACCOUNT SEAM: this is the point where the flow forks. The ERC-4337
@@ -904,6 +947,7 @@ export async function sendEvm(
   const signed = signEip1559(tx, signer);
   const node = new NodeClient(evmHttpTransport(url));
   const txid = await node.sendRawTransaction(signed.rawHex);
+  notifyEvmSent({ from: signer.address, quote, txid });
   return { txid, explorerUrl: explorerTxBase ? `${explorerTxBase}${txid}` : null };
 }
 

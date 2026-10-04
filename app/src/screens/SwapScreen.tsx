@@ -30,6 +30,7 @@ import { OfflineNotice } from '../wallet/connectivity';
 import { useTheme, type Theme } from '../theme';
 import { BalanceChangePreview } from '../components/BalanceChangePreview';
 import { RiskWarnings } from '../components/RiskWarnings';
+import { SpendingPolicyNotice, spendingGateForQuote } from '../components/SpendingPolicyViews';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
 import { requireLocalAuth } from '../wallet/biometric';
@@ -116,8 +117,8 @@ function exact(amount: bigint, decimals: number): string {
 function NetworkBadge({ label, testnet, theme }: { label: string; testnet: boolean; theme: Theme }) {
   if (testnet) {
     return (
-      <View style={[styles.badge, { backgroundColor: '#e07800', borderColor: '#e07800' }]}>
-        <Text style={[styles.badgeText, { color: '#ffffff' }]}>
+      <View style={[styles.badge, { backgroundColor: theme.testnetFill, borderColor: theme.testnetFill }]}>
+        <Text style={[styles.badgeText, { color: theme.onTestnetFill }]}>
           {label} TESTNET — test funds only
         </Text>
       </View>
@@ -818,6 +819,18 @@ export function SwapScreen({ navigation }: Props) {
       setPhase('review');
       return;
     }
+    // App-enforced spending limits (phase 12 item 3): sell side, after the
+    // eth_call gate, before the biometric gate.
+    const swapFrom = preparedFrom.current ?? account.address;
+    const withinLimits = await spendingGateForQuote({
+      chain: evmChain.caip2,
+      owner: swapFrom,
+      from: swapFrom,
+      quote: sendQuote,
+      url: swapUrl,
+      ...(sellAsset === 'native' ? {} : { quoteOutflows: [{ token: sellAsset.assetId.reference, amount: quote.sellAmount }] }),
+    });
+    if (!withinLimits) return;
     const auth = await requireLocalAuth(
       `Swap ${exact(quote.sellAmount, sellDecimals)} ${sellSymbol} for ${buySymbol}`,
     );
@@ -898,6 +911,17 @@ export function SwapScreen({ navigation }: Props) {
       setPhase('review');
       return;
     }
+    // App-enforced spending limits (phase 12 item 3): the batch's sell side,
+    // after the bundler-estimate gate, before the biometric gate.
+    const withinLimits = await spendingGateForQuote({
+      chain: evmChain.caip2,
+      owner: preparedFrom.current ?? account.address,
+      from: preparedFrom.current ?? account.address,
+      quote: aaQuote,
+      url: bundleUrl ?? url,
+      ...(sellAsset === 'native' ? {} : { quoteOutflows: [{ token: sellAsset.assetId.reference, amount: quote.sellAmount }] }),
+    });
+    if (!withinLimits) return;
     const auth = await requireLocalAuth(
       `Swap ${exact(quote.sellAmount, sellDecimals)} ${sellSymbol} for ${buySymbol} from your smart account`,
     );
@@ -1103,6 +1127,7 @@ export function SwapScreen({ navigation }: Props) {
           note={batch ? PREVIEW_AA_BATCH_NOTE : PREVIEW_AA_NOTE}
         />
         <RiskWarnings url={url} wallet={aaQuote.sender} to={aaQuote.calls[0]!.to} data={aaQuote.calls[0]!.data} />
+        <SpendingPolicyNotice owner={account.address} />
         <Text style={[styles.simulationOk, { color: theme.success }]}>
           Bundler gas estimate passed (eth_estimateUserOperationGas simulated the operation).
         </Text>
@@ -1329,6 +1354,7 @@ export function SwapScreen({ navigation }: Props) {
           }}
         />
         <RiskWarnings url={confirmUrl} wallet={account.address} to={sendQuote.to} data={sendQuote.data} />
+        <SpendingPolicyNotice owner={account.address} />
 
         {sendQuote.simulation.ok ? (
           <Text style={[styles.simulationOk, { color: theme.success }]}>
@@ -1487,7 +1513,7 @@ export function SwapScreen({ navigation }: Props) {
       contentContainerStyle={styles.content}
       keyboardShouldPersistTaps="handled"
     >
-      <Text style={[styles.networkLine, { color: evmChain.testnet ? '#e07800' : theme.textMuted }]}>
+      <Text style={[styles.networkLine, { color: evmChain.testnet ? theme.testnetFill : theme.textMuted }]}>
         {evmChain.label} · {evmChain.testnet ? 'TESTNET' : 'Mainnet'} · powered by 0x · from{' '}
         {aaActive ? `smart account ${aaSender ? `${aaSender.slice(0, 10)}…` : '(resolving…)'}` : `${account.address.slice(0, 10)}…`}
       </Text>

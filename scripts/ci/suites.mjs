@@ -41,6 +41,7 @@ export const APP_SCRIPTS = {
   'check-sessions.mjs': { kind: 'offline', summary: 'counts' },
   'check-settings-protection.mjs': { kind: 'offline', summary: 'counts' },
   'check-siwe.mjs': { kind: 'offline', summary: 'counts' },
+  'check-spending-policy.mjs': { kind: 'offline', summary: 'counts' },
   'check-simulation.mjs': { kind: 'offline', summary: 'counts' },
   'check-storage.mjs': { kind: 'offline', summary: 'counts' },
   'check-swap.mjs': { kind: 'offline', summary: 'counts' },

@@ -53,6 +53,12 @@ import {
   waitForAaReceipt,
 } from '../src/wallet/aa.ts';
 import { EVM_CHAIN_ID, describeSendError } from '../src/wallet/send.ts';
+import {
+  flushSpendingWrites,
+  installSpendingRecorder,
+  listSpendRecords,
+  saveSpendingPolicy,
+} from '../src/wallet/spending-policy.ts';
 import { EVM_BASE_SEPOLIA, EVM_SEPOLIA } from '../src/config/evm-chain.ts';
 
 // Smart accounts and paymasters are 'testnet-only' in the mainnet readiness
@@ -533,8 +539,57 @@ const { bundle: sendBundle, bundler: sendBundlerT } = makeBundle(
   { receipt: specReceipt, receiptAfterPolls: 2 },
 );
 const sendQuote = await prepareAaSend(sendBundle, owner.address, RECIPIENT, AMOUNT);
+// Phase 12 item 3: the spending-limit recorder listens through
+// addAaSentListener and records only operations the bundler accepted.
+const spendMem = new Map();
+const spendStore = { getItem: async (k) => spendMem.get(k) ?? null, setItem: async (k, v) => void spendMem.set(k, v) };
+const spendScope = { chain: `eip155:${sendBundle.chainId}`, owner: owner.address };
+await saveSpendingPolicy(
+  spendScope,
+  { token: '0x0000000000000000000000000000000000000000', symbol: 'ETH', decimals: 18, cap: 10n ** 18n, windowSeconds: 86400 },
+  [],
+  { store: spendStore },
+);
+const stopSpendRecorder = installSpendingRecorder(spendStore);
 const { userOpHash } = await sendAa(sendBundle, owner, sendQuote);
 check('sendCalls returns the bundler-issued userOpHash', userOpHash === USEROP_HASH);
+await new Promise((r) => setTimeout(r, 10));
+await flushSpendingWrites();
+{
+  const records = (await listSpendRecords(spendScope, spendStore)).records;
+  check(
+    'spending limits: bundler-accepted op recorded (amount + worst-case fee, userOpHash ref)',
+    records.some((r) => r.kind === 'transfer' && r.amount === AMOUNT && r.ref === USEROP_HASH) &&
+      records.some((r) => r.kind === 'fee' && r.amount === sendQuote.fee),
+    JSON.stringify(records, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)),
+  );
+  const rejectNode = fakeNode({});
+  const acceptingBundler = fakeBundler({});
+  const rejectingBundler = async (method, params) => {
+    if (method === 'eth_sendUserOperation') throw new Error("RPC error -32500: AA21 didn't pay prefund (eth_sendUserOperation)");
+    return acceptingBundler(method, params);
+  };
+  const rejectBundle = createAaClient({
+    nodeUrl: 'https://node.example',
+    bundlerUrl: 'https://bundler.example',
+    factory: FACTORY_INPUT,
+    transportFor: (url) => (url === 'https://node.example' ? rejectNode : rejectingBundler),
+  });
+  const rejectQuote = await prepareAaSend(rejectBundle, owner.address, RECIPIENT, AMOUNT);
+  let refused = false;
+  try {
+    await sendAa(rejectBundle, owner, rejectQuote);
+  } catch {
+    refused = true;
+  }
+  await new Promise((r) => setTimeout(r, 10));
+  await flushSpendingWrites();
+  check(
+    'spending limits: bundler-refused op not recorded',
+    refused && (await listSpendRecords(spendScope, spendStore)).records.length === records.length,
+  );
+}
+stopSpendRecorder();
 
 const op = sendBundlerT.lastOp;
 check('submitted op sender is the counterfactual account', same(op.sender, SENDER));

@@ -60,4 +60,9 @@ export type RootStackParamList = {
    * holds with the active account (EOA or its Kernel smart account).
    */
   ProveOwnership: undefined;
+  /**
+   * App-enforced spending limits (phase 12 item 3) for the active account on
+   * the active EVM network; nothing on-chain enforces them.
+   */
+  SpendingLimits: undefined;
 };

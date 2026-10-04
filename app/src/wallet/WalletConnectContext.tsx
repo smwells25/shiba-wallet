@@ -24,6 +24,7 @@ import {
   type TxQuoteState,
 } from '../components/WcApprovalSheet';
 import { getEndpoint } from '../config/networks';
+import { spendingGateForQuote } from '../components/SpendingPolicyViews';
 import { requireLocalAuth } from './biometric';
 import { usePrefs } from './PrefsContext';
 import { useWallet } from './WalletContext';
@@ -750,6 +751,21 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
       if (
         (item.parsed.kind === 'transaction' || item.parsed.kind === 'calls' || item.parsed.kind === 'permissions') &&
         !txApprovalAllowed(txQuote, overrideSimulation)
+      ) {
+        return;
+      }
+      // App-enforced spending limits (phase 12 item 3): after the eth_call /
+      // bundler-estimate gate above, before the biometric gate below.
+      if (
+        (txQuote?.status === 'ready' || txQuote?.status === 'ready-aa') &&
+        (item.parsed.kind === 'transaction' || item.parsed.kind === 'calls') &&
+        !(await spendingGateForQuote({
+          chain: contextRef.current.activeChain,
+          owner: txQuote.status === 'ready' ? txQuote.from : txQuote.owner,
+          from: txQuote.status === 'ready' ? txQuote.from : txQuote.owner,
+          quote: txQuote.quote,
+          url: txQuote.url,
+        }))
       ) {
         return;
       }

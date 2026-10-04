@@ -104,6 +104,8 @@ import {
 import { listContacts, matchRecipient, type Contact } from '../wallet/contacts';
 import { BalanceChangePreview } from '../components/BalanceChangePreview';
 import { RiskWarnings } from '../components/RiskWarnings';
+import { SpendingPolicyNotice, spendingGateForQuote } from '../components/SpendingPolicyViews';
+import { recordAcceptedSpend, spendingInputForQuote } from '../wallet/spending-policy';
 import { PREVIEW_AA_NOTE } from '../wallet/simulation';
 import { useAccountDelegation } from '../wallet/useDelegation';
 import { delegationLabelSuffix, invalidateAccountDelegation } from '../wallet/delegation';
@@ -950,6 +952,20 @@ export function SendScreen({ route, navigation }: Props) {
       return;
     }
     const sendUrl = quotedUrl;
+    // App-enforced spending limits (phase 12 item 3): after the eth_call or
+    // bundler-estimate gate (the button stays disabled until it passed or was
+    // overridden) and before the biometric gate. EVM sends only.
+    if (quote.kind === 'evm' || quote.kind === 'erc20' || quote.kind === 'nft' || quote.kind === 'aa') {
+      const withinLimits = await spendingGateForQuote({
+        chain: evmChain.caip2,
+        owner: quotedFrom,
+        from: quotedFrom,
+        quote,
+        url: sendUrl,
+        authenticateOverride: quote.kind === 'aa' && quote.passkey === true,
+      });
+      if (!withinLimits) return;
+    }
     if (quote.kind === 'aa' && quote.passkey) {
       // Passkey-signed: no app-level biometric gate and no owner key. The
       // platform passkey prompt that runs at submission IS the user
@@ -963,6 +979,13 @@ export function SendScreen({ route, navigation }: Props) {
       setPhase('sending');
       try {
         const { userOpHash } = await sendPasskeyCalls(bundle, quote);
+        // The passkey path bypasses sendAa's listeners: record the accepted
+        // operation for the spending limits here.
+        void recordAcceptedSpend({
+          scope: { chain: evmChain.caip2, owner: quotedFrom },
+          ...spendingInputForQuote(quote, quotedFrom),
+          ref: userOpHash,
+        });
         setAaResult({ userOpHash, receiptState: 'pending', success: null, txHash: null });
         setPhase('success');
         void waitForAaReceipt(bundle, userOpHash, { timeoutMs: 120_000, pollMs: 3_000 }).then(
@@ -1303,6 +1326,7 @@ export function SendScreen({ route, navigation }: Props) {
           to={quote.calls[0]!.to}
           data={quote.calls[0]!.data}
         />
+        <SpendingPolicyNotice owner={quotedFrom} />
         <Text style={[styles.simulationOk, { color: theme.success }]}>
           Bundler gas estimate passed (eth_estimateUserOperationGas simulated the operation).
         </Text>
@@ -1388,6 +1412,7 @@ export function SendScreen({ route, navigation }: Props) {
           counterparty={quote.to}
           data={quote.data}
         />
+        <SpendingPolicyNotice owner={quotedFrom} />
 
         {!simulationFailed && !quote.returnedFalse ? (
           <Text style={[styles.simulationOk, { color: theme.success }]}>
@@ -1494,6 +1519,7 @@ export function SendScreen({ route, navigation }: Props) {
           counterparty={quote.to}
           data={quote.data}
         />
+        <SpendingPolicyNotice owner={quotedFrom} />
 
         {!simulationFailed ? (
           <Text style={[styles.simulationOk, { color: theme.success }]}>
@@ -1603,6 +1629,7 @@ export function SendScreen({ route, navigation }: Props) {
         {quote.kind === 'evm' ? (
           <RiskWarnings url={confirmUrl} wallet={account.address} to={quote.to} data={quote.data} />
         ) : null}
+        {quote.kind === 'evm' ? <SpendingPolicyNotice owner={quotedFrom} /> : null}
 
         {quote.kind === 'evm' ? (
           quote.simulation.ok ? (

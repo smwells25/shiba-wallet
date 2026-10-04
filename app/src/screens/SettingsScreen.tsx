@@ -91,6 +91,11 @@ import { EVM_CHAIN_ID } from '../wallet/send';
 import { exportAllRecordsText, loadRecoveryRecords } from '../wallet/recovery';
 import { passkeyGateNow } from '../wallet/passkey-native';
 import { PASSKEY_AUDIT_NOTE, PASSKEY_EXPLANATION, PASSKEY_SELF_CALL_RISK } from '../wallet/passkeys';
+import {
+  SPENDING_HONESTY_SENTENCE,
+  SPENDING_SECTION_TITLE,
+  SPENDING_SETTINGS_HINT,
+} from '../wallet/spending-policy';
 
 /**
  * The chains where the pinned Kernel v3.3 addresses were checked on-chain
@@ -1727,6 +1732,17 @@ export function SettingsScreen({ navigation, route }: Props) {
           title="Manage tokens"
           variant="secondary"
           onPress={() => navigation.navigate('Tokens')}
+        />
+      </View>
+
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: theme.text }]}>{SPENDING_SECTION_TITLE}</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{SPENDING_SETTINGS_HINT}</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{SPENDING_HONESTY_SENTENCE}</Text>
+        <Button
+          title="Spending limits"
+          variant="secondary"
+          onPress={() => navigation.navigate('SpendingLimits')}
         />
       </View>
 

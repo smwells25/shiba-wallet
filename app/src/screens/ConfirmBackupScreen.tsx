@@ -105,7 +105,7 @@ export function ConfirmBackupScreen() {
                     },
                   ]}
                 >
-                  <Text style={{ color: active ? '#ffffff' : theme.text, fontWeight: '500' }}>
+                  <Text style={{ color: active ? theme.onAccent : theme.text, fontWeight: '500' }}>
                     {choice}
                   </Text>
                 </Pressable>

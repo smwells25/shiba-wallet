@@ -46,6 +46,14 @@ import {
   waitForAllowance,
 } from '../src/wallet/swap.ts';
 import { sendEvm } from '../src/wallet/send.ts';
+import {
+  evaluateBeforeSigning,
+  flushSpendingWrites,
+  installSpendingRecorder,
+  listSpendRecords,
+  saveSpendingPolicy,
+  spendingInputForQuote,
+} from '../src/wallet/spending-policy.ts';
 import { USDC_MAINNET } from '../src/wallet/erc20.ts';
 import { assertSecureEndpointUrl } from '../src/config/endpoint-url.ts';
 
@@ -619,10 +627,45 @@ await checkRejects(
   /Insufficient funds/,
 );
 
+// Phase 12 item 3: the swap's sell side against an app-enforced spending
+// limit (native sell = the 0x value), checked before signing, and recorded
+// only once the node accepted the broadcast.
+const spendMem = new Map();
+const spendStore = { getItem: async (k) => spendMem.get(k) ?? null, setItem: async (k, v) => void spendMem.set(k, v) };
+const spendScope = { chain: 'eip155:1', owner: signer.address };
+await saveSpendingPolicy(
+  spendScope,
+  { token: '0x0000000000000000000000000000000000000000', symbol: 'ETH', decimals: 18, cap: 10n ** 18n - 1n, windowSeconds: 86400 },
+  [],
+  { store: spendStore },
+);
+{
+  const input = spendingInputForQuote(sendQuote, signer.address);
+  const over = await evaluateBeforeSigning({ scope: spendScope, spender: input.spender, calls: input.calls, fee: input.fee, store: spendStore });
+  check('spending limits: 1 ETH sell over a 1 ETH − 1 wei cap is blocked (fee not counted)', over.status === 'blocked' && over.results[0].entry.proposed === 10n ** 18n);
+}
+await saveSpendingPolicy(
+  spendScope,
+  { id: JSON.parse(spendMem.get('shiba-wallet.spending-policies.v1')).entries[`eip155:1|${signer.address.toLowerCase()}`][0].id, token: '0x0000000000000000000000000000000000000000', symbol: 'ETH', decimals: 18, cap: 10n ** 18n, windowSeconds: 86400 },
+  [],
+  { store: spendStore },
+);
+const stopSpendRecorder = installSpendingRecorder(spendStore);
+
 rpc = defaultRpc();
 lastRawTx = null;
 const swapSent = await sendEvm(RPC_URL, signer, sendQuote);
 check('swap broadcast returns the node txid', swapSent.txid === rpc.txid);
+await new Promise((r) => setTimeout(r, 10));
+await flushSpendingWrites();
+{
+  const records = (await listSpendRecords(spendScope, spendStore)).records;
+  check(
+    'spending limits: accepted swap recorded with its sell amount',
+    records.some((r) => r.kind === 'transfer' && r.amount === 10n ** 18n && r.ref === swapSent.txid),
+  );
+}
+stopSpendRecorder();
 {
   const decoded = Transaction.from(lastRawTx);
   check('swap raw tx targets the 0x contract (ethers-decoded)', decoded.to === ZEROX_TO);

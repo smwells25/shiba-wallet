@@ -19,6 +19,7 @@ import { Button, WarningBox } from '../components';
 import { BalanceChangePreview } from './BalanceChangePreview';
 import { GrantReview } from './SessionGrantViews';
 import { RiskWarnings } from './RiskWarnings';
+import { SpendingPolicyNotice } from './SpendingPolicyViews';
 import { getEndpoint } from '../config/networks';
 import type { EvmChainProfile } from '../config/evm-chain';
 import { useTheme, type Theme } from '../theme';
@@ -857,8 +858,8 @@ function RequestBody({
     <>
       <Text style={[styles.modalTitle, { color: theme.text }]}>Transaction request</Text>
       {evmChain.testnet ? (
-        <View style={[styles.mainnetBadge, { backgroundColor: '#e07800', borderColor: '#e07800' }]}>
-          <Text style={[styles.mainnetBadgeText, { color: '#ffffff' }]}>
+        <View style={[styles.mainnetBadge, { backgroundColor: theme.testnetFill, borderColor: theme.testnetFill }]}>
+          <Text style={[styles.mainnetBadgeText, { color: theme.onTestnetFill }]}>
             {evmChain.label} TESTNET — test funds only
           </Text>
         </View>
@@ -915,6 +916,7 @@ function RequestBody({
             }}
           />
           <RiskWarnings url={txQuote.url} wallet={txQuote.from} to={txQuote.quote.to} data={txQuote.quote.data} />
+          <SpendingPolicyNotice owner={txQuote.from} />
           {txQuote.quote.simulation.ok ? (
             <Text style={[styles.simulationOk, { color: theme.success }]}>
               Pre-flight simulation passed (eth_call).
@@ -1237,8 +1239,8 @@ function SmartAccountTxBody({
         {batch ? `Batch request (${txs.length} call${txs.length === 1 ? '' : 's'})` : 'Transaction request'}
       </Text>
       {evmChain.testnet ? (
-        <View style={[styles.mainnetBadge, { backgroundColor: '#e07800', borderColor: '#e07800' }]}>
-          <Text style={[styles.mainnetBadgeText, { color: '#ffffff' }]}>
+        <View style={[styles.mainnetBadge, { backgroundColor: theme.testnetFill, borderColor: theme.testnetFill }]}>
+          <Text style={[styles.mainnetBadgeText, { color: theme.onTestnetFill }]}>
             {evmChain.label} TESTNET — test funds only
           </Text>
         </View>
@@ -1341,6 +1343,7 @@ function SmartAccountTxBody({
             to={ready.quote.calls[0]!.to}
             data={ready.quote.calls[0]!.data}
           />
+          <SpendingPolicyNotice owner={ready.owner} />
           <Text style={[styles.simulationOk, { color: theme.success }]}>
             Bundler gas estimate passed (eth_estimateUserOperationGas simulated the operation).
           </Text>
@@ -1423,8 +1426,8 @@ function PermissionRequestBody({
     <>
       <Text style={[styles.modalTitle, { color: theme.text }]}>Session permission request</Text>
       {evmChain.testnet ? (
-        <View style={[styles.mainnetBadge, { backgroundColor: '#e07800', borderColor: '#e07800' }]}>
-          <Text style={[styles.mainnetBadgeText, { color: '#ffffff' }]}>
+        <View style={[styles.mainnetBadge, { backgroundColor: theme.testnetFill, borderColor: theme.testnetFill }]}>
+          <Text style={[styles.mainnetBadgeText, { color: theme.onTestnetFill }]}>
             {evmChain.label} TESTNET — test funds only
           </Text>
         </View>
