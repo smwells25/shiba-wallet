@@ -5264,3 +5264,72 @@ SessionsScreen contrast line the subscriptions owner handled; F5 (WETH
 Deposit events in the preview); the WcApprovalSheet L1-fee line and the
 7702 set-code L1 fee on Base; the two unreasoned eslint disables in
 WcApprovalSheet.
+- [x] Base in-app findings FIXED (commit d6e8910; new check-home 61,
+      check-base 95 (was 64), check-aa 147 (133 — this file previously
+      said 131; 133 ran at HEAD), test-units 59 (45); offline runner ALL
+      GREEN in the CTO's isolated worktree: engine 722, app 3,958 across
+      37 suites, lint 0/0, tsc clean; nothing on a device). (1) MAX SLACK:
+      send.ts prepareEvmSend gained options { fromMax }; when the amount
+      came from Max, the transaction is a plain transfer with no calldata
+      and amount + re-quoted worst-case fee exceeds the balance, the quote
+      lowers the amount to balance − current fee, re-pricing the L1 data
+      fee on the exact lowered unsigned transaction (at most 3 rounds,
+      MAX_TRIM_ROUNDS), else the existing Insufficient-funds refusal;
+      amounts are only ever lowered, never raised (if fees fell, a little
+      is left over — judgement), typed amounts and calldata values are
+      never trimmed; the quote records maxAdjustment { requested } only
+      when adjusted, so unadjusted mainnet/Sepolia quotes are byte-
+      identical (key pin still passes); SendScreen keeps a lastEvmMax ref
+      (set only on the plain EOA native Max path, cleared on re-tap),
+      passes fromMax at Review only when the amount text, account and
+      chain equal the last Max result (amountIsLastMax), and shows
+      maxAdjustmentSentence in a WarningBox ("The amount was lowered from
+      X to Y because the network fee rose after you tapped Max…"); the
+      smart-account Max (maxAaSend) has the same exposure and is NOT
+      addressed. Mutation checks failed as expected (re-pricing removed,
+      trim disabled reproduces the live error text, trimming typed
+      amounts, raising when the fee fell). (2) HOME LINKS: aa.ts
+      saveConfigMap (the single write path) notifies
+      addAaConfigChangedListener after a successful write (refused saves
+      notify nobody); subscribeAaStateChanges fires on config writes and
+      accepted ops; new useAaStateRevision.ts; useSessionEligibility /
+      useRecoveryInfo / usePasskeyInfo take a refreshKey and depend on the
+      revision (answer key still chain|owner|index so the old answer stays
+      while re-checking); Home passes a toolsRefresh counter that grows on
+      every focus after the first and on pull-to-refresh; caveat: a
+      deployment is visible only at inclusion, so the accept-time re-check
+      may still say not deployed and the focus re-check catches it. (3)
+      DUST: balances.ts formatBalanceDisplay renders a non-zero amount that
+      would truncate to "0" as "< 0.000001" (zero stays "0") with
+      spokenAmount "less than 0.000001" for screen readers; used by native
+      rows, token rows and the Home accessibility label; Hide amounts still
+      masks; fiat from the exact amount; Activity amounts and Swap's
+      sell-balance line still use formatUnits (follow-up). (4) BASE COPY:
+      evm-chain.ts profile flag swapsOffered (mainnet and Ethereum Sepolia
+      true — phase 5 deliberately kept the Swap screen on Sepolia — Base
+      Sepolia false) hides Home's Swap link; testModeTokenNote(profile)
+      names the active profile (Sepolia text byte-identical). (5) AA ROW:
+      kernelDeploymentNote without a bundler → "No bundler is configured
+      yet; once one is saved, the first smart-account send deploys the
+      account through it."; the bundler save stores bundlerChainIdVerified
+      (decimal digits only; cleared with the URL) and bundlerVerifiedLine
+      reads "Verified ✓ — the bundler reported chain id 84532 (Base
+      Sepolia) and eth_supportedEntryPoints includes EntryPoint v0.7
+      (checked …)"; bundlers saved BEFORE this change show the old line
+      plus "Saved before the chain-id check existed: save it again to
+      confirm which network it serves." — the emulator's two AA rows will
+      show that sentence until re-saved (no check is claimed that left no
+      record). (6) DATES: config/dates.ts localDateLabel (device-local
+      YYYY-MM-DD via Date local getters, no Intl) for every Settings
+      "checked" date, the phrase-protection "since" date and Guardians'
+      "Backed up off-device"; stored timestamps stay UTC; recovery-file
+      names keep the UTC day; tests switch TZ between New York, UTC and
+      Tokyo. (7) HOME REFRESH: send.ts addSendAcceptedListener /
+      notifySendAccepted called only after acceptance in sendEvm,
+      sendUtxo, sendSol, the 7702 set-code tx (delegation.ts) and
+      approveWithSig (recovery.ts); home-refresh.ts tracks "a send was
+      accepted since the last focus" (plus addAaSentListener) and Home
+      reloads the native rows on focus through refreshOne (per-row retry
+      state kept) and rows + tokens once more 15 s later (cancelled on
+      blur) because balances move at inclusion; passkey-signed ops bypass
+      sendAa and do not mark Home (they do not move the EOA balance).
