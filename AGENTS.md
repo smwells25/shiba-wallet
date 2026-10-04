@@ -6246,3 +6246,77 @@ DECIDED by the Chairperson (2026-10-04): (a) single private-key import
 as not covered by the recovery phrase; (b) Circle's token paymaster is
 acceptable on test networks ("no risk there"); the test-networks-only
 readiness gate and finding F-58 stand for mainnet.
+- [x] Item 3 — SINGLE PRIVATE-KEY IMPORT (feature 12; commit 053d1b7;
+      new check-key-import 212, check-readiness 167,
+      check-settings-protection 51; core tests 25 → 29; offline runner ALL
+      GREEN in the CTO's isolated worktree: engine 778, app 4,695 across
+      39 suites, lint 0/0, tsc clean; the CTO spot-checked that the key
+      files log nothing and never touch AsyncStorage and read the signWith
+      branch; NOT run on a device). DESIGN: (1) account ids — an imported
+      account's id is 2^31 + its vault slot (account-ids.ts); every
+      derivation helper already refuses ids ≥ 2^31 (isValidIndex), so
+      deriving an imported account from the phrase FAILS instead of using
+      phrase key N; slots are never reused (high-water mark). (2) Core:
+      isValidEvmPrivateKey (noble's secp256k1.utils.isValidSecretKey —
+      rejects 0, n, n+1, wrong lengths, probed on noble 2.4.0) and
+      evmAccountFromPrivateKey; imported and derived keys sign through one
+      shared evmSigner closure, derived signing byte-identical (pinned);
+      addresses and r/s/v cross-checked against ethers. (3) Storage
+      (storage.ts): shiba-wallet.imported-key.v1.K (standard),
+      .imported-key.v2.K (protected, service shiba-wallet.protected), and
+      the public record shiba-wallet.imported-keys.v1 (slot, address,
+      location, nextSlot — never key material); a save recomputes the
+      address and refuses a mismatch with the one shown, reserves the slot
+      first and follows the phrase's protection state (protected: write,
+      read back, compare; a cancel aborts the import; a platform refusal
+      or mismatch falls back to standard and says so); migration of
+      standard keys runs ONLY on the explicit Settings "Protect with
+      biometrics" (never during the automatic phrase move, to avoid
+      surprise prompts) in the phrase's order (write, read back, record,
+      delete), stopping at the first cancel or failure, and Settings
+      states how many keys are still standard; the approval gate is
+      target-aware (one prompt per operation for a protected imported
+      key; the held secret is single-use and never handed to another
+      target); a damaged record refuses every write and deletes nothing;
+      wipe sweeps slots even with a damaged record and deletes imported
+      keys FIRST. (4) signWith: imported branch refuses non-EVM chains
+      ("This account comes from an imported Ethereum private key, so it
+      can only sign on Ethereum networks. Nothing was signed."), reads
+      through the vault, enforces expectAddress, zeroes the key bytes in a
+      finally (the hex string cannot be zeroed — N-03). (5) Account store:
+      entries carry imported: true; nextIndex and MAX_ACCOUNTS count
+      phrase accounts only; imported accounts cannot be hidden, only
+      removed (key deleted first, after two dialogs); phrase entries
+      serialize byte-identically. (6) Smart accounts: salt 0 for an
+      imported owner (the owner makes the address unique; recomputable
+      from the key, the factory and index 0; NOT recoverable from the
+      phrase). AUDIT: WalletConnect (EOA and smart sessions), Kernel /
+      SimpleAccount sends, swap, 5792, the 7702 upgrade, session keys,
+      passkeys, spending limits, proof of ownership, contacts' and the
+      risk card's own-address lists all WORK; GUARDIANS and recovery
+      records are REFUSED for an imported owner ("Guardians are not
+      offered for a smart account owned by an imported private key: the
+      recovery phrase does not back up that key, and the recovery record
+      cannot say so yet…"), as are guardian recovery onto an imported key,
+      attaching to one, and owner changes from or to one — the engine's
+      record format has no field for "this owner is an imported key", so
+      refusing beats half-support. HONESTY: the shared notice "This
+      account comes from an imported private key. Your recovery phrase
+      does NOT back it up: if this phone is lost or the wallet is removed,
+      the account and its funds are lost unless you kept the private key
+      yourself." on Home, Receive, every From/Owner row, the WalletConnect
+      sheet, the import screen and the reveal; the name always ends
+      " (imported key)"; BTC/DOGE/SOL rows say "Not available for an
+      imported key…". Show private key reuses the phrase reveal's
+      confirmation, gate and screenshot block, plus a Copy (a 64-character
+      key is impractical to write by hand) overwritten after 60 s and on
+      close. Readiness row imported-key (blocked, advisory; T-67, W1, W2,
+      W3, W19); ADR D9 in ARCHITECTURE.md; T-67 and two secure-store rows
+      in THREAT_MODEL.md (its section 7.4 suite-count table is stale).
+      FEATURE row 12 → Built (tally Proven live 34, Built 17, Designed 2,
+      Not started 46). KNOWN GAP: a key equal to a phrase account that is
+      not yet listed is not detected as a duplicate. UNVERIFIED on a
+      device: secureTextEntry / paste / keyboard suggestions, FLAG_SECURE
+      on the import and reveal screens, protected-key prompts, the
+      clipboard overwrite, TalkBack. Emulator checklist (11 steps,
+      throwaway key only) in the builder's report.
