@@ -5749,3 +5749,123 @@ then 2's app half, 3 and 5; 6 last. Subagents on Opus.
       actual charge from UserOperationSponsored on success; offer it only
       on the Base Sepolia profile for Kernel accounts (readiness: test
       networks only), hidden on Ethereum Sepolia.
+- [x] Item 1 — TOKENS ON EVERY EVM PROFILE + TOKEN DISCOVERY (feature
+      37) and Item 4 — FOLLOW-UPS (one commit, f1ac39d, because the slices
+      share files; offline runner ALL GREEN in the CTO's isolated
+      worktree: engine 773, app 4,209 across 37 suites, lint 0/0, tsc
+      clean; nothing on a device).
+      ITEM 1. One tracked list per profile (eip155:1 / 11155111 / 84532).
+      NO MIGRATION by construction: mainnet keeps the key
+      shiba-wallet.tokens.v1 byte for byte; other chains use
+      shiba-wallet.tokens.v1.<CAIP-2>; each key is filtered to its own
+      chain on read (foreign entries stay stored, never shown); a missing
+      key = that chain's defaults (mainnet USDC; test networks Circle's
+      USDC and EURC), a present key (even []) = the user's list verbatim.
+      listTokens(chain?, store?) with no chain reads the active profile
+      from prefs (keeps WcApprovalSheet correct unedited). Never on the
+      wrong chain: loadTokenBalance(…, { expectedChain }) reads only when
+      the endpoint serves the token's chain; the ERC-20 quote and Max
+      require eth_chainId == the token's CAIP-2 chain; SendScreen refuses
+      a token from another chain; maxErc20Send now also includes the
+      OP-stack L1 fee (it had neither check before). Prices: the
+      tokenPriceAssetId guard is unchanged (test tokens unpriced); the
+      preview's contract-AND-chain label rule is unchanged. Consumers
+      moved: Home rows (all profiles; the test-mode note is gone), Tokens
+      screen, token sends, Activity decoder, Swap pickers (a selection
+      from another chain resets on a mode flip), the logs-fallback
+      history (any chain), approvals notes, preview, risk card, spending
+      limits. NEW FACT: Base Sepolia EURC
+      0x808456652fdb597867f38412077A9182bf77359F (Circle's EURC
+      contract-addresses page, fetched 2026-10-04; symbol/decimals read
+      live); all four test tokens and mainnet USDC re-read live.
+      DISCOVERY: packages/chains-evm/src/token-discovery.ts
+      (indexerTokenBalanceProvider over alchemy_getTokenBalances; params
+      [address, "erc20", {pageKey, maxCount ≤ 100}], result
+      {address, tokenBalances:[{contractAddress, tokenBalance | error}]}
+      per www.alchemy.com/docs/data/token-api/…/alchemy-get-token-balances,
+      fetched 2026-10-04; exact bigints, >64-hex values rejected per
+      entry, an answer for another address discarded, a repeated cursor
+      stops the walk; 13 tests). Docs gaps observed live: pageKey is not
+      in the documented result (present only while more exist); the error
+      field's shape is unspecified; zero balances are returned;
+      alchemy_getTokenMetadata answered a plain address with empty fields
+      instead of an error, so metadata is read from the chain, never the
+      indexer; Base Sepolia answered 403 "BASE_SEPOLIA is not enabled for
+      this app" for our key (a dashboard setting — INPUT if discovery on
+      Base is wanted). App token-discovery.ts + the Tokens screen's "Find
+      my tokens": re-checks the indexer's chain id, lists untracked tokens
+      with an UNTRACKED tag, the full contract address, sanitised on-chain
+      metadata, zero balances hidden and counted, a look-alike warning
+      when the symbol equals a tracked/known token's but the contract
+      differs, at most 5 pages and 25 metadata reads per run, and NOTHING
+      auto-added. Live probes: Sepolia, emulator Account 1 → "0 untracked
+      tokens found · 2 already tracked · 1 with a zero balance hidden" (it
+      holds about 36 USDC and 41 EURC); mainnet standard test address → 3
+      untracked airdrop-style tokens, 24 zero balances hidden. Dust in
+      Activity ("+<0.000001", spoken "less than") and Swap's sell balance.
+      Suites: check-tokens 95 offline / 106 live (was 23/28),
+      check-token-send 56, check-base 101, check-approvals 159,
+      check-failover 130, check-prices 112, check-home 60; two manual
+      mutations (chain filter removed; mainnet defaults on test chains)
+      failed 4 and 11 checks. Left for the aa.ts / subscriptions owners
+      (wave 2): an optional chainCaip2 guard in prepareAaErc20Send /
+      maxAaErc20Send; the user's tracked tokens in the subscription token
+      list; WcApprovalSheet passing evmChain.caip2 explicitly. Pre-existing
+      gap noted: Swap's sell balance is not masked by Hide amounts.
+      ITEM 4 (check-aa 178, check-subscriptions 134, check-7702 131,
+      check-wc 271, asset-diff tests 42). (1) Custom subscription period
+      (whole minutes/hours/days; minimum 60 s on test networks — the
+      engine's SUBSCRIPTION_MIN_PERIOD_SECONDS — else 1 hour; maximum 365
+      days; the last two are judgement); "2 minutes (testing)" only on
+      test networks; subscriptionShortWindowWarning when period × payments
+      < 600 s (the default 2 min × 3 now shows it). (2) aa.ts
+      aaFeeFromBalance is the single deposit rule; AaSendQuote.deposit is
+      set when the read succeeded; Review quotes the install first, keeps
+      its fee back from an untyped budget (lowering and re-quoting with a
+      WarningBox; a typed budget is never changed), blocks Start with a
+      warning when balance + deposit cannot cover the install, notes when
+      the deposit is what makes it payable, and warns (without blocking)
+      when the remainder is below payments + budget. (3)
+      subscriptionHandoverOffer: an expired, never-handed-over
+      subscription offers only Revoke then Forget, and
+      buildSubscriptionKeyExport refuses it. (4) subscriptionDisplayTitle
+      fixes legacy "Subscription: Subscription" titles at render time. (5)
+      "Copied ✓" follows the clipboard helper's pending state. (6)
+      SMART-ACCOUNT MAX: prepareAaCalls option fromMax — only a self-paid
+      plain native transfer whose amount came from Max is lowered (each
+      candidate priced through the bundler estimate, at most 3 rounds,
+      never raised; typed amounts, contract calls and sponsored ops never
+      trimmed; maxAdjustment only when changed, unadjusted quotes key-for-
+      key identical); DECISION: Max must fit beside the FULL worst-case
+      fee without the EntryPoint deposit, because sendCalls re-estimates
+      at signing and the account pays fee − deposit in validation before
+      the transfer runs — the unused deposit absorbs a rise (typed amounts
+      may still use the deposit for the fee). (7) F5: WETH9
+      Deposit(address indexed dst, uint wad) / Withdrawal(address indexed
+      src, uint wad) (gnosis/canonical-weth WETH9.sol at 0dd1ea3e; topics
+      keccak-computed, pinned against ethers) decoded ONLY for
+      WRAPPED_NATIVE_TOKENS — mainnet 0xC02a…6Cc2, Sepolia 0xfFf9…6B14
+      (Uniswap's deployments page), the OP-stack predeploy 0x4200…0006
+      (each checked on-chain: both topics in code, symbol() "WETH") — and
+      only when traceTransfers shows exactly that ETH moving between the
+      wallet and the wrapper in the matching direction in the same call
+      (one movement backs one event; dropped when the wrapper also emitted
+      an equal mint/burn Transfer); pinned because other contracts (e.g.
+      the old Gnosis MultiSigWallet) emit the same Deposit shape; the
+      constants are not exported from the package (nothing needs them).
+      (8) Base L1 fee: wcOpStackFeeLines adds "Layer 1 data fee
+      (estimate)" (and an operator-fee row when non-zero) to the
+      WalletConnect sheet; delegation.ts serializeUnsignedSetCode (pinned
+      byte for byte against ethers 6.17 unsignedSerialized) +
+      quoteSetCodeOpStackFees — op-geth (b355734b) RollupCostData charges
+      every non-deposit type from MarshalBinary, and GasPriceOracle.getL1Fee
+      (optimism 773798a6) is type-agnostic; the authorization's signature
+      can only be made after the biometric gate (D6), so the quote prices
+      stand-in r/s (keccak digests, incompressible like a real signature)
+      and the 50% reserve covers the difference; an oracle failure refuses
+      the quote; Sepolia quotes unchanged. (9) both unreasoned eslint
+      disables in WcApprovalSheet removed by complete dependency lists
+      (behaviour change: narrowing an ERC-7715 grant re-quotes on any
+      grant change). Unverified: everything on a device; a real bundler
+      accepting a trimmed Max op; the real compressed size of the 7702
+      authorization signature.
