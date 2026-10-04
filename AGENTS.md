@@ -5869,3 +5869,70 @@ then 2's app half, 3 and 5; 6 last. Subagents on Opus.
       grant change). Unverified: everything on a device; a real bundler
       accepting a trimmed Max op; the real compressed size of the 7702
       authorization signature.
+- [x] Item 2, app half — "Pay the network fee in USDC" (commit adb3a6b;
+      new check-token-gas 125, check-readiness 161; offline runner ALL
+      GREEN in the CTO's isolated worktree: engine 773, app 4,339 across
+      38 suites, lint 0/0, tsc clean; NOT run on a device or a live
+      network). app/src/wallet/token-gas.ts + aa.ts + SendScreen. The
+      switch sits on the Send FORM under the smart-account toggle (off by
+      default; Max depends on the fee mode), shown only after
+      readCirclePaymasterState / circlePaymasterProblems pass on the
+      active endpoint (cached 60 s; a failed read is not cached). OFFERED
+      (tokenGasOffer): Base Sepolia only (CIRCLE_TOKEN_PAYMASTER_V07.tokens
+      lists only 84532), readiness row token-gas (testnet-only, enforced;
+      C1, C2, C3, W8, W9), a Kernel v3.3 account at its own address —
+      factory or recovered. REFUSED with a plain sentence: SimpleAccount
+      (no ERC-1271), EIP-7702-upgraded owners and the passkey signer (both
+      unverified in the engine; the 7702 envelope differs), and when an
+      ERC-7677 sponsorship paymaster is configured; session keys never
+      reach it. QUOTE loads no key and makes no bundler estimate: the
+      worst case is the engine stub's figure (the 1,500,000-gas ceiling +
+      200,000 paymaster verification + postOp, at the quote's fees after
+      the bundler priority-fee floor, through quoteCircleTokenCharge); it
+      also checks the paymaster deposit and the permit domain
+      (readTokenPermitInfo refuses a DOMAIN_SEPARATOR mismatch); the
+      quote's ETH fee is 0n. SEND: after the biometric gate, inside ONE
+      signWith (one system prompt), a SmartAccountClient with
+      createCirclePaymasterTransport in permit mode, maxTokenCharge = the
+      displayed amount, padding {verification 110, call 130,
+      preVerification 105} (the live-proven values); every permit incl.
+      the estimation stub passes assertTokenGasPermit (value ≤ displayed,
+      owner, spender, token, chain, deadline); a
+      TokenGasChargeAboveLimitError returns to the form ("The network fee
+      in USDC would now be up to R USDC, above the L USDC you approved.
+      Nothing was sent…"). MAX: native = the full ETH balance; USDC =
+      balance − worst case; another token = its full balance if USDC
+      covers the fee. SPENDING LIMITS: the USDC fee is NOT counted
+      (countFees exists only on native limits and the quote's ETH fee is
+      0n); the USDC amount of a USDC send still counts. SUCCESS: the
+      actual charge from UserOperationSponsored (matched on userOpHash,
+      paymaster, token, sender), never guessed. Copy: fee "Network fee
+      paid in USDC: up to X USDC; the unused part is refunded in the same
+      transaction; no ETH is needed for the fee."; rate "1 test ETH = 3000
+      USDC, from the paymaster's on-chain oracle." + the fixed-test-price
+      note; spread "0% (0 basis points), read from the paymaster" + the
+      documented-10% note; the paymaster address in full. CTO CHANGE
+      before commit: the grant sentence said "nothing stays approved",
+      which the builder's own analysis shows can be false — the estimation
+      permit reaches the bundler first and shares the USDC permit nonce
+      with the final one, so a third party submitting it to USDC first
+      would make the final permit fail and leave the paymaster an
+      allowance of up to the displayed amount minus the charge (usable
+      only inside this account's own signed operations); the sentence now
+      reads "A one-time permit letting Circle's paymaster take at most X
+      USDC. The permit is used up by this operation, so normally nothing
+      stays approved." with the reason in a code comment. TO RECORD in
+      docs/THREAT_MODEL.md at the leadership refresh (proposed F-58):
+      Circle's paymaster — no published audit, GPL-3.0 behind a UUPS proxy
+      Circle controls, a static test oracle with no staleness check, the
+      surcharge docs-vs-chain gap, and the stub-permit residual above.
+      Follow-ups applied: aa.ts prepareAaErc20Send / maxAaErc20Send refuse
+      a token from another chain (assertAaTokenChain; quotes key-for-key
+      unchanged); the subscription token list appends the user's tracked
+      tokens on that chain; WcApprovalSheet passes evmChain.caip2.
+      UNVERIFIED: ZeroDev's estimate accepting the stub for a
+      counterfactual account, whether it returns
+      paymasterVerificationGasLimit, the layout and dark mode, the
+      recovered-account case. Emulator checklist (12 steps, Base Sepolia,
+      needs ~1 test USDC on 0xD31c…D8FA there — the dev EOA holds ~19) in
+      the builder's report.
