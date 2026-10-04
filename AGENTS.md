@@ -4850,3 +4850,39 @@ detail lines on Activity/Swap/Connections/Tokens; F5, F8, F11, A3; a
 live SIWE login with a real dApp; the WcApprovalSheet L1-fee line and
 the 7702 set-code L1 fee on Base; Base copy leftovers; the two
 unreasoned eslint disables in WcApprovalSheet.
+
+## Phase 12 plan (approved 2026-10-03): automation and chain breadth
+
+Input received: 0.01 Base Sepolia ETH at the dev EOA (balance now 0.03).
+No phone yet.
+
+1. Base Sepolia live: the Kernel deployment through ZeroDev on chain
+   84532 (kernel-smoke.mjs CHAIN_ID=84532), then on the emulator the
+   Base Sepolia profile end to end — ZeroDev Base bundler saved, a
+   smart-account send, and an EOA Max send to validate the layer 1 data
+   fee headroom.
+2. Subscriptions via session keys (feature 69; also 25/63 groundwork):
+   a "subscription" grant template on Kernel's CallPolicy +
+   RateLimitPolicy (an ERC-20 transfer of at most X to one merchant, at
+   most once per interval, until an expiry), a keeper script that pulls
+   on schedule with only the session key, and a live Sepolia run with
+   the interval compressed to minutes; in-app grant from the Sessions
+   screen with plain-language review ("Lets <merchant> take up to X USDC
+   every N days until <date>").
+3. App-side spending policy (feature 19 at the honest level): per-token
+   rolling-window caps checked before signing from the preview, labelled
+   as enforced by this app only, with a spend-history store and a
+   Settings screen; refuses nothing on-chain (see the phase 11 item 1
+   finding).
+4. Accessibility and contrast completion: light-mode palette to WCAG AA
+   on the accent, the remaining hard-coded TESTNET badges on theme
+   tokens, technical-detail lines on Activity/Swap/Connections/Tokens,
+   A3 (Activity header), F11 (Home links shifting after async loads).
+5. Leadership refresh: feature rows (14 in-app, 19, 69, 29), the
+   shareable page, DEMO.md updated for Base and subscriptions.
+6. Inputs as they appear: a live SIWE login with a real dApp, the ZeroDev
+   gas policy, the device track.
+
+Waves: 1 (CTO) with 2, 3 and 4 (agents) in parallel; 5 after.
+
+## Phase 12 progress
