@@ -5431,3 +5431,79 @@ WcApprovalSheet.
       End state: Account 1, Sepolia, light mode, Google IME, no policy,
       both subscriptions revoked (listed with Forget); Kernel account
       0.001427 + 0.000474 deposit, EOA 0.002080; Metro still at da61b58.
+- [x] Rehearsal findings FIXED (commit 74b9201; check-subscriptions 99
+      (was 58), check-sessions 123 (117), check-spending-policy 118 (99),
+      check-aa 156 (147), check-approvals 157 (147), check-devmode 226
+      (224); 21 mutation checks each fail their suite; offline runner ALL
+      GREEN in the CTO's isolated worktree: engine 722, app 4,045 across
+      37 suites, lint 0/0, tsc clean; NOT re-run on the emulator).
+      SUBSCRIPTIONS: (1) the clock starts at Start — restartSubscriptionAt
+      moves startAt to "now" and the expiry by the same span (payment
+      count and other terms unchanged); onSubInstall runs restart →
+      re-quote with the same session key (permission id and policy data
+      change) → fee re-check → requireLocalAuth('Approve this
+      subscription') → installSession, i.e. the re-quote runs BEFORE the
+      gate so the approval is followed straight by signing (30 s phrase
+      hold); back to the review only when the fee rose > 20%
+      (subscriptionRequoteNeedsReview — judgement) or sponsorship ended;
+      the review states the dates move (SUBSCRIPTION_START_NOTE), the
+      success screen shows the final dates; engine unchanged; a check
+      reproduces the old bug (Review-time terms refused as expired ten
+      minutes later). (2) Review order: batch warning → sentence → start
+      note → on-chain bullets (the list card too); the mid-page scroll was
+      React reusing an unkeyed ScrollView across phases — every phase's
+      ScrollView is now keyed. (3) suggestedFeeBudget follows the payment
+      count, the node fee and the Kernel balance, shown until the user
+      types, capped at balance − payments × amount for native
+      subscriptions with a WarningBox. (4) unnamed → "Subscription to
+      0x69F0…7E8a"; live, then failed, then revoked, newest first, by
+      stored status. (5) per-card "Refresh status" and useFocusEffect
+      reload. (6) App.tsx banner on theme.testnetFill / onTestnetFill. (7)
+      copy: sessionRevokeKeySentence (handed-over keys: the merchant's
+      copy stops working; no deletion promised), one parenthesis in the
+      key-holder text, "Subscription sent to the bundler". (8) aa.ts
+      aaFundingMessage shows the "before it is deployed" sentence only
+      for undeployed accounts (omitted for 7702 and unknown state); the
+      EntryPoint deposit is read once with the other node reads and may
+      pay the FEE but never the amount in both the pre-check and
+      aaCanPaySelf (a failed read counts as zero); maxAaSend still
+      subtracts the full fee (conservative). (9) SECURITY: the old Copy
+      note claimed "This text contains no secrets." for the private key —
+      fixed; components/SubscriptionKeyHandover.tsx shares the key as a
+      .json FILE via expo-sharing (no plain-text Share), sweeps leftovers,
+      deletes the file 10 s after the sheet closes (judgement; shorter
+      than the recovery record's 60 s), at once on failure and when the
+      screen closes; expo-clipboard 57.0.2 has NO clear function and
+      Android's setStringAsync sets no sensitive flag (read from the
+      installed package), so the copy is overwritten with '' after 60 s,
+      on return to the foreground, or on leaving the screen (module-level
+      timer); the warning says other apps can read the clipboard and a
+      keyboard's clipboard history "may" keep a copy (not verified for any
+      keyboard). SPENDING LIMITS: (10) Remove alert masks the cap under
+      Hide amounts; Remove, Reset and any LOOSENING edit
+      (policyLooseningReasons: higher cap, shorter window, override on,
+      fees no longer counted — the last two readings are judgement) ask
+      requireLocalAuth; tightening does not. (12) SpendingPolicyNotice runs
+      evaluateBeforeSigning on the quote with stage:false (a check proves
+      nothing is staged for the recorder) and shows "This send would go
+      over the limit for …" on the 4 Send confirms, both Swap confirms and
+      both WC sheet sections, masked under Hide amounts; the look-ahead
+      skips the preview simulation, so the tap-time check can still find
+      more. RISK CARD (13): risk.ts ownWalletAddresses / findOwnAddress /
+      ownAccountText (every account's EOA, its Kernel counterfactual and
+      any recovered account, via walletAddressesFor); a send to an own
+      address gets one calm line ("one of your own accounts in this wallet:
+      Account 1's smart account (0x…)") and no first-interaction search or
+      contract-age check; SendScreen (useOwnAddresses.ts) names own
+      addresses on success instead of offering "Save as contact"; SimpleAccount
+      addresses not covered. NOT FIXED: (11) native Alerts follow the
+      system theme, not the app's (platform dialog). One new reasoned
+      exhaustive-deps disable in useOwnAddresses.ts. UNVERIFIED on a
+      device: the file share sheet and a target reading the file before
+      deletion, the clipboard overwrite, the scroll fix, focus refresh,
+      the dark banner, the new warning lines, the re-quote spinner, the
+      install prompt count (expected to stay 2), ZeroDev's re-quote.
+      NEXT EMULATOR PASS (Metro must move to this commit): one
+      subscription install to confirm the dates and prompt count, the
+      file hand-over, a Max send on Base to see the trim sentence, the
+      re-saved AA rows' chain-id line.
