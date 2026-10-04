@@ -11,7 +11,7 @@ Everything in this walkthrough runs on the **Sepolia test network** with test ET
 ## Before you start: three warnings
 
 1. **Do not wipe the wallet on the demo emulator, and do not add or remove a fingerprint on it.** The emulator wallet's recovery phrase is stored in biometric-protected storage, and `AGENTS.md` records that the written phrase for that wallet is not kept anywhere ("Settings 'Recovery phrase protection' section"). Changing the fingerprint enrollment makes the phrase permanently unreadable; wiping deletes it. Either would lose Account 1, which owns the deployed Kernel smart account and the WalletConnect session this demo relies on. Show onboarding on a second, disposable emulator instead (see step 1).
-2. **Quoted labels can drift.** Every flow in steps 1 to 9 has now been run live through the app's screens on the emulator (session keys and guardians in phase 10 item 1, the counterfactual deployment in phase 11 item 2). Steps 10 and 11 (subscriptions and Base Sepolia) are newer: subscriptions ran live through the app's code from a script and on the engine, and the Base in-app leg is recorded in "Phase 12 progress" in `AGENTS.md`. Later phases keep editing these screens, so if a quoted label differs slightly on screen, trust the screen, and check the latest "progress" section of `AGENTS.md` before presenting.
+2. **Quoted labels can drift.** Every flow in steps 1 to 9 has now been run live through the app's screens on the emulator (session keys and guardians in phase 10 item 1, the counterfactual deployment in phase 11 item 2). Steps 10 to 13 (subscriptions, Base Sepolia, per-network tokens and the fee in USDC) are newer and have each been run live through the app's screens once or twice; see "Phase 12 progress" and "Phase 13 progress" in `AGENTS.md`. Later phases keep editing these screens, so if a quoted label differs slightly on screen, trust the screen, and check the latest "progress" section of `AGENTS.md` before presenting.
 3. **Bitcoin, Solana and Dogecoin in the app use their main networks.** Sepolia test mode only switches the Ethereum side. Anything you broadcast on those three chains from the app spends real coins. Step 9 explains how to show them without broadcasting.
 
 ---
@@ -287,6 +287,36 @@ Account 1. Rehearsed live in-app on 2026-10-03 (phase 12 item 1). Base Sepolia t
 **What it proves:** on 2026-10-03 the app deployed Account 1's Kernel account on Base Sepolia through ZeroDev's bundler (block 47657170) and sent a Max transaction whose actual layer 1 fee came in 5.2% above the estimate and within the reserve (block 47657380), with every receipt checked independently (phase 12 item 1). The engine had deployed a Kernel account there by script the same day.
 
 **Fallbacks:** without Base Sepolia test ETH, show the mode switch, the layer-2 note and the bundler refusal, and describe the recorded run. The Home account-tool links (Sessions, Guardians, Passkey) may stay hidden on Base until the app is relaunched after the deployment (a recorded bug).
+
+### Step 12. Tokens on every network, and "Find my tokens"
+
+Account 1 on Ethereum Sepolia. Rehearsed live in-app on 2026-10-04 (phase 13 items 1 and 5).
+
+- Home → the Ethereum row now lists the test network's own tokens: USDC and EURC with live balances and no fiat values (test tokens are never priced). Switch briefly to mainnet mode in Settings → Developer to show that the lists never mix, then switch back.
+- Home → **Manage tokens**. The header reads "Tokens · Ethereum Sepolia". Remove EURC ("Remove EURC?"), then tap **Find my tokens**. With the history indexer saved, the result reads "1 untracked token found · 1 already tracked · …" and shows an **UNTRACKED TOKEN** card with the balance and the full contract address. **Track EURC** asks first: "Track EURC? Contract 0x08210F9170F89Ab7658F0B5E3fF39b0E03C594D4 on Ethereum Sepolia. Anyone can create a token with any name and symbol; track it only if this is the contract you expect."
+- Send a little USDC from the regular account to the wallet's own smart account (Home → USDC row → Send; the risk card names it as one of your own accounts), then send some back with the smart-account toggle on.
+
+**What to say:** tokens follow the network you are on, and nothing is ever added for you. Discovery only lists what the indexer reports; the name and decimals are read from the chain, and the full contract address is always shown, because anyone can create a token with any name.
+
+**What it proves:** per-network token lists, discovery and live USDC sends from both the regular and the smart account ran on Sepolia on 2026-10-04 (blocks 11843700 and 11843716), and the first ERC-20 subscription pull moved exactly 0.1 USDC to the merchant (block 11843849).
+
+**Fallbacks:** without a history indexer the screen says that finding tokens needs one and names the Settings section. Discovery on Base Sepolia needs that network enabled for the indexer key.
+
+### Step 13. Pay the network fee in USDC (Base Sepolia)
+
+Account 1 on Base Sepolia; its Kernel account needs test USDC there. Rehearsed live in-app on 2026-10-04 (phase 13 item 2). Scroll Settings with slow swipes at the screen edge on this emulator: a fling that starts on a button can register as a tap, and the Danger zone is at the bottom.
+
+- Settings → Developer → **Base Sepolia**. Settings → Mainnet readiness shows "Paying the network fee in USDC — Test networks only", with the reason: neither the smart account nor Circle's paymaster has a published audit, and Circle can upgrade or pause the paymaster.
+- Home → USDC row → **Send**, turn on **Send from smart account**, then **Pay the network fee in USDC**. The hint reads: "Circle's token paymaster pays the gas and takes USDC from your smart account instead. The confirm screen shows the most it can take before you approve; ETH stays the default."
+- Enter an amount and tap **Review**. Walk through the confirm: "Network fee paid in USDC: up to … USDC; the unused part is refunded in the same transaction; no ETH is needed for the fee."; the rate "1 test ETH = 3000 USDC, from the paymaster's on-chain oracle." with the note that the test oracle is a fixed price; the fee spread read from the paymaster; the paymaster's address in full; and the grant: "A one-time permit letting Circle's paymaster take at most … USDC. The permit is used up by this operation, so normally nothing stays approved."
+- **Send**: one device prompt. The success screen ends with "Network fee charged: … USDC (up to … USDC was permitted; the rest was refunded in the same transaction)."
+- Optional: a test-ETH send with the same switch on. **Max** equals the whole ETH balance, because no ETH is needed for the fee.
+
+**What to say:** a new user can hold only a stablecoin and still transact: the account never needs the network's own coin. The fee comes out of the token being held, the most that can be taken is shown before approval, and the wallet refuses to sign more than that. Be plain about the dependencies: this is one issuer's paymaster for one token, on the networks where it is deployed, and it is not audited in public.
+
+**What it proves:** on 2026-10-04 two sends from the app paid 0.005776 and 0.005424 USDC in fees through Circle's paymaster on Base Sepolia (blocks 47688510 and 47688684); the smart account's ETH balance and EntryPoint deposit were identical before and after, and no allowance remained.
+
+**Fallbacks:** on Ethereum Sepolia the form explains that the choice is offered only on Base Sepolia. If the paymaster check fails, the switch is hidden with the reason. A send larger than the USDC balance minus the worst-case fee is refused before any prompt.
 
 ---
 

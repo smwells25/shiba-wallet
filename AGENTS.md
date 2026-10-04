@@ -6093,3 +6093,106 @@ then 2's app half, 3 and 5; 6 last. Subagents on Opus.
       as Alto does; Rundler states a priority floor only; fee facts are
       not re-read on return from the background; the WalletConnect
       ERC-7715 path keeps its own error wording.
+- [x] GAS PAID IN USDC, PROVEN LIVE IN-APP ON BASE SEPOLIA (2026-10-04;
+      emulator, Metro worktree at 0e00f34, 2,297 modules; no repo files
+      edited; every figure verified on-chain). Funding by a scratch
+      script mirroring token-gas-smoke.mjs (eth_call first; capped at 2
+      USDC): dev EOA → Kernel 0xD31c…D8FA 2 USDC (tx 0x26de97a2…ad6f76,
+      block 47687709) and → Account 1's EOA 1 USDC (tx 0x8b18cf6a…b48c3,
+      block 47687710); dev EOA USDC 19 → 16. Readiness row "Paying the
+      network fee in USDC — Test networks only" with its reason. (B) 0.5
+      USDC to Account 1's EOA with the USDC fee: the switch appears under
+      the smart-account toggle; confirm "NETWORK FEE (PAID IN USDC) up to
+      0.06007 USDC" (1,770,000 gas × 0.0113125 gwei × 3000 — arithmetic
+      checked), the rate + fixed-test-price note, "0% (0 basis points),
+      read from the paymaster", the paymaster address in full, the grant
+      sentence with "normally nothing stays approved", TOTAL USDC (WORST
+      CASE) 0.56007; ONE prompt; userOp 0x85904440…904df5, tx
+      0xae6a7d67aceb3805709fe5559a0cb11f1c0d8680fdaa35f33fd0f3dd9b3cf320,
+      block 47688510; success line "Network fee charged: 0.005776 USDC (up
+      to 0.06007 USDC was permitted; the rest was refunded in the same
+      transaction)."; on-chain: paymaster = Circle's, UserOperationSponsored
+      actualTokenNeeded 5776 (= the line shown), prefund 23,541 pulled and
+      17,765 refunded, Kernel ETH 2,894,423,407,550,000 wei and deposit
+      IDENTICAL at block−1 and block, allowance 0 both, USDC 2,000,000 →
+      1,494,224 (= 0.5 + 0.005776). (C) 0.0001 test ETH to Account 2 with
+      the USDC fee: Max = the full ETH balance; ONE prompt; userOp
+      0xd932eb17…cb0db9, tx 0x6987a7d5f84ae766092735bef8ab5efa7d4b88bf8c88eebc0245b294e6776603,
+      block 47688684; charge 0.005424 USDC (= actualTokenNeeded 5424);
+      Kernel ETH down by exactly 0.0001, deposit unchanged, allowance 0.
+      (D) USDC Max = balance − worst case (1.42873 of 1.4888), total =
+      balance; not sent. (E) Negatives: the Ethereum Sepolia form shows
+      the offered-only-on-Base-Sepolia sentence incl. "its entryPoint()
+      call reverts and it holds no deposit there"; an over-balance send is
+      refused before any prompt with both USDC figures. (F) FEE-FLOOR FIX
+      HELD: a Sepolia smart-account send of 0.1 USDC tapped after a
+      3-minute wait on the confirm went through with one prompt and no
+      bundler refusal (userOp 0xb5e35cf2…15c5a9, tx 0x7e0a7b5e…d1fcf4,
+      block 11844241; the fee came out of the EntryPoint deposit). (G)
+      "Tokens · Base Sepolia" / "Tokens · Ethereum Sepolia"; Track asks
+      first with the full contract. Observation: the final permit equalled
+      the prefund the estimate needed (23,541), well under the displayed
+      ceiling. FINDINGS (fix slice running): (1) the risk card on token
+      sends still opens with "This transaction goes to a contract (<token
+      contract>)" (+ a contract-age line on Sepolia) — both paths; (2)
+      "Find my tokens" counted a token whose metadata read failed as "do
+      not answer like an ERC-20 token"; (3) the preview footnote still
+      talks about gas paid through the EntryPoint in USDC-fee mode; (4)
+      Tokens / Settings copy still says the token-send fee is paid in ETH;
+      (5) "Your smart account needs funds first." titles an
+      amount-plus-fee shortfall on a funded account; (6) the WalletConnect
+      readiness row still says identity checks and permit decoding do not
+      exist. STANDING EMULATOR RULE ADDED: scroll Settings only with slow
+      swipes at the screen edge and never fling near the Danger zone — a
+      fling that started on "Wipe wallet from this device" opened its
+      first dialog (cancelled at once; the wallet is intact). End state:
+      Ethereum Sepolia, Account 1, light mode, Google IME; Base Kernel
+      account 0.002794 ETH + 1.4888 USDC; Metro at 0e00f34.
+- [x] Item 6 — leadership refresh (commit below). FEATURE_UNIVERSE
+      section 15: row 16 Not started → Proven live (in-app, Base Sepolia,
+      with the USDC-only / Base-only / unaudited limits), row 37 Not
+      started → Proven live (per-network tokens and discovery, in-app),
+      row 69 extended with the in-app runs and the ERC-20 pull; tally
+      Proven live 34 (T1 27, T2 7), Built 16, Designed 2, Not started 47
+      (T1 3: private-key import, fiat on-ramp, push notifications). The
+      shareable page was rebuilt (counts 34/16/2/47 asserted) and
+      published as VERSION 9 of https://claude.ai/artifact/JEfyMuPcMJ8YW5x3ZKitsw.
+      DEMO.md: steps 12 (tokens on every network and "Find my tokens")
+      and 13 (pay the network fee in USDC on Base Sepolia, with the slow-
+      swipe warning), warning 2 updated. THREAT_MODEL.md: F-58 (the token
+      paymaster's trust and the stub-permit residual; open) and F-59 (the
+      bundler fee-floor drift; fixed in 7c29fc7); check-readiness 161
+      still passes.
+
+## Phase 13 status (2026-10-04)
+
+Items 1, 2, 4, 5 and 6 are landed and pushed. Proven live this phase:
+gas paid in USDC (engine by script, then twice through the app's Send
+screen on Base Sepolia), per-network tokens with discovery, USDC sends
+from the regular and the smart account, the first ERC-20 subscription
+pull with its on-chain refusals, the smart-account Max trim, and the
+bundler fee-floor fix. Engine: 774 tests. App: 38 offline suites, 4,427
+checks at 7c29fc7. The shareable page is at version 9 (34 proven live,
+16 built).
+
+NOT STARTED, waiting on the Chairperson: item 3, single private-key
+import (feature 12) — an imported key is not covered by the recovery
+phrase, which bends requirement 2; the CTO asked for a decision twice
+and holds the item until one arrives.
+
+Findings for the Chairperson this phase: Circle's token paymaster has no
+published audit, is GPL-3.0 behind a proxy Circle controls, uses a fixed
+test price with no staleness check, and its documented 10% surcharge
+reads 0 on Base Sepolia (F-58; adds to the counsel question); the only
+EntryPoint v0.7 option on Ethereum Sepolia is Pimlico's permissioned
+paymaster, which ZeroDev resells and which needs a key on mainnet.
+
+Inputs that would unlock more: the private-key decision; enabling Base
+Sepolia for the Alchemy key (token discovery there); the ZeroDev gas
+policy; a phone and Expo account; the disclosure decision (four
+findings); a Pimlico key for the second paymaster source.
+
+Follow-ups (no inputs): the six findings of the last emulator run (fix
+slice running); a gas margin inside the displayed fee if Base refuses
+re-estimates often; the WalletConnect ERC-7715 error wording; fee facts
+on return from the background.
