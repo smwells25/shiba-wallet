@@ -5936,3 +5936,88 @@ then 2's app half, 3 and 5; 6 last. Subagents on Opus.
       recovered-account case. Emulator checklist (12 steps, Base Sepolia,
       needs ~1 test USDC on 0xD31c…D8FA there — the dev EOA holds ~19) in
       the builder's report.
+- [x] EMULATOR RUN at 1fab9a6 — items 1 and 4 verified live, and Item 5:
+      THE FIRST LIVE ERC-20 SUBSCRIPTION PULL (2026-10-04; Metro worktree
+      at 1fab9a6, engine built inside it, 2,296 modules; no repo files
+      edited; every hash verified on a public RPC). (A) TOKENS PER
+      NETWORK: Sepolia Home shows USDC 36 and EURC 40.991829 (matching
+      the chain), no fiat, no mainnet token; "Tracked tokens on Ethereum
+      Sepolia"; Remove EURC → "Find my tokens" without an indexer shows
+      the needs-an-indexer sentence; after saving the Sepolia history
+      indexer (typed via ADBKeyboard; now saved on the device): "1
+      untracked token found · 1 already tracked · 1 with a zero balance
+      hidden.", "UNTRACKED TOKEN / EURC / Balance: 40.991829 / Contract
+      0x08210F9170F89Ab7658F0B5E3fF39b0E03C594D4 / Track EURC" (Track adds
+      at once, no confirm); mainnet mode shows only USDC 0. (B) USDC SEND,
+      EOA → own Kernel account, 1 prompt "Approve sending 2 USDC": fee
+      "paid in test ETH", preview "You send 2 USDC", the own-account risk
+      line, eth_call passed; tx 0x7602b6c2…e6e9d5, block 11843700, Transfer
+      of exactly 2,000,000 base units; Home updated without a pull. (C)
+      SMART-ACCOUNT USDC SEND 0.5 back, 1 prompt: userOp 0xa6d8c4ae…5cdb66,
+      bundle tx 0xdcc8bb49…5eb781, block 11843716, Transfer 500,000,
+      UserOperationEvent success. (D) Subscription form: custom period
+      with its hint, the testing preset, the short-terms warning, the
+      EntryPoint deposit row and the fee-budget lowering note all render.
+      (E) ERC-20 SUBSCRIPTION (0.1 USDC every 15 min × 2, merchant
+      0x69F0…7E8a): review order warning box → sentence naming USDC →
+      start note → bullets; install userOp 0x0dd169fc…1205b0, tx
+      0xc8091a4d…a4b2fe, block 11843831 (permission 0x321c1cd3, session
+      key 0x6d6Fab3c…72Bd; 3 prompts only because the driver answered the
+      first one after the 30 s hold); final terms from the tap time;
+      hand-over 2 prompts (Copy → .dev-wallet at 0600 → cleared and
+      deleted afterwards); keeper import + PULL 1: userOp 0x9f95b31e…dcb020,
+      tx 0x9fe98beb5a43ecec989b2454f94ccb7048cb8451a1cd327b842081579af8b56b,
+      block 11843849, status 0x1, USDC Transfer of EXACTLY 100,000 base
+      units from the Kernel account to the merchant, UserOperationEvent
+      success; a second pull before the period was REFUSED at submission
+      "-32500 … AA22 expired or not due"; an over-cap pull (100,001) was
+      REFUSED at estimation "AA23 reverted 0x59d52e40" =
+      CallViolatesParamRule() (selector recomputed with keccak) — the
+      first live proof of the ERC-20 parameter rule; card "1 of 2 payments
+      taken." with the fee budget equal to the keeper's figure; revoke
+      userOp 0x5e6dad4e…4b2c9c, tx 0x9bacae1b…a1939, block 11843880; pull
+      after revoke refused. (F) EXPIRED CARD: a 2 min × 2 native
+      subscription left to expire shows the expired box and only Revoke
+      (install tx 0xb89141fc…3eff7 block 11843912; revoke tx
+      0x921eb932…7325 block 11843943). (G) SMART-ACCOUNT MAX TRIM SEEN
+      LIVE (not sent): after ~105 s Review showed "The amount was lowered
+      from 0.002515568514493859 test ETH to 0.002513727360327474 test ETH
+      because the network fee rose after you tapped Max. The amount plus
+      the worst-case fee now fits the smart account's balance; its
+      EntryPoint deposit, if any, is left as a reserve for the fee." with
+      total = balance. (H) BASE: USDC/EURC rows (0, confirmed on-chain);
+      the Upgrade confirm shows "Layer 1 data fee (estimate)
+      0.000000011477591219 test ETH" with the stand-in-signature note;
+      nothing sent. Funds: one top-up dev EOA → Kernel 0.004 Sepolia ETH
+      (tx 0xc011df21…28ea, block 11843737; dev EOA 0.037996 left); Kernel
+      account 0.002854 ETH + 0.000696 deposit + 1.4 USDC; Account 1 EOA
+      0.002013 ETH, 34.5 USDC, 40.99 EURC; merchant 0.1 USDC. BUGS (fix
+      slice dispatched): (1) the smart-account token send's risk card is
+      wrong — SendScreen passes to = calls[0].to with no counterparty, so
+      it describes the USDC contract ("first time sending to it") and
+      omits the own-account line; (2) the subscription fee budget is built
+      on a balance read once when the form opens (stale after funding;
+      for a USDC subscription it then said "cannot spare anything for fees
+      after the payments themselves"); (3) A REVOKE WAS REFUSED BY THE
+      BUNDLER AFTER THE BIOMETRIC PROMPT: "-32602: maxPriorityFeePerGas
+      must be at least 32305086 (current … 29835424) - use
+      pimlico_getUserOperationGasPrice…" — the floor drifted ~8% between
+      quote and send, there is no margin and no re-fetch at send time, and
+      re-tapping re-sends the stale quote (likely every smart-account
+      confirm on ZeroDev); (4) a raw "fetch failed:
+      java.net.UnknownHostException … 0xrpc.io" in the subscription
+      re-quote alert (unsanitised, and that path does not fail over;
+      transient DNS); (5) the expired card still shows "Key still on this
+      device: hand it to the merchant (shown once)." above the expired
+      box; (6) user copy cites an internal file ("engine notes,
+      kernel-permissions.ts"); (7) subscription revokes say "session";
+      (8) the card's "Next payment" line goes stale after a failed
+      revoke; (9) keeper: pull without --unchecked submits an early pull
+      instead of refusing locally, prints "100000 token units" for USDC,
+      and merchantDeltaWei reports ETH only for ERC-20 pulls; (10) dev
+      only — the LogBox toast "Cannot connect to Expo CLI…" ends with
+      "Error: undefined", the likely source of the intermittent warning
+      recorded in phase 9. Minor: the Tokens screen header reads "Tokens"
+      (the network is in the section heading); Track adds without a
+      confirm. End state: Ethereum Sepolia, Account 1, light mode, Google
+      IME, no policy, every subscription revoked; Metro still at 1fab9a6.
