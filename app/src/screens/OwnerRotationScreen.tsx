@@ -564,6 +564,8 @@ export function OwnerRotationScreen({ navigation }: Props) {
                 {!refusal ? (
                   <Button
                     title={chosen ? 'Chosen' : 'Make this the new owner'}
+                    selected={chosen}
+                    accessibilityLabel={`Make ${w.name} the new owner`}
                     variant={chosen ? 'primary' : 'secondary'}
                     onPress={() => setTarget(w)}
                     disabled={readiness !== null}
@@ -583,7 +585,11 @@ export function OwnerRotationScreen({ navigation }: Props) {
                 Also remove the guardians in the same operation (otherwise they stay unchanged and can still replace the
                 new owner)
               </Text>
-              <Switch value={removeGuardians} onValueChange={setRemoveGuardians} />
+              <Switch
+                accessibilityLabel="Also remove the guardians in the same operation"
+                value={removeGuardians}
+                onValueChange={setRemoveGuardians}
+              />
             </View>
           ) : null}
           {formError ? <WarningBox>{formError}</WarningBox> : null}

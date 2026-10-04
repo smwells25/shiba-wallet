@@ -7,6 +7,7 @@ import {
   StyleSheet,
   Text,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -40,6 +41,13 @@ import {
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Home'>;
 
+/**
+ * Height reserved for one line of card links at the default text size (the
+ * links are 14 px semibold text, about 19 px tall), before the eligibility
+ * checks behind the account-tools row finish.
+ */
+const TOOLS_ROW_HEIGHT = 20;
+
 function shortAddress(address: string): string {
   if (address.length <= 20) return address;
   return `${address.slice(0, 10)}…${address.slice(-8)}`;
@@ -72,8 +80,18 @@ function BalanceCell({
     return <ActivityIndicator size="small" color={theme.textMuted} />;
   }
   if (state.status === 'ok') {
+    // Read as one element: "Balance 0.5 ETH, about $1,234.56" (or "Balance
+    // hidden" under Hide amounts, where the fiat line is masked too).
+    const spokenFiat = fiat && !hidden ? `, about ${fiat.text.replace(/^≈\s*/, '')}` : '';
+    const spokenStale = fiat?.staleNote && !hidden ? `, ${fiat.staleNote}` : '';
     return (
-      <View style={styles.balanceCell}>
+      <View
+        style={styles.balanceCell}
+        accessible
+        accessibilityLabel={
+          hidden ? 'Balance hidden' : `Balance ${state.display} ${state.symbol}${spokenFiat}${spokenStale}`
+        }
+      >
         <Text style={[styles.balance, { color: theme.text }]} numberOfLines={1}>
           {maskAmount(state.display, hidden)}
         </Text>
@@ -172,6 +190,9 @@ function TokenRow({
 /** The four launch chains: address, live native balance, tap to receive. */
 export function HomeScreen({ navigation }: Props) {
   const theme = useTheme();
+  // The reserved account-tools row scales with the system text size, so a
+  // larger font does not bring the layout shift back.
+  const { fontScale } = useWindowDimensions();
   // `accounts` holds the ACTIVE account's addresses (phase 6 item 3);
   // switching accounts remounts the navigator (App.tsx), so this screen
   // never shows one account's balances under another's name.
@@ -234,149 +255,130 @@ export function HomeScreen({ navigation }: Props) {
     }, [reloadTokens, showTokens]),
   );
 
-  const renderChainCard = ({ item }: { item: ChainAccount }) => (
+  /** One text link in a chain card's link rows. */
+  const cardLink = (key: string, label: string, text: string, onPress: () => void, hint?: string) => (
     <Pressable
+      key={key}
       accessibilityRole="button"
-      accessibilityHint={`Opens the ${item.name} receive screen`}
-      onPress={() => navigation.navigate('Receive', { chainId: item.chainId })}
-      style={({ pressed }) => [
-        styles.card,
-        {
-          backgroundColor: theme.card,
-          borderColor: theme.border,
-          opacity: pressed ? 0.8 : 1,
-        },
-      ]}
+      accessibilityLabel={label}
+      {...(hint !== undefined ? { accessibilityHint: hint } : {})}
+      onPress={onPress}
+      hitSlop={8}
     >
-      <View style={[styles.badge, { backgroundColor: item.accent }]}>
-        <Text style={styles.badgeText}>{item.symbol}</Text>
-      </View>
-      <View style={styles.cardBody}>
-        <Text style={[styles.chainName, { color: theme.text }]}>{item.name}</Text>
-        <Text style={[styles.address, { color: theme.textMuted }]}>
-          {shortAddress(item.address)}
-        </Text>
-        {/* Nested Pressables: taps here are consumed by the inner handler,
-            so the card's own tap (Receive) does not fire. */}
-        <View style={styles.linkRow}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Send ${item.symbol}`}
-            onPress={() => navigation.navigate('Send', { chainId: item.chainId })}
-            hitSlop={8}
-          >
-            <Text style={[styles.sendLink, { color: theme.accent }]}>Send ↗</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`${item.name} activity`}
-            onPress={() => navigation.navigate('Activity', { chainId: item.chainId })}
-            hitSlop={8}
-          >
-            <Text style={[styles.sendLink, { color: theme.accent }]}>Activity</Text>
-          </Pressable>
-          {/* Swaps are an EVM feature (0x, phase 5 item 1); the screen
-              itself explains and stays off until a key is configured. */}
-          {item.chainId === EVM_CHAIN_ID ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Swap"
-              onPress={() => navigation.navigate('Swap')}
-              hitSlop={8}
-            >
-              <Text style={[styles.sendLink, { color: theme.accent }]}>Swap</Text>
-            </Pressable>
-          ) : null}
-          {/* NFT gallery (phase 7 item 4) for the active EVM chain; the
-              screen explains itself until an NFT indexer is configured. */}
-          {item.chainId === EVM_CHAIN_ID ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="NFTs"
-              onPress={() => navigation.navigate('Nfts')}
-              hitSlop={8}
-            >
-              <Text style={[styles.sendLink, { color: theme.accent }]}>NFTs</Text>
-            </Pressable>
-          ) : null}
-          {/* EIP-7702 account upgrade (phase 8 item 1) for the active
-              account on the active EVM chain. */}
-          {item.chainId === EVM_CHAIN_ID ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Upgrade this account"
-              onPress={() => navigation.navigate('UpgradeAccount')}
-              hitSlop={8}
-            >
-              <Text style={[styles.sendLink, { color: theme.accent }]}>
-                {delegation.status?.kind === 'kernel-v3.3' ? 'Upgraded ✓' : 'Upgrade'}
-              </Text>
-            </Pressable>
-          ) : null}
-          {/* Session keys (phase 8 item 2): only for a deployed Kernel
-              account or an upgraded (EIP-7702) account. */}
-          {item.chainId === EVM_CHAIN_ID && sessionsEligible ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Sessions"
-              onPress={() => navigation.navigate('Sessions')}
-              hitSlop={8}
-            >
-              <Text style={[styles.sendLink, { color: theme.accent }]}>Sessions</Text>
-            </Pressable>
-          ) : null}
-          {/* Guardians (phase 8 item 4): only for a deployed Kernel v3.3
-              account (never an EIP-7702 upgrade, which guardians cannot
-              protect). */}
-          {item.chainId === EVM_CHAIN_ID && recovery.guardiansEligible ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Guardians"
-              onPress={() => navigation.navigate('Guardians')}
-              hitSlop={8}
-            >
-              <Text style={[styles.sendLink, { color: theme.accent }]}>Guardians</Text>
-            </Pressable>
-          ) : null}
-          {item.chainId === EVM_CHAIN_ID && passkey.eligible ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Passkey"
-              onPress={() => navigation.navigate('Passkey')}
-              hitSlop={8}
-            >
-              <Text style={[styles.sendLink, { color: theme.accent }]}>
-                {passkey.record ? 'Passkey ✓' : 'Passkey'}
-              </Text>
-            </Pressable>
-          ) : null}
-          {/* Token approvals manager (phase 7 item 5) for the active EVM
-              chain; the screen explains what it can and cannot see. */}
-          {item.chainId === EVM_CHAIN_ID ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Token approvals"
-              onPress={() => navigation.navigate('Approvals')}
-              hitSlop={8}
-            >
-              <Text style={[styles.sendLink, { color: theme.accent }]}>Approvals</Text>
-            </Pressable>
-          ) : null}
-        </View>
-      </View>
-      <BalanceCell
-        state={balances[item.chainId]}
-        onRetry={() => void refreshOne(item.chainId)}
-        hidden={hideAmounts}
-        fiat={(() => {
-          const state = balances[item.chainId];
-          return state?.status === 'ok'
-            ? fiatFor(state, nativePriceAssetId(item.chainId, state.networkChainId))
-            : null;
-        })()}
-      />
+      <Text style={[styles.sendLink, { color: theme.accent }]}>{text}</Text>
     </Pressable>
   );
+
+  // A chain card is a plain View holding SIBLING controls (phase 12 item 4):
+  // the Receive area (badge, name and address), the balance cell and the
+  // link rows. It used to be one Pressable wrapping the link Pressables,
+  // which screen readers can merge into a single element so the inner
+  // links were hard to reach; now every link is its own focusable button.
+  const renderChainCard = ({ item }: { item: ChainAccount }) => {
+    const isEvm = item.chainId === EVM_CHAIN_ID;
+    // Account tools that appear only after asynchronous eligibility checks
+    // (session keys, guardians, passkey). They get their own row with its
+    // height reserved from the start, so nothing above or below moves when
+    // they appear (finding F11: a tap aimed at Approvals once opened
+    // Guardians because a link was inserted before it).
+    const tools = isEvm
+      ? [
+          sessionsEligible
+            ? cardLink('sessions', 'Sessions', 'Sessions', () => navigation.navigate('Sessions'))
+            : null,
+          recovery.guardiansEligible
+            ? cardLink('guardians', 'Guardians', 'Guardians', () => navigation.navigate('Guardians'))
+            : null,
+          passkey.eligible
+            ? cardLink(
+                'passkey',
+                passkey.record ? 'Passkey, added' : 'Passkey',
+                passkey.record ? 'Passkey ✓' : 'Passkey',
+                () => navigation.navigate('Passkey'),
+              )
+            : null,
+        ].filter((link) => link !== null)
+      : [];
+    return (
+      <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+        <View style={styles.cardTop}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`${item.name}, ${shortAddress(item.address)}`}
+            accessibilityHint={`Opens the ${item.name} receive screen`}
+            onPress={() => navigation.navigate('Receive', { chainId: item.chainId })}
+            style={({ pressed }) => [styles.receiveArea, { opacity: pressed ? 0.7 : 1 }]}
+          >
+            <View style={[styles.badge, { backgroundColor: item.accent }]}>
+              <Text style={styles.badgeText}>{item.symbol}</Text>
+            </View>
+            <View style={styles.cardBody}>
+              <Text style={[styles.chainName, { color: theme.text }]}>{item.name}</Text>
+              <Text style={[styles.address, { color: theme.textMuted }]}>
+                {shortAddress(item.address)}
+              </Text>
+            </View>
+          </Pressable>
+          <BalanceCell
+            state={balances[item.chainId]}
+            onRetry={() => void refreshOne(item.chainId)}
+            hidden={hideAmounts}
+            fiat={(() => {
+              const state = balances[item.chainId];
+              return state?.status === 'ok'
+                ? fiatFor(state, nativePriceAssetId(item.chainId, state.networkChainId))
+                : null;
+            })()}
+          />
+        </View>
+        <View style={styles.linkRow}>
+          {cardLink('send', `Send ${item.symbol}`, 'Send ↗', () =>
+            navigation.navigate('Send', { chainId: item.chainId }),
+          )}
+          {cardLink('activity', `${item.name} activity`, 'Activity', () =>
+            navigation.navigate('Activity', { chainId: item.chainId }),
+          )}
+          {/* Swaps are an EVM feature (0x, phase 5 item 1); the screen
+              itself explains and stays off until a key is configured. */}
+          {isEvm ? cardLink('swap', 'Swap', 'Swap', () => navigation.navigate('Swap')) : null}
+          {/* NFT gallery (phase 7 item 4) for the active EVM chain; the
+              screen explains itself until an NFT indexer is configured. */}
+          {isEvm ? cardLink('nfts', 'NFTs', 'NFTs', () => navigation.navigate('Nfts')) : null}
+          {/* EIP-7702 account upgrade (phase 8 item 1) for the active
+              account on the active EVM chain. */}
+          {isEvm
+            ? cardLink(
+                'upgrade',
+                delegation.status?.kind === 'kernel-v3.3' ? 'Account upgraded' : 'Upgrade this account',
+                delegation.status?.kind === 'kernel-v3.3' ? 'Upgraded ✓' : 'Upgrade',
+                () => navigation.navigate('UpgradeAccount'),
+              )
+            : null}
+          {/* Token approvals manager (phase 7 item 5) for the active EVM
+              chain; the screen explains what it can and cannot see. */}
+          {isEvm
+            ? cardLink('approvals', 'Token approvals', 'Approvals', () => navigation.navigate('Approvals'))
+            : null}
+        </View>
+        {/* Session keys (phase 8 item 2: a deployed Kernel account or an
+            EIP-7702 upgrade), guardians (phase 8 item 4: a deployed Kernel
+            v3.3 account, never a 7702 upgrade) and the passkey signer
+            (phase 8 item 3: a deployed Kernel v3.3 account). The row is
+            always present on the EVM card, empty until (unless) the checks
+            pass, and hidden from screen readers while empty. */}
+        {isEvm ? (
+          <View
+            style={[styles.toolsRow, { minHeight: Math.ceil(TOOLS_ROW_HEIGHT * fontScale) }]}
+            {...(tools.length === 0
+              ? { accessibilityElementsHidden: true, importantForAccessibility: 'no-hide-descendants' as const }
+              : {})}
+          >
+            {tools}
+          </View>
+        ) : null}
+      </View>
+    );
+  };
 
   // The Ethereum row carries its tracked ERC-20 tokens beneath it, plus the
   // entry point to the token management screen.
@@ -462,6 +464,11 @@ export function HomeScreen({ navigation }: Props) {
             (delegation.status?.kind === 'other' || delegation.status?.kind === 'contract') ? (
               <Pressable
                 accessibilityRole="button"
+                accessibilityLabel={
+                  `Warning: ${activeAccount.name}${delegationLabelSuffix(delegation.status)} on ${evmChain.label}. ` +
+                  (delegation.status.kind === 'other' ? `${FOREIGN_DELEGATE_WARNING} ` : '') +
+                  'Tap to review.'
+                }
                 accessibilityHint="Opens the account upgrade screen to review this"
                 onPress={() => navigation.navigate('UpgradeAccount')}
                 hitSlop={8}
@@ -567,11 +574,20 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   card: {
-    flexDirection: 'row',
-    alignItems: 'center',
     borderRadius: 14,
     borderWidth: 1,
     padding: 16,
+    gap: 10,
+  },
+  cardTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+  },
+  receiveArea: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 14,
   },
   badge: {
@@ -601,8 +617,15 @@ const styles = StyleSheet.create({
   linkRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 16,
-    marginTop: 2,
+    columnGap: 16,
+    rowGap: 10,
+  },
+  // minHeight is set inline: TOOLS_ROW_HEIGHT x the system font scale.
+  toolsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    columnGap: 16,
+    rowGap: 10,
   },
   sendLink: {
     fontSize: 14,

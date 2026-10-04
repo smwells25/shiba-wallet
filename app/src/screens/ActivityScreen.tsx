@@ -23,7 +23,8 @@ import { EVM_CHAIN_ID } from '../wallet/send';
 import { useHistory } from '../wallet/useHistory';
 import { usePrefs } from '../wallet/PrefsContext';
 import { useWallet } from '../wallet/WalletContext';
-import { OfflineNotice } from '../wallet/connectivity';
+import { OfflineNotice, TechnicalDetail } from '../wallet/connectivity';
+import { sanitizeEndpointMessage } from '../config/endpoint-probe';
 import {
   createActivityDecoder,
   renderActivitySentence,
@@ -281,6 +282,20 @@ function useActivitySentences(options: {
 
 const EMPTY_CONTACTS: Contact[] = [];
 
+/**
+ * The muted technical line for a history failure. useHistory keeps only the
+ * error's message string, so this applies the same cleaning that
+ * describeNetworkFailure uses for its `technical` text
+ * (sanitizeEndpointMessage: JSON-RPC code kept, Java class names, links and
+ * advertisements removed, first sentence only); null when nothing readable
+ * is left.
+ */
+function historyTechnicalText(message: string | null | undefined): string | null {
+  if (!message) return null;
+  const text = sanitizeEndpointMessage(message);
+  return text === '' ? null : text;
+}
+
 /** Newest-first transaction list for one chain, entered from a Home row. */
 export function ActivityScreen({ navigation, route }: Props) {
   const theme = useTheme();
@@ -326,6 +341,23 @@ export function ActivityScreen({ navigation, route }: Props) {
     navigation.setOptions({ title: account ? `${account.name} activity` : 'Activity' });
   }, [navigation, account]);
 
+  // The "network · account" line the other network screens open with
+  // (Send, NFTs, Approvals): which network this history comes from and
+  // whose address it is. The EVM slot follows the active chain profile.
+  const networkLabel = isEvmSlot ? evmChain.label : network?.label ?? chainId;
+  const testnet = isEvmSlot && evmChain.testnet;
+  const networkHeader = account ? (
+    <View style={styles.headerBlock}>
+      <Text style={[styles.networkLine, { color: testnet ? theme.testnetFill : theme.textMuted }]}>
+        {networkLabel} · {testnet ? 'TESTNET' : 'Mainnet'}
+        {activeAccount ? ` · ${activeAccount.name}` : ''}
+      </Text>
+      <Text selectable style={[styles.addressLine, { color: theme.textMuted }]}>
+        {account.address}
+      </Text>
+    </View>
+  ) : null;
+
   if (!account || !network) {
     return (
       <View style={[screenStyle(theme), styles.center]}>
@@ -345,25 +377,32 @@ export function ActivityScreen({ navigation, route }: Props) {
   if (state.status === 'unavailable') {
     return (
       <View style={[screenStyle(theme), styles.center]}>
-        <Text style={[styles.unavailableMark, { color: theme.textMuted }]}>—</Text>
+        {networkHeader}
+        {/* Decorative dash: the note below says what is unavailable. */}
+        <Text
+          accessibilityElementsHidden
+          importantForAccessibility="no"
+          style={[styles.unavailableMark, { color: theme.textMuted }]}
+        >
+          —
+        </Text>
         <Text style={[styles.note, { color: theme.textMuted }]}>{state.note}</Text>
       </View>
     );
   }
 
   if (state.status === 'error') {
-    // A calm sentence first; the endpoint's own message stays available as
-    // muted detail for anyone diagnosing it.
+    // A calm sentence first; the endpoint's own message, cleaned, stays
+    // available as the muted technical line for anyone diagnosing it.
     return (
       <View style={[screenStyle(theme), styles.center]}>
+        {networkHeader}
         <OfflineNotice />
-        <Text style={[styles.note, { color: theme.text }]}>
+        <Text accessibilityLiveRegion="polite" style={[styles.note, { color: theme.text }]}>
           The history could not be loaded right now. Check your connection
           and try again.
         </Text>
-        <Text selectable style={[styles.noteDetail, { color: theme.textMuted }]}>
-          {state.message}
-        </Text>
+        <TechnicalDetail text={historyTechnicalText(state.message)} />
         <Button title="Retry" onPress={() => void reload()} style={styles.retry} />
       </View>
     );
@@ -382,12 +421,10 @@ export function ActivityScreen({ navigation, route }: Props) {
     <View style={styles.footer}>
       {state.loadMoreError ? (
         <>
-          <Text style={[styles.note, { color: theme.text }]}>
+          <Text accessibilityLiveRegion="polite" style={[styles.note, { color: theme.text }]}>
             Older entries could not be loaded. The entries above are unchanged.
           </Text>
-          <Text selectable style={[styles.noteDetail, { color: theme.textMuted }]}>
-            {state.loadMoreError}
-          </Text>
+          <TechnicalDetail text={historyTechnicalText(state.loadMoreError)} />
         </>
       ) : null}
       {state.loadingMore ? (
@@ -395,6 +432,7 @@ export function ActivityScreen({ navigation, route }: Props) {
       ) : state.nextCursor ? (
         <Pressable
           accessibilityRole="button"
+          accessibilityLabel={state.loadMoreError ? 'Try loading older transactions again' : 'Load more transactions'}
           accessibilityHint="Loads older transactions"
           onPress={() => void loadMore()}
           hitSlop={8}
@@ -414,14 +452,6 @@ export function ActivityScreen({ navigation, route }: Props) {
   return (
     <View style={screenStyle(theme)}>
       <OfflineNotice style={styles.notice} />
-      {state.note ? (
-        <Text style={[styles.note, { color: theme.textMuted }]}>{state.note}</Text>
-      ) : null}
-      {state.noteDetail ? (
-        <Text selectable style={[styles.noteDetail, { color: theme.textMuted }]}>
-          {state.noteDetail}
-        </Text>
-      ) : null}
       <FlatList
         data={state.entries}
         // uid distinguishes several entries born from one EVM transaction
@@ -453,11 +483,14 @@ export function ActivityScreen({ navigation, route }: Props) {
           />
         }
         ListHeaderComponent={
-          activeAccount ? (
-            <Text style={[styles.note, { color: theme.textMuted }]}>
-              {activeAccount.name} · {account.address}
-            </Text>
-          ) : null
+          <View style={styles.listHeader}>
+            {networkHeader}
+            {state.note ? (
+              <Text style={[styles.note, { color: theme.textMuted }]}>{state.note}</Text>
+            ) : null}
+            {/* Already cleaned by history.ts (sanitizeEndpointMessage). */}
+            <TechnicalDetail text={state.noteDetail} />
+          </View>
         }
         ListEmptyComponent={
           <Text style={[styles.note, { color: theme.textMuted }]}>
@@ -557,16 +590,23 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     textAlign: 'center',
   },
-  noteDetail: {
-    fontSize: 12,
-    lineHeight: 17,
-    textAlign: 'center',
-    fontStyle: 'italic',
-    paddingTop: 4,
-  },
   notice: {
     marginHorizontal: 16,
     marginTop: 8,
+  },
+  listHeader: {
+    gap: 6,
+  },
+  headerBlock: {
+    gap: 2,
+    alignSelf: 'stretch',
+  },
+  networkLine: {
+    fontSize: 13,
+  },
+  addressLine: {
+    fontSize: 12,
+    fontVariant: ['tabular-nums'],
   },
   unavailableMark: {
     fontSize: 32,

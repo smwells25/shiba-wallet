@@ -954,10 +954,81 @@ console.log('theme contrast (D1):');
     const ratio = contrastRatio(fg, bg);
     check(`${name} >= 4.5:1`, ratio >= 4.5, `${fg} on ${bg}: ${ratio.toFixed(2)}:1`);
   }
-  check('light mode unchanged: white on #d97a1a and on the TESTNET orange',
-    lightTheme.accent === '#d97a1a' && lightTheme.onAccent === '#ffffff' && lightTheme.onDanger === '#ffffff' &&
-      lightTheme.testnetFill === '#e07800' && lightTheme.onTestnetFill === '#ffffff' && lightTheme.danger === '#c62828');
   check('dark accent kept (only the text on it changed)', darkTheme.accent === '#f0942f');
+  check('dark palette kept as phase 11 left it (TESTNET fill and danger unchanged)',
+    darkTheme.testnetFill === '#e07800' && darkTheme.danger === '#ef5350' && darkTheme.onTestnetFill === '#101216');
+}
+
+// Phase 12 item 4: light mode to WCAG 2.2 SC 1.4.3 as well. White text
+// stays on the fills; the two oranges are darkened (hue kept, HSL lightness
+// lowered) so that both white text ON them and orange text on the light
+// background and cards reach 4.5:1.
+console.log('theme contrast (light mode, phase 12 item 4):');
+{
+  const hue = (hex) => {
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+    const max = Math.max(r, g, b);
+    const d = max - Math.min(r, g, b);
+    if (d === 0) return 0;
+    const h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    return (h * 60 + 360) % 360;
+  };
+  const oldAccent = contrastRatio('#ffffff', '#d97a1a');
+  const oldTestnet = contrastRatio('#ffffff', '#e07800');
+  check('the finding reproduced: white on the old light accent #d97a1a was about 3.1:1', oldAccent > 3.0 && oldAccent < 3.2, oldAccent.toFixed(2));
+  check('the finding reproduced: white on the old TESTNET orange #e07800 was about 3.1:1', oldTestnet > 3.0 && oldTestnet < 3.1, oldTestnet.toFixed(2));
+  const pairs = [
+    ['light primary button / selected chip label (onAccent on accent)', lightTheme.onAccent, lightTheme.accent],
+    ['light accent text on background (links, secondary buttons)', lightTheme.accent, lightTheme.background],
+    ['light accent text on card (links inside cards)', lightTheme.accent, lightTheme.card],
+    ['light TESTNET badge (onTestnetFill on testnetFill)', lightTheme.onTestnetFill, lightTheme.testnetFill],
+    ['light TESTNET orange text on background (network lines)', lightTheme.testnetFill, lightTheme.background],
+    ['light TESTNET orange text on card', lightTheme.testnetFill, lightTheme.card],
+    ['light destructive button label (onDanger on danger)', lightTheme.onDanger, lightTheme.danger],
+    ['light Mainnet badge (danger on dangerSurface)', lightTheme.danger, lightTheme.dangerSurface],
+    ['light warning text on warningSurface', lightTheme.warningText, lightTheme.warningSurface],
+    ['light muted text on background', lightTheme.textMuted, lightTheme.background],
+    ['light success text on background', lightTheme.success, lightTheme.background],
+  ];
+  for (const [name, fg, bg] of pairs) {
+    const ratio = contrastRatio(fg, bg);
+    check(`${name} >= 4.5:1`, ratio >= 4.5, `${fg} on ${bg}: ${ratio.toFixed(2)}:1`);
+  }
+  check('light oranges keep their hue (accent ~30°, TESTNET ~32°, within 1°)',
+    Math.abs(hue(lightTheme.accent) - hue('#d97a1a')) < 1 && Math.abs(hue(lightTheme.testnetFill) - hue('#e07800')) < 1,
+    `${hue(lightTheme.accent).toFixed(1)}° / ${hue(lightTheme.testnetFill).toFixed(1)}°`);
+  check('light oranges are darker than before (relative luminance lower)',
+    relativeLuminance(lightTheme.accent) < relativeLuminance('#d97a1a') && relativeLuminance(lightTheme.testnetFill) < relativeLuminance('#e07800'));
+  check('light fills still carry white text', lightTheme.onAccent === '#ffffff' && lightTheme.onTestnetFill === '#ffffff' && lightTheme.onDanger === '#ffffff');
+}
+
+// The TESTNET badges and network lines take their colours from the theme
+// (no hard-coded orange or white) in the screens this check owns. Swap,
+// Sessions and the WalletConnect sheet are tracked separately.
+console.log('theme tokens in screens (phase 12 item 4):');
+{
+  const { readFileSync } = await import('node:fs');
+  const files = [
+    '../src/screens/PasskeyScreen.tsx',
+    '../src/screens/UpgradeAccountScreen.tsx',
+    '../src/components/RecoveryViews.tsx',
+    '../src/screens/GuardiansScreen.tsx',
+    '../src/screens/RecoverAccountScreen.tsx',
+    '../src/screens/ApproveRecoveryScreen.tsx',
+    '../src/screens/OwnerRotationScreen.tsx',
+    '../src/screens/NftsScreen.tsx',
+    '../src/screens/ActivityScreen.tsx',
+    '../src/screens/ApprovalsScreen.tsx',
+  ];
+  for (const f of files) {
+    const src = readFileSync(new globalThis.URL(f, import.meta.url), 'utf8');
+    check(`${f.split('/').pop()}: no hard-coded TESTNET orange`, !/#e07800|#a85a00/i.test(src));
+  }
+  for (const f of ['../src/screens/PasskeyScreen.tsx', '../src/screens/UpgradeAccountScreen.tsx', '../src/components/RecoveryViews.tsx']) {
+    const src = readFileSync(new globalThis.URL(f, import.meta.url), 'utf8');
+    check(`${f.split('/').pop()}: TESTNET badge uses testnetFill / onTestnetFill`,
+      /backgroundColor: theme\.testnetFill, borderColor: theme\.testnetFill/.test(src) && /color: theme\.onTestnetFill/.test(src));
+  }
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -617,6 +617,7 @@ export function GuardiansScreen({ navigation }: Props) {
             <TextInput
               value={d.address}
               onChangeText={(t) => setDrafts((p) => p.map((x, j) => (j === i ? { ...x, address: t } : x)))}
+              accessibilityLabel={`Guardian ${i + 1} address`}
               placeholder="Guardian address (0x…)"
               placeholderTextColor={theme.textMuted}
               autoCapitalize="none"
@@ -626,10 +627,16 @@ export function GuardiansScreen({ navigation }: Props) {
             {draftMatches[i] && draftMatches[i]!.kind !== 'none' ? (
               <RecipientContactNotice match={draftMatches[i]!} address={d.address.trim()} />
             ) : null}
-            <Button title="Pick from contacts" variant="secondary" onPress={() => setPickerFor(i)} />
+            <Button
+              title="Pick from contacts"
+              accessibilityLabel={`Pick guardian ${i + 1} from contacts`}
+              variant="secondary"
+              onPress={() => setPickerFor(i)}
+            />
             <TextInput
               value={d.label}
               onChangeText={(t) => setDrafts((p) => p.map((x, j) => (j === i ? { ...x, label: t } : x)))}
+              accessibilityLabel={`Guardian ${i + 1} label, optional`}
               placeholder="Label (optional, stored in the recovery record)"
               placeholderTextColor={theme.textMuted}
               style={[styles.input, { color: theme.text, borderColor: theme.border }]}
@@ -637,13 +644,19 @@ export function GuardiansScreen({ navigation }: Props) {
             <TextInput
               value={d.weight}
               onChangeText={(t) => setDrafts((p) => p.map((x, j) => (j === i ? { ...x, weight: t } : x)))}
+              accessibilityLabel={`Guardian ${i + 1} weight`}
               placeholder="Weight (1 or more)"
               placeholderTextColor={theme.textMuted}
               keyboardType="number-pad"
               style={[styles.input, { color: theme.text, borderColor: theme.border }]}
             />
             {drafts.length > 1 ? (
-              <Button title="Remove this guardian" variant="secondary" onPress={() => setDrafts((p) => p.filter((_, j) => j !== i))} />
+              <Button
+                title="Remove this guardian"
+                accessibilityLabel={`Remove guardian ${i + 1}`}
+                variant="secondary"
+                onPress={() => setDrafts((p) => p.filter((_, j) => j !== i))}
+              />
             ) : null}
           </View>
         ))}
@@ -652,6 +665,7 @@ export function GuardiansScreen({ navigation }: Props) {
         <TextInput
           value={threshold}
           onChangeText={setThreshold}
+          accessibilityLabel="Threshold (total weight needed to recover)"
           keyboardType="number-pad"
           style={[styles.input, { color: theme.text, borderColor: theme.border }]}
         />
@@ -663,6 +677,8 @@ export function GuardiansScreen({ navigation }: Props) {
           <Button
             key={p.seconds}
             title={delaySeconds === p.seconds ? `✓ ${p.label}` : p.label}
+            selected={delaySeconds === p.seconds}
+            accessibilityLabel={`Delay ${p.label}`}
             variant={delaySeconds === p.seconds ? 'primary' : 'secondary'}
             onPress={() => setDelaySeconds(p.seconds)}
           />
@@ -670,7 +686,7 @@ export function GuardiansScreen({ navigation }: Props) {
         {delaySeconds === 0 ? (
           <View style={styles.toggleRow}>
             <Text style={[styles.toggleLabel, { color: theme.text }]}>{NO_VETO_ACK_TEXT}</Text>
-            <Switch value={noVetoAck} onValueChange={setNoVetoAck} />
+            <Switch accessibilityLabel={NO_VETO_ACK_TEXT} value={noVetoAck} onValueChange={setNoVetoAck} />
           </View>
         ) : null}
         {draftSet ? (
@@ -686,7 +702,7 @@ export function GuardiansScreen({ navigation }: Props) {
             <WarningBox>{GUARDIANS_MAINNET_CONDITION}</WarningBox>
             <View style={styles.toggleRow}>
               <Text style={[styles.toggleLabel, { color: theme.text }]}>{GUARDIANS_MAINNET_ACK}</Text>
-              <Switch value={mainnetAck} onValueChange={setMainnetAck} />
+              <Switch accessibilityLabel={GUARDIANS_MAINNET_ACK} value={mainnetAck} onValueChange={setMainnetAck} />
             </View>
           </>
         ) : null}
@@ -792,9 +808,17 @@ export function GuardiansScreen({ navigation }: Props) {
                 {left !== null && left > 0 ? (
                   <Text style={[styles.hint, { color: theme.text }]}>Time left before it can execute: {formatDuration(left)}</Text>
                 ) : null}
-                {p.canVeto ? <Button title="Veto" variant="destructive" onPress={() => void onVetoQuote(p.hash)} /> : null}
+                {p.canVeto ? (
+                  <Button
+                    title="Veto"
+                    accessibilityLabel={`Veto proposal ${p.hash.slice(0, 10)}`}
+                    variant="destructive"
+                    onPress={() => void onVetoQuote(p.hash)}
+                  />
+                ) : null}
                 <Button
                   title="Stop watching"
+                  accessibilityLabel={`Stop watching proposal ${p.hash.slice(0, 10)}`}
                   variant="secondary"
                   onPress={() => void removeWatchedProposal(chain, resolution.account, p.hash).then(reload, reload)}
                 />

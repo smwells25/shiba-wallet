@@ -19,8 +19,23 @@
  * secondary buttons' orange text on the near-black background below 4.5:1,
  * so dark mode keeps the accent and puts dark text on it instead
  * (`onAccent`), and does the same on the danger fill and the orange
- * TESTNET fill. Light mode is unchanged on purpose (see the report in
- * AGENTS.md for its own ratios).
+ * TESTNET fill.
+ *
+ * Light mode (phase 12 item 4) keeps white text on its fills and instead
+ * darkens the two oranges, keeping their hue and saturation (HSL hue 30°
+ * for the accent, 32° for the TESTNET orange) and lowering only lightness,
+ * until every use passes 4.5:1. The binding case is orange TEXT on the
+ * light background (#f6f7f9), which is slightly darker than white:
+ *
+ *   pair (light mode)                          before   after
+ *   white on accent (primary buttons, chips)   3.11     5.00   (#d97a1a -> #a65d13)
+ *   accent text on background (links)         2.90     4.67
+ *   accent text on card                        3.11     5.00
+ *   white on TESTNET orange (badges)           3.06     5.09   (#e07800 -> #a85a00)
+ *   TESTNET orange text on background          2.86     4.75
+ *   TESTNET orange text on card                3.06     5.09
+ *
+ * scripts/check-devmode.mjs recomputes all of these from the values below.
  */
 export interface Theme {
   dark: boolean;
@@ -46,8 +61,15 @@ export interface Theme {
   onTestnetFill: string;
 }
 
-/** The TESTNET orange used across the app (unchanged value). */
+/**
+ * The TESTNET orange of the dark palette (dark text is drawn on it there).
+ * Light mode uses the darker LIGHT_TESTNET_ORANGE so white text and orange
+ * text on the light background both pass 4.5:1.
+ */
 export const TESTNET_ORANGE = '#e07800';
+
+/** Light-mode TESTNET orange: #e07800 with HSL lightness lowered (hue 32°). */
+export const LIGHT_TESTNET_ORANGE = '#a85a00';
 
 export const lightTheme: Theme = {
   dark: false,
@@ -56,7 +78,8 @@ export const lightTheme: Theme = {
   text: '#16181d',
   textMuted: '#5c6470',
   border: '#e2e5ea',
-  accent: '#d97a1a',
+  // #d97a1a with HSL lightness lowered from 0.476 to 0.363 (hue 30° kept).
+  accent: '#a65d13',
   onAccent: '#ffffff',
   danger: '#c62828',
   onDanger: '#ffffff',
@@ -65,7 +88,7 @@ export const lightTheme: Theme = {
   warningBorder: '#e6b35a',
   warningText: '#7a4a00',
   success: '#2e7d32',
-  testnetFill: TESTNET_ORANGE,
+  testnetFill: LIGHT_TESTNET_ORANGE,
   onTestnetFill: '#ffffff',
 };
 

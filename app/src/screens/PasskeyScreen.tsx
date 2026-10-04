@@ -661,8 +661,8 @@ async function loadPasskeyContext(
 function NetworkBadge({ label, testnet, theme }: { label: string; testnet: boolean; theme: Theme }) {
   if (testnet) {
     return (
-      <View style={[styles.badge, { backgroundColor: '#e07800', borderColor: '#e07800' }]}>
-        <Text style={[styles.badgeText, { color: '#ffffff' }]}>{label} TESTNET — test funds only</Text>
+      <View style={[styles.badge, { backgroundColor: theme.testnetFill, borderColor: theme.testnetFill }]}>
+        <Text style={[styles.badgeText, { color: theme.onTestnetFill }]}>{label} TESTNET — test funds only</Text>
       </View>
     );
   }

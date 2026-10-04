@@ -149,6 +149,7 @@ export function NftDetailScreen({ route, navigation }: Props) {
           </Text>
           <Button
             title="Try again"
+            accessibilityLabel="Try reading the metadata again"
             variant="secondary"
             onPress={() => {
               setMetadata(null);
@@ -165,6 +166,7 @@ export function NftDetailScreen({ route, navigation }: Props) {
 
       <Button
         title="Send"
+        accessibilityLabel={`Send ${name}`}
         onPress={() => navigation.navigate('Send', { chainId: EVM_CHAIN_ID, nft: sendParams })}
       />
       {explorer ? (

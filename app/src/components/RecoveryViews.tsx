@@ -25,8 +25,8 @@ export function RecoveryNetworkBadge({ label, testnet }: { label: string; testne
   const theme = useTheme();
   if (testnet) {
     return (
-      <View style={[styles.badge, { backgroundColor: '#e07800', borderColor: '#e07800' }]}>
-        <Text style={[styles.badgeText, { color: '#ffffff' }]}>{label} TESTNET — test funds only</Text>
+      <View style={[styles.badge, { backgroundColor: theme.testnetFill, borderColor: theme.testnetFill }]}>
+        <Text style={[styles.badgeText, { color: theme.onTestnetFill }]}>{label} TESTNET — test funds only</Text>
       </View>
     );
   }
@@ -229,6 +229,7 @@ export function PasteOrScan({
       <TextInput
         value={value}
         onChangeText={onChange}
+        accessibilityLabel={placeholder}
         placeholder={placeholder}
         placeholderTextColor={theme.textMuted}
         multiline
@@ -236,7 +237,12 @@ export function PasteOrScan({
         autoCorrect={false}
         style={[styles.input, { color: theme.text, borderColor: theme.border, backgroundColor: theme.card }]}
       />
-      <Button title="Scan QR code" variant="secondary" onPress={() => setScanning(true)} />
+      <Button
+        title="Scan QR code"
+        accessibilityLabel={`Scan QR code: ${placeholder}`}
+        variant="secondary"
+        onPress={() => setScanning(true)}
+      />
       <QrScanner
         visible={scanning}
         rationale={rationale}

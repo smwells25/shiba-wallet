@@ -14,7 +14,7 @@ import type { FungibleAsset } from '@shiba-wallet/core';
 import type { RootStackParamList } from '../navigation';
 import { Button, screenStyle } from '../components';
 import { NoEndpointError, withEndpoint } from '../config/networks';
-import { OfflineNotice, describeNetworkError } from '../wallet/connectivity';
+import { OfflineNotice, TechnicalDetail, describeNetworkError } from '../wallet/connectivity';
 import { useTheme } from '../theme';
 import { usePrefs } from '../wallet/PrefsContext';
 import { EVM_CHAIN_ID } from '../wallet/send';
@@ -63,6 +63,8 @@ export function TokensScreen({ navigation }: Props) {
   const [address, setAddress] = useState('');
   const [lookingUp, setLookingUp] = useState(false);
   const [lookupError, setLookupError] = useState<string | null>(null);
+  /** describeNetworkError's cleaned technical text for a failed lookup. */
+  const [lookupTechnical, setLookupTechnical] = useState<string | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [manualSymbol, setManualSymbol] = useState('');
   const [manualName, setManualName] = useState('');
@@ -77,12 +79,14 @@ export function TokensScreen({ navigation }: Props) {
     setAddress('');
     setPreview(null);
     setLookupError(null);
+    setLookupTechnical(null);
     setManualSymbol('');
     setManualName('');
   };
 
   const lookUp = async () => {
     setLookupError(null);
+    setLookupTechnical(null);
     setPreview(null);
     const validation = validateErc20ContractAddress(address);
     if (!validation.ok) {
@@ -102,8 +106,9 @@ export function TokensScreen({ navigation }: Props) {
       if (e instanceof NoEndpointError) {
         setLookupError('No Ethereum RPC endpoint configured. Set one in Settings first.');
       } else {
-        const { title, detail } = describeNetworkError(e, 'the token details');
+        const { title, detail, technical } = describeNetworkError(e, 'the token details');
         setLookupError(`${title}\n${detail}`);
+        setLookupTechnical(technical);
       }
     } finally {
       setLookingUp(false);
@@ -217,6 +222,7 @@ export function TokensScreen({ navigation }: Props) {
               <View style={styles.rowButtons}>
                 <Button
                   title="Send"
+                  accessibilityLabel={`Send ${token.symbol}`}
                   onPress={() =>
                     navigation.navigate('Send', {
                       chainId: EVM_CHAIN_ID,
@@ -227,6 +233,7 @@ export function TokensScreen({ navigation }: Props) {
                 />
                 <Button
                   title="Remove"
+                  accessibilityLabel={`Remove ${token.symbol} from tracked tokens`}
                   variant="destructive"
                   onPress={() => onRemove(token)}
                   style={styles.removeButton}
@@ -252,6 +259,7 @@ export function TokensScreen({ navigation }: Props) {
             setAddress(text);
             setPreview(null);
             setLookupError(null);
+            setLookupTechnical(null);
           }}
           accessibilityLabel="Token contract address"
           placeholder="0x…"
@@ -268,6 +276,7 @@ export function TokensScreen({ navigation }: Props) {
             {lookupError}
           </Text>
         ) : null}
+        {lookupError ? <TechnicalDetail text={lookupTechnical} /> : null}
         {lookingUp ? (
           <ActivityIndicator size="small" color={theme.textMuted} />
         ) : preview === null ? (

@@ -20,6 +20,14 @@ import { OfflineNotice, TechnicalDetail, describeNetworkError } from '../wallet/
 import { usePrefs } from '../wallet/PrefsContext';
 import { EVM_CHAIN_ID } from '../wallet/send';
 import { NftImage } from '../components/NftImage';
+import { getEndpoint } from '../config/networks';
+import {
+  getAaConfig,
+  loadSmartAccountAddress,
+  showsSmartAccountAddressOnSend,
+  smartAccountAddressLabel,
+  type SmartAccountAddressInfo,
+} from '../wallet/aa';
 import {
   groupNftsByCollection,
   loadMoreNfts,
@@ -46,6 +54,11 @@ type Row =
 
 const COLUMNS = 3;
 
+/** "Smart account (Kernel v3.3)" -> "smart account (Kernel v3.3)" mid-sentence. */
+function lowerFirst(text: string): string {
+  return text.charAt(0).toLowerCase() + text.slice(1);
+}
+
 /**
  * NFT gallery (phase 7 item 4) for the ACTIVE account on the ACTIVE EVM
  * chain (mainnet, or Sepolia in test mode). Ownership comes from the NFT
@@ -67,6 +80,41 @@ export function NftsScreen({ navigation }: Props) {
   // the whole gallery with the error state) and offers a retry below them.
   const [loadMoreError, setLoadMoreError] = useState<{ detail: string; technical: string | null } | null>(null);
   const [showSpam, setShowSpam] = useState(false);
+
+  // The gallery asks the indexer about the account's REGULAR address only
+  // (phase 11 item 6 finding F8). When the active account also has a smart
+  // account with an address of its own on this chain (Kernel, recovered or
+  // SimpleAccount; an EIP-7702 upgrade keeps the regular address and is
+  // covered), the header names it as not included. Read-only and node-only
+  // through loadSmartAccountAddress (the Receive screen's helper, cached per
+  // account + chain); when it cannot be read, nothing extra is shown. The
+  // state carries the key it was read for, so a switched account or network
+  // never shows a stale address.
+  const smartKey =
+    owner && accountIndex !== null ? `${evmChain.chainIdDecimal}|${accountIndex}|${owner}` : null;
+  const [smart, setSmart] = useState<{ key: string; info: SmartAccountAddressInfo } | null>(null);
+  useEffect(() => {
+    if (!smartKey || !owner || accountIndex === null) return;
+    let cancelled = false;
+    (async () => {
+      const endpoint = await getEndpoint(EVM_CHAIN_ID);
+      if (!endpoint?.url || endpoint.network.kind !== 'evm-jsonrpc') return;
+      // AA settings are keyed by the ACTIVE network's CAIP-2 id.
+      const config = await getAaConfig(endpoint.network.chainId);
+      if (!showsSmartAccountAddressOnSend(config, owner)) return;
+      const info = await loadSmartAccountAddress(config, {
+        nodeUrl: endpoint.url,
+        chainId: BigInt(evmChain.chainIdDecimal),
+        accountIndex,
+        ownerAddress: owner,
+      });
+      if (!cancelled && info) setSmart({ key: smartKey, info });
+    })().catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [smartKey, owner, accountIndex, evmChain.chainIdDecimal]);
+  const smartInfo = smart && smart.key === smartKey ? smart.info : null;
   // Generation counter: a response from a superseded load (account or mode
   // switch, refresh) never overwrites a newer one.
   const generation = useRef(0);
@@ -176,6 +224,15 @@ export function NftsScreen({ navigation }: Props) {
         {evmChain.label} · {evmChain.testnet ? 'TESTNET' : 'Mainnet'}
         {activeAccount ? ` · ${activeAccount.name}` : ''}
       </Text>
+      {owner ? (
+        <Text selectable style={[styles.hint, { color: theme.textMuted }]}>
+          Shows the NFTs held by this account&apos;s regular address, {owner}.
+          {smartInfo
+            ? ` Your ${lowerFirst(smartAccountAddressLabel(smartInfo))}, ` +
+              `${smartInfo.address}, is not included: NFTs held there do not appear in this gallery.`
+            : ''}
+        </Text>
+      ) : null}
       <OfflineNotice />
       {state.status === 'ok' && state.skipped > 0 ? (
         <Text style={[styles.hint, { color: theme.textMuted }]}>

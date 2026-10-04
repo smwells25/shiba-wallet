@@ -536,6 +536,7 @@ export function RecoverAccountScreen({ navigation }: Props) {
             <TextInput
               value={hashInput}
               onChangeText={setHashInput}
+              accessibilityLabel="UserOperation or transaction hash, optional"
               placeholder="UserOperation or transaction hash (optional)"
               placeholderTextColor={theme.textMuted}
               autoCapitalize="none"
@@ -725,6 +726,7 @@ export function RecoverAccountScreen({ navigation }: Props) {
       <TextInput
         value={accountInput}
         onChangeText={setAccountInput}
+        accessibilityLabel="Lost account address"
         placeholder="Account address (0x…)"
         placeholderTextColor={theme.textMuted}
         autoCapitalize="none"
@@ -750,6 +752,7 @@ export function RecoverAccountScreen({ navigation }: Props) {
       <TextInput
         value={originalOwnerInput}
         onChangeText={setOriginalOwnerInput}
+        accessibilityLabel="Original owner address, optional"
         placeholder="Original owner address (optional)"
         placeholderTextColor={theme.textMuted}
         autoCapitalize="none"

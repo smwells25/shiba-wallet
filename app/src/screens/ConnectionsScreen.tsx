@@ -8,7 +8,8 @@ import { useTheme } from '../theme';
 import { usePrefs } from '../wallet/PrefsContext';
 import { describeChain, validatePairingUri } from '../wallet/walletconnect';
 import { useWalletConnect, type WcSessionView } from '../wallet/WalletConnectContext';
-import { OfflineNotice } from '../wallet/connectivity';
+import { OfflineNotice, TechnicalDetail, describeNetworkError } from '../wallet/connectivity';
+import { sanitizeEndpointMessage } from '../config/endpoint-probe';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Connections'>;
 
@@ -56,9 +57,13 @@ export function ConnectionsScreen({ navigation }: Props) {
       setUri('');
       // The session_proposal event opens the app-level approval sheet.
     } catch (e) {
+      // Same wording rules as the other network screens: a calm sentence,
+      // then the cleaned technical text (an Alert cannot host the
+      // TechnicalDetail component, so it is appended as a labelled line).
+      const { detail, technical } = describeNetworkError(e, 'the pairing');
       Alert.alert(
         'Pairing failed',
-        e instanceof Error ? e.message : 'The pairing URI was not accepted.',
+        technical ? `${detail}\n\nTechnical detail: ${technical}` : detail,
       );
     } finally {
       setPairBusy(false);
@@ -121,9 +126,13 @@ export function ConnectionsScreen({ navigation }: Props) {
       {wc.initError ? (
         <>
           <WarningBox>
-            WalletConnect could not start: {wc.initError} Check the project id in
-            Settings and the network connection, then reopen this screen.
+            WalletConnect could not start. Check the project id in Settings and
+            the network connection, then try again. If you changed the project
+            id, restart the app.
           </WarningBox>
+          {/* WalletConnectContext keeps only the error's message; it gets
+              the same cleaning as describeNetworkFailure's technical text. */}
+          <TechnicalDetail text={sanitizeEndpointMessage(wc.initError) || null} />
           {/* ensureStarted re-runs a failed start (WalletConnectContext). */}
           <Button
             title="Try again"
@@ -150,6 +159,7 @@ export function ConnectionsScreen({ navigation }: Props) {
             </Text>
             <Button
               title="Scan QR code"
+              accessibilityLabel="Scan a WalletConnect QR code"
               variant="secondary"
               onPress={() => setScannerOpen(true)}
               disabled={pairBusy}
@@ -213,6 +223,7 @@ export function ConnectionsScreen({ navigation }: Props) {
                   ) : null}
                   <Button
                     title="Disconnect"
+                    accessibilityLabel={`Disconnect ${session.name}`}
                     variant="secondary"
                     onPress={() => onDisconnect(session)}
                   />

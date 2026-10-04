@@ -278,11 +278,13 @@ export function ContactsScreen(_props: Props) {
                       <>
                         <Button
                           title="Save"
+                          accessibilityLabel={`Save the new name for ${contact.name}`}
                           onPress={() => void onRenameSave()}
                           style={styles.smallButton}
                         />
                         <Button
                           title="Cancel"
+                          accessibilityLabel={`Cancel renaming ${contact.name}`}
                           variant="secondary"
                           onPress={() => {
                             setRenaming(null);
@@ -295,6 +297,7 @@ export function ContactsScreen(_props: Props) {
                       <>
                         <Button
                           title="Rename"
+                          accessibilityLabel={`Rename ${contact.name}`}
                           variant="secondary"
                           disabled={unreadable}
                           onPress={() => {
@@ -306,6 +309,7 @@ export function ContactsScreen(_props: Props) {
                         />
                         <Button
                           title="Delete"
+                          accessibilityLabel={`Delete ${contact.name}`}
                           variant="destructive"
                           disabled={unreadable}
                           onPress={() => onDelete(contact)}
@@ -328,6 +332,7 @@ export function ContactsScreen(_props: Props) {
             <Button
               key={slot}
               title={slot === addSlot ? `✓ ${network.label}` : network.label}
+              selected={slot === addSlot}
               variant={slot === addSlot ? 'primary' : 'secondary'}
               onPress={() => {
                 setAddSlot(slot);
@@ -366,6 +371,7 @@ export function ContactsScreen(_props: Props) {
           />
           <Button
             title="Scan"
+            accessibilityLabel={`Scan a QR code for the ${addNetwork?.network.label ?? ''} address`}
             variant="secondary"
             onPress={() => setScannerOpen(true)}
             style={styles.smallButton}
