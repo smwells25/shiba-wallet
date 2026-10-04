@@ -68,7 +68,9 @@ import {
   resolveSessionAccount,
   revokeSession,
   saveSessionRecord,
+  releaseSessionKey,
   sendSessionCalls,
+  sessionCanBeTested,
   sessionLocalStatusText,
   sessionTestCall,
   sessionVaultId,
@@ -756,6 +758,36 @@ console.log('check-sessions: controller routing');
   const e1 = last(kitE);
   await kitE.fire('session_request', event(2, 'wallet_requestExecutionPermissions', [request]));
   check('EOA session: both 7715 methods declined (5101)', e1?.error?.code === 5101 && last(kitE)?.error?.code === 5101);
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-sessions: subscription source (phase 12 item 2) and key release');
+// ---------------------------------------------------------------------------
+{
+  // Full subscription coverage is in check-subscriptions.mjs; here only the
+  // session-level rules those flows rely on.
+  const s = memoryStore();
+  const v = fakeVault();
+  const base = { ...installRecord, localStatus: 'installed', keyHeld: true, revokeUserOpHash: null };
+  await saveSessionRecord(base, s);
+  const asSub = { ...base, source: 'subscription' };
+  const s2 = memoryStore();
+  await saveSessionRecord(asSub, s2);
+  check('a "subscription" record without terms is dropped on load (terms are mandatory for that source)', (await loadSessions(s2)).records.length === 0 && (await loadSessions(s2)).corrupt);
+  const s3 = memoryStore();
+  await saveSessionRecord({ ...base, subscription: { terms: {}, tokenSymbol: 'X', tokenDecimals: 6, keyExportedAt: null } }, s3);
+  check('terms on a non-subscription record are refused on load', (await loadSessions(s3)).records.length === 0);
+  check('Test is offered for manual sessions holding their key, never for subscriptions or without the key',
+    sessionCanBeTested(base) && !sessionCanBeTested({ ...base, source: 'subscription' }) && !sessionCanBeTested({ ...base, keyHeld: false }));
+  const vid = sessionVaultId(M, ACCOUNT, base.permissionId);
+  await v.save(vid, '0x' + '11'.repeat(32));
+  const released = await releaseSessionKey(base, s, v);
+  check('releaseSessionKey: vault entry removed first, record keyHeld false', !v.map.has(vid) && released.keyHeld === false && (await loadSessions(s)).records[0].keyHeld === false);
+  check('releasing again is refused (nothing left to release)', /not on this device/.test((await caught(() => releaseSessionKey(released, s, v)))?.message ?? ''));
+  const noKey = await caught(() => sendSessionCalls({ bundle, record: released, calls: [sessionTestCall(grant.calls[0])], vault: v, now: NOW }));
+  check('a manual session without its key: plain refusal (not the dApp wording)', /no longer on this device/.test(noKey?.message ?? '') && !/dApp/.test(noKey?.message ?? ''), noKey?.message);
+  const dappKey = await caught(() => sendSessionCalls({ bundle, record: { ...released, source: 'erc7715' }, calls: [sessionTestCall(grant.calls[0])], vault: v, now: NOW }));
+  check('an ERC-7715 session keeps the "held by the dApp" wording', /held by the dApp/.test(dappKey?.message ?? ''));
 }
 
 // prepareAaCalls is imported to keep the quote path visible in this suite's

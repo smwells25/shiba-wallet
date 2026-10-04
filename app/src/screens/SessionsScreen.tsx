@@ -12,11 +12,20 @@ import {
   View,
 } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { parseSessionKeyGrant, toHex, type KernelPermissionInstall, type SessionKeyGrant } from '@shiba-wallet/chains-evm';
+import { allowScreenCaptureAsync, preventScreenCaptureAsync } from 'expo-screen-capture';
+import {
+  NodeClient,
+  parseSessionKeyGrant,
+  toHex,
+  type KernelPermissionInstall,
+  type SessionKeyGrant,
+  type SubscriptionGrant,
+} from '@shiba-wallet/chains-evm';
 import type { RootStackParamList } from '../navigation';
 import { Button, TestNetworksOnlyCard, WarningBox, screenStyle } from '../components';
 import { ContactPicker, RecipientContactNotice } from '../components/Contacts';
 import { GrantReview } from '../components/SessionGrantViews';
+import { PayloadQr, ShareActions } from '../components/RecoveryViews';
 import { useTheme, type Theme } from '../theme';
 import { getEndpoint } from '../config/networks';
 import { useWallet } from '../wallet/WalletContext';
@@ -56,6 +65,7 @@ import {
   resolveSessionAccount,
   revokeSession,
   sendSessionCalls,
+  sessionCanBeTested,
   sessionLocalStatusText,
   sessionRecordKey,
   sessionStatusText,
@@ -66,10 +76,43 @@ import {
   type SessionChainStatus,
   type SessionRecord,
 } from '../wallet/sessions';
+import {
+  SUBSCRIPTION_AUDIT_NOTE,
+  SUBSCRIPTION_KEY_WARNING,
+  SUBSCRIPTION_MAX_PAYMENTS,
+  SUBSCRIPTION_PERIOD_PRESETS,
+  buildSubscription,
+  buildSubscriptionKeyExport,
+  defaultFeeBudgetWei,
+  markSubscriptionKeyExported,
+  readSubscriptionStatus,
+  subscriptionGrantFor,
+  subscriptionKeyStatusText,
+  subscriptionMeta,
+  subscriptionReview,
+  subscriptionStatusLines,
+  subscriptionSummary,
+  subscriptionTokenChoices,
+  termsOf,
+  type SubscriptionStatus,
+  type SubscriptionTokenChoice,
+} from '../wallet/subscriptions';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Sessions'>;
 
-type Phase = 'list' | 'form' | 'quoting' | 'confirm' | 'sending' | 'revoke-confirm' | 'progress';
+type Phase =
+  | 'list'
+  | 'form'
+  | 'quoting'
+  | 'confirm'
+  | 'sending'
+  | 'revoke-confirm'
+  | 'progress'
+  | 'sub-form'
+  | 'sub-quoting'
+  | 'sub-confirm'
+  | 'sub-sending'
+  | 'key-export';
 
 const mono = Platform.select({ ios: 'Menlo', default: 'monospace' });
 const EMPTY_DRAFT: AllowedCallDraft = { target: '', selector: '', valueCapEth: '' };
@@ -81,6 +124,32 @@ interface PendingInstall {
   install: KernelPermissionInstall;
   quote: AaSendQuote;
 }
+
+/** A reviewed subscription waiting for the owner's approval (same lifetime rules as PendingInstall). */
+interface PendingSubscription extends PendingInstall {
+  subscription: SubscriptionGrant;
+  choice: SubscriptionTokenChoice;
+}
+
+interface SubscriptionFormState {
+  merchant: string;
+  choiceIndex: number;
+  amount: string;
+  periodSeconds: number;
+  payments: string;
+  feeBudget: string;
+  label: string;
+}
+
+const EMPTY_SUBSCRIPTION_FORM: SubscriptionFormState = {
+  merchant: '',
+  choiceIndex: 0,
+  amount: '',
+  periodSeconds: SUBSCRIPTION_PERIOD_PRESETS[0]!.seconds,
+  payments: '3',
+  feeBudget: '',
+  label: '',
+};
 
 interface Progress {
   kind: 'install' | 'revoke' | 'test';
@@ -132,6 +201,24 @@ export function SessionsScreen({ navigation }: Props) {
   const [pendingView, setPendingView] = useState<PendingInstall | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<{ record: SessionRecord; quote: AaSendQuote } | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
+  const [subForm, setSubForm] = useState<SubscriptionFormState>(EMPTY_SUBSCRIPTION_FORM);
+  const [subPickerOpen, setSubPickerOpen] = useState(false);
+  const subPending = useRef<PendingSubscription | null>(null);
+  const [subPendingView, setSubPendingView] = useState<PendingSubscription | null>(null);
+  const [subStatuses, setSubStatuses] = useState<Record<string, SubscriptionStatus | 'loading'>>({});
+  /** The key hand-over payload: in memory only while the export screen is open. */
+  const [keyExport, setKeyExport] = useState<{ record: SessionRecord; text: string } | null>(null);
+  const tokenChoices = useMemo(() => subscriptionTokenChoices(evmChain.caip2, symbol), [evmChain.caip2, symbol]);
+
+  // The subscription key on screen must not end up in screenshots or the
+  // app switcher (same guard as the recovery-phrase screens).
+  useEffect(() => {
+    if (phase !== 'key-export') return undefined;
+    preventScreenCaptureAsync('subscription-key').catch(() => {});
+    return () => {
+      allowScreenCaptureAsync('subscription-key').catch(() => {});
+    };
+  }, [phase]);
 
   useEffect(() => {
     navigation.setOptions({ title: 'Sessions' });
@@ -142,6 +229,9 @@ export function SessionsScreen({ navigation }: Props) {
     pending.current?.privateKey.fill(0);
     pending.current = null;
     setPendingView(null);
+    subPending.current?.privateKey.fill(0);
+    subPending.current = null;
+    setSubPendingView(null);
   }, []);
   useEffect(() => discardPending, [discardPending]);
 
@@ -179,6 +269,10 @@ export function SessionsScreen({ navigation }: Props) {
           const key = sessionRecordKey(r.chain, r.account, r.permissionId);
           setStatuses((prev) => ({ ...prev, [key]: 'loading' }));
           void readSessionStatus(bundle.node, r).then((st) => setStatuses((prev) => ({ ...prev, [key]: st })));
+          if (r.source === 'subscription' && r.subscription) {
+            setSubStatuses((prev) => ({ ...prev, [key]: 'loading' }));
+            void readSubscriptionStatus(bundle.node, r).then((st) => setSubStatuses((prev) => ({ ...prev, [key]: st })));
+          }
           // An install or revocation that was sent but never settled — the
           // screen that sent it was closed or remounted while it waited (the
           // phase 10 emulator run lost the install's success screen that
@@ -306,6 +400,177 @@ export function SessionsScreen({ navigation }: Props) {
       setPhase('confirm');
       reloadList();
     }
+  };
+
+  // ------------------------------------------------------------ subscriptions
+
+  const onSubOpen = () => {
+    setFormError(null);
+    setSubForm(EMPTY_SUBSCRIPTION_FORM);
+    setPhase('sub-form');
+    if (!bundle) return;
+    // Default fee budget from the node's current fee (shown and editable).
+    new NodeClient(bundle.node).suggestFees().then(
+      (fees) =>
+        setSubForm((prev) =>
+          prev.feeBudget.trim() === ''
+            ? {
+                ...prev,
+                feeBudget: formatUnits(
+                  defaultFeeBudgetWei(Math.max(1, Number(prev.payments) || 1), fees.maxFeePerGas),
+                  18,
+                  18,
+                ),
+              }
+            : prev,
+        ),
+      () => undefined,
+    );
+  };
+
+  const onSubReview = async () => {
+    if (!bundle || !account || !owner) return;
+    setFormError(null);
+    discardPending();
+    const choice = tokenChoices[subForm.choiceIndex];
+    if (!choice) return;
+    const key = newSessionKey();
+    const now = Math.floor(Date.now() / 1000);
+    let subscription: SubscriptionGrant;
+    let grant: SessionKeyGrant;
+    try {
+      const merchantName = nameFor(subForm.merchant.trim());
+      subscription = buildSubscription(
+        {
+          merchant: subForm.merchant,
+          choice,
+          amount: subForm.amount,
+          periodSeconds: subForm.periodSeconds,
+          payments: subForm.payments,
+          feeBudget: subForm.feeBudget,
+          label: subForm.label.trim() || merchantName || 'Subscription',
+        },
+        { now, account },
+      );
+      // The engine's refusal (validateSubscription / validateSessionKeyGrant) verbatim.
+      grant = subscriptionGrantFor(subscription, key.address, { account, now });
+    } catch (e) {
+      key.privateKey.fill(0);
+      setFormError(e instanceof Error ? e.message : String(e));
+      return;
+    }
+    setPhase('sub-quoting');
+    try {
+      const { install, quote } = await prepareSessionInstall(bundle, owner, account, grant, { now });
+      subPending.current = { privateKey: key.privateKey, grant, install, quote, subscription, choice };
+      setSubPendingView(subPending.current);
+      setPhase('sub-confirm');
+    } catch (e) {
+      key.privateKey.fill(0);
+      const { title, detail } =
+        describeAaError(e, { accountType: bundle.accountType, deployed: true }) ?? describeSendError(e, symbol);
+      setFormError(`${title}\n${detail}`);
+      setPhase('sub-form');
+    }
+  };
+
+  const onSubInstall = async () => {
+    const p = subPending.current;
+    if (!p || !bundle || !account || !owner || !resolution?.ok || !activeAccount) return;
+    const auth = await requireLocalAuth('Approve this subscription');
+    if (!auth.ok) {
+      Alert.alert('Not granted', auth.message);
+      return;
+    }
+    setPhase('sub-sending');
+    try {
+      const { record, userOpHash } = await installSession({
+        quote: p.quote,
+        install: p.install,
+        grant: p.grant,
+        chain: evmChain.caip2,
+        account,
+        owner,
+        accountIndex: activeAccount.index,
+        accountKind: resolution.kind,
+        label: `Subscription: ${p.subscription.label}`,
+        source: 'subscription',
+        subscription: subscriptionMeta(p.subscription, p.choice),
+        // Kept in the vault only until it is handed to the merchant.
+        sessionPrivateKey: p.privateKey,
+        store: AsyncStorage,
+        vault: sessionKeyVault,
+        // Same explicit, owner-signed install as every session.
+        submit: (q) => signWith(EVM_CHAIN_ID, owner, (signer) => sendAa(bundle, signer, q)),
+      });
+      discardPending();
+      waitingFor.current.add(userOpHash);
+      setProgress({ kind: 'install', userOpHash, state: 'pending', txHash: null, detail: null });
+      setPhase('progress');
+      void finalizeSessionInstall(bundle, record, AsyncStorage).then(
+        ({ receipt, status }) =>
+          setProgress((prev) =>
+            prev && prev.userOpHash === userOpHash
+              ? {
+                  ...prev,
+                  state: receipt.success === false ? 'failed' : 'done',
+                  txHash: receipt.txHash,
+                  detail: sessionStatusText(status),
+                }
+              : prev,
+          ),
+        () => setProgress((prev) => (prev && prev.userOpHash === userOpHash ? { ...prev, state: 'timeout' } : prev)),
+      );
+      reloadList();
+    } catch (e) {
+      const { title, detail } =
+        describeAaError(e, { accountType: bundle.accountType, deployed: true }) ?? describeSendError(e, symbol);
+      Alert.alert(title, detail);
+      setPhase('sub-confirm');
+      reloadList();
+    }
+  };
+
+  const onShowKey = async (record: SessionRecord) => {
+    const auth = await requireLocalAuth('Show the subscription key for the merchant');
+    if (!auth.ok) {
+      Alert.alert('Not shown', auth.message);
+      return;
+    }
+    try {
+      const payload = await buildSubscriptionKeyExport(record, sessionKeyVault);
+      setKeyExport({ record, text: JSON.stringify(payload) });
+      setPhase('key-export');
+    } catch (e) {
+      Alert.alert('Key not available', e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const onKeyHandedOver = () => {
+    const current = keyExport;
+    if (!current) return;
+    Alert.alert(
+      'Delete the key from this device?',
+      'Only do this once the merchant has the key. It cannot be shown again; if it was lost, revoke the ' +
+        'subscription and create a new one.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'The merchant has it',
+          style: 'destructive',
+          onPress: () => {
+            markSubscriptionKeyExported(current.record, AsyncStorage, sessionKeyVault).then(
+              () => {
+                setKeyExport(null);
+                setPhase('list');
+                reloadList();
+              },
+              (e: unknown) => Alert.alert('Not changed', e instanceof Error ? e.message : String(e)),
+            );
+          },
+        },
+      ],
+    );
   };
 
   const onTest = async (record: SessionRecord, callIndex: number) => {
@@ -581,6 +846,223 @@ export function SessionsScreen({ navigation }: Props) {
     );
   }
 
+  if (phase === 'key-export' && keyExport) {
+    const terms = termsOf(keyExport.record);
+    return (
+      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+        <Text style={[styles.title, { color: theme.text }]}>Hand the key to the merchant</Text>
+        <WarningBox>{SUBSCRIPTION_KEY_WARNING}</WarningBox>
+        <Row label="Subscription" value={subscriptionSummary(keyExport.record, nameFor(terms.merchant))} theme={theme} />
+        <PayloadQr value={keyExport.text} caption="Subscription key and terms (JSON) for the merchant's keeper." />
+        <Text selectable style={[styles.monoText, { color: theme.text }]}>
+          {keyExport.text}
+        </Text>
+        <ShareActions text={keyExport.text} shareTitle="Subscription key" />
+        <Button title="The merchant has the key — delete it here" variant="destructive" onPress={onKeyHandedOver} />
+        <Button
+          title="Not now (keep it on this device)"
+          variant="secondary"
+          onPress={() => {
+            setKeyExport(null);
+            setPhase('list');
+          }}
+        />
+      </ScrollView>
+    );
+  }
+
+  if ((phase === 'sub-confirm' || phase === 'sub-sending') && subPendingView && account) {
+    const q = subPendingView.quote;
+    const sub = subPendingView.subscription;
+    const review = subscriptionReview(sub, {
+      tokenSymbol: subPendingView.choice.symbol,
+      tokenDecimals: subPendingView.choice.decimals,
+      nativeSymbol: symbol,
+      merchantName: nameFor(sub.merchant),
+    });
+    const [batchCaveat, ...otherCaveats] = review.caveats;
+    return (
+      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+        <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
+        <Text style={[styles.title, { color: theme.text }]}>Start this subscription?</Text>
+        {header}
+        <Text style={[styles.ok, { color: theme.text }]}>{review.sentence}</Text>
+        <Text style={[styles.label, { color: theme.textMuted }]}>Your account enforces on-chain:</Text>
+        {review.enforced.map((line) => (
+          <Text key={line} style={[styles.hint, { color: theme.text }]}>
+            • {line}
+          </Text>
+        ))}
+        {batchCaveat ? <WarningBox>{batchCaveat}</WarningBox> : null}
+        {otherCaveats.map((line) => (
+          <Text key={line} style={[styles.hint, { color: theme.textMuted }]}>
+            {line}
+          </Text>
+        ))}
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{SUBSCRIPTION_AUDIT_NOTE}</Text>
+        <Text style={[styles.label, { color: theme.textMuted }]}>Technical details (the grant as installed)</Text>
+        <GrantReview
+          grant={subPendingView.grant}
+          account={account}
+          symbol={symbol}
+          nameFor={nameFor}
+          sessionKeyHolder="the merchant, once you hand it over (kept in secure storage until then)"
+          permissionId={toHex(subPendingView.install.permissionId)}
+        />
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{SESSIONS_INSTALL_MODE_NOTE}</Text>
+        <Row
+          label="Install operation"
+          value={`2 calls to your own account (installValidations, grantAccess), 0 ${symbol}`}
+          sub="Signed by your account key as the account's root validator."
+          theme={theme}
+        />
+        <Row
+          label={q.sponsored ? 'Network fee' : 'Max network fee (bundler estimate)'}
+          value={q.sponsored ? 'Sponsored — the account pays 0' : `${formatUnits(q.fee, 18, 18)} ${symbol}`}
+          theme={theme}
+        />
+        <Row label="Account balance" value={`${formatUnits(q.senderBalance, 18, 18)} ${symbol}`} theme={theme} />
+        <Text style={[styles.ok, { color: theme.success }]}>
+          Bundler gas estimate passed (eth_estimateUserOperationGas simulated the install).
+        </Text>
+        {phase === 'sub-sending' ? (
+          <View style={styles.center}>
+            <ActivityIndicator size="large" color={theme.accent} />
+            <Text style={[styles.hint, { color: theme.textMuted }]}>Signing and sending…</Text>
+          </View>
+        ) : (
+          <>
+            <Button title="Start subscription" onPress={() => void onSubInstall()} />
+            <Button
+              title="Back"
+              variant="secondary"
+              onPress={() => {
+                discardPending();
+                setPhase('sub-form');
+              }}
+            />
+          </>
+        )}
+      </ScrollView>
+    );
+  }
+
+  if ((phase === 'sub-form' || phase === 'sub-quoting') && account) {
+    const merchantMatch =
+      contactsNetworkId && subForm.merchant.trim() ? matchRecipient(contactsNetworkId, subForm.merchant, contacts) : null;
+    const choice = tokenChoices[subForm.choiceIndex];
+    return (
+      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <Text style={[styles.title, { color: theme.text }]}>New subscription</Text>
+        {header}
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          Lets one merchant take up to a fixed amount once per period, until the payments run out or you
+          revoke. A new key is created for the merchant; your account enforces the limits on-chain.
+        </Text>
+        <Text style={[styles.label, { color: theme.textMuted }]}>Merchant (receives the payments)</Text>
+        <TextInput
+          value={subForm.merchant}
+          onChangeText={(t) => setSubForm((prev) => ({ ...prev, merchant: t }))}
+          placeholder="Merchant address (0x…)"
+          placeholderTextColor={theme.textMuted}
+          autoCapitalize="none"
+          autoCorrect={false}
+          accessibilityLabel="Merchant address"
+          style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+        />
+        {merchantMatch && merchantMatch.kind !== 'none' ? (
+          <RecipientContactNotice match={merchantMatch} address={subForm.merchant.trim()} />
+        ) : null}
+        <Button title="Pick from contacts" variant="secondary" onPress={() => setSubPickerOpen(true)} />
+        <Text style={[styles.label, { color: theme.textMuted }]}>Paid in</Text>
+        <View style={styles.rowButtons}>
+          {tokenChoices.map((c, i) => (
+            <Button
+              key={c.token}
+              title={`${subForm.choiceIndex === i ? '✓ ' : ''}${c.symbol}${c.token.startsWith('0x') ? ` (${c.token.slice(0, 6)}…${c.token.slice(-4)})` : ''}`}
+              variant={subForm.choiceIndex === i ? 'primary' : 'secondary'}
+              onPress={() => setSubForm((prev) => ({ ...prev, choiceIndex: i }))}
+            />
+          ))}
+        </View>
+        <Text style={[styles.label, { color: theme.textMuted }]}>Most per payment</Text>
+        <TextInput
+          value={subForm.amount}
+          onChangeText={(t) => setSubForm((prev) => ({ ...prev, amount: t }))}
+          placeholder={`Amount in ${choice?.symbol ?? ''}`}
+          placeholderTextColor={theme.textMuted}
+          keyboardType="decimal-pad"
+          accessibilityLabel="Most per payment"
+          style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+        />
+        <Text style={[styles.label, { color: theme.textMuted }]}>Once every</Text>
+        <View style={styles.rowButtons}>
+          {SUBSCRIPTION_PERIOD_PRESETS.map((p) => (
+            <Button
+              key={p.seconds}
+              title={subForm.periodSeconds === p.seconds ? `✓ ${p.label}` : p.label}
+              variant={subForm.periodSeconds === p.seconds ? 'primary' : 'secondary'}
+              onPress={() => setSubForm((prev) => ({ ...prev, periodSeconds: p.seconds }))}
+            />
+          ))}
+        </View>
+        <Text style={[styles.label, { color: theme.textMuted }]}>Number of payments (1–{SUBSCRIPTION_MAX_PAYMENTS}; sets the expiry)</Text>
+        <TextInput
+          value={subForm.payments}
+          onChangeText={(t) => setSubForm((prev) => ({ ...prev, payments: t }))}
+          keyboardType="number-pad"
+          accessibilityLabel="Number of payments"
+          style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+        />
+        <Text style={[styles.label, { color: theme.textMuted }]}>Fee budget ({symbol}, all payments together)</Text>
+        <TextInput
+          value={subForm.feeBudget}
+          onChangeText={(t) => setSubForm((prev) => ({ ...prev, feeBudget: t }))}
+          placeholder={`Total ${symbol} the merchant's payments may spend on network fees`}
+          placeholderTextColor={theme.textMuted}
+          keyboardType="decimal-pad"
+          accessibilityLabel="Fee budget"
+          style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+        />
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          Each payment’s network fee is paid by your account. The budget caps the total; without it a merchant
+          could pay itself high fees from your {symbol}.
+        </Text>
+        <Text style={[styles.label, { color: theme.textMuted }]}>Name (optional)</Text>
+        <TextInput
+          value={subForm.label}
+          onChangeText={(t) => setSubForm((prev) => ({ ...prev, label: t }))}
+          placeholder="e.g. the service’s name"
+          placeholderTextColor={theme.textMuted}
+          maxLength={64}
+          style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+        />
+        {formError ? <WarningBox>{formError}</WarningBox> : null}
+        {phase === 'sub-quoting' ? (
+          <View style={styles.center}>
+            <ActivityIndicator color={theme.accent} />
+            <Text style={[styles.hint, { color: theme.textMuted }]}>Reading the account and asking the bundler…</Text>
+          </View>
+        ) : (
+          <>
+            <Button title="Review" onPress={() => void onSubReview()} />
+            <Button title="Cancel" variant="secondary" onPress={() => setPhase('list')} />
+          </>
+        )}
+        <ContactPicker
+          visible={subPickerOpen}
+          contacts={contacts}
+          networkLabel={evmChain.label}
+          onPick={(c) => {
+            setSubPickerOpen(false);
+            setSubForm((prev) => ({ ...prev, merchant: c.address }));
+          }}
+          onClose={() => setSubPickerOpen(false)}
+        />
+      </ScrollView>
+    );
+  }
+
   if ((phase === 'revoke-confirm' || phase === 'sending') && revokeTarget) {
     const q = revokeTarget.quote;
     return (
@@ -740,6 +1222,12 @@ export function SessionsScreen({ navigation }: Props) {
             }}
             disabled={listFlags.unreadable || readiness !== null}
           />
+          <Button
+            title="New subscription"
+            variant="secondary"
+            onPress={onSubOpen}
+            disabled={listFlags.unreadable || readiness !== null}
+          />
           {listFlags.unreadable ? (
             <>
               <WarningBox>
@@ -753,11 +1241,67 @@ export function SessionsScreen({ navigation }: Props) {
               Some saved sessions could not be read and are not shown.
             </Text>
           ) : null}
-          <Text style={[styles.sectionTitle, { color: theme.text }]}>Sessions on this account</Text>
-          {records.length === 0 ? (
+          <Text style={[styles.sectionTitle, { color: theme.text }]}>Subscriptions</Text>
+          {records.filter((r) => r.source === 'subscription').length === 0 ? (
             <Text style={[styles.hint, { color: theme.textMuted }]}>None on this device.</Text>
           ) : null}
-          {records.map((r) => {
+          {records
+            .filter((r) => r.source === 'subscription' && r.subscription)
+            .map((r) => {
+              const key = sessionRecordKey(r.chain, r.account, r.permissionId);
+              const status = statuses[key];
+              const subStatus = subStatuses[key];
+              const terms = termsOf(r);
+              const review = subscriptionReview(terms, {
+                tokenSymbol: r.subscription!.tokenSymbol,
+                tokenDecimals: r.subscription!.tokenDecimals,
+                nativeSymbol: symbol,
+                merchantName: nameFor(terms.merchant),
+              });
+              const settled = status !== undefined && status !== 'loading';
+              return (
+                <View key={key} style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+                  <Text style={[styles.cardTitle, { color: theme.text }]}>{r.label}</Text>
+                  <Text style={[styles.hint, { color: theme.text }]}>{subscriptionSummary(r, nameFor(terms.merchant))}</Text>
+                  <Text style={[styles.status, { color: settled && status.kind === 'active' ? theme.success : theme.text }]}>
+                    {settled ? sessionStatusText(status) : 'Reading status…'}
+                  </Text>
+                  {subStatus === undefined || subStatus === 'loading'
+                    ? null
+                    : subscriptionStatusLines(r, subStatus, symbol).map((line) => (
+                        <Text key={line} style={[styles.hint, { color: theme.text }]}>
+                          {line}
+                        </Text>
+                      ))}
+                  <Text style={[styles.hint, { color: theme.textMuted }]}>{subscriptionKeyStatusText(r)}</Text>
+                  <Text style={[styles.hint, { color: theme.textMuted }]}>{sessionLocalStatusText(r)}</Text>
+                  {pendingSessionOperation(r) ? <ActivityIndicator color={theme.accent} /> : null}
+                  <Text style={[styles.hint, { color: theme.text }]}>{review.sentence}</Text>
+                  {review.caveats[0] ? <WarningBox>{review.caveats[0]}</WarningBox> : null}
+                  <Row label="Permission id" value={r.permissionId} mono theme={theme} />
+                  {r.installUserOpHash ? (
+                    <Row label="Install UserOperation hash" value={r.installUserOpHash} mono theme={theme} />
+                  ) : null}
+                  {r.revokeUserOpHash ? (
+                    <Row label="Revocation UserOperation hash" value={r.revokeUserOpHash} mono theme={theme} />
+                  ) : null}
+                  {r.keyHeld && r.subscription!.keyExportedAt === null && r.localStatus === 'installed' && settled && status.kind === 'active' ? (
+                    <Button title="Hand the key to the merchant (shown once)" onPress={() => void onShowKey(r)} />
+                  ) : null}
+                  {settled && (status.kind === 'active' || status.kind === 'unknown') ? (
+                    <Button title="Revoke (stop the subscription)" variant="destructive" onPress={() => void onRevokeQuote(r)} />
+                  ) : null}
+                  {settled && (status.kind === 'revoked' || status.kind === 'not-installed') ? (
+                    <Button title="Forget" variant="secondary" onPress={() => onForget(r)} />
+                  ) : null}
+                </View>
+              );
+            })}
+          <Text style={[styles.sectionTitle, { color: theme.text }]}>Sessions on this account</Text>
+          {records.filter((r) => r.source !== 'subscription').length === 0 ? (
+            <Text style={[styles.hint, { color: theme.textMuted }]}>None on this device.</Text>
+          ) : null}
+          {records.filter((r) => r.source !== 'subscription').map((r) => {
             const key = sessionRecordKey(r.chain, r.account, r.permissionId);
             const status = statuses[key];
             const grant = parseSessionKeyGrant(r.grant);
@@ -797,7 +1341,7 @@ export function SessionsScreen({ navigation }: Props) {
                   sessionKeyHolder={r.keyHeld ? 'this device' : r.source === 'erc7715' ? r.label : 'nobody (deleted)'}
                   permissionId={r.permissionId}
                 />
-                {usable && r.keyHeld
+                {usable && sessionCanBeTested(r)
                   ? grant.calls.map((c, i) => (
                       <Button
                         key={`t${i}`}
@@ -858,8 +1402,8 @@ async function loadSessionContext(
 function NetworkBadge({ label, testnet, theme }: { label: string; testnet: boolean; theme: Theme }) {
   if (testnet) {
     return (
-      <View style={[styles.badge, { backgroundColor: '#e07800', borderColor: '#e07800' }]}>
-        <Text style={[styles.badgeText, { color: '#ffffff' }]}>{label} TESTNET — test funds only</Text>
+      <View style={[styles.badge, { backgroundColor: theme.testnetFill, borderColor: theme.testnetFill }]}>
+        <Text style={[styles.badgeText, { color: theme.onTestnetFill }]}>{label} TESTNET — test funds only</Text>
       </View>
     );
   }

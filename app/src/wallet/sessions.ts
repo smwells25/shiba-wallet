@@ -19,6 +19,8 @@ import {
   selector as abiSelector,
   serializeSessionKeyGrant,
   sessionNonceKey,
+  parseSubscription,
+  subscriptionMatchesGrant,
   toBytes,
   toHex,
   validateSessionKeyGrant,
@@ -27,6 +29,7 @@ import {
   type JsonRpcTransport,
   type KernelPermissionInstall,
   type SerializedSessionKeyGrant,
+  type SerializedSubscriptionGrant,
   type SessionAllowedCall,
   type SessionKeyGrant,
 } from '@shiba-wallet/chains-evm';
@@ -156,8 +159,30 @@ export const SESSION_NOT_UPGRADED_REFUSAL =
 
 export type SessionAccountKind = 'kernel-v3.3' | 'kernel-7702';
 
-/** Where a session came from. */
-export type SessionSource = 'manual' | 'erc7715';
+/**
+ * Where a session came from: the manual grant form, a dApp's ERC-7715
+ * request, or the subscription template (./subscriptions.ts).
+ */
+export type SessionSource = 'manual' | 'erc7715' | 'subscription';
+
+/**
+ * Subscription terms stored with a session record (source 'subscription').
+ * Public data only. On every load the terms are re-parsed and must map to
+ * exactly the record's grant (engine subscriptionMatchesGrant), so the
+ * stored description can never disagree with what is installed.
+ */
+export interface SessionSubscriptionMeta {
+  terms: SerializedSubscriptionGrant;
+  /** Display symbol and decimals of the token (or the native currency). */
+  tokenSymbol: string;
+  tokenDecimals: number;
+  /**
+   * Date.now() when the subscriber confirmed handing the key to the merchant
+   * (the key was deleted from this device at that moment), or null while the
+   * key is still on this device waiting to be exported.
+   */
+  keyExportedAt: number | null;
+}
 
 /**
  * Local lifecycle (the on-chain status is read separately, see
@@ -197,6 +222,8 @@ export interface SessionRecord {
   installUserOpHash: string | null;
   revokeUserOpHash: string | null;
   localStatus: SessionLocalStatus;
+  /** Present exactly when source is 'subscription'. */
+  subscription?: SessionSubscriptionMeta | null;
 }
 
 export interface SessionListLoad {
@@ -258,7 +285,11 @@ function reviveRecord(value: unknown): SessionRecord | null {
     // Re-validates the stored grant (shape and rules; no clock check).
     parseSessionKeyGrant(v.grant);
     if (typeof v.label !== 'string' || v.label.length === 0 || v.label.length > 200) return null;
-    if (v.source !== 'manual' && v.source !== 'erc7715') return null;
+    if (v.source !== 'manual' && v.source !== 'erc7715' && v.source !== 'subscription') return null;
+    const subscription = reviveSubscriptionMeta(v.subscription, v.grant);
+    if (v.source === 'subscription' ? subscription === null : v.subscription !== undefined && v.subscription !== null) {
+      return null;
+    }
     if (v.dappUrl !== null && typeof v.dappUrl !== 'string') return null;
     if (typeof v.createdAt !== 'number' || !Number.isFinite(v.createdAt)) return null;
     if (v.installMode !== 'explicit') return null;
@@ -284,6 +315,30 @@ function reviveRecord(value: unknown): SessionRecord | null {
       installUserOpHash: (v.installUserOpHash as string | null) ?? null,
       revokeUserOpHash: (v.revokeUserOpHash as string | null) ?? null,
       localStatus: v.localStatus as SessionLocalStatus,
+      ...(subscription ? { subscription } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Strict revival of subscription terms; null unless they map to exactly `grant`. */
+function reviveSubscriptionMeta(value: unknown, grant: unknown): SessionSubscriptionMeta | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const v = value as Record<string, unknown>;
+  try {
+    const terms = parseSubscription(v.terms);
+    if (!subscriptionMatchesGrant(terms, parseSessionKeyGrant(grant))) return null;
+    if (typeof v.tokenSymbol !== 'string' || v.tokenSymbol.length === 0 || v.tokenSymbol.length > 32) return null;
+    if (typeof v.tokenDecimals !== 'number' || !Number.isInteger(v.tokenDecimals) || v.tokenDecimals < 0 || v.tokenDecimals > 36) {
+      return null;
+    }
+    if (v.keyExportedAt !== null && (typeof v.keyExportedAt !== 'number' || !Number.isFinite(v.keyExportedAt))) return null;
+    return {
+      terms: v.terms as SerializedSubscriptionGrant,
+      tokenSymbol: v.tokenSymbol,
+      tokenDecimals: v.tokenDecimals,
+      keyExportedAt: (v.keyExportedAt as number | null) ?? null,
     };
   } catch {
     return null;
@@ -650,8 +705,17 @@ export function describeGrantLimits(grant: SessionKeyGrant, symbol: string): str
       : `No gas budget: fees for the session’s operations are paid from the account’s ${symbol} until it expires.`,
   );
   if (grant.rateLimit) {
+    // RateLimitPolicy semantics (verified source, see the engine's
+    // kernel-subscription.ts header): `count` operations IN TOTAL, the k-th
+    // valid from startAt + k × interval; a missed slot can be used later.
+    const startAt = grant.rateLimit.startAt ?? 0;
     lines.push(
-      `Rate limit: at most ${grant.rateLimit.count} operations, at least ${grant.rateLimit.intervalSeconds} s apart.`,
+      `Rate limit: at most ${grant.rateLimit.count} operation${grant.rateLimit.count === 1 ? '' : 's'} in total, ` +
+        `one more becoming valid every ${grant.rateLimit.intervalSeconds} s` +
+        (startAt > 0
+          ? ` from ${new Date(startAt * 1000).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC')}`
+          : ' (no start time: every slot is already open, so only the total is limited)') +
+        '; a missed slot can be used later. Counted per operation, not per transfer.',
     );
   }
   lines.push('A session key can never sign messages or logins for your account (ERC-1271 is switched off for it).');
@@ -726,7 +790,13 @@ export async function installSession(args: {
   label: string;
   source: SessionSource;
   dappUrl?: string | null;
-  /** Manual grants: the session's private key (stored in the vault). ERC-7715: null (the dApp holds it). */
+  /** Required for source 'subscription' (and refused for the others). */
+  subscription?: SessionSubscriptionMeta | null;
+  /**
+   * Manual grants and subscriptions: the session's private key (stored in
+   * the vault; a subscription's key leaves it when it is handed to the
+   * merchant, see releaseSessionKey). ERC-7715: null (the dApp holds it).
+   */
   sessionPrivateKey: Uint8Array | null;
   store: KeyValueStore;
   vault: SessionKeyVault | null;
@@ -746,6 +816,12 @@ export async function installSession(args: {
     )
   ) {
     throw new Error('The quoted operation is not the session install it claims to be. Nothing was signed.');
+  }
+  if ((args.source === 'subscription') !== Boolean(args.subscription)) {
+    throw new Error('Subscription terms belong exactly to subscription grants. Nothing was signed.');
+  }
+  if (args.subscription && !subscriptionMatchesGrant(parseSubscription(args.subscription.terms), args.grant)) {
+    throw new Error('The subscription terms do not match the grant being installed. Nothing was signed.');
   }
   if (args.sessionPrivateKey) {
     const derived = createSessionKeyAccount(args.sessionPrivateKey).address;
@@ -776,6 +852,7 @@ export async function installSession(args: {
     installUserOpHash: null,
     revokeUserOpHash: null,
     localStatus: 'installing',
+    ...(args.subscription ? { subscription: { ...args.subscription } } : {}),
   };
   try {
     await saveSessionRecord(record, args.store);
@@ -973,11 +1050,17 @@ export async function sendSessionCalls(args: {
   assertFeatureAllowed('session-keys', eip155Caip2(bundle.chainId));
   const grant = parseSessionKeyGrant(record.grant);
   assertCallsAllowed(grant, args.calls, args.now ?? Math.floor(Date.now() / 1000));
-  if (!record.keyHeld) {
-    throw new Error('This session’s key is held by the dApp that requested it, not by this wallet.');
-  }
   if (record.localStatus === 'revoking' || record.localStatus === 'revoked') {
     throw new Error('This session was revoked.');
+  }
+  if (!record.keyHeld) {
+    throw new Error(
+      record.source === 'subscription'
+        ? 'This subscription’s key was handed to the merchant and is no longer on this device.'
+        : record.source === 'erc7715'
+          ? 'This session’s key is held by the dApp that requested it, not by this wallet.'
+          : 'This session’s key is no longer on this device.',
+    );
   }
   if (eip155Decimal(record.chain) !== bundle.chainId) {
     throw new Error('This session belongs to another network.');
@@ -1027,6 +1110,33 @@ export async function sendSessionCalls(args: {
 /** The uint192 EntryPoint nonce key a session's operations use (display / checks). */
 export function sessionOperationNonceKey(record: SessionRecord): bigint {
   return sessionNonceKey(record.permissionId);
+}
+
+/**
+ * Whether the Sessions screen may offer "Test this session". Never for a
+ * subscription: its only allowed call is a payment to the merchant, and any
+ * operation — even a zero-value one — would use up one of the merchant's
+ * rate-limited pulls (RateLimitPolicy counts operations).
+ */
+export function sessionCanBeTested(record: SessionRecord): boolean {
+  return record.source !== 'subscription' && record.keyHeld;
+}
+
+/**
+ * Deletes a session's private key from this device and records that the
+ * wallet no longer holds it (used once a subscription key has been handed to
+ * the merchant). The vault entry is removed FIRST, so a failure to update the
+ * list can never leave a key behind that the list says is gone.
+ */
+export async function releaseSessionKey(
+  record: SessionRecord,
+  store: KeyValueStore,
+  vault: SessionKeyVault,
+  patch: Partial<Pick<SessionRecord, 'subscription'>> = {},
+): Promise<SessionRecord> {
+  if (!record.keyHeld) throw new Error('This session’s key is not on this device.');
+  await vault.remove(sessionVaultId(record.chain, record.account, record.permissionId));
+  return updateRecord(record, { keyHeld: false, ...patch }, store);
 }
 
 // ---------------------------------------------------------------------------

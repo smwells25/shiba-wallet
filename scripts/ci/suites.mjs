@@ -44,6 +44,8 @@ export const APP_SCRIPTS = {
   'check-spending-policy.mjs': { kind: 'offline', summary: 'counts' },
   'check-simulation.mjs': { kind: 'offline', summary: 'counts' },
   'check-storage.mjs': { kind: 'offline', summary: 'counts' },
+  // Phase 12 item 2: subscription grants on Kernel session keys (fakes only).
+  'check-subscriptions.mjs': { kind: 'offline', summary: 'counts' },
   'check-swap.mjs': { kind: 'offline', summary: 'counts' },
   'check-token-send.mjs': { kind: 'offline', summary: 'counts' },
   'check-typed-data.mjs': { kind: 'offline', summary: 'counts' },
