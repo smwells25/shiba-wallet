@@ -1133,7 +1133,12 @@ export function SwapScreen({ navigation }: Props) {
           note={batch ? PREVIEW_AA_BATCH_NOTE : PREVIEW_AA_NOTE}
         />
         <RiskWarnings url={url} wallet={aaQuote.sender} to={aaQuote.calls[0]!.to} data={aaQuote.calls[0]!.data} />
-        <SpendingPolicyNotice owner={account.address} />
+        <SpendingPolicyNotice
+          owner={account.address}
+          quote={aaQuote}
+          from={preparedFromShown ?? account.address}
+          {...(sellAsset === 'native' ? {} : { quoteOutflows: [{ token: sellAsset.assetId.reference, amount: quote.sellAmount }] })}
+        />
         <Text style={[styles.simulationOk, { color: theme.success }]}>
           Bundler gas estimate passed (eth_estimateUserOperationGas simulated the operation).
         </Text>
@@ -1360,7 +1365,12 @@ export function SwapScreen({ navigation }: Props) {
           }}
         />
         <RiskWarnings url={confirmUrl} wallet={account.address} to={sendQuote.to} data={sendQuote.data} />
-        <SpendingPolicyNotice owner={account.address} />
+        <SpendingPolicyNotice
+          owner={account.address}
+          quote={sendQuote}
+          from={preparedFromShown ?? account.address}
+          {...(sellAsset === 'native' ? {} : { quoteOutflows: [{ token: sellAsset.assetId.reference, amount: quote.sellAmount }] })}
+        />
 
         {sendQuote.simulation.ok ? (
           <Text style={[styles.simulationOk, { color: theme.success }]}>

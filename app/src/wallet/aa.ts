@@ -1812,6 +1812,14 @@ export function isPrefundError(message: string): boolean {
  * and a new account's address appears nowhere else until it is used. Amounts
  * are exact wei. `fee` null means the fee is not known yet (the check ran
  * before the bundler estimate).
+ *
+ * `deployed` decides the last sentence: only an account that is not deployed
+ * yet is told that it can be funded before deployment (the rehearsal of
+ * 2026-10-03 showed that sentence for a deployed account, finding 8); null
+ * (unknown) omits it. `deposit` is the account's EntryPoint deposit when it
+ * was read: the EntryPoint v0.7 takes the prefund from the deposit first and
+ * asks the account only for the rest (_validateAccountPrepayment), so a
+ * non-zero deposit is named as part of what pays the fee.
  */
 export function aaFundingMessage(p: {
   sender: string;
@@ -1819,10 +1827,14 @@ export function aaFundingMessage(p: {
   fee: bigint | null;
   balance: bigint;
   sponsored: boolean;
+  deployed?: boolean | null;
+  deposit?: bigint | null;
 }): string {
   const fund =
-    `Fund the smart account address ${p.sender} (not the owner address), then review again. ` +
-    'A smart account can receive funds before it is deployed; the first send deploys it.';
+    `Fund the smart account address ${p.sender} (not the owner address), then review again.` +
+    (p.deployed === false
+      ? ' A smart account can receive funds before it is deployed; the first send deploys it.'
+      : '');
   if (p.sponsored) {
     return (
       `Insufficient funds: sending ${p.amount} wei exceeds the balance of ${p.balance} wei held by ` +
@@ -1830,11 +1842,28 @@ export function aaFundingMessage(p: {
     );
   }
   const feePart = p.fee === null ? 'its network fee' : `a worst-case fee of ${p.fee} wei`;
+  const deposit = p.deposit ?? 0n;
+  const held =
+    deposit > 0n
+      ? `the balance of ${p.balance} wei held by the smart account ${p.sender} plus its EntryPoint ` +
+        `deposit of ${deposit} wei (the deposit can pay only the fee, not the amount)`
+      : `the balance of ${p.balance} wei held by the smart account ${p.sender}`;
   return (
     'Insufficient funds: the smart account pays its own gas (no paymaster), and sending ' +
-    `${p.amount} wei plus ${feePart} exceeds the balance of ${p.balance} wei held by the smart ` +
-    `account ${p.sender}. ${fund}`
+    `${p.amount} wei plus ${feePart} exceeds ${held}. ${fund}`
   );
+}
+
+/**
+ * True when a self-paid operation is affordable: the EntryPoint v0.7 takes
+ * the prefund (the worst-case fee) from the account's deposit first and the
+ * account pays only the missing part from its balance during validation
+ * (EntryPoint._validateAccountPrepayment); the amount itself always comes
+ * from the balance. `deposit` null (not read) counts as zero.
+ */
+export function aaCanPaySelf(p: { amount: bigint; fee: bigint; balance: bigint; deposit: bigint | null }): boolean {
+  const fromBalance = p.fee > (p.deposit ?? 0n) ? p.fee - (p.deposit ?? 0n) : 0n;
+  return p.amount + fromBalance <= p.balance;
 }
 
 /** Neutral confirm-screen sentence for a Kernel deployment through any non-Alchemy bundler. */
@@ -2101,7 +2130,11 @@ export async function prepareAaCalls(
   }
   // Node reads only: the bundler is not contacted until the wallet's own
   // funding check below has passed.
-  const [senderBalance, deployed, nonce, suggestedFees, tokenBalance] = await Promise.all([
+  // The EntryPoint deposit is one eth_call (balanceOf on the EntryPoint);
+  // it is read for self-paid operations only, because it can pay the fee
+  // (see aaCanPaySelf). A failed read counts as no deposit, which is the
+  // stricter side and what the wallet assumed before it was read here.
+  const [senderBalance, deployed, nonce, suggestedFees, tokenBalance, deposit] = await Promise.all([
     nodeClient.getBalance(sender),
     eip7702 ? Promise.resolve(!eip7702.upgrade) : bundle.client.isDeployed(owner),
     bundle.client.getNonce(owner),
@@ -2109,6 +2142,7 @@ export async function prepareAaCalls(
     options.tokenSpend
       ? fetchTokenBalanceVia(bundle.node, options.tokenSpend.contract, sender)
       : Promise.resolve(null),
+    bundle.sponsored ? Promise.resolve(null) : bundle.client.getEntryPointDeposit(sender).catch(() => null),
   ]);
 
   if (options.tokenSpend && tokenBalance !== null && options.tokenSpend.amount > tokenBalance) {
@@ -2126,17 +2160,29 @@ export async function prepareAaCalls(
   // error that names neither the account nor the remedy. This check is
   // strictly weaker than the worst-case check after the estimate (which
   // adds the gas cost): self-paid, the account must hold MORE than the
-  // amount, because any non-zero fee on top would exceed the balance;
-  // sponsored, it must hold at least the amount. So it never refuses an
-  // operation the full check would accept.
+  // amount, because any non-zero fee on top would exceed the balance —
+  // unless the EntryPoint deposit is non-zero, which may pay the whole fee,
+  // so then it must hold at least the amount; sponsored, it must hold at
+  // least the amount. So it never refuses an operation the full check would
+  // accept.
   const cannotPay = bundle.sponsored
     ? amount > senderBalance
-    : suggestedFees.maxFeePerGas > 0n && amount >= senderBalance;
+    : (deposit ?? 0n) > 0n
+      ? amount > senderBalance
+      : suggestedFees.maxFeePerGas > 0n && amount >= senderBalance;
+  // The "can be funded before it is deployed" sentence belongs to factory
+  // accounts that are not deployed yet; an EIP-7702 account is the owner's own
+  // address, so the sentence is left out there (deployed: null).
+  const fundingFacts = {
+    sender,
+    amount,
+    balance: senderBalance,
+    sponsored: bundle.sponsored,
+    deployed: eip7702 ? null : deployed,
+    deposit,
+  };
   if (cannotPay) {
-    throw new AaFundingError(
-      sender,
-      aaFundingMessage({ sender, amount, fee: null, balance: senderBalance, sponsored: bundle.sponsored }),
-    );
+    throw new AaFundingError(sender, aaFundingMessage({ ...fundingFacts, fee: null }));
   }
 
   const priorityFloor = await bundlerPriorityFeeFloor(bundle.bundler);
@@ -2181,7 +2227,7 @@ export async function prepareAaCalls(
     if (isPrefundError(raw)) {
       throw new AaFundingError(
         sender,
-        `${aaFundingMessage({ sender, amount, fee: null, balance: senderBalance, sponsored: bundle.sponsored })}` +
+        `${aaFundingMessage({ ...fundingFacts, fee: null })}` +
           `\n\nThe bundler's message: ${raw}`,
       );
     }
@@ -2192,13 +2238,10 @@ export async function prepareAaCalls(
   // actually be signed (sendCalls re-estimates and applies the same rule,
   // and, like here, keeps the plain estimate when the deposit read fails).
   // Clients built without the headroom (none configured) are mirrored as
-  // such: no deposit read, the plain estimate.
+  // such: the plain estimate. The deposit was read once above, with the
+  // other node reads, and also counts in the funding checks.
   const headroom = bundle.client.depositTopUpVerificationGas;
-  const deposit =
-    bundle.sponsored || headroom === 0n
-      ? null
-      : await bundle.client.getEntryPointDeposit(sender).catch(() => null);
-  const gas = deposit === null
+  const gas = deposit === null || headroom === 0n
     ? estimated
     : {
         ...estimated,
@@ -2238,16 +2281,13 @@ export async function prepareAaCalls(
   // With a paymaster the sponsor pays the gas: the account only needs to
   // cover the amount itself. Self-paid keeps the full worst-case check.
   const fee = bundle.sponsored ? 0n : worstCaseGasCost;
-  if (amount + fee > senderBalance) {
+  const affordable = bundle.sponsored
+    ? amount <= senderBalance
+    : aaCanPaySelf({ amount, fee, balance: senderBalance, deposit });
+  if (!affordable) {
     throw new AaFundingError(
       sender,
-      aaFundingMessage({
-        sender,
-        amount,
-        fee: bundle.sponsored ? null : fee,
-        balance: senderBalance,
-        sponsored: bundle.sponsored,
-      }),
+      aaFundingMessage({ ...fundingFacts, fee: bundle.sponsored ? null : fee }),
     );
   }
 

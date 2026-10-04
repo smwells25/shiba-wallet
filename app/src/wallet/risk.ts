@@ -21,6 +21,7 @@ import {
 // relative specifiers literally.
 import { groupThousands, simulationTransport } from './simulation.ts';
 import { WALLET_7702_DELEGATE } from './delegation.ts';
+import { walletAddressesFor, type AaAddressFacts } from './activity-sentences.ts';
 
 /**
  * Risk warnings for EVM confirm screens (phase 7, item 5, app half). The
@@ -277,9 +278,55 @@ export interface NativeInteractionResult {
   complete: boolean;
 }
 
+/** One of the wallet's own EVM addresses, with the name shown for it. */
+export interface OwnAddress {
+  address: string;
+  /** "Account 2", or "Account 1's smart account". */
+  label: string;
+}
+
+/**
+ * Every EVM address this wallet controls on one network, known WITHOUT a
+ * network request: each account's EOA (hidden accounts included), plus
+ * the smart-account addresses activity-sentences.ts walletAddressesFor
+ * derives (the Kernel v3.3 counterfactual when Kernel is the chain's
+ * account type, and a recovered account linked to the owner). SimpleAccount
+ * addresses need a factory call and are not included. Used so the risk
+ * card and the success screens treat a send between the wallet's own
+ * accounts as such (finding 13 of the rehearsal), never as a first-time or
+ * unknown counterparty.
+ */
+export function ownWalletAddresses(
+  accounts: readonly { index: number; name: string; evmAddress: string | null }[],
+  aa: AaAddressFacts | null,
+): OwnAddress[] {
+  const out: OwnAddress[] = [];
+  const seen = new Set<string>();
+  for (const account of accounts) {
+    if (!account.evmAddress || !ADDRESS.test(account.evmAddress)) continue;
+    walletAddressesFor(account.evmAddress, account.index, aa).forEach((address, i) => {
+      const key = address.toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push({ address, label: i === 0 ? account.name : `${account.name}’s smart account` });
+    });
+  }
+  return out;
+}
+
+/** The own-address entry for `address` (case-insensitive), or null. */
+export function findOwnAddress(address: string, own: readonly OwnAddress[]): OwnAddress | null {
+  const lower = address.toLowerCase();
+  return own.find((o) => o.address.toLowerCase() === lower) ?? null;
+}
+
 export interface RiskFacts {
   /** The transaction's `to` (what classification and age describe). */
   to: string;
+  /** Set when `to` is one of the wallet's own addresses (no age or first-interaction checks then). */
+  ownRecipient?: OwnAddress;
+  /** Set when the paid party differs from `to` and is one of the wallet's own addresses. */
+  ownCounterparty?: OwnAddress;
   /** classifyRecipient result for `to`; absent when the lookup failed or was skipped. */
   recipientClass?: RecipientClass;
   /** True when an endpoint was available, so classification was attempted. */
@@ -422,6 +469,11 @@ export function recipientClassText(to: string, recipientClass: RecipientClass, o
     : `This transaction goes to a regular account that runs delegated contract code (${to}).`;
 }
 
+/** The calm line for a send to one of the wallet's own addresses. */
+export function ownAccountText(own: OwnAddress): string {
+  return `This transaction goes to one of your own accounts in this wallet: ${own.label} (${own.address}).`;
+}
+
 function firstInteractionLine(facts: RiskFacts): RiskLine | null {
   if (!facts.firstInteractionApplicable) return null;
   if (facts.firstInteraction?.known || facts.nativeInteraction?.known) return null;
@@ -493,7 +545,16 @@ export function computeRiskLines(facts: RiskFacts): RiskLine[] {
     ...(s.subject ? { subject: s.subject } : {}),
   }));
 
-  if (facts.recipientClass) {
+  if (facts.ownRecipient && !facts.expectedOwnDelegation) {
+    // A send between the wallet's own accounts: one calm line, whatever the
+    // address's code (an own smart account is a contract, possibly a new one).
+    lines.push({
+      type: 'recipient-class',
+      tone: 'notice',
+      text: ownAccountText(facts.ownRecipient),
+      subject: facts.to,
+    });
+  } else if (facts.recipientClass) {
     const saidByEngine = lines.some(
       (l) => l.type === 'no-code-recipient-with-calldata' || l.type === 'delegated-eoa',
     );
@@ -526,6 +587,15 @@ export function computeRiskLines(facts: RiskFacts): RiskLine[] {
             'the oldest state this endpoint serves.'
           : CONTRACT_AGE_UNKNOWN_LINE,
       subject: facts.to,
+    });
+  }
+
+  if (facts.ownCounterparty) {
+    lines.push({
+      type: 'recipient-class',
+      tone: 'notice',
+      text: `The recipient is ${ownAccountText(facts.ownCounterparty).replace(/^This transaction goes to /, '')}`,
+      subject: facts.ownCounterparty.address,
     });
   }
 
@@ -591,6 +661,12 @@ export interface GatherRiskOptions {
    * pinned Kernel delegate raises no delegated-eoa signal.
    */
   ownAddresses?: readonly string[];
+  /**
+   * The wallet's own addresses with names (ownWalletAddresses). A `to` or
+   * counterparty among them is described as the user's own account, and no
+   * first-interaction or contract-age check runs for it.
+   */
+  ownAccounts?: readonly OwnAddress[];
 }
 
 async function attempt<T>(fn: () => Promise<T>): Promise<T | undefined> {
@@ -701,6 +777,13 @@ export async function gatherRiskFacts(options: GatherRiskOptions): Promise<RiskF
     options.assetChanges ?? approvalChangesFromCalldata(options.to, options.wallet, options.data);
   const facts: RiskFacts = { to: options.to, hasCalldata, assetChanges, chainCaip2: options.chainCaip2 };
   if (!ADDRESS.test(options.to) || !ADDRESS.test(options.wallet)) return facts;
+  // The sending address always counts as the wallet's own.
+  const own: OwnAddress[] = [
+    ...(options.ownAccounts ?? []),
+    { address: options.wallet, label: 'the sending account itself' },
+  ];
+  const ownTo = findOwnAddress(options.to, own);
+  if (ownTo) facts.ownRecipient = ownTo;
   const transport =
     options.transport ?? (options.url ? simulationTransport(options.url) : null);
   if (!transport) return facts;
@@ -722,7 +805,9 @@ export async function gatherRiskFacts(options: GatherRiskOptions): Promise<RiskF
     ) {
       facts.expectedOwnDelegation = true;
     }
-    if (recipientClass.kind !== 'contract' || threshold === undefined) return;
+    // No age check for the wallet's own smart account: a freshly deployed
+    // own account is not a "new contract" risk.
+    if (recipientClass.kind !== 'contract' || threshold === undefined || facts.ownRecipient) return;
     Object.assign(facts, await contractAgeFacts(transport, options.to, threshold));
   };
 
@@ -765,7 +850,11 @@ export async function gatherRiskFacts(options: GatherRiskOptions): Promise<RiskF
     }
   };
 
-  const selfSend = counterparty.toLowerCase() === options.wallet.toLowerCase();
+  const ownParty = findOwnAddress(counterparty, own);
+  if (ownParty && counterparty.toLowerCase() !== options.to.toLowerCase()) facts.ownCounterparty = ownParty;
+  // A send to the wallet itself or to another of its own addresses is never
+  // a first interaction worth a warning (finding 13), so no search runs.
+  const selfSend = ownParty !== null;
   facts.firstInteractionApplicable = !selfSend;
   await Promise.all([
     classifyTask(),

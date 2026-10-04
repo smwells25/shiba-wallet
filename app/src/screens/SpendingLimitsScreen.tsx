@@ -8,19 +8,24 @@ import { useTheme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
 import { EVM_CHAIN_ID } from '../wallet/send';
+import { requireLocalAuth } from '../wallet/biometric';
 import { listTokens } from '../wallet/tokens';
 import { formatUnits, parseUnits } from '../wallet/balances';
 import { evmProfileByCaip2 } from '../config/evm-chain';
 import {
   NATIVE_TOKEN,
   SPENDING_HONESTY_SENTENCE,
+  SPENDING_LOOSEN_PROMPT,
   SPENDING_NO_ONCHAIN_NOTE,
   SPENDING_NOT_COUNTED_BEFORE_NOTE,
+  SPENDING_REMOVE_PROMPT,
+  SPENDING_RESET_PROMPT,
   SPENDING_SCREEN_EXPLAINER,
   WINDOW_PRESETS,
   listSpendingPolicies,
   listSpendingScopes,
   parseCustomWindow,
+  policyLooseningReasons,
   policySummary,
   removeSpendingPolicy,
   resetSpendingLimits,
@@ -194,6 +199,24 @@ export function SpendingLimitsScreen({ navigation }: Props) {
       setFormError(e instanceof Error ? e.message : 'Choose a time window.');
       return;
     }
+    // Loosening a saved limit asks for the device check first (finding 10),
+    // like "Send anyway" does; a new limit or a tighter one needs none.
+    const nextCountFees = chosen.token === NATIVE_TOKEN ? countFees : false;
+    if (editingPolicy && editingId === editingPolicy.id) {
+      const looser = policyLooseningReasons(editingPolicy, {
+        cap,
+        windowSeconds,
+        allowOverride,
+        countFees: nextCountFees,
+      });
+      if (looser.length > 0) {
+        const auth = await requireLocalAuth(SPENDING_LOOSEN_PROMPT);
+        if (!auth.ok) {
+          setFormError(`Not saved: this change ${looser.join(', ')}, and the device check did not pass. ${auth.message}`);
+          return;
+        }
+      }
+    }
     setBusy(true);
     try {
       await saveSpendingPolicy(
@@ -206,7 +229,7 @@ export function SpendingLimitsScreen({ navigation }: Props) {
           cap,
           windowSeconds,
           allowOverride,
-          countFees: chosen.token === NATIVE_TOKEN ? countFees : false,
+          countFees: nextCountFees,
         },
         options.map((o) => o.token),
       );
@@ -223,7 +246,8 @@ export function SpendingLimitsScreen({ navigation }: Props) {
     if (!scope) return;
     Alert.alert(
       `Remove the ${p.symbol} limit?`,
-      `${policySummary(p, false)}. Sends of ${p.symbol} from this account on ${evmChain.label} will no ` +
+      // Masked under Hide amounts like every other readout (finding 10).
+      `${policySummary(p, hideAmounts)}. Sends of ${p.symbol} from this account on ${evmChain.label} will no ` +
         'longer be checked against it, and its spending record is deleted.',
       [
         { text: 'Cancel', style: 'cancel' },
@@ -231,6 +255,12 @@ export function SpendingLimitsScreen({ navigation }: Props) {
           text: 'Remove',
           style: 'destructive',
           onPress: async () => {
+            // Removing a limit asks for the device check first, like "Send anyway".
+            const auth = await requireLocalAuth(SPENDING_REMOVE_PROMPT);
+            if (!auth.ok) {
+              Alert.alert('Not removed', auth.message);
+              return;
+            }
             try {
               await removeSpendingPolicy(scope, p.id);
             } catch (e) {
@@ -256,6 +286,12 @@ export function SpendingLimitsScreen({ navigation }: Props) {
           text: 'Reset',
           style: 'destructive',
           onPress: async () => {
+            // Resetting deletes every limit: the same device check as removing one.
+            const auth = await requireLocalAuth(SPENDING_RESET_PROMPT);
+            if (!auth.ok) {
+              Alert.alert('Not reset', auth.message);
+              return;
+            }
             await resetSpendingLimits();
             reload();
           },

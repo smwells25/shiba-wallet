@@ -1024,6 +1024,16 @@ console.log('theme tokens in screens (phase 12 item 4):');
     const src = readFileSync(new globalThis.URL(f, import.meta.url), 'utf8');
     check(`${f.split('/').pop()}: no hard-coded TESTNET orange`, !/#e07800|#a85a00/i.test(src));
   }
+  // Phase 12 rehearsal finding 6: the app-wide TESTNET banner in App.tsx was
+  // still white on #e07800 (2.3:1 in dark mode).
+  {
+    const app = readFileSync(new globalThis.URL('../App.tsx', import.meta.url), 'utf8');
+    const banner = app.slice(app.indexOf('function TestnetBanner'), app.indexOf('function Root'));
+    check('App.tsx TESTNET banner: no hard-coded orange or white anywhere in the file',
+      !/#e07800|#a85a00/i.test(app) && !/'#ffffff'|'#fff'|'white'/i.test(app));
+    check('App.tsx TESTNET banner: background theme.testnetFill, text theme.onTestnetFill',
+      /backgroundColor: theme\.testnetFill/.test(banner) && /color: theme\.onTestnetFill/.test(banner) && /const theme = useTheme\(\);/.test(banner));
+  }
   for (const f of ['../src/screens/PasskeyScreen.tsx', '../src/screens/UpgradeAccountScreen.tsx', '../src/components/RecoveryViews.tsx']) {
     const src = readFileSync(new globalThis.URL(f, import.meta.url), 'utf8');
     check(`${f.split('/').pop()}: TESTNET badge uses testnetFill / onTestnetFill`,

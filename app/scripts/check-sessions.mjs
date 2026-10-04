@@ -72,6 +72,8 @@ import {
   sendSessionCalls,
   sessionCanBeTested,
   sessionLocalStatusText,
+  sessionProgressTitle,
+  sessionRevokeKeySentence,
   sessionTestCall,
   sessionVaultId,
   validateGrantForAccount,
@@ -819,6 +821,29 @@ console.log('check-sessions: mainnet readiness gate (phase 9 item 6)');
   check('mainnet installSession refused before storing, vaulting or submitting', /only on test networks/.test(e2?.message ?? '') && !submitted && vault.map.size === 0 && (await store.getItem(SESSIONS_KEY)) === null);
   const e3 = await caught(() => sendSessionCalls({ bundle: mainnetBundle, record: { chain: 'eip155:1', grant: '{}', keyHeld: true, localStatus: 'installed' }, calls: [], vault }));
   check('mainnet sendSessionCalls refused before the vault is read or any request', /only on test networks/.test(e3?.message ?? '') && vault.loads === 0 && node.calls.length === before);
+}
+
+
+// ---------------------------------------------------------------------------
+console.log('check-sessions: revoke and progress copy (phase 12 rehearsal finding 7)');
+// ---------------------------------------------------------------------------
+{
+  const OLD = 'Signed by your account key. Once the bundler accepts it, the session key is deleted from this device.';
+  check('a key still on this device: the old sentence, byte for byte', sessionRevokeKeySentence({ keyHeld: true, source: 'manual' }) === OLD &&
+    sessionRevokeKeySentence({ keyHeld: true, source: 'subscription', subscription: { keyExportedAt: null } }) === OLD);
+  const handed = sessionRevokeKeySentence({ keyHeld: false, source: 'subscription', subscription: { keyExportedAt: 1_800_000_000_000 } });
+  check('a subscription key already handed over: never promises to delete it here; says the merchant’s copy stops working',
+    !/deleted from this device/.test(handed) && /no longer holds the subscription key/.test(handed) && /merchant’s copy stops working/.test(handed), handed);
+  check('a dApp-held (ERC-7715) key: the dApp’s key stops working', /The dApp holds the session key/.test(sessionRevokeKeySentence({ keyHeld: false, source: 'erc7715' })) && !/deleted from this device/.test(sessionRevokeKeySentence({ keyHeld: false, source: 'erc7715' })));
+  check('progress titles: a subscription is never called a "Session install"',
+    sessionProgressTitle('subscription') === 'Subscription sent to the bundler' && sessionProgressTitle('install') === 'Session install sent to the bundler' &&
+      sessionProgressTitle('revoke') === 'Revocation sent to the bundler' && sessionProgressTitle('test') === 'Session test operation sent to the bundler');
+  const screen = readFileSync(new URL('../src/screens/SessionsScreen.tsx', import.meta.url), 'utf8');
+  const subInstall = screen.slice(screen.indexOf('const onSubInstall = async'), screen.indexOf('const onShowKey = async'));
+  check('the subscription install reports progress kind "subscription"; the screen title comes from sessionProgressTitle',
+    /setProgress\(\{ kind: 'subscription'/.test(subInstall) && /\{sessionProgressTitle\(progress\.kind\)\}/.test(screen) && !/\{what\} sent to the bundler/.test(screen));
+  check('the revoke confirm uses sessionRevokeKeySentence (no fixed promise to delete the key)',
+    /sub=\{sessionRevokeKeySentence\(revokeTarget\.record\)\}/.test(screen) && !screen.includes(`sub="${OLD}"`));
 }
 
 console.log(`\ncheck-sessions: ${passed} passed, ${failed} failed`);

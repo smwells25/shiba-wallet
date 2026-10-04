@@ -108,6 +108,8 @@ import { listContacts, matchRecipient, type Contact } from '../wallet/contacts';
 import { BalanceChangePreview } from '../components/BalanceChangePreview';
 import { RiskWarnings } from '../components/RiskWarnings';
 import { SpendingPolicyNotice, spendingGateForQuote } from '../components/SpendingPolicyViews';
+import { useOwnEvmAddresses } from '../wallet/useOwnAddresses';
+import { findOwnAddress } from '../wallet/risk';
 import { recordAcceptedSpend, spendingInputForQuote } from '../wallet/spending-policy';
 import { PREVIEW_AA_NOTE } from '../wallet/simulation';
 import { useAccountDelegation } from '../wallet/useDelegation';
@@ -192,6 +194,9 @@ export function SendScreen({ route, navigation }: Props) {
   // Sepolia test mode switches every EVM-touching piece of this screen
   // at once and the two modes never mix.
   const { evmChain, hideAmounts } = usePrefs();
+  // The wallet's own EVM addresses (accounts and their smart accounts): the
+  // success screen names them instead of offering "Save as contact".
+  const ownAddresses = useOwnEvmAddresses();
   const account = accounts.find((a) => a.chainId === route.params.chainId);
   const tokenId = route.params.tokenId;
   const tokenMode = tokenId !== undefined;
@@ -468,6 +473,16 @@ export function SendScreen({ route, navigation }: Props) {
     if (!contactsNetworkId) return null;
     const match = contactMatchFor(address);
     if (match.kind !== 'none') return <RecipientContactNotice match={match} address={address} />;
+    // One of the wallet's own accounts (finding 13): named as such, never
+    // offered as a new contact.
+    const own = route.params.chainId === EVM_CHAIN_ID ? findOwnAddress(address, ownAddresses) : null;
+    if (own) {
+      return (
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          {`This is one of your own accounts in this wallet: ${own.label}.`}
+        </Text>
+      );
+    }
     return (
       <SaveContactInline
         key={address}
@@ -1348,7 +1363,7 @@ export function SendScreen({ route, navigation }: Props) {
           to={quote.calls[0]!.to}
           data={quote.calls[0]!.data}
         />
-        <SpendingPolicyNotice owner={quotedFrom} />
+        <SpendingPolicyNotice owner={quotedFrom} quote={quote} from={quotedFrom} />
         <Text style={[styles.simulationOk, { color: theme.success }]}>
           Bundler gas estimate passed (eth_estimateUserOperationGas simulated the operation).
         </Text>
@@ -1434,7 +1449,7 @@ export function SendScreen({ route, navigation }: Props) {
           counterparty={quote.to}
           data={quote.data}
         />
-        <SpendingPolicyNotice owner={quotedFrom} />
+        <SpendingPolicyNotice owner={quotedFrom} quote={quote} from={quotedFrom} />
 
         {!simulationFailed && !quote.returnedFalse ? (
           <Text style={[styles.simulationOk, { color: theme.success }]}>
@@ -1541,7 +1556,7 @@ export function SendScreen({ route, navigation }: Props) {
           counterparty={quote.to}
           data={quote.data}
         />
-        <SpendingPolicyNotice owner={quotedFrom} />
+        <SpendingPolicyNotice owner={quotedFrom} quote={quote} from={quotedFrom} />
 
         {!simulationFailed ? (
           <Text style={[styles.simulationOk, { color: theme.success }]}>
@@ -1654,7 +1669,7 @@ export function SendScreen({ route, navigation }: Props) {
         {quote.kind === 'evm' ? (
           <RiskWarnings url={confirmUrl} wallet={account.address} to={quote.to} data={quote.data} />
         ) : null}
-        {quote.kind === 'evm' ? <SpendingPolicyNotice owner={quotedFrom} /> : null}
+        {quote.kind === 'evm' ? <SpendingPolicyNotice owner={quotedFrom} quote={quote} from={quotedFrom} /> : null}
 
         {quote.kind === 'evm' ? (
           quote.simulation.ok ? (
@@ -1930,6 +1945,7 @@ export function SendScreen({ route, navigation }: Props) {
       {validation?.ok &&
       formMatch?.kind === 'none' &&
       contactsNetworkId &&
+      !(route.params.chainId === EVM_CHAIN_ID && findOwnAddress(validation.normalized, ownAddresses)) &&
       scannedRecipient !== null &&
       scannedRecipient === recipient ? (
         <SaveContactInline

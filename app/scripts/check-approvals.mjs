@@ -76,8 +76,13 @@ import {
   computeRiskLines,
   gatherRiskFacts,
   CONTRACT_AGE_UNKNOWN_LINE,
+  findOwnAddress,
+  ownAccountText,
+  ownWalletAddresses,
   searchNativeInteraction,
 } from '../src/wallet/risk.ts';
+import { walletAddressesFor } from '../src/wallet/activity-sentences.ts';
+import { KERNEL_V3_3 } from '@shiba-wallet/chains-evm';
 import { describeAssetChanges } from '../src/wallet/simulation.ts';
 import { USDC_MAINNET } from '../src/wallet/erc20.ts';
 
@@ -831,6 +836,62 @@ node.codes[DELEGATED.toLowerCase()] = '0xef0100' + DELEGATE_TARGET.slice(2);
   });
   const lines = computeRiskLines(facts);
   check('warnings first, then notices', lines.map((l) => l.tone).join(',') === 'warning,notice,notice', lines.map((l) => l.type).join(','));
+}
+
+
+// Finding 13 of the phase 12 rehearsal: the wallet's own addresses (other
+// accounts' EOAs, own Kernel / recovered smart accounts) are never treated
+// as first-time or unknown counterparties.
+console.log('own accounts on the risk card:');
+{
+  const ACCOUNT2 = DRAINER; // stands in for Account 2's EOA
+  const RECOVERED = '0x1D723b78e1D0D84Fd0531e2686285fb1B6414106';
+  const aa = { accountType: 'kernel-v3.3', factory: KERNEL_V3_3.factory, factoryImplementation: null, kernelValidator: null, recoveredAccounts: [{ owner: ACCOUNT2, account: RECOVERED }] };
+  const own = ownWalletAddresses([{ index: 0, name: 'Account 1', evmAddress: ME }, { index: 1, name: 'Account 2', evmAddress: ACCOUNT2 }, { index: 2, name: 'Account 3', evmAddress: null }], aa);
+  const kernel1 = walletAddressesFor(ME, 0, aa)[1];
+  const kernel2 = walletAddressesFor(ACCOUNT2, 1, aa)[1];
+  check('ownWalletAddresses: each EOA, its Kernel counterfactual (account index as salt) and a recovered account, named',
+    own.length === 5 && own[0].address === ME && own[0].label === 'Account 1' && own[1].address === kernel1 && own[1].label === 'Account 1’s smart account' &&
+      own[2].label === 'Account 2' && own[3].address === kernel2 && findOwnAddress(RECOVERED.toLowerCase(), own)?.label === 'Account 2’s smart account',
+    JSON.stringify(own));
+  check('…EOAs only when the chain has no Kernel configuration', ownWalletAddresses([{ index: 0, name: 'Account 1', evmAddress: ME }], null).length === 1);
+
+  node = defaultNode();
+  node.codes[kernel1.toLowerCase()] = '0x363d3d373d3d363d7f';
+  node.deployedAt[kernel1.toLowerCase()] = HEAD - 10n; // the own smart account was deployed moments ago
+  const TRACKED = [{ address: USDC, symbol: 'USDC' }];
+  calls = [];
+  const toOwnSmart = await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: kernel1, chainCaip2: MAINNET, trackedTokens: TRACKED, ownAccounts: own });
+  const ownLines = computeRiskLines(toOwnSmart);
+  check('send to the own (freshly deployed) smart account: one calm own-account line, no "new contract", no first-time line',
+    ownLines.length === 1 && ownLines[0].tone === 'notice' && ownLines[0].text === ownAccountText(own[1]) && /one of your own accounts in this wallet: Account 1’s smart account/.test(ownLines[0].text),
+    ownLines.map((l) => l.text).join(' | '));
+  check('…and neither the age search nor the first-interaction search ran', !calls.some((c) => c.method === 'eth_getLogs') && toOwnSmart.contractAge === undefined && toOwnSmart.firstInteractionApplicable === false);
+
+  calls = [];
+  const toAccount2 = await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: ACCOUNT2, chainCaip2: MAINNET, trackedTokens: TRACKED, ownAccounts: own });
+  const a2 = computeRiskLines(toAccount2);
+  check('send to Account 2’s EOA: named as Account 2, no first-interaction line, no search',
+    a2.length === 1 && /your own accounts in this wallet: Account 2 \(/.test(a2[0].text) && !a2.some((l) => l.type.startsWith('first-interaction')) && !calls.some((c) => c.method === 'eth_getLogs'),
+    a2.map((l) => l.text).join(' | '));
+
+  const tokenToOwn = await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: USDC, counterparty: kernel2, data: '0xa9059cbb' + '00'.repeat(64), chainCaip2: MAINNET, trackedTokens: TRACKED, ownAccounts: own });
+  const tl = computeRiskLines(tokenToOwn);
+  check('token transfer to an own smart account: "The recipient is one of your own accounts…", no first-interaction line',
+    tl.some((l) => l.text === `The recipient is one of your own accounts in this wallet: Account 2’s smart account (${kernel2}).`) && !tl.some((l) => l.type.startsWith('first-interaction')),
+    tl.map((l) => l.text).join(' | '));
+
+  // Mutation guard: without the own list the same send is a first-time
+  // counterparty again, so the checks above really depend on ownAccounts.
+  const stranger = computeRiskLines(await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: ACCOUNT2, chainCaip2: MAINNET, trackedTokens: TRACKED }));
+  check('control: the same address without ownAccounts gets the first-interaction notice', stranger.some((l) => l.type === 'first-interaction-unknown'));
+
+  const riskSrc = (await import('node:fs')).readFileSync(new URL('../src/components/RiskWarnings.tsx', import.meta.url), 'utf8');
+  check('RiskWarnings passes ownAccounts built from every account and the chain’s AA configuration', /ownWalletAddresses\(accountList, aa\)/.test(riskSrc) && /ownAccounts,/.test(riskSrc) && /getAaConfig\(evmChain\.caip2\)/.test(riskSrc));
+  const sendSrc = (await import('node:fs')).readFileSync(new URL('../src/screens/SendScreen.tsx', import.meta.url), 'utf8');
+  const succ = sendSrc.slice(sendSrc.indexOf('const renderSuccessContact'), sendSrc.indexOf('<SaveContactInline', sendSrc.indexOf('const renderSuccessContact')));
+  check('success screen: an own address is named and returns BEFORE "Save as contact" is offered', /findOwnAddress\(address, ownAddresses\)/.test(succ) && /if \(own\) \{/.test(succ) && /one of your own accounts in this wallet/.test(succ));
+  check('scan offer on the form skips own addresses too', /!\(route\.params\.chainId === EVM_CHAIN_ID && findOwnAddress\(validation\.normalized, ownAddresses\)\)/.test(sendSrc));
 }
 
 check('approximate durations', approxDuration(9000n) === 'about 30 hours' && approxDuration(72000n) === 'about 10 days' && approxDuration(1n) === 'about 1 minute' && approxDuration(64n) === 'about 13 minutes' && approxDuration(300n) === 'about 1 hour');

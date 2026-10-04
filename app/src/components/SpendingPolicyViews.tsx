@@ -8,6 +8,7 @@ import {
   SPENDING_REVIEW_CHECKED_NOTE,
   SPENDING_SECTION_TITLE,
   evaluateBeforeSigning,
+  overLimitPreviewLines,
   policySummary,
   spendingInputForQuote,
   spendingReadouts,
@@ -112,12 +113,64 @@ export function confirmSpendingCheck(
  * network with what is already spent in each window (masked under Hide
  * amounts), and the honesty sentence. Renders nothing when there is no
  * limit. The decision itself happens when the user confirms.
+ *
+ * With `quote` and `from` it also looks ahead (finding 12 of the rehearsal):
+ * when the quote's own amounts already go over a limit, a warning line says
+ * so BEFORE the user taps Send. The look-ahead runs the same evaluation as
+ * the gate but without the preview simulation and without staging anything
+ * for the recorder; the gate on tap is unchanged.
  */
-export function SpendingPolicyNotice({ owner }: { owner: string | null }) {
+export function SpendingPolicyNotice({
+  owner,
+  quote,
+  from,
+  quoteOutflows,
+}: {
+  owner: string | null;
+  quote?: EvmSendQuote | Erc20SendQuote | NftSendQuote | AaSendQuote | null;
+  from?: string | null;
+  /** Outflows the gate also counts beyond the calls (the swap's sell amount). */
+  quoteOutflows?: Outflow[];
+}) {
   const theme = useTheme();
   const { evmChain, hideAmounts } = usePrefs();
   const [readouts, setReadouts] = useState<SpendingReadout[] | null>(null);
   const [damaged, setDamaged] = useState(false);
+  const [lookAhead, setLookAhead] = useState<SpendingCheck | null>(null);
+  // Callers pass quoteOutflows inline; a string key keeps the effect from
+  // re-running on every render.
+  const outflowsKey = quoteOutflows ? quoteOutflows.map((o) => `${o.token}:${o.amount}`).join(',') : '';
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!owner || !quote || !from) return;
+    const extra: Outflow[] = outflowsKey
+      ? outflowsKey.split(',').map((part) => {
+          const [token, amount] = part.split(':');
+          return { token: token!, amount: BigInt(amount!) };
+        })
+      : [];
+    const input = spendingInputForQuote(quote, from);
+    evaluateBeforeSigning({
+      scope: { chain: evmChain.caip2, owner },
+      spender: input.spender,
+      calls: input.calls,
+      fee: input.fee,
+      url: null,
+      quoteOutflows: extra,
+      stage: false,
+    }).then(
+      (check) => {
+        if (!cancelled) setLookAhead(check);
+      },
+      () => {
+        if (!cancelled) setLookAhead(null);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [owner, quote, from, outflowsKey, evmChain.caip2]);
 
   useEffect(() => {
     let cancelled = false;
@@ -153,6 +206,17 @@ export function SpendingPolicyNotice({ owner }: { owner: string | null }) {
           </Text>
         ))
       )}
+      {lookAhead
+        ? overLimitPreviewLines(lookAhead, hideAmounts).map((line) => (
+            <Text
+              key={line}
+              accessibilityLabel={`Warning: ${line}`}
+              style={[styles.warning, { color: theme.warningText, backgroundColor: theme.warningSurface, borderColor: theme.warningBorder }]}
+            >
+              {line}
+            </Text>
+          ))
+        : null}
       <Text style={[styles.muted, { color: theme.textMuted }]}>
         {SPENDING_REVIEW_CHECKED_NOTE} {SPENDING_HONESTY_SENTENCE}
       </Text>
@@ -178,5 +242,13 @@ const styles = StyleSheet.create({
   muted: {
     fontSize: 12,
     lineHeight: 17,
+  },
+  warning: {
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '700',
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 8,
   },
 });

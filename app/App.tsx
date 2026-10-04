@@ -55,10 +55,14 @@ function TestnetBanner() {
   // The active test profile carries its own banner sentence (Ethereum
   // Sepolia or Base Sepolia); the Sepolia wording is kept verbatim.
   const { evmChain } = usePrefs();
+  // Colours come from the theme tokens like every other TESTNET badge
+  // (theme-palette.ts): the light palette's darker orange with white text,
+  // and the dark palette's orange with dark text, both above 4.5:1.
+  const theme = useTheme();
   const text = evmChain.bannerText ?? 'TESTNET — Sepolia test mode is on. Amounts are test ETH, not real funds.';
   return (
-    <View style={[styles.testnetBanner, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-      <Text style={styles.testnetBannerText}>{text}</Text>
+    <View style={[styles.testnetBanner, { backgroundColor: theme.testnetFill, paddingBottom: Math.max(insets.bottom, 8) }]}>
+      <Text style={[styles.testnetBannerText, { color: theme.onTestnetFill }]}>{text}</Text>
     </View>
   );
 }
@@ -233,13 +237,11 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   testnetBanner: {
-    backgroundColor: '#e07800',
     paddingTop: 8,
     paddingHorizontal: 16,
     alignItems: 'center',
   },
   testnetBannerText: {
-    color: '#ffffff',
     fontSize: 13,
     fontWeight: '700',
     textAlign: 'center',

@@ -24,6 +24,8 @@ import { ENTRYPOINT_V07, selector, toHex } from '@shiba-wallet/chains-evm';
 import { readFileSync } from 'node:fs';
 import {
   AA_FUNDING_TITLE,
+  aaCanPaySelf,
+  aaFundingMessage,
   AaFundingError,
   QUOTE_FAILED_TITLE,
   aaSendApprovalPrompt,
@@ -133,6 +135,7 @@ function fakeNode({
   chainId = '0x1',
   senderDeployed = false,
   senderBalance = 10n ** 18n, // 1 ETH
+  deposit = null, // EntryPoint deposit; null = the read fails (as before)
   calls = [],
 } = {}) {
   const transport = async (method, params) => {
@@ -163,6 +166,9 @@ function fakeNode({
       }
       if (same(to, ENTRYPOINT_V07) && data.startsWith(sel('getNonce(address,uint192)'))) {
         return '0x07';
+      }
+      if (deposit !== null && same(to, ENTRYPOINT_V07) && data.startsWith(sel('balanceOf(address)'))) {
+        return '0x' + deposit.toString(16).padStart(64, '0');
       }
       throw new Error(`fake node: unexpected eth_call to ${to} data ${data.slice(0, 10)}`);
     }
@@ -1078,6 +1084,46 @@ await (async () => {
   }
   check('amount + 1 wei passes the pre-check; the post-estimate check names the worst-case fee and the address', postErr instanceof AaFundingError && postErr.message.includes('a worst-case fee of') && postErr.message.includes(postErr.sender));
   check('describeAaError gives both the funding title', describeAaError(err, { accountType: 'simple', deployed: false })?.title === AA_FUNDING_TITLE && describeAaError(postErr, { accountType: 'simple', deployed: false })?.title === 'Your smart account needs funds first.');
+
+  // Finding 8 of the phase 12 rehearsal: the deploy sentence only for an
+  // account that is not deployed yet, and the EntryPoint deposit counted.
+  const DEPLOY_SENTENCE = 'A smart account can receive funds before it is deployed; the first send deploys it.';
+  check('undeployed account: the funding message keeps the deploy sentence', (err?.message ?? '').includes(DEPLOY_SENTENCE));
+  const { bundle: deployedEmpty } = makeBundle({ senderBalance: 0n, senderDeployed: true });
+  let deployedErr = null;
+  try {
+    await prepareAaSend(deployedEmpty, owner.address, RECIPIENT, AMOUNT);
+  } catch (e) {
+    deployedErr = e;
+  }
+  check('DEPLOYED account: refused with the funding message but WITHOUT the deploy sentence',
+    deployedErr instanceof AaFundingError && /Fund the smart account address/.test(deployedErr.message) && !deployedErr.message.includes(DEPLOY_SENTENCE), String(deployedErr));
+  const base = { sender: SENDER, amount: 5n, fee: 3n, balance: 4n, sponsored: false };
+  check('aaFundingMessage: deployed true / null omit the deploy sentence, false keeps it',
+    !aaFundingMessage({ ...base, deployed: true }).includes(DEPLOY_SENTENCE) && !aaFundingMessage({ ...base, deployed: null }).includes(DEPLOY_SENTENCE) && aaFundingMessage({ ...base, deployed: false }).includes(DEPLOY_SENTENCE));
+  check('aaFundingMessage names a non-zero EntryPoint deposit and that it pays only the fee',
+    aaFundingMessage({ ...base, deposit: 2n }).includes('plus its EntryPoint deposit of 2 wei (the deposit can pay only the fee, not the amount)') && !aaFundingMessage({ ...base, deposit: 0n }).includes('deposit'));
+  check('aaCanPaySelf: the deposit pays the fee first, the balance the rest and the amount',
+    aaCanPaySelf({ amount: 10n, fee: 5n, balance: 10n, deposit: 5n }) && !aaCanPaySelf({ amount: 10n, fee: 5n, balance: 10n, deposit: 4n }) &&
+      aaCanPaySelf({ amount: 10n, fee: 5n, balance: 11n, deposit: 4n }) && !aaCanPaySelf({ amount: 11n, fee: 0n, balance: 10n, deposit: 100n }) &&
+      !aaCanPaySelf({ amount: 10n, fee: 5n, balance: 10n, deposit: null }));
+  // Balance exactly the amount: refused without a deposit (above), accepted
+  // when the deposit covers the worst-case fee.
+  const { bundle: withDeposit, bundler: depositBundler } = makeBundle({ senderBalance: AMOUNT, deposit: 10n ** 17n });
+  const depQuote = await prepareAaSend(withDeposit, owner.address, RECIPIENT, AMOUNT);
+  check('balance == amount + a deposit that covers the fee: quoted (the deposit is counted)', depQuote.amount === AMOUNT && depositBundler.calls.some((c) => c.method === 'eth_estimateUserOperationGas'));
+  const { bundle: tinyDeposit } = makeBundle({ senderBalance: AMOUNT, deposit: 1n });
+  let partialErr = null;
+  try {
+    await prepareAaSend(tinyDeposit, owner.address, RECIPIENT, AMOUNT);
+  } catch (e) {
+    partialErr = e;
+  }
+  check('a deposit smaller than the fee: refused after the estimate, naming the deposit',
+    partialErr instanceof AaFundingError && partialErr.message.includes('a worst-case fee of') && partialErr.message.includes('EntryPoint deposit of 1 wei'), String(partialErr));
+  const { bundle: overDeposit, bundler: overBundler } = makeBundle({ senderBalance: AMOUNT - 1n, deposit: 10n ** 17n });
+  await checkRejects('the deposit never pays the amount: amount above the balance is refused before the bundler', () => prepareAaSend(overDeposit, owner.address, RECIPIENT, AMOUNT), 'Fund the smart account address');
+  check('…with zero bundler calls', overBundler.calls.length === 0);
 
   // Sponsored: only the amount must be covered, and the pre-check runs
   // before both the bundler and the paymaster.

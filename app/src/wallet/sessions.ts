@@ -1123,6 +1123,48 @@ export function sessionCanBeTested(record: SessionRecord): boolean {
 }
 
 /**
+ * The revoke confirm's sentence about the session key. The old fixed text
+ * ("…the session key is deleted from this device") was also shown for a
+ * subscription whose key had already been handed to the merchant and was no
+ * longer on the device (finding 7 of the rehearsal); it is kept verbatim for
+ * sessions whose key IS on this device.
+ */
+export function sessionRevokeKeySentence(record: Pick<SessionRecord, 'keyHeld' | 'source' | 'subscription'>): string {
+  if (record.keyHeld) {
+    return 'Signed by your account key. Once the bundler accepts it, the session key is deleted from this device.';
+  }
+  if (record.source === 'subscription' && record.subscription?.keyExportedAt != null) {
+    return (
+      'Signed by your account key. This device no longer holds the subscription key (it was handed to the ' +
+      'merchant); once the revocation is included on-chain, the merchant’s copy stops working.'
+    );
+  }
+  if (record.source === 'erc7715') {
+    return 'Signed by your account key. The dApp holds the session key; once the revocation is included on-chain, that key stops working.';
+  }
+  return (
+    'Signed by your account key. The session key is no longer on this device; once the revocation is ' +
+    'included on-chain, any copy of it stops working.'
+  );
+}
+
+export type SessionProgressKind = 'install' | 'subscription' | 'revoke' | 'test';
+
+/** Title of the Sessions screen's progress view. */
+export function sessionProgressTitle(kind: SessionProgressKind): string {
+  switch (kind) {
+    case 'install':
+      return 'Session install sent to the bundler';
+    case 'subscription':
+      return 'Subscription sent to the bundler';
+    case 'revoke':
+      return 'Revocation sent to the bundler';
+    case 'test':
+      return 'Session test operation sent to the bundler';
+  }
+}
+
+/**
  * Deletes a session's private key from this device and records that the
  * wallet no longer holds it (used once a subscription key has been handed to
  * the merchant). The vault entry is removed FIRST, so a failure to update the

@@ -136,8 +136,10 @@ export interface SubscriptionDraft {
 /**
  * Form → SubscriptionGrant. Input errors get plain messages; the engine's
  * validateSubscription then checks everything else and its text is shown
- * verbatim. The first period starts now, so the first payment can be taken
- * as soon as the grant is installed.
+ * verbatim. The first period starts at `context.now`. The Sessions screen
+ * calls this when Review opens and then moves the start to the moment the
+ * user taps Start (restartSubscriptionAt), so the time spent reading the
+ * review does not eat into the subscription's window.
  */
 export function buildSubscription(draft: SubscriptionDraft, context: { now: number; account?: string }): SubscriptionGrant {
   const merchant = validateRecipient(EVM_CHAIN_ID, draft.merchant);
@@ -171,6 +173,138 @@ export function buildSubscription(draft: SubscriptionDraft, context: { now: numb
     label: draft.label.trim(),
   };
   return sub;
+}
+
+/**
+ * The same subscription with its clock restarted at `now`: the start moves
+ * to `now` and the expiry moves by the same amount, so the number of
+ * payments (ceil((validUntil − startAt) / period), engine
+ * subscriptionPeriodCount) and every other term stay exactly as reviewed.
+ *
+ * Why (phase 12 emulator rehearsal, finding 1): the terms used to be fixed
+ * when Review opened, so the minutes spent on the review and the approval
+ * were taken out of the window — on a 2-minute test period only one of three
+ * payments fitted. The Sessions screen now restarts the clock when the user
+ * taps Start, re-quotes the install with the restarted terms (the permission
+ * id and the policy data change with the start), and shows the final dates
+ * once the bundler accepted the install. The engine's validation still runs
+ * on the restarted terms (subscriptionGrantFor).
+ */
+export function restartSubscriptionAt(sub: SubscriptionGrant, now: number): SubscriptionGrant {
+  if (!Number.isSafeInteger(now) || now <= 0) throw new Error('The start must be a unix time (seconds).');
+  return { ...sub, startAt: now, validUntil: now + (sub.validUntil - sub.startAt) };
+}
+
+/** Shown on the review under the plain sentence. */
+export const SUBSCRIPTION_START_NOTE =
+  'The subscription starts when you tap Start subscription, not when this screen opened: the dates above ' +
+  'move forward by the time you spend here, and the final dates are shown once the bundler accepts the install.';
+
+/**
+ * How much the re-quoted install's worst-case fee may exceed the reviewed one
+ * before the user is asked to review again (percent). A judgement call, not a
+ * standard: the restarted install has the same calls and sizes, so only the
+ * network's fee moves between the two quotes, and a small rise should not send
+ * the user back through the review.
+ */
+export const SUBSCRIPTION_REQUOTE_FEE_TOLERANCE_PERCENT = 20n;
+
+/** True when the re-quoted install must be reviewed again (fee rose beyond the tolerance, or sponsorship ended). */
+export function subscriptionRequoteNeedsReview(
+  reviewed: { fee: bigint; sponsored: boolean },
+  requoted: { fee: bigint; sponsored: boolean },
+): boolean {
+  if (reviewed.sponsored && !requoted.sponsored) return true;
+  if (requoted.sponsored) return false;
+  return requoted.fee * 100n > reviewed.fee * (100n + SUBSCRIPTION_REQUOTE_FEE_TOLERANCE_PERCENT);
+}
+
+export const SUBSCRIPTION_REQUOTE_TITLE = 'Please review again';
+export const SUBSCRIPTION_REQUOTE_MESSAGE =
+  'The network fee for the install rose since you opened the review. Nothing was signed. The review now ' +
+  'shows the new fee.';
+
+/** "0x69F0…7E8a". */
+export function shortAddress(address: string): string {
+  return address.length > 12 ? `${address.slice(0, 6)}…${address.slice(-4)}` : address;
+}
+
+/**
+ * The names of a new subscription: the terms' label (stored with the grant)
+ * and the list card's title. A typed name or the merchant's exact-match
+ * contact name gives "Subscription: <name>"; with neither, the card says
+ * "Subscription to 0x69F0…7E8a" (the rehearsal showed "Subscription:
+ * Subscription", finding 4).
+ */
+export function subscriptionNames(
+  typedLabel: string,
+  merchant: string,
+  merchantName: string | null,
+): { termsLabel: string; recordLabel: string } {
+  const named = typedLabel.trim() || (merchantName ?? '').trim();
+  if (named) return { termsLabel: named, recordLabel: `Subscription: ${named}` };
+  const short = shortAddress(merchant.trim());
+  return { termsLabel: `to ${short}`, recordLabel: `Subscription to ${short}` };
+}
+
+/**
+ * List order for subscription cards: live ones (installing, installed,
+ * revoking) first, then failed installs, then revoked ones; newest first
+ * within each group. Only the stored local status is used, never the
+ * on-chain read, so cards do not jump while their statuses load.
+ */
+export function sortSubscriptionRecords(records: readonly SessionRecord[]): SessionRecord[] {
+  const rank = (r: SessionRecord) => (r.localStatus === 'revoked' ? 2 : r.localStatus === 'failed' ? 1 : 0);
+  return [...records].sort((a, b) => rank(a) - rank(b) || b.createdAt - a.createdAt);
+}
+
+/**
+ * The fee-budget pre-fill: defaultFeeBudgetWei for the CURRENT payment count,
+ * capped at what the account can spare. "Can spare" is a judgement: the
+ * account's current balance minus, for a native-currency subscription, every
+ * payment it would make (payments × amount); the install's own fee is not
+ * subtracted because the review shows and checks it separately. `wei` null
+ * means nothing can be suggested (the account cannot even cover the payments,
+ * or the balance or fee is not known yet).
+ */
+export function suggestedFeeBudget(p: {
+  payments: number;
+  maxFeePerGas: bigint | null;
+  balance: bigint | null;
+  /** Native amount per payment (0 for an ERC-20 subscription). */
+  nativeAmountPerPayment: bigint;
+}): { wei: bigint | null; capped: boolean; uncapped: bigint | null; spare: bigint | null } {
+  if (!Number.isInteger(p.payments) || p.payments < 1 || p.maxFeePerGas === null) {
+    return { wei: null, capped: false, uncapped: null, spare: null };
+  }
+  const uncapped = defaultFeeBudgetWei(p.payments, p.maxFeePerGas);
+  if (p.balance === null) return { wei: uncapped, capped: false, uncapped, spare: null };
+  const committed = BigInt(p.payments) * p.nativeAmountPerPayment;
+  const spare = p.balance > committed ? p.balance - committed : 0n;
+  if (uncapped <= spare) return { wei: uncapped, capped: false, uncapped, spare };
+  return { wei: spare > 0n ? spare : null, capped: true, uncapped, spare };
+}
+
+/** The note under the fee-budget field when the pre-fill was capped. */
+export function feeBudgetCapNote(spare: bigint, uncapped: bigint, nativeSymbol: string): string {
+  return spare > 0n
+    ? `Lowered to what your account can spare (${formatUnits(spare, 18, 18)} ${nativeSymbol}); the usual ` +
+        `budget for this many payments would be ${formatUnits(uncapped, 18, 18)} ${nativeSymbol}. Fund the account ` +
+        'or enter a budget by hand.'
+    : `Your account cannot spare anything for fees after the payments themselves; the usual budget for this ` +
+        `many payments would be ${formatUnits(uncapped, 18, 18)} ${nativeSymbol}. Fund the account first.`;
+}
+
+/** GrantReview's key-holder phrase for a subscription ("Session key (held by …)"), one parenthesis only. */
+export const SUBSCRIPTION_KEY_HOLDER_TEXT = 'the merchant once you hand it over; until then, this device’s secure storage';
+
+/** The success screen's line with the dates the install actually carries. */
+export function subscriptionFinalDatesLine(sub: SubscriptionGrant): string {
+  const count = subscriptionPeriodCount(sub);
+  return (
+    `Final terms: the first payment can be taken from ${utc(sub.startAt)}, then one more every ` +
+    `${describePeriod(sub.periodSeconds)} (${count} in total); nothing after ${utc(sub.validUntil)}.`
+  );
 }
 
 /** The engine's grant for the subscription (validates; throws the engine's sentence). */
@@ -264,6 +398,143 @@ export async function buildSubscriptionKeyExport(record: SessionRecord, vault: S
     sessionPrivateKey: stored.toLowerCase(),
     sessionKey: grant.sessionKey,
     subscription: record.subscription.terms,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Hand-over channels: a .json file through the share sheet, or the clipboard
+// ---------------------------------------------------------------------------
+
+/**
+ * The hand-over used to offer React Native's plain-text Share, which put the
+ * private key into the share sheet's preview and into whatever the target
+ * app does with shared text (finding 9 of the rehearsal). It is now a file:
+ * the payload is written to a .json file in the app's cache directory and the
+ * FILE is shared (the same mechanism as components/RecordFileActions.tsx),
+ * then deleted. The orchestration lives here with injected file operations so
+ * scripts/check-subscriptions.mjs can test it under Node; the screen wires in
+ * expo-file-system and expo-sharing (components/SubscriptionKeyHandover.tsx).
+ */
+export const SUBSCRIPTION_KEY_FILE_DIRECTORY = 'subscription-key-handover';
+export const SUBSCRIPTION_KEY_FILE_MIME_TYPE = 'application/json';
+export const SUBSCRIPTION_KEY_FILE_UTI = 'public.json';
+
+/**
+ * How long the shared key file stays after the share sheet closes. Shorter
+ * than the recovery record's 60 s because this file holds a private key; not
+ * zero because on Android the share promise resolves when the target app's
+ * activity returns and some apps finish reading the shared content a moment
+ * later. A judgement call. Leftovers are also swept when the key screen
+ * closes and before the next hand-over.
+ */
+export const SUBSCRIPTION_KEY_FILE_DELETE_DELAY_MS = 10_000;
+
+/** "shiba-subscription-key_11155111_0x762fb3f6.json" (public data only). */
+export function subscriptionKeyFileName(payload: Pick<SubscriptionKeyExport, 'chainId' | 'permissionId'>): string {
+  const chain = /^[0-9]+$/.test(payload.chainId) ? payload.chainId : 'chain';
+  const pid = /^0x[0-9a-fA-F]{8}$/.test(payload.permissionId) ? payload.permissionId.toLowerCase() : 'permission';
+  return `shiba-subscription-key_${chain}_${pid}.json`;
+}
+
+/** The file operations the share flow needs (expo-file-system + expo-sharing in the app, fakes in scripts). */
+export interface SecretFileShareDeps {
+  /** Deletes every leftover file of earlier hand-overs. */
+  sweep: () => void;
+  /** Writes the text to a new file named `name` and returns its handle. */
+  write: (name: string, text: string) => { uri: string; remove: () => void };
+  /** Opens the share sheet for the file; resolves when the sheet closes. */
+  share: (uri: string) => Promise<void>;
+  /** Schedules the delayed deletion. */
+  schedule: (fn: () => void, ms: number) => void;
+  /** False when the platform cannot share files (the flow then refuses before writing anything). */
+  available: () => Promise<boolean>;
+}
+
+/**
+ * Writes the key payload to a .json file and shares the file: leftovers are
+ * swept first, the file is deleted SUBSCRIPTION_KEY_FILE_DELETE_DELAY_MS after
+ * the sheet closes, and at once if sharing fails. Nothing is written when file
+ * sharing is not available.
+ */
+export async function shareSubscriptionKeyFile(text: string, name: string, deps: SecretFileShareDeps): Promise<void> {
+  if (!(await deps.available())) {
+    throw new Error('Sharing files is not available on this device. Show the QR code to the merchant instead.');
+  }
+  deps.sweep();
+  const file = deps.write(name, text);
+  try {
+    await deps.share(file.uri);
+  } catch (e) {
+    file.remove();
+    throw e;
+  }
+  deps.schedule(() => file.remove(), SUBSCRIPTION_KEY_FILE_DELETE_DELAY_MS);
+}
+
+/** How long a copied key stays on the clipboard before the wallet overwrites it. */
+export const SUBSCRIPTION_KEY_CLIPBOARD_CLEAR_MS = 60_000;
+
+/**
+ * Shown with the Copy button. expo-clipboard 57.0.2 has no "clear" call (its
+ * Android setStringAsync is ClipData.newPlainText + setPrimaryClip; iOS sets
+ * UIPasteboard.general.string), so "clearing" means overwriting the clipboard
+ * with an empty string. It does not mark the clip as sensitive either (no
+ * ClipDescription extras are set), so a keyboard's own clipboard history is
+ * out of the wallet's reach; the warning says so. JavaScript timers do not
+ * run while the app is in the background, so the overwrite happens 60
+ * seconds after copying or as soon as the wallet is back in the foreground
+ * after that.
+ */
+export const SUBSCRIPTION_KEY_CLIPBOARD_WARNING =
+  'The clipboard can be read by other apps on this phone. The wallet empties it 60 seconds after you copy ' +
+  '(or when you come back to the wallet after that), and when you leave this screen. Keyboards that keep a ' +
+  'clipboard history of their own may still hold a copy; prefer the file or the QR code.';
+
+export interface ClipboardAutoClear {
+  /** Copies `text` and schedules the overwrite (a newer copy replaces the schedule). */
+  copy: (text: string) => Promise<void>;
+  /** Overwrites the clipboard now if this helper put something there that is still pending. */
+  clearNow: () => Promise<void>;
+  /** True while a copied secret is waiting to be overwritten. */
+  pending: () => boolean;
+}
+
+/**
+ * Copy-then-overwrite for secrets. `setString` is expo-clipboard's
+ * setStringAsync in the app; the timer functions are injectable for tests.
+ * clearNow overwrites only if a copy made by this helper is still pending, so
+ * leaving the screen without copying never touches the user's clipboard.
+ */
+export function createClipboardAutoClear(deps: {
+  setString: (text: string) => Promise<unknown>;
+  setTimer?: (fn: () => void, ms: number) => unknown;
+  clearTimer?: (handle: unknown) => void;
+  delayMs?: number;
+}): ClipboardAutoClear {
+  const setTimer = deps.setTimer ?? ((fn: () => void, ms: number) => setTimeout(fn, ms));
+  const clearTimer = deps.clearTimer ?? ((h: unknown) => clearTimeout(h as ReturnType<typeof setTimeout>));
+  const delay = deps.delayMs ?? SUBSCRIPTION_KEY_CLIPBOARD_CLEAR_MS;
+  let handle: unknown = null;
+  let isPending = false;
+  const clearNow = async () => {
+    if (handle !== null) clearTimer(handle);
+    handle = null;
+    if (!isPending) return;
+    isPending = false;
+    await deps.setString('');
+  };
+  return {
+    copy: async (text: string) => {
+      if (handle !== null) clearTimer(handle);
+      await deps.setString(text);
+      isPending = true;
+      handle = setTimer(() => {
+        handle = null;
+        void clearNow();
+      }, delay);
+    },
+    clearNow,
+    pending: () => isPending,
   };
 }
 

@@ -12,9 +12,11 @@ import {
   View,
 } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useFocusEffect } from '@react-navigation/native';
 import { allowScreenCaptureAsync, preventScreenCaptureAsync } from 'expo-screen-capture';
 import {
   NodeClient,
+  SUBSCRIPTION_NATIVE,
   parseSessionKeyGrant,
   toHex,
   type KernelPermissionInstall,
@@ -25,18 +27,20 @@ import type { RootStackParamList } from '../navigation';
 import { Button, TestNetworksOnlyCard, WarningBox, screenStyle } from '../components';
 import { ContactPicker, RecipientContactNotice } from '../components/Contacts';
 import { GrantReview } from '../components/SessionGrantViews';
-import { PayloadQr, ShareActions } from '../components/RecoveryViews';
+import { PayloadQr } from '../components/RecoveryViews';
+import { SubscriptionKeyHandoverActions } from '../components/SubscriptionKeyHandover';
 import { useTheme, type Theme } from '../theme';
 import { getEndpoint } from '../config/networks';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
 import { requireLocalAuth } from '../wallet/biometric';
-import { formatUnits } from '../wallet/balances';
+import { formatUnits, parseUnits } from '../wallet/balances';
 import { EVM_CHAIN_ID, describeSendError } from '../wallet/send';
 import {
   createAaClientFromConfig,
   describeAaError,
   getAaConfig,
+  retitleQuoteFailure,
   sendAa,
   summarizeAaReceipt,
   type AaClientBundle,
@@ -67,32 +71,46 @@ import {
   sendSessionCalls,
   sessionCanBeTested,
   sessionLocalStatusText,
+  sessionProgressTitle,
   sessionRecordKey,
+  sessionRevokeKeySentence,
   sessionStatusText,
   sessionTestCall,
   validateGrantForAccount,
   type AllowedCallDraft,
   type SessionAccountResolution,
   type SessionChainStatus,
+  type SessionProgressKind,
   type SessionRecord,
 } from '../wallet/sessions';
 import {
   SUBSCRIPTION_AUDIT_NOTE,
+  SUBSCRIPTION_KEY_HOLDER_TEXT,
   SUBSCRIPTION_KEY_WARNING,
   SUBSCRIPTION_MAX_PAYMENTS,
   SUBSCRIPTION_PERIOD_PRESETS,
+  SUBSCRIPTION_REQUOTE_MESSAGE,
+  SUBSCRIPTION_REQUOTE_TITLE,
+  SUBSCRIPTION_START_NOTE,
   buildSubscription,
   buildSubscriptionKeyExport,
-  defaultFeeBudgetWei,
+  feeBudgetCapNote,
   markSubscriptionKeyExported,
   readSubscriptionStatus,
+  restartSubscriptionAt,
+  sortSubscriptionRecords,
+  subscriptionFinalDatesLine,
   subscriptionGrantFor,
+  subscriptionKeyFileName,
   subscriptionKeyStatusText,
   subscriptionMeta,
+  subscriptionNames,
+  subscriptionRequoteNeedsReview,
   subscriptionReview,
   subscriptionStatusLines,
   subscriptionSummary,
   subscriptionTokenChoices,
+  suggestedFeeBudget,
   termsOf,
   type SubscriptionStatus,
   type SubscriptionTokenChoice,
@@ -129,6 +147,8 @@ interface PendingInstall {
 interface PendingSubscription extends PendingInstall {
   subscription: SubscriptionGrant;
   choice: SubscriptionTokenChoice;
+  /** The list card's title ("Subscription: <name>" or "Subscription to 0x…"). */
+  recordLabel: string;
 }
 
 interface SubscriptionFormState {
@@ -138,6 +158,12 @@ interface SubscriptionFormState {
   periodSeconds: number;
   payments: string;
   feeBudget: string;
+  /**
+   * True once the user typed a fee budget. Until then the field shows the
+   * suggestion for the CURRENT payment count and period (suggestedFeeBudget),
+   * so changing the number of payments changes the budget too.
+   */
+  feeEdited: boolean;
   label: string;
 }
 
@@ -148,11 +174,14 @@ const EMPTY_SUBSCRIPTION_FORM: SubscriptionFormState = {
   periodSeconds: SUBSCRIPTION_PERIOD_PRESETS[0]!.seconds,
   payments: '3',
   feeBudget: '',
+  feeEdited: false,
   label: '',
 };
 
 interface Progress {
-  kind: 'install' | 'revoke' | 'test';
+  kind: SessionProgressKind;
+  /** Subscriptions: the final dates the install carries (subscriptionFinalDatesLine). */
+  finalTerms?: string | null;
   userOpHash: string;
   state: 'pending' | 'done' | 'failed' | 'timeout';
   txHash: string | null;
@@ -206,8 +235,15 @@ export function SessionsScreen({ navigation }: Props) {
   const subPending = useRef<PendingSubscription | null>(null);
   const [subPendingView, setSubPendingView] = useState<PendingSubscription | null>(null);
   const [subStatuses, setSubStatuses] = useState<Record<string, SubscriptionStatus | 'loading'>>({});
+  /** Facts for the fee-budget suggestion: the node's fee and the Kernel account's balance (null until read). */
+  const [subFeeFacts, setSubFeeFacts] = useState<{ maxFeePerGas: bigint | null; balance: bigint | null }>({
+    maxFeePerGas: null,
+    balance: null,
+  });
+  /** What the subscription confirm's spinner is doing: re-quoting with the restarted clock, or signing. */
+  const [subSendStage, setSubSendStage] = useState<'requote' | 'signing'>('signing');
   /** The key hand-over payload: in memory only while the export screen is open. */
-  const [keyExport, setKeyExport] = useState<{ record: SessionRecord; text: string } | null>(null);
+  const [keyExport, setKeyExport] = useState<{ record: SessionRecord; text: string; fileName: string } | null>(null);
   const tokenChoices = useMemo(() => subscriptionTokenChoices(evmChain.caip2, symbol), [evmChain.caip2, symbol]);
 
   // The subscription key on screen must not end up in screenshots or the
@@ -258,45 +294,52 @@ export function SessionsScreen({ navigation }: Props) {
   // and ones resumed from the stored list below), by userOpHash.
   const waitingFor = useRef(new Set<string>());
   const reloadRef = useRef<() => void>(() => undefined);
+  /** Re-reads one record's on-chain status (and its subscription counters), and resumes an unsettled operation. */
+  const refreshRecord = useCallback(
+    (r: SessionRecord) => {
+      if (!bundle) return;
+      const key = sessionRecordKey(r.chain, r.account, r.permissionId);
+      setStatuses((prev) => ({ ...prev, [key]: 'loading' }));
+      void readSessionStatus(bundle.node, r).then((st) => setStatuses((prev) => ({ ...prev, [key]: st })));
+      if (r.source === 'subscription' && r.subscription) {
+        setSubStatuses((prev) => ({ ...prev, [key]: 'loading' }));
+        void readSubscriptionStatus(bundle.node, r).then((st) => setSubStatuses((prev) => ({ ...prev, [key]: st })));
+      }
+      // An install or revocation that was sent but never settled — the
+      // screen that sent it was closed or remounted while it waited (the
+      // phase 10 emulator run lost the install's success screen that way) —
+      // is resumed from the stored record, so its hash and outcome are never
+      // lost.
+      const op = pendingSessionOperation(r);
+      if (op && !waitingFor.current.has(op.userOpHash)) {
+        waitingFor.current.add(op.userOpHash);
+        const settle = op.kind === 'install' ? finalizeSessionInstall : finalizeSessionRevoke;
+        void settle(bundle, r, AsyncStorage).then(
+          () => reloadRef.current(),
+          // Not included yet (or unreadable): "Refresh status" tries again.
+          () => waitingFor.current.delete(op.userOpHash),
+        );
+      }
+    },
+    [bundle],
+  );
   const reloadList = useCallback(() => {
     if (!account) return;
     loadSessionsFor(evmChain.caip2, account).then(
       (load) => {
         setRecords(load.records);
         setListFlags({ corrupt: load.corrupt, unreadable: load.unreadable });
-        if (!bundle) return;
-        for (const r of load.records) {
-          const key = sessionRecordKey(r.chain, r.account, r.permissionId);
-          setStatuses((prev) => ({ ...prev, [key]: 'loading' }));
-          void readSessionStatus(bundle.node, r).then((st) => setStatuses((prev) => ({ ...prev, [key]: st })));
-          if (r.source === 'subscription' && r.subscription) {
-            setSubStatuses((prev) => ({ ...prev, [key]: 'loading' }));
-            void readSubscriptionStatus(bundle.node, r).then((st) => setSubStatuses((prev) => ({ ...prev, [key]: st })));
-          }
-          // An install or revocation that was sent but never settled — the
-          // screen that sent it was closed or remounted while it waited (the
-          // phase 10 emulator run lost the install's success screen that
-          // way) — is resumed from the stored record, so its hash and outcome
-          // are never lost.
-          const op = pendingSessionOperation(r);
-          if (op && !waitingFor.current.has(op.userOpHash)) {
-            waitingFor.current.add(op.userOpHash);
-            const settle = op.kind === 'install' ? finalizeSessionInstall : finalizeSessionRevoke;
-            void settle(bundle, r, AsyncStorage).then(
-              () => reloadRef.current(),
-              // Not included yet (or unreadable): "Refresh status" tries again.
-              () => waitingFor.current.delete(op.userOpHash),
-            );
-          }
-        }
+        for (const r of load.records) refreshRecord(r);
       },
       () => setListFlags({ corrupt: true, unreadable: true }),
     );
-  }, [account, bundle, evmChain.caip2]);
+  }, [account, evmChain.caip2, refreshRecord]);
   useEffect(() => {
     reloadRef.current = reloadList;
   }, [reloadList]);
-  useEffect(reloadList, [reloadList]);
+  // Loads on mount and again every time the screen comes back into focus
+  // (finding 5 of the rehearsal: counts stayed stale until a manual refresh).
+  useFocusEffect(reloadList);
 
   useEffect(() => {
     if (!contactsNetworkId) return;
@@ -407,26 +450,47 @@ export function SessionsScreen({ navigation }: Props) {
   const onSubOpen = () => {
     setFormError(null);
     setSubForm(EMPTY_SUBSCRIPTION_FORM);
+    setSubFeeFacts({ maxFeePerGas: null, balance: null });
     setPhase('sub-form');
-    if (!bundle) return;
-    // Default fee budget from the node's current fee (shown and editable).
-    new NodeClient(bundle.node).suggestFees().then(
-      (fees) =>
-        setSubForm((prev) =>
-          prev.feeBudget.trim() === ''
-            ? {
-                ...prev,
-                feeBudget: formatUnits(
-                  defaultFeeBudgetWei(Math.max(1, Number(prev.payments) || 1), fees.maxFeePerGas),
-                  18,
-                  18,
-                ),
-              }
-            : prev,
-        ),
+    if (!bundle || !account) return;
+    // Facts for the fee-budget suggestion (shown and editable): the node's
+    // current fee and what the Kernel account holds.
+    const node = new NodeClient(bundle.node);
+    node.suggestFees().then(
+      (fees) => setSubFeeFacts((prev) => ({ ...prev, maxFeePerGas: fees.maxFeePerGas })),
+      () => undefined,
+    );
+    node.getBalance(account).then(
+      (balance) => setSubFeeFacts((prev) => ({ ...prev, balance })),
       () => undefined,
     );
   };
+
+  /**
+   * The fee budget the form shows: the user's own figure once typed, else
+   * the suggestion for the current payment count, capped at what the
+   * account can spare (findings 3 of the rehearsal).
+   */
+  const subChoice = tokenChoices[subForm.choiceIndex];
+  let subNativeAmount = 0n;
+  if (subChoice?.token === SUBSCRIPTION_NATIVE) {
+    try {
+      subNativeAmount = parseUnits(subForm.amount.trim(), 18);
+    } catch {
+      subNativeAmount = 0n;
+    }
+  }
+  const feeSuggestion = suggestedFeeBudget({
+    payments: Number(subForm.payments.trim()),
+    maxFeePerGas: subFeeFacts.maxFeePerGas,
+    balance: subFeeFacts.balance,
+    nativeAmountPerPayment: subNativeAmount,
+  });
+  const subFeeBudgetText = subForm.feeEdited
+    ? subForm.feeBudget
+    : feeSuggestion.wei !== null
+      ? formatUnits(feeSuggestion.wei, 18, 18)
+      : '';
 
   const onSubReview = async () => {
     if (!bundle || !account || !owner) return;
@@ -438,8 +502,8 @@ export function SessionsScreen({ navigation }: Props) {
     const now = Math.floor(Date.now() / 1000);
     let subscription: SubscriptionGrant;
     let grant: SessionKeyGrant;
+    const names = subscriptionNames(subForm.label, subForm.merchant, nameFor(subForm.merchant.trim()));
     try {
-      const merchantName = nameFor(subForm.merchant.trim());
       subscription = buildSubscription(
         {
           merchant: subForm.merchant,
@@ -447,8 +511,8 @@ export function SessionsScreen({ navigation }: Props) {
           amount: subForm.amount,
           periodSeconds: subForm.periodSeconds,
           payments: subForm.payments,
-          feeBudget: subForm.feeBudget,
-          label: subForm.label.trim() || merchantName || 'Subscription',
+          feeBudget: subFeeBudgetText,
+          label: names.termsLabel,
         },
         { now, account },
       );
@@ -462,7 +526,15 @@ export function SessionsScreen({ navigation }: Props) {
     setPhase('sub-quoting');
     try {
       const { install, quote } = await prepareSessionInstall(bundle, owner, account, grant, { now });
-      subPending.current = { privateKey: key.privateKey, grant, install, quote, subscription, choice };
+      subPending.current = {
+        privateKey: key.privateKey,
+        grant,
+        install,
+        quote,
+        subscription,
+        choice,
+        recordLabel: names.recordLabel,
+      };
       setSubPendingView(subPending.current);
       setPhase('sub-confirm');
     } catch (e) {
@@ -475,14 +547,47 @@ export function SessionsScreen({ navigation }: Props) {
   };
 
   const onSubInstall = async () => {
-    const p = subPending.current;
-    if (!p || !bundle || !account || !owner || !resolution?.ok || !activeAccount) return;
+    const reviewed = subPending.current;
+    if (!reviewed || !bundle || !account || !owner || !resolution?.ok || !activeAccount) return;
+    // Finding 1 of the rehearsal: the clock starts NOW, when Start was tapped,
+    // not when Review opened. The restarted terms change the policy data and
+    // the permission id, so the install is quoted again (same session key,
+    // same calls and sizes); only a fee rise beyond the tolerance sends the
+    // user back to the review. Done before the biometric gate, so the
+    // approval prompt is followed directly by signing.
+    setSubSendStage('requote');
+    setPhase('sub-sending');
+    let p: PendingSubscription;
+    try {
+      const now = Math.floor(Date.now() / 1000);
+      const restarted = restartSubscriptionAt(reviewed.subscription, now);
+      const grant = subscriptionGrantFor(restarted, reviewed.grant.sessionKey, { account, now });
+      const { install, quote } = await prepareSessionInstall(bundle, owner, account, grant, { now });
+      p = { ...reviewed, subscription: restarted, grant, install, quote };
+    } catch (e) {
+      const { title, detail } = retitleQuoteFailure(
+        describeAaError(e, { accountType: bundle.accountType, deployed: true }) ?? describeSendError(e, symbol),
+      );
+      Alert.alert(title, detail);
+      setPhase('sub-confirm');
+      return;
+    }
+    // The review was left (Back) while the quote ran: nothing to install.
+    if (subPending.current !== reviewed) return;
+    subPending.current = p;
+    setSubPendingView(p);
+    if (subscriptionRequoteNeedsReview(reviewed.quote, p.quote)) {
+      Alert.alert(SUBSCRIPTION_REQUOTE_TITLE, SUBSCRIPTION_REQUOTE_MESSAGE);
+      setPhase('sub-confirm');
+      return;
+    }
     const auth = await requireLocalAuth('Approve this subscription');
     if (!auth.ok) {
       Alert.alert('Not granted', auth.message);
+      setPhase('sub-confirm');
       return;
     }
-    setPhase('sub-sending');
+    setSubSendStage('signing');
     try {
       const { record, userOpHash } = await installSession({
         quote: p.quote,
@@ -493,7 +598,7 @@ export function SessionsScreen({ navigation }: Props) {
         owner,
         accountIndex: activeAccount.index,
         accountKind: resolution.kind,
-        label: `Subscription: ${p.subscription.label}`,
+        label: p.recordLabel,
         source: 'subscription',
         subscription: subscriptionMeta(p.subscription, p.choice),
         // Kept in the vault only until it is handed to the merchant.
@@ -503,9 +608,10 @@ export function SessionsScreen({ navigation }: Props) {
         // Same explicit, owner-signed install as every session.
         submit: (q) => signWith(EVM_CHAIN_ID, owner, (signer) => sendAa(bundle, signer, q)),
       });
+      const finalTerms = subscriptionFinalDatesLine(p.subscription);
       discardPending();
       waitingFor.current.add(userOpHash);
-      setProgress({ kind: 'install', userOpHash, state: 'pending', txHash: null, detail: null });
+      setProgress({ kind: 'subscription', userOpHash, state: 'pending', txHash: null, detail: null, finalTerms });
       setPhase('progress');
       void finalizeSessionInstall(bundle, record, AsyncStorage).then(
         ({ receipt, status }) =>
@@ -539,7 +645,7 @@ export function SessionsScreen({ navigation }: Props) {
     }
     try {
       const payload = await buildSubscriptionKeyExport(record, sessionKeyVault);
-      setKeyExport({ record, text: JSON.stringify(payload) });
+      setKeyExport({ record, text: JSON.stringify(payload), fileName: subscriptionKeyFileName(payload) });
       setPhase('key-export');
     } catch (e) {
       Alert.alert('Key not available', e instanceof Error ? e.message : String(e));
@@ -739,12 +845,14 @@ export function SessionsScreen({ navigation }: Props) {
     </>
   );
 
+  // Every phase's ScrollView carries its own key, so React mounts a fresh
+  // one (scrolled to the top) instead of reusing the previous phase's
+  // native view with its scroll offset — the subscription review opened
+  // scrolled to the middle in the rehearsal (finding 2).
   if (phase === 'progress' && progress) {
-    const what =
-      progress.kind === 'install' ? 'Session install' : progress.kind === 'revoke' ? 'Revocation' : 'Session test operation';
     return (
-      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
-        <Text style={[styles.title, { color: theme.success }]}>{what} sent to the bundler</Text>
+      <ScrollView key="progress" style={screenStyle(theme)} contentContainerStyle={styles.content}>
+        <Text style={[styles.title, { color: theme.success }]}>{sessionProgressTitle(progress.kind)}</Text>
         <Text style={[styles.label, { color: theme.textMuted }]}>UserOperation hash</Text>
         <Text selectable style={[styles.monoText, { color: theme.text }]}>
           {progress.userOpHash}
@@ -752,6 +860,7 @@ export function SessionsScreen({ navigation }: Props) {
         {progress.kind === 'test' ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>Signed by the session key only.</Text>
         ) : null}
+        {progress.finalTerms ? <Text style={[styles.hint, { color: theme.text }]}>{progress.finalTerms}</Text> : null}
         {progress.state === 'pending' ? (
           <View style={styles.center}>
             <ActivityIndicator color={theme.accent} />
@@ -795,7 +904,7 @@ export function SessionsScreen({ navigation }: Props) {
   if ((phase === 'confirm' || phase === 'sending') && pendingView && account) {
     const q = pendingView.quote;
     return (
-      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+      <ScrollView key="confirm" style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
         <Text style={[styles.title, { color: theme.text }]}>Grant this session?</Text>
         {header}
@@ -849,7 +958,7 @@ export function SessionsScreen({ navigation }: Props) {
   if (phase === 'key-export' && keyExport) {
     const terms = termsOf(keyExport.record);
     return (
-      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+      <ScrollView key="key-export" style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <Text style={[styles.title, { color: theme.text }]}>Hand the key to the merchant</Text>
         <WarningBox>{SUBSCRIPTION_KEY_WARNING}</WarningBox>
         <Row label="Subscription" value={subscriptionSummary(keyExport.record, nameFor(terms.merchant))} theme={theme} />
@@ -857,7 +966,7 @@ export function SessionsScreen({ navigation }: Props) {
         <Text selectable style={[styles.monoText, { color: theme.text }]}>
           {keyExport.text}
         </Text>
-        <ShareActions text={keyExport.text} shareTitle="Subscription key" />
+        <SubscriptionKeyHandoverActions text={keyExport.text} fileName={keyExport.fileName} />
         <Button title="The merchant has the key — delete it here" variant="destructive" onPress={onKeyHandedOver} />
         <Button
           title="Not now (keep it on this device)"
@@ -882,18 +991,21 @@ export function SessionsScreen({ navigation }: Props) {
     });
     const [batchCaveat, ...otherCaveats] = review.caveats;
     return (
-      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+      <ScrollView key="sub-confirm" style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
         <Text style={[styles.title, { color: theme.text }]}>Start this subscription?</Text>
         {header}
+        {/* Order as recorded for phase 12 item 2 and DEMO step 10: the batch
+            warning FIRST, then the plain sentence, then the on-chain lines. */}
+        {batchCaveat ? <WarningBox>{batchCaveat}</WarningBox> : null}
         <Text style={[styles.ok, { color: theme.text }]}>{review.sentence}</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{SUBSCRIPTION_START_NOTE}</Text>
         <Text style={[styles.label, { color: theme.textMuted }]}>Your account enforces on-chain:</Text>
         {review.enforced.map((line) => (
           <Text key={line} style={[styles.hint, { color: theme.text }]}>
             • {line}
           </Text>
         ))}
-        {batchCaveat ? <WarningBox>{batchCaveat}</WarningBox> : null}
         {otherCaveats.map((line) => (
           <Text key={line} style={[styles.hint, { color: theme.textMuted }]}>
             {line}
@@ -906,7 +1018,7 @@ export function SessionsScreen({ navigation }: Props) {
           account={account}
           symbol={symbol}
           nameFor={nameFor}
-          sessionKeyHolder="the merchant, once you hand it over (kept in secure storage until then)"
+          sessionKeyHolder={SUBSCRIPTION_KEY_HOLDER_TEXT}
           permissionId={toHex(subPendingView.install.permissionId)}
         />
         <Text style={[styles.hint, { color: theme.textMuted }]}>{SESSIONS_INSTALL_MODE_NOTE}</Text>
@@ -928,7 +1040,11 @@ export function SessionsScreen({ navigation }: Props) {
         {phase === 'sub-sending' ? (
           <View style={styles.center}>
             <ActivityIndicator size="large" color={theme.accent} />
-            <Text style={[styles.hint, { color: theme.textMuted }]}>Signing and sending…</Text>
+            <Text style={[styles.hint, { color: theme.textMuted }]}>
+              {subSendStage === 'requote'
+                ? 'Starting the clock now and asking the bundler again…'
+                : 'Signing and sending…'}
+            </Text>
           </View>
         ) : (
           <>
@@ -952,7 +1068,7 @@ export function SessionsScreen({ navigation }: Props) {
       contactsNetworkId && subForm.merchant.trim() ? matchRecipient(contactsNetworkId, subForm.merchant, contacts) : null;
     const choice = tokenChoices[subForm.choiceIndex];
     return (
-      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <ScrollView key="sub-form" style={screenStyle(theme)} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <Text style={[styles.title, { color: theme.text }]}>New subscription</Text>
         {header}
         <Text style={[styles.hint, { color: theme.textMuted }]}>
@@ -1016,8 +1132,10 @@ export function SessionsScreen({ navigation }: Props) {
         />
         <Text style={[styles.label, { color: theme.textMuted }]}>Fee budget ({symbol}, all payments together)</Text>
         <TextInput
-          value={subForm.feeBudget}
-          onChangeText={(t) => setSubForm((prev) => ({ ...prev, feeBudget: t }))}
+          value={subFeeBudgetText}
+          // Typing makes the figure the user's own; clearing the field goes
+          // back to the suggestion that follows the payment count.
+          onChangeText={(t) => setSubForm((prev) => ({ ...prev, feeBudget: t, feeEdited: t.trim() !== '' }))}
           placeholder={`Total ${symbol} the merchant's payments may spend on network fees`}
           placeholderTextColor={theme.textMuted}
           keyboardType="decimal-pad"
@@ -1028,6 +1146,15 @@ export function SessionsScreen({ navigation }: Props) {
           Each payment’s network fee is paid by your account. The budget caps the total; without it a merchant
           could pay itself high fees from your {symbol}.
         </Text>
+        {!subForm.feeEdited ? (
+          <Text style={[styles.hint, { color: theme.textMuted }]}>
+            Suggested from today’s network fee for the number of payments above; it follows that number until you
+            type your own figure.
+          </Text>
+        ) : null}
+        {!subForm.feeEdited && feeSuggestion.capped && feeSuggestion.spare !== null && feeSuggestion.uncapped !== null ? (
+          <WarningBox>{feeBudgetCapNote(feeSuggestion.spare, feeSuggestion.uncapped, symbol)}</WarningBox>
+        ) : null}
         <Text style={[styles.label, { color: theme.textMuted }]}>Name (optional)</Text>
         <TextInput
           value={subForm.label}
@@ -1066,7 +1193,7 @@ export function SessionsScreen({ navigation }: Props) {
   if ((phase === 'revoke-confirm' || phase === 'sending') && revokeTarget) {
     const q = revokeTarget.quote;
     return (
-      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+      <ScrollView key="revoke-confirm" style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
         <Text style={[styles.title, { color: theme.text }]}>Revoke session “{revokeTarget.record.label}”</Text>
         {header}
@@ -1074,7 +1201,7 @@ export function SessionsScreen({ navigation }: Props) {
         <Row
           label="Operation"
           value="One call to your own account: uninstallValidation for this permission"
-          sub="Signed by your account key. Once the bundler accepts it, the session key is deleted from this device."
+          sub={sessionRevokeKeySentence(revokeTarget.record)}
           theme={theme}
         />
         <Row
@@ -1104,7 +1231,7 @@ export function SessionsScreen({ navigation }: Props) {
 
   if ((phase === 'form' || phase === 'quoting') && account) {
     return (
-      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <ScrollView key="form" style={screenStyle(theme)} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <Text style={[styles.title, { color: theme.text }]}>Grant a session</Text>
         {header}
         <Text style={[styles.hint, { color: theme.textMuted }]}>
@@ -1203,7 +1330,7 @@ export function SessionsScreen({ navigation }: Props) {
 
   // ------------------------------------------------------------ list
   return (
-    <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+    <ScrollView key="list" style={screenStyle(theme)} contentContainerStyle={styles.content}>
       {readiness ? <TestNetworksOnlyCard feature={readiness.feature} hint={readiness.hint} /> : null}
       {header}
       <WarningBox>{SESSIONS_WIPE_WARNING}</WarningBox>
@@ -1245,9 +1372,8 @@ export function SessionsScreen({ navigation }: Props) {
           {records.filter((r) => r.source === 'subscription').length === 0 ? (
             <Text style={[styles.hint, { color: theme.textMuted }]}>None on this device.</Text>
           ) : null}
-          {records
-            .filter((r) => r.source === 'subscription' && r.subscription)
-            .map((r) => {
+          {sortSubscriptionRecords(records.filter((r) => r.source === 'subscription' && r.subscription)).map(
+            (r) => {
               const key = sessionRecordKey(r.chain, r.account, r.permissionId);
               const status = statuses[key];
               const subStatus = subStatuses[key];
@@ -1276,8 +1402,14 @@ export function SessionsScreen({ navigation }: Props) {
                   <Text style={[styles.hint, { color: theme.textMuted }]}>{subscriptionKeyStatusText(r)}</Text>
                   <Text style={[styles.hint, { color: theme.textMuted }]}>{sessionLocalStatusText(r)}</Text>
                   {pendingSessionOperation(r) ? <ActivityIndicator color={theme.accent} /> : null}
-                  <Text style={[styles.hint, { color: theme.text }]}>{review.sentence}</Text>
+                  <Button
+                    title="Refresh status"
+                    variant="secondary"
+                    accessibilityLabel={`Refresh the status of ${r.label}`}
+                    onPress={() => refreshRecord(r)}
+                  />
                   {review.caveats[0] ? <WarningBox>{review.caveats[0]}</WarningBox> : null}
+                  <Text style={[styles.hint, { color: theme.text }]}>{review.sentence}</Text>
                   <Row label="Permission id" value={r.permissionId} mono theme={theme} />
                   {r.installUserOpHash ? (
                     <Row label="Install UserOperation hash" value={r.installUserOpHash} mono theme={theme} />
@@ -1296,7 +1428,8 @@ export function SessionsScreen({ navigation }: Props) {
                   ) : null}
                 </View>
               );
-            })}
+            },
+          )}
           <Text style={[styles.sectionTitle, { color: theme.text }]}>Sessions on this account</Text>
           {records.filter((r) => r.source !== 'subscription').length === 0 ? (
             <Text style={[styles.hint, { color: theme.textMuted }]}>None on this device.</Text>

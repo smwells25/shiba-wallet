@@ -7,7 +7,8 @@ import { useWallet } from '../wallet/WalletContext';
 import { listTokens } from '../wallet/tokens';
 import { approvalTokensForChain } from '../wallet/approvals';
 import { getIndexerConfig } from '../wallet/indexer';
-import { computeRiskLines, gatherRiskFacts, type RiskLine } from '../wallet/risk';
+import { getAaConfig } from '../wallet/aa';
+import { computeRiskLines, gatherRiskFacts, ownWalletAddresses, type RiskLine } from '../wallet/risk';
 
 export const RISK_TITLE = 'Risk checks';
 export const RISK_FOOTNOTE =
@@ -64,7 +65,7 @@ export function RiskWarnings({
   const ownAddresses = accountList
     .map((a) => a.evmAddress)
     .filter((a): a is string => typeof a === 'string');
-  const ownKey = ownAddresses.join(',').toLowerCase();
+  const ownKey = accountList.map((a) => `${a.index}:${a.name}:${a.evmAddress ?? ''}`).join(',').toLowerCase();
   const [lines, setLines] = useState<RiskLine[] | null>(null);
 
   const dataHex = data === undefined ? '0x' : typeof data === 'string' ? data.toLowerCase() : toHex(data);
@@ -99,6 +100,16 @@ export function RiskWarnings({
       } catch {
         indexerUrl = null;
       }
+      // The wallet's own smart-account addresses (Kernel counterfactuals and
+      // recovered accounts) come from the active chain's AA configuration;
+      // with them a send between own accounts reads as such (finding 13).
+      let aa: Awaited<ReturnType<typeof getAaConfig>> | null = null;
+      try {
+        aa = await getAaConfig(evmChain.caip2);
+      } catch {
+        aa = null;
+      }
+      const ownAccounts = ownWalletAddresses(accountList, aa);
       const facts = await gatherRiskFacts({
         url,
         wallet,
@@ -107,7 +118,8 @@ export function RiskWarnings({
         data: dataHex,
         ...(assetChanges !== undefined ? { assetChanges } : {}),
         chainCaip2: evmChain.caip2,
-        ownAddresses,
+        ownAddresses: [...ownAddresses, ...ownAccounts.map((o) => o.address)],
+        ownAccounts,
         indexerUrl,
         // Tracked tokens plus the known test-network tokens (tokens.ts).
         trackedTokens: approvalTokensForChain(tracked, evmChain.caip2).map((t) => ({
@@ -127,7 +139,7 @@ export function RiskWarnings({
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `key` serializes every input of the checks (url, chain, wallet, to, counterparty, calldata, the asset changes and the wallet's own addresses). ownAddresses is a new array on every render and callers may pass assetChanges inline, so listing them would re-run the network checks without any input having changed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `key` serializes every input of the checks (url, chain, wallet, to, counterparty, calldata, the asset changes and the wallet's accounts). ownAddresses and accountList are new arrays on every render and callers may pass assetChanges inline, so listing them would re-run the network checks without any input having changed. The AA configuration is read inside the effect.
   }, [key]);
 
   if (lines === null) {

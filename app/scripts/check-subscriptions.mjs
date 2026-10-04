@@ -53,8 +53,26 @@ import {
   sessionVaultId,
 } from '../src/wallet/sessions.ts';
 import {
+  SUBSCRIPTION_KEY_CLIPBOARD_CLEAR_MS,
+  SUBSCRIPTION_KEY_CLIPBOARD_WARNING,
+  SUBSCRIPTION_KEY_FILE_DELETE_DELAY_MS,
+  SUBSCRIPTION_KEY_FILE_DIRECTORY,
+  SUBSCRIPTION_KEY_FILE_MIME_TYPE,
+  SUBSCRIPTION_KEY_HOLDER_TEXT,
+  SUBSCRIPTION_REQUOTE_FEE_TOLERANCE_PERCENT,
+  SUBSCRIPTION_START_NOTE,
   SUBSCRIPTION_KEY_EXPORT_TYPE,
   SUBSCRIPTION_KEY_WARNING,
+  createClipboardAutoClear,
+  feeBudgetCapNote,
+  restartSubscriptionAt,
+  shareSubscriptionKeyFile,
+  sortSubscriptionRecords,
+  subscriptionFinalDatesLine,
+  subscriptionKeyFileName,
+  subscriptionNames,
+  subscriptionRequoteNeedsReview,
+  suggestedFeeBudget,
   SUBSCRIPTION_MAX_PAYMENTS,
   SUBSCRIPTION_PULL_GAS_ALLOWANCE,
   buildSubscription,
@@ -430,6 +448,165 @@ console.log('check-subscriptions: Sessions screen source checks');
   check('showing the key and approving the subscription both pass the biometric gate', /requireLocalAuth\('Show the subscription key/.test(screen) && /requireLocalAuth\('Approve this subscription'\)/.test(screen));
   check('the Test button is gated on sessionCanBeTested', /usable && sessionCanBeTested\(r\)/.test(screen));
   check('the batch caveat is rendered in a WarningBox on the review and the list card', (screen.match(/<WarningBox>\{(batchCaveat|review\.caveats\[0\])\}<\/WarningBox>/g) ?? []).length >= 2);
+}
+
+
+// ---------------------------------------------------------------------------
+console.log('check-subscriptions: phase 12 rehearsal fixes (findings 1–7 and 9)');
+// ---------------------------------------------------------------------------
+const screenSrc = readFileSync(new URL('../src/screens/SessionsScreen.tsx', import.meta.url), 'utf8');
+{
+  // Finding 1: the clock starts when Start is tapped.
+  const REVIEW_OPENED = NOW - 600; // the user read the review for ten minutes
+  const reviewed = buildSubscription({ ...draft, choice: native, amount: '0.000000000000001', periodSeconds: 120, payments: '3' }, { now: REVIEW_OPENED, account: ACCOUNT });
+  const stale = await caught(() => subscriptionGrantFor(reviewed, SDK_SESSION_KEY, { account: ACCOUNT, now: NOW }));
+  check('the problem reproduced: terms fixed at Review (3 × 2 min) have expired ten minutes later (engine refusal)', /already have expired/.test(stale?.message ?? ''), stale?.message);
+  const restarted = restartSubscriptionAt(reviewed, NOW);
+  check('restartSubscriptionAt: start = now, expiry moves by the same amount, still 3 payments, every other term unchanged',
+    restarted.startAt === NOW && restarted.validUntil === NOW + 360 && restarted.merchant === reviewed.merchant && restarted.amountPerPeriod === reviewed.amountPerPeriod &&
+      restarted.feeBudgetWei === reviewed.feeBudgetWei && restarted.periodSeconds === 120 && restarted.label === reviewed.label);
+  const key2 = ethers.randomBytes(32);
+  const key2Account = createSessionKeyAccount(key2.slice());
+  const g2 = subscriptionGrantFor(restarted, key2Account.address, { account: ACCOUNT, now: NOW });
+  check('the restarted grant passes the engine: validAfter = rate-limit start = now, 3 operations, expiry now + 6 min',
+    g2.validAfter === NOW && g2.rateLimit.startAt === NOW && g2.rateLimit.count === 3 && g2.validUntil === NOW + 360);
+  const store2 = memoryStore();
+  const vault2 = fakeVault();
+  const { install: inst2, quote: q2 } = await prepareSessionInstall(bundle, OWNER_0, ACCOUNT, g2, { now: NOW });
+  const res2 = await installSession({
+    quote: q2, install: inst2, grant: g2, chain: M, account: ACCOUNT, owner: OWNER_0, accountIndex: 0, accountKind: 'kernel-v3.3',
+    label: subscriptionNames('', MERCHANT, null).recordLabel, source: 'subscription', subscription: subscriptionMeta(restarted, native),
+    sessionPrivateKey: key2.slice(), store: store2, vault: vault2, submit: (q) => sendAa(bundle, owner, q),
+  });
+  check('the install carries the RESTARTED terms (stored start = the time Start was tapped)', termsOf(res2.record).startAt === NOW && termsOf(res2.record).validUntil === NOW + 360);
+  check('the success screen line states the final dates and the count',
+    subscriptionFinalDatesLine(restarted) === `Final terms: the first payment can be taken from ${new Date(NOW * 1000).toISOString().slice(0, 16).replace('T', ' ')} UTC, then one more every 2 minutes (3 in total); nothing after ${new Date((NOW + 360) * 1000).toISOString().slice(0, 16).replace('T', ' ')} UTC.`,
+    subscriptionFinalDatesLine(restarted));
+  check('requote tolerance: same fee or +20% → no second review; +21% or sponsorship ended → review again',
+    SUBSCRIPTION_REQUOTE_FEE_TOLERANCE_PERCENT === 20n &&
+      !subscriptionRequoteNeedsReview({ fee: 100n, sponsored: false }, { fee: 100n, sponsored: false }) &&
+      !subscriptionRequoteNeedsReview({ fee: 100n, sponsored: false }, { fee: 120n, sponsored: false }) &&
+      subscriptionRequoteNeedsReview({ fee: 100n, sponsored: false }, { fee: 121n, sponsored: false }) &&
+      subscriptionRequoteNeedsReview({ fee: 0n, sponsored: true }, { fee: 50n, sponsored: false }) &&
+      !subscriptionRequoteNeedsReview({ fee: 100n, sponsored: false }, { fee: 0n, sponsored: true }));
+  const inst = screenSrc.slice(screenSrc.indexOf('const onSubInstall = async'), screenSrc.indexOf('const onShowKey = async'));
+  const at = (needle) => inst.indexOf(needle);
+  check('onSubInstall order: restart the clock → re-quote → fee re-check → biometric gate → installSession',
+    at('restartSubscriptionAt(reviewed.subscription, now)') > 0 && at('restartSubscriptionAt(') < at('prepareSessionInstall(') &&
+      at('prepareSessionInstall(') < at('subscriptionRequoteNeedsReview(') && at('subscriptionRequoteNeedsReview(') < at("requireLocalAuth('Approve this subscription')") &&
+      at("requireLocalAuth('Approve this subscription')") < at('installSession(') && /quote: p\.quote,\s*\n\s*install: p\.install,\s*\n\s*grant: p\.grant/.test(inst));
+  check('the review explains that the start is fixed when Start is tapped', screenSrc.includes('{SUBSCRIPTION_START_NOTE}') && /when you tap Start subscription/.test(SUBSCRIPTION_START_NOTE));
+
+  // Finding 2: review order and scroll position.
+  const confirm = screenSrc.slice(screenSrc.indexOf('key="sub-confirm"'), screenSrc.indexOf('Technical details (the grant as installed)'));
+  const w = confirm.indexOf('<WarningBox>{batchCaveat}</WarningBox>');
+  const sentenceAt = confirm.indexOf('{review.sentence}');
+  const enforcedAt = confirm.indexOf('Your account enforces on-chain:');
+  check('review order: the batch warning box FIRST, then the plain sentence, then the on-chain bullets', w > 0 && w < sentenceAt && sentenceAt < enforcedAt, `${w} ${sentenceAt} ${enforcedAt}`);
+  const scrollViews = (screenSrc.match(/<ScrollView\b/g) ?? []).length;
+  const keyed = (screenSrc.match(/<ScrollView key="[a-z-]+"/g) ?? []).length;
+  check('every phase’s ScrollView has its own key (a fresh view opens at the top instead of reusing the previous scroll offset)', scrollViews > 0 && scrollViews === keyed, `${keyed}/${scrollViews}`);
+
+  // Finding 3: the fee budget follows the payment count and is capped.
+  const s3 = suggestedFeeBudget({ payments: 3, maxFeePerGas: 2_000_000_000n, balance: 10n ** 18n, nativeAmountPerPayment: 0n });
+  const s6 = suggestedFeeBudget({ payments: 6, maxFeePerGas: 2_000_000_000n, balance: 10n ** 18n, nativeAmountPerPayment: 0n });
+  check('suggestion follows the payment count (6 payments = twice 3)', s3.wei === defaultFeeBudgetWei(3, 2_000_000_000n) && s6.wei === 2n * s3.wei && !s6.capped);
+  const poor = suggestedFeeBudget({ payments: 6, maxFeePerGas: 2_000_000_000n, balance: 4_000_000_000_000_000n, nativeAmountPerPayment: 0n });
+  check('capped at the balance when the account cannot afford it (the rehearsal’s ~0.006 > balance)', poor.capped && poor.wei === 4_000_000_000_000_000n && poor.uncapped === s6.wei);
+  const nat = suggestedFeeBudget({ payments: 3, maxFeePerGas: 2_000_000_000n, balance: 4_000_000_000_000_000n, nativeAmountPerPayment: 1_000_000_000_000_000n });
+  check('native subscription: the payments themselves are set aside first (4 − 3 × 1 = 1 milli-ETH spare)', nat.capped && nat.wei === 1_000_000_000_000_000n && nat.spare === 1_000_000_000_000_000n);
+  const none = suggestedFeeBudget({ payments: 3, maxFeePerGas: 2_000_000_000n, balance: 1n, nativeAmountPerPayment: 1n });
+  check('nothing to spare → no pre-fill and a note saying to fund the account', none.wei === null && none.capped && /Fund the account first/.test(feeBudgetCapNote(none.spare, none.uncapped, 'test ETH')));
+  check('cap note names what can be spared and the usual budget', feeBudgetCapNote(1_000_000_000_000_000n, 6_000_000_000_000_000n, 'test ETH') === 'Lowered to what your account can spare (0.001 test ETH); the usual budget for this many payments would be 0.006 test ETH. Fund the account or enter a budget by hand.');
+  check('invalid payment count or unknown fee → no suggestion', suggestedFeeBudget({ payments: 0, maxFeePerGas: 1n, balance: null, nativeAmountPerPayment: 0n }).wei === null && suggestedFeeBudget({ payments: 3, maxFeePerGas: null, balance: 1n, nativeAmountPerPayment: 0n }).wei === null);
+  check('the form shows the suggestion until the user types (feeEdited) and submits what it shows',
+    /value=\{subFeeBudgetText\}/.test(screenSrc) && /feeEdited: t\.trim\(\) !== ''/.test(screenSrc) && /feeBudget: subFeeBudgetText,/.test(screenSrc) && /payments: Number\(subForm\.payments\.trim\(\)\)/.test(screenSrc));
+
+  // Finding 4: default names and list order.
+  check('unnamed: "Subscription to 0x0000…bEEF" (never "Subscription: Subscription"); terms label "to 0x0000…bEEF"',
+    subscriptionNames('', MERCHANT, null).recordLabel === 'Subscription to 0x0000…bEEF' && subscriptionNames('  ', MERCHANT, null).termsLabel === 'to 0x0000…bEEF');
+  check('typed name or contact name: "Subscription: <name>"', subscriptionNames('Streaming', MERCHANT, 'Streamy').recordLabel === 'Subscription: Streaming' && subscriptionNames('', MERCHANT, 'Streamy').recordLabel === 'Subscription: Streamy');
+  check('the default terms label passes the engine’s name rule', subscriptionGrantFor({ ...restarted, label: subscriptionNames('', MERCHANT, null).termsLabel }, SDK_SESSION_KEY, { account: ACCOUNT, now: NOW }).calls.length === 1);
+  check('the screen no longer falls back to the literal "Subscription"', !/\|\| 'Subscription'/.test(screenSrc) && /label: p\.recordLabel/.test(screenSrc));
+  const rec = (localStatus, createdAt) => ({ localStatus, createdAt, permissionId: `${localStatus}${createdAt}` });
+  const sorted = sortSubscriptionRecords([rec('revoked', 300), rec('installed', 100), rec('failed', 400), rec('installing', 200), rec('revoked', 50)]);
+  check('list order: live (newest first), then failed, then revoked — an old live one above a new revoked one',
+    sorted.map((r) => r.permissionId).join() === 'installing200,installed100,failed400,revoked300,revoked50', sorted.map((r) => r.permissionId).join());
+  check('the Subscriptions list renders through sortSubscriptionRecords', /\{sortSubscriptionRecords\(records\.filter\(/.test(screenSrc));
+
+  // Finding 5: per-card refresh and refresh on focus.
+  check('each subscription card has its own "Refresh status" calling refreshRecord(r); the list reloads on focus',
+    /onPress=\{\(\) => refreshRecord\(r\)\}/.test(screenSrc) && /useFocusEffect\(reloadList\)/.test(screenSrc));
+
+  // Finding 7: copy.
+  check('key holder phrase has no nested parentheses', `Session key (held by ${SUBSCRIPTION_KEY_HOLDER_TEXT})`.match(/\(/g).length === 1 && screenSrc.includes('sessionKeyHolder={SUBSCRIPTION_KEY_HOLDER_TEXT}'));
+}
+
+{
+  // Finding 9: the key leaves as a FILE, never as shared plain text.
+  const events = [];
+  let scheduled = null;
+  const deps = (opts = {}) => ({
+    available: async () => opts.available ?? true,
+    sweep: () => events.push('sweep'),
+    write: (name, text) => {
+      events.push(`write:${name}:${text.length}`);
+      return { uri: `file:///cache/${SUBSCRIPTION_KEY_FILE_DIRECTORY}/${name}`, remove: () => events.push('remove') };
+    },
+    share: async (uri) => {
+      events.push(`share:${uri}`);
+      if (opts.shareFails) throw new Error('share failed');
+    },
+    schedule: (fn, ms) => {
+      scheduled = { fn, ms };
+      events.push(`schedule:${ms}`);
+    },
+  });
+  const name = subscriptionKeyFileName({ chainId: '11155111', permissionId: '0x762FB3F6' });
+  check('file name: chain and permission id only (public data), .json', name === 'shiba-subscription-key_11155111_0x762fb3f6.json');
+  await shareSubscriptionKeyFile('{"k":1}', name, deps());
+  check('share: sweep leftovers → write → share the FILE uri → delete scheduled after the sheet closes',
+    events.join('|') === `sweep|write:${name}:7|share:file:///cache/${SUBSCRIPTION_KEY_FILE_DIRECTORY}/${name}|schedule:${SUBSCRIPTION_KEY_FILE_DELETE_DELAY_MS}` && SUBSCRIPTION_KEY_FILE_DELETE_DELAY_MS === 10_000,
+    events.join('|'));
+  scheduled.fn();
+  check('…and the scheduled deletion removes the file', events.at(-1) === 'remove');
+  events.length = 0;
+  const failed2 = await caught(() => shareSubscriptionKeyFile('{"k":1}', name, deps({ shareFails: true })));
+  check('share failure: the file is deleted at once and the error is shown', failed2?.message === 'share failed' && events.at(-1) === 'remove' && !events.some((e) => e.startsWith('schedule')));
+  events.length = 0;
+  const unavailable = await caught(() => shareSubscriptionKeyFile('{"k":1}', name, deps({ available: false })));
+  check('no file sharing on the device: refused before anything is written', /not available/.test(unavailable?.message ?? '') && events.length === 0);
+  check('mime type application/json (same as the recovery record file)', SUBSCRIPTION_KEY_FILE_MIME_TYPE === 'application/json');
+
+  // Clipboard: copy, then overwrite with "" after 60 s (or when the screen closes).
+  const writes = [];
+  const timers = [];
+  const clip = createClipboardAutoClear({
+    setString: async (t) => void writes.push(t),
+    setTimer: (fn, ms) => { timers.push({ fn, ms, cleared: false }); return timers.length - 1; },
+    clearTimer: (h) => { timers[h].cleared = true; },
+  });
+  await clip.clearNow();
+  check('leaving without copying never touches the clipboard', writes.length === 0);
+  await clip.copy('SECRET');
+  check('copy writes the key and schedules the overwrite at 60 s', writes.join('|') === 'SECRET' && timers[0].ms === 60_000 && SUBSCRIPTION_KEY_CLIPBOARD_CLEAR_MS === 60_000 && clip.pending());
+  timers[0].fn();
+  await new Promise((r) => setTimeout(r, 0));
+  check('after 60 s the clipboard is overwritten with an empty string', writes.join('|') === 'SECRET|' && !clip.pending());
+  await clip.copy('SECRET2');
+  await clip.copy('SECRET3');
+  check('a second copy replaces the pending timer', timers[1].cleared === true && !timers[2].cleared);
+  await clip.clearNow();
+  check('clearNow (screen closed) overwrites a pending copy at once and cancels its timer', writes.at(-1) === '' && timers[2].cleared);
+  check('warning says the clipboard is readable by other apps and when it is emptied', /can be read by other apps/.test(SUBSCRIPTION_KEY_CLIPBOARD_WARNING) && /60 seconds/.test(SUBSCRIPTION_KEY_CLIPBOARD_WARNING));
+
+  const handover = readFileSync(new URL('../src/components/SubscriptionKeyHandover.tsx', import.meta.url), 'utf8');
+  check('the key screen uses the file + auto-clear hand-over, not the plain-text ShareActions',
+    /<SubscriptionKeyHandoverActions text=\{keyExport\.text\} fileName=\{keyExport\.fileName\} \/>/.test(screenSrc) && !/ShareActions/.test(screenSrc));
+  check('the hand-over component never shares text: expo-sharing shareAsync on a file uri, no React Native Share',
+    /Sharing\.shareAsync\(uri,/.test(handover) && !/\bShare\.share\(/.test(handover) && !/from 'react-native';[^\n]*\bShare\b/.test(handover) && /mimeType: SUBSCRIPTION_KEY_FILE_MIME_TYPE/.test(handover));
+  check('on unmount it overwrites a pending copy and sweeps leftover files', /keyClipboard\.clearNow\(\)/.test(handover) && /sweepSubscriptionKeyFiles\(\);/.test(handover));
+  check('screenshots stay blocked while the key screen is open', /preventScreenCaptureAsync\('subscription-key'\)/.test(screenSrc));
 }
 
 console.log(`\ncheck-subscriptions: ${passed} passed, ${failed} failed`);

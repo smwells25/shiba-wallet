@@ -46,8 +46,13 @@ import {
   listSpendingScopes,
   mergeOutflowsMax,
   outflowsFromCalls,
+  overLimitPreviewLines,
   overLimitSentence,
   parseCustomWindow,
+  policyLooseningReasons,
+  SPENDING_LOOSEN_PROMPT,
+  SPENDING_REMOVE_PROMPT,
+  SPENDING_RESET_PROMPT,
   policySummary,
   pruneRecords,
   recordAcceptedSpend,
@@ -573,6 +578,78 @@ console.log('readouts and masking:');
   check('summary masked', policySummary(readouts[0].policy, true) === '•••• USDC per 7 days');
   const later = await spendingReadouts(SCOPE, { store: s, now: NOW + 7 * 86400 });
   check('readout drops to 0 once the window has passed', later.readouts[0].spentInWindow === 0n);
+}
+
+
+// ---------------------------------------------------------------------------
+// Phase 12 rehearsal findings 10 and 12
+// ---------------------------------------------------------------------------
+console.log('loosening asks for the device check (finding 10):');
+{
+  const saved = { cap: 100n, windowSeconds: 86400, allowOverride: false, countFees: true };
+  check('same terms → nothing loosened', policyLooseningReasons(saved, saved).length === 0);
+  check('tighter: lower cap, longer window, override off, fees counted → nothing loosened',
+    policyLooseningReasons(saved, { cap: 50n, windowSeconds: 7 * 86400, allowOverride: false, countFees: true }).length === 0);
+  check('raising the cap loosens', policyLooseningReasons(saved, { ...saved, cap: 101n }).join() === 'raises the limit');
+  check('shortening the window loosens', policyLooseningReasons(saved, { ...saved, windowSeconds: 3600 }).join() === 'shortens the time window');
+  check('turning on "Send anyway" loosens', policyLooseningReasons(saved, { ...saved, allowOverride: true }).join() === 'allows "Send anyway"');
+  check('no longer counting fees loosens', policyLooseningReasons(saved, { ...saved, countFees: false }).join() === 'stops counting network fees');
+  const { readFileSync } = await import('node:fs');
+  const screen = readFileSync(new globalThis.URL('../src/screens/SpendingLimitsScreen.tsx', import.meta.url), 'utf8');
+  const save = screen.slice(screen.indexOf('const onSave = async'), screen.indexOf('const onRemove ='));
+  check('onSave: a loosening edit runs requireLocalAuth(SPENDING_LOOSEN_PROMPT) BEFORE saveSpendingPolicy',
+    /policyLooseningReasons\(editingPolicy/.test(save) && save.indexOf('requireLocalAuth(SPENDING_LOOSEN_PROMPT)') > 0 &&
+      save.indexOf('requireLocalAuth(SPENDING_LOOSEN_PROMPT)') < save.indexOf('saveSpendingPolicy('));
+  const remove = screen.slice(screen.indexOf('const onRemove ='), screen.indexOf('const onReset ='));
+  check('Remove alert masks the cap under Hide amounts (policySummary(p, hideAmounts))', /policySummary\(p, hideAmounts\)/.test(remove) && !/policySummary\(p, false\)/.test(remove));
+  check('Remove asks for the device check before removeSpendingPolicy', remove.indexOf('requireLocalAuth(SPENDING_REMOVE_PROMPT)') > 0 && remove.indexOf('requireLocalAuth(SPENDING_REMOVE_PROMPT)') < remove.indexOf('removeSpendingPolicy('));
+  const reset = screen.slice(screen.indexOf('const onReset ='));
+  check('Reset (deletes every limit) asks for the same device check', reset.indexOf('requireLocalAuth(SPENDING_RESET_PROMPT)') > 0 && reset.indexOf('requireLocalAuth(SPENDING_RESET_PROMPT)') < reset.indexOf('resetSpendingLimits()'));
+  check('prompts are plain sentences', SPENDING_LOOSEN_PROMPT === 'Loosen your spending limit' && SPENDING_REMOVE_PROMPT === 'Remove your spending limit' && SPENDING_RESET_PROMPT === 'Reset your spending limits');
+}
+
+console.log('the confirm screen warns before Send (finding 12):');
+{
+  const s = memoryStore();
+  await saveSpendingPolicy(SCOPE, { token: NATIVE_TOKEN, symbol: 'test ETH', decimals: 18, cap: 200n, windowSeconds: 3600 }, KNOWN, { store: s, now: NOW });
+  await recordAcceptedSpend({ scope: SCOPE, spender: OWNER, calls: [{ to: TO, value: 100n }], fee: 0n, ref: '0x0a', store: s, now: NOW - 10 });
+  const look = await evaluateBeforeSigning({ scope: SCOPE, spender: OWNER, calls: [{ to: TO, value: 150n }], fee: 0n, url: null, stage: false, store: s, now: NOW });
+  const lines = overLimitPreviewLines(look, false);
+  check('look-ahead over the limit → one warning line with cap, spent and this send',
+    lines.length === 1 && lines[0] === 'This send would go over the limit for test ETH (0.0000000000000002 test ETH per 1 hour): already spent 0.0000000000000001 test ETH, this send 0.00000000000000015 test ETH. Tapping Send will stop it; raise or remove the limit first.',
+    lines[0]);
+  check('…masked under Hide amounts', overLimitPreviewLines(look, true)[0] === 'This send would go over the limit for test ETH (•••• test ETH per 1 hour): already spent •••• test ETH, this send •••• test ETH. Tapping Send will stop it; raise or remove the limit first.', overLimitPreviewLines(look, true)[0]);
+  const fits = await evaluateBeforeSigning({ scope: SCOPE, spender: OWNER, calls: [{ to: TO, value: 100n }], fee: 0n, url: null, stage: false, store: s, now: NOW });
+  check('a send that fits → no warning line', overLimitPreviewLines(fits, false).length === 0);
+  // The look-ahead must not stage: a staged figure would be recorded for the
+  // real send instead of what the gate later counts. Here the extra outflow
+  // (200) is only in the look-ahead; the accepted send records the calldata's 5.
+  const t = memoryStore();
+  await saveSpendingPolicy(SCOPE, { token: SEP_USDC, symbol: 'USDC', decimals: 6, cap: 1_000n, windowSeconds: 3600 }, KNOWN, { store: t, now: NOW });
+  const sendCalls = [{ to: SEP_USDC, value: 0n, data: encodeErc20Transfer(TO, 5n) }];
+  clearStagedSpends();
+  await evaluateBeforeSigning({ scope: SCOPE, spender: OWNER, calls: sendCalls, fee: 0n, url: null, quoteOutflows: [{ token: SEP_USDC, amount: 200n }], stage: false, store: t, now: NOW });
+  await recordAcceptedSpend({ scope: SCOPE, spender: OWNER, calls: sendCalls, fee: 0n, ref: '0x0b', store: t, now: NOW });
+  const recorded = (await listSpendRecords(SCOPE, t)).records.filter((r) => r.kind === 'transfer');
+  check('stage:false look-ahead stages nothing (the accepted send records 5, not 200)', recorded.length === 1 && recorded[0].amount === 5n, recorded);
+  // Control: the gate's normal call stages, so the same flow records 200.
+  const u = memoryStore();
+  await saveSpendingPolicy(SCOPE, { token: SEP_USDC, symbol: 'USDC', decimals: 6, cap: 1_000n, windowSeconds: 3600 }, KNOWN, { store: u, now: NOW });
+  await evaluateBeforeSigning({ scope: SCOPE, spender: OWNER, calls: sendCalls, fee: 0n, url: null, quoteOutflows: [{ token: SEP_USDC, amount: 200n }], store: u, now: NOW });
+  await recordAcceptedSpend({ scope: SCOPE, spender: OWNER, calls: sendCalls, fee: 0n, ref: '0x0c', store: u, now: NOW });
+  check('control: the gate (default stage) records the staged 200', (await listSpendRecords(SCOPE, u)).records.some((r) => r.kind === 'transfer' && r.amount === 200n));
+  const { readFileSync } = await import('node:fs');
+  const views = readFileSync(new globalThis.URL('../src/components/SpendingPolicyViews.tsx', import.meta.url), 'utf8');
+  check('SpendingPolicyNotice looks ahead with url null and stage false, and renders overLimitPreviewLines with Hide amounts',
+    /url: null,\s*\n\s*quoteOutflows: extra,\s*\n\s*stage: false/.test(views) && /overLimitPreviewLines\(lookAhead, hideAmounts\)/.test(views));
+  const send = readFileSync(new globalThis.URL('../src/screens/SendScreen.tsx', import.meta.url), 'utf8');
+  const swap = readFileSync(new globalThis.URL('../src/screens/SwapScreen.tsx', import.meta.url), 'utf8');
+  const wc = readFileSync(new globalThis.URL('../src/components/WcApprovalSheet.tsx', import.meta.url), 'utf8');
+  check('every Send confirm passes its quote to the notice (4 sites)', (send.match(/<SpendingPolicyNotice owner=\{quotedFrom\} quote=\{quote\} from=\{quotedFrom\} \/>/g) ?? []).length === 4);
+  check('Swap (2) and the WalletConnect sheet (2) pass their quotes too',
+    (swap.match(/<SpendingPolicyNotice\s+owner=\{account\.address\}\s+quote=\{(aaQuote|sendQuote)\}/g) ?? []).length === 2 &&
+      /<SpendingPolicyNotice owner=\{txQuote\.from\} quote=\{txQuote\.quote\} from=\{txQuote\.from\} \/>/.test(wc) &&
+      /<SpendingPolicyNotice owner=\{ready\.owner\} quote=\{ready\.quote\} from=\{ready\.owner\} \/>/.test(wc));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

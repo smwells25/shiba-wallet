@@ -916,7 +916,7 @@ function RequestBody({
             }}
           />
           <RiskWarnings url={txQuote.url} wallet={txQuote.from} to={txQuote.quote.to} data={txQuote.quote.data} />
-          <SpendingPolicyNotice owner={txQuote.from} />
+          <SpendingPolicyNotice owner={txQuote.from} quote={txQuote.quote} from={txQuote.from} />
           {txQuote.quote.simulation.ok ? (
             <Text style={[styles.simulationOk, { color: theme.success }]}>
               Pre-flight simulation passed (eth_call).
@@ -1343,7 +1343,7 @@ function SmartAccountTxBody({
             to={ready.quote.calls[0]!.to}
             data={ready.quote.calls[0]!.data}
           />
-          <SpendingPolicyNotice owner={ready.owner} />
+          <SpendingPolicyNotice owner={ready.owner} quote={ready.quote} from={ready.owner} />
           <Text style={[styles.simulationOk, { color: theme.success }]}>
             Bundler gas estimate passed (eth_estimateUserOperationGas simulated the operation).
           </Text>

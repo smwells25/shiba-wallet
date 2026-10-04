@@ -591,6 +591,34 @@ export async function saveSpendingPolicy(
   });
 }
 
+/**
+ * What makes an edit LOOSER than the saved limit (finding 10 of the
+ * rehearsal): a higher cap, a shorter window (the same cap then allows more
+ * per unit of time), turning on "Send anyway", or no longer counting network
+ * fees. Each such change — and removing a limit — asks for the device check
+ * first, like "Send anyway" does; tightening needs none. Which changes count
+ * as loosening is a judgement call recorded here. Returns plain reasons
+ * (empty when nothing loosens).
+ */
+export function policyLooseningReasons(
+  previous: Pick<SpendingPolicy, 'cap' | 'windowSeconds' | 'allowOverride' | 'countFees'>,
+  next: Pick<SpendingPolicy, 'cap' | 'windowSeconds' | 'allowOverride' | 'countFees'>,
+): string[] {
+  const reasons: string[] = [];
+  if (next.cap > previous.cap) reasons.push('raises the limit');
+  if (next.windowSeconds < previous.windowSeconds) reasons.push('shortens the time window');
+  if (next.allowOverride && !previous.allowOverride) reasons.push('allows "Send anyway"');
+  if (previous.countFees && !next.countFees) reasons.push('stops counting network fees');
+  return reasons;
+}
+
+/** The device-check prompt for loosening an existing limit. */
+export const SPENDING_LOOSEN_PROMPT = 'Loosen your spending limit';
+/** The device-check prompt for removing a limit. */
+export const SPENDING_REMOVE_PROMPT = 'Remove your spending limit';
+/** The device-check prompt for resetting every limit. */
+export const SPENDING_RESET_PROMPT = 'Reset your spending limits';
+
 /** Removes one policy; its scope's history is pruned to what the remaining limits need. */
 export async function removeSpendingPolicy(
   scope: SpendingScope,
@@ -930,6 +958,12 @@ export interface SpendingCheckInput {
   store?: KeyValueStore;
   now?: number;
   fetchFn?: typeof fetch;
+  /**
+   * False for a look-ahead that is not followed by signing (the confirm
+   * screen's early warning): the counted outflows are then NOT staged for
+   * the recorder. Default true.
+   */
+  stage?: boolean;
 }
 
 async function simulateOutflows(
@@ -1021,7 +1055,9 @@ export async function evaluateBeforeSigning(input: SpendingCheckInput): Promise<
     enforcement: 'client-side',
     entries: results.map((r) => r.entry),
   };
-  stage(callsFingerprint(input.scope.chain, input.spender, input.calls), { outflows, fee: input.fee });
+  if (input.stage !== false) {
+    stage(callsFingerprint(input.scope.chain, input.spender, input.calls), { outflows, fee: input.fee });
+  }
 
   const note = basis === 'quote' && fromCalls.unreadable ? SPENDING_QUOTE_BASIS_NOTE : null;
   if (decision.allowed) {
@@ -1046,6 +1082,32 @@ export async function evaluateBeforeSigning(input: SpendingCheckInput): Promise<
     message,
     note,
   };
+}
+
+/**
+ * The confirm screen's early warning (finding 12 of the rehearsal): one line
+ * per limit this send would exceed, shown BEFORE the user taps Send. Amounts
+ * are masked under Hide amounts (the line is passive; the alert after the tap
+ * keeps exact figures). The look-ahead counts only the amounts the quote
+ * itself carries (no simulation), so the tap's check — which also uses the
+ * preview — can still find more; the line says so.
+ */
+export function overLimitPreviewLines(check: SpendingCheck, hidden: boolean): string[] {
+  if (check.status !== 'blocked') return [];
+  return check.results
+    .filter((r) => r.entry.exceeds)
+    .map((r) => {
+      const s = r.policy.symbol;
+      const fmt = (n: bigint) => maskAmount(formatSpendAmount(n, r.policy.decimals), hidden);
+      return (
+        `This send would go over the limit for ${s} (${fmt(r.policy.cap)} ${s} per ` +
+        `${windowLabel(r.policy.windowSeconds)}): already spent ${fmt(r.entry.spentInWindow)} ${s}, this send ` +
+        `${fmt(r.entry.proposed)} ${s}${r.policy.countFees ? ' with the network fee' : ''}. ` +
+        (r.policy.allowOverride
+          ? 'Tapping Send will ask whether to send anyway.'
+          : 'Tapping Send will stop it; raise or remove the limit first.')
+      );
+    });
 }
 
 // ---------------------------------------------------------------------------
