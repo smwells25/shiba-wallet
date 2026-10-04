@@ -6240,3 +6240,9 @@ on return from the background.
       Left alone: Settings → Developer still says test networks are "each
       paid in test ETH". Phase 13's code is complete at this commit apart
       from item 3 (private-key import), which waits on the Chairperson.
+
+DECIDED by the Chairperson (2026-10-04): (a) single private-key import
+(feature 12) is wanted — build it, with the account labelled everywhere
+as not covered by the recovery phrase; (b) Circle's token paymaster is
+acceptable on test networks ("no risk there"); the test-networks-only
+readiness gate and finding F-58 stand for mainnet.
