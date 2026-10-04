@@ -5587,3 +5587,54 @@ WcApprovalSheet.
       mid-form injected a stray digit (keep ADBKeyboard on through Save).
       End state: Ethereum Sepolia, Account 1, light mode, Google IME, no
       policy, every subscription revoked; Metro still serving cc71223.
+
+## Phase 13 plan (started 2026-10-04 on the Chairperson's "let's begin"): tokens everywhere and gas in any token
+
+The Chairperson said to begin without naming a scope, so this plan is
+the CTO's proposal, recorded before any code. It can be redirected at
+any time; nothing in wave 1 is hard to undo. Selection rule: the Tier 1
+features still unbuilt that need no outside account (16, 37, 12), the
+one structural gap that has blocked several live tests (tracked tokens
+are mainnet-only), and the recorded follow-ups. Tier 1 features left
+out because they need inputs: fiat on-ramp (65, a vendor account and
+compliance decisions), push notifications (93, a development build),
+audits and bounty (56, a budget decision).
+
+1. Tokens on every EVM profile (prerequisite for 2 and for token
+   features on test networks; also feature 37): the tracked-token store,
+   Home rows, token sends, Activity, the preview's labels and the
+   subscriptions token list become per-chain (mainnet, Ethereum Sepolia,
+   Base Sepolia) instead of mainnet-only, with the known test-network
+   tokens (Circle's USDC / EURC) offered as defaults there; token
+   discovery through the configured indexer where one exists (verify the
+   API from documentation first), always behind the existing spam and
+   anti-spoofing rules.
+2. Pay gas in any token (feature 16, Tier 1, "only with AA"): verify
+   from documentation and on Sepolia which ERC-20 paymaster works with
+   EntryPoint v0.7 and Kernel v3.3 without a vendor lock (candidates to
+   check, none assumed: Circle's USDC paymaster, the bundler vendors'
+   ERC-20 paymasters through ERC-7677); engine support (the approval or
+   permit the paymaster needs, the exchange-rate quote, the fee shown in
+   the token), a live Sepolia run paying a UserOperation's gas in a test
+   token, then the app's Send confirm with a "pay the network fee in"
+   choice. Readiness: test networks only.
+3. Single private-key import (feature 12, Tier 1): an imported EVM key
+   as an additional account, stored like the phrase, labelled everywhere
+   as NOT covered by the recovery phrase; ADR for how it relates to D1.
+4. Follow-ups from phase 12: subscription form (custom period, a fee
+   budget that keeps back the install fee, no hand-over on an expired
+   card, legacy titles, the stale "Copied" mark), the smart-account Max
+   slack, dust formatting in Activity and Swap, WETH Deposit / Withdrawal
+   events in the preview (F5), the layer 1 fee line on the WalletConnect
+   sheet and in the EIP-7702 set-code quote on Base, the two unreasoned
+   eslint disables in WcApprovalSheet.
+5. An ERC-20 subscription pull, live (needs a test token on a dev or
+   emulator account; item 1 makes it reachable in-app).
+6. Leadership refresh at the end: feature rows, the shareable page,
+   DEMO.md.
+
+Waves: 1 (agent, app), 2's research and engine half (agent, engine and
+scripts only) and 4 (agent; files disjoint from item 1) in parallel;
+then 2's app half, 3 and 5; 6 last. Subagents on Opus.
+
+## Phase 13 progress
