@@ -25,7 +25,7 @@ import {
 // scripts/check-subscriptions.mjs under Node's type stripping.
 import { formatUnits, parseUnits } from './balances.ts';
 import { EVM_CHAIN_ID, validateRecipient } from './send.ts';
-import { knownTokensForChain, type KeyValueStore } from './tokens.ts';
+import { knownTokensForChain, listTokens, type KeyValueStore } from './tokens.ts';
 import { aaCanPaySelf, aaFeeFromBalance, type AaSendQuote } from './aa.ts';
 import {
   eip155Decimal,
@@ -197,6 +197,41 @@ export function subscriptionTokenChoices(chainCaip2: string, nativeSymbol: strin
     { token: SUBSCRIPTION_NATIVE, symbol: nativeSymbol, decimals: 18 },
     ...knownTokensForChain(chainCaip2).map((t) => ({ token: t.assetId.reference, symbol: t.symbol, decimals: t.decimals })),
   ];
+}
+
+/**
+ * The form's full list: subscriptionTokenChoices (native, then the known
+ * tokens) followed by the user's tracked tokens on the SAME chain
+ * (tokens.ts listTokens(chainCaip2), whose decimals were read from the chain
+ * when the token was added) that are not already in it. The prefix is
+ * exactly subscriptionTokenChoices, so an index chosen before this list
+ * loaded still names the same token afterwards. Duplicates are matched on
+ * the contract address, case-insensitively; a tracked token that is not an
+ * ERC-20 on this chain never appears (listTokens filters by chain). An
+ * unreadable token store degrades to the synchronous list.
+ */
+export async function loadSubscriptionTokenChoices(
+  chainCaip2: string,
+  nativeSymbol: string,
+  store?: KeyValueStore,
+): Promise<SubscriptionTokenChoice[]> {
+  const base = subscriptionTokenChoices(chainCaip2, nativeSymbol);
+  let tracked: Awaited<ReturnType<typeof listTokens>> = [];
+  try {
+    tracked = await listTokens(chainCaip2, store);
+  } catch {
+    return base;
+  }
+  const seen = new Set(base.map((c) => c.token.toLowerCase()));
+  const extra: SubscriptionTokenChoice[] = [];
+  for (const t of tracked) {
+    if (t.assetId.chainId !== chainCaip2) continue;
+    const address = t.assetId.reference;
+    if (seen.has(address.toLowerCase())) continue;
+    seen.add(address.toLowerCase());
+    extra.push({ token: address, symbol: t.symbol, decimals: t.decimals });
+  }
+  return [...base, ...extra];
 }
 
 /**

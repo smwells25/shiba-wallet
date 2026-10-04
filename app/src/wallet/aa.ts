@@ -8,6 +8,9 @@ import {
   NodeClient,
   SmartAccountClient,
   KERNEL_V3_3_7702_DELEGATE,
+  PERMIT_DEADLINE_MAX,
+  TokenGasChargeAboveLimitError,
+  createCirclePaymasterTransport,
   createKernel7702AccountSpec,
   createKernelAccountSpec,
   createSimpleAccountSpec,
@@ -25,6 +28,7 @@ import {
   withDepositTopUpHeadroom,
   type Call,
   type JsonRpcTransport,
+  type PermitRequest,
   type SignedEip7702Authorization,
   type SmartAccountSignature,
   type SmartAccountSpec,
@@ -1759,7 +1763,79 @@ export interface AaSendQuote {
    * submit it. sendAa (the owner-key path) refuses such a quote.
    */
   passkey?: boolean;
+  /**
+   * Present only when the network fee is paid in USDC through Circle's
+   * token paymaster (phase 13 item 2, ./token-gas.ts). Such a quote is made
+   * WITHOUT a bundler estimate (the paymaster's estimation stub needs a
+   * permit signed by the account, i.e. the owner key, which is never loaded
+   * at quote time), so its gas fields above are 0n, `fee` is 0n (no ETH is
+   * charged for gas) and the worst case is `tokenGas.maxTokenCharge`.
+   */
+  tokenGas?: AaTokenGas;
 }
+
+/**
+ * The USDC-fee part of a smart-account quote (./token-gas.ts builds it).
+ * maxTokenCharge is the worst case the confirm screen shows; sendAa passes it
+ * to the engine's paymaster transport as maxTokenCharge and refuses to sign
+ * any permit above it, so the final charge can never exceed what the user
+ * saw (packages/chains-evm/src/token-paymaster.ts: the prefund pulled in
+ * validation is the most the operation can cost; postOp only refunds).
+ */
+export interface AaTokenGas {
+  /** Circle's paymaster (CIRCLE_TOKEN_PAYMASTER_V07.testnetAddress on Base Sepolia). */
+  paymaster: string;
+  /** The fee token; equals the paymaster's on-chain token(). */
+  token: string;
+  symbol: string;
+  /** tokenDecimals() of the paymaster. */
+  decimals: number;
+  /** The worst-case charge in token base units (the permit's exact value cap). */
+  maxTokenCharge: bigint;
+  /** The EntryPoint prefund in wei the worst case converts (maxCost). */
+  requiredPrefundWei: bigint;
+  /** additionalGasCharge * maxFeePerGas + requiredPrefundWei. */
+  worstCaseWei: bigint;
+  /** fetchPrice(): base units of the token per 1e18 wei, from the paymaster's oracle. */
+  nativeTokenPrice: bigint;
+  /** feeSpread() in basis points, read from the paymaster. */
+  feeSpreadBips: bigint;
+  /** additionalGasCharge() of the paymaster (gas). */
+  additionalGasCharge: bigint;
+  /** oracle() of the paymaster. */
+  oracle: string;
+  /** The smart account's fee-token balance as read for the quote. */
+  tokenBalance: bigint;
+  /** verification + call + preVerification gas assumed for the worst case. */
+  estimationGasCeiling: bigint;
+  /** paymasterVerificationGasLimit assumed for the worst case (and the stub). */
+  paymasterVerificationGasLimit: bigint;
+  /** paymasterPostOpGasLimit used for the worst case and the operation. */
+  paymasterPostOpGasLimit: bigint;
+}
+
+/**
+ * Gas assumed for verification + call + preVerification when the USDC worst
+ * case is computed before the biometric gate. It is the engine's own
+ * default for the stub permit (createCirclePaymasterTransport,
+ * packages/chains-evm/src/token-paymaster.ts line 699), passed explicitly so
+ * the figure on the confirm screen and the stub permit signed at send time
+ * are the same number.
+ */
+export const TOKEN_GAS_ESTIMATION_CEILING = 1_500_000n;
+
+/**
+ * Padding on the bundler's estimate for USDC-fee operations: the values of
+ * the live Base Sepolia proof (scripts/testnet/token-gas-smoke.mjs line 604,
+ * userOpHash 0x49f93a11…f7f6 accepted by ZeroDev's bundler on 2026-10-04),
+ * kept identical so the app runs the configuration that was proven.
+ */
+export const TOKEN_GAS_PADDING_PCT = { verification: 110, call: 130, preVerification: 105 } as const;
+
+/** Refusal when a USDC-fee quote reaches an account type it was never offered for. */
+export const TOKEN_GAS_ACCOUNT_REFUSAL =
+  'Paying the network fee in USDC needs a Kernel v3.3 smart account at its own address that pays its own ' +
+  'gas (no sponsoring paymaster). Nothing was signed; review the send again.';
 
 /** Convenience alias: a quote for any list of calls. */
 export type AaCallsQuote = AaSendQuote;
@@ -2468,15 +2544,57 @@ export function aaErc20TransferCalls(contract: string, recipient: string, amount
 }
 
 /**
+ * The ERC-20 a smart-account token send names, as the screens pass it.
+ * `chainCaip2` is the token's own CAIP-2 chain (its CAIP-19 id's chain,
+ * tokens.ts): when present, the quote and Max refuse a token from another
+ * chain before any request, because tokens are tracked per chain since phase
+ * 13 item 1 and the same contract address can mean something else (or
+ * nothing) elsewhere. Optional so older callers keep working unchanged.
+ */
+export interface AaErc20Target {
+  contract: string;
+  recipient: string;
+  symbol: string;
+  decimals: number;
+  chainCaip2?: string;
+}
+
+/**
+ * Refuses a token whose CAIP-2 chain is not the bundle's chain (no request
+ * is made first). A token without `chainCaip2` is not checked.
+ */
+export function assertAaTokenChain(bundle: Pick<AaClientBundle, 'chainId'>, token: { symbol: string; chainCaip2?: string }): void {
+  if (token.chainCaip2 === undefined) return;
+  const expected = eip155Caip2(bundle.chainId);
+  if (token.chainCaip2 !== expected) {
+    throw new Error(
+      `${token.symbol} belongs to ${token.chainCaip2}, but this smart account is on ${expected}. ` +
+        'Nothing was quoted; switch to the token\u2019s network to send it.',
+    );
+  }
+}
+
+/**
  * Smart-account ERC-20 send quote: one transfer call, token balance checked
  * against the SMART ACCOUNT, gas (in ETH) checked against the smart
- * account's ETH balance unless sponsored.
+ * account's ETH balance unless sponsored. A token from another chain
+ * (`chainCaip2`) is refused before any request.
  */
 export async function prepareAaErc20Send(
   bundle: AaClientBundle,
   ownerAddress: string,
-  token: { contract: string; recipient: string; amount: bigint; symbol: string; decimals: number },
+  token: AaErc20Target & { amount: bigint },
 ): Promise<AaSendQuote> {
+  assertAaTokenChain(bundle, token);
+  // The quote's `token` carries exactly the display fields (never the
+  // chain id), so quotes stay key-for-key what they were before.
+  const display: AaTokenTransfer = {
+    contract: token.contract,
+    recipient: token.recipient,
+    amount: token.amount,
+    symbol: token.symbol,
+    decimals: token.decimals,
+  };
   return prepareAaCalls(
     bundle,
     ownerAddress,
@@ -2484,7 +2602,7 @@ export async function prepareAaErc20Send(
     {
       tokenSpend: { contract: token.contract, amount: token.amount, symbol: token.symbol },
       displayTo: token.recipient,
-      token,
+      token: display,
     },
   );
 }
@@ -2493,13 +2611,15 @@ export async function prepareAaErc20Send(
  * Smart-account token Max: the smart account's full token balance (gas is
  * paid in ETH). Refuses — through the quote's own insufficient-funds error
  * — when the smart account's ETH cannot cover the worst-case fee for
- * sending that balance. Returns 0n for an empty token balance.
+ * sending that balance. Returns 0n for an empty token balance. A token from
+ * another chain (`chainCaip2`) is refused before any request.
  */
 export async function maxAaErc20Send(
   bundle: AaClientBundle,
   ownerAddress: string,
-  token: { contract: string; recipient: string; symbol: string; decimals: number },
+  token: AaErc20Target,
 ): Promise<bigint> {
+  assertAaTokenChain(bundle, token);
   const sender = await resolveAaSender(bundle, ownerAddress);
   const balance = await fetchTokenBalanceVia(bundle.node, token.contract, sender);
   if (balance === 0n) return 0n;
@@ -2592,6 +2712,85 @@ function notifyAaSent(event: AaSentEvent): void {
 }
 
 /**
+ * Refuses (TokenGasChargeAboveLimitError) any USDC permit the paymaster
+ * transport asks for that is not exactly the grant the confirm screen
+ * described: owner = the smart account, spender = the quoted paymaster,
+ * token = the quoted fee token on this chain, deadline = type(uint256).max
+ * (the only deadline the paymaster passes), value at most the displayed
+ * worst case. Returns nothing; throws on the first mismatch. Exported for
+ * scripts/check-token-gas.mjs.
+ */
+export function assertTokenGasPermit(
+  permit: PermitRequest,
+  expected: { account: string; tokenGas: AaTokenGas; chainId: bigint },
+): void {
+  const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+  const m = permit.message;
+  if (
+    !same(m.owner, expected.account) ||
+    !same(m.spender, expected.tokenGas.paymaster) ||
+    !same(permit.domain.verifyingContract, expected.tokenGas.token) ||
+    BigInt(permit.domain.chainId) !== expected.chainId ||
+    m.deadline !== PERMIT_DEADLINE_MAX
+  ) {
+    throw new Error(
+      'The USDC permit the paymaster asked for does not match the reviewed send (owner, paymaster, token, ' +
+        'network or deadline differ). Nothing was signed; review the send again.',
+    );
+  }
+  if (m.value > expected.tokenGas.maxTokenCharge) {
+    throw new TokenGasChargeAboveLimitError(m.value, expected.tokenGas.maxTokenCharge);
+  }
+}
+
+/**
+ * The SmartAccountClient for one USDC-fee send: the bundle's own spec, node
+ * and bundler, plus the engine's local ERC-7677 transport for Circle's
+ * paymaster in permit mode. It is built inside sendAa, after the biometric
+ * gate, because the permit is signed AS THE ACCOUNT (the spec's ERC-1271
+ * envelope over the permit digest) with the owner key that only exists
+ * there. maxTokenCharge = the displayed worst case: the engine refuses final
+ * paymaster data above it (TokenGasChargeAboveLimitError), and
+ * assertTokenGasPermit refuses to sign any permit above it, the estimation
+ * stub included.
+ */
+function tokenGasClient(
+  bundle: AaClientBundle,
+  owner: DerivedAccount,
+  sender: string,
+  tokenGas: AaTokenGas,
+): SmartAccountClient {
+  const signErc1271 = bundle.spec.signErc1271;
+  if (!signErc1271) throw new Error(TOKEN_GAS_ACCOUNT_REFUSAL);
+  const transport = createCirclePaymasterTransport({
+    node: bundle.node,
+    chainId: bundle.chainId,
+    account: sender,
+    paymaster: tokenGas.paymaster,
+    token: tokenGas.token,
+    entryPoint: ENTRYPOINT_V07,
+    mode: 'permit',
+    estimationGasCeiling: tokenGas.estimationGasCeiling,
+    verificationGasLimit: tokenGas.paymasterVerificationGasLimit,
+    postOpGasLimit: tokenGas.paymasterPostOpGasLimit,
+    maxTokenCharge: tokenGas.maxTokenCharge,
+    signPermit: (digest, permit) => {
+      assertTokenGasPermit(permit, { account: sender, tokenGas, chainId: bundle.chainId });
+      return signErc1271.call(bundle.spec, owner, digest, { chainId: bundle.chainId, account: sender });
+    },
+  });
+  return new SmartAccountClient({
+    chainId: bundle.chainId,
+    entryPoint: ENTRYPOINT_V07,
+    bundler: bundle.bundler,
+    node: bundle.node,
+    spec: bundle.spec,
+    paymaster: { transport },
+    gasPaddingPct: { ...TOKEN_GAS_PADDING_PCT },
+  });
+}
+
+/**
  * Signs and submits the quoted calls as one UserOperation through
  * SmartAccountClient.sendCalls (stub → estimate → sign → send; the client
  * re-runs its own estimation so the submitted gas limits are fresh).
@@ -2607,6 +2806,20 @@ export async function sendAa(
 ): Promise<{ userOpHash: string }> {
   if (quote.passkey) {
     throw new Error('This operation was prepared for the passkey signer. Nothing was signed; review it again.');
+  }
+  // USDC fee (phase 13 item 2): only for the account type it is offered for,
+  // and only where the readiness switchboard allows it (test networks).
+  if (quote.tokenGas) {
+    assertFeatureAllowed('token-gas', eip155Caip2(bundle.chainId));
+    if (
+      bundle.accountType !== 'kernel-v3.3' ||
+      bundle.eip7702 ||
+      bundle.sponsored ||
+      !bundle.spec.signErc1271 ||
+      quote.eip7702
+    ) {
+      throw new Error(TOKEN_GAS_ACCOUNT_REFUSAL);
+    }
   }
   // Mainnet readiness: an operation that would sign an EIP-7702
   // authorization is refused where the upgrade is not allowed.
@@ -2626,7 +2839,8 @@ export async function sendAa(
   // otherwise. The gate is closed again whatever happens.
   if (bundle.eip7702) bundle.eip7702.gate.allowAuthorization = quote.eip7702?.upgrade === true;
   try {
-    const { userOpHash } = await bundle.client.sendCalls(owner, quote.calls, {
+    const client = quote.tokenGas ? tokenGasClient(bundle, owner, sender, quote.tokenGas) : bundle.client;
+    const { userOpHash } = await client.sendCalls(owner, quote.calls, {
       maxFeePerGas: quote.maxFeePerGas,
       maxPriorityFeePerGas: quote.maxPriorityFeePerGas,
     });

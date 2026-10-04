@@ -1614,7 +1614,8 @@ function TypedDataSummaryCard({
 
   useEffect(() => {
     let cancelled = false;
-    listTokens().then(
+    // The sheet's own chain, named explicitly (tokens are tracked per chain).
+    listTokens(evmChain.caip2).then(
       (list) => {
         if (!cancelled) setTracked(list);
       },

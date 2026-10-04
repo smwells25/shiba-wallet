@@ -101,7 +101,7 @@ console.log('check-readiness: table integrity');
 const EXPECTED_IDS = [
   'eoa-send', 'tokens', 'nft', 'swap', 'walletconnect', 'dogecoin-send', 'simple-account',
   'kernel-smart-account', 'eip7702-upgrade', 'session-keys', 'passkeys', 'guardians',
-  'owner-rotation', 'paymaster',
+  'owner-rotation', 'paymaster', 'token-gas',
 ];
 const ids = FEATURE_READINESS.map((f) => f.id);
 check('every expected feature id is present exactly once', EXPECTED_IDS.every((id) => ids.filter((x) => x === id).length === 1) && ids.length === EXPECTED_IDS.length, ids.join());
@@ -149,7 +149,7 @@ for (const f of FEATURE_READINESS) {
 }
 const cUnmet = ['C1', 'C2', 'C3'].filter((id) => !metStatus(id));
 check('while any of C1–C3 is not Met, no feature citing them is mainnet-ok', cUnmet.length === 0 || FEATURE_READINESS.filter((f) => f.evidence.some((id) => /^C\d$/.test(id))).every((f) => f.status !== 'mainnet-ok'), cUnmet.join());
-for (const id of ['kernel-smart-account', 'eip7702-upgrade', 'session-keys', 'passkeys', 'guardians', 'owner-rotation', 'paymaster', 'simple-account']) {
+for (const id of ['kernel-smart-account', 'eip7702-upgrade', 'session-keys', 'passkeys', 'guardians', 'owner-rotation', 'paymaster', 'simple-account', 'token-gas']) {
   check(`${id} is testnet-only (leadership summary conclusion 2)`, featureReadiness(id).status === 'testnet-only');
 }
 for (const id of ['eoa-send', 'tokens', 'nft', 'swap', 'walletconnect', 'dogecoin-send']) {
@@ -160,7 +160,7 @@ check('swap names W7 (a live 0x quote)', featureReadiness('swap').evidence.inclu
 check('paymaster names W8 (live sponsorship)', featureReadiness('paymaster').evidence.includes('W8'));
 check('walletconnect names W11 and W12 (permit decoding, dApp identity)', ['W11', 'W12'].every((i) => featureReadiness('walletconnect').evidence.includes(i)));
 // Every enforced feature has a gate in the app modules (static check).
-const gateSources = ['aa.ts', 'delegation.ts', 'sessions.ts', 'passkeys.ts', 'recovery.ts']
+const gateSources = ['aa.ts', 'delegation.ts', 'sessions.ts', 'passkeys.ts', 'recovery.ts', 'token-gas.ts']
   .map((f) => readFileSync(join(HERE, '..', 'src', 'wallet', f), 'utf8'))
   .join('\n');
 for (const f of FEATURE_READINESS.filter((x) => x.enforced)) {

@@ -82,6 +82,31 @@ import {
   type AaSendQuote,
   type SmartAccountAddressInfo,
 } from '../wallet/aa';
+import { TokenGasChargeAboveLimitError } from '@shiba-wallet/chains-evm';
+import {
+  TOKEN_GAS_CHOICE_HINT,
+  TOKEN_GAS_ESTIMATE_AFTER_APPROVAL,
+  TOKEN_GAS_NO_CHARGE_EVENT,
+  TOKEN_GAS_SPREAD_NOTE,
+  checkTokenGasPaymaster,
+  describeTokenGasError,
+  maxAaTokenGasErc20Send,
+  maxAaTokenGasSend,
+  prepareAaTokenGasErc20Send,
+  prepareAaTokenGasSend,
+  tokenGasChargeFromReceipt,
+  tokenGasChargedSentence,
+  tokenGasFeeSentence,
+  tokenGasGrantSentence,
+  tokenGasMaxAdjustmentSentence,
+  tokenGasOffer,
+  tokenGasOracleNote,
+  tokenGasPaymasterFor,
+  tokenGasRateSentence,
+  tokenGasSpreadText,
+  tokenGasWorstCaseHint,
+  type TokenGasCheck,
+} from '../wallet/token-gas';
 import {
   maxErc20Send,
   prepareErc20Send,
@@ -294,7 +319,21 @@ export function SendScreen({ route, navigation }: Props) {
     receiptState: 'pending' | 'found' | 'timeout';
     success: boolean | null;
     txHash: string | null;
+    /**
+     * USDC-fee sends only: the charge read from Circle's
+     * UserOperationSponsored event once the receipt arrived (null when the
+     * receipt had no such event; undefined for every other send).
+     */
+    tokenGasCharge?: bigint | null;
   } | null>(null);
+  // Pay the network fee in USDC (phase 13 item 2, ../wallet/token-gas.ts):
+  // the user's choice on the form; it takes effect only where the choice is
+  // offered and Circle's paymaster passed its on-chain check. ETH is the
+  // default.
+  const [feeInUsdc, setFeeInUsdc] = useState(false);
+  // The Max record for the USDC-fee path, kept apart from the ETH-fee one so
+  // a Max figure from one fee mode is never trimmed by the other.
+  const lastTokenGasMax = useRef<LastMaxResult | null>(null);
 
   useEffect(() => {
     const title = token
@@ -458,6 +497,38 @@ export function SendScreen({ route, navigation }: Props) {
     const t = setTimeout(() => setAaAddressCopied(false), 2000);
     return () => clearTimeout(t);
   }, [aaAddressCopied]);
+
+  // Circle's paymaster, checked on-chain against the ACTIVE endpoint before
+  // the USDC-fee choice is shown (cached briefly by checkTokenGasPaymaster).
+  // Only on a network that has a verified paymaster, and only while the
+  // smart-account toggle is on; the state carries the key it was read for.
+  const tokenGasCheckKey =
+    aaEnabled && !nftMode && aaConfig && aaOwner && aaNodeUrl && tokenGasPaymasterFor(evmChain.caip2)
+      ? `${evmChain.caip2}|${aaNodeUrl}`
+      : null;
+  const [tokenGasCheckState, setTokenGasCheckState] = useState<{ key: string; result: TokenGasCheck } | null>(null);
+  useEffect(() => {
+    if (!tokenGasCheckKey || !aaNodeUrl) return;
+    let cancelled = false;
+    checkTokenGasPaymaster(aaNodeUrl, evmChain.caip2).then(
+      (result) => {
+        if (!cancelled) setTokenGasCheckState({ key: tokenGasCheckKey, result });
+      },
+      (e: unknown) => {
+        if (!cancelled) {
+          setTokenGasCheckState({
+            key: tokenGasCheckKey,
+            result: { ok: false, reason: e instanceof Error ? e.message : String(e) },
+          });
+        }
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [tokenGasCheckKey, aaNodeUrl, evmChain.caip2]);
+  const tokenGasCheck =
+    tokenGasCheckState && tokenGasCheckState.key === tokenGasCheckKey ? tokenGasCheckState.result : null;
 
   /**
    * Exact-match / look-alike classification of an address against the
@@ -659,6 +730,15 @@ export function SendScreen({ route, navigation }: Props) {
   // not an EIP-7702 upgrade) whose passkey this device installed.
   const passkeyRecord = aaType === 'kernel-v3.3' ? passkeyInfo.record : null;
   const passkeyActive = aaActive && passkeySigner && passkeyRecord !== null;
+  // Pay the network fee in USDC: offered by configuration (tokenGasOffer),
+  // then shown only once Circle's paymaster passed its on-chain check, and
+  // used only when the user turned it on. Never together with the passkey
+  // signer (tokenGasOffer refuses that combination).
+  const tokenGasOfferNow = aaActive
+    ? tokenGasOffer({ chainCaip2: evmChain.caip2, config: aaConfig, owner: account.address, passkeySigner: passkeyActive })
+    : null;
+  const tokenGasReady = tokenGasOfferNow?.kind === 'available' && tokenGasCheck?.ok === true;
+  const tokenGasActive = aaActive && tokenGasReady && feeInUsdc && !passkeyActive;
 
   /**
    * The passkey-signing bundle over the same verified configuration: the
@@ -710,6 +790,7 @@ export function SendScreen({ route, navigation }: Props) {
     setFormError(null);
     lastEvmMax.current = null;
     lastAaMax.current = null;
+    lastTokenGasMax.current = null;
     try {
       const start = await currentEndpoint();
       let max: bigint;
@@ -731,6 +812,31 @@ export function SendScreen({ route, navigation }: Props) {
         if (!validation?.ok) {
           throw new Error('Enter a valid recipient first — the max depends on it.');
         }
+        if (tokenGasActive) {
+          // Network fee in USDC: native Max = the smart account's full ETH
+          // balance (no ETH pays for gas); USDC Max = its USDC balance minus
+          // the worst-case fee; another token's Max = its full balance.
+          const tbundle = buildAaBundle(start.url);
+          if (token) {
+            max = await maxAaTokenGasErc20Send(tbundle, account.address, {
+              contract: token.assetId.reference,
+              recipient: validation.normalized,
+              symbol: token.symbol,
+              decimals: token.decimals,
+              chainCaip2: token.assetId.chainId,
+            });
+            if (max <= 0n) {
+              throw new Error(`The smart account's ${token.symbol} balance cannot cover the amount and the network fee.`);
+            }
+          } else {
+            max = await maxAaTokenGasSend(tbundle, account.address);
+            if (max <= 0n) throw new Error('The smart account holds no ETH to send.');
+          }
+          const tgText = exact(max, decimals);
+          lastTokenGasMax.current = { text: tgText, from: account.address, chainId: route.params.chainId };
+          setAmountText(tgText);
+          return;
+        }
         if (passkeyActive) {
           // Passkey path: the passkey's own quote (nonce key, stub, padding)
           // prices the fee; tokens use the full token balance.
@@ -742,6 +848,7 @@ export function SendScreen({ route, navigation }: Props) {
               recipient: validation.normalized,
               symbol: token.symbol,
               decimals: token.decimals,
+              chainCaip2: token.assetId.chainId,
             });
             if (max <= 0n) throw new Error(`The smart account's ${token.symbol} balance is zero.`);
           } else {
@@ -761,6 +868,7 @@ export function SendScreen({ route, navigation }: Props) {
             recipient: validation.normalized,
             symbol: token.symbol,
             decimals: token.decimals,
+            chainCaip2: token.assetId.chainId,
           });
           if (max <= 0n) throw new Error(`The smart account's ${token.symbol} balance is zero.`);
         } else {
@@ -813,9 +921,11 @@ export function SendScreen({ route, navigation }: Props) {
       setAmountText(maxText);
     } catch (e) {
       const { title, detail } = retitleQuoteFailure(
-        (aaActive && aaType
-          ? describeAaError(e, { accountType: aaType, deployed: null, bundlerUrl: aaConfig?.bundlerUrl ?? null })
-          : null) ?? describeError(e),
+        (tokenGasActive ? describeTokenGasError(e) : null) ??
+          (aaActive && aaType
+            ? describeAaError(e, { accountType: aaType, deployed: null, bundlerUrl: aaConfig?.bundlerUrl ?? null })
+            : null) ??
+          describeError(e),
       );
       setFormError(`${title}\n${detail}`);
     } finally {
@@ -875,6 +985,42 @@ export function SendScreen({ route, navigation }: Props) {
         // from the bundler as well as the node, and charging a bundler
         // refusal to the node endpoint would be wrong. They quote through
         // the endpoint resolved just now and are pinned to it like the rest.
+        if (tokenGasActive) {
+          // Network fee in USDC through Circle's paymaster: quoted WITHOUT a
+          // bundler estimate (the estimation stub needs a permit signed by
+          // the account, so estimation runs after the biometric gate); the
+          // confirm shows the worst case, which caps every permit signed.
+          const tbundle = buildAaBundle(start.url);
+          aaBundle.current = tbundle;
+          const tgFromMax = amountIsLastMax(lastTokenGasMax.current, {
+            text: amountText,
+            from: account.address,
+            chainId: route.params.chainId,
+          });
+          next = token
+            ? await prepareAaTokenGasErc20Send(
+                tbundle,
+                account.address,
+                {
+                  contract: token.assetId.reference,
+                  recipient: validation.normalized,
+                  amount,
+                  symbol: token.symbol,
+                  decimals: token.decimals,
+                  chainCaip2: token.assetId.chainId,
+                },
+                { fromMax: tgFromMax },
+              )
+            : await prepareAaTokenGasSend(tbundle, account.address, validation.normalized, amount, {
+                fromMax: tgFromMax,
+              });
+          setQuote(next);
+          setQuotedFrom(account.address);
+          setQuotedUrl(quoteUrl);
+          setOverrideSimulation(false);
+          setPhase('confirm');
+          return;
+        }
         if (passkeyActive) {
           // Passkey-signed operation from the SAME smart account: quoted with
           // the passkey nonce key and stub signature (passkeys.ts).
@@ -915,6 +1061,7 @@ export function SendScreen({ route, navigation }: Props) {
               amount,
               symbol: token.symbol,
               decimals: token.decimals,
+              chainCaip2: token.assetId.chainId,
             })
           : await prepareAaSend(bundle, account.address, validation.normalized, amount, {
               fromMax: amountIsLastMax(lastAaMax.current, {
@@ -978,9 +1125,11 @@ export function SendScreen({ route, navigation }: Props) {
       // Nothing has been signed or sent while a quote is prepared: the
       // generic failure title says so (retitleQuoteFailure).
       const { title, detail } = retitleQuoteFailure(
-        (aaActive && aaType
-          ? describeAaError(e, { accountType: aaType, deployed: null, bundlerUrl: aaConfig?.bundlerUrl ?? null })
-          : null) ?? describeError(e),
+        (tokenGasActive ? describeTokenGasError(e) : null) ??
+          (aaActive && aaType
+            ? describeAaError(e, { accountType: aaType, deployed: null, bundlerUrl: aaConfig?.bundlerUrl ?? null })
+            : null) ??
+          describeError(e),
       );
       setFormError(`${title}\n${detail}`);
       setPhase('form');
@@ -1092,10 +1241,19 @@ export function SendScreen({ route, navigation }: Props) {
         // "bundling…" until it lands (or the poll times out — the op may
         // still be included later, the userOpHash stays the lookup key).
         void waitForAaReceipt(bundle, userOpHash, { timeoutMs: 120_000, pollMs: 3_000 }).then(
-          ({ summary }) => {
+          ({ raw, summary }) => {
             // The operation carried the EIP-7702 upgrade: re-read the
             // account's status now that it is included.
             if (quote.eip7702?.upgrade) invalidateAccountDelegation(quote.sender);
+            // USDC fee: the actual charge from Circle's event in the receipt.
+            const tokenGasCharge = quote.tokenGas
+              ? (tokenGasChargeFromReceipt(raw, {
+                  userOpHash,
+                  paymaster: quote.tokenGas.paymaster,
+                  token: quote.tokenGas.token,
+                  sender: quote.sender,
+                })?.actualTokenNeeded ?? null)
+              : undefined;
             setAaResult((prev) =>
               prev && prev.userOpHash === userOpHash
                 ? {
@@ -1103,6 +1261,7 @@ export function SendScreen({ route, navigation }: Props) {
                     receiptState: 'found',
                     success: summary.success,
                     txHash: summary.txHash,
+                    ...(tokenGasCharge !== undefined ? { tokenGasCharge } : {}),
                   }
                 : prev,
             );
@@ -1134,7 +1293,19 @@ export function SendScreen({ route, navigation }: Props) {
       }
       setPhase('success');
     } catch (e) {
+      // USDC fee: the charge would now exceed the amount the user approved.
+      // Nothing was signed above that amount and nothing was sent; back to
+      // the form so Review shows the new worst case.
+      if (quote.kind === 'aa' && quote.tokenGas && e instanceof TokenGasChargeAboveLimitError) {
+        const described = describeTokenGasError(e, quote.tokenGas);
+        setQuote(null);
+        setQuotedUrl(null);
+        setFormError(described ? `${described.title}\n${described.detail}` : e.message);
+        setPhase('form');
+        return;
+      }
       const { title, detail } =
+        (quote.kind === 'aa' && quote.tokenGas ? describeTokenGasError(e, quote.tokenGas) : null) ??
         (quote.kind === 'aa'
           ? describeAaError(e, {
               accountType: quote.accountType,
@@ -1190,6 +1361,17 @@ export function SendScreen({ route, navigation }: Props) {
                 Included on-chain{aaResult.success === true ? ' — succeeded.' : '.'}
               </Text>
             )}
+            {quote?.kind === 'aa' && quote.tokenGas && aaResult.tokenGasCharge !== undefined ? (
+              <Text style={[styles.hint, { color: theme.text }]}>
+                {aaResult.tokenGasCharge === null
+                  ? TOKEN_GAS_NO_CHARGE_EVENT
+                  : tokenGasChargedSentence(
+                      exact(aaResult.tokenGasCharge, quote.tokenGas.decimals),
+                      exact(quote.tokenGas.maxTokenCharge, quote.tokenGas.decimals),
+                      quote.tokenGas.symbol,
+                    )}
+              </Text>
+            ) : null}
             {aaResult.txHash ? (
               <>
                 <Text style={[styles.label, { color: theme.textMuted }]}>Transaction</Text>
@@ -1283,10 +1465,13 @@ export function SendScreen({ route, navigation }: Props) {
               />
             ) : null}
             <Text style={[styles.hint, { color: theme.textMuted }]}>
-              One transfer call executed by the smart account: it sends its
-              own {quote.token.symbol}, so no approval is needed. Gas is paid
-              in {evmChain.displaySymbol} by the smart account (or the
-              paymaster, when sponsored).
+              {quote.tokenGas
+                ? `One transfer call executed by the smart account: it sends its own ${quote.token.symbol}, ` +
+                  `so no approval is needed. The network fee is paid in ${quote.tokenGas.symbol} through ` +
+                  'Circle\u2019s paymaster (see below).'
+                : `One transfer call executed by the smart account: it sends its own ${quote.token.symbol}, ` +
+                  `so no approval is needed. Gas is paid in ${evmChain.displaySymbol} by the smart account ` +
+                  '(or the paymaster, when sponsored).'}
             </Text>
           </>
         ) : (
@@ -1299,7 +1484,13 @@ export function SendScreen({ route, navigation }: Props) {
         )}
         {quote.kind === 'aa' && quote.maxAdjustment ? (
           <WarningBox>
-            {aaMaxAdjustmentSentence(quote, (v) => `${exact(v, nativeDecimals)} ${evmChain.displaySymbol}`)}
+            {!quote.tokenGas
+              ? aaMaxAdjustmentSentence(quote, (v) => `${exact(v, nativeDecimals)} ${evmChain.displaySymbol}`)
+              : tokenGasMaxAdjustmentSentence(quote, (v) =>
+                  quote.token
+                    ? `${exact(v, quote.token.decimals)} ${quote.token.symbol}`
+                    : `${exact(v, nativeDecimals)} ${evmChain.displaySymbol}`,
+                )}
           </WarningBox>
         ) : null}
         {quote.passkey ? (
@@ -1342,32 +1533,102 @@ export function SendScreen({ route, navigation }: Props) {
             {kernelDeploymentNote(aaConfig?.bundlerUrl ?? null)}
           </Text>
         ) : null}
-        <Row
-          label={quote.sponsored ? 'Network fee' : 'Max network fee (bundler estimate)'}
-          value={
-            quote.sponsored
-              ? 'Sponsored — you pay 0'
-              : `${exact(quote.fee, nativeDecimals)} ${evmChain.displaySymbol}`
-          }
-          sub={quote.sponsored ? null : fiatOf(nativePriceId, quote.fee, nativeDecimals)}
-          theme={theme}
-        />
-        <Text style={[styles.hint, { color: theme.textMuted }]}>
-          {quote.sponsored
-            ? 'An ERC-7677 paymaster sponsors this operation\u2019s gas: the ' +
-              'smart account pays only the amount. The paymaster may still ' +
-              'decline at send time; that shows up as a bundler error, not a charge.'
-            : `Worst case at ${exact(quote.maxFeePerGas, 9)} gwei max fee \u00d7 ` +
-              `${(quote.callGasLimit + quote.verificationGasLimit + quote.preVerificationGas).toString()} ` +
-              'gas (bundler eth_estimateUserOperationGas). The smart account pays ' +
-              'its own gas from its own balance.'}
-        </Text>
-        <Row
-          label={quote.token ? `Total ${evmChain.displaySymbol} (worst case)` : 'Total (worst case)'}
-          value={`${exact(quote.total, nativeDecimals)} ${evmChain.displaySymbol}`}
-          sub={fiatOf(nativePriceId, quote.total, nativeDecimals)}
-          theme={theme}
-        />
+        {quote.tokenGas ? (
+          <>
+            <Row
+              label={`Network fee (paid in ${quote.tokenGas.symbol})`}
+              value={
+                `up to ${exact(quote.tokenGas.maxTokenCharge, quote.tokenGas.decimals)} ${quote.tokenGas.symbol}`
+              }
+              theme={theme}
+            />
+            <Text style={[styles.hint, { color: theme.text }]}>
+              {tokenGasFeeSentence(
+                exact(quote.tokenGas.maxTokenCharge, quote.tokenGas.decimals),
+                quote.tokenGas.symbol,
+              )}
+            </Text>
+            <Text style={[styles.hint, { color: theme.textMuted }]}>
+              {tokenGasWorstCaseHint(quote.tokenGas, quote.maxFeePerGas)}
+            </Text>
+            <Row
+              label="Rate"
+              value={tokenGasRateSentence(
+                quote.tokenGas.nativeTokenPrice,
+                quote.tokenGas.decimals,
+                evmChain.displaySymbol,
+                quote.tokenGas.symbol,
+              )}
+              sub={tokenGasOracleNote(evmChain.caip2)}
+              theme={theme}
+            />
+            <Row
+              label="Paymaster fee spread"
+              value={tokenGasSpreadText(quote.tokenGas.feeSpreadBips)}
+              sub={TOKEN_GAS_SPREAD_NOTE}
+              theme={theme}
+            />
+            <Row label="Paymaster (Circle)" value={quote.tokenGas.paymaster} mono theme={theme} />
+            <Row
+              label={`Smart account ${quote.tokenGas.symbol} balance`}
+              value={
+                `${exact(quote.tokenGas.tokenBalance, quote.tokenGas.decimals)} ${quote.tokenGas.symbol}`
+              }
+              theme={theme}
+            />
+            <WarningBox>
+              {tokenGasGrantSentence(
+                exact(quote.tokenGas.maxTokenCharge, quote.tokenGas.decimals),
+                quote.tokenGas.symbol,
+              )}
+            </WarningBox>
+            {quote.token && quote.token.contract.toLowerCase() === quote.tokenGas.token.toLowerCase() ? (
+              <Row
+                label={`Total ${quote.tokenGas.symbol} (worst case)`}
+                value={
+                  `${exact(quote.token.amount + quote.tokenGas.maxTokenCharge, quote.tokenGas.decimals)} ${quote.tokenGas.symbol}`
+                }
+                theme={theme}
+              />
+            ) : !quote.token ? (
+              <Row
+                label={`Total ${evmChain.displaySymbol}`}
+                value={`${exact(quote.total, nativeDecimals)} ${evmChain.displaySymbol}`}
+                sub={fiatOf(nativePriceId, quote.total, nativeDecimals)}
+                theme={theme}
+              />
+            ) : null}
+          </>
+        ) : (
+          <>
+            <Row
+              label={quote.sponsored ? 'Network fee' : 'Max network fee (bundler estimate)'}
+              value={
+                quote.sponsored
+                  ? 'Sponsored — you pay 0'
+                  : `${exact(quote.fee, nativeDecimals)} ${evmChain.displaySymbol}`
+              }
+              sub={quote.sponsored ? null : fiatOf(nativePriceId, quote.fee, nativeDecimals)}
+              theme={theme}
+            />
+            <Text style={[styles.hint, { color: theme.textMuted }]}>
+              {quote.sponsored
+                ? 'An ERC-7677 paymaster sponsors this operation\u2019s gas: the ' +
+                  'smart account pays only the amount. The paymaster may still ' +
+                  'decline at send time; that shows up as a bundler error, not a charge.'
+                : `Worst case at ${exact(quote.maxFeePerGas, 9)} gwei max fee \u00d7 ` +
+                  `${(quote.callGasLimit + quote.verificationGasLimit + quote.preVerificationGas).toString()} ` +
+                  'gas (bundler eth_estimateUserOperationGas). The smart account pays ' +
+                  'its own gas from its own balance.'}
+            </Text>
+            <Row
+              label={quote.token ? `Total ${evmChain.displaySymbol} (worst case)` : 'Total (worst case)'}
+              value={`${exact(quote.total, nativeDecimals)} ${evmChain.displaySymbol}`}
+              sub={fiatOf(nativePriceId, quote.total, nativeDecimals)}
+              theme={theme}
+            />
+          </>
+        )}
 
         <BalanceChangePreview
           url={confirmUrl}
@@ -1387,9 +1648,13 @@ export function SendScreen({ route, navigation }: Props) {
           data={quote.calls[0]!.data}
         />
         <SpendingPolicyNotice owner={quotedFrom} quote={quote} from={quotedFrom} />
-        <Text style={[styles.simulationOk, { color: theme.success }]}>
-          Bundler gas estimate passed (eth_estimateUserOperationGas simulated the operation).
-        </Text>
+        {quote.tokenGas ? (
+          <Text style={[styles.hint, { color: theme.textMuted }]}>{TOKEN_GAS_ESTIMATE_AFTER_APPROVAL}</Text>
+        ) : (
+          <Text style={[styles.simulationOk, { color: theme.success }]}>
+            Bundler gas estimate passed (eth_estimateUserOperationGas simulated the operation).
+          </Text>
+        )}
 
         {phase === 'sending' ? (
           <View style={styles.center}>
@@ -1863,6 +2128,40 @@ export function SendScreen({ route, navigation }: Props) {
               The smart-account address could not be read: {aaAddressView.error}
             </Text>
           ) : null}
+        </View>
+      ) : null}
+
+      {aaActive && tokenGasOfferNow ? (
+        <View
+          style={[styles.aaToggleBox, { backgroundColor: theme.card, borderColor: theme.border }]}
+        >
+          {tokenGasOfferNow.kind === 'unavailable' ? (
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{tokenGasOfferNow.reason}</Text>
+          ) : tokenGasCheck === null ? (
+            <Text style={[styles.hint, { color: theme.textMuted }]}>
+              Checking Circle{'\u2019'}s token paymaster on-chain before offering to pay the network fee in USDC…
+            </Text>
+          ) : !tokenGasCheck.ok ? (
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{tokenGasCheck.reason}</Text>
+          ) : (
+            <>
+              <View style={styles.overrideRow}>
+                <Switch
+                  accessibilityLabel="Pay the network fee in USDC"
+                  value={feeInUsdc}
+                  onValueChange={(v) => {
+                    // A Max figure from one fee mode must not be trimmed by the other.
+                    lastAaMax.current = null;
+                    lastTokenGasMax.current = null;
+                    setFeeInUsdc(v);
+                  }}
+                  disabled={!url}
+                />
+                <Text style={[styles.overrideLabel, { color: theme.text }]}>Pay the network fee in USDC</Text>
+              </View>
+              <Text style={[styles.hint, { color: theme.textMuted }]}>{TOKEN_GAS_CHOICE_HINT}</Text>
+            </>
+          )}
         </View>
       ) : null}
 

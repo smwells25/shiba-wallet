@@ -51,6 +51,8 @@ export const APP_SCRIPTS = {
   'check-subscriptions.mjs': { kind: 'offline', summary: 'counts' },
   'check-swap.mjs': { kind: 'offline', summary: 'counts' },
   'check-token-send.mjs': { kind: 'offline', summary: 'counts' },
+  // Phase 13 item 2: paying the network fee in USDC through Circle's paymaster (fakes only).
+  'check-token-gas.mjs': { kind: 'offline', summary: 'counts' },
   'check-typed-data.mjs': { kind: 'offline', summary: 'counts' },
   'check-wc.mjs': { kind: 'offline', summary: 'counts' },
   'check-wc-5792.mjs': { kind: 'offline', summary: 'counts' },

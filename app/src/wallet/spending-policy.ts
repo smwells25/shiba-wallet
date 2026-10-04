@@ -759,6 +759,10 @@ export function spendingInputForQuote(
   from: string,
 ): { spender: string; calls: SpendingCall[]; fee: bigint } {
   if (quote.kind === 'aa') {
+    // A USDC-fee quote (quote.tokenGas, ./token-gas.ts) carries fee 0n: no
+    // ETH pays for its gas, and its USDC fee is deliberately not counted,
+    // because fees count only under countFees, which validatePolicyList
+    // allows only on a limit for the network's own coin.
     return { spender: quote.sender, calls: quote.calls, fee: quote.sponsored ? 0n : quote.fee };
   }
   if (quote.kind === 'evm') {

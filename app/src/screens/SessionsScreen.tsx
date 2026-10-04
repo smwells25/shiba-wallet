@@ -123,6 +123,7 @@ import {
   subscriptionStatusLines,
   subscriptionSummary,
   subscriptionTokenChoices,
+  loadSubscriptionTokenChoices,
   suggestedFeeBudget,
   termsOf,
   type SubscriptionStatus,
@@ -275,7 +276,26 @@ export function SessionsScreen({ navigation }: Props) {
   const [subSendStage, setSubSendStage] = useState<'requote' | 'signing'>('signing');
   /** The key hand-over payload: in memory only while the export screen is open. */
   const [keyExport, setKeyExport] = useState<{ record: SessionRecord; text: string; fileName: string } | null>(null);
-  const tokenChoices = useMemo(() => subscriptionTokenChoices(evmChain.caip2, symbol), [evmChain.caip2, symbol]);
+  // Native, the chain's known tokens, then the user's tracked tokens on the
+  // same chain (loaded asynchronously; the synchronous list is its prefix,
+  // so a choice made before the load completes keeps its meaning).
+  const baseTokenChoices = useMemo(() => subscriptionTokenChoices(evmChain.caip2, symbol), [evmChain.caip2, symbol]);
+  const tokenChoicesKey = `${evmChain.caip2}|${symbol}`;
+  const [loadedTokenChoices, setLoadedTokenChoices] = useState<{ key: string; list: SubscriptionTokenChoice[] } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    loadSubscriptionTokenChoices(evmChain.caip2, symbol).then(
+      (list) => {
+        if (!cancelled) setLoadedTokenChoices({ key: tokenChoicesKey, list });
+      },
+      () => undefined,
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [evmChain.caip2, symbol, tokenChoicesKey]);
+  const tokenChoices =
+    loadedTokenChoices && loadedTokenChoices.key === tokenChoicesKey ? loadedTokenChoices.list : baseTokenChoices;
 
   // The subscription key on screen must not end up in screenshots or the
   // app switcher (same guard as the recovery-phrase screens).

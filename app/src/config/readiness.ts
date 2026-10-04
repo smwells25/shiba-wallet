@@ -75,7 +75,8 @@ export type FeatureId =
   | 'passkeys'
   | 'guardians'
   | 'owner-rotation'
-  | 'paymaster';
+  | 'paymaster'
+  | 'token-gas';
 
 export interface FeatureReadiness {
   id: FeatureId;
@@ -294,6 +295,22 @@ export const FEATURE_READINESS: readonly FeatureReadiness[] = [
       'Sponsorship is used only by smart accounts, which are limited to test networks, and no ' +
       'live paymaster has been tested yet. This wallet accepts a paymaster only on test networks.',
     evidence: ['W8', 'C1'],
+    enforced: true,
+  },
+  {
+    id: 'token-gas',
+    title: 'Paying the network fee in USDC',
+    status: 'testnet-only',
+    reason:
+      'Paying the network fee in USDC runs on the Kernel v3.3 smart account and Circle’s token ' +
+      'paymaster, and neither has a published audit for the deployed version. Circle can also ' +
+      'upgrade or pause the paymaster and change its price source, so this wallet offers it only on ' +
+      'test networks.',
+    // C1–C3: the Kernel account it runs on; W8: no live paymaster cleared
+    // for real funds; W9: the switchboard itself. The Circle paymaster has
+    // no threat-model finding of its own yet (proposed in the phase 13
+    // item 2 app-half report).
+    evidence: ['C1', 'C2', 'C3', 'W8', 'W9'],
     enforced: true,
   },
 ];
