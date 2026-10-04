@@ -5333,3 +5333,101 @@ WcApprovalSheet.
       state kept) and rows + tokens once more 15 s later (cancelled on
       blur) because balances move at inclusion; passkey-signed ops bypass
       sendAa and do not mark Home (they do not move the EOA balance).
+- [x] EMULATOR REHEARSAL of the subscription and spending-limits screens
+      (2026-10-04 UTC / 2026-10-03 US Eastern; Metro moved to the isolated
+      worktree at da61b58 with the engine built INSIDE the worktree, 2,288
+      modules; no repo files edited; every hash checked on-chain, all
+      status 0x1 / success=1; the hand-over JSONs were stored only under
+      .dev-wallet/ at 0600 and deleted by the CTO afterwards). BOTH FLOWS
+      WORKED LIVE. Subscription #1 (merchant 0x69F0…7E8a, 1,000 wei every
+      2 min, 3 payments): review sentence "Lets 0x69F0… take up to
+      0.000000000000001 test ETH every 2 minutes until 2026-10-04 03:25
+      UTC; at most one pull per period." with five on-chain bullets and the
+      batch warning box; Start = 2 prompts ("Approve this subscription",
+      "Protect the new session key with biometrics"); install userOp
+      0xabdc0108…5d89d, tx 0x09758c28…3a0fe, block 11839730 (740,330 gas);
+      card "Active", "Next payment: due now…", "0 of 3 payments taken.",
+      fee budget, "Key still on this device…"; hand-over = 2 prompts
+      ("Show the subscription key for the merchant", "Use the session
+      key"), adb screencap returned a 0-byte file while the JSON and the
+      delete-confirm alert were shown; the JSON reached the host via the
+      in-app Copy (emulator clipboard sync; pbpaste → .dev-wallet, then
+      both clipboards cleared); confirming "The merchant has the key —
+      delete it here" removed the button and showed the hand-over time;
+      keeper import --force, pull 1 userOp 0x29bd5b7a…72811, tx
+      0x614fa6a4…9bbe0, block 11839744 — 5 s before expiry; afterwards
+      `run --once` was REFUSED LOCALLY ("Session expired at …") and `pull
+      --unchecked` passed the estimate but was REJECTED at submission
+      "-32500 … AA22 expired or not due" — FIRST LIVE PROOF OF
+      TIMESTAMPPOLICY EXPIRY (previously unverified); card "Active
+      on-chain, but expired (revoke to clean up)"; revoke = 1 prompt,
+      userOp 0x9a373427…8af0, tx 0x7b68e88e…9015c, block 11839754;
+      pull after revoke refused "AA23 reverted 0x". Top-up 0.0015 test
+      ETH from Account 1's EOA to its own Kernel account (tx 0x341db91c…6d89,
+      block 11839784) after the #2 quote was refused for funds.
+      Subscription #2 (6 payments): install userOp 0x335a96cb…9700, tx
+      0x22fa8105…6540, block 11839801; hand-over 2 prompts; keeper `run`
+      caught up on missed slots with three pulls (txs 0x8983c71a…9ae9
+      block 11839813, 0xd84750a1…cf60 block 11839814, 0xe8b73a85…9c79
+      block 11839818); the card stayed at "1 of 6" until Refresh status,
+      then "3 of 6 payments taken.", fee budget left 0.00432990781879042
+      (equal to the keeper's figure), "Next payment: not before …";
+      revoke 1 prompt, userOp 0x0f0c2ec7…2259, tx 0xe4537fdf…3faa7, block
+      11839830; pulls refused afterwards. Merchant 3,000 → 7,000 wei.
+      SPENDING LIMITS: the screen's explainer, honesty box and both notes
+      render as recorded; policy test ETH 0.0002 per 1 hour, override off,
+      fees off → readout "Spent in the current window: 0 of 0.0002 test
+      ETH"; a 0.0001 EOA send showed the "Spending limits (this app only)"
+      block on the confirm and went through with 1 prompt (tx
+      0x38c728d5…09cd5, block 11839920); a 0.00015 send was BLOCKED with
+      the alert "Over your spending limit" — exact figures, the honesty
+      sentence, "To send it, raise or remove the limit…", a single OK, no
+      prompt, nonce unchanged; after allowing the override the alert ended
+      with the "Send anyway" sentence and CANCEL / SEND ANYWAY, and SEND
+      ANYWAY raised the BiometricPrompt "Approve sending 0.00015 test ETH"
+      (cancelled: "Not sent — Authentication cancelled.", nonce unchanged);
+      Hide amounts masked both readouts ("•••• of ••••"); the notice
+      renders on the smart-account confirm too; Swap is key-gated so its
+      notice could not be reached; Remove alert and empty state as
+      designed. Dark mode: Sessions list, form and the spending screen
+      look right; the review was seen in light mode only. FINDINGS (fix
+      slice dispatched): (1) DESIGN — subscriptions.ts fixes startAt at
+      Review (startAt: context.now; validUntil = now + payments × period),
+      so setup time eats the window (only 1 of 3 pulls fit in #1) and a
+      real merchant loses whatever setup takes; (2) the review order
+      CONTRADICTS the item-2 record and DEMO step 10 — the batch warning
+      renders AFTER the sentence and the on-chain bullets (SessionsScreen
+      ~line 888), and Review opens scrolled to the middle; (3) the fee
+      budget does not follow the payment count (3 → 6 kept the 3-payment
+      figure) and the pre-fill (~0.006) exceeded the account's balance;
+      (4) an unnamed subscription is titled "Subscription: Subscription",
+      new ones list below old revoked ones; (5) no refresh control on the
+      card — counts stay stale until the list-bottom "Refresh status";
+      (6) the app-wide TESTNET banner is still white on #e07800 in dark
+      mode (App.tsx 236/242, hard-coded); (7) copy: the revoke confirm
+      promises to delete a key already handed over; "Session key (held by
+      the merchant, once you hand it over (kept in secure storage until
+      then))" nests parentheses; the success screen says "Session install
+      sent to the bundler" for a subscription; (8) the funds text says "A
+      smart account can receive funds before it is deployed; the first
+      send deploys it." for a deployed account, and the check ignores the
+      EntryPoint deposit; (9) SECURITY/UX — "Share…" hands the private-key
+      JSON to the system share sheet as plain text (preview and target
+      apps are outside the screenshot block) and Copy puts it on a
+      clipboard other apps can read; (10) the Remove-limit alert shows the
+      cap in clear under Hide amounts, and removing a limit needs no device
+      check while Send anyway does; (11) native Alerts render light in dark
+      mode (userInterfaceStyle "automatic"); (12) the confirm does not say
+      beforehand that the send would exceed the limit — figures appear only
+      after tapping Send; (13) the risk card calls the wallet's own smart
+      account and Account 2 first-time counterparties, and the success
+      screen offers "Save as contact" for the wallet's own smart account;
+      (14) Home did not refresh after the top-up (fixed since in d6e8910,
+      which Metro was not serving). Dev-only: the Expo Tools button over
+      the Home gear; LogBox "Cannot connect to Expo CLI" under nohup; a
+      WalletConnect "Console Error" with empty text (possibly the
+      intermittent "Error: undefined"); type12.sh's BACK left the Send
+      screen twice — keep ADBKeyboard active for a whole form instead.
+      End state: Account 1, Sepolia, light mode, Google IME, no policy,
+      both subscriptions revoked (listed with Forget); Kernel account
+      0.001427 + 0.000474 deposit, EOA 0.002080; Metro still at da61b58.
