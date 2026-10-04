@@ -4886,3 +4886,24 @@ No phone yet.
 Waves: 1 (CTO) with 2, 3 and 4 (agents) in parallel; 5 after.
 
 ## Phase 12 progress
+- [x] Item 1, first half — KERNEL DEPLOYMENT ON BASE SEPOLIA THROUGH
+      ZERODEV, PROVEN LIVE (2026-10-03; the Chairperson funded the dev
+      EOA 0x16DA…C5C with 0.01 Base Sepolia ETH, balance 0.03 before the
+      run): `CHAIN_ID=84532 KERNEL_FUND_ETH=0.004 BUNDLER_URL=<ZeroDev
+      /chain/84532> node scripts/testnet/kernel-smoke.mjs` — Kernel
+      deployment verified on-chain (implementation 0xd6CE…5b28, EntryPoint
+      v0.7, kernel.advanced.v0.3.3), the dev owner's index-0 account
+      0xc995E49acA5C888F4FF1E50E8467E9fFc31CC5AC (the SAME address as on
+      Sepolia — CREATE2) not deployed, funded by tx 0xc0656720…8e17f,
+      preflight handleOps simulation passed, op 1 (deployment + ERC-7579
+      batch) ACCEPTED by the bundler: userOp 0x57e42d35…df67bd, bundle tx
+      0x1fa97616ec18f281131a314900bf2ff0d5e843617c0cbcb7542c04de2cd2102b;
+      op 2 on the deployed path accepted: userOp 0x43345b54…193226, tx
+      0x2d0229733829f4a9209c6655b81d45c0b34bbfc1970e3e58fe6e99f73d9d42c1.
+      Independently verified on base-sepolia-rpc.publicnode.com: block
+      47656208 status 0x1 to EntryPoint v0.7, 326,887 gas, one
+      UserOperationEvent success=1 and one AccountDeployed; block 47656211
+      status 0x1, 125,860 gas, UserOperationEvent success=1; eth_getCode =
+      the 61-byte ERC-1967 proxy. First Layer 2 proof for the AA stack.
+      The in-app Base Sepolia leg (bundler save, smart-account send, EOA
+      Max with the L1 fee) follows on the emulator.
