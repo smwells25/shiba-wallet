@@ -5008,3 +5008,107 @@ Waves: 1 (CTO) with 2, 3 and 4 (agents) in parallel; 5 after.
       sheet TESTNET badges and the Swap network line on theme.testnetFill
       / onTestnetFill, ConfirmBackupScreen quiz chips on theme.onAccent.
       Not seen on a device: layouts, the Alert buttons, dark mode.
+- [x] Item 2 — SUBSCRIPTIONS ON KERNEL SESSION KEYS, PROVEN LIVE (commit
+      f175e1e; engine 722 tests — 31 new in chains-evm; check-subscriptions
+      58/58 new, check-sessions 117; offline runner ALL GREEN in the CTO's
+      isolated worktree: app 3,838 across 36 suites, lint 0/0, tsc clean;
+      nothing run on the emulator). POLICY FACTS read from the deployed
+      sources (Sourcify full matches on chain 1, 2026-10-03): CallPolicy
+      v0.0.4 has LESS_THAN_OR_EQUAL (code 4) over the raw bytes32 word, so
+      "amount ≤ cap" works; for CALLTYPE_BATCH it checks each execution
+      against the single-call rules and never adds amounts up, and cannot
+      forbid batch mode. RateLimitPolicy init = uint48 interval ‖ count ‖
+      startAt (SDK layout); it runs ONCE per UserOperation, fails when
+      count is 0 (Kernel PolicyFailed(3)), else decrements count, moves
+      startAt forward one interval and returns validAfter = the old
+      startAt — so count is the TOTAL number of operations, missed slots
+      can be caught up, and with startAt = 0 (the SDK default, and the
+      default of the existing session and ERC-7715 grants) every slot is
+      already open and only the total is limited (the review says so).
+      GasPolicy charges (pvg + vgl + cgl) × maxFeePerGas per operation
+      against a running budget — MANDATORY for subscriptions, else a key
+      holder bundling its own ops could set a high fee and drain the
+      subscriber's ETH. EntryPoint v0.7 accepts validAfter ≤ block time ≤
+      validUntil. ENGINE packages/chains-evm/src/kernel-subscription.ts:
+      ERC-20 = one call (target token, transfer(address,uint256), value 0,
+      rules [offset 0 EQUAL merchant, offset 32 LESS_THAN_OR_EQUAL
+      amount]); native = target merchant, no selector, value cap; both get
+      TimestampPolicy [startAt, validUntil], GasPolicy (fee budget),
+      RateLimitPolicy {period, count = periods, startAt}, signer flag
+      SKIP_SIGNATURE; SubscriptionGrant carries startAt and feeBudgetWei;
+      subscriptionToGrant, describeSubscription, nextPullAllowedAt,
+      readSubscriptionState, kernelSubscriptionSpec (refuses batches
+      before signing), subscriptionMatchesGrant; permission id,
+      validatorData and every policy init byte-pinned against
+      @zerodev/permissions 5.6.3 + @zerodev/sdk 5.5.10 + viem 2.57.2 for
+      an ERC-20 and a native vector. RESIDUAL RISK (cannot be closed with
+      the deployed modules; stated first, in a warning box, on the review
+      and every list card): one operation may be a BATCH of several
+      transfers each under the cap, so a dishonest merchant can take
+      several periods' worth in one pull up to the account's whole balance
+      of that token — no audited deployed Kernel v3.3 hook restricts the
+      execution mode, and the GasPolicy budget does not bound the call
+      count because the key holder picks maxFeePerGas; PROVEN in the dry
+      run against the real contracts (10 USDC moved in one op under a
+      5 USDC cap). Mitigations: the single-call rule binds honest keepers
+      only; keep only what you intend to pay in the subscribing account.
+      The plain sentence ("Lets X take up to 5 USDC every 30 days until …;
+      at most one pull per period") is accurate on schedule but overstates
+      the on-chain guarantee — hence the warning placement. KEEPER
+      scripts/testnet/subscription-keeper.mjs: pull/run read only
+      .dev-wallet/subscription-session.key (0600) and the grant JSON; demo
+      runs each keeper step in a child process that never sees the phrase;
+      --unchecked skips local checks so the account's own refusal is
+      recorded; import <file> takes the app's hand-over JSON (refused this
+      grant because it was revoked); dry-run uses eth_simulateV1 with the
+      USDC variant via state override (10 steps incl. the batch residual).
+      The public run record is written to scripts/testnet/runs/ (git-
+      ignored) — NOT .dev-wallet/, because the pre-commit scan treats every
+      .dev-wallet value as a secret and flagged the error name
+      CallViolatesValueRule() quoted in it (CTO fix before commit). LIVE ON
+      SEPOLIA (ZeroDev bundler; native token because no dev address holds
+      Sepolia USDC and Circle's faucet needs a captcha; 1,000 wei per
+      120 s, 3 periods; subscriber = dev account index 2 0x1D72…4106,
+      merchant = dev seed index 5 0x69F0…7E8a): funding 0.006 ETH tx
+      0x8f055535…74c0 block 11839559; explicit owner-signed install userOp
+      0xe74870d1…9d98e, tx 0xaa088fa3…8544e9, block 11839561 (permission
+      0x762fb3f6, session key 0x82Ba39d4E87D90A3f6Be48C5ad6656e980d3747F;
+      read back installed, flag 0x0002, policies [call, timestamp, gas,
+      rateLimit], 3 pulls left); pull 1 userOp 0xa413201e…359e27, tx
+      0xc73d020c…8a828, block 11839565; an IMMEDIATE second pull passed
+      the estimate but was REJECTED at submission "-32500 … AA22 expired
+      or not due" (the bundler did not hold it); pull 2 userOp
+      0x099449e6…d212, tx 0xcbf89042…969db, block 11839573; an over-cap
+      pull (1,001 wei) REJECTED at estimation "AA23 reverted 0x7b5812d4"
+      = CallViolatesValueRule() (direct submission also refused); pull 3
+      userOp 0xcafb8177…59a4a, tx 0x242f8669…c181d, block 11839583; a
+      fourth pull REJECTED PolicyFailed(3) (RateLimitPolicy count used
+      up); revoke userOp 0x108eeef4…b9e82, tx 0xb194f393…d0442, block
+      11839585 (read back not installed, RateLimitPolicy status
+      deprecated); a pull after revoke REJECTED "AA23 reverted 0x". Every
+      receipt re-checked independently (status 0x1, UserOperationEvent
+      success, sender = the account); the merchant holds exactly 3,000
+      wei. GasPolicy charged 367,706 / 302,094 / 302,094 gas at about
+      2 gwei per pull (actual 246k / 202k / 202k); the app's default fee
+      budget is 500k gas × maxFee × 2 per payment. Balances after: account
+      0.00454 ETH + 0.00046 deposit; dev EOA 0.04505 Sepolia ETH. APP:
+      app/src/wallet/subscriptions.ts (form → terms, token choices = native
+      plus Circle's test-network USDC/EURC from the known-token list,
+      review copy, key hand-over payload, status lines); sessions.ts source
+      'subscription' re-checked against the grant on every load,
+      releaseSessionKey, sessionCanBeTested (no Test button for
+      subscriptions — any op uses up a pull), "revoked" shown before the
+      key check, rate-limit line corrected; SessionsScreen: New
+      subscription form / review / install through the same installSession
+      path, a Subscriptions list (next payment, payments taken, fee budget
+      left, key status, Revoke), the key hand-over shown ONCE behind the
+      biometric gate with screenshots blocked (confirming deletes the key
+      from the device), TESTNET badge on theme.testnetFill / onTestnetFill.
+      NOT VERIFIED: an ERC-20 pull live (dry run only); any app screen on
+      a device or emulator (7-step checklist in the builder's report:
+      Sepolia, Account 1, Kernel 0xD31c…D8FA; restart Metro so the dist
+      copies include kernel-subscription); GasPolicy exhaustion and
+      TimestampPolicy expiry live; Alchemy / Pimlico with these policies;
+      the policies remain unaudited (C1). Feature rows 69 (proven live,
+      engine + app code via script) and 25/63 (groundwork) to update in
+      item 5.
