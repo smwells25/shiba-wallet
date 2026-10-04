@@ -27,6 +27,8 @@ import { DEFAULT_NETWORKS, TEST_EVM_NETWORKS } from '../src/config/defaults.ts';
 import { formatUnits } from '../src/wallet/balances.ts';
 import { createDefaultEndpointResolver, describeDefaultChoice } from '../src/config/endpoint-probe.ts';
 import {
+  Erc20NotATokenError,
+  Erc20ReadUnavailableError,
   USDC_MAINNET,
   decodeAbiString,
   fetchErc20Balance,
@@ -53,6 +55,7 @@ import {
   discoverUntrackedTokens,
   discoveryUnavailableNote,
   discoverySummary,
+  isNotATokenError,
   trackDiscoveredPrompt,
 } from '../src/wallet/token-discovery.ts';
 import { sanitizeSymbol } from '../src/wallet/simulation.ts';
@@ -397,7 +400,7 @@ console.log('\nFind my tokens (fake indexer + fake chain reads):');
   const fetchMetadata = async (url, contract) => {
     metaReads.push([url, contract.toLowerCase()]);
     const m = meta[contract.toLowerCase()];
-    if (!m) throw new Error('Could not read decimals() from this address — it does not answer like an ERC-20 token.');
+    if (!m) throw new Erc20NotATokenError('Could not read decimals() from this address — it does not answer like an ERC-20 token.');
     return m;
   };
   const cfgStore = () => {
@@ -472,6 +475,82 @@ console.log('\nFind my tokens (fake indexer + fake chain reads):');
   const capped = await discoverUntrackedTokens({ chainCaip2: SEPOLIA, owner: OWNER, rpc: { url: RPC, chainId: SEPOLIA }, store: cfgStore(), transportFor: indexerWith('0xaa36a7', many), fetchMetadata: async () => { reads += 1; return { decimals: 18, symbol: 'SPAM', name: 'Spam', note: null }; } });
   check(`metadata is read for at most ${MAX_DISCOVERY_METADATA} contracts; the rest are counted`, reads === MAX_DISCOVERY_METADATA && capped.status === 'ok' && capped.notChecked === 7);
   check('the warning says nothing is added until the user picks', /Nothing is added until you pick it/.test(FIND_TOKENS_WARNING));
+  // Emulator-run finding 2 (phase 13): a metadata read that FAILED (no
+  // answer from the contract) is counted as "could not be read right now",
+  // never as "does not answer like an ERC-20 token".
+  {
+    const NET_DOWN = '0x' + 'd1'.repeat(20);
+    const ENDPOINT_ERR = '0x' + 'd2'.repeat(20);
+    const UNKNOWN_ERR = '0x' + 'd3'.repeat(20);
+    const flakyMeta = async (_url, contract) => {
+      const c = contract.toLowerCase();
+      if (c === NET_DOWN) throw new TypeError('fetch failed');
+      if (c === ENDPOINT_ERR) throw new Erc20ReadUnavailableError('Could not read decimals() from this address right now: the network endpoint did not answer the request. Try again. (RPC HTTP error 503 for eth_call)');
+      if (c === UNKNOWN_ERR) throw new Error('something unexpected');
+      return fetchMetadata(_url, contract);
+    };
+    const flaky = await discoverUntrackedTokens({
+      chainCaip2: SEPOLIA, owner: OWNER, rpc: { url: RPC, chainId: SEPOLIA }, store: cfgStore(), fetchMetadata: flakyMeta,
+      transportFor: indexerWith('0xaa36a7', [
+        { contractAddress: DUST, tokenBalance: w(5n) },
+        { contractAddress: NOT_TOKEN, tokenBalance: w(9n) },
+        { contractAddress: NET_DOWN, tokenBalance: w(1n) },
+        { contractAddress: ENDPOINT_ERR, tokenBalance: w(1n) },
+        { contractAddress: UNKNOWN_ERR, tokenBalance: w(1n) },
+      ]),
+    });
+    const failedSet = flaky.status === 'ok' ? flaky.readFailed.map((r) => r.contract.toLowerCase()).sort().join() : '';
+    check('failed reads (network down, endpoint error, unrecognized error) are "could not be read", not non-ERC-20',
+      flaky.status === 'ok' && failedSet === [NET_DOWN, ENDPOINT_ERR, UNKNOWN_ERR].sort().join() &&
+        flaky.unreadable.length === 1 && flaky.unreadable[0].contract.toLowerCase() === NOT_TOKEN,
+      JSON.stringify(flaky, (_, v) => (typeof v === 'bigint' ? v.toString() : v)));
+    check('summary counts failed reads separately and says to search again',
+      flaky.status === 'ok' && discoverySummary(flaky) === '1 untracked token found · 1 that do not answer like an ERC-20 token not shown · 3 could not be read right now — search again.',
+      flaky.status === 'ok' ? discoverySummary(flaky) : '');
+    check('isNotATokenError: only the not-a-token class (by class or name)',
+      isNotATokenError(new Erc20NotATokenError('x')) && isNotATokenError(Object.assign(new Error('x'), { name: 'Erc20NotATokenError' })) &&
+        !isNotATokenError(new Erc20ReadUnavailableError('x')) && !isNotATokenError(new TypeError('fetch failed')));
+
+    // fetchErc20Metadata itself, against a fake endpoint behind global fetch.
+    const realFetch = globalThis.fetch;
+    const fakeEndpoint = (respond) => {
+      globalThis.fetch = async (_u, init) => {
+        const { id } = JSON.parse(init.body);
+        return respond(id);
+      };
+    };
+    const json = (id, body, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => ({ jsonrpc: '2.0', id, ...body }) });
+    const metaError = async () => {
+      try {
+        await fetchErc20Metadata('https://offline.fake/rpc', DUST);
+        return null;
+      } catch (e) {
+        return e;
+      }
+    };
+    try {
+      fakeEndpoint(() => { throw new TypeError('fetch failed'); });
+      const eNet = await metaError();
+      check('fetchErc20Metadata: network failure -> Erc20ReadUnavailableError, never "does not answer like an ERC-20"',
+        eNet instanceof Erc20ReadUnavailableError && !/does not answer like/.test(eNet.message), String(eNet));
+      fakeEndpoint((id) => json(id, {}, 503));
+      check('fetchErc20Metadata: HTTP 503 -> Erc20ReadUnavailableError', (await metaError()) instanceof Erc20ReadUnavailableError);
+      fakeEndpoint((id) => json(id, { error: { code: -32603, message: 'internal error' } }));
+      check('fetchErc20Metadata: a non-execution JSON-RPC error -> Erc20ReadUnavailableError', (await metaError()) instanceof Erc20ReadUnavailableError);
+      fakeEndpoint((id) => json(id, { result: null }));
+      check('fetchErc20Metadata: no result -> Erc20ReadUnavailableError', (await metaError()) instanceof Erc20ReadUnavailableError);
+      fakeEndpoint((id) => json(id, { error: { code: 3, message: 'execution reverted' } }));
+      const eRev = await metaError();
+      check('fetchErc20Metadata: a revert -> Erc20NotATokenError with the existing wording',
+        eRev instanceof Erc20NotATokenError && eRev.message.startsWith('Could not read decimals() from this address — it does not answer like an ERC-20 token.'), String(eRev));
+      fakeEndpoint((id) => json(id, { result: '0x' }));
+      check('fetchErc20Metadata: empty return data (no such function / no code) -> Erc20NotATokenError', (await metaError()) instanceof Erc20NotATokenError);
+      fakeEndpoint((id) => json(id, { result: '0x' + (300).toString(16).padStart(64, '0') }));
+      check('fetchErc20Metadata: decimals 300 -> Erc20NotATokenError', (await metaError()) instanceof Erc20NotATokenError);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  }
   // Mainnet with the same indexer key absent → unavailable on mainnet even
   // though Sepolia has one (per-chain indexer config).
   const mainnetNone = await discoverUntrackedTokens({ chainCaip2: MAINNET, owner: OWNER, rpc: { url: RPC, chainId: MAINNET }, store: cfgStore(), fetchMetadata });

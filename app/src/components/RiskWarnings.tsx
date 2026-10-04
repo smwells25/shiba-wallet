@@ -25,6 +25,14 @@ export const RISK_FOOTNOTE =
  *
  *   <RiskWarnings url={url} wallet={from} to={quote.contract} counterparty={quote.to} data={quote.data} />
  *
+ * The regular-account and smart-account token sends pass exactly these
+ * three values (aa.ts aaRiskWarningTarget), so both get the same card: for
+ * a tracked or known token of the active chain, transferred to that
+ * counterparty, the card describes the recipient ("This sends USDC through
+ * its token contract 0x… to …") and says nothing about the token
+ * contract's own class or age; any other contract keeps those lines (see
+ * wallet/risk.ts tokenTransferTarget).
+ *
  * Pass `assetChanges` when the caller already holds the balance-change
  * preview's changes; without them, direct approve / setApprovalForAll calls
  * are decoded from the calldata (see wallet/risk.ts). Purely informational:

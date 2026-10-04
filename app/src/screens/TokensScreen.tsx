@@ -27,6 +27,7 @@ import {
   type Erc20Metadata,
 } from '../wallet/erc20';
 import { addToken, listTokens, removeToken } from '../wallet/tokens';
+import { tokenSendFeeSentence } from '../wallet/token-gas';
 import {
   FIND_TOKENS_WARNING,
   TOKEN_NAME_MAX,
@@ -285,8 +286,7 @@ export function TokensScreen({ navigation }: Props) {
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           ERC-20 balances shown on Home under {evmChain.label}. Each network
           keeps its own list. Tokens arrive at your address, and Send starts
-          a token transfer — the network fee for a token send is paid in{' '}
-          {evmChain.displaySymbol}.
+          a token transfer. {tokenSendFeeSentence(evmChain.caip2)}
           {evmChain.testnet
             ? ' This is a test network: its tokens (such as Circle\'s test USDC and EURC) have no value.'
             : ''}

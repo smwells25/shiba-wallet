@@ -210,29 +210,90 @@ export interface Erc20Metadata {
 }
 
 /**
+ * Thrown by fetchErc20Metadata when the contract ANSWERED decimals(), but
+ * not like an ERC-20 token: the call reverted (or failed during execution),
+ * or the return data is not a single uint8-sized word. This is the only
+ * evidence on which the wallet says an address "does not answer like an
+ * ERC-20 token".
+ */
+export class Erc20NotATokenError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'Erc20NotATokenError';
+  }
+}
+
+/**
+ * Thrown by fetchErc20Metadata when decimals() could not be read at all:
+ * the endpoint did not answer, answered with an HTTP or JSON-RPC error that
+ * is not an execution result, or returned no result. Says nothing about the
+ * contract; a later attempt may succeed.
+ */
+export class Erc20ReadUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'Erc20ReadUnavailableError';
+  }
+}
+
+/**
+ * True when an eth_call error message reports the CALL's own outcome (a
+ * revert or another execution failure the node reached by running the
+ * contract), as opposed to the endpoint failing. Geth-style nodes answer
+ * "execution reverted" (JSON-RPC code 3, or -32000 on older nodes); the
+ * other phrases are EVM execution failures some nodes report verbatim.
+ */
+export function isExecutionErrorMessage(message: string): boolean {
+  return /execution reverted|\brevert(?:ed)?\b|invalid opcode|out of gas|stack (?:underflow|overflow)|invalid jump/i.test(
+    message,
+  );
+}
+
+/**
  * Reads symbol()/name()/decimals() from an ERC-20 contract via eth_call.
  *
  * decimals() must answer with a valid uint8 or this throws — a token whose
  * decimals are unknown cannot have balances displayed honestly, so it
- * cannot be added. symbol() and name() are best-effort: legacy bytes32
- * tokens and contracts that revert on them yield null plus a note, and the
- * add-token flow falls back to manual entry.
+ * cannot be added. Two different failures are kept apart: a contract that
+ * answered unlike an ERC-20 (Erc20NotATokenError, the wording "does not
+ * answer like an ERC-20 token") and a read that did not happen at all
+ * (Erc20ReadUnavailableError: a transport failure is never presented as
+ * evidence about the contract). symbol() and name() are best-effort: legacy
+ * bytes32 tokens and contracts that revert on them yield null plus a note,
+ * and the add-token flow falls back to manual entry.
  */
 export async function fetchErc20Metadata(url: string, contract: string): Promise<Erc20Metadata> {
+  const notAToken = (detail: string) =>
+    new Erc20NotATokenError(
+      `Could not read decimals() from this address — it does not answer like ` +
+        `an ERC-20 token. (${detail})`,
+    );
+  let raw: unknown;
+  try {
+    raw = await ethCall(url, contract, encodeFunctionCall('decimals()', []));
+  } catch (e) {
+    const detail = e instanceof Error ? e.message : String(e);
+    if (isExecutionErrorMessage(detail)) throw notAToken(detail);
+    throw new Erc20ReadUnavailableError(
+      `Could not read decimals() from this address right now: the network endpoint did not ` +
+        `answer the request. Try again. (${detail})`,
+    );
+  }
+  if (typeof raw !== 'string') {
+    throw new Erc20ReadUnavailableError(
+      'Could not read decimals() from this address right now: the network endpoint returned no ' +
+        'result. Try again.',
+    );
+  }
   let decimals: number;
   try {
-    const raw = await ethCall(url, contract, encodeFunctionCall('decimals()', []));
     const value = decodeUint256(raw);
     // ERC-20 declares decimals as uint8; anything larger is not an ERC-20
     // answer (and would break formatUnits' padStart arithmetic).
     if (value > 255n) throw new Error(`decimals() returned ${value}, not a uint8`);
     decimals = Number(value);
   } catch (e) {
-    const detail = e instanceof Error ? e.message : String(e);
-    throw new Error(
-      `Could not read decimals() from this address — it does not answer like ` +
-        `an ERC-20 token. (${detail})`,
-    );
+    throw notAToken(e instanceof Error ? e.message : String(e));
   }
 
   let symbol: string | null = null;

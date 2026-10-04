@@ -19,6 +19,7 @@ import {
 import {
   AA_FUNDING_TITLE,
   AaFundingError,
+  aaAmountShortfallTitle,
   TOKEN_GAS_ACCOUNT_REFUSAL,
   TOKEN_GAS_ESTIMATION_CEILING,
   aaErc20TransferCalls,
@@ -38,7 +39,7 @@ import {
 } from './aa.ts';
 import { formatUnits } from './balances.ts';
 import { assertFeatureAllowed, eip155Caip2, isFeatureAllowed, readinessRefusal } from '../config/readiness.ts';
-import { evmProfileByCaip2 } from '../config/evm-chain.ts';
+import { EVM_PROFILES, evmProfileByCaip2 } from '../config/evm-chain.ts';
 
 /**
  * Paying a smart-account send's network fee in USDC (phase 13 item 2, app
@@ -121,6 +122,42 @@ export function tokenGasPaymasterFor(chainCaip2: string): { paymaster: string; t
 // ---------------------------------------------------------------------------
 // Sentences (pinned by scripts/check-token-gas.mjs)
 // ---------------------------------------------------------------------------
+
+/**
+ * The networks (by label) where a smart-account send can pay its network fee
+ * in USDC: the app profiles with a verified token paymaster.
+ */
+export function tokenGasNetworkLabels(): string[] {
+  return EVM_PROFILES.filter((p) => tokenGasPaymasterFor(p.caip2) !== null).map((p) => p.label);
+}
+
+/**
+ * Tokens screen: how a token send's network fee is paid on `chainCaip2`.
+ * "Normally" because a configured gas sponsor (ERC-7677 paymaster) can pay
+ * a smart-account send's fee instead; the USDC sentence appears only where
+ * a token paymaster exists, and says the Send screen must offer the choice
+ * (it needs a verified Kernel smart account, tokenGasOffer).
+ */
+export function tokenSendFeeSentence(chainCaip2: string): string {
+  const profile = evmProfileByCaip2(chainCaip2);
+  const native = profile?.displaySymbol ?? 'ETH';
+  const base = `The network fee for a token send is normally paid in ${native}, not in the token.`;
+  if (!tokenGasPaymasterFor(chainCaip2)) return base;
+  return (
+    `${base} On ${profile?.label ?? chainCaip2}, a smart-account send can pay it in ${TOKEN_GAS_SYMBOL} ` +
+    'instead when the Send screen offers that choice.'
+  );
+}
+
+/** Settings → Tokens: the same rule for every network the app knows. */
+export function settingsTokensFeeSentence(): string {
+  const labels = tokenGasNetworkLabels();
+  const base = 'The network fee for a token send is normally paid in ETH (test ETH on test networks), not in the token';
+  return labels.length === 0
+    ? `${base}.`
+    : `${base}; on ${labels.join(' and ')}, a smart-account send can pay it in ${TOKEN_GAS_SYMBOL} instead ` +
+        'when the Send screen offers that choice.';
+}
 
 /** Where a user looks for the choice on a network without a verified paymaster. */
 export function tokenGasNotOnNetworkSentence(chainCaip2: string): string {
@@ -531,11 +568,14 @@ export async function prepareAaTokenGasSend(
   let value = amount;
   if (options.fromMax === true && value > facts.senderBalance && facts.senderBalance > 0n) value = facts.senderBalance;
   if (value > facts.senderBalance) {
+    // The fee is paid in USDC, so only the amount is short in ETH (title
+    // without "plus the network fee"; the USDC fee is checked next).
     throw new AaFundingError(
       facts.sender,
       `Insufficient funds: sending ${value} wei exceeds the balance of ${facts.senderBalance} wei held by the ` +
         `smart account ${facts.sender}. The network fee is paid in USDC, so no ETH is needed for it. Fund ` +
         `the smart account address ${facts.sender} (not the owner address), then review again.`,
+      aaAmountShortfallTitle(evmProfileByCaip2(eip155Caip2(bundle.chainId))?.displaySymbol ?? 'ETH', false),
     );
   }
   if (facts.tokenGas.tokenBalance < facts.tokenGas.maxTokenCharge) {
@@ -571,7 +611,14 @@ export async function prepareAaTokenGasErc20Send(
     const room = tg.tokenBalance > tg.maxTokenCharge ? tg.tokenBalance - tg.maxTokenCharge : 0n;
     if (options.fromMax === true && amount > room && room > 0n) amount = room;
     if (amount + tg.maxTokenCharge > tg.tokenBalance) {
-      throw new AaFundingError(facts.sender, tokenGasFundingMessage({ sender: facts.sender, tokenGas: tg, amount }));
+      // A balance that covers the worst-case fee alone is short only for
+      // this amount plus the fee; one that cannot cover even the fee could
+      // not pay for any send in USDC and keeps AA_FUNDING_TITLE.
+      throw new AaFundingError(
+        facts.sender,
+        tokenGasFundingMessage({ sender: facts.sender, tokenGas: tg, amount }),
+        amount > 0n && tg.tokenBalance >= tg.maxTokenCharge ? aaAmountShortfallTitle(tg.symbol, true) : AA_FUNDING_TITLE,
+      );
     }
   } else {
     const held = facts.spendBalance ?? 0n;

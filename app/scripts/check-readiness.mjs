@@ -159,6 +159,16 @@ check('dogecoin-send names W6 (the one real broadcast)', featureReadiness('dogec
 check('swap names W7 (a live 0x quote)', featureReadiness('swap').evidence.includes('W7'));
 check('paymaster names W8 (live sponsorship)', featureReadiness('paymaster').evidence.includes('W8'));
 check('walletconnect names W11 and W12 (permit decoding, dApp identity)', ['W11', 'W12'].every((i) => featureReadiness('walletconnect').evidence.includes(i)));
+// Emulator-run finding 6 (phase 13): identity verification and the
+// Permit/Permit2 summaries shipped in commit 3194031 (built, tested
+// offline, not yet exercised live), so the reason must not say they are
+// missing, and must say what is still untested.
+{
+  const wc = featureReadiness('walletconnect').reason;
+  check('walletconnect reason: says identity checks and permit summaries exist, tested offline, not yet live',
+    !/cannot yet confirm|does not yet decode/.test(wc) && /verification service/.test(wc) && /Permit and Permit2/.test(wc) &&
+      /tested offline/.test(wc) && /live app over the WalletConnect relay/.test(wc) && /not yet cleared for real funds/.test(wc), wc);
+}
 // Every enforced feature has a gate in the app modules (static check).
 const gateSources = ['aa.ts', 'delegation.ts', 'sessions.ts', 'passkeys.ts', 'recovery.ts', 'token-gas.ts']
   .map((f) => readFileSync(join(HERE, '..', 'src', 'wallet', f), 'utf8'))

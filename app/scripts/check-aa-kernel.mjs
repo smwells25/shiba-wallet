@@ -31,6 +31,7 @@ import { readFileSync } from 'node:fs';
 import {
   AA_FUNDING_TITLE,
   AaFundingError,
+  aaAmountShortfallTitle,
   KERNEL_BUNDLER_NOTE,
   KERNEL_DEPLOYMENT_NEUTRAL_NOTE,
   KERNEL_PREFILL,
@@ -589,6 +590,42 @@ console.log('check-aa-kernel: unfunded counterfactual account (phase 11 item 2, 
   const d7702 = describeAaError(raw, { accountType: 'kernel-7702', deployed: false, sender: OWNER_0 });
   check('AA21 wins over the EIP-7702 upgrade-refusal wording', d7702?.title === AA_FUNDING_TITLE);
   check('isPrefundError matches AA21 only (not AA13 / AA210-like tokens)', isPrefundError(aa21) && !isPrefundError('AA13 initCode failed') && !isPrefundError('AA210'));
+
+  // Emulator-run finding 5 (phase 13): a FUNDED account that is short only
+  // for this amount (plus the fee) gets a title that says so; the "needs
+  // funds first" title stays for an account that could pay for no send.
+  {
+    const bundleWith = (balance) => createAaClientFromConfig(fullSepoliaKernel, {
+      nodeUrl: NODE_URL,
+      chainId: 11155111n,
+      accountIndex: 0,
+      transportFor: (url) => (url === NODE_URL ? sepNode({ balance }) : fakeBundler()),
+    });
+    const caught = async (fn) => {
+      try {
+        await fn();
+        return null;
+      } catch (e) {
+        return e;
+      }
+    };
+    const SHORT = 'Not enough test ETH for this amount plus the network fee.';
+    check('shortfall title wording', aaAmountShortfallTitle('test ETH', true) === SHORT && aaAmountShortfallTitle('USDC', false) === 'Not enough USDC for this amount.');
+    const pre = await caught(() => prepareAaSend(bundleWith(1_000n), OWNER_0, RECIPIENT, 1_000n));
+    check('funded account, amount >= balance (pre-check): the shortfall title, the funding message as the detail',
+      pre instanceof AaFundingError && pre.title === SHORT && describeAaError(pre, { accountType: 'kernel-v3.3', deployed: null })?.title === SHORT &&
+        pre.message.includes(`Fund the smart account address ${KERNEL_ACCOUNT_0}`), `${pre?.title} / ${pre?.message}`);
+    const probe = await prepareAaSend(bundleWith(10n ** 18n), OWNER_0, RECIPIENT, 1n);
+    const fee = probe.fee;
+    check('fixture: the fake estimate gives a non-trivial worst-case fee', fee > 100n, String(fee));
+    const post = await caught(() => prepareAaSend(bundleWith(fee + 5n), OWNER_0, RECIPIENT, 10n));
+    check('funded account that covers the fee alone but not amount + fee (after the estimate): the shortfall title',
+      post instanceof AaFundingError && post.title === SHORT, `${post?.title} / ${post?.message}`);
+    const feeShort = await caught(() => prepareAaSend(bundleWith(fee - 1n), OWNER_0, RECIPIENT, 1n));
+    check('balance below the fee alone: the existing "needs funds first" title',
+      feeShort instanceof AaFundingError && feeShort.title === AA_FUNDING_TITLE, `${feeShort?.title}`);
+    check('…and the empty account above kept it too', fundingError?.title === AA_FUNDING_TITLE);
+  }
 
   // The ordering does not change a funded quote.
   const fundedBundler = fakeBundler();

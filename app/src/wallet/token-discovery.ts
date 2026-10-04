@@ -11,7 +11,7 @@ import {
 // Node's type stripping, which resolves relative specifiers literally.
 import { getIndexerConfig } from './indexer.ts';
 import { knownTokensForChain, listTokens, type KeyValueStore } from './tokens.ts';
-import { fetchErc20Metadata, type Erc20Metadata } from './erc20.ts';
+import { Erc20NotATokenError, fetchErc20Metadata, type Erc20Metadata } from './erc20.ts';
 import { simulationTransport } from './simulation.ts';
 import { formatBalanceDisplay } from './balances.ts';
 import { sanitizeEndpointMessage } from '../config/endpoint-probe.ts';
@@ -38,9 +38,13 @@ import { evmProfileByCaip2 } from '../config/evm-chain.ts';
  * contacts screen follow):
  *  - metadata comes from the CHAIN, never from the indexer: decimals(),
  *    symbol() and name() are read with eth_call through erc20.ts
- *    fetchErc20Metadata against the active RPC endpoint; a contract whose
- *    decimals() cannot be read is listed as unreadable and cannot be
- *    tracked from here (balances could not be shown honestly);
+ *    fetchErc20Metadata against the active RPC endpoint; a contract that
+ *    answered decimals() unlike an ERC-20 (a revert or malformed return
+ *    data) is counted as not answering like a token and cannot be tracked
+ *    from here (balances could not be shown honestly). A read that failed
+ *    without such an answer (the endpoint did not respond, refused, or
+ *    returned nothing) is counted separately as "could not be read right
+ *    now": a network failure is never evidence about the contract;
  *  - the on-chain symbol and name are cleaned with the preview's rule
  *    (control, bidirectional-override and zero-width characters stripped;
  *    simulation.ts sanitizeSymbol) and capped like the add-token form;
@@ -156,8 +160,14 @@ export type DiscoveryOutcome =
       status: 'ok';
       /** Untracked holdings with readable decimals, in the indexer's order. */
       tokens: DiscoveredToken[];
-      /** Untracked holdings whose decimals() could not be read. */
+      /** Untracked holdings whose decimals() answer was not an ERC-20's (revert, malformed data). */
       unreadable: { contract: string; reason: string }[];
+      /**
+       * Untracked holdings whose metadata read failed without an answer from
+       * the contract (transport or endpoint failure): nothing is known about
+       * them, and searching again may list them.
+       */
+      readFailed: { contract: string; reason: string }[];
       /** Holdings already in the tracked list (not shown). */
       alreadyTracked: number;
       /** Contracts the indexer reported with a zero balance (hidden). */
@@ -243,16 +253,22 @@ export async function discoverUntrackedTokens(options: {
       try {
         return { holding, metadata: await fetchMetadata(rpc.url, holding.contract) };
       } catch (e) {
-        return { holding, error: e instanceof Error ? e.message : String(e) };
+        return { holding, error: e instanceof Error ? e.message : String(e), notAToken: isNotATokenError(e) };
       }
     }),
   );
 
   const tokens: DiscoveredToken[] = [];
   const unreadable: { contract: string; reason: string }[] = [];
+  const readFailed: { contract: string; reason: string }[] = [];
   for (const r of results) {
     if (!('metadata' in r) || r.metadata === undefined) {
-      unreadable.push({ contract: r.holding.contract, reason: r.error ?? 'unknown error' });
+      // Only an answer from the contract counts as "not an ERC-20"; any
+      // other failure (including an unrecognized one from an injected
+      // reader) is a read that did not happen.
+      const entry = { contract: r.holding.contract, reason: r.error ?? 'unknown error' };
+      if (r.notAToken) unreadable.push(entry);
+      else readFailed.push(entry);
       continue;
     }
     const { holding, metadata } = r;
@@ -293,12 +309,25 @@ export async function discoverUntrackedTokens(options: {
     status: 'ok',
     tokens,
     unreadable,
+    readFailed,
     alreadyTracked,
     zeroHidden: collected.zeroCount,
     indexerFailures: collected.failures.length,
     notChecked: untracked.length - toRead.length,
     complete: collected.complete,
   };
+}
+
+/**
+ * True for fetchErc20Metadata's "answered, but not like an ERC-20" failure
+ * (checked by name too, so an equivalent error from an injected reader in
+ * another module instance counts).
+ */
+export function isNotATokenError(error: unknown): boolean {
+  return (
+    error instanceof Erc20NotATokenError ||
+    (error instanceof Error && error.name === 'Erc20NotATokenError')
+  );
 }
 
 /** The one-line summary under the results ("3 found · 1 already tracked · …"). */
@@ -310,6 +339,9 @@ export function discoverySummary(outcome: Extract<DiscoveryOutcome, { status: 'o
   if (outcome.zeroHidden > 0) parts.push(`${outcome.zeroHidden} with a zero balance hidden`);
   if (outcome.unreadable.length > 0) {
     parts.push(`${outcome.unreadable.length} that do not answer like an ERC-20 token not shown`);
+  }
+  if (outcome.readFailed.length > 0) {
+    parts.push(`${outcome.readFailed.length} could not be read right now — search again`);
   }
   if (outcome.notChecked > 0) parts.push(`${outcome.notChecked} more not looked up (limit ${MAX_DISCOVERY_METADATA})`);
   if (outcome.indexerFailures > 0) parts.push(`${outcome.indexerFailures} the indexer could not answer`);

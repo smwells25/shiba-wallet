@@ -189,9 +189,11 @@ export const FEATURE_READINESS: readonly FeatureReadiness[] = [
     title: 'Connecting to apps (WalletConnect)',
     status: 'blocked',
     reason:
-      'The wallet cannot yet confirm which website a connected app really is, and it does not yet ' +
-      'decode token-permit signatures (Permit and Permit2) into a plain spender, amount and expiry. ' +
-      'Until both are addressed, connecting to apps is not cleared for real funds.',
+      'The wallet now shows whether WalletConnect’s verification service confirms which website a ' +
+      'connected app really is, and it summarizes token-permit signatures (Permit and Permit2) as a ' +
+      'plain spender, amount and expiry. Both are built and tested offline but have not yet been ' +
+      'exercised with a live app over the WalletConnect relay, so connecting to apps is not yet ' +
+      'cleared for real funds.',
     evidence: ['W12', 'W11', 'N-06', 'N-07', 'W1', 'W2'],
     enforced: false,
   },

@@ -93,6 +93,7 @@ import { EVM_CHAIN_ID } from '../wallet/send';
 import { exportAllRecordsText, loadRecoveryRecords } from '../wallet/recovery';
 import { passkeyGateNow } from '../wallet/passkey-native';
 import { PASSKEY_AUDIT_NOTE, PASSKEY_EXPLANATION, PASSKEY_SELF_CALL_RISK } from '../wallet/passkeys';
+import { settingsTokensFeeSentence } from '../wallet/token-gas';
 import {
   SPENDING_HONESTY_SENTENCE,
   SPENDING_SECTION_TITLE,
@@ -1729,7 +1730,7 @@ export function SettingsScreen({ navigation, route }: Props) {
         <Text style={[styles.sectionTitle, { color: theme.text }]}>Tokens</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Track ERC-20 tokens on the Home screen: balances, and sending
-          with the network fee paid in ETH. Each network has its own list
+          them. {settingsTokensFeeSentence()} Each network has its own list
           ({evmChain.label} now), and Find my tokens lists what your address
           holds when a history indexer is configured.
         </Text>

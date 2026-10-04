@@ -4,6 +4,7 @@ import {
   SET_APPROVAL_FOR_ALL_SELECTOR,
   classifyRecipient,
   encodeErc20Approve,
+  encodeErc20Transfer,
   findCodeDeploymentBlock,
   isFirstInteraction,
   riskSignals,
@@ -19,7 +20,7 @@ import {
 // Explicit .ts extension: this module is imported by
 // scripts/check-approvals.mjs under Node's type stripping, which resolves
 // relative specifiers literally.
-import { groupThousands, simulationTransport } from './simulation.ts';
+import { groupThousands, sanitizeSymbol, simulationTransport } from './simulation.ts';
 import { WALLET_7702_DELEGATE } from './delegation.ts';
 import { walletAddressesFor, type AaAddressFacts } from './activity-sentences.ts';
 
@@ -56,6 +57,19 @@ import { walletAddressesFor, type AaAddressFacts } from './activity-sentences.ts
  *    the depth it does serve and searches inside it (contractAgeFacts). A
  *    contract whose age still cannot be compared with the threshold gets
  *    the neutral CONTRACT_AGE_UNKNOWN_LINE, never a "new contract" warning.
+ *
+ *  - Token transfers (the transaction is transfer(recipient, amount) on an
+ *    ERC-20 contract the wallet tracks or knows on the ACTIVE chain, and
+ *    that contract holds code): the card is about the RECIPIENT, exactly as
+ *    for a plain ETH send — "This sends USDC through its token contract
+ *    0x… to …" — and the class, age and delegation checks run on the
+ *    recipient. The token contract itself gets no contract-age or
+ *    "goes to a contract" line, because the user chose to track it (or the
+ *    wallet pins it) on this very chain. Any other contract — an untracked
+ *    token, a tracked token's address on another chain, a call that is not
+ *    a plain transfer to the named recipient, or a "token" address without
+ *    code — keeps every existing line about the contract (see
+ *    tokenTransferTarget).
  *
  * The look-alike-contact warning is NOT produced here; it stays in
  * ./contacts.ts and the send screens' RecipientContactNotice.
@@ -178,6 +192,10 @@ export const ERC20_APPROVE_SELECTOR_HEX = toHex(
   encodeErc20Approve('0x0000000000000000000000000000000000000000', 0n).slice(0, 4),
 );
 export const SET_APPROVAL_FOR_ALL_SELECTOR_HEX = toHex(SET_APPROVAL_FOR_ALL_SELECTOR);
+/** transfer(address,uint256) selector, taken from the engine's encoder (no hardcoded hex). */
+export const ERC20_TRANSFER_SELECTOR_HEX = toHex(
+  encodeErc20Transfer('0x0000000000000000000000000000000000000000', 0n).slice(0, 4),
+);
 
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 
@@ -258,6 +276,45 @@ export function approvalChangesFromCalldata(
   return [];
 }
 
+/**
+ * The recipient of a DIRECT ERC-20 transfer(address,uint256) call, decoded
+ * from its calldata (EIP-55), or null. Only exactly-sized calldata (selector
+ * plus two words) with a clean address word counts, the same strictness as
+ * approvalChangesFromCalldata.
+ */
+export function erc20TransferRecipientFromCalldata(data: Uint8Array | string | undefined): string | null {
+  const hex = dataToHex(data);
+  if (!/^0x[0-9a-f]*$/.test(hex) || hex.length !== 2 + 8 + 128) return null;
+  if (hex.slice(0, 10) !== ERC20_TRANSFER_SELECTOR_HEX) return null;
+  return wordToAddress(hex.slice(10, 74));
+}
+
+/**
+ * The token whose transfer the card may describe in terms of its recipient,
+ * or null. All of these must hold, otherwise the card keeps describing the
+ * contract `to` exactly as before:
+ *  - `to` is one of `tokens` (the caller passes the tracked tokens plus the
+ *    known test-network tokens of the ACTIVE chain only), matched on the
+ *    full address;
+ *  - a counterparty is given and differs from `to`;
+ *  - the calldata is exactly transfer(counterparty, amount).
+ * Whether `to` really holds contract code is checked separately on the
+ * network (gatherRiskFacts); a "token" address without code keeps the
+ * engine's no-code warning.
+ */
+export function tokenTransferTarget(
+  to: string,
+  counterparty: string | undefined,
+  data: Uint8Array | string | undefined,
+  tokens: readonly RiskTokenRef[],
+): RiskTokenRef | null {
+  if (!ADDRESS.test(to) || !counterparty || !ADDRESS.test(counterparty)) return null;
+  if (counterparty.toLowerCase() === to.toLowerCase()) return null;
+  const recipient = erc20TransferRecipientFromCalldata(data);
+  if (!recipient || recipient.toLowerCase() !== counterparty.toLowerCase()) return null;
+  return tokens.find((t) => ADDRESS.test(t.address) && t.address.toLowerCase() === to.toLowerCase()) ?? null;
+}
+
 // ---------------------------------------------------------------------------
 // Facts -> lines (pure)
 // ---------------------------------------------------------------------------
@@ -321,8 +378,16 @@ export function findOwnAddress(address: string, own: readonly OwnAddress[]): Own
 }
 
 export interface RiskFacts {
-  /** The transaction's `to` (what classification and age describe). */
+  /** The transaction's `to` (what classification and age describe, unless tokenTransfer is set). */
   to: string;
+  /**
+   * Set when the transaction is a plain transfer of a token the wallet
+   * tracks or knows on this chain, to `recipient`, and `contract` was seen
+   * to hold code (tokenTransferTarget). Then recipientClass, contractAge,
+   * contractAgeUnknown and expectedOwnDelegation describe the RECIPIENT,
+   * not the token contract.
+   */
+  tokenTransfer?: { contract: string; symbol: string; recipient: string };
   /** Set when `to` is one of the wallet's own addresses (no age or first-interaction checks then). */
   ownRecipient?: OwnAddress;
   /** Set when the paid party differs from `to` and is one of the wallet's own addresses. */
@@ -474,6 +539,31 @@ export function ownAccountText(own: OwnAddress): string {
   return `This transaction goes to one of your own accounts in this wallet: ${own.label} (${own.address}).`;
 }
 
+/**
+ * The opening line for a transfer of a tracked or known token
+ * (RiskFacts.tokenTransfer): what is sent, through which contract (in
+ * full), and to whom — the recipient described like the `to` of a plain
+ * ETH send.
+ */
+export function tokenTransferText(facts: RiskFacts & { tokenTransfer: NonNullable<RiskFacts['tokenTransfer']> }): string {
+  const { contract, symbol, recipient } = facts.tokenTransfer;
+  const prefix = `This sends ${symbol} through its token contract ${contract}`;
+  if (facts.ownCounterparty) {
+    return `${prefix} to one of your own accounts in this wallet: ${facts.ownCounterparty.label} (${facts.ownCounterparty.address}).`;
+  }
+  const cls = facts.recipientClass;
+  if (!cls) {
+    return `${prefix} to ${recipient}. Whether ${recipient} is a contract or a regular account could not be checked on this endpoint.`;
+  }
+  if (cls.kind === 'contract') return `${prefix} to a contract (${recipient}).`;
+  if (cls.kind === 'eoa') return `${prefix} to a regular account with no contract code on this network (${recipient}).`;
+  // A delegated recipient: the engine's delegated-eoa notice explains the
+  // code, unless it is one of the wallet's own upgraded accounts.
+  return facts.expectedOwnDelegation
+    ? `${prefix} to one of your own accounts, upgraded to this wallet's Kernel v3.3 delegate (${recipient}).`
+    : `${prefix} to ${recipient}.`;
+}
+
 function firstInteractionLine(facts: RiskFacts): RiskLine | null {
   if (!facts.firstInteractionApplicable) return null;
   if (facts.firstInteraction?.known || facts.nativeInteraction?.known) return null;
@@ -525,9 +615,16 @@ function firstInteractionLine(facts: RiskFacts): RiskLine | null {
  * was decoded.
  */
 export function computeRiskLines(facts: RiskFacts): RiskLine[] {
+  const transfer = facts.tokenTransfer;
+  // What the class and age facts describe: the recipient of a tracked or
+  // known token's transfer, else the transaction's `to`.
+  const subject = transfer ? transfer.recipient : facts.to;
   const signals = riskSignals({
-    ...(facts.recipientClass ? { recipient: { address: facts.to, class: facts.recipientClass } } : {}),
-    hasCalldata: facts.hasCalldata,
+    ...(facts.recipientClass ? { recipient: { address: subject, class: facts.recipientClass } } : {}),
+    // The recipient of a token transfer is not called (the call goes to the
+    // token contract, which was seen to hold code), so "instructions to an
+    // address with no code" cannot apply to it.
+    hasCalldata: transfer ? false : facts.hasCalldata,
     ...(facts.assetChanges ? { assetChanges: facts.assetChanges } : {}),
     // Age only means something for ordinary contracts; riskSignals also
     // ignores it for other classes, this keeps the input honest.
@@ -545,7 +642,17 @@ export function computeRiskLines(facts: RiskFacts): RiskLine[] {
     ...(s.subject ? { subject: s.subject } : {}),
   }));
 
-  if (facts.ownRecipient && !facts.expectedOwnDelegation) {
+  if (transfer) {
+    // One line describing the transfer in terms of its recipient (own
+    // account, class, or "could not be checked"); nothing about the token
+    // contract's own class or age.
+    lines.push({
+      type: 'recipient-class',
+      tone: 'notice',
+      text: tokenTransferText({ ...facts, tokenTransfer: transfer }),
+      subject,
+    });
+  } else if (facts.ownRecipient && !facts.expectedOwnDelegation) {
     // A send between the wallet's own accounts: one calm line, whatever the
     // address's code (an own smart account is a contract, possibly a new one).
     lines.push({
@@ -586,11 +693,12 @@ export function computeRiskLines(facts: RiskFacts): RiskLine[] {
             `${groupThousands(atLeast.toString())} blocks (${approxDuration(atLeast, facts.chainCaip2)}), ` +
             'the oldest state this endpoint serves.'
           : CONTRACT_AGE_UNKNOWN_LINE,
-      subject: facts.to,
+      subject,
     });
   }
 
-  if (facts.ownCounterparty) {
+  // (A token transfer's opening line already names an own recipient.)
+  if (facts.ownCounterparty && !transfer) {
     lines.push({
       type: 'recipient-class',
       tone: 'notice',
@@ -642,7 +750,9 @@ export interface GatherRiskOptions {
   /**
    * ERC-20 tokens on the ACTIVE chain to search for earlier transfers: the
    * tracked tokens plus the known test-network tokens (approvals.ts
-   * approvalTokensForChain).
+   * approvalTokensForChain). Also the only contracts whose transfer the card
+   * describes in terms of the recipient (tokenTransferTarget), so callers
+   * must pass the active chain's tokens and nothing else.
    */
   trackedTokens: RiskTokenRef[];
   /** Injectable for scripts; defaults to simulationTransport(url). */
@@ -796,19 +906,42 @@ export async function gatherRiskFacts(options: GatherRiskOptions): Promise<RiskF
   const indexerTransport =
     options.indexerTransport ?? (options.indexerUrl ? simulationTransport(options.indexerUrl) : null);
 
-  const classifyTask = async () => {
-    const recipientClass = await attempt(() => classifyRecipient(transport, options.to));
+  // A transfer of a tracked or known token on this chain (see
+  // tokenTransferTarget); confirmed below only if `to` holds code.
+  const tokenRef = facts.ownRecipient
+    ? null
+    : tokenTransferTarget(options.to, options.counterparty, options.data, tokens);
+
+  // Class, delegation and age of `address`, recorded as the card's subject.
+  const describeSubject = async (address: string, known?: RecipientClass) => {
+    const recipientClass = known ?? (await attempt(() => classifyRecipient(transport, address)));
     if (!recipientClass) return;
     facts.recipientClass = recipientClass;
-    if (
-      isExpectedOwnDelegation(options.to, recipientClass, [options.wallet, ...(options.ownAddresses ?? [])])
-    ) {
+    if (isExpectedOwnDelegation(address, recipientClass, [options.wallet, ...(options.ownAddresses ?? [])])) {
       facts.expectedOwnDelegation = true;
     }
     // No age check for the wallet's own smart account: a freshly deployed
     // own account is not a "new contract" risk.
     if (recipientClass.kind !== 'contract' || threshold === undefined || facts.ownRecipient) return;
-    Object.assign(facts, await contractAgeFacts(transport, options.to, threshold));
+    Object.assign(facts, await contractAgeFacts(transport, address, threshold));
+  };
+
+  const classifyTask = async () => {
+    const toClass = await attempt(() => classifyRecipient(transport, options.to));
+    if (!toClass) return;
+    if (tokenRef && toClass.kind === 'contract') {
+      facts.tokenTransfer = {
+        contract: checksum(options.to),
+        symbol: sanitizeSymbol(tokenRef.symbol) ?? 'the token',
+        recipient: checksum(counterparty),
+      };
+      // An own recipient is named in the opening line; it needs no class
+      // or age check (the same rule as a send to an own `to`).
+      if (facts.ownCounterparty) return;
+      await describeSubject(counterparty);
+      return;
+    }
+    await describeSubject(options.to, toClass);
   };
 
   const tokenSearchTask = async () => {

@@ -53,9 +53,9 @@ import {
   type SendResult,
 } from '../wallet/send';
 import {
-  PREVIEW_AA_BATCH_NOTE,
   aaAccountTypeLabel,
   aaMaxAdjustmentSentence,
+  aaPreviewNote,
   aaRiskWarningTarget,
   aaSendApprovalPrompt,
   aaSenderLabel,
@@ -138,7 +138,6 @@ import { SpendingPolicyNotice, spendingGateForQuote } from '../components/Spendi
 import { useOwnEvmAddresses } from '../wallet/useOwnAddresses';
 import { findOwnAddress } from '../wallet/risk';
 import { recordAcceptedSpend, spendingInputForQuote } from '../wallet/spending-policy';
-import { PREVIEW_AA_NOTE } from '../wallet/simulation';
 import { useAccountDelegation } from '../wallet/useDelegation';
 import { delegationLabelSuffix, invalidateAccountDelegation } from '../wallet/delegation';
 import { Eip7702QuoteNotice } from '../components/DelegationViews';
@@ -1656,7 +1655,7 @@ export function SendScreen({ route, navigation }: Props) {
             data: quote.calls[0]!.data,
           }}
           batch={quote.calls.map((c) => ({ from: quote.sender, to: c.to, value: c.value, data: c.data }))}
-          note={quote.calls.length > 1 ? PREVIEW_AA_BATCH_NOTE : PREVIEW_AA_NOTE}
+          note={aaPreviewNote(quote)}
         />
         <RiskWarnings url={confirmUrl} wallet={quote.sender} {...aaRiskWarningTarget(quote)} />
         <SpendingPolicyNotice owner={quotedFrom} quote={quote} from={quotedFrom} />

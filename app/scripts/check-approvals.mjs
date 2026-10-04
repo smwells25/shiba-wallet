@@ -71,7 +71,10 @@ import {
   FIRST_INTERACTION_FALLBACK_BLOCKS,
   NEW_CONTRACT_THRESHOLD_BLOCKS,
   SET_APPROVAL_FOR_ALL_SELECTOR_HEX,
+  ERC20_TRANSFER_SELECTOR_HEX,
   approvalChangesFromCalldata,
+  erc20TransferRecipientFromCalldata,
+  tokenTransferTarget,
   approxDuration,
   classifyAddresses,
   computeRiskLines,
@@ -902,6 +905,89 @@ console.log('own accounts on the risk card:');
   const succ = sendSrc.slice(sendSrc.indexOf('const renderSuccessContact'), sendSrc.indexOf('<SaveContactInline', sendSrc.indexOf('const renderSuccessContact')));
   check('success screen: an own address is named and returns BEFORE "Save as contact" is offered', /findOwnAddress\(address, ownAddresses\)/.test(succ) && /if \(own\) \{/.test(succ) && /one of your own accounts in this wallet/.test(succ));
   check('scan offer on the form skips own addresses too', /!\(route\.params\.chainId === EVM_CHAIN_ID && findOwnAddress\(validation\.normalized, ownAddresses\)\)/.test(sendSrc));
+}
+
+// Emulator-run finding 1 (phase 13): a transfer of a tracked or KNOWN token
+// is described in terms of its recipient on BOTH paths (regular account and
+// smart account), with no contract-age or "goes to a contract" line about
+// the token contract; every other contract keeps the existing lines.
+console.log('token transfers on the risk card:');
+{
+  const transferIface = new Interface(['function transfer(address to, uint256 value) returns (bool)']);
+  const transferTo = (r, n = 5n) => transferIface.encodeFunctionData('transfer', [r, n]);
+  check('transfer selector derived from the engine = ethers', ERC20_TRANSFER_SELECTOR_HEX === transferIface.getFunction('transfer').selector);
+  const SEP_USDC = '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238';
+  const SMART = '0xD31c2C54F21684eE2026a6C41e391130BdEeD8FA'; // stands in for a Kernel account (the sender on the AA path)
+  const sepKnown = approvalTokensForChain([], SEPOLIA).map((t) => ({ address: t.address, symbol: t.symbol }));
+  check('tokenTransferTarget: known Sepolia USDC + transfer(counterparty) -> the token',
+    tokenTransferTarget(SEP_USDC, DRAINER, transferTo(DRAINER), sepKnown)?.symbol === 'USDC');
+  check('tokenTransferTarget: calldata naming another recipient -> null', tokenTransferTarget(SEP_USDC, DRAINER, transferTo(ROUTER), sepKnown) === null);
+  check('tokenTransferTarget: approve calldata -> null', tokenTransferTarget(SEP_USDC, DRAINER, erc20Iface.encodeFunctionData('approve', [DRAINER, 5n]), sepKnown) === null);
+  check('tokenTransferTarget: no counterparty -> null', tokenTransferTarget(SEP_USDC, undefined, transferTo(DRAINER), sepKnown) === null);
+  check('tokenTransferTarget: the MAINNET USDC address is not a known token on Sepolia -> null', tokenTransferTarget(USDC, DRAINER, transferTo(DRAINER), sepKnown) === null);
+  check('erc20TransferRecipientFromCalldata: trailing bytes -> null', erc20TransferRecipientFromCalldata(transferTo(DRAINER) + '00') === null);
+
+  // The emulator case: Ethereum Sepolia, publicnode-like pruned state (no
+  // historical eth_getCode at all), USDC (a known token) to a regular account.
+  node = defaultNode();
+  node.chainId = '0xaa36a7';
+  node.codes[SEP_USDC.toLowerCase()] = '0x6080604052';
+  node.depth = 0n;
+  const gather = (wallet, extra = {}) => gatherRiskFacts({ transport, url: RPC, wallet, to: SEP_USDC, counterparty: DRAINER, data: transferTo(DRAINER), chainCaip2: SEPOLIA, trackedTokens: sepKnown, ...extra });
+  const eoaLines = computeRiskLines(await gather(ME));
+  const expected = `This sends USDC through its token contract ${SEP_USDC} to a regular account with no contract code on this network (${DRAINER}).`;
+  check('regular-account USDC send: the card opens with the transfer, recipient described',
+    eoaLines.some((l) => l.type === 'recipient-class' && l.text === expected), eoaLines.map((l) => l.text).join(' | '));
+  check('…no "goes to a contract" line about the token contract', !eoaLines.some((l) => /goes to a contract/.test(l.text)));
+  check('…no contract-age line (the token contract is known on this chain)', !eoaLines.some((l) => l.type === 'contract-age-unknown' || l.type === 'new-contract'));
+  check('…no warning at all for a plain transfer to a regular account', eoaLines.every((l) => l.tone === 'notice'));
+  check('…the first-interaction line still covers the recipient', eoaLines.some((l) => /^first-interaction/.test(l.type)));
+  const aaLines = computeRiskLines(await gather(SMART));
+  check('smart-account USDC send: exactly the same card as the regular-account send',
+    JSON.stringify(aaLines) === JSON.stringify(eoaLines), `${aaLines.map((l) => l.text).join(' | ')} VS ${eoaLines.map((l) => l.text).join(' | ')}`);
+
+  // Controls: every other contract keeps the existing lines.
+  const untracked = computeRiskLines(await gather(ME, { trackedTokens: [] }));
+  check('control: an UNTRACKED token keeps "goes to a contract" and the contract-age line',
+    untracked.some((l) => l.text === `This transaction goes to a contract (${SEP_USDC}).`) && untracked.some((l) => l.type === 'contract-age-unknown'),
+    untracked.map((l) => l.text).join(' | '));
+  const otherRecipient = computeRiskLines(await gather(ME, { data: transferTo(ROUTER) }));
+  check('control: calldata paying someone other than the shown recipient keeps the contract lines',
+    otherRecipient.some((l) => /goes to a contract/.test(l.text)) && !otherRecipient.some((l) => /^This sends /.test(l.text)));
+  delete node.codes[SEP_USDC.toLowerCase()];
+  const noCode = computeRiskLines(await gather(ME));
+  check('control: a known token address WITHOUT code keeps the no-code warning',
+    noCode.some((l) => l.type === 'no-code-recipient-with-calldata' && l.tone === 'warning') && !noCode.some((l) => /^This sends /.test(l.text)));
+  node.codes[SEP_USDC.toLowerCase()] = '0x6080604052';
+
+  // The recipient is the card's subject: its class, delegation and age.
+  node.depth = null;
+  node.codes[ROUTER.toLowerCase()] = '0x6080604052';
+  node.deployedAt[ROUTER.toLowerCase()] = HEAD - 150n;
+  const toYoung = computeRiskLines(await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: SEP_USDC, counterparty: ROUTER, data: transferTo(ROUTER), chainCaip2: SEPOLIA, trackedTokens: sepKnown }));
+  check('a young contract RECIPIENT gets the "new contract" warning (about the recipient, not the token)',
+    toYoung.some((l) => l.type === 'new-contract' && l.subject === ROUTER) && toYoung.some((l) => l.text === `This sends USDC through its token contract ${SEP_USDC} to a contract (${ROUTER}).`),
+    toYoung.map((l) => l.text).join(' | '));
+  node.codes[DELEGATED.toLowerCase()] = '0xef0100' + DELEGATE_TARGET.slice(2);
+  const toDelegated = computeRiskLines(await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: SEP_USDC, counterparty: DELEGATED, data: transferTo(DELEGATED), chainCaip2: SEPOLIA, trackedTokens: sepKnown }));
+  check('a delegated RECIPIENT keeps the delegated-account notice', toDelegated.some((l) => l.type === 'delegated-eoa' && l.subject === DELEGATED) && toDelegated.some((l) => l.text === `This sends USDC through its token contract ${SEP_USDC} to ${DELEGATED}.`), toDelegated.map((l) => l.text).join(' | '));
+  const blindRecipient = computeRiskLines(await gatherRiskFacts({
+    transport: async (method, params) => { if (method === 'eth_getCode' && params[0].toLowerCase() === DRAINER.toLowerCase()) throw new Error('down'); return transport(method, params); },
+    url: RPC, wallet: ME, to: SEP_USDC, counterparty: DRAINER, data: transferTo(DRAINER), chainCaip2: SEPOLIA, trackedTokens: sepKnown,
+  }));
+  check('recipient class unreadable -> the transfer line says it could not be checked (never silent)',
+    blindRecipient.some((l) => l.text === `This sends USDC through its token contract ${SEP_USDC} to ${DRAINER}. Whether ${DRAINER} is a contract or a regular account could not be checked on this endpoint.`),
+    blindRecipient.map((l) => l.text).join(' | '));
+
+  // Mainnet: a TRACKED token, sent to one of the wallet's own accounts.
+  const ownList = [{ address: SMART, label: 'Account 1’s smart account' }];
+  node.codes[USDC.toLowerCase()] = '0x6080604052';
+  const toOwn = computeRiskLines(await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: USDC, counterparty: SMART, data: transferTo(SMART), chainCaip2: MAINNET, trackedTokens: [{ address: USDC, symbol: 'USDC' }], ownAccounts: ownList }));
+  check('tracked USDC to an own smart account: one opening line naming the own account, nothing else',
+    toOwn.length === 1 && toOwn[0].text === `This sends USDC through its token contract ${USDC} to one of your own accounts in this wallet: Account 1’s smart account (${SMART}).`,
+    toOwn.map((l) => l.text).join(' | '));
+  const sym = computeRiskLines(await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: USDC, counterparty: SMART, data: transferTo(SMART), chainCaip2: MAINNET, trackedTokens: [{ address: USDC, symbol: 'US‮DC' }], ownAccounts: ownList }));
+  check('the tracked symbol is cleaned with the preview rule (bidi override stripped)', /^This sends USDC through/.test(sym[0]?.text ?? ''), sym[0]?.text);
 }
 
 check('approximate durations', approxDuration(9000n) === 'about 30 hours' && approxDuration(72000n) === 'about 10 days' && approxDuration(1n) === 'about 1 minute' && approxDuration(64n) === 'about 13 minutes' && approxDuration(300n) === 'about 1 hour');

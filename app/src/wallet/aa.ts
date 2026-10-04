@@ -49,6 +49,7 @@ import {
   type FeatureId,
 } from '../config/readiness.ts';
 import { evmProfileByCaip2 } from '../config/evm-chain.ts';
+import { PREVIEW_AA_NOTE } from './simulation.ts';
 
 /**
  * ERC-4337 smart-account glue for the app (experimental, off by default):
@@ -2072,16 +2073,38 @@ export function retitleQuoteFailure(described: { title: string; detail: string }
 }
 
 /**
+ * Title for a refusal where the smart account holds funds — enough to pay
+ * for some send — but not for THIS amount (plus the network fee when the
+ * account pays it in the same currency). AA_FUNDING_TITLE stays for an
+ * account that could not pay for any send at all (empty, or unable to cover
+ * even the fee).
+ */
+export function aaAmountShortfallTitle(symbol: string, withFee: boolean): string {
+  return withFee
+    ? `Not enough ${symbol} for this amount plus the network fee.`
+    : `Not enough ${symbol} for this amount.`;
+}
+
+/** The chain's display currency ("ETH", "test ETH") for funding titles. */
+function nativeSymbolFor(chainId: bigint): string {
+  return evmProfileByCaip2(`eip155:${chainId}`)?.displaySymbol ?? 'ETH';
+}
+
+/**
  * Thrown when the smart account cannot pay for an operation (the wallet's
  * own check, or a bundler AA21 "didn't pay prefund" answer). `sender` is the
- * smart account that needs the funds.
+ * smart account that needs the funds; `title` is what describeAaError shows
+ * (AA_FUNDING_TITLE unless the refusal is an amount shortfall, see
+ * aaAmountShortfallTitle).
  */
 export class AaFundingError extends Error {
   sender: string;
+  title: string;
   // No TS parameter properties: Node's strip-only type stripping rejects them.
-  constructor(sender: string, message: string) {
+  constructor(sender: string, message: string, title: string = AA_FUNDING_TITLE) {
     super(message);
     this.sender = sender;
+    this.title = title;
     this.name = 'AaFundingError';
   }
 }
@@ -2539,7 +2562,20 @@ export async function prepareAaCalls(
     deposit,
   });
   if (cannotPay) {
-    throw new AaFundingError(sender, aaFundingMessage({ ...fundingFacts(), fee: null }));
+    // The title says what is short. An account that could pay for SOME send
+    // (it holds a balance, or — self-paid — an EntryPoint deposit that can
+    // pay a fee; a sponsored account always can) is short only for this
+    // amount; an account with nothing keeps AA_FUNDING_TITLE. A zero amount
+    // (token sends, the Max probe) is refused here only when the account
+    // has nothing at all.
+    const canPaySomeSend = bundle.sponsored || senderBalance > 0n || (deposit ?? 0n) > 0n;
+    throw new AaFundingError(
+      sender,
+      aaFundingMessage({ ...fundingFacts(), fee: null }),
+      checkAmount > 0n && canPaySomeSend
+        ? aaAmountShortfallTitle(nativeSymbolFor(bundle.chainId), !bundle.sponsored)
+        : AA_FUNDING_TITLE,
+    );
   }
 
   // The bundler's floor plus AA_FEE_FLOOR_HEADROOM_PERCENT: sendAa never
@@ -2675,9 +2711,17 @@ export async function prepareAaCalls(
     ? amount <= senderBalance
     : aaCanPaySelf({ amount, fee, balance: senderBalance, deposit });
   if (!affordable) {
+    // Self-paid: if the balance (with the deposit) covers the fee alone, the
+    // account is short only for the amount plus the fee; if it cannot cover
+    // even the fee, no send would go through and AA_FUNDING_TITLE stays.
+    // Sponsored: the fee is not the account's, so only the amount is short.
+    const feeAloneFits = bundle.sponsored || aaFeeFromBalance(fee, deposit) <= senderBalance;
     throw new AaFundingError(
       sender,
       aaFundingMessage({ ...fundingFacts(), fee: bundle.sponsored ? null : fee }),
+      amount > 0n && feeAloneFits
+        ? aaAmountShortfallTitle(nativeSymbolFor(bundle.chainId), !bundle.sponsored)
+        : AA_FUNDING_TITLE,
     );
   }
 
@@ -3162,6 +3206,42 @@ export const PREVIEW_AA_BATCH_NOTE =
   'pays through the EntryPoint is shown separately above and is not part of this list.';
 
 /**
+ * Footnotes for a smart-account operation whose network fee is paid in a
+ * token through Circle's paymaster (quote.tokenGas, ./token-gas.ts). The
+ * simulated calls do not include that charge (the paymaster takes it in
+ * the same UserOperation), and no ETH pays for gas, so the plain notes'
+ * "gas the smart account pays through the EntryPoint" would be wrong.
+ */
+export function previewTokenGasNote(symbol: string): string {
+  return (
+    'Simulated as a direct call from your smart account. The network fee is paid in ' +
+    `${symbol} through Circle’s paymaster and is shown above; it is not part of this list.`
+  );
+}
+
+export function previewTokenGasBatchNote(symbol: string): string {
+  return (
+    'Simulated as direct calls from your smart account, one after another in a single ' +
+    'simulated block (eth_simulateV1). The smart account executes them as one atomic ' +
+    'operation: if any call fails, none of them take effect. The network fee is paid in ' +
+    `${symbol} through Circle’s paymaster and is shown above; it is not part of this list.`
+  );
+}
+
+/**
+ * The balance-change preview's footnote for a smart-account quote: the
+ * token-fee wording when the quote pays its fee in a token, else the plain
+ * single-call or batch note.
+ */
+export function aaPreviewNote(quote: Pick<AaSendQuote, 'calls' | 'tokenGas'>): string {
+  const batch = quote.calls.length > 1;
+  if (quote.tokenGas) {
+    return batch ? previewTokenGasBatchNote(quote.tokenGas.symbol) : previewTokenGasNote(quote.tokenGas.symbol);
+  }
+  return batch ? PREVIEW_AA_BATCH_NOTE : PREVIEW_AA_NOTE;
+}
+
+/**
  * Plain-language error for the AA path, keeping the bundler's message
  * verbatim as the detail. A smart account that cannot pay (the wallet's
  * own check, or a bundler AA21 "didn't pay prefund") gets the funding title
@@ -3182,7 +3262,7 @@ export function describeAaError(
   },
 ): { title: string; detail: string } | null {
   const detail = error instanceof Error ? error.message : String(error);
-  if (error instanceof AaFundingError) return { title: AA_FUNDING_TITLE, detail };
+  if (error instanceof AaFundingError) return { title: error.title, detail };
   if (error instanceof AaFeeRoseError) return { title: AA_FEE_ROSE_TITLE, detail };
   if (isBundlerFeeFloorRefusal(detail)) {
     return {

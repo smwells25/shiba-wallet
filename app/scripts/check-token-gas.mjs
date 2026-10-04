@@ -38,9 +38,13 @@ import {
 } from '@shiba-wallet/chains-evm';
 import { ethers } from 'ethers';
 import { readFileSync } from 'node:fs';
+import { PREVIEW_AA_NOTE } from '../src/wallet/simulation.ts';
 import {
   AA_FUNDING_TITLE,
   AaFundingError,
+  PREVIEW_AA_BATCH_NOTE,
+  aaPreviewNote,
+  describeAaError,
   TOKEN_GAS_ACCOUNT_REFUSAL,
   TOKEN_GAS_ESTIMATION_CEILING,
   TOKEN_GAS_PADDING_PCT,
@@ -84,6 +88,8 @@ import {
   tokenGasPaymasterFor,
   tokenGasRateSentence,
   tokenGasSpreadText,
+  settingsTokensFeeSentence,
+  tokenSendFeeSentence,
 } from '../src/wallet/token-gas.ts';
 import { FeatureNotAllowedError, featureReadiness, isFeatureAllowed } from '../src/config/readiness.ts';
 import { spendingInputForQuote, validatePolicyList } from '../src/wallet/spending-policy.ts';
@@ -813,6 +819,54 @@ console.log('check-token-gas: sendAa refusals for a USDC-fee quote');
   const main = kernelBundle({ chainId: 1n });
   const e = await rejection(() => sendAa(main.bundle, owner, quote));
   check('mainnet bundle: FeatureNotAllowedError (token-gas)', e instanceof FeatureNotAllowedError && e.featureId === 'token-gas');
+}
+
+// Emulator-run findings 3, 4 and 5 (phase 13): the preview footnote, the
+// fee copy on the Tokens and Settings screens, and the funding titles in
+// USDC-fee mode.
+console.log('check-token-gas: footnote, fee copy and funding titles');
+{
+  const worst = nativeQuote.tokenGas.maxTokenCharge;
+  const tgNote = 'Simulated as a direct call from your smart account. The network fee is paid in USDC through ' +
+    'Circle’s paymaster and is shown above; it is not part of this list.';
+  check('USDC-fee quote: the preview footnote says the fee is paid in USDC through the paymaster and shown above',
+    aaPreviewNote(nativeQuote) === tgNote && !/EntryPoint/.test(aaPreviewNote(nativeQuote)), aaPreviewNote(nativeQuote));
+  const batchNote = aaPreviewNote({ ...nativeQuote, calls: [nativeQuote.calls[0], nativeQuote.calls[0]] });
+  check('…and its batch form keeps the atomic-batch sentence', /one atomic operation/.test(batchNote) && /paid in USDC through Circle’s paymaster and is shown above/.test(batchNote));
+  const { tokenGas: _omit, ...plain } = nativeQuote;
+  check('control: an ETH-fee quote keeps the plain notes', aaPreviewNote(plain) === PREVIEW_AA_NOTE && aaPreviewNote({ ...plain, calls: [plain.calls[0], plain.calls[0]] }) === PREVIEW_AA_BATCH_NOTE);
+  const sendSrc = readFileSync(new URL('../src/screens/SendScreen.tsx', import.meta.url), 'utf8');
+  check('SendScreen picks the footnote with aaPreviewNote(quote)', sendSrc.includes('note={aaPreviewNote(quote)}') && !sendSrc.includes('PREVIEW_AA_BATCH_NOTE : PREVIEW_AA_NOTE'));
+
+  check('Tokens screen fee sentence on Base Sepolia names the USDC option without promising it',
+    tokenSendFeeSentence(BASE) === 'The network fee for a token send is normally paid in test ETH, not in the token. On Base Sepolia, a smart-account send can pay it in USDC instead when the Send screen offers that choice.',
+    tokenSendFeeSentence(BASE));
+  check('…on Ethereum Sepolia and mainnet there is no USDC sentence',
+    tokenSendFeeSentence(SEPOLIA) === 'The network fee for a token send is normally paid in test ETH, not in the token.' &&
+      tokenSendFeeSentence(MAINNET) === 'The network fee for a token send is normally paid in ETH, not in the token.');
+  check('Settings fee sentence covers every network',
+    settingsTokensFeeSentence() === 'The network fee for a token send is normally paid in ETH (test ETH on test networks), not in the token; on Base Sepolia, a smart-account send can pay it in USDC instead when the Send screen offers that choice.',
+    settingsTokensFeeSentence());
+  const tokensSrc = readFileSync(new URL('../src/screens/TokensScreen.tsx', import.meta.url), 'utf8');
+  const settingsSrc = readFileSync(new URL('../src/screens/SettingsScreen.tsx', import.meta.url), 'utf8');
+  check('the screens use the helpers and the old absolute wording is gone',
+    tokensSrc.includes('{tokenSendFeeSentence(evmChain.caip2)}') && !tokensSrc.includes('the network fee for a token send is paid in') &&
+      settingsSrc.includes('{settingsTokensFeeSentence()}') && !settingsSrc.includes('with the network fee paid in ETH'));
+
+  // Funding titles with the USDC fee (Base Sepolia).
+  const noEth = await rejection(() => prepareAaTokenGasSend(kernelBundle({ node: tgNode({ eth: 100n }) }).bundle, OWNER_0, RECIPIENT, 101n));
+  check('native amount above the ETH balance (fee in USDC): "Not enough test ETH for this amount."',
+    noEth instanceof AaFundingError && noEth.title === 'Not enough test ETH for this amount.', noEth?.title);
+  const usdcTarget = { contract: USDC, recipient: RECIPIENT, symbol: 'USDC', decimals: 6, chainCaip2: BASE };
+  const bal = 2_000_000n;
+  const over = await rejection(() => prepareAaTokenGasErc20Send(kernelBundle({ node: tgNode({ usdc: bal }) }).bundle, OWNER_0, { ...usdcTarget, amount: bal - worst + 1n }));
+  check('USDC amount + fee above a balance that covers the fee: "Not enough USDC for this amount plus the network fee."',
+    over instanceof AaFundingError && over.title === 'Not enough USDC for this amount plus the network fee.' &&
+      describeAaError(over, { accountType: 'kernel-v3.3', deployed: true })?.title === over.title, over?.title);
+  const feeShort = await rejection(() => prepareAaTokenGasErc20Send(kernelBundle({ node: tgNode({ usdc: worst - 1n }) }).bundle, OWNER_0, { ...usdcTarget, amount: 1n }));
+  check('USDC below the worst-case fee alone: the existing "needs funds first" title', feeShort instanceof AaFundingError && feeShort.title === AA_FUNDING_TITLE, feeShort?.title);
+  const nativeFeeShort = await rejection(() => prepareAaTokenGasSend(kernelBundle({ node: tgNode({ usdc: worst - 1n }) }).bundle, OWNER_0, RECIPIENT, 1n));
+  check('native send whose USDC cannot cover the fee: the existing title', nativeFeeShort instanceof AaFundingError && nativeFeeShort.title === AA_FUNDING_TITLE, nativeFeeShort?.title);
 }
 
 // ---------------------------------------------------------------------------
