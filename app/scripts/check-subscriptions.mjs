@@ -28,6 +28,7 @@ import {
   ENTRYPOINT_V07,
   KERNEL_PERMISSION_MODULES,
   KERNEL_V3_3,
+  SUBSCRIPTION_MIN_PERIOD_SECONDS,
   SUBSCRIPTION_NATIVE,
   createSessionKeyAccount,
   encodePermissionInstall,
@@ -89,6 +90,18 @@ import {
   subscriptionSummary,
   subscriptionTokenChoices,
   termsOf,
+  SUBSCRIPTION_EXPIRED_UNHANDED_TEXT,
+  SUBSCRIPTION_MAX_PERIOD_SECONDS,
+  SUBSCRIPTION_SHORT_WINDOW_SECONDS,
+  checkSubscriptionPeriod,
+  customPeriodSeconds,
+  subscriptionDisplayTitle,
+  subscriptionHandoverOffer,
+  subscriptionInstallFunding,
+  subscriptionInstallKeepBack,
+  subscriptionMinPeriodSeconds,
+  subscriptionPeriodPresets,
+  subscriptionShortWindowWarning,
 } from '../src/wallet/subscriptions.ts';
 import {
   KERNEL_ACCOUNT_0,
@@ -293,7 +306,7 @@ const sdkGrant = subscriptionGrantFor(sub, SDK_SESSION_KEY, { account: ACCOUNT, 
   check('GasPolicy data = abi.encode(uint128 budget, false, 0x0)', toHex(permission.policies[2].data) === abi.encode(['uint128', 'bool', 'address'], [3_000_000_000_000_000n, false, ZERO]));
   check('RateLimitPolicy data = packed uint48 interval ‖ count ‖ startAt (ethers solidityPacked)',
     toHex(permission.policies[3].data) === ethers.solidityPacked(['uint48', 'uint48', 'uint48'], [MONTH, 3, SDK_S]).toLowerCase());
-  const nativeSub = buildSubscription({ ...draft, choice: native, amount: '0.000000000000001', periodSeconds: 120 }, { now: SDK_S, account: ACCOUNT });
+  const nativeSub = buildSubscription({ ...draft, choice: native, amount: '0.000000000000001', periodSeconds: 120 }, { now: SDK_S, account: ACCOUNT, testnet: true });
   const nativeGrant = subscriptionGrantFor(nativeSub, SDK_SESSION_KEY, { account: ACCOUNT, now: SDK_S - 10 });
   check('native: one call to the merchant, no function, value cap = 1000 wei, rate limit {120 s, 3, start}',
     nativeGrant.calls.length === 1 && nativeGrant.calls[0].target === MERCHANT && nativeGrant.calls[0].selector === null && nativeGrant.calls[0].valueLimit === 1000n && nativeGrant.rateLimit.intervalSeconds === 120);
@@ -332,7 +345,7 @@ const vault = fakeVault();
 const node = fakeNode();
 const bundler = fakeBundler({ receipt: { success: true, receipt: { transactionHash: TX_HASH } } });
 const bundle = kernelBundle(node, bundler);
-const live = buildSubscription({ ...draft, periodSeconds: 120, payments: '3' }, { now: NOW, account: ACCOUNT });
+const live = buildSubscription({ ...draft, periodSeconds: 120, payments: '3' }, { now: NOW, account: ACCOUNT, testnet: true });
 const keyBytes = ethers.randomBytes(32);
 const keyHex = ethers.hexlify(keyBytes).toLowerCase();
 const sessionAccount = createSessionKeyAccount(keyBytes.slice());
@@ -458,7 +471,7 @@ const screenSrc = readFileSync(new URL('../src/screens/SessionsScreen.tsx', impo
 {
   // Finding 1: the clock starts when Start is tapped.
   const REVIEW_OPENED = NOW - 600; // the user read the review for ten minutes
-  const reviewed = buildSubscription({ ...draft, choice: native, amount: '0.000000000000001', periodSeconds: 120, payments: '3' }, { now: REVIEW_OPENED, account: ACCOUNT });
+  const reviewed = buildSubscription({ ...draft, choice: native, amount: '0.000000000000001', periodSeconds: 120, payments: '3' }, { now: REVIEW_OPENED, account: ACCOUNT, testnet: true });
   const stale = await caught(() => subscriptionGrantFor(reviewed, SDK_SESSION_KEY, { account: ACCOUNT, now: NOW }));
   check('the problem reproduced: terms fixed at Review (3 × 2 min) have expired ten minutes later (engine refusal)', /already have expired/.test(stale?.message ?? ''), stale?.message);
   const restarted = restartSubscriptionAt(reviewed, NOW);
@@ -607,6 +620,109 @@ const screenSrc = readFileSync(new URL('../src/screens/SessionsScreen.tsx', impo
     /Sharing\.shareAsync\(uri,/.test(handover) && !/\bShare\.share\(/.test(handover) && !/from 'react-native';[^\n]*\bShare\b/.test(handover) && /mimeType: SUBSCRIPTION_KEY_FILE_MIME_TYPE/.test(handover));
   check('on unmount it overwrites a pending copy and sweeps leftover files', /keyClipboard\.clearNow\(\)/.test(handover) && /sweepSubscriptionKeyFiles\(\);/.test(handover));
   check('screenshots stay blocked while the key screen is open', /preventScreenCaptureAsync\('subscription-key'\)/.test(screenSrc));
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-subscriptions: phase 13 item 4 follow-ups (custom period, install fee, expired hand-over, legacy titles, Copied mark)');
+// ---------------------------------------------------------------------------
+{
+  // 1. Periods: the testing preset only on test networks; custom periods within bounds.
+  check('"2 minutes (testing)" is offered on test networks only',
+    subscriptionPeriodPresets(true).some((p) => p.seconds === 120) && !subscriptionPeriodPresets(false).some((p) => p.seconds === 120) && subscriptionPeriodPresets(false).length === 4);
+  check('custom period minimum = the engine’s SUBSCRIPTION_MIN_PERIOD_SECONDS (60 s) on test networks, 1 hour elsewhere; maximum 365 days',
+    subscriptionMinPeriodSeconds(true) === SUBSCRIPTION_MIN_PERIOD_SECONDS && SUBSCRIPTION_MIN_PERIOD_SECONDS === 60 && subscriptionMinPeriodSeconds(false) === 3600 && SUBSCRIPTION_MAX_PERIOD_SECONDS === 365 * 86400);
+  const c = (n, u, t = true) => customPeriodSeconds(n, u, t);
+  check('custom: 45 minutes / 6 hours / 14 days → seconds', c('45', 60).seconds === 2700 && c(' 6 ', 3600).seconds === 21600 && c('14', 86400).seconds === 14 * 86400);
+  check('custom refusals: empty, zero, fractions, signs, letters, unknown unit',
+    !c('', 60).ok && !c('0', 60).ok && !c('1.5', 3600).ok && !c('-3', 60).ok && !c('ten', 60).ok && /unit/.test(c('5', 7).error));
+  check('custom bounds: 1 minute OK on a test network, refused elsewhere; 366 days refused; 365 days OK',
+    c('1', 60).ok && c('1', 60, false).error === 'Period: from 1 hour to 365 days.' && /to 365 days/.test(c('366', 86400).error) && c('365', 86400).ok);
+  check('checkSubscriptionPeriod: whole minutes only, else "Choose a period."', checkSubscriptionPeriod(999, true) === 'Choose a period.' && checkSubscriptionPeriod(120, true) === null && checkSubscriptionPeriod(120, false) !== null);
+  const custom90 = buildSubscription({ ...draft, periodSeconds: 90 * 60 }, { now: SDK_S, account: ACCOUNT, testnet: true });
+  check('buildSubscription accepts a custom period and the engine maps it (rate limit interval = the period)',
+    custom90.periodSeconds === 5400 && subscriptionGrantFor(custom90, SDK_SESSION_KEY, { account: ACCOUNT, now: SDK_S - 10 }).rateLimit.intervalSeconds === 5400);
+  check('buildSubscription refuses 2 minutes off test networks (the default context is the stricter one)',
+    /from 1 hour/.test((await caught(() => buildSubscription({ ...draft, periodSeconds: 120 }, { now: SDK_S, account: ACCOUNT })))?.message ?? ''));
+  const short = buildSubscription({ ...draft, periodSeconds: 120, payments: '3' }, { now: NOW, account: ACCOUNT, testnet: true });
+  const warn = subscriptionShortWindowWarning(short);
+  check('short terms (3 × 2 min = 6 min) warn on the review, naming the total and the hand-over',
+    SUBSCRIPTION_SHORT_WINDOW_SECONDS === 600 && warn === 'These terms last only 6 minutes in total (3 payments of 2 minutes). Handing the key to the merchant and the merchant\'s first pull happen inside the first period, so some payments may never be taken. Choose a longer period or more payments unless this is a quick test.', warn);
+  check('exactly ten minutes or more: no warning', subscriptionShortWindowWarning({ startAt: 1000, validUntil: 1600, periodSeconds: 120 }) === null && subscriptionShortWindowWarning({ startAt: 1000, validUntil: 1599, periodSeconds: 60 }) !== null);
+
+  // 2. The install's own fee: kept back by the pre-fill, checked on the review.
+  const q = (over) => ({ amount: 0n, fee: 1_000n, senderBalance: 10_000n, deposit: undefined, sponsored: false, sender: ACCOUNT, ...over });
+  check('keep-back = the part of the install fee the balance pays (deposit first; sponsored → 0)',
+    subscriptionInstallKeepBack(q({})) === 1_000n && subscriptionInstallKeepBack(q({ deposit: 400n })) === 600n && subscriptionInstallKeepBack(q({ deposit: 5_000n })) === 0n && subscriptionInstallKeepBack(q({ sponsored: true })) === 0n);
+  const kept = suggestedFeeBudget({ payments: 3, maxFeePerGas: 2_000_000_000n, balance: 4_000_000_000_000_000n, nativeAmountPerPayment: 1_000_000_000_000_000n, installFeeFromBalance: 300_000_000_000_000n });
+  check('pre-fill cap keeps back the install fee (4 − 3 × 1 − 0.3 = 0.7 milli-ETH)', kept.capped && kept.wei === 700_000_000_000_000n);
+  check('…the cap note says what was kept back; without it the note is unchanged',
+    feeBudgetCapNote(700_000_000_000_000n, 6_000_000_000_000_000n, 'test ETH', 300_000_000_000_000n).endsWith(' 0.0003 test ETH is kept back for the install\'s own worst-case network fee.') &&
+      feeBudgetCapNote(1_000_000_000_000_000n, 6_000_000_000_000_000n, 'test ETH') === 'Lowered to what your account can spare (0.001 test ETH); the usual budget for this many payments would be 0.006 test ETH. Fund the account or enter a budget by hand.');
+  const g = { startAt: 0, validUntil: 360, periodSeconds: 120, feeBudgetWei: 1_000n, amountPerPeriod: 10n, token: SUBSCRIPTION_NATIVE };
+  const fine = subscriptionInstallFunding(q({}), g, 'test ETH');
+  check('affordable install: Start offered, no warnings', fine.canStart && !fine.block && !fine.depositNote && !fine.shortfall);
+  // The rehearsal: fee 0.001895 > balance 0.001427, payable only because of the 0.000474 deposit.
+  const viaDeposit = subscriptionInstallFunding(q({ fee: 1_895_000n, senderBalance: 1_427_000n, deposit: 474_000n }), { ...g, feeBudgetWei: 1n, amountPerPeriod: 0n, token: USDC }, 'test ETH');
+  check('fee above the balance but covered by the deposit: Start offered, with a note naming the deposit',
+    viaDeposit.canStart && /EntryPoint deposit \(0\.000000000000474 test ETH\) pays the difference/.test(viaDeposit.depositNote ?? ''), viaDeposit.depositNote);
+  const blocked = subscriptionInstallFunding(q({ fee: 1_895_000n, senderBalance: 1_427_000n, deposit: 467_999n }), g, 'test ETH');
+  check('balance + deposit below the install fee: NO Start, and the block names the address to fund',
+    !blocked.canStart && blocked.block?.includes(`Fund the smart account address ${ACCOUNT}`) && /Nothing was signed\.$/.test(blocked.block ?? ''), blocked.block);
+  check('the review hides Start when the install cannot be paid (source)', /\{funding\.canStart \? \(\s*<Button title="Start subscription"/.test(screenSrc) && screenSrc.includes('{funding.block ? <WarningBox>{funding.block}</WarningBox> : null}'));
+  const tight = subscriptionInstallFunding(q({ fee: 1_000n, senderBalance: 2_000n }), g, 'test ETH');
+  check('payments + fee budget above what the install leaves: a warning, Start still offered',
+    tight.canStart && /keeps at most 0\.000000000000001 test ETH/.test(tight.shortfall ?? '') && /the payments and the fee budget can use up to 0\.00000000000000103 test ETH/.test(tight.shortfall ?? ''), tight.shortfall);
+  check('sponsored install: never blocked', subscriptionInstallFunding(q({ fee: 0n, senderBalance: 0n, sponsored: true }), { ...g, feeBudgetWei: 0n, amountPerPeriod: 0n }, 'x').canStart);
+  check('Review lowers an UNEDITED pre-fill to keep the install fee back and quotes again (source)',
+    /if \(!subForm\.feeEdited\) \{[\s\S]{0,200}subscriptionInstallKeepBack\(quote\)[\s\S]{0,900}refit\.wei < subscription\.feeBudgetWei[\s\S]{0,300}prepareSessionInstall\(bundle, owner, account, grant, \{ now \}\)/.test(screenSrc));
+
+  // 3. Expired before the hand-over: no hand-over, only Revoke / Forget.
+  const base = { ...record, keyHeld: true, localStatus: 'installed', subscription: { ...record.subscription, keyExportedAt: null } };
+  const validUntil = termsOf(base).validUntil;
+  check('active and in time → the hand-over is offered', subscriptionHandoverOffer(base, { kind: 'active', expired: false }, validUntil - 1) === 'offer');
+  check('expired by the stored terms (even while the on-chain read is loading) → "expired", no hand-over',
+    subscriptionHandoverOffer(base, 'loading', validUntil) === 'expired' && subscriptionHandoverOffer(base, { kind: 'active', expired: false }, validUntil + 5) === 'expired');
+  check('expired per the on-chain read → "expired"', subscriptionHandoverOffer(base, { kind: 'active', expired: true }, validUntil - 100) === 'expired');
+  check('handed over, not installed, or not active → nothing',
+    subscriptionHandoverOffer({ ...base, subscription: { ...base.subscription, keyExportedAt: 1 } }, { kind: 'active', expired: false }, 0) === 'none' &&
+      subscriptionHandoverOffer({ ...base, localStatus: 'installing' }, { kind: 'active', expired: false }, 0) === 'none' &&
+      subscriptionHandoverOffer(base, { kind: 'revoked' }, 0) === 'none');
+  const late = await caught(() => buildSubscriptionKeyExport(base, vault, validUntil));
+  check('the export itself refuses an expired subscription', /has expired/.test(late?.message ?? ''), late?.message);
+  check('the card says it expired and points at Revoke', /expired before its key was handed to the merchant/.test(SUBSCRIPTION_EXPIRED_UNHANDED_TEXT) && screenSrc.includes("{handover === 'expired' ? <WarningBox>{SUBSCRIPTION_EXPIRED_UNHANDED_TEXT}</WarningBox> : null}") && screenSrc.includes("{handover === 'offer' ? ("));
+
+  // 4. Legacy titles derived at render time.
+  const legacy = { ...record, label: 'Subscription: Subscription', subscription: { ...record.subscription, terms: { ...record.subscription.terms, label: 'Subscription' } } };
+  check('a legacy "Subscription: Subscription" record reads "Subscription to 0x0000…bEEF"', subscriptionDisplayTitle(legacy, null) === 'Subscription to 0x0000…bEEF');
+  check('…or the merchant’s contact name', subscriptionDisplayTitle(legacy, 'Streamy') === 'Subscription: Streamy');
+  check('other titles are kept as stored (incl. a typed name)', subscriptionDisplayTitle(record, 'Streamy') === record.label && subscriptionDisplayTitle({ ...legacy, subscription: { ...legacy.subscription, terms: { ...legacy.subscription.terms, label: 'Gym' } } }, null) === 'Subscription: Subscription');
+  check('cards, their refresh label and the revoke title use the derived title (source)',
+    screenSrc.includes('const title = subscriptionDisplayTitle(r, nameFor(terms.merchant));') && screenSrc.includes('{title}</Text>') && screenSrc.includes('Revoke session “{revokeTitle}”'));
+
+  // 5. "Copied ✓" follows the clipboard helper.
+  const timers = [];
+  const writes = [];
+  const clip = createClipboardAutoClear({
+    setString: async (t) => void writes.push(t),
+    setTimer: (fn, ms) => { timers.push({ fn, ms }); return timers.length - 1; },
+    clearTimer: () => {},
+  });
+  const seen = [];
+  const off = clip.subscribe(() => seen.push(clip.pending()));
+  await clip.copy('SECRET');
+  check('subscribers hear the copy (pending true)', seen.join() === 'true');
+  timers[0].fn();
+  await new Promise((r) => setTimeout(r, 0));
+  check('…and the overwrite after 60 s (pending false), so the mark clears', seen.join() === 'true,false' && writes.at(-1) === '');
+  await clip.copy('SECRET2');
+  await clip.clearNow();
+  check('…and clearNow when the screen closes', seen.join() === 'true,false,true,false');
+  off();
+  await clip.copy('SECRET3');
+  check('unsubscribe stops notifications', seen.length === 4);
+  const handoverSrc = readFileSync(new URL('../src/components/SubscriptionKeyHandover.tsx', import.meta.url), 'utf8');
+  check('the Copy button’s mark is the helper’s pending state (no separate copied flag)',
+    handoverSrc.includes('const copied = useSyncExternalStore(keyClipboard.subscribe, keyClipboard.pending);') && !/setCopied/.test(handoverSrc));
 }
 
 console.log(`\ncheck-subscriptions: ${passed} passed, ${failed} failed`);

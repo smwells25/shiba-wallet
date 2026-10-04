@@ -1,6 +1,7 @@
 import {
   ENTRYPOINT_V07,
   KERNEL_PERMISSION_MODULES,
+  SUBSCRIPTION_MIN_PERIOD_SECONDS,
   SUBSCRIPTION_NATIVE,
   describePeriod,
   describeSubscription,
@@ -25,10 +26,12 @@ import {
 import { formatUnits, parseUnits } from './balances.ts';
 import { EVM_CHAIN_ID, validateRecipient } from './send.ts';
 import { knownTokensForChain, type KeyValueStore } from './tokens.ts';
+import { aaCanPaySelf, aaFeeFromBalance, type AaSendQuote } from './aa.ts';
 import {
   eip155Decimal,
   releaseSessionKey,
   sessionVaultId,
+  type SessionChainStatus,
   type SessionKeyVault,
   type SessionRecord,
   type SessionSubscriptionMeta,
@@ -60,14 +63,100 @@ import {
  * total.
  */
 
-/** Period choices; the short ones exist because subscriptions are test-network-only (readiness gate). */
+/** The testing-only preset period (offered on test networks only, subscriptionPeriodPresets). */
+export const SUBSCRIPTION_TEST_PERIOD_SECONDS = 120;
+
+/** Every period preset; the screen offers subscriptionPeriodPresets(testnet), which drops the testing one off test networks. */
 export const SUBSCRIPTION_PERIOD_PRESETS: readonly { label: string; seconds: number }[] = [
-  { label: '2 minutes (testing)', seconds: 120 },
+  { label: '2 minutes (testing)', seconds: SUBSCRIPTION_TEST_PERIOD_SECONDS },
   { label: '1 hour', seconds: 3600 },
   { label: '1 day', seconds: 86400 },
   { label: '7 days', seconds: 7 * 86400 },
   { label: '30 days', seconds: 30 * 86400 },
 ];
+
+/** The presets the form offers on this network: "2 minutes (testing)" only on a test network. */
+export function subscriptionPeriodPresets(testnet: boolean): readonly { label: string; seconds: number }[] {
+  return testnet ? SUBSCRIPTION_PERIOD_PRESETS : SUBSCRIPTION_PERIOD_PRESETS.filter((p) => p.seconds !== SUBSCRIPTION_TEST_PERIOD_SECONDS);
+}
+
+/** Units of the custom period field. */
+export const SUBSCRIPTION_PERIOD_UNITS: readonly { label: string; seconds: number }[] = [
+  { label: 'minutes', seconds: 60 },
+  { label: 'hours', seconds: 3600 },
+  { label: 'days', seconds: 86400 },
+];
+
+/**
+ * Longest period the form accepts: 365 days. A wallet policy (a judgement,
+ * not a standard): the engine only requires the period to fit in a uint48,
+ * but a subscription that pays less than once a year is better granted
+ * again when it is due.
+ */
+export const SUBSCRIPTION_MAX_PERIOD_SECONDS = 365 * 86400;
+
+/**
+ * Shortest period the form accepts. On a test network it is the engine's
+ * own minimum (SUBSCRIPTION_MIN_PERIOD_SECONDS, 60 s — the live run used
+ * 120 s periods); elsewhere one hour, because short periods exist only for
+ * testing (the same rule that keeps the "2 minutes (testing)" preset off
+ * other networks). Subscriptions are test-network-only today anyway
+ * (config/readiness.ts session-keys row).
+ */
+export function subscriptionMinPeriodSeconds(testnet: boolean): number {
+  return testnet ? SUBSCRIPTION_MIN_PERIOD_SECONDS : 3600;
+}
+
+/** Bounds of a period in seconds, with the form's plain sentences. Whole minutes only. */
+export function checkSubscriptionPeriod(seconds: number, testnet: boolean): string | null {
+  if (!Number.isSafeInteger(seconds) || seconds <= 0 || seconds % 60 !== 0) return 'Choose a period.';
+  const min = subscriptionMinPeriodSeconds(testnet);
+  if (seconds < min || seconds > SUBSCRIPTION_MAX_PERIOD_SECONDS) {
+    return `Period: from ${describePeriod(min)} to ${describePeriod(SUBSCRIPTION_MAX_PERIOD_SECONDS)}.`;
+  }
+  return null;
+}
+
+/**
+ * The custom period field: a whole number of minutes, hours or days.
+ * Returns the seconds, or the sentence to show under the field.
+ */
+export function customPeriodSeconds(
+  countText: string,
+  unitSeconds: number,
+  testnet: boolean,
+): { ok: true; seconds: number } | { ok: false; error: string } {
+  const text = countText.trim();
+  if (!SUBSCRIPTION_PERIOD_UNITS.some((u) => u.seconds === unitSeconds)) return { ok: false, error: 'Choose a unit.' };
+  if (!/^[0-9]{1,6}$/.test(text) || Number(text) < 1) {
+    return { ok: false, error: 'Custom period: enter a whole number (1 or more).' };
+  }
+  const seconds = Number(text) * unitSeconds;
+  const problem = checkSubscriptionPeriod(seconds, testnet);
+  return problem ? { ok: false, error: problem } : { ok: true, seconds };
+}
+
+/**
+ * Below this total length (period × payments, in seconds) the review warns:
+ * the key hand-over and the merchant's first pull happen inside the first
+ * period, so on very short terms some payments can never be taken (the
+ * 2 min × 2 test of 2026-10-04 expired before a hand-over and a pull were
+ * possible). Ten minutes is a judgement, not a measured bound.
+ */
+export const SUBSCRIPTION_SHORT_WINDOW_SECONDS = 600;
+
+/** The review's warning for terms shorter than SUBSCRIPTION_SHORT_WINDOW_SECONDS, else null. */
+export function subscriptionShortWindowWarning(sub: Pick<SubscriptionGrant, 'startAt' | 'validUntil' | 'periodSeconds'>): string | null {
+  const total = sub.validUntil - sub.startAt;
+  if (!(total < SUBSCRIPTION_SHORT_WINDOW_SECONDS)) return null;
+  const payments = subscriptionPeriodCount(sub);
+  return (
+    `These terms last only ${describePeriod(total)} in total (${payments} payment${payments === 1 ? '' : 's'} ` +
+    `of ${describePeriod(sub.periodSeconds)}). Handing the key to the merchant and the merchant's first pull ` +
+    'happen inside the first period, so some payments may never be taken. Choose a longer period or more payments ' +
+    'unless this is a quick test.'
+  );
+}
 
 /** Most payments one subscription may allow from the form (the engine allows more). */
 export const SUBSCRIPTION_MAX_PAYMENTS = 120;
@@ -136,12 +225,17 @@ export interface SubscriptionDraft {
 /**
  * Form → SubscriptionGrant. Input errors get plain messages; the engine's
  * validateSubscription then checks everything else and its text is shown
- * verbatim. The first period starts at `context.now`. The Sessions screen
+ * verbatim. `context.testnet` decides the period bounds (checkSubscriptionPeriod;
+ * absent counts as not a test network, the stricter side). The first period
+ * starts at `context.now`. The Sessions screen
  * calls this when Review opens and then moves the start to the moment the
  * user taps Start (restartSubscriptionAt), so the time spent reading the
  * review does not eat into the subscription's window.
  */
-export function buildSubscription(draft: SubscriptionDraft, context: { now: number; account?: string }): SubscriptionGrant {
+export function buildSubscription(
+  draft: SubscriptionDraft,
+  context: { now: number; account?: string; testnet?: boolean },
+): SubscriptionGrant {
   const merchant = validateRecipient(EVM_CHAIN_ID, draft.merchant);
   if (!merchant.ok) throw new Error(`Merchant: ${merchant.error}`);
   let amountPerPeriod: bigint;
@@ -151,7 +245,8 @@ export function buildSubscription(draft: SubscriptionDraft, context: { now: numb
     throw new Error(`Amount: ${(e as Error).message}`);
   }
   if (amountPerPeriod <= 0n) throw new Error('Amount: enter more than zero.');
-  if (!SUBSCRIPTION_PERIOD_PRESETS.some((p) => p.seconds === draft.periodSeconds)) throw new Error('Choose a period.');
+  const periodProblem = checkSubscriptionPeriod(draft.periodSeconds, context.testnet === true);
+  if (periodProblem) throw new Error(periodProblem);
   const payments = Number(draft.payments.trim());
   if (!Number.isInteger(payments) || payments < 1 || payments > SUBSCRIPTION_MAX_PAYMENTS) {
     throw new Error(`Number of payments: a whole number from 1 to ${SUBSCRIPTION_MAX_PAYMENTS}.`);
@@ -262,10 +357,14 @@ export function sortSubscriptionRecords(records: readonly SessionRecord[]): Sess
  * The fee-budget pre-fill: defaultFeeBudgetWei for the CURRENT payment count,
  * capped at what the account can spare. "Can spare" is a judgement: the
  * account's current balance minus, for a native-currency subscription, every
- * payment it would make (payments × amount); the install's own fee is not
- * subtracted because the review shows and checks it separately. `wei` null
- * means nothing can be suggested (the account cannot even cover the payments,
- * or the balance or fee is not known yet).
+ * payment it would make (payments × amount), minus the part of the install
+ * operation's own worst-case fee that the balance must pay
+ * (`installFeeFromBalance`, aa.ts aaFeeFromBalance of the review's quote; the
+ * EntryPoint deposit pays the rest). Before the first review no install
+ * quote exists yet and nothing is kept back; Review then lowers an
+ * unedited pre-fill that no longer fits (SessionsScreen onSubReview) and
+ * says so. `wei` null means nothing can be suggested (the account cannot
+ * even cover the payments, or the balance or fee is not known yet).
  */
 export function suggestedFeeBudget(p: {
   payments: number;
@@ -273,26 +372,155 @@ export function suggestedFeeBudget(p: {
   balance: bigint | null;
   /** Native amount per payment (0 for an ERC-20 subscription). */
   nativeAmountPerPayment: bigint;
+  /** The part of the install's worst-case fee the balance pays (null or absent = not known yet). */
+  installFeeFromBalance?: bigint | null;
 }): { wei: bigint | null; capped: boolean; uncapped: bigint | null; spare: bigint | null } {
   if (!Number.isInteger(p.payments) || p.payments < 1 || p.maxFeePerGas === null) {
     return { wei: null, capped: false, uncapped: null, spare: null };
   }
   const uncapped = defaultFeeBudgetWei(p.payments, p.maxFeePerGas);
   if (p.balance === null) return { wei: uncapped, capped: false, uncapped, spare: null };
-  const committed = BigInt(p.payments) * p.nativeAmountPerPayment;
+  const committed = BigInt(p.payments) * p.nativeAmountPerPayment + (p.installFeeFromBalance ?? 0n);
   const spare = p.balance > committed ? p.balance - committed : 0n;
   if (uncapped <= spare) return { wei: uncapped, capped: false, uncapped, spare };
   return { wei: spare > 0n ? spare : null, capped: true, uncapped, spare };
 }
 
-/** The note under the fee-budget field when the pre-fill was capped. */
-export function feeBudgetCapNote(spare: bigint, uncapped: bigint, nativeSymbol: string): string {
+/**
+ * The note under the fee-budget field when the pre-fill was capped. With
+ * `installKeptBack` (wei) above zero the note also says that the install's
+ * own fee was kept back; without it the text is unchanged.
+ */
+export function feeBudgetCapNote(spare: bigint, uncapped: bigint, nativeSymbol: string, installKeptBack: bigint = 0n): string {
+  const kept =
+    installKeptBack > 0n
+      ? ` ${formatUnits(installKeptBack, 18, 18)} ${nativeSymbol} is kept back for the install's own worst-case network fee.`
+      : '';
+  return feeBudgetCapNoteBase(spare, uncapped, nativeSymbol) + kept;
+}
+
+function feeBudgetCapNoteBase(spare: bigint, uncapped: bigint, nativeSymbol: string): string {
   return spare > 0n
     ? `Lowered to what your account can spare (${formatUnits(spare, 18, 18)} ${nativeSymbol}); the usual ` +
         `budget for this many payments would be ${formatUnits(uncapped, 18, 18)} ${nativeSymbol}. Fund the account ` +
         'or enter a budget by hand.'
     : `Your account cannot spare anything for fees after the payments themselves; the usual budget for this ` +
         `many payments would be ${formatUnits(uncapped, 18, 18)} ${nativeSymbol}. Fund the account first.`;
+}
+
+/**
+ * What the review says about paying for the install (finding 2 of the
+ * 2026-10-04 emulator verification: the review offered Start with an
+ * install fee above the balance, payable only through the EntryPoint
+ * deposit, and said nothing). Uses aa.ts's own rule (aaCanPaySelf /
+ * aaFeeFromBalance: the EntryPoint takes the fee from the deposit first).
+ *  - canStart false: the balance plus the deposit cannot cover the install's
+ *    worst-case fee; the screen shows `block` and offers no Start button.
+ *  - depositNote: the fee is above the balance, and the deposit pays the
+ *    difference.
+ *  - shortfall: after the install's worst case, what the account keeps
+ *    (balance + deposit − fee) is less than the payments (native only) plus
+ *    the fee budget, so pulls can fail later. A warning; Start stays offered.
+ */
+export function subscriptionInstallFunding(
+  quote: Pick<AaSendQuote, 'amount' | 'fee' | 'senderBalance' | 'deposit' | 'sponsored' | 'sender'>,
+  sub: Pick<SubscriptionGrant, 'startAt' | 'validUntil' | 'periodSeconds' | 'feeBudgetWei' | 'amountPerPeriod' | 'token'>,
+  nativeSymbol: string,
+): { canStart: boolean; block: string | null; depositNote: string | null; shortfall: string | null } {
+  const fmt = (wei: bigint) => `${formatUnits(wei, 18, 18)} ${nativeSymbol}`;
+  const deposit = quote.deposit ?? 0n;
+  const fee = quote.sponsored ? 0n : quote.fee;
+  if (!quote.sponsored && !aaCanPaySelf({ amount: quote.amount, fee, balance: quote.senderBalance, deposit })) {
+    return {
+      canStart: false,
+      block:
+        `The smart account cannot pay for the install: its worst-case network fee is ${fmt(fee)}, and the ` +
+        `account holds ${fmt(quote.senderBalance)} plus an EntryPoint deposit of ${fmt(deposit)}. Fund the smart ` +
+        `account address ${quote.sender} first, then review again. Nothing was signed.`,
+      depositNote: null,
+      shortfall: null,
+    };
+  }
+  const depositNote =
+    !quote.sponsored && fee > quote.senderBalance
+      ? `The install's worst-case fee (${fmt(fee)}) is more than the account's balance (${fmt(quote.senderBalance)}); ` +
+        `its EntryPoint deposit (${fmt(deposit)}) pays the difference, because the EntryPoint takes the fee from ` +
+        'the deposit first.'
+      : null;
+  const payments = BigInt(subscriptionPeriodCount(sub));
+  const nativePayments = isNativeSubscription(sub as SubscriptionGrant) ? payments * sub.amountPerPeriod : 0n;
+  const need = nativePayments + sub.feeBudgetWei;
+  // The install takes at most its worst-case fee from the deposit and the
+  // balance together (the unused part is refunded to the deposit), so this
+  // is a lower bound of what remains for the pulls.
+  const left = quote.senderBalance + deposit - fee;
+  const shortfall =
+    need > left
+      ? `After the install the account keeps at most ${fmt(left > 0n ? left : 0n)} (balance plus EntryPoint deposit, ` +
+        `minus the install's worst-case fee), but ${nativePayments > 0n ? 'the payments and ' : ''}the fee budget ` +
+        `can use up to ${fmt(need)}. Pulls the account cannot pay for will fail; fund the smart account to cover them.`
+      : null;
+  return { canStart: true, block: null, depositNote, shortfall };
+}
+
+/**
+ * What the fee-budget pre-fill keeps back for the install, from a review
+ * quote: the part of the install's worst-case fee that the balance must pay
+ * (aa.ts aaFeeFromBalance; zero when sponsored or when the deposit covers it).
+ */
+export function subscriptionInstallKeepBack(quote: Pick<AaSendQuote, 'fee' | 'deposit' | 'sponsored'>): bigint {
+  return quote.sponsored ? 0n : aaFeeFromBalance(quote.fee, quote.deposit ?? null);
+}
+
+/**
+ * The card title. Records created before the naming fix (2026-10-04) were
+ * stored as "Subscription: Subscription" with the terms label
+ * "Subscription" when no name was typed and the merchant was not a contact;
+ * they are titled at render time like new ones ("Subscription to 0x…", or
+ * the merchant's contact name), without rewriting storage.
+ */
+export function subscriptionDisplayTitle(record: SessionRecord, merchantName: string | null): string {
+  if (record.label !== 'Subscription: Subscription' || !record.subscription) return record.label;
+  let terms: SubscriptionGrant;
+  try {
+    terms = termsOf(record);
+  } catch {
+    return record.label;
+  }
+  if (terms.label !== 'Subscription') return record.label;
+  return subscriptionNames('', terms.merchant, merchantName).recordLabel;
+}
+
+/** Shown on a card whose subscription expired while its key was still on this device. */
+export const SUBSCRIPTION_EXPIRED_UNHANDED_TEXT =
+  'This subscription expired before its key was handed to the merchant, so there is nothing left to hand ' +
+  'over: no payment can be taken any more. Revoke it to remove the permission from your account (the key is ' +
+  'deleted from this device too), then Forget it.';
+
+/**
+ * Whether a card offers the one-time key hand-over: only for a subscription
+ * confirmed on-chain, active and NOT expired, whose key is still on this
+ * device and was never handed over. 'expired' means the key is still here
+ * but the terms ended (by the stored expiry or the on-chain read): the card
+ * says so (SUBSCRIPTION_EXPIRED_UNHANDED_TEXT) and offers only Revoke /
+ * Forget.
+ */
+export function subscriptionHandoverOffer(
+  record: SessionRecord,
+  status: SessionChainStatus | 'loading' | undefined,
+  now: number = Math.floor(Date.now() / 1000),
+): 'offer' | 'expired' | 'none' {
+  if (!record.subscription || !record.keyHeld || record.subscription.keyExportedAt !== null) return 'none';
+  if (record.localStatus !== 'installed') return 'none';
+  let validUntil: number;
+  try {
+    validUntil = termsOf(record).validUntil;
+  } catch {
+    return 'none';
+  }
+  const settled = status !== undefined && status !== 'loading';
+  if (validUntil <= now || (settled && status.kind === 'active' && status.expired)) return 'expired';
+  return settled && status.kind === 'active' ? 'offer' : 'none';
 }
 
 /** GrantReview's key-holder phrase for a subscription ("Session key (held by …)"), one parenthesis only. */
@@ -373,13 +601,20 @@ export interface SubscriptionKeyExport {
  * the key was already handed over (it is no longer on the device) or the
  * install has not been confirmed on-chain yet.
  */
-export async function buildSubscriptionKeyExport(record: SessionRecord, vault: SessionKeyVault): Promise<SubscriptionKeyExport> {
+export async function buildSubscriptionKeyExport(
+  record: SessionRecord,
+  vault: SessionKeyVault,
+  now: number = Math.floor(Date.now() / 1000),
+): Promise<SubscriptionKeyExport> {
   if (record.source !== 'subscription' || !record.subscription) throw new Error('Not a subscription.');
   if (!record.keyHeld || record.subscription.keyExportedAt !== null) {
     throw new Error('The key was already handed over and is no longer on this device. Revoke and create a new subscription if it was lost.');
   }
   if (record.localStatus !== 'installed') {
     throw new Error('Wait until the subscription is confirmed on-chain before handing over its key.');
+  }
+  if (termsOf(record).validUntil <= now) {
+    throw new Error('This subscription has expired, so its key can no longer take payments. Revoke it instead of handing it over.');
   }
   const stored = await vault.load(sessionVaultId(record.chain, record.account, record.permissionId));
   if (!stored || !/^0x[0-9a-fA-F]{64}$/.test(stored)) throw new Error('The subscription key is not on this device.');
@@ -497,6 +732,14 @@ export interface ClipboardAutoClear {
   clearNow: () => Promise<void>;
   /** True while a copied secret is waiting to be overwritten. */
   pending: () => boolean;
+  /**
+   * Calls `listener` whenever pending() changes: after a copy, and after the
+   * wallet emptied the clipboard (timer, foreground return or screen close).
+   * Returns the unsubscribe function (React useSyncExternalStore shape), so a
+   * "Copied ✓" mark can follow pending() instead of staying after the
+   * clipboard was emptied.
+   */
+  subscribe: (listener: () => void) => () => void;
 }
 
 /**
@@ -516,12 +759,29 @@ export function createClipboardAutoClear(deps: {
   const delay = deps.delayMs ?? SUBSCRIPTION_KEY_CLIPBOARD_CLEAR_MS;
   let handle: unknown = null;
   let isPending = false;
+  const listeners = new Set<() => void>();
+  const notify = () => {
+    for (const listener of [...listeners]) {
+      try {
+        listener();
+      } catch {
+        // A display listener never affects the clipboard handling.
+      }
+    }
+  };
   const clearNow = async () => {
     if (handle !== null) clearTimer(handle);
     handle = null;
     if (!isPending) return;
     isPending = false;
-    await deps.setString('');
+    try {
+      await deps.setString('');
+    } finally {
+      // Told after the overwrite was attempted: the mark goes when the
+      // clipboard was emptied (or the attempt failed — the copy is no longer
+      // tracked either way).
+      notify();
+    }
   };
   return {
     copy: async (text: string) => {
@@ -530,11 +790,18 @@ export function createClipboardAutoClear(deps: {
       isPending = true;
       handle = setTimer(() => {
         handle = null;
-        void clearNow();
+        void clearNow().catch(() => undefined);
       }, delay);
+      notify();
     },
     clearNow,
     pending: () => isPending,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
   };
 }
 

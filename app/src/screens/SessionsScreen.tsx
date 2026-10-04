@@ -17,7 +17,9 @@ import { allowScreenCaptureAsync, preventScreenCaptureAsync } from 'expo-screen-
 import {
   NodeClient,
   SUBSCRIPTION_NATIVE,
+  describePeriod,
   parseSessionKeyGrant,
+  subscriptionPeriodCount,
   toHex,
   type KernelPermissionInstall,
   type SessionKeyGrant,
@@ -87,26 +89,37 @@ import {
   SUBSCRIPTION_AUDIT_NOTE,
   SUBSCRIPTION_KEY_HOLDER_TEXT,
   SUBSCRIPTION_KEY_WARNING,
+  SUBSCRIPTION_EXPIRED_UNHANDED_TEXT,
   SUBSCRIPTION_MAX_PAYMENTS,
   SUBSCRIPTION_PERIOD_PRESETS,
+  SUBSCRIPTION_PERIOD_UNITS,
+  SUBSCRIPTION_MAX_PERIOD_SECONDS,
   SUBSCRIPTION_REQUOTE_MESSAGE,
   SUBSCRIPTION_REQUOTE_TITLE,
   SUBSCRIPTION_START_NOTE,
   buildSubscription,
   buildSubscriptionKeyExport,
+  customPeriodSeconds,
   feeBudgetCapNote,
   markSubscriptionKeyExported,
   readSubscriptionStatus,
   restartSubscriptionAt,
   sortSubscriptionRecords,
+  subscriptionDisplayTitle,
   subscriptionFinalDatesLine,
   subscriptionGrantFor,
+  subscriptionHandoverOffer,
+  subscriptionInstallFunding,
+  subscriptionInstallKeepBack,
   subscriptionKeyFileName,
   subscriptionKeyStatusText,
   subscriptionMeta,
   subscriptionNames,
+  subscriptionMinPeriodSeconds,
+  subscriptionPeriodPresets,
   subscriptionRequoteNeedsReview,
   subscriptionReview,
+  subscriptionShortWindowWarning,
   subscriptionStatusLines,
   subscriptionSummary,
   subscriptionTokenChoices,
@@ -149,13 +162,24 @@ interface PendingSubscription extends PendingInstall {
   choice: SubscriptionTokenChoice;
   /** The list card's title ("Subscription: <name>" or "Subscription to 0x…"). */
   recordLabel: string;
+  /**
+   * Set when Review lowered the unedited fee-budget pre-fill so that the
+   * install's own worst-case fee is kept back (wei).
+   */
+  feeBudgetLowered?: { from: bigint; to: bigint; keptBack: bigint } | null;
 }
 
 interface SubscriptionFormState {
   merchant: string;
   choiceIndex: number;
   amount: string;
+  /** The chosen preset period (used while periodCustom is false). */
   periodSeconds: number;
+  /** True when the custom period field (a number of minutes, hours or days) is used. */
+  periodCustom: boolean;
+  customCount: string;
+  /** One of SUBSCRIPTION_PERIOD_UNITS' seconds. */
+  customUnit: number;
   payments: string;
   feeBudget: string;
   /**
@@ -172,6 +196,9 @@ const EMPTY_SUBSCRIPTION_FORM: SubscriptionFormState = {
   choiceIndex: 0,
   amount: '',
   periodSeconds: SUBSCRIPTION_PERIOD_PRESETS[0]!.seconds,
+  periodCustom: false,
+  customCount: '',
+  customUnit: 86400,
   payments: '3',
   feeBudget: '',
   feeEdited: false,
@@ -236,6 +263,10 @@ export function SessionsScreen({ navigation }: Props) {
   const [subPendingView, setSubPendingView] = useState<PendingSubscription | null>(null);
   const [subStatuses, setSubStatuses] = useState<Record<string, SubscriptionStatus | 'loading'>>({});
   /** Facts for the fee-budget suggestion: the node's fee and the Kernel account's balance (null until read). */
+  // The part of the install's worst-case fee the balance pays, from the last
+  // review quote (null before the first review): the fee-budget pre-fill
+  // keeps it back.
+  const [subInstallKeepBack, setSubInstallKeepBack] = useState<bigint | null>(null);
   const [subFeeFacts, setSubFeeFacts] = useState<{ maxFeePerGas: bigint | null; balance: bigint | null }>({
     maxFeePerGas: null,
     balance: null,
@@ -449,8 +480,11 @@ export function SessionsScreen({ navigation }: Props) {
 
   const onSubOpen = () => {
     setFormError(null);
-    setSubForm(EMPTY_SUBSCRIPTION_FORM);
+    // "2 minutes (testing)" exists only on test networks: start from the
+    // first preset this network offers.
+    setSubForm({ ...EMPTY_SUBSCRIPTION_FORM, periodSeconds: subscriptionPeriodPresets(evmChain.testnet)[0]!.seconds });
     setSubFeeFacts({ maxFeePerGas: null, balance: null });
+    setSubInstallKeepBack(null);
     setPhase('sub-form');
     if (!bundle || !account) return;
     // Facts for the fee-budget suggestion (shown and editable): the node's
@@ -485,6 +519,7 @@ export function SessionsScreen({ navigation }: Props) {
     maxFeePerGas: subFeeFacts.maxFeePerGas,
     balance: subFeeFacts.balance,
     nativeAmountPerPayment: subNativeAmount,
+    installFeeFromBalance: subInstallKeepBack,
   });
   const subFeeBudgetText = subForm.feeEdited
     ? subForm.feeBudget
@@ -498,6 +533,15 @@ export function SessionsScreen({ navigation }: Props) {
     discardPending();
     const choice = tokenChoices[subForm.choiceIndex];
     if (!choice) return;
+    let periodSeconds = subForm.periodSeconds;
+    if (subForm.periodCustom) {
+      const custom = customPeriodSeconds(subForm.customCount, subForm.customUnit, evmChain.testnet);
+      if (!custom.ok) {
+        setFormError(custom.error);
+        return;
+      }
+      periodSeconds = custom.seconds;
+    }
     const key = newSessionKey();
     const now = Math.floor(Date.now() / 1000);
     let subscription: SubscriptionGrant;
@@ -509,12 +553,12 @@ export function SessionsScreen({ navigation }: Props) {
           merchant: subForm.merchant,
           choice,
           amount: subForm.amount,
-          periodSeconds: subForm.periodSeconds,
+          periodSeconds,
           payments: subForm.payments,
           feeBudget: subFeeBudgetText,
           label: names.termsLabel,
         },
-        { now, account },
+        { now, account, testnet: evmChain.testnet },
       );
       // The engine's refusal (validateSubscription / validateSessionKeyGrant) verbatim.
       grant = subscriptionGrantFor(subscription, key.address, { account, now });
@@ -525,7 +569,42 @@ export function SessionsScreen({ navigation }: Props) {
     }
     setPhase('sub-quoting');
     try {
-      const { install, quote } = await prepareSessionInstall(bundle, owner, account, grant, { now });
+      let { install, quote } = await prepareSessionInstall(bundle, owner, account, grant, { now });
+      // Finding 2 of the 2026-10-04 verification: an UNEDITED fee-budget
+      // pre-fill must keep back the install's own worst-case fee. The install
+      // is quoted first (its fee barely depends on the budget), the pre-fill
+      // is recomputed with that fee kept back, and when it no longer fits the
+      // budget is lowered and the install quoted again (the budget is part of
+      // the GasPolicy data the install writes). A typed budget is never
+      // changed; the review's funding lines cover it.
+      let feeBudgetLowered: PendingSubscription['feeBudgetLowered'] = null;
+      if (!subForm.feeEdited) {
+        const keptBack = subscriptionInstallKeepBack(quote);
+        setSubInstallKeepBack(keptBack);
+        const refit = suggestedFeeBudget({
+          payments: subscriptionPeriodCount(subscription),
+          maxFeePerGas: subFeeFacts.maxFeePerGas,
+          balance: quote.senderBalance,
+          nativeAmountPerPayment: subscription.token === SUBSCRIPTION_NATIVE ? subscription.amountPerPeriod : 0n,
+          installFeeFromBalance: keptBack,
+        });
+        if (refit.wei === null) {
+          key.privateKey.fill(0);
+          setFormError(
+            refit.spare !== null && refit.uncapped !== null
+              ? feeBudgetCapNote(refit.spare, refit.uncapped, symbol, keptBack)
+              : 'The fee budget could not be suggested: the network fee is not known yet. Enter a budget by hand.',
+          );
+          setPhase('sub-form');
+          return;
+        }
+        if (refit.wei < subscription.feeBudgetWei) {
+          feeBudgetLowered = { from: subscription.feeBudgetWei, to: refit.wei, keptBack };
+          subscription = { ...subscription, feeBudgetWei: refit.wei };
+          grant = subscriptionGrantFor(subscription, key.address, { account, now });
+          ({ install, quote } = await prepareSessionInstall(bundle, owner, account, grant, { now }));
+        }
+      }
       subPending.current = {
         privateKey: key.privateKey,
         grant,
@@ -534,6 +613,7 @@ export function SessionsScreen({ navigation }: Props) {
         subscription,
         choice,
         recordLabel: names.recordLabel,
+        feeBudgetLowered,
       };
       setSubPendingView(subPending.current);
       setPhase('sub-confirm');
@@ -990,6 +1070,9 @@ export function SessionsScreen({ navigation }: Props) {
       merchantName: nameFor(sub.merchant),
     });
     const [batchCaveat, ...otherCaveats] = review.caveats;
+    const shortWindow = subscriptionShortWindowWarning(sub);
+    const funding = subscriptionInstallFunding(q, sub, symbol);
+    const lowered = subPendingView.feeBudgetLowered;
     return (
       <ScrollView key="sub-confirm" style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
@@ -1000,6 +1083,7 @@ export function SessionsScreen({ navigation }: Props) {
         {batchCaveat ? <WarningBox>{batchCaveat}</WarningBox> : null}
         <Text style={[styles.ok, { color: theme.text }]}>{review.sentence}</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>{SUBSCRIPTION_START_NOTE}</Text>
+        {shortWindow ? <WarningBox>{shortWindow}</WarningBox> : null}
         <Text style={[styles.label, { color: theme.textMuted }]}>Your account enforces on-chain:</Text>
         {review.enforced.map((line) => (
           <Text key={line} style={[styles.hint, { color: theme.text }]}>
@@ -1034,6 +1118,21 @@ export function SessionsScreen({ navigation }: Props) {
           theme={theme}
         />
         <Row label="Account balance" value={`${formatUnits(q.senderBalance, 18, 18)} ${symbol}`} theme={theme} />
+        {q.deposit !== undefined && q.deposit > 0n ? (
+          <Row label="EntryPoint deposit (pays fees first)" value={`${formatUnits(q.deposit, 18, 18)} ${symbol}`} theme={theme} />
+        ) : null}
+        {funding.depositNote ? (
+          <Text style={[styles.hint, { color: theme.textMuted }]}>{funding.depositNote}</Text>
+        ) : null}
+        {lowered ? (
+          <WarningBox>
+            {`The suggested fee budget was lowered from ${formatUnits(lowered.from, 18, 18)} to ` +
+              `${formatUnits(lowered.to, 18, 18)} ${symbol} so that ${formatUnits(lowered.keptBack, 18, 18)} ` +
+              `${symbol} stays in the account for this install's own worst-case network fee.`}
+          </WarningBox>
+        ) : null}
+        {funding.shortfall ? <WarningBox>{funding.shortfall}</WarningBox> : null}
+        {funding.block ? <WarningBox>{funding.block}</WarningBox> : null}
         <Text style={[styles.ok, { color: theme.success }]}>
           Bundler gas estimate passed (eth_estimateUserOperationGas simulated the install).
         </Text>
@@ -1048,7 +1147,9 @@ export function SessionsScreen({ navigation }: Props) {
           </View>
         ) : (
           <>
-            <Button title="Start subscription" onPress={() => void onSubInstall()} />
+            {funding.canStart ? (
+              <Button title="Start subscription" onPress={() => void onSubInstall()} />
+            ) : null}
             <Button
               title="Back"
               variant="secondary"
@@ -1064,6 +1165,13 @@ export function SessionsScreen({ navigation }: Props) {
   }
 
   if ((phase === 'sub-form' || phase === 'sub-quoting') && account) {
+    const customPeriod = customPeriodSeconds(subForm.customCount, subForm.customUnit, evmChain.testnet);
+    const customPeriodHint = customPeriod.ok
+      ? `One payment at most every ${describePeriod(customPeriod.seconds)}.`
+      : subForm.customCount.trim() === ''
+        ? `From ${describePeriod(subscriptionMinPeriodSeconds(evmChain.testnet))} to ` +
+          `${describePeriod(SUBSCRIPTION_MAX_PERIOD_SECONDS)}.`
+        : customPeriod.error;
     const merchantMatch =
       contactsNetworkId && subForm.merchant.trim() ? matchRecipient(contactsNetworkId, subForm.merchant, contacts) : null;
     const choice = tokenChoices[subForm.choiceIndex];
@@ -1113,15 +1221,50 @@ export function SessionsScreen({ navigation }: Props) {
         />
         <Text style={[styles.label, { color: theme.textMuted }]}>Once every</Text>
         <View style={styles.rowButtons}>
-          {SUBSCRIPTION_PERIOD_PRESETS.map((p) => (
-            <Button
-              key={p.seconds}
-              title={subForm.periodSeconds === p.seconds ? `✓ ${p.label}` : p.label}
-              variant={subForm.periodSeconds === p.seconds ? 'primary' : 'secondary'}
-              onPress={() => setSubForm((prev) => ({ ...prev, periodSeconds: p.seconds }))}
-            />
-          ))}
+          {subscriptionPeriodPresets(evmChain.testnet).map((p) => {
+            const chosen = !subForm.periodCustom && subForm.periodSeconds === p.seconds;
+            return (
+              <Button
+                key={p.seconds}
+                title={chosen ? `✓ ${p.label}` : p.label}
+                variant={chosen ? 'primary' : 'secondary'}
+                selected={chosen}
+                onPress={() => setSubForm((prev) => ({ ...prev, periodSeconds: p.seconds, periodCustom: false }))}
+              />
+            );
+          })}
+          <Button
+            title={subForm.periodCustom ? '✓ Custom' : 'Custom'}
+            variant={subForm.periodCustom ? 'primary' : 'secondary'}
+            selected={subForm.periodCustom}
+            onPress={() => setSubForm((prev) => ({ ...prev, periodCustom: true }))}
+          />
         </View>
+        {subForm.periodCustom ? (
+          <>
+            <TextInput
+              value={subForm.customCount}
+              onChangeText={(t) => setSubForm((prev) => ({ ...prev, customCount: t }))}
+              placeholder="How many"
+              placeholderTextColor={theme.textMuted}
+              keyboardType="number-pad"
+              accessibilityLabel="Custom period length"
+              style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+            />
+            <View style={styles.rowButtons}>
+              {SUBSCRIPTION_PERIOD_UNITS.map((u) => (
+                <Button
+                  key={u.seconds}
+                  title={subForm.customUnit === u.seconds ? `✓ ${u.label}` : u.label}
+                  variant={subForm.customUnit === u.seconds ? 'primary' : 'secondary'}
+                  selected={subForm.customUnit === u.seconds}
+                  onPress={() => setSubForm((prev) => ({ ...prev, customUnit: u.seconds }))}
+                />
+              ))}
+            </View>
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{customPeriodHint}</Text>
+          </>
+        ) : null}
         <Text style={[styles.label, { color: theme.textMuted }]}>Number of payments (1–{SUBSCRIPTION_MAX_PAYMENTS}; sets the expiry)</Text>
         <TextInput
           value={subForm.payments}
@@ -1192,10 +1335,18 @@ export function SessionsScreen({ navigation }: Props) {
 
   if ((phase === 'revoke-confirm' || phase === 'sending') && revokeTarget) {
     const q = revokeTarget.quote;
+    let revokeTitle = revokeTarget.record.label;
+    if (revokeTarget.record.source === 'subscription' && revokeTarget.record.subscription) {
+      try {
+        revokeTitle = subscriptionDisplayTitle(revokeTarget.record, nameFor(termsOf(revokeTarget.record).merchant));
+      } catch {
+        // Unreadable terms: the stored label stays.
+      }
+    }
     return (
       <ScrollView key="revoke-confirm" style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
-        <Text style={[styles.title, { color: theme.text }]}>Revoke session “{revokeTarget.record.label}”</Text>
+        <Text style={[styles.title, { color: theme.text }]}>Revoke session “{revokeTitle}”</Text>
         {header}
         <Row label="Permission id" value={revokeTarget.record.permissionId} mono theme={theme} />
         <Row
@@ -1385,9 +1536,12 @@ export function SessionsScreen({ navigation }: Props) {
                 merchantName: nameFor(terms.merchant),
               });
               const settled = status !== undefined && status !== 'loading';
+              // Old records keep their stored label; the title is derived here.
+              const title = subscriptionDisplayTitle(r, nameFor(terms.merchant));
+              const handover = subscriptionHandoverOffer(r, status);
               return (
                 <View key={key} style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-                  <Text style={[styles.cardTitle, { color: theme.text }]}>{r.label}</Text>
+                  <Text style={[styles.cardTitle, { color: theme.text }]}>{title}</Text>
                   <Text style={[styles.hint, { color: theme.text }]}>{subscriptionSummary(r, nameFor(terms.merchant))}</Text>
                   <Text style={[styles.status, { color: settled && status.kind === 'active' ? theme.success : theme.text }]}>
                     {settled ? sessionStatusText(status) : 'Reading status…'}
@@ -1405,7 +1559,7 @@ export function SessionsScreen({ navigation }: Props) {
                   <Button
                     title="Refresh status"
                     variant="secondary"
-                    accessibilityLabel={`Refresh the status of ${r.label}`}
+                    accessibilityLabel={`Refresh the status of ${title}`}
                     onPress={() => refreshRecord(r)}
                   />
                   {review.caveats[0] ? <WarningBox>{review.caveats[0]}</WarningBox> : null}
@@ -1417,9 +1571,10 @@ export function SessionsScreen({ navigation }: Props) {
                   {r.revokeUserOpHash ? (
                     <Row label="Revocation UserOperation hash" value={r.revokeUserOpHash} mono theme={theme} />
                   ) : null}
-                  {r.keyHeld && r.subscription!.keyExportedAt === null && r.localStatus === 'installed' && settled && status.kind === 'active' ? (
+                  {handover === 'offer' ? (
                     <Button title="Hand the key to the merchant (shown once)" onPress={() => void onShowKey(r)} />
                   ) : null}
+                  {handover === 'expired' ? <WarningBox>{SUBSCRIPTION_EXPIRED_UNHANDED_TEXT}</WarningBox> : null}
                   {settled && (status.kind === 'active' || status.kind === 'unknown') ? (
                     <Button title="Revoke (stop the subscription)" variant="destructive" onPress={() => void onRevokeQuote(r)} />
                   ) : null}

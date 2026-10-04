@@ -22,7 +22,14 @@ import {
 } from '@shiba-wallet/chains-evm';
 // Explicit .ts extensions: this module is imported by scripts/check-wc.mjs
 // under Node's type stripping, which resolves relative specifiers literally.
-import { EVM_CHAIN_ID, prepareEvmSend, validateRecipient, type EvmSendQuote } from './send.ts';
+import {
+  EVM_CHAIN_ID,
+  L1_DATA_FEE_HEADROOM_PERCENT,
+  prepareEvmSend,
+  validateRecipient,
+  type EvmSendQuote,
+  type OpStackFees,
+} from './send.ts';
 import type { KeyValueStore } from './tokens.ts';
 import { EVM_MAINNET, evmProfileByCaip2 } from '../config/evm-chain.ts';
 import { getEndpoint, withEndpoint } from '../config/networks.ts';
@@ -1524,6 +1531,31 @@ export async function quoteWcTransaction(
     prepareEvmSend(ep.url, from, tx.to, tx.valueWei, tx.data.length > 0 ? tx.data : undefined, activeCaip2),
   );
   return { quote: outcome.value, url: outcome.endpoint.url, from };
+}
+
+/**
+ * The layer 1 data fee lines for a dApp transaction on an OP-stack network
+ * (Base Sepolia), the same figures and wording the Send screen shows
+ * (SendScreen OpStackFeeRows): the quote's reserve for the L1 data fee, the
+ * operator fee when the chain charges one, and a note that both are already
+ * inside the max network fee and the total. Null on chains without them
+ * (Ethereum mainnet and Sepolia), so those sheets are unchanged.
+ */
+export function wcOpStackFeeLines(
+  fees: OpStackFees | undefined,
+  format: (wei: bigint) => string,
+): { rows: { label: string; value: string }[]; note: string } | null {
+  if (!fees) return null;
+  const rows = [{ label: 'Layer 1 data fee (estimate)', value: format(fees.l1DataFee) }];
+  if (fees.operatorFee > 0n) rows.push({ label: 'Operator fee (worst case)', value: format(fees.operatorFee) });
+  return {
+    rows,
+    note:
+      'This is a layer-2 network: every transaction also pays for publishing its data on Ethereum. The ' +
+      `network's fee oracle estimates ${format(fees.l1DataFeeEstimate)} for this transaction; ` +
+      `${L1_DATA_FEE_HEADROOM_PERCENT.toString()}% more is reserved because this fee follows Ethereum's fees ` +
+      'and cannot be capped. It is included in the max network fee and the total.',
+  };
 }
 
 /**

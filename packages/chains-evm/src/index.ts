@@ -605,6 +605,21 @@ export type {
   WalletMovement,
 } from './activity-decode.js';
 export {
+  TOKEN_BALANCES_MAX_PAGE_SIZE,
+  TokenDiscoveryUnsupportedError,
+  collectTokenBalances,
+  indexerTokenBalanceProvider,
+  isMethodUnsupportedError,
+  parseTokenBalancesResult,
+} from './token-discovery.js';
+export type {
+  CollectedTokenBalances,
+  DiscoveredTokenBalance,
+  DiscoveryEntryFailure,
+  TokenBalanceDiscoveryProvider,
+  TokenDiscoveryPage,
+} from './token-discovery.js';
+export {
   CIRCLE_FEE_BIPS_DENOMINATOR,
   CIRCLE_PAYMASTER_PERMIT_SIGNATURE_OFFSET,
   CIRCLE_PAYMASTER_TOKEN_ADDRESS_OFFSET,

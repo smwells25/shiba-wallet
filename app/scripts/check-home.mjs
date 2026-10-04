@@ -14,8 +14,10 @@
 //    the hooks themselves need React;
 //  - finding 3: a dust balance keeps its "< 0.000001" form, Hide amounts
 //    still masks it, and its fiat value is computed from the exact amount;
-//  - finding 4: the test-mode token note names the active profile and the
-//    Swap link is hidden where swaps are not offered (Base Sepolia);
+//  - finding 4: the Swap link is hidden where swaps are not offered (Base
+//    Sepolia); since phase 13 item 1 the token section shows the active
+//    network's own tracked list on every profile (the old test-mode note
+//    that hid tokens is gone);
 //  - finding 6: displayed dates use the device's local calendar day.
 //
 //   export PATH="$HOME/.nvm/versions/node/v24.21.0/bin:$PATH"
@@ -31,7 +33,8 @@ import { FOLLOW_UP_RELOAD_MS, createSendRefreshTracker, reloadNowAndLater } from
 import { formatBalanceDisplay, spokenAmount } from '../src/wallet/balances.ts';
 import { maskAmount } from '../src/config/prefs.ts';
 import { formatFiat } from '../src/wallet/prices.ts';
-import { EVM_BASE_SEPOLIA, EVM_MAINNET, EVM_SEPOLIA, testModeTokenNote } from '../src/config/evm-chain.ts';
+import * as evmChainModule from '../src/config/evm-chain.ts';
+import { EVM_BASE_SEPOLIA, EVM_MAINNET, EVM_SEPOLIA } from '../src/config/evm-chain.ts';
 import { localDateLabel } from '../src/config/dates.ts';
 import { protectionDate } from '../src/wallet/phrase-protection-copy.ts';
 
@@ -275,26 +278,20 @@ console.log('dust balances (finding 3):');
 
 console.log('test-network copy and the Swap link (finding 4):');
 
-check('mainnet: no test-mode note', testModeTokenNote(EVM_MAINNET) === null);
-check(
-  'Ethereum Sepolia: the note is byte-identical to the old copy',
-  testModeTokenNote(EVM_SEPOLIA) ===
-    'Sepolia test mode — tracked tokens are mainnet assets and are hidden until test mode is turned off in Settings.',
-  String(testModeTokenNote(EVM_SEPOLIA)),
-);
-check(
-  'Base Sepolia: the note names Base Sepolia',
-  testModeTokenNote(EVM_BASE_SEPOLIA) ===
-    'Base Sepolia test mode — tracked tokens are mainnet assets and are hidden until test mode is turned off in Settings.',
-  String(testModeTokenNote(EVM_BASE_SEPOLIA)),
-);
+check('the hide-tokens note is gone (tokens are per chain since phase 13 item 1)', !('testModeTokenNote' in evmChainModule));
 check('swaps offered on mainnet (kept)', EVM_MAINNET.swapsOffered === true);
 check('swaps offered on Ethereum Sepolia (unchanged since phase 5)', EVM_SEPOLIA.swapsOffered === true);
 check('swaps NOT offered on Base Sepolia (0x lists no Base Sepolia)', EVM_BASE_SEPOLIA.swapsOffered === false);
 {
   const home = source('../src/screens/HomeScreen.tsx');
   check('Home gates the Swap link on the active profile', home.includes('isEvm && evmChain.swapsOffered'));
-  check('Home derives the note from the active profile', home.includes('{testModeTokenNote(evmChain)}') && !home.includes('Sepolia test mode — tracked'));
+  check(
+    'Home lists the ACTIVE chain\'s tokens on every profile (no testnet gate)',
+    home.includes('useTokenBalances(\n    evmAccount?.address,\n    evmChain.caip2,\n  )') &&
+      !home.includes('showTokens') &&
+      !home.includes('tracked tokens are mainnet assets'),
+  );
+  check('Home prices tokens only through tokenPriceAssetId (test tokens stay unpriced)', home.includes('...tokens.map((t) => tokenPriceAssetId(t, evmChain.caip2)),'));
 }
 
 // ---------------------------------------------------------------------------

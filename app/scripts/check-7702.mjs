@@ -23,6 +23,7 @@ import {
   setCodeIntrinsicGas,
 } from '@shiba-wallet/chains-evm';
 import { ethers } from 'ethers';
+import { readFileSync } from 'node:fs';
 import {
   EIP7702_STUB_R,
   EIP7702_STUB_S,
@@ -42,6 +43,8 @@ import {
 import {
   FOREIGN_DELEGATE_WARNING,
   SET_CODE_EXECUTION_GAS,
+  SET_CODE_L1_FEE_STUB_R,
+  SET_CODE_L1_FEE_STUB_S,
   UPGRADE_EXPLANATION,
   WALLET_7702_DELEGATE,
   assertWalletDelegate,
@@ -51,6 +54,7 @@ import {
   prepareSetCodeTx,
   readAccountDelegation,
   sendSetCodeTx,
+  serializeUnsignedSetCode,
   subscribeDelegation,
   waitForSetCode,
 } from '../src/wallet/delegation.ts';
@@ -112,7 +116,7 @@ const indicator = (delegate) => ('0xef0100' + delegate.slice(2)).toLowerCase();
  * result (default '0x'); mutable, so a test can flip an account's state
  * between quote and send. Records every call and every raw transaction.
  */
-function fake7702Node({ chainIdHex = '0x1', code = {}, nonce = 5n, balance = 10n ** 18n, receipt = { status: '0x1' } } = {}) {
+function fake7702Node({ chainIdHex = '0x1', code = {}, nonce = 5n, balance = 10n ** 18n, receipt = { status: '0x1' }, oracle = null } = {}) {
   const calls = [];
   const raws = [];
   const transport = async (method, params) => {
@@ -126,6 +130,13 @@ function fake7702Node({ chainIdHex = '0x1', code = {}, nonce = 5n, balance = 10n
     if (method === 'eth_call') {
       const [{ to, data }] = params;
       if (same(to, ENTRYPOINT_V07) && data.startsWith(ethers.id('getNonce(address,uint192)').slice(0, 10))) return '0x' + '0'.repeat(63) + '3';
+      // OP-stack GasPriceOracle (only when the test gives one).
+      if (oracle && same(to, '0x420000000000000000000000000000000000000F')) {
+        oracle.calls.push(data);
+        if (oracle.fail) throw new Error('RPC error -32000: oracle down');
+        if (data.startsWith(ethers.id('getL1Fee(bytes)').slice(0, 10))) return ethers.toBeHex(oracle.l1Fee, 32);
+        if (data.startsWith(ethers.id('getOperatorFee(uint256)').slice(0, 10))) return ethers.toBeHex(oracle.operatorFee ?? 0n, 32);
+      }
       throw new Error(`fake 7702 node: unexpected eth_call to ${to}`);
     }
     if (method === 'eth_sendRawTransaction') {
@@ -414,6 +425,57 @@ const EXPLORER = 'https://sepolia.etherscan.io/tx/';
     check('…but removing a mainnet upgrade record always works', (await setAccountEip7702(MAINNET, OWNER_0, false, mstore)).eip7702Owners.length === 0);
   }
   await checkRejects('quote refused when ETH cannot cover the worst-case fee (not sponsorable)', () => prepareSetCodeTx({ url: NODE_URL, from: OWNER_0, action: 'upgrade', expectedChainId: 11155111n, transportFor: () => fake7702Node({ chainIdHex: '0xaa36a7', balance: 1000n }) }), 'Not enough ETH to pay the network fee');
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-7702: set-code on an OP-stack network (Base Sepolia) pays the layer 1 data fee');
+// ---------------------------------------------------------------------------
+{
+  // The unsigned type-0x04 bytes the oracle is given equal ethers' unsignedSerialized.
+  const stubAuth = { chainId: 84532n, address: PINNED, nonce: 8n, yParity: 1, r: SET_CODE_L1_FEE_STUB_R, s: SET_CODE_L1_FEE_STUB_S };
+  const fields = { chainId: 84532n, nonce: 7n, maxPriorityFeePerGas: 1_000_000n, maxFeePerGas: 3_000_000n, gasLimit: 86_000n, to: OWNER_0 };
+  const mine = ethers.hexlify(serializeUnsignedSetCode({ ...fields, authorizations: [stubAuth] }));
+  const theirs = ethers.Transaction.from({
+    type: 4, ...fields, value: 0n, data: '0x', accessList: [],
+    authorizationList: [{ chainId: 84532n, address: PINNED, nonce: 8n, signature: { r: ethers.hexlify(SET_CODE_L1_FEE_STUB_R), s: ethers.hexlify(SET_CODE_L1_FEE_STUB_S), yParity: 1 } }],
+  }).unsignedSerialized;
+  check('serializeUnsignedSetCode = ethers Transaction(type 4).unsignedSerialized, byte for byte', mine === theirs, `${mine.slice(0, 40)} vs ${theirs.slice(0, 40)}`);
+  check('stub r and s are 32 incompressible-looking bytes (keccak digests), not repeated patterns',
+    SET_CODE_L1_FEE_STUB_R.length === 32 && SET_CODE_L1_FEE_STUB_S.length === 32 && new Set(SET_CODE_L1_FEE_STUB_R).size > 20 && new Set(SET_CODE_L1_FEE_STUB_S).size > 20);
+
+  const oracle = { l1Fee: 6_000_000_000n, operatorFee: 0n, calls: [] };
+  const node = fake7702Node({ chainIdHex: '0x14a34', nonce: 7n, oracle });
+  const transportFor = () => node;
+  const quote = await prepareSetCodeTx({ url: NODE_URL, from: OWNER_0, action: 'upgrade', expectedChainId: 84532n, transportFor });
+  check('Base Sepolia upgrade quote: L1 estimate from the oracle, reserve = estimate + 50%, included in the fee',
+    quote.opStack?.l1DataFeeEstimate === 6_000_000_000n && quote.opStack.l1DataFee === 9_000_000_000n && quote.fee === quote.gasLimit * quote.maxFeePerGas + 9_000_000_000n);
+  const priced = oracle.calls.find((d) => d.startsWith(ethers.id('getL1Fee(bytes)').slice(0, 10)));
+  const [pricedBytes] = ethers.AbiCoder.defaultAbiCoder().decode(['bytes'], '0x' + priced.slice(10));
+  const pricedTx = ethers.Transaction.from(pricedBytes);
+  check('the oracle priced the EXACT unsigned type-0x04 transaction that will be signed (tuple → pinned delegate, nonce + 1; stub signature)',
+    pricedBytes.startsWith('0x04') && pricedTx.type === 4 && pricedTx.to === OWNER_0 && pricedTx.nonce === 7 && pricedTx.gasLimit === quote.gasLimit && pricedTx.maxFeePerGas === quote.maxFeePerGas &&
+      pricedTx.authorizationList[0].address === PINNED && pricedTx.authorizationList[0].nonce === 8n && pricedTx.authorizationList[0].signature.yParity === 1 && quote.opStack.unsignedTxBytes === ethers.getBytes(pricedBytes).length);
+  const sent = await sendSetCodeTx(NODE_URL, owner, quote, null, { transportFor });
+  const signedTx = ethers.Transaction.from(node.raws.at(-1));
+  check('the signed transaction differs from the priced one only in the signatures (same unsigned fields)',
+    signedTx.type === 4 && signedTx.nonce === 7 && signedTx.gasLimit === quote.gasLimit && signedTx.authorizationList[0].address === PINNED && Boolean(sent.txid));
+  check('the signed bytes are within 2 bytes of the priced unsigned bytes + 65 (the sender signature the oracle\'s +68 stands for)',
+    Math.abs(ethers.getBytes(node.raws.at(-1)).length - (quote.opStack.unsignedTxBytes + 65)) <= 2, String(ethers.getBytes(node.raws.at(-1)).length - quote.opStack.unsignedTxBytes));
+  const revokeOracle = { l1Fee: 5_000_000_000n, operatorFee: 7n, calls: [] };
+  const rnode = fake7702Node({ chainIdHex: '0x14a34', nonce: 3n, oracle: revokeOracle, code: { [OWNER_0.toLowerCase()]: indicator(PINNED) } });
+  const revoke = await prepareSetCodeTx({ url: NODE_URL, from: OWNER_0, action: 'revoke', expectedChainId: 84532n, transportFor: () => rnode });
+  check('Base Sepolia revoke quote also pays it, operator fee included when non-zero',
+    revoke.opStack?.l1DataFee === 7_500_000_000n && revoke.opStack.operatorFee === 7n && revoke.fee === revoke.gasLimit * revoke.maxFeePerGas + 7_500_000_007n);
+  await checkRejects('an oracle failure refuses the quote (the full fee would be unknown)',
+    () => prepareSetCodeTx({ url: NODE_URL, from: OWNER_0, action: 'upgrade', expectedChainId: 84532n, transportFor: () => fake7702Node({ chainIdHex: '0x14a34', oracle: { fail: true, calls: [] } }) }),
+    'Nothing was signed');
+  const tight = fake7702Node({ chainIdHex: '0x14a34', oracle: { l1Fee: 6_000_000_000n, calls: [] }, balance: 86_000n * 3_000_000_000n });
+  await checkRejects('a balance that covers gas × maxFee but not the L1 reserve is refused', () => prepareSetCodeTx({ url: NODE_URL, from: OWNER_0, action: 'upgrade', expectedChainId: 84532n, transportFor: () => tight }), 'Not enough ETH');
+  const sep = fake7702Node({ chainIdHex: '0xaa36a7', nonce: 7n, oracle: { l1Fee: 1n, calls: [] } });
+  const sepQuote = await prepareSetCodeTx({ url: NODE_URL, from: OWNER_0, action: 'upgrade', expectedChainId: 11155111n, transportFor: () => sep });
+  check('Ethereum Sepolia: no oracle call, no opStack field, fee = gas × maxFee as before', !('opStack' in sepQuote) && sepQuote.fee === sepQuote.gasLimit * sepQuote.maxFeePerGas && !sep.calls.some((c) => c.method === 'eth_call'));
+  const screen = readFileSync(new URL('../src/screens/UpgradeAccountScreen.tsx', import.meta.url), 'utf8');
+  check('UpgradeAccountScreen shows the layer 1 data fee line when the quote has one', /quote\.opStack \? \([\s\S]{0,400}Layer 1 data fee \(estimate\)/.test(screen));
 }
 
 // ---------------------------------------------------------------------------

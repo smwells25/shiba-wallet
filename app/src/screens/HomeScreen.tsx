@@ -24,7 +24,6 @@ import { AccountSwitcher } from '../components/AccountSwitcher';
 import { OfflineNotice } from '../wallet/connectivity';
 import { usePrefs } from '../wallet/PrefsContext';
 import { maskAmount } from '../config/prefs';
-import { testModeTokenNote } from '../config/evm-chain';
 import { BalanceState, useBalances } from '../wallet/useBalances';
 import { spokenAmount } from '../wallet/balances';
 import { useTokenBalances } from '../wallet/useTokenBalances';
@@ -229,21 +228,22 @@ export function HomeScreen({ navigation }: Props) {
   // account the active account owns; the screen shows the development-build
   // note when the native module or the rpId is missing.
   const passkey = usePasskeyInfo(evmAccount?.address, activeAccount?.index ?? null, toolsRefresh);
-  // Tracked tokens are Ethereum-mainnet assets; in every test mode the
-  // token section is hidden entirely (fetching a mainnet contract's
-  // balanceOf against a Sepolia endpoint would be wrong-chain noise).
-  const showTokens = !evmChain.testnet;
+  // Tracked tokens are per chain (phase 13 item 1): the section lists the
+  // ACTIVE profile's own list (mainnet, Ethereum Sepolia or Base Sepolia),
+  // and each balance is read only from an endpoint on the token's chain.
   const { tokens, tokenBalances, reloadTokens, refreshToken } = useTokenBalances(
-    showTokens ? evmAccount?.address : undefined,
+    evmAccount?.address,
+    evmChain.caip2,
   );
 
   // USD prices for the natives (all four in one request; null for the EVM
-  // slot in Sepolia test mode) and the tracked tokens on the ACTIVE chain
-  // (null for every token in test mode). The hook requests nothing while
-  // "Show fiat values" is off.
+  // slot in a test mode) and the tracked tokens on the ACTIVE chain
+  // (tokenPriceAssetId returns null for every test-network token, so test
+  // tokens are never priced). The hook requests nothing while "Show fiat
+  // values" is off.
   const priceIds = [
     ...nativePriceIds(sepolia),
-    ...tokens.map((t) => (showTokens ? tokenPriceAssetId(t, evmChain.caip2) : null)),
+    ...tokens.map((t) => tokenPriceAssetId(t, evmChain.caip2)),
   ];
   const { quotes, refresh: refreshPrices } = usePrices(priceIds);
 
@@ -263,8 +263,8 @@ export function HomeScreen({ navigation }: Props) {
   // toggle in Settings takes effect on the next focus/refresh.
   useFocusEffect(
     useCallback(() => {
-      if (showTokens) void reloadTokens();
-    }, [reloadTokens, showTokens]),
+      void reloadTokens();
+    }, [reloadTokens]),
   );
 
   // Balances after a send (Base Sepolia finding 7): Home stays mounted
@@ -281,8 +281,8 @@ export function HomeScreen({ navigation }: Props) {
   }, [accounts, refreshOne]);
   const reloadAllRows = useCallback(() => {
     reloadNativeRows();
-    if (showTokens) void reloadTokens();
-  }, [reloadNativeRows, reloadTokens, showTokens]);
+    void reloadTokens();
+  }, [reloadNativeRows, reloadTokens]);
   // Read through refs so the focus effect below runs once per focus, not
   // again whenever these callbacks change identity while Home is focused.
   const reloaders = useRef({ now: reloadNativeRows, later: reloadAllRows });
@@ -435,19 +435,11 @@ export function HomeScreen({ navigation }: Props) {
     );
   };
 
-  // The Ethereum row carries its tracked ERC-20 tokens beneath it, plus the
-  // entry point to the token management screen.
+  // The EVM row carries the active network's tracked ERC-20 tokens beneath
+  // it, plus the entry point to the token management screen.
   const renderItem = ({ item }: { item: ChainAccount }) => {
     const card = renderChainCard({ item });
     if (item.chainId !== EVM_CHAIN_ID) return card;
-    if (!showTokens) {
-      return (
-        <View style={styles.evmGroup}>
-          {card}
-          <Text style={[styles.testnetNote, { color: theme.textMuted }]}>{testModeTokenNote(evmChain)}</Text>
-        </View>
-      );
-    }
     return (
       <View style={styles.evmGroup}>
         {card}
@@ -743,11 +735,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     paddingVertical: 2,
-  },
-  testnetNote: {
-    fontSize: 12,
-    lineHeight: 17,
-    marginLeft: 20,
   },
   headerStack: {
     gap: 8,

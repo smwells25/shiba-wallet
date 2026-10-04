@@ -598,6 +598,20 @@ console.log('\nToken balance (useTokenBalances.ts loadTokenBalance):');
   check('token row: a non-transport error is surfaced, not failed over', error !== null && !calls.some((c) => c.url === ETH_B && c.method === 'eth_call'));
 }
 
+{
+  // Phase 13 item 1: a token is only ever read on its own chain. The
+  // mainnet endpoint answers; a Sepolia token row gets an "unavailable"
+  // state with NO balanceOf call, and the control (expectedChain = the
+  // endpoint's chain) reads normally.
+  forgetDefaultEndpointChoices();
+  const calls = installFake({ rpc: { [ETH_A]: evmNode({ eth_call: () => word(7n) }), [ETH_B]: evmNode() } });
+  const SEPOLIA_USDC = '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238';
+  const other = await loadTokenBalance(SEPOLIA_USDC, WALLET, { retryDelayMs: 0, expectedChain: 'eip155:11155111' });
+  check('token row: a Sepolia token is never read on the mainnet endpoint', other.status === 'unavailable' && /another network/.test(other.note) && !calls.some((c) => c.method === 'eth_call'), other);
+  const same = await loadTokenBalance(USDC, WALLET, { retryDelayMs: 0, expectedChain: ETH_CHAIN });
+  check('control: the same call with the endpoint\'s own chain reads the balance', same.status === 'ok' && same.amount === 7n && calls.some((c) => c.method === 'eth_call'));
+}
+
 console.log('\nUpgrade screen quote pinning (delegation.ts set-code quote):');
 const TEST_MNEMONIC =
   'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';

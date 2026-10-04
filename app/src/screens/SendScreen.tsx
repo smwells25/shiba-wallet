@@ -55,6 +55,7 @@ import {
 import {
   PREVIEW_AA_BATCH_NOTE,
   aaAccountTypeLabel,
+  aaMaxAdjustmentSentence,
   aaSendApprovalPrompt,
   aaSenderLabel,
   kernelDeploymentNote,
@@ -276,6 +277,10 @@ export function SendScreen({ route, navigation }: Props) {
   // with a plain note instead of refusing it, and a typed amount is never
   // changed.
   const lastEvmMax = useRef<LastMaxResult | null>(null);
+  // The same record for the smart-account native Max (aa.ts maxAaSend), kept
+  // apart so an EOA Max figure can never be lowered on the smart-account
+  // path or the other way round.
+  const lastAaMax = useRef<LastMaxResult | null>(null);
   // Passkey signer (phase 8 item 3): offered on smart-account sends when this
   // device installed a passkey on the active account's Kernel account. Off
   // by default; the owner key stays the default signer.
@@ -302,13 +307,16 @@ export function SendScreen({ route, navigation }: Props) {
     navigation.setOptions({ title });
   }, [navigation, account, token, nftMode]);
 
-  // Token mode: resolve the CAIP-19 id against the tracked-token store. The
-  // store is the single source of the token's contract address, symbol and
-  // on-chain decimals (all verified when the token was added).
+  // Token mode: resolve the CAIP-19 id against the ACTIVE chain's tracked
+  // list (tokens are per chain since phase 13 item 1). The store is the
+  // single source of the token's contract address, symbol and on-chain
+  // decimals (all verified when the token was added). A token id from
+  // another network is not in this list, so it resolves to null and the
+  // screen says so instead of quoting it on the wrong chain.
   useEffect(() => {
     if (!tokenId) return;
     let cancelled = false;
-    listTokens().then(
+    listTokens(evmChain.caip2).then(
       (list) => {
         if (cancelled) return;
         setToken(list.find((t) => formatAssetId(t.assetId) === tokenId) ?? null);
@@ -320,7 +328,7 @@ export function SendScreen({ route, navigation }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [tokenId]);
+  }, [tokenId, evmChain.caip2]);
 
   useEffect(() => {
     let cancelled = false;
@@ -528,22 +536,22 @@ export function SendScreen({ route, navigation }: Props) {
   if (tokenMode && token === null) {
     return (
       <View style={[screenStyle(theme), styles.center]}>
-        <Text style={{ color: theme.textMuted }}>
-          This token is no longer in your tracked list.
+        <Text style={{ color: theme.textMuted, textAlign: 'center', padding: 24 }}>
+          This token is not in your tracked list on {evmChain.label}. Tokens are
+          tracked per network: switch back to the token&apos;s network under
+          Settings → Developer, or add it under Manage tokens.
         </Text>
       </View>
     );
   }
-  if (tokenMode && evmChain.testnet) {
-    // Defensive: every token entry point is hidden in Sepolia test mode
-    // (tracked tokens are mainnet assets), and prepareErc20Send would
-    // refuse the Sepolia endpoint anyway. State this plainly instead of
-    // quoting a mainnet token against a testnet chain.
+  if (tokenMode && token && token.assetId.chainId !== evmChain.caip2) {
+    // Defensive: the list above is the active chain's, so this cannot
+    // happen; if it ever did, nothing is quoted on the wrong chain.
     return (
       <View style={[screenStyle(theme), styles.center]}>
         <Text style={{ color: theme.textMuted, textAlign: 'center', padding: 24 }}>
-          Token sending is an Ethereum mainnet feature. Choose Off (mainnet)
-          under Settings → Developer to send tokens.
+          This token belongs to another network. Switch networks under
+          Settings → Developer to send it.
         </Text>
       </View>
     );
@@ -701,6 +709,7 @@ export function SendScreen({ route, navigation }: Props) {
     setMaxBusy(true);
     setFormError(null);
     lastEvmMax.current = null;
+    lastAaMax.current = null;
     try {
       const start = await currentEndpoint();
       let max: bigint;
@@ -757,6 +766,7 @@ export function SendScreen({ route, navigation }: Props) {
         } else {
           max = await maxAaSend(bundle, account.address, validation.normalized);
           if (max <= 0n) throw new Error('The smart account balance cannot cover the network fee.');
+          lastAaMax.current = { text: exact(max, decimals), from: account.address, chainId: route.params.chainId };
         }
       } else if (token) {
         // Token max = the full token balance: the fee is paid in ETH, so
@@ -770,6 +780,7 @@ export function SendScreen({ route, navigation }: Props) {
               account.address,
               token.assetId.reference,
               validation?.ok ? validation.normalized : undefined,
+              token.assetId.chainId,
             ),
           )
         ).value;
@@ -905,7 +916,13 @@ export function SendScreen({ route, navigation }: Props) {
               symbol: token.symbol,
               decimals: token.decimals,
             })
-          : await prepareAaSend(bundle, account.address, validation.normalized, amount);
+          : await prepareAaSend(bundle, account.address, validation.normalized, amount, {
+              fromMax: amountIsLastMax(lastAaMax.current, {
+                text: amountText,
+                from: account.address,
+                chainId: route.params.chainId,
+              }),
+            });
       } else if (token) {
         // ERC-20 token mode, EOA path. Quote checks the token balance,
         // checks the ETH balance against the fee, and pre-flights the
@@ -919,6 +936,7 @@ export function SendScreen({ route, navigation }: Props) {
             amount,
             symbol: token.symbol,
             decimals: token.decimals,
+            chainCaip2: token.assetId.chainId,
           }),
         );
         next = quoted.value;
@@ -1279,6 +1297,11 @@ export function SendScreen({ route, navigation }: Props) {
             theme={theme}
           />
         )}
+        {quote.kind === 'aa' && quote.maxAdjustment ? (
+          <WarningBox>
+            {aaMaxAdjustmentSentence(quote, (v) => `${exact(v, nativeDecimals)} ${evmChain.displaySymbol}`)}
+          </WarningBox>
+        ) : null}
         {quote.passkey ? (
           <Row
             label="Signer"
@@ -1413,28 +1436,30 @@ export function SendScreen({ route, navigation }: Props) {
         />
         <Row label="Token contract" value={quote.contract} mono theme={theme} />
         <Row
-          label="Max network fee (paid in ETH)"
-          value={`${exact(quote.fee, nativeDecimals)} ETH`}
+          label={`Max network fee (paid in ${evmChain.displaySymbol})`}
+          value={`${exact(quote.fee, nativeDecimals)} ${evmChain.displaySymbol}`}
           sub={fiatOf(nativePriceId, quote.fee, nativeDecimals)}
           theme={theme}
         />
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Worst case at {exact(quote.maxFeePerGas, 9)} gwei max fee ×{' '}
-          {quote.gasLimit.toString()} gas; the actual fee is usually lower,
-          and the unused part is not charged. The fee comes out of your ETH
-          balance — the full token amount reaches the recipient.
+          {quote.gasLimit.toString()} gas
+          {quote.opStack ? ', plus the layer 1 data fee below' : ''}; the actual fee is usually lower,
+          and the unused part is not charged. The fee comes out of your{' '}
+          {evmChain.displaySymbol} balance — the full token amount reaches the recipient.
           {quote.gasIsFallback
             ? ' Gas estimation failed, so a conservative default gas limit is shown.'
             : ''}
         </Text>
+        <OpStackFeeRows fees={quote.opStack} symbol={evmChain.displaySymbol} theme={theme} />
         <Row
           label={`${quote.symbol} balance`}
           value={`${exact(quote.tokenBalance, quote.decimals)} ${quote.symbol}`}
           theme={theme}
         />
         <Row
-          label="ETH balance"
-          value={`${exact(quote.ethBalance, nativeDecimals)} ETH`}
+          label={`${evmChain.displaySymbol} balance`}
+          value={`${exact(quote.ethBalance, nativeDecimals)} ${evmChain.displaySymbol}`}
           theme={theme}
         />
 
@@ -1744,8 +1769,8 @@ export function SendScreen({ route, navigation }: Props) {
           <Text style={[styles.hint, { color: theme.textMuted }]}>
             Sending {token.symbol} (ERC-20 token, contract{' '}
             {token.assetId.reference.slice(0, 10)}…{token.assetId.reference.slice(-8)}) from
-            {aaActive ? ' your smart account' : ' your Ethereum address'}. The network
-            fee is paid in ETH, not in {token.symbol}.
+            {aaActive ? ' your smart account' : ` your address on ${evmChain.label}`}. The network
+            fee is paid in {evmChain.displaySymbol}, not in {token.symbol}.
             {aaAvailable
               ? ' With "Send from smart account" on, the smart account sends its own ' +
                 `${token.symbol} in one transfer call (no approval needed).`

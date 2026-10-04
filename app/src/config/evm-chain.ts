@@ -427,9 +427,10 @@ const BASE_SEPOLIA_RPC_DEFAULTS: readonly string[] = [
  *    shipped; each test network keeps its own saved bundler.
  *  - Not available here: 0x swap quotes (0x's supported-chain list,
  *    https://docs.0x.org/docs/introduction/supported-chains, lists Base
- *    8453 but no Base Sepolia, checked 2026-10-03); tracked ERC-20 tokens
- *    (mainnet assets, hidden in every test mode); fiat prices (test assets
- *    are never priced). Base Sepolia entries exist for NFT explorer links
+ *    8453 but no Base Sepolia, checked 2026-10-03); fiat prices (test
+ *    assets are never priced). Tracked ERC-20 tokens are per chain since
+ *    phase 13 item 1 (wallet/tokens.ts): Base Sepolia starts with Circle's
+ *    test USDC and EURC. Base Sepolia entries exist for NFT explorer links
  *    (wallet/nfts.ts), the risk module's new-contract threshold (302,400
  *    two-second blocks, wallet/risk.ts) and recovery-record file names
  *    ("base-sepolia", wallet/recovery.ts) since phase 11 item 5.
@@ -460,18 +461,6 @@ export const EVM_BASE_SEPOLIA: EvmChainProfile = {
   l1DataFee: true,
   swapsOffered: false,
 };
-
-/**
- * The note Home shows under the EVM card in a test mode, where the tracked
- * tokens (mainnet assets) are hidden; null on a main network. Built from
- * the active profile's modeLabel so it names the test network actually in
- * use ("Base Sepolia test mode — …", not always "Sepolia test mode").
- */
-export function testModeTokenNote(profile: EvmChainProfile): string | null {
-  if (!profile.testnet) return null;
-  const mode = profile.modeLabel.charAt(0).toUpperCase() + profile.modeLabel.slice(1);
-  return `${mode} — tracked tokens are mainnet assets and are hidden until test mode is turned off in Settings.`;
-}
 
 /** The test-network profiles, in the order Settings → Developer lists them. */
 export const EVM_TEST_PROFILES: readonly EvmChainProfile[] = [EVM_SEPOLIA, EVM_BASE_SEPOLIA];

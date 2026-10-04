@@ -305,7 +305,7 @@ export function parseCustomWindow(text: string, unit: WindowUnit): number {
 
 /**
  * Tokens a policy may name on `chain`: the network's coin, the tracked
- * ERC-20 tokens on that chain (pass listTokens()), and the known test-network
+ * ERC-20 tokens on that chain (pass listTokens(chain)), and the known test-network
  * tokens (tokens.ts KNOWN_TEST_NETWORK_TOKENS). The same list is the
  * engine's `knownTokens` at save time.
  */

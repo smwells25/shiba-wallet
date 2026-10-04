@@ -1725,6 +1725,22 @@ export interface AaSendQuote {
   /** Present for a smart-account ERC-20 send. */
   token?: AaTokenTransfer;
   /**
+   * The smart account's EntryPoint deposit as read for this quote (self-paid
+   * operations only; absent when sponsored or when the read failed, which
+   * the funding checks count as zero). The EntryPoint takes the fee from
+   * the deposit first (aaFeeFromBalance), so screens use it to explain why
+   * a fee above the balance is still payable.
+   */
+  deposit?: bigint;
+  /**
+   * Present only when the amount came from the smart-account Max button
+   * (prepareAaCalls option fromMax) and the re-quoted worst-case fee no
+   * longer fitted beside it, so the quote lowered the amount (see
+   * AA_MAX_TRIM_ROUNDS). `requested` is the amount the form held; `amount`
+   * and `calls` above are what will be signed. Absent in every other case.
+   */
+  maxAdjustment?: { requested: bigint };
+  /**
    * 'kernel-7702' only. upgrade = true means the account is still a plain
    * EOA and THIS operation carries the EIP-7702 authorization (the confirm
    * screen must say so); false means it is already delegated to `delegate`.
@@ -1862,8 +1878,45 @@ export function aaFundingMessage(p: {
  * from the balance. `deposit` null (not read) counts as zero.
  */
 export function aaCanPaySelf(p: { amount: bigint; fee: bigint; balance: bigint; deposit: bigint | null }): boolean {
-  const fromBalance = p.fee > (p.deposit ?? 0n) ? p.fee - (p.deposit ?? 0n) : 0n;
-  return p.amount + fromBalance <= p.balance;
+  return p.amount + aaFeeFromBalance(p.fee, p.deposit) <= p.balance;
+}
+
+/**
+ * The part of a self-paid operation's worst-case fee that the account's
+ * BALANCE must supply: the EntryPoint v0.7 takes the prefund from the
+ * deposit first and asks the account for the rest during validation
+ * (EntryPoint._validateAccountPrepayment). `deposit` null (not read) counts
+ * as zero. The single rule aaCanPaySelf and the subscription review use.
+ */
+export function aaFeeFromBalance(fee: bigint, deposit: bigint | null | undefined): bigint {
+  const d = deposit ?? 0n;
+  return fee > d ? fee - d : 0n;
+}
+
+/**
+ * Upper bound on re-pricing rounds when a smart-account Max amount is
+ * lowered at quote time (the EOA path's MAX_TRIM_ROUNDS in ./send.ts, same
+ * reason): the amount is part of the calldata the bundler prices
+ * (preVerificationGas charges zero and non-zero calldata bytes
+ * differently), so after lowering it the operation is estimated again.
+ * After the bound the ordinary funding refusal applies.
+ */
+export const AA_MAX_TRIM_ROUNDS = 3;
+
+/**
+ * The confirm screen's sentence for a smart-account Max amount that the
+ * quote lowered. `format` renders wei in the chain's display units.
+ */
+export function aaMaxAdjustmentSentence(
+  quote: Pick<AaSendQuote, 'amount' | 'maxAdjustment'>,
+  format: (value: bigint) => string,
+): string | null {
+  if (!quote.maxAdjustment) return null;
+  return (
+    `The amount was lowered from ${format(quote.maxAdjustment.requested)} to ${format(quote.amount)} ` +
+    'because the network fee rose after you tapped Max. The amount plus the worst-case fee now fits the ' +
+    "smart account's balance; its EntryPoint deposit, if any, is left as a reserve for the fee."
+  );
 }
 
 /** Neutral confirm-screen sentence for a Kernel deployment through any non-Alchemy bundler. */
@@ -2097,7 +2150,17 @@ export async function prepareAaCalls(
   bundle: AaClientBundle,
   ownerAddress: string,
   calls: Call[],
-  options: { tokenSpend?: AaTokenSpend; displayTo?: string; token?: AaTokenTransfer } = {},
+  options: {
+    tokenSpend?: AaTokenSpend;
+    displayTo?: string;
+    token?: AaTokenTransfer;
+    /**
+     * True when the amount of a plain native transfer is exactly what the
+     * smart-account Max button produced (SendScreen compares the amount text
+     * with the last Max result). See the Max section below.
+     */
+    fromMax?: boolean;
+  } = {},
 ): Promise<AaSendQuote> {
   if (calls.length === 0) throw new Error('Nothing to send: the operation has no calls.');
   const nodeClient = new NodeClient(bundle.node);
@@ -2153,7 +2216,25 @@ export async function prepareAaCalls(
     );
   }
 
-  const amount = calls.reduce((sum, c) => sum + c.value, 0n);
+  const requested = calls.reduce((sum, c) => sum + c.value, 0n);
+  let amount = requested;
+  // Smart-account Max (mirrors prepareEvmSend's fromMax in ./send.ts): Max
+  // subtracts one fee snapshot (maxAaSend), Review quotes again with fresh
+  // fees and a fresh bundler estimate, and a small rise would otherwise make
+  // the wallet refuse its own Max. Only a self-paid plain native transfer (one
+  // call, no calldata) whose amount came from Max is ever lowered; typed
+  // amounts, contract calls, batches and sponsored operations are not.
+  //
+  // DEPOSIT RULE FOR MAX (a decision): a Max amount must fit beside the FULL
+  // worst-case fee, i.e. amount + fee <= balance, ignoring the EntryPoint
+  // deposit. SmartAccountClient.sendCalls re-estimates the gas limits when it
+  // signs, so the signed fee can be a little above the quoted one; the
+  // account pays (fee - deposit) from its balance during validation, before
+  // the transfer runs, so the unused deposit is what absorbs such a rise
+  // instead of the transfer failing on-chain with the fee already charged.
+  // aaCanPaySelf (typed amounts) still lets the deposit pay the fee.
+  const trimMax =
+    options.fromMax === true && !bundle.sponsored && calls.length === 1 && calls[0]!.data.length === 0;
   // Funding pre-check, BEFORE any bundler call. A new smart account starts
   // with a zero balance, and the bundler's estimate of an operation the
   // account cannot pay for fails with a raw "AA21 didn't pay prefund"
@@ -2165,24 +2246,27 @@ export async function prepareAaCalls(
   // so then it must hold at least the amount; sponsored, it must hold at
   // least the amount. So it never refuses an operation the full check would
   // accept.
+  // A Max amount may be lowered below, so for it the pre-check asks only
+  // whether the account can pay for a zero-value operation at all.
+  const checkAmount = trimMax ? 0n : amount;
   const cannotPay = bundle.sponsored
-    ? amount > senderBalance
+    ? checkAmount > senderBalance
     : (deposit ?? 0n) > 0n
-      ? amount > senderBalance
-      : suggestedFees.maxFeePerGas > 0n && amount >= senderBalance;
+      ? checkAmount > senderBalance
+      : suggestedFees.maxFeePerGas > 0n && checkAmount >= senderBalance;
   // The "can be funded before it is deployed" sentence belongs to factory
   // accounts that are not deployed yet; an EIP-7702 account is the owner's own
   // address, so the sentence is left out there (deployed: null).
-  const fundingFacts = {
+  const fundingFacts = () => ({
     sender,
     amount,
     balance: senderBalance,
     sponsored: bundle.sponsored,
     deployed: eip7702 ? null : deployed,
     deposit,
-  };
+  });
   if (cannotPay) {
-    throw new AaFundingError(sender, aaFundingMessage({ ...fundingFacts, fee: null }));
+    throw new AaFundingError(sender, aaFundingMessage({ ...fundingFacts(), fee: null }));
   }
 
   const priorityFloor = await bundlerPriorityFeeFloor(bundle.bundler);
@@ -2200,101 +2284,132 @@ export async function prepareAaCalls(
           BigInt((await bundle.node('eth_getTransactionCount', [sender, 'pending'])) as string),
         )
       : undefined;
-  const op: UserOperation = {
-    sender,
-    nonce,
-    ...(factoryArgs
-      ? { factory: factoryArgs.factory, factoryData: factoryArgs.factoryData }
-      : {}),
-    callData: bundle.spec.encodeCalls(calls),
-    callGasLimit: 0n,
-    verificationGasLimit: 0n,
-    preVerificationGas: 0n,
-    maxFeePerGas: fees.maxFeePerGas,
-    maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
-    signature: bundle.spec.stubSignature(),
-    ...(stubAuth ? { eip7702Auth: stubAuth } : {}),
-  };
-  let estimated: Awaited<ReturnType<BundlerClient['estimateUserOperationGas']>>;
-  try {
-    estimated = await new BundlerClient(bundle.bundler, ENTRYPOINT_V07).estimateUserOperationGas(op);
-  } catch (e) {
-    // The pre-check above cannot see the gas, so an account holding a
-    // little more than the amount can still fail the bundler's simulation
-    // with AA21. Say what it means and which address to fund, keeping the
-    // bundler's words.
-    const raw = e instanceof Error ? e.message : String(e);
-    if (isPrefundError(raw)) {
-      throw new AaFundingError(
-        sender,
-        `${aaFundingMessage({ ...fundingFacts, fee: null })}` +
-          `\n\nThe bundler's message: ${raw}`,
-      );
+  // Prices one candidate call list: the bundler estimate (the AA path's
+  // pre-flight gate) plus the deposit top-up headroom, and the worst-case fee.
+  const price = async (candidate: Call[]) => {
+    const op: UserOperation = {
+      sender,
+      nonce,
+      ...(factoryArgs
+        ? { factory: factoryArgs.factory, factoryData: factoryArgs.factoryData }
+        : {}),
+      callData: bundle.spec.encodeCalls(candidate),
+      callGasLimit: 0n,
+      verificationGasLimit: 0n,
+      preVerificationGas: 0n,
+      maxFeePerGas: fees.maxFeePerGas,
+      maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+      signature: bundle.spec.stubSignature(),
+      ...(stubAuth ? { eip7702Auth: stubAuth } : {}),
+    };
+    let estimated: Awaited<ReturnType<BundlerClient['estimateUserOperationGas']>>;
+    try {
+      estimated = await new BundlerClient(bundle.bundler, ENTRYPOINT_V07).estimateUserOperationGas(op);
+    } catch (e) {
+      // The pre-check above cannot see the gas, so an account holding a
+      // little more than the amount can still fail the bundler's simulation
+      // with AA21. Say what it means and which address to fund, keeping the
+      // bundler's words.
+      const raw = e instanceof Error ? e.message : String(e);
+      if (isPrefundError(raw)) {
+        throw new AaFundingError(
+          sender,
+          `${aaFundingMessage({ ...fundingFacts(), fee: null })}` +
+            `\n\nThe bundler's message: ${raw}`,
+        );
+      }
+      throw e;
     }
-    throw e;
-  }
-  // Mirror the bundle client's deposit top-up headroom so the confirm
-  // screen's worst-case fee and the balance check use the limit that will
-  // actually be signed (sendCalls re-estimates and applies the same rule,
-  // and, like here, keeps the plain estimate when the deposit read fails).
-  // Clients built without the headroom (none configured) are mirrored as
-  // such: the plain estimate. The deposit was read once above, with the
-  // other node reads, and also counts in the funding checks.
-  const headroom = bundle.client.depositTopUpVerificationGas;
-  const gas = deposit === null || headroom === 0n
-    ? estimated
-    : {
-        ...estimated,
-        verificationGasLimit: withDepositTopUpHeadroom(
-          {
-            ...op,
-            callGasLimit: estimated.callGasLimit,
-            verificationGasLimit: estimated.verificationGasLimit,
-            preVerificationGas: estimated.preVerificationGas,
-          },
-          deposit,
-          headroom,
-        ),
-      };
+    // Mirror the bundle client's deposit top-up headroom so the confirm
+    // screen's worst-case fee and the balance check use the limit that will
+    // actually be signed (sendCalls re-estimates and applies the same rule,
+    // and, like here, keeps the plain estimate when the deposit read fails).
+    // Clients built without the headroom (none configured) are mirrored as
+    // such: the plain estimate. The deposit was read once above, with the
+    // other node reads, and also counts in the funding checks.
+    const headroom = bundle.client.depositTopUpVerificationGas;
+    const gas = deposit === null || headroom === 0n
+      ? estimated
+      : {
+          ...estimated,
+          verificationGasLimit: withDepositTopUpHeadroom(
+            {
+              ...op,
+              callGasLimit: estimated.callGasLimit,
+              verificationGasLimit: estimated.verificationGasLimit,
+              preVerificationGas: estimated.preVerificationGas,
+            },
+            deposit,
+            headroom,
+          ),
+        };
+    // OP-stack chains (Base Sepolia): NO separate layer 1 data fee is added
+    // here, unlike the EOA quotes in send.ts. The bundler's EOA sends the
+    // handleOps transaction and pays its L1 data fee; the account repays the
+    // bundler through preVerificationGas, which bundlers price to include it
+    // (Pimlico's permissionless.js FAQ, docs.pimlico.io/references/
+    // permissionless/faqs, read 2026-10-03: "The preVerificationGas accounts
+    // for: Gas overhead that can't be calculated onchain; L1 data costs when
+    // operating on L2 networks"). ERC-4337 itself (Final, section "Estimating
+    // preVerificationGas") leaves the method open ("depends on non-permanent
+    // network properties such as operation and data gas pricing"), and the
+    // EntryPoint's prefund is gas limits × maxFeePerGas, so the figure below
+    // is already the account's worst case. ZeroDev does not document its
+    // formula. A read-only comparison on 2026-10-03 (the same counterfactual
+    // Kernel deployment op estimated by ZeroDev on both test networks, with a
+    // balance state override) gave preVerificationGas 51,428 on Ethereum
+    // Sepolia and 56,811 on Base Sepolia — about 5,400 gas more on Base, more
+    // than the GasPriceOracle's L1 fee for the op's bytes expressed in gas
+    // at its maxFeePerGas (about 1,000 gas). That is consistent with the L1
+    // data cost being priced in, not a proof of ZeroDev's formula.
+    const gasTotal = gas.callGasLimit + gas.verificationGasLimit + gas.preVerificationGas;
+    const worstCaseGasCost = gasTotal * fees.maxFeePerGas;
+    // With a paymaster the sponsor pays the gas: the account only needs to
+    // cover the amount itself. Self-paid keeps the full worst-case check.
+    return { estimated, gas, fee: bundle.sponsored ? 0n : worstCaseGasCost };
+  };
 
-  // OP-stack chains (Base Sepolia): NO separate layer 1 data fee is added
-  // here, unlike the EOA quotes in send.ts. The bundler's EOA sends the
-  // handleOps transaction and pays its L1 data fee; the account repays the
-  // bundler through preVerificationGas, which bundlers price to include it
-  // (Pimlico's permissionless.js FAQ, docs.pimlico.io/references/
-  // permissionless/faqs, read 2026-10-03: "The preVerificationGas accounts
-  // for: Gas overhead that can't be calculated onchain; L1 data costs when
-  // operating on L2 networks"). ERC-4337 itself (Final, section "Estimating
-  // preVerificationGas") leaves the method open ("depends on non-permanent
-  // network properties such as operation and data gas pricing"), and the
-  // EntryPoint's prefund is gas limits × maxFeePerGas, so the figure below
-  // is already the account's worst case. ZeroDev does not document its
-  // formula. A read-only comparison on 2026-10-03 (the same counterfactual
-  // Kernel deployment op estimated by ZeroDev on both test networks, with a
-  // balance state override) gave preVerificationGas 51,428 on Ethereum
-  // Sepolia and 56,811 on Base Sepolia — about 5,400 gas more on Base, more
-  // than the GasPriceOracle's L1 fee for the op's bytes expressed in gas
-  // at its maxFeePerGas (about 1,000 gas). That is consistent with the L1
-  // data cost being priced in, not a proof of ZeroDev's formula.
-  const gasTotal = gas.callGasLimit + gas.verificationGasLimit + gas.preVerificationGas;
-  const worstCaseGasCost = gasTotal * fees.maxFeePerGas;
-  // With a paymaster the sponsor pays the gas: the account only needs to
-  // cover the amount itself. Self-paid keeps the full worst-case check.
-  const fee = bundle.sponsored ? 0n : worstCaseGasCost;
+  // The single call of a Max transfer with another value.
+  const withValue = (value: bigint): Call[] => [{ ...calls[0]!, value }];
+  let currentCalls = calls;
+  if (trimMax && amount >= senderBalance) {
+    // The balance no longer exceeds the Max figure (it fell, or the Max was
+    // computed while a paymaster sponsored the gas). A transfer of more than
+    // the account can pay is not a safe thing to ask the bundler to
+    // simulate, so price a zero-value transfer first, as maxAaSend does.
+    const probe = await price(withValue(0n));
+    const room = senderBalance > probe.fee ? senderBalance - probe.fee : 0n;
+    if (room <= 0n) {
+      throw new AaFundingError(sender, aaFundingMessage({ ...fundingFacts(), fee: probe.fee }));
+    }
+    amount = room;
+    currentCalls = withValue(amount);
+  }
+  let priced = await price(currentCalls);
+  if (trimMax) {
+    for (let round = 0; round < AA_MAX_TRIM_ROUNDS && amount + priced.fee > senderBalance; round++) {
+      const lowered = senderBalance - priced.fee;
+      if (lowered <= 0n) break;
+      amount = lowered;
+      currentCalls = withValue(amount);
+      priced = await price(currentCalls);
+    }
+  }
+  const { estimated, gas, fee } = priced;
   const affordable = bundle.sponsored
     ? amount <= senderBalance
     : aaCanPaySelf({ amount, fee, balance: senderBalance, deposit });
   if (!affordable) {
     throw new AaFundingError(
       sender,
-      aaFundingMessage({ ...fundingFacts, fee: bundle.sponsored ? null : fee }),
+      aaFundingMessage({ ...fundingFacts(), fee: bundle.sponsored ? null : fee }),
     );
   }
 
   return {
     kind: 'aa',
-    calls,
-    to: options.displayTo ?? calls[0]!.to,
+    calls: currentCalls,
+    to: options.displayTo ?? currentCalls[0]!.to,
     amount,
     sender,
     senderBalance,
@@ -2315,6 +2430,8 @@ export async function prepareAaCalls(
     ...(options.token ? { token: options.token } : {}),
     ...(eip7702 ? { eip7702 } : {}),
     ...(bundle.recovered ? { recovered: true } : {}),
+    ...(deposit !== null ? { deposit } : {}),
+    ...(amount !== requested ? { maxAdjustment: { requested } } : {}),
   };
 }
 
@@ -2331,8 +2448,14 @@ export async function prepareAaSend(
   ownerAddress: string,
   to: string,
   amount: bigint,
+  options: { fromMax?: boolean } = {},
 ): Promise<AaSendQuote> {
-  return prepareAaCalls(bundle, ownerAddress, [{ to, value: amount, data: new Uint8Array(0) }]);
+  return prepareAaCalls(
+    bundle,
+    ownerAddress,
+    [{ to, value: amount, data: new Uint8Array(0) }],
+    options.fromMax === true ? { fromMax: true } : {},
+  );
 }
 
 /**
@@ -2388,8 +2511,12 @@ export async function maxAaErc20Send(
  * The largest amount the smart account can send right now (phase 5's
  * AA Max slice): the full balance under sponsorship, else the balance
  * minus the worst-case fee of a zero-value transfer to the same
- * recipient (gas for a simple native transfer does not depend on the
- * amount). Returns 0n when fees exceed the balance.
+ * recipient (gas for a simple native transfer depends on the amount only
+ * through a few calldata bytes; prepareAaCalls with fromMax re-prices the
+ * exact amount at Review). Returns 0n when fees exceed the balance. The
+ * EntryPoint deposit is deliberately NOT added: it stays as the reserve
+ * that absorbs a fee rise at signing time (see the deposit rule for Max in
+ * prepareAaCalls).
  */
 export async function maxAaSend(
   bundle: AaClientBundle,

@@ -1729,7 +1729,9 @@ export function SettingsScreen({ navigation, route }: Props) {
         <Text style={[styles.sectionTitle, { color: theme.text }]}>Tokens</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Track ERC-20 tokens on the Home screen: balances, and sending
-          with the network fee paid in ETH.
+          with the network fee paid in ETH. Each network has its own list
+          ({evmChain.label} now), and Find my tokens lists what your address
+          holds when a history indexer is configured.
         </Text>
         <Button
           title="Manage tokens"
@@ -1833,8 +1835,9 @@ export function SettingsScreen({ navigation, route }: Props) {
           Sepolia SimpleAccountFactory on Sepolia and the Kernel v3.3
           factory on both; the bundler URL still has to be pasted by you for
           each network, because bundler endpoints contain your own API key.
-          Tracked ERC-20 tokens are mainnet assets and are hidden while a test
-          network is chosen.
+          Tracked ERC-20 tokens are kept per network too: each test network
+          starts with Circle&apos;s test USDC and EURC (no value), and your
+          mainnet token list is unchanged.
         </Text>
         {sepolia ? (
           <Text style={[styles.hint, { color: theme.testnetFill }]}>

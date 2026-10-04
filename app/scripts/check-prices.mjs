@@ -43,6 +43,7 @@ import { DEFAULT_PREFS, loadPrefs, maskAmount, savePrefs } from '../src/config/p
 import { groupThousands } from '../src/wallet/balances.ts';
 import { groupThousands as simulationGroupThousands } from '../src/wallet/simulation.ts';
 import { USDC_MAINNET } from '../src/wallet/erc20.ts';
+import { KNOWN_TEST_NETWORK_TOKENS } from '../src/wallet/tokens.ts';
 
 let passed = 0;
 let failed = 0;
@@ -212,6 +213,18 @@ console.log('\nCAIP-19 mapping');
     'a token on Sepolia is null even when Sepolia is active',
     tokenPriceAssetId(sepoliaToken, 'eip155:11155111') === null,
   );
+  // Phase 13 item 1: test networks now have tracked-token DEFAULTS (Circle's
+  // test USDC/EURC). None of them is ever priced, on its own network or in
+  // mainnet mode, and the mainnet USDC is never priced in Base Sepolia mode.
+  const testDefaults = Object.values(KNOWN_TEST_NETWORK_TOKENS).flat();
+  check(
+    'every test-network default token stays unpriced in every mode',
+    testDefaults.length === 4 &&
+      testDefaults.every((t) =>
+        ['eip155:1', 'eip155:11155111', 'eip155:84532'].every((mode) => tokenPriceAssetId(t, mode) === null),
+      ),
+  );
+  check('tracked mainnet USDC is null while Base Sepolia is active', tokenPriceAssetId(USDC_MAINNET, 'eip155:84532') === null);
 }
 
 // ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useSyncExternalStore } from 'react';
 import { Alert, StyleSheet, Text, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 // The same file-sharing mechanism as components/RecordFileActions.tsx:
@@ -77,7 +77,10 @@ const keyClipboard = createClipboardAutoClear({ setString: (text) => Clipboard.s
 export function SubscriptionKeyHandoverActions({ text, fileName }: { text: string; fileName: string }) {
   const theme = useTheme();
   const [busy, setBusy] = useState(false);
-  const [copied, setCopied] = useState(false);
+  // "Copied ✓" follows the helper's pending state, so the mark clears as soon
+  // as the wallet empties the clipboard (after 60 s, on return to the
+  // foreground after that, or when the screen closes).
+  const copied = useSyncExternalStore(keyClipboard.subscribe, keyClipboard.pending);
 
   useEffect(
     () => () => {
@@ -112,9 +115,8 @@ export function SubscriptionKeyHandoverActions({ text, fileName }: { text: strin
         title={copied ? 'Copied ✓' : 'Copy'}
         variant="secondary"
         onPress={() => {
-          keyClipboard.copy(text).then(
-            () => setCopied(true),
-            (e: unknown) => Alert.alert('Not copied', e instanceof Error ? e.message : String(e)),
+          keyClipboard.copy(text).catch((e: unknown) =>
+            Alert.alert('Not copied', e instanceof Error ? e.message : String(e)),
           );
         }}
       />

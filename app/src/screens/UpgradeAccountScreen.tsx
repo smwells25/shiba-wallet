@@ -19,6 +19,7 @@ import { requireLocalAuth } from '../wallet/biometric';
 import { formatUnits } from '../wallet/balances';
 import {
   EVM_CHAIN_ID,
+  L1_DATA_FEE_HEADROOM_PERCENT,
   QUOTE_ENDPOINT_CHANGED_TITLE,
   describeSendError,
   quoteEndpointChange,
@@ -333,9 +334,32 @@ export function UpgradeAccountScreen({ navigation }: Props) {
         <Row
           label="Max network fee"
           value={`${exact(quote.fee, 18)} ${evmChain.displaySymbol}`}
-          sub={`Worst case: ${quote.gasLimit} gas (intrinsic ${quote.gasLimit - SET_CODE_EXECUTION_GAS} incl. 25,000 for the authorization, plus ${SET_CODE_EXECUTION_GAS} for the call) × ${exact(quote.maxFeePerGas, 9)} gwei. Unused gas is refunded.`}
+          sub={`Worst case: ${quote.gasLimit} gas (intrinsic ${quote.gasLimit - SET_CODE_EXECUTION_GAS} incl. 25,000 for the authorization, plus ${SET_CODE_EXECUTION_GAS} for the call) × ${exact(quote.maxFeePerGas, 9)} gwei${quote.opStack ? ', plus the layer 1 data fee below' : ''}. Unused gas is refunded.`}
           theme={theme}
         />
+        {quote.opStack ? (
+          <>
+            <Row
+              label="Layer 1 data fee (estimate)"
+              value={`${exact(quote.opStack.l1DataFee, 18)} ${evmChain.displaySymbol}`}
+              theme={theme}
+            />
+            {quote.opStack.operatorFee > 0n ? (
+              <Row
+                label="Operator fee (worst case)"
+                value={`${exact(quote.opStack.operatorFee, 18)} ${evmChain.displaySymbol}`}
+                theme={theme}
+              />
+            ) : null}
+            <Text style={[styles.hint, { color: theme.textMuted }]}>
+              {`This is a layer-2 network: every transaction also pays for publishing its data on Ethereum. The ` +
+                `network's fee oracle estimates ${exact(quote.opStack.l1DataFeeEstimate, 18)} ${evmChain.displaySymbol} ` +
+                `for this transaction (priced before the authorization is signed, with a stand-in signature of the ` +
+                `same size); ${L1_DATA_FEE_HEADROOM_PERCENT.toString()}% more is reserved because this fee follows ` +
+                "Ethereum's fees and cannot be capped. It is included in the max network fee."}
+            </Text>
+          </>
+        ) : null}
         <Row
           label={`Your ${evmChain.displaySymbol} balance`}
           value={`${exact(quote.balance, 18)} ${evmChain.displaySymbol}`}

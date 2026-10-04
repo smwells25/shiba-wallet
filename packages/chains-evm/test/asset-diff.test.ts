@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { AbiCoder, concat, getAddress, id, zeroPadValue } from 'ethers';
 import {
   APPROVAL_EVENT_TOPIC,
+  DEPOSIT_EVENT_TOPIC,
+  WITHDRAWAL_EVENT_TOPIC,
+  WRAPPED_NATIVE_TOKENS,
   APPROVAL_FOR_ALL_EVENT_TOPIC,
   MAX_UINT256,
   NATIVE_TRANSFER_PSEUDO_ADDRESS,
@@ -440,5 +443,146 @@ describe('verifySimulationSupport', () => {
       throw new Error('fetch failed');
     };
     await expect(verifySimulationSupport(down)).rejects.toThrow('fetch failed');
+  });
+});
+
+describe('wrapped ether (WETH9 Deposit / Withdrawal, finding F5)', () => {
+  const WETH = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2';
+  const SEPOLIA_WETH = '0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14';
+  const OP_WETH = '0x4200000000000000000000000000000000000006';
+  const ZERO = '0x0000000000000000000000000000000000000000';
+  const wad = 100000000000000000n; // 0.1 ETH
+  const ethOut = (to: string, amount = wad) =>
+    log(NATIVE_TRANSFER_PSEUDO_ADDRESS, [TRANSFER_EVENT_TOPIC, topicOf(ME), topicOf(to)], word(amount));
+  const ethIn = (from: string, amount = wad) =>
+    log(NATIVE_TRANSFER_PSEUDO_ADDRESS, [TRANSFER_EVENT_TOPIC, topicOf(from), topicOf(ME)], word(amount));
+  const deposit = (emitter: string, dst: string, amount = wad) =>
+    log(emitter, [DEPOSIT_EVENT_TOPIC, topicOf(dst)], word(amount));
+  const withdrawal = (emitter: string, src: string, amount = wad) =>
+    log(emitter, [WITHDRAWAL_EVENT_TOPIC, topicOf(src)], word(amount));
+
+  it('topics are keccak256 of the WETH9 declarations (pinned against ethers id())', () => {
+    // WETH9.sol (gnosis/canonical-weth 0dd1ea3e): event Deposit(address indexed dst, uint wad);
+    // event Withdrawal(address indexed src, uint wad).
+    expect(DEPOSIT_EVENT_TOPIC).toBe(id('Deposit(address,uint256)'));
+    expect(WITHDRAWAL_EVENT_TOPIC).toBe(id('Withdrawal(address,uint256)'));
+    expect(DEPOSIT_EVENT_TOPIC).toBe('0xe1fffcc4923d04b559f4d29a8bfc6cda04eb5b0d3c460751c2402c5c5cc9109c');
+    expect(WITHDRAWAL_EVENT_TOPIC).toBe('0x7fcf532c15f0a6db0bd6d0e038bea71d30d808c7d98cb3bf7268a95bf5081b65');
+  });
+
+  it('pins mainnet, Sepolia and OP-stack WETH (lowercase)', () => {
+    expect(WRAPPED_NATIVE_TOKENS).toEqual([WETH, SEPOLIA_WETH, OP_WETH].map((a) => a.toLowerCase()));
+  });
+
+  it('a wrap shows the ether out AND the WETH in (was: ether out only)', () => {
+    const result = parseSimulationResult(block([okCall([ethOut(WETH), deposit(WETH, ME)])]), 1, ME);
+    expect(result.skippedLogs).toBe(0);
+    expect(result.changes).toEqual([
+      { type: 'native', callIndex: 0, direction: 'out', from: getAddress(ME), to: WETH, amount: wad },
+      {
+        type: 'erc20',
+        callIndex: 0,
+        direction: 'in',
+        token: WETH,
+        from: ZERO,
+        to: getAddress(ME),
+        amount: wad,
+        wrap: 'deposit',
+      },
+    ]);
+  });
+
+  it('an unwrap shows the WETH out and the ether in', () => {
+    const result = parseSimulationResult(block([okCall([ethIn(OP_WETH), withdrawal(OP_WETH, ME)])]), 1, ME);
+    expect(result.changes).toEqual([
+      { type: 'native', callIndex: 0, direction: 'in', from: OP_WETH, to: getAddress(ME), amount: wad },
+      {
+        type: 'erc20',
+        callIndex: 0,
+        direction: 'out',
+        token: OP_WETH,
+        from: getAddress(ME),
+        to: ZERO,
+        amount: wad,
+        wrap: 'withdrawal',
+      },
+    ]);
+  });
+
+  it('is not decoded without the matching ether movement (amount, direction or another call)', () => {
+    const differentAmount = parseSimulationResult(block([okCall([ethOut(WETH, wad - 1n), deposit(WETH, ME)])]), 1, ME);
+    expect(differentAmount.changes.filter((c) => c.type === 'erc20')).toEqual([]);
+    const wrongDirection = parseSimulationResult(block([okCall([ethIn(WETH), deposit(WETH, ME)])]), 1, ME);
+    expect(wrongDirection.changes.filter((c) => c.type === 'erc20')).toEqual([]);
+    const otherCall = parseSimulationResult(block([okCall([ethOut(WETH)]), okCall([deposit(WETH, ME)])]), 2, ME);
+    expect(otherCall.changes.filter((c) => c.type === 'erc20')).toEqual([]);
+    // A receipt (activity-decode.ts) has no pseudo-events: nothing changes there.
+    const receiptLike = parseSimulationResult(block([okCall([deposit(WETH, ME)])]), 1, ME);
+    expect(receiptLike.changes).toEqual([]);
+    expect(receiptLike.skippedLogs).toBe(0);
+  });
+
+  it('one ether movement backs one event only', () => {
+    const result = parseSimulationResult(block([okCall([ethOut(WETH), deposit(WETH, ME), deposit(WETH, ME)])]), 1, ME);
+    expect(result.changes.filter((c) => c.type === 'erc20')).toHaveLength(1);
+  });
+
+  it('a contract outside the pinned list is ignored even with the same shape (e.g. a multisig Deposit)', () => {
+    const MULTISIG = '0x3333333333333333333333333333333333333333';
+    const result = parseSimulationResult(block([okCall([ethOut(MULTISIG), deposit(MULTISIG, ME)])]), 1, ME);
+    expect(result.changes).toEqual([
+      { type: 'native', callIndex: 0, direction: 'out', from: getAddress(ME), to: MULTISIG, amount: wad },
+    ]);
+    expect(result.skippedLogs).toBe(0);
+    // ...unless the caller lists it, and an empty list turns the decoding off.
+    const listed = parseSimulationResult(block([okCall([ethOut(MULTISIG), deposit(MULTISIG, ME)])]), 1, ME, {
+      wrappedNativeTokens: [MULTISIG],
+    });
+    expect(listed.changes.some((c) => c.type === 'erc20' && c.wrap === 'deposit')).toBe(true);
+    const off = parseSimulationResult(block([okCall([ethOut(WETH), deposit(WETH, ME)])]), 1, ME, { wrappedNativeTokens: [] });
+    expect(off.changes.some((c) => c.type === 'erc20')).toBe(false);
+  });
+
+  it('a deposit for someone else is ignored', () => {
+    const result = parseSimulationResult(block([okCall([ethOut(WETH), deposit(WETH, OTHER)])]), 1, ME);
+    expect(result.changes.filter((c) => c.type === 'erc20')).toEqual([]);
+  });
+
+  it('a wrapper that also emits a mint / burn Transfer is counted once', () => {
+    const mint = log(WETH, [TRANSFER_EVENT_TOPIC, topicOf(ZERO), topicOf(ME)], word(wad));
+    const minted = parseSimulationResult(block([okCall([ethOut(WETH), mint, deposit(WETH, ME)])]), 1, ME);
+    expect(minted.changes.filter((c) => c.type === 'erc20')).toEqual([
+      { type: 'erc20', callIndex: 0, direction: 'in', token: WETH, from: ZERO, to: getAddress(ME), amount: wad },
+    ]);
+    const burn = log(WETH, [TRANSFER_EVENT_TOPIC, topicOf(ME), topicOf(ZERO)], word(wad));
+    const burned = parseSimulationResult(block([okCall([burn, ethIn(WETH), withdrawal(WETH, ME)])]), 1, ME);
+    expect(burned.changes.filter((c) => c.type === 'erc20')).toHaveLength(1);
+    expect(burned.changes.find((c) => c.type === 'erc20')).not.toHaveProperty('wrap');
+  });
+
+  it('non-standard shapes from a pinned wrapper are skipped and counted, never guessed', () => {
+    const extraTopic = log(WETH, [DEPOSIT_EVENT_TOPIC, topicOf(ME), topicOf(OTHER)], word(wad));
+    const shortData = log(WETH, [DEPOSIT_EVENT_TOPIC, topicOf(ME)], '0x01');
+    const badAddress = log(WETH, [WITHDRAWAL_EVENT_TOPIC, '0x' + 'f'.repeat(64)], word(wad));
+    const result = parseSimulationResult(block([okCall([ethOut(WETH), extraTopic, shortData, badAddress])]), 1, ME);
+    expect(result.skippedLogs).toBe(3);
+    expect(result.changes.filter((c) => c.type === 'erc20')).toEqual([]);
+  });
+
+  it('a reverted wrap shows nothing', () => {
+    const result = parseSimulationResult(
+      block([{ status: '0x0', returnData: '0x', gasUsed: '0x5208', logs: [ethOut(WETH), deposit(WETH, ME)] }]),
+      1,
+      ME,
+    );
+    expect(result.changes).toEqual([]);
+  });
+
+  it('simulateAssetChanges passes the option through', async () => {
+    const { transport } = fakeTransport(() => block([okCall([ethOut(WETH), deposit(WETH, ME)])]));
+    const def = await simulateAssetChanges(transport, [{ from: ME, to: WETH, value: wad }], ME);
+    expect(def.changes.some((c) => c.type === 'erc20' && c.wrap === 'deposit')).toBe(true);
+    const off = await simulateAssetChanges(transport, [{ from: ME, to: WETH, value: wad }], ME, { wrappedNativeTokens: [] });
+    expect(off.changes.some((c) => c.type === 'erc20')).toBe(false);
   });
 });

@@ -156,7 +156,7 @@ export function ApprovalsScreen({ navigation }: Props) {
       const notes: string[] = [];
       let trackedTokens: Awaited<ReturnType<typeof listTokens>> = [];
       try {
-        trackedTokens = await listTokens();
+        trackedTokens = await listTokens(evmChain.caip2);
       } catch {
         trackedTokens = [];
       }
@@ -630,9 +630,7 @@ export function ApprovalsScreen({ navigation }: Props) {
             <Text style={[styles.body, { color: theme.text }]}>
               {nothingToCheckNote({ testnet: evmChain.testnet, nftIndexerConfigured: state.nftIndexerConfigured })}
             </Text>
-            {!evmChain.testnet ? (
-              <Button title="Manage tokens" variant="secondary" onPress={() => navigation.navigate('Tokens')} />
-            ) : null}
+            <Button title="Manage tokens" variant="secondary" onPress={() => navigation.navigate('Tokens')} />
           </>
         ) : null}
         {state.status === 'error' ? (

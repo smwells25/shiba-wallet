@@ -113,6 +113,49 @@ export const NATIVE_TRANSFER_PSEUDO_ADDRESS = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 /** type(uint256).max — the conventional "unlimited" ERC-20 allowance. */
 export const MAX_UINT256 = (1n << 256n) - 1n;
 
+/**
+ * Wrapped-ether events. WETH9 (the canonical Wrapped Ether contract,
+ * gnosis/canonical-weth contracts/WETH9.sol at commit
+ * 0dd1ea3e295eef916d0c6223ec63141137d22d67, read 2026-10-04) declares
+ * `event Deposit(address indexed dst, uint wad)` and
+ * `event Withdrawal(address indexed src, uint wad)` (`uint` is uint256 in
+ * the canonical signature). deposit() credits msg.sender with msg.value and
+ * emits Deposit only; withdraw(wad) debits msg.sender, sends the ether back
+ * with transfer() and emits Withdrawal only. Neither emits Transfer, so
+ * without these events a wrap shows only the ether leaving (finding F5 of
+ * the phase 11 emulator pass).
+ */
+export const DEPOSIT_EVENT_TOPIC = eventTopic('Deposit(address,uint256)');
+export const WITHDRAWAL_EVENT_TOPIC = eventTopic('Withdrawal(address,uint256)');
+
+/**
+ * Wrapped-ether contracts whose Deposit / Withdrawal events are decoded
+ * (lowercase). Pinned because the same event shape is used with other
+ * meanings — the old Gnosis MultiSigWallet, for example, emits
+ * `Deposit(address indexed sender, uint value)` when it RECEIVES ether, and
+ * many vaults emit a Deposit(address,uint256) for an underlying token —
+ * so decoding the event from any contract would report tokens the wallet
+ * never receives. Each entry was checked on 2026-10-04: listed by the cited
+ * source, and its runtime code (eth_getCode on the publicnode endpoints)
+ * contains both topics above and its symbol() answers "WETH".
+ *  - 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2: Ethereum mainnet WETH9
+ *    (gnosis/canonical-weth README; Uniswap v3 Ethereum deployments page).
+ *  - 0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14: Ethereum Sepolia WETH
+ *    (Uniswap v3 Ethereum deployments page, "Sepolia 11155111 WETH").
+ *  - 0x4200000000000000000000000000000000000006: the OP-stack WETH9
+ *    predeploy (docs.base.org Base contracts page, Base Sepolia L2
+ *    contracts, "WETH9").
+ * The list is address-only (the parser does not know the chain); a caller
+ * may pass its own list through AssetDiffOptions.wrappedNativeTokens.
+ */
+export const WRAPPED_NATIVE_TOKENS: readonly string[] = [
+  '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',
+  '0xfff9976782d46cc05630d1f6ebab18b2324d6b14',
+  '0x4200000000000000000000000000000000000006',
+];
+
+const ZERO_ADDRESS_LOWER = '0x0000000000000000000000000000000000000000';
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -148,6 +191,13 @@ export type AssetChange =
       to: string;
       /** Token base units (decimals are not part of the event). */
       amount: bigint;
+      /**
+       * Present when the change was decoded from a wrapped-ether Deposit
+       * ('deposit': `from` is the zero address, the wallet is credited) or
+       * Withdrawal ('withdrawal': `to` is the zero address, the wallet is
+       * debited) instead of a Transfer event. See WRAPPED_NATIVE_TOKENS.
+       */
+      wrap?: 'deposit' | 'withdrawal';
     })
   | (ChangeBase & {
       type: 'erc721';
@@ -352,7 +402,24 @@ function decodeTwoUintArrays(words: bigint[]): [bigint[], bigint[]] | null {
   return [ids, values];
 }
 
-type Decoded = { kind: 'changes'; changes: AssetChange[] } | { kind: 'ignored' } | { kind: 'skipped' };
+/**
+ * A wrapped-ether Deposit or Withdrawal naming the wallet. It becomes a
+ * balance change only after parseSimulationResult has matched it with the
+ * ether movement it implies (see resolveWraps).
+ */
+interface WrapCandidate {
+  kind: 'wrap';
+  wrap: 'deposit' | 'withdrawal';
+  /** Lowercase emitter (the wrapped-ether contract). */
+  token: string;
+  amount: bigint;
+}
+
+type Decoded =
+  | { kind: 'changes'; changes: AssetChange[] }
+  | WrapCandidate
+  | { kind: 'ignored' }
+  | { kind: 'skipped' };
 
 const IGNORED: Decoded = { kind: 'ignored' };
 const SKIPPED: Decoded = { kind: 'skipped' };
@@ -362,12 +429,25 @@ const SKIPPED: Decoded = { kind: 'skipped' };
  * `ignored` (swaps, syncs … are normal); known token-event topics with a
  * non-standard shape are `skipped` and counted, never guessed at.
  */
-function decodeLog(log: RawLog, me: string, callIndex: number): Decoded {
+function decodeLog(log: RawLog, me: string, callIndex: number, wrappers: ReadonlySet<string>): Decoded {
   const topic0 = log.topics[0]?.toLowerCase();
   if (topic0 === undefined) return IGNORED;
   const emitter = log.address.toLowerCase();
   const n = log.topics.length;
   const dataBytes = (log.data.length - 2) / 2;
+
+  if ((topic0 === DEPOSIT_EVENT_TOPIC || topic0 === WITHDRAWAL_EVENT_TOPIC) && wrappers.has(emitter)) {
+    // WETH9 shape: one indexed address (dst / src) and one uint256 word.
+    const account = log.topics[1] ? topicAddress(log.topics[1]) : null;
+    if (n !== 2 || dataBytes !== 32 || !account) return SKIPPED;
+    if (account !== me) return IGNORED;
+    return {
+      kind: 'wrap',
+      wrap: topic0 === DEPOSIT_EVENT_TOPIC ? 'deposit' : 'withdrawal',
+      token: emitter,
+      amount: BigInt(log.data),
+    };
+  }
 
   if (topic0 === TRANSFER_EVENT_TOPIC) {
     const from = log.topics[1] ? topicAddress(log.topics[1]) : null;
@@ -519,6 +599,81 @@ function decodeLog(log: RawLog, me: string, callIndex: number): Decoded {
   return IGNORED;
 }
 
+/**
+ * Turns one call's wrapped-ether candidates into balance changes, in log
+ * order. A candidate counts only when the call also moved the matching
+ * ether, as the node reports it through traceTransfers (pseudo-events from
+ * 0xeeee…, which no contract can emit): for a Deposit, exactly `amount` wei
+ * from the wallet to the wrapper; for a Withdrawal, exactly `amount` wei
+ * from the wrapper to the wallet. Each ether movement backs at most one
+ * candidate. Without it the candidate is dropped, never guessed at (a
+ * receipt, as decoded by activity-decode.ts, has no pseudo-events, so
+ * receipts are unchanged by this decoding).
+ *
+ * A wrapper that ALSO emits a mint or burn Transfer for the same deposit or
+ * withdrawal (Solmate's WETH, for example, calls _mint and then emits
+ * Deposit) is already shown by that Transfer; the candidate is then dropped
+ * so the amount is not counted twice. Matching is one-to-one on token,
+ * wallet and exact amount within the same call.
+ *
+ * Trust: like Transfer events, these are emitted by the contract itself;
+ * the pinned list (WRAPPED_NATIVE_TOKENS) and the ether-movement match
+ * limit which contracts are believed, and the change carries the emitter
+ * address so UIs label the token by address.
+ */
+function resolveWraps(entries: (AssetChange | WrapCandidate)[], me: string, callIndex: number): AssetChange[] {
+  const changes = entries.filter((e): e is AssetChange => !isWrapCandidate(e));
+  const usedNative = new Set<AssetChange>();
+  const usedTransfer = new Set<AssetChange>();
+  const out: AssetChange[] = [];
+  for (const entry of entries) {
+    if (!isWrapCandidate(entry)) {
+      out.push(entry);
+      continue;
+    }
+    const deposit = entry.wrap === 'deposit';
+    const backing = changes.find(
+      (c) =>
+        c.type === 'native' &&
+        !usedNative.has(c) &&
+        c.amount === entry.amount &&
+        c.from.toLowerCase() === (deposit ? me : entry.token) &&
+        c.to.toLowerCase() === (deposit ? entry.token : me),
+    );
+    if (!backing) continue;
+    usedNative.add(backing);
+    const duplicate = changes.find(
+      (c) =>
+        c.type === 'erc20' &&
+        c.wrap === undefined &&
+        !usedTransfer.has(c) &&
+        c.token.toLowerCase() === entry.token &&
+        c.amount === entry.amount &&
+        c.from.toLowerCase() === (deposit ? ZERO_ADDRESS_LOWER : me) &&
+        c.to.toLowerCase() === (deposit ? me : ZERO_ADDRESS_LOWER),
+    );
+    if (duplicate) {
+      usedTransfer.add(duplicate);
+      continue;
+    }
+    out.push({
+      type: 'erc20',
+      callIndex,
+      direction: deposit ? 'in' : 'out',
+      token: checksum(entry.token),
+      from: deposit ? checksum(ZERO_ADDRESS_LOWER) : checksum(me),
+      to: deposit ? checksum(me) : checksum(ZERO_ADDRESS_LOWER),
+      amount: entry.amount,
+      wrap: entry.wrap,
+    });
+  }
+  return out;
+}
+
+function isWrapCandidate(entry: AssetChange | WrapCandidate): entry is WrapCandidate {
+  return (entry as { kind?: unknown }).kind === 'wrap';
+}
+
 function revertReasonOf(call: Record<string, unknown>): string {
   const error = call.error as { data?: unknown; message?: unknown } | undefined;
   const errorData = error?.data;
@@ -548,7 +703,9 @@ export function parseSimulationResult(
   result: unknown,
   expectedCalls: number,
   wallet: string,
+  options: Pick<AssetDiffOptions, 'wrappedNativeTokens'> = {},
 ): AssetDiffResult {
+  const wrappers = new Set((options.wrappedNativeTokens ?? WRAPPED_NATIVE_TOKENS).map((a) => a.toLowerCase()));
   function malformed(detail: string): never {
     throw new SimulationUnsupportedError(
       'malformed-response',
@@ -587,15 +744,18 @@ export function parseSimulationResult(
     calls.push({ ok: true, ...(gasUsed !== undefined ? { gasUsed } : {}) });
     const logs = call.logs;
     if (!Array.isArray(logs)) malformed(`call ${callIndex} succeeded without a logs array`);
+    const entries: (AssetChange | WrapCandidate)[] = [];
     for (const log of logs as unknown[]) {
       if (!isRawLog(log)) {
         skippedLogs += 1;
         continue;
       }
-      const decoded = decodeLog(log, me, callIndex);
-      if (decoded.kind === 'changes') changes.push(...decoded.changes);
+      const decoded = decodeLog(log, me, callIndex, wrappers);
+      if (decoded.kind === 'changes') entries.push(...decoded.changes);
+      else if (decoded.kind === 'wrap') entries.push(decoded);
       else if (decoded.kind === 'skipped') skippedLogs += 1;
     }
+    changes.push(...resolveWraps(entries, me, callIndex));
   });
 
   return { ok: calls.every((c) => c.ok), calls, changes, skippedLogs };
@@ -617,6 +777,12 @@ function toCallObject(call: AssetDiffCall): Record<string, string> {
 export interface AssetDiffOptions {
   /** Block to simulate on top of; default 'latest'. */
   blockTag?: string;
+  /**
+   * Wrapped-ether contracts whose Deposit / Withdrawal events count as
+   * balance changes; default WRAPPED_NATIVE_TOKENS. An empty list turns the
+   * decoding off.
+   */
+  wrappedNativeTokens?: readonly string[];
 }
 
 /**
@@ -655,7 +821,7 @@ export async function simulateAssetChanges(
     }
     throw error;
   }
-  return parseSimulationResult(result, calls.length, wallet);
+  return parseSimulationResult(result, calls.length, wallet, options);
 }
 
 /**

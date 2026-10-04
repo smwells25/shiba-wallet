@@ -12,28 +12,43 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { formatAssetId } from '@shiba-wallet/core';
 import type { FungibleAsset } from '@shiba-wallet/core';
 import type { RootStackParamList } from '../navigation';
-import { Button, screenStyle } from '../components';
+import { Button, WarningBox, screenStyle } from '../components';
 import { NoEndpointError, withEndpoint } from '../config/networks';
 import { OfflineNotice, TechnicalDetail, describeNetworkError } from '../wallet/connectivity';
 import { useTheme } from '../theme';
 import { usePrefs } from '../wallet/PrefsContext';
+import { useWallet } from '../wallet/WalletContext';
 import { EVM_CHAIN_ID } from '../wallet/send';
+import { maskAmount } from '../config/prefs';
+import { spokenAmount } from '../wallet/balances';
 import {
   fetchErc20Metadata,
   validateErc20ContractAddress,
   type Erc20Metadata,
 } from '../wallet/erc20';
 import { addToken, listTokens, removeToken } from '../wallet/tokens';
+import {
+  FIND_TOKENS_WARNING,
+  TOKEN_NAME_MAX,
+  TOKEN_SYMBOL_MAX,
+  cleanTokenText,
+  discoverUntrackedTokens,
+  discoverySummary,
+  type DiscoveredToken,
+  type DiscoveryOutcome,
+} from '../wallet/token-discovery';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Tokens'>;
 
 /**
  * Fetched metadata strings are attacker-controlled contract output; cap
- * them so a hostile token cannot flood the UI. Same caps apply to manual
- * entry for consistency.
+ * them so a hostile token cannot flood the UI, and strip control,
+ * bidirectional and zero-width characters (token-discovery.ts
+ * cleanTokenText, the balance-change preview's rule). Same caps apply to
+ * manual entry for consistency.
  */
-const MAX_SYMBOL_LENGTH = 16;
-const MAX_NAME_LENGTH = 48;
+const MAX_SYMBOL_LENGTH = TOKEN_SYMBOL_MAX;
+const MAX_NAME_LENGTH = TOKEN_NAME_MAX;
 
 function shortAddress(address: string): string {
   return `${address.slice(0, 10)}…${address.slice(-8)}`;
@@ -55,10 +70,19 @@ interface Preview {
  * always come from the chain because honest balance display depends on
  * them. Each tracked token row links into the send screen's token mode
  * (phase 4 item 3).
+ *
+ * Per chain (phase 13 item 1): the screen manages the ACTIVE EVM profile's
+ * own list (mainnet, Ethereum Sepolia or Base Sepolia); lookups run against
+ * that network's endpoint and a token is always stored under the chain the
+ * endpoint that read it serves. "Find my tokens" lists untracked holdings
+ * through the configured history indexer (wallet/token-discovery.ts) and
+ * adds nothing until the user picks a token.
  */
 export function TokensScreen({ navigation }: Props) {
   const theme = useTheme();
-  const { evmChain } = usePrefs();
+  const { evmChain, hideAmounts } = usePrefs();
+  const { accounts } = useWallet();
+  const owner = accounts.find((a) => a.chainId === EVM_CHAIN_ID)?.address ?? null;
   const [tokens, setTokens] = useState<FungibleAsset[]>([]);
   const [address, setAddress] = useState('');
   const [lookingUp, setLookingUp] = useState(false);
@@ -68,10 +92,15 @@ export function TokensScreen({ navigation }: Props) {
   const [preview, setPreview] = useState<Preview | null>(null);
   const [manualSymbol, setManualSymbol] = useState('');
   const [manualName, setManualName] = useState('');
+  /** The chain the preview was read from (the endpoint's own network). */
+  const [previewChain, setPreviewChain] = useState<string | null>(null);
+  const [discovering, setDiscovering] = useState(false);
+  const [discovery, setDiscovery] = useState<{ chain: string; outcome: DiscoveryOutcome } | null>(null);
+  const [discoveryError, setDiscoveryError] = useState<{ message: string; technical: string | null } | null>(null);
 
   const reload = useCallback(() => {
-    listTokens().then(setTokens, () => setTokens([]));
-  }, []);
+    listTokens(evmChain.caip2).then(setTokens, () => setTokens([]));
+  }, [evmChain.caip2]);
 
   useEffect(reload, [reload]);
 
@@ -82,6 +111,7 @@ export function TokensScreen({ navigation }: Props) {
     setLookupTechnical(null);
     setManualSymbol('');
     setManualName('');
+    setPreviewChain(null);
   };
 
   const lookUp = async () => {
@@ -96,9 +126,16 @@ export function TokensScreen({ navigation }: Props) {
     setLookingUp(true);
     try {
       // Resolved now, with the shared failover rule (config/networks.ts).
-      const { value: metadata } = await withEndpoint(EVM_CHAIN_ID, (ep) =>
+      const { value: metadata, endpoint: used } = await withEndpoint(EVM_CHAIN_ID, (ep) =>
         fetchErc20Metadata(ep.url, validation.normalized),
       );
+      // The token is stored under the chain that answered, and only when
+      // that is the network on screen (a mode flip mid-lookup is refused).
+      if (used.network.chainId !== evmChain.caip2) {
+        setLookupError('The network changed while the token was looked up. Look it up again.');
+        return;
+      }
+      setPreviewChain(used.network.chainId);
       setPreview({ address: validation.normalized, metadata });
       setManualSymbol('');
       setManualName('');
@@ -117,23 +154,19 @@ export function TokensScreen({ navigation }: Props) {
 
   // An empty decoded string counts as missing too: a token symbol of ""
   // would be indistinguishable from a bug in every list it appears in.
-  const fetchedSymbol = preview?.metadata.symbol?.trim() ?? '';
-  const fetchedName = preview?.metadata.name?.trim() ?? '';
-  const effectiveSymbol = (fetchedSymbol !== '' ? fetchedSymbol : manualSymbol.trim()).slice(
-    0,
-    MAX_SYMBOL_LENGTH,
-  );
-  const effectiveName = (fetchedName !== '' ? fetchedName : manualName.trim()).slice(
-    0,
-    MAX_NAME_LENGTH,
-  );
+  const fetchedSymbol = cleanTokenText(preview?.metadata.symbol, MAX_SYMBOL_LENGTH) ?? '';
+  const fetchedName = cleanTokenText(preview?.metadata.name, MAX_NAME_LENGTH) ?? '';
+  const effectiveSymbol =
+    fetchedSymbol !== '' ? fetchedSymbol : (cleanTokenText(manualSymbol, MAX_SYMBOL_LENGTH) ?? '');
+  const effectiveName =
+    fetchedName !== '' ? fetchedName : (cleanTokenText(manualName, MAX_NAME_LENGTH) ?? '');
 
   const confirmAdd = async () => {
-    if (!preview || effectiveSymbol === '') return;
+    if (!preview || effectiveSymbol === '' || previewChain !== evmChain.caip2) return;
     const asset: FungibleAsset = {
       kind: 'fungible',
       assetId: {
-        chainId: EVM_CHAIN_ID,
+        chainId: previewChain,
         namespace: 'erc20',
         reference: preview.address,
       },
@@ -150,6 +183,60 @@ export function TokensScreen({ navigation }: Props) {
       Alert.alert('Not added', e instanceof Error ? e.message : 'Could not add this token.');
     }
   };
+
+  const findTokens = async () => {
+    if (!owner) return;
+    const chain = evmChain.caip2;
+    setDiscovering(true);
+    setDiscovery(null);
+    setDiscoveryError(null);
+    try {
+      const { value: outcome } = await withEndpoint(EVM_CHAIN_ID, (ep) =>
+        discoverUntrackedTokens({
+          chainCaip2: chain,
+          owner,
+          rpc: { url: ep.url, chainId: ep.network.chainId },
+        }),
+      );
+      setDiscovery({ chain, outcome });
+    } catch (e) {
+      if (e instanceof NoEndpointError) {
+        setDiscoveryError({ message: `No RPC endpoint is configured for ${evmChain.label}.`, technical: null });
+      } else {
+        const { title, detail, technical } = describeNetworkError(e, 'your token list');
+        setDiscoveryError({ message: `${title}\n${detail}`, technical });
+      }
+    } finally {
+      setDiscovering(false);
+    }
+  };
+
+  /** Tracks one discovered token (the user's explicit pick). */
+  const trackDiscovered = async (found: DiscoveredToken) => {
+    if (!found.asset || found.asset.assetId.chainId !== evmChain.caip2) return;
+    try {
+      await addToken(found.asset);
+      setDiscovery((prev) =>
+        prev && prev.outcome.status === 'ok'
+          ? {
+              ...prev,
+              outcome: {
+                ...prev.outcome,
+                tokens: prev.outcome.tokens.filter((t) => t.contract !== found.contract),
+                alreadyTracked: prev.outcome.alreadyTracked + 1,
+              },
+            }
+          : prev,
+      );
+      reload();
+    } catch (e) {
+      Alert.alert('Not added', e instanceof Error ? e.message : 'Could not add this token.');
+    }
+  };
+
+  // Results belong to the chain they were found on; after a mode flip they
+  // are not shown (and cannot be tracked) on the other network.
+  const shownDiscovery = discovery && discovery.chain === evmChain.caip2 ? discovery.outcome : null;
 
   const onRemove = (token: FungibleAsset) => {
     const id = formatAssetId(token.assetId);
@@ -173,32 +260,18 @@ export function TokensScreen({ navigation }: Props) {
 
   const needsManualEntry = preview !== null && fetchedSymbol === '';
 
-  // Token management is a mainnet feature: the tracked list holds
-  // Ethereum-mainnet ERC-20s, and metadata/balance lookups would hit the
-  // Sepolia endpoint in test mode (wrong chain). State it plainly rather
-  // than half-working.
-  if (evmChain.testnet) {
-    return (
-      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>Tokens are mainnet-only</Text>
-        <Text style={[styles.hint, { color: theme.textMuted }]}>
-          Sepolia test mode is on, and your tracked ERC-20 tokens are
-          Ethereum mainnet assets. Turn off test mode in Settings →
-          Developer to see and manage them again — the list itself is kept
-          and unchanged.
-        </Text>
-      </ScrollView>
-    );
-  }
-
   return (
     <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
       <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>Tracked tokens</Text>
+        <Text style={[styles.sectionTitle, { color: theme.text }]}>Tracked tokens on {evmChain.label}</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          ERC-20 balances shown on Home under Ethereum. Tokens arrive at
-          your Ethereum address, and Send starts a token transfer — the
-          network fee for a token send is paid in ETH.
+          ERC-20 balances shown on Home under {evmChain.label}. Each network
+          keeps its own list. Tokens arrive at your address, and Send starts
+          a token transfer — the network fee for a token send is paid in{' '}
+          {evmChain.displaySymbol}.
+          {evmChain.testnet
+            ? ' This is a test network: its tokens (such as Circle\'s test USDC and EURC) have no value.'
+            : ''}
         </Text>
         {tokens.length === 0 ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
@@ -245,9 +318,101 @@ export function TokensScreen({ navigation }: Props) {
       </View>
 
       <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: theme.text }]}>Find my tokens</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          Lists tokens your address holds on {evmChain.label} that you do not
+          track yet, using the history indexer in Settings. Their details are
+          read from each token contract.
+        </Text>
+        <WarningBox>{FIND_TOKENS_WARNING}</WarningBox>
+        {discovering ? (
+          <ActivityIndicator size="small" color={theme.textMuted} />
+        ) : (
+          <Button
+            title={shownDiscovery ? 'Search again' : 'Find my tokens'}
+            variant="secondary"
+            onPress={() => void findTokens()}
+            disabled={!owner}
+          />
+        )}
+        {discoveryError ? (
+          <Text accessibilityLiveRegion="polite" style={[styles.error, { color: theme.danger }]}>
+            {discoveryError.message}
+          </Text>
+        ) : null}
+        {discoveryError ? <TechnicalDetail text={discoveryError.technical} /> : null}
+        {shownDiscovery && shownDiscovery.status !== 'ok' ? (
+          <Text accessibilityLiveRegion="polite" style={[styles.hint, { color: theme.textMuted }]}>
+            {shownDiscovery.note}
+          </Text>
+        ) : null}
+        {shownDiscovery && shownDiscovery.status === 'unsupported' ? (
+          <TechnicalDetail text={shownDiscovery.technical} />
+        ) : null}
+        {shownDiscovery && shownDiscovery.status === 'ok' ? (
+          <>
+            <Text accessibilityLiveRegion="polite" style={[styles.hint, { color: theme.textMuted }]}>
+              {discoverySummary(shownDiscovery)}
+            </Text>
+            {shownDiscovery.tokens.map((found) => (
+              <View
+                key={found.contract}
+                style={[styles.previewCard, { backgroundColor: theme.card, borderColor: theme.border }]}
+              >
+                <Text style={[styles.untrackedTag, { color: theme.textMuted }]}>UNTRACKED TOKEN</Text>
+                <Text style={[styles.previewTitle, { color: theme.text }]}>
+                  {found.symbol ?? 'Symbol unavailable'}
+                  {found.name && found.name !== found.symbol ? ` — ${found.name}` : ''}
+                </Text>
+                <Text
+                  accessibilityLabel={`Balance ${hideAmounts ? 'hidden' : spokenAmount(found.display)}`}
+                  style={[styles.previewMeta, { color: theme.text }]}
+                >
+                  Balance: {maskAmount(found.display, hideAmounts)}
+                </Text>
+                <Text style={[styles.tokenAddress, { color: theme.textMuted }]}>
+                  Contract {found.contract}
+                </Text>
+                {found.lookalikeOf ? (
+                  <Text style={[styles.error, { color: theme.danger }]}>
+                    Warning: this token uses the symbol {found.lookalikeOf} but its contract is
+                    DIFFERENT from the {found.lookalikeOf} you track or the wallet knows on{' '}
+                    {evmChain.label}. It may be a fake.
+                  </Text>
+                ) : null}
+                {found.asset ? (
+                  <Button
+                    title={`Track ${found.asset.symbol}`}
+                    accessibilityLabel={`Track ${found.asset.symbol}, contract ${found.contract}`}
+                    variant="secondary"
+                    onPress={() => void trackDiscovered(found)}
+                  />
+                ) : (
+                  <>
+                    <Text style={[styles.hint, { color: theme.textMuted }]}>
+                      {found.note ?? 'The contract did not return a readable symbol.'} Add it
+                      through the address form below to enter a symbol yourself.
+                    </Text>
+                    <Button
+                      title="Use this address below"
+                      variant="secondary"
+                      onPress={() => {
+                        resetForm();
+                        setAddress(found.contract);
+                      }}
+                    />
+                  </>
+                )}
+              </View>
+            ))}
+          </>
+        ) : null}
+      </View>
+
+      <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: theme.text }]}>Add a token</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          Paste the token&apos;s Ethereum contract address. Its symbol, name
+          Paste the token&apos;s contract address on {evmChain.label}. Its symbol, name
           and decimals are read from the contract itself; confirm before it
           is added. Anyone can deploy a token with any name — verify the
           contract address from a source you trust.
@@ -283,7 +448,7 @@ export function TokensScreen({ navigation }: Props) {
           <Button title="Look up token" onPress={() => void lookUp()} disabled={address.trim() === ''} />
         ) : null}
 
-        {preview ? (
+        {preview && previewChain === evmChain.caip2 ? (
           <View style={[styles.previewCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
             <Text style={[styles.previewTitle, { color: theme.text }]}>
               {fetchedSymbol !== '' ? fetchedSymbol : 'Symbol unavailable'}
@@ -428,5 +593,10 @@ const styles = StyleSheet.create({
   },
   previewButton: {
     flex: 1,
+  },
+  untrackedTag: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.6,
   },
 });

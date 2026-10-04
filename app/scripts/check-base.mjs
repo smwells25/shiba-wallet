@@ -52,7 +52,7 @@ import {
   serializeUnsignedEip1559,
 } from '../src/wallet/send.ts';
 import { prepareNftSend, sendNft } from '../src/wallet/send-nft.ts';
-import { prepareErc20Send } from '../src/wallet/send-erc20.ts';
+import { maxErc20Send, prepareErc20Send } from '../src/wallet/send-erc20.ts';
 import { EVM_BASE_SEPOLIA, EVM_MAINNET, EVM_SEPOLIA } from '../src/config/evm-chain.ts';
 import { RECORD_FILE_NAME_PATTERN, rebuildRecoveryRecord, recordExportFileName } from '../src/wallet/recovery.ts';
 import { KERNEL_ACCOUNT_0, OWNER_0 } from './fakes-kernel.mjs';
@@ -600,7 +600,8 @@ for (const [profile, hex] of [
 }
 
 // ---------------------------------------------------------------------------
-// 5. NFT send on Base Sepolia; ERC-20 stays mainnet-only
+// 5. NFT and ERC-20 sends on Base Sepolia (ERC-20 per chain since phase 13
+//    item 1: a Base Sepolia token quotes on Base with the L1 data fee)
 // ---------------------------------------------------------------------------
 
 console.log('NFT and ERC-20 sends:');
@@ -665,11 +666,38 @@ await checkRejects(
 scenario = defaultScenario('0x14a34');
 requests = [];
 await checkRejects(
-  'ERC-20 quotes stay pinned to mainnet (a Base endpoint is refused before any oracle call)',
+  'a MAINNET token (default chain) is refused on a Base endpoint before any oracle call',
   () => prepareErc20Send({ url: URL, from: FROM, to: TO, contract: NFT_CONTRACT, amount: 1n, symbol: 'T', decimals: 6 }),
   /expected 1 \(Ethereum mainnet\)/,
 );
 check('ERC-20 refusal made no oracle call', oracleCalls().length === 0);
+{
+  const BASE_USDC = '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
+  scenario = defaultScenario('0x14a34');
+  requests = [];
+  const ercQuote = await prepareErc20Send({
+    url: URL, from: FROM, to: TO, contract: BASE_USDC, amount: 1n, symbol: 'USDC', decimals: 6,
+    chainCaip2: EVM_BASE_SEPOLIA.caip2,
+  });
+  const ercL2 = 21000n * 3_000_000n;
+  check('a Base Sepolia token quotes on Base with the L1 data fee reserve', ercQuote.chainId === 84532n && ercQuote.opStack?.l1DataFee === reserve);
+  check('ERC-20 fee on Base = L2 fee + L1 reserve', ercQuote.fee === ercL2 + reserve, `${ercQuote.fee}`);
+  const ercPriced = ethers.Transaction.from(pricedUnsignedTx());
+  check('ERC-20 on Base: the priced transaction targets the token with the transfer calldata, value 0',
+    ercPriced.to === BASE_USDC && ercPriced.data === toHex(ercQuote.data) && ercPriced.value === 0n);
+  scenario = defaultScenario('0x14a34');
+  scenario.balance = ercL2 + reserve - 1n;
+  requests = [];
+  await checkRejects(
+    'ERC-20 Max on Base counts the L1 data fee (ETH one wei short of L2 + reserve is refused)',
+    () => maxErc20Send(URL, FROM, BASE_USDC, TO, EVM_BASE_SEPOLIA.caip2),
+    /Not enough ETH to pay the network fee/,
+  );
+  check('… and the Max check asked the oracle', oracleCalls().some((r) => r.params[0].data.startsWith(GET_L1_FEE)));
+  scenario = defaultScenario('0x14a34');
+  scenario.balance = ercL2 + reserve;
+  check('ERC-20 Max on Base with exactly L2 + reserve returns the full token balance', (await maxErc20Send(URL, FROM, BASE_USDC, TO, EVM_BASE_SEPOLIA.caip2)) === 10n ** 6n);
+}
 
 scenario = defaultScenario('0x14a34');
 await checkRejects(

@@ -139,6 +139,16 @@ export function formatBalanceDisplay(amount: bigint, decimals: number, maxFracti
 }
 
 /**
+ * A signed display amount for history rows: the sign goes directly in front
+ * of the number, and in front of the "<" of a dust amount
+ * (signedDisplay('+', '< 0.000001') === '+<0.000001'), so "-" never lands
+ * between "<" and the digits. `sign` is '', '+' or '−'.
+ */
+export function signedDisplay(sign: string, display: string): string {
+  return display.startsWith('< ') ? `${sign}<${display.slice(2)}` : `${sign}${display}`;
+}
+
+/**
  * The screen-reader form of a display amount: a leading "< " (from
  * formatBalanceDisplay) is read as "less than " rather than as a symbol.
  */

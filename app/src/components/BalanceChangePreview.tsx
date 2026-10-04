@@ -88,7 +88,7 @@ export function BalanceChangePreview({
     (async () => {
       let trackedTokens: Awaited<ReturnType<typeof listTokens>> = [];
       try {
-        trackedTokens = await listTokens();
+        trackedTokens = await listTokens(evmChain.caip2);
       } catch {
         trackedTokens = [];
       }

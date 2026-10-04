@@ -19,6 +19,12 @@ import type { BalanceState } from './useBalances.ts';
  * re-read from AsyncStorage on every reload, so additions/removals made on
  * the Tokens screen show up when Home regains focus, and endpoint edits in
  * Settings take effect on the next refresh.
+ *
+ * Per chain (phase 13 item 1): the hook lists the tracked tokens of the
+ * chain it is given (the ACTIVE EVM profile's CAIP-2 id), and a token's
+ * balance is only ever read from an endpoint serving that token's own
+ * chain (loadTokenBalance's expectedChain check), so a mode flip can never
+ * show a Sepolia balance under a mainnet token or the reverse.
  */
 export interface TokenBalancesHook {
   /** The tracked tokens, in stored order. */
@@ -50,7 +56,7 @@ export type TokenBalanceLoad =
 export async function loadTokenBalance(
   contract: string,
   owner: string,
-  options: { retryDelayMs?: number } = {},
+  options: { retryDelayMs?: number; expectedChain?: string } = {},
 ): Promise<TokenBalanceLoad> {
   // EVM_CHAIN_ID is the stable slot id; getEndpoint translates it to the
   // ACTIVE network (Sepolia in test mode), exactly like the native row.
@@ -58,13 +64,25 @@ export async function loadTokenBalance(
   if (!endpoint || endpoint.url === null) {
     return { status: 'unavailable', note: 'No Ethereum endpoint configured.' };
   }
+  // The token's own chain must be the chain the endpoint serves. A token
+  // listed for one network is never queried on another (balanceOf on the
+  // same address on another chain is a different contract, or none).
+  if (options.expectedChain !== undefined && endpoint.network.chainId !== options.expectedChain) {
+    return {
+      status: 'unavailable',
+      note: `This token is on another network (${options.expectedChain}); switch networks to see its balance.`,
+    };
+  }
   const outcome = await callWithFailover({ ...endpoint, url: endpoint.url }, (ep) =>
     fetchErc20Balance(ep.url, contract, owner, options.retryDelayMs),
   );
   return { status: 'ok', amount: outcome.value, endpoint: outcome.endpoint };
 }
 
-export function useTokenBalances(evmAddress: string | undefined): TokenBalancesHook {
+export function useTokenBalances(
+  evmAddress: string | undefined,
+  chainCaip2: string,
+): TokenBalancesHook {
   const [tokens, setTokens] = useState<FungibleAsset[]>([]);
   const [tokenBalances, setTokenBalances] = useState<Record<string, BalanceState>>({});
   // Bump on unmount so late responses from an unmounted screen are dropped.
@@ -80,7 +98,9 @@ export function useTokenBalances(evmAddress: string | undefined): TokenBalancesH
       const id = formatAssetId(token.assetId);
       setTokenState(id, { status: 'loading' });
       try {
-        const load = await loadTokenBalance(token.assetId.reference, owner);
+        const load = await loadTokenBalance(token.assetId.reference, owner, {
+          expectedChain: token.assetId.chainId,
+        });
         if (generation.current !== gen) return;
         if (load.status === 'unavailable') {
           setTokenState(id, { status: 'unavailable', note: load.note });
@@ -111,7 +131,7 @@ export function useTokenBalances(evmAddress: string | undefined): TokenBalancesH
     if (!evmAddress) return;
     const gen = generation.current;
     try {
-      const list = await listTokens();
+      const list = await listTokens(chainCaip2);
       if (generation.current !== gen) return;
       setTokens(list);
       // Drop stale states for tokens no longer tracked.
@@ -129,7 +149,7 @@ export function useTokenBalances(evmAddress: string | undefined): TokenBalancesH
       // listTokens falls back internally; reaching here means storage is
       // unusable — keep the last known list rather than blanking the UI.
     }
-  }, [evmAddress, fetchToken]);
+  }, [evmAddress, chainCaip2, fetchToken]);
 
   const refreshToken = useCallback(
     async (assetId: string) => {
@@ -159,13 +179,17 @@ export function useTokenBalances(evmAddress: string | undefined): TokenBalancesH
   // (App.tsx also remounts the navigator on a switch; this keeps the hook
   // correct on its own.) Declared before the caller's focus effect, so the
   // reload for the new address runs under the new generation.
-  const lastAddress = useRef(evmAddress);
+  // The same holds for a different chain (a mode flip in Settings →
+  // Developer): the previous chain's list and balances are dropped at once.
+  const lastKey = useRef(`${evmAddress}|${chainCaip2}`);
   useEffect(() => {
-    if (lastAddress.current === evmAddress) return;
-    lastAddress.current = evmAddress;
+    const key = `${evmAddress}|${chainCaip2}`;
+    if (lastKey.current === key) return;
+    lastKey.current = key;
     generation.current += 1;
+    setTokens([]);
     setTokenBalances({});
-  }, [evmAddress]);
+  }, [evmAddress, chainCaip2]);
 
   return { tokens, tokenBalances, reloadTokens, refreshToken };
 }

@@ -29,6 +29,7 @@
 // The signing key derives from the standard BIP-39 test mnemonic
 // ("abandon ... about"), which is public knowledge.
 
+import { readFileSync } from 'node:fs';
 import { Interface, Transaction, id as ethersId, zeroPadValue, getAddress } from 'ethers';
 import { evmKeyProvider, mnemonicToSeed } from '@shiba-wallet/core';
 import { MAX_UINT256, toHex } from '@shiba-wallet/chains-evm';
@@ -342,8 +343,10 @@ console.log('inputs:');
       sep[1].address === '0x08210F9170F89Ab7658F0B5E3fF39b0E03C594D4' && sep[1].symbol === 'EURC' && sep[1].decimals === 6,
     JSON.stringify(sep));
   const base = approvalTokensForChain([], 'eip155:84532');
-  check('Base Sepolia scan tokens = known USDC 0x036CbD53842c5426634e7929541eC2318f3dCF7e',
-    base.length === 1 && base[0].address === '0x036CbD53842c5426634e7929541eC2318f3dCF7e' && base[0].decimals === 6);
+  check('Base Sepolia scan tokens = known USDC 0x036CbD53842c5426634e7929541eC2318f3dCF7e + EURC 0x808456652fdb597867f38412077A9182bf77359F',
+    base.length === 2 && base[0].address === '0x036CbD53842c5426634e7929541eC2318f3dCF7e' && base[0].decimals === 6 &&
+      base[1].address === '0x808456652fdb597867f38412077A9182bf77359F' && base[1].symbol === 'EURC' && base[1].decimals === 6,
+    JSON.stringify(base));
   check('mainnet scan tokens = tracked only (no known list on mainnet)', JSON.stringify(approvalTokensForChain([USDC_MAINNET], MAINNET)) === JSON.stringify(mainnetTokens) && knownTokensForChain(MAINNET).length === 0);
   check('known list addresses are EIP-55 checksummed', Object.values(KNOWN_TEST_NETWORK_TOKENS).flat().every((t) => getAddress(t.assetId.reference) === t.assetId.reference));
   check('known tokens carry their own CAIP-2 chain', Object.entries(KNOWN_TEST_NETWORK_TOKENS).every(([chain, list]) => list.every((t) => t.assetId.chainId === chain && t.assetId.namespace === 'erc20')));
@@ -355,9 +358,16 @@ console.log('inputs:');
   check('empty state with an NFT indexer configured never asks to configure one',
     !/configure an NFT indexer/i.test(nothingToCheckNote({ testnet: true, ...nftOn })) && !/configure an NFT indexer/i.test(nothingToCheckNote({ testnet: false, ...nftOn })));
   check('empty state without an NFT indexer points at Settings → NFT indexer', /Settings → NFT indexer/.test(nothingToCheckNote({ testnet: true, nftIndexerConfigured: false })) && /Settings → NFT indexer/.test(nothingToCheckNote({ testnet: false, nftIndexerConfigured: false })));
-  check('test-network empty state never offers Manage tokens', !/Manage tokens/.test(nothingToCheckNote({ testnet: true, nftIndexerConfigured: false })));
+  // Tokens are tracked per network since phase 13 item 1, so every network's
+  // empty state offers Manage tokens and the test-network note no longer
+  // claims tracked tokens are mainnet assets.
+  check('test-network empty state offers Manage tokens (tokens are per network now)', /Manage tokens/.test(nothingToCheckNote({ testnet: true, nftIndexerConfigured: false })) && /Manage tokens/.test(nothingToCheckNote({ testnet: true, nftIndexerConfigured: true })));
+  check('no approvals copy says tracked tokens are mainnet assets',
+    ![approvalsScopeNote(true), approvalsScopeNote(false), nothingToCheckNote({ testnet: true, nftIndexerConfigured: true }), testnetTokensNote('Base Sepolia', knownTokenRefsForChain('eip155:84532')), testnetTokensNote('X', [])].some((t) => /mainnet assets|hidden on test networks/.test(t)));
+  check('the Approvals screen offers Manage tokens on every network and scans the active chain\'s list',
+    (() => { const src = readFileSync(new URL('../src/screens/ApprovalsScreen.tsx', import.meta.url), 'utf8'); return !src.includes('{!evmChain.testnet ? (\n              <Button title="Manage tokens"') && src.includes('listTokens(evmChain.caip2)'); })());
   const tnote = testnetTokensNote('Ethereum Sepolia', knownTokenRefsForChain(SEPOLIA));
-  check('test-network note names the known tokens and addresses, not the NFT indexer', /USDC, EURC/.test(tnote) && tnote.includes('0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238') && !/NFT indexer/.test(tnote), tnote);
+  check('test-network note names the known tokens and addresses, not the NFT indexer', /USDC, EURC/.test(tnote) && tnote.includes('0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238') && !/NFT indexer/.test(tnote) && /even if you do not track them/.test(tnote), tnote);
   check('scope note on a test network mentions Permit2 honestly', /Permit2/.test(approvalsScopeNote(true)) && approvalsScopeNote(false).startsWith('Only tokens you track'));
   const nft = (contract, spam, name) => ({
     contract, tokenId: 1n, standard: 'erc721', balance: 1n, spam, collectionName: name, contractName: null,

@@ -35,7 +35,13 @@ import { SpendingPolicyNotice, spendingGateForQuote } from '../components/Spendi
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
 import { requireLocalAuth } from '../wallet/biometric';
-import { fetchNativeBalance, formatUnits, parseUnits } from '../wallet/balances';
+import {
+  fetchNativeBalance,
+  formatBalanceDisplay,
+  formatUnits,
+  parseUnits,
+  spokenAmount,
+} from '../wallet/balances';
 import { fetchErc20Balance } from '../wallet/erc20';
 import { listTokens } from '../wallet/tokens';
 import {
@@ -259,18 +265,25 @@ export function SwapScreen({ navigation }: Props) {
     };
   }, []);
 
-  // Tracked tokens on the ACTIVE chain only. The tracked list holds
-  // Ethereum-mainnet assets today, so in Sepolia test mode this filter
-  // yields none and the screen says why — but nothing here hardcodes
-  // mainnet, so tokens for another chain would light up without changes.
+  // Tracked tokens on the ACTIVE chain only: tokens are per chain since
+  // phase 13 item 1, so this reads the active profile's own list (the
+  // filter below stays as a second guard against another chain's entry).
   useEffect(() => {
     let cancelled = false;
-    listTokens().then(
+    listTokens(evmChain.caip2).then(
       (list) => {
         if (cancelled) return;
         const active = list.filter((t) => t.assetId.chainId === evmChain.caip2);
         setTokens(active);
-        setBuyAsset((prev) => prev ?? active[0] ?? null);
+        // A token picked on another network (before a mode flip) never
+        // stays selected: it is not an asset on this chain. This effect runs
+        // only on mount and on a chain change, so the buy side is never kept
+        // as the native coin here: if it was, the sell side was a token of
+        // the previous chain and has just been reset to the native coin.
+        const tokenOnThisChain = (a: SwapAsset | null) =>
+          a !== null && a !== 'native' && a.assetId.chainId === evmChain.caip2;
+        setSellAsset((prev) => (prev === 'native' || tokenOnThisChain(prev) ? prev : 'native'));
+        setBuyAsset((prev) => (tokenOnThisChain(prev) ? prev : (active[0] ?? null)));
       },
       () => {
         if (!cancelled) setTokens([]);
@@ -1570,14 +1583,12 @@ export function SwapScreen({ navigation }: Props) {
 
       {tokens.length === 0 ? (
         <WarningBox>
-          {evmChain.testnet
-            ? 'No tracked tokens exist on the Sepolia test chain — the ' +
-              'tracked list holds mainnet assets, so there is nothing to ' +
-              'swap ETH against in test mode. (Note: 0x\'s published ' +
-              'supported-chain list covers mainnets only.) Turn off test ' +
-              'mode in Settings to swap.'
-            : 'Swapping needs at least one tracked token as the other side ' +
-              'of the pair. Add one under Settings → Tokens.'}
+          {`Swapping needs at least one tracked token on ${evmChain.label} as the ` +
+            'other side of the pair. Add one under Manage tokens on Home.' +
+            (evmChain.testnet
+              ? ' (Note: 0x\'s published supported-chain list covers mainnets only, so ' +
+                'quotes may be refused on a test network.)'
+              : '')}
         </WarningBox>
       ) : null}
 
@@ -1603,10 +1614,19 @@ export function SwapScreen({ navigation }: Props) {
           />
         ))}
       </View>
-      <Text style={[styles.hint, { color: theme.textMuted }]}>
+      <Text
+        accessibilityLabel={
+          sellBalance !== null
+            ? `Balance ${spokenAmount(formatBalanceDisplay(sellBalance, sellDecimals))} ${sellSymbol}`
+            : undefined
+        }
+        style={[styles.hint, { color: theme.textMuted }]}
+      >
         Balance:{' '}
         {sellBalance !== null
-          ? `${formatUnits(sellBalance, sellDecimals)} ${sellSymbol}`
+          ? // formatBalanceDisplay: a non-zero dust balance reads
+            // "< 0.000001", never "0" (phase 12 follow-up).
+            `${formatBalanceDisplay(sellBalance, sellDecimals)} ${sellSymbol}`
           : sellBalanceFailed
             ? 'could not be loaded right now.'
             : '…'}

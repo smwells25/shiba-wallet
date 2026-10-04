@@ -1,18 +1,34 @@
 import type { DerivedAccount } from '@shiba-wallet/core';
+import { keccak_256 } from '@noble/hashes/sha3.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import {
   KERNEL_V3_3_7702_DELEGATE,
   NodeClient,
   ZERO_ADDRESS,
+  decodeUint256,
+  encodeFunctionCall,
   httpTransport,
+  minimalBytes,
+  rlpEncode,
   readDelegationStatus,
   selfSponsoredAuthorizationNonce,
   setCodeIntrinsicGas,
   signEip7702Authorization,
   signEip7702Transaction,
+  toBytes,
+  toHex,
   type JsonRpcTransport,
 } from '@shiba-wallet/chains-evm';
 import { assertFeatureAllowed, eip155Caip2 } from '../config/readiness.ts';
-import { notifySendAccepted, quoteEndpointChange } from './send.ts';
+import {
+  L1_DATA_FEE_HEADROOM_PERCENT,
+  OP_STACK_GAS_PRICE_ORACLE,
+  chainHasL1DataFee,
+  notifySendAccepted,
+  opStackFeeTotal,
+  quoteEndpointChange,
+  type OpStackFees,
+} from './send.ts';
 
 /**
  * EIP-7702 "Upgrade this account" glue for the app (phase 8 item 1, app
@@ -295,8 +311,17 @@ export interface SetCodeQuote {
   gasLimit: bigint;
   maxFeePerGas: bigint;
   maxPriorityFeePerGas: bigint;
-  /** Worst case: gasLimit × maxFeePerGas. */
+  /**
+   * Worst case: gasLimit × maxFeePerGas, plus on an OP-stack network the
+   * layer 1 data fee reserve and the operator fee (`opStack`).
+   */
   fee: bigint;
+  /**
+   * OP-stack fee parts (Base Sepolia), already included in `fee`. Absent on
+   * chains without an L1 data fee (Ethereum mainnet and Sepolia), whose
+   * quotes are unchanged.
+   */
+  opStack?: OpStackFees;
   balance: bigint;
   /** Status when quoted. */
   statusBefore: AccountDelegation;
@@ -310,6 +335,136 @@ export interface SetCodeQuote {
 }
 
 /**
+ * The unsigned set-code (type 0x04) transaction as GasPriceOracle.getL1Fee
+ * expects it: 0x04 || rlp([chainId, nonce, maxPriorityFeePerGas,
+ * maxFeePerGas, gasLimit, to, value, data, accessList, authorizationList]),
+ * the payload whose keccak256 the sender signs (EIP-7702 "Set Code
+ * Transaction"; the same ten fields, in the same order, as the engine's
+ * eip7702.ts setCodePayloadFields, whose bytes the engine does not export).
+ * Each authorization is [chainId, address, nonce, yParity, r, s].
+ */
+export function serializeUnsignedSetCode(tx: {
+  chainId: bigint;
+  nonce: bigint;
+  maxPriorityFeePerGas: bigint;
+  maxFeePerGas: bigint;
+  gasLimit: bigint;
+  to: string;
+  authorizations: { chainId: bigint; address: string; nonce: bigint; yParity: number; r: Uint8Array; s: Uint8Array }[];
+}): Uint8Array {
+  const strip = (b: Uint8Array) => {
+    let i = 0;
+    while (i < b.length && b[i] === 0) i++;
+    return b.slice(i);
+  };
+  const body = rlpEncode([
+    minimalBytes(tx.chainId),
+    minimalBytes(tx.nonce),
+    minimalBytes(tx.maxPriorityFeePerGas),
+    minimalBytes(tx.maxFeePerGas),
+    minimalBytes(tx.gasLimit),
+    toBytes(tx.to),
+    minimalBytes(0n),
+    new Uint8Array(0),
+    [],
+    tx.authorizations.map((a) => [
+      minimalBytes(a.chainId),
+      toBytes(a.address),
+      minimalBytes(a.nonce),
+      minimalBytes(BigInt(a.yParity)),
+      strip(a.r),
+      strip(a.s),
+    ]),
+  ]);
+  const out = new Uint8Array(1 + body.length);
+  out[0] = 0x04;
+  out.set(body, 1);
+  return out;
+}
+
+/**
+ * Stand-in signature values for the authorization tuple when the L1 data fee
+ * is priced. The real tuple is signed only after the biometric gate (D6), so
+ * at quote time its r and s are unknown. The oracle prices the bytes' FastLZ-
+ * compressed size, so stand-ins must be as incompressible as a real
+ * signature: two keccak256 digests (32 bytes each, like a real r and s) and
+ * yParity 1 (one byte; 0 would encode as an empty string and price lower).
+ */
+export const SET_CODE_L1_FEE_STUB_R = keccak_256(utf8ToBytes('shiba-wallet: set-code L1 fee stub r'));
+export const SET_CODE_L1_FEE_STUB_S = keccak_256(utf8ToBytes('shiba-wallet: set-code L1 fee stub s'));
+
+/**
+ * The OP-stack fees of a self-sponsored set-code transaction (phase 13 item
+ * 4; Base Sepolia). Sources, read 2026-10-04:
+ *  - op-geth (ethereum-optimism/op-geth, branch optimism at b355734b),
+ *    core/types/transaction.go RollupCostData(): the L1 cost a node charges
+ *    is computed from `tx.MarshalBinary()` for every transaction type except
+ *    deposits, so a type 0x04 transaction pays it like any other
+ *    (SetCodeTxType = 0x04 in the same file);
+ *  - GasPriceOracle (ethereum-optimism/optimism, develop at 773798a6,
+ *    packages/contracts-bedrock/src/L2/GasPriceOracle.sol): getL1Fee(bytes
+ *    _data) takes the "Unsigned fully RLP-encoded transaction" and, since
+ *    Fjord, prices `LibZip.flzCompress(_data).length + 68` — nothing in it
+ *    depends on the transaction type, so the unsigned type 0x04 bytes are
+ *    what it expects, the +68 standing for the sender's own signature.
+ * What is NOT exact: the authorization's own signature sits inside the
+ * unsigned payload and is stubbed (SET_CODE_L1_FEE_STUB_R/S), so the priced
+ * bytes differ from the signed ones in those 64 bytes; a real r or s with a
+ * leading zero byte is one byte shorter. The send.ts headroom
+ * (L1_DATA_FEE_HEADROOM_PERCENT) covers that difference as it covers the
+ * fee moving. Any oracle failure refuses the quote, as for the Send screen.
+ */
+export async function quoteSetCodeOpStackFees(
+  transport: JsonRpcTransport,
+  tx: {
+    chainId: bigint;
+    nonce: bigint;
+    maxPriorityFeePerGas: bigint;
+    maxFeePerGas: bigint;
+    gasLimit: bigint;
+    to: string;
+    delegate: string;
+    authorizationNonce: bigint;
+  },
+): Promise<OpStackFees> {
+  const unsigned = serializeUnsignedSetCode({
+    ...tx,
+    authorizations: [
+      {
+        chainId: tx.chainId,
+        address: tx.delegate,
+        nonce: tx.authorizationNonce,
+        yParity: 1,
+        r: SET_CODE_L1_FEE_STUB_R,
+        s: SET_CODE_L1_FEE_STUB_S,
+      },
+    ],
+  });
+  const read = async (data: Uint8Array, what: string): Promise<bigint> => {
+    let result: unknown;
+    try {
+      result = await transport('eth_call', [{ to: OP_STACK_GAS_PRICE_ORACLE, data: toHex(data) }, 'latest']);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `Could not read the ${what} from the network's GasPriceOracle, so the full fee of this ` +
+          `transaction is unknown. Nothing was signed. (${detail})`,
+      );
+    }
+    if (typeof result !== 'string') {
+      throw new Error(`The GasPriceOracle answered the ${what} request with no value. Nothing was signed.`);
+    }
+    return decodeUint256(result);
+  };
+  const [l1DataFeeEstimate, operatorFee] = await Promise.all([
+    read(encodeFunctionCall('getL1Fee(bytes)', [{ kind: 'bytes', value: unsigned }]), 'layer 1 data fee'),
+    read(encodeFunctionCall('getOperatorFee(uint256)', [{ kind: 'uint256', value: tx.gasLimit }]), 'operator fee'),
+  ]);
+  const headroom = (l1DataFeeEstimate * L1_DATA_FEE_HEADROOM_PERCENT + 99n) / 100n;
+  return { l1DataFeeEstimate, l1DataFee: l1DataFeeEstimate + headroom, operatorFee, unsignedTxBytes: unsigned.length };
+}
+
+/**
  * Quotes the self-sponsored set-code transaction for `action`:
  *  - the endpoint's eth_chainId must equal `expectedChainId` (the active
  *    chain), so a tuple is only ever bound to the chain the user is on;
@@ -318,7 +473,9 @@ export interface SetCodeQuote {
  *    security-critical — revoke first), or holding contract code;
  *  - revoke: refused for a plain account (nothing to undo) or contract code;
  *  - gas = setCodeIntrinsicGas(1) + SET_CODE_EXECUTION_GAS, fee checked
- *    against the EOA's ETH balance (it cannot be sponsored).
+ *    against the EOA's ETH balance (it cannot be sponsored); on an OP-stack
+ *    network the fee includes the layer 1 data fee reserve and the operator
+ *    fee (quoteSetCodeOpStackFees).
  */
 export async function prepareSetCodeTx(options: {
   url: string;
@@ -364,7 +521,23 @@ export async function prepareSetCodeTx(options: {
     client.getBalance(options.from),
   ]);
   const gasLimit = setCodeIntrinsicGas(1) + SET_CODE_EXECUTION_GAS;
-  const fee = gasLimit * fees.maxFeePerGas;
+  const delegate = options.action === 'upgrade' ? WALLET_7702_DELEGATE : ZERO_ADDRESS;
+  const authorizationNonce = selfSponsoredAuthorizationNonce(nonce);
+  // OP-stack networks only: the layer 1 data fee of this exact transaction,
+  // with the authorization's signature stubbed (see quoteSetCodeOpStackFees).
+  const opStack = chainHasL1DataFee(chainId)
+    ? await quoteSetCodeOpStackFees(node, {
+        chainId,
+        nonce,
+        maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+        maxFeePerGas: fees.maxFeePerGas,
+        gasLimit,
+        to: options.from,
+        delegate,
+        authorizationNonce,
+      })
+    : undefined;
+  const fee = gasLimit * fees.maxFeePerGas + opStackFeeTotal(opStack);
   if (fee > balance) {
     throw new Error(
       `Not enough ETH to pay the network fee: the worst-case fee is ${fee} wei and the account ` +
@@ -378,12 +551,13 @@ export async function prepareSetCodeTx(options: {
     from: options.from,
     chainId,
     nonce,
-    authorizationNonce: selfSponsoredAuthorizationNonce(nonce),
-    delegate: options.action === 'upgrade' ? WALLET_7702_DELEGATE : ZERO_ADDRESS,
+    authorizationNonce,
+    delegate,
     gasLimit,
     maxFeePerGas: fees.maxFeePerGas,
     maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
     fee,
+    ...(opStack ? { opStack } : {}),
     balance,
     statusBefore,
     url: options.url,

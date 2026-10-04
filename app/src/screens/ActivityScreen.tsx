@@ -17,7 +17,12 @@ import { Button, screenStyle } from '../components';
 import { Theme, useTheme } from '../theme';
 import { networkDefaultFor } from '../config/defaults';
 import { maskAmount } from '../config/prefs';
-import { formatUnits } from '../wallet/balances';
+import {
+  formatBalanceDisplay,
+  formatUnits,
+  signedDisplay,
+  spokenAmount as spokenDisplayAmount,
+} from '../wallet/balances';
 import { directionLabel, explorerTxUrl, timestampLabel } from '../wallet/history';
 import { EVM_CHAIN_ID } from '../wallet/send';
 import { useHistory } from '../wallet/useHistory';
@@ -101,12 +106,17 @@ function EntryRow({
   // or an em-dash.
   const rowSymbol = entry.assetSymbol ?? symbol;
   const sign = entry.direction === 'in' ? '+' : entry.direction === 'out' ? '−' : '';
-  const amountText =
+  // formatBalanceDisplay, not formatUnits: a non-zero dust amount reads
+  // "< 0.000001" instead of a misleading "0" (phase 12 follow-up). The sign
+  // goes in front of the "<" ("+<0.000001").
+  const display =
     entry.assetAmount !== undefined && entry.assetDecimals !== undefined
-      ? maskAmount(`${sign}${formatUnits(entry.assetAmount, entry.assetDecimals)}`, hidden)
+      ? formatBalanceDisplay(entry.assetAmount, entry.assetDecimals)
       : entry.amount === undefined
-        ? '—'
-        : maskAmount(`${sign}${formatUnits(entry.amount, decimals)}`, hidden);
+        ? null
+        : formatBalanceDisplay(entry.amount, decimals);
+  const amountText =
+    display === null ? '—' : maskAmount(signedDisplay(sign, display), hidden);
   const hasAmount = entry.assetAmount !== undefined || entry.amount !== undefined;
   const amountColor =
     entry.failed || !hasAmount
@@ -117,7 +127,14 @@ function EntryRow({
 
   // Screen readers get the whole row as one sentence (the label replaces
   // the children's text), so it must carry the amount, time and status.
-  const spokenAmount = !hasAmount ? 'no amount' : hidden ? 'amount hidden' : `${amountText} ${rowSymbol}`;
+  const spokenAmount =
+    !hasAmount || display === null
+      ? 'no amount'
+      : hidden
+        ? 'amount hidden'
+        : // The row's direction is already spoken; a dust amount reads
+          // "less than 0.000001" without a sign in front of "less".
+          `${display.startsWith('< ') ? '' : sign}${spokenDisplayAmount(display)} ${rowSymbol}`;
   const spokenStatus = [entry.failed ? 'failed' : null, !entry.confirmed ? 'pending' : null]
     .filter(Boolean)
     .join(', ');
@@ -217,7 +234,7 @@ function useActivitySentences(options: {
     void (async () => {
       try {
         const [tokens, savedContacts, aa] = await Promise.all([
-          listTokens(),
+          listTokens(chainCaip2),
           listContacts(chainCaip2),
           getAaConfig(chainCaip2).catch(() => null),
         ]);

@@ -88,7 +88,7 @@ export function RiskWarnings({
     (async () => {
       let tracked: Awaited<ReturnType<typeof listTokens>> = [];
       try {
-        tracked = await listTokens();
+        tracked = await listTokens(evmChain.caip2);
       } catch {
         tracked = [];
       }

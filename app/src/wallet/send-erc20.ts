@@ -21,6 +21,7 @@ import {
   type SendResult,
 } from './send.ts';
 import { fetchErc20Balance } from './erc20.ts';
+import { evmProfileByCaip2 } from '../config/evm-chain.ts';
 
 /**
  * ERC-20 send flow (phase 4, item 3): quoting, max-amount, and sign+
@@ -125,10 +126,10 @@ export interface Erc20SendQuote {
   /** True when gasLimit is ERC20_TRANSFER_GAS_FALLBACK (estimation reverted). */
   gasIsFallback: boolean;
   /**
-   * OP-stack fee parts, included in `fee`. Never present today: token
-   * quotes are pinned to Ethereum mainnet (see prepareErc20Send), which has
-   * no L1 data fee; the hook keys on the verified chain id so a future
-   * OP-stack token send cannot silently leave the fee out.
+   * OP-stack fee parts, included in `fee`. Present when the token's chain
+   * is an OP-stack L2 (Base Sepolia today; the hook keys on the verified
+   * chain id, send.ts chainHasL1DataFee), absent on Ethereum mainnet and
+   * Sepolia, whose quotes are byte-identical to before.
    */
   opStack?: OpStackFees;
 }
@@ -144,6 +145,28 @@ export interface Erc20SendRequest {
   amount: bigint;
   symbol: string;
   decimals: number;
+  /**
+   * CAIP-2 chain of the token (its CAIP-19 chain id: since phase 13 item 1
+   * tracked tokens are per chain). The endpoint's eth_chainId must equal
+   * it or the quote is refused before anything is signed. Defaults to
+   * Ethereum mainnet, the only token chain before phase 13.
+   */
+  chainCaip2?: string;
+}
+
+/** The token's numeric chain id, and the name used in a wrong-chain message. */
+function expectedChain(chainCaip2: string): { id: bigint; name: string } {
+  const id = BigInt(chainCaip2.split(':')[1] ?? 'x');
+  const name = id === 1n ? 'Ethereum mainnet' : (evmProfileByCaip2(chainCaip2)?.label ?? chainCaip2);
+  return { id, name };
+}
+
+function wrongChainError(actual: bigint, chainCaip2: string): Error {
+  const { id, name } = expectedChain(chainCaip2);
+  return new Error(
+    `Endpoint is chain id ${actual}, expected ${id} (${name}). ` +
+      'Check the RPC endpoint (and the test network choice under Settings → Developer) in Settings.',
+  );
 }
 
 /**
@@ -156,6 +179,7 @@ export interface Erc20SendRequest {
  */
 export async function prepareErc20Send(request: Erc20SendRequest): Promise<Erc20SendQuote> {
   const { url, from, to, contract, amount, symbol, decimals } = request;
+  const chainCaip2 = request.chainCaip2 ?? EVM_CHAIN_ID;
   const transport = evmHttpTransport(url);
   const node = new NodeClient(transport);
   const data = encodeErc20Transfer(to, amount);
@@ -168,19 +192,10 @@ export async function prepareErc20Send(request: Erc20SendRequest): Promise<Erc20
     node.suggestFees(),
   ]);
 
-  // DELIBERATELY pinned to mainnet (not the active-chain profile): the
-  // tracked-token store only holds Ethereum-mainnet ERC-20s, and the app
-  // hides every token entry point while Sepolia test mode is on. If a
-  // token quote is ever reached in test mode anyway, this check fails
-  // closed against the Sepolia endpoint instead of quoting a mainnet
-  // token on the wrong chain.
-  const expected = BigInt(EVM_CHAIN_ID.split(':')[1]!);
-  if (chainId !== expected) {
-    throw new Error(
-      `Endpoint is chain id ${chainId}, expected ${expected} (Ethereum mainnet). ` +
-        'Check the RPC endpoint in Settings.',
-    );
-  }
+  // The endpoint must serve the TOKEN's own chain (its CAIP-19 chain id):
+  // a token tracked on one network is never quoted on another, even if a
+  // mode flip or a wrong override points the endpoint elsewhere.
+  if (chainId !== expectedChain(chainCaip2).id) throw wrongChainError(chainId, chainCaip2);
 
   if (amount > tokenBalance) {
     throw new Error(
@@ -263,13 +278,18 @@ export async function maxErc20Send(
   from: string,
   contract: string,
   to?: string,
+  chainCaip2: string = EVM_CHAIN_ID,
 ): Promise<bigint> {
-  const node = new NodeClient(evmHttpTransport(url));
-  const [ethBalance, tokenBalance, fees] = await Promise.all([
+  const transport = evmHttpTransport(url);
+  const node = new NodeClient(transport);
+  const [chainId, ethBalance, tokenBalance, fees] = await Promise.all([
+    node.chainId(),
     node.getBalance(from),
     fetchErc20Balance(url, contract, from),
     node.suggestFees(),
   ]);
+  // Same rule as the quote: the endpoint must serve the token's chain.
+  if (chainId !== expectedChain(chainCaip2).id) throw wrongChainError(chainId, chainCaip2);
   if (tokenBalance === 0n) return 0n;
 
   const data = encodeErc20Transfer(to ?? from, tokenBalance);
@@ -279,7 +299,22 @@ export async function maxErc20Send(
   } catch {
     gasLimit = ERC20_TRANSFER_GAS_FALLBACK;
   }
-  const fee = gasLimit * fees.maxFeePerGas;
+  // On an OP-stack chain (Base) the layer 1 data fee is charged from the
+  // ETH balance too, so the max check includes it exactly as the quote does
+  // (send.ts quoteOpStackFees on the exact unsigned transaction).
+  const opStack = chainHasL1DataFee(chainId)
+    ? await quoteOpStackFees(transport, {
+        chainId,
+        nonce: await node.getTransactionCount(from),
+        maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+        maxFeePerGas: fees.maxFeePerGas,
+        gasLimit,
+        to: contract,
+        value: 0n,
+        data,
+      })
+    : undefined;
+  const fee = gasLimit * fees.maxFeePerGas + opStackFeeTotal(opStack);
   if (fee > ethBalance) {
     throw new Error(
       `Not enough ETH to pay the network fee: the worst-case fee is ${fee} wei ` +

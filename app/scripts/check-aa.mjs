@@ -25,6 +25,10 @@ import { readFileSync } from 'node:fs';
 import {
   AA_FUNDING_TITLE,
   aaCanPaySelf,
+  aaFeeFromBalance,
+  aaMaxAdjustmentSentence,
+  prepareAaCalls,
+  AA_MAX_TRIM_ROUNDS,
   aaFundingMessage,
   AaFundingError,
   QUOTE_FAILED_TITLE,
@@ -1235,6 +1239,116 @@ await (async () => {
       settingsSource.includes('const shortDate = (iso: string | null) => localDateLabel(iso);') &&
       !settingsSource.includes('iso.slice(0, 10)'),
   );
+})();
+
+console.log('\ncheck-aa: smart-account Max slack (phase 13 item 4): a Max amount is lowered, never raised, when the fee rose');
+await (async () => {
+  // A bundler whose estimate can be changed between Max and Review, and
+  // which records the value of every call it was asked to price.
+  const MAXFEE = 3_000_000_000n; // fakeNode: base 1 gwei × 2 + priority 1 gwei
+  const gasSet = { cgl: 100_000n, vgl: 200_000n, pvg: 50_000n };
+  const estimates = [];
+  const priced = (g) => (g.cgl + g.vgl + g.pvg) * MAXFEE;
+  function tunableBundle(nodeOptions = {}, onEstimate = null) {
+    const node = fakeNode(nodeOptions);
+    const bundler = async (method, params) => {
+      if (method === 'eth_estimateUserOperationGas') {
+        estimates.push(params[0].callData);
+        if (onEstimate) onEstimate();
+        return { callGasLimit: '0x' + gasSet.cgl.toString(16), verificationGasLimit: '0x' + gasSet.vgl.toString(16), preVerificationGas: '0x' + gasSet.pvg.toString(16) };
+      }
+      throw new Error(`tunable bundler: unexpected ${method}`);
+    };
+    return createAaClient({
+      nodeUrl: 'https://node.example',
+      bundlerUrl: 'https://bundler.example',
+      factory: FACTORY_INPUT,
+      transportFor: (url) => (url === 'https://node.example' ? node : bundler),
+    });
+  }
+  const BAL = 10n ** 16n; // 0.01 ETH
+  const keysOf = (q) => JSON.stringify(q, (_k, v) => (typeof v === 'bigint' ? v.toString() : v instanceof Uint8Array ? toHex(v) : v));
+
+  // Steady fee: the fromMax quote equals the plain quote, key for key.
+  gasSet.vgl = 200_000n;
+  const steady = tunableBundle({ senderBalance: BAL });
+  const steadyMax = await maxAaSend(steady, owner.address, RECIPIENT);
+  check('Max = balance − the worst-case fee of a zero-value probe (deposit not counted)', steadyMax === BAL - priced(gasSet), String(steadyMax));
+  const plain = await prepareAaSend(steady, owner.address, RECIPIENT, steadyMax);
+  const marked = await prepareAaSend(steady, owner.address, RECIPIENT, steadyMax, { fromMax: true });
+  check('fee steady: the fromMax quote is identical to the plain quote (no maxAdjustment)', keysOf(plain) === keysOf(marked) && !('maxAdjustment' in marked), keysOf(marked));
+
+  // The fee rose between Max and Review (the Base finding, smart-account side).
+  gasSet.vgl = 200_000n;
+  const maxBefore = await maxAaSend(tunableBundle({ senderBalance: BAL }), owner.address, RECIPIENT);
+  gasSet.vgl = 260_000n; // +60k gas at 3 gwei
+  const rose = tunableBundle({ senderBalance: BAL });
+  await checkRejects('fee rose, TYPED amount (no fromMax): refused as before, never lowered', () => prepareAaSend(rose, owner.address, RECIPIENT, maxBefore), 'Fund the smart account address');
+  estimates.length = 0;
+  const trimmed = await prepareAaSend(rose, owner.address, RECIPIENT, maxBefore, { fromMax: true });
+  check('fee rose, fromMax: amount lowered to balance − the new worst-case fee', trimmed.amount === BAL - priced(gasSet) && trimmed.amount < maxBefore && trimmed.amount + trimmed.fee === BAL, `${trimmed.amount} ${trimmed.fee}`);
+  check('…the signed call carries the lowered value and maxAdjustment records the Max figure', trimmed.calls.length === 1 && trimmed.calls[0].value === trimmed.amount && trimmed.maxAdjustment?.requested === maxBefore && trimmed.total === trimmed.amount + trimmed.fee);
+  check('…re-estimated with the lowered amount (two estimates: Max figure, then the lowered one)', estimates.length === 2 && estimates[0] !== estimates[1]);
+  const sentence = aaMaxAdjustmentSentence(trimmed, (v) => `${v} wei`);
+  check('the confirm sentence names both amounts and the reason',
+    sentence === `The amount was lowered from ${maxBefore} wei to ${trimmed.amount} wei because the network fee rose after you tapped Max. The amount plus the worst-case fee now fits the smart account's balance; its EntryPoint deposit, if any, is left as a reserve for the fee.`,
+    sentence);
+  check('no sentence without an adjustment', aaMaxAdjustmentSentence(plain, String) === null);
+
+  // The fee fell: the Max amount is kept (never raised).
+  gasSet.vgl = 200_000n;
+  const maxHigh = await maxAaSend(tunableBundle({ senderBalance: BAL }), owner.address, RECIPIENT);
+  gasSet.vgl = 150_000n;
+  const fell = await prepareAaSend(tunableBundle({ senderBalance: BAL }), owner.address, RECIPIENT, maxHigh, { fromMax: true });
+  check('fee fell: the Max amount is kept, no maxAdjustment', fell.amount === maxHigh && !('maxAdjustment' in fell) && fell.total < BAL);
+
+  // DEPOSIT RULE: a Max amount must fit beside the FULL fee even when the
+  // deposit could pay it; a typed amount may still use the deposit.
+  gasSet.vgl = 200_000n;
+  const maxDep = await maxAaSend(tunableBundle({ senderBalance: BAL, deposit: 10n ** 18n }), owner.address, RECIPIENT);
+  check('Max ignores a large EntryPoint deposit (it stays as the fee reserve)', maxDep === BAL - priced(gasSet), String(maxDep));
+  gasSet.vgl = 260_000n;
+  const depTrim = await prepareAaSend(tunableBundle({ senderBalance: BAL, deposit: 10n ** 18n }), owner.address, RECIPIENT, maxDep, { fromMax: true });
+  check('fee rose with a large deposit, fromMax: still lowered to balance − fee', depTrim.amount === BAL - priced(gasSet) && depTrim.maxAdjustment?.requested === maxDep);
+  const depTyped = await prepareAaSend(tunableBundle({ senderBalance: BAL, deposit: 10n ** 18n }), owner.address, RECIPIENT, maxDep);
+  check('…while the same amount TYPED is quoted unchanged (the deposit pays the fee, aaCanPaySelf)', depTyped.amount === maxDep && !('maxAdjustment' in depTyped) && depTyped.deposit === 10n ** 18n);
+
+  // Contract calls are never lowered.
+  gasSet.vgl = 260_000n;
+  await checkRejects('fromMax on a call with calldata: refused, value unchanged',
+    () => prepareAaCalls(tunableBundle({ senderBalance: BAL }), owner.address, [{ to: RECIPIENT, value: maxBefore, data: new Uint8Array([1, 2, 3, 4]) }], { fromMax: true }),
+    'Fund the smart account address');
+
+  // The balance fell to (or below) the Max figure: priced through a zero-value probe first.
+  gasSet.vgl = 200_000n;
+  estimates.length = 0;
+  const fallen = await prepareAaSend(tunableBundle({ senderBalance: BAL / 2n }), owner.address, RECIPIENT, BAL, { fromMax: true });
+  check('balance below the Max figure: lowered to the new balance − fee via a zero-value probe', fallen.amount === BAL / 2n - priced(gasSet) && fallen.maxAdjustment?.requested === BAL && estimates.length === 2);
+  await checkRejects('…and refused with the funding message when the fee alone exceeds the balance',
+    () => prepareAaSend(tunableBundle({ senderBalance: priced(gasSet) }), owner.address, RECIPIENT, BAL, { fromMax: true }), 'Fund the smart account address');
+
+  // A bundler whose estimate keeps rising: bounded rounds, then refused.
+  gasSet.vgl = 200_000n;
+  const climbMax = await maxAaSend(tunableBundle({ senderBalance: BAL }), owner.address, RECIPIENT);
+  gasSet.vgl = 260_000n;
+  estimates.length = 0;
+  const climbing = tunableBundle({ senderBalance: BAL }, () => { gasSet.vgl += 10_000n; });
+  await checkRejects('estimate rising on every pricing: refused after the bounded rounds', () => prepareAaSend(climbing, owner.address, RECIPIENT, climbMax, { fromMax: true }), 'Fund the smart account address');
+  check(`…at most 1 + ${AA_MAX_TRIM_ROUNDS} estimates`, AA_MAX_TRIM_ROUNDS === 3 && estimates.length === 4, String(estimates.length));
+
+  check('aaFeeFromBalance: the deposit pays first; null counts as zero', aaFeeFromBalance(5n, 3n) === 2n && aaFeeFromBalance(5n, 9n) === 0n && aaFeeFromBalance(5n, null) === 5n);
+
+  // SendScreen wiring (source checks): a separate last-Max record for the
+  // smart-account path, fromMax passed only on the plain native AA quote,
+  // the sentence on the confirm.
+  const send = readFileSync(new URL('../src/screens/SendScreen.tsx', import.meta.url), 'utf8');
+  check('SendScreen keeps a separate lastAaMax record, cleared on every Max tap',
+    /const lastAaMax = useRef<LastMaxResult \| null>\(null\);/.test(send) && /lastEvmMax\.current = null;\s*\n\s*lastAaMax\.current = null;/.test(send));
+  check('…set only after the smart-account native Max (not the passkey or token path)',
+    /max = await maxAaSend\(bundle, account\.address, validation\.normalized\);[\s\S]{0,400}lastAaMax\.current = \{/.test(send));
+  check('…and passed as fromMax only to prepareAaSend',
+    /prepareAaSend\(bundle, account\.address, validation\.normalized, amount, \{\s*fromMax: amountIsLastMax\(lastAaMax\.current,/.test(send));
+  check('the confirm shows aaMaxAdjustmentSentence for a lowered smart-account Max', /quote\.kind === 'aa' && quote\.maxAdjustment[\s\S]{0,200}aaMaxAdjustmentSentence\(quote,/.test(send));
 })();
 
 console.log(`\n${passed} passed, ${failed} failed`);

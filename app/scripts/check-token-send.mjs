@@ -239,6 +239,38 @@ await checkRejects(
   /chain id 11155111, expected 1/,
 );
 
+// Phase 13 item 1: tokens are per chain. The quote takes the token's CAIP-2
+// chain and refuses an endpoint on any other network, in both directions.
+console.log('per-chain token quotes (phase 13 item 1):');
+const SEPOLIA_USDC = '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238';
+scenario = defaultScenario();
+scenario.chainId = '0xaa36a7';
+const sepQuote = await prepareErc20Send({
+  url: URL, from: FROM, to: TO, contract: SEPOLIA_USDC, amount: 1000000n, symbol: 'USDC', decimals: 6,
+  chainCaip2: 'eip155:11155111',
+});
+check('a Sepolia token quotes on a Sepolia endpoint', sepQuote.chainId === 11155111n && sepQuote.contract === SEPOLIA_USDC);
+check('Sepolia token quote has no L1 data fee part (not an OP-stack chain)', !('opStack' in sepQuote));
+scenario = defaultScenario(); // mainnet endpoint
+await checkRejects(
+  'a Sepolia token is refused on a mainnet endpoint (names Ethereum Sepolia)',
+  () => prepareErc20Send({ url: URL, from: FROM, to: TO, contract: SEPOLIA_USDC, amount: 1n, symbol: 'USDC', decimals: 6, chainCaip2: 'eip155:11155111' }),
+  /chain id 1, expected 11155111 \(Ethereum Sepolia\)/,
+);
+await checkRejects(
+  'Max for a Sepolia token is refused on a mainnet endpoint too',
+  () => maxErc20Send(URL, FROM, SEPOLIA_USDC, TO, 'eip155:11155111'),
+  /chain id 1, expected 11155111/,
+);
+scenario = defaultScenario();
+scenario.chainId = '0xaa36a7';
+check('Max for a Sepolia token on a Sepolia endpoint = full token balance', (await maxErc20Send(URL, FROM, SEPOLIA_USDC, TO, 'eip155:11155111')) === 25000000n);
+await checkRejects(
+  'control: a mainnet token (default chain) is still refused on the Sepolia endpoint',
+  () => maxErc20Send(URL, FROM, CONTRACT, TO),
+  /chain id 11155111, expected 1 \(Ethereum mainnet\)/,
+);
+
 // ---------------------------------------------------------------------------
 // 3. The false-return / empty-return rule.
 // ---------------------------------------------------------------------------
@@ -419,6 +451,19 @@ check(
   'recipient appears only as the padded calldata word',
   lastRawTx.includes(TO.toLowerCase().slice(2).padStart(64, '0')),
 );
+{
+  // A Sepolia token send signs for chain 11155111 through the same sendEvm
+  // path; decoded independently with ethers.
+  const { Transaction } = await import('ethers');
+  scenario = defaultScenario();
+  scenario.chainId = '0xaa36a7';
+  lastRawTx = null;
+  await sendErc20(URL, signer, sepQuote);
+  const tx = Transaction.from(lastRawTx);
+  check('Sepolia token send: signed for chain 11155111, to the token contract, value 0, transfer calldata',
+    tx.chainId === 11155111n && tx.to === SEPOLIA_USDC && tx.value === 0n && tx.data === handBuiltTransfer(TO, 1000000n) && tx.from === signer.address,
+    `${tx.chainId} ${tx.to} ${tx.from}`);
+}
 
 // Phase 12 item 3: the app-enforced spending policy records an ACCEPTED token
 // send (sendErc20 -> sendEvm -> addEvmSentListener) from its calldata, and

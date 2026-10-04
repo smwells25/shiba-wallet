@@ -105,7 +105,8 @@ export function SpendingLimitsScreen({ navigation }: Props) {
     if (!scope) return;
     let cancelled = false;
     Promise.all([
-      listTokens().catch(() => [] as FungibleAsset[]),
+      // The scope's own chain (tokens are per chain since phase 13 item 1).
+      listTokens(scope.chain).catch(() => [] as FungibleAsset[]),
       spendingReadouts(scope),
       listSpendingPolicies(scope),
       spendingHistoryDamaged(),

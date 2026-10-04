@@ -60,6 +60,7 @@ import {
   WC_SUPPORTED_METHODS,
   decideProposal,
   identityApprovalAllowed,
+  wcOpStackFeeLines,
   quoteWcTransaction,
   requoteWcTransactionIfMoved,
   smartAccountMethodsFor,
@@ -412,10 +413,15 @@ export function WcApprovalSheet({
     return () => {
       cancelled = true;
     };
-    // The item key identifies the request; the chain and address are part
-    // of what the quote was computed for.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item.key, address, evmChain.caip2, permissionGrantKey]);
+    // Everything the quote reads. `item` is the queue's object for one
+    // request: the controller pushes it once and never replaces it
+    // (wc-controller.ts), so its identity changes exactly when the request
+    // does. `permissionGrant` changes when the user narrows an ERC-7715
+    // grant, which must re-quote the install. `loadAaBundle` is a
+    // useCallback in WalletConnectContext that changes only with the active
+    // chain. The in-render reset above (quotedInputs) clears the override and
+    // the old quote on the same changes.
+  }, [item, address, evmChain.caip2, permissionGrant, loadAaBundle]);
 
   // Approval-time quote pinning for regular-account transactions: the
   // quote is one endpoint's answer, and the wallet may have moved to
@@ -562,8 +568,11 @@ function ProposalBody({
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [event.id, activeChain, address]);
+    // smartOption is a useCallback in WalletConnectContext over the active
+    // account and chain, so it changes exactly when the smart-account answer
+    // can change; event.id, activeChain and address re-resolve it for a new
+    // proposal or a switch while the sheet is open.
+  }, [event.id, activeChain, address, smartOption]);
   const asSmart = connectAs === 'smart' && smart;
   // Recomputed against the CURRENT active chain, so the sheet always shows
   // what approving would actually do right now.
@@ -854,6 +863,11 @@ function RequestBody({
   const quoteReady = txQuote?.status === 'ready';
   const simulationFailed = quoteReady && !txQuote.quote.simulation.ok;
   const approveBlocked = !quoteReady || (simulationFailed && !overrideSimulation);
+  // OP-stack networks: the layer 1 data fee reserve inside fee/total, shown
+  // as its own line like the Send screen does.
+  const opStackLines = quoteReady
+    ? wcOpStackFeeLines(txQuote.quote.opStack, (wei) => `${formatUnits(wei, 18, 18)} ${evmChain.displaySymbol}`)
+    : null;
   return (
     <>
       <Text style={[styles.modalTitle, { color: theme.text }]}>Transaction request</Text>
@@ -901,6 +915,14 @@ function RequestBody({
             value={`${formatUnits(txQuote.quote.fee, 18, 18)} ${evmChain.displaySymbol}`}
             theme={theme}
           />
+          {opStackLines ? (
+            <>
+              {opStackLines.rows.map((row) => (
+                <Field key={row.label} label={row.label} value={row.value} theme={theme} />
+              ))}
+              <Text style={[styles.hint, { color: theme.textMuted }]}>{opStackLines.note}</Text>
+            </>
+          ) : null}
           <Field
             label="Total (worst case)"
             value={`${formatUnits(txQuote.quote.total, 18, 18)} ${evmChain.displaySymbol}`}

@@ -77,6 +77,7 @@ import {
   requoteWcTransactionIfMoved,
   siweOriginFor,
   siweSheetState,
+  wcOpStackFeeLines,
 } from '../src/wallet/walletconnect.ts';
 import { forgetDefaultEndpointChoices } from '../src/config/networks.ts';
 import { DEFAULT_NETWORKS } from '../src/config/defaults.ts';
@@ -1255,6 +1256,26 @@ console.log('check-wc: Sign-In with Ethereum on the approval sheet (EIP-4361, ph
 
 
 seed.fill(0);
+
+console.log('');
+console.log('check-wc: layer 1 data fee line on the transaction sheet (OP-stack, phase 13 item 4)');
+{
+  const fmt = (wei) => `${wei} wei`;
+  check('no OP-stack fees (mainnet, Sepolia): no lines', wcOpStackFeeLines(undefined, fmt) === null);
+  const lines = wcOpStackFeeLines({ l1DataFeeEstimate: 6n, l1DataFee: 9n, operatorFee: 0n, unsignedTxBytes: 100 }, fmt);
+  check('Base: "Layer 1 data fee (estimate)" = the reserve (same label as the Send screen), no operator row when it is 0',
+    lines.rows.length === 1 && lines.rows[0].label === 'Layer 1 data fee (estimate)' && lines.rows[0].value === '9 wei');
+  check('…the note names the oracle estimate, the 50% reserve and that it is inside the fee and total',
+    lines.note === "This is a layer-2 network: every transaction also pays for publishing its data on Ethereum. The network's fee oracle estimates 6 wei for this transaction; 50% more is reserved because this fee follows Ethereum's fees and cannot be capped. It is included in the max network fee and the total.");
+  const withOp = wcOpStackFeeLines({ l1DataFeeEstimate: 6n, l1DataFee: 9n, operatorFee: 4n, unsignedTxBytes: 100 }, fmt);
+  check('a non-zero operator fee gets its own row', withOp.rows.length === 2 && withOp.rows[1].label === 'Operator fee (worst case)' && withOp.rows[1].value === '4 wei');
+  const sheetSrc = readFileSync(new URL('../src/components/WcApprovalSheet.tsx', import.meta.url), 'utf8');
+  check('the sheet renders the lines from the EOA quote between the max fee and the total',
+    /wcOpStackFeeLines\(txQuote\.quote\.opStack,/.test(sheetSrc) &&
+      sheetSrc.indexOf('{opStackLines ? (') > sheetSrc.indexOf('label="Max network fee"') &&
+      sheetSrc.indexOf('{opStackLines ? (') < sheetSrc.indexOf('label="Total (worst case)"'));
+  check('no unreasoned eslint-disable comments left in the sheet', !/eslint-disable/.test(sheetSrc));
+}
 
 console.log('');
 console.log(`check-wc: ${passed} passed, ${failed} failed`);

@@ -71,12 +71,13 @@ async function sourceForEndpoint(
 ): Promise<{ source: HistorySource; viaIndexer: boolean }> {
   const isEvm = endpoint.network.kind === 'evm-jsonrpc';
   const indexerUrl = isEvm ? (await getIndexerConfig(endpoint.network.chainId)).url : null;
-  // Tracked tokens power the logs fallback when no indexer is configured
-  // (mainnet only: tracked tokens are mainnet assets and are hidden in
-  // Sepolia test mode, so the fallback naturally stays mainnet-scoped).
+  // Tracked tokens power the logs fallback when no indexer is configured.
+  // Tokens are per chain since phase 13 item 1, so the fallback reads the
+  // list of the chain the endpoint serves (its own CAIP-2 id) and never
+  // searches one network's contracts on another.
   let evmTokenLogs: { walletAddress: string; tokens: TrackedTokenRef[] } | undefined;
-  if (isEvm && !indexerUrl && endpoint.network.chainId === 'eip155:1') {
-    const tokens = await listTokens();
+  if (isEvm && !indexerUrl) {
+    const tokens = await listTokens(endpoint.network.chainId);
     if (tokens.length > 0) {
       evmTokenLogs = {
         walletAddress,

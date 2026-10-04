@@ -33,10 +33,11 @@ import { sanitizeEndpointMessage } from '../config/endpoint-probe.ts';
  * revoke transactions. Built on the engine's approvals.ts over plain
  * JSON-RPC against the chain's configured endpoint.
  *
- * DISCOVERY (logs). For every TRACKED ERC-20 token on the active chain,
- * plus the tokens the wallet KNOWS on a test network (tokens.ts
- * KNOWN_TEST_NETWORK_TOKENS: Sepolia USDC and EURC, Base Sepolia USDC —
- * the tracked list holds mainnet assets only), the engine reads
+ * DISCOVERY (logs). For every TRACKED ERC-20 token on the active chain
+ * (tokens are tracked per chain since phase 13 item 1), plus the tokens
+ * the wallet KNOWS on a test network (tokens.ts KNOWN_TEST_NETWORK_TOKENS:
+ * Sepolia USDC and EURC, Base Sepolia USDC and EURC — checked even after
+ * the user stops tracking them), the engine reads
  * Approval(owner, spender, value) logs; for every NFT
  * collection in the NFT gallery's list (nfts.ts, loaded through the same
  * per-account cache) it reads ApprovalForAll(owner, operator, approved)
@@ -107,10 +108,10 @@ export const APPROVALS_SCOPE_NOTE =
   'appear here.';
 /** The scope sentence on a test network, where the known test-network tokens are checked. */
 export const TESTNET_APPROVALS_SCOPE_NOTE =
-  'On a test network the wallet checks the test-network tokens it knows and NFT collections in ' +
-  'your NFT gallery. Approvals held inside other contracts (for example the allowances Permit2 ' +
-  'keeps for each app) do not appear here; the approval that lets Permit2 itself spend a token ' +
-  'does.';
+  'On a test network the wallet checks the tokens you track on it (Manage tokens), the ' +
+  'test-network tokens it knows, and NFT collections in your NFT gallery. Approvals held inside ' +
+  'other contracts (for example the allowances Permit2 keeps for each app) do not appear here; ' +
+  'the approval that lets Permit2 itself spend a token does.';
 export const NO_ENDPOINT_NOTE =
   'Approvals cannot be checked: no RPC endpoint is configured for this network.';
 export const NFT_UNCONFIGURED_NOTE =
@@ -123,34 +124,39 @@ export function approvalsScopeNote(testnet: boolean): string {
 }
 
 /**
- * The test-network note naming exactly the known tokens being checked, or
- * saying there are none on this network. Never mentions NFT indexer setup
- * (that is NFT_UNCONFIGURED_NOTE's job, shown only when none is configured).
+ * The test-network note naming exactly the known tokens that are checked
+ * whether or not the user tracks them, or saying there are none on this
+ * network. Never mentions NFT indexer setup (that is NFT_UNCONFIGURED_NOTE's
+ * job, shown only when none is configured).
  */
 export function testnetTokensNote(networkLabel: string, known: readonly ApprovalTokenRef[]): string {
-  const hidden = 'Your tracked tokens are mainnet assets and are hidden on test networks.';
   if (known.length === 0) {
-    return `${hidden} The wallet knows no tokens on ${networkLabel}, so only NFT collections are checked.`;
+    return `The wallet knows no test tokens on ${networkLabel}; only the tokens you track there are checked.`;
   }
   return (
-    `${hidden} Checked instead on ${networkLabel}: ${known.map((t) => t.symbol).join(', ')} ` +
-    `(${known.map((t) => t.address).join(', ')}), the test-network tokens the wallet knows.`
+    `Also checked on ${networkLabel}, even if you do not track them: ` +
+    `${known.map((t) => t.symbol).join(', ')} (${known.map((t) => t.address).join(', ')}), the ` +
+    'test-network tokens the wallet knows.'
   );
 }
 
 /**
  * The empty-state sentence when there is nothing to scan. It never tells
- * the user to configure an NFT indexer that is already configured, and it
- * offers Manage tokens only on mainnet (tracked tokens are mainnet assets).
+ * the user to configure an NFT indexer that is already configured. Every
+ * network offers Manage tokens, because tokens are tracked per network
+ * (phase 13 item 1); the `testnet` flag is kept for callers and only adds
+ * that the wallet knows no test tokens here.
  */
 export function nothingToCheckNote(options: { testnet: boolean; nftIndexerConfigured: boolean }): string {
   const { testnet, nftIndexerConfigured } = options;
   if (testnet) {
     return nftIndexerConfigured
-      ? 'There is nothing to check yet: the wallet knows no tokens on this test network and your ' +
-          'NFT gallery lists no collections.'
-      : 'There is nothing to check yet: the wallet knows no tokens on this test network. Configure ' +
-          'an NFT indexer (Settings → NFT indexer) to include NFT collections.';
+      ? 'There is nothing to check yet: you track no tokens on this test network, the wallet knows ' +
+          'none here, and your NFT gallery lists no collections. Add tokens in Manage tokens and the ' +
+          'approvals you granted on them will be listed here.'
+      : 'There is nothing to check yet: you track no tokens on this test network and the wallet ' +
+          'knows none here. Add tokens in Manage tokens, or configure an NFT indexer (Settings → NFT ' +
+          'indexer) to include NFT collections.';
   }
   return nftIndexerConfigured
     ? 'There is nothing to check yet: you track no tokens on this network and your NFT gallery ' +
