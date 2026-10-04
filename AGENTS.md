@@ -6021,3 +6021,75 @@ then 2's app half, 3 and 5; 6 last. Subagents on Opus.
       (the network is in the section heading); Track adds without a
       confirm. End state: Ethereum Sepolia, Account 1, light mode, Google
       IME, no policy, every subscription revoked; Metro still at 1fab9a6.
+- [x] Emulator-run findings FIXED (commit 7c29fc7; engine 774 (+1:
+      beforeSign); check-aa 215 (was 178), check-aa-kernel 149,
+      check-token-gas 130, check-passkeys 131, check-recovery 257,
+      check-sessions 137, check-subscriptions 154, check-tokens 99; 16
+      mutation breaks each caught; offline runner ALL GREEN in the CTO's
+      isolated worktree: app 4,427 across 38 suites, lint 0/0, tsc clean;
+      NOT run live). BUNDLER FEE FLOOR: the refusal text matches
+      pimlicolabs/alto (main at 96529592, src/rpc/rpcHandler.ts 255–274),
+      which refuses when EITHER maxFeePerGas or maxPriorityFeePerGas is
+      below the lowest recently observed price (which bundler software
+      ZeroDev runs is undocumented). (a) Every smart-account quote prices
+      at the bundler's floor + 25% (AA_FEE_FLOOR_HEADROOM_PERCENT, rounded
+      up, exact bigint; priority raised to floor × 1.25 with maxFee rising
+      by the same amount; a stated maxFee minimum × 1.25; unchanged when
+      already above) — the confirm's worst case includes it; the cost is
+      at most 25% of the priority floor per gas. (b) NO FEE IS RAISED AT
+      SEND TIME: sendAa signs exactly the quoted fees; before signing it
+      re-reads the floor (assertQuoteFeesMeetBundlerFloor) and throws
+      AaFeeRoseError "The network fee rose. Please review again." when the
+      floor exceeds the quoted fees (the 8% live drift passes; > 25% is
+      refused; an unreadable floor passes, best effort). (c) The engine's
+      SmartAccountClient.sendCalls gained an additive { beforeSign } hook;
+      the app's signedFeeGuard refuses when the signed worst case
+      (requiredPrefund) exceeds the displayed fee or the fees differ from
+      the quote — the client re-estimates gas at send time and a larger
+      estimate was previously signed silently (paymaster ops skipped:
+      sponsored costs nothing, the USDC fee is capped by maxTokenCharge).
+      (d) A quote can be submitted ONCE (claimQuoteForSubmission, a
+      WeakSet; purely local refusals leave it usable), and every screen
+      returns to the step that quotes again after a failure (Send, Swap,
+      Guardians, owner change, Passkey, Approve a recovery, Sessions, the
+      WalletConnect sheet). (e) Applied on every path: sendAa callers,
+      passkey ops (checks before the passkey prompt), the guardian
+      recovery submit (its quote now mirrors the deposit top-up headroom —
+      its displayed fee could be below what was signed before), session-key
+      ops, and the USDC-fee path (priced and signed at the headroom fees).
+      (f) The subscription Start re-quote tolerated +20% above the
+      reviewed fee, which broke "never sign more than shown": the review
+      now DISPLAYS the reviewed fee + 20% as "Max network fee" with an
+      explanation, and the funding lines and keep-back use that figure.
+      KNOWN TRADE-OFF: on Base, where preVerificationGas follows the L1
+      fee, a re-estimate that grows even slightly is now refused ("review
+      again") rather than signed at a higher cost; if frequent, add a gas
+      margin inside the displayed fee. OTHER FIXES: aaRiskWarningTarget
+      gives the risk card the token's recipient as counterparty on
+      smart-account token sends (incl. the USDC-fee path); the
+      subscription form re-reads balance, deposit and fee on open, focus
+      and Review ("holds X plus an EntryPoint deposit of Y (read just
+      now)") and words a token-subscription shortfall as the install fee
+      versus balance + deposit; describeSessionError gives a plain
+      sentence + cleaned technical detail (bundler texts verbatim) and
+      session / subscription quotes fail over once on NODE failures only,
+      sending through the bundle they were quoted on; the expired card's
+      key line reads "Key still on this device. It can no longer be used
+      for payments; it is deleted from this device when you revoke.";
+      internal file names removed from user copy (subscription/session
+      audit notes, two passkey strings, the Settings readiness note) and
+      check-sessions now scans every string literal and JSX text in 111
+      app/src files for file paths and doc references; "Revoke
+      subscription" wording on the title, button, prompt and progress; the
+      card re-reads after a failed action; keeper: pull without
+      --unchecked refuses an early pull locally from the on-chain next
+      slot, prints "0.1 USDC (100000 base units)", and reports
+      merchantDeltaBaseUnits for ERC-20 pulls; the Tokens header reads
+      "Tokens · <network>"; Track asks first with the full contract and
+      the look-alike warning. Incident (repaired by the agent): a mutation
+      test's `git checkout -- recovery.ts` reverted its edits; restored
+      from its own copy; the green runs are on the restored file.
+      UNVERIFIED: whether ZeroDev's bundler checks the maxFeePerGas floor
+      as Alto does; Rundler states a priority floor only; fee facts are
+      not re-read on return from the background; the WalletConnect
+      ERC-7715 path keeps its own error wording.
