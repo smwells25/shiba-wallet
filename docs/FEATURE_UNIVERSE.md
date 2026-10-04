@@ -447,7 +447,7 @@ The record used here runs to phase 10 item 1 (session keys and guardians through
 | 9 | Receive: addresses, QR codes, payment URIs | 1 | Proven live | In-app on the emulator, 2026-09-27: the Receive QR was decoded from a screenshot with an independent decoder and matched the address ("Emulator validation, continued"). Scanning parses EIP-681 / BIP-21 / Solana Pay (phase 4 task 4). Partial: Receive shows the plain address; payment URIs with amounts are not generated. |
 | 10 | Watch-only accounts | 2 | Not started | None recorded. |
 | 11 | Hardware wallet pairing | 2 | Not started | None recorded. |
-| 12 | Single private-key import | 1 | Built, verified offline | Built 2026-10-04 (phase 13 item 3, by the Chairperson's decision the same day): a single Ethereum private key can be imported as an additional account. It is validated and shown as a full address before saving, stored in the same secure-storage class as the recovery phrase and moved with it into biometric protection, labelled on every screen as NOT backed up by the recovery phrase, Ethereum-only, and able to own a Kernel smart account. Guardians and owner changes are refused for an imported owner, because the recovery record cannot yet say that the owner is an imported key. 212 offline checks; ADR D9. Not yet run on the emulator or a phone. |
+| 12 | Single private-key import | 1 | Proven live | In-app on Sepolia, emulator, 2026-10-04 (phase 13 item 3, by the Chairperson's decision the same day), with a throwaway key: a single Ethereum private key was imported as an additional account (the full address shown before saving, the screen blocked from screenshots, the key stored under the same biometric protection as the recovery phrase), funded, used for a regular send and for a smart-account send that deployed its own Kernel account, revealed behind the device check, kept across an app restart with no prompt, and removed. Every screen labels the account as NOT backed up by the recovery phrase; it is Ethereum-only; guardians and owner changes are refused for an imported owner. ADR D9; 212 offline checks. Not yet run on a real phone. |
 | 13 | ERC-4337 smart accounts | 1 | Proven live | In-app: first smart-account send (Kernel v3.3) through a bundler, included on Sepolia, 2026-10-01 (phase 7 live validation). Engine: SimpleAccount UserOperation through Alchemy, Sepolia, 2026-09-27 (phase 2 task 8); Kernel smoke 2026-10-01 (phase 7 item 1). Testnet-only by the readiness switchboard (C1–C3). |
 | 14 | Counterfactual deployment | 1 | Proven live | In-app on Sepolia, 2026-10-03 (phase 11 item 2): a new account's first smart-account send deployed its Kernel account at the predicted address through ZeroDev's bundler from the app itself (AccountDeployed and a successful UserOperationEvent in block 11838420; owner read back as the new account). Engine proofs: SimpleAccount 2026-09-27 (self-bundled) and Kernel through ZeroDev 2026-10-01. |
 | 15 | Gas sponsorship (verifying paymasters) | 1 | Built, verified offline | ERC-7677 paymaster support with verify-before-save in Settings (phase 5 item 2; `check-aa.mjs`). No live sponsorship yet (THREAT_MODEL W8; phase 10 item 2 in progress). |
@@ -540,13 +540,13 @@ The record used here runs to phase 10 item 1 (session keys and guardians through
 
 | Status | Tier 1 | Tier 2 | Tier 3 | Total |
 |---|---|---|---|---|
-| Proven live | 27 | 7 | 0 | 34 |
-| Built, verified offline | 10 | 7 | 0 | 17 |
+| Proven live | 28 | 7 | 0 | 35 |
+| Built, verified offline | 9 | 7 | 0 | 16 |
 | Designed | 1 | 1 | 0 | 2 |
 | Not started | 2 | 29 | 15 | 46 |
 | **Total** | **40** | **44** | **15** | **99** |
 
-Of the 34 features proven live, the account-abstraction ones split into two groups. Smart-account sends (13), Kernel modularity (22), the EIP-7702 upgrade and revoke (23), WalletConnect (78) and the balance-change preview (49) have been proven through the app's own screens. Session keys (18) and guardian recovery (20) have also been proven through the app's screens (phase 10 item 1), and counterfactual deployment (14) through the app's first smart-account send from a new account (phase 11 item 2); on-chain batching (17) remains proven at engine level only.
+Of the 35 features proven live, the account-abstraction ones split into two groups. Smart-account sends (13), Kernel modularity (22), the EIP-7702 upgrade and revoke (23), WalletConnect (78) and the balance-change preview (49) have been proven through the app's own screens. Session keys (18) and guardian recovery (20) have also been proven through the app's screens (phase 10 item 1), and counterfactual deployment (14) through the app's first smart-account send from a new account (phase 11 item 2); on-chain batching (17) remains proven at engine level only.
 
 ### What separates "built" from "proven live"
 

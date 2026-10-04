@@ -6320,3 +6320,67 @@ readiness gate and finding F-58 stand for mainnet.
       on the import and reveal screens, protected-key prompts, the
       clipboard overwrite, TalkBack. Emulator checklist (11 steps,
       throwaway key only) in the builder's report.
+- [x] PRIVATE-KEY IMPORT, PROVEN LIVE IN-APP (2026-10-04; emulator, Metro
+      worktree at 44eef11 with the engine built inside it, 2,301 modules;
+      no repo files edited; every hash status 0x1; a THROWAWAY key written
+      to a 0600 scratch file, entered only through the ADBKeyboard
+      broadcast, never printed, deleted afterwards; no 64-hex strings in
+      logcat). After the reload Home showed Account 1 · 0x772e…F44F with
+      NO prompt at launch (the storage code changed). (A) IMPORT: garbage
+      refused ("A private key contains only the characters 0–9 and a–f…");
+      the field is masked; preview "This key controls the Ethereum address
+      0xe34F1a4a31B8c5730b74F9eC9B29770308E42D1B" = the address computed
+      on the host; screencap 0 bytes while the field holds text; "Import
+      this key? … NOT backed up by your recovery phrase…"; IMPORT raised 2
+      prompts (protected write + read-back); row "Imported 1 (imported
+      key)" with the "Imported" chip and "…imported private key, Ethereum
+      only — NOT backed up by your recovery phrase"; Settings: "Your 1
+      imported private key is protected by biometrics too…". (B) Home
+      notice under the switcher; BTC/DOGE/SOL "Not available for an
+      imported key…"; Receive "Imported private key — no derivation path,
+      not part of your recovery phrase" and the Kernel counterfactual
+      0x5426907b17EBF28A54A5821CDcac02f2c22104DE = the engine's
+      predictKernelAddress(owner, 0) (salt 0 confirmed). (C) Funded from
+      Account 1 (risk card: one of your own accounts; tx 0x80f33696…65a1f5,
+      block 11845160); send back signed BY THE IMPORTED KEY, 1 prompt, tx
+      0x9efc915c…634e4d, block 11845175, sender 0xe34f…2d1b. (D) SMART
+      ACCOUNT OWNED BY THE IMPORTED KEY: funded (tx 0xb0a18aa4…38649b),
+      then a smart-account send deployed it through ZeroDev, 1 prompt:
+      userOp 0xc2ffdb40…653127, bundle tx 0x49d67558…8a0be7, block
+      11845193; AccountDeployed, OwnerRegistered, UserOperationEvent
+      success; readKernelOwner → the imported address. (E) Guardians
+      refused with the recorded sentence; Change owner from Account 1
+      lists only phrase accounts. (F) Show private key: dialog, 1 prompt
+      "Reveal the imported private key", screencap 0 bytes (the key screen
+      was never dumped); the Mac pasteboard held 66 bytes after Copy and 0
+      about 60 s later. (G) Relaunch: 0 prompts, the imported account
+      still listed. (H) Sweeps (smart-account tx 0xac8cfe68…eedc3a block
+      11845270; EOA Max, block 11845280), then Remove with two dialogs
+      ("Remove this imported account? … Your recovery phrase cannot bring
+      it back…" / "Delete the private key? …"), 0 prompts; the row is gone.
+      (I) Last fix slice eyeballed: the USDC confirm's risk card is the
+      single line "This sends USDC through its token contract 0x1c7D…7238
+      to one of your own accounts in this wallet: Account 2 (0xb699…81fE)."
+      with no contract-age line; "Tokens · Ethereum Sepolia" and the new
+      fee sentence; the WalletConnect readiness reason; the "Imported
+      private keys" row. Funds: dev EOA → Account 1 0.004 Sepolia ETH (tx
+      0x8075fab3…5f97, block 11845137; dev EOA 0.0340 left); about
+      0.000517 test ETH stranded with the deleted throwaway key (mostly a
+      0.000495 EntryPoint deposit). FINDINGS (fix slice running): (1) THE
+      FEE-FLOOR GUARD REFUSED TWO SENDS IN A ROW AFTER THE PROMPT ("The
+      network fee rose. Please review again.") on floor moves of +12% and
+      +1% within ~20 s — contradicting the 25% headroom recorded for
+      7c29fc7; the quote seems to carry the floor with no margin in some
+      case; (2) the Settings → Accounts intro still opens "Every account
+      comes from your one recovery phrase…"; (3) "Change owner…" is
+      offered then refused for an imported-owner Kernel account; (4)
+      removing an imported key needs no device check; (5) the removal
+      dialog does not mention the key's smart account or its EntryPoint
+      deposit, and the app cannot withdraw a deposit; (6) Home copy for an
+      imported account (token fee "in ETH"; the guardians-recovery link);
+      (7) "The smart account pays its own gas from its own balance." when
+      the deposit pays; (8) two wording nits. FEATURE row 12 → Proven live
+      (tally Proven live 35 — T1 28 — Built 16, Designed 2, Not started
+      46); the shareable page is VERSION 10. End state: Ethereum Sepolia,
+      Account 1, light mode, Google IME, no imported account; Metro at
+      44eef11.
