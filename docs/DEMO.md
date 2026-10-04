@@ -11,7 +11,7 @@ Everything in this walkthrough runs on the **Sepolia test network** with test ET
 ## Before you start: three warnings
 
 1. **Do not wipe the wallet on the demo emulator, and do not add or remove a fingerprint on it.** The emulator wallet's recovery phrase is stored in biometric-protected storage, and `AGENTS.md` records that the written phrase for that wallet is not kept anywhere ("Settings 'Recovery phrase protection' section"). Changing the fingerprint enrollment makes the phrase permanently unreadable; wiping deletes it. Either would lose Account 1, which owns the deployed Kernel smart account and the WalletConnect session this demo relies on. Show onboarding on a second, disposable emulator instead (see step 1).
-2. **Two flows in this walkthrough have not yet been rehearsed live through the app's screens.** Session keys (step 6) and guardians (step 7) are proven live on Sepolia through engine scripts, and their screens are built and tested offline, but their first in-app live run is phase 10 item 1, which was in progress when this document was written. Check the "Phase 10 progress" section of `AGENTS.md` before presenting; if those runs found problems, follow what it says over this document. Other phase 10 work was also editing these screens while this was written, so if a quoted label differs slightly on screen, trust the screen.
+2. **Quoted labels can drift.** Every flow in steps 1 to 9 has now been run live through the app's screens on the emulator (session keys and guardians in phase 10 item 1, the counterfactual deployment in phase 11 item 2). Steps 10 and 11 (subscriptions and Base Sepolia) are newer: subscriptions ran live through the app's code from a script and on the engine, and the Base in-app leg is recorded in "Phase 12 progress" in `AGENTS.md`. Later phases keep editing these screens, so if a quoted label differs slightly on screen, trust the screen, and check the latest "progress" section of `AGENTS.md` before presenting.
 3. **Bitcoin, Solana and Dogecoin in the app use their main networks.** Sepolia test mode only switches the Ethereum side. Anything you broadcast on those three chains from the app spends real coins. Step 9 explains how to show them without broadcasting.
 
 ---
@@ -176,7 +176,7 @@ Switch back to **Account 1**.
 
 ### Step 6. Session keys: grant, use, revoke
 
-Account 1, whose Kernel account is deployed. **Not yet rehearsed in-app; see warning 2.**
+Account 1, whose Kernel account is deployed. Rehearsed live in-app on 2026-10-03 (phase 10 item 1, and again after the fixes: two system prompts, success state intact).
 
 - Home → Ethereum row → **Sessions**. The list starts with a warning that sessions are enforced on-chain but the session keys live only on this device ("…Revoke sessions you no longer need before wiping, and revoke everything you no longer recognise.").
 - Tap **Grant a new session**. The form explains: "A session key is a new key on this device that may make ONLY the calls you list, until it expires. Your account enforces the limits on-chain. Each value cap is per call, not a total." For the allowed call, **Pick from contacts** → "Burn", leave the function empty and the cap at 0, choose **10 minutes**, and tap **Review**.
@@ -186,13 +186,13 @@ Account 1, whose Kernel account is deployed. **Not yet rehearsed in-app; see war
 
 **What to say:** this is consent that behaves like a phone app permission: one approval, then zero pop-ups inside a fence the account itself enforces. A session key cannot touch anything outside its list, and it cannot sign messages as the account.
 
-**What it proves:** the same cycle (install, use, refusal outside the grant, revocation, refusal after revocation) ran live on Sepolia through the engine on 2026-10-02 UTC (phase 8 item 2, engine half). The app screens are built and pass 99 offline checks (`check-sessions.mjs`). The policies are unaudited, so session keys are test-network-only.
+**What it proves:** the whole cycle (install, a test operation signed by the session key alone, revocation) ran live on Sepolia through these exact screens on 2026-10-03 (phase 10 item 1), after the engine had proven install, use, refusal outside the grant, revocation and refusal after revocation on 2026-10-02 UTC (phase 8 item 2). The screens pass 117 offline checks (`check-sessions.mjs`). The policies are unaudited, so session keys are test-network-only.
 
 **Fallbacks:** if the Sessions link is missing, the account is not eligible (the Kernel account must be deployed and the Kernel type selected for Sepolia). If the install is refused, read the bundler's message aloud (it is shown verbatim) and fall back to describing the engine run; `scripts/testnet/session-key-smoke.mjs` with `SESSION_SMOKE_DRY_RUN=1` replays the stages in simulation without spending anything.
 
 ### Step 7. Guardians: setup, the exposure warning, recovery, veto and owner change
 
-**Not yet rehearsed in-app; see warning 2.** This is the longest step. It is described here as the screens and the record imply; rehearse it first and pre-run the waits.
+Rehearsed live in-app on 2026-10-03 (phase 10 item 1: setup, a recovery request with pasted approvals and the on-chain delay, the owner's veto, a second recovery executed after the delay, attach, owner change back, removal). This is the longest step. It is described here as the screens and the record imply; rehearse it first and pre-run the waits.
 
 **Setup (Account 1).**
 
@@ -256,6 +256,37 @@ These chains run on their main networks in the app, so show the flows to the con
   Broadcasting needs `DOGE_MAINNET_BROADCAST=1` plus typing the exact txid; do not do that in a presentation.
 
 **What it proves:** one wallet, one phrase, four chain families with very different transaction formats, each proven with a live broadcast (three on test networks, Dogecoin on mainnet). The Dogecoin send has not yet been broadcast from the Send screen itself, and the emulator wallet holds no DOGE (about 10.69 DOGE remain in the dev wallet at `DEQ788Pe98Z97Le6feBa2P49JL7ETGSMNf`).
+
+### Step 10. Subscriptions via session keys: a merchant pulls a payment on schedule
+
+Account 1, whose Kernel account is deployed, on Sepolia. **The app screens for this step have not yet been rehearsed on the emulator**; the same grant and keeper ran live on Sepolia through the app's own code from a script on 2026-10-03 (phase 12 item 2). Rehearse it first.
+
+- Home → Ethereum row → **Sessions** → **New subscription**. Fill in a merchant address (for a rehearsal, the dev seed's index-5 address `0x69F0EC265702D0891b0AEF8e79ddDC3277ef7E8a`, which the keeper script can play), the token (test ETH, or a test-network USDC/EURC), the amount per payment, the period and the number of payments. The fee budget is pre-filled. Tap **Review**.
+- Read the review aloud in this order. First the warning box: a single operation may contain several transfers each under the cap, so a dishonest merchant could take several periods' worth in one pull, up to the account's whole balance of that token. Then the plain sentence ("Lets … take up to … every … until …; at most one pull per period") and the on-chain lines: the per-call rules, the time window, the fee budget and the pull count. Then **Start subscription**: expect the same two system prompts as a session grant (approve, then sign with the phrase), then "Included".
+- The Subscriptions list shows the card: next payment due, payments taken (0 of N), fee budget left, and "key on this device". Tap **Hand the key to the merchant**: after the fingerprint the hand-over JSON is shown once with screenshots blocked; share or copy it, then confirm, which deletes the key from this device. The card now shows the hand-over time and no hand-over button.
+- To show a pull, give the JSON to the keeper on the host and run it with only the session key: `node scripts/testnet/subscription-keeper.mjs import <file>` then `… run`. Refresh the card as the counts move. Then **Revoke** from the card and run `… pull --unchecked` to show the account refusing the next pull.
+
+**What to say:** a subscription is a session key with a schedule. The merchant holds a key that can move at most the agreed amount, to itself only, at most once per period, until the expiry, and the account enforces all of that. The owner can cancel at any time. Be honest about the limit stated in the warning box: the deployed policies cannot forbid batching, so this is a schedule the account enforces, not a hard cap on what a dishonest merchant can take in one go.
+
+**What it proves:** on 2026-10-03 the keeper pulled three scheduled payments of 1,000 wei through ZeroDev's bundler from the dev seed's index-2 Kernel account; an early pull was refused as not yet due, an over-cap pull was refused by the call policy, a fourth pull was refused by the rate limit, and after revocation the key was refused outright, with every receipt checked independently and the merchant holding exactly 3,000 wei (phase 12 item 2). The engine's dry run also showed the batching gap against the real contracts. The policies are unaudited, so subscriptions are test-network-only.
+
+**Fallbacks:** if the Sessions link is missing, the account is not eligible (deployed Kernel account, Kernel type selected). If the install is refused, the bundler's message is shown verbatim. `node scripts/testnet/subscription-keeper.mjs dry-run` walks every stage in simulation (eth_simulateV1 against the real Sepolia contracts) without spending anything.
+
+### Step 11. The same wallet on a Layer 2: Base Sepolia
+
+Account 1. Rehearsed live in-app on 2026-10-03 (phase 12 item 1). Base Sepolia test ETH is needed on Account 1's regular address and, for the smart-account send, on its Kernel account `0xD31c2C54F21684eE2026a6C41e391130BdEeD8FA`, which has the same address on every chain. Faucets for Base Sepolia usually require a small mainnet ETH balance on the requesting address; `scripts/testnet/fund.mjs` can move test ETH from the dev wallet if it holds some.
+
+- Settings → Developer → **Base Sepolia**. The banner becomes "TESTNET — Base Sepolia test mode is on. Amounts are test ETH, not real funds." and a note explains that every transaction on this layer-2 network also pays a layer 1 data fee, that the app reserves the fee oracle's estimate plus 50%, and that swaps are not offered here.
+- Settings → Account Abstraction → Base Sepolia row. On the demo emulator it already reads "ready · Kernel v3.3 (ERC-7579)". To show the per-network check, paste the Ethereum Sepolia bundler URL into the Base row: the save is refused with "This bundler serves Ethereum Sepolia (chain id 11155111), but you are saving it for Base Sepolia (chain id 84532). Nothing was saved…". The Kernel factory pre-fill is the same address as on Ethereum, "each checked on-chain".
+- Home → Ethereum → **Send**, smart-account toggle on, a small amount to Account 2. The confirm shows the smart account's balance, the deployment state and the bundler's estimate. Approve: one prompt, then "Included on-chain — succeeded." On the rehearsal this send deployed the Kernel account on Base from the app.
+- A plain send with **Max**: the confirm shows "Max network fee … plus the layer 1 data fee below" and a separate "Layer 1 data fee (estimate)" line with the oracle figure and the 50% reserve. Tap **Review** within a few seconds of Max: the fee oracle moves, and Max leaves no slack, so a slow Review can be refused with "Not enough test ETH to cover this amount plus the network fee." Tap Max again and Review promptly.
+- Switch back to **Ethereum Sepolia** afterwards: the emulator's Sepolia bundler, session and guardian state live there.
+
+**What to say:** nothing about the account-abstraction stack is Ethereum-specific. The same Kernel contracts sit at the same addresses on Base, the same bundler project serves it, and a smart account has one address everywhere. The only new thing is the layer 1 data fee, which the app estimates from the network's own oracle and shows as its own line.
+
+**What it proves:** on 2026-10-03 the app deployed Account 1's Kernel account on Base Sepolia through ZeroDev's bundler (block 47657170) and sent a Max transaction whose actual layer 1 fee came in 5.2% above the estimate and within the reserve (block 47657380), with every receipt checked independently (phase 12 item 1). The engine had deployed a Kernel account there by script the same day.
+
+**Fallbacks:** without Base Sepolia test ETH, show the mode switch, the layer-2 note and the bundler refusal, and describe the recorded run. The Home account-tool links (Sessions, Guardians, Passkey) may stay hidden on Base until the app is relaunched after the deployment (a recorded bug).
 
 ---
 

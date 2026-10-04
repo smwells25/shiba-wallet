@@ -5112,3 +5112,155 @@ Waves: 1 (CTO) with 2, 3 and 4 (agents) in parallel; 5 after.
       the policies remain unaudited (C1). Feature rows 69 (proven live,
       engine + app code via script) and 25/63 (groundwork) to update in
       item 5.
+- [x] Item 1, second half — IN-APP BASE SEPOLIA LEG, PROVEN LIVE
+      (2026-10-03 US Eastern / 2026-10-04 UTC; emulator, Expo Go, Metro
+      serving the worktree at 4e47586 — which has the Base L1-fee code,
+      the bundler chain-id check and the item-2 fixes but not 06ad90e's
+      F1–F10 fixes; no repo files changed by the run; project id typed only
+      via ADBKeyboard, every dump redacted). Settings → Developer → Base
+      Sepolia: banner "TESTNET — Base Sepolia test mode is on…", the
+      layer-2 note (L1 data fee + 50% headroom, no swaps), endpoint row
+      "Base Sepolia · default (1 of 3: base-sepolia-rpc.publicnode.com)",
+      Home 0.008 test ETH. AA row: the NEGATIVE CHECK PASSED — the Sepolia
+      ZeroDev URL was refused with "This bundler serves Ethereum Sepolia
+      (chain id 11155111), but you are saving it for Base Sepolia (chain id
+      84532). Nothing was saved…"; the Base URL saved "Verified ✓ —
+      eth_supportedEntryPoints includes EntryPoint v0.7"; the pre-filled
+      KernelFactory 0x2577…E2E9 passed the on-chain check ("…accountId() is
+      kernel.advanced.v0.3.3; the meta factory approves the factory"); row
+      "ready · Kernel v3.3 (ERC-7579)". SMART-ACCOUNT SEND (first in-app
+      smart-account operation on a Layer 2): 0.0001 test ETH to Account 2's
+      EOA from Account 1's Kernel account 0xD31c…D8FA (same address as on
+      Sepolia — CREATE2), form "Not deployed yet — the first send deploys
+      it.", confirm DEPLOYMENT "Will deploy with this send" / "Deployment
+      goes through the configured bundler.", bundler estimate 0.01105 gwei
+      × 504,949 gas, preview "You send 0.0001 test ETH", one prompt;
+      userOpHash 0xc7645628e0d477a6e9da494f095d2887e79137567c65934339d9fb9a21ef9beb,
+      bundle tx 0xff96f21e44fe614d65221f1a46270637308a27005d89cbcabaf8fa49f8ca64f8.
+      Independently verified on base-sepolia-rpc.publicnode.com: block
+      47657170, status 0x1, to EntryPoint v0.7, gasUsed 346,863, receipt
+      l1Fee 22,900,598,354 wei paid by the bundler EOA; AccountDeployed
+      (factory = the meta factory 0xd703…42d5); UserOperationEvent nonce 0
+      success, actualGasUsed 355,791; OwnerRegistered(0xD31c…, 0x772e…);
+      eth_getCode 0x at block−1, the 61-byte ERC-1967 proxy now, implementation
+      slot = Kernel 0xd6CE…5b28; readKernelOwner → Account 1; Account 2
+      received exactly 0.0001. EOA MAX SEND WITH THE L1 DATA FEE: confirm
+      AMOUNT 0.007999760062260531, MAX NETWORK FEE 0.000000239937739469
+      ("0.011 gwei max fee × 21000 gas, plus the layer 1 data fee below"),
+      LAYER 1 DATA FEE (ESTIMATE) 0.000000008937739469 (oracle
+      0.000000005958492979 + 50%), TOTAL 0.008 = BALANCE, eth_call gate
+      passed, one prompt "Approve sending 0.007999760062260531 test ETH";
+      tx 0xebc64f593c2bc73b913a106fb446e80d59a48fb87b58ba1362dbf9c4bd7b95e6,
+      block 47657380, status 0x1, type 2, 21,000 gas, effectiveGasPrice
+      6,000,000; receipt l1Fee 6,265,488,623 wei (l1GasUsed 1,600,
+      l1BaseFeeScalar 1,101). ESTIMATE VS ACTUAL: app estimate
+      5,958,492,979 wei, actual 6,265,488,623 (5.2% over the estimate),
+      reserve 8,937,739,469 (actual used 70% of it); L2 fee actual
+      126e9 wei vs worst case 231e9; total charged 132,265,488,623 wei.
+      The 50% headroom held at inclusion. HEADROOM FINDING (bug): the
+      app refused its OWN Max twice before the third try passed — Max
+      subtracts exactly one fee snapshot, Review re-quotes with fresh
+      oracle and fee values, and the implied L1 estimate rose from ~5.42e9
+      to ~6.02e9 wei over about a minute, so amount + fee exceeded the
+      balance by a few hundred thousand wei in prepareEvmSend's own check
+      ("Insufficient funds: sending 7999760875356003 wei plus a worst-case
+      fee of 239731282451 wei exceeds the balance of 8000000000000000
+      wei"); getL1Fee was value-independent on the same block. Passed when
+      Max and Review were ~3 s apart. Switched back to Ethereum Sepolia
+      afterwards: banner, Home 0.00373 test ETH with the account-tool links
+      back, Sepolia AA row unchanged. Prompts: 2 total. Funds on Base
+      Sepolia after: Account 1 EOA 107,672,250,846 wei (dust), Kernel
+      account 0.00289 ETH + 0.00000342 deposit, Account 2 0.00809976.
+      BUGS / COPY (fix slice next): (1) Max has no slack for fee movement
+      between the Max tap and Review (add slack or trim a Max amount by
+      the fee delta at quote time); (2) Home's Sessions / Guardians /
+      Passkey links stay hidden on Base after the deployment —
+      useSessionEligibility re-runs only on chain/owner/index changes, not
+      when the AA config is saved or the account becomes deployed (the
+      other two hooks likely the same); (3) Home shows "0" for 107.7 gwei
+      of dust instead of a small amount; (4) Home on Base still says
+      "Sepolia test mode — tracked tokens are mainnet assets…" and shows a
+      Swap link although swaps are not offered there; (5) the Base AA
+      row's Kernel note says "Deployment goes through the configured
+      bundler." before any bundler is configured, and the bundler
+      "Verified ✓" line omits the eth_chainId check that ran; (6) "checked
+      2026-10-04" dates are the UTC day while this file uses US Eastern;
+      (7) Home did not refresh its balance after either send until a
+      pull-to-refresh; (8) no risk card on the EOA confirm — expected at
+      4e47586 (pre-F2); (9) the smart-account prompt title could not be
+      read from the dump (the header "Send ETH" came back; the code uses
+      aaSendApprovalPrompt). Emulator notes: slow left-edge swipes to
+      scroll Settings up; the scratchpad type.sh pressed BACK with the
+      keyboard hidden and left Settings once (type12.sh guards it). End
+      state: Account 1, Ethereum Sepolia mode, both chains' AA rows saved,
+      Google IME restored, fingerprint and wallet untouched.
+- [x] Item 5 — leadership refresh (commit below). docs/FEATURE_UNIVERSE.md
+      section 15: row 19 Designed → Built (app-enforced limits, with the
+      on-chain-limits refusal reason), row 69 Not started → Proven live
+      (app code via script, Sepolia, with the batching limit stated), row
+      25 Not started → Designed (the keeper as scheduled-puller
+      groundwork), row 63 annotated (no DCA; what the subscription grant
+      shows about its shape), row 29 rewritten for the in-app Base leg
+      (chain-id refusal, deployment from the app, Max with the L1 fee,
+      the Max-slack bug); the stale sentence that called feature 14
+      engine-only corrected (in-app since phase 11 item 2). Tally now
+      Proven live 32 (T1 25, T2 7), Built 16 (9/7), Designed 2 (1/1), Not
+      started 49 (5/29/15). The shareable page was rebuilt from the
+      markdown (scratchpad build-fu.py; counts 32/16/2/49 asserted) and
+      published as VERSION 8 of https://claude.ai/artifact/JEfyMuPcMJ8YW5x3ZKitsw
+      (still private until the Chairperson shares it). docs/DEMO.md:
+      warning 2 rewritten (every flow in steps 1–9 has now run live
+      through the app's screens; steps 10–11 are newer), the "not yet
+      rehearsed" lines on steps 6 and 7 replaced with the phase 10 facts
+      and current check counts, new Step 10 (subscriptions: form, the
+      warning-box-first review order, the one-time key hand-over, the
+      keeper import/run/revoke demonstration, the honest batching
+      sentence) and Step 11 (Base Sepolia: mode switch, the bundler
+      chain-id refusal, the smart-account send that deployed the account,
+      Max with the layer 1 data fee line and the "Review promptly" advice,
+      switching back). The app screens for step 10 are still unrehearsed
+      on the emulator and the step says so.
+
+## Phase 12 status (2026-10-03, end of the autonomous run)
+
+All five build items landed and are pushed; CI green on every push
+(the intermediate runs cancelled by the concurrency rule aside). Proven
+live this phase: the Kernel deployment on Base Sepolia by script and
+then from the app itself (the first smart-account operation on a Layer
+2 through the app's screens), an EOA Max send on Base with the layer 1
+data fee inside the 50% reserve (actual 5.2% above the estimate), and
+subscriptions on Kernel session keys — three scheduled pulls by a keeper
+holding only the session key, with the early, over-cap, exhausted and
+post-revocation pulls each refused on-chain. Built and verified offline:
+app-enforced spending limits (item 3), the in-app subscription flow
+(item 2, screens unrehearsed), and the contrast and accessibility
+completion (item 4, light palette to WCAG AA, badges on theme tokens,
+technical-detail lines, the stable Home layout). Engine: 722 tests.
+App: 36 offline suites, 3,838 checks, lint 0, tsc clean. The shareable
+feature page is at version 8 (32 proven live, 16 built).
+
+Findings for the Chairperson this phase: the deployed Kernel policies
+cannot stop a subscription merchant from batching several transfers
+into one pull (stated on every subscription screen; a fourth item for
+the ZeroDev disclosure decision, which still awaits the Chairperson);
+RateLimitPolicy counts total operations, not operations per period, and
+with the SDK's default startAt of 0 it limits only the total; on Base the
+app's own Max can be refused by its re-quote because Max leaves no slack
+for the fee oracle moving between the Max tap and Review.
+
+Waiting on inputs: the ZeroDev gas policy (live sponsorship); a physical
+phone, Expo account, app identifiers and the passkey rpId domain (device
+track); a live SIWE login with a real dApp; the disclosure decision;
+everything listed under the phase 9 status.
+
+Follow-ups (no inputs): the Base findings from the in-app leg (Max
+slack, Home account-tool links not refreshing after a deployment or an
+AA save, dust shown as "0", Sepolia-specific Home copy and the Swap link
+on Base, the Kernel note before a bundler exists, UTC "checked" dates,
+Home balance not refreshing after a send); an emulator rehearsal of the
+subscription screens and the spending-limits screen; an ERC-20
+subscription pull live (needs Sepolia USDC on a dev address); the
+SessionsScreen contrast line the subscriptions owner handled; F5 (WETH
+Deposit events in the preview); the WcApprovalSheet L1-fee line and the
+7702 set-code L1 fee on Base; the two unreasoned eslint disables in
+WcApprovalSheet.
