@@ -5638,3 +5638,114 @@ scripts only) and 4 (agent; files disjoint from item 1) in parallel;
 then 2's app half, 3 and 5; 6 last. Subagents on Opus.
 
 ## Phase 13 progress
+- [x] Item 2, research and engine half — GAS PAID IN USDC, PROVEN LIVE
+      ON BASE SEPOLIA (commit acdf04f; 26 new tests, engine 748 in the
+      CTO's isolated worktree, offline runner ALL GREEN; no app files;
+      the CTO re-read the bundle receipt independently on
+      base-sepolia-rpc.publicnode.com: block 47682905, status 0x1, sender
+      0xc995…C5AC, paymaster 0x31be…0b58, success 1, actualGasCost
+      1,650,524,700,000 wei). RESEARCH (all fetched 2026-10-04):
+      * Circle Paymaster v0.7 — RECOMMENDED. developers.circle.com/
+        paymaster.md: "permissionless", "You don't need to sign up… or
+        generate any API keys", "no dependency on offchain APIs"; v0.7 is
+        listed for "Arbitrum and Base" only (Ethereum only for v0.8).
+        Testnet 0x31BE08D380A21fc740883c0BC434FcFc88740b58 (Arbitrum
+        Sepolia, Base Sepolia); mainnet 0x6C973eBe80dCD8660841D4356bf15c32460271C9
+        (Arbitrum, Base — NOT verified on-chain). Base Sepolia, read live:
+        entryPoint() = v0.7, token() = USDC 0x036CbD53…CF7e, EntryPoint
+        deposit ~1.0077 ETH, staked 0.25 ETH / 86,400 s; an ERC-1967 UUPS
+        proxy whose implementation 0x1E42055dECF050828AfE8bA0A374bC5F44CbFC8d
+        is a Sourcify exact match (solc 0.8.28), licence GPL-3.0-or-later.
+        On ETHEREUM SEPOLIA the same proxy address has code but
+        entryPoint() reverts and its v0.7 deposit is 0 — unusable there
+        (Circle's v0.8 address reports EntryPoint v0.8). Rate: an on-chain
+        oracle read during validation; on Base Sepolia the oracle returns
+        a FIXED 3000.00000000 (roundId 1) and fetchPrice ignores updatedAt
+        (no staleness check). Markup: the docs say a 10% surcharge on
+        Arbitrum and Base "and their testnets", but on-chain feeSpread()
+        is 0 on Base Sepolia (mainnet unverified); additionalGasCharge
+        35,000 gas per op. Grant: an EIP-2612 permit inside paymasterData
+        (uint8 0 ‖ token ‖ uint256 amount ‖ signature, deadline
+        type(uint256).max) or a prior approve; USDC's permit accepts
+        ERC-1271 signatures; the paymaster pulls the prefund DURING
+        VALIDATION, so an approve batched into the same op is too late.
+        Audit: Circle says third-party audits exist; no published report
+        found → treat as unaudited. Circle can upgrade, pause, change the
+        oracle, the spread and the extra gas charge; one token (USDC).
+      * Pimlico ERC-20 paymaster — SECOND SOURCE. v0.7
+        0x777777777777AeC03fd955926DbF81597e66834C (docs.pimlico.io),
+        Sourcify exact match on chains 1 / 11155111 / 84532, MIT; Sepolia
+        deposit ~140 ETH but NOT staked (EREP-050 risk with strict
+        bundlers), Base Sepolia staked 5 ETH; PERMISSIONED — every op
+        carries Pimlico's signature and the rate comes from Pimlico's API
+        with its markup; token pulled in postOp (an approve can ride in
+        the same op); the keyless public endpoint serves paymaster methods
+        on testnets only — mainnet needs an API key; no audit of the
+        singleton found. The only EntryPoint v0.7 option on Ethereum
+        Sepolia.
+      * ZeroDev ERC-20 gas: with context {token: USDC} the project RPC
+        returned Pimlico's 0x7777… stub data on both testnets with no gas
+        policy (the earlier "no ERC20 gas token data present" error only
+        meant the token field was missing); docs add "a 5% premium" and
+        list USDC on mainnets only — a proxy of the Pimlico source, not an
+        independent one. Alchemy: needs an ERC-20 policy in its dashboard.
+      ENGINE packages/chains-evm/src/token-paymaster.ts (smart-account.ts
+      unchanged; plugs into the ERC-7677 paymaster seam):
+      CIRCLE_TOKEN_PAYMASTER_V07, encodeCirclePaymasterData /
+      parseCirclePaymasterData, exact-bigint mirrors of FeeLib and the
+      v0.7 prefund (entryPointRequiredPrefund, circleTokenCost,
+      circleUserCharge, quoteCircleTokenCharge → maxTokenCharge = the
+      prefund pulled in validation, the true worst case; circlePostOpCharge),
+      readCirclePaymasterState / circlePaymasterProblems (wrong EntryPoint,
+      other token, paused, no stake, thin deposit), buildTokenPermit (max
+      deadline), readTokenPermitInfo (refuses a DOMAIN_SEPARATOR
+      mismatch), readTokenBalanceAndAllowance, circlePaymasterApproveCall
+      (exact amount; refuses 0 or unlimited), TokenGasInsufficientBalance /
+      Allowance / ChargeAboveLimit errors, createCirclePaymasterTransport
+      (answers pm_getPaymasterStubData / pm_getPaymasterData locally; the
+      stub carries a REAL permit sized for a 1.5M-gas ceiling because the
+      bundler simulates the permit and transfer; the final data permits
+      EXACTLY the worst case and leaves allowance 0 — both permits share
+      one nonce so at most one takes effect; refuses another EntryPoint,
+      chain, sender or method), decodeCircleSponsoredEvents. paymasterData
+      byte-identical to ethers solidityPacked and viem 2.57.2 encodePacked;
+      the permit digest matches ethers and viem; the tests reproduce the
+      LIVE transaction's paymasterData byte for byte and recover the owner
+      from the Kernel ERC-1271 envelope. PROOF scripts/testnet/
+      token-gas-smoke.mjs: dry run (eth_simulateV1, USDC balance by a
+      slot-9 override proven by read-back) passes for the public mnemonic
+      (deploy + ERC-1271 permit + prefund + refund in one op with ZERO ETH
+      in the account) and the dev owner; refusals AA33 "transfer amount
+      exceeds balance" / "exceeds allowance" / permit one unit low, and
+      the engine's own pre-check. LIVE (TOKEN_GAS_LIVE=1, Base Sepolia,
+      ZeroDev bundler): the dev EOA sent 1 USDC to the dev Kernel account
+      0xc995E49acA5C888F4FF1E50E8467E9fFc31CC5AC (tx 0x65fb119d…3a3968,
+      block 47682895; the dev EOA already held 20 USDC on Base Sepolia
+      from an earlier unknown source, now 19 — no swap needed); userOp
+      0x49f93a1111f3fc4af130f091f417b66f648dfd86d67bc5e0c76b1a1bcf77b7f6,
+      bundle tx 0x83f56b31aafd23b92d5c05624c054273267d266331e3cb593b165c1b0d12b4cb,
+      block 47682905; verified on sepolia.base.org: paymaster = Circle's,
+      permit nonce 0 → 1, USDC 15,291 to the paymaster (= the quote) and
+      9,899 refunded, UserOperationSponsored actualTokenNeeded 5,392 at
+      price 3,000,000,000, account USDC 1,000,000 → 994,608, account ETH
+      and EntryPoint deposit UNCHANGED, allowance 0 before and after, the
+      paymaster's deposit down by exactly actualGasCost. FINDINGS FOR THE
+      CHAIRPERSON: docs-vs-chain on the surcharge (10% documented, 0 on
+      Base Sepolia); a static test oracle and no staleness check; GPL-3.0
+      code behind a Circle-controlled upgradeable proxy (adds to the
+      counsel question); no published audits for Circle's or Pimlico's
+      paymaster; Pimlico is permissioned and keyed on mainnet; ZeroDev
+      resells Pimlico. UNVERIFIED: Circle's mainnet addresses, oracle and
+      spread; other bundlers; deployment + permit through a real bundler
+      (simulation only); the postOp formula against a trace; 7702 and
+      passkey accounts; a live Pimlico run. Session keys cannot use the
+      permit path (ERC-1271 is off for them). APP DESIGN NOTE: the stub
+      needs an owner signature, so run estimation and signing after the
+      biometric gate; show "Network fee paid in USDC: up to X (unused part
+      refunded in the same transaction), no ETH needed", the rate and its
+      source, the spread, the paymaster address, and "a one-time permit
+      letting Circle's paymaster take at most X USDC; nothing stays
+      approved"; pass maxTokenCharge = the displayed amount; show the
+      actual charge from UserOperationSponsored on success; offer it only
+      on the Base Sepolia profile for Kernel accounts (readiness: test
+      networks only), hidden on Ethereum Sepolia.
