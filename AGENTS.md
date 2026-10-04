@@ -6196,3 +6196,47 @@ Follow-ups (no inputs): the six findings of the last emulator run (fix
 slice running); a gas margin inside the displayed fee if Base refuses
 re-estimates often; the WalletConnect ERC-7715 error wording; fee facts
 on return from the background.
+- [x] Gas-in-USDC run findings FIXED (commit e1e3178; check-approvals
+      180, check-tokens 109, check-aa-kernel 155, check-token-gas 142,
+      check-readiness 162; nine mutation breaks each caught; offline
+      runner ALL GREEN in the CTO's isolated worktree: engine 774, app
+      4,477 across 38 suites, lint 0/0, tsc clean; not seen on a device).
+      (1) RISK CARD ON TOKEN SENDS (both paths were identical and both
+      wrong): risk.ts tokenTransferTarget returns a token only when `to`
+      is a tracked/known token on the active chain THAT HOLDS CODE, a
+      counterparty is given and differs from `to`, and the calldata is
+      exactly transfer(counterparty, x); then the class, delegation and
+      contract-age checks run on the RECIPIENT and the card opens with one
+      line — "This sends USDC through its token contract 0x… to a regular
+      account with no contract code on this network (0x…)." / "… to a
+      contract (0x…)." / "… to one of your own accounts in this wallet:
+      <label> (0x…)." (and the upgraded-own-account, foreign-delegated and
+      could-not-be-checked variants); untracked tokens, tracked addresses
+      on another chain, calldata paying anyone else, approve and other
+      calls, NFTs and a code-less "token" keep the existing warnings, so a
+      spoofed counterparty cannot suppress one; the recipient's
+      new-contract, delegated and first-interaction lines are still
+      raised; a check pins the full card equal for the same send from the
+      regular and the smart account. (2) erc20.ts splits
+      Erc20NotATokenError (only on a revert / execution failure, malformed
+      return data or decimals > 255; old message byte-identical) from
+      Erc20ReadUnavailableError (transport, HTTP, non-execution JSON-RPC
+      errors, null result); discovery counts the latter as "N could not be
+      read right now — search again"; isExecutionErrorMessage's phrase
+      list is a judgement from common node wordings. (3) aaPreviewNote:
+      in USDC-fee mode the preview says "…The network fee is paid in USDC
+      through Circle's paymaster and is shown above; it is not part of
+      this list." (4) tokenSendFeeSentence / settingsTokensFeeSentence:
+      "…normally paid in test ETH, not in the token. On Base Sepolia, a
+      smart-account send can pay it in USDC instead when the Send screen
+      offers that choice." (5) AaFundingError carries a title:
+      aaAmountShortfallTitle → "Not enough <SYMBOL> for this amount plus
+      the network fee." (or without the fee clause for sponsored and
+      USDC-fee native sends) only when the account could pay for some
+      send; the empty/under-funded cases keep "Your smart account needs
+      funds first." (6) the WalletConnect readiness reason now says
+      identity verification and Permit/Permit2 summaries are built and
+      tested offline but not yet exercised with a live app over the relay.
+      Left alone: Settings → Developer still says test networks are "each
+      paid in test ETH". Phase 13's code is complete at this commit apart
+      from item 3 (private-key import), which waits on the Chairperson.
