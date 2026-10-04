@@ -4907,3 +4907,38 @@ Waves: 1 (CTO) with 2, 3 and 4 (agents) in parallel; 5 after.
       the 61-byte ERC-1967 proxy. First Layer 2 proof for the AA stack.
       The in-app Base Sepolia leg (bundler save, smart-account send, EOA
       Max with the L1 fee) follows on the emulator.
+- [x] Item 4 — contrast and accessibility completion (commit 7d40ebb;
+      check-devmode 224; tsc and lint clean in the CTO's worktree).
+      Light palette (theme-palette.ts): accent #d97a1a → #a65d13 and the
+      light TESTNET orange #e07800 → #a85a00 (LIGHT_TESTNET_ORANGE), hue
+      and saturation kept, lightness lowered; ratios: white on accent 3.11
+      → 5.00, accent text on background 2.90 → 4.67, white on TESTNET
+      3.06 → 5.09, TESTNET text on background 2.86 → 4.75 (WCAG 2.2 SC
+      1.4.3; eleven light pairs asserted; dark palette unchanged and
+      asserted). Badges on theme.testnetFill / onTestnetFill in Passkey,
+      UpgradeAccount and RecoveryViews; a source scan forbids the literal
+      oranges in the owned files. Technical-detail lines on Activity
+      (error, load-more error and the refusal note — useHistory keeps only
+      the message string, so Activity sanitises it itself), Tokens and
+      Connections (start failure WarningBox + TechnicalDetail; pairing
+      Alert text). A3: Activity opens with "network · TESTNET/Mainnet ·
+      account" plus the full address. F11: the Home chain card is a plain
+      View with sibling controls (Receive area, balance cell, fixed links,
+      and an EVM account-tools row with a reserved min height so Sessions /
+      Guardians / Passkey no longer shift the layout). F8: the NFTs header
+      says the gallery shows the regular address and names the smart
+      account (Kernel / recovered / SimpleAccount) as not included.
+      Accessibility labels, hints and selected states across Home,
+      Activity, Tokens, Connections, NftDetail, Guardians, Recover, the
+      recovery views, OwnerRotation and Contacts. LEFT FOR THE SWAP /
+      SPENDING OWNERS (lines at 4c6bb46): SwapScreen.tsx:119-120 and :1490
+      badge/text colours → theme.testnetFill / onTestnetFill; a Swap
+      technical-detail line for the sell-balance failure;
+      WcApprovalSheet.tsx 860/861, 1240/1241, 1426/1427 the same badge
+      replacement; SessionsScreen.tsx:861-862 (its owner switches it).
+      Other findings: ConfirmBackupScreen.tsx:108 hard-codes white on the
+      accent (2.34:1 in dark mode; use theme.onAccent); dark-mode danger
+      on dangerSurface is 4.32:1; the chain badges draw white on brand
+      colours (BTC 2.30, DOGE 2.39, ETH 3.69, SOL 4.52 — arguably the
+      logotype exception); Home's async header lines can still push the
+      list. Not seen on a device.
