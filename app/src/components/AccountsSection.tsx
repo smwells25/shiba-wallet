@@ -3,7 +3,19 @@ import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-nativ
 import { Button } from '../components';
 import { useTheme } from '../theme';
 import { MAX_ACCOUNT_NAME_LENGTH, shortAccountAddress } from '../wallet/accounts';
+import { importedSlotOf } from '../wallet/account-ids';
+import { requireLocalAuth } from '../wallet/biometric';
+import {
+  REMOVE_IMPORTED_CONFIRM_MESSAGE,
+  REMOVE_IMPORTED_CONFIRM_TITLE,
+  REMOVE_IMPORTED_TITLE,
+  REVEAL_IMPORTED_MESSAGE,
+  REVEAL_IMPORTED_TITLE,
+  removeImportedMessage,
+} from '../wallet/imported-keys';
+import { PROMPTS } from '../wallet/storage';
 import { useWallet, type AccountView } from '../wallet/WalletContext';
+import { ImportedKeyReveal } from './ImportedKeyReveal';
 
 /**
  * Settings → Accounts (phase 6 item 3): list, add, rename, hide and show
@@ -11,8 +23,14 @@ import { useWallet, type AccountView } from '../wallet/WalletContext';
  * docs/ARCHITECTURE.md); hiding never deletes anything and never frees the
  * index, so a later "Add account" can never land on a key that was
  * already used under another name.
+ *
+ * Imported accounts (feature 12, ADR D9) are listed with the others but
+ * labelled as NOT backed up by the recovery phrase; they cannot be hidden,
+ * only removed, which deletes their key after two confirmations that state
+ * the consequence. "Show private key" uses the same confirmation, biometric
+ * gate and screenshot block as the recovery-phrase reveal.
  */
-export function AccountsSection() {
+export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
   const theme = useTheme();
   const {
     activeAccount,
@@ -22,7 +40,10 @@ export function AccountsSection() {
     hideAccount,
     unhideAccount,
     switchAccount,
+    removeImportedAccount,
+    revealImportedKey,
   } = useWallet();
+  const [revealed, setRevealed] = useState<{ name: string; address: string; key: string } | null>(null);
   const [editing, setEditing] = useState<number | null>(null);
   const [draft, setDraft] = useState('');
   const [newName, setNewName] = useState('');
@@ -31,6 +52,7 @@ export function AccountsSection() {
 
   const visible = accountList.filter((a) => !a.hidden);
   const hidden = accountList.filter((a) => a.hidden);
+  const importedCount = accountList.filter((a) => a.imported).length;
 
   const run = async (title: string, task: () => Promise<unknown>) => {
     setBusy(true);
@@ -71,6 +93,53 @@ export function AccountsSection() {
     );
   };
 
+  const onRemoveImported = (account: AccountView) => {
+    Alert.alert(REMOVE_IMPORTED_TITLE, removeImportedMessage(account.name, account.evmAddress ?? 'unknown address'), [
+      { text: 'Keep it', style: 'cancel' },
+      {
+        text: 'Continue',
+        style: 'destructive',
+        onPress: () =>
+          Alert.alert(REMOVE_IMPORTED_CONFIRM_TITLE, REMOVE_IMPORTED_CONFIRM_MESSAGE, [
+            { text: 'Keep it', style: 'cancel' },
+            {
+              text: 'Delete the key',
+              style: 'destructive',
+              onPress: () => void run('Could not remove account', () => removeImportedAccount(account.index)),
+            },
+          ]),
+      },
+    ]);
+  };
+
+  const onRevealImported = (account: AccountView) => {
+    Alert.alert(REVEAL_IMPORTED_TITLE, REVEAL_IMPORTED_MESSAGE, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Show it',
+        style: 'destructive',
+        onPress: async () => {
+          // The same gate as the phrase reveal, opening THIS key (one prompt
+          // when it is protected).
+          const auth = await requireLocalAuth(PROMPTS.importedKeyReveal, {
+            kind: 'imported',
+            slot: importedSlotOf(account.index),
+          });
+          if (!auth.ok) {
+            Alert.alert('Not revealed', auth.message);
+            return;
+          }
+          try {
+            const key = await revealImportedKey(account.index);
+            setRevealed({ name: account.name, address: account.evmAddress ?? '', key });
+          } catch (e) {
+            Alert.alert('Not revealed', e instanceof Error ? e.message : 'The key could not be opened.');
+          }
+        },
+      },
+    ]);
+  };
+
   const renderRow = (account: AccountView) => {
     const active = account.index === activeAccount?.index;
     const isEditing = editing === account.index;
@@ -87,10 +156,15 @@ export function AccountsSection() {
             {account.name}
           </Text>
           <Text style={[styles.tag, { color: active ? theme.accent : theme.textMuted }]}>
-            {active ? 'Active' : account.hidden ? 'Hidden' : `#${account.index}`}
+            {active ? 'Active' : account.hidden ? 'Hidden' : account.imported ? 'Imported' : `#${account.index}`}
           </Text>
         </View>
-        {account.evmAddress ? (
+        {account.imported ? (
+          <Text style={[styles.address, { color: theme.warningText }]}>
+            {account.evmAddress ? `${shortAccountAddress(account.evmAddress)} · ` : 'Key record unreadable · '}
+            imported private key, Ethereum only — NOT backed up by your recovery phrase
+          </Text>
+        ) : account.evmAddress ? (
           <Text style={[styles.address, { color: theme.textMuted }]}>
             {shortAccountAddress(account.evmAddress)} · derivation index {account.index}
           </Text>
@@ -148,14 +222,24 @@ export function AccountsSection() {
             <Pressable
               accessibilityRole="button"
               onPress={() => {
-                setDraft(account.name);
+                setDraft(account.storedName);
                 setEditing(account.index);
               }}
               hitSlop={8}
             >
               <Text style={[styles.link, { color: theme.accent }]}>Rename</Text>
             </Pressable>
-            {account.index !== 0 && !active ? (
+            {account.imported ? (
+              <Pressable accessibilityRole="button" onPress={() => onRevealImported(account)} hitSlop={8}>
+                <Text style={[styles.link, { color: theme.accent }]}>Show private key</Text>
+              </Pressable>
+            ) : null}
+            {account.imported && !active ? (
+              <Pressable accessibilityRole="button" onPress={() => onRemoveImported(account)} hitSlop={8}>
+                <Text style={[styles.link, { color: theme.danger }]}>Remove</Text>
+              </Pressable>
+            ) : null}
+            {!account.imported && account.index !== 0 && !active ? (
               <Pressable accessibilityRole="button" onPress={() => onHide(account)} hitSlop={8}>
                 <Text style={[styles.link, { color: theme.accent }]}>Hide</Text>
               </Pressable>
@@ -176,6 +260,10 @@ export function AccountsSection() {
         Phantom), Bitcoin m/84&apos;/0&apos;/N&apos;/0/0 and Dogecoin m/44&apos;/3&apos;/N&apos;/0/0. After
         restoring the phrase on a new device, add accounts again in the same
         order to get the same addresses back.
+        {importedCount > 0
+          ? ' Imported accounts are the exception: they come from a private key you imported, so the ' +
+            'recovery phrase does NOT back them up and restoring the phrase does not bring them back.'
+          : ''}
       </Text>
       {visible.map(renderRow)}
       <View style={styles.editor}>
@@ -191,6 +279,13 @@ export function AccountsSection() {
           ]}
         />
         <Button title="Add account" onPress={() => void onAdd()} disabled={busy} />
+        <Button
+          title="Import a private key (Ethereum only)"
+          variant="secondary"
+          onPress={onImportKey}
+          disabled={busy}
+          accessibilityHint="Adds an account from a single Ethereum private key. It is not backed up by your recovery phrase."
+        />
       </View>
       {hidden.length > 0 ? (
         <>
@@ -201,6 +296,14 @@ export function AccountsSection() {
           </Pressable>
           {showHidden ? hidden.map(renderRow) : null}
         </>
+      ) : null}
+      {revealed ? (
+        <ImportedKeyReveal
+          accountName={revealed.name}
+          address={revealed.address}
+          privateKey={revealed.key}
+          onClose={() => setRevealed(null)}
+        />
       ) : null}
     </View>
   );

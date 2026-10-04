@@ -39,6 +39,7 @@ import {
 // under Node's type stripping, which resolves relative specifiers literally.
 import { EVM_CHAIN_ID, validateRecipient } from './send.ts';
 import type { KeyValueStore } from './tokens.ts';
+import { smartAccountSaltFor } from './account-ids.ts';
 import { assertSecureEndpointUrl } from '../config/endpoint-url.ts';
 import { assertWalletDelegate, invalidateAccountDelegation } from './delegation.ts';
 import {
@@ -1483,7 +1484,11 @@ export interface AaClientBundle {
    * 'kernel-7702' there is no factory: this is the delegate address.
    */
   factory: string;
-  /** Wallet account index = CREATE2 salt (unused by 'kernel-7702'). */
+  /**
+   * Wallet account id. For an account from the phrase it is also the
+   * CREATE2 salt; for an imported key's account the salt is 0
+   * (account-ids.ts smartAccountSaltFor). Unused by 'kernel-7702'.
+   */
   accountIndex: number;
   /**
    * 'kernel-7702' only. `gate.allowAuthorization` is the D6 switch: the
@@ -1555,13 +1560,18 @@ export interface AaKernelAddresses {
  * the same index becomes the bytes32 salt (the ZeroDev SDK convention the
  * engine follows), and the engine's spec refuses any factory answer that
  * differs from its local CREATE2 prediction.
+ *
+ * An imported key's account (ADR D9) uses salt 0 with the imported key's
+ * address as owner: unique because the owner is, recomputable by whoever
+ * holds the key from the key, the factory and index 0, and NOT recoverable
+ * from the recovery phrase.
  */
 export function createAaClient(options: {
   nodeUrl: string;
   bundlerUrl: string;
   factory: string;
   chainId?: bigint;
-  /** Wallet account index; also the CREATE2 salt. Defaults to 0. */
+  /** Wallet account id; the CREATE2 salt is smartAccountSaltFor(id). Defaults to 0. */
   accountIndex?: number;
   transportFor?: TransportFactory;
   /** Verified ERC-7677 paymaster configuration, when sponsorship is on. */
@@ -1586,6 +1596,10 @@ export function createAaClient(options: {
   if (!Number.isSafeInteger(accountIndex) || accountIndex < 0) {
     throw new Error(`Invalid account index ${String(options.accountIndex)}.`);
   }
+  // The CREATE2 salt: the derivation index for an account from the phrase,
+  // 0 for an imported key's account (account-ids.ts smartAccountSaltFor;
+  // ADR D9). Throws for an id in neither range.
+  const salt = smartAccountSaltFor(accountIndex);
   const accountType = options.accountType ?? 'simple';
   if (options.recoveredAccount !== undefined && accountType !== 'kernel-v3.3') {
     throw new Error('A recovered account is a Kernel v3.3 account.');
@@ -1608,7 +1622,7 @@ export function createAaClient(options: {
           })
         : createKernelAccountSpec({
             node,
-            index: BigInt(accountIndex),
+            index: BigInt(salt),
             factory: options.factory,
             implementation: kernelAddresses.implementation,
             metaFactory: kernelAddresses.metaFactory,
@@ -1617,7 +1631,7 @@ export function createAaClient(options: {
       : createSimpleAccountSpec({
           factory: options.factory,
           node,
-          salt: BigInt(accountIndex),
+          salt: BigInt(salt),
         });
   // Context was validated as JSON at save time; a parse failure here
   // degrades to null rather than blocking sends.

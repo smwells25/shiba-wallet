@@ -35,6 +35,10 @@ export const APP_SCRIPTS = {
   // Phase 12 Base Sepolia findings: Home reload after a send, eligibility
   // re-checks, dust display, profile copy and local dates (fakes only).
   'check-home.mjs': { kind: 'offline', summary: 'counts' },
+  // Phase 13 item 3: single private-key import (feature 12, ADR D9): engine
+  // validation, the imported-key vault, signing selection and refusals,
+  // a full EOA send and a smart-account operation (fakes only).
+  'check-key-import.mjs': { kind: 'offline', summary: 'counts' },
   'check-nfts.mjs': { kind: 'offline', summary: 'counts' },
   'check-passkeys.mjs': { kind: 'offline', summary: 'counts' },
   'check-proof.mjs': { kind: 'offline', summary: 'counts' },

@@ -22,6 +22,11 @@ export interface ProtectionStatusView {
   warning: boolean;
   /** True when the "Protect with biometrics" button should be offered. */
   showProtectButton: boolean;
+  /**
+   * Where the imported private keys are (feature 12), or null when there
+   * are none. Shown as its own line under the phrase's status.
+   */
+  importedNote: string | null;
 }
 
 export const PROTECT_BUTTON_TITLE = 'Protect with biometrics';
@@ -31,6 +36,21 @@ export const PROTECT_CONFIRM_MESSAGE =
   'remove a fingerprint or face, or turn off the screen lock, this phone will no longer be able to ' +
   'open the phrase and you will need your written backup. Make sure your written recovery phrase ' +
   'is safe before continuing.';
+
+/**
+ * The confirm dialog's message: PROTECT_CONFIRM_MESSAGE, plus a sentence
+ * when imported private keys would move too (feature 12), because the
+ * invalidation rule is final for them: the phrase cannot restore them.
+ */
+export function protectConfirmMessage(s: StorageProtection | null): string {
+  const k = s?.importedKeys;
+  if (!k || k.standard === 0) return PROTECT_CONFIRM_MESSAGE;
+  return (
+    `${PROTECT_CONFIRM_MESSAGE} Your ${keysWord(k.standard)} in standard storage ${k.standard === 1 ? 'moves' : 'move'} ` +
+    'too (each asks for your fingerprint or face again). The same rule applies to them, and your recovery ' +
+    'phrase cannot restore them: keep a copy of each private key.'
+  );
+}
 
 export const STANDARD_COPY_NOTE =
   'An unprotected copy is still being removed; it goes the next time you approve something.';
@@ -82,12 +102,61 @@ export function verifyFailedText(detail: string | null): string {
   );
 }
 
+function keysWord(n: number): string {
+  return n === 1 ? '1 imported private key' : `${n} imported private keys`;
+}
+
+/**
+ * Exactly what is protected and what is not among the imported keys
+ * (feature 12): a key's protection follows the phrase's when it is saved,
+ * and "Protect with biometrics" moves the rest; anything that could not be
+ * moved is named here.
+ */
+export function importedKeysProtectionNote(s: StorageProtection): string | null {
+  const k = s.importedKeys;
+  if (!k) return null;
+  if (k.damaged) {
+    return (
+      'The record of imported private keys on this phone could not be read, so where they are kept is ' +
+      'unknown. No key was deleted.'
+    );
+  }
+  if (k.total === 0) return null;
+  const parts: string[] = [];
+  if (k.unreadable > 0) {
+    parts.push(
+      `${keysWord(k.unreadable)} can no longer be opened on this phone after a biometric change; your ` +
+        'recovery phrase cannot restore them, only the keys you kept yourself can.',
+    );
+  }
+  if (s.phrase === 'protected' || s.phrase === 'unreadable') {
+    if (k.standard > 0) {
+      parts.push(
+        `${keysWord(k.standard)} ${k.standard === 1 ? 'is' : 'are'} still in standard secure storage, ` +
+          'readable by code inside the app while the phone is unlocked.' +
+          (s.canProtectNow ? ' Protect with biometrics moves them too.' : ''),
+      );
+    } else if (k.protected - k.unreadable > 0) {
+      parts.push(`Your ${keysWord(k.protected - k.unreadable)} ${k.protected - k.unreadable === 1 ? 'is' : 'are'} protected by biometrics too.`);
+    }
+  } else if (s.phrase === 'standard') {
+    parts.push(
+      `Your ${keysWord(k.total)} ${k.total === 1 ? 'is' : 'are'} in standard secure storage too` +
+        (s.canProtectNow ? '; protecting the phrase moves them with it.' : '.'),
+    );
+  }
+  parts.push('The recovery phrase does not back up imported keys.');
+  return parts.join(' ');
+}
+
 export function describeProtectionStatus(s: StorageProtection): ProtectionStatusView {
+  const importedNote = importedKeysProtectionNote(s);
   const view = (text: string | null, extra: Partial<ProtectionStatusView> = {}): ProtectionStatusView => ({
     text,
     note: null,
     warning: false,
     showProtectButton: s.canProtectNow,
+    importedNote,
     ...extra,
   });
   switch (s.phrase) {
@@ -98,7 +167,9 @@ export function describeProtectionStatus(s: StorageProtection): ProtectionStatus
     case 'protected':
       return view(protectedText(s.protectedSince), {
         note: s.standardCopyPresent ? STANDARD_COPY_NOTE : null,
-        showProtectButton: false,
+        // Offered again only while imported keys remain in standard storage
+        // (storage.ts sets canProtectNow for exactly that case).
+        showProtectButton: s.canProtectNow,
       });
     case 'standard':
       switch (s.reason) {
@@ -126,8 +197,31 @@ export function describeProtectionStatus(s: StorageProtection): ProtectionStatus
   }
 }
 
+/** The sentence about imported keys appended to the outcome alert, or ''. */
+export function importedKeysOutcomeSentence(r: UpgradeResult): string {
+  const k = r.importedKeys;
+  if (!k) return '';
+  const moved = k.moved > 0 ? ` ${keysWord(k.moved)} also moved into biometric protection.` : '';
+  if (k.remaining === 0) return moved;
+  const why = k.cancelled ? 'the prompt was cancelled' : `the move did not finish${paren(k.detail)}`;
+  return (
+    `${moved} ${keysWord(k.remaining)} ${k.remaining === 1 ? 'is' : 'are'} still in standard secure storage ` +
+    `because ${why}; Settings shows which, and you can try again.`
+  );
+}
+
 /** Alert shown after "Protect with biometrics" ran. */
 export function describeUpgradeOutcome(r: UpgradeResult): { title: string; message: string } {
+  const base = describePhraseUpgradeOutcome(r);
+  const extra = importedKeysOutcomeSentence(r);
+  if (!extra) return base;
+  if (r.outcome === 'already-protected' && r.importedKeys && r.importedKeys.remaining === 0) {
+    return { title: 'Imported keys protected', message: extra.trim() };
+  }
+  return { title: base.title, message: `${base.message}${extra}` };
+}
+
+function describePhraseUpgradeOutcome(r: UpgradeResult): { title: string; message: string } {
   switch (r.outcome) {
     case 'protected':
       return {

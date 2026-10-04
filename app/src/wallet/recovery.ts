@@ -90,6 +90,7 @@ import {
 import { sanitizeDisplayName } from './names.ts';
 import { EVM_CHAIN_ID, notifySendAccepted, validateRecipient } from './send.ts';
 import type { KeyValueStore } from './tokens.ts';
+import { IMPORTED_KEY_PATH, isBip32Path, isImportedAccountId, smartAccountSaltFor } from './account-ids.ts';
 
 /**
  * Guardians and social recovery for the app (phase 8 item 4, app half), on
@@ -257,6 +258,24 @@ export const GUARDIAN_7702_REFUSAL =
 export const GUARDIAN_UNDEPLOYED_REFUSAL =
   'Your Kernel smart account is not deployed yet. Guardians are installed into the account’s code, ' +
   'so send one smart-account transaction first (it deploys the account), then add guardians.';
+
+/**
+ * Imported keys (feature 12, ADR D9): guardians are not offered for a smart
+ * account whose owner is an imported key. The recovery record format
+ * cannot say that its owner is outside the recovery phrase, and the
+ * record-based restore paths assume an owner the phrase derives, so this
+ * slice refuses rather than half-supports it.
+ */
+export const GUARDIAN_IMPORTED_REFUSAL =
+  'Guardians are not offered for a smart account owned by an imported private key: the recovery ' +
+  'phrase does not back up that key, and the recovery record cannot say so yet. Use an account from ' +
+  'your recovery phrase for a smart account you want guardians to protect.';
+
+/** Recovering an account onto an imported key would leave it outside the phrase again. */
+export const RECOVERY_IMPORTED_OWNER_REFUSAL =
+  'An imported account cannot be the new owner of a recovered account: the recovery phrase does not ' +
+  'back up its key, so the account could be lost again with this phone. Switch to an account from ' +
+  'your recovery phrase (or add a fresh one) and start the recovery there.';
 
 export const GUARDIAN_NOT_OWNER_REFUSAL =
   'This wallet’s account is not the current owner of that Kernel account, so it cannot change its ' +
@@ -725,6 +744,8 @@ export async function ensureFactoryKernelRecord(args: {
   store?: KeyValueStore;
   now?: number;
 }): Promise<{ created: boolean; entry: RecoveryRecordEntry }> {
+  // An imported key's account gets no record (see GUARDIAN_IMPORTED_REFUSAL).
+  if (isImportedAccountId(args.accountIndex)) throw new Error(GUARDIAN_IMPORTED_REFUSAL);
   const store = args.store ?? AsyncStorage;
   const existing = await getRecoveryRecord(args.chain, args.account, store);
   if (existing) return { created: false, entry: existing };
@@ -732,7 +753,7 @@ export async function ensureFactoryKernelRecord(args: {
   const meta = createRecoveryMetadata({
     chainId: eip155ChainIdOf(args.chain),
     account: args.account,
-    index: BigInt(args.accountIndex),
+    index: BigInt(smartAccountSaltFor(args.accountIndex)),
     originalOwner: args.owner,
     originalOwnerPath: args.ownerPath && BIP32_PATH.test(args.ownerPath) ? args.ownerPath : null,
     factory: args.factory,
@@ -756,6 +777,10 @@ export function recoveryRecordListener(store: KeyValueStore = AsyncStorage): (ev
   return async (event) => {
     const { bundle } = event;
     if (bundle.accountType !== 'kernel-v3.3' || bundle.recovered || bundle.eip7702 || !bundle.kernel) return;
+    // An imported key's smart account (ADR D9) gets no record: its address
+    // follows from the key itself (salt 0), and the record could not say
+    // that its owner is outside the recovery phrase.
+    if (isImportedAccountId(bundle.accountIndex) || !isBip32Path(event.owner.path)) return;
     await ensureFactoryKernelRecord({
       chain: `eip155:${bundle.chainId.toString()}`,
       account: event.quote.sender,
@@ -998,6 +1023,8 @@ export async function resolveGuardianAccount(
   bundle: AaClientBundle,
   ownerAddress: string,
 ): Promise<GuardianAccountResolution> {
+  // Refused before any request: an imported key never owns a guardian-protected account here.
+  if (isImportedAccountId(bundle.accountIndex)) return { ok: false, reason: GUARDIAN_IMPORTED_REFUSAL };
   const reported = await new NodeClient(bundle.node).chainId();
   if (reported !== bundle.chainId) {
     return {
@@ -1968,6 +1995,7 @@ export async function removeRecoveryProgress(chain: string, newOwner: string, st
 
 /** A draft: the fresh account that will become the new owner, nothing checked yet. */
 export function draftRecoveryProgress(chain: string, ownerIndex: number, newOwner: string, now: number = Date.now()): RecoveryProgress {
+  if (isImportedAccountId(ownerIndex)) throw new Error(RECOVERY_IMPORTED_OWNER_REFUSAL);
   if (!ADDRESS.test(newOwner)) throw new Error(`Not an EVM address: ${newOwner}`);
   return {
     chain,
@@ -2708,6 +2736,8 @@ export async function attachRecoveredAccount(args: {
   // Mainnet readiness: a recovered account is attached only where the
   // feature that produced it is allowed, before any request.
   assertFeatureAllowed(args.change?.source === 'owner-rotation' ? 'owner-rotation' : 'guardians', args.chain);
+  // An imported key never becomes the owner of an attached account (ADR D9).
+  if (args.ownerPath === IMPORTED_KEY_PATH) throw new Error(RECOVERY_IMPORTED_OWNER_REFUSAL);
   const store = args.store ?? AsyncStorage;
   const reported = await new NodeClient(args.node).chainId();
   if (`eip155:${reported}` !== args.chain) throw new Error(`The RPC endpoint is chain ${reported}, not ${args.chain}. Nothing was attached.`);
@@ -2776,6 +2806,9 @@ export async function reviewRecordImport(
   ownedAccounts: readonly { index: number; address: string; path: string }[],
 ): Promise<RecordImportReview> {
   const metadata = parseRecordText(text);
+  // Only accounts from the recovery phrase can own a restored account here
+  // (an imported key's id is not a derivation index; ADR D9).
+  const owned = ownedAccounts.filter((a) => !isImportedAccountId(a.index) && isBip32Path(a.path));
   const verification = await verifyRecoveryMetadataOnChain(node, metadata);
   let onChainOwner: string | null = null;
   try {
@@ -2783,7 +2816,7 @@ export async function reviewRecordImport(
   } catch {
     onChainOwner = null;
   }
-  const ownerAccount = onChainOwner ? (ownedAccounts.find((a) => same(a.address, onChainOwner!)) ?? null) : null;
+  const ownerAccount = onChainOwner ? (owned.find((a) => same(a.address, onChainOwner!)) ?? null) : null;
   let needsAttach = false;
   if (ownerAccount) {
     const predicted = predictKernelAddress(ownerAccount.address, {
@@ -2891,7 +2924,10 @@ export interface WalletOwnerAccount {
  * evmKeyProvider's own path.
  */
 export function evmAccountPath(index: number): string {
-  if (!Number.isSafeInteger(index) || index < 0) throw new Error(`Invalid account index ${String(index)}.`);
+  // An imported key has no derivation path (ADR D9); its id is not an index.
+  if (!Number.isSafeInteger(index) || index < 0 || isImportedAccountId(index)) {
+    throw new Error(`Invalid account index ${String(index)}.`);
+  }
   return `m/44'/60'/0'/0/${index}`;
 }
 
@@ -2935,6 +2971,14 @@ export const OWNER_ROTATION_GUARDIAN_TARGET =
   'That account is one of this account’s guardians. A guardian cannot also be the owner (it would hold ' +
   'a vote over its own replacement). Remove it from the guardians first, or choose another account.';
 
+export const OWNER_ROTATION_IMPORTED_TARGET =
+  'An imported account cannot become the owner: the recovery phrase does not back up its key, so the ' +
+  'smart account could be lost with this phone. Choose an account from your recovery phrase.';
+
+export const OWNER_ROTATION_IMPORTED_REFUSAL =
+  'Changing the owner is not offered for a smart account owned by an imported private key in this ' +
+  'version. Nothing was signed.';
+
 export const OWNER_ROTATION_7702_TARGET =
   'That account is upgraded with EIP-7702 on this network, so its smart-account sends use its own ' +
   'address and could not use this account. Choose another account, or revoke its upgrade first.';
@@ -2969,7 +3013,9 @@ export function checkOwnerRotationTarget(args: {
   config: AaChainConfig;
 }): string | null {
   if (!ADDRESS.test(args.newOwner)) return `Not an EVM address: ${args.newOwner}`;
-  if (!args.walletOwners.some((w) => same(w.address, args.newOwner))) return OWNER_ROTATION_FOREIGN_TARGET;
+  const target = args.walletOwners.find((w) => same(w.address, args.newOwner));
+  if (!target) return OWNER_ROTATION_FOREIGN_TARGET;
+  if (isImportedAccountId(target.index) || !isBip32Path(target.path)) return OWNER_ROTATION_IMPORTED_TARGET;
   if (same(args.newOwner, args.currentOwner)) return OWNER_ROTATION_SAME_OWNER;
   if (args.account !== null && same(args.newOwner, args.account)) return OWNER_ROTATION_FOREIGN_TARGET;
   if ((args.guardians ?? []).some((g) => same(g.address, args.newOwner))) return OWNER_ROTATION_GUARDIAN_TARGET;
@@ -3028,6 +3074,7 @@ export async function resolveOwnerRotationAccount(
     [GUARDIAN_7702_REFUSAL]: OWNER_ROTATION_7702_REFUSAL,
     [GUARDIAN_UNDEPLOYED_REFUSAL]: OWNER_ROTATION_UNDEPLOYED_REFUSAL,
     [GUARDIAN_NOT_OWNER_REFUSAL]: OWNER_ROTATION_NOT_OWNER_REFUSAL,
+    [GUARDIAN_IMPORTED_REFUSAL]: OWNER_ROTATION_IMPORTED_REFUSAL,
   };
   return { ok: false, reason: translated[r.reason] ?? r.reason };
 }

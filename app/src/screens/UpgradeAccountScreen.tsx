@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation';
-import { Button, TestNetworksOnlyCard, WarningBox, screenStyle } from '../components';
+import { Button, ImportedKeyNotice, screenStyle, TestNetworksOnlyCard, WarningBox } from '../components';
 import { useTheme, type Theme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
@@ -399,6 +399,7 @@ export function UpgradeAccountScreen({ navigation }: Props) {
       </Text>
       {gate ? <TestNetworksOnlyCard feature={gate.feature} hint={gate.hint} bodyStyle={styles.body} hintStyle={styles.hint} /> : null}
       <Row label="Account" value={accountName} sub={address} theme={theme} />
+      <ImportedKeyNotice show={activeAccount?.imported === true} />
       <Text style={[styles.body, { color: theme.text }]}>{UPGRADE_EXPLANATION}</Text>
       <Row label="Kernel v3.3 delegate" value={WALLET_7702_DELEGATE} mono theme={theme} />
       <Text style={[styles.hint, { color: theme.textMuted }]}>{UPGRADE_RECEIVE_NOTE}</Text>

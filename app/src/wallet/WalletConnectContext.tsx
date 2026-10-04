@@ -982,6 +982,7 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
                   : '';
               return `${labelFor(shown) ?? shown}${suffix}`;
             })()}
+            importedKey={activeAccount?.imported === true}
             smartOption={smartOption}
             loadAaBundle={loadAaBundle}
             onApprove={(q, o, c, signer, ack) => onApprove(head, q, o, c, signer, ack)}

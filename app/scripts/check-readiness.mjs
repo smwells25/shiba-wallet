@@ -101,7 +101,7 @@ console.log('check-readiness: table integrity');
 const EXPECTED_IDS = [
   'eoa-send', 'tokens', 'nft', 'swap', 'walletconnect', 'dogecoin-send', 'simple-account',
   'kernel-smart-account', 'eip7702-upgrade', 'session-keys', 'passkeys', 'guardians',
-  'owner-rotation', 'paymaster', 'token-gas',
+  'owner-rotation', 'paymaster', 'token-gas', 'imported-key',
 ];
 const ids = FEATURE_READINESS.map((f) => f.id);
 check('every expected feature id is present exactly once', EXPECTED_IDS.every((id) => ids.filter((x) => x === id).length === 1) && ids.length === EXPECTED_IDS.length, ids.join());
@@ -154,6 +154,16 @@ for (const id of ['kernel-smart-account', 'eip7702-upgrade', 'session-keys', 'pa
 }
 for (const id of ['eoa-send', 'tokens', 'nft', 'swap', 'walletconnect', 'dogecoin-send']) {
   check(`${id} is a mainnet candidate that is not yet cleared (conclusion 1)`, featureReadiness(id).status === 'blocked');
+}
+// Feature 12 (the Chairperson's decision of 2026-10-04): imported private
+// keys are a plain-account feature, advisory like the others, and the reason
+// must say the recovery phrase does not back them up.
+{
+  const f = featureReadiness('imported-key');
+  check('imported-key is advisory (blocked, not enforced) and cites T-67 and the device conditions',
+    f.status === 'blocked' && f.enforced === false && ['T-67', 'W1', 'W2', 'W3', 'W19'].every((i) => f.evidence.includes(i)), JSON.stringify(f.evidence));
+  check('imported-key reason says the recovery phrase does not back up an imported key',
+    /recovery phrase does not back up an imported key/.test(f.reason) && f.reason.includes(PLAIN_BLOCKERS), f.reason);
 }
 check('dogecoin-send names W6 (the one real broadcast)', featureReadiness('dogecoin-send').evidence.includes('W6'));
 check('swap names W7 (a live 0x quote)', featureReadiness('swap').evidence.includes('W7'));

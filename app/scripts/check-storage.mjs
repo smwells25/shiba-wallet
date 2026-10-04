@@ -756,7 +756,7 @@ console.log('check-storage: source rules');
   check('WalletContext binds the native module once', (ctxSrc.match(/bindSecureStore\(/g) ?? []).length === 1);
   check('WalletContext reads the phrase only through readPhrase (no loadMnemonic left)', !/loadMnemonic|saveMnemonic/.test(ctxSrc) && /readPhrase\(PROMPTS\.signFallback\)/.test(ctxSrc));
   check('WalletContext calls no expo-secure-store function directly', !/SecureStore\.(get|set|delete)Item/.test(ctxSrc));
-  check('requireLocalAuth asks the vault first', /openPhraseForApproval\(promptMessage\)/.test(bioSrc));
+  check('requireLocalAuth asks the vault first (optionally for an explicit target)', /openPhraseForApproval\(promptMessage(?:, target)?\)/.test(bioSrc));
   check('requireLocalAuth keeps the OS passcode fallback for its own prompt', /disableDeviceFallback: false/.test(bioSrc));
   check('activate stores standard first, then attempts protection', ctxSrc.indexOf('await saveNewPhrase(mnemonic)') < ctxSrc.indexOf('await upgradePhraseProtectionIfAutomatic()'));
   check('the held phrase is dropped when the app leaves the foreground', /AppState\.addEventListener[\s\S]{0,120}dropPhraseTicket\(\)/.test(ctxSrc));

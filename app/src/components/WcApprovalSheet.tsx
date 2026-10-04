@@ -15,7 +15,7 @@ import {
   type RecipientClass,
   type SessionKeyGrant,
 } from '@shiba-wallet/chains-evm';
-import { Button, WarningBox } from '../components';
+import { Button, ImportedKeyNotice, WarningBox } from '../components';
 import { BalanceChangePreview } from './BalanceChangePreview';
 import { GrantReview } from './SessionGrantViews';
 import { RiskWarnings } from './RiskWarnings';
@@ -188,6 +188,7 @@ export function WcApprovalSheet({
   evmChain,
   address,
   accountLabel,
+  importedKey = false,
   smartOption,
   loadAaBundle,
   onApprove,
@@ -207,6 +208,12 @@ export function WcApprovalSheet({
   address: string | null;
   /** "Account 2 (0x6Fac…b9C0)" for `address`, shown on every approval. */
   accountLabel: string | null;
+  /**
+   * True when the account that would connect or sign is an imported private
+   * key (feature 12): the sheet then says the recovery phrase does not back
+   * it up (ADR D9).
+   */
+  importedKey?: boolean;
   /**
    * Proposals only: resolves the active account's smart account when a
    * verified AA configuration exists for the active chain (else null).
@@ -499,6 +506,7 @@ export function WcApprovalSheet({
       <View style={[styles.card, { backgroundColor: theme.background, borderColor: theme.border }]}>
         <ScrollView key={item.key} contentContainerStyle={styles.content}>
           <IdentityBanner identity={item.identity} acknowledged={identityAck} setAcknowledged={setIdentityAck} theme={theme} />
+          <ImportedKeyNotice show={importedKey} />
           {item.type === 'proposal' ? (
             <ProposalBody
               event={item.event}

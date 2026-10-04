@@ -65,4 +65,9 @@ export type RootStackParamList = {
    * the active EVM network; nothing on-chain enforces them.
    */
   SpendingLimits: undefined;
+  /**
+   * Import a single Ethereum private key as an additional account (feature
+   * 12). The recovery phrase does not back such an account up (ADR D9).
+   */
+  ImportKey: undefined;
 };

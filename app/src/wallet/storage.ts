@@ -3,7 +3,8 @@
 // expo-secure-store package cannot be evaluated outside React Native. The
 // native module is handed in once by WalletContext.tsx (bindSecureStore).
 import type * as ExpoSecureStore from 'expo-secure-store';
-import { isValidMnemonic } from '@shiba-wallet/core';
+import { isValidEvmPrivateKey, isValidMnemonic, publicKeyToEvmAddress } from '@shiba-wallet/core';
+import { MAX_IMPORTED_SLOT } from './account-ids.ts';
 
 /**
  * NON-CUSTODIAL INVARIANT — the single most important property of this
@@ -100,9 +101,41 @@ import { isValidMnemonic } from '@shiba-wallet/core';
  *                                  and paths, so launching the app does not
  *                                  have to open the phrase (and raise a
  *                                  prompt) just to draw the Home screen
+ *  shiba-wallet.imported-key.v1.K  standard copy of the private key imported
+ *                                  into slot K (feature 12, ADR D9)
+ *  shiba-wallet.imported-key.v2.K  protected copy of that key, keychain
+ *                                  service "shiba-wallet.protected"
+ *  shiba-wallet.imported-keys.v1   standard: the imported keys' public
+ *                                  record — slot, ADDRESS, where each key
+ *                                  lives and since when — and the next
+ *                                  unused slot. No key material. It is the
+ *                                  imported accounts' public cache (launch
+ *                                  draws them from it without a prompt).
  *
- * The meta entry is needed because the existence of a protected item
+ * The meta entries are needed because the existence of a protected item
  * cannot be tested without a prompt on either platform.
+ *
+ * ---------------------------------------------------------------------------
+ * Imported private keys (feature 12; ADR D9 in docs/ARCHITECTURE.md)
+ * ---------------------------------------------------------------------------
+ *
+ * An imported EVM private key is NOT derived from the recovery phrase, so
+ * the phrase does not back it up: this phone's secure storage is its only
+ * copy unless the user kept the key. It is stored exactly like the phrase:
+ * same access class (WHEN_UNLOCKED_THIS_DEVICE_ONLY), same keychain service
+ * for the protected copy, and the same protection as the phrase has at the
+ * moment the key is saved — protected when the phrase is protected and the
+ * phone can hold protected items, standard otherwise. A protected save
+ * writes, reads back and compares before it records the key; if the
+ * platform refuses or the read-back differs, the key is saved in standard
+ * storage instead and the status says so (a cancelled prompt cancels the
+ * import). When the user later protects the phrase from Settings, the
+ * imported keys are moved with the same discipline as the phrase (write,
+ * read back and compare, record, then delete the standard copy); keys that
+ * could not be moved stay where they were and storageProtection() reports
+ * exactly how many remain in standard storage. The invalidation rule above
+ * applies to protected imported keys too, and for them it is final: the
+ * recovery phrase cannot restore them.
  */
 
 // ---------------------------------------------------------------------------
@@ -149,6 +182,12 @@ export const VAULT_META_KEY = 'shiba-wallet.vault-meta.v1';
 export const PUBLIC_ACCOUNT_KEY_PREFIX = 'shiba-wallet.public-account.v1.';
 const SESSION_KEY_PREFIX = 'shiba-wallet.session-key.v1.';
 const PROTECTED_SESSION_KEY_PREFIX = 'shiba-wallet.session-key.v2.';
+export const IMPORTED_KEYS_META_KEY = 'shiba-wallet.imported-keys.v1';
+export const IMPORTED_KEY_PREFIX = 'shiba-wallet.imported-key.v1.';
+export const PROTECTED_IMPORTED_KEY_PREFIX = 'shiba-wallet.imported-key.v2.';
+
+/** Imported keys held at once (each one costs two prompts when the phrase is later protected). */
+export const MAX_IMPORTED_KEYS = 10;
 
 /**
  * How the phrase is protected:
@@ -186,6 +225,10 @@ export const PROMPTS = {
   sessionKeyWrite: 'Protect the new session key with biometrics',
   sessionKeyRead: 'Use the session key',
   checkExisting: 'Check the wallet already stored on this phone',
+  importedKeyWrite: 'Protect the imported private key with biometrics',
+  importedKeyCheck: 'Confirm the protected imported private key',
+  importedKeySign: 'Approve signing with the imported private key',
+  importedKeyReveal: 'Reveal the imported private key',
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -205,6 +248,34 @@ export const OTHER_WALLET_STORED_MESSAGE =
   'Another wallet’s recovery phrase is still stored on this phone, so it was not replaced. ' +
   'Restart the app to open that wallet; to replace it, remove it in Settings first (after ' +
   'checking that its recovery phrase is written down).';
+
+export const IMPORTED_KEY_UNREADABLE_MESSAGE =
+  'This phone can no longer open the imported private key. Its biometric protection was reset (for ' +
+  'example, a fingerprint or face was added or removed, or the screen lock was turned off), and the ' +
+  'system deletes protected keys when that happens. Nothing was signed. Your recovery phrase cannot ' +
+  'restore this account: only the private key you kept yourself can (remove the account in Settings ' +
+  '→ Accounts and import the key again).';
+
+export const IMPORTED_KEY_MISSING_MESSAGE =
+  'The imported private key for this account is no longer in this phone’s secure storage. Nothing ' +
+  'was signed. If you kept the key, remove the account in Settings → Accounts and import it again.';
+
+export const IMPORTED_KEYS_DAMAGED_MESSAGE =
+  'The record of imported private keys on this phone could not be read, so nothing was changed. ' +
+  'No key was deleted.';
+
+export type ImportedKeyAccessFailure = 'cancelled' | 'unreadable' | 'missing' | 'failed';
+
+/** Thrown when an imported key exists in the record but could not be opened. */
+export class ImportedKeyAccessError extends Error {
+  reason: ImportedKeyAccessFailure;
+  // No TS parameter properties: Node's strip-only type stripping rejects them.
+  constructor(reason: ImportedKeyAccessFailure, message: string) {
+    super(message);
+    this.reason = reason;
+    this.name = 'ImportedKeyAccessError';
+  }
+}
 
 /** Thrown when the phrase exists but could not be opened. */
 export class PhraseAccessError extends Error {
@@ -257,7 +328,48 @@ export interface StorageProtection {
   policy: PhraseProtectionPolicy;
   /** True when upgradePhraseProtection() would attempt a move now. */
   canProtectNow: boolean;
+  /**
+   * Imported private keys (feature 12): how many there are and where they
+   * live. `damaged` is true when their record could not be read (then the
+   * counts are 0 and nothing about them is known).
+   */
+  importedKeys: ImportedKeysStatus;
 }
+
+export interface ImportedKeysStatus {
+  total: number;
+  standard: number;
+  protected: number;
+  /** Protected keys this phone could no longer open (biometrics changed). */
+  unreadable: number;
+  damaged: boolean;
+}
+
+/** The public facts of one imported key (no key material). */
+export interface ImportedKeyInfo {
+  /** Vault slot; the account id is account-ids.ts importedAccountId(slot). */
+  slot: number;
+  /** EIP-55 address of the key, computed by the vault when it was saved. */
+  address: string;
+  location: 'standard' | 'protected';
+  /** ms since epoch. */
+  addedAt: number;
+  protectedSince: number | null;
+  unreadableSince: number | null;
+}
+
+/** What an imported-key save did. */
+export interface ImportedKeySaveResult {
+  info: ImportedKeyInfo;
+  /**
+   * Set when the phrase is protected but this key could not be: the
+   * platform's words. The key was saved in standard storage instead.
+   */
+  protectionDetail: string | null;
+}
+
+/** Whose secret the approval gate opens (see KeyVault.setApprovalTarget). */
+export type ApprovalTarget = { kind: 'phrase' } | { kind: 'imported'; slot: number };
 
 export type UpgradeOutcome =
   | 'protected'
@@ -276,6 +388,13 @@ export interface UpgradeResult {
   outcome: UpgradeOutcome;
   /** Platform error text, verbatim, when a step failed. */
   detail: string | null;
+  /**
+   * Present only when imported private keys exist and an explicit
+   * upgrade() ran with the phrase protected: how many keys moved into
+   * protected storage, how many are still standard, and why the move
+   * stopped (verbatim), if it did.
+   */
+  importedKeys?: { moved: number; remaining: number; detail: string | null; cancelled: boolean };
 }
 
 /** Result of the approval gate (biometric.ts requireLocalAuth). */
@@ -358,6 +477,94 @@ export function parseVaultMeta(raw: string | null): VaultMeta | null | 'corrupt'
     attempt,
     unreadableSince: numOrNull(o.unreadableSince),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Imported-key record
+// ---------------------------------------------------------------------------
+
+interface ImportedKeysMeta {
+  v: 1;
+  /** The slot the next import takes; slots are never reused. */
+  nextSlot: number;
+  keys: ImportedKeyInfo[];
+}
+
+const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+const PRIVATE_KEY_HEX = /^0x[0-9a-f]{64}$/;
+
+/** Strict parse; 'corrupt' for anything that is not a well-formed record. */
+export function parseImportedKeysMeta(raw: string | null): ImportedKeysMeta | null | 'corrupt' {
+  if (raw === null) return null;
+  let v: unknown;
+  try {
+    v = JSON.parse(raw);
+  } catch {
+    return 'corrupt';
+  }
+  if (typeof v !== 'object' || v === null) return 'corrupt';
+  const o = v as Record<string, unknown>;
+  if (o.v !== 1 || !Array.isArray(o.keys) || o.keys.length > MAX_IMPORTED_KEYS) return 'corrupt';
+  const nextSlot = o.nextSlot;
+  if (typeof nextSlot !== 'number' || !Number.isSafeInteger(nextSlot) || nextSlot < 0 || nextSlot > MAX_IMPORTED_SLOT + 1) {
+    return 'corrupt';
+  }
+  const keys: ImportedKeyInfo[] = [];
+  const slots = new Set<number>();
+  const addresses = new Set<string>();
+  for (const entry of o.keys) {
+    if (typeof entry !== 'object' || entry === null) return 'corrupt';
+    const e = entry as Record<string, unknown>;
+    const slot = e.slot;
+    if (typeof slot !== 'number' || !Number.isSafeInteger(slot) || slot < 0 || slot >= nextSlot || slots.has(slot)) {
+      return 'corrupt';
+    }
+    if (typeof e.address !== 'string' || !EVM_ADDRESS.test(e.address) || addresses.has(e.address.toLowerCase())) {
+      return 'corrupt';
+    }
+    if (e.location !== 'standard' && e.location !== 'protected') return 'corrupt';
+    const addedAt = numOrNull(e.addedAt);
+    if (addedAt === null) return 'corrupt';
+    slots.add(slot);
+    addresses.add(e.address.toLowerCase());
+    keys.push({
+      slot,
+      address: e.address,
+      location: e.location,
+      addedAt,
+      protectedSince: numOrNull(e.protectedSince),
+      unreadableSince: numOrNull(e.unreadableSince),
+    });
+  }
+  keys.sort((a, b) => a.slot - b.slot);
+  return { v: 1, nextSlot, keys };
+}
+
+function checkSlot(slot: number): number {
+  if (!Number.isSafeInteger(slot) || slot < 0 || slot > MAX_IMPORTED_SLOT) throw new Error('Invalid imported-key slot');
+  return slot;
+}
+
+function hexToBytes32(hex: string): Uint8Array {
+  const out = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) out[i] = parseInt(hex.slice(2 + i * 2, 4 + i * 2), 16);
+  return out;
+}
+
+/**
+ * The EIP-55 address of a private key in the vault's canonical form
+ * (0x + 64 lowercase hex), through core (noble); throws for anything that
+ * is not a valid secp256k1 private key.
+ */
+export function addressOfImportedKey(privateKeyHex: string): string {
+  if (!PRIVATE_KEY_HEX.test(privateKeyHex)) throw new Error('An imported key is 0x followed by 64 lowercase hex characters');
+  const bytes = hexToBytes32(privateKeyHex);
+  try {
+    if (!isValidEvmPrivateKey(bytes)) throw new Error('Not a valid secp256k1 private key');
+    return publicKeyToEvmAddress(bytes);
+  } finally {
+    bytes.fill(0);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -464,7 +671,12 @@ export interface KeyVault {
   /** Moves the phrase into protected storage (the migration state machine). */
   upgrade(options?: { prompt?: string; checkPrompt?: string; holdForSigning?: boolean; automatic?: boolean }): Promise<UpgradeResult>;
   /** The approval gate (see ApprovalGateResult). */
-  openPhraseForApproval(prompt: string): Promise<ApprovalGateResult>;
+  /**
+   * The approval gate (see ApprovalGateResult). Opens the secret of
+   * `target` — by default the current approval target (setApprovalTarget):
+   * the phrase, or the active imported account's key.
+   */
+  openPhraseForApproval(prompt: string, target?: ApprovalTarget): Promise<ApprovalGateResult>;
   /** Forgets a phrase held by the approval gate. */
   dropTicket(): void;
   /** Deletes every copy of the phrase and the meta record. */
@@ -477,6 +689,34 @@ export interface KeyVault {
     save(id: string, privateKeyHex: string): Promise<void>;
     load(id: string): Promise<string | null>;
     remove(id: string): Promise<void>;
+  };
+  /**
+   * Whose secret the approval gate opens: the phrase (default) or the
+   * imported key of the active account. WalletContext sets it whenever the
+   * active account changes, so the one system prompt of an approval opens
+   * the key that will actually sign.
+   */
+  setApprovalTarget(target: ApprovalTarget): void;
+  importedKeys: {
+    /** The public record, without any prompt. damaged = the record could not be read. */
+    list(): Promise<{ keys: ImportedKeyInfo[]; damaged: boolean }>;
+    /**
+     * Stores a NEW imported key (0x + 64 lowercase hex). `expectAddress` is
+     * the address the user was shown; the vault computes the address itself
+     * and refuses if it differs. Refuses a duplicate address, a damaged
+     * record and more than MAX_IMPORTED_KEYS keys.
+     */
+    save(privateKeyHex: string, expectAddress: string): Promise<ImportedKeySaveResult>;
+    /**
+     * The key in slot `slot` for one operation: a key just opened by the
+     * approval gate for this slot (single use), else a read, which prompts
+     * when the key is protected. Throws ImportedKeyAccessError.
+     */
+    read(slot: number, prompt: string): Promise<string>;
+    /** Deletes the key in `slot` (both copies), then its record. */
+    remove(slot: number): Promise<void>;
+    /** Deletes every imported key and the record (wallet wipe). */
+    removeAll(): Promise<void>;
   };
 }
 
@@ -500,8 +740,11 @@ export function createKeyVault(backend: SecureStoreBackend, options: KeyVaultOpt
     keychainAccessible: backend.whenUnlockedThisDeviceOnly,
   };
 
-  // A phrase opened by the approval gate, for the signing call that follows.
-  let ticket: { phrase: string; expiresAt: number } | null = null;
+  // A secret opened by the approval gate, for the signing call that follows:
+  // the phrase (target 'phrase') or one imported key (target 'imported:K').
+  let ticket: { target: string; phrase: string; expiresAt: number } | null = null;
+  let approvalTarget: ApprovalTarget = { kind: 'phrase' };
+  const targetKey = (t: ApprovalTarget): string => (t.kind === 'phrase' ? 'phrase' : `imported:${t.slot}`);
   // Automatic attempts that the user cancelled or the platform refused are
   // not repeated until the next app start (a new vault instance).
   let automaticAttemptDone = false;
@@ -574,15 +817,16 @@ export function createKeyVault(backend: SecureStoreBackend, options: KeyVaultOpt
     return { location: standardCopy !== null ? 'standard' : 'none', standardCopy, meta };
   }
 
-  function takeTicket(): string | null {
+  /** Single use: any read consumes a held secret, but returns it only to its own target. */
+  function takeTicket(target = 'phrase'): string | null {
     const t = ticket;
     ticket = null;
-    if (!t || now() > t.expiresAt) return null;
+    if (!t || now() > t.expiresAt || t.target !== target) return null;
     return t.phrase;
   }
 
-  function holdTicket(phrase: string): void {
-    ticket = { phrase, expiresAt: now() + ticketTtl };
+  function holdTicket(phrase: string, target = 'phrase'): void {
+    ticket = { target, phrase, expiresAt: now() + ticketTtl };
   }
 
   /**
@@ -748,7 +992,189 @@ export function createKeyVault(backend: SecureStoreBackend, options: KeyVaultOpt
     return { outcome: 'protected', detail: null };
   }
 
+  // -------------------------------------------------------------------------
+  // Imported keys
+  // -------------------------------------------------------------------------
+
+  async function readImportedMeta(): Promise<ImportedKeysMeta | null | 'corrupt'> {
+    try {
+      return parseImportedKeysMeta(await backend.getItemAsync(IMPORTED_KEYS_META_KEY, STANDARD));
+    } catch {
+      return 'corrupt';
+    }
+  }
+
+  async function writeImportedMeta(meta: ImportedKeysMeta): Promise<void> {
+    await backend.setItemAsync(IMPORTED_KEYS_META_KEY, JSON.stringify(meta), STANDARD);
+  }
+
+  /** The record, or throws IMPORTED_KEYS_DAMAGED_MESSAGE: nothing that writes may run on a damaged record. */
+  async function importedMetaForWrite(): Promise<ImportedKeysMeta> {
+    const meta = await readImportedMeta();
+    if (meta === 'corrupt') throw new Error(IMPORTED_KEYS_DAMAGED_MESSAGE);
+    return meta ?? { v: 1, nextSlot: 0, keys: [] };
+  }
+
+  async function patchImportedRecord(slot: number, patch: Partial<ImportedKeyInfo>): Promise<void> {
+    const meta = await importedMetaForWrite();
+    await writeImportedMeta({
+      ...meta,
+      keys: meta.keys.map((k) => (k.slot === slot ? { ...k, ...patch } : k)),
+    });
+  }
+
+  const standardImportedKey = (slot: number) => IMPORTED_KEY_PREFIX + checkSlot(slot);
+  const protectedImportedKey = (slot: number) => PROTECTED_IMPORTED_KEY_PREFIX + checkSlot(slot);
+
+  /**
+   * Opens a protected imported key. Like openProtected for the phrase: a
+   * null answer falls back to a leftover standard copy (an interrupted
+   * move) or marks the key unreadable and throws; a successful read
+   * finishes an interrupted move by deleting an identical standard copy.
+   */
+  async function openProtectedImported(
+    record: ImportedKeyInfo,
+    prompt: string,
+  ): Promise<{ key: string; authenticated: boolean }> {
+    const standardCopy = await backend.getItemAsync(standardImportedKey(record.slot), STANDARD);
+    let value: string | null;
+    try {
+      value = await backend.getItemAsync(protectedImportedKey(record.slot), protectedOptions(prompt));
+    } catch (e) {
+      if (isCancellation(e)) {
+        throw new ImportedKeyAccessError('cancelled', 'Authentication cancelled. Nothing was signed.');
+      }
+      throw new ImportedKeyAccessError(
+        'failed',
+        `Secure storage could not open the imported private key (${errorText(e)}). Nothing was signed.`,
+      );
+    }
+    if (value === null) {
+      if (standardCopy !== null) {
+        await patchImportedRecord(record.slot, { location: 'standard', protectedSince: null, unreadableSince: null }).catch(
+          () => undefined,
+        );
+        return { key: standardCopy, authenticated: false };
+      }
+      await patchImportedRecord(record.slot, { unreadableSince: now() }).catch(() => undefined);
+      throw new ImportedKeyAccessError('unreadable', IMPORTED_KEY_UNREADABLE_MESSAGE);
+    }
+    if (record.unreadableSince !== null) {
+      await patchImportedRecord(record.slot, { unreadableSince: null }).catch(() => undefined);
+    }
+    if (standardCopy !== null && standardCopy === value) {
+      await backend.deleteItemAsync(standardImportedKey(record.slot), STANDARD).catch(() => undefined);
+    }
+    return { key: value, authenticated: true };
+  }
+
+  async function findImportedRecord(slot: number): Promise<ImportedKeyInfo> {
+    const meta = await readImportedMeta();
+    if (meta === 'corrupt') throw new ImportedKeyAccessError('failed', IMPORTED_KEYS_DAMAGED_MESSAGE);
+    const record = meta?.keys.find((k) => k.slot === slot);
+    if (!record) throw new ImportedKeyAccessError('missing', IMPORTED_KEY_MISSING_MESSAGE);
+    return record;
+  }
+
+  async function readImportedInner(slot: number, prompt: string): Promise<string> {
+    checkSlot(slot);
+    const held = takeTicket(`imported:${slot}`);
+    if (held !== null) return held;
+    const record = await findImportedRecord(slot);
+    if (record.location === 'protected') return (await openProtectedImported(record, prompt)).key;
+    const value = await backend.getItemAsync(standardImportedKey(slot), STANDARD);
+    if (value === null) throw new ImportedKeyAccessError('missing', IMPORTED_KEY_MISSING_MESSAGE);
+    return value;
+  }
+
+  /**
+   * Writes one key into protected storage, reads it back and compares.
+   * Returns null on success; otherwise deletes the partial protected copy
+   * and returns why (cancelled = the user cancelled a prompt).
+   */
+  async function writeProtectedImported(
+    slot: number,
+    value: string,
+  ): Promise<null | { cancelled: boolean; detail: string }> {
+    const cleanUp = async () => {
+      await backend.deleteItemAsync(protectedImportedKey(slot), PROTECTED_NO_PROMPT).catch(() => undefined);
+    };
+    try {
+      await backend.setItemAsync(protectedImportedKey(slot), value, protectedOptions(PROMPTS.importedKeyWrite));
+    } catch (e) {
+      await cleanUp();
+      return { cancelled: isCancellation(e), detail: errorText(e) };
+    }
+    let readBack: string | null;
+    try {
+      readBack = await backend.getItemAsync(protectedImportedKey(slot), protectedOptions(PROMPTS.importedKeyCheck));
+    } catch (e) {
+      await cleanUp();
+      return { cancelled: isCancellation(e), detail: errorText(e) };
+    }
+    if (readBack !== value) {
+      await cleanUp();
+      return {
+        cancelled: false,
+        detail:
+          readBack === null
+            ? 'The protected copy could not be read back.'
+            : 'The protected copy read back different from the original.',
+      };
+    }
+    return null;
+  }
+
+  /**
+   * Moves every imported key still in standard storage into protected
+   * storage, one at a time, each with the phrase's discipline: write, read
+   * back and compare, record "protected", then delete the standard copy.
+   * Stops at the first cancel or failure (the rest stay where they are).
+   */
+  async function migrateImportedInner(): Promise<UpgradeResult['importedKeys'] | undefined> {
+    const meta = await readImportedMeta();
+    if (meta === 'corrupt') {
+      return { moved: 0, remaining: 0, detail: IMPORTED_KEYS_DAMAGED_MESSAGE, cancelled: false };
+    }
+    if (!meta || meta.keys.length === 0) return undefined;
+    const pending = meta.keys.filter((k) => k.location === 'standard');
+    let moved = 0;
+    for (const record of pending) {
+      const value = await backend.getItemAsync(standardImportedKey(record.slot), STANDARD).catch(() => null);
+      if (value === null) {
+        return { moved, remaining: pending.length - moved, detail: IMPORTED_KEY_MISSING_MESSAGE, cancelled: false };
+      }
+      const failure = await writeProtectedImported(record.slot, value);
+      if (failure) {
+        return { moved, remaining: pending.length - moved, detail: failure.detail, cancelled: failure.cancelled };
+      }
+      try {
+        await patchImportedRecord(record.slot, { location: 'protected', protectedSince: now(), unreadableSince: null });
+      } catch (e) {
+        await backend.deleteItemAsync(protectedImportedKey(record.slot), PROTECTED_NO_PROMPT).catch(() => undefined);
+        return { moved, remaining: pending.length - moved, detail: errorText(e), cancelled: false };
+      }
+      await backend.deleteItemAsync(standardImportedKey(record.slot), STANDARD).catch(() => undefined);
+      moved += 1;
+    }
+    return { moved, remaining: 0, detail: null, cancelled: false };
+  }
+
+  async function importedStatus(): Promise<ImportedKeysStatus> {
+    const meta = await readImportedMeta();
+    if (meta === 'corrupt') return { total: 0, standard: 0, protected: 0, unreadable: 0, damaged: true };
+    const keys = meta?.keys ?? [];
+    return {
+      total: keys.length,
+      standard: keys.filter((k) => k.location === 'standard').length,
+      protected: keys.filter((k) => k.location === 'protected').length,
+      unreadable: keys.filter((k) => k.location === 'protected' && k.unreadableSince !== null).length,
+      damaged: false,
+    };
+  }
+
   async function statusInner(): Promise<StorageProtection> {
+    const importedKeys = await importedStatus();
     const { location, standardCopy, meta } = await locate();
     const m = meta && meta !== 'corrupt' ? meta : null;
     const biometricsAvailable = canProtect();
@@ -765,6 +1191,7 @@ export function createKeyVault(backend: SecureStoreBackend, options: KeyVaultOpt
         sessionKeys,
         policy,
         canProtectNow: false,
+        importedKeys,
       };
     }
     if (location === 'protected') {
@@ -777,7 +1204,9 @@ export function createKeyVault(backend: SecureStoreBackend, options: KeyVaultOpt
         standardCopyPresent: standardCopy !== null,
         sessionKeys,
         policy,
-        canProtectNow: false,
+        // Only imported keys left in standard storage can still be moved.
+        canProtectNow: !m?.unreadableSince && importedKeys.standard > 0 && biometricsAvailable && policy !== 'off',
+        importedKeys,
       };
     }
     let reason: StandardStorageReason;
@@ -800,6 +1229,7 @@ export function createKeyVault(backend: SecureStoreBackend, options: KeyVaultOpt
       sessionKeys,
       policy,
       canProtectNow: policy !== 'off' && biometricsAvailable,
+      importedKeys,
     };
   }
 
@@ -850,12 +1280,47 @@ export function createKeyVault(backend: SecureStoreBackend, options: KeyVaultOpt
         if (opts.automatic && (result.outcome === 'cancelled' || result.outcome === 'platform-refused' || result.outcome === 'verify-failed' || result.outcome === 'failed')) {
           automaticAttemptDone = true;
         }
+        // Imported keys follow the phrase into protected storage, but only on
+        // an explicit request (the Settings button), never during an
+        // automatic move at an approval, where each key's two extra prompts
+        // would be a surprise. Keys left behind are reported by status().
+        if (!opts.automatic && (result.outcome === 'protected' || result.outcome === 'already-protected') && canProtect()) {
+          const importedKeys = await migrateImportedInner();
+          if (importedKeys) return { ...result, importedKeys };
+        }
         return result;
       }),
 
-    openPhraseForApproval: (prompt) =>
+    openPhraseForApproval: (prompt, target) =>
       serial(async (): Promise<ApprovalGateResult> => {
         ticket = null;
+        const gateTarget = target ?? approvalTarget;
+        if (gateTarget.kind === 'imported') {
+          // The active account's imported key: when it is protected, its own
+          // system prompt is the user verification and the opened key is
+          // held for the signing call that follows (one prompt per
+          // operation, as for the phrase). A standard key, a missing record
+          // or a key that cannot be opened falls back to the app-level prompt;
+          // the signing call then reports any problem in plain words.
+          let record: ImportedKeyInfo;
+          try {
+            record = await findImportedRecord(gateTarget.slot);
+          } catch (e) {
+            return { kind: 'fallback', detail: errorText(e) };
+          }
+          if (record.location !== 'protected') return { kind: 'fallback', detail: null };
+          try {
+            const opened = await openProtectedImported(record, prompt);
+            if (!opened.authenticated) {
+              return { kind: 'fallback', detail: 'The protected copy could no longer be opened.' };
+            }
+            holdTicket(opened.key, targetKey(gateTarget));
+            return { kind: 'authenticated' };
+          } catch (e) {
+            if (e instanceof ImportedKeyAccessError && e.reason === 'cancelled') return { kind: 'cancelled' };
+            return { kind: 'fallback', detail: errorText(e) };
+          }
+        }
         const { location, standardCopy } = await locate();
         if (location === 'protected') {
           try {
@@ -996,6 +1461,102 @@ export function createKeyVault(backend: SecureStoreBackend, options: KeyVaultOpt
           await backend.deleteItemAsync(SESSION_KEY_PREFIX + id, STANDARD);
         }),
     },
+
+    setApprovalTarget: (target) => {
+      if (target.kind === 'imported') checkSlot(target.slot);
+      // A secret held for another target is never handed to this one.
+      if (ticket && ticket.target !== targetKey(target)) ticket = null;
+      approvalTarget = target.kind === 'phrase' ? { kind: 'phrase' } : { kind: 'imported', slot: target.slot };
+    },
+
+    importedKeys: {
+      list: async () => {
+        const meta = await readImportedMeta();
+        if (meta === 'corrupt') return { keys: [], damaged: true };
+        return { keys: meta?.keys ?? [], damaged: false };
+      },
+
+      save: (privateKeyHex, expectAddress) =>
+        serial(async (): Promise<ImportedKeySaveResult> => {
+          const address = addressOfImportedKey(privateKeyHex);
+          if (address.toLowerCase() !== expectAddress.toLowerCase()) {
+            throw new Error('The key does not match the address that was shown, so it was not imported.');
+          }
+          const meta = await importedMetaForWrite();
+          if (meta.keys.length >= MAX_IMPORTED_KEYS) {
+            throw new Error(`This wallet already holds the maximum of ${MAX_IMPORTED_KEYS} imported keys.`);
+          }
+          if (meta.keys.some((k) => k.address.toLowerCase() === address.toLowerCase())) {
+            throw new Error('This key is already imported.');
+          }
+          const slot = meta.nextSlot;
+          if (slot > MAX_IMPORTED_SLOT) throw new Error('No imported-key slot is left on this phone.');
+          // 1. Reserve the slot first, so an interrupted save can never leave
+          //    a key in a slot that a later import would overwrite.
+          await writeImportedMeta({ ...meta, nextSlot: slot + 1 });
+          // 2. The key itself, in the phrase's class.
+          const { location: phraseAt } = await locate();
+          let location: 'standard' | 'protected' = 'standard';
+          let protectionDetail: string | null = null;
+          if (phraseAt === 'protected' && policy !== 'off' && canProtect()) {
+            const failure = await writeProtectedImported(slot, privateKeyHex);
+            if (failure === null) location = 'protected';
+            else if (failure.cancelled) throw new Error('Authentication cancelled. The key was not imported.');
+            else protectionDetail = failure.detail;
+          } else if (phraseAt === 'protected') {
+            protectionDetail = 'This phone cannot hold biometric-protected items right now.';
+          }
+          if (location === 'standard') {
+            await backend.setItemAsync(standardImportedKey(slot), privateKeyHex, STANDARD);
+          }
+          // 3. The public record.
+          const info: ImportedKeyInfo = {
+            slot,
+            address,
+            location,
+            addedAt: now(),
+            protectedSince: location === 'protected' ? now() : null,
+            unreadableSince: null,
+          };
+          try {
+            const fresh = await importedMetaForWrite();
+            await writeImportedMeta({ ...fresh, nextSlot: Math.max(fresh.nextSlot, slot + 1), keys: [...fresh.keys, info] });
+          } catch (e) {
+            await backend.deleteItemAsync(protectedImportedKey(slot), PROTECTED_NO_PROMPT).catch(() => undefined);
+            await backend.deleteItemAsync(standardImportedKey(slot), STANDARD).catch(() => undefined);
+            throw e;
+          }
+          return { info, protectionDetail };
+        }),
+
+      read: (slot, prompt) => serial(() => readImportedInner(slot, prompt)),
+
+      remove: (slot) =>
+        serial(async () => {
+          checkSlot(slot);
+          const meta = await importedMetaForWrite();
+          if (ticket?.target === `imported:${slot}`) ticket = null;
+          // Both copies first; the record goes last, so a failed delete
+          // leaves the record saying where the key still is.
+          await backend.deleteItemAsync(protectedImportedKey(slot), PROTECTED_NO_PROMPT);
+          await backend.deleteItemAsync(standardImportedKey(slot), STANDARD);
+          await writeImportedMeta({ ...meta, keys: meta.keys.filter((k) => k.slot !== slot) });
+        }),
+
+      removeAll: () =>
+        serial(async () => {
+          if (ticket && ticket.target !== 'phrase') ticket = null;
+          const meta = await readImportedMeta();
+          // With a damaged record the slots in use are unknown; the first 256
+          // are swept (far more than MAX_IMPORTED_KEYS imports in practice).
+          const upper = meta && meta !== 'corrupt' ? meta.nextSlot : 256;
+          for (let slot = 0; slot < upper; slot++) {
+            await backend.deleteItemAsync(protectedImportedKey(slot), PROTECTED_NO_PROMPT);
+            await backend.deleteItemAsync(standardImportedKey(slot), STANDARD);
+          }
+          await backend.deleteItemAsync(IMPORTED_KEYS_META_KEY, STANDARD);
+        }),
+    },
   };
   return vault;
 }
@@ -1038,10 +1599,25 @@ export function dropPhraseTicket(): void {
  * user sees one prompt per operation instead of two. When the vault is not
  * bound (never in the app) or nothing is protected, returns 'fallback'.
  */
-export async function openPhraseForApproval(prompt: string): Promise<ApprovalGateResult> {
+export async function openPhraseForApproval(prompt: string, target?: ApprovalTarget): Promise<ApprovalGateResult> {
   if (!appVault) return { kind: 'fallback', detail: null };
-  return appVault.openPhraseForApproval(prompt);
+  return appVault.openPhraseForApproval(prompt, target);
 }
+
+/** Called by WalletContext whenever the active account changes (see KeyVault.setApprovalTarget). */
+export function setApprovalTarget(target: ApprovalTarget): void {
+  appVault?.setApprovalTarget(target);
+}
+
+/** The imported-key vault used by WalletContext (feature 12). */
+export const importedKeyVault = {
+  list: (): Promise<{ keys: ImportedKeyInfo[]; damaged: boolean }> => vault().importedKeys.list(),
+  save: (privateKeyHex: string, expectAddress: string): Promise<ImportedKeySaveResult> =>
+    vault().importedKeys.save(privateKeyHex, expectAddress),
+  read: (slot: number, prompt: string): Promise<string> => vault().importedKeys.read(slot, prompt),
+  remove: (slot: number): Promise<void> => vault().importedKeys.remove(slot),
+  removeAll: (): Promise<void> => vault().importedKeys.removeAll(),
+};
 
 /**
  * For Settings: where the phrase is kept and why. Never throws; an
@@ -1061,6 +1637,7 @@ export async function storageProtection(): Promise<StorageProtection> {
       sessionKeys: 'standard',
       policy: PHRASE_PROTECTION_POLICY,
       canProtectNow: false,
+      importedKeys: { total: 0, standard: 0, protected: 0, unreadable: 0, damaged: true },
     };
   }
 }

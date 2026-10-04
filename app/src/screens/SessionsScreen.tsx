@@ -27,7 +27,7 @@ import {
   type SubscriptionGrant,
 } from '@shiba-wallet/chains-evm';
 import type { RootStackParamList } from '../navigation';
-import { Button, TestNetworksOnlyCard, WarningBox, screenStyle } from '../components';
+import { Button, ImportedKeyNotice, screenStyle, TestNetworksOnlyCard, WarningBox } from '../components';
 import { ContactPicker, RecipientContactNotice } from '../components/Contacts';
 import { GrantReview } from '../components/SessionGrantViews';
 import { PayloadQr } from '../components/RecoveryViews';
@@ -1143,6 +1143,7 @@ export function SessionsScreen({ navigation }: Props) {
         {evmChain.testnet ? ' · TESTNET' : ''} · chain id {evmChain.chainIdDecimal}
       </Text>
       <Row label="Owner account (installs and revokes)" value={activeAccount?.name ?? 'Account'} sub={owner} theme={theme} />
+      <ImportedKeyNotice show={activeAccount?.imported === true} />
       {resolution?.ok ? (
         <Row
           label={resolution.kind === 'kernel-7702' ? 'Kernel account (your upgraded address)' : 'Kernel smart account'}

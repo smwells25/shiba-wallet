@@ -2,6 +2,7 @@ import React from 'react';
 import { Pressable, StyleSheet, Text, TextStyle, View, ViewStyle } from 'react-native';
 import { Theme, useTheme } from './theme';
 import type { FeatureReadiness } from './config/readiness';
+import { IMPORTED_KEY_NOT_BACKED_UP } from './wallet/account-ids';
 
 /** Primary / secondary / destructive button built from plain components. */
 export function Button({
@@ -76,6 +77,18 @@ export function WarningBox({ children }: { children: React.ReactNode }) {
       <Text style={[styles.warningText, { color: theme.warningText }]}>{children}</Text>
     </View>
   );
+}
+
+/**
+ * The Chairperson's condition for imported private keys (ADR D9), in one
+ * place: every screen that shows or uses an imported account renders this
+ * warning (Home, Receive, every confirm's "From account", the WalletConnect
+ * sheet, Settings → Accounts and the backup and reveal views). Renders
+ * nothing when `show` is false, so callers can pass the account's flag.
+ */
+export function ImportedKeyNotice({ show = true }: { show?: boolean }) {
+  if (!show) return null;
+  return <WarningBox>{IMPORTED_KEY_NOT_BACKED_UP}</WarningBox>;
 }
 
 /**

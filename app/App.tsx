@@ -40,6 +40,7 @@ import { OwnerRotationScreen } from './src/screens/OwnerRotationScreen';
 import { PasskeyScreen } from './src/screens/PasskeyScreen';
 import { ProveOwnershipScreen } from './src/screens/ProveOwnershipScreen';
 import { SpendingLimitsScreen } from './src/screens/SpendingLimitsScreen';
+import { ImportKeyScreen } from './src/screens/ImportKeyScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -199,6 +200,7 @@ function Root() {
               component={SpendingLimitsScreen}
               options={{ title: 'Spending limits' }}
             />
+            <Stack.Screen name="ImportKey" component={ImportKeyScreen} options={{ title: 'Import a private key' }} />
           </>
         )}
         </Stack.Navigator>

@@ -11,7 +11,8 @@ import * as Clipboard from 'expo-clipboard';
 import QRCode from 'react-native-qrcode-svg';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation';
-import { Button, screenStyle } from '../components';
+import { Button, ImportedKeyNotice, screenStyle } from '../components';
+import { IMPORTED_KEY_NO_CHAIN, IMPORTED_KEY_PATH } from '../wallet/account-ids';
 import { useTheme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
 import { EVM_CHAIN_ID } from '../wallet/send';
@@ -112,7 +113,9 @@ export function ReceiveScreen({ route, navigation }: Props) {
   if (!account) {
     return (
       <View style={[screenStyle(theme), styles.center]}>
-        <Text style={{ color: theme.textMuted }}>Unknown chain.</Text>
+        <Text style={{ color: theme.textMuted }}>
+          {activeAccount?.imported ? IMPORTED_KEY_NO_CHAIN : 'Unknown chain.'}
+        </Text>
       </View>
     );
   }
@@ -133,6 +136,7 @@ export function ReceiveScreen({ route, navigation }: Props) {
           {delegationLabelSuffix(delegation.status)}
         </Text>
       ) : null}
+      <ImportedKeyNotice show={activeAccount?.imported === true} />
       {/*
         The QR payload is the plain address, nothing else. This screen has
         never built per-chain payment URIs (no amounts, no labels), and a
@@ -154,7 +158,11 @@ export function ReceiveScreen({ route, navigation }: Props) {
           {account.address}
         </Text>
       </View>
-      <Text style={[styles.path, { color: theme.textMuted }]}>{account.path}</Text>
+      <Text style={[styles.path, { color: theme.textMuted }]}>
+        {account.path === IMPORTED_KEY_PATH
+          ? 'Imported private key — no derivation path, not part of your recovery phrase'
+          : account.path}
+      </Text>
       {recovery.recoveredAccount ? (
         <View style={[styles.addressBox, { backgroundColor: theme.card, borderColor: theme.border }]}>
           <Text style={[styles.note, { color: theme.text }]}>

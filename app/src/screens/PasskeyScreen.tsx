@@ -4,7 +4,7 @@ import { ActivityIndicator, Alert, Linking, Platform, ScrollView, StyleSheet, Te
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { KERNEL_WEBAUTHN_VALIDATOR } from '@shiba-wallet/chains-evm';
 import type { RootStackParamList } from '../navigation';
-import { Button, TestNetworksOnlyCard, WarningBox, screenStyle } from '../components';
+import { Button, ImportedKeyNotice, screenStyle, TestNetworksOnlyCard, WarningBox } from '../components';
 import { useTheme, type Theme } from '../theme';
 import { getEndpoint } from '../config/networks';
 import { useWallet } from '../wallet/WalletContext';
@@ -392,6 +392,7 @@ export function PasskeyScreen({ navigation }: Props) {
         {evmChain.testnet ? ' · TESTNET' : ''} · chain id {evmChain.chainIdDecimal}
       </Text>
       <Row label="Owner account (adds and removes the passkey)" value={activeAccount?.name ?? 'Account'} sub={owner} theme={theme} />
+      <ImportedKeyNotice show={activeAccount?.imported === true} />
       {account ? <Row label="Kernel smart account (address unchanged)" value={account} mono theme={theme} /> : null}
     </>
   );

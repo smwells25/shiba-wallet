@@ -112,11 +112,16 @@ export function OwnerRotationScreen({ navigation }: Props) {
     navigation.setOptions({ title: 'Change owner' });
   }, [navigation]);
 
-  /** Every account of this wallet with an EVM key: the only allowed new owners. */
+  /**
+   * Every account of this wallet from the recovery phrase with an EVM key:
+   * the only allowed new owners. Imported accounts are left out (ADR D9):
+   * the phrase does not back up their keys, so the smart account could be
+   * lost with this phone (recovery.ts refuses them as targets too).
+   */
   const walletOwners = useMemo<WalletOwnerAccount[]>(
     () =>
       accountList
-        .filter((a) => a.evmAddress)
+        .filter((a) => a.evmAddress && !a.imported)
         .map((a) => ({ index: a.index, name: a.name, address: a.evmAddress!, path: evmAccountPath(a.index) })),
     [accountList],
   );

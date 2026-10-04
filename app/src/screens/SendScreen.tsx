@@ -16,7 +16,8 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { formatAssetId, nonFungibleTokenId, parseAssetId } from '@shiba-wallet/core';
 import type { FungibleAsset } from '@shiba-wallet/core';
 import type { RootStackParamList } from '../navigation';
-import { Button, WarningBox, screenStyle } from '../components';
+import { Button, ImportedKeyNotice, WarningBox, screenStyle } from '../components';
+import { IMPORTED_KEY_NO_CHAIN } from '../wallet/account-ids';
 import {
   callWithFailover,
   getEndpoint,
@@ -593,7 +594,9 @@ export function SendScreen({ route, navigation }: Props) {
   if (!account) {
     return (
       <View style={[screenStyle(theme), styles.center]}>
-        <Text style={{ color: theme.textMuted }}>Unknown chain.</Text>
+        <Text style={{ color: theme.textMuted }}>
+          {activeAccount?.imported ? IMPORTED_KEY_NO_CHAIN : 'Unknown chain.'}
+        </Text>
       </View>
     );
   }
@@ -1524,6 +1527,7 @@ export function SendScreen({ route, navigation }: Props) {
             theme={theme}
           />
         )}
+        <ImportedKeyNotice show={activeAccount?.imported === true} />
         <Row
           label={aaSenderLabel(quote)}
           value={quote.sender}
@@ -1702,6 +1706,7 @@ export function SendScreen({ route, navigation }: Props) {
         <NetworkBadge label={network.label} testnet={testnet} theme={theme} />
 
         <Row label="From account" value={fromName} sub={quotedFrom} theme={theme} />
+        <ImportedKeyNotice show={activeAccount?.imported === true} />
         <Row label="To" value={quote.to} mono theme={theme} />
         <RecipientContactNotice match={contactMatchFor(quote.to)} address={quote.to} />
         <Row
@@ -1809,6 +1814,7 @@ export function SendScreen({ route, navigation }: Props) {
         <NetworkBadge label={network.label} testnet={testnet} theme={theme} />
 
         <Row label="From account" value={fromName} sub={quotedFrom} theme={theme} />
+        <ImportedKeyNotice show={activeAccount?.imported === true} />
         <Row label="To" value={quote.to} mono theme={theme} />
         <RecipientContactNotice match={contactMatchFor(quote.to)} address={quote.to} />
         <Row label="NFT" value={nftParams?.name ?? '—'} sub={nftParams?.collection ?? null} theme={theme} />
@@ -1913,6 +1919,7 @@ export function SendScreen({ route, navigation }: Props) {
         <NetworkBadge label={network.label} testnet={testnet} theme={theme} />
 
         <Row label="From account" value={fromName} sub={quotedFrom} theme={theme} />
+        <ImportedKeyNotice show={activeAccount?.imported === true} />
         <Row label="To" value={quote.to} mono theme={theme} />
         <RecipientContactNotice match={contactMatchFor(quote.to)} address={quote.to} />
         <Row

@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation';
-import { Button, WarningBox, screenStyle } from '../components';
+import { Button, ImportedKeyNotice, WarningBox, screenStyle } from '../components';
 import { callWithFailover, getEndpoint, withEndpoint, type NetworkEndpoint } from '../config/networks';
 import { endpointHost, findAlternateDefaultUrl, otherDefaultCandidates } from '../config/endpoint-probe';
 import { OfflineNotice, TechnicalDetail, describeNetworkError } from '../wallet/connectivity';
@@ -483,6 +483,7 @@ export function ApprovalsScreen({ navigation }: Props) {
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
         <Row label="From account" value={activeAccount?.name ?? '—'} sub={quotedFrom} theme={theme} />
+        <ImportedKeyNotice show={activeAccount?.imported === true} />
         <Row
           label="Action"
           value={item.kind === 'erc20' ? `Revoke ${item.symbol} allowance` : 'Revoke collection-wide approval'}

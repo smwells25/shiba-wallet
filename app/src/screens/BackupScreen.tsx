@@ -41,6 +41,12 @@ export function BackupScreen({ navigation }: Props) {
         notes or cloud storage, and never type them into a website. The same
         words also back up every additional account you create later.
       </WarningBox>
+      {/* Feature 12 (ADR D9): the one kind of account these words do not cover. */}
+      <Text style={[styles.note, { color: theme.textMuted }]}>
+        They do not back up private keys you import later (Settings → Accounts →
+        Import a private key): an imported account is lost with this phone
+        unless you keep its private key yourself.
+      </Text>
       <WordGrid words={words} />
       <Button
         title="I wrote the words down"
@@ -59,5 +65,9 @@ const styles = StyleSheet.create({
   heading: {
     fontSize: 24,
     fontWeight: '700',
+  },
+  note: {
+    fontSize: 13,
+    lineHeight: 19,
   },
 });

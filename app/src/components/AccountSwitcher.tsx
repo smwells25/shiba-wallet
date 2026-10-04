@@ -22,8 +22,10 @@ import { useWallet, type AccountView } from '../wallet/WalletContext';
  * account and nothing prepared for the previous one (quotes, history,
  * balances) survives the switch. "Add account" creates the next index and
  * switches to it; renaming and hiding live in Settings → Accounts.
+ * Imported accounts (feature 12, ADR D9) are listed with a line saying the
+ * recovery phrase does not back them up.
  */
-export function AccountSwitcher({ onManage }: { onManage: () => void }) {
+export function AccountSwitcher({ onManage, onImportKey }: { onManage: () => void; onImportKey: () => void }) {
   const theme = useTheme();
   const { activeAccount, accountList, switchAccount, addAccount } = useWallet();
   const [open, setOpen] = useState(false);
@@ -31,6 +33,7 @@ export function AccountSwitcher({ onManage }: { onManage: () => void }) {
 
   if (!activeAccount) return null;
   const visible = accountList.filter((a) => !a.hidden);
+  const anyImported = accountList.some((a) => a.imported);
 
   const choose = async (account: AccountView) => {
     if (account.index === activeAccount.index) {
@@ -93,8 +96,10 @@ export function AccountSwitcher({ onManage }: { onManage: () => void }) {
         <View style={[styles.modal, { backgroundColor: theme.background }]}>
           <Text style={[styles.modalTitle, { color: theme.text }]}>Accounts</Text>
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            Every account comes from your one recovery phrase — backing up the
-            phrase backs up all of them.
+            {anyImported
+              ? 'Every account except the imported ones comes from your one recovery phrase. Imported ' +
+                'accounts are NOT backed up by the phrase: keep their private keys yourself.'
+              : 'Every account comes from your one recovery phrase — backing up the phrase backs up all of them.'}
           </Text>
           <FlatList
             data={visible}
@@ -125,6 +130,11 @@ export function AccountSwitcher({ onManage }: { onManage: () => void }) {
                         {shortAccountAddress(item.evmAddress)}
                       </Text>
                     ) : null}
+                    {item.imported ? (
+                      <Text style={[styles.headerAddress, { color: theme.warningText }]}>
+                        Imported key, Ethereum only — not backed up by your recovery phrase
+                      </Text>
+                    ) : null}
                   </View>
                   {active ? <Text style={[styles.check, { color: theme.accent }]}>✓</Text> : null}
                 </Pressable>
@@ -132,6 +142,14 @@ export function AccountSwitcher({ onManage }: { onManage: () => void }) {
             }}
           />
           <Button title="Add account" onPress={() => void add()} disabled={busy} />
+          <Button
+            title="Import a private key"
+            variant="secondary"
+            onPress={() => {
+              setOpen(false);
+              onImportKey();
+            }}
+          />
           <Button
             title="Manage accounts"
             variant="secondary"

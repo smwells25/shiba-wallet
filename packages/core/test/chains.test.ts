@@ -1,12 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
-import { HDNodeWallet } from 'ethers';
+import { HDNodeWallet, Signature, SigningKey, Wallet } from 'ethers';
 import { derivePath as refDerivePath } from 'ed25519-hd-key';
 import { base58check } from '@scure/base';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { mnemonicToSeed } from '../src/keyring/mnemonic.js';
-import { evmKeyProvider, toChecksumAddress } from '../src/chains/evm.js';
+import {
+  evmAccountFromPrivateKey,
+  evmKeyProvider,
+  isValidEvmPrivateKey,
+  toChecksumAddress,
+} from '../src/chains/evm.js';
 import { bitcoinKeyProvider, dogecoinKeyProvider } from '../src/chains/utxo.js';
 import { solanaKeyProvider } from '../src/chains/solana.js';
 import { slip10DerivePath } from '../src/keyring/slip10.js';
@@ -75,6 +80,70 @@ describe('EVM key provider', () => {
       format: 'recovered',
     });
     expect(bytesToHex(recovered)).toBe(bytesToHex(account.publicKey));
+  });
+});
+
+describe('EVM account from an imported private key', () => {
+  // Disposable keys, built at runtime (never pasted literals): the private
+  // key of the public test mnemonic's account 0, the smallest and largest
+  // valid scalars, and keccak-free byte patterns.
+  const N = secp256k1.Point.Fn.ORDER;
+  const be32 = (v: bigint) => {
+    const out = new Uint8Array(32);
+    let x = v;
+    for (let i = 31; i >= 0; i--) {
+      out[i] = Number(x & 0xffn);
+      x >>= 8n;
+    }
+    return out;
+  };
+  const seedKey = HDNodeWallet.fromPhrase(TEST_MNEMONIC).privateKey;
+  const seedKeyBytes = Uint8Array.from(Buffer.from(seedKey.slice(2), 'hex'));
+
+  it('accepts exactly the scalars 1..n-1 of 32 bytes', () => {
+    expect(isValidEvmPrivateKey(be32(1n))).toBe(true);
+    expect(isValidEvmPrivateKey(be32(N - 1n))).toBe(true);
+    expect(isValidEvmPrivateKey(be32(0n))).toBe(false);
+    expect(isValidEvmPrivateKey(be32(N))).toBe(false);
+    expect(isValidEvmPrivateKey(be32(N + 1n))).toBe(false);
+    expect(isValidEvmPrivateKey(new Uint8Array(32).fill(0xff))).toBe(false);
+    expect(isValidEvmPrivateKey(new Uint8Array(31).fill(1))).toBe(false);
+    expect(isValidEvmPrivateKey(new Uint8Array(33).fill(1))).toBe(false);
+    expect(() => evmAccountFromPrivateKey(be32(0n), 'imported')).toThrow();
+    expect(() => evmAccountFromPrivateKey(be32(N), 'imported')).toThrow();
+  });
+
+  it('derives the address ethers derives for the same key, for boundary keys too', () => {
+    for (const key of [seedKeyBytes, be32(1n), be32(N - 1n), be32(0x1234n << 128n)]) {
+      const ours = evmAccountFromPrivateKey(key, 'imported');
+      const reference = new Wallet('0x' + bytesToHex(key));
+      expect(ours.address).toBe(reference.address);
+      expect(ours.path).toBe('imported');
+      expect(ours.chainId).toBe('eip155:1');
+      expect(bytesToHex(ours.publicKey)).toBe(new SigningKey('0x' + bytesToHex(key)).compressedPublicKey.slice(2));
+    }
+  });
+
+  it('is byte-identical to the seed-derived account for the same key (address, public key, signatures)', () => {
+    const derived = evmKeyProvider.deriveAccount(seed, 0, 0);
+    const imported = evmAccountFromPrivateKey(seedKeyBytes, 'imported');
+    expect(imported.address).toBe(derived.address);
+    expect(bytesToHex(imported.publicKey)).toBe(bytesToHex(derived.publicKey));
+    const digest = sha256(new Uint8Array([9, 8, 7]));
+    expect(bytesToHex(imported.sign(digest))).toBe(bytesToHex(derived.sign(digest)));
+  });
+
+  it('signs like ethers SigningKey (r, s, v) and recovers to the address', () => {
+    const key = be32(N - 1n);
+    const ours = evmAccountFromPrivateKey(key, 'imported');
+    const digest = sha256(new Uint8Array([4, 5, 6]));
+    const sig = ours.sign(digest);
+    const ref = new SigningKey('0x' + bytesToHex(key)).sign(digest);
+    expect('0x' + bytesToHex(sig.subarray(0, 32))).toBe(ref.r);
+    expect('0x' + bytesToHex(sig.subarray(32, 64))).toBe(ref.s);
+    expect(sig[64]! + 27).toBe(ref.v);
+    const recovered = SigningKey.recoverPublicKey(digest, Signature.from(ref));
+    expect(new Wallet('0x' + bytesToHex(key)).signingKey.publicKey).toBe(recovered);
   });
 });
 

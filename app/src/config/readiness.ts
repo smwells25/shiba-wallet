@@ -76,7 +76,8 @@ export type FeatureId =
   | 'guardians'
   | 'owner-rotation'
   | 'paymaster'
-  | 'token-gas';
+  | 'token-gas'
+  | 'imported-key';
 
 export interface FeatureReadiness {
   id: FeatureId;
@@ -206,6 +207,21 @@ export const FEATURE_READINESS: readonly FeatureReadiness[] = [
       '2026-10-03 (txid 2f05331b…a6fd, block 6399309). Dogecoin sending still shares the ' +
       `conditions every regular-account feature waits on: ${PLAIN_BLOCKERS}.`,
     evidence: ['W6', 'F-41', 'W1', 'W2'],
+    enforced: false,
+  },
+  {
+    id: 'imported-key',
+    title: 'Imported private keys',
+    status: 'blocked',
+    reason:
+      'Importing an Ethereum private key works on mainnet in this build, but it is not yet cleared for ' +
+      'real funds. The recovery phrase does not back up an imported key, so this phone’s secure storage ' +
+      `holds its only copy unless you kept the key yourself, and ${PLAIN_BLOCKERS}.`,
+    // T-67: the key outside the HD tree (backup gap, storage, clipboard);
+    // W1–W3: the storage class and its device verification it shares with
+    // the phrase; W19: screen-capture and app-switcher privacy, which the
+    // import screen depends on.
+    evidence: ['T-67', 'W1', 'W2', 'W3', 'W19'],
     enforced: false,
   },
   {

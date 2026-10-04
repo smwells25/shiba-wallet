@@ -17,7 +17,7 @@ import { formatAssetId } from '@shiba-wallet/core';
 import type { FungibleAsset } from '@shiba-wallet/core';
 import type { SwapQuote } from '@shiba-wallet/chains-evm';
 import type { RootStackParamList } from '../navigation';
-import { Button, WarningBox, screenStyle } from '../components';
+import { Button, ImportedKeyNotice, WarningBox, screenStyle } from '../components';
 import {
   callWithFailover,
   getEndpoint,
@@ -1058,6 +1058,7 @@ export function SwapScreen({ navigation }: Props) {
           sub={account.address}
           theme={theme}
         />
+        <ImportedKeyNotice show={activeAccount?.imported === true} />
         <Row
           label={aaSenderLabel(aaQuote)}
           value={aaQuote.sender}
@@ -1228,6 +1229,7 @@ export function SwapScreen({ navigation }: Props) {
           sub={preparedFromShown}
           theme={theme}
         />
+        <ImportedKeyNotice show={activeAccount?.imported === true} />
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Before the swap contract can take your {sellSymbol}, it needs a
           spending allowance. This approves exactly{' '}
@@ -1327,6 +1329,7 @@ export function SwapScreen({ navigation }: Props) {
           sub={preparedFromShown}
           theme={theme}
         />
+        <ImportedKeyNotice show={activeAccount?.imported === true} />
         {notice ? (
           <Text style={[styles.notice, { color: theme.accent }]}>{notice}</Text>
         ) : null}

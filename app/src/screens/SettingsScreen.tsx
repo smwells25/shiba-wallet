@@ -38,7 +38,7 @@ import { localAuthAvailable, requireLocalAuth } from '../wallet/biometric';
 import { storageProtection, upgradePhraseProtection, type StorageProtection } from '../wallet/storage';
 import {
   PROTECT_BUTTON_TITLE,
-  PROTECT_CONFIRM_MESSAGE,
+  protectConfirmMessage,
   PROTECT_CONFIRM_TITLE,
   describeProtectionStatus,
   describeRevealFailure,
@@ -1051,7 +1051,11 @@ export function SettingsScreen({ navigation, route }: Props) {
     },
     [scrollToSection],
   );
-  const { revealMnemonic, wipe, accounts } = useWallet();
+  const { revealMnemonic, wipe, accounts, accountList } = useWallet();
+  // Imported accounts (feature 12, ADR D9): the phrase does not back them up,
+  // so the backup, reveal and wipe texts name them.
+  const importedAccounts = accountList.filter((a) => a.imported);
+  const importedNames = importedAccounts.map((a) => a.name).join(', ');
   const {
     sepolia,
     testNetwork,
@@ -1156,7 +1160,8 @@ export function SettingsScreen({ navigation, route }: Props) {
         : 'unknown';
 
   const onProtect = () => {
-    Alert.alert(PROTECT_CONFIRM_TITLE, PROTECT_CONFIRM_MESSAGE, [
+    // PROTECT_CONFIRM_MESSAGE, extended when imported keys move too.
+    Alert.alert(PROTECT_CONFIRM_TITLE, protectConfirmMessage(protection), [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Protect',
@@ -1192,7 +1197,9 @@ export function SettingsScreen({ navigation, route }: Props) {
             // authentication whenever the device has enrolled biometrics;
             // devices without biometrics proceed (see wallet/biometric.ts
             // for the full behavior matrix).
-            const auth = await requireLocalAuth('Reveal recovery phrase');
+            // The gate opens the PHRASE even while an imported account is
+            // active, so the one prompt opens what is actually shown.
+            const auth = await requireLocalAuth('Reveal recovery phrase', { kind: 'phrase' });
             if (!auth.ok) {
               Alert.alert('Not revealed', auth.message);
               return;
@@ -1256,6 +1263,10 @@ export function SettingsScreen({ navigation, route }: Props) {
     // Double confirmation: wiping is irreversible without the paper backup.
     Alert.alert(
       'Wipe wallet?',
+      (importedAccounts.length > 0
+        ? `This also deletes the private keys of your imported accounts (${importedNames}). Your recovery ` +
+          'phrase cannot bring them back: they are lost unless you kept each private key yourself. '
+        : '') +
       'This deletes the recovery phrase from this device. The app returns to onboarding. Session ' +
         'keys and the session list are deleted too, but sessions granted on-chain stay active until ' +
         'they expire — revoke them first (Settings → Session keys) if you still can. Recovery records ' +
@@ -1298,20 +1309,39 @@ export function SettingsScreen({ navigation, route }: Props) {
         pendingSection.current = null;
       }}
     >
-      <AccountsSection />
+      <AccountsSection onImportKey={() => navigation.navigate('ImportKey')} />
 
       <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: theme.text }]}>Backup</Text>
-        <Text style={[styles.hint, { color: theme.textMuted }]}>
-          One recovery phrase backs up ALL of your accounts — every account
-          in the list above, including hidden ones, on every chain.
-        </Text>
+        {importedAccounts.length === 0 ? (
+          <Text style={[styles.hint, { color: theme.textMuted }]}>
+            One recovery phrase backs up ALL of your accounts — every account
+            in the list above, including hidden ones, on every chain.
+          </Text>
+        ) : (
+          <>
+            <Text style={[styles.hint, { color: theme.textMuted }]}>
+              One recovery phrase backs up every account in the list above
+              that comes from it, including hidden ones, on every chain.
+            </Text>
+            <WarningBox>
+              {`It does NOT back up your imported accounts (${importedNames}). Each one is lost with this ` +
+                'phone unless you keep its private key yourself: use Show private key in the list above to ' +
+                'make a copy.'}
+            </WarningBox>
+          </>
+        )}
         {revealed ? (
           <View style={styles.revealBlock}>
             <WarningBox>
-              Never share these words. They control every account in this
-              wallet, not just the active one. Shiba Wallet support will never
-              ask for them. Hide them again as soon as you are done.
+              {importedAccounts.length === 0
+                ? 'Never share these words. They control every account in this wallet, not just the ' +
+                  'active one. Shiba Wallet support will never ask for them. Hide them again as soon as ' +
+                  'you are done.'
+                : 'Never share these words. They control every account in this wallet that comes from ' +
+                  'them, not just the active one. Shiba Wallet support will never ask for them. Hide ' +
+                  `them again as soon as you are done. They do not restore your imported accounts ` +
+                  `(${importedNames}).`}
             </WarningBox>
             <WordGrid words={revealed.split(' ')} />
             {/*
@@ -1348,6 +1378,9 @@ export function SettingsScreen({ navigation, route }: Props) {
           )}
           {protectionView.note ? (
             <Text style={[styles.hint, { color: theme.textMuted }]}>{protectionView.note}</Text>
+          ) : null}
+          {protectionView.importedNote ? (
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{protectionView.importedNote}</Text>
           ) : null}
           {protectionView.showProtectButton ? (
             <Button

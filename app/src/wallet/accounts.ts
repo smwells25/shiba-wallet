@@ -5,6 +5,21 @@ import type { ChainKeyProvider, DerivedAccount } from '@shiba-wallet/core';
 import { CHAINS } from './chains.ts';
 import { sanitizeDisplayName, type NameValidation } from './names.ts';
 import type { KeyValueStore } from './tokens.ts';
+import {
+  defaultImportedName,
+  importedAccountId,
+  importedSlotOf,
+  isImportedAccountId,
+} from './account-ids.ts';
+
+export {
+  IMPORTED_ACCOUNT_ID_BASE,
+  IMPORTED_KEY_PATH,
+  importedAccountId,
+  importedSlotOf,
+  isImportedAccountId,
+  smartAccountSaltFor,
+} from './account-ids.ts';
 
 /**
  * Multiple accounts (Tier 1 feature 4; ADR D8 in docs/ARCHITECTURE.md).
@@ -33,6 +48,16 @@ import type { KeyValueStore } from './tokens.ts';
  *  - If storage is unreadable, the store falls back to the default
  *    (Account 1 = index 0, active). No funds are affected: re-adding
  *    accounts walks the same indices and therefore the same keys.
+ *
+ * IMPORTED ACCOUNTS (feature 12, ADR D9). An account whose key was imported
+ * is listed here too, with `imported: true` and an id in the separate range
+ * of ./account-ids.ts (2^31 + vault slot). It is never derived from the
+ * phrase, never counts toward MAX_ACCOUNTS or nextIndex, and is never
+ * hidden: it is removed instead, which deletes its key (WalletContext asks
+ * for an explicit confirmation first). The key itself and the account's
+ * address live only in the imported-key vault in ./storage.ts; this list
+ * holds only the name. reconcileImportedAccounts keeps the two in step: a
+ * key in the vault always has an entry, and an entry without a key goes.
  */
 
 const ACCOUNTS_KEY = 'shiba-wallet.accounts.v1';
@@ -56,12 +81,18 @@ export const MAX_ACCOUNTS = 50;
 export const BIP32_HARDENED_OFFSET = 0x80000000;
 
 export interface WalletAccount {
-  /** Derivation index (see derivationArgsFor). Never reused. */
+  /**
+   * Derivation index (see derivationArgsFor) for an account from the
+   * phrase; for an imported account, its id in the imported range of
+   * ./account-ids.ts, which is NOT a derivation index. Never reused.
+   */
   index: number;
   /** Sanitized display name, 1–32 code points. */
   name: string;
   /** Hidden accounts keep their index and keys; they are only not listed. */
   hidden: boolean;
+  /** Present (true) only for an account whose key was imported (never derived). */
+  imported?: true;
 }
 
 export interface AccountsState {
@@ -69,7 +100,7 @@ export interface AccountsState {
   accounts: WalletAccount[];
   /** Index of the active account; always a visible account. */
   activeIndex: number;
-  /** The index the next "Add account" takes; > every index in `accounts`. */
+  /** The index the next "Add account" takes; > every DERIVED index in `accounts`. */
   nextIndex: number;
 }
 
@@ -115,7 +146,21 @@ function reviveState(raw: unknown): AccountsState {
   const byIndex = new Map<number, WalletAccount>();
   for (const entry of r.accounts) {
     if (typeof entry !== 'object' || entry === null) continue;
-    const e = entry as { index?: unknown; name?: unknown; hidden?: unknown };
+    const e = entry as { index?: unknown; name?: unknown; hidden?: unknown; imported?: unknown };
+    if (e.imported === true) {
+      // An imported account: only an id in the imported range is accepted,
+      // and it is never hidden (it is removed instead).
+      if (typeof e.index !== 'number' || !isImportedAccountId(e.index) || byIndex.has(e.index)) continue;
+      const fallback = defaultImportedName(importedSlotOf(e.index));
+      const name = typeof e.name === 'string' ? sanitizeAccountName(e.name) : null;
+      byIndex.set(e.index, {
+        index: e.index,
+        name: name && name.ok && name.name === e.name ? name.name : fallback,
+        hidden: false,
+        imported: true,
+      });
+      continue;
+    }
     if (!isValidIndex(e.index) || byIndex.has(e.index)) continue;
     const name = typeof e.name === 'string' ? sanitizeAccountName(e.name) : null;
     byIndex.set(e.index, {
@@ -127,10 +172,15 @@ function reviveState(raw: unknown): AccountsState {
   if (!byIndex.has(0)) byIndex.set(0, { index: 0, name: defaultAccountName(0), hidden: false });
 
   const accounts = [...byIndex.values()].sort((a, b) => a.index - b.index);
-  const maxIndex = accounts[accounts.length - 1]!.index;
+  // Imported ids sit above every derivation index, so the high-water mark
+  // is taken over the derived accounts only.
+  const maxIndex = Math.max(...accounts.filter((a) => !a.imported).map((a) => a.index));
   const storedNext = isValidIndex(r.nextIndex) ? r.nextIndex : 0;
   const nextIndex = Math.max(storedNext, maxIndex + 1);
-  const active = isValidIndex(r.activeIndex) ? byIndex.get(r.activeIndex) : undefined;
+  const active =
+    isValidIndex(r.activeIndex) || (typeof r.activeIndex === 'number' && isImportedAccountId(r.activeIndex))
+      ? byIndex.get(r.activeIndex)
+      : undefined;
   return {
     accounts,
     activeIndex: active && !active.hidden ? active.index : 0,
@@ -194,7 +244,8 @@ export async function addAccount(
   store: KeyValueStore = AsyncStorage,
 ): Promise<{ state: AccountsState; account: WalletAccount }> {
   const state = await loadAccounts(store);
-  if (state.accounts.length >= MAX_ACCOUNTS || state.nextIndex >= BIP32_HARDENED_OFFSET) {
+  const derivedCount = state.accounts.filter((a) => !a.imported).length;
+  if (derivedCount >= MAX_ACCOUNTS || state.nextIndex >= BIP32_HARDENED_OFFSET) {
     throw new Error(`This wallet already has the maximum of ${MAX_ACCOUNTS} accounts.`);
   }
   const index = state.nextIndex;
@@ -243,6 +294,7 @@ export async function hideAccount(
   if (index === 0) throw new Error('The wallet\'s first account cannot be hidden.');
   const state = await loadAccounts(store);
   const account = findAccount(state, index);
+  if (account.imported) throw new Error(IMPORTED_HIDE_REFUSAL);
   if (state.activeIndex === index) {
     throw new Error(`${account.name} is the active account. Switch to another account first.`);
   }
@@ -267,6 +319,105 @@ export async function unhideAccount(
   };
   await saveAccounts(next, store);
   return next;
+}
+
+// ---------------------------------------------------------------------------
+// Imported accounts (feature 12; ADR D9)
+// ---------------------------------------------------------------------------
+
+/** Refusal for "Hide" on an imported account. */
+export const IMPORTED_HIDE_REFUSAL =
+  'An imported account cannot be hidden. Remove it instead (Settings → Accounts); removing deletes ' +
+  'its private key from this phone after you confirm.';
+
+/** Upper bound on imported keys held at once (the vault enforces it too). */
+export const MAX_IMPORTED_ACCOUNTS = 10;
+
+/**
+ * Adds the list entry for imported-key vault slot `slot` (the vault entry
+ * must already exist). Does not switch to it.
+ */
+export async function addImportedAccountEntry(
+  slot: number,
+  rawName: string | null = null,
+  store: KeyValueStore = AsyncStorage,
+): Promise<{ state: AccountsState; account: WalletAccount }> {
+  const state = await loadAccounts(store);
+  const id = importedAccountId(slot);
+  if (state.accounts.some((a) => a.index === id)) throw new Error('This imported key is already listed.');
+  let name = defaultImportedName(slot);
+  if (rawName !== null && rawName.trim() !== '') {
+    const validation = sanitizeAccountName(rawName);
+    if (!validation.ok) throw new Error(validation.error);
+    name = validation.name;
+  }
+  const account: WalletAccount = { index: id, name, hidden: false, imported: true };
+  const next: AccountsState = { ...state, accounts: [...state.accounts, account].sort((a, b) => a.index - b.index) };
+  await saveAccounts(next, store);
+  return { state: next, account };
+}
+
+/**
+ * Removes an imported account's list entry. The active account cannot be
+ * removed (switch first). The caller deletes the key from the vault FIRST,
+ * after the user's explicit confirmation; a leftover entry without a key is
+ * also dropped by reconcileImportedAccounts at the next launch.
+ */
+export async function removeImportedAccountEntry(
+  id: number,
+  store: KeyValueStore = AsyncStorage,
+): Promise<AccountsState> {
+  const state = await loadAccounts(store);
+  const account = findAccount(state, id);
+  if (!account.imported) throw new Error('Only an imported account can be removed.');
+  if (state.activeIndex === id) {
+    throw new Error(`${account.name} is the active account. Switch to another account first.`);
+  }
+  const next: AccountsState = { ...state, accounts: state.accounts.filter((a) => a.index !== id) };
+  await saveAccounts(next, store);
+  return next;
+}
+
+/**
+ * Brings the list in step with the imported-key vault (pure). `vaultSlots`
+ * is the list of slots the vault holds, or null when the vault's record of
+ * them could not be read (then nothing is added or dropped):
+ *  - a slot without an entry gets one ("Imported N"), so a key on this
+ *    phone is never invisible, e.g. after the account list was reset;
+ *  - an imported entry without a slot is dropped (its key is gone), and if
+ *    it was active, Account 1 becomes active.
+ * Returns changed = false when nothing differs.
+ */
+export function reconcileImportedAccounts(
+  state: AccountsState,
+  vaultSlots: readonly number[] | null,
+): { state: AccountsState; changed: boolean } {
+  if (vaultSlots === null) return { state, changed: false };
+  const ids = new Set(vaultSlots.map((slot) => importedAccountId(slot)));
+  const kept = state.accounts.filter((a) => !a.imported || ids.has(a.index));
+  const present = new Set(kept.map((a) => a.index));
+  const added: WalletAccount[] = [...ids]
+    .filter((id) => !present.has(id))
+    .map((id) => ({ index: id, name: defaultImportedName(importedSlotOf(id)), hidden: false, imported: true }));
+  const changed = kept.length !== state.accounts.length || added.length > 0;
+  if (!changed) return { state, changed: false };
+  const accounts = [...kept, ...added].sort((a, b) => a.index - b.index);
+  const activeStillThere = accounts.some((a) => a.index === state.activeIndex && !a.hidden);
+  return {
+    state: { accounts, activeIndex: activeStillThere ? state.activeIndex : 0, nextIndex: state.nextIndex },
+    changed: true,
+  };
+}
+
+/** reconcileImportedAccounts, persisted when something changed. */
+export async function reconcileStoredImportedAccounts(
+  vaultSlots: readonly number[] | null,
+  store: KeyValueStore = AsyncStorage,
+): Promise<AccountsState> {
+  const current = await loadAccounts(store);
+  const { state, changed } = reconcileImportedAccounts(current, vaultSlots);
+  if (changed) await saveAccounts(state, store);
+  return state;
 }
 
 /** Persists a new active account; it must exist and be visible. */

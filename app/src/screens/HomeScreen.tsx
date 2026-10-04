@@ -14,7 +14,9 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { formatAssetId } from '@shiba-wallet/core';
 import type { FungibleAsset } from '@shiba-wallet/core';
 import type { RootStackParamList } from '../navigation';
-import { screenStyle } from '../components';
+import { ImportedKeyNotice, screenStyle } from '../components';
+import { CHAINS } from '../wallet/chains';
+import { IMPORTED_KEY_NO_CHAIN } from '../wallet/account-ids';
 import { useTheme } from '../theme';
 import { EVM_CHAIN_ID, addSendAcceptedListener } from '../wallet/send';
 import { addAaSentListener } from '../wallet/aa';
@@ -489,7 +491,13 @@ export function HomeScreen({ navigation }: Props) {
           <View style={styles.headerStack}>
             {/* Account switcher (phase 6 item 3): active account name and
                 short EVM address; opens the account list. */}
-            <AccountSwitcher onManage={() => navigation.navigate('Settings')} />
+            <AccountSwitcher
+              onManage={() => navigation.navigate('Settings')}
+              onImportKey={() => navigation.navigate('ImportKey')}
+            />
+            {/* Feature 12 (ADR D9): an imported account says, every time it is
+                shown, that the recovery phrase does not back it up. */}
+            <ImportedKeyNotice show={activeAccount?.imported === true} />
             <OfflineNotice />
             {activeAccount && delegation.status?.kind === 'kernel-v3.3' ? (
               <Pressable
@@ -586,6 +594,31 @@ export function HomeScreen({ navigation }: Props) {
         }
         ListFooterComponent={
           <View>
+          {/* Feature 12 (ADR D9): an imported Ethereum key has no Bitcoin,
+              Dogecoin or Solana address; those networks are shown as not
+              available rather than left out silently. */}
+          {activeAccount?.imported ? (
+            <View style={styles.unavailableList}>
+              {CHAINS.filter((c) => !accounts.some((a) => a.chainId === c.provider.chainId)).map((c) => (
+                <View
+                  key={c.provider.chainId}
+                  accessible
+                  accessibilityLabel={`${c.provider.name}: ${IMPORTED_KEY_NO_CHAIN}`}
+                  style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}
+                >
+                  <View style={styles.cardTop}>
+                    <View style={[styles.badge, { backgroundColor: c.accent, opacity: 0.4 }]}>
+                      <Text style={styles.badgeText}>{c.symbol}</Text>
+                    </View>
+                    <View style={styles.cardBody}>
+                      <Text style={[styles.chainName, { color: theme.text }]}>{c.provider.name}</Text>
+                      <Text style={[styles.address, { color: theme.textMuted }]}>{IMPORTED_KEY_NO_CHAIN}</Text>
+                    </View>
+                  </View>
+                </View>
+              ))}
+            </View>
+          ) : null}
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Recover an account with guardians"
@@ -597,9 +630,12 @@ export function HomeScreen({ navigation }: Props) {
             </Text>
           </Pressable>
           <Text style={[styles.footer, { color: theme.textMuted }]}>
-            {activeAccount ? `${activeAccount.name}'s` : 'Your'} addresses, derived on
-            this device from your recovery phrase (one phrase backs up every
-            account). Balances come from the RPC endpoints in Settings; pull
+            {activeAccount?.imported
+              ? `${activeAccount.name}'s Ethereum address comes from a private key you imported; your ` +
+                'recovery phrase does not back it up.'
+              : `${activeAccount ? `${activeAccount.name}'s` : 'Your'} addresses, derived on this device ` +
+                'from your recovery phrase (one phrase backs up every account from it).'}{' '}
+            Balances come from the RPC endpoints in Settings; pull
             down to refresh. Tap a chain to receive, or use its Send link —
             tokens have their own Send link and pay their network fee in ETH.
             {showFiat
@@ -650,6 +686,10 @@ const styles = StyleSheet.create({
   cardBody: {
     flex: 1,
     gap: 4,
+  },
+  unavailableList: {
+    gap: 12,
+    marginBottom: 12,
   },
   chainName: {
     fontSize: 17,

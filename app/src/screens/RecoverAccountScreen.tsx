@@ -57,6 +57,7 @@ import {
   type RecoveryCandidate,
   type RecoveryProgress,
   type RecoveryStage,
+  RECOVERY_IMPORTED_OWNER_REFUSAL,
 } from '../wallet/recovery';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'RecoverAccount'>;
@@ -220,8 +221,10 @@ export function RecoverAccountScreen({ navigation }: Props) {
         account = meta.account;
         // A record whose account one of THIS wallet's accounts already owns
         // is a restore: review and attach it instead of recovering.
+        // Accounts from the recovery phrase only: an imported key's id is not
+        // a derivation index (ADR D9; recovery.ts filters them too).
         const owned = accountList
-          .filter((a) => a.evmAddress)
+          .filter((a) => a.evmAddress && !a.imported)
           .map((a) => ({ index: a.index, address: a.evmAddress!, path: `m/44'/60'/0'/0/${a.index}` }));
         const review = await reviewRecordImport(node, recordText, owned);
         if (review.ownerAccount) {
@@ -242,6 +245,8 @@ export function RecoverAccountScreen({ navigation }: Props) {
           recordedAt: Math.floor(Date.now() / 1000),
         });
       }
+      // The new owner is the active account; an imported key cannot be it.
+      if (activeAccount?.imported) throw new Error(RECOVERY_IMPORTED_OWNER_REFUSAL);
       const result = await prepareRecoveryStart(node, { chainId, account, newOwner: owner, metadata: meta });
       setCandidate(result);
       setCandidateMeta(meta);

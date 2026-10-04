@@ -14,6 +14,7 @@ import { maskAmount } from '../config/prefs.ts';
 import { findExactContact, type Contact } from './contacts.ts';
 import { resolveTokenMeta, type TokenMetaMap } from './simulation.ts';
 import type { Erc20Metadata } from './erc20.ts';
+import { smartAccountSaltFor } from './account-ids.ts';
 
 /**
  * Human-readable Activity rows (phase 11 item 4): app glue around the
@@ -240,8 +241,9 @@ export interface AaAddressFacts {
  * The wallet's addresses for decoding on one network: the account's EOA,
  * plus the smart-account addresses that are known WITHOUT a network
  * request — the Kernel v3.3 counterfactual address (engine
- * predictKernelAddress with the verified factory, the account index as
- * salt, the configured validator) when Kernel is the chain's account type,
+ * predictKernelAddress with the verified factory, the account's salt
+ * (smartAccountSaltFor: the index, or 0 for an imported key), the
+ * configured validator) when Kernel is the chain's account type,
  * and a recovered account attached to this owner. SimpleAccount addresses
  * need a factory call and are not included, so their operations read as
  * "from other accounts".
@@ -253,7 +255,9 @@ export function walletAddressesFor(eoa: string, accountIndex: number, aa: AaAddr
     try {
       out.push(
         predictKernelAddress(eoa, {
-          index: BigInt(accountIndex),
+          // The account's CREATE2 salt: its derivation index, or 0 for an
+          // imported key's account (account-ids.ts, ADR D9).
+          index: BigInt(smartAccountSaltFor(accountIndex)),
           factory: aa.factory,
           ...(aa.factoryImplementation ? { implementation: aa.factoryImplementation } : {}),
           ...(aa.kernelValidator ? { ecdsaValidator: aa.kernelValidator } : {}),

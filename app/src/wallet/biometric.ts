@@ -1,5 +1,5 @@
 import * as LocalAuthentication from 'expo-local-authentication';
-import { openPhraseForApproval } from './storage';
+import { openPhraseForApproval, type ApprovalTarget } from './storage';
 
 /**
  * Local-authentication gate for the two sensitive actions in the app: the
@@ -85,9 +85,17 @@ export async function localAuthAvailable(): Promise<boolean> {
   }
 }
 
-export async function requireLocalAuth(promptMessage: string): Promise<LocalAuthOutcome> {
+/**
+ * IMPORTED KEYS (feature 12): the vault opens the ACTIVE account's secret —
+ * the phrase, or the active imported account's key (WalletContext sets the
+ * approval target on every account change). `target` overrides that for a
+ * gate that is about a different secret, e.g. revealing the recovery
+ * phrase while an imported account is active, so the one prompt opens the
+ * secret that is actually used.
+ */
+export async function requireLocalAuth(promptMessage: string, target?: ApprovalTarget): Promise<LocalAuthOutcome> {
   try {
-    const vault = await openPhraseForApproval(promptMessage);
+    const vault = await openPhraseForApproval(promptMessage, target);
     if (vault.kind === 'authenticated') return { ok: true, gated: true };
     if (vault.kind === 'cancelled') return { ok: false, message: 'Authentication cancelled.' };
   } catch {

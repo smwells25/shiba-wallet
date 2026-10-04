@@ -14,7 +14,13 @@ export type {
   Curve,
   DerivedAccount,
 } from './chains/types.js';
-export { evmKeyProvider, publicKeyToEvmAddress, toChecksumAddress } from './chains/evm.js';
+export {
+  evmAccountFromPrivateKey,
+  evmKeyProvider,
+  isValidEvmPrivateKey,
+  publicKeyToEvmAddress,
+  toChecksumAddress,
+} from './chains/evm.js';
 export {
   bitcoinKeyProvider,
   dogecoinKeyProvider,
