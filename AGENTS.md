@@ -4942,3 +4942,69 @@ Waves: 1 (CTO) with 2, 3 and 4 (agents) in parallel; 5 after.
       colours (BTC 2.30, DOGE 2.39, ETH 3.69, SOL 4.52 — arguably the
       logotype exception); Home's async header lines can still push the
       list. Not seen on a device.
+- [x] Item 3 — app-enforced spending limits (commit 5a688df; the Swap
+      sell-balance technical-detail line in the commit after it;
+      check-spending-policy 99/99; check-aa 133, check-swap 93,
+      check-token-send 49; offline runner ALL GREEN in the CTO's
+      isolated worktree: engine 691, app 3,773 across 35 suites, lint
+      0/0, tsc clean; nothing run on a device). app/src/wallet/
+      spending-policy.ts (Node-loadable): policies keyed by EVM chain +
+      the account's own EOA, so one policy covers the EOA and its smart
+      account (Bitcoin, Dogecoin and Solana are not covered); fields
+      token (native = the engine's SPENDING_LIMIT_NATIVE_TOKEN, or an
+      ERC-20 from the network coin, tracked tokens and knownTokensForChain),
+      symbol, decimals, exact-bigint cap, window seconds, allowOverride
+      (default off), countFees (default off; native only — fees on an
+      ERC-20 policy are refused); every save runs the engine's
+      validateSpendingPolicy, plus app caps of 8 policies per scope and
+      2,000 history records (judgement calls, not standards). Storage:
+      AsyncStorage shiba-wallet.spending-policies.v1 and
+      .spending-history.v1 behind one write queue; unreadable or malformed
+      data FAILS CLOSED (nothing is signed until Settings → Reset).
+      Counting: when a policy exists the check re-runs the preview's
+      eth_simulateV1 (simulation.ts transport + simulateAssetChanges →
+      balanceDeltasFromAssetChanges / outflowsFromDeltas) against the
+      quote's URL and merges it with what the wallet reads itself (native
+      value, ERC-20 transfer/transferFrom calldata, the swap's quoted sell
+      amount) — the larger figure per token counts; with no preview only
+      the quote's amounts count and the user is told so; the fee counts
+      only under countFees, at the quote's worst case. Decision via the
+      engine's evaluateSpendingPolicy, enforcement always 'client-side'.
+      History records a send only once the node or bundler ACCEPTED it
+      (a new addEvmSentListener in send.ts after eth_sendRawTransaction —
+      covers native, ERC-20, NFT, swaps, revokes and WalletConnect — plus
+      the existing addAaSentListener; passkey sends record explicitly
+      after sendPasskeyCalls), matched in memory to the exact checked calls
+      (15-minute expiry) else from calldata; only policy tokens are
+      recorded; pruned past the longest window. Accepted-not-included is
+      the conservative side (a later failure still counts). Hook points,
+      all AFTER the eth_call / bundler-estimate gate and BEFORE the
+      biometric gate via spendingGateForQuote (SpendingPolicyViews.tsx):
+      SendScreen.onSend (native, ERC-20, NFT, smart-account, passkey),
+      SwapScreen.onSwap / onAaSwap (sell side as quoteOutflows),
+      WalletConnectContext.onApprove (transactions and 5792 batches);
+      <SpendingPolicyNotice> on every EVM confirm and both WC sheet
+      sections. Override: "Send anyway" only when EVERY exceeded policy
+      allows it, and the normal biometric gate still follows. Not
+      checked: session-key operations (sessions.ts was the subscriptions
+      owner's) and the swap approve step (moves no value). Exact copy:
+      honesty line "Enforced by this app only. Anyone with your recovery
+      phrase, and keys used outside this app, are not limited."; block
+      title "Over your spending limit" with cap/window/spent/this-send
+      figures (exact, since it appears only after a tap) and "(network fee
+      included)" when fees count; readout "Spent in the current window: X
+      of Y SYM" masked to •••• under Hide amounts; screen notes that
+      on-chain limits are not offered (no audited module works with the
+      wallet's smart accounts, and the account's own key could bypass one)
+      and that sends before a limit existed are not counted. UI: Settings
+      "Spending limits (this app only)" + route SpendingLimits
+      (SpendingLimitsScreen: list, add/edit/remove, token picker, cap in
+      token units, windows 1 h / 24 h / 7 d / 30 d / custom, override and
+      fee switches, readouts, other-scope limits, Reset). Mutation-tested:
+      counting fees by default, ignoring the preview, unmasking the
+      readout, loosening the override rule and removing the send hook
+      each fail the suite. readiness.ts has no feature-19 row (unchanged).
+      Also in 5a688df: the item-4 leftovers on these files — Swap and WC
+      sheet TESTNET badges and the Swap network line on theme.testnetFill
+      / onTestnetFill, ConfirmBackupScreen quiz chips on theme.onAccent.
+      Not seen on a device: layouts, the Alert buttons, dark mode.

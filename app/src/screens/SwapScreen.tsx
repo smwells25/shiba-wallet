@@ -26,7 +26,8 @@ import {
   type NetworkEndpoint,
   type UsableEndpoint,
 } from '../config/networks';
-import { OfflineNotice } from '../wallet/connectivity';
+import { OfflineNotice, TechnicalDetail } from '../wallet/connectivity';
+import { sanitizeEndpointMessage } from '../config/endpoint-probe';
 import { useTheme, type Theme } from '../theme';
 import { BalanceChangePreview } from '../components/BalanceChangePreview';
 import { RiskWarnings } from '../components/RiskWarnings';
@@ -173,6 +174,9 @@ export function SwapScreen({ navigation }: Props) {
   // The sell-side balance read failed (shown as a sentence with Retry);
   // bumping sellBalanceTry re-runs the read.
   const [sellBalanceFailed, setSellBalanceFailed] = useState(false);
+  // Sanitised text of the failed balance read, shown as a technical-detail
+  // line under the plain sentence (same rule as the Activity screen).
+  const [sellBalanceDetail, setSellBalanceDetail] = useState<string | null>(null);
   const [sellBalanceTry, setSellBalanceTry] = useState(0);
   const [formError, setFormError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -383,10 +387,12 @@ export function SwapScreen({ navigation }: Props) {
             : fetchErc20Balance(ep.url, sellAsset.assetId.reference, holder),
         );
         if (!cancelled) setSellBalance(balance);
-      } catch {
+      } catch (err) {
         if (!cancelled) {
           setSellBalance(null);
           setSellBalanceFailed(true);
+          const text = sanitizeEndpointMessage(err instanceof Error ? err.message : String(err));
+          setSellBalanceDetail(text === '' ? null : text);
         }
       }
     })();
@@ -1595,12 +1601,14 @@ export function SwapScreen({ navigation }: Props) {
             ? 'could not be loaded right now.'
             : '…'}
       </Text>
+      {sellBalanceFailed ? <TechnicalDetail text={sellBalanceDetail} /> : null}
       {sellBalanceFailed ? (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Retry loading the balance"
           onPress={() => {
             setSellBalanceFailed(false);
+            setSellBalanceDetail(null);
             setSellBalanceTry((n) => n + 1);
           }}
           hitSlop={8}
