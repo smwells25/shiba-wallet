@@ -1154,7 +1154,9 @@ console.log('check-wc: WalletConnect Verify (verifyContext, threat-model N-06)')
   check('sheet: every approve button (connect, sign ×2, send, smart send, grant) honours the switch', approveButtons.every((r) => r.test(sheet)));
   check('sheet: the switch resets for each new item', /if \(identityKey !== item\.key\) \{\s*setIdentityKey\(item\.key\);\s*setIdentityAck\(false\);/.test(sheet));
   check('provider re-checks the switch before acting (defense in depth)', /if \(!identityApprovalAllowed\(item\.identity, identityAcknowledged\)\) return;/.test(provider));
-  check('provider passes the switch state through', /onApprove=\{\(q, o, c, signer, ack\) => void onApprove\(head, q, o, c, signer, ack\)\}/.test(provider));
+  // The handler's promise is returned (not voided) so the sheet can re-quote
+  // a smart-account request whose attempt left it on the sheet.
+  check('provider passes the switch state through', /onApprove=\{\(q, o, c, signer, ack\) => onApprove\(head, q, o, c, signer, ack\)\}/.test(provider));
 }
 
 

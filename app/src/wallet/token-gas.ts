@@ -23,12 +23,12 @@ import {
   TOKEN_GAS_ESTIMATION_CEILING,
   aaErc20TransferCalls,
   addressOnlyOwner,
-  applyPriorityFeeFloor,
   assertAaTokenChain,
-  bundlerPriorityFeeFloor,
+  bundlerFeeFloor,
   effectiveAaAccountType,
   fetchTokenBalanceVia,
   isAaConfigured,
+  quoteFeesOverFloor,
   type AaChainConfig,
   type AaClientBundle,
   type AaErc20Target,
@@ -408,7 +408,12 @@ async function tokenGasFacts(
     // now so the refusal comes before the gate, not after it.
     readTokenPermitInfo(bundle.node, pm.token, sender, bundle.chainId),
   ]);
-  const fees = applyPriorityFeeFloor(suggestedFees, await bundlerPriorityFeeFloor(bundle.bundler));
+  // The same quote fees as every smart-account quote (aa.ts
+  // quoteFeesOverFloor: the bundler's floor plus the stated headroom). The
+  // worst case below is priced at them, sendAa signs exactly them, and the
+  // engine's permit cap (maxTokenCharge) holds because the fees are never
+  // raised after the review.
+  const fees = quoteFeesOverFloor(suggestedFees, await bundlerFeeFloor(bundle.bundler));
   const paymasterVerificationGasLimit = CIRCLE_TOKEN_PAYMASTER_V07.defaultVerificationGasLimit;
   // The same rule as the engine's transport (token-paymaster.ts lines
   // 717-721): the documented 35,000, or the on-chain additionalGasCharge

@@ -247,7 +247,10 @@ export function OwnerRotationScreen({ navigation }: Props) {
     } catch (e) {
       const { title, detail } = describe(e);
       Alert.alert(title, detail);
-      setPhase('confirm');
+      // The quote went out once and is used up (aa.ts
+      // claimQuoteForSubmission): Review prices the change again.
+      setRotation(null);
+      setPhase('overview');
     }
   };
 

@@ -34,6 +34,7 @@ import {
   cleanTokenText,
   discoverUntrackedTokens,
   discoverySummary,
+  trackDiscoveredPrompt,
   type DiscoveredToken,
   type DiscoveryOutcome,
 } from '../wallet/token-discovery';
@@ -97,6 +98,12 @@ export function TokensScreen({ navigation }: Props) {
   const [discovering, setDiscovering] = useState(false);
   const [discovery, setDiscovery] = useState<{ chain: string; outcome: DiscoveryOutcome } | null>(null);
   const [discoveryError, setDiscoveryError] = useState<{ message: string; technical: string | null } | null>(null);
+
+  // The header names the network the list belongs to (each EVM profile has
+  // its own tracked tokens).
+  useEffect(() => {
+    navigation.setOptions({ title: `Tokens · ${evmChain.label}` });
+  }, [navigation, evmChain.label]);
 
   const reload = useCallback(() => {
     listTokens(evmChain.caip2).then(setTokens, () => setTokens([]));
@@ -211,7 +218,18 @@ export function TokensScreen({ navigation }: Props) {
     }
   };
 
-  /** Tracks one discovered token (the user's explicit pick). */
+  /** Asks first (full contract, look-alike warning), then tracks the discovered token. */
+  const confirmTrackDiscovered = (found: DiscoveredToken) => {
+    const asset = found.asset;
+    if (!asset) return;
+    const prompt = trackDiscoveredPrompt({ ...found, asset }, evmChain.label);
+    Alert.alert(prompt.title, prompt.message, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: prompt.confirm, onPress: () => void trackDiscovered(found) },
+    ]);
+  };
+
+  /** Tracks one discovered token (the user's explicit pick, after confirmTrackDiscovered). */
   const trackDiscovered = async (found: DiscoveredToken) => {
     if (!found.asset || found.asset.assetId.chainId !== evmChain.caip2) return;
     try {
@@ -385,7 +403,7 @@ export function TokensScreen({ navigation }: Props) {
                     title={`Track ${found.asset.symbol}`}
                     accessibilityLabel={`Track ${found.asset.symbol}, contract ${found.contract}`}
                     variant="secondary"
-                    onPress={() => void trackDiscovered(found)}
+                    onPress={() => confirmTrackDiscovered(found)}
                   />
                 ) : (
                   <>

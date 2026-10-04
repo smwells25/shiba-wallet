@@ -53,6 +53,7 @@ import {
   discoverUntrackedTokens,
   discoveryUnavailableNote,
   discoverySummary,
+  trackDiscoveredPrompt,
 } from '../src/wallet/token-discovery.ts';
 import { sanitizeSymbol } from '../src/wallet/simulation.ts';
 import { tokenPriceAssetId } from '../src/wallet/prices.ts';
@@ -487,6 +488,22 @@ console.log('\nDust display in Activity and Swap (phase 12 follow-up):');
   check('Activity rows use formatBalanceDisplay + signedDisplay (no bare formatUnits for amounts)', activity.includes('formatBalanceDisplay(entry.assetAmount, entry.assetDecimals)') && activity.includes('formatBalanceDisplay(entry.amount, decimals)') && activity.includes('signedDisplay(sign, display)') && !activity.includes('formatUnits(entry.amount, decimals)}`'));
   const swap = src('../src/screens/SwapScreen.tsx');
   check('Swap sell balance uses formatBalanceDisplay and a spoken label', swap.includes('`${formatBalanceDisplay(sellBalance, sellDecimals)} ${sellSymbol}`') && swap.includes('spokenAmount(formatBalanceDisplay(sellBalance, sellDecimals))') && !swap.includes('formatUnits(sellBalance, sellDecimals)'));
+}
+
+// Track from "Find my tokens": a one-tap confirm with the full contract
+// (2026-10-04 emulator run: Track added the token at once).
+{
+  const CONTRACT = '0x08210F9170F89Ab7658F0B5E3fF39b0E03C594D4';
+  const plain = trackDiscoveredPrompt({ contract: CONTRACT, lookalikeOf: null, asset: { symbol: 'EURC' } }, 'Ethereum Sepolia');
+  check('track prompt: title, the FULL contract and the network, confirm button names the token',
+    plain.title === 'Track EURC?' && plain.message.startsWith(`Contract ${CONTRACT} on Ethereum Sepolia.`) && plain.confirm === 'Track EURC' && !/fake/.test(plain.message));
+  const fake = trackDiscoveredPrompt({ contract: CONTRACT, lookalikeOf: 'USDC', asset: { symbol: 'USDC' } }, 'Ethereum Sepolia');
+  check('…a look-alike repeats the warning in the prompt', /DIFFERENT/.test(fake.message) && /may be a fake/.test(fake.message));
+  const screen = readFileSync(new URL('../src/screens/TokensScreen.tsx', import.meta.url), 'utf8');
+  check('the Track button asks first (source): onPress opens the prompt, the prompt\'s confirm tracks',
+    screen.includes('onPress={() => confirmTrackDiscovered(found)}') && /onPress: \(\) => void trackDiscovered\(found\)/.test(screen) &&
+      !screen.includes('onPress={() => void trackDiscovered(found)}'));
+  check('the header names the network (source)', screen.includes('navigation.setOptions({ title: `Tokens · ${evmChain.label}` });'));
 }
 
 if (process.argv.includes('--live')) {

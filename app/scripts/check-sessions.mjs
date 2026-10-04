@@ -77,7 +77,17 @@ import {
   sessionTestCall,
   sessionVaultId,
   validateGrantForAccount,
+  SESSIONS_AUDIT_NOTE,
+  SESSION_UNREACHABLE_TITLE,
+  describeSessionError,
+  isNodeEndpointFailure,
+  markNodeErrors,
+  sessionStatusText,
+  sessionTransportFor,
+  unknownStatusFrom,
 } from '../src/wallet/sessions.ts';
+import { AA_FEE_ROSE_TITLE, AaFeeRoseError, paymasterProbeTransport } from '../src/wallet/aa.ts';
+import { describeSendError } from '../src/wallet/send.ts';
 import {
   ERC7715_ERRORS,
   WC_7715_METHODS,
@@ -844,6 +854,82 @@ console.log('check-sessions: revoke and progress copy (phase 12 rehearsal findin
     /setProgress\(\{ kind: 'subscription'/.test(subInstall) && /\{sessionProgressTitle\(progress\.kind\)\}/.test(screen) && !/\{what\} sent to the bundler/.test(screen));
   check('the revoke confirm uses sessionRevokeKeySentence (no fixed promise to delete the key)',
     /sub=\{sessionRevokeKeySentence\(revokeTarget\.record\)\}/.test(screen) && !screen.includes(`sub="${OLD}"`));
+}
+
+// ---------------------------------------------------------------------------
+console.log('\ncheck-sessions: endpoint failures and user copy (2026-10-04 emulator run, bugs 4 and 6)');
+// ---------------------------------------------------------------------------
+{
+  const RAW = 'fetch failed: java.net.UnknownHostException: Unable to resolve host "0xrpc.io": No address associated with hostname';
+  const dns = new TypeError(RAW);
+  const quote = describeSessionError(dns, { accountType: 'kernel-v3.3', symbol: 'test ETH', stage: 'quote' }, describeSendError);
+  check('a DNS failure in a quote: plain title, "nothing was signed", sanitized technical detail without the Java class',
+    quote.title === SESSION_UNREACHABLE_TITLE && /Nothing was signed\./.test(quote.detail) && /Technical detail: /.test(quote.detail) &&
+      !/java\.net|UnknownHostException/.test(quote.title + quote.detail) && /Unable to resolve host/.test(quote.detail), quote.detail);
+  const send = describeSessionError(dns, { accountType: 'kernel-v3.3', symbol: 'test ETH', stage: 'send' }, describeSendError);
+  check('…at the send step it says "nothing was sent"', /Nothing was sent\./.test(send.detail));
+  check('control: the raw path (describeSendError alone) would have shown the Java class name', /java\.net/.test(describeSendError(dns, 'test ETH').detail));
+  check('smart-account wording first: a fee rise keeps its own title',
+    describeSessionError(new AaFeeRoseError('x'), { accountType: 'kernel-v3.3', symbol: 'ETH', stage: 'send' }, describeSendError).title === AA_FEE_ROSE_TITLE);
+  check('a bundler refusal keeps its text verbatim (not sanitized)',
+    describeSessionError(new Error('RPC error -32500: AA23 reverted 0x59d52e40'), { accountType: 'kernel-v3.3', symbol: 'ETH', stage: 'send' }, describeSendError).detail ===
+      'RPC error -32500: AA23 reverted 0x59d52e40');
+  check('a generic quote failure is titled as a quote failure (nothing was signed)',
+    describeSessionError(new Error('boom'), { accountType: 'kernel-v3.3', symbol: 'ETH', stage: 'quote' }, describeSendError).title === 'The quote could not be prepared.');
+
+  const st = unknownStatusFrom(dns);
+  check('a status read that got no answer: "unknown" in plain words, flagged for the failover, no Java class',
+    st.kind === 'unknown' && st.endpointFailure === true && /^the network endpoint did not answer/.test(st.reason) && !/java\.net/.test(sessionStatusText(st)), sessionStatusText(st));
+  check('control: other read errors keep their message and are not flagged',
+    unknownStatusFrom(new Error('RPC error -32000: down')).reason === 'RPC error -32000: down' && unknownStatusFrom(new Error('x')).endpointFailure === undefined);
+
+  // Only a NODE failure may move a quote to another RPC endpoint.
+  const nodeT = markNodeErrors(async () => { throw new TypeError('fetch failed'); });
+  const nodeErr = await caught(() => nodeT('eth_chainId', []));
+  check('a node transport failure is marked and counts for the failover', isNodeEndpointFailure(nodeErr));
+  const bundlerErr = await caught(() => (async () => { throw new TypeError('fetch failed'); })());
+  check('the same failure from the bundler does not', !isNodeEndpointFailure(bundlerErr));
+  const nodeRevert = await caught(() => markNodeErrors(async () => { throw new Error('RPC error 3: execution reverted'); })('eth_call', []));
+  check('a node answer that is not a transport failure does not either', !isNodeEndpointFailure(nodeRevert));
+  const made = [];
+  const factory = sessionTransportFor('https://node.example', (url) => { made.push(url); return async () => '0x1'; }, { paymasterUrl: 'https://pm.example', plainHttp: true });
+  factory('https://bundler.example');
+  const pm = factory('https://pm.example');
+  check('session transports: node marked, bundler plain, paymaster keeps the probe transport (as createAaClient does)',
+    made.join() === 'https://bundler.example' && pm.toString() === paymasterProbeTransport('https://pm.example').toString());
+
+  // Bug 6: no internal file names in user-facing strings anywhere in the app.
+  check('the sessions audit note names no internal file', !/\.ts\b|engine notes|packages\//.test(SESSIONS_AUDIT_NOTE));
+  const { createRequire } = await import('node:module');
+  const ts = createRequire(import.meta.url)('typescript');
+  const { readdirSync, statSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const root = new URL('../src/', import.meta.url).pathname;
+  const files = [];
+  (function walk(d) {
+    for (const f of readdirSync(d)) {
+      const p = join(d, f);
+      if (statSync(p).isDirectory()) walk(p);
+      else if (/\.tsx?$/.test(f)) files.push(p);
+    }
+  })(root);
+  const internal = /engine notes|packages\/|\b[\w-]+\.(?:tsx?|mjs)\b|AGENTS\.md|THREAT_MODEL|docs\/|scripts\//;
+  const hits = [];
+  for (const f of files) {
+    const sf = ts.createSourceFile(f, readFileSync(f, 'utf8'), ts.ScriptTarget.Latest, true, f.endsWith('x') ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+    const visit = (n) => {
+      if (ts.isImportDeclaration(n) || ts.isExportDeclaration(n)) return;
+      if (ts.isCallExpression(n) && (n.expression.kind === ts.SyntaxKind.ImportKeyword || n.expression.getText(sf) === 'require')) return;
+      const text =
+        ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateHead(n) || ts.isTemplateMiddle(n) || ts.isTemplateTail(n) || ts.isJsxText(n)
+          ? n.text
+          : null;
+      if (text && internal.test(text)) hits.push(`${f.slice(root.length)}: ${text.trim().slice(0, 80)}`);
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+  }
+  check(`no user-facing string in app/src cites an internal file (${files.length} files scanned)`, hits.length === 0 && files.length > 50, hits.join(' | '));
 }
 
 console.log(`\ncheck-sessions: ${passed} passed, ${failed} failed`);

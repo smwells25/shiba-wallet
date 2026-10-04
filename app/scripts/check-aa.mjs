@@ -40,6 +40,16 @@ import {
   retitleQuoteFailure,
   applyPriorityFeeFloor,
   bundlerPriorityFeeFloor,
+  bundlerFeeFloor,
+  quoteFeesOverFloor,
+  withFeeFloorHeadroom,
+  feeFloorShortfall,
+  signedFeeGuard,
+  isBundlerFeeFloorRefusal,
+  AaFeeRoseError,
+  AA_FEE_ROSE_TITLE,
+  AA_FEE_FLOOR_HEADROOM_PERCENT,
+  AA_QUOTE_ALREADY_USED,
   maskUrlForDisplay,
   clearAaBundlerUrl,
   clearAaFactory,
@@ -989,6 +999,202 @@ await (async () => {
     )) === null);
   check('the existing fake bundler (no such method) leaves the quote on the node suggestion',
     quote.maxPriorityFeePerGas === 100_000_000n);
+
+  // Send-time fee floor (the 2026-10-04 emulator run: ZeroDev refused a
+  // revoke AFTER the biometric prompt with "maxPriorityFeePerGas must be at
+  // least 32305086 (current maxPriorityFeePerGas: 29835424)"). Quotes carry
+  // AA_FEE_FLOOR_HEADROOM_PERCENT over the floor; sendAa never raises the
+  // fees, re-reads the floor before signing and refuses when even the
+  // headroom no longer meets it; a quote is submitted at most once.
+  console.log('\nsend-time fee floor');
+  {
+    check('headroom is the stated 25 %', AA_FEE_FLOOR_HEADROOM_PERCENT === 25n);
+    check('withFeeFloorHeadroom rounds up exactly (29835424 → 37294280; 3 → 4)',
+      withFeeFloorHeadroom(29_835_424n) === 37_294_280n && withFeeFloorHeadroom(3n) === 4n && withFeeFloorHeadroom(100n) === 125n);
+    const node = { maxFeePerGas: 2_001_000_000n, maxPriorityFeePerGas: 1_000_000n };
+    check('no floor: fees returned unchanged (same object)', quoteFeesOverFloor(node, null) === node);
+    const q1 = quoteFeesOverFloor(node, { maxPriorityFeePerGas: 29_835_424n, maxFeePerGas: null });
+    check('priority floor + 25 %, base allowance kept on maxFeePerGas',
+      q1.maxPriorityFeePerGas === 37_294_280n && q1.maxFeePerGas === 2_001_000_000n + (37_294_280n - 1_000_000n));
+    const high = { maxFeePerGas: 9_000_000_000n, maxPriorityFeePerGas: 2_000_000_000n };
+    check('a suggestion already above floor + 25 % is unchanged (same object)',
+      quoteFeesOverFloor(high, { maxPriorityFeePerGas: 1_600_000_000n, maxFeePerGas: 7_200_000_000n }) === high);
+    const q2 = quoteFeesOverFloor(node, { maxPriorityFeePerGas: 1n, maxFeePerGas: 4_000_000_000n });
+    check('an Alto-style maxFeePerGas minimum is met with the same headroom', q2.maxFeePerGas === 5_000_000_000n && q2.maxPriorityFeePerGas === 1_000_000n);
+    check('the observed refusal is a shortfall (floor 32305086 above the quoted 29835424)',
+      /at least 32305086 wei .* above the 29835424 wei/.test(
+        feeFloorShortfall({ maxFeePerGas: 2n * 10n ** 9n, maxPriorityFeePerGas: 29_835_424n }, { maxPriorityFeePerGas: 32_305_086n, maxFeePerGas: null }) ?? ''));
+    check('…and with the headroom quote it is not (8 % drift fits in 25 %)',
+      feeFloorShortfall(quoteFeesOverFloor(node, { maxPriorityFeePerGas: 29_835_424n, maxFeePerGas: null }), { maxPriorityFeePerGas: 32_305_086n, maxFeePerGas: null }) === null);
+    check('a floor exactly at the quoted fee passes; one wei above does not',
+      feeFloorShortfall(q1, { maxPriorityFeePerGas: q1.maxPriorityFeePerGas, maxFeePerGas: q1.maxFeePerGas }) === null &&
+        feeFloorShortfall(q1, { maxPriorityFeePerGas: q1.maxPriorityFeePerGas + 1n, maxFeePerGas: null }) !== null &&
+        feeFloorShortfall(q1, { maxPriorityFeePerGas: 1n, maxFeePerGas: q1.maxFeePerGas + 1n }) !== null);
+    check('unknown floor: no shortfall', feeFloorShortfall(q1, null) === null);
+    const pim = await bundlerFeeFloor(async (m) => {
+      if (m === 'rundler_maxPriorityFeePerGas') throw new Error('-32601');
+      return { standard: { maxPriorityFeePerGas: '0x1ecf4a8', maxFeePerGas: '0x77359400' } };
+    });
+    check('bundlerFeeFloor reads both standard-tier fees (Pimlico style)', pim?.maxPriorityFeePerGas === 0x1ecf4a8n && pim?.maxFeePerGas === 2_000_000_000n);
+    const pimNoMax = await bundlerFeeFloor(async (m) => (m === 'rundler_maxPriorityFeePerGas' ? null : { standard: { maxPriorityFeePerGas: '0x10', maxFeePerGas: 7 } }));
+    check('a malformed maxFeePerGas leaves only that half unknown', pimNoMax?.maxPriorityFeePerGas === 16n && pimNoMax?.maxFeePerGas === null);
+    const run = await bundlerFeeFloor(async (m) => (m === 'rundler_maxPriorityFeePerGas' ? '0x5f5e100' : null));
+    check('Rundler: priority floor only', run?.maxPriorityFeePerGas === 100_000_000n && run?.maxFeePerGas === null);
+    check('isBundlerFeeFloorRefusal: Alto priority + max-fee texts and Rundler text; not other errors',
+      isBundlerFeeFloorRefusal('RPC error -32602: maxPriorityFeePerGas must be at least 32305086 (current maxPriorityFeePerGas: 29835424) - use pimlico_getUserOperationGasPrice to get the current gas price (eth_sendUserOperation)') &&
+        isBundlerFeeFloorRefusal('maxFeePerGas must be at least 5 (current maxFeePerGas: 4)') &&
+        isBundlerFeeFloorRefusal('precheck failed: maxPriorityFeePerGas is 1000000 but must be at least 100000000') &&
+        !isBundlerFeeFloorRefusal("RPC error -32500: AA21 didn't pay prefund"));
+    const raw = describeAaError(new Error('RPC error -32602: maxPriorityFeePerGas must be at least 32305086 (current maxPriorityFeePerGas: 29835424) - use pimlico_getUserOperationGasPrice to get the current gas price (eth_sendUserOperation)'), { accountType: 'kernel-v3.3', deployed: true });
+    check('describeAaError: a bundler floor refusal gets the "review again" title and keeps the bundler text',
+      raw?.title === AA_FEE_ROSE_TITLE && /must be at least 32305086/.test(raw.detail) && /Review it again/.test(raw.detail));
+
+    // A bundler whose floor (Pimlico style) and estimate can move between
+    // the quote and the send, around the module's fake bundler.
+    function movingBundler() {
+      const base = fakeBundler({});
+      const state = { priority: 29_835_424n, maxFee: null, estimate: null };
+      const t = async (method, params) => {
+        if (method === 'rundler_maxPriorityFeePerGas') throw new Error('RPC error -32601: method not found');
+        if (method === 'pimlico_getUserOperationGasPrice') {
+          base.calls.push({ method, params });
+          return { standard: { maxPriorityFeePerGas: '0x' + state.priority.toString(16), ...(state.maxFee !== null ? { maxFeePerGas: '0x' + state.maxFee.toString(16) } : {}) } };
+        }
+        if (method === 'eth_estimateUserOperationGas' && state.estimate) {
+          base.calls.push({ method, params });
+          return state.estimate;
+        }
+        return base(method, params);
+      };
+      t.state = state;
+      t.base = base;
+      return t;
+    }
+    function movingBundle(nodeOptions = {}) {
+      const mb = movingBundler();
+      const n = fakeNode(nodeOptions);
+      const b = createAaClient({
+        nodeUrl: 'https://node.example',
+        bundlerUrl: 'https://bundler.example',
+        factory: FACTORY_INPUT,
+        transportFor: (url) => (url === 'https://node.example' ? n : mb),
+      });
+      return { b, mb };
+    }
+    const sent = (mb) => mb.base.calls.filter((c) => c.method === 'eth_sendUserOperation').length;
+
+    // Within the headroom: signed with exactly the quoted fees.
+    {
+      const { b, mb } = movingBundle();
+      const qq = await prepareAaSend(b, owner.address, RECIPIENT, AMOUNT);
+      check('quote: priority = floor + 25 % (the node suggested 1 gwei, so the floor applies only when higher)',
+        qq.maxPriorityFeePerGas === 1_000_000_000n && qq.maxFeePerGas === 3_000_000_000n);
+      mb.state.priority = 1_000_000_001n; // the floor now sits above the quoted priority
+      const estimatesBefore = mb.base.calls.filter((c) => c.method === 'eth_estimateUserOperationGas').length;
+      const r = await sendAa(b, owner, qq).then(() => null, (e) => e);
+      check('floor above the quoted priority at send time → AaFeeRoseError, nothing estimated or sent',
+        r instanceof AaFeeRoseError && sent(mb) === 0 &&
+          mb.base.calls.filter((c) => c.method === 'eth_estimateUserOperationGas').length === estimatesBefore);
+      check('…describeAaError gives the fee-rose title', describeAaError(r, { accountType: 'simple', deployed: false })?.title === AA_FEE_ROSE_TITLE);
+      mb.state.priority = 29_835_424n;
+      const again = await sendAa(b, owner, qq).then(() => null, (e) => e);
+      check('the same quote cannot be re-sent after the refusal (the screen must re-quote)', again?.message === AA_QUOTE_ALREADY_USED && sent(mb) === 0);
+    }
+    {
+      const { b, mb } = movingBundle();
+      mb.state.priority = 2_000_000_000n; // floor above the node's 1 gwei suggestion
+      const qq = await prepareAaSend(b, owner.address, RECIPIENT, AMOUNT);
+      check('quote with a floor above the suggestion: priority 2.5 gwei, maxFee 3 gwei + 1.5 gwei',
+        qq.maxPriorityFeePerGas === 2_500_000_000n && qq.maxFeePerGas === 4_500_000_000n);
+      check('the displayed worst case is priced at those fees', qq.fee === (0x111n + 0x222n + 0x333n) * 4_500_000_000n);
+      mb.state.priority = 2_160_000_000n; // +8 %, as observed live
+      await sendAa(b, owner, qq);
+      const op = mb.base.lastOp;
+      check('8 % floor drift: sent, signed with EXACTLY the quoted fees (never raised)',
+        sent(mb) === 1 && BigInt(op.maxPriorityFeePerGas) === qq.maxPriorityFeePerGas && BigInt(op.maxFeePerGas) === qq.maxFeePerGas);
+      check('the signed worst case equals the displayed one',
+        (BigInt(op.callGasLimit) + BigInt(op.verificationGasLimit) + BigInt(op.preVerificationGas)) * BigInt(op.maxFeePerGas) === qq.fee);
+    }
+    {
+      const { b, mb } = movingBundle();
+      mb.state.priority = 2_000_000_000n;
+      const qq = await prepareAaSend(b, owner.address, RECIPIENT, AMOUNT);
+      mb.state.priority = 2_500_000_001n; // one wei above the quoted priority
+      const r = await sendAa(b, owner, qq).then(() => null, (e) => e);
+      check('one wei above the quoted priority → refused before signing', r instanceof AaFeeRoseError && sent(mb) === 0);
+    }
+    {
+      const { b, mb } = movingBundle();
+      mb.state.maxFee = 3_000_000_000n;
+      const qq = await prepareAaSend(b, owner.address, RECIPIENT, AMOUNT);
+      check('an Alto maxFeePerGas floor raises the quoted maxFeePerGas by 25 %', qq.maxFeePerGas === 3_750_000_000n);
+      mb.state.maxFee = 3_750_000_001n;
+      const r = await sendAa(b, owner, qq).then(() => null, (e) => e);
+      check('a maxFeePerGas floor above the quoted one at send → refused, nothing sent', r instanceof AaFeeRoseError && /maximum fee/.test(r.message) && sent(mb) === 0);
+    }
+    {
+      // The client re-estimates at send: a larger estimate must not be signed.
+      const { b, mb } = movingBundle();
+      const qq = await prepareAaSend(b, owner.address, RECIPIENT, AMOUNT);
+      mb.state.estimate = { callGasLimit: '0x111', verificationGasLimit: '0x222', preVerificationGas: '0x334' };
+      const r = await sendAa(b, owner, qq).then(() => null, (e) => e);
+      check('re-estimate one gas higher than the quote → AaFeeRoseError before signing, nothing sent',
+        r instanceof AaFeeRoseError && /fresh gas estimate/.test(r.message) && sent(mb) === 0);
+      const { b: b2, mb: mb2 } = movingBundle();
+      const q2b = await prepareAaSend(b2, owner.address, RECIPIENT, AMOUNT);
+      mb2.state.estimate = { callGasLimit: '0x110', verificationGasLimit: '0x222', preVerificationGas: '0x333' };
+      await sendAa(b2, owner, q2b);
+      check('a lower re-estimate is signed (worst case below the displayed one)', sent(mb2) === 1);
+    }
+    check('signedFeeGuard ignores paymaster operations (sponsored / USDC fee are capped elsewhere)',
+      (() => {
+        try {
+          signedFeeGuard({ maxFeePerGas: 1n, maxPriorityFeePerGas: 1n }, 0n)({ maxFeePerGas: 1n, maxPriorityFeePerGas: 1n, callGasLimit: 10n, verificationGasLimit: 10n, preVerificationGas: 10n, paymaster: '0x' + '11'.repeat(20) });
+          return true;
+        } catch {
+          return false;
+        }
+      })());
+    check('signedFeeGuard refuses fees that differ from the quote',
+      (() => {
+        try {
+          signedFeeGuard({ maxFeePerGas: 2n, maxPriorityFeePerGas: 1n }, 10n ** 18n)({ maxFeePerGas: 3n, maxPriorityFeePerGas: 1n, callGasLimit: 1n, verificationGasLimit: 1n, preVerificationGas: 1n });
+          return false;
+        } catch (e) {
+          return e instanceof AaFeeRoseError;
+        }
+      })());
+  }
+
+  // After a failed smart-account submission no screen may keep a confirm
+  // whose button re-sends the used-up quote (the 2026-10-04 run: re-tapping
+  // re-sent the stale fees). Source checks; sendAa itself also refuses a
+  // second submission of the same quote (checked above).
+  console.log('\nretry re-quotes on every smart-account screen (source)');
+  {
+    const read = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8');
+    const send = read('../src/screens/SendScreen.tsx');
+    check('Send (owner and passkey paths): quote dropped, back to the form',
+      (send.match(/setQuote\(null\);\s*setQuotedUrl\(null\);\s*setPhase\('form'\);/g) ?? []).length >= 3 &&
+        /if \(quote\.kind === 'aa'\) \{[\s\S]{0,400}setQuote\(null\);\s*setQuotedUrl\(null\);\s*setPhase\('form'\);\s*return;\s*\}\s*setPhase\('confirm'\);/.test(send));
+    check('Swap (smart account): quote dropped, back to the review',
+      /describeSendError\(e, sellSymbol\);\s*Alert\.alert\(title, detail\);[\s\S]{0,300}setAaQuote\(null\);\s*setPhase\('review'\);/.test(read('../src/screens/SwapScreen.tsx')));
+    check('Guardians: operation dropped, back to where it was prepared',
+      /setOperation\(null\);\s*setPhase\(op\.kind === 'install' \|\| op\.kind === 'renew' \? 'form' : 'overview'\);/.test(read('../src/screens/GuardiansScreen.tsx')));
+    check('Change owner: rotation dropped, back to the overview',
+      /setRotation\(null\);\s*setPhase\('overview'\);/.test(read('../src/screens/OwnerRotationScreen.tsx')));
+    const pk = read('../src/screens/PasskeyScreen.tsx');
+    check('Passkey: install re-quoted from the same registration; test and remove back to main',
+      /setPendingInstall\(null\);\s*setPhase\('quoting'\);[\s\S]{0,200}preparePasskeyInstall\(bundle, owner, account, p\.registration\)/.test(pk) &&
+        /setPendingTest\(null\);\s*setPhase\('main'\);/.test(pk) && /setPendingRemove\(null\);\s*setPhase\('main'\);/.test(pk));
+    check('Guardian submit (Approve a recovery): submission dropped, back to the review',
+      /setSubmission\(null\);\s*setPhase\('review'\);/.test(read('../src/screens/ApproveRecoveryScreen.tsx')));
+    const sheet = read('../src/components/WcApprovalSheet.tsx');
+    check('WalletConnect sheet: an attempt that leaves the request on the sheet re-quotes a smart-account request',
+      /await onApprove\(txQuote, overrideSimulation, undefined, messageSigner, identityAck\);\s*\/\/[^\n]*\n\s*if \(smartQuote && currentItemKey\.current === key\) setAaQuoteGeneration\(\(g\) => g \+ 1\);/.test(sheet) &&
+        sheet.includes('quotedInputs.generation !== aaQuoteGeneration') &&
+        read('../src/wallet/WalletConnectContext.tsx').includes('onApprove={(q, o, c, signer, ack) => onApprove(head, q, o, c, signer, ack)}'));
+  }
 
   // Stored endpoint URLs embed API keys; Settings must never render them.
   console.log('\nstored URL display masking');

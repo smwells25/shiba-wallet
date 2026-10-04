@@ -371,7 +371,11 @@ export function GuardiansScreen({ navigation }: Props) {
     } catch (e) {
       const { title, detail } = describe(e);
       Alert.alert(title, detail);
-      setPhase('confirm');
+      // The quote went out once and is used up (aa.ts
+      // claimQuoteForSubmission): back to where it was prepared, so the
+      // retry quotes again with fresh fees (same destination as Back).
+      setOperation(null);
+      setPhase(op.kind === 'install' || op.kind === 'renew' ? 'form' : 'overview');
       reload();
     }
   };

@@ -56,6 +56,7 @@ import {
   PREVIEW_AA_BATCH_NOTE,
   aaAccountTypeLabel,
   aaMaxAdjustmentSentence,
+  aaRiskWarningTarget,
   aaSendApprovalPrompt,
   aaSenderLabel,
   kernelDeploymentNote,
@@ -1208,7 +1209,13 @@ export function SendScreen({ route, navigation }: Props) {
         const { title, detail } =
           describeAaError(e, { accountType: 'kernel-v3.3', deployed: true }) ?? describeError(e);
         Alert.alert(title, detail);
-        setPhase('confirm');
+        // A smart-account quote goes out at most once (aa.ts
+        // claimQuoteForSubmission): back to the form, where Review quotes
+        // again with fresh fees, instead of a confirm whose button would
+        // re-send the old figures.
+        setQuote(null);
+        setQuotedUrl(null);
+        setPhase('form');
       }
       return;
     }
@@ -1315,6 +1322,16 @@ export function SendScreen({ route, navigation }: Props) {
             })
           : null) ?? describeError(e);
       Alert.alert(title, detail);
+      if (quote.kind === 'aa') {
+        // The smart-account quote was used up by this attempt (a bundler
+        // refusal, or the fee rose since the review): the retry must
+        // re-quote, so return to the form rather than to a confirm whose
+        // button would send the same figures again.
+        setQuote(null);
+        setQuotedUrl(null);
+        setPhase('form');
+        return;
+      }
       setPhase('confirm');
     }
   };
@@ -1641,12 +1658,7 @@ export function SendScreen({ route, navigation }: Props) {
           batch={quote.calls.map((c) => ({ from: quote.sender, to: c.to, value: c.value, data: c.data }))}
           note={quote.calls.length > 1 ? PREVIEW_AA_BATCH_NOTE : PREVIEW_AA_NOTE}
         />
-        <RiskWarnings
-          url={confirmUrl}
-          wallet={quote.sender}
-          to={quote.calls[0]!.to}
-          data={quote.calls[0]!.data}
-        />
+        <RiskWarnings url={confirmUrl} wallet={quote.sender} {...aaRiskWarningTarget(quote)} />
         <SpendingPolicyNotice owner={quotedFrom} quote={quote} from={quotedFrom} />
         {quote.tokenGas ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>{TOKEN_GAS_ESTIMATE_AFTER_APPROVAL}</Text>

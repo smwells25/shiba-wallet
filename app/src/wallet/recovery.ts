@@ -43,6 +43,7 @@ import {
   verifyGuardianApproval,
   verifyKernelAccountForOwner,
   verifyRecoveryMetadataOnChain,
+  withDepositTopUpHeadroom,
   type Call,
   type GuardianRecoveryRequest,
   type GuardianSignatureExposure,
@@ -65,8 +66,11 @@ import { toChecksumAddress, type DerivedAccount } from '@shiba-wallet/core';
 import { assertFeatureAllowed, eip155Caip2 } from '../config/readiness.ts';
 import {
   AA_DEPOSIT_TOPUP_VERIFICATION_GAS,
-  applyPriorityFeeFloor,
-  bundlerPriorityFeeFloor,
+  assertQuoteFeesMeetBundlerFloor,
+  bundlerFeeFloor,
+  claimQuoteForSubmission,
+  quoteFeesOverFloor,
+  signedFeeGuard,
   clearAllRecoveredAccounts,
   eip155ChainIdOf,
   isEip7702Owner,
@@ -2529,12 +2533,26 @@ export async function prepareGuardianSubmission(args: {
     approvals = [];
   }
   const spec = kernelGuardianRecoverySpec({ request, approvals, submitter: args.submitter });
-  const [suggested, floor, accountBalance] = await Promise.all([
+  // The EntryPoint deposit decides the deposit top-up headroom the submit
+  // client adds (AA_DEPOSIT_TOPUP_VERIFICATION_GAS); it is read here so the
+  // displayed worst case is the limit that will be signed. A failed read
+  // counts as "not read", like the client (no headroom).
+  const depositReader = new SmartAccountClient({
+    chainId: args.chainId,
+    entryPoint: ENTRYPOINT_V07,
+    bundler: args.bundler,
+    node: args.node,
+    spec,
+  });
+  const [suggested, floor, accountBalance, deposit] = await Promise.all([
     client.suggestFees(),
-    bundlerPriorityFeeFloor(args.bundler),
+    bundlerFeeFloor(args.bundler),
     client.getBalance(request.account),
+    depositReader.getEntryPointDeposit(request.account).catch(() => null),
   ]);
-  const fees = applyPriorityFeeFloor(suggested, floor);
+  // Same fee rule as every smart-account quote (aa.ts quoteFeesOverFloor):
+  // the submit signs exactly these fees and never raises them.
+  const fees = quoteFeesOverFloor(suggested, floor);
   const op: UserOperation = {
     sender: request.account,
     nonce: BigInt(request.nonce),
@@ -2546,7 +2564,21 @@ export async function prepareGuardianSubmission(args: {
     maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
     signature: spec.stubSignature(),
   };
-  const gas = await new BundlerClient(args.bundler, ENTRYPOINT_V07).estimateUserOperationGas(op);
+  const estimated = await new BundlerClient(args.bundler, ENTRYPOINT_V07).estimateUserOperationGas(op);
+  const verificationGasLimit =
+    deposit === null
+      ? estimated.verificationGasLimit
+      : withDepositTopUpHeadroom(
+          {
+            ...op,
+            callGasLimit: estimated.callGasLimit,
+            verificationGasLimit: estimated.verificationGasLimit,
+            preVerificationGas: estimated.preVerificationGas,
+          },
+          deposit,
+          AA_DEPOSIT_TOPUP_VERIFICATION_GAS,
+        );
+  const gas = { ...estimated, verificationGasLimit };
   const fee = (gas.callGasLimit + gas.verificationGasLimit + gas.preVerificationGas) * fees.maxFeePerGas;
   if (fee > accountBalance) {
     throw new Error(
@@ -2586,6 +2618,12 @@ export async function submitGuardianRecovery(args: {
   if (!same(args.signer.address, args.quote.submitter)) {
     throw new Error(`This recovery was prepared for guardian ${args.quote.submitter}. Nothing was signed.`);
   }
+  // The fee rules of aa.ts sendAa: one submission per quote, the quoted
+  // fees exactly (re-checked against the bundler's floor now), and a worst
+  // case no higher than the displayed one after the client re-estimates.
+  claimQuoteForSubmission(args.quote);
+  const fees = { maxFeePerGas: args.quote.maxFeePerGas, maxPriorityFeePerGas: args.quote.maxPriorityFeePerGas };
+  await assertQuoteFeesMeetBundlerFloor(args.bundler, fees);
   const spec = kernelGuardianRecoverySpec({
     request: args.quote.request,
     approvals: args.quote.approvals,
@@ -2601,9 +2639,8 @@ export async function submitGuardianRecovery(args: {
     // operation (aa.ts AA_DEPOSIT_TOPUP_VERIFICATION_GAS explains why).
     depositTopUpVerificationGas: AA_DEPOSIT_TOPUP_VERIFICATION_GAS,
   });
-  const { userOpHash } = await client.sendCalls(args.signer, [recoveryCall(args.quote.request)], {
-    maxFeePerGas: args.quote.maxFeePerGas,
-    maxPriorityFeePerGas: args.quote.maxPriorityFeePerGas,
+  const { userOpHash } = await client.sendCalls(args.signer, [recoveryCall(args.quote.request)], fees, {
+    beforeSign: signedFeeGuard(fees, args.quote.fee),
   });
   return { userOpHash, client };
 }

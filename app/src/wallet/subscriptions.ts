@@ -1,6 +1,7 @@
 import {
   ENTRYPOINT_V07,
   KERNEL_PERMISSION_MODULES,
+  NodeClient,
   SUBSCRIPTION_MIN_PERIOD_SECONDS,
   SUBSCRIPTION_NATIVE,
   describePeriod,
@@ -26,11 +27,12 @@ import {
 import { formatUnits, parseUnits } from './balances.ts';
 import { EVM_CHAIN_ID, validateRecipient } from './send.ts';
 import { knownTokensForChain, listTokens, type KeyValueStore } from './tokens.ts';
-import { aaCanPaySelf, aaFeeFromBalance, type AaSendQuote } from './aa.ts';
+import { aaCanPaySelf, aaFeeFromBalance, fetchTokenBalanceVia, type AaSendQuote } from './aa.ts';
 import {
   eip155Decimal,
   releaseSessionKey,
   sessionVaultId,
+  unknownStatusFrom,
   type SessionChainStatus,
   type SessionKeyVault,
   type SessionRecord,
@@ -181,7 +183,8 @@ export const SUBSCRIPTION_KEY_WARNING =
 
 export const SUBSCRIPTION_AUDIT_NOTE =
   'Subscriptions use ZeroDev’s ECDSASigner, CallPolicy v0.0.4, TimestampPolicy, GasPolicy and ' +
-  'RateLimitPolicy. No published audit names these modules (engine notes, kernel-permissions.ts).';
+  'RateLimitPolicy. No published security audit names these modules, so treat subscriptions as ' +
+  'experimental with real funds.';
 
 /** A token the form offers: the native currency, or a known ERC-20 on the active chain. */
 export interface SubscriptionTokenChoice {
@@ -339,14 +342,20 @@ export const SUBSCRIPTION_START_NOTE =
  */
 export const SUBSCRIPTION_REQUOTE_FEE_TOLERANCE_PERCENT = 20n;
 
-/** True when the re-quoted install must be reviewed again (fee rose beyond the tolerance, or sponsorship ended). */
+/**
+ * True when the re-quoted install must be reviewed again (fee rose beyond the
+ * tolerance, or sponsorship ended). The tolerance is part of the displayed
+ * worst case (subscriptionInstallFeeCeiling), so a re-quote that passes here
+ * never exceeds what the review showed; sendAa's signing check then holds
+ * the signed operation to the re-quote.
+ */
 export function subscriptionRequoteNeedsReview(
   reviewed: { fee: bigint; sponsored: boolean },
   requoted: { fee: bigint; sponsored: boolean },
 ): boolean {
   if (reviewed.sponsored && !requoted.sponsored) return true;
   if (requoted.sponsored) return false;
-  return requoted.fee * 100n > reviewed.fee * (100n + SUBSCRIPTION_REQUOTE_FEE_TOLERANCE_PERCENT);
+  return requoted.fee > subscriptionInstallFeeCeiling(reviewed);
 }
 
 export const SUBSCRIPTION_REQUOTE_TITLE = 'Please review again';
@@ -422,16 +431,114 @@ export function suggestedFeeBudget(p: {
 }
 
 /**
+ * What the account holds, for the fee-budget note of a subscription paid in
+ * a TOKEN (finding 2 of the 2026-10-04 emulator run: a USDC subscription
+ * was told "cannot spare anything for fees after the payments themselves",
+ * which is wrong when the payments are not in the native currency).
+ */
+export interface FeeBudgetTokenContext {
+  /** The payment token's symbol ("USDC"). */
+  tokenSymbol: string;
+  /** The smart account's native balance (wei), when read. */
+  balance: bigint | null;
+  /** Its EntryPoint deposit (wei), when read. */
+  deposit: bigint | null;
+  /** The install's worst-case network fee (wei), once a review quote exists. */
+  installFee: bigint | null;
+}
+
+/**
  * The note under the fee-budget field when the pre-fill was capped. With
  * `installKeptBack` (wei) above zero the note also says that the install's
- * own fee was kept back; without it the text is unchanged.
+ * own fee was kept back; without it the text is unchanged. `token` is given
+ * for a subscription paid in a token: when nothing can be spared, the note
+ * then says what is actually short (the install's fee against the balance
+ * and the EntryPoint deposit) instead of blaming the payments.
  */
-export function feeBudgetCapNote(spare: bigint, uncapped: bigint, nativeSymbol: string, installKeptBack: bigint = 0n): string {
+export function feeBudgetCapNote(
+  spare: bigint,
+  uncapped: bigint,
+  nativeSymbol: string,
+  installKeptBack: bigint = 0n,
+  token: FeeBudgetTokenContext | null = null,
+): string {
+  if (spare <= 0n && token) return feeBudgetTokenShortNote(uncapped, nativeSymbol, token);
   const kept =
     installKeptBack > 0n
       ? ` ${formatUnits(installKeptBack, 18, 18)} ${nativeSymbol} is kept back for the install's own worst-case network fee.`
       : '';
   return feeBudgetCapNoteBase(spare, uncapped, nativeSymbol) + kept;
+}
+
+function feeBudgetTokenShortNote(uncapped: bigint, nativeSymbol: string, token: FeeBudgetTokenContext): string {
+  const fmt = (wei: bigint) => `${formatUnits(wei, 18, 18)} ${nativeSymbol}`;
+  const deposit = token.deposit ?? 0n;
+  const held =
+    token.balance === null
+      ? 'The smart account’s balance could not be read'
+      : `The smart account holds ${fmt(token.balance)}${deposit > 0n ? ` plus an EntryPoint deposit of ${fmt(deposit)}` : ''}`;
+  const install =
+    token.installFee !== null
+      ? `, and this install's worst-case network fee is ${fmt(token.installFee)}, so nothing is left for the payments' network fees`
+      : ', so nothing is left for the payments’ network fees';
+  return (
+    `${held}${install}. The payments themselves are in ${token.tokenSymbol}; their network fees are paid in ` +
+    `${nativeSymbol}. The usual budget for this many payments would be ${fmt(uncapped)}. Fund the smart account ` +
+    `with ${nativeSymbol}, or enter a budget by hand.`
+  );
+}
+
+/**
+ * The fee facts behind the fee-budget suggestion, read fresh (when the form
+ * opens, when it comes back into focus and at Review — finding 2 of the
+ * 2026-10-04 emulator run: a balance read once at opening went stale after
+ * funding): the node's current maxFeePerGas, the smart account's native
+ * balance and its EntryPoint deposit (EntryPoint balanceOf, the same read
+ * aa.ts uses). Each read that fails is null; nothing throws.
+ */
+export async function readSubscriptionFeeFacts(
+  node: JsonRpcTransport,
+  account: string,
+): Promise<{ maxFeePerGas: bigint | null; balance: bigint | null; deposit: bigint | null; failures: unknown[] }> {
+  const client = new NodeClient(node);
+  const failures: unknown[] = [];
+  const keep = <T,>(p: Promise<T>): Promise<T | null> =>
+    p.catch((e: unknown) => {
+      failures.push(e);
+      return null;
+    });
+  const [fees, balance, deposit] = await Promise.all([
+    keep(client.suggestFees()),
+    keep(client.getBalance(account)),
+    keep(fetchTokenBalanceVia(node, ENTRYPOINT_V07, account)),
+  ]);
+  return { maxFeePerGas: fees ? fees.maxFeePerGas : null, balance, deposit, failures };
+}
+
+/**
+ * The worst-case install fee the subscription REVIEW shows and the most
+ * that Start may sign (finding 3 of the 2026-10-04 emulator run: the user
+ * must never sign a fee above the one displayed). Start restarts the clock,
+ * which changes the grant and so the operation, and quotes it again; that
+ * re-quote may be higher by up to SUBSCRIPTION_REQUOTE_FEE_TOLERANCE_PERCENT
+ * before the review is shown again (subscriptionRequoteNeedsReview), so the
+ * review displays the reviewed quote's fee plus that tolerance as the bound.
+ * Zero when sponsored. Exact bigint, rounded up.
+ */
+export function subscriptionInstallFeeCeiling(quote: Pick<AaSendQuote, 'fee' | 'sponsored'>): bigint {
+  if (quote.sponsored) return 0n;
+  return (quote.fee * (100n + SUBSCRIPTION_REQUOTE_FEE_TOLERANCE_PERCENT) + 99n) / 100n;
+}
+
+/**
+ * The review quote as the review shows and checks it: `fee` (and `total`)
+ * replaced by subscriptionInstallFeeCeiling, so the funding lines and the
+ * fee-budget keep-back use the same worst case as the displayed row.
+ */
+export function withSubscriptionFeeCeiling<Q extends Pick<AaSendQuote, 'fee' | 'sponsored' | 'amount' | 'total'>>(quote: Q): Q {
+  if (quote.sponsored) return quote;
+  const fee = subscriptionInstallFeeCeiling(quote);
+  return { ...quote, fee, total: quote.amount + fee };
 }
 
 function feeBudgetCapNoteBase(spare: bigint, uncapped: bigint, nativeSymbol: string): string {
@@ -855,12 +962,28 @@ export async function markSubscriptionKeyExported(
   return releaseSessionKey(record, store, vault, { subscription: { ...record.subscription, keyExportedAt: now } });
 }
 
-/** Key status in plain words. */
-export function subscriptionKeyStatusText(record: SessionRecord): string {
+/**
+ * The key line of a subscription card whose key is still on this device but
+ * can no longer be handed over (subscriptionHandoverOffer 'expired'): the
+ * card shows SUBSCRIPTION_EXPIRED_UNHANDED_TEXT below it, so this line only
+ * says where the key is and when it goes (2026-10-04 emulator run, bug 5:
+ * the card still said "hand it to the merchant" above the expired box).
+ */
+export const SUBSCRIPTION_KEY_EXPIRED_STATUS_TEXT =
+  'Key still on this device. It can no longer be used for payments; it is deleted from this device when you revoke.';
+
+/**
+ * Key status in plain words. `handover` is the card's
+ * subscriptionHandoverOffer answer: 'expired' gives
+ * SUBSCRIPTION_KEY_EXPIRED_STATUS_TEXT; omitted (or any other answer) keeps
+ * the previous wording.
+ */
+export function subscriptionKeyStatusText(record: SessionRecord, handover?: 'offer' | 'expired' | 'none'): string {
   if (!record.subscription) return '';
   if (record.subscription.keyExportedAt !== null) {
     return `Key handed to the merchant ${new Date(record.subscription.keyExportedAt).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC')} and deleted from this device.`;
   }
+  if (record.keyHeld && handover === 'expired') return SUBSCRIPTION_KEY_EXPIRED_STATUS_TEXT;
   if (record.keyHeld) return 'Key still on this device: hand it to the merchant (shown once).';
   return 'Key no longer on this device.';
 }
@@ -871,7 +994,7 @@ export function subscriptionKeyStatusText(record: SessionRecord): string {
 
 export type SubscriptionStatus =
   | { kind: 'ok'; state: SubscriptionChainState; next: NextPull }
-  | { kind: 'unknown'; reason: string };
+  | { kind: 'unknown'; reason: string; endpointFailure?: boolean };
 
 export async function readSubscriptionStatus(
   node: JsonRpcTransport,
@@ -883,7 +1006,9 @@ export async function readSubscriptionStatus(
     const state = await readSubscriptionState(node, record.account, record.permissionId, terms);
     return { kind: 'ok', state, next: nextPullAllowedAt(state, now) };
   } catch (e) {
-    return { kind: 'unknown', reason: e instanceof Error ? e.message : String(e) };
+    // Same wording as a session's status: an endpoint that did not answer
+    // is described in plain words (never a raw platform exception).
+    return unknownStatusFrom(e);
   }
 }
 

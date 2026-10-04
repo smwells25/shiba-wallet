@@ -984,7 +984,7 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
             })()}
             smartOption={smartOption}
             loadAaBundle={loadAaBundle}
-            onApprove={(q, o, c, signer, ack) => void onApprove(head, q, o, c, signer, ack)}
+            onApprove={(q, o, c, signer, ack) => onApprove(head, q, o, c, signer, ack)}
             onReject={() => onReject(head)}
           />
         ) : null}

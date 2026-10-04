@@ -255,7 +255,19 @@ export function PasskeyScreen({ navigation }: Props) {
       );
     } catch (e) {
       Alert.alert('Not added', describe(e));
-      setPhase('confirm-install');
+      // The quote went out once and is used up (aa.ts
+      // claimQuoteForSubmission): quote the same registration again, so the
+      // confirm shows fresh fees instead of re-sending the old figures.
+      setPendingInstall(null);
+      setPhase('quoting');
+      try {
+        const plan = await preparePasskeyInstall(bundle, owner, account, p.registration);
+        setPendingInstall({ registration: p.registration, plan });
+        setPhase('confirm-install');
+      } catch (requoteError) {
+        setActionError(`${describe(requoteError)}\n\n${PASSKEY_OS_CLEANUP_NOTE}`);
+        setPhase('main');
+      }
     }
     reloadStatus();
   };
@@ -298,7 +310,9 @@ export function PasskeyScreen({ navigation }: Props) {
       );
     } catch (e) {
       Alert.alert('Passkey test not sent', describe(e));
-      setPhase('confirm-test');
+      // Used-up quote: back to the main view; "Test" quotes again.
+      setPendingTest(null);
+      setPhase('main');
     }
   };
 
@@ -351,7 +365,9 @@ export function PasskeyScreen({ navigation }: Props) {
       );
     } catch (e) {
       Alert.alert('Not removed', describe(e));
-      setPhase('confirm-remove');
+      // Used-up quote: back to the main view; "Remove" quotes again.
+      setPendingRemove(null);
+      setPhase('main');
     }
   };
 

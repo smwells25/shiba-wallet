@@ -37,9 +37,14 @@ import { toChecksumAddress, type DerivedAccount } from '@shiba-wallet/core';
 // Explicit .ts extensions: this module is imported by scripts/check-sessions.mjs
 // under Node's type stripping, which resolves relative specifiers literally.
 import {
-  applyPriorityFeeFloor,
-  bundlerPriorityFeeFloor,
+  bundlerFeeFloor,
+  describeAaError,
+  paymasterProbeTransport,
   prepareAaCalls,
+  quoteFeesOverFloor,
+  retitleQuoteFailure,
+  type AaAccountType,
+  type TransportFactory,
   resolveAaSender,
   summarizeAaReceipt,
   type AaClientBundle,
@@ -53,6 +58,7 @@ import { WALLET_7702_DELEGATE } from './delegation.ts';
 import { EVM_CHAIN_ID, validateRecipient } from './send.ts';
 import type { KeyValueStore } from './tokens.ts';
 import { assertFeatureAllowed, eip155Caip2 } from '../config/readiness.ts';
+import { NO_ANSWER_SENTENCE, isEndpointFailure, sanitizeEndpointMessage } from '../config/endpoint-probe.ts';
 
 /**
  * Session keys for the app (phase 8 item 2, app half), on the engine's
@@ -141,8 +147,8 @@ export const SESSIONS_INSTALL_MODE_NOTE =
 
 export const SESSIONS_AUDIT_NOTE =
   'The session permission modules (ZeroDev ECDSASigner, CallPolicy v0.0.4, TimestampPolicy, ' +
-  'GasPolicy) have no published audit that names them (engine notes, packages/chains-evm ' +
-  'kernel-permissions.ts). Treat sessions as experimental with real funds.';
+  'GasPolicy) have no published security audit that names them. Treat sessions as experimental ' +
+  'with real funds.';
 
 export const SESSION_SIMPLE_REFUSAL =
   'Sessions need a Kernel v3.3 account: this network’s smart-account type is SimpleAccount, which ' +
@@ -950,7 +956,13 @@ export type SessionChainStatus =
   | { kind: 'revoked' }
   /** Not installed on-chain, and the install never confirmed. */
   | { kind: 'not-installed' }
-  | { kind: 'unknown'; reason: string };
+  /**
+   * `endpointFailure` is set when the read failed because the network
+   * endpoint did not answer (isEndpointFailure); the screen then retries the
+   * read once on the next healthy default endpoint. `reason` is already
+   * plain words in that case (never a raw Java exception).
+   */
+  | { kind: 'unknown'; reason: string; endpointFailure?: boolean };
 
 /**
  * The session's status from the engine's readKernelPermissionState (plus
@@ -984,9 +996,123 @@ export async function readSessionStatus(
     }
     return { kind: 'unknown', reason: 'The permission is only partly installed on-chain.' };
   } catch (e) {
-    return { kind: 'unknown', reason: e instanceof Error ? e.message : String(e) };
+    return unknownStatusFrom(e);
   }
 }
+
+/**
+ * The 'unknown' status for a failed read: an endpoint that did not answer
+ * is described in plain words with the sanitized technical detail
+ * (sanitizeEndpointMessage strips Java exception class names, links and
+ * advertisements); any other error keeps its message, as before.
+ */
+export function unknownStatusFrom(error: unknown): { kind: 'unknown'; reason: string; endpointFailure?: boolean } {
+  if (isEndpointFailure(error)) {
+    const technical = sanitizeEndpointMessage(error instanceof Error ? error.message : String(error));
+    return {
+      kind: 'unknown',
+      reason: `the network endpoint did not answer${technical ? ` (${technical.replace(/\.$/, '')})` : ''}`,
+      endpointFailure: true,
+    };
+  }
+  return { kind: 'unknown', reason: error instanceof Error ? error.message : String(error) };
+}
+
+// ---------------------------------------------------------------------------
+// Endpoint failures on the Sessions screen (2026-10-04 emulator run, bug 4:
+// a raw "fetch failed: java.net.UnknownHostException …" alert, and no
+// failover on the subscription re-quote)
+// ---------------------------------------------------------------------------
+
+/** Marker set on errors thrown by a session bundle's NODE transport. */
+const NODE_ERROR_MARK = 'shibaNodeTransport';
+
+/**
+ * Wraps a node transport so the errors it throws are marked as the node's.
+ * The smart-account quote talks to the node AND the bundler, whose
+ * transport failures look alike; only a node failure may move the quote to
+ * another default RPC endpoint (the failover rule of
+ * ../config/endpoint-probe.ts runWithEndpointFailover). The error object is
+ * passed through unchanged apart from the marker.
+ */
+export function markNodeErrors(transport: JsonRpcTransport): JsonRpcTransport {
+  return async (method, params) => {
+    try {
+      return await transport(method, params);
+    } catch (error) {
+      if (error !== null && typeof error === 'object') {
+        try {
+          (error as Record<string, unknown>)[NODE_ERROR_MARK] = true;
+        } catch {
+          // A frozen error stays unmarked: it is then not failed over.
+        }
+      }
+      throw error;
+    }
+  };
+}
+
+/** True for an endpoint failure (isEndpointFailure) thrown by a marked node transport. */
+export function isNodeEndpointFailure(error: unknown): boolean {
+  return (
+    isEndpointFailure(error) &&
+    error !== null &&
+    typeof error === 'object' &&
+    (error as Record<string, unknown>)[NODE_ERROR_MARK] === true
+  );
+}
+
+/**
+ * The transport factory for a session bundle on `nodeUrl`: the node's
+ * transport marks its errors (markNodeErrors); the bundler gets `base`;
+ * the paymaster keeps the probe transport that preserves a refusal's text
+ * (aa.ts paymasterProbeTransport) when `base` is the plain HTTP transport,
+ * exactly as createAaClient chooses it.
+ */
+export function sessionTransportFor(
+  nodeUrl: string,
+  base: TransportFactory,
+  options: { paymasterUrl?: string | null; plainHttp?: boolean } = {},
+): TransportFactory {
+  return (url) => {
+    if (url === nodeUrl) return markNodeErrors(base(url));
+    if (options.plainHttp && options.paymasterUrl && url === options.paymasterUrl) return paymasterProbeTransport(url);
+    return base(url);
+  };
+}
+
+/** Alert title for a session or subscription step that could not reach the network endpoint. */
+export const SESSION_UNREACHABLE_TITLE = 'Could not reach the network endpoint. Check your connection and try again.';
+
+/**
+ * Plain-language error for every quote, submit and status step of the
+ * Sessions screen: the smart-account wording first (describeAaError: fee
+ * rose, funding, bundler refusals with their text kept), then an endpoint
+ * that did not answer (a plain sentence plus the sanitized technical
+ * detail, never the raw platform exception), then the send wording.
+ * `stage` 'quote' re-titles a generic failure as "The quote could not be
+ * prepared." (nothing was signed at that step).
+ */
+export function describeSessionError(
+  error: unknown,
+  context: { accountType: AaAccountType; symbol: string; stage: 'quote' | 'send' },
+  describeSend: (error: unknown, symbol: string) => { title: string; detail: string },
+): { title: string; detail: string } {
+  const aa = describeAaError(error, { accountType: context.accountType, deployed: true });
+  if (aa) return aa;
+  if (isEndpointFailure(error)) {
+    const technical = sanitizeEndpointMessage(error instanceof Error ? error.message : String(error));
+    return {
+      title: SESSION_UNREACHABLE_TITLE,
+      detail:
+        `${NO_ANSWER_SENTENCE} Nothing was ${context.stage === 'quote' ? 'signed' : 'sent'}.` +
+        (technical ? `\n\nTechnical detail: ${technical}` : ''),
+    };
+  }
+  const described = describeSend(error, context.symbol);
+  return context.stage === 'quote' ? retitleQuoteFailure(described) : described;
+}
+
 
 /**
  * readSessionStatus for readAtInclusionBlock: an 'unknown' answer (which is
@@ -1089,8 +1215,12 @@ export async function sendSessionCalls(args: {
   if (reported !== bundle.chainId) {
     throw new Error(`Endpoint is chain id ${reported}, expected ${bundle.chainId}.`);
   }
-  const [suggested, floor] = await Promise.all([nodeClient.suggestFees(), bundlerPriorityFeeFloor(bundle.bundler)]);
-  const fees = applyPriorityFeeFloor(suggested, floor);
+  // No quote is shown for a session-key operation; the fees are read here,
+  // right before sending, with the same floor rule as every smart-account
+  // quote (aa.ts quoteFeesOverFloor, which also meets a bundler's
+  // maxFeePerGas minimum).
+  const [suggested, floor] = await Promise.all([nodeClient.suggestFees(), bundlerFeeFloor(bundle.bundler)]);
+  const fees = quoteFeesOverFloor(suggested, floor);
   const client = new SmartAccountClient({
     chainId: bundle.chainId,
     entryPoint: ENTRYPOINT_V07,
@@ -1148,7 +1278,7 @@ export function sessionRevokeKeySentence(record: Pick<SessionRecord, 'keyHeld' |
   );
 }
 
-export type SessionProgressKind = 'install' | 'subscription' | 'revoke' | 'test';
+export type SessionProgressKind = 'install' | 'subscription' | 'revoke' | 'subscription-revoke' | 'test';
 
 /** Title of the Sessions screen's progress view. */
 export function sessionProgressTitle(kind: SessionProgressKind): string {
@@ -1159,9 +1289,31 @@ export function sessionProgressTitle(kind: SessionProgressKind): string {
       return 'Subscription sent to the bundler';
     case 'revoke':
       return 'Revocation sent to the bundler';
+    case 'subscription-revoke':
+      return 'Subscription revocation sent to the bundler';
     case 'test':
       return 'Session test operation sent to the bundler';
   }
+}
+
+/**
+ * The revoke confirm's words (finding 7 of the 2026-10-04 emulator run: a
+ * subscription's revoke said "Revoke session"). A subscription is revoked
+ * with the same operation as any session, but the user knows it as a
+ * subscription, so the title and the button say so.
+ */
+export function revokeConfirmCopy(
+  record: Pick<SessionRecord, 'source'>,
+  title: string,
+): { heading: string; button: string } {
+  return record.source === 'subscription'
+    ? { heading: `Revoke subscription “${title}”`, button: 'Revoke subscription' }
+    : { heading: `Revoke session “${title}”`, button: 'Revoke session' };
+}
+
+/** The biometric prompt for a revocation (subscription or session wording). */
+export function revokeApprovalPrompt(record: Pick<SessionRecord, 'source'>): string {
+  return record.source === 'subscription' ? 'Approve revoking this subscription' : 'Approve revoking this session';
 }
 
 /**

@@ -15,12 +15,13 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
 import { allowScreenCaptureAsync, preventScreenCaptureAsync } from 'expo-screen-capture';
 import {
-  NodeClient,
   SUBSCRIPTION_NATIVE,
+  httpTransport,
   describePeriod,
   parseSessionKeyGrant,
   subscriptionPeriodCount,
   toHex,
+  type JsonRpcTransport,
   type KernelPermissionInstall,
   type SessionKeyGrant,
   type SubscriptionGrant,
@@ -32,7 +33,8 @@ import { GrantReview } from '../components/SessionGrantViews';
 import { PayloadQr } from '../components/RecoveryViews';
 import { SubscriptionKeyHandoverActions } from '../components/SubscriptionKeyHandover';
 import { useTheme, type Theme } from '../theme';
-import { getEndpoint } from '../config/networks';
+import { getEndpoint, withEndpoint } from '../config/networks';
+import { isEndpointFailure } from '../config/endpoint-probe';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
 import { requireLocalAuth } from '../wallet/biometric';
@@ -40,9 +42,7 @@ import { formatUnits, parseUnits } from '../wallet/balances';
 import { EVM_CHAIN_ID, describeSendError } from '../wallet/send';
 import {
   createAaClientFromConfig,
-  describeAaError,
   getAaConfig,
-  retitleQuoteFailure,
   sendAa,
   summarizeAaReceipt,
   type AaClientBundle,
@@ -57,10 +57,12 @@ import {
   SESSIONS_WIPE_WARNING,
   SESSION_EXPIRY_PRESETS,
   buildManualGrant,
+  describeSessionError,
   finalizeSessionInstall,
   finalizeSessionRevoke,
   forgetSession,
   installSession,
+  isNodeEndpointFailure,
   loadSessionsFor,
   newSessionKey,
   pendingSessionOperation,
@@ -78,6 +80,10 @@ import {
   sessionRevokeKeySentence,
   sessionStatusText,
   sessionTestCall,
+  sessionTransportFor,
+  revokeApprovalPrompt,
+  revokeConfirmCopy,
+  unknownStatusFrom,
   validateGrantForAccount,
   type AllowedCallDraft,
   type SessionAccountResolution,
@@ -94,6 +100,7 @@ import {
   SUBSCRIPTION_PERIOD_PRESETS,
   SUBSCRIPTION_PERIOD_UNITS,
   SUBSCRIPTION_MAX_PERIOD_SECONDS,
+  SUBSCRIPTION_REQUOTE_FEE_TOLERANCE_PERCENT,
   SUBSCRIPTION_REQUOTE_MESSAGE,
   SUBSCRIPTION_REQUOTE_TITLE,
   SUBSCRIPTION_START_NOTE,
@@ -102,6 +109,7 @@ import {
   customPeriodSeconds,
   feeBudgetCapNote,
   markSubscriptionKeyExported,
+  readSubscriptionFeeFacts,
   readSubscriptionStatus,
   restartSubscriptionAt,
   sortSubscriptionRecords,
@@ -109,6 +117,7 @@ import {
   subscriptionFinalDatesLine,
   subscriptionGrantFor,
   subscriptionHandoverOffer,
+  subscriptionInstallFeeCeiling,
   subscriptionInstallFunding,
   subscriptionInstallKeepBack,
   subscriptionKeyFileName,
@@ -126,6 +135,7 @@ import {
   loadSubscriptionTokenChoices,
   suggestedFeeBudget,
   termsOf,
+  withSubscriptionFeeCeiling,
   type SubscriptionStatus,
   type SubscriptionTokenChoice,
 } from '../wallet/subscriptions';
@@ -147,6 +157,15 @@ type Phase =
   | 'key-export';
 
 const mono = Platform.select({ ios: 'Menlo', default: 'monospace' });
+
+/** The native amount typed into the subscription form, in wei (0 when it does not parse). */
+function safeParseNative(text: string): bigint {
+  try {
+    return parseUnits(text.trim(), 18);
+  } catch {
+    return 0n;
+  }
+}
 const EMPTY_DRAFT: AllowedCallDraft = { target: '', selector: '', valueCapEth: '' };
 
 interface PendingInstall {
@@ -155,6 +174,11 @@ interface PendingInstall {
   grant: SessionKeyGrant;
   install: KernelPermissionInstall;
   quote: AaSendQuote;
+  /**
+   * The bundle the quote was made through (its node may differ from the
+   * screen's after an endpoint failover); the install is sent through it.
+   */
+  bundle: AaClientBundle;
 }
 
 /** A reviewed subscription waiting for the owner's approval (same lifetime rules as PendingInstall). */
@@ -256,7 +280,9 @@ export function SessionsScreen({ navigation }: Props) {
   const [pickerFor, setPickerFor] = useState<number | null>(null);
   const pending = useRef<PendingInstall | null>(null);
   const [pendingView, setPendingView] = useState<PendingInstall | null>(null);
-  const [revokeTarget, setRevokeTarget] = useState<{ record: SessionRecord; quote: AaSendQuote } | null>(null);
+  const [revokeTarget, setRevokeTarget] = useState<{ record: SessionRecord; quote: AaSendQuote; bundle: AaClientBundle } | null>(
+    null,
+  );
   const [progress, setProgress] = useState<Progress | null>(null);
   const [subForm, setSubForm] = useState<SubscriptionFormState>(EMPTY_SUBSCRIPTION_FORM);
   const [subPickerOpen, setSubPickerOpen] = useState(false);
@@ -268,9 +294,14 @@ export function SessionsScreen({ navigation }: Props) {
   // review quote (null before the first review): the fee-budget pre-fill
   // keeps it back.
   const [subInstallKeepBack, setSubInstallKeepBack] = useState<bigint | null>(null);
-  const [subFeeFacts, setSubFeeFacts] = useState<{ maxFeePerGas: bigint | null; balance: bigint | null }>({
+  const [subFeeFacts, setSubFeeFacts] = useState<{
+    maxFeePerGas: bigint | null;
+    balance: bigint | null;
+    deposit: bigint | null;
+  }>({
     maxFeePerGas: null,
     balance: null,
+    deposit: null,
   });
   /** What the subscription confirm's spinner is doing: re-quoting with the restarted clock, or signing. */
   const [subSendStage, setSubSendStage] = useState<'requote' | 'signing'>('signing');
@@ -336,7 +367,15 @@ export function SessionsScreen({ navigation }: Props) {
         setBundle(ctx.bundle);
         setResolution(ctx.resolution);
       },
-      (e: unknown) => setSetupError(e instanceof Error ? e.message : String(e)),
+      (e: unknown) => {
+        // An endpoint that did not answer is described in plain words with
+        // the sanitized detail, never as a raw platform exception.
+        const { title, detail } = describeSessionError(e, { accountType: 'kernel-v3.3', symbol: '', stage: 'quote' }, (err) => ({
+          title: err instanceof Error ? err.message : String(err),
+          detail: '',
+        }));
+        setSetupError(detail ? `${title}\n${detail}` : title);
+      },
     );
   }, [owner, activeAccount, evmChain.caip2, evmChain.chainIdDecimal]);
   useEffect(setup, [setup]);
@@ -345,16 +384,52 @@ export function SessionsScreen({ navigation }: Props) {
   // and ones resumed from the stored list below), by userOpHash.
   const waitingFor = useRef(new Set<string>());
   const reloadRef = useRef<() => void>(() => undefined);
+  /**
+   * Runs a status read on the RPC endpoint in use now, under the endpoint
+   * failover rule (networks.ts withEndpoint): a read that came back
+   * 'unknown' because a default endpoint did not answer is repeated once on
+   * the next healthy default (the other screens' rule; bug 4 of the
+   * 2026-10-04 emulator run). Without any resolvable endpoint the read goes
+   * through the screen's bundle, as before.
+   */
+  const readWithFailover = useCallback(
+    async <S extends { kind: string; endpointFailure?: boolean }>(read: (node: JsonRpcTransport) => Promise<S>): Promise<S> => {
+      const unreachable = new Error('The network endpoint did not answer.');
+      const box: { last: S | null } = { last: null };
+      try {
+        const { value } = await withEndpoint(
+          EVM_CHAIN_ID,
+          async (endpoint) => {
+            const status = await read(httpTransport(endpoint.url));
+            box.last = status;
+            if (status.kind === 'unknown' && status.endpointFailure) throw unreachable;
+            return status;
+          },
+          { isFailure: (e) => e === unreachable },
+        );
+        return value;
+      } catch (e) {
+        if (box.last) return box.last;
+        if (bundle) return read(bundle.node);
+        throw e;
+      }
+    },
+    [bundle],
+  );
   /** Re-reads one record's on-chain status (and its subscription counters), and resumes an unsettled operation. */
   const refreshRecord = useCallback(
     (r: SessionRecord) => {
       if (!bundle) return;
       const key = sessionRecordKey(r.chain, r.account, r.permissionId);
       setStatuses((prev) => ({ ...prev, [key]: 'loading' }));
-      void readSessionStatus(bundle.node, r).then((st) => setStatuses((prev) => ({ ...prev, [key]: st })));
+      void readWithFailover((node) => readSessionStatus(node, r))
+        .catch((e: unknown) => unknownStatusFrom(e))
+        .then((st) => setStatuses((prev) => ({ ...prev, [key]: st })));
       if (r.source === 'subscription' && r.subscription) {
         setSubStatuses((prev) => ({ ...prev, [key]: 'loading' }));
-        void readSubscriptionStatus(bundle.node, r).then((st) => setSubStatuses((prev) => ({ ...prev, [key]: st })));
+        void readWithFailover((node) => readSubscriptionStatus(node, r))
+          .catch((e: unknown): SubscriptionStatus => unknownStatusFrom(e))
+          .then((st) => setSubStatuses((prev) => ({ ...prev, [key]: st })));
       }
       // An install or revocation that was sent but never settled — the
       // screen that sent it was closed or remounted while it waited (the
@@ -372,7 +447,7 @@ export function SessionsScreen({ navigation }: Props) {
         );
       }
     },
-    [bundle],
+    [bundle, readWithFailover],
   );
   const reloadList = useCallback(() => {
     if (!account) return;
@@ -401,6 +476,80 @@ export function SessionsScreen({ navigation }: Props) {
     [contacts, contactsNetworkId],
   );
 
+  /** Plain-language error for this screen's steps (sessions.ts describeSessionError). */
+  const describe = useCallback(
+    (e: unknown, stage: 'quote' | 'send') =>
+      describeSessionError(e, { accountType: bundle?.accountType ?? 'kernel-v3.3', symbol, stage }, describeSendError),
+    [bundle, symbol],
+  );
+
+  /**
+   * Runs a quote on a bundle built for the RPC endpoint in use NOW, under
+   * the endpoint failover rule (networks.ts withEndpoint): when the node of
+   * a default endpoint does not answer, the quote is repeated once on the
+   * next healthy default. Only node failures move it (a bundler that does
+   * not answer is not a reason to change the RPC endpoint). The bundle is
+   * returned with the result: the operation is later sent through the same
+   * bundle it was quoted on.
+   */
+  const quoteOnNode = useCallback(
+    async <T,>(op: (b: AaClientBundle) => Promise<T>): Promise<{ value: T; bundle: AaClientBundle }> => {
+      if (!owner || !activeAccount) throw new Error('No Ethereum address for this account.');
+      const config = await getAaConfig(evmChain.caip2);
+      const outcome = await withEndpoint(
+        EVM_CHAIN_ID,
+        async (endpoint) => {
+          const b = createAaClientFromConfig(config, {
+            nodeUrl: endpoint.url,
+            chainId: BigInt(evmChain.chainIdDecimal),
+            accountIndex: activeAccount.index,
+            ownerAddress: owner,
+            transportFor: sessionTransportFor(endpoint.url, httpTransport, {
+              paymasterUrl: config.paymasterUrl,
+              plainHttp: true,
+            }),
+          });
+          return { value: await op(b), bundle: b };
+        },
+        { isFailure: isNodeEndpointFailure },
+      );
+      return outcome.value;
+    },
+    [owner, activeAccount, evmChain.caip2, evmChain.chainIdDecimal],
+  );
+
+  /**
+   * Reads the subscription form's fee facts (node fee, Kernel balance and
+   * EntryPoint deposit) from the endpoint in use now, failing over once
+   * when a default endpoint did not answer. Returns null when nothing could
+   * be read.
+   */
+  const refreshSubFeeFacts = useCallback(async () => {
+    if (!account) return null;
+    try {
+      const { value } = await withEndpoint(EVM_CHAIN_ID, async (endpoint) => {
+        const facts = await readSubscriptionFeeFacts(httpTransport(endpoint.url), account);
+        const unreachable = facts.failures.find((f) => isEndpointFailure(f));
+        if (unreachable && facts.maxFeePerGas === null && facts.balance === null) throw unreachable;
+        return facts;
+      });
+      const facts = { maxFeePerGas: value.maxFeePerGas, balance: value.balance, deposit: value.deposit };
+      setSubFeeFacts(facts);
+      return facts;
+    } catch {
+      return null;
+    }
+  }, [account]);
+
+  // Finding 2 of the 2026-10-04 emulator run: the fee facts are read when
+  // the subscription form opens AND every time it comes back into focus
+  // (for example after funding the account from the Send screen), not once.
+  useFocusEffect(
+    useCallback(() => {
+      if (phase === 'sub-form') void refreshSubFeeFacts();
+    }, [phase, refreshSubFeeFacts]),
+  );
+
   // ------------------------------------------------------------ actions
 
   const onReview = async () => {
@@ -427,14 +576,16 @@ export function SessionsScreen({ navigation }: Props) {
     }
     setPhase('quoting');
     try {
-      const { install, quote } = await prepareSessionInstall(bundle, owner, account, grant, { now });
-      pending.current = { privateKey: key.privateKey, grant, install, quote };
+      const {
+        value: { install, quote },
+        bundle: quotedOn,
+      } = await quoteOnNode((b) => prepareSessionInstall(b, owner, account, grant, { now }));
+      pending.current = { privateKey: key.privateKey, grant, install, quote, bundle: quotedOn };
       setPendingView(pending.current);
       setPhase('confirm');
     } catch (e) {
       key.privateKey.fill(0);
-      const { title, detail } =
-        describeAaError(e, { accountType: bundle.accountType, deployed: true }) ?? describeSendError(e, symbol);
+      const { title, detail } = describe(e, 'quote');
       setFormError(`${title}\n${detail}`);
       setPhase('form');
     }
@@ -442,7 +593,8 @@ export function SessionsScreen({ navigation }: Props) {
 
   const onInstall = async () => {
     const p = pending.current;
-    if (!p || !bundle || !account || !owner || !resolution?.ok || !activeAccount) return;
+    if (!p || !account || !owner || !resolution?.ok || !activeAccount) return;
+    const sendBundle = p.bundle;
     const auth = await requireLocalAuth('Approve granting this session');
     if (!auth.ok) {
       Alert.alert('Not granted', auth.message);
@@ -466,13 +618,13 @@ export function SessionsScreen({ navigation }: Props) {
         vault: sessionKeyVault,
         // The OWNER key signs the install (root validator), only for the
         // owner EOA the quote was prepared for.
-        submit: (q) => signWith(EVM_CHAIN_ID, owner, (signer) => sendAa(bundle, signer, q)),
+        submit: (q) => signWith(EVM_CHAIN_ID, owner, (signer) => sendAa(sendBundle, signer, q)),
       });
       discardPending();
       waitingFor.current.add(userOpHash);
       setProgress({ kind: 'install', userOpHash, state: 'pending', txHash: null, detail: null });
       setPhase('progress');
-      void finalizeSessionInstall(bundle, record, AsyncStorage).then(
+      void finalizeSessionInstall(sendBundle, record, AsyncStorage).then(
         ({ receipt, status }) =>
           setProgress((prev) =>
             prev && prev.userOpHash === userOpHash
@@ -488,10 +640,14 @@ export function SessionsScreen({ navigation }: Props) {
       );
       reloadList();
     } catch (e) {
-      const { title, detail } =
-        describeAaError(e, { accountType: bundle.accountType, deployed: true }) ?? describeSendError(e, symbol);
+      const { title, detail } = describe(e, 'send');
       Alert.alert(title, detail);
-      setPhase('confirm');
+      // The quote went out once and is used up (aa.ts
+      // claimQuoteForSubmission): back to the form, where Review creates a
+      // fresh key and quote. The failed attempt stays in the list as a
+      // "failed" record until the chain shows it can be forgotten.
+      discardPending();
+      setPhase('form');
       reloadList();
     }
   };
@@ -503,21 +659,12 @@ export function SessionsScreen({ navigation }: Props) {
     // "2 minutes (testing)" exists only on test networks: start from the
     // first preset this network offers.
     setSubForm({ ...EMPTY_SUBSCRIPTION_FORM, periodSeconds: subscriptionPeriodPresets(evmChain.testnet)[0]!.seconds });
-    setSubFeeFacts({ maxFeePerGas: null, balance: null });
+    setSubFeeFacts({ maxFeePerGas: null, balance: null, deposit: null });
     setSubInstallKeepBack(null);
+    // The fee facts for the suggestion (shown and editable) are read by the
+    // focus effect above as soon as the form is on screen, and again
+    // whenever it regains focus and at Review.
     setPhase('sub-form');
-    if (!bundle || !account) return;
-    // Facts for the fee-budget suggestion (shown and editable): the node's
-    // current fee and what the Kernel account holds.
-    const node = new NodeClient(bundle.node);
-    node.suggestFees().then(
-      (fees) => setSubFeeFacts((prev) => ({ ...prev, maxFeePerGas: fees.maxFeePerGas })),
-      () => undefined,
-    );
-    node.getBalance(account).then(
-      (balance) => setSubFeeFacts((prev) => ({ ...prev, balance })),
-      () => undefined,
-    );
   };
 
   /**
@@ -526,14 +673,7 @@ export function SessionsScreen({ navigation }: Props) {
    * account can spare (findings 3 of the rehearsal).
    */
   const subChoice = tokenChoices[subForm.choiceIndex];
-  let subNativeAmount = 0n;
-  if (subChoice?.token === SUBSCRIPTION_NATIVE) {
-    try {
-      subNativeAmount = parseUnits(subForm.amount.trim(), 18);
-    } catch {
-      subNativeAmount = 0n;
-    }
-  }
+  const subNativeAmount = subChoice?.token === SUBSCRIPTION_NATIVE ? safeParseNative(subForm.amount) : 0n;
   const feeSuggestion = suggestedFeeBudget({
     payments: Number(subForm.payments.trim()),
     maxFeePerGas: subFeeFacts.maxFeePerGas,
@@ -546,6 +686,16 @@ export function SessionsScreen({ navigation }: Props) {
     : feeSuggestion.wei !== null
       ? formatUnits(feeSuggestion.wei, 18, 18)
       : '';
+
+  /** The fee-budget note's facts for a subscription paid in a token (null for the native currency). */
+  const tokenNoteContext = (
+    choice: SubscriptionTokenChoice | undefined,
+    facts: { balance: bigint | null; deposit: bigint | null },
+    installFee: bigint | null,
+  ) =>
+    choice && choice.token !== SUBSCRIPTION_NATIVE
+      ? { tokenSymbol: choice.symbol, balance: facts.balance, deposit: facts.deposit, installFee }
+      : null;
 
   const onSubReview = async () => {
     if (!bundle || !account || !owner) return;
@@ -562,6 +712,22 @@ export function SessionsScreen({ navigation }: Props) {
       }
       periodSeconds = custom.seconds;
     }
+    setPhase('sub-quoting');
+    // Finding 2 of the 2026-10-04 emulator run: the suggestion is built on
+    // the balance, deposit and fee as they are NOW, not as they were when the
+    // form opened. A typed budget is used as typed.
+    const facts = (await refreshSubFeeFacts()) ?? subFeeFacts;
+    let feeBudgetText = subForm.feeBudget;
+    if (!subForm.feeEdited) {
+      const fresh = suggestedFeeBudget({
+        payments: Number(subForm.payments.trim()),
+        maxFeePerGas: facts.maxFeePerGas,
+        balance: facts.balance,
+        nativeAmountPerPayment: choice.token === SUBSCRIPTION_NATIVE ? safeParseNative(subForm.amount) : 0n,
+        installFeeFromBalance: subInstallKeepBack,
+      });
+      feeBudgetText = fresh.wei !== null ? formatUnits(fresh.wei, 18, 18) : '';
+    }
     const key = newSessionKey();
     const now = Math.floor(Date.now() / 1000);
     let subscription: SubscriptionGrant;
@@ -575,7 +741,7 @@ export function SessionsScreen({ navigation }: Props) {
           amount: subForm.amount,
           periodSeconds,
           payments: subForm.payments,
-          feeBudget: subFeeBudgetText,
+          feeBudget: feeBudgetText,
           label: names.termsLabel,
         },
         { now, account, testnet: evmChain.testnet },
@@ -585,25 +751,29 @@ export function SessionsScreen({ navigation }: Props) {
     } catch (e) {
       key.privateKey.fill(0);
       setFormError(e instanceof Error ? e.message : String(e));
+      setPhase('sub-form');
       return;
     }
-    setPhase('sub-quoting');
     try {
-      let { install, quote } = await prepareSessionInstall(bundle, owner, account, grant, { now });
+      let {
+        value: { install, quote },
+        bundle: quotedOn,
+      } = await quoteOnNode((b) => prepareSessionInstall(b, owner, account, grant, { now }));
       // Finding 2 of the 2026-10-04 verification: an UNEDITED fee-budget
       // pre-fill must keep back the install's own worst-case fee. The install
       // is quoted first (its fee barely depends on the budget), the pre-fill
       // is recomputed with that fee kept back, and when it no longer fits the
       // budget is lowered and the install quoted again (the budget is part of
       // the GasPolicy data the install writes). A typed budget is never
-      // changed; the review's funding lines cover it.
+      // changed; the review's funding lines cover it. The worst case kept
+      // back is the one the review displays (withSubscriptionFeeCeiling).
       let feeBudgetLowered: PendingSubscription['feeBudgetLowered'] = null;
       if (!subForm.feeEdited) {
-        const keptBack = subscriptionInstallKeepBack(quote);
+        const keptBack = subscriptionInstallKeepBack(withSubscriptionFeeCeiling(quote));
         setSubInstallKeepBack(keptBack);
         const refit = suggestedFeeBudget({
           payments: subscriptionPeriodCount(subscription),
-          maxFeePerGas: subFeeFacts.maxFeePerGas,
+          maxFeePerGas: facts.maxFeePerGas,
           balance: quote.senderBalance,
           nativeAmountPerPayment: subscription.token === SUBSCRIPTION_NATIVE ? subscription.amountPerPeriod : 0n,
           installFeeFromBalance: keptBack,
@@ -612,7 +782,17 @@ export function SessionsScreen({ navigation }: Props) {
           key.privateKey.fill(0);
           setFormError(
             refit.spare !== null && refit.uncapped !== null
-              ? feeBudgetCapNote(refit.spare, refit.uncapped, symbol, keptBack)
+              ? feeBudgetCapNote(
+                  refit.spare,
+                  refit.uncapped,
+                  symbol,
+                  keptBack,
+                  tokenNoteContext(
+                    choice,
+                    { balance: quote.senderBalance, deposit: quote.deposit ?? null },
+                    subscriptionInstallFeeCeiling(quote),
+                  ),
+                )
               : 'The fee budget could not be suggested: the network fee is not known yet. Enter a budget by hand.',
           );
           setPhase('sub-form');
@@ -622,7 +802,11 @@ export function SessionsScreen({ navigation }: Props) {
           feeBudgetLowered = { from: subscription.feeBudgetWei, to: refit.wei, keptBack };
           subscription = { ...subscription, feeBudgetWei: refit.wei };
           grant = subscriptionGrantFor(subscription, key.address, { account, now });
-          ({ install, quote } = await prepareSessionInstall(bundle, owner, account, grant, { now }));
+          const lowered = grant;
+          ({
+            value: { install, quote },
+            bundle: quotedOn,
+          } = await quoteOnNode((b) => prepareSessionInstall(b, owner, account, lowered, { now })));
         }
       }
       subPending.current = {
@@ -630,6 +814,7 @@ export function SessionsScreen({ navigation }: Props) {
         grant,
         install,
         quote,
+        bundle: quotedOn,
         subscription,
         choice,
         recordLabel: names.recordLabel,
@@ -639,8 +824,7 @@ export function SessionsScreen({ navigation }: Props) {
       setPhase('sub-confirm');
     } catch (e) {
       key.privateKey.fill(0);
-      const { title, detail } =
-        describeAaError(e, { accountType: bundle.accountType, deployed: true }) ?? describeSendError(e, symbol);
+      const { title, detail } = describe(e, 'quote');
       setFormError(`${title}\n${detail}`);
       setPhase('sub-form');
     }
@@ -648,13 +832,15 @@ export function SessionsScreen({ navigation }: Props) {
 
   const onSubInstall = async () => {
     const reviewed = subPending.current;
-    if (!reviewed || !bundle || !account || !owner || !resolution?.ok || !activeAccount) return;
+    if (!reviewed || !account || !owner || !resolution?.ok || !activeAccount) return;
     // Finding 1 of the rehearsal: the clock starts NOW, when Start was tapped,
     // not when Review opened. The restarted terms change the policy data and
     // the permission id, so the install is quoted again (same session key,
     // same calls and sizes); only a fee rise beyond the tolerance sends the
     // user back to the review. Done before the biometric gate, so the
-    // approval prompt is followed directly by signing.
+    // approval prompt is followed directly by signing. The tolerance is part
+    // of the worst case the review displayed (subscriptionInstallFeeCeiling),
+    // so the signed fee never exceeds it.
     setSubSendStage('requote');
     setPhase('sub-sending');
     let p: PendingSubscription;
@@ -662,12 +848,13 @@ export function SessionsScreen({ navigation }: Props) {
       const now = Math.floor(Date.now() / 1000);
       const restarted = restartSubscriptionAt(reviewed.subscription, now);
       const grant = subscriptionGrantFor(restarted, reviewed.grant.sessionKey, { account, now });
-      const { install, quote } = await prepareSessionInstall(bundle, owner, account, grant, { now });
-      p = { ...reviewed, subscription: restarted, grant, install, quote };
+      const {
+        value: { install, quote },
+        bundle: quotedOn,
+      } = await quoteOnNode((b) => prepareSessionInstall(b, owner, account, grant, { now }));
+      p = { ...reviewed, subscription: restarted, grant, install, quote, bundle: quotedOn };
     } catch (e) {
-      const { title, detail } = retitleQuoteFailure(
-        describeAaError(e, { accountType: bundle.accountType, deployed: true }) ?? describeSendError(e, symbol),
-      );
+      const { title, detail } = describe(e, 'quote');
       Alert.alert(title, detail);
       setPhase('sub-confirm');
       return;
@@ -688,6 +875,7 @@ export function SessionsScreen({ navigation }: Props) {
       return;
     }
     setSubSendStage('signing');
+    const sendBundle = p.bundle;
     try {
       const { record, userOpHash } = await installSession({
         quote: p.quote,
@@ -706,14 +894,14 @@ export function SessionsScreen({ navigation }: Props) {
         store: AsyncStorage,
         vault: sessionKeyVault,
         // Same explicit, owner-signed install as every session.
-        submit: (q) => signWith(EVM_CHAIN_ID, owner, (signer) => sendAa(bundle, signer, q)),
+        submit: (q) => signWith(EVM_CHAIN_ID, owner, (signer) => sendAa(sendBundle, signer, q)),
       });
       const finalTerms = subscriptionFinalDatesLine(p.subscription);
       discardPending();
       waitingFor.current.add(userOpHash);
       setProgress({ kind: 'subscription', userOpHash, state: 'pending', txHash: null, detail: null, finalTerms });
       setPhase('progress');
-      void finalizeSessionInstall(bundle, record, AsyncStorage).then(
+      void finalizeSessionInstall(sendBundle, record, AsyncStorage).then(
         ({ receipt, status }) =>
           setProgress((prev) =>
             prev && prev.userOpHash === userOpHash
@@ -729,9 +917,10 @@ export function SessionsScreen({ navigation }: Props) {
       );
       reloadList();
     } catch (e) {
-      const { title, detail } =
-        describeAaError(e, { accountType: bundle.accountType, deployed: true }) ?? describeSendError(e, symbol);
+      const { title, detail } = describe(e, 'send');
       Alert.alert(title, detail);
+      // The review stays: its next Start quotes the install again (the clock
+      // restarts), so the used-up quote is never sent a second time.
       setPhase('sub-confirm');
       reloadList();
     }
@@ -823,7 +1012,9 @@ export function SessionsScreen({ navigation }: Props) {
                   () => setProgress((prev) => (prev && prev.userOpHash === userOpHash ? { ...prev, state: 'timeout' } : prev)),
                 );
               } catch (e) {
-                Alert.alert('Session test refused', e instanceof Error ? e.message : String(e));
+                const { title, detail } = describe(e, 'send');
+                Alert.alert(title === 'The transaction could not be sent.' ? 'Session test refused' : title, detail);
+                refreshRecord(record);
               }
             })();
           },
@@ -833,21 +1024,24 @@ export function SessionsScreen({ navigation }: Props) {
   };
 
   const onRevokeQuote = async (record: SessionRecord) => {
-    if (!bundle || !owner) return;
+    if (!owner) return;
     try {
-      const quote = await prepareSessionRevoke(bundle, owner, record);
-      setRevokeTarget({ record, quote });
+      const { value: quote, bundle: quotedOn } = await quoteOnNode((b) => prepareSessionRevoke(b, owner, record));
+      setRevokeTarget({ record, quote, bundle: quotedOn });
       setPhase('revoke-confirm');
     } catch (e) {
-      const { title, detail } =
-        describeAaError(e, { accountType: bundle.accountType, deployed: true }) ?? describeSendError(e, symbol);
+      const { title, detail } = describe(e, 'quote');
       Alert.alert(title, detail);
+      // Finding 8: the card re-reads its status after any failed action.
+      refreshRecord(record);
     }
   };
 
   const onRevoke = async () => {
-    if (!revokeTarget || !bundle || !owner) return;
-    const auth = await requireLocalAuth('Approve revoking this session');
+    if (!revokeTarget || !owner) return;
+    const target = revokeTarget;
+    const sendBundle = target.bundle;
+    const auth = await requireLocalAuth(revokeApprovalPrompt(target.record));
     if (!auth.ok) {
       Alert.alert('Not revoked', auth.message);
       return;
@@ -855,17 +1049,23 @@ export function SessionsScreen({ navigation }: Props) {
     setPhase('sending');
     try {
       const { record, userOpHash } = await revokeSession({
-        record: revokeTarget.record,
-        quote: revokeTarget.quote,
+        record: target.record,
+        quote: target.quote,
         store: AsyncStorage,
         vault: sessionKeyVault,
-        submit: (q) => signWith(EVM_CHAIN_ID, owner, (signer) => sendAa(bundle, signer, q)),
+        submit: (q) => signWith(EVM_CHAIN_ID, owner, (signer) => sendAa(sendBundle, signer, q)),
       });
       setRevokeTarget(null);
       waitingFor.current.add(userOpHash);
-      setProgress({ kind: 'revoke', userOpHash, state: 'pending', txHash: null, detail: null });
+      setProgress({
+        kind: target.record.source === 'subscription' ? 'subscription-revoke' : 'revoke',
+        userOpHash,
+        state: 'pending',
+        txHash: null,
+        detail: null,
+      });
       setPhase('progress');
-      void finalizeSessionRevoke(bundle, record, AsyncStorage).then(
+      void finalizeSessionRevoke(sendBundle, record, AsyncStorage).then(
         ({ receipt, status }) =>
           setProgress((prev) =>
             prev && prev.userOpHash === userOpHash
@@ -881,10 +1081,15 @@ export function SessionsScreen({ navigation }: Props) {
       );
       reloadList();
     } catch (e) {
-      const { title, detail } =
-        describeAaError(e, { accountType: bundle.accountType, deployed: true }) ?? describeSendError(e, symbol);
+      const { title, detail } = describe(e, 'send');
       Alert.alert(title, detail);
-      setPhase('revoke-confirm');
+      // The quote went out once and is used up (aa.ts
+      // claimQuoteForSubmission): back to the list, where Revoke quotes
+      // again with fresh fees, and the card re-reads its status so its
+      // "Next payment" line is current (finding 8).
+      setRevokeTarget(null);
+      setPhase('list');
+      refreshRecord(target.record);
     }
   };
 
@@ -898,7 +1103,11 @@ export function SessionsScreen({ navigation }: Props) {
         onPress: () => {
           forgetSession({ record, node: bundle.node, store: AsyncStorage, vault: sessionKeyVault }).then(
             () => reloadList(),
-            (e: unknown) => Alert.alert('Kept', e instanceof Error ? e.message : String(e)),
+            (e: unknown) => {
+              Alert.alert('Kept', e instanceof Error ? e.message : String(e));
+              // A failed action re-reads the card (finding 8).
+              refreshRecord(record);
+            },
           );
         },
       },
@@ -1091,7 +1300,10 @@ export function SessionsScreen({ navigation }: Props) {
     });
     const [batchCaveat, ...otherCaveats] = review.caveats;
     const shortWindow = subscriptionShortWindowWarning(sub);
-    const funding = subscriptionInstallFunding(q, sub, symbol);
+    // The displayed worst case includes the re-quote tolerance of Start
+    // (subscriptionInstallFeeCeiling), and the funding lines use it too.
+    const shown = withSubscriptionFeeCeiling(q);
+    const funding = subscriptionInstallFunding(shown, sub, symbol);
     const lowered = subPendingView.feeBudgetLowered;
     return (
       <ScrollView key="sub-confirm" style={screenStyle(theme)} contentContainerStyle={styles.content}>
@@ -1133,8 +1345,15 @@ export function SessionsScreen({ navigation }: Props) {
           theme={theme}
         />
         <Row
-          label={q.sponsored ? 'Network fee' : 'Max network fee (bundler estimate)'}
-          value={q.sponsored ? 'Sponsored — the account pays 0' : `${formatUnits(q.fee, 18, 18)} ${symbol}`}
+          label={q.sponsored ? 'Network fee' : 'Max network fee'}
+          value={q.sponsored ? 'Sponsored — the account pays 0' : `${formatUnits(shown.fee, 18, 18)} ${symbol}`}
+          sub={
+            q.sponsored
+              ? null
+              : `The bundler's estimate (${formatUnits(q.fee, 18, 18)} ${symbol}) plus up to ` +
+                `${SUBSCRIPTION_REQUOTE_FEE_TOLERANCE_PERCENT}% for the new quote taken when you tap Start subscription ` +
+                '(the clock restarts then). Nothing above this is ever signed; a higher fee brings you back here.'
+          }
           theme={theme}
         />
         <Row label="Account balance" value={`${formatUnits(q.senderBalance, 18, 18)} ${symbol}`} theme={theme} />
@@ -1316,7 +1535,24 @@ export function SessionsScreen({ navigation }: Props) {
           </Text>
         ) : null}
         {!subForm.feeEdited && feeSuggestion.capped && feeSuggestion.spare !== null && feeSuggestion.uncapped !== null ? (
-          <WarningBox>{feeBudgetCapNote(feeSuggestion.spare, feeSuggestion.uncapped, symbol)}</WarningBox>
+          <WarningBox>
+            {feeBudgetCapNote(
+              feeSuggestion.spare,
+              feeSuggestion.uncapped,
+              symbol,
+              0n,
+              tokenNoteContext(choice, subFeeFacts, null),
+            )}
+          </WarningBox>
+        ) : null}
+        {subFeeFacts.balance !== null ? (
+          <Text style={[styles.hint, { color: theme.textMuted }]}>
+            {`The smart account holds ${formatUnits(subFeeFacts.balance, 18, 18)} ${symbol}` +
+              (subFeeFacts.deposit !== null && subFeeFacts.deposit > 0n
+                ? ` plus an EntryPoint deposit of ${formatUnits(subFeeFacts.deposit, 18, 18)} ${symbol}`
+                : '') +
+              ' (read just now).'}
+          </Text>
         ) : null}
         <Text style={[styles.label, { color: theme.textMuted }]}>Name (optional)</Text>
         <TextInput
@@ -1363,10 +1599,11 @@ export function SessionsScreen({ navigation }: Props) {
         // Unreadable terms: the stored label stays.
       }
     }
+    const revokeCopy = revokeConfirmCopy(revokeTarget.record, revokeTitle);
     return (
       <ScrollView key="revoke-confirm" style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
-        <Text style={[styles.title, { color: theme.text }]}>Revoke session “{revokeTitle}”</Text>
+        <Text style={[styles.title, { color: theme.text }]}>{revokeCopy.heading}</Text>
         {header}
         <Row label="Permission id" value={revokeTarget.record.permissionId} mono theme={theme} />
         <Row
@@ -1385,7 +1622,7 @@ export function SessionsScreen({ navigation }: Props) {
           <ActivityIndicator size="large" color={theme.accent} />
         ) : (
           <>
-            <Button title="Revoke session" variant="destructive" onPress={() => void onRevoke()} />
+            <Button title={revokeCopy.button} variant="destructive" onPress={() => void onRevoke()} />
             <Button
               title="Back"
               variant="secondary"
@@ -1573,7 +1810,7 @@ export function SessionsScreen({ navigation }: Props) {
                           {line}
                         </Text>
                       ))}
-                  <Text style={[styles.hint, { color: theme.textMuted }]}>{subscriptionKeyStatusText(r)}</Text>
+                  <Text style={[styles.hint, { color: theme.textMuted }]}>{subscriptionKeyStatusText(r, handover)}</Text>
                   <Text style={[styles.hint, { color: theme.textMuted }]}>{sessionLocalStatusText(r)}</Text>
                   {pendingSessionOperation(r) ? <ActivityIndicator color={theme.accent} /> : null}
                   <Button

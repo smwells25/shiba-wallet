@@ -225,7 +225,7 @@ export function WcApprovalSheet({
     signer?: MessageSigner,
     /** The WalletConnect Verify risk switch (required for scam / mismatch). */
     identityAcknowledged?: boolean,
-  ) => void;
+  ) => void | Promise<void>;
   onReject: () => void;
 }) {
   const theme = useTheme();
@@ -266,20 +266,34 @@ export function WcApprovalSheet({
   // quote restarts from initialTxQuote. That happens while rendering
   // (React's "adjust state when a prop changes" pattern, which also covers
   // the first render); the effect below only runs the asynchronous quote.
+  // A smart-account quote goes out at most once (aa.ts
+  // claimQuoteForSubmission): when an approval attempt returns with the
+  // request still on the sheet (the bundler refused it, the fee rose, the
+  // prompt was cancelled), this counter moves and the request is quoted
+  // again, so the next Approve never re-sends the old figures.
+  const [aaQuoteGeneration, setAaQuoteGeneration] = useState(0);
   const [quotedInputs, setQuotedInputs] = useState<{
     itemKey: string;
     address: string | null;
     caip2: string;
     grantKey: string;
+    generation: number;
   } | null>(null);
   if (
     quotedInputs === null ||
     quotedInputs.itemKey !== item.key ||
     quotedInputs.address !== address ||
     quotedInputs.caip2 !== evmChain.caip2 ||
-    quotedInputs.grantKey !== permissionGrantKey
+    quotedInputs.grantKey !== permissionGrantKey ||
+    quotedInputs.generation !== aaQuoteGeneration
   ) {
-    setQuotedInputs({ itemKey: item.key, address, caip2: evmChain.caip2, grantKey: permissionGrantKey });
+    setQuotedInputs({
+      itemKey: item.key,
+      address,
+      caip2: evmChain.caip2,
+      grantKey: permissionGrantKey,
+      generation: aaQuoteGeneration,
+    });
     setOverrideSimulation(false);
     setTxQuote(initialTxQuote(item, address, permissionGrant));
   }
@@ -419,9 +433,11 @@ export function WcApprovalSheet({
     // does. `permissionGrant` changes when the user narrows an ERC-7715
     // grant, which must re-quote the install. `loadAaBundle` is a
     // useCallback in WalletConnectContext that changes only with the active
-    // chain. The in-render reset above (quotedInputs) clears the override and
-    // the old quote on the same changes.
-  }, [item, address, evmChain.caip2, permissionGrant, loadAaBundle]);
+    // chain. `aaQuoteGeneration` moves after an approval attempt that left
+    // the request on the sheet, so a used-up smart-account quote is replaced.
+    // The in-render reset above (quotedInputs) clears the override and the
+    // old quote on the same changes.
+  }, [item, address, evmChain.caip2, permissionGrant, loadAaBundle, aaQuoteGeneration]);
 
   // Approval-time quote pinning for regular-account transactions: the
   // quote is one endpoint's answer, and the wallet may have moved to
@@ -471,7 +487,11 @@ export function WcApprovalSheet({
         setRequoting(false);
       }
     }
-    onApprove(txQuote, overrideSimulation, undefined, messageSigner, identityAck);
+    const key = item.key;
+    const smartQuote = txQuote?.status === 'ready-aa' || txQuote?.status === 'ready-permission';
+    await onApprove(txQuote, overrideSimulation, undefined, messageSigner, identityAck);
+    // Still the same request on the sheet: the attempt did not complete it.
+    if (smartQuote && currentItemKey.current === key) setAaQuoteGeneration((g) => g + 1);
   };
 
   return (

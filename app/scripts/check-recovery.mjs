@@ -78,6 +78,7 @@ import {
   getAaConfig,
   resolveAaSender,
   sendAa,
+  AA_QUOTE_ALREADY_USED,
   setAccountEip7702,
   setRecoveredAccount,
 } from '../src/wallet/aa.ts';
@@ -798,8 +799,17 @@ console.log('check-recovery: recovery on a new wallet (no delay)');
   const engineOp = { sender: op.sender, nonce: BigInt(op.nonce), callData: toBytes(op.callData), callGasLimit: BigInt(op.callGasLimit), verificationGasLimit: BigInt(op.verificationGasLimit), preVerificationGas: BigInt(op.preVerificationGas), maxFeePerGas: BigInt(op.maxFeePerGas), maxPriorityFeePerGas: BigInt(op.maxPriorityFeePerGas), signature: new Uint8Array(0) };
   const opHash = getUserOpHash(engineOp, ENTRYPOINT_V07, CHAIN_ID);
   check('op signature = A’s approval || B’s EIP-191 signature over the userOpHash (ethers)', sig.length === 130 && ethers.hexlify(sig.slice(0, 65)) === toHex(sigA) && same(ethers.verifyMessage(opHash, ethers.hexlify(sig.slice(65))), wB.address) && typeof userOpHash === 'string');
+  check('guardian quote: the submitted worst case equals the displayed one (fees exact, deposit top-up headroom mirrored)',
+    BigInt(op.maxFeePerGas) === quote.maxFeePerGas && BigInt(op.maxPriorityFeePerGas) === quote.maxPriorityFeePerGas &&
+      BigInt(op.verificationGasLimit) === quote.verificationGasLimit &&
+      (BigInt(op.callGasLimit) + BigInt(op.verificationGasLimit) + BigInt(op.preVerificationGas)) * BigInt(op.maxFeePerGas) === quote.fee,
+    `${op.verificationGasLimit} vs ${quote.verificationGasLimit}`);
   const wrongSigner = await caught(() => submitGuardianRecovery({ quote, node, bundler, chainId: CHAIN_ID, signer: gA }));
   check('submission refuses a signer other than the quoted guardian', wrongSigner && /prepared for guardian/.test(wrongSigner.message));
+  const sendsBefore = bundler.calls.filter((c) => c.method === 'eth_sendUserOperation').length;
+  const resubmit = await caught(() => submitGuardianRecovery({ quote, node, bundler, chainId: CHAIN_ID, signer: gB }));
+  check('the submitted guardian quote cannot be sent a second time (re-quote first)',
+    resubmit?.message === AA_QUOTE_ALREADY_USED && bundler.calls.filter((c) => c.method === 'eth_sendUserOperation').length === sendsBefore, resubmit?.message);
 
   // After inclusion: attach only after the on-chain owner check.
   const aaStore = memoryStore();
@@ -1282,9 +1292,13 @@ console.log('check-recovery: owner rotation ("Change owner")');
     check('the record was started for the factory account (CREATE2 lineage)', (await getRecoveryRecord(M, ACCOUNT, store))?.metadata.owners.length === 1);
 
     // Bundler refusal: verbatim error, record untouched.
+    // (A quote can be submitted once; the refused attempt uses its own quote.)
+    const refusedRotation = await prepareOwnerRotationQuote(bundle, rotateArgs(store, config));
     const refusedBundler = fakeBundler({ sendError: 'RPC error -32500: bundler refused' });
-    const refused = await caught(() => submitOwnerRotation({ rotation, chain: M, store, submit: (q) => sendAa(kernelBundle(node, refusedBundler), owner, q) }));
+    const refused = await caught(() => submitOwnerRotation({ rotation: refusedRotation, chain: M, store, submit: (q) => sendAa(kernelBundle(node, refusedBundler), owner, q) }));
     check('bundler refusal → error verbatim, record unchanged', refused?.message === 'RPC error -32500: bundler refused' && (await getRecoveryRecord(M, ACCOUNT, store)).metadata.owners.length === 1);
+    const resent = await caught(() => submitOwnerRotation({ rotation: refusedRotation, chain: M, store, submit: (q) => sendAa(bundle, owner, q) }));
+    check('the refused quote cannot be sent again (the retry must re-quote), nothing submitted', resent?.message === AA_QUOTE_ALREADY_USED && (await getRecoveryRecord(M, ACCOUNT, store)).metadata.owners.length === 1);
     const tamperedQuote = { ...rotation, quote: { ...rotation.quote, calls: [rotation.calls[0]] } };
     const tq = await caught(() => submitOwnerRotation({ rotation: tamperedQuote, chain: M, store, submit: async () => ({ userOpHash: '0x' + '00'.repeat(32) }) }));
     check('a quote whose calls differ from the rotation is refused before signing', tq && /Nothing was signed/.test(tq.message));
@@ -1357,7 +1371,9 @@ console.log('check-recovery: owner rotation ("Change owner")');
     check('reverted operation → failed; previous record restored (one owner, guardians back)', failed.state === 'failed' && restored.metadata.owners.length === 1 && restored.metadata.guardians?.guardians.length === 2 && (await getAaConfig(M, store)).recoveredAccounts.length === 0);
 
     // Resume after a restart: no saved previous record; "forget" drops the tail and re-reads guardians.
-    const sub2 = await submitOwnerRotation({ rotation, chain: M, store, submit: (q) => sendAa(bundle, owner, q) });
+    // A fresh quote: the first one was already submitted once.
+    const rotationAgain = await prepareOwnerRotationQuote(bundle, rotateArgs(store, config, { removeGuardians: true }));
+    const sub2 = await submitOwnerRotation({ rotation: rotationAgain, chain: M, store, submit: (q) => sendAa(bundle, owner, q) });
     const pend = await listPendingOwnerRotations(M, walletOwners, store);
     check('restart: the change is listed as pending', sub2.entry.metadata.owners.length === 2 && pend.length === 1);
     const forgot = await finalizeOwnerRotation({ node, chain: M, account: ACCOUNT, previousOwner: pend[0].previousOwner, newOwner: pend[0].newOwner, removeGuardians: false, userOpHash: pend[0].userOpHash, config, store, abandon: true });

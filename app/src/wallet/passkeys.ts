@@ -34,7 +34,10 @@ import type { DerivedAccount } from '@shiba-wallet/core';
 // Explicit .ts extensions: this module is imported by scripts/check-passkeys.mjs
 // under Node's type stripping, which resolves relative specifiers literally.
 import {
+  assertQuoteFeesMeetBundlerFloor,
+  claimQuoteForSubmission,
   prepareAaCalls,
+  signedFeeGuard,
   resolveAaSender,
   summarizeAaReceipt,
   type AaClientBundle,
@@ -125,8 +128,8 @@ const STORE_VERSION = 1;
 
 export const PASSKEY_GATE_NOTE =
   'Passkeys need a development build with a configured rpId. Expo Go does not contain the native ' +
-  'passkey module, and the passkey domain (rpId) is still the unconfigured placeholder. See ' +
-  'docs/DEVICE_BUILDS.md → Passkeys.';
+  'passkey module, and the passkey domain (rpId) is still the unconfigured placeholder. The project’s ' +
+  'device-build instructions (the Passkeys section) explain how to set both up.';
 
 export const PASSKEY_EXPLANATION =
   'A passkey becomes an ADDITIONAL signer on your smart account, protected by this phone’s ' +
@@ -723,7 +726,7 @@ export function describePasskeyError(e: unknown): string {
     return 'The phone has no matching passkey for this account (it may have been deleted from the password manager).';
   }
   if (/NotConfigured|NotSupported|domain|association|asset ?links/i.test(text)) {
-    return `The phone refused the passkey request (${text}). Check that the rpId domain's association files are hosted correctly (docs/DEVICE_BUILDS.md → Passkeys).`;
+    return `The phone refused the passkey request (${text}). Check that the rpId domain's association files are hosted correctly (see the Passkeys section of the project’s device-build instructions).`;
   }
   return text;
 }
@@ -1458,9 +1461,16 @@ export async function sendPasskeyCalls(
   if (!same(quote.sender, bundle.passkey.record.account)) {
     throw new Error('The operation was prepared for another account. Nothing was signed.');
   }
-  const { userOpHash, userOp } = await bundle.client.sendCalls(bundle.passkey.spec.signer, quote.calls, {
-    maxFeePerGas: quote.maxFeePerGas,
-    maxPriorityFeePerGas: quote.maxPriorityFeePerGas,
+  // The fee rules of aa.ts sendAa, all before the passkey prompt (which
+  // runs inside the spec's signUserOpHash): one submission per quote, the
+  // quoted fees exactly (re-checked against the bundler's floor now), and a
+  // worst case no higher than the displayed one after the client
+  // re-estimates (beforeSign runs before signUserOpHash).
+  claimQuoteForSubmission(quote);
+  const fees = { maxFeePerGas: quote.maxFeePerGas, maxPriorityFeePerGas: quote.maxPriorityFeePerGas };
+  await assertQuoteFeesMeetBundlerFloor(bundle.bundler, fees);
+  const { userOpHash, userOp } = await bundle.client.sendCalls(bundle.passkey.spec.signer, quote.calls, fees, {
+    beforeSign: signedFeeGuard(fees, quote.sponsored ? 0n : quote.fee),
   });
   return { userOpHash, signature: userOp.signature };
 }

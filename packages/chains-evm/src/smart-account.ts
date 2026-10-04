@@ -293,11 +293,19 @@ export class SmartAccountClient {
   /**
    * Builds, sponsors (if configured), estimates, and signs a UserOperation
    * for the given calls, then submits it. Returns the userOpHash.
+   *
+   * `options.beforeSign`, when given, is called with the complete operation
+   * (final gas limits, fees and paymaster data) after estimation and before
+   * the spec signs it. Throwing from it stops the send before any signature
+   * over the userOpHash is made; callers use it to refuse an operation whose
+   * re-estimated worst-case cost exceeds what the user reviewed. Omitting it
+   * keeps the previous behaviour exactly.
    */
   async sendCalls(
     owner: DerivedAccount,
     calls: Call[],
     fees: { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint },
+    options: { beforeSign?: (op: UserOperation) => void | Promise<void> } = {},
   ): Promise<{ userOpHash: string; userOp: UserOperation }> {
     const spec = this.config.spec;
     // EIP-7702 senders are EOAs: no factory ever; the delegation (if not yet
@@ -377,6 +385,8 @@ export class SmartAccountClient {
       );
       op = { ...op, ...paymasterFields(finalData) };
     }
+
+    if (options.beforeSign) await options.beforeSign(op);
 
     const hash = getUserOpHash(op, this.config.entryPoint, this.config.chainId);
     // Awaited: a spec may sign asynchronously (for example behind a passkey

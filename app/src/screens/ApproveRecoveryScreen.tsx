@@ -22,7 +22,7 @@ import { usePrefs } from '../wallet/PrefsContext';
 import { requireLocalAuth } from '../wallet/biometric';
 import { formatUnits } from '../wallet/balances';
 import { EVM_CHAIN_ID, describeSendError } from '../wallet/send';
-import { getAaConfig, summarizeAaReceipt, type AaReceiptSummary } from '../wallet/aa';
+import { describeAaError, getAaConfig, summarizeAaReceipt, type AaReceiptSummary } from '../wallet/aa';
 import { listContacts, matchRecipient, type Contact } from '../wallet/contacts';
 import {
   APPROVER_WARNING,
@@ -260,9 +260,14 @@ export function ApproveRecoveryScreen({ navigation }: Props) {
         () => setSubmitted((prev) => (prev && prev.userOpHash === userOpHash ? { ...prev, state: 'timeout' } : prev)),
       );
     } catch (e) {
-      const { title, detail } = describeSendError(e, symbol);
+      const { title, detail } =
+        describeAaError(e, { accountType: 'kernel-v3.3', deployed: true }) ?? describeSendError(e, symbol);
       Alert.alert(title, detail);
-      setPhase('submit-confirm');
+      // The quote went out once and is used up (aa.ts
+      // claimQuoteForSubmission): back to the review, whose "Submit the
+      // recovery" quotes again with fresh fees.
+      setSubmission(null);
+      setPhase('review');
     }
   };
 

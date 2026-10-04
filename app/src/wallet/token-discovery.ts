@@ -127,6 +127,28 @@ export interface DiscoveredToken {
   note: string | null;
 }
 
+/**
+ * The one-tap confirmation before a discovered token is tracked (the manual
+ * add flow also shows the full contract before adding). The contract is
+ * shown in full because a look-alike token copies the symbol and name, never
+ * the address; a look-alike gets the warning again.
+ */
+export function trackDiscoveredPrompt(
+  found: Pick<DiscoveredToken, 'contract' | 'lookalikeOf'> & { asset: Pick<FungibleAsset, 'symbol'> },
+  networkLabel: string,
+): { title: string; message: string; confirm: string } {
+  return {
+    title: `Track ${found.asset.symbol}?`,
+    message:
+      `Contract ${found.contract} on ${networkLabel}.` +
+      (found.lookalikeOf
+        ? ` Warning: its symbol equals the ${found.lookalikeOf} you track or the wallet knows, but the contract is DIFFERENT. It may be a fake.`
+        : '') +
+      ' Anyone can create a token with any name and symbol; track it only if this is the contract you expect.',
+    confirm: `Track ${found.asset.symbol}`,
+  };
+}
+
 export type DiscoveryOutcome =
   | { status: 'unavailable'; note: string }
   | { status: 'unsupported'; note: string; technical: string }

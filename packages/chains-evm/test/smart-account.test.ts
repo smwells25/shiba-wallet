@@ -216,6 +216,52 @@ describe('SmartAccountClient asynchronous signing and nonce keys', () => {
     expect(calls.map((c) => c.method)).not.toContain('eth_sendUserOperation');
   });
 
+  it('beforeSign sees the final operation before the spec signs, and a throw stops the send', async () => {
+    const { calls, node, bundler, paymaster } = makeTransports({ deployed: true, sponsored: true });
+    const seen: UserOperation[] = [];
+    let signedBeforeHook = false;
+    let signed = false;
+    const client = new SmartAccountClient({
+      chainId: 1n,
+      entryPoint: ENTRYPOINT_V07,
+      bundler,
+      node,
+      paymaster: { transport: paymaster },
+      spec: {
+        ...spec,
+        signUserOpHash: (owner, hash) => {
+          signed = true;
+          return spec.signUserOpHash(owner, hash);
+        },
+      },
+    });
+    const { userOp } = await client.sendCalls(ownerAccount(), [], FEES, {
+      beforeSign: (op) => {
+        signedBeforeHook = signed;
+        seen.push(op);
+      },
+    });
+    expect(signedBeforeHook).toBe(false);
+    expect(seen).toHaveLength(1);
+    // The hook got the operation exactly as it was then signed (final
+    // paymaster data included), apart from the signature itself.
+    expect({ ...seen[0]!, signature: userOp.signature }).toEqual(userOp);
+    expect(seen[0]!.paymasterPostOpGasLimit).toBe(0x50n);
+    expect(requiredPrefund(seen[0]!)).toBe(requiredPrefund(userOp));
+
+    calls.length = 0;
+    signed = false;
+    await expect(
+      client.sendCalls(ownerAccount(), [], FEES, {
+        beforeSign: () => {
+          throw new Error('fee above the reviewed worst case');
+        },
+      }),
+    ).rejects.toThrow(/fee above the reviewed worst case/);
+    expect(signed).toBe(false);
+    expect(calls.map((c) => c.method)).not.toContain('eth_sendUserOperation');
+  });
+
   it('reads the nonce for getNonceKey and refuses an answer for another key', async () => {
     const key = 0x010203040506070809101112131415161718192021222324n; // 24 bytes, < 2^192
     const reads: string[] = [];

@@ -972,7 +972,11 @@ export function SwapScreen({ navigation }: Props) {
         describeAaError(e, { accountType: aaQuote.accountType, deployed: aaQuote.deployed }) ??
         describeSendError(e, sellSymbol);
       Alert.alert(title, detail);
-      setPhase('aa-confirm');
+      // The smart-account quote went out once and is used up (aa.ts
+      // claimQuoteForSubmission): back to the review, whose next step
+      // prepares a fresh operation with fresh fees.
+      setAaQuote(null);
+      setPhase('review');
     }
   };
 

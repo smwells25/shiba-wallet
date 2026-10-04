@@ -53,6 +53,7 @@ import {
   maxAaErc20Send,
   prepareAaCalls,
   prepareAaErc20Send,
+  aaRiskWarningTarget,
   prepareAaSend,
   resolveAaSender,
   sendAa,
@@ -353,6 +354,16 @@ const RECIPIENT = '0x1111111111111111111111111111111111111111';
   const quote = await prepareAaErc20Send(bundle, OWNER_0, { contract: USDC, recipient: RECIPIENT, amount: 1_500_000n, symbol: 'USDC', decimals: 6 });
   check('token quote: one call, no native value, token balance read from the SMART ACCOUNT', quote.calls.length === 1 && quote.amount === 0n && quote.tokenSpend?.balance === 5_000_000n && quote.token?.amount === 1_500_000n);
   check('display recipient is the token recipient, not the contract', quote.to === RECIPIENT);
+  // Finding 1 of the 2026-10-04 emulator run: the risk card got to = the
+  // token contract with no counterparty.
+  const risk = aaRiskWarningTarget(quote);
+  check('risk card target: the token contract with the transfer calldata, counterparty = the RECIPIENT (as on the regular-account token path)',
+    same(risk.to, USDC) && toHex(risk.data) === toHex(quote.calls[0].data) && same(risk.counterparty, RECIPIENT));
+  const nativeRisk = aaRiskWarningTarget({ calls: [{ to: RECIPIENT, value: 1n, data: new Uint8Array(0) }] });
+  check('control: a native smart-account send has no separate counterparty (to is the recipient)', same(nativeRisk.to, RECIPIENT) && nativeRisk.counterparty === undefined);
+  const sendSrc = readFileSync(new URL('../src/screens/SendScreen.tsx', import.meta.url), 'utf8');
+  check('the Send confirm passes the helper\'s target to RiskWarnings (source)',
+    sendSrc.includes('<RiskWarnings url={confirmUrl} wallet={quote.sender} {...aaRiskWarningTarget(quote)} />') && !sendSrc.includes('to={quote.calls[0]!.to}'));
   await sendAa(bundle, owner, quote);
   const exec = decodeKernelExecute(bundler.lastOp.callData);
   const erc20 = new ethers.Interface(['function transfer(address to, uint256 amount)', 'function approve(address spender, uint256 amount)']);

@@ -63,7 +63,7 @@ import { ethers } from 'ethers';
 // independent verifier next to Node's crypto.
 import { p256 } from '../../node_modules/@noble/curves/nist.js';
 import { keccak_256 } from '../../node_modules/@noble/hashes/sha3.js';
-import { AA_DEPOSIT_TOPUP_VERIFICATION_GAS, createAaClient, sendAa } from '../src/wallet/aa.ts';
+import { AA_DEPOSIT_TOPUP_VERIFICATION_GAS, AA_QUOTE_ALREADY_USED, AaFeeRoseError, createAaClient, sendAa } from '../src/wallet/aa.ts';
 import { PASSKEY_RP_ID, PASSKEY_RP_ID_PLACEHOLDER } from '../src/config/passkey.ts';
 import {
   PASSKEYS_KEY,
@@ -363,9 +363,14 @@ function hashingBundler({ receipt = { success: true, receipt: { transactionHash:
       return toHex(getUserOpHash(fromRpcOp(params[0]), ENTRYPOINT_V07, CHAIN_ID));
     }
     if (method === 'eth_getUserOperationReceipt') return receipt;
+    // A Pimlico-style fee floor, only when a check sets one.
+    if (method === 'pimlico_getUserOperationGasPrice' && transport.floor != null) {
+      return { standard: { maxPriorityFeePerGas: '0x' + transport.floor.toString(16) } };
+    }
     throw new Error(`fake bundler: unexpected method ${method}`);
   };
   transport.calls = calls;
+  transport.floor = null;
   transport.sends = () => calls.filter((c) => c.method === 'eth_sendUserOperation').length;
   return transport;
 }
@@ -739,6 +744,20 @@ console.log('check-passkeys: passkey-signed operation (the owner key is never us
     check(`${mode}: refused, nothing submitted`, e && pattern.test(e.message) && bundler.sends() === before, e?.message);
   }
   auth.mode = 'normal';
+  // Send-time fee rules (aa.ts sendAa's, all before the passkey prompt).
+  {
+    const before = bundler.sends();
+    const getsNow = auth.calls.get;
+    const reused = await caught(() => sendPasskeyCalls(pbundle, quote));
+    check('the already-submitted quote is refused, with no prompt and nothing submitted',
+      reused?.message === AA_QUOTE_ALREADY_USED && auth.calls.get === getsNow && bundler.sends() === before, reused?.message);
+    const q = await preparePasskeyCalls(pbundle, calls);
+    bundler.floor = q.maxPriorityFeePerGas + 1n;
+    const rose = await caught(() => sendPasskeyCalls(pbundle, q));
+    bundler.floor = null;
+    check('a bundler fee floor above the quoted priority fee: AaFeeRoseError BEFORE the passkey prompt, nothing submitted',
+      rose instanceof AaFeeRoseError && auth.calls.get === getsNow && bundler.sends() === before, rose?.message);
+  }
   check('self-call refused (the engine\'s client-side D1 guard)', /may not call the account itself/.test((await caught(() => preparePasskeyCalls(pbundle, [{ to: ACCOUNT, value: 0n, data: new Uint8Array(0) }])))?.message ?? ''));
   check('the passkey bundle refuses to quote for another address', /own smart account/.test((await caught(() => pbundle.client.getAddress({ ...owner })))?.message ?? ''));
   check('an owner-signed quote cannot be sent through the passkey path', /not prepared for the passkey/.test((await caught(() => sendPasskeyCalls(pbundle, { ...quote, passkey: undefined })))?.message ?? ''));

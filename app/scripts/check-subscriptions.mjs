@@ -52,6 +52,9 @@ import {
   sendSessionCalls,
   sessionCanBeTested,
   sessionVaultId,
+  revokeApprovalPrompt,
+  revokeConfirmCopy,
+  sessionProgressTitle,
 } from '../src/wallet/sessions.ts';
 import {
   SUBSCRIPTION_KEY_CLIPBOARD_CLEAR_MS,
@@ -102,6 +105,11 @@ import {
   subscriptionMinPeriodSeconds,
   subscriptionPeriodPresets,
   subscriptionShortWindowWarning,
+  SUBSCRIPTION_AUDIT_NOTE,
+  SUBSCRIPTION_KEY_EXPIRED_STATUS_TEXT,
+  readSubscriptionFeeFacts,
+  subscriptionInstallFeeCeiling,
+  withSubscriptionFeeCeiling,
 } from '../src/wallet/subscriptions.ts';
 import {
   KERNEL_ACCOUNT_0,
@@ -533,7 +541,7 @@ const screenSrc = readFileSync(new URL('../src/screens/SessionsScreen.tsx', impo
   check('cap note names what can be spared and the usual budget', feeBudgetCapNote(1_000_000_000_000_000n, 6_000_000_000_000_000n, 'test ETH') === 'Lowered to what your account can spare (0.001 test ETH); the usual budget for this many payments would be 0.006 test ETH. Fund the account or enter a budget by hand.');
   check('invalid payment count or unknown fee → no suggestion', suggestedFeeBudget({ payments: 0, maxFeePerGas: 1n, balance: null, nativeAmountPerPayment: 0n }).wei === null && suggestedFeeBudget({ payments: 3, maxFeePerGas: null, balance: 1n, nativeAmountPerPayment: 0n }).wei === null);
   check('the form shows the suggestion until the user types (feeEdited) and submits what it shows',
-    /value=\{subFeeBudgetText\}/.test(screenSrc) && /feeEdited: t\.trim\(\) !== ''/.test(screenSrc) && /feeBudget: subFeeBudgetText,/.test(screenSrc) && /payments: Number\(subForm\.payments\.trim\(\)\)/.test(screenSrc));
+    /value=\{subFeeBudgetText\}/.test(screenSrc) && /feeEdited: t\.trim\(\) !== ''/.test(screenSrc) && /feeBudget: feeBudgetText,/.test(screenSrc) && /payments: Number\(subForm\.payments\.trim\(\)\)/.test(screenSrc));
 
   // Finding 4: default names and list order.
   check('unnamed: "Subscription to 0x0000…bEEF" (never "Subscription: Subscription"); terms label "to 0x0000…bEEF"',
@@ -674,7 +682,7 @@ console.log('check-subscriptions: phase 13 item 4 follow-ups (custom period, ins
     tight.canStart && /keeps at most 0\.000000000000001 test ETH/.test(tight.shortfall ?? '') && /the payments and the fee budget can use up to 0\.00000000000000103 test ETH/.test(tight.shortfall ?? ''), tight.shortfall);
   check('sponsored install: never blocked', subscriptionInstallFunding(q({ fee: 0n, senderBalance: 0n, sponsored: true }), { ...g, feeBudgetWei: 0n, amountPerPeriod: 0n }, 'x').canStart);
   check('Review lowers an UNEDITED pre-fill to keep the install fee back and quotes again (source)',
-    /if \(!subForm\.feeEdited\) \{[\s\S]{0,200}subscriptionInstallKeepBack\(quote\)[\s\S]{0,900}refit\.wei < subscription\.feeBudgetWei[\s\S]{0,300}prepareSessionInstall\(bundle, owner, account, grant, \{ now \}\)/.test(screenSrc));
+    /if \(!subForm\.feeEdited\) \{[\s\S]{0,200}subscriptionInstallKeepBack\(withSubscriptionFeeCeiling\(quote\)\)[\s\S]{0,1400}refit\.wei < subscription\.feeBudgetWei[\s\S]{0,500}prepareSessionInstall\(b, owner, account, lowered, \{ now \}\)/.test(screenSrc));
 
   // 3. Expired before the hand-over: no hand-over, only Revoke / Forget.
   const base = { ...record, keyHeld: true, localStatus: 'installed', subscription: { ...record.subscription, keyExportedAt: null } };
@@ -697,7 +705,7 @@ console.log('check-subscriptions: phase 13 item 4 follow-ups (custom period, ins
   check('…or the merchant’s contact name', subscriptionDisplayTitle(legacy, 'Streamy') === 'Subscription: Streamy');
   check('other titles are kept as stored (incl. a typed name)', subscriptionDisplayTitle(record, 'Streamy') === record.label && subscriptionDisplayTitle({ ...legacy, subscription: { ...legacy.subscription, terms: { ...legacy.subscription.terms, label: 'Gym' } } }, null) === 'Subscription: Subscription');
   check('cards, their refresh label and the revoke title use the derived title (source)',
-    screenSrc.includes('const title = subscriptionDisplayTitle(r, nameFor(terms.merchant));') && screenSrc.includes('{title}</Text>') && screenSrc.includes('Revoke session “{revokeTitle}”'));
+    screenSrc.includes('const title = subscriptionDisplayTitle(r, nameFor(terms.merchant));') && screenSrc.includes('{title}</Text>') && screenSrc.includes('const revokeCopy = revokeConfirmCopy(revokeTarget.record, revokeTitle);') && screenSrc.includes('{revokeCopy.heading}</Text>'));
 
   // 5. "Copied ✓" follows the clipboard helper.
   const timers = [];
@@ -723,6 +731,91 @@ console.log('check-subscriptions: phase 13 item 4 follow-ups (custom period, ins
   const handoverSrc = readFileSync(new URL('../src/components/SubscriptionKeyHandover.tsx', import.meta.url), 'utf8');
   check('the Copy button’s mark is the helper’s pending state (no separate copied flag)',
     handoverSrc.includes('const copied = useSyncExternalStore(keyClipboard.subscribe, keyClipboard.pending);') && !/setCopied/.test(handoverSrc));
+}
+
+// ---------------------------------------------------------------------------
+console.log('\ncheck-subscriptions: fixes from the 2026-10-04 emulator run (bugs 2, 3, 5, 6, 7, 8)');
+// ---------------------------------------------------------------------------
+{
+  // Bug 2: fresh fee facts, and the right words for a token subscription.
+  const facts = await readSubscriptionFeeFacts(async (method, params) => {
+    if (method === 'eth_getBalance') return '0x' + (5_000_000_000_000_000n).toString(16);
+    if (method === 'eth_getBlockByNumber') return { baseFeePerGas: '0x3b9aca00' };
+    if (method === 'eth_maxPriorityFeePerGas') return '0x3b9aca00';
+    if (method === 'eth_call' && same(params[0].to, ENTRYPOINT_V07)) return word(696_000_000_000_000n);
+    throw new Error(`unexpected ${method}`);
+  }, ACCOUNT);
+  check('fee facts: balance, EntryPoint deposit (balanceOf on the EntryPoint) and the node fee, read fresh',
+    facts.balance === 5_000_000_000_000_000n && facts.deposit === 696_000_000_000_000n && facts.maxFeePerGas === 3_000_000_000n && facts.failures.length === 0);
+  const partial = await readSubscriptionFeeFacts(async (method) => {
+    if (method === 'eth_getBalance') return '0x10';
+    throw new TypeError('fetch failed');
+  }, ACCOUNT);
+  check('a failing read is null (and listed), the others still arrive; nothing throws',
+    partial.balance === 16n && partial.deposit === null && partial.maxFeePerGas === null && partial.failures.length === 2);
+  const tokenCtx = { tokenSymbol: 'USDC', balance: 300_000_000_000_000n, deposit: 696_000_000_000_000n, installFee: 1_200_000_000_000_000n };
+  const tokenNote = feeBudgetCapNote(0n, 6_000_000_000_000_000n, 'test ETH', 0n, tokenCtx);
+  check('USDC subscription with nothing to spare: never "after the payments themselves"; names balance, deposit and the install fee',
+    !/after the payments themselves/.test(tokenNote) && tokenNote.includes('holds 0.0003 test ETH plus an EntryPoint deposit of 0.000696 test ETH') &&
+      tokenNote.includes("this install's worst-case network fee is 0.0012 test ETH") && tokenNote.includes('The payments themselves are in USDC') &&
+      tokenNote.includes('would be 0.006 test ETH'), tokenNote);
+  check('…before the first review (install fee not known yet) it names only what the account holds',
+    feeBudgetCapNote(0n, 6_000_000_000_000_000n, 'test ETH', 0n, { ...tokenCtx, deposit: 0n, installFee: null }).startsWith('The smart account holds 0.0003 test ETH, so nothing is left'));
+  check('control: a NATIVE subscription keeps the original sentence byte for byte (no token context)',
+    feeBudgetCapNote(0n, 6_000_000_000_000_000n, 'test ETH', 0n, null) === feeBudgetCapNote(0n, 6_000_000_000_000_000n, 'test ETH') &&
+      /after the payments themselves/.test(feeBudgetCapNote(0n, 6_000_000_000_000_000n, 'test ETH')));
+  check('a partial spare keeps the "Lowered to what your account can spare" sentence for token subscriptions too',
+    feeBudgetCapNote(1_000_000_000_000_000n, 6_000_000_000_000_000n, 'test ETH', 0n, tokenCtx).startsWith('Lowered to what your account can spare (0.001 test ETH)'));
+  check('the screen reads the facts on focus and at Review (source)',
+    /useFocusEffect\(\s*useCallback\(\(\) => \{\s*if \(phase === 'sub-form'\) void refreshSubFeeFacts\(\);/.test(screenSrc) &&
+      screenSrc.includes('const facts = (await refreshSubFeeFacts()) ?? subFeeFacts;') &&
+      screenSrc.includes('tokenNoteContext(choice, subFeeFacts, null)'));
+
+  // Bug 3: the review displays the bound Start may sign; never more.
+  check('fee ceiling = fee + 20 %, rounded up; 0 when sponsored',
+    subscriptionInstallFeeCeiling({ fee: 1_000n, sponsored: false }) === 1_200n && subscriptionInstallFeeCeiling({ fee: 1_001n, sponsored: false }) === 1_202n &&
+      subscriptionInstallFeeCeiling({ fee: 9n, sponsored: true }) === 0n && SUBSCRIPTION_REQUOTE_FEE_TOLERANCE_PERCENT === 20n);
+  check('a re-quote at the displayed ceiling proceeds; one wei above goes back to the review',
+    !subscriptionRequoteNeedsReview({ fee: 1_001n, sponsored: false }, { fee: 1_202n, sponsored: false }) &&
+      subscriptionRequoteNeedsReview({ fee: 1_001n, sponsored: false }, { fee: 1_203n, sponsored: false }));
+  const shownQ = withSubscriptionFeeCeiling({ fee: 1_000n, sponsored: false, amount: 0n, total: 1_000n, senderBalance: 5n });
+  check('the review checks funding against the displayed ceiling (fee and total replaced, other fields kept)',
+    shownQ.fee === 1_200n && shownQ.total === 1_200n && shownQ.senderBalance === 5n);
+  check('the review row shows the ceiling and explains it (source)',
+    screenSrc.includes('const shown = withSubscriptionFeeCeiling(q);') && screenSrc.includes('const funding = subscriptionInstallFunding(shown, sub, symbol);') &&
+      screenSrc.includes('`${formatUnits(shown.fee, 18, 18)} ${symbol}`'));
+
+  // Bug 5: the expired card's key line.
+  const held = { ...record, keyHeld: true, localStatus: 'installed', subscription: { ...record.subscription, keyExportedAt: null } };
+  check('expired before the hand-over: the key line no longer says "hand it to the merchant"',
+    subscriptionKeyStatusText(held, 'expired') === SUBSCRIPTION_KEY_EXPIRED_STATUS_TEXT && !/hand it to the merchant/.test(SUBSCRIPTION_KEY_EXPIRED_STATUS_TEXT) &&
+      /deleted from this device when you revoke/.test(SUBSCRIPTION_KEY_EXPIRED_STATUS_TEXT));
+  check('control: in time (or unknown) the hand-over wording stays',
+    /hand it to the merchant/.test(subscriptionKeyStatusText(held, 'offer')) && /hand it to the merchant/.test(subscriptionKeyStatusText(held)));
+  check('the card passes its hand-over answer to the key line (source)', screenSrc.includes('{subscriptionKeyStatusText(r, handover)}'));
+
+  // Bug 6: no internal file names in user copy.
+  check('the subscription audit note names no internal file', !/\.ts\b|engine notes|packages\//.test(SUBSCRIPTION_AUDIT_NOTE));
+
+  // Bug 7: subscription wording on revoke.
+  const subRec = { source: 'subscription' };
+  check('revoke wording: subscription title, button, prompt and progress',
+    revokeConfirmCopy(subRec, 'Subscription: Gym').heading === 'Revoke subscription “Subscription: Gym”' &&
+      revokeConfirmCopy(subRec, 'x').button === 'Revoke subscription' && revokeApprovalPrompt(subRec) === 'Approve revoking this subscription' &&
+      sessionProgressTitle('subscription-revoke') === 'Subscription revocation sent to the bundler');
+  check('control: a session keeps the session wording',
+    revokeConfirmCopy({ source: 'manual' }, 'Manual').heading === 'Revoke session “Manual”' && revokeConfirmCopy({ source: 'manual' }, 'Manual').button === 'Revoke session' &&
+      revokeApprovalPrompt({ source: 'erc7715' }) === 'Approve revoking this session');
+  check('the screen uses them (source)',
+    screenSrc.includes('await requireLocalAuth(revokeApprovalPrompt(target.record))') && screenSrc.includes('title={revokeCopy.button}') &&
+      screenSrc.includes("kind: target.record.source === 'subscription' ? 'subscription-revoke' : 'revoke',"));
+
+  // Bug 8 and the used-up quote: after a failed revoke the card is re-read
+  // and the retry quotes again.
+  check('failed revoke: back to the list, quote dropped, card status re-read (source)',
+    /describe\(e, 'send'\);\s*Alert\.alert\(title, detail\);[\s\S]{0,400}setRevokeTarget\(null\);\s*setPhase\('list'\);\s*refreshRecord\(target\.record\);/.test(screenSrc));
+  check('failed manual grant: back to the form (fresh key and quote at the next Review) (source)',
+    /describe\(e, 'send'\);\s*Alert\.alert\(title, detail\);[\s\S]{0,500}discardPending\(\);\s*setPhase\('form'\);/.test(screenSrc));
 }
 
 console.log(`\ncheck-subscriptions: ${passed} passed, ${failed} failed`);

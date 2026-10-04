@@ -1559,8 +1559,8 @@ export function SettingsScreen({ navigation, route }: Props) {
         ))}
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           The ids under “Details for reviewers” (C1–C3, W1–W20 and the finding numbers) refer to the
-          project&apos;s threat model, docs/THREAT_MODEL.md, section 5 (mainnet-readiness checklist)
-          and section 6 (findings). {READINESS_TESTNET_HINT}
+          project&apos;s threat model: its mainnet-readiness checklist and its list of findings.{' '}
+          {READINESS_TESTNET_HINT}
         </Text>
       </View>
 

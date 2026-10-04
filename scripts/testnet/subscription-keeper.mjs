@@ -31,7 +31,10 @@
  *       seed's index-5 EOA; generates the session key (saved 0600 BEFORE the
  *       install is submitted), installs, reads the permission back.
  *   node scripts/testnet/subscription-keeper.mjs pull [--amount N] [--unchecked]
- *       KEEPER: one pull attempt. --unchecked skips the local grant checks so
+ *       KEEPER: one pull attempt. Without --unchecked a pull the account
+ *       would refuse is refused locally first, from the on-chain state (too
+ *       early for the next period, payments used up, ended or revoked) and
+ *       the grant (cap, merchant). --unchecked skips those local checks so
  *       the ACCOUNT's own refusal can be recorded (negative tests); a refusal
  *       is printed as REJECTED with the bundler's verbatim text and, when the
  *       estimate already refused, a direct submission with the last accepted
@@ -78,7 +81,9 @@ import {
   SmartAccountClient,
   createKernelAccountSpec,
   createSessionKeyAccount,
+  decodeUint256,
   describeSubscription,
+  encodeErc20BalanceOf,
   encodeFunctionCall,
   encodeKernelExecute,
   encodePermissionInstall,
@@ -543,9 +548,63 @@ async function importHandOver() {
     install: null,
     revoke: null,
   });
+  const meta = await tokenMeta({ subscription });
+  if (meta) writeJson(GRANT_FILE, { ...readJson(GRANT_FILE), token: meta });
   writeJson(STATE_FILE, {});
   console.log(`Imported: account ${payload.account}, permission ${payload.permissionId}, session key ${session.address}`);
-  console.log(describeSubscription(subscription, { symbol: subscription.token === SUBSCRIPTION_NATIVE ? 'test ETH' : 'token units', decimals: subscription.token === SUBSCRIPTION_NATIVE ? 18 : 0 }).sentence);
+  console.log(
+    describeSubscription(subscription, {
+      symbol: subscription.token === SUBSCRIPTION_NATIVE ? 'test ETH' : (meta?.symbol ?? 'base units'),
+      decimals: subscription.token === SUBSCRIPTION_NATIVE ? 18 : (meta?.decimals ?? 0),
+    }).sentence,
+  );
+}
+
+/** Exact decimal rendering of base units (no floats). */
+function formatBaseUnits(amount, decimals) {
+  const negative = amount < 0n;
+  const abs = negative ? -amount : amount;
+  if (decimals === 0) return `${negative ? '-' : ''}${abs}`;
+  const unit = 10n ** BigInt(decimals);
+  const frac = (abs % unit).toString().padStart(decimals, '0').replace(/0+$/, '');
+  return `${negative ? '-' : ''}${abs / unit}${frac ? `.${frac}` : ''}`;
+}
+
+/**
+ * The payment token's symbol and decimals: from the grant file when the
+ * import stored them, else read from the token contract (symbol() and
+ * decimals(); the symbol is shown only if it is short printable ASCII).
+ * Null for a native subscription or when the reads fail.
+ */
+async function tokenMeta(record) {
+  const sub = record.subscription;
+  if (sub.token === SUBSCRIPTION_NATIVE) return null;
+  if (record.token && typeof record.token.symbol === 'string' && Number.isInteger(record.token.decimals)) return record.token;
+  try {
+    const call = async (signature) =>
+      node('eth_call', [{ to: sub.token, data: toHex(encodeFunctionCall(signature, [])) }, 'latest']);
+    const decimals = Number(decodeUint256(await call('decimals()')));
+    const raw = String(await call('symbol()'));
+    // ABI string: offset, length, bytes.
+    const len = Number(BigInt('0x' + raw.slice(2 + 64, 2 + 128)));
+    const text = Buffer.from(raw.slice(2 + 128, 2 + 128 + len * 2), 'hex').toString('utf8');
+    if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) return null;
+    return { symbol: /^[\x20-\x7e]{1,16}$/.test(text) ? text : 'tokens', decimals };
+  } catch {
+    return null;
+  }
+}
+
+/** "0.1 USDC (100000 base units)", "1000 wei", or "100000 base units" when the token is unknown. */
+function describeAmount(amount, sub, meta) {
+  if (sub.token === SUBSCRIPTION_NATIVE) return `${amount} wei`;
+  return meta ? `${formatBaseUnits(amount, meta.decimals)} ${meta.symbol} (${amount} base units)` : `${amount} base units`;
+}
+
+/** The merchant's balance of what the subscription pays (ETH, or the token's balanceOf), at `block`. */
+async function merchantHolding(sub, block = 'latest') {
+  if (sub.token === SUBSCRIPTION_NATIVE) return BigInt(await node('eth_getBalance', [sub.merchant, block]));
+  return decodeUint256(await node('eth_call', [{ to: sub.token, data: toHex(encodeErc20BalanceOf(sub.merchant)) }, block]));
 }
 
 async function status() {
@@ -572,13 +631,29 @@ async function pull({ amount, unchecked, batch }) {
   const calls = Array.from({ length: batch ?? 1 }, () => one);
   const now = await chainTime();
   const before = await readSubscriptionState(node, record.account, record.permissionId, sub).catch((e) => ({ error: e.message }));
-  const label = `pull of ${amount ?? sub.amountPerPeriod} ${sub.token === SUBSCRIPTION_NATIVE ? 'wei' : 'base units'}${
+  const meta = await tokenMeta(record);
+  const label = `pull of ${describeAmount(amount ?? sub.amountPerPeriod, sub, meta)}${
     batch > 1 ? ` x${batch} (batch)` : ''
   }${unchecked ? ' [local checks skipped]' : ''}`;
   console.log(`Keeper: ${label} at chain time ${now} (${formatUtc(now)})`);
-  if (!before.error) console.log(`  before: next pull ${JSON.stringify(nextPullAllowedAt(before, now))}`);
-  const merchantBefore = BigInt(await node('eth_getBalance', [sub.merchant, 'latest']));
+  const next = before.error ? null : nextPullAllowedAt(before, now);
+  if (next) console.log(`  before: next pull ${JSON.stringify(next)}`);
   const result = { label, chainTime: now, before: before.error ? before : { ...before, feeBudgetLeftWei: String(before.feeBudgetLeftWei) } };
+  // Local refusal of a pull the account would refuse anyway (2026-10-04
+  // emulator run, finding 9): without --unchecked an early pull — or one
+  // after the count is used up, the end, or a revocation — is refused here
+  // from the on-chain state, before anything is signed or sent.
+  if (!unchecked && (!next || next.kind !== 'now')) {
+    result.outcome = 'refused-locally';
+    result.reason = !next
+      ? `the on-chain subscription state could not be read (${before.error}), so the pull was not attempted`
+      : next.kind === 'later'
+        ? `too early: the next payment opens at ${next.at} (${formatUtc(next.at)}), chain time is ${now}`
+        : `no payment is open (${next.kind})`;
+    console.log(`  REFUSED LOCALLY (nothing signed): ${result.reason}. Pass --unchecked to let the account refuse it.`);
+    return emit(result);
+  }
+  const merchantBefore = await merchantHolding(sub);
   const f = await fees();
   let userOpHash;
   let stage = 'estimate';
@@ -627,13 +702,17 @@ async function pull({ amount, unchecked, batch }) {
   const r = await receiptSummary(client, userOpHash);
   result.outcome = r.success ? 'accepted' : 'reverted';
   Object.assign(result, { tx: r.tx, block: r.block, blockTime: r.blockTime });
-  const merchantAfter = BigInt(await node('eth_getBalance', [sub.merchant, r.block !== null ? '0x' + r.block.toString(16) : 'latest']));
-  result.merchantDeltaWei = (merchantAfter - merchantBefore).toString();
+  const merchantAfter = await merchantHolding(sub, r.block !== null ? '0x' + r.block.toString(16) : 'latest');
+  const delta = merchantAfter - merchantBefore;
+  // Native pulls keep the old field name; ERC-20 pulls report the merchant's
+  // TOKEN balance change (its ETH does not move in a token pull).
+  if (sub.token === SUBSCRIPTION_NATIVE) result.merchantDeltaWei = delta.toString();
+  else result.merchantDeltaBaseUnits = delta.toString();
   const after = await readSubscriptionState(node, record.account, record.permissionId, sub);
   result.after = { ...after, feeBudgetLeftWei: String(after.feeBudgetLeftWei) };
   console.log(
-    `  receipt: success=${r.success} tx ${r.tx} block ${r.block} (block time ${r.blockTime}); merchant +${result.merchantDeltaWei} wei; ` +
-      `after: remaining ${after.remainingPulls}, next slot ${after.nextSlotAt}, fee budget left ${after.feeBudgetLeftWei}`,
+    `  receipt: success=${r.success} tx ${r.tx} block ${r.block} (block time ${r.blockTime}); merchant ${delta >= 0n ? '+' : ''}${describeAmount(delta, sub, meta)}; ` +
+      `after: remaining ${after.remainingPulls}, next slot ${after.nextSlotAt}, fee budget left ${after.feeBudgetLeftWei} wei`,
   );
   return emit(result);
 }

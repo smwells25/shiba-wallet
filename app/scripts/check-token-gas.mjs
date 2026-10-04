@@ -50,6 +50,8 @@ import {
   prepareAaErc20Send,
   prepareAaSend,
   sendAa,
+  AaFeeRoseError,
+  AA_QUOTE_ALREADY_USED,
 } from '../src/wallet/aa.ts';
 import {
   TOKEN_GAS_7702_NOTE,
@@ -520,8 +522,10 @@ let nativeQuote;
   const n2 = tgNode({ usdc: 5_000_000n, spread: 1_000n });
   const b2 = tgBundler(n2, { floor: 100_000_000n });
   const q2 = await prepareAaTokenGasSend(kernelBundle({ node: n2, bundler: b2 }).bundle, OWNER_0, RECIPIENT, 1n);
-  const fee2 = MAX_FEE + (100_000_000n - 1_000_000n);
-  check('with a 10% spread and a 0.1 gwei bundler floor the worst case follows exactly',
+  // The quote prices at the floor plus aa.ts AA_FEE_FLOOR_HEADROOM_PERCENT
+  // (25 %): 0.1 gwei → 0.125 gwei.
+  const fee2 = MAX_FEE + (125_000_000n - 1_000_000n);
+  check('with a 10% spread and a 0.1 gwei bundler floor (+25% headroom) the worst case follows exactly',
     q2.maxFeePerGas === fee2 && q2.tokenGas.maxTokenCharge === expectedCharge({ gas: CEILING_GAS, maxFee: fee2, spread: 1_000n }).total,
     `${q2.tokenGas.maxTokenCharge}`);
   // Control (mutation guard): a different ceiling would give a different figure.
@@ -719,6 +723,41 @@ console.log('check-token-gas: the cap (the charge can never exceed what the user
   const nonceReads = n2.calls.filter((c) => c.method === 'eth_call' && same(c.params[0].to, USDC) && c.params[0].data.startsWith(sel('nonces(address)'))).length;
   check('…by the engine’s own maxTokenCharge check, before the final permit is even built (permit nonce read only for the quote and the stub)',
     nonceReads === 2, `${nonceReads}`);
+
+  // The bundler's fee floor moves between the quote and the send. The USDC
+  // worst case is priced at the quote's fees (floor + 25 % headroom) and the
+  // operation is signed with exactly those fees, so the permit cap and the
+  // floor rule compose: a drift inside the headroom changes nothing, a
+  // larger one is refused before ANY permit is signed.
+  {
+    const n3 = tgNode({ usdc: 5_000_000n });
+    const inner = tgBundler(n3, { floor: 100_000_000n });
+    let floorNow = 100_000_000n;
+    const b3 = async (method, params) =>
+      method === 'pimlico_getUserOperationGasPrice'
+        ? { standard: { maxFeePerGas: '0x1', maxPriorityFeePerGas: '0x' + floorNow.toString(16) } }
+        : inner(method, params);
+    b3.estimated = inner.estimated;
+    b3.sent = inner.sent;
+    const k3 = kernelBundle({ node: n3, bundler: b3 });
+    const q3 = await prepareAaTokenGasSend(k3.bundle, OWNER_0, RECIPIENT, 1n);
+    check('USDC fee quote: priority = floor + 25 % (0.125 gwei)', q3.maxPriorityFeePerGas === 125_000_000n);
+    floorNow = 125_000_001n;
+    const e3 = await rejection(() => sendAa(k3.bundle, owner, q3));
+    check('floor above the quoted priority at send: AaFeeRoseError before any permit (no estimate, no submission)',
+      e3 instanceof AaFeeRoseError && inner.estimated.length === 0 && inner.sent.length === 0, e3?.message);
+    const again = await rejection(() => sendAa(k3.bundle, owner, q3));
+    check('…and the same quote is not sent again', again?.message === AA_QUOTE_ALREADY_USED && inner.sent.length === 0);
+    floorNow = 108_000_000n; // +8 %, inside the headroom
+    const q4 = await prepareAaTokenGasSend(k3.bundle, OWNER_0, RECIPIENT, 1n);
+    check('re-quote at the risen floor: priority 0.135 gwei, worst case priced at it', q4.maxPriorityFeePerGas === 135_000_000n);
+    floorNow = 116_000_000n;
+    await sendAa(k3.bundle, owner, q4);
+    const op4 = inner.sent[0];
+    check('drift inside the headroom: sent with EXACTLY the quoted fees, final permit ≤ the displayed USDC worst case',
+      inner.sent.length === 1 && BigInt(op4.maxPriorityFeePerGas) === q4.maxPriorityFeePerGas && BigInt(op4.maxFeePerGas) === q4.maxFeePerGas &&
+        permitOf(op4).amount <= q4.tokenGas.maxTokenCharge);
+  }
 
   // assertTokenGasPermit on its own.
   const tg = q2.tokenGas;
