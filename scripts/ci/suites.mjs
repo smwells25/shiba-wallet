@@ -32,6 +32,9 @@ export const APP_SCRIPTS = {
   'check-contacts.mjs': { kind: 'offline', summary: 'counts' },
   'check-devmode.mjs': { kind: 'offline', summary: 'counts' },
   'check-failover.mjs': { kind: 'offline', summary: 'counts' },
+  // Phase 12 Base Sepolia findings: Home reload after a send, eligibility
+  // re-checks, dust display, profile copy and local dates (fakes only).
+  'check-home.mjs': { kind: 'offline', summary: 'counts' },
   'check-nfts.mjs': { kind: 'offline', summary: 'counts' },
   'check-passkeys.mjs': { kind: 'offline', summary: 'counts' },
   'check-proof.mjs': { kind: 'offline', summary: 'counts' },

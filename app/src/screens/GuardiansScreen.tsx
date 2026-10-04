@@ -5,6 +5,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { KernelGuardianSet } from '@shiba-wallet/chains-evm';
 import type { RootStackParamList } from '../navigation';
 import { Button, TestNetworksOnlyCard, WarningBox, screenStyle } from '../components';
+import { localDateLabel } from '../config/dates';
 import { ContactPicker, RecipientContactNotice } from '../components/Contacts';
 import {
   GuardianExposureWarning,
@@ -839,7 +840,7 @@ export function GuardiansScreen({ navigation }: Props) {
             <>
               <Text style={[styles.hint, { color: entry.exportedAt ? theme.text : theme.danger }]}>
                 {entry.exportedAt
-                  ? `Backed up off-device ${new Date(entry.exportedAt).toISOString().slice(0, 10)}.`
+                  ? `Backed up off-device ${localDateLabel(entry.exportedAt)}.`
                   : 'Not backed up since its last change.'}
               </Text>
               {status?.recordCheck ? (

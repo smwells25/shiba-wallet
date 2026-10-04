@@ -192,6 +192,88 @@ export interface EvmSendQuote {
    * Sepolia), whose quotes are unchanged.
    */
   opStack?: OpStackFees;
+  /**
+   * Present only when the amount came from the Max button
+   * (PrepareEvmSendOptions.fromMax) and the fees had risen since the Max
+   * figure was computed, so the quote lowered the amount to the balance
+   * minus the current worst-case fee. `requested` is the amount the form
+   * held; `amount` above is what will be signed. The confirm screen states
+   * the change in a plain sentence (maxAdjustmentSentence). Absent in every
+   * other case, so quotes without an adjustment are unchanged.
+   */
+  maxAdjustment?: { requested: bigint };
+}
+
+/** Options for prepareEvmSend beyond the positional arguments. */
+export interface PrepareEvmSendOptions {
+  /**
+   * True when the amount is exactly the figure the Max button produced for
+   * this account (SendScreen compares the amount text with the last Max
+   * result). Fees are re-read at quote time, and on OP-stack chains the
+   * layer 1 data fee follows Ethereum's fees from block to block, so the
+   * worst-case fee can rise between the Max tap and Review. With this flag
+   * the quote then lowers the amount to balance minus the current
+   * worst-case fee and records the change in `maxAdjustment`, instead of
+   * refusing the user's own Max. The amount is only ever lowered, never
+   * raised, and the balance check below still applies to the result.
+   */
+  fromMax?: boolean;
+}
+
+/**
+ * Upper bound on re-pricing rounds when a Max amount is lowered on an
+ * OP-stack chain. Lowering the value changes the unsigned transaction's
+ * bytes, and the oracle prices those bytes, so the layer 1 data fee is
+ * re-read for the exact transaction that will be signed. A smaller value
+ * never has a longer encoding, so one round is normally enough; the bound
+ * only stops a misbehaving oracle from looping. After it the ordinary
+ * insufficient-funds refusal applies.
+ */
+const MAX_TRIM_ROUNDS = 3;
+
+/** What SendScreen remembers about the last Max result (public data only). */
+export interface LastMaxResult {
+  /** The amount text the Max button wrote into the form. */
+  text: string;
+  /** The account the Max figure was computed for. */
+  from: string;
+  /** The route's chain id (CAIP-2) the Max figure was computed on. */
+  chainId: string;
+}
+
+/**
+ * True only when the form still holds exactly the text the Max button
+ * wrote, for the same account and chain. Any edit of the amount, a switch
+ * of account or chain, or no Max at all gives false, so an amount the user
+ * typed is never lowered by prepareEvmSend.
+ */
+export function amountIsLastMax(
+  last: LastMaxResult | null,
+  current: { text: string; from: string; chainId: string },
+): boolean {
+  return (
+    last !== null &&
+    last.text === current.text &&
+    last.from.toLowerCase() === current.from.toLowerCase() &&
+    last.chainId === current.chainId
+  );
+}
+
+/**
+ * The plain sentence the confirm screen shows when a Max amount was
+ * lowered at quote time. `format` renders a base-unit amount in the
+ * chain's display units.
+ */
+export function maxAdjustmentSentence(
+  quote: Pick<EvmSendQuote, 'amount' | 'maxAdjustment'>,
+  format: (value: bigint) => string,
+): string | null {
+  if (!quote.maxAdjustment) return null;
+  return (
+    `The amount was lowered from ${format(quote.maxAdjustment.requested)} to ` +
+    `${format(quote.amount)} because the network fee rose after you tapped Max. ` +
+    'The amount plus the worst-case fee now equals your balance.'
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -411,6 +493,10 @@ export type SendQuote = EvmSendQuote | UtxoSendQuote | SolSendQuote;
  * amount+fee exceeds the balance, it is retried with value 0 — intrinsic
  * gas for a transfer does not depend on the value, and the insufficient
  * funds condition is reported separately via the simulation/balance checks.
+ *
+ * `options.fromMax` marks an amount produced by the Max button; see
+ * PrepareEvmSendOptions for how such an amount is lowered when the fee
+ * rose after the Max tap.
  */
 export async function prepareEvmSend(
   url: string,
@@ -419,7 +505,9 @@ export async function prepareEvmSend(
   amount: bigint,
   data?: Uint8Array,
   expectedCaip2: string = EVM_CHAIN_ID,
+  options: PrepareEvmSendOptions = {},
 ): Promise<EvmSendQuote> {
+  const requested = amount;
   const transport = evmHttpTransport(url);
   const node = new NodeClient(transport);
 
@@ -459,20 +547,36 @@ export async function prepareEvmSend(
 
   // OP-stack chains only (config/evm-chain.ts l1DataFee): price the exact
   // unsigned transaction sendEvm will sign. Other chains make no extra call.
-  const opStack = chainHasL1DataFee(chainId)
-    ? await quoteOpStackFees(transport, {
-        chainId,
-        nonce,
-        maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
-        maxFeePerGas: fees.maxFeePerGas,
-        gasLimit,
-        to,
-        value: amount,
-        ...(data && data.length > 0 ? { data } : {}),
-      })
-    : undefined;
+  const priceOpStack = (value: bigint) =>
+    quoteOpStackFees(transport, {
+      chainId,
+      nonce,
+      maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+      maxFeePerGas: fees.maxFeePerGas,
+      gasLimit,
+      to,
+      value,
+      ...(data && data.length > 0 ? { data } : {}),
+    });
+  const hasOpStack = chainHasL1DataFee(chainId);
+  let opStack = hasOpStack ? await priceOpStack(amount) : undefined;
+  let fee = gasLimit * fees.maxFeePerGas + opStackFeeTotal(opStack);
 
-  const fee = gasLimit * fees.maxFeePerGas + opStackFeeTotal(opStack);
+  // Max amounts only (options.fromMax): when the fee rose since the Max
+  // figure was computed, lower the amount to what the balance covers now.
+  // Plain transfers only — a contract call's value is part of what the
+  // caller asked for and is never changed here.
+  if (options.fromMax === true && !(data && data.length > 0)) {
+    for (let round = 0; round < MAX_TRIM_ROUNDS && amount + fee > balance; round++) {
+      const lowered = balance - fee;
+      if (lowered <= 0n) break;
+      amount = lowered;
+      if (!hasOpStack) break; // the fee does not depend on the value
+      opStack = await priceOpStack(amount);
+      fee = gasLimit * fees.maxFeePerGas + opStackFeeTotal(opStack);
+    }
+  }
+
   if (amount + fee > balance) {
     throw new Error(
       `Insufficient funds: sending ${amount} wei plus a worst-case fee of ${fee} wei ` +
@@ -497,6 +601,7 @@ export async function prepareEvmSend(
     simulation,
     ...(data && data.length > 0 ? { data } : {}),
     ...(opStack ? { opStack } : {}),
+    ...(amount !== requested ? { maxAdjustment: { requested } } : {}),
   };
 }
 
@@ -892,6 +997,38 @@ export function addEvmSentListener(listener: EvmSentListener): () => void {
   };
 }
 
+export type SendAcceptedListener = () => void;
+
+const sendAcceptedListeners = new Set<SendAcceptedListener>();
+
+/**
+ * Subscribes to "a transaction from this wallet was accepted by a node" on
+ * ANY chain: sendEvm (and so every EOA EVM caller), sendUtxo, sendSol, the
+ * EIP-7702 set-code transaction (delegation.ts) and the guardian
+ * approveWithSig transaction (recovery.ts). Smart-account operations are
+ * reported separately by aa.ts addAaSentListener. Home uses both to reload
+ * its balances when it regains focus after a send. Carries no data on
+ * purpose: it only says that balances may have moved. Returns the
+ * unsubscribe function.
+ */
+export function addSendAcceptedListener(listener: SendAcceptedListener): () => void {
+  sendAcceptedListeners.add(listener);
+  return () => {
+    sendAcceptedListeners.delete(listener);
+  };
+}
+
+/** Best-effort fan-out: a failing listener never affects the send. */
+export function notifySendAccepted(): void {
+  for (const listener of [...sendAcceptedListeners]) {
+    try {
+      listener();
+    } catch {
+      // Listeners only refresh displays; the transaction was already accepted.
+    }
+  }
+}
+
 /** Best-effort fan-out: a failing listener never affects the send. */
 function notifyEvmSent(event: EvmSentEvent): void {
   for (const listener of [...evmSentListeners]) {
@@ -948,6 +1085,7 @@ export async function sendEvm(
   const node = new NodeClient(evmHttpTransport(url));
   const txid = await node.sendRawTransaction(signed.rawHex);
   notifyEvmSent({ from: signer.address, quote, txid });
+  notifySendAccepted();
   return { txid, explorerUrl: explorerTxBase ? `${explorerTxBase}${txid}` : null };
 }
 
@@ -967,6 +1105,7 @@ export async function sendUtxo(
   options: UtxoBackendOptions = {},
 ): Promise<SendResult> {
   const txid = await signAndBroadcast(quote.built, signer, utxoTransportFor(url, options));
+  notifySendAccepted();
   const explorerUrl =
     chainId === BITCOIN_CHAIN_ID ? `https://blockstream.info/tx/${txid}` : null;
   return { txid, explorerUrl };
@@ -990,6 +1129,7 @@ export async function sendSol(
     { publicKey: signer.publicKey, sign: (bytes) => signer.sign(bytes) },
   ]);
   const signature = await client.sendTransaction(signed.wireBytes);
+  notifySendAccepted();
   return { txid: signature, explorerUrl: `https://solscan.io/tx/${signature}` };
 }
 

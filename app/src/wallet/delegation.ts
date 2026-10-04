@@ -12,7 +12,7 @@ import {
   type JsonRpcTransport,
 } from '@shiba-wallet/chains-evm';
 import { assertFeatureAllowed, eip155Caip2 } from '../config/readiness.ts';
-import { quoteEndpointChange } from './send.ts';
+import { notifySendAccepted, quoteEndpointChange } from './send.ts';
 
 /**
  * EIP-7702 "Upgrade this account" glue for the app (phase 8 item 1, app
@@ -453,6 +453,7 @@ export async function sendSetCodeTx(
   );
   const txid = await client.sendRawTransaction(signed.rawHex);
   invalidateAccountDelegation(quote.from);
+  notifySendAccepted();
   return { txid, explorerUrl: explorerTxBase ? `${explorerTxBase}${txid}` : null };
 }
 

@@ -27,6 +27,9 @@ import {
   AaFundingError,
   QUOTE_FAILED_TITLE,
   aaSendApprovalPrompt,
+  addAaConfigChangedListener,
+  bundlerVerifiedLine,
+  subscribeAaStateChanges,
   describeAaError,
   retitleQuoteFailure,
   applyPriorityFeeFloor,
@@ -551,8 +554,15 @@ await saveSpendingPolicy(
   { store: spendStore },
 );
 const stopSpendRecorder = installSpendingRecorder(spendStore);
+// Base Sepolia finding 2: Home's eligibility hooks re-check through
+// subscribeAaStateChanges, which must fire on an ACCEPTED operation.
+let aaStateChanges = 0;
+const stopAaState = subscribeAaStateChanges(() => {
+  aaStateChanges += 1;
+});
 const { userOpHash } = await sendAa(sendBundle, owner, sendQuote);
 check('sendCalls returns the bundler-issued userOpHash', userOpHash === USEROP_HASH);
+check('subscribeAaStateChanges fired once for the accepted operation', aaStateChanges === 1, String(aaStateChanges));
 await new Promise((r) => setTimeout(r, 10));
 await flushSpendingWrites();
 {
@@ -588,8 +598,10 @@ await flushSpendingWrites();
     'spending limits: bundler-refused op not recorded',
     refused && (await listSpendRecords(spendScope, spendStore)).records.length === records.length,
   );
+  check('subscribeAaStateChanges did not fire for the refused operation', aaStateChanges === 1, String(aaStateChanges));
 }
 stopSpendRecorder();
+stopAaState();
 
 const op = sendBundlerT.lastOp;
 check('submitted op sender is the counterfactual account', same(op.sender, SENDER));
@@ -1102,6 +1114,81 @@ await (async () => {
   check('prompt for an EIP-7702 upgraded account', aaSendApprovalPrompt({ eip7702: { upgrade: false, delegate: '0x' + '11'.repeat(20) } }, '0.0001 test ETH') === 'Approve sending 0.0001 test ETH from your upgraded account');
   check('prompt for a recovered smart account', aaSendApprovalPrompt({ recovered: true }, '2 test ETH') === 'Approve sending 2 test ETH from your recovered smart account');
   check('SendScreen passes the smart-account quote through aaSendApprovalPrompt with the typed amount and symbol', sendSource.includes("quote.kind === 'aa'\n          ? aaSendApprovalPrompt(quote, `${amountText} ${symbol}`)"));
+})();
+
+// ---------------------------------------------------------------------------
+// Base Sepolia findings 2 and 5: config-changed notifications, the bundler
+// chain id recorded at save time, and the Settings wording.
+// ---------------------------------------------------------------------------
+
+console.log('AA config notifications and the bundler status line:');
+await (async () => {
+  const s2 = memoryStore();
+  let writes = 0;
+  const stop = addAaConfigChangedListener(() => {
+    writes += 1;
+  });
+  let stateChanges = 0;
+  const stopState = subscribeAaStateChanges(() => {
+    stateChanges += 1;
+  });
+  await setAaBundlerUrl(EVM_BASE_SEPOLIA.caip2, 'https://bundler.example/base', {
+    store: s2,
+    transportFor: () => fakeBundler({ chainIdHex: '0x14a34' }),
+  });
+  check('a successful bundler save notifies config listeners once', writes === 1, String(writes));
+  check('subscribeAaStateChanges also fires on a config write', stateChanges === 1, String(stateChanges));
+  let c = await getAaConfig(EVM_BASE_SEPOLIA.caip2, s2);
+  check('the bundler chain id reported at save time is recorded (84532)', c.bundlerChainIdVerified === '84532', String(c.bundlerChainIdVerified));
+  check(
+    'status line names the reported chain id and the network',
+    bundlerVerifiedLine(c, 'Base Sepolia', '2026-10-03') ===
+      'Verified ✓ — the bundler reported chain id 84532 (Base Sepolia) and eth_supportedEntryPoints includes EntryPoint v0.7 (checked 2026-10-03)',
+    bundlerVerifiedLine(c, 'Base Sepolia', '2026-10-03'),
+  );
+  await setAaBundlerUrl(EVM_BASE_SEPOLIA.caip2, 'https://bundler.example/sepolia', {
+    store: s2,
+    transportFor: () => fakeBundler({ chainIdHex: '0xaa36a7' }),
+  }).catch(() => undefined);
+  check('a refused bundler save (wrong chain) notifies nobody', writes === 1, String(writes));
+  await clearAaBundlerUrl(EVM_BASE_SEPOLIA.caip2, s2);
+  check('clearing the bundler notifies config listeners', writes === 2, String(writes));
+  c = await getAaConfig(EVM_BASE_SEPOLIA.caip2, s2);
+  check('clearing the bundler also clears the recorded chain id', c.bundlerUrl === null && c.bundlerChainIdVerified === null);
+  stop();
+  stopState();
+  await setAaBundlerUrl(EVM_BASE_SEPOLIA.caip2, 'https://bundler.example/base', {
+    store: s2,
+    transportFor: () => fakeBundler({ chainIdHex: '0x14a34' }),
+  });
+  check('unsubscribed listeners are not called', writes === 2 && stateChanges === 2, `${writes}/${stateChanges}`);
+
+  // A bundler saved before the chain-id check existed carries no chain id.
+  const legacy = memoryStore();
+  await legacy.setItem(
+    'shiba-wallet.aa-config.v1',
+    JSON.stringify({ [AA_CHAIN]: { bundlerUrl: 'https://bundler.example/old', bundlerVerifiedAt: '2026-10-01T23:30:00.000Z' } }),
+  );
+  const old = await getAaConfig(AA_CHAIN, legacy);
+  check('legacy bundler entry reads with no recorded chain id', old.bundlerUrl !== null && old.bundlerChainIdVerified === null);
+  check(
+    'legacy status line does not claim the chain-id check ran',
+    bundlerVerifiedLine(old, 'Ethereum Sepolia', '2026-10-01') ===
+      'Verified ✓ — eth_supportedEntryPoints includes EntryPoint v0.7 (checked 2026-10-01). Saved before the chain-id check existed: save it again to confirm which network it serves.',
+  );
+  await legacy.setItem(
+    'shiba-wallet.aa-config.v1',
+    JSON.stringify({ [AA_CHAIN]: { bundlerUrl: 'https://bundler.example/old', bundlerChainIdVerified: '0xaa36a7' } }),
+  );
+  check('a malformed stored chain id is ignored (decimal digits only)', (await getAaConfig(AA_CHAIN, legacy)).bundlerChainIdVerified === null);
+
+  const settingsSource = readFileSync(new URL('../src/screens/SettingsScreen.tsx', import.meta.url), 'utf8');
+  check(
+    'Settings renders the bundler line through bundlerVerifiedLine with the local date',
+    settingsSource.includes('bundlerVerifiedLine(config, network.label, shortDate(config.bundlerVerifiedAt))') &&
+      settingsSource.includes('const shortDate = (iso: string | null) => localDateLabel(iso);') &&
+      !settingsSource.includes('iso.slice(0, 10)'),
+  );
 })();
 
 console.log(`\n${passed} passed, ${failed} failed`);

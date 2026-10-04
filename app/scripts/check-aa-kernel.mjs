@@ -654,7 +654,13 @@ console.log('check-aa-kernel: deployment note depends on the bundler host (bug B
   const ZERODEV = 'https://rpc.zerodev.app/api/v3/SECRETPROJECT/chain/11155111';
   check('Alchemy bundler host → the Alchemy limitation note', kernelDeploymentNote(ALCHEMY) === KERNEL_BUNDLER_NOTE);
   check('ZeroDev bundler → neutral sentence', kernelDeploymentNote(ZERODEV) === 'Deployment goes through the configured bundler.' && KERNEL_DEPLOYMENT_NEUTRAL_NOTE === 'Deployment goes through the configured bundler.');
-  check('no bundler URL → neutral sentence', kernelDeploymentNote(null) === KERNEL_DEPLOYMENT_NEUTRAL_NOTE);
+  check(
+    'no bundler URL → says no bundler is configured yet (never "the configured bundler")',
+    kernelDeploymentNote(null) ===
+      'No bundler is configured yet; once one is saved, the first smart-account send deploys the account through it.' &&
+      kernelDeploymentNote(undefined) === kernelDeploymentNote(null) &&
+      kernelDeploymentNote('') === kernelDeploymentNote(null),
+  );
   check('bare g.alchemy.com and a port/userinfo are Alchemy', isAlchemyBundlerUrl('https://g.alchemy.com/v2/k') && isAlchemyBundlerUrl('https://user:pw@base-sepolia.g.alchemy.com:443/v2/k'));
   check('look-alike hosts are not Alchemy', !isAlchemyBundlerUrl('https://evil-g.alchemy.com/v2/k') && !isAlchemyBundlerUrl('https://g.alchemy.com.attacker.example/v2/k') && !isAlchemyBundlerUrl('https://alchemy.com/v2/k'));
   check('"g.alchemy.com" in the path or query does not count (host only)', !isAlchemyBundlerUrl('https://bundler.example/g.alchemy.com/v2/k') && !isAlchemyBundlerUrl('https://bundler.example/?u=https://x.g.alchemy.com'));

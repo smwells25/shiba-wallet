@@ -7,7 +7,7 @@ import type { FungibleAsset } from '@shiba-wallet/core';
 import { callWithFailover, getEndpoint, type NetworkEndpoint } from '../config/networks.ts';
 import { EVM_CHAIN_ID } from './send.ts';
 import { fetchErc20Balance } from './erc20.ts';
-import { formatUnits } from './balances.ts';
+import { formatBalanceDisplay } from './balances.ts';
 import { listTokens } from './tokens.ts';
 import type { BalanceState } from './useBalances.ts';
 
@@ -88,7 +88,7 @@ export function useTokenBalances(evmAddress: string | undefined): TokenBalancesH
         }
         setTokenState(id, {
           status: 'ok',
-          display: formatUnits(load.amount, token.decimals),
+          display: formatBalanceDisplay(load.amount, token.decimals),
           symbol: token.symbol,
           amount: load.amount,
           decimals: token.decimals,

@@ -8,7 +8,7 @@
 //   node scripts/test-units.mjs
 
 import { dogecoinKeyProvider, mnemonicToSeed } from '@shiba-wallet/core';
-import { formatUnits, parseUnits } from '../src/wallet/balances.ts';
+import { formatBalanceDisplay, formatUnits, parseUnits, spokenAmount } from '../src/wallet/balances.ts';
 import {
   BITCOIN_CHAIN_ID,
   DOGECOIN_CHAIN_ID,
@@ -148,6 +148,23 @@ check('non-base58 rejected', !v.ok, true);
 console.log('--- empty input ---');
 v = validateRecipient(EVM_CHAIN_ID, '   ');
 check('blank recipient rejected', !v.ok, true);
+
+console.log('--- balance rows: dust is never shown as 0 (Base Sepolia finding 3) ---');
+// The live figure: 107,672,250,846 wei left on Account 1 after the Base Max send.
+check('formatUnits alone truncates the live dust to "0" (the bug)', formatUnits(107_672_250_846n, 18), '0');
+check('formatBalanceDisplay: 107,672,250,846 wei → "< 0.000001"', formatBalanceDisplay(107_672_250_846n, 18), '< 0.000001');
+check('formatBalanceDisplay: 1 wei → "< 0.000001"', formatBalanceDisplay(1n, 18), '< 0.000001');
+check('formatBalanceDisplay: zero stays "0"', formatBalanceDisplay(0n, 18), '0');
+check('formatBalanceDisplay: exactly 0.000001 ETH is shown as such', formatBalanceDisplay(10n ** 12n, 18), '0.000001');
+check('formatBalanceDisplay: just below 0.000001 ETH → "< 0.000001"', formatBalanceDisplay(10n ** 12n - 1n, 18), '< 0.000001');
+check('formatBalanceDisplay: ordinary amounts unchanged (0.008 ETH)', formatBalanceDisplay(8_000_000_000_000_000n, 18), '0.008');
+check('formatBalanceDisplay: truncation of larger amounts unchanged', formatBalanceDisplay(1_234_567_890_123_456_789n, 18), '1.234567');
+check('formatBalanceDisplay: 1 satoshi (8 decimals) → "< 0.000001"', formatBalanceDisplay(1n, 8), '< 0.000001');
+check('formatBalanceDisplay: USDC base unit (6 decimals) is exact', formatBalanceDisplay(1n, 6), '0.000001');
+check('formatBalanceDisplay: 2-decimal token → its own smallest unit', formatBalanceDisplay(1n, 2), '0.01');
+check('formatBalanceDisplay: other caps follow the cap', formatBalanceDisplay(5n, 18, 2), '< 0.01');
+check('spokenAmount reads "<" as "less than"', spokenAmount('< 0.000001'), 'less than 0.000001');
+check('spokenAmount leaves ordinary amounts alone', spokenAmount('0.008'), '0.008');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

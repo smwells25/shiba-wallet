@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { getEndpoint } from '../config/networks';
 import { usePrefs } from './PrefsContext';
+import { useAaStateRevision } from './useAaStateRevision';
 import { createAaClientFromConfig, getAaConfig, isAaConfigured, recoveredAccountFor } from './aa';
 import { EVM_CHAIN_ID } from './send';
 import { getRecoveryProgress, resolveGuardianAccount } from './recovery';
@@ -21,8 +22,12 @@ const NONE: RecoveryInfo = { guardiansEligible: false, recoveredAccount: null, r
  * active EVM chain. Read-only; NONE on any error. The Guardians and Recover
  * screens re-check everything and explain refusals.
  */
-export function useRecoveryInfo(owner: string | null | undefined, accountIndex: number | null): RecoveryInfo {
+export function useRecoveryInfo(owner: string | null | undefined, accountIndex: number | null, refreshKey = 0): RecoveryInfo {
   const { evmChain } = usePrefs();
+  // Re-check (keeping the last answer on screen meanwhile) when the AA
+  // configuration changes, an operation is accepted, or the caller asks
+  // (Home passes a counter that grows on focus and on pull-to-refresh).
+  const revision = useAaStateRevision();
   // The answer is stored with its inputs, so another account's or chain's
   // answer is never shown while a new one loads.
   const key = `${evmChain.caip2}|${owner ?? ''}|${accountIndex ?? ''}`;
@@ -65,6 +70,6 @@ export function useRecoveryInfo(owner: string | null | undefined, accountIndex: 
     return () => {
       cancelled = true;
     };
-  }, [key, owner, accountIndex, evmChain.caip2, evmChain.chainIdDecimal]);
+  }, [key, owner, accountIndex, evmChain.caip2, evmChain.chainIdDecimal, revision, refreshKey]);
   return answer !== null && answer.key === key ? answer.info : NONE;
 }

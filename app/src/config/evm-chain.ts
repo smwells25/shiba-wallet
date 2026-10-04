@@ -112,6 +112,17 @@ export interface EvmChainProfile {
    * and Max; see the OP-stack section of send.ts for the sources.
    */
   l1DataFee: boolean;
+  /**
+   * True when the Home screen offers the Swap screen on this profile. The
+   * swap flow quotes through 0x (wallet/swap.ts). Base Sepolia is false:
+   * 0x's supported-chain list (https://docs.0x.org/docs/introduction/supported-chains,
+   * checked 2026-10-03) names Base 8453 but not Base Sepolia, and Settings
+   * already tells the user that swaps are not offered there. Ethereum
+   * Sepolia stays true as it was since phase 5: 0x does not list Sepolia
+   * either, but the Swap screen was deliberately kept there so it can show
+   * whatever 0x answers (phase 5 item 1 record in AGENTS.md).
+   */
+  swapsOffered: boolean;
 }
 
 const MAINNET_RPC_DEFAULTS: readonly string[] = [
@@ -273,6 +284,7 @@ export const EVM_MAINNET: EvmChainProfile = {
   // item 1 (AGENTS.md); mainnet use stays gated by config/readiness.ts.
   kernelV33Verified: true,
   l1DataFee: false,
+  swapsOffered: true,
 };
 
 export const EVM_SEPOLIA: EvmChainProfile = {
@@ -300,6 +312,7 @@ export const EVM_SEPOLIA: EvmChainProfile = {
   // Confirmed read-only on Sepolia in phase 7 item 1 and live-proven since.
   kernelV33Verified: true,
   l1DataFee: false,
+  swapsOffered: true,
 };
 
 /**
@@ -445,7 +458,20 @@ export const EVM_BASE_SEPOLIA: EvmChainProfile = {
   bannerText: 'TESTNET — Base Sepolia test mode is on. Amounts are test ETH, not real funds.',
   kernelV33Verified: true,
   l1DataFee: true,
+  swapsOffered: false,
 };
+
+/**
+ * The note Home shows under the EVM card in a test mode, where the tracked
+ * tokens (mainnet assets) are hidden; null on a main network. Built from
+ * the active profile's modeLabel so it names the test network actually in
+ * use ("Base Sepolia test mode — …", not always "Sepolia test mode").
+ */
+export function testModeTokenNote(profile: EvmChainProfile): string | null {
+  if (!profile.testnet) return null;
+  const mode = profile.modeLabel.charAt(0).toUpperCase() + profile.modeLabel.slice(1);
+  return `${mode} — tracked tokens are mainnet assets and are hidden until test mode is turned off in Settings.`;
+}
 
 /** The test-network profiles, in the order Settings → Developer lists them. */
 export const EVM_TEST_PROFILES: readonly EvmChainProfile[] = [EVM_SEPOLIA, EVM_BASE_SEPOLIA];

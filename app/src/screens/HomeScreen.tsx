@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -16,13 +16,17 @@ import type { FungibleAsset } from '@shiba-wallet/core';
 import type { RootStackParamList } from '../navigation';
 import { screenStyle } from '../components';
 import { useTheme } from '../theme';
-import { EVM_CHAIN_ID } from '../wallet/send';
+import { EVM_CHAIN_ID, addSendAcceptedListener } from '../wallet/send';
+import { addAaSentListener } from '../wallet/aa';
+import { createSendRefreshTracker, reloadNowAndLater } from '../wallet/home-refresh';
 import { ChainAccount, useWallet } from '../wallet/WalletContext';
 import { AccountSwitcher } from '../components/AccountSwitcher';
 import { OfflineNotice } from '../wallet/connectivity';
 import { usePrefs } from '../wallet/PrefsContext';
 import { maskAmount } from '../config/prefs';
+import { testModeTokenNote } from '../config/evm-chain';
 import { BalanceState, useBalances } from '../wallet/useBalances';
+import { spokenAmount } from '../wallet/balances';
 import { useTokenBalances } from '../wallet/useTokenBalances';
 import { useAccountDelegation } from '../wallet/useDelegation';
 import { useSessionEligibility } from '../wallet/useSessionEligibility';
@@ -89,7 +93,7 @@ function BalanceCell({
         style={styles.balanceCell}
         accessible
         accessibilityLabel={
-          hidden ? 'Balance hidden' : `Balance ${state.display} ${state.symbol}${spokenFiat}${spokenStale}`
+          hidden ? 'Balance hidden' : `Balance ${spokenAmount(state.display)} ${state.symbol}${spokenFiat}${spokenStale}`
         }
       >
         <Text style={[styles.balance, { color: theme.text }]} numberOfLines={1}>
@@ -202,22 +206,30 @@ export function HomeScreen({ navigation }: Props) {
   // re-fetches the EVM row (useBalances handles it).
   const { balances, refreshing, refreshAll, refreshOne } = useBalances(accounts, evmChain.caip2);
   const evmAccount = accounts.find((a) => a.chainId === EVM_CHAIN_ID);
+  // Grows on every focus after the first and on every pull-to-refresh, so
+  // the eligibility checks behind the account-tools row (sessions,
+  // guardians, passkey) run again: an account deployed by a send from
+  // another screen, or a bundler saved in Settings, then shows its links
+  // without a relaunch. The hooks also re-check on their own when the AA
+  // configuration is written or an operation is accepted
+  // (useAaStateRevision). The previous answer stays on screen meanwhile.
+  const [toolsRefresh, setToolsRefresh] = useState(0);
   // EIP-7702 status of the active account on the active EVM chain (phase 8
   // item 1): shown under the account switcher so the user always knows
   // which code runs at the address.
   const delegation = useAccountDelegation(evmAccount?.address);
   // Session keys (phase 8 item 2): linked only when the active account has
   // a deployed Kernel account or an active EIP-7702 upgrade.
-  const sessionsEligible = useSessionEligibility(evmAccount?.address, activeAccount?.index ?? null);
+  const sessionsEligible = useSessionEligibility(evmAccount?.address, activeAccount?.index ?? null, toolsRefresh);
   // Guardians (phase 8 item 4): linked only for a deployed Kernel v3.3
   // account the active account owns; a recovered account gets a label; a
   // recovery in progress gets a "continue" line.
-  const recovery = useRecoveryInfo(evmAccount?.address, activeAccount?.index ?? null);
+  const recovery = useRecoveryInfo(evmAccount?.address, activeAccount?.index ?? null, toolsRefresh);
   // Passkey signer (phase 8 item 3): linked only for a deployed Kernel v3.3
   // account the active account owns; the screen shows the development-build
   // note when the native module or the rpId is missing.
-  const passkey = usePasskeyInfo(evmAccount?.address, activeAccount?.index ?? null);
-  // Tracked tokens are Ethereum-mainnet assets; in Sepolia test mode the
+  const passkey = usePasskeyInfo(evmAccount?.address, activeAccount?.index ?? null, toolsRefresh);
+  // Tracked tokens are Ethereum-mainnet assets; in every test mode the
   // token section is hidden entirely (fetching a mainnet contract's
   // balanceOf against a Sepolia endpoint would be wrong-chain noise).
   const showTokens = !evmChain.testnet;
@@ -253,6 +265,45 @@ export function HomeScreen({ navigation }: Props) {
     useCallback(() => {
       if (showTokens) void reloadTokens();
     }, [reloadTokens, showTokens]),
+  );
+
+  // Balances after a send (Base Sepolia finding 7): Home stays mounted
+  // under Send, Swap and the other screens, so it only notes that a
+  // transaction or smart-account operation was accepted, and reloads every
+  // row when it regains focus — once at once and once more a little later,
+  // because the balance moves at inclusion, not at acceptance
+  // (wallet/home-refresh.ts). Each row keeps its own loading, error and
+  // retry state (useBalances refreshOne).
+  const sendTracker = useRef(createSendRefreshTracker([addSendAcceptedListener, addAaSentListener]));
+  useEffect(() => sendTracker.current.start(), []);
+  const reloadNativeRows = useCallback(() => {
+    for (const account of accounts) void refreshOne(account.chainId);
+  }, [accounts, refreshOne]);
+  const reloadAllRows = useCallback(() => {
+    reloadNativeRows();
+    if (showTokens) void reloadTokens();
+  }, [reloadNativeRows, reloadTokens, showTokens]);
+  // Read through refs so the focus effect below runs once per focus, not
+  // again whenever these callbacks change identity while Home is focused.
+  const reloaders = useRef({ now: reloadNativeRows, later: reloadAllRows });
+  useEffect(() => {
+    reloaders.current = { now: reloadNativeRows, later: reloadAllRows };
+  }, [reloadNativeRows, reloadAllRows]);
+  const focusedBefore = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      // The first focus is the initial mount, where every hook loads anyway.
+      if (focusedBefore.current) setToolsRefresh((value) => value + 1);
+      focusedBefore.current = true;
+      if (!sendTracker.current.takeStale()) return undefined;
+      // Tokens are already reloaded on every focus by the effect above, so
+      // the immediate pass reloads the native rows only; the follow-up pass
+      // reloads both. It is cancelled when Home loses focus or unmounts.
+      return reloadNowAndLater(
+        () => reloaders.current.now(),
+        () => reloaders.current.later(),
+      );
+    }, []),
   );
 
   /** One text link in a chain card's link rows. */
@@ -339,8 +390,12 @@ export function HomeScreen({ navigation }: Props) {
             navigation.navigate('Activity', { chainId: item.chainId }),
           )}
           {/* Swaps are an EVM feature (0x, phase 5 item 1); the screen
-              itself explains and stays off until a key is configured. */}
-          {isEvm ? cardLink('swap', 'Swap', 'Swap', () => navigation.navigate('Swap')) : null}
+              itself explains and stays off until a key is configured. Not
+              linked on profiles where swaps are not offered (Base Sepolia:
+              config/evm-chain.ts swapsOffered). */}
+          {isEvm && evmChain.swapsOffered
+            ? cardLink('swap', 'Swap', 'Swap', () => navigation.navigate('Swap'))
+            : null}
           {/* NFT gallery (phase 7 item 4) for the active EVM chain; the
               screen explains itself until an NFT indexer is configured. */}
           {isEvm ? cardLink('nfts', 'NFTs', 'NFTs', () => navigation.navigate('Nfts')) : null}
@@ -389,10 +444,7 @@ export function HomeScreen({ navigation }: Props) {
       return (
         <View style={styles.evmGroup}>
           {card}
-          <Text style={[styles.testnetNote, { color: theme.textMuted }]}>
-            Sepolia test mode — tracked tokens are mainnet assets and are
-            hidden until test mode is turned off in Settings.
-          </Text>
+          <Text style={[styles.testnetNote, { color: theme.textMuted }]}>{testModeTokenNote(evmChain)}</Text>
         </View>
       );
     }
@@ -534,6 +586,7 @@ export function HomeScreen({ navigation }: Props) {
               void refreshAll();
               void reloadTokens();
               void refreshPrices();
+              setToolsRefresh((value) => value + 1);
             }}
             tintColor={theme.textMuted}
             colors={[theme.accent]}

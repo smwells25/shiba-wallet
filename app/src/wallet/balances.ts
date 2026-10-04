@@ -120,6 +120,33 @@ export function formatUnits(amount: bigint, decimals: number, maxFractionDigits 
 }
 
 /**
+ * The display form of a balance row (Home's native and token rows). It is
+ * formatUnits capped at `maxFractionDigits`, except that a NON-ZERO amount
+ * smaller than the smallest digit shown — which formatUnits truncates to
+ * "0" — is shown as "< 0.000001" (the smallest displayable unit at that
+ * cap) instead. A balance that is not empty must never read as empty; the
+ * exact figure is still available on the Send screen (Max) and in the
+ * fiat value, which is computed from the exact amount, not this string.
+ * Zero stays "0". Example: 107,672,250,846 wei → "< 0.000001".
+ */
+export function formatBalanceDisplay(amount: bigint, decimals: number, maxFractionDigits = 6): string {
+  const display = formatUnits(amount, decimals, maxFractionDigits);
+  if (amount <= 0n || display !== '0') return display;
+  const digits = Math.min(decimals, maxFractionDigits);
+  // With digits === 0 every non-zero amount has a whole part, so this is
+  // unreachable then; kept total for safety.
+  return digits > 0 ? `< 0.${'0'.repeat(digits - 1)}1` : '< 1';
+}
+
+/**
+ * The screen-reader form of a display amount: a leading "< " (from
+ * formatBalanceDisplay) is read as "less than " rather than as a symbol.
+ */
+export function spokenAmount(display: string): string {
+  return display.startsWith('< ') ? `less than ${display.slice(2)}` : display;
+}
+
+/**
  * Inserts thousands separators into the whole part of a plain decimal
  * string ("1234567.891" -> "1,234,567.891"). Pure string manipulation
  * rather than Intl/toLocaleString, whose support on Hermes is limited; the

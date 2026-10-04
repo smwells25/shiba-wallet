@@ -84,7 +84,7 @@ import {
   type AaSentEvent,
 } from './aa.ts';
 import { sanitizeDisplayName } from './names.ts';
-import { EVM_CHAIN_ID, validateRecipient } from './send.ts';
+import { EVM_CHAIN_ID, notifySendAccepted, validateRecipient } from './send.ts';
 import type { KeyValueStore } from './tokens.ts';
 
 /**
@@ -2308,7 +2308,9 @@ export async function sendApproveWithSig(
     },
     signer,
   );
-  return client.sendRawTransaction(signed.rawHex);
+  const txid = await client.sendRawTransaction(signed.rawHex);
+  notifySendAccepted();
+  return txid;
 }
 
 /** Polls for a transaction receipt; true when it succeeded. Throws on timeout. */

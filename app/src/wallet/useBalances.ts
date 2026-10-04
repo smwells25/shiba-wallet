@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 // Explicit .ts extensions: scripts/check-failover.mjs imports
 // loadNativeBalance from this module under Node's type stripping.
 import { callWithFailover, getEndpoint, type NetworkEndpoint } from '../config/networks.ts';
-import { fetchNativeBalance, formatUnits } from './balances.ts';
+import { fetchNativeBalance, formatBalanceDisplay } from './balances.ts';
 import type { ChainAccount } from './WalletContext';
 
 /**
@@ -106,7 +106,7 @@ export function useBalances(accounts: ChainAccount[], activeEvmChainId?: string)
         const used = load.endpoint;
         setChainState(account.chainId, {
           status: 'ok',
-          display: formatUnits(load.amount, used.network.decimals),
+          display: formatBalanceDisplay(load.amount, used.network.decimals),
           symbol: used.network.symbol,
           amount: load.amount,
           decimals: used.network.decimals,

@@ -5,6 +5,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import type { RootStackParamList, SettingsSectionId } from '../navigation';
 import { allowScreenCaptureAsync, preventScreenCaptureAsync } from 'expo-screen-capture';
 import { Button, WarningBox, WordGrid, screenStyle } from '../components';
+import { localDateLabel } from '../config/dates';
 import { AccountsSection } from '../components/AccountsSection';
 import {
   NetworkEndpoint,
@@ -45,6 +46,7 @@ import {
 } from '../wallet/phrase-protection-copy';
 import {
   AA_ACCOUNT_TYPES,
+  bundlerVerifiedLine,
   kernelDeploymentNote,
   KERNEL_PREFILL,
   aaAccountTypeLabel,
@@ -371,7 +373,7 @@ function BlockbookRow({
           {config?.url ? (
             <Text style={[styles.aaVerified, { color: theme.success }]}>
               Verified ✓ — /api/v2/utxo answered for your address (checked{' '}
-              {config.verifiedAt ? config.verifiedAt.slice(0, 10) : 'unknown date'}).{' '}
+              {localDateLabel(config.verifiedAt)}).{' '}
               {config.apiKey ? 'API key set.' : 'No API key.'}
             </Text>
           ) : config?.ignoredUrlReason ? (
@@ -653,7 +655,8 @@ function AaChainRow({ network }: { network: NetworkDefault }) {
 
   useEffect(reload, [reload]);
 
-  const shortDate = (iso: string | null) => (iso ? iso.slice(0, 10) : 'unknown date');
+  // The device's local day of the stored UTC timestamp (config/dates.ts).
+  const shortDate = (iso: string | null) => localDateLabel(iso);
   const simplePrefill = network.chainId === evmChain.caip2 ? evmChain.aaPrefill : null;
   const type: AaAccountType = selectedType ?? 'kernel-v3.3';
   // The stored factory belongs to the selected type only when the types match.
@@ -693,9 +696,7 @@ function AaChainRow({ network }: { network: NetworkDefault }) {
         locked={!anyTypeAllowed}
         statusLine={
           config?.bundlerUrl
-            ? `Verified ✓ — eth_supportedEntryPoints includes EntryPoint v0.7 (checked ${shortDate(
-                config.bundlerVerifiedAt,
-              )})`
+            ? bundlerVerifiedLine(config, network.label, shortDate(config.bundlerVerifiedAt))
             : null
         }
         onSave={async (draft) => {
@@ -904,7 +905,8 @@ function IndexerChainRow({
 
   useEffect(reload, [reload]);
 
-  const shortDate = (iso: string | null) => (iso ? iso.slice(0, 10) : 'unknown date');
+  // The device's local day of the stored UTC timestamp (config/dates.ts).
+  const shortDate = (iso: string | null) => localDateLabel(iso);
 
   return (
     <View style={[styles.endpointRow, { backgroundColor: theme.card, borderColor: theme.border }]}>
@@ -964,7 +966,8 @@ function NftIndexerChainRow({
 
   useEffect(reload, [reload]);
 
-  const shortDate = (iso: string | null) => (iso ? iso.slice(0, 10) : 'unknown date');
+  // The device's local day of the stored UTC timestamp (config/dates.ts).
+  const shortDate = (iso: string | null) => localDateLabel(iso);
 
   return (
     <View style={[styles.endpointRow, { backgroundColor: theme.card, borderColor: theme.border }]}>
@@ -1448,7 +1451,7 @@ export function SettingsScreen({ navigation, route }: Props) {
               statusLine={
                 priceConfig?.demoApiKey
                   ? `Checked ✓ — a live price request with this key succeeded (${
-                      priceConfig.verifiedAt ? priceConfig.verifiedAt.slice(0, 10) : 'unknown date'
+                      localDateLabel(priceConfig.verifiedAt)
                     })`
                   : null
               }
@@ -1778,7 +1781,7 @@ export function SettingsScreen({ navigation, route }: Props) {
           statusLine={
             swapConfig?.apiKey
               ? `Verified ✓ — a live quote request succeeded (checked ${
-                  swapConfig.verifiedAt ? swapConfig.verifiedAt.slice(0, 10) : 'unknown date'
+                  localDateLabel(swapConfig.verifiedAt)
                 })`
               : null
           }

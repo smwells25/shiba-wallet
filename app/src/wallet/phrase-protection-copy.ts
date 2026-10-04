@@ -10,6 +10,7 @@ import {
   type StorageProtection,
   type UpgradeResult,
 } from './storage.ts';
+import { localDateLabel } from '../config/dates.ts';
 
 /** What the Settings section shows for one storageProtection() result. */
 export interface ProtectionStatusView {
@@ -35,12 +36,13 @@ export const STANDARD_COPY_NOTE =
   'An unprotected copy is still being removed; it goes the next time you approve something.';
 
 /**
- * The date shown in "protected … (since {date})": YYYY-MM-DD, the same
- * form the other Settings status lines use for their check dates.
+ * The date shown in "protected … (since {date})": YYYY-MM-DD on the
+ * device's local calendar (config/dates.ts), the same form and rule the
+ * other Settings status lines use for their check dates.
  */
 export function protectionDate(ms: number | null): string {
   if (ms === null || !Number.isFinite(ms)) return 'unknown date';
-  return new Date(ms).toISOString().slice(0, 10);
+  return localDateLabel(ms);
 }
 
 /** " ({detail})" when the platform gave error text, otherwise nothing. */

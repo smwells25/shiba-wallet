@@ -16,7 +16,13 @@
 //    and Max use the same figure (op-geth's buyGas balance check);
 //  - Ethereum mainnet and Sepolia quotes make no oracle call and carry no
 //    OP-stack fields (their quotes are unchanged);
-//  - an oracle that fails or answers malformed data refuses the quote.
+//  - an oracle that fails or answers malformed data refuses the quote;
+//  - a Max amount whose fee rose before Review (the live Base Sepolia
+//    finding of phase 12) is lowered to balance minus the current
+//    worst-case fee only when the quote is marked fromMax, re-priced on the
+//    exact lowered transaction, and reported in maxAdjustment; a typed
+//    amount is still refused, and quotes without an adjustment are
+//    unchanged.
 //
 //   export PATH="$HOME/.nvm/versions/node/v24.21.0/bin:$PATH"
 //   node scripts/check-base.mjs           # offline
@@ -35,7 +41,9 @@ import { encodeFunctionCall, selector, toBytes, toHex } from '@shiba-wallet/chai
 import {
   L1_DATA_FEE_HEADROOM_PERCENT,
   OP_STACK_GAS_PRICE_ORACLE,
+  amountIsLastMax,
   chainHasL1DataFee,
+  maxAdjustmentSentence,
   maxEvmSend,
   opStackFeeTotal,
   prepareEvmSend,
@@ -129,7 +137,7 @@ function rpcResult(method, params) {
       const { to, data = '0x' } = params[0];
       if (to.toLowerCase() === OP_STACK_GAS_PRICE_ORACLE.toLowerCase()) {
         if (s.oracleError) throw { code: -32000, message: s.oracleError };
-        if (data.startsWith(GET_L1_FEE)) return s.oracleResult ?? uintWord(s.l1Fee);
+        if (data.startsWith(GET_L1_FEE)) return s.oracleResult ?? uintWord(s.l1FeeFn ? s.l1FeeFn(data) : s.l1Fee);
         if (data.startsWith(GET_OPERATOR_FEE)) return uintWord(s.operatorFee);
         throw { code: -32000, message: `unexpected oracle call ${data.slice(0, 10)}` };
       }
@@ -161,6 +169,14 @@ function oracleCalls() {
   return requests.filter(
     (r) => r.method === 'eth_call' && r.params[0].to.toLowerCase() === OP_STACK_GAS_PRICE_ORACLE.toLowerCase(),
   );
+}
+
+/** The bytes argument of the LAST recorded getL1Fee call, decoded with ethers. */
+function lastPricedUnsignedTx() {
+  const calls = oracleCalls().filter((r) => r.params[0].data.startsWith(GET_L1_FEE));
+  if (calls.length === 0) return null;
+  const [bytes] = abi.decode(['bytes'], '0x' + calls[calls.length - 1].params[0].data.slice(10));
+  return bytes;
 }
 
 /** The bytes argument of the recorded getL1Fee call, decoded with ethers. */
@@ -395,6 +411,165 @@ check(
   maxQuote.total <= scenario.balance,
   `${maxQuote.total} vs ${scenario.balance}`,
 );
+
+// ---------------------------------------------------------------------------
+// 3b. Max slack: the fee rises between the Max tap and Review
+// ---------------------------------------------------------------------------
+
+console.log('Max when the fee rises before Review:');
+
+// The live figures of 2026-10-03: balance 0.008 ETH, an L1 estimate that
+// rose from ~5.42e9 to ~6.02e9 wei between the Max tap and Review.
+function liveScenario() {
+  const s = defaultScenario('0x14a34');
+  s.balance = 8_000_000_000_000_000n;
+  s.baseFeePerGas = 5_000_000n;
+  s.priorityFee = 1_000_000n; // maxFeePerGas 0.011 gwei, as on the confirm
+  s.l1Fee = 5_420_000_000n;
+  return s;
+}
+scenario = liveScenario();
+const liveMax = await maxEvmSend(URL, FROM, TO);
+scenario.l1Fee = 6_020_000_000n; // the oracle moved on
+const liveL2 = 21000n * 11_000_000n;
+const liveFeeAfter = liveL2 + reserveOf(6_020_000_000n);
+await checkRejects(
+  'a typed amount equal to the old Max is still refused when the fee rose (refusal rule kept)',
+  () => prepareEvmSend(URL, FROM, TO, liveMax, undefined, EVM_BASE_SEPOLIA.caip2),
+  /Insufficient funds: sending \d+ wei plus a worst-case fee of \d+ wei exceeds the balance of 8000000000000000 wei/,
+);
+await checkRejects(
+  'fromMax false behaves like no option (refused)',
+  () => prepareEvmSend(URL, FROM, TO, liveMax, undefined, EVM_BASE_SEPOLIA.caip2, { fromMax: false }),
+  /Insufficient funds/,
+);
+requests = [];
+const trimmed = await prepareEvmSend(URL, FROM, TO, liveMax, undefined, EVM_BASE_SEPOLIA.caip2, { fromMax: true }).catch(
+  (e) => {
+    check('fromMax: the Max amount quotes after the fee rose', false, e instanceof Error ? e.message : String(e));
+    console.log(`\ncheck-base: ${passed} passed, ${failed} failed`);
+    process.exit(1);
+  },
+);
+check('fromMax: the Max amount quotes after the fee rose', true);
+check(
+  'fromMax: the amount is lowered to balance − current worst-case fee',
+  trimmed.amount === scenario.balance - liveFeeAfter,
+  `${trimmed.amount} vs ${scenario.balance - liveFeeAfter}`,
+);
+check('fromMax: amount + fee equals the balance exactly', trimmed.total === scenario.balance && trimmed.amount + trimmed.fee === scenario.balance);
+check('fromMax: the amount was lowered, never raised', trimmed.amount < liveMax);
+check('fromMax: maxAdjustment records the requested amount', trimmed.maxAdjustment?.requested === liveMax);
+check(
+  'fromMax: the oracle re-priced the exact lowered transaction',
+  ethers.Transaction.from(lastPricedUnsignedTx()).value === trimmed.amount,
+);
+check(
+  'fromMax: the first pricing used the requested amount, the second the lowered one',
+  oracleCalls().filter((r) => r.params[0].data.startsWith(GET_L1_FEE)).length === 2 &&
+    ethers.Transaction.from(pricedUnsignedTx()).value === liveMax,
+);
+const simCall = requests.filter((r) => r.method === 'eth_call' && r.params[0].to.toLowerCase() === TO.toLowerCase());
+check(
+  'fromMax: the eth_call pre-flight simulated the lowered amount',
+  simCall.length === 1 && BigInt(simCall[0].params[0].value) === trimmed.amount,
+  JSON.stringify(simCall.map((r) => r.params[0].value)),
+);
+await sendEvm(URL, signer(), trimmed, EVM_BASE_SEPOLIA.explorerTxBase);
+const trimmedSigned = ethers.Transaction.from(lastRawTx);
+check(
+  'fromMax: sendEvm signs exactly the re-priced, lowered transaction',
+  trimmedSigned.unsignedSerialized === lastPricedUnsignedTx() && trimmedSigned.value === trimmed.amount,
+);
+const sentence = maxAdjustmentSentence(trimmed, (v) => `${v} wei`);
+check(
+  'confirm sentence names both amounts in plain words',
+  sentence ===
+    `The amount was lowered from ${liveMax} wei to ${trimmed.amount} wei because the network fee rose after you tapped Max. ` +
+      'The amount plus the worst-case fee now equals your balance.',
+  String(sentence),
+);
+check('no sentence without an adjustment', maxAdjustmentSentence(baseQuote, String) === null);
+
+// The fee FELL before Review: nothing changes (the amount is never raised,
+// and the quote carries no adjustment field).
+scenario = liveScenario();
+const maxBeforeFall = await maxEvmSend(URL, FROM, TO);
+scenario.l1Fee = 4_000_000_000n;
+const fell = await prepareEvmSend(URL, FROM, TO, maxBeforeFall, undefined, EVM_BASE_SEPOLIA.caip2, { fromMax: true });
+check('fee fell: the Max amount is kept as typed', fell.amount === maxBeforeFall && fell.total < scenario.balance);
+check('fee fell: no maxAdjustment field', !('maxAdjustment' in fell));
+
+// The fee did not move: the quote equals one without the option, key for key.
+scenario = liveScenario();
+const steadyMax = await maxEvmSend(URL, FROM, TO);
+const steadyPlain = await prepareEvmSend(URL, FROM, TO, steadyMax, undefined, EVM_BASE_SEPOLIA.caip2);
+const steadyMarked = await prepareEvmSend(URL, FROM, TO, steadyMax, undefined, EVM_BASE_SEPOLIA.caip2, { fromMax: true });
+const keysOf = (q) => JSON.stringify(q, (_k, v) => (typeof v === 'bigint' ? v.toString() : v));
+check('fee steady: fromMax quote is identical to the plain quote', keysOf(steadyPlain) === keysOf(steadyMarked));
+
+// A pathological oracle whose fee keeps rising with every pricing: bounded
+// rounds, then the ordinary refusal — never a signature over the balance.
+scenario = liveScenario();
+const maxBeforeClimb = await maxEvmSend(URL, FROM, TO);
+let climb = 6_000_000_000n;
+scenario.l1FeeFn = () => (climb += 1_000_000_000n);
+requests = [];
+await checkRejects(
+  'oracle rising on every pricing: refused after the bounded rounds',
+  () => prepareEvmSend(URL, FROM, TO, maxBeforeClimb, undefined, EVM_BASE_SEPOLIA.caip2, { fromMax: true }),
+  /Insufficient funds/,
+);
+check(
+  'oracle rising on every pricing: at most 1 + 3 getL1Fee calls',
+  oracleCalls().filter((r) => r.params[0].data.startsWith(GET_L1_FEE)).length === 4,
+  String(oracleCalls().filter((r) => r.params[0].data.startsWith(GET_L1_FEE)).length),
+);
+
+// Fees larger than the whole balance: refused, not lowered to zero or below.
+scenario = liveScenario();
+scenario.balance = 1000n;
+await checkRejects(
+  'fromMax with fees above the balance → refused',
+  () => prepareEvmSend(URL, FROM, TO, 500n, undefined, EVM_BASE_SEPOLIA.caip2, { fromMax: true }),
+  /Insufficient funds/,
+);
+
+// Calldata is never lowered (a contract call's value is the caller's).
+scenario = liveScenario();
+scenario.balance = 100_000_000_000n;
+await checkRejects(
+  'fromMax with calldata → refused, value unchanged',
+  () =>
+    prepareEvmSend(URL, FROM, TO, 99_000_000_000n, toBytes('0xa9059cbb'), EVM_BASE_SEPOLIA.caip2, { fromMax: true }),
+  /Insufficient funds/,
+);
+
+// Mainnet / Sepolia: the base fee rose; one lowering, no oracle call.
+for (const [profile, hex] of [
+  [EVM_MAINNET, '0x1'],
+  [EVM_SEPOLIA, '0xaa36a7'],
+]) {
+  scenario = defaultScenario(hex);
+  const m = await maxEvmSend(URL, FROM, TO);
+  scenario.baseFeePerGas = 3_000_000n; // the fee rose
+  requests = [];
+  const q = await prepareEvmSend(URL, FROM, TO, m, undefined, profile.caip2, { fromMax: true });
+  check(
+    `${profile.label}: fromMax lowers to balance − gasLimit × new maxFeePerGas`,
+    q.amount === scenario.balance - 21000n * (2n * 3_000_000n + 1_000_000n) && q.total === scenario.balance,
+  );
+  check(`${profile.label}: fromMax makes no oracle call`, oracleCalls().length === 0);
+  check(`${profile.label}: maxAdjustment present`, q.maxAdjustment?.requested === m);
+}
+
+// amountIsLastMax: only the exact text, account and chain count.
+const last = { text: '0.0079', from: FROM, chainId: 'eip155:84532' };
+check('amountIsLastMax: same text, account and chain → true', amountIsLastMax(last, { text: '0.0079', from: FROM.toLowerCase(), chainId: 'eip155:84532' }));
+check('amountIsLastMax: edited text → false', !amountIsLastMax(last, { text: '0.00790', from: FROM, chainId: 'eip155:84532' }));
+check('amountIsLastMax: other account → false', !amountIsLastMax(last, { text: '0.0079', from: TO, chainId: 'eip155:84532' }));
+check('amountIsLastMax: other chain → false', !amountIsLastMax(last, { text: '0.0079', from: FROM, chainId: 'eip155:11155111' }));
+check('amountIsLastMax: no Max yet → false', !amountIsLastMax(null, { text: '0.0079', from: FROM, chainId: 'eip155:84532' }));
 
 // ---------------------------------------------------------------------------
 // 4. Ethereum mainnet and Sepolia: unchanged, no oracle call

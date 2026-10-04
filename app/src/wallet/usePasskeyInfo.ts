@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { getEndpoint } from '../config/networks';
 import { usePrefs } from './PrefsContext';
+import { useAaStateRevision } from './useAaStateRevision';
 import { createAaClientFromConfig, effectiveAaAccountType, getAaConfig, isAaConfigured } from './aa';
 import { EVM_CHAIN_ID } from './send';
 import { passkeyRecordForOwner, resolvePasskeyAccount, type PasskeyRecord } from './passkeys';
@@ -20,8 +21,12 @@ const NONE: PasskeyInfo = { eligible: false, record: null };
  * re-checks everything, explains refusals and shows the development-build
  * note when the native module or the rpId is missing.
  */
-export function usePasskeyInfo(owner: string | null | undefined, accountIndex: number | null): PasskeyInfo {
+export function usePasskeyInfo(owner: string | null | undefined, accountIndex: number | null, refreshKey = 0): PasskeyInfo {
   const { evmChain } = usePrefs();
+  // Re-check (keeping the last answer on screen meanwhile) when the AA
+  // configuration changes, an operation is accepted, or the caller asks
+  // (Home passes a counter that grows on focus and on pull-to-refresh).
+  const revision = useAaStateRevision();
   // The answer is stored with its inputs, so another account's or chain's
   // answer is never shown while a new one loads.
   const key = `${evmChain.caip2}|${owner ?? ''}|${accountIndex ?? ''}`;
@@ -58,6 +63,6 @@ export function usePasskeyInfo(owner: string | null | undefined, accountIndex: n
     return () => {
       cancelled = true;
     };
-  }, [key, owner, accountIndex, evmChain.caip2, evmChain.chainIdDecimal]);
+  }, [key, owner, accountIndex, evmChain.caip2, evmChain.chainIdDecimal, revision, refreshKey]);
   return answer !== null && answer.key === key ? answer.info : NONE;
 }

@@ -179,6 +179,12 @@ export interface AaChainConfig {
   /** ISO timestamp of the successful eth_supportedEntryPoints check. */
   bundlerVerifiedAt: string | null;
   /**
+   * The chain id (decimal) the bundler reported through eth_chainId when it
+   * was saved (verifyAaBundlerChain). Null for a bundler saved before that
+   * check existed (phase 11 item 5): Settings then does not claim it ran.
+   */
+  bundlerChainIdVerified: string | null;
+  /**
    * Which implementation `factory` deploys. Configurations saved before
    * account types existed have no stored type and read as 'simple'.
    */
@@ -255,6 +261,7 @@ export interface RecoveredAccountLink {
 const EMPTY_CONFIG: AaChainConfig = {
   bundlerUrl: null,
   bundlerVerifiedAt: null,
+  bundlerChainIdVerified: null,
   accountType: 'simple',
   factory: null,
   factoryImplementation: null,
@@ -313,6 +320,37 @@ async function loadConfigMap(store: KeyValueStore): Promise<ConfigMap> {
 
 async function saveConfigMap(map: ConfigMap, store: KeyValueStore): Promise<void> {
   await store.setItem(AA_CONFIG_KEY, JSON.stringify(map));
+  notifyAaConfigChanged();
+}
+
+export type AaConfigChangedListener = () => void;
+
+const configChangedListeners = new Set<AaConfigChangedListener>();
+
+/**
+ * Subscribes to writes of the smart-account configuration. Every setter and
+ * clear function in this module persists through saveConfigMap, which calls
+ * the listeners after the write succeeded (a refused save writes nothing
+ * and notifies nobody). Used by the Home eligibility hooks so the Sessions,
+ * Guardians and Passkey links appear or disappear without a relaunch.
+ * Returns the unsubscribe function.
+ */
+export function addAaConfigChangedListener(listener: AaConfigChangedListener): () => void {
+  configChangedListeners.add(listener);
+  return () => {
+    configChangedListeners.delete(listener);
+  };
+}
+
+/** Best-effort fan-out: a failing listener never affects the saved configuration. */
+function notifyAaConfigChanged(): void {
+  for (const listener of [...configChangedListeners]) {
+    try {
+      listener();
+    } catch {
+      // Listeners only refresh displays; the configuration is already saved.
+    }
+  }
 }
 
 /**
@@ -350,6 +388,10 @@ function normalizeEntry(entry: Partial<AaChainConfig> | undefined, chain: string
   return {
     bundlerUrl,
     bundlerVerifiedAt: bundlerUrl ? str(entry?.bundlerVerifiedAt) : null,
+    bundlerChainIdVerified:
+      bundlerUrl && typeof entry?.bundlerChainIdVerified === 'string' && /^[0-9]+$/.test(entry.bundlerChainIdVerified)
+        ? entry.bundlerChainIdVerified
+        : null,
     accountType,
     factory,
     factoryImplementation: factory ? str(entry?.factoryImplementation) : null,
@@ -723,13 +765,16 @@ export async function setAaBundlerUrl(
   // before any request, so a refused URL persists nothing.
   const trimmed = assertSecureEndpointUrl(url);
   const bundler = transportFor(trimmed);
-  await verifyAaBundlerChain(bundler, eip155ChainIdOf(chainId));
+  const expectedChainId = eip155ChainIdOf(chainId);
+  await verifyAaBundlerChain(bundler, expectedChainId);
   const supported = await verifyAaBundler(bundler);
   const map = await loadConfigMap(store);
   map[chainId] = {
     ...map[chainId],
     bundlerUrl: trimmed,
     bundlerVerifiedAt: new Date().toISOString(),
+    // verifyAaBundlerChain returned, so the bundler reported exactly this id.
+    bundlerChainIdVerified: expectedChainId.toString(),
   };
   await saveConfigMap(map, store);
   return supported;
@@ -846,6 +891,7 @@ export async function clearAaBundlerUrl(
   if (map[chainId]) {
     delete map[chainId]!.bundlerUrl;
     delete map[chainId]!.bundlerVerifiedAt;
+    delete map[chainId]!.bundlerChainIdVerified;
     await saveConfigMap(map, store);
   }
 }
@@ -1809,12 +1855,46 @@ export function isAlchemyBundlerUrl(bundlerUrl: string | null | undefined): bool
 }
 
 /**
- * The confirm-screen note for an operation that deploys a Kernel account:
- * the Alchemy limitation (KERNEL_BUNDLER_NOTE) only when the configured
- * bundler is Alchemy's, otherwise the neutral sentence.
+ * Settings sentence for a Kernel account on a chain with no bundler saved
+ * yet: the neutral sentence would claim a "configured bundler" that does
+ * not exist (Base Sepolia finding 5).
+ */
+export const KERNEL_DEPLOYMENT_NO_BUNDLER_NOTE =
+  'No bundler is configured yet; once one is saved, the first smart-account send deploys the account through it.';
+
+/**
+ * The note for an operation that deploys a Kernel account (Send confirm and
+ * the Settings AA section): the Alchemy limitation (KERNEL_BUNDLER_NOTE)
+ * only when the configured bundler is Alchemy's, the no-bundler sentence
+ * when none is saved, otherwise the neutral sentence.
  */
 export function kernelDeploymentNote(bundlerUrl: string | null | undefined): string {
+  if (!bundlerUrl) return KERNEL_DEPLOYMENT_NO_BUNDLER_NOTE;
   return isAlchemyBundlerUrl(bundlerUrl) ? KERNEL_BUNDLER_NOTE : KERNEL_DEPLOYMENT_NEUTRAL_NOTE;
+}
+
+/**
+ * The Settings status line for a saved bundler. It names the chain id the
+ * bundler reported through eth_chainId when the save ran that check
+ * (verifyAaBundlerChain, which runs first), and says that the check did not
+ * run for a bundler saved before it existed, instead of implying it did.
+ * `checked` is the already formatted local date (config/dates.ts).
+ */
+export function bundlerVerifiedLine(
+  config: Pick<AaChainConfig, 'bundlerChainIdVerified'>,
+  chainLabel: string,
+  checked: string,
+): string {
+  if (config.bundlerChainIdVerified) {
+    return (
+      `Verified ✓ — the bundler reported chain id ${config.bundlerChainIdVerified} (${chainLabel}) and ` +
+      `eth_supportedEntryPoints includes EntryPoint v0.7 (checked ${checked})`
+    );
+  }
+  return (
+    `Verified ✓ — eth_supportedEntryPoints includes EntryPoint v0.7 (checked ${checked}). ` +
+    'Saved before the chain-id check existed: save it again to confirm which network it serves.'
+  );
 }
 
 /**
@@ -2309,6 +2389,24 @@ export function addAaSentListener(listener: AaSentListener): () => void {
   sentListeners.add(listener);
   return () => {
     sentListeners.delete(listener);
+  };
+}
+
+/**
+ * Calls `onChange` whenever something that decides smart-account
+ * eligibility may have changed: the configuration was written (a bundler,
+ * factory, account type, EIP-7702 upgrade or recovered-account link was
+ * saved or cleared) or a smart-account operation was accepted by the
+ * bundler (which may deploy the account once it is included). Returns one
+ * function that removes both subscriptions. useAaStateRevision wraps it
+ * for React; it is separate so scripts/check-aa.mjs can exercise it.
+ */
+export function subscribeAaStateChanges(onChange: () => void): () => void {
+  const offConfig = addAaConfigChangedListener(onChange);
+  const offSent = addAaSentListener(() => onChange());
+  return () => {
+    offConfig();
+    offSent();
   };
 }
 

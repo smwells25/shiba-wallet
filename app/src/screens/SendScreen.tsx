@@ -33,6 +33,8 @@ import {
   EVM_CHAIN_ID,
   QUOTE_ENDPOINT_CHANGED_TITLE,
   describeSendError,
+  amountIsLastMax,
+  maxAdjustmentSentence,
   maxEvmSend,
   maxSolSend,
   maxUtxoSend,
@@ -45,6 +47,7 @@ import {
   sendUtxo,
   validateRecipient,
   L1_DATA_FEE_HEADROOM_PERCENT,
+  type LastMaxResult,
   type OpStackFees,
   type SendQuote,
   type SendResult,
@@ -261,6 +264,13 @@ export function SendScreen({ route, navigation }: Props) {
   const [aaConfig, setAaConfig] = useState<AaChainConfig | null>(null);
   const [aaEnabled, setAaEnabled] = useState(false);
   const aaBundle = useRef<AaClientBundle | null>(null);
+  // The amount text the Max button last wrote on the plain EOA native path
+  // (and for which account and chain). Review passes fromMax to
+  // prepareEvmSend only while the form still holds exactly this text, so a
+  // rise in the fee between the Max tap and Review lowers the Max amount
+  // with a plain note instead of refusing it, and a typed amount is never
+  // changed.
+  const lastEvmMax = useRef<LastMaxResult | null>(null);
   // Passkey signer (phase 8 item 3): offered on smart-account sends when this
   // device installed a passkey on the active account's Kernel account. Off
   // by default; the owner key stays the default signer.
@@ -675,6 +685,7 @@ export function SendScreen({ route, navigation }: Props) {
     if (!url) return;
     setMaxBusy(true);
     setFormError(null);
+    lastEvmMax.current = null;
     try {
       const start = await currentEndpoint();
       let max: bigint;
@@ -769,7 +780,11 @@ export function SendScreen({ route, navigation }: Props) {
         max = swept.amount;
       }
       if (max <= 0n) throw new Error('Balance is too small to cover the network fee.');
-      setAmountText(exact(max, decimals));
+      const maxText = exact(max, decimals);
+      if (!aaActive && !token && start.network.kind === 'evm-jsonrpc') {
+        lastEvmMax.current = { text: maxText, from: account.address, chainId: route.params.chainId };
+      }
+      setAmountText(maxText);
     } catch (e) {
       const { title, detail } = retitleQuoteFailure(
         (aaActive && aaType
@@ -896,8 +911,15 @@ export function SendScreen({ route, navigation }: Props) {
       } else if (start.network.kind === 'evm-jsonrpc') {
         // The endpoint's eth_chainId must match the ACTIVE EVM chain
         // (mainnet 1 / Sepolia 11155111) — the modes can never mix.
+        const fromMax = amountIsLastMax(lastEvmMax.current, {
+          text: amountText,
+          from: account.address,
+          chainId: route.params.chainId,
+        });
         const quoted = await viaFailover(start, (ep) =>
-          prepareEvmSend(ep.url, account.address, recipientAddress, amount, undefined, evmChain.caip2),
+          prepareEvmSend(ep.url, account.address, recipientAddress, amount, undefined, evmChain.caip2, {
+            fromMax,
+          }),
         );
         next = quoted.value;
         quoteUrl = quoted.used.url;
@@ -1583,6 +1605,9 @@ export function SendScreen({ route, navigation }: Props) {
           sub={fiatOf(nativePriceId, quote.amount, decimals)}
           theme={theme}
         />
+        {quote.kind === 'evm' && quote.maxAdjustment ? (
+          <WarningBox>{maxAdjustmentSentence(quote, (v) => `${exact(v, decimals)} ${symbol}`)}</WarningBox>
+        ) : null}
         <Row
           label={quote.kind === 'evm' ? 'Max network fee' : 'Network fee'}
           value={`${exact(quote.fee, decimals)} ${symbol}`}
