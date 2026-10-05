@@ -95,15 +95,24 @@ export interface FeatureReadiness {
   enforced: boolean;
 }
 
+/**
+ * The test networks' names as one phrase, from the profiles (never a
+ * hard-coded list): "A or B", "A, B or C".
+ */
+function testNetworkNames(conjunction: 'or' | 'and'): string {
+  const names = EVM_TEST_PROFILES.map((p) => p.label);
+  return names.length > 1 ? `${names.slice(0, -1).join(', ')} ${conjunction} ${names[names.length - 1]}` : names.join('');
+}
+
 /** The sentence every refusal and every gated screen ends with. */
 export const READINESS_TESTNET_HINT =
-  'Turn on a test network (Ethereum Sepolia or Base Sepolia) in Settings → Developer to use this ' +
+  `Turn on a test network (${testNetworkNames('or')}) in Settings → Developer to use this ` +
   'feature.';
 
 /** Shown in Settings above the list, so the advisory entries are not misread. */
 export const READINESS_INTRO =
   'What this build allows with real funds on a main network, and why. Features marked “Test ' +
-  'networks only” are switched off outside the test networks (Sepolia, Base Sepolia) and cannot be ' +
+  `networks only” are switched off outside the test networks (${testNetworkNames('and')}) and cannot be ` +
   'switched on. Features ' +
   'marked “Not yet cleared” still work on mainnet in this build, but the open items listed for ' +
   'them have not been closed, so use them with amounts you can afford to lose. Undoing something ' +
@@ -320,15 +329,16 @@ export const FEATURE_READINESS: readonly FeatureReadiness[] = [
     title: 'Paying the network fee in USDC',
     status: 'testnet-only',
     reason:
-      'Paying the network fee in USDC runs on the Kernel v3.3 smart account and Circle’s token ' +
-      'paymaster, and neither has a published audit for the deployed version. Circle can also ' +
-      'upgrade or pause the paymaster and change its price source, so this wallet offers it only on ' +
-      'test networks.',
+      'Paying the network fee in USDC runs on the Kernel v3.3 smart account and a token paymaster ' +
+      '(Circle’s, or Pimlico’s where Circle has none), and none of them has a published audit for the ' +
+      'deployed version. Circle can upgrade or pause its paymaster and change its price source, and ' +
+      'Pimlico sets its rate and can decline any operation, so this wallet offers it only on test networks.',
     // C1–C3: the Kernel account it runs on; W8: no live paymaster cleared
-    // for real funds; W9: the switchboard itself. The Circle paymaster has
-    // no threat-model finding of its own yet (proposed in the phase 13
-    // item 2 app-half report).
-    evidence: ['C1', 'C2', 'C3', 'W8', 'W9'],
+    // for real funds; W9: the switchboard itself; F-58: the token
+    // paymaster's trust (recorded in docs/THREAT_MODEL.md at the phase 13
+    // leadership refresh; it covers Circle's paymaster, and Pimlico's
+    // second source has the same no-audit and operator-control shape).
+    evidence: ['C1', 'C2', 'C3', 'W8', 'W9', 'F-58'],
     enforced: true,
   },
 ];

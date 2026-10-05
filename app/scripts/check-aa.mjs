@@ -1034,23 +1034,27 @@ await (async () => {
   // headroom no longer meets it; a quote is submitted at most once.
   console.log('\nsend-time fee floor');
   {
-    check('headroom is the stated 25 %', AA_FEE_FLOOR_HEADROOM_PERCENT === 25n);
-    check('withFeeFloorHeadroom rounds up exactly (29835424 → 37294280; 3 → 4)',
-      withFeeFloorHeadroom(29_835_424n) === 37_294_280n && withFeeFloorHeadroom(3n) === 4n && withFeeFloorHeadroom(100n) === 125n);
+    // The CTO raised the headroom from 25 % to 100 % on 2026-10-04 (AGENTS.md,
+    // phase 13 fee-floor fixes): with 100 % the quote is exactly twice the floor.
+    check('headroom is the stated 100 %', AA_FEE_FLOOR_HEADROOM_PERCENT === 100n);
+    check('withFeeFloorHeadroom doubles exactly (29835424 → 59670848; 3 → 6; 100 → 200; 0 → 0)',
+      withFeeFloorHeadroom(29_835_424n) === 59_670_848n && withFeeFloorHeadroom(3n) === 6n && withFeeFloorHeadroom(100n) === 200n && withFeeFloorHeadroom(0n) === 0n);
     const node = { maxFeePerGas: 2_001_000_000n, maxPriorityFeePerGas: 1_000_000n };
     check('no floor: fees returned unchanged (same object)', quoteFeesOverFloor(node, null) === node);
     const q1 = quoteFeesOverFloor(node, { maxPriorityFeePerGas: 29_835_424n, maxFeePerGas: null });
-    check('priority floor + 25 %, base allowance kept on maxFeePerGas',
-      q1.maxPriorityFeePerGas === 37_294_280n && q1.maxFeePerGas === 2_001_000_000n + (37_294_280n - 1_000_000n));
+    check('priority floor + 100 %, base allowance kept on maxFeePerGas',
+      q1.maxPriorityFeePerGas === 59_670_848n && q1.maxFeePerGas === 2_001_000_000n + (59_670_848n - 1_000_000n));
     const high = { maxFeePerGas: 9_000_000_000n, maxPriorityFeePerGas: 2_000_000_000n };
-    check('a suggestion already above floor + 25 % is unchanged (same object)',
-      quoteFeesOverFloor(high, { maxPriorityFeePerGas: 1_600_000_000n, maxFeePerGas: 7_200_000_000n }) === high);
+    check('a suggestion already at or above floor + 100 % is unchanged (same object)',
+      quoteFeesOverFloor(high, { maxPriorityFeePerGas: 1_000_000_000n, maxFeePerGas: 4_500_000_000n }) === high);
+    check('…but a floor one wei higher raises it (twice the floor is above the suggestion)',
+      quoteFeesOverFloor(high, { maxPriorityFeePerGas: 1_000_000_001n, maxFeePerGas: null }).maxPriorityFeePerGas === 2_000_000_002n);
     const q2 = quoteFeesOverFloor(node, { maxPriorityFeePerGas: 1n, maxFeePerGas: 4_000_000_000n });
-    check('an Alto-style maxFeePerGas minimum is met with the same headroom', q2.maxFeePerGas === 5_000_000_000n && q2.maxPriorityFeePerGas === 1_000_000n);
+    check('an Alto-style maxFeePerGas minimum is met with the same headroom', q2.maxFeePerGas === 8_000_000_000n && q2.maxPriorityFeePerGas === 1_000_000n);
     check('the observed refusal is a shortfall (floor 32305086 above the quoted 29835424)',
       /at least 32305086 wei .* above the 29835424 wei/.test(
         feeFloorShortfall({ maxFeePerGas: 2n * 10n ** 9n, maxPriorityFeePerGas: 29_835_424n }, { maxPriorityFeePerGas: 32_305_086n, maxFeePerGas: null }) ?? ''));
-    check('…and with the headroom quote it is not (8 % drift fits in 25 %)',
+    check('…and with the headroom quote it is not (8 % drift fits in 100 %)',
       feeFloorShortfall(quoteFeesOverFloor(node, { maxPriorityFeePerGas: 29_835_424n, maxFeePerGas: null }), { maxPriorityFeePerGas: 32_305_086n, maxFeePerGas: null }) === null);
     check('a floor exactly at the quoted fee passes; one wei above does not',
       feeFloorShortfall(q1, { maxPriorityFeePerGas: q1.maxPriorityFeePerGas, maxFeePerGas: q1.maxFeePerGas }) === null &&
@@ -1130,9 +1134,9 @@ await (async () => {
       const { b, mb } = movingBundle();
       mb.state.priority = 2_000_000_000n; // floor above the node's 1 gwei suggestion
       const qq = await prepareAaSend(b, owner.address, RECIPIENT, AMOUNT);
-      check('quote with a floor above the suggestion: priority 2.5 gwei, maxFee 3 gwei + 1.5 gwei',
-        qq.maxPriorityFeePerGas === 2_500_000_000n && qq.maxFeePerGas === 4_500_000_000n);
-      check('the displayed worst case is priced at those fees', qq.fee === (0x111n + 0x222n + 0x333n) * 4_500_000_000n);
+      check('quote with a floor above the suggestion: priority 4 gwei (floor × 2), maxFee 3 gwei + 3 gwei',
+        qq.maxPriorityFeePerGas === 4_000_000_000n && qq.maxFeePerGas === 6_000_000_000n);
+      check('the displayed worst case is priced at those fees (the headroom is inside it)', qq.fee === (0x111n + 0x222n + 0x333n) * 6_000_000_000n);
       mb.state.priority = 2_160_000_000n; // +8 %, as observed live
       await sendAa(b, owner, qq);
       const op = mb.base.lastOp;
@@ -1145,7 +1149,7 @@ await (async () => {
       const { b, mb } = movingBundle();
       mb.state.priority = 2_000_000_000n;
       const qq = await prepareAaSend(b, owner.address, RECIPIENT, AMOUNT);
-      mb.state.priority = 2_500_000_001n; // one wei above the quoted priority
+      mb.state.priority = 4_000_000_001n; // one wei above the quoted priority
       const r = await sendAa(b, owner, qq).then(() => null, (e) => e);
       check('one wei above the quoted priority → refused before signing', r instanceof AaFeeRoseError && sent(mb) === 0);
     }
@@ -1153,8 +1157,8 @@ await (async () => {
       const { b, mb } = movingBundle();
       mb.state.maxFee = 3_000_000_000n;
       const qq = await prepareAaSend(b, owner.address, RECIPIENT, AMOUNT);
-      check('an Alto maxFeePerGas floor raises the quoted maxFeePerGas by 25 %', qq.maxFeePerGas === 3_750_000_000n);
-      mb.state.maxFee = 3_750_000_001n;
+      check('an Alto maxFeePerGas floor raises the quoted maxFeePerGas by 100 %', qq.maxFeePerGas === 6_000_000_000n);
+      mb.state.maxFee = 6_000_000_001n;
       const r = await sendAa(b, owner, qq).then(() => null, (e) => e);
       check('a maxFeePerGas floor above the quoted one at send → refused, nothing sent', r instanceof AaFeeRoseError && /maximum fee/.test(r.message) && sent(mb) === 0);
     }
@@ -1249,49 +1253,76 @@ await (async () => {
     // answers eth_maxPriorityFeePerGas with 0.001 gwei (probe of 2026-10-04).
     const sepoliaNode = { maxFeePerGas: 2n * 1_000_000_000n + 1_000_000n, maxPriorityFeePerGas: 1_000_000n };
 
-    // The two live refusals, reconstructed exactly.
+    // The two live refusals, reconstructed exactly. They were quoted under
+    // the old 25 % headroom (the recorded quoted fees are ceil(1.25 × the
+    // quote-time standard tier)); the standard tier then rose +40.0 % and
+    // +26.3 %. Under the 100 % headroom both rises must pass.
     const live = [
-      { name: 'first refusal', quoteStandard: 86_768_137n, quoted: 108_460_172n, sendStandard: 121_510_234n },
-      { name: 'second refusal', quoteStandard: 53_945_437n, quoted: 67_431_797n, sendStandard: 68_112_565n },
+      { name: 'first refusal', quoteStandard: 86_768_137n, quoted25: 108_460_172n, sendStandard: 121_510_234n },
+      { name: 'second refusal', quoteStandard: 53_945_437n, quoted25: 67_431_797n, sendStandard: 68_112_565n },
     ];
     for (const c of live) {
+      check(`${c.name}: the recorded quoted priority fee ${c.quoted25} was ceil(1.25 × ${c.quoteStandard}) (the old 25 % rule)`,
+        (c.quoteStandard * 125n + 99n) / 100n === c.quoted25);
       const q = quoteFeesOverFloor(sepoliaNode, { maxPriorityFeePerGas: c.quoteStandard, maxFeePerGas: null });
-      check(`${c.name}: the quoted priority fee ${c.quoted} is ceil(1.25 × ${c.quoteStandard}) (the headroom was applied)`,
-        q.maxPriorityFeePerGas === c.quoted, String(q.maxPriorityFeePerGas));
+      check(`${c.name}: under the 100 % rule the quote is 2 × ${c.quoteStandard} = ${2n * c.quoteStandard}`,
+        q.maxPriorityFeePerGas === 2n * c.quoteStandard, String(q.maxPriorityFeePerGas));
       const risePermille = ((c.sendStandard - c.quoteStandard) * 1000n) / c.quoteStandard;
-      check(`${c.name}: the standard tier had risen ${Number(risePermille) / 10} % since the quote (above the 25 % headroom)`,
-        risePermille > 250n);
+      check(`${c.name}: the standard tier had risen ${Number(risePermille) / 10} % since the quote (above the old 25 %, within the new 100 %)`,
+        risePermille > 250n && risePermille <= 1000n);
     }
     // ZeroDev's slow tier is the standard one / 1.05 (probes of 2026-10-04:
     // slow, standard and fast always in the ratio 1 : 1.05 : 1.10).
     const slowOf = (standard) => (standard * 100n) / 105n;
     const q2 = quoteFeesOverFloor(sepoliaNode, { maxPriorityFeePerGas: live[1].quoteStandard, maxFeePerGas: null });
-    check('second refusal, standard tier only (what the old code read): still a shortfall — a bundler without a slow tier is compared as before',
-      feeFloorShortfall(q2, { maxPriorityFeePerGas: live[1].sendStandard, maxFeePerGas: null }) !== null);
-    check('second refusal, with the slow tier the bundler also returned (64869109): NOT a shortfall now (the old code refused it)',
-      feeFloorShortfall(q2, { maxPriorityFeePerGas: live[1].sendStandard, maxFeePerGas: null, lowest: { maxPriorityFeePerGas: slowOf(live[1].sendStandard), maxFeePerGas: null } }) === null);
     const q1 = quoteFeesOverFloor(sepoliaNode, { maxPriorityFeePerGas: live[0].quoteStandard, maxFeePerGas: null });
-    const s1 = feeFloorShortfall(q1, { maxPriorityFeePerGas: live[0].sendStandard, maxFeePerGas: null, lowest: { maxPriorityFeePerGas: slowOf(live[0].sendStandard), maxFeePerGas: null } });
-    check('first refusal: still a shortfall (even the slow tier, 115724032, is above the quoted 108460172), worded as the bundler’s minimum',
-      s1 !== null && s1.startsWith("The bundler's minimum fee rose: it now asks for a priority fee of at least 115724032 wei"), s1 ?? '');
+    for (const [c, q] of [[live[0], q1], [live[1], q2]]) {
+      check(`${c.name} (+${Number(((c.sendStandard - c.quoteStandard) * 1000n) / c.quoteStandard) / 10} %): NOT a shortfall now, compared with the standard tier alone`,
+        feeFloorShortfall(q, { maxPriorityFeePerGas: c.sendStandard, maxFeePerGas: null }) === null);
+      check(`${c.name}: NOT a shortfall now with the slow tier the bundler also returned (${slowOf(c.sendStandard)})`,
+        feeFloorShortfall(q, { maxPriorityFeePerGas: c.sendStandard, maxFeePerGas: null, lowest: { maxPriorityFeePerGas: slowOf(c.sendStandard), maxFeePerGas: null } }) === null);
+    }
+    // A rise above 100 % still refuses when only the standard tier is known,
+    // and the slow-tier comparison refuses one wei above the quoted fee.
+    const over = (live[0].quoteStandard * 201n) / 100n; // +101 %
+    const s1 = feeFloorShortfall(q1, { maxPriorityFeePerGas: over, maxFeePerGas: null });
+    check(`a +101 % rise of the standard tier (${over}, no slow tier) is a shortfall, worded as the bundler’s minimum`,
+      s1 !== null && s1.startsWith(`The bundler's minimum fee rose: it now asks for a priority fee of at least ${over} wei`), s1 ?? '');
+    check('slow-tier comparison: a slow tier exactly at the quoted fee passes; one wei above refuses (the standard tier far above does not matter)',
+      feeFloorShortfall(q1, { maxPriorityFeePerGas: 10n * q1.maxPriorityFeePerGas, maxFeePerGas: null, lowest: { maxPriorityFeePerGas: q1.maxPriorityFeePerGas, maxFeePerGas: null } }) === null &&
+        feeFloorShortfall(q1, { maxPriorityFeePerGas: 10n * q1.maxPriorityFeePerGas, maxFeePerGas: null, lowest: { maxPriorityFeePerGas: q1.maxPriorityFeePerGas + 1n, maxFeePerGas: null } }) !== null);
+    check('slow-tier comparison on maxFeePerGas: one wei above the quoted maximum fee refuses',
+      feeFloorShortfall(q1, { maxPriorityFeePerGas: 1n, maxFeePerGas: 10n * q1.maxFeePerGas, lowest: { maxPriorityFeePerGas: 1n, maxFeePerGas: q1.maxFeePerGas + 1n } }) !== null &&
+        feeFloorShortfall(q1, { maxPriorityFeePerGas: 1n, maxFeePerGas: 10n * q1.maxFeePerGas, lowest: { maxPriorityFeePerGas: 1n, maxFeePerGas: q1.maxFeePerGas } }) === null);
 
-    // The stated rule: any rise of the standard tier up to 25 % between the
+    // The stated rule: any rise of the standard tier up to 100 % between the
     // quote and the send never refuses (exact bigint, rounding included),
-    // with or without a slow tier; the first wei above does.
+    // with or without a slow tier; a rise of 101 % with no slow tier, and one
+    // wei above the quoted fee, do.
     let ruleHolds = true;
     let firstAboveRefused = true;
+    let overHundredRefused = true;
+    let overHundredCases = 0;
     for (const f of [1n, 3n, 999n, 29_835_424n, 53_945_437n, 86_768_137n, 108_460_172n, 1_000_000_001n, 117_170_432n]) {
       const q = quoteFeesOverFloor(sepoliaNode, { maxPriorityFeePerGas: f, maxFeePerGas: f * 15n });
-      for (const pct of [0n, 1n, 12n, 24n, 25n]) {
+      for (const pct of [0n, 1n, 12n, 24n, 25n, 26n, 40n, 50n, 90n, 99n, 100n]) {
         const risen = (f * (100n + pct)) / 100n;
         const floorNow = { maxPriorityFeePerGas: risen, maxFeePerGas: (f * 15n * (100n + pct)) / 100n };
         if (feeFloorShortfall(q, floorNow) !== null) ruleHolds = false;
         if (feeFloorShortfall(q, { ...floorNow, lowest: { maxPriorityFeePerGas: slowOf(risen), maxFeePerGas: slowOf(floorNow.maxFeePerGas) } }) !== null) ruleHolds = false;
       }
       if (feeFloorShortfall(q, { maxPriorityFeePerGas: q.maxPriorityFeePerGas + 1n, maxFeePerGas: null }) === null) firstAboveRefused = false;
+      // +101 % lands strictly above 2f only once f ≥ 100 (integer division),
+      // and refuses only where the floor set the quote (not the node's own
+      // higher suggestion).
+      if (f >= 100n && q.maxPriorityFeePerGas === 2n * f) {
+        overHundredCases += 1;
+        if (feeFloorShortfall(q, { maxPriorityFeePerGas: (f * 201n) / 100n, maxFeePerGas: null }) === null) overHundredRefused = false;
+      }
     }
-    check('the stated rule: a standard-tier rise of 0, 1, 12, 24 or 25 % between quote and send never refuses (nine floors, both fees)', ruleHolds);
-    check('…and one wei above the quoted priority fee always does', firstAboveRefused);
+    check('the stated rule: a standard-tier rise of 0 to 100 % between quote and send never refuses (nine floors, eleven steps, both fees)', ruleHolds);
+    check('…one wei above the quoted priority fee always refuses', firstAboveRefused);
+    check('…and a +101 % rise of the standard tier with no slow tier refuses (every floor ≥ 100 wei that set the quote: six of nine)', overHundredRefused && overHundredCases === 6);
     check('the CTO’s reading of the two runs (+12 % and +1 % over the quote-time floor) passes',
       feeFloorShortfall(quoteFeesOverFloor(sepoliaNode, { maxPriorityFeePerGas: 108_460_172n, maxFeePerGas: null }), { maxPriorityFeePerGas: 121_510_234n, maxFeePerGas: null }) === null &&
         feeFloorShortfall(quoteFeesOverFloor(sepoliaNode, { maxPriorityFeePerGas: 67_431_797n, maxFeePerGas: null }), { maxPriorityFeePerGas: 68_112_565n, maxFeePerGas: null }) === null);
@@ -1312,27 +1343,31 @@ await (async () => {
 
     // End to end through sendAa and the pre-approval check (scaled ×20 so the
     // floor sits above the fake node's 1 gwei suggestion).
-    {
+    for (const c of live) {
       const { b, tb } = tieredBundle();
-      tb.state.standard = live[1].quoteStandard * 20n;
+      tb.state.standard = c.quoteStandard * 20n;
       const qq = await prepareAaSend(b, owner.address, RECIPIENT, AMOUNT);
-      check('scaled second refusal: quoted at standard × 1.25', qq.maxPriorityFeePerGas === withFeeFloorHeadroom(live[1].quoteStandard * 20n));
-      tb.state.standard = live[1].sendStandard * 20n;
-      tb.state.slow = slowOf(live[1].sendStandard * 20n);
+      check(`scaled ${c.name}: quoted at standard × 2`, qq.maxPriorityFeePerGas === withFeeFloorHeadroom(c.quoteStandard * 20n) && qq.maxPriorityFeePerGas === c.quoteStandard * 40n);
+      tb.state.standard = c.sendStandard * 20n;
+      tb.state.slow = slowOf(c.sendStandard * 20n);
       const pre = await checkAaQuoteBeforeApproval(b.bundler, qq).then(() => null, (e) => e);
-      check('pre-approval check passes (the slow tier is below the quote)', pre === null);
+      check(`scaled ${c.name}: the pre-approval check now passes (the live rise fits in 100 %)`, pre === null);
       await sendAa(b, owner, qq);
-      check('…and sendAa signs and sends it with exactly the quoted fees', sends(tb) === 1 && BigInt(tb.base.lastOp.maxPriorityFeePerGas) === qq.maxPriorityFeePerGas);
+      check(`…and sendAa signs and sends it with exactly the quoted fees`, sends(tb) === 1 && BigInt(tb.base.lastOp.maxPriorityFeePerGas) === qq.maxPriorityFeePerGas && BigInt(tb.base.lastOp.maxFeePerGas) === qq.maxFeePerGas);
+      check('…and the signed worst case equals the displayed one',
+        (BigInt(tb.base.lastOp.callGasLimit) + BigInt(tb.base.lastOp.verificationGasLimit) + BigInt(tb.base.lastOp.preVerificationGas)) * BigInt(tb.base.lastOp.maxFeePerGas) === qq.fee);
     }
     {
+      // A rise past the headroom: the standard tier +120 %, so even the slow
+      // tier (+109.5 %) is above the quoted fee.
       const { b, tb } = tieredBundle();
       tb.state.standard = live[0].quoteStandard * 20n;
       const qq = await prepareAaSend(b, owner.address, RECIPIENT, AMOUNT);
       const estimatesBefore = estimates(tb);
-      tb.state.standard = live[0].sendStandard * 20n;
-      tb.state.slow = slowOf(live[0].sendStandard * 20n);
+      tb.state.standard = (live[0].quoteStandard * 20n * 220n) / 100n;
+      tb.state.slow = slowOf(tb.state.standard);
       const pre = await checkAaQuoteBeforeApproval(b.bundler, qq).then(() => null, (e) => e);
-      check('scaled first refusal: the PRE-APPROVAL check refuses (reason floor), before anything is estimated, signed or sent',
+      check('a +120 % rise (slow tier above the quote): the PRE-APPROVAL check refuses (reason floor), before anything is estimated, signed or sent',
         pre instanceof AaFeeRoseError && pre.reason === 'floor' && estimates(tb) === estimatesBefore && sends(tb) === 0);
       const described = describeAaError(pre, { accountType: 'simple', deployed: false });
       check('…titled "The network fee rose. Please review again." with the bundler’s-minimum sentence and "Nothing was signed or sent"',
@@ -1355,8 +1390,9 @@ await (async () => {
       tb.state.standard = 2_000_000_000n;
       const qq = await prepareAaSend(b, owner.address, RECIPIENT, AMOUNT);
       await checkAaQuoteBeforeApproval(b.bundler, qq);
-      tb.state.standard = 4_000_000_000n;
-      tb.state.slow = 3_000_000_000n;
+      // Quoted at 4 gwei (2 gwei × 2); the slow tier then reads 4.2 gwei.
+      tb.state.standard = 4_410_000_000n;
+      tb.state.slow = 4_200_000_000n;
       const late = await sendAa(b, owner, qq).then(() => null, (e) => e);
       check('send time: a floor that rose after the pre-approval check is still refused before signing (reason floor)',
         late instanceof AaFeeRoseError && late.reason === 'floor' && sends(tb) === 0);
@@ -1393,8 +1429,12 @@ await (async () => {
     };
     {
       const m = await loadAaMutant('const min = floor.lowest ?? floor;', 'const min = floor;');
-      check('M1 caught: comparing with the standard tier (the old code) refuses the second live case again',
-        m.feeFloorShortfall(q2, { maxPriorityFeePerGas: live[1].sendStandard, maxFeePerGas: null, lowest: { maxPriorityFeePerGas: slowOf(live[1].sendStandard), maxFeePerGas: null } }) !== null);
+      // A +105 % rise of the standard tier: above the quote, while its slow
+      // tier (+95.2 %) is below it.
+      const risen = (live[1].quoteStandard * 205n) / 100n;
+      const floorNow = { maxPriorityFeePerGas: risen, maxFeePerGas: null, lowest: { maxPriorityFeePerGas: slowOf(risen), maxFeePerGas: null } };
+      check('M1 caught: comparing with the standard tier (the old code) refuses a +105 % standard rise whose slow tier fits; the real code passes it',
+        m.feeFloorShortfall(q2, floorNow) !== null && feeFloorShortfall(q2, floorNow) === null);
     }
     {
       const m = await loadAaMutant('return (value * (100n + AA_FEE_FLOOR_HEADROOM_PERCENT) + 99n) / 100n;', 'return value;');
@@ -1420,6 +1460,12 @@ await (async () => {
       const m = await loadAaMutant("    if (isHexQuantity(slowPriority) && BigInt(slowPriority) <= floor.maxPriorityFeePerGas) {", '    if (isHexQuantity(slowPriority)) {');
       const mm = await m.bundlerFeeFloor(async (x) => (x === 'rundler_maxPriorityFeePerGas' ? null : { slow: { maxPriorityFeePerGas: '0x50' }, standard: { maxPriorityFeePerGas: '0x40' } }));
       check('M4 caught: trusting a slow tier above the standard one yields a `lowest` the real code refuses to set', mm?.lowest !== undefined);
+    }
+    {
+      const m = await loadAaMutant('export const AA_FEE_FLOOR_HEADROOM_PERCENT = 100n;', 'export const AA_FEE_FLOOR_HEADROOM_PERCENT = 25n;');
+      const qm = m.quoteFeesOverFloor(sepoliaNode, { maxPriorityFeePerGas: live[0].quoteStandard, maxFeePerGas: null });
+      check('M2b caught: with the old 25 % headroom the first live rise (+40 %) refuses again, as it did on the emulator',
+        qm.maxPriorityFeePerGas === live[0].quoted25 && m.feeFloorShortfall(qm, { maxPriorityFeePerGas: live[0].sendStandard, maxFeePerGas: null }) !== null);
     }
     {
       const m = await loadAaMutant("  if (error.reason === 'gas') return AA_GAS_GREW_TITLE;\n", '');
@@ -1557,7 +1603,7 @@ await (async () => {
   await checkRejects(
     'mainnet paymaster save refused',
     () => setAaPaymaster(EVM_CHAIN_ID, 'https://pm.example', '', { store: gateStore, transportFor: counting }),
-    'Turn on a test network (Ethereum Sepolia or Base Sepolia)',
+    'Turn on a test network (Ethereum Sepolia, Base Sepolia or Arbitrum Sepolia)',
   );
   const after = await getAaConfig(EVM_CHAIN_ID, gateStore);
   check(

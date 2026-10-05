@@ -1414,6 +1414,15 @@ export interface KernelGuardianRecord {
   threshold: number;
   delaySeconds: number;
   installTxHash: string | null;
+  /**
+   * What the owner set this guardian set up FOR. Absent in records written
+   * before the inheritance switch (phase 14 item 4), and then means
+   * 'guardians'. 'heirs' = the inheritance switch: the same contract and the
+   * same powers, labelled so a restored wallet and the guardians themselves
+   * read the set correctly. The contract stores no role: it is a label in
+   * this record only (one guardian set per account, see GUARDIAN_ROLES).
+   */
+  role?: GuardianRole;
 }
 
 /**
@@ -1551,6 +1560,8 @@ export function serializeRecoveryMetadata(meta: KernelRecoveryMetadata): string 
           threshold: meta.guardians.threshold,
           delaySeconds: meta.guardians.delaySeconds,
           installTxHash: meta.guardians.installTxHash,
+          // Only when present, so records without a role serialize byte for byte as before.
+          ...(meta.guardians.role !== undefined ? { role: meta.guardians.role } : {}),
         }
       : null,
   });
@@ -1626,6 +1637,9 @@ export function parseRecoveryMetadata(input: unknown): KernelRecoveryMetadata {
     if (g.installTxHash !== null && (typeof g.installTxHash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(g.installTxHash))) {
       throw new Error('guardians.installTxHash must be a 32-byte hex hash or null');
     }
+    if (g.role !== undefined && !GUARDIAN_ROLES.includes(g.role as GuardianRole)) {
+      throw new Error(`guardians.role must be one of ${GUARDIAN_ROLES.join(', ')} when present`);
+    }
     guardians = {
       weightedEcdsaValidator: toChecksumAddress(toBytes(g.weightedEcdsaValidator)),
       recoveryAction: toChecksumAddress(toBytes(g.recoveryAction)),
@@ -1639,6 +1653,7 @@ export function parseRecoveryMetadata(input: unknown): KernelRecoveryMetadata {
       threshold: g.threshold as number,
       delaySeconds: g.delaySeconds as number,
       installTxHash: g.installTxHash ? g.installTxHash.toLowerCase() : null,
+      ...(g.role !== undefined ? { role: g.role as GuardianRole } : {}),
     };
   }
   return {
@@ -1738,4 +1753,222 @@ function requireAddress(value: unknown, what: string): asserts value is string {
 
 function sameAddress(a: string, b: string): boolean {
   return a.toLowerCase() === b.toLowerCase();
+}
+
+// ---------------------------------------------------------------------------
+// Inheritance switch support (phase 14 item 4): roles, delay bounds and
+// approval discovery. Additive; nothing above changes behaviour.
+// ---------------------------------------------------------------------------
+
+/**
+ * Labels a guardian set can carry in the recovery record. The deployed
+ * WeightedECDSAValidator keeps ONE configuration per account
+ * (weightedStorage[kernel], and onInstall reverts AlreadyInitialized when it
+ * is set [K WeightedECDSAValidator.sol lines 52, 89]); Kernel also has a
+ * single validation id per validator contract (0x01 || validator). So an
+ * account has at most one set: guardians OR heirs, never both with separate
+ * delays. The role is a record label, not on-chain state.
+ */
+export const GUARDIAN_ROLES = ['guardians', 'heirs'] as const;
+export type GuardianRole = (typeof GUARDIAN_ROLES)[number];
+
+/** 2^48: the validator stores validAfter as a uint48 [K ProposalStorage, ValidAfter]. */
+export const GUARDIAN_DELAY_UINT48_MODULUS = 2n ** 48n;
+
+/**
+ * True when an approval made at `approvalTime` (unix seconds) with this
+ * delay would WRAP: approve / approveWithSig compute
+ * `uint48(block.timestamp + delay)` [K WeightedECDSAValidator.sol lines 152,
+ * 176], and Solidity's explicit narrowing conversion truncates silently, so
+ * a delay of 2^48 - approvalTime seconds or more yields a validAfter in the
+ * PAST and the takeover is valid at once (proven by eth_simulateV1 against
+ * the deployed contract: scripts/testnet/inheritance-smoke.mjs, S8).
+ * validateGuardianSet accepts any uint48 delay; callers that offer long
+ * delays check this too.
+ */
+export function guardianDelayWraps(delaySeconds: number | bigint, approvalTime: number | bigint): boolean {
+  const delay = BigInt(delaySeconds);
+  const now = BigInt(approvalTime);
+  if (delay < 0n || now < 0n) throw new Error('delay and approval time must be non-negative');
+  return now + delay >= GUARDIAN_DELAY_UINT48_MODULUS;
+}
+
+/**
+ * Largest delay that cannot wrap for any approval made before
+ * `latestApprovalTime` (unix seconds). Callers pass a date far in the future
+ * (an heir may approve decades later).
+ */
+export function maxNonWrappingGuardianDelay(latestApprovalTime: number | bigint): bigint {
+  const t = BigInt(latestApprovalTime);
+  if (t < 0n || t >= GUARDIAN_DELAY_UINT48_MODULUS) throw new Error('approval time out of range');
+  return GUARDIAN_DELAY_UINT48_MODULUS - 1n - t;
+}
+
+/**
+ * Number of guardian-validator nonce lanes a takeover may use, which is why
+ * the owner cannot invalidate an unknown approval by bumping nonces:
+ * Kernel's nonce key is mode (1 byte) || type 0x01 || validator (20) ||
+ * parallel key (2) [K ValidationTypeLib.decodeNonce], and every mode byte
+ * except 0x01 (ENABLE, which needs the root's enable signature) runs the
+ * default path [K ValidationManager._validateUserOp]. 255 × 65,536 lanes,
+ * each with its own EntryPoint sequence; proposals bind the full nonce
+ * [K validateUserOp: keccak256(abi.encode(sender, callData, nonce))].
+ * Proven by eth_simulateV1 (inheritance-smoke.mjs S6: bumping lane 0 voids
+ * its proposal while a proposal on mode 0x07 / key 0xabcd executes).
+ */
+export const GUARDIAN_NONCE_LANES = 255 * 65_536;
+
+export interface GuardianApprovalCall {
+  kind: 'approve' | 'approveWithSig';
+  /** callDataAndNonceHash, lowercase 0x + 64 hex. */
+  proposalHash: string;
+  /** The Kernel account named in the call. */
+  account: string;
+  /** approveWithSig only: the 65-byte signatures it carries (empty for approve). */
+  signatures: Uint8Array[];
+}
+
+const APPROVE_SELECTOR = toHex(abiSelector('approve(bytes32,address)'));
+const APPROVE_WITH_SIG_SELECTOR = toHex(abiSelector('approveWithSig(bytes32,address,bytes)'));
+
+/**
+ * Decodes calldata sent to the weighted validator: approve(bytes32 hash,
+ * address kernel) or approveWithSig(bytes32 hash, address kernel, bytes
+ * sigs) [K lines 141, 156]. Returns null for any other call or malformed
+ * data (never guesses). approve() also uses the ERC-20 selector name but
+ * not its signature (bytes32, address), so selectors differ.
+ */
+export function decodeGuardianApprovalCall(data: Uint8Array | string): GuardianApprovalCall | null {
+  const bytes = typeof data === 'string' ? toBytes(data) : data;
+  if (bytes.length < 4 + 64) return null;
+  const sel = toHex(bytes.subarray(0, 4)).toLowerCase();
+  const body = bytes.subarray(4);
+  const proposalHash = toHex(body.subarray(0, 32)).toLowerCase();
+  if (word(body, 1) >> 160n !== 0n) return null;
+  const account = addressAt(body, 1);
+  if (sel === APPROVE_SELECTOR.toLowerCase()) {
+    if (body.length !== 64) return null;
+    return { kind: 'approve', proposalHash, account, signatures: [] };
+  }
+  if (sel !== APPROVE_WITH_SIG_SELECTOR.toLowerCase() || body.length < 128) return null;
+  const offset = word(body, 2);
+  if (offset !== 96n) return null;
+  const length = word(body, 3);
+  if (length > BigInt(body.length) || body.length < 128 + Number(length)) return null;
+  const sigs = body.subarray(128, 128 + Number(length));
+  // The contract reads sigs.length / 65 signatures and ignores a remainder.
+  const signatures: Uint8Array[] = [];
+  for (let i = 0; i + 65 <= sigs.length; i += 65) signatures.push(sigs.slice(i, i + 65));
+  return { kind: 'approveWithSig', proposalHash, account, signatures };
+}
+
+export interface FoundGuardianApproval {
+  kind: GuardianApprovalCall['kind'];
+  proposalHash: string;
+  account: string;
+  txHash: string;
+  blockNumber: bigint;
+  /** The transaction's sender (the guardian itself for approve; anyone for approveWithSig). */
+  from: string;
+  /**
+   * Who approved: tx.from for approve(); for approveWithSig the addresses
+   * recovered from each signature over the Approve digest (null when a
+   * signature does not recover). Whether they are guardians is for the
+   * caller to compare with the set.
+   */
+  approvers: Array<string | null>;
+}
+
+export interface GuardianApprovalScan {
+  approvals: FoundGuardianApproval[];
+  fromBlock: bigint;
+  toBlock: bigint;
+  /** Blocks actually read (toBlock - fromBlock + 1). */
+  blocksScanned: number;
+}
+
+/** Wallet policy: one scan reads at most this many blocks (each is a full eth_getBlockByNumber). */
+export const MAX_GUARDIAN_APPROVAL_SCAN_BLOCKS = 2_000;
+
+/**
+ * Finds approvals naming `account` in TOP-LEVEL transactions sent to the
+ * weighted validator between two blocks, by reading every block in full
+ * (eth_getBlockByNumber with transactions) and decoding the calldata.
+ *
+ * Why this exists: the validator emits NO event for approve / approveWithSig
+ * (its only events are GuardianAdded and GuardianRemoved [K lines 58–59])
+ * and its proposal mappings are keyed by the proposal hash, which commits to
+ * the new owner and the exact nonce the approver chose. Without the hash the
+ * owner cannot read a proposal's status, and logs cannot reveal it. The
+ * calldata of the approving transaction does carry the hash and the account.
+ *
+ * LIMITS, stated to the user by the app: an approval made from inside
+ * another contract (a multicall, a relayer contract, a smart-account
+ * operation) is an internal call and is NOT seen; blocks outside the range
+ * are not seen; a reverted transaction is reported too (the caller reads the
+ * proposal's status before showing it). Reading full blocks is heavy, so the
+ * range is capped at MAX_GUARDIAN_APPROVAL_SCAN_BLOCKS per call.
+ */
+export async function scanGuardianApprovals(
+  node: JsonRpcTransport,
+  params: {
+    account: string;
+    chainId: bigint;
+    fromBlock: bigint;
+    toBlock: bigint;
+    modules?: KernelRecoveryModules;
+    concurrency?: number;
+  },
+): Promise<GuardianApprovalScan> {
+  requireAddress(params.account, 'account');
+  if (params.fromBlock < 0n || params.toBlock < params.fromBlock) throw new Error('fromBlock must not be after toBlock');
+  const count = params.toBlock - params.fromBlock + 1n;
+  if (count > BigInt(MAX_GUARDIAN_APPROVAL_SCAN_BLOCKS)) {
+    throw new Error(`A scan reads at most ${MAX_GUARDIAN_APPROVAL_SCAN_BLOCKS} blocks; split the range`);
+  }
+  const validator = (params.modules ?? KERNEL_RECOVERY_MODULES).weightedEcdsaValidator;
+  const concurrency = Math.max(1, Math.min(params.concurrency ?? 6, 16));
+  const found: FoundGuardianApproval[] = [];
+  const numbers: bigint[] = [];
+  for (let b = params.fromBlock; b <= params.toBlock; b++) numbers.push(b);
+  for (let i = 0; i < numbers.length; i += concurrency) {
+    const batch = numbers.slice(i, i + concurrency);
+    const blocks = await Promise.all(
+      batch.map((b) => node('eth_getBlockByNumber', ['0x' + b.toString(16), true]) as Promise<unknown>),
+    );
+    blocks.forEach((raw, j) => {
+      if (!raw || typeof raw !== 'object') throw new Error(`Block ${batch[j]} was not returned`);
+      const txs = (raw as { transactions?: unknown }).transactions;
+      if (!Array.isArray(txs)) throw new Error(`Block ${batch[j]} has no transaction list`);
+      for (const tx of txs as Array<Record<string, unknown>>) {
+        if (typeof tx !== 'object' || tx === null) throw new Error(`Block ${batch[j]} returned transaction hashes, not transactions`);
+        if (typeof tx.to !== 'string' || !sameAddress(tx.to, validator)) continue;
+        const input = typeof tx.input === 'string' ? tx.input : typeof tx.data === 'string' ? tx.data : null;
+        if (!input) continue;
+        const call = decodeGuardianApprovalCall(input);
+        if (!call || !sameAddress(call.account, params.account)) continue;
+        const from = typeof tx.from === 'string' ? toChecksumAddress(toBytes(tx.from)) : '';
+        const approvers =
+          call.kind === 'approve'
+            ? [from || null]
+            : call.signatures.map((sig) => {
+                try {
+                  return recoverSignerAddress(guardianApprovalDigest(params.chainId, call.proposalHash, params.modules), sig);
+                } catch {
+                  return null;
+                }
+              });
+        found.push({
+          kind: call.kind,
+          proposalHash: call.proposalHash,
+          account: toChecksumAddress(toBytes(call.account)),
+          txHash: typeof tx.hash === 'string' ? tx.hash.toLowerCase() : '',
+          blockNumber: batch[j]!,
+          from,
+          approvers,
+        });
+      }
+    });
+  }
+  return { approvals: found, fromBlock: params.fromBlock, toBlock: params.toBlock, blocksScanned: Number(count) };
 }

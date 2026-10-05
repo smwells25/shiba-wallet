@@ -1,6 +1,6 @@
 // Explicit .ts extension: this module is loaded directly by Node scripts
 // under type stripping, which resolves relative specifiers literally.
-import { EVM_BASE_SEPOLIA, EVM_MAINNET, EVM_SEPOLIA } from './evm-chain.ts';
+import { EVM_BASE_SEPOLIA, EVM_MAINNET, EVM_SEPOLIA, EVM_TEST_PROFILES, type EvmChainProfile } from './evm-chain.ts';
 
 /**
  * Default network endpoints, as pure data.
@@ -215,8 +215,32 @@ export const BASE_SEPOLIA_NETWORK: NetworkDefault = {
   note: 'Base Sepolia test network — balances and sends here are test ETH, not real funds.',
 };
 
-/** The network entries of the test-network profiles, in EVM_TEST_PROFILES order. */
-export const TEST_EVM_NETWORKS: readonly NetworkDefault[] = [SEPOLIA_NETWORK, BASE_SEPOLIA_NETWORK];
+/**
+ * The network entry of a test profile that has no hand-written entry
+ * above: derived from the profile alone, so a new profile in
+ * ./evm-chain.ts gets its row without another list to edit here.
+ */
+function testNetworkDefault(p: EvmChainProfile): NetworkDefault {
+  return {
+    chainId: p.caip2,
+    label: p.label,
+    kind: 'evm-jsonrpc',
+    defaultUrls: p.defaultRpcUrls,
+    defaultUrl: p.defaultRpcUrls[0],
+    decimals: 18,
+    symbol: p.displaySymbol,
+    note: `${p.label} test network — balances and sends here are test ETH, not real funds.`,
+  };
+}
+
+/**
+ * The network entries of the test-network profiles, in EVM_TEST_PROFILES
+ * order: the hand-written entries above where they exist (their wording
+ * predates the generic one and stays byte-identical), else derived.
+ */
+export const TEST_EVM_NETWORKS: readonly NetworkDefault[] = EVM_TEST_PROFILES.map(
+  (p) => [SEPOLIA_NETWORK, BASE_SEPOLIA_NETWORK].find((n) => n.chainId === p.caip2) ?? testNetworkDefault(p),
+);
 
 export function networkDefaultFor(chainId: string): NetworkDefault | undefined {
   const test = TEST_EVM_NETWORKS.find((n) => n.chainId === chainId);

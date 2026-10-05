@@ -1,4 +1,5 @@
 import type { NftSendParams } from './wallet/send-nft';
+import type { SendRequestPrefill } from './wallet/payment-request';
 
 /**
  * Settings sections another screen can open directly (phase 11 item 6
@@ -20,9 +21,12 @@ export type RootStackParamList = {
    * tokenId (a CAIP-19 id from the tracked-token store) switches the send
    * screen into ERC-20 token mode; nft (phase 7 item 4) switches it into
    * NFT mode (ERC-721 / ERC-1155 safeTransferFrom on the active EVM chain);
-   * with neither, the chain's native coin is sent.
+   * with neither, the chain's native coin is sent. `request` (phase 14
+   * item 1) pre-fills the form from a scanned or pasted payment request
+   * when the request switched the screen between the native coin and a
+   * token; every value stays editable.
    */
-  Send: { chainId: string; tokenId?: string; nft?: NftSendParams };
+  Send: { chainId: string; tokenId?: string; nft?: NftSendParams; request?: SendRequestPrefill };
   Activity: { chainId: string };
   /** EVM-only swap flow (phase 5 item 1); the active EVM chain applies. */
   Swap: undefined;
@@ -44,10 +48,15 @@ export type RootStackParamList = {
   Sessions: undefined;
   /** Guardians / social recovery (phase 8 item 4) for the active account's Kernel account. */
   Guardians: undefined;
-  /** Recover a Kernel account with guardians (new owner = the active account), or restore a record. */
-  RecoverAccount: undefined;
-  /** The guardian side: review, approve and submit a recovery request as the active account. */
-  ApproveRecovery: undefined;
+  /**
+   * Recover a Kernel account with guardians (new owner = the active account), or restore a record.
+   * role 'heir': opened from the Inheritance screen for an heir's takeover (wording only).
+   */
+  RecoverAccount: { role?: 'heir' } | undefined;
+  /** The guardian side: review, approve and submit a recovery request as the active account (role 'heir': wording only). */
+  ApproveRecovery: { role?: 'heir' } | undefined;
+  /** Inheritance switch (phase 14 item 4), a test-network demonstration on the guardian modules. */
+  Inheritance: undefined;
   /** Passkey signer (phase 8 item 3) for the active account's deployed Kernel account, active EVM chain. */
   Passkey: undefined;
   /**

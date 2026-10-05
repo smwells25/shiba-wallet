@@ -28,7 +28,8 @@ import { ENTRYPOINT_V07 } from './userop.js';
  *    testnets)".
  *  - [C2] developers.circle.com/paymaster/addresses-and-events.md: Paymaster
  *    v0.7 testnet address 0x31BE08D380A21fc740883c0BC434FcFc88740b58 on
- *    Arbitrum Sepolia and Base Sepolia (NOT Ethereum Sepolia); mainnet
+ *    Arbitrum Sepolia and Base Sepolia (NOT Ethereum Sepolia; both checked
+ *    on-chain, see `tokens` below); mainnet
  *    0x6C973eBe80dCD8660841D4356bf15c32460271C9 on Arbitrum and Base; the
  *    UserOperationSponsored event.
  *  - [C3] developers.circle.com/paymaster/pay-gas-fees-usdc.md: paymasterData
@@ -113,10 +114,22 @@ export const CIRCLE_TOKEN_PAYMASTER_V07 = {
   entryPoint: ENTRYPOINT_V07,
   /**
    * Tokens verified on-chain per chain id (token() of the paymaster).
-   * 84532 = Base Sepolia, read 2026-10-04.
+   * 84532 = Base Sepolia, read 2026-10-04. 421614 = Arbitrum Sepolia, read
+   * 2026-10-04 (phase 14 item 3): token() = Circle's Arbitrum Sepolia USDC
+   * (developers.circle.com/stablecoins/usdc-contract-addresses: "| Arbitrum
+   * Sepolia | 0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d |"), entryPoint()
+   * v0.7, not paused, feeSpread 0, additionalGasCharge 35,000, a fixed test
+   * oracle (0x66B5…bf52, answer 3,000.00000000, roundId 1, updatedAt 2),
+   * staked 0.25 ETH / 86,400 s with a deposit of about 1.05 ETH;
+   * readCirclePaymasterState + circlePaymasterProblems pass. Its ERC-1967
+   * implementation 0xD9d18FD662B5B2F567545C13fd1e902008beD755 is a Sourcify
+   * exact match (TokenPaymasterV07, solc 0.8.28) and differs from Base
+   * Sepolia's only in immutable address slots (token, wrapped native token,
+   * its own address).
    */
   tokens: {
     '84532': '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+    '421614': '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d',
   } as Record<string, string>,
   /** The documented example's paymasterVerificationGasLimit [C3]. */
   defaultVerificationGasLimit: 200_000n,

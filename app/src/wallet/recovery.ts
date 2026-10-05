@@ -46,6 +46,7 @@ import {
   withDepositTopUpHeadroom,
   type Call,
   type GuardianRecoveryRequest,
+  type GuardianRole,
   type GuardianSignatureExposure,
   type JsonRpcTransport,
   type KernelAccountOwnershipCheck,
@@ -90,7 +91,15 @@ import {
 import { sanitizeDisplayName } from './names.ts';
 import { EVM_CHAIN_ID, notifySendAccepted, validateRecipient } from './send.ts';
 import type { KeyValueStore } from './tokens.ts';
-import { IMPORTED_KEY_PATH, isBip32Path, isImportedAccountId, smartAccountSaltFor } from './account-ids.ts';
+import {
+  IMPORTED_KEY_PATH,
+  WATCH_ONLY_SIGN_REFUSAL,
+  isBip32Path,
+  isImportedAccountId,
+  isPhraseAccountId,
+  isWatchOnlyAccountId,
+  smartAccountSaltFor,
+} from './account-ids.ts';
 
 /**
  * Guardians and social recovery for the app (phase 8 item 4, app half), on
@@ -887,6 +896,13 @@ export function mergeRecoveryMetadata(
     }
     return null;
   };
+  // The role (guardians or heirs) is kept only for a set equal to the one it labelled, like the install transaction.
+  const roleFor = (set: KernelGuardianSet): GuardianRole | undefined => {
+    for (const record of [existing?.guardians ?? null, incoming.guardians]) {
+      if (record && sameSet(set, record) && record.role !== undefined) return record.role;
+    }
+    return undefined;
+  };
   const relabel = (record: KernelGuardianRecord | null): KernelGuardianRecord | null =>
     record
       ? {
@@ -901,7 +917,7 @@ export function mergeRecoveryMetadata(
   const chain = options.chainGuardians ?? null;
   let guardians: KernelGuardianRecord | null;
   if (chain && chain.active && chain.set) {
-    guardians = guardianRecordFrom(chain.set, labels, installTxFor(chain.set));
+    guardians = guardianRecordFrom(chain.set, labels, installTxFor(chain.set), KERNEL_RECOVERY_MODULES, roleFor(chain.set));
   } else if (chain && !chain.validatorInitialized && !chain.validationInstalled) {
     guardians = null;
   } else {
@@ -1146,14 +1162,20 @@ export function validateGuardianSetForAccount(
   }
 }
 
-/** The record form of a set (pinned modules; labels attached; sorted by the engine on parse). */
+/**
+ * The record form of a set (pinned modules; labels attached; sorted by the
+ * engine on parse). `role` labels an inheritance set ('heirs'); absent means
+ * guardians, and records without it serialize exactly as before.
+ */
 export function guardianRecordFrom(
   set: KernelGuardianSet,
   labels: Record<string, string>,
   installTxHash: string | null,
   modules: KernelRecoveryModules = KERNEL_RECOVERY_MODULES,
+  role?: GuardianRole,
 ): KernelGuardianRecord {
   return {
+    ...(role !== undefined ? { role } : {}),
     weightedEcdsaValidator: modules.weightedEcdsaValidator,
     recoveryAction: modules.recoveryAction,
     guardians: set.guardians.map((g) => ({
@@ -1254,6 +1276,12 @@ export interface GuardianOperationQuote {
   labels: Record<string, string>;
   /** veto: the proposal id. */
   proposalHash: string | null;
+  /**
+   * install / renew: what the set is for, written into the recovery record
+   * ('heirs' from the Inheritance screen). Absent = keep the record's
+   * current role (a renew) or none (a guardian install).
+   */
+  role?: GuardianRole;
 }
 
 export function sameCalls(a: readonly Call[], b: readonly Call[]): boolean {
@@ -1277,7 +1305,13 @@ export function assertGuardianModulesSafe(
   }
 }
 
-async function quoteRootOperation(
+/**
+ * Quotes any list of root-signed calls on the account (exported for the
+ * inheritance switch, which removes heirs and vetoes known takeovers in one
+ * operation): the sender must be the expected account, deployed, and not an
+ * EIP-7702 upgrade.
+ */
+export async function quoteRootOperation(
   bundle: AaClientBundle,
   ownerAddress: string,
   account: string,
@@ -1429,7 +1463,8 @@ export async function submitGuardianOperation(args: {
           'record first: Recover an account with guardians → paste its address and its original owner (or its record).',
       );
     }
-    const guardians = op.kind === 'remove' ? null : guardianRecordFrom(op.set!, op.labels, null);
+    const role = op.role ?? (op.kind === 'renew' ? previous.metadata.guardians?.role : undefined);
+    const guardians = op.kind === 'remove' ? null : guardianRecordFrom(op.set!, op.labels, null, KERNEL_RECOVERY_MODULES, role);
     next = await saveRecoveryMetadata(recordGuardians(previous.metadata, guardians), args.store);
   }
   try {
@@ -1581,8 +1616,10 @@ export async function syncRecordGuardiansFromChain(
   if (state.active && state.set) {
     const labels: Record<string, string> = {};
     for (const g of old?.guardians ?? []) if (g.label) labels[g.address.toLowerCase()] = g.label;
-    const keepTx = old !== null && sameSet(state.set, old) ? old.installTxHash : null;
-    guardians = guardianRecordFrom(state.set, labels, keepTx);
+    const same = old !== null && sameSet(state.set, old);
+    const keepTx = same ? old.installTxHash : null;
+    // The role is the owner's label for THIS set: kept only while the chain still holds it.
+    guardians = guardianRecordFrom(state.set, labels, keepTx, KERNEL_RECOVERY_MODULES, same ? old.role : undefined);
   }
   return saveRecoveryMetadata(recordGuardians(entry.metadata, guardians), store);
 }
@@ -1996,6 +2033,8 @@ export async function removeRecoveryProgress(chain: string, newOwner: string, st
 /** A draft: the fresh account that will become the new owner, nothing checked yet. */
 export function draftRecoveryProgress(chain: string, ownerIndex: number, newOwner: string, now: number = Date.now()): RecoveryProgress {
   if (isImportedAccountId(ownerIndex)) throw new Error(RECOVERY_IMPORTED_OWNER_REFUSAL);
+  // A watch-only account holds no key, so it can never start a recovery.
+  if (isWatchOnlyAccountId(ownerIndex)) throw new Error(WATCH_ONLY_SIGN_REFUSAL);
   if (!ADDRESS.test(newOwner)) throw new Error(`Not an EVM address: ${newOwner}`);
   return {
     chain,
@@ -2924,8 +2963,10 @@ export interface WalletOwnerAccount {
  * evmKeyProvider's own path.
  */
 export function evmAccountPath(index: number): string {
-  // An imported key has no derivation path (ADR D9); its id is not an index.
-  if (!Number.isSafeInteger(index) || index < 0 || isImportedAccountId(index)) {
+  // Only an account derived from the recovery phrase has a derivation path:
+  // an imported key (ADR D9) and a watch-only address have ids that are not
+  // indices, and must never be turned into a path.
+  if (!Number.isSafeInteger(index) || index < 0 || !isPhraseAccountId(index)) {
     throw new Error(`Invalid account index ${String(index)}.`);
   }
   return `m/44'/60'/0'/0/${index}`;

@@ -22,8 +22,9 @@
 // (eth_blockNumber against the freshest candidate) and records whether it
 // serves eth_simulateV1 (used by the balance-change preview).
 
-import { EVM_BASE_SEPOLIA, EVM_MAINNET, EVM_SEPOLIA } from '../src/config/evm-chain.ts';
-import { BASE_SEPOLIA_NETWORK, DEFAULT_NETWORKS, SEPOLIA_NETWORK, networkDefaultFor } from '../src/config/defaults.ts';
+import { EVM_ARBITRUM_SEPOLIA, EVM_BASE_SEPOLIA, EVM_MAINNET, EVM_SEPOLIA } from '../src/config/evm-chain.ts';
+import { BASE_SEPOLIA_NETWORK, DEFAULT_NETWORKS, SEPOLIA_NETWORK, TEST_EVM_NETWORKS, networkDefaultFor } from '../src/config/defaults.ts';
+const ARBITRUM_SEPOLIA_NETWORK = networkDefaultFor('eip155:421614');
 import {
   createDefaultEndpointResolver,
   describeDefaultChoice,
@@ -167,6 +168,24 @@ check(
   );
 }
 check(
+  'Arbitrum Sepolia EVM: publicnode primary, then Arbitrum’s own RPC, then Pocket (phase 14 item 3)',
+  same(EVM_ARBITRUM_SEPOLIA.defaultRpcUrls, [
+    'https://arbitrum-sepolia-rpc.publicnode.com',
+    'https://sepolia-rollup.arbitrum.io/rpc',
+    'https://arb-sepolia-testnet.api.pocket.network',
+  ]),
+);
+{
+  // Recorded in evm-chain.ts (2026-10-04): the sequencer URL serves only
+  // eth_sendRawTransaction(Conditional); dRPC shows no keyless URL.
+  check('Arbitrum Sepolia EVM: the send-only sequencer URL is not listed', EVM_ARBITRUM_SEPOLIA.defaultRpcUrls.every((u) => u !== 'https://sepolia-rollup-sequencer.arbitrum.io/rpc'));
+  check(
+    'Arbitrum Sepolia EVM: no candidate is shared with another profile',
+    EVM_ARBITRUM_SEPOLIA.defaultRpcUrls.every((u) => ![EVM_MAINNET, EVM_SEPOLIA, EVM_BASE_SEPOLIA].some((p) => p.defaultRpcUrls.includes(u))),
+  );
+  check('Arbitrum Sepolia row list is the profile list (no drift)', ARBITRUM_SEPOLIA_NETWORK?.defaultUrls === EVM_ARBITRUM_SEPOLIA.defaultRpcUrls);
+}
+check(
   'Bitcoin Esplora: blockstream.info then mempool.space',
   same(BTC.defaultUrls, ['https://blockstream.info/api', 'https://mempool.space/api']),
 );
@@ -184,7 +203,7 @@ check('Sepolia row list is the Sepolia profile list (no drift)', SEPOLIA_NETWORK
 check('Base Sepolia row list is the Base Sepolia profile list (no drift)', BASE_SEPOLIA_NETWORK.defaultUrls === EVM_BASE_SEPOLIA.defaultRpcUrls);
 check('networkDefaultFor(eip155:84532) is the Base Sepolia row', networkDefaultFor('eip155:84532') === BASE_SEPOLIA_NETWORK);
 {
-  const all = [...DEFAULT_NETWORKS, SEPOLIA_NETWORK, BASE_SEPOLIA_NETWORK];
+  const all = [...DEFAULT_NETWORKS, ...TEST_EVM_NETWORKS];
   check(
     'every defaultUrl equals defaultUrls[0] (or null when empty)',
     all.every((n) => n.defaultUrl === (n.defaultUrls[0] ?? null)),
@@ -193,7 +212,8 @@ check('networkDefaultFor(eip155:84532) is the Base Sepolia row', networkDefaultF
     'profile defaultRpcUrl equals defaultRpcUrls[0]',
     EVM_MAINNET.defaultRpcUrl === EVM_MAINNET.defaultRpcUrls[0] &&
       EVM_SEPOLIA.defaultRpcUrl === EVM_SEPOLIA.defaultRpcUrls[0] &&
-      EVM_BASE_SEPOLIA.defaultRpcUrl === EVM_BASE_SEPOLIA.defaultRpcUrls[0],
+      EVM_BASE_SEPOLIA.defaultRpcUrl === EVM_BASE_SEPOLIA.defaultRpcUrls[0] &&
+      EVM_ARBITRUM_SEPOLIA.defaultRpcUrl === EVM_ARBITRUM_SEPOLIA.defaultRpcUrls[0],
   );
   const urls = all.flatMap((n) => n.defaultUrls);
   check('every candidate is https:// with no trailing slash', urls.every((u) => /^https:\/\/[^\s]+[^/]$/.test(u)));
@@ -579,7 +599,7 @@ check('endpointHost strips scheme and path', endpointHost('https://mempool.space
 
 if (process.argv.includes('--live')) {
   console.log('\nlive candidate probes (read-only):');
-  for (const network of [...DEFAULT_NETWORKS, SEPOLIA_NETWORK, BASE_SEPOLIA_NETWORK]) {
+  for (const network of [...DEFAULT_NETWORKS, ...TEST_EVM_NETWORKS]) {
     if (network.defaultUrls.length === 0) {
       console.log(`  ${network.label}: no defaults (by design)`);
       continue;
@@ -609,6 +629,11 @@ if (process.argv.includes('--live')) {
     'https://base-sepolia-rpc.publicnode.com': 'supported',
     'https://sepolia.base.org': 'supported',
     'https://base-sepolia-testnet.api.pocket.network': 'supported',
+    // Probed 2026-10-04 (phase 14 item 3): all three returned the ETH
+    // pseudo-Transfer log with traceTransfers.
+    'https://arbitrum-sepolia-rpc.publicnode.com': 'supported',
+    'https://sepolia-rollup.arbitrum.io/rpc': 'supported',
+    'https://arb-sepolia-testnet.api.pocket.network': 'supported',
   };
   const liveRpc = async (url, method, params = []) => {
     const controller = new AbortController();
@@ -635,7 +660,7 @@ if (process.argv.includes('--live')) {
       clearTimeout(timer);
     }
   };
-  for (const [network, headTolerance] of [[SEPOLIA_NETWORK, 5n], [BASE_SEPOLIA_NETWORK, 15n]]) {
+  for (const [network, headTolerance] of [[SEPOLIA_NETWORK, 5n], [BASE_SEPOLIA_NETWORK, 15n], [ARBITRUM_SEPOLIA_NETWORK, 240n]]) {
     console.log(`\nlive ${network.label} candidate detail (read-only):`);
     check(
       `every ${network.label} candidate has a documented eth_simulateV1 status`,

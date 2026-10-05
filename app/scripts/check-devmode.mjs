@@ -31,8 +31,10 @@ import {
   savePrefs,
 } from '../src/config/prefs.ts';
 import {
+  EVM_ARBITRUM_SEPOLIA,
   EVM_BASE_SEPOLIA,
   EVM_MAINNET,
+  l1CostInGasNote,
   EVM_PROFILES,
   EVM_SEPOLIA,
   EVM_TEST_PROFILES,
@@ -43,11 +45,12 @@ import {
 import {
   BASE_SEPOLIA_NETWORK,
   DEFAULT_NETWORKS,
+  TEST_EVM_NETWORKS,
   SEPOLIA_NETWORK,
   networkDefaultFor,
   resolveActiveNetworks,
 } from '../src/config/defaults.ts';
-import { EVM_CHAIN_ID, prepareEvmSend, sendEvm } from '../src/wallet/send.ts';
+import { EVM_CHAIN_ID, maxEvmSend, prepareEvmSend, sendEvm } from '../src/wallet/send.ts';
 import { explorerTxUrl } from '../src/wallet/history.ts';
 import {
   WcRequestRejection,
@@ -714,8 +717,8 @@ console.log('\n== Base Sepolia profile and the test-network choice ==');
   check('Base Sepolia: flagged as paying an L1 data fee (OP-stack); Ethereum profiles are not', B.l1DataFee === true && !EVM_SEPOLIA.l1DataFee && !EVM_MAINNET.l1DataFee);
   check('Base Sepolia: banner and mode wording name Base Sepolia', B.bannerText?.includes('Base Sepolia') && B.modeLabel === 'Base Sepolia test mode');
   check('mainnet has no banner; Sepolia keeps its wording', EVM_MAINNET.bannerText === null && EVM_SEPOLIA.modeLabel === 'Sepolia test mode');
-  check('test profiles listed Sepolia then Base Sepolia', EVM_TEST_PROFILES.map((p) => p.caip2).join() === 'eip155:11155111,eip155:84532');
-  check('EVM_PROFILES = mainnet + test profiles', EVM_PROFILES.length === 3 && EVM_PROFILES[0] === EVM_MAINNET);
+  check('test profiles listed Sepolia, Base Sepolia, Arbitrum Sepolia', EVM_TEST_PROFILES.map((p) => p.caip2).join() === 'eip155:11155111,eip155:84532,eip155:421614');
+  check('EVM_PROFILES = mainnet + test profiles', EVM_PROFILES.length === 1 + EVM_TEST_PROFILES.length && EVM_PROFILES[0] === EVM_MAINNET);
   check('evmProfileFor(Base Sepolia id) / (Sepolia id) / null', evmProfileFor('eip155:84532') === B && evmProfileFor('eip155:11155111') === EVM_SEPOLIA && evmProfileFor(null) === EVM_MAINNET);
   check('evmProfileFor: an unknown id stays on a test network (Sepolia), never mainnet', evmProfileFor('eip155:999') === EVM_SEPOLIA);
   check('evmProfileByCaip2 finds all three and nothing else', evmProfileByCaip2('eip155:84532') === B && evmProfileByCaip2('eip155:1') === EVM_MAINNET && evmProfileByCaip2('eip155:8453') === undefined);
@@ -1039,6 +1042,80 @@ console.log('theme tokens in screens (phase 12 item 4):');
     check(`${f.split('/').pop()}: TESTNET badge uses testnetFill / onTestnetFill`,
       /backgroundColor: theme\.testnetFill, borderColor: theme\.testnetFill/.test(src) && /color: theme\.onTestnetFill/.test(src));
   }
+}
+
+
+// Phase 14 item 3: the third test profile, Arbitrum Sepolia (eip155:421614),
+// an Arbitrum Nitro rollup whose layer-1 cost is folded into gas (not an
+// OP-stack chain), and the rule that nothing assumes a number of test
+// networks.
+console.log('\n== Arbitrum Sepolia profile (third test network) ==');
+{
+  const A = EVM_ARBITRUM_SEPOLIA;
+  check('Arbitrum Sepolia: CAIP-2 eip155:421614, chain id 421614', A.caip2 === 'eip155:421614' && A.chainIdDecimal === '421614');
+  check('Arbitrum Sepolia: label, testnet flag, test ETH, Arbiscan', A.label === 'Arbitrum Sepolia' && A.testnet === true && A.displaySymbol === 'test ETH' && A.explorerTxBase === 'https://sepolia.arbiscan.io/tx/');
+  check('Arbitrum Sepolia: the three verified keyless RPC candidates, publicnode first',
+    A.defaultRpcUrls.join() === 'https://arbitrum-sepolia-rpc.publicnode.com,https://sepolia-rollup.arbitrum.io/rpc,https://arb-sepolia-testnet.api.pocket.network' &&
+      A.defaultRpcUrl === A.defaultRpcUrls[0] && A.defaultRpcUrls.every((u) => u.startsWith('https://')));
+  check('Arbitrum Sepolia: the send-only sequencer URL is not a candidate', !A.defaultRpcUrls.some((u) => u.includes('sequencer')));
+  check('Arbitrum Sepolia: NOT an OP-stack chain (no L1-data-fee oracle path); L1 cost is in the gas', A.l1DataFee === false && A.l1CostInGas === true &&
+    !EVM_BASE_SEPOLIA.l1CostInGas && !EVM_SEPOLIA.l1CostInGas && !EVM_MAINNET.l1CostInGas);
+  check('Arbitrum Sepolia: Kernel v3.3 verified, no SimpleAccount pre-fill, no swaps', A.kernelV33Verified === true && A.aaPrefill === null && A.swapsOffered === false);
+  check('Arbitrum Sepolia: banner and mode wording', A.bannerText === 'TESTNET — Arbitrum Sepolia test mode is on. Amounts are test ETH, not real funds.' && A.modeLabel === 'Arbitrum Sepolia test mode');
+  check('Arbitrum Sepolia: listed third; evmProfileFor / evmProfileByCaip2 / isTestProfileId know it; Arbitrum One does not exist here',
+    EVM_TEST_PROFILES[2] === A && evmProfileFor('eip155:421614') === A && evmProfileByCaip2('eip155:421614') === A && isTestProfileId('eip155:421614') &&
+      evmProfileByCaip2('eip155:42161') === undefined && !isTestProfileId('eip155:42161'));
+  const row = networkDefaultFor('eip155:421614');
+  check('its network row is derived from the profile (no hand-written list to forget)', row?.chainId === A.caip2 && row.defaultUrls === A.defaultRpcUrls && row.symbol === 'test ETH' && row.kind === 'evm-jsonrpc' &&
+    row.note === 'Arbitrum Sepolia test network — balances and sends here are test ETH, not real funds.');
+  check('TEST_EVM_NETWORKS follows EVM_TEST_PROFILES one to one; the older rows are unchanged',
+    TEST_EVM_NETWORKS.map((n) => n.chainId).join() === EVM_TEST_PROFILES.map((p) => p.caip2).join() && TEST_EVM_NETWORKS[0] === SEPOLIA_NETWORK && TEST_EVM_NETWORKS[1] === BASE_SEPOLIA_NETWORK);
+  const arbMode = resolveActiveNetworks('eip155:421614');
+  check('Arbitrum Sepolia mode: the EVM slot (eip155:1) serves eip155:421614; other chains unchanged',
+    arbMode.find((e) => e.slot === 'eip155:1')?.network === row && arbMode.filter((e) => e.slot !== 'eip155:1').every((e) => e.network === resolveActiveNetworks(null).find((m) => m.slot === e.slot).network));
+  const store = memoryStore();
+  let p = await savePrefs({ testNetwork: 'eip155:421614' }, store);
+  check('choosing Arbitrum Sepolia persists and sets the test flag', p.testNetwork === 'eip155:421614' && p.sepolia === true && JSON.parse(await store.getItem('shiba-wallet.prefs.v1')).testNetwork === 'eip155:421614');
+  p = await loadPrefs(store);
+  check('…and reads back', p.testNetwork === 'eip155:421614');
+  check('the Settings note for Arbitrum says the L1 cost is inside the gas estimate and names the swap limit',
+    l1CostInGasNote(A) === 'Arbitrum Sepolia is a layer-2 network that charges for publishing its data on Ethereum as extra gas, not as a separate fee: the network’s own gas estimate already includes it, so the max network fee on the confirm screen covers the whole cost, and Max leaves exactly that. The estimate can move with Ethereum’s fees; if it rises before the transaction is included, the network refuses it and nothing is charged. Swaps are not offered here (0x does not support Arbitrum Sepolia).');
+
+  // The EOA quote and Max on Arbitrum: gas × max fee from eth_estimateGas (which includes the L1 part), no oracle call.
+  scenario = { chainId: '0x66eee' };
+  oracleCalls = 0;
+  const q = await prepareEvmSend(URL, FROM, TO, 1000n, undefined, A.caip2);
+  check('Arbitrum Sepolia-mode quote accepts an Arbitrum Sepolia node', q.chainId === 421614n);
+  check('…makes NO GasPriceOracle call and adds no L1 data fee: fee = estimated gas × max fee', oracleCalls === 0 && q.opStack === undefined && q.fee === 21000n * 3n * GWEI);
+  const max = await maxEvmSend(URL, FROM, TO);
+  check('Max (chain from the node) = balance − estimated gas × max fee, no oracle call', max === 10n ** 18n - 21000n * 3n * GWEI && oracleCalls === 0, `${max}`);
+  await checkRejects('Arbitrum Sepolia-mode quote refuses a Base Sepolia node', async () => {
+    scenario = { chainId: '0x14a34' };
+    return prepareEvmSend(URL, FROM, TO, 1000n, undefined, A.caip2);
+  }, /chain id 84532, expected 421614/);
+  scenario = { chainId: '0x66eee' };
+  await checkRejects('Base Sepolia-mode quote refuses an Arbitrum Sepolia node', () => prepareEvmSend(URL, FROM, TO, 1000n, undefined, EVM_BASE_SEPOLIA.caip2), /chain id 421614, expected 84532/);
+  const sent = await sendEvm(URL, signer, q, A.explorerTxBase);
+  check('sendEvm on Arbitrum Sepolia links to sepolia.arbiscan.io', sent.explorerUrl === `https://sepolia.arbiscan.io/tx/${sent.txid}`);
+  scenario = { chainId: '0x1' };
+
+  // WalletConnect names it from the profile table.
+  check('WalletConnect: describeChain names Arbitrum Sepolia; requests for it are accepted only in its mode',
+    describeChain('eip155:421614') === 'Arbitrum Sepolia (test network)' &&
+      parseWcRequest(signEvent('eip155:421614'), WALLET, 'eip155:421614').kind === 'personal_sign' &&
+      (() => { try { parseWcRequest(signEvent('eip155:421614'), WALLET, EVM_BASE_SEPOLIA.caip2); return false; } catch (e) { return e instanceof WcRequestRejection; } })());
+  check('WalletConnect: mode-mismatch sentence for an Arbitrum Sepolia dApp in mainnet mode',
+    modeMismatchMessage('eip155:421614', 'eip155:1', 'connect') ===
+      'This dApp asked for Arbitrum Sepolia (test network); the wallet is in mainnet mode. Turn on Arbitrum Sepolia test mode in Settings → Developer to connect.',
+    modeMismatchMessage('eip155:421614', 'eip155:1', 'connect'));
+
+  // No source in the owned files assumes how many test networks exist.
+  const { readFileSync: readFs } = await import('node:fs');
+  const read = (rel) => readFs(new globalThis.URL(rel, import.meta.url), 'utf8');
+  const settings = read('../src/screens/SettingsScreen.tsx');
+  check('Settings → Developer text is built from the profiles (no hand-written network list)',
+    settings.includes('{DEVELOPER_TEST_NETWORK_HINT}') && !settings.includes('Sepolia (chain id 11155111) or Base Sepolia') && !settings.includes('between\n          the two test networks'));
+  check('readiness hints are built from the profiles', !read('../src/config/readiness.ts').includes("'Turn on a test network (Ethereum Sepolia or Base Sepolia)"));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

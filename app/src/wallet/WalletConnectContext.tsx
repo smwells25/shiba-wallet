@@ -26,6 +26,7 @@ import {
 import { getEndpoint } from '../config/networks';
 import { spendingGateForQuote } from '../components/SpendingPolicyViews';
 import { requireLocalAuth } from './biometric';
+import { WATCH_ONLY_WC_REFUSAL, walletConnectAddressFor } from './watch-only';
 import { usePrefs } from './PrefsContext';
 import { useWallet } from './WalletContext';
 import { accountLabel } from './accounts';
@@ -174,7 +175,12 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
 
   // The ACTIVE account's EVM address: new sessions are approved with it,
   // and only sessions bound to it are served.
-  const ethAddress = accounts.find((a) => a.chainId === EVM_CHAIN_ID)?.address ?? null;
+  // A watch-only account has no key, so it is never offered to a dApp:
+  // walletConnectAddressFor returns null for it.
+  const ethAddress = walletConnectAddressFor(
+    activeAccount,
+    accounts.find((a) => a.chainId === EVM_CHAIN_ID)?.address ?? null,
+  );
   // EIP-7702 status of the active account (phase 8 item 1): the approval
   // sheet labels it "Account 1 (…) · upgraded (Kernel v3.3)" when it runs
   // Kernel, so the user knows which code acts for the dApp.
@@ -694,6 +700,12 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
       // switch. Re-checked here (defense in depth: the sheet also disables
       // its approve buttons).
       if (!identityApprovalAllowed(item.identity, identityAcknowledged)) return;
+      // A proposal cannot be approved while a watch-only account is active:
+      // the wallet holds no key for it. Refused before any device check.
+      if (item.type === 'proposal' && activeAccount?.watchOnly) {
+        Alert.alert('Not connected', WATCH_ONLY_WC_REFUSAL);
+        return;
+      }
       const address = contextRef.current.address;
       if (!address) return;
 
@@ -890,7 +902,7 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
         Alert.alert(title, detail);
       }
     },
-    [controller, client, signWith, evmChain.explorerTxBase, loadAaBundle, approveSmartRequest],
+    [controller, client, signWith, evmChain.explorerTxBase, loadAaBundle, approveSmartRequest, activeAccount?.watchOnly],
   );
 
   const onReject = useCallback(

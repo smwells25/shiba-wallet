@@ -24,6 +24,7 @@ import { formatUnits } from '../wallet/balances';
 import { EVM_CHAIN_ID, describeSendError } from '../wallet/send';
 import { checkAaQuoteBeforeApproval, describeAaError, getAaConfig, summarizeAaReceipt, type AaReceiptSummary } from '../wallet/aa';
 import { listContacts, matchRecipient, type Contact } from '../wallet/contacts';
+import { HEIR_SIDE_NOTE, INHERITANCE_RISK_STATEMENT } from '../wallet/inheritance';
 import {
   APPROVER_WARNING,
   GUARDIAN_SUBMITS_NOTE,
@@ -61,7 +62,7 @@ type Phase = 'input' | 'reviewing' | 'review' | 'signed' | 'submit-confirm' | 's
  * requires a guardian's signature on it): delay 0 with enough approvals, or
  * after an on-chain approval's delay; the account pays the gas.
  */
-export function ApproveRecoveryScreen({ navigation }: Props) {
+export function ApproveRecoveryScreen({ navigation, route }: Props) {
   const theme = useTheme();
   const { accounts, activeAccount, accountList, signWith } = useWallet();
   const { evmChain } = usePrefs();
@@ -73,6 +74,14 @@ export function ApproveRecoveryScreen({ navigation }: Props) {
   // test-network only, so reviewing, approving and submitting a request are
   // switched off here; recovery.ts refuses them too.
   const readiness = readinessGate('guardians', evmChain.caip2);
+  // Opened from the Inheritance screen: the heir approves and submits a takeover with the same steps.
+  const heir = route.params?.role === 'heir';
+  const heirNote = heir ? (
+    <>
+      <WarningBox>{INHERITANCE_RISK_STATEMENT}</WarningBox>
+      <Text style={[styles.hint, { color: theme.text }]}>{HEIR_SIDE_NOTE}</Text>
+    </>
+  ) : null;
 
   const [node, setNode] = useState<JsonRpcTransport | null>(null);
   const [nodeError, setNodeError] = useState<string | null>(null);
@@ -89,8 +98,8 @@ export function ApproveRecoveryScreen({ navigation }: Props) {
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
 
   useEffect(() => {
-    navigation.setOptions({ title: 'Approve a recovery' });
-  }, [navigation]);
+    navigation.setOptions({ title: heir ? 'Approve a takeover (heir)' : 'Approve a recovery' });
+  }, [navigation, heir]);
 
   useEffect(() => {
     const t = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
@@ -403,8 +412,9 @@ export function ApproveRecoveryScreen({ navigation }: Props) {
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
         {readiness ? <TestNetworksOnlyCard feature={readiness.feature} hint={readiness.hint} style={styles.card} titleStyle={styles.ok} bodyStyle={styles.hint} hintStyle={styles.hint} /> : null}
+        {heirNote}
         <RecoveryNetworkBadge label={evmChain.label} testnet={evmChain.testnet} />
-        <Text style={[styles.title, { color: theme.text }]}>Recovery request</Text>
+        <Text style={[styles.title, { color: theme.text }]}>{heir ? 'Takeover request' : 'Recovery request'}</Text>
         <WarningBox>{APPROVER_WARNING}</WarningBox>
         {guardianRow}
         <InfoRow label="Account to be recovered" value={review.request.account} monoValue />
@@ -480,7 +490,8 @@ export function ApproveRecoveryScreen({ navigation }: Props) {
   return (
     <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
       {readiness ? <TestNetworksOnlyCard feature={readiness.feature} hint={readiness.hint} style={styles.card} titleStyle={styles.ok} bodyStyle={styles.hint} hintStyle={styles.hint} /> : null}
-      <Text style={[styles.title, { color: theme.text }]}>Approve a recovery (as a guardian)</Text>
+      {heirNote}
+      <Text style={[styles.title, { color: theme.text }]}>{heir ? 'Approve a takeover (as the heir)' : 'Approve a recovery (as a guardian)'}</Text>
       <Text style={[styles.hint, { color: theme.text }]}>
         Someone who named you as a guardian lost access to their account and asks you to make a new key its owner. Paste
         or scan their request. Nothing is signed until you review it and tap Approve.

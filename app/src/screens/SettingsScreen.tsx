@@ -18,7 +18,7 @@ import { type NetworkDefault } from '../config/defaults';
 import { describeDefaultChoice, describeDefaultFallbackNote } from '../config/endpoint-probe';
 import { INSECURE_ENDPOINT_MESSAGE } from '../config/endpoint-url';
 import { AUTO_LOCK_CHOICES } from '../config/prefs';
-import { EVM_PROFILES, EVM_TEST_PROFILES, type TestNetworkId } from '../config/evm-chain';
+import { EVM_PROFILES, EVM_TEST_PROFILES, l1CostInGasNote, type TestNetworkId } from '../config/evm-chain';
 
 import {
   FEATURE_READINESS,
@@ -99,6 +99,38 @@ import {
   SPENDING_SECTION_TITLE,
   SPENDING_SETTINGS_HINT,
 } from '../wallet/spending-policy';
+
+/** "A, B and C" / "A, B or C". */
+function listJoin(items: string[], conjunction: 'and' | 'or'): string {
+  return items.length > 1 ? `${items.slice(0, -1).join(', ')} ${conjunction} ${items[items.length - 1]}` : items.join('');
+}
+
+/**
+ * Settings → Developer: what the test-network choice does, built from the
+ * test profiles (config/evm-chain.ts) so a new profile is described without
+ * editing this text, and nothing here assumes how many test networks exist.
+ */
+const DEVELOPER_TEST_NETWORK_HINT = (() => {
+  const nets = listJoin(EVM_TEST_PROFILES.map((p) => `${p.label} (chain id ${p.chainIdDecimal})`), 'or');
+  const hosts = listJoin(
+    EVM_TEST_PROFILES.map((p) => /^https:\/\/([^/]+)\//.exec(p.explorerTxBase)?.[1] ?? p.explorerTxBase),
+    'or',
+  );
+  const kernel = EVM_TEST_PROFILES.filter((p) => p.kernelV33Verified).map((p) => p.label);
+  const simple = EVM_TEST_PROFILES.filter((p) => p.aaPrefill !== null).map((p) => p.label);
+  return (
+    `Switches the app’s EVM chain to a test network — ${nets}, each paid in test ETH: balances, sends, ` +
+    'WalletConnect and the smart-account path all run against the chosen network, an orange TESTNET banner ' +
+    `replaces the mainnet warning, and explorer links go to ${hosts}. Each network keeps its own endpoint, ` +
+    'indexer and Account Abstraction configuration — nothing is shared between mainnet and the test networks ' +
+    'or between test networks, and choosing Off restores mainnet exactly as it was. The Account Abstraction ' +
+    (simple.length > 0 ? `section pre-fills the verified SimpleAccountFactory on ${listJoin(simple, 'and')} and ` : 'section pre-fills ') +
+    `the Kernel v3.3 factory on ${listJoin(kernel, 'and')}; the bundler URL still has to be pasted by you for ` +
+    'each network, because bundler endpoints contain your own API key. Tracked ERC-20 tokens are kept per ' +
+    'network too: each test network starts with the test tokens known for it (no value), and your mainnet ' +
+    'token list is unchanged.'
+  );
+})();
 
 /**
  * The chains where the pinned Kernel v3.3 addresses were checked on-chain
@@ -1673,6 +1705,11 @@ export function SettingsScreen({ navigation, route }: Props) {
           onPress={() => navigation.navigate('Guardians')}
         />
         <Button
+          title="Inheritance (demonstration)"
+          variant="secondary"
+          onPress={() => navigation.navigate('Inheritance')}
+        />
+        <Button
           title="Recover an account with guardians"
           variant="secondary"
           onPress={() => navigation.navigate('RecoverAccount')}
@@ -1855,24 +1892,7 @@ export function SettingsScreen({ navigation, route }: Props) {
             />
           ))}
         </View>
-        <Text style={[styles.hint, { color: theme.textMuted }]}>
-          Switches the app&apos;s EVM chain to a test network — Ethereum
-          Sepolia (chain id 11155111) or Base Sepolia (chain id 84532), each
-          paid in test ETH: balances, sends, WalletConnect and the
-          smart-account path all run against the chosen network, an orange
-          TESTNET banner replaces the mainnet warning, and explorer links go
-          to sepolia.etherscan.io or sepolia.basescan.org. Each network keeps
-          its own endpoint, indexer and Account Abstraction configuration —
-          nothing is shared between mainnet and the test networks or between
-          the two test networks, and choosing Off restores mainnet exactly as
-          it was. The Account Abstraction section pre-fills the verified
-          Sepolia SimpleAccountFactory on Sepolia and the Kernel v3.3
-          factory on both; the bundler URL still has to be pasted by you for
-          each network, because bundler endpoints contain your own API key.
-          Tracked ERC-20 tokens are kept per network too: each test network
-          starts with Circle&apos;s test USDC and EURC (no value), and your
-          mainnet token list is unchanged.
-        </Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{DEVELOPER_TEST_NETWORK_HINT}</Text>
         {sepolia ? (
           <Text style={[styles.hint, { color: theme.testnetFill }]}>
             Test mode is ON ({evmChain.label}). Your addresses are the same on
@@ -1887,9 +1907,12 @@ export function SettingsScreen({ navigation, route }: Props) {
             screens show it as a separate line — the network&apos;s fee-oracle
             estimate plus 50% headroom, because this fee cannot be capped — and
             include it in the max network fee, the total and Max. Smart-account
-            sends pay it through the bundler&apos;s gas estimate instead. Swaps
-            are not offered here (0x does not support Base Sepolia).
+            sends pay it through the bundler&apos;s gas estimate instead.
+            {evmChain.swapsOffered ? '' : ` Swaps are not offered here (0x does not support ${evmChain.label}).`}
           </Text>
+        ) : null}
+        {evmChain.l1CostInGas ? (
+          <Text style={[styles.hint, { color: theme.textMuted }]}>{l1CostInGasNote(evmChain)}</Text>
         ) : null}
       </View>
 

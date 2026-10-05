@@ -229,9 +229,14 @@ for (const [file, name] of [
   const home = source('../src/screens/HomeScreen.tsx');
   check(
     'Home passes its refresh counter to all three hooks',
-    home.includes('useSessionEligibility(evmAccount?.address, activeAccount?.index ?? null, toolsRefresh)') &&
-      home.includes('useRecoveryInfo(evmAccount?.address, activeAccount?.index ?? null, toolsRefresh)') &&
-      home.includes('usePasskeyInfo(evmAccount?.address, activeAccount?.index ?? null, toolsRefresh)'),
+    // Feature 10: the owner and index are null for a watch-only account (no
+    // smart-account checks for an address the wallet cannot sign for), and
+    // otherwise exactly the active account's address and index as before.
+    home.includes('const toolsOwner = watchOnly ? null : evmAccount?.address;') &&
+      home.includes('const toolsIndex = watchOnly ? null : (activeAccount?.index ?? null);') &&
+      home.includes('useSessionEligibility(toolsOwner, toolsIndex, toolsRefresh)') &&
+      home.includes('useRecoveryInfo(toolsOwner, toolsIndex, toolsRefresh)') &&
+      home.includes('usePasskeyInfo(toolsOwner, toolsIndex, toolsRefresh)'),
   );
   check(
     'the counter grows on focus (after the first) and on pull-to-refresh',

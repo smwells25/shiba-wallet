@@ -37,7 +37,9 @@ import {
   toHex,
 } from '@shiba-wallet/chains-evm';
 import { ethers } from 'ethers';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { PREVIEW_AA_NOTE } from '../src/wallet/simulation.ts';
 import {
   AA_FUNDING_TITLE,
@@ -106,6 +108,21 @@ import {
   fromRpcOp,
   memoryStore,
 } from './fakes-kernel.mjs';
+
+const TG_APP_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const TG_MUTANT_DIR = join(dirname(fileURLToPath(import.meta.url)), `.mutants-tg-${process.pid}`);
+let tgMutantCount = 0;
+process.on('exit', () => rmSync(TG_MUTANT_DIR, { recursive: true, force: true }));
+/** Imports a mutated copy of an app module (relative imports re-pointed at the real files). */
+async function importMutantTg(relPath, source) {
+  const originalDir = dirname(join(TG_APP_ROOT, relPath));
+  const rewritten = source.replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolve(originalDir, spec)).href}'`);
+  mkdirSync(TG_MUTANT_DIR, { recursive: true });
+  tgMutantCount += 1;
+  const file = join(TG_MUTANT_DIR, `m${tgMutantCount}-${relPath.split('/').pop()}`);
+  writeFileSync(file, rewritten);
+  return import(pathToFileURL(file).href);
+}
 
 let passed = 0;
 let failed = 0;
@@ -409,10 +426,10 @@ console.log('check-token-gas: pinned constants and where the choice is offered')
   const avail = offer(BASE, configFor(BASE));
   check('Base Sepolia + Kernel v3.3 at its own address: available', avail.kind === 'available' && avail.paymaster === PAYMASTER && same(avail.token, USDC));
   const sep = offer(SEPOLIA, configFor(SEPOLIA));
-  check('Ethereum Sepolia: hidden with the honest sentence (names Base Sepolia and why Sepolia lacks it)',
+  check('Ethereum Sepolia: hidden with the honest sentence (names the Circle networks and why Sepolia lacks it)',
     sep.kind === 'unavailable' && sep.reason === tokenGasNotOnNetworkSentence(SEPOLIA) &&
       sep.reason ===
-        'Paying the network fee in USDC is offered only on Base Sepolia, where Circle’s token paymaster for EntryPoint v0.7 has been checked on-chain. It is not available on Ethereum Sepolia. On Ethereum Sepolia the same paymaster address does not serve EntryPoint v0.7 (its entryPoint() call reverts and it holds no deposit there).',
+        'Paying the network fee in USDC is offered only on Base Sepolia and Arbitrum Sepolia, where Circle’s token paymaster for EntryPoint v0.7 has been checked on-chain. It is not available on Ethereum Sepolia. On Ethereum Sepolia the same paymaster address does not serve EntryPoint v0.7 (its entryPoint() call reverts and it holds no deposit there).',
     sep.reason);
   check('mainnet: not offered (smart accounts themselves are test-network-only there)', offer(MAINNET, configFor(MAINNET)).kind === 'unavailable');
   check('the sentence names the active network and adds the Sepolia clause only there',
@@ -529,9 +546,9 @@ let nativeQuote;
   const b2 = tgBundler(n2, { floor: 100_000_000n });
   const q2 = await prepareAaTokenGasSend(kernelBundle({ node: n2, bundler: b2 }).bundle, OWNER_0, RECIPIENT, 1n);
   // The quote prices at the floor plus aa.ts AA_FEE_FLOOR_HEADROOM_PERCENT
-  // (25 %): 0.1 gwei → 0.125 gwei.
-  const fee2 = MAX_FEE + (125_000_000n - 1_000_000n);
-  check('with a 10% spread and a 0.1 gwei bundler floor (+25% headroom) the worst case follows exactly',
+  // (100 % since 2026-10-04): 0.1 gwei → 0.2 gwei.
+  const fee2 = MAX_FEE + (200_000_000n - 1_000_000n);
+  check('with a 10% spread and a 0.1 gwei bundler floor (+100% headroom) the worst case follows exactly',
     q2.maxFeePerGas === fee2 && q2.tokenGas.maxTokenCharge === expectedCharge({ gas: CEILING_GAS, maxFee: fee2, spread: 1_000n }).total,
     `${q2.tokenGas.maxTokenCharge}`);
   // Control (mutation guard): a different ceiling would give a different figure.
@@ -731,7 +748,7 @@ console.log('check-token-gas: the cap (the charge can never exceed what the user
     nonceReads === 2, `${nonceReads}`);
 
   // The bundler's fee floor moves between the quote and the send. The USDC
-  // worst case is priced at the quote's fees (floor + 25 % headroom) and the
+  // worst case is priced at the quote's fees (floor + 100 % headroom) and the
   // operation is signed with exactly those fees, so the permit cap and the
   // floor rule compose: a drift inside the headroom changes nothing, a
   // larger one is refused before ANY permit is signed.
@@ -747,8 +764,8 @@ console.log('check-token-gas: the cap (the charge can never exceed what the user
     b3.sent = inner.sent;
     const k3 = kernelBundle({ node: n3, bundler: b3 });
     const q3 = await prepareAaTokenGasSend(k3.bundle, OWNER_0, RECIPIENT, 1n);
-    check('USDC fee quote: priority = floor + 25 % (0.125 gwei)', q3.maxPriorityFeePerGas === 125_000_000n);
-    floorNow = 125_000_001n;
+    check('USDC fee quote: priority = floor + 100 % (0.2 gwei)', q3.maxPriorityFeePerGas === 200_000_000n);
+    floorNow = 200_000_001n; // one wei above the quoted priority fee
     const e3 = await rejection(() => sendAa(k3.bundle, owner, q3));
     check('floor above the quoted priority at send: AaFeeRoseError before any permit (no estimate, no submission)',
       e3 instanceof AaFeeRoseError && inner.estimated.length === 0 && inner.sent.length === 0, e3?.message);
@@ -756,11 +773,11 @@ console.log('check-token-gas: the cap (the charge can never exceed what the user
     check('…and the same quote is not sent again', again?.message === AA_QUOTE_ALREADY_USED && inner.sent.length === 0);
     floorNow = 108_000_000n; // +8 %, inside the headroom
     const q4 = await prepareAaTokenGasSend(k3.bundle, OWNER_0, RECIPIENT, 1n);
-    check('re-quote at the risen floor: priority 0.135 gwei, worst case priced at it', q4.maxPriorityFeePerGas === 135_000_000n);
-    floorNow = 116_000_000n;
+    check('re-quote at the risen floor: priority 0.216 gwei, worst case priced at it', q4.maxPriorityFeePerGas === 216_000_000n);
+    floorNow = 216_000_000n; // +100 % since the re-quote: exactly the headroom
     await sendAa(k3.bundle, owner, q4);
     const op4 = inner.sent[0];
-    check('drift inside the headroom: sent with EXACTLY the quoted fees, final permit ≤ the displayed USDC worst case',
+    check('a +100 % drift (exactly the headroom): sent with EXACTLY the quoted fees, final permit ≤ the displayed USDC worst case',
       inner.sent.length === 1 && BigInt(op4.maxPriorityFeePerGas) === q4.maxPriorityFeePerGas && BigInt(op4.maxFeePerGas) === q4.maxFeePerGas &&
         permitOf(op4).amount <= q4.tokenGas.maxTokenCharge);
   }
@@ -845,7 +862,7 @@ console.log('check-token-gas: footnote, fee copy and funding titles');
     tokenSendFeeSentence(SEPOLIA) === 'The network fee for a token send is normally paid in test ETH, not in the token.' &&
       tokenSendFeeSentence(MAINNET) === 'The network fee for a token send is normally paid in ETH, not in the token.');
   check('Settings fee sentence covers every network',
-    settingsTokensFeeSentence() === 'The network fee for a token send is normally paid in ETH (test ETH on test networks), not in the token; on Base Sepolia, a smart-account send can pay it in USDC instead when the Send screen offers that choice.',
+    settingsTokensFeeSentence() === 'The network fee for a token send is normally paid in ETH (test ETH on test networks), not in the token; on Base Sepolia and Arbitrum Sepolia, a smart-account send can pay it in USDC instead when the Send screen offers that choice.',
     settingsTokensFeeSentence());
   const tokensSrc = readFileSync(new URL('../src/screens/TokensScreen.tsx', import.meta.url), 'utf8');
   const settingsSrc = readFileSync(new URL('../src/screens/SettingsScreen.tsx', import.meta.url), 'utf8');
@@ -938,6 +955,436 @@ console.log('check-token-gas: the ETH path and the follow-ups');
   // (c) WcApprovalSheet names its chain.
   const sheet = readFileSync(new URL('../src/components/WcApprovalSheet.tsx', import.meta.url), 'utf8');
   check('(c) WcApprovalSheet passes evmChain.caip2 to listTokens explicitly', sheet.includes('listTokens(evmChain.caip2)') && !sheet.includes('listTokens()'));
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-token-gas: the ERC-7677 source (Pimlico’s ERC-20 paymaster on Ethereum Sepolia, phase 14 item 3)');
+// ---------------------------------------------------------------------------
+{
+  const engine = await import('@shiba-wallet/chains-evm');
+  const tg = await import('../src/wallet/token-gas.ts');
+  const aa = await import('../src/wallet/aa.ts');
+  const { keccak256 } = ethers;
+  const PIM = engine.PIMLICO_ERC20_PAYMASTER_V07.address;
+  const SEP_USDC = '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238';
+  const SEP_CHAIN = 11155111n;
+  const TREASURY = '0xD8Baa107006C93a030d1455A2eF43261b384F21c';
+  const RATE = 3_003_989_130n; // the live stub's rate on 2026-10-04 (USDC base units per 1 ETH)
+  const POST_OP_GAS = 18_990n;
+  const POST_OP_LIMIT = 0x10d7en;
+  const code = readFileSync(new URL('./fixtures/pimlico-singleton-paymaster-v07.runtime.hex', import.meta.url), 'utf8').trim();
+  check('fixture: the paymaster runtime code hashes to the pinned keccak (eth_getCode on Sepolia, 2026-10-04)',
+    keccak256(code) === engine.PIMLICO_ERC20_PAYMASTER_V07.runtimeCodeKeccak && (code.length - 2) / 2 === 15_118);
+
+  // Where the source is offered.
+  check('tokenGasSourceFor: Circle on Base Sepolia; nothing on Ethereum Sepolia unless the screen accepts ERC-7677',
+    tg.tokenGasSourceFor(BASE)?.kind === 'circle' && tg.tokenGasSourceFor(SEPOLIA) === null &&
+      tg.tokenGasSourceFor(SEPOLIA, { acceptsErc7677: true })?.kind === 'erc7677' &&
+      same(tg.tokenGasSourceFor(SEPOLIA, { acceptsErc7677: true })?.paymaster, PIM) &&
+      same(tg.tokenGasSourceFor(SEPOLIA, { acceptsErc7677: true })?.token, SEP_USDC) &&
+      tg.tokenGasSourceFor(MAINNET, { acceptsErc7677: true }) === null && tg.tokenGasSourceFor(BASE, { acceptsErc7677: true })?.kind === 'circle');
+  const offer = (cfg, extra = {}) => tg.tokenGasOffer({ chainCaip2: SEPOLIA, config: cfg, owner: OWNER_0, passkeySigner: false, ...extra });
+  check('offer on Ethereum Sepolia: unavailable with the existing sentence unless accepted; available (source erc7677) when accepted',
+    offer(configFor(SEPOLIA)).kind === 'unavailable' && offer(configFor(SEPOLIA)).reason === tokenGasNotOnNetworkSentence(SEPOLIA) &&
+      offer(configFor(SEPOLIA), { acceptsErc7677: true }).kind === 'available' &&
+      offer(configFor(SEPOLIA), { acceptsErc7677: true }).source.kind === 'erc7677');
+  check('offer refusals name this source: SimpleAccount, 7702, passkey; a sponsoring paymaster keeps its note',
+    offer(configFor(SEPOLIA, { accountType: 'simple' }), { acceptsErc7677: true }).reason === tg.ERC7677_SIMPLE_ACCOUNT_NOTE &&
+      offer(configFor(SEPOLIA, { eip7702Owners: [OWNER_0] }), { acceptsErc7677: true }).reason === tg.ERC7677_7702_NOTE &&
+      offer(configFor(SEPOLIA), { acceptsErc7677: true, passkeySigner: true }).reason === tg.ERC7677_PASSKEY_NOTE &&
+      offer(configFor(SEPOLIA, { paymasterUrl: 'https://pm.example' }), { acceptsErc7677: true }).reason === TOKEN_GAS_SPONSORED_NOTE);
+
+  /** Fake Ethereum Sepolia node: the Kernel surface plus Pimlico's code, entryPoint() and deposit, USDC views. */
+  function pimNode(opts = {}) {
+    const state = { usdc: 5_000_000n, allowance: 0n, deposit: 140n * 10n ** 18n, staked: false, code, entryPoint: ENTRYPOINT_V07, ...opts };
+    const calls = [];
+    const tokenBalances = { [`${SEP_USDC.toLowerCase()}|${KERNEL_ACCOUNT_0.toLowerCase()}`]: state.usdc };
+    const inner = fakeKernelNode({
+      chainIdHex: '0xaa36a7',
+      balance: opts.eth ?? 10n ** 16n,
+      tokenBalances,
+      deployedAccounts: opts.deployed ? new Set([KERNEL_ACCOUNT_0]) : new Set(),
+      owners: { [KERNEL_ACCOUNT_0.toLowerCase()]: OWNER_0 },
+      calls,
+    });
+    const t = async (method, params) => {
+      if (method === 'eth_getCode' && same(params[0], PIM)) {
+        calls.push({ method, params });
+        return state.code;
+      }
+      if (method === 'eth_getBlockByNumber') return { baseFeePerGas: '0x3b9aca00' };
+      if (method === 'eth_maxPriorityFeePerGas') return '0xf4240';
+      if (method === 'eth_call') {
+        const [{ to, data }] = params;
+        if (same(to, PIM) && data === sel('entryPoint()')) return pad32(state.entryPoint);
+        if (same(to, ENTRYPOINT_V07) && data.startsWith(sel('getDepositInfo(address)'))) {
+          return '0x' + [state.deposit, state.staked ? 1n : 0n, 0n, 0n, 0n].map((v) => word(v).slice(2)).join('');
+        }
+        if (same(to, SEP_USDC) && data === sel('decimals()')) return word(6);
+        if (same(to, SEP_USDC) && data.startsWith(sel('allowance(address,address)'))) return word(state.allowance);
+      }
+      return inner(method, params);
+    };
+    t.calls = calls;
+    t.state = state;
+    tokenBalances.set = (v) => {
+      tokenBalances[`${SEP_USDC.toLowerCase()}|${KERNEL_ACCOUNT_0.toLowerCase()}`] = v;
+    };
+    t.tokenBalances = tokenBalances;
+    return t;
+  }
+
+  /**
+   * Fake ERC-7677 bundler: answers the two pm_ methods in Pimlico's
+   * SingletonPaymasterV7 format (built here from the contract layout with
+   * ethers.solidityPacked, independently of the engine encoder), estimates
+   * like a bundler that runs postOp (the first call must approve enough and
+   * the USDC left after the account's own transfers must cover the charge),
+   * and records what is sent.
+   */
+  function pimBundler(node, opts = {}) {
+    const terms = { rate: RATE, postOpGas: POST_OP_GAS, constantFee: 0n, recipient: null, preFund: 0n, paymaster: PIM, token: SEP_USDC, finalRate: null, ...opts };
+    const calls = [];
+    const pmData = (rate) => {
+      const flags = (terms.constantFee > 0n ? 1 : 0) | (terms.recipient ? 2 : 0) | (terms.preFund > 0n ? 4 : 0);
+      const types = ['uint8', 'uint8', 'uint48', 'uint48', 'address', 'uint128', 'uint256', 'uint128', 'address'];
+      const values = [3, flags, 0, 0, terms.token, terms.postOpGas, rate, 1, TREASURY];
+      if (terms.preFund > 0n) { types.push('uint128'); values.push(terms.preFund); }
+      if (terms.constantFee > 0n) { types.push('uint128'); values.push(terms.constantFee); }
+      if (terms.recipient) { types.push('address'); values.push(terms.recipient); }
+      types.push('bytes');
+      values.push('0x' + '11'.repeat(65));
+      return ethers.solidityPacked(types, values);
+    };
+    const t = async (method, params) => {
+      calls.push({ method, params });
+      if (method === 'eth_chainId') return opts.chainIdHex ?? '0xaa36a7';
+      if (method === 'rundler_maxPriorityFeePerGas') throw new Error('RPC error -32601: method not found');
+      if (method === 'pimlico_getUserOperationGasPrice') {
+        return { slow: { maxFeePerGas: '0x1', maxPriorityFeePerGas: '0x1' }, standard: { maxFeePerGas: '0x1', maxPriorityFeePerGas: '0x1' } };
+      }
+      if (method === 'pm_getPaymasterStubData') {
+        return { paymaster: terms.paymaster, paymasterData: pmData(terms.rate), paymasterPostOpGasLimit: '0x' + POST_OP_LIMIT.toString(16) };
+      }
+      if (method === 'pm_getPaymasterData') {
+        // Like ZeroDev's live answer: no gas limits in the final answer.
+        return { paymaster: terms.paymaster, paymasterData: pmData(terms.finalRate ?? terms.rate) };
+      }
+      if (method === 'eth_estimateUserOperationGas') {
+        const op = params[0];
+        t.estimated.push(op);
+        const exec = decodeKernelExecute(op.callData);
+        const first = exec.calls[0];
+        const approveIface = new ethers.Interface(['function approve(address,uint256)', 'function transfer(address,uint256)']);
+        let approved = 0n;
+        if (first && same(first.to, SEP_USDC) && first.data.startsWith(sel('approve(address,uint256)'))) {
+          const [spender, amount] = approveIface.decodeFunctionData('approve', first.data);
+          if (same(spender, PIM)) approved = amount;
+        }
+        let held = node.tokenBalances[`${SEP_USDC.toLowerCase()}|${op.sender.toLowerCase()}`] ?? 0n;
+        for (const c of exec.calls.slice(1)) {
+          if (same(c.to, SEP_USDC) && c.data.startsWith(sel('transfer(address,uint256)'))) held -= approveIface.decodeFunctionData('transfer', c.data)[1];
+        }
+        const fee = BigInt(op.maxFeePerGas);
+        const charge = ((300_000n * fee + terms.postOpGas * fee) * terms.rate) / 10n ** 18n; // a realistic actual charge
+        if (approved < charge) throw new Error('RPC error -32500: AA50 postOp reverted: ERC20: transfer amount exceeds allowance');
+        if (held < charge) throw new Error('RPC error -32500: AA50 PostOp Reverted: Insufficient balance');
+        return opts.estimate ?? {
+          callGasLimit: '0xc404', verificationGasLimit: '0x16471', preVerificationGas: '0xd71e',
+          paymasterVerificationGasLimit: '0xb578', paymasterPostOpGasLimit: '0xb98f',
+        };
+      }
+      if (method === 'eth_sendUserOperation') {
+        t.sent.push(params[0]);
+        return USEROP_HASH;
+      }
+      throw new Error(`pim bundler: unexpected method ${method}`);
+    };
+    t.calls = calls;
+    t.estimated = [];
+    t.sent = [];
+    t.terms = terms;
+    return t;
+  }
+  function pimBundle({ node = pimNode(), bundler } = {}) {
+    const b = bundler ?? pimBundler(node);
+    const bundle = createAaClient({
+      nodeUrl: NODE_URL,
+      bundlerUrl: BUNDLER_URL,
+      factory: KERNEL_V3_3.factory,
+      chainId: SEP_CHAIN,
+      accountIndex: 0,
+      accountType: 'kernel-v3.3',
+      transportFor: (url) => (url.includes('bundler') ? b : node),
+    });
+    return { bundle, node, bundler: b };
+  }
+  /** The bound written out from SingletonPaymasterV7 + EntryPoint v0.7, independently of the engine helper. */
+  function expectedBound({ call, verification, pvg, pmVerification, postOpLimit, maxFee, rate = RATE, postOpGas = POST_OP_GAS, constantFee = 0n }) {
+    const prefund = (call + verification + pvg + pmVerification + postOpLimit) * maxFee;
+    const penalty = ((call + postOpLimit) * 10n) / 100n;
+    return ((prefund + penalty * maxFee + postOpGas * maxFee) * rate) / 10n ** 18n + constantFee;
+  }
+  const PADDED = {
+    call: (0xc404n * 130n) / 100n,
+    verification: (0x16471n * 110n) / 100n,
+    pvg: (0xd71en * 105n) / 100n,
+    pmVerification: (0xb578n * 110n) / 100n,
+  };
+
+  // The on-chain + bundler check.
+  {
+    const node = pimNode();
+    const bundler = pimBundler(node);
+    const transportFor = (url) => (url.includes('bundler') ? bundler : node);
+    tg.forgetTokenGasChecks();
+    const none = await tg.checkTokenGasPaymaster(NODE_URL, SEPOLIA, { acceptsErc7677: true, transportFor, store: memoryStore() });
+    check('check without a saved bundler: the needs-a-bundler sentence, nothing asked',
+      none.ok === false && none.reason === tg.erc7677NeedsBundlerSentence('Ethereum Sepolia') && bundler.calls.length === 0, none.reason);
+    check('…which reads exactly', tg.erc7677NeedsBundlerSentence('Ethereum Sepolia') ===
+      'On Ethereum Sepolia, paying the network fee in USDC goes through Pimlico’s token paymaster, which is reached through the bundler saved in Settings → Account Abstraction. No bundler is saved for this network.');
+    const ok = await tg.checkTokenGasPaymaster(NODE_URL, SEPOLIA, { acceptsErc7677: true, transportFor, bundlerUrl: BUNDLER_URL });
+    check('check with the bundler: ok, the stub terms read (rate, postOpGas), context {token} sent',
+      ok.ok === true && ok.source === 'erc7677' && ok.stub.exchangeRate === RATE && ok.stub.postOpGas === POST_OP_GAS &&
+        JSON.stringify(bundler.calls.find((c) => c.method === 'pm_getPaymasterStubData')?.params[3]) === JSON.stringify({ token: SEP_USDC }));
+    tg.forgetTokenGasChecks();
+    const wrongChain = pimBundler(node, { chainIdHex: '0x14a34' });
+    const wc = await tg.checkTokenGasPaymaster(NODE_URL, SEPOLIA, { acceptsErc7677: true, bundlerUrl: BUNDLER_URL, transportFor: (u) => (u.includes('bundler') ? wrongChain : node) });
+    check('a bundler for another chain is refused before any paymaster question', wc.ok === false && /serves chain id 84532/.test(wc.reason) &&
+      !wrongChain.calls.some((c) => c.method.startsWith('pm_')), wc.reason);
+    tg.forgetTokenGasChecks();
+    const tampered = pimNode({ code: code.slice(0, -2) + (code.endsWith('00') ? '01' : '00') });
+    const tc = await tg.checkTokenGasPaymaster(NODE_URL, SEPOLIA, { acceptsErc7677: true, bundlerUrl: BUNDLER_URL, transportFor: (u) => (u.includes('bundler') ? pimBundler(tampered) : tampered) });
+    check('different deployed code: refused (code hash)', tc.ok === false && /deployed code/.test(tc.reason), tc.reason);
+    tg.forgetTokenGasChecks();
+    const foreign = pimBundler(node, { paymaster: '0x' + '42'.repeat(20) });
+    const fc = await tg.checkTokenGasPaymaster(NODE_URL, SEPOLIA, { acceptsErc7677: true, bundlerUrl: BUNDLER_URL, transportFor: (u) => (u.includes('bundler') ? foreign : node) });
+    check('a bundler naming another paymaster: refused, with the wallet’s reason', fc.ok === false && /did not offer Pimlico’s token paymaster/.test(fc.reason) && /not 0x7777/.test(fc.reason), fc.reason);
+    tg.forgetTokenGasChecks();
+  }
+
+  // The quote: estimated before the gate, the exact approval first, the bound recomputed independently.
+  const { bundle: qb, bundler: qBundler } = pimBundle();
+  const q = await tg.prepareAaTokenGasSend(qb, OWNER_0, RECIPIENT, 0n, { acceptsErc7677: true });
+  const maxFee = q.maxFeePerGas;
+  const bound = expectedBound({ ...PADDED, postOpLimit: POST_OP_LIMIT, maxFee });
+  const expectedMax = (bound * 125n + 99n) / 100n;
+  check('quote: source erc7677, Pimlico’s paymaster, Sepolia USDC (6 decimals read on-chain)',
+    q.tokenGas.source === 'erc7677' && same(q.tokenGas.paymaster, PIM) && same(q.tokenGas.token, SEP_USDC) && q.tokenGas.decimals === 6);
+  check('quote: the worst case = the contract formula over the padded estimate at the quote fees, + 25 % (independent recomputation)',
+    q.tokenGas.erc7677.boundAtQuote === bound && q.tokenGas.maxTokenCharge === expectedMax, `${q.tokenGas.maxTokenCharge} vs ${expectedMax}`);
+  check('quote: no ETH fee, gas fields = the padded estimate', q.fee === 0n &&
+    q.callGasLimit === PADDED.call && q.verificationGasLimit === PADDED.verification && q.preVerificationGas === PADDED.pvg);
+  const approveIface = new ethers.Interface(['function approve(address,uint256)']);
+  check('quote: the first call approves Pimlico’s paymaster for EXACTLY the displayed worst case (ethers encoding)',
+    same(q.calls[0].to, SEP_USDC) && q.calls[0].value === 0n && toHex(q.calls[0].data) === approveIface.encodeFunctionData('approve', [PIM, q.tokenGas.maxTokenCharge]) &&
+      q.calls.length === 2 && same(q.calls[1].to, RECIPIENT));
+  check('quote: nothing sent, only the stub and the estimate were asked (no final data before the gate)',
+    qBundler.sent.length === 0 && !qBundler.calls.some((c) => c.method === 'pm_getPaymasterData') && qBundler.estimated.length === 1);
+  check('quote: the estimate used a placeholder approval (the account’s whole USDC balance), never the unlimited value',
+    (() => {
+      const exec = decodeKernelExecute(qBundler.estimated[0].callData);
+      return toHex(ethers.getBytes(exec.calls[0].data)) === approveIface.encodeFunctionData('approve', [PIM, 5_000_000n]);
+    })());
+
+  // Funding refusals before any bundler request.
+  {
+    const node = pimNode({ usdc: 0n });
+    const { bundle, bundler } = pimBundle({ node });
+    const e = await rejection(() => tg.prepareAaTokenGasSend(bundle, OWNER_0, RECIPIENT, 0n, { acceptsErc7677: true }));
+    check('no USDC at all: funding error before the bundler is asked', e instanceof AaFundingError && e.title === AA_FUNDING_TITLE && bundler.calls.filter((c) => c.method.startsWith('pm_') || c.method.startsWith('eth_est')).length === 0, e?.message);
+    const small = pimNode({ usdc: expectedMax - 1n });
+    const { bundle: b2 } = pimBundle({ node: small });
+    const e2 = await rejection(() => tg.prepareAaTokenGasSend(b2, OWNER_0, RECIPIENT, 0n, { acceptsErc7677: true }));
+    check('USDC one unit below the worst case: funding error naming both figures', e2 instanceof AaFundingError && e2.message.includes(fmt6(expectedMax)), e2?.message);
+  }
+
+  // USDC send: amount + worst case must fit; Max = balance − worst case.
+  {
+    const usdcTarget = { contract: SEP_USDC, recipient: RECIPIENT, symbol: 'USDC', decimals: 6, chainCaip2: SEPOLIA };
+    const { bundle } = pimBundle();
+    const qq = await tg.prepareAaTokenGasErc20Send(bundle, OWNER_0, { ...usdcTarget, amount: 1_000_000n }, { acceptsErc7677: true });
+    check('USDC send: approve first, then the transfer; total = amount + worst case ≤ balance',
+      qq.calls.length === 2 && qq.token.amount === 1_000_000n && 1_000_000n + qq.tokenGas.maxTokenCharge <= 5_000_000n);
+    const max = await tg.maxAaTokenGasErc20Send(bundle, OWNER_0, usdcTarget, { acceptsErc7677: true });
+    check('USDC Max = balance − worst case (priced with a 1-unit transfer)', max > 0n && max < 5_000_000n, `${max}`);
+    const over = await rejection(() => tg.prepareAaTokenGasErc20Send(bundle, OWNER_0, { ...usdcTarget, amount: 5_000_000n }, { acceptsErc7677: true }));
+    check('USDC send of the whole balance (typed): refused, the fee would not fit', over instanceof AaFundingError, over?.message);
+    const ethMax = await tg.maxAaTokenGasSend(bundle, OWNER_0, { acceptsErc7677: true });
+    check('ETH Max with the USDC fee = the full ETH balance', ethMax === 10n ** 16n);
+  }
+
+  // Send: after the gate, the final terms are checked against the displayed maximum.
+  {
+    const { bundle, bundler } = pimBundle();
+    const quote = await tg.prepareAaTokenGasSend(bundle, OWNER_0, RECIPIENT, 0n, { acceptsErc7677: true });
+    await sendAa(bundle, owner, quote);
+    const op = bundler.sent[0];
+    check('sent: one operation through Pimlico’s paymaster, final data asked with context {token}',
+      bundler.sent.length === 1 && same(op.paymaster, PIM) &&
+        JSON.stringify(bundler.calls.find((c) => c.method === 'pm_getPaymasterData')?.params[3]) === JSON.stringify({ token: SEP_USDC }));
+    const exec = decodeKernelExecute(op.callData);
+    check('sent: the signed callData approves exactly the displayed maximum, then the reviewed call',
+      exec.calls.length === 2 && approveIface.encodeFunctionData('approve', [PIM, quote.tokenGas.maxTokenCharge]) === ethers.hexlify(exec.calls[0].data) &&
+        same(exec.calls[1].to, RECIPIENT));
+    check('sent: exactly the quoted fees', BigInt(op.maxFeePerGas) === quote.maxFeePerGas && BigInt(op.maxPriorityFeePerGas) === quote.maxPriorityFeePerGas);
+    const full = {
+      ...fromRpcOp(op),
+      paymaster: op.paymaster,
+      paymasterVerificationGasLimit: BigInt(op.paymasterVerificationGasLimit),
+      paymasterPostOpGasLimit: BigInt(op.paymasterPostOpGasLimit),
+      paymasterData: toBytes(op.paymasterData),
+    };
+    check('sent: the postOp limit is the stub’s (the final answer omitted it)', full.paymasterPostOpGasLimit === POST_OP_LIMIT);
+    const hash = getUserOpHash(full, ENTRYPOINT_V07, SEP_CHAIN);
+    check('sent: the userOp signature (covering paymasterAndData) recovers to the owner (ethers)', ethers.verifyMessage(hash, op.signature) === OWNER_0);
+    const signedBound = expectedBound({
+      call: full.callGasLimit, verification: full.verificationGasLimit, pvg: full.preVerificationGas,
+      pmVerification: full.paymasterVerificationGasLimit, postOpLimit: full.paymasterPostOpGasLimit, maxFee: full.maxFeePerGas,
+    });
+    check('sent: the bound of what was signed is within the displayed maximum (= the approval)', signedBound <= quote.tokenGas.maxTokenCharge, `${signedBound} ≤ ${quote.tokenGas.maxTokenCharge}`);
+  }
+  {
+    // The rate in the final answer rises past the headroom → refused before signing.
+    const node = pimNode();
+    const bundler = pimBundler(node);
+    const { bundle } = pimBundle({ node, bundler });
+    const quote = await tg.prepareAaTokenGasSend(bundle, OWNER_0, RECIPIENT, 0n, { acceptsErc7677: true });
+    bundler.terms.finalRate = (RATE * 126n) / 100n;
+    const e = await rejection(() => sendAa(bundle, owner, quote));
+    check('final rate +26 %: TokenGasChargeAboveLimitError before signing; nothing sent', e instanceof TokenGasChargeAboveLimitError && e.limit === quote.tokenGas.maxTokenCharge && bundler.sent.length === 0, e?.message);
+    const d = tg.describeTokenGasError(e, quote.tokenGas);
+    check('…worded with the fee-changed title and both amounts', d?.title === TOKEN_GAS_FEE_ROSE_TITLE && d.detail.includes(fmt6(quote.tokenGas.maxTokenCharge)));
+    const node2 = pimNode();
+    const bundler2 = pimBundler(node2);
+    const { bundle: bundle2 } = pimBundle({ node: node2, bundler: bundler2 });
+    const quote2 = await tg.prepareAaTokenGasSend(bundle2, OWNER_0, RECIPIENT, 0n, { acceptsErc7677: true });
+    bundler2.terms.finalRate = (RATE * 120n) / 100n;
+    await sendAa(bundle2, owner, quote2);
+    check('final rate +20 % (inside the 25 % headroom): sent', bundler2.sent.length === 1);
+  }
+  {
+    // Final data with a recipient or a preFund is refused before signing.
+    for (const [label, extra] of [['recipient', { recipient: '0x' + '33'.repeat(20) }], ['preFund', { preFund: 1n }]]) {
+      const node = pimNode();
+      const bundler = pimBundler(node);
+      const { bundle } = pimBundle({ node, bundler });
+      const quote = await tg.prepareAaTokenGasSend(bundle, OWNER_0, RECIPIENT, 0n, { acceptsErc7677: true });
+      Object.assign(bundler.terms, extra);
+      const e = await rejection(() => sendAa(bundle, owner, quote));
+      check(`final data with a ${label}: refused before signing, nothing sent`, e !== null && new RegExp(label).test(e.message) && bundler.sent.length === 0, e?.message);
+    }
+  }
+  {
+    // A quote whose approval was altered after review is refused.
+    const { bundle, bundler } = pimBundle();
+    const quote = await tg.prepareAaTokenGasSend(bundle, OWNER_0, RECIPIENT, 0n, { acceptsErc7677: true });
+    const tampered = { ...quote, calls: [engine.erc7677TokenApproveCall(SEP_USDC, PIM, quote.tokenGas.maxTokenCharge * 2n), ...quote.calls.slice(1)] };
+    const e = await rejection(() => sendAa(bundle, owner, tampered));
+    check('an approval larger than the displayed maximum: refused before anything is asked or signed',
+      e !== null && /does not start by approving exactly/.test(e.message) && bundler.sent.length === 0 && !bundler.calls.some((c) => c.method === 'pm_getPaymasterData'), e?.message);
+    const aaSrc = readFileSync(new URL('../src/wallet/aa.ts', import.meta.url), 'utf8');
+    const anchor = '  assertErc7677ApprovalCall(quote);\n  const transport = createErc7677TokenPaymasterTransport({';
+    const mutant = await importMutantTg('src/wallet/aa.ts', aaSrc.replace(anchor, '  const transport = createErc7677TokenPaymasterTransport({'));
+    check('mutation anchor present', aaSrc.includes(anchor));
+    const mb = pimBundle();
+    const mq = await tg.prepareAaTokenGasSend(mb.bundle, OWNER_0, RECIPIENT, 0n, { acceptsErc7677: true });
+    const mbundle = mutant.createAaClient({
+      nodeUrl: NODE_URL, bundlerUrl: BUNDLER_URL, factory: KERNEL_V3_3.factory, chainId: SEP_CHAIN, accountIndex: 0, accountType: 'kernel-v3.3',
+      transportFor: (url) => (url.includes('bundler') ? mb.bundler : mb.node),
+    });
+    await mutant.sendAa(mbundle, owner, { ...mq, calls: [engine.erc7677TokenApproveCall(SEP_USDC, PIM, mq.tokenGas.maxTokenCharge * 2n), ...mq.calls.slice(1)] }).catch(() => null);
+    check('M-a caught: without the approval check a doubled approval would be sent', mb.bundler.sent.length === 1);
+  }
+  {
+    // Headroom mutation: the displayed maximum must include the 25 %.
+    const tgSrc = readFileSync(new URL('../src/wallet/token-gas.ts', import.meta.url), 'utf8');
+    const anchor = 'const maxTokenCharge = (bound * (100n + ERC7677_TOKEN_GAS_HEADROOM_PERCENT) + 99n) / 100n;';
+    check('mutation anchor present (headroom)', tgSrc.includes(anchor));
+    const mutant = await importMutantTg('src/wallet/token-gas.ts', tgSrc.replace(anchor, 'const maxTokenCharge = bound;'));
+    const { bundle } = pimBundle();
+    const mq = await mutant.prepareAaTokenGasSend(bundle, OWNER_0, RECIPIENT, 0n, { acceptsErc7677: true });
+    check('M-b caught: without the headroom the displayed maximum differs from the checked figure', mq.tokenGas.maxTokenCharge !== expectedMax);
+  }
+
+  // Sentences.
+  const lines = tg.tokenGasConfirmLines(q.tokenGas, { chainCaip2: SEPOLIA, nativeSymbol: 'test ETH', maxFeePerGas: q.maxFeePerGas });
+  const m = fmt6(q.tokenGas.maxTokenCharge);
+  check('confirm: fee sentence', lines.feeSentence ===
+    `Network fee paid in USDC: up to ${m} USDC. This operation first approves Pimlico’s paymaster for exactly ${m} USDC; after your calls run, it takes the actual fee, which can be less. No ETH is needed for the fee.`, lines.feeSentence);
+  check('confirm: rate set by Pimlico, not an oracle', lines.rateValue ===
+    '1 test ETH = 3003.98913 USDC, set by Pimlico’s service and signed into the operation; it is not read from an on-chain oracle.', lines.rateValue);
+  check('confirm: markup row and note', lines.spreadLabel === 'Paymaster markup' && lines.spreadValue === 'Included in the rate; not shown as a separate figure' &&
+    lines.spreadNote === 'Pimlico says its fee is built into the exchange rate it returns, and services that resell its paymaster may add their own (ZeroDev documents a 5% premium on the rate).');
+  check('confirm: grant sentence says what stays approved and who can use it', lines.grantSentence ===
+    `This operation approves Pimlico’s paymaster to take up to ${m} USDC from your smart account. It takes only the actual fee; the rest of the approval (up to ${m} USDC minus the fee) stays in place afterwards. Only operations from this smart account that use this paymaster can draw on it, and the next one replaces it with a new exact approval.`, lines.grantSentence);
+  check('confirm: permissioned and unstaked notes', lines.notes.length === 2 &&
+    lines.notes[0] === 'Pimlico’s paymaster is a permissioned service: its server signs each operation and can decline any of them. If it declines, nothing is sent.' &&
+    lines.notes[1] === 'This paymaster is not staked in the EntryPoint on Ethereum Sepolia, so some bundlers may refuse operations that use it.');
+  check('confirm: labels and the estimate line', lines.paymasterLabel === 'Paymaster (Pimlico)' && same(lines.paymasterValue, PIM) &&
+    lines.estimateSentence === 'Bundler gas estimate passed with Pimlico’s paymaster terms.' && lines.feeLabel === 'Network fee (paid in USDC)');
+  check('confirm: the worst-case hint names the headroom and the refusal', lines.worstCaseHint.includes('plus 25% headroom in case Pimlico’s rate moves') &&
+    lines.worstCaseHint.endsWith('If Pimlico’s final terms would cost more than this, nothing is signed.'), lines.worstCaseHint);
+  const withEarlier = tg.tokenGasConfirmLines({ ...q.tokenGas, erc7677: { ...q.tokenGas.erc7677, allowanceBefore: 1_500_000n } }, { chainCaip2: SEPOLIA, nativeSymbol: 'test ETH', maxFeePerGas: 1n });
+  check('confirm: an existing approval is named as replaced', withEarlier.grantSentence.includes(', replacing an earlier approval of 1.5 USDC.'));
+  check('choice hint names the permissioned service', tg.erc7677ChoiceHint() ===
+    'Pimlico’s token paymaster pays the gas and takes USDC from your smart account instead. It is a permissioned service: Pimlico sets the rate, must sign each operation, and can decline. The confirm screen shows the most it can take before you approve; ETH stays the default.');
+  // Circle lines are the existing functions, unchanged.
+  const { bundle: cb } = kernelBundle();
+  const cq = await prepareAaTokenGasSend(cb, OWNER_0, RECIPIENT, 1n);
+  const cl = tg.tokenGasConfirmLines(cq.tokenGas, { chainCaip2: BASE, nativeSymbol: 'test ETH', maxFeePerGas: cq.maxFeePerGas });
+  const cmax = fmt6(cq.tokenGas.maxTokenCharge);
+  check('Circle confirm lines are exactly the existing sentences',
+    cl.feeSentence === tokenGasFeeSentence(cmax) && cl.grantSentence === tokenGasGrantSentence(cmax) &&
+      cl.rateNote === TOKEN_GAS_FIXED_ORACLE_NOTE && cl.spreadValue === tokenGasSpreadText(cq.tokenGas.feeSpreadBips) &&
+      cl.paymasterLabel === 'Paymaster (Circle)' && cl.estimateSentence === TOKEN_GAS_ESTIMATE_AFTER_APPROVAL && cl.notes.length === 0);
+  check('preview footnote for the ERC-7677 quote names the approval and Pimlico', aa.aaPreviewNote(q) === aa.previewErc7677TokenGasNote('USDC', 'Pimlico') &&
+    aa.aaPreviewNote(q).includes('The first call approves Pimlico’s paymaster for the most the network fee can cost'));
+  check('Circle’s preview footnotes are unchanged (default paymaster name)', aa.previewTokenGasNote('USDC') ===
+    'Simulated as a direct call from your smart account. The network fee is paid in USDC through Circle’s paymaster and is shown above; it is not part of this list.');
+
+  // Errors.
+  const refusal = new tg.TokenGasPaymasterRefusalError('RPC error -32500: AA50 PostOp Reverted: Insufficient balance', 'Pimlico’s token paymaster');
+  check('a refusal while quoting: titled with Pimlico’s name, the bundler text verbatim',
+    tg.describeTokenGasError(refusal)?.title === 'Pimlico’s token paymaster refused the operation.' && tg.describeTokenGasError(refusal).detail.startsWith('RPC error -32500: AA50 PostOp Reverted'));
+  check('AA50 on an ERC-7677 quote is the paymaster’s refusal; on Circle’s it is not classified', tg.describeTokenGasError(new Error('AA50 postOp reverted'), q.tokenGas)?.title === 'Pimlico’s token paymaster refused the operation.' &&
+    tg.describeTokenGasError(new Error('AA50 postOp reverted')) === null);
+  check('Circle’s AA33 wording is unchanged', tg.describeTokenGasError(new Error('AA33 reverted'))?.title === TOKEN_GAS_REFUSED_TITLE);
+  check('an unavailable error carrying Pimlico’s name gets its title', tg.describeTokenGasError(new TokenGasUnavailableError('x', 'Pimlico’s token paymaster'))?.title === 'Pimlico’s token paymaster cannot be used right now.' &&
+    tg.describeTokenGasError(new TokenGasUnavailableError('x'))?.title === TOKEN_GAS_UNAVAILABLE_TITLE);
+
+  // Receipt: Pimlico's UserOperationSponsored, encoded with ethers.
+  const PIM_TOPIC = ethers.id('UserOperationSponsored(bytes32,address,uint8,address,uint256,uint256)');
+  const pimLog = {
+    address: PIM.toLowerCase(),
+    topics: [PIM_TOPIC, USEROP_HASH, pad32(KERNEL_ACCOUNT_0)],
+    data: abi.encode(['uint8', 'address', 'uint256', 'uint256'], [1, SEP_USDC, 760_363n, RATE]),
+  };
+  const charge = tokenGasChargeFromReceipt({ logs: [pimLog] }, { userOpHash: USEROP_HASH, paymaster: PIM, token: SEP_USDC, sender: KERNEL_ACCOUNT_0 });
+  check('receipt: the charge is Pimlico’s tokenAmountPaid for exactly this operation (the live run’s 760363)', charge?.actualTokenNeeded === 760_363n && charge.nativeTokenPrice === RATE);
+  check('receipt: another userOpHash, sender or a verifying-mode event → null', tokenGasChargeFromReceipt({ logs: [pimLog] }, { userOpHash: '0x' + '00'.repeat(32), paymaster: PIM, token: SEP_USDC, sender: KERNEL_ACCOUNT_0 }) === null &&
+    tokenGasChargeFromReceipt({ logs: [{ ...pimLog, data: abi.encode(['uint8', 'address', 'uint256', 'uint256'], [0, ethers.ZeroAddress, 0n, 0n]) }] }, { userOpHash: USEROP_HASH, paymaster: PIM, token: SEP_USDC, sender: KERNEL_ACCOUNT_0 }) === null);
+  check('success line for either source', tg.tokenGasChargedLine(q.tokenGas, 760_363n) ===
+    `Network fee charged: 0.760363 USDC. The approval allowed up to ${m} USDC; what was not charged stays approved for Pimlico’s paymaster until a later operation through it replaces the approval.` &&
+    tg.tokenGasChargedLine(q.tokenGas, null) === 'The receipt did not include Pimlico’s fee event, so the USDC charge could not be read from it.' &&
+    tg.tokenGasChargedLine(cq.tokenGas, 5_776n) === tokenGasChargedSentence('0.005776', cmax));
+  // Arbitrum Sepolia (phase 14 item 3): Circle's paymaster, checked on-chain there.
+  const ARB = 'eip155:421614';
+  check('Arbitrum Sepolia: Circle’s v0.7 paymaster with Circle’s Arbitrum Sepolia USDC (Circle docs + token() on-chain)',
+    tokenGasPaymasterFor(ARB)?.paymaster === '0x31BE08D380A21fc740883c0BC434FcFc88740b58' &&
+      tokenGasPaymasterFor(ARB)?.token === '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d' &&
+      tg.tokenGasSourceFor(ARB, { acceptsErc7677: true })?.kind === 'circle');
+  check('Arbitrum Sepolia: offered (Circle source) for a Kernel account without any screen opt-in',
+    tg.tokenGasOffer({ chainCaip2: ARB, config: configFor(ARB), owner: OWNER_0, passkeySigner: false }).kind === 'available' &&
+      tg.tokenGasOffer({ chainCaip2: ARB, config: configFor(ARB), owner: OWNER_0, passkeySigner: false }).source.kind === 'circle');
+  check('Arbitrum Sepolia: the fixed-oracle note names it; Base’s note is unchanged',
+    tokenGasOracleNote(ARB) === 'On Arbitrum Sepolia the paymaster’s test oracle returns a fixed price; it is not a market rate.' &&
+      tokenGasOracleNote(BASE) === TOKEN_GAS_FIXED_ORACLE_NOTE && tokenGasOracleNote(SEPOLIA) === null);
+  check('the Circle networks come from the profiles: Base Sepolia and Arbitrum Sepolia', tg.tokenGasNetworkLabels().join() === 'Base Sepolia,Arbitrum Sepolia');
+  check('token sends on Arbitrum Sepolia mention the USDC choice', tokenSendFeeSentence(ARB) ===
+    'The network fee for a token send is normally paid in test ETH, not in the token. On Arbitrum Sepolia, a smart-account send can pay it in USDC instead when the Send screen offers that choice.');
+  check('the not-on-network sentence lists the Circle networks from the profiles', tokenGasNotOnNetworkSentence(MAINNET).startsWith(
+    `Paying the network fee in USDC is offered only on ${tg.tokenGasNetworkLabels().join(' and ')}, where Circle’s token paymaster`));
 }
 
 console.log('');

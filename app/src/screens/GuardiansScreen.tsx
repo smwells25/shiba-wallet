@@ -77,6 +77,7 @@ import {
   type ProposalView,
   type RecoveryRecordEntry,
 } from '../wallet/recovery';
+import { HEIRS_ON_GUARDIANS_NOTE, INHERITANCE_RISK_STATEMENT, isHeirRecord } from '../wallet/inheritance';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Guardians'>;
 
@@ -803,16 +804,29 @@ export function GuardiansScreen({ navigation }: Props) {
                   ? 'Guardians are installed and can recover this account.'
                   : 'Guardians are only partly installed on-chain (recovery would not work). Remove them and set them up again.'}
               </Text>
-              <GuardianSetView set={set} labelFor={labelFor} />
-              <GuardianExposureWarning set={set} labelFor={labelFor} />
-              <Text style={[styles.hint, { color: theme.textMuted }]}>{GUARDIANS_AUDIT_NOTE}</Text>
-              <Button
-                title="Change guardians (renew)"
-                variant="secondary"
-                onPress={() => startForm(true)}
-                disabled={readiness !== null}
-              />
-              <Button title="Remove guardians" variant="destructive" onPress={() => void onRemoveQuote()} />
+              {isHeirRecord(entry) ? (
+                // One set per account (inheritance.ts): an heir set is managed on the Inheritance screen,
+                // where removal also vetoes the takeovers it knows about.
+                <>
+                  <WarningBox>{INHERITANCE_RISK_STATEMENT}</WarningBox>
+                  <Text style={[styles.hint, { color: theme.text }]}>{HEIRS_ON_GUARDIANS_NOTE}</Text>
+                  <GuardianSetView set={set} labelFor={labelFor} title="Heirs" memberNoun="Heir" />
+                  <Button title="Open Inheritance (demonstration)" variant="secondary" onPress={() => navigation.navigate('Inheritance')} />
+                </>
+              ) : (
+                <>
+                  <GuardianSetView set={set} labelFor={labelFor} />
+                  <GuardianExposureWarning set={set} labelFor={labelFor} />
+                  <Text style={[styles.hint, { color: theme.textMuted }]}>{GUARDIANS_AUDIT_NOTE}</Text>
+                  <Button
+                    title="Change guardians (renew)"
+                    variant="secondary"
+                    onPress={() => startForm(true)}
+                    disabled={readiness !== null}
+                  />
+                  <Button title="Remove guardians" variant="destructive" onPress={() => void onRemoveQuote()} />
+                </>
+              )}
             </>
           ) : null}
 

@@ -35,11 +35,17 @@ export const APP_SCRIPTS = {
   // Phase 12 Base Sepolia findings: Home reload after a send, eligibility
   // re-checks, dust display, profile copy and local dates (fakes only).
   'check-home.mjs': { kind: 'offline', summary: 'counts' },
+  // Phase 14 item 4: the inheritance switch (test-network demonstration on the
+  // guardian modules): rules, record role, takeover scan, removal + vetoes (fakes only).
+  'check-inheritance.mjs': { kind: 'offline', summary: 'counts' },
   // Phase 13 item 3: single private-key import (feature 12, ADR D9): engine
   // validation, the imported-key vault, signing selection and refusals,
   // a full EOA send and a smart-account operation (fakes only).
   'check-key-import.mjs': { kind: 'offline', summary: 'counts' },
   'check-nfts.mjs': { kind: 'offline', summary: 'counts' },
+  // Phase 14 item 1: payment requests (EIP-681, BIP-321, the Dogecoin
+  // format, Solana Pay): spec examples, refusals, round trips and QR codes.
+  'check-payment-request.mjs': { kind: 'offline', summary: 'counts' },
   'check-passkeys.mjs': { kind: 'offline', summary: 'counts' },
   'check-proof.mjs': { kind: 'offline', summary: 'counts' },
   'check-qr.mjs': { kind: 'offline', summary: 'counts' },
@@ -60,10 +66,18 @@ export const APP_SCRIPTS = {
   'check-typed-data.mjs': { kind: 'offline', summary: 'counts' },
   'check-wc.mjs': { kind: 'offline', summary: 'counts' },
   'check-wc-5792.mjs': { kind: 'offline', summary: 'counts' },
+  // Phase 14 item 6: watch-only accounts (feature 10): the id range, the
+  // account store, signWith's refusal with zero secure-store reads, the
+  // route allow list and the audit list (fakes only).
+  'check-watch-only.mjs': { kind: 'offline', summary: 'counts' },
 
   // Offline: OP-stack L1 data fee in the EOA send quotes (fake GasPriceOracle);
   // --live adds a read-only getL1Fee quote on Base Sepolia.
   'check-base.mjs': { kind: 'flag-live', summary: 'counts' },
+  // Phase 14 item 2: ENS names in the Send recipient field (fake resolver
+  // answers); --live adds read-only Universal Resolver lookups on Ethereum
+  // mainnet and Sepolia through the keyless default RPCs.
+  'check-names.mjs': { kind: 'flag-live', summary: 'counts' },
   'check-prices.mjs': { kind: 'flag-live', summary: 'counts' },
   'check-rpc-fallback.mjs': { kind: 'flag-live', summary: 'counts' },
   'check-token-history.mjs': { kind: 'flag-live', summary: 'counts' },

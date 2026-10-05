@@ -59,6 +59,7 @@ import {
   type RecoveryStage,
   RECOVERY_IMPORTED_OWNER_REFUSAL,
 } from '../wallet/recovery';
+import { HEIR_NEW_OWNER_NOTE, HEIR_SIDE_NOTE, INHERITANCE_RISK_STATEMENT } from '../wallet/inheritance';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'RecoverAccount'>;
 
@@ -85,7 +86,7 @@ type Phase = 'start' | 'checking' | 'candidate' | 'import-review' | 'progress' |
  * ("import a recovery record"), and can search recent blocks for accounts
  * owned by the active account.
  */
-export function RecoverAccountScreen({ navigation }: Props) {
+export function RecoverAccountScreen({ navigation, route }: Props) {
   const theme = useTheme();
   const { accounts, activeAccount, accountList, accountForEvmAddress, addAccount, switchAccount, signWith } = useWallet();
   const { evmChain } = usePrefs();
@@ -99,7 +100,20 @@ export function RecoverAccountScreen({ navigation }: Props) {
   // record and forgetting a recovery stay available; recovery.ts refuses
   // starting a recovery, sending approvals and attaching too.
   const readiness = readinessGate('guardians', chain);
-  const readinessCard = readiness ? <TestNetworksOnlyCard feature={readiness.feature} hint={readiness.hint} style={styles.card} titleStyle={styles.ok} bodyStyle={styles.hint} hintStyle={styles.hint} /> : null;
+  // Opened from the Inheritance screen for an heir's takeover: same flow, inheritance wording on top.
+  const heir = route.params?.role === 'heir';
+  const readinessCard = (
+    <>
+      {readiness ? <TestNetworksOnlyCard feature={readiness.feature} hint={readiness.hint} style={styles.card} titleStyle={styles.ok} bodyStyle={styles.hint} hintStyle={styles.hint} /> : null}
+      {heir ? (
+        <>
+          <WarningBox>{INHERITANCE_RISK_STATEMENT}</WarningBox>
+          <Text style={[styles.hint, { color: theme.text }]}>{HEIR_SIDE_NOTE}</Text>
+          <Text style={[styles.hint, { color: theme.textMuted }]}>{HEIR_NEW_OWNER_NOTE}</Text>
+        </>
+      ) : null}
+    </>
+  );
 
   const [node, setNode] = useState<JsonRpcTransport | null>(null);
   const [setupError, setSetupError] = useState<string | null>(null);
@@ -123,8 +137,8 @@ export function RecoverAccountScreen({ navigation }: Props) {
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
 
   useEffect(() => {
-    navigation.setOptions({ title: 'Recover an account' });
-  }, [navigation]);
+    navigation.setOptions({ title: heir ? 'Take over as heir' : 'Recover an account' });
+  }, [navigation, heir]);
 
   useEffect(() => {
     const t = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);

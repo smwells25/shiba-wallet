@@ -446,6 +446,14 @@ export type {
 } from './kernel-webauthn.js';
 export {
   ECDSA_OWNER_REGISTERED_TOPIC,
+  GUARDIAN_DELAY_UINT48_MODULUS,
+  GUARDIAN_NONCE_LANES,
+  GUARDIAN_ROLES,
+  MAX_GUARDIAN_APPROVAL_SCAN_BLOCKS,
+  decodeGuardianApprovalCall,
+  guardianDelayWraps,
+  maxNonWrappingGuardianDelay,
+  scanGuardianApprovals,
   KERNEL_MODULE_TYPE_FALLBACK,
   KERNEL_MODULE_TYPE_VALIDATOR,
   KERNEL_RECOVERY_MODULES,
@@ -499,6 +507,10 @@ export {
   verifyRecoveryMetadataOnChain,
 } from './kernel-recovery.js';
 export type {
+  FoundGuardianApproval,
+  GuardianApprovalCall,
+  GuardianApprovalScan,
+  GuardianRole,
   GuardianRecoveryRequest,
   GuardianSetContext,
   GuardianSignatureExposure,
@@ -657,3 +669,57 @@ export type {
   PrefundGasFields,
   TokenPermitInfo,
 } from './token-paymaster.js';
+export {
+  PIMLICO_ERC20_CONFIG_LENGTH,
+  PIMLICO_ERC20_MODE,
+  PIMLICO_ERC20_PAYMASTER_V07,
+  PIMLICO_PENALTY_PERCENT,
+  PIMLICO_USER_OPERATION_SPONSORED_TOPIC,
+  createErc7677TokenPaymasterTransport,
+  decodePimlicoSponsoredEvents,
+  encodePimlicoErc20PaymasterData,
+  erc7677MaxTokenCharge,
+  erc7677PaymasterDataProblems,
+  erc7677TokenApproveCall,
+  parsePimlicoErc20PaymasterData,
+  pimlicoCostInToken,
+  pimlicoErc20PaymasterHash,
+  pimlicoPaymasterProblems,
+  readPimlicoPaymasterState,
+} from './erc7677-token-paymaster.js';
+export type {
+  Erc7677ChargeGasFields,
+  Erc7677TokenPaymasterConfig,
+  Erc7677TokenQuote,
+  PimlicoErc20PaymasterData,
+  PimlicoHashedFields,
+  PimlicoPaymasterState,
+  PimlicoSponsoredEvent,
+} from './erc7677-token-paymaster.js';
+export {
+  ENS_COIN_TYPE_ETH,
+  ENS_ERROR_SELECTORS,
+  ENS_MAX_NAME_BYTES,
+  ENS_RESOLUTION_CHAIN_IDS,
+  ENS_UNIVERSAL_RESOLVER,
+  EnsResolutionError,
+  classifyEnsRevert,
+  decodeEnsAddrResult,
+  decodeUniversalResolveResult,
+  dnsEncodeName,
+  encodeEnsAddrCall,
+  encodeUniversalResolve,
+  labelhash,
+  namehash,
+  normalizeEnsNameAscii,
+  resolveEnsAddress,
+  reverifyEnsResolution,
+  revertDataOf,
+} from './ens.js';
+export type {
+  EnsForwardResolution,
+  EnsNameCheck,
+  EnsNameProblem,
+  EnsResolutionErrorReason,
+  EnsRevertKind,
+} from './ens.js';

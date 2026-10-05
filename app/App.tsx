@@ -37,10 +37,12 @@ import { GuardiansScreen } from './src/screens/GuardiansScreen';
 import { RecoverAccountScreen } from './src/screens/RecoverAccountScreen';
 import { ApproveRecoveryScreen } from './src/screens/ApproveRecoveryScreen';
 import { OwnerRotationScreen } from './src/screens/OwnerRotationScreen';
+import { InheritanceScreen } from './src/screens/InheritanceScreen';
 import { PasskeyScreen } from './src/screens/PasskeyScreen';
 import { ProveOwnershipScreen } from './src/screens/ProveOwnershipScreen';
 import { SpendingLimitsScreen } from './src/screens/SpendingLimitsScreen';
 import { ImportKeyScreen } from './src/screens/ImportKeyScreen';
+import { watchOnlyScreenLayout } from './src/components/WatchOnlyGate';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -113,7 +115,9 @@ function Root() {
           quote, balance, history page or form prepared for the previous
           account. Signing is additionally guarded in WalletContext.signWith. */}
       <NavigationContainer key={`account-${activeAccount?.index ?? 0}`} theme={navTheme}>
-        <Stack.Navigator>
+        {/* Every route outside the watch-only allow list renders a refusal
+            instead of its screen while a watch-only account is active. */}
+        <Stack.Navigator screenLayout={watchOnlyScreenLayout}>
         {status === 'no-wallet' ? (
           <>
             <Stack.Screen
@@ -194,6 +198,7 @@ function Root() {
             />
             <Stack.Screen name="Passkey" component={PasskeyScreen} options={{ title: 'Passkey' }} />
             <Stack.Screen name="OwnerRotation" component={OwnerRotationScreen} options={{ title: 'Change owner' }} />
+            <Stack.Screen name="Inheritance" component={InheritanceScreen} options={{ title: 'Inheritance (demonstration)' }} />
             <Stack.Screen name="ProveOwnership" component={ProveOwnershipScreen} options={{ title: 'Prove ownership' }} />
             <Stack.Screen
               name="SpendingLimits"

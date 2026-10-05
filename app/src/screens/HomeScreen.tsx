@@ -14,15 +14,16 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { formatAssetId } from '@shiba-wallet/core';
 import type { FungibleAsset } from '@shiba-wallet/core';
 import type { RootStackParamList } from '../navigation';
-import { ImportedKeyNotice, screenStyle } from '../components';
+import { ImportedKeyNotice, WatchOnlyNotice, screenStyle } from '../components';
 import { CHAINS } from '../wallet/chains';
-import { IMPORTED_KEY_NO_CHAIN } from '../wallet/account-ids';
+import { IMPORTED_KEY_NO_CHAIN, WATCH_ONLY_NO_CHAIN } from '../wallet/account-ids';
 import { useTheme } from '../theme';
 import { EVM_CHAIN_ID, addSendAcceptedListener } from '../wallet/send';
 import { addAaSentListener } from '../wallet/aa';
 import { createSendRefreshTracker, reloadNowAndLater } from '../wallet/home-refresh';
 import { ChainAccount, useWallet } from '../wallet/WalletContext';
 import { AccountSwitcher } from '../components/AccountSwitcher';
+import { watchOnlyFooterText } from '../wallet/watch-only';
 import { OfflineNotice } from '../wallet/connectivity';
 import { usePrefs } from '../wallet/PrefsContext';
 import { maskAmount } from '../config/prefs';
@@ -162,7 +163,8 @@ function TokenRow({
   token: FungibleAsset;
   state: BalanceState | undefined;
   onRetry: () => void;
-  onSend: () => void;
+  /** Absent for a watch-only account (feature 10): no Send link is offered. */
+  onSend?: () => void;
   hidden: boolean;
   fiat: FiatDisplay | null;
 }) {
@@ -179,16 +181,49 @@ function TokenRow({
           {token.name}
         </Text>
         <Text style={[styles.tokenKind, { color: theme.textMuted }]}>ERC-20</Text>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Send ${token.symbol}`}
-          onPress={onSend}
-          hitSlop={8}
-        >
-          <Text style={[styles.sendLink, { color: theme.accent }]}>Send ↗</Text>
-        </Pressable>
+        {onSend ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Send ${token.symbol}`}
+            onPress={onSend}
+            hitSlop={8}
+          >
+            <Text style={[styles.sendLink, { color: theme.accent }]}>Send ↗</Text>
+          </Pressable>
+        ) : null}
       </View>
       <BalanceCell state={state} onRetry={onRetry} hidden={hidden} fiat={fiat} />
+    </View>
+  );
+}
+
+/**
+ * The networks an account has no address on (an imported key or a watched
+ * address has an Ethereum address only), each shown as a muted card with
+ * the plain reason instead of being left out silently.
+ */
+function UnavailableChains({ accounts, sentence }: { accounts: ChainAccount[]; sentence: string }) {
+  const theme = useTheme();
+  return (
+    <View style={styles.unavailableList}>
+      {CHAINS.filter((c) => !accounts.some((a) => a.chainId === c.provider.chainId)).map((c) => (
+        <View
+          key={c.provider.chainId}
+          accessible
+          accessibilityLabel={`${c.provider.name}: ${sentence}`}
+          style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}
+        >
+          <View style={styles.cardTop}>
+            <View style={[styles.badge, { backgroundColor: c.accent, opacity: 0.4 }]}>
+              <Text style={styles.badgeText}>{c.symbol}</Text>
+            </View>
+            <View style={styles.cardBody}>
+              <Text style={[styles.chainName, { color: theme.text }]}>{c.provider.name}</Text>
+              <Text style={[styles.address, { color: theme.textMuted }]}>{sentence}</Text>
+            </View>
+          </View>
+        </View>
+      ))}
     </View>
   );
 }
@@ -203,6 +238,12 @@ export function HomeScreen({ navigation }: Props) {
   // switching accounts remounts the navigator (App.tsx), so this screen
   // never shows one account's balances under another's name.
   const { accounts, activeAccount } = useWallet();
+  // Watch-only accounts (feature 10): the wallet holds no key, so Home
+  // offers only what reads public data by address (balances, tokens,
+  // Activity, NFTs) and none of the links that lead to signing (Send, Swap,
+  // Upgrade, Approvals' revoke, Sessions, Guardians, Passkey, Receive's
+  // Send and proof of ownership, the guardian recovery link).
+  const watchOnly = activeAccount?.watchOnly === true;
   const { hideAmounts, setHideAmounts, evmChain, sepolia, showFiat } = usePrefs();
   // The active EVM chain is passed so a mode flip (mainnet <-> Sepolia)
   // re-fetches the EVM row (useBalances handles it).
@@ -219,18 +260,23 @@ export function HomeScreen({ navigation }: Props) {
   // EIP-7702 status of the active account on the active EVM chain (phase 8
   // item 1): shown under the account switcher so the user always knows
   // which code runs at the address.
-  const delegation = useAccountDelegation(evmAccount?.address);
+  const delegation = useAccountDelegation(watchOnly ? undefined : evmAccount?.address);
   // Session keys (phase 8 item 2): linked only when the active account has
   // a deployed Kernel account or an active EIP-7702 upgrade.
-  const sessionsEligible = useSessionEligibility(evmAccount?.address, activeAccount?.index ?? null, toolsRefresh);
+  // The three account-tool checks are not run at all for a watch-only
+  // account (null owner and index): no smart-account bundle is built for an
+  // address the wallet cannot sign for.
+  const toolsOwner = watchOnly ? null : evmAccount?.address;
+  const toolsIndex = watchOnly ? null : (activeAccount?.index ?? null);
+  const sessionsEligible = useSessionEligibility(toolsOwner, toolsIndex, toolsRefresh);
   // Guardians (phase 8 item 4): linked only for a deployed Kernel v3.3
   // account the active account owns; a recovered account gets a label; a
   // recovery in progress gets a "continue" line.
-  const recovery = useRecoveryInfo(evmAccount?.address, activeAccount?.index ?? null, toolsRefresh);
+  const recovery = useRecoveryInfo(toolsOwner, toolsIndex, toolsRefresh);
   // Passkey signer (phase 8 item 3): linked only for a deployed Kernel v3.3
   // account the active account owns; the screen shows the development-build
   // note when the native module or the rpId is missing.
-  const passkey = usePasskeyInfo(evmAccount?.address, activeAccount?.index ?? null, toolsRefresh);
+  const passkey = usePasskeyInfo(toolsOwner, toolsIndex, toolsRefresh);
   // Tracked tokens are per chain (phase 13 item 1): the section lists the
   // ACTIVE profile's own list (mainnet, Ethereum Sepolia or Base Sepolia),
   // and each balance is read only from an endpoint on the token's chain.
@@ -335,13 +381,19 @@ export function HomeScreen({ navigation }: Props) {
     // height reserved from the start, so nothing above or below moves when
     // they appear (finding F11: a tap aimed at Approvals once opened
     // Guardians because a link was inserted before it).
-    const tools = isEvm
+    const tools = isEvm && !watchOnly
       ? [
           sessionsEligible
             ? cardLink('sessions', 'Sessions', 'Sessions', () => navigation.navigate('Sessions'))
             : null,
           recovery.guardiansEligible
             ? cardLink('guardians', 'Guardians', 'Guardians', () => navigation.navigate('Guardians'))
+            : null,
+          // Inheritance is a test-network demonstration built on the guardian
+          // module, so it is offered under the same eligibility, on test
+          // networks only.
+          recovery.guardiansEligible && evmChain.testnet
+            ? cardLink('inheritance', 'Inheritance', 'Inheritance (demonstration)', () => navigation.navigate('Inheritance'))
             : null,
           passkey.eligible
             ? cardLink(
@@ -356,10 +408,14 @@ export function HomeScreen({ navigation }: Props) {
     return (
       <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
         <View style={styles.cardTop}>
+          {/* A watch-only address is shown, not offered for receiving: the
+              Receive screen also leads to Send, payment requests and proof
+              of ownership, and the wallet cannot move funds from it. */}
           <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`${item.name}, ${shortAddress(item.address)}`}
-            accessibilityHint={`Opens the ${item.name} receive screen`}
+            accessibilityRole={watchOnly ? 'text' : 'button'}
+            accessibilityLabel={`${item.name}, ${watchOnly ? `watch-only address ${item.address}` : shortAddress(item.address)}`}
+            {...(watchOnly ? {} : { accessibilityHint: `Opens the ${item.name} receive screen` })}
+            disabled={watchOnly}
             onPress={() => navigation.navigate('Receive', { chainId: item.chainId })}
             style={({ pressed }) => [styles.receiveArea, { opacity: pressed ? 0.7 : 1 }]}
           >
@@ -386,9 +442,11 @@ export function HomeScreen({ navigation }: Props) {
           />
         </View>
         <View style={styles.linkRow}>
-          {cardLink('send', `Send ${item.symbol}`, 'Send ↗', () =>
-            navigation.navigate('Send', { chainId: item.chainId }),
-          )}
+          {watchOnly
+            ? null
+            : cardLink('send', `Send ${item.symbol}`, 'Send ↗', () =>
+                navigation.navigate('Send', { chainId: item.chainId }),
+              )}
           {cardLink('activity', `${item.name} activity`, 'Activity', () =>
             navigation.navigate('Activity', { chainId: item.chainId }),
           )}
@@ -396,7 +454,7 @@ export function HomeScreen({ navigation }: Props) {
               itself explains and stays off until a key is configured. Not
               linked on profiles where swaps are not offered (Base Sepolia:
               config/evm-chain.ts swapsOffered). */}
-          {isEvm && evmChain.swapsOffered
+          {isEvm && evmChain.swapsOffered && !watchOnly
             ? cardLink('swap', 'Swap', 'Swap', () => navigation.navigate('Swap'))
             : null}
           {/* NFT gallery (phase 7 item 4) for the active EVM chain; the
@@ -404,7 +462,7 @@ export function HomeScreen({ navigation }: Props) {
           {isEvm ? cardLink('nfts', 'NFTs', 'NFTs', () => navigation.navigate('Nfts')) : null}
           {/* EIP-7702 account upgrade (phase 8 item 1) for the active
               account on the active EVM chain. */}
-          {isEvm
+          {isEvm && !watchOnly
             ? cardLink(
                 'upgrade',
                 delegation.status?.kind === 'kernel-v3.3' ? 'Account upgraded' : 'Upgrade this account',
@@ -414,6 +472,8 @@ export function HomeScreen({ navigation }: Props) {
             : null}
           {/* Token approvals manager (phase 7 item 5) for the active EVM
               chain; the screen explains what it can and cannot see. */}
+          {/* Linked for a watch-only account too: the Approvals screen is
+              read-only there (no Revoke buttons). */}
           {isEvm
             ? cardLink('approvals', 'Token approvals', 'Approvals', () => navigation.navigate('Approvals'))
             : null}
@@ -460,9 +520,9 @@ export function HomeScreen({ navigation }: Props) {
                 token={token}
                 state={tokenBalances[id]}
                 onRetry={() => void refreshToken(id)}
-                onSend={() =>
-                  navigation.navigate('Send', { chainId: EVM_CHAIN_ID, tokenId: id })
-                }
+                {...(watchOnly
+                  ? {}
+                  : { onSend: () => navigation.navigate('Send', { chainId: EVM_CHAIN_ID, tokenId: id }) })}
                 hidden={hideAmounts}
                 fiat={fiatFor(tokenState, priceId)}
               />
@@ -499,6 +559,9 @@ export function HomeScreen({ navigation }: Props) {
             {/* Feature 12 (ADR D9): an imported account says, every time it is
                 shown, that the recovery phrase does not back it up. */}
             <ImportedKeyNotice show={activeAccount?.imported === true} />
+            {/* Feature 10: a watch-only account says, every time it is
+                shown, that the wallet holds no key for it. */}
+            <WatchOnlyNotice show={watchOnly} />
             <OfflineNotice />
             {activeAccount && delegation.status?.kind === 'kernel-v3.3' ? (
               <Pressable
@@ -597,33 +660,20 @@ export function HomeScreen({ navigation }: Props) {
           <View>
           {/* Feature 12 (ADR D9): an imported Ethereum key has no Bitcoin,
               Dogecoin or Solana address; those networks are shown as not
-              available rather than left out silently. */}
+              available rather than left out silently. Feature 10: neither
+              has a watched Ethereum address. */}
           {activeAccount?.imported ? (
-            <View style={styles.unavailableList}>
-              {CHAINS.filter((c) => !accounts.some((a) => a.chainId === c.provider.chainId)).map((c) => (
-                <View
-                  key={c.provider.chainId}
-                  accessible
-                  accessibilityLabel={`${c.provider.name}: ${IMPORTED_KEY_NO_CHAIN}`}
-                  style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}
-                >
-                  <View style={styles.cardTop}>
-                    <View style={[styles.badge, { backgroundColor: c.accent, opacity: 0.4 }]}>
-                      <Text style={styles.badgeText}>{c.symbol}</Text>
-                    </View>
-                    <View style={styles.cardBody}>
-                      <Text style={[styles.chainName, { color: theme.text }]}>{c.provider.name}</Text>
-                      <Text style={[styles.address, { color: theme.textMuted }]}>{IMPORTED_KEY_NO_CHAIN}</Text>
-                    </View>
-                  </View>
-                </View>
-              ))}
-            </View>
+            <UnavailableChains accounts={accounts} sentence={IMPORTED_KEY_NO_CHAIN} />
+          ) : watchOnly ? (
+            <UnavailableChains accounts={accounts} sentence={WATCH_ONLY_NO_CHAIN} />
           ) : null}
           {/* Not offered from an imported account: a recovery onto an
               imported key is refused (recovery.ts
               RECOVERY_IMPORTED_OWNER_REFUSAL), so the link would lead to a
-              refusal. */}
+              refusal. Not offered from a watch-only account either (no key
+              to become the new owner). */}
+          {watchOnly ? null : (
+            <>
           {activeAccount?.imported ? null : (
             <Pressable
               accessibilityRole="button"
@@ -636,6 +686,14 @@ export function HomeScreen({ navigation }: Props) {
               </Text>
             </Pressable>
           )}
+            </>
+          )}
+          {watchOnly && activeAccount ? (
+            <Text style={[styles.footer, { color: theme.textMuted }]}>
+              {watchOnlyFooterText(activeAccount.name)}
+              {showFiat ? ' USD values are indicative prices from CoinGecko (Settings → Prices).' : ''}
+            </Text>
+          ) : (
           <Text style={[styles.footer, { color: theme.textMuted }]}>
             {activeAccount?.imported
               ? `${activeAccount.name}'s Ethereum address comes from a private key you imported; your ` +
@@ -649,6 +707,7 @@ export function HomeScreen({ navigation }: Props) {
               ? ' USD values are indicative prices from CoinGecko (Settings → Prices).'
               : ''}
           </Text>
+          )}
           </View>
         }
       />

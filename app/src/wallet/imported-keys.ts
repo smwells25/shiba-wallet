@@ -81,6 +81,8 @@ export function parsePrivateKeyInput(raw: string): ParsedPrivateKey {
 export interface ExistingAccount {
   name: string;
   imported: boolean;
+  /** True for a watch-only account (feature 10): an address the wallet follows without a key. */
+  watchOnly?: boolean;
   evmAddress: string | null;
 }
 
@@ -98,6 +100,12 @@ export function duplicateImportError(address: string, accounts: readonly Existin
   if (!match) return null;
   if (match.imported) {
     return `This key is already imported as ${match.name} (${match.evmAddress}). It was not imported again.`;
+  }
+  if (match.watchOnly) {
+    return (
+      `This key controls ${match.name} (${match.evmAddress}), which this wallet only watches. Remove the ` +
+      'watch-only account in Settings → Accounts first, then import the key. Nothing was imported.'
+    );
   }
   return (
     `This key belongs to ${match.name} (${match.evmAddress}), which already comes from your recovery ` +

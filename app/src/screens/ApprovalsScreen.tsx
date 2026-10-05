@@ -375,6 +375,7 @@ export function ApprovalsScreen({ navigation }: Props) {
   };
 
   const onRevokePress = async (item: ApprovalItem) => {
+    if (activeAccount?.watchOnly) return;
     if (!url || !owner) return;
     setPhase('quoting');
     try {
@@ -696,7 +697,9 @@ export function ApprovalsScreen({ navigation }: Props) {
         {zeroFirst && withRevoke ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>{zeroFirst}</Text>
         ) : null}
-        {withRevoke ? (
+        {/* A watch-only account can read approvals but cannot revoke: the
+            wallet holds no key for it. */}
+        {withRevoke && !activeAccount?.watchOnly ? (
           <Button title="Revoke" variant="secondary" onPress={() => void onRevokePress(item)} />
         ) : null}
       </View>

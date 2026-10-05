@@ -49,7 +49,10 @@
  *   paying the gas, and the allowance left at zero.
  *
  * Environment:
- *   CHAIN_ID              84532 (default) or 11155111 (evidence only).
+ *   CHAIN_ID              84532 (default), 421614 (Arbitrum Sepolia, Circle's
+ *                         paymaster there; dry run only) or 11155111 (Ethereum
+ *                         Sepolia: Pimlico's ERC-20 paymaster over ERC-7677,
+ *                         see the section near the end of this file).
  *   NODE_URL              optional; default https://base-sepolia-rpc.publicnode.com.
  *   TOKEN_GAS_LIVE=1      live mode (needs ZERODEV_PROJECT_ID or BUNDLER_URL).
  *   ZERODEV_PROJECT_ID    bundler https://rpc.zerodev.app/api/v3/{id}/chain/84532;
@@ -68,6 +71,19 @@ import { ChainRegistry, HdKeyring, evmKeyProvider } from '../../packages/core/di
 import {
   CIRCLE_TOKEN_PAYMASTER_V07,
   ENTRYPOINT_V07,
+  PIMLICO_ERC20_PAYMASTER_V07,
+  TokenGasChargeAboveLimitError,
+  createErc7677TokenPaymasterTransport,
+  decodePimlicoSponsoredEvents,
+  encodePimlicoErc20PaymasterData,
+  erc7677MaxTokenCharge,
+  erc7677TokenApproveCall,
+  parsePimlicoErc20PaymasterData,
+  pimlicoErc20PaymasterHash,
+  pimlicoPaymasterProblems,
+  readPimlicoPaymasterState,
+  toEthSignedMessageHash,
+  withEthereumV,
   NodeClient,
   SmartAccountClient,
   TokenGasInsufficientBalanceError,
@@ -97,9 +113,15 @@ const LIVE = process.env.TOKEN_GAS_LIVE === '1';
 const CHAIN_ID = BigInt(process.env.CHAIN_ID ?? '84532');
 const NODE_URL =
   process.env.NODE_URL ??
-  (CHAIN_ID === 11155111n ? SEPOLIA_RPC : 'https://base-sepolia-rpc.publicnode.com');
+  (CHAIN_ID === 11155111n
+    ? SEPOLIA_RPC
+    : CHAIN_ID === 421614n
+      ? 'https://arbitrum-sepolia-rpc.publicnode.com'
+      : 'https://base-sepolia-rpc.publicnode.com');
 const PAYMASTER = CIRCLE_TOKEN_PAYMASTER_V07.testnetAddress;
-const USDC = CIRCLE_TOKEN_PAYMASTER_V07.tokens['84532'];
+// Circle's chains (Base Sepolia, Arbitrum Sepolia); on Ethereum Sepolia the
+// Pimlico section below uses its own constant.
+const USDC = CIRCLE_TOKEN_PAYMASTER_V07.tokens[CHAIN_ID.toString()] ?? CIRCLE_TOKEN_PAYMASTER_V07.tokens['84532'];
 /** FiatToken v2.2 balanceAndBlacklistStates mapping slot (proved by an override read below). */
 const USDC_BALANCE_SLOT = 9n;
 const DEV_ACCOUNT = '0xc995E49acA5C888F4FF1E50E8467E9fFc31CC5AC';
@@ -108,7 +130,7 @@ const PUBLIC_TEST_MNEMONIC =
 const BUNDLER_URL =
   process.env.BUNDLER_URL ??
   (process.env.ZERODEV_PROJECT_ID
-    ? `https://rpc.zerodev.app/api/v3/${process.env.ZERODEV_PROJECT_ID}/chain/84532`
+    ? `https://rpc.zerodev.app/api/v3/${process.env.ZERODEV_PROJECT_ID}/chain/${CHAIN_ID}`
     : undefined);
 
 function mask(text) {
@@ -226,8 +248,16 @@ function overriddenNode(stateOverrides) {
 async function main() {
   const chainId = await nodeClient.chainId();
   if (chainId !== CHAIN_ID) throw new Error(`The node reports chain ${chainId}, expected ${CHAIN_ID}`);
-  if (chainId === 11155111n) return sepoliaEvidence();
-  if (chainId !== 84532n) throw new Error('Base Sepolia (84532) only');
+  if (chainId === 11155111n) {
+    await sepoliaEvidence();
+    return pimlicoSepolia();
+  }
+  if (chainId !== 84532n && chainId !== 421614n) throw new Error('Base Sepolia (84532) or Arbitrum Sepolia (421614) only');
+  if (chainId === 421614n && LIVE) {
+    // The dev EOA holds no Arbitrum Sepolia ETH or USDC (read 2026-10-04),
+    // so only the dry run is offered there.
+    throw new Error('Arbitrum Sepolia: dry run only (fund the dev account first; see the header).');
+  }
   const state = await readCirclePaymasterState(node, PAYMASTER);
   log(`Circle paymaster ${PAYMASTER}: entryPoint ${state.entryPoint}, token ${state.token}, ` +
     `price ${state.nativeTokenPrice} base units per ETH, additionalGasCharge ${state.additionalGasCharge}, ` +
@@ -246,8 +276,7 @@ async function sepoliaEvidence() {
     'latest',
   ]);
   log(`Ethereum Sepolia: ${PAYMASTER} entryPoint() -> ${ep}; EntryPoint v0.7 deposit ${BigInt(deposit)} wei.`);
-  log('Circle documents no EntryPoint v0.7 paymaster on Ethereum Sepolia; run with CHAIN_ID=84532.');
-  process.exitCode = 2;
+  log('Circle documents no EntryPoint v0.7 paymaster on Ethereum Sepolia; the Sepolia run below uses Pimlico’s ERC-20 paymaster over ERC-7677.');
 }
 
 // ---------------------------------------------------------------------------
@@ -643,6 +672,413 @@ async function live(state) {
   check('prefund pulled equals the permitted worst case', !!prefundPull && BigInt(prefundPull.data) === final.permitAmount);
   check('signed paymaster limits are the ones quoted', userOp.paymasterPostOpGasLimit >= state.additionalGasCharge);
   log(failures === 0 ? 'LIVE RUN PASSED' : `LIVE RUN FAILED (${failures})`);
+  if (failures) process.exitCode = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Ethereum Sepolia: Pimlico's ERC-20 paymaster over ERC-7677 (phase 14 item 3)
+// ---------------------------------------------------------------------------
+//
+// Engine code under test: packages/chains-evm/src/erc7677-token-paymaster.ts.
+// The paymaster is Pimlico's SingletonPaymasterV7 at
+// 0x777777777777AeC03fd955926DbF81597e66834C (docs.pimlico.io contract
+// addresses page; Sourcify exact match on chain 11155111). The exchange rate
+// and Pimlico's signature come from the ERC-7677 endpoint (ZeroDev's project
+// RPC forwards pm_getPaymasterStubData / pm_getPaymasterData with the context
+// {token} to Pimlico's paymaster). The account approves the paymaster for
+// EXACTLY the displayed maximum in the same operation; postOp takes the cost.
+//
+// DRY RUN (default; read-only): one eth_simulateV1 per case against the real
+// Sepolia contracts. Two state overrides are used, each proved by a read-back
+// first: USDC's balance slot for the account, and the paymaster's `signers`
+// mapping for a LOCAL key (the public test mnemonic's first address), which
+// then signs the paymaster data in Pimlico's exact format with the rate and
+// postOpGas of a real stub answer (fetched live when a bundler is configured,
+// else the stub recorded on 2026-10-04). Cases: (1) approve + call, charged at
+// most the approval; (2) an approval one unit below the charge: postOp's
+// transferFrom fails, the operation is marked failed and no USDC moves;
+// (3) the engine refuses final data above the displayed maximum, and data
+// with a preFund, before anything is signed.
+//
+// LIVE (TOKEN_GAS_LIVE=1 CHAIN_ID=11155111; needs ZERODEV_PROJECT_ID or
+// BUNDLER_URL and the git-ignored dev seed): the dev seed's index-2 Kernel
+// account 0x1D723b78e1D0D84Fd0531e2686285fb1B6414106 pays one UserOperation
+// (approve + a 0-value call to the owner EOA) in Sepolia USDC. If it holds
+// less than TOKEN_GAS_MIN_USDC (default 0.5 USDC), the dev EOA first buys
+// USDC for it with SWAP_ETH test ETH (default 0.001, refused above 0.005) on
+// Uniswap v3's Sepolia SwapRouter02, the pool and amount read from Uniswap's
+// Sepolia factory and QuoterV2 (addresses from docs.uniswap.org v3 Ethereum
+// deployments, fetched 2026-10-04), simulated with eth_call first.
+
+const SEPOLIA_USDC = PIMLICO_ERC20_PAYMASTER_V07.tokens['11155111'];
+const PIMLICO = PIMLICO_ERC20_PAYMASTER_V07.address;
+const SEPOLIA_DEV_ACCOUNT = '0x1D723b78e1D0D84Fd0531e2686285fb1B6414106';
+const SEPOLIA_DEV_INDEX = 2n;
+/** docs.uniswap.org/contracts/v3/reference/deployments/ethereum-deployments (Sepolia column). */
+const UNISWAP_SEPOLIA = {
+  factory: '0x0227628f3F023bb0B980b67D528571c95c6DaC1c',
+  quoterV2: '0xEd1f6473345F45b75F8179591dd5bA1888cf2FB3',
+  swapRouter02: '0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E',
+};
+/** WETH9 on Sepolia (Uniswap's deployments page "Wrapped Native Token Addresses"; also pinned in activity-decode.ts). */
+const SEPOLIA_WETH = '0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14';
+const SWAP_FEE_TIER = 500n;
+const SWAP_ETH_CAP = 5_000_000_000_000_000n; // 0.005 test ETH, the brief's cap
+/** The stub ZeroDev's Sepolia endpoint returned on 2026-10-04 (used when no bundler is configured). */
+const RECORDED_STUB = {
+  paymaster: PIMLICO,
+  paymasterData:
+    '0x03000000000000000000000000001c7d4b196cb0c7b01d743fbc6116a902379c723800000000000000000000000000004a2e' +
+    '00000000000000000000000000000000000000000000000000000000b2cdc40300000000000000000000000000000001d8baa1' +
+    '07006c93a030d1455a2ef43261b384f21ccd91f19f0f19ce862d7bec7b7d9b95457145afc6f639c28fd0360f488937bfa41e6e' +
+    'edcd3a46054fd95fcd0e3ef6b0bc0a615c4d975eef55c8a3517257904d5b1c',
+  paymasterPostOpGasLimit: '0x10d7e',
+};
+/** The app's quote headroom on this path (token-gas.ts ERC7677_TOKEN_GAS_HEADROOM_PERCENT). */
+const APPROVAL_HEADROOM_PERCENT = 25n;
+
+function mappingSlot(key, slot) {
+  const preimage = new Uint8Array(64);
+  preimage.set(toBytes(key), 12);
+  preimage.set(toBytes(word(slot)), 32);
+  return toHex(keccak_256(preimage));
+}
+
+async function callWith(to, signature, args, overrides, block = 'latest') {
+  return node('eth_call', [{ to, data: toHex(encodeFunctionCall(signature, args)) }, block, ...(overrides ? [overrides] : [])]);
+}
+
+/** Finds the storage slot of a mapping(address => uint/bool) by override read-back (slots 0..15). */
+async function proveMappingSlot(contract, getter, key, value) {
+  for (let slot = 0n; slot < 16n; slot++) {
+    const overrides = { [contract]: { stateDiff: { [mappingSlot(key, slot)]: word(value) } } };
+    const answer = await callWith(contract, getter, [{ kind: 'address', value: key }], overrides).catch(() => '0x');
+    if (answer !== '0x' && BigInt(answer) === value) return slot;
+  }
+  return null;
+}
+
+async function bundlerFees(bundler) {
+  // The app's rule (aa.ts quoteFeesOverFloor with AA_FEE_FLOOR_HEADROOM_PERCENT = 100):
+  // the standard tier's priority fee doubled, keeping the base-fee allowance.
+  const answer = await bundler('pimlico_getUserOperationGasPrice', []);
+  const priority = BigInt(answer.standard.maxPriorityFeePerGas) * 2n;
+  const nodeFees = await nodeClient.suggestFees();
+  const maxFee = nodeFees.maxFeePerGas + (priority > nodeFees.maxPriorityFeePerGas ? priority - nodeFees.maxPriorityFeePerGas : 0n);
+  const stdMax = BigInt(answer.standard.maxFeePerGas) * 2n;
+  return { maxPriorityFeePerGas: priority, maxFeePerGas: maxFee > stdMax ? maxFee : stdMax };
+}
+
+async function pimlicoSepolia() {
+  const state = await readPimlicoPaymasterState(node, PIMLICO);
+  const problems = pimlicoPaymasterProblems(state);
+  log(`Pimlico ERC-20 paymaster ${PIMLICO}: code keccak ${state.runtimeCodeKeccak}, entryPoint ${state.entryPoint}, ` +
+    `deposit ${state.deposit} wei, staked ${state.staked} (${state.stake} wei, ${state.unstakeDelaySec} s)`);
+  check('Pimlico paymaster passes the engine checks (code hash, EntryPoint v0.7, deposit)', problems.length === 0, problems.join(' '));
+  if (problems.length > 0) {
+    process.exitCode = 1;
+    return;
+  }
+  if (LIVE) return pimlicoLive(state);
+  return pimlicoDryRun();
+}
+
+async function pimlicoDryRun() {
+  const useDev = process.env.DRY_RUN_OWNER === 'dev';
+  const owner = loadOwner(useDev ? readFileSync(new URL('../../.dev-wallet/mnemonic.txt', import.meta.url), 'utf8').trim() : PUBLIC_TEST_MNEMONIC);
+  const spec = createKernelAccountSpec({ node, index: useDev ? SEPOLIA_DEV_INDEX : 0n });
+  const account = await spec.getAddress(owner);
+  const deployed = (await node('eth_getCode', [account, 'latest'])) !== '0x';
+  log(`DRY RUN on Ethereum Sepolia (${useDev ? 'dev seed, index 2' : 'public test mnemonic, index 0'}): owner ${owner.address}, Kernel account ${account}, deployed ${deployed}`);
+  const beneficiary = '0x000000000000000000000000000000000000bEEF';
+  // The local stand-in for Pimlico's signer: the public test mnemonic's first address.
+  const localSigner = loadOwner(PUBLIC_TEST_MNEMONIC);
+
+  // A real stub answer when a bundler is configured, else the recorded one.
+  let stub = RECORDED_STUB;
+  if (BUNDLER_URL) {
+    const bundler = async (method, params) => bundlerRaw(method, params);
+    if (BigInt(await bundler('eth_chainId', [])) !== CHAIN_ID) throw new Error('The bundler serves another chain');
+    const probeTransport = createErc7677TokenPaymasterTransport({ upstream: bundler, chainId: CHAIN_ID, account, token: SEPOLIA_USDC });
+    stub = await probeTransport('pm_getPaymasterStubData', [
+      toRpcUserOperation({ sender: account, nonce: 0n, callData: new Uint8Array(0), callGasLimit: 0n, verificationGasLimit: 0n, preVerificationGas: 0n, maxFeePerGas: 0n, maxPriorityFeePerGas: 0n, signature: new Uint8Array(0) }),
+      ENTRYPOINT_V07, '0x' + CHAIN_ID.toString(16), null,
+    ]);
+    log('Stub fetched live from the configured bundler (context {token: USDC}).');
+  } else {
+    log('No bundler configured: using the stub recorded on 2026-10-04.');
+  }
+  const stubData = parsePimlicoErc20PaymasterData(toBytes(stub.paymasterData));
+  log(`Stub: token ${stubData.token}, exchangeRate ${stubData.exchangeRate} base units per ETH, postOpGas ${stubData.postOpGas}, ` +
+    `constantFee ${stubData.constantFee}, preFund ${stubData.preFundPresent}, recipient ${stubData.recipientPresent}, treasury ${stubData.treasury}`);
+  check('stub is ERC-20 mode for Sepolia USDC with no preFund and no recipient',
+    stubData.token.toLowerCase() === SEPOLIA_USDC.toLowerCase() && !stubData.preFundPresent && !stubData.recipientPresent);
+
+  // Prove both override slots by read-back.
+  const usdcSlot = await proveMappingSlot(SEPOLIA_USDC, 'balanceOf(address)', account, 7_000_000n);
+  check('USDC balance slot found by override read-back', usdcSlot !== null, `slot ${usdcSlot}`);
+  const signerSlot = await proveMappingSlot(PIMLICO, 'signers(address)', localSigner.address, 1n);
+  check('paymaster signers slot found by override read-back', signerSlot !== null, `slot ${signerSlot}`);
+  if (usdcSlot === null || signerSlot === null) {
+    process.exitCode = 1;
+    return;
+  }
+  const usdcHeld = 5_000_000n;
+  const overrides = {
+    [SEPOLIA_USDC]: { stateDiff: { [mappingSlot(account, usdcSlot)]: word(usdcHeld) } },
+    [PIMLICO]: { stateDiff: { [mappingSlot(localSigner.address, signerSlot)]: word(1n) } },
+    [account]: { balance: '0x0' },
+    [beneficiary]: { balance: '0xde0b6b3a7640000' },
+  };
+
+  const fees = await nodeClient.suggestFees();
+  if (fees.maxPriorityFeePerGas < 100_000_000n) {
+    fees.maxFeePerGas += 100_000_000n - fees.maxPriorityFeePerGas;
+    fees.maxPriorityFeePerGas = 100_000_000n;
+  }
+  const nonce = BigInt(await callWith(ENTRYPOINT_V07, 'getNonce(address,uint192)', [{ kind: 'address', value: account }, { kind: 'uint256', value: 0n }]));
+  const factoryArgs = deployed ? undefined : await spec.getFactoryArgs(owner);
+  const gas = {
+    callGasLimit: 200_000n,
+    verificationGasLimit: deployed ? 250_000n : 600_000n,
+    preVerificationGas: 120_000n,
+    paymasterVerificationGasLimit: 80_000n,
+    paymasterPostOpGasLimit: BigInt(stub.paymasterPostOpGasLimit),
+  };
+  // The paymaster data in Pimlico's format: the stub's terms, signed locally.
+  const pmFields = { ...stubData, validUntil: 0n, validAfter: 0n, allowAllBundlers: true, signature: new Uint8Array(65) };
+  const bound = erc7677MaxTokenCharge({ ...gas, maxFeePerGas: fees.maxFeePerGas }, pmFields);
+  const displayed = (bound * (100n + APPROVAL_HEADROOM_PERCENT) + 99n) / 100n;
+  log(`Worst-case bound ${fmtUsdc(bound)}; displayed and approved ${fmtUsdc(displayed)} (+${APPROVAL_HEADROOM_PERCENT}%)`);
+
+  async function opWithApproval(approval) {
+    const callData = spec.encodeCalls([
+      erc7677TokenApproveCall(SEPOLIA_USDC, PIMLICO, approval),
+      { to: owner.address, value: 0n, data: new Uint8Array(0) },
+    ]);
+    const base = {
+      sender: account,
+      nonce,
+      ...(factoryArgs ? { factory: factoryArgs.factory, factoryData: factoryArgs.factoryData } : {}),
+      callData,
+      ...gas,
+      maxFeePerGas: fees.maxFeePerGas,
+      maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+      paymaster: PIMLICO,
+      paymasterData: encodePimlicoErc20PaymasterData(pmFields),
+      signature: spec.stubSignature(),
+    };
+    const pmHash = pimlicoErc20PaymasterHash(base, CHAIN_ID);
+    const pmSig = withEthereumV(localSigner.sign(toEthSignedMessageHash(pmHash)));
+    const op = { ...base, paymasterData: encodePimlicoErc20PaymasterData({ ...pmFields, signature: pmSig }) };
+    const hash = getUserOpHash(op, ENTRYPOINT_V07, CHAIN_ID);
+    return { ...op, signature: await spec.signUserOpHash(owner, hash), userOpHash: toHex(hash) };
+  }
+  const read = (to, signature, args) => ({ from: beneficiary, to, data: toHex(encodeFunctionCall(signature, args)) });
+  const afterReads = [
+    read(SEPOLIA_USDC, 'balanceOf(address)', [{ kind: 'address', value: account }]),
+    read(SEPOLIA_USDC, 'allowance(address,address)', [{ kind: 'address', value: account }, { kind: 'address', value: PIMLICO }]),
+    read(ENTRYPOINT_V07, 'balanceOf(address)', [{ kind: 'address', value: account }]),
+  ];
+  const depositBefore = BigInt(await callWith(ENTRYPOINT_V07, 'balanceOf(address)', [{ kind: 'address', value: account }]));
+
+  // Case 1.
+  const op1 = await opWithApproval(displayed);
+  const [h1, bal1, allow1, dep1] = await simulate(op1, overrides, beneficiary, afterReads);
+  check('case 1 handleOps succeeds', h1.status === '0x1', h1.error ? describeRevert(h1.error.data) : '');
+  const ev1 = h1.logs.find((l) => l.topics[0] === USER_OPERATION_EVENT);
+  check('case 1 UserOperationEvent success', !!ev1 && BigInt('0x' + ev1.data.slice(2 + 64, 2 + 128)) === 1n);
+  check('case 1 UserOperationEvent names Pimlico’s paymaster', !!ev1 && ev1.topics[3].slice(26).toLowerCase() === PIMLICO.slice(2).toLowerCase());
+  const sp1 = decodePimlicoSponsoredEvents(h1.logs).filter((e) => e.userOpHash === op1.userOpHash);
+  check('case 1 UserOperationSponsored (ERC-20 mode) emitted once', sp1.length === 1 && sp1[0].mode === 1);
+  const paid1 = sp1[0]?.tokenAmountPaid ?? -1n;
+  check('case 1 USDC debit equals tokenAmountPaid', usdcHeld - BigInt(bal1.returnData) === paid1, fmtUsdc(paid1));
+  check('case 1 charge within the engine bound and the approval', paid1 > 0n && paid1 <= bound && bound <= displayed, `${fmtUsdc(paid1)} <= ${fmtUsdc(bound)}`);
+  check('case 1 allowance left = approval − charge', BigInt(allow1.returnData) === displayed - paid1, fmtUsdc(BigInt(allow1.returnData)));
+  check('case 1 account EntryPoint deposit unchanged', BigInt(dep1.returnData) === depositBefore, `${depositBefore} wei`);
+  check('case 1 no ETH leaves the account (it holds none)', !h1.logs.some((l) =>
+    l.address.toLowerCase() === '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' && l.topics[1]?.slice(26).toLowerCase() === account.slice(2).toLowerCase()));
+
+  // Case 2: an approval one unit below the charge.
+  const op2 = await opWithApproval(paid1 - 1n);
+  const [h2, bal2] = await simulate(op2, overrides, beneficiary, afterReads.slice(0, 1));
+  const ev2 = h2.logs?.find((l) => l.topics[0] === USER_OPERATION_EVENT);
+  const success2 = ev2 ? BigInt('0x' + ev2.data.slice(2 + 64, 2 + 128)) : null;
+  check('case 2 approval one unit below the charge: the operation fails and no USDC moves',
+    (h2.status === '0x0' || success2 === 0n) && BigInt(bal2?.returnData ?? '0x0') === usdcHeld,
+    h2.error ? describeRevert(h2.error.data) : `success=${success2}`);
+
+  // Case 3: the engine refuses before signing.
+  const finalAnswer = async (data, limit) => {
+    const t = createErc7677TokenPaymasterTransport({
+      upstream: async () => ({ paymaster: PIMLICO, paymasterData: toHex(encodePimlicoErc20PaymasterData(data)), paymasterPostOpGasLimit: stub.paymasterPostOpGasLimit }),
+      chainId: CHAIN_ID, account, token: SEPOLIA_USDC, maxTokenCharge: limit,
+    });
+    const rpc = toRpcUserOperation({ ...op1, signature: new Uint8Array(0) });
+    return t('pm_getPaymasterData', [rpc, ENTRYPOINT_V07, '0x' + CHAIN_ID.toString(16), null]).then(() => null, (e) => e);
+  };
+  const signedFields = { ...pmFields, signature: new Uint8Array(65).fill(1) };
+  const atLimit = await finalAnswer(signedFields, bound);
+  const belowLimit = await finalAnswer(signedFields, bound - 1n);
+  check('case 3 final data exactly at the displayed maximum is accepted; one unit lower refused (TokenGasChargeAboveLimitError)',
+    atLimit === null && belowLimit instanceof TokenGasChargeAboveLimitError, belowLimit?.message ?? '');
+  const preFund = await finalAnswer({ ...signedFields, preFundPresent: true, preFundInToken: 1n }, displayed);
+  check('case 3 final data with a preFund is refused', preFund !== null && /preFund/.test(preFund.message), preFund?.message ?? '');
+
+  log(failures === 0 ? 'SEPOLIA DRY RUN PASSED' : `SEPOLIA DRY RUN FAILED (${failures})`);
+  if (failures) process.exitCode = 1;
+}
+
+/** Buys a little Sepolia USDC for `recipient` with the dev EOA's test ETH (simulated first). */
+async function swapForUsdc(owner, recipient) {
+  const amountIn = BigInt(process.env.SWAP_ETH_WEI ?? '1000000000000000');
+  if (amountIn <= 0n || amountIn > SWAP_ETH_CAP) throw new Error(`SWAP_ETH_WEI must be in (0, ${SWAP_ETH_CAP}]`);
+  const pool = await callWith(UNISWAP_SEPOLIA.factory, 'getPool(address,address,uint24)', [
+    { kind: 'address', value: SEPOLIA_WETH }, { kind: 'address', value: SEPOLIA_USDC }, { kind: 'uint256', value: SWAP_FEE_TIER },
+  ]);
+  if (BigInt(pool) === 0n) throw new Error('No WETH/USDC 0.05% pool on Sepolia');
+  const quote = await callWith(UNISWAP_SEPOLIA.quoterV2, 'quoteExactInputSingle((address,address,uint256,uint24,uint160))', [{
+    kind: 'tuple',
+    items: [
+      { kind: 'address', value: SEPOLIA_WETH }, { kind: 'address', value: SEPOLIA_USDC },
+      { kind: 'uint256', value: amountIn }, { kind: 'uint256', value: SWAP_FEE_TIER }, { kind: 'uint256', value: 0n },
+    ],
+  }]);
+  const amountOut = BigInt('0x' + quote.slice(2, 66));
+  const minOut = (amountOut * 97n) / 100n;
+  log(`Swap quote (pool 0x${pool.slice(26)}): ${amountIn} wei -> ${fmtUsdc(amountOut)}; minimum ${fmtUsdc(minOut)}`);
+  const data = encodeFunctionCall('exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))', [{
+    kind: 'tuple',
+    items: [
+      { kind: 'address', value: SEPOLIA_WETH }, { kind: 'address', value: SEPOLIA_USDC }, { kind: 'uint256', value: SWAP_FEE_TIER },
+      { kind: 'address', value: recipient }, { kind: 'uint256', value: amountIn }, { kind: 'uint256', value: minOut }, { kind: 'uint256', value: 0n },
+    ],
+  }]);
+  const txCall = { from: owner.address, to: UNISWAP_SEPOLIA.swapRouter02, data: toHex(data), value: '0x' + amountIn.toString(16) };
+  const simulated = await node('eth_call', [txCall, 'latest']);
+  log(`Swap simulated with eth_call: ${fmtUsdc(BigInt(simulated))} out`);
+  const gas = BigInt(await node('eth_estimateGas', [txCall]));
+  const nodeFees = await nodeClient.suggestFees();
+  const tx = signEip1559({
+    chainId: CHAIN_ID,
+    nonce: await nodeClient.getTransactionCount(owner.address),
+    maxPriorityFeePerGas: nodeFees.maxPriorityFeePerGas,
+    maxFeePerGas: nodeFees.maxFeePerGas,
+    gasLimit: (gas * 130n) / 100n,
+    to: UNISWAP_SEPOLIA.swapRouter02,
+    value: amountIn,
+    data,
+  }, owner);
+  const hash = await nodeClient.sendRawTransaction(tx.rawHex);
+  log(`Swap transaction: ${hash}`);
+  const receipt = await waitForTx(hash);
+  check('swap status 1', receipt.status === '0x1', `block ${BigInt(receipt.blockNumber)}`);
+  const usdcIn = receipt.logs.filter((l) => l.address.toLowerCase() === SEPOLIA_USDC.toLowerCase() && l.topics[0] === TRANSFER &&
+    l.topics[2].slice(26).toLowerCase() === recipient.slice(2).toLowerCase());
+  check('swap paid USDC to the smart account', usdcIn.length === 1 && BigInt(usdcIn[0].data) >= minOut, usdcIn[0] ? fmtUsdc(BigInt(usdcIn[0].data)) : 'none');
+}
+
+async function pimlicoLive(state) {
+  if (!BUNDLER_URL) throw new Error('Set ZERODEV_PROJECT_ID (or BUNDLER_URL) for live mode.');
+  const bundler = async (method, params) => bundlerRaw(method, params);
+  if (BigInt(await bundler('eth_chainId', [])) !== CHAIN_ID) throw new Error('The bundler serves another chain');
+  const owner = loadOwner(readFileSync(new URL('../../.dev-wallet/mnemonic.txt', import.meta.url), 'utf8').trim());
+  const spec = createKernelAccountSpec({ node, index: SEPOLIA_DEV_INDEX });
+  const account = await spec.getAddress(owner);
+  if (account.toLowerCase() !== SEPOLIA_DEV_ACCOUNT.toLowerCase()) throw new Error(`Unexpected account ${account}`);
+  if ((await node('eth_getCode', [account, 'latest'])) === '0x') throw new Error('The dev index-2 Kernel account is not deployed on Sepolia');
+  log(`LIVE on Ethereum Sepolia: owner ${owner.address}, Kernel account ${account}, bundler ${BUNDLER_URL}`);
+
+  const minUsdc = BigInt(process.env.TOKEN_GAS_MIN_USDC ?? '500000');
+  let { balance } = await readTokenBalanceAndAllowance(node, SEPOLIA_USDC, account, PIMLICO);
+  log(`Account USDC: ${fmtUsdc(balance)}`);
+  if (balance < minUsdc) {
+    await swapForUsdc(owner, account);
+    ({ balance } = await readTokenBalanceAndAllowance(node, SEPOLIA_USDC, account, PIMLICO));
+    log(`Account USDC now ${fmtUsdc(balance)}`);
+  }
+
+  const fees = await bundlerFees(bundler);
+  log(`Fees (standard tier × 2, the app's rule): maxFeePerGas ${fees.maxFeePerGas}, maxPriorityFeePerGas ${fees.maxPriorityFeePerGas}`);
+  const userCall = { to: owner.address, value: 0n, data: new Uint8Array(0) };
+  const padding = { verification: 110, call: 130, preVerification: 105 };
+
+  // Quote (what the app does before the device check): stub + estimate with
+  // a placeholder approval of the whole balance, then the bound over the
+  // padded estimate plus the headroom = the displayed maximum.
+  const quotes = [];
+  const transportFor = (maxTokenCharge) => createErc7677TokenPaymasterTransport({
+    upstream: bundler, chainId: CHAIN_ID, account, token: SEPOLIA_USDC, maxTokenCharge, onQuote: (q) => quotes.push(q),
+  });
+  const client0 = new SmartAccountClient({ chainId: CHAIN_ID, entryPoint: ENTRYPOINT_V07, bundler, node, spec });
+  const nonce = await client0.getNonce(owner);
+  const placeholder = { sender: account, nonce, callData: spec.encodeCalls([erc7677TokenApproveCall(SEPOLIA_USDC, PIMLICO, balance), userCall]),
+    callGasLimit: 0n, verificationGasLimit: 0n, preVerificationGas: 0n, ...fees, signature: spec.stubSignature() };
+  const stub = await transportFor(undefined)('pm_getPaymasterStubData', [toRpcUserOperation(placeholder), ENTRYPOINT_V07, '0x' + CHAIN_ID.toString(16), null]);
+  const stubOp = { ...placeholder, paymaster: stub.paymaster, paymasterData: toBytes(stub.paymasterData), paymasterPostOpGasLimit: BigInt(stub.paymasterPostOpGasLimit),
+    ...(stub.paymasterVerificationGasLimit ? { paymasterVerificationGasLimit: BigInt(stub.paymasterVerificationGasLimit) } : {}) };
+  const est = await bundler('eth_estimateUserOperationGas', [toRpcUserOperation(stubOp), ENTRYPOINT_V07]);
+  log(`Bundler estimate: ${JSON.stringify(est)}`);
+  const pad = (v, pct) => (BigInt(v) * BigInt(pct)) / 100n;
+  const stubData = parsePimlicoErc20PaymasterData(toBytes(stub.paymasterData));
+  const bound = erc7677MaxTokenCharge({
+    callGasLimit: pad(est.callGasLimit, padding.call),
+    verificationGasLimit: pad(est.verificationGasLimit, padding.verification),
+    preVerificationGas: pad(est.preVerificationGas, padding.preVerification),
+    paymasterVerificationGasLimit: est.paymasterVerificationGasLimit ? pad(est.paymasterVerificationGasLimit, padding.verification) : 0n,
+    // SmartAccountClient keeps the stub's postOp limit (it applies only the
+    // estimate's paymasterVerificationGasLimit), so that is what is signed.
+    paymasterPostOpGasLimit: BigInt(stub.paymasterPostOpGasLimit),
+    maxFeePerGas: fees.maxFeePerGas,
+  }, stubData);
+  const displayed = (bound * (100n + APPROVAL_HEADROOM_PERCENT) + 99n) / 100n;
+  log(`Stub rate ${stubData.exchangeRate} base units per ETH, postOpGas ${stubData.postOpGas}; bound ${fmtUsdc(bound)}; displayed and approved ${fmtUsdc(displayed)}`);
+  if (balance < displayed) throw new Error(`The account holds ${fmtUsdc(balance)}, below the displayed maximum ${fmtUsdc(displayed)}`);
+
+  // The real operation through SmartAccountClient's ERC-7677 seam.
+  const client = new SmartAccountClient({
+    chainId: CHAIN_ID, entryPoint: ENTRYPOINT_V07, bundler, node, spec,
+    paymaster: { transport: transportFor(displayed) },
+    gasPaddingPct: padding,
+  });
+  quotes.length = 0;
+  const { userOpHash, userOp } = await client.sendCalls(owner, [erc7677TokenApproveCall(SEPOLIA_USDC, PIMLICO, displayed), userCall], fees);
+  const final = quotes.find((q) => q.phase === 'final');
+  log(`Final paymaster data: rate ${final.data.exchangeRate}, postOpGas ${final.data.postOpGas}, constantFee ${final.data.constantFee}, ` +
+    `validUntil ${final.data.validUntil}, allowAllBundlers ${final.data.allowAllBundlers}; final bound ${fmtUsdc(final.maxTokenCharge)}`);
+  log(`UserOperation accepted by the bundler: ${userOpHash}`);
+  const opReceipt = await client.waitForReceipt(userOpHash, { timeoutMs: 180_000, pollMs: 4_000 });
+  const txHash = opReceipt?.receipt?.transactionHash;
+  log(`Bundle transaction: ${txHash}`);
+  const receipt = await waitForTx(txHash);
+  const block = BigInt(receipt.blockNumber);
+  check('bundle transaction status 1', receipt.status === '0x1', `block ${block}`);
+  const opEvent = receipt.logs.find((l) => l.topics[0] === USER_OPERATION_EVENT && l.topics[1] === userOpHash);
+  check('UserOperationEvent success', !!opEvent && BigInt('0x' + opEvent.data.slice(2 + 64, 2 + 128)) === 1n);
+  check('UserOperationEvent paymaster is Pimlico’s', !!opEvent && opEvent.topics[3].slice(26).toLowerCase() === PIMLICO.slice(2).toLowerCase());
+  const actualGasCost = opEvent ? BigInt('0x' + opEvent.data.slice(2 + 128, 2 + 192)) : 0n;
+  const sponsored = decodePimlicoSponsoredEvents(receipt.logs).filter((e) => e.userOpHash === userOpHash);
+  check('UserOperationSponsored (ERC-20 mode) for this operation', sponsored.length === 1 && sponsored[0].mode === 1);
+  const paid = sponsored[0]?.tokenAmountPaid ?? -1n;
+  log(`  actualGasCost ${actualGasCost} wei; tokenAmountPaid ${fmtUsdc(paid)}; exchangeRate ${sponsored[0]?.exchangeRate}`);
+  const at = (b) => '0x' + b.toString(16);
+  const eth = async (b) => BigInt(await node('eth_getBalance', [account, at(b)]));
+  const dep = async (who, b) => BigInt(await callWith(ENTRYPOINT_V07, 'balanceOf(address)', [{ kind: 'address', value: who }], undefined, at(b)));
+  const tok = (b) => readTokenBalanceAndAllowance(node, SEPOLIA_USDC, account, PIMLICO, at(b));
+  const [ethBefore, ethAfter, depBefore, depAfter, pmBefore, pmAfter, tokBefore, tokAfter] = await Promise.all([
+    eth(block - 1n), eth(block), dep(account, block - 1n), dep(account, block), dep(PIMLICO, block - 1n), dep(PIMLICO, block), tok(block - 1n), tok(block),
+  ]);
+  check('account ETH balance unchanged', ethBefore === ethAfter, `${ethBefore} wei`);
+  check('account EntryPoint deposit unchanged', depBefore === depAfter, `${depBefore} wei`);
+  check('USDC debit equals tokenAmountPaid', tokBefore.balance - tokAfter.balance === paid, `${fmtUsdc(tokBefore.balance)} -> ${fmtUsdc(tokAfter.balance)}`);
+  check('charge within the final bound and the displayed maximum', paid > 0n && paid <= final.maxTokenCharge && final.maxTokenCharge <= displayed,
+    `${fmtUsdc(paid)} <= ${fmtUsdc(final.maxTokenCharge)} <= ${fmtUsdc(displayed)}`);
+  check('allowance afterwards = approval − charge', tokAfter.allowance === displayed - paid, `before ${tokBefore.allowance}, after ${tokAfter.allowance}`);
+  check('paymaster EntryPoint deposit paid the gas', pmBefore - pmAfter === actualGasCost, `${pmBefore} -> ${pmAfter}`);
+  const transfers = receipt.logs.filter((l) => l.address.toLowerCase() === SEPOLIA_USDC.toLowerCase() && l.topics[0] === TRANSFER);
+  for (const l of transfers) log(`  USDC Transfer 0x${l.topics[1].slice(26)} -> 0x${l.topics[2].slice(26)}: ${fmtUsdc(BigInt(l.data))}`);
+  check('the signed operation carried the paymaster the transport accepted', userOp.paymaster.toLowerCase() === PIMLICO.toLowerCase());
+  log(failures === 0 ? 'SEPOLIA LIVE RUN PASSED' : `SEPOLIA LIVE RUN FAILED (${failures})`);
   if (failures) process.exitCode = 1;
 }
 

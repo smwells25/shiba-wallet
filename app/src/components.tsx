@@ -2,7 +2,7 @@ import React from 'react';
 import { Pressable, StyleSheet, Text, TextStyle, View, ViewStyle } from 'react-native';
 import { Theme, useTheme } from './theme';
 import type { FeatureReadiness } from './config/readiness';
-import { IMPORTED_KEY_NOT_BACKED_UP } from './wallet/account-ids';
+import { IMPORTED_KEY_NOT_BACKED_UP, WATCH_ONLY_NOTICE } from './wallet/account-ids';
 
 /** Primary / secondary / destructive button built from plain components. */
 export function Button({
@@ -89,6 +89,17 @@ export function WarningBox({ children }: { children: React.ReactNode }) {
 export function ImportedKeyNotice({ show = true }: { show?: boolean }) {
   if (!show) return null;
   return <WarningBox>{IMPORTED_KEY_NOT_BACKED_UP}</WarningBox>;
+}
+
+/**
+ * Watch-only accounts (feature 10): the notice every screen that shows a
+ * watch-only account renders (Home under the switcher, the account lists,
+ * the route gate's refusal). Renders nothing when `show` is false, so
+ * callers can pass the account's flag.
+ */
+export function WatchOnlyNotice({ show = true }: { show?: boolean }) {
+  if (!show) return null;
+  return <WarningBox>{WATCH_ONLY_NOTICE}</WarningBox>;
 }
 
 /**

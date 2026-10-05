@@ -10,6 +10,12 @@ import {
   callDataAndNonceHash,
   createRecoveryMetadata,
   currentOwnerOf,
+  GUARDIAN_NONCE_LANES,
+  MAX_GUARDIAN_APPROVAL_SCAN_BLOCKS,
+  decodeGuardianApprovalCall,
+  guardianDelayWraps,
+  maxNonWrappingGuardianDelay,
+  scanGuardianApprovals,
   encodeApproveWithSig,
   encodeGuardianSetData,
   encodeGuardianSignature,
@@ -713,5 +719,128 @@ describe('recovery metadata', () => {
     expect(result.ok).toBe(false);
     expect(result.problems.join('\n')).toMatch(/owner is/);
     expect(result.problems.join('\n')).toMatch(/not in the record/);
+  });
+});
+
+describe('inheritance support: roles, delay wrap, approval discovery', () => {
+  const created = createRecoveryMetadata({
+    chainId: CHAIN_ID,
+    account: ACCOUNT,
+    index: 2n,
+    originalOwner: DEV_OWNER,
+    recordedAt: 1790000000,
+  });
+  const heirRecord = {
+    weightedEcdsaValidator: KERNEL_RECOVERY_MODULES.weightedEcdsaValidator,
+    recoveryAction: KERNEL_RECOVERY_MODULES.recoveryAction,
+    guardians: [{ address: G1.address, weight: 1, label: 'My sister' }],
+    threshold: 1,
+    delaySeconds: 600,
+    installTxHash: null,
+  };
+
+  it('keeps records without a role byte-identical and round-trips the heirs role', () => {
+    const plain = recordGuardians(created, heirRecord);
+    const plainText = serializeRecoveryMetadata(plain);
+    expect(plainText).not.toMatch(/"role"/);
+    expect(serializeRecoveryMetadata(parseRecoveryMetadata(plainText))).toBe(plainText);
+    const heirs = recordGuardians(created, { ...heirRecord, role: 'heirs' });
+    const text = serializeRecoveryMetadata(heirs);
+    expect(text).toMatch(/"installTxHash":null,"role":"heirs"\}/);
+    expect(parseRecoveryMetadata(text).guardians!.role).toBe('heirs');
+    expect(serializeRecoveryMetadata(parseRecoveryMetadata(text))).toBe(text);
+    const v = JSON.parse(text);
+    v.guardians.role = 'executors';
+    expect(() => parseRecoveryMetadata(v)).toThrow(/guardians.role must be one of guardians, heirs/);
+  });
+
+  it('detects delays whose validAfter would wrap at 2^48', () => {
+    const now = 1_791_163_500;
+    const max = maxNonWrappingGuardianDelay(now);
+    expect(max).toBe(2n ** 48n - 1n - BigInt(now));
+    expect(guardianDelayWraps(max, now)).toBe(false);
+    expect(guardianDelayWraps(max + 1n, now)).toBe(true);
+    expect(guardianDelayWraps(2 ** 48 - 1, now)).toBe(true);
+    expect(guardianDelayWraps(365 * 86_400, now)).toBe(false);
+    // The validator itself accepts the wrapping delay (validateGuardianSet allows any uint48).
+    expect(() => validateGuardianSet({ guardians: [{ address: G1.address, weight: 1 }], threshold: 1, delaySeconds: 2 ** 48 - 1 })).not.toThrow();
+    expect(() => maxNonWrappingGuardianDelay(2n ** 48n)).toThrow(/out of range/);
+  });
+
+  it('counts the guardian nonce lanes an heir may choose from', () => {
+    expect(GUARDIAN_NONCE_LANES).toBe(16_711_680);
+  });
+
+  it('decodes approveWithSig and approve calldata like ethers encodes it', () => {
+    const iface = new Interface([
+      'function approveWithSig(bytes32 _callDataAndNonceHash, address _kernel, bytes sigs)',
+      'function approve(bytes32 _callDataAndNonceHash, address _kernel)',
+    ]);
+    const request = buildGuardianRecoveryRequest({ chainId: CHAIN_ID, account: ACCOUNT, newOwner: NEW_OWNER, nonce: SDK.nonce });
+    const sig1 = signGuardianApproval(G1, toBytes(request.approvalDigest));
+    const sig2 = signGuardianApproval(G2, toBytes(request.approvalDigest));
+    const engine = encodeApproveWithSig(request, [sig1, sig2]);
+    const viaEthers = iface.encodeFunctionData('approveWithSig', [request.callDataAndNonceHash, ACCOUNT, toHex(new Uint8Array([...sig1, ...sig2]))]);
+    expect(toHex(engine.data)).toBe(viaEthers);
+    const decoded = decodeGuardianApprovalCall(viaEthers)!;
+    expect(decoded.kind).toBe('approveWithSig');
+    expect(decoded.proposalHash).toBe(lower(request.callDataAndNonceHash));
+    expect(decoded.account).toBe(ACCOUNT);
+    expect(decoded.signatures.map((x) => toHex(x))).toEqual([toHex(sig1), toHex(sig2)]);
+    const approve = decodeGuardianApprovalCall(iface.encodeFunctionData('approve', [request.callDataAndNonceHash, ACCOUNT]))!;
+    expect(approve).toEqual({ kind: 'approve', proposalHash: lower(request.callDataAndNonceHash), account: ACCOUNT, signatures: [] });
+    // Not an approval, truncated, non-canonical offset, dirty address bits: null, never a guess.
+    expect(decodeGuardianApprovalCall(toHex(encodeVetoCall(request.callDataAndNonceHash).data))).toBeNull();
+    expect(decodeGuardianApprovalCall(viaEthers.slice(0, 80))).toBeNull();
+    const badOffset = viaEthers.slice(0, 10 + 128) + (0x80).toString(16).padStart(64, '0') + viaEthers.slice(10 + 192);
+    expect(decodeGuardianApprovalCall(badOffset)).toBeNull();
+    const dirty = viaEthers.slice(0, 10 + 64) + 'ff' + viaEthers.slice(10 + 66);
+    expect(decodeGuardianApprovalCall(dirty)).toBeNull();
+  });
+
+  it('scans full blocks for approvals naming the account and recovers the approvers', async () => {
+    const request = buildGuardianRecoveryRequest({ chainId: CHAIN_ID, account: ACCOUNT, newOwner: NEW_OWNER, nonce: SDK.nonce });
+    const other = buildGuardianRecoveryRequest({ chainId: CHAIN_ID, account: DEV_OWNER === ACCOUNT ? NEW_OWNER : '0x959E8dF4f03033134A791f887209B75aeb13D95a', newOwner: NEW_OWNER, nonce: SDK.nonce });
+    const withSig = encodeApproveWithSig(request, [signGuardianApproval(G3, toBytes(request.approvalDigest))]);
+    const elsewhere = encodeApproveWithSig(other, [signGuardianApproval(G3, toBytes(other.approvalDigest))]);
+    const direct = encodeFunctionCall('approve(bytes32,address)', [
+      { kind: 'fixedBytes', value: toBytes(request.callDataAndNonceHash) },
+      { kind: 'address', value: ACCOUNT },
+    ]);
+    const validator = KERNEL_RECOVERY_MODULES.weightedEcdsaValidator;
+    const blocks: Record<string, unknown> = {
+      '0x64': { transactions: [{ hash: '0x' + '01'.repeat(32), from: NEW_OWNER, to: validator, input: toHex(withSig.data) }] },
+      '0x65': {
+        transactions: [
+          { hash: '0x' + '02'.repeat(32), from: NEW_OWNER, to: validator, input: toHex(elsewhere.data) },
+          { hash: '0x' + '03'.repeat(32), from: NEW_OWNER, to: ACCOUNT, input: toHex(withSig.data) },
+          { hash: '0x' + '04'.repeat(32), from: G2.address, to: validator, input: toHex(direct) },
+        ],
+      },
+      '0x66': { transactions: [] },
+    };
+    const calls: string[] = [];
+    const node: JsonRpcTransport = async (method, params) => {
+      expect(method).toBe('eth_getBlockByNumber');
+      expect(params[1]).toBe(true);
+      calls.push(params[0] as string);
+      return blocks[params[0] as string] ?? null;
+    };
+    const scan = await scanGuardianApprovals(node, { account: ACCOUNT, chainId: CHAIN_ID, fromBlock: 100n, toBlock: 102n });
+    expect(calls.sort()).toEqual(['0x64', '0x65', '0x66']);
+    expect(scan.blocksScanned).toBe(3);
+    expect(scan.approvals.map((a) => [a.kind, a.txHash, a.blockNumber, a.approvers])).toEqual([
+      ['approveWithSig', '0x' + '01'.repeat(32), 100n, [G3.address]],
+      ['approve', '0x' + '04'.repeat(32), 101n, [G2.address]],
+    ]);
+    expect(scan.approvals[0]!.proposalHash).toBe(lower(request.callDataAndNonceHash));
+    // Hash-only blocks, missing blocks and oversized ranges are refused, not skipped.
+    const hashesOnly: JsonRpcTransport = async () => ({ transactions: ['0x' + '01'.repeat(32)] });
+    await expect(scanGuardianApprovals(hashesOnly, { account: ACCOUNT, chainId: CHAIN_ID, fromBlock: 1n, toBlock: 1n })).rejects.toThrow(/hashes, not transactions/);
+    const missing: JsonRpcTransport = async () => null;
+    await expect(scanGuardianApprovals(missing, { account: ACCOUNT, chainId: CHAIN_ID, fromBlock: 1n, toBlock: 1n })).rejects.toThrow(/was not returned/);
+    await expect(
+      scanGuardianApprovals(missing, { account: ACCOUNT, chainId: CHAIN_ID, fromBlock: 1n, toBlock: BigInt(MAX_GUARDIAN_APPROVAL_SCAN_BLOCKS) + 1n }),
+    ).rejects.toThrow(/at most 2000 blocks/);
   });
 });

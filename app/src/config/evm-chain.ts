@@ -1,9 +1,10 @@
 /**
- * The active-EVM-chain profiles: Ethereum mainnet (the default) and two
+ * The active-EVM-chain profiles: Ethereum mainnet (the default) and the
  * test networks chosen under Settings → Developer: Ethereum Sepolia (phase
- * 4, item 6) and Base Sepolia (phase 10, item 3, the second test profile,
- * which proves that a new EVM chain — smart accounts included — is a data
- * entry here rather than a code change). This file is pure data with NO
+ * 4, item 6), Base Sepolia (phase 10, item 3) and Arbitrum Sepolia (phase
+ * 14 item 3). Base Sepolia, the second test profile, proved that a new EVM
+ * chain — smart accounts included — is a data entry here rather than a code
+ * change. This file is pure data with NO
  * imports, like ./defaults.ts, so
  * Node scripts (scripts/check-devmode.mjs) can load it directly under
  * type stripping and pin every value.
@@ -123,6 +124,14 @@ export interface EvmChainProfile {
    * whatever 0x answers (phase 5 item 1 record in AGENTS.md).
    */
   swapsOffered: boolean;
+  /**
+   * True for Arbitrum chains, whose parent-chain (layer 1) data cost is NOT
+   * a separate fee: it is charged as extra layer-2 gas inside the gas used,
+   * and eth_estimateGas already includes it (see EVM_ARBITRUM_SEPOLIA for
+   * the sources). The app's OP-stack code (l1DataFee) must never run there;
+   * this flag only selects the plain-language note Settings shows.
+   */
+  l1CostInGas: boolean;
 }
 
 const MAINNET_RPC_DEFAULTS: readonly string[] = [
@@ -285,6 +294,7 @@ export const EVM_MAINNET: EvmChainProfile = {
   kernelV33Verified: true,
   l1DataFee: false,
   swapsOffered: true,
+  l1CostInGas: false,
 };
 
 export const EVM_SEPOLIA: EvmChainProfile = {
@@ -313,6 +323,7 @@ export const EVM_SEPOLIA: EvmChainProfile = {
   kernelV33Verified: true,
   l1DataFee: false,
   swapsOffered: true,
+  l1CostInGas: false,
 };
 
 /**
@@ -460,16 +471,164 @@ export const EVM_BASE_SEPOLIA: EvmChainProfile = {
   kernelV33Verified: true,
   l1DataFee: true,
   swapsOffered: false,
+  l1CostInGas: false,
 };
 
+/**
+ * Arbitrum Sepolia default RPC candidates, in order (config/networks.ts uses
+ * the first one whose eth_chainId probe answers 0x66eee = 421614). Each was
+ * probed live on 2026-10-04: eth_chainId 0x66eee, eth_blockNumber,
+ * eth_getBalance, eth_gasPrice, eth_feeHistory, eth_maxPriorityFeePerGas
+ * (0x0 on all three), eth_estimateGas, and eth_simulateV1 with
+ * traceTransfers (the ETH pseudo-Transfer log from 0xeeee…eeee was
+ * returned, so the balance-change preview works on all three).
+ *
+ *  1. https://arbitrum-sepolia-rpc.publicnode.com — PublicNode (Allnodes).
+ *     Its Arbitrum page https://arbitrum.publicnode.com lists it (page data:
+ *     "platform":"arbitrum-sepolia-rpc", "network":"Testnet",
+ *     "endpoint":"https://arbitrum-sepolia-rpc.publicnode.com"), and
+ *     Arbitrum's own third-party provider table
+ *     (https://docs.arbitrum.io/arbitrum-essentials/reference/node-providers)
+ *     ticks PublicNode for Arbitrum Sepolia. The page data carries the same
+ *     unexplained "showDeprecatedMessage" flag (2024-02-19) seen on Base;
+ *     every probe answered. Ranked FIRST because eth_getLogs was consistent:
+ *     ranges up to 50,000 blocks accepted (-32701 "exceed maximum block
+ *     range: 50000" above), and windows ten million blocks deep were served,
+ *     so the app's 9,000-block log windows work.
+ *  2. https://sepolia-rollup.arbitrum.io/rpc — Arbitrum's own public RPC,
+ *     https://docs.arbitrum.io/arbitrum-essentials/reference/node-providers:
+ *     "| Arbitrum Sepolia (Testnet) | <https://sepolia-rollup.arbitrum.io/rpc>
+ *     | 421614 | [Arbiscan](https://sepolia.arbiscan.io/), [Blockscout](…) |
+ *     Sepolia | Nitro (Rollup) | …". The same page warns of "No uptime,
+ *     latency, or rate-limit guarantees", and it answered HTTP 429 "Too Many
+ *     Requests" after about 25 rapid requests, hence second.
+ *  3. https://arb-sepolia-testnet.api.pocket.network — Pocket Network
+ *     Foundation; https://api.pocket.network lists "Arbitrum Sepolia Testnet
+ *     RPC" — "Public Arbitrum Sepolia testnet JSON-RPC endpoint by Pocket
+ *     Network. No API key required; fair-use limits apply." Ranked last:
+ *     reads worked, but eth_getLogs with toBlock = the head block number was
+ *     refused ("invalid block range params") and some deeper windows
+ *     answered "historical state is not available" on one run, i.e. its
+ *     load-balanced backends differ.
+ *
+ * Not added: https://sepolia-rollup-sequencer.arbitrum.io/rpc (the same
+ * Arbitrum page: "the Sequencer endpoints only support
+ * eth_sendRawTransaction and eth_sendRawTransactionConditional calls"), and
+ * dRPC (its page shows no keyless URL to cite). Arbitrum's blocks are about
+ * 0.25 s apart (measured 2026-10-04: 2,500 s over 10,000 blocks), so a
+ * 9,000-block window covers only about 37 minutes of history here.
+ */
+const ARBITRUM_SEPOLIA_RPC_DEFAULTS: readonly string[] = [
+  'https://arbitrum-sepolia-rpc.publicnode.com',
+  'https://sepolia-rollup.arbitrum.io/rpc',
+  'https://arb-sepolia-testnet.api.pocket.network',
+];
+
+/**
+ * Arbitrum Sepolia (phase 14 item 3), Arbitrum's test network: an Arbitrum
+ * Nitro rollup that settles to Ethereum Sepolia. It is NOT an OP-stack
+ * chain. Facts and sources (fetched and read on-chain 2026-10-04):
+ *
+ *  - chain id 421614 (0x66eee), currency ETH, explorer Arbiscan
+ *    https://sepolia.arbiscan.io: the provider table quoted on
+ *    ARBITRUM_SEPOLIA_RPC_DEFAULTS, and
+ *    https://docs.arbitrum.io/build-decentralized-apps/quickstart-solidity-remix
+ *    ("Chain ID: `421614`", "Currency Symbol: **ETH**"). Arbitrum's pages
+ *    link Arbiscan in the /address/<addr> form; the /tx/<hash> path is the
+ *    Etherscan-family convention, observed answering HTTP 200 for a real
+ *    transaction (titled "… | Arbitrum Sepolia"), not documented.
+ *  - FEE MODEL. https://docs.arbitrum.io/arbitrum-essentials/how-to-estimate-gas:
+ *    "users will see a single fee—the L2 cost with the L1 fee "baked-in."
+ *    This differs from other Rollups"; "Call an Arbitrum node's
+ *    `eth_estimateGas` RPC, which returns a gas limit sufficient to cover
+ *    the entire transaction fee at the current child chain gas price";
+ *    "Note that for a given operation, the `eth_estimateGas` value may vary
+ *    over time as the parent chain calldata price fluctuates". And
+ *    https://docs.arbitrum.io/how-arbitrum-works/deep-dives/gas-and-fees:
+ *    "The total fee charged to a transaction is the child chain basefee
+ *    multiplied by the sum of the child chain gas used and the parent chain
+ *    calldata charge." So the worst case is gas limit × max fee per gas,
+ *    exactly what send.ts computes for Ethereum, and Max (balance − that
+ *    worst case) stays correct; the OP-stack L1-fee code (l1DataFee) must
+ *    NOT run here: there is no GasPriceOracle (eth_getCode at
+ *    0x420000000000000000000000000000000000000F returned 0x on Arbitrum
+ *    Sepolia, while it holds code on Base Sepolia). Measured: for a 1-wei
+ *    transfer NodeInterface.gasEstimateComponents gave gasEstimate 21,770
+ *    of which gasEstimateForL1 601, and eth_estimateGas returned the same
+ *    21,770, i.e. the estimate already includes the parent-chain part.
+ *    eth_maxPriorityFeePerGas answers 0x0, so the app's priority fee is 0;
+ *    ArbOwnerPublic.getCollectTips() read true, so a non-zero tip WOULD be
+ *    paid. Gas price floor: ArbGasInfo.getMinimumGasPrice() = 0.02 gwei
+ *    on-chain (the chain-params page's 0.2 gwei for Arbitrum Sepolia
+ *    disagrees with the chain; the chain is what charges).
+ *  - ERC-4337 / Kernel: the engine's verifyKernelDeployment PASSED against
+ *    this chain (implementation 0xd6CE…5b28, entryPoint() v0.7, accountId
+ *    "kernel.advanced.v0.3.3", meta factory approved); the meta factory is
+ *    staked (0.1 ETH, 86,400 s). EntryPoint v0.7, the KernelFactory, meta
+ *    factory, ECDSA validator, the session-key signer and policies,
+ *    RecoveryAction, WebAuthnValidator v0.0.3 (its pinned code hash) and
+ *    Daimo's P256Verifier are byte-identical to Ethereum Sepolia; the Kernel
+ *    implementation and the WeightedECDSAValidator differ in exactly 35
+ *    bytes, the cached EIP-712 chain id (0x066eee) and domain separator,
+ *    recomputed and matching — the same pattern as Base Sepolia. The dev
+ *    owner's index-0 counterfactual is 0xc995…C5AC here too (CREATE2,
+ *    factory getAddress agreed), not deployed. The secp256r1 precompile at
+ *    0x100 answers (detectP256Precompile true; Arbitrum documents EIP-7951
+ *    in ArbOS 51, https://docs.arbitrum.io/run-arbitrum-node/arbos-releases/arbos51,
+ *    and the chain reports ArbOS 61).
+ *  - SimpleAccount is not pre-filled (the AA_STACK check was not run here).
+ *  - Bundlers: the ZeroDev project URL for 421614 answered eth_chainId
+ *    0x66eee and eth_supportedEntryPoints including v0.7, serves
+ *    pimlico_getUserOperationGasPrice, not rundler_maxPriorityFeePerGas.
+ *  - Token paymaster: Circle's v0.7 paymaster 0x31BE…0b58 is documented for
+ *    Arbitrum Sepolia (developers.circle.com/paymaster/addresses-and-events)
+ *    and passed readCirclePaymasterState + circlePaymasterProblems (token()
+ *    = Circle's USDC 0x75fa…AA4d, feeSpread 0, a fixed test oracle at
+ *    3,000 USDC per ETH, staked 0.25 ETH, deposit about 1.05 ETH); see
+ *    packages/chains-evm/src/token-paymaster.ts.
+ *  - Not available here: 0x swap quotes (https://docs.0x.org/docs/introduction/supported-chains
+ *    lists Arbitrum One 42161 only, checked 2026-10-04).
+ */
+export const EVM_ARBITRUM_SEPOLIA: EvmChainProfile = {
+  caip2: 'eip155:421614',
+  chainIdDecimal: '421614',
+  label: 'Arbitrum Sepolia',
+  testnet: true,
+  displaySymbol: 'test ETH',
+  defaultRpcUrls: ARBITRUM_SEPOLIA_RPC_DEFAULTS,
+  defaultRpcUrl: ARBITRUM_SEPOLIA_RPC_DEFAULTS[0],
+  explorerTxBase: 'https://sepolia.arbiscan.io/tx/',
+  aaPrefill: null,
+  modeLabel: 'Arbitrum Sepolia test mode',
+  bannerText: 'TESTNET — Arbitrum Sepolia test mode is on. Amounts are test ETH, not real funds.',
+  kernelV33Verified: true,
+  l1DataFee: false,
+  swapsOffered: false,
+  l1CostInGas: true,
+};
+
+/**
+ * Settings → Developer note for a profile with l1CostInGas (Arbitrum): what
+ * the fee covers there, in plain words (sources on EVM_ARBITRUM_SEPOLIA).
+ */
+export function l1CostInGasNote(profile: Pick<EvmChainProfile, 'label' | 'swapsOffered'>): string {
+  return (
+    `${profile.label} is a layer-2 network that charges for publishing its data on Ethereum as extra gas, not ` +
+    'as a separate fee: the network’s own gas estimate already includes it, so the max network fee on the ' +
+    'confirm screen covers the whole cost, and Max leaves exactly that. The estimate can move with Ethereum’s ' +
+    'fees; if it rises before the transaction is included, the network refuses it and nothing is charged.' +
+    (profile.swapsOffered ? '' : ` Swaps are not offered here (0x does not support ${profile.label}).`)
+  );
+}
+
 /** The test-network profiles, in the order Settings → Developer lists them. */
-export const EVM_TEST_PROFILES: readonly EvmChainProfile[] = [EVM_SEPOLIA, EVM_BASE_SEPOLIA];
+export const EVM_TEST_PROFILES: readonly EvmChainProfile[] = [EVM_SEPOLIA, EVM_BASE_SEPOLIA, EVM_ARBITRUM_SEPOLIA];
 
 /** Every EVM profile the app knows (mainnet first). */
 export const EVM_PROFILES: readonly EvmChainProfile[] = [EVM_MAINNET, ...EVM_TEST_PROFILES];
 
 /** The CAIP-2 id of a test-network profile (the stored Developer choice). */
-export type TestNetworkId = 'eip155:11155111' | 'eip155:84532';
+export type TestNetworkId = 'eip155:11155111' | 'eip155:84532' | 'eip155:421614';
 
 /** The profile with this CAIP-2 id, or undefined for a chain the app has no profile for. */
 export function evmProfileByCaip2(caip2: string): EvmChainProfile | undefined {

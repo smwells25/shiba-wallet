@@ -30,6 +30,8 @@ import {
   smartAccountDeploymentNote,
   type SmartAccountAddressInfo,
 } from '../wallet/aa';
+import { RequestAmountCard } from '../components/PaymentRequestViews';
+import { familyForSlot } from '../wallet/payment-request';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Receive'>;
 
@@ -110,6 +112,8 @@ export function ReceiveScreen({ route, navigation }: Props) {
     return () => clearTimeout(t);
   }, [smartCopied]);
 
+  const requestFamily = account ? familyForSlot(account.chainId) : null;
+
   if (!account) {
     return (
       <View style={[screenStyle(theme), styles.center]}>
@@ -138,10 +142,11 @@ export function ReceiveScreen({ route, navigation }: Props) {
       ) : null}
       <ImportedKeyNotice show={activeAccount?.imported === true} />
       {/*
-        The QR payload is the plain address, nothing else. This screen has
-        never built per-chain payment URIs (no amounts, no labels), and a
-        bare address is what every major wallet's scanner accepts for all
-        four chains — inventing a URI here would only narrow compatibility.
+        The default QR payload is the plain address, nothing else: a bare
+        address is what every major wallet's scanner accepts for all four
+        chains. Payment URIs with an amount (EIP-681, BIP-321, the Dogecoin
+        format, Solana Pay) are offered separately under "Request an
+        amount" below, built only from the specifications.
       */}
       <View
         style={styles.qrBox}
@@ -198,6 +203,25 @@ export function ReceiveScreen({ route, navigation }: Props) {
         <Text accessibilityLiveRegion="polite" style={[styles.note, { color: theme.textMuted }]}>
           Copied — note that the clipboard can be read by other apps.
         </Text>
+      ) : null}
+      {/*
+        Payment requests (phase 14 item 1): closed by default, so the plain
+        address QR above stays the default code. The request is always for
+        this account's own address; on the EVM slot it names the ACTIVE
+        network's chain id and offers that network's tracked tokens only.
+      */}
+      {requestFamily ? (
+        <RequestAmountCard
+          key={`${account.chainId}|${account.address}|${evmChain.caip2}`}
+          family={requestFamily}
+          address={account.address}
+          networkLabel={account.chainId === EVM_CHAIN_ID ? evmChain.label : account.name}
+          nativeSymbol={account.chainId === EVM_CHAIN_ID ? evmChain.displaySymbol : account.symbol}
+          {...(account.chainId === EVM_CHAIN_ID
+            ? { chainIdDecimal: evmChain.chainIdDecimal, evmCaip2: evmChain.caip2 }
+            : {})}
+          qrSize={Math.min(qrSize, 220)}
+        />
       ) : null}
       {smartInfo ? (
         <View

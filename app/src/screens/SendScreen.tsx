@@ -21,6 +21,7 @@ import { IMPORTED_KEY_NO_CHAIN } from '../wallet/account-ids';
 import {
   callWithFailover,
   getEndpoint,
+  withEndpoint,
   type NetworkEndpoint,
   type UsableEndpoint,
 } from '../config/networks';
@@ -128,6 +129,26 @@ import {
 } from '../wallet/send-nft';
 import { invalidateNftCache, standardLabel } from '../wallet/nfts';
 import { extractScannedAddress } from '../wallet/scan';
+import {
+  describeParsedRequest,
+  isPaymentUriFor,
+  parsePaymentRequest,
+} from '../wallet/payment-request';
+import {
+  describeNameError,
+  ensPrivacyNote,
+  ensRegistryFor,
+  looksLikeName,
+  lookUpRecipientName,
+  recheckRecipientName,
+  resolvedNameLine,
+} from '../wallet/ens-names';
+import { simulationTransport } from '../wallet/simulation';
+import {
+  EnsNameStatus,
+  PaymentRequestNotice,
+  type EnsNameView,
+} from '../components/PaymentRequestViews';
 import { QrScanner } from '../components/QrScanner';
 import {
   ContactPicker,
@@ -262,8 +283,20 @@ export function SendScreen({ route, navigation }: Props) {
     tokenMode ? undefined : null,
   );
   const [phase, setPhase] = useState<Phase>('form');
-  const [recipient, setRecipient] = useState('');
-  const [amountText, setAmountText] = useState('');
+  // A payment request that switched this screen between the native coin and
+  // a token (navigation.replace) arrives as route.params.request; its values
+  // only pre-fill the editable fields.
+  const [recipient, setRecipient] = useState(route.params.request?.recipient ?? '');
+  const [amountText, setAmountText] = useState(route.params.request?.amountText ?? '');
+  // The "Payment request" box (lines describing what the request asked
+  // for), and a refusal sentence when a scanned or pasted request was
+  // refused (nothing is filled in then).
+  const [requestLines, setRequestLines] = useState<string[] | null>(route.params.request?.lines ?? null);
+  const [requestError, setRequestError] = useState<string | null>(null);
+  // ENS (phase 14 item 2): the lookup result for the name in the recipient
+  // field, keyed by network and name; the name the confirm screen shows.
+  const [nameState, setNameState] = useState<{ key: string; view: EnsNameView; url: string | null } | null>(null);
+  const [quotedName, setQuotedName] = useState<{ name: string; address: string; registryLabel: string } | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [scannerOpen, setScannerOpen] = useState(false);
   const [maxBusy, setMaxBusy] = useState(false);
@@ -419,10 +452,67 @@ export function SendScreen({ route, navigation }: Props) {
     ? `${activeAccount.name}${delegationLabelSuffix(delegation.status)}`
     : '—';
 
-  const validation = useMemo(
-    () => (recipient.trim() ? validateRecipient(route.params.chainId, recipient) : null),
-    [route.params.chainId, recipient],
-  );
+  // A name in the EVM recipient field (anything with a dot that does not
+  // start with 0x; ../wallet/ens-names.ts) is looked up, never sent to: the
+  // resolved address is what the validation below, the contact and
+  // own-account checks, the risk card and the quote all see.
+  const nameKey =
+    route.params.chainId === EVM_CHAIN_ID && looksLikeName(recipient)
+      ? `${evmChain.caip2}|${recipient.trim()}`
+      : null;
+  const nameView: EnsNameView | null = nameKey
+    ? nameState && nameState.key === nameKey
+      ? nameState.view
+      : { status: 'resolving', name: recipient.trim() }
+    : null;
+  const nameRegistry = ensRegistryFor(evmChain);
+  useEffect(() => {
+    if (!nameKey) return;
+    const input = nameKey.slice(nameKey.indexOf('|') + 1);
+    let cancelled = false;
+    // A short pause so a name is looked up once typing stops, not per key.
+    const timer = setTimeout(() => {
+      withEndpoint(EVM_CHAIN_ID, (ep) => lookUpRecipientName(simulationTransport(ep.url), input, evmChain)).then(
+        (outcome) => {
+          if (cancelled) return;
+          const found = outcome.value;
+          setNameState({
+            key: nameKey,
+            url: outcome.endpoint.url,
+            view:
+              found.kind === 'resolved'
+                ? {
+                    status: 'resolved',
+                    name: found.resolution.name,
+                    address: found.resolution.address,
+                    registryLabel: found.registryLabel,
+                  }
+                : { status: 'refused', name: input, message: found.message },
+          });
+        },
+        (e: unknown) => {
+          if (cancelled) return;
+          setNameState({
+            key: nameKey,
+            url: null,
+            view: { status: 'refused', name: input, message: describeNameError(e, input, '') },
+          });
+        },
+      );
+    }, 450);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [nameKey, evmChain]);
+  const nameResolvedAddress = nameView?.status === 'resolved' ? nameView.address : null;
+
+  const validation = useMemo(() => {
+    if (nameKey) {
+      return nameResolvedAddress ? validateRecipient(route.params.chainId, nameResolvedAddress) : null;
+    }
+    return recipient.trim() ? validateRecipient(route.params.chainId, recipient) : null;
+  }, [route.params.chainId, recipient, nameKey, nameResolvedAddress]);
 
   const contactsNetworkId = endpoint?.network.chainId ?? null;
   const reloadContacts = useCallback(() => {
@@ -552,6 +642,21 @@ export function SendScreen({ route, navigation }: Props) {
    * nested component, so the inline name field keeps its state across
    * re-renders.
    */
+  /**
+   * Confirm-screen line for a recipient entered as an ENS name: the name,
+   * the registry that answered and the full address it resolved to (shown
+   * only when that address is exactly the quote's recipient).
+   */
+  const renderNameNote = (to: string) =>
+    quotedName && quotedName.address.toLowerCase() === to.toLowerCase() ? (
+      <Text style={[styles.hint, { color: theme.textMuted }]}>
+        {resolvedNameLine(
+          { name: quotedName.name, address: quotedName.address },
+          quotedName.registryLabel,
+        )}
+      </Text>
+    ) : null;
+
   const renderSuccessContact = (address: string) => {
     if (!contactsNetworkId) return null;
     const match = contactMatchFor(address);
@@ -939,9 +1044,119 @@ export function SendScreen({ route, navigation }: Props) {
     }
   };
 
+  /**
+   * A scanned or pasted payload that starts with THIS slot's payment-URI
+   * scheme (../wallet/payment-request.ts). Returns false when it is not
+   * one, so the caller keeps the old behaviour (another family's URI then
+   * fails the normal address validation). A refused request fills in
+   * nothing and shows the reason. An accepted one fills the editable
+   * recipient and amount fields; when it asks for a token while this
+   * screen sends the native coin (or the other way round), the screen is
+   * replaced by the matching mode with the same values. Nothing switches
+   * the network and nothing adds a token: those requests are refused.
+   */
+  const handlePaymentPayload = async (data: string, scanned: boolean): Promise<boolean> => {
+    if (!isPaymentUriFor(route.params.chainId, data)) return false;
+    if (nftMode) {
+      setRequestLines(null);
+      setRequestError(
+        'This is a payment request, which cannot fill in an NFT send. Open Send from the Home screen to pay it.',
+      );
+      return true;
+    }
+    const isEvm = route.params.chainId === EVM_CHAIN_ID;
+    const tracked = isEvm ? await listTokens(evmChain.caip2).catch(() => []) : [];
+    const parsed = parsePaymentRequest(data, {
+      slotChainId: route.params.chainId,
+      evmProfile: evmChain,
+      trackedTokens: tracked,
+    });
+    if (parsed.kind === 'not-a-request') return false;
+    setFormError(null);
+    if (parsed.kind === 'refused') {
+      setRequestLines(null);
+      setRequestError(parsed.message);
+      return true;
+    }
+    const lines = describeParsedRequest(parsed, {
+      nativeSymbol: isEvm ? evmChain.displaySymbol : account.symbol,
+      networkLabel: isEvm ? evmChain.label : account.name,
+    });
+    const wantedToken = parsed.token?.assetId ?? null;
+    if (wantedToken !== (tokenId ?? null)) {
+      navigation.replace('Send', {
+        chainId: route.params.chainId,
+        ...(wantedToken ? { tokenId: wantedToken } : {}),
+        request: { recipient: parsed.recipient, amountText: parsed.amountText, lines },
+      });
+      return true;
+    }
+    lastEvmMax.current = null;
+    lastAaMax.current = null;
+    lastTokenGasMax.current = null;
+    setRequestError(null);
+    setRequestLines(lines);
+    setRecipient(parsed.recipient);
+    setAmountText(parsed.amountText ?? '');
+    setScannedRecipient(scanned ? parsed.recipient : null);
+    return true;
+  };
+
   const onReview = async () => {
     if (!url || !network) return;
     setFormError(null);
+    setQuotedName(null);
+    // A name: it must have resolved (the full address is on screen), and it
+    // is resolved again now; a different answer stops the review and shows
+    // the new address instead (ens-names.ts recheckRecipientName).
+    let reviewedName: { name: string; address: string; registryLabel: string } | null = null;
+    if (nameKey) {
+      if (!nameView || nameView.status !== 'resolved' || !nameRegistry.ok) {
+        setFormError(
+          nameView?.status === 'refused'
+            ? nameView.message
+            : 'Wait until the name has been looked up and its address is shown.',
+        );
+        return;
+      }
+      const shown = nameView;
+      const registryChainId = nameRegistry.chainId;
+      setPhase('quoting');
+      try {
+        const { value: recheck } = await withEndpoint(EVM_CHAIN_ID, (ep) =>
+          recheckRecipientName(
+            simulationTransport(ep.url),
+            { name: shown.name, address: shown.address, chainId: registryChainId },
+            shown.registryLabel,
+          ),
+        );
+        if (recheck.kind !== 'same') {
+          setNameState({
+            key: nameKey,
+            url: nameState?.url ?? null,
+            view:
+              recheck.kind === 'changed'
+                ? {
+                    status: 'resolved',
+                    name: recheck.resolution.name,
+                    address: recheck.resolution.address,
+                    registryLabel: shown.registryLabel,
+                  }
+                : { status: 'refused', name: shown.name, message: recheck.message },
+          });
+          setFormError(recheck.message);
+          setPhase('form');
+          return;
+        }
+      } catch (e) {
+        setFormError(describeNameError(e, shown.name, shown.registryLabel));
+        setPhase('form');
+        return;
+      }
+      // Back to the form state; the quote below sets 'quoting' again.
+      setPhase('form');
+      reviewedName = { name: shown.name, address: shown.address, registryLabel: shown.registryLabel };
+    }
     if (!validation?.ok) {
       setFormError(validation ? validation.error : 'Enter a recipient address.');
       return;
@@ -1020,6 +1235,7 @@ export function SendScreen({ route, navigation }: Props) {
             : await prepareAaTokenGasSend(tbundle, account.address, validation.normalized, amount, {
                 fromMax: tgFromMax,
               });
+          setQuotedName(reviewedName);
           setQuote(next);
           setQuotedFrom(account.address);
           setQuotedUrl(quoteUrl);
@@ -1051,6 +1267,7 @@ export function SendScreen({ route, navigation }: Props) {
             : await preparePasskeyCalls(pbundle, [
                 { to: validation.normalized, value: amount, data: new Uint8Array(0) },
               ]);
+          setQuotedName(reviewedName);
           setQuote(next);
           setQuotedFrom(account.address);
           setQuotedUrl(quoteUrl);
@@ -1122,6 +1339,7 @@ export function SendScreen({ route, navigation }: Props) {
         next = quoted.value;
         quoteUrl = quoted.used.url;
       }
+      setQuotedName(reviewedName);
       setQuote(next);
       setQuotedFrom(account.address);
       setQuotedUrl(quoteUrl);
@@ -1497,6 +1715,7 @@ export function SendScreen({ route, navigation }: Props) {
 
         <Row label="To" value={quote.to} mono theme={theme} />
         <RecipientContactNotice match={contactMatchFor(quote.to)} address={quote.to} />
+        {renderNameNote(quote.to)}
         {quote.token ? (
           <>
             <Row
@@ -1747,6 +1966,7 @@ export function SendScreen({ route, navigation }: Props) {
         <ImportedKeyNotice show={activeAccount?.imported === true} />
         <Row label="To" value={quote.to} mono theme={theme} />
         <RecipientContactNotice match={contactMatchFor(quote.to)} address={quote.to} />
+        {renderNameNote(quote.to)}
         <Row
           label="Amount"
           value={`${exact(quote.amount, quote.decimals)} ${quote.symbol}`}
@@ -1855,6 +2075,7 @@ export function SendScreen({ route, navigation }: Props) {
         <ImportedKeyNotice show={activeAccount?.imported === true} />
         <Row label="To" value={quote.to} mono theme={theme} />
         <RecipientContactNotice match={contactMatchFor(quote.to)} address={quote.to} />
+        {renderNameNote(quote.to)}
         <Row label="NFT" value={nftParams?.name ?? '—'} sub={nftParams?.collection ?? null} theme={theme} />
         <Row label="Token ID" value={quote.tokenId.toString()} mono theme={theme} />
         <Row label="Contract" value={quote.contract} mono theme={theme} />
@@ -1960,6 +2181,7 @@ export function SendScreen({ route, navigation }: Props) {
         <ImportedKeyNotice show={activeAccount?.imported === true} />
         <Row label="To" value={quote.to} mono theme={theme} />
         <RecipientContactNotice match={contactMatchFor(quote.to)} address={quote.to} />
+        {renderNameNote(quote.to)}
         <Row
           label="Amount"
           value={`${exact(quote.amount, decimals)} ${symbol}`}
@@ -2242,16 +2464,33 @@ export function SendScreen({ route, navigation }: Props) {
         </View>
       ) : null}
 
+      {requestLines ? <PaymentRequestNotice lines={requestLines} /> : null}
       <Text style={[styles.label, { color: theme.textMuted }]}>Recipient</Text>
       <View style={styles.amountRow}>
         <TextInput
           value={recipient}
           onChangeText={(t) => {
-            setRecipient(t);
             setFormError(null);
+            // A pasted payment request for this slot fills the form instead
+            // of landing in the field as text (handlePaymentPayload); a
+            // refused one leaves the field as it was and says why.
+            if (isPaymentUriFor(route.params.chainId, t)) {
+              void handlePaymentPayload(t, false);
+              return;
+            }
+            setRequestError(null);
+            setRecipient(t);
           }}
-          accessibilityLabel="Recipient address"
-          placeholder={token || nftMode ? 'Ethereum address' : `${account.symbol} address`}
+          accessibilityLabel={
+            route.params.chainId === EVM_CHAIN_ID ? 'Recipient address or ENS name' : 'Recipient address'
+          }
+          placeholder={
+            token || nftMode
+              ? 'Ethereum address or ENS name'
+              : route.params.chainId === EVM_CHAIN_ID
+                ? `${account.symbol} address or ENS name`
+                : `${account.symbol} address`
+          }
           placeholderTextColor={theme.textMuted}
           autoCapitalize="none"
           autoCorrect={false}
@@ -2280,13 +2519,20 @@ export function SendScreen({ route, navigation }: Props) {
       */}
       <QrScanner
         visible={scannerOpen}
-        rationale={`Point the camera at a ${token || nftMode ? 'Ethereum' : account.name} address QR code. The camera is only used to read the code.`}
+        rationale={`Point the camera at a ${token || nftMode ? 'Ethereum' : account.name} address or payment-request QR code. The camera is only used to read the code.`}
         onScanned={(data) => {
           setScannerOpen(false);
-          const scanned = extractScannedAddress(route.params.chainId, data);
-          setRecipient(scanned);
-          setScannedRecipient(scanned);
           setFormError(null);
+          void handlePaymentPayload(data, true).then((handled) => {
+            if (handled) return;
+            // Not a payment request for this slot: the old behaviour, so a
+            // plain address (or another chain's URI, left untouched) meets
+            // the normal validation.
+            const scanned = extractScannedAddress(route.params.chainId, data);
+            setRequestError(null);
+            setRecipient(scanned);
+            setScannedRecipient(scanned);
+          });
         }}
         onClose={() => setScannerOpen(false)}
       />
@@ -2303,6 +2549,7 @@ export function SendScreen({ route, navigation }: Props) {
           setContactsOpen(false);
           setRecipient(contact.address);
           setScannedRecipient(null);
+          setRequestError(null);
           setFormError(null);
         }}
         onClose={() => setContactsOpen(false)}
@@ -2311,6 +2558,17 @@ export function SendScreen({ route, navigation }: Props) {
           navigation.navigate('Contacts');
         }}
       />
+      {requestError ? (
+        <Text accessibilityLiveRegion="polite" style={[styles.fieldError, { color: theme.danger }]}>
+          {requestError}
+        </Text>
+      ) : null}
+      {nameView ? (
+        <EnsNameStatus
+          view={nameView}
+          privacyNote={nameRegistry.ok ? ensPrivacyNote(nameState?.url ?? url) : null}
+        />
+      ) : null}
       {validation && !validation.ok ? (
         <Text style={[styles.fieldError, { color: theme.danger }]}>{validation.error}</Text>
       ) : null}

@@ -18,6 +18,13 @@
  *    path that tries to derive a key for an imported account from the
  *    phrase fails closed with an error instead of silently using a phrase
  *    key that happens to share the number.
+ *  - 3 × 2^30 + k (k = 0, 1, 2, …): a WATCH-ONLY account (feature 10): an
+ *    Ethereum address the user asked to follow, with NO key anywhere in the
+ *    wallet. Its id is neither a derivation index nor an imported-key slot:
+ *    derivationArgsFor refuses it (it is at or above 2^31), the imported-key
+ *    helpers refuse it (it is outside the imported range, which
+ *    isImportedAccountId bounds exactly), smartAccountSaltFor refuses it,
+ *    and assertAccountCanSign refuses it before signing reads anything.
  *
  * This module has no imports so that every other module (including the
  * Node-loaded check scripts) can use it without pulling in React Native.
@@ -40,6 +47,49 @@ export function isImportedAccountId(id: number): boolean {
     id >= IMPORTED_ACCOUNT_ID_BASE &&
     id - IMPORTED_ACCOUNT_ID_BASE <= MAX_IMPORTED_SLOT
   );
+}
+
+/**
+ * First id of the watch-only range: 3 × 2^30. It sits far above the whole
+ * imported range (2^31 to 2^31 + MAX_IMPORTED_SLOT), so the two ranges can
+ * never overlap, and below 2^32, so every id stays an ordinary safe integer.
+ */
+export const WATCH_ONLY_ACCOUNT_ID_BASE = 0xc0000000;
+
+/**
+ * Highest watch-only slot number the id range allows. Like imported slots,
+ * watch-only slots are never reused (the account store keeps a high-water
+ * mark), so a per-account cache keyed by the id can never show one watched
+ * address's data under another.
+ */
+export const MAX_WATCH_ONLY_SLOT = 0xfffff;
+
+/** True for an id in the watch-only range (a well-formed one). */
+export function isWatchOnlyAccountId(id: number): boolean {
+  return (
+    Number.isSafeInteger(id) &&
+    id >= WATCH_ONLY_ACCOUNT_ID_BASE &&
+    id - WATCH_ONLY_ACCOUNT_ID_BASE <= MAX_WATCH_ONLY_SLOT
+  );
+}
+
+/** The account id of watch-only slot `slot`. */
+export function watchOnlyAccountId(slot: number): number {
+  if (!Number.isSafeInteger(slot) || slot < 0 || slot > MAX_WATCH_ONLY_SLOT) {
+    throw new Error(`Invalid watch-only slot ${String(slot)}.`);
+  }
+  return WATCH_ONLY_ACCOUNT_ID_BASE + slot;
+}
+
+/** The watch-only slot of a watch-only account id; throws for any other id. */
+export function watchOnlySlotOf(id: number): number {
+  if (!isWatchOnlyAccountId(id)) throw new Error(`Account ${String(id)} is not a watch-only account.`);
+  return id - WATCH_ONLY_ACCOUNT_ID_BASE;
+}
+
+/** True for an id in the recovery-phrase range: a BIP-32 derivation index (0 to 2^31 - 1). */
+export function isPhraseAccountId(id: number): boolean {
+  return Number.isSafeInteger(id) && id >= 0 && id < IMPORTED_ACCOUNT_ID_BASE;
 }
 
 /** The account id of imported-key vault slot `slot`. */
@@ -69,6 +119,9 @@ export function importedSlotOf(id: number): number {
  *    function of the imported key, which the phrase does not contain.
  */
 export function smartAccountSaltFor(id: number): number {
+  // A watch-only account has no key, so it can own no smart account: any
+  // address computed for it would be one the wallet can never sign for.
+  if (isWatchOnlyAccountId(id)) throw new Error(WATCH_ONLY_NO_SMART_ACCOUNT);
   if (isImportedAccountId(id)) return 0;
   if (!Number.isSafeInteger(id) || id < 0 || id >= IMPORTED_ACCOUNT_ID_BASE) {
     throw new Error(`Invalid account index ${String(id)}.`);
@@ -121,3 +174,62 @@ export const IMPORTED_KEY_NO_CHAIN =
 export const IMPORTED_KEY_EVM_ONLY =
   'This account comes from an imported Ethereum private key, so it can only sign on Ethereum ' +
   'networks. Nothing was signed.';
+
+// ---------------------------------------------------------------------------
+// Watch-only accounts (feature 10)
+// ---------------------------------------------------------------------------
+
+/**
+ * The `path` a watch-only account carries where a derivation path would be
+ * (core DerivedAccount.path, the Home row). Not a BIP-32 path on purpose,
+ * so isBip32Path is false for it and nothing records it as one.
+ */
+export const WATCH_ONLY_PATH = 'watch-only';
+
+/** "Watched 1" for slot 0, "Watched 2" for slot 1, and so on. */
+export function defaultWatchOnlyName(slot: number): string {
+  return `Watched ${slot + 1}`;
+}
+
+/**
+ * The label appended to a watch-only account's name everywhere it is shown
+ * (AccountView.name in WalletContext), so no screen can show the account
+ * without saying the wallet holds no key for it.
+ */
+export const WATCH_ONLY_NAME_SUFFIX = ' (watch-only)';
+
+/** The notice on Home and in the account lists while a watch-only account is shown. */
+export const WATCH_ONLY_NOTICE =
+  'Watch-only: this wallet can show this address but holds no key for it. It cannot send, sign or ' +
+  'recover anything for it.';
+
+/** Thrown by every signing path while a watch-only account is active (WalletContext.signWith). */
+export const WATCH_ONLY_SIGN_REFUSAL =
+  'This is a watch-only account: the wallet holds no key for it, so it cannot sign or send. Nothing ' +
+  'was signed.';
+
+/** Thrown by smartAccountSaltFor for a watch-only id. */
+export const WATCH_ONLY_NO_SMART_ACCOUNT =
+  'A watch-only account has no key, so it cannot own a smart account in this wallet.';
+
+/** Thrown by derivationArgsFor for a watch-only id. */
+export const WATCH_ONLY_NO_DERIVATION =
+  'A watch-only account has no key and no derivation path; nothing can be derived for it.';
+
+/** Shown where a non-Ethereum chain would be for a watch-only account. */
+export const WATCH_ONLY_NO_CHAIN =
+  'Not available for a watch-only address. A watched Ethereum address has no address on this network.';
+
+/**
+ * Refuses, before anything is read from secure storage, every signing
+ * request for an account id that has no key in this wallet: a watch-only
+ * account (with the plain sentence above), or any id outside the phrase
+ * and imported ranges (a malformed id). Called first by
+ * WalletContext.signWith; phrase and imported ids pass unchanged.
+ */
+export function assertAccountCanSign(id: number): void {
+  if (isWatchOnlyAccountId(id)) throw new Error(WATCH_ONLY_SIGN_REFUSAL);
+  if (!isPhraseAccountId(id) && !isImportedAccountId(id)) {
+    throw new Error(`Invalid account index ${String(id)}.`);
+  }
+}

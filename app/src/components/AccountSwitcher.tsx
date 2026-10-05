@@ -18,6 +18,11 @@ import {
   phraseAccountSameAsImportedNote,
 } from '../wallet/imported-keys';
 import { useWallet, type AccountView } from '../wallet/WalletContext';
+import {
+  PHRASE_ACCOUNT_WAS_WATCHED_TITLE,
+  WATCH_ONLY_LIST_HINT,
+  phraseAccountSameAsWatchedNote,
+} from '../wallet/watch-only';
 
 /**
  * Home-screen account switcher (phase 6 item 3): a header row showing the
@@ -28,17 +33,21 @@ import { useWallet, type AccountView } from '../wallet/WalletContext';
  * balances) survives the switch. "Add account" creates the next index and
  * switches to it; renaming and hiding live in Settings → Accounts.
  * Imported accounts (feature 12, ADR D9) are listed with a line saying the
- * recovery phrase does not back them up.
+ * recovery phrase does not back them up. Watch-only accounts (feature 10)
+ * are listed after them with a "Watch-only" label; choosing one shows its
+ * balances, tokens, activity and NFTs, and every signing path refuses it.
  */
 export function AccountSwitcher({ onManage, onImportKey }: { onManage: () => void; onImportKey: () => void }) {
   const theme = useTheme();
-  const { activeAccount, accountList, switchAccount, addAccount } = useWallet();
+  const { activeAccount, accountList, watchOnlyAccounts, switchAccount, addAccount } = useWallet();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
   if (!activeAccount) return null;
-  const visible = accountList.filter((a) => !a.hidden);
+  // Accounts with a key first, then the watch-only ones (never hidden).
+  const visible = [...accountList.filter((a) => !a.hidden), ...watchOnlyAccounts];
   const anyImported = accountList.some((a) => a.imported);
+  const anyWatched = watchOnlyAccounts.length > 0;
 
   const choose = async (account: AccountView) => {
     if (account.index === activeAccount.index) {
@@ -64,6 +73,8 @@ export function AccountSwitcher({ onManage, onImportKey }: { onManage: () => voi
       await switchAccount(created.index);
       const sameKey = phraseAccountSameAsImportedNote(created, accountList);
       if (sameKey) Alert.alert(PHRASE_ACCOUNT_WAS_IMPORTED_TITLE, sameKey);
+      const watched = phraseAccountSameAsWatchedNote(created, watchOnlyAccounts);
+      if (watched) Alert.alert(PHRASE_ACCOUNT_WAS_WATCHED_TITLE, watched);
     } catch (e) {
       Alert.alert('Could not add account', e instanceof Error ? e.message : 'Unknown error.');
     } finally {
@@ -75,7 +86,7 @@ export function AccountSwitcher({ onManage, onImportKey }: { onManage: () => voi
     <>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`Active account: ${activeAccount.name}. Switch account`}
+        accessibilityLabel={`Active account: ${activeAccount.name}${activeAccount.watchOnly ? ', watch-only, no key in this wallet' : ''}. Switch account`}
         onPress={() => setOpen(true)}
         style={({ pressed }) => [
           styles.header,
@@ -91,6 +102,9 @@ export function AccountSwitcher({ onManage, onImportKey }: { onManage: () => voi
               {shortAccountAddress(activeAccount.evmAddress)}
             </Text>
           ) : null}
+          {activeAccount.watchOnly ? (
+            <Text style={[styles.headerAddress, { color: theme.warningText }]}>Watch-only — no key in this wallet</Text>
+          ) : null}
         </View>
         {busy ? (
           <ActivityIndicator size="small" color={theme.textMuted} />
@@ -104,6 +118,7 @@ export function AccountSwitcher({ onManage, onImportKey }: { onManage: () => voi
           <Text style={[styles.modalTitle, { color: theme.text }]}>Accounts</Text>
           <Text style={[styles.hint, { color: theme.textMuted }]}>
             {accountsBackupHint(anyImported)}
+            {anyWatched ? ` ${WATCH_ONLY_LIST_HINT}` : ''} To watch an address, use Manage accounts.
           </Text>
           <FlatList
             data={visible}
@@ -115,6 +130,9 @@ export function AccountSwitcher({ onManage, onImportKey }: { onManage: () => voi
                 <Pressable
                   accessibilityRole="button"
                   accessibilityState={{ selected: active }}
+                  {...(item.watchOnly
+                    ? { accessibilityLabel: `${item.name}, watch-only, ${item.evmAddress ?? 'unknown address'}` }
+                    : {})}
                   onPress={() => void choose(item)}
                   style={({ pressed }) => [
                     styles.row,
@@ -137,6 +155,11 @@ export function AccountSwitcher({ onManage, onImportKey }: { onManage: () => voi
                     {item.imported ? (
                       <Text style={[styles.headerAddress, { color: theme.warningText }]}>
                         Imported key, Ethereum only — not backed up by your recovery phrase
+                      </Text>
+                    ) : null}
+                    {item.watchOnly ? (
+                      <Text style={[styles.headerAddress, { color: theme.warningText }]}>
+                        Watch-only — the wallet holds no key; it cannot send or sign
                       </Text>
                     ) : null}
                   </View>

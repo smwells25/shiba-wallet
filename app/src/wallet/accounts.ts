@@ -1,15 +1,21 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { ChainKeyProvider, DerivedAccount } from '@shiba-wallet/core';
+import { toChecksumAddress } from '@shiba-wallet/core';
 // Explicit .ts extensions: this module is imported by scripts/check-accounts.mjs
 // under Node's type stripping, which resolves relative specifiers literally.
 import { CHAINS } from './chains.ts';
 import { sanitizeDisplayName, type NameValidation } from './names.ts';
 import type { KeyValueStore } from './tokens.ts';
 import {
+  WATCH_ONLY_NO_DERIVATION,
   defaultImportedName,
+  defaultWatchOnlyName,
   importedAccountId,
   importedSlotOf,
   isImportedAccountId,
+  isWatchOnlyAccountId,
+  watchOnlyAccountId,
+  watchOnlySlotOf,
 } from './account-ids.ts';
 
 export {
@@ -18,7 +24,10 @@ export {
   importedAccountId,
   importedSlotOf,
   isImportedAccountId,
+  isWatchOnlyAccountId,
   smartAccountSaltFor,
+  watchOnlyAccountId,
+  watchOnlySlotOf,
 } from './account-ids.ts';
 
 /**
@@ -58,6 +67,16 @@ export {
  * address live only in the imported-key vault in ./storage.ts; this list
  * holds only the name. reconcileImportedAccounts keeps the two in step: a
  * key in the vault always has an entry, and an entry without a key goes.
+ *
+ * WATCH-ONLY ACCOUNTS (feature 10). An Ethereum address the user follows
+ * without any key. Its entry carries `watchOnly: true`, an id in the
+ * watch-only range of ./account-ids.ts and the address itself (EIP-55),
+ * which is public data and the ONLY thing the wallet knows about it: there
+ * is nothing in secure storage for a watch-only account. It never counts
+ * toward MAX_ACCOUNTS or nextIndex, is never hidden (it is removed, which
+ * deletes nothing secret), and its slot is never reused (`nextWatchSlot`,
+ * written only once a watch-only account has existed, so the stored form of
+ * a list without one is unchanged byte for byte).
  */
 
 const ACCOUNTS_KEY = 'shiba-wallet.accounts.v1';
@@ -93,6 +112,10 @@ export interface WalletAccount {
   hidden: boolean;
   /** Present (true) only for an account whose key was imported (never derived). */
   imported?: true;
+  /** Present (true) only for a watch-only account: an address with no key in this wallet. */
+  watchOnly?: true;
+  /** A watch-only account's EIP-55 address (absent for every other account). */
+  address?: string;
 }
 
 export interface AccountsState {
@@ -102,6 +125,11 @@ export interface AccountsState {
   activeIndex: number;
   /** The index the next "Add account" takes; > every DERIVED index in `accounts`. */
   nextIndex: number;
+  /**
+   * The slot the next watch-only account takes; > every watch-only slot ever
+   * used. Absent (meaning 0) until the first watch-only account is added.
+   */
+  nextWatchSlot?: number;
 }
 
 /** "Account 1" for index 0, "Account 2" for index 1, and so on. */
@@ -140,13 +168,45 @@ function isValidIndex(value: unknown): value is number {
  */
 function reviveState(raw: unknown): AccountsState {
   if (typeof raw !== 'object' || raw === null) return defaultAccountsState();
-  const r = raw as { version?: unknown; accounts?: unknown; activeIndex?: unknown; nextIndex?: unknown };
+  const r = raw as {
+    version?: unknown;
+    accounts?: unknown;
+    activeIndex?: unknown;
+    nextIndex?: unknown;
+    nextWatchSlot?: unknown;
+  };
   if (r.version !== STORE_VERSION || !Array.isArray(r.accounts)) return defaultAccountsState();
 
   const byIndex = new Map<number, WalletAccount>();
   for (const entry of r.accounts) {
     if (typeof entry !== 'object' || entry === null) continue;
-    const e = entry as { index?: unknown; name?: unknown; hidden?: unknown; imported?: unknown };
+    const e = entry as {
+      index?: unknown;
+      name?: unknown;
+      hidden?: unknown;
+      imported?: unknown;
+      watchOnly?: unknown;
+      address?: unknown;
+    };
+    if (e.watchOnly === true) {
+      // A watch-only account: only an id in the watch-only range and a
+      // well-formed EIP-55 address are accepted (anything else is dropped:
+      // nothing is lost, the user can add the address again), it is never
+      // hidden, and it can never also be an imported entry.
+      if (e.imported !== undefined) continue;
+      if (typeof e.index !== 'number' || !isWatchOnlyAccountId(e.index) || byIndex.has(e.index)) continue;
+      if (typeof e.address !== 'string' || canonicalEvmAddress(e.address) !== e.address) continue;
+      const fallback = defaultWatchOnlyName(watchOnlySlotOf(e.index));
+      const name = typeof e.name === 'string' ? sanitizeAccountName(e.name) : null;
+      byIndex.set(e.index, {
+        index: e.index,
+        name: name && name.ok && name.name === e.name ? name.name : fallback,
+        hidden: false,
+        watchOnly: true,
+        address: e.address,
+      });
+      continue;
+    }
     if (e.imported === true) {
       // An imported account: only an id in the imported range is accepted,
       // and it is never hidden (it is removed instead).
@@ -172,20 +232,31 @@ function reviveState(raw: unknown): AccountsState {
   if (!byIndex.has(0)) byIndex.set(0, { index: 0, name: defaultAccountName(0), hidden: false });
 
   const accounts = [...byIndex.values()].sort((a, b) => a.index - b.index);
-  // Imported ids sit above every derivation index, so the high-water mark
-  // is taken over the derived accounts only.
-  const maxIndex = Math.max(...accounts.filter((a) => !a.imported).map((a) => a.index));
+  // Imported and watch-only ids sit above every derivation index, so the
+  // high-water mark is taken over the derived accounts only.
+  const maxIndex = Math.max(...accounts.filter((a) => !a.imported && !a.watchOnly).map((a) => a.index));
   const storedNext = isValidIndex(r.nextIndex) ? r.nextIndex : 0;
   const nextIndex = Math.max(storedNext, maxIndex + 1);
   const active =
-    isValidIndex(r.activeIndex) || (typeof r.activeIndex === 'number' && isImportedAccountId(r.activeIndex))
+    isValidIndex(r.activeIndex) ||
+    (typeof r.activeIndex === 'number' && (isImportedAccountId(r.activeIndex) || isWatchOnlyAccountId(r.activeIndex)))
       ? byIndex.get(r.activeIndex)
       : undefined;
-  return {
+  const state: AccountsState = {
     accounts,
     activeIndex: active && !active.hidden ? active.index : 0,
     nextIndex,
   };
+  // The watch-only high-water mark: never below the stored value, never
+  // below one past the highest slot still listed.
+  const watchSlots = accounts.filter((a) => a.watchOnly).map((a) => watchOnlySlotOf(a.index));
+  const storedWatchNext =
+    typeof r.nextWatchSlot === 'number' && Number.isSafeInteger(r.nextWatchSlot) && r.nextWatchSlot > 0
+      ? Math.min(r.nextWatchSlot, MAX_WATCH_ONLY_SLOT_COUNT)
+      : 0;
+  const nextWatchSlot = Math.max(storedWatchNext, watchSlots.length > 0 ? Math.max(...watchSlots) + 1 : 0);
+  if (nextWatchSlot > 0) state.nextWatchSlot = nextWatchSlot;
+  return state;
 }
 
 /** Loads the account list. Never throws: unreadable storage yields the default. */
@@ -212,6 +283,9 @@ async function saveAccounts(state: AccountsState, store: KeyValueStore): Promise
       accounts: state.accounts,
       activeIndex: state.activeIndex,
       nextIndex: state.nextIndex,
+      // Written only once a watch-only account has existed, so a list
+      // without one is stored exactly as before (feature 10).
+      ...(state.nextWatchSlot ? { nextWatchSlot: state.nextWatchSlot } : {}),
     }),
   );
 }
@@ -244,7 +318,7 @@ export async function addAccount(
   store: KeyValueStore = AsyncStorage,
 ): Promise<{ state: AccountsState; account: WalletAccount }> {
   const state = await loadAccounts(store);
-  const derivedCount = state.accounts.filter((a) => !a.imported).length;
+  const derivedCount = state.accounts.filter((a) => !a.imported && !a.watchOnly).length;
   if (derivedCount >= MAX_ACCOUNTS || state.nextIndex >= BIP32_HARDENED_OFFSET) {
     throw new Error(`This wallet already has the maximum of ${MAX_ACCOUNTS} accounts.`);
   }
@@ -260,6 +334,7 @@ export async function addAccount(
     accounts: [...state.accounts, account],
     activeIndex: state.activeIndex,
     nextIndex: index + 1,
+    ...(state.nextWatchSlot ? { nextWatchSlot: state.nextWatchSlot } : {}),
   };
   await saveAccounts(next, store);
   return { state: next, account };
@@ -295,6 +370,7 @@ export async function hideAccount(
   const state = await loadAccounts(store);
   const account = findAccount(state, index);
   if (account.imported) throw new Error(IMPORTED_HIDE_REFUSAL);
+  if (account.watchOnly) throw new Error(WATCH_ONLY_HIDE_REFUSAL);
   if (state.activeIndex === index) {
     throw new Error(`${account.name} is the active account. Switch to another account first.`);
   }
@@ -404,7 +480,12 @@ export function reconcileImportedAccounts(
   const accounts = [...kept, ...added].sort((a, b) => a.index - b.index);
   const activeStillThere = accounts.some((a) => a.index === state.activeIndex && !a.hidden);
   return {
-    state: { accounts, activeIndex: activeStillThere ? state.activeIndex : 0, nextIndex: state.nextIndex },
+    state: {
+      accounts,
+      activeIndex: activeStillThere ? state.activeIndex : 0,
+      nextIndex: state.nextIndex,
+      ...(state.nextWatchSlot ? { nextWatchSlot: state.nextWatchSlot } : {}),
+    },
     changed: true,
   };
 }
@@ -418,6 +499,99 @@ export async function reconcileStoredImportedAccounts(
   const { state, changed } = reconcileImportedAccounts(current, vaultSlots);
   if (changed) await saveAccounts(state, store);
   return state;
+}
+
+// ---------------------------------------------------------------------------
+// Watch-only accounts (feature 10)
+// ---------------------------------------------------------------------------
+
+/** Number of watch-only slot values the id range allows (MAX_WATCH_ONLY_SLOT + 1). */
+const MAX_WATCH_ONLY_SLOT_COUNT = 0x100000;
+
+/** Upper bound on watch-only accounts listed at once. */
+export const MAX_WATCH_ONLY_ACCOUNTS = 20;
+
+/** Refusal for "Hide" on a watch-only account. */
+export const WATCH_ONLY_HIDE_REFUSAL =
+  'A watch-only account cannot be hidden. Remove it instead (Settings → Accounts); removing deletes ' +
+  'nothing secret, because the wallet holds no key for it.';
+
+/** Refusal when the address is already a watch-only account. */
+export function watchOnlyDuplicateError(name: string, address: string): string {
+  return `This address is already watched as ${name} (${address}).`;
+}
+
+/**
+ * EIP-55 form of a 0x-prefixed 40-hex-digit address, or null for anything
+ * else. Used to re-check stored watch-only addresses; user input goes
+ * through the send flow's validateRecipient (./watch-only.ts), which also
+ * refuses a wrong checksum instead of silently fixing it.
+ */
+export function canonicalEvmAddress(address: string): string | null {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(address)) return null;
+  const hex = address.slice(2).toLowerCase();
+  const bytes = new Uint8Array(20);
+  for (let i = 0; i < 20; i++) bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  return toChecksumAddress(bytes);
+}
+
+/**
+ * Adds a watch-only account for `address` (already validated and in EIP-55
+ * form; the caller also refuses an address that is one of the wallet's own
+ * accounts, which this store cannot see). Refuses a duplicate watch-only
+ * address and an address that is not in EIP-55 form. Does not switch to it.
+ */
+export async function addWatchOnlyAccountEntry(
+  address: string,
+  rawName: string | null = null,
+  store: KeyValueStore = AsyncStorage,
+): Promise<{ state: AccountsState; account: WalletAccount }> {
+  if (canonicalEvmAddress(address) !== address) {
+    throw new Error('A watch-only address must be a checksummed (EIP-55) Ethereum address.');
+  }
+  const state = await loadAccounts(store);
+  const existing = state.accounts.find((a) => a.watchOnly && a.address?.toLowerCase() === address.toLowerCase());
+  if (existing) throw new Error(watchOnlyDuplicateError(existing.name, existing.address ?? address));
+  if (state.accounts.filter((a) => a.watchOnly).length >= MAX_WATCH_ONLY_ACCOUNTS) {
+    throw new Error(`This wallet already watches the maximum of ${MAX_WATCH_ONLY_ACCOUNTS} addresses.`);
+  }
+  const slot = state.nextWatchSlot ?? 0;
+  if (slot >= MAX_WATCH_ONLY_SLOT_COUNT) {
+    throw new Error('No watch-only slot is left in this wallet.');
+  }
+  let name = defaultWatchOnlyName(slot);
+  if (rawName !== null && rawName.trim() !== '') {
+    const validation = sanitizeAccountName(rawName);
+    if (!validation.ok) throw new Error(validation.error);
+    name = validation.name;
+  }
+  const account: WalletAccount = { index: watchOnlyAccountId(slot), name, hidden: false, watchOnly: true, address };
+  const next: AccountsState = {
+    ...state,
+    accounts: [...state.accounts, account].sort((a, b) => a.index - b.index),
+    nextWatchSlot: slot + 1,
+  };
+  await saveAccounts(next, store);
+  return { state: next, account };
+}
+
+/**
+ * Removes a watch-only account. Nothing secret exists for it, so nothing
+ * else is deleted. The active account cannot be removed (switch first).
+ */
+export async function removeWatchOnlyAccountEntry(
+  id: number,
+  store: KeyValueStore = AsyncStorage,
+): Promise<AccountsState> {
+  const state = await loadAccounts(store);
+  const account = findAccount(state, id);
+  if (!account.watchOnly) throw new Error('Only a watch-only account can be removed this way.');
+  if (state.activeIndex === id) {
+    throw new Error(`${account.name} is the active account. Switch to another account first.`);
+  }
+  const next: AccountsState = { ...state, accounts: state.accounts.filter((a) => a.index !== id) };
+  await saveAccounts(next, store);
+  return next;
 }
 
 /** Persists a new active account; it must exist and be visible. */
@@ -471,6 +645,7 @@ export function derivationArgsFor(
   chainId: string,
   accountIndex: number,
 ): { account: number; addressIndex: number } {
+  if (isWatchOnlyAccountId(accountIndex)) throw new Error(WATCH_ONLY_NO_DERIVATION);
   if (!isValidIndex(accountIndex)) {
     throw new Error(`Invalid account index ${String(accountIndex)}.`);
   }

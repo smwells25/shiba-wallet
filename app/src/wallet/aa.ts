@@ -11,6 +11,7 @@ import {
   PERMIT_DEADLINE_MAX,
   TokenGasChargeAboveLimitError,
   createCirclePaymasterTransport,
+  createErc7677TokenPaymasterTransport,
   createKernel7702AccountSpec,
   createKernelAccountSpec,
   createSimpleAccountSpec,
@@ -19,6 +20,7 @@ import {
   encodeErc20BalanceOf,
   encodeErc20Transfer,
   encodeFunctionCall,
+  erc7677TokenApproveCall,
   httpTransport,
   readDelegationStatus,
   requiredPrefund,
@@ -765,22 +767,31 @@ export function applyPriorityFeeFloor(
  * fee floor (its standard-tier price, see bundlerFeeFloor). A judgement
  * call, not a standard. The wallet never raises a fee after the user
  * approved the quote, so the quote itself carries room for the price to
- * move; the headroom is part of the displayed worst-case fee. The fee
+ * move; the headroom is part of the displayed worst-case fee, and nothing
+ * above that displayed worst case is ever signed (signedFeeGuard). The fee
  * actually charged is lower: the EntryPoint charges gas used × min(
  * maxFeePerGas, base fee + maxPriorityFeePerGas), so the headroom costs at
- * most 25 % of the (small) priority fee per unit of gas, and nothing when
- * the node's own suggestion is already above floor + 25 %.
+ * most 100 % of the (small) priority fee per unit of gas, and nothing when
+ * the node's own suggestion is already above twice the floor.
+ *
+ * Why 100 % (the CTO's decision of 2026-10-04, recorded in AGENTS.md under
+ * the phase 13 fee-floor fixes): read-only probes of ZeroDev's Sepolia
+ * bundler that day saw its standard-tier priority fee move by up to +90.7 %
+ * within 10 s, and the two live refusals of the private-key run were rises
+ * of +40.0 % and +26.3 % within about 20 s. Measured over about ten minutes
+ * of samples, 25 % headroom still bounced about 13 % of 20-second-old
+ * quotes, 50 % about 8-12 %, and 100 % about 0-5 %, at roughly +5-10 % of
+ * the actual cost on Sepolia (the priority fee was 5-10 % of the effective
+ * price there).
  *
  * The rule this gives, with the send-time check in feeFloorShortfall
  * (which compares against the bundler's LOWEST tier, never above the
- * standard one): a rise of the standard-tier price of up to 25 % between
- * the quote and the send never refuses. What it does not cover is the
- * per-block noise of that price measured on 2026-10-04 (bundlerFeeFloor):
- * a quote priced on a low reading can meet a reading 40 % or more above it
- * one block later. Those refusals happen BEFORE the device check
+ * standard one): a rise of the standard-tier price of up to 100 % between
+ * the quote and the send never refuses. A larger rise can still refuse;
+ * those refusals happen BEFORE the device check
  * (checkAaQuoteBeforeApproval) and lead to a fresh quote.
  */
-export const AA_FEE_FLOOR_HEADROOM_PERCENT = 25n;
+export const AA_FEE_FLOOR_HEADROOM_PERCENT = 100n;
 
 /** `value` plus AA_FEE_FLOOR_HEADROOM_PERCENT, rounded up (exact bigint). */
 export function withFeeFloorHeadroom(value: bigint): bigint {
@@ -2076,12 +2087,15 @@ export interface AaSendQuote {
    */
   passkey?: boolean;
   /**
-   * Present only when the network fee is paid in USDC through Circle's
-   * token paymaster (phase 13 item 2, ./token-gas.ts). Such a quote is made
-   * WITHOUT a bundler estimate (the paymaster's estimation stub needs a
-   * permit signed by the account, i.e. the owner key, which is never loaded
-   * at quote time), so its gas fields above are 0n, `fee` is 0n (no ETH is
-   * charged for gas) and the worst case is `tokenGas.maxTokenCharge`.
+   * Present only when the network fee is paid in USDC through a token
+   * paymaster (./token-gas.ts). `fee` is 0n (no ETH is charged for gas) and
+   * the worst case is `tokenGas.maxTokenCharge`. Circle's paymaster (phase
+   * 13 item 2): the quote is made WITHOUT a bundler estimate (its estimation
+   * stub needs a permit signed by the account, i.e. the owner key, which is
+   * never loaded at quote time), so the gas fields above are 0n. An
+   * ERC-7677 paymaster (tokenGas.source 'erc7677', phase 14 item 3): the
+   * stub needs no signature, so the quote carries the bundler's padded
+   * estimate in the gas fields above, and `calls[0]` is the exact approval.
    */
   tokenGas?: AaTokenGas;
 }
@@ -2124,6 +2138,47 @@ export interface AaTokenGas {
   paymasterVerificationGasLimit: bigint;
   /** paymasterPostOpGasLimit used for the worst case and the operation. */
   paymasterPostOpGasLimit: bigint;
+  /**
+   * Absent: Circle's permissionless on-chain paymaster (the fields above
+   * mean what they say). 'erc7677': a PERMISSIONED token paymaster reached
+   * over ERC-7677 on the configured bundler endpoint (Pimlico's ERC-20
+   * paymaster on Ethereum Sepolia; packages/chains-evm/src/
+   * erc7677-token-paymaster.ts). For that source the Circle-only fields
+   * carry: nativeTokenPrice = the exchange rate Pimlico's stub answer
+   * offered (same unit: token base units per 1e18 wei); feeSpreadBips = 0n
+   * (there is no on-chain spread; the markup is inside the rate);
+   * additionalGasCharge = the stub's postOpGas; oracle = '' (no on-chain
+   * oracle); estimationGasCeiling = verification + call + preVerification
+   * gas of the padded bundler estimate; and `erc7677` below holds the rest.
+   */
+  source?: 'erc7677';
+  erc7677?: AaErc7677TokenGas;
+}
+
+/**
+ * The ERC-7677 token-paymaster part of a USDC-fee quote (./token-gas.ts
+ * builds it). maxTokenCharge (above) is BOTH the displayed worst case and the
+ * exact amount the operation's first call approves; the engine transport
+ * refuses final paymaster data whose bound exceeds it, and the token
+ * contract refuses any transferFrom above the approval.
+ */
+export interface AaErc7677TokenGas {
+  /** The vendor that sets the rate and signs each operation ("Pimlico"). */
+  vendor: string;
+  /** The bound over the padded estimate at the stub's terms, before the headroom. */
+  boundAtQuote: bigint;
+  /** Headroom (percent) added to boundAtQuote to give maxTokenCharge. */
+  headroomPercent: bigint;
+  /** Fixed postOp gas the paymaster charges for (from its signed data). */
+  postOpGas: bigint;
+  /** Constant fee in token base units (0n unless the paymaster data carries one). */
+  constantFee: bigint;
+  /** Where the paymaster sends the charge (its treasury, from the signed data). */
+  treasury: string;
+  /** Whether the paymaster is staked in the EntryPoint on this chain. */
+  staked: boolean;
+  /** The approval the paymaster already had before this operation (replaced by it). */
+  allowanceBefore: bigint;
 }
 
 /**
@@ -3290,6 +3345,65 @@ function tokenGasClient(
 }
 
 /**
+ * The approval an ERC-7677 USDC-fee quote must carry as its FIRST call:
+ * approve(paymaster, maxTokenCharge) on the fee token, exactly. sendAa
+ * checks the quote against it before anything is signed, so the amount the
+ * confirm screen showed is the amount the token contract will let the
+ * paymaster take. Exported for scripts/check-token-gas.mjs.
+ */
+export function assertErc7677ApprovalCall(quote: Pick<AaSendQuote, 'calls' | 'tokenGas'>): void {
+  const tg = quote.tokenGas;
+  if (!tg || tg.source !== 'erc7677') throw new Error('Not an ERC-7677 USDC-fee quote.');
+  const expected = erc7677TokenApproveCall(tg.token, tg.paymaster, tg.maxTokenCharge);
+  const first = quote.calls[0];
+  const sameBytes = (a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((x, i) => x === b[i]);
+  if (
+    !first ||
+    first.to.toLowerCase() !== expected.to.toLowerCase() ||
+    first.value !== 0n ||
+    !sameBytes(first.data, expected.data)
+  ) {
+    throw new Error(
+      `The operation does not start by approving exactly ${tg.maxTokenCharge} base units of ${tg.symbol} for the ` +
+        'paymaster, as the confirm screen showed. Nothing was signed; review the send again.',
+    );
+  }
+}
+
+/**
+ * The SmartAccountClient for one ERC-7677 USDC-fee send (phase 14 item 3):
+ * the bundle's spec, node and bundler, plus the engine's
+ * createErc7677TokenPaymasterTransport forwarding pm_getPaymasterStubData /
+ * pm_getPaymasterData to the SAME bundler endpoint with the context
+ * { token }. maxTokenCharge = the displayed worst case = the approval in the
+ * operation's first call: the transport refuses final paymaster data whose
+ * bound is above it (TokenGasChargeAboveLimitError) before the owner signs.
+ * No key is needed for the paymaster: the owner signs only the operation.
+ */
+function erc7677TokenGasClient(bundle: AaClientBundle, sender: string, quote: AaSendQuote): SmartAccountClient {
+  const tokenGas = quote.tokenGas!;
+  assertErc7677ApprovalCall(quote);
+  const transport = createErc7677TokenPaymasterTransport({
+    upstream: bundle.bundler,
+    chainId: bundle.chainId,
+    account: sender,
+    token: tokenGas.token,
+    paymaster: tokenGas.paymaster,
+    entryPoint: ENTRYPOINT_V07,
+    maxTokenCharge: tokenGas.maxTokenCharge,
+  });
+  return new SmartAccountClient({
+    chainId: bundle.chainId,
+    entryPoint: ENTRYPOINT_V07,
+    bundler: bundle.bundler,
+    node: bundle.node,
+    spec: bundle.spec,
+    paymaster: { transport },
+    gasPaddingPct: { ...TOKEN_GAS_PADDING_PCT },
+  });
+}
+
+/**
  * Quotes that already went to the network through sendAa, sendPasskeyCalls
  * or submitGuardianRecovery (whatever the outcome; refusals decided locally
  * before any request leave the quote usable). A quote's fees and gas figures are one moment's answer;
@@ -3404,7 +3518,11 @@ export async function sendAa(
   // otherwise. The gate is closed again whatever happens.
   if (bundle.eip7702) bundle.eip7702.gate.allowAuthorization = quote.eip7702?.upgrade === true;
   try {
-    const client = quote.tokenGas ? tokenGasClient(bundle, owner, sender, quote.tokenGas) : bundle.client;
+    const client = quote.tokenGas
+      ? quote.tokenGas.source === 'erc7677'
+        ? erc7677TokenGasClient(bundle, sender, quote)
+        : tokenGasClient(bundle, owner, sender, quote.tokenGas)
+      : bundle.client;
     const { userOpHash } = await client.sendCalls(owner, quote.calls, fees, {
       beforeSign: signedFeeGuard(fees, quote.sponsored ? 0n : quote.fee),
     });
@@ -3478,19 +3596,34 @@ export const PREVIEW_AA_BATCH_NOTE =
  * the same UserOperation), and no ETH pays for gas, so the plain notes'
  * "gas the smart account pays through the EntryPoint" would be wrong.
  */
-export function previewTokenGasNote(symbol: string): string {
+export function previewTokenGasNote(symbol: string, paymasterName = 'Circle’s paymaster'): string {
   return (
     'Simulated as a direct call from your smart account. The network fee is paid in ' +
-    `${symbol} through Circle’s paymaster and is shown above; it is not part of this list.`
+    `${symbol} through ${paymasterName} and is shown above; it is not part of this list.`
   );
 }
 
-export function previewTokenGasBatchNote(symbol: string): string {
+export function previewTokenGasBatchNote(symbol: string, paymasterName = 'Circle’s paymaster'): string {
   return (
     'Simulated as direct calls from your smart account, one after another in a single ' +
     'simulated block (eth_simulateV1). The smart account executes them as one atomic ' +
     'operation: if any call fails, none of them take effect. The network fee is paid in ' +
-    `${symbol} through Circle’s paymaster and is shown above; it is not part of this list.`
+    `${symbol} through ${paymasterName} and is shown above; it is not part of this list.`
+  );
+}
+
+/**
+ * The footnote for an ERC-7677 USDC-fee operation: its first call is the
+ * approval for the paymaster (it appears in the list as an approval), and
+ * the fee itself is taken after the calls run, so it is not in the list.
+ */
+export function previewErc7677TokenGasNote(symbol: string, vendor: string): string {
+  return (
+    'Simulated as direct calls from your smart account, one after another in a single ' +
+    'simulated block (eth_simulateV1). The smart account executes them as one atomic ' +
+    `operation: if any call fails, none of them take effect. The first call approves ${vendor}’s ` +
+    `paymaster for the most the network fee can cost; the fee itself is taken in ${symbol} after ` +
+    'the calls run, is shown above, and is not part of this list.'
   );
 }
 
@@ -3501,6 +3634,9 @@ export function previewTokenGasBatchNote(symbol: string): string {
  */
 export function aaPreviewNote(quote: Pick<AaSendQuote, 'calls' | 'tokenGas'>): string {
   const batch = quote.calls.length > 1;
+  if (quote.tokenGas?.source === 'erc7677') {
+    return previewErc7677TokenGasNote(quote.tokenGas.symbol, quote.tokenGas.erc7677?.vendor ?? 'the token');
+  }
   if (quote.tokenGas) {
     return batch ? previewTokenGasBatchNote(quote.tokenGas.symbol) : previewTokenGasNote(quote.tokenGas.symbol);
   }

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import { Button } from '../components';
+import * as Clipboard from 'expo-clipboard';
+import { Button, WatchOnlyNotice } from '../components';
 import { useTheme } from '../theme';
 import { MAX_ACCOUNT_NAME_LENGTH, shortAccountAddress } from '../wallet/accounts';
 import { importedSlotOf } from '../wallet/account-ids';
@@ -25,6 +26,17 @@ import { formatUnits } from '../wallet/balances';
 import { EVM_CHAIN_ID } from '../wallet/send';
 import { useWallet, type AccountView } from '../wallet/WalletContext';
 import { ImportedKeyReveal } from './ImportedKeyReveal';
+import { QrScanner } from './QrScanner';
+import {
+  PHRASE_ACCOUNT_WAS_WATCHED_TITLE,
+  REMOVE_WATCH_ONLY_TITLE,
+  WATCH_ADDRESS_INTRO,
+  WATCH_ADDRESS_PRIVACY_NOTE,
+  WATCH_ONLY_LIST_HINT,
+  phraseAccountSameAsWatchedNote,
+  removeWatchOnlyMessage,
+  watchAddressFromScan,
+} from '../wallet/watch-only';
 
 /**
  * Settings → Accounts (phase 6 item 3): list, add, rename, hide and show
@@ -38,6 +50,12 @@ import { ImportedKeyReveal } from './ImportedKeyReveal';
  * only removed, which deletes their key after two confirmations that state
  * the consequence. "Show private key" uses the same confirmation, biometric
  * gate and screenshot block as the recovery-phrase reveal.
+ *
+ * Watch-only accounts (feature 10) are listed in their own group with the
+ * watch-only notice. "Watch an address" adds one (paste, type or scan; the
+ * address is validated like a send recipient and refused when it is
+ * already one of this wallet's accounts). Removing one asks once and needs
+ * no device check, because no secret exists for it.
  */
 export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
   const theme = useTheme();
@@ -52,6 +70,9 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
     switchAccount,
     removeImportedAccount,
     revealImportedKey,
+    watchOnlyAccounts,
+    addWatchOnly,
+    removeWatchOnly,
   } = useWallet();
   const [revealed, setRevealed] = useState<{ name: string; address: string; key: string } | null>(null);
   const [editing, setEditing] = useState<number | null>(null);
@@ -59,6 +80,10 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
   const [newName, setNewName] = useState('');
   const [showHidden, setShowHidden] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [watchOpen, setWatchOpen] = useState(false);
+  const [watchAddress, setWatchAddress] = useState('');
+  const [watchName, setWatchName] = useState('');
+  const [watchScanning, setWatchScanning] = useState(false);
 
   const visible = accountList.filter((a) => !a.hidden);
   const hidden = accountList.filter((a) => a.hidden);
@@ -85,6 +110,39 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
     if (ok) setNewName('');
     const sameKey = out.created ? phraseAccountSameAsImportedNote(out.created, accountList) : null;
     if (sameKey) Alert.alert(PHRASE_ACCOUNT_WAS_IMPORTED_TITLE, sameKey);
+    const watched = out.created ? phraseAccountSameAsWatchedNote(out.created, watchOnlyAccounts) : null;
+    if (watched) Alert.alert(PHRASE_ACCOUNT_WAS_WATCHED_TITLE, watched);
+  };
+
+  const onWatch = async () => {
+    const ok = await run('Could not watch this address', () => addWatchOnly(watchAddress, watchName.trim() || null));
+    if (ok) {
+      setWatchAddress('');
+      setWatchName('');
+      setWatchOpen(false);
+    }
+  };
+
+  const onPasteWatchAddress = async () => {
+    try {
+      const text = await Clipboard.getStringAsync();
+      setWatchAddress(text.trim());
+    } catch {
+      Alert.alert('Nothing pasted', 'The clipboard could not be read. Type the address instead.');
+    }
+  };
+
+  // No device check: a watch-only account has no secret to delete. One
+  // confirmation that says exactly that.
+  const onRemoveWatchOnly = (account: AccountView) => {
+    Alert.alert(REMOVE_WATCH_ONLY_TITLE, removeWatchOnlyMessage(account.name, account.evmAddress ?? 'unknown address'), [
+      { text: 'Keep it', style: 'cancel' },
+      {
+        text: 'Stop watching',
+        style: 'destructive',
+        onPress: () => void run('Could not remove account', () => removeWatchOnly(account.index)),
+      },
+    ]);
   };
 
   const onRename = async (account: AccountView) => {
@@ -206,10 +264,22 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
             {account.name}
           </Text>
           <Text style={[styles.tag, { color: active ? theme.accent : theme.textMuted }]}>
-            {active ? 'Active' : account.hidden ? 'Hidden' : account.imported ? 'Imported' : `#${account.index}`}
+            {active
+              ? 'Active'
+              : account.hidden
+                ? 'Hidden'
+                : account.imported
+                  ? 'Imported'
+                  : account.watchOnly
+                    ? 'Watch-only'
+                    : `#${account.index}`}
           </Text>
         </View>
-        {account.imported ? (
+        {account.watchOnly ? (
+          <Text style={[styles.address, { color: theme.warningText }]}>
+            {account.evmAddress ?? 'unknown address'} · watch-only, no key in this wallet — it cannot send or sign
+          </Text>
+        ) : account.imported ? (
           <Text style={[styles.address, { color: theme.warningText }]}>
             {account.evmAddress ? `${shortAccountAddress(account.evmAddress)} · ` : 'Key record unreadable · '}
             imported private key, Ethereum only — NOT backed up by your recovery phrase
@@ -289,7 +359,17 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
                 <Text style={[styles.link, { color: theme.danger }]}>Remove</Text>
               </Pressable>
             ) : null}
-            {!account.imported && account.index !== 0 && !active ? (
+            {account.watchOnly && !active ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Stop watching ${account.name}`}
+                onPress={() => onRemoveWatchOnly(account)}
+                hitSlop={8}
+              >
+                <Text style={[styles.link, { color: theme.danger }]}>Remove</Text>
+              </Pressable>
+            ) : null}
+            {!account.imported && !account.watchOnly && account.index !== 0 && !active ? (
               <Pressable accessibilityRole="button" onPress={() => onHide(account)} hitSlop={8}>
                 <Text style={[styles.link, { color: theme.accent }]}>Hide</Text>
               </Pressable>
@@ -334,6 +414,82 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
           accessibilityHint="Adds an account from a single Ethereum private key. It is not backed up by your recovery phrase."
         />
       </View>
+      {watchOnlyAccounts.length > 0 ? (
+        <>
+          <Text style={[styles.subTitle, { color: theme.text }]}>Watch-only accounts</Text>
+          <Text style={[styles.hint, { color: theme.textMuted }]}>{WATCH_ONLY_LIST_HINT}</Text>
+          <WatchOnlyNotice />
+          {watchOnlyAccounts.map(renderRow)}
+        </>
+      ) : null}
+      {watchOpen ? (
+        <View style={styles.editor}>
+          <Text style={[styles.subTitle, { color: theme.text }]}>Watch an address</Text>
+          <Text style={[styles.hint, { color: theme.textMuted }]}>{WATCH_ADDRESS_INTRO}</Text>
+          <Text style={[styles.hint, { color: theme.textMuted }]}>{WATCH_ADDRESS_PRIVACY_NOTE}</Text>
+          <TextInput
+            value={watchAddress}
+            onChangeText={setWatchAddress}
+            autoCapitalize="none"
+            autoCorrect={false}
+            spellCheck={false}
+            placeholder="Ethereum address (0x…)"
+            placeholderTextColor={theme.textMuted}
+            accessibilityLabel="Ethereum address to watch"
+            style={[
+              styles.input,
+              { color: theme.text, borderColor: theme.border, backgroundColor: theme.card },
+            ]}
+          />
+          <View style={styles.buttons}>
+            <Button title="Paste" variant="secondary" onPress={() => void onPasteWatchAddress()} style={styles.flex} />
+            <Button title="Scan QR" variant="secondary" onPress={() => setWatchScanning(true)} style={styles.flex} />
+          </View>
+          <TextInput
+            value={watchName}
+            onChangeText={setWatchName}
+            maxLength={MAX_ACCOUNT_NAME_LENGTH * 2}
+            placeholder="Name (optional)"
+            placeholderTextColor={theme.textMuted}
+            accessibilityLabel="Name for the watched address"
+            style={[
+              styles.input,
+              { color: theme.text, borderColor: theme.border, backgroundColor: theme.card },
+            ]}
+          />
+          <Button
+            title="Watch this address"
+            onPress={() => void onWatch()}
+            disabled={busy || watchAddress.trim() === ''}
+          />
+          <Button
+            title="Cancel"
+            variant="secondary"
+            onPress={() => {
+              setWatchOpen(false);
+              setWatchAddress('');
+              setWatchName('');
+            }}
+          />
+        </View>
+      ) : (
+        <Button
+          title="Watch an address"
+          variant="secondary"
+          onPress={() => setWatchOpen(true)}
+          disabled={busy}
+          accessibilityHint="Follows an Ethereum address without its key. The wallet cannot send or sign for it."
+        />
+      )}
+      <QrScanner
+        visible={watchScanning}
+        rationale="Point the camera at a QR code of an Ethereum address. The camera is only used to read the code, and the address is checked exactly like a typed one."
+        onScanned={(data) => {
+          setWatchScanning(false);
+          setWatchAddress(watchAddressFromScan(data));
+        }}
+        onClose={() => setWatchScanning(false)}
+      />
       {hidden.length > 0 ? (
         <>
           <Pressable accessibilityRole="button" onPress={() => setShowHidden((v) => !v)} hitSlop={8}>
@@ -362,6 +518,10 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     fontSize: 18,
+    fontWeight: '700',
+  },
+  subTitle: {
+    fontSize: 15,
     fontWeight: '700',
   },
   hint: {

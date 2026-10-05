@@ -109,10 +109,13 @@ export function GuardianSetView({
   set,
   labelFor,
   title = 'Guardians',
+  memberNoun = 'Guardian',
 }: {
   set: KernelGuardianSet;
   labelFor?: (address: string) => string | null;
   title?: string;
+  /** What an unlabelled member is called ('Heir' on the Inheritance screen). */
+  memberNoun?: string;
 }) {
   const theme = useTheme();
   const total = set.guardians.reduce((s, g) => s + g.weight, 0);
@@ -124,7 +127,7 @@ export function GuardianSetView({
         return (
           <View key={g.address} style={styles.guardianRow}>
             <Text style={[styles.guardianName, { color: theme.text }]}>
-              {label ?? 'Guardian'} · weight {g.weight}
+              {label ?? memberNoun} · weight {g.weight}
             </Text>
             <Text selectable style={[styles.mono, { color: theme.textMuted }]}>
               {g.address}

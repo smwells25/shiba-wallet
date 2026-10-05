@@ -36,11 +36,16 @@ import {
   IMPORTED_KEY_EVM_ONLY,
   IMPORTED_KEY_PATH,
   IMPORTED_NAME_SUFFIX,
+  WATCH_ONLY_NAME_SUFFIX,
+  WATCH_ONLY_PATH,
+  assertAccountCanSign,
   defaultImportedName,
   importedAccountId,
   importedSlotOf,
   isImportedAccountId,
+  isWatchOnlyAccountId,
 } from './account-ids';
+import { checkWatchAddress, type KnownAccount } from './watch-only';
 import { duplicateImportError, importedKeyBytes, importedSignerFor, parsePrivateKeyInput } from './imported-keys';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { forgetAllSessions } from './sessions';
@@ -53,6 +58,8 @@ import {
   MAX_IMPORTED_ACCOUNTS,
   addAccount as addAccountToStore,
   addImportedAccountEntry,
+  addWatchOnlyAccountEntry,
+  removeWatchOnlyAccountEntry,
   reconcileImportedAccounts,
   reconcileStoredImportedAccounts,
   removeImportedAccountEntry,
@@ -100,6 +107,13 @@ export interface AccountView {
   /** True for an account whose key was imported: the recovery phrase does NOT back it up. */
   imported: boolean;
   /**
+   * True for a watch-only account (feature 10): an address with NO key in
+   * this wallet. Such an account is never in `accountList` (only in
+   * `watchOnlyAccounts`), can be the active account, and every signing path
+   * refuses it.
+   */
+  watchOnly: boolean;
+  /**
    * The account's EVM address (m/44'/60'/0'/0/index for a phrase account,
    * the imported key's address otherwise), or null if not known yet.
    */
@@ -122,17 +136,35 @@ interface WalletContextValue {
    * and WalletConnect at once.
    */
   accounts: ChainAccount[];
-  /** The active account; null until status is 'ready'. */
+  /** The active account (possibly a watch-only one); null until status is 'ready'. */
   activeAccount: AccountView | null;
-  /** Every account, ascending by index, hidden ones included. */
+  /**
+   * Every account this wallet holds a KEY for (recovery-phrase and imported
+   * accounts), ascending by index, hidden ones included. Watch-only
+   * accounts are deliberately NOT in this list: every caller that treats
+   * this list as "your own accounts" (the risk card, own-address labels,
+   * WalletConnect bindings, guardians and owner changes) must never count
+   * an address the wallet cannot sign for. They are in `watchOnlyAccounts`.
+   */
   accountList: AccountView[];
-  /** The account whose EVM address this is (case-insensitive), or null. */
+  /** The watch-only accounts (feature 10), ascending by id; no key exists for any of them. */
+  watchOnlyAccounts: AccountView[];
+  /** The account (from `accountList`, never a watch-only one) whose EVM address this is, or null. */
   accountForEvmAddress: (address: string) => AccountView | null;
   /** Makes a visible account the active one (persisted). */
   switchAccount: (index: number) => Promise<void>;
   /** Creates the next account (never reusing an index); does not switch. */
   addAccount: (name?: string | null) => Promise<AccountView>;
   renameAccount: (index: number, name: string) => Promise<void>;
+  /**
+   * Adds a watch-only account for an EVM address (feature 10): validated by
+   * the send flow's validateRecipient, refused when it is already one of
+   * this wallet's accounts or already watched. Stores public data only.
+   * Does not switch to it.
+   */
+  addWatchOnly: (address: string, name?: string | null) => Promise<AccountView>;
+  /** Removes a non-active watch-only account (nothing secret is deleted). */
+  removeWatchOnly: (index: number) => Promise<void>;
   /** Hides a non-active account other than the first; keys are unaffected. */
   hideAccount: (index: number) => Promise<void>;
   unhideAccount: (index: number) => Promise<void>;
@@ -274,9 +306,37 @@ function importedRowsFrom(keys: readonly ImportedKeyInfo[]): Record<number, Chai
   return out;
 }
 
-/** Phrase-derived indices of a list (imported ids are never derived). */
+/** Phrase-derived indices of a list (imported and watch-only ids are never derived). */
 function derivedIndices(state: AccountsState): number[] {
-  return state.accounts.filter((a) => !a.imported).map((a) => a.index);
+  return state.accounts.filter((a) => !a.imported && !a.watchOnly).map((a) => a.index);
+}
+
+/**
+ * The row of a watch-only account: its Ethereum address only, from the
+ * account store, labelled with WATCH_ONLY_PATH instead of a derivation path.
+ * Home shows Bitcoin, Dogecoin and Solana as not available for it.
+ */
+function watchOnlyRows(address: string): ChainAccount[] {
+  const evm = CHAINS.find((c) => c.provider.chainId === EVM_SLOT)!;
+  return [
+    {
+      chainId: EVM_SLOT,
+      name: evm.provider.name,
+      symbol: evm.symbol,
+      accent: evm.accent,
+      address,
+      path: WATCH_ONLY_PATH,
+    },
+  ];
+}
+
+/** The watch-only accounts' rows from the account store (public data; no prompt, no secure storage). */
+function watchOnlyRowsFrom(state: AccountsState): Record<number, ChainAccount[]> {
+  const out: Record<number, ChainAccount[]> = {};
+  for (const a of state.accounts) {
+    if (a.watchOnly && a.address) out[a.index] = watchOnlyRows(a.address);
+  }
+  return out;
 }
 
 /** Every index the cache can hold (accounts are hidden, never deleted, so indices stay below MAX_ACCOUNTS). */
@@ -373,7 +433,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           const { state, imported } = await loadAccountsWithImported();
           if (cancelled) return;
           const fresh = derivePublic(mnemonic, derivedIndices(state));
-          setDerived({ ...fresh, ...imported });
+          setDerived({ ...fresh, ...imported, ...watchOnlyRowsFrom(state) });
           commitAccounts(state);
           setStatus('ready');
           void cachePublic(fresh);
@@ -381,7 +441,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         }
         const { state, imported } = await loadAccountsWithImported();
         if (cancelled) return;
-        const fromCache: Record<number, ChainAccount[]> = { ...imported };
+        const fromCache: Record<number, ChainAccount[]> = { ...imported, ...watchOnlyRowsFrom(state) };
         const missing: number[] = [];
         for (const index of derivedIndices(state)) {
           const rows = hydratePublic(await loadPublicAccount(index));
@@ -515,7 +575,19 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       setDerived((prev) => ({ ...prev, ...rows }));
       derivedRef.current = { ...derivedRef.current, ...rows };
     }
-    let missing = indices.filter((i) => !isImportedAccountId(i) && derivedRef.current[i] === undefined);
+    // Watch-only accounts come from the account store (their address is all
+    // the wallet knows), never from the phrase or the imported-key vault.
+    const watchMissing = indices.filter((i) => isWatchOnlyAccountId(i) && derivedRef.current[i] === undefined);
+    if (watchMissing.length > 0) {
+      const all = watchOnlyRowsFrom(await loadAccounts());
+      const rows: Record<number, ChainAccount[]> = {};
+      for (const i of watchMissing) if (all[i]) rows[i] = all[i];
+      setDerived((prev) => ({ ...prev, ...rows }));
+      derivedRef.current = { ...derivedRef.current, ...rows };
+    }
+    let missing = indices.filter(
+      (i) => !isImportedAccountId(i) && !isWatchOnlyAccountId(i) && derivedRef.current[i] === undefined,
+    );
     if (missing.length === 0) return;
     // The public cache first (no prompt), then the phrase for the rest.
     const cached: Record<number, ChainAccount[]> = {};
@@ -558,6 +630,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           storedName: account.name,
           hidden: account.hidden,
           imported: false,
+          watchOnly: false,
           evmAddress,
         };
       }),
@@ -629,7 +702,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         const list = await importedKeyVault.list();
         const existing = [
           ...state.accounts
-            .filter((a) => !a.imported)
+            .filter((a) => !a.imported && !a.watchOnly)
             .map((a) => ({
               name: a.name,
               imported: false,
@@ -640,6 +713,17 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
             imported: true,
             evmAddress: k.address,
           })),
+          // A watched address (feature 10) is refused too: the watch-only
+          // entry must be removed first, so one address is never listed as
+          // both an account the wallet signs for and one it only watches.
+          ...state.accounts
+            .filter((a) => a.watchOnly)
+            .map((a) => ({
+              name: `${a.name}${WATCH_ONLY_NAME_SUFFIX}`,
+              imported: false,
+              watchOnly: true,
+              evmAddress: a.address ?? null,
+            })),
         ];
         const duplicate = duplicateImportError(parsed.address, existing);
         if (duplicate) throw new Error(duplicate);
@@ -664,6 +748,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
             name: `${storedName}${IMPORTED_NAME_SUFFIX}`,
             hidden: false,
             imported: true,
+            watchOnly: false,
             evmAddress: saved.info.address,
           },
           protectionDetail: saved.protectionDetail,
@@ -697,6 +782,79 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     [serialized, commitAccounts],
   );
 
+  const addWatchOnly = useCallback(
+    (address: string, name: string | null = null) =>
+      serialized(async (): Promise<AccountView> => {
+        // The name is checked before anything is stored.
+        let cleanName: string | null = null;
+        if (name !== null && name.trim() !== '') {
+          const validation = sanitizeAccountName(name);
+          if (!validation.ok) throw new Error(validation.error);
+          cleanName = validation.name;
+        }
+        const state = await loadAccounts();
+        // Every account the wallet holds a key for, hidden ones included,
+        // with the address it is known by (the public cache or the
+        // imported-key record; no prompt). A phrase account whose address is
+        // not known yet is looked up in the public cache first; one that is
+        // in neither is skipped (the same known gap as the key import:
+        // checking it would need the phrase).
+        const list = await importedKeyVault.list().catch(() => ({ keys: [] as ImportedKeyInfo[], damaged: true }));
+        const known: KnownAccount[] = [];
+        for (const a of state.accounts) {
+          if (a.watchOnly) {
+            known.push({ name: `${a.name}${WATCH_ONLY_NAME_SUFFIX}`, evmAddress: a.address ?? null, kind: 'watch-only' });
+            continue;
+          }
+          if (a.imported) {
+            const info = list.keys.find((k) => importedAccountId(k.slot) === a.index);
+            known.push({ name: `${a.name}${IMPORTED_NAME_SUFFIX}`, evmAddress: info?.address ?? null, kind: 'imported' });
+            continue;
+          }
+          let rows: ChainAccount[] | undefined = derivedRef.current[a.index];
+          if (rows === undefined) rows = hydratePublic(await loadPublicAccount(a.index)) ?? undefined;
+          known.push({
+            name: a.name,
+            evmAddress: rows?.find((c) => c.chainId === EVM_SLOT)?.address ?? null,
+            kind: 'phrase',
+          });
+        }
+        const checked = checkWatchAddress(address, known);
+        if (!checked.ok) throw new Error(checked.error);
+        const { state: next, account } = await addWatchOnlyAccountEntry(checked.address, cleanName);
+        const rows = { [account.index]: watchOnlyRows(checked.address) };
+        setDerived((prev) => ({ ...prev, ...rows }));
+        derivedRef.current = { ...derivedRef.current, ...rows };
+        commitAccounts(next);
+        return {
+          index: account.index,
+          storedName: account.name,
+          name: `${account.name}${WATCH_ONLY_NAME_SUFFIX}`,
+          hidden: false,
+          imported: false,
+          watchOnly: true,
+          evmAddress: checked.address,
+        };
+      }),
+    [serialized, commitAccounts],
+  );
+
+  const removeWatchOnly = useCallback(
+    (index: number) =>
+      serialized(async () => {
+        // Nothing secret exists for a watch-only account: only its list
+        // entry (public data) is deleted.
+        const next = await removeWatchOnlyAccountEntry(index);
+        setDerived((prev) => {
+          const copy = { ...prev };
+          delete copy[index];
+          return copy;
+        });
+        commitAccounts(next);
+      }),
+    [serialized, commitAccounts],
+  );
+
   // Uses the key the reveal's approval prompt just opened (no second prompt).
   const revealImportedKey = useCallback(async (index: number) => {
     return importedKeyVault.read(importedSlotOf(index), PROMPTS.importedKeyReveal);
@@ -708,6 +866,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       expectAddress: string,
       fn: (account: DerivedAccount) => Promise<T>,
     ): Promise<T> => {
+      // Feature 10: a watch-only account has no key anywhere in the wallet.
+      // Refused FIRST, before the chain lookup and before anything is read
+      // from secure storage, so no prompt is shown and nothing is opened.
+      assertAccountCanSign(activeIndexRef.current);
       const chain = chainByCaip2(chainId);
       if (!chain) throw new Error(`Unknown chain ${chainId}`);
       const index = activeIndexRef.current;
@@ -777,26 +939,54 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setStatus('no-wallet');
   }, [commitAccounts]);
 
+  // Accounts the wallet holds a key for. Watch-only accounts are filtered
+  // out here on purpose (see the `accountList` doc comment above).
   const accountList = useMemo<AccountView[]>(
     () =>
-      (accountsState?.accounts ?? []).map((a) => ({
+      (accountsState?.accounts ?? []).filter((a) => !a.watchOnly).map((a) => ({
         index: a.index,
         name: a.imported ? `${a.name}${IMPORTED_NAME_SUFFIX}` : a.name,
         storedName: a.name,
         hidden: a.hidden,
         imported: a.imported === true,
+        watchOnly: false,
         evmAddress: derived[a.index]?.find((c) => c.chainId === EVM_SLOT)?.address ?? null,
       })),
     [accountsState, derived],
   );
 
+  // Watch-only accounts (feature 10): the name always ends in
+  // WATCH_ONLY_NAME_SUFFIX, and the address comes from the account store.
+  const watchOnlyAccounts = useMemo<AccountView[]>(
+    () =>
+      (accountsState?.accounts ?? [])
+        .filter((a) => a.watchOnly)
+        .map((a) => ({
+          index: a.index,
+          name: `${a.name}${WATCH_ONLY_NAME_SUFFIX}`,
+          storedName: a.name,
+          hidden: false,
+          imported: false,
+          watchOnly: true,
+          evmAddress: a.address ?? null,
+        })),
+    [accountsState],
+  );
+
   const activeIndex = accountsState?.activeIndex ?? 0;
   const activeAccount = useMemo(
-    () => (accountsState ? (accountList.find((a) => a.index === activeIndex) ?? null) : null),
-    [accountsState, accountList, activeIndex],
+    () =>
+      accountsState
+        ? (accountList.find((a) => a.index === activeIndex) ??
+          watchOnlyAccounts.find((a) => a.index === activeIndex) ??
+          null)
+        : null,
+    [accountsState, accountList, watchOnlyAccounts, activeIndex],
   );
   const accounts = useMemo(() => derived[activeIndex] ?? [], [derived, activeIndex]);
 
+  // Searches `accountList` only: a watched address is never "one of your
+  // accounts" (WalletConnect labels and bindings, recovery screens).
   const accountForEvmAddress = useCallback(
     (address: string) => {
       const lower = address.toLowerCase();
@@ -811,9 +1001,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       accounts,
       activeAccount,
       accountList,
+      watchOnlyAccounts,
       accountForEvmAddress,
       switchAccount,
       addAccount,
+      addWatchOnly,
+      removeWatchOnly,
       renameAccount,
       hideAccount,
       unhideAccount,
@@ -834,9 +1027,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       accounts,
       activeAccount,
       accountList,
+      watchOnlyAccounts,
       accountForEvmAddress,
       switchAccount,
       addAccount,
+      addWatchOnly,
+      removeWatchOnly,
       renameAccount,
       hideAccount,
       unhideAccount,
