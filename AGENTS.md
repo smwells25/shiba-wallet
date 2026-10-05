@@ -6453,3 +6453,47 @@ readiness gate and finding F-58 stand for mainnet.
       0). UNVERIFIED: ZeroDev's bundler software and settings; that its
       slow tier is at or above its acceptance minimum; everything on a
       device.
+
+## Phase 14 plan (approved 2026-10-04): payments people can use
+
+Approved by the Chairperson as proposed. The account-abstraction
+machinery is proven; this phase builds the everyday layer on top of it,
+with no new inputs.
+
+0. Carry-over: widen the bundler fee-floor headroom from 25% to 100%
+   (CTO decision recorded under the phase 13 fixes), and an emulator
+   check of the last fix slice (e851481).
+1. Payment requests, links and QR invoices (features 67, 68): Receive
+   gains "request an amount", producing a standard payment URI and QR
+   per chain (EIP-681 for EVM incl. ERC-20 transfers, BIP-21 for Bitcoin
+   and Dogecoin, Solana Pay — each verified from its specification);
+   scanning or pasting one pre-fills Send (recipient, amount, token,
+   chain id), always through the existing validation, never widening it.
+2. Name resolution (feature 74): ENS names in the Send recipient field,
+   resolved through the engine with the method verified from ENS's
+   current documentation, shown as the full address before anything is
+   quoted, with the existing contact and look-alike rules applied to
+   the resolved address.
+3. Gas in tokens on more networks (feature 16): the second paymaster
+   source on Ethereum Sepolia through ERC-7677 on the bundler already in
+   use (research found it answers on test networks without a key; live
+   send unverified), and an Arbitrum Sepolia test profile where Circle's
+   paymaster is also deployed (verify every address on-chain first).
+4. Inheritance switch (feature 48, "only with AA"): an heir who can take
+   over a smart account only after a long delay the owner can veto,
+   built on the guardian engine; the known weakness (guardians can sign
+   messages as the account immediately) stays stated on every screen.
+5. Scheduled and recurring payments (features 25, 63): a design document
+   first — what can honestly be scheduled from the user's own side with
+   session keys and a keeper, what a recurring swap would need — then
+   the smallest buildable slice if the design supports one.
+6. Watch-only accounts (feature 10): follow any EVM address with no key;
+   every signing path refuses plainly.
+7. Leadership refresh at the end: feature rows, the shareable page,
+   DEMO.md, the threat model.
+
+Waves: 1 — four agents on disjoint files: (A) items 0 and 3, (B) items
+1 and 2, (C) item 6, (D) items 4 and 5; then one emulator pass; fixes;
+7 last. Subagents on Opus.
+
+## Phase 14 progress
