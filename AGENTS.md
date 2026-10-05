@@ -6497,3 +6497,173 @@ Waves: 1 — four agents on disjoint files: (A) items 0 and 3, (B) items
 7 last. Subagents on Opus.
 
 ## Phase 14 progress
+- [x] WAVE 1 (commit f364451; four slices verified as one tree in the
+      CTO's isolated worktree: engine 814, app 5,366 across 43 suites,
+      lint 0/0, tsc clean; nothing on a device). The pre-commit scan
+      flagged 12 consecutive BIP-39 words in PaymentRequestViews.tsx —
+      ordinary identifiers (amount, asset, token, family, address, label,
+      message, note are all wordlist words); the code was restructured,
+      the scanner left strict.
+      ITEM 0 — headroom: AA_FEE_FLOOR_HEADROOM_PERCENT = 100n; the two
+      recorded live rises (+40.0%, +26.3%) now pass and +101% refuses;
+      check-aa 287.
+      ITEM 3a — PIMLICO ERC-20 PAYMASTER OVER ERC-7677 ON ETHEREUM
+      SEPOLIA, PROVEN LIVE BY SCRIPT. SingletonPaymasterV7
+      0x777777777777AeC03fd955926DbF81597e66834C (Sourcify exact match on
+      1 / 11155111 / 84532 / 421614, solc 0.8.26, MIT, not a proxy; code
+      keccak 0x337b6e1b…d98fbc identical on the three test networks). From
+      source: paymaster data = mode (ERC-20 = 1), flags (constantFee /
+      recipient / preFund), validity, token, postOpGas, exchangeRate,
+      paymasterValidationGasLimit, treasury, Pimlico's signature; the
+      token is pulled in postOp (costInToken = ((actualGasCost + penalty +
+      postOpGas·fee)·rate)/1e18 + constantFee, sender → treasury), and
+      EntryPoint v0.7 reverts postOp if the cost exceeds the prefund, so
+      the wallet computes an EXACT maximum from the signed fields
+      (erc7677MaxTokenCharge) and the op's first call is approve(paymaster,
+      exactly that maximum); data with a preFund or a recipient is
+      REFUSED. ZeroDev's Sepolia RPC returns Pimlico's stub with context
+      {token: USDC} and no gas policy (rate ≈ 3,000 USDC/ETH, postOpGas
+      18,990; it does not serve pimlico_getTokenQuotes); the paymaster is
+      NOT staked on Ethereum Sepolia but ZeroDev accepted it; the markup
+      cannot be measured on a testnet (Pimlico: baked into the rate;
+      ZeroDev documents a 5% premium); no audit of the singleton found.
+      Engine packages/chains-evm/src/erc7677-token-paymaster.ts (14 tests;
+      a 2,000-case random check that the bound never falls below what
+      postOp can take). LIVE: the dev EOA swapped 0.001 test ETH for
+      46.98 USDC on Uniswap v3 Sepolia (SwapRouter02 0x3bFA…e48E from
+      docs.uniswap.org, simulated first; tx 0xccbf0705…2193a2, block
+      11845779) to the dev index-2 account; USDC-fee op userOp
+      0xe064aef0…a0d514, bundle tx 0xfbf3e5cddba6a066c2ed066891e875c6f13770ed6b30197a1a7db981de2ef481,
+      block 11845782: Approval = 3,817,963 (exactly the displayed
+      maximum), charged 760,363 base units (0.760363 USDC) to the
+      treasury, Pimlico named in UserOperationEvent, the account's ETH and
+      deposit unchanged, allowance afterwards 3,057,600 (= approval −
+      charge; it STAYS APPROVED until a later op through this paymaster
+      replaces it — stated on screen). App: token-gas.ts dispatches by
+      source (Circle where it exists, else ERC-7677 when the caller
+      accepts it); the ERC-7677 quote runs the stub AND a bundler estimate
+      before the gate (no key needed) and shows bound + 25%
+      (ERC7677_TOKEN_GAS_HEADROOM_PERCENT, judgement); every sentence is
+      true for this source (rate "set by Pimlico's service and signed into
+      the operation", markup "Included in the rate", "a permissioned
+      service… can decline", the unstaked note). NOT YET WIRED: SendScreen
+      needs eight mechanical edits (scratchpad sendscreen-patch.md) before
+      the Sepolia choice appears; check-token-gas 205.
+      ITEM 3b — ARBITRUM SEPOLIA PROFILE (eip155:421614): RPC order
+      arbitrum-sepolia-rpc.publicnode.com, sepolia-rollup.arbitrum.io/rpc,
+      arb-sepolia-testnet.api.pocket.network (all serve eth_simulateV1);
+      0.25 s blocks; verifyKernelDeployment passed; ZeroDev bundler
+      answers; P-256 precompile present; Circle's paymaster there reads
+      token() = USDC 0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d, spread 0,
+      fixed test oracle, staked; FEE MODEL: not OP-stack (no code at
+      0x4200…000F) — Arbitrum docs "a single fee—the L2 cost with the L1
+      fee 'baked-in'", eth_estimateGas covers it (measured 21,770 of which
+      601 is the L1 part), so gas × max fee and Max are correct and the
+      OP-stack path never runs (profile flag l1CostInGas); Circle's USDC
+      fee is offered there; nothing hard-codes two test networks any more.
+      INPUT NEEDED for a live run: Arbitrum Sepolia test ETH (and USDC) at
+      the dev EOA 0x16DA…C5C. Still to add in other files: the USDC known
+      token, risk block time (0.25 s), NFT explorer, recovery file label,
+      one WalletConnect string.
+      ITEM 1 — PAYMENT REQUESTS (check-payment-request 210): EIP-681
+      (ethereum/ERCs 365b4c02; value in wei with the integer-exponent
+      rule; no chain id = the current network, stated on screen), BIP-321
+      (which supersedes BIP-21; req- parameters refuse the whole URI;
+      duplicate keys refused) applied to Dogecoin too per Dogecoin Core
+      v1.14.9 guiutil.cpp, Solana Pay (single amount, no scientific
+      notation; requests with spl-token, reference or memo and transaction
+      requests are REFUSED because the standard requires including them
+      and the wallet cannot yet). Receive: "Request an amount" card with
+      the URI, QR and a plain description; the plain-address QR stays the
+      default. Send: a scanned or pasted request pre-fills editable fields
+      and NEVER switches network (a different chain id is refused naming
+      both networks) or tracks a token (untracked contracts refused);
+      unknown parameters refused for EIP-681 and Solana Pay, ignored for
+      BIP-321 as it allows; EIP-681 gas suggestions are ignored with a
+      note; scan.ts unchanged. Findings: EIP-681's own example address
+      fails EIP-55; BIP-321's examples are intentionally invalid.
+      ITEM 2 — ENS NAMES (engine ens.ts, 17 tests; check-names 45 / 51
+      live): the Universal Resolver 0xeEeEEEeE14D718C2B47D9923Deab1335E144EeEe
+      (ENS docs: "the canonical entrypoint"; same code on mainnet and
+      Sepolia, none on Base Sepolia), resolve(bytes name, bytes data) with
+      addr(bytes32); normalisation is a conservative ASCII subset (a–z,
+      0–9, hyphen, dots; ENSIP-15's "--" rule) proven equal to ethers'
+      ensNormalize on every accepted input (3,000 generated cases) — no
+      new dependency; CCIP-Read (ERC-3668) is NOT followed, so offchain
+      names incl. every *.base.eth are refused; mainnet uses mainnet ENS,
+      Sepolia uses Sepolia's ("test-network names, separate from mainnet
+      names"), Base Sepolia refuses before any request. The full address
+      is shown before Review, re-resolved at Review (a change stops and
+      shows the new address), and only the address is validated, matched,
+      risk-checked, quoted and stored. Live probes: nick.eth and
+      vitalik.eth on mainnet, nick.eth on Sepolia, jesse.base.eth refused
+      as offchain. INCIDENT (repaired): the agent overwrote the existing
+      app/src/wallet/names.ts and restored it from HEAD at once (the CTO
+      confirmed it is unchanged); the ENS glue lives in ens-names.ts.
+      ITEM 6 — WATCH-ONLY ACCOUNTS (check-watch-only 160): ids 0xC0000000 +
+      slot, refused by every derivation, vault and salt helper;
+      assertAccountCanSign also refuses any malformed id before the phrase
+      is read; accountList means "accounts this wallet holds a key for",
+      so a watched address is never "one of your own accounts"; signWith
+      refuses first with zero secure-store reads ("This is a watch-only
+      account: the wallet holds no key for it, so it cannot sign or send.
+      Nothing was signed."); WatchOnlyGate is an ALLOW list (Home,
+      Activity, Nfts, NftDetail, Tokens, Approvals, Settings, Contacts,
+      ImportKey) wired by the CTO as the navigator's screenLayout, so any
+      other or future route renders a refusal instead of mounting; the CTO
+      also added the WalletConnect guard (the watched address is never
+      offered; a proposal is refused before any device check), the
+      read-only Approvals form (no Revoke) and the two recovery.ts guards
+      (evmAccountPath only for phrase ids; draftRecoveryProgress refuses a
+      watch-only owner). Receive is refused for a watch-only account for
+      now.
+      ITEM 4 — INHERITANCE IS A DEMONSTRATION ONLY (check-inheritance 62;
+      kernel-recovery tests 60). From Kernel v3.3 sources (cd697c7e) and
+      eight eth_simulateV1 scenarios: (a) the delay is per ACCOUNT and is
+      copied into a proposal's validAfter when its approvals reach the
+      threshold; the validator emits NO approval events and proposals are
+      keyed by (account, callData, full nonce) with the heir choosing the
+      new owner and the nonce lane, so the owner CANNOT enumerate unknown
+      takeovers — detection is only a shared request or a scan of full
+      blocks for top-level approve / approveWithSig calldata
+      (scanGuardianApprovals; internal calls are invisible); NO PROOF OF
+      LIFE EXISTS: renew keeps approvals, remove + re-install of the same
+      heir REVIVES an old approval, a veto while the heirs are removed
+      does stick, bumping one lane's nonce voids only that lane, and
+      Kernel invalidateNonce would break the wallet's own ERC-1271
+      envelope; (b) THE HEIR CAN SIGN AS THE ACCOUNT FROM DAY ONE AND
+      THAT MOVES TOKENS — in simulation the heir signed a USDC permit
+      through ERC-1271 and pulled 1,000 USDC; live, the heir's ERC-1271
+      probe returned 0x1626ba7e and a heir-signed USDC permit passed
+      eth_call (never sent); Permit2 verifies contract signers the same
+      way (source only); (c) one set per account — guardians OR heirs.
+      NEW CONTRACT FINDING: validAfter = uint48(block.timestamp + delay)
+      truncates silently, so a delay ≥ 2^48 − now makes a takeover valid
+      IMMEDIATELY (proven in simulation with delay 2^48 − 1); the engine's
+      validateGuardianSet still accepts such delays (the app only offers
+      presets; inheritance caps at 365 days) — refusing them in the engine
+      is in the next slice; a sixth item for the disclosure decision.
+      Built: "Inheritance (demonstration)", test networks only, the risk
+      statement first ("Read this first: your heir can sign messages AS
+      THIS ACCOUNT from the moment you add them — not after the delay.
+      Those signatures can move your tokens…"), an acknowledgement before
+      Review, role "heirs" in the recovery record (additive), a
+      takeover-attempt check on focus, veto, and Remove that also vetoes
+      every known pending takeover; NO "I am still here" button. LIVE ON
+      SEPOLIA (dev index-2 account, heir = dev index 5, 600 s delay):
+      install (tx 0x573fd4e4…0ac5, block 11845766), approval found by the
+      scan, veto, a second approval, the early takeover refused with AA22,
+      the takeover after the delay (tx 0x051a4925…9e04, block 11845819),
+      rotation back and removal (tx 0x4925475f…cc7c); end state owner
+      0x16DA…C5C, no modules, no pending approvals. The CTO added the Home
+      (test networks only) and Settings links.
+      ITEM 5 — docs/SCHEDULED_PAYMENTS.md: "pay X every month to Y" is the
+      existing subscription grant with the key held by the user's own
+      phone (fixed seconds, not calendar months; missed slots catch up);
+      DCA must not be built on aggregator or Universal Router calldata
+      (cannot be pinned by a CallPolicy; SwapRouter02 exactInputSingle can
+      be pinned but only with a STATIC minimum-out floor and no deadline);
+      recommended next slice: a user-pushed recurring payment for ETH and
+      USDC with no engine change.
+      Funds: dev EOA about 0.031 Sepolia ETH; the dev index-2 account
+      holds 46.22 USDC (3.0576 approved to Pimlico's paymaster).
