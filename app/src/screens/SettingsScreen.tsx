@@ -18,7 +18,7 @@ import { type NetworkDefault } from '../config/defaults';
 import { describeDefaultChoice, describeDefaultFallbackNote } from '../config/endpoint-probe';
 import { INSECURE_ENDPOINT_MESSAGE } from '../config/endpoint-url';
 import { AUTO_LOCK_CHOICES } from '../config/prefs';
-import { EVM_PROFILES, EVM_TEST_PROFILES, l1CostInGasNote, type TestNetworkId } from '../config/evm-chain';
+import { EVM_MAINNET, EVM_PROFILES, EVM_TEST_PROFILES, l1CostInGasNote, type TestNetworkId } from '../config/evm-chain';
 
 import {
   FEATURE_READINESS,
@@ -62,7 +62,7 @@ import {
   type AaAccountType,
   type AaChainConfig,
 } from '../wallet/aa';
-import { clearWcProjectId, getWcProjectId, setWcProjectId } from '../wallet/walletconnect';
+import { clearWcProjectId, getWcProjectId, setWcProjectId, testNetworkLabelsOr } from '../wallet/walletconnect';
 import {
   clearIndexerUrl,
   getIndexerConfig,
@@ -1083,7 +1083,7 @@ export function SettingsScreen({ navigation, route }: Props) {
     },
     [scrollToSection],
   );
-  const { revealMnemonic, wipe, accounts, accountList } = useWallet();
+  const { revealMnemonic, wipe, accounts, accountList, watchOnlyAccounts } = useWallet();
   // Imported accounts (feature 12, ADR D9): the phrase does not back them up,
   // so the backup, reveal and wipe texts name them.
   const importedAccounts = accountList.filter((a) => a.imported);
@@ -1347,8 +1347,9 @@ export function SettingsScreen({ navigation, route }: Props) {
         <Text style={[styles.sectionTitle, { color: theme.text }]}>Backup</Text>
         {importedAccounts.length === 0 ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            One recovery phrase backs up ALL of your accounts — every account
-            in the list above, including hidden ones, on every chain.
+            {watchOnlyAccounts.length === 0
+              ? 'One recovery phrase backs up ALL of your accounts — every account in the list above, including hidden ones, on every chain.'
+              : 'One recovery phrase backs up every account in the list above that this wallet holds a key for, including hidden ones, on every chain.'}
           </Text>
         ) : (
           <>
@@ -1363,6 +1364,12 @@ export function SettingsScreen({ navigation, route }: Props) {
             </WarningBox>
           </>
         )}
+        {watchOnlyAccounts.length > 0 ? (
+          <Text style={[styles.hint, { color: theme.textMuted }]}>
+            Watch-only addresses have no key in this wallet, so the recovery phrase does not back them up and
+            is not needed for them: to watch one again on another phone, add its address again.
+          </Text>
+        ) : null}
         {revealed ? (
           <View style={styles.revealBlock}>
             <WarningBox>
@@ -1738,8 +1745,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: theme.text }]}>WalletConnect</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          Lets external dApps connect to this wallet on the active EVM
-          chain (Ethereum mainnet, or Sepolia while test mode is on).
+          {`Lets external dApps connect to this wallet on the active EVM chain (${EVM_MAINNET.label} mainnet, or ${testNetworkLabelsOr()} while test mode is on). `}
           Requires a relay project id — create one for free at
           dashboard.reown.com. The id is public app configuration, not a
           secret; no account or personal data from this wallet is involved.

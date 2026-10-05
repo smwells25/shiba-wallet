@@ -72,15 +72,55 @@ export function ensRegistryFor(profile: Pick<EvmChainProfile, 'chainIdDecimal' |
 
 /**
  * True when the recipient text should be treated as a name rather than an
- * address: it contains a dot and does not start with "0x". Hexadecimal
- * input always stays on the address path (EIP-681's rule that hexadecimal
- * addresses take precedence over names applies to typed input too), so
- * resolution never gets in the way of typing an address.
+ * address: it contains a dot, does not start with "0x", and contains no
+ * colon. Hexadecimal input always stays on the address path (EIP-681's rule
+ * that hexadecimal addresses take precedence over names applies to typed
+ * input too), so resolution never gets in the way of typing an address.
+ * Text with a colon is a URI (a payment request such as
+ * "bitcoin:bc1q…?amount=0.01", or any other scheme) and is never a name:
+ * ENS names cannot contain a colon in the subset this wallet looks up, and
+ * sending a URI down the name path would show name errors for something
+ * that is not a name (phase 14 emulator finding 1).
  */
 export function looksLikeName(text: string): boolean {
   const t = text.trim();
-  return t.includes('.') && !/^0x/i.test(t);
+  return t.includes('.') && !/^0x/i.test(t) && !t.includes(':');
 }
+
+/**
+ * The refusal for a name that is decided WITHOUT any network request: a
+ * name outside the supported ASCII subset, or a network where names are not
+ * looked up. Null when the name may be looked up. The Send screen shows
+ * this sentence at once (no "Looking up…" and no privacy line, because
+ * nothing is sent anywhere); lookUpRecipientName applies the same two rules
+ * in the same order.
+ */
+export function localNameRefusal(
+  input: string,
+  profile: Pick<EvmChainProfile, 'chainIdDecimal' | 'label'>,
+): string | null {
+  const check = normalizeEnsNameAscii(input);
+  if (!check.ok) return nameProblemSentence(check.problem);
+  const registry = ensRegistryFor(profile);
+  return registry.ok ? null : registry.reason;
+}
+
+/**
+ * The Send form's error line, or null when it would only repeat the name
+ * panel's refusal shown just above it (the sentence must never render
+ * twice). Any other error is returned unchanged.
+ */
+export function formErrorBesideName(
+  formError: string | null,
+  nameRefusal: string | null,
+): string | null {
+  if (formError === null) return null;
+  return nameRefusal !== null && formError === nameRefusal ? null : formError;
+}
+
+/** The form error when Review is tapped while the recipient name cannot be used. */
+export const NAME_NOT_USABLE_SENTENCE =
+  'The recipient name above cannot be used; the reason is shown under the recipient field.';
 
 /** The plain sentence for each name the engine's ASCII subset refuses. */
 export function nameProblemSentence(problem: EnsNameProblem): string {

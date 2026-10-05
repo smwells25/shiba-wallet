@@ -146,7 +146,11 @@ export const WATCH_ONLY_ALLOWED_ROUTES: readonly string[] = [
   'Receive',
 ];
 
-/** Plain names for the refusal sentence; a route not named here is called "This screen". */
+/**
+ * Plain names for the refusal sentence; a route not named here is called
+ * "This screen" (scripts/check-watch-only.mjs checks that every refused route
+ * of App.tsx has a name here).
+ */
 const ROUTE_FEATURES: Record<string, string> = {
   Send: 'Sending',
   Swap: 'Swapping',
@@ -162,6 +166,7 @@ const ROUTE_FEATURES: Record<string, string> = {
   RecoverAccount: 'Recovering an account',
   Connections: 'WalletConnect',
   SpendingLimits: 'Spending limits',
+  Inheritance: 'Inheritance (demonstration)',
 };
 
 /**

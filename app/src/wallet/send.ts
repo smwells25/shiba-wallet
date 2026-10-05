@@ -46,9 +46,10 @@ import { base58, base64 } from '@scure/base';
 // balances.ts imports nothing from this module, so the graph stays a DAG.
 import { parseUnits } from './balances.ts';
 // Type-free helper only; endpoint-probe.ts has no React Native imports.
-import { endpointHost, isEndpointFailure } from '../config/endpoint-probe.ts';
+import { endpointHost, isEndpointFailure, sanitizeEndpointMessage } from '../config/endpoint-probe.ts';
 // Pure data with no imports (see its file comment), so no cycle.
 import { evmProfileByCaip2 } from '../config/evm-chain.ts';
+import { suggestFeesRetryingOnce } from './fee-read.ts';
 
 /**
  * Send-flow engine glue: recipient validation, fee quoting, max-amount
@@ -515,7 +516,7 @@ export async function prepareEvmSend(
     node.chainId(),
     node.getBalance(from),
     node.getTransactionCount(from),
-    node.suggestFees(),
+    suggestFeesRetryingOnce(node),
   ]);
 
   const expected = BigInt(expectedCaip2.split(':')[1]!);
@@ -619,7 +620,7 @@ export async function maxEvmSend(url: string, from: string, to?: string): Promis
   const node = new NodeClient(transport);
   const [balance, fees, chainId] = await Promise.all([
     node.getBalance(from),
-    node.suggestFees(),
+    suggestFeesRetryingOnce(node),
     node.chainId(),
   ]);
   // Value does not change a transfer's intrinsic gas; estimate with 0 so
@@ -1237,7 +1238,10 @@ export function estimateRevertSentence(error: GasEstimateRevertError): string {
  * the original message as detail because it names the exact protocol-level
  * failure (dust threshold, insufficient funds arithmetic, node rejection).
  */
-export function describeSendError(error: unknown, symbol: string): { title: string; detail: string } {
+export function describeSendError(
+  error: unknown,
+  symbol: string,
+): { title: string; detail: string; technical?: string } {
   // A reverted gas estimate is a quote-step failure (nothing was attempted),
   // explained in one plain sentence rather than the node's "RPC error 3".
   if (error instanceof GasEstimateRevertError || (error as { name?: unknown } | null)?.name === 'GasEstimateRevertError') {
@@ -1277,5 +1281,31 @@ export function describeSendError(error: unknown, symbol: string): { title: stri
       detail,
     };
   }
+  const httpAnswer = describeEndpointHttpAnswer(error);
+  if (httpAnswer) return { title: 'The transaction could not be sent.', ...httpAnswer };
   return { title: 'The transaction could not be sent.', detail };
+}
+
+/**
+ * A read that the endpoint answered with an HTTP error status that is not
+ * an endpoint failure (isEndpointFailure: typically HTTP 400), in the
+ * engine transports' wording "RPC HTTP error <status> for <method>"
+ * (finding 3 of the phase 14 emulator pass: "RPC HTTP error 400 for
+ * eth_getBlockByNumber" was shown raw under the quote title). Returns a
+ * plain sentence plus the cleaned original text as a technical line
+ * (../config/endpoint-probe.ts sanitizeEndpointMessage, the same pattern as
+ * describeNetworkFailure). Broadcast methods (eth_send…, wallet_send…) are
+ * left to the generic wording, because an HTTP error there does not tell
+ * whether the transaction went out. Null for anything else.
+ */
+export function describeEndpointHttpAnswer(error: unknown): { detail: string; technical: string } | null {
+  const raw = error instanceof Error ? error.message : String(error);
+  const match = /\bRPC HTTP error (\d{3}) for ([A-Za-z0-9_]+)\b/.exec(raw);
+  if (!match || /^(?:eth|wallet)_send/.test(match[2]!)) return null;
+  return {
+    detail:
+      `The network endpoint answered a request for network data with an error (HTTP ${match[1]}) instead of ` +
+      'the data. This is usually brief; try again in a moment.',
+    technical: sanitizeEndpointMessage(raw),
+  };
 }

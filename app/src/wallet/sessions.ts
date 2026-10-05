@@ -59,6 +59,7 @@ import { EVM_CHAIN_ID, validateRecipient } from './send.ts';
 import type { KeyValueStore } from './tokens.ts';
 import { assertFeatureAllowed, eip155Caip2 } from '../config/readiness.ts';
 import { NO_ANSWER_SENTENCE, isEndpointFailure, sanitizeEndpointMessage } from '../config/endpoint-probe.ts';
+import { suggestFeesRetryingOnce } from './fee-read.ts';
 
 /**
  * Session keys for the app (phase 8 item 2, app half), on the engine's
@@ -1219,7 +1220,7 @@ export async function sendSessionCalls(args: {
   // right before sending, with the same floor rule as every smart-account
   // quote (aa.ts quoteFeesOverFloor, which also meets a bundler's
   // maxFeePerGas minimum).
-  const [suggested, floor] = await Promise.all([nodeClient.suggestFees(), bundlerFeeFloor(bundle.bundler)]);
+  const [suggested, floor] = await Promise.all([suggestFeesRetryingOnce(nodeClient), bundlerFeeFloor(bundle.bundler)]);
   const fees = quoteFeesOverFloor(suggested, floor);
   const client = new SmartAccountClient({
     chainId: bundle.chainId,

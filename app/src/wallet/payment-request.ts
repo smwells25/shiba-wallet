@@ -116,14 +116,48 @@ export function familyForSlot(slotChainId: string): PaymentFamily | null {
 /**
  * True when `text` starts with the payment-URI scheme of THIS slot
  * (case-insensitive, RFC 3986 section 3.1). Another family's scheme returns
- * false, so the caller leaves it to the normal address validation, which
- * rejects it with its usual error.
+ * false; the Send screen then refuses it with foreignPaymentRequestSentence
+ * (below) instead of filling it in.
  */
 export function isPaymentUriFor(slotChainId: string, text: string): boolean {
   const scheme = SCHEME_BY_CHAIN[slotChainId];
   if (!scheme) return false;
   const t = text.trim();
   return t.slice(0, scheme.length + 1).toLowerCase() === `${scheme}:`;
+}
+
+/** The name of each family in the "request for another network family" sentence. */
+const FAMILY_NAME: Record<PaymentFamily, string> = {
+  evm: 'Ethereum',
+  bitcoin: 'Bitcoin',
+  dogecoin: 'Dogecoin',
+  solana: 'Solana',
+};
+
+/**
+ * The family of a payment URI that belongs to ANOTHER family than this
+ * slot's (for example "bitcoin:bc1q…?amount=0.01" pasted on the Ethereum
+ * Send screen), or null: null for this slot's own scheme (isPaymentUriFor
+ * handles it), for a plain address, and for any scheme that is not one of
+ * the four payment families (the normal address validation then refuses
+ * it). Matching is on the scheme only, case-insensitive (RFC 3986 section
+ * 3.1); nothing after the colon is read.
+ */
+export function foreignPaymentFamily(slotChainId: string, text: string): PaymentFamily | null {
+  const own = familyForSlot(slotChainId);
+  const match = /^([A-Za-z][A-Za-z0-9+.-]*):/.exec(text.trim());
+  if (!match) return null;
+  const family = FAMILY_BY_SCHEME[match[1]!.toLowerCase()] ?? null;
+  return family !== null && family !== own ? family : null;
+}
+
+/**
+ * The one sentence a foreign-family payment request gets on the Send form
+ * (phase 14 emulator finding 1); nothing is filled in.
+ */
+export function foreignPaymentRequestSentence(family: PaymentFamily): string {
+  const name = FAMILY_NAME[family];
+  return `This is a payment request for ${name}, a different network family, so nothing was filled in; open Send for ${name} from the Home screen to pay it.`;
 }
 
 // ---------------------------------------------------------------------------

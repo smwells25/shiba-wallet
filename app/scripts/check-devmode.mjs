@@ -1118,5 +1118,62 @@ console.log('\n== Arbitrum Sepolia profile (third test network) ==');
   check('readiness hints are built from the profiles', !read('../src/config/readiness.ts').includes("'Turn on a test network (Ethereum Sepolia or Base Sepolia)"));
 }
 
+// ---------------------------------------------------------------------------
+// Phase 14 emulator pass: the lock screen hides the screens from screen
+// readers (finding 6), and copy built from the profile table (finding 7).
+// ---------------------------------------------------------------------------
+{
+  const { readFileSync: readFs } = await import('node:fs');
+  const read = (rel) => readFs(new globalThis.URL(rel, import.meta.url), 'utf8');
+  console.log('\n# lock screen accessibility (LockGate.tsx, source)');
+  // The screens must sit inside ONE always-rendered wrapper whose two
+  // documented props hide it while locked: importantForAccessibility
+  // "no-hide-descendants" (Android) and accessibilityElementsHidden (iOS).
+  // Always rendered, so locking never remounts the screens.
+  const lockHidesScreens = (src) =>
+    /<View\s+style=\{styles\.fill\}\s+importantForAccessibility=\{locked \? 'no-hide-descendants' : 'auto'\}\s+accessibilityElementsHidden=\{locked\}\s*>\s*\{children\}\s*<\/View>/.test(src) &&
+    (src.match(/\{children\}/g) ?? []).length === 1 &&
+    !/locked \?\s*\(?\s*<View[^>]*>\s*\{children\}/.test(src);
+  const lockSrc = read('../src/components/LockGate.tsx');
+  check('LockGate: the screens are hidden from accessibility while locked, on Android and iOS, without unmounting', lockHidesScreens(lockSrc));
+  const noAndroid = lockSrc.replace("importantForAccessibility={locked ? 'no-hide-descendants' : 'auto'}", '');
+  const noIos = lockSrc.replace('accessibilityElementsHidden={locked}', '');
+  const remounting = lockSrc.replace(/<View\s+style=\{styles\.fill\}\s+importantForAccessibility[\s\S]*?\{children\}\s*<\/View>/, "{locked ? <View importantForAccessibility='no-hide-descendants' accessibilityElementsHidden>{children}</View> : children}");
+  check('mutation: dropping the Android prop is caught', noAndroid !== lockSrc && !lockHidesScreens(noAndroid));
+  check('mutation: dropping the iOS prop is caught', noIos !== lockSrc && !lockHidesScreens(noIos));
+  check('mutation: wrapping only while locked (remounts the screens) is caught', remounting !== lockSrc && !lockHidesScreens(remounting));
+  check('LockGate: the lock overlay itself stays outside the hidden wrapper',
+    lockSrc.indexOf('{children}') < lockSrc.indexOf('Shiba Wallet is locked') &&
+      /\{children\}\s*<\/View>\s*\{locked \? \(/.test(lockSrc));
+
+  console.log('\n# copy built from the profile table');
+  const { testNetworkLabelsOr } = await import('../src/wallet/walletconnect.ts');
+  const { EVM_MAINNET: MAIN } = await import('../src/config/evm-chain.ts');
+  const settingsSrc = read('../src/screens/SettingsScreen.tsx');
+  check('Settings WalletConnect blurb names every profile (built from the table)',
+    settingsSrc.includes('(${EVM_MAINNET.label} mainnet, or ${testNetworkLabelsOr()} while test mode is on)') &&
+      !settingsSrc.includes('(Ethereum mainnet, or Sepolia while test mode is on)') &&
+      `${MAIN.label} mainnet, or ${testNetworkLabelsOr()} while test mode is on` ===
+        'Ethereum mainnet, or Ethereum Sepolia, Base Sepolia or Arbitrum Sepolia while test mode is on');
+  check('Settings Backup text: no "every account in the list above" claim while watch-only addresses are listed',
+    settingsSrc.includes("watchOnlyAccounts.length === 0\n              ? 'One recovery phrase backs up ALL of your accounts") &&
+      settingsSrc.includes('that this wallet holds a key for') &&
+      settingsSrc.includes('Watch-only addresses have no key in this wallet, so the recovery phrase does not back them up'));
+  const sendSrc = read('../src/screens/SendScreen.tsx');
+  check('Send: the recipient placeholder offers ENS names only where the profile looks them up',
+    sendSrc.includes('const namesOffered = route.params.chainId === EVM_CHAIN_ID && nameRegistry.ok;') &&
+      sendSrc.includes("(namesOffered ? ' or ENS name' : '')") &&
+      !/'Ethereum address or ENS name'|address or ENS name`/.test(sendSrc));
+  const { ensRegistryFor } = await import('../src/wallet/ens-names.ts');
+  check('…which is false on Base Sepolia and Arbitrum Sepolia, true on mainnet and Sepolia',
+    EVM_PROFILES.map((p) => `${p.caip2}=${ensRegistryFor(p).ok}`).join(',') ===
+      'eip155:1=true,eip155:11155111=true,eip155:84532=false,eip155:421614=false');
+  const homeSrc = read('../src/screens/HomeScreen.tsx');
+  check('Home: the EVM row is titled with the active profile’s label; other rows keep their own names',
+    homeSrc.includes('const title = isEvm ? evmChain.label : item.name;') &&
+      homeSrc.includes('<Text style={[styles.chainName, { color: theme.text }]}>{title}</Text>') &&
+      !homeSrc.includes('{item.name}</Text>'));
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

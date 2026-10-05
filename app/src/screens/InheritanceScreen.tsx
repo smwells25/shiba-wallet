@@ -60,6 +60,7 @@ import {
   INHERITANCE_TITLE,
   MAX_HEIRS,
   buildHeirSet,
+  canReviewHeirs,
   checkTakeoverAttempts,
   clearTakeoverScanState,
   describeHeirExposure,
@@ -595,7 +596,11 @@ export function InheritanceScreen({ navigation }: Props) {
           </View>
         ) : (
           <>
-            <Button title="Review" onPress={() => void onReview()} disabled={!ack} />
+            <Button
+              title="Review"
+              onPress={() => void onReview()}
+              disabled={!canReviewHeirs({ drafts, acknowledged: ack })}
+            />
             <Button title="Cancel" variant="secondary" onPress={() => setPhase('overview')} />
           </>
         )}

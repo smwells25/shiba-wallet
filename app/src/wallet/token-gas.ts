@@ -63,6 +63,7 @@ import type { KeyValueStore } from './tokens.ts';
 import { formatUnits } from './balances.ts';
 import { assertFeatureAllowed, eip155Caip2, isFeatureAllowed, readinessRefusal } from '../config/readiness.ts';
 import { EVM_PROFILES, evmProfileByCaip2 } from '../config/evm-chain.ts';
+import { suggestFeesRetryingOnce } from './fee-read.ts';
 
 /**
  * Paying a smart-account send's network fee in USDC (phase 13 item 2, app
@@ -941,7 +942,7 @@ async function tokenGasFacts(
   const [senderBalance, deployed, suggestedFees, state, feeTokenBalance, spendBalance] = await Promise.all([
     nodeClient.getBalance(sender),
     bundle.client.isDeployed(owner),
-    nodeClient.suggestFees(),
+    suggestFeesRetryingOnce(nodeClient),
     readCirclePaymasterState(bundle.node, pm.paymaster),
     fetchTokenBalanceVia(bundle.node, pm.token, sender),
     spendsOther && spendContract ? fetchTokenBalanceVia(bundle.node, spendContract, sender) : Promise.resolve(null),
@@ -1111,7 +1112,7 @@ async function erc7677Facts(
   const [senderBalance, deployed, suggestedFees, paymaster, feeToken, spendBalance, decimals] = await Promise.all([
     nodeClient.getBalance(sender),
     bundle.client.isDeployed(owner),
-    nodeClient.suggestFees(),
+    suggestFeesRetryingOnce(nodeClient),
     readPimlicoPaymasterState(bundle.node, source.paymaster),
     readTokenBalanceAndAllowance(bundle.node, source.token, sender, source.paymaster),
     spendsOther && spendContract ? fetchTokenBalanceVia(bundle.node, spendContract, sender) : Promise.resolve(null),

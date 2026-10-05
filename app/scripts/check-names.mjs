@@ -24,6 +24,9 @@ import {
   describeNameError,
   ensPrivacyNote,
   ensRegistryFor,
+  NAME_NOT_USABLE_SENTENCE,
+  formErrorBesideName,
+  localNameRefusal,
   looksLikeName,
   lookUpRecipientName,
   nameChangedSentence,
@@ -116,6 +119,12 @@ for (const [text, expected] of [
   ['0xb8c2C29ee19D8307cb7255e1Cd9CbDE883A267d5', false],
   ['nick', false],
   ['', false],
+  // Phase 14 emulator finding 1: a URI (anything with a colon) is never a name.
+  ['bitcoin:bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq?amount=0.001', false],
+  ['dogecoin:DEQ788Pe98Z97Le6feBa2P49JL7ETGSMNf?amount=1.5', false],
+  ['solana:9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM?amount=0.1', false],
+  ['ethereum:nick.eth', false],
+  ['nick.eth:443', false],
 ]) {
   check(`looksLikeName(${JSON.stringify(text)}) = ${expected}`, looksLikeName(text) === expected);
 }
@@ -123,6 +132,15 @@ check('sentence: not-ascii-subset', nameProblemSentence('not-ascii-subset') === 
 check('sentence: single-label', nameProblemSentence('single-label') === 'A name needs at least one dot, for example name.eth.');
 check('sentence: empty-label', nameProblemSentence('empty-label') === 'This name has an empty part (two dots together, or a dot at the start or end).');
 check('sentence: label-extension', /hyphen as both the third and fourth character/.test(nameProblemSentence('label-extension')));
+check('localNameRefusal: unsupported characters are refused with no request', localNameRefusal('café.eth', EVM_MAINNET) === nameProblemSentence('not-ascii-subset'));
+check('localNameRefusal: Base Sepolia refuses before any request', localNameRefusal('nick.eth', EVM_BASE_SEPOLIA) === ensRegistryFor(EVM_BASE_SEPOLIA).reason);
+check('localNameRefusal: a supported name on mainnet and Sepolia may be looked up', localNameRefusal('nick.eth', EVM_MAINNET) === null && localNameRefusal('nick.eth', EVM_SEPOLIA) === null);
+{
+  const refusal = nameProblemSentence('not-ascii-subset');
+  check('the form error never repeats the name panel’s refusal', formErrorBesideName(refusal, refusal) === null);
+  check('other form errors are shown unchanged', formErrorBesideName('Something else.', refusal) === 'Something else.' && formErrorBesideName('x', null) === 'x' && formErrorBesideName(null, refusal) === null);
+  check('the Review-time pointer is a different sentence from every refusal', NAME_NOT_USABLE_SENTENCE === 'The recipient name above cannot be used; the reason is shown under the recipient field.' && NAME_NOT_USABLE_SENTENCE !== refusal);
+}
 check('privacy note names the endpoint host only', ensPrivacyNote('https://ethereum.publicnode.com/some/key') === 'Names are looked up through your network endpoint (ethereum.publicnode.com), which sees the name you looked up.');
 
 console.log('\n# lookups through fakes');
@@ -214,7 +232,14 @@ check('Review requires a shown, resolved address and re-checks it before quoting
   send.includes("if (!nameView || nameView.status !== 'resolved' || !nameRegistry.ok) {") &&
   send.includes('recheckRecipientName(') && send.indexOf('recheckRecipientName(') < send.indexOf('const recipientAddress = validation.normalized;'));
 check('every confirm variant shows the name line next to the recipient (4)', (send.match(/\{renderNameNote\(quote\.to\)\}/g) ?? []).length === 4);
-check('the privacy sentence is shown with lookups', send.includes('privacyNote={nameRegistry.ok ? ensPrivacyNote(nameState?.url ?? url) : null}'));
+check('the privacy sentence is shown with lookups, and not for a name refused before any request',
+  send.includes('privacyNote={nameRegistry.ok && nameLocalRefusal === null ? ensPrivacyNote(nameState?.url ?? url) : null}'));
+check('a locally refused name never starts a lookup', send.includes('if (!nameKey || nameLocalRefusal !== null) return;'));
+check('Review with a refused name shows the pointer, not the refusal again',
+  /nameView\?\.status === 'refused'\s*\?\s*NAME_NOT_USABLE_SENTENCE/.test(send) && !/\? nameView\.message\s*:\s*'Wait until/.test(send));
+check('the form error line goes through formErrorBesideName',
+  send.includes("const shownFormError = formErrorBesideName(formError, nameView?.status === 'refused' ? nameView.message : null);") &&
+    send.includes('{shownFormError}') && !/\{formError\}\s*<\/Text>/.test(send));
 check('typing an address never waits for a lookup (debounced effect keyed on names only)', send.includes('}, 450);') && send.includes('const nameKey ='));
 
 console.log('\n# mutation checks');
@@ -225,8 +250,13 @@ console.log('\n# mutation checks');
   const m2 = await importMutant('src/wallet/ens-names.ts', ens.replace("if (changed) return { kind: 'changed'", "if (false) return { kind: 'changed'"));
   const r2 = await m2.recheckRecipientName(fakeEndpoint(1n, () => okAnswer(OTHER)).transport, { name: 'nick.eth', address: NICK, chainId: 1n }, 'x');
   check('M2 caught: a re-check that ignores a changed address answers "same"', r2.kind === 'same');
-  const m3 = await importMutant('src/wallet/ens-names.ts', ens.replace("return t.includes('.') && !/^0x/i.test(t);", "return t.includes('.');"));
+  const m3 = await importMutant('src/wallet/ens-names.ts', ens.replace("return t.includes('.') && !/^0x/i.test(t) && !t.includes(':');", "return t.includes('.') && !t.includes(':');"));
   check('M3 caught: hexadecimal input would be treated as a name', m3.looksLikeName('0x1234.eth') === true && looksLikeName('0x1234.eth') === false);
+  const uri = 'bitcoin:bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq?amount=0.001';
+  const m4 = await importMutant('src/wallet/ens-names.ts', ens.replace("return t.includes('.') && !/^0x/i.test(t) && !t.includes(':');", "return t.includes('.') && !/^0x/i.test(t);"));
+  check('M4 caught: without the colon rule a payment URI would go down the name path', m4.looksLikeName(uri) === true && looksLikeName(uri) === false);
+  const m5 = await importMutant('src/wallet/ens-names.ts', ens.replace('return nameRefusal !== null && formError === nameRefusal ? null : formError;', 'return formError;'));
+  check('M5 caught: without the guard the refusal would render twice', m5.formErrorBesideName('a', 'a') === 'a' && formErrorBesideName('a', 'a') === null);
 }
 
 if (LIVE) {

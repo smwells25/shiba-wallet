@@ -22,6 +22,7 @@ import {
 } from './send.ts';
 import { fetchErc20Balance } from './erc20.ts';
 import { evmProfileByCaip2 } from '../config/evm-chain.ts';
+import { suggestFeesRetryingOnce } from './fee-read.ts';
 
 /**
  * ERC-20 send flow (phase 4, item 3): quoting, max-amount, and sign+
@@ -189,7 +190,7 @@ export async function prepareErc20Send(request: Erc20SendRequest): Promise<Erc20
     node.getBalance(from),
     fetchErc20Balance(url, contract, from),
     node.getTransactionCount(from),
-    node.suggestFees(),
+    suggestFeesRetryingOnce(node),
   ]);
 
   // The endpoint must serve the TOKEN's own chain (its CAIP-19 chain id):
@@ -286,7 +287,7 @@ export async function maxErc20Send(
     node.chainId(),
     node.getBalance(from),
     fetchErc20Balance(url, contract, from),
-    node.suggestFees(),
+    suggestFeesRetryingOnce(node),
   ]);
   // Same rule as the quote: the endpoint must serve the token's chain.
   if (chainId !== expectedChain(chainCaip2).id) throw wrongChainError(chainId, chainCaip2);

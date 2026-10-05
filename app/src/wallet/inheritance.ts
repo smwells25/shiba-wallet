@@ -215,7 +215,28 @@ export function buildHeirSet(args: {
   const delayProblem = validateInheritanceDelay(args.delaySeconds);
   if (delayProblem) throw new Error(delayProblem);
   // Address syntax, weights and labels: the guardian form's rules (engine-validated addresses).
-  return buildGuardianSet({ drafts: args.drafts, threshold: args.threshold, delaySeconds: args.delaySeconds, noVetoAcknowledged: false });
+  return buildGuardianSet({
+    drafts: args.drafts,
+    threshold: args.threshold,
+    delaySeconds: args.delaySeconds,
+    noVetoAcknowledged: false,
+    role: 'heir',
+  });
+}
+
+/** How many heir rows have an address typed in (blank rows do not count). */
+export function heirCount(drafts: readonly GuardianDraft[]): number {
+  return drafts.filter((d) => d.address.trim() !== '').length;
+}
+
+/**
+ * Whether the inheritance form's Review button is enabled: the
+ * acknowledgement is on AND at least one heir has an address. With no heir
+ * the button stays disabled even with the acknowledgement on (finding 4 of
+ * the phase 14 emulator pass).
+ */
+export function canReviewHeirs(args: { drafts: readonly GuardianDraft[]; acknowledged: boolean }): boolean {
+  return args.acknowledged && heirCount(args.drafts) > 0;
 }
 
 /** True when the record labels the account's set as heirs. */

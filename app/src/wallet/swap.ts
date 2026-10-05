@@ -20,6 +20,7 @@ import { prepareAaCalls, type AaClientBundle, type AaSendQuote } from './aa.ts';
 import { USDC_MAINNET } from './erc20.ts';
 import { formatUnits } from './balances.ts';
 import type { KeyValueStore } from './tokens.ts';
+import { suggestFeesRetryingOnce } from './fee-read.ts';
 
 /**
  * Swap glue for the app (phase 5, item 1): 0x API-key configuration with
@@ -327,7 +328,7 @@ export async function estimateSwapFee(
   quote: SwapQuote,
 ): Promise<{ zeroExGas: bigint | null; maxFeePerGas: bigint; worstCaseFee: bigint | null }> {
   const node = new NodeClient(evmHttpTransport(url));
-  const fees = await node.suggestFees();
+  const fees = await suggestFeesRetryingOnce(node);
   const zeroExGas = quote.transaction.gas ?? null;
   return {
     zeroExGas,

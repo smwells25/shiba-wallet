@@ -54,7 +54,9 @@ import {
 } from '../src/config/networks.ts';
 import { loadNativeBalance } from '../src/wallet/useBalances.ts';
 import { loadHistoryPage } from '../src/wallet/useHistory.ts';
-import { prepareEvmSend, quoteEndpointChange } from '../src/wallet/send.ts';
+import { describeEndpointHttpAnswer, describeSendError, prepareEvmSend, quoteEndpointChange } from '../src/wallet/send.ts';
+import { isRetryableFeeReadError, suggestFeesRetryingOnce } from '../src/wallet/fee-read.ts';
+import { QUOTE_FAILED_TITLE, retitleQuoteFailure } from '../src/wallet/aa.ts';
 import { waitForAllowance } from '../src/wallet/swap.ts';
 import { runBalancePreview } from '../src/wallet/simulation.ts';
 import { loadTokenBalance } from '../src/wallet/useTokenBalances.ts';
@@ -65,7 +67,9 @@ import {
   requoteWcTransactionIfMoved,
 } from '../src/wallet/walletconnect.ts';
 import { evmKeyProvider, mnemonicToSeed } from '@shiba-wallet/core';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 let passed = 0;
 let failed = 0;
@@ -841,6 +845,101 @@ console.log('endpoint error text (F4, F9):');
   check('a raw Java timeout never reaches the user verbatim', t.detail === NO_ANSWER_SENTENCE && t.technical !== null && !/java\.|Exception/.test(t.technical), JSON.stringify(t));
   const answer = describeNetworkFailure(new Error(ad), 'older approvals');
   check('an endpoint answer: detail is its cleaned first sentence', answer.title === 'Older approvals could not be loaded.' && answer.detail === 'JSON-RPC error -32602: Archive requests require a personal token.' && answer.technical === null);
+}
+
+// ---------------------------------------------------------------------------
+// Fee read: one same-endpoint retry on HTTP 400 (phase 14 emulator finding 3)
+// ---------------------------------------------------------------------------
+{
+  console.log('\nFee read retry (fee-read.ts) and the quote-failure wording (send.ts):');
+  const http400Block = new Error('RPC HTTP error 400 for eth_getBlockByNumber');
+  for (const [label, error, expected] of [
+    ['HTTP 400 for eth_getBlockByNumber', http400Block, true],
+    ['HTTP 400 for eth_maxPriorityFeePerGas', new Error('RPC HTTP error 400 for eth_maxPriorityFeePerGas'), true],
+    ['HTTP 400 for eth_call (an answer: not retried)', new Error('RPC HTTP error 400 for eth_call'), false],
+    ['HTTP 503 for eth_getBlockByNumber (left to failover)', new Error('RPC HTTP error 503 for eth_getBlockByNumber'), false],
+    ['a JSON-RPC error for eth_getBlockByNumber', new Error('RPC error -32602: invalid argument (eth_getBlockByNumber)'), false],
+  ]) {
+    check(`retryable fee read: ${label} -> ${expected}`, isRetryableFeeReadError(error) === expected);
+  }
+  check('the global rule is unchanged: HTTP 400 is still not an endpoint failure', isEndpointFailure(http400Block) === false);
+
+  const FEES = { maxFeePerGas: 3n, maxPriorityFeePerGas: 1n };
+  const flaky = (errors) => {
+    const client = { calls: 0, async suggestFees() { client.calls += 1; const e = errors.shift(); if (e) throw e; return FEES; } };
+    return client;
+  };
+  const once = flaky([http400Block]);
+  const got = await suggestFeesRetryingOnce(once);
+  check('one HTTP 400 on the block read: retried once on the same client, fees returned', got === FEES && once.calls === 2);
+  const twice = flaky([http400Block, http400Block]);
+  const second = await suggestFeesRetryingOnce(twice).then(() => null, (e) => e);
+  check('a second HTTP 400: thrown, never a third attempt', second === http400Block && twice.calls === 2);
+  const other = flaky([new Error('RPC HTTP error 400 for eth_call')]);
+  const notRetried = await suggestFeesRetryingOnce(other).then(() => null, (e) => e);
+  check('any other error: thrown at once without a retry', notRetried !== null && other.calls === 1);
+
+  // End to end through prepareEvmSend and the engine transport: the first
+  // eth_getBlockByNumber answers HTTP 400, the second answers normally.
+  const FLAKY_URL = 'https://flaky-400.example';
+  const node = evmNode();
+  let blockReads = 0;
+  globalThis.fetch = async (url, init = {}) => {
+    const body = JSON.parse(init.body);
+    if (url !== FLAKY_URL) throw new TypeError(`fetch failed (no fake for ${url})`);
+    if (body.method === 'eth_getBlockByNumber' && ++blockReads === 1) {
+      return { ok: false, status: 400, json: async () => ({}), text: async () => '' };
+    }
+    const text = JSON.stringify({ jsonrpc: '2.0', id: body.id, result: node(body.method, body.params) });
+    return { ok: true, status: 200, json: async () => JSON.parse(text), text: async () => text };
+  };
+  const quote = await prepareEvmSend(FLAKY_URL, WALLET, RECIPIENT, 1000n).then((q) => q, (e) => e);
+  check('a quote whose first block read answers HTTP 400 is prepared on the same endpoint (2 block reads)',
+    !(quote instanceof Error) && quote.maxFeePerGas === 2n * 0x3b9aca00n + 0x5f5e100n && blockReads === 2, quote instanceof Error ? quote.message : '');
+
+  // The wording when it fails twice: a plain sentence and a technical line.
+  const described = describeSendError(http400Block, 'ETH');
+  const retitled = retitleQuoteFailure(described);
+  check('quote failure title: "The quote could not be prepared."', retitled.title === QUOTE_FAILED_TITLE && retitled.title === 'The quote could not be prepared.');
+  check('quote failure detail: a plain sentence, never the raw transport text',
+    retitled.detail === 'The network endpoint answered a request for network data with an error (HTTP 400) instead of the data. This is usually brief; try again in a moment.' &&
+      !/RPC HTTP error/.test(retitled.detail), retitled.detail);
+  check('quote failure technical line: the cleaned original text, carried through retitleQuoteFailure',
+    retitled.technical === 'RPC HTTP error 400 for eth_getBlockByNumber.', retitled.technical);
+  const broadcast = describeSendError(new Error('RPC HTTP error 400 for eth_sendRawTransaction'), 'ETH');
+  check('a broadcast HTTP 400 keeps the old wording (it does not tell whether the transaction went out)',
+    broadcast.title === 'The transaction could not be sent.' && broadcast.detail === 'RPC HTTP error 400 for eth_sendRawTransaction' && broadcast.technical === undefined);
+  check('an unreachable endpoint keeps its own title', describeSendError(new Error('RPC HTTP error 503 for eth_getBlockByNumber'), 'ETH').title === 'Could not reach the network endpoint. Check your connection.');
+  check('describeEndpointHttpAnswer ignores other errors', describeEndpointHttpAnswer(new Error('RPC error 3: execution reverted (eth_estimateGas)')) === null);
+
+  // Source checks: every quote's fee read goes through the retry, and the
+  // Send screen shows the technical line under the form error it belongs to.
+  const walletDir = new URL('../src/wallet/', import.meta.url);
+  const direct = readdirSync(walletDir)
+    .filter((f) => f.endsWith('.ts') && f !== 'fee-read.ts')
+    .filter((f) => /\.suggestFees\(\)/.test(readFileSync(new URL(f, walletDir), 'utf8')));
+  check('no app module calls NodeClient.suggestFees() directly (all through suggestFeesRetryingOnce)', direct.length === 0, direct.join(', '));
+  const sendScreen = readFileSync(new URL('../src/screens/SendScreen.tsx', import.meta.url), 'utf8');
+  check('Send: quote failures (Review and Max) go through showQuoteFailure, which keeps the technical line',
+    (sendScreen.match(/showQuoteFailure\(\n\s*retitleQuoteFailure\(/g) ?? []).length === 2 &&
+      sendScreen.includes('{formError && formTechnical?.forError === formError ? <TechnicalDetail text={formTechnical.text} /> : null}'));
+
+  // Mutation: fee-read.ts without the retry must fail the checks above.
+  const feeSrc = readFileSync(new URL('../src/wallet/fee-read.ts', import.meta.url), 'utf8');
+  const anchor = '    if (!isRetryableFeeReadError(error)) throw error;\n    return client.suggestFees();';
+  check('mutation anchor present (fee read retry)', feeSrc.includes(anchor));
+  const mutantDir = join(dirname(fileURLToPath(import.meta.url)), `.mutants-failover-${process.pid}`);
+  mkdirSync(mutantDir, { recursive: true });
+  const mutantFile = join(mutantDir, 'fee-read.ts');
+  writeFileSync(mutantFile, feeSrc.replace(anchor, '    throw error;'));
+  try {
+    const mutant = await import(pathToFileURL(mutantFile).href);
+    const m = flaky([http400Block]);
+    const r = await mutant.suggestFeesRetryingOnce(m).then(() => 'ok', () => 'threw');
+    check('M-f1 caught: without the retry a single HTTP 400 fails the quote', r === 'threw' && m.calls === 1);
+  } finally {
+    rmSync(mutantDir, { recursive: true, force: true });
+  }
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

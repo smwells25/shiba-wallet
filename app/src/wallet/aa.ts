@@ -53,6 +53,7 @@ import {
 } from '../config/readiness.ts';
 import { evmProfileByCaip2 } from '../config/evm-chain.ts';
 import { PREVIEW_AA_NOTE } from './simulation.ts';
+import { suggestFeesRetryingOnce } from './fee-read.ts';
 
 /**
  * ERC-4337 smart-account glue for the app (experimental, off by default):
@@ -2229,16 +2230,11 @@ const GENERIC_SEND_FAILURE_TITLE = 'The transaction could not be sent.';
 /**
  * Re-titles a described error for the quote (review) step: the generic
  * "could not be sent" title becomes QUOTE_FAILED_TITLE; specific titles
- * (insufficient funds, unreachable endpoint, …) are kept, and the detail is
- * never changed.
+ * (insufficient funds, unreachable endpoint, …) are kept, and the detail (and
+ * any technical line) is never changed.
  */
-export function retitleQuoteFailure(described: { title: string; detail: string }): {
-  title: string;
-  detail: string;
-} {
-  return described.title === GENERIC_SEND_FAILURE_TITLE
-    ? { title: QUOTE_FAILED_TITLE, detail: described.detail }
-    : described;
+export function retitleQuoteFailure<D extends { title: string; detail: string }>(described: D): D {
+  return described.title === GENERIC_SEND_FAILURE_TITLE ? { ...described, title: QUOTE_FAILED_TITLE } : described;
 }
 
 /**
@@ -2791,7 +2787,7 @@ export async function prepareAaCalls(
     nodeClient.getBalance(sender),
     eip7702 ? Promise.resolve(!eip7702.upgrade) : bundle.client.isDeployed(owner),
     bundle.client.getNonce(owner),
-    nodeClient.suggestFees(),
+    suggestFeesRetryingOnce(nodeClient),
     options.tokenSpend
       ? fetchTokenBalanceVia(bundle.node, options.tokenSpend.contract, sender)
       : Promise.resolve(null),
@@ -3049,17 +3045,40 @@ export async function prepareAaCalls(
 }
 
 /**
+ * The calls the user asked for in a smart-account quote, without the one
+ * call the wallet itself inserts: an ERC-7677 USDC-fee quote (tokenGas.source
+ * 'erc7677', ./token-gas.ts) starts with approve(paymaster, maxTokenCharge)
+ * on the fee token, which the confirm screen already explains in its grant
+ * box. Only that exact first call is dropped (same token contract, value 0,
+ * byte-identical calldata, and at least one call after it); any other
+ * approve, including one the user asked for, stays in the list. Every other
+ * quote is returned unchanged.
+ */
+export function aaUserCalls(quote: Pick<AaSendQuote, 'calls' | 'tokenGas'>): readonly Call[] {
+  const tg = quote.tokenGas;
+  if (!tg || tg.source !== 'erc7677' || quote.calls.length < 2) return quote.calls;
+  const inserted = erc7677TokenApproveCall(tg.token, tg.paymaster, tg.maxTokenCharge);
+  const first = quote.calls[0]!;
+  const sameData =
+    first.data.length === inserted.data.length && first.data.every((byte, i) => byte === inserted.data[i]);
+  const isInserted = first.to.toLowerCase() === inserted.to.toLowerCase() && first.value === 0n && sameData;
+  return isInserted ? quote.calls.slice(1) : quote.calls;
+}
+
+/**
  * What the Send confirm's risk card checks for a smart-account quote
- * (finding 1 of the 2026-10-04 emulator run): the first call's target and
- * calldata, and, for a token send, the token's RECIPIENT as the
+ * (finding 1 of the 2026-10-04 emulator run): the first USER call's target
+ * and calldata (aaUserCalls: the paymaster approval an ERC-7677 USDC-fee
+ * quote inserts is skipped, so the card equals the ETH-fee card for the
+ * same send), and, for a token send, the token's RECIPIENT as the
  * counterparty — exactly as the regular-account token path passes it — so
  * the card describes the person or contract receiving the tokens (and the
  * wallet's own accounts as its own), not the token contract.
  */
 export function aaRiskWarningTarget(
-  quote: Pick<AaSendQuote, 'calls' | 'token'>,
+  quote: Pick<AaSendQuote, 'calls' | 'token' | 'tokenGas'>,
 ): { to: string; data: Uint8Array; counterparty?: string } {
-  const first = quote.calls[0]!;
+  const first = aaUserCalls(quote)[0]!;
   return quote.token
     ? { to: first.to, data: first.data, counterparty: quote.token.recipient }
     : { to: first.to, data: first.data };

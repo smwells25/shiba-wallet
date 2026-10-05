@@ -122,7 +122,27 @@ export function LockGate({ children }: { children: React.ReactNode }) {
   return (
     <LockStateContext.Provider value={lockValue}>
       <View style={styles.fill}>
-        {children}
+        {/*
+          The screens stay MOUNTED under the lock (their state survives), but
+          while locked they are removed from the accessibility tree, so a
+          screen reader cannot read balances or addresses behind the lock
+          screen. Documented props (reactnative.dev/docs/accessibility, and
+          the installed react-native 0.86.3 types in
+          Libraries/Components/View/ViewAccessibility.d.ts):
+          importantForAccessibility="no-hide-descendants" makes Android's
+          accessibility services ignore the view and all of its children;
+          accessibilityElementsHidden makes VoiceOver on iOS ignore the view
+          and every element it contains. This wrapper is always rendered
+          (locked or not), so locking never changes the element tree above
+          the screens and never remounts them.
+        */}
+        <View
+          style={styles.fill}
+          importantForAccessibility={locked ? 'no-hide-descendants' : 'auto'}
+          accessibilityElementsHidden={locked}
+        >
+          {children}
+        </View>
         {locked ? (
           <View style={[styles.overlay, { backgroundColor: theme.background }]}>
             <Text style={[styles.title, { color: theme.text }]}>Shiba Wallet is locked</Text>

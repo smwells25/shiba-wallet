@@ -46,6 +46,8 @@ import {
   describeBuiltRequest,
   describeParsedRequest,
   familyForSlot,
+  foreignPaymentFamily,
+  foreignPaymentRequestSentence,
   formatEip681Amount,
   isPaymentUriFor,
   parseEip681Number,
@@ -406,6 +408,18 @@ check('a mistyped checksum inside an EIP-681 request is filled in, then refused 
 check('a Bitcoin testnet address in a bitcoin: request is filled in, then refused by validateRecipient',
   (() => { const r = parsePaymentRequest('bitcoin:tb1qghfhmd4zh7ncpmxl3qzhmq566jk8ckq4gafnmq?amount=1', ctxBtc); return r.kind === 'request' && validateRecipient(BITCOIN_CHAIN_ID, r.recipient).ok === false; })());
 check('familyForSlot maps the four slots', familyForSlot(EVM_CHAIN_ID) === 'evm' && familyForSlot(BITCOIN_CHAIN_ID) === 'bitcoin' && familyForSlot(DOGECOIN_CHAIN_ID) === 'dogecoin' && familyForSlot(SOLANA_CHAIN_ID) === 'solana' && familyForSlot('eip155:137') === null);
+// Phase 14 emulator finding 1: another family's request on a slot.
+check('foreignPaymentFamily: bitcoin: on the EVM slot -> bitcoin', foreignPaymentFamily(EVM_CHAIN_ID, `bitcoin:${BTC}?amount=0.001`) === 'bitcoin');
+check('foreignPaymentFamily: Dogecoin and Solana requests on the EVM slot, case-insensitive',
+  foreignPaymentFamily(EVM_CHAIN_ID, `  DOGECOIN:${DOGE}?amount=1`) === 'dogecoin' && foreignPaymentFamily(EVM_CHAIN_ID, `solana:${SOL}`) === 'solana');
+check('foreignPaymentFamily: ethereum: on the Bitcoin slot -> evm', foreignPaymentFamily(BITCOIN_CHAIN_ID, `ethereum:${ETH}?value=1`) === 'evm');
+check('foreignPaymentFamily: the slot’s own scheme, plain addresses, names and other schemes -> null',
+  foreignPaymentFamily(EVM_CHAIN_ID, `ethereum:${ETH}`) === null && foreignPaymentFamily(EVM_CHAIN_ID, BTC) === null &&
+    foreignPaymentFamily(EVM_CHAIN_ID, 'nick.eth') === null && foreignPaymentFamily(EVM_CHAIN_ID, 'wc:abc@2?x=y') === null &&
+    foreignPaymentFamily(EVM_CHAIN_ID, 'bitcoinx:abc') === null);
+check('the foreign-request sentence names the family and says nothing was filled in',
+  foreignPaymentRequestSentence('bitcoin') === 'This is a payment request for Bitcoin, a different network family, so nothing was filled in; open Send for Bitcoin from the Home screen to pay it.' &&
+    foreignPaymentRequestSentence('evm').includes('for Ethereum,'));
 check('isPaymentUriFor is scheme- and slot-exact', isPaymentUriFor(EVM_CHAIN_ID, '  Ethereum:0x') && !isPaymentUriFor(EVM_CHAIN_ID, 'ethereumx:0x') && !isPaymentUriFor(BITCOIN_CHAIN_ID, 'ethereum:0x'));
 
 // ---------------------------------------------------------------------------
@@ -490,9 +504,13 @@ const send = src('screens/SendScreen.tsx');
 const receive = src('screens/ReceiveScreen.tsx');
 const views = src('components/PaymentRequestViews.tsx');
 check('Send: scans try the payment-request parser first, then the old extractScannedAddress path',
-  /void handlePaymentPayload\(data, true\)\.then\(\(handled\) => \{\s*if \(handled\) return;[\s\S]{0,400}extractScannedAddress\(route\.params\.chainId, data\)/.test(send));
+  /void handlePaymentPayload\(data, true\)\.then\(\(handled\) => \{\s*if \(handled\) return;[\s\S]{0,700}extractScannedAddress\(route\.params\.chainId, data\)/.test(send));
 check('Send: a pasted payment URI goes through the same parser (never into the field as text)',
   /if \(isPaymentUriFor\(route\.params\.chainId, t\)\) \{\s*void handlePaymentPayload\(t, false\);\s*return;\s*\}/.test(send));
+check('Send: a pasted foreign-family request shows one sentence and fills nothing in',
+  /const foreign = foreignPaymentFamily\(route\.params\.chainId, t\);\s*if \(foreign\) \{\s*setRequestLines\(null\);\s*setRequestError\(foreignPaymentRequestSentence\(foreign\)\);\s*return;\s*\}\s*setRequestError\(null\);\s*setRecipient\(t\);/.test(send));
+check('Send: a scanned foreign-family request shows the same sentence and fills nothing in',
+  /if \(handled\) return;\s*const foreign = foreignPaymentFamily\(route\.params\.chainId, data\);\s*if \(foreign\) \{\s*setRequestLines\(null\);\s*setRequestError\(foreignPaymentRequestSentence\(foreign\)\);\s*return;\s*\}/.test(send));
 check('Send: a refused request fills nothing in', /if \(parsed\.kind === 'refused'\) \{\s*setRequestLines\(null\);\s*setRequestError\(parsed\.message\);\s*return true;\s*\}/.test(send));
 check('Send: the parser gets the ACTIVE profile and the ACTIVE network\'s tracked tokens',
   send.includes('const tracked = isEvm ? await listTokens(evmChain.caip2).catch(() => []) : [];') && send.includes('evmProfile: evmChain,'));
@@ -520,6 +538,10 @@ async function mutant(name, find, replace, stillCorrect) {
   const m = await importMutant('src/wallet/payment-request.ts', prSrc.replace(find, replace));
   check(`${name} caught`, !(await stillCorrect(m)));
 }
+await mutant('M11 (foreign family not recognised)', "  return family !== null && family !== own ? family : null;", '  return null;',
+  (m) => m.foreignPaymentFamily(EVM_CHAIN_ID, `bitcoin:${BTC}?amount=1`) === 'bitcoin');
+await mutant('M12 (own scheme reported as foreign)', "  return family !== null && family !== own ? family : null;", '  return family;',
+  (m) => m.foreignPaymentFamily(EVM_CHAIN_ID, `ethereum:${ETH}`) === null);
 await mutant('M1 (chain id check dropped)', 'if (chainId !== active) {', 'if (false) {',
   (m) => m.parsePaymentRequest(`ethereum:${ETH}@11155111?value=1`, ctxMainnet).kind === 'refused');
 await mutant('M2 (untracked token accepted)', '  if (!tracked) {\n', '  if (false) {\n',

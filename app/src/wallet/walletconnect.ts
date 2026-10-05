@@ -44,8 +44,8 @@ import {
 /**
  * WalletConnect v2 glue (Tier 1 feature 78): lets external dApps connect to
  * this wallet, request signatures, and submit transactions — on the ACTIVE
- * EVM chain only (Ethereum mainnet, or Sepolia while test mode is on; see
- * config/evm-chain.ts). Requests are handled app-wide by
+ * EVM chain only (Ethereum mainnet, or the chosen test network while test
+ * mode is on; see config/evm-chain.ts). Requests are handled app-wide by
  * WalletConnectContext, not only while the Connections screen is open.
  *
  * SDK choice (verified 2026-09-27): WalletConnect-the-company rebranded to

@@ -38,6 +38,7 @@ import {
   type SessionRecord,
   type SessionSubscriptionMeta,
 } from './sessions.ts';
+import { suggestFeesRetryingOnce } from './fee-read.ts';
 
 /**
  * Subscriptions (phase 12 item 2, app half): a grant TEMPLATE on the
@@ -508,7 +509,7 @@ export async function readSubscriptionFeeFacts(
       return null;
     });
   const [fees, balance, deposit] = await Promise.all([
-    keep(client.suggestFees()),
+    keep(suggestFeesRetryingOnce(client)),
     keep(client.getBalance(account)),
     keep(fetchTokenBalanceVia(node, ENTRYPOINT_V07, account)),
   ]);

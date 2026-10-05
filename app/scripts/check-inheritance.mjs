@@ -78,6 +78,7 @@ import {
   MAX_INHERITANCE_DELAY_SECONDS,
   assertInheritanceAllowed,
   buildHeirSet,
+  canReviewHeirs,
   checkTakeoverAttempts,
   clearTakeoverScanState,
   describeHeirExposure,
@@ -90,6 +91,7 @@ import {
   takeoverCoverageText,
   takeoverStatusText,
   validateInheritanceDelay,
+  heirCount,
 } from '../src/wallet/inheritance.ts';
 import { KERNEL_ACCOUNT_0, OWNER_0, TEST_MNEMONIC, decodeKernelExecute, fakeBundler, fakeKernelNode, memoryStore } from './fakes-kernel.mjs';
 
@@ -337,7 +339,48 @@ console.log('check-inheritance: rules (network, delay, heirs)');
   const noDelay = await caught(() => Promise.resolve().then(() => buildHeirSet({ drafts: [{ address: heirA.address, label: '', weight: '1' }], threshold: '1', delaySeconds: 0 })));
   check('delay 0 refused before the guardian rules', noDelay?.message === 'Choose one of the delays offered.');
   const badAddress = await caught(() => Promise.resolve().then(() => buildHeirSet({ drafts: [{ address: '0x1234', label: '', weight: '1' }], threshold: '1', delaySeconds: 600 })));
-  check('a malformed heir address is refused by the send flow’s validation', badAddress && /^Guardian 1: /.test(badAddress.message), badAddress?.message);
+  check('a malformed heir address is refused by the send flow’s validation, named "Heir 1"', badAddress && /^Heir 1: /.test(badAddress.message) && !/Guardian|recipient/i.test(badAddress.message), badAddress?.message);
+  // Phase 14 emulator finding 4: an empty heir row said "Guardian 1: Enter a
+  // recipient address."; and Review was enabled with no heir at all.
+  const blank = await caught(() => Promise.resolve().then(() => buildHeirSet({ drafts: [{ address: '  ', label: '', weight: '1' }], threshold: '1', delaySeconds: 600 })));
+  check('an empty heir row: "Heir 1: Enter the heir’s address."', blank?.message === 'Heir 1: Enter the heir’s address.', blank?.message);
+  const blankSecond = await caught(() => Promise.resolve().then(() => buildHeirSet({ drafts: [{ address: heirA.address, label: '', weight: '1' }, { address: '', label: '', weight: '1' }], threshold: '1', delaySeconds: 600 })));
+  check('an empty second row names "Heir 2"', blankSecond?.message === 'Heir 2: Enter the heir’s address.', blankSecond?.message);
+  const { buildGuardianSet } = await import('../src/wallet/recovery.ts');
+  const blankGuardian = await caught(() => Promise.resolve().then(() => buildGuardianSet({ drafts: [{ address: '', label: '', weight: '1' }], threshold: '1', delaySeconds: 600, noVetoAcknowledged: false })));
+  check('the guardian form keeps "Guardian 1" and no longer says "recipient"', blankGuardian?.message === 'Guardian 1: Enter the guardian’s address.', blankGuardian?.message);
+  const empty = [{ address: '', label: '', weight: '1' }];
+  const filled = [{ address: heirA.address, label: '', weight: '1' }];
+  check('heirCount counts only rows with an address', heirCount(empty) === 0 && heirCount([...empty, ...filled]) === 1 && heirCount([]) === 0);
+  check('Review stays disabled with zero heirs even when the acknowledgement is on',
+    canReviewHeirs({ drafts: empty, acknowledged: true }) === false && canReviewHeirs({ drafts: [], acknowledged: true }) === false);
+  check('Review stays disabled without the acknowledgement', canReviewHeirs({ drafts: filled, acknowledged: false }) === false);
+  check('Review is enabled with one heir and the acknowledgement', canReviewHeirs({ drafts: filled, acknowledged: true }) === true);
+  const { readFileSync: readSrc, writeFileSync: writeSrc, mkdirSync: mkdirSrc, rmSync: rmSrc } = await import('node:fs');
+  const screenSrc = readSrc(new URL('../src/screens/InheritanceScreen.tsx', import.meta.url), 'utf8');
+  check('the screen’s Review button uses canReviewHeirs (source)',
+    screenSrc.includes('disabled={!canReviewHeirs({ drafts, acknowledged: ack })}') && !screenSrc.includes('disabled={!ack}'));
+  // Mutation: canReviewHeirs without the heir count must fail the zero-heir check.
+  const inhSrc = readSrc(new URL('../src/wallet/inheritance.ts', import.meta.url), 'utf8');
+  const anchor = '  return args.acknowledged && heirCount(args.drafts) > 0;';
+  check('mutation anchor present (zero-heir rule)', inhSrc.includes(anchor));
+  const { dirname: dn, resolve: rs, join: jn } = await import('node:path');
+  const { fileURLToPath: f2p, pathToFileURL: p2f } = await import('node:url');
+  const here = dn(f2p(import.meta.url));
+  const original = rs(here, '../src/wallet');
+  const mdir = jn(here, `.mutants-inheritance-${process.pid}`);
+  mkdirSrc(mdir, { recursive: true });
+  try {
+    const mutated = inhSrc
+      .replace(anchor, '  return args.acknowledged;')
+      .replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${p2f(rs(original, spec)).href}'`);
+    const file = jn(mdir, 'inheritance.ts');
+    writeSrc(file, mutated);
+    const m = await import(p2f(file).href);
+    check('M-h1 caught: without the heir count Review would be enabled with zero heirs', m.canReviewHeirs({ drafts: empty, acknowledged: true }) === true);
+  } finally {
+    rmSrc(mdir, { recursive: true, force: true });
+  }
 }
 
 // ---------------------------------------------------------------------------

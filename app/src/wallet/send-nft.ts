@@ -26,6 +26,7 @@ import {
   type OpStackFees,
   type SendResult,
 } from './send.ts';
+import { suggestFeesRetryingOnce } from './fee-read.ts';
 
 /**
  * NFT send flow (phase 7 item 4): quoting and sign+broadcast for ERC-721
@@ -211,7 +212,7 @@ export async function prepareNftSend(request: NftSendRequest): Promise<NftSendQu
     node.chainId(),
     node.getBalance(from),
     node.getTransactionCount(from),
-    node.suggestFees(),
+    suggestFeesRetryingOnce(node),
   ]);
   const expected = BigInt(expectedCaip2.split(':')[1]!);
   if (chainId !== expected) {

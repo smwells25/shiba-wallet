@@ -395,6 +395,17 @@ console.log('check-watch-only: which screens a watch-only account may open');
     check(`${route} is refused`, typeof watchOnlyRouteRefusal(route) === 'string');
   }
   check('a route added later is refused by default (allow list, not deny list)', watchOnlyRouteRefusal('SomeFutureSigningScreen')?.startsWith('This screen is not available for a watch-only account') === true);
+  // Phase 14 emulator finding 5: Inheritance was refused as "This screen…".
+  // Every refused route of the main stack must name its feature.
+  {
+    const appSrc = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
+    const main = appSrc.slice(appSrc.indexOf('name="Home"'));
+    const routes = [...main.matchAll(/name="([A-Za-z]+)"/g)].map((m) => m[1]);
+    const unnamed = routes.filter((r) => watchOnlyRouteRefusal(r)?.startsWith('This screen') === true);
+    check('every refused route of the main stack names its feature (no "This screen…")', routes.length >= 20 && unnamed.length === 0, unnamed.join(', '));
+    check('Inheritance names its feature', watchOnlyRouteRefusal('Inheritance') ===
+      'Inheritance (demonstration) is not available for a watch-only account: the wallet holds no key for this address, so it cannot sign or send anything for it. Switch to one of your own accounts to use it.');
+  }
   check('the Send refusal sentence',
     watchOnlyRouteRefusal('Send') === 'Sending is not available for a watch-only account: the wallet holds no key for this address, so it cannot sign or send anything for it. Switch to one of your own accounts to use it.');
   check('every route the app registers is classified (allowed or named in the refusal map)', (() => {

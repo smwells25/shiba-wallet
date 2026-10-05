@@ -376,6 +376,12 @@ export function HomeScreen({ navigation }: Props) {
   // links were hard to reach; now every link is its own focusable button.
   const renderChainCard = ({ item }: { item: ChainAccount }) => {
     const isEvm = item.chainId === EVM_CHAIN_ID;
+    // The EVM row is titled with the ACTIVE profile's network ("Ethereum",
+    // "Ethereum Sepolia", "Base Sepolia", "Arbitrum Sepolia"); the account's
+    // own name (item.name, the key provider's "Ethereum") is left unchanged
+    // because other screens use it. Only this card's visible title and its
+    // screen-reader labels use the profile label.
+    const title = isEvm ? evmChain.label : item.name;
     // Account tools that appear only after asynchronous eligibility checks
     // (session keys, guardians, passkey). They get their own row with its
     // height reserved from the start, so nothing above or below moves when
@@ -414,9 +420,9 @@ export function HomeScreen({ navigation }: Props) {
               ownership or smart-account box). */}
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`${item.name}, ${watchOnly ? `watch-only address ${item.address}` : shortAddress(item.address)}`}
+            accessibilityLabel={`${title}, ${watchOnly ? `watch-only address ${item.address}` : shortAddress(item.address)}`}
             accessibilityHint={
-              watchOnly ? 'Opens the watched address and its QR code' : `Opens the ${item.name} receive screen`
+              watchOnly ? 'Opens the watched address and its QR code' : `Opens the ${title} receive screen`
             }
             onPress={() => navigation.navigate('Receive', { chainId: item.chainId })}
             style={({ pressed }) => [styles.receiveArea, { opacity: pressed ? 0.7 : 1 }]}
@@ -425,7 +431,7 @@ export function HomeScreen({ navigation }: Props) {
               <Text style={styles.badgeText}>{item.symbol}</Text>
             </View>
             <View style={styles.cardBody}>
-              <Text style={[styles.chainName, { color: theme.text }]}>{item.name}</Text>
+              <Text style={[styles.chainName, { color: theme.text }]}>{title}</Text>
               <Text style={[styles.address, { color: theme.textMuted }]}>
                 {shortAddress(item.address)}
               </Text>
@@ -449,7 +455,7 @@ export function HomeScreen({ navigation }: Props) {
             : cardLink('send', `Send ${item.symbol}`, 'Send ↗', () =>
                 navigation.navigate('Send', { chainId: item.chainId }),
               )}
-          {cardLink('activity', `${item.name} activity`, 'Activity', () =>
+          {cardLink('activity', `${title} activity`, 'Activity', () =>
             navigation.navigate('Activity', { chainId: item.chainId }),
           )}
           {/* Swaps are an EVM feature (0x, phase 5 item 1); the screen

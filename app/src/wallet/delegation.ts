@@ -29,6 +29,7 @@ import {
   quoteEndpointChange,
   type OpStackFees,
 } from './send.ts';
+import { suggestFeesRetryingOnce } from './fee-read.ts';
 
 /**
  * EIP-7702 "Upgrade this account" glue for the app (phase 8 item 1, app
@@ -517,7 +518,7 @@ export async function prepareSetCodeTx(options: {
   }
   const [nonce, fees, balance] = await Promise.all([
     client.getTransactionCount(options.from),
-    client.suggestFees(),
+    suggestFeesRetryingOnce(client),
     client.getBalance(options.from),
   ]);
   const gasLimit = setCodeIntrinsicGas(1) + SET_CODE_EXECUTION_GAS;

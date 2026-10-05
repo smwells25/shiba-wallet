@@ -100,6 +100,7 @@ import {
   isWatchOnlyAccountId,
   smartAccountSaltFor,
 } from './account-ids.ts';
+import { suggestFeesRetryingOnce } from './fee-read.ts';
 
 /**
  * Guardians and social recovery for the app (phase 8 item 4, app half), on
@@ -1123,6 +1124,12 @@ export function buildGuardianSet(args: {
   threshold: string;
   delaySeconds: number;
   noVetoAcknowledged: boolean;
+  /**
+   * What the form calls each entry in its messages: 'guardian' (default) or
+   * 'heir' (the inheritance form, ./inheritance.ts buildHeirSet), so an
+   * error reads "Heir 1: …" on the inheritance screen.
+   */
+  role?: 'guardian' | 'heir';
 }): { set: KernelGuardianSet; labels: Record<string, string> } {
   if (args.delaySeconds === 0 && !args.noVetoAcknowledged) throw new Error(NO_VETO_ACK_REQUIRED);
   if (!Number.isSafeInteger(args.delaySeconds) || args.delaySeconds < 0) {
@@ -1130,7 +1137,11 @@ export function buildGuardianSet(args: {
   }
   const labels: Record<string, string> = {};
   const guardians: KernelGuardian[] = args.drafts.map((draft, i) => {
-    const where = `Guardian ${i + 1}`;
+    const noun = args.role === 'heir' ? 'heir' : 'guardian';
+    const where = `${noun === 'heir' ? 'Heir' : 'Guardian'} ${i + 1}`;
+    // An empty field gets its own sentence: the send flow's "Enter a
+    // recipient address." would call a guardian or heir a recipient.
+    if (draft.address.trim() === '') throw new Error(`${where}: Enter the ${noun}’s address.`);
     const address = validateRecipient(EVM_CHAIN_ID, draft.address);
     if (!address.ok) throw new Error(`${where}: ${address.error}`);
     const weightText = draft.weight.trim();
@@ -2326,7 +2337,7 @@ export async function prepareApproveWithSig(
   const call = encodeApproveWithSig(progress.request, progress.approvals.map((a) => toBytes(a)));
   const [estimate, fees, nonce, balance] = await Promise.all([
     client.estimateGas({ from: args.from, to: call.to, value: 0n, data: toHex(call.data) }),
-    client.suggestFees(),
+    suggestFeesRetryingOnce(client),
     client.getTransactionCount(args.from),
     client.getBalance(args.from),
   ]);
@@ -2614,7 +2625,7 @@ export async function prepareGuardianSubmission(args: {
     spec,
   });
   const [suggested, floor, accountBalance, deposit] = await Promise.all([
-    client.suggestFees(),
+    suggestFeesRetryingOnce(client),
     bundlerFeeFloor(args.bundler),
     client.getBalance(request.account),
     depositReader.getEntryPointDeposit(request.account).catch(() => null),

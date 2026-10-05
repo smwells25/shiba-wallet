@@ -125,13 +125,18 @@ import { invalidateNftCache, standardLabel } from '../wallet/nfts';
 import { extractScannedAddress } from '../wallet/scan';
 import {
   describeParsedRequest,
+  foreignPaymentFamily,
+  foreignPaymentRequestSentence,
   isPaymentUriFor,
   parsePaymentRequest,
 } from '../wallet/payment-request';
 import {
+  NAME_NOT_USABLE_SENTENCE,
   describeNameError,
   ensPrivacyNote,
   ensRegistryFor,
+  formErrorBesideName,
+  localNameRefusal,
   looksLikeName,
   lookUpRecipientName,
   recheckRecipientName,
@@ -164,7 +169,7 @@ import { usePrices } from '../wallet/usePrices';
 import { fiatLine, formatFiat, nativePriceAssetId, tokenPriceAssetId } from '../wallet/prices';
 import { BITCOIN, DOGECOIN } from '@shiba-wallet/chains-utxo';
 import { usePasskeyInfo } from '../wallet/usePasskeyInfo';
-import { OfflineNotice } from '../wallet/connectivity';
+import { OfflineNotice, TechnicalDetail } from '../wallet/connectivity';
 import { loadPasskeyNative } from '../wallet/passkey-native';
 import {
   createPasskeyBundle,
@@ -292,6 +297,15 @@ export function SendScreen({ route, navigation }: Props) {
   const [nameState, setNameState] = useState<{ key: string; view: EnsNameView; url: string | null } | null>(null);
   const [quotedName, setQuotedName] = useState<{ name: string; address: string; registryLabel: string } | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  // The technical line under a quote failure (finding 3 of the phase 14
+  // emulator pass): shown only while the form error it belongs to is the one
+  // on screen, so every existing setFormError(null) also hides it.
+  const [formTechnical, setFormTechnical] = useState<{ forError: string; text: string } | null>(null);
+  const showQuoteFailure = (described: { title: string; detail: string; technical?: string }) => {
+    const message = `${described.title}\n${described.detail}`;
+    setFormError(message);
+    setFormTechnical(described.technical ? { forError: message, text: described.technical } : null);
+  };
   const [scannerOpen, setScannerOpen] = useState(false);
   const [maxBusy, setMaxBusy] = useState(false);
   const [quote, setQuote] = useState<
@@ -455,14 +469,24 @@ export function SendScreen({ route, navigation }: Props) {
     route.params.chainId === EVM_CHAIN_ID && looksLikeName(recipient)
       ? `${evmChain.caip2}|${recipient.trim()}`
       : null;
+  // A name refused without any request (outside the supported characters,
+  // or a network where names are not looked up) is shown at once, with no
+  // "Looking up…" and no privacy line, because nothing goes out.
+  const nameLocalRefusal = nameKey ? localNameRefusal(recipient.trim(), evmChain) : null;
   const nameView: EnsNameView | null = nameKey
-    ? nameState && nameState.key === nameKey
-      ? nameState.view
-      : { status: 'resolving', name: recipient.trim() }
+    ? nameLocalRefusal !== null
+      ? { status: 'refused', name: recipient.trim(), message: nameLocalRefusal }
+      : nameState && nameState.key === nameKey
+        ? nameState.view
+        : { status: 'resolving', name: recipient.trim() }
     : null;
   const nameRegistry = ensRegistryFor(evmChain);
+  // ENS names are offered in the recipient field only on the EVM slot of a
+  // profile whose registry answers (Ethereum mainnet and Sepolia); on Base
+  // Sepolia and Arbitrum Sepolia the placeholder does not mention names.
+  const namesOffered = route.params.chainId === EVM_CHAIN_ID && nameRegistry.ok;
   useEffect(() => {
-    if (!nameKey) return;
+    if (!nameKey || nameLocalRefusal !== null) return;
     const input = nameKey.slice(nameKey.indexOf('|') + 1);
     let cancelled = false;
     // A short pause so a name is looked up once typing stops, not per key.
@@ -499,8 +523,11 @@ export function SendScreen({ route, navigation }: Props) {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [nameKey, evmChain]);
+  }, [nameKey, nameLocalRefusal, evmChain]);
   const nameResolvedAddress = nameView?.status === 'resolved' ? nameView.address : null;
+  // The form error line never repeats the name panel's refusal (shown just
+  // above it), e.g. after a Review-time re-check refused the name.
+  const shownFormError = formErrorBesideName(formError, nameView?.status === 'refused' ? nameView.message : null);
 
   const validation = useMemo(() => {
     if (nameKey) {
@@ -1044,14 +1071,15 @@ export function SendScreen({ route, navigation }: Props) {
       }
       setAmountText(maxText);
     } catch (e) {
-      const { title, detail } = retitleQuoteFailure(
-        (tokenGasActive ? describeTokenGasError(e) : null) ??
-          (aaActive && aaType
-            ? describeAaError(e, { accountType: aaType, deployed: null, bundlerUrl: aaConfig?.bundlerUrl ?? null })
-            : null) ??
-          describeError(e),
+      showQuoteFailure(
+        retitleQuoteFailure(
+          (tokenGasActive ? describeTokenGasError(e) : null) ??
+            (aaActive && aaType
+              ? describeAaError(e, { accountType: aaType, deployed: null, bundlerUrl: aaConfig?.bundlerUrl ?? null })
+              : null) ??
+            describeError(e),
+        ),
       );
-      setFormError(`${title}\n${detail}`);
     } finally {
       setMaxBusy(false);
     }
@@ -1060,8 +1088,9 @@ export function SendScreen({ route, navigation }: Props) {
   /**
    * A scanned or pasted payload that starts with THIS slot's payment-URI
    * scheme (../wallet/payment-request.ts). Returns false when it is not
-   * one, so the caller keeps the old behaviour (another family's URI then
-   * fails the normal address validation). A refused request fills in
+   * one; the caller then refuses another family's request with one sentence
+   * (foreignPaymentFamily) and leaves anything else to the normal address
+   * validation. A refused request fills in
    * nothing and shows the reason. An accepted one fills the editable
    * recipient and amount fields; when it asks for a token while this
    * screen sends the native coin (or the other way round), the screen is
@@ -1125,9 +1154,11 @@ export function SendScreen({ route, navigation }: Props) {
     let reviewedName: { name: string; address: string; registryLabel: string } | null = null;
     if (nameKey) {
       if (!nameView || nameView.status !== 'resolved' || !nameRegistry.ok) {
+        // The refusal itself is already under the recipient field; repeating
+        // it here would show the same sentence twice.
         setFormError(
           nameView?.status === 'refused'
-            ? nameView.message
+            ? NAME_NOT_USABLE_SENTENCE
             : 'Wait until the name has been looked up and its address is shown.',
         );
         return;
@@ -1364,14 +1395,15 @@ export function SendScreen({ route, navigation }: Props) {
     } catch (e) {
       // Nothing has been signed or sent while a quote is prepared: the
       // generic failure title says so (retitleQuoteFailure).
-      const { title, detail } = retitleQuoteFailure(
-        (tokenGasActive ? describeTokenGasError(e) : null) ??
-          (aaActive && aaType
-            ? describeAaError(e, { accountType: aaType, deployed: null, bundlerUrl: aaConfig?.bundlerUrl ?? null })
-            : null) ??
-          describeError(e),
+      showQuoteFailure(
+        retitleQuoteFailure(
+          (tokenGasActive ? describeTokenGasError(e) : null) ??
+            (aaActive && aaType
+              ? describeAaError(e, { accountType: aaType, deployed: null, bundlerUrl: aaConfig?.bundlerUrl ?? null })
+              : null) ??
+            describeError(e),
+        ),
       );
-      setFormError(`${title}\n${detail}`);
       setPhase('form');
     }
   };
@@ -2473,18 +2505,21 @@ export function SendScreen({ route, navigation }: Props) {
               void handlePaymentPayload(t, false);
               return;
             }
+            // Another family's payment request (bitcoin:, dogecoin:,
+            // solana: or ethereum:): one sentence naming it; nothing filled.
+            const foreign = foreignPaymentFamily(route.params.chainId, t);
+            if (foreign) {
+              setRequestLines(null);
+              setRequestError(foreignPaymentRequestSentence(foreign));
+              return;
+            }
             setRequestError(null);
             setRecipient(t);
           }}
-          accessibilityLabel={
-            route.params.chainId === EVM_CHAIN_ID ? 'Recipient address or ENS name' : 'Recipient address'
-          }
+          accessibilityLabel={namesOffered ? 'Recipient address or ENS name' : 'Recipient address'}
           placeholder={
-            token || nftMode
-              ? 'Ethereum address or ENS name'
-              : route.params.chainId === EVM_CHAIN_ID
-                ? `${account.symbol} address or ENS name`
-                : `${account.symbol} address`
+            (token || nftMode ? 'Ethereum address' : `${account.symbol} address`) +
+            (namesOffered ? ' or ENS name' : '')
           }
           placeholderTextColor={theme.textMuted}
           autoCapitalize="none"
@@ -2520,9 +2555,15 @@ export function SendScreen({ route, navigation }: Props) {
           setFormError(null);
           void handlePaymentPayload(data, true).then((handled) => {
             if (handled) return;
-            // Not a payment request for this slot: the old behaviour, so a
-            // plain address (or another chain's URI, left untouched) meets
-            // the normal validation.
+            const foreign = foreignPaymentFamily(route.params.chainId, data);
+            if (foreign) {
+              setRequestLines(null);
+              setRequestError(foreignPaymentRequestSentence(foreign));
+              return;
+            }
+            // Not a payment request of any family: the old behaviour, so a
+            // plain address (or a URI of some other scheme, left untouched)
+            // meets the normal validation.
             const scanned = extractScannedAddress(route.params.chainId, data);
             setRequestError(null);
             setRecipient(scanned);
@@ -2561,7 +2602,7 @@ export function SendScreen({ route, navigation }: Props) {
       {nameView ? (
         <EnsNameStatus
           view={nameView}
-          privacyNote={nameRegistry.ok ? ensPrivacyNote(nameState?.url ?? url) : null}
+          privacyNote={nameRegistry.ok && nameLocalRefusal === null ? ensPrivacyNote(nameState?.url ?? url) : null}
         />
       ) : null}
       {validation && !validation.ok ? (
@@ -2620,11 +2661,12 @@ export function SendScreen({ route, navigation }: Props) {
         </>
       )}
 
-      {formError ? (
+      {shownFormError ? (
         <Text accessibilityLiveRegion="polite" style={[styles.fieldError, { color: theme.danger }]}>
-          {formError}
+          {shownFormError}
         </Text>
       ) : null}
+      {formError && formTechnical?.forError === formError ? <TechnicalDetail text={formTechnical.text} /> : null}
 
       {phase === 'quoting' ? (
         <View style={styles.center}>

@@ -58,6 +58,9 @@ import {
   sendAa,
   AaFeeRoseError,
   AA_QUOTE_ALREADY_USED,
+  aaErc20TransferCalls,
+  aaRiskWarningTarget,
+  aaUserCalls,
 } from '../src/wallet/aa.ts';
 import {
   TOKEN_GAS_7702_NOTE,
@@ -1220,6 +1223,44 @@ console.log('check-token-gas: the ERC-7677 source (Pimlico’s ERC-20 paymaster 
     check('USDC send of the whole balance (typed): refused, the fee would not fit', over instanceof AaFundingError, over?.message);
     const ethMax = await tg.maxAaTokenGasSend(bundle, OWNER_0, { acceptsErc7677: true });
     check('ETH Max with the USDC fee = the full ETH balance', ethMax === 10n ** 16n);
+  }
+
+  // Emulator finding 2 (phase 14 pass): the risk card on an ERC-7677 USDC-fee
+  // confirm described the inserted paymaster approval instead of the user's
+  // own call. aaRiskWarningTarget must skip exactly that approval, so the
+  // card equals the ETH-fee card for the same send.
+  {
+    const riskOf = (t) => ({ to: t.to.toLowerCase(), data: toHex(t.data), counterparty: t.counterparty?.toLowerCase() ?? null });
+    const eq = (a, b) => JSON.stringify(riskOf(a)) === JSON.stringify(riskOf(b));
+    const native7677 = await tg.prepareAaTokenGasSend(pimBundle().bundle, OWNER_0, RECIPIENT, 0n, { acceptsErc7677: true });
+    const nativeEth = { calls: [{ to: RECIPIENT, value: 0n, data: new Uint8Array(0) }] };
+    check('risk card (ERC-7677, native send): the user’s call, equal to the ETH-fee card', eq(aaRiskWarningTarget(native7677), aaRiskWarningTarget(nativeEth)) && same(aaRiskWarningTarget(native7677).to, RECIPIENT));
+    check('aaUserCalls drops only the inserted approval', aaUserCalls(native7677).length === 1 && same(aaUserCalls(native7677)[0].to, RECIPIENT));
+    const usdcTarget = { contract: SEP_USDC, recipient: RECIPIENT, symbol: 'USDC', decimals: 6, chainCaip2: SEPOLIA };
+    const token7677 = await tg.prepareAaTokenGasErc20Send(pimBundle().bundle, OWNER_0, { ...usdcTarget, amount: 1_000_000n }, { acceptsErc7677: true });
+    const tokenEth = { calls: aaErc20TransferCalls(SEP_USDC, RECIPIENT, 1_000_000n), token: token7677.token };
+    check('risk card (ERC-7677, USDC send): the transfer with the recipient as counterparty, equal to the ETH-fee card',
+      eq(aaRiskWarningTarget(token7677), aaRiskWarningTarget(tokenEth)) && same(aaRiskWarningTarget(token7677).counterparty, RECIPIENT));
+    // A user-requested approve is never skipped: not when it is the only
+    // call after the inserted one, not when the first call differs from the
+    // exact inserted approval, and not on a quote of another source.
+    const approveIface = new ethers.Interface(['function approve(address,uint256)']);
+    const userApprove = { to: SEP_USDC, value: 0n, data: ethers.getBytes(approveIface.encodeFunctionData('approve', [RECIPIENT, 7n])) };
+    const withUserApprove = { ...native7677, calls: [native7677.calls[0], userApprove] };
+    check('a user approve after the inserted one is what the card describes', toHex(aaRiskWarningTarget(withUserApprove).data) === toHex(userApprove.data));
+    const differentFirst = { ...native7677, calls: [engine.erc7677TokenApproveCall(SEP_USDC, PIM, native7677.tokenGas.maxTokenCharge + 1n), ...native7677.calls.slice(1)] };
+    check('a first approve that is not the exact inserted one is not skipped', aaUserCalls(differentFirst).length === 2 && toHex(aaRiskWarningTarget(differentFirst).data) === toHex(differentFirst.calls[0].data));
+    const circleLike = { ...native7677, tokenGas: { ...native7677.tokenGas, source: undefined } };
+    check('the same calls on a non-ERC-7677 quote are not trimmed', aaUserCalls(circleLike).length === 2);
+    const aloneApproval = { ...native7677, calls: [native7677.calls[0]] };
+    check('an approval with no call after it is not skipped (nothing to describe otherwise)', aaUserCalls(aloneApproval).length === 1);
+    const aaSrc = readFileSync(new URL('../src/wallet/aa.ts', import.meta.url), 'utf8');
+    const skipAnchor = '  return isInserted ? quote.calls.slice(1) : quote.calls;';
+    check('mutation anchor present (risk-card skip)', aaSrc.includes(skipAnchor) && aaSrc.includes('  const first = aaUserCalls(quote)[0]!;'));
+    const noSkip = await importMutantTg('src/wallet/aa.ts', aaSrc.replace(skipAnchor, '  return quote.calls;'));
+    check('M-r1 caught: without the skip the card describes the paymaster approval', !eq(noSkip.aaRiskWarningTarget(native7677), aaRiskWarningTarget(nativeEth)));
+    const skipAny = await importMutantTg('src/wallet/aa.ts', aaSrc.replace(skipAnchor, '  return quote.calls.slice(1);'));
+    check('M-r2 caught: skipping any first call would hide a non-matching approve', skipAny.aaUserCalls(differentFirst).length === 1 && aaUserCalls(differentFirst).length === 2);
   }
 
   // Send: after the gate, the final terms are checked against the displayed maximum.
