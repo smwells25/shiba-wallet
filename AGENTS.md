@@ -6823,3 +6823,43 @@ Recommended next (not started): the user-pushed recurring payment from
 docs/SCHEDULED_PAYMENTS.md; multi-signature accounts (24) or an in-app
 dApp browser (79) as the next large items; a live check that other
 wallets accept the payment links.
+- [x] Phase 14 emulator findings FIXED (commit 83feb84; offline runner
+      ALL GREEN in the CTO's isolated worktree: engine 815, app 5,503
+      across 43 suites, lint 0/0, tsc clean; not seen on a device). (1)
+      looksLikeName refuses any text with a colon; foreignPaymentFamily
+      recognises another family's payment scheme on paste and scan and
+      shows one sentence ("This is a payment request for Bitcoin, a
+      different network family, so nothing was filled in; open Send for
+      Bitcoin from the Home screen to pay it."); a name refusal decided
+      locally shows at once with no request and no privacy line, and is
+      never rendered twice. (2) aa.ts aaUserCalls drops calls[0] ONLY for
+      an 'erc7677' token-gas quote whose first call is byte-identical to
+      erc7677TokenApproveCall(token, paymaster, maxTokenCharge) with at
+      least one call after it; the risk card then equals the ETH-fee
+      path's card; an approve differing by one base unit, a user approve
+      and non-ERC-7677 quotes are never skipped. (3) The transient "RPC
+      HTTP error 400 for eth_getBlockByNumber" comes from
+      NodeClient.suggestFees; new fee-read.ts suggestFeesRetryingOnce
+      retries ONCE on the same endpoint, only for HTTP 400 on
+      eth_getBlockByNumber / eth_maxPriorityFeePerGas (read-only,
+      wallet-fixed parameters, cannot revert), used at all 13 call sites
+      (a check forbids direct .suggestFees() calls); the global rule that
+      HTTP 400 is not an endpoint failure is unchanged; a remaining error
+      reads "The network endpoint answered a request for network data
+      with an error (HTTP 400) instead of the data. This is usually brief;
+      try again in a moment." with a technical line (broadcast methods
+      keep their own wording). (4) "Heir N: Enter the heir's address."
+      and Review needs at least one heir address (canReviewHeirs). (5) The
+      watch-only gate names "Inheritance (demonstration)"; a check asserts
+      every refused main-stack route names its feature. (6) LockGate wraps
+      the screens in an always-rendered View with
+      importantForAccessibility 'no-hide-descendants' and
+      accessibilityElementsHidden while locked (React Native accessibility
+      docs, fetched 2026-10-05, and the installed 0.86.3 typings); screens
+      are not unmounted; three mutants caught. (7) Copy: the recipient
+      placeholder offers ENS only where ensRegistryFor allows; the Home
+      EVM row shows the active profile's label; the Settings WalletConnect
+      blurb lists the test networks from the profile table; the Backup
+      text is true with watch-only addresses present. Unverified: the
+      provider behind the transient 400; TalkBack / VoiceOver on a device.
+      Phase 14's code is complete at this commit.
