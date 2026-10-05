@@ -6,14 +6,23 @@ import { MAX_ACCOUNT_NAME_LENGTH, shortAccountAddress } from '../wallet/accounts
 import { importedSlotOf } from '../wallet/account-ids';
 import { requireLocalAuth } from '../wallet/biometric';
 import {
+  accountsBackupHint,
+  PHRASE_ACCOUNT_WAS_IMPORTED_TITLE,
+  phraseAccountSameAsImportedNote,
   REMOVE_IMPORTED_CONFIRM_MESSAGE,
   REMOVE_IMPORTED_CONFIRM_TITLE,
   REMOVE_IMPORTED_TITLE,
   REVEAL_IMPORTED_MESSAGE,
   REVEAL_IMPORTED_TITLE,
+  importedRemovalStrandedSentence,
   removeImportedMessage,
 } from '../wallet/imported-keys';
-import { PROMPTS } from '../wallet/storage';
+import { PROMPTS, dropPhraseTicket } from '../wallet/storage';
+import { getEndpoint } from '../config/networks';
+import { usePrefs } from '../wallet/PrefsContext';
+import { getAaConfig, readOwnerSmartAccountHoldings } from '../wallet/aa';
+import { formatUnits } from '../wallet/balances';
+import { EVM_CHAIN_ID } from '../wallet/send';
 import { useWallet, type AccountView } from '../wallet/WalletContext';
 import { ImportedKeyReveal } from './ImportedKeyReveal';
 
@@ -32,6 +41,7 @@ import { ImportedKeyReveal } from './ImportedKeyReveal';
  */
 export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
   const theme = useTheme();
+  const { evmChain } = usePrefs();
   const {
     activeAccount,
     accountList,
@@ -68,8 +78,13 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
   };
 
   const onAdd = async () => {
-    const ok = await run('Could not add account', () => addAccount(newName.trim() || null));
+    const out: { created: AccountView | null } = { created: null };
+    const ok = await run('Could not add account', async () => {
+      out.created = await addAccount(newName.trim() || null);
+    });
     if (ok) setNewName('');
+    const sameKey = out.created ? phraseAccountSameAsImportedNote(out.created, accountList) : null;
+    if (sameKey) Alert.alert(PHRASE_ACCOUNT_WAS_IMPORTED_TITLE, sameKey);
   };
 
   const onRename = async (account: AccountView) => {
@@ -93,23 +108,58 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
     );
   };
 
-  const onRemoveImported = (account: AccountView) => {
-    Alert.alert(REMOVE_IMPORTED_TITLE, removeImportedMessage(account.name, account.evmAddress ?? 'unknown address'), [
-      { text: 'Keep it', style: 'cancel' },
-      {
-        text: 'Continue',
-        style: 'destructive',
-        onPress: () =>
-          Alert.alert(REMOVE_IMPORTED_CONFIRM_TITLE, REMOVE_IMPORTED_CONFIRM_MESSAGE, [
-            { text: 'Keep it', style: 'cancel' },
-            {
-              text: 'Delete the key',
-              style: 'destructive',
-              onPress: () => void run('Could not remove account', () => removeImportedAccount(account.index)),
-            },
-          ]),
-      },
-    ]);
+  const onRemoveImported = async (account: AccountView) => {
+    // What else this key controls on the network in use (its smart account
+    // and EntryPoint deposit), best effort and bounded in time: a failed or
+    // slow read is named as such in the dialog and never blocks it.
+    setBusy(true);
+    let stranded: string | null = null;
+    try {
+      stranded = await removalStrandedSentence(account, evmChain);
+    } finally {
+      setBusy(false);
+    }
+    Alert.alert(
+      REMOVE_IMPORTED_TITLE,
+      removeImportedMessage(account.name, account.evmAddress ?? 'unknown address', stranded),
+      [
+        { text: 'Keep it', style: 'cancel' },
+        {
+          text: 'Continue',
+          style: 'destructive',
+          onPress: () =>
+            Alert.alert(REMOVE_IMPORTED_CONFIRM_TITLE, REMOVE_IMPORTED_CONFIRM_MESSAGE, [
+              { text: 'Keep it', style: 'cancel' },
+              {
+                text: 'Delete the key',
+                style: 'destructive',
+                onPress: async () => {
+                  // Deleting the only copy of a key needs the device check
+                  // (finding 4 of the 2026-10-04 private-key run), after both
+                  // dialogs; a cancel leaves everything untouched. The prompt
+                  // targets THIS key, so a protected key is opened by its own
+                  // system prompt; the held copy is dropped right after.
+                  const auth = await requireLocalAuth(PROMPTS.importedKeyRemove, {
+                    kind: 'imported',
+                    slot: importedSlotOf(account.index),
+                  });
+                  if (!auth.ok) {
+                    Alert.alert('Not removed', `${auth.message} Nothing was deleted.`);
+                    return;
+                  }
+                  void run('Could not remove account', async () => {
+                    try {
+                      await removeImportedAccount(account.index);
+                    } finally {
+                      dropPhraseTicket();
+                    }
+                  });
+                },
+              },
+            ]),
+        },
+      ],
+    );
   };
 
   const onRevealImported = (account: AccountView) => {
@@ -235,7 +285,7 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
               </Pressable>
             ) : null}
             {account.imported && !active ? (
-              <Pressable accessibilityRole="button" onPress={() => onRemoveImported(account)} hitSlop={8}>
+              <Pressable accessibilityRole="button" onPress={() => void onRemoveImported(account)} hitSlop={8}>
                 <Text style={[styles.link, { color: theme.danger }]}>Remove</Text>
               </Pressable>
             ) : null}
@@ -254,16 +304,13 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
     <View style={styles.section}>
       <Text style={[styles.sectionTitle, { color: theme.text }]}>Accounts</Text>
       <Text style={[styles.hint, { color: theme.textMuted }]}>
-        Every account comes from your one recovery phrase, so the phrase backs
-        up all of them. Account addresses follow the common conventions:
-        Ethereum m/44&apos;/60&apos;/0&apos;/0/N (as MetaMask), Solana m/44&apos;/501&apos;/N&apos;/0&apos; (as
-        Phantom), Bitcoin m/84&apos;/0&apos;/N&apos;/0/0 and Dogecoin m/44&apos;/3&apos;/N&apos;/0/0. After
-        restoring the phrase on a new device, add accounts again in the same
-        order to get the same addresses back.
-        {importedCount > 0
-          ? ' Imported accounts are the exception: they come from a private key you imported, so the ' +
-            'recovery phrase does NOT back them up and restoring the phrase does not bring them back.'
-          : ''}
+        {accountsBackupHint(importedCount > 0)} Account addresses from the
+        phrase follow the common conventions: Ethereum m/44&apos;/60&apos;/0&apos;/0/N (as
+        MetaMask), Solana m/44&apos;/501&apos;/N&apos;/0&apos; (as Phantom), Bitcoin
+        m/84&apos;/0&apos;/N&apos;/0/0 and Dogecoin m/44&apos;/3&apos;/N&apos;/0/0. After restoring the
+        phrase on a new device, add accounts again in the same order to get the
+        same addresses back.
+        {importedCount > 0 ? ' Restoring the phrase does not bring imported accounts back.' : ''}
       </Text>
       {visible.map(renderRow)}
       <View style={styles.editor}>
@@ -372,3 +419,45 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 });
+
+/** How long the removal dialog waits for the smart-account read before naming it as unchecked. */
+const REMOVAL_READ_TIMEOUT_MS = 6_000;
+
+/**
+ * The removal dialog's sentence about the key's smart account on the
+ * network in use (wallet/imported-keys.ts importedRemovalStrandedSentence),
+ * read through aa.ts readOwnerSmartAccountHoldings. Never throws; a read
+ * that fails or takes longer than REMOVAL_READ_TIMEOUT_MS is reported as
+ * "could not be checked" when smart-account settings exist, and nothing is
+ * said when they do not.
+ */
+async function removalStrandedSentence(
+  account: AccountView,
+  evmChain: { chainIdDecimal: string; displaySymbol: string; label: string },
+): Promise<string | null> {
+  const owner = account.evmAddress;
+  if (!owner) return null;
+  try {
+    const endpoint = await getEndpoint(EVM_CHAIN_ID);
+    if (!endpoint?.url || endpoint.network.kind !== 'evm-jsonrpc') return null;
+    const config = await getAaConfig(endpoint.network.chainId);
+    const chainId = BigInt(evmChain.chainIdDecimal);
+    const read = readOwnerSmartAccountHoldings(config, {
+      nodeUrl: endpoint.url,
+      chainId,
+      accountIndex: account.index,
+      ownerAddress: owner,
+    });
+    const timeout = new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), REMOVAL_READ_TIMEOUT_MS));
+    const holdings = await Promise.race([read, timeout]);
+    const format = (wei: bigint) => `${formatUnits(wei, 18, 18)} ${evmChain.displaySymbol}`;
+    if (holdings === 'timeout') {
+      // readOwnerSmartAccountHoldings returns 'none' quickly when there are no
+      // settings, so a timeout means settings exist and the read was slow.
+      return importedRemovalStrandedSentence({ kind: 'unknown', network: evmChain.label }, format);
+    }
+    return importedRemovalStrandedSentence(holdings, format);
+  } catch {
+    return null;
+  }
+}

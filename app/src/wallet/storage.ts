@@ -229,6 +229,7 @@ export const PROMPTS = {
   importedKeyCheck: 'Confirm the protected imported private key',
   importedKeySign: 'Approve signing with the imported private key',
   importedKeyReveal: 'Reveal the imported private key',
+  importedKeyRemove: 'Approve deleting the imported private key',
 } as const;
 
 // ---------------------------------------------------------------------------

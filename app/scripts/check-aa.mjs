@@ -21,7 +21,9 @@
 
 import { evmKeyProvider, mnemonicToSeed } from '@shiba-wallet/core';
 import { ENTRYPOINT_V07, selector, toHex } from '@shiba-wallet/chains-evm';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   AA_FUNDING_TITLE,
   aaCanPaySelf,
@@ -48,6 +50,12 @@ import {
   isBundlerFeeFloorRefusal,
   AaFeeRoseError,
   AA_FEE_ROSE_TITLE,
+  AA_GAS_GREW_TITLE,
+  AA_REVIEW_AGAIN_TITLE,
+  AA_DEPOSIT_NOTE,
+  AA_SELF_PAID_FEE_SENTENCE,
+  aaSelfPaidFeeSentence,
+  checkAaQuoteBeforeApproval,
   AA_FEE_FLOOR_HEADROOM_PERCENT,
   AA_QUOTE_ALREADY_USED,
   maskUrlForDisplay,
@@ -108,6 +116,24 @@ async function checkRejects(name, promiseFn, messagePart) {
     const message = e instanceof Error ? e.message : String(e);
     check(name, message.includes(messagePart), `error was: ${message}`);
   }
+}
+
+// Mutation checks load a deliberately broken copy of an app module. The copy
+// lives in a scratch directory next to this script; its relative imports are
+// rewritten to absolute file URLs of the real modules, so only the mutated
+// file differs. The directory is removed when the script exits.
+const APP_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const MUTANT_DIR = join(dirname(fileURLToPath(import.meta.url)), `.mutants-aa-${process.pid}`);
+let mutantCount = 0;
+process.on('exit', () => rmSync(MUTANT_DIR, { recursive: true, force: true }));
+async function importMutant(relPath, source) {
+  const originalDir = dirname(join(APP_ROOT, relPath));
+  const rewritten = source.replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolve(originalDir, spec)).href}'`);
+  mkdirSync(MUTANT_DIR, { recursive: true });
+  mutantCount += 1;
+  const file = join(MUTANT_DIR, `m${mutantCount}-${relPath.split('/').pop()}`);
+  writeFileSync(file, rewritten);
+  return import(pathToFileURL(file).href);
 }
 
 function memoryStore() {
@@ -1164,6 +1190,303 @@ await (async () => {
           return e instanceof AaFeeRoseError;
         }
       })());
+  }
+
+  // The 2026-10-04 private-key run (commit 44eef11): two smart-account sends
+  // were refused AFTER the biometric prompt with "The network fee rose".
+  // The refusal text compared the bundler's NEW standard-tier price with
+  // the QUOTED fee, which already carried the 25 % headroom (the quoted
+  // priority fees 108460172 and 67431797 are ceil(1.25 × 86768137) and
+  // ceil(1.25 × 53945437)), so the standard tier had risen by 40.0 % and
+  // 26.3 % since the quote — past the headroom, not +12 % and +1 % as the
+  // two printed numbers suggested. Read-only probes of the same bundler the
+  // same evening showed that tier jumping with almost every block (aa.ts
+  // bundlerFeeFloor). The fixes checked here: the send-time comparison uses
+  // the bundler's LOWEST advertised tier (slow), the check also runs BEFORE
+  // the device check (checkAaQuoteBeforeApproval, which does not use up the
+  // quote), and the refusal causes have distinct titles.
+  console.log('\nfee floor: the 2026-10-04 refusals, the lowest tier and the pre-approval check');
+  {
+    // A Pimlico-style bundler around the module's fake bundler, whose slow
+    // and standard tiers can move independently between quote and send.
+    function tieredBundler() {
+      const base = fakeBundler({});
+      const state = { standard: 29_835_424n, slow: null, standardMax: null, slowMax: null, estimate: null };
+      const tier = (p, m) => ({ maxPriorityFeePerGas: '0x' + p.toString(16), ...(m !== null ? { maxFeePerGas: '0x' + m.toString(16) } : {}) });
+      const t = async (method, params) => {
+        if (method === 'rundler_maxPriorityFeePerGas') throw new Error('RPC error -32601: method not found');
+        if (method === 'pimlico_getUserOperationGasPrice') {
+          base.calls.push({ method, params });
+          return {
+            ...(state.slow !== null ? { slow: tier(state.slow, state.slowMax) } : {}),
+            standard: tier(state.standard, state.standardMax),
+          };
+        }
+        if (method === 'eth_estimateUserOperationGas' && state.estimate) {
+          base.calls.push({ method, params });
+          return state.estimate;
+        }
+        return base(method, params);
+      };
+      t.state = state;
+      t.base = base;
+      return t;
+    }
+    function tieredBundle() {
+      const tb = tieredBundler();
+      const n = fakeNode({});
+      const b = createAaClient({
+        nodeUrl: 'https://node.example',
+        bundlerUrl: 'https://bundler.example',
+        factory: FACTORY_INPUT,
+        transportFor: (url) => (url === 'https://node.example' ? n : tb),
+      });
+      return { b, tb };
+    }
+    const sends = (tb) => tb.base.calls.filter((c) => c.method === 'eth_sendUserOperation').length;
+    const estimates = (tb) => tb.base.calls.filter((c) => c.method === 'eth_estimateUserOperationGas').length;
+    // The node's own suggestion in the emulator run: Sepolia's publicnode
+    // answers eth_maxPriorityFeePerGas with 0.001 gwei (probe of 2026-10-04).
+    const sepoliaNode = { maxFeePerGas: 2n * 1_000_000_000n + 1_000_000n, maxPriorityFeePerGas: 1_000_000n };
+
+    // The two live refusals, reconstructed exactly.
+    const live = [
+      { name: 'first refusal', quoteStandard: 86_768_137n, quoted: 108_460_172n, sendStandard: 121_510_234n },
+      { name: 'second refusal', quoteStandard: 53_945_437n, quoted: 67_431_797n, sendStandard: 68_112_565n },
+    ];
+    for (const c of live) {
+      const q = quoteFeesOverFloor(sepoliaNode, { maxPriorityFeePerGas: c.quoteStandard, maxFeePerGas: null });
+      check(`${c.name}: the quoted priority fee ${c.quoted} is ceil(1.25 × ${c.quoteStandard}) (the headroom was applied)`,
+        q.maxPriorityFeePerGas === c.quoted, String(q.maxPriorityFeePerGas));
+      const risePermille = ((c.sendStandard - c.quoteStandard) * 1000n) / c.quoteStandard;
+      check(`${c.name}: the standard tier had risen ${Number(risePermille) / 10} % since the quote (above the 25 % headroom)`,
+        risePermille > 250n);
+    }
+    // ZeroDev's slow tier is the standard one / 1.05 (probes of 2026-10-04:
+    // slow, standard and fast always in the ratio 1 : 1.05 : 1.10).
+    const slowOf = (standard) => (standard * 100n) / 105n;
+    const q2 = quoteFeesOverFloor(sepoliaNode, { maxPriorityFeePerGas: live[1].quoteStandard, maxFeePerGas: null });
+    check('second refusal, standard tier only (what the old code read): still a shortfall — a bundler without a slow tier is compared as before',
+      feeFloorShortfall(q2, { maxPriorityFeePerGas: live[1].sendStandard, maxFeePerGas: null }) !== null);
+    check('second refusal, with the slow tier the bundler also returned (64869109): NOT a shortfall now (the old code refused it)',
+      feeFloorShortfall(q2, { maxPriorityFeePerGas: live[1].sendStandard, maxFeePerGas: null, lowest: { maxPriorityFeePerGas: slowOf(live[1].sendStandard), maxFeePerGas: null } }) === null);
+    const q1 = quoteFeesOverFloor(sepoliaNode, { maxPriorityFeePerGas: live[0].quoteStandard, maxFeePerGas: null });
+    const s1 = feeFloorShortfall(q1, { maxPriorityFeePerGas: live[0].sendStandard, maxFeePerGas: null, lowest: { maxPriorityFeePerGas: slowOf(live[0].sendStandard), maxFeePerGas: null } });
+    check('first refusal: still a shortfall (even the slow tier, 115724032, is above the quoted 108460172), worded as the bundler’s minimum',
+      s1 !== null && s1.startsWith("The bundler's minimum fee rose: it now asks for a priority fee of at least 115724032 wei"), s1 ?? '');
+
+    // The stated rule: any rise of the standard tier up to 25 % between the
+    // quote and the send never refuses (exact bigint, rounding included),
+    // with or without a slow tier; the first wei above does.
+    let ruleHolds = true;
+    let firstAboveRefused = true;
+    for (const f of [1n, 3n, 999n, 29_835_424n, 53_945_437n, 86_768_137n, 108_460_172n, 1_000_000_001n, 117_170_432n]) {
+      const q = quoteFeesOverFloor(sepoliaNode, { maxPriorityFeePerGas: f, maxFeePerGas: f * 15n });
+      for (const pct of [0n, 1n, 12n, 24n, 25n]) {
+        const risen = (f * (100n + pct)) / 100n;
+        const floorNow = { maxPriorityFeePerGas: risen, maxFeePerGas: (f * 15n * (100n + pct)) / 100n };
+        if (feeFloorShortfall(q, floorNow) !== null) ruleHolds = false;
+        if (feeFloorShortfall(q, { ...floorNow, lowest: { maxPriorityFeePerGas: slowOf(risen), maxFeePerGas: slowOf(floorNow.maxFeePerGas) } }) !== null) ruleHolds = false;
+      }
+      if (feeFloorShortfall(q, { maxPriorityFeePerGas: q.maxPriorityFeePerGas + 1n, maxFeePerGas: null }) === null) firstAboveRefused = false;
+    }
+    check('the stated rule: a standard-tier rise of 0, 1, 12, 24 or 25 % between quote and send never refuses (nine floors, both fees)', ruleHolds);
+    check('…and one wei above the quoted priority fee always does', firstAboveRefused);
+    check('the CTO’s reading of the two runs (+12 % and +1 % over the quote-time floor) passes',
+      feeFloorShortfall(quoteFeesOverFloor(sepoliaNode, { maxPriorityFeePerGas: 108_460_172n, maxFeePerGas: null }), { maxPriorityFeePerGas: 121_510_234n, maxFeePerGas: null }) === null &&
+        feeFloorShortfall(quoteFeesOverFloor(sepoliaNode, { maxPriorityFeePerGas: 67_431_797n, maxFeePerGas: null }), { maxPriorityFeePerGas: 68_112_565n, maxFeePerGas: null }) === null);
+
+    // bundlerFeeFloor reads the slow tier as `lowest` (and never trusts one above the standard tier).
+    const read = (answer) => bundlerFeeFloor(async (m) => (m === 'rundler_maxPriorityFeePerGas' ? null : answer));
+    const both = await read({ slow: { maxPriorityFeePerGas: '0x3dddcae', maxFeePerGas: '0x5a8d1c11' }, standard: { maxPriorityFeePerGas: '0x40f1c66', maxFeePerGas: '0x5f2f3f3e' } });
+    check('bundlerFeeFloor: standard tier for quoting, slow tier as `lowest`',
+      both?.maxPriorityFeePerGas === 0x40f1c66n && both?.maxFeePerGas === 0x5f2f3f3en && both?.lowest?.maxPriorityFeePerGas === 0x3dddcaen && both?.lowest?.maxFeePerGas === 0x5a8d1c11n);
+    const inverted = await read({ slow: { maxPriorityFeePerGas: '0x50', maxFeePerGas: '0x10' }, standard: { maxPriorityFeePerGas: '0x40', maxFeePerGas: '0x20' } });
+    check('a slow priority fee above the standard one is ignored (no `lowest`)', inverted !== null && inverted.lowest === undefined);
+    const maxAbove = await read({ slow: { maxPriorityFeePerGas: '0x10', maxFeePerGas: '0x30' }, standard: { maxPriorityFeePerGas: '0x40', maxFeePerGas: '0x20' } });
+    check('a slow maxFeePerGas above the standard one is not trusted (the standard value is kept)', maxAbove?.lowest?.maxPriorityFeePerGas === 0x10n && maxAbove?.lowest?.maxFeePerGas === 0x20n);
+    const badSlow = await read({ slow: { maxPriorityFeePerGas: 7 }, standard: { maxPriorityFeePerGas: '0x40' } });
+    check('a malformed slow tier is ignored', badSlow?.maxPriorityFeePerGas === 0x40n && badSlow.lowest === undefined);
+    check('quotes are priced over the STANDARD tier, never the slow one',
+      quoteFeesOverFloor(sepoliaNode, { ...both, lowest: { maxPriorityFeePerGas: 1n, maxFeePerGas: null } }).maxPriorityFeePerGas === withFeeFloorHeadroom(0x40f1c66n));
+
+    // End to end through sendAa and the pre-approval check (scaled ×20 so the
+    // floor sits above the fake node's 1 gwei suggestion).
+    {
+      const { b, tb } = tieredBundle();
+      tb.state.standard = live[1].quoteStandard * 20n;
+      const qq = await prepareAaSend(b, owner.address, RECIPIENT, AMOUNT);
+      check('scaled second refusal: quoted at standard × 1.25', qq.maxPriorityFeePerGas === withFeeFloorHeadroom(live[1].quoteStandard * 20n));
+      tb.state.standard = live[1].sendStandard * 20n;
+      tb.state.slow = slowOf(live[1].sendStandard * 20n);
+      const pre = await checkAaQuoteBeforeApproval(b.bundler, qq).then(() => null, (e) => e);
+      check('pre-approval check passes (the slow tier is below the quote)', pre === null);
+      await sendAa(b, owner, qq);
+      check('…and sendAa signs and sends it with exactly the quoted fees', sends(tb) === 1 && BigInt(tb.base.lastOp.maxPriorityFeePerGas) === qq.maxPriorityFeePerGas);
+    }
+    {
+      const { b, tb } = tieredBundle();
+      tb.state.standard = live[0].quoteStandard * 20n;
+      const qq = await prepareAaSend(b, owner.address, RECIPIENT, AMOUNT);
+      const estimatesBefore = estimates(tb);
+      tb.state.standard = live[0].sendStandard * 20n;
+      tb.state.slow = slowOf(live[0].sendStandard * 20n);
+      const pre = await checkAaQuoteBeforeApproval(b.bundler, qq).then(() => null, (e) => e);
+      check('scaled first refusal: the PRE-APPROVAL check refuses (reason floor), before anything is estimated, signed or sent',
+        pre instanceof AaFeeRoseError && pre.reason === 'floor' && estimates(tb) === estimatesBefore && sends(tb) === 0);
+      const described = describeAaError(pre, { accountType: 'simple', deployed: false });
+      check('…titled "The network fee rose. Please review again." with the bundler’s-minimum sentence and "Nothing was signed or sent"',
+        described?.title === AA_FEE_ROSE_TITLE && /^The bundler's minimum fee rose: /.test(described.detail) && described.detail.includes('Nothing was signed or sent.'));
+      tb.state.standard = live[0].quoteStandard * 20n;
+      tb.state.slow = null;
+      const again = await checkAaQuoteBeforeApproval(b.bundler, qq).then(() => null, (e) => e);
+      check('the pre-approval check does not use the quote up: when the floor falls back, it passes', again === null);
+      await sendAa(b, owner, qq);
+      check('…and the same quote can still be sent once', sends(tb) === 1);
+      const used = await checkAaQuoteBeforeApproval(b.bundler, qq).then(() => null, (e) => e);
+      check('a quote already submitted is refused by the pre-approval check (reason used, its own title), no bundler request',
+        used instanceof AaFeeRoseError && used.reason === 'used' && used.message === AA_QUOTE_ALREADY_USED &&
+          describeAaError(used, { accountType: 'simple', deployed: false })?.title === AA_REVIEW_AGAIN_TITLE);
+    }
+    {
+      // The send-time check stays the last line of defence (a floor that rises
+      // while the prompt is up), and the gas-estimate refusal has its own title.
+      const { b, tb } = tieredBundle();
+      tb.state.standard = 2_000_000_000n;
+      const qq = await prepareAaSend(b, owner.address, RECIPIENT, AMOUNT);
+      await checkAaQuoteBeforeApproval(b.bundler, qq);
+      tb.state.standard = 4_000_000_000n;
+      tb.state.slow = 3_000_000_000n;
+      const late = await sendAa(b, owner, qq).then(() => null, (e) => e);
+      check('send time: a floor that rose after the pre-approval check is still refused before signing (reason floor)',
+        late instanceof AaFeeRoseError && late.reason === 'floor' && sends(tb) === 0);
+      const { b: b2, tb: tb2 } = tieredBundle();
+      const q2b = await prepareAaSend(b2, owner.address, RECIPIENT, AMOUNT);
+      tb2.state.estimate = { callGasLimit: '0x111', verificationGasLimit: '0x222', preVerificationGas: '0x334' };
+      const grew = await sendAa(b2, owner, q2b).then(() => null, (e) => e);
+      const g = describeAaError(grew, { accountType: 'simple', deployed: false });
+      check('a grown gas estimate: reason gas, title "The gas estimate grew. Please review again.", detail names both worst cases',
+        grew instanceof AaFeeRoseError && grew.reason === 'gas' && g?.title === AA_GAS_GREW_TITLE && AA_GAS_GREW_TITLE === 'The gas estimate grew. Please review again.' &&
+          /^The gas estimate grew: the bundler's fresh gas estimate makes the worst-case fee \d+ wei, above the \d+ wei you reviewed\./.test(g.detail) && sends(tb2) === 0, g?.detail);
+      check('the two causes never share a title', AA_FEE_ROSE_TITLE !== AA_GAS_GREW_TITLE && AA_GAS_GREW_TITLE !== AA_REVIEW_AGAIN_TITLE);
+      check('a bundler’s own floor refusal (after signing) keeps the network-fee title and says the minimum fee rose',
+        /minimum fee rose after you reviewed it/.test(describeAaError(new Error('RPC error -32602: maxPriorityFeePerGas must be at least 5 (current maxPriorityFeePerGas: 4)'), { accountType: 'simple', deployed: true })?.detail ?? ''));
+    }
+
+    // Who pays a self-paid fee (finding 7): the sentence follows the deposit.
+    const fmt = (wei) => `${wei} wei`;
+    check('no deposit: the plain sentence', aaSelfPaidFeeSentence({ fee: 100n, deposit: 0n }, fmt) === AA_SELF_PAID_FEE_SENTENCE &&
+      aaSelfPaidFeeSentence({ fee: 100n }, fmt) === 'The smart account pays its own gas from its own balance.');
+    check('deposit covers the worst case: nothing for gas from the balance',
+      aaSelfPaidFeeSentence({ fee: 100n, deposit: 100n }, fmt) ===
+        "The smart account's EntryPoint deposit (100 wei) covers this whole worst-case fee, so nothing for gas comes from its balance; the deposit is reduced by what the operation actually uses.");
+    check('smaller deposit: it pays first, the balance tops it up, the unused part stays in the deposit',
+      aaSelfPaidFeeSentence({ fee: 100n, deposit: 30n }, fmt) ===
+        "The fee comes first from the smart account's EntryPoint deposit (30 wei); its balance tops the deposit up by the rest of the worst case, up to 70 wei. What the operation does not use stays in the deposit for later fees; it does not return to the balance.");
+    check('the deposit note says it cannot be sent and is not withdrawable here', /cannot be sent as an amount \(Max leaves it out\)/.test(AA_DEPOSIT_NOTE) && /does not offer a way to withdraw it/.test(AA_DEPOSIT_NOTE));
+
+    // Mutation checks: broken copies of aa.ts must fail the checks above.
+    const aaSource = readFileSync(new URL('../src/wallet/aa.ts', import.meta.url), 'utf8');
+    const loadAaMutant = async (from, to) => {
+      if (!aaSource.includes(from)) throw new Error(`mutation anchor not found: ${from}`);
+      return importMutant('src/wallet/aa.ts', aaSource.replace(from, to));
+    };
+    {
+      const m = await loadAaMutant('const min = floor.lowest ?? floor;', 'const min = floor;');
+      check('M1 caught: comparing with the standard tier (the old code) refuses the second live case again',
+        m.feeFloorShortfall(q2, { maxPriorityFeePerGas: live[1].sendStandard, maxFeePerGas: null, lowest: { maxPriorityFeePerGas: slowOf(live[1].sendStandard), maxFeePerGas: null } }) !== null);
+    }
+    {
+      const m = await loadAaMutant('return (value * (100n + AA_FEE_FLOOR_HEADROOM_PERCENT) + 99n) / 100n;', 'return value;');
+      const q = m.quoteFeesOverFloor(sepoliaNode, { maxPriorityFeePerGas: 53_945_437n, maxFeePerGas: null });
+      check('M2 caught: without the headroom a 1 % rise refuses (the rule check above would fail)',
+        m.feeFloorShortfall(q, { maxPriorityFeePerGas: (53_945_437n * 101n) / 100n, maxFeePerGas: null }) !== null);
+    }
+    {
+      const m = await loadAaMutant(
+        "  if (submittedQuotes.has(quote)) throw new AaFeeRoseError(AA_QUOTE_ALREADY_USED, 'used');\n  await assertQuoteFeesMeetBundlerFloor(bundler, {",
+        "  claimQuoteForSubmission(quote);\n  await assertQuoteFeesMeetBundlerFloor(bundler, {",
+      );
+      const quote = { maxFeePerGas: 10n, maxPriorityFeePerGas: 10n };
+      const okBundler = async () => ({ standard: { maxPriorityFeePerGas: '0x1' } });
+      await m.checkAaQuoteBeforeApproval(okBundler, quote);
+      const second = await m.checkAaQuoteBeforeApproval(okBundler, quote).then(() => null, (e) => e);
+      check('M3 caught: a pre-approval check that claims the quote makes the real send impossible', second !== null);
+      const real = { maxFeePerGas: 10n, maxPriorityFeePerGas: 10n };
+      await checkAaQuoteBeforeApproval(okBundler, real);
+      check('…while the real check leaves it usable', (await checkAaQuoteBeforeApproval(okBundler, real).then(() => null, (e) => e)) === null);
+    }
+    {
+      const m = await loadAaMutant("    if (isHexQuantity(slowPriority) && BigInt(slowPriority) <= floor.maxPriorityFeePerGas) {", '    if (isHexQuantity(slowPriority)) {');
+      const mm = await m.bundlerFeeFloor(async (x) => (x === 'rundler_maxPriorityFeePerGas' ? null : { slow: { maxPriorityFeePerGas: '0x50' }, standard: { maxPriorityFeePerGas: '0x40' } }));
+      check('M4 caught: trusting a slow tier above the standard one yields a `lowest` the real code refuses to set', mm?.lowest !== undefined);
+    }
+    {
+      const m = await loadAaMutant("  if (error.reason === 'gas') return AA_GAS_GREW_TITLE;\n", '');
+      check('M5 caught: without the gas title a grown estimate reads as a fee rise',
+        m.aaFeeRoseTitle(new m.AaFeeRoseError('x', 'gas')) !== AA_GAS_GREW_TITLE);
+    }
+  }
+
+  // The floor is re-read BEFORE the device check on every screen that takes
+  // the biometric gate itself (source order), so "The network fee rose"
+  // arrives before the user approves anything; the in-sendAa check stays.
+  console.log('\nfee floor checked before the device check on every smart-account screen (source)');
+  {
+    const read = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8');
+    // `body` must contain the check, and the check must come before the gate.
+    const before = (body, gate) => {
+      const c = body.indexOf('checkAaQuoteBeforeApproval(');
+      const g = body.indexOf(gate);
+      return c >= 0 && g >= 0 && c < g;
+    };
+    const handler = (src, start, end) => {
+      const i = src.indexOf(start);
+      const j = src.indexOf(end, i + start.length);
+      return i >= 0 && j > i ? src.slice(i, j) : '';
+    };
+    const send = read('../src/screens/SendScreen.tsx');
+    const onSend = handler(send, 'const onSend = async () => {', '// ------------------------------------------------- ');
+    check('Send: before the spending-limit gate, the passkey path and the biometric prompt; a refusal re-quotes at once',
+      before(onSend, 'spendingGateForQuote(') && before(onSend, 'sendPasskeyCalls(') && before(onSend, 'requireLocalAuth(') &&
+        /checkAaQuoteBeforeApproval\(preBundle\.bundler, quote\);[\s\S]{0,700}setPhase\('form'\);\s*void onReview\(\);\s*return;/.test(onSend));
+    const swap = read('../src/screens/SwapScreen.tsx');
+    check('Swap (smart account): before the spending-limit gate and the biometric prompt',
+      before(handler(swap, 'const bundleUrl = aaBundleUrl.current;', 'setPhase(\'aa-sending\');'), 'requireLocalAuth(') &&
+        before(handler(swap, 'const bundleUrl = aaBundleUrl.current;', 'setPhase(\'aa-sending\');'), 'spendingGateForQuote('));
+    for (const [name, file, start, gate] of [
+      ['Guardians', '../src/screens/GuardiansScreen.tsx', 'const onConfirm = async () => {', 'requireLocalAuth(what)'],
+      ['Change owner', '../src/screens/OwnerRotationScreen.tsx', 'const onConfirm = async () => {', "requireLocalAuth('Approve changing the owner key')"],
+      ['Passkey install', '../src/screens/PasskeyScreen.tsx', 'const onInstall = async () => {', "requireLocalAuth('Approve adding this passkey"],
+      ['Passkey remove', '../src/screens/PasskeyScreen.tsx', 'const onRemove = async () => {', "requireLocalAuth('Approve removing the passkey"],
+      ['Session grant', '../src/screens/SessionsScreen.tsx', 'const onInstall = async () => {', "requireLocalAuth('Approve granting this session')"],
+      ['Session / subscription revoke', '../src/screens/SessionsScreen.tsx', 'const onRevoke = async () => {', 'requireLocalAuth(revokeApprovalPrompt('],
+      ['Guardian submit (Approve a recovery)', '../src/screens/ApproveRecoveryScreen.tsx', 'const onSubmit = async () => {', "requireLocalAuth('Approve submitting this recovery"],
+    ]) {
+      const src = read(file);
+      check(`${name}: before the biometric prompt`, src.includes(start) && before(src.slice(src.indexOf(start)), gate));
+    }
+    const wc = read('../src/wallet/WalletConnectContext.tsx');
+    const wcApprove = handler(wc, "item.parsed.kind === 'permissions') &&\n        !txApprovalAllowed(txQuote, overrideSimulation)", 'if (!controller.begin(item.key)) return;');
+    check('WalletConnect sheet (smart-account transactions, batches and grants): before the biometric prompt',
+      /item\.smart && \(txQuote\?\.status === 'ready-aa' \|\| txQuote\?\.status === 'ready-permission'\)/.test(wcApprove) && before(wcApprove, 'requireLocalAuth(promptTitle)'));
+    check('sendAa, the passkey submit and the guardian submit keep the send-time floor check (last line of defence)',
+      /claimQuoteForSubmission\(quote\);\s*const fees = [^\n]*\n\s*await assertQuoteFeesMeetBundlerFloor\(bundle\.bundler, fees\);/.test(read('../src/wallet/aa.ts')) &&
+        /await assertQuoteFeesMeetBundlerFloor\(bundle\.bundler, fees\);/.test(read('../src/wallet/passkeys.ts')) &&
+        /await assertQuoteFeesMeetBundlerFloor\(args\.bundler, fees\);/.test(read('../src/wallet/recovery.ts')));
+    // Mutation: the same predicate on a copy with the check moved after the gate must fail.
+    const gateEnd = "if (!auth.ok) {\n      Alert.alert('Not sent', auth.message);\n      return;\n    }";
+    const moved = onSend
+      .replace('await checkAaQuoteBeforeApproval(preBundle.bundler, quote);', '')
+      .replace(gateEnd, `${gateEnd}\n    await checkAaQuoteBeforeApproval(preBundle.bundler, quote);`);
+    check('M6 anchor present (the mutation really moved the check)', onSend.includes(gateEnd) && moved !== onSend);
+    check('M6 caught: a Send handler that checks the floor after the biometric prompt fails the order check', !before(moved, 'requireLocalAuth('));
+    // The deposit row on every self-paid smart-account confirm (finding 7).
+    for (const f of ['../src/screens/SendScreen.tsx', '../src/screens/SwapScreen.tsx', '../src/screens/GuardiansScreen.tsx', '../src/screens/OwnerRotationScreen.tsx', '../src/screens/PasskeyScreen.tsx', '../src/screens/SessionsScreen.tsx', '../src/components/WcApprovalSheet.tsx']) {
+      check(`${f.split('/').pop()}: the confirm shows the EntryPoint deposit (AaDepositNote)`, /<AaDepositNote\b/.test(read(f)));
+    }
+    check('Send confirm: the plain "own balance" sentence only when there is no deposit',
+      /quote\.deposit !== undefined && quote\.deposit > 0n \? '' : ` \$\{AA_SELF_PAID_FEE_SENTENCE\}`/.test(send) && !/The smart account pays ' \+\s*'its own gas from its own balance\.'/.test(send));
   }
 
   // After a failed smart-account submission no screen may keep a confirm

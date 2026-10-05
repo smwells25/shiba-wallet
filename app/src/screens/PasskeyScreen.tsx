@@ -13,6 +13,7 @@ import { requireLocalAuth } from '../wallet/biometric';
 import { formatUnits } from '../wallet/balances';
 import { EVM_CHAIN_ID, describeSendError } from '../wallet/send';
 import {
+  checkAaQuoteBeforeApproval,
   createAaClientFromConfig,
   describeAaError,
   getAaConfig,
@@ -21,6 +22,7 @@ import {
   type AaClientBundle,
   type AaSendQuote,
 } from '../wallet/aa';
+import { AaDepositNote } from '../components/AaDepositNote';
 import { loadPasskeyNative } from '../wallet/passkey-native';
 import { readinessGate } from '../config/readiness';
 import {
@@ -221,6 +223,25 @@ export function PasskeyScreen({ navigation }: Props) {
   const onInstall = async () => {
     const p = pendingInstall;
     if (!p || !bundle || !account || !owner || !activeAccount || !gate?.ok) return;
+    // The bundler's fee floor, BEFORE the device check (aa.ts
+    // checkAaQuoteBeforeApproval): when it rose above the reviewed fees, the
+    // same registration is quoted again, nothing approved.
+    try {
+      await checkAaQuoteBeforeApproval(bundle.bundler, p.plan.quote);
+    } catch (e) {
+      Alert.alert('Not added', describe(e));
+      setPendingInstall(null);
+      setPhase('quoting');
+      try {
+        const plan = await preparePasskeyInstall(bundle, owner, account, p.registration);
+        setPendingInstall({ registration: p.registration, plan });
+        setPhase('confirm-install');
+      } catch (requoteError) {
+        setActionError(`${describe(requoteError)}\n\n${PASSKEY_OS_CLEANUP_NOTE}`);
+        setPhase('main');
+      }
+      return;
+    }
     const auth = await requireLocalAuth('Approve adding this passkey to your smart account');
     if (!auth.ok) {
       Alert.alert('Not added', auth.message);
@@ -332,6 +353,15 @@ export function PasskeyScreen({ navigation }: Props) {
   const onRemove = async () => {
     const quote = pendingRemove;
     if (!quote || !bundle || !account || !owner) return;
+    // The bundler's fee floor, BEFORE the device check (see onInstall).
+    try {
+      await checkAaQuoteBeforeApproval(bundle.bundler, quote);
+    } catch (e) {
+      Alert.alert('Not removed', describe(e));
+      setPendingRemove(null);
+      setPhase('main');
+      return;
+    }
     const auth = await requireLocalAuth('Approve removing the passkey from your smart account');
     if (!auth.ok) {
       Alert.alert('Not removed', auth.message);
@@ -453,6 +483,7 @@ export function PasskeyScreen({ navigation }: Props) {
         theme={theme}
       />
       <Row label="Smart account balance" value={`${formatUnits(q.senderBalance, 18, 18)} ${symbol}`} theme={theme} />
+      <AaDepositNote fee={q.fee} deposit={q.deposit} sponsored={q.sponsored} symbol={symbol} />
       <Text style={[styles.ok, { color: theme.success }]}>Bundler gas estimate passed (eth_estimateUserOperationGas).</Text>
     </>
   );

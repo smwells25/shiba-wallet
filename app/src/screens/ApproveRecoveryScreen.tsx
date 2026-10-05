@@ -22,7 +22,7 @@ import { usePrefs } from '../wallet/PrefsContext';
 import { requireLocalAuth } from '../wallet/biometric';
 import { formatUnits } from '../wallet/balances';
 import { EVM_CHAIN_ID, describeSendError } from '../wallet/send';
-import { describeAaError, getAaConfig, summarizeAaReceipt, type AaReceiptSummary } from '../wallet/aa';
+import { checkAaQuoteBeforeApproval, describeAaError, getAaConfig, summarizeAaReceipt, type AaReceiptSummary } from '../wallet/aa';
 import { listContacts, matchRecipient, type Contact } from '../wallet/contacts';
 import {
   APPROVER_WARNING,
@@ -233,6 +233,20 @@ export function ApproveRecoveryScreen({ navigation }: Props) {
 
   const onSubmit = async () => {
     if (!node || !submission) return;
+    // The bundler's fee floor, BEFORE the device check (aa.ts
+    // checkAaQuoteBeforeApproval): when it rose above the reviewed fees, back
+    // to the review, whose "Submit the recovery" quotes again; nothing was
+    // approved.
+    try {
+      await checkAaQuoteBeforeApproval(await bundlerFor(), submission);
+    } catch (e) {
+      const { title, detail } =
+        describeAaError(e, { accountType: 'kernel-v3.3', deployed: true }) ?? describeSendError(e, symbol);
+      Alert.alert(title, detail);
+      setSubmission(null);
+      setPhase('review');
+      return;
+    }
     const auth = await requireLocalAuth('Approve submitting this recovery as a guardian');
     if (!auth.ok) {
       Alert.alert('Not sent', auth.message);

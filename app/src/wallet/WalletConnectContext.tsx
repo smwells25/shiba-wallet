@@ -40,6 +40,7 @@ import {
 } from './send';
 import {
   aaAccountTypeSignsMessages,
+  checkAaQuoteBeforeApproval,
   createAaClientFromConfig,
   describeAaError,
   fetchUserOpReceipt,
@@ -768,6 +769,24 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
         }))
       ) {
         return;
+      }
+      // Smart-account operations: the bundler's fee floor is re-read BEFORE
+      // the device check (aa.ts checkAaQuoteBeforeApproval). When it rose
+      // above the reviewed fees, nothing is approved; the request stays on
+      // the sheet, which quotes it again (WcApprovalSheet's
+      // aaQuoteGeneration), so the next Approve shows the new fee.
+      if (item.smart && (txQuote?.status === 'ready-aa' || txQuote?.status === 'ready-permission')) {
+        try {
+          await checkAaQuoteBeforeApproval(txQuote.bundle.bundler, txQuote.quote);
+        } catch (e) {
+          const { title, detail } = describeAaError(e, {
+            accountType: txQuote.quote.accountType,
+            deployed: txQuote.quote.deployed,
+            sender: txQuote.quote.sender,
+          }) ?? { title: 'Not approved', detail: e instanceof Error ? e.message : String(e) };
+          Alert.alert(title, detail);
+          return;
+        }
       }
       const dapp = controller.dappName(item.event.topic);
       const promptTitle =

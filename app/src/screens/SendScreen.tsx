@@ -54,8 +54,10 @@ import {
   type SendResult,
 } from '../wallet/send';
 import {
+  AA_SELF_PAID_FEE_SENTENCE,
   aaAccountTypeLabel,
   aaMaxAdjustmentSentence,
+  checkAaQuoteBeforeApproval,
   aaPreviewNote,
   aaRiskWarningTarget,
   aaSendApprovalPrompt,
@@ -142,6 +144,7 @@ import { recordAcceptedSpend, spendingInputForQuote } from '../wallet/spending-p
 import { useAccountDelegation } from '../wallet/useDelegation';
 import { delegationLabelSuffix, invalidateAccountDelegation } from '../wallet/delegation';
 import { Eip7702QuoteNotice } from '../components/DelegationViews';
+import { AaDepositNote } from '../components/AaDepositNote';
 import { usePrices } from '../wallet/usePrices';
 import { fiatLine, formatFiat, nativePriceAssetId, tokenPriceAssetId } from '../wallet/prices';
 import { BITCOIN, DOGECOIN } from '@shiba-wallet/chains-utxo';
@@ -1159,6 +1162,33 @@ export function SendScreen({ route, navigation }: Props) {
       return;
     }
     const sendUrl = quotedUrl;
+    if (quote.kind === 'aa') {
+      // The bundler's fee floor is re-read BEFORE any device check or
+      // passkey prompt (aa.ts checkAaQuoteBeforeApproval): when it rose
+      // above the reviewed fees, the user is told so and Review quotes
+      // again at once, without having approved anything. sendAa and
+      // sendPasskeyCalls repeat the check at send time.
+      const preBundle = aaBundle.current;
+      if (preBundle) {
+        try {
+          await checkAaQuoteBeforeApproval(preBundle.bundler, quote);
+        } catch (e) {
+          const { title, detail } =
+            describeAaError(e, {
+              accountType: quote.accountType,
+              deployed: quote.deployed,
+              sender: quote.sender,
+              bundlerUrl: aaConfig?.bundlerUrl ?? null,
+            }) ?? describeError(e);
+          Alert.alert(title, detail);
+          setQuote(null);
+          setQuotedUrl(null);
+          setPhase('form');
+          void onReview();
+          return;
+        }
+      }
+    }
     // App-enforced spending limits (phase 12 item 3): after the eth_call or
     // bundler-estimate gate (the button stays disabled until it passed or was
     // overridden) and before the biometric gate. EVM sends only.
@@ -1638,9 +1668,17 @@ export function SendScreen({ route, navigation }: Props) {
                   'decline at send time; that shows up as a bundler error, not a charge.'
                 : `Worst case at ${exact(quote.maxFeePerGas, 9)} gwei max fee \u00d7 ` +
                   `${(quote.callGasLimit + quote.verificationGasLimit + quote.preVerificationGas).toString()} ` +
-                  'gas (bundler eth_estimateUserOperationGas). The smart account pays ' +
-                  'its own gas from its own balance.'}
+                  'gas (bundler eth_estimateUserOperationGas).' +
+                  // With an EntryPoint deposit the deposit pays first:
+                  // AaDepositNote below says so instead of this sentence.
+                  (quote.deposit !== undefined && quote.deposit > 0n ? '' : ` ${AA_SELF_PAID_FEE_SENTENCE}`)}
             </Text>
+            <AaDepositNote
+              fee={quote.fee}
+              deposit={quote.deposit}
+              sponsored={quote.sponsored}
+              symbol={evmChain.displaySymbol}
+            />
             <Row
               label={quote.token ? `Total ${evmChain.displaySymbol} (worst case)` : 'Total (worst case)'}
               value={`${exact(quote.total, nativeDecimals)} ${evmChain.displaySymbol}`}

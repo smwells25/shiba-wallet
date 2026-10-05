@@ -32,8 +32,8 @@
 //   node scripts/check-key-import.mjs
 
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { dirname, join, resolve as resolvePath } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { ethers } from 'ethers';
 import { bitcoinKeyProvider, evmKeyProvider, mnemonicToSeed, solanaKeyProvider } from '@shiba-wallet/core';
 import { ENTRYPOINT_V07, KERNEL_V3_3, getUserOpHash, predictKernelAddress } from '@shiba-wallet/chains-evm';
@@ -58,6 +58,7 @@ import {
   describeProtectionStatus,
   describeUpgradeOutcome,
   importedKeysProtectionNote,
+  importedKeysSubject,
   protectConfirmMessage,
 } from '../src/wallet/phrase-protection-copy.ts';
 import {
@@ -95,15 +96,21 @@ import {
   KEY_NOT_HEX_ERROR,
   KEY_OUT_OF_RANGE_ERROR,
   KEY_ZERO_ERROR,
+  PHRASE_ACCOUNT_WAS_IMPORTED_TITLE,
+  accountsBackupHint,
   duplicateImportError,
   importedKeyBytes,
+  importedRemovalStrandedSentence,
+  phraseAccountSameAsImportedNote,
+  removeImportedMessage,
   importedSignerFor,
   keyLengthError,
   parsePrivateKeyInput,
 } from '../src/wallet/imported-keys.ts';
-import { createAaClientFromConfig, prepareAaSend, resolveAaSender, sendAa } from '../src/wallet/aa.ts';
+import { createAaClientFromConfig, prepareAaSend, readOwnerSmartAccountHoldings, resolveAaSender, sendAa } from '../src/wallet/aa.ts';
 import {
   GUARDIAN_IMPORTED_REFUSAL,
+  OWNER_ROTATION_IMPORTED_NOT_OFFERED,
   OWNER_ROTATION_IMPORTED_REFUSAL,
   OWNER_ROTATION_IMPORTED_TARGET,
   RECOVERY_IMPORTED_OWNER_REFUSAL,
@@ -149,6 +156,22 @@ async function checkRejects(name, fn, includes) {
 const same = (a, b) => typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase();
 const HERE = dirname(fileURLToPath(import.meta.url));
 const src = (rel) => readFileSync(join(HERE, '..', 'src', rel), 'utf8');
+
+// A deliberately broken copy of an app module for a mutation check: written
+// to a scratch directory with its relative imports rewritten to absolute file
+// URLs of the real modules, so only the mutated file differs. Removed on exit.
+const APP_MUTANT_DIR = join(HERE, `.mutants-app-${process.pid}`);
+let appMutants = 0;
+process.on('exit', () => rmSync(APP_MUTANT_DIR, { recursive: true, force: true }));
+async function importAppMutant(relPath, source) {
+  const originalDir = dirname(join(HERE, '..', relPath));
+  const rewritten = source.replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolvePath(originalDir, spec)).href}'`);
+  mkdirSync(APP_MUTANT_DIR, { recursive: true });
+  appMutants += 1;
+  const file = join(APP_MUTANT_DIR, `m${appMutants}-${relPath.split('/').pop()}`);
+  writeFileSync(file, rewritten);
+  return import(pathToFileURL(file).href);
+}
 
 // ---------------------------------------------------------------------------
 // Disposable keys, built at runtime
@@ -352,9 +375,9 @@ console.log('check-key-import: vault — standard storage (phrase not protected)
   check('status: 1 imported key, standard', st.importedKeys.total === 1 && st.importedKeys.standard === 1 && !st.importedKeys.damaged);
   const view = describeProtectionStatus(st);
   check('Settings note: the key is in standard storage too and moves with the phrase',
-    view.importedNote === 'Your 1 imported private key is in standard secure storage too; protecting the phrase moves them with it. The recovery phrase does not back up imported keys.', view.importedNote);
-  check('protect confirm message names the imported key and the backup gap',
-    protectConfirmMessage(st).startsWith(PROTECT_CONFIRM_MESSAGE) && /1 imported private key in standard storage moves too/.test(protectConfirmMessage(st)) && /recovery phrase cannot restore them/.test(protectConfirmMessage(st)));
+    view.importedNote === 'Your imported private key is in standard secure storage too; protecting the phrase moves it too. The recovery phrase does not back up imported keys.', view.importedNote);
+  check('protect confirm message names the imported key and the backup gap (singular wording for one key)',
+    protectConfirmMessage(st).startsWith(PROTECT_CONFIRM_MESSAGE) && /Your imported private key in standard storage moves too \(it asks/.test(protectConfirmMessage(st)) && /recovery phrase cannot restore it: keep a copy of the private key\./.test(protectConfirmMessage(st)), protectConfirmMessage(st));
   // Cap.
   const cap = await freshVault();
   for (let i = 0; i < MAX_IMPORTED_KEYS; i++) {
@@ -377,7 +400,7 @@ console.log('check-key-import: vault — a new key follows the PROTECTED phrase'
   check('list() still needs no prompt', (await vault.importedKeys.list()).keys.length === 1 && shim.take().length === 0);
   const st = await vault.status();
   check('status: protected, nothing left to move', st.importedKeys.protected === 1 && st.importedKeys.standard === 0 && st.canProtectNow === false);
-  check('Settings note: protected too', describeProtectionStatus(st).importedNote === 'Your 1 imported private key is protected by biometrics too. The recovery phrase does not back up imported keys.');
+  check('Settings note: protected too (finding 8: reads naturally for one key)', describeProtectionStatus(st).importedNote === 'Your imported private key is protected by biometrics too. The recovery phrase does not back up imported keys.', describeProtectionStatus(st).importedNote);
 
   const ios = await freshVault({ platform: 'ios', protect: true });
   await ios.vault.importedKeys.save(canon(KEY_A), ADDR_A);
@@ -446,7 +469,7 @@ console.log('check-key-import: vault — protecting the phrase later moves the i
   check('status: phrase protected, 1 key still standard, the button is offered again', st.phrase === 'protected' && st.importedKeys.standard === 1 && st.canProtectNow === true);
   const view = describeProtectionStatus(st);
   check('Settings says precisely what remains unprotected',
-    view.showProtectButton === true && view.importedNote === '1 imported private key is still in standard secure storage, readable by code inside the app while the phone is unlocked. Protect with biometrics moves them too. The recovery phrase does not back up imported keys.', view.importedNote);
+    view.showProtectButton === true && view.importedNote === 'One of your imported private keys is still in standard secure storage, readable by code inside the app while the phone is unlocked. Protect with biometrics moves it too. The recovery phrase does not back up imported keys.', view.importedNote);
   check('the outcome alert says how many remain and why', describeUpgradeOutcome(partial).message.includes('1 imported private key is still in standard secure storage because the prompt was cancelled'));
   const rest = await p.vault.upgrade();
   check('pressing Protect again moves the remaining key (no phrase prompt needed)', rest.outcome === 'already-protected' && rest.importedKeys?.moved === 1 && rest.importedKeys?.remaining === 0);
@@ -506,7 +529,7 @@ console.log('check-key-import: vault — invalidation, damage, removal and wipe'
   check('…the message says the recovery phrase cannot restore it', /Your recovery phrase cannot restore this account/.test(IMPORTED_KEY_UNREADABLE_MESSAGE));
   const st = await vault.status();
   check('…status counts it as unreadable and the record is kept (never deleted silently)', st.importedKeys.unreadable === 1 && (await vault.importedKeys.list()).keys.length === 1);
-  check('…Settings names it', /1 imported private key can no longer be opened on this phone/.test(importedKeysProtectionNote(st) ?? ''));
+  check('…Settings names it', /Your imported private key can no longer be opened on this phone after a biometric change; your recovery phrase cannot restore it, only a copy you kept yourself can\./.test(importedKeysProtectionNote(st) ?? ''), importedKeysProtectionNote(st));
 
   const m = await freshVault();
   await m.vault.importedKeys.save(canon(KEY_A), ADDR_A);
@@ -826,6 +849,150 @@ console.log('check-key-import: features that refuse an imported owner (before an
 }
 
 // ===========================================================================
+console.log('check-key-import: findings 2–8 of the 2026-10-04 private-key run');
+// ===========================================================================
+{
+  // Finding 5: the removal dialog names what else the key controls on the
+  // network in use: its smart account and EntryPoint deposit (best effort).
+  const cfg = { ...kernelConfig, eip7702Owners: [], recoveredAccounts: [] };
+  const fmt = (wei) => `${ethers.formatEther(wei)} test ETH`;
+  const read = (config, node, bundlerCalls = []) =>
+    readOwnerSmartAccountHoldings(config, {
+      nodeUrl: NODE_URL,
+      chainId: 11155111n,
+      accountIndex: IMPORTED_ID,
+      ownerAddress: ADDR_A,
+      transportFor: (url) => (url === NODE_URL ? node : async (m) => { bundlerCalls.push(m); throw new Error('no bundler call expected'); }),
+    });
+  const EP_KEY = (holder) => `${ENTRYPOINT_V07.toLowerCase()}|${holder.toLowerCase()}`;
+  {
+    const node = fakeKernelNode({ chainIdHex: '0xaa36a7', balance: 0n });
+    const bundlerCalls = [];
+    const h = await read(cfg, node, bundlerCalls);
+    check('an undeployed, empty smart account (salt 0) is read without any bundler request',
+      h.kind === 'smart-account' && h.address === KERNEL_IMPORTED && h.deployed === false && h.balance === 0n && h.deposit === 0n && bundlerCalls.length === 0, JSON.stringify(h, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
+    check('…and the dialog says nothing about it (nothing would be stranded)', importedRemovalStrandedSentence(h, fmt) === null);
+  }
+  {
+    const node = fakeKernelNode({
+      chainIdHex: '0xaa36a7',
+      deployedAccounts: new Set([KERNEL_IMPORTED]),
+      balance: 2_500_000_000_000_000n,
+      tokenBalances: { [EP_KEY(KERNEL_IMPORTED)]: 500_000_000_000_000n },
+    });
+    const h = await read(cfg, node);
+    const sentence = importedRemovalStrandedSentence(h, fmt);
+    check('a deployed smart account with a balance and a deposit is named in full',
+      sentence === `This key also controls the smart account ${KERNEL_IMPORTED} on Ethereum Sepolia, which holds 0.0025 test ETH and an EntryPoint deposit of 0.0005 test ETH. Only this key can move them, so they, and any tokens or NFTs that smart account holds, would be stranded too. Other networks were not checked.`, sentence ?? '');
+    const msg = removeImportedMessage('Imported 1 (imported key)', ADDR_A, sentence);
+    check('the first removal dialog keeps its sentences byte-identical and appends the stranded sentence',
+      msg === `This deletes the private key of Imported 1 (imported key) (${ADDR_A}) from this phone. Your recovery phrase cannot bring it back: unless you kept the private key yourself, this account and everything it holds will be lost for good. Funds on-chain are not moved. ${sentence}`);
+    check('…and without one it is exactly the old text', removeImportedMessage('X', ADDR_A) === `This deletes the private key of X (${ADDR_A}) from this phone. Your recovery phrase cannot bring it back: unless you kept the private key yourself, this account and everything it holds will be lost for good. Funds on-chain are not moved.`);
+  }
+  {
+    const node = fakeKernelNode({ chainIdHex: '0xaa36a7' });
+    const h = await read({ ...cfg, bundlerUrl: null }, node);
+    check('no smart-account settings on this network: kind none, no node request, no sentence', h.kind === 'none' && node.calls.length === 0 && importedRemovalStrandedSentence(h, fmt) === null);
+  }
+  {
+    const h = await read(cfg, fakeKernelNode({ chainIdHex: '0x1' }));
+    check('a node on another chain: kind unknown (never blocks), and the dialog says it could not be checked',
+      h.kind === 'unknown' && importedRemovalStrandedSentence(h, fmt) === 'This key may also control a smart account on Ethereum Sepolia; it could not be checked just now. Anything that smart account holds, and its EntryPoint deposit, would be stranded too.');
+    const broken = await read(cfg, async () => { throw new Error('offline'); });
+    check('a failing node: kind unknown, no throw', broken.kind === 'unknown');
+  }
+  {
+    const node = fakeKernelNode({ chainIdHex: '0xaa36a7', tokenBalances: { [EP_KEY(ADDR_A)]: 300_000_000_000_000n } });
+    const h = await read({ ...cfg, eip7702Owners: [ADDR_A] }, node);
+    check('an EIP-7702 upgraded key: its own address\'s EntryPoint deposit is named',
+      h.kind === 'eip7702' && h.deposit === 300_000_000_000_000n && importedRemovalStrandedSentence(h, fmt) === 'This account is upgraded (EIP-7702) on Ethereum Sepolia, and the EntryPoint holds a deposit of 0.0003 test ETH for it, which only this key can use; it would be stranded too. Other networks were not checked.');
+  }
+
+  // Finding 4: deleting the only copy needs the device check, after both
+  // dialogs and before the deletion; a cancel deletes nothing.
+  const acc = src('components/AccountsSection.tsx');
+  const removeBody = acc.slice(acc.indexOf('const onRemoveImported'), acc.indexOf('const onRevealImported'));
+  const removeOrder = (body) => {
+    const confirm = body.indexOf('REMOVE_IMPORTED_CONFIRM_TITLE');
+    const gate = body.indexOf('requireLocalAuth(PROMPTS.importedKeyRemove, {');
+    const refusal = body.indexOf("if (!auth.ok) {\n                    Alert.alert('Not removed', `${auth.message} Nothing was deleted.`);\n                    return;\n                  }");
+    const del = body.indexOf('removeImportedAccount(account.index)');
+    return confirm >= 0 && gate > confirm && refusal > gate && del > refusal;
+  };
+  check('Remove: both dialogs, then requireLocalAuth for THAT key, then the deletion; a cancel returns with "Nothing was deleted."',
+    removeOrder(removeBody) && /kind: 'imported',\s*slot: importedSlotOf\(account\.index\)/.test(removeBody));
+  check('…the opened key is dropped right after the deletion', /await removeImportedAccount\(account\.index\);\s*\} finally \{\s*dropPhraseTicket\(\);/.test(removeBody));
+  check('…with its own prompt title', PROMPTS.importedKeyRemove === 'Approve deleting the imported private key');
+  check('M7 caught: a Remove without the device check fails the order check',
+    !removeOrder(removeBody.replace('requireLocalAuth(PROMPTS.importedKeyRemove, {', 'Promise.resolve({ ok: true }) && ({')));
+
+  // Finding 3: no "Change owner…" for an imported key's account.
+  const guardians = src('screens/GuardiansScreen.tsx');
+  const guardiansOk = (text) => {
+    const importedBranch = text.indexOf('{owner && activeAccount?.imported ? (');
+    const ownerBranch = text.indexOf(') : owner ? (', importedBranch);
+    return importedBranch >= 0 && ownerBranch > importedBranch &&
+      text.slice(importedBranch, ownerBranch).includes('{OWNER_ROTATION_IMPORTED_NOT_OFFERED}') &&
+      !text.slice(importedBranch, ownerBranch).includes('Change owner…') &&
+      text.slice(ownerBranch).includes('<Button title="Change owner…"');
+  };
+  check('Guardians: an imported account gets the not-offered sentence and no Change owner button', guardiansOk(guardians));
+  check('the refusal text is unchanged (not-offered sentence + "Nothing was signed.")',
+    OWNER_ROTATION_IMPORTED_REFUSAL === 'Changing the owner is not offered for a smart account owned by an imported private key in this version. Nothing was signed.' &&
+      OWNER_ROTATION_IMPORTED_REFUSAL === `${OWNER_ROTATION_IMPORTED_NOT_OFFERED} Nothing was signed.`);
+
+  // Finding 6: Home — the token fee sentence and the recover link.
+  const home = src('screens/HomeScreen.tsx');
+  check('Home footer: the corrected token-fee sentence, not "pay their network fee in ETH"',
+    /tokens have their own Send link\. \{tokenSendFeeSentence\(evmChain\.caip2\)\}/.test(home) && !/network fee in ETH/.test(home));
+  check('Home: "Lost a recovery phrase? Recover an account with guardians" is not offered from an imported account',
+    /\{activeAccount\?\.imported \? null : \(\s*<Pressable[\s\S]{0,600}Lost a recovery phrase\? Recover an account with guardians/.test(home));
+
+  // Finding 8: wording that reads naturally for one key.
+  check('importedKeysSubject: one key, all of several, one of several, some of several',
+    importedKeysSubject(1, 1) === 'Your imported private key' && importedKeysSubject(3, 3) === 'Your 3 imported private keys' &&
+      importedKeysSubject(1, 3) === 'One of your imported private keys' && importedKeysSubject(2, 3) === '2 of your 3 imported private keys');
+
+  // The known gap, closed from the other side: a phrase account added later
+  // whose address equals an imported key's is flagged.
+  const listed = [
+    { name: 'Account 1', imported: false, evmAddress: PHRASE_ACCOUNT_0.address },
+    { name: 'Imported 1 (imported key)', imported: true, evmAddress: ADDR_A.toLowerCase() },
+  ];
+  const note = phraseAccountSameAsImportedNote({ name: 'Account 3', imported: false, evmAddress: ADDR_A }, listed);
+  check('a new phrase account with an imported key\'s address is flagged (case-insensitive), with the smart-account caveat',
+    note === `Account 3 comes from your recovery phrase and has the same Ethereum address (${ADDR_A}) as Imported 1 (imported key). That imported key is this phrase account's key, so your recovery phrase does back it up. You can use Account 3 instead and remove the imported copy in Settings → Accounts. Before removing it, move anything its smart account holds: the phrase account’s smart account has a different address.`, note ?? '');
+  check('…not for a different address, an imported "new" account, or a match with a phrase account only',
+    phraseAccountSameAsImportedNote({ name: 'Account 3', imported: false, evmAddress: ADDR_B }, listed) === null &&
+      phraseAccountSameAsImportedNote({ name: 'X', imported: true, evmAddress: ADDR_A }, listed) === null &&
+      phraseAccountSameAsImportedNote({ name: 'Account 3', imported: false, evmAddress: PHRASE_ACCOUNT_0.address }, listed) === null);
+  check('both add paths show it (Settings → Accounts and the switcher)',
+    /phraseAccountSameAsImportedNote\(out\.created, accountList\)/.test(acc) && /PHRASE_ACCOUNT_WAS_IMPORTED_TITLE/.test(acc) &&
+      /phraseAccountSameAsImportedNote\(created, accountList\)/.test(src('components/AccountSwitcher.tsx')) && PHRASE_ACCOUNT_WAS_IMPORTED_TITLE === 'This key was already imported');
+  const ikSource = src('wallet/imported-keys.ts');
+  const mutant = await importAppMutant('src/wallet/imported-keys.ts', ikSource.replace('accounts.find((a) => a.imported && a.evmAddress?.toLowerCase() === lower)', 'accounts.find((a) => a.evmAddress?.toLowerCase() === lower)'));
+  check('M8 caught: without the imported-only match a phrase account is "flagged" against itself',
+    mutant.phraseAccountSameAsImportedNote({ name: 'Account 3', imported: false, evmAddress: PHRASE_ACCOUNT_0.address }, listed) !== null);
+
+  // More mutation checks, one per remaining fix.
+  const depositOnly = { kind: 'smart-account', network: 'Ethereum Sepolia', address: KERNEL_IMPORTED, deployed: false, balance: 0n, deposit: 1n };
+  check('an undeployed smart account holding only a deposit is still named', importedRemovalStrandedSentence(depositOnly, fmt) !== null);
+  const m9 = await importAppMutant('src/wallet/imported-keys.ts', ikSource.replace('holdings.balance <= 0n && holdings.deposit <= 0n) return null;', 'holdings.balance <= 0n) return null;'));
+  check('M9 caught: a removal sentence that ignores the deposit stays silent about it', m9.importedRemovalStrandedSentence(depositOnly, fmt) === null);
+  const ppcSource = src('wallet/phrase-protection-copy.ts');
+  const m10 = await importAppMutant('src/wallet/phrase-protection-copy.ts', ppcSource.replace("count === 1 ? 'Your imported private key' :", 'count === 1 ? `Your ${count} imported private key` :'));
+  check('M10 caught: the old "Your 1 imported private key" wording fails the singular check', m10.importedKeysSubject(1, 1) !== 'Your imported private key');
+  const guardianMutant = guardians.replace('{owner && activeAccount?.imported ? (', '{false ? (');
+  check('M11 caught: a Guardians screen that offers Change owner to an imported account fails the check', !guardiansOk(guardianMutant));
+  const homeMutant = home.replace('{activeAccount?.imported ? null : (', '{(');
+  check('M12 caught: a Home screen that always shows the recover link fails the check',
+    !/\{activeAccount\?\.imported \? null : \(\s*<Pressable[\s\S]{0,600}Lost a recovery phrase\? Recover an account with guardians/.test(homeMutant));
+  const accMutant = acc.replace('{accountsBackupHint(importedCount > 0)}', 'Every account comes from your one recovery phrase, so the phrase backs up all of them.');
+  check('M13 caught: the old Settings opening sentence fails the shared-sentence check',
+    !/\{accountsBackupHint\(importedCount > 0\)\}/.test(accMutant) && /Every account comes from your one recovery phrase, so the phrase backs/.test(accMutant));
+}
+
+// ===========================================================================
 console.log('check-key-import: honesty and input hygiene in the screens (source checks)');
 // ===========================================================================
 {
@@ -845,8 +1012,17 @@ console.log('check-key-import: honesty and input hygiene in the screens (source 
   check('notice on the WalletConnect sheet, fed by the active account', notice('components/WcApprovalSheet.tsx') && /importedKey=\{activeAccount\?\.imported === true\}/.test(src('wallet/WalletConnectContext.tsx')));
   check('notice on the import screen and the private-key reveal', notice('screens/ImportKeyScreen.tsx') && notice('components/ImportedKeyReveal.tsx'));
   const acc = src('components/AccountsSection.tsx');
-  check('Settings → Accounts labels imported rows and explains the exception', /NOT backed up by your recovery phrase/.test(acc) && /Imported accounts are the exception/.test(acc));
-  check('the switcher\'s hint is true when imported accounts exist', /Every account except the imported ones comes from your one recovery phrase/.test(src('components/AccountSwitcher.tsx')));
+  // Finding 2 of the 2026-10-04 private-key run: Settings → Accounts opened
+  // with "Every account comes from your one recovery phrase" and appended the
+  // exception; both lists now use one helper whose sentence is true as one
+  // statement.
+  check('Settings → Accounts labels imported rows', /NOT backed up by your recovery phrase/.test(acc));
+  check('the shared backup sentence: true as one statement when imported accounts exist',
+    accountsBackupHint(true) === 'Every account except the imported ones comes from your one recovery phrase. Imported accounts are NOT backed up by the phrase: keep their private keys yourself.' &&
+      accountsBackupHint(false) === 'Every account comes from your one recovery phrase — backing up the phrase backs up all of them.');
+  check('Settings → Accounts and the switcher both use it; the old opening sentence is gone from Settings',
+    /\{accountsBackupHint\(importedCount > 0\)\}/.test(acc) && /\{accountsBackupHint\(anyImported\)\}/.test(src('components/AccountSwitcher.tsx')) &&
+      !/Every account comes from your one recovery phrase, so the phrase backs/.test(acc) && !/Imported accounts are the exception/.test(acc));
   const settings = src('screens/SettingsScreen.tsx');
   check('Backup section names the imported accounts the phrase does NOT back up', /It does NOT back up your imported accounts/.test(settings));
   check('the phrase reveal says it does not restore imported accounts, and its gate opens the PHRASE', /They do not restore your imported accounts/.test(settings) && /requireLocalAuth\('Reveal recovery phrase', \{ kind: 'phrase' \}\)/.test(settings));

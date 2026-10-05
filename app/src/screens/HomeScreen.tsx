@@ -36,6 +36,7 @@ import { usePasskeyInfo } from '../wallet/usePasskeyInfo';
 import { shortAccountAddress } from '../wallet/accounts';
 import { delegationLabelSuffix, FOREIGN_DELEGATE_WARNING } from '../wallet/delegation';
 import { usePrices } from '../wallet/usePrices';
+import { tokenSendFeeSentence } from '../wallet/token-gas';
 import {
   formatFiat,
   nativePriceAssetId,
@@ -619,16 +620,22 @@ export function HomeScreen({ navigation }: Props) {
               ))}
             </View>
           ) : null}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Recover an account with guardians"
-            onPress={() => navigation.navigate('RecoverAccount')}
-            hitSlop={8}
-          >
-            <Text style={[styles.manageTokens, styles.recoverLink, { color: theme.accent }]}>
-              Lost a recovery phrase? Recover an account with guardians
-            </Text>
-          </Pressable>
+          {/* Not offered from an imported account: a recovery onto an
+              imported key is refused (recovery.ts
+              RECOVERY_IMPORTED_OWNER_REFUSAL), so the link would lead to a
+              refusal. */}
+          {activeAccount?.imported ? null : (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Recover an account with guardians"
+              onPress={() => navigation.navigate('RecoverAccount')}
+              hitSlop={8}
+            >
+              <Text style={[styles.manageTokens, styles.recoverLink, { color: theme.accent }]}>
+                Lost a recovery phrase? Recover an account with guardians
+              </Text>
+            </Pressable>
+          )}
           <Text style={[styles.footer, { color: theme.textMuted }]}>
             {activeAccount?.imported
               ? `${activeAccount.name}'s Ethereum address comes from a private key you imported; your ` +
@@ -636,8 +643,8 @@ export function HomeScreen({ navigation }: Props) {
               : `${activeAccount ? `${activeAccount.name}'s` : 'Your'} addresses, derived on this device ` +
                 'from your recovery phrase (one phrase backs up every account from it).'}{' '}
             Balances come from the RPC endpoints in Settings; pull
-            down to refresh. Tap a chain to receive, or use its Send link —
-            tokens have their own Send link and pay their network fee in ETH.
+            down to refresh. Tap a chain to receive, or use its Send link;
+            tokens have their own Send link. {tokenSendFeeSentence(evmChain.caip2)}
             {showFiat
               ? ' USD values are indicative prices from CoinGecko (Settings → Prices).'
               : ''}

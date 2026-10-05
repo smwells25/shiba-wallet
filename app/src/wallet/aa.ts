@@ -628,6 +628,15 @@ export async function bundlerPriorityFeeFloor(bundler: JsonRpcTransport): Promis
 export interface BundlerFeeFloor {
   maxPriorityFeePerGas: bigint;
   maxFeePerGas: bigint | null;
+  /**
+   * The LOWEST price the bundler currently advertises, when it says (the
+   * Pimlico-style `slow` tier). Quotes are priced over the fields above
+   * (the standard tier, plus AA_FEE_FLOOR_HEADROOM_PERCENT); the send-time
+   * check compares the quoted fees with this one (feeFloorShortfall). Absent
+   * for Rundler's single answer and when the tier is missing or malformed,
+   * in which case the check falls back to the fields above.
+   */
+  lowest?: { maxPriorityFeePerGas: bigint; maxFeePerGas: bigint | null };
 }
 
 /**
@@ -643,8 +652,31 @@ export interface BundlerFeeFloor {
  * getLowestValidGasPrices, main at 96529592, read 2026-10-04). ZeroDev's
  * Sepolia bundler refused a revoke on 2026-10-04 with exactly the second
  * message, so it behaves like Alto here (which bundler software ZeroDev
- * runs is not documented). The floor moves with the network: in that run it
- * rose about 8 % between the quote and the send.
+ * runs is not documented).
+ *
+ * What the tiers are, and why the send-time check uses the lowest one
+ * (pimlicolabs/alto at 96529592, read 2026-10-04): the method returns the
+ * bundler's LATEST observed gas price scaled by its configured slow /
+ * standard / fast multipliers (src/rpc/methods/
+ * pimlico_getUserOperationGasPrice.ts), while the refusal above compares
+ * the operation with the MINIMUM of the prices it observed during the last
+ * gas-price-expiry seconds (src/handlers/gasPriceManager.ts
+ * getLowestValidGasPrices over a min/max queue, src/utils/minMaxQueue;
+ * src/cli/config/options.ts: default expiry 20 s, default multipliers
+ * 100,100,100). So the standard tier is a point estimate at or above what
+ * the bundler accepts, and it is noisy: read-only probes of ZeroDev's
+ * Sepolia endpoint on 2026-10-04 saw its standard-tier priority fee change
+ * with almost every block, between about 0.061 and 0.117 gwei (+90 % from
+ * one block to the next at worst), with the slow, standard and fast tiers
+ * always in the ratio 1 : 1.05 : 1.10. Under Alto's rule the minimum over
+ * the window is at most the latest raw price, and the slow tier equals
+ * that raw price when its multiplier is 100 (ZeroDev's multipliers are not
+ * published; the 1 : 1.05 : 1.10 ratio fits 100,105,110, but that is an
+ * inference). Hence: quotes are priced over the STANDARD tier plus
+ * headroom, and the send-time check refuses only when the bundler's LOWEST
+ * advertised price is above the quoted fee. A bundler that still refuses
+ * at submission is caught by isBundlerFeeFloorRefusal and gets the same
+ * wording.
  */
 export async function bundlerFeeFloor(bundler: JsonRpcTransport): Promise<BundlerFeeFloor | null> {
   const rundler = await rundlerPriorityFee(bundler);
@@ -671,20 +703,43 @@ async function rundlerPriorityFee(bundler: JsonRpcTransport): Promise<bigint | n
  * returning "the gas prices that must be used for the user operation you
  * are bundling with Pimlico bundlers", with slow / standard / fast tiers
  * of hex maxFeePerGas and maxPriorityFeePerGas (docs.pimlico.io, Bundler
- * endpoints reference, read 2026-10-01). The standard tier is used as the
- * floor; a tier without a valid maxPriorityFeePerGas yields null, and a
- * missing or malformed maxFeePerGas only leaves that half unknown.
+ * endpoints reference, read 2026-10-01). Quotes are priced over the
+ * standard tier; the slow tier, when well formed and not above the
+ * standard one, becomes `lowest` (bundlerFeeFloor explains why the
+ * send-time check uses it). A standard tier without a valid
+ * maxPriorityFeePerGas yields null, and a missing or malformed
+ * maxFeePerGas only leaves that half unknown.
  */
 async function pimlicoFeeFloor(bundler: JsonRpcTransport): Promise<BundlerFeeFloor | null> {
+  type Tier = { maxPriorityFeePerGas?: unknown; maxFeePerGas?: unknown };
   try {
     const result = (await bundler('pimlico_getUserOperationGasPrice', [])) as
-      | { standard?: { maxPriorityFeePerGas?: unknown; maxFeePerGas?: unknown } }
+      | { slow?: Tier; standard?: Tier }
       | null
       | undefined;
     const priority = result?.standard?.maxPriorityFeePerGas;
     if (!isHexQuantity(priority)) return null;
     const maxFee = result?.standard?.maxFeePerGas;
-    return { maxPriorityFeePerGas: BigInt(priority), maxFeePerGas: isHexQuantity(maxFee) ? BigInt(maxFee) : null };
+    const floor: BundlerFeeFloor = {
+      maxPriorityFeePerGas: BigInt(priority),
+      maxFeePerGas: isHexQuantity(maxFee) ? BigInt(maxFee) : null,
+    };
+    // A "lowest" price above the standard one would not be the lowest: such
+    // a slow tier is ignored rather than trusted, and so is a slow
+    // maxFeePerGas above the standard one (the standard value is kept).
+    const slowPriority = result?.slow?.maxPriorityFeePerGas;
+    if (isHexQuantity(slowPriority) && BigInt(slowPriority) <= floor.maxPriorityFeePerGas) {
+      const slowMax = result?.slow?.maxFeePerGas;
+      const lowestMax = isHexQuantity(slowMax) ? BigInt(slowMax) : null;
+      floor.lowest = {
+        maxPriorityFeePerGas: BigInt(slowPriority),
+        maxFeePerGas:
+          lowestMax !== null && floor.maxFeePerGas !== null && lowestMax <= floor.maxFeePerGas
+            ? lowestMax
+            : floor.maxFeePerGas,
+      };
+    }
+    return floor;
   } catch {
     return null;
   }
@@ -707,15 +762,23 @@ export function applyPriorityFeeFloor(
 
 /**
  * Headroom (percent) that smart-account QUOTES add on top of the bundler's
- * fee floor. A judgement call, not a standard: the floor drifted about 8 %
- * between a quote and its send in the 2026-10-04 emulator run, and the
- * wallet never raises a fee after the user approved the quote, so the quote
- * itself carries room for a modest drift. The headroom is part of the
- * displayed worst-case fee. The fee actually charged is lower: the
- * EntryPoint charges gas used × min(maxFeePerGas, base fee +
- * maxPriorityFeePerGas), so the headroom costs at most 25 % of the
- * (small) priority fee floor per unit of gas, and nothing when the node's
- * own suggestion is already above floor + 25 %.
+ * fee floor (its standard-tier price, see bundlerFeeFloor). A judgement
+ * call, not a standard. The wallet never raises a fee after the user
+ * approved the quote, so the quote itself carries room for the price to
+ * move; the headroom is part of the displayed worst-case fee. The fee
+ * actually charged is lower: the EntryPoint charges gas used × min(
+ * maxFeePerGas, base fee + maxPriorityFeePerGas), so the headroom costs at
+ * most 25 % of the (small) priority fee per unit of gas, and nothing when
+ * the node's own suggestion is already above floor + 25 %.
+ *
+ * The rule this gives, with the send-time check in feeFloorShortfall
+ * (which compares against the bundler's LOWEST tier, never above the
+ * standard one): a rise of the standard-tier price of up to 25 % between
+ * the quote and the send never refuses. What it does not cover is the
+ * per-block noise of that price measured on 2026-10-04 (bundlerFeeFloor):
+ * a quote priced on a low reading can meet a reading 40 % or more above it
+ * one block later. Those refusals happen BEFORE the device check
+ * (checkAaQuoteBeforeApproval) and lead to a fresh quote.
  */
 export const AA_FEE_FLOOR_HEADROOM_PERCENT = 25n;
 
@@ -730,7 +793,8 @@ export function withFeeFloorHeadroom(value: bigint): bigint {
  * (priority fee first, keeping the base-fee allowance like
  * applyPriorityFeeFloor; then maxFeePerGas when the bundler states a
  * minimum for it). A null floor, or a suggestion already above floor +
- * headroom, returns `fees` unchanged.
+ * headroom, returns `fees` unchanged. The floor here is always the
+ * standard tier (`floor.lowest` is for the send-time check only).
  */
 export function quoteFeesOverFloor(
   fees: { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint },
@@ -751,8 +815,14 @@ export function quoteFeesOverFloor(
   return { maxFeePerGas, maxPriorityFeePerGas };
 }
 
-/** Title for every "the fee moved after the review" refusal (send time, before signing). */
+/** Title when the bundler's minimum fee rose above the reviewed fees (reason 'floor'). */
 export const AA_FEE_ROSE_TITLE = 'The network fee rose. Please review again.';
+
+/** Title when the bundler's fresh gas estimate makes the worst case larger than the reviewed one (reason 'gas'). */
+export const AA_GAS_GREW_TITLE = 'The gas estimate grew. Please review again.';
+
+/** Title for the other "review again" refusals (a quote already submitted, fees that changed). */
+export const AA_REVIEW_AGAIN_TITLE = 'Please review the operation again.';
 
 /** The closing sentence of every AaFeeRoseError message. */
 export const AA_FEE_ROSE_NEXT_STEP =
@@ -760,18 +830,38 @@ export const AA_FEE_ROSE_NEXT_STEP =
   'wallet never signs more than the worst-case fee you approved.';
 
 /**
- * Thrown at send time, BEFORE anything is signed, when the operation can
- * no longer go out at or below the worst-case fee the user reviewed: the
- * bundler's fee floor rose above the quoted fees, or the bundler's fresh
- * gas estimate makes the worst case larger than the displayed one. The
- * screens drop the quote and ask for a new review.
+ * Why an operation must be reviewed again:
+ *  - 'floor': the bundler's minimum fee rose above the quoted fees
+ *    (feeFloorShortfall), before the device check or at send time;
+ *  - 'gas': the bundler's fresh gas estimate at send time makes the
+ *    worst-case fee larger than the displayed one (signedFeeGuard);
+ *  - 'fees-changed': the operation about to be signed does not carry the
+ *    quoted fees (an internal invariant; signedFeeGuard);
+ *  - 'used': the quote was already submitted once (claimQuoteForSubmission).
+ */
+export type AaFeeRoseReason = 'floor' | 'gas' | 'fees-changed' | 'used';
+
+/**
+ * Thrown BEFORE anything is signed when the operation can no longer go out
+ * at or below the worst-case fee the user reviewed. `reason` decides the
+ * title (describeAaError). The screens drop the quote and ask for a new
+ * review.
  */
 export class AaFeeRoseError extends Error {
+  reason: AaFeeRoseReason;
   // No TS parameter properties: Node's strip-only type stripping rejects them.
-  constructor(message: string) {
+  constructor(message: string, reason: AaFeeRoseReason = 'floor') {
     super(message);
     this.name = 'AaFeeRoseError';
+    this.reason = reason;
   }
+}
+
+/** The title describeAaError shows for an AaFeeRoseError. */
+export function aaFeeRoseTitle(error: AaFeeRoseError): string {
+  if (error.reason === 'floor') return AA_FEE_ROSE_TITLE;
+  if (error.reason === 'gas') return AA_GAS_GREW_TITLE;
+  return AA_REVIEW_AGAIN_TITLE;
 }
 
 function gwei(wei: bigint): string {
@@ -781,26 +871,30 @@ function gwei(wei: bigint): string {
 }
 
 /**
- * The reason the quoted fees fall below `floor`, or null when they meet it
- * (or the floor is unknown). Exact comparison, no tolerance: the bundler
- * refuses anything below its floor.
+ * The reason the quoted fees fall below what the bundler accepts now, or
+ * null when they meet it (or the floor is unknown). Compared with the
+ * bundler's LOWEST advertised price (`floor.lowest`, the slow tier) when it
+ * has one, else with the standard tier; bundlerFeeFloor explains why the
+ * standard tier is not the bundler's minimum. Exact comparison, no
+ * tolerance.
  */
 export function feeFloorShortfall(
   quoted: { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint },
   floor: BundlerFeeFloor | null,
 ): string | null {
   if (floor === null) return null;
-  if (floor.maxPriorityFeePerGas > quoted.maxPriorityFeePerGas) {
+  const min = floor.lowest ?? floor;
+  if (min.maxPriorityFeePerGas > quoted.maxPriorityFeePerGas) {
     return (
-      `The bundler now asks for a priority fee of at least ${floor.maxPriorityFeePerGas} wei ` +
-      `(${gwei(floor.maxPriorityFeePerGas)} gwei) per gas, above the ${quoted.maxPriorityFeePerGas} wei ` +
+      `The bundler's minimum fee rose: it now asks for a priority fee of at least ${min.maxPriorityFeePerGas} wei ` +
+      `(${gwei(min.maxPriorityFeePerGas)} gwei) per gas, above the ${quoted.maxPriorityFeePerGas} wei ` +
       `(${gwei(quoted.maxPriorityFeePerGas)} gwei) this operation was reviewed with.`
     );
   }
-  if (floor.maxFeePerGas !== null && floor.maxFeePerGas > quoted.maxFeePerGas) {
+  if (min.maxFeePerGas !== null && min.maxFeePerGas > quoted.maxFeePerGas) {
     return (
-      `The bundler now asks for a maximum fee of at least ${floor.maxFeePerGas} wei ` +
-      `(${gwei(floor.maxFeePerGas)} gwei) per gas, above the ${quoted.maxFeePerGas} wei ` +
+      `The bundler's minimum fee rose: it now asks for a maximum fee of at least ${min.maxFeePerGas} wei ` +
+      `(${gwei(min.maxFeePerGas)} gwei) per gas, above the ${quoted.maxFeePerGas} wei ` +
       `(${gwei(quoted.maxFeePerGas)} gwei) this operation was reviewed with.`
     );
   }
@@ -808,19 +902,21 @@ export function feeFloorShortfall(
 }
 
 /**
- * Send-time fee check, before anything is signed: re-reads the bundler's
- * floor and throws AaFeeRoseError when the quoted fees no longer meet it.
- * The quoted fees are never raised here, so the signed fee per gas is
- * always the reviewed one. An unreadable floor passes (best effort, as at
- * quote time); the bundler's own refusal then arrives as an error and the
- * screens re-quote.
+ * Fee-floor check, before anything is signed: re-reads the bundler's floor
+ * and throws AaFeeRoseError (reason 'floor') when the quoted fees no longer
+ * meet it. The quoted fees are never raised here, so the signed fee per
+ * gas is always the reviewed one. An unreadable floor passes (best effort,
+ * as at quote time); the bundler's own refusal then arrives as an error
+ * and the screens re-quote. Used twice per operation: before the device
+ * check (checkAaQuoteBeforeApproval) and again at send time, as the last
+ * line of defence for a floor that moved while the prompt was up.
  */
 export async function assertQuoteFeesMeetBundlerFloor(
   bundler: JsonRpcTransport,
   quoted: { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint },
 ): Promise<void> {
   const shortfall = feeFloorShortfall(quoted, await bundlerFeeFloor(bundler));
-  if (shortfall) throw new AaFeeRoseError(`${shortfall} ${AA_FEE_ROSE_NEXT_STEP}`);
+  if (shortfall) throw new AaFeeRoseError(`${shortfall} ${AA_FEE_ROSE_NEXT_STEP}`, 'floor');
 }
 
 /**
@@ -842,14 +938,18 @@ export function signedFeeGuard(
 ): (op: UserOperation) => void {
   return (op) => {
     if (op.maxFeePerGas !== quoted.maxFeePerGas || op.maxPriorityFeePerGas !== quoted.maxPriorityFeePerGas) {
-      throw new AaFeeRoseError(`The operation's fees differ from the reviewed ones. ${AA_FEE_ROSE_NEXT_STEP}`);
+      throw new AaFeeRoseError(
+        `The operation's fees differ from the reviewed ones. ${AA_FEE_ROSE_NEXT_STEP}`,
+        'fees-changed',
+      );
     }
     if (op.paymaster) return;
     const worstCase = requiredPrefund(op);
     if (worstCase > displayedFee) {
       throw new AaFeeRoseError(
-        `The bundler's fresh gas estimate makes the worst-case fee ${worstCase} wei, above the ` +
-          `${displayedFee} wei you reviewed. ${AA_FEE_ROSE_NEXT_STEP}`,
+        `The gas estimate grew: the bundler's fresh gas estimate makes the worst-case fee ${worstCase} wei, ` +
+          `above the ${displayedFee} wei you reviewed. ${AA_FEE_ROSE_NEXT_STEP}`,
+        'gas',
       );
     }
   };
@@ -2203,6 +2303,56 @@ export function aaFeeFromBalance(fee: bigint, deposit: bigint | null | undefined
   return fee > d ? fee - d : 0n;
 }
 
+/** Row label for a smart account's EntryPoint deposit on a confirm screen. */
+export const AA_DEPOSIT_ROW_LABEL = 'EntryPoint deposit (pays fees first)';
+
+/**
+ * What the deposit is, under its row. EntryPoint v0.7 (account-abstraction
+ * v0.7.0, core/EntryPoint.sol): during validation the account is asked
+ * only for requiredPrefund minus its deposit (_validateAccountPrepayment),
+ * the prefund is then taken from the deposit, and after execution the
+ * unused part of the prefund is credited back to the DEPOSIT
+ * (_postExecution, `_incrementDeposit(refundAddress, refund)` with the
+ * sender as refundAddress when there is no paymaster), not to the account's
+ * balance. The wallet offers no withdrawal (EntryPoint.withdrawTo would
+ * need an operation of its own), so the deposit is used up by later fees.
+ */
+export const AA_DEPOSIT_NOTE =
+  'The EntryPoint holds this deposit for the smart account and takes network fees from it first. It ' +
+  'cannot be sent as an amount (Max leaves it out), and this wallet does not offer a way to withdraw it; ' +
+  'later operations use it for their fees.';
+
+/** The plain sentence when the smart account has no EntryPoint deposit (or it could not be read). */
+export const AA_SELF_PAID_FEE_SENTENCE = 'The smart account pays its own gas from its own balance.';
+
+/**
+ * Who pays a self-paid smart-account fee, for the confirm screen (finding 7
+ * of the 2026-10-04 private-key run: "The smart account pays its own gas
+ * from its own balance." was shown although the deposit paid). The rules
+ * are EntryPoint v0.7's, as in AA_DEPOSIT_NOTE: a deposit at or above the
+ * worst-case fee pays all of it; a smaller one pays first and the balance
+ * tops it up by the rest of the worst case, whose unused part then stays in
+ * the deposit. `format` renders a wei amount with its unit.
+ */
+export function aaSelfPaidFeeSentence(
+  p: { fee: bigint; deposit?: bigint | null },
+  format: (wei: bigint) => string,
+): string {
+  const deposit = p.deposit ?? 0n;
+  if (deposit <= 0n) return AA_SELF_PAID_FEE_SENTENCE;
+  if (deposit >= p.fee) {
+    return (
+      `The smart account's EntryPoint deposit (${format(deposit)}) covers this whole worst-case fee, so ` +
+      'nothing for gas comes from its balance; the deposit is reduced by what the operation actually uses.'
+    );
+  }
+  return (
+    `The fee comes first from the smart account's EntryPoint deposit (${format(deposit)}); its balance tops ` +
+    `the deposit up by the rest of the worst case, up to ${format(p.fee - deposit)}. What the operation ` +
+    'does not use stays in the deposit for later fees; it does not return to the balance.'
+  );
+}
+
 /**
  * Upper bound on re-pricing rounds when a smart-account Max amount is
  * lowered at quote time (the EOA path's MAX_TRIM_ROUNDS in ./send.ts, same
@@ -2441,6 +2591,81 @@ export async function loadSmartAccountAddress(
   };
   smartAccountAddressCache.set(key, info);
   return info;
+}
+
+/**
+ * What an owner key controls besides its own address on one network, for
+ * the "remove this imported key" dialog (finding 5 of the 2026-10-04
+ * private-key run: the dialog said "Funds on-chain are not moved" without
+ * naming the smart account and its EntryPoint deposit, which the key alone
+ * controls):
+ *  - 'none': the network has no complete smart-account settings for this
+ *    owner, so the wallet never built a smart account for it here;
+ *  - 'smart-account': the owner's factory smart account (Kernel or
+ *    SimpleAccount), its deployment state, balance and EntryPoint deposit;
+ *  - 'eip7702': the owner's own address is upgraded with EIP-7702 here; its
+ *    EntryPoint deposit (the address's own balance is the account's);
+ *  - 'unknown': settings exist but a read failed (best effort; the caller
+ *    says so instead of blocking).
+ */
+export type OwnerSmartAccountHoldings =
+  | { kind: 'none' }
+  | {
+      kind: 'smart-account';
+      network: string;
+      symbol: string;
+      address: string;
+      deployed: boolean;
+      balance: bigint;
+      deposit: bigint;
+    }
+  | { kind: 'eip7702'; network: string; symbol: string; address: string; deposit: bigint }
+  | { kind: 'unknown'; network: string };
+
+/**
+ * Reads OwnerSmartAccountHoldings for `ownerAddress` on the network
+ * `config` belongs to. Read-only and node-only (eth_chainId, the spec's
+ * getAddress, eth_getCode, eth_getBalance and the EntryPoint's balanceOf);
+ * no bundler call and no key. Never throws: any failure is 'unknown'.
+ */
+export async function readOwnerSmartAccountHoldings(
+  config: AaChainConfig,
+  options: {
+    nodeUrl: string;
+    chainId: bigint;
+    accountIndex: number;
+    ownerAddress: string;
+    transportFor?: TransportFactory;
+  },
+): Promise<OwnerSmartAccountHoldings> {
+  const network = evmProfileByCaip2(`eip155:${options.chainId}`)?.label ?? `chain id ${options.chainId}`;
+  const symbol = nativeSymbolFor(options.chainId);
+  try {
+    if (!hasCompleteAaSettings(config, options.ownerAddress)) return { kind: 'none' };
+    const bundle = createAaClientFromConfig(config, {
+      nodeUrl: options.nodeUrl,
+      chainId: options.chainId,
+      accountIndex: options.accountIndex,
+      ownerAddress: options.ownerAddress,
+      ...(options.transportFor ? { transportFor: options.transportFor } : {}),
+    });
+    const node = new NodeClient(bundle.node);
+    if ((await node.chainId()) !== options.chainId) return { kind: 'unknown', network };
+    if (isEip7702Owner(config, options.ownerAddress)) {
+      const deposit = await bundle.client.getEntryPointDeposit(options.ownerAddress);
+      return { kind: 'eip7702', network, symbol, address: options.ownerAddress, deposit };
+    }
+    const address = toChecksumAddress(toBytes((await resolveAaSender(bundle, options.ownerAddress)).toLowerCase()));
+    const [code, balance, deposit] = await Promise.all([
+      bundle.node('eth_getCode', [address, 'latest']),
+      node.getBalance(address),
+      bundle.client.getEntryPointDeposit(address),
+    ]);
+    const deployed = typeof code === 'string' && !/^0x0*$/i.test(code);
+    return { kind: 'smart-account', network, symbol, address, deployed, balance, deposit };
+  } catch {
+    return { kind: 'unknown', network };
+  }
 }
 
 /**
@@ -3085,8 +3310,35 @@ export const AA_QUOTE_ALREADY_USED =
  * the guardian recovery submit (./recovery.ts) and scripts/check-aa.mjs.
  */
 export function claimQuoteForSubmission(quote: object): void {
-  if (submittedQuotes.has(quote)) throw new AaFeeRoseError(AA_QUOTE_ALREADY_USED);
+  if (submittedQuotes.has(quote)) throw new AaFeeRoseError(AA_QUOTE_ALREADY_USED, 'used');
   submittedQuotes.add(quote);
+}
+
+/**
+ * The purely network checks of sendAa's fee rules, run by the screens
+ * BEFORE the device check (the 2026-10-04 emulator run: two sends were
+ * refused with "The network fee rose" only after the user had passed the
+ * biometric prompt). Refuses, with an AaFeeRoseError and nothing signed or
+ * claimed, a quote that was already submitted once ('used', a local check)
+ * and quoted fees below the bundler's current floor ('floor',
+ * assertQuoteFeesMeetBundlerFloor). The quote stays usable when this
+ * passes; sendAa (and the passkey and guardian submits) still run the same
+ * floor check again at send time as the last line of defence, and the
+ * gas-estimate check (signedFeeGuard) can only run there, because the
+ * client re-estimates the operation while it signs.
+ *
+ * `quote` needs only the quoted fees; `bundler` is the transport the quote
+ * was priced against (AaClientBundle.bundler, or the guardian submit's).
+ */
+export async function checkAaQuoteBeforeApproval(
+  bundler: JsonRpcTransport,
+  quote: { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint },
+): Promise<void> {
+  if (submittedQuotes.has(quote)) throw new AaFeeRoseError(AA_QUOTE_ALREADY_USED, 'used');
+  await assertQuoteFeesMeetBundlerFloor(bundler, {
+    maxFeePerGas: quote.maxFeePerGas,
+    maxPriorityFeePerGas: quote.maxPriorityFeePerGas,
+  });
 }
 
 /**
@@ -3277,12 +3529,12 @@ export function describeAaError(
 ): { title: string; detail: string } | null {
   const detail = error instanceof Error ? error.message : String(error);
   if (error instanceof AaFundingError) return { title: error.title, detail };
-  if (error instanceof AaFeeRoseError) return { title: AA_FEE_ROSE_TITLE, detail };
+  if (error instanceof AaFeeRoseError) return { title: aaFeeRoseTitle(error), detail };
   if (isBundlerFeeFloorRefusal(detail)) {
     return {
       title: AA_FEE_ROSE_TITLE,
       detail:
-        'The bundler refused the operation because its minimum network fee rose after you reviewed it, so ' +
+        'The bundler refused the operation because its minimum fee rose after you reviewed it, so ' +
         'nothing was sent. Review it again: the new quote shows the higher fee.' +
         `\n\nThe bundler's message: ${detail}`,
     };

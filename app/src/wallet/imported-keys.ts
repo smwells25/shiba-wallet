@@ -105,6 +105,34 @@ export function duplicateImportError(address: string, accounts: readonly Existin
   );
 }
 
+/** Title of the note shown when a newly added phrase account turns out to be an imported key. */
+export const PHRASE_ACCOUNT_WAS_IMPORTED_TITLE = 'This key was already imported';
+
+/**
+ * The known gap of duplicateImportError, closed from the other side: a key
+ * equal to a phrase account that was not listed yet cannot be recognised at
+ * import time (that would need the phrase), but when that phrase account is
+ * added later its address is known. Returns the note to show then (the
+ * account is added either way: an index is never reused, so refusing would
+ * not give the user a different account), or null when the new account's
+ * address is not one of the imported ones.
+ */
+export function phraseAccountSameAsImportedNote(
+  added: { name: string; imported: boolean; evmAddress: string | null },
+  accounts: readonly ExistingAccount[],
+): string | null {
+  if (added.imported || !added.evmAddress) return null;
+  const lower = added.evmAddress.toLowerCase();
+  const match = accounts.find((a) => a.imported && a.evmAddress?.toLowerCase() === lower);
+  if (!match) return null;
+  return (
+    `${added.name} comes from your recovery phrase and has the same Ethereum address (${added.evmAddress}) as ` +
+    `${match.name}. That imported key is this phrase account's key, so your recovery phrase does back it up. ` +
+    `You can use ${added.name} instead and remove the imported copy in Settings → Accounts. Before removing it, ` +
+    'move anything its smart account holds: the phrase account’s smart account has a different address.'
+  );
+}
+
 /**
  * The signing half of WalletContext.signWith for an imported account, kept
  * pure so the check script runs the exact code: builds the engine's
@@ -137,6 +165,25 @@ export function importedKeyBytes(hex: string): Uint8Array {
 // Screen copy (pinned by scripts/check-key-import.mjs)
 // ---------------------------------------------------------------------------
 
+/** The account lists' backup sentence when every account comes from the phrase. */
+export const ACCOUNTS_PHRASE_ONLY_HINT =
+  'Every account comes from your one recovery phrase — backing up the phrase backs up all of them.';
+
+/** The same sentence when imported accounts exist: true as one statement. */
+export const ACCOUNTS_WITH_IMPORTED_HINT =
+  'Every account except the imported ones comes from your one recovery phrase. Imported accounts are ' +
+  'NOT backed up by the phrase: keep their private keys yourself.';
+
+/**
+ * The backup sentence shared by the account switcher and Settings →
+ * Accounts (finding 2 of the 2026-10-04 private-key run: Settings opened
+ * with "Every account comes from your one recovery phrase" and only then
+ * appended the exception).
+ */
+export function accountsBackupHint(anyImported: boolean): string {
+  return anyImported ? ACCOUNTS_WITH_IMPORTED_HINT : ACCOUNTS_PHRASE_ONLY_HINT;
+}
+
 export const IMPORT_KEY_INTRO =
   'Add an Ethereum account from a single private key, for example one exported from another ' +
   'wallet. Only Ethereum-network private keys (64 hexadecimal characters) can be imported; Bitcoin, ' +
@@ -165,12 +212,63 @@ export function importKeySavedMessage(name: string, address: string, protectionD
 
 export const REMOVE_IMPORTED_TITLE = 'Remove this imported account?';
 
-export function removeImportedMessage(name: string, address: string): string {
+/**
+ * The first removal dialog. `stranded` is importedRemovalStrandedSentence's
+ * sentence about the key's smart account on the current network (null when
+ * there is nothing to name); it is appended unchanged.
+ */
+export function removeImportedMessage(name: string, address: string, stranded: string | null = null): string {
   return (
     `This deletes the private key of ${name} (${address}) from this phone. Your recovery phrase cannot ` +
     'bring it back: unless you kept the private key yourself, this account and everything it holds ' +
-    'will be lost for good. Funds on-chain are not moved.'
+    'will be lost for good. Funds on-chain are not moved.' +
+    (stranded ? ` ${stranded}` : '')
   );
+}
+
+/** What the removal dialog knows about the key's smart account (aa.ts OwnerSmartAccountHoldings, by shape). */
+export type ImportedRemovalHoldings =
+  | { kind: 'none' }
+  | { kind: 'smart-account'; network: string; address: string; deployed: boolean; balance: bigint; deposit: bigint }
+  | { kind: 'eip7702'; network: string; address: string; deposit: bigint }
+  | { kind: 'unknown'; network: string };
+
+/**
+ * The removal dialog's sentence about what else the key controls on the
+ * current network (finding 5 of the 2026-10-04 private-key run), or null
+ * when there is nothing to name: no smart-account settings, or a smart
+ * account that is not deployed and holds nothing and has no deposit, or an
+ * EIP-7702 upgrade with no deposit. Only the network in use was read, and
+ * the sentence says so. `format` renders a wei amount with its unit.
+ */
+export function importedRemovalStrandedSentence(
+  holdings: ImportedRemovalHoldings,
+  format: (wei: bigint) => string,
+): string | null {
+  switch (holdings.kind) {
+    case 'none':
+      return null;
+    case 'unknown':
+      return (
+        `This key may also control a smart account on ${holdings.network}; it could not be checked just now. ` +
+        'Anything that smart account holds, and its EntryPoint deposit, would be stranded too.'
+      );
+    case 'eip7702':
+      if (holdings.deposit <= 0n) return null;
+      return (
+        `This account is upgraded (EIP-7702) on ${holdings.network}, and the EntryPoint holds a deposit of ` +
+        `${format(holdings.deposit)} for it, which only this key can use; it would be stranded too. Other ` +
+        'networks were not checked.'
+      );
+    case 'smart-account':
+      if (!holdings.deployed && holdings.balance <= 0n && holdings.deposit <= 0n) return null;
+      return (
+        `This key also controls the smart account ${holdings.address} on ${holdings.network}` +
+        `${holdings.deployed ? '' : ' (not deployed yet)'}, which holds ${format(holdings.balance)} and an ` +
+        `EntryPoint deposit of ${format(holdings.deposit)}. Only this key can move them, so they, and any ` +
+        'tokens or NFTs that smart account holds, would be stranded too. Other networks were not checked.'
+      );
+  }
 }
 
 export const REMOVE_IMPORTED_CONFIRM_TITLE = 'Delete the private key?';

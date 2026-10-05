@@ -164,6 +164,18 @@ for (const id of ['eoa-send', 'tokens', 'nft', 'swap', 'walletconnect', 'dogecoi
     f.status === 'blocked' && f.enforced === false && ['T-67', 'W1', 'W2', 'W3', 'W19'].every((i) => f.evidence.includes(i)), JSON.stringify(f.evidence));
   check('imported-key reason says the recovery phrase does not back up an imported key',
     /recovery phrase does not back up an imported key/.test(f.reason) && f.reason.includes(PLAIN_BLOCKERS), f.reason);
+  // Finding 8 of the 2026-10-04 private-key run: the reason ran two clauses
+  // together ("…unless you kept the key yourself, and biometric protection
+  // …"); it is now two sentences, with the shared blockers clause where the
+  // other plain-feature reasons have it.
+  check('imported-key reason is two plain sentences (exact text)',
+    f.reason ===
+      'Importing an Ethereum private key works on mainnet in this build, but it is not yet cleared for real funds: ' +
+        `${PLAIN_BLOCKERS}. The recovery phrase does not back up an imported key, so this phone’s secure storage ` +
+        'holds its only copy unless you kept the key yourself.',
+    f.reason);
+  check('…and the protected-phrase substitution keeps it two sentences',
+    readinessDisplayReason(f, 'protected').split('. ').length === 2 && !readinessDisplayReason(f, 'protected').includes(', and your recovery phrase'));
 }
 check('dogecoin-send names W6 (the one real broadcast)', featureReadiness('dogecoin-send').evidence.includes('W6'));
 check('swap names W7 (a live 0x quote)', featureReadiness('swap').evidence.includes('W7'));

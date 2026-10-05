@@ -17,6 +17,7 @@ import {
 } from '@shiba-wallet/chains-evm';
 import { Button, ImportedKeyNotice, WarningBox } from '../components';
 import { BalanceChangePreview } from './BalanceChangePreview';
+import { AaDepositNote } from './AaDepositNote';
 import { GrantReview } from './SessionGrantViews';
 import { RiskWarnings } from './RiskWarnings';
 import { SpendingPolicyNotice } from './SpendingPolicyViews';
@@ -1371,6 +1372,12 @@ function SmartAccountTxBody({
             value={`${formatUnits(ready.quote.senderBalance, 18, 18)} ${evmChain.displaySymbol}`}
             theme={theme}
           />
+          <AaDepositNote
+            fee={ready.quote.fee}
+            deposit={ready.quote.deposit}
+            sponsored={ready.quote.sponsored}
+            symbol={evmChain.displaySymbol}
+          />
           <BalanceChangePreview
             url={ready.url}
             request={{
@@ -1560,6 +1567,12 @@ function PermissionRequestBody({
                 : `${formatUnits(ready.quote.fee, 18, 18)} ${evmChain.displaySymbol}`
             }
             theme={theme}
+          />
+          <AaDepositNote
+            fee={ready.quote.fee}
+            deposit={ready.quote.deposit}
+            sponsored={ready.quote.sponsored}
+            symbol={evmChain.displaySymbol}
           />
           <Text style={[styles.simulationOk, { color: theme.success }]}>
             Bundler gas estimate passed (eth_estimateUserOperationGas simulated the install).

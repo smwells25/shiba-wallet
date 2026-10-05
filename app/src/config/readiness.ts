@@ -215,8 +215,8 @@ export const FEATURE_READINESS: readonly FeatureReadiness[] = [
     status: 'blocked',
     reason:
       'Importing an Ethereum private key works on mainnet in this build, but it is not yet cleared for ' +
-      'real funds. The recovery phrase does not back up an imported key, so this phone’s secure storage ' +
-      `holds its only copy unless you kept the key yourself, and ${PLAIN_BLOCKERS}.`,
+      `real funds: ${PLAIN_BLOCKERS}. The recovery phrase does not back up an imported key, so this ` +
+      'phone’s secure storage holds its only copy unless you kept the key yourself.',
     // T-67: the key outside the HD tree (backup gap, storage, clipboard);
     // W1–W3: the storage class and its device verification it shares with
     // the phrase; W19: screen-capture and app-switcher privacy, which the

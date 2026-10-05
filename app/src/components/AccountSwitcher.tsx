@@ -12,6 +12,11 @@ import {
 import { Button } from '../components';
 import { useTheme } from '../theme';
 import { shortAccountAddress } from '../wallet/accounts';
+import {
+  PHRASE_ACCOUNT_WAS_IMPORTED_TITLE,
+  accountsBackupHint,
+  phraseAccountSameAsImportedNote,
+} from '../wallet/imported-keys';
 import { useWallet, type AccountView } from '../wallet/WalletContext';
 
 /**
@@ -57,6 +62,8 @@ export function AccountSwitcher({ onManage, onImportKey }: { onManage: () => voi
       const created = await addAccount();
       setOpen(false);
       await switchAccount(created.index);
+      const sameKey = phraseAccountSameAsImportedNote(created, accountList);
+      if (sameKey) Alert.alert(PHRASE_ACCOUNT_WAS_IMPORTED_TITLE, sameKey);
     } catch (e) {
       Alert.alert('Could not add account', e instanceof Error ? e.message : 'Unknown error.');
     } finally {
@@ -96,10 +103,7 @@ export function AccountSwitcher({ onManage, onImportKey }: { onManage: () => voi
         <View style={[styles.modal, { backgroundColor: theme.background }]}>
           <Text style={[styles.modalTitle, { color: theme.text }]}>Accounts</Text>
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            {anyImported
-              ? 'Every account except the imported ones comes from your one recovery phrase. Imported ' +
-                'accounts are NOT backed up by the phrase: keep their private keys yourself.'
-              : 'Every account comes from your one recovery phrase — backing up the phrase backs up all of them.'}
+            {accountsBackupHint(anyImported)}
           </Text>
           <FlatList
             data={visible}

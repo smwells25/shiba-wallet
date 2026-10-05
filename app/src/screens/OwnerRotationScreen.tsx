@@ -23,6 +23,7 @@ import { requireLocalAuth } from '../wallet/biometric';
 import { formatUnits } from '../wallet/balances';
 import { EVM_CHAIN_ID, describeSendError } from '../wallet/send';
 import {
+  checkAaQuoteBeforeApproval,
   createAaClientFromConfig,
   describeAaError,
   getAaConfig,
@@ -30,6 +31,7 @@ import {
   type AaChainConfig,
   type AaClientBundle,
 } from '../wallet/aa';
+import { AaDepositNote } from '../components/AaDepositNote';
 import {
   OWNER_ROTATION_EXPLANATION,
   OWNER_ROTATION_OLD_KEY_WARNING,
@@ -220,6 +222,18 @@ export function OwnerRotationScreen({ navigation }: Props) {
   const onConfirm = async () => {
     const r = rotation;
     if (!r || !bundle || !owner || !config) return;
+    // The bundler's fee floor, BEFORE the device check (aa.ts
+    // checkAaQuoteBeforeApproval): when it rose above the reviewed fees,
+    // Review prices the change again, nothing approved.
+    try {
+      await checkAaQuoteBeforeApproval(bundle.bundler, r.quote);
+    } catch (e) {
+      const { title, detail } = describe(e);
+      Alert.alert(title, detail);
+      setRotation(null);
+      setPhase('overview');
+      return;
+    }
     const auth = await requireLocalAuth('Approve changing the owner key');
     if (!auth.ok) {
       Alert.alert('Not sent', auth.message);
@@ -468,6 +482,7 @@ export function OwnerRotationScreen({ navigation }: Props) {
           value={q.sponsored ? 'Sponsored — the account pays 0' : `${formatUnits(q.fee, 18, 18)} ${symbol}`}
         />
         <InfoRow label="Account balance" value={`${formatUnits(q.senderBalance, 18, 18)} ${symbol}`} />
+        <AaDepositNote fee={q.fee} deposit={q.deposit} sponsored={q.sponsored} symbol={symbol} />
         <Text style={[styles.ok, { color: theme.success }]}>
           Bundler gas estimate passed (eth_estimateUserOperationGas simulated the operation).
         </Text>

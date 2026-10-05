@@ -41,6 +41,7 @@ import { requireLocalAuth } from '../wallet/biometric';
 import { formatUnits, parseUnits } from '../wallet/balances';
 import { EVM_CHAIN_ID, describeSendError } from '../wallet/send';
 import {
+  checkAaQuoteBeforeApproval,
   createAaClientFromConfig,
   getAaConfig,
   sendAa,
@@ -48,6 +49,7 @@ import {
   type AaClientBundle,
   type AaSendQuote,
 } from '../wallet/aa';
+import { AaDepositNote } from '../components/AaDepositNote';
 import { findExactContact, listContacts, matchRecipient, type Contact } from '../wallet/contacts';
 import { sessionKeyVault } from '../wallet/storage';
 import { readinessGate } from '../config/readiness';
@@ -595,6 +597,19 @@ export function SessionsScreen({ navigation }: Props) {
     const p = pending.current;
     if (!p || !account || !owner || !resolution?.ok || !activeAccount) return;
     const sendBundle = p.bundle;
+    // The bundler's fee floor, BEFORE the device check (aa.ts
+    // checkAaQuoteBeforeApproval): when it rose above the reviewed fees, back
+    // to the form, where Review creates a fresh key and quote; nothing was
+    // approved or stored.
+    try {
+      await checkAaQuoteBeforeApproval(sendBundle.bundler, p.quote);
+    } catch (e) {
+      const { title, detail } = describe(e, 'send');
+      Alert.alert(title, detail);
+      discardPending();
+      setPhase('form');
+      return;
+    }
     const auth = await requireLocalAuth('Approve granting this session');
     if (!auth.ok) {
       Alert.alert('Not granted', auth.message);
@@ -1041,6 +1056,17 @@ export function SessionsScreen({ navigation }: Props) {
     if (!revokeTarget || !owner) return;
     const target = revokeTarget;
     const sendBundle = target.bundle;
+    // The bundler's fee floor, BEFORE the device check (see onInstall): back
+    // to the list, where Revoke quotes again.
+    try {
+      await checkAaQuoteBeforeApproval(sendBundle.bundler, target.quote);
+    } catch (e) {
+      const { title, detail } = describe(e, 'send');
+      Alert.alert(title, detail);
+      setRevokeTarget(null);
+      setPhase('list');
+      return;
+    }
     const auth = await requireLocalAuth(revokeApprovalPrompt(target.record));
     if (!auth.ok) {
       Alert.alert('Not revoked', auth.message);
@@ -1240,6 +1266,7 @@ export function SessionsScreen({ navigation }: Props) {
           theme={theme}
         />
         <Row label="Account balance" value={`${formatUnits(q.senderBalance, 18, 18)} ${symbol}`} theme={theme} />
+        <AaDepositNote fee={q.fee} deposit={q.deposit} sponsored={q.sponsored} symbol={symbol} />
         <Text style={[styles.ok, { color: theme.success }]}>
           Bundler gas estimate passed (eth_estimateUserOperationGas simulated the install).
         </Text>
@@ -1618,6 +1645,7 @@ export function SessionsScreen({ navigation }: Props) {
           value={q.sponsored ? 'Sponsored — the account pays 0' : `${formatUnits(q.fee, 18, 18)} ${symbol}`}
           theme={theme}
         />
+        <AaDepositNote fee={q.fee} deposit={q.deposit} sponsored={q.sponsored} symbol={symbol} />
         <Text style={[styles.ok, { color: theme.success }]}>Bundler gas estimate passed.</Text>
         {phase === 'sending' ? (
           <ActivityIndicator size="large" color={theme.accent} />

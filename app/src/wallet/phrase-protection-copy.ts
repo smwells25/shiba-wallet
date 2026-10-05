@@ -45,8 +45,16 @@ export const PROTECT_CONFIRM_MESSAGE =
 export function protectConfirmMessage(s: StorageProtection | null): string {
   const k = s?.importedKeys;
   if (!k || k.standard === 0) return PROTECT_CONFIRM_MESSAGE;
+  const subject = importedKeysSubject(k.standard, k.total);
+  if (k.standard === 1) {
+    return (
+      `${PROTECT_CONFIRM_MESSAGE} ${subject} in standard storage moves too (it asks for your fingerprint or ` +
+      'face again). The same rule applies to it, and your recovery phrase cannot restore it: keep a copy of ' +
+      'the private key.'
+    );
+  }
   return (
-    `${PROTECT_CONFIRM_MESSAGE} Your ${keysWord(k.standard)} in standard storage ${k.standard === 1 ? 'moves' : 'move'} ` +
+    `${PROTECT_CONFIRM_MESSAGE} ${subject} in standard storage move ` +
     'too (each asks for your fingerprint or face again). The same rule applies to them, and your recovery ' +
     'phrase cannot restore them: keep a copy of each private key.'
   );
@@ -107,6 +115,27 @@ function keysWord(n: number): string {
 }
 
 /**
+ * The subject of a sentence about `count` of the phone's `total` imported
+ * keys, written to read naturally for one key (finding 8 of the 2026-10-04
+ * private-key run: "Your 1 imported private key is protected…"): "Your
+ * imported private key" when it is the only one, "Your 3 imported private
+ * keys" for all of several, "One of your imported private keys" or "2 of
+ * your 3 imported private keys" for some of them.
+ */
+export function importedKeysSubject(count: number, total: number): string {
+  if (count >= total) return count === 1 ? 'Your imported private key' : `Your ${count} imported private keys`;
+  return count === 1 ? 'One of your imported private keys' : `${count} of your ${total} imported private keys`;
+}
+
+/** "is" / "are", and "it" / "them", for importedKeysSubject's count. */
+function verb(count: number): string {
+  return count === 1 ? 'is' : 'are';
+}
+function pronoun(count: number): string {
+  return count === 1 ? 'it' : 'them';
+}
+
+/**
  * Exactly what is protected and what is not among the imported keys
  * (feature 12): a key's protection follows the phrase's when it is saved,
  * and "Protect with biometrics" moves the rest; anything that could not be
@@ -125,24 +154,25 @@ export function importedKeysProtectionNote(s: StorageProtection): string | null 
   const parts: string[] = [];
   if (k.unreadable > 0) {
     parts.push(
-      `${keysWord(k.unreadable)} can no longer be opened on this phone after a biometric change; your ` +
-        'recovery phrase cannot restore them, only the keys you kept yourself can.',
+      `${importedKeysSubject(k.unreadable, k.total)} can no longer be opened on this phone after a biometric ` +
+        `change; your recovery phrase cannot restore ${pronoun(k.unreadable)}, only a copy you kept yourself can.`,
     );
   }
   if (s.phrase === 'protected' || s.phrase === 'unreadable') {
     if (k.standard > 0) {
       parts.push(
-        `${keysWord(k.standard)} ${k.standard === 1 ? 'is' : 'are'} still in standard secure storage, ` +
+        `${importedKeysSubject(k.standard, k.total)} ${verb(k.standard)} still in standard secure storage, ` +
           'readable by code inside the app while the phone is unlocked.' +
-          (s.canProtectNow ? ' Protect with biometrics moves them too.' : ''),
+          (s.canProtectNow ? ` Protect with biometrics moves ${pronoun(k.standard)} too.` : ''),
       );
     } else if (k.protected - k.unreadable > 0) {
-      parts.push(`Your ${keysWord(k.protected - k.unreadable)} ${k.protected - k.unreadable === 1 ? 'is' : 'are'} protected by biometrics too.`);
+      const n = k.protected - k.unreadable;
+      parts.push(`${importedKeysSubject(n, k.total - k.unreadable)} ${verb(n)} protected by biometrics too.`);
     }
   } else if (s.phrase === 'standard') {
     parts.push(
-      `Your ${keysWord(k.total)} ${k.total === 1 ? 'is' : 'are'} in standard secure storage too` +
-        (s.canProtectNow ? '; protecting the phrase moves them with it.' : '.'),
+      `${importedKeysSubject(k.total, k.total)} ${verb(k.total)} in standard secure storage too` +
+        (s.canProtectNow ? `; protecting the phrase moves ${pronoun(k.total)} too.` : '.'),
     );
   }
   parts.push('The recovery phrase does not back up imported keys.');

@@ -27,12 +27,14 @@ import { requireLocalAuth } from '../wallet/biometric';
 import { formatUnits } from '../wallet/balances';
 import { EVM_CHAIN_ID, describeSendError } from '../wallet/send';
 import {
+  checkAaQuoteBeforeApproval,
   createAaClientFromConfig,
   describeAaError,
   getAaConfig,
   sendAa,
   type AaClientBundle,
 } from '../wallet/aa';
+import { AaDepositNote } from '../components/AaDepositNote';
 import { findExactContact, listContacts, matchRecipient, type Contact } from '../wallet/contacts';
 import {
   DEFAULT_GUARDIAN_DELAY_SECONDS,
@@ -43,6 +45,7 @@ import {
   GUARDIANS_MAINNET_CONDITION,
   GUARDIANS_TRADE_OFF,
   NO_VETO_ACK_TEXT,
+  OWNER_ROTATION_IMPORTED_NOT_OFFERED,
   PROPOSAL_DISCOVERY_NOTE,
   RECOVERED_NOT_DERIVABLE_NOTE,
   RECOVERY_RECORD_NOTE,
@@ -325,6 +328,18 @@ export function GuardiansScreen({ navigation }: Props) {
           : op.kind === 'remove'
             ? 'Approve removing the guardians'
             : 'Approve vetoing this recovery';
+    // The bundler's fee floor, BEFORE the device check (aa.ts
+    // checkAaQuoteBeforeApproval): a floor that rose above the reviewed fees
+    // returns to where the operation was prepared, nothing approved.
+    try {
+      await checkAaQuoteBeforeApproval(bundle.bundler, op.quote);
+    } catch (e) {
+      const { title, detail } = describe(e);
+      Alert.alert(title, detail);
+      setOperation(null);
+      setPhase(op.kind === 'install' || op.kind === 'renew' ? 'form' : 'overview');
+      return;
+    }
     const auth = await requireLocalAuth(what);
     if (!auth.ok) {
       Alert.alert('Not sent', auth.message);
@@ -568,6 +583,7 @@ export function GuardiansScreen({ navigation }: Props) {
           value={q.sponsored ? 'Sponsored — the account pays 0' : `${formatUnits(q.fee, 18, 18)} ${symbol}`}
         />
         <InfoRow label="Account balance" value={`${formatUnits(q.senderBalance, 18, 18)} ${symbol}`} />
+        <AaDepositNote fee={q.fee} deposit={q.deposit} sponsored={q.sponsored} symbol={symbol} />
         <Text style={[styles.ok, { color: theme.success }]}>
           Bundler gas estimate passed (eth_estimateUserOperationGas simulated the operation).
         </Text>
@@ -877,7 +893,15 @@ export function GuardiansScreen({ navigation }: Props) {
           <Button title="Refresh" variant="secondary" onPress={reload} />
         </>
       ) : null}
-      {owner ? (
+      {owner && activeAccount?.imported ? (
+        // An imported key's account: owner changes from or to an imported
+        // key are refused (recovery.ts OWNER_ROTATION_IMPORTED_REFUSAL), so
+        // the button is not offered at all.
+        <>
+          <Text style={[styles.sectionTitle, { color: theme.text }]}>Owner key</Text>
+          <Text style={[styles.hint, { color: theme.textMuted }]}>{OWNER_ROTATION_IMPORTED_NOT_OFFERED}</Text>
+        </>
+      ) : owner ? (
         <>
           <Text style={[styles.sectionTitle, { color: theme.text }]}>Owner key</Text>
           <Text style={[styles.hint, { color: theme.textMuted }]}>

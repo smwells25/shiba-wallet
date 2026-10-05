@@ -79,6 +79,7 @@ import {
   aaAccountTypeLabel,
   aaSenderLabel,
   createAaClientFromConfig,
+  checkAaQuoteBeforeApproval,
   describeAaError,
   effectiveAaAccountType,
   getAaConfig,
@@ -92,6 +93,7 @@ import {
 } from '../wallet/aa';
 import { PREVIEW_AA_NOTE } from '../wallet/simulation';
 import { Eip7702QuoteNotice } from '../components/DelegationViews';
+import { AaDepositNote } from '../components/AaDepositNote';
 import { usePrices } from '../wallet/usePrices';
 import { fiatLine, formatFiat, nativePriceAssetId, tokenPriceAssetId } from '../wallet/prices';
 
@@ -930,6 +932,21 @@ export function SwapScreen({ navigation }: Props) {
       setPhase('review');
       return;
     }
+    // The bundler's fee floor, BEFORE the spending-limit and device checks
+    // (aa.ts checkAaQuoteBeforeApproval): a floor that rose above the
+    // reviewed fees sends the user back to the review, whose next step
+    // prepares a fresh operation, without having approved anything.
+    try {
+      await checkAaQuoteBeforeApproval(bundle.bundler, aaQuote);
+    } catch (e) {
+      const { title, detail } =
+        describeAaError(e, { accountType: aaQuote.accountType, deployed: aaQuote.deployed }) ??
+        describeSendError(e, sellSymbol);
+      Alert.alert(title, detail);
+      setAaQuote(null);
+      setPhase('review');
+      return;
+    }
     // App-enforced spending limits (phase 12 item 3): the batch's sell side,
     // after the bundler-estimate gate, before the biometric gate.
     const withinLimits = await spendingGateForQuote({
@@ -1133,6 +1150,12 @@ export function SwapScreen({ navigation }: Props) {
               : `${exact(aaQuote.fee, 18)} ${evmChain.displaySymbol}`
           }
           theme={theme}
+        />
+        <AaDepositNote
+          fee={aaQuote.fee}
+          deposit={aaQuote.deposit}
+          sponsored={aaQuote.sponsored}
+          symbol={evmChain.displaySymbol}
         />
         <BalanceChangePreview
           url={url}

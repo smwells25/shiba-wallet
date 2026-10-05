@@ -2975,9 +2975,17 @@ export const OWNER_ROTATION_IMPORTED_TARGET =
   'An imported account cannot become the owner: the recovery phrase does not back up its key, so the ' +
   'smart account could be lost with this phone. Choose an account from your recovery phrase.';
 
-export const OWNER_ROTATION_IMPORTED_REFUSAL =
+/**
+ * Why the Guardians screen does not offer "Change owner…" for an imported
+ * key's account (finding 3 of the 2026-10-04 private-key run: the button
+ * was offered and the next screen refused). OWNER_ROTATION_IMPORTED_REFUSAL
+ * is this sentence plus the refusal's closing words.
+ */
+export const OWNER_ROTATION_IMPORTED_NOT_OFFERED =
   'Changing the owner is not offered for a smart account owned by an imported private key in this ' +
-  'version. Nothing was signed.';
+  'version.';
+
+export const OWNER_ROTATION_IMPORTED_REFUSAL = `${OWNER_ROTATION_IMPORTED_NOT_OFFERED} Nothing was signed.`;
 
 export const OWNER_ROTATION_7702_TARGET =
   'That account is upgraded with EIP-7702 on this network, so its smart-account sends use its own ' +
