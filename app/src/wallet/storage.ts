@@ -369,8 +369,15 @@ export interface ImportedKeySaveResult {
   protectionDetail: string | null;
 }
 
-/** Whose secret the approval gate opens (see KeyVault.setApprovalTarget). */
-export type ApprovalTarget = { kind: 'phrase' } | { kind: 'imported'; slot: number };
+/**
+ * Whose secret the approval gate opens (see KeyVault.setApprovalTarget).
+ * 'none' (a watch-only account, feature 10) opens NO secret: the gate reads
+ * nothing from secure storage and answers 'fallback', so a device check
+ * reached while a watch-only account is active (the lock screen, for
+ * example) is the ordinary system prompt, and the phrase is never opened
+ * for an account that has no key in it.
+ */
+export type ApprovalTarget = { kind: 'phrase' } | { kind: 'imported'; slot: number } | { kind: 'none' };
 
 export type UpgradeOutcome =
   | 'protected'
@@ -745,7 +752,8 @@ export function createKeyVault(backend: SecureStoreBackend, options: KeyVaultOpt
   // the phrase (target 'phrase') or one imported key (target 'imported:K').
   let ticket: { target: string; phrase: string; expiresAt: number } | null = null;
   let approvalTarget: ApprovalTarget = { kind: 'phrase' };
-  const targetKey = (t: ApprovalTarget): string => (t.kind === 'phrase' ? 'phrase' : `imported:${t.slot}`);
+  const targetKey = (t: ApprovalTarget): string =>
+    t.kind === 'phrase' ? 'phrase' : t.kind === 'none' ? 'none' : `imported:${t.slot}`;
   // Automatic attempts that the user cancelled or the platform refused are
   // not repeated until the next app start (a new vault instance).
   let automaticAttemptDone = false;
@@ -1296,6 +1304,9 @@ export function createKeyVault(backend: SecureStoreBackend, options: KeyVaultOpt
       serial(async (): Promise<ApprovalGateResult> => {
         ticket = null;
         const gateTarget = target ?? approvalTarget;
+        // A watch-only account: nothing to open, nothing read; the caller's
+        // ordinary device prompt is the check (biometric.ts requireLocalAuth).
+        if (gateTarget.kind === 'none') return { kind: 'fallback', detail: null };
         if (gateTarget.kind === 'imported') {
           // The active account's imported key: when it is protected, its own
           // system prompt is the user verification and the opened key is
@@ -1467,7 +1478,12 @@ export function createKeyVault(backend: SecureStoreBackend, options: KeyVaultOpt
       if (target.kind === 'imported') checkSlot(target.slot);
       // A secret held for another target is never handed to this one.
       if (ticket && ticket.target !== targetKey(target)) ticket = null;
-      approvalTarget = target.kind === 'phrase' ? { kind: 'phrase' } : { kind: 'imported', slot: target.slot };
+      approvalTarget =
+        target.kind === 'phrase'
+          ? { kind: 'phrase' }
+          : target.kind === 'none'
+            ? { kind: 'none' }
+            : { kind: 'imported', slot: target.slot };
     },
 
     importedKeys: {

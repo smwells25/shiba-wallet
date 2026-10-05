@@ -101,7 +101,7 @@ console.log('check-readiness: table integrity');
 const EXPECTED_IDS = [
   'eoa-send', 'tokens', 'nft', 'swap', 'walletconnect', 'dogecoin-send', 'simple-account',
   'kernel-smart-account', 'eip7702-upgrade', 'session-keys', 'passkeys', 'guardians',
-  'owner-rotation', 'paymaster', 'token-gas', 'imported-key',
+  'owner-rotation', 'paymaster', 'token-gas', 'imported-key', 'inheritance',
 ];
 const ids = FEATURE_READINESS.map((f) => f.id);
 check('every expected feature id is present exactly once', EXPECTED_IDS.every((id) => ids.filter((x) => x === id).length === 1) && ids.length === EXPECTED_IDS.length, ids.join());
@@ -192,7 +192,7 @@ check('walletconnect names W11 and W12 (permit decoding, dApp identity)', ['W11'
       /tested offline/.test(wc) && /live app over the WalletConnect relay/.test(wc) && /not yet cleared for real funds/.test(wc), wc);
 }
 // Every enforced feature has a gate in the app modules (static check).
-const gateSources = ['aa.ts', 'delegation.ts', 'sessions.ts', 'passkeys.ts', 'recovery.ts', 'token-gas.ts']
+const gateSources = ['aa.ts', 'delegation.ts', 'sessions.ts', 'passkeys.ts', 'recovery.ts', 'token-gas.ts', 'inheritance.ts']
   .map((f) => readFileSync(join(HERE, '..', 'src', 'wallet', f), 'utf8'))
   .join('\n');
 for (const f of FEATURE_READINESS.filter((x) => x.enforced)) {

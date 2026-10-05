@@ -199,6 +199,30 @@ export function tokenGasNetworkLabels(): string[] {
 }
 
 /**
+ * The networks (by label) where only the ERC-7677 source applies (Pimlico's
+ * paymaster through the saved bundler; today Ethereum Sepolia).
+ */
+export function erc7677TokenGasNetworkLabels(): string[] {
+  return EVM_PROFILES.filter((p) => tokenGasSourceFor(p.caip2, { acceptsErc7677: true })?.kind === 'erc7677').map(
+    (p) => p.label,
+  );
+}
+
+/**
+ * Every network (by label) where the Send screen can offer the USDC fee,
+ * from either source, in profile order.
+ */
+export function tokenGasAnyNetworkLabels(): string[] {
+  return EVM_PROFILES.filter((p) => tokenGasSourceFor(p.caip2, { acceptsErc7677: true }) !== null).map((p) => p.label);
+}
+
+/** "A", "A and B", "A, B and C". */
+function joinLabels(labels: string[]): string {
+  if (labels.length <= 2) return labels.join(' and ');
+  return `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`;
+}
+
+/**
  * Tokens screen: how a token send's network fee is paid on `chainCaip2`.
  * "Normally" because a configured gas sponsor (ERC-7677 paymaster) can pay
  * a smart-account send's fee instead; the USDC sentence appears only where
@@ -209,7 +233,8 @@ export function tokenSendFeeSentence(chainCaip2: string): string {
   const profile = evmProfileByCaip2(chainCaip2);
   const native = profile?.displaySymbol ?? 'ETH';
   const base = `The network fee for a token send is normally paid in ${native}, not in the token.`;
-  if (!tokenGasPaymasterFor(chainCaip2)) return base;
+  // Either source: the Send screen offers the ERC-7677 source as well.
+  if (!tokenGasSourceFor(chainCaip2, { acceptsErc7677: true })) return base;
   return (
     `${base} On ${profile?.label ?? chainCaip2}, a smart-account send can pay it in ${TOKEN_GAS_SYMBOL} ` +
     'instead when the Send screen offers that choice.'
@@ -218,11 +243,11 @@ export function tokenSendFeeSentence(chainCaip2: string): string {
 
 /** Settings → Tokens: the same rule for every network the app knows. */
 export function settingsTokensFeeSentence(): string {
-  const labels = tokenGasNetworkLabels();
+  const labels = tokenGasAnyNetworkLabels();
   const base = 'The network fee for a token send is normally paid in ETH (test ETH on test networks), not in the token';
   return labels.length === 0
     ? `${base}.`
-    : `${base}; on ${labels.join(' and ')}, a smart-account send can pay it in ${TOKEN_GAS_SYMBOL} instead ` +
+    : `${base}; on ${joinLabels(labels)}, a smart-account send can pay it in ${TOKEN_GAS_SYMBOL} instead ` +
         'when the Send screen offers that choice.';
 }
 
@@ -237,9 +262,17 @@ export function tokenGasNotOnNetworkSentence(chainCaip2: string): string {
   // The networks come from the profiles (tokenGasNetworkLabels), never a
   // hard-coded list, so a new profile with a verified paymaster joins it.
   const where = tokenGasNetworkLabels().join(' and ') || 'no network';
+  // The ERC-7677 networks are named too (the Send screen offers them), except
+  // on such a network itself: there this sentence is reached only by a caller
+  // that does not render the ERC-7677 source.
+  const erc = erc7677TokenGasNetworkLabels();
+  const ercClause =
+    erc.length > 0 && !erc.includes(label)
+      ? `, and on ${erc.join(' and ')} through ${erc7677PaymasterName()} (reached through the saved bundler)`
+      : '';
   return (
     `Paying the network fee in USDC is offered only on ${where}, where Circle’s token paymaster ` +
-    `for EntryPoint v0.7 has been checked on-chain. It is not available on ${label}.${sepolia}`
+    `for EntryPoint v0.7 has been checked on-chain${ercClause}. It is not available on ${label}.${sepolia}`
   );
 }
 

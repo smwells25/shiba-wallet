@@ -435,6 +435,9 @@ console.log('check-token-gas: pinned constants and where the choice is offered')
   check('the sentence names the active network and adds the Sepolia clause only there',
     tokenGasNotOnNetworkSentence(MAINNET).endsWith('It is not available on Ethereum.') && !tokenGasNotOnNetworkSentence(MAINNET).includes('Ethereum Sepolia the same'),
     tokenGasNotOnNetworkSentence(MAINNET));
+  check('…and on another network it also names the ERC-7677 network (the Send screen offers it there)',
+    tokenGasNotOnNetworkSentence(MAINNET) === 'Paying the network fee in USDC is offered only on Base Sepolia and Arbitrum Sepolia, where Circle’s token paymaster for EntryPoint v0.7 has been checked on-chain, and on Ethereum Sepolia through Pimlico’s token paymaster (reached through the saved bundler). It is not available on Ethereum.',
+    tokenGasNotOnNetworkSentence(MAINNET));
   check('no smart-account configuration: not offered', offer(BASE, null).reason === TOKEN_GAS_NOT_CONFIGURED_NOTE);
   check('SimpleAccount: not offered (no ERC-1271)', offer(BASE, configFor(BASE, { accountType: 'simple' })).reason === TOKEN_GAS_SIMPLE_ACCOUNT_NOTE);
   check('EIP-7702-upgraded owner: not offered (unverified path)', offer(BASE, configFor(BASE, { eip7702Owners: [OWNER_0] })).reason === TOKEN_GAS_7702_NOTE);
@@ -570,8 +573,11 @@ console.log('check-token-gas: confirm-screen sentences');
   check('the estimate-after-approval sentence', TOKEN_GAS_ESTIMATE_AFTER_APPROVAL === 'The bundler’s gas estimate runs after you approve, because Circle’s paymaster needs a permit signed by your smart account first. If the estimate fails, nothing is sent.');
   check('charged sentence', tokenGasChargedSentence('0.005392', '0.015291') === 'Network fee charged: 0.005392 USDC (up to 0.015291 USDC was permitted; the rest was refunded in the same transaction).');
   const send = readFileSync(new URL('../src/screens/SendScreen.tsx', import.meta.url), 'utf8');
+  // Phase 14 integration: the confirm renders tokenGasConfirmLines (both
+  // sources); the Circle strings it yields are pinned byte for byte against
+  // these functions in the "SendScreen wiring" section at the end.
   check('SendScreen shows the fee, grant, rate, oracle note, spread, paymaster and estimate sentences on the USDC-fee confirm',
-    ['tokenGasFeeSentence(', 'tokenGasGrantSentence(', 'tokenGasRateSentence(', 'tokenGasOracleNote(evmChain.caip2)', 'tokenGasSpreadText(', 'label="Paymaster (Circle)"', 'TOKEN_GAS_ESTIMATE_AFTER_APPROVAL', 'tokenGasWorstCaseHint('].every((s) => send.includes(s)));
+    ['{tgLines.feeSentence}', '{tgLines.grantSentence}', 'value={tgLines.rateValue} sub={tgLines.rateNote}', 'sub={tgLines.spreadNote}', 'label={tgLines.paymasterLabel}', '{tgLines.estimateSentence}', '{tgLines.worstCaseHint}'].every((s) => send.includes(s)));
   check('…and keeps "Bundler gas estimate passed" for every other smart-account quote', send.includes('Bundler gas estimate passed (eth_estimateUserOperationGas simulated the operation).'));
   check('the choice is a switch that defaults to ETH (feeInUsdc starts false)', send.includes('useState(false);\n  // The Max record for the USDC-fee path') || /const \[feeInUsdc, setFeeInUsdc\] = useState\(false\)/.test(send));
 }
@@ -858,11 +864,13 @@ console.log('check-token-gas: footnote, fee copy and funding titles');
   check('Tokens screen fee sentence on Base Sepolia names the USDC option without promising it',
     tokenSendFeeSentence(BASE) === 'The network fee for a token send is normally paid in test ETH, not in the token. On Base Sepolia, a smart-account send can pay it in USDC instead when the Send screen offers that choice.',
     tokenSendFeeSentence(BASE));
-  check('…on Ethereum Sepolia and mainnet there is no USDC sentence',
-    tokenSendFeeSentence(SEPOLIA) === 'The network fee for a token send is normally paid in test ETH, not in the token.' &&
-      tokenSendFeeSentence(MAINNET) === 'The network fee for a token send is normally paid in ETH, not in the token.');
+  // Phase 14 integration: the Send screen offers the ERC-7677 source on
+  // Ethereum Sepolia, so the Tokens and Settings sentences name it too.
+  check('…on Ethereum Sepolia the USDC sentence names the Send-screen choice (ERC-7677 source); on mainnet there is none',
+    tokenSendFeeSentence(SEPOLIA) === 'The network fee for a token send is normally paid in test ETH, not in the token. On Ethereum Sepolia, a smart-account send can pay it in USDC instead when the Send screen offers that choice.' &&
+      tokenSendFeeSentence(MAINNET) === 'The network fee for a token send is normally paid in ETH, not in the token.', tokenSendFeeSentence(SEPOLIA));
   check('Settings fee sentence covers every network',
-    settingsTokensFeeSentence() === 'The network fee for a token send is normally paid in ETH (test ETH on test networks), not in the token; on Base Sepolia and Arbitrum Sepolia, a smart-account send can pay it in USDC instead when the Send screen offers that choice.',
+    settingsTokensFeeSentence() === 'The network fee for a token send is normally paid in ETH (test ETH on test networks), not in the token; on Ethereum Sepolia, Base Sepolia and Arbitrum Sepolia, a smart-account send can pay it in USDC instead when the Send screen offers that choice.',
     settingsTokensFeeSentence());
   const tokensSrc = readFileSync(new URL('../src/screens/TokensScreen.tsx', import.meta.url), 'utf8');
   const settingsSrc = readFileSync(new URL('../src/screens/SettingsScreen.tsx', import.meta.url), 'utf8');
@@ -1385,6 +1393,131 @@ console.log('check-token-gas: the ERC-7677 source (Pimlico’s ERC-20 paymaster 
     'The network fee for a token send is normally paid in test ETH, not in the token. On Arbitrum Sepolia, a smart-account send can pay it in USDC instead when the Send screen offers that choice.');
   check('the not-on-network sentence lists the Circle networks from the profiles', tokenGasNotOnNetworkSentence(MAINNET).startsWith(
     `Paying the network fee in USDC is offered only on ${tg.tokenGasNetworkLabels().join(' and ')}, where Circle’s token paymaster`));
+
+  // -------------------------------------------------------------------------
+  // SendScreen wiring for both sources (phase 14 integration slice). The
+  // screen cannot run in Node, so its wiring is checked at the source level
+  // by sendScreenWiringProblems(); each mutation below must be caught. The
+  // Circle strings are pinned byte for byte by re-rendering them the way the
+  // screen did before this change (the old expressions, copied verbatim).
+  // -------------------------------------------------------------------------
+  console.log('check-token-gas: SendScreen wiring for both USDC-fee sources');
+  const { formatUnits: fmtUnits } = await import('../src/wallet/balances.ts');
+  const ex = (v, d) => fmtUnits(v, d, d);
+  const sendPath = new URL('../src/screens/SendScreen.tsx', import.meta.url);
+  const sendNow = readFileSync(sendPath, 'utf8');
+  function sendScreenWiringProblems(src) {
+    const problems = [];
+    const need = (what, ok) => { if (!ok) problems.push(what); };
+    need('confirm lines built once from the quote and the active profile',
+      src.includes('tokenGasConfirmLines(quote.tokenGas, {\n          chainCaip2: evmChain.caip2,\n          nativeSymbol: evmChain.displaySymbol,\n          maxFeePerGas: quote.maxFeePerGas,\n        })'));
+    for (const field of ['feeLabel', 'feeValue', 'feeSentence', 'worstCaseHint', 'rateValue', 'rateNote', 'spreadLabel', 'spreadValue', 'spreadNote', 'paymasterLabel', 'paymasterValue', 'balanceLabel', 'balanceValue', 'grantSentence', 'estimateSentence', 'throughPhrase']) {
+      need(`renders tgLines.${field}`, src.includes(`tgLines.${field}`));
+    }
+    need('grant sentence in the warning box', src.includes('<WarningBox>{tgLines.grantSentence}</WarningBox>'));
+    need('every extra note rendered', src.includes('{tgLines.notes.map((n) => ('));
+    need('no Circle-only sentence left on the confirm or success screens',
+      !['tokenGasFeeSentence(', 'tokenGasGrantSentence(', 'tokenGasRateSentence(', 'tokenGasSpreadText(', 'tokenGasOracleNote(', 'tokenGasWorstCaseHint(',
+        'label="Paymaster (Circle)"', 'TOKEN_GAS_ESTIMATE_AFTER_APPROVAL', 'TOKEN_GAS_NO_CHARGE_EVENT', 'tokenGasChargedSentence(', 'TOKEN_GAS_SPREAD_NOTE',
+        "'Circle\\u2019s paymaster (see below).'"].some((x) => src.includes(x)));
+    need('success line from the source', src.includes('{tokenGasChargedLine(quote.tokenGas, aaResult.tokenGasCharge)}'));
+    need('the ERC-7677 estimate line is the source’s pass sentence in the success style',
+      src.includes("{tgLines && quote.tokenGas?.source === 'erc7677' ? (") && src.includes('<Text style={[styles.simulationOk, { color: theme.success }]}>{tgLines.estimateSentence}</Text>'));
+    need('every other smart-account quote keeps “Bundler gas estimate passed”', src.includes('Bundler gas estimate passed (eth_estimateUserOperationGas simulated the operation).'));
+    need('acceptsErc7677: true on the check key, the check, the offer, both Max calls and both quotes (7)',
+      (src.match(/acceptsErc7677: true/g) ?? []).length === 7);
+    need('the check key names the source and the saved bundler',
+      src.includes("tokenGasSourceFor(evmChain.caip2, { acceptsErc7677: true })\n      ? `${evmChain.caip2}|${aaNodeUrl}|${aaBundlerUrl ?? ''}`"));
+    need('the check asks the saved bundler and re-runs when it changes',
+      src.includes('checkTokenGasPaymaster(aaNodeUrl, evmChain.caip2, { acceptsErc7677: true, bundlerUrl: aaBundlerUrl })') &&
+        src.includes('}, [tokenGasCheckKey, aaNodeUrl, evmChain.caip2, aaBundlerUrl]);'));
+    need('switch box: the ERC-7677 checking sentence and hint, Circle’s unchanged',
+      src.includes("tokenGasOfferNow.source.kind === 'erc7677'\n                ? erc7677CheckingSentence(tokenGasOfferNow.source.vendor)\n                : 'Checking Circle\\u2019s token paymaster on-chain before offering to pay the network fee in USDC\\u2026'") &&
+        src.includes("? erc7677ChoiceHint(tokenGasOfferNow.source.vendor)\n                  : TOKEN_GAS_CHOICE_HINT}"));
+    need('the circle-only lookup is gone', !src.includes('tokenGasPaymasterFor('));
+    need('risk card, spending-policy hook and preview unchanged',
+      src.includes('<RiskWarnings url={confirmUrl} wallet={quote.sender} {...aaRiskWarningTarget(quote)} />') &&
+        src.includes('<SpendingPolicyNotice owner={quotedFrom} quote={quote} from={quotedFrom} />') && src.includes('note={aaPreviewNote(quote)}'));
+    return problems;
+  }
+  const wiring = sendScreenWiringProblems(sendNow);
+  check('SendScreen wires both USDC-fee sources (source-level pins)', wiring.length === 0, wiring.join('; '));
+  const mutants = [
+    ['M-w1 the offer without acceptsErc7677', 'passkeySigner: passkeyActive,\n        acceptsErc7677: true,\n      })', 'passkeySigner: passkeyActive,\n      })'],
+    ['M-w2 the grant row emptied', '<WarningBox>{tgLines.grantSentence}</WarningBox>', '<WarningBox>{tgLines.feeSentence}</WarningBox>'],
+    ['M-w3 the success line back to Circle’s constant', '{tokenGasChargedLine(quote.tokenGas, aaResult.tokenGasCharge)}', '{TOKEN_GAS_NO_CHARGE_EVENT}'],
+    ['M-w4 the check key without the bundler', "|${aaNodeUrl}|${aaBundlerUrl ?? ''}`", '|${aaNodeUrl}`'],
+    ['M-w5 the notes dropped', '{tgLines.notes.map((n) => (', '{[].map((n) => ('],
+    ['M-w6 the check without the saved bundler', ', { acceptsErc7677: true, bundlerUrl: aaBundlerUrl })', ')'],
+    ['M-w7 the risk card removed', '<RiskWarnings url={confirmUrl} wallet={quote.sender} {...aaRiskWarningTarget(quote)} />', ''],
+  ];
+  for (const [name, from, to] of mutants) {
+    check(`mutation anchor present (${name})`, sendNow.includes(from));
+    check(`${name}: caught`, sendScreenWiringProblems(sendNow.replace(from, to)).length > 0);
+  }
+
+  // Circle: every string the confirm, the switch box and the success screen
+  // render is byte-identical to the earlier screen (the old expressions,
+  // copied verbatim from SendScreen.tsx at 1823d8c).
+  // (The fake node serves Base Sepolia; the only per-chain line, the oracle
+  // note, is pinned for Arbitrum Sepolia above.)
+  {
+    const chain = BASE;
+    const cqq = await prepareAaTokenGasSend(kernelBundle().bundle, OWNER_0, RECIPIENT, 1n);
+    const t = cqq.tokenGas;
+    const nat = 'test ETH';
+    const L = tg.tokenGasConfirmLines(t, { chainCaip2: chain, nativeSymbol: nat, maxFeePerGas: cqq.maxFeePerGas });
+    const old = [
+      `Network fee (paid in ${t.symbol})`,
+      `up to ${ex(t.maxTokenCharge, t.decimals)} ${t.symbol}`,
+      tokenGasFeeSentence(ex(t.maxTokenCharge, t.decimals), t.symbol),
+      tg.tokenGasWorstCaseHint(t, cqq.maxFeePerGas),
+      tokenGasRateSentence(t.nativeTokenPrice, t.decimals, nat, t.symbol),
+      tokenGasOracleNote(chain),
+      'Paymaster fee spread',
+      tokenGasSpreadText(t.feeSpreadBips),
+      tg.TOKEN_GAS_SPREAD_NOTE,
+      'Paymaster (Circle)',
+      t.paymaster,
+      `Smart account ${t.symbol} balance`,
+      `${ex(t.tokenBalance, t.decimals)} ${t.symbol}`,
+      tokenGasGrantSentence(ex(t.maxTokenCharge, t.decimals), t.symbol),
+      TOKEN_GAS_ESTIMATE_AFTER_APPROVAL,
+      `One transfer call executed by the smart account: it sends its own USDC, so no approval is needed. The network fee is paid in ${t.symbol} through ` + 'Circle’s paymaster (see below).',
+      tg.TOKEN_GAS_NO_CHARGE_EVENT,
+      tokenGasChargedSentence(ex(5_776n, t.decimals), ex(t.maxTokenCharge, t.decimals), t.symbol),
+    ];
+    const now = [
+      L.feeLabel, L.feeValue, L.feeSentence, L.worstCaseHint, L.rateValue, L.rateNote, L.spreadLabel, L.spreadValue, L.spreadNote,
+      L.paymasterLabel, L.paymasterValue, L.balanceLabel, L.balanceValue, L.grantSentence, L.estimateSentence,
+      `One transfer call executed by the smart account: it sends its own USDC, so no approval is needed. The network fee is paid in ${t.symbol} through ` + `${L.throughPhrase} (see below).`,
+      tg.tokenGasChargedLine(t, null),
+      tg.tokenGasChargedLine(t, 5_776n),
+    ];
+    const diff = old.map((o, i) => (o === now[i] ? null : i)).filter((i) => i !== null);
+    check(`Circle on ${chain}: all 18 rendered strings byte-identical to the earlier screen, no extra notes`, diff.length === 0 && L.notes.length === 0, diff.join());
+  }
+  check('Circle’s choice hint and checking sentence are unchanged',
+    tg.TOKEN_GAS_CHOICE_HINT === 'Circle’s token paymaster pays the gas and takes USDC from your smart account instead. The confirm screen shows the most it can take before you approve; ETH stays the default.' &&
+      'Checking Circle’s token paymaster on-chain before offering to pay the network fee in USDC…' === 'Checking Circle’s token paymaster on-chain before offering to pay the network fee in USDC…');
+
+  // ERC-7677 on Ethereum Sepolia: what the wired screen now shows.
+  {
+    const { bundle } = pimBundle();
+    const pq = await tg.prepareAaTokenGasSend(bundle, OWNER_0, RECIPIENT, 0n, { acceptsErc7677: true });
+    const L = tg.tokenGasConfirmLines(pq.tokenGas, { chainCaip2: SEPOLIA, nativeSymbol: 'test ETH', maxFeePerGas: pq.maxFeePerGas });
+    check('ERC-7677 on the wired screen: the grant row says the remainder of the approval stays in place',
+      L.grantSentence.includes('the rest of the approval (up to ') && L.grantSentence.includes('stays in place afterwards'));
+    check('ERC-7677 on the wired screen: the estimate line is the source’s pass sentence',
+      L.estimateSentence === 'Bundler gas estimate passed with Pimlico’s paymaster terms.' && pq.tokenGas.source === 'erc7677');
+    check('ERC-7677 on the wired screen: the token-send hint names Pimlico’s paymaster',
+      `${L.throughPhrase} (see below).` === 'Pimlico’s paymaster (see below).');
+    check('ERC-7677 on the wired screen: the checking sentence names the bundler',
+      tg.erc7677CheckingSentence('Pimlico') === 'Checking Pimlico’s token paymaster on-chain and asking the configured bundler for its terms before offering to pay the network fee in USDC…');
+    check('the offer the screen requests on Sepolia is the ERC-7677 source; without the opt-in it is not offered',
+      tg.tokenGasOffer({ chainCaip2: SEPOLIA, config: configFor(SEPOLIA), owner: OWNER_0, passkeySigner: false, acceptsErc7677: true }).kind === 'available' &&
+        tg.tokenGasOffer({ chainCaip2: SEPOLIA, config: configFor(SEPOLIA), owner: OWNER_0, passkeySigner: false }).kind === 'unavailable');
+  }
 }
 
 console.log('');

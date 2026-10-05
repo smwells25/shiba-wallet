@@ -360,8 +360,15 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     const active = state?.activeIndex ?? 0;
     activeIndexRef.current = active;
     // The approval gate opens the secret of the account that will sign
-    // (./storage.ts): the phrase, or the active imported account's key.
-    setApprovalTarget(isImportedAccountId(active) ? { kind: 'imported', slot: importedSlotOf(active) } : { kind: 'phrase' });
+    // (./storage.ts): the phrase, the active imported account's key, or
+    // nothing for a watch-only account (it has no key; signWith refuses it).
+    setApprovalTarget(
+      isImportedAccountId(active)
+        ? { kind: 'imported', slot: importedSlotOf(active) }
+        : isWatchOnlyAccountId(active)
+          ? { kind: 'none' }
+          : { kind: 'phrase' },
+    );
     setAccountsState(state);
   }, []);
 

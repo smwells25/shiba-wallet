@@ -716,6 +716,22 @@ node.codes[DELEGATED.toLowerCase()] = '0xef0100' + DELEGATE_TARGET.slice(2);
   );
   check('Base Sepolia: age search starts 302,400 blocks back', calls.some((c) => c.method === 'eth_getCode' && c.params[1] === '0x' + (HEAD - 302_400n).toString(16)));
 
+  // Arbitrum Sepolia (phase 14 integration): 7 days at the measured 0.25 s.
+  check('Arbitrum Sepolia threshold is 2,419,200 blocks (7 days of 0.25-second blocks)',
+    NEW_CONTRACT_THRESHOLD_BLOCKS['eip155:421614'] === 2_419_200n && (7n * 86_400n * 4n) === 2_419_200n);
+  calls.length = 0;
+  const arbYoung = await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: ROUTER, data: '0x12345678', chainCaip2: 'eip155:421614', trackedTokens: [] });
+  check('Arbitrum Sepolia: a 60,000-block-old contract (about 4 hours there) is still "new"',
+    computeRiskLines(arbYoung).some((l) => l.type === 'new-contract' && /deployed only 60000 blocks ago/.test(l.text)),
+    JSON.stringify(computeRiskLines(arbYoung).map((l) => l.text)));
+  // The fake head (1,000,000) is below the threshold, so the search starts
+  // at block 0 (risk.ts clamps head − threshold at 0) and not at 302,400 back.
+  check('Arbitrum Sepolia: age search starts at max(0, head − 2,419,200) = block 0 here', HEAD < 2_419_200n &&
+    calls.some((c) => c.method === 'eth_getCode' && c.params[1] === '0x0') && !calls.some((c) => c.method === 'eth_getCode' && c.params[1] === '0x' + (HEAD - 302_400n).toString(16)));
+  check('Arbitrum Sepolia durations use 0.25 s blocks (72,000 blocks = about 5 hours; 2,419,200 = about 7 days)',
+    approxDuration(72_000n, 'eip155:421614') === 'about 5 hours' && approxDuration(2_419_200n, 'eip155:421614') === 'about 7 days' &&
+      approxDuration(72_000n, 'eip155:11155111') === 'about 10 days');
+
   const otherChain = await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: ROUTER, data: '0x12345678', chainCaip2: 'eip155:999', trackedTokens: [] });
   check('chain without a threshold -> no age check at all', otherChain.contractAge === undefined);
 }

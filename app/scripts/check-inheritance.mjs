@@ -302,9 +302,32 @@ console.log('check-inheritance: rules (network, delay, heirs)');
   check('Ethereum Sepolia and Base Sepolia allowed', (await caught(() => Promise.resolve().then(() => assertInheritanceAllowed(M)))) === null && (await caught(() => Promise.resolve().then(() => assertInheritanceAllowed('eip155:84532')))) === null);
   const unknown = await caught(() => Promise.resolve().then(() => assertInheritanceAllowed('eip155:8453')));
   check('Base MAINNET (and any unknown chain) refused', unknown?.message === INHERITANCE_TESTNET_ONLY);
+  // Phase 14 integration: the readiness switchboard lists inheritance
+  // (testnet-only, enforced) and the gate consults it; Arbitrum Sepolia is a
+  // test network like the other two.
+  {
+    const { featureReadiness, isFeatureAllowed } = await import('../src/config/readiness.ts');
+    const row = featureReadiness('inheritance');
+    check('readiness row: inheritance is testnet-only and enforced, citing T-68 and F-60',
+      row.status === 'testnet-only' && row.enforced === true && ['T-68', 'F-60', 'C1'].every((i) => row.evidence.includes(i)) &&
+        !isFeatureAllowed('inheritance', 'eip155:1') && isFeatureAllowed('inheritance', 'eip155:421614'));
+    check('Arbitrum Sepolia allowed by the gate', (await caught(() => Promise.resolve().then(() => assertInheritanceAllowed('eip155:421614')))) === null);
+    check('the gate names the switchboard row', (await import('node:fs')).readFileSync(new URL('../src/wallet/inheritance.ts', import.meta.url), 'utf8').includes("!isFeatureAllowed('inheritance', caip2)"));
+  }
   check('delay presets: 10 min, 30, 90, 180, 365 days', JSON.stringify(INHERITANCE_DELAY_PRESETS.map((p) => p.seconds)) === JSON.stringify([600, 2_592_000, 7_776_000, 15_552_000, 31_536_000]));
   check('every preset passes; 365 days is the maximum', INHERITANCE_DELAY_PRESETS.every((p) => validateInheritanceDelay(p.seconds) === null) && MAX_INHERITANCE_DELAY_SECONDS === 31_536_000);
   check('delay 0 (no veto), 1 day (not offered) and 2^48 - 1 (would wrap) refused', validateInheritanceDelay(0) !== null && validateInheritanceDelay(86_400) !== null && validateInheritanceDelay(2 ** 48 - 1) !== null);
+  // Phase 14 integration: behind the preset rule, the engine now refuses any
+  // delay that could wrap (MAX_GUARDIAN_DELAY_SECONDS), and the screen shows
+  // that refusal verbatim (validateGuardianSetForAccount, recovery.ts).
+  {
+    const { GUARDIAN_DELAY_TOO_LONG: TOO_LONG } = await import('@shiba-wallet/chains-evm');
+    const { validateGuardianSetForAccount } = await import('../src/wallet/recovery.ts');
+    const heirOnly = (delaySeconds) => ({ guardians: [{ address: heirA.address, weight: 1 }], threshold: 1, delaySeconds });
+    check('the engine refuses a wrapping heir delay with its sentence; the longest preset passes',
+      validateGuardianSetForAccount(heirOnly(2 ** 48 - 1), { account: ACCOUNT, owner: OWNER_0 }) === TOO_LONG &&
+        validateGuardianSetForAccount(heirOnly(MAX_INHERITANCE_DELAY_SECONDS), { account: ACCOUNT, owner: OWNER_0 }) === null);
+  }
   const one = buildHeirSet({ drafts: [{ address: heirA.address, label: 'Sister', weight: '1' }], threshold: '1', delaySeconds: 600 });
   check('one heir, threshold 1, 10-minute delay', one.set.guardians.length === 1 && one.set.threshold === 1 && one.set.delaySeconds === 600 && one.labels[heirA.address.toLowerCase()] === 'Sister');
   const six = await caught(() => Promise.resolve().then(() => buildHeirSet({ drafts: Array.from({ length: MAX_HEIRS + 1 }, (_, i) => ({ address: '0x' + (i + 1).toString(16).padStart(40, '0'), label: '', weight: '1' })), threshold: '1', delaySeconds: 600 })));

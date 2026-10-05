@@ -218,7 +218,8 @@ console.log('check-proof: screen wiring (source checks; the screen is React Nati
   check('screen: signs only via signWith(expectAddress = the active EOA) — no other key path', !/mnemonic|revealMnemonic|deriveAccount/.test(screenSrc));
   check('screen: smart-account proofs via makeSmartAccountProof (signHashAsSmartAccount)', /makeSmartAccountProof\(bundle, owner, screened, smart\.address, network\)/.test(screenSrc));
   check('route registered (navigation.ts + App.tsx)', /ProveOwnership: undefined;/.test(src('../src/navigation.ts')) && /<Stack\.Screen name="ProveOwnership" component=\{ProveOwnershipScreen\}/.test(src('../App.tsx')));
-  check('linked from Receive (EVM only) and Settings', /account\.chainId === EVM_CHAIN_ID \? \(\s*<Button\s*title="Prove you own this address"/.test(src('../src/screens/ReceiveScreen.tsx')) && /navigate\('ProveOwnership'\)/.test(src('../src/screens/SettingsScreen.tsx')));
+  // Phase 14 integration: not offered for a watch-only account (no key).
+  check('linked from Receive (EVM only, never for a watch-only account) and Settings', /account\.chainId === EVM_CHAIN_ID && !watchOnly \? \(\s*<Button\s*title="Prove you own this address"/.test(src('../src/screens/ReceiveScreen.tsx')) && /navigate\('ProveOwnership'\)/.test(src('../src/screens/SettingsScreen.tsx')));
 }
 
 seed.fill(0);

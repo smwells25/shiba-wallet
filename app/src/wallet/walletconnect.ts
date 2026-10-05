@@ -31,7 +31,7 @@ import {
   type OpStackFees,
 } from './send.ts';
 import type { KeyValueStore } from './tokens.ts';
-import { EVM_MAINNET, evmProfileByCaip2 } from '../config/evm-chain.ts';
+import { EVM_MAINNET, EVM_TEST_PROFILES, evmProfileByCaip2 } from '../config/evm-chain.ts';
 import { getEndpoint, withEndpoint } from '../config/networks.ts';
 import {
   classifySiweBytes,
@@ -321,7 +321,7 @@ export const WC_ERRORS = {
 
 /**
  * Human name for a CAIP-2 chain id; unknown chains show their id. Every
- * profile in config/evm-chain.ts is named (mainnet, Sepolia, Base Sepolia).
+ * profile in config/evm-chain.ts is named (mainnet and each test network).
  */
 export function describeChain(caip2: string): string {
   if (caip2 === EVM_MAINNET.caip2) return 'Ethereum mainnet';
@@ -354,6 +354,15 @@ export function modeMismatchMessage(
   return `This dApp asked for ${describeChain(requestedChain)}; the wallet is in ${active}. ${how}`;
 }
 
+/**
+ * The test networks' names from the profiles (never a hard-coded list):
+ * "A or B", "A, B or C".
+ */
+export function testNetworkLabelsOr(): string {
+  const names = EVM_TEST_PROFILES.map((p) => p.label);
+  return names.length > 1 ? `${names.slice(0, -1).join(', ')} or ${names[names.length - 1]}` : names.join('');
+}
+
 /** True when `chain` is the chain of the other (inactive) wallet mode. */
 function isOtherModeChain(chain: string, activeChain: string): boolean {
   return chain !== activeChain && modeName(chain) !== null;
@@ -376,7 +385,7 @@ function unsupportedChainMessage(
   return (
     `This dApp requires ${unknown.map(describeChain).join(', ')}, which this wallet does ` +
     'not support over WalletConnect. It connects on Ethereum mainnet, or on the chosen test ' +
-    `network (Sepolia or Base Sepolia) while test mode is on (currently: ${describeChain(activeChain)}).`
+    `network (${testNetworkLabelsOr()}) while test mode is on (currently: ${describeChain(activeChain)}).`
   );
 }
 

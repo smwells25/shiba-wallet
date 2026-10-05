@@ -90,26 +90,20 @@ import {
 import { TokenGasChargeAboveLimitError } from '@shiba-wallet/chains-evm';
 import {
   TOKEN_GAS_CHOICE_HINT,
-  TOKEN_GAS_ESTIMATE_AFTER_APPROVAL,
-  TOKEN_GAS_NO_CHARGE_EVENT,
-  TOKEN_GAS_SPREAD_NOTE,
   checkTokenGasPaymaster,
   describeTokenGasError,
+  erc7677CheckingSentence,
+  erc7677ChoiceHint,
   maxAaTokenGasErc20Send,
   maxAaTokenGasSend,
   prepareAaTokenGasErc20Send,
   prepareAaTokenGasSend,
   tokenGasChargeFromReceipt,
-  tokenGasChargedSentence,
-  tokenGasFeeSentence,
-  tokenGasGrantSentence,
+  tokenGasChargedLine,
+  tokenGasConfirmLines,
   tokenGasMaxAdjustmentSentence,
   tokenGasOffer,
-  tokenGasOracleNote,
-  tokenGasPaymasterFor,
-  tokenGasRateSentence,
-  tokenGasSpreadText,
-  tokenGasWorstCaseHint,
+  tokenGasSourceFor,
   type TokenGasCheck,
 } from '../wallet/token-gas';
 import {
@@ -357,16 +351,17 @@ export function SendScreen({ route, navigation }: Props) {
     success: boolean | null;
     txHash: string | null;
     /**
-     * USDC-fee sends only: the charge read from Circle's
-     * UserOperationSponsored event once the receipt arrived (null when the
+     * USDC-fee sends only: the charge read from the paymaster's
+     * UserOperationSponsored event (Circle's or Pimlico's, matched by
+     * tokenGasChargeFromReceipt) once the receipt arrived (null when the
      * receipt had no such event; undefined for every other send).
      */
     tokenGasCharge?: bigint | null;
   } | null>(null);
   // Pay the network fee in USDC (phase 13 item 2, ../wallet/token-gas.ts):
   // the user's choice on the form; it takes effect only where the choice is
-  // offered and Circle's paymaster passed its on-chain check. ETH is the
-  // default.
+  // offered and its source (Circle's paymaster, or the ERC-7677 paymaster
+  // on Ethereum Sepolia) passed its check. ETH is the default.
   const [feeInUsdc, setFeeInUsdc] = useState(false);
   // The Max record for the USDC-fee path, kept apart from the ETH-fee one so
   // a Max figure from one fee mode is never trimmed by the other.
@@ -592,19 +587,25 @@ export function SendScreen({ route, navigation }: Props) {
     return () => clearTimeout(t);
   }, [aaAddressCopied]);
 
-  // Circle's paymaster, checked on-chain against the ACTIVE endpoint before
-  // the USDC-fee choice is shown (cached briefly by checkTokenGasPaymaster).
-  // Only on a network that has a verified paymaster, and only while the
-  // smart-account toggle is on; the state carries the key it was read for.
+  // The USDC-fee source, checked against the ACTIVE endpoint before the
+  // choice is shown (cached briefly by checkTokenGasPaymaster): Circle's
+  // paymaster on-chain where it exists, else the ERC-7677 source (Pimlico's
+  // paymaster, on-chain plus a stub request to the saved bundler). This
+  // screen renders tokenGasConfirmLines, so it accepts the ERC-7677 source.
+  // Only on a network that has a verified source, and only while the
+  // smart-account toggle is on; the state carries the key it was read for,
+  // which includes the saved bundler because the ERC-7677 check asks it.
+  const aaBundlerUrl = aaConfig?.bundlerUrl ?? null;
   const tokenGasCheckKey =
-    aaEnabled && !nftMode && aaConfig && aaOwner && aaNodeUrl && tokenGasPaymasterFor(evmChain.caip2)
-      ? `${evmChain.caip2}|${aaNodeUrl}`
+    aaEnabled && !nftMode && aaConfig && aaOwner && aaNodeUrl &&
+    tokenGasSourceFor(evmChain.caip2, { acceptsErc7677: true })
+      ? `${evmChain.caip2}|${aaNodeUrl}|${aaBundlerUrl ?? ''}`
       : null;
   const [tokenGasCheckState, setTokenGasCheckState] = useState<{ key: string; result: TokenGasCheck } | null>(null);
   useEffect(() => {
     if (!tokenGasCheckKey || !aaNodeUrl) return;
     let cancelled = false;
-    checkTokenGasPaymaster(aaNodeUrl, evmChain.caip2).then(
+    checkTokenGasPaymaster(aaNodeUrl, evmChain.caip2, { acceptsErc7677: true, bundlerUrl: aaBundlerUrl }).then(
       (result) => {
         if (!cancelled) setTokenGasCheckState({ key: tokenGasCheckKey, result });
       },
@@ -620,7 +621,7 @@ export function SendScreen({ route, navigation }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [tokenGasCheckKey, aaNodeUrl, evmChain.caip2]);
+  }, [tokenGasCheckKey, aaNodeUrl, evmChain.caip2, aaBundlerUrl]);
   const tokenGasCheck =
     tokenGasCheckState && tokenGasCheckState.key === tokenGasCheckKey ? tokenGasCheckState.result : null;
 
@@ -842,11 +843,18 @@ export function SendScreen({ route, navigation }: Props) {
   const passkeyRecord = aaType === 'kernel-v3.3' ? passkeyInfo.record : null;
   const passkeyActive = aaActive && passkeySigner && passkeyRecord !== null;
   // Pay the network fee in USDC: offered by configuration (tokenGasOffer),
-  // then shown only once Circle's paymaster passed its on-chain check, and
+  // then shown only once the source passed its check (Circle's paymaster
+  // on-chain, or the ERC-7677 paymaster on-chain plus the bundler), and
   // used only when the user turned it on. Never together with the passkey
   // signer (tokenGasOffer refuses that combination).
   const tokenGasOfferNow = aaActive
-    ? tokenGasOffer({ chainCaip2: evmChain.caip2, config: aaConfig, owner: account.address, passkeySigner: passkeyActive })
+    ? tokenGasOffer({
+        chainCaip2: evmChain.caip2,
+        config: aaConfig,
+        owner: account.address,
+        passkeySigner: passkeyActive,
+        acceptsErc7677: true,
+      })
     : null;
   const tokenGasReady = tokenGasOfferNow?.kind === 'available' && tokenGasCheck?.ok === true;
   const tokenGasActive = aaActive && tokenGasReady && feeInUsdc && !passkeyActive;
@@ -929,18 +937,23 @@ export function SendScreen({ route, navigation }: Props) {
           // the worst-case fee; another token's Max = its full balance.
           const tbundle = buildAaBundle(start.url);
           if (token) {
-            max = await maxAaTokenGasErc20Send(tbundle, account.address, {
-              contract: token.assetId.reference,
-              recipient: validation.normalized,
-              symbol: token.symbol,
-              decimals: token.decimals,
-              chainCaip2: token.assetId.chainId,
-            });
+            max = await maxAaTokenGasErc20Send(
+              tbundle,
+              account.address,
+              {
+                contract: token.assetId.reference,
+                recipient: validation.normalized,
+                symbol: token.symbol,
+                decimals: token.decimals,
+                chainCaip2: token.assetId.chainId,
+              },
+              { acceptsErc7677: true },
+            );
             if (max <= 0n) {
               throw new Error(`The smart account's ${token.symbol} balance cannot cover the amount and the network fee.`);
             }
           } else {
-            max = await maxAaTokenGasSend(tbundle, account.address);
+            max = await maxAaTokenGasSend(tbundle, account.address, { acceptsErc7677: true });
             if (max <= 0n) throw new Error('The smart account holds no ETH to send.');
           }
           const tgText = exact(max, decimals);
@@ -1207,10 +1220,12 @@ export function SendScreen({ route, navigation }: Props) {
         // refusal to the node endpoint would be wrong. They quote through
         // the endpoint resolved just now and are pinned to it like the rest.
         if (tokenGasActive) {
-          // Network fee in USDC through Circle's paymaster: quoted WITHOUT a
+          // Network fee in USDC. Circle's paymaster is quoted WITHOUT a
           // bundler estimate (the estimation stub needs a permit signed by
           // the account, so estimation runs after the biometric gate); the
-          // confirm shows the worst case, which caps every permit signed.
+          // ERC-7677 source (Pimlico's paymaster) needs no permit, so its
+          // quote runs the stub and the bundler estimate now. Either way the
+          // confirm shows the worst case, which caps what can be charged.
           const tbundle = buildAaBundle(start.url);
           aaBundle.current = tbundle;
           const tgFromMax = amountIsLastMax(lastTokenGasMax.current, {
@@ -1230,10 +1245,11 @@ export function SendScreen({ route, navigation }: Props) {
                   decimals: token.decimals,
                   chainCaip2: token.assetId.chainId,
                 },
-                { fromMax: tgFromMax },
+                { fromMax: tgFromMax, acceptsErc7677: true },
               )
             : await prepareAaTokenGasSend(tbundle, account.address, validation.normalized, amount, {
                 fromMax: tgFromMax,
+                acceptsErc7677: true,
               });
           setQuotedName(reviewedName);
           setQuote(next);
@@ -1502,7 +1518,7 @@ export function SendScreen({ route, navigation }: Props) {
             // The operation carried the EIP-7702 upgrade: re-read the
             // account's status now that it is included.
             if (quote.eip7702?.upgrade) invalidateAccountDelegation(quote.sender);
-            // USDC fee: the actual charge from Circle's event in the receipt.
+            // USDC fee: the actual charge from the paymaster's event in the receipt.
             const tokenGasCharge = quote.tokenGas
               ? (tokenGasChargeFromReceipt(raw, {
                   userOpHash,
@@ -1630,13 +1646,7 @@ export function SendScreen({ route, navigation }: Props) {
             )}
             {quote?.kind === 'aa' && quote.tokenGas && aaResult.tokenGasCharge !== undefined ? (
               <Text style={[styles.hint, { color: theme.text }]}>
-                {aaResult.tokenGasCharge === null
-                  ? TOKEN_GAS_NO_CHARGE_EVENT
-                  : tokenGasChargedSentence(
-                      exact(aaResult.tokenGasCharge, quote.tokenGas.decimals),
-                      exact(quote.tokenGas.maxTokenCharge, quote.tokenGas.decimals),
-                      quote.tokenGas.symbol,
-                    )}
+                {tokenGasChargedLine(quote.tokenGas, aaResult.tokenGasCharge)}
               </Text>
             ) : null}
             {aaResult.txHash ? (
@@ -1703,6 +1713,15 @@ export function SendScreen({ route, navigation }: Props) {
 
   // ------------------------------------------------ confirm (smart account)
   if ((phase === 'confirm' || phase === 'sending') && quote?.kind === 'aa' && network) {
+    // Every USDC-fee line comes from the source that will charge it (Circle
+    // or the ERC-7677 paymaster); for Circle the strings are the earlier ones.
+    const tgLines = quote.tokenGas
+      ? tokenGasConfirmLines(quote.tokenGas, {
+          chainCaip2: evmChain.caip2,
+          nativeSymbol: evmChain.displaySymbol,
+          maxFeePerGas: quote.maxFeePerGas,
+        })
+      : null;
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={network.label} testnet={testnet} theme={theme} />
@@ -1733,10 +1752,10 @@ export function SendScreen({ route, navigation }: Props) {
               />
             ) : null}
             <Text style={[styles.hint, { color: theme.textMuted }]}>
-              {quote.tokenGas
+              {quote.tokenGas && tgLines
                 ? `One transfer call executed by the smart account: it sends its own ${quote.token.symbol}, ` +
                   `so no approval is needed. The network fee is paid in ${quote.tokenGas.symbol} through ` +
-                  'Circle\u2019s paymaster (see below).'
+                  `${tgLines.throughPhrase} (see below).`
                 : `One transfer call executed by the smart account: it sends its own ${quote.token.symbol}, ` +
                   `so no approval is needed. Gas is paid in ${evmChain.displaySymbol} by the smart account ` +
                   '(or the paymaster, when sponsored).'}
@@ -1802,55 +1821,21 @@ export function SendScreen({ route, navigation }: Props) {
             {kernelDeploymentNote(aaConfig?.bundlerUrl ?? null)}
           </Text>
         ) : null}
-        {quote.tokenGas ? (
+        {quote.tokenGas && tgLines ? (
           <>
-            <Row
-              label={`Network fee (paid in ${quote.tokenGas.symbol})`}
-              value={
-                `up to ${exact(quote.tokenGas.maxTokenCharge, quote.tokenGas.decimals)} ${quote.tokenGas.symbol}`
-              }
-              theme={theme}
-            />
-            <Text style={[styles.hint, { color: theme.text }]}>
-              {tokenGasFeeSentence(
-                exact(quote.tokenGas.maxTokenCharge, quote.tokenGas.decimals),
-                quote.tokenGas.symbol,
-              )}
-            </Text>
-            <Text style={[styles.hint, { color: theme.textMuted }]}>
-              {tokenGasWorstCaseHint(quote.tokenGas, quote.maxFeePerGas)}
-            </Text>
-            <Row
-              label="Rate"
-              value={tokenGasRateSentence(
-                quote.tokenGas.nativeTokenPrice,
-                quote.tokenGas.decimals,
-                evmChain.displaySymbol,
-                quote.tokenGas.symbol,
-              )}
-              sub={tokenGasOracleNote(evmChain.caip2)}
-              theme={theme}
-            />
-            <Row
-              label="Paymaster fee spread"
-              value={tokenGasSpreadText(quote.tokenGas.feeSpreadBips)}
-              sub={TOKEN_GAS_SPREAD_NOTE}
-              theme={theme}
-            />
-            <Row label="Paymaster (Circle)" value={quote.tokenGas.paymaster} mono theme={theme} />
-            <Row
-              label={`Smart account ${quote.tokenGas.symbol} balance`}
-              value={
-                `${exact(quote.tokenGas.tokenBalance, quote.tokenGas.decimals)} ${quote.tokenGas.symbol}`
-              }
-              theme={theme}
-            />
-            <WarningBox>
-              {tokenGasGrantSentence(
-                exact(quote.tokenGas.maxTokenCharge, quote.tokenGas.decimals),
-                quote.tokenGas.symbol,
-              )}
-            </WarningBox>
+            <Row label={tgLines.feeLabel} value={tgLines.feeValue} theme={theme} />
+            <Text style={[styles.hint, { color: theme.text }]}>{tgLines.feeSentence}</Text>
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{tgLines.worstCaseHint}</Text>
+            <Row label="Rate" value={tgLines.rateValue} sub={tgLines.rateNote} theme={theme} />
+            <Row label={tgLines.spreadLabel} value={tgLines.spreadValue} sub={tgLines.spreadNote} theme={theme} />
+            <Row label={tgLines.paymasterLabel} value={tgLines.paymasterValue} mono theme={theme} />
+            <Row label={tgLines.balanceLabel} value={tgLines.balanceValue} theme={theme} />
+            <WarningBox>{tgLines.grantSentence}</WarningBox>
+            {tgLines.notes.map((n) => (
+              <Text key={n} style={[styles.hint, { color: theme.textMuted }]}>
+                {n}
+              </Text>
+            ))}
             {quote.token && quote.token.contract.toLowerCase() === quote.tokenGas.token.toLowerCase() ? (
               <Row
                 label={`Total ${quote.tokenGas.symbol} (worst case)`}
@@ -1920,8 +1905,12 @@ export function SendScreen({ route, navigation }: Props) {
         />
         <RiskWarnings url={confirmUrl} wallet={quote.sender} {...aaRiskWarningTarget(quote)} />
         <SpendingPolicyNotice owner={quotedFrom} quote={quote} from={quotedFrom} />
-        {quote.tokenGas ? (
-          <Text style={[styles.hint, { color: theme.textMuted }]}>{TOKEN_GAS_ESTIMATE_AFTER_APPROVAL}</Text>
+        {tgLines && quote.tokenGas?.source === 'erc7677' ? (
+          // The ERC-7677 quote ran the bundler estimate before the gate, with
+          // the paymaster's stub terms, so it reports a pass like other quotes.
+          <Text style={[styles.simulationOk, { color: theme.success }]}>{tgLines.estimateSentence}</Text>
+        ) : tgLines ? (
+          <Text style={[styles.hint, { color: theme.textMuted }]}>{tgLines.estimateSentence}</Text>
         ) : (
           <Text style={[styles.simulationOk, { color: theme.success }]}>
             Bundler gas estimate passed (eth_estimateUserOperationGas simulated the operation).
@@ -2417,7 +2406,9 @@ export function SendScreen({ route, navigation }: Props) {
             <Text style={[styles.hint, { color: theme.textMuted }]}>{tokenGasOfferNow.reason}</Text>
           ) : tokenGasCheck === null ? (
             <Text style={[styles.hint, { color: theme.textMuted }]}>
-              Checking Circle{'\u2019'}s token paymaster on-chain before offering to pay the network fee in USDC…
+              {tokenGasOfferNow.source.kind === 'erc7677'
+                ? erc7677CheckingSentence(tokenGasOfferNow.source.vendor)
+                : 'Checking Circle\u2019s token paymaster on-chain before offering to pay the network fee in USDC\u2026'}
             </Text>
           ) : !tokenGasCheck.ok ? (
             <Text style={[styles.hint, { color: theme.textMuted }]}>{tokenGasCheck.reason}</Text>
@@ -2437,7 +2428,11 @@ export function SendScreen({ route, navigation }: Props) {
                 />
                 <Text style={[styles.overrideLabel, { color: theme.text }]}>Pay the network fee in USDC</Text>
               </View>
-              <Text style={[styles.hint, { color: theme.textMuted }]}>{TOKEN_GAS_CHOICE_HINT}</Text>
+              <Text style={[styles.hint, { color: theme.textMuted }]}>
+                {tokenGasOfferNow.source.kind === 'erc7677'
+                  ? erc7677ChoiceHint(tokenGasOfferNow.source.vendor)
+                  : TOKEN_GAS_CHOICE_HINT}
+              </Text>
             </>
           )}
         </View>

@@ -448,6 +448,7 @@ console.log('ownership + cache:');
   check('explorer link (mainnet)', nftExplorerUrl(MAINNET, big) === `https://etherscan.io/nft/${C721}/${BIG_ID}`);
   check('explorer link (Sepolia)', nftExplorerUrl(SEPOLIA, big) === `https://sepolia.etherscan.io/nft/${C721}/${BIG_ID}`);
   check('explorer link (Base Sepolia, BaseScan /nft/ path)', nftExplorerUrl('eip155:84532', big) === `https://sepolia.basescan.org/nft/${C721}/${BIG_ID}`);
+  check('explorer link (Arbitrum Sepolia, Arbiscan /nft/ path — the Etherscan-family convention)', nftExplorerUrl('eip155:421614', big) === `https://sepolia.arbiscan.io/nft/${C721}/${BIG_ID}`);
   check('no guessed explorer for unknown chains (incl. Base mainnet, which has no profile)', nftExplorerUrl('eip155:10', big) === null && nftExplorerUrl('eip155:8453', big) === null);
   globalThis.__nfts = more.nfts;
 }

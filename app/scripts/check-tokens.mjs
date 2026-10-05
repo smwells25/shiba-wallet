@@ -270,6 +270,16 @@ console.log('\nPer-chain defaults (phase 13 item 1):');
       'USDC@0x036CbD53842c5426634e7929541eC2318f3dCF7e,EURC@0x808456652fdb597867f38412077A9182bf77359F',
     JSON.stringify(base),
   );
+  // Phase 14 integration: Circle's Arbitrum Sepolia USDC (Circle's USDC page
+  // fetched 2026-10-04; live symbol/name/decimals reads on two endpoints).
+  // Circle lists no Arbitrum Sepolia EURC.
+  const arb = await listTokens('eip155:421614', fresh);
+  check(
+    'fresh Arbitrum Sepolia list = Circle test USDC only (name "USD Coin", 6 decimals; no EURC listed by Circle)',
+    arb.map((t) => `${t.symbol}/${t.name}/${t.decimals}@${t.assetId.reference}`).join(',') ===
+      'USDC/USD Coin/6@0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d',
+    JSON.stringify(arb),
+  );
   check('every known test token has 6 decimals and its own CAIP-2 chain', Object.entries(KNOWN_TEST_NETWORK_TOKENS).every(([c, l]) => l.every((t) => t.decimals === 6 && t.assetId.chainId === c)));
   check('mainnet default is USDC only; unknown chains have none', defaultTokensForChain(MAINNET).length === 1 && defaultTokensForChain('eip155:137').length === 0);
   check('reading defaults writes nothing (missing key stays missing)', fresh.mem.size === 0);

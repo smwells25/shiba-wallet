@@ -162,7 +162,24 @@ const HOOK_ONLY_ENTRYPOINT = '0xFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF';
 const GUARDIAN_LIST_END = '0xffffffffffffffffffffffffffffffffffffffff';
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const MAX_UINT24 = 0xffffff;
-const MAX_UINT48 = 2 ** 48 - 1;
+/**
+ * The longest guardian delay this engine accepts: 2^32 - 1 seconds (about
+ * 136 years). WALLET POLICY, chosen for safety, not taken from the contract.
+ *
+ * The weighted validator stores the delay as a uint48 but computes
+ * validAfter = uint48(block.timestamp + delay) when guardians approve
+ * [K WeightedECDSAValidator.sol lines 152, 176]; Solidity's explicit
+ * narrowing conversion truncates silently, so a delay of 2^48 - now seconds
+ * or more puts validAfter in the PAST and makes a takeover valid at once
+ * (inheritance-smoke.mjs S8 proved it against the deployed contract). Any
+ * bound that depends on today's clock would be wrong for an approval made
+ * decades later, so the bound is fixed: with delay <= 2^32 - 1 the sum can
+ * only reach 2^48 once block.timestamp >= 2^48 - 2^32 + 1 =
+ * 281,470,681,743,361 (about 8.9 million years from 1970; block timestamps
+ * are about 1.8 * 10^9 in 2026). No real clock gets there, and 136 years is
+ * longer than any delay an owner can mean.
+ */
+export const MAX_GUARDIAN_DELAY_SECONDS = 2 ** 32 - 1;
 /** Hard bound on guardian-list traversal so a malicious RPC cannot loop us forever (wallet policy). */
 const MAX_GUARDIANS = 32;
 
@@ -205,6 +222,12 @@ export interface GuardianSetContext {
   /** Its current root owner (the ECDSA validator's stored owner). */
   owner?: string | undefined;
 }
+
+/** The refusal for a delay above MAX_GUARDIAN_DELAY_SECONDS (shown verbatim by the app). */
+export const GUARDIAN_DELAY_TOO_LONG =
+  `delaySeconds must be at most ${MAX_GUARDIAN_DELAY_SECONDS} (about 136 years): the guardian validator ` +
+  'computes the waiting time as uint48(block.timestamp + delay), and a longer delay could wrap to a time ' +
+  'in the past, which would make a takeover valid immediately.';
 
 /**
  * Local, network-free validation. Throws on the first problem. Rules the
@@ -266,8 +289,14 @@ export function validateGuardianSet(set: KernelGuardianSet, context: GuardianSet
     // check is the only protection on that path.
     throw new Error(`threshold ${set.threshold} exceeds the total guardian weight ${total}; recovery would be impossible`);
   }
-  if (!Number.isInteger(set.delaySeconds) || set.delaySeconds < 0 || set.delaySeconds > MAX_UINT48) {
-    throw new Error('delaySeconds must be an integer between 0 and 2^48 - 1');
+  if (!Number.isInteger(set.delaySeconds) || set.delaySeconds < 0) {
+    throw new Error('delaySeconds must be a non-negative integer');
+  }
+  if (set.delaySeconds > MAX_GUARDIAN_DELAY_SECONDS) {
+    // Wallet policy (see MAX_GUARDIAN_DELAY_SECONDS): refuse every delay that
+    // could wrap the validator's uint48 arithmetic for any realistic clock,
+    // including every delay the contract itself would accept up to 2^48 - 1.
+    throw new Error(GUARDIAN_DELAY_TOO_LONG);
   }
 }
 
@@ -1783,8 +1812,9 @@ export const GUARDIAN_DELAY_UINT48_MODULUS = 2n ** 48n;
  * a delay of 2^48 - approvalTime seconds or more yields a validAfter in the
  * PAST and the takeover is valid at once (proven by eth_simulateV1 against
  * the deployed contract: scripts/testnet/inheritance-smoke.mjs, S8).
- * validateGuardianSet accepts any uint48 delay; callers that offer long
- * delays check this too.
+ * validateGuardianSet refuses every delay above MAX_GUARDIAN_DELAY_SECONDS,
+ * which cannot wrap for any realistic clock; this helper stays for callers
+ * that reason about a specific approval time and for the S8 demonstration.
  */
 export function guardianDelayWraps(delaySeconds: number | bigint, approvalTime: number | bigint): boolean {
   const delay = BigInt(delaySeconds);

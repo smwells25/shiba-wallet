@@ -525,11 +525,20 @@ export function groupNftsByCollection(nfts: OwnedNft[]): NftCollectionGroup[] {
  * (a "Token ID" field, site name "Base Sepolia Network Explorer"), while
  * /tx/ pages answered with a Cloudflare challenge; the path has not been
  * checked against a real indexed Base Sepolia NFT.
+ *
+ * Arbitrum Sepolia (phase 14 integration): the explorer host
+ * sepolia.arbiscan.io is the one the profile records (Arbitrum's pages link
+ * Arbiscan in the /address/<addr> form; see EVM_ARBITRUM_SEPOLIA in
+ * config/evm-chain.ts). The /nft/{contract}/{token id} path is the
+ * Etherscan-family convention Arbiscan shares; Arbitrum does not document
+ * it, and it has not been checked against a real indexed Arbitrum Sepolia
+ * NFT.
  */
 const NFT_EXPLORER_BASE: Record<string, string> = {
   'eip155:1': 'https://etherscan.io/nft/',
   'eip155:11155111': 'https://sepolia.etherscan.io/nft/',
   'eip155:84532': 'https://sepolia.basescan.org/nft/',
+  'eip155:421614': 'https://sepolia.arbiscan.io/nft/',
 };
 
 export function nftExplorerUrl(chainId: string, nft: Pick<OwnedNft, 'contract' | 'tokenId'>): string | null {

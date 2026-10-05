@@ -37,7 +37,9 @@
  *       ERC-1271), but also the wallet's own 0x01-envelope ERC-1271
  *       signatures — an emergency switch, not a proof of life.
  *   S8  a delay near 2^48 seconds WRAPS: validAfter = uint48(now + delay)
- *       truncates, so the takeover is valid immediately.
+ *       truncates, so the takeover is valid immediately. The engine now
+ *       refuses such delays (validateGuardianSet, MAX_GUARDIAN_DELAY_SECONDS);
+ *       S8 checks that refusal and builds the install around it.
  *
  * LIVE (BUNDLER_URL or ZERODEV_PROJECT_ID set, INHERITANCE_SMOKE_LIVE=1):
  * on the dev seed's DEPLOYED Kernel account (index 2, 0x1D72…4106), with a
@@ -420,6 +422,24 @@ async function dryRun() {
   const factory = await spec.getFactoryArgs(owner);
   const deployWith = (set) =>
     signRootOp({ sender: account, nonce: 0n, ...factory, callData: encodeKernelExecute(guardianInstallCalls(account, set, { owner: owner.address })), ...GAS }, owner, spec);
+  // S8 only: the engine now REFUSES delays above MAX_GUARDIAN_DELAY_SECONDS
+  // (2^32 - 1), so the wrapping install is built from a valid set whose
+  // delay is a sentinel and then has exactly that one ABI word replaced.
+  // This exists only to keep demonstrating, in simulation, that the
+  // contract itself accepts and truncates such a delay.
+  const deployWithRawDelay = (delay) => {
+    const sentinel = 0x0dea1a7en;
+    const word = (v) => v.toString(16).padStart(64, '0');
+    let replaced = 0;
+    const calls = guardianInstallCalls(account, heirSet(Number(sentinel)), { owner: owner.address }).map((c) => {
+      const hexData = toHex(c.data);
+      const hits = hexData.split(word(sentinel)).length - 1;
+      replaced += hits;
+      return hits === 1 ? { ...c, data: toBytes(hexData.replace(word(sentinel), word(delay))) } : c;
+    });
+    if (replaced !== 1) throw new Error(`S8: expected the sentinel delay word exactly once, found it ${replaced} times`);
+    return signRootOp({ sender: account, nonce: 0n, ...factory, callData: encodeKernelExecute(calls), ...GAS }, owner, spec);
+  };
   const rootOp = (nonce, calls) => signRootOp({ sender: account, nonce, callData: encodeKernelExecute(calls), ...GAS }, owner, spec);
   const proposal = (nonce) =>
     buildGuardianRecoveryRequest({ chainId: CHAIN_ID, account, newOwner: heirNewOwner.address, nonce, guardians: heirSet(DRY_DELAY).guardians });
@@ -689,7 +709,14 @@ async function dryRun() {
   {
     console.log('\n[S8] A delay near 2^48 seconds wraps around');
     const wrapSet = heirSet(Number(MAX_UINT48));
-    const deploy = deployWith(wrapSet);
+    let engineRefused = false;
+    try {
+      guardianInstallCalls(account, wrapSet, { owner: owner.address });
+    } catch {
+      engineRefused = true;
+    }
+    check('the engine refuses a delay of 2^48 - 1 s (validateGuardianSet)', engineRefused, engineRefused ? 'refused' : 'accepted', failures, log);
+    const deploy = deployWithRawDelay(MAX_UINT48);
     const wrapRequest = buildGuardianRecoveryRequest({ chainId: CHAIN_ID, account, newOwner: heirNewOwner.address, nonce: lane0, guardians: wrapSet.guardians });
     const tx = encodeApproveWithSig(wrapRequest, [signGuardianApproval(heir, toBytes(wrapRequest.approvalDigest))]);
     const wrapTakeover = heirOp(account, lane0, toBytes(wrapRequest.callData), heir);
@@ -700,7 +727,7 @@ async function dryRun() {
       { blockOverrides: at(tApprove), calls: [{ from: relayer, to: tx.to, data: toHex(tx.data) }, proposalCall(account, wrapRequest.callDataAndNonceHash)] },
       { blockOverrides: at(tApprove + 12), calls: [handle(wrapTakeover), ownerOfCall(account)] },
     ]);
-    opResult(`install with delay 2^48 - 1 s (the engine's validateGuardianSet accepts it)`, r[0].calls[0], deploy, true, failures, log);
+    opResult('install with delay 2^48 - 1 s (built around the engine, which refuses it; the contract accepts it)', r[0].calls[0], deploy, true, failures, log);
     const st = statusOf(r[1].calls[1]);
     check('validAfter wrapped to approval time - 1', st?.status === 1 && st.validAfter === expected, st ? `validAfter ${st.validAfter} (approval time ${tApprove})` : 'revert', failures, log);
     opResult('takeover 12 seconds after approval', r[2].calls[0], wrapTakeover, true, failures, log);

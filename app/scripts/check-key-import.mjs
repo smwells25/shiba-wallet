@@ -593,6 +593,41 @@ console.log('check-key-import: the approval gate opens the active account\'s sec
   check('a standard imported key falls back to the app-level prompt (no system prompt)', (await std.vault.openPhraseForApproval('Approve')).kind === 'fallback' && std.shim.take().length === 0);
   std.vault.setApprovalTarget({ kind: 'imported', slot: 7 });
   check('a missing key falls back too (the signing call then explains)', (await std.vault.openPhraseForApproval('Approve')).kind === 'fallback');
+
+  // Phase 14 integration: a watch-only account's target opens NOTHING (no
+  // secure-store read, no system prompt), so the caller's ordinary device
+  // prompt is the check; the phrase and imported targets are unchanged.
+  {
+    const w = await freshVault({ protect: true });
+    let gets = 0;
+    const realGet = w.shim.getItemAsync.bind(w.shim);
+    w.shim.getItemAsync = async (key, opts) => { gets += 1; return realGet(key, opts); };
+    await w.vault.openPhraseForApproval('Approve');
+    w.shim.take();
+    w.vault.setApprovalTarget({ kind: 'none' });
+    gets = 0;
+    const none = await w.vault.openPhraseForApproval('Unlock Shiba Wallet');
+    check('watch-only target: fallback with no prompt and ZERO secure-store reads', none.kind === 'fallback' && none.detail === null && w.shim.take().length === 0 && gets === 0, `${none.kind} ${gets}`);
+    check('…and the phrase held for the previous target was dropped (the next phrase read prompts)', (await w.vault.readPhrase('Phrase')) === PHRASE && w.shim.take().length === 1);
+    const explicitPhrase = await w.vault.openPhraseForApproval('Reveal recovery phrase', { kind: 'phrase' });
+    check('an explicit phrase target still opens the phrase while a watch-only account is active', explicitPhrase.kind === 'authenticated' && JSON.stringify(w.shim.take()) === JSON.stringify(['Reveal recovery phrase']));
+    w.vault.setApprovalTarget({ kind: 'phrase' });
+    check('back on a phrase account: one system prompt, authenticated (unchanged)', (await w.vault.openPhraseForApproval('Approve')).kind === 'authenticated' && w.shim.take().length === 1);
+    // Mutation: without the 'none' early return the gate would open the phrase.
+    const storageSrc = readFileSync(new URL('../src/wallet/storage.ts', import.meta.url), 'utf8');
+    const anchor = "        if (gateTarget.kind === 'none') return { kind: 'fallback', detail: null };\n";
+    check('mutation anchor present (watch-only target)', storageSrc.includes(anchor));
+    const mutant = await importAppMutant('src/wallet/storage.ts', storageSrc.replace(anchor, ''));
+    const mShim = makeShim({ platform: 'android' });
+    const mVault = mutant.createKeyVault(mShim, {});
+    await mVault.saveNewPhrase(PHRASE);
+    await mVault.upgrade();
+    mShim.take();
+    mVault.setApprovalTarget({ kind: 'none' });
+    const mGate = await mVault.openPhraseForApproval('Unlock Shiba Wallet');
+    check('M-none caught: without the early return a watch-only target opens the protected phrase (system prompt)',
+      mGate.kind === 'authenticated' && mShim.take().length === 1, mGate.kind);
+  }
 }
 
 // ===========================================================================
@@ -680,7 +715,8 @@ console.log('check-key-import: signing selection (the signWith half) and refusal
       /importedSignerFor\(chain\.provider, keyBytes, expectAddress\)/.test(sw) && /finally \{\s*keyBytes\.fill\(0\);/.test(sw));
   check('signWith: a non-EVM chain is refused before the imported key is read', sw.indexOf('throw new Error(IMPORTED_KEY_EVM_ONLY)') < sw.indexOf('importedKeyVault.read('));
   check('signWith: phrase accounts still go through readPhrase(PROMPTS.signFallback) and deriveSignerFor', /readPhrase\(PROMPTS\.signFallback\)/.test(sw) && /deriveSignerFor\(chain\.provider, seed, index, expectAddress\)/.test(sw));
-  check('the approval target follows the active account (commitAccounts)', /setApprovalTarget\(isImportedAccountId\(active\) \? \{ kind: 'imported', slot: importedSlotOf\(active\) \} : \{ kind: 'phrase' \}\)/.test(ctx));
+  check('the approval target follows the active account (commitAccounts; nothing for a watch-only account)',
+    /setApprovalTarget\(\s*isImportedAccountId\(active\)\s*\? \{ kind: 'imported', slot: importedSlotOf\(active\) \}\s*: isWatchOnlyAccountId\(active\)\s*\? \{ kind: 'none' \}\s*: \{ kind: 'phrase' \},?\s*\)/.test(ctx));
   const wipe = ctx.slice(ctx.indexOf('const wipe = useCallback('));
   check('wipe deletes imported keys FIRST, before the phrase', wipe.indexOf('await importedKeyVault.removeAll()') >= 0 && wipe.indexOf('await importedKeyVault.removeAll()') < wipe.indexOf('await deleteMnemonic()'));
   check('launch derives only phrase indices (imported ids never reach derivePublic)', /derivePublic\(mnemonic, derivedIndices\(state\)\)/.test(ctx) && /for \(const index of derivedIndices\(state\)\)/.test(ctx));

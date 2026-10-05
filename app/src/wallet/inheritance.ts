@@ -15,7 +15,7 @@ import {
 } from '@shiba-wallet/chains-evm';
 // Explicit .ts extensions: scripts/check-inheritance.mjs loads this module
 // under Node's type stripping, which resolves relative specifiers literally.
-import { eip155Caip2, isTestNetwork } from '../config/readiness.ts';
+import { eip155Caip2, isFeatureAllowed, isTestNetwork } from '../config/readiness.ts';
 import type { AaClientBundle } from './aa.ts';
 import {
   addWatchedProposal,
@@ -182,7 +182,10 @@ export const DEFAULT_INHERITANCE_DELAY_SECONDS = 600;
 
 /** Refuses outside a test network, before any request. */
 export function assertInheritanceAllowed(caip2: string): void {
-  if (!isTestNetwork(caip2)) throw new Error(INHERITANCE_TESTNET_ONLY);
+  // Both rules: the test-network check and the readiness switchboard row
+  // (config/readiness.ts 'inheritance', testnet-only and enforced); the
+  // refusal keeps the demonstration sentence.
+  if (!isTestNetwork(caip2) || !isFeatureAllowed('inheritance', caip2)) throw new Error(INHERITANCE_TESTNET_ONLY);
 }
 
 /**
@@ -320,8 +323,11 @@ const STORE_VERSION = 1;
 /**
  * Blocks one check reads (each is a full block with every transaction).
  * Wallet policy, sized for a phone on a free endpoint: 60 blocks is about 12
- * minutes on Ethereum Sepolia and 2 minutes on Base Sepolia. The engine caps
- * a single scan at MAX_GUARDIAN_APPROVAL_SCAN_BLOCKS.
+ * minutes on Ethereum Sepolia, 2 minutes on Base Sepolia and only about 15
+ * seconds on Arbitrum Sepolia (0.25 s blocks, risk.ts), where a check
+ * therefore covers little time and the coverage sentence says how many
+ * blocks are still unscanned. The engine caps a single scan at
+ * MAX_GUARDIAN_APPROVAL_SCAN_BLOCKS.
  */
 export const INHERITANCE_SCAN_BLOCKS_PER_CHECK = 60;
 

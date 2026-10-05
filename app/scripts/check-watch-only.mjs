@@ -82,6 +82,8 @@ import {
   WATCH_ADDRESS_PRIVACY_NOTE,
   WATCH_ONLY_ALLOWED_ROUTES,
   WATCH_ONLY_WC_REFUSAL,
+  WATCHED_ADDRESS_RECEIVE_NOTE,
+  WATCHED_ADDRESS_TITLE,
   checkWatchAddress,
   phraseAccountSameAsWatchedNote,
   removeWatchOnlyMessage,
@@ -133,6 +135,27 @@ async function rejects(fn) {
 }
 const HERE = dirname(fileURLToPath(import.meta.url));
 const src = (rel) => readFileSync(join(HERE, '..', 'src', rel), 'utf8');
+
+/**
+ * Source-level rules for ReceiveScreen's watch-only form (the screen cannot
+ * run in Node). Returns the broken rules; empty when all hold.
+ */
+function receiveWatchOnlyProblems(receive) {
+  const problems = [];
+  const need = (what, ok) => { if (!ok) problems.push(what); };
+  need('watchOnly from the active account', receive.includes('const watchOnly = activeAccount?.watchOnly === true;'));
+  need('the notice and the watched-address sentence',
+    receive.includes('<WatchOnlyNotice show={watchOnly} />') && receive.includes('{WATCHED_ADDRESS_RECEIVE_NOTE}'));
+  need('the QR code and the address stay', receive.includes('<QRCode value={account.address}') && receive.includes('{account.address}'));
+  need('Send hidden', receive.includes('{watchOnly ? null : (\n        <Button\n          title={`Send ${account.symbol}`}'));
+  need('payment request hidden', receive.includes('account && !watchOnly ? familyForSlot(account.chainId) : null'));
+  need('proof of ownership hidden', receive.includes("account.chainId === EVM_CHAIN_ID && !watchOnly ? (") && (receive.match(/navigate\('ProveOwnership'\)/g) ?? []).length === 1);
+  need('smart-account box hidden and never read', receive.includes('{smartInfo && !watchOnly ? (') && receive.includes('const smartOwner = evmOwnAddress;') &&
+    receive.includes("const evmOwnAddress = route.params.chainId === EVM_CHAIN_ID && !watchOnly ? (account?.address ?? null) : null;"));
+  need('no upgrade or recovery reads', receive.includes('useAccountDelegation(evmOwnAddress)') && receive.includes('useRecoveryInfo(evmOwnAddress, watchOnly ? null'));
+  need('no raw "watch-only" path label', receive.includes('{watchOnly ? null : (\n        <Text style={[styles.path'));
+  return problems;
+}
 
 // A deliberately broken copy of an app module for a mutation check: written
 // to a scratch directory with its relative imports rewritten to absolute file
@@ -366,9 +389,9 @@ console.log('check-watch-only: which screens a watch-only account may open');
 // ===========================================================================
 {
   check('the allow list is exactly the read-only and wallet-management routes',
-    JSON.stringify(WATCH_ONLY_ALLOWED_ROUTES) === JSON.stringify(['Home', 'Activity', 'Nfts', 'NftDetail', 'Tokens', 'Approvals', 'Settings', 'Contacts', 'ImportKey']));
+    JSON.stringify(WATCH_ONLY_ALLOWED_ROUTES) === JSON.stringify(['Home', 'Activity', 'Nfts', 'NftDetail', 'Tokens', 'Approvals', 'Settings', 'Contacts', 'ImportKey', 'Receive']));
   for (const route of WATCH_ONLY_ALLOWED_ROUTES) check(`${route} is allowed`, watchOnlyRouteRefusal(route) === null);
-  for (const route of ['Send', 'Swap', 'Receive', 'UpgradeAccount', 'Sessions', 'Guardians', 'Passkey', 'ProveOwnership', 'OwnerRotation', 'ApproveRecovery', 'RecoverAccount', 'Connections', 'SpendingLimits']) {
+  for (const route of ['Send', 'Swap', 'UpgradeAccount', 'Sessions', 'Guardians', 'Passkey', 'ProveOwnership', 'OwnerRotation', 'ApproveRecovery', 'RecoverAccount', 'Connections', 'SpendingLimits']) {
     check(`${route} is refused`, typeof watchOnlyRouteRefusal(route) === 'string');
   }
   check('a route added later is refused by default (allow list, not deny list)', watchOnlyRouteRefusal('SomeFutureSigningScreen')?.startsWith('This screen is not available for a watch-only account') === true);
@@ -621,7 +644,29 @@ console.log('check-watch-only: honesty and the screens (source checks)');
   check('Home: Activity and NFTs stay linked', /cardLink\('activity'/.test(home) && /cardLink\('nfts'/.test(home));
   check('Home: Sessions, Guardians and Passkey are never offered (the checks get no owner or index)',
     /const tools = isEvm && !watchOnly/.test(home) && /const toolsOwner = watchOnly \? null : evmAccount\?\.address;/.test(home));
-  check('Home: the address is shown but does not open Receive', /disabled=\{watchOnly\}/.test(home));
+  check('Home: the address opens Receive for a watch-only account too (its read-only form)',
+    !/disabled=\{watchOnly\}/.test(home) && /accessibilityHint=\{\s*watchOnly \? 'Opens the watched address and its QR code'/.test(home) &&
+      /onPress=\{\(\) => navigation\.navigate\('Receive', \{ chainId: item\.chainId \}\)\}/.test(home));
+  // Receive (phase 14 integration): address, QR and the notice only.
+  {
+    const receive = src('screens/ReceiveScreen.tsx');
+    const problems = receiveWatchOnlyProblems(receive);
+    check('Receive for a watch-only account: address, QR and notice only; Send, request, proof and smart box hidden; no smart/upgrade/recovery reads',
+      problems.length === 0, problems.join('; '));
+    for (const [name, from, to] of [
+      ['M-r1 Send shown', '{watchOnly ? null : (\n        <Button\n          title={`Send ${account.symbol}`}', '{false ? null : (\n        <Button\n          title={`Send ${account.symbol}`}'],
+      ['M-r2 request card shown', 'account && !watchOnly ? familyForSlot(account.chainId) : null', 'account ? familyForSlot(account.chainId) : null'],
+      ['M-r3 proof shown', "account.chainId === EVM_CHAIN_ID && !watchOnly ? (", 'account.chainId === EVM_CHAIN_ID ? ('],
+      ['M-r4 smart-account read for the watched address', 'const smartOwner = evmOwnAddress;', "const smartOwner = route.params.chainId === EVM_CHAIN_ID ? (account?.address ?? null) : null;"],
+      ['M-r5 notice dropped', '<WatchOnlyNotice show={watchOnly} />', ''],
+    ]) {
+      check(`mutation anchor present (${name})`, receive.includes(from));
+      check(`${name}: caught`, receiveWatchOnlyProblems(receive.replace(from, to)).length > 0);
+    }
+    check('the watched-address sentence and title',
+      WATCHED_ADDRESS_RECEIVE_NOTE === 'This is the address being watched. Anyone can send to it, but this wallet holds no key for it, so it cannot move anything that arrives there.' &&
+        WATCHED_ADDRESS_TITLE === 'Watched address');
+  }
   check('Home: Bitcoin, Dogecoin and Solana shown as not available', /<UnavailableChains accounts=\{accounts\} sentence=\{WATCH_ONLY_NO_CHAIN\} \/>/.test(home));
   check('Home: no guardian-recovery link for a watch-only account', /\{watchOnly \? null : \(\s*<>\s*\{activeAccount\?\.imported \? null : \(/.test(home));
   check('Home: the delegation lines (which link to Upgrade) are not read for a watch-only account', /useAccountDelegation\(watchOnly \? undefined : evmAccount\?\.address\)/.test(home));

@@ -77,7 +77,8 @@ export type FeatureId =
   | 'owner-rotation'
   | 'paymaster'
   | 'token-gas'
-  | 'imported-key';
+  | 'imported-key'
+  | 'inheritance';
 
 export interface FeatureReadiness {
   id: FeatureId;
@@ -339,6 +340,22 @@ export const FEATURE_READINESS: readonly FeatureReadiness[] = [
     // leadership refresh; it covers Circle's paymaster, and Pimlico's
     // second source has the same no-audit and operator-control shape).
     evidence: ['C1', 'C2', 'C3', 'W8', 'W9', 'F-58'],
+    enforced: true,
+  },
+  {
+    id: 'inheritance',
+    title: 'Inheritance (demonstration)',
+    status: 'testnet-only',
+    reason:
+      'An heir can sign messages as the account, and so move its tokens through permits, from the moment ' +
+      'they are added, not only after the delay, and the owner has no reliable way to notice a takeover ' +
+      'attempt in time. It runs on the same unaudited guardian modules, so this wallet offers inheritance ' +
+      'only on test networks, as a demonstration.',
+    // C1: the unaudited Kernel and guardian modules it runs on; W9: the
+    // switchboard; W14: the guardian findings; F-20 / F-21: the guardian
+    // validator's behaviour and audit gap; T-68 / F-60: the inheritance
+    // risks (phase 14 item 4), including the uint48 delay wrap.
+    evidence: ['C1', 'W9', 'W14', 'F-20', 'F-21', 'T-68', 'F-60'],
     enforced: true,
   },
 ];

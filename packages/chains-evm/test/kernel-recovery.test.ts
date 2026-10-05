@@ -18,6 +18,8 @@ import {
   scanGuardianApprovals,
   encodeApproveWithSig,
   encodeGuardianSetData,
+  GUARDIAN_DELAY_TOO_LONG,
+  MAX_GUARDIAN_DELAY_SECONDS,
   encodeGuardianSignature,
   encodeGuardianValidatorInstall,
   encodeRecoveryActionInstall,
@@ -762,9 +764,37 @@ describe('inheritance support: roles, delay wrap, approval discovery', () => {
     expect(guardianDelayWraps(max + 1n, now)).toBe(true);
     expect(guardianDelayWraps(2 ** 48 - 1, now)).toBe(true);
     expect(guardianDelayWraps(365 * 86_400, now)).toBe(false);
-    // The validator itself accepts the wrapping delay (validateGuardianSet allows any uint48).
-    expect(() => validateGuardianSet({ guardians: [{ address: G1.address, weight: 1 }], threshold: 1, delaySeconds: 2 ** 48 - 1 })).not.toThrow();
+    // The validator itself accepts the wrapping delay; the engine refuses it
+    // (and everything above MAX_GUARDIAN_DELAY_SECONDS) with the plain sentence.
+    expect(() => validateGuardianSet({ guardians: [{ address: G1.address, weight: 1 }], threshold: 1, delaySeconds: 2 ** 48 - 1 })).toThrow(GUARDIAN_DELAY_TOO_LONG);
     expect(() => maxNonWrappingGuardianDelay(2n ** 48n)).toThrow(/out of range/);
+  });
+
+  it('refuses every delay that could wrap the uint48 validAfter for any realistic clock', () => {
+    const one = (delaySeconds: number) => ({ guardians: [{ address: G1.address, weight: 1 }], threshold: 1, delaySeconds });
+    expect(MAX_GUARDIAN_DELAY_SECONDS).toBe(4_294_967_295);
+    expect(GUARDIAN_DELAY_TOO_LONG).toBe(
+      'delaySeconds must be at most 4294967295 (about 136 years): the guardian validator computes the waiting time as ' +
+        'uint48(block.timestamp + delay), and a longer delay could wrap to a time in the past, which would make a takeover valid immediately.',
+    );
+    // The bound itself and every realistic delay pass; one second more is refused.
+    expect(() => validateGuardianSet(one(MAX_GUARDIAN_DELAY_SECONDS))).not.toThrow();
+    expect(() => validateGuardianSet(one(365 * 86_400))).not.toThrow();
+    expect(() => validateGuardianSet(one(0))).not.toThrow();
+    expect(() => validateGuardianSet(one(MAX_GUARDIAN_DELAY_SECONDS + 1))).toThrow(GUARDIAN_DELAY_TOO_LONG);
+    // A delay that would wrap for an approval made today, and the S8 value.
+    const now = 1_791_163_500;
+    expect(() => validateGuardianSet(one(Number(maxNonWrappingGuardianDelay(now)) + 1))).toThrow(GUARDIAN_DELAY_TOO_LONG);
+    expect(() => validateGuardianSet(one(2 ** 48 - 1))).toThrow(GUARDIAN_DELAY_TOO_LONG);
+    // Why the bound is safe: wrapping at the bound needs a clock past 2^48 - 2^32.
+    const firstWrappingTime = 2n ** 48n - BigInt(MAX_GUARDIAN_DELAY_SECONDS);
+    expect(firstWrappingTime).toBe(281_470_681_743_361n);
+    expect(guardianDelayWraps(MAX_GUARDIAN_DELAY_SECONDS, firstWrappingTime - 1n)).toBe(false);
+    expect(guardianDelayWraps(MAX_GUARDIAN_DELAY_SECONDS, firstWrappingTime)).toBe(true);
+    // Every entry point that validates refuses before encoding anything.
+    expect(() => encodeGuardianSetData(one(2 ** 40))).toThrow(GUARDIAN_DELAY_TOO_LONG);
+    expect(() => guardianInstallCalls(ACCOUNT, one(2 ** 40), { owner: DEV_OWNER })).toThrow(GUARDIAN_DELAY_TOO_LONG);
+    expect(() => guardianSignatureExposure(one(2 ** 40))).toThrow(GUARDIAN_DELAY_TOO_LONG);
   });
 
   it('counts the guardian nonce lanes an heir may choose from', () => {

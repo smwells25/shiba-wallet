@@ -63,6 +63,7 @@ import {
   decideSwitchChain,
   declineProposal,
   describeChain,
+  testNetworkLabelsOr,
   getWcUsed,
   modeMismatchMessage,
   sessionChainsOf,
@@ -230,6 +231,13 @@ console.log('check-wc: namespaces + proposals');
     client2.calls.reject[0]?.id === 7 && client2.calls.reject[0]?.reason?.code === 5100,
     JSON.stringify(client2.calls.reject),
   );
+  // Phase 14 integration: the test networks in this sentence come from the
+  // profiles (three since Arbitrum Sepolia), not a hard-coded pair.
+  check('the test networks named to a dApp come from the profiles',
+    testNetworkLabelsOr() === 'Ethereum Sepolia, Base Sepolia or Arbitrum Sepolia' &&
+      JSON.stringify(client2.calls.reject).includes('(Ethereum Sepolia, Base Sepolia or Arbitrum Sepolia) while test mode is on') &&
+      !readFileSync(new URL('../src/wallet/walletconnect.ts', import.meta.url), 'utf8').includes('(Sepolia or Base Sepolia)'),
+    JSON.stringify(client2.calls.reject));
 
   const client3 = fakeClient();
   await rejectProposal(client3, 9);

@@ -543,6 +543,24 @@ console.log('check-recovery: guardian set form and engine refusals (verbatim)');
   check('weight 0 → engine text', v({ guardians: [{ address: gA.address, weight: 0 }], threshold: 1, delaySeconds: 3600 }) === 'guardians[0].weight must be an integer from 1 to 16777215');
   check('threshold 0 → engine text', v({ guardians: [{ address: gA.address, weight: 1 }], threshold: 0, delaySeconds: 3600 }) === 'threshold must be a positive integer (0 would disable recovery)');
   check('valid set → null', v(set2of2()) === null);
+  // Phase 14 integration: the engine's delay bound (2^32 − 1 s) reaches the
+  // form verbatim. buildGuardianSet accepts any whole delay (the screen offers
+  // presets); the set check then refuses one that could wrap.
+  const { GUARDIAN_DELAY_TOO_LONG: TOO_LONG, MAX_GUARDIAN_DELAY_SECONDS: MAX_DELAY } = await import('@shiba-wallet/chains-evm');
+  const longBuilt = buildGuardianSet({ drafts, threshold: '2', delaySeconds: 2 ** 40, noVetoAcknowledged: false });
+  check('a delay above 2^32 − 1 s → the engine’s wrap sentence, verbatim',
+    v({ ...longBuilt.set, guardians: set2of2().guardians }) === TOO_LONG &&
+      TOO_LONG.startsWith('delaySeconds must be at most 4294967295 (about 136 years)') && v({ ...set2of2(), delaySeconds: MAX_DELAY }) === null,
+    v({ ...longBuilt.set, guardians: set2of2().guardians }));
+  // Both setup screens show that refusal before any request (source order).
+  const fsMod = await import('node:fs');
+  const screenOrder = (rel) => {
+    const src = fsMod.readFileSync(new URL(rel, import.meta.url), 'utf8');
+    const i = src.indexOf('const refusal = validateGuardianSetForAccount(built.set, { account, owner });\n    if (refusal) {\n      setFormError(refusal);\n      return;\n    }');
+    return i > 0 && i < src.indexOf("setPhase('quoting');", i);
+  };
+  check('Guardians and Inheritance screens show the engine refusal before quoting',
+    screenOrder('../src/screens/GuardiansScreen.tsx') && screenOrder('../src/screens/InheritanceScreen.tsx'));
 }
 
 // ---------------------------------------------------------------------------
@@ -582,6 +600,13 @@ let installedRecordStore;
   const before = node.calls.length;
   const invalid = await caught(() => prepareGuardianInstallQuote(bundle, OWNER_0, ACCOUNT, { ...set, threshold: 3 }, labels));
   check('invalid set refused with the engine text and ZERO network calls', invalid?.message === 'threshold 3 exceeds the total guardian weight 2; recovery would be impossible' && node.calls.length === before);
+  // Phase 14 integration: a delay that could wrap the validator's uint48
+  // validAfter is refused by the engine, before any request, on install and renew.
+  const { GUARDIAN_DELAY_TOO_LONG: TOO_LONG } = await import('@shiba-wallet/chains-evm');
+  const wrapInstall = await caught(() => prepareGuardianInstallQuote(bundle, OWNER_0, ACCOUNT, { ...set, delaySeconds: 2 ** 48 - 1 }, labels));
+  const wrapRenew = await caught(() => prepareGuardianRenewQuote(bundle, OWNER_0, ACCOUNT, { ...set, delaySeconds: 2 ** 32 }, labels));
+  check('wrapping delay: install and renew refused with the engine sentence and ZERO network calls',
+    wrapInstall?.message === TOO_LONG && wrapRenew?.message === TOO_LONG && node.calls.length === before, `${wrapInstall?.message} | ${wrapRenew?.message}`);
   const hazard = await caught(() => assertGuardianModulesSafe({ weightedEcdsaValidator: VALIDATOR, recoveryAction: RA }));
   check('finding (4): a guardian module equal to the owner validator is refused', hazard?.message === GUARDIAN_ROOT_VALIDATOR_HAZARD);
 
@@ -1088,6 +1113,8 @@ console.log('check-recovery: record files (.json export / import)');
   check('file name matches the published pattern and uses only [A-Za-z0-9._-]', RECORD_FILE_NAME_PATTERN.test(name) && /^[A-Za-z0-9._-]+$/.test(name));
   const sepoliaMeta = rebuildRecoveryRecord({ chainId: 11155111n, account: ACCOUNT, originalOwner: OWNER_0, index: 0, recordedAt: 1 });
   check('file name on Sepolia says "sepolia"', recordExportFileName(sepoliaMeta, day) === 'shiba-recovery-record_sepolia_0xB67b-9a42_2026-10-02.json');
+  const arbMeta = rebuildRecoveryRecord({ chainId: 421614n, account: ACCOUNT, originalOwner: OWNER_0, index: 0, recordedAt: 1 });
+  check('file name on Arbitrum Sepolia says "arbitrum-sepolia"', recordExportFileName(arbMeta, day) === 'shiba-recovery-record_arbitrum-sepolia_0xB67b-9a42_2026-10-02.json');
   const baseMeta = rebuildRecoveryRecord({ chainId: 8453n, account: ACCOUNT, originalOwner: OWNER_0, index: 0, recordedAt: 1 });
   const baseName = recordExportFileName(baseMeta, day);
   check('file name on another chain uses its CAIP-2 id without ":"', baseName === 'shiba-recovery-record_eip155-8453_0xB67b-9a42_2026-10-02.json' && RECORD_FILE_NAME_PATTERN.test(baseName), baseName);

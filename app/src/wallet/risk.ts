@@ -102,6 +102,9 @@ export const SECONDS_PER_BLOCK_ESTIMATE = 12;
  */
 export const SECONDS_PER_BLOCK_BY_CHAIN: Readonly<Record<string, number>> = {
   'eip155:84532': 2,
+  // Arbitrum Sepolia: 0.25 s, measured (sources under
+  // NEW_CONTRACT_THRESHOLD_BLOCKS below).
+  'eip155:421614': 0.25,
 };
 
 /**
@@ -131,6 +134,20 @@ export const SECONDS_PER_BLOCK_BY_CHAIN: Readonly<Record<string, number>> = {
  * eth_getCode this far back, which gives "unknown" and no signal, exactly
  * as on Ethereum.
  *
+ * Arbitrum Sepolia (phase 14 integration): the same 7 days at 0.25 s per
+ * block: 7 x 86,400 s / 0.25 s = 2,419,200 blocks. Arbitrum does not
+ * document a fixed block time: its "Block gas limit, numbers and time" page
+ * (https://docs.arbitrum.io/arbitrum-essentials/arbitrum-vs-ethereum/block-numbers-and-time.md,
+ * read 2026-10-04) says "block creation depends entirely on chain usage,
+ * meaning that block production only occurs when there are transactions to
+ * sequence". The figure is therefore MEASURED: on 2026-10-04 (UTC
+ * 2026-10-05T02:12) the latest 1,000,000 Arbitrum Sepolia blocks spanned
+ * 250,118 s on arbitrum-sepolia-rpc.publicnode.com and 250,117 s on
+ * sepolia-rollup.arbitrum.io/rpc, both answering eth_chainId 0x66eee, i.e.
+ * 0.2501 s per block. If blocks come more slowly than that, 2,419,200 blocks
+ * cover MORE than 7 days, so the warning errs towards showing, never towards
+ * hiding.
+ *
  * The search runs from (head - threshold) to head: if code already exists
  * at the start, the contract is older than the threshold and no signal is
  * raised (the engine reports atOrBefore). On free endpoints the very first
@@ -140,6 +157,7 @@ export const NEW_CONTRACT_THRESHOLD_BLOCKS: Readonly<Record<string, bigint>> = {
   'eip155:1': 50_400n,
   'eip155:11155111': 50_400n,
   'eip155:84532': 302_400n,
+  'eip155:421614': 2_419_200n,
 };
 
 /** eth_getLogs window size (token-history.ts's 9,000-block window). */

@@ -72,7 +72,7 @@ export interface Contact {
   createdAt: string;
 }
 
-/** CAIP-2 ids of the EVM test networks (Sepolia, Base Sepolia; config/evm-chain.ts). */
+/** CAIP-2 ids of the EVM test networks (every test profile in config/evm-chain.ts). */
 const EVM_TEST_NETWORK_IDS: readonly string[] = EVM_TEST_PROFILES.map((p) => p.caip2);
 
 /**

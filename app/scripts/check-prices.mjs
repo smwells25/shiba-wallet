@@ -219,9 +219,10 @@ console.log('\nCAIP-19 mapping');
   const testDefaults = Object.values(KNOWN_TEST_NETWORK_TOKENS).flat();
   check(
     'every test-network default token stays unpriced in every mode',
-    testDefaults.length === 4 &&
+    // Five since phase 14: Arbitrum Sepolia USDC joined (tokens.ts).
+    testDefaults.length === 5 &&
       testDefaults.every((t) =>
-        ['eip155:1', 'eip155:11155111', 'eip155:84532'].every((mode) => tokenPriceAssetId(t, mode) === null),
+        ['eip155:1', 'eip155:11155111', 'eip155:84532', 'eip155:421614'].every((mode) => tokenPriceAssetId(t, mode) === null),
       ),
   );
   check('tracked mainnet USDC is null while Base Sepolia is active', tokenPriceAssetId(USDC_MAINNET, 'eip155:84532') === null);

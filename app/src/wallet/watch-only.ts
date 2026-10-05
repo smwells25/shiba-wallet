@@ -125,11 +125,13 @@ export const PHRASE_ACCOUNT_WAS_WATCHED_TITLE = 'You were watching this address'
  * watch-only account by the route gate (components/WatchOnlyGate.tsx)
  * before the screen mounts, i.e. before any network request or prompt.
  *
- * Not on the list yet, with the reason:
- *  - Receive: it also offers Send, payment requests, "Prove you own this
- *    address" and the smart-account box, none of which apply.
- *  - Approvals: its Revoke buttons quote, prompt and sign; a read-only
- *    form needs a guard inside ApprovalsScreen.
+ * Two routes are on the list because their screens have a read-only form
+ * for a watch-only account:
+ *  - Approvals: no Revoke buttons, and the revoke handler refuses first.
+ *  - Receive (phase 14 integration): only the watched address, its QR code
+ *    and the watch-only notice; Send, "Request an amount", "Prove you own
+ *    this address" and the smart-account box are not rendered, and nothing
+ *    about smart accounts, upgrades or recovery is read for it.
  */
 export const WATCH_ONLY_ALLOWED_ROUTES: readonly string[] = [
   'Home',
@@ -141,6 +143,7 @@ export const WATCH_ONLY_ALLOWED_ROUTES: readonly string[] = [
   'Settings',
   'Contacts',
   'ImportKey',
+  'Receive',
 ];
 
 /** Plain names for the refusal sentence; a route not named here is called "This screen". */
@@ -222,6 +225,14 @@ export function removeWatchOnlyMessage(name: string, address: string): string {
     'never held a key for it, and nothing on-chain changes. You can watch it again at any time.'
   );
 }
+
+/** Receive for a watch-only account: what the code on the screen is. */
+export const WATCHED_ADDRESS_RECEIVE_NOTE =
+  'This is the address being watched. Anyone can send to it, but this wallet holds no key for it, so it ' +
+  'cannot move anything that arrives there.';
+
+/** Receive's title for a watch-only account. */
+export const WATCHED_ADDRESS_TITLE = 'Watched address';
 
 /** Home's footer for a watch-only account. */
 export function watchOnlyFooterText(name: string): string {

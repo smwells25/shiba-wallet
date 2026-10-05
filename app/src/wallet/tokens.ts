@@ -9,8 +9,9 @@ import { loadPrefs } from '../config/prefs.ts';
 
 /**
  * The user's tracked ERC-20 token lists, ONE PER EVM CHAIN (phase 13 item
- * 1): Ethereum mainnet (eip155:1), Ethereum Sepolia (eip155:11155111) and
- * Base Sepolia (eip155:84532) — every profile in config/evm-chain.ts. Each
+ * 1): Ethereum mainnet (eip155:1), Ethereum Sepolia (eip155:11155111),
+ * Base Sepolia (eip155:84532) and Arbitrum Sepolia (eip155:421614) — every
+ * profile in config/evm-chain.ts. Each
  * list is persisted in AsyncStorage as the JSON produced by core's
  * AssetRegistry.toJSON and rehydrated with AssetRegistry.fromJSON. Tokens
  * are identified by CAIP-19 ids (e.g. "eip155:1/erc20:0xA0b8...eB48"), and
@@ -234,7 +235,11 @@ export async function removeToken(
  *    (https://developers.circle.com/stablecoins/usdc-contract-addresses,
  *    fetched 2026-10-03 and again 2026-10-04): Ethereum Sepolia
  *    0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238 and Base Sepolia
- *    0x036CbD53842c5426634e7929541eC2318f3dCF7e;
+ *    0x036CbD53842c5426634e7929541eC2318f3dCF7e; fetched again 2026-10-04
+ *    (phase 14 integration): Arbitrum Sepolia
+ *    0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d. The EURC page's testnet
+ *    table, fetched the same day, lists no Arbitrum Sepolia EURC, so none is
+ *    known there;
  *  - Circle, "EURC contract addresses"
  *    (https://developers.circle.com/stablecoins/eurc-contract-addresses,
  *    fetched 2026-10-03 and again 2026-10-04): Ethereum Sepolia
@@ -246,7 +251,9 @@ export async function removeToken(
  *    which answered eth_chainId 0xaa36a7, and both
  *    base-sepolia-rpc.publicnode.com and sepolia.base.org, which answered
  *    0x14a34): symbol() and name() "USDC" / "EURC", decimals() 6 for all
- *    four.
+ *    four; and for Arbitrum Sepolia USDC, both
+ *    arbitrum-sepolia-rpc.publicnode.com and sepolia-rollup.arbitrum.io/rpc
+ *    (eth_chainId 0x66eee): symbol() "USDC", name() "USD Coin", decimals() 6.
  */
 export const KNOWN_TEST_NETWORK_TOKENS: Readonly<Record<string, readonly FungibleAsset[]>> = {
   'eip155:11155111': [
@@ -294,6 +301,19 @@ export const KNOWN_TEST_NETWORK_TOKENS: Readonly<Record<string, readonly Fungibl
       },
       symbol: 'EURC',
       name: 'EURC',
+      decimals: 6,
+    },
+  ],
+  'eip155:421614': [
+    {
+      kind: 'fungible',
+      assetId: {
+        chainId: 'eip155:421614',
+        namespace: 'erc20',
+        reference: '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d',
+      },
+      symbol: 'USDC',
+      name: 'USD Coin',
       decimals: 6,
     },
   ],

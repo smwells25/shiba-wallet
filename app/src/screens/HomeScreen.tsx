@@ -408,14 +408,16 @@ export function HomeScreen({ navigation }: Props) {
     return (
       <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
         <View style={styles.cardTop}>
-          {/* A watch-only address is shown, not offered for receiving: the
-              Receive screen also leads to Send, payment requests and proof
-              of ownership, and the wallet cannot move funds from it. */}
+          {/* A watch-only address opens Receive too, which shows it in a
+              plain read-only form (the address, its QR code and the
+              watch-only notice; no Send, payment request, proof of
+              ownership or smart-account box). */}
           <Pressable
-            accessibilityRole={watchOnly ? 'text' : 'button'}
+            accessibilityRole="button"
             accessibilityLabel={`${item.name}, ${watchOnly ? `watch-only address ${item.address}` : shortAddress(item.address)}`}
-            {...(watchOnly ? {} : { accessibilityHint: `Opens the ${item.name} receive screen` })}
-            disabled={watchOnly}
+            accessibilityHint={
+              watchOnly ? 'Opens the watched address and its QR code' : `Opens the ${item.name} receive screen`
+            }
             onPress={() => navigation.navigate('Receive', { chainId: item.chainId })}
             style={({ pressed }) => [styles.receiveArea, { opacity: pressed ? 0.7 : 1 }]}
           >

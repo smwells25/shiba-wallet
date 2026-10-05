@@ -635,14 +635,16 @@ export const RECORD_EXPORT_DIRECTORY = 'recovery-record-export';
 
 /**
  * Readable network names for file names; other chains use their CAIP-2 id
- * with ":" replaced. Base Sepolia (the second test-network profile,
- * config/evm-chain.ts) is "base-sepolia", so its records are never confused
- * with Ethereum Sepolia's "sepolia" ones.
+ * with ":" replaced. Base Sepolia and Arbitrum Sepolia (the other
+ * test-network profiles, config/evm-chain.ts) are "base-sepolia" and
+ * "arbitrum-sepolia", so their records are never confused with Ethereum
+ * Sepolia's "sepolia" ones.
  */
 const RECORD_FILE_CHAIN_LABELS: Readonly<Record<string, string>> = {
   'eip155:1': 'ethereum',
   'eip155:11155111': 'sepolia',
   'eip155:84532': 'base-sepolia',
+  'eip155:421614': 'arbitrum-sepolia',
 };
 
 /**
