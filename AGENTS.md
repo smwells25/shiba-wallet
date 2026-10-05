@@ -6667,3 +6667,42 @@ Waves: 1 — four agents on disjoint files: (A) items 0 and 3, (B) items
       USDC with no engine change.
       Funds: dev EOA about 0.031 Sepolia ETH; the dev index-2 account
       holds 46.22 USDC (3.0576 approved to Pimlico's paymaster).
+- [x] INTEGRATION SLICE (commit 9c3c7d6; offline runner ALL GREEN in the
+      CTO's isolated worktree: engine 815, app 5,426 across 43 suites,
+      lint 0/0, tsc clean; nothing on a device). (1) SendScreen wiring for
+      the ERC-7677 (Pimlico) USDC fee on Ethereum Sepolia: the offer,
+      check, Max and quote calls pass acceptsErc7677; the paymaster-check
+      key includes the saved bundler; every confirm row and note comes
+      from tokenGasConfirmLines, the success line from tokenGasChargedLine;
+      the ERC-7677 confirm shows "Bundler gas estimate passed with
+      Pimlico's paymaster terms." (that quote IS estimated before the
+      device check); for Circle all 18 rendered strings are pinned
+      byte-identical to the old screen; seven source mutants each caught;
+      copy that said the choice exists only on Base Sepolia now names
+      Ethereum Sepolia, Base Sepolia and Arbitrum Sepolia; check-token-gas
+      228. (2) Arbitrum Sepolia entries: USDC 0x75fa…AA4d as a known test
+      token (Circle's USDC page, fetched 2026-10-04; live symbol "USDC",
+      name "USD Coin", decimals 6; Circle lists no Arbitrum Sepolia EURC);
+      block time MEASURED 0.2501 s over 1,000,000 blocks (Arbitrum
+      documents no fixed block time) → new-contract threshold 2,419,200
+      blocks; explorer https://sepolia.arbiscan.io/nft/ (Etherscan-family
+      convention, flagged); recovery-file label; the WalletConnect
+      wrong-network sentence built from the profile table. No gas pad was
+      added for Arbitrum (no documentary basis). Noted: the inheritance
+      takeover check reads 60 blocks per tap, about 15 s on Arbitrum. (3)
+      ENGINE: validateGuardianSet refuses a delay above
+      MAX_GUARDIAN_DELAY_SECONDS = 2^32 − 1 (about 136 years; at this
+      bound uint48(block.timestamp + delay) cannot wrap for about 8.9
+      million years); the guardian and inheritance paths surface the
+      sentence with zero network calls; the smoke script's wrap scenario
+      still demonstrates the contract behaviour. (4) Watch-only Receive:
+      "Watched address" with the notice, "This is the address being
+      watched. Anyone can send to it, but this wallet holds no key for it,
+      so it cannot move anything that arrives there.", the QR and Copy
+      only; 'Receive' joins the allow list; the Home address is pressable
+      again. (5) Approval target {kind:'none'} for a watch-only account:
+      a device check while one is active uses the ordinary system prompt
+      and NEVER opens the recovery phrase (zero secure-store reads,
+      pinned; a mutant without the early return is caught). (6) Readiness
+      row "Inheritance (demonstration)" (testnet-only, enforced); T-68 and
+      F-60 in THREAT_MODEL.md.
