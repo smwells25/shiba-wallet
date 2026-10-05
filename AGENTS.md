@@ -6384,3 +6384,72 @@ readiness gate and finding F-58 stand for mainnet.
       46); the shareable page is VERSION 10. End state: Ethereum Sepolia,
       Account 1, light mode, Google IME, no imported account; Metro at
       44eef11.
+- [x] Fee-floor guard and imported-key findings FIXED (commit e851481;
+      check-aa 273 (was 215), check-key-import 241, check-readiness 169;
+      offline runner ALL GREEN in the CTO's isolated worktree: engine 778,
+      app 4,784 across 39 suites, lint 0/0, tsc clean; not run on a
+      device). FEE FLOOR — ROOT CAUSE (measured, not a headroom defect):
+      the two refusal figures were the bundler's new price versus the
+      REVIEWED price, which already included the 25% (108,460,172 =
+      ceil(1.25 × 86,768,137); 67,431,797 = ceil(1.25 × 53,945,437)), so
+      the standard tier had really risen +40.0% and +26.3% within ~20 s.
+      From pimlicolabs/alto (96529592): pimlico_getUserOperationGasPrice
+      returns the bundler's LATEST observed price × slow/standard/fast
+      multipliers, while its refusal compares against the MINIMUM over
+      the last gas-price-expiry seconds (default 20 s) — the standard tier
+      is a noisy point estimate above what is accepted. Read-only probes
+      of ZeroDev's Sepolia endpoint (2026-10-04, id never printed): tiers
+      always exactly 1 : 1.05 : 1.10; the standard priority fee moved
+      0.0014–0.117 gwei over minutes and +90.7% within 10 s; the node's
+      eth_maxPriorityFeePerGas was a constant 0.001 gwei; the maxFee tier
+      moved ≤ 17.7% in 60 s; under the old rule 15–16% of quote/send pairs
+      ~20 s apart would refuse (17–45% at ~60 s). CHANGES: the send-time
+      comparison uses the SLOW tier (BundlerFeeFloor.lowest; quotes still
+      priced at standard × 1.25) — under Alto's semantics an op at or above
+      the slow tier is above the minimum (assumes ZeroDev's slow
+      multiplier is 100, inferred from the ratio, unpublished);
+      checkAaQuoteBeforeApproval runs the floor check BEFORE the device
+      check on Send, Swap, Guardians, owner change, Passkey install and
+      remove, Sessions grant and revoke, Approve a recovery and the
+      WalletConnect sheet (the in-send checks stay as the last line of
+      defence; Upgrade has no bundler floor; subscription Start already
+      re-quotes before the prompt); AaFeeRoseError carries a reason —
+      "The bundler's minimum fee rose: …" / title "The gas estimate grew.
+      Please review again." / "Please review the operation again.";
+      AaDepositNote shows "EntryPoint deposit (pays fees first)" with the
+      deposit sentences on every smart-account confirm, and "pays its own
+      gas from its own balance" only when there is no deposit. RESIDUAL
+      (measured over ~10 minutes of samples): with 25% headroom and the
+      slow-tier check about 13% of quotes 20 s old and 17–31% of quotes
+      60 s old still bounce (now before the prompt, with a fresh quote),
+      and ~4–9% of 5-second gaps can still trip the send-time check;
+      measured alternatives: 50% headroom → 8–12% refusals; 100% → 0–5%
+      at roughly +5–10% actual cost on Sepolia (the priority fee is 5–10%
+      of the effective price). CTO DECISION: raise the headroom to 100% in
+      the next slice (the tests pin the 25% figures from the live cases,
+      so it is its own change); nothing above the displayed worst case is
+      signed either way. DEPOSIT ANALYSIS: EntryPoint v0.7 asks the
+      account for requiredPrefund − deposit, takes the whole prefund and
+      credits prefund − actualGasCost back to the DEPOSIT, not the balance
+      (phase 11's deployment: 1,127,572,960,505,705 − 458,756,313,552,258
+      = the recorded 0.000669 ETH); the 40,000-gas top-up headroom is only
+      ~14% of it — the bulk is maxFee = 2 × base + tip versus the
+      effective price and gas limits versus gas used; the deposit is
+      bounded by about one worst-case fee and is spent first by later
+      ops, so the headroom stays. IMPORTED KEYS: removal asks
+      requireLocalAuth("Approve deleting the imported private key") after
+      both dialogs (cancel → "Nothing was deleted."); the removal dialog
+      appends what would be stranded ("This key also controls the smart
+      account 0x… on <network>, which holds A and an EntryPoint deposit of
+      B. Only this key can move them… Other networks were not checked.");
+      no "Change owner…" on an imported owner's Guardians screen; the
+      Accounts intro, Home (no guardians-recovery link for an imported
+      account; the corrected token-fee sentence for every account), the
+      single-key protection note and the two-sentence readiness reason
+      are corrected; adding a phrase account whose address equals an
+      imported key's is FLAGGED ("This key was already imported"; an index
+      is never reused, so it cannot be refused), with the note that the
+      phrase account's smart account has a different address (salt N, not
+      0). UNVERIFIED: ZeroDev's bundler software and settings; that its
+      slow tier is at or above its acceptance minimum; everything on a
+      device.
