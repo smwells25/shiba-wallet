@@ -11,7 +11,7 @@ Everything in this walkthrough runs on the **Sepolia test network** with test ET
 ## Before you start: three warnings
 
 1. **Do not wipe the wallet on the demo emulator, and do not add or remove a fingerprint on it.** The emulator wallet's recovery phrase is stored in biometric-protected storage, and `AGENTS.md` records that the written phrase for that wallet is not kept anywhere ("Settings 'Recovery phrase protection' section"). Changing the fingerprint enrollment makes the phrase permanently unreadable; wiping deletes it. Either would lose Account 1, which owns the deployed Kernel smart account and the WalletConnect session this demo relies on. Show onboarding on a second, disposable emulator instead (see step 1).
-2. **Quoted labels can drift.** Every flow in steps 1 to 9 has now been run live through the app's screens on the emulator (session keys and guardians in phase 10 item 1, the counterfactual deployment in phase 11 item 2). Steps 10 to 13 (subscriptions, Base Sepolia, per-network tokens and the fee in USDC) are newer and have each been run live through the app's screens once or twice; see "Phase 12 progress" and "Phase 13 progress" in `AGENTS.md`. Later phases keep editing these screens, so if a quoted label differs slightly on screen, trust the screen, and check the latest "progress" section of `AGENTS.md` before presenting.
+2. **Quoted labels can drift.** Every flow in steps 1 to 9 has now been run live through the app's screens on the emulator (session keys and guardians in phase 10 item 1, the counterfactual deployment in phase 11 item 2). Steps 10 to 17 (subscriptions, Base Sepolia, per-network tokens, the fee in USDC, payment requests and names, watch-only accounts, the second paymaster and the inheritance demonstration) are newer and have each been run live through the app's screens once or twice; see the "progress" sections for phases 12 to 14 in `AGENTS.md`. Later phases keep editing these screens, so if a quoted label differs slightly on screen, trust the screen, and check the latest "progress" section of `AGENTS.md` before presenting.
 3. **Bitcoin, Solana and Dogecoin in the app use their main networks.** Sepolia test mode only switches the Ethereum side. Anything you broadcast on those three chains from the app spends real coins. Step 9 explains how to show them without broadcasting.
 
 ---
@@ -317,6 +317,56 @@ Account 1 on Base Sepolia; its Kernel account needs test USDC there. Rehearsed l
 **What it proves:** on 2026-10-04 two sends from the app paid 0.005776 and 0.005424 USDC in fees through Circle's paymaster on Base Sepolia (blocks 47688510 and 47688684); the smart account's ETH balance and EntryPoint deposit were identical before and after, and no allowance remained.
 
 **Fallbacks:** on Ethereum Sepolia the form explains that the choice is offered only on Base Sepolia. If the paymaster check fails, the switch is hidden with the reason. A send larger than the USDC balance minus the worst-case fee is refused before any prompt.
+
+### Step 14. Request a payment, and pay to a name
+
+Account 1 on Ethereum Sepolia. Rehearsed live in-app on 2026-10-05 (phase 14 items 1 and 2).
+
+- Home → tap the address → Receive → **Request an amount**. Enter 0.001 and show the description ("This request asks the payer to send exactly 0.001 test ETH on Ethereum Sepolia (chain id 11155111) to your address …") and the QR. Switch the asset to USDC: the link becomes a token transfer that names the token contract and the network.
+- Send: paste a request into the recipient field. The screen switches to the requested token with the recipient and amount filled in and a box that says "Filled in from a payment request (EIP-681). Check every field before you tap Review; you can change any of them." Paste a request made for another network: it is refused in one sentence that names both networks, and nothing is filled in.
+- Send ETH: type `nick.eth`. The screen shows "Looking up nick.eth…", then the name with its full address, which registry answered, and "Names are looked up through your network endpoint (…), which sees the name you looked up." Review shows the name line on the confirm. Do not send.
+- Type a name with an accent or an underscore: the screen says which characters are supported and asks for the address instead.
+
+**What to say:** a request is only a pre-filled form. The wallet never changes network or adds a token because a link said so, and a name is only a way to find an address: the address is what gets checked, shown in full and used.
+
+**What it proves:** request links and QR codes for all four chain families, the pre-fill and its refusals, and name resolution on mainnet and Sepolia ran on the emulator on 2026-10-05.
+
+**Fallbacks:** names are not looked up on Base Sepolia or Arbitrum Sepolia, and names stored off-chain (every *.base.eth name) are refused with an explanation.
+
+### Step 15. Watch an address
+
+Rehearsed live in-app on 2026-10-05 (phase 14 item 6).
+
+- Settings → Accounts → **Watch an address**. Paste any Ethereum address and name it. Pasting one of the wallet's own addresses is refused ("This address is already one of your accounts…").
+- Switch to the watched address. Home shows "Watch-only — no key in this wallet" and the address's balances and tokens, with no Send, Swap or account tools. Open Settings → Sessions (or Guardians, Passkey, Connections): each shows one sentence saying the feature is not available for a watch-only account, and no prompt appears.
+- Switch back to Account 1 and remove the watched address ("Stop watching this address? … Nothing secret is deleted…").
+
+**What to say:** watching is reading. There is no key for this address anywhere in the wallet, so nothing can be signed for it, and the wallet never treats it as one of your own accounts.
+
+**What it proves:** the watch-only account, its refusals and its removal ran on the emulator on 2026-10-05, including a lock and unlock that used the ordinary device prompt and never opened the recovery phrase.
+
+### Step 16. The fee in USDC on Ethereum Sepolia, through a second paymaster
+
+Account 1's Kernel account on Ethereum Sepolia with a few test USDC. Rehearsed live in-app on 2026-10-05 (phase 14 item 3).
+
+- Send ETH with **Send from smart account** on. The form checks Pimlico's paymaster and the saved bundler, then offers **Pay the network fee in USDC** with the hint that this is a permissioned service: Pimlico sets the rate, must sign each operation, and can decline.
+- Review. Compare with step 13: the fee line says the operation "first approves Pimlico's paymaster for exactly … USDC; after your calls run, it takes the actual fee, which can be less"; the rate is "set by Pimlico's service and signed into the operation; it is not read from an on-chain oracle"; the markup is "Included in the rate; not shown as a separate figure"; and the grant box says the rest of the approval stays in place afterwards.
+- Send: one device prompt. The success line gives the fee charged and repeats that what was not charged stays approved until a later operation through the paymaster replaces it.
+
+**What to say:** two different paymasters, two different trust models, one screen that tells the truth about each. Circle's reads a price on-chain and leaves nothing approved in the normal case; Pimlico's is a service that signs each operation, sets its own rate and leaves the unused approval in place.
+
+**What it proves:** on 2026-10-05 a smart-account send on Sepolia paid 0.856453 USDC through Pimlico's paymaster (block 11846591): the approval equalled the displayed maximum, the charge equalled the success line, and the account's ETH fell by exactly the amount sent.
+
+### Step 17. Inheritance, as a demonstration of what today's contracts cannot do
+
+Account 1 on Ethereum Sepolia. Show the screens only; do not install an heir on the demo account. Reviewed live on 2026-10-05; the full flow ran by script on 2026-10-04 (phase 14 item 4).
+
+- Home → **Inheritance** (test networks only). Read the first sentence aloud: "Read this first: your heir can sign messages AS THIS ACCOUNT from the moment you add them — not after the delay." Review stays disabled until the acknowledgement is switched on. Go back without installing.
+- Settings → Developer → Off: the screen refuses with "Inheritance is a test-network demonstration only: …". Switch test mode back on.
+
+**What to say:** this is the wallet declining to oversell. The deployed modules give a delay and an owner's veto for the change of owner, but an heir can sign as the account from day one, the owner cannot reliably see a takeover coming, and nothing on-chain can serve as a check-in. A real inheritance feature needs a module that does not exist in audited form today.
+
+**What it proves:** the analysis is backed by eight simulated scenarios against the real contracts and a live Sepolia run (setup, approval, veto, takeover after the delay, rotation back), recorded in `AGENTS.md` under phase 14.
 
 ---
 

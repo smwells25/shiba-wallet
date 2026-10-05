@@ -6706,3 +6706,120 @@ Waves: 1 — four agents on disjoint files: (A) items 0 and 3, (B) items
       pinned; a mutant without the early return is caught). (6) Readiness
       row "Inheritance (demonstration)" (testnet-only, enforced); T-68 and
       F-60 in THREAT_MODEL.md.
+- [x] EMULATOR PASS OVER WAVE 1 at 4620435 (2026-10-05; Metro worktree
+      at 4620435 with the engine built inside it, 2,311 modules; no repo
+      files edited; every hash verified on a public RPC; no dev-EOA
+      top-ups). Launch: Account 1 · 0x772e…F44F, no prompt. (A) PAYMENT
+      REQUESTS: every QR decoded from the screenshot and matched its URI —
+      ethereum:0x772e…F44F@11155111?value=0.001e18; the USDC form
+      ethereum:0x1c7D…7238@11155111/transfer?address=…&uint256=1.5e6;
+      bitcoin:…?amount=0.0001&label=Shiba%20test&message=Invoice%207;
+      dogecoin:…?amount=12.5&label=…; solana:…?amount=0.25&label=…;
+      pasting a USDC request for Account 2 switched Send to "Send USDC"
+      with the fields filled and the "Filled in from a payment request
+      (EIP-681)…" box (Review only); an @1 request in Sepolia mode was
+      refused naming both networks; an untracked token contract was
+      refused. (B) ENS: nick.eth on Sepolia → 0xb8c2C29ee19D8307cb7255e1Cd9CbDE883A267d5
+      (equal to ethers' resolveName), with the registry and privacy lines
+      and the name line on the confirm; unsupported characters refused;
+      mainnet vitalik.eth → 0xd8dA…6045; jesse.base.eth refused as
+      offchain; Base Sepolia refuses names; a plain address triggers no
+      lookup. (C) WATCH-ONLY: own-account and duplicate refusals; "Watched
+      1 (watch-only)" added with 0 prompts; Home notice and live balances
+      (61.06 test ETH, 1,344.23 USDC, 10.6 EURC for 0xd8dA…6045, matching
+      the chain), no signing links, BTC/DOGE/SOL not-available text; the
+      "Watched address" screen; gate refusals on Sessions, Guardians,
+      WalletConnect, Prove ownership, Spending limits and Passkey with 0
+      prompts; after the 1-minute auto-lock, Unlock raised the ORDINARY
+      prompt "Unlock Shiba Wallet" with "Use PIN" (not the protected-phrase
+      prompt); a send to the watched address is never called one of your
+      own accounts; removal with one dialog. (D) SECOND USDC-FEE SOURCE,
+      PROVEN LIVE IN-APP ON ETHEREUM SEPOLIA: the Pimlico checking
+      sentence and hint; the first Review refused for funds (the bound was
+      4.6 USDC against 1.3 held), so 4 USDC were sent in-app from Account
+      1's EOA (tx 0x74aea3c4…a9b596, block 11846560); confirm "up to
+      4.466678 USDC" with every row as designed (rate "1 test ETH =
+      2977.08222 USDC, set by Pimlico's service and signed into the
+      operation…", "Included in the rate; not shown as a separate figure",
+      the grant box, the permissioned and unstaked notes, the preview
+      "Approval: 0x7777…834C may spend up to 4.466678 USDC", "Bundler gas
+      estimate passed with Pimlico's paymaster terms."); ONE prompt;
+      success "Network fee charged: 0.856453 USDC. The approval allowed up
+      to 4.466678 USDC; what was not charged stays approved…"; tx
+      0x2bad539409517ca52e0ee60df1d19c973309478541d11c4200cb419c2fa616bb,
+      block 11846591, userOp 0x7dc68e31…9f2f68: paymaster 0x7777…834C,
+      Approval = 4,466,678 (the displayed maximum), 856,453 to the
+      treasury (the success line), Kernel ETH down by exactly 0.0001,
+      deposit unchanged, allowance afterwards 3,610,225. (E) HEADROOM: an
+      ETH-fee smart-account send tapped after ~3 minutes on the confirm
+      went through with one prompt and no "fee rose" (tx 0xcb943f7f…206218,
+      block 11846626). (F) INHERITANCE: the risk statement first, Review
+      disabled until the acknowledgement, the review screen for a dev
+      heir (nothing installed), the mainnet refusal, the readiness row.
+      (G) ARBITRUM SEPOLIA: banner, the layer-2 note, USDC "USD Coin" row,
+      the Kernel factory pre-fill verified and saved (no bundler), a send
+      refused for funds before any confirm. FINDINGS (fix slice running):
+      (1) a bitcoin: URI in the ETH recipient goes down the ENS name path
+      (the unsupported-name sentence twice + the privacy line); (2) on the
+      Pimlico confirm the risk card describes the wallet-built approve on
+      the USDC contract instead of the user's call; (3) one transient "RPC
+      HTTP error 400 for eth_getBlockByNumber" on a Review, shown raw; (4)
+      the Inheritance form says "Guardian 1: Enter a recipient address."
+      and enables Review with zero heirs once acknowledged; (5) the
+      watch-only gate does not name Inheritance; (6) while "Shiba Wallet
+      is locked" is shown, the screens underneath stay in the
+      accessibility tree (a screen reader could read balances); (7) copy:
+      the ENS placeholder on Base/Arbitrum, the Home row titled
+      "Ethereum" on other profiles, the Settings WalletConnect blurb, the
+      Backup sentence below the watch-only list; (8) dev only — a
+      WalletConnect core log "No internet connection detected…" at launch
+      although the network works (probably the earlier empty "Console
+      Error"). Emulator note: `adb input swipe` drops gestures and once
+      registered as a tap; `input motionevent DOWN/MOVE/UP` scrolling is
+      reliable (helper mscroll in the scratchpad p14a/env.sh). Funds
+      after: Account 1 EOA 0.00482 ETH, 30.6 USDC; Kernel 0.002654 ETH,
+      4.44 USDC, 3.61 USDC approved to Pimlico's paymaster; Account 2
+      0.001 ETH. End state: Ethereum Sepolia, Account 1, light mode,
+      Google IME, no watch-only account.
+- [x] Item 7 — leadership refresh (commit below). FEATURE_UNIVERSE
+      section 15: rows 10, 67, 68 and 74 → Proven live (in-app, with their
+      limits stated), row 48 → Built as a demonstration (the feature as
+      described is not achievable with the deployed modules), rows 16, 25
+      and 29 extended (the second paymaster in-app; the scheduled-payments
+      design; the Arbitrum profile); tally Proven live 39 (T1 28, T2 11),
+      Built 17 (9/8), Designed 2, Not started 41 (2/24/15). The shareable
+      page is VERSION 11 (counts 39/17/2/41 asserted). DEMO.md gained
+      steps 14 (request a payment, pay to a name), 15 (watch an address),
+      16 (the fee in USDC through the second paymaster) and 17 (the
+      inheritance demonstration, screens only).
+
+## Phase 14 status (2026-10-05)
+
+Items 0 to 7 are landed and pushed; one small fix slice for the
+emulator findings is in flight. Proven live this phase: the second
+token-fee source (by script, then through the app's Send screen on
+Ethereum Sepolia), payment requests and their refusals, ENS names on
+mainnet and Sepolia, watch-only accounts, the 100% fee headroom, and
+the inheritance flow by script. Delivered without a live run: the
+Arbitrum Sepolia profile (no test ETH there), the in-app inheritance
+demonstration beyond its review screen (deliberately not installed on
+the emulator's account), and the scheduled-payments design. Engine: 815
+tests. App: 43 offline suites, 5,426 checks at 9c3c7d6.
+
+Findings for the Chairperson this phase: the deployed guardian module
+cannot support an honest inheritance switch (an heir can sign as the
+account, including token permits, from the day it is added; no reliable
+takeover detection; no on-chain check-in) and its delay arithmetic wraps
+for very large delays — two more items for the ZeroDev disclosure
+decision, now six; Pimlico's paymaster is a permissioned service that
+leaves the unused part of each approval in place; every *.base.eth name
+is refused because offchain resolution is not followed.
+
+Inputs that would unlock more: Arbitrum Sepolia test ETH and USDC at the
+dev EOA; the disclosure decision; the ZeroDev gas policy; a phone and
+Expo account; a 0x key; enabling Base Sepolia for the Alchemy key.
+
+Recommended next (not started): the user-pushed recurring payment from
+docs/SCHEDULED_PAYMENTS.md; multi-signature accounts (24) or an in-app
+dApp browser (79) as the next large items; a live check that other
+wallets accept the payment links.
