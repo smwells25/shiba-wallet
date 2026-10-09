@@ -1958,3 +1958,55 @@ Subagents on Opus.
       Smart-account type and Auto-lock rows keep the old flex-1 style and
       may wrap the same way — not observed). (4) the endpoint status tag
       lost numberOfLines={1} and wraps a long host.
+- [ ] RECURRING-PAYMENTS REHEARSAL, BLOCKED AT STEP 2 (2026-10-09;
+      emulator, Metro at 3b0a507; nothing installed, no repo files
+      edited). The form rendered exactly as recorded (intro, while-open
+      box, later-slice note, spending note, "Pay to (receives the
+      payments)", periods incl. "2 minutes (testing)" and Custom, "Number
+      of payments (1–120; sets the expiry)", the fee-budget hint, the
+      balance line); the mainnet negative (no Sessions link, no banner,
+      "Session keys: test networks only") held. Review was REFUSED twice
+      at eth_estimateUserOperationGas with AA21 "didn't pay prefund",
+      before and after a 0.002 top-up from Account 1's EOA (tx
+      0x93e9b8433a3e2ec892094830722cb2c4eec8f7c9d720b2a2301b9248d1554e70,
+      block 11880316). ROOT CAUSE (read-only probes, scratchpad p15c):
+      the subscription-template install now estimates callGasLimit
+      3,031,138 / verificationGasLimit 310,546 / preVerificationGas
+      60,711 on Sepolia — eth_estimateGas for the installValidations
+      self-call alone is 2,661,683, about THREE TIMES the 2026-10-04
+      install (tx 0xc8091a4d…a4b2fe used 976,899 gas for the whole op) —
+      while ZeroDev's standard priority fee sat at a constant 1.155 gwei
+      (40 samples / 10 min), so the app's floor + 100% quote (2.31 gwei)
+      needs about 0.0079 ETH of balance plus deposit against the 0.005
+      held; the same op passes at 1.2 gwei. publicnode's eth_config
+      reports a fork activated at 1791294816 (2026-10-06 13:53:36 UTC)
+      with builder deposit/exit system contracts, and since then plain
+      ETH transfers emit a Transfer log from
+      0xfffffffffffffffffffffffffffffffffffffffe (seen in the funding
+      receipt) — the fork's name and EIP list are NOT yet verified from
+      documentation. FINDINGS (fix slice dispatched): (1) BUG — the
+      fee-budget pre-fill (suggestedFeeBudget → payments × 500,000 ×
+      node maxFeePerGas × 2, about 0.000003 ETH for 3 payments) is priced
+      at the NODE's fee while the payments are signed at the bundler floor
+      + 100% (about 2.31 gwei) and GasPolicy charges (pVG + vGL + cGL) ×
+      maxFeePerGas per op (the phase-13 pull cost 0.000909 ETH), so the
+      first payment would exceed the default budget and be refused by
+      GasPolicy — predicted from code and on-chain arithmetic, not run;
+      (2) COPY — an AA21 from the ESTIMATE of a set-up reads "sending 0
+      wei plus its network fee exceeds the balance…" and names no amount
+      to fund; (3) NEW CHAIN BEHAVIOUR — the 0xff…fe Transfer log makes
+      the Send preview show a second bogus row "You send 2000000000000000
+      raw units of token 0xffff…FFfE (decimals unreadable)" under "You
+      send 0.002 test ETH" (Activity decoding probably affected, not
+      checked); (4) COST — every Kernel permission install (sessions,
+      subscriptions, recurring, guardians) is likely about 3× dearer on
+      Sepolia now (not measured for the others); (5) a revoked
+      subscription card still shows the batching warning; (6) the
+      emulator hit load 76 and a "Process system isn't responding" dialog
+      during the first Review. Funding for the re-run: the CTO sent 0.01
+      Sepolia ETH from the dev EOA to the Kernel account 0xD31c…D8FA (tx
+      0x0293867adea984c67d62dfff3e9d8f704ed789071e220fc67c441a51a2a83b1d,
+      block 11880421; gasUsed 27,539), so it holds about 0.01465 ETH +
+      0.000347 deposit. Funds otherwise: Account 1 EOA 0.00282, payee
+      8,000 wei unchanged. End state: Home, Ethereum Sepolia, Account 1,
+      light mode, Google IME; emulator and Metro (wt-app 3b0a507) still up.
