@@ -1840,3 +1840,95 @@ Subagents on Opus.
       outlasts a real burst; how a bundler treats a submitted zero-gas
       op; the sessions / subscription wording path (describeSessionError
       → describeAaError) has no check in its suites.
+- [x] Item 0, in-app half — ARBITRUM SEPOLIA PROVEN LIVE THROUGH THE
+      APP (2026-10-09; emulator, Expo Go, Metro worktree at 3b0a507 with
+      the engine built inside it and a worktree-only metro.config.js
+      resolveRequest pinning @shiba-wallet/* to the worktree's dist, 2,315
+      modules; no repo files edited; every hash re-read on
+      arbitrum-sepolia-rpc.publicnode.com and sepolia-rollup.arbitrum.io;
+      the project id never left .dev-wallet/env). (A) Developer → Arbitrum
+      Sepolia: banner, the layer-2 note (the L1 cost is inside the gas
+      estimate; no swaps), endpoint "default (1 of 3:
+      arbitrum-sepolia-rpc.p…", Home 0.004 test ETH + "USD Coin · ERC-20 ·
+      2 USDC"; the Sessions / Guardians / Inheritance / Passkey links
+      appeared only after the Kernel account was deployed (by design).
+      (B) AA row: NEGATIVE CHECK PASSED — the chain-11155111 ZeroDev URL
+      refused with "This bundler serves Ethereum Sepolia (chain id
+      11155111), but you are saving it for Arbitrum Sepolia (chain id
+      421614). Nothing was saved…"; the chain-421614 URL → "Verified ✓ —
+      the bundler reported chain id 421614 (Arbitrum Sepolia) and
+      eth_supportedEntryPoints includes EntryPoint v0.7 (checked
+      2026-10-09)", row "ready · Kernel v3.3 (ERC-7579)". (C)
+      SMART-ACCOUNT SEND THAT DEPLOYED THE ACCOUNT (0.0001 test ETH to
+      Account 2): form "Not deployed yet — the first send deploys it.";
+      the first Review was accepted (0 zero-estimate refusals seen);
+      confirm DEPLOYMENT "Will deploy with this send", max fee
+      0.0000711385387776 test ETH (0.1423044 gwei × 499,904 gas), preview,
+      the own-account risk line, one prompt "Approve sending 0.0001 test
+      ETH from your smart account"; userOpHash
+      0xd5d576307687fcb96745df03f754c454568f78ca58bb95c51e8035a0146ab88a,
+      bundle tx 0x0527bd9f6655f537480cf1455d166c287e218cbd9445e8a327dd7cc08a6b36b9,
+      block 317505893, status 0x1, gasUsed 346,851, gasUsedForL1 0;
+      AccountDeployed via the meta factory, OwnerRegistered(0x772e…F44F),
+      Deposited 71,138,538,777,600 wei (= the displayed max fee),
+      UserOperationEvent success, actualGasCost 19,977,423,921,572 wei;
+      the signed op carried verificationGasLimit 398,217 (non-zero),
+      callGasLimit 50,180, preVerificationGas 51,507; afterwards code 61
+      B, Kernel ETH 1,828,861,461,222,400 wei, EntryPoint deposit
+      51,161,114,856,028 wei. (D1) 1 USDC EOA → Kernel account, one
+      prompt, risk line "…to one of your own accounts in this wallet:
+      Account 1's smart account…", no Layer 1 line: tx
+      0xc0d20e974a07bd92b9e24bdda2dafe4c96b30b1b912146658c8d36c063e5496e,
+      block 317506860, gasUsed 62,159 of 62,989, tip 0. (D2) GAS PAID IN
+      USDC IN-APP ON ARBITRUM: 0.3 USDC was correctly refused before any
+      prompt ("…holds 1 USDC, but this send needs 0.3 USDC plus a network
+      fee of up to 0.749749 USDC…"), so 0.2 USDC was sent: confirm "up to
+      0.749508 USDC" (1,770,000 gas × 0.14115024 gwei × 3000, arithmetic
+      checked), the fixed-test-oracle note, "0% (0 basis points)" with the
+      10%-documented note, the paymaster address, the permit sentence,
+      TOTAL USDC (WORST CASE) 0.949508, the USDC-fee preview footnote, one
+      prompt "Approve sending 0.2 USDC from your smart account" (about 48 s
+      to the success screen — whether the engine retried a zero estimate
+      is not visible); success "Network fee charged: 0.054559 USDC (up to
+      0.749508 USDC was permitted; the rest was refunded in the same
+      transaction)."; userOpHash
+      0x55e9959604f394d7977c3f626c242c47f067aa215c7ee82bf2922e4213d8ed2f,
+      bundle tx 0xa2c62f6e494d6794e846bdaa0daa05027bd42dbf11d8c47a641ee0e5d87f9aa0,
+      block 317507769, status 0x1, paymaster 0x31be…0b58,
+      UserOperationSponsored actualTokenNeeded 54,559 (= the line shown),
+      permit and prefund pull 333,188 / refund 278,629, Transfer 200,000
+      to Account 2, signed paymasterVerificationGasLimit 473,173
+      (non-zero); Kernel ETH, EntryPoint deposit and allowance identical
+      at block−1 and block, Kernel USDC 1,000,000 → 745,441. (E) EOA MAX
+      (fee in ETH): the Max trim box appeared live ("The amount was
+      lowered from 0.00399415320266 test ETH to 0.00399414135866 test ETH
+      because the network fee rose after you tapped Max…"), TOTAL =
+      BALANCE 0.00399650293466, NO Layer 1 line; tx
+      0x88f48f773973d89d084c97b3150a68bdaa432a1a2a312b5f8376059e2c36f5df,
+      block 317508661, value = the lowered amount, gasUsed 21,000 = limit,
+      actual fee 49.8% of the worst case, gasUsedForL1 0. (F) back to
+      Ethereum Sepolia: Home 0.00482 test ETH, USDC 30.6, EURC 40.991829,
+      every account-tool link. The L1 component was 0 for the whole pass
+      (non-zero L1 still unverified). FINDINGS (fix slice dispatched): (1)
+      BUG — when Max is trimmed at Review, the biometric prompt reads the
+      PRE-TRIM typed amount ("Approve sending 0.00399415320266 test ETH")
+      while the confirm and the signed transaction use the lowered amount
+      (SendScreen builds the title from the form text, ~line 1524; the
+      smart-account aaSendApprovalPrompt takes the typed amount too) — the
+      value sent was correct, only the prompt text is wrong; (2) copy —
+      with the smart account and the USDC fee both on, the Send USDC info
+      box still says "The network fee is paid in test ETH, not in USDC.";
+      (3) layout — the Developer test-network buttons break words
+      mid-word ("Ethe/reum/Sepo/lia", "Off/(mai/nnet)"); (4) the Network
+      endpoints status truncates the Arbitrum host; (5) observation —
+      Circle's worst case on Arbitrum is about 0.75 USDC (14× the actual
+      charge), so a 1-USDC balance cannot send 0.3 USDC with the USDC
+      fee; (6) dev only — the LogBox toast "Cannot connect to Expo CLI…
+      Error: undefined" appeared once while Metro was serving. Emulator
+      notes: the keyguard sleeps 10 s after a cold boot, so wake, finger
+      touch and PIN taps must run in one burst; uiautomator dumps take
+      ~24 s while spinners run. Funds after (Arbitrum): EOA
+      1,186,122,000,000 wei + 1 USDC, Kernel 0.001829 ETH + 0.745441 USDC
+      + 0.0000512 deposit, Account 2 0.004094 ETH + 0.2 USDC. End state:
+      Ethereum Sepolia, Account 1, light mode, Google IME, the Arbitrum
+      bundler saved on the device; Metro still serving wt-app at 3b0a507.
