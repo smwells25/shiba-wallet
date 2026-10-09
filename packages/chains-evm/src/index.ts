@@ -531,6 +531,34 @@ export type {
   RecoveryProposalState,
   RecoveryProposalStatus,
 } from './kernel-recovery.js';
+// --- Multi-signature accounts (phase 15 item 2) ---------------------------
+export {
+  KERNEL_MULTISIG_VALIDATOR,
+  MULTISIG_MAX_SIGNERS,
+  MULTISIG_ERC1271_REFUSAL,
+  approveMultisigRequest,
+  buildMultisigSigningRequest,
+  createKernelMultisigSpec,
+  encodeKernelMultisigInitialize,
+  encodeMultisigValidatorData,
+  multisigChangeRootValidatorCall,
+  multisigExposure,
+  multisigFactoryArgs,
+  parseMultisigApproval,
+  parseMultisigSigningRequest,
+  predictKernelMultisigAddress,
+  validateMultisigConfig,
+  verifyMultisigApproval,
+} from './kernel-multisig.js';
+export type {
+  KernelMultisigSpecConfig,
+  MultisigApproval,
+  MultisigConfig,
+  MultisigDeploymentOptions,
+  MultisigExposure,
+  MultisigSigner,
+  MultisigSigningRequest,
+} from './kernel-multisig.js';
 export {
   HOOK_POSTCHECK_KERNEL_V3_0,
   HOOK_POSTCHECK_KERNEL_V3_1,
