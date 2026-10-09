@@ -1705,3 +1705,133 @@ Subagents on Opus.
       phases 12–13). Emulator checklist (11 steps, Sepolia, Account 1,
       payee 0x69F0…7E8a) in the builder's report; a Home "Recurring
       payments" link is optional (Sessions already reaches it).
+- [x] Item 2 — MULTI-SIGNATURE ACCOUNTS, ANALYSIS AND ENGINE GROUNDWORK
+      (commit ad0d68d; docs/MULTISIG.md; packages/chains-evm/src/
+      kernel-multisig.ts with 33 tests; scripts/testnet/multisig-smoke.mjs;
+      offline runner ALL GREEN in the CTO's isolated worktree: engine 848,
+      app 5,617 across 44 suites; about 0.004 Sepolia ETH spent). FIVE
+      DETERMINATIONS from kernel tag v3.3 (cd697c7e) and runs against the
+      deployed Sepolia contracts: (a) the deployed WeightedECDSAValidator
+      0xeD89…eEEE CAN be a Kernel v3.3 ROOT validator and gives a correct
+      k-of-n for OPERATIONS — validateUserOp (lines 203–245)
+      de-duplicates signers by vote status, so the repeated-signer trick
+      fails there (a 2-of-3 by two distinct signers accepted; one signer,
+      and the same signer as approver and submitter, refused with AA24);
+      (b) ERC-1271 MESSAGE SIGNING IS BROKEN AND NO WEIGHTS FIX IT:
+      isValidSignatureWithSender (292–303) checks the threshold before the
+      signer order, so a coalition C satisfies a message when weight(C) +
+      max(C) ≥ threshold — MULTISIG.md §4 proves that for every threshold
+      k ≥ 2 no weight assignment makes the message check as strong as the
+      operation check (equal-weight k-of-n is (k−1)-of-n for messages; a
+      signer with weight ≥ ⌈T/2⌉ signs alone); PROVEN LIVE on the deployed
+      2-of-3: one signer with its signature duplicated → 0x1626ba7e,
+      single → rejected; co-signers sign only Approve(keccak(sender,
+      callData, nonce)) — never gas, fees, paymaster or validity, which
+      the submitter alone sets; (c) a weighted-root account CANNOT also
+      use the wallet's guardian recovery (same contract, same validation
+      id 0x01‖validator — the phase 8 finding-4 collision made concrete);
+      session keys and passkeys should coexist (reasoned, not run); (d) a
+      timelocked multisig is possible but the veto itself needs the
+      k-of-n, and the uint48 wrap applies (the engine's delay cap holds);
+      (e) alternatives: Safe + Safe4337Module v0.3.0 (LGPL-3.0, EP v0.7,
+      SafeOp covers every userOp field, rejects duplicate owners and bad
+      thresholds, audited commit == release; not ERC-7579, no released
+      7702) is the strongest correct multisig; Rhinestone OwnableValidator
+      (ERC-7579, installable on Kernel, signers sign the full userOpHash,
+      dedups; AGPL-3.0 header vs GPL-3.0 package.json, deployed bytecode
+      post-audit); ZeroDev WeightedValidator v0.0.2 (MIT, fixes the 1271
+      duplicate count by ordering first, but co-signers still sign only
+      call + nonce, and its audited source "91f8fcb" exists in no ZeroDev
+      repo); Coinbase Smart Wallet is 1-of-N on EP v0.6. BUILT: a
+      transaction-only multisig on the verified module —
+      validateMultisigConfig, multisigExposure (reuses
+      guardianSignatureExposure), install data / initialize /
+      predictKernelMultisigAddress / factory args,
+      multisigChangeRootValidatorCall (with a backdoor warning), the
+      off-device request/approval flow (build / parse / approve / verify,
+      tamper-checked), createKernelMultisigSpec (re-verifies approvals
+      against the final op; refuses sub-threshold weight, the submitter
+      among the approvals, a wrong submitter; NO signErc1271 —
+      MULTISIG_ERC1271_REFUSAL). Tests pin the install data to the ZeroDev
+      SDK getEnableData vector and assert the impossibility result for
+      every equal-weight k-of-n with 2 ≤ k ≤ n ≤ 10. LIVE ON SEPOLIA (dev
+      indices 0/1/2, weights 1, threshold 2, salt index 77): account
+      0xd927ac18Cd58D4E6DdfD8D97D0B3e78c64f28c57, rootValidator() =
+      0x01‖eD89…eEEE on-chain; deploy + one op SELF-BUNDLED (ZeroDev
+      declined the deployment for a prefund/fee reason, not ERC-7562): tx
+      0xb28a55de36be77d7d43c3220c43580523715ebbcea46d4f0078c6ced0a01b6c4,
+      block 11879418; a second op THROUGH ZeroDev's bundler: userOp
+      0x4b881c4e…65cf1a, tx 0x716bb33a2b1c8fa76a1cf55228fad6a5fd22e8079e164324ffd5244b5a37e508,
+      block 11879423, success — which settles that a bundler accepts a
+      weighted-ROOT operation although the validator is UNSTAKED and
+      writes account-keyed storage. About 0.0017 test ETH stays in the
+      2-of-3 for demos. FINDINGS FOR THE CHAIRPERSON (disclosure list,
+      now seven items): the ERC-1271 threshold-before-order check restated
+      with a live multisig counterexample and the impossibility proof; no
+      ZeroDev weighted validator refuses threshold 0 at install (the
+      engine does); the incremental audit's "WeightedValidator @ 91f8fcb"
+      cannot be found in any ZeroDev repo. UNVERIFIED: session keys /
+      passkeys on a weighted root; a bundler-accepted DEPLOYMENT of a
+      weighted-root account (only post-deployment ops confirmed); the
+      delayed path live; none of the alternatives integrated. APP DESIGN
+      NOTE (MULTISIG.md §11, later slice): deploy fresh rather than
+      convert (converting leaves the single-key validator as a backdoor
+      unless uninstalled in the same batch); collect co-signer approvals
+      off-device as request/approval JSON (QR/file, like guardian
+      recovery); show the exposure; state that a multisig CANNOT sign
+      messages, logins or permits; state that co-signers approve calls +
+      nonce but not fees; test networks only until C1–C3; no guardian
+      recovery on a weighted root.
+- [x] ZERO-ESTIMATE GUARD (commit below; offline runner ALL GREEN in the
+      CTO's isolated worktree: engine 866 — chains-evm +18 — app 5,643
+      across 44 suites, check-aa 304, check-token-gas 247, lint 0/0, tsc
+      clean; five hand-applied engine mutants (rule removed, unchecked
+      estimate, each transport check, the final-op check) failed 1–11
+      checks each; five permanent in-suite mutants caught; nothing live).
+      RULES (account-abstraction v0.7.0 EntryPoint.sol and ERC-4337 at
+      ethereum/ERCs f4df3d05, read 2026-10-09, cited in the doc comment on
+      gasLimitProblems): verificationGasLimit > 0
+      (_validateAccountPrepayment and _createSenderIfNeeded call with
+      exactly that gas); callGasLimit > 0 even for empty callData
+      (innerHandleOp skips the call for empty data, but the ERC's bundler
+      sanity checks require at least a CALL's cost, and the client never
+      builds empty callData); preVerificationGas > 0 (the ERC's minimum;
+      the EntryPoint enforces none); paymasterVerificationGasLimit > 0
+      when the op names a paymaster (undefined packs as 0);
+      paymasterPostOpGasLimit unchecked (postOp runs only with a
+      context). ENGINE: rpc.ts gasLimitProblems / gasEstimateProblems,
+      ImpossibleGasEstimateError {problems, fields, attempts, source:
+      estimate | paymaster | operation}, EstimateRetryPolicy,
+      DEFAULT_ESTIMATE_RETRIES = 4 × 2 s (about 6 s of waiting while a
+      user waits on Review — the 2026-10-09 bursts lasted tens of seconds,
+      so the refusal is the real protection and the retry covers short
+      bursts; the scripts keep 5 s × 24), BundlerClient
+      .estimateUserOperationGasChecked (retries only impossible answers;
+      bundler errors throw at once); SmartAccountClient config
+      estimateRetries, the checked estimate before padding, and a final
+      check on the op to be signed after the paymaster data and before
+      beforeSign (catches padding that rounds to 0 and final paymaster
+      data with a zero limit); the Circle transport refuses an effective
+      paymasterVerificationGasLimit of 0 in either phase before any
+      permit; the ERC-7677 transport refuses zero or omitted final limits.
+      The raw estimateUserOperationGas is unchanged; the CTO added the
+      new symbols to index.ts. APP: aa.ts AA_ESTIMATE_RETRIES,
+      AA_IMPOSSIBLE_ESTIMATE_TITLE "The bundler's gas estimate was
+      impossible." + sentence, isImpossibleGasEstimateError (by name),
+      describeAaError mapping right after AaFeeRoseError with the engine
+      text as technical detail; prepareAaCalls, the ERC-7677 quote
+      (token-gas.ts passes the error through) and the guardian quote
+      (recovery.ts) use the checked estimate so a zero never reaches a
+      confirm screen; both USDC-fee clients, the guardian and passkey
+      clients carry the retries; sessions.ts gets the engine default.
+      Two fixtures fed zero limits by accident and were corrected (the
+      live-run token-paymaster fixture's preVerificationGas 0 split into
+      350,000 + 50,000 with the permit assertion unchanged; check-aa's
+      sponsored fake paymaster now answers 0x400). TIMING: the Circle
+      USDC-fee path has no quote-time estimate by design, so a zero there
+      is caught at send time after the biometric prompt but before the
+      final permit and the operation are signed (the sentence says "The
+      operation was not signed or sent."). UNVERIFIED: whether 6 s ever
+      outlasts a real burst; how a bundler treats a submitted zero-gas
+      op; the sessions / subscription wording path (describeSessionError
+      → describeAaError) has no check in its suites.
