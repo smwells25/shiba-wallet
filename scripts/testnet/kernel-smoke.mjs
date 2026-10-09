@@ -9,23 +9,29 @@
  * before contacting the bundler if that simulation reverts.
  *
  * Environment variables:
- *   CHAIN_ID      optional; 11155111 (Ethereum Sepolia, the default) or
- *                 84532 (Base Sepolia, phase 10 item 3). Any other value is
- *                 refused. The node's eth_chainId must match it, and every
- *                 chain-bound value (userOpHash, self-bundled transaction)
- *                 uses it. The Kernel v3.3 addresses and EntryPoint v0.7
- *                 were verified read-only on Base Sepolia on 2026-10-03
- *                 (app/src/config/evm-chain.ts EVM_BASE_SEPOLIA).
+ *   CHAIN_ID      optional; 11155111 (Ethereum Sepolia, the default),
+ *                 84532 (Base Sepolia, phase 10 item 3) or 421614 (Arbitrum
+ *                 Sepolia, phase 15 item 0). Any other value is refused. The
+ *                 node's eth_chainId must match it, and every chain-bound
+ *                 value (userOpHash, self-bundled transaction) uses it. The
+ *                 Kernel v3.3 addresses and EntryPoint v0.7 were verified
+ *                 read-only on Base Sepolia on 2026-10-03 and on Arbitrum
+ *                 Sepolia on 2026-10-04 (app/src/config/evm-chain.ts
+ *                 EVM_BASE_SEPOLIA, EVM_ARBITRUM_SEPOLIA).
  *   BUNDLER_URL   endpoint for CHAIN_ID serving the eth_sendUserOperation
  *                 namespace (the dev Alchemy URL serves node and bundler
- *                 methods on Sepolia; for Base Sepolia use the ZeroDev
- *                 project URL https://rpc.zerodev.app/api/v3/<project>/chain/84532,
- *                 which accepted Kernel deployment ops on Sepolia).
- *                 Probed with eth_supportedEntryPoints first.
+ *                 methods on Sepolia; for Base Sepolia and Arbitrum Sepolia
+ *                 use the ZeroDev project URL
+ *                 https://rpc.zerodev.app/api/v3/<project>/chain/<CHAIN_ID>,
+ *                 which accepts Kernel deployment ops through the staked
+ *                 meta factory). Probed with eth_supportedEntryPoints first.
+ *                 Never printed: every log line masks it and the ZeroDev
+ *                 project id.
  *   NODE_URL      optional; defaults to the public RPC of CHAIN_ID
  *                 (Sepolia: scripts/testnet/config.mjs SEPOLIA_RPC; Base
- *                 Sepolia: https://base-sepolia-rpc.publicnode.com, the
- *                 app's first default candidate).
+ *                 Sepolia: https://base-sepolia-rpc.publicnode.com; Arbitrum
+ *                 Sepolia: https://arbitrum-sepolia-rpc.publicnode.com — each
+ *                 the first default candidate of the app's profile).
  *   KERNEL_INDEX  optional account index (CREATE2 salt); default 0.
  *   KERNEL_DIRECT_FACTORY=1
  *                 optional; use KernelFactory.createAccount directly as the
@@ -48,20 +54,29 @@
  *     set -a; . .dev-wallet/env; set +a
  *     BUNDLER_URL="$ALCHEMY_SEPOLIA" NODE_URL="$ALCHEMY_SEPOLIA" \
  *       SELF_BUNDLE_ON_REJECT=1 node scripts/testnet/kernel-smoke.mjs
- *   Live on Base Sepolia (needs test ETH on the dev EOA on Base Sepolia;
- *   the dev EOA held 0 there on 2026-10-03, so this has NOT been run):
+ *   Live on Base Sepolia (run 2026-10-03, phase 12) or Arbitrum Sepolia
+ *   (CHAIN_ID=421614, phase 15 item 0):
  *     set -a; . .dev-wallet/env; set +a
  *     CHAIN_ID=84532 KERNEL_FUND_ETH=0.004 \
  *       BUNDLER_URL="https://rpc.zerodev.app/api/v3/$ZERODEV_PROJECT_ID/chain/84532" \
  *       node scripts/testnet/kernel-smoke.mjs
- *   Dry run (anyone, read-only; add CHAIN_ID=84532 for Base Sepolia):
+ *   Dry run (anyone, read-only; add CHAIN_ID=84532 or CHAIN_ID=421614):
  *     KERNEL_SMOKE_DRY_RUN=1 node scripts/testnet/kernel-smoke.mjs
  *
- * Base Sepolia is an OP-stack L2: each transaction also pays an L1 data fee
- * from the sender's balance (docs.base.org/specifications/transactions/
- * network-fees). The funding transfer below is unaffected (the fee is taken
- * on top of the transferred value), and the bundler prices the L1 fee into
- * preVerificationGas for UserOperations.
+ * Layer 2 fees. Base Sepolia is an OP-stack L2: each transaction also pays
+ * an L1 data fee from the sender's balance (docs.base.org/specifications/
+ * transactions/network-fees), taken on top of the gas limit. Arbitrum
+ * Sepolia is an Arbitrum Nitro rollup: the parent-chain cost is charged as
+ * extra GAS UNITS inside the transaction's own gas limit
+ * (docs.arbitrum.io/arbitrum-essentials/how-to-estimate-gas: eth_estimateGas
+ * "returns a gas limit sufficient to cover the entire transaction fee"), so
+ * a fixed 21,000-gas transfer can run out of gas there whenever the parent
+ * chain price is non-zero. The funding transfer below therefore uses
+ * eth_estimateGas (plus 20%, as fund.mjs does) on every chain, and the
+ * bundler prices each L2's parent-chain cost into preVerificationGas.
+ * Arbitrum collects priority fees (ArbOwnerPublic.getCollectTips() read
+ * true on 2026-10-04), so the 0.15 gwei priority floor below is actually
+ * paid there; it is kept on every chain so the figures stay comparable.
  */
 import { readFileSync } from 'node:fs';
 import { keccak_256 } from '@noble/hashes/sha3.js';
@@ -98,6 +113,15 @@ const CHAINS = {
   // Base Sepolia: PublicNode's documented endpoint (https://base.publicnode.com),
   // the first default candidate of the app's Base Sepolia profile.
   '84532': { name: 'Base Sepolia', rpc: 'https://base-sepolia-rpc.publicnode.com' },
+  // Arbitrum Sepolia: the first default candidate of the app's profile
+  // (app/src/config/evm-chain.ts ARBITRUM_SEPOLIA_RPC_DEFAULTS).
+  '421614': { name: 'Arbitrum Sepolia', rpc: 'https://arbitrum-sepolia-rpc.publicnode.com' },
+};
+/** Explorer transaction links, as in the app's profiles (explorerTxBase). */
+const EXPLORER_TX = {
+  '11155111': 'https://sepolia.etherscan.io/tx/',
+  '84532': 'https://sepolia.basescan.org/tx/',
+  '421614': 'https://sepolia.arbiscan.io/tx/',
 };
 const CHAIN_ID_TEXT = process.env.CHAIN_ID ?? '11155111';
 if (!Object.hasOwn(CHAINS, CHAIN_ID_TEXT)) {
@@ -110,6 +134,38 @@ const NODE_URL = process.env.NODE_URL ?? CHAIN.rpc;
 const INDEX = BigInt(process.env.KERNEL_INDEX ?? '0');
 const DIRECT_FACTORY = process.env.KERNEL_DIRECT_FACTORY === '1';
 const SELF_BUNDLE = process.env.SELF_BUNDLE_ON_REJECT === '1';
+const explorerTx = (hash) => `${EXPLORER_TX[CHAIN_ID_TEXT]}${hash}`;
+
+/**
+ * A bundler gas estimate that cannot be right. Account validation always
+ * uses gas (signature check, and on a deployment op the account creation),
+ * so verificationGasLimit 0 is never a real estimate; likewise a zero
+ * paymasterVerificationGasLimit when the operation names a paymaster.
+ * Observed 2026-10-09 on ZeroDev's Arbitrum Sepolia endpoint: most answers
+ * to eth_estimateUserOperationGas for the Kernel deployment op carried
+ * verificationGasLimit 0x0 (with ?provider=PIMLICO and ULTRA_RELAY always;
+ * the default route sometimes answered a real figure), and signing such an
+ * answer produces an operation that reverts in EntryPoint.handleOps.
+ */
+function estimateProblem(answer, op) {
+  if (!answer || BigInt(answer.verificationGasLimit ?? '0x0') === 0n) {
+    return 'verificationGasLimit is 0, which no account validation can use';
+  }
+  if (op?.paymaster && answer.paymasterVerificationGasLimit !== undefined && BigInt(answer.paymasterVerificationGasLimit) === 0n) {
+    return 'paymasterVerificationGasLimit is 0 although the operation names a paymaster';
+  }
+  return null;
+}
+const ESTIMATE_ATTEMPTS = Number(process.env.ESTIMATE_ATTEMPTS ?? '24');
+
+/** Masks the bundler URL and the ZeroDev project id in anything printed. */
+function mask(text) {
+  let out = String(text);
+  for (const secret of [process.env.ZERODEV_PROJECT_ID, BUNDLER_URL].filter(Boolean)) {
+    out = out.split(secret).join('<masked>');
+  }
+  return out;
+}
 const PUBLIC_TEST_MNEMONIC =
   'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 
@@ -248,6 +304,24 @@ async function main() {
       // Generous fixed limits; the dry run only checks validity, not pricing.
       return { callGasLimit: '0x30d40', verificationGasLimit: '0xf4240', preVerificationGas: '0x186a0' };
     }
+    if (method === 'eth_estimateUserOperationGas') {
+      // Refuse impossible estimates (see estimateProblem) and ask again; the
+      // EntryPoint preflight below would catch them too, but only as a bare
+      // revert. Nothing is signed from a refused estimate.
+      for (let attempt = 1; ; attempt++) {
+        const answer = await realBundler(method, params);
+        const problem = estimateProblem(answer, params[0]);
+        if (!problem) {
+          console.log(`Bundler gas estimate (attempt ${attempt}): ${JSON.stringify(answer)}`);
+          return answer;
+        }
+        console.log(`Bundler gas estimate refused (attempt ${attempt} of ${ESTIMATE_ATTEMPTS}): ${problem}; answer ${JSON.stringify(answer)}`);
+        if (attempt >= ESTIMATE_ATTEMPTS) {
+          throw new Error(`The bundler answered no usable gas estimate in ${ESTIMATE_ATTEMPTS} attempts (${problem}). Nothing was signed or sent.`);
+        }
+        await new Promise((r) => setTimeout(r, 5000));
+      }
+    }
     return realBundler(method, params);
   };
 
@@ -287,21 +361,35 @@ async function main() {
     const [fundWhole, fundFrac = ''] = fundEth.split('.');
     const target = BigInt(fundWhole) * 10n ** 18n + BigInt((fundFrac + '0'.repeat(18)).slice(0, 18));
     if (balance < target) {
+      const value = target - balance;
+      // Estimated, not a fixed 21,000: on Arbitrum the parent-chain cost is
+      // part of the gas used (see the header), and a recipient with code may
+      // need more than a plain transfer. +20% as in fund.mjs.
+      const estimate = BigInt(
+        await node('eth_estimateGas', [{ from: owner.address, to: sender, value: '0x' + value.toString(16) }]),
+      );
+      const gasLimit = (estimate * 120n) / 100n;
       const fund = signEip1559(
         {
           chainId,
           nonce: await nodeClient.getTransactionCount(owner.address),
           maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
           maxFeePerGas: fees.maxFeePerGas,
-          gasLimit: 21_000n,
+          gasLimit,
           to: sender,
-          value: target - balance,
+          value,
         },
         owner,
       );
       const fundHash = await nodeClient.sendRawTransaction(fund.rawHex);
-      console.log(`Funding the Kernel account: ${fundHash}`);
-      await waitForTx(fundHash);
+      console.log(`Funding the Kernel account with ${value} wei (gas estimate ${estimate}, limit ${gasLimit}): ${fundHash}`);
+      console.log(`  ${explorerTx(fundHash)}`);
+      const fundReceipt = await waitForTx(fundHash);
+      console.log(
+        `  funding status ${fundReceipt.status}, block ${BigInt(fundReceipt.blockNumber)}, gasUsed ${BigInt(fundReceipt.gasUsed)}` +
+          `${fundReceipt.gasUsedForL1 ? ` (of which L1 ${BigInt(fundReceipt.gasUsedForL1)})` : ''}`,
+      );
+      if (fundReceipt.status !== '0x1') throw new Error('Funding transfer failed');
     }
   }
 
@@ -411,11 +499,21 @@ function fromRpc(r) {
  */
 async function sendWithPreflight(client, owner, calls, fees, { allowSelfBundle, getLastSignedOp }) {
   try {
-    const { userOpHash } = await client.sendCalls(owner, calls, fees);
+    const { userOpHash, userOp } = await client.sendCalls(owner, calls, fees);
     console.log(`UserOperation accepted by bundler: ${userOpHash}`);
+    console.log(
+      `  signed gas: preVerificationGas ${userOp.preVerificationGas}, verificationGasLimit ${userOp.verificationGasLimit}, ` +
+        `callGasLimit ${userOp.callGasLimit}, maxFeePerGas ${userOp.maxFeePerGas}, maxPriorityFeePerGas ${userOp.maxPriorityFeePerGas}` +
+        `${userOp.factory ? `, factory ${userOp.factory}` : ''}`,
+    );
     const receipt = await client.waitForReceipt(userOpHash, { timeoutMs: 180_000, pollMs: 5_000 });
     const success = receipt?.success;
-    console.log(`UserOperation receipt: success=${JSON.stringify(success)} tx=${receipt?.receipt?.transactionHash ?? '?'}`);
+    const txHash = receipt?.receipt?.transactionHash;
+    console.log(`UserOperation receipt: success=${JSON.stringify(success)} tx=${txHash ?? '?'}`);
+    if (receipt?.actualGasCost !== undefined) {
+      console.log(`  actualGasCost ${BigInt(receipt.actualGasCost)} wei, actualGasUsed ${BigInt(receipt.actualGasUsed)}`);
+    }
+    if (txHash) console.log(`  ${explorerTx(txHash)}`);
     if (success !== true && success !== '0x1') throw new Error('UserOperation did not succeed');
     return userOpHash;
   } catch (error) {
@@ -423,7 +521,7 @@ async function sendWithPreflight(client, owner, calls, fees, { allowSelfBundle, 
     if (!allowSelfBundle || !signed || /^Preflight|\(eth_call\)$/.test(error.message)) {
       throw error;
     }
-    console.log(`Bundler rejected the deployment op (${error.message}); self-bundling via handleOps.`);
+    console.log(mask(`Bundler rejected the deployment op (${error.message}); self-bundling via handleOps.`));
     return selfBundle(fromRpc(signed), owner, fees);
   }
 }
@@ -458,6 +556,6 @@ async function selfBundle(op, owner, fees) {
 }
 
 main().catch((e) => {
-  console.error(`Kernel smoke failed: ${e.message}`);
+  console.error(mask(`Kernel smoke failed: ${e.message}`));
   process.exit(1);
 });

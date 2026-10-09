@@ -9,12 +9,13 @@
  * Sepolia only (developers.circle.com/paymaster/addresses-and-events.md,
  * fetched 2026-10-04). On Ethereum Sepolia the same address holds a proxy
  * whose entryPoint() reverts and whose EntryPoint v0.7 deposit is zero, so
- * this script runs on Base Sepolia (chain 84532) and, with CHAIN_ID=11155111,
- * only prints that on-chain evidence and stops.
+ * the Circle path of this script runs on Base Sepolia (chain 84532, the
+ * default) and Arbitrum Sepolia (CHAIN_ID=421614); with CHAIN_ID=11155111 it
+ * prints that on-chain evidence and runs the Pimlico section instead.
  *
  * DRY RUN (default; read-only, anyone can run it, nothing is broadcast):
- *   One eth_simulateV1 request per case against the REAL Base Sepolia
- *   contracts (EntryPoint v0.7, Kernel v3.3, Circle's paymaster, USDC, the
+ *   One eth_simulateV1 request per case against the REAL contracts of the
+ *   chosen chain (EntryPoint v0.7, Kernel v3.3, Circle's paymaster, USDC, the
  *   paymaster's oracle). The account's USDC balance is supplied by a state
  *   override of USDC's balance mapping (slot 9, FiatToken v2.2
  *   balanceAndBlacklistStates); the script first proves the slot by reading
@@ -31,14 +32,23 @@
  *   refused; (5) the engine's own pre-check refuses an insufficient balance
  *   before anything is signed.
  *
- * LIVE (TOKEN_GAS_LIVE=1; Base Sepolia only; uses the git-ignored dev seed):
+ * LIVE (TOKEN_GAS_LIVE=1; Base Sepolia or Arbitrum Sepolia; uses the
+ * git-ignored dev seed):
  *   The dev seed's index-0 Kernel account 0xc995E49acA5C888F4FF1E50E8467E9fFc31CC5AC
- *   (deployed on Base Sepolia in phase 12) pays for one UserOperation (a
- *   0-value call to the owner EOA) in USDC through ZeroDev's bundler. If the
- *   account holds less than TOKEN_GAS_MIN_USDC (default 0.5 USDC), the dev
- *   EOA first transfers TOKEN_GAS_FUND_USDC (default 1 USDC) of its own
- *   Base Sepolia USDC with an engine-signed EIP-1559 transaction (simulated
- *   with eth_call first). Before the real operation, two refusals are
+ *   (the same CREATE2 address on every chain; deployed on Base Sepolia in
+ *   phase 12, on Arbitrum Sepolia by kernel-smoke.mjs in phase 15) pays for
+ *   one UserOperation (a 0-value call to the owner EOA) in USDC through
+ *   ZeroDev's bundler. If the account is NOT yet deployed on the chain, the
+ *   same operation deploys it: SmartAccountClient adds the factory fields,
+ *   the EntryPoint creates the account before validation, and the USDC
+ *   permit (an ERC-1271 signature by the new account) is checked after the
+ *   account exists — the path dry-run case 1 proves with the public test
+ *   mnemonic's undeployed account holding no ETH at all. No ETH is needed in
+ *   the account on either path. If the account holds less than
+ *   TOKEN_GAS_MIN_USDC (default 0.5 USDC), the dev EOA first transfers
+ *   TOKEN_GAS_FUND_USDC (default 1 USDC) of its own USDC on that chain with
+ *   an engine-signed EIP-1559 transaction (simulated with eth_call first,
+ *   gas estimated). Before the real operation, two refusals are
  *   obtained from the real bundler's estimation (read-only): allowance mode
  *   with no approval, and an account holding no USDC (index 1,
  *   counterfactual). Afterwards every claim is checked from chain state at
@@ -50,12 +60,15 @@
  *
  * Environment:
  *   CHAIN_ID              84532 (default), 421614 (Arbitrum Sepolia, Circle's
- *                         paymaster there; dry run only) or 11155111 (Ethereum
- *                         Sepolia: Pimlico's ERC-20 paymaster over ERC-7677,
- *                         see the section near the end of this file).
- *   NODE_URL              optional; default https://base-sepolia-rpc.publicnode.com.
+ *                         paymaster there) or 11155111 (Ethereum Sepolia:
+ *                         Pimlico's ERC-20 paymaster over ERC-7677, see the
+ *                         section near the end of this file).
+ *   NODE_URL              optional; default the first RPC of the app's profile
+ *                         (https://base-sepolia-rpc.publicnode.com,
+ *                         https://arbitrum-sepolia-rpc.publicnode.com, or
+ *                         config.mjs SEPOLIA_RPC).
  *   TOKEN_GAS_LIVE=1      live mode (needs ZERODEV_PROJECT_ID or BUNDLER_URL).
- *   ZERODEV_PROJECT_ID    bundler https://rpc.zerodev.app/api/v3/{id}/chain/84532;
+ *   ZERODEV_PROJECT_ID    bundler https://rpc.zerodev.app/api/v3/{id}/chain/{CHAIN_ID};
  *                         never printed (masked as <masked>).
  *   DRY_RUN_OWNER=dev     dry run with the dev seed's deployed account.
  *
@@ -63,6 +76,7 @@
  *   node scripts/testnet/token-gas-smoke.mjs                         # dry run
  *   set -a; . .dev-wallet/env; set +a
  *   TOKEN_GAS_LIVE=1 node scripts/testnet/token-gas-smoke.mjs        # one live op
+ *   CHAIN_ID=421614 TOKEN_GAS_LIVE=1 node scripts/testnet/token-gas-smoke.mjs  # on Arbitrum Sepolia
  */
 import { readFileSync } from 'node:fs';
 import { keccak_256 } from '@noble/hashes/sha3.js';
@@ -118,6 +132,8 @@ const NODE_URL =
     : CHAIN_ID === 421614n
       ? 'https://arbitrum-sepolia-rpc.publicnode.com'
       : 'https://base-sepolia-rpc.publicnode.com');
+const CHAIN_NAMES = { '84532': 'Base Sepolia', '421614': 'Arbitrum Sepolia', '11155111': 'Ethereum Sepolia' };
+const CHAIN_NAME = CHAIN_NAMES[CHAIN_ID.toString()] ?? `chain ${CHAIN_ID}`;
 const PAYMASTER = CIRCLE_TOKEN_PAYMASTER_V07.testnetAddress;
 // Circle's chains (Base Sepolia, Arbitrum Sepolia); on Ethereum Sepolia the
 // Pimlico section below uses its own constant.
@@ -253,11 +269,6 @@ async function main() {
     return pimlicoSepolia();
   }
   if (chainId !== 84532n && chainId !== 421614n) throw new Error('Base Sepolia (84532) or Arbitrum Sepolia (421614) only');
-  if (chainId === 421614n && LIVE) {
-    // The dev EOA holds no Arbitrum Sepolia ETH or USDC (read 2026-10-04),
-    // so only the dry run is offered there.
-    throw new Error('Arbitrum Sepolia: dry run only (fund the dev account first; see the header).');
-  }
   const state = await readCirclePaymasterState(node, PAYMASTER);
   log(`Circle paymaster ${PAYMASTER}: entryPoint ${state.entryPoint}, token ${state.token}, ` +
     `price ${state.nativeTokenPrice} base units per ETH, additionalGasCharge ${state.additionalGasCharge}, ` +
@@ -493,6 +504,45 @@ async function bundlerRaw(method, params) {
   return body.result;
 }
 
+/**
+ * A bundler gas estimate that cannot be right: account validation always
+ * uses gas, and a paymaster's validation too (Circle's paymaster pulls USDC
+ * and, in permit mode, verifies an ERC-1271 permit). Observed 2026-10-09 on
+ * ZeroDev's Arbitrum Sepolia endpoint: eth_estimateUserOperationGas often
+ * answered verificationGasLimit 0x0 (and paymasterVerificationGasLimit 0x0)
+ * for a Kernel deployment op; the engine's Circle transport keeps the
+ * estimate's paymasterVerificationGasLimit for the final data, so a zero
+ * there would be signed. Such answers are refused and asked again.
+ */
+function estimateProblem(answer, op) {
+  if (!answer || BigInt(answer.verificationGasLimit ?? '0x0') === 0n) {
+    return 'verificationGasLimit is 0, which no account validation can use';
+  }
+  if (op?.paymaster && answer.paymasterVerificationGasLimit !== undefined && BigInt(answer.paymasterVerificationGasLimit) === 0n) {
+    return 'paymasterVerificationGasLimit is 0 although the operation names a paymaster';
+  }
+  return null;
+}
+const ESTIMATE_ATTEMPTS = Number(process.env.ESTIMATE_ATTEMPTS ?? '24');
+
+/** The bundler for SmartAccountClient: raw, except that impossible estimates are refused and retried. */
+async function guardedBundler(method, params) {
+  if (method !== 'eth_estimateUserOperationGas') return bundlerRaw(method, params);
+  for (let attempt = 1; ; attempt++) {
+    const answer = await bundlerRaw(method, params);
+    const problem = estimateProblem(answer, params[0]);
+    if (!problem) {
+      log(`Bundler gas estimate (attempt ${attempt}): ${JSON.stringify(answer)}`);
+      return answer;
+    }
+    log(`Bundler gas estimate refused (attempt ${attempt} of ${ESTIMATE_ATTEMPTS}): ${problem}; answer ${JSON.stringify(answer)}`);
+    if (attempt >= ESTIMATE_ATTEMPTS) {
+      throw new Error(`The bundler answered no usable gas estimate in ${ESTIMATE_ATTEMPTS} attempts (${problem}). Nothing was signed or sent.`);
+    }
+    await new Promise((r) => setTimeout(r, 5000));
+  }
+}
+
 async function waitForTx(hash) {
   for (let i = 0; i < 90; i++) {
     const receipt = await node('eth_getTransactionReceipt', [hash]);
@@ -511,8 +561,11 @@ async function live(state) {
   const spec = createKernelAccountSpec({ node, index: 0n });
   const account = await spec.getAddress(owner);
   if (account.toLowerCase() !== DEV_ACCOUNT.toLowerCase()) throw new Error(`Unexpected account ${account}`);
-  if ((await node('eth_getCode', [account, 'latest'])) === '0x') throw new Error('The dev Kernel account is not deployed on Base Sepolia');
-  log(`LIVE on Base Sepolia: owner ${owner.address}, Kernel account ${account}, bundler ${BUNDLER_URL}`);
+  // An undeployed account is deployed by this same operation (see the header;
+  // dry-run case 1 proves the path), so no separate deployment is needed.
+  const deployedBefore = (await node('eth_getCode', [account, 'latest'])) !== '0x';
+  log(`LIVE on ${CHAIN_NAME}: owner ${owner.address}, Kernel account ${account} ` +
+    `(${deployedBefore ? 'deployed' : 'NOT deployed: this operation deploys it'}), bundler ${BUNDLER_URL}`);
   const signPermit = (digest) => spec.signErc1271(owner, digest, { chainId: CHAIN_ID, account });
 
   // Fees from the bundler (ZeroDev serves pimlico_getUserOperationGasPrice), else the node.
@@ -525,7 +578,7 @@ async function live(state) {
   }
   log(`Fees: maxFeePerGas ${fees.maxFeePerGas}, maxPriorityFeePerGas ${fees.maxPriorityFeePerGas}`);
 
-  // 1. Make sure the account holds some USDC (from the dev EOA's own Base Sepolia USDC).
+  // 1. Make sure the account holds some USDC (from the dev EOA's own USDC on this chain).
   const minUsdc = BigInt(process.env.TOKEN_GAS_MIN_USDC ?? '500000');
   const fundUsdc = BigInt(process.env.TOKEN_GAS_FUND_USDC ?? '1000000');
   let { balance } = await readTokenBalanceAndAllowance(node, USDC, account, PAYMASTER);
@@ -621,7 +674,7 @@ async function live(state) {
   const client = new SmartAccountClient({
     chainId: CHAIN_ID,
     entryPoint: ENTRYPOINT_V07,
-    bundler,
+    bundler: guardedBundler,
     node,
     spec,
     paymaster: {
@@ -647,6 +700,16 @@ async function live(state) {
   const opEvent = receipt.logs.find((l) => l.topics[0] === USER_OPERATION_EVENT && l.topics[1] === userOpHash);
   check('UserOperationEvent success', !!opEvent && BigInt('0x' + opEvent.data.slice(2 + 64, 2 + 128)) === 1n);
   check('UserOperationEvent paymaster is Circle', !!opEvent && opEvent.topics[3].slice(26).toLowerCase() === PAYMASTER.slice(2).toLowerCase());
+  const deployedEvent = receipt.logs.some((l) => l.topics[0] === ACCOUNT_DEPLOYED && l.topics[1] === userOpHash);
+  if (deployedBefore) check('no AccountDeployed (the account already existed)', !deployedEvent);
+  else check('AccountDeployed in the same operation', deployedEvent);
+  if (opEvent) {
+    log(`  UserOperationEvent: actualGasCost ${BigInt('0x' + opEvent.data.slice(2 + 128, 2 + 192))} wei, ` +
+      `actualGasUsed ${BigInt('0x' + opEvent.data.slice(2 + 192, 2 + 256))}; signed preVerificationGas ${userOp.preVerificationGas}, ` +
+      `verificationGasLimit ${userOp.verificationGasLimit}, callGasLimit ${userOp.callGasLimit}, ` +
+      `paymasterVerificationGasLimit ${userOp.paymasterVerificationGasLimit}, paymasterPostOpGasLimit ${userOp.paymasterPostOpGasLimit}, ` +
+      `maxFeePerGas ${userOp.maxFeePerGas}`);
+  }
   const actualGasCost = opEvent ? BigInt('0x' + opEvent.data.slice(2 + 128, 2 + 192)) : 0n;
   const sponsored = decodeCircleSponsoredEvents(receipt.logs).filter((e) => e.userOpHash === userOpHash);
   check('UserOperationSponsored for this operation', sponsored.length === 1);
