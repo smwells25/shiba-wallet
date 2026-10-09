@@ -5,7 +5,7 @@
 
 **Status:** Draft for engineering review
 **Audience:** Engineers building and maintaining the wallet. No prior context is assumed.
-**Related documents:** `docs/DECISIONS.md` (canonical Architecture Decision Records), `docs/FEATURE_UNIVERSE.md` (feature landscape for leadership), `AGENTS.md` (project state).
+**Related documents:** section 7 of this document (the Architecture Decision Records D1–D9; a separate `docs/DECISIONS.md` was planned and never created), `docs/FEATURE_UNIVERSE.md` (feature landscape for leadership), `docs/THREAT_MODEL.md`, `AGENTS.md` (project state) and `docs/HISTORY.md` (phases 1–12).
 
 This document describes the architecture of a non-custodial mobile cryptocurrency wallet whose defining feature is Account Abstraction (ERC-4337 and EIP-7702) on EVM chains, with first-class support for Bitcoin, Solana, and Dogecoin, and an adapter system designed to scale to thousands of assets.
 
@@ -41,7 +41,7 @@ The system is organized in four layers. Each layer depends only on the layer dir
 ├─────────────────────────────────────────────────────────────────────┤
 │  Chain adapters (one package per chain family)                      │
 │  ┌───────────────────┐ ┌───────────────────┐ ┌───────────────────┐  │
-│  │ chains-evm        │ │ chains-bitcoin    │ │ chains-solana     │  │
+│  │ chains-evm        │ │ chains-utxo       │ │ chains-solana     │  │
 │  │ EVM txs +         │ │ UTXO base class:  │ │ ed25519,          │  │
 │  │ ERC-4337 smart    │ │ Bitcoin, Dogecoin │ │ SPL tokens        │  │
 │  │ accounts, 7702    │ │ (and future forks)│ │                   │  │
@@ -415,7 +415,7 @@ Requirement 4 is "no architectural lock-in." The concrete mechanisms, most of wh
 
 ## 7. Architecture Decision Records
 
-Canonical ADRs live in `docs/DECISIONS.md`; this section restates them in full for self-containedness. Format: context, decision, consequences.
+This section is the canonical home of the ADRs (the separate `docs/DECISIONS.md` once planned was never created). Format: context, decision, consequences.
 
 ### D1 — Single BIP-39 seed roots all assets, including ERC-4337 owner keys
 
@@ -496,4 +496,4 @@ Canonical ADRs live in `docs/DECISIONS.md`; this section restates them in full f
 
 ---
 
-*End of document. Corrections and challenges to any section are welcome — file them as issues referencing the ADR numbers above, and record accepted changes in `docs/DECISIONS.md`.*
+*End of document. Corrections and challenges to any section are welcome — file them as issues referencing the ADR numbers above, and record accepted changes as new ADRs in this section.*
