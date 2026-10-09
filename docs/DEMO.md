@@ -11,7 +11,7 @@ Everything in this walkthrough runs on the **Sepolia test network** with test ET
 ## Before you start: three warnings
 
 1. **Do not wipe the wallet on the demo emulator, and do not add or remove a fingerprint on it.** The emulator wallet's recovery phrase is stored in biometric-protected storage, and `AGENTS.md` records that the written phrase for that wallet is not kept anywhere ("Settings 'Recovery phrase protection' section"). Changing the fingerprint enrollment makes the phrase permanently unreadable; wiping deletes it. Either would lose Account 1, which owns the deployed Kernel smart account and the WalletConnect session this demo relies on. Show onboarding on a second, disposable emulator instead (see step 1).
-2. **Quoted labels can drift.** Every flow in steps 1 to 9 has now been run live through the app's screens on the emulator (session keys and guardians in phase 10 item 1, the counterfactual deployment in phase 11 item 2). Steps 10 to 17 (subscriptions, Base Sepolia, per-network tokens, the fee in USDC, payment requests and names, watch-only accounts, the second paymaster and the inheritance demonstration) are newer and have each been run live through the app's screens once or twice; see the "progress" sections for phases 12 to 14 in `AGENTS.md`. Later phases keep editing these screens, so if a quoted label differs slightly on screen, trust the screen, and check the latest "progress" section of `AGENTS.md` before presenting. Step 18 (recurring payments) has not been rehearsed on the emulator at all, and step 19 (multi-signature) runs from a terminal script only, with nothing in the app.
+2. **Quoted labels can drift.** Every flow in steps 1 to 9 has now been run live through the app's screens on the emulator (session keys and guardians in phase 10 item 1, the counterfactual deployment in phase 11 item 2). Steps 10 to 18 (subscriptions, Base Sepolia, per-network tokens, the fee in USDC, payment requests and names, watch-only accounts, the second paymaster, the inheritance demonstration and Arbitrum Sepolia) are newer and have each been run live through the app's screens once or twice; see the "progress" sections for phases 12 to 14 in `AGENTS.md`. Later phases keep editing these screens, so if a quoted label differs slightly on screen, trust the screen, and check the latest "progress" section of `AGENTS.md` before presenting. Step 19 (recurring payments) has not been rehearsed on the emulator at all, and step 20 (multi-signature) runs from a terminal script only, with nothing in the app.
 3. **Bitcoin, Solana and Dogecoin in the app use their main networks.** Sepolia test mode only switches the Ethereum side. Anything you broadcast on those three chains from the app spends real coins. Step 9 explains how to show them without broadcasting.
 
 ---
@@ -368,7 +368,22 @@ Account 1 on Ethereum Sepolia. Show the screens only; do not install an heir on 
 
 **What it proves:** the analysis is backed by eight simulated scenarios against the real contracts and a live Sepolia run (setup, approval, veto, takeover after the delay, rotation back), recorded in `AGENTS.md` under phase 14.
 
-### Step 18. Recurring payments sent by the phone itself
+### Step 18. Arbitrum Sepolia: a third network with the same smart account
+
+Account 1 with a little Arbitrum Sepolia test ETH and USDC on its regular address and on its Kernel smart account (the Chairperson funded the development address; the emulator wallet was funded from it). Rehearsed live in-app on 2026-10-09 (phase 15 item 0).
+
+- Settings → Developer → **Arbitrum Sepolia**. The banner reads "TESTNET — Arbitrum Sepolia test mode is on", and the note under the choice explains the fee model: the cost of publishing data on Ethereum is charged as extra gas inside the network's own estimate, not as a separate fee, so there is no layer 1 line on the confirm and Max leaves exactly the estimate. Swaps are not offered.
+- Settings → Account Abstraction → the Arbitrum Sepolia row. Paste a bundler URL for another network first: the save is refused with "This bundler serves Ethereum Sepolia (chain id 11155111), but you are saving it for Arbitrum Sepolia (chain id 421614). Nothing was saved." Then the right URL: "Verified ✓ — the bundler reported chain id 421614 (Arbitrum Sepolia) and eth_supportedEntryPoints includes EntryPoint v0.7". The Kernel factory pre-fill is the same contract set as on the other networks.
+- Send ETH with **Send from smart account** on. The form shows the smart-account address with "Not deployed yet — the first send deploys it." Review: DEPLOYMENT "Will deploy with this send". One device prompt. The success screen shows the operation hash, then the bundle transaction.
+- Send USDC from the smart account with **Pay the network fee in USDC** on, exactly as in step 13. The ceiling on Arbitrum is larger (about 0.75 USDC at the time of the rehearsal) because the gas price is higher; the actual charge was 0.054559 USDC. Ask for more than the balance can cover and the form refuses before any prompt, naming both figures.
+- Send ETH from the regular account with Max. If the fee moved while you looked at the form, the confirm shows the "The amount was lowered from … because the network fee rose after you tapped Max" box. There is no layer 1 line.
+- Settings → Developer → **Ethereum Sepolia** to return.
+
+**What to say:** the same smart account, at the same address, now lives on three networks, and the wallet tells the truth about each network's fee model instead of pretending they are alike.
+
+**What it proves:** on 2026-10-09 the app deployed Account 1's Kernel account on Arbitrum Sepolia through the bundler (block 317505893), paid a smart-account fee in USDC there (block 317507769, charge 0.054559 USDC, ETH balance and deposit unchanged) and sent a Max transfer with no separate layer 1 fee (block 317508661). The layer 1 component happened to be zero during the rehearsal, so the "extra gas" part of the fee model has only been shown at a zero price.
+
+### Step 19. Recurring payments sent by the phone itself
 
 Account 1's Kernel account on Ethereum Sepolia, eligible for the Sessions screen as in step 10. **This step has NOT been rehearsed on the emulator.** It was built in phase 15 item 1 and is verified only by the offline suites (`check-recurring.mjs`, 114 checks); no recurring payment has yet been sent through the app on a live network. Run it completely at the rehearsal before showing it, and where a quoted label differs, trust the screen. The Kernel account needs enough test ETH for the set-up fee, the payments and the fee budget; the form's funding lines say what is missing.
 
@@ -385,7 +400,7 @@ Account 1's Kernel account on Ethereum Sepolia, eligible for the Sessions screen
 
 **Fallbacks:** if the Sessions link is missing, see step 10. If a payment is refused, the card keeps "Last payment attempt refused: …" with the reason. A payment that would go over one of the app's spending limits is not sent, and there is deliberately no "send anyway".
 
-### Step 19. A 2-of-3 multi-signature account, by script only
+### Step 20. A 2-of-3 multi-signature account, by script only
 
 Nothing in this step runs in the app: multi-signature accounts exist only as engine groundwork (phase 15 item 2, `docs/MULTISIG.md`). Show it from a terminal on the host. The live run is recorded for 2026-10-09 UTC (Sepolia block timestamps).
 
