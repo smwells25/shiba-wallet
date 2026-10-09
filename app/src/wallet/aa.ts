@@ -40,6 +40,7 @@ import {
 // Explicit .ts extensions: this module is imported by scripts/check-aa.mjs
 // under Node's type stripping, which resolves relative specifiers literally.
 import { EVM_CHAIN_ID, validateRecipient } from './send.ts';
+import { formatUnits } from './balances.ts';
 import type { KeyValueStore } from './tokens.ts';
 import { smartAccountSaltFor } from './account-ids.ts';
 import { assertSecureEndpointUrl } from '../config/endpoint-url.ts';
@@ -2542,8 +2543,9 @@ export function bundlerVerifiedLine(
 /**
  * The biometric prompt title for a smart-account send, naming the amount
  * and asset like the regular-address path ("Approve sending 0.0001 test
- * ETH") plus where it comes from. `amountWithSymbol` is the amount as the
- * user typed it followed by the asset symbol.
+ * ETH") plus where it comes from. `amountWithSymbol` is the QUOTED amount
+ * (the one that will be signed) followed by the asset symbol; the Send
+ * screen builds it through sendApprovalPromptTitle, never from the form.
  */
 export function aaSendApprovalPrompt(
   quote: Pick<AaSendQuote, 'eip7702' | 'recovered'>,
@@ -2555,6 +2557,90 @@ export function aaSendApprovalPrompt(
       ? 'your recovered smart account'
       : 'your smart account';
   return `Approve sending ${amountWithSymbol} from ${from}`;
+}
+
+/**
+ * Full-precision display of a base-unit amount: every digit, trailing zeros
+ * dropped, never rounded. The Send screen's confirm "Amount" rows and its
+ * biometric prompt both use this, so the two always show the same figure.
+ */
+export function exactAmountText(amount: bigint, decimals: number): string {
+  return formatUnits(amount, decimals, decimals);
+}
+
+/**
+ * The fields of a Send quote that the biometric prompt title is built from.
+ * The shapes are structural so this module needs no import of the regular,
+ * token or NFT send modules; the real quote objects satisfy them.
+ */
+export type SendApprovalQuote =
+  | Pick<AaSendQuote, 'kind' | 'amount' | 'token' | 'eip7702' | 'recovered'>
+  | { kind: 'erc20'; amount: bigint; symbol: string; decimals: number }
+  | { kind: 'evm' | 'sol' | 'utxo'; amount: bigint };
+
+/**
+ * The biometric prompt title for a Send of a coin or a fungible token,
+ * built from the QUOTE, which is exactly what will be signed. It must never
+ * come from the amount field's text: when the quote lowered a Max amount
+ * (maxAdjustment on a regular-address or smart-account quote), the form
+ * still holds the higher figure, and the prompt must name the lowered one.
+ *
+ * `symbol` and `decimals` describe the native asset (or, for the regular
+ * Bitcoin, Dogecoin and Solana paths, the account's coin). A quote that
+ * carries its own token fields (an ERC-20 quote, or a smart-account quote
+ * with `token`) uses those, as the confirm screen does. The amount text is
+ * exactAmountText, the same as the confirm's "Amount" row. For an amount
+ * typed in canonical form ("0.0001", "2", "1.5") the title is the same
+ * string as the earlier title built from the typed text; a typed form with
+ * trailing zeros ("1.50") is now shown as the confirm shows it ("1.5").
+ *
+ * NFT sends keep their own title (the item's name, and a count for
+ * ERC-1155), built on the Send screen from the quote.
+ */
+export function sendApprovalPromptTitle(
+  quote: SendApprovalQuote,
+  symbol: string,
+  decimals: number,
+): string {
+  if (quote.kind === 'aa') {
+    const amountWithSymbol = quote.token
+      ? `${exactAmountText(quote.token.amount, quote.token.decimals)} ${quote.token.symbol}`
+      : `${exactAmountText(quote.amount, decimals)} ${symbol}`;
+    return aaSendApprovalPrompt(quote, amountWithSymbol);
+  }
+  if (quote.kind === 'erc20') {
+    return `Approve sending ${exactAmountText(quote.amount, quote.decimals)} ${quote.symbol}`;
+  }
+  return `Approve sending ${exactAmountText(quote.amount, decimals)} ${symbol}`;
+}
+
+/**
+ * How the Send form names the paymaster that takes the USDC fee. These are
+ * the same phrases tokenGasConfirmLines (token-gas.ts) returns as
+ * `throughPhrase` for each source, so the form and the confirm agree.
+ */
+export function tokenGasThroughPhrase(
+  source: { kind: 'circle' } | { kind: 'erc7677'; vendor: string },
+): string {
+  return source.kind === 'erc7677' ? `${source.vendor}\u2019s paymaster` : 'Circle\u2019s paymaster';
+}
+
+/**
+ * The fee sentence in the Send form's token box ("Sending USDC … from your
+ * smart account."). It follows the fee mode the form will quote: with the
+ * USDC-fee choice switched on (`feeToken` given), the fee is paid in that
+ * token through the paymaster; otherwise in the native asset, as before.
+ */
+export function sendFormTokenFeeSentence(p: {
+  nativeSymbol: string;
+  tokenSymbol: string;
+  feeToken: { symbol: string; throughPhrase: string } | null;
+}): string {
+  if (!p.feeToken) return `The network fee is paid in ${p.nativeSymbol}, not in ${p.tokenSymbol}.`;
+  return (
+    `The network fee is paid in ${p.feeToken.symbol} through ${p.feeToken.throughPhrase}, ` +
+    `not in ${p.nativeSymbol}; Review shows the most it can cost.`
+  );
 }
 
 // ---------------------------------------------------------------------------

@@ -29,7 +29,7 @@ import { useTheme, type Theme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
 import { requireLocalAuth } from '../wallet/biometric';
-import { formatUnits, parseUnits } from '../wallet/balances';
+import { parseUnits } from '../wallet/balances';
 import {
   BITCOIN_CHAIN_ID,
   EVM_CHAIN_ID,
@@ -61,8 +61,11 @@ import {
   checkAaQuoteBeforeApproval,
   aaPreviewNote,
   aaRiskWarningTarget,
-  aaSendApprovalPrompt,
   aaSenderLabel,
+  exactAmountText,
+  sendApprovalPromptTitle,
+  sendFormTokenFeeSentence,
+  tokenGasThroughPhrase,
   kernelDeploymentNote,
   loadSmartAccountAddress,
   retitleQuoteFailure,
@@ -90,6 +93,7 @@ import {
 import { TokenGasChargeAboveLimitError } from '@shiba-wallet/chains-evm';
 import {
   TOKEN_GAS_CHOICE_HINT,
+  TOKEN_GAS_SYMBOL,
   checkTokenGasPaymaster,
   describeTokenGasError,
   erc7677CheckingSentence,
@@ -185,9 +189,13 @@ type Phase = 'form' | 'quoting' | 'confirm' | 'sending' | 'success';
 
 const mono = Platform.select({ ios: 'Menlo', default: 'monospace' });
 
-/** Full-precision base-unit display (never truncates a payment amount). */
+/**
+ * Full-precision base-unit display (never truncates a payment amount). The
+ * biometric prompt (sendApprovalPromptTitle) uses the same function, so the
+ * confirm's Amount row and the prompt always show the same figure.
+ */
 function exact(amount: bigint, decimals: number): string {
-  return formatUnits(amount, decimals, decimals);
+  return exactAmountText(amount, decimals);
 }
 
 /**
@@ -1518,13 +1526,18 @@ export function SendScreen({ route, navigation }: Props) {
       return;
     }
     // Biometric gate (task 7): the final send confirmation requires local
-    // authentication whenever the device has enrolled biometrics.
+    // authentication whenever the device has enrolled biometrics. The title
+    // names the QUOTED amount, which is what gets signed: a Max amount the
+    // quote lowered (maxAdjustment) differs from the form's text.
     const auth = await requireLocalAuth(
-      nftMode && nftParams
-        ? `Approve sending ${quote.kind === 'nft' && quote.standard === 'erc1155' ? `${quote.amount.toString()} × ` : ''}${nftParams.name}`
+      // An NFT quote exists only in NFT mode (the EOA path), where the
+      // route always carries the item's name; the token-id wording is a
+      // type-level fallback only.
+      quote.kind === 'nft'
+        ? `Approve sending ${quote.standard === 'erc1155' ? `${quote.amount.toString()} × ` : ''}${nftParams?.name ?? `token ${quote.tokenId.toString()} of ${quote.contract}`}`
         : quote.kind === 'aa'
-          ? aaSendApprovalPrompt(quote, `${amountText} ${symbol}`)
-          : `Approve sending ${amountText} ${symbol}`,
+          ? sendApprovalPromptTitle(quote, evmChain.displaySymbol, nativeDecimals)
+          : sendApprovalPromptTitle(quote, symbol, decimals),
     );
     if (!auth.ok) {
       Alert.alert('Not sent', auth.message);
@@ -2333,8 +2346,17 @@ export function SendScreen({ route, navigation }: Props) {
           <Text style={[styles.hint, { color: theme.textMuted }]}>
             Sending {token.symbol} (ERC-20 token, contract{' '}
             {token.assetId.reference.slice(0, 10)}…{token.assetId.reference.slice(-8)}) from
-            {aaActive ? ' your smart account' : ` your address on ${evmChain.label}`}. The network
-            fee is paid in {evmChain.displaySymbol}, not in {token.symbol}.
+            {aaActive ? ' your smart account' : ` your address on ${evmChain.label}`}.{' '}
+            {sendFormTokenFeeSentence({
+              nativeSymbol: evmChain.displaySymbol,
+              tokenSymbol: token.symbol,
+              // The fee mode Review will quote: the USDC fee only while the
+              // choice is offered, checked and switched on (tokenGasActive).
+              feeToken:
+                tokenGasActive && tokenGasOfferNow?.kind === 'available'
+                  ? { symbol: TOKEN_GAS_SYMBOL, throughPhrase: tokenGasThroughPhrase(tokenGasOfferNow.source) }
+                  : null,
+            })}
             {aaAvailable
               ? ' With "Send from smart account" on, the smart account sends its own ' +
                 `${token.symbol} in one transfer call (no approval needed).`

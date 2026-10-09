@@ -82,8 +82,13 @@ import {
   summarizeAaReceipt,
   verifyAaFactory,
   waitForAaReceipt,
+  exactAmountText,
+  sendApprovalPromptTitle,
+  sendFormTokenFeeSentence,
+  tokenGasThroughPhrase,
 } from '../src/wallet/aa.ts';
 import { EVM_CHAIN_ID, describeSendError } from '../src/wallet/send.ts';
+import { formatUnits, parseUnits } from '../src/wallet/balances.ts';
 import {
   flushSpendingWrites,
   installSpendingRecorder,
@@ -1745,7 +1750,115 @@ await (async () => {
   check('prompt for a token send from the smart account', aaSendApprovalPrompt({ eip7702: undefined, recovered: undefined }, '1.5 USDC') === 'Approve sending 1.5 USDC from your smart account');
   check('prompt for an EIP-7702 upgraded account', aaSendApprovalPrompt({ eip7702: { upgrade: false, delegate: '0x' + '11'.repeat(20) } }, '0.0001 test ETH') === 'Approve sending 0.0001 test ETH from your upgraded account');
   check('prompt for a recovered smart account', aaSendApprovalPrompt({ recovered: true }, '2 test ETH') === 'Approve sending 2 test ETH from your recovered smart account');
-  check('SendScreen passes the smart-account quote through aaSendApprovalPrompt with the typed amount and symbol', sendSource.includes("quote.kind === 'aa'\n          ? aaSendApprovalPrompt(quote, `${amountText} ${symbol}`)"));
+})();
+
+// ---------------------------------------------------------------------------
+// Arbitrum in-app pass, finding 1: the biometric prompt must name the QUOTED
+// amount. When the quote lowered a Max amount (maxAdjustment), the form still
+// holds the higher figure; the prompt read that figure while the signed
+// transaction used the lowered one. Finding 2: the Send form's token box
+// names the fee mode Review will quote.
+// ---------------------------------------------------------------------------
+
+console.log('Send approval prompt from the quote, and the form fee sentence:');
+await (async () => {
+  // The live case (Arbitrum Sepolia, EOA Max with the fee in ETH): the form
+  // held 0.00399415320266 test ETH and the quote lowered it.
+  const typedLive = '0.00399415320266';
+  const loweredLive = parseUnits('0.00399414135866', 18);
+  const evmTrim = { kind: 'evm', amount: loweredLive, maxAdjustment: { requested: parseUnits(typedLive, 18) } };
+  const evmTitle = sendApprovalPromptTitle(evmTrim, 'test ETH', 18);
+  check('trimmed EOA Max: the prompt names the lowered amount', evmTitle === 'Approve sending 0.00399414135866 test ETH', evmTitle);
+  check('trimmed EOA Max: the prompt is not the form-text title shown in the live run', evmTitle !== `Approve sending ${typedLive} test ETH`);
+
+  // Untrimmed quotes: for an amount typed in canonical form the title is
+  // byte-identical to the earlier one built from the typed text.
+  for (const [typed, decimals, symbol] of [
+    ['0.0001', 18, 'test ETH'],
+    ['2', 18, 'ETH'],
+    ['1.5', 18, 'test ETH'],
+    ['0.000000000000000001', 18, 'test ETH'],
+    ['123.456', 18, 'ETH'],
+    ['0.0001', 8, 'BTC'],
+    ['12.5', 8, 'DOGE'],
+    ['0.25', 9, 'SOL'],
+  ]) {
+    const amount = parseUnits(typed, decimals);
+    const kind = symbol === 'BTC' || symbol === 'DOGE' ? 'utxo' : symbol === 'SOL' ? 'sol' : 'evm';
+    const title = sendApprovalPromptTitle({ kind, amount }, symbol, decimals);
+    check(`untrimmed ${kind} quote for ${typed} ${symbol}: unchanged text`, title === `Approve sending ${typed} ${symbol}`, title);
+  }
+  const erc20Title = sendApprovalPromptTitle({ kind: 'erc20', amount: 2_000_000n, symbol: 'USDC', decimals: 6 }, 'USDC', 6);
+  check('ERC-20 quote: "Approve sending 2 USDC" (unchanged text)', erc20Title === 'Approve sending 2 USDC', erc20Title);
+  check('ERC-20 quote: the token fields of the quote decide the amount text', sendApprovalPromptTitle({ kind: 'erc20', amount: 1_500_000n, symbol: 'USDC', decimals: 6 }, 'test ETH', 18) === 'Approve sending 1.5 USDC');
+
+  // Smart-account quotes: the from-wording is unchanged, the amount is the quote's.
+  const aaPlain = { kind: 'aa', amount: parseUnits('0.0001', 18) };
+  check('smart account: "…from your smart account" unchanged', sendApprovalPromptTitle(aaPlain, 'test ETH', 18) === 'Approve sending 0.0001 test ETH from your smart account');
+  check('upgraded account: "…from your upgraded account" unchanged', sendApprovalPromptTitle({ ...aaPlain, eip7702: { upgrade: false, delegate: '0x' + '11'.repeat(20) } }, 'test ETH', 18) === 'Approve sending 0.0001 test ETH from your upgraded account');
+  check('recovered account: "…from your recovered smart account" unchanged', sendApprovalPromptTitle({ ...aaPlain, recovered: true }, 'test ETH', 18) === 'Approve sending 0.0001 test ETH from your recovered smart account');
+  // The phase 13 live smart-account Max trim (not sent there).
+  const aaTrim = {
+    kind: 'aa',
+    amount: parseUnits('0.002513727360327474', 18),
+    maxAdjustment: { requested: parseUnits('0.002515568514493859', 18) },
+  };
+  const aaTrimTitle = sendApprovalPromptTitle(aaTrim, 'test ETH', 18);
+  check('trimmed smart-account Max: the prompt names the lowered amount', aaTrimTitle === 'Approve sending 0.002513727360327474 test ETH from your smart account', aaTrimTitle);
+  // USDC-fee path: the USDC Max is balance minus the worst-case fee, and a
+  // re-quote can lower it; the token fields carry the amount.
+  const tokenTrim = {
+    kind: 'aa',
+    amount: 0n,
+    token: { contract: '0x' + '22'.repeat(20), recipient: '0x' + '33'.repeat(20), amount: 1_428_730n, symbol: 'USDC', decimals: 6 },
+    maxAdjustment: { requested: 1_488_800n },
+    tokenGas: { symbol: 'USDC' },
+  };
+  const tokenTrimTitle = sendApprovalPromptTitle(tokenTrim, 'test ETH', 18);
+  check('smart-account USDC send with the USDC fee: the prompt names the quoted token amount', tokenTrimTitle === 'Approve sending 1.42873 USDC from your smart account', tokenTrimTitle);
+  check('smart-account token send: the same text as before for an untrimmed 1.5 USDC', sendApprovalPromptTitle({ ...tokenTrim, maxAdjustment: undefined, token: { ...tokenTrim.token, amount: 1_500_000n } }, 'test ETH', 18) === 'Approve sending 1.5 USDC from your smart account');
+
+  // The prompt's amount text is the confirm's Amount-row text.
+  for (const [a, d] of [[1n, 18], [10n ** 18n, 18], [123_456_789n, 6], [0n, 8], [3_994_141_358_660_000n, 18]]) {
+    check(`exactAmountText(${a}, ${d}) equals the confirm's formatUnits(amount, decimals, decimals)`, exactAmountText(a, d) === formatUnits(a, d, d));
+  }
+
+  // SendScreen: the title comes from the quote, never from the form text.
+  const sendSource = readFileSync(new URL('../src/screens/SendScreen.tsx', import.meta.url), 'utf8');
+  const authStart = sendSource.indexOf('const auth = await requireLocalAuth(');
+  const authCall = authStart >= 0 ? sendSource.slice(authStart, sendSource.indexOf('\n    );', authStart)) : '';
+  check('SendScreen: one send-approval requireLocalAuth call found', authStart >= 0 && sendSource.indexOf('const auth = await requireLocalAuth(', authStart + 1) < 0);
+  check('SendScreen: the approval title never reads the amount field (amountText)', authCall !== '' && !authCall.includes('amountText'), authCall);
+  check('SendScreen: the smart-account title is sendApprovalPromptTitle with the native symbol and decimals of the confirm', authCall.includes('sendApprovalPromptTitle(quote, evmChain.displaySymbol, nativeDecimals)'));
+  check('SendScreen: the other coin and token titles are sendApprovalPromptTitle', authCall.includes('sendApprovalPromptTitle(quote, symbol, decimals)'));
+  check('SendScreen: the confirm\'s exact() is exactAmountText (same text as the prompt)', /function exact\(amount: bigint, decimals: number\): string \{\n  return exactAmountText\(amount, decimals\);\n\}/.test(sendSource));
+
+  // Mutant: a title that names what the form held (the requested amount)
+  // instead of the quote's amount must fail the checks above.
+  const aaSource = readFileSync(new URL('../src/wallet/aa.ts', import.meta.url), 'utf8');
+  const promptAnchor = '  return `Approve sending ${exactAmountText(quote.amount, decimals)} ${symbol}`;\n}';
+  if (!aaSource.includes(promptAnchor)) throw new Error('mutation anchor not found: sendApprovalPromptTitle');
+  const m = await importMutant(
+    'src/wallet/aa.ts',
+    aaSource.replace(promptAnchor, '  return `Approve sending ${exactAmountText(quote.maxAdjustment?.requested ?? quote.amount, decimals)} ${symbol}`;\n}'),
+  );
+  check('M-P1 caught: a title from the form figure names the pre-trim amount (the trimmed-Max check above would fail)',
+    m.sendApprovalPromptTitle(evmTrim, 'test ETH', 18) === `Approve sending ${typedLive} test ETH`);
+
+  // Finding 2: the form's token box.
+  check('form fee sentence, ETH fee: unchanged text', sendFormTokenFeeSentence({ nativeSymbol: 'test ETH', tokenSymbol: 'USDC', feeToken: null }) === 'The network fee is paid in test ETH, not in USDC.');
+  check('form fee sentence, USDC fee through Circle',
+    sendFormTokenFeeSentence({ nativeSymbol: 'test ETH', tokenSymbol: 'USDC', feeToken: { symbol: 'USDC', throughPhrase: tokenGasThroughPhrase({ kind: 'circle' }) } }) ===
+      'The network fee is paid in USDC through Circle\u2019s paymaster, not in test ETH; Review shows the most it can cost.');
+  check('form fee sentence, USDC fee through the ERC-7677 paymaster',
+    sendFormTokenFeeSentence({ nativeSymbol: 'test ETH', tokenSymbol: 'EURC', feeToken: { symbol: 'USDC', throughPhrase: tokenGasThroughPhrase({ kind: 'erc7677', vendor: 'Pimlico' }) } }) ===
+      'The network fee is paid in USDC through Pimlico\u2019s paymaster, not in test ETH; Review shows the most it can cost.');
+  const tokenGasSource = readFileSync(new URL('../src/wallet/token-gas.ts', import.meta.url), 'utf8');
+  check('the form\'s paymaster phrases are the confirm\'s throughPhrase values (token-gas.ts)',
+    tokenGasSource.includes("throughPhrase: 'Circle\u2019s paymaster'") && tokenGasSource.includes('throughPhrase: `${vendor}\u2019s paymaster`'));
+  check('SendScreen: the token box takes the USDC wording only when the USDC fee is active',
+    sendSource.includes("tokenGasActive && tokenGasOfferNow?.kind === 'available'\n                  ? { symbol: TOKEN_GAS_SYMBOL, throughPhrase: tokenGasThroughPhrase(tokenGasOfferNow.source) }\n                  : null,"));
+  check('SendScreen: the fixed ETH sentence is gone from the token box', !sendSource.includes('fee is paid in {evmChain.displaySymbol}, not in {token.symbol}.'));
 })();
 
 // ---------------------------------------------------------------------------

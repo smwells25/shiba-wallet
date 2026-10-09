@@ -205,9 +205,9 @@ function EndpointRow({
     <View style={[styles.endpointRow, { backgroundColor: theme.card, borderColor: theme.border }]}>
       <View style={styles.endpointHeader}>
         <Text style={[styles.endpointLabel, { color: theme.text }]}>{network.label}</Text>
-        <Text style={[styles.endpointTag, { color: theme.textMuted }]} numberOfLines={1}>
-          {tag}
-        </Text>
+        {/* No line limit: the tag names the default endpoint's host, which a
+            long test-network host would otherwise cut off; it wraps instead. */}
+        <Text style={[styles.endpointTag, { color: theme.textMuted }]}>{tag}</Text>
       </View>
       {editing ? (
         <View style={styles.endpointEditor}>
@@ -1882,7 +1882,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: theme.text }]}>Developer</Text>
         <Text style={[styles.toggleLabel, { color: theme.text }]}>Test network</Text>
-        <View style={styles.endpointButtons}>
+        <View style={styles.choiceChips}>
           {[
             { label: 'Off (mainnet)', value: null },
             ...EVM_TEST_PROFILES.map((p) => ({ label: p.label, value: p.caip2 as TestNetworkId })),
@@ -1894,7 +1894,7 @@ export function SettingsScreen({ navigation, route }: Props) {
               selected={testNetwork === choice.value}
               accessibilityHint="Chooses which network the app's Ethereum account uses"
               onPress={() => void setTestNetwork(choice.value)}
-              style={styles.endpointButton}
+              style={styles.choiceChip}
             />
           ))}
         </View>
@@ -2008,6 +2008,25 @@ const styles = StyleSheet.create({
   },
   endpointButton: {
     flex: 1,
+  },
+  // Choice chips whose labels are several words ("Ethereum Sepolia"): they
+  // flow onto more rows instead of squeezing four into one row, where each
+  // was too narrow for a single word and the text broke mid-word. With the
+  // minimum width, two chips share a row when the row is at least 290
+  // points wide, otherwise each takes a row of its own; the width left for
+  // the label (140 minus the button's padding and border, about 97 points)
+  // is meant to hold the longest single word of these labels at the
+  // button's 16-point font, so a label breaks only between words. That was
+  // reasoned from the styles, not measured on a device.
+  choiceChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  choiceChip: {
+    flexGrow: 1,
+    flexBasis: '40%',
+    minWidth: 140,
   },
   aaField: {
     gap: 8,
