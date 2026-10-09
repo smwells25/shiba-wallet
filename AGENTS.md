@@ -1448,3 +1448,82 @@ wallets accept the payment links.
       text is true with watch-only addresses present. Unverified: the
       provider behind the transient 400; TalkBack / VoiceOver on a device.
       Phase 14's code is complete at this commit.
+
+## Housekeeping (2026-10-09, commit f8e1224)
+
+Done before phase 15 at the Chairperson's request, as one commit verified
+by the offline runner in an isolated worktree (engine 815, app 5,503
+across 43 suites) plus the bundle export: phases 1–12 moved verbatim to
+docs/HISTORY.md and this file rewritten to the rules, decisions, standing
+rules, a phase index and the current phases; stale references fixed
+(chains-bitcoin → chains-utxo, the never-created docs/DECISIONS.md, the
+threat model's suite counts); Expo patch updates (expo 57.0.27,
+expo-camera 57.0.6, expo-screen-capture 57.0.4; `expo install --check`
+clean); dangling worktrees pruned. Left as they were by decision: two
+legacy fee-floor helpers and a session routeNode pass-through (small
+refactor, low value), five reasoned eslint-disable comments, the
+git-ignored keeper files in .dev-wallet.
+
+ARBITRUM SEPOLIA, READ-ONLY PASS (2026-10-09; the Chairperson funded the
+dev EOA 0x16DA…C5C with 0.03 test ETH and 20 USDC): chain id 421614 on
+all three profile RPCs; verifyKernelDeployment passed; Circle's paymaster
+0x31BE…0b58 reads EntryPoint v0.7, USDC 0x75fa…AA4d, price 3000 (fixed),
+spread 0, deposit ~1.0528 ETH, staked 0.25 ETH, no problems; its
+implementation there is 0xD9d18FD662B5B2F567545C13fd1e902008beD755
+(Sourcify exact match; 180 bytes of immutables differ from Base's, same
+logic); ZeroDev serves chain 421614 (v0.7 supported;
+pimlico_getUserOperationGasPrice standard 73,704,960 / 368,524 wei;
+rundler_maxPriorityFeePerGas not served); the node's
+eth_maxPriorityFeePerGas is 0 (quotes carry a 0 tip, which Arbitrum
+ignores); the L1 component was ZERO at the time (ArbGasInfo
+getL1BaseFeeEstimate 0; eth_estimateGas for a transfer exactly 21,000;
+NodeInterface.gasEstimateL1Component 0 for a handleOps too — the 601 L1
+gas measured in phase 14 was at a non-zero L1 price); ZeroDev's
+estimate accepted the Kernel deployment op with the same gas figures as
+Base (pVG 51,428 / vGL 358,217 / cGL 17,955). The token-gas dry run
+passed for both owners (worst case ~0.719 USDC simulated). NOTHING LIVE
+RAN: kernel-smoke.mjs refuses "CHAIN_ID must be one of 84532, 11155111",
+token-gas-smoke.mjs refuses 421614 for live and its live() refuses an
+undeployed account, fund.mjs allows only 11155111 and 84532; the agent
+was told not to edit scripts, so the live run is phase 15 item 0.
+
+## Phase 15 plan (approved 2026-10-09 "immediately after" the housekeeping): recurring payments, Arbitrum live, the next account types
+
+The Chairperson approved starting phase 15 without naming a scope; this
+is the CTO's proposal, recorded before code, following the phase 14
+status's "recommended next".
+
+0. Arbitrum Sepolia live: extend kernel-smoke.mjs (CHAINS map; estimate
+   the funding transfer's gas instead of 21,000), token-gas-smoke.mjs
+   (drop the 421614 live refusal; allow the deploy-in-the-same-op path)
+   and fund.mjs (allow 421614) — then the Kernel deployment through
+   ZeroDev, a USDC-fee operation through Circle's paymaster, and an EOA
+   send, all verified independently; then the in-app Arbitrum pass on
+   the emulator (Metro worktree recreated at HEAD; the emulator's
+   Account 1 funded from the dev EOA).
+1. Recurring payments pushed by the user's own phone (the slice
+   docs/SCHEDULED_PAYMENTS.md recommends): a "pay X every N days to Y"
+   subscription whose session key stays on the device and whose pulls
+   the app submits itself while open (and offers to run when due), for
+   ETH and USDC, with the same batching caveat and fee budget rules; no
+   engine change expected.
+2. Multi-signature accounts (feature 24): research from the Kernel v3.3
+   sources whether the deployed WeightedECDSAValidator can serve as a
+   ROOT validator for a k-of-n account (threshold semantics incl. the
+   repeated-signer finding, ERC-1271 behaviour, recovery interplay) and
+   what an honest multi-signer smart account would need; build the
+   engine spec and a test-network demonstration only if the analysis
+   supports it; otherwise deliver the analysis and the candidate
+   modules.
+3. In-app dApp browser (feature 79): a design document first (WebView
+   provider injection, the EIP-1193 surface, origin binding versus the
+   WalletConnect identity model, what the threat model requires), then
+   the smallest safe slice if the design supports one.
+4. Leadership refresh at the end: feature rows, the shareable page,
+   DEMO.md (an Arbitrum step), the threat model.
+
+Waves: 0 (agent: scripts + live, then the emulator), 1 (agent, app) and
+2's research (agent, engine) in parallel; 3's design alongside; 4 last.
+Subagents on Opus.
+
+## Phase 15 progress
