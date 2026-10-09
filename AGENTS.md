@@ -1527,3 +1527,104 @@ Waves: 0 (agent: scripts + live, then the emulator), 1 (agent, app) and
 Subagents on Opus.
 
 ## Phase 15 progress
+- [x] Item 0, script half — ARBITRUM SEPOLIA PROVEN LIVE BY SCRIPT
+      (commit d01a397; scripts/testnet only; every hash re-read on a
+      second RPC; dev EOA spent 0.0081 test ETH and exactly 3 USDC; the
+      offline runner stayed ALL GREEN in the isolated worktree). (a)
+      Kernel deployment through ZeroDev: funding tx 0x6238aeb1…05281
+      (21,000 gas used, 0 for L1); op 1 (deployment + batch) userOp
+      0xef0a7c39…50ab28, bundle tx 0xde60e28ab50330db81d4f32951aa161017ed0c245efc1ad5befcf409d2246d8e,
+      block 317488796, AccountDeployed via the meta factory, OwnerRegistered,
+      success, actualGasUsed 334,973; op 2 on the deployed path userOp
+      0xb52aa53d…9de2257, tx 0x62f1950b…eaa853, block 317488824. Versus
+      Base: the same verification/call gas limits, preVerificationGas
+      56,041 vs 61,454 (Base's includes its L1 cost), bundle gasUsed
+      326,911 vs 326,887, effective price 208 vs 155 Mwei (Arbitrum's base
+      fee ~0.058 gwei; the 0.15 gwei tip was really paid — Arbitrum
+      collects tips); op 1 cost 0.0000697 vs 0.0000528 ETH. THE L1
+      COMPONENT WAS ZERO for the whole run (ArbGasInfo.getL1BaseFeeEstimate
+      0, NodeInterface.gasEstimateL1Component 0, receipts' gasUsedForL1
+      0). (b) USDC fee through Circle's paymaster: funding 1 USDC (tx
+      0x8458a2f3…f59e335); refusals at estimation AA33 "exceeds
+      allowance" / "exceeds balance"; the op userOp 0xb696e392…3b35f1,
+      bundle tx 0x75ec840e1c122a0afc0ed6be31471145fd267ee503a2c44f50accbffc1046771,
+      block 317489146, paymaster 0x31be…0b58, success, actualTokenNeeded
+      50,728 (0.050728 USDC — about 9.4× Base's 0.005392 at ~10× the
+      effective price; gas used similar), Approval = prefund 149,428 = the
+      displayed worst case, refund 98,700, ETH and EntryPoint deposit
+      unchanged, allowance 0 before and after, the paymaster's deposit
+      down by exactly actualGasCost. (c) EOA send with fund.mjs: tx
+      0xc3c2a2d8…08cc85, estimate 27,484 (limit 32,980), used 27,139, fee
+      41% of the worst case, tip 0 — the "L1 cost inside the gas
+      estimate" model held at a zero L1 price (non-zero L1 still
+      unverified). (d) Emulator wallet funded for the in-app pass: Account
+      1 EOA 0.004 ETH (tx 0xcebb25c2…36bf3) + 2 USDC (tx 0x4859eab6…a10d85),
+      its Kernel account 0.002 ETH (tx 0xd0fe1188…ea6c90; undeployed on
+      Arbitrum). SCRIPTS: kernel-smoke.mjs (421614 in CHAINS, explorer
+      links for all three chains, the funding transfer's gas estimated +
+      20% instead of 21,000, signed gas fields logged, URL masked in
+      errors), token-gas-smoke.mjs (live refusal removed; live() deploys
+      an undeployed account in the same op — proven by the dry run, not
+      live, since (a) had deployed it; chain-named text), fund.mjs
+      (421614 allowed; estimate/limit/fees/worst case and the receipt's
+      gas figures printed); dry runs on all three chains pass. NEW
+      FINDING — ZEROD​EV'S ARBITRUM ESTIMATES ARE OFTEN IMPOSSIBLE: on
+      421614 eth_estimateUserOperationGas answered verificationGasLimit
+      0x0 and paymasterVerificationGasLimit 0x0 with a constant
+      callGasLimit 0xcb36 in about 27 of 35 samples (bursts of tens of
+      seconds; the Pimlico and Ultra Relay routes 4/4 zero, the Alchemy
+      route 4/4 real, Gelato TLS failure); the first live attempt signed
+      such an estimate and the script's EntryPoint preflight stopped it
+      ("RPC error 3: execution reverted (eth_call)", revert data 0x)
+      before anything reached the bundler; both smoke scripts now refuse
+      an impossible estimate and ask again (every 5 s, up to 24 times).
+      RISK FOR THE APP: SmartAccountClient has no such guard and the
+      Circle transport keeps the estimate's paymasterVerificationGasLimit,
+      so an in-app smart-account send on Arbitrum could sign a zero-gas
+      op and fail after the biometric prompt — a guard slice is
+      dispatched before the emulator pass. Unverified: a non-zero L1
+      component; the live deploy-in-the-same-op USDC-fee path; how the
+      bundler treats a zero-gas op; which upstream each ZeroDev answer
+      came from.
+- [x] Item 3 — docs/DAPP_BROWSER.md, the in-app dApp browser design
+      (commit below; about 4,900 words; sources read 2026-10-09 and
+      cited). CONCLUSIONS: feasible with ONE approval path — Expo SDK 57
+      pins react-native-webview 13.16.1 and Expo Go bundles it; a browser
+      bridge client can present each site as a synthetic session keyed
+      browser:<origin> through the existing wc-controller queue, so the
+      proposal/request sheet, gates, preview, risk card and D6 serve it
+      unchanged; three changes to existing code (a composite client so
+      the controller exists without WalletKit, a browser identity source
+      because describeVerifyContext would otherwise say "Verified by
+      WalletConnect" plus the matching siweOriginFor branch, and a
+      WalletConnect → EIP-1193 error-code translation); first-hand origin
+      replaces the self-reported dApp name and makes the SIWE domain check
+      exact but proves nothing about a site's honesty. THE LIBRARY'S
+      DEFAULTS ARE UNSAFE FOR A WALLET (read from the 13.16.1 source, B1
+      confirmed by running its code): B1 originWhitelist is a prefix match
+      (https://app.uniswap.org also admits
+      https://app.uniswap.org.attacker.example and …@evil.example); B2 the
+      Android bridge is exposed to every frame of every origin and the
+      main-frame flag is dropped; B3 Android's fallback bridge reports the
+      top page's URL for every frame; B4 Android page-start injection is
+      documented as "not 100% reliable"; B5 Android grants a page's camera
+      request with no prompt when the app already holds the permission
+      (which this wallet does for QR scanning); B6 allowlist-rejected
+      navigations are handed to the OS; B7 Android downloads carry the
+      site's cookies; B8 setSupportMultipleWindows must stay true
+      (CVE-2020-6506). B3, B5, B7 and the stronger fixes for B2/B4 are
+      native changes a development build must carry. RECOMMENDATION: keep
+      WalletConnect primary; at most an allowlisted-sites slice on test
+      networks behind an enforced readiness row dapp-browser; mainnet
+      waits on a development build with the native fixes and a device
+      test. Store policy (primary text quoted): Apple 2.5.6 met (WebKit);
+      whether 4.7 "mini apps" applies is unclear and B5 runs against
+      4.7.3; 3.1.1 argues against NFT marketplaces on the allowlist;
+      Google Play's Device and Network Abuse policy bans a WebView
+      JavaScript interface that loads untrusted http content or URLs from
+      intents; neither store has dApp-browser-specific text. Could not
+      verify: WEB_MESSAGE_LISTENER support on the emulator/phones, iframe
+      access to the iOS handler, B5 in practice, clipboard reads, user
+      agents, Safe Browsing's data flow, Apple's application of 4.7.
+      DECISION FOR THE CHAIRPERSON: whether to build the allowlisted slice
+      at all for this prototype.
