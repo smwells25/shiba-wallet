@@ -124,7 +124,12 @@ examples/demo.mjs          Offline end-to-end engine demo
   secrets only through the ADBKeyboard IME and redact every UI dump.
 - Every slice is verified by the CTO in an isolated worktree with the
   offline runner before it is pushed, then recorded here, then CI is
-  checked.
+  checked. The verify worktree must resolve @shiba-wallet/* to ITS OWN
+  packages: its app/node_modules is a real directory of symlinks into
+  the main checkout's app/node_modules except @shiba-wallet, whose
+  entries point at the worktree's packages (lesson of 2026-10-09: with
+  a plain symlinked app/node_modules the app checks ran against the
+  main checkout's dist, i.e. whatever another agent was building).
 - Subagents run on Opus (the Chairperson's credit directive); one agent
   drives the emulator at a time.
 - Do not contact ZeroDev / Offchain Labs: the responsible-disclosure
