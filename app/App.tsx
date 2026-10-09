@@ -43,6 +43,7 @@ import { ProveOwnershipScreen } from './src/screens/ProveOwnershipScreen';
 import { SpendingLimitsScreen } from './src/screens/SpendingLimitsScreen';
 import { ImportKeyScreen } from './src/screens/ImportKeyScreen';
 import { watchOnlyScreenLayout } from './src/components/WatchOnlyGate';
+import { RecurringDueBanner } from './src/components/RecurringDueBanner';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -209,6 +210,9 @@ function Root() {
           </>
         )}
         </Stack.Navigator>
+        {/* Recurring payments (phase 15 item 1): on start and on every return to
+            the foreground, shows which are due; never sends anything. */}
+        <RecurringDueBanner />
       </NavigationContainer>
       {sepolia && status === 'ready' ? <TestnetBanner /> : null}
     </View>

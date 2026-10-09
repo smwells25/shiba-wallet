@@ -51,6 +51,8 @@ export const APP_SCRIPTS = {
   'check-qr.mjs': { kind: 'offline', summary: 'counts' },
   'check-readiness.mjs': { kind: 'offline', summary: 'counts' },
   'check-recovery.mjs': { kind: 'offline', summary: 'counts' },
+  // Phase 15 item 1: recurring payments pushed by this phone (subscription grant, key kept on the device, confirm before each payment; fakes only).
+  'check-recurring.mjs': { kind: 'offline', summary: 'counts' },
   'check-sessions.mjs': { kind: 'offline', summary: 'counts' },
   'check-settings-protection.mjs': { kind: 'offline', summary: 'counts' },
   'check-siwe.mjs': { kind: 'offline', summary: 'counts' },

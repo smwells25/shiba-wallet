@@ -851,7 +851,7 @@ console.log('check-sessions: revoke and progress copy (phase 12 rehearsal findin
   const screen = readFileSync(new URL('../src/screens/SessionsScreen.tsx', import.meta.url), 'utf8');
   const subInstall = screen.slice(screen.indexOf('const onSubInstall = async'), screen.indexOf('const onShowKey = async'));
   check('the subscription install reports progress kind "subscription"; the screen title comes from sessionProgressTitle',
-    /setProgress\(\{ kind: 'subscription'/.test(subInstall) && /\{sessionProgressTitle\(progress\.kind\)\}/.test(screen) && !/\{what\} sent to the bundler/.test(screen));
+    /setProgress\(\{\s*kind: p\.mode === 'recurring' \? 'recurring' : 'subscription',/.test(subInstall) && /\{sessionProgressTitle\(progress\.kind\)\}/.test(screen) && !/\{what\} sent to the bundler/.test(screen));
   check('the revoke confirm uses sessionRevokeKeySentence (no fixed promise to delete the key)',
     /sub=\{sessionRevokeKeySentence\(revokeTarget\.record\)\}/.test(screen) && !screen.includes(`sub="${OLD}"`));
 }

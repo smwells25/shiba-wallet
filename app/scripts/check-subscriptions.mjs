@@ -516,7 +516,7 @@ const screenSrc = readFileSync(new URL('../src/screens/SessionsScreen.tsx', impo
     at('restartSubscriptionAt(reviewed.subscription, now)') > 0 && at('restartSubscriptionAt(') < at('prepareSessionInstall(') &&
       at('prepareSessionInstall(') < at('subscriptionRequoteNeedsReview(') && at('subscriptionRequoteNeedsReview(') < at("requireLocalAuth('Approve this subscription')") &&
       at("requireLocalAuth('Approve this subscription')") < at('installSession(') && /quote: p\.quote,\s*\n\s*install: p\.install,\s*\n\s*grant: p\.grant/.test(inst));
-  check('the review explains that the start is fixed when Start is tapped', screenSrc.includes('{SUBSCRIPTION_START_NOTE}') && /when you tap Start subscription/.test(SUBSCRIPTION_START_NOTE));
+  check('the review explains that the start is fixed when Start is tapped', screenSrc.includes('{recurring ? RECURRING_START_NOTE : SUBSCRIPTION_START_NOTE}') && /when you tap Start subscription/.test(SUBSCRIPTION_START_NOTE));
 
   // Finding 2: review order and scroll position.
   const confirm = screenSrc.slice(screenSrc.indexOf('key="sub-confirm"'), screenSrc.indexOf('Technical details (the grant as installed)'));
@@ -560,7 +560,7 @@ const screenSrc = readFileSync(new URL('../src/screens/SessionsScreen.tsx', impo
     /onPress=\{\(\) => refreshRecord\(r\)\}/.test(screenSrc) && /useFocusEffect\(reloadList\)/.test(screenSrc));
 
   // Finding 7: copy.
-  check('key holder phrase has no nested parentheses', `Session key (held by ${SUBSCRIPTION_KEY_HOLDER_TEXT})`.match(/\(/g).length === 1 && screenSrc.includes('sessionKeyHolder={SUBSCRIPTION_KEY_HOLDER_TEXT}'));
+  check('key holder phrase has no nested parentheses', `Session key (held by ${SUBSCRIPTION_KEY_HOLDER_TEXT})`.match(/\(/g).length === 1 && screenSrc.includes('sessionKeyHolder={recurring ? RECURRING_KEY_HOLDER_TEXT : SUBSCRIPTION_KEY_HOLDER_TEXT}'));
 }
 
 {
@@ -676,7 +676,7 @@ console.log('check-subscriptions: phase 13 item 4 follow-ups (custom period, ins
   const blocked = subscriptionInstallFunding(q({ fee: 1_895_000n, senderBalance: 1_427_000n, deposit: 467_999n }), g, 'test ETH');
   check('balance + deposit below the install fee: NO Start, and the block names the address to fund',
     !blocked.canStart && blocked.block?.includes(`Fund the smart account address ${ACCOUNT}`) && /Nothing was signed\.$/.test(blocked.block ?? ''), blocked.block);
-  check('the review hides Start when the install cannot be paid (source)', /\{funding\.canStart \? \(\s*<Button title="Start subscription"/.test(screenSrc) && screenSrc.includes('{funding.block ? <WarningBox>{funding.block}</WarningBox> : null}'));
+  check('the review hides Start when the install cannot be paid (source)', /\{funding\.canStart \? <Button title=\{startButton\}/.test(screenSrc) && screenSrc.includes("const startButton = recurring ? 'Start recurring payment' : 'Start subscription';") && screenSrc.includes('{funding.block ? <WarningBox>{funding.block}</WarningBox> : null}'));
   const tight = subscriptionInstallFunding(q({ fee: 1_000n, senderBalance: 2_000n }), g, 'test ETH');
   check('payments + fee budget above what the install leaves: a warning, Start still offered',
     tight.canStart && /keeps at most 0\.000000000000001 test ETH/.test(tight.shortfall ?? '') && /the payments and the fee budget can use up to 0\.00000000000000103 test ETH/.test(tight.shortfall ?? ''), tight.shortfall);
@@ -808,7 +808,7 @@ console.log('\ncheck-subscriptions: fixes from the 2026-10-04 emulator run (bugs
       revokeApprovalPrompt({ source: 'erc7715' }) === 'Approve revoking this session');
   check('the screen uses them (source)',
     screenSrc.includes('await requireLocalAuth(revokeApprovalPrompt(target.record))') && screenSrc.includes('title={revokeCopy.button}') &&
-      screenSrc.includes("kind: target.record.source === 'subscription' ? 'subscription-revoke' : 'revoke',"));
+      /kind:\s*target\.record\.source === 'subscription'\s*\?\s*'subscription-revoke'\s*:\s*target\.record\.source === 'recurring'\s*\?\s*'recurring-revoke'\s*:\s*'revoke',/.test(screenSrc));
 
   // Bug 8 and the used-up quote: after a failed revoke the card is re-read
   // and the retry quotes again.

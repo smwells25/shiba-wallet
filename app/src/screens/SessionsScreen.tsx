@@ -85,6 +85,7 @@ import {
   sessionTransportFor,
   revokeApprovalPrompt,
   revokeConfirmCopy,
+  sessionCarriesTerms,
   unknownStatusFrom,
   validateGrantForAccount,
   type AllowedCallDraft,
@@ -141,6 +142,37 @@ import {
   type SubscriptionStatus,
   type SubscriptionTokenChoice,
 } from '../wallet/subscriptions';
+import {
+  RECURRING_AUDIT_NOTE,
+  RECURRING_CARD_NOTE,
+  RECURRING_COMPLETED_TEXT,
+  RECURRING_FORM_INTRO,
+  RECURRING_KEY_HOLDER_TEXT,
+  RECURRING_LATER_SLICE_NOTE,
+  RECURRING_PAY_PROMPT_NOTE,
+  RECURRING_SPENDING_NOTE,
+  RECURRING_START_NOTE,
+  RECURRING_WHILE_OPEN_NOTE,
+  describeRecurringPaymentError,
+  payRecurringPayment,
+  planRecurringPayment,
+  runRecurringPayment,
+  recurringConfirmMessage,
+  recurringDueHeadline,
+  recurringDueStateNow,
+  recurringFeeBudgetHint,
+  recurringFinalDatesLine,
+  recurringGrantFor,
+  recurringKeyStatusText,
+  recurringMeta,
+  recurringNames,
+  recurringRefusalLine,
+  recurringReview,
+  recurringShortWindowWarning,
+  recurringStatusLines,
+  recurringSummary,
+  type RecurringPaymentPlan,
+} from '../wallet/recurring';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Sessions'>;
 
@@ -187,8 +219,10 @@ interface PendingInstall {
 interface PendingSubscription extends PendingInstall {
   subscription: SubscriptionGrant;
   choice: SubscriptionTokenChoice;
-  /** The list card's title ("Subscription: <name>" or "Subscription to 0x…"). */
+  /** The list card's title ("Subscription: <name>" or "Subscription to 0x…"; "Recurring payment …" for a recurring payment). */
   recordLabel: string;
+  /** A merchant-pulled subscription, or a recurring payment this phone sends (same grant template). */
+  mode: 'subscription' | 'recurring';
   /**
    * Set when Review lowered the unedited fee-budget pre-fill so that the
    * install's own worst-case fee is kept back (wei).
@@ -282,15 +316,25 @@ export function SessionsScreen({ navigation }: Props) {
   const [pickerFor, setPickerFor] = useState<number | null>(null);
   const pending = useRef<PendingInstall | null>(null);
   const [pendingView, setPendingView] = useState<PendingInstall | null>(null);
-  const [revokeTarget, setRevokeTarget] = useState<{ record: SessionRecord; quote: AaSendQuote; bundle: AaClientBundle } | null>(
-    null,
-  );
+  const [revokeTarget, setRevokeTarget] = useState<{
+    record: SessionRecord;
+    quote: AaSendQuote;
+    bundle: AaClientBundle;
+    /** "Revoke and forget" of a completed recurring payment: forgotten once the revocation is read back. */
+    forgetAfter?: boolean;
+  } | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [subForm, setSubForm] = useState<SubscriptionFormState>(EMPTY_SUBSCRIPTION_FORM);
   const [subPickerOpen, setSubPickerOpen] = useState(false);
   const subPending = useRef<PendingSubscription | null>(null);
   const [subPendingView, setSubPendingView] = useState<PendingSubscription | null>(null);
   const [subStatuses, setSubStatuses] = useState<Record<string, SubscriptionStatus | 'loading'>>({});
+  /** Which grant the subscription form builds: a merchant-pulled subscription, or a recurring payment this phone sends. */
+  const [subMode, setSubMode] = useState<'subscription' | 'recurring'>('subscription');
+  /** The last refused payment attempt per recurring card (plain sentence; the card stays). */
+  const [payRefusals, setPayRefusals] = useState<Record<string, string>>({});
+  /** The recurring card whose payment is being checked or sent (its buttons are disabled meanwhile). */
+  const [payingKey, setPayingKey] = useState<string | null>(null);
   /** Facts for the fee-budget suggestion: the node's fee and the Kernel account's balance (null until read). */
   // The part of the install's worst-case fee the balance pays, from the last
   // review quote (null before the first review): the fee-budget pre-fill
@@ -427,7 +471,7 @@ export function SessionsScreen({ navigation }: Props) {
       void readWithFailover((node) => readSessionStatus(node, r))
         .catch((e: unknown) => unknownStatusFrom(e))
         .then((st) => setStatuses((prev) => ({ ...prev, [key]: st })));
-      if (r.source === 'subscription' && r.subscription) {
+      if (sessionCarriesTerms(r.source) && r.subscription) {
         setSubStatuses((prev) => ({ ...prev, [key]: 'loading' }));
         void readWithFailover((node) => readSubscriptionStatus(node, r))
           .catch((e: unknown): SubscriptionStatus => unknownStatusFrom(e))
@@ -669,8 +713,9 @@ export function SessionsScreen({ navigation }: Props) {
 
   // ------------------------------------------------------------ subscriptions
 
-  const onSubOpen = () => {
+  const onSubOpen = (mode: 'subscription' | 'recurring') => {
     setFormError(null);
+    setSubMode(mode);
     // "2 minutes (testing)" exists only on test networks: start from the
     // first preset this network offers.
     setSubForm({ ...EMPTY_SUBSCRIPTION_FORM, periodSeconds: subscriptionPeriodPresets(evmChain.testnet)[0]!.seconds });
@@ -747,7 +792,13 @@ export function SessionsScreen({ navigation }: Props) {
     const now = Math.floor(Date.now() / 1000);
     let subscription: SubscriptionGrant;
     let grant: SessionKeyGrant;
-    const names = subscriptionNames(subForm.label, subForm.merchant, nameFor(subForm.merchant.trim()));
+    const mode = subMode;
+    const names =
+      mode === 'recurring'
+        ? recurringNames(subForm.label, subForm.merchant, nameFor(subForm.merchant.trim()))
+        : subscriptionNames(subForm.label, subForm.merchant, nameFor(subForm.merchant.trim()));
+    // The same engine grant for both (recurringGrantFor is subscriptionGrantFor).
+    const grantFor = mode === 'recurring' ? recurringGrantFor : subscriptionGrantFor;
     try {
       subscription = buildSubscription(
         {
@@ -762,7 +813,7 @@ export function SessionsScreen({ navigation }: Props) {
         { now, account, testnet: evmChain.testnet },
       );
       // The engine's refusal (validateSubscription / validateSessionKeyGrant) verbatim.
-      grant = subscriptionGrantFor(subscription, key.address, { account, now });
+      grant = grantFor(subscription, key.address, { account, now });
     } catch (e) {
       key.privateKey.fill(0);
       setFormError(e instanceof Error ? e.message : String(e));
@@ -816,7 +867,7 @@ export function SessionsScreen({ navigation }: Props) {
         if (refit.wei < subscription.feeBudgetWei) {
           feeBudgetLowered = { from: subscription.feeBudgetWei, to: refit.wei, keptBack };
           subscription = { ...subscription, feeBudgetWei: refit.wei };
-          grant = subscriptionGrantFor(subscription, key.address, { account, now });
+          grant = grantFor(subscription, key.address, { account, now });
           const lowered = grant;
           ({
             value: { install, quote },
@@ -833,6 +884,7 @@ export function SessionsScreen({ navigation }: Props) {
         subscription,
         choice,
         recordLabel: names.recordLabel,
+        mode,
         feeBudgetLowered,
       };
       setSubPendingView(subPending.current);
@@ -862,7 +914,8 @@ export function SessionsScreen({ navigation }: Props) {
     try {
       const now = Math.floor(Date.now() / 1000);
       const restarted = restartSubscriptionAt(reviewed.subscription, now);
-      const grant = subscriptionGrantFor(restarted, reviewed.grant.sessionKey, { account, now });
+      const grantFor = reviewed.mode === 'recurring' ? recurringGrantFor : subscriptionGrantFor;
+      const grant = grantFor(restarted, reviewed.grant.sessionKey, { account, now });
       const {
         value: { install, quote },
         bundle: quotedOn,
@@ -883,7 +936,10 @@ export function SessionsScreen({ navigation }: Props) {
       setPhase('sub-confirm');
       return;
     }
-    const auth = await requireLocalAuth('Approve this subscription');
+    const auth =
+      p.mode === 'recurring'
+        ? await requireLocalAuth('Approve this recurring payment')
+        : await requireLocalAuth('Approve this subscription');
     if (!auth.ok) {
       Alert.alert('Not granted', auth.message);
       setPhase('sub-confirm');
@@ -902,19 +958,30 @@ export function SessionsScreen({ navigation }: Props) {
         accountIndex: activeAccount.index,
         accountKind: resolution.kind,
         label: p.recordLabel,
-        source: 'subscription',
-        subscription: subscriptionMeta(p.subscription, p.choice),
-        // Kept in the vault only until it is handed to the merchant.
+        ...(p.mode === 'recurring'
+          ? // A recurring payment's key stays in the vault for its whole life
+            // (never handed over); this wallet sends each payment with it.
+            { source: 'recurring' as const, subscription: recurringMeta(p.subscription, p.choice) }
+          : { source: 'subscription' as const, subscription: subscriptionMeta(p.subscription, p.choice) }),
+        // A subscription's key is kept in the vault only until it is handed to the merchant.
         sessionPrivateKey: p.privateKey,
         store: AsyncStorage,
         vault: sessionKeyVault,
         // Same explicit, owner-signed install as every session.
         submit: (q) => signWith(EVM_CHAIN_ID, owner, (signer) => sendAa(sendBundle, signer, q)),
       });
-      const finalTerms = subscriptionFinalDatesLine(p.subscription);
+      const finalTerms =
+        p.mode === 'recurring' ? recurringFinalDatesLine(p.subscription) : subscriptionFinalDatesLine(p.subscription);
       discardPending();
       waitingFor.current.add(userOpHash);
-      setProgress({ kind: 'subscription', userOpHash, state: 'pending', txHash: null, detail: null, finalTerms });
+      setProgress({
+        kind: p.mode === 'recurring' ? 'recurring' : 'subscription',
+        userOpHash,
+        state: 'pending',
+        txHash: null,
+        detail: null,
+        finalTerms,
+      });
       setPhase('progress');
       void finalizeSessionInstall(sendBundle, record, AsyncStorage).then(
         ({ receipt, status }) =>
@@ -1038,11 +1105,97 @@ export function SessionsScreen({ navigation }: Props) {
     );
   };
 
-  const onRevokeQuote = async (record: SessionRecord) => {
+  // ------------------------------------------------------------ recurring payments
+
+  /** Shows a refused payment in plain words and keeps it on the card (the card stays). */
+  const showPayRefusal = (record: SessionRecord, e: unknown) => {
+    const key = sessionRecordKey(record.chain, record.account, record.permissionId);
+    const { title, detail } = describeRecurringPaymentError(
+      e,
+      { accountType: bundle?.accountType ?? 'kernel-v3.3', symbol },
+      describeSendError,
+    );
+    Alert.alert(title, detail);
+    setPayRefusals((prev) => ({ ...prev, [key]: recurringRefusalLine(detail) }));
+    refreshRecord(record);
+  };
+
+  /**
+   * The confirmation dialog of a payment: resolves true ONLY when the user
+   * taps "Send payment"; Cancel, the back button or tapping outside resolve
+   * false.
+   */
+  const confirmPaymentDialog = (plan: RecurringPaymentPlan) =>
+    new Promise<boolean>((resolve) => {
+      Alert.alert(
+        'Send this payment now?',
+        recurringConfirmMessage(plan, { nativeSymbol: symbol, payeeName: nameFor(plan.terms.merchant) }),
+        [
+          { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+          { text: 'Send payment', onPress: () => resolve(true) },
+        ],
+        { cancelable: true, onDismiss: () => resolve(false) },
+      );
+    });
+
+  /**
+   * A due recurring payment (phase 15 item 1). NEVER automatic: through
+   * runRecurringPayment, the plan re-reads the chain (no key, no bundler),
+   * then the confirmation dialog opens, and only "Send payment" sends.
+   * There is deliberately no requireLocalAuth here: that gate opens the
+   * recovery phrase when it is protected, and a payment must never read the
+   * phrase. The payment key's own vault read shows the system prompt "Use
+   * the session key" when that key is stored with biometric protection.
+   */
+  const onPayNow = async (record: SessionRecord) => {
+    if (!bundle) return;
+    const payBundle = bundle;
+    const key = sessionRecordKey(record.chain, record.account, record.permissionId);
+    setPayingKey(key);
+    try {
+      const run = await runRecurringPayment({
+        plan: () => planRecurringPayment({ node: payBundle.node, record }),
+        confirm: (plan) => {
+          setPayingKey(null);
+          return confirmPaymentDialog(plan);
+        },
+        pay: (plan) => {
+          setPayingKey(key);
+          return payRecurringPayment({ bundle: payBundle, plan, vault: sessionKeyVault });
+        },
+      });
+      if (run.outcome !== 'sent') return;
+      const { userOpHash, client } = run.result;
+      setPayRefusals((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+      setProgress({ kind: 'recurring-payment', userOpHash, state: 'pending', txHash: null, detail: null });
+      setPhase('progress');
+      void client.waitForReceipt(userOpHash, { timeoutMs: 120_000, pollMs: 3_000 }).then(
+        (raw) => {
+          const summary = summarizeAaReceipt(raw);
+          setProgress((prev) =>
+            prev && prev.userOpHash === userOpHash
+              ? { ...prev, state: summary.success === false ? 'failed' : 'done', txHash: summary.txHash }
+              : prev,
+          );
+        },
+        () => setProgress((prev) => (prev && prev.userOpHash === userOpHash ? { ...prev, state: 'timeout' } : prev)),
+      );
+    } catch (e) {
+      showPayRefusal(record, e);
+    } finally {
+      setPayingKey(null);
+    }
+  };
+
+  const onRevokeQuote = async (record: SessionRecord, options: { forgetAfter?: boolean } = {}) => {
     if (!owner) return;
     try {
       const { value: quote, bundle: quotedOn } = await quoteOnNode((b) => prepareSessionRevoke(b, owner, record));
-      setRevokeTarget({ record, quote, bundle: quotedOn });
+      setRevokeTarget({ record, quote, bundle: quotedOn, ...(options.forgetAfter ? { forgetAfter: true } : {}) });
       setPhase('revoke-confirm');
     } catch (e) {
       const { title, detail } = describe(e, 'quote');
@@ -1084,7 +1237,12 @@ export function SessionsScreen({ navigation }: Props) {
       setRevokeTarget(null);
       waitingFor.current.add(userOpHash);
       setProgress({
-        kind: target.record.source === 'subscription' ? 'subscription-revoke' : 'revoke',
+        kind:
+          target.record.source === 'subscription'
+            ? 'subscription-revoke'
+            : target.record.source === 'recurring'
+              ? 'recurring-revoke'
+              : 'revoke',
         userOpHash,
         state: 'pending',
         txHash: null,
@@ -1092,7 +1250,7 @@ export function SessionsScreen({ navigation }: Props) {
       });
       setPhase('progress');
       void finalizeSessionRevoke(sendBundle, record, AsyncStorage).then(
-        ({ receipt, status }) =>
+        ({ record: settled, receipt, status }) => {
           setProgress((prev) =>
             prev && prev.userOpHash === userOpHash
               ? {
@@ -1102,7 +1260,22 @@ export function SessionsScreen({ navigation }: Props) {
                   detail: sessionStatusText(status),
                 }
               : prev,
-          ),
+          );
+          // "Revoke and forget" (a completed recurring payment): forgotten only
+          // once the chain shows the permission removed (forgetSession checks
+          // again and refuses otherwise).
+          if (target.forgetAfter && receipt.success !== false && status.kind === 'revoked') {
+            forgetSession({ record: settled, node: sendBundle.node, store: AsyncStorage, vault: sessionKeyVault }).then(
+              () => {
+                setProgress((prev) =>
+                  prev && prev.userOpHash === userOpHash ? { ...prev, detail: 'Revoked and forgotten' } : prev,
+                );
+                reloadList();
+              },
+              () => reloadList(),
+            );
+          }
+        },
         () => setProgress((prev) => (prev && prev.userOpHash === userOpHash ? { ...prev, state: 'timeout' } : prev)),
       );
       reloadList();
@@ -1195,6 +1368,11 @@ export function SessionsScreen({ navigation }: Props) {
         </Text>
         {progress.kind === 'test' ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>Signed by the session key only.</Text>
+        ) : null}
+        {progress.kind === 'recurring-payment' ? (
+          <Text style={[styles.hint, { color: theme.textMuted }]}>
+            Signed by this recurring payment’s own key only, not by your account key.
+          </Text>
         ) : null}
         {progress.finalTerms ? <Text style={[styles.hint, { color: theme.text }]}>{progress.finalTerms}</Text> : null}
         {progress.state === 'pending' ? (
@@ -1320,14 +1498,25 @@ export function SessionsScreen({ navigation }: Props) {
   if ((phase === 'sub-confirm' || phase === 'sub-sending') && subPendingView && account) {
     const q = subPendingView.quote;
     const sub = subPendingView.subscription;
-    const review = subscriptionReview(sub, {
-      tokenSymbol: subPendingView.choice.symbol,
-      tokenDecimals: subPendingView.choice.decimals,
-      nativeSymbol: symbol,
-      merchantName: nameFor(sub.merchant),
-    });
+    // A recurring payment (phase 15 item 1) shares the grant, the install
+    // and every funding rule with a subscription; only its words differ.
+    const recurring = subPendingView.mode === 'recurring';
+    const review = recurring
+      ? recurringReview(sub, {
+          tokenSymbol: subPendingView.choice.symbol,
+          tokenDecimals: subPendingView.choice.decimals,
+          nativeSymbol: symbol,
+          payeeName: nameFor(sub.merchant),
+        })
+      : subscriptionReview(sub, {
+          tokenSymbol: subPendingView.choice.symbol,
+          tokenDecimals: subPendingView.choice.decimals,
+          nativeSymbol: symbol,
+          merchantName: nameFor(sub.merchant),
+        });
     const [batchCaveat, ...otherCaveats] = review.caveats;
-    const shortWindow = subscriptionShortWindowWarning(sub);
+    const shortWindow = recurring ? recurringShortWindowWarning(sub) : subscriptionShortWindowWarning(sub);
+    const startButton = recurring ? 'Start recurring payment' : 'Start subscription';
     // The displayed worst case includes the re-quote tolerance of Start
     // (subscriptionInstallFeeCeiling), and the funding lines use it too.
     const shown = withSubscriptionFeeCeiling(q);
@@ -1336,13 +1525,22 @@ export function SessionsScreen({ navigation }: Props) {
     return (
       <ScrollView key="sub-confirm" style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
-        <Text style={[styles.title, { color: theme.text }]}>Start this subscription?</Text>
+        <Text style={[styles.title, { color: theme.text }]}>
+          {recurring ? 'Start this recurring payment?' : 'Start this subscription?'}
+        </Text>
         {header}
         {/* Order as recorded for phase 12 item 2 and DEMO step 10: the batch
             warning FIRST, then the plain sentence, then the on-chain lines. */}
         {batchCaveat ? <WarningBox>{batchCaveat}</WarningBox> : null}
         <Text style={[styles.ok, { color: theme.text }]}>{review.sentence}</Text>
-        <Text style={[styles.hint, { color: theme.textMuted }]}>{SUBSCRIPTION_START_NOTE}</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{recurring ? RECURRING_START_NOTE : SUBSCRIPTION_START_NOTE}</Text>
+        {recurring ? (
+          <>
+            <Text style={[styles.hint, { color: theme.text }]}>{RECURRING_WHILE_OPEN_NOTE}</Text>
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{RECURRING_PAY_PROMPT_NOTE}</Text>
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{RECURRING_SPENDING_NOTE}</Text>
+          </>
+        ) : null}
         {shortWindow ? <WarningBox>{shortWindow}</WarningBox> : null}
         <Text style={[styles.label, { color: theme.textMuted }]}>Your account enforces on-chain:</Text>
         {review.enforced.map((line) => (
@@ -1355,14 +1553,14 @@ export function SessionsScreen({ navigation }: Props) {
             {line}
           </Text>
         ))}
-        <Text style={[styles.hint, { color: theme.textMuted }]}>{SUBSCRIPTION_AUDIT_NOTE}</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{recurring ? RECURRING_AUDIT_NOTE : SUBSCRIPTION_AUDIT_NOTE}</Text>
         <Text style={[styles.label, { color: theme.textMuted }]}>Technical details (the grant as installed)</Text>
         <GrantReview
           grant={subPendingView.grant}
           account={account}
           symbol={symbol}
           nameFor={nameFor}
-          sessionKeyHolder={SUBSCRIPTION_KEY_HOLDER_TEXT}
+          sessionKeyHolder={recurring ? RECURRING_KEY_HOLDER_TEXT : SUBSCRIPTION_KEY_HOLDER_TEXT}
           permissionId={toHex(subPendingView.install.permissionId)}
         />
         <Text style={[styles.hint, { color: theme.textMuted }]}>{SESSIONS_INSTALL_MODE_NOTE}</Text>
@@ -1379,7 +1577,7 @@ export function SessionsScreen({ navigation }: Props) {
             q.sponsored
               ? null
               : `The bundler's estimate (${formatUnits(q.fee, 18, 18)} ${symbol}) plus up to ` +
-                `${SUBSCRIPTION_REQUOTE_FEE_TOLERANCE_PERCENT}% for the new quote taken when you tap Start subscription ` +
+                `${SUBSCRIPTION_REQUOTE_FEE_TOLERANCE_PERCENT}% for the new quote taken when you tap ${startButton} ` +
                 '(the clock restarts then). Nothing above this is ever signed; a higher fee brings you back here.'
           }
           theme={theme}
@@ -1414,9 +1612,7 @@ export function SessionsScreen({ navigation }: Props) {
           </View>
         ) : (
           <>
-            {funding.canStart ? (
-              <Button title="Start subscription" onPress={() => void onSubInstall()} />
-            ) : null}
+            {funding.canStart ? <Button title={startButton} onPress={() => void onSubInstall()} /> : null}
             <Button
               title="Back"
               variant="secondary"
@@ -1442,23 +1638,35 @@ export function SessionsScreen({ navigation }: Props) {
     const merchantMatch =
       contactsNetworkId && subForm.merchant.trim() ? matchRecipient(contactsNetworkId, subForm.merchant, contacts) : null;
     const choice = tokenChoices[subForm.choiceIndex];
+    const recurringForm = subMode === 'recurring';
     return (
       <ScrollView key="sub-form" style={screenStyle(theme)} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <Text style={[styles.title, { color: theme.text }]}>New subscription</Text>
+        <Text style={[styles.title, { color: theme.text }]}>{recurringForm ? 'New recurring payment' : 'New subscription'}</Text>
         {header}
-        <Text style={[styles.hint, { color: theme.textMuted }]}>
-          Lets one merchant take up to a fixed amount once per period, until the payments run out or you
-          revoke. A new key is created for the merchant; your account enforces the limits on-chain.
+        {recurringForm ? (
+          <>
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{RECURRING_FORM_INTRO}</Text>
+            <WarningBox>{RECURRING_WHILE_OPEN_NOTE}</WarningBox>
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{RECURRING_LATER_SLICE_NOTE}</Text>
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{RECURRING_SPENDING_NOTE}</Text>
+          </>
+        ) : (
+          <Text style={[styles.hint, { color: theme.textMuted }]}>
+            Lets one merchant take up to a fixed amount once per period, until the payments run out or you
+            revoke. A new key is created for the merchant; your account enforces the limits on-chain.
+          </Text>
+        )}
+        <Text style={[styles.label, { color: theme.textMuted }]}>
+          {recurringForm ? 'Pay to (receives the payments)' : 'Merchant (receives the payments)'}
         </Text>
-        <Text style={[styles.label, { color: theme.textMuted }]}>Merchant (receives the payments)</Text>
         <TextInput
           value={subForm.merchant}
           onChangeText={(t) => setSubForm((prev) => ({ ...prev, merchant: t }))}
-          placeholder="Merchant address (0x…)"
+          placeholder={recurringForm ? 'Recipient address (0x…)' : 'Merchant address (0x…)'}
           placeholderTextColor={theme.textMuted}
           autoCapitalize="none"
           autoCorrect={false}
-          accessibilityLabel="Merchant address"
+          accessibilityLabel={recurringForm ? 'Recipient address' : 'Merchant address'}
           style={[styles.input, { color: theme.text, borderColor: theme.border }]}
         />
         {merchantMatch && merchantMatch.kind !== 'none' ? (
@@ -1546,16 +1754,24 @@ export function SessionsScreen({ navigation }: Props) {
           // Typing makes the figure the user's own; clearing the field goes
           // back to the suggestion that follows the payment count.
           onChangeText={(t) => setSubForm((prev) => ({ ...prev, feeBudget: t, feeEdited: t.trim() !== '' }))}
-          placeholder={`Total ${symbol} the merchant's payments may spend on network fees`}
+          placeholder={
+            recurringForm
+              ? `Total ${symbol} the payments may spend on network fees`
+              : `Total ${symbol} the merchant's payments may spend on network fees`
+          }
           placeholderTextColor={theme.textMuted}
           keyboardType="decimal-pad"
           accessibilityLabel="Fee budget"
           style={[styles.input, { color: theme.text, borderColor: theme.border }]}
         />
-        <Text style={[styles.hint, { color: theme.textMuted }]}>
-          Each payment’s network fee is paid by your account. The budget caps the total; without it a merchant
-          could pay itself high fees from your {symbol}.
-        </Text>
+        {recurringForm ? (
+          <Text style={[styles.hint, { color: theme.textMuted }]}>{recurringFeeBudgetHint(symbol)}</Text>
+        ) : (
+          <Text style={[styles.hint, { color: theme.textMuted }]}>
+            Each payment’s network fee is paid by your account. The budget caps the total; without it a merchant
+            could pay itself high fees from your {symbol}.
+          </Text>
+        )}
         {!subForm.feeEdited ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
             Suggested from today’s network fee for the number of payments above; it follows that number until you
@@ -1586,7 +1802,7 @@ export function SessionsScreen({ navigation }: Props) {
         <TextInput
           value={subForm.label}
           onChangeText={(t) => setSubForm((prev) => ({ ...prev, label: t }))}
-          placeholder="e.g. the service’s name"
+          placeholder={recurringForm ? 'e.g. rent' : 'e.g. the service’s name'}
           placeholderTextColor={theme.textMuted}
           maxLength={64}
           style={[styles.input, { color: theme.text, borderColor: theme.border }]}
@@ -1766,6 +1982,21 @@ export function SessionsScreen({ navigation }: Props) {
   }
 
   // ------------------------------------------------------------ list
+  // Recurring payments (phase 15 item 1): their due state comes from the
+  // on-chain reads refreshRecord makes on every focus; a due one is only
+  // OFFERED (the card's button, then a confirmation), never sent here.
+  const recurringList = sortSubscriptionRecords(records.filter((r) => r.source === 'recurring' && r.subscription)).map(
+    (record) => {
+      const key = sessionRecordKey(record.chain, record.account, record.permissionId);
+      const subStatus = subStatuses[key];
+      return {
+        record,
+        key,
+        due: subStatus === undefined || subStatus === 'loading' ? null : recurringDueStateNow(record, subStatus),
+      };
+    },
+  );
+  const dueHeadline = recurringDueHeadline(recurringList.filter((x) => x.due?.kind === 'due').length);
   return (
     <ScrollView key="list" style={screenStyle(theme)} contentContainerStyle={styles.content}>
       {readiness ? <TestNetworksOnlyCard feature={readiness.feature} hint={readiness.hint} /> : null}
@@ -1789,9 +2020,16 @@ export function SessionsScreen({ navigation }: Props) {
           <Button
             title="New subscription"
             variant="secondary"
-            onPress={onSubOpen}
+            onPress={() => onSubOpen('subscription')}
             disabled={listFlags.unreadable || readiness !== null}
           />
+          <Button
+            title="New recurring payment"
+            variant="secondary"
+            onPress={() => onSubOpen('recurring')}
+            disabled={listFlags.unreadable || readiness !== null}
+          />
+          {dueHeadline ? <WarningBox>{dueHeadline}</WarningBox> : null}
           {listFlags.unreadable ? (
             <>
               <WarningBox>
@@ -1805,6 +2043,88 @@ export function SessionsScreen({ navigation }: Props) {
               Some saved sessions could not be read and are not shown.
             </Text>
           ) : null}
+          <Text style={[styles.sectionTitle, { color: theme.text }]}>Recurring payments</Text>
+          {recurringList.length === 0 ? (
+            <Text style={[styles.hint, { color: theme.textMuted }]}>None on this device.</Text>
+          ) : (
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{RECURRING_CARD_NOTE}</Text>
+          )}
+          {recurringList.map(({ record: r, key, due }) => {
+            const status = statuses[key];
+            const settled = status !== undefined && status !== 'loading';
+            const terms = termsOf(r);
+            const review = recurringReview(terms, {
+              tokenSymbol: r.subscription!.tokenSymbol,
+              tokenDecimals: r.subscription!.tokenDecimals,
+              nativeSymbol: symbol,
+              payeeName: nameFor(terms.merchant),
+            });
+            const busy = payingKey !== null;
+            return (
+              <View key={key} style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+                <Text style={[styles.cardTitle, { color: theme.text }]}>{r.label}</Text>
+                <Text style={[styles.hint, { color: theme.text }]}>{recurringSummary(r, nameFor(terms.merchant))}</Text>
+                <Text style={[styles.status, { color: settled && status.kind === 'active' ? theme.success : theme.text }]}>
+                  {settled ? sessionStatusText(status) : 'Reading status…'}
+                </Text>
+                {due
+                  ? recurringStatusLines(r, due, symbol).map((line) => (
+                      <Text key={line} style={[styles.hint, { color: theme.text }]}>
+                        {line}
+                      </Text>
+                    ))
+                  : null}
+                <Text style={[styles.hint, { color: theme.textMuted }]}>{recurringKeyStatusText(r)}</Text>
+                <Text style={[styles.hint, { color: theme.textMuted }]}>{sessionLocalStatusText(r)}</Text>
+                {pendingSessionOperation(r) || payingKey === key ? <ActivityIndicator color={theme.accent} /> : null}
+                {payRefusals[key] ? <WarningBox>{payRefusals[key]}</WarningBox> : null}
+                {due?.kind === 'due' ? (
+                  <Button
+                    title="Send the payment now"
+                    accessibilityHint="Checks the payment with the network, then asks you to confirm before anything is sent."
+                    onPress={() => void onPayNow(r)}
+                    disabled={busy || readiness !== null}
+                  />
+                ) : null}
+                <Button
+                  title="Refresh status"
+                  variant="secondary"
+                  accessibilityLabel={`Refresh the status of ${r.label}`}
+                  onPress={() => refreshRecord(r)}
+                />
+                {review.caveats[0] ? <WarningBox>{review.caveats[0]}</WarningBox> : null}
+                <Text style={[styles.hint, { color: theme.text }]}>{review.sentence}</Text>
+                <Row label="Permission id" value={r.permissionId} mono theme={theme} />
+                {r.installUserOpHash ? (
+                  <Row label="Set-up UserOperation hash" value={r.installUserOpHash} mono theme={theme} />
+                ) : null}
+                {r.revokeUserOpHash ? (
+                  <Row label="Revocation UserOperation hash" value={r.revokeUserOpHash} mono theme={theme} />
+                ) : null}
+                {due?.kind === 'completed' && settled && status.kind === 'active' ? (
+                  <>
+                    <WarningBox>{RECURRING_COMPLETED_TEXT}</WarningBox>
+                    <Button
+                      title="Revoke and forget"
+                      variant="destructive"
+                      onPress={() => void onRevokeQuote(r, { forgetAfter: true })}
+                      disabled={busy}
+                    />
+                  </>
+                ) : settled && (status.kind === 'active' || status.kind === 'unknown') ? (
+                  <Button
+                    title="Revoke (stop the recurring payment)"
+                    variant="destructive"
+                    onPress={() => void onRevokeQuote(r)}
+                    disabled={busy}
+                  />
+                ) : null}
+                {settled && (status.kind === 'revoked' || status.kind === 'not-installed') ? (
+                  <Button title="Forget" variant="secondary" onPress={() => onForget(r)} />
+                ) : null}
+              </View>
+            );
+          })}
           <Text style={[styles.sectionTitle, { color: theme.text }]}>Subscriptions</Text>
           {records.filter((r) => r.source === 'subscription').length === 0 ? (
             <Text style={[styles.hint, { color: theme.textMuted }]}>None on this device.</Text>
@@ -1872,10 +2192,10 @@ export function SessionsScreen({ navigation }: Props) {
             },
           )}
           <Text style={[styles.sectionTitle, { color: theme.text }]}>Sessions on this account</Text>
-          {records.filter((r) => r.source !== 'subscription').length === 0 ? (
+          {records.filter((r) => !sessionCarriesTerms(r.source)).length === 0 ? (
             <Text style={[styles.hint, { color: theme.textMuted }]}>None on this device.</Text>
           ) : null}
-          {records.filter((r) => r.source !== 'subscription').map((r) => {
+          {records.filter((r) => !sessionCarriesTerms(r.source)).map((r) => {
             const key = sessionRecordKey(r.chain, r.account, r.permissionId);
             const status = statuses[key];
             const grant = parseSessionKeyGrant(r.grant);

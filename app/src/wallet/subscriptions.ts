@@ -177,6 +177,14 @@ export const SUBSCRIPTION_PULL_GAS_ALLOWANCE = 500_000n;
 
 export const SUBSCRIPTION_KEY_EXPORT_TYPE = 'shiba-wallet:subscription-key';
 
+/**
+ * The refusal for any attempt to hand over or release a recurring payment's
+ * key (./recurring.ts): that key is created for this phone and never leaves
+ * it — the wallet itself sends each payment after the user confirms it.
+ */
+export const RECURRING_KEY_NEVER_EXPORTED =
+  'A recurring payment’s key stays on this phone and is never shown or handed over. Nothing was shown.';
+
 export const SUBSCRIPTION_KEY_WARNING =
   'This is the subscription key. Whoever holds it can take payments from your account within the ' +
   'limits above until you revoke or it expires. Give it only to the merchant, over a channel you trust. ' +
@@ -653,6 +661,9 @@ export function subscriptionHandoverOffer(
   status: SessionChainStatus | 'loading' | undefined,
   now: number = Math.floor(Date.now() / 1000),
 ): 'offer' | 'expired' | 'none' {
+  // Only a subscription's key is ever handed over; a recurring payment's
+  // key stays on this device (./recurring.ts).
+  if (record.source !== 'subscription') return 'none';
   if (!record.subscription || !record.keyHeld || record.subscription.keyExportedAt !== null) return 'none';
   if (record.localStatus !== 'installed') return 'none';
   let validUntil: number;
@@ -749,6 +760,7 @@ export async function buildSubscriptionKeyExport(
   vault: SessionKeyVault,
   now: number = Math.floor(Date.now() / 1000),
 ): Promise<SubscriptionKeyExport> {
+  if (record.source === 'recurring') throw new Error(RECURRING_KEY_NEVER_EXPORTED);
   if (record.source !== 'subscription' || !record.subscription) throw new Error('Not a subscription.');
   if (!record.keyHeld || record.subscription.keyExportedAt !== null) {
     throw new Error('The key was already handed over and is no longer on this device. Revoke and create a new subscription if it was lost.');
@@ -959,6 +971,7 @@ export async function markSubscriptionKeyExported(
   vault: SessionKeyVault,
   now: number = Date.now(),
 ): Promise<SessionRecord> {
+  if (record.source === 'recurring') throw new Error(RECURRING_KEY_NEVER_EXPORTED);
   if (record.source !== 'subscription' || !record.subscription) throw new Error('Not a subscription.');
   return releaseSessionKey(record, store, vault, { subscription: { ...record.subscription, keyExportedAt: now } });
 }
@@ -980,7 +993,7 @@ export const SUBSCRIPTION_KEY_EXPIRED_STATUS_TEXT =
  * the previous wording.
  */
 export function subscriptionKeyStatusText(record: SessionRecord, handover?: 'offer' | 'expired' | 'none'): string {
-  if (!record.subscription) return '';
+  if (!record.subscription || record.source !== 'subscription') return '';
   if (record.subscription.keyExportedAt !== null) {
     return `Key handed to the merchant ${new Date(record.subscription.keyExportedAt).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC')} and deleted from this device.`;
   }

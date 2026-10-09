@@ -168,9 +168,21 @@ export type SessionAccountKind = 'kernel-v3.3' | 'kernel-7702';
 
 /**
  * Where a session came from: the manual grant form, a dApp's ERC-7715
- * request, or the subscription template (./subscriptions.ts).
+ * request, the subscription template (./subscriptions.ts), or a recurring
+ * payment (./recurring.ts): the same grant template as a subscription, but
+ * its key never leaves this device and the wallet itself sends each payment
+ * after the user confirms it.
  */
-export type SessionSource = 'manual' | 'erc7715' | 'subscription';
+export type SessionSource = 'manual' | 'erc7715' | 'subscription' | 'recurring';
+
+/**
+ * True for the sources whose record carries subscription terms
+ * (SessionSubscriptionMeta): subscriptions and recurring payments. Both use
+ * the engine's subscription grant template.
+ */
+export function sessionCarriesTerms(source: SessionSource): boolean {
+  return source === 'subscription' || source === 'recurring';
+}
 
 /**
  * Subscription terms stored with a session record (source 'subscription').
@@ -229,7 +241,7 @@ export interface SessionRecord {
   installUserOpHash: string | null;
   revokeUserOpHash: string | null;
   localStatus: SessionLocalStatus;
-  /** Present exactly when source is 'subscription'. */
+  /** Present exactly when source is 'subscription' or 'recurring' (sessionCarriesTerms). */
   subscription?: SessionSubscriptionMeta | null;
 }
 
@@ -292,11 +304,16 @@ function reviveRecord(value: unknown): SessionRecord | null {
     // Re-validates the stored grant (shape and rules; no clock check).
     parseSessionKeyGrant(v.grant);
     if (typeof v.label !== 'string' || v.label.length === 0 || v.label.length > 200) return null;
-    if (v.source !== 'manual' && v.source !== 'erc7715' && v.source !== 'subscription') return null;
-    const subscription = reviveSubscriptionMeta(v.subscription, v.grant);
-    if (v.source === 'subscription' ? subscription === null : v.subscription !== undefined && v.subscription !== null) {
+    if (v.source !== 'manual' && v.source !== 'erc7715' && v.source !== 'subscription' && v.source !== 'recurring') {
       return null;
     }
+    const subscription = reviveSubscriptionMeta(v.subscription, v.grant);
+    if (sessionCarriesTerms(v.source) ? subscription === null : v.subscription !== undefined && v.subscription !== null) {
+      return null;
+    }
+    // A recurring payment's key is never handed over: a stored hand-over
+    // time on one means the record was altered, so it is dropped.
+    if (v.source === 'recurring' && subscription !== null && subscription.keyExportedAt !== null) return null;
     if (v.dappUrl !== null && typeof v.dappUrl !== 'string') return null;
     if (typeof v.createdAt !== 'number' || !Number.isFinite(v.createdAt)) return null;
     if (v.installMode !== 'explicit') return null;
@@ -797,12 +814,13 @@ export async function installSession(args: {
   label: string;
   source: SessionSource;
   dappUrl?: string | null;
-  /** Required for source 'subscription' (and refused for the others). */
+  /** Required for sources 'subscription' and 'recurring' (and refused for the others). */
   subscription?: SessionSubscriptionMeta | null;
   /**
-   * Manual grants and subscriptions: the session's private key (stored in
-   * the vault; a subscription's key leaves it when it is handed to the
-   * merchant, see releaseSessionKey). ERC-7715: null (the dApp holds it).
+   * Manual grants, subscriptions and recurring payments: the session's
+   * private key (stored in the vault; a subscription's key leaves it when it
+   * is handed to the merchant, see releaseSessionKey; a recurring payment's
+   * key never leaves it). ERC-7715: null (the dApp holds it).
    */
   sessionPrivateKey: Uint8Array | null;
   store: KeyValueStore;
@@ -824,8 +842,16 @@ export async function installSession(args: {
   ) {
     throw new Error('The quoted operation is not the session install it claims to be. Nothing was signed.');
   }
-  if ((args.source === 'subscription') !== Boolean(args.subscription)) {
+  if (sessionCarriesTerms(args.source) !== Boolean(args.subscription)) {
     throw new Error('Subscription terms belong exactly to subscription grants. Nothing was signed.');
+  }
+  if (args.source === 'recurring') {
+    // The wallet sends each recurring payment itself, so the key must be
+    // stored on this device, and it is never handed over.
+    if (!args.sessionPrivateKey) throw new Error('A recurring payment needs its key on this device. Nothing was signed.');
+    if (args.subscription!.keyExportedAt !== null) {
+      throw new Error('A recurring payment’s key is never handed over. Nothing was signed.');
+    }
   }
   if (args.subscription && !subscriptionMatchesGrant(parseSubscription(args.subscription.terms), args.grant)) {
     throw new Error('The subscription terms do not match the grant being installed. Nothing was signed.');
@@ -1184,9 +1210,11 @@ export async function sendSessionCalls(args: {
     throw new Error(
       record.source === 'subscription'
         ? 'This subscription’s key was handed to the merchant and is no longer on this device.'
-        : record.source === 'erc7715'
-          ? 'This session’s key is held by the dApp that requested it, not by this wallet.'
-          : 'This session’s key is no longer on this device.',
+        : record.source === 'recurring'
+          ? 'This recurring payment’s key is no longer on this device (it was revoked or removed), so it cannot pay.'
+          : record.source === 'erc7715'
+            ? 'This session’s key is held by the dApp that requested it, not by this wallet.'
+            : 'This session’s key is no longer on this device.',
     );
   }
   if (eip155Decimal(record.chain) !== bundle.chainId) {
@@ -1245,12 +1273,12 @@ export function sessionOperationNonceKey(record: SessionRecord): bigint {
 
 /**
  * Whether the Sessions screen may offer "Test this session". Never for a
- * subscription: its only allowed call is a payment to the merchant, and any
- * operation — even a zero-value one — would use up one of the merchant's
- * rate-limited pulls (RateLimitPolicy counts operations).
+ * subscription or a recurring payment: the only allowed call is a payment,
+ * and any operation — even a zero-value one — would use up one of the
+ * rate-limited payments (RateLimitPolicy counts operations).
  */
 export function sessionCanBeTested(record: SessionRecord): boolean {
-  return record.source !== 'subscription' && record.keyHeld;
+  return !sessionCarriesTerms(record.source) && record.keyHeld;
 }
 
 /**
@@ -1279,7 +1307,15 @@ export function sessionRevokeKeySentence(record: Pick<SessionRecord, 'keyHeld' |
   );
 }
 
-export type SessionProgressKind = 'install' | 'subscription' | 'revoke' | 'subscription-revoke' | 'test';
+export type SessionProgressKind =
+  | 'install'
+  | 'subscription'
+  | 'revoke'
+  | 'subscription-revoke'
+  | 'test'
+  | 'recurring'
+  | 'recurring-payment'
+  | 'recurring-revoke';
 
 /** Title of the Sessions screen's progress view. */
 export function sessionProgressTitle(kind: SessionProgressKind): string {
@@ -1294,6 +1330,12 @@ export function sessionProgressTitle(kind: SessionProgressKind): string {
       return 'Subscription revocation sent to the bundler';
     case 'test':
       return 'Session test operation sent to the bundler';
+    case 'recurring':
+      return 'Recurring payment set-up sent to the bundler';
+    case 'recurring-payment':
+      return 'Payment sent to the bundler';
+    case 'recurring-revoke':
+      return 'Recurring payment revocation sent to the bundler';
   }
 }
 
@@ -1307,14 +1349,16 @@ export function revokeConfirmCopy(
   record: Pick<SessionRecord, 'source'>,
   title: string,
 ): { heading: string; button: string } {
-  return record.source === 'subscription'
-    ? { heading: `Revoke subscription “${title}”`, button: 'Revoke subscription' }
-    : { heading: `Revoke session “${title}”`, button: 'Revoke session' };
+  if (record.source === 'subscription') return { heading: `Revoke subscription “${title}”`, button: 'Revoke subscription' };
+  if (record.source === 'recurring') return { heading: `Stop recurring payment “${title}”`, button: 'Revoke recurring payment' };
+  return { heading: `Revoke session “${title}”`, button: 'Revoke session' };
 }
 
-/** The biometric prompt for a revocation (subscription or session wording). */
+/** The biometric prompt for a revocation (subscription, recurring payment or session wording). */
 export function revokeApprovalPrompt(record: Pick<SessionRecord, 'source'>): string {
-  return record.source === 'subscription' ? 'Approve revoking this subscription' : 'Approve revoking this session';
+  if (record.source === 'subscription') return 'Approve revoking this subscription';
+  if (record.source === 'recurring') return 'Approve revoking this recurring payment';
+  return 'Approve revoking this session';
 }
 
 /**
@@ -1329,6 +1373,11 @@ export async function releaseSessionKey(
   vault: SessionKeyVault,
   patch: Partial<Pick<SessionRecord, 'subscription'>> = {},
 ): Promise<SessionRecord> {
+  // A recurring payment's key stays on this device for its whole life; it
+  // leaves the vault only through revokeSession, forgetSession or a wipe.
+  if (record.source === 'recurring') {
+    throw new Error('A recurring payment’s key never leaves this device. Revoke the recurring payment instead.');
+  }
   if (!record.keyHeld) throw new Error('This session’s key is not on this device.');
   await vault.remove(sessionVaultId(record.chain, record.account, record.permissionId));
   return updateRecord(record, { keyHeld: false, ...patch }, store);
