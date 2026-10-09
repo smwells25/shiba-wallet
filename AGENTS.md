@@ -1628,3 +1628,80 @@ Subagents on Opus.
       agents, Safe Browsing's data flow, Apple's application of 4.7.
       DECISION FOR THE CHAIRPERSON: whether to build the allowlisted slice
       at all for this prototype.
+- [x] Item 1 — RECURRING PAYMENTS SENT BY THE PHONE ITSELF (commit
+      eb952a2; new check-recurring 114; check-subscriptions 154 and
+      check-sessions 137 unchanged; offline runner ALL GREEN in the CTO's
+      isolated worktree: engine 815, app 5,617 across 44 suites, lint
+      0/0, tsc clean; 25 mutations each caught; NOT run on a device or a
+      live network). DESIGN: recurringGrantFor delegates to
+      subscriptionGrantFor, so the template cannot drift (same CallPolicy,
+      TimestampPolicy, GasPolicy, RateLimitPolicy {period, payments,
+      startAt = the Start tap}, SKIP_SIGNATURE); the subscription form
+      gained subMode 'subscription' | 'recurring' and keeps the Start
+      re-quote, the fee-budget keep-back, the funding block and the 20%
+      re-quote ceiling. SessionSource gains 'recurring';
+      sessionCarriesTerms() for both. THE KEY NEVER LEAVES THE DEVICE:
+      buildSubscriptionKeyExport / markSubscriptionKeyExported refuse with
+      RECURRING_KEY_NEVER_EXPORTED without reading the vault;
+      releaseSessionKey refuses; subscriptionHandoverOffer is 'none';
+      sessionCanBeTested is false (a test op would use a payment slot); a
+      recurring install without the key on the device, or a stored record
+      with a hand-over time, is refused / dropped on load. NOTHING RUNS IN
+      THE BACKGROUND: app/src/components/RecurringDueBanner.tsx (mounted in
+      App.tsx inside the NavigationContainer) checks on start and on every
+      AppState 'active' through findDueRecurringPayments (public list +
+      read-only eth_calls on RateLimitPolicy / GasPolicy; no request with
+      no recurring record; nothing on mainnet — isFeatureAllowed
+      'session-keys'); it has no vault and no bundler and offers "Review"
+      (opens Sessions) or "Not now"; the Sessions screen re-reads on
+      focus and offers "Send the payment now" per due card. CONFIRM
+      BEFORE SUBMIT: runRecurringPayment({plan, confirm, pay}) —
+      planRecurringPayment re-reads the chain, refuses anything not due,
+      builds one full-amount transfer checked by assertSubscriptionPull
+      with no key read and no bundler call; the dialog "Send this payment
+      now?" (Cancel / Send payment; back and outside resolve false); pay
+      runs only on exactly true, through sendSessionCalls — the recovery
+      phrase and the owner key are never read (no requireLocalAuth, no
+      signWith on this path; a test against the real createKeyVault with a
+      fake secure store proves zero phrase reads). Catch-up: openSlotCount
+      follows RateLimitPolicy (slot k opens at nextSlotAt + k × interval,
+      capped by validUntil and the remaining count); each payment needs
+      its own confirmation. SPENDING LIMITS: evaluateBeforeSigning on the
+      transfer (no simulation, fee 0; the fee is capped on-chain by the
+      budget) before each payment; over a limit → refused with no "send
+      anyway" (that would need a device check, which would open the
+      phrase); unreadable limits fail closed; recordAcceptedSpend only
+      after the bundler accepts. REFUSALS mapped to sentences: AA22,
+      CallViolatesValueRule 0x7b5812d4, CallViolatesParamRule 0x59d52e40,
+      PolicyFailed(i) 0x3e4983f6, "AA23 reverted 0x" (revoked); the card
+      keeps "Last payment attempt refused: …". Completed plans show
+      "Revoke and forget" (forget only after finalizeSessionRevoke reads
+      back revoked). NOT ADDED (said on the form): expo-background-task /
+      expo-task-manager / notifications — a development build, OS-timed,
+      and a product decision on sending without the user present. PROMPTS:
+      Start = requireLocalAuth('Approve this recurring payment') (+ the
+      Android "Protect the new session key" write when the phrase is
+      protected: 2 on this AVD); a payment = the in-app dialog + ONE
+      "Use the session key" prompt when the key is protected, else none;
+      revoke 1; due check and banner 0. Copy (exact): form intro "Pays one
+      recipient up to a fixed amount once per period from your smart
+      account, until the payments run out or you revoke. A new payment key
+      is created on this phone and never leaves it; your account enforces
+      the limits on-chain."; the while-open box "Payments are sent only
+      while this wallet is open… Nothing is sent in the background or
+      while the wallet is closed. A payment missed while the wallet was
+      closed is not lost…"; the review opens with the batching box ("ONE
+      PAYMENT OPERATION CAN HOLD SEVERAL TRANSFERS…"), then "Pays <payee>
+      up to X every N until <date>: at most one payment per period, each
+      sent by this wallet after you confirm it."; banner "1 recurring
+      payment is due. Each is sent only after you confirm it on the
+      Sessions screen." UNVERIFIED: Android Alert onDismiss/cancelable;
+      the banner's layout below the native stack; AppState 'active' in
+      Expo Go; whether expo-secure-store prompts when reading a MISSING
+      protected key (the vault reads the protected name first — would
+      affect every standard-key session the same way); the in-app
+      sendSessionCalls path for a subscription-template grant has never
+      gone through ZeroDev live (the keeper pulled the same grant live in
+      phases 12–13). Emulator checklist (11 steps, Sepolia, Account 1,
+      payee 0x69F0…7E8a) in the builder's report; a Home "Recurring
+      payments" link is optional (Sessions already reaches it).
