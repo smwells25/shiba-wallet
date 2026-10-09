@@ -31,7 +31,7 @@ import { SmartAccountClient, requiredPrefund, toEthSignedMessageHash, withEthere
 import { ENTRYPOINT_V07, getUserOpHash, type UserOperation } from '../src/userop.js';
 import { toBytes, toHex } from '../src/encoding.js';
 import { selector } from '../src/abi.js';
-import type { JsonRpcTransport } from '../src/rpc.js';
+import { ImpossibleGasEstimateError, type JsonRpcTransport } from '../src/rpc.js';
 
 const PAYMASTER = CIRCLE_TOKEN_PAYMASTER_V07.testnetAddress;
 const USDC = '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
@@ -499,7 +499,10 @@ describe('SmartAccountClient integration through the unchanged ERC-7677 seam', (
         const op = params[0] as Record<string, string>;
         // The stub reached the bundler with a permit sized for the ceiling.
         expect(parseCirclePaymasterData(toBytes(op.paymasterData!)).mode).toBe('permit');
-        return { callGasLimit: '0x5bab', verificationGasLimit: '0x61a80', preVerificationGas: '0x0', paymasterVerificationGasLimit: '0x30d40' };
+        // The live run's 658,467 gas, split so that preVerificationGas is not
+        // 0 (a zero estimate is now refused as impossible): 350,000 + 50,000
+        // replaces 400,000 + 0, so the prefund and the permit are unchanged.
+        return { callGasLimit: '0x5bab', verificationGasLimit: '0x55730', preVerificationGas: '0xc350', paymasterVerificationGasLimit: '0x30d40' };
       }
       if (method === 'eth_sendUserOperation') {
         sent = params[0] as Record<string, string>;
@@ -521,5 +524,39 @@ describe('SmartAccountClient integration through the unchanged ERC-7677 seam', (
     // The owner's operation signature covers the final paymaster data.
     const hash = getUserOpHash(userOp, ENTRYPOINT_V07, CHAIN);
     expect(recoverAddress(toHex(toEthSignedMessageHash(hash)), Signature.from(toHex(userOp.signature)))).toBe(signer.address);
+  });
+});
+
+describe('createCirclePaymasterTransport never hands back a zero paymaster verification limit', () => {
+  const signer = owner();
+  it('refuses final data when the estimate set paymasterVerificationGasLimit to 0, before any permit is signed', async () => {
+    const { node } = fakeNode({ balance: 1_000_000n, allowance: 0n, nonce: 0n });
+    let signed = 0;
+    const transport = createCirclePaymasterTransport({
+      node, chainId: CHAIN, account: ACCOUNT, token: USDC, mode: 'permit',
+      signPermit: (d) => { signed++; return withEthereumV(signer.sign(d)); },
+    });
+    const op = rpcOp({ verificationGasLimit: '0x0', callGasLimit: '0xcb36', preVerificationGas: '0xdae9', paymasterVerificationGasLimit: '0x0' });
+    const err = await transport('pm_getPaymasterData', [op, ENTRYPOINT_V07, '0x14a34', null]).catch((e) => e);
+    expect(err).toBeInstanceOf(ImpossibleGasEstimateError);
+    expect(err.source).toBe('paymaster');
+    expect(err.problems).toHaveLength(1);
+    expect(err.problems[0]).toMatch(/^paymasterVerificationGasLimit is 0/);
+    expect(err.fields).toMatchObject({ callGasLimit: 0xcb36n, paymasterVerificationGasLimit: 0n, paymasterPostOpGasLimit: 35_000n });
+    expect(signed).toBe(0);
+  });
+
+  it('refuses a configured verification limit of 0 for the stub too; a non-zero estimate is still used as before', async () => {
+    const { node } = fakeNode({ balance: 1_000_000n, allowance: 0n, nonce: 0n });
+    const zero = createCirclePaymasterTransport({
+      node, chainId: CHAIN, account: ACCOUNT, token: USDC, mode: 'permit', verificationGasLimit: 0n,
+      signPermit: (d) => withEthereumV(signer.sign(d)),
+    });
+    await expect(zero('pm_getPaymasterStubData', [rpcOp(), ENTRYPOINT_V07, '0x14a34', null])).rejects.toBeInstanceOf(ImpossibleGasEstimateError);
+    // With no estimate value the configured (zero) limit would be used: refused.
+    await expect(zero('pm_getPaymasterData', [rpcOp(), ENTRYPOINT_V07, '0x14a34', null])).rejects.toBeInstanceOf(ImpossibleGasEstimateError);
+    // An estimate value replaces it, as before.
+    const r = (await zero('pm_getPaymasterData', [rpcOp({ paymasterVerificationGasLimit: '0x1' }), ENTRYPOINT_V07, '0x14a34', null])) as Record<string, string>;
+    expect(BigInt(r.paymasterVerificationGasLimit!)).toBe(1n);
   });
 });

@@ -5,7 +5,11 @@ import { getUserOpHash, type UserOperation } from './userop.js';
 import type { SignedEip7702Authorization } from './eip7702.js';
 import {
   BundlerClient,
+  DEFAULT_ESTIMATE_RETRIES,
+  ImpossibleGasEstimateError,
   PaymasterClient,
+  gasLimitProblems,
+  type EstimateRetryPolicy,
   type JsonRpcTransport,
 } from './rpc.js';
 
@@ -166,6 +170,17 @@ export interface SmartAccountClientConfig {
    * >= 0.4), so the headroom must stay modest.
    */
   depositTopUpVerificationGas?: bigint;
+  /**
+   * How sendCalls treats a bundler estimate with an impossible (zero) gas
+   * limit (see gasLimitProblems in ./rpc.ts): it is refused and asked for
+   * again up to `attempts` times, `delayMs` apart, then
+   * ImpossibleGasEstimateError is thrown before the operation is signed
+   * (a paymaster transport may already have signed its estimation stub, as
+   * Circle's permit stub does). Absent means DEFAULT_ESTIMATE_RETRIES (4
+   * attempts, 2 s apart). Valid
+   * estimates are used exactly as before, whatever this is set to.
+   */
+  estimateRetries?: EstimateRetryPolicy;
 }
 
 /**
@@ -343,7 +358,12 @@ export class SmartAccountClient {
       op = { ...op, ...paymasterFields(stub) };
     }
 
-    const gas = await this.bundlerClient.estimateUserOperationGas(op);
+    // An estimate with an impossible (zero) limit is refused and asked for
+    // again before anything is padded or signed (gasLimitProblems).
+    const gas = await this.bundlerClient.estimateUserOperationGasChecked(
+      op,
+      this.config.estimateRetries ?? DEFAULT_ESTIMATE_RETRIES,
+    );
     const pad = (value: bigint, pct: number | undefined): bigint =>
       pct === undefined || pct === 100 ? value : (value * BigInt(pct)) / 100n;
     const padding = this.config.gasPaddingPct;
@@ -384,6 +404,27 @@ export class SmartAccountClient {
         this.config.paymaster!.context ?? null,
       );
       op = { ...op, ...paymasterFields(finalData) };
+    }
+
+    // Last check on the limits that will be signed: padding below 100
+    // percent or paymaster data with a zero verification limit could still
+    // produce an operation that cannot execute. Refused before beforeSign
+    // and before the spec signs anything.
+    const finalProblems = gasLimitProblems(op, Boolean(op.paymaster));
+    if (finalProblems.length > 0) {
+      throw new ImpossibleGasEstimateError(
+        finalProblems,
+        {
+          callGasLimit: op.callGasLimit,
+          verificationGasLimit: op.verificationGasLimit,
+          preVerificationGas: op.preVerificationGas,
+          ...(op.paymasterVerificationGasLimit !== undefined
+            ? { paymasterVerificationGasLimit: op.paymasterVerificationGasLimit }
+            : {}),
+          ...(op.paymasterPostOpGasLimit !== undefined ? { paymasterPostOpGasLimit: op.paymasterPostOpGasLimit } : {}),
+        },
+        { source: 'operation' },
+      );
     }
 
     if (options.beforeSign) await options.beforeSign(op);

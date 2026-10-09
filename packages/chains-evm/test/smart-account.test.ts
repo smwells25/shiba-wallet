@@ -20,7 +20,14 @@ import {
 } from '../src/smart-account.js';
 import { ENTRYPOINT_V07, getUserOpHash, type UserOperation } from '../src/userop.js';
 import { toHex } from '../src/encoding.js';
-import type { JsonRpcTransport } from '../src/rpc.js';
+import {
+  BundlerClient,
+  DEFAULT_ESTIMATE_RETRIES,
+  ImpossibleGasEstimateError,
+  gasEstimateProblems,
+  gasLimitProblems,
+  type JsonRpcTransport,
+} from '../src/rpc.js';
 
 const TEST_MNEMONIC =
   'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
@@ -507,5 +514,225 @@ describe('EntryPoint deposit top-up headroom', () => {
     });
     const { userOp } = await client.sendCalls(ownerAccount(), [], FEES);
     expect(userOp.verificationGasLimit).toBe(0x222n);
+  });
+});
+
+describe('impossible gas estimates (zero limits) are refused before signing', () => {
+  const REAL = { callGasLimit: '0x111', verificationGasLimit: '0x222', preVerificationGas: '0x333' };
+  const TO = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  const NO_WAIT = { attempts: 3, delayMs: 0 };
+
+  /** A bundler answering `answers` in turn (the last one repeats), counting estimates and sends. */
+  function scriptedBundler(answers: Record<string, string>[]) {
+    let estimates = 0;
+    let sends = 0;
+    const bundler: JsonRpcTransport = async (method) => {
+      if (method === 'eth_estimateUserOperationGas') {
+        const answer = answers[Math.min(estimates, answers.length - 1)]!;
+        estimates++;
+        return answer;
+      }
+      if (method === 'eth_sendUserOperation') {
+        sends++;
+        return '0xuserophash';
+      }
+      throw new Error(`unexpected bundler method ${method}`);
+    };
+    return { bundler, counts: () => ({ estimates, sends }) };
+  }
+
+  function countingSpec() {
+    let signed = 0;
+    const counted: SmartAccountSpec = {
+      ...spec,
+      signUserOpHash: (owner, hash) => {
+        signed++;
+        return spec.signUserOpHash(owner, hash);
+      },
+    };
+    return { spec: counted, signed: () => signed };
+  }
+
+  const baseOp = (over: Partial<UserOperation> = {}): UserOperation => ({
+    sender: ACCOUNT_ADDRESS,
+    nonce: 0n,
+    callData: new Uint8Array([1]),
+    callGasLimit: 0n,
+    verificationGasLimit: 0n,
+    preVerificationGas: 0n,
+    maxFeePerGas: 1n,
+    maxPriorityFeePerGas: 1n,
+    signature: new Uint8Array(0),
+    ...over,
+  });
+
+  it('names each zero field, and accepts a zero paymasterPostOpGasLimit', () => {
+    const ok = { callGasLimit: 1n, verificationGasLimit: 1n, preVerificationGas: 1n };
+    expect(gasLimitProblems(ok, false)).toEqual([]);
+    expect(gasLimitProblems({ ...ok, verificationGasLimit: 0n }, false)[0]).toMatch(/^verificationGasLimit is 0/);
+    expect(gasLimitProblems({ ...ok, callGasLimit: 0n }, false)[0]).toMatch(/^callGasLimit is 0/);
+    expect(gasLimitProblems({ ...ok, preVerificationGas: 0n }, false)[0]).toMatch(/^preVerificationGas is 0/);
+    // A paymaster needs a non-zero verification limit; absent counts as 0.
+    expect(gasLimitProblems(ok, true)[0]).toMatch(/^paymasterVerificationGasLimit is 0/);
+    expect(gasLimitProblems({ ...ok, paymasterVerificationGasLimit: 0n }, true)).toHaveLength(1);
+    expect(gasLimitProblems({ ...ok, paymasterVerificationGasLimit: 1n, paymasterPostOpGasLimit: 0n }, true)).toEqual([]);
+    // Without a paymaster its limits are not judged.
+    expect(gasLimitProblems({ ...ok, paymasterVerificationGasLimit: 0n }, false)).toEqual([]);
+    // All at once: one reason per field.
+    expect(gasLimitProblems({ callGasLimit: 0n, verificationGasLimit: 0n, preVerificationGas: 0n }, true)).toHaveLength(4);
+  });
+
+  it('judges an estimate that omits the paymaster limit by the limit the operation already carries', () => {
+    const estimate = { callGasLimit: 1n, verificationGasLimit: 1n, preVerificationGas: 1n };
+    const pm = '0x' + '66'.repeat(20);
+    expect(gasEstimateProblems(estimate, baseOp({ paymaster: pm, paymasterVerificationGasLimit: 5n }))).toEqual([]);
+    expect(gasEstimateProblems(estimate, baseOp({ paymaster: pm }))).toHaveLength(1);
+    expect(gasEstimateProblems({ ...estimate, paymasterVerificationGasLimit: 0n }, baseOp({ paymaster: pm, paymasterVerificationGasLimit: 5n }))).toHaveLength(1);
+  });
+
+  it('the default retry policy is 4 attempts, 2 s apart', () => {
+    expect(DEFAULT_ESTIMATE_RETRIES).toEqual({ attempts: 4, delayMs: 2_000 });
+  });
+
+  for (const field of ['verificationGasLimit', 'callGasLimit', 'preVerificationGas'] as const) {
+    it(`refuses an estimate with ${field} 0 on every attempt: nothing signed or sent`, async () => {
+      const { bundler, counts } = scriptedBundler([{ ...REAL, [field]: '0x0' }]);
+      const { node } = makeTransports({ deployed: true, sponsored: false });
+      const counted = countingSpec();
+      const client = new SmartAccountClient({ chainId: 1n, entryPoint: ENTRYPOINT_V07, bundler, node, spec: counted.spec, estimateRetries: NO_WAIT });
+      const err = await client.sendCalls(ownerAccount(), [{ to: TO, value: 1n, data: new Uint8Array(0) }], FEES).catch((e) => e);
+      expect(err).toBeInstanceOf(ImpossibleGasEstimateError);
+      expect(err.name).toBe('ImpossibleGasEstimateError');
+      expect(err.attempts).toBe(3);
+      expect(err.source).toBe('estimate');
+      expect(err.fields[field]).toBe(0n);
+      expect(err.problems).toHaveLength(1);
+      expect(err.problems[0]).toMatch(new RegExp(`^${field} is 0`));
+      expect(err.message).toMatch(/on all 3 attempts/);
+      expect(err.message).toMatch(/not signed or submitted/);
+      expect(counts()).toEqual({ estimates: 3, sends: 0 });
+      expect(counted.signed()).toBe(0);
+    });
+  }
+
+  it('refuses a sponsored estimate whose paymasterVerificationGasLimit is 0 (the Arbitrum Sepolia answer)', async () => {
+    // The shape ZeroDev's Arbitrum Sepolia endpoint answered on 2026-10-09.
+    const zero = { callGasLimit: '0xcb36', verificationGasLimit: '0x0', preVerificationGas: '0xdae9', paymasterVerificationGasLimit: '0x0' };
+    const { bundler, counts } = scriptedBundler([zero]);
+    const { node, paymaster } = makeTransports({ deployed: true, sponsored: true });
+    const counted = countingSpec();
+    const client = new SmartAccountClient({
+      chainId: 1n, entryPoint: ENTRYPOINT_V07, bundler, node, spec: counted.spec,
+      paymaster: { transport: paymaster }, estimateRetries: { attempts: 2, delayMs: 0 },
+    });
+    const err = await client.sendCalls(ownerAccount(), [{ to: TO, value: 1n, data: new Uint8Array(0) }], FEES).catch((e) => e);
+    expect(err).toBeInstanceOf(ImpossibleGasEstimateError);
+    expect(err.problems.map((p: string) => p.split(' ')[0])).toEqual(['verificationGasLimit', 'paymasterVerificationGasLimit']);
+    expect(err.fields).toMatchObject({ callGasLimit: 0xcb36n, verificationGasLimit: 0n, paymasterVerificationGasLimit: 0n });
+    expect(counts()).toEqual({ estimates: 2, sends: 0 });
+    expect(counted.signed()).toBe(0);
+  });
+
+  it('asks again after an impossible answer and then sends exactly what a clean first answer would have produced', async () => {
+    const owner = ownerAccount();
+    const calls = [{ to: TO, value: 1n, data: new Uint8Array(0) }];
+    const clean = scriptedBundler([REAL]);
+    const reference = await new SmartAccountClient({
+      chainId: 1n, entryPoint: ENTRYPOINT_V07, bundler: clean.bundler, node: makeTransports({ deployed: true, sponsored: false }).node, spec,
+    }).sendCalls(owner, calls, FEES);
+    const flaky = scriptedBundler([{ ...REAL, verificationGasLimit: '0x0' }, { ...REAL, preVerificationGas: '0x0' }, REAL]);
+    const retried = await new SmartAccountClient({
+      chainId: 1n, entryPoint: ENTRYPOINT_V07, bundler: flaky.bundler, node: makeTransports({ deployed: true, sponsored: false }).node, spec,
+      estimateRetries: NO_WAIT,
+    }).sendCalls(owner, calls, FEES);
+    expect(flaky.counts()).toEqual({ estimates: 3, sends: 1 });
+    expect(retried.userOp).toEqual(reference.userOp);
+  });
+
+  it('waits delayMs between attempts and not after the last', async () => {
+    const { bundler } = scriptedBundler([{ ...REAL, verificationGasLimit: '0x0' }]);
+    const started = Date.now();
+    const err = await new BundlerClient(bundler, ENTRYPOINT_V07)
+      .estimateUserOperationGasChecked(baseOp(), { attempts: 3, delayMs: 60 })
+      .catch((e) => e);
+    const elapsed = Date.now() - started;
+    expect(err).toBeInstanceOf(ImpossibleGasEstimateError);
+    expect(elapsed).toBeGreaterThanOrEqual(110); // two waits of 60 ms (timer slack allowed)
+    expect(elapsed).toBeLessThan(1_000);
+  });
+
+  it('a single attempt asks once; a bundler error is thrown at once, not retried', async () => {
+    const once = scriptedBundler([{ ...REAL, callGasLimit: '0x0' }]);
+    const err = await new BundlerClient(once.bundler, ENTRYPOINT_V07)
+      .estimateUserOperationGasChecked(baseOp(), { attempts: 1, delayMs: 0 })
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(ImpossibleGasEstimateError);
+    expect(err.message).not.toMatch(/attempts/);
+    expect(once.counts().estimates).toBe(1);
+    let asked = 0;
+    const failing: JsonRpcTransport = async () => {
+      asked++;
+      throw new Error('RPC error -32500: AA23 reverted (eth_estimateUserOperationGas)');
+    };
+    await expect(
+      new BundlerClient(failing, ENTRYPOINT_V07).estimateUserOperationGasChecked(baseOp(), NO_WAIT),
+    ).rejects.toThrow(/AA23 reverted/);
+    expect(asked).toBe(1);
+  });
+
+  it('refuses the final operation when padding below 100 percent would leave a zero limit', async () => {
+    const { bundler, counts } = scriptedBundler([{ ...REAL, verificationGasLimit: '0x1' }]);
+    const counted = countingSpec();
+    const client = new SmartAccountClient({
+      chainId: 1n, entryPoint: ENTRYPOINT_V07, bundler, node: makeTransports({ deployed: true, sponsored: false }).node, spec: counted.spec,
+      gasPaddingPct: { verification: 50 },
+    });
+    let beforeSign = 0;
+    const err = await client
+      .sendCalls(ownerAccount(), [{ to: TO, value: 1n, data: new Uint8Array(0) }], FEES, { beforeSign: () => { beforeSign++; } })
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(ImpossibleGasEstimateError);
+    expect(err.source).toBe('operation');
+    expect(err.message).toMatch(/^The operation would carry an impossible gas limit/);
+    expect(beforeSign).toBe(0);
+    expect(counted.signed()).toBe(0);
+    expect(counts().sends).toBe(0);
+  });
+
+  it('refuses final paymaster data that sets the paymaster verification limit to 0', async () => {
+    // The stub gives a limit and the estimate omits one (so the estimate
+    // passes on the stub's); the final data then answers 0, which would be
+    // packed into the signed paymasterAndData.
+    const { bundler, counts } = scriptedBundler([REAL]);
+    const { node } = makeTransports({ deployed: true, sponsored: true });
+    const pm = '0x' + '66'.repeat(20);
+    const paymaster: JsonRpcTransport = async (method) => {
+      if (method === 'pm_getPaymasterStubData') return { paymaster: pm, paymasterData: '0x00', paymasterVerificationGasLimit: '0x4444' };
+      if (method === 'pm_getPaymasterData') return { paymaster: pm, paymasterData: '0xf1a1', paymasterVerificationGasLimit: '0x0', paymasterPostOpGasLimit: '0x0' };
+      throw new Error(method);
+    };
+    const counted = countingSpec();
+    const client = new SmartAccountClient({ chainId: 1n, entryPoint: ENTRYPOINT_V07, bundler, node, spec: counted.spec, paymaster: { transport: paymaster } });
+    const err = await client.sendCalls(ownerAccount(), [{ to: TO, value: 1n, data: new Uint8Array(0) }], FEES).catch((e) => e);
+    expect(err).toBeInstanceOf(ImpossibleGasEstimateError);
+    expect(err.source).toBe('operation');
+    // Only the verification limit is named: a zero postOp limit is allowed.
+    expect(err.problems).toHaveLength(1);
+    expect(err.problems[0]).toMatch(/^paymasterVerificationGasLimit is 0/);
+    expect(counts()).toEqual({ estimates: 1, sends: 0 });
+    expect(counted.signed()).toBe(0);
+  });
+
+  it('refuses at the estimate when neither the stub nor the estimate gives a paymaster verification limit', async () => {
+    const { bundler, counts } = scriptedBundler([REAL]);
+    const { node, paymaster } = makeTransports({ deployed: true, sponsored: true });
+    const client = new SmartAccountClient({
+      chainId: 1n, entryPoint: ENTRYPOINT_V07, bundler, node, spec, paymaster: { transport: paymaster }, estimateRetries: NO_WAIT,
+    });
+    const err = await client.sendCalls(ownerAccount(), [{ to: TO, value: 1n, data: new Uint8Array(0) }], FEES).catch((e) => e);
+    expect(err).toBeInstanceOf(ImpossibleGasEstimateError);
+    expect(err.source).toBe('estimate');
+    expect(err.problems[0]).toMatch(/^paymasterVerificationGasLimit is 0/);
+    expect(counts()).toEqual({ estimates: 3, sends: 0 });
   });
 });

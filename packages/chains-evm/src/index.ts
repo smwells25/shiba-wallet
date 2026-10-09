@@ -9,13 +9,19 @@ export {
 export type { UserOperation } from './userop.js';
 export {
   BundlerClient,
+  DEFAULT_ESTIMATE_RETRIES,
+  ImpossibleGasEstimateError,
   NodeClient,
   PaymasterClient,
+  gasEstimateProblems,
+  gasLimitProblems,
   httpTransport,
   toRpcUserOperation,
 } from './rpc.js';
 export type {
+  EstimateRetryPolicy,
   GasEstimate,
+  GasLimitFields,
   JsonRpcTransport,
   PaymasterResult,
   RpcUserOperation,

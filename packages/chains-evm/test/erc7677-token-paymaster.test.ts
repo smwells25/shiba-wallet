@@ -18,7 +18,7 @@ import {
 import { TokenGasChargeAboveLimitError } from '../src/token-paymaster.js';
 import { ENTRYPOINT_V07 } from '../src/userop.js';
 import { toBytes, toHex } from '../src/encoding.js';
-import type { JsonRpcTransport } from '../src/rpc.js';
+import { ImpossibleGasEstimateError, type JsonRpcTransport } from '../src/rpc.js';
 
 const PAYMASTER = PIMLICO_ERC20_PAYMASTER_V07.address;
 const USDC = '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238';
@@ -325,5 +325,47 @@ describe('receipts and on-chain checks', () => {
     expect(pimlicoPaymasterProblems({ ...ok, deposit: 0n }).join(' ')).toMatch(/no EntryPoint deposit/);
     expect(pimlicoPaymasterProblems(ok, { minDeposit: 2n }).join(' ')).toMatch(/below/);
     expect(erc7677PaymasterDataProblems(PAYMASTER, parsePimlicoErc20PaymasterData(toBytes(LIVE_STUB)), { token: USDC })).toEqual([]);
+  });
+});
+
+describe('createErc7677TokenPaymasterTransport never hands back a zero paymaster verification limit', () => {
+  const rpcOp = {
+    sender: ACCOUNT,
+    nonce: '0x0',
+    callData: '0x',
+    callGasLimit: '0x249f0',
+    verificationGasLimit: '0x30d40',
+    preVerificationGas: '0xea60',
+    maxFeePerGas: '0xb2d05e00',
+    maxPriorityFeePerGas: '0xbebc200',
+    paymasterVerificationGasLimit: '0xea60',
+    paymasterPostOpGasLimit: '0x10d7e',
+    signature: '0x',
+  };
+  const make = (answer: Record<string, unknown>) =>
+    createErc7677TokenPaymasterTransport({
+      upstream: async () => answer, chainId: CHAIN, account: ACCOUNT, token: USDC, maxTokenCharge: 10n ** 12n,
+    });
+  const final = (t: JsonRpcTransport, op: Record<string, string>) => t('pm_getPaymasterData', [op, ENTRYPOINT_V07, '0xaa36a7', null]);
+
+  it('refuses final data whose answer sets paymasterVerificationGasLimit to 0', async () => {
+    const err = await final(make({ paymaster: PAYMASTER, paymasterData: LIVE_STUB, paymasterVerificationGasLimit: '0x0' }), rpcOp).catch((e) => e);
+    expect(err).toBeInstanceOf(ImpossibleGasEstimateError);
+    expect(err.source).toBe('paymaster');
+    expect(err.problems[0]).toMatch(/^paymasterVerificationGasLimit is 0/);
+  });
+
+  it('refuses final data that omits the limit when the operation carries 0 (or none)', async () => {
+    const t = make({ paymaster: PAYMASTER, paymasterData: LIVE_STUB });
+    await expect(final(t, { ...rpcOp, paymasterVerificationGasLimit: '0x0' })).rejects.toBeInstanceOf(ImpossibleGasEstimateError);
+    const { paymasterVerificationGasLimit: _omitted, ...without } = rpcOp;
+    await expect(final(t, without)).rejects.toBeInstanceOf(ImpossibleGasEstimateError);
+    // The operation's own non-zero limit is accepted, as before.
+    await expect(final(t, rpcOp)).resolves.toBeTruthy();
+  });
+
+  it('does not judge the stub (its limits are replaced by the checked estimate)', async () => {
+    const t = make({ paymaster: PAYMASTER, paymasterData: LIVE_STUB, paymasterVerificationGasLimit: '0x0' });
+    await expect(t('pm_getPaymasterStubData', [{ ...rpcOp, paymasterVerificationGasLimit: '0x0' }, ENTRYPOINT_V07, '0xaa36a7', null])).resolves.toBeTruthy();
   });
 });

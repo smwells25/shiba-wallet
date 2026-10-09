@@ -3,7 +3,7 @@ import { toChecksumAddress } from '@shiba-wallet/core';
 import { encodeFunctionCall } from './abi.js';
 import { bigintToHex, keccak, packUint128Pair, toBytes, toHex, toWord } from './encoding.js';
 import { encodeErc20Approve } from './erc20.js';
-import type { JsonRpcTransport } from './rpc.js';
+import { gasLimitProblems, ImpossibleGasEstimateError, type JsonRpcTransport } from './rpc.js';
 import type { Call } from './smart-account.js';
 import { TokenGasChargeAboveLimitError } from './token-paymaster.js';
 import { ENTRYPOINT_V07 } from './userop.js';
@@ -576,6 +576,27 @@ export function createErc7677TokenPaymasterTransport(config: Erc7677TokenPaymast
     const pmPostOp = hexOrNull(answer.paymasterPostOpGasLimit) ?? hexOrNull(rpcOp.paymasterPostOpGasLimit);
     if (pmPostOp === null) throw new Error(`${method} returned no paymasterPostOpGasLimit and the operation has none`);
     const field = (v: string | undefined) => (v === undefined ? 0n : BigInt(v));
+    // The final data must never leave a zero paymasterVerificationGasLimit
+    // to be signed (EntryPoint v0.7 runs validatePaymasterUserOp with
+    // exactly that much gas; see gasLimitProblems in ./rpc.ts): neither an
+    // answer of 0 nor, when the answer omits it, an operation carrying 0
+    // (a bundler estimate answered 0x0 in bursts on Arbitrum Sepolia,
+    // 2026-10-09). The stub is not checked: its limits are replaced by the
+    // bundler's estimate, which the client checks itself.
+    if (!stub && (pmVerification ?? field(rpcOp.paymasterVerificationGasLimit)) === 0n) {
+      const fields = {
+        callGasLimit: field(rpcOp.callGasLimit),
+        verificationGasLimit: field(rpcOp.verificationGasLimit),
+        preVerificationGas: field(rpcOp.preVerificationGas),
+        paymasterVerificationGasLimit: 0n,
+        paymasterPostOpGasLimit: pmPostOp,
+      };
+      throw new ImpossibleGasEstimateError(
+        gasLimitProblems(fields, true).filter((p) => p.startsWith('paymasterVerificationGasLimit')),
+        fields,
+        { source: 'paymaster' },
+      );
+    }
     const maxTokenCharge = erc7677MaxTokenCharge(
       {
         callGasLimit: field(rpcOp.callGasLimit),

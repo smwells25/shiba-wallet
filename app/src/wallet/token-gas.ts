@@ -36,6 +36,7 @@ import {
 // Explicit .ts extensions: this module is imported by
 // scripts/check-token-gas.mjs under Node's type stripping.
 import {
+  AA_ESTIMATE_RETRIES,
   AA_FUNDING_TITLE,
   AaFundingError,
   aaAmountShortfallTitle,
@@ -51,6 +52,7 @@ import {
   quoteFeesOverFloor,
   TOKEN_GAS_PADDING_PCT,
   getAaConfig,
+  isImpossibleGasEstimateError,
   isPrefundError,
   type AaChainConfig,
   type AaClientBundle,
@@ -1215,10 +1217,17 @@ async function erc7677Price(
         ? { paymasterVerificationGasLimit: BigInt(answer.paymasterVerificationGasLimit) }
         : {}),
     };
-    estimated = await new BundlerClient(bundle.bundler, ENTRYPOINT_V07).estimateUserOperationGas(op);
+    // Checked: an impossible (zero) estimate — paymasterVerificationGasLimit
+    // 0x0 was among ZeroDev's Arbitrum Sepolia answers on 2026-10-09 — is
+    // asked for again and then refused, never shown on the confirm screen.
+    estimated = await new BundlerClient(bundle.bundler, ENTRYPOINT_V07).estimateUserOperationGasChecked(
+      op,
+      bundle.estimateRetries ?? AA_ESTIMATE_RETRIES,
+    );
   } catch (e) {
     const raw = e instanceof Error ? e.message : String(e);
-    if (isPrefundError(raw)) throw e;
+    // Not the paymaster's refusal: describeAaError words it (wait and review again).
+    if (isPrefundError(raw) || isImpossibleGasEstimateError(e)) throw e;
     throw new TokenGasPaymasterRefusalError(raw, name);
   }
   const pad = (value: bigint, pct: number) => (value * BigInt(pct)) / 100n;

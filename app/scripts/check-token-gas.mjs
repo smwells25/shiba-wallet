@@ -61,6 +61,8 @@ import {
   aaErc20TransferCalls,
   aaRiskWarningTarget,
   aaUserCalls,
+  AA_IMPOSSIBLE_ESTIMATE_TITLE,
+  isImpossibleGasEstimateError,
 } from '../src/wallet/aa.ts';
 import {
   TOKEN_GAS_7702_NOTE,
@@ -356,9 +358,9 @@ function tgBundler(node, { estimate, floor = null, receipt = null } = {}) {
   return transport;
 }
 
-function kernelBundle({ node = tgNode(), bundler = null, chainId = CHAIN_ID, accountType = 'kernel-v3.3', paymaster } = {}) {
+function kernelBundle({ node = tgNode(), bundler = null, chainId = CHAIN_ID, accountType = 'kernel-v3.3', paymaster, estimateRetries, create = createAaClient } = {}) {
   const b = bundler ?? tgBundler(node);
-  const bundle = createAaClient({
+  const bundle = create({
     nodeUrl: NODE_URL,
     bundlerUrl: BUNDLER_URL,
     factory: accountType === 'simple' ? '0x' + '55'.repeat(20) : KERNEL_V3_3.factory,
@@ -366,6 +368,7 @@ function kernelBundle({ node = tgNode(), bundler = null, chainId = CHAIN_ID, acc
     accountIndex: 0,
     accountType,
     ...(paymaster ? { paymaster } : {}),
+    ...(estimateRetries ? { estimateRetries } : {}),
     transportFor: (url) => (url.includes('bundler') ? b : node),
   });
   return { bundle, node, bundler: b };
@@ -1117,7 +1120,7 @@ console.log('check-token-gas: the ERC-7677 source (Pimlico’s ERC-20 paymaster 
     t.terms = terms;
     return t;
   }
-  function pimBundle({ node = pimNode(), bundler } = {}) {
+  function pimBundle({ node = pimNode(), bundler, estimateRetries } = {}) {
     const b = bundler ?? pimBundler(node);
     const bundle = createAaClient({
       nodeUrl: NODE_URL,
@@ -1126,6 +1129,7 @@ console.log('check-token-gas: the ERC-7677 source (Pimlico’s ERC-20 paymaster 
       chainId: SEP_CHAIN,
       accountIndex: 0,
       accountType: 'kernel-v3.3',
+      ...(estimateRetries ? { estimateRetries } : {}),
       transportFor: (url) => (url.includes('bundler') ? b : node),
     });
     return { bundle, node, bundler: b };
@@ -1558,6 +1562,106 @@ console.log('check-token-gas: the ERC-7677 source (Pimlico’s ERC-20 paymaster 
     check('the offer the screen requests on Sepolia is the ERC-7677 source; without the opt-in it is not offered',
       tg.tokenGasOffer({ chainCaip2: SEPOLIA, config: configFor(SEPOLIA), owner: OWNER_0, passkeySigner: false, acceptsErc7677: true }).kind === 'available' &&
         tg.tokenGasOffer({ chainCaip2: SEPOLIA, config: configFor(SEPOLIA), owner: OWNER_0, passkeySigner: false }).kind === 'unavailable');
+  }
+
+  // -------------------------------------------------------------------------
+  // Impossible (zero) gas estimates on the USDC-fee paths: ZeroDev's Arbitrum
+  // Sepolia endpoint answered verificationGasLimit and
+  // paymasterVerificationGasLimit 0x0 in bursts on 2026-10-09.
+  // -------------------------------------------------------------------------
+  console.log('check-token-gas: impossible (zero) gas estimates are refused, never signed');
+  {
+    const NO_WAIT = { attempts: 3, delayMs: 0 };
+    const PIM_ZERO = {
+      callGasLimit: '0xcb36', verificationGasLimit: '0x0', preVerificationGas: '0xd71e',
+      paymasterVerificationGasLimit: '0x0', paymasterPostOpGasLimit: '0xb98f',
+    };
+    // ERC-7677 quote (estimated before the device check): always zero.
+    const zb = pimBundler(pimNode(), { estimate: PIM_ZERO });
+    const { bundle: zBundle } = pimBundle({ bundler: zb, estimateRetries: NO_WAIT });
+    const ze = await rejection(() => tg.prepareAaTokenGasSend(zBundle, OWNER_0, RECIPIENT, 0n, { acceptsErc7677: true }));
+    check('ERC-7677 quote, zero on every attempt: the engine’s ImpossibleGasEstimateError, not a paymaster refusal; 3 asks, nothing sent',
+      isImpossibleGasEstimateError(ze) && !(ze instanceof tg.TokenGasPaymasterRefusalError) && zb.estimated.length === 3 && zb.sent.length === 0, ze?.message);
+    check('…both zero fields named', /verificationGasLimit is 0/.test(ze?.message ?? '') && /paymasterVerificationGasLimit is 0/.test(ze?.message ?? ''));
+    check('…describeTokenGasError leaves it to describeAaError, which gives the impossible-estimate title',
+      tg.describeTokenGasError(ze, { decimals: 6, symbol: 'USDC', source: 'erc7677' }) === null &&
+        describeAaError(ze, { accountType: 'kernel-v3.3', deployed: false })?.title === AA_IMPOSSIBLE_ESTIMATE_TITLE);
+    // ERC-7677 quote: zero once, then real → the same quote as a clean answer.
+    const cleanQ = await tg.prepareAaTokenGasSend(pimBundle({ estimateRetries: NO_WAIT }).bundle, OWNER_0, RECIPIENT, 0n, { acceptsErc7677: true });
+    const inner = pimBundler(pimNode());
+    let asked = 0;
+    const onceZero = async (method, params) => {
+      if (method === 'eth_estimateUserOperationGas' && asked++ === 0) {
+        await inner(method, params);
+        return PIM_ZERO;
+      }
+      return inner(method, params);
+    };
+    const flakyQ = await tg.prepareAaTokenGasSend(pimBundle({ bundler: onceZero, estimateRetries: NO_WAIT }).bundle, OWNER_0, RECIPIENT, 0n, { acceptsErc7677: true });
+    check('ERC-7677 quote, zero once then real: asked twice, the same worst case as a clean answer',
+      asked === 2 && flakyQ.tokenGas.maxTokenCharge === cleanQ.tokenGas.maxTokenCharge && flakyQ.tokenGas.paymasterVerificationGasLimit === cleanQ.tokenGas.paymasterVerificationGasLimit);
+
+    // Circle (no estimate at quote time; the stub permit needs the owner's
+    // signature, so estimation runs after the device check, inside sendAa).
+    const CIRCLE_ZERO = { callGasLimit: '0xcb36', verificationGasLimit: '0x0', preVerificationGas: '0xea60', paymasterVerificationGasLimit: '0x0' };
+    const cNode = tgNode({ usdc: 2_000_000n, eth: 0n });
+    const cBundler = tgBundler(cNode, { estimate: CIRCLE_ZERO });
+    const { bundle: cBundle } = kernelBundle({ node: cNode, bundler: cBundler, estimateRetries: NO_WAIT });
+    const cQuote = await prepareAaTokenGasSend(cBundle, OWNER_0, RECIPIENT, 0n);
+    const ce = await rejection(() => sendAa(cBundle, owner, cQuote));
+    const nonceReads = cNode.calls.filter((c) => c.method === 'eth_call' && same(c.params[0].to, USDC) && c.params[0].data.startsWith(sel('nonces(address)'))).length;
+    check('Circle send, zero on every attempt: refused before the final permit and the operation are signed; nothing submitted',
+      isImpossibleGasEstimateError(ce) && cBundler.estimated.length === 3 && cBundler.sent.length === 0 && nonceReads === 2,
+      `${ce?.message} estimated=${cBundler.estimated.length} sent=${cBundler.sent.length} nonceReads=${nonceReads}`);
+    check('…the screens’ wording: describeTokenGasError → null, describeAaError → the impossible-estimate title',
+      tg.describeTokenGasError(ce, cQuote.tokenGas) === null && describeAaError(ce, { accountType: 'kernel-v3.3', deployed: false })?.title === AA_IMPOSSIBLE_ESTIMATE_TITLE);
+    // Circle: zero once at send time, then real → sent once.
+    const rNode = tgNode({ usdc: 2_000_000n, eth: 0n });
+    const rInner = tgBundler(rNode);
+    let rAsked = 0;
+    const rBundler = async (method, params) => {
+      if (method === 'eth_estimateUserOperationGas' && rAsked++ === 0) {
+        await rInner(method, params);
+        return CIRCLE_ZERO;
+      }
+      return rInner(method, params);
+    };
+    const { bundle: rBundle } = kernelBundle({ node: rNode, bundler: rBundler, estimateRetries: NO_WAIT });
+    const rQuote = await prepareAaTokenGasSend(rBundle, OWNER_0, RECIPIENT, 0n);
+    const rResult = await sendAa(rBundle, owner, rQuote).then((x) => x, (e) => e);
+    check('Circle send, zero once then real: asked again and sent once, the final permit ≤ the displayed worst case',
+      rResult?.userOpHash === USEROP_HASH && rAsked === 2 && rInner.sent.length === 1 &&
+        BigInt(rInner.sent[0].paymasterVerificationGasLimit) > 0n && permitOf(rInner.sent[0]).amount <= rQuote.tokenGas.maxTokenCharge,
+      rResult?.message);
+
+    // Mutation checks.
+    const tgSource = readFileSync(new URL('../src/wallet/token-gas.ts', import.meta.url), 'utf8');
+    const passThrough = 'if (isPrefundError(raw) || isImpossibleGasEstimateError(e)) throw e;';
+    if (!tgSource.includes(passThrough)) throw new Error('mutation anchor not found (token-gas pass-through)');
+    const mTg = await importMutantTg('src/wallet/token-gas.ts', tgSource.replace(passThrough, 'if (isPrefundError(raw)) throw e;'));
+    const mb = pimBundler(pimNode(), { estimate: PIM_ZERO });
+    const me = await rejection(() => mTg.prepareAaTokenGasSend(pimBundle({ bundler: mb, estimateRetries: NO_WAIT }).bundle, OWNER_0, RECIPIENT, 0n, { acceptsErc7677: true }));
+    check('M-T1 caught: without the pass-through the zero estimate is mislabelled as the paymaster’s refusal (the check above would fail)',
+      !isImpossibleGasEstimateError(me) && me instanceof mTg.TokenGasPaymasterRefusalError);
+    const aaSource = readFileSync(new URL('../src/wallet/aa.ts', import.meta.url), 'utf8');
+    const circleRetries = '    gasPaddingPct: { ...TOKEN_GAS_PADDING_PCT },\n    estimateRetries: bundle.estimateRetries ?? AA_ESTIMATE_RETRIES,\n  });';
+    if (!aaSource.includes(circleRetries)) throw new Error('mutation anchor not found (token-gas client retries)');
+    const mAa = await importMutantTg('src/wallet/aa.ts', aaSource.replace(circleRetries, '    gasPaddingPct: { ...TOKEN_GAS_PADDING_PCT },\n    estimateRetries: { attempts: 1, delayMs: 0 },\n  });'));
+    const m2Node = tgNode({ usdc: 2_000_000n, eth: 0n });
+    const m2Inner = tgBundler(m2Node);
+    let m2Asked = 0;
+    const m2Bundler = async (method, params) => {
+      if (method === 'eth_estimateUserOperationGas' && m2Asked++ === 0) {
+        await m2Inner(method, params);
+        return CIRCLE_ZERO;
+      }
+      return m2Inner(method, params);
+    };
+    const { bundle: m2Bundle } = kernelBundle({ node: m2Node, bundler: m2Bundler, estimateRetries: NO_WAIT, create: mAa.createAaClient });
+    const m2Quote = await prepareAaTokenGasSend(m2Bundle, OWNER_0, RECIPIENT, 0n);
+    const m2 = await mAa.sendAa(m2Bundle, owner, m2Quote).then((x) => x, (e) => e);
+    check('M-T2 caught: a Circle client that ignores the bundle’s retry policy refuses instead of asking again (the recovery check above would fail)',
+      isImpossibleGasEstimateError(m2) && m2Inner.sent.length === 0);
   }
 }
 

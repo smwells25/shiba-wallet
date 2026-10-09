@@ -4,7 +4,7 @@ import { encodeFunctionCall } from './abi.js';
 import { domainSeparator, typedDataDigest, type TypedDataDomain, type TypedDataTypes } from './eip712.js';
 import { bigintToHex, keccak, toBytes, toHex, toWord } from './encoding.js';
 import { decodeUint256, encodeErc20Approve } from './erc20.js';
-import type { JsonRpcTransport } from './rpc.js';
+import { gasLimitProblems, ImpossibleGasEstimateError, type JsonRpcTransport } from './rpc.js';
 import type { Call } from './smart-account.js';
 import { ENTRYPOINT_V07 } from './userop.js';
 
@@ -743,6 +743,25 @@ export function createCirclePaymasterTransport(config: CirclePaymasterTransportC
       : rpcOp.paymasterVerificationGasLimit !== undefined
         ? BigInt(rpcOp.paymasterVerificationGasLimit)
         : (config.verificationGasLimit ?? CIRCLE_TOKEN_PAYMASTER_V07.defaultVerificationGasLimit);
+    // Never hand back a zero paymasterVerificationGasLimit: EntryPoint v0.7
+    // runs validatePaymasterUserOp with exactly that much gas (see
+    // gasLimitProblems in ./rpc.ts), so the operation could not execute. A
+    // bundler estimate answered 0x0 here in bursts on Arbitrum Sepolia
+    // (2026-10-09); the final data would otherwise carry it and be signed.
+    if (verificationGasLimit === 0n) {
+      const fields = {
+        callGasLimit: BigInt(rpcOp.callGasLimit ?? '0x0'),
+        verificationGasLimit: BigInt(rpcOp.verificationGasLimit ?? '0x0'),
+        preVerificationGas: BigInt(rpcOp.preVerificationGas ?? '0x0'),
+        paymasterVerificationGasLimit: 0n,
+        paymasterPostOpGasLimit: postOpGasLimit,
+      };
+      throw new ImpossibleGasEstimateError(
+        gasLimitProblems(fields, true).filter((p) => p.startsWith('paymasterVerificationGasLimit')),
+        fields,
+        { source: 'paymaster' },
+      );
+    }
 
     const quote = quoteCircleTokenCharge(
       state,

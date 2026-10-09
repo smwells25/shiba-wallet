@@ -26,6 +26,10 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   AA_FUNDING_TITLE,
+  AA_ESTIMATE_RETRIES,
+  AA_IMPOSSIBLE_ESTIMATE_TITLE,
+  AA_IMPOSSIBLE_ESTIMATE_SENTENCE,
+  isImpossibleGasEstimateError,
   aaCanPaySelf,
   aaFeeFromBalance,
   aaMaxAdjustmentSentence,
@@ -913,7 +917,10 @@ await (async () => {
     if (url.includes('pm.example')) {
       pmCalls.push(method);
       if (method === 'pm_getPaymasterStubData' || method === 'pm_getPaymasterData') {
-        return { paymaster: '0x' + '66'.repeat(20), paymasterData: '0x01' };
+        // A paymaster verification limit, as ERC-7677 paymasters give for
+        // EntryPoint v0.7: without one anywhere the operation would carry 0,
+        // which the engine now refuses as impossible (gasLimitProblems).
+        return { paymaster: '0x' + '66'.repeat(20), paymasterData: '0x01', paymasterVerificationGasLimit: '0x400' };
       }
       throw new Error(`unexpected pm ${method}`);
     }
@@ -1924,6 +1931,147 @@ await (async () => {
   check('…and passed as fromMax only to prepareAaSend',
     /prepareAaSend\(bundle, account\.address, validation\.normalized, amount, \{\s*fromMax: amountIsLastMax\(lastAaMax\.current,/.test(send));
   check('the confirm shows aaMaxAdjustmentSentence for a lowered smart-account Max', /quote\.kind === 'aa' && quote\.maxAdjustment[\s\S]{0,200}aaMaxAdjustmentSentence\(quote,/.test(send));
+})();
+
+console.log('\ncheck-aa: impossible (zero) gas estimates are refused before any confirm or signature');
+await (async () => {
+  // The answer ZeroDev's Arbitrum Sepolia endpoint gave in bursts on
+  // 2026-10-09 (verificationGasLimit 0x0 with a constant callGasLimit
+  // 0xcb36), and a real one.
+  const REAL = { callGasLimit: '0x111', verificationGasLimit: '0x222', preVerificationGas: '0x333' };
+  const ZERO = { callGasLimit: '0xcb36', verificationGasLimit: '0x0', preVerificationGas: '0x333' };
+  const NO_WAIT = { attempts: 3, delayMs: 0 };
+  // A bundle whose bundler answers `script` in turn (the last answer
+  // repeats); script() can be replaced between the quote and the send.
+  const scripted = (initial, options = {}, aaModule = null) => {
+    const node = fakeNode({});
+    const base = fakeBundler({});
+    const state = { answers: initial, next: 0, estimates: 0, sends: 0 };
+    const bundler = async (method, params) => {
+      if (method === 'eth_estimateUserOperationGas') {
+        state.estimates += 1;
+        const answer = state.answers[Math.min(state.next, state.answers.length - 1)];
+        state.next += 1;
+        return answer;
+      }
+      if (method === 'eth_sendUserOperation') state.sends += 1;
+      return base(method, params);
+    };
+    const create = aaModule ? aaModule.createAaClient : createAaClient;
+    const bundle = create({
+      nodeUrl: 'https://node.example',
+      bundlerUrl: 'https://bundler.example',
+      factory: FACTORY_INPUT,
+      transportFor: (url) => (url === 'https://node.example' ? node : bundler),
+      ...options,
+    });
+    const answer = (answers) => {
+      state.answers = answers;
+      state.next = 0;
+    };
+    return { bundle, state, answer };
+  };
+  // An owner whose signatures are counted.
+  let signatures = 0;
+  const countingOwner = { ...owner, sign: (hash) => { signatures += 1; return owner.sign(hash); } };
+
+  check('the retry policy is 4 attempts, 2 s apart, and a bundle uses it by default',
+    AA_ESTIMATE_RETRIES.attempts === 4 && AA_ESTIMATE_RETRIES.delayMs === 2_000 &&
+      scripted([REAL]).bundle.estimateRetries === AA_ESTIMATE_RETRIES);
+
+  // Quote time: a burst that ends within the retries gives the same quote as a clean answer.
+  const clean = scripted([REAL], { estimateRetries: NO_WAIT });
+  const cleanQuote = await prepareAaSend(clean.bundle, owner.address, RECIPIENT, AMOUNT);
+  const flaky = scripted([ZERO, REAL], { estimateRetries: NO_WAIT });
+  const flakyQuote = await prepareAaSend(flaky.bundle, owner.address, RECIPIENT, AMOUNT);
+  check('zero once, then real: asked twice and quoted exactly as a clean first answer',
+    flaky.state.estimates === 2 && flakyQuote.fee === cleanQuote.fee && flakyQuote.total === cleanQuote.total,
+    `estimates=${flaky.state.estimates} fee=${flakyQuote.fee} vs ${cleanQuote.fee}`);
+
+  // Quote time: a burst that outlasts the retries never reaches a confirm.
+  const stuck = scripted([ZERO], { estimateRetries: NO_WAIT });
+  const stuckError = await prepareAaSend(stuck.bundle, owner.address, RECIPIENT, AMOUNT).then(() => null, (e) => e);
+  check('zero on every attempt: the quote is refused with the engine’s ImpossibleGasEstimateError after 3 asks',
+    isImpossibleGasEstimateError(stuckError) && stuckError.attempts === 3 && stuck.state.estimates === 3 && stuck.state.sends === 0,
+    stuckError?.message);
+  check('…naming the zero field', /verificationGasLimit is 0/.test(stuckError?.message ?? ''));
+  const described = describeAaError(stuckError, { accountType: 'simple', deployed: false });
+  check('describeAaError: the impossible-estimate title',
+    described?.title === AA_IMPOSSIBLE_ESTIMATE_TITLE && AA_IMPOSSIBLE_ESTIMATE_TITLE === 'The bundler’s gas estimate was impossible.');
+  check('…the plain sentence first, then the technical detail',
+    described?.detail?.startsWith(AA_IMPOSSIBLE_ESTIMATE_SENTENCE + '\n\nTechnical detail: The bundler answered an impossible gas estimate') &&
+      AA_IMPOSSIBLE_ESTIMATE_SENTENCE ===
+        'The bundler answered with an impossible gas estimate (zero gas). This happens in bursts on some networks; wait a few seconds and review again. The operation was not signed or sent.');
+  check('…kept on the quote step (retitleQuoteFailure leaves a specific title alone)',
+    described !== null && retitleQuoteFailure(described).title === AA_IMPOSSIBLE_ESTIMATE_TITLE);
+  check('an ordinary error that merely mentions a zero limit is not mistaken for it',
+    describeAaError(new Error('verificationGasLimit is 0'), { accountType: 'simple', deployed: false }) === null &&
+      !isImpossibleGasEstimateError(new Error('ImpossibleGasEstimateError')));
+  for (const [field, answer] of [
+    ['callGasLimit 0', { ...REAL, callGasLimit: '0x0' }],
+    ['preVerificationGas 0', { ...REAL, preVerificationGas: '0x0' }],
+    ['a missing verificationGasLimit (read as 0)', { callGasLimit: '0x111', preVerificationGas: '0x333' }],
+  ]) {
+    const b = scripted([answer], { estimateRetries: NO_WAIT });
+    const e = await prepareAaSend(b.bundle, owner.address, RECIPIENT, AMOUNT).then(() => null, (x) => x);
+    check(`${field}: refused at the quote`, isImpossibleGasEstimateError(e) && b.state.estimates === 3, e?.message);
+  }
+
+  // Send time (sendCalls re-estimates while signing): a zero answer then is
+  // refused before the owner signs anything, and nothing is submitted.
+  const late = scripted([REAL], { estimateRetries: NO_WAIT });
+  const lateQuote = await prepareAaSend(late.bundle, owner.address, RECIPIENT, AMOUNT);
+  late.answer([ZERO]);
+  signatures = 0;
+  const lateError = await sendAa(late.bundle, countingOwner, lateQuote).then(() => null, (e) => e);
+  check('zero at send time on every attempt: refused before signing; nothing signed or submitted',
+    isImpossibleGasEstimateError(lateError) && signatures === 0 && late.state.sends === 0 && late.state.estimates === 1 + 3,
+    `${lateError?.message} signatures=${signatures} sends=${late.state.sends} estimates=${late.state.estimates}`);
+  check('…and the screens show the same plain wording',
+    describeAaError(lateError, { accountType: 'simple', deployed: false })?.title === AA_IMPOSSIBLE_ESTIMATE_TITLE);
+  const recovering = scripted([REAL], { estimateRetries: NO_WAIT });
+  const recoveringQuote = await prepareAaSend(recovering.bundle, owner.address, RECIPIENT, AMOUNT);
+  recovering.answer([ZERO, REAL]);
+  signatures = 0;
+  const sent = await sendAa(recovering.bundle, countingOwner, recoveringQuote).then((r) => r, (e) => e);
+  check('zero once at send time, then real: asked again, signed once and submitted once',
+    sent?.userOpHash === USEROP_HASH && signatures === 1 && recovering.state.sends === 1 && recovering.state.estimates === 1 + 2,
+    `${sent?.message ?? ''} signatures=${signatures} sends=${recovering.state.sends}`);
+
+  // Mutation checks: broken copies of aa.ts must fail the checks above.
+  const aaSource = readFileSync(new URL('../src/wallet/aa.ts', import.meta.url), 'utf8');
+  const mutant = async (from, to) => {
+    if (!aaSource.includes(from)) throw new Error(`mutation anchor not found: ${from}`);
+    return importMutant('src/wallet/aa.ts', aaSource.replace(from, to));
+  };
+  {
+    // M-I1: the quote's estimate unchecked (the code before this fix).
+    const m = await mutant(
+      'estimated = await new BundlerClient(bundle.bundler, ENTRYPOINT_V07).estimateUserOperationGasChecked(\n        op,\n        bundle.estimateRetries ?? AA_ESTIMATE_RETRIES,\n      );',
+      'estimated = await new BundlerClient(bundle.bundler, ENTRYPOINT_V07).estimateUserOperationGas(op);',
+    );
+    const b = scripted([ZERO], { estimateRetries: NO_WAIT }, m);
+    const q = await m.prepareAaSend(b.bundle, owner.address, RECIPIENT, AMOUNT).then((x) => x, () => null);
+    check('M-I1 caught: an unchecked quote estimate lets a zero estimate reach the confirm (the refusal check above would fail)',
+      q !== null && b.state.estimates === 1);
+  }
+  {
+    // M-I2: describeAaError without the mapping.
+    const m = await mutant('  if (isImpossibleGasEstimateError(error)) {\n', '  if (false) {\n');
+    check('M-I2 caught: without the mapping the impossible-estimate title is not shown',
+      m.describeAaError(stuckError, { accountType: 'simple', deployed: false })?.title !== AA_IMPOSSIBLE_ESTIMATE_TITLE);
+  }
+  {
+    // M-I3: the bundle's client built without the retry policy falls back
+    // to the engine default (2 s waits), so the no-wait policy is not used.
+    const m = await mutant('    depositTopUpVerificationGas: AA_DEPOSIT_TOPUP_VERIFICATION_GAS,\n    estimateRetries,\n    ...(paymasterTransport', '    depositTopUpVerificationGas: AA_DEPOSIT_TOPUP_VERIFICATION_GAS,\n    estimateRetries: { attempts: 1, delayMs: 0 },\n    ...(paymasterTransport');
+    const b = scripted([REAL], { estimateRetries: NO_WAIT }, m);
+    const q = await m.prepareAaSend(b.bundle, owner.address, RECIPIENT, AMOUNT);
+    b.answer([ZERO, REAL]);
+    const r = await m.sendAa(b.bundle, owner, q).then(() => 'sent', (e) => e);
+    check('M-I3 caught: a client that ignores the bundle’s retry policy does not ask again at send time (the recovery check above would fail)',
+      isImpossibleGasEstimateError(r) && b.state.sends === 0);
+  }
 })();
 
 console.log(`\n${passed} passed, ${failed} failed`);

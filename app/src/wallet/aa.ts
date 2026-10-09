@@ -842,6 +842,40 @@ export const AA_FEE_ROSE_NEXT_STEP =
   'wallet never signs more than the worst-case fee you approved.';
 
 /**
+ * How the wallet treats a bundler gas estimate with an impossible (zero)
+ * limit: the engine (BundlerClient.estimateUserOperationGasChecked and
+ * SmartAccountClient's estimateRetries) refuses it and asks again, up to
+ * `attempts` times `delayMs` apart, before throwing
+ * ImpossibleGasEstimateError. Observed 2026-10-09 on ZeroDev's Arbitrum
+ * Sepolia endpoint: verificationGasLimit and paymasterVerificationGasLimit
+ * 0x0 in about 27 of 35 answers, in bursts of tens of seconds; signed, such
+ * an operation reverts in the EntryPoint. A person is waiting on the Review
+ * or Approve button, so the retry is short (at most about 6 s of waiting
+ * plus four round trips, against the testnet scripts' 24 attempts 5 s
+ * apart): it rides out a brief burst, and otherwise the refusal tells the
+ * user to try again. The same values as the engine's default
+ * (DEFAULT_ESTIMATE_RETRIES), passed explicitly so this file states them.
+ */
+export const AA_ESTIMATE_RETRIES: { attempts: number; delayMs: number } = { attempts: 4, delayMs: 2_000 };
+
+/** Title describeAaError shows for an impossible gas estimate. */
+export const AA_IMPOSSIBLE_ESTIMATE_TITLE = 'The bundler’s gas estimate was impossible.';
+
+/** The plain sentence describeAaError shows for an impossible gas estimate (before the technical line). */
+export const AA_IMPOSSIBLE_ESTIMATE_SENTENCE =
+  'The bundler answered with an impossible gas estimate (zero gas). This happens in bursts on some ' +
+  'networks; wait a few seconds and review again. The operation was not signed or sent.';
+
+/**
+ * True for the engine's ImpossibleGasEstimateError. Matched by name because
+ * the class is not exported from the engine package's entry point; the
+ * engine sets this name on the class itself (packages/chains-evm/src/rpc.ts).
+ */
+export function isImpossibleGasEstimateError(error: unknown): error is Error & { problems: string[]; attempts: number } {
+  return error instanceof Error && error.name === 'ImpossibleGasEstimateError';
+}
+
+/**
  * Why an operation must be reviewed again:
  *  - 'floor': the bundler's minimum fee rose above the quoted fees
  *    (feeFloorShortfall), before the device check or at send time;
@@ -1619,6 +1653,12 @@ export interface AaClientBundle {
    * engine's kernelRecoveredAccountSpec.
    */
   recovered?: { account: string };
+  /**
+   * The impossible-estimate retry policy this bundle's client and quotes
+   * use (AA_ESTIMATE_RETRIES unless createAaClient was given another, which
+   * only the check scripts do, to avoid real waits).
+   */
+  estimateRetries?: { attempts: number; delayMs: number };
 }
 
 /**
@@ -1698,8 +1738,11 @@ export function createAaClient(options: {
    * kernelRecoveredAccountSpec for this address.
    */
   recoveredAccount?: string;
+  /** Impossible-estimate retries; defaults to AA_ESTIMATE_RETRIES (check scripts pass a no-wait policy). */
+  estimateRetries?: { attempts: number; delayMs: number };
 }): AaClientBundle {
   if (options.accountType === 'kernel-7702') return createKernel7702Bundle(options);
+  const estimateRetries = options.estimateRetries ?? AA_ESTIMATE_RETRIES;
   const transportFor = options.transportFor ?? httpTransport;
   const node = transportFor(options.nodeUrl);
   const bundler = transportFor(options.bundlerUrl);
@@ -1768,6 +1811,7 @@ export function createAaClient(options: {
     node,
     spec,
     depositTopUpVerificationGas: AA_DEPOSIT_TOPUP_VERIFICATION_GAS,
+    estimateRetries,
     ...(paymasterTransport
       ? { paymaster: { transport: paymasterTransport, context: paymasterContext } }
       : {}),
@@ -1779,6 +1823,7 @@ export function createAaClient(options: {
     bundler,
     chainId,
     sponsored: paymasterTransport !== undefined,
+    estimateRetries,
     accountType,
     factory: options.factory,
     accountIndex,
@@ -1805,11 +1850,13 @@ function createKernel7702Bundle(options: {
   accountIndex?: number;
   transportFor?: TransportFactory;
   paymaster?: { url: string; contextJson: string | null };
+  estimateRetries?: { attempts: number; delayMs: number };
 }): AaClientBundle {
   const transportFor = options.transportFor ?? httpTransport;
   const node = transportFor(options.nodeUrl);
   const bundler = transportFor(options.bundlerUrl);
   const chainId = options.chainId ?? BigInt(EVM_CHAIN_ID.split(':')[1]!);
+  const estimateRetries = options.estimateRetries ?? AA_ESTIMATE_RETRIES;
   const delegate = KERNEL_V3_3_7702_DELEGATE;
   assertWalletDelegate(delegate);
   const engineSpec = createKernel7702AccountSpec({ node, chainId });
@@ -1845,6 +1892,7 @@ function createKernel7702Bundle(options: {
     node,
     spec,
     depositTopUpVerificationGas: AA_DEPOSIT_TOPUP_VERIFICATION_GAS,
+    estimateRetries,
     ...(paymasterTransport
       ? { paymaster: { transport: paymasterTransport, context: paymasterContext } }
       : {}),
@@ -1856,6 +1904,7 @@ function createKernel7702Bundle(options: {
     bundler,
     chainId,
     sponsored: paymasterTransport !== undefined,
+    estimateRetries,
     accountType: 'kernel-7702',
     factory: delegate,
     accountIndex: options.accountIndex ?? 0,
@@ -2905,7 +2954,14 @@ export async function prepareAaCalls(
     };
     let estimated: Awaited<ReturnType<BundlerClient['estimateUserOperationGas']>>;
     try {
-      estimated = await new BundlerClient(bundle.bundler, ENTRYPOINT_V07).estimateUserOperationGas(op);
+      // Checked: an estimate with an impossible (zero) limit is asked for
+      // again and, if it stays impossible, refused here, so it never
+      // reaches a confirm screen (ImpossibleGasEstimateError →
+      // describeAaError).
+      estimated = await new BundlerClient(bundle.bundler, ENTRYPOINT_V07).estimateUserOperationGasChecked(
+        op,
+        bundle.estimateRetries ?? AA_ESTIMATE_RETRIES,
+      );
     } catch (e) {
       // The pre-check above cannot see the gas, so an account holding a
       // little more than the amount can still fail the bundler's simulation
@@ -3360,6 +3416,7 @@ function tokenGasClient(
     spec: bundle.spec,
     paymaster: { transport },
     gasPaddingPct: { ...TOKEN_GAS_PADDING_PCT },
+    estimateRetries: bundle.estimateRetries ?? AA_ESTIMATE_RETRIES,
   });
 }
 
@@ -3419,6 +3476,7 @@ function erc7677TokenGasClient(bundle: AaClientBundle, sender: string, quote: Aa
     spec: bundle.spec,
     paymaster: { transport },
     gasPaddingPct: { ...TOKEN_GAS_PADDING_PCT },
+    estimateRetries: bundle.estimateRetries ?? AA_ESTIMATE_RETRIES,
   });
 }
 
@@ -3685,6 +3743,9 @@ export function describeAaError(
   const detail = error instanceof Error ? error.message : String(error);
   if (error instanceof AaFundingError) return { title: error.title, detail };
   if (error instanceof AaFeeRoseError) return { title: aaFeeRoseTitle(error), detail };
+  if (isImpossibleGasEstimateError(error)) {
+    return { title: AA_IMPOSSIBLE_ESTIMATE_TITLE, detail: `${AA_IMPOSSIBLE_ESTIMATE_SENTENCE}\n\nTechnical detail: ${detail}` };
+  }
   if (isBundlerFeeFloorRefusal(detail)) {
     return {
       title: AA_FEE_ROSE_TITLE,

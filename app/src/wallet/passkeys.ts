@@ -46,6 +46,7 @@ import {
   type AaTokenSpend,
   type AaTokenTransfer,
   AA_DEPOSIT_TOPUP_VERIFICATION_GAS,
+  AA_ESTIMATE_RETRIES,
 } from './aa.ts';
 import { utf8Decode } from './erc20.ts';
 import type { KeyValueStore } from './tokens.ts';
@@ -1392,6 +1393,9 @@ export function createPasskeyBundle(
     // performs at real fees, so the signed verification gas needs this margin
     // whenever the account's deposit is below the required prefund.
     depositTopUpVerificationGas: AA_DEPOSIT_TOPUP_VERIFICATION_GAS,
+    // Impossible (zero) gas estimates are refused and asked for again, as
+    // for every smart-account client (aa.ts AA_ESTIMATE_RETRIES).
+    estimateRetries: AA_ESTIMATE_RETRIES,
   });
   return {
     client,

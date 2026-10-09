@@ -67,6 +67,7 @@ import { toChecksumAddress, type DerivedAccount } from '@shiba-wallet/core';
 import { assertFeatureAllowed, eip155Caip2 } from '../config/readiness.ts';
 import {
   AA_DEPOSIT_TOPUP_VERIFICATION_GAS,
+  AA_ESTIMATE_RETRIES,
   assertQuoteFeesMeetBundlerFloor,
   bundlerFeeFloor,
   claimQuoteForSubmission,
@@ -2644,7 +2645,12 @@ export async function prepareGuardianSubmission(args: {
     maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
     signature: spec.stubSignature(),
   };
-  const estimated = await new BundlerClient(args.bundler, ENTRYPOINT_V07).estimateUserOperationGas(op);
+  // Checked: an impossible (zero) estimate is asked for again and then
+  // refused, so it never reaches the confirm screen (aa.ts AA_ESTIMATE_RETRIES).
+  const estimated = await new BundlerClient(args.bundler, ENTRYPOINT_V07).estimateUserOperationGasChecked(
+    op,
+    AA_ESTIMATE_RETRIES,
+  );
   const verificationGasLimit =
     deposit === null
       ? estimated.verificationGasLimit
@@ -2718,6 +2724,7 @@ export async function submitGuardianRecovery(args: {
     // Same deposit top-up headroom as every other self-paid smart-account
     // operation (aa.ts AA_DEPOSIT_TOPUP_VERIFICATION_GAS explains why).
     depositTopUpVerificationGas: AA_DEPOSIT_TOPUP_VERIFICATION_GAS,
+    estimateRetries: AA_ESTIMATE_RETRIES,
   });
   const { userOpHash } = await client.sendCalls(args.signer, [recoveryCall(args.quote.request)], fees, {
     beforeSign: signedFeeGuard(fees, args.quote.fee),
