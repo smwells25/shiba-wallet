@@ -1932,3 +1932,29 @@ Subagents on Opus.
       + 0.0000512 deposit, Account 2 0.004094 ETH + 0.2 USDC. End state:
       Ethereum Sepolia, Account 1, light mode, Google IME, the Arbitrum
       bundler saved on the device; Metro still serving wt-app at 3b0a507.
+- [x] Arbitrum-pass findings FIXED (commit above; check-aa 338 (was 304);
+      offline runner ALL GREEN in the CTO's isolated worktree — now with
+      its own engine resolution: engine 866, app 5,677 across 44 suites,
+      lint 0/0, tsc clean; not seen on a device). (1) aa.ts
+      sendApprovalPromptTitle(quote, symbol, decimals) + exactAmountText:
+      the biometric prompt is built from the QUOTE's amount with the
+      confirm screen's own formatting (SendScreen's exact() calls the same
+      helper) on every path — regular, ERC-20 (own symbol/decimals), NFT
+      (text unchanged), smart-account (through the unchanged
+      aaSendApprovalPrompt) and the USDC-fee path (quote.token); live trim
+      case before/after: "Approve sending 0.00399415320266 test ETH" →
+      "Approve sending 0.00399414135866 test ETH"; untrimmed canonical
+      amounts byte-identical; one deliberate change: "1.50" now reads
+      "1.5" like the confirm. Mutants caught: a title from
+      maxAdjustment.requested (in-suite) and the old form-text title (by
+      hand, 2 checks failed). (2) sendFormTokenFeeSentence /
+      tokenGasThroughPhrase: with the USDC fee on, the Send form's box
+      reads "The network fee is paid in USDC through Circle's paymaster,
+      not in test ETH; Review shows the most it can cost." (Pimlico named
+      on Ethereum Sepolia); the ETH wording unchanged. (3) Developer →
+      Test network uses choiceChips/choiceChip (row, wrap, gap 10,
+      flexGrow 1, flexBasis 40%, minWidth 140) so two chips sit per row
+      and words no longer break mid-word (reasoned from the styles; the
+      Smart-account type and Auto-lock rows keep the old flex-1 style and
+      may wrap the same way — not observed). (4) the endpoint status tag
+      lost numberOfLines={1} and wraps a long host.
