@@ -834,6 +834,12 @@ export class BrowserBridgeClient implements WcClient {
     if (sent === null) return;
     if (sent.chainId !== chainId) page.deliver({ nonce: page.nonce, type: 'event', name: 'chainChanged', value: chainId });
     if (sent.accounts !== accountsKey) page.deliver({ nonce: page.nonce, type: 'event', name: 'accountsChanged', value: accounts });
+    // The screen's bar and panel read servedAccounts() during render, so a
+    // context change that reaches the page must also bump the version that
+    // re-renders them; on the emulator (2026-10-10) a network switch left the
+    // bar saying "Connected as …" while the page had already been told
+    // accountsChanged([]), because only the disconnect paths bumped it.
+    if (sent.chainId !== chainId || sent.accounts !== accountsKey) this.changed();
   }
 
   /**
