@@ -2130,3 +2130,84 @@ Subagents on Opus.
       fork (Pocket and 1RPC report "answered without the traceTransfers
       log" because the log now comes from 0xff…fe) — a printed note only;
       follow-up. Why 0xrpc.io froze is unknown.
+- [x] Item 1 — RECURRING PAYMENTS PROVEN LIVE IN-APP (2026-10-09 US
+      Eastern / 2026-10-10 UTC; emulator, Metro worktree moved to d6fd300
+      with the engine built inside it, 2,306 modules — Expo Go needed an
+      `am force-stop host.exp.exponent` to drop the old bundle; no repo
+      files edited; every hash verified on publicnode). Form: the new
+      hint "Suggested from the fee each payment is signed at today (the
+      bundler's current fee plus 100% headroom)…", pre-fill
+      0.006930000012 test ETH for 3 payments (2.31 gwei), the balance line
+      with the 0.01465 + 0.000347 deposit. Review (no AA21 this time):
+      batching box first, the sentence "Pays 0x69F0… up to
+      0.000000000000001 test ETH every 5 minutes until 2026-10-10 02:03
+      UTC…", the start note, the three recurring notes, the bullets, the
+      session-key line; max network fee 0.009543 test ETH (bundler
+      estimate 0.007953 + 20%); the budget auto-lowered to 0.0054575 to
+      keep the install fee back, with the pricing note "Fee budget priced
+      at 2.310000004 gwei per gas … 500,000 gas per payment … doubled
+      because fees move; it covers the fees of all 3 payments at that
+      fee." Start: 3 prompts ("Approve this recurring payment", "Protect
+      the new session key with biometrics", "Approve signing with your
+      recovery phrase" — the third only because the driver's 45 s dumps
+      let the 30 s phrase hold lapse; 2 when answered promptly), "Final
+      terms: the first payment is due from 2026-10-10 01:50 UTC, then one
+      more every 5 minutes (3 in total); nothing after 02:05 UTC";
+      install userOp 0x8df52475f67214c2f2ff46be90b904f4c765892d63b884d0cff1f0f028879d79,
+      tx 0xd4e0d06b47b5b9d74e01e80ea2f215234845279cdda81e0c7f6fce78b03def74,
+      block 11881366, gasUsed 2,945,937 (post-fork cost), actualGasCost
+      0.0069 ETH, permission 0x5eec2ec3. Card: "Payment due now (since
+      01:50 UTC).", "0 of 3 payments sent.", the budget left, "Payment key
+      on this phone only (never shown or exported)…", the headline box.
+      PAYMENT 1: Cancel left the permission-key nonce at 0; "Send payment"
+      raised exactly ONE prompt "Use the session key" and NO phrase
+      prompt; userOp 0x2d5dc6a1ccc7fd6c921fc4ac6f63d5e412746cbca30c8669da4924835885427d,
+      tx 0xcdaaf98827694747448c227b56aed093aab6e904ef261eed3ecc457c8ac53a47,
+      block 11881383, sender 0xD31c…, nonce key 0x25eec2ec3… seq 0,
+      success, the EIP-7708 log showing 1,000 wei to the payee. The
+      second slot had already opened, so the "Next payment: not before…"
+      state was never shown. Background (3.7 min, under the 5-min period
+      because the grant ended at 02:05): nonce unchanged; after the
+      auto-lock unlock (1 ordinary prompt) the banner sheet "1 recurring
+      payment is due…" with Review / Not now. Catch-up: "2 payments due
+      now (the first since 01:55 UTC). 1 was missed; your account allows
+      them to be sent now, one at a time."; PAYMENT 2 (1 prompt): userOp
+      0x09496a0b60a1543202a93771484e0baed7352cf5652f65dbfc1449a12129ffd3,
+      tx 0x51cb6ff0b60817376972108fbfb38189039dc3e8a69acad7761582dee9a9bc14,
+      block 11881417, seq 1, success. PAYMENT 3 FAILED after the prompt
+      with a transient emulator DNS error ("Unable to resolve host
+      ethereum-sepolia-rpc.publicnode.com") and the grant expired at
+      02:05 before a retry; card "Active on-chain, but expired…" /
+      "Completed: ended 02:05 UTC; 2 of 3 payments were sent." REVOKE AND
+      FORGET (1 prompt; no batching warning on the expired card): userOp
+      0x75f4475f9a874746a6528f3553193f077d4266e719ad88fd10707bb5b0d63f07,
+      tx 0xb70cf960c889cb3877bf8b3587fd733918af7454cfd294b4f1725edb5c6de31f,
+      block 11881439, success; readKernelPermissionState: installed
+      false, no policies; "None on this device."; every phase-13 revoked
+      subscription card shows no batching warning; mainnet mode shows no
+      Sessions link and no banner; the Developer chips sit two per row
+      with no mid-word breaks (the Arbitrum-pass fix seen live). Step 9
+      (spending limit below 1,000 wei) skipped. FINDINGS (fix slice
+      dispatched): (1) BUG — the recurring send path shows the raw
+      UnknownHostException in the alert, twice in the card status and as
+      "Last payment attempt refused: fetch failed…" (wrong word for a
+      network failure), despite describeRecurringPaymentError's comment;
+      neither the send nor the status read failed over to the other
+      Sepolia endpoints; (2) BUG/UX — the card's due state is computed at
+      render only and reloads on focus, so after the unlock it still
+      said "due now (since 01:55)" until Refresh; (3) DESIGN — validUntil
+      = start + payments × period gives the LAST payment a single period,
+      so a late payment plus a transient error loses it for good,
+      contradicting "missed payments are not lost" near the end; (4) the
+      auto-lowered fee budget still trips the keep-back warning by
+      38,808,000,067 wei because the lowering is computed from the first
+      quote and the re-quote came back higher; (5) copy — "Merchant:" on
+      the payee error, "Pulls" in the funding box, "the session key is
+      deleted" on the revoke screen, the dialog says twice that the
+      payment key signs, "Completed: ended …; 2 of 3 payments were sent."
+      for an expired grant with a payment unsent. Funds: Kernel
+      0.014654 → 0.004747 ETH + deposit 0.000347 → 0.000450 (spent
+      0.0098035 = the four actualGasCosts + 2,000 wei, reconciled);
+      payee 8,000 → 10,000 wei. End state: Home, Ethereum Sepolia,
+      Account 1, light mode, Google IME, nothing installed; Metro at
+      d6fd300.
