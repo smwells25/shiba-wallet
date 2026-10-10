@@ -289,6 +289,20 @@ export function describeScreenProtectionStatus(status: ScreenProtectionStatus): 
   }
 }
 
+/**
+ * react-native, loaded lazily so this module stays loadable under Node (the
+ * check script injects the native calls). A CommonJS require is used rather
+ * than a dynamic `import('react-native')`: Metro's ES-module interop copies
+ * every export of the namespace, which reads react-native's deprecated
+ * getters (PushNotificationIOS, Clipboard, SafeAreaView, …) and raised five
+ * LogBox warnings at every launch (seen on the emulator, 2026-10-10); a
+ * require reads only the two properties used.
+ */
+function reactNative(): typeof import('react-native') {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy, see above
+  return require('react-native') as typeof import('react-native');
+}
+
 // ---- The app's instance (runtime only) ----
 
 /**
@@ -298,7 +312,7 @@ export function describeScreenProtectionStatus(status: ScreenProtectionStatus): 
  */
 export async function loadScreenCaptureNative(): Promise<ScreenCaptureNative> {
   const capture = await import('expo-screen-capture');
-  const { Platform } = await import('react-native');
+  const { Platform } = reactNative();
   const native: ScreenCaptureNative = {
     prevent: (key) => capture.preventScreenCaptureAsync(key),
     allow: (key) => capture.allowScreenCaptureAsync(key),
@@ -332,14 +346,13 @@ export function appScreenProtection(): ScreenProtectionController {
     // Android without a current activity) is tried again on every return to
     // the foreground. react-native is imported dynamically for the same
     // reason as above; the listener lives as long as the app.
-    void import('react-native').then(
-      ({ AppState }) => {
-        AppState.addEventListener('change', (next) => {
-          if (next === 'active') void instance.retryIfFailed();
-        });
-      },
-      () => {},
-    );
+    try {
+      reactNative().AppState.addEventListener('change', (next) => {
+        if (next === 'active') void instance.retryIfFailed();
+      });
+    } catch {
+      // Without react-native (the Node check script) there is no foreground event.
+    }
   }
   return appInstance;
 }
