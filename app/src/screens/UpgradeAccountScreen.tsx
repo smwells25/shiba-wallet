@@ -28,6 +28,7 @@ import { getEndpoint, withEndpoint } from '../config/networks';
 import { getAaConfig, isEip7702Owner, setAccountEip7702, type AaChainConfig } from '../wallet/aa';
 import {
   FOREIGN_DELEGATE_WARNING,
+  PENDING_UPGRADE_UNAVAILABLE_WARNING,
   REVOKE_NOTE,
   SET_CODE_EXECUTION_GAS,
   SET_CODE_NO_SIMULATION_NOTE,
@@ -38,7 +39,11 @@ import {
   delegationStatusText,
   prepareSetCodeTx,
   sendSetCodeTx,
+  upgradeActionsOffered,
+  upgradeAvailabilityUnknownText,
+  upgradeNotAvailableText,
   waitForSetCode,
+  walletDelegateDeployed,
   type SetCodeAction,
   type SetCodeQuote,
 } from '../wallet/delegation';
@@ -108,6 +113,13 @@ export function UpgradeAccountScreen({ navigation }: Props) {
   // only. Status reads, cancelling a pending upgrade and revoking stay
   // available; delegation.ts and aa.ts refuse the upgrade itself too.
   const gate = readinessGate('eip7702-upgrade', evmChain.caip2);
+  // Whether the Kernel v3.3 delegate has code on this chain (read with the
+  // status by useAccountDelegation → readAccountDelegation, per chain, and
+  // again by every upgrade quote). On a network the user added it may not:
+  // then neither upgrade action is offered and the status says so.
+  // Revoking is never affected.
+  const delegateDeployed = walletDelegateDeployed(chainId);
+  const upgradeOffered = upgradeActionsOffered({ kernelV33Verified: evmChain.kernelV33Verified, delegateDeployed });
 
   const onUpgradeWithSend = () => {
     if (!address) return;
@@ -400,9 +412,10 @@ export function UpgradeAccountScreen({ navigation }: Props) {
       {gate ? <TestNetworksOnlyCard feature={gate.feature} hint={gate.hint} bodyStyle={styles.body} hintStyle={styles.hint} /> : null}
       <Row label="Account" value={accountName} sub={address} theme={theme} />
       <ImportedKeyNotice show={activeAccount?.imported === true} />
-      <Text style={[styles.body, { color: theme.text }]}>{UPGRADE_EXPLANATION}</Text>
+      {/* What the upgrade enables is described only where it can be done. */}
+      {upgradeOffered ? <Text style={[styles.body, { color: theme.text }]}>{UPGRADE_EXPLANATION}</Text> : null}
       <Row label="Kernel v3.3 delegate" value={WALLET_7702_DELEGATE} mono theme={theme} />
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{UPGRADE_RECEIVE_NOTE}</Text>
+      {upgradeOffered ? <Text style={[styles.hint, { color: theme.textMuted }]}>{UPGRADE_RECEIVE_NOTE}</Text> : null}
 
       <Text style={[styles.label, { color: theme.textMuted }]}>Current status</Text>
       {delegation.loading ? (
@@ -424,12 +437,24 @@ export function UpgradeAccountScreen({ navigation }: Props) {
           {delegationStatusText(status)}
         </Text>
       )}
+      {delegateDeployed === false ? (
+        <WarningBox>{upgradeNotAvailableText(evmChain.label)}</WarningBox>
+      ) : !upgradeOffered && !delegation.loading ? (
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{upgradeAvailabilityUnknownText(evmChain.label)}</Text>
+      ) : null}
       <Button title="Refresh status" variant="secondary" onPress={delegation.refresh} />
 
       {error ? <Text style={[styles.error, { color: theme.danger }]}>{error}</Text> : null}
       {phase === 'quoting' ? <ActivityIndicator size="small" color={theme.accent} /> : null}
 
-      {status?.kind === 'plain' ? (
+      {status?.kind === 'plain' && !upgradeOffered && optedIn ? (
+        <View style={styles.block}>
+          <WarningBox>{PENDING_UPGRADE_UNAVAILABLE_WARNING}</WarningBox>
+          <Button title="Cancel pending upgrade" variant="secondary" onPress={onCancelPending} />
+        </View>
+      ) : null}
+
+      {status?.kind === 'plain' && upgradeOffered ? (
         <View style={styles.block}>
           {optedIn ? (
             <>
@@ -468,7 +493,7 @@ export function UpgradeAccountScreen({ navigation }: Props) {
         </View>
       ) : null}
 
-      {status?.kind === 'kernel-v3.3' && !optedIn ? (
+      {status?.kind === 'kernel-v3.3' && !optedIn && upgradeOffered ? (
         <View style={styles.block}>
           <Text style={[styles.hint, { color: theme.textMuted }]}>
             This account is upgraded on-chain, but smart-account sends do not use it yet on this

@@ -52,6 +52,7 @@ import {
   readinessDisplayReason,
   readinessEvidenceLine,
   readinessGate,
+  readinessRefusal,
   type FeatureReadiness,
   type PhraseProtectionState,
 } from '../config/readiness';
@@ -154,9 +155,11 @@ const DEVELOPER_TEST_NETWORK_HINT = (() => {
   const kernel = EVM_TEST_PROFILES.filter((p) => p.kernelV33Verified).map((p) => p.label);
   const simple = EVM_TEST_PROFILES.filter((p) => p.aaPrefill !== null).map((p) => p.label);
   return (
-    `Switches the app’s EVM chain to a test network — ${nets}, each paid in test ETH: balances, sends, ` +
+    `Switches the app’s EVM chain to a test network — ${nets}, each paid in test ETH, or a test network you ` +
+    'added under “Networks you added” below: balances, sends, ' +
     'WalletConnect and the smart-account path all run against the chosen network, an orange TESTNET banner ' +
-    `replaces the mainnet warning, and explorer links go to ${hosts}. Each network keeps its own endpoint, ` +
+    `replaces the mainnet warning, and explorer links go to ${hosts} (on a network you added, to the explorer ` +
+    'you gave, if any). Each network keeps its own endpoint, ' +
     'indexer and Account Abstraction configuration — nothing is shared between mainnet and the test networks ' +
     'or between test networks, and choosing Off restores mainnet exactly as it was. The Account Abstraction ' +
     (simple.length > 0 ? `section pre-fills the verified SimpleAccountFactory on ${listJoin(simple, 'and')} and ` : 'section pre-fills ') +
@@ -2281,7 +2284,9 @@ export function SettingsScreen({ navigation, route }: Props) {
           </WarningBox>
         ) : null}
         {evmChain.custom ? (
-          <Text style={[styles.hint, { color: theme.textMuted }]}>{customNetworkNote(evmChain)}</Text>
+          <Text style={[styles.hint, { color: theme.textMuted }]}>
+            {customNetworkNote(evmChain, { smartAccountRefusal: readinessRefusal('kernel-smart-account') })}
+          </Text>
         ) : null}
         {evmChain.l1DataFee ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>

@@ -783,6 +783,11 @@ export function setCustomEvmProfiles(profiles: readonly EvmChainProfile[]): void
     seen.add(p.caip2);
   }
   customProfiles = [...profiles];
+  // A passed multisig check belongs to the network as it was registered; a
+  // removed (or re-added) custom network must be checked again.
+  for (const caip2 of [...multisigCheckedNetworks]) {
+    if (!isBuiltInEvmChain(caip2)) multisigCheckedNetworks.delete(caip2);
+  }
   for (const listener of [...customListeners]) {
     try {
       listener();
@@ -836,18 +841,69 @@ export function subscribeCustomEvmProfiles(listener: () => void): () => void {
  * says when a network charges a separate layer 1 data fee or folds it into
  * gas; a custom one is treated like Ethereum), smart-account deployments
  * are not pre-filled, swaps are not offered, and the explorer path is
- * assumed.
+ * assumed. On a network treated as a MAIN network the Account Abstraction
+ * settings cannot be saved at all (readiness row kernel-smart-account), so
+ * the note does not invite the user to paste a factory there: it carries
+ * the readiness refusal instead, passed in by the caller
+ * (readinessRefusal('kernel-smart-account'); this module imports nothing,
+ * so it cannot read the readiness table itself).
  */
-export function customNetworkNote(profile: Pick<EvmChainProfile, 'label' | 'custom'>): string {
+export function customNetworkNote(
+  profile: Pick<EvmChainProfile, 'label' | 'custom' | 'testnet'>,
+  options: { smartAccountRefusal?: string } = {},
+): string {
   const explorer = profile.custom?.explorerBase
     ? ` Explorer links assume the Etherscan-style paths ${profile.custom.explorerBase}/tx/… and /address/…; ` +
       'the wallet did not check that the explorer uses them.'
     : ' No block explorer was given, so the wallet shows no explorer links here.';
+  const smartAccounts = profile.testnet
+    ? 'No smart-account deployment is pre-filled (paste a factory under Account Abstraction and the wallet checks ' +
+      'it on-chain before saving), swaps are not offered, and tokens start with an empty list.'
+    : 'Smart-account features cannot be set up on it, because the wallet treats it as a main network: ' +
+      `${options.smartAccountRefusal ?? 'they are switched off there, as on Ethereum mainnet.'} Swaps are not ` +
+      'offered, and tokens start with an empty list.';
   return (
     `${profile.label} is a network you added. The wallet treats its fees like Ethereum’s: it does not detect ` +
-    'layer-2 fee models, so on a rollup quotes may be refused or underestimate the fee. No smart-account ' +
-    'deployment is pre-filled (paste a factory under Account Abstraction and the wallet checks it on-chain ' +
-    'before saving), swaps are not offered, and tokens start with an empty list.' +
+    `layer-2 fee models, so on a rollup quotes may be refused or underestimate the fee. ${smartAccounts}` +
     explorer
   );
+}
+
+// ---------------------------------------------------------------------------
+// Multi-signature accounts: where they are offered (phase 17, custom networks)
+// ---------------------------------------------------------------------------
+
+/**
+ * Shown on the Multisig screen (and instead of Create) on a network where
+ * the multisig contracts are not known to exist.
+ */
+export const MULTISIG_UNVERIFIED_NETWORK_NOTE =
+  "Multi-signature accounts need the Kernel v3.3 contracts and ZeroDev's weighted signer module on this " +
+  'network; the wallet has not verified them here.';
+
+/** Networks (CAIP-2) where the multisig network check passed this session. */
+const multisigCheckedNetworks = new Set<string>();
+
+/**
+ * Records the result of the multisig network check (wallet/multisig.ts
+ * checkMultisigNetwork: the weighted signer module has code and
+ * verifyKernelDeployment passes, read through the active endpoint). Only a
+ * pass with no problem at all is remembered, for this session; any problem
+ * forgets an earlier pass.
+ */
+export function recordMultisigNetworkCheck(caip2: string, problems: readonly string[]): void {
+  if (problems.length === 0) multisigCheckedNetworks.add(caip2);
+  else multisigCheckedNetworks.delete(caip2);
+}
+
+/**
+ * Whether the Home link and the Multisig screen's Create action are
+ * offered: on a profile whose Kernel v3.3 deployment the project verified
+ * (kernelV33Verified — the built-in networks; multisig is further limited
+ * to test networks by its readiness row), or on a network where the
+ * multisig check passed this session. A network the user added starts
+ * unverified (custom-networks.ts sets kernelV33Verified false).
+ */
+export function multisigNetworkVerified(profile: Pick<EvmChainProfile, 'caip2' | 'kernelV33Verified'>): boolean {
+  return profile.kernelV33Verified || multisigCheckedNetworks.has(profile.caip2);
 }

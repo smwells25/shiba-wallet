@@ -14,6 +14,7 @@ import {
 import { pickRecordFile } from '../components/RecordFileActions';
 import { useTheme } from '../theme';
 import { readinessGate } from '../config/readiness';
+import { MULTISIG_UNVERIFIED_NETWORK_NOTE, multisigNetworkVerified, recordMultisigNetworkCheck } from '../config/evm-chain';
 import { getEndpoint } from '../config/networks';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
@@ -140,6 +141,12 @@ export function MultisigScreen() {
   const { accounts, activeAccount, accountList, signWith } = useWallet();
   const { evmChain } = usePrefs();
   const chain = evmChain.caip2;
+  // Create is offered only where the Kernel v3.3 contracts and the weighted
+  // signer module are known to exist: a built-in network (kernelV33Verified)
+  // or one where checkMultisigNetwork passed this session (recorded below).
+  // (The counter only re-renders the screen after a check is recorded.)
+  const [, setNetworkCheckNonce] = useState(0);
+  const networkVerified = multisigNetworkVerified(evmChain);
   const nativeSymbol = evmChain.displaySymbol;
   const evm = accounts.find((a) => a.chainId === EVM_CHAIN_ID) ?? null;
   const activeAddress = evm?.address ?? null;
@@ -294,12 +301,31 @@ export function MultisigScreen() {
     setPhase('create-review');
   };
 
+  /** Runs the multisig network check on the active endpoint and remembers a pass for this session. */
+  const onCheckNetwork = async () => {
+    if (!node) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const problems = await checkMultisigNetwork(node, chain);
+      recordMultisigNetworkCheck(chain, problems);
+      setNetworkCheckNonce((n) => n + 1);
+      if (problems.length > 0) throw new Error(problems.join(' '));
+    } catch (e) {
+      fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const onCreate = async () => {
     if (!reviewed || !phraseSigner || !node) return;
     setBusy(true);
     setError(null);
     try {
       const problems = await checkMultisigNetwork(node, chain);
+      recordMultisigNetworkCheck(chain, problems);
+      setNetworkCheckNonce((n) => n + 1);
       if (problems.length > 0) throw new Error(problems.join(' '));
       const record = await createMultisigRecord({ chain, config: reviewed.config, localSigner: phraseSigner, name: nameInput });
       await reload();
@@ -470,6 +496,8 @@ export function MultisigScreen() {
         throw new Error(`This record is for chain id ${importParsed.facts.chainId}; switch to that network first (Settings → Developer).`);
       }
       const problems = await checkMultisigNetwork(node, chain);
+      recordMultisigNetworkCheck(chain, problems);
+      setNetworkCheckNonce((n) => n + 1);
       if (problems.length > 0) throw new Error(problems.join(' '));
       const record = await importMultisigRecord(importParsed, ownAccounts);
       await reload();
@@ -1074,13 +1102,24 @@ export function MultisigScreen() {
         ))
       )}
       {errorBox}
+      {!networkVerified ? (
+        <>
+          <WarningBox>{MULTISIG_UNVERIFIED_NETWORK_NOTE}</WarningBox>
+          <Button
+            title="Check this network"
+            variant="secondary"
+            onPress={() => void onCheckNetwork()}
+            disabled={readiness !== null || busy || !node}
+          />
+        </>
+      ) : null}
       <Button
         title="Create a multisig"
         onPress={() => {
           setError(null);
           setPhase('create');
         }}
-        disabled={readiness !== null}
+        disabled={readiness !== null || !networkVerified}
       />
       <Button
         title="Add a multisig from a record"

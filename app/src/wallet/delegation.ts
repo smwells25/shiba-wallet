@@ -20,6 +20,7 @@ import {
   type JsonRpcTransport,
 } from '@shiba-wallet/chains-evm';
 import { assertFeatureAllowed, eip155Caip2 } from '../config/readiness.ts';
+import { evmProfileByCaip2 } from '../config/evm-chain.ts';
 import {
   L1_DATA_FEE_HEADROOM_PERCENT,
   OP_STACK_GAS_PRICE_ORACLE,
@@ -117,6 +118,12 @@ export function classifyDelegation(
 const cache = new Map<string, AccountDelegation>();
 const inflight = new Map<string, Promise<AccountDelegation>>();
 const listeners = new Set<() => void>();
+/**
+ * Whether the wallet's delegate (WALLET_7702_DELEGATE) has code, per chain
+ * id (decimal string), as last read this session. Absent = not read, or the
+ * read failed.
+ */
+const delegateCode = new Map<string, boolean>();
 
 function cacheKey(chainId: bigint | undefined, url: string, address: string): string {
   return `${chainId !== undefined ? chainId.toString() : `url:${url}`}|${address.toLowerCase()}`;
@@ -139,6 +146,7 @@ export function subscribeDelegation(listener: () => void): () => void {
 export function invalidateAccountDelegation(address?: string): void {
   if (address === undefined) {
     cache.clear();
+    delegateCode.clear();
   } else {
     const suffix = `|${address.toLowerCase()}`;
     for (const key of [...cache.keys()]) if (key.endsWith(suffix)) cache.delete(key);
@@ -154,6 +162,98 @@ export function cachedAccountDelegation(
 ): AccountDelegation | undefined {
   return cache.get(cacheKey(chainId, url, address));
 }
+
+// ---------------------------------------------------------------------------
+// Is the delegate deployed on this chain? (custom networks, phase 17)
+// ---------------------------------------------------------------------------
+
+/**
+ * The network's name for the sentences below: the profile's label (built-in
+ * or a network the user added), else the chain id.
+ */
+function networkNameFor(chainId: bigint): string {
+  return evmProfileByCaip2(eip155Caip2(chainId))?.label ?? `the network with chain id ${chainId}`;
+}
+
+/**
+ * Reads the wallet delegate's code through `node` (eth_getCode at
+ * 'latest'). True when there is code. Throws on an answer that is not hex.
+ * EIP-7702 ("Delegation designation"): a call to a delegated account runs
+ * the code AT the delegate's address, so a delegate without code leaves the
+ * account running nothing — every smart-account call to it would do nothing
+ * and the wallet's features built on Kernel would not exist there.
+ */
+export async function readWalletDelegateDeployed(node: JsonRpcTransport): Promise<boolean> {
+  const code = await node('eth_getCode', [WALLET_7702_DELEGATE, 'latest']);
+  if (typeof code !== 'string' || !/^0x[0-9a-fA-F]*$/.test(code)) {
+    throw new Error('The network endpoint did not answer eth_getCode with hex data.');
+  }
+  return !/^0x0*$/.test(code);
+}
+
+/**
+ * Whether the Kernel v3.3 delegate has code on `chainId`, as read this
+ * session (no network): true, false, or undefined when it was not read or
+ * the read failed. Filled by readAccountDelegation (when it is given the
+ * chain id) and by prepareSetCodeTx.
+ */
+export function walletDelegateDeployed(chainId: bigint | string): boolean | undefined {
+  return delegateCode.get(BigInt(chainId).toString());
+}
+
+/**
+ * Whether the screens offer the two upgrade actions ("Upgrade with the next
+ * smart-account send", "Upgrade now with a transaction") and "Use this
+ * upgraded account": only when the delegate is known to have code on the
+ * chain, or — before it was read — on a profile whose Kernel v3.3
+ * deployment the project verified on-chain (kernelV33Verified, the built-in
+ * networks; the delegate IS that deployment's implementation, engine
+ * kernel-account.ts KERNEL_V3_3_7702_DELEGATE = KERNEL_V3_3.implementation).
+ * A network the user added is never offered on an assumption. prepareSetCodeTx
+ * checks the code again on every quote either way.
+ */
+export function upgradeActionsOffered(args: { kernelV33Verified: boolean; delegateDeployed: boolean | undefined }): boolean {
+  return args.delegateDeployed ?? args.kernelV33Verified;
+}
+
+/**
+ * Home's "Upgrade" link: hidden only when the delegate is known to have no
+ * code on the chain AND the account has no delegation to review or undo
+ * (revoking always stays reachable).
+ */
+export function upgradeLinkShown(args: { delegateDeployed: boolean | undefined; status: AccountDelegation | null | undefined }): boolean {
+  return !(args.delegateDeployed === false && args.status?.kind === 'plain');
+}
+
+/** prepareSetCodeTx's refusal when the delegate has no code on the chain. */
+export function kernelDelegateMissingMessage(network: string): string {
+  return (
+    `The Kernel v3.3 code this upgrade points to is not deployed on ${network}, so delegating to it would leave ` +
+    'your address pointing at nothing. Nothing was signed.'
+  );
+}
+
+/** The Upgrade screen's status when the delegate has no code on the chain. */
+export function upgradeNotAvailableText(network: string): string {
+  return (
+    `Not available on this network: the Kernel v3.3 code this upgrade points to (${shortDelegate(WALLET_7702_DELEGATE)}) ` +
+    `is not deployed on ${network}, so delegating to it would leave your address pointing at nothing. The wallet ` +
+    'does not offer the upgrade here. Undoing an existing delegation stays available.'
+  );
+}
+
+/** The Upgrade screen's status on a network added by the user before the delegate's code could be read. */
+export function upgradeAvailabilityUnknownText(network: string): string {
+  return (
+    `The upgrade is not offered yet: the wallet could not check whether the Kernel v3.3 code this upgrade points ` +
+    `to is deployed on ${network}. Tap Refresh status to check again.`
+  );
+}
+
+/** A pending "upgrade with the next smart-account send" on a chain where the delegate has no code. */
+export const PENDING_UPGRADE_UNAVAILABLE_WARNING =
+  'An upgrade is pending for this account on this network, but the Kernel v3.3 code it points to is not ' +
+  'deployed here. Cancel it so no smart-account send carries it.';
 
 /**
  * Reads an account's delegation through the engine's readDelegationStatus
@@ -186,7 +286,24 @@ export async function readAccountDelegation(
         );
       }
     }
-    const status = classifyDelegation(await readDelegationStatus(node, address));
+    // With a chain id, the delegate's code on that chain is read alongside
+    // (once per chain per session, again on `force`), so every screen that
+    // shows the status can also say whether the upgrade exists there. A
+    // failed read of the delegate's code leaves it unknown; it never fails
+    // the status read.
+    const chainKey = options.chainId !== undefined ? options.chainId.toString() : null;
+    const [raw] = await Promise.all([
+      readDelegationStatus(node, address),
+      chainKey !== null && (options.force || !delegateCode.has(chainKey))
+        ? readWalletDelegateDeployed(node).then(
+            (deployed) => {
+              delegateCode.set(chainKey, deployed);
+            },
+            () => undefined,
+          )
+        : Promise.resolve(),
+    ]);
+    const status = classifyDelegation(raw);
     cache.set(key, status);
     return status;
   })();
@@ -469,6 +586,8 @@ export async function quoteSetCodeOpStackFees(
  * Quotes the self-sponsored set-code transaction for `action`:
  *  - the endpoint's eth_chainId must equal `expectedChainId` (the active
  *    chain), so a tuple is only ever bound to the chain the user is on;
+ *  - upgrade: refused when the Kernel v3.3 delegate has no code on that
+ *    chain (kernelDelegateMissingMessage; a network the user added);
  *  - upgrade: refused when already upgraded (nothing to do), delegated
  *    elsewhere (EIP-7702 "Storage management": changing delegates is
  *    security-critical — revoke first), or holding contract code;
@@ -497,6 +616,26 @@ export async function prepareSetCodeTx(options: {
       `Endpoint is chain id ${chainId}, expected ${options.expectedChainId}. Check the RPC ` +
         'endpoint (and the Sepolia test mode toggle) in Settings.',
     );
+  }
+  // The delegate must have code on THIS chain (read through the quote's own
+  // endpoint): a network the user added may not have Kernel v3.3 deployed,
+  // and an authorization to an address without code would leave the account
+  // pointing at nothing (EIP-7702 runs the code at the delegate's address).
+  // Not checked for a revocation, which delegates to the zero address and
+  // must always be possible.
+  if (options.action === 'upgrade') {
+    let deployed: boolean;
+    try {
+      deployed = await readWalletDelegateDeployed(node);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `Could not read whether the Kernel v3.3 code this upgrade points to is deployed on ` +
+          `${networkNameFor(chainId)}. Nothing was signed. (${detail})`,
+      );
+    }
+    delegateCode.set(chainId.toString(), deployed);
+    if (!deployed) throw new Error(kernelDelegateMissingMessage(networkNameFor(chainId)));
   }
   const statusBefore = classifyDelegation(await readDelegationStatus(node, options.from));
   if (statusBefore.kind === 'contract') {

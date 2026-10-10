@@ -107,15 +107,20 @@ function testNetworkNames(conjunction: 'or' | 'and'): string {
   return names.length > 1 ? `${names.slice(0, -1).join(', ')} ${conjunction} ${names[names.length - 1]}` : names.join('');
 }
 
-/** The sentence every refusal and every gated screen ends with. */
+/**
+ * The sentence every refusal and every gated screen ends with. A test
+ * network the user added (one of the well-known public test networks,
+ * isTestNetwork below) counts too, so the hint names that option.
+ */
 export const READINESS_TESTNET_HINT =
-  `Turn on a test network (${testNetworkNames('or')}) in Settings → Developer to use this ` +
-  'feature.';
+  `Turn on a test network (${testNetworkNames('or')}), or a test network you added, in Settings → Developer ` +
+  'to use this feature.';
 
 /** Shown in Settings above the list, so the advisory entries are not misread. */
 export const READINESS_INTRO =
   'What this build allows with real funds on a main network, and why. Features marked “Test ' +
-  `networks only” are switched off outside the test networks (${testNetworkNames('and')}) and cannot be ` +
+  `networks only” are switched off outside the test networks (${testNetworkNames('and')}, and any test ` +
+  'network you added) and cannot be ' +
   'switched on. Features ' +
   'marked “Not yet cleared” still work on mainnet in this build, but the open items listed for ' +
   'them have not been closed, so use them with amounts you can afford to lose. Undoing something ' +

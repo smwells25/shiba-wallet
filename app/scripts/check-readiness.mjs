@@ -22,6 +22,7 @@ import { KERNEL_V3_3 } from '@shiba-wallet/chains-evm';
 import {
   FEATURE_READINESS,
   FeatureNotAllowedError,
+  READINESS_INTRO,
   READINESS_STATUS_LABEL,
   READINESS_TESTNET_HINT,
   TEST_NETWORK_CHAINS,
@@ -216,8 +217,10 @@ check('isFeatureAllowed: blocked feature allowed on Sepolia, not cleared on main
 check('isFeatureAllowed accepts a testnet flag', isFeatureAllowed('passkeys', true) && !isFeatureAllowed('passkeys', false));
 check('readinessReason returns the table text', readinessReason('session-keys') === featureReadiness('session-keys').reason);
 check('readinessRefusal = reason + the test-mode hint', readinessRefusal('passkeys') === `${featureReadiness('passkeys').reason} ${READINESS_TESTNET_HINT}`);
-check('the hint points at Settings → Developer, naming every test profile', READINESS_TESTNET_HINT === 'Turn on a test network (Ethereum Sepolia, Base Sepolia or Arbitrum Sepolia) in Settings → Developer to use this feature.', READINESS_TESTNET_HINT);
+check('the hint points at Settings → Developer, naming every test profile and a test network the user added', READINESS_TESTNET_HINT === 'Turn on a test network (Ethereum Sepolia, Base Sepolia or Arbitrum Sepolia), or a test network you added, in Settings → Developer to use this feature.', READINESS_TESTNET_HINT);
 check('the hint names Base Sepolia as well', READINESS_TESTNET_HINT.includes('Base Sepolia'));
+check('the Settings intro names the built-in test networks and any test network the user added (exact clause)',
+  READINESS_INTRO.includes('switched off outside the test networks (Ethereum Sepolia, Base Sepolia and Arbitrum Sepolia, and any test network you added) and cannot be switched on.'), READINESS_INTRO);
 const thrown = await caught(() => assertFeatureAllowed('kernel-smart-account', MAINNET));
 check('assertFeatureAllowed throws FeatureNotAllowedError with the feature id', thrown instanceof FeatureNotAllowedError && thrown.featureId === 'kernel-smart-account' && isRefusal(thrown));
 check('assertFeatureAllowed is silent where allowed', (await caught(() => assertFeatureAllowed('kernel-smart-account', SEPOLIA))) === null);

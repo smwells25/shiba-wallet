@@ -334,6 +334,12 @@ export interface NotificationPermission {
 /** The calls this module makes; the app's implementation is loadNotificationsNative(). */
 export interface NotificationsNative {
   platform: string;
+  /**
+   * True when the app runs inside Expo Go (its native module "ExpoGo" is
+   * registered; the same test as expo's isRunningInExpoGo,
+   * node_modules/expo/src/environment/ExpoGo.ts). Absent = false.
+   */
+  inExpoGo?: boolean;
   getPermission(): Promise<NotificationPermission>;
   requestPermission(): Promise<NotificationPermission>;
   /** Creates (or updates) the Android channels; a no-op elsewhere. */
@@ -350,23 +356,112 @@ export interface NotificationsNative {
   onResponse(listener: (data: unknown) => void): { remove(): void };
 }
 
+/**
+ * Why reminders are unavailable, each with its own sentence:
+ *  - 'missing': requireOptionalNativeModule returned null for a module the
+ *    imported build files bind (a build of the app made without
+ *    expo-notifications);
+ *  - 'expo-go': the module is present, the app runs inside Expo Go on
+ *    Android, and creating the notification channels was rejected (see
+ *    NOTIFICATIONS_EXPO_GO_TEXT for what Expo Go's source shows);
+ *  - 'refused': the module is present and one of its calls was rejected;
+ *  - 'load-failed': loading the notification code failed for another
+ *    reason (for example a platform without local notifications).
+ */
+export type NotificationsUnavailableCause = 'missing' | 'expo-go' | 'refused' | 'load-failed';
+
 export type EnableOutcome =
   | { ok: true }
   | { ok: false; reason: 'denied' }
-  | { ok: false; reason: 'unavailable'; detail: string };
+  | { ok: false; reason: 'unavailable'; cause: NotificationsUnavailableCause; detail: string }
+  | { ok: false; reason: 'failed'; detail: string };
+
+/**
+ * Thrown by loadNotificationsNative when requireOptionalNativeModule returns
+ * null for any native module the imported build files bind. Recognised by
+ * name as well as by class, so a copy of this module (the check script's
+ * mutants) still classifies it.
+ */
+export class NotificationModuleMissingError extends Error {
+  readonly missing: readonly string[];
+  constructor(missing: readonly string[]) {
+    super(
+      `Native module${missing.length === 1 ? '' : 's'} missing: ${missing.join(', ')}. A new build of the app is needed.`,
+    );
+    this.name = 'NotificationModuleMissingError';
+    this.missing = missing;
+  }
+}
+
+function isModuleMissingError(error: unknown): boolean {
+  return error instanceof NotificationModuleMissingError || (error instanceof Error && error.name === 'NotificationModuleMissingError');
+}
 
 export const NOTIFICATIONS_DENIED_TEXT =
   'Notifications are turned off for Shiba Wallet in this phone’s settings, so no reminder can be shown. ' +
   'Allow notifications for Shiba Wallet in the system settings, then turn this on again.';
+/** Cause 'missing': the build has no notification module (requireOptionalNativeModule returned null). */
 export const NOTIFICATIONS_UNAVAILABLE_TEXT =
   'Reminders are not available in this build of the app (its notification module is missing), so nothing ' +
   'was scheduled.';
+
+/**
+ * Cause 'expo-go': the notification module is present, the app runs inside
+ * Expo Go on Android, and creating the reminder channels was rejected.
+ * Why, from Expo Go's own source (expo/expo, branch sdk-57 at 4200838a and
+ * main at 4039ca12, read 2026-10-10; the two files below are identical on
+ * both): Expo Go registers expo-notifications' NotificationChannelManagerModule
+ * (apps/expo-go/android/expoview/src/main/java/versioned/host/exp/exponent/
+ * ExperiencePackagePicker.kt, getModulesMap), so the JavaScript module
+ * "ExpoNotificationChannelManager" exists. That module finds its channel
+ * provider with appContext.registry.getModule("NotificationsChannelsProvider")
+ * cast to NotificationsChannelsProvider (expo-notifications 57.0.22,
+ * android/.../channels/NotificationChannelManagerModule.kt:17-19 and
+ * NotificationsChannelProviderAccessor.kt:6-8; identical on sdk-57). Expo
+ * Go never registers a module under that name in that registry: its
+ * modules map omits AndroidXNotificationsChannelsProvider, and its own
+ * ScopedNotificationsChannelsProvider is registered only as a legacy
+ * internal module (modules/universal/ExpoModuleRegistryAdapter.kt:42-47,
+ * moduleRegistry.registerInternalModule; ScopedNotificationsChannelsProvider.kt
+ * carries "TODO vonovak refactor this for expo go"). getModule returns null
+ * for an unknown name (expo-modules-core ModuleRegistry.kt:57), and the cast
+ * of null to a non-null type throws, so every channel call is rejected
+ * there. Not yet seen in the error text on a device: the full "Caused by"
+ * line, which describeNotificationError now keeps.
+ */
+export const NOTIFICATIONS_EXPO_GO_TEXT =
+  'Reminders are not available inside Expo Go on this device: Expo Go refused to create the reminder channels ' +
+  'that Android needs before it shows any notification, so nothing was scheduled. Reminders need the wallet’s ' +
+  'own development build.';
+
+/** Cause 'refused': the module is present and one of its calls was rejected. */
+export const NOTIFICATIONS_REFUSED_TEXT =
+  'Reminders could not be turned on: this build includes the notification module, but the phone’s ' +
+  'notification service refused the wallet’s request, so nothing was scheduled.';
+
+/** Cause 'load-failed': the notification code could not be loaded for another reason. */
+export const NOTIFICATIONS_LOAD_FAILED_TEXT =
+  'Reminders could not be turned on: the wallet could not load its notification code, so nothing was scheduled.';
+
+/** The sentence for each cause of an unavailable state. */
+export function notificationsUnavailableText(cause: NotificationsUnavailableCause): string {
+  switch (cause) {
+    case 'missing':
+      return NOTIFICATIONS_UNAVAILABLE_TEXT;
+    case 'expo-go':
+      return NOTIFICATIONS_EXPO_GO_TEXT;
+    case 'refused':
+      return NOTIFICATIONS_REFUSED_TEXT;
+    case 'load-failed':
+      return NOTIFICATIONS_LOAD_FAILED_TEXT;
+  }
+}
 
 export type NotificationsStatus =
   | { state: 'off' }
   | { state: 'on' }
   | { state: 'blocked' }
-  | { state: 'unavailable'; detail: string }
+  | { state: 'unavailable'; cause: NotificationsUnavailableCause; detail: string }
   | { state: 'failed'; detail: string };
 
 /** The status sentence under the switch. */
@@ -379,16 +474,49 @@ export function describeNotificationsStatus(status: NotificationsStatus): string
     case 'blocked':
       return NOTIFICATIONS_DENIED_TEXT;
     case 'unavailable':
-      return `${NOTIFICATIONS_UNAVAILABLE_TEXT} Technical detail: ${status.detail}`;
+      return `${notificationsUnavailableText(status.cause)} Technical detail: ${status.detail}`;
     case 'failed':
       return `The last reminder update failed; it is tried again the next time the wallet checks. Technical detail: ${status.detail}`;
   }
 }
 
-/** One plain line from a native error (no stack). */
+/** The longest technical detail shown under the switch (characters). */
+export const NOTIFICATION_ERROR_MAX_LENGTH = 800;
+
+/**
+ * The technical detail of a native error, for the status line: the WHOLE
+ * message, including the "→ Caused by: …" line that expo-modules-core
+ * appends when a native call is rejected (expo-modules-core 57.0.21,
+ * android/.../kotlin/exception/CodedException.kt:155-171: DecoratedException
+ * joins "Call to function 'Module.method' has been rejected." and
+ * "→ Caused by: <cause>" with a line separator). Lines are joined with a
+ * space, control characters removed, every URL replaced by "[link
+ * removed]" (an error must not put an endpoint, which may embed a key, on
+ * the screen), and the result bounded to NOTIFICATION_ERROR_MAX_LENGTH
+ * characters. The stack is never included.
+ */
 export function describeNotificationError(error: unknown): string {
-  const text = error instanceof Error ? error.message : String(error);
-  return text.split('\n')[0]!.slice(0, 300);
+  let text: string;
+  if (error instanceof Error) text = error.message;
+  else if (typeof error === 'string') text = error;
+  else {
+    try {
+      text = String(error);
+    } catch {
+      text = '';
+    }
+  }
+  const cleaned = text
+    .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s'"<>()]+/gi, '[link removed]')
+    .split(/\r?\n|\r/)
+    .map((line) => line.trim())
+    .filter((line) => line !== '')
+    .join(' ')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/ {2,}/g, ' ')
+    .trim();
+  if (cleaned === '') return 'The notification module gave no error text.';
+  return cleaned.length > NOTIFICATION_ERROR_MAX_LENGTH ? `${cleaned.slice(0, NOTIFICATION_ERROR_MAX_LENGTH - 1)}…` : cleaned;
 }
 
 interface StoreState {
@@ -512,33 +640,51 @@ export function createNotificationCenter(deps: {
   return {
     enable: ({ found }) =>
       serial(async () => {
+        const unavailable = (cause: NotificationsUnavailableCause, e: unknown): EnableOutcome => {
+          const detail = describeNotificationError(e);
+          setStatus({ state: 'unavailable', cause, detail });
+          return { ok: false, reason: 'unavailable', cause, detail };
+        };
         let n: NotificationsNative;
         try {
           n = await native();
         } catch (e) {
-          const detail = describeNotificationError(e);
-          setStatus({ state: 'unavailable', detail });
-          return { ok: false, reason: 'unavailable', detail } as const;
+          // Only a module that requireOptionalNativeModule did not find is
+          // "missing"; any other load failure has its own sentence.
+          return unavailable(isModuleMissingError(e) ? 'missing' : 'load-failed', e);
         }
         try {
           // Android 13: the permission prompt appears only once a channel exists (docs).
           await n.ensureChannels([CHANNEL_PAYMENTS, CHANNEL_SECURITY]);
-          let permission = await n.getPermission();
+        } catch (e) {
+          // The module is present, so this is a refusal, not a missing
+          // module; inside Expo Go on Android it is Expo Go's own gap
+          // (NOTIFICATIONS_EXPO_GO_TEXT).
+          return unavailable(n.inExpoGo === true && n.platform === 'android' ? 'expo-go' : 'refused', e);
+        }
+        let permission: NotificationPermission;
+        try {
+          permission = await n.getPermission();
           if (!permission.granted && permission.canAskAgain) permission = await n.requestPermission();
-          if (!permission.granted) {
-            setStatus({ state: 'blocked' });
-            return { ok: false, reason: 'denied' } as const;
-          }
+        } catch (e) {
+          return unavailable('refused', e);
+        }
+        if (!permission.granted) {
+          setStatus({ state: 'blocked' });
+          return { ok: false, reason: 'denied' } as const;
+        }
+        try {
           const state = await readState(deps.store);
           const plan = planTakeoverAlerts({ found, seen: state.seenTakeovers, looking: true });
           await writeState(deps.store, { ...state, seenTakeovers: plan.seen });
-          setStatus({ state: 'on' });
-          return { ok: true } as const;
         } catch (e) {
+          // The wallet's own storage, not the notification service.
           const detail = describeNotificationError(e);
-          setStatus({ state: 'unavailable', detail });
-          return { ok: false, reason: 'unavailable', detail } as const;
+          setStatus({ state: 'failed', detail });
+          return { ok: false, reason: 'failed', detail } as const;
         }
+        setStatus({ state: 'on' });
+        return { ok: true } as const;
       }),
 
     disable: () =>
@@ -641,20 +787,38 @@ const REQUIRED_NATIVE_MODULES: Record<string, readonly string[]> = {
 };
 
 /**
+ * react-native, loaded lazily so this module stays loadable under Node (the
+ * check script injects the native layer). A CommonJS require is used rather
+ * than a dynamic `import('react-native')`: Metro's ES-module interop copies
+ * every export of the namespace, which reads react-native's deprecated
+ * getters and raised five LogBox warnings the moment reminders were turned
+ * on (seen on the emulator, 2026-10-10) — the same cause and the same fix as
+ * src/wallet/screen-protection.ts (commit 783032a). A require reads only the
+ * property used.
+ */
+function reactNative(): typeof import('react-native') {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy, see above
+  return require('react-native') as typeof import('react-native');
+}
+
+/**
  * Loads the native layer. Called only by the app at runtime, never by the
  * check script. It imports individual files of expo-notifications' build
  * (never the package index; see the module header for why), each only after
  * the native modules it binds were found.
  */
 export async function loadNotificationsNative(): Promise<NotificationsNative> {
-  const { Platform } = await import('react-native');
+  const { Platform } = reactNative();
   const { requireOptionalNativeModule } = await import('expo');
   const required = REQUIRED_NATIVE_MODULES[Platform.OS];
   if (!required) throw new Error(`Local notifications are not supported on ${Platform.OS}.`);
   const missing = required.filter((name) => !requireOptionalNativeModule(name));
-  if (missing.length > 0) {
-    throw new Error(`Native module${missing.length === 1 ? '' : 's'} missing: ${missing.join(', ')}. A new build of the app is needed.`);
-  }
+  if (missing.length > 0) throw new NotificationModuleMissingError(missing);
+  // Expo Go registers a native module named "ExpoGo"; a development or
+  // store build does not (expo 57.0.27 src/environment/ExpoGo.ts,
+  // isRunningInExpoGo; apps/expo-go/.../core/modules/ExpoGoModule.kt
+  // Name("ExpoGo") on expo/expo sdk-57).
+  const inExpoGo = requireOptionalNativeModule('ExpoGo') != null;
   const { scheduleNotificationAsync } = await import('expo-notifications/build/scheduleNotificationAsync');
   const { cancelScheduledNotificationAsync } = await import('expo-notifications/build/cancelScheduledNotificationAsync');
   const { getAllScheduledNotificationsAsync } = await import('expo-notifications/build/getAllScheduledNotificationsAsync');
@@ -685,6 +849,7 @@ export async function loadNotificationsNative(): Promise<NotificationsNative> {
 
   return {
     platform: Platform.OS,
+    inExpoGo,
     getPermission: async () => toPermission(await getPermissionsAsync()),
     requestPermission: async () =>
       toPermission(await requestPermissionsAsync({ ios: { allowAlert: true, allowBadge: false, allowSound: true } })),
