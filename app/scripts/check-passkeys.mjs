@@ -70,6 +70,8 @@ import {
   PASSKEY_7702_REFUSAL,
   PASSKEY_CANCELLED,
   PASSKEY_GATE_NOTE,
+  PASSKEY_GATE_NOTE_NO_RP_ID,
+  PASSKEY_GATE_NOTE_NO_MODULE,
   PASSKEY_NOT_OWNER_REFUSAL,
   PASSKEY_ONE_PER_ACCOUNT_REFUSAL,
   PASSKEY_SIMPLE_REFUSAL,
@@ -398,8 +400,10 @@ console.log('check-passkeys: feature gate (Expo Go, rpId placeholder)');
   const g1 = passkeyGate({ rpId: PASSKEY_RP_ID, nativePresent: false, platformSupported: null });
   check('Expo Go (native module missing) → refused with the development-build note', !g1.ok && g1.kind === 'native-missing' && g1.reason === PASSKEY_GATE_NOTE);
   const g2 = passkeyGate({ rpId: PASSKEY_RP_ID, nativePresent: true, platformSupported: true });
-  check('development build but rpId placeholder → refused with the same note', !g2.ok && g2.kind === 'rp-id-unset' && g2.reason === PASSKEY_GATE_NOTE);
-  check('the note says "development build" and "rpId"', /development build/.test(PASSKEY_GATE_NOTE) && /rpId/.test(PASSKEY_GATE_NOTE));
+  check('development build but rpId placeholder → refused with its OWN note (module present, domain missing)', !g2.ok && g2.kind === 'rp-id-unset' && g2.reason === PASSKEY_GATE_NOTE_NO_RP_ID && g2.reason !== PASSKEY_GATE_NOTE);
+  check('the notes say "development build" and "rpId"', /development build/.test(PASSKEY_GATE_NOTE) && /rpId/.test(PASSKEY_GATE_NOTE) && /rpId/.test(PASSKEY_GATE_NOTE_NO_RP_ID));
+  check('the development-build note never claims the module is missing', !/does not contain the native/.test(PASSKEY_GATE_NOTE_NO_RP_ID) && /contains the native passkey module/.test(PASSKEY_GATE_NOTE_NO_RP_ID));
+  check('the Expo Go note names Expo Go as the reason', /Expo Go/.test(PASSKEY_GATE_NOTE_NO_MODULE));
   const g3 = passkeyGate({ rpId: RP_ID, nativePresent: true, platformSupported: false });
   check('unsupported device → refused', !g3.ok && g3.kind === 'unsupported');
   const g4 = passkeyGate({ rpId: RP_ID, nativePresent: true, platformSupported: true });
