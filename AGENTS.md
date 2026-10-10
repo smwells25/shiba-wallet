@@ -3425,3 +3425,51 @@ alongside; emulator passes after each wave. Subagents on Opus.
       TalkBack, dark mode, iOS. End state: Home, Ethereum Sepolia, Account
       1, light mode, Google IME, protection ON, one multisig record
       ("Multisig 2"); Metro at 3eb00f1.
+- [x] Multisig-pass findings FIXED (commit ed184cc; check-multisig 211 (was
+      155, 15 mutants), check-aa 362, check-approvals 191; offline runner
+      ALL GREEN in the CTO's isolated worktree: engine 877, app 6,909
+      across 50 suites, lint 0/0, tsc clean; not seen on a device). (2)
+      multisigWeightProgress keeps counting this wallet's weight (CTO
+      decision) but the bar reads "Co-signer approvals: weight 0 of 1
+      needed (1 still needed)" / "… — ready" with "This wallet signs the
+      remaining weight 1 when you submit." and the confirm "Co-signer
+      approvals: weight 1 (1 needed). This wallet signs the remaining
+      weight 1 when you submit, for weight 2 of the threshold 2…"; (3)
+      multisigSubmitErrorText appends MULTISIG_FUND_AND_RETRY only to
+      AaFundingError / AA21 (never AaFeeRoseError); the note now says the
+      approvals stay valid while funding as long as no other operation
+      uses the nonce; multisigFundingFigure gives amount + max(0, fee −
+      deposit) from the session's last quote when one exists, else "The
+      exact amount is unknown because the estimate itself was refused."
+      plus, on Ethereum Sepolia only, the RECORDED range labelled as a
+      record not a quote (deploying: "about 0.0036 to 0.0066 test ETH …
+      actually cost about 0.0020"; later: "about 0.0013 to 0.0023 … actually
+      cost about 0.0008" — the CTO set the later figures from the pass
+      record: op 2 estimated 1,001,071 gas, worst case ~0.0023 at 2.31 gwei
+      and 0.0013065 at the 652 Mwei it was sent at, cost
+      0.000765397384254224); (4) AA_MULTISIG_FUNDING_TITLE "This multisig
+      account needs funds first." and multisig-specific funding sentences
+      ("the multisig pays its own network fee from its balance and
+      EntryPoint deposit…", "Fund the multisig address 0x…"), the
+      smart-account text byte-identical (pinned); (5)
+      refreshMultisigDeployment after the receipt + multisigChainNote
+      ("Deployed by its first operation (the bundler's receipt confirmed
+      it), but the network endpoint does not show the account's code
+      yet…") and "Back to the multisig" reloads; (6) errors render above
+      each phase's actions; addMultisigApproval wraps engine refusals with
+      asSentence (period added; engine string unchanged); (7)
+      readMultisigFunds → "EntryPoint deposit (pays fees first)" row with
+      an adapted AA_DEPOSIT_NOTE and the list line "… · EntryPoint deposit
+      (pays fees first): … · deployed"; (8) ownMultisigAddresses(chain)
+      ("Multisig 1 (2-of-3)") merged into gatherRiskFacts by default
+      (loadOwnMultisigs) and into ownWalletAddresses(accounts, aa, extra)
+      via useOwnEvmAddresses, so the risk card says "one of your own
+      accounts in this wallet: Multisig 1 (2-of-3) (0x…)" with no searches
+      and the success screen offers no "Save as contact"; (9)
+      multisigExposureLine(config, localSigner) counts SIGNERS and says
+      whether the co-signers can act without this phone ("Any 2 of the 3
+      signers together can send an operation — including the 2 co-signers
+      without this phone; …"; 3-of-3 "Every operation needs all 3 signers,
+      so this phone's signer is always one of them…"; weighted variants).
+      Left for other owners: RiskWarnings' ownAddresses (cosmetic);
+      activity-sentences' walletAddressesFor ignores multisig addresses.
