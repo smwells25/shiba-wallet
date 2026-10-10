@@ -3050,3 +3050,166 @@ alongside; emulator passes after each wave. Subagents on Opus.
       mode), Done-with-keyboard-open saving, the AA note → link → Activity
       path, the focus reload after Send, the Android share sheet with
       text/csv, TalkBack on the note bar.
+- [x] Item 0 PROVEN ON THE EMULATOR (2026-10-10; Metro at 072e744, 2,315
+      modules; 1 prompt — Unlock; nothing sent). With protection ON
+      (default, on a wallet that had never seen the preference) every
+      screencap was 0 bytes — Home, Settings, the account-switcher modal
+      (its dialog window carries SECURE too, confirming the RN
+      FLAG_SECURE copy), the lock screen and Home after unlock; the
+      window flag line read "…FORCE_NOT_FULLSCREEN SECURE…"; the recents
+      thumbnail was a blank card. OFF: screencaps worked (Settings
+      255,132 bytes, Home 215,652), SECURE gone, and the recents
+      thumbnail showed the whole Home with balances — the control that
+      proves the blank card comes from the flag. The Import-a-private-key
+      screen is protected only while its field holds text (by design;
+      ImportKeyScreen.tsx 59–65). A stored "off" survived a force-stop
+      relaunch: the splash (no data) ~60 s, ONE sample with SECURE at
+      t+101 s (the protect-first moment, under ~5 s), then Home captured
+      normally. Settings → Privacy copy exactly as pinned; "Screen
+      protection is on/off" statuses. FINDINGS: (1) dev-only but it gets
+      in the way — all 5 LogBox warnings at launch (PushNotificationIOS,
+      InteractionManager, Clipboard, SafeAreaView, ProgressBarAndroid)
+      come from screen-protection.ts's `void import('react-native')` (a
+      namespace import reads every deprecated getter); the toast covers
+      the bottom of every screen — fix: import only AppState / Platform;
+      (2) copy — "always protected" is slightly too broad for the
+      import-key screen (protected once the field has text); (3) copy —
+      neighbouring sections "Privacy & security" and "Privacy"; the
+      switch's label leads with the app switcher while on Android its main
+      effect is blocking screenshots. UNVERIFIED: screenrecord, activity
+      recreation, native alerts and system dialogs, the biometric prompt
+      window, the seed screens with protection off, iOS; the 2,315 vs
+      2,323 module difference.
+- [x] Items 1 and 2 — MULTI-SIGNATURE ACCOUNTS IN THE APP and LOCAL
+      REMINDERS (one commit, b1010bc, because the two slices share
+      App.tsx, SettingsScreen and recovery.ts; verified as one snapshot in
+      the CTO's isolated worktree: engine 877, app 6,687 across 49
+      suites — check-multisig 155 and check-notifications 98 new —
+      lint 0/0, tsc clean; 17 mutants caught; not yet on the emulator).
+      ITEM 1 (feature 24, readiness row `multisig` testnet-only enforced;
+      evidence C1 C2 C3 W9 F-21 F-62 T-70): a multisig is a NEW account
+      type DEPLOYED FRESH — no conversion path ("…Kernel keeps the old
+      single-key validator installed when the root signer changes, so a
+      converted account would still obey one key, a backdoor around the
+      co-signers."); signer set = the active phrase account's EOA + 1–9
+      co-signers (weights 1–100; app policy: every operation needs at
+      least two signers, so threshold 1 or a lone-sufficient weight is
+      refused; another account of this wallet allowed with a warning;
+      imported / watch-only cannot be the wallet's signer); CREATE2 index
+      0 unless this phone already holds a multisig with the same set and
+      threshold on that network (chooseMultisigIndex), so anyone knowing
+      the set can recompute the address, order-independent, same on every
+      chain; ids 0xD0000000 + slot, never reused, refused by
+      derivationArgsFor / smartAccountSaltFor / assertAccountCanSign / the
+      imported and watch-only helpers / createAaClient /
+      createAaClientFromConfig (MULTISIG_CONFIG_BUNDLE_REFUSAL, zero
+      requests); bundle type 'kernel-multisig' built only by
+      createMultisigAaClient (engine createKernelMultisigSpec, the local
+      signer as submitter; self-paid only: no paymaster, no token fee),
+      the first operation carries the deployment through the ordinary
+      prepareAaCalls / checkAaQuoteBeforeApproval / sendAa path (a bundler
+      refusal shown verbatim + MULTISIG_FUND_AND_RETRY); records in
+      shiba-wallet.multisig.v1 (secret-free; chain, address, signers,
+      threshold, index, pinned deployment addresses, local signer,
+      deployed facts, operations with request id / approval ids =
+      keccak of each signature / userOpHash / tx; address recomputed on
+      load, mismatched or non-pinned records dropped; damaged list
+      refuses writes); export/import as typed JSON (import needs one of
+      this wallet's phrase accounts as a signer); request payload = the
+      engine request + account facts + calls (the co-signer side
+      re-derives every hash and re-encodes the calls to exactly the
+      callData); approvals accepted as the app payload, the engine's bare
+      JSON or a bare 65-byte signature, the share text carrying EIP-712
+      typed data for other wallets; gate order on both paths: network
+      checks → requireLocalAuth → signWith (tested with injected fakes).
+      HONESTY STRINGS on every phase: exposure ("Any 2 co-signers together
+      can send an operation; for messages the deployed validator needs
+      only 1, so this account must never be used to sign logins, orders or
+      token permits — the wallet refuses that."; weighted variant), fees
+      ("Co-signers approve the calls and the nonce, not the network fee or
+      paymaster, which the submitter sets."), the no-audit note, the
+      engine's MULTISIG_ERC1271_REFUSAL, the fresh-deploy sentence, the
+      readiness reason. REFUSED: WalletConnect and the browser never offer
+      a multisig (createAaClientFromConfig refuses; signHashAsSmartAccount
+      throws MULTISIG_ERC1271_REFUSAL first; aaAccountTypeSignsMessages
+      false; walletConnectAddressFor null) — no WalletConnect file edited;
+      guardians and inheritance (validation-id collision); passkeys and
+      session keys (not offered); 7702 and owner change (not applicable).
+      CTO edits: route Multisig (navigation.ts, App.tsx), the Home link
+      (test networks), the Settings section with MULTISIG_SETTINGS_BLURB,
+      resetMultisigRecords in the wipe, and the defence-in-depth
+      'kernel-multisig' refusal in resolveGuardianAccount /
+      resolveSessionAccount / resolvePasskeyAccount. FOLLOW-UP (optional):
+      showing a multisig in the account switcher (AccountView.multisig,
+      reconcileStoredMultisigAccounts at launch, EVM-only rows, approval
+      target none, WatchOnlyGate multisigRouteRefusal, loadAaBundle null)
+      — today it lives on the Multisig screen (Receive with QR, balance,
+      Send-as-request). Scratch co-signer helper
+      <scratchpad>/multisig-cosigner.mjs (address / approve / request /
+      submit with the dev seed). UNVERIFIED: everything on a device;
+      whether ZeroDev accepts a weighted-root deployment (phase 15 saw a
+      prefund/fee decline); the on-chain reads ran against fakes; whether
+      the weighted validator exists on Base / Arbitrum Sepolia. THREAT
+      MODEL T-70 / F-62 still say "Nothing is in the app" — update at the
+      refresh. ITEM 2 (feature 93 partial, 83 groundwork): FACTS —
+      expo-notifications 57.0.22; the docs say local notifications remain
+      available in Expo Go, but the package INDEX imports
+      DevicePushTokenAutoRegistration.fx, whose addPushTokenListener calls
+      warnOfExpoGoPushUsage which THROWS on Android in Expo Go (CHANGELOG
+      #39459; Expo Go registers ScopedServerRegistrationModule), and a
+      module throwing on load is fatal in Metro's require — so
+      notifications.ts never imports the index: it dynamically imports
+      ten individual build files after requireOptionalNativeModule
+      confirms their native parts (the check script computes the
+      transitive closure and proves it never reaches the .fx module,
+      TokenEmitter, warnOfExpoGoPushUsage, the push-token functions or
+      index.js; the export bundle holds none of the throw text); channels
+      "payments-due" (default) and "security-alerts" (high) created before
+      the permission request (Android 13 POST_NOTIFICATIONS); only the
+      DATE trigger and an immediate trigger; the library re-arms on
+      BOOT_COMPLETED / REBOOT / MY_PACKAGE_REPLACED (NotificationsService.kt
+      33–39, 643–645) but nothing re-arms after a force stop (stated in
+      the copy); exact alarms only with the exact-alarm permission, which
+      is not requested (a reminder can be late); the same identifier
+      replaces (FLAG_UPDATE_CURRENT); no config plugin added (the library's
+      manifest declares POST_NOTIFICATIONS and RECEIVE_BOOT_COMPLETED);
+      privacy: only getExpoPushTokenAsync and the auto-registration
+      contact exp.host and neither is loaded; the Android library links
+      firebase-messaging 25.0.1 with no google-services.json (should not
+      initialise — unverified; PRIVACY.md 2.8 says so); the phase-16 local
+      dev build must be REBUILT to include the native module. BEHAVIOUR:
+      Settings → Privacy → Notifications, switch "Remind me when
+      something is due" (default off; enable = channels → permission
+      (asked once) → saved on only on success), three notes (what is
+      reminded; "No notification service is used and nothing about them
+      leaves the device. They say only what kind of event happened, never
+      an amount, an address or a name…"; force-stop / not-included
+      lines), statuses off / on / blocked / unavailable / failed; (a)
+      "Recurring payment due" — "A recurring payment is due. Open the
+      wallet to review it; nothing is sent until you confirm it." at the
+      next slot after the open ones (never for payments already due — the
+      banner's job), synced on start, foreground and leaving Sessions,
+      with a network-free pass cancelling reminders for revoked / failed /
+      forgotten records on every screen change and on background; (b)
+      merchant subscriptions deliberately NOT reminded (the merchant
+      pulls); (c) "Account recovery started" — "Someone started a recovery
+      of one of your accounts. Open the wallet to review it, and veto it
+      if you did not expect it." immediately, once per (network, account,
+      proposal hash) with seen hashes in shiba-wallet.notifications.v1;
+      FINDING — the existing takeover check runs only while the
+      Inheritance screen is focused, so the alert fires for results the
+      user did not see (polled while in front, re-read 20 s and 60 s after
+      leaving, on background / foreground / screen change; enabling marks
+      everything found as seen); (d) no auto-lock reminder (stated);
+      tapping opens Sessions or Inheritance through the navigation ref
+      (waits for ready on a cold start); foreground banner without sound
+      or badge; wipe → preference off and every "shiba-wallet." identifier
+      cancelled; identifiers are sha256-derived (no addresses or ids).
+      PRE-EXISTING GAP noted: wipeRecoveryData does not clear the takeover
+      scan state (shiba-wallet.inheritance.v1). UNVERIFIED (emulator, in
+      Expo Go): the deep imports loading, the permission prompt and
+      channels, delivery in background / closed, lateness, re-arm after
+      reboot, force stop, tap navigation warm and cold incl. under the
+      lock, the foreground banner, the lock screen, revoke cancelling, the
+      takeover alert after leaving mid-check, TalkBack; a dev build making
+      no FCM traffic.
