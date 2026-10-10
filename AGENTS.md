@@ -2695,3 +2695,57 @@ emulator where Expo Go cannot carry a feature.
       IME, no browser connections; Metro at 6f85488; the emulator's
       screen_off_timeout was left at 1800000 (previous value not
       recorded).
+- [x] Browser-pass findings FIXED (commit 9d1e0b3; check-browser 299 (was
+      260), check-devmode 261; offline runner ALL GREEN in the CTO's
+      isolated worktree: engine 877, app 6,159 across 45 suites, lint
+      0/0, tsc clean; mutants caught; not seen on a device). (1) The
+      bar's new "Connection" button opens an IN-SCREEN panel (served /
+      stored-elsewhere / none wording; "Disconnect <host>" with the same
+      confirmation as the connections screen, through the context's
+      disconnect(browserTopicFor(origin)) → the bridge's disconnectSession
+      → notifyContextChanged, so the OPEN page receives accountsChanged([]);
+      a network note; "Open Settings" and "All connected apps" push those
+      screens ON TOP of the page, which stays loaded — React Navigation
+      7's StackRouter pushes a new route and native-stack 7.19.2 documents
+      freezeOnBlur false, so the existing effect on evmChain.caip2 sends
+      chainChanged + accountsChanged([]) while Settings shows, and a
+      focus effect repeats notifyContextChanged on return sending only
+      differences); mainnet still replaces the page with the readiness
+      card; an account switch still closes it (the navigator is rebuilt);
+      a second Apps page opened from Settings no longer silences the
+      first (re-attached and reloaded on focus); browserBarConnection()
+      helper. (2) WalletConnectContext exposes visibleNotice /
+      dismissVisibleNotice / claimInlineNotices and ConnectedAppsNotice
+      {floating | inline}; the focused Apps page claims the notice and
+      draws it below the bar; elsewhere the floating notice is unchanged.
+      (3) Screen title "Connected apps" (the screen sets it; the CTO
+      aligned App.tsx's registered title and the watch-only refusal
+      label), headings "Connect a dApp with WalletConnect" /
+      "WalletConnect connections", empty line "No dApps are connected
+      through WalletConnect.", the browser section hint and the Settings
+      blurb name the real buttons. (4) ACCESSIBILITY UNDER THE LOCK —
+      facts: RN's no-hide-descendants makes services "ignore the
+      component and all of its children" (reactnative.dev/docs/
+      accessibility) but Android's FLAG_INCLUDE_NOT_IMPORTANT_VIEWS still
+      reports such views to a full dump, so the dump alone does not show
+      what TalkBack would read; react-native-webview 13.16.1 has no
+      accessibility prop or code on Android and whether Chromium's
+      virtual nodes honour an ancestor's importance is undocumented; RN
+      0.86.3 maps display:'none' to View.INVISIBLE on Android
+      (SurfaceMountingManager.kt) / hidden on iOS, and AOSP
+      ViewGroup.addChildrenForAccessibility adds only VISIBLE children —
+      so LockGate's always-rendered wrapper is now also display:'none'
+      while locked (nothing remounts) and BrowserScreen (useAppLock)
+      hides its whole page with the web view marked no-hide-descendants +
+      accessibilityElementsHidden; the web view stays MOUNTED so the
+      bridge and the lock hold survive. While locked, a queued signing
+      request gets no answer (declined 4001 after unlock as before);
+      READS and local methods are still answered while locked (no
+      approval needed; left as is — CTO's call to hold them too).
+      UNVERIFIED (device): whether Android delivers injectJavaScript to a
+      web view under Settings at once or on return; that the full dump
+      drops the nodes under the lock; TalkBack / VoiceOver; nothing
+      visible on unlock; the wrapping four-button bar, the panel and the
+      inline notice on a narrow screen; Uniswap's reaction to a hidden
+      web view and to the re-attach reload. An emulator re-check of the
+      disconnect, the network change and the locked dump is dispatched.
