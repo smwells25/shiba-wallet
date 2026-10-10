@@ -2211,3 +2211,108 @@ Subagents on Opus.
       payee 8,000 → 10,000 wei. End state: Home, Ethereum Sepolia,
       Account 1, light mode, Google IME, nothing installed; Metro at
       d6fd300.
+- [x] Recurring-rehearsal findings FIXED + an APP-WIDE ROOT CAUSE (commit
+      d3cf3cc; check-recurring 169 (was 114), check-subscriptions 183,
+      check-sessions 139, check-failover 153; offline runner ALL GREEN in
+      the CTO's isolated worktree: engine 877, app 5,853 across 44 suites,
+      lint 0/0, tsc clean; 34 mutants caught; not seen on a device). ROOT
+      CAUSE of the raw exception (from the installed source): Expo SDK 57
+      replaces the global fetch (expo/src/winter/runtime.native.ts; opt-out
+      EXPO_PUBLIC_USE_RN_FETCH not set) and a failed request throws
+      FetchError extends Error — NOT a TypeError — with the message
+      "fetch failed: <platform text>" (expo/src/winter/fetch/FetchErrors.ts);
+      endpoint-probe's isEndpointFailure accepted "fetch failed" only on a
+      TypeError, so on the device a DNS failure was never an endpoint
+      failure anywhere in the app (no failover, raw Java text) — the phase
+      13 "bug 4" fix had been tested with a TypeError. CTO FIX, app-wide:
+      isEndpointFailure also accepts name === 'FetchError' or an Error
+      whose message STARTS with "fetch failed:" (the engine's "UTXO fetch
+      failed: HTTP 400" does not and keeps its status rule); pinned in
+      check-failover with the live message; the agent's sessions.ts
+      isTransportFailure clause stays as a harmless second line.
+      RECURRING FIXES: (1) describeRecurringPaymentError returns an
+      outcome — "not sent" (node failure, unanswered status read, or a
+      bundler failure before submission; every node request and every
+      bundler request except eth_sendUserOperation precedes the
+      submission, since SmartAccountClient.sendCalls submits last): title
+      "Could not reach the network endpoint. Check your connection and try
+      again.", a detail saying the payment was not handed to the bundler
+      and no allowed payment was used up, then "Technical detail: …";
+      "outcome unknown" (failure during eth_sendUserOperation): "Payment
+      status unknown" with the nonce-decides explanation and "Tap Refresh
+      status and wait for the count before sending again"; AA22 / policy
+      refusals keep "refused"; the card's status line is shown once;
+      the chain id is read BEFORE the vault so a dead node is found before
+      the "Use the session key" prompt; node errors marked by
+      markNodeErrors, bundler errors by method; the status read
+      (readStatusWithFailover, screen and banner), the plan
+      (activeEvmNodeRunner) and the payment (quoteOnNode) fail over once
+      on node failures only, never the bundler (caveat: a node dying after
+      the key was read costs one more prompt on the retry). (2)
+      RecurringDueBanner.tsx hosts useOnAppActive (the single AppState
+      listener) and useClockTick(30 s, focused); the list computes
+      recurringDueState(record, status, nowTick) locally and re-reads on a
+      return to the foreground. (3) GRACE PERIOD: subscriptionGrantFor(sub,
+      key, {graceSeconds}) moves only the GRANT's validUntil after the
+      engine built it (re-validated by validateSessionKeyGrant);
+      recurringGrantFor passes one period; the RateLimitPolicy count still
+      equals the number of payments (kernel-permissions.ts 547 / 553–557;
+      kernel-subscription.ts 44–56, 66–69 — relied on the engine's notes,
+      Solidity not re-read), so no extra payment is possible;
+      termsMatchGrant accepts an end exactly one period later (older
+      records still load; a subscription record with a grace is dropped as
+      corrupt); the local call check uses the INSTALLED grant; review
+      "until <grant end>", "Nothing after <end>. The last payment falls due
+      <date> and can be sent until then.", the catch-up caveat explains the
+      grace; merchant subscriptions deliberately unchanged (the keeper
+      checks the handed-over terms). (4) fitFeeBudgetToInstall re-fits the
+      keep-back against each new quote for up to
+      SUBSCRIPTION_FEE_BUDGET_REFIT_ROUNDS = 2, never raising; the test
+      reproduces the old single-round trip. (5) Copy: "Payee: …";
+      "Payments the account cannot pay for will fail…"; "…the payment key
+      is deleted from this phone." / "…any copy of it stops working.";
+      the dialog says once that the payment key signs; "Ended <date>: 2 of
+      3 payments were sent; 1 was not sent before the end date."
+      UNVERIFIED: on a device (TalkBack, the timer under background
+      throttling, the second key prompt after a mid-send failover); that
+      the device error object is exactly Expo's FetchError (message format
+      matches byte for byte; not reproduced).
+
+## Phase 15 status (2026-10-09, end of the autonomous run)
+
+Items 0 to 4 are landed and pushed. Proven live this phase: Arbitrum
+Sepolia by script and then through the app (the Kernel deployment
+through ZeroDev, gas paid in USDC through Circle's paymaster, an EOA
+Max send with Arbitrum's fee model), recurring payments through the
+app's own screens (set-up, two payments signed by the recurring key
+alone with one prompt each, the banner, catch-up, revoke and forget),
+and a 2-of-3 multisig account by script. Built and verified offline:
+the multisig engine spec (transaction-only, with the proof that the
+deployed validator cannot give an honest k-of-n for messages), the
+zero-estimate guard, the Glamsterdam fork decoding, the endpoint
+freshness check, the app-wide Expo fetch-failure recognition, and the
+fixes from the two emulator passes. Designed: the in-app dApp browser.
+Engine: 877 tests. App: 44 offline suites, 5,853 checks. The shareable
+page is at version 13 (40 proven live, 18 built, 2 designed, 39 not
+started).
+
+Findings for the Chairperson this phase: ZeroDev's Arbitrum bundler
+often answers impossible (zero) gas estimates (guarded); the deployed
+weighted validator cannot give an honest multi-signature for messages
+(seventh item for the disclosure decision); Glamsterdam on Sepolia
+made every Kernel permission install three to four times dearer and
+added protocol transfer logs that two clients report differently; a
+default fallback endpoint (0xrpc.io) has been frozen since the fork;
+react-native-webview's defaults are unsafe for a wallet (the dApp
+browser is a decision).
+
+Waiting on the Chairperson: the dApp browser decision; the ZeroDev
+disclosure decision (seven findings); a phone and Expo account; the
+items listed under the phase 9 status.
+
+Follow-ups (no inputs): a multisig app slice if wanted
+(docs/MULTISIG.md §11); the merchant-subscription grace period and the
+keeper; the check-rpc-fallback live table's eth_simulateV1 expectations
+after the fork; the "Error: undefined" LogBox toast (dev only); the
+Smart-account type and Auto-lock chip rows in Settings (same wrap style
+as the fixed Developer row); an ERC-20 pull post-fork gas measurement.
