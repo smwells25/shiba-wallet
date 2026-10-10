@@ -262,10 +262,9 @@ export const SCREEN_PROTECTION_PLATFORM_NOTE =
  * Which screens keep their own protection whatever this setting: BackupScreen
  * (usePreventScreenCapture), Settings → Show recovery phrase ('seed-reveal'),
  * the private-key import and reveal screens and the subscription key
- * hand-over. The phrase IMPORT screen (ImportScreen.tsx) and the backup quiz
- * (ConfirmBackupScreen.tsx) make no capture call of their own, so the
- * sentence names the screens that do rather than "every recovery phrase
- * screen".
+ * hand-over, and since 6e1106f the phrase import screen ('import-phrase')
+ * and the backup quiz ('backup-quiz') as well, which is why the sentence
+ * says "show or take in".
  */
 export const SCREEN_PROTECTION_ALWAYS_NOTE =
   'The screens that show or take in your recovery phrase or a private key are always protected, whatever this setting.';
