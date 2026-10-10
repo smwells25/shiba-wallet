@@ -3213,3 +3213,98 @@ alongside; emulator passes after each wave. Subagents on Opus.
       lock, the foreground banner, the lock screen, revoke cancelling, the
       takeover alert after leaving mid-check, TalkBack; a dev build making
       no FCM traffic.
+- [x] Item 3 — CUSTOM EVM NETWORKS (commit 22b06e9; new check-custom-networks
+      152; offline runner ALL GREEN in the CTO's isolated worktree: engine
+      877, app 6,839 across 50 suites, lint 0/0, tsc clean; six mutants
+      caught; the export bundles 2,223 modules; not seen on a device).
+      READ PATH: evm-chain.ts (still import-free) holds a module-level
+      registry (setCustomEvmProfiles refuses built-in ids, duplicates and
+      profiles without custom facts; customEvmProfiles / allEvmProfiles /
+      isCustomNetworkId / isCustomTestNetwork / subscribeCustomEvmProfiles);
+      evmProfileByCaip2 / evmProfileFor check built-ins first, then the
+      registry (an unregistered id still resolves to Sepolia); EVM_PROFILES
+      lists only the four built-ins (pins unchanged); loadPrefs(store)
+      first awaits ensureCustomNetworksLoaded(store) (read once per store
+      object; a storage failure not cached; afterwards only
+      custom-networks.ts's own writes update the registry and notify), so
+      PrefsContext, networks.ts getEndpoint and tokens.ts
+      activeTokenChain see custom profiles before resolving;
+      prefs.testNetwork is now EvmNetworkChoice (a test profile id or a
+      custom id, kept only while registered; sepolia:true still reads as
+      Sepolia); PrefsContext exposes customNetworks and re-reads on every
+      registry change; SAFETY FIX — the context's `sepolia` is now
+      evmProfileFor(testNetwork).testnet, so a custom MAIN network never
+      shows the TESTNET banner (pinned). FORM: name; chain id 1..2^53−1;
+      one https RPC (assertSecureEndpointUrl); symbol 1–10 ASCII letters
+      or digits ("The coin's symbol is your word: EVM networks do not
+      publish their coin's symbol on-chain…"); decimals — ONLY 18 accepted
+      (judgement: every EVM screen assumes 18, stated in the refusal);
+      optional https explorer (host + path); the test-network switch.
+      REFUSALS (exact strings pinned): chain-id format; built-in ("Chain
+      id 11155111 is already built in as Ethereum Sepolia; choose it in
+      the network list above instead. Nothing was saved."); duplicate; an
+      unlisted id with the tick ("…is not on this wallet's list of
+      well-known public test networks (Holesky (17000), Hoodi (560048),
+      OP Sepolia (11155420), Polygon Amoy (80002), Linea Sepolia (59141),
+      Scroll Sepolia (534351)), so it cannot be added as a test network:
+      the wallet would then treat its funds as worthless and allow
+      features that are switched off where funds are real…"); http URL;
+      max 10 (judgement); a built-in or duplicate name; a main network
+      with a test-like name (test / sepolia / holesky / hoodi / goerli /
+      devnet / amoy). VERIFY: eth_chainId mismatch ("This RPC endpoint
+      serves chain id 1, but you entered chain id 560048…"); stale or
+      unreadable head (FRESHNESS_BOUND_SECONDS 600 via assessHeadFreshness:
+      "The newest block this endpoint reports (block N) is M minutes old,
+      more than the 10 minutes allowed…"); block time measured from head
+      and head−100. ALLOW-LIST source: ethereum-lists/chains ec732e43,
+      _data/chains/eip155-<id>.json, each a named testnet with slip44 1;
+      readiness.ts isTestNetwork accepts TEST_NETWORK_CHAINS or a
+      registered custom network with the tick AND on the list, re-checked
+      on every call; every feature's allowed/refused result on a custom
+      main network equals Ethereum mainnet's (asserted per feature).
+      PROFILE: kernelV33Verified false / aaPrefill null (aaKernelPrefillFor
+      drives the Settings pre-fill with a note), swapsOffered false,
+      l1DataFee / l1CostInGas false with the note "…does not detect
+      layer-2 fee models, so on a rollup quotes may be refused or
+      underestimate the fee" and that explorer paths are assumed;
+      explorerTxBase <base>/tx/ or '' (the CTO gated the explorer buttons
+      on eight smart-account result screens — Guardians, Passkey,
+      ApproveRecovery, OwnerRotation, Inheritance, Swap, Send, Sessions —
+      on a non-empty base); a test network's symbol shows "test <SYM>"
+      with the banner "TESTNET — Hoodi test mode is on (a network you
+      added). Amounts are test ETH, not real funds."; a main network has no
+      banner and a Settings WarningBox saying it is treated as a MAIN
+      network; WalletConnect describeChain "Hoodi (a test network you
+      added, chain id 560048)"; risk thresholds from the measured block
+      time (7 days), none without a measurement; tokens and contacts per
+      chain; prices and ENS never offered. STORE
+      shiba-wallet.custom-networks.v1 (strict; damaged = read-only; "Reset
+      custom networks" returns an active custom choice to mainnet).
+      SETTINGS → Developer: "Networks you added" chips (item 0's style),
+      per-network rows (facts, masked RPC, block-time line, Remove), the
+      Add form with "Verify and save". REMOVAL: an active network switches
+      to mainnet first; the confirmation names everything deleted and
+      kept; a device check when spending limits for the chain would go;
+      deleted only for that chain: tracked tokens, endpoint override
+      (resetEndpoint returns a boolean), AA config (forgetAaConfigForChain),
+      history and NFT indexer settings, contacts (forgetContactsForNetwork),
+      notes, spending limits + history, browser connections, WalletConnect
+      smart bindings and ERC-5792 records (forgetWalletConnectChainData);
+      a failed step leaves the network listed and names the failure; NOT
+      reachable: WalletConnect sessions (SDK storage; paused, disconnect
+      under Connections); DELIBERATELY KEPT (stated): session keys and
+      subscriptions, recovery records, inheritance state, passkey details,
+      multisig records, notification seen-hashes — they describe on-chain
+      state and are needed to revoke or recover; they return if the chain
+      id is re-added. LIVE read-only probes: rpc.hoodi.ethpandaops.io
+      with 560048 accepted (head 22 s old, 13.68 s per block);
+      sepolia.optimism.io with 11155420 accepted but the head−100 read
+      answered HTTP 503 (saved with no block time); Hoodi's RPC typed as
+      17000 refused with the mismatch sentence. WORDING LEFT: 
+      payment-request.ts names only built-in networks in its switch hint;
+      walletconnect.ts unsupportedChainMessage says "…or on the chosen
+      test network". UNVERIFIED: the form, keyboard, dark mode, chips,
+      alerts and the dynamic imports under Hermes on a device; a dApp over
+      WalletConnect on a custom chain; rollup fee behaviour on OP Sepolia.
+      Emulator checklist (11 steps, Hoodi via rpc.hoodi.ethpandaops.io; a
+      main-network case; OP Sepolia optional) in the builder's report.
