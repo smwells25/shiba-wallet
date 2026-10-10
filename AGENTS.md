@@ -2010,3 +2010,85 @@ Subagents on Opus.
       0.000347 deposit. Funds otherwise: Account 1 EOA 0.00282, payee
       8,000 wei unchanged. End state: Home, Ethereum Sepolia, Account 1,
       light mode, Google IME; emulator and Metro (wt-app 3b0a507) still up.
+- [x] SEPOLIA FORK FINDINGS RESOLVED (commit 8351c09; offline runner ALL
+      GREEN in the CTO's isolated worktree: engine 877 — chains-evm 615 —
+      app 5,729 across 44 suites, check-aa 350, check-activity 58,
+      check-simulation 62, check-subscriptions 176, lint 0/0, tsc clean;
+      every mutant caught; nothing sent; copy not seen on a device). THE
+      FORK, from primary sources: GLAMSTERDAM (Amsterdam on the execution
+      layer) — EIP-7773 "Hardfork Meta - Glamsterdam" (ethereum/EIPs
+      af3a7802) lists Sepolia at "353024 | 1791294816 (2026-10-06
+      13:53:36 UTC)" (set by commit 644b8479); blog.ethereum.org
+      2026-09-17 testnet announcement; go-ethereum v1.17.6 notes; the
+      forkId 0x6c1d9423 from publicnode's eth_config matches geth's
+      "First Amsterdam block" test entry; the builder deposit/exit
+      contract addresses match EIP-8282. EIP-7708 (Last Call, scheduled
+      in 7773): every nonzero ETH transfer to a different account (the
+      transaction itself, CALL, SELFDESTRUCT, CREATE/CREATE2) emits a
+      LOG3 from SYSTEM_ADDRESS 0xfffffffffffffffffffffffffffffffffffffffe
+      with keccak('Transfer(address,address,uint256)'), from/to as topics
+      and the wei amount as uint256 data; nothing for zero value,
+      self-transfers, fees or reverted frames (execution-specs 64cbead5
+      emit_transfer_log agrees; eth_getCode at 0xff…fe is 0x on all four
+      networks, so no contract can emit from it). EIP-8037 (state
+      creation, CPSB 1530: a new slot about 110,020 gas instead of about
+      22,100) and EIP-8038 (STORAGE_WRITE 2,800 → 10,000, cold account
+      2,600 → 3,000) explain the install cost; EIP-2780 is in the fork
+      too (a transfer to a never-used address about 204,600 gas; a
+      zero-value transfer 15,000; a self-transfer 12,000). MEASURED same
+      calldata pre-fork (0xrpc.io/sep, geth 1.17.7, STUCK at block
+      11856335 = 24 s before activation, eth_syncing false — the app's
+      third Sepolia fallback is serving a stale pre-fork chain; cause
+      unverified, follow-up) vs post-fork (publicnode): subscription
+      installValidations 611,578 → 2,661,683 (eth_estimateGas), 599,723 →
+      2,617,795 (eth_simulateV1); WETH deposit 45,038 → 133,058;
+      guardian install 155,417 + 77,721 → 521,869 + 249,590 (×3.3);
+      passkey install 136,570 → 488,144 (×3.6); session grant 511,682 +
+      51,597 → 2,203,598 + 132,829 (×4.1); subscription (native, 3
+      payments) 611,578 + 51,597 → 2,661,683 + 132,829 (×4.2); a native
+      PULL did not rise (handleOps simulation 429,439 post vs 445,795
+      pre). Practical consequence: a subscription or recurring set-up
+      needs about 0.008 ETH of headroom at 2.31 gwei. DECODING RULE
+      (asset-diff.ts mergeNativeTransferLogs): eth_simulateV1 with
+      traceTransfers on publicnode (which load-balances reth 2.7.0 and
+      geth 1.17.7; each probe batched with web3_clientVersion) returns
+      for a plain transfer ONLY the 0xff…fe log on reth but the 0xeeee
+      pseudo-log FOLLOWED BY the 0xff…fe log on geth (execution-apis
+      issue #868; geth PR #35617 merged 2026-10-07, in v1.17.8,
+      suppresses the pseudo-log) — the rehearsal's double row came from
+      geth; a Transfer log from 0xff…fe (3 topics, 32-byte data) is now a
+      NATIVE change, and within one call each protocol log cancels one
+      uncancelled pseudo-log with the same from/to/amount (per movement
+      the larger count wins — correct for geth, reth, nethermind, besu
+      and pre-fork nodes); a protocol log can back a WETH
+      Deposit/Withdrawal; a 4-topic 0xff…fe log is skipped and counted.
+      New exports EIP7708_TRANSFER_LOG_ADDRESS /
+      isEip7708TransferLogAddress. Fixtures: the live funding receipt
+      (block 11880421) and both clients' simulate answers for four cases.
+      Consumers audited: activity-decode.ts WAS affected (the log became
+      token 0xff…fe; now native and skipped — ETH is read from the tx
+      value, so Activity reads as before; wrap decoding off for receipts);
+      erc20-logs.ts getErc20Transfers and contract-risk.ts
+      isFirstInteraction now exclude the system address (the app always
+      passes tokens, so not affected in practice); the spending policy
+      consumed the doubled preview (fixed by the merge); token-gas-smoke
+      now checks both emitters; approvals, recovery, the paymaster event
+      decoders and the keeper are unaffected. FEE BUDGET:
+      readSubscriptionFeeFacts(node, account, {bundler}) prices with
+      quoteFeesOverFloor(node suggestion, bundlerFeeFloor) — exactly what
+      sendSessionCalls signs — with feeSource 'node' as the labelled
+      fallback; the ×2 margin and SUBSCRIPTION_PULL_GAS_ALLOWANCE 500,000
+      stay, justified from the recorded pulls (367,706 / 302,094 /
+      302,094; 438,168); feeBudgetSuggestionHint and a review
+      feeBudgetPricingNote say what it is priced at and how many payments
+      it covers; the default budget is pinned to cover 438,168 gas at the
+      signed fee. SET-UP FUNDING: aaEstimateFundingMessage for an AA21 at
+      the estimate when every call has value 0 (refused to estimate;
+      balance and deposit in exact wei; exact fee unknown; fund and
+      review again; bundler text verbatim); aaFundingMessage never says
+      "sending 0 wei". CARDS: cardShowsBatchingWarning hides the warning
+      for revoked / not installed / failed / expired / finished grants
+      (kept while the status is loading). UNVERIFIED: which client
+      ZeroDev simulates with; nethermind / besu behaviour; the
+      opcode-level breakdown; ERC-20 pull gas post-fork; why 0xrpc.io is
+      stuck.
