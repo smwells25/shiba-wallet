@@ -3543,3 +3543,77 @@ alongside; emulator passes after each wave. Subagents on Opus.
       42-character address to 30 — use the ADBKeyboard base64 broadcast.
       End state: Home, Ethereum Sepolia, Account 1, light mode, Google IME,
       protection ON, no custom network, reminders off; Metro at b2530cd.
+- [x] Reminders-blocker, 7702-safety and custom-network copy findings
+      FIXED (commit faad88a; check-notifications 117 (was 98), check-7702 156
+      (131), check-custom-networks 162 (152), check-home 69 (60),
+      check-readiness 185; offline runner ALL GREEN in the CTO's isolated
+      worktree: engine 877, app 6,973 across 50 suites, lint 0/0, tsc
+      clean; not seen on a device). (1)(2) describeNotificationError keeps
+      the whole message incl. expo-modules-core's "→ Caused by:" line
+      (CodedException.kt 155–171 in 57.0.21), URLs replaced, 800-char cap,
+      no stack; the unavailable state carries a cause with its own
+      sentence — missing (requireOptionalNativeModule null), EXPO GO
+      ("Reminders are not available inside Expo Go on this device: Expo Go
+      refused to create the reminder channels that Android needs before it
+      shows any notification, so nothing was scheduled. Reminders need the
+      wallet's own development build."; detected by
+      requireOptionalNativeModule('ExpoGo') != null, the same test as
+      expo's isRunningInExpoGo), refused, load-failed; a storage failure
+      is 'failed'. ROOT CAUSE CONFIRMED FROM SOURCE (expo/expo sdk-57 at
+      4200838a; main 4039ca12 matches): Expo Go's ExperiencePackagePicker
+      registers NotificationChannelManagerModule, which looks up
+      appContext.registry.getModule("NotificationsChannelsProvider")
+      (NotificationChannelManagerModule.kt 17–19,
+      NotificationsChannelProviderAccessor.kt 6–8 — byte-identical in the
+      installed 57.0.22), but Expo Go never registers a module under that
+      name in that registry (its modules map omits
+      AndroidXNotificationsChannelsProvider;
+      ExpoModuleRegistryAdapter.kt 42–47 registers
+      ScopedNotificationsChannelsProvider only as a legacy internal module;
+      ScopedNotificationsChannelsProvider.kt 27 "TODO vonovak refactor this
+      for expo go"); ModuleRegistry.kt 57 getModule returns null for an
+      unknown name and the non-null cast throws — so EVERY channel call is
+      rejected in Expo Go on Android; the exact "Caused by" text on the
+      device and that the emulator's Expo Go is an sdk-57 build remain
+      unconfirmed. (3) loadNotificationsNative uses the lazy reactNative()
+      require (the 783032a rule); pins forbid any dynamic import of
+      react-native in notifications.ts / NotificationScheduler.tsx. (4)
+      delegation.ts prepareSetCodeTx (upgrade only) reads
+      eth_getCode(0xd6CE…5b28) on the quote's endpoint right after the
+      chain-id check — "0x"/"0x0"/"0x00" → "The Kernel v3.3 code this
+      upgrade points to is not deployed on <network>, so delegating to it
+      would leave your address pointing at nothing. Nothing was signed.";
+      unreadable → "Could not read whether…"; revoke never gated;
+      readAccountDelegation records the delegate fact once per chain per
+      session (readWalletDelegateDeployed / walletDelegateDeployed /
+      upgradeActionsOffered / upgradeLinkShown — before a read a network
+      the user added is never offered on an assumption); UpgradeAccountScreen
+      shows "Not available on this network: …" and hides both upgrade
+      actions, "Use this upgraded account" and the batching/sponsored-gas
+      claim, with Revoke unchanged and a pending upgrade shown with a
+      Cancel warning; Home hides the Upgrade link only when the delegate
+      is known to have no code and the status is plain; the aa.ts
+      kernel-7702 quote path (REACHABLE: an owner recorded before the fix
+      would carry the tuple on its next smart-account send) refuses in the
+      bundle.eip7702 branch when the status is 'none' and the delegate has
+      no code — the CTO applied the agent's patch and pinned it (a Hoodi
+      kernel-7702 bundle on a fake node without delegate code is refused
+      before any bundler request; the control with code announces the
+      upgrade). (5) evm-chain.ts MULTISIG_UNVERIFIED_NETWORK_NOTE,
+      recordMultisigNetworkCheck (a pass remembered per session; custom
+      registry changes forget custom passes), multisigNetworkVerified
+      (kernelV33Verified or a recorded pass); the Home link needs it; the
+      CTO applied the agent's MultisigScreen patch (the note in a
+      WarningBox, Create disabled until verified, a "Check this network"
+      button running checkMultisigNetwork, the pass recorded after create
+      and import). (6)–(9) customNetworkNote on a MAIN network replaces the
+      paste-a-factory clause with "Smart-account features cannot be set up
+      on it, because the wallet treats it as a main network: <readiness
+      refusal>"; CUSTOM_RPC_INSECURE_MESSAGE = INSECURE_ENDPOINT_MESSAGE +
+      " Nothing was saved." at both custom-network call sites; "…choose Off
+      (mainnet) in the network list above instead."; READINESS_TESTNET_HINT
+      "…or a test network you added…", READINESS_INTRO and the Developer
+      intro mention networks you added. UNVERIFIED (device / dev build):
+      the Expo Go sentence with the real "Caused by" text, no toasts on
+      toggle, reminders working in a development build, the Hoodi Upgrade
+      screen and hidden links, the Multisig "Check this network" flow.
