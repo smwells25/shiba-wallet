@@ -45,8 +45,23 @@ import { ImportKeyScreen } from './src/screens/ImportKeyScreen';
 import { BrowserScreen } from './src/screens/BrowserScreen';
 import { watchOnlyScreenLayout } from './src/components/WatchOnlyGate';
 import { RecurringDueBanner } from './src/components/RecurringDueBanner';
+import { appScreenProtection } from './src/wallet/screen-protection';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
+
+/**
+ * App-wide screen protection (phase 17 item 0; src/wallet/screen-protection.ts).
+ * Mounted first inside PrefsProvider: its first effect runs before the stored
+ * preference is loaded and therefore protects at once; once the preference is
+ * known, a stored "off" releases the app-wide protection. Renders nothing.
+ */
+function ScreenProtection() {
+  const { ready, screenProtection } = usePrefs();
+  React.useEffect(() => {
+    void appScreenProtection().update({ prefsLoaded: ready, enabled: screenProtection });
+  }, [ready, screenProtection]);
+  return null;
+}
 
 /**
  * Persistent orange TESTNET banner (phase 4, item 6), shown whenever the
@@ -226,6 +241,7 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <PrefsProvider>
+        <ScreenProtection />
         <WalletProvider>
           <StatusBar style="auto" />
           {/* LockGate sits inside both providers (it needs wallet status and

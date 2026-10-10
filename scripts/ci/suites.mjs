@@ -46,6 +46,10 @@ export const APP_SCRIPTS = {
   // validation, the imported-key vault, signing selection and refusals,
   // a full EOA send and a smart-account operation (fakes only).
   'check-key-import.mjs': { kind: 'offline', summary: 'counts' },
+  // Phase 17 item 4: transaction notes and the Activity CSV export (feature
+  // 87): the note store, the UserOperation-to-transaction key rule, CSV
+  // quoting and formula defusal, the export's row set (fakes only).
+  'check-notes.mjs': { kind: 'offline', summary: 'counts' },
   'check-nfts.mjs': { kind: 'offline', summary: 'counts' },
   // Phase 14 item 1: payment requests (EIP-681, BIP-321, the Dogecoin
   // format, Solana Pay): spec examples, refusals, round trips and QR codes.
@@ -58,6 +62,9 @@ export const APP_SCRIPTS = {
   // Phase 15 item 1: recurring payments pushed by this phone (subscription grant, key kept on the device, confirm before each payment; fakes only).
   'check-recurring.mjs': { kind: 'offline', summary: 'counts' },
   'check-sessions.mjs': { kind: 'offline', summary: 'counts' },
+  // Phase 17 item 0: app-wide screen protection (the preference, the state
+  // machine over a fake of expo-screen-capture's key handling, the copy).
+  'check-screen-protection.mjs': { kind: 'offline', summary: 'counts' },
   'check-settings-protection.mjs': { kind: 'offline', summary: 'counts' },
   'check-siwe.mjs': { kind: 'offline', summary: 'counts' },
   'check-spending-policy.mjs': { kind: 'offline', summary: 'counts' },

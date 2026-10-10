@@ -168,6 +168,25 @@ app-switcher preview on both platforms.
 
 **Nothing on iOS has been observed yet**, in any build type.
 
+### App-wide protection (phase 17)
+
+Since phase 17 the whole app is protected by default, not only the
+phrase screens: `app/src/wallet/screen-protection.ts` calls
+`preventScreenCaptureAsync('app-wide')` at launch (and, on iOS,
+`enableAppSwitcherProtectionAsync(1.0)`, which blurs the app-switcher
+preview) while Settings → Privacy → "Hide in the app switcher and block
+screenshots" is on. The key is distinct from the phrase screens' keys,
+and the library releases the flag only when no key is held
+(`node_modules/expo-screen-capture/src/ScreenCapture.ts` lines 63-72), so
+turning the setting off never unprotects an open phrase screen. On
+Android every screenshot, recording and recent-apps thumbnail of the
+wallet is therefore blank while the setting is on: to capture anything
+for a test report, turn it off before taking screenshots or recordings,
+and turn it back on afterwards. React Native 0.86.3 copies the flag onto
+a `Modal`'s dialog window when the dialog is created
+(`ReactModalHostView.kt` lines 334-341), which corrects the statement
+above that a `Modal` does not inherit it; system dialogs still do not.
+
 ## Passkeys (phase 8, item 3)
 
 The passkey signer uses the native module `react-native-passkeys` 0.4.2
