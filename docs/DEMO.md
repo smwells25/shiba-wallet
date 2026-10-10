@@ -11,7 +11,7 @@ Everything in this walkthrough runs on the **Sepolia test network** with test ET
 ## Before you start: three warnings
 
 1. **Do not wipe the wallet on the demo emulator, and do not add or remove a fingerprint on it.** The emulator wallet's recovery phrase is stored in biometric-protected storage, and `AGENTS.md` records that the written phrase for that wallet is not kept anywhere ("Settings 'Recovery phrase protection' section"). Changing the fingerprint enrollment makes the phrase permanently unreadable; wiping deletes it. Either would lose Account 1, which owns the deployed Kernel smart account and the WalletConnect session this demo relies on. Show onboarding on a second, disposable emulator instead (see step 1).
-2. **Quoted labels can drift.** Every flow in steps 1 to 9 has now been run live through the app's screens on the emulator (session keys and guardians in phase 10 item 1, the counterfactual deployment in phase 11 item 2). Steps 10 to 18 (subscriptions, Base Sepolia, per-network tokens, the fee in USDC, payment requests and names, watch-only accounts, the second paymaster, the inheritance demonstration and Arbitrum Sepolia) are newer and have each been run live through the app's screens once or twice; see the "progress" sections for phases 12 to 14 in `AGENTS.md`. Later phases keep editing these screens, so if a quoted label differs slightly on screen, trust the screen, and check the latest "progress" section of `AGENTS.md` before presenting. Step 19 (recurring payments) was rehearsed on the emulator on 2026-10-09 (set-up, two payments, the banner, revoke), and step 20 (multi-signature) runs from a terminal script only, with nothing in the app.
+2. **Quoted labels can drift.** Every flow in steps 1 to 9 has now been run live through the app's screens on the emulator (session keys and guardians in phase 10 item 1, the counterfactual deployment in phase 11 item 2). Steps 10 to 18 (subscriptions, Base Sepolia, per-network tokens, the fee in USDC, payment requests and names, watch-only accounts, the second paymaster, the inheritance demonstration and Arbitrum Sepolia) are newer and have each been run live through the app's screens once or twice; see the "progress" sections for phases 12 to 14 in `AGENTS.md`. Later phases keep editing these screens, so if a quoted label differs slightly on screen, trust the screen, and check the latest "progress" section of `AGENTS.md` before presenting. Step 19 (recurring payments) was rehearsed on the emulator on 2026-10-09 (set-up, two payments, the banner, revoke), step 21 (the in-app browser) was rehearsed on 2026-10-10, and step 20 (multi-signature) runs from a terminal script only, with nothing in the app.
 3. **Bitcoin, Solana and Dogecoin in the app use their main networks.** Sepolia test mode only switches the Ethereum side. Anything you broadcast on those three chains from the app spends real coins. Step 9 explains how to show them without broadcasting.
 
 ---
@@ -420,6 +420,21 @@ Nothing in this step runs in the app: multi-signature accounts exist only as eng
 **What it proves:** the dry run against the real contracts, and the live 2-of-3 on Sepolia: deployed and operated, with a second operation accepted by ZeroDev's bundler, which settled that a real bundler accepts operations from a weighted-root account (phase 15 item 2). Not shown anywhere: a bundler-accepted deployment of such an account, session keys or passkeys on it, the delayed path, and any app screen.
 
 ---
+
+### Step 21. A dApp inside the wallet: the in-app browser
+
+Account 1 on Ethereum Sepolia with a little test ETH. Rehearsed live in-app on 2026-10-10 (phase 16 item 2).
+
+- Home → **Apps**. The screen is titled "Apps (test networks)". There is no address field: two cards, Uniswap and the ENS app, each with its origin and "Why it is listed", and a box headed "What this test build cannot yet prevent" that states what the web-view library allows on Android until a native build exists (a silent camera grant, cookies on downloads, the file picker).
+- Open Uniswap. The bar shows `https://app.uniswap.org` and "Not connected · Ethereum Sepolia (test network)". In Uniswap's wallet picker, "Shiba Wallet — Detected" appears through EIP-6963. Connect: the same approval sheet as WalletConnect, with the line "Opened in this wallet's browser: the request came from https://app.uniswap.org, as reported by the web view (not a name the site gives itself). This confirms which site asked, not that the site is safe." One device prompt. The first connection can take a minute or two while Uniswap's own backend runs its checks.
+- Turn on Uniswap's testnet mode in its settings and swap a small amount of test ETH for USDC. The wallet sheet shows the transaction, the balance-change preview ("You send 0.0001 test ETH / You receive 5.286847 USDC"), the risk card and "Pre-flight simulation passed (eth_call)". One prompt. The hash goes back to the page.
+- Open the ENS app and choose "Sign in with Wallet": the SIWE card shows the site, account, network, URI and the exact message; one prompt "Sign for app.ens.dev".
+- Tap a link that leaves the site (Uniswap's Developers page): "Open outside the wallet?" with the full URL; Cancel keeps the page.
+- Settings → Developer → Off (mainnet): the Apps link disappears and the screen shows only the test-networks-only card. Switch back.
+
+**What to say:** the wallet now has two ways into dApps, WalletConnect and its own browser, and both go through one approval path. The browser knows the site's real origin first-hand, which WalletConnect cannot, but that proves which site asked, not that the site is honest.
+
+**What it proves:** on 2026-10-10 a swap started inside the wallet's browser was simulated, approved and included (block 11882561) with the USDC received equal to the preview, and the ENS app completed a Sign-In with Ethereum through the SIWE card. The emulator's WebView dates from 2023 and still rendered both sites.
 
 ## Known rough edges (development builds only)
 
