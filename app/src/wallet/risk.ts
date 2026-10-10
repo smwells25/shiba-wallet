@@ -23,6 +23,7 @@ import {
 import { groupThousands, sanitizeSymbol, simulationTransport } from './simulation.ts';
 import { WALLET_7702_DELEGATE } from './delegation.ts';
 import { walletAddressesFor, type AaAddressFacts } from './activity-sentences.ts';
+import { ownMultisigAddresses } from './multisig.ts';
 import { evmProfileByCaip2 } from '../config/evm-chain.ts';
 
 /**
@@ -415,10 +416,16 @@ export interface OwnAddress {
  * card and the success screens treat a send between the wallet's own
  * accounts as such (finding 13 of the rehearsal), never as a first-time or
  * unknown counterparty.
+ *
+ * `extra` adds further own addresses already named by the caller — the
+ * wallet's multi-signature accounts on this network ("Multisig 1 (2-of-3)",
+ * multisig.ts ownMultisigAddresses), which are stored records rather than
+ * accounts — after the accounts' own, skipping any address already listed.
  */
 export function ownWalletAddresses(
   accounts: readonly { index: number; name: string; evmAddress: string | null }[],
   aa: AaAddressFacts | null,
+  extra: readonly OwnAddress[] = [],
 ): OwnAddress[] {
   const out: OwnAddress[] = [];
   const seen = new Set<string>();
@@ -430,6 +437,13 @@ export function ownWalletAddresses(
       seen.add(key);
       out.push({ address, label: i === 0 ? account.name : `${account.name}’s smart account` });
     });
+  }
+  for (const own of extra) {
+    if (!ADDRESS.test(own.address)) continue;
+    const key = own.address.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ address: own.address, label: own.label });
   }
   return out;
 }
@@ -839,6 +853,15 @@ export interface GatherRiskOptions {
    * first-interaction or contract-age check runs for it.
    */
   ownAccounts?: readonly OwnAddress[];
+  /**
+   * Loads the wallet's own multi-signature accounts on `chainCaip2`, which
+   * are added to ownAccounts (finding 8 of the 2026-10-10 multisig emulator
+   * pass: a send to the wallet's own counterfactual multisig read as "a
+   * regular account with no contract code" and "first time sending").
+   * Omitted: the stored records (multisig.ts ownMultisigAddresses); null:
+   * none (scripts). A failed load adds none.
+   */
+  loadOwnMultisigs?: ((chainCaip2: string) => Promise<readonly OwnAddress[]>) | null;
 }
 
 async function attempt<T>(fn: () => Promise<T>): Promise<T | undefined> {
@@ -949,9 +972,22 @@ export async function gatherRiskFacts(options: GatherRiskOptions): Promise<RiskF
     options.assetChanges ?? approvalChangesFromCalldata(options.to, options.wallet, options.data);
   const facts: RiskFacts = { to: options.to, hasCalldata, assetChanges, chainCaip2: options.chainCaip2 };
   if (!ADDRESS.test(options.to) || !ADDRESS.test(options.wallet)) return facts;
+  // The wallet's own multisig accounts on this chain (stored records, not
+  // accounts, so the caller's ownAccounts may not list them).
+  const loadMultisigs = options.loadOwnMultisigs === undefined ? ownMultisigAddresses : options.loadOwnMultisigs;
+  let multisigs: readonly OwnAddress[] = [];
+  if (loadMultisigs) {
+    try {
+      multisigs = await loadMultisigs(options.chainCaip2);
+    } catch {
+      multisigs = [];
+    }
+  }
   // The sending address always counts as the wallet's own.
+  const listed = options.ownAccounts ?? [];
   const own: OwnAddress[] = [
-    ...(options.ownAccounts ?? []),
+    ...listed,
+    ...multisigs.filter((m) => ADDRESS.test(m.address) && !findOwnAddress(m.address, listed)),
     { address: options.wallet, label: 'the sending account itself' },
   ];
   const ownTo = findOwnAddress(options.to, own);

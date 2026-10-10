@@ -47,9 +47,14 @@ import {
 import { sanitizeAccountName } from './accounts.ts';
 import { QR_MAX_BYTES, extractFirstJsonObject, utf8Length } from './recovery.ts';
 import {
+  AA_DEPOSIT_ROW_LABEL,
+  AaFeeRoseError,
+  AaFundingError,
   MULTISIG_CONFIG_BUNDLE_REFUSAL,
   checkAaQuoteBeforeApproval,
   createMultisigAaClient,
+  describeAaError,
+  isPrefundError,
   prepareAaCalls,
   sendAa,
   type AaClientBundle,
@@ -155,10 +160,14 @@ export const MULTISIG_DEPLOY_NOTE =
   'Not deployed yet. The first operation deploys the account; it needs the co-signers’ approvals like every ' +
   'operation, and the account pays the network fee from its own balance, so fund the address first.';
 
-/** Shown under a bundler error on a deploying operation. */
+/**
+ * Appended to a FUNDING refusal only (an AaFundingError, or a bundler AA21
+ * "didn't pay prefund"), never to a fee-rose or any other refusal, where
+ * funding is not the remedy (finding 3 of the 2026-10-10 emulator pass).
+ */
 export const MULTISIG_FUND_AND_RETRY =
-  'If the bundler refused because of the prefund or the fee, send a little more test ETH to the multisig ' +
-  'address and try again. The approvals stay valid as long as no other operation used this nonce.';
+  'The co-signer approvals stay valid while you fund the multisig, as long as no other operation uses this ' +
+  'nonce: fund it, then review and submit again without collecting them again.';
 
 /** Refusal when the active account is not a recovery-phrase account. */
 export const MULTISIG_PHRASE_SIGNER_ONLY =
@@ -176,15 +185,63 @@ export const MULTISIG_SUBMITTER_APPROVAL_REFUSAL =
   'This approval is from this wallet’s own signer, which submits the operation and signs it last. The signer ' +
   'module counts each signer once, so it cannot also be a co-signer approval.';
 
-/** The exposure line: operations versus messages (multisigExposure). */
-export function multisigExposureLine(config: MultisigConfig): string {
+/** The fewest signers of `signers` whose weights reach `threshold` (heaviest first), or null when all of them together do not. */
+function fewestSignersFor(signers: readonly { weight: number }[], threshold: number): number | null {
+  const weights = signers.map((s) => s.weight).sort((a, b) => b - a);
+  let sum = 0;
+  for (let i = 0; i < weights.length; i++) {
+    sum += weights[i]!;
+    if (sum >= threshold) return i + 1;
+  }
+  return null;
+}
+
+/**
+ * The exposure line: operations versus messages (multisigExposure). It
+ * counts SIGNERS, never "co-signers", for the operation minimum (the old
+ * "Any 2 co-signers together" counted this wallet's own signer as a
+ * co-signer; finding 9 of the 2026-10-10 emulator pass). When `localSigner`
+ * (this phone's signer in the set) is given, it also says whether the OTHER
+ * signers can send an operation without this phone: they can when their
+ * combined weight reaches the threshold; otherwise this phone's signer is
+ * always needed.
+ */
+export function multisigExposureLine(config: MultisigConfig, localSigner: string | null = null): string {
   const e = multisigExposure(config);
+  const n = config.signers.length;
   const equal = config.signers.every((s) => s.weight === config.signers[0]!.weight);
   const ops = e.operationMinimumSigners;
   const msgs = e.messageMinimumSigners;
-  const lead = equal
-    ? `Any ${ops} co-signer${ops === 1 ? '' : 's'} together can send an operation`
-    : `Co-signers whose weights add up to ${config.threshold} (at least ${ops} of them) can send an operation`;
+  const local = localSigner ? config.signers.find((s) => sameAddress(s.address, localSigner)) : undefined;
+  let lead: string;
+  if (equal && ops === n) {
+    lead = `Every operation needs ${n === 2 ? 'both signers' : `all ${n} signers`}`;
+    if (local) lead += ', so this phone’s signer is always one of them';
+  } else {
+    lead = equal
+      ? `Any ${ops} of the ${n} signers together can send an operation`
+      : `Signers whose weights add up to ${config.threshold} (at least ${ops} of them) can send an operation`;
+    if (local) {
+      const others = config.signers.filter((s) => s !== local);
+      const otherWeight = others.reduce((sum, s) => sum + s.weight, 0);
+      const fewest = fewestSignersFor(others, config.threshold);
+      if (fewest !== null) {
+        const who =
+          fewest === others.length
+            ? `the ${others.length} co-signer${others.length === 1 ? '' : 's'}`
+            : `any ${fewest} of the ${others.length} co-signers`;
+        lead += equal
+          ? ` — including ${who} without this phone`
+          : fewest === others.length
+            ? ` — including the ${others.length} co-signers together, without this phone`
+            : ` — including co-signers without this phone (at least ${fewest} of the ${others.length})`;
+      } else {
+        lead +=
+          ` — and this phone’s signer is always one of them, because the co-signers’ combined weight ${otherWeight} ` +
+          `is below the threshold ${config.threshold}`;
+      }
+    }
+  }
   return (
     `${lead}; for messages the deployed validator needs only ${msgs}, so this account must never be used to ` +
     'sign logins, orders or token permits — the wallet refuses that.'
@@ -1125,6 +1182,227 @@ export async function markMultisigDeployed(
   });
 }
 
+/** The detail view's line when the record and the chain agree (kept verbatim from the first slice). */
+export const MULTISIG_DEPLOYED_MATCH_NOTE = 'Deployed; its signer set and threshold on-chain match this record.';
+
+/** When the receipt said deployed but the node does not show the code yet (an endpoint a few blocks behind). */
+export const MULTISIG_DEPLOYED_NOT_VISIBLE_NOTE =
+  'Deployed by its first operation (the bundler’s receipt confirmed it), but the network endpoint does not show ' +
+  'the account’s code yet, so its signer set could not be compared on-chain. Open the multisig again in a moment.';
+
+/** The detail view's deployment line for what the chain and the record say. */
+export function multisigChainNote(record: Pick<MultisigRecord, 'deployed'>, state: MultisigChainState): string {
+  if (state.deployed) {
+    return state.problems.length > 0 ? `On-chain check: ${state.problems.join(' ')}` : MULTISIG_DEPLOYED_MATCH_NOTE;
+  }
+  return record.deployed.deployed ? MULTISIG_DEPLOYED_NOT_VISIBLE_NOTE : MULTISIG_DEPLOY_NOTE;
+}
+
+/**
+ * Reads the account on-chain, records it as deployed when the chain shows
+ * code the record did not know about yet (a failed write is ignored: the
+ * on-chain read is the fact shown), and returns the stored record with the
+ * line to show. Used when the detail view opens and after an operation's
+ * receipt, so "Back to the multisig" after a deploying operation never shows
+ * the stale "Not deployed yet" (finding 5 of the 2026-10-10 emulator pass).
+ */
+export async function refreshMultisigDeployment(
+  node: JsonRpcTransport,
+  record: MultisigRecord,
+  store: KeyValueStore = AsyncStorage,
+): Promise<{ record: MultisigRecord; state: MultisigChainState; note: string }> {
+  const state = await readMultisigOnChain(node, record);
+  if (state.deployed && !record.deployed.deployed) {
+    await markMultisigDeployed(record.id, {}, store).catch(() => undefined);
+  }
+  const stored = (await getMultisigRecord(record.id, store).catch(() => null)) ?? record;
+  const fresh = state.deployed && !stored.deployed.deployed ? { ...stored, deployed: { ...stored.deployed, deployed: true } } : stored;
+  return { record: fresh, state, note: multisigChainNote(fresh, state) };
+}
+
+/** The multisig's EntryPoint deposit row label (aa.ts AA_DEPOSIT_ROW_LABEL, as on every smart-account confirm). */
+export const MULTISIG_DEPOSIT_ROW_LABEL = AA_DEPOSIT_ROW_LABEL;
+
+/** Under the deposit row: aa.ts AA_DEPOSIT_NOTE in the multisig's words (no Max button on this screen). */
+export const MULTISIG_DEPOSIT_NOTE =
+  'The EntryPoint holds this deposit for the multisig and takes network fees from it first. It cannot be sent as ' +
+  'an amount, and this wallet does not offer a way to withdraw it; later operations use it for their fees.';
+
+/** What a multisig holds: its balance and its EntryPoint deposit, each null when it could not be read. */
+export interface MultisigFunds {
+  balance: bigint | null;
+  deposit: bigint | null;
+}
+
+/**
+ * The multisig's balance (eth_getBalance) and EntryPoint v0.7 deposit
+ * (balanceOf(account) on the EntryPoint, the same read as the engine's
+ * SmartAccountClient.getEntryPointDeposit). Never throws.
+ */
+export async function readMultisigFunds(node: JsonRpcTransport, address: string): Promise<MultisigFunds> {
+  const client = new NodeClient(node);
+  const [balance, deposit] = await Promise.all([
+    client.getBalance(address).catch(() => null),
+    ethCallBytes(node, ENTRYPOINT_V07, encodeFunctionCall('balanceOf(address)', [{ kind: 'address', value: address }])).then(
+      (out) => (out.length === 32 ? wordAt(out, 0) : null),
+      () => null,
+    ),
+  ]);
+  return { balance, deposit };
+}
+
+/** "0.0005 test ETH · EntryPoint deposit (pays fees first): 0.000697 test ETH" for the list row. */
+export function multisigFundsLine(funds: MultisigFunds | undefined, format: (wei: bigint) => string): string {
+  if (!funds) return 'Balance loading…';
+  const balance = funds.balance === null ? 'Balance unknown' : format(funds.balance);
+  const deposit = funds.deposit === null ? 'could not be read' : format(funds.deposit);
+  return `${balance} · ${MULTISIG_DEPOSIT_ROW_LABEL}: ${deposit}`;
+}
+
+/**
+ * The wallet's own multisig addresses on `chain`, named as every screen names
+ * them ("Multisig 1 (2-of-3)"), for the risk card's and the success screen's
+ * own-address set (risk.ts gatherRiskFacts, useOwnAddresses.ts): a send to
+ * the wallet's own multisig, deployed or not, is "one of your own accounts",
+ * never a first-time or unknown counterparty (finding 8 of the 2026-10-10
+ * emulator pass). Never throws: an unreadable list gives none.
+ */
+export async function ownMultisigAddresses(
+  chain: string,
+  store: KeyValueStore = AsyncStorage,
+): Promise<{ address: string; label: string }[]> {
+  try {
+    const records = await listMultisigRecords(chain, store);
+    return records.map((r) => ({ address: r.address, label: multisigDisplayName(r) }));
+  } catch {
+    return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Submit errors: which advice goes with which refusal
+// ---------------------------------------------------------------------------
+
+/**
+ * Figures from this wallet's recorded live run (AGENTS.md, phase 17 item 1,
+ * "MULTI-SIGNATURE ACCOUNTS PROVEN LIVE IN-APP", 2026-10-10, Ethereum
+ * Sepolia, a 2-of-3 with weights 1): the deploying first operation was quoted
+ * at a worst case of 0.0066 ETH (2.31 gwei) and later 0.00369334246196974 ETH
+ * total for a 0.0001 ETH send, i.e. a worst-case fee of about 0.0036 ETH, and
+ * cost 0.002042 ETH; the second operation (nonce 1, no deployment) estimated
+ * 1,001,071 gas, a worst case of about 0.0023 ETH at 2.31 gwei and
+ * 0.001306547839675704 ETH at the 652 Mwei level it was sent at, and cost
+ * 0.000765397384254224 ETH. Shown ONLY on Ethereum Sepolia, only when no
+ * estimate of this operation is known, and always as a recorded figure, not a
+ * quote.
+ */
+export const MULTISIG_RECORDED_DEPLOY_COST_NOTE =
+  'For scale only: in this wallet’s recorded test run on Ethereum Sepolia (2026-10-10), the first operation of ' +
+  'a 2-of-3 multisig, which also deployed it, was quoted at a worst-case network fee of about 0.0036 to 0.0066 ' +
+  'test ETH at different fee levels and actually cost about 0.0020 test ETH. That is a recorded range, not a quote ' +
+  'for this operation; fees change.';
+
+export const MULTISIG_RECORDED_LATER_COST_NOTE =
+  'For scale only: in this wallet’s recorded test run on Ethereum Sepolia (2026-10-10), a later operation of a ' +
+  '2-of-3 multisig was quoted at a worst-case network fee of about 0.0013 to 0.0023 test ETH at different fee ' +
+  'levels and actually cost about 0.0008 test ETH. That is a recorded range, not a quote for this operation; fees ' +
+  'change.';
+
+/** The last accepted quote of an operation, kept by the screen for the funding figure. */
+export interface MultisigLastQuote {
+  requestId: string;
+  /** The quote's worst-case network fee, wei. */
+  fee: bigint;
+  /** The native amount the operation sends, wei. */
+  amount: bigint;
+}
+
+/**
+ * The figure for an AA21 refusal of the bundler's ESTIMATE (finding 3 of the
+ * 2026-10-10 emulator pass, where the shortfall was three times the balance
+ * and no amount was named). The exact fee cannot be known, because the
+ * bundler refused the estimate itself. With the last accepted quote of the
+ * same operation, the worst case is computed from it (the deposit pays the
+ * fee first and only the fee, EntryPoint v0.7 _validateAccountPrepayment;
+ * see aa.ts aaFeeFromBalance); without one, the recorded figures are named
+ * on Ethereum Sepolia only.
+ */
+export function multisigFundingFigure(p: {
+  chain: string;
+  deploys: boolean;
+  lastQuote: Pick<MultisigLastQuote, 'fee' | 'amount'> | null;
+  funds: MultisigFunds | null;
+  symbol: string;
+}): string {
+  const fmt = (wei: bigint) => `${formatUnits(wei, 18, 18)} ${p.symbol}`;
+  if (p.lastQuote) {
+    const { fee, amount } = p.lastQuote;
+    const deposit = p.funds?.deposit ?? 0n;
+    const fromBalance = amount + (fee > deposit ? fee - deposit : 0n);
+    let text = `The last accepted quote for this operation had a worst-case network fee of ${fmt(fee)}.`;
+    const what = amount > 0n ? ` (the amount ${fmt(amount)} plus ${deposit > 0n ? 'the rest of ' : ''}the fee)` : '';
+    text +=
+      deposit > 0n
+        ? ` The EntryPoint deposit of ${fmt(deposit)} pays the fee first, so at that figure the balance must hold ${fmt(fromBalance)}${what}.`
+        : ` At that figure the balance must hold ${fmt(fromBalance)}${what}.`;
+    const balance = p.funds?.balance ?? null;
+    if (balance === null) return `${text} Its balance could not be read just now.`;
+    if (fromBalance > balance) {
+      return (
+        `${text} It holds ${fmt(balance)}, so send at least ${fmt(fromBalance - balance)} to the multisig, and a ` +
+        'little more, because the fee changes between quotes.'
+      );
+    }
+    return (
+      `${text} It holds ${fmt(balance)}, which would have covered that quote, so the fee or the gas estimate has ` +
+      'risen since; the new figure is unknown because the estimate itself was refused.'
+    );
+  }
+  const unknown = 'The exact amount is unknown because the estimate itself was refused.';
+  if (p.chain !== 'eip155:11155111') return unknown;
+  return `${unknown} ${p.deploys ? MULTISIG_RECORDED_DEPLOY_COST_NOTE : MULTISIG_RECORDED_LATER_COST_NOTE}`;
+}
+
+/**
+ * The text the Multisig screen shows for a failed quote or submit:
+ * describeAaError's title and detail (the multisig's own funding wording
+ * comes from aa.ts), then — ONLY for a funding refusal (an AaFundingError, or
+ * a bundler AA21 "didn't pay prefund") — the funding figure when the
+ * bundler's estimate itself was refused, and MULTISIG_FUND_AND_RETRY. A
+ * fee-rose refusal (AaFeeRoseError) or any other error never gets the funding
+ * advice (finding 3 of the 2026-10-10 emulator pass).
+ */
+export function multisigSubmitErrorText(
+  error: unknown,
+  ctx: {
+    record: Pick<MultisigRecord, 'address' | 'chain'>;
+    deploys: boolean;
+    symbol: string;
+    lastQuote?: Pick<MultisigLastQuote, 'fee' | 'amount'> | null;
+    funds?: MultisigFunds | null;
+  },
+): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const described = describeAaError(error, { accountType: 'kernel-multisig', deployed: !ctx.deploys, sender: ctx.record.address });
+  const base = described ? `${described.title}\n\n${described.detail}` : message;
+  if (error instanceof AaFeeRoseError) return base;
+  const funding = error instanceof AaFundingError || isPrefundError(message);
+  if (!funding) return base;
+  // An AA21 from the bundler (at the quote's estimate, or the re-estimate when
+  // the operation is signed) means the estimate itself was refused.
+  const estimateRefused = isPrefundError(message);
+  const figure = estimateRefused
+    ? `\n\n${multisigFundingFigure({
+        chain: ctx.record.chain,
+        deploys: ctx.deploys,
+        lastQuote: ctx.lastQuote ?? null,
+        funds: ctx.funds ?? null,
+        symbol: ctx.symbol,
+      })}`
+    : '';
+  return `${base}${figure}\n\n${MULTISIG_FUND_AND_RETRY}`;
+}
+
 // ---------------------------------------------------------------------------
 // Describing calls (both sides show the calls in full)
 // ---------------------------------------------------------------------------
@@ -1328,6 +1606,28 @@ export function addMultisigApproval(
   op: MultisigOperationRecord,
   text: string,
 ): { op: MultisigOperationRecord; added: { address: string; weight: number } } {
+  try {
+    return addApprovalChecked(record, op, text);
+  } catch (e) {
+    // The engine's refusals ("0x… is not a signer of this multisig", the
+    // signature checks) carry no final period; the screen shows them as
+    // sentences, so one is added here without changing the engine's words
+    // (finding 6 of the 2026-10-10 emulator pass).
+    throw new Error(asSentence(e instanceof Error ? e.message : String(e)));
+  }
+}
+
+/** `message` ending in a full stop (unchanged when it already ends a sentence). */
+export function asSentence(message: string): string {
+  const t = message.trim();
+  return /[.!?…]$/.test(t) ? t : `${t}.`;
+}
+
+function addApprovalChecked(
+  record: MultisigRecord,
+  op: MultisigOperationRecord,
+  text: string,
+): { op: MultisigOperationRecord; added: { address: string; weight: number } } {
   if (op.status !== 'collecting') throw new Error('This operation is no longer collecting approvals.');
   const trimmed = text.trim();
   let approval: MultisigApproval;
@@ -1385,23 +1685,75 @@ export async function saveMultisigOperation(id: number, op: MultisigOperationRec
 }
 
 export interface MultisigWeightProgress {
-  /** Approvals' weight plus this wallet's signer's weight. */
+  /** Approvals' weight plus this wallet's signer's weight (what the operation carries when submitted). */
   weight: number;
   threshold: number;
   localWeight: number;
   approvers: { address: string; weight: number }[];
+  /** The co-signer approvals' weight collected so far. */
+  cosignerWeight: number;
+  /** The co-signer weight the operation needs: the threshold minus this wallet's weight (at least 0). */
+  cosignerNeeded: number;
   ready: boolean;
 }
 
-/** The weight bar's figures: the collected approvals plus this wallet's own (submitting) signer. */
+/**
+ * The weight bar's figures. DECISION (CTO, finding 2 of the 2026-10-10
+ * emulator pass): this wallet's own signer still COUNTS towards the
+ * threshold before it has signed, because it is the submitter and its
+ * signature is certain at submission; but the screen shows the CO-SIGNER
+ * weight collected against the co-signer weight still needed
+ * (multisigCosignerBarLabel) and says separately that this wallet signs the
+ * remaining weight when you submit (multisigLocalSignsLine), so the bar never
+ * reads as if this wallet had already approved.
+ */
 export function multisigWeightProgress(record: MultisigRecord, op: Pick<MultisigOperationRecord, 'approvals'>): MultisigWeightProgress {
   const local = record.signers.find((s) => sameAddress(s.address, record.localSigner));
   const localWeight = local?.weight ?? 0;
   const approvers = op.approvals
     .map((a) => record.signers.find((s) => sameAddress(s.address, a.signer)))
     .filter((s): s is { address: string; weight: number } => s !== undefined);
-  const weight = localWeight + approvers.reduce((sum, s) => sum + s.weight, 0);
-  return { weight, threshold: record.threshold, localWeight, approvers, ready: weight >= record.threshold };
+  const cosignerWeight = approvers.reduce((sum, s) => sum + s.weight, 0);
+  const weight = localWeight + cosignerWeight;
+  const cosignerNeeded = Math.max(0, record.threshold - localWeight);
+  return {
+    weight,
+    threshold: record.threshold,
+    localWeight,
+    approvers,
+    cosignerWeight,
+    cosignerNeeded,
+    ready: weight >= record.threshold,
+  };
+}
+
+/** The weight bar's label: co-signer weight collected versus needed, "ready" once enough. */
+export function multisigCosignerBarLabel(p: MultisigWeightProgress): string {
+  if (p.ready) return `Co-signer approvals: weight ${p.cosignerWeight} of ${p.cosignerNeeded} needed — ready`;
+  return (
+    `Co-signer approvals: weight ${p.cosignerWeight} of ${p.cosignerNeeded} needed ` +
+    `(${p.cosignerNeeded - p.cosignerWeight} still needed)`
+  );
+}
+
+/** The separate line for this wallet's own signer, which signs only at submission. */
+export function multisigLocalSignsLine(p: MultisigWeightProgress): string {
+  return `This wallet signs the remaining weight ${p.localWeight} when you submit.`;
+}
+
+/** Under the submit button while the co-signer weight is short. */
+export function multisigNotReadyHint(p: MultisigWeightProgress): string {
+  return `Submitting needs co-signer approvals of weight ${p.cosignerNeeded}; the approvals so far reach ${p.cosignerWeight}.`;
+}
+
+/** The confirm screen's approvals sentence. */
+export function multisigSubmitApprovalsLine(p: MultisigWeightProgress): string {
+  return (
+    `Co-signer approvals: weight ${p.cosignerWeight} (${p.cosignerNeeded} needed). This wallet signs the remaining ` +
+    `weight ${p.localWeight} when you submit, for weight ${p.weight} of the threshold ${p.threshold}. Your device ` +
+    'check comes next; this wallet’s signer then signs the final operation, and the signer module checks every ' +
+    'approval again.'
+  );
 }
 
 export function multisigThresholdNotReached(weight: number, threshold: number): string {
@@ -1645,7 +1997,7 @@ export function reviewMultisigRequestAsCosigner(
     signer: { address: checksum(signerEntry.address), weight: signerEntry.weight },
     networkLabel: network,
     described: parsed.calls.map((c) => describeMultisigCall(c, ctx.nativeSymbol, ctx.tokens ?? [])),
-    exposureLine: multisigExposureLine(parsed.config),
+    exposureLine: multisigExposureLine(parsed.config, signerEntry.address),
     knownRecord,
     warnings,
   };

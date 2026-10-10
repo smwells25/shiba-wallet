@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Alert, Text, View } from 'react-native';
+import { Alert, StyleSheet, Text, View } from 'react-native';
 // expo-file-system 57 object API and expo-sharing 57, exactly as
 // components/RecordFileActions.tsx uses them (its comments carry the
 // documentation and typings checks); only the file name and contents differ.
@@ -16,8 +16,11 @@ import {
   MULTISIG_EXPORT_DIRECTORY,
   MULTISIG_FEES_LINE,
   MULTISIG_UNAUDITED_NOTE,
+  multisigCosignerBarLabel,
   multisigExposureLine,
   multisigFeatureRefusal,
+  multisigLocalSignsLine,
+  type MultisigWeightProgress,
 } from '../wallet/multisig';
 
 /**
@@ -26,12 +29,12 @@ import {
  * known, what co-signers approve and what they do not, that the account
  * never signs messages, and the audit status. Never collapsed.
  */
-export function MultisigHonesty({ config }: { config: MultisigConfig | null }) {
+export function MultisigHonesty({ config, localSigner = null }: { config: MultisigConfig | null; localSigner?: string | null }) {
   const theme = useTheme();
   let exposure: string | null = null;
   if (config) {
     try {
-      exposure = multisigExposureLine(config);
+      exposure = multisigExposureLine(config, localSigner);
     } catch {
       exposure = null;
     }
@@ -45,6 +48,32 @@ export function MultisigHonesty({ config }: { config: MultisigConfig | null }) {
     </View>
   );
 }
+
+/**
+ * The approvals bar: the CO-SIGNER weight collected versus the co-signer
+ * weight still needed (the threshold minus this wallet's weight), then a
+ * separate line saying this wallet signs its weight only when you submit
+ * (multisig.ts multisigWeightProgress explains the decision).
+ */
+export function MultisigWeightBar({ progress }: { progress: MultisigWeightProgress }) {
+  const theme = useTheme();
+  const need = progress.cosignerNeeded;
+  const pct = need > 0 ? Math.max(0, Math.min(1, progress.cosignerWeight / need)) : 1;
+  return (
+    <View style={styles.card}>
+      <Text style={[styles.hint, { color: theme.text }]}>{multisigCosignerBarLabel(progress)}</Text>
+      <View style={[barStyles.track, { backgroundColor: theme.border }]}>
+        <View style={[barStyles.fill, { width: `${Math.round(pct * 100)}%`, backgroundColor: theme.accent }]} />
+      </View>
+      <Text style={[styles.hint, { color: theme.text }]}>{multisigLocalSignsLine(progress)}</Text>
+    </View>
+  );
+}
+
+const barStyles = StyleSheet.create({
+  track: { height: 8, borderRadius: 4, overflow: 'hidden' },
+  fill: { height: 8, borderRadius: 4 },
+});
 
 /** What is refused for a multisig, and why (collision versus not offered versus not applicable). */
 export function MultisigRefusedFeatures() {
