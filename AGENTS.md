@@ -3308,3 +3308,120 @@ alongside; emulator passes after each wave. Subagents on Opus.
       WalletConnect on a custom chain; rollup fee behaviour on OP Sepolia.
       Emulator checklist (11 steps, Hoodi via rpc.hoodi.ethpandaops.io; a
       main-network case; OP Sepolia optional) in the builder's report.
+- [x] Item 1 — MULTI-SIGNATURE ACCOUNTS PROVEN LIVE IN-APP (2026-10-10;
+      emulator, Expo Go, Metro at 3eb00f1, 2,340 modules; 7 prompts, each
+      expected; Privacy toggle off during the pass and back on after; the
+      dev EOA untouched during the pass; every hash verified on publicnode).
+      THE OPEN QUESTION IS SETTLED: ZeroDev's bundler ACCEPTED the
+      weighted-root DEPLOYMENT from the app. Flow: Multisig screen (the
+      fresh-deploy sentence, the "Not available for a multi-signature
+      account" card with 8 bullets, the fees sentence, the ERC-1271
+      refusal, the no-audit note; no readiness card on Sepolia) → Create
+      with dev-seed 5 (0x69F0…7E8a) and 6 (0xCCB4…b107), weights 1,
+      threshold 2 → "Multisig 1 (2-of-3)", CREATE2 index 0, address
+      0x944caA404e389b18b2fe251e969EdD7A220d0d38 (= KernelFactory
+      getAddress(initData, 0) on-chain; the QR decodes to the plain
+      address); refusals exactly as designed (threshold 1 → "…one signer
+      alone could send operations…"; own address → "Co-signer 2 is this
+      wallet's own signer…"; bad checksum). Funded 0.002 from Account 1
+      (tx 0x58226ca94754521cd07e10e8092c08f72231162da6f9773ea7a3517caa57dcde,
+      block 11885161 — NOTE: a plain transfer to a never-used address now
+      costs 204,600 gas on Sepolia after Glamsterdam (EIP-2780 / 8037);
+      the app's estimate was 207,391, correct; a later transfer to the same
+      address used 21,000). OPERATION 1 (0.0001 test ETH to Account 2,
+      nonce 0, carries the deployment): request
+      0xa8bf3dc1…f9d7a2 (the QR decodes to the request JSON; the copy
+      text carries EIP-712 typed data for other wallets); the weight bar
+      reads "Approvals: weight 1 of the threshold 2" with "✓ This wallet's
+      signer … (weight 1, signs last when you submit)" BEFORE any approval
+      and 2 of 2 after dev5's (the wallet's own weight is counted before
+      it signs — a design point to decide); duplicate → "An approval from
+      0x69F0… was already added."; dev7 → "0xFDF5… is not a signer of
+      this multisig" (the engine's own refusal; the helper refuses first).
+      The first Review hit AA21 with the smart-account funding text: a
+      weighted-root deployment estimates verificationGasLimit 2,707,397
+      / 2,788,290 gas in total, so at the 2.31 gwei quote (ZeroDev's
+      standard 1.155 gwei × 2) the worst case was 0.0066 ETH against
+      0.002; two submits quoted during momentary 1 Mwei readings were
+      refused BEFORE the prompt by the fee-floor check ("The network fee
+      rose. Please review again…" with the fund-and-retry hint wrongly
+      appended); the driver topped up from Account 1's EOA (0.0006, tx
+      0xbe7b7d31…8273) and from Account 1's own Kernel account (0.0012,
+      userOp 0x94890ac7…b74bb, tx 0xd4cbddcf…4ed91) — a judgement within
+      the wallet's own funds — then submitted in the 578–655 Mwei regime:
+      confirm "Network fee (worst case, set by you as the submitter)",
+      "Total (worst case) 0.00369334246196974 test ETH", "This operation
+      also deploys the multisig account (its first operation).",
+      "Approvals: weight 2 of the threshold 2…"; ONE prompt "Approve
+      submitting this multisig operation (2 of weight 2)"; userOp
+      0x351601656cd2f10a7bc36b7a8943b5e45e4c678aff6df7c46bf2dc81b36af32d,
+      bundle tx 0x384a35202db5e51b01e52100ba962cd875bed1a11b31ce1647d2adc8b1b61fe3,
+      block 11885650, AccountDeployed (meta factory, no paymaster),
+      UserOperationEvent nonce 0 success, actualGasUsed 1,607,278, cost
+      0.002042 ETH, three weighted-validator signer events (dev5, dev6,
+      Account 1) and the root-validator event, rootValidator() (selector
+      0xf1f7f0f9) = 0x01‖eD89244160cfe273800b58b1b534031699dfeeee, Account
+      2 +0.0001 exactly. OPERATION 2 (nonce 1, approved by dev6; the
+      deposit of 0.00155 "pays first"; fee 0.001306547839675704): userOp
+      0xe8e3d4d4c21ba92fe0605a94b53a4ac26c063fcef27fdd5be3fd7fe31a8ea335,
+      tx 0xfd6441172064018e2ecf30ccfe71b25d466d09395ba2a086913802c895575141,
+      block 11885722, success, gasUsed 586,444. MIRROR (this wallet as a
+      co-signer): dev5's request 0x2c7bc047…b08d (nonce 2) → "Review
+      before you approve" (account, "Multisig 1 (2-of-3)", "Ethereum
+      Sepolia (chain id 11155111)", nonce 2, "You approve as 0x772e…F44F
+      weight 1 of the threshold 2", the full call) → ONE prompt "Approve
+      this multisig operation as a co-signer" → "Approval ready — give it
+      to the submitter" (QR = the approval JSON); the independently
+      recomputed EIP-712 digest (WeightedECDSAValidator / 0.0.3 / 11155111
+      / 0xeD89…) equals request.approvalDigest and the signature recovers
+      to Account 1; the script's submit (after a second 0.0006 top-up
+      from the Kernel account, userOp 0x90742cce…e452): userOp
+      0x14abc237e07ca3fa2ae5658b9aab145dfc2b9ab34a6096f451590136112a8b72,
+      tx 0x19a41c1f74a7c1b6a6756ee4746f37278b4f97787d4d7ee0b807d5c6f5f87b23,
+      block 11885853, success, Account 2 +0.0001. REFUSALS (0 prompts):
+      on Base Sepolia "This request is for Ethereum Sepolia, but the
+      active network is Base Sepolia. Switch networks first (Settings →
+      Developer)."; as Account 2 "The active account is not a signer of
+      this multisig, but Account 1 (0x772e…) is. Switch to it on Home
+      first."; mainnet → the Home link hidden, the readiness card with its
+      reason, Create / Add / Approve disabled, the Settings readiness row.
+      REMOVE AND RE-IMPORT: the dialog names what is removed and that
+      nothing on-chain changes; re-import "Add this multisig (2-of-3)?" →
+      "Multisig 2 (2-of-3)" at the SAME address, "Deployed; its signer set
+      and threshold on-chain match this record." Funds after: Account 1
+      EOA 0.00012 ETH, Kernel 0.00188, multisig 0.000507 + 0.000697
+      deposit, Account 2 +0.0003; then the CTO topped up from the dev EOA
+      for the next passes: Kernel +0.012 (tx 0x4f33acfc…4e1a, block
+      11885882), Account 1 EOA +0.004 (tx 0x5b5f2e8c…6101, block
+      11885883); the dev EOA holds about 0.018 Sepolia ETH. FINDINGS (fix
+      slice dispatched): (1) ECONOMICS — on Sepolia the base fee is ~14
+      wei, so the effective price equals the quoted priority fee and the
+      100% headroom is paid in full (every op paid 2× ZeroDev's standard;
+      op 2 1.305 gwei vs 652 Mwei) — accepted on a test network, worth
+      revisiting for mainnet where the base fee dominates; (2) the weight
+      bar counts the wallet's own signer before it has signed (labelled
+      "signs last when you submit") — decide and state; (3)
+      MULTISIG_FUND_AND_RETRY is appended to fee-rose errors (wrong advice)
+      and an AA21 names no amount while the shortfall was 3× the balance;
+      (4) the multisig funding error uses the smart-account text ("Your
+      smart account needs funds first", "(not the owner address)"); (5)
+      "Back to the multisig" after a deploying op still shows "Not
+      deployed yet" until reopened; (6) the duplicate / non-signer errors
+      render below Back, off-screen, and the non-signer text lacks a
+      period; (7) the detail and list show the balance but not the
+      EntryPoint deposit; (8) the risk card on a send to the wallet's own
+      counterfactual multisig says "regular account with no contract code"
+      / "first time sending"; (9) "Any 2 co-signers together can send"
+      counts this wallet's signer as a co-signer (ambiguous); (10) a
+      re-import takes a new name and loses the history (as the dialog
+      says); (11) dev-only: Expo Go hung at "Bundling 99%" once; (12) the
+      account switcher does not list the multisig (known optional
+      follow-up). EMULATOR NOTES: host-to-emulator paste did not deliver
+      host text — payloads were typed with an ADBKeyboard base64
+      broadcast; the co-signer helper had to run against the Metro
+      worktree because the main checkout was mid-edit. UNVERIFIED: QR
+      scanning of requests/approvals, the file save/open paths, approvals
+      from another wallet via typed data, Base / Arbitrum Sepolia,
+      TalkBack, dark mode, iOS. End state: Home, Ethereum Sepolia, Account
+      1, light mode, Google IME, protection ON, one multisig record
+      ("Multisig 2"); Metro at 3eb00f1.
