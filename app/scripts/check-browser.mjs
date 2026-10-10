@@ -717,9 +717,15 @@ async function approveHeadSignature() {
 // Account switch: the connection belongs to Account 1.
 {
   ctx.address = ACCOUNT_1.address;
+  const versionBefore = browser.version;
   browser.notifyContextChanged();
   await settle();
   check('an account switch emits accountsChanged [] to the page', page.events.at(-1)?.[0] === 'accountsChanged' && page.events.at(-1)[1].length === 0);
+  check('a context change that reaches the page also bumps the bridge version, so the bar and panel re-render (the stale-bar bug seen live)', browser.version > versionBefore);
+  const versionAfter = browser.version;
+  browser.notifyContextChanged();
+  await settle();
+  check('a repeated notify with nothing new sends nothing and bumps nothing', browser.version === versionAfter && page.events.at(-1)?.[0] === 'accountsChanged');
   check('eth_accounts is [] for another account', JSON.stringify(await page.request('eth_accounts')) === '[]');
   const e = await rejection(page.request('personal_sign', ['0x01', ACCOUNT_1.address]));
   await settle();

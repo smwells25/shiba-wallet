@@ -481,7 +481,7 @@ function SiteView({
           {loading && !topOrigin ? `Loading ${parseWebOrigin(shownOrigin)?.host ?? shownOrigin}…` : shownOrigin}
         </Text>
         <Text style={[styles.barLine, { color: theme.textMuted }]}>
-          {served ? `Connected as ${served}` : 'Not connected'} · {describeChain(evmChain.caip2)}
+          {served ? `Connected as ${labelOf(served)}` : 'Not connected'} · {describeChain(evmChain.caip2)}
         </Text>
         <View style={styles.barButtons}>
           <Button title="Back" variant="secondary" onPress={() => webView.current?.goBack()} />
