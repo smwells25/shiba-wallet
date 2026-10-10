@@ -2316,3 +2316,29 @@ keeper; the check-rpc-fallback live table's eth_simulateV1 expectations
 after the fork; the "Error: undefined" LogBox toast (dev only); the
 Smart-account type and Auto-lock chip rows in Settings (same wrap style
 as the fixed Developer row); an ERC-20 pull post-fork gas measurement.
+
+DECIDED by the Chairperson (2026-10-09): (1) build the dApp browser's
+allowlisted-sites slice (docs/DAPP_BROWSER.md section 5; test networks
+only, enforced), because it exercises capabilities WalletConnect cannot;
+(2) the disclosure findings must be collected in one document so the
+Chairperson can confirm each one against its evidence before any
+disclosure decision; (3) hold everything that needs a physical phone —
+emulate as much as possible, including a local development build on the
+emulator where Expo Go cannot carry a feature.
+
+## Phase 16 plan (started 2026-10-09): the dApp browser and the findings record
+
+1. docs/DISCLOSURE_FINDINGS.md: every finding about third-party
+   contracts gathered so far (the seven disclosure items plus the
+   Circle, Pimlico, Glamsterdam and bundler observations), each with its
+   claim, the exact evidence (sources at pinned commits, transactions,
+   simulations, scripts to reproduce), its status (proven live /
+   simulated / reasoned from source), and what would refute it.
+2. The dApp browser allowlisted-sites slice per docs/DAPP_BROWSER.md
+   section 5, then an emulator pass against a real test-network dApp.
+3. Emulator-only substitutes for the phone track: a local development
+   build on the AVD (passkeys through Credential Manager, screen-capture
+   behaviour in a non-Expo-Go build, the WebView native checks).
+4. Leadership refresh at the end.
+
+## Phase 16 progress
