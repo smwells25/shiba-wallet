@@ -32,6 +32,7 @@ import {
   type SerializedSubscriptionGrant,
   type SessionAllowedCall,
   type SessionKeyGrant,
+  type SubscriptionGrant,
 } from '@shiba-wallet/chains-evm';
 import { toChecksumAddress, type DerivedAccount } from '@shiba-wallet/core';
 // Explicit .ts extensions: this module is imported by scripts/check-sessions.mjs
@@ -307,7 +308,7 @@ function reviveRecord(value: unknown): SessionRecord | null {
     if (v.source !== 'manual' && v.source !== 'erc7715' && v.source !== 'subscription' && v.source !== 'recurring') {
       return null;
     }
-    const subscription = reviveSubscriptionMeta(v.subscription, v.grant);
+    const subscription = reviveSubscriptionMeta(v.subscription, v.grant, v.source);
     if (sessionCarriesTerms(v.source) ? subscription === null : v.subscription !== undefined && v.subscription !== null) {
       return null;
     }
@@ -346,13 +347,42 @@ function reviveRecord(value: unknown): SessionRecord | null {
   }
 }
 
-/** Strict revival of subscription terms; null unless they map to exactly `grant`. */
-function reviveSubscriptionMeta(value: unknown, grant: unknown): SessionSubscriptionMeta | null {
+/**
+ * The grace period of a RECURRING payment, in seconds: one period. The grant
+ * a recurring payment installs (recurring.ts recurringGrantFor) ends one
+ * period after the terms' validUntil, so the last payment can be sent during
+ * two periods instead of one (finding 3 of the 2026-10-09 recurring-payments
+ * rehearsal: a late last payment plus a transient error lost it for good).
+ * The number of payments is not changed by it; see recurringGrantFor for why
+ * the extra period cannot allow one more payment. Merchant subscriptions do
+ * not get it (subscriptions.ts subscriptionGrantFor explains why).
+ */
+export function recurringGraceSeconds(terms: Pick<SubscriptionGrant, 'periodSeconds'>): number {
+  return terms.periodSeconds;
+}
+
+/**
+ * Whether stored terms describe exactly `grant`: the engine's
+ * subscriptionMatchesGrant (every field of the grant derived from the terms),
+ * or, for a recurring payment only, the same grant with its validUntil one
+ * grace period (recurringGraceSeconds) later. Nothing else is accepted, so
+ * the stored description can still never disagree with what is installed.
+ * Recurring payments set up before the grace period existed carry no grace
+ * and still match the first form.
+ */
+export function termsMatchGrant(source: SessionSource, terms: SubscriptionGrant, grant: SessionKeyGrant): boolean {
+  if (subscriptionMatchesGrant(terms, grant)) return true;
+  if (source !== 'recurring') return false;
+  return subscriptionMatchesGrant(terms, { ...grant, validUntil: grant.validUntil - recurringGraceSeconds(terms) });
+}
+
+/** Strict revival of subscription terms; null unless they map to exactly `grant` (termsMatchGrant). */
+function reviveSubscriptionMeta(value: unknown, grant: unknown, source: SessionSource): SessionSubscriptionMeta | null {
   if (typeof value !== 'object' || value === null) return null;
   const v = value as Record<string, unknown>;
   try {
     const terms = parseSubscription(v.terms);
-    if (!subscriptionMatchesGrant(terms, parseSessionKeyGrant(grant))) return null;
+    if (!termsMatchGrant(source, terms, parseSessionKeyGrant(grant))) return null;
     if (typeof v.tokenSymbol !== 'string' || v.tokenSymbol.length === 0 || v.tokenSymbol.length > 32) return null;
     if (typeof v.tokenDecimals !== 'number' || !Number.isInteger(v.tokenDecimals) || v.tokenDecimals < 0 || v.tokenDecimals > 36) {
       return null;
@@ -853,7 +883,7 @@ export async function installSession(args: {
       throw new Error('A recurring payment’s key is never handed over. Nothing was signed.');
     }
   }
-  if (args.subscription && !subscriptionMatchesGrant(parseSubscription(args.subscription.terms), args.grant)) {
+  if (args.subscription && !termsMatchGrant(args.source, parseSubscription(args.subscription.terms), args.grant)) {
     throw new Error('The subscription terms do not match the grant being installed. Nothing was signed.');
   }
   if (args.sessionPrivateKey) {
@@ -985,7 +1015,7 @@ export type SessionChainStatus =
   | { kind: 'not-installed' }
   /**
    * `endpointFailure` is set when the read failed because the network
-   * endpoint did not answer (isEndpointFailure); the screen then retries the
+   * endpoint did not answer (isTransportFailure); the screen then retries the
    * read once on the next healthy default endpoint. `reason` is already
    * plain words in that case (never a raw Java exception).
    */
@@ -1034,7 +1064,7 @@ export async function readSessionStatus(
  * advertisements); any other error keeps its message, as before.
  */
 export function unknownStatusFrom(error: unknown): { kind: 'unknown'; reason: string; endpointFailure?: boolean } {
-  if (isEndpointFailure(error)) {
+  if (isTransportFailure(error)) {
     const technical = sanitizeEndpointMessage(error instanceof Error ? error.message : String(error));
     return {
       kind: 'unknown',
@@ -1051,8 +1081,54 @@ export function unknownStatusFrom(error: unknown): { kind: 'unknown'; reason: st
 // failover on the subscription re-quote)
 // ---------------------------------------------------------------------------
 
+/**
+ * True when `error` means the request got no usable answer from the endpoint
+ * (a transport failure), so another default endpoint might succeed and the
+ * user should be told in plain words that the network could not be reached.
+ *
+ * It is ../config/endpoint-probe.ts isEndpointFailure plus ONE shape that
+ * function does not accept: Expo SDK 57's runtime replaces the global fetch
+ * with expo/fetch (node_modules/expo/src/winter/runtime.native.ts installs
+ * it unless EXPO_PUBLIC_USE_RN_FETCH is set, and this app does not set it),
+ * and expo/fetch reports a failed request as a plain Error, not a TypeError,
+ * whose message is "fetch failed: " followed by the platform's text
+ * (node_modules/expo/src/winter/fetch/FetchErrors.ts, class FetchError
+ * extends Error; fetch.ts wraps every failure of the native request in it).
+ * isEndpointFailure accepts the "fetch failed" wording only on a TypeError
+ * (React Native's own fetch and Node's undici), so on the device a DNS
+ * failure such as "fetch failed: java.net.UnknownHostException: Unable to
+ * resolve host …" was neither failed over nor described in plain words
+ * (finding 1 of the 2026-10-09 recurring-payments rehearsal). The extra test
+ * is anchored at the start of the message, so the engine's own texts such
+ * as "UTXO fetch failed: HTTP 400 …" (an answer, not a transport failure)
+ * are not matched. The same gap affects every other screen that relies on
+ * isEndpointFailure alone; that function lives outside this module.
+ */
+export function isTransportFailure(error: unknown): boolean {
+  if (isEndpointFailure(error)) return true;
+  return error instanceof Error && /^fetch failed(?::|$)/.test(error.message);
+}
+
 /** Marker set on errors thrown by a session bundle's NODE transport. */
 const NODE_ERROR_MARK = 'shibaNodeTransport';
+/** Marker set on errors thrown by a send's BUNDLER transport: the JSON-RPC method that failed. */
+const BUNDLER_METHOD_MARK = 'shibaBundlerMethod';
+
+function markError(error: unknown, mark: string, value: unknown = true): void {
+  if (error !== null && typeof error === 'object') {
+    try {
+      (error as Record<string, unknown>)[mark] = value;
+    } catch {
+      // A frozen error stays unmarked: it is then treated as unclassified.
+    }
+  }
+}
+
+function bundlerMethodOf(error: unknown): string | null {
+  if (error === null || typeof error !== 'object') return null;
+  const method = (error as Record<string, unknown>)[BUNDLER_METHOD_MARK];
+  return typeof method === 'string' ? method : null;
+}
 
 /**
  * Wraps a node transport so the errors it throws are marked as the node's.
@@ -1067,26 +1143,60 @@ export function markNodeErrors(transport: JsonRpcTransport): JsonRpcTransport {
     try {
       return await transport(method, params);
     } catch (error) {
-      if (error !== null && typeof error === 'object') {
-        try {
-          (error as Record<string, unknown>)[NODE_ERROR_MARK] = true;
-        } catch {
-          // A frozen error stays unmarked: it is then not failed over.
-        }
-      }
+      // A frozen error stays unmarked: it is then not failed over.
+      markError(error, NODE_ERROR_MARK);
       throw error;
     }
   };
 }
 
-/** True for an endpoint failure (isEndpointFailure) thrown by a marked node transport. */
+/** True for a transport failure (isTransportFailure) thrown by a marked node transport. */
 export function isNodeEndpointFailure(error: unknown): boolean {
   return (
-    isEndpointFailure(error) &&
+    isTransportFailure(error) &&
     error !== null &&
     typeof error === 'object' &&
     (error as Record<string, unknown>)[NODE_ERROR_MARK] === true
   );
+}
+
+/**
+ * Wraps a send's bundler transport so every error it throws carries the
+ * JSON-RPC method that failed. Every bundler request of a send other than
+ * eth_sendUserOperation (the fee floor, the gas estimate) happens BEFORE the
+ * submission (engine SmartAccountClient.sendCalls submits last), so a
+ * transport failure there means nothing was handed over; a transport failure
+ * during eth_sendUserOperation itself leaves the outcome open (the bundler
+ * may have received the operation before the connection failed).
+ */
+export function markBundlerErrors(transport: JsonRpcTransport): JsonRpcTransport {
+  return async (method, params) => {
+    try {
+      return await transport(method, params);
+    } catch (error) {
+      markError(error, BUNDLER_METHOD_MARK, method);
+      throw error;
+    }
+  };
+}
+
+/**
+ * True for a transport failure (isTransportFailure) of a marked bundler
+ * transport (markBundlerErrors) on a request made BEFORE the submission:
+ * nothing was handed to the bundler.
+ */
+export function isBundlerTransportFailureBeforeSubmit(error: unknown): boolean {
+  const method = bundlerMethodOf(error);
+  return isTransportFailure(error) && method !== null && method !== 'eth_sendUserOperation';
+}
+
+/**
+ * True for a transport failure (isTransportFailure) while the signed
+ * operation was being handed to the bundler (eth_sendUserOperation, marked
+ * by markBundlerErrors): the bundler may or may not have received it.
+ */
+export function isSubmissionTransportFailure(error: unknown): boolean {
+  return isTransportFailure(error) && bundlerMethodOf(error) === 'eth_sendUserOperation';
 }
 
 /**
@@ -1127,7 +1237,7 @@ export function describeSessionError(
 ): { title: string; detail: string } {
   const aa = describeAaError(error, { accountType: context.accountType, deployed: true });
   if (aa) return aa;
-  if (isEndpointFailure(error)) {
+  if (isTransportFailure(error)) {
     const technical = sanitizeEndpointMessage(error instanceof Error ? error.message : String(error));
     return {
       title: SESSION_UNREACHABLE_TITLE,
@@ -1177,14 +1287,21 @@ export function sessionTestCall(call: SessionAllowedCall): Call {
  *   1. the calls are checked against the stored grant locally (engine
  *      assertCallsAllowed) — a call outside the grant throws here, before
  *      any network request and before the vault is read;
- *   2. the session key is loaded from the vault and must derive to the
+ *   2. the node's chain id is read (the first network request) and must
+ *      be the record's chain;
+ *   3. the session key is loaded from the vault and must derive to the
  *      grant's session address;
- *   3. a SmartAccountClient is built around the engine's kernelSessionSpec
+ *   4. a SmartAccountClient is built around the engine's kernelSessionSpec
  *      (signs only with that key, checks the grant again, routes the nonce
  *      to the permission's nonce key via routeNode) and sendCalls runs the
  *      usual stub → estimate → sign → submit. No paymaster: session
  *      operations are paid by the account (GasPolicy / paymaster interplay
  *      was not run live; engine caveat).
+ * Every node request of the engine's SmartAccountClient.sendCalls (the
+ * account's code, its nonce, the EntryPoint deposit) happens BEFORE the
+ * operation is handed to the bundler with eth_sendUserOperation, its last
+ * step (packages/chains-evm/src/smart-account.ts sendCalls), so a node
+ * failure here always means nothing was submitted.
  * The owner key is never requested: there is no signWith here and the
  * spec refuses any other signer.
  */
@@ -1220,6 +1337,23 @@ export async function sendSessionCalls(args: {
   if (eip155Decimal(record.chain) !== bundle.chainId) {
     throw new Error('This session belongs to another network.');
   }
+  // Every node error of this send is marked as the node's (markNodeErrors)
+  // and every bundler error with its method (markBundlerErrors), so a caller
+  // can tell "nothing was handed to the bundler" from "the outcome is open"
+  // (recurring.ts describeRecurringPaymentError) and fail over only on the
+  // node.
+  const node = markNodeErrors(bundle.node);
+  const bundler = markBundlerErrors(bundle.bundler);
+  const nodeClient = new NodeClient(node);
+  // The endpoint's chain is checked BEFORE the key is read: a node that
+  // cannot be reached (or serves another chain) is found before any system
+  // prompt for the key, so a failover to another endpoint does not ask for
+  // the key twice in the common case. The fees are read after the key (as
+  // before), so they are as fresh as possible when the operation is signed.
+  const reported = await nodeClient.chainId();
+  if (reported !== bundle.chainId) {
+    throw new Error(`Endpoint is chain id ${reported}, expected ${bundle.chainId}.`);
+  }
   const stored = await args.vault.load(sessionVaultId(record.chain, record.account, record.permissionId));
   if (!stored) throw new Error('The session key is not on this device (it may have been deleted).');
   const keyBytes = toBytes(stored);
@@ -1239,22 +1373,17 @@ export async function sendSessionCalls(args: {
     grant,
     ...(args.now !== undefined ? { now: () => args.now! } : {}),
   });
-  const nodeClient = new NodeClient(bundle.node);
-  const reported = await nodeClient.chainId();
-  if (reported !== bundle.chainId) {
-    throw new Error(`Endpoint is chain id ${reported}, expected ${bundle.chainId}.`);
-  }
   // No quote is shown for a session-key operation; the fees are read here,
   // right before sending, with the same floor rule as every smart-account
   // quote (aa.ts quoteFeesOverFloor, which also meets a bundler's
   // maxFeePerGas minimum).
-  const [suggested, floor] = await Promise.all([suggestFeesRetryingOnce(nodeClient), bundlerFeeFloor(bundle.bundler)]);
+  const [suggested, floor] = await Promise.all([suggestFeesRetryingOnce(nodeClient), bundlerFeeFloor(bundler)]);
   const fees = quoteFeesOverFloor(suggested, floor);
   const client = new SmartAccountClient({
     chainId: bundle.chainId,
     entryPoint: ENTRYPOINT_V07,
-    bundler: bundle.bundler,
-    node: spec.routeNode(bundle.node),
+    bundler,
+    node: spec.routeNode(node),
     spec,
     // Same deposit top-up headroom as the owner-signed clients in aa.ts: a
     // bundler's estimate omits the EntryPoint deposit top-up that validation
@@ -1289,6 +1418,14 @@ export function sessionCanBeTested(record: SessionRecord): boolean {
  * sessions whose key IS on this device.
  */
 export function sessionRevokeKeySentence(record: Pick<SessionRecord, 'keyHeld' | 'source' | 'subscription'>): string {
+  // A recurring payment's key is the "payment key" everywhere else on its
+  // screens (finding 5 of the 2026-10-09 recurring-payments rehearsal).
+  if (record.source === 'recurring') {
+    return record.keyHeld
+      ? 'Signed by your account key. Once the bundler accepts it, the payment key is deleted from this phone.'
+      : 'Signed by your account key. The payment key is no longer on this phone; once the revocation is ' +
+          'included on-chain, any copy of it stops working.';
+  }
   if (record.keyHeld) {
     return 'Signed by your account key. Once the bundler accepts it, the session key is deleted from this device.';
   }

@@ -21,6 +21,7 @@ import {
   type SubscriptionChainState,
   type SubscriptionDescription,
   type SubscriptionGrant,
+  validateSessionKeyGrant,
 } from '@shiba-wallet/chains-evm';
 // Explicit .ts extensions: this module is imported by
 // scripts/check-subscriptions.mjs under Node's type stripping.
@@ -310,10 +311,20 @@ export interface SubscriptionDraft {
  */
 export function buildSubscription(
   draft: SubscriptionDraft,
-  context: { now: number; account?: string; testnet?: boolean },
+  context: {
+    now: number;
+    account?: string;
+    testnet?: boolean;
+    /**
+     * The name of the recipient field in error messages: "Merchant" (the
+     * default) for a subscription, "Payee" for a recurring payment (finding
+     * 5 of the 2026-10-09 recurring-payments rehearsal).
+     */
+    recipientLabel?: 'Merchant' | 'Payee';
+  },
 ): SubscriptionGrant {
   const merchant = validateRecipient(EVM_CHAIN_ID, draft.merchant);
-  if (!merchant.ok) throw new Error(`Merchant: ${merchant.error}`);
+  if (!merchant.ok) throw new Error(`${context.recipientLabel ?? 'Merchant'}: ${merchant.error}`);
   let amountPerPeriod: bigint;
   try {
     amountPerPeriod = parseUnits(draft.amount, draft.choice.decimals);
@@ -712,6 +723,8 @@ export function subscriptionInstallFunding(
   quote: Pick<AaSendQuote, 'amount' | 'fee' | 'senderBalance' | 'deposit' | 'sponsored' | 'sender'>,
   sub: Pick<SubscriptionGrant, 'startAt' | 'validUntil' | 'periodSeconds' | 'feeBudgetWei' | 'amountPerPeriod' | 'token'>,
   nativeSymbol: string,
+  /** 'recurring' words the shortfall as payments this phone sends, not pulls (finding 5 of the 2026-10-09 rehearsal). */
+  mode: 'subscription' | 'recurring' = 'subscription',
 ): { canStart: boolean; block: string | null; depositNote: string | null; shortfall: string | null } {
   const fmt = (wei: bigint) => `${formatUnits(wei, 18, 18)} ${nativeSymbol}`;
   const deposit = quote.deposit ?? 0n;
@@ -744,7 +757,8 @@ export function subscriptionInstallFunding(
     need > left
       ? `After the install the account keeps at most ${fmt(left > 0n ? left : 0n)} (balance plus EntryPoint deposit, ` +
         `minus the install's worst-case fee), but ${nativePayments > 0n ? 'the payments and ' : ''}the fee budget ` +
-        `can use up to ${fmt(need)}. Pulls the account cannot pay for will fail; fund the smart account to cover them.`
+        `can use up to ${fmt(need)}. ${mode === 'recurring' ? 'Payments' : 'Pulls'} the account cannot pay for will fail; ` +
+        'fund the smart account to cover them.'
       : null;
   return { canStart: true, block: null, depositNote, shortfall };
 }
@@ -756,6 +770,88 @@ export function subscriptionInstallFunding(
  */
 export function subscriptionInstallKeepBack(quote: Pick<AaSendQuote, 'fee' | 'deposit' | 'sponsored'>): bigint {
   return quote.sponsored ? 0n : aaFeeFromBalance(quote.fee, quote.deposit ?? null);
+}
+
+/**
+ * How many times Review may lower an UNEDITED fee-budget pre-fill and quote
+ * the install again (finding 4 of the 2026-10-09 recurring-payments
+ * rehearsal). A bound, like the smart-account Max trim's: each lowering
+ * changes the install's GasPolicy data, so the install is quoted again, and
+ * the new quote's fee can come back higher than the one the lowering was
+ * computed from (the rehearsal's re-quote did, and the review's funding
+ * warning fired by 38,808,000,067 wei for the app's own suggestion).
+ */
+export const SUBSCRIPTION_FEE_BUDGET_REFIT_ROUNDS = 2;
+
+/** One quoted install attempt (the screen's prepareSessionInstall result plus whatever else it carries). */
+type QuotedAttempt = { quote: Pick<AaSendQuote, 'fee' | 'deposit' | 'sponsored' | 'senderBalance' | 'amount' | 'total'> };
+
+export type FeeBudgetFit<A extends QuotedAttempt> =
+  | {
+      kind: 'fitted';
+      /** The attempt quoted with `feeBudgetWei` (the last one). */
+      attempt: A;
+      feeBudgetWei: bigint;
+      /** Set when the budget was lowered: from the first figure to the final one; keptBack from the final quote. */
+      lowered: { from: bigint; to: bigint; keptBack: bigint } | null;
+      keptBack: bigint;
+      /** False only when the rounds ran out with the final quote still higher; the review's funding warning then says so. */
+      fits: boolean;
+      rounds: number;
+    }
+  | { kind: 'cannot-fit'; attempt: A; keptBack: bigint; spare: bigint | null; uncapped: bigint | null };
+
+/**
+ * Lowers an UNEDITED fee-budget pre-fill until it fits beside the install's
+ * displayed worst-case fee (withSubscriptionFeeCeiling, the figure the
+ * review's funding lines use), re-checking against EVERY new quote, not only
+ * the first one: after each lowering the install is quoted again
+ * (`requote`) and the keep-back is recomputed from that quote; when the new
+ * quote still leaves the budget too large, the budget is lowered once more.
+ * At most SUBSCRIPTION_FEE_BUDGET_REFIT_ROUNDS lowerings; the budget is never
+ * raised. The test "fits" is exactly the review's funding rule
+ * (subscriptionInstallFunding: payments + budget ≤ balance + deposit −
+ * worst-case fee), expressed through suggestedFeeBudget's spare amount, so
+ * when this returns fits: true the review cannot show the shortfall warning
+ * for the app's own suggestion. A typed budget never comes here.
+ */
+export async function fitFeeBudgetToInstall<A extends QuotedAttempt>(args: {
+  feeBudgetWei: bigint;
+  attempt: A;
+  payments: number;
+  maxFeePerGas: bigint | null;
+  nativeAmountPerPayment: bigint;
+  requote: (feeBudgetWei: bigint) => Promise<A>;
+}): Promise<FeeBudgetFit<A>> {
+  let attempt = args.attempt;
+  let budget = args.feeBudgetWei;
+  let lowered: { from: bigint; to: bigint } | null = null;
+  for (let rounds = 0; ; rounds += 1) {
+    const keptBack = subscriptionInstallKeepBack(withSubscriptionFeeCeiling(attempt.quote));
+    const refit = suggestedFeeBudget({
+      payments: args.payments,
+      maxFeePerGas: args.maxFeePerGas,
+      balance: attempt.quote.senderBalance,
+      nativeAmountPerPayment: args.nativeAmountPerPayment,
+      installFeeFromBalance: keptBack,
+    });
+    if (refit.wei === null) return { kind: 'cannot-fit', attempt, keptBack, spare: refit.spare, uncapped: refit.uncapped };
+    const fits = refit.wei >= budget;
+    if (fits || rounds >= SUBSCRIPTION_FEE_BUDGET_REFIT_ROUNDS) {
+      return {
+        kind: 'fitted',
+        attempt,
+        feeBudgetWei: budget,
+        lowered: lowered ? { ...lowered, keptBack } : null,
+        keptBack,
+        fits,
+        rounds,
+      };
+    }
+    lowered = { from: args.feeBudgetWei, to: refit.wei };
+    budget = refit.wei;
+    attempt = await args.requote(budget);
+  }
 }
 
 /**
@@ -850,13 +946,36 @@ export function subscriptionFinalDatesLine(sub: SubscriptionGrant): string {
   );
 }
 
-/** The engine's grant for the subscription (validates; throws the engine's sentence). */
+/**
+ * The engine's grant for the subscription (validates; throws the engine's
+ * sentence). `graceSeconds` (default 0) moves ONLY the grant's validUntil
+ * (TimestampPolicy) later; every other field, the RateLimitPolicy count
+ * included, stays exactly what the engine's subscriptionToGrant derives
+ * from the terms. The engine computes the count from the terms' validUntil
+ * (subscriptionPeriodCount), so the grace cannot be passed through the
+ * terms themselves without adding a payment; it is applied to the grant
+ * here instead, and the extended grant is validated again by the engine's
+ * validateSessionKeyGrant.
+ *
+ * Only recurring payments use a grace (recurring.ts recurringGrantFor).
+ * Merchant subscriptions keep validUntil = the terms' end: their terms are
+ * handed to the merchant's keeper with the key (buildSubscriptionKeyExport,
+ * `subscription`), which checks every pull locally against those terms, and
+ * the subscription review prints the engine's describeSubscription sentence
+ * from the terms; a longer on-chain window would disagree with both.
+ */
 export function subscriptionGrantFor(
   sub: SubscriptionGrant,
   sessionKey: string,
-  context: { account: string; now: number },
+  context: { account: string; now: number; graceSeconds?: number },
 ): SessionKeyGrant {
-  return subscriptionToGrant(sub, sessionKey, { account: context.account, now: context.now });
+  const grant = subscriptionToGrant(sub, sessionKey, { account: context.account, now: context.now });
+  const grace = context.graceSeconds ?? 0;
+  if (grace === 0) return grant;
+  if (!Number.isSafeInteger(grace) || grace < 0) throw new Error('The grace period must be a whole number of seconds.');
+  const extended: SessionKeyGrant = { ...grant, validUntil: grant.validUntil + grace };
+  validateSessionKeyGrant(extended, { account: context.account, now: context.now });
+  return extended;
 }
 
 /** The meta stored with the session record (keyExportedAt null until the hand-over). */
@@ -1177,8 +1296,13 @@ export async function readSubscriptionStatus(
   now: number = Math.floor(Date.now() / 1000),
 ): Promise<SubscriptionStatus> {
   try {
-    const terms = termsOf(record);
-    const state = await readSubscriptionState(node, record.account, record.permissionId, terms);
+    termsOf(record);
+    // The end that the account enforces is the INSTALLED grant's validUntil
+    // (TimestampPolicy). For a subscription it equals the terms' end; a
+    // recurring payment's grant ends one grace period later
+    // (sessions.ts recurringGraceSeconds).
+    const validUntil = parseSessionKeyGrant(record.grant).validUntil;
+    const state = await readSubscriptionState(node, record.account, record.permissionId, { validUntil });
     return { kind: 'ok', state, next: nextPullAllowedAt(state, now) };
   } catch (e) {
     // Same wording as a session's status: an endpoint that did not answer

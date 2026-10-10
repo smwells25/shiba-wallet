@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, StyleSheet, Text, View } from 'react-native';
 import { useNavigation, type NavigationProp } from '@react-navigation/native';
 import { httpTransport } from '@shiba-wallet/chains-evm';
@@ -10,13 +10,83 @@ import { usePrefs } from '../wallet/PrefsContext';
 import { EVM_CHAIN_ID } from '../wallet/send';
 import { withEndpoint } from '../config/networks';
 import { readSubscriptionStatus } from '../wallet/subscriptions';
-import { findDueRecurringPayments, recurringDueHeadline } from '../wallet/recurring';
-import type { SessionRecord } from '../wallet/sessions';
+import {
+  findDueRecurringPayments,
+  readStatusWithFailover,
+  recurringDueHeadline,
+  type NodeFailoverRunner,
+} from '../wallet/recurring';
+import { markNodeErrors, type SessionRecord } from '../wallet/sessions';
 
-/** Read-only status read on the active EVM endpoint (failover rule of networks.ts withEndpoint). */
-async function readStatusNow(record: SessionRecord) {
-  const { value } = await withEndpoint(EVM_CHAIN_ID, (endpoint) => readSubscriptionStatus(httpTransport(endpoint.url), record));
-  return value;
+/**
+ * Runs a node operation on the active EVM endpoint under the shared failover
+ * rule (networks.ts withEndpoint → runWithEndpointFailover): when a DEFAULT
+ * endpoint fails with an error `isFailure` accepts, the operation is repeated
+ * once on the next healthy default. The node transport marks its errors
+ * (sessions.ts markNodeErrors) so a payment's node failures can be told from
+ * the bundler's. Used for recurring payments by this banner and the Sessions
+ * screen; the bundler is never failed over.
+ */
+export const activeEvmNodeRunner: NodeFailoverRunner = (operation, options) =>
+  withEndpoint(EVM_CHAIN_ID, (endpoint) => operation(markNodeErrors(httpTransport(endpoint.url))), options).then(
+    (outcome) => outcome.value,
+  );
+
+/**
+ * Read-only status read on the active EVM endpoint; a read the endpoint did
+ * not answer is repeated once on the next healthy default (recurring.ts
+ * readStatusWithFailover). Before, readSubscriptionStatus turned the failure
+ * into an 'unknown' answer, so withEndpoint never saw an error to fail over on.
+ */
+function readStatusNow(record: SessionRecord) {
+  return readStatusWithFailover(activeEvmNodeRunner, (node) => readSubscriptionStatus(node, record));
+}
+
+/**
+ * Calls `callback` every time the app returns to the foreground (AppState
+ * 'active'), while `enabled`. The latest callback is used without
+ * re-subscribing. Shared by this banner and the Sessions screen.
+ */
+export function useOnAppActive(callback: () => void, enabled = true): void {
+  const latest = useRef(callback);
+  useEffect(() => {
+    latest.current = callback;
+  }, [callback]);
+  useEffect(() => {
+    if (!enabled) return undefined;
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'active') latest.current();
+    });
+    return () => sub.remove();
+  }, [enabled]);
+}
+
+function nowSeconds(): number {
+  return Math.floor(Date.now() / 1000);
+}
+
+/**
+ * The current time in unix seconds, refreshed every `intervalMs` while
+ * `enabled`, right after it becomes enabled, and whenever the app returns to
+ * the foreground (timers do not run while the app is in the background).
+ * Lets a screen re-evaluate time-dependent state (a payment that became due)
+ * from facts it already read, without a network request (finding 2 of the
+ * 2026-10-09 recurring-payments rehearsal).
+ */
+export function useClockTick(intervalMs: number, enabled: boolean): number {
+  const [now, setNow] = useState(nowSeconds);
+  const update = useCallback(() => setNow(nowSeconds()), []);
+  useOnAppActive(update, enabled);
+  useEffect(() => {
+    if (!enabled) return undefined;
+    const first = setTimeout(update, 0);
+    const id = setInterval(update, intervalMs);
+    return () => {
+      clearTimeout(first);
+      clearInterval(id);
+    };
+  }, [enabled, intervalMs, update]);
+  return now;
 }
 
 /**
@@ -47,12 +117,7 @@ export function RecurringDueBanner() {
   const [dismissed, setDismissed] = useState<string | null>(null);
   const checkKey = `${evmChain.caip2}|${owner ?? ''}|${generation}`;
 
-  useEffect(() => {
-    const sub = AppState.addEventListener('change', (next) => {
-      if (next === 'active') setGeneration((g) => g + 1);
-    });
-    return () => sub.remove();
-  }, []);
+  useOnAppActive(useCallback(() => setGeneration((g) => g + 1), []));
 
   useEffect(() => {
     if (!eligible || owner === null) return undefined;

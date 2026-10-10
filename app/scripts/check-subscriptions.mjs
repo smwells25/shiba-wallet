@@ -115,6 +115,8 @@ import {
   cardShowsBatchingWarning,
   subscriptionInstallFeeCeiling,
   withSubscriptionFeeCeiling,
+  SUBSCRIPTION_FEE_BUDGET_REFIT_ROUNDS,
+  fitFeeBudgetToInstall,
 } from '../src/wallet/subscriptions.ts';
 import {
   KERNEL_ACCOUNT_0,
@@ -686,8 +688,53 @@ console.log('check-subscriptions: phase 13 item 4 follow-ups (custom period, ins
   check('payments + fee budget above what the install leaves: a warning, Start still offered',
     tight.canStart && /keeps at most 0\.000000000000001 test ETH/.test(tight.shortfall ?? '') && /the payments and the fee budget can use up to 0\.00000000000000103 test ETH/.test(tight.shortfall ?? ''), tight.shortfall);
   check('sponsored install: never blocked', subscriptionInstallFunding(q({ fee: 0n, senderBalance: 0n, sponsored: true }), { ...g, feeBudgetWei: 0n, amountPerPeriod: 0n }, 'x').canStart);
-  check('Review lowers an UNEDITED pre-fill to keep the install fee back and quotes again (source)',
-    /if \(!subForm\.feeEdited\) \{[\s\S]{0,200}subscriptionInstallKeepBack\(withSubscriptionFeeCeiling\(quote\)\)[\s\S]{0,1400}refit\.wei < subscription\.feeBudgetWei[\s\S]{0,500}prepareSessionInstall\(b, owner, account, lowered, \{ now \}\)/.test(screenSrc));
+  check('Review lowers an UNEDITED pre-fill through fitFeeBudgetToInstall, re-quoting the lowered grant, and keeps the FINAL quote (source)',
+    /if \(!subForm\.feeEdited\) \{[\s\S]{0,900}const fit = await fitFeeBudgetToInstall\(\{[\s\S]{0,500}requote: async \(feeBudgetWei\) => \{\s*const lowered = grantFor\(\{ \.\.\.sub0, feeBudgetWei \}, key\.address, \{ account, now \}\);\s*const r = await quoteOnNode\(\(b\) => prepareSessionInstall\(b, owner, account, lowered, \{ now \}\)\);/.test(screenSrc) &&
+      /if \(fit\.lowered\) \{\s*feeBudgetLowered = fit\.lowered;\s*subscription = \{ \.\.\.sub0, feeBudgetWei: fit\.feeBudgetWei \};\s*grant = grantFor\(subscription, key\.address, \{ account, now \}\);\s*\(\{ install, quote, bundle: quotedOn \} = fit\.attempt\);/.test(screenSrc) &&
+      !/refit\.wei < subscription\.feeBudgetWei/.test(screenSrc));
+
+  // Finding 4 of the 2026-10-09 recurring-payments rehearsal: the lowering was computed from the FIRST
+  // quote; the re-quote came back higher and the review's funding warning fired for the app's own
+  // suggestion. Figures shaped like the rehearsal (balance 0.01465, deposit 0.000347, 3 payments of
+  // 1,000 wei, 2.31 gwei, bundler estimate 0.007953 test ETH; the re-quote's displayed worst case
+  // about 38.8 gwei (38,808,000,068 wei) higher — the rehearsal's own figure, 38,808,000,067 wei,
+  // came from fees that cannot be reproduced exactly here).
+  {
+    const BAL = 14_650_000_000_000_000n;
+    const DEP = 347_000_000_000_000n;
+    const F1 = 7_953_000_000_000_000n;
+    const F2 = F1 + 32_340_000_056n;
+    const json = (v) => JSON.stringify(v, (_k, x) => (typeof x === 'bigint' ? `${x}n` : x));
+    const quoteOf = (fee) => ({ amount: 0n, fee, total: fee, senderBalance: BAL, deposit: DEP, sponsored: false, sender: ACCOUNT });
+    const rise = subscriptionInstallFeeCeiling(quoteOf(F2)) - subscriptionInstallFeeCeiling(quoteOf(F1));
+    check('fixture: the re-quote\'s displayed worst case is 38,808,000,068 wei above the first', rise === 38_808_000_068n, String(rise));
+    const g3 = { startAt: 0, validUntil: 900, periodSeconds: 300, amountPerPeriod: 1_000n, token: SUBSCRIPTION_NATIVE };
+    const base = { payments: 3, maxFeePerGas: 2_310_000_004n, nativeAmountPerPayment: 1_000n };
+    const uncapped = defaultFeeBudgetWei(3, 2_310_000_004n);
+    // What the OLD single-round code did: lower from the first quote, then show the review for the second.
+    const oldBudget = suggestedFeeBudget({ ...base, balance: BAL, installFeeFromBalance: subscriptionInstallKeepBack(withSubscriptionFeeCeiling(quoteOf(F1))) }).wei;
+    const oldReview = subscriptionInstallFunding(withSubscriptionFeeCeiling(quoteOf(F2)), { ...g3, feeBudgetWei: oldBudget }, 'test ETH', 'recurring');
+    check('control: the old one-round lowering trips the review\'s funding warning when the re-quote is higher (the bug)', oldReview.shortfall !== null);
+    const calls = [];
+    const fit = await fitFeeBudgetToInstall({ ...base, feeBudgetWei: uncapped, attempt: { quote: quoteOf(F1), n: 0 }, requote: async (b) => (calls.push(b), { quote: quoteOf(F2), n: calls.length }) });
+    const review = subscriptionInstallFunding(withSubscriptionFeeCeiling(fit.attempt.quote), { ...g3, feeBudgetWei: fit.feeBudgetWei }, 'test ETH', 'recurring');
+    check('re-checked against the NEW quote: lowered once more, and the review shows NO shortfall for the app\'s own suggestion',
+      fit.kind === 'fitted' && fit.fits && calls.length === 2 && fit.attempt.n === 2 && review.shortfall === null && review.canStart &&
+        fit.lowered?.from === uncapped && fit.lowered?.to === fit.feeBudgetWei && fit.feeBudgetWei < oldBudget && oldBudget - fit.feeBudgetWei === rise &&
+        fit.keptBack === subscriptionInstallKeepBack(withSubscriptionFeeCeiling(quoteOf(F2))), `${json(fit)} ${review.shortfall}`);
+    const rising = [];
+    const keepRising = await fitFeeBudgetToInstall({ ...base, feeBudgetWei: uncapped, attempt: { quote: quoteOf(F1) }, requote: async (b) => (rising.push(b), { quote: quoteOf(F1 + BigInt(rising.length) * 10_000_000_000_000n) }) });
+    check(`bounded: a fee that keeps rising is re-quoted at most ${SUBSCRIPTION_FEE_BUDGET_REFIT_ROUNDS} times; fits:false (the review then warns honestly)`,
+      SUBSCRIPTION_FEE_BUDGET_REFIT_ROUNDS === 2 && rising.length === 2 && keepRising.kind === 'fitted' && keepRising.fits === false && keepRising.rounds === 2);
+    const falling = [];
+    const fell = await fitFeeBudgetToInstall({ ...base, feeBudgetWei: uncapped, attempt: { quote: quoteOf(F1) }, requote: async (b) => (falling.push(b), { quote: quoteOf(F1 / 2n) }) });
+    check('never raised: a re-quote that came back LOWER keeps the lowered budget (one re-quote)', fell.kind === 'fitted' && fell.fits && falling.length === 1 && fell.feeBudgetWei === falling[0]);
+    let unexpected = 0;
+    const roomy = await fitFeeBudgetToInstall({ ...base, feeBudgetWei: 1_000n, attempt: { quote: quoteOf(F1) }, requote: async () => (unexpected += 1, { quote: quoteOf(F1) }) });
+    check('a budget that already fits is left alone (no re-quote, nothing lowered)', unexpected === 0 && roomy.kind === 'fitted' && roomy.fits && roomy.lowered === null && roomy.feeBudgetWei === 1_000n);
+    const broke = await fitFeeBudgetToInstall({ ...base, feeBudgetWei: uncapped, attempt: { quote: { ...quoteOf(F1), senderBalance: 1_000n } }, requote: async () => (unexpected += 1, { quote: quoteOf(F1) }) });
+    check('nothing to spare: cannot-fit with the figures for the cap note (no re-quote)', unexpected === 0 && broke.kind === 'cannot-fit' && broke.spare === 0n && broke.uncapped === uncapped);
+  }
 
   // 3. Expired before the hand-over: no hand-over, only Revoke / Forget.
   const base = { ...record, keyHeld: true, localStatus: 'installed', subscription: { ...record.subscription, keyExportedAt: null } };
@@ -787,7 +834,7 @@ console.log('\ncheck-subscriptions: fixes from the 2026-10-04 emulator run (bugs
   check('the review checks funding against the displayed ceiling (fee and total replaced, other fields kept)',
     shownQ.fee === 1_200n && shownQ.total === 1_200n && shownQ.senderBalance === 5n);
   check('the review row shows the ceiling and explains it (source)',
-    screenSrc.includes('const shown = withSubscriptionFeeCeiling(q);') && screenSrc.includes('const funding = subscriptionInstallFunding(shown, sub, symbol);') &&
+    screenSrc.includes('const shown = withSubscriptionFeeCeiling(q);') && screenSrc.includes("const funding = subscriptionInstallFunding(shown, sub, symbol, recurring ? 'recurring' : 'subscription');") &&
       screenSrc.includes('`${formatUnits(shown.fee, 18, 18)} ${symbol}`'));
 
   // Bug 5: the expired card's key line.

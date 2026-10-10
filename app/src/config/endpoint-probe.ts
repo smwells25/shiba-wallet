@@ -760,7 +760,16 @@ function isEndpointHttpStatus(status: number): boolean {
  *
  * Counted as endpoint failures:
  *  - fetch rejections: React Native's fetch throws TypeError("Network
- *    request failed"), Node's undici TypeError("fetch failed");
+ *    request failed"), Node's undici TypeError("fetch failed"); Expo
+ *    SDK 57 installs its own fetch (expo/src/winter/runtime.native.ts,
+ *    unless EXPO_PUBLIC_USE_RN_FETCH is set) whose failures are a
+ *    FetchError extends Error — not a TypeError — with the message
+ *    "fetch failed: <platform text>" (expo/src/winter/fetch/FetchErrors.ts),
+ *    which is what a phone actually throws on a DNS or connection
+ *    failure (seen live on the emulator, 2026-10-09: "fetch failed:
+ *    java.net.UnknownHostException …"); the engine transports' own
+ *    "UTXO fetch failed: HTTP 400" messages do not start with the phrase
+ *    and are judged by their HTTP status below instead;
  *  - aborts and timeouts;
  *  - SyntaxError (an HTML error page where JSON was expected);
  *  - an HTTP status in the engine transports' messages ("RPC HTTP error
@@ -785,6 +794,7 @@ export function isEndpointFailure(error: unknown): boolean {
   if (error instanceof TypeError && /network request failed|fetch failed|failed to fetch|load failed/i.test(message)) {
     return true;
   }
+  if (name === 'FetchError' || (error instanceof Error && /^fetch failed:/i.test(message))) return true;
   if (/\b(timed out|timeout|aborted)\b/i.test(message)) return true;
   if (e.code === -32005) return true;
   if (/RPC error -32005\b/.test(message)) return true;

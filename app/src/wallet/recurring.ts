@@ -1,5 +1,5 @@
 import {
-  assertSubscriptionPull,
+  assertCallsAllowed,
   describePeriod,
   formatBaseUnits,
   formatUtc,
@@ -20,8 +20,13 @@ import {
 // Explicit .ts extensions: this module is imported by
 // scripts/check-recurring.mjs under Node's type stripping.
 import {
+  SESSION_UNREACHABLE_TITLE,
   describeSessionError,
+  isBundlerTransportFailureBeforeSubmit,
+  isNodeEndpointFailure,
+  isTransportFailure,
   loadSessions,
+  recurringGraceSeconds,
   sendSessionCalls,
   type SessionKeyVault,
   type SessionRecord,
@@ -47,18 +52,20 @@ import {
 import type { AaAccountType } from './aa.ts';
 import type { KeyValueStore } from './tokens.ts';
 import { assertFeatureAllowed, isFeatureAllowed } from '../config/readiness.ts';
-import { sanitizeEndpointMessage } from '../config/endpoint-probe.ts';
+import { NO_ANSWER_SENTENCE, sanitizeEndpointMessage } from '../config/endpoint-probe.ts';
 
 /**
  * Recurring payments pushed by this phone (phase 15 item 1; the slice
  * recommended in docs/SCHEDULED_PAYMENTS.md section 5.1): "pay X every N to Y".
  *
- * THE GRANT. Exactly the subscription template (engine kernel-subscription:
- * one allowed call — a transfer of at most X to Y — plus TimestampPolicy,
- * a mandatory GasPolicy fee budget and RateLimitPolicy {interval = period,
+ * THE GRANT. The subscription template (engine kernel-subscription: one
+ * allowed call — a transfer of at most X to Y — plus TimestampPolicy, a
+ * mandatory GasPolicy fee budget and RateLimitPolicy {interval = period,
  * count = payments, startAt = the moment Start was tapped}), produced by the
- * same function the subscription form uses (recurringGrantFor ==
- * subscriptionGrantFor). Only the roles change: the payee is the
+ * same function the subscription form uses (subscriptionGrantFor), with ONE
+ * difference: the grant's validUntil is one period later than the terms'
+ * (a grace period for a late last payment; recurringGrantFor says why it
+ * cannot add a payment). Only the roles change: the payee is the
  * "merchant", and the session key is generated on this phone, stored in the
  * same secure vault as every session key and NEVER handed over
  * (sessions.ts installSession / releaseSessionKey and subscriptions.ts
@@ -168,8 +175,8 @@ export function recurringFeeBudgetHint(nativeSymbol: string): string {
 }
 
 export const RECURRING_COMPLETED_TEXT =
-  'Completed: no more payments can be sent. Revoke it to remove the permission from your account (the ' +
-  'payment key is deleted from this phone too); it is then forgotten here.';
+  'No more payments can be sent. Revoke it to remove the permission from your account (the payment key is ' +
+  'deleted from this phone too); it is then forgotten here.';
 
 // ---------------------------------------------------------------------------
 // Names, grant and review
@@ -195,14 +202,62 @@ export function recurringNames(
 /**
  * The engine grant of a recurring payment: deliberately the very function the
  * subscription form uses, so the two templates can never drift apart
- * (scripts/check-recurring.mjs compares them field by field).
+ * (scripts/check-recurring.mjs compares them field by field), with a grace
+ * period of ONE PERIOD added to the grant's validUntil
+ * (sessions.ts recurringGraceSeconds).
+ *
+ * WHY. The terms end at start + payments × period, so without a grace the
+ * LAST payment could be sent during a single period only: a late last
+ * payment plus one transient error lost it for good (finding 3 of the
+ * 2026-10-09 recurring-payments rehearsal), which contradicted "a missed
+ * payment is not lost". With the grace the last payment can be sent during
+ * two periods, until start + (payments + 1) × period.
+ *
+ * WHY IT CANNOT ADD A PAYMENT. The grace moves only TimestampPolicy's
+ * validUntil (engine kernel-permissions.ts kernelPermissionFromGrant
+ * encodes TimestampPolicy from grant.validAfter / grant.validUntil, line 547,
+ * and RateLimitPolicy from grant.rateLimit's interval, count and startAt,
+ * lines 553–557). The count stays subscriptionPeriodCount(terms) = payments
+ * (subscriptionGrantFor changes nothing else, and check-recurring pins it).
+ * RateLimitPolicy's count is the TOTAL number of operations: each operation
+ * decrements it and, once it is 0, the policy returns a failure, which
+ * Kernel turns into PolicyFailed (engine kernel-subscription.ts module
+ * header, lines 44–56, and the Kernel v3.3 note at lines 66–69: every
+ * policy runs once per operation and their validity windows are
+ * intersected). So a longer TimestampPolicy window still allows at most
+ * `payments` operations; the extra period only keeps the slots that are
+ * already allowed open for longer. (Those engine notes record the policy
+ * sources as read for the engine; they were not re-read for this change.)
  */
 export function recurringGrantFor(
   sub: SubscriptionGrant,
   sessionKey: string,
   context: { account: string; now: number },
 ): SessionKeyGrant {
-  return subscriptionGrantFor(sub, sessionKey, context);
+  return subscriptionGrantFor(sub, sessionKey, { ...context, graceSeconds: recurringGraceSeconds(sub) });
+}
+
+/**
+ * The end of a recurring payment that is about to be set up: the terms' end
+ * plus the grace period, i.e. exactly the validUntil recurringGrantFor puts
+ * in the grant (after it no payment can be sent).
+ */
+export function recurringEndOf(sub: Pick<SubscriptionGrant, 'validUntil' | 'periodSeconds'>): number {
+  return sub.validUntil + recurringGraceSeconds(sub);
+}
+
+/**
+ * The end of an INSTALLED recurring payment: its stored grant's validUntil
+ * (what TimestampPolicy enforces). Recurring payments set up before the
+ * grace period existed end at the terms' end; newer ones one period later.
+ */
+export function recurringEndsAt(record: SessionRecord): number {
+  return parseSessionKeyGrant(record.grant).validUntil;
+}
+
+/** When the last of `sub`'s payments falls due: start + (payments − 1) × period. */
+function lastPaymentDueAt(sub: Pick<SubscriptionGrant, 'startAt' | 'validUntil' | 'periodSeconds'>): number {
+  return sub.startAt + Math.max(0, subscriptionPeriodCount(sub) - 1) * sub.periodSeconds;
 }
 
 /** The meta stored with the record; keyExportedAt stays null for the record's whole life. */
@@ -223,18 +278,25 @@ export interface RecurringDescription {
   caveats: string[];
 }
 
-/** The plain-language review of a recurring payment (own wording; the facts are the subscription module's). */
+/**
+ * The plain-language review of a recurring payment (own wording; the facts
+ * are the subscription module's). Every date printed as the end is the
+ * grant's validUntil: `context.endsAt` for an installed record
+ * (recurringEndsAt), else the end the set-up will install (recurringEndOf).
+ */
 export function recurringReview(
   sub: SubscriptionGrant,
-  context: { tokenSymbol: string; tokenDecimals: number; nativeSymbol: string; payeeName?: string | null },
+  context: { tokenSymbol: string; tokenDecimals: number; nativeSymbol: string; payeeName?: string | null; endsAt?: number },
 ): RecurringDescription {
+  const end = context.endsAt ?? recurringEndOf(sub);
+  const graced = end > sub.validUntil;
   const payee = context.payeeName ? `${context.payeeName} (${sub.merchant})` : sub.merchant;
   const amount = `${formatBaseUnits(sub.amountPerPeriod, context.tokenDecimals)} ${context.tokenSymbol}`;
   const period = describePeriod(sub.periodSeconds);
   const count = subscriptionPeriodCount(sub);
   const fee = `${formatBaseUnits(sub.feeBudgetWei, 18)} ${context.nativeSymbol}`;
   const sentence =
-    `Pays ${payee} up to ${amount} every ${period} until ${formatUtc(sub.validUntil)}: at most one payment ` +
+    `Pays ${payee} up to ${amount} every ${period} until ${formatUtc(end)}: at most one payment ` +
     'per period, each sent by this wallet after you confirm it.';
   const enforced = [
     isNativeSubscription(sub)
@@ -242,7 +304,8 @@ export function recurringReview(
       : `Only ${context.tokenSymbol} (contract ${sub.token}) transfers to ${sub.merchant}, at most ${amount} each.`,
     `At most ${count} payment${count === 1 ? '' : 's'} in total: the first from ${formatUtc(sub.startAt)}, ` +
       `then one more every ${period}.`,
-    `Nothing after ${formatUtc(sub.validUntil)}.`,
+    `Nothing after ${formatUtc(end)}. The last payment falls due ${formatUtc(lastPaymentDueAt(sub))} and can be ` +
+      'sent until then.',
     `Network fees for the payments are paid by your account, at most ${fee} in total.`,
     'The payment key cannot sign messages, logins or permits for your account.',
   ];
@@ -253,7 +316,11 @@ export function recurringReview(
       `up to everything this account holds in ${context.tokenSymbol} — though only to ${sub.merchant}. Keep ` +
       'only what you are willing to pay in this account.',
     'Missed payments are not lost: a payment whose period passed while the wallet was closed can still be sent ' +
-      'later, even right before the next one, until the end date.',
+      'later, even right before the next one, until the end date.' +
+      (graced
+        ? ' The end date is one period after the last payment falls due, so a late last payment can still be sent ' +
+          'too; this does not allow any extra payment.'
+        : ''),
     'The payment key lives in this phone’s secure storage. Wiping the wallet or restoring it from the recovery ' +
       'phrase deletes it: payments then stop, while the permission stays on-chain until its end date. Revoke ' +
       'before wiping.',
@@ -269,7 +336,8 @@ export function recurringReview(
  * confirmation, so short terms can end before some payments are sent.
  */
 export function recurringShortWindowWarning(sub: Pick<SubscriptionGrant, 'startAt' | 'validUntil' | 'periodSeconds'>): string | null {
-  const total = sub.validUntil - sub.startAt;
+  // From the start to the end the set-up installs (the grace period included).
+  const total = recurringEndOf(sub) - sub.startAt;
   if (!(total < 600)) return null;
   const count = subscriptionPeriodCount(sub);
   return (
@@ -285,7 +353,7 @@ export function recurringFinalDatesLine(sub: SubscriptionGrant): string {
   const count = subscriptionPeriodCount(sub);
   return (
     `Final terms: the first payment is due from ${formatUtc(sub.startAt)}, then one more every ` +
-    `${describePeriod(sub.periodSeconds)} (${count} in total); nothing after ${formatUtc(sub.validUntil)}.`
+    `${describePeriod(sub.periodSeconds)} (${count} in total); nothing after ${formatUtc(recurringEndOf(sub))}.`
   );
 }
 
@@ -369,13 +437,19 @@ export function recurringDueState(record: SessionRecord, status: SubscriptionSta
   }
 }
 
-/** recurringDueState at the current time (for render code, which must not read the clock itself). */
-export function recurringDueStateNow(record: SessionRecord, status: SubscriptionStatus): RecurringDue {
-  return recurringDueState(record, status, Math.floor(Date.now() / 1000));
-}
-
-/** Status lines for a recurring-payment card. */
-export function recurringStatusLines(record: SessionRecord, due: RecurringDue, nativeSymbol: string): string[] {
+/**
+ * Status lines for a recurring-payment card. `shownStatus` is the session
+ * status line the card already shows above these lines (sessions.ts
+ * sessionStatusText); when the due state is 'unknown' for the same reason,
+ * its line is not repeated (finding 1 of the 2026-10-09 rehearsal: the card
+ * showed "Status unknown: …" twice).
+ */
+export function recurringStatusLines(
+  record: SessionRecord,
+  due: RecurringDue,
+  nativeSymbol: string,
+  shownStatus?: string | null,
+): string[] {
   const lines: string[] = [];
   switch (due.kind) {
     case 'due':
@@ -393,16 +467,17 @@ export function recurringStatusLines(record: SessionRecord, due: RecurringDue, n
       lines.push(
         due.reason === 'all-sent'
           ? `Completed: all ${due.total} payment${due.total === 1 ? ' was' : 's were'} sent.`
-          : `Completed: ended ${formatUtc(termsOf(record).validUntil)}; ${due.sent} of ${due.total} ` +
-              `payment${due.total === 1 ? ' was' : 's were'} sent.`,
+          : recurringEndedLine(record, due),
       );
       break;
     case 'inactive':
       lines.push('Not active on-chain (revoked or never installed).');
       return lines;
-    case 'unknown':
-      lines.push(`Status unknown: ${due.reason}`);
+    case 'unknown': {
+      const line = `Status unknown: ${due.reason}`;
+      if (line !== shownStatus) lines.push(line);
       return lines;
+    }
     case 'not-ready':
       lines.push(due.reason);
       return lines;
@@ -410,6 +485,20 @@ export function recurringStatusLines(record: SessionRecord, due: RecurringDue, n
   if (due.kind !== 'completed') lines.push(`${due.sent} of ${due.total} payment${due.total === 1 ? '' : 's'} sent.`);
   lines.push(`Fee budget left: ${formatBaseUnits(due.feeBudgetLeftWei, 18)} ${nativeSymbol}.`);
   return lines;
+}
+
+/**
+ * The card line of a recurring payment whose end date passed: how many were
+ * sent and, when some were not, how many (finding 5 of the 2026-10-09
+ * rehearsal: "Completed: ended …; 2 of 3 payments were sent." hid the unsent
+ * one). The date is the installed grant's end (recurringEndsAt).
+ */
+export function recurringEndedLine(record: SessionRecord, due: { sent: number; total: number }): string {
+  const unsent = Math.max(0, due.total - due.sent);
+  const head =
+    `Ended ${formatUtc(recurringEndsAt(record))}: ${due.sent} of ${due.total} ` +
+    `payment${due.total === 1 ? ' was' : 's were'} sent`;
+  return unsent === 0 ? `${head}.` : `${head}; ${unsent} ${unsent === 1 ? 'was' : 'were'} not sent before the end date.`;
 }
 
 /** The headline above the list (and the banner's sentence) for `count` due payments, or null. */
@@ -496,7 +585,7 @@ function notDueMessage(record: SessionRecord, due: RecurringDue): string {
     case 'completed':
       return due.reason === 'all-sent'
         ? 'Every payment of this recurring payment was already sent. Nothing was sent.'
-        : `This recurring payment ended ${formatUtc(termsOf(record).validUntil)}. Nothing was sent.`;
+        : `This recurring payment ended ${formatUtc(recurringEndsAt(record))}. Nothing was sent.`;
     case 'inactive':
       return 'This recurring payment is not active on-chain (it was revoked). Nothing was sent.';
     case 'unknown':
@@ -509,11 +598,43 @@ function notDueMessage(record: SessionRecord, due: RecurringDue): string {
 }
 
 /**
+ * The status read could not get an answer from the network endpoint (the
+ * read returned 'unknown' with endpointFailure). Thrown by
+ * planRecurringPayment and readStatusWithFailover so the read can be failed
+ * over to another default endpoint, and described as a network failure,
+ * never as a refusal.
+ */
+export class RecurringStatusUnreachableError extends Error {
+  readonly reason: string;
+  constructor(reason: string) {
+    super(`The on-chain status could not be read: ${reason}.`);
+    this.name = 'RecurringStatusUnreachableError';
+    this.reason = reason;
+  }
+}
+
+/**
+ * The local check of a payment's single call: one transfer, allowed by the
+ * INSTALLED grant at `now` (engine assertCallsAllowed: target, value cap,
+ * parameter rules and the grant's window). The installed grant is used, not
+ * a grant rebuilt from the terms (engine assertSubscriptionPull), because a
+ * recurring payment's grant ends one grace period after the terms
+ * (recurringGrantFor): a payment sent during the grace period is allowed
+ * on-chain and must not be refused here.
+ */
+function assertRecurringCall(record: SessionRecord, calls: Call[], now: number): void {
+  if (calls.length !== 1) throw new Error(`A recurring payment is exactly one transfer; refusing ${calls.length} calls.`);
+  assertCallsAllowed(parseSessionKeyGrant(record.grant), calls, now);
+}
+
+/**
  * Step 1 of a payment, BEFORE the confirmation: re-reads the on-chain state
  * (never trusting the card), refuses a payment that is not due, and builds
  * the single transfer (engine subscriptionPullCall, full amount), which is
- * checked locally against the terms (engine assertSubscriptionPull: exactly
- * one call, within the grant). Reads no key and contacts no bundler.
+ * checked locally against the installed grant (assertRecurringCall). Reads
+ * no key and contacts no bundler. A read the endpoint did not answer throws
+ * RecurringStatusUnreachableError (so the caller can fail over once and
+ * describe it as a network failure).
  */
 export async function planRecurringPayment(args: {
   node: JsonRpcTransport;
@@ -526,12 +647,66 @@ export async function planRecurringPayment(args: {
   assertFeatureAllowed('session-keys', record.chain);
   const now = args.now ?? Math.floor(Date.now() / 1000);
   const status = await readSubscriptionStatus(args.node, record, now);
+  if (status.kind === 'unknown' && status.endpointFailure) throw new RecurringStatusUnreachableError(status.reason);
   const due = recurringDueState(record, status, now);
   if (due.kind !== 'due') throw new RecurringNotDueError(notDueMessage(record, due), due);
   const terms = termsOf(record);
   const call = subscriptionPullCall(terms);
-  assertSubscriptionPull(terms, parseSessionKeyGrant(record.grant).sessionKey, [call], now);
+  assertRecurringCall(record, [call], now);
   return { record, terms, call, due };
+}
+
+/**
+ * Runs a node operation through the caller's endpoint failover (the screen
+ * and the banner pass config/networks.ts withEndpoint, i.e.
+ * runWithEndpointFailover): `isFailure` says which errors may move the
+ * operation ONCE to the next healthy default endpoint.
+ */
+export type NodeFailoverRunner = <T>(
+  operation: (node: JsonRpcTransport) => Promise<T>,
+  options: { isFailure: (error: unknown) => boolean },
+) => Promise<T>;
+
+/**
+ * True for the errors a recurring payment's NODE work may fail over on: a
+ * status read the endpoint did not answer (RecurringStatusUnreachableError)
+ * and a transport failure of a marked node transport (sessions.ts
+ * isNodeEndpointFailure). A bundler failure never qualifies: the bundler is
+ * not an RPC endpoint the wallet can switch, and a submission that may have
+ * reached it must never be repeated blindly.
+ */
+export function isRecurringNodeFailure(error: unknown): boolean {
+  return error instanceof RecurringStatusUnreachableError || isNodeEndpointFailure(error);
+}
+
+/**
+ * A status read under the failover rule (the phase 13 rule for session and
+ * subscription quotes, applied to reads): the read's 'unknown' answer for an
+ * endpoint that did not answer is turned into an error the runner fails over
+ * on, so the read is repeated ONCE on the next healthy default endpoint.
+ * When the runner cannot fail over (an override, no other healthy default,
+ * or the second endpoint fails too), the last answer is returned as it is —
+ * 'unknown' with the plain reason — never thrown.
+ */
+export async function readStatusWithFailover<S extends { kind: string; endpointFailure?: boolean }>(
+  run: NodeFailoverRunner,
+  read: (node: JsonRpcTransport) => Promise<S>,
+): Promise<S> {
+  const box: { last: S | null } = { last: null };
+  try {
+    return await run(
+      async (node) => {
+        const status = await read(node);
+        box.last = status;
+        if (status.kind === 'unknown' && status.endpointFailure) throw new RecurringStatusUnreachableError('unreachable');
+        return status;
+      },
+      { isFailure: (e) => e instanceof RecurringStatusUnreachableError },
+    );
+  } catch (e) {
+    if (box.last) return box.last;
+    throw e;
+  }
 }
 
 /**
@@ -564,11 +739,12 @@ export function recurringConfirmMessage(
   const payee = context.payeeName ? `${context.payeeName} (${plan.terms.merchant})` : plan.terms.merchant;
   const extra =
     plan.due.openSlots > 1 ? ` ${plan.due.openSlots} payments are due; this sends one of them.` : '';
+  // Who signs is said once, by RECURRING_PAY_PROMPT_NOTE at the end (finding
+  // 5 of the 2026-10-09 rehearsal: the dialog used to say it twice).
   return (
-    `Send ${amount} to ${payee} from your smart account ${plan.record.account}.${extra} This recurring ` +
-    'payment’s own key signs it, not your account key. The network fee comes from your smart account ' +
-    `and counts against the fee budget (${formatBaseUnits(plan.due.feeBudgetLeftWei, 18)} ` +
-    `${context.nativeSymbol} left). ${RECURRING_PAY_PROMPT_NOTE}`
+    `Send ${amount} to ${payee} from your smart account ${plan.record.account}.${extra} The network fee ` +
+    'comes from your smart account and counts against the fee budget ' +
+    `(${formatBaseUnits(plan.due.feeBudgetLeftWei, 18)} ${context.nativeSymbol} left). ${RECURRING_PAY_PROMPT_NOTE}`
   );
 }
 
@@ -602,7 +778,7 @@ export async function payRecurringPayment(args: {
   // Mainnet readiness first (sendSessionCalls checks again before the key is read).
   assertFeatureAllowed('session-keys', record.chain);
   const now = args.now ?? Math.floor(Date.now() / 1000);
-  assertSubscriptionPull(plan.terms, parseSessionKeyGrant(record.grant).sessionKey, [plan.call], now);
+  assertRecurringCall(record, [plan.call], now);
   const scope: SpendingScope = { chain: record.chain, owner: record.owner };
   const check = await evaluateBeforeSigning({
     scope,
@@ -663,6 +839,52 @@ const POLICY_MEANING = [
   'every payment this recurring payment allows was already sent, or the next one is not due yet',
 ];
 
+export const RECURRING_REFUSED_TITLE = 'Payment not sent';
+export const RECURRING_OUTCOME_UNKNOWN_TITLE = 'Payment status unknown';
+
+/**
+ * What happened to a payment attempt (finding 1 of the 2026-10-09
+ * recurring-payments rehearsal: a DNS failure was shown as the raw platform
+ * exception and labelled "refused").
+ */
+export type RecurringAttemptOutcome =
+  /** The wallet or the account refused it (not due, a spending limit, AA22, a policy). Nothing was paid. */
+  | 'refused'
+  /** The network endpoint or the bundler could not be reached BEFORE the payment was submitted. Nothing was sent. */
+  | 'not-sent'
+  /** The connection failed in a way that leaves open whether the bundler received the signed payment. */
+  | 'outcome-unknown'
+  /** Any other failure, in the session wording. */
+  | 'failed';
+
+/**
+ * After a transport failure on the node (the status read, the chain check,
+ * the fees, the nonce) or on a bundler request made before the submission.
+ * Exact because every such request precedes eth_sendUserOperation (sessions.ts
+ * sendSessionCalls and the engine's SmartAccountClient.sendCalls submit last),
+ * and RateLimitPolicy counts only operations that execute.
+ */
+export const RECURRING_NOT_SENT_SENTENCE =
+  'The payment was not handed to the bundler, so nothing was sent and none of the allowed payments was used ' +
+  'up. Try again once the connection is back.';
+
+/**
+ * After a transport failure during the submission itself (or one the wallet
+ * cannot place): the bundler may have received the signed payment.
+ */
+export const RECURRING_OUTCOME_UNKNOWN_SENTENCE =
+  'The connection failed while the payment was being sent, so this wallet cannot tell whether the bundler ' +
+  'received it. The account’s nonce for this payment key decides: if the bundler received the payment, it ' +
+  'will be included and this card will count it as sent; if not, nothing was paid. Wait a minute, then tap ' +
+  'Refresh status before sending again: if the first one went through, sending again would pay the next due ' +
+  'payment as well.';
+
+/** The technical detail of a status read the endpoint did not answer (the parenthesis unknownStatusFrom adds). */
+function unreachableTechnical(reason: string): string {
+  const m = /\((.+)\)$/.exec(reason);
+  return m ? `${m[1]}.` : '';
+}
+
 /**
  * The plain sentence for an account/bundler refusal of a payment, or null
  * when the message is not one of the known refusals. The bundler's own text
@@ -691,33 +913,85 @@ export function recurringRefusalSentence(message: string): string | null {
   return null;
 }
 
-export const RECURRING_REFUSED_TITLE = 'Payment not sent';
-
 /**
- * Every error of the payment steps in plain words: not due, spending limits,
- * the account's own refusals (recurringRefusalSentence, with the bundler's
- * text kept as the technical detail), else the session wording
- * (sessions.ts describeSessionError, which keeps bundler texts verbatim and
- * never shows a raw platform exception).
+ * Every error of the payment steps in plain words, with what happened to
+ * the payment (`outcome`). Never a raw platform exception: a transport
+ * failure is described by the shared no-answer sentence plus what it means
+ * for the payment, with the cleaned text (sanitizeEndpointMessage, which
+ * removes Java exception class names and links) as the technical detail.
+ * In order:
+ *  - not due / spending limits: their own words ('refused');
+ *  - a status read the endpoint did not answer, a NODE transport failure,
+ *    or a bundler transport failure before the submission: 'not-sent'
+ *    (never "refused");
+ *  - any other transport failure — during eth_sendUserOperation, or one the
+ *    wallet cannot place — 'outcome-unknown': the nonce decides;
+ *  - the account's own refusals (recurringRefusalSentence, with the
+ *    bundler's text kept as the technical detail): 'refused';
+ *  - else the session wording (sessions.ts describeSessionError): 'failed'.
  */
 export function describeRecurringPaymentError(
   error: unknown,
   context: { accountType: AaAccountType; symbol: string },
   describeSend: (error: unknown, symbol: string) => { title: string; detail: string },
-): { title: string; detail: string } {
-  if (error instanceof RecurringNotDueError) return { title: RECURRING_REFUSED_TITLE, detail: error.message };
-  if (error instanceof RecurringSpendingError) return { title: error.title, detail: error.message };
+): { title: string; detail: string; outcome: RecurringAttemptOutcome } {
+  if (error instanceof RecurringNotDueError) {
+    // A status that could not be read for another reason (not an endpoint
+    // failure) is not a refusal either.
+    return { title: RECURRING_REFUSED_TITLE, detail: error.message, outcome: error.due.kind === 'unknown' ? 'failed' : 'refused' };
+  }
+  if (error instanceof RecurringSpendingError) return { title: error.title, detail: error.message, outcome: 'refused' };
+  const withTechnical = (sentence: string, technical: string) =>
+    technical ? `${sentence}\n\nTechnical detail: ${technical}` : sentence;
+  if (error instanceof RecurringStatusUnreachableError) {
+    return {
+      title: SESSION_UNREACHABLE_TITLE,
+      detail: withTechnical(`${NO_ANSWER_SENTENCE} ${RECURRING_NOT_SENT_SENTENCE}`, unreachableTechnical(error.reason)),
+      outcome: 'not-sent',
+    };
+  }
   const message = error instanceof Error ? error.message : String(error);
+  if (isTransportFailure(error)) {
+    const technical = sanitizeEndpointMessage(message);
+    if (isNodeEndpointFailure(error) || isBundlerTransportFailureBeforeSubmit(error)) {
+      return {
+        title: SESSION_UNREACHABLE_TITLE,
+        detail: withTechnical(`${NO_ANSWER_SENTENCE} ${RECURRING_NOT_SENT_SENTENCE}`, technical),
+        outcome: 'not-sent',
+      };
+    }
+    return {
+      title: RECURRING_OUTCOME_UNKNOWN_TITLE,
+      detail: withTechnical(RECURRING_OUTCOME_UNKNOWN_SENTENCE, technical),
+      outcome: 'outcome-unknown',
+    };
+  }
   const refusal = recurringRefusalSentence(message);
   if (refusal) {
-    const technical = sanitizeEndpointMessage(message);
-    return { title: RECURRING_REFUSED_TITLE, detail: technical ? `${refusal}\n\nTechnical detail: ${technical}` : refusal };
+    return { title: RECURRING_REFUSED_TITLE, detail: withTechnical(refusal, sanitizeEndpointMessage(message)), outcome: 'refused' };
   }
-  return describeSessionError(error, { accountType: context.accountType, symbol: context.symbol, stage: 'send' }, describeSend);
+  return {
+    ...describeSessionError(error, { accountType: context.accountType, symbol: context.symbol, stage: 'send' }, describeSend),
+    outcome: 'failed',
+  };
 }
 
-/** The card's one-line reason after a refused payment (the card stays). */
-export function recurringRefusalLine(detail: string): string {
-  return `Last payment attempt refused: ${detail.split('\n\n')[0]}`;
+/**
+ * The card's one-line note after a payment attempt that did not go through
+ * (the card stays). Only an actual refusal is called "refused".
+ */
+export function recurringAttemptLine(outcome: RecurringAttemptOutcome, detail: string): string {
+  const first = detail.split('\n\n')[0];
+  switch (outcome) {
+    case 'refused':
+      return `Last payment attempt refused: ${first}`;
+    case 'not-sent':
+      return 'Last payment attempt not sent: the network could not be reached before the payment was handed to the ' +
+        'bundler, so nothing was sent. Try again once the connection is back.';
+    case 'outcome-unknown':
+      return 'Last payment attempt: outcome unknown (the connection failed while it was being sent). Tap Refresh ' +
+        'status and wait for the count before sending again.';
+    case 'failed':
+      return `Last payment attempt failed: ${first}`;
+  }
 }
-

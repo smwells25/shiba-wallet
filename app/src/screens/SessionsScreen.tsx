@@ -12,7 +12,7 @@ import {
   View,
 } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { allowScreenCaptureAsync, preventScreenCaptureAsync } from 'expo-screen-capture';
 import {
   SUBSCRIPTION_NATIVE,
@@ -32,9 +32,9 @@ import { ContactPicker, RecipientContactNotice } from '../components/Contacts';
 import { GrantReview } from '../components/SessionGrantViews';
 import { PayloadQr } from '../components/RecoveryViews';
 import { SubscriptionKeyHandoverActions } from '../components/SubscriptionKeyHandover';
+import { activeEvmNodeRunner, useClockTick, useOnAppActive } from '../components/RecurringDueBanner';
 import { useTheme, type Theme } from '../theme';
 import { getEndpoint, withEndpoint } from '../config/networks';
-import { isEndpointFailure } from '../config/endpoint-probe';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
 import { requireLocalAuth } from '../wallet/biometric';
@@ -65,6 +65,7 @@ import {
   forgetSession,
   installSession,
   isNodeEndpointFailure,
+  isTransportFailure,
   loadSessionsFor,
   newSessionKey,
   pendingSessionOperation,
@@ -114,6 +115,7 @@ import {
   feeBudgetCapNote,
   feeBudgetPricingNote,
   feeBudgetSuggestionHint,
+  fitFeeBudgetToInstall,
   type SubscriptionFeeSource,
   markSubscriptionKeyExported,
   readSubscriptionFeeFacts,
@@ -126,7 +128,6 @@ import {
   subscriptionHandoverOffer,
   subscriptionInstallFeeCeiling,
   subscriptionInstallFunding,
-  subscriptionInstallKeepBack,
   subscriptionKeyFileName,
   subscriptionKeyStatusText,
   subscriptionMeta,
@@ -158,23 +159,26 @@ import {
   RECURRING_START_NOTE,
   RECURRING_WHILE_OPEN_NOTE,
   describeRecurringPaymentError,
+  isRecurringNodeFailure,
   payRecurringPayment,
   planRecurringPayment,
   runRecurringPayment,
   recurringConfirmMessage,
   recurringDueHeadline,
-  recurringDueStateNow,
+  recurringAttemptLine,
+  recurringDueState,
+  recurringEndsAt,
   recurringFeeBudgetHint,
   recurringFinalDatesLine,
   recurringGrantFor,
   recurringKeyStatusText,
   recurringMeta,
   recurringNames,
-  recurringRefusalLine,
   recurringReview,
   recurringShortWindowWarning,
   recurringStatusLines,
   recurringSummary,
+  readStatusWithFailover,
   type RecurringPaymentPlan,
 } from '../wallet/recurring';
 
@@ -449,30 +453,18 @@ export function SessionsScreen({ navigation }: Props) {
   const reloadRef = useRef<() => void>(() => undefined);
   /**
    * Runs a status read on the RPC endpoint in use now, under the endpoint
-   * failover rule (networks.ts withEndpoint): a read that came back
-   * 'unknown' because a default endpoint did not answer is repeated once on
-   * the next healthy default (the other screens' rule; bug 4 of the
-   * 2026-10-04 emulator run). Without any resolvable endpoint the read goes
-   * through the screen's bundle, as before.
+   * failover rule (networks.ts withEndpoint, through recurring.ts
+   * readStatusWithFailover): a read that came back 'unknown' because a
+   * default endpoint did not answer is repeated once on the next healthy
+   * default (the other screens' rule; bug 4 of the 2026-10-04 emulator run).
+   * Without any resolvable endpoint the read goes through the screen's
+   * bundle, as before.
    */
   const readWithFailover = useCallback(
     async <S extends { kind: string; endpointFailure?: boolean }>(read: (node: JsonRpcTransport) => Promise<S>): Promise<S> => {
-      const unreachable = new Error('The network endpoint did not answer.');
-      const box: { last: S | null } = { last: null };
       try {
-        const { value } = await withEndpoint(
-          EVM_CHAIN_ID,
-          async (endpoint) => {
-            const status = await read(httpTransport(endpoint.url));
-            box.last = status;
-            if (status.kind === 'unknown' && status.endpointFailure) throw unreachable;
-            return status;
-          },
-          { isFailure: (e) => e === unreachable },
-        );
-        return value;
+        return await readStatusWithFailover(activeEvmNodeRunner, read);
       } catch (e) {
-        if (box.last) return box.last;
         if (bundle) return read(bundle.node);
         throw e;
       }
@@ -529,6 +521,17 @@ export function SessionsScreen({ navigation }: Props) {
   // Loads on mount and again every time the screen comes back into focus
   // (finding 5 of the rehearsal: counts stayed stale until a manual refresh).
   useFocusEffect(reloadList);
+  // Finding 2 of the 2026-10-09 recurring-payments rehearsal: after the app
+  // came back (and was unlocked) the card still said "Payment due now (since
+  // 01:55)" until Refresh, because the screen kept its focus and the due
+  // state was worked out only when it rendered. Now, while this screen is
+  // focused, the due state is re-evaluated every 30 seconds from the facts
+  // already read (useClockTick: local arithmetic only, no network), and a
+  // return to the foreground re-reads every record (a full read, like focus
+  // and Refresh status) and refreshes the clock.
+  const isFocused = useIsFocused();
+  useOnAppActive(reloadList, isFocused);
+  const nowTick = useClockTick(30_000, isFocused);
 
   useEffect(() => {
     if (!contactsNetworkId) return;
@@ -553,7 +556,8 @@ export function SessionsScreen({ navigation }: Props) {
    * next healthy default. Only node failures move it (a bundler that does
    * not answer is not a reason to change the RPC endpoint). The bundle is
    * returned with the result: the operation is later sent through the same
-   * bundle it was quoted on.
+   * bundle it was quoted on. A recurring payment's send runs through it too
+   * (onPayNow): its node requests all precede the submission.
    */
   const quoteOnNode = useCallback(
     async <T,>(op: (b: AaClientBundle) => Promise<T>): Promise<{ value: T; bundle: AaClientBundle }> => {
@@ -594,12 +598,17 @@ export function SessionsScreen({ navigation }: Props) {
     if (!account) return null;
     const bundler = bundle?.bundler ?? null;
     try {
-      const { value } = await withEndpoint(EVM_CHAIN_ID, async (endpoint) => {
-        const facts = await readSubscriptionFeeFacts(httpTransport(endpoint.url), account, { bundler });
-        const unreachable = facts.failures.find((f) => isEndpointFailure(f));
-        if (unreachable && facts.maxFeePerGas === null && facts.balance === null) throw unreachable;
-        return facts;
-      });
+      const { value } = await withEndpoint(
+        EVM_CHAIN_ID,
+        async (endpoint) => {
+          const facts = await readSubscriptionFeeFacts(httpTransport(endpoint.url), account, { bundler });
+          const unreachable = facts.failures.find((f) => isTransportFailure(f));
+          if (unreachable && facts.maxFeePerGas === null && facts.balance === null) throw unreachable;
+          return facts;
+        },
+        // Also Expo's "fetch failed: …" errors (sessions.ts isTransportFailure).
+        { isFailure: isTransportFailure },
+      );
       const facts = {
         maxFeePerGas: value.maxFeePerGas,
         feeSource: value.feeSource,
@@ -836,7 +845,7 @@ export function SessionsScreen({ navigation }: Props) {
           feeBudget: feeBudgetText,
           label: names.termsLabel,
         },
-        { now, account, testnet: evmChain.testnet },
+        { now, account, testnet: evmChain.testnet, recipientLabel: mode === 'recurring' ? 'Payee' : 'Merchant' },
       );
       // The engine's refusal (validateSubscription / validateSessionKeyGrant) verbatim.
       grant = grantFor(subscription, key.address, { account, now });
@@ -861,28 +870,39 @@ export function SessionsScreen({ navigation }: Props) {
       // back is the one the review displays (withSubscriptionFeeCeiling).
       let feeBudgetLowered: PendingSubscription['feeBudgetLowered'] = null;
       if (!subForm.feeEdited) {
-        const keptBack = subscriptionInstallKeepBack(withSubscriptionFeeCeiling(quote));
-        setSubInstallKeepBack(keptBack);
-        const refit = suggestedFeeBudget({
-          payments: subscriptionPeriodCount(subscription),
+        // Finding 4 of the 2026-10-09 recurring-payments rehearsal: the
+        // lowering used to be computed from the FIRST quote only, and the
+        // re-quote after lowering came back higher, so the review's funding
+        // warning fired for the app's own suggestion. fitFeeBudgetToInstall
+        // re-checks the keep-back against every new quote and lowers again
+        // when needed (at most SUBSCRIPTION_FEE_BUDGET_REFIT_ROUNDS times).
+        const sub0 = subscription;
+        const fit = await fitFeeBudgetToInstall({
+          feeBudgetWei: sub0.feeBudgetWei,
+          attempt: { install, quote, bundle: quotedOn },
+          payments: subscriptionPeriodCount(sub0),
           maxFeePerGas: facts.maxFeePerGas,
-          balance: quote.senderBalance,
-          nativeAmountPerPayment: subscription.token === SUBSCRIPTION_NATIVE ? subscription.amountPerPeriod : 0n,
-          installFeeFromBalance: keptBack,
+          nativeAmountPerPayment: sub0.token === SUBSCRIPTION_NATIVE ? sub0.amountPerPeriod : 0n,
+          requote: async (feeBudgetWei) => {
+            const lowered = grantFor({ ...sub0, feeBudgetWei }, key.address, { account, now });
+            const r = await quoteOnNode((b) => prepareSessionInstall(b, owner, account, lowered, { now }));
+            return { install: r.value.install, quote: r.value.quote, bundle: r.bundle };
+          },
         });
-        if (refit.wei === null) {
+        setSubInstallKeepBack(fit.keptBack);
+        if (fit.kind === 'cannot-fit') {
           key.privateKey.fill(0);
           setFormError(
-            refit.spare !== null && refit.uncapped !== null
+            fit.spare !== null && fit.uncapped !== null
               ? feeBudgetCapNote(
-                  refit.spare,
-                  refit.uncapped,
+                  fit.spare,
+                  fit.uncapped,
                   symbol,
-                  keptBack,
+                  fit.keptBack,
                   tokenNoteContext(
                     choice,
-                    { balance: quote.senderBalance, deposit: quote.deposit ?? null },
-                    subscriptionInstallFeeCeiling(quote),
+                    { balance: fit.attempt.quote.senderBalance, deposit: fit.attempt.quote.deposit ?? null },
+                    subscriptionInstallFeeCeiling(fit.attempt.quote),
                   ),
                 )
               : 'The fee budget could not be suggested: the network fee is not known yet. Enter a budget by hand.',
@@ -890,15 +910,11 @@ export function SessionsScreen({ navigation }: Props) {
           setPhase('sub-form');
           return;
         }
-        if (refit.wei < subscription.feeBudgetWei) {
-          feeBudgetLowered = { from: subscription.feeBudgetWei, to: refit.wei, keptBack };
-          subscription = { ...subscription, feeBudgetWei: refit.wei };
+        if (fit.lowered) {
+          feeBudgetLowered = fit.lowered;
+          subscription = { ...sub0, feeBudgetWei: fit.feeBudgetWei };
           grant = grantFor(subscription, key.address, { account, now });
-          const lowered = grant;
-          ({
-            value: { install, quote },
-            bundle: quotedOn,
-          } = await quoteOnNode((b) => prepareSessionInstall(b, owner, account, lowered, { now })));
+          ({ install, quote, bundle: quotedOn } = fit.attempt);
         }
       }
       subPending.current = {
@@ -1137,13 +1153,14 @@ export function SessionsScreen({ navigation }: Props) {
   /** Shows a refused payment in plain words and keeps it on the card (the card stays). */
   const showPayRefusal = (record: SessionRecord, e: unknown) => {
     const key = sessionRecordKey(record.chain, record.account, record.permissionId);
-    const { title, detail } = describeRecurringPaymentError(
+    const { title, detail, outcome } = describeRecurringPaymentError(
       e,
       { accountType: bundle?.accountType ?? 'kernel-v3.3', symbol },
       describeSendError,
     );
     Alert.alert(title, detail);
-    setPayRefusals((prev) => ({ ...prev, [key]: recurringRefusalLine(detail) }));
+    // Only an actual refusal is called "refused" on the card (finding 1 of the 2026-10-09 rehearsal).
+    setPayRefusals((prev) => ({ ...prev, [key]: recurringAttemptLine(outcome, detail) }));
     refreshRecord(record);
   };
 
@@ -1176,19 +1193,28 @@ export function SessionsScreen({ navigation }: Props) {
    */
   const onPayNow = async (record: SessionRecord) => {
     if (!bundle) return;
-    const payBundle = bundle;
     const key = sessionRecordKey(record.chain, record.account, record.permissionId);
     setPayingKey(key);
     try {
+      // Endpoint failover (finding 1 of the 2026-10-09 rehearsal): the plan's
+      // status read and the payment's node requests run on the RPC endpoint
+      // in use now and move ONCE to the next healthy default when that node
+      // does not answer (isRecurringNodeFailure / quoteOnNode's
+      // isNodeEndpointFailure) — the rule of the session and subscription
+      // quotes. Every node request of a payment precedes its submission
+      // (sessions.ts sendSessionCalls), so repeating it cannot send twice; a
+      // bundler failure is never failed over. When the node fails after the
+      // payment key was read, the retry reads the key again (one more system
+      // prompt when the key is protected).
       const run = await runRecurringPayment({
-        plan: () => planRecurringPayment({ node: payBundle.node, record }),
+        plan: () => activeEvmNodeRunner((node) => planRecurringPayment({ node, record }), { isFailure: isRecurringNodeFailure }),
         confirm: (plan) => {
           setPayingKey(null);
           return confirmPaymentDialog(plan);
         },
         pay: (plan) => {
           setPayingKey(key);
-          return payRecurringPayment({ bundle: payBundle, plan, vault: sessionKeyVault });
+          return quoteOnNode((b) => payRecurringPayment({ bundle: b, plan, vault: sessionKeyVault })).then(({ value }) => value);
         },
       });
       if (run.outcome !== 'sent') return;
@@ -1547,7 +1573,7 @@ export function SessionsScreen({ navigation }: Props) {
     // The displayed worst case includes the re-quote tolerance of Start
     // (subscriptionInstallFeeCeiling), and the funding lines use it too.
     const shown = withSubscriptionFeeCeiling(q);
-    const funding = subscriptionInstallFunding(shown, sub, symbol);
+    const funding = subscriptionInstallFunding(shown, sub, symbol, recurring ? 'recurring' : 'subscription');
     const lowered = subPendingView.feeBudgetLowered;
     return (
       <ScrollView key="sub-confirm" style={screenStyle(theme)} contentContainerStyle={styles.content}>
@@ -2026,7 +2052,8 @@ export function SessionsScreen({ navigation }: Props) {
       return {
         record,
         key,
-        due: subStatus === undefined || subStatus === 'loading' ? null : recurringDueStateNow(record, subStatus),
+        // nowTick (above) re-evaluates this every 30 seconds while the screen is focused.
+        due: subStatus === undefined || subStatus === 'loading' ? null : recurringDueState(record, subStatus, nowTick),
       };
     },
   );
@@ -2092,17 +2119,19 @@ export function SessionsScreen({ navigation }: Props) {
               tokenDecimals: r.subscription!.tokenDecimals,
               nativeSymbol: symbol,
               payeeName: nameFor(terms.merchant),
+              endsAt: recurringEndsAt(r),
             });
             const busy = payingKey !== null;
+            const statusLine = settled ? sessionStatusText(status) : 'Reading status…';
             return (
               <View key={key} style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
                 <Text style={[styles.cardTitle, { color: theme.text }]}>{r.label}</Text>
                 <Text style={[styles.hint, { color: theme.text }]}>{recurringSummary(r, nameFor(terms.merchant))}</Text>
                 <Text style={[styles.status, { color: settled && status.kind === 'active' ? theme.success : theme.text }]}>
-                  {settled ? sessionStatusText(status) : 'Reading status…'}
+                  {statusLine}
                 </Text>
                 {due
-                  ? recurringStatusLines(r, due, symbol).map((line) => (
+                  ? recurringStatusLines(r, due, symbol, statusLine).map((line) => (
                       <Text key={line} style={[styles.hint, { color: theme.text }]}>
                         {line}
                       </Text>

@@ -64,8 +64,18 @@ import {
   sessionCanBeTested,
   sessionCarriesTerms,
   sessionProgressTitle,
+  sessionRevokeKeySentence,
+  sessionStatusText,
   sessionVaultId,
+  SESSION_UNREACHABLE_TITLE,
+  isNodeEndpointFailure,
+  isTransportFailure,
+  markNodeErrors,
+  recurringGraceSeconds,
+  termsMatchGrant,
+  unknownStatusFrom,
 } from '../src/wallet/sessions.ts';
+import { NO_ANSWER_SENTENCE, isEndpointFailure, runWithEndpointFailover } from '../src/config/endpoint-probe.ts';
 import {
   RECURRING_KEY_NEVER_EXPORTED,
   buildSubscription,
@@ -73,6 +83,8 @@ import {
   markSubscriptionKeyExported,
   subscriptionGrantFor,
   subscriptionHandoverOffer,
+  readSubscriptionStatus,
+  subscriptionInstallFunding,
   subscriptionKeyStatusText,
   subscriptionMeta,
   subscriptionRecords,
@@ -80,6 +92,10 @@ import {
 } from '../src/wallet/subscriptions.ts';
 import {
   RECURRING_CARD_NOTE,
+  RECURRING_COMPLETED_TEXT,
+  RECURRING_NOT_SENT_SENTENCE,
+  RECURRING_OUTCOME_UNKNOWN_SENTENCE,
+  RECURRING_OUTCOME_UNKNOWN_TITLE,
   RECURRING_KEY_HOLDER_TEXT,
   RECURRING_PAY_PROMPT_NOTE,
   RECURRING_REFUSED_TITLE,
@@ -87,6 +103,13 @@ import {
   RECURRING_WHILE_OPEN_NOTE,
   RecurringNotDueError,
   RecurringSpendingError,
+  RecurringStatusUnreachableError,
+  isRecurringNodeFailure,
+  readStatusWithFailover,
+  recurringAttemptLine,
+  recurringEndOf,
+  recurringEndedLine,
+  recurringEndsAt,
   describeRecurringPaymentError,
   findDueRecurringPayments,
   openSlotCount,
@@ -309,16 +332,31 @@ console.log('check-recurring: the grant is the subscription template');
     const sub = buildSubscription({ merchant: PAYEE, choice, amount, periodSeconds: 30 * DAY, payments: '3', feeBudget: '0.003', label: 'Rent' }, { now: S, account: ACCOUNT });
     const r = recurringGrantFor(sub, KEY, { account: ACCOUNT, now: S - 10 });
     const g = subscriptionGrantFor(sub, KEY, { account: ACCOUNT, now: S - 10 });
-    check(`${label}: recurringGrantFor equals subscriptionGrantFor field for field`, json(r) === json(g), json(r));
+    // Finding 3 of the 2026-10-09 rehearsal: the grant ends ONE PERIOD after the terms (grace for a late last payment).
+    check(`${label}: recurringGrantFor = subscriptionGrantFor with ONLY validUntil one period later (grace)`,
+      json(r) === json({ ...g, validUntil: g.validUntil + 30 * DAY }) && r.validUntil === sub.validUntil + 30 * DAY && g.validUntil === sub.validUntil, json(r));
     const ri = encodePermissionInstall(r, { chainId: CHAIN_ID, account: ACCOUNT, currentNonce: 3, validationNonce: 0, now: S - 10 });
-    const gi = encodePermissionInstall(g, { chainId: CHAIN_ID, account: ACCOUNT, currentNonce: 3, validationNonce: 0, now: S - 10 });
-    check(`${label}: same Kernel permission id and validatorData as the subscription`, toHex(ri.permissionId) === toHex(gi.permissionId) && toHex(ri.validatorData) === toHex(gi.validatorData));
-    check(`${label}: one allowed call, validAfter = start, rate limit {period, payments, start}, fee budget`,
-      r.calls.length === 1 && r.validAfter === S && r.rateLimit.count === 3 && r.rateLimit.intervalSeconds === 30 * DAY && r.rateLimit.startAt === S && r.gasBudgetWei === 3_000_000_000_000_000n);
+    const gi = encodePermissionInstall({ ...g, validUntil: g.validUntil + 30 * DAY }, { chainId: CHAIN_ID, account: ACCOUNT, currentNonce: 3, validationNonce: 0, now: S - 10 });
+    check(`${label}: the install is the subscription template's with only TimestampPolicy's validUntil moved (permission id and validatorData)`,
+      toHex(ri.permissionId) === toHex(gi.permissionId) && toHex(ri.validatorData) === toHex(gi.validatorData));
+    check(`${label}: one allowed call, validAfter = start, rate limit {period, payments (NOT payments + 1), start}, fee budget`,
+      r.calls.length === 1 && r.validAfter === S && r.rateLimit.count === 3 && r.rateLimit.count === g.rateLimit.count && r.rateLimit.intervalSeconds === 30 * DAY && r.rateLimit.startAt === S && r.gasBudgetWei === 3_000_000_000_000_000n);
     check(`${label}: recurringMeta equals subscriptionMeta (hand-over time null)`, json(recurringMeta(sub, choice)) === json(subscriptionMeta(sub, choice)) && recurringMeta(sub, choice).keyExportedAt === null);
   }
   const rsrc = src('../src/wallet/recurring.ts');
-  check('source: recurringGrantFor delegates to subscriptionGrantFor (one template, no copy)', /export function recurringGrantFor[\s\S]{0,260}return subscriptionGrantFor\(sub, sessionKey, context\);/.test(rsrc));
+  check('source: recurringGrantFor delegates to subscriptionGrantFor with the one-period grace (one template, no copy)',
+    /export function recurringGrantFor[\s\S]{0,260}return subscriptionGrantFor\(sub, sessionKey, \{ \.\.\.context, graceSeconds: recurringGraceSeconds\(sub\) \}\);/.test(rsrc) && recurringGraceSeconds({ periodSeconds: 120 }) === 120);
+  const subSrc = src('../src/wallet/subscriptions.ts');
+  check('source: the grace moves only the grant\'s validUntil, after the engine built the grant, and is validated again by the engine',
+    /const grant = subscriptionToGrant\(sub, sessionKey, \{ account: context\.account, now: context\.now \}\);[\s\S]{0,300}const extended: SessionKeyGrant = \{ \.\.\.grant, validUntil: grant\.validUntil \+ grace \};\s*validateSessionKeyGrant\(extended,/.test(subSrc));
+  const S2 = 1790000000;
+  const sub2 = buildSubscription({ merchant: PAYEE, choice: native, amount: '0.001', periodSeconds: 120, payments: '3', feeBudget: '0.003', label: 'x' }, { now: S2, account: ACCOUNT, testnet: true });
+  const plain = subscriptionGrantFor(sub2, KEY, { account: ACCOUNT, now: S2 });
+  check('subscriptionGrantFor without a grace is the engine grant unchanged (merchant subscriptions keep their end)',
+    plain.validUntil === sub2.validUntil && json(subscriptionGrantFor(sub2, KEY, { account: ACCOUNT, now: S2, graceSeconds: 0 })) === json(plain));
+  check('a negative or fractional grace is refused',
+    /grace period/.test((await caught(() => subscriptionGrantFor(sub2, KEY, { account: ACCOUNT, now: S2, graceSeconds: -1 })))?.message ?? '') &&
+      /grace period/.test((await caught(() => subscriptionGrantFor(sub2, KEY, { account: ACCOUNT, now: S2, graceSeconds: 1.5 })))?.message ?? ''));
   check('names: typed or contact name → "Recurring payment: <name>", else "Recurring payment to 0x69F0…7E8a"',
     recurringNames('Rent', PAYEE, null).recordLabel === 'Recurring payment: Rent' && recurringNames('', PAYEE, 'Landlord').recordLabel === 'Recurring payment: Landlord' &&
       recurringNames('', PAYEE, null).recordLabel === 'Recurring payment to 0x69F0…7E8a' && recurringNames('', PAYEE, null).termsLabel === 'to 0x69F0…7E8a');
@@ -331,8 +369,17 @@ console.log('check-recurring: review copy');
 {
   const sub = buildSubscription({ merchant: PAYEE, choice: usdc, amount: '5', periodSeconds: 30 * DAY, payments: '2', feeBudget: '0.003', label: 'Rent' }, { now: Date.UTC(2026, 9, 10) / 1000, account: ACCOUNT });
   const r = recurringReview(sub, { tokenSymbol: 'USDC', tokenDecimals: 6, nativeSymbol: 'test ETH', payeeName: 'Landlord' });
-  check('sentence names the payee, amount, period, end date and the confirmation',
-    r.sentence === `Pays Landlord (${PAYEE}) up to 5 USDC every 30 days until 2026-12-09 00:00 UTC: at most one payment per period, each sent by this wallet after you confirm it.`, r.sentence);
+  // 2 payments of 30 days from 2026-10-10 plus one period of grace: the grant ends 2027-01-08 (the terms 2026-12-09).
+  check('sentence names the payee, amount, period, the GRANT\'s end date (grace included) and the confirmation',
+    r.sentence === `Pays Landlord (${PAYEE}) up to 5 USDC every 30 days until 2027-01-08 00:00 UTC: at most one payment per period, each sent by this wallet after you confirm it.`, r.sentence);
+  check('"Nothing after" is the grant\'s end, with when the last payment falls due',
+    r.enforced[2] === 'Nothing after 2027-01-08 00:00 UTC. The last payment falls due 2026-11-09 00:00 UTC and can be sent until then.', r.enforced[2]);
+  check('the catch-up caveat explains the grace and that it allows no extra payment',
+    /The end date is one period after the last payment falls due, so a late last payment can still be sent too; this does not allow any extra payment\.$/.test(r.caveats[1]), r.caveats[1]);
+  const installedOld = recurringReview(sub, { tokenSymbol: 'USDC', tokenDecimals: 6, nativeSymbol: 'test ETH', endsAt: sub.validUntil });
+  check('an installed record WITHOUT grace (set up before this change) prints its own end and no grace sentence',
+    /until 2026-12-09 00:00 UTC:/.test(installedOld.sentence) && installedOld.enforced[2].startsWith('Nothing after 2026-12-09 00:00 UTC.') && !/one period after/.test(installedOld.caveats[1]));
+  check('recurringEndOf = terms end + one period', recurringEndOf(sub) === sub.validUntil + 30 * DAY);
   check('the FIRST caveat is the batching residual: per-transfer cap, up to the whole balance, payee only',
     /^ONE PAYMENT OPERATION CAN HOLD SEVERAL TRANSFERS\./.test(r.caveats[0]) && /does not add them up/.test(r.caveats[0]) && /up to everything this account holds in USDC/.test(r.caveats[0]) && r.caveats[0].includes(`only to ${PAYEE}`));
   check('on-chain lines: token contract and payee, count and first date, end, fee budget, no ERC-1271',
@@ -346,10 +393,10 @@ console.log('check-recurring: review copy');
   check(`the prompt note quotes the vault's real session-key prompt ("${PROMPTS.sessionKeyRead}") and says the phrase is never opened`,
     RECURRING_PAY_PROMPT_NOTE.includes(`"${PROMPTS.sessionKeyRead}"`) && /recovery phrase is never opened/.test(RECURRING_PAY_PROMPT_NOTE));
   check('spending note: limits checked before each payment; the fee is not counted', /checked before each payment/.test(RECURRING_SPENDING_NOTE) && /not counted/.test(RECURRING_SPENDING_NOTE));
-  check('short terms warn (2 min × 3) and long ones do not',
-    /last only 6 minutes in total \(3 payments of 2 minutes\)/.test(recurringShortWindowWarning({ startAt: 1000, validUntil: 1360, periodSeconds: 120 }) ?? '') && recurringShortWindowWarning({ startAt: 0, validUntil: 3 * DAY, periodSeconds: DAY }) === null);
-  check('final dates line', recurringFinalDatesLine({ ...sub, startAt: 1_800_000_000, validUntil: 1_800_000_000 + 3 * 120, periodSeconds: 120 }) ===
-    'Final terms: the first payment is due from 2027-01-15 08:00 UTC, then one more every 2 minutes (3 in total); nothing after 2027-01-15 08:06 UTC.');
+  check('short terms warn (2 min × 3 = 8 minutes with the grace) and long ones do not',
+    /last only 8 minutes in total \(3 payments of 2 minutes\)/.test(recurringShortWindowWarning({ startAt: 1000, validUntil: 1360, periodSeconds: 120 }) ?? '') && recurringShortWindowWarning({ startAt: 0, validUntil: 3 * DAY, periodSeconds: DAY }) === null);
+  check('final dates line: nothing after the grant\'s end (3 × 2 min + 2 min grace)', recurringFinalDatesLine({ ...sub, startAt: 1_800_000_000, validUntil: 1_800_000_000 + 3 * 120, periodSeconds: 120 }) ===
+    'Final terms: the first payment is due from 2027-01-15 08:00 UTC, then one more every 2 minutes (3 in total); nothing after 2027-01-15 08:08 UTC.');
 }
 
 // ---------------------------------------------------------------------------
@@ -432,8 +479,9 @@ console.log('check-recurring: due detection (RateLimitPolicy semantics)');
   const { record } = main;
   const S = 1_800_000_000;
   const terms = { ...JSON.parse(JSON.stringify(record.subscription.terms)), startAt: S, validUntil: S + 3 * 120, periodSeconds: 120 };
-  const rec = { ...record, subscription: { ...record.subscription, terms } };
-  const st = (over) => ({ kind: 'ok', state: { rateLimitStatus: 'live', remainingPulls: 3, nextSlotAt: S, intervalSeconds: 120, feeBudgetLeftWei: 10n ** 16n, validUntil: S + 360, ...over }, next: { kind: 'now' } });
+  // The installed grant ends one period after the terms (grace): S + 480.
+  const rec = { ...record, grant: { ...record.grant, validUntil: S + 480 }, subscription: { ...record.subscription, terms } };
+  const st = (over) => ({ kind: 'ok', state: { rateLimitStatus: 'live', remainingPulls: 3, nextSlotAt: S, intervalSeconds: 120, feeBudgetLeftWei: 10n ** 16n, validUntil: S + 480, ...over }, next: { kind: 'now' } });
   const at = (over, now) => recurringDueState(rec, st(over), now);
   check('one second before the first slot: later (at the start)', at({}, S - 1).kind === 'later' && at({}, S - 1).at === S);
   check('exactly at the slot: due (validAfter <= block time), one open slot, 0 of 3 sent', (() => { const d = at({}, S); return d.kind === 'due' && d.openSlots === 1 && d.sent === 0 && d.total === 3; })());
@@ -446,8 +494,13 @@ console.log('check-recurring: due detection (RateLimitPolicy semantics)');
   check('no slot open: 0', openSlotCount({ nextSlotAt: S + 10, intervalSeconds: 120, remainingPulls: 3, validUntil: S + 360 }, S) === 0);
   const usedUp = at({ remainingPulls: 0, nextSlotAt: S + 360 }, S + 100);
   check('count exhausted: completed, all sent', usedUp.kind === 'completed' && usedUp.reason === 'all-sent' && usedUp.sent === 3);
-  const ended = at({ remainingPulls: 2, nextSlotAt: S + 120 }, S + 361);
-  check('end date passed with payments left: completed (ended), 1 of 3 sent', ended.kind === 'completed' && ended.reason === 'ended' && ended.sent === 1);
+  const late = at({ remainingPulls: 1, nextSlotAt: S + 240 }, S + 400);
+  check('GRACE: after the terms\' end (S + 360) the last payment is still due until the grant\'s end (S + 480)',
+    late.kind === 'due' && late.openSlots === 1 && late.sent === 2 && at({ remainingPulls: 1, nextSlotAt: S + 240 }, S + 480).kind === 'due');
+  check('…and the count still bounds it: with all 3 sent, nothing more is due inside the grace period',
+    at({ remainingPulls: 0, nextSlotAt: S + 360 }, S + 400).kind === 'completed' && openSlotCount({ nextSlotAt: S + 240, intervalSeconds: 120, remainingPulls: 1, validUntil: S + 480 }, S + 479) === 1);
+  const ended = at({ remainingPulls: 2, nextSlotAt: S + 120 }, S + 481);
+  check('end date (the grant\'s) passed with payments left: completed (ended), 1 of 3 sent', ended.kind === 'completed' && ended.reason === 'ended' && ended.sent === 1);
   check('revoked on-chain (RateLimitPolicy status deprecated): inactive', at({ rateLimitStatus: 'deprecated' }, S).kind === 'inactive');
   check('read failure: unknown with the reason', recurringDueState(rec, { kind: 'unknown', reason: 'the network endpoint did not answer' }, S).kind === 'unknown');
   check('set-up not confirmed / key gone / revoked locally: not ready (nothing offered)',
@@ -463,7 +516,13 @@ console.log('check-recurring: due detection (RateLimitPolicy semantics)');
   check('lines: later, completed (all sent), completed (ended)',
     lines({ remainingPulls: 2, nextSlotAt: S + 120 }, S + 5)[0] === 'Next payment: not before 2027-01-15 08:02 UTC.' &&
       lines({ remainingPulls: 0, nextSlotAt: S + 360 }, S + 5)[0] === 'Completed: all 3 payments were sent.' &&
-      lines({ remainingPulls: 2, nextSlotAt: S + 120 }, S + 400)[0] === 'Completed: ended 2027-01-15 08:06 UTC; 1 of 3 payments were sent.');
+      lines({ remainingPulls: 2, nextSlotAt: S + 120 }, S + 500)[0] === 'Ended 2027-01-15 08:08 UTC: 1 of 3 payments were sent; 2 were not sent before the end date.',
+    lines({ remainingPulls: 2, nextSlotAt: S + 120 }, S + 500)[0]);
+  check('ended line: one unsent payment in the singular; an "ended" count with nothing unsent has no unsent clause',
+    recurringEndedLine(rec, { sent: 2, total: 3 }) === 'Ended 2027-01-15 08:08 UTC: 2 of 3 payments were sent; 1 was not sent before the end date.' &&
+      recurringEndedLine(rec, { sent: 3, total: 3 }) === 'Ended 2027-01-15 08:08 UTC: 3 of 3 payments were sent.' && !/^Completed:/.test(recurringEndedLine(rec, { sent: 2, total: 3 })));
+  check('the completed box no longer opens with "Completed:" (it also shows for an ended grant with payments unsent)',
+    RECURRING_COMPLETED_TEXT === 'No more payments can be sent. Revoke it to remove the permission from your account (the payment key is deleted from this phone too); it is then forgotten here.');
   check('headline', recurringDueHeadline(0) === null && recurringDueHeadline(1) === '1 recurring payment is due. Each is sent only after you confirm it on the Sessions screen.' && /^2 recurring payments are due\./.test(recurringDueHeadline(2)));
   // Against the fake node: the on-chain read moves with emulated payments.
   const d0 = recurringDueState(record, { kind: 'ok', state: { rateLimitStatus: 'live', remainingPulls: 3, nextSlotAt: NOW, intervalSeconds: DAY, feeBudgetLeftWei: 1n, validUntil: NOW + 3 * DAY }, next: { kind: 'now' } }, NOW);
@@ -546,7 +605,7 @@ console.log('check-recurring: confirm before submit');
 
   const screen = src('../src/screens/SessionsScreen.tsx');
   check('the screen sends a recurring payment in exactly one place: the pay step of runRecurringPayment (source)',
-    (screen.match(/payRecurringPayment\(/g) ?? []).length === 1 && /runRecurringPayment\(\{[\s\S]{0,200}plan: \(\) => planRecurringPayment\([\s\S]{0,200}confirm: \(plan\) => \{[\s\S]{0,120}return confirmPaymentDialog\(plan\);[\s\S]{0,80}\},\s*pay: \(plan\) => \{[\s\S]{0,80}return payRecurringPayment\(/.test(screen));
+    (screen.match(/payRecurringPayment\(/g) ?? []).length === 1 && /runRecurringPayment\(\{[\s\S]{0,200}plan: \(\) => activeEvmNodeRunner\(\(node\) => planRecurringPayment\(\{ node, record \}\), \{ isFailure: isRecurringNodeFailure \}\),[\s\S]{0,40}confirm: \(plan\) => \{[\s\S]{0,120}return confirmPaymentDialog\(plan\);[\s\S]{0,80}\},\s*pay: \(plan\) => \{[\s\S]{0,80}return quoteOnNode\(\(b\) => payRecurringPayment\(\{ bundle: b, plan, vault: sessionKeyVault \}\)\)/.test(screen));
   const dialog = body(screen, 'const confirmPaymentDialog =', 'const onPayNow =');
   check('the dialog resolves true only from "Send payment"; Cancel and dismiss resolve false (source)',
     /text: 'Cancel', style: 'cancel', onPress: \(\) => resolve\(false\)/.test(dialog) && /text: 'Send payment', onPress: \(\) => resolve\(true\)/.test(dialog) && /onDismiss: \(\) => resolve\(false\)/.test(dialog) && (dialog.match(/resolve\(true\)/g) ?? []).length === 1);
@@ -572,7 +631,9 @@ console.log('check-recurring: a payment, signed by the payment key alone');
     plan.due.kind === 'due' && same(plan.call.to, PAYEE) && plan.call.value === 100_000_000_000_000n && plan.call.data.length === 0 && vault.loads === loadsBefore);
   const msg = recurringConfirmMessage(plan, { nativeSymbol: 'test ETH', payeeName: 'Landlord' });
   check('confirmation text: amount, payee, smart account, the signer, fee source and the exact prompts',
-    msg.startsWith(`Send 0.0001 test ETH to Landlord (${PAYEE}) from your smart account ${ACCOUNT}.`) && /own key signs it, not your account key/.test(msg) && /fee budget \(0\.01 test ETH left\)/.test(msg) && msg.endsWith(RECURRING_PAY_PROMPT_NOTE), msg);
+    msg.startsWith(`Send 0.0001 test ETH to Landlord (${PAYEE}) from your smart account ${ACCOUNT}.`) && /fee budget \(0\.01 test ETH left\)/.test(msg) && msg.endsWith(RECURRING_PAY_PROMPT_NOTE), msg);
+  check('the dialog says ONCE that the payment key signs, not the account key (finding 5)',
+    (msg.match(/not your account key/g) ?? []).length === 1 && !/own key signs it/.test(msg) && msg === `Send 0.0001 test ETH to Landlord (${PAYEE}) from your smart account ${ACCOUNT}. The network fee comes from your smart account and counts against the fee budget (0.01 test ETH left). ${RECURRING_PAY_PROMPT_NOTE}`, msg);
   const { userOpHash } = await payRecurringPayment({ bundle, plan, vault, store, now: NOW });
   const op = fromRpcOp(bundler.lastOp);
   const hash = getUserOpHash(op, ENTRYPOINT_V07, CHAIN_ID);
@@ -732,7 +793,7 @@ console.log('check-recurring: refusals in plain words');
   const screen = src('../src/screens/SessionsScreen.tsx');
   const refusal = body(screen, 'const showPayRefusal = (', 'const confirmPaymentDialog =');
   check('a refused payment: alert + reason kept on the card + status re-read; the record is not removed (source)',
-    /Alert\.alert\(title, detail\)/.test(refusal) && /setPayRefusals\(\(prev\) => \(\{ \.\.\.prev, \[key\]: recurringRefusalLine\(detail\) \}\)\)/.test(refusal) && /refreshRecord\(record\)/.test(refusal) && !/forget|writeRecord|resetSessions/i.test(refusal));
+    /Alert\.alert\(title, detail\)/.test(refusal) && /setPayRefusals\(\(prev\) => \(\{ \.\.\.prev, \[key\]: recurringAttemptLine\(outcome, detail\) \}\)\)/.test(refusal) && /refreshRecord\(record\)/.test(refusal) && !/forget|writeRecord|resetSessions/i.test(refusal));
 }
 
 // ---------------------------------------------------------------------------
@@ -785,6 +846,289 @@ console.log('check-recurring: mainnet readiness');
   check('planning a mainnet payment is refused before any request', /only on test networks|test networks/.test(e1?.message ?? '') && node.calls.length === nodeCalls, e1?.message);
   const e2 = await caught(() => payRecurringPayment({ bundle, plan: { record: mainnetRecord, terms: JSON.parse('{}'), call: { to: PAYEE, value: 1n, data: new Uint8Array(0) }, due: { kind: 'due' } }, vault: v9 }));
   check('paying a mainnet plan is refused before the vault is read', /test networks/.test(e2?.message ?? '') && v9.loads === 0, e2?.message);
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-recurring: network failures in plain words, never "refused" (2026-10-09 rehearsal, finding 1)');
+// ---------------------------------------------------------------------------
+/** The exact shape Expo SDK 57's fetch throws (expo/src/winter/fetch/FetchErrors.ts: a plain Error, NOT a TypeError). */
+const expoFetchError = (host = 'ethereum-sepolia-rpc.publicnode.com') =>
+  new Error(`fetch failed: java.net.UnknownHostException: Unable to resolve host "${host}": No address associated with hostname`);
+const noJava = (t) => !/java\.net|UnknownHostException/.test(t);
+{
+  const e = expoFetchError();
+  // The root cause of the raw alert was that endpoint-probe's isEndpointFailure
+  // accepted "fetch failed" only on a TypeError, while Expo's fetch throws a
+  // plain Error; it now recognises the Expo shape app-wide, and sessions.ts
+  // keeps its own clause as a harmless second line.
+  check('endpoint-probe isEndpointFailure now recognises the Expo shape app-wide (it is not a TypeError)', isEndpointFailure(e) && !(e instanceof TypeError));
+  check('sessions.ts isTransportFailure recognises it; the engine\'s "UTXO fetch failed: HTTP 400" answer and a revert are not transport failures',
+    isTransportFailure(e) && !isTransportFailure(new Error('UTXO fetch failed: HTTP 400 for bc1q')) && !isTransportFailure(new Error('RPC error 3: execution reverted')) && isTransportFailure(new TypeError('Network request failed')));
+  const st = unknownStatusFrom(expoFetchError());
+  check('status read: "the network endpoint did not answer" with the cleaned detail, flagged for failover, no Java class',
+    st.endpointFailure === true && st.reason.startsWith('the network endpoint did not answer (') && noJava(st.reason) && /Unable to resolve host/.test(st.reason), st.reason);
+  const label = sessionStatusText(st);
+  const { record } = main;
+  const unknownDue = recurringDueState(record, st, NOW);
+  check('the card shows "Status unknown: …" ONCE: the due lines skip the same line the status label shows',
+    json(recurringStatusLines(record, unknownDue, 'test ETH', label)) === json([]) && json(recurringStatusLines(record, unknownDue, 'test ETH')) === json([label]));
+
+  // Payment step: the node does not answer at the FIRST request (chain id), before the key is read.
+  const s10 = memoryStore();
+  const v10 = fakeVault();
+  const n10 = fakeNode();
+  const b10 = fakeBundler({ receipt: { success: true, receipt: { transactionHash: TX_HASH } } });
+  const k10 = kernelBundle(n10, b10);
+  const r10 = await installRecurring({ node: n10, bundle: k10, store: s10, vault: v10 });
+  const plan10 = await planRecurringPayment({ node: n10, record: r10.record, now: NOW });
+  const deadNode = async (method, params) => {
+    if (method === 'eth_chainId') throw expoFetchError();
+    return n10(method, params);
+  };
+  const loads10 = v10.loads;
+  const sends10 = b10.calls.length;
+  const dead = await caught(() => payRecurringPayment({ bundle: kernelBundle(deadNode, b10), plan: plan10, vault: v10, store: s10, now: NOW }));
+  check('a dead node is found BEFORE the payment key is read (chain id first) and before any bundler call',
+    dead instanceof Error && isNodeEndpointFailure(dead) && v10.loads === loads10 && b10.calls.length === sends10, dead?.message);
+  const d1 = describeRecurringPaymentError(dead, { accountType: 'kernel-v3.3', symbol: 'test ETH' }, describeSendError);
+  check('described as NOT SENT: the unreachable title, the no-answer sentence, nothing sent, a cleaned technical detail',
+    d1.outcome === 'not-sent' && d1.title === SESSION_UNREACHABLE_TITLE && d1.detail.startsWith(`${NO_ANSWER_SENTENCE} ${RECURRING_NOT_SENT_SENTENCE}\n\nTechnical detail: `) &&
+      noJava(d1.title + d1.detail) && /Unable to resolve host/.test(d1.detail) && !/refused/i.test(d1.title + d1.detail), d1.detail);
+  check('exact not-sent sentence', RECURRING_NOT_SENT_SENTENCE === 'The payment was not handed to the bundler, so nothing was sent and none of the allowed payments was used up. Try again once the connection is back.');
+  const line1 = recurringAttemptLine(d1.outcome, d1.detail);
+  check('card line: "not sent", never "refused", no raw exception',
+    line1 === 'Last payment attempt not sent: the network could not be reached before the payment was handed to the bundler, so nothing was sent. Try again once the connection is back.', line1);
+
+  // The node dies AFTER the key was read (the account's code check inside sendCalls): still nothing submitted.
+  const midNode = async (method, params) => {
+    if (method === 'eth_getCode') throw expoFetchError();
+    return n10(method, params);
+  };
+  const mid = await caught(() => payRecurringPayment({ bundle: kernelBundle(midNode, b10), plan: plan10, vault: v10, store: s10, now: NOW }));
+  check('a node failure inside sendCalls (after the key read): marked as the node\'s, eth_sendUserOperation never called, described as not sent',
+    isNodeEndpointFailure(mid) && !b10.calls.slice(sends10).some((c) => c.method === 'eth_sendUserOperation') &&
+      describeRecurringPaymentError(mid, { accountType: 'kernel-v3.3', symbol: 'x' }, describeSendError).outcome === 'not-sent', mid?.message);
+
+  // The bundler does not answer the ESTIMATE: nothing submitted.
+  const estDead = Object.assign(async (method, params) => {
+    if (method === 'eth_estimateUserOperationGas') throw expoFetchError('rpc.zerodev.app');
+    return b10(method, params);
+  }, { calls: b10.calls });
+  const est = await caught(() => payRecurringPayment({ bundle: kernelBundle(n10, estDead), plan: plan10, vault: v10, store: s10, now: NOW }));
+  const d2 = describeRecurringPaymentError(est, { accountType: 'kernel-v3.3', symbol: 'x' }, describeSendError);
+  check('bundler unreachable at the estimate (before submission): not sent, and not a node failure (never failed over)',
+    d2.outcome === 'not-sent' && !isNodeEndpointFailure(est) && !isRecurringNodeFailure(est) && noJava(d2.detail), d2.detail);
+
+  // The bundler connection fails DURING eth_sendUserOperation: the outcome is open.
+  const sendDead = async (method, params) => {
+    if (method === 'eth_sendUserOperation') throw expoFetchError('rpc.zerodev.app');
+    return b10(method, params);
+  };
+  const sub = await caught(() => payRecurringPayment({ bundle: kernelBundle(n10, sendDead), plan: plan10, vault: v10, store: s10, now: NOW }));
+  const d3 = describeRecurringPaymentError(sub, { accountType: 'kernel-v3.3', symbol: 'x' }, describeSendError);
+  check('failure during submission: "Payment status unknown", the nonce decides, refresh before sending again; never "not sent" or "refused"',
+    d3.outcome === 'outcome-unknown' && d3.title === RECURRING_OUTCOME_UNKNOWN_TITLE && d3.title === 'Payment status unknown' && d3.detail.startsWith(RECURRING_OUTCOME_UNKNOWN_SENTENCE) &&
+      /nonce for this payment key decides/.test(d3.detail) && /Refresh status before sending again/.test(d3.detail) && !/nothing was sent|refused/i.test(d3.title + d3.detail) && noJava(d3.detail) &&
+      !isRecurringNodeFailure(sub), d3.detail);
+  check('card line for an open outcome',
+    recurringAttemptLine(d3.outcome, d3.detail) === 'Last payment attempt: outcome unknown (the connection failed while it was being sent). Tap Refresh status and wait for the count before sending again.');
+  const unreadable = describeRecurringPaymentError(new RecurringNotDueError('Its on-chain status could not be read (The permission is only partly installed on-chain.), so nothing was sent.', { kind: 'unknown', reason: 'x' }), { accountType: 'kernel-v3.3', symbol: 'x' }, describeSendError);
+  check('a status unreadable for another reason is "failed", not "refused"; a real not-due stays "refused"',
+    unreadable.outcome === 'failed' && recurringAttemptLine(unreadable.outcome, unreadable.detail).startsWith('Last payment attempt failed: Its on-chain status could not be read') &&
+      describeRecurringPaymentError(new RecurringNotDueError('This payment is not due yet.', { kind: 'later', at: 1 }), { accountType: 'kernel-v3.3', symbol: 'x' }, describeSendError).outcome === 'refused');
+  const unplaced = describeRecurringPaymentError(expoFetchError(), { accountType: 'kernel-v3.3', symbol: 'x' }, describeSendError);
+  check('a transport failure the wallet cannot place (unmarked) is treated as an open outcome, never as "nothing was sent"', unplaced.outcome === 'outcome-unknown');
+  check('an on-chain refusal keeps "refused" on the card',
+    recurringAttemptLine('refused', 'Your account refused this payment: it is not due yet, or the recurring payment has ended. Nothing was paid.\n\nTechnical detail: x') ===
+      'Last payment attempt refused: Your account refused this payment: it is not due yet, or the recurring payment has ended. Nothing was paid.' &&
+      describeRecurringPaymentError(new Error('RPC error -32500: AA22 expired or not due'), { accountType: 'kernel-v3.3', symbol: 'x' }, describeSendError).outcome === 'refused');
+
+  // The plan's status read does not answer: a network failure, not "Payment not sent … status could not be read".
+  const deadRead = async () => { throw expoFetchError(); };
+  const p1 = await caught(() => planRecurringPayment({ node: deadRead, record: r10.record, now: NOW }));
+  const d4 = describeRecurringPaymentError(p1, { accountType: 'kernel-v3.3', symbol: 'x' }, describeSendError);
+  check('plan read unanswered: RecurringStatusUnreachableError, described as not sent with the cleaned detail, failover-eligible',
+    p1 instanceof RecurringStatusUnreachableError && isRecurringNodeFailure(p1) && d4.outcome === 'not-sent' && d4.title === SESSION_UNREACHABLE_TITLE &&
+      /\n\nTechnical detail: fetch failed: Unable to resolve host/.test(d4.detail) && noJava(d4.detail), d4.detail);
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-recurring: endpoint failover for the status read, the plan and the payment (node only, once)');
+// ---------------------------------------------------------------------------
+{
+  const s11 = memoryStore();
+  const v11 = fakeVault();
+  const n11 = fakeNode();
+  const b11 = fakeBundler({ receipt: { success: true, receipt: { transactionHash: TX_HASH } } });
+  const k11 = kernelBundle(n11, b11);
+  const r11 = await installRecurring({ node: n11, bundle: k11, store: s11, vault: v11 });
+  let plannedValue = null;
+  const A = { url: 'https://a.example', isOverride: false, defaultChoice: { healthy: true }, network: { chainId: M } };
+  const B = { url: 'https://b.example', isOverride: false, defaultChoice: { healthy: true }, network: { chainId: M } };
+  const deadA = async () => { throw expoFetchError('a.example'); };
+  const nodes = { [A.url]: deadA, [B.url]: n11 };
+  const reports = [];
+  // The real failover rule (endpoint-probe.ts runWithEndpointFailover), shaped like the app's activeEvmNodeRunner.
+  const runner = (operation, options) =>
+    runWithEndpointFailover(A, (ep) => operation(markNodeErrors(nodes[ep.url])), {
+      reResolve: async () => B,
+      report: (chain, url) => (reports.push(url), true),
+      isFailure: options.isFailure,
+    }).then((o) => o.value);
+  const st = await readStatusWithFailover(runner, (node) => readSubscriptionStatus(node, r11.record, NOW));
+  check('status read: endpoint A does not answer (Expo error) → reported and read once more on B → a real answer',
+    st.kind === 'ok' && reports.length === 1 && reports[0] === A.url, json(st));
+  reports.length = 0;
+  const bothDead = (operation, options) =>
+    runWithEndpointFailover(A, (ep) => operation(markNodeErrors(deadA)), { reResolve: async () => B, report: (c, u) => (reports.push(u), true), isFailure: options.isFailure }).then((o) => o.value);
+  const st2 = await readStatusWithFailover(bothDead, (node) => readSubscriptionStatus(node, r11.record, NOW));
+  check('both endpoints silent: no third attempt, the plain "unknown" answer is returned (not thrown)', st2.kind === 'unknown' && st2.endpointFailure === true && reports.length === 2 && noJava(st2.reason));
+  const override = { ...A, isOverride: true };
+  let overrideCalls = 0;
+  const overrideRunner = (operation, options) =>
+    runWithEndpointFailover(override, (ep) => (overrideCalls += 1, operation(markNodeErrors(deadA))), { reResolve: async () => B, report: () => true, isFailure: options.isFailure }).then((o) => o.value);
+  const st3 = await readStatusWithFailover(overrideRunner, (node) => readSubscriptionStatus(node, r11.record, NOW));
+  check('a user override is never worked around', st3.kind === 'unknown' && overrideCalls === 1);
+
+  reports.length = 0;
+  const planned = await caught(async () => {
+    plannedValue = await runner((node) => planRecurringPayment({ node, record: r11.record, now: NOW }), { isFailure: isRecurringNodeFailure });
+  });
+  check('plan: fails over once on the unanswered read and plans on B', planned === null && plannedValue?.due.kind === 'due' && reports.length === 1, planned?.message);
+  // Continue with a plan made directly on B when the failover check above failed.
+  const plan = plannedValue ?? (await planRecurringPayment({ node: n11, record: r11.record, now: NOW }));
+
+  // The payment: bundles per endpoint, like the screen's quoteOnNode (isNodeEndpointFailure).
+  const bundles = { [A.url]: kernelBundle(deadA, b11), [B.url]: k11 };
+  reports.length = 0;
+  const loads = v11.loads;
+  const sendsBefore = b11.calls.filter((c) => c.method === 'eth_sendUserOperation').length;
+  let paid = null;
+  const payError = await caught(async () => {
+    paid = await runWithEndpointFailover(A, (ep) => payRecurringPayment({ bundle: bundles[ep.url], plan, vault: v11, store: s11, now: NOW }), {
+      reResolve: async () => B, report: (c, u) => (reports.push(u), true), isFailure: isNodeEndpointFailure,
+    });
+  });
+  check('payment: the dead node A is failed over to B; ONE submission; the payment key read ONCE (A failed before the key read)',
+    payError === null && paid.switched && typeof paid.value.userOpHash === 'string' && b11.calls.filter((c) => c.method === 'eth_sendUserOperation').length === sendsBefore + 1 &&
+      v11.loads === loads + 1 && reports.length === 1);
+  const sendDead = async (method, params) => {
+    if (method === 'eth_sendUserOperation') throw expoFetchError('rpc.zerodev.app');
+    return b11(method, params);
+  };
+  let attemptsOnB = 0;
+  const noRetry = await caught(() => runWithEndpointFailover(B, (ep) => (attemptsOnB += 1, payRecurringPayment({ bundle: kernelBundle(n11, sendDead), plan, vault: v11, store: s11, now: NOW })), {
+    reResolve: async () => A, report: () => true, isFailure: isNodeEndpointFailure,
+  }));
+  check('a BUNDLER failure is never failed over (the submission may have been received): one attempt, the error surfaces', noRetry instanceof Error && attemptsOnB === 1);
+
+  const screen = src('../src/screens/SessionsScreen.tsx');
+  const banner = src('../src/components/RecurringDueBanner.tsx');
+  check('the screen\'s status reads go through readStatusWithFailover on the active endpoint (source)',
+    /return await readStatusWithFailover\(activeEvmNodeRunner, read\);/.test(screen));
+  check('the banner\'s due check reads through readStatusWithFailover too (source; before, withEndpoint never saw an error)',
+    /readStatusWithFailover\(activeEvmNodeRunner, \(node\) => readSubscriptionStatus\(node, record\)\)/.test(banner) &&
+      /withEndpoint\(EVM_CHAIN_ID, \(endpoint\) => operation\(markNodeErrors\(httpTransport\(endpoint\.url\)\)\), options\)/.test(banner));
+  const sess = src('../src/wallet/sessions.ts');
+  const sendBody = body(sess, 'export async function sendSessionCalls', 'export function sessionOperationNonceKey');
+  check('sendSessionCalls reads the chain id BEFORE the vault, marks node and bundler errors, and signs through the marked transports (source)',
+    sendBody.indexOf('await nodeClient.chainId()') > 0 && sendBody.indexOf('await nodeClient.chainId()') < sendBody.indexOf('args.vault.load(') &&
+      /const node = markNodeErrors\(bundle\.node\);/.test(sendBody) && /const bundler = markBundlerErrors\(bundle\.bundler\);/.test(sendBody) && /node: spec\.routeNode\(node\),/.test(sendBody) && /^\s*bundler,$/m.test(sendBody));
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-recurring: the grace period end to end (finding 3)');
+// ---------------------------------------------------------------------------
+{
+  const { record, sub } = main;
+  const { parseSessionKeyGrant, serializeSessionKeyGrant } = await import('@shiba-wallet/chains-evm');
+  check('the installed record carries the grant\'s end one period after the terms (recurringEndsAt)', recurringEndsAt(record) === sub.validUntil + DAY && parseSessionKeyGrant(record.grant).validUntil === sub.validUntil + DAY);
+  const g = parseSessionKeyGrant(record.grant);
+  check('termsMatchGrant: recurring with grace ✓; recurring without grace (set up before) ✓; two periods ✗; a SUBSCRIPTION with grace ✗',
+    termsMatchGrant('recurring', sub, g) && termsMatchGrant('recurring', sub, { ...g, validUntil: sub.validUntil }) &&
+      !termsMatchGrant('recurring', sub, { ...g, validUntil: sub.validUntil + 2 * DAY }) && !termsMatchGrant('subscription', sub, g));
+  // Stored records: an old (no-grace) recurring record still loads; a subscription record carrying a grace is dropped.
+  const raw = JSON.parse(await store.getItem(SESSIONS_KEY));
+  const k = Object.keys(raw.records)[0];
+  const oldStyle = memoryStore();
+  const raw1 = JSON.parse(JSON.stringify(raw));
+  raw1.records[k].grant = serializeSessionKeyGrant({ ...g, validUntil: sub.validUntil });
+  await oldStyle.setItem(SESSIONS_KEY, JSON.stringify(raw1));
+  const ol = await loadSessions(oldStyle);
+  check('a recurring record installed before the grace (grant end = terms end) still loads', ol.records.length === 1 && !ol.corrupt && recurringEndsAt(ol.records[0]) === sub.validUntil);
+  const asSub = memoryStore();
+  const raw2 = JSON.parse(JSON.stringify(raw));
+  raw2.records[k].source = 'subscription';
+  await asSub.setItem(SESSIONS_KEY, JSON.stringify(raw2));
+  check('a SUBSCRIPTION record whose grant ends after its terms is dropped (grace only for recurring payments)', (await loadSessions(asSub)).records.length === 0);
+  const st = await readSubscriptionStatus(node, record, NOW);
+  check('readSubscriptionStatus uses the INSTALLED grant\'s end (TimestampPolicy), not the terms\'', st.kind === 'ok' && st.state.validUntil === sub.validUntil + DAY);
+
+  // A payment inside the grace period passes the local checks (before, assertSubscriptionPull refused it).
+  const s12 = memoryStore();
+  const v12 = fakeVault();
+  const n12 = fakeNode();
+  const b12 = fakeBundler({ receipt: { success: true, receipt: { transactionHash: TX_HASH } } });
+  const k12 = kernelBundle(n12, b12);
+  const r12 = await installRecurring({ node: n12, bundle: k12, store: s12, vault: v12, periodSeconds: 120, payments: '3', now: NOW });
+  n12.paid(r12.record.permissionId);
+  n12.paid(r12.record.permissionId);
+  const afterEnd = await caught(() => planRecurringPayment({ node: n12, record: r12.record, now: NOW + 4 * 120 + 1 }));
+  check('after the grant\'s end (terms + one period) the unsent payment is refused locally as ended',
+    afterEnd instanceof RecurringNotDueError && afterEnd.due.kind === 'completed' && afterEnd.due.reason === 'ended' && /ended/.test(afterEnd.message), afterEnd?.message);
+  const inGrace = NOW + 3 * 120 + 30; // after the terms' end, before the grant's end
+  let lastPlan = null;
+  let sent = null;
+  const graceError = await caught(async () => {
+    lastPlan = await planRecurringPayment({ node: n12, record: r12.record, now: inGrace });
+    sent = await payRecurringPayment({ bundle: k12, plan: lastPlan, vault: v12, store: s12, now: inGrace });
+  });
+  check('the LAST payment sent late, inside the grace period: planned, checked locally and submitted',
+    graceError === null && lastPlan.due.kind === 'due' && lastPlan.due.sent === 2 && typeof sent.userOpHash === 'string', graceError?.message);
+  n12.paid(r12.record.permissionId);
+  const fourth = await caught(() => planRecurringPayment({ node: n12, record: r12.record, now: inGrace + 10 }));
+  check('…and no fourth payment inside the grace period: all 3 sent', fourth instanceof RecurringNotDueError && /already sent/.test(fourth.message));
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-recurring: copy (finding 5) and the due-state timer (finding 2)');
+// ---------------------------------------------------------------------------
+{
+  const payeeErr = (await caught(() => buildSubscription({ merchant: '0x123', choice: native, amount: '1', periodSeconds: DAY, payments: '3', feeBudget: '0.01', label: 'x' }, { now: NOW, account: ACCOUNT, recipientLabel: 'Payee' })))?.message ?? '';
+  const merchErr = (await caught(() => buildSubscription({ merchant: '0x123', choice: native, amount: '1', periodSeconds: DAY, payments: '3', feeBudget: '0.01', label: 'x' }, { now: NOW, account: ACCOUNT })))?.message ?? '';
+  check('the payee error is labelled "Payee:" on the recurring form; subscriptions keep "Merchant:"', /^Payee: An Ethereum address is 0x/.test(payeeErr) && /^Merchant: /.test(merchErr), payeeErr);
+  const screen = src('../src/screens/SessionsScreen.tsx');
+  check('the form passes "Payee" for a recurring payment (source)', screen.includes("{ now, account, testnet: evmChain.testnet, recipientLabel: mode === 'recurring' ? 'Payee' : 'Merchant' }"));
+  const q = { amount: 0n, fee: 1_000n, senderBalance: 2_000n, deposit: undefined, sponsored: false, sender: ACCOUNT };
+  const g = { startAt: 0, validUntil: 360, periodSeconds: 120, feeBudgetWei: 1_000n, amountPerPeriod: 10n, token: SUBSCRIPTION_NATIVE };
+  const rec = subscriptionInstallFunding(q, g, 'test ETH', 'recurring').shortfall ?? '';
+  const subs = subscriptionInstallFunding(q, g, 'test ETH').shortfall ?? '';
+  check('the funding box says "Payments" for a recurring payment, "Pulls" for a subscription',
+    rec.endsWith('Payments the account cannot pay for will fail; fund the smart account to cover them.') && !/Pulls/.test(rec) && subs.endsWith('Pulls the account cannot pay for will fail; fund the smart account to cover them.'), rec);
+  check('the review passes the mode to the funding lines (source)', screen.includes("const funding = subscriptionInstallFunding(shown, sub, symbol, recurring ? 'recurring' : 'subscription');"));
+  check('revoke screen: "the payment key is deleted from this phone" for a recurring payment; sessions keep their sentence',
+    sessionRevokeKeySentence({ keyHeld: true, source: 'recurring' }) === 'Signed by your account key. Once the bundler accepts it, the payment key is deleted from this phone.' &&
+      sessionRevokeKeySentence({ keyHeld: false, source: 'recurring' }) === 'Signed by your account key. The payment key is no longer on this phone; once the revocation is included on-chain, any copy of it stops working.' &&
+      sessionRevokeKeySentence({ keyHeld: true, source: 'manual' }) === 'Signed by your account key. Once the bundler accepts it, the session key is deleted from this device.');
+
+  // Finding 2: due state re-evaluated on a timer and on return to the foreground.
+  check('the list computes the due state from a ticking clock, not the render-time clock (source)',
+    /due: subStatus === undefined \|\| subStatus === 'loading' \? null : recurringDueState\(record, subStatus, nowTick\),/.test(screen) && !/recurringDueStateNow\(/.test(screen));
+  check('the clock ticks every 30 s while focused; a return to the foreground re-reads every record (source)',
+    /const isFocused = useIsFocused\(\);\s*useOnAppActive\(reloadList, isFocused\);\s*const nowTick = useClockTick\(30_000, isFocused\);/.test(screen));
+  const banner = src('../src/components/RecurringDueBanner.tsx');
+  const tick = body(banner, 'export function useClockTick', '\n}\n');
+  check('useClockTick: interval while enabled, refreshed on enable and on AppState active, cleared on cleanup (source)',
+    /useOnAppActive\(update, enabled\);/.test(tick) && /if \(!enabled\) return undefined;/.test(tick) && /setInterval\(update, intervalMs\)/.test(tick) && /setTimeout\(update, 0\)/.test(tick) && /clearInterval\(id\)/.test(tick));
+  check('the banner and the screen share ONE AppState listener implementation (useOnAppActive; source)',
+    (banner.match(/AppState\.addEventListener\(/g) ?? []).length === 1 && /useOnAppActive\(useCallback\(\(\) => setGeneration\(\(g\) => g \+ 1\), \[\]\)\);/.test(banner) && !/AppState/.test(screen));
+  // Behaviour of the due arithmetic the timer drives: the same facts, a later clock.
+  const S = 1_800_000_000;
+  const terms = { ...JSON.parse(JSON.stringify(main.record.subscription.terms)), startAt: S, validUntil: S + 360, periodSeconds: 120 };
+  const r = { ...main.record, grant: { ...main.record.grant, validUntil: S + 480 }, subscription: { ...main.record.subscription, terms } };
+  const facts = { kind: 'ok', state: { rateLimitStatus: 'live', remainingPulls: 2, nextSlotAt: S + 120, intervalSeconds: 120, feeBudgetLeftWei: 1n, validUntil: S + 480 }, next: { kind: 'later' } };
+  check('the same on-chain facts read at S + 60 give "later", and at the next tick (S + 120) "due" — no network needed',
+    recurringDueState(r, facts, S + 60).kind === 'later' && recurringDueState(r, facts, S + 120).kind === 'due');
 }
 
 console.log(`\ncheck-recurring: ${passed} passed, ${failed} failed`);

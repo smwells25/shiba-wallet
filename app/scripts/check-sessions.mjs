@@ -891,6 +891,20 @@ console.log('\ncheck-sessions: endpoint failures and user copy (2026-10-04 emula
   check('the same failure from the bundler does not', !isNodeEndpointFailure(bundlerErr));
   const nodeRevert = await caught(() => markNodeErrors(async () => { throw new Error('RPC error 3: execution reverted'); })('eth_call', []));
   check('a node answer that is not a transport failure does not either', !isNodeEndpointFailure(nodeRevert));
+  // Source pins (2026-10-09 recurring-payments rehearsal, finding 1): Expo SDK 57's fetch throws a plain
+  // Error("fetch failed: …"), which endpoint-probe isEndpointFailure does not accept; every transport-failure
+  // decision in sessions.ts therefore goes through isTransportFailure (behaviour pinned in check-recurring.mjs).
+  {
+    const sessSrc = readFileSync(new URL('../src/wallet/sessions.ts', import.meta.url), 'utf8');
+    const code = sessSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    check('sessions.ts calls isEndpointFailure only inside isTransportFailure, which also accepts "fetch failed: …" on a plain Error (source)',
+      (code.match(/isEndpointFailure\(/g) ?? []).length === 1 &&
+        /export function isTransportFailure\(error: unknown\): boolean \{\s*if \(isEndpointFailure\(error\)\) return true;\s*return error instanceof Error && \/\^fetch failed\(\?::\|\$\)\/\.test\(error\.message\);\s*\}/.test(code));
+    check('unknownStatusFrom, isNodeEndpointFailure and describeSessionError use isTransportFailure (source)',
+      /export function unknownStatusFrom[\s\S]{0,160}if \(isTransportFailure\(error\)\)/.test(code) &&
+        /export function isNodeEndpointFailure[\s\S]{0,80}isTransportFailure\(error\) &&/.test(code) &&
+        /export function describeSessionError[\s\S]{0,400}if \(isTransportFailure\(error\)\)/.test(code));
+  }
   const made = [];
   const factory = sessionTransportFor('https://node.example', (url) => { made.push(url); return async () => '0x1'; }, { paymasterUrl: 'https://pm.example', plainHttp: true });
   factory('https://bundler.example');

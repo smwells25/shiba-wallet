@@ -228,6 +228,12 @@ rateLimited.code = -32005;
 for (const [label, error, expected] of [
   ['React Native fetch failure', new TypeError('Network request failed'), true],
   ['Node fetch failure', new TypeError('fetch failed'), true],
+  // Expo SDK 57's own fetch (expo/src/winter/fetch/FetchErrors.ts) throws a
+  // FetchError that extends Error, not TypeError, with "fetch failed: " plus
+  // the platform's text. This is what the emulator threw on 2026-10-09.
+  ['Expo FetchError (DNS)', Object.assign(new Error('fetch failed: java.net.UnknownHostException: Unable to resolve host "ethereum-sepolia-rpc.publicnode.com": No address associated with hostname'), { name: 'FetchError' }), true],
+  ['a plain Error that starts with "fetch failed:"', new Error('fetch failed: Software caused connection abort'), true],
+  ['an engine message containing "fetch failed" with an answered status', new Error('UTXO fetch failed: HTTP 400 for bc1q…'), false],
   ['abort', abort, true],
   ['timeout wording', new Error('no answer within 4000 ms (timed out)'), true],
   ['HTML instead of JSON', new SyntaxError('Unexpected token < in JSON'), true],
