@@ -3001,3 +3001,52 @@ alongside; emulator passes after each wave. Subagents on Opus.
       on Hoodi. DECISION FOR THE CHAIRPERSON: build the stake-only
       Sepolia slice (cheap, honest, no rewards to show) and/or add a
       Hoodi profile (rewards and Rocket Pool, but no Kernel there).
+- [x] Item 4 — TRANSACTION NOTES AND AN ACTIVITY EXPORT (commit cba1d0c; new
+      check-notes 174; offline runner ALL GREEN in the CTO's isolated
+      worktree with only this slice: engine 877, app 6,422 across 47
+      suites, lint 0/0, tsc clean; mutants caught — sanitiser removed 19
+      checks, formula defusal removed 11, unloaded notes exported 3; not
+      seen on a device). KEY RULE (app/src/wallet/notes.ts): CAIP-2 +
+      transaction id (hex lowercased; Solana signatures exact; eip155 /
+      bip122 / solana only), not tied to an account; a smart-account note
+      saved before the receipt lives under op:<userOpHash> and moves to
+      tx:<hash> via linkUserOperation (keeping the userOpHash) when the
+      bundle hash arrives; findNote tries the transaction id then the
+      row's decoded userOps, so a note whose receipt timed out still
+      shows once the row decodes; an existing tx-id note is kept, never
+      merged. STORE shiba-wallet.tx-notes.v1 (strict parse: any bad
+      record makes the whole store read-only with the readable notes
+      shown and writes refused with NOTES_READ_ONLY_MESSAGE; "Reset
+      notes" on Activity; one write queue; MAX_NOTES 2,000 — a
+      judgement); sanitiser: line breaks and tabs → spaces, then the
+      shared sanitizeDisplayName, then 280 code points; an empty result
+      removes the note; the CTO added the wipe line in WalletContext
+      (wipeTransactionNotes after forgetBrowserConnections). UI: "Note
+      (private, this phone only)" on both Send success views and per
+      Activity row ("Add note" / "Edit note", editor with "N / 280",
+      "Save note" / "Remove note" / "Cancel"), the privacy line "Notes
+      are kept only on this phone. They are not sent anywhere, not backed
+      up by your recovery phrase and are deleted when the wallet is
+      wiped. Hide amounts does not hide them." EXPORT: "Export activity
+      (.csv)" — RFC 4180 (every field quoted, quotes doubled, CRLF),
+      OWASP CSV-injection defusal (a leading apostrophe on any cell
+      starting with = + - @ tab CR LF — every cell, so indexer-supplied
+      symbols too), columns network / date (UTC; "pending" / "block N")
+      / direction ("Sent (failed)") / amount / asset / fee / FEE ASSET
+      (an 11th column so a fee is never read in the token's units) /
+      counterparty (from decodes in memory; no network requests) /
+      transaction id / explorer URL / note; exact strings via formatUnits;
+      MIME text/csv, UTI public.comma-separated-values-text (checked in
+      the macOS SDK); file shiba-activity_<caip2>_<short>_<date>.csv with
+      the 60 s delete-after-share rule in its own directory; the note
+      says it exports the loaded entries only and contains addresses,
+      amounts and notes in clear even under Hide amounts.
+      RecordFileActions gained a generic shareTextFile (lazy name and
+      contents; the recovery-record path byte-identical). FOLLOW-UPS: a
+      TransactionNoteField component for the Swap, WalletConnect and
+      Sessions success views; no UTF-8 BOM (Excel may misread non-ASCII
+      notes); spreadsheets may round 18-decimal amounts on import.
+      UNVERIFIED (emulator): the editor modal (layout, keyboard, dark
+      mode), Done-with-keyboard-open saving, the AA note → link → Activity
+      path, the focus reload after Send, the Android share sheet with
+      text/csv, TalkBack on the note bar.
