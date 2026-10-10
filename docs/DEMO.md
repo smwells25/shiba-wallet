@@ -31,6 +31,7 @@ Allow about an hour the first time, mostly for funding and for a rehearsal run.
 - The emulator is the Android Virtual Device named **`shiba`** (Pixel 7 profile, Android 14 with Google APIs). Start it from Android Studio's Device Manager, or with `~/Library/Android/sdk/emulator/emulator -avd shiba`.
 - The device PIN is **1234** and one fingerprint is enrolled. To "touch" the fingerprint sensor, run `adb emu finger touch 1` in a terminal. After a cold boot the emulator says "PIN is required after device restarts"; `AGENTS.md` records that `adb shell locksettings verify --old 1234` unlocks the user storage, after which the PIN typed on the on-screen keypad is accepted (open the keypad with a finger touch first).
 - The wallet runs inside **Expo Go**, which is already installed on the emulator.
+- **Screen protection is on by default (phase 17).** Settings → Privacy → "Hide in the app switcher and block screenshots" makes every screen of the wallet come out blank in screenshots, screen recordings, `adb screencap` and the recent-apps thumbnail on Android. If you want to take screenshots or record the demo, turn it **off** before you start, and turn it back on afterwards. The screens that show the recovery phrase or a private key stay protected even with the setting off, so step 1's blank backup screenshot still works.
 
 ### Metro, the development server
 

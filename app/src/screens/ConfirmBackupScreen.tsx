@@ -1,4 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
+import { usePreventScreenCapture } from 'expo-screen-capture';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { wordlist } from '@scure/bip39/wordlists/english.js';
 import { Button, screenStyle } from '../components';
@@ -40,6 +41,11 @@ function makeQuiz(words: string[]): Question[] {
 }
 
 export function ConfirmBackupScreen() {
+  // The phrase (or words of it) is on screen here, so this screen holds its
+  // own capture key like the Backup screen, independent of the app-wide
+  // Privacy setting (expo-screen-capture keeps a set of keys; see
+  // screen-protection.ts).
+  usePreventScreenCapture('backup-quiz');
   const theme = useTheme();
   const { pendingMnemonic, confirmCreate } = useWallet();
   const words = useMemo(

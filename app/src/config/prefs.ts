@@ -7,7 +7,7 @@ import { EVM_SEPOLIA, isTestProfileId, type TestNetworkId } from './evm-chain.ts
  * App preferences (phase 4, items 5 + 6; phase 6, item 2; phase 10, item
  * 3): the developer test-network choice, the balance-privacy toggle, the
  * auto-lock threshold,
- * and the fiat-display toggle. All of them are
+ * the fiat-display toggle and the app-wide screen protection (phase 17). All of them are
  * plain configuration, not secrets, so they live in AsyncStorage like the
  * endpoint overrides (config/networks.ts) — never in the secure store,
  * which holds only the mnemonic (wallet/storage.ts).
@@ -60,6 +60,15 @@ export interface AppPrefs {
    * network call, so with it off CoinGecko is never contacted.
    */
   showFiat: boolean;
+  /**
+   * App-wide screen protection (phase 17 item 0; the Chairperson's decision
+   * of 2026-10-10). Default ON: the whole app is protected from screenshots,
+   * screen recording and the app-switcher preview (wallet/screen-protection.ts
+   * applies it). Turning it off releases only the app-wide protection; the
+   * screens that show the recovery phrase or a private key keep their own.
+   * Any stored value that is not a boolean reads as ON.
+   */
+  screenProtection: boolean;
 }
 
 export const DEFAULT_PREFS: AppPrefs = {
@@ -68,6 +77,7 @@ export const DEFAULT_PREFS: AppPrefs = {
   hideAmounts: false,
   autoLockMs: null,
   showFiat: true,
+  screenProtection: true,
 };
 
 /** The selectable auto-lock thresholds: off, 1 minute, 5 minutes. */
@@ -92,6 +102,8 @@ function sanitize(parsed: unknown): AppPrefs {
       typeof p.hideAmounts === 'boolean' ? p.hideAmounts : DEFAULT_PREFS.hideAmounts,
     autoLockMs: autoLockOk ? (p.autoLockMs as number | null) : DEFAULT_PREFS.autoLockMs,
     showFiat: typeof p.showFiat === 'boolean' ? p.showFiat : DEFAULT_PREFS.showFiat,
+    screenProtection:
+      typeof p.screenProtection === 'boolean' ? p.screenProtection : DEFAULT_PREFS.screenProtection,
   };
 }
 

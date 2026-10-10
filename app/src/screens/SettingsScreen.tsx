@@ -34,6 +34,14 @@ import {
 import { useTheme, type Theme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
+import {
+  SCREEN_PROTECTION_ALWAYS_NOTE,
+  SCREEN_PROTECTION_PLATFORM_NOTE,
+  SCREEN_PROTECTION_SWITCH_LABEL,
+  SCREEN_PROTECTION_TITLE,
+  appScreenProtection,
+  describeScreenProtectionStatus,
+} from '../wallet/screen-protection';
 import { localAuthAvailable, requireLocalAuth } from '../wallet/biometric';
 import { storageProtection, upgradePhraseProtection, type StorageProtection } from '../wallet/storage';
 import {
@@ -1100,6 +1108,18 @@ export function SettingsScreen({ navigation, route }: Props) {
     showFiat,
     setShowFiat,
   } = usePrefs();
+  // Settings → Privacy (phase 17 item 0): the app-wide screen protection.
+  const { screenProtection, setScreenProtection } = usePrefs();
+  const screenProtectionStatus = React.useSyncExternalStore(
+    appScreenProtection().subscribe,
+    appScreenProtection().status,
+  );
+  // A failed attempt is also retried whenever Settings comes into view.
+  useFocusEffect(
+    useCallback(() => {
+      void appScreenProtection().retryIfFailed();
+    }, []),
+  );
   const [revealed, setRevealed] = useState<string | null>(null);
 
   // Block screenshots while the revealed recovery phrase is on screen
@@ -1483,6 +1503,32 @@ export function SettingsScreen({ navigation, route }: Props) {
             auto-lock.
           </Text>
         ) : null}
+      </View>
+
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: theme.text }]}>{SCREEN_PROTECTION_TITLE}</Text>
+        <View style={styles.toggleRow}>
+          <Text style={[styles.toggleLabel, { color: theme.text, flexShrink: 1, marginRight: 12 }]}>
+            {SCREEN_PROTECTION_SWITCH_LABEL}
+          </Text>
+          <Switch
+            accessibilityLabel={SCREEN_PROTECTION_SWITCH_LABEL}
+            accessibilityRole="switch"
+            accessibilityState={{ checked: screenProtection }}
+            value={screenProtection}
+            onValueChange={(v) => void setScreenProtection(v)}
+          />
+        </View>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{SCREEN_PROTECTION_PLATFORM_NOTE}</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{SCREEN_PROTECTION_ALWAYS_NOTE}</Text>
+        <Text
+          style={[
+            styles.hint,
+            { color: screenProtectionStatus.state === 'failed' ? theme.danger : theme.textMuted },
+          ]}
+        >
+          {describeScreenProtectionStatus(screenProtectionStatus)}
+        </Text>
       </View>
 
       <View style={styles.section}>

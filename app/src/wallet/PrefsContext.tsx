@@ -30,6 +30,12 @@ interface PrefsContextValue {
   /** Show fiat values (default on); off means no price request is made. */
   showFiat: boolean;
   /**
+   * App-wide screen protection (default on; wallet/screen-protection.ts).
+   * Only meaningful once `ready` is true: before that the root protects the
+   * app whatever this says.
+   */
+  screenProtection: boolean;
+  /**
    * The active EVM chain profile — THE config source screens use for
    * chain-id verification, explorer links, badges and AA prefill
    * (config/evm-chain.ts). Derived from `testNetwork`.
@@ -42,6 +48,7 @@ interface PrefsContextValue {
   setHideAmounts: (on: boolean) => Promise<void>;
   setAutoLockMs: (ms: number | null) => Promise<void>;
   setShowFiat: (on: boolean) => Promise<void>;
+  setScreenProtection: (on: boolean) => Promise<void>;
 }
 
 const PrefsContext = createContext<PrefsContextValue | null>(null);
@@ -83,12 +90,14 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
       hideAmounts: prefs.hideAmounts,
       autoLockMs: prefs.autoLockMs,
       showFiat: prefs.showFiat,
+      screenProtection: prefs.screenProtection,
       evmChain: evmProfileFor(prefs.testNetwork),
       setSepolia: (on) => patch({ sepolia: on }),
       setTestNetwork: (network) => patch({ testNetwork: network }),
       setHideAmounts: (on) => patch({ hideAmounts: on }),
       setAutoLockMs: (ms) => patch({ autoLockMs: ms }),
       setShowFiat: (on) => patch({ showFiat: on }),
+      setScreenProtection: (on) => patch({ screenProtection: on }),
     }),
     [ready, prefs, patch],
   );

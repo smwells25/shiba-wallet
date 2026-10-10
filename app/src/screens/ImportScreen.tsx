@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { usePreventScreenCapture } from 'expo-screen-capture';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -16,6 +17,11 @@ const VALID_WORD_COUNTS = [12, 15, 18, 21, 24];
 
 /** Import an existing wallet from a BIP-39 mnemonic, with validation. */
 export function ImportScreen() {
+  // The phrase (or words of it) is on screen here, so this screen holds its
+  // own capture key like the Backup screen, independent of the app-wide
+  // Privacy setting (expo-screen-capture keeps a set of keys; see
+  // screen-protection.ts).
+  usePreventScreenCapture('import-phrase');
   const theme = useTheme();
   const { importExisting } = useWallet();
   const [input, setInput] = useState('');
