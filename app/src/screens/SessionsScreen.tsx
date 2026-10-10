@@ -110,7 +110,11 @@ import {
   buildSubscription,
   buildSubscriptionKeyExport,
   customPeriodSeconds,
+  cardShowsBatchingWarning,
   feeBudgetCapNote,
+  feeBudgetPricingNote,
+  feeBudgetSuggestionHint,
+  type SubscriptionFeeSource,
   markSubscriptionKeyExported,
   readSubscriptionFeeFacts,
   readSubscriptionStatus,
@@ -228,6 +232,12 @@ interface PendingSubscription extends PendingInstall {
    * install's own worst-case fee is kept back (wei).
    */
   feeBudgetLowered?: { from: bigint; to: bigint; keptBack: bigint } | null;
+  /**
+   * What the fee budget was priced at when Review ran (readSubscriptionFeeFacts):
+   * the fee the payments will be signed at, or the node's fee as a labelled
+   * fallback; `edited` when the user typed the budget.
+   */
+  feePricing: { maxFeePerGas: bigint | null; source: SubscriptionFeeSource | null; edited: boolean };
 }
 
 interface SubscriptionFormState {
@@ -335,17 +345,24 @@ export function SessionsScreen({ navigation }: Props) {
   const [payRefusals, setPayRefusals] = useState<Record<string, string>>({});
   /** The recurring card whose payment is being checked or sent (its buttons are disabled meanwhile). */
   const [payingKey, setPayingKey] = useState<string | null>(null);
-  /** Facts for the fee-budget suggestion: the node's fee and the Kernel account's balance (null until read). */
+  /**
+   * Facts for the fee-budget suggestion (null until read): the fee the
+   * payments will be signed at (the bundler's floor plus headroom; the node's
+   * fee only as a labelled fallback), the Kernel account's balance and its
+   * EntryPoint deposit.
+   */
   // The part of the install's worst-case fee the balance pays, from the last
   // review quote (null before the first review): the fee-budget pre-fill
   // keeps it back.
   const [subInstallKeepBack, setSubInstallKeepBack] = useState<bigint | null>(null);
   const [subFeeFacts, setSubFeeFacts] = useState<{
     maxFeePerGas: bigint | null;
+    feeSource: SubscriptionFeeSource | null;
     balance: bigint | null;
     deposit: bigint | null;
   }>({
     maxFeePerGas: null,
+    feeSource: null,
     balance: null,
     deposit: null,
   });
@@ -565,27 +582,36 @@ export function SessionsScreen({ navigation }: Props) {
   );
 
   /**
-   * Reads the subscription form's fee facts (node fee, Kernel balance and
-   * EntryPoint deposit) from the endpoint in use now, failing over once
-   * when a default endpoint did not answer. Returns null when nothing could
-   * be read.
+   * Reads the subscription form's fee facts (the fee the payments will be
+   * signed at, Kernel balance and EntryPoint deposit) from the endpoint in
+   * use now, failing over once when a default endpoint did not answer. The
+   * fee is priced exactly as the payments are (sessions.ts sendSessionCalls:
+   * the node's suggestion raised to the bundler's floor plus headroom), so
+   * the screen's bundler is passed; without one the node's fee is used and
+   * labelled. Returns null when nothing could be read.
    */
   const refreshSubFeeFacts = useCallback(async () => {
     if (!account) return null;
+    const bundler = bundle?.bundler ?? null;
     try {
       const { value } = await withEndpoint(EVM_CHAIN_ID, async (endpoint) => {
-        const facts = await readSubscriptionFeeFacts(httpTransport(endpoint.url), account);
+        const facts = await readSubscriptionFeeFacts(httpTransport(endpoint.url), account, { bundler });
         const unreachable = facts.failures.find((f) => isEndpointFailure(f));
         if (unreachable && facts.maxFeePerGas === null && facts.balance === null) throw unreachable;
         return facts;
       });
-      const facts = { maxFeePerGas: value.maxFeePerGas, balance: value.balance, deposit: value.deposit };
+      const facts = {
+        maxFeePerGas: value.maxFeePerGas,
+        feeSource: value.feeSource,
+        balance: value.balance,
+        deposit: value.deposit,
+      };
       setSubFeeFacts(facts);
       return facts;
     } catch {
       return null;
     }
-  }, [account]);
+  }, [account, bundle]);
 
   // Finding 2 of the 2026-10-04 emulator run: the fee facts are read when
   // the subscription form opens AND every time it comes back into focus
@@ -719,7 +745,7 @@ export function SessionsScreen({ navigation }: Props) {
     // "2 minutes (testing)" exists only on test networks: start from the
     // first preset this network offers.
     setSubForm({ ...EMPTY_SUBSCRIPTION_FORM, periodSeconds: subscriptionPeriodPresets(evmChain.testnet)[0]!.seconds });
-    setSubFeeFacts({ maxFeePerGas: null, balance: null, deposit: null });
+    setSubFeeFacts({ maxFeePerGas: null, feeSource: null, balance: null, deposit: null });
     setSubInstallKeepBack(null);
     // The fee facts for the suggestion (shown and editable) are read by the
     // focus effect above as soon as the form is on screen, and again
@@ -886,6 +912,7 @@ export function SessionsScreen({ navigation }: Props) {
         recordLabel: names.recordLabel,
         mode,
         feeBudgetLowered,
+        feePricing: { maxFeePerGas: facts.maxFeePerGas, source: facts.feeSource, edited: subForm.feeEdited },
       };
       setSubPendingView(subPending.current);
       setPhase('sub-confirm');
@@ -1598,6 +1625,16 @@ export function SessionsScreen({ navigation }: Props) {
         ) : null}
         {funding.shortfall ? <WarningBox>{funding.shortfall}</WarningBox> : null}
         {funding.block ? <WarningBox>{funding.block}</WarningBox> : null}
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          {feeBudgetPricingNote({
+            budgetWei: sub.feeBudgetWei,
+            payments: subscriptionPeriodCount(sub),
+            maxFeePerGas: subPendingView.feePricing.maxFeePerGas,
+            source: subPendingView.feePricing.source,
+            edited: subPendingView.feePricing.edited,
+            nativeSymbol: symbol,
+          })}
+        </Text>
         <Text style={[styles.ok, { color: theme.success }]}>
           Bundler gas estimate passed (eth_estimateUserOperationGas simulated the install).
         </Text>
@@ -1773,10 +1810,7 @@ export function SessionsScreen({ navigation }: Props) {
           </Text>
         )}
         {!subForm.feeEdited ? (
-          <Text style={[styles.hint, { color: theme.textMuted }]}>
-            Suggested from today’s network fee for the number of payments above; it follows that number until you
-            type your own figure.
-          </Text>
+          <Text style={[styles.hint, { color: theme.textMuted }]}>{feeBudgetSuggestionHint(subFeeFacts.feeSource)}</Text>
         ) : null}
         {!subForm.feeEdited && feeSuggestion.capped && feeSuggestion.spare !== null && feeSuggestion.uncapped !== null ? (
           <WarningBox>
@@ -2092,7 +2126,9 @@ export function SessionsScreen({ navigation }: Props) {
                   accessibilityLabel={`Refresh the status of ${r.label}`}
                   onPress={() => refreshRecord(r)}
                 />
-                {review.caveats[0] ? <WarningBox>{review.caveats[0]}</WarningBox> : null}
+                {review.caveats[0] && cardShowsBatchingWarning(r, status, due?.kind === 'completed') ? (
+                  <WarningBox>{review.caveats[0]}</WarningBox>
+                ) : null}
                 <Text style={[styles.hint, { color: theme.text }]}>{review.sentence}</Text>
                 <Row label="Permission id" value={r.permissionId} mono theme={theme} />
                 {r.installUserOpHash ? (
@@ -2168,7 +2204,17 @@ export function SessionsScreen({ navigation }: Props) {
                     accessibilityLabel={`Refresh the status of ${title}`}
                     onPress={() => refreshRecord(r)}
                   />
-                  {review.caveats[0] ? <WarningBox>{review.caveats[0]}</WarningBox> : null}
+                  {review.caveats[0] &&
+                  cardShowsBatchingWarning(
+                    r,
+                    status,
+                    subStatus !== undefined &&
+                      subStatus !== 'loading' &&
+                      subStatus.kind === 'ok' &&
+                      (subStatus.next.kind === 'used-up' || subStatus.next.kind === 'ended'),
+                  ) ? (
+                    <WarningBox>{review.caveats[0]}</WarningBox>
+                  ) : null}
                   <Text style={[styles.hint, { color: theme.text }]}>{review.sentence}</Text>
                   <Row label="Permission id" value={r.permissionId} mono theme={theme} />
                   {r.installUserOpHash ? (

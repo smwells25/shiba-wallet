@@ -421,6 +421,45 @@ reset({ chainId: '0x1' });
   check('runner is exported for the screen', typeof activeEndpointRunner('eip155:1') === 'function');
 }
 
+console.log('EIP-7708 protocol ETH-transfer logs (Sepolia after Glamsterdam, 2026-10-06):');
+reset();
+installFakeNode(); // the previous section served another URL
+{
+  // Since EIP-7708 every receipt that moves ETH carries a Transfer-shaped log
+  // from the system address 0xff…fe. It is ETH, never a token: no token
+  // metadata read for that address, no token row, and the sentence reads
+  // exactly as before the fork. Real receipt: the CTO's funding transaction
+  // of 2026-10-09 (fixture 0x0293…, captured verbatim). Fake receipt: the
+  // pinned smart-account send (H.handleOps) with a protocol log added for
+  // the ETH it moves inside the operation.
+  const SYSTEM = '0xfffffffffffffffffffffffffffffffffffffffe';
+  const FUNDING = '0x0293867adea984c67d62dfff3e9d8f704ed789071e220fc67c441a51a2a83b1d';
+  check('the funding fixture carries a 0xff…fe log', fixtures.get(FUNDING)?.receipt.logs[0].address === SYSTEM);
+  const pad = (a) => '0x' + '0'.repeat(24) + a.slice(2).toLowerCase();
+  const FAKE = '0x' + '77'.repeat(32);
+  const base = fixtures.get(H.handleOps);
+  const fake = structuredClone(base);
+  fake.transaction.hash = FAKE;
+  fake.receipt.transactionHash = FAKE;
+  fake.receipt.logs = [
+    {
+      address: SYSTEM,
+      topics: ['0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef', pad(KERNEL_OF_ACCOUNT_1), pad(BURN)],
+      data: '0x' + (100_000_000_000_000n).toString(16).padStart(64, '0'),
+    },
+    ...fake.receipt.logs,
+  ];
+  mode.extraTx = (h) => (h === FAKE ? fake : null);
+  const decoder = createActivityDecoder({ chainCaip2: SEPOLIA, evmChainId: SEPOLIA_ID, wallet: wallet1, trackedTokens: [], run: fixedRun });
+  const out = await decoder.decodeEntries([FUNDING, FAKE]);
+  check('real receipt: "Received 0.01 test ETH from 0x16DA…aC5C"', render(out.get(FUNDING)) === 'Received 0.01 test ETH from 0x16DA…aC5C', render(out.get(FUNDING)));
+  check('fake receipt with the protocol log: the smart-account sentence is unchanged',
+    render(out.get(FAKE)) === 'Smart-account operation: sent 0.0001 test ETH to Burn', render(out.get(FAKE)));
+  check('no token row and no "token 0xffff…" anywhere', ![render(out.get(FUNDING)), render(out.get(FAKE))].some((t) => /token|0xffff/i.test(t ?? '')));
+  check('no token metadata read for 0xff…fe',
+    !requests.some((r) => r.method === 'eth_call' && r.params[0].to.toLowerCase() === SYSTEM), requests.filter((r) => r.method === 'eth_call').map((r) => r.params[0].to));
+}
+
 console.log('ActivityScreen source:');
 {
   const screen = readFileSync(join(here, '..', 'src', 'screens', 'ActivityScreen.tsx'), 'utf8');

@@ -15,6 +15,7 @@ import { AbiCoder, getAddress, id, zeroPadValue } from 'ethers';
 import {
   APPROVAL_EVENT_TOPIC,
   APPROVAL_FOR_ALL_EVENT_TOPIC,
+  EIP7708_TRANSFER_LOG_ADDRESS,
   MAX_UINT256,
   NATIVE_TRANSFER_PSEUDO_ADDRESS,
   TRANSFER_EVENT_TOPIC,
@@ -176,6 +177,50 @@ installFakeNode(() => ({
   check('native hidden: masked', masked[0]?.text === 'You send •••• ETH', masked[0]?.text);
   const testnet = describeAssetChanges(state.changes, state.meta, { nativeSymbol: 'test ETH', hidden: false });
   check('native: profile symbol', testnet[0]?.text === 'You send 0.1 test ETH');
+}
+
+// ---------------------------------------------------------------- EIP-7708
+// Since the Glamsterdam upgrade (Sepolia, 2026-10-06) every ETH movement also
+// carries the protocol's own Transfer-shaped log from the system address
+// 0xff…fe (EIP-7708). The 2026-10-09 rehearsal saw the preview of a 0.002
+// test ETH send show a second, bogus row "You send 2000000000000000 raw units
+// of token 0xffff…FFfE (decimals unreadable)". Read-only probes the same day
+// (packages/chains-evm/test/fixtures/eip7708-sepolia) found three node
+// behaviours for one plain transfer under traceTransfers: the protocol log
+// only (reth), the 0xeeee… pseudo-log followed by the protocol log (geth
+// 1.17.7), and the pseudo-log only (any node before the fork). The preview
+// must read ONE native row in every case and never look the address up as a
+// token.
+console.log('check-simulation: EIP-7708 protocol ETH-transfer logs (Sepolia after Glamsterdam)');
+{
+  const KERNEL = '0xD31c2C54F21684eE2026a6C41e391130BdEeD8FA';
+  const amount = 2_000_000_000_000_000n; // 0.002 test ETH, the rehearsal's send
+  const pseudo = log(NATIVE_TRANSFER_PSEUDO_ADDRESS, [TRANSFER_EVENT_TOPIC, topicOf(ME), topicOf(KERNEL)], word(amount));
+  const proto = log(EIP7708_TRANSFER_LOG_ADDRESS, [TRANSFER_EVENT_TOPIC, topicOf(ME), topicOf(KERNEL)], word(amount));
+  const received = log(KERNEL, [id('Received(address,uint256)')], coder.encode(['address', 'uint256'], [ME, amount]));
+  const behaviours = {
+    'protocol log only (reth)': [proto, received],
+    'pseudo-log then protocol log (geth 1.17.7)': [pseudo, proto, received],
+    'pseudo-log only (before the fork)': [pseudo, received],
+  };
+  check('EIP7708_TRANSFER_LOG_ADDRESS is the system address', EIP7708_TRANSFER_LOG_ADDRESS === '0xfffffffffffffffffffffffffffffffffffffffe');
+  for (const [name, logs] of Object.entries(behaviours)) {
+    requests.length = 0;
+    installFakeNode(() => ({ result: block([okCall(logs)]) }));
+    const state = await runBalancePreview({
+      url: URL,
+      wallet: ME,
+      calls: [{ from: ME, to: KERNEL, value: amount }],
+      chainCaip2: SEPOLIA,
+      trackedTokens: [],
+    });
+    const lines = texts(describeAssetChanges(state.changes, state.meta, { nativeSymbol: 'test ETH', hidden: false }));
+    check(`7708 ${name}: exactly one row "You send 0.002 test ETH"`, JSON.stringify(lines) === JSON.stringify(['You send 0.002 test ETH']), lines);
+    check(`7708 ${name}: no "raw units of token 0xffff…FFfE" row`, !lines.some((l) => /raw units|0xffff/i.test(l)), lines);
+    check(`7708 ${name}: no token metadata read for 0xff…fe`,
+      !requests.some((r) => r.body.method === 'eth_call' && r.body.params[0].to.toLowerCase() === EIP7708_TRANSFER_LOG_ADDRESS), requests.map((r) => r.body.method));
+    check(`7708 ${name}: one native change, no erc20`, state.changes.filter((c) => c.type === 'native').length === 1 && !state.changes.some((c) => c.type === 'erc20'), state.changes.map((c) => c.type));
+  }
 }
 
 // ---------------------------------------------------------------- swap

@@ -1,0 +1,310 @@
+{
+ "description": "eth_simulateV1 with traceTransfers: true on https://ethereum-sepolia-rpc.publicnode.com, 2026-10-09, read-only. The endpoint load-balances between two clients; each request was sent in a JSON-RPC batch together with web3_clientVersion so that the answering client is known. Each entry keeps the calls array of the first simulated block verbatim (status, gasUsed, logs with address/topics/data; the per-log block fields the node adds were dropped).",
+ "params": "[{\"blockStateCalls\":[{\"calls\": <request>}],\"traceTransfers\":true},\"latest\"]",
+ "cases": {
+  "eoaToKernel": {
+   "request": [
+    {
+     "from": "0x16da2caeada26516f919c6872f6c38ab378cac5c",
+     "to": "0xD31c2C54F21684eE2026a6C41e391130BdEeD8FA",
+     "value": "0x2386f26fc10000"
+    }
+   ],
+   "answers": {
+    "Geth": {
+     "client": "Geth/v1.17.7-stable-3d858f85/linux-amd64/go1.25.14",
+     "block": "0xb54800",
+     "calls": [
+      {
+       "status": "0x1",
+       "gasUsed": "0x6b93",
+       "logs": [
+        {
+         "address": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+         "topics": [
+          "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+          "0x00000000000000000000000016da2caeada26516f919c6872f6c38ab378cac5c",
+          "0x000000000000000000000000d31c2c54f21684ee2026a6c41e391130bdeed8fa"
+         ],
+         "data": "0x000000000000000000000000000000000000000000000000002386f26fc10000"
+        },
+        {
+         "address": "0xfffffffffffffffffffffffffffffffffffffffe",
+         "topics": [
+          "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+          "0x00000000000000000000000016da2caeada26516f919c6872f6c38ab378cac5c",
+          "0x000000000000000000000000d31c2c54f21684ee2026a6c41e391130bdeed8fa"
+         ],
+         "data": "0x000000000000000000000000000000000000000000000000002386f26fc10000"
+        },
+        {
+         "address": "0xd31c2c54f21684ee2026a6c41e391130bdeed8fa",
+         "topics": [
+          "0x88a5966d370b9919b20f3e2c13ff65706f196a4e32cc2c12bf57088f88525874"
+         ],
+         "data": "0x00000000000000000000000016da2caeada26516f919c6872f6c38ab378cac5c000000000000000000000000000000000000000000000000002386f26fc10000"
+        }
+       ]
+      }
+     ]
+    },
+    "reth": {
+     "client": "reth/v2.7.0-3d592ec/x86_64-unknown-linux-gnu",
+     "block": "0xb54800",
+     "calls": [
+      {
+       "status": "0x1",
+       "gasUsed": "0x6b93",
+       "logs": [
+        {
+         "address": "0xfffffffffffffffffffffffffffffffffffffffe",
+         "topics": [
+          "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+          "0x00000000000000000000000016da2caeada26516f919c6872f6c38ab378cac5c",
+          "0x000000000000000000000000d31c2c54f21684ee2026a6c41e391130bdeed8fa"
+         ],
+         "data": "0x000000000000000000000000000000000000000000000000002386f26fc10000"
+        },
+        {
+         "address": "0xd31c2c54f21684ee2026a6c41e391130bdeed8fa",
+         "topics": [
+          "0x88a5966d370b9919b20f3e2c13ff65706f196a4e32cc2c12bf57088f88525874"
+         ],
+         "data": "0x00000000000000000000000016da2caeada26516f919c6872f6c38ab378cac5c000000000000000000000000000000000000000000000000002386f26fc10000"
+        }
+       ]
+      }
+     ]
+    }
+   }
+  },
+  "wethDeposit": {
+   "request": [
+    {
+     "from": "0x16da2caeada26516f919c6872f6c38ab378cac5c",
+     "to": "0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14",
+     "value": "0x5",
+     "input": "0xd0e30db0"
+    }
+   ],
+   "answers": {
+    "reth": {
+     "client": "reth/v2.7.0-3d592ec/x86_64-unknown-linux-gnu",
+     "block": "0xb54800",
+     "calls": [
+      {
+       "status": "0x1",
+       "gasUsed": "0x207c2",
+       "logs": [
+        {
+         "address": "0xfffffffffffffffffffffffffffffffffffffffe",
+         "topics": [
+          "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+          "0x00000000000000000000000016da2caeada26516f919c6872f6c38ab378cac5c",
+          "0x000000000000000000000000fff9976782d46cc05630d1f6ebab18b2324d6b14"
+         ],
+         "data": "0x0000000000000000000000000000000000000000000000000000000000000005"
+        },
+        {
+         "address": "0xfff9976782d46cc05630d1f6ebab18b2324d6b14",
+         "topics": [
+          "0xe1fffcc4923d04b559f4d29a8bfc6cda04eb5b0d3c460751c2402c5c5cc9109c",
+          "0x00000000000000000000000016da2caeada26516f919c6872f6c38ab378cac5c"
+         ],
+         "data": "0x0000000000000000000000000000000000000000000000000000000000000005"
+        }
+       ]
+      }
+     ]
+    },
+    "Geth": {
+     "client": "Geth/v1.17.7-stable-3d858f85/linux-amd64/go1.25.14",
+     "block": "0xb54800",
+     "calls": [
+      {
+       "status": "0x1",
+       "gasUsed": "0x207c2",
+       "logs": [
+        {
+         "address": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+         "topics": [
+          "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+          "0x00000000000000000000000016da2caeada26516f919c6872f6c38ab378cac5c",
+          "0x000000000000000000000000fff9976782d46cc05630d1f6ebab18b2324d6b14"
+         ],
+         "data": "0x0000000000000000000000000000000000000000000000000000000000000005"
+        },
+        {
+         "address": "0xfffffffffffffffffffffffffffffffffffffffe",
+         "topics": [
+          "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+          "0x00000000000000000000000016da2caeada26516f919c6872f6c38ab378cac5c",
+          "0x000000000000000000000000fff9976782d46cc05630d1f6ebab18b2324d6b14"
+         ],
+         "data": "0x0000000000000000000000000000000000000000000000000000000000000005"
+        },
+        {
+         "address": "0xfff9976782d46cc05630d1f6ebab18b2324d6b14",
+         "topics": [
+          "0xe1fffcc4923d04b559f4d29a8bfc6cda04eb5b0d3c460751c2402c5c5cc9109c",
+          "0x00000000000000000000000016da2caeada26516f919c6872f6c38ab378cac5c"
+         ],
+         "data": "0x0000000000000000000000000000000000000000000000000000000000000005"
+        }
+       ]
+      }
+     ]
+    }
+   }
+  },
+  "selfTransfer": {
+   "request": [
+    {
+     "from": "0x16da2caeada26516f919c6872f6c38ab378cac5c",
+     "to": "0x16da2caeada26516f919c6872f6c38ab378cac5c",
+     "value": "0x7"
+    }
+   ],
+   "answers": {
+    "Geth": {
+     "client": "Geth/v1.17.7-stable-3d858f85/linux-amd64/go1.25.14",
+     "block": "0xb54800",
+     "calls": [
+      {
+       "status": "0x1",
+       "gasUsed": "0x2ee0",
+       "logs": [
+        {
+         "address": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+         "topics": [
+          "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+          "0x00000000000000000000000016da2caeada26516f919c6872f6c38ab378cac5c",
+          "0x00000000000000000000000016da2caeada26516f919c6872f6c38ab378cac5c"
+         ],
+         "data": "0x0000000000000000000000000000000000000000000000000000000000000007"
+        }
+       ]
+      }
+     ]
+    },
+    "reth": {
+     "client": "reth/v2.7.0-3d592ec/x86_64-unknown-linux-gnu",
+     "block": "0xb54800",
+     "calls": [
+      {
+       "status": "0x1",
+       "gasUsed": "0x2ee0",
+       "logs": []
+      }
+     ]
+    }
+   }
+  },
+  "twoSame": {
+   "request": [
+    {
+     "from": "0x16da2caeada26516f919c6872f6c38ab378cac5c",
+     "to": "0x000000000000000000000000000000000000dEaD",
+     "value": "0x1"
+    },
+    {
+     "from": "0x16da2caeada26516f919c6872f6c38ab378cac5c",
+     "to": "0x000000000000000000000000000000000000dEaD",
+     "value": "0x1"
+    }
+   ],
+   "answers": {
+    "Geth": {
+     "client": "Geth/v1.17.7-stable-3d858f85/linux-amd64/go1.25.14",
+     "block": "0xb54800",
+     "calls": [
+      {
+       "status": "0x1",
+       "gasUsed": "0x5208",
+       "logs": [
+        {
+         "address": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+         "topics": [
+          "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+          "0x00000000000000000000000016da2caeada26516f919c6872f6c38ab378cac5c",
+          "0x000000000000000000000000000000000000000000000000000000000000dead"
+         ],
+         "data": "0x0000000000000000000000000000000000000000000000000000000000000001"
+        },
+        {
+         "address": "0xfffffffffffffffffffffffffffffffffffffffe",
+         "topics": [
+          "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+          "0x00000000000000000000000016da2caeada26516f919c6872f6c38ab378cac5c",
+          "0x000000000000000000000000000000000000000000000000000000000000dead"
+         ],
+         "data": "0x0000000000000000000000000000000000000000000000000000000000000001"
+        }
+       ]
+      },
+      {
+       "status": "0x1",
+       "gasUsed": "0x5208",
+       "logs": [
+        {
+         "address": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+         "topics": [
+          "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+          "0x00000000000000000000000016da2caeada26516f919c6872f6c38ab378cac5c",
+          "0x000000000000000000000000000000000000000000000000000000000000dead"
+         ],
+         "data": "0x0000000000000000000000000000000000000000000000000000000000000001"
+        },
+        {
+         "address": "0xfffffffffffffffffffffffffffffffffffffffe",
+         "topics": [
+          "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+          "0x00000000000000000000000016da2caeada26516f919c6872f6c38ab378cac5c",
+          "0x000000000000000000000000000000000000000000000000000000000000dead"
+         ],
+         "data": "0x0000000000000000000000000000000000000000000000000000000000000001"
+        }
+       ]
+      }
+     ]
+    },
+    "reth": {
+     "client": "reth/v2.7.0-3d592ec/x86_64-unknown-linux-gnu",
+     "block": "0xb54800",
+     "calls": [
+      {
+       "status": "0x1",
+       "gasUsed": "0x5208",
+       "logs": [
+        {
+         "address": "0xfffffffffffffffffffffffffffffffffffffffe",
+         "topics": [
+          "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+          "0x00000000000000000000000016da2caeada26516f919c6872f6c38ab378cac5c",
+          "0x000000000000000000000000000000000000000000000000000000000000dead"
+         ],
+         "data": "0x0000000000000000000000000000000000000000000000000000000000000001"
+        }
+       ]
+      },
+      {
+       "status": "0x1",
+       "gasUsed": "0x5208",
+       "logs": [
+        {
+         "address": "0xfffffffffffffffffffffffffffffffffffffffe",
+         "topics": [
+          "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+          "0x00000000000000000000000016da2caeada26516f919c6872f6c38ab378cac5c",
+          "0x000000000000000000000000000000000000000000000000000000000000dead"
+         ],
+         "data": "0x0000000000000000000000000000000000000000000000000000000000000001"
+        }
+       ]
+      }
+     ]
+    }
+   }
+  }
+ }
+}

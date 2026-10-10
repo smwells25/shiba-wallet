@@ -66,8 +66,11 @@ import { ENTRYPOINT_V07 } from './userop.js';
  *    receipt as in an eth_simulateV1 result.
  *
  *  - ETH value: the transaction's own `value`. ETH that moves INSIDE a
- *    call (a router paying out ETH, a smart account sending ETH) emits no
- *    log and is not in the receipt. It is reported only where the calldata
+ *    call (a router paying out ETH, a smart account sending ETH) emitted no
+ *    log before EIP-7708 and is not taken from the receipt. (Since EIP-7708
+ *    — Sepolia, 2026-10-06 — the protocol logs every ETH movement from
+ *    0xff…fe; the shared decoder reads those as native changes and this
+ *    module leaves them out, so Activity is unchanged by the fork.) It is reported only where the calldata
  *    proves it together with success: an ERC-4337 operation whose
  *    UserOperationEvent says success and whose callData is the account's
  *    own non-"try" execute (Kernel v3.3 ERC-7579 execute, SimpleAccount
@@ -1058,10 +1061,17 @@ export function describeTransaction(
   const movements: WalletMovement[] = [];
   let skippedCounted = false;
   for (const account of wallet) {
+    // Wrapped-ether decoding is OFF for receipts (wrappedNativeTokens: []):
+    // before EIP-7708 a receipt held no ETH-movement log to back a WETH
+    // Deposit / Withdrawal, so none was ever shown; after it, the protocol
+    // logs from 0xff…fe would back them. Keeping it off keeps Activity
+    // exactly as it was across the fork; using the protocol logs here is a
+    // possible later improvement, not part of this decoding.
     const parsed = parseSimulationResult(
       [{ calls: [{ status: '0x1', logs: goodLogs }] }],
       1,
       account,
+      { wrappedNativeTokens: [] },
     );
     // Skipped (non-standard) logs do not depend on the wallet address; count once.
     if (!skippedCounted) {
@@ -1069,7 +1079,13 @@ export function describeTransaction(
       skippedCounted = true;
     }
     for (const change of parsed.changes) {
-      // A receipt cannot hold traceTransfers pseudo-events; ETH value is read from the transaction.
+      // ETH is not taken from the logs: the value is read from the
+      // transaction (and from proven smart-account calldata, below). A
+      // receipt holds no traceTransfers pseudo-events, but since EIP-7708
+      // (Sepolia, 2026-10-06; see asset-diff.ts) it holds the protocol's
+      // ETH-transfer logs from 0xff…fe, which the decoder returns as
+      // 'native' changes — skipped here, so they never become a token row
+      // and the transaction's value is not counted twice.
       if (change.type === 'native') continue;
       movements.push({ account, change });
     }

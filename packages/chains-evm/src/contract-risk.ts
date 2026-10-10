@@ -1,6 +1,7 @@
 import { toChecksumAddress } from '@shiba-wallet/core';
 import type { AssetChange } from './asset-diff.js';
 import { bigintToHex, toBytes } from './encoding.js';
+import { isEip7708TransferLogAddress } from './asset-diff.js';
 import { TRANSFER_TOPIC, addressTopic } from './erc20-logs.js';
 import { getLogsWindowed, topicToLowerAddress, validateLog } from './approvals.js';
 import type { JsonRpcTransport } from './rpc.js';
@@ -166,8 +167,10 @@ export interface FirstInteractionResult {
 /**
  * Looks for evidence that `me` has sent ERC-20 tokens to `address`.
  *
- * LIMITS, stated honestly: plain ETH transfers emit no logs, so without an
- * indexer they are invisible here; so are interactions older than the
+ * LIMITS, stated honestly: plain ETH transfers are not searched here
+ * (before EIP-7708 they emitted no logs; after it they emit protocol logs
+ * from 0xff…fe, which this ERC-20 search deliberately leaves out), so
+ * without an indexer they are invisible here; so are interactions older than the
  * lookback window and interactions that emitted no Transfer from `me` to
  * `address`. A result of known: false therefore means "unknown", and the
  * risk signal built from it says so.
@@ -223,6 +226,12 @@ export async function isFirstInteraction(
           topicToLowerAddress(log.topics[1]!) === meLower &&
           topicToLowerAddress(log.topics[2]!) === target &&
           log.data.length === 66 &&
+          // EIP-7708's protocol ETH-transfer logs (system address 0xff…fe,
+          // same topic and shape; see asset-diff.ts) are ETH, not an ERC-20
+          // transfer: this function reports token evidence only, so they
+          // are not candidates (they can only appear in a query without a
+          // token filter).
+          !isEip7708TransferLogAddress(log.address) &&
           (!tokens || tokens.includes(log.address)),
       )
       .sort((a, b) =>

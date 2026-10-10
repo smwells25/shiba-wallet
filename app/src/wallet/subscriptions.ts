@@ -27,7 +27,15 @@ import {
 import { formatUnits, parseUnits } from './balances.ts';
 import { EVM_CHAIN_ID, validateRecipient } from './send.ts';
 import { knownTokensForChain, listTokens, type KeyValueStore } from './tokens.ts';
-import { aaCanPaySelf, aaFeeFromBalance, fetchTokenBalanceVia, type AaSendQuote } from './aa.ts';
+import {
+  AA_FEE_FLOOR_HEADROOM_PERCENT,
+  aaCanPaySelf,
+  aaFeeFromBalance,
+  bundlerFeeFloor,
+  fetchTokenBalanceVia,
+  quoteFeesOverFloor,
+  type AaSendQuote,
+} from './aa.ts';
 import {
   eip155Decimal,
   releaseSessionKey,
@@ -165,13 +173,25 @@ export function subscriptionShortWindowWarning(sub: Pick<SubscriptionGrant, 'sta
 export const SUBSCRIPTION_MAX_PAYMENTS = 120;
 
 /**
- * Gas units budgeted per pull for the default fee budget. Measured on Sepolia
- * on 2026-10-03 (subscription-keeper.mjs live run through ZeroDev's bundler):
- * the three native pulls were signed with preVerificationGas +
- * verificationGasLimit + callGasLimit — what GasPolicy charges — of 367,706,
- * 302,094 and 302,094 gas (keeper padding included). An ERC-20 pull adds the
- * token transfer and two parameter checks (not measured live), so the default
- * rounds up to 500,000. A default, shown and editable, not a guarantee.
+ * Gas units budgeted per payment for the default fee budget. GasPolicy
+ * charges each payment (preVerificationGas + verificationGasLimit +
+ * callGasLimit) × maxFeePerGas — the SIGNED limits, not the gas used
+ * (kernel-permissions.ts SessionKeyGrant.gasBudgetWei) — so the figure is
+ * the sum of the signed limits. Recorded pulls on Sepolia through ZeroDev's
+ * bundler:
+ *  - 2026-10-03 (phase 12, subscription-keeper.mjs, native): 367,706,
+ *    302,094 and 302,094 gas charged (keeper padding included; about 246k /
+ *    202k / 202k actually used);
+ *  - 2026-10-04 (phase 13, the app's first ERC-20 pull): 438,168 gas charged
+ *    (0.000909 ETH at about 2.07 gwei).
+ * After Sepolia's Glamsterdam upgrade (2026-10-06; EIP-8037 / EIP-8038
+ * reprice storage CREATION and writes) a pull does not create storage, and a
+ * read-only eth_simulateV1 of handleOps for a native pull (2026-10-09,
+ * public test mnemonic's account, scratchpad probe) used 429,439 / 331,519
+ * gas after the fork against 445,795 / 347,887 on a node still at the last
+ * block before it — no rise. 500,000 covers the largest recorded charge
+ * (438,168) with about 14% to spare; defaultFeeBudgetWei then doubles it
+ * because fees move. A default, shown and editable, not a guarantee.
  */
 export const SUBSCRIPTION_PULL_GAS_ALLOWANCE = 500_000n;
 
@@ -247,9 +267,18 @@ export async function loadSubscriptionTokenChoices(
 }
 
 /**
- * Default fee budget: payments × SUBSCRIPTION_PULL_GAS_ALLOWANCE × the
- * node's current maxFeePerGas × 2 (fees move). GasPolicy refuses a pull
- * that would exceed what is left, so the merchant then needs a new grant.
+ * Default fee budget: payments × SUBSCRIPTION_PULL_GAS_ALLOWANCE ×
+ * `maxFeePerGas` × 2. `maxFeePerGas` must be the fee each payment will be
+ * SIGNED at (readSubscriptionFeeFacts: the bundler's fee floor plus
+ * AA_FEE_FLOOR_HEADROOM_PERCENT, as sessions.ts sendSessionCalls prices
+ * every session-key operation), because GasPolicy charges the signed
+ * maxFeePerGas. The × 2 is a judgement, kept from phase 12: fees move
+ * between the review and the payments, and a budget that runs out cannot be
+ * topped up (GasPolicy refuses a payment that would exceed what is left, so
+ * the grant must be replaced). Before the 2026-10-09 rehearsal this was fed
+ * the NODE's maxFeePerGas (about 0.001 gwei on Sepolia that day) while the
+ * payments were signed at about 2.31 gwei, so the default budget could not
+ * pay even the first payment.
  */
 export function defaultFeeBudgetWei(payments: number, maxFeePerGas: bigint): bigint {
   return BigInt(payments) * SUBSCRIPTION_PULL_GAS_ALLOWANCE * maxFeePerGas * 2n;
@@ -498,17 +527,46 @@ function feeBudgetTokenShortNote(uncapped: bigint, nativeSymbol: string, token: 
 }
 
 /**
+ * What the fee-budget suggestion was priced at: 'bundler' = the fee the
+ * payments will be signed at (the node's suggestion raised to the bundler's
+ * fee floor plus AA_FEE_FLOOR_HEADROOM_PERCENT, exactly as sendSessionCalls
+ * prices them); 'node' = the fallback when no bundler fee could be read (the
+ * node's own maxFeePerGas, which can be far lower — the review says so).
+ */
+export type SubscriptionFeeSource = 'bundler' | 'node';
+
+export interface SubscriptionFeeFacts {
+  /** The maxFeePerGas the suggestion is priced at (see `feeSource`); null when unknown. */
+  maxFeePerGas: bigint | null;
+  /** Where `maxFeePerGas` came from; null when it is unknown. */
+  feeSource: SubscriptionFeeSource | null;
+  balance: bigint | null;
+  deposit: bigint | null;
+  failures: unknown[];
+}
+
+/**
  * The fee facts behind the fee-budget suggestion, read fresh (when the form
  * opens, when it comes back into focus and at Review — finding 2 of the
  * 2026-10-04 emulator run: a balance read once at opening went stale after
- * funding): the node's current maxFeePerGas, the smart account's native
- * balance and its EntryPoint deposit (EntryPoint balanceOf, the same read
- * aa.ts uses). Each read that fails is null; nothing throws.
+ * funding): the fee the payments will be signed at, the smart account's
+ * native balance and its EntryPoint deposit (EntryPoint balanceOf, the same
+ * read aa.ts uses). Each read that fails is null; nothing throws.
+ *
+ * The fee (finding 1 of the 2026-10-09 rehearsal): every payment is a
+ * session-key operation, and sessions.ts sendSessionCalls signs it at
+ * quoteFeesOverFloor(the node's suggestion, bundlerFeeFloor(bundler)) — the
+ * bundler's standard-tier fee plus AA_FEE_FLOOR_HEADROOM_PERCENT, or the
+ * node's suggestion when that is higher. The same function is applied here,
+ * so the budget is priced at what the payments sign. Without a `bundler`, or
+ * when the bundler states no fee floor, the node's maxFeePerGas is used and
+ * `feeSource` says 'node'.
  */
 export async function readSubscriptionFeeFacts(
   node: JsonRpcTransport,
   account: string,
-): Promise<{ maxFeePerGas: bigint | null; balance: bigint | null; deposit: bigint | null; failures: unknown[] }> {
+  options: { bundler?: JsonRpcTransport | null } = {},
+): Promise<SubscriptionFeeFacts> {
   const client = new NodeClient(node);
   const failures: unknown[] = [];
   const keep = <T,>(p: Promise<T>): Promise<T | null> =>
@@ -516,12 +574,89 @@ export async function readSubscriptionFeeFacts(
       failures.push(e);
       return null;
     });
-  const [fees, balance, deposit] = await Promise.all([
+  const [fees, floor, balance, deposit] = await Promise.all([
     keep(suggestFeesRetryingOnce(client)),
+    // bundlerFeeFloor never throws: a bundler that serves neither fee method answers null.
+    options.bundler ? bundlerFeeFloor(options.bundler) : Promise.resolve(null),
     keep(client.getBalance(account)),
     keep(fetchTokenBalanceVia(node, ENTRYPOINT_V07, account)),
   ]);
-  return { maxFeePerGas: fees ? fees.maxFeePerGas : null, balance, deposit, failures };
+  if (!fees) return { maxFeePerGas: null, feeSource: null, balance, deposit, failures };
+  if (!floor) return { maxFeePerGas: fees.maxFeePerGas, feeSource: 'node', balance, deposit, failures };
+  return { maxFeePerGas: quoteFeesOverFloor(fees, floor).maxFeePerGas, feeSource: 'bundler', balance, deposit, failures };
+}
+
+/** "500,000" — digits grouped by threes (no Intl, which Hermes may lack). */
+function thousands(n: bigint): string {
+  return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+/** "2.31 gwei" — exact decimal gwei (no rounding), for the fee-budget sentences. */
+function gweiText(wei: bigint): string {
+  return `${formatUnits(wei, 9, 9)} gwei`;
+}
+
+/**
+ * The form's hint under an unedited fee-budget pre-fill: what it is priced
+ * at. `source` null (not read yet) keeps a neutral sentence.
+ */
+export function feeBudgetSuggestionHint(source: SubscriptionFeeSource | null): string {
+  if (source === 'node') {
+    return (
+      'Suggested from the network node’s current fee, because the bundler’s fee could not be read; the ' +
+      'payments are signed at the bundler’s fee, which can be much higher. It follows the number of payments ' +
+      'above until you type your own figure.'
+    );
+  }
+  return (
+    `Suggested from the fee each payment is signed at today (the bundler’s current fee plus ` +
+    `${AA_FEE_FLOOR_HEADROOM_PERCENT}% headroom) for the number of payments above; it follows that number ` +
+    'until you type your own figure.'
+  );
+}
+
+/**
+ * The review's sentence on what the fee budget is priced at (finding 1 of
+ * the 2026-10-09 rehearsal: the review must say it). `edited` = the user
+ * typed the budget. With a known fee it also says how many payments' fees
+ * the budget covers at that fee and SUBSCRIPTION_PULL_GAS_ALLOWANCE gas each
+ * (GasPolicy charges the signed gas limits × the signed maxFeePerGas).
+ */
+export function feeBudgetPricingNote(p: {
+  budgetWei: bigint;
+  payments: number;
+  maxFeePerGas: bigint | null;
+  source: SubscriptionFeeSource | null;
+  edited: boolean;
+  nativeSymbol: string;
+}): string {
+  if (p.maxFeePerGas === null || p.source === null || p.maxFeePerGas <= 0n) {
+    return (
+      'The network fee could not be read, so the fee budget is not compared with what the payments will cost. ' +
+      'Each payment is charged its signed gas limits × its signed fee against the budget.'
+    );
+  }
+  const perPayment = SUBSCRIPTION_PULL_GAS_ALLOWANCE * p.maxFeePerGas;
+  const covers = perPayment > 0n ? p.budgetWei / perPayment : 0n;
+  const fee = gweiText(p.maxFeePerGas);
+  const basis =
+    p.source === 'bundler'
+      ? `${fee} per gas — the fee each payment is signed at today (the bundler’s current fee plus ` +
+        `${AA_FEE_FLOOR_HEADROOM_PERCENT}% headroom)`
+      : `${fee} per gas — the network node’s fee, because the bundler’s fee could not be read; the payments are ` +
+        'signed at the bundler’s fee, which can be much higher, so this budget may run out sooner';
+  const each = `${formatUnits(perPayment, 18, 18)} ${p.nativeSymbol}`;
+  const head = p.edited
+    ? `You entered this fee budget. Priced at ${basis}, one payment can be charged up to about ${each} ` +
+      `(${thousands(SUBSCRIPTION_PULL_GAS_ALLOWANCE)} gas)`
+    : `Fee budget priced at ${basis}: ${thousands(SUBSCRIPTION_PULL_GAS_ALLOWANCE)} gas per payment ` +
+      `(${each}), doubled because fees move`;
+  const coverage =
+    covers >= BigInt(p.payments)
+      ? `; it covers the fees of all ${p.payments} payment${p.payments === 1 ? '' : 's'} at that fee.`
+      : `; at that fee it covers about ${covers} of the ${p.payments} payment${p.payments === 1 ? '' : 's'}, ` +
+        'after which the account refuses further payments until a new grant replaces this one.';
+  return head + coverage;
 }
 
 /**
@@ -675,6 +810,32 @@ export function subscriptionHandoverOffer(
   const settled = status !== undefined && status !== 'loading';
   if (validUntil <= now || (settled && status.kind === 'active' && status.expired)) return 'expired';
   return settled && status.kind === 'active' ? 'offer' : 'none';
+}
+
+/**
+ * Whether a subscription or recurring-payment CARD shows the batching
+ * warning (the review's caveats[0]: one operation may batch several
+ * in-cap transfers). The warning describes what a LIVE grant still allows,
+ * so it is shown only while the grant may still be used (finding 5 of the
+ * 2026-10-09 recurring-payments rehearsal: a revoked card still showed it).
+ * Hidden when the wallet recorded the grant as revoked or its install as
+ * failed, when the chain says it is revoked / not installed or expired, and
+ * when the payments are finished (`finished`: a recurring payment's due
+ * state 'completed', a subscription whose next pull is used up or ended).
+ * While the status is still loading, or could not be read, a recorded
+ * installation keeps the warning (it may still be live).
+ */
+export function cardShowsBatchingWarning(
+  record: Pick<SessionRecord, 'localStatus'>,
+  status: SessionChainStatus | 'loading' | undefined,
+  finished = false,
+): boolean {
+  if (record.localStatus === 'revoked' || record.localStatus === 'failed') return false;
+  if (finished) return false;
+  if (status === undefined || status === 'loading') return true;
+  if (status.kind === 'revoked' || status.kind === 'not-installed') return false;
+  if (status.kind === 'active' && status.expired) return false;
+  return true;
 }
 
 /** GrantReview's key-holder phrase for a subscription ("Session key (held by …)"), one parenthesis only. */

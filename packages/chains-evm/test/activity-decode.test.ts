@@ -478,3 +478,52 @@ describe('decodeActivity over a transport', () => {
     expect(d.to).toBe(ROUTER);
   });
 });
+
+// ---------------------------------------------------------------------------
+// EIP-7708 (Sepolia since 2026-10-06): receipts carry the protocol's
+// ETH-transfer logs from 0xff…fe. They must never become a token movement,
+// and Activity must read exactly as before the fork.
+// ---------------------------------------------------------------------------
+
+describe('EIP-7708 ETH-transfer logs in receipts', () => {
+  const SYSTEM = '0xfffffffffffffffffffffffffffffffffffffffe';
+  const DEV_EOA = getAddress('0x16da2caeada26516f919c6872f6c38ab378cac5c');
+  const SEPOLIA_WETH = '0xfff9976782d46cc05630d1f6ebab18b2324d6b14';
+  const ethLog = (from: string, to: string, amount: bigint) => ({
+    address: SYSTEM,
+    topics: [TRANSFER_EVENT_TOPIC, topicOf(from), topicOf(to)],
+    data: word(amount),
+  });
+
+  it('the live funding receipt (0x0293…, block 11880421): no token row, ETH from the transaction value', () => {
+    const f = fixture('0x0293');
+    expect((f.receipt.logs as { address: string }[])[0]!.address).toBe(SYSTEM);
+    const received = describeFixture('0x0293', [KERNEL_OF_ACCOUNT_1]);
+    expect(received.movements).toEqual([]);
+    expect(received.skippedLogs).toBe(0);
+    expect(activityTokenContracts(received)).toEqual([]);
+    expect(received.call).toEqual({ kind: 'native-transfer', to: KERNEL_OF_ACCOUNT_1, value: 10_000_000_000_000_000n });
+    expect(activitySentence(received, ctx())).toBe('Received 0.01 ETH from 0x16DA…aC5C');
+    const sent = describeFixture('0x0293', [DEV_EOA]);
+    expect(sent.movements).toEqual([]);
+    expect(activitySentence(sent, ctx())).toBe('Sent 0.01 ETH to 0xD31c…D8FA');
+  });
+
+  it('a plain send reads the same with or without the protocol log', () => {
+    const tx = syntheticTx({ value: '0x2386f26fc10000' });
+    const before = describe1(tx, syntheticReceipt([]));
+    const after = describe1(tx, syntheticReceipt([ethLog(ACCOUNT_1, OTHER, 10_000_000_000_000_000n)]));
+    expect(after.movements).toEqual([]);
+    expect(activitySentence(after, ctx())).toBe(activitySentence(before, ctx()));
+    expect(activitySentence(after, ctx())).toBe('Sent 0.01 ETH to 0x1111…1111');
+  });
+
+  it('a WETH deposit receipt is unchanged by the fork (wrap decoding stays off for receipts)', () => {
+    const deposit = { address: SEPOLIA_WETH, topics: [id('Deposit(address,uint256)'), topicOf(ACCOUNT_1)], data: word(5n) };
+    const tx = syntheticTx({ to: SEPOLIA_WETH, value: '0x5', input: '0xd0e30db0' });
+    const before = describe1(tx, syntheticReceipt([deposit]));
+    const after = describe1(tx, syntheticReceipt([ethLog(ACCOUNT_1, SEPOLIA_WETH, 5n), deposit]));
+    expect(after.movements).toEqual(before.movements);
+    expect(activitySentence(after, ctx())).toBe(activitySentence(before, ctx()));
+  });
+});

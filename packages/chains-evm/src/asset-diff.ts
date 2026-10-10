@@ -57,7 +57,62 @@ import { decodeRevertReason } from './simulate.js';
  * and UIs must identify tokens by that address, not by a self-reported
  * symbol. The native-ETH pseudo-events cannot be forged this way: they are
  * synthesized by the node at the 0xeeee… address, which no deployed
- * contract occupies.
+ * contract occupies. The same holds for the protocol's own ETH-transfer
+ * logs (EIP-7708, below): they are issued by the execution layer itself at
+ * the system address 0xff…fe, which holds no code (eth_getCode answered
+ * "0x" on Ethereum mainnet, Sepolia, Base Sepolia and Arbitrum Sepolia on
+ * 2026-10-09), so no contract can emit a log from that address.
+ *
+ * EIP-7708 (ETH TRANSFERS EMIT A LOG). Since the Glamsterdam upgrade
+ * activated on Sepolia at timestamp 1791294816 (2026-10-06 13:53:36 UTC;
+ * EIP-7773 "Hardfork Meta - Glamsterdam", ethereum/EIPs commit
+ * 644b84799ba6873edcb13c0e21fdd319b4efbc08, whose Sepolia row reads
+ * "353024 | 1791294816"; blog.ethereum.org/2026/09/17/glamsterdam-testnet-
+ * announcement; go-ethereum v1.17.6 release notes "The Amsterdam hardfork
+ * is scheduled on the Sepolia testnet at timestamp 1791294816"), every
+ * transaction receipt and every eth_simulateV1 call result carries a real
+ * log for each ETH movement. EIP-7708 (ethereum/EIPs EIPS/eip-7708.md at
+ * af3a7802c8ea516f717c6013e27d0f529046f007, status Last Call, listed in
+ * EIP-7773's "EIPs Scheduled for Inclusion") specifies: "A log, identical
+ * to a LOG3, is issued for: Any nonzero-value-transferring transaction to a
+ * different account …; Any nonzero-value-transferring CALL to a different
+ * account …; Any nonzero-value-transferring SELFDESTRUCT to a different
+ * account …; Any nonzero-value-transferring CREATE or CREATE2 to the
+ * created account", with address 0xfffffffffffffffffffffffffffffffffffffffe
+ * (SYSTEM_ADDRESS), topics[0] keccak256('Transfer(address,address,uint256)'),
+ * topics[1] / topics[2] the from / to addresses "zero prefixed to fill
+ * uint256", and data the "amount in Wei (big endian uint256)" — "This
+ * matches the ERC-20 Transfer event definition." Zero-value transfers,
+ * transfers to self, fee payments and reverted frames emit nothing. The
+ * execution-specs reference (ethereum/execution-specs
+ * 64cbead5981236d0fd6f5d172c1ac5dbfb5998f3, src/ethereum/forks/amsterdam/
+ * vm/__init__.py emit_transfer_log) agrees. Observed on Sepolia: the
+ * funding transaction 0x0293867adea984c67d62dfff3e9d8f704ed789071e220fc67c441a51a2a83b1d
+ * (block 11880421) carries exactly such a log (captured verbatim in
+ * test/fixtures/eip7708-sepolia/). Such a log is therefore a NATIVE ETH
+ * movement, never a token: decoding it as an ERC-20 Transfer of "token
+ * 0xff…fe" was the bogus preview row of the 2026-10-09 rehearsal.
+ *
+ * traceTransfers AFTER EIP-7708: nodes disagree, so both kinds are read and
+ * one movement counts once. Read-only probes of eth_simulateV1 with
+ * traceTransfers on ethereum-sepolia-rpc.publicnode.com on 2026-10-09,
+ * which load-balances between two clients (web3_clientVersion
+ * "reth/v2.7.0-3d592ec" and "Geth/v1.17.7-stable-3d858f85"): for a plain
+ * transfer, reth returned ONLY the 0xff…fe log; geth returned the 0xeeee…
+ * pseudo-log immediately followed by the 0xff…fe log for the same
+ * movement (two identical calls in one block: two such pairs); for a
+ * transfer to self, which EIP-7708 does not log, geth returned only a
+ * 0xeeee… pseudo-log and reth returned no log at all (the captured answers
+ * are in test/fixtures/eip7708-sepolia/simulate-trace-transfers.json). The open execution-apis issue #868 reports the same
+ * split per client (geth, reth, erigon both; nethermind protocol log only;
+ * besu synthetic log only), and go-ethereum PR #35617 (merged 2026-10-07,
+ * in v1.17.8) stops geth adding the pseudo-log once EIP-7708 is active.
+ * RULE (mergeNativeTransferLogs): within one call, every 0xff…fe log
+ * cancels ONE not-yet-cancelled 0xeeee… pseudo-log with the same from, to
+ * and amount; everything else counts. Per movement this gives the larger
+ * of the two counts, which is right for every behaviour above: both kinds
+ * (geth), protocol log only (reth, nethermind), pseudo-log only (besu, and
+ * every node before the fork or on networks without EIP-7708).
  */
 
 // ---------------------------------------------------------------------------
@@ -109,6 +164,24 @@ export const TRANSFER_BATCH_EVENT_TOPIC = eventTopic(
 
 /** Emitter address of the traceTransfers ETH pseudo-events (schemas/execute.yaml). */
 export const NATIVE_TRANSFER_PSEUDO_ADDRESS = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+
+/**
+ * Emitter address of the protocol's own ETH-transfer logs: EIP-7708's
+ * SYSTEM_ADDRESS (ethereum/EIPs EIPS/eip-7708.md at af3a7802, "address:
+ * 0xfffffffffffffffffffffffffffffffffffffffe"). Active on Sepolia since the
+ * Glamsterdam upgrade (see the module comment); a Transfer-shaped log from
+ * this address is a native ETH movement, never a token.
+ */
+export const EIP7708_TRANSFER_LOG_ADDRESS = '0xfffffffffffffffffffffffffffffffffffffffe';
+
+/**
+ * True when `address` (any case) is EIP7708_TRANSFER_LOG_ADDRESS. Log
+ * consumers that look for TOKEN Transfer events (erc20-logs.ts,
+ * contract-risk.ts) use it to leave the protocol's ETH-transfer logs out.
+ */
+export function isEip7708TransferLogAddress(address: string): boolean {
+  return address.toLowerCase() === EIP7708_TRANSFER_LOG_ADDRESS;
+}
 
 /** type(uint256).max — the conventional "unlimited" ERC-20 allowance. */
 export const MAX_UINT256 = (1n << 256n) - 1n;
@@ -429,7 +502,13 @@ const SKIPPED: Decoded = { kind: 'skipped' };
  * `ignored` (swaps, syncs … are normal); known token-event topics with a
  * non-standard shape are `skipped` and counted, never guessed at.
  */
-function decodeLog(log: RawLog, me: string, callIndex: number, wrappers: ReadonlySet<string>): Decoded {
+function decodeLog(
+  log: RawLog,
+  me: string,
+  callIndex: number,
+  wrappers: ReadonlySet<string>,
+  nativeSources: Map<AssetChange, NativeSource>,
+): Decoded {
   const topic0 = log.topics[0]?.toLowerCase();
   if (topic0 === undefined) return IGNORED;
   const emitter = log.address.toLowerCase();
@@ -456,13 +535,17 @@ function decodeLog(log: RawLog, me: string, callIndex: number, wrappers: Readonl
       const dir = direction(from, to, me);
       if (!dir) return IGNORED;
       const amount = BigInt(log.data);
-      if (emitter === NATIVE_TRANSFER_PSEUDO_ADDRESS) {
-        return {
-          kind: 'changes',
-          changes: [
-            { type: 'native', callIndex, direction: dir, from: checksum(from), to: checksum(to), amount },
-          ],
+      if (emitter === NATIVE_TRANSFER_PSEUDO_ADDRESS || emitter === EIP7708_TRANSFER_LOG_ADDRESS) {
+        const change: AssetChange = {
+          type: 'native',
+          callIndex,
+          direction: dir,
+          from: checksum(from),
+          to: checksum(to),
+          amount,
         };
+        nativeSources.set(change, emitter === EIP7708_TRANSFER_LOG_ADDRESS ? 'eip7708' : 'trace');
+        return { kind: 'changes', changes: [change] };
       }
       return {
         kind: 'changes',
@@ -479,7 +562,14 @@ function decodeLog(log: RawLog, me: string, callIndex: number, wrappers: Readonl
         ],
       };
     }
-    if (n === 4 && dataBytes === 0 && from && to && emitter !== NATIVE_TRANSFER_PSEUDO_ADDRESS) {
+    if (
+      n === 4 &&
+      dataBytes === 0 &&
+      from &&
+      to &&
+      emitter !== NATIVE_TRANSFER_PSEUDO_ADDRESS &&
+      emitter !== EIP7708_TRANSFER_LOG_ADDRESS
+    ) {
       const dir = direction(from, to, me);
       if (!dir) return IGNORED;
       return {
@@ -599,16 +689,50 @@ function decodeLog(log: RawLog, me: string, callIndex: number, wrappers: Readonl
   return IGNORED;
 }
 
+/** Where a native change was read from: the traceTransfers pseudo-log, or the EIP-7708 protocol log. */
+type NativeSource = 'trace' | 'eip7708';
+
+/**
+ * Counts each ETH movement of one call once (the RULE in the module
+ * comment): every native change read from an EIP-7708 log removes the
+ * earliest not-yet-removed traceTransfers pseudo-log change with the same
+ * from, to and amount. The protocol log is kept (it is the protocol's own
+ * record); order is otherwise preserved. Non-native entries pass through.
+ */
+function mergeNativeTransferLogs(
+  entries: (AssetChange | WrapCandidate)[],
+  nativeSources: ReadonlyMap<AssetChange, NativeSource>,
+): (AssetChange | WrapCandidate)[] {
+  const dropped = new Set<AssetChange>();
+  for (const entry of entries) {
+    if (isWrapCandidate(entry) || entry.type !== 'native' || nativeSources.get(entry) !== 'eip7708') continue;
+    const twin = entries.find(
+      (e): e is AssetChange =>
+        !isWrapCandidate(e) &&
+        e.type === 'native' &&
+        nativeSources.get(e) === 'trace' &&
+        !dropped.has(e) &&
+        e.amount === entry.amount &&
+        e.from === entry.from &&
+        e.to === entry.to,
+    );
+    if (twin) dropped.add(twin);
+  }
+  return dropped.size === 0 ? entries : entries.filter((e) => isWrapCandidate(e) || !dropped.has(e));
+}
+
 /**
  * Turns one call's wrapped-ether candidates into balance changes, in log
  * order. A candidate counts only when the call also moved the matching
- * ether, as the node reports it through traceTransfers (pseudo-events from
- * 0xeeee…, which no contract can emit): for a Deposit, exactly `amount` wei
- * from the wallet to the wrapper; for a Withdrawal, exactly `amount` wei
- * from the wrapper to the wallet. Each ether movement backs at most one
- * candidate. Without it the candidate is dropped, never guessed at (a
- * receipt, as decoded by activity-decode.ts, has no pseudo-events, so
- * receipts are unchanged by this decoding).
+ * ether, as the node reports it (traceTransfers pseudo-events from 0xeeee…
+ * or EIP-7708 protocol logs from 0xff…fe, neither of which a contract can
+ * emit; already merged by mergeNativeTransferLogs): for a Deposit, exactly
+ * `amount` wei from the wallet to the wrapper; for a Withdrawal, exactly
+ * `amount` wei from the wrapper to the wallet. Each ether movement backs at
+ * most one candidate. Without it the candidate is dropped, never guessed
+ * at. A receipt from before EIP-7708 has no ETH-movement logs at all; for
+ * receipts after it, activity-decode.ts turns this decoding off
+ * (wrappedNativeTokens: []) so that Activity is unchanged by the fork.
  *
  * A wrapper that ALSO emits a mint or burn Transfer for the same deposit or
  * withdrawal (Solmate's WETH, for example, calls _mint and then emits
@@ -745,17 +869,18 @@ export function parseSimulationResult(
     const logs = call.logs;
     if (!Array.isArray(logs)) malformed(`call ${callIndex} succeeded without a logs array`);
     const entries: (AssetChange | WrapCandidate)[] = [];
+    const nativeSources = new Map<AssetChange, NativeSource>();
     for (const log of logs as unknown[]) {
       if (!isRawLog(log)) {
         skippedLogs += 1;
         continue;
       }
-      const decoded = decodeLog(log, me, callIndex, wrappers);
+      const decoded = decodeLog(log, me, callIndex, wrappers, nativeSources);
       if (decoded.kind === 'changes') entries.push(...decoded.changes);
       else if (decoded.kind === 'wrap') entries.push(decoded);
       else if (decoded.kind === 'skipped') skippedLogs += 1;
     }
-    changes.push(...resolveWraps(entries, me, callIndex));
+    changes.push(...resolveWraps(mergeNativeTransferLogs(entries, nativeSources), me, callIndex));
   });
 
   return { ok: calls.every((c) => c.ok), calls, changes, skippedLogs };

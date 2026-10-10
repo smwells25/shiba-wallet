@@ -99,4 +99,18 @@ describe('ERC-20 transfer logs', () => {
     });
     expect(transfers[0]!.value).toBe(0n);
   });
+
+  it('leaves out EIP-7708 protocol ETH-transfer logs (0xff…fe, same topic and shape) in an unfiltered query', async () => {
+    const SYSTEM = '0xfffffffffffffffffffffffffffffffffffffffe';
+    const transport: JsonRpcTransport = async (_method, params) => {
+      const topics = (params as [Record<string, unknown>])[0]!.topics as (string | null)[];
+      if (topics[1] === addressTopic(ME)) {
+        return [log({ address: SYSTEM, transactionHash: '0xeth' }), log({ transactionHash: '0xtoken', logIndex: '0x1' })];
+      }
+      return [];
+    };
+    const transfers = await getErc20Transfers(transport, { address: ME, fromBlock: 1n, toBlock: 200n });
+    expect(transfers.map((t) => t.txHash)).toEqual(['0xtoken']);
+    expect(transfers.every((t) => t.token.toLowerCase() !== SYSTEM)).toBe(true);
+  });
 });

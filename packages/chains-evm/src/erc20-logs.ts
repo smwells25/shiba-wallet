@@ -2,6 +2,7 @@ import { keccak_256 } from '@noble/hashes/sha3.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { toChecksumAddress } from '@shiba-wallet/core';
 import { bigintToHex, toBytes, toHex } from './encoding.js';
+import { isEip7708TransferLogAddress } from './asset-diff.js';
 import type { JsonRpcTransport } from './rpc.js';
 
 /**
@@ -9,7 +10,9 @@ import type { JsonRpcTransport } from './rpc.js';
  * plain JSON-RPC endpoint can serve (native-coin history needs an indexer
  * or explorer API, which stays a configurable later addition). The
  * Transfer(address,address,uint256) event indexes both parties, so two
- * topic-filtered queries (as sender, as recipient) cover an address.
+ * topic-filtered queries (as sender, as recipient) cover an address. Since
+ * EIP-7708 the protocol also emits Transfer-shaped logs for ETH from the
+ * system address 0xff…fe; they are left out here (not a token).
  *
  * Public endpoints cap eth_getLogs block ranges, so callers page by
  * explicit block windows; the app walks backwards window by window.
@@ -92,6 +95,13 @@ export async function getErc20Transfers(
     // Some non-compliant contracts emit Transfer with missing indexed
     // fields; skip anything that does not match the canonical shape.
     if (log.topics.length !== 3) continue;
+    // EIP-7708 (active on Sepolia since 2026-10-06, see asset-diff.ts): the
+    // protocol logs every ETH transfer with this same Transfer topic and
+    // shape from the system address 0xff…fe. That is an ETH movement, not
+    // an ERC-20 token, so a query without a token filter must not list it
+    // as "token 0xff…fe". (A query filtered to a token contract never
+    // returns it: eth_getLogs matches the emitting address.)
+    if (isEip7708TransferLogAddress(log.address)) continue;
     transfers.push({
       txHash: log.transactionHash,
       blockNumber: BigInt(log.blockNumber),

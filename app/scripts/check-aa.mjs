@@ -36,6 +36,7 @@ import {
   prepareAaCalls,
   AA_MAX_TRIM_ROUNDS,
   aaFundingMessage,
+  aaEstimateFundingMessage,
   AaFundingError,
   QUOTE_FAILED_TITLE,
   aaSendApprovalPrompt,
@@ -2185,6 +2186,77 @@ await (async () => {
     check('M-I3 caught: a client that ignores the bundle’s retry policy does not ask again at send time (the recovery check above would fail)',
       isImpossibleGasEstimateError(r) && b.state.sends === 0);
   }
+})();
+
+// ---------------------------------------------------------------------------
+// AA21 from the ESTIMATE of an operation that sends nothing (a set-up)
+// ---------------------------------------------------------------------------
+// Finding 2 of the 2026-10-09 recurring-payments rehearsal: the subscription
+// install (two zero-value self-calls) was refused at
+// eth_estimateUserOperationGas with AA21, and the app said "…sending 0 wei
+// plus its network fee exceeds the balance…", naming no amount to fund.
+await (async () => {
+  console.log('\nAA21 at the estimate of a zero-value set-up:');
+  const AA21 = "RPC error -32500: validation reverted: AA21 didn't pay prefund (eth_estimateUserOperationGas)";
+  const OLD_SENTENCE = 'sending 0 wei plus its network fee';
+  const make = (aaModule = null) => {
+    const node = fakeNode({ senderDeployed: true, senderBalance: 5_000_000_000_000_000n, deposit: 346_697_572_982_424n });
+    const base = fakeBundler({});
+    const bundler = async (method, params) => {
+      if (method === 'eth_estimateUserOperationGas') throw new Error(AA21);
+      return base(method, params);
+    };
+    return (aaModule ? aaModule.createAaClient : createAaClient)({
+      nodeUrl: 'https://node.example',
+      bundlerUrl: 'https://bundler.example',
+      factory: FACTORY_INPUT,
+      transportFor: (url) => (url === 'https://node.example' ? node : bundler),
+      estimateRetries: { attempts: 1, delayMs: 0 },
+    });
+  };
+  // The install's shape: zero-value self-calls (installValidations, grantAccess).
+  const setUp = [
+    { to: SENDER, value: 0n, data: new Uint8Array([1, 2, 3, 4]) },
+    { to: SENDER, value: 0n, data: new Uint8Array([5, 6, 7, 8]) },
+  ];
+  const run = (m = null) =>
+    (m ?? { prepareAaCalls }).prepareAaCalls(make(m), owner.address, setUp, { displayTo: SENDER }).then(() => null, (e) => e);
+  const e = await run();
+  const msg = e?.message ?? '';
+  check('refused as an AaFundingError naming the smart account', e instanceof AaFundingError && same(e.sender, SENDER), String(e));
+  check('never the old "sending 0 wei plus its network fee" sentence', !msg.includes(OLD_SENTENCE) && !/sending 0 wei/.test(msg), msg);
+  check('says the bundler refused to estimate because the account cannot pay the network fee',
+    msg.startsWith(`The bundler refused to estimate this operation because the smart account ${e?.sender} cannot pay the operation's network fee.`), msg);
+  check('names what it holds (balance and EntryPoint deposit, exact wei)',
+    msg.includes('It holds 5000000000000000 wei plus an EntryPoint deposit of 346697572982424 wei'), msg);
+  check('says the exact fee is unknown because the estimate itself was refused',
+    msg.includes('The exact fee is not known, because the bundler refused the estimate itself.'), msg);
+  check('says what to do: fund the smart-account address, then review again',
+    msg.includes(`Fund the smart account address ${e?.sender} (not the owner address), then review again.`), msg);
+  check("keeps the bundler's text as technical detail, verbatim and last", msg.endsWith(`\n\nThe bundler's message: ${AA21}`), msg);
+  const described = describeAaError(e, { accountType: 'simple', deployed: true });
+  check('describeAaError: the funding title, the message as the detail', described?.title === AA_FUNDING_TITLE && described.detail === msg);
+  check('aaEstimateFundingMessage: no deposit → no deposit clause; undeployed → the deploy sentence',
+    aaEstimateFundingMessage({ sender: SENDER, balance: 0n, deposit: 0n, deployed: false }).includes('It holds 0 wei, and') &&
+      aaEstimateFundingMessage({ sender: SENDER, balance: 0n, deployed: false }).endsWith('the first operation deploys it.') &&
+      !aaEstimateFundingMessage({ sender: SENDER, balance: 0n, deployed: true }).includes('deployed'));
+  check('aaFundingMessage with a zero amount (the pre-check) never says "sending 0 wei" either',
+    !/sending 0 wei/.test(aaFundingMessage({ sender: SENDER, amount: 0n, fee: null, balance: 0n, sponsored: false })) &&
+      aaFundingMessage({ sender: SENDER, amount: 0n, fee: null, balance: 0n, sponsored: false }).startsWith(
+        'Insufficient funds: the smart account pays its own gas (no paymaster), and this operation’s network fee exceeds the balance of 0 wei'));
+  check('control: a send WITH an amount keeps the amount sentence',
+    aaFundingMessage({ sender: SENDER, amount: 5n, fee: null, balance: 4n, sponsored: false }).includes('sending 5 wei plus its network fee'));
+  const aaSrc = readFileSync(new URL('../src/wallet/aa.ts', import.meta.url), 'utf8');
+  // Mutant: the estimate catch without the set-up branch (the code before this fix, with the old sentence).
+  const anchorFrom = 'const sendsNothing = candidate.every((c) => c.value === 0n);';
+  if (!aaSrc.includes(anchorFrom)) throw new Error('mutation anchor not found');
+  const m1 = await importMutant('src/wallet/aa.ts', aaSrc.replace(anchorFrom, 'const sendsNothing = false;').replace(
+    '  if (p.amount === 0n) {\n    // An operation that sends no native currency',
+    '  if (false) {\n    // An operation that sends no native currency',
+  ));
+  const e1 = await run(m1);
+  check('MUTANT caught: the old catch says "sending 0 wei plus its network fee", which the checks above refuse',
+    (e1?.message ?? '').includes(OLD_SENTENCE) && !(e1?.message ?? '').startsWith('The bundler refused to estimate'), e1?.message);
 })();
 
 console.log(`\n${passed} passed, ${failed} failed`);

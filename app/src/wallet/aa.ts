@@ -2368,8 +2368,20 @@ export function aaFundingMessage(p: {
       `the smart account ${p.sender} (gas is sponsored, but the amount is not). ${fund}`
     );
   }
-  const feePart = p.fee === null ? 'its network fee' : `a worst-case fee of ${p.fee} wei`;
   const deposit = p.deposit ?? 0n;
+  if (p.amount === 0n) {
+    // An operation that sends no native currency (a set-up such as a session
+    // or subscription install, a token send): saying "sending 0 wei plus its
+    // network fee" (the 2026-10-09 rehearsal) names an amount nobody chose.
+    const fee = p.fee === null ? 'this operation’s network fee' : `this operation’s worst-case fee of ${p.fee} wei`;
+    const heldZero =
+      deposit > 0n
+        ? `the balance of ${p.balance} wei held by the smart account ${p.sender} plus its EntryPoint deposit ` +
+          `of ${deposit} wei`
+        : `the balance of ${p.balance} wei held by the smart account ${p.sender}`;
+    return `Insufficient funds: the smart account pays its own gas (no paymaster), and ${fee} exceeds ${heldZero}. ${fund}`;
+  }
+  const feePart = p.fee === null ? 'its network fee' : `a worst-case fee of ${p.fee} wei`;
   const held =
     deposit > 0n
       ? `the balance of ${p.balance} wei held by the smart account ${p.sender} plus its EntryPoint ` +
@@ -2378,6 +2390,42 @@ export function aaFundingMessage(p: {
   return (
     'Insufficient funds: the smart account pays its own gas (no paymaster), and sending ' +
     `${p.amount} wei plus ${feePart} exceeds ${held}. ${fund}`
+  );
+}
+
+/**
+ * The funding message for an AA21 ("didn't pay prefund") refusal of the
+ * bundler's ESTIMATE of an operation that sends no native currency (a
+ * set-up: a session, subscription, recurring-payment, guardian or passkey
+ * install; finding 2 of the 2026-10-09 recurring-payments rehearsal, where
+ * the old text read "sending 0 wei plus its network fee exceeds the
+ * balance…" and named nothing to fund). AA21 means the EntryPoint's
+ * validation could not collect the operation's worst-case fee (its
+ * prefund) from the account's deposit plus balance (account-abstraction
+ * v0.7.0, EntryPoint._validateAccountPrepayment); the bundler computes
+ * that prefund from gas limits it never returned, so no exact figure
+ * exists to show. The caller appends the bundler's own text as technical
+ * detail.
+ */
+export function aaEstimateFundingMessage(p: {
+  sender: string;
+  balance: bigint;
+  deposit?: bigint | null;
+  deployed?: boolean | null;
+}): string {
+  const deposit = p.deposit ?? 0n;
+  const holds =
+    deposit > 0n
+      ? `It holds ${p.balance} wei plus an EntryPoint deposit of ${deposit} wei`
+      : `It holds ${p.balance} wei`;
+  return (
+    `The bundler refused to estimate this operation because the smart account ${p.sender} cannot pay ` +
+    `the operation's network fee. ${holds}, and the network fee must be available up front, before ` +
+    'the operation runs. The exact fee is not known, because the bundler refused the estimate itself. ' +
+    `Fund the smart account address ${p.sender} (not the owner address), then review again.` +
+    (p.deployed === false
+      ? ' A smart account can receive funds before it is deployed; the first operation deploys it.'
+      : '')
   );
 }
 
@@ -3055,10 +3103,15 @@ export async function prepareAaCalls(
       // bundler's words.
       const raw = e instanceof Error ? e.message : String(e);
       if (isPrefundError(raw)) {
+        // A candidate that sends no native currency (a set-up) gets the
+        // estimate-specific wording: there is no amount to name, and the
+        // fee is unknown because the estimate itself was refused.
+        const sendsNothing = candidate.every((c) => c.value === 0n);
         throw new AaFundingError(
           sender,
-          `${aaFundingMessage({ ...fundingFacts(), fee: null })}` +
-            `\n\nThe bundler's message: ${raw}`,
+          (sendsNothing
+            ? aaEstimateFundingMessage({ sender, balance: senderBalance, deposit, deployed: eip7702 ? null : deployed })
+            : aaFundingMessage({ ...fundingFacts(), fee: null })) + `\n\nThe bundler's message: ${raw}`,
         );
       }
       throw e;

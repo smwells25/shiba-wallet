@@ -1,7 +1,12 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { AbiCoder, concat, getAddress, id, zeroPadValue } from 'ethers';
 import {
   APPROVAL_EVENT_TOPIC,
+  EIP7708_TRANSFER_LOG_ADDRESS,
+  isEip7708TransferLogAddress,
   DEPOSIT_EVENT_TOPIC,
   WITHDRAWAL_EVENT_TOPIC,
   WRAPPED_NATIVE_TOKENS,
@@ -584,5 +589,152 @@ describe('wrapped ether (WETH9 Deposit / Withdrawal, finding F5)', () => {
     expect(def.changes.some((c) => c.type === 'erc20' && c.wrap === 'deposit')).toBe(true);
     const off = await simulateAssetChanges(transport, [{ from: ME, to: WETH, value: wad }], ME, { wrappedNativeTokens: [] });
     expect(off.changes.some((c) => c.type === 'erc20')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// EIP-7708: the protocol's own ETH-transfer logs (Sepolia since 2026-10-06)
+// ---------------------------------------------------------------------------
+
+describe('EIP-7708 ETH-transfer logs from 0xff…fe (native, never a token)', () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const FUNDING = '0x0293867adea984c67d62dfff3e9d8f704ed789071e220fc67c441a51a2a83b1d';
+  const funding = JSON.parse(
+    readFileSync(join(here, 'fixtures', 'activity-sepolia', `${FUNDING}.json`), 'utf8'),
+  ) as { transaction: { from: string; to: string; value: string }; receipt: { logs: unknown[] } };
+  const sims = JSON.parse(
+    readFileSync(join(here, 'fixtures', 'eip7708-sepolia', 'simulate-trace-transfers.json'), 'utf8'),
+  ) as {
+    cases: Record<
+      string,
+      {
+        request: { from: string; to: string; value: string }[];
+        answers: Record<string, { client: string; calls: { status: string; gasUsed: string; logs: unknown[] }[] }>;
+      }
+    >;
+  };
+  const DEV_EOA = getAddress('0x16da2caeada26516f919c6872f6c38ab378cac5c');
+  const KERNEL = getAddress('0xd31c2c54f21684ee2026a6c41e391130bdeed8fa');
+  const SEPOLIA_WETH = getAddress('0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14');
+  const DEAD = getAddress('0x000000000000000000000000000000000000dead');
+  const ethMove = (emitter: string, from: string, to: string, amount: bigint) =>
+    log(emitter, [TRANSFER_EVENT_TOPIC, topicOf(from), topicOf(to)], word(amount));
+  const pseudo = (from: string, to: string, amount: bigint) => ethMove(NATIVE_TRANSFER_PSEUDO_ADDRESS, from, to, amount);
+  const proto = (from: string, to: string, amount: bigint) => ethMove(EIP7708_TRANSFER_LOG_ADDRESS, from, to, amount);
+  const noTokenAt0xff = (changes: { type: string; token?: string }[]) =>
+    changes.every((c) => !('token' in c) || c.token?.toLowerCase() !== EIP7708_TRANSFER_LOG_ADDRESS);
+
+  it('the emitter is EIP-7708 SYSTEM_ADDRESS and the topic is the ERC-20 Transfer topic (EIP-7708 text)', () => {
+    expect(EIP7708_TRANSFER_LOG_ADDRESS).toBe('0xfffffffffffffffffffffffffffffffffffffffe');
+    expect(TRANSFER_EVENT_TOPIC).toBe('0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef');
+    expect(isEip7708TransferLogAddress('0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE')).toBe(true);
+    expect(isEip7708TransferLogAddress(NATIVE_TRANSFER_PSEUDO_ADDRESS)).toBe(false);
+  });
+
+  it('the live Sepolia receipt (0x0293…, block 11880421) decodes as a native movement, not token 0xff…fe', () => {
+    const logs = funding.receipt.logs;
+    expect((logs[0] as { address: string }).address).toBe(EIP7708_TRANSFER_LOG_ADDRESS);
+    const sent = parseSimulationResult([{ calls: [{ status: '0x1', logs }] }], 1, DEV_EOA);
+    expect(sent.changes).toEqual([
+      { type: 'native', callIndex: 0, direction: 'out', from: DEV_EOA, to: KERNEL, amount: BigInt(funding.transaction.value) },
+    ]);
+    expect(sent.skippedLogs).toBe(0);
+    const received = parseSimulationResult([{ calls: [{ status: '0x1', logs }] }], 1, KERNEL);
+    expect(received.changes).toEqual([
+      { type: 'native', callIndex: 0, direction: 'in', from: DEV_EOA, to: KERNEL, amount: 10_000_000_000_000_000n },
+    ]);
+  });
+
+  it('live eth_simulateV1 answers from both clients give the same changes (geth: both logs, reth: 0xff…fe only)', () => {
+    const expected: Record<string, (client: string) => unknown[]> = {
+      eoaToKernel: () => [
+        { type: 'native', callIndex: 0, direction: 'out', from: DEV_EOA, to: KERNEL, amount: 10_000_000_000_000_000n },
+      ],
+      wethDeposit: () => [
+        { type: 'native', callIndex: 0, direction: 'out', from: DEV_EOA, to: SEPOLIA_WETH, amount: 5n },
+        {
+          type: 'erc20',
+          callIndex: 0,
+          direction: 'in',
+          token: SEPOLIA_WETH,
+          from: getAddress('0x0000000000000000000000000000000000000000'),
+          to: DEV_EOA,
+          amount: 5n,
+          wrap: 'deposit',
+        },
+      ],
+      // A transfer to self: EIP-7708 logs nothing; geth still adds its
+      // pseudo-log, reth added none (no balance changes either way).
+      selfTransfer: (client) =>
+        client.startsWith('Geth')
+          ? [{ type: 'native', callIndex: 0, direction: 'self', from: DEV_EOA, to: DEV_EOA, amount: 7n }]
+          : [],
+      twoSame: () => [
+        { type: 'native', callIndex: 0, direction: 'out', from: DEV_EOA, to: DEAD, amount: 1n },
+        { type: 'native', callIndex: 1, direction: 'out', from: DEV_EOA, to: DEAD, amount: 1n },
+      ],
+    };
+    const clientsSeen = new Set<string>();
+    for (const [name, c] of Object.entries(sims.cases)) {
+      for (const answer of Object.values(c.answers)) {
+        clientsSeen.add(answer.client.split('/')[0]!);
+        const result = parseSimulationResult([{ calls: answer.calls }], c.request.length, DEV_EOA);
+        expect(result.changes, `${name} on ${answer.client}`).toEqual(expected[name]!(answer.client));
+        expect(result.skippedLogs).toBe(0);
+        expect(noTokenAt0xff(result.changes)).toBe(true);
+      }
+    }
+    // The fixture really holds both behaviours.
+    expect([...clientsSeen].sort()).toEqual(['Geth', 'reth']);
+    const gethKernel = sims.cases.eoaToKernel!.answers.Geth!.calls[0]!.logs as { address: string }[];
+    expect(gethKernel.map((l) => l.address)).toEqual([
+      NATIVE_TRANSFER_PSEUDO_ADDRESS,
+      EIP7708_TRANSFER_LOG_ADDRESS,
+      KERNEL.toLowerCase(),
+    ]);
+    const rethKernel = sims.cases.eoaToKernel!.answers.reth!.calls[0]!.logs as { address: string }[];
+    expect(rethKernel.map((l) => l.address)).toEqual([EIP7708_TRANSFER_LOG_ADDRESS, KERNEL.toLowerCase()]);
+  });
+
+  it('one movement counts once whichever logs a node returns; different movements all count', () => {
+    const amount = 123n;
+    const one = { type: 'native', callIndex: 0, direction: 'out', from: getAddress(ME), to: getAddress(OTHER), amount };
+    const parse = (logs: unknown[]) => parseSimulationResult(block([okCall(logs)]), 1, ME).changes;
+    expect(parse([pseudo(ME, OTHER, amount)])).toEqual([one]); // pre-fork nodes, besu
+    expect(parse([proto(ME, OTHER, amount)])).toEqual([one]); // reth, nethermind, receipts
+    expect(parse([pseudo(ME, OTHER, amount), proto(ME, OTHER, amount)])).toEqual([one]); // geth 1.17.7
+    expect(parse([proto(ME, OTHER, amount), pseudo(ME, OTHER, amount)])).toEqual([one]); // order does not matter
+    // Two identical movements in one call, each reported twice: two.
+    expect(
+      parse([pseudo(ME, OTHER, amount), proto(ME, OTHER, amount), pseudo(ME, OTHER, amount), proto(ME, OTHER, amount)]),
+    ).toEqual([one, one]);
+    // Two identical movements, the node reports only one pseudo-log and two protocol logs: still two.
+    expect(parse([pseudo(ME, OTHER, amount), proto(ME, OTHER, amount), proto(ME, OTHER, amount)])).toEqual([one, one]);
+    // A pseudo-log never cancels a protocol log of another amount, sender or recipient.
+    expect(parse([pseudo(ME, OTHER, amount), proto(ME, OTHER, amount + 1n)])).toHaveLength(2);
+    expect(parse([pseudo(ME, OTHER, amount), proto(ME, SPENDER, amount)])).toHaveLength(2);
+    expect(parse([pseudo(OTHER, ME, amount), proto(ME, OTHER, amount)])).toHaveLength(2);
+    // Nor across calls (each call is its own transaction-like frame).
+    const twoCalls = parseSimulationResult(block([okCall([pseudo(ME, OTHER, amount)]), okCall([proto(ME, OTHER, amount)])]), 2, ME);
+    expect(twoCalls.changes.map((c) => c.callIndex)).toEqual([0, 1]);
+  });
+
+  it('a protocol log backs a WETH Deposit like a pseudo-log does, and is not used twice', () => {
+    const wad = 5n;
+    const dep = log(SEPOLIA_WETH, [DEPOSIT_EVENT_TOPIC, topicOf(ME)], word(wad));
+    const r = parseSimulationResult(block([okCall([proto(ME, SEPOLIA_WETH, wad), dep])]), 1, ME);
+    expect(r.changes.map((c) => c.type)).toEqual(['native', 'erc20']);
+    const twice = parseSimulationResult(block([okCall([pseudo(ME, SEPOLIA_WETH, wad), proto(ME, SEPOLIA_WETH, wad), dep, dep])]), 1, ME);
+    expect(twice.changes.filter((c) => c.type === 'erc20')).toHaveLength(1);
+  });
+
+  it('a 4-topic (ERC-721-shaped) log from 0xff…fe is skipped, never an NFT', () => {
+    const r = parseSimulationResult(
+      block([okCall([log(EIP7708_TRANSFER_LOG_ADDRESS, [TRANSFER_EVENT_TOPIC, topicOf(ME), topicOf(OTHER), word(1n)])])]),
+      1,
+      ME,
+    );
+    expect(r.changes).toEqual([]);
+    expect(r.skippedLogs).toBe(1);
   });
 });

@@ -22,7 +22,9 @@
 //
 // Nothing is signed against a live chain and nothing is broadcast.
 
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { evmKeyProvider, mnemonicToSeed } from '@shiba-wallet/core';
 import {
   ENTRYPOINT_V07,
@@ -40,7 +42,7 @@ import {
   toHex,
 } from '@shiba-wallet/chains-evm';
 import { ethers } from 'ethers';
-import { createAaClient, sendAa } from '../src/wallet/aa.ts';
+import { AA_FEE_FLOOR_HEADROOM_PERCENT, createAaClient, quoteFeesOverFloor, sendAa } from '../src/wallet/aa.ts';
 import {
   SESSIONS_KEY,
   describeGrantLimits,
@@ -108,6 +110,9 @@ import {
   SUBSCRIPTION_AUDIT_NOTE,
   SUBSCRIPTION_KEY_EXPIRED_STATUS_TEXT,
   readSubscriptionFeeFacts,
+  feeBudgetPricingNote,
+  feeBudgetSuggestionHint,
+  cardShowsBatchingWarning,
   subscriptionInstallFeeCeiling,
   withSubscriptionFeeCeiling,
 } from '../src/wallet/subscriptions.ts';
@@ -816,6 +821,109 @@ console.log('\ncheck-subscriptions: fixes from the 2026-10-04 emulator run (bugs
     /describe\(e, 'send'\);\s*Alert\.alert\(title, detail\);[\s\S]{0,400}setRevokeTarget\(null\);\s*setPhase\('list'\);\s*refreshRecord\(target\.record\);/.test(screenSrc));
   check('failed manual grant: back to the form (fresh key and quote at the next Review) (source)',
     /describe\(e, 'send'\);\s*Alert\.alert\(title, detail\);[\s\S]{0,500}discardPending\(\);\s*setPhase\('form'\);/.test(screenSrc));
+}
+
+// ---------------------------------------------------------------------------
+console.log('\ncheck-subscriptions: fixes from the 2026-10-09 recurring-payments rehearsal (findings 1 and 5)');
+// ---------------------------------------------------------------------------
+{
+  // Finding 1: the fee-budget pre-fill must be priced at the fee the payments
+  // are SIGNED at. The rehearsal's figures (Sepolia, 2026-10-09): the node
+  // suggested a maxFeePerGas of about 0.001 gwei (the default budget for 3
+  // payments was 0.00000300009 ETH), while ZeroDev's standard priority fee was
+  // a constant 1.155 gwei, so payments were signed at about 2.31 gwei
+  // (floor + 100 %). GasPolicy charges (pVG + vGL + cGL) × maxFeePerGas per
+  // payment; the largest recorded charge was 438,168 gas (phase 13).
+  const NODE_PRIORITY = 1_000_000n; // 0.001 gwei
+  const BASE_FEE = 8n;
+  const FLOOR_PRIORITY = 1_154_999_983n; // ZeroDev's standard tier, 2026-10-09
+  const FLOOR_MAXFEE = 1_155_000_005n;
+  const nodeFake = async (method, params) => {
+    if (method === 'eth_getBalance') return '0x' + (14_650_000_000_000_000n).toString(16);
+    if (method === 'eth_getBlockByNumber') return { baseFeePerGas: '0x' + BASE_FEE.toString(16) };
+    if (method === 'eth_maxPriorityFeePerGas') return '0x' + NODE_PRIORITY.toString(16);
+    if (method === 'eth_call' && same(params[0].to, ENTRYPOINT_V07)) return word(346_697_572_982_424n);
+    throw new Error(`unexpected ${method}`);
+  };
+  const bundlerFake = async (method) => {
+    if (method === 'pimlico_getUserOperationGasPrice') {
+      const tier = (m) => ({ maxFeePerGas: '0x' + ((FLOOR_MAXFEE * m) / 100n).toString(16), maxPriorityFeePerGas: '0x' + ((FLOOR_PRIORITY * m) / 100n).toString(16) });
+      return { slow: tier(100n), standard: tier(100n), fast: tier(110n) };
+    }
+    throw new Error('RPC error -32601: Method not found');
+  };
+  const nodeOnly = await readSubscriptionFeeFacts(nodeFake, ACCOUNT);
+  const viaBundler = await readSubscriptionFeeFacts(nodeFake, ACCOUNT, { bundler: bundlerFake });
+  const nodeFees = { maxFeePerGas: nodeOnly.maxFeePerGas, maxPriorityFeePerGas: NODE_PRIORITY };
+  const signed = quoteFeesOverFloor(nodeFees, { maxPriorityFeePerGas: FLOOR_PRIORITY, maxFeePerGas: FLOOR_MAXFEE }).maxFeePerGas;
+  check('without a bundler: the node fee, labelled "node"', nodeOnly.feeSource === 'node' && nodeOnly.maxFeePerGas !== null && nodeOnly.maxFeePerGas < 10_000_000n, String(nodeOnly.maxFeePerGas));
+  check('with the bundler: priced at the fee the payments sign (quoteFeesOverFloor over the bundler floor), labelled "bundler"',
+    viaBundler.feeSource === 'bundler' && viaBundler.maxFeePerGas === signed && signed >= 2n * FLOOR_PRIORITY,
+    `${viaBundler.maxFeePerGas} vs ${signed}`);
+  check('the headroom is the one every smart-account quote uses (100 %)', AA_FEE_FLOOR_HEADROOM_PERCENT === 100n);
+  check('a bundler without a fee method falls back to the node fee, labelled',
+    (await readSubscriptionFeeFacts(nodeFake, ACCOUNT, { bundler: async () => { throw new Error('nope'); } })).feeSource === 'node');
+  const PHASE13_PULL_CHARGE_GAS = 438_168n;
+  const pre = suggestedFeeBudget({ payments: 3, maxFeePerGas: viaBundler.maxFeePerGas, balance: viaBundler.balance, nativeAmountPerPayment: 1000n });
+  check('the default budget covers at least one payment at the quoted bundler fee (438,168 gas × signed fee)',
+    pre.wei !== null && pre.wei >= PHASE13_PULL_CHARGE_GAS * signed, String(pre.wei));
+  check('…and all three payments of the rehearsal at that fee', pre.wei !== null && pre.wei >= 3n * PHASE13_PULL_CHARGE_GAS * signed);
+  // A pre-fill priced at the NODE's fee (the code before this fix) fails the same test.
+  const atNode = suggestedFeeBudget({ payments: 3, maxFeePerGas: nodeOnly.maxFeePerGas, balance: viaBundler.balance, nativeAmountPerPayment: 1000n });
+  check('control: priced at the node fee it would not cover even one payment (the bug)', atNode.wei !== null && atNode.wei < PHASE13_PULL_CHARGE_GAS * signed);
+  // Source mutant: readSubscriptionFeeFacts returning the node fee under the bundler label must fail the checks above.
+  const here = dirname(fileURLToPath(import.meta.url));
+  const MUT = join(here, `.mutants-subs-${process.pid}`);
+  process.on('exit', () => rmSync(MUT, { recursive: true, force: true }));
+  const subsSrc = readFileSync(join(here, '..', 'src', 'wallet', 'subscriptions.ts'), 'utf8');
+  const from = "return { maxFeePerGas: quoteFeesOverFloor(fees, floor).maxFeePerGas, feeSource: 'bundler', balance, deposit, failures };";
+  check('mutation anchor present', subsSrc.includes(from));
+  const mutated = subsSrc.replace(from, "return { maxFeePerGas: fees.maxFeePerGas, feeSource: 'bundler', balance, deposit, failures };")
+    .replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolve(join(here, '..', 'src', 'wallet'), spec)).href}'`);
+  mkdirSync(MUT, { recursive: true });
+  writeFileSync(join(MUT, 'subscriptions.ts'), mutated);
+  const m = await import(pathToFileURL(join(MUT, 'subscriptions.ts')).href);
+  const mFacts = await m.readSubscriptionFeeFacts(nodeFake, ACCOUNT, { bundler: bundlerFake });
+  const mPre = m.suggestedFeeBudget({ payments: 3, maxFeePerGas: mFacts.maxFeePerGas, balance: mFacts.balance, nativeAmountPerPayment: 1000n });
+  check('MUTANT caught: a pre-fill priced at the node fee fails "covers one payment at the bundler fee"',
+    !(mPre.wei !== null && mPre.wei >= PHASE13_PULL_CHARGE_GAS * signed));
+
+  // The review and the form say what the budget is priced at.
+  const note = feeBudgetPricingNote({ budgetWei: pre.wei, payments: 3, maxFeePerGas: signed, source: 'bundler', edited: false, nativeSymbol: 'test ETH' });
+  check('review note: priced at the signing fee, named as the bundler fee plus 100 % headroom, 500,000 gas per payment, doubled',
+    note.startsWith(`Fee budget priced at ${Number(signed) / 1e9} gwei per gas — the fee each payment is signed at today (the bundler’s current fee plus 100% headroom): 500,000 gas per payment`) &&
+      note.includes('doubled because fees move') && note.endsWith('it covers the fees of all 3 payments at that fee.'), note);
+  const nodeNote = feeBudgetPricingNote({ budgetWei: 3_000_090_000_000n, payments: 3, maxFeePerGas: 1_000_016n, source: 'node', edited: false, nativeSymbol: 'test ETH' });
+  check('review note, node fallback: labelled, warns it may run out sooner', nodeNote.includes('the network node’s fee, because the bundler’s fee could not be read') && nodeNote.includes('may run out sooner'), nodeNote);
+  const typed = feeBudgetPricingNote({ budgetWei: 3_000_090_000_000n, payments: 3, maxFeePerGas: signed, source: 'bundler', edited: true, nativeSymbol: 'test ETH' });
+  check('review note, typed budget too small: says how many payments it covers at the signing fee',
+    typed.startsWith('You entered this fee budget.') && typed.includes('at that fee it covers about 0 of the 3 payments'), typed);
+  check('review note without a fee: says it could not compare', feeBudgetPricingNote({ budgetWei: 1n, payments: 1, maxFeePerGas: null, source: null, edited: false, nativeSymbol: 'ETH' }).startsWith('The network fee could not be read'));
+  check('form hint names the basis', /signed at today \(the bundler’s current fee plus 100% headroom\)/.test(feeBudgetSuggestionHint('bundler')) &&
+    /network node’s current fee, because the bundler’s fee could not be read/.test(feeBudgetSuggestionHint('node')));
+  check('the screen passes its bundler, shows the hint and the review note, and records the pricing (source)',
+    screenSrc.includes('readSubscriptionFeeFacts(httpTransport(endpoint.url), account, { bundler })') &&
+      screenSrc.includes('{feeBudgetSuggestionHint(subFeeFacts.feeSource)}') &&
+      screenSrc.includes('feePricing: { maxFeePerGas: facts.maxFeePerGas, source: facts.feeSource, edited: subForm.feeEdited },') &&
+      /feeBudgetPricingNote\(\{\s*budgetWei: sub\.feeBudgetWei,/.test(screenSrc) &&
+      !screenSrc.includes('Suggested from today’s network fee'));
+  check('the recurring form shares the same facts and pricing (one sub-form, subMode only picks the grant)',
+    (screenSrc.match(/readSubscriptionFeeFacts\(/g) ?? []).length === 1 && screenSrc.includes("const grantFor = mode === 'recurring' ? recurringGrantFor : subscriptionGrantFor;"));
+
+  // Finding 5: a revoked or finished card shows no batching warning.
+  const installed = { localStatus: 'installed' };
+  check('batching warning: live (active, not expired) → shown', cardShowsBatchingWarning(installed, { kind: 'active', expired: false }));
+  check('…still loading or unreadable with a recorded install → shown (may be live)',
+    cardShowsBatchingWarning(installed, 'loading') && cardShowsBatchingWarning(installed, undefined) && cardShowsBatchingWarning(installed, { kind: 'unknown', reason: 'x' }));
+  check('…revoked locally or on-chain → hidden', !cardShowsBatchingWarning({ localStatus: 'revoked' }, 'loading') && !cardShowsBatchingWarning(installed, { kind: 'revoked' }));
+  check('…not installed, failed install, expired → hidden',
+    !cardShowsBatchingWarning(installed, { kind: 'not-installed' }) && !cardShowsBatchingWarning({ localStatus: 'failed' }, undefined) &&
+      !cardShowsBatchingWarning(installed, { kind: 'active', expired: true }));
+  check('…payments finished → hidden', !cardShowsBatchingWarning(installed, { kind: 'active', expired: false }, true));
+  check('both cards gate the warning box on it (source)',
+    screenSrc.includes("{review.caveats[0] && cardShowsBatchingWarning(r, status, due?.kind === 'completed') ? (") &&
+      /review\.caveats\[0\] &&\s*cardShowsBatchingWarning\(\s*r,\s*status,/.test(screenSrc) &&
+      !screenSrc.includes('{review.caveats[0] ? <WarningBox>{review.caveats[0]}</WarningBox> : null}'));
 }
 
 console.log(`\ncheck-subscriptions: ${passed} passed, ${failed} failed`);

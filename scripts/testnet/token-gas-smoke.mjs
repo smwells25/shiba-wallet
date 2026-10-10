@@ -165,6 +165,17 @@ const topic = (sig) => toHex(keccak_256(utf8ToBytes(sig)));
 const USER_OPERATION_EVENT = topic('UserOperationEvent(bytes32,address,address,uint256,bool,uint256,uint256)');
 const ACCOUNT_DEPLOYED = topic('AccountDeployed(bytes32,address,address,address)');
 const TRANSFER = topic('Transfer(address,address,uint256)');
+// Logs that report an ETH movement in an eth_simulateV1 result: the
+// traceTransfers pseudo-log (0xeeee…, execution-apis eth_simulateV1) and,
+// since EIP-7708 activated on Sepolia (Glamsterdam, 2026-10-06), the
+// protocol's own log from the system address 0xff…fe. Some nodes return
+// only the second one after the fork (reth/v2.7.0 on publicnode, observed
+// 2026-10-09; see packages/chains-evm/src/asset-diff.ts), so a "no ETH
+// leaves the account" check must look for both.
+const ETH_MOVEMENT_LOG_EMITTERS = [
+  '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+  '0xfffffffffffffffffffffffffffffffffffffffe',
+];
 const HANDLE_OPS_SIG =
   'handleOps((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes)[],address)';
 const ERRORS = Object.fromEntries(
@@ -438,7 +449,7 @@ async function dryRun(state) {
   check('case 1 account EntryPoint deposit unchanged', BigInt(depositAfter.returnData) === depositBefore, `${depositBefore} wei`);
   const ethOut = handle.logs.filter(
     (l) =>
-      l.address.toLowerCase() === '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' &&
+      ETH_MOVEMENT_LOG_EMITTERS.includes(l.address.toLowerCase()) &&
       l.topics[1]?.slice(26).toLowerCase() === account.slice(2).toLowerCase(),
   );
   check('case 1 no ETH leaves the account (it holds none)', ethOut.length === 0);
@@ -960,7 +971,7 @@ async function pimlicoDryRun() {
   check('case 1 allowance left = approval − charge', BigInt(allow1.returnData) === displayed - paid1, fmtUsdc(BigInt(allow1.returnData)));
   check('case 1 account EntryPoint deposit unchanged', BigInt(dep1.returnData) === depositBefore, `${depositBefore} wei`);
   check('case 1 no ETH leaves the account (it holds none)', !h1.logs.some((l) =>
-    l.address.toLowerCase() === '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' && l.topics[1]?.slice(26).toLowerCase() === account.slice(2).toLowerCase()));
+    ETH_MOVEMENT_LOG_EMITTERS.includes(l.address.toLowerCase()) && l.topics[1]?.slice(26).toLowerCase() === account.slice(2).toLowerCase()));
 
   // Case 2: an approval one unit below the charge.
   const op2 = await opWithApproval(paid1 - 1n);

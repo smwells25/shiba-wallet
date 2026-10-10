@@ -267,6 +267,17 @@ describe('isFirstInteraction', () => {
     expect(calls.map((c) => c.method)).toEqual(['eth_getLogs']);
   });
 
+  it('leaves out EIP-7708 protocol ETH-transfer logs (0xff…fe) in a wallet-wide query: ETH, not token evidence', async () => {
+    const { transport, calls } = recordingTransport((method) => {
+      if (method === 'eth_getLogs') return [transferLog('0xfffffffffffffffffffffffffffffffffffffffe', 5n, 10, 0, hash(1))];
+      if (method === 'eth_getTransactionByHash') return { from: ME.toLowerCase() };
+      throw new Error(method);
+    });
+    const result = await isFirstInteraction(transport, ME, TARGET, { lookbackBlocks: 10n, toBlock: 10n });
+    expect(result).toMatchObject({ known: false, evidence: 'none', rejectedCandidates: 0 });
+    expect(calls.map((c) => c.method)).toEqual(['eth_getLogs']);
+  });
+
   it('validates its options', async () => {
     const { transport } = recordingTransport(() => []);
     await expect(isFirstInteraction(transport, ME, TARGET, { lookbackBlocks: 0n })).rejects.toThrow(
