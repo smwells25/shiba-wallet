@@ -2404,3 +2404,121 @@ emulator where Expo Go cannot carry a feature.
       DECISION FOR THE CHAIRPERSON: confirm the document, decide whether
       item (d) is withdrawn, and whether the list goes to ZeroDev /
       Offchain Labs (nothing has been sent).
+- [x] Item 2 — THE IN-APP BROWSER, ALLOWLISTED-SITES SLICE (commit cb6eef3;
+      new check-browser 260, check-readiness 177; offline runner ALL
+      GREEN in the CTO's isolated worktree: engine 877, app 6,117 across
+      45 suites, lint 0/0, tsc clean; ten mutants caught; expo export
+      bundles 2,197 modules / 8.8 MB with RNCWebView and the new strings;
+      NOT yet opened on the emulator). Dependency: react-native-webview
+      13.16.1 via expo install (the version expo/bundledNativeModules.json
+      pins and Expo Go's sdk-57 package.json lists; lockfile adds only
+      it). FILES: new app/src/wallet/browser-sites.ts (origin parser,
+      allowlist, navigation decisions, per-origin records under
+      shiba-wallet.browser-connections.v1), browser-provider-script.ts
+      (the EIP-1193 + EIP-6963 shim as a string; no secrets),
+      browser-bridge.ts (method table, error translation, message
+      validation, the frame rule, the read proxy with validation /
+      eth_getLogs bounds / rate limiter, BrowserBridgeClient = a WcClient
+      for browser:<origin> sessions, CompositeWcClient),
+      screens/BrowserScreen.tsx (the "Apps" screen), scripts/
+      check-browser.mjs; changed: walletconnect.ts
+      (describeBrowserIdentity, identity status 'browser', siweOriginFor
+      browser branch, methodMentionsEip7702 exported), siwe.ts,
+      wc-controller.ts (uses a browser event's identity only for negative
+      ids or browser: topics; browser_requests_withdrawn),
+      WalletConnectContext.tsx (the controller exists from mount on the
+      composite client; WalletKit attaches lazily via setWalletClient;
+      approvals/disconnects answer through the composite; the launch
+      marker counts WalletConnect sessions only; the bridge exposed as
+      `browser`), WcApprovalSheet (browser identity in plain text),
+      ConnectionsScreen ("In-app browser connections", shown even with
+      WalletConnect off), readiness.ts (row dapp-browser, testnet-only,
+      enforced in the screen AND the bridge), watch-only.ts (route
+      refused: "The in-app browser (Apps)"), navigation.ts / App.tsx
+      (route Apps), Home / Settings links, WalletContext (wipe forgets the
+      browser records). ALLOWLIST: https://app.uniswap.org (every
+      WalletConnect live test; Sepolia) and https://app.ens.dev (ENS's
+      deployments page says Sepolia resolves through it; its headers send
+      permissions-policy: camera=(); not yet opened); no Aave testnet page
+      found. B1–B8: originWhitelist ['*'] so every decision is the
+      wallet's — decideNavigation / siteForUrl compare scheme, host and
+      port exactly with the wallet's parser (refuses backslashes, control
+      characters, spaces, percent signs, non-ASCII and IPv6 hosts, leading
+      dots, empty labels, ports > 65535; lower-cases; drops default ports;
+      user-info flagged with the real host after "@"; 5,376 generated URLs
+      agree with WHATWG URL.origin; the library's matcher rebuilt from
+      source admits the prefix attacks, the wallet refuses them); B6
+      unreachable, non-https refused without Linking, off-list https
+      offered outside only after a confirmation showing the full URL (the
+      single Linking.openURL), the first URL checked before render; B2/B3
+      a message is acted on only when its reported origin equals the
+      current top origin AND is allowlisted, else dropped unanswered
+      before parsing (Android's fallback bridge reports the top URL for
+      every frame — unfixable in JS; a page-reported heuristic is shown on
+      Android, informational only); B4 the shim is injected before
+      content and on every load end (idempotent: re-announces via
+      EIP-6963, sets window.ethereum only if unset; each document says
+      "hello", which withdraws the previous document's waiting requests);
+      B5/B7/file upload are RESIDUALS stated in BROWSER_RESIDUALS on
+      screen (no Android prop exists; iOS mediaCapturePermissionGrantType
+      "deny", no onFileDownload); B8 setSupportMultipleWindows true,
+      onOpenWindow loads an allowlisted page in the same view else refuses
+      or asks. NEW FROM SOURCE: Android shouldOverrideUrlLoading waits at
+      most 250 ms for the JS answer then ALLOWS ("defaulting to allow
+      loading") — the second line detaches the bridge, stopLoading and a
+      refusal panel at load start/end for an off-list top page; Android
+      events carry no isTopFrame; Android incognito leaves DOM storage on;
+      RNCWebViewManagerImpl enables WebView debugging under
+      ReactBuildConfig.DEBUG (whether Expo Go sets it is unverified).
+      Props set: incognito, cacheEnabled false, third-party and shared
+      cookies off, mixedContentMode never, file access off, geolocation
+      off, saveFormDataDisabled, allowsLinkPreview false,
+      fraudulentWebsiteWarningEnabled, webviewDebuggingEnabled false,
+      paymentRequestEnabled false. METHOD TABLE: local eth_chainId /
+      net_version / eth_accounts ([] unless connected for the active
+      owner + chain) / eth_requestAccounts (a session_proposal on the
+      shared queue; repeats join; an already-served origin answered
+      without a prompt; watch-only → 4100); queued only if connected
+      (else 4100) and in the approved namespaces (else 4200):
+      personal_sign, eth_signTypedData_v4, eth_sendTransaction,
+      wallet_switchEthereumChain, wallet_sendCalls /
+      wallet_getCapabilities / wallet_getCallsStatus (smart accounts;
+      ERC-7715 never offered); requests carry the connection's chain so a
+      mode change declines them (5100 → 4901); at most 5 waiting per
+      origin (-32005); proxied reads eth_blockNumber, eth_call,
+      eth_estimateGas, eth_getBalance, eth_getTransactionCount,
+      eth_getCode, eth_getTransactionByHash / Receipt,
+      eth_getBlockByNumber / ByHash, eth_feeHistory, eth_gasPrice,
+      eth_maxPriorityFeePerGas, eth_getLogs (no state overrides; an
+      authorization list refused with the D6 sentence; getLogs: a block
+      hash, an explicit range ≤ 1,000 blocks or latest only, ≤ 20
+      addresses, 4 topic positions; rate limit per origin 10/s, 120/min,
+      4 in flight — judgements; withEndpoint failover; each endpoint's
+      eth_chainId checked once; the page sees only code / ≤ 500-char
+      message / hex data, transport failures as a generic sentence);
+      refused 4200 with a reason: wallet_addEthereumChain, eth_sign,
+      eth_signTypedData / v1 / v3, eth_signTransaction,
+      eth_sendRawTransaction, wallet_requestPermissions / getPermissions /
+      revokePermissions, wallet_connect, the four ERC-7715 methods,
+      wallet_showCallsStatus, wallet_watchAsset, eth_subscribe /
+      unsubscribe, anything unknown. D6: method names matching
+      authorization / 7702 / delegat → EIP7702_WC_REFUSAL (5101 → 4200);
+      authorizationList / authorization_list / type 0x4 transactions →
+      5000 → 4001 with the same sentence. Error translation 5000→4001,
+      5100→4901, 5101→4200, 5103→4100 (design); 5102→4200, 5104→4200,
+      6000→4100 (judgements); 57xx / 4xxx / -326xx pass through; on a
+      non-test network every message gets 4900 with the readiness
+      refusal. IDENTITY: the sheet shows "Opened in this wallet's browser:
+      the request came from <origin>, as reported by the web view…"; a
+      mismatched SIWE domain stays behind the existing risk switch (not
+      refused outright — the Chairperson's call). THREAT MODEL: T-71 and
+      F-67 added by the CTO. UNVERIFIED: whether Uniswap / app.ens.dev
+      detect the provider and complete a connection, SIWE or swap, and
+      whether their pages run with third-party cookies and cache off; the
+      Android order of onLoadStart vs the shim's first messages after a
+      cross-origin navigation between the two sites (early messages would
+      be dropped); which bridge path the emulator's WebView uses; B5 in
+      practice; the rate limits against real traffic; iOS entirely.
+      Emulator checklist (10 steps, Expo Go, Sepolia, Account 1, Uniswap)
+      in the builder's report — runs once the dev-build probe releases
+      the AVD.
