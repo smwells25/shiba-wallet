@@ -27,6 +27,10 @@ export const APP_SCRIPTS = {
   'check-aa.mjs': { kind: 'offline', summary: 'counts' },
   'check-aa-kernel.mjs': { kind: 'offline', summary: 'counts' },
   'check-aa-urls.mjs': { kind: 'offline', summary: 'counts' },
+  // Phase 16 item 2: the in-app browser's allowlisted-sites slice (origin
+  // rules, frame rule, method table, read proxy, the bridge through the real
+  // WcController with the real provider script in a fake page; fakes only).
+  'check-browser.mjs': { kind: 'offline', summary: 'counts' },
   'check-accounts.mjs': { kind: 'offline', summary: 'counts' },
   'check-approvals.mjs': { kind: 'offline', summary: 'counts' },
   'check-contacts.mjs': { kind: 'offline', summary: 'counts' },

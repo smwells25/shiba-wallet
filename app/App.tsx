@@ -42,6 +42,7 @@ import { PasskeyScreen } from './src/screens/PasskeyScreen';
 import { ProveOwnershipScreen } from './src/screens/ProveOwnershipScreen';
 import { SpendingLimitsScreen } from './src/screens/SpendingLimitsScreen';
 import { ImportKeyScreen } from './src/screens/ImportKeyScreen';
+import { BrowserScreen } from './src/screens/BrowserScreen';
 import { watchOnlyScreenLayout } from './src/components/WatchOnlyGate';
 import { RecurringDueBanner } from './src/components/RecurringDueBanner';
 
@@ -207,6 +208,8 @@ function Root() {
               options={{ title: 'Spending limits' }}
             />
             <Stack.Screen name="ImportKey" component={ImportKeyScreen} options={{ title: 'Import a private key' }} />
+            {/* The in-app browser (feature 79): outside the watch-only allow list. */}
+            <Stack.Screen name="Apps" component={BrowserScreen} options={{ title: 'Apps (test networks)' }} />
           </>
         )}
         </Stack.Navigator>

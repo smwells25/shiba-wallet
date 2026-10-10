@@ -401,6 +401,12 @@ export function HomeScreen({ navigation }: Props) {
           recovery.guardiansEligible && evmChain.testnet
             ? cardLink('inheritance', 'Inheritance', 'Inheritance (demonstration)', () => navigation.navigate('Inheritance'))
             : null,
+          // The in-app browser (feature 79): test networks only, enforced
+          // by its readiness row; never for a watch-only account (this list
+          // is empty for one).
+          evmChain.testnet
+            ? cardLink('apps', 'Apps, the in-app browser', 'Apps', () => navigation.navigate('Apps'))
+            : null,
           passkey.eligible
             ? cardLink(
                 'passkey',

@@ -450,7 +450,7 @@ export function buildWalletNamespaces(
  * another; UNKNOWN proves nothing (the origin shown is self-reported); and
  * isScam is the Verify server's own scam flag.
  */
-export type WcIdentityStatus = 'verified' | 'unverified' | 'mismatch' | 'scam';
+export type WcIdentityStatus = 'verified' | 'unverified' | 'mismatch' | 'scam' | 'browser';
 
 export interface WcDappIdentity {
   status: WcIdentityStatus;
@@ -532,6 +532,29 @@ export function describeVerifyContext(verifyContext: unknown, claimedUrl: string
     message:
       'UNVERIFIED — the dApp’s origin could not be confirmed. Its name and URL are what the dApp ' +
       'says about itself.',
+  };
+}
+
+/**
+ * Identity of a request from the wallet's own in-app browser (feature 79,
+ * docs/DAPP_BROWSER.md sections 1.3 and 2.7). The origin is not a claim the
+ * site makes about itself and not WalletConnect's verdict: it is the origin
+ * the web view reported for the page that sent the message, accepted only
+ * when it equals the page's top-level origin and that origin is on the
+ * browser's allowlist (browser-bridge.ts). So this must never be worded as
+ * "Verified by WalletConnect" (status 'verified'), and it needs no risk
+ * switch of its own; the SIWE domain gate still applies (siweOriginFor
+ * returns this origin with source 'browser').
+ */
+export function describeBrowserIdentity(origin: string): WcDappIdentity {
+  return {
+    status: 'browser',
+    origin,
+    claimedUrl: origin,
+    requiresAcknowledgement: false,
+    message:
+      `Opened in this wallet’s browser: the request came from ${origin}, as reported by the web view ` +
+      '(not a name the site gives itself). This confirms which site asked, not that the site is safe.',
   };
 }
 
@@ -825,8 +848,14 @@ export type SiweSheetState =
  * ('verified' / 'mismatch'), otherwise the URL the session's peer metadata
  * gives (self-reported, labelled as such on the card).
  */
-export function siweOriginFor(identity: WcDappIdentity | undefined): { url: string; source: 'verify' | 'metadata' } | null {
+export function siweOriginFor(
+  identity: WcDappIdentity | undefined,
+): { url: string; source: 'verify' | 'metadata' | 'browser' } | null {
   if (!identity) return null;
+  // In-app browser: the first-hand origin the web view reported, exactly
+  // what EIP-4361 asks the wallet to compare against ("SHOULD be read from a
+  // trusted data source such as the browser window").
+  if (identity.status === 'browser') return identity.origin ? { url: identity.origin, source: 'browser' } : null;
   if ((identity.status === 'verified' || identity.status === 'mismatch') && identity.origin) {
     return { url: identity.origin, source: 'verify' };
   }
@@ -1101,6 +1130,15 @@ export const EIP7702_WC_REFUSAL =
   'instead.';
 
 const EIP7702_HINT = /authori[sz]ation|7702|delegat/i;
+
+/**
+ * True when a method name mentions an authorization, 7702 or a delegation:
+ * the same test parseWcRequest applies before anything else, exported so
+ * the in-app browser refuses such methods with the same sentence.
+ */
+export function methodMentionsEip7702(method: string): boolean {
+  return EIP7702_HINT.test(method);
+}
 
 /**
  * Guardian approvals and recovery operations are never served to dApps

@@ -79,4 +79,11 @@ export type RootStackParamList = {
    * 12). The recovery phrase does not back such an account up (ADR D9).
    */
   ImportKey: undefined;
+  /**
+   * The in-app browser (feature 79): a fixed list of allowlisted apps on test
+   * networks only, connected through the same approval sheet as
+   * WalletConnect. `origin` opens that allowlisted site directly; anything
+   * not on the list is ignored.
+   */
+  Apps: { origin?: string } | undefined;
 };

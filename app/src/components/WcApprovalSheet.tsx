@@ -1593,7 +1593,8 @@ function PermissionRequestBody({
 
 /**
  * WalletConnect Verify result (threat-model N-06; see walletconnect.ts
- * describeVerifyContext). Verified origins get a calm line; everything else
+ * describeVerifyContext), or the in-app browser's first-hand origin
+ * (describeBrowserIdentity). Verified origins get a calm line; everything else
  * uses the warning style, and scam / mismatch add the explicit risk switch
  * that unlocks the approve buttons (same pattern as the simulation
  * override).
@@ -1613,6 +1614,11 @@ function IdentityBanner({
     <>
       {identity.status === 'verified' ? (
         <Text style={[styles.simulationOk, { color: theme.success }]}>{identity.message}</Text>
+      ) : identity.status === 'browser' ? (
+        // In-app browser (feature 79): a first-hand origin, stated plainly.
+        // Neither the success colour (it says nothing about the site's
+        // honesty) nor a warning (nothing is wrong with the request's origin).
+        <Text style={[styles.simulationOk, { color: theme.text }]}>{identity.message}</Text>
       ) : (
         <WarningBox>{identity.message}</WarningBox>
       )}

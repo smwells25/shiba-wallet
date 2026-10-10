@@ -51,6 +51,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { forgetAllSessions } from './sessions';
 import { addAaSentListener } from './aa';
 import { recoveryRecordListener, wipeRecoveryData } from './recovery';
+import { forgetBrowserConnections } from './browser-sites';
 import { resetPasskeys } from './passkeys';
 import { installSpendingRecorder, resetSpendingLimits } from './spending-policy';
 import {
@@ -936,6 +937,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     // Spending limits and their record are per-address settings of this
     // wallet; they go with it.
     await resetSpendingLimits(AsyncStorage).catch(() => undefined);
+    // In-app browser connections (feature 79) are public per-site records of
+    // this wallet's accounts; they go with it (WalletConnectContext also
+    // clears the bridge's memory when the status becomes 'no-wallet').
+    await forgetBrowserConnections(AsyncStorage).catch(() => undefined);
     await deleteMnemonic();
     // The public account cache (addresses only) goes with the wallet.
     await deletePublicAccounts(ALL_CACHE_INDICES);

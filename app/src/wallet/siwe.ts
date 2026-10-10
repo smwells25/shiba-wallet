@@ -518,9 +518,11 @@ export interface SiweDescribeContext {
   /**
    * Where the request came from: the WalletConnect Verify-attested origin
    * ('verify') or, when that is unknown, the URL the dApp gives for itself
-   * in its session metadata ('metadata'); null when neither exists.
+   * in its session metadata ('metadata'); for the wallet's in-app browser,
+   * the page's origin as the web view reported it ('browser'); null when
+   * none exists.
    */
-  origin: { url: string; source: 'verify' | 'metadata' } | null;
+  origin: { url: string; source: 'verify' | 'metadata' | 'browser' } | null;
   /** The address this connection signs as (EOA or bound smart account). */
   sessionAddress: string;
   /** Numeric id of the ACTIVE chain. */
@@ -573,7 +575,9 @@ export function describeSiweMessage(message: SiweMessage, ctx: SiweDescribeConte
       const from =
         ctx.origin?.source === 'verify'
           ? `${problem.originHost} (confirmed by WalletConnect)`
-          : `${problem.originHost} (the address the dApp gives for itself)`;
+          : ctx.origin?.source === 'browser'
+            ? `${problem.originHost} (the page open in this wallet’s browser)`
+            : `${problem.originHost} (the address the dApp gives for itself)`;
       warnings.push(
         `This sign-in is for ${host}, but the request came from ${from}. ` +
           (problem.subdomain ? 'A different subdomain is a different site. ' : '') +
