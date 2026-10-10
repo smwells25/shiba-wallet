@@ -3473,3 +3473,73 @@ alongside; emulator passes after each wave. Subagents on Opus.
       so this phone's signer is always one of them…"; weighted variants).
       Left for other owners: RiskWarnings' ownAddresses (cosmetic);
       activity-sentences' walletAddressesFor ignores multisig addresses.
+- [x] Item 3 PROVEN LIVE and Item 2 BLOCKED IN EXPO GO (2026-10-10;
+      emulator, Metro at b2530cd, 2,351 modules; no LogBox toast at
+      launch — the 783032a fix held; 0 prompts, nothing sent, funds
+      unchanged; Privacy off during the pass, on after). CUSTOM NETWORKS:
+      Hoodi (560048, https://rpc.hoodi.ethpandaops.io, ticked) → "Network
+      added": "Hoodi (chain id 560048) answered as that chain, and its
+      newest block (block 3790553) was 8 s old. Block time: about 14.04 s
+      per block, measured over 100 blocks…" (block and timestamp checked
+      independently); the row ("Treated as a TEST network (ETH here has no
+      value).", coin, RPC, "Explorer: none", verified date, block time,
+      Remove); the five refusals byte-exact (chain id 1 "already built in
+      as Ethereum mainnet"; 137 with the tick → the allow-list sentence;
+      http → INSECURE_ENDPOINT_MESSAGE; 17000 with the Hoodi RPC → "This
+      RPC endpoint serves chain id 560048, but you entered chain id
+      17000…"; "Hoodi2" on 137 unticked → the test-like-name sentence;
+      also the duplicate-chain and duplicate-name sentences); selecting
+      "✓ Hoodi (test)": the banner "TESTNET — Hoodi test mode is on (a
+      network you added)…", the test-mode line, the custom-network note,
+      Home "Hoodi" 0 test ETH with no Swap link, no fiat, no tokens; a
+      0.001 send refused for funds at Review; the AA row "Hoodi —
+      incomplete" with the no-pre-fill note; endpoints "Hoodi — default (1
+      of 1: rpc.hoodi.ethpandaops.io)"; REMOVE: the dialog names what is
+      deleted and kept, "…back on Ethereum mainnet. No other data was
+      stored for this chain."; "My chain" (560048 unticked): "Treated as a
+      MAIN network: its funds may be real…", no banner, Home "My chain" 0
+      ETH, the Multisig link hidden, AA "test networks only"; removed.
+      REMINDERS BLOCKED: the Notifications subsection and its three notes
+      exactly as pinned; turning the switch on gave NO system prompt and
+      the red line "Reminders are not available in this build of the app
+      (its notification module is missing), so nothing was scheduled.
+      Technical detail: Call to function
+      'ExpoNotificationChannelManager.setNotificationChannelAsync' has
+      been rejected." — deterministic; POST_NOTIFICATIONS stays denied;
+      no EXPO_CHANNEL channel exists (only Expo Go's own 'expo-experience'
+      channel and an empty "Shiba Wallet" group); root cause unconfirmed
+      — describeNotificationError keeps only the first line, dropping
+      Expo's "Caused by" detail, and Expo Go's
+      ScopedNotificationsChannelsProvider carries "TODO vonovak refactor
+      this for expo go" (hypothesis: channels are not wired in Expo Go);
+      steps 2–5 not run (nothing new to learn without reminders).
+      CONSEQUENCE: features 93/83 cannot be shown in Expo Go as built —
+      the proof needs the local development build (phase 16's route,
+      rebuilt with expo-notifications). FINDINGS (fix slice dispatched):
+      (1) keep the full error text (incl. "Caused by") in the reminders
+      status so the cause can be read; (2) the status says "its
+      notification module is missing" although the module is present and
+      its call was rejected; (3) REGRESSION of the namespace-import
+      LogBox toasts the moment reminders are toggled —
+      loadNotificationsNative's `await import('react-native')`
+      (notifications.ts:650), the same root cause 783032a fixed; (4)
+      SAFETY — on a custom test network the EIP-7702 "Upgrade now with a
+      transaction" button is offered although the Kernel v3.3 delegate
+      has NO code there (eth_getCode on Hoodi = 0x); prepareSetCodeTx
+      checks readiness, the chain id and the current delegation but not
+      the delegate's code; the screen also claims "batching, sponsored
+      gas"; not exercised (no Hoodi ETH); (5) the Multisig link and
+      "Create a multisig" are offered on Hoodi (checkMultisigNetwork
+      would refuse at creation — UX only); (6) a custom MAIN network
+      still shows the "paste a factory…" pre-fill note while AA cannot be
+      saved there; (7) the http refusal lacks "Nothing was saved." and its
+      localhost allowance applies to custom RPCs; (8) the chain-id-1
+      refusal says "choose it in the network list above" where the chip is
+      "Off (mainnet)"; (9) the Developer intro and the readiness hints do
+      not mention custom test networks; (10) duplicate-name is checked
+      before test-like-name (correct order; noted); (11) block time
+      measured 14.04 s then 12.84 s over 100 blocks (plausible with missed
+      slots); (12) emulator: `adb shell input text` truncated a
+      42-character address to 30 — use the ADBKeyboard base64 broadcast.
+      End state: Home, Ethereum Sepolia, Account 1, light mode, Google IME,
+      protection ON, no custom network, reminders off; Metro at b2530cd.
