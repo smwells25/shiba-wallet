@@ -2280,6 +2280,33 @@ await (async () => {
     refused = e;
   }
   check('pin: createAaClient refuses the multisig type (only createMultisigAaClient builds it)', refused instanceof Error && refused.message.includes('createMultisigAaClient'));
+
+  // Finding 4 of the 2026-10-10 multisig emulator pass: the multisig's own
+  // funding sentences (no "smart account", no "owner address"); the
+  // smart-account sentences above are unchanged.
+  const MS = '0x944caA404e389b18b2fe251e969EdD7A220d0d38';
+  check('pin: the funding titles — smart account unchanged, the multisig its own',
+    aa.AA_FUNDING_TITLE === 'Your smart account needs funds first.' && aa.AA_MULTISIG_FUNDING_TITLE === 'This multisig account needs funds first.' &&
+      aa.aaFundingTitleFor('kernel-multisig') === aa.AA_MULTISIG_FUNDING_TITLE && aa.aaFundingTitleFor('kernel-v3.3') === aa.AA_FUNDING_TITLE && aa.aaFundingTitleFor('simple') === aa.AA_FUNDING_TITLE);
+  check('pin: multisig funding message with an amount and a deposit, exact',
+    aa.aaFundingMessage({ sender: MS, amount: 100n, fee: 50n, balance: 120n, sponsored: false, deployed: true, deposit: 7n, multisig: true }) ===
+      `Insufficient funds: the multisig pays its own network fee from its balance and EntryPoint deposit, and sending 100 wei plus a worst-case fee of 50 wei exceeds the balance of 120 wei held by the multisig ${MS} plus its EntryPoint deposit of 7 wei (the deposit can pay only the fee, not the amount). Fund the multisig address ${MS}, then review again.`);
+  check('pin: multisig funding message with no amount, undeployed, exact',
+    aa.aaFundingMessage({ sender: MS, amount: 0n, fee: null, balance: 0n, sponsored: false, deployed: false, multisig: true }) ===
+      `Insufficient funds: the multisig pays its own network fee from its balance and EntryPoint deposit, and this operation’s network fee exceeds the balance of 0 wei held by the multisig ${MS}. Fund the multisig address ${MS}, then review again. A multisig can receive funds before it is deployed; its first operation deploys it.`);
+  check('pin: the same facts without the flag keep the smart-account sentence byte for byte',
+    aa.aaFundingMessage({ sender: MS, amount: 0n, fee: null, balance: 0n, sponsored: false, deployed: false }) ===
+      `Insufficient funds: the smart account pays its own gas (no paymaster), and this operation’s network fee exceeds the balance of 0 wei held by the smart account ${MS}. Fund the smart account address ${MS} (not the owner address), then review again. A smart account can receive funds before it is deployed; the first send deploys it.`);
+  check('pin: multisig estimate-refusal message, exact',
+    aa.aaEstimateFundingMessage({ sender: MS, balance: 3n, deposit: 0n, deployed: false, multisig: true }) ===
+      `The bundler refused to estimate this operation because the multisig ${MS} cannot pay the operation's network fee: the multisig pays its own network fee from its balance and EntryPoint deposit. It holds 3 wei, and the network fee must be available up front, before the operation runs. The exact fee is not known, because the bundler refused the estimate itself. Fund the multisig address ${MS}, then review again. A multisig can receive funds before it is deployed; its first operation deploys it.`);
+  const raw = "RPC error -32500: AA21 didn't pay prefund";
+  const msD = aa.describeAaError(new Error(raw), { accountType: 'kernel-multisig', deployed: true, sender: MS });
+  check('pin: a raw AA21 for the multisig type gets the multisig title and sentence, the bundler’s words kept',
+    msD?.title === aa.AA_MULTISIG_FUNDING_TITLE &&
+      msD.detail === `The multisig ${MS} cannot pay for this operation's network fee: the multisig pays its own network fee from its balance and EntryPoint deposit, and they are too small. Fund the multisig address ${MS}, then try again.\n\nThe bundler's message: ${raw}`);
+  const kD = aa.describeAaError(new Error(raw), { accountType: 'kernel-v3.3', deployed: true, sender: MS });
+  check('pin: …the Kernel smart account keeps its own AA21 wording', kD?.title === aa.AA_FUNDING_TITLE && kD.detail.includes('(not the owner address)'));
 })();
 
 console.log(`\n${passed} passed, ${failed} failed`);

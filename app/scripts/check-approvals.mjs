@@ -921,6 +921,38 @@ console.log('own accounts on the risk card:');
   const succ = sendSrc.slice(sendSrc.indexOf('const renderSuccessContact'), sendSrc.indexOf('<SaveContactInline', sendSrc.indexOf('const renderSuccessContact')));
   check('success screen: an own address is named and returns BEFORE "Save as contact" is offered', /findOwnAddress\(address, ownAddresses\)/.test(succ) && /if \(own\) \{/.test(succ) && /one of your own accounts in this wallet/.test(succ));
   check('scan offer on the form skips own addresses too', /!\(route\.params\.chainId === EVM_CHAIN_ID && findOwnAddress\(validation\.normalized, ownAddresses\)\)/.test(sendSrc));
+
+  // Finding 8 of the 2026-10-10 multisig emulator pass: a send to the
+  // wallet's own (counterfactual) multisig read as "a regular account with no
+  // contract code" and "first time sending". The stored multisigs of the
+  // active network join the own-address set, named "Multisig 1 (2-of-3)".
+  const MSIG = '0x944caA404e389b18b2fe251e969EdD7A220d0d38';
+  const MSIG_OWN = { address: MSIG, label: 'Multisig 1 (2-of-3)' };
+  const withMsig = ownWalletAddresses([{ index: 0, name: 'Account 1', evmAddress: ME }], aa, [MSIG_OWN, { address: ME, label: 'duplicate' }]);
+  check('ownWalletAddresses: the extra multisig entries come after the accounts’, named, duplicates skipped',
+    withMsig.length === 3 && withMsig[2].address === MSIG && withMsig[2].label === 'Multisig 1 (2-of-3)' && withMsig[0].label === 'Account 1', JSON.stringify(withMsig));
+  node = defaultNode();
+  calls = [];
+  const loadOwnMultisigs = async (chain) => (chain === MAINNET ? [MSIG_OWN] : []);
+  const toMsig = await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: MSIG, chainCaip2: MAINNET, trackedTokens: TRACKED, ownAccounts: own, loadOwnMultisigs });
+  const msLines = computeRiskLines(toMsig);
+  check('send to the wallet’s own counterfactual multisig: one calm line "one of your own accounts in this wallet: Multisig 1 (2-of-3)"',
+    msLines.length === 1 && msLines[0].text === `This transaction goes to one of your own accounts in this wallet: Multisig 1 (2-of-3) (${MSIG}).`,
+    msLines.map((l) => l.text).join(' | '));
+  check('…no "regular account with no contract code", no first-interaction line, no searches', !msLines.some((l) => /regular account with no contract code/.test(l.text)) &&
+    !msLines.some((l) => l.type.startsWith('first-interaction')) && toMsig.firstInteractionApplicable === false && !calls.some((c) => c.method === 'eth_getLogs'));
+  const tokenToMsig = computeRiskLines(await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: USDC, counterparty: MSIG, data: '0xa9059cbb' + '00'.repeat(64), chainCaip2: MAINNET, trackedTokens: TRACKED, ownAccounts: own, loadOwnMultisigs }));
+  check('a token transfer to the own multisig names it as the recipient, no first-interaction line',
+    tokenToMsig.some((l) => l.text === `The recipient is one of your own accounts in this wallet: Multisig 1 (2-of-3) (${MSIG}).`) && !tokenToMsig.some((l) => l.type.startsWith('first-interaction')),
+    tokenToMsig.map((l) => l.text).join(' | '));
+  const msigStranger = computeRiskLines(await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: MSIG, chainCaip2: MAINNET, trackedTokens: TRACKED, ownAccounts: own, loadOwnMultisigs: null }));
+  check('control: without the multisig list the same send is "a regular account with no contract code" plus the first-interaction notice',
+    msigStranger.some((l) => /regular account with no contract code/.test(l.text)) && msigStranger.some((l) => l.type === 'first-interaction-unknown'), msigStranger.map((l) => l.text).join(' | '));
+  const otherChain = computeRiskLines(await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: MSIG, chainCaip2: SEPOLIA, trackedTokens: TRACKED, ownAccounts: own, loadOwnMultisigs }));
+  check('…and the list is per network (a multisig stored for another network is not "own" here)', !otherChain.some((l) => /one of your own accounts/.test(l.text)));
+  const riskModSrc = (await import('node:fs')).readFileSync(new URL('../src/wallet/risk.ts', import.meta.url), 'utf8');
+  check('gatherRiskFacts loads the stored multisigs of options.chainCaip2 by default (RiskWarnings passes no loader)',
+    /options\.loadOwnMultisigs === undefined \? ownMultisigAddresses : options\.loadOwnMultisigs/.test(riskModSrc) && /await loadMultisigs\(options\.chainCaip2\)/.test(riskModSrc) && /import \{ ownMultisigAddresses \} from '\.\/multisig\.ts';/.test(riskModSrc));
 }
 
 // Emulator-run finding 1 (phase 13): a transfer of a tracked or KNOWN token

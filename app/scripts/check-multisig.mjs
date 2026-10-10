@@ -24,8 +24,15 @@
 //    sessions / passkeys / inheritance (createAaClientFromConfig), 7702 and
 //    owner change wording, readiness gating on mainnet with zero requests,
 //    and the account-id refusals of every derivation / salt / vault helper;
+//  - the fixes for the 2026-10-10 emulator findings: the co-signer weight
+//    bar, funding advice only on funding refusals (with a figure on AA21),
+//    the multisig's own funding sentences, the deployment refresh, error
+//    placement and the sentence period, the EntryPoint deposit, the own-
+//    address set (risk card and success screen) and the exposure line seen
+//    from this phone;
 //  - mutation checks: the threshold, the submitter rule and the readiness
-//    gate, each removed in a scratch copy, must be caught.
+//    gate, and each of the fixes above, broken in a scratch copy, must be
+//    caught.
 //
 // Every key is disposable: the public BIP-39 test mnemonic ("abandon ...
 // about"). Nothing touches the network.
@@ -83,6 +90,9 @@ import {
   reconcileStoredMultisigAccounts,
 } from '../src/wallet/accounts.ts';
 import {
+  AA_MULTISIG_FUNDING_TITLE,
+  AaFeeRoseError,
+  AaFundingError,
   MULTISIG_CONFIG_BUNDLE_REFUSAL,
   aaAccountTypeLabel,
   aaAccountTypeSignsMessages,
@@ -111,8 +121,15 @@ import {
 import {
   MULTISIG_ACCOUNT_PAYLOAD,
   MULTISIG_APPROVAL_PAYLOAD,
+  MULTISIG_DEPLOYED_MATCH_NOTE,
+  MULTISIG_DEPLOYED_NOT_VISIBLE_NOTE,
   MULTISIG_DEPLOYMENT,
+  MULTISIG_DEPLOY_NOTE,
+  MULTISIG_DEPOSIT_ROW_LABEL,
   MULTISIG_FEES_LINE,
+  MULTISIG_FUND_AND_RETRY,
+  MULTISIG_RECORDED_DEPLOY_COST_NOTE,
+  MULTISIG_RECORDED_LATER_COST_NOTE,
   MULTISIG_FRESH_DEPLOY_NOTE,
   MULTISIG_REQUEST_PAYLOAD,
   MULTISIG_SINGLE_SIGNER_REFUSAL,
@@ -121,6 +138,7 @@ import {
   MULTISIG_UNAUDITED_NOTE,
   MultisigAuthCancelledError,
   addMultisigApproval,
+  asSentence,
   buildMultisigConfig,
   checkMultisigNetwork,
   chooseMultisigIndex,
@@ -133,22 +151,33 @@ import {
   importMultisigRecord,
   listMultisigRecords,
   multisigAddressFor,
+  multisigChainNote,
   multisigConfigOf,
+  multisigCosignerBarLabel,
   multisigDisplayName,
   multisigExportFileName,
   multisigExposureLine,
   multisigFeatureRefusal,
   multisigFileText,
+  multisigFundingFigure,
+  multisigFundsLine,
   multisigListEntries,
+  multisigLocalSignsLine,
+  multisigNotReadyHint,
   multisigShapeLabel,
+  multisigSubmitApprovalsLine,
+  multisigSubmitErrorText,
   multisigThresholdNotReached,
   multisigWeightProgress,
+  ownMultisigAddresses,
   parseMultisigAccountImport,
   parseMultisigRequestPayload,
   prepareMultisigRequest,
   prepareMultisigSubmission,
+  readMultisigFunds,
   readMultisigOnChain,
   recordMultisigOutcome,
+  refreshMultisigDeployment,
   removeMultisigRecord,
   resetMultisigRecords,
   reviewMultisigRequestAsCosigner,
@@ -375,12 +404,35 @@ console.log('check-multisig: the create form (buildMultisigConfig)');
 console.log('check-multisig: honesty lines (exact text)');
 // ===========================================================================
 {
-  check('exposure line for a 2-of-3 (operations 2, messages 1), exact',
-    multisigExposureLine(CONFIG_2_OF_3) ===
-      'Any 2 co-signers together can send an operation; for messages the deployed validator needs only 1, so this account must never be used to sign logins, orders or token permits — the wallet refuses that.',
-    multisigExposureLine(CONFIG_2_OF_3));
+  // Finding 9 of the 2026-10-10 emulator pass: the line counts SIGNERS (the
+  // old "Any 2 co-signers together" counted this wallet's signer as a
+  // co-signer) and, with this phone's signer known, says whether the other
+  // signers can act without this phone.
+  const TAIL = '; for messages the deployed validator needs only 1, so this account must never be used to sign logins, orders or token permits — the wallet refuses that.';
+  check('exposure line for a 2-of-3 without a local signer (operations 2, messages 1), exact',
+    multisigExposureLine(CONFIG_2_OF_3) === `Any 2 of the 3 signers together can send an operation${TAIL}`, multisigExposureLine(CONFIG_2_OF_3));
+  check('exposure line for a 2-of-3 seen from this phone: the 2 co-signers can act WITHOUT this phone, exact',
+    multisigExposureLine(CONFIG_2_OF_3, S0.address) === `Any 2 of the 3 signers together can send an operation — including the 2 co-signers without this phone${TAIL}`,
+    multisigExposureLine(CONFIG_2_OF_3, S0.address));
+  const S8 = evmKeyProvider.deriveAccount(seed, 0, 8);
+  const TWO_OF_FOUR = { signers: [...CONFIG_2_OF_3.signers, { address: S8.address, weight: 1 }], threshold: 2, delaySeconds: 0 };
+  check('exposure line for a 2-of-4 from this phone: any 2 of the 3 co-signers, exact',
+    multisigExposureLine(TWO_OF_FOUR, S0.address) === `Any 2 of the 4 signers together can send an operation — including any 2 of the 3 co-signers without this phone${TAIL}`);
+  const THREE_OF_THREE = { ...CONFIG_2_OF_3, threshold: 3 };
+  check('exposure line for a 3-of-3 from this phone: this phone is always needed, exact',
+    multisigExposureLine(THREE_OF_THREE, S0.address) ===
+      'Every operation needs all 3 signers, so this phone’s signer is always one of them; for messages the deployed validator needs only 2, so this account must never be used to sign logins, orders or token permits — the wallet refuses that.',
+    multisigExposureLine(THREE_OF_THREE, S0.address));
   const w = { signers: [{ address: S0.address, weight: 2 }, { address: S5.address, weight: 1 }, { address: S6.address, weight: 1 }], threshold: 3, delaySeconds: 0 };
-  check('exposure line for a weighted set names the weight and the minimum', multisigExposureLine(w).startsWith('Co-signers whose weights add up to 3 (at least 2 of them) can send an operation; for messages the deployed validator needs only 1'));
+  check('exposure line for a weighted set names the weight and the minimum', multisigExposureLine(w) === `Signers whose weights add up to 3 (at least 2 of them) can send an operation${TAIL}`, multisigExposureLine(w));
+  check('weighted, this phone weight 2 of threshold 3: the co-signers (weight 2) cannot act alone, exact',
+    multisigExposureLine(w, S0.address) ===
+      `Signers whose weights add up to 3 (at least 2 of them) can send an operation — and this phone’s signer is always one of them, because the co-signers’ combined weight 2 is below the threshold 3${TAIL}`,
+    multisigExposureLine(w, S0.address));
+  const w2 = { signers: [{ address: S0.address, weight: 1 }, { address: S5.address, weight: 2 }, { address: S6.address, weight: 1 }], threshold: 3, delaySeconds: 0 };
+  check('weighted, the co-signers reach the threshold together: they can act without this phone, exact',
+    multisigExposureLine(w2, S0.address) === `Signers whose weights add up to 3 (at least 2 of them) can send an operation — including the 2 co-signers together, without this phone${TAIL}`,
+    multisigExposureLine(w2, S0.address));
   check('fees line, exact', MULTISIG_FEES_LINE === 'Co-signers approve the calls and the nonce, not the network fee or paymaster, which the submitter sets.');
   check('fresh-deploy note says never converting and why', /never converts an existing account/.test(MULTISIG_FRESH_DEPLOY_NOTE) && /old single-key validator installed/.test(MULTISIG_FRESH_DEPLOY_NOTE) && /backdoor/.test(MULTISIG_FRESH_DEPLOY_NOTE));
   check('unaudited note names the audit status and test networks', /no published audit/.test(MULTISIG_UNAUDITED_NOTE) && /test networks only/.test(MULTISIG_UNAUDITED_NOTE));
@@ -395,9 +447,11 @@ console.log('check-multisig: honesty lines (exact text)');
   // Every phase of the screen renders the honesty block (source pin).
   const screen = readFileSync(join(HERE, '..', 'src', 'screens', 'MultisigScreen.tsx'), 'utf8');
   const views = readFileSync(join(HERE, '..', 'src', 'screens', 'MultisigViews.tsx'), 'utf8');
-  check('screen: every phase goes through shell(), which renders <MultisigHonesty> (source pin)', (screen.match(/return shell\(/g) ?? []).length >= 13 && /<MultisigHonesty config=\{config\} \/>/.test(screen) && !/return \(\s*<ScrollView/.test(screen));
+  check('screen: every phase goes through shell(), which renders <MultisigHonesty> with this phone’s signer (source pin)', (screen.match(/return shell\(/g) ?? []).length >= 13 && /<MultisigHonesty config=\{config\} localSigner=\{localSigner\} \/>/.test(screen) && !/return \(\s*<ScrollView/.test(screen));
   check('screen: the readiness card is in the shell and every starting button is disabled when gated', /readinessCard/.test(screen) && (screen.match(/disabled=\{readiness !== null/g) ?? []).length >= 8);
-  check('views: the honesty block shows the exposure, fees, message refusal and audit lines', /multisigExposureLine\(config\)/.test(views) && /MULTISIG_FEES_LINE/.test(views) && /MULTISIG_ERC1271_REFUSAL/.test(views) && /MULTISIG_UNAUDITED_NOTE/.test(views));
+  check('views: the honesty block shows the exposure (with this phone’s signer), fees, message refusal and audit lines', /multisigExposureLine\(config, localSigner\)/.test(views) && /MULTISIG_FEES_LINE/.test(views) && /MULTISIG_ERC1271_REFUSAL/.test(views) && /MULTISIG_UNAUDITED_NOTE/.test(views));
+  check('screen: the list, the co-signer review and every record phase pass this phone’s signer to the exposure line',
+    /multisigExposureLine\(multisigConfigOf\(r\), r\.localSigner\)/.test(screen) && /r\.config,\s*r\.signer\.address,/.test(screen) && (screen.match(/selected\.localSigner,\n\s*\);/g) ?? []).length >= 5 && /reviewed\.config,\s*phraseSigner,/.test(screen));
   check('screen: keys only via signWith after requireLocalAuth (no key APIs, no readPhrase)', !/readPhrase|importedKeyVault|mnemonicToSeed|deriveAccount/.test(screen) && /requireAuth: requireLocalAuth/.test(screen));
 }
 
@@ -528,7 +582,8 @@ let approvalPayload;
   const review = reviewMultisigRequestAsCosigner(multisigRequestShareTextSafe(payload), ctx);
   check('co-signer review: account, network, nonce, signer weight, the calls described by THIS wallet, exposure line',
     review.request.account === record.address && review.networkLabel === 'Ethereum Sepolia' && review.request.nonce === '0' && review.signer.address === S5.address && review.signer.weight === 1 &&
-      review.described[0] === `Send 0.0001 test ETH (100000000000000 wei) to ${RECIPIENT}.` && review.exposureLine === multisigExposureLine(CONFIG_2_OF_3) && review.warnings.some((w) => w.includes('not in this wallet')));
+      review.described[0] === `Send 0.0001 test ETH (100000000000000 wei) to ${RECIPIENT}.` && review.exposureLine === multisigExposureLine(CONFIG_2_OF_3, S5.address) && review.warnings.some((w) => w.includes('not in this wallet')));
+  check('co-signer review: the exposure line is seen from THIS co-signer’s phone (the other 2 can act without it)', review.exposureLine.includes('including the 2 co-signers without this phone'));
   check('review refuses another network than the active one', throwsWith(() => reviewMultisigRequestAsCosigner(payload, { ...ctx, activeChain: 'eip155:84532' }), 'but the active network is Base Sepolia'));
   check('review refuses when the active account is not a signer, naming the account that is', throwsWith(() => reviewMultisigRequestAsCosigner(payload, { ...ctx, activeAddress: S7.address }), 'Account 6'));
   check('review refuses when no account of this wallet is a signer', throwsWith(() => reviewMultisigRequestAsCosigner(payload, { ...ctx, activeAddress: S7.address, ownAccounts: [] }), 'None of this wallet’s accounts'));
@@ -549,13 +604,33 @@ let approvalPayload;
   // The submitting side adds approvals.
   const p0 = multisigWeightProgress(record, op);
   check('progress before approvals: weight 1 (this wallet’s signer) of 2, not ready', p0.weight === 1 && p0.threshold === 2 && p0.localWeight === 1 && !p0.ready);
+  // Finding 2 (CTO decision): the submitter still counts, but the bar shows
+  // co-signer weight collected versus co-signer weight needed, and a separate
+  // line says this wallet signs only when you submit.
+  check('progress before approvals: co-signer weight 0 of 1 needed',
+    p0.cosignerWeight === 0 && p0.cosignerNeeded === 1 && multisigCosignerBarLabel(p0) === 'Co-signer approvals: weight 0 of 1 needed (1 still needed)', multisigCosignerBarLabel(p0));
+  check('the wallet’s own signer has its own line, exact', multisigLocalSignsLine(p0) === 'This wallet signs the remaining weight 1 when you submit.');
+  check('the not-ready hint names co-signer weight, exact', multisigNotReadyHint(p0) === 'Submitting needs co-signer approvals of weight 1; the approvals so far reach 0.');
   const { op: op2, added } = addMultisigApproval(record, op, approvalPayload);
   check('an approval payload is added: weight 2 of 2, ready, approval id = keccak256(signature)', added.address === S5.address && multisigWeightProgress(record, op2).ready && op2.approvalIds[0].approvalId === ethers.keccak256(appr.signature));
+  const p1 = multisigWeightProgress(record, op2);
+  check('after one co-signer approval: "weight 1 of 1 needed — ready", exact', multisigCosignerBarLabel(p1) === 'Co-signer approvals: weight 1 of 1 needed — ready', multisigCosignerBarLabel(p1));
+  check('the confirm sentence separates co-signer weight from what this wallet signs, exact',
+    multisigSubmitApprovalsLine(p1) ===
+      'Co-signer approvals: weight 1 (1 needed). This wallet signs the remaining weight 1 when you submit, for weight 2 of the threshold 2. Your device check comes next; this wallet’s signer then signs the final operation, and the signer module checks every approval again.',
+    multisigSubmitApprovalsLine(p1));
+  const weightedRecord = { ...record, signers: [{ address: S0.address, weight: 2 }, { address: S5.address, weight: 1 }, { address: S6.address, weight: 1 }], threshold: 3 };
+  const pw = multisigWeightProgress(weightedRecord, op);
+  check('weighted (this wallet 2 of threshold 3): co-signer weight needed is 1', pw.cosignerNeeded === 1 && pw.localWeight === 2 && multisigLocalSignsLine(pw) === 'This wallet signs the remaining weight 2 when you submit.');
   const bare = approveMultisigRequest(op.request, S6);
   check('a bare 65-byte signature from another wallet is accepted (signer recovered)', addMultisigApproval(record, op, bare.signature).added.address === S6.address);
   check('the engine’s bare {signer, signature} JSON is accepted', addMultisigApproval(record, op, JSON.stringify(bare)).added.address === S6.address);
   check('refused: the same co-signer twice', throwsWith(() => addMultisigApproval(record, op2, approvalPayload), 'already added'));
   check('refused: an approval from a non-signer', throwsWith(() => addMultisigApproval(record, op, approveMultisigRequest(op.request, S7).signature), 'not a signer'));
+  check('the non-signer refusal is shown as a sentence: the engine’s words plus a period (finding 6)',
+    throwsWith(() => addMultisigApproval(record, op, approveMultisigRequest(op.request, S7).signature), `${S7.address} is not a signer of this multisig.`));
+  check('…and an app sentence that already ends with a period is unchanged', throwsWith(() => addMultisigApproval(record, op2, approvalPayload), `An approval from ${S5.address} was already added.`) &&
+    asSentence('Already a sentence.') === 'Already a sentence.' && asSentence('no period') === 'no period.');
   const own = approveMultisigRequest(op.request, S0);
   check('refused: this wallet’s own signer as a co-signer approval (the submitter rule)', throwsWith(() => addMultisigApproval(record, op, JSON.stringify(own)), MULTISIG_SUBMITTER_APPROVAL_REFUSAL));
   const otherReq = buildMultisigSigningRequest({ chainId: 11155111n, account: record.address, calls, nonce: 1n });
@@ -671,6 +746,140 @@ console.log('check-multisig: a deployed account is checked on-chain before a req
 }
 
 // ===========================================================================
+console.log('check-multisig: funding refusals (findings 3 and 4 of the 2026-10-10 emulator pass)');
+// ===========================================================================
+{
+  const fresh = memoryStore();
+  const r0 = await createMultisigRecord({ chain: SEPOLIA, config: CONFIG_2_OF_3, localSigner: S0.address }, fresh);
+  const calls = [{ to: RECIPIENT, value: 10n ** 14n, data: new Uint8Array(0) }];
+  const op0 = await prepareMultisigRequest({ record: r0, calls, node: multisigNode(), nativeSymbol: 'test ETH' }, fresh);
+  const { op: ready0 } = addMultisigApproval(r0, op0, approveMultisigRequest(op0.request, S5).signature);
+  const submit = (node, bundler) => prepareMultisigSubmission({ record: r0, op: ready0, nodeUrl: NODE_URL, bundlerUrl: BUNDLER_URL, transportFor: transportsFor(node, bundler) });
+
+  // (4) The wallet's own pre-check on an empty multisig: the multisig's own sentences.
+  const empty = await caught(() => submit(multisigNode({ balance: 0n }), fakeBundler()));
+  check('empty multisig: AaFundingError titled "This multisig account needs funds first."', empty instanceof AaFundingError && empty.title === AA_MULTISIG_FUNDING_TITLE && AA_MULTISIG_FUNDING_TITLE === 'This multisig account needs funds first.', empty?.title);
+  check('…its message is the multisig’s own, exact (no "smart account", no "owner address")',
+    empty?.message ===
+      `Insufficient funds: the multisig pays its own network fee from its balance and EntryPoint deposit, and sending 100000000000000 wei plus its network fee exceeds the balance of 0 wei held by the multisig ${r0.address}. Fund the multisig address ${r0.address}, then review again. A multisig can receive funds before it is deployed; its first operation deploys it.`,
+    empty?.message);
+  const emptyText = multisigSubmitErrorText(empty, { record: r0, deploys: true, symbol: 'test ETH' });
+  check('…the screen text: title, message, then the fund-and-retry note (no estimate figure: the bundler was not asked)',
+    emptyText === `This multisig account needs funds first.\n\n${empty.message}\n\n${MULTISIG_FUND_AND_RETRY}` && !/smart account|owner address/.test(emptyText), emptyText);
+
+  // AA21 from the bundler's estimate: the multisig wording, and a figure.
+  const AA21 = "UserOperation reverted during simulation with reason: AA21 didn't pay prefund";
+  const est = await caught(() => submit(multisigNode(), fakeBundler({ estimateError: AA21 })));
+  check('AA21 at the estimate: AaFundingError with the multisig title and wording, the bundler’s words kept',
+    est instanceof AaFundingError && est.title === AA_MULTISIG_FUNDING_TITLE && est.message.startsWith('Insufficient funds: the multisig pays its own network fee') &&
+      est.message.endsWith(`\n\nThe bundler's message: ${AA21}`) && !/smart account|owner address/.test(est.message), est?.message);
+  const noQuote = multisigSubmitErrorText(est, { record: r0, deploys: true, symbol: 'test ETH', lastQuote: null, funds: { balance: 2n * 10n ** 15n, deposit: 0n } });
+  check('…without an earlier quote on Sepolia: "unknown because the estimate itself was refused" + the RECORDED range, then fund-and-retry',
+    noQuote === `This multisig account needs funds first.\n\n${est.message}\n\nThe exact amount is unknown because the estimate itself was refused. ${MULTISIG_RECORDED_DEPLOY_COST_NOTE}\n\n${MULTISIG_FUND_AND_RETRY}`, noQuote);
+  check('the recorded range is the run’s figures, labelled as recorded, not a quote, exact',
+    MULTISIG_RECORDED_DEPLOY_COST_NOTE ===
+      'For scale only: in this wallet’s recorded test run on Ethereum Sepolia (2026-10-10), the first operation of a 2-of-3 multisig, which also deployed it, was quoted at a worst-case network fee of about 0.0036 to 0.0066 test ETH at different fee levels and actually cost about 0.0020 test ETH. That is a recorded range, not a quote for this operation; fees change.');
+  check('…a non-deploying operation names the recorded later-operation figure instead',
+    multisigFundingFigure({ chain: SEPOLIA, deploys: false, lastQuote: null, funds: null, symbol: 'test ETH' }) === `The exact amount is unknown because the estimate itself was refused. ${MULTISIG_RECORDED_LATER_COST_NOTE}` &&
+      /about 0\.0013 to 0\.0023 test ETH .* actually cost about 0\.0008 test ETH/.test(MULTISIG_RECORDED_LATER_COST_NOTE));
+  check('…on another network no recorded figure is shown (they are Sepolia figures)',
+    multisigFundingFigure({ chain: 'eip155:84532', deploys: true, lastQuote: null, funds: null, symbol: 'test ETH' }) === 'The exact amount is unknown because the estimate itself was refused.');
+  const E18 = 10n ** 18n;
+  const lq = { fee: 6_600_000n * 10n ** 9n, amount: 10n ** 14n }; // 0.0066 fee, 0.0001 amount
+  check('with the last accepted quote: the worst case from it and the shortfall against the balance read now, exact',
+    multisigFundingFigure({ chain: SEPOLIA, deploys: true, lastQuote: lq, funds: { balance: 2n * 10n ** 15n, deposit: 0n }, symbol: 'test ETH' }) ===
+      'The last accepted quote for this operation had a worst-case network fee of 0.0066 test ETH. At that figure the balance must hold 0.0067 test ETH (the amount 0.0001 test ETH plus the fee). It holds 0.002 test ETH, so send at least 0.0047 test ETH to the multisig, and a little more, because the fee changes between quotes.',
+    multisigFundingFigure({ chain: SEPOLIA, deploys: true, lastQuote: lq, funds: { balance: 2n * 10n ** 15n, deposit: 0n }, symbol: 'test ETH' }));
+  check('…a deposit pays the fee first (EntryPoint v0.7), so it lowers what the balance must hold, exact',
+    multisigFundingFigure({ chain: SEPOLIA, deploys: false, lastQuote: lq, funds: { balance: 2n * 10n ** 15n, deposit: 10n ** 15n }, symbol: 'test ETH' }) ===
+      'The last accepted quote for this operation had a worst-case network fee of 0.0066 test ETH. The EntryPoint deposit of 0.001 test ETH pays the fee first, so at that figure the balance must hold 0.0057 test ETH (the amount 0.0001 test ETH plus the rest of the fee). It holds 0.002 test ETH, so send at least 0.0037 test ETH to the multisig, and a little more, because the fee changes between quotes.');
+  check('…a balance that covered the last quote: the fee rose since; no invented figure',
+    /which would have covered that quote, so the fee or the gas estimate has risen since; the new figure is unknown/.test(
+      multisigFundingFigure({ chain: SEPOLIA, deploys: true, lastQuote: lq, funds: { balance: E18, deposit: 0n }, symbol: 'test ETH' })));
+  const withQuote = multisigSubmitErrorText(est, { record: r0, deploys: true, symbol: 'test ETH', lastQuote: lq, funds: { balance: 2n * 10n ** 15n, deposit: 0n } });
+  check('…the screen text uses the last quote when there is one (and no recorded range)', withQuote.includes('The last accepted quote for this operation') && !withQuote.includes('For scale only'));
+
+  // (3) Never the funding advice on a fee-rose or any other refusal.
+  const rose = new AaFeeRoseError('The bundler\'s minimum fee rose: it now asks for more.', 'floor');
+  const roseText = multisigSubmitErrorText(rose, { record: r0, deploys: true, symbol: 'test ETH' });
+  check('a fee-rose refusal gets NO fund-and-retry note and no figure (finding 3)', !roseText.includes(MULTISIG_FUND_AND_RETRY) && !roseText.includes('estimate itself') && roseText.startsWith('The network fee rose.'), roseText);
+  const other = multisigSubmitErrorText(new Error('RPC error -32602: something else'), { record: r0, deploys: true, symbol: 'test ETH' });
+  check('any other refusal gets NO funding advice either (shown as its message)', other === 'RPC error -32602: something else');
+  const rawAa21 = multisigSubmitErrorText(new Error(`RPC error -32500: ${AA21}`), { record: r0, deploys: false, symbol: 'test ETH', lastQuote: null, funds: null });
+  check('a raw AA21 at submission: the multisig funding title and sentence, a figure, then fund-and-retry',
+    rawAa21.startsWith(`This multisig account needs funds first.\n\nThe multisig ${r0.address} cannot pay for this operation's network fee: the multisig pays its own network fee from its balance and EntryPoint deposit, and they are too small. Fund the multisig address ${r0.address}, then try again.`) &&
+      rawAa21.includes(MULTISIG_RECORDED_LATER_COST_NOTE) && rawAa21.endsWith(MULTISIG_FUND_AND_RETRY) && !/smart account|owner address/.test(rawAa21), rawAa21);
+  check('fund-and-retry note, exact', MULTISIG_FUND_AND_RETRY === 'The co-signer approvals stay valid while you fund the multisig, as long as no other operation uses this nonce: fund it, then review and submit again without collecting them again.');
+  const screenSrc = readFileSync(join(HERE, '..', 'src', 'screens', 'MultisigScreen.tsx'), 'utf8');
+  check('screen: both the quote and the submit failure go through multisigSubmitErrorText (no unconditional fund-and-retry)',
+    (screenSrc.match(/setError\(await submitErrorText\(e\)\)/g) ?? []).length === 2 && /multisigSubmitErrorText\(e, \{/.test(screenSrc) && !/MULTISIG_FUND_AND_RETRY/.test(screenSrc) && /setLastQuote\(\{ recordId: selected\.id, requestId: op\.requestId, fee: prepared\.quote\.fee, amount: prepared\.quote\.amount \}\)/.test(screenSrc));
+}
+
+// ===========================================================================
+console.log('check-multisig: deployment refresh, deposit, own addresses (findings 5, 7, 8)');
+// ===========================================================================
+{
+  const fresh = memoryStore();
+  const r0 = await createMultisigRecord({ chain: SEPOLIA, config: CONFIG_2_OF_3, localSigner: S0.address }, fresh);
+  check('chain note: not deployed on-chain and not in the record → the deploy note', multisigChainNote(r0, { deployed: false, problems: [] }) === MULTISIG_DEPLOY_NOTE);
+  const deployedNode = multisigNode({ deployed: new Set([r0.address]) });
+  const refreshed = await refreshMultisigDeployment(deployedNode, r0, fresh);
+  const stored = (await listMultisigRecords(SEPOLIA, fresh))[0];
+  check('refresh after a deploying operation: "Deployed; … match this record." and the record is stored as deployed (finding 5)',
+    refreshed.note === MULTISIG_DEPLOYED_MATCH_NOTE && MULTISIG_DEPLOYED_MATCH_NOTE === 'Deployed; its signer set and threshold on-chain match this record.' && refreshed.record.deployed.deployed === true && stored.deployed.deployed === true);
+  const lagging = await refreshMultisigDeployment(multisigNode(), stored, fresh);
+  check('the receipt said deployed but the endpoint shows no code yet: never "Not deployed yet"', lagging.note === MULTISIG_DEPLOYED_NOT_VISIBLE_NOTE && !lagging.note.startsWith('Not deployed yet'));
+  const problems = await refreshMultisigDeployment(multisigNode({ deployed: new Set([r0.address]), onChainSet: { ...CONFIG_2_OF_3, threshold: 3 } }), stored, fresh);
+  check('a mismatch on-chain is still reported', problems.note.startsWith('On-chain check: ') && problems.note.includes('threshold on-chain is 3'));
+  const screenSrc = readFileSync(join(HERE, '..', 'src', 'screens', 'MultisigScreen.tsx'), 'utf8');
+  const backHandler = screenSrc.slice(screenSrc.indexOf('title="Back to the multisig"'), screenSrc.indexOf('title="Back to the multisig"') + 700);
+  check('screen: "Back to the multisig" re-reads the records and re-opens the detail (a fresh on-chain read), and the receipt refreshes the note',
+    /reload\(\)\.then\(/.test(backHandler) && /openDetail\(list\.find\(\(r\) => r\.id === id\) \?\? selected\)/.test(backHandler) &&
+      /refreshChainNote\(list\?\.find\(\(r\) => r\.id === submitted\.id\) \?\? submitted\)/.test(screenSrc) && /refreshMultisigDeployment\(node, record\)/.test(screenSrc) && !/readMultisigOnChain/.test(screenSrc));
+
+  // (6) Errors render above the actions, never after Back.
+  check('screen: the shell no longer renders the error after the phase (below Back); every phase places {errorBox} itself',
+    !/\{children\}\s*\{errorBox\}/.test(screenSrc) && (screenSrc.match(/\{errorBox\}/g) ?? []).length >= 13);
+  const collect = screenSrc.slice(screenSrc.indexOf("if (phase === 'collect'"), screenSrc.indexOf("if ((phase === 'confirm'"));
+  check('screen: in the collect phase the error sits after the approval inputs and before "3. Submit" and Back',
+    collect.indexOf('{errorBox}') > collect.indexOf('Add an approval from a file') && collect.indexOf('{errorBox}') < collect.indexOf('3. Submit') && collect.indexOf('{errorBox}') < collect.indexOf("back('detail')"));
+  check('screen: the collect phase uses the co-signer bar (no "✓ This wallet’s signer … signs last" line)',
+    /<MultisigWeightBar progress=\{p\} \/>/.test(collect) && !/signs last when you submit/.test(screenSrc) && /multisigNotReadyHint\(p\)/.test(collect) && /multisigSubmitApprovalsLine\(/.test(screenSrc));
+  const viewsSrc = readFileSync(join(HERE, '..', 'src', 'screens', 'MultisigViews.tsx'), 'utf8');
+  check('views: the bar shows multisigCosignerBarLabel and, separately, multisigLocalSignsLine', /multisigCosignerBarLabel\(progress\)/.test(viewsSrc) && /multisigLocalSignsLine\(progress\)/.test(viewsSrc) && /progress\.cosignerWeight \/ need/.test(viewsSrc));
+
+  // (7) The EntryPoint deposit next to the balance.
+  const DEP = 697_000_000_000_000n;
+  const fundsNode = multisigNode();
+  const depositNode = async (method, params) => {
+    if (method === 'eth_call' && same(params[0].to, ENTRYPOINT_V07) && params[0].data.startsWith(sel('balanceOf(address)'))) {
+      return same('0x' + params[0].data.slice(34, 74), r0.address) ? word(DEP) : word(0);
+    }
+    return fundsNode(method, params);
+  };
+  const held = await readMultisigFunds(depositNode, r0.address);
+  check('readMultisigFunds: the balance and the EntryPoint balanceOf(account) deposit', held.balance === 10n ** 18n && held.deposit === DEP);
+  const broken = await readMultisigFunds(async () => { throw new Error('down'); }, r0.address);
+  check('…each is null when it cannot be read (never throws)', broken.balance === null && broken.deposit === null);
+  const fmt = (wei) => `${ethers.formatEther(wei)} test ETH`;
+  check('list line: balance · "EntryPoint deposit (pays fees first): X", exact',
+    multisigFundsLine({ balance: 507_000_000_000_000n, deposit: DEP }, fmt) === '0.000507 test ETH · EntryPoint deposit (pays fees first): 0.000697 test ETH' &&
+      MULTISIG_DEPOSIT_ROW_LABEL === 'EntryPoint deposit (pays fees first)' && multisigFundsLine(undefined, fmt) === 'Balance loading…',
+    multisigFundsLine({ balance: 507_000_000_000_000n, deposit: DEP }, fmt));
+  check('screen: the detail view shows the deposit row with its note, and the list uses multisigFundsLine',
+    /label=\{MULTISIG_DEPOSIT_ROW_LABEL\}/.test(screenSrc) && /sub=\{MULTISIG_DEPOSIT_NOTE\}/.test(screenSrc) && /multisigFundsLine\(funds\[r\.address\], formatNative\)/.test(screenSrc) && /readMultisigFunds\(node, r\.address\)/.test(screenSrc));
+
+  // (8) The wallet's own multisig addresses, named as every screen names them.
+  const own = await ownMultisigAddresses(SEPOLIA, fresh);
+  check('ownMultisigAddresses: every stored multisig on the network, labelled "Multisig 1 (2-of-3)"', own.length === 1 && own[0].address === r0.address && own[0].label === 'Multisig 1 (2-of-3)', JSON.stringify(own));
+  check('…none on another network, and none from an unreadable list', (await ownMultisigAddresses('eip155:84532', fresh)).length === 0 &&
+    (await ownMultisigAddresses(SEPOLIA, { getItem: async () => { throw new Error('locked'); }, setItem: async () => undefined, removeItem: async () => undefined })).length === 0);
+  const hookSrc = readFileSync(join(HERE, '..', 'src', 'wallet', 'useOwnAddresses.ts'), 'utf8');
+  check('useOwnEvmAddresses (success screen, "Save as contact") includes the stored multisigs of the active network',
+    /ownMultisigAddresses\(evmChain\.caip2\)/.test(hookSrc) && /ownWalletAddresses\(accountList, aa, multisigs\)/.test(hookSrc));
+}
+
+// ===========================================================================
 console.log('check-multisig: refusals (WalletConnect, browser, ERC-1271, guardians, sessions, passkeys, 7702)');
 // ===========================================================================
 {
@@ -742,7 +951,7 @@ console.log('check-multisig: mutation checks (broken copies must be caught)');
 // ===========================================================================
 {
   // M1 — the threshold: the app's ready flag always true.
-  const m1 = await importMutant('src/wallet/multisig.ts', 'ready: weight >= record.threshold }', 'ready: true }');
+  const m1 = await importMutant('src/wallet/multisig.ts', '    ready: weight >= record.threshold,\n', '    ready: true,\n');
   const fresh = { ...op, status: 'collecting', approvals: [], approvalIds: [] };
   check('M1 caught: without the threshold check the progress says ready at weight 1 of 2 (the real one does not)', m1.multisigWeightProgress(record, fresh).ready === true && multisigWeightProgress(record, fresh).ready === false);
   const node = multisigNode();
@@ -791,6 +1000,59 @@ console.log('check-multisig: mutation checks (broken copies must be caught)');
   // M7 — the derivation refusal removed: a multisig id reaches the generic index error.
   const m7 = await importMutant('src/wallet/accounts.ts', '  if (isMultisigAccountId(accountIndex)) throw new Error(MULTISIG_NO_DERIVATION);\n', '');
   check('M7 caught: without the refusal the derivation error loses its plain sentence', !throwsWith(() => m7.derivationArgsFor('eip155:1', multisigAccountId(0)), MULTISIG_NO_DERIVATION));
+
+  // Fix slice for the 2026-10-10 emulator findings: each behaviour change, broken in a copy, must be caught.
+  const r8 = { address: record.address, chain: SEPOLIA };
+  // M8 (finding 3) — funding advice on every refusal.
+  const m8 = await importMutant('src/wallet/multisig.ts', '  if (!funding) return base;\n', '');
+  const m8text = m8.multisigSubmitErrorText(new Error('RPC error -32602: something else'), { record: r8, deploys: true, symbol: 'test ETH' });
+  check('M8 caught: without the funding-only rule a non-funding refusal gets the fund-and-retry note (the real one does not)',
+    m8text.includes(MULTISIG_FUND_AND_RETRY) && !multisigSubmitErrorText(new Error('RPC error -32602: something else'), { record: r8, deploys: true, symbol: 'test ETH' }).includes(MULTISIG_FUND_AND_RETRY));
+  // M9 (finding 4) — the multisig wording in aa.ts removed: the smart-account text comes back.
+  const m9 = await importMutant('src/wallet/aa.ts', '  if (p.multisig === true) return aaMultisigFundingMessage(p);\n', '');
+  const m9msg = m9.aaFundingMessage({ sender: record.address, amount: 1n, fee: null, balance: 0n, sponsored: false, deployed: false, multisig: true });
+  check('M9 caught: without the multisig branch the funding text says "smart account … (not the owner address)"', /smart account/.test(m9msg) && /owner address/.test(m9msg));
+  // M10 (finding 2) — the co-signer weight needed counted as the whole threshold.
+  const m10 = await importMutant('src/wallet/multisig.ts', '  const cosignerNeeded = Math.max(0, record.threshold - localWeight);\n', '  const cosignerNeeded = record.threshold;\n');
+  const fresh10 = { ...op, status: 'collecting', approvals: [], approvalIds: [] };
+  check('M10 caught: without subtracting this wallet’s weight the bar reads "weight 0 of 2 needed" (the real one: of 1)',
+    m10.multisigCosignerBarLabel(m10.multisigWeightProgress(record, fresh10)).includes('of 2 needed') && multisigCosignerBarLabel(multisigWeightProgress(record, fresh10)).includes('of 1 needed'));
+  // M11 (finding 9) — the "without this phone" condition inverted.
+  const m11 = await importMutant('src/wallet/multisig.ts', '      if (fewest !== null) {\n', '      if (fewest === null) {\n');
+  check('M11 caught: with the condition inverted the 2-of-3 line no longer says the co-signers can act without this phone',
+    !m11.multisigExposureLine(CONFIG_2_OF_3, S0.address).includes('including the 2 co-signers without this phone') && multisigExposureLine(CONFIG_2_OF_3, S0.address).includes('including the 2 co-signers without this phone'));
+  // M12 (finding 5) — the refresh no longer records the deployment.
+  const m12 = await importMutant('src/wallet/multisig.ts', '    await markMultisigDeployed(record.id, {}, store).catch(() => undefined);\n', '');
+  const s12 = memoryStore();
+  const r12 = await m12.createMultisigRecord({ chain: SEPOLIA, config: CONFIG_2_OF_3, localSigner: S0.address }, s12);
+  await m12.refreshMultisigDeployment(multisigNode({ deployed: new Set([r12.address]) }), r12, s12);
+  check('M12 caught: without the write the stored record still says "not deployed" after the refresh', (await listMultisigRecords(SEPOLIA, s12))[0].deployed.deployed === false);
+  // M13 (finding 6) — the engine refusal passed through without a period.
+  const m13 = await importMutant('src/wallet/multisig.ts', '    throw new Error(asSentence(e instanceof Error ? e.message : String(e)));\n', '    throw e;\n');
+  const opFresh = { ...op, status: 'collecting', approvals: [], approvalIds: [] };
+  const s7sig = approveMultisigRequest(op.request, S7).signature;
+  check('M13 caught: without the wrap the non-signer refusal has no period (the real one does)',
+    throwsWith(() => m13.addMultisigApproval(record, opFresh, s7sig), `${S7.address} is not a signer of this multisig`) &&
+      !throwsWith(() => m13.addMultisigApproval(record, opFresh, s7sig), `${S7.address} is not a signer of this multisig.`) &&
+      throwsWith(() => addMultisigApproval(record, opFresh, s7sig), `${S7.address} is not a signer of this multisig.`));
+  // M14 (finding 8) — the own-address label loses the shape.
+  const m14 = await importMutant('src/wallet/multisig.ts', '    return records.map((r) => ({ address: r.address, label: multisigDisplayName(r) }));\n', '    return records.map((r) => ({ address: r.address, label: r.name }));\n');
+  const s14 = memoryStore();
+  await createMultisigRecord({ chain: SEPOLIA, config: CONFIG_2_OF_3, localSigner: S0.address }, s14);
+  check('M14 caught: the mutant names the multisig "Multisig 1" instead of "Multisig 1 (2-of-3)"',
+    (await m14.ownMultisigAddresses(SEPOLIA, s14))[0].label === 'Multisig 1' && (await ownMultisigAddresses(SEPOLIA, s14))[0].label === 'Multisig 1 (2-of-3)');
+  // M15 (finding 8) — risk.ts no longer merges the multisigs into the own set.
+  const realRisk = await import('../src/wallet/risk.ts');
+  const m15 = await importMutant('src/wallet/risk.ts', '    ...multisigs.filter((m) => ADDRESS.test(m.address) && !findOwnAddress(m.address, listed)),\n', '');
+  const codeless = async (method) => {
+    if (method === 'eth_getCode') return '0x';
+    throw new Error(`offline: ${method}`);
+  };
+  const riskOpts = { transport: codeless, url: NODE_URL, wallet: S0.address, to: record.address, chainCaip2: SEPOLIA, trackedTokens: [], loadOwnMultisigs: async () => [{ address: record.address, label: 'Multisig 1 (2-of-3)' }] };
+  const realFacts = await realRisk.gatherRiskFacts(riskOpts);
+  const m15Facts = await m15.gatherRiskFacts(riskOpts);
+  check('M15 caught: without the merge a send to the own multisig is not "one of your own accounts" (the real one is)',
+    realFacts.ownRecipient?.label === 'Multisig 1 (2-of-3)' && realFacts.firstInteractionApplicable === false && m15Facts.ownRecipient === undefined && m15Facts.firstInteractionApplicable === true);
 }
 
 // ===========================================================================

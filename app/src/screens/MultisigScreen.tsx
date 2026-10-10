@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, ScrollView, Text, TextInput, View } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
-import { NodeClient, httpTransport, type JsonRpcTransport } from '@shiba-wallet/chains-evm';
+import { httpTransport, type JsonRpcTransport } from '@shiba-wallet/chains-evm';
 import { Button, TestNetworksOnlyCard, WarningBox, screenStyle } from '../components';
 import {
   InfoRow,
@@ -9,7 +9,6 @@ import {
   PayloadQr,
   RecoveryNetworkBadge,
   ShareActions,
-  WeightProgress,
   recoveryLayout as styles,
 } from '../components/RecoveryViews';
 import { pickRecordFile } from '../components/RecordFileActions';
@@ -24,7 +23,6 @@ import { EVM_CHAIN_ID, validateRecipient } from '../wallet/send';
 import { listTokens } from '../wallet/tokens';
 import {
   aaErc20TransferCalls,
-  describeAaError,
   getAaConfig,
   waitForAaReceipt,
   type AaClientBundle,
@@ -33,8 +31,9 @@ import {
 import {
   MAX_MULTISIG_COSIGNERS,
   MULTISIG_DEPLOY_NOTE,
+  MULTISIG_DEPOSIT_NOTE,
+  MULTISIG_DEPOSIT_ROW_LABEL,
   MULTISIG_FRESH_DEPLOY_NOTE,
-  MULTISIG_FUND_AND_RETRY,
   MULTISIG_PHRASE_SIGNER_ONLY,
   MULTISIG_TITLE,
   MultisigAuthCancelledError,
@@ -56,16 +55,21 @@ import {
   multisigExportFileName,
   multisigExposureLine,
   multisigFileText,
+  multisigFundsLine,
+  multisigNotReadyHint,
   multisigOperationCalls,
   multisigQrValue,
   multisigRequestShareText,
   multisigShapeLabel,
+  multisigSubmitApprovalsLine,
+  multisigSubmitErrorText,
   multisigWeightProgress,
   parseMultisigAccountImport,
   prepareMultisigRequest,
   prepareMultisigSubmission,
-  readMultisigOnChain,
+  readMultisigFunds,
   recordMultisigOutcome,
+  refreshMultisigDeployment,
   removeMultisigMessage,
   removeMultisigRecord,
   reviewMultisigRequestAsCosigner,
@@ -75,6 +79,8 @@ import {
   type MultisigConfigCheck,
   type MultisigCosignReview,
   type MultisigCosignerDraft,
+  type MultisigFunds,
+  type MultisigLastQuote,
   type MultisigOperationRecord,
   type MultisigRecord,
   type OwnAccount,
@@ -84,6 +90,7 @@ import {
   MultisigFileExportButton,
   MultisigHonesty,
   MultisigRefusedFeatures,
+  MultisigWeightBar,
 } from './MultisigViews';
 
 type Phase =
@@ -149,7 +156,8 @@ export function MultisigScreen() {
 
   const [phase, setPhase] = useState<Phase>('list');
   const [records, setRecords] = useState<MultisigRecord[]>([]);
-  const [balances, setBalances] = useState<Record<string, bigint | null>>({});
+  // Balance and EntryPoint deposit per multisig address (each null when unreadable).
+  const [funds, setFunds] = useState<Record<string, MultisigFunds>>({});
   const [nodeUrl, setNodeUrl] = useState<string | null>(null);
   const [setupError, setSetupError] = useState<string | null>(null);
   const [tokens, setTokens] = useState<(KnownToken & { assetId: string })[]>([]);
@@ -173,6 +181,9 @@ export function MultisigScreen() {
   const [approvalInput, setApprovalInput] = useState('');
   const [submission, setSubmission] = useState<{ bundle: AaClientBundle; quote: AaSendQuote } | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
+  // The last accepted quote per operation, for the funding figure when a
+  // later estimate is refused with AA21 (multisigFundingFigure).
+  const [lastQuote, setLastQuote] = useState<(MultisigLastQuote & { recordId: number }) | null>(null);
 
   // Import and co-sign.
   const [importInput, setImportInput] = useState('');
@@ -216,11 +227,8 @@ export function MultisigScreen() {
     const list = await listMultisigRecords(chain);
     setRecords(list);
     if (node) {
-      const client = new NodeClient(node);
-      const entries = await Promise.all(
-        list.map(async (r) => [r.address, await client.getBalance(r.address).catch(() => null)] as const),
-      );
-      setBalances(Object.fromEntries(entries));
+      const entries = await Promise.all(list.map(async (r) => [r.address, await readMultisigFunds(node, r.address)] as const));
+      setFunds(Object.fromEntries(entries));
     }
     return list;
   }, [chain, node]);
@@ -236,9 +244,28 @@ export function MultisigScreen() {
     <TestNetworksOnlyCard feature={readiness.feature} hint={readiness.hint} style={styles.card} titleStyle={styles.ok} bodyStyle={styles.hint} hintStyle={styles.hint} />
   ) : null;
   const badge = <RecoveryNetworkBadge label={evmChain.label} testnet={evmChain.testnet} />;
+  // Rendered by each phase ABOVE its actions (never below Back, where it was
+  // off-screen; finding 6 of the 2026-10-10 emulator pass).
   const errorBox = error ? <WarningBox>{error}</WarningBox> : null;
+  const formatNative = (wei: bigint) => `${formatBalanceDisplay(wei, 18)} ${nativeSymbol}`;
 
   const fail = (e: unknown) => setError(e instanceof Error ? e.message : String(e));
+
+  /**
+   * Re-reads the account on-chain (refreshMultisigDeployment: a deployment
+   * the record did not know yet is stored) and shows the result, so the
+   * detail view never keeps a stale "Not deployed yet".
+   */
+  const refreshChainNote = (record: MultisigRecord) => {
+    if (!node) return;
+    refreshMultisigDeployment(node, record).then(
+      ({ note }) => {
+        setChainNote(note);
+        void reload().catch(() => undefined);
+      },
+      (e: unknown) => setChainNote(`Could not read the account on-chain: ${e instanceof Error ? e.message : String(e)}`),
+    );
+  };
 
   const openDetail = (record: MultisigRecord) => {
     setSelectedId(record.id);
@@ -246,19 +273,7 @@ export function MultisigScreen() {
     setChainNote(null);
     setOp(record.operations.find((o) => o.status === 'collecting') ?? null);
     setPhase('detail');
-    if (node) {
-      readMultisigOnChain(node, record).then(
-        (state) =>
-          setChainNote(
-            state.deployed
-              ? state.problems.length > 0
-                ? `On-chain check: ${state.problems.join(' ')}`
-                : 'Deployed; its signer set and threshold on-chain match this record.'
-              : MULTISIG_DEPLOY_NOTE,
-          ),
-        (e: unknown) => setChainNote(`Could not read the account on-chain: ${e instanceof Error ? e.message : String(e)}`),
-      );
-    }
+    refreshChainNote(record);
   };
 
   // ---------------------------------------------------------------------
@@ -368,14 +383,28 @@ export function MultisigScreen() {
     try {
       const config = await getAaConfig(chain);
       if (!config.bundlerUrl) throw new Error('No bundler is configured for this network (Settings → Account Abstraction).');
-      setSubmission(await prepareMultisigSubmission({ record: selected, op, nodeUrl, bundlerUrl: config.bundlerUrl }));
+      const prepared = await prepareMultisigSubmission({ record: selected, op, nodeUrl, bundlerUrl: config.bundlerUrl });
+      setLastQuote({ recordId: selected.id, requestId: op.requestId, fee: prepared.quote.fee, amount: prepared.quote.amount });
+      setSubmission(prepared);
       setPhase('confirm');
     } catch (e) {
-      const described = describeAaError(e, { accountType: 'kernel-multisig', deployed: !op.deploys, sender: selected.address });
-      setError(described ? `${described.title}\n\n${described.detail}${op.deploys ? `\n\n${MULTISIG_FUND_AND_RETRY}` : ''}` : String(e));
+      setError(await submitErrorText(e));
     } finally {
       setBusy(false);
     }
+  };
+
+  /**
+   * The quote / submit error for the selected operation
+   * (multisigSubmitErrorText): the funding advice only for funding refusals,
+   * and on an AA21 the figure from the last accepted quote of this operation
+   * (or the recorded figures) with the balance and deposit read just now.
+   */
+  const submitErrorText = async (e: unknown): Promise<string> => {
+    if (!selected || !op) return e instanceof Error ? e.message : String(e);
+    const last = lastQuote && lastQuote.recordId === selected.id && lastQuote.requestId === op.requestId ? lastQuote : null;
+    const current = node ? await readMultisigFunds(node, selected.address) : null;
+    return multisigSubmitErrorText(e, { record: selected, deploys: op.deploys, symbol: nativeSymbol, lastQuote: last, funds: current });
   };
 
   const onSubmit = async () => {
@@ -394,13 +423,16 @@ export function MultisigScreen() {
       setProgress({ userOpHash, state: 'pending', success: null, txHash: null });
       setPhase('progress');
       await reload();
-      const recordId = selected.id;
+      const submitted = selected;
       const requestId = op.requestId;
       waitForAaReceipt(submission.bundle, userOpHash, { timeoutMs: 120_000, pollMs: 3_000 }).then(
         async ({ summary }) => {
-          await recordMultisigOutcome(recordId, requestId, summary).catch(() => undefined);
+          await recordMultisigOutcome(submitted.id, requestId, summary).catch(() => undefined);
+          // A deploying operation's receipt: read the account again now, so
+          // the detail view says "Deployed" when the user goes back.
+          const list = await reload().catch(() => null);
+          refreshChainNote(list?.find((r) => r.id === submitted.id) ?? submitted);
           setProgress((p) => (p && p.userOpHash === userOpHash ? { ...p, state: 'done', success: summary.success, txHash: summary.txHash } : p));
-          await reload().catch(() => undefined);
         },
         () => setProgress((p) => (p && p.userOpHash === userOpHash ? { ...p, state: 'timeout' } : p)),
       );
@@ -411,8 +443,7 @@ export function MultisigScreen() {
         setPhase('collect');
         return;
       }
-      const described = describeAaError(e, { accountType: 'kernel-multisig', deployed: !op.deploys, sender: selected.address });
-      setError(described ? `${described.title}\n\n${described.detail}${op.deploys ? `\n\n${MULTISIG_FUND_AND_RETRY}` : ''}` : String(e));
+      setError(await submitErrorText(e));
       setPhase('collect');
     }
   };
@@ -500,14 +531,18 @@ export function MultisigScreen() {
     />
   );
 
-  const shell = (children: React.ReactNode, config: ReturnType<typeof multisigConfigOf> | null = null) => (
+  // Each phase places {errorBox} itself, directly above its actions.
+  const shell = (
+    children: React.ReactNode,
+    config: ReturnType<typeof multisigConfigOf> | null = null,
+    localSigner: string | null = null,
+  ) => (
     <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
       {badge}
       {readinessCard}
       {setupError ? <WarningBox>{setupError}</WarningBox> : null}
       {children}
-      {errorBox}
-      <MultisigHonesty config={config} />
+      <MultisigHonesty config={config} localSigner={localSigner} />
     </ScrollView>
   );
 
@@ -574,6 +609,7 @@ export function MultisigScreen() {
           placeholderTextColor={theme.textMuted}
           style={[styles.input, { color: theme.text, borderColor: theme.border }]}
         />
+        {errorBox}
         <Button title="Review" onPress={onReviewCreate} disabled={readiness !== null || !phraseSigner} />
         {back('list')}
       </>,
@@ -616,17 +652,19 @@ export function MultisigScreen() {
           <WarningBox key={w}>{w}</WarningBox>
         ))}
         <Text style={[styles.hint, { color: theme.textMuted }]}>{MULTISIG_DEPLOY_NOTE}</Text>
+        {errorBox}
         {busy ? <ActivityIndicator color={theme.accent} /> : <Button title="Create this multisig" onPress={() => void onCreate()} disabled={readiness !== null || !preview || !node} />}
         {back('create')}
       </>,
       reviewed.config,
+      phraseSigner,
     );
   }
 
   if (phase === 'detail' && selected) {
     const config = multisigConfigOf(selected);
     const exported = exportMultisigAccount(selected);
-    const balance = balances[selected.address];
+    const held = funds[selected.address];
     const finished = selected.operations.filter((o) => o.status !== 'collecting');
     return shell(
       <>
@@ -634,7 +672,12 @@ export function MultisigScreen() {
         <InfoRow label="Multisig address (receive here)" value={selected.address} monoValue />
         <PayloadQr value={selected.address} caption="The multisig account’s address. Anyone can send to it; moving funds out needs the co-signers." />
         <ShareActions text={selected.address} shareTitle="Multisig address" />
-        <InfoRow label="Balance" value={balance === undefined ? 'Loading…' : balance === null ? 'Could not be read' : `${formatBalanceDisplay(balance, 18)} ${nativeSymbol}`} />
+        <InfoRow label="Balance" value={held === undefined ? 'Loading…' : held.balance === null ? 'Could not be read' : formatNative(held.balance)} />
+        <InfoRow
+          label={MULTISIG_DEPOSIT_ROW_LABEL}
+          value={held === undefined ? 'Loading…' : held.deposit === null ? 'Could not be read' : formatNative(held.deposit)}
+          sub={MULTISIG_DEPOSIT_NOTE}
+        />
         <Text style={[styles.hint, { color: theme.text }]}>{chainNote ?? 'Checking the account on-chain…'}</Text>
         {selected.signers.map((s) => (
           <InfoRow
@@ -652,6 +695,7 @@ export function MultisigScreen() {
             operations.
           </WarningBox>
         ) : null}
+        {errorBox}
         {op ? (
           <Button title="Continue the operation being approved" onPress={() => setPhase('collect')} />
         ) : null}
@@ -714,6 +758,7 @@ export function MultisigScreen() {
         {back('list')}
       </>,
       config,
+      selected.localSigner,
     );
   }
 
@@ -749,10 +794,12 @@ export function MultisigScreen() {
           keyboardType="decimal-pad"
           style={[styles.input, { color: theme.text, borderColor: theme.border }]}
         />
+        {errorBox}
         {busy ? <ActivityIndicator color={theme.accent} /> : <Button title="Build the signing request" onPress={() => void onBuildRequest()} disabled={readiness !== null || !node} />}
         {back('detail')}
       </>,
       multisigConfigOf(selected),
+      selected.localSigner,
     );
   }
 
@@ -770,8 +817,7 @@ export function MultisigScreen() {
           nativeSymbol={nativeSymbol}
         />
         {op.deploys ? <Text style={[styles.hint, { color: theme.textMuted }]}>{MULTISIG_DEPLOY_NOTE}</Text> : null}
-        <WeightProgress weight={p.weight} threshold={p.threshold} />
-        <Text style={[styles.hint, { color: theme.text }]}>✓ This wallet’s signer {selected.localSigner} (weight {p.localWeight}, signs last when you submit)</Text>
+        <MultisigWeightBar progress={p} />
         {p.approvers.map((a) => (
           <Text key={a.address} style={[styles.hint, { color: theme.text }]}>
             ✓ {a.address} (weight {a.weight})
@@ -790,20 +836,18 @@ export function MultisigScreen() {
         />
         <Button title="Add approval" variant="secondary" disabled={!approvalInput.trim()} onPress={() => void onAddApproval(approvalInput)} />
         <Button title="Add an approval from a file" variant="secondary" onPress={() => void onPickApprovalFile()} />
+        {errorBox}
         <Text style={[styles.sectionTitle, { color: theme.text }]}>3. Submit</Text>
         {busy ? (
           <ActivityIndicator color={theme.accent} />
         ) : (
           <Button title="Review and submit" onPress={() => void onQuote()} disabled={!p.ready || readiness !== null || !nodeUrl} />
         )}
-        {!p.ready ? (
-          <Text style={[styles.hint, { color: theme.textMuted }]}>
-            Submitting needs weight {p.threshold}; this wallet’s signer and the approvals so far reach {p.weight}.
-          </Text>
-        ) : null}
+        {!p.ready ? <Text style={[styles.hint, { color: theme.textMuted }]}>{multisigNotReadyHint(p)}</Text> : null}
         {back('detail')}
       </>,
       multisigConfigOf(selected),
+      selected.localSigner,
     );
   }
 
@@ -821,10 +865,8 @@ export function MultisigScreen() {
         />
         <InfoRow label="Total (worst case)" value={`${formatUnits(q.total, 18, 18)} ${nativeSymbol}`} />
         {!q.deployed ? <WarningBox>This operation also deploys the multisig account (its first operation).</WarningBox> : null}
-        <Text style={[styles.hint, { color: theme.text }]}>
-          Approvals: weight {multisigWeightProgress(selected, op).weight} of the threshold {selected.threshold}. Your device check
-          comes next; this wallet’s signer then signs the final operation, and the signer module checks every approval again.
-        </Text>
+        <Text style={[styles.hint, { color: theme.text }]}>{multisigSubmitApprovalsLine(multisigWeightProgress(selected, op))}</Text>
+        {errorBox}
         {phase === 'sending' ? (
           <ActivityIndicator color={theme.accent} />
         ) : (
@@ -842,6 +884,7 @@ export function MultisigScreen() {
         )}
       </>,
       multisigConfigOf(selected),
+      selected.localSigner,
     );
   }
 
@@ -866,18 +909,25 @@ export function MultisigScreen() {
             lookup key.
           </Text>
         ) : null}
+        {errorBox}
         <Button
           title="Back to the multisig"
           onPress={() => {
-            setOp(null);
             setSubmission(null);
             setProgress(null);
-            setPhase('detail');
-            void reload();
+            // Re-open from the stored record and read the account on-chain
+            // again (finding 5: a stale "Not deployed yet" after a deploying
+            // operation).
+            const id = selected.id;
+            reload().then(
+              (list) => openDetail(list.find((r) => r.id === id) ?? selected),
+              () => openDetail(selected),
+            );
           }}
         />
       </>,
       multisigConfigOf(selected),
+      selected.localSigner,
     );
   }
 
@@ -890,6 +940,7 @@ export function MultisigScreen() {
           follows from the signer set and that one of your recovery-phrase accounts is a signer.
         </Text>
         <PasteOrScan value={importInput} onChange={setImportInput} placeholder="Paste the multisig record" rationale="Scan the multisig record QR code." />
+        {errorBox}
         <Button title="Check the record" disabled={!importInput.trim()} onPress={() => onReviewImport(importInput)} />
         <Button title="Open a record file" variant="secondary" onPress={() => void pickInto(onReviewImport)} />
         {back('list')}
@@ -907,10 +958,12 @@ export function MultisigScreen() {
           return <InfoRow key={s.address} label={own ? `Signer: ${own.name} (this wallet)` : 'Signer'} value={s.address} sub={`weight ${s.weight}`} monoValue />;
         })}
         <InfoRow label="Threshold" value={String(importParsed.config.threshold)} />
+        {errorBox}
         {busy ? <ActivityIndicator color={theme.accent} /> : <Button title="Add to this wallet" onPress={() => void onImport()} disabled={readiness !== null || !node} />}
         {back('import')}
       </>,
       importParsed.config,
+      ownAccounts.find((a) => a.kind === 'phrase' && importParsed.config.signers.some((s) => s.address.toLowerCase() === a.address.toLowerCase()))?.address ?? null,
     );
   }
 
@@ -923,6 +976,7 @@ export function MultisigScreen() {
           the nonce and every call in full before anything is signed.
         </Text>
         <PasteOrScan value={cosignInput} onChange={setCosignInput} placeholder="Paste the multisig signing request" rationale="Scan the signing request QR code." />
+        {errorBox}
         <Button title="Review the request" disabled={!cosignInput.trim()} onPress={() => onReviewCosign(cosignInput)} />
         <Button title="Open a request file" variant="secondary" onPress={() => void pickInto(onReviewCosign)} />
         {back('list')}
@@ -949,6 +1003,7 @@ export function MultisigScreen() {
         {r.warnings.map((w) => (
           <WarningBox key={w}>{w}</WarningBox>
         ))}
+        {errorBox}
         {busy ? (
           <ActivityIndicator color={theme.accent} />
         ) : (
@@ -957,6 +1012,7 @@ export function MultisigScreen() {
         {back('cosign-input')}
       </>,
       r.config,
+      r.signer.address,
     );
   }
 
@@ -975,6 +1031,7 @@ export function MultisigScreen() {
           fileName={multisigExportFileName('approval', cosignReview.chain, cosignReview.request.account)}
           dialogTitle="Save the approval"
         />
+        {errorBox}
         <Button
           title="Done"
           onPress={() => {
@@ -986,6 +1043,7 @@ export function MultisigScreen() {
         />
       </>,
       cosignReview.config,
+      cosignReview.signer.address,
     );
   }
 
@@ -1000,25 +1058,22 @@ export function MultisigScreen() {
       {records.length === 0 ? (
         <Text style={[styles.hint, { color: theme.textMuted }]}>No multi-signature account on {evmChain.label} yet.</Text>
       ) : (
-        records.map((r) => {
-          const b = balances[r.address];
-          return (
-            <View key={r.id} style={[styles.card, { borderColor: theme.border, backgroundColor: theme.card }]}>
-              <Text style={[styles.cardTitle, { color: theme.text }]}>{multisigDisplayName(r)}</Text>
-              <Text selectable style={[styles.mono, { color: theme.textMuted }]}>
-                {r.address}
-              </Text>
-              <Text style={[styles.hint, { color: theme.text }]}>
-                {b === undefined || b === null ? 'Balance unknown' : `${formatBalanceDisplay(b, 18)} ${nativeSymbol}`} ·{' '}
-                {r.deployed.deployed ? 'deployed' : 'not deployed yet'}
-                {r.operations.some((o) => o.status === 'collecting') ? ' · an operation is collecting approvals' : ''}
-              </Text>
-              <Text style={[styles.hint, { color: theme.textMuted }]}>{multisigExposureLine(multisigConfigOf(r))}</Text>
-              <Button title={`Open ${r.name}`} variant="secondary" onPress={() => openDetail(r)} />
-            </View>
-          );
-        })
+        records.map((r) => (
+          <View key={r.id} style={[styles.card, { borderColor: theme.border, backgroundColor: theme.card }]}>
+            <Text style={[styles.cardTitle, { color: theme.text }]}>{multisigDisplayName(r)}</Text>
+            <Text selectable style={[styles.mono, { color: theme.textMuted }]}>
+              {r.address}
+            </Text>
+            <Text style={[styles.hint, { color: theme.text }]}>
+              {multisigFundsLine(funds[r.address], formatNative)} · {r.deployed.deployed ? 'deployed' : 'not deployed yet'}
+              {r.operations.some((o) => o.status === 'collecting') ? ' · an operation is collecting approvals' : ''}
+            </Text>
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{multisigExposureLine(multisigConfigOf(r), r.localSigner)}</Text>
+            <Button title={`Open ${r.name}`} variant="secondary" onPress={() => openDetail(r)} />
+          </View>
+        ))
       )}
+      {errorBox}
       <Button
         title="Create a multisig"
         onPress={() => {

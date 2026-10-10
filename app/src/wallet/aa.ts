@@ -2440,6 +2440,21 @@ export type AaCallsQuote = AaSendQuote;
 export const AA_FUNDING_TITLE = 'Your smart account needs funds first.';
 
 /**
+ * The same title for a multi-signature account ('kernel-multisig'): a
+ * multisig has no owner address and is not "your smart account" in the
+ * single-owner sense (finding 4 of the 2026-10-10 multisig emulator pass).
+ */
+export const AA_MULTISIG_FUNDING_TITLE = 'This multisig account needs funds first.';
+
+/** How the multisig funding sentences say who pays the fee. */
+const MULTISIG_PAYS_FEE = 'the multisig pays its own network fee from its balance and EntryPoint deposit';
+
+/** The funding title for an account type: the multisig wording for 'kernel-multisig', else AA_FUNDING_TITLE. */
+export function aaFundingTitleFor(accountType: AaAccountType | null | undefined): string {
+  return accountType === 'kernel-multisig' ? AA_MULTISIG_FUNDING_TITLE : AA_FUNDING_TITLE;
+}
+
+/**
  * Title for any failure while a quote is being prepared (review step). Nothing
  * has been signed or sent at that point, so "could not be sent" would be
  * wrong.
@@ -2528,7 +2543,10 @@ export function aaFundingMessage(p: {
   sponsored: boolean;
   deployed?: boolean | null;
   deposit?: bigint | null;
+  /** True for a multi-signature account: its own sentences (no owner address; see aaMultisigFundingMessage). */
+  multisig?: boolean;
 }): string {
+  if (p.multisig === true) return aaMultisigFundingMessage(p);
   const fund =
     `Fund the smart account address ${p.sender} (not the owner address), then review again.` +
     (p.deployed === false
@@ -2566,6 +2584,52 @@ export function aaFundingMessage(p: {
 }
 
 /**
+ * aaFundingMessage for a multi-signature account (finding 4 of the
+ * 2026-10-10 multisig emulator pass, where the smart-account text said "Fund
+ * the smart account address … (not the owner address)" although a multisig
+ * has no owner address). The same facts and amounts, in the multisig's own
+ * words: who pays the fee, which address to fund, and that a multisig can be
+ * funded before its first operation deploys it.
+ */
+function aaMultisigFundingMessage(p: {
+  sender: string;
+  amount: bigint;
+  fee: bigint | null;
+  balance: bigint;
+  sponsored: boolean;
+  deployed?: boolean | null;
+  deposit?: bigint | null;
+}): string {
+  const fund =
+    `Fund the multisig address ${p.sender}, then review again.` +
+    (p.deployed === false
+      ? ' A multisig can receive funds before it is deployed; its first operation deploys it.'
+      : '');
+  if (p.sponsored) {
+    return (
+      `Insufficient funds: sending ${p.amount} wei exceeds the balance of ${p.balance} wei held by ` +
+      `the multisig ${p.sender} (gas is sponsored, but the amount is not). ${fund}`
+    );
+  }
+  const deposit = p.deposit ?? 0n;
+  if (p.amount === 0n) {
+    const fee = p.fee === null ? 'this operation’s network fee' : `this operation’s worst-case fee of ${p.fee} wei`;
+    const heldZero =
+      deposit > 0n
+        ? `the balance of ${p.balance} wei held by the multisig ${p.sender} plus its EntryPoint deposit of ${deposit} wei`
+        : `the balance of ${p.balance} wei held by the multisig ${p.sender}`;
+    return `Insufficient funds: ${MULTISIG_PAYS_FEE}, and ${fee} exceeds ${heldZero}. ${fund}`;
+  }
+  const feePart = p.fee === null ? 'its network fee' : `a worst-case fee of ${p.fee} wei`;
+  const held =
+    deposit > 0n
+      ? `the balance of ${p.balance} wei held by the multisig ${p.sender} plus its EntryPoint deposit of ` +
+        `${deposit} wei (the deposit can pay only the fee, not the amount)`
+      : `the balance of ${p.balance} wei held by the multisig ${p.sender}`;
+  return `Insufficient funds: ${MULTISIG_PAYS_FEE}, and sending ${p.amount} wei plus ${feePart} exceeds ${held}. ${fund}`;
+}
+
+/**
  * The funding message for an AA21 ("didn't pay prefund") refusal of the
  * bundler's ESTIMATE of an operation that sends no native currency (a
  * set-up: a session, subscription, recurring-payment, guardian or passkey
@@ -2584,12 +2648,25 @@ export function aaEstimateFundingMessage(p: {
   balance: bigint;
   deposit?: bigint | null;
   deployed?: boolean | null;
+  /** True for a multi-signature account: the multisig's own sentences. */
+  multisig?: boolean;
 }): string {
   const deposit = p.deposit ?? 0n;
   const holds =
     deposit > 0n
       ? `It holds ${p.balance} wei plus an EntryPoint deposit of ${deposit} wei`
       : `It holds ${p.balance} wei`;
+  if (p.multisig === true) {
+    return (
+      `The bundler refused to estimate this operation because the multisig ${p.sender} cannot pay the ` +
+      `operation's network fee: ${MULTISIG_PAYS_FEE}. ${holds}, and the network fee must be available up ` +
+      'front, before the operation runs. The exact fee is not known, because the bundler refused the ' +
+      `estimate itself. Fund the multisig address ${p.sender}, then review again.` +
+      (p.deployed === false
+        ? ' A multisig can receive funds before it is deployed; its first operation deploys it.'
+        : '')
+    );
+  }
   return (
     `The bundler refused to estimate this operation because the smart account ${p.sender} cannot pay ` +
     `the operation's network fee. ${holds}, and the network fee must be available up front, before ` +
@@ -3198,6 +3275,7 @@ export async function prepareAaCalls(
   // The "can be funded before it is deployed" sentence belongs to factory
   // accounts that are not deployed yet; an EIP-7702 account is the owner's own
   // address, so the sentence is left out there (deployed: null).
+  const multisigSender = bundle.accountType === 'kernel-multisig';
   const fundingFacts = () => ({
     sender,
     amount,
@@ -3205,7 +3283,11 @@ export async function prepareAaCalls(
     sponsored: bundle.sponsored,
     deployed: eip7702 ? null : deployed,
     deposit,
+    ...(multisigSender ? { multisig: true } : {}),
   });
+  // The title for an account that could not pay for any send (the multisig's
+  // own wording for a multi-signature account).
+  const fundingTitle = aaFundingTitleFor(bundle.accountType);
   if (cannotPay) {
     // The title says what is short. An account that could pay for SOME send
     // (it holds a balance, or — self-paid — an EntryPoint deposit that can
@@ -3219,7 +3301,7 @@ export async function prepareAaCalls(
       aaFundingMessage({ ...fundingFacts(), fee: null }),
       checkAmount > 0n && canPaySomeSend
         ? aaAmountShortfallTitle(nativeSymbolFor(bundle.chainId), !bundle.sponsored)
-        : AA_FUNDING_TITLE,
+        : fundingTitle,
     );
   }
 
@@ -3282,8 +3364,15 @@ export async function prepareAaCalls(
         throw new AaFundingError(
           sender,
           (sendsNothing
-            ? aaEstimateFundingMessage({ sender, balance: senderBalance, deposit, deployed: eip7702 ? null : deployed })
+            ? aaEstimateFundingMessage({
+                sender,
+                balance: senderBalance,
+                deposit,
+                deployed: eip7702 ? null : deployed,
+                ...(multisigSender ? { multisig: true } : {}),
+              })
             : aaFundingMessage({ ...fundingFacts(), fee: null })) + `\n\nThe bundler's message: ${raw}`,
+          fundingTitle,
         );
       }
       throw e;
@@ -3348,7 +3437,7 @@ export async function prepareAaCalls(
     const probe = await price(withValue(0n));
     const room = senderBalance > probe.fee ? senderBalance - probe.fee : 0n;
     if (room <= 0n) {
-      throw new AaFundingError(sender, aaFundingMessage({ ...fundingFacts(), fee: probe.fee }));
+      throw new AaFundingError(sender, aaFundingMessage({ ...fundingFacts(), fee: probe.fee }), fundingTitle);
     }
     amount = room;
     currentCalls = withValue(amount);
@@ -3378,7 +3467,7 @@ export async function prepareAaCalls(
       aaFundingMessage({ ...fundingFacts(), fee: bundle.sponsored ? null : fee }),
       amount > 0n && feeAloneFits
         ? aaAmountShortfallTitle(nativeSymbolFor(bundle.chainId), !bundle.sponsored)
-        : AA_FUNDING_TITLE,
+        : fundingTitle,
     );
   }
 
@@ -4080,6 +4169,17 @@ export function describeAaError(
         'The bundler refused the operation because its minimum fee rose after you reviewed it, so ' +
         'nothing was sent. Review it again: the new quote shows the higher fee.' +
         `\n\nThe bundler's message: ${detail}`,
+    };
+  }
+  if (isPrefundError(detail) && context.accountType === 'kernel-multisig') {
+    const sender = context.sender ?? null;
+    return {
+      title: AA_MULTISIG_FUNDING_TITLE,
+      detail: sender
+        ? `The multisig ${sender} cannot pay for this operation's network fee: ${MULTISIG_PAYS_FEE}, and ` +
+          `they are too small. Fund the multisig address ${sender}, then try again.\n\nThe bundler's message: ${detail}`
+        : `The multisig cannot pay for this operation's network fee: ${MULTISIG_PAYS_FEE}, and they are ` +
+          `too small. Fund the multisig address shown on the Multisig screen, then try again.\n\nThe bundler's message: ${detail}`,
     };
   }
   if (isPrefundError(detail)) {
