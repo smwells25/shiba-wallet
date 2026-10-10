@@ -2092,3 +2092,41 @@ Subagents on Opus.
       ZeroDev simulates with; nethermind / besu behaviour; the
       opcode-level breakdown; ERC-20 pull gas post-fork; why 0xrpc.io is
       stuck.
+- [x] F-66 FIXED — default endpoints behind the chain are skipped
+      (commit 3a4901d; check-rpc-fallback 166 offline / 194 live (was 109),
+      check-failover 150 unchanged; offline runner ALL GREEN in the CTO's
+      isolated worktree: engine 877, app 5,786 across 44 suites, lint
+      0/0, tsc clean; eight mutants caught; not seen on a device).
+      probeEndpoint reads the newest block's timestamp AFTER identity
+      passes, within the same 4 s deadline (sequential, so a down or
+      wrong-chain candidate still gets exactly one request): eip155
+      eth_getBlockByNumber("latest") timestamp (execution-apis 34151926),
+      bound 600 s (50 Ethereum slots; the slowest profile sets it);
+      Esplora GET /blocks (ten newest; the newest timestamp, because
+      Bitcoin timestamps are not monotonic; Blockstream API.md cfcb22c4),
+      bound 10,800 s; Solana getSlot(finalized) + getBlockTime (null =
+      unknown; getHealth deliberately not used — a self-report is what
+      failed in F-66), bound 300 s. Rules: exactly at the bound is
+      fresh; a head ahead of the device clock is fresh; a failed,
+      unsupported, null or timed-out freshness read is 'unknown' and
+      ACCEPTED; a stale candidate is skipped like a wrong-chain one (new
+      ProbeResult kind 'stale' with headTimestamp); LAST RESORT (CTO
+      accepted): when no candidate is healthy the resolver returns the
+      stale candidate with the newest head, flagged healthy:false,
+      stale:true (a wrong device clock or a halted chain would otherwise
+      blank the chain), then the first unreachable one as before, never a
+      wrong-chain one; findAlternateDefaultUrl skips stale alternates;
+      overrides never probed. Settings: "default (2 of 4: host, behind
+      the chain)", a primary-stale note, and an all-stale note naming the
+      phone's date and time. New exports FRESHNESS_BOUND_SECONDS,
+      assessHeadFreshness, ProbeOptions {now, checkFreshness,
+      freshnessBoundSeconds}; DefaultChoice gains primaryFailureKind /
+      stale. LIVE (keyless lists, 2026-10-09): only https://0xrpc.io/sep
+      is skipped as stale (block 11856335, timestamp 1791294792, about
+      84 h old, eth_syncing false); the other defaults' heads were 0–16 s
+      old (Bitcoin 425–771 s); public.1rpc.io/sepolia once answered no
+      head within 4 s and was accepted as unknown. NOTED: the live pass's
+      expected-status table for eth_simulateV1 is out of date since the
+      fork (Pocket and 1RPC report "answered without the traceTransfers
+      log" because the log now comes from 0xff…fe) — a printed note only;
+      follow-up. Why 0xrpc.io froze is unknown.
