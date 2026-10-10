@@ -162,8 +162,12 @@ console.log('Validation and refusal sentences (no network)');
   }
   check('the largest accepted chain id is 2^53 − 1', cn.parseCustomChainId('9007199254740991') === '9007199254740991' && cn.MAX_CUSTOM_CHAIN_ID === 2n ** 53n - 1n);
   check('format sentence (exact)', cn.CHAIN_ID_FORMAT_MESSAGE === 'Enter the chain id as a whole number from 1 to 9007199254740991 (digits only, no leading zeros).');
-  check('collision with Ethereum mainnet refused: "already built in"',
-    v({ chainId: '1' }) === 'Chain id 1 is already built in as Ethereum mainnet; choose it in the network list above instead. Nothing was saved.', v({ chainId: '1' }));
+  check('collision with Ethereum mainnet refused: "already built in", naming the chip as shown ("Off (mainnet)")',
+    v({ chainId: '1' }) === 'Chain id 1 is already built in as Ethereum mainnet; choose Off (mainnet) in the network list above instead. Nothing was saved.', v({ chainId: '1' }));
+  {
+    const settingsSrc = readFileSync(join(HERE, '../src/screens/SettingsScreen.tsx'), 'utf8');
+    check('…and that chip really reads "Off (mainnet)" in Settings → Developer', settingsSrc.includes("{ label: 'Off (mainnet)', value: null },"));
+  }
   for (const p of evm.EVM_TEST_PROFILES) {
     check(`collision with ${p.label} refused`, v({ chainId: p.chainIdDecimal }) === `Chain id ${p.chainIdDecimal} is already built in as ${p.label}; choose it in the network list above instead. Nothing was saved.`);
   }
@@ -179,8 +183,13 @@ console.log('Validation and refusal sentences (no network)');
     v({ testnet: true }));
   check('an allow-listed id with the tick is accepted', v({ chainId: '560048', name: 'Hoodi', testnet: true }) === null);
   check('an allow-listed id WITHOUT the tick is accepted as a main network (the safe direction)', v({ chainId: '17000', name: 'My chain' }) === null);
-  check('http RPC URL refused with the shared https sentence', v({ rpcUrl: 'http://rpc.example.org' }) === INSECURE_ENDPOINT_MESSAGE);
-  check('…and an http look-alike of localhost too', v({ rpcUrl: 'http://localhost@evil.example' }) === INSECURE_ENDPOINT_MESSAGE);
+  check('the shared https sentence itself is unchanged (other Settings sections show it as a standing rule)',
+    INSECURE_ENDPOINT_MESSAGE === 'Endpoints must use https:// (plain http:// is accepted only for localhost or 10.0.2.2 during development).');
+  check('the form’s http refusal is that sentence + "Nothing was saved." (exact)',
+    cn.CUSTOM_RPC_INSECURE_MESSAGE === 'Endpoints must use https:// (plain http:// is accepted only for localhost or 10.0.2.2 during development). Nothing was saved.');
+  check('http RPC URL refused with the form’s https sentence', v({ rpcUrl: 'http://rpc.example.org' }) === cn.CUSTOM_RPC_INSECURE_MESSAGE, v({ rpcUrl: 'http://rpc.example.org' }));
+  check('…and an http look-alike of localhost too', v({ rpcUrl: 'http://localhost@evil.example' }) === cn.CUSTOM_RPC_INSECURE_MESSAGE);
+  check('other RPC URL refusals also end "Nothing was saved."', v({ rpcUrl: 'https://' })?.endsWith('Nothing was saved.') && v({ rpcUrl: 'https://a b.example' })?.endsWith('Nothing was saved.'));
   check('the shared development exception (http on a loopback host) still applies', v({ rpcUrl: 'http://127.0.0.1:8545' }) === null);
   check('decimals other than 18 refused (exact)',
     v({ nativeDecimals: '6' }) === 'This wallet handles a network’s own coin with 18 decimals only (every amount, fee and Max on the Ethereum screens assumes 18), so a coin with 6 decimals cannot be added. Nothing was saved.', v({ nativeDecimals: '6' }));
@@ -244,7 +253,7 @@ console.log('Verify before save (fake RPC)');
 
   const http = fakeRpc();
   e = await rejects(() => cn.addCustomNetwork({ ...HOODI_INPUT, rpcUrl: 'http://rpc.example.org' }, opts(http, store)));
-  check('an http URL is refused before any request', e === INSECURE_ENDPOINT_MESSAGE && http.calls.length === 0);
+  check('an http URL is refused before any request', e === cn.CUSTOM_RPC_INSECURE_MESSAGE && http.calls.length === 0);
   const unlisted = fakeRpc({ chainId: '137' });
   e = await rejects(() => cn.addCustomNetwork({ ...POLYGON_INPUT, testnet: true }, opts(unlisted, store)));
   check('an unlisted test id is refused before any request', e === cn.unlistedTestNetworkMessage('137') && unlisted.calls.length === 0);
@@ -353,6 +362,22 @@ const store = memoryStore();
   check('ENS: names are not looked up on a custom network', ensRegistryFor(polygon).ok === false && ensRegistryFor(hoodi).ok === false);
   check('the Settings note names the unknowns', evm.customNetworkNote(polygon).includes('does not detect layer-2 fee models, so on a rollup quotes may be refused or underestimate the fee') &&
     evm.customNetworkNote(polygon).includes('No block explorer was given') && evm.customNetworkNote(hoodi).includes('assume the Etherscan-style paths https://hoodi.etherscan.io/tx/… and /address/…'));
+  {
+    // Finding 6 of the custom-networks pass: a MAIN network cannot save an
+    // Account Abstraction setup, so its note must not invite pasting a factory.
+    const refusal = (await import('../src/config/readiness.ts')).readinessRefusal('kernel-smart-account');
+    const mainNote = evm.customNetworkNote(polygon, { smartAccountRefusal: refusal });
+    const testNote = evm.customNetworkNote(hoodi, { smartAccountRefusal: refusal });
+    check('a custom MAIN network’s note carries the readiness refusal, never the "paste a factory" pre-fill note',
+      !mainNote.includes('paste a factory') && mainNote.includes(`Smart-account features cannot be set up on it, because the wallet treats it as a main network: ${refusal} Swaps are not offered`), mainNote);
+    check('…without a refusal passed, it still says they are switched off (and still no pre-fill note)',
+      !evm.customNetworkNote(polygon).includes('paste a factory') && evm.customNetworkNote(polygon).includes('they are switched off there, as on Ethereum mainnet.'));
+    check('a custom TEST network keeps the pre-fill note (a factory can be pasted and verified there)',
+      testNote.includes('No smart-account deployment is pre-filled (paste a factory under Account Abstraction and the wallet checks it on-chain before saving)') && !testNote.includes(refusal));
+    const settingsSrc = readFileSync(join(HERE, '../src/screens/SettingsScreen.tsx'), 'utf8');
+    check('Settings → Developer passes the kernel-smart-account refusal to the note',
+      settingsSrc.includes("{customNetworkNote(evmChain, { smartAccountRefusal: readinessRefusal('kernel-smart-account') })}"));
+  }
 
   // The single read path: a store with a saved network and choice, read cold.
   const cold = memoryStore({ [cn.CUSTOM_NETWORKS_KEY]: store.map.get(cn.CUSTOM_NETWORKS_KEY), 'shiba-wallet.prefs.v1': store.map.get('shiba-wallet.prefs.v1') });
@@ -551,6 +576,13 @@ console.log('Settings source checks');
   check('"Test mode is ON" is shown from evmChain.testnet, never the sepolia flag', settings.includes('{evmChain.testnet ? (\n          <Text style={[styles.hint, { color: theme.testnetFill }]}>\n            Test mode is ON') && !/\{sepolia \? \(/.test(settings));
   check('Developer shows the custom networks section with chips', settings.includes('<CustomNetworksSection customNetworks={customNetworks} choice={testNetwork} onChoose={setTestNetwork} />') && settings.includes('style={styles.choiceChip}'));
   check('removal asks for the device check when spending limits would be deleted', settings.includes("requireLocalAuth('Remove the network and its spending limits')"));
+  check('the Developer intro mentions a test network you added (finding 9)',
+    settings.includes('`Switches the app’s EVM chain to a test network — ${nets}, each paid in test ETH, or a test network you ` +\n    \'added under “Networks you added” below: balances, sends, \' +') &&
+      settings.includes('(on a network you added, to the explorer ` +\n    \'you gave, if any).'));
+  const readiness = await import('../src/config/readiness.ts');
+  check('the readiness hint and intro mention a test network you added (finding 9)',
+    readiness.READINESS_TESTNET_HINT.includes(', or a test network you added, in Settings → Developer') &&
+      readiness.READINESS_INTRO.includes(', and any test network you added) and cannot be switched on.'));
   // The TESTNET banner (App.tsx, not edited here) shows while the context's
   // `sepolia` is true and falls back to the Sepolia sentence when the
   // profile has no banner text: so `sepolia` must be the ACTIVE PROFILE's

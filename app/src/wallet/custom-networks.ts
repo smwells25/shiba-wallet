@@ -10,7 +10,7 @@ import {
   setCustomEvmProfiles,
   type EvmChainProfile,
 } from '../config/evm-chain.ts';
-import { assertSecureEndpointUrl } from '../config/endpoint-url.ts';
+import { INSECURE_ENDPOINT_MESSAGE, assertSecureEndpointUrl } from '../config/endpoint-url.ts';
 import { FRESHNESS_BOUND_SECONDS, assessHeadFreshness, type FetchLike } from '../config/endpoint-probe.ts';
 import { sanitizeDisplayName } from './names.ts';
 
@@ -188,12 +188,40 @@ function builtInName(p: EvmChainProfile): string {
   return p.testnet ? p.label : `${p.label} mainnet`;
 }
 
+/**
+ * Names the chip that selects a built-in network in Settings → Developer as
+ * it is shown there (SettingsScreen.tsx): mainnet's chip reads "Off
+ * (mainnet)", so it is named; a test network's chip carries the same name
+ * as the sentence already gives, so "it" is enough.
+ */
 export function builtInChainMessage(chainId: string, p: EvmChainProfile): string {
+  const choose = p.testnet ? 'choose it' : 'choose Off (mainnet)';
   return (
-    `Chain id ${chainId} is already built in as ${builtInName(p)}; choose it in the network list above instead. ` +
+    `Chain id ${chainId} is already built in as ${builtInName(p)}; ${choose} in the network list above instead. ` +
     'Nothing was saved.'
   );
 }
+
+/**
+ * The RPC URL check of the shared https rule (config/endpoint-url.ts
+ * assertSecureEndpointUrl), with "Nothing was saved." added to its refusal
+ * for this form. INSECURE_ENDPOINT_MESSAGE itself stays unchanged, because
+ * the other Settings sections show it as a standing rule, not as a refusal.
+ */
+export function customRpcUrlRefusal(message: string): string {
+  return message.endsWith('Nothing was saved.') ? message : `${message} Nothing was saved.`;
+}
+
+function assertCustomRpcUrl(raw: string): string {
+  try {
+    return assertSecureEndpointUrl(raw);
+  } catch (error) {
+    throw new Error(customRpcUrlRefusal(error instanceof Error ? error.message : String(error)));
+  }
+}
+
+/** The http refusal exactly as the custom-network form shows it. */
+export const CUSTOM_RPC_INSECURE_MESSAGE = customRpcUrlRefusal(INSECURE_ENDPOINT_MESSAGE);
 
 export function duplicateChainMessage(chainId: string, existingName: string): string {
   return `Chain id ${chainId} is already added as “${existingName}”. Nothing was saved.`;
@@ -355,7 +383,7 @@ export function validateCustomNetworkInput(
   const decimals = Number(decimalsText);
   if (decimals !== CUSTOM_NATIVE_DECIMALS) throw new Error(decimalsMessage(decimals));
 
-  const rpcUrl = assertSecureEndpointUrl(input.rpcUrl ?? '');
+  const rpcUrl = assertCustomRpcUrl(input.rpcUrl ?? '');
 
   const explorerRaw = (input.explorerUrl ?? '').trim();
   const explorerUrl = explorerRaw === '' ? null : normalizeExplorerUrl(explorerRaw);
@@ -706,7 +734,7 @@ export async function verifyCustomNetworkEndpoint(
   chainIdDecimal: string,
   options: VerifyOptions = {},
 ): Promise<CustomNetworkVerification> {
-  const url = assertSecureEndpointUrl(rpcUrl);
+  const url = assertCustomRpcUrl(rpcUrl);
   const now = options.now ?? (() => Date.now());
 
   let chainResult: unknown;

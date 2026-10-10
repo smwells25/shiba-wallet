@@ -13,15 +13,22 @@
 //   export PATH="$HOME/.nvm/versions/node/v24.21.0/bin:$PATH"
 //   node scripts/check-notifications.mjs
 
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve as resolvePath } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { serializeSessionKeyGrant } from '@shiba-wallet/chains-evm';
 import { DEFAULT_PREFS, loadPrefs, savePrefs } from '../src/config/prefs.ts';
 import {
   CHANNEL_PAYMENTS,
   CHANNEL_SECURITY,
   NOTIFICATIONS_DENIED_TEXT,
+  NOTIFICATIONS_EXPO_GO_TEXT,
   NOTIFICATIONS_LIMITS_NOTE,
+  NOTIFICATIONS_LOAD_FAILED_TEXT,
+  NOTIFICATIONS_REFUSED_TEXT,
+  NOTIFICATIONS_UNAVAILABLE_TEXT,
+  NOTIFICATION_ERROR_MAX_LENGTH,
+  NotificationModuleMissingError,
   NOTIFICATIONS_PRIVACY_NOTE,
   NOTIFICATIONS_SECTION_TITLE,
   NOTIFICATIONS_STORE_KEY,
@@ -35,6 +42,7 @@ import {
   TAKEOVER_ID_PREFIX,
   TAKEOVER_TITLE,
   createNotificationCenter,
+  describeNotificationError,
   describeNotificationsStatus,
   planRecurringSync,
   planTakeoverAlerts,
@@ -216,7 +224,9 @@ function centerWith(native, { store = memoryStore(), now = () => S, failLoads = 
       counter.loads += 1;
       if (counter.failLoads > 0) {
         counter.failLoads -= 1;
-        throw new Error("Cannot find native module 'ExpoNotificationScheduler'");
+        // What loadNotificationsNative throws when requireOptionalNativeModule
+        // returns null (a build without the module).
+        throw new NotificationModuleMissingError(['ExpoNotificationScheduler']);
       }
       return native;
     },
@@ -275,7 +285,7 @@ console.log('check-notifications: copy and the lock-screen content rule');
   check('the content functions take no record (nothing from a record can reach them)', recurringDueContent.length === 0 && takeoverContent.length === 0);
   check('status sentences', describeNotificationsStatus({ state: 'off' }) === 'Reminders are off. Nothing is scheduled.' &&
     describeNotificationsStatus({ state: 'on' }) === 'Reminders are on.' && describeNotificationsStatus({ state: 'blocked' }) === NOTIFICATIONS_DENIED_TEXT &&
-    describeNotificationsStatus({ state: 'unavailable', detail: 'X' }).endsWith('Technical detail: X'));
+    describeNotificationsStatus({ state: 'unavailable', cause: 'missing', detail: 'X' }) === `${NOTIFICATIONS_UNAVAILABLE_TEXT} Technical detail: X`);
   check('tap routing: only Sessions and Inheritance are opened',
     screenFromNotificationData({ screen: 'Sessions' }) === 'Sessions' && screenFromNotificationData({ screen: 'Inheritance' }) === 'Inheritance' &&
       screenFromNotificationData({ screen: 'Send' }) === null && screenFromNotificationData({ screen: 'Settings' }) === null &&
@@ -441,8 +451,9 @@ console.log('check-notifications: turning on (permission once; channels first)')
   const missing = fakeNative();
   const u = centerWith(missing, { failLoads: 1 });
   const unavailable = await u.center.enable({ found: [] });
-  check('module missing (a build without it): unavailable with the technical detail',
-    unavailable.ok === false && unavailable.reason === 'unavailable' && /ExpoNotificationScheduler/.test(unavailable.detail) && u.center.status()?.state === 'unavailable');
+  check('module missing (a build without it): unavailable, cause "missing", with the technical detail',
+    unavailable.ok === false && unavailable.reason === 'unavailable' && unavailable.cause === 'missing' && /ExpoNotificationScheduler/.test(unavailable.detail) &&
+      u.center.status()?.state === 'unavailable' && u.center.status()?.cause === 'missing');
   const retry = await u.center.enable({ found: [] });
   check('a failed load is not cached: the next attempt loads again', retry.ok === true && u.counter.loads === 2);
 }
@@ -610,6 +621,121 @@ console.log('check-notifications: turning off and the wipe cancel everything (an
 }
 
 // ---------------------------------------------------------------------------
+console.log('check-notifications: why reminders are unavailable (finding 1 and 2 of the custom-networks pass)');
+// ---------------------------------------------------------------------------
+// The exact text Expo Go showed on the emulator, plus the "Caused by" line
+// expo-modules-core appends (CodedException.kt DecoratedException: message,
+// line separator, "→ Caused by: <cause>"). The cause text below is what a
+// Kotlin cast of null to a non-null type reports; it is a stand-in, not a
+// captured device string.
+const EXPO_GO_REJECTION =
+  "Call to function 'ExpoNotificationChannelManager.setNotificationChannelAsync' has been rejected.\n" +
+  '→ Caused by: java.lang.NullPointerException: null cannot be cast to non-null type ' +
+  'expo.modules.notifications.notifications.channels.NotificationsChannelsProvider';
+{
+  const full = describeNotificationError(new Error(EXPO_GO_REJECTION));
+  check('the technical detail keeps the whole error, including the "Caused by" line (joined into one line)',
+    full === "Call to function 'ExpoNotificationChannelManager.setNotificationChannelAsync' has been rejected. → Caused by: java.lang.NullPointerException: null cannot be cast to non-null type expo.modules.notifications.notifications.channels.NotificationsChannelsProvider", full);
+  const withUrl = describeNotificationError(new Error('fetch failed for https://rpc.example.org/v2/SECRETKEY123 and wss://relay.example/x?key=abc\nsecond line'));
+  check('URLs are removed from the detail (an endpoint may embed a key)',
+    !withUrl.includes('SECRETKEY123') && !withUrl.includes('key=abc') && !withUrl.includes('rpc.example.org') && withUrl === 'fetch failed for [link removed] and [link removed] second line', withUrl);
+  const long = describeNotificationError(new Error('x'.repeat(5000)));
+  check(`the detail is bounded to ${NOTIFICATION_ERROR_MAX_LENGTH} characters and marked as cut`, long.length === NOTIFICATION_ERROR_MAX_LENGTH && long.endsWith('…'));
+  check('control characters are removed, a non-Error value is described, an empty error says so',
+    describeNotificationError(new Error('a\u0000b\tc')) === 'a b c' && describeNotificationError('plain text') === 'plain text' &&
+      describeNotificationError(new Error('')) === 'The notification module gave no error text.');
+  check('the four causes have four different sentences; only "missing" says the module is missing',
+    new Set([NOTIFICATIONS_UNAVAILABLE_TEXT, NOTIFICATIONS_EXPO_GO_TEXT, NOTIFICATIONS_REFUSED_TEXT, NOTIFICATIONS_LOAD_FAILED_TEXT]).size === 4 &&
+      NOTIFICATIONS_UNAVAILABLE_TEXT.includes('its notification module is missing') &&
+      ![NOTIFICATIONS_EXPO_GO_TEXT, NOTIFICATIONS_REFUSED_TEXT, NOTIFICATIONS_LOAD_FAILED_TEXT].some((t) => /missing/.test(t)));
+  check('the Expo Go sentence (exact)', NOTIFICATIONS_EXPO_GO_TEXT ===
+    'Reminders are not available inside Expo Go on this device: Expo Go refused to create the reminder channels that Android needs before it shows any notification, so nothing was scheduled. Reminders need the wallet’s own development build.');
+  check('the refusal sentence (exact)', NOTIFICATIONS_REFUSED_TEXT ===
+    'Reminders could not be turned on: this build includes the notification module, but the phone’s notification service refused the wallet’s request, so nothing was scheduled.');
+  check('the load-failure sentence (exact)', NOTIFICATIONS_LOAD_FAILED_TEXT ===
+    'Reminders could not be turned on: the wallet could not load its notification code, so nothing was scheduled.');
+
+  const rejectingChannels = (over = {}) => {
+    const n = fakeNative({ ...over });
+    n.ensureChannels = async () => {
+      n.log.push('ensureChannels');
+      throw new Error(EXPO_GO_REJECTION);
+    };
+    return n;
+  };
+  // Expo Go on Android: module present, channel call rejected.
+  const goNative = rejectingChannels();
+  goNative.inExpoGo = true;
+  const go = centerWith(goNative);
+  const goOut = await go.center.enable({ found: [] });
+  const goStatus = go.center.status();
+  check('Expo Go on Android, channel call rejected → cause "expo-go", NO permission request, nothing scheduled',
+    goOut.ok === false && goOut.reason === 'unavailable' && goOut.cause === 'expo-go' && goNative.requests === 0 && !goNative.log.includes('getPermission') && goNative.scheduled.size === 0);
+  const goLine = describeNotificationsStatus(goStatus);
+  check('…its status line: the Expo Go sentence, then the FULL technical detail with the "Caused by" line',
+    goLine === `${NOTIFICATIONS_EXPO_GO_TEXT} Technical detail: ${describeNotificationError(new Error(EXPO_GO_REJECTION))}` && goLine.includes('→ Caused by: java.lang.NullPointerException') && !goLine.includes('module is missing'), goLine);
+  // The same rejection outside Expo Go (a development build): a refusal.
+  const devNative = rejectingChannels();
+  const dev = centerWith(devNative);
+  const devOut = await dev.center.enable({ found: [] });
+  check('the same rejection outside Expo Go → cause "refused" (never "module missing")',
+    devOut.ok === false && devOut.cause === 'refused' && describeNotificationsStatus(dev.center.status()).startsWith(NOTIFICATIONS_REFUSED_TEXT));
+  // Expo Go on iOS has no channels; a rejection there is not the Android gap.
+  const iosNative = rejectingChannels({ platform: 'ios' });
+  iosNative.inExpoGo = true;
+  const ios = centerWith(iosNative);
+  check('Expo Go on iOS with a rejected call → "refused", not the Android channel sentence', (await ios.center.enable({ found: [] })).cause === 'refused');
+  // A rejected permission call.
+  const permNative = fakeNative();
+  permNative.getPermission = async () => {
+    throw new Error("Call to function 'ExpoNotificationPermissionsModule.getPermissionsAsync' has been rejected.\n→ Caused by: boom");
+  };
+  const perm = centerWith(permNative);
+  const permOut = await perm.center.enable({ found: [] });
+  check('a rejected permission call → cause "refused", detail keeps "Caused by: boom"', permOut.cause === 'refused' && permOut.detail.endsWith('→ Caused by: boom'));
+  // Another load failure (not requireOptionalNativeModule returning null).
+  const otherLoad = createNotificationCenter({ loadNative: async () => { throw new Error('Local notifications are not supported on web.'); }, store: memoryStore() });
+  const otherOut = await otherLoad.enable({ found: [] });
+  check('a load failure that is not a missing module → cause "load-failed"', otherOut.cause === 'load-failed' && describeNotificationsStatus(otherLoad.status()).startsWith(NOTIFICATIONS_LOAD_FAILED_TEXT));
+  // The wallet's own storage failing is not the notification service.
+  const brokenStore = { async getItem() { throw new Error('disk read failed'); }, async setItem() { throw new Error('disk full'); } };
+  const okNative = fakeNative({ permission: { granted: true, canAskAgain: true } });
+  const storeFail = createNotificationCenter({ loadNative: async () => okNative, store: brokenStore });
+  const sfOut = await storeFail.enable({ found: [{ chain: M, account: ACCOUNT, proposalHash: `0x${'22'.repeat(32)}` }] });
+  check('a storage failure while turning on → "failed" (not "unavailable"), reminders not reported on', sfOut.ok === false && sfOut.reason === 'failed' && storeFail.status()?.state === 'failed');
+}
+
+// Mutation checks: copies of notifications.ts with one rule removed must fail.
+{
+  const MUTANT_DIR = join(appDir, 'scripts', `.mutants-notifications-${process.pid}`);
+  process.on('exit', () => rmSync(MUTANT_DIR, { recursive: true, force: true }));
+  let count = 0;
+  const importMutant = async (from, to) => {
+    const rel = 'src/wallet/notifications.ts';
+    const original = read(rel);
+    if (!original.includes(from)) throw new Error(`mutation anchor not found: ${from}`);
+    const dir = dirname(join(appDir, rel));
+    const source = original
+      .replace(from, to)
+      .replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolvePath(dir, spec)).href}'`);
+    mkdirSync(MUTANT_DIR, { recursive: true });
+    count += 1;
+    const file = join(MUTANT_DIR, `m${count}-notifications.ts`);
+    writeFileSync(file, source);
+    return import(pathToFileURL(file).href);
+  };
+  const m1 = await importMutant(".split(/\\r?\\n|\\r/)", ".split(/\\r?\\n|\\r/).slice(0, 1)");
+  check('mutant (detail cut to the first line, the old behaviour) is caught', !m1.describeNotificationError(new Error(EXPO_GO_REJECTION)).includes('Caused by'));
+  const m2 = await importMutant("return unavailable(n.inExpoGo === true && n.platform === 'android' ? 'expo-go' : 'refused', e);", "return unavailable('missing', e);");
+  const n2 = fakeNative();
+  n2.inExpoGo = true;
+  n2.ensureChannels = async () => { throw new Error(EXPO_GO_REJECTION); };
+  const c2 = m2.createNotificationCenter({ loadNative: async () => n2, store: memoryStore() });
+  const o2 = await c2.enable({ found: [] });
+  check('mutant (a rejected channel call reported as a missing module, the bug seen live) is caught', o2.cause === 'missing' && o2.cause !== 'expo-go');
+}
+
+// ---------------------------------------------------------------------------
 console.log('check-notifications: wiring and the import rule (source)');
 // ---------------------------------------------------------------------------
 {
@@ -645,6 +771,16 @@ console.log('check-notifications: wiring and the import rule (source)');
   const importers = files.filter((f) => /['"]expo-notifications/.test(readFileSync(f, 'utf8'))).map((f) => f.slice(appDir.length));
   check('the only module that imports expo-notifications is src/wallet/notifications.ts', JSON.stringify(importers) === JSON.stringify(['src/wallet/notifications.ts']), JSON.stringify(importers));
   const lib = read('src/wallet/notifications.ts');
+  // Finding 3 of the custom-networks pass: a dynamic import of react-native
+  // makes Metro copy every export of the namespace, reading its deprecated
+  // getters (five LogBox warnings). The 783032a rule: a lazy require only.
+  const noComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const scheduler = read('src/components/NotificationScheduler.tsx');
+  check('react-native is never imported dynamically in notifications.ts or NotificationScheduler.tsx (no `await import` / `void import`)',
+    ![lib, scheduler].some((src) => /(?:await|void)\s+import\(\s*'react-native'\s*\)/.test(noComments(src)) || /import\(\s*'react-native'\s*\)\s*\.then/.test(noComments(src))));
+  check('notifications.ts reaches react-native only through the lazy require helper (reasoned eslint disable)',
+    /function reactNative\(\): typeof import\('react-native'\) \{\n  \/\/ eslint-disable-next-line @typescript-eslint\/no-require-imports -- lazy, see above\n  return require\('react-native'\)/.test(lib) &&
+      /const \{ Platform \} = reactNative\(\);/.test(lib) && !/^import .*'react-native'/m.test(lib));
   const specs = [...lib.matchAll(/(?:import\(|from )\s*'(expo-notifications[^']*)'/g)].map((m) => m[1]);
   check('it never imports the package index (whose push-token side effect throws in Expo Go on Android)',
     specs.length > 0 && specs.every((s) => s.startsWith('expo-notifications/build/')) && !specs.includes('expo-notifications'), JSON.stringify(specs));

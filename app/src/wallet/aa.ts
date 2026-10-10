@@ -49,7 +49,12 @@ import { formatUnits } from './balances.ts';
 import type { KeyValueStore } from './tokens.ts';
 import { isMultisigAccountId, smartAccountSaltFor } from './account-ids.ts';
 import { assertSecureEndpointUrl } from '../config/endpoint-url.ts';
-import { assertWalletDelegate, invalidateAccountDelegation } from './delegation.ts';
+import {
+  assertWalletDelegate,
+  invalidateAccountDelegation,
+  kernelDelegateMissingMessage,
+  readWalletDelegateDeployed,
+} from './delegation.ts';
 import {
   FeatureNotAllowedError,
   assertFeatureAllowed,
@@ -3206,6 +3211,13 @@ export async function prepareAaCalls(
           `${bundle.eip7702.delegate}. The wallet does not replace another delegation; revoke it ` +
           'first (Upgrade this account → Revoke).',
       );
+    }
+    // An operation that carries the authorization (the account is not yet
+    // delegated) needs the delegate's code on this chain, as the
+    // set-code path checks (delegation.ts prepareSetCodeTx): on a network
+    // the user added, Kernel v3.3 may not be deployed.
+    if (status.kind === 'none' && !(await readWalletDelegateDeployed(bundle.node))) {
+      throw new Error(kernelDelegateMissingMessage(chainNameForMessage(bundle.chainId)));
     }
     eip7702 = { upgrade: status.kind === 'none', delegate: bundle.eip7702.delegate };
   }

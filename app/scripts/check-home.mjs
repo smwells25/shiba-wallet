@@ -330,5 +330,35 @@ console.log('displayed dates are the local day (finding 6):');
   check('Guardians backup date uses the local day', source('../src/screens/GuardiansScreen.tsx').includes('Backed up off-device ${localDateLabel(entry.exportedAt)}.'));
 }
 
+// ---------------------------------------------------------------------------
+console.log('check-home: the Multisig link only where the multisig contracts are known (custom networks)');
+// ---------------------------------------------------------------------------
+{
+  const home = source('../src/screens/HomeScreen.tsx');
+  check('Home: the Multisig link needs a test network AND multisigNetworkVerified(evmChain)',
+    home.includes("evmChain.testnet && multisigNetworkVerified(evmChain)\n            ? cardLink('multisig', 'Multi-signature accounts', 'Multisig', () => navigation.navigate('Multisig'))") &&
+      home.includes("import { multisigNetworkVerified } from '../config/evm-chain';"));
+  const { multisigNetworkVerified, recordMultisigNetworkCheck, setCustomEvmProfiles, MULTISIG_UNVERIFIED_NETWORK_NOTE } = evmChainModule;
+  check('the note (exact)', MULTISIG_UNVERIFIED_NETWORK_NOTE ===
+    "Multi-signature accounts need the Kernel v3.3 contracts and ZeroDev's weighted signer module on this network; the wallet has not verified them here.");
+  check('built-in profiles (Kernel v3.3 verified) are offered', [EVM_SEPOLIA, EVM_BASE_SEPOLIA].every((p) => multisigNetworkVerified(p)));
+  const hoodi = { ...EVM_SEPOLIA, caip2: 'eip155:560048', chainIdDecimal: '560048', label: 'Hoodi', kernelV33Verified: false,
+    custom: { rpcUrl: 'https://rpc.hoodi.example', nativeSymbol: 'ETH', explorerBase: null, blockTimeMs: null, testnetRequested: true } };
+  setCustomEvmProfiles([hoodi]);
+  check('a network the user added is NOT offered before a check passed', multisigNetworkVerified(hoodi) === false);
+  recordMultisigNetworkCheck(hoodi.caip2, ['The weighted signer module 0x… has no code on this network.']);
+  check('…nor after a failed check', multisigNetworkVerified(hoodi) === false);
+  recordMultisigNetworkCheck(hoodi.caip2, []);
+  check('…and IS offered after a passed check (this session)', multisigNetworkVerified(hoodi) === true);
+  recordMultisigNetworkCheck(hoodi.caip2, ['problem']);
+  check('a later failed check withdraws it', multisigNetworkVerified(hoodi) === false);
+  recordMultisigNetworkCheck(hoodi.caip2, []);
+  setCustomEvmProfiles([]);
+  check('removing (or changing) the custom networks forgets a passed check', multisigNetworkVerified(hoodi) === false);
+  recordMultisigNetworkCheck(EVM_SEPOLIA.caip2, ['problem']);
+  check('a failed check never withdraws a built-in verified profile (the profile flag decides there)', multisigNetworkVerified(EVM_SEPOLIA) === true);
+  recordMultisigNetworkCheck(EVM_SEPOLIA.caip2, []);
+}
+
 console.log(`\ncheck-home: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

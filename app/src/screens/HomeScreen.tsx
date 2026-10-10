@@ -35,7 +35,8 @@ import { useSessionEligibility } from '../wallet/useSessionEligibility';
 import { useRecoveryInfo } from '../wallet/useRecoveryInfo';
 import { usePasskeyInfo } from '../wallet/usePasskeyInfo';
 import { shortAccountAddress } from '../wallet/accounts';
-import { delegationLabelSuffix, FOREIGN_DELEGATE_WARNING } from '../wallet/delegation';
+import { delegationLabelSuffix, FOREIGN_DELEGATE_WARNING, upgradeLinkShown, walletDelegateDeployed } from '../wallet/delegation';
+import { multisigNetworkVerified } from '../config/evm-chain';
 import { usePrices } from '../wallet/usePrices';
 import { tokenSendFeeSentence } from '../wallet/token-gas';
 import {
@@ -408,8 +409,11 @@ export function HomeScreen({ navigation }: Props) {
             ? cardLink('apps', 'Apps, the in-app browser', 'Apps', () => navigation.navigate('Apps'))
             : null,
           // Multi-signature accounts (feature 24): test networks only,
-          // enforced by the readiness row `multisig`.
-          evmChain.testnet
+          // enforced by the readiness row `multisig`, and only where the
+          // Kernel v3.3 contracts and the weighted signer module are known to
+          // exist (config/evm-chain.ts multisigNetworkVerified: a built-in
+          // test network, or a network the multisig check passed on).
+          evmChain.testnet && multisigNetworkVerified(evmChain)
             ? cardLink('multisig', 'Multi-signature accounts', 'Multisig', () => navigation.navigate('Multisig'))
             : null,
           passkey.eligible
@@ -480,15 +484,21 @@ export function HomeScreen({ navigation }: Props) {
               screen explains itself until an NFT indexer is configured. */}
           {isEvm ? cardLink('nfts', 'NFTs', 'NFTs', () => navigation.navigate('Nfts')) : null}
           {/* EIP-7702 account upgrade (phase 8 item 1) for the active
-              account on the active EVM chain. */}
-          {isEvm && !watchOnly
-            ? cardLink(
-                'upgrade',
-                delegation.status?.kind === 'kernel-v3.3' ? 'Account upgraded' : 'Upgrade this account',
-                delegation.status?.kind === 'kernel-v3.3' ? 'Upgraded ✓' : 'Upgrade',
-                () => navigation.navigate('UpgradeAccount'),
-              )
-            : null}
+              account on the active EVM chain. Hidden where the Kernel v3.3
+              delegate is known to have no code (a network the user added)
+              unless the account has a delegation to review or undo. */}
+          {upgradeLinkShown({ delegateDeployed: walletDelegateDeployed(evmChain.chainIdDecimal), status: delegation.status }) ? (
+            <>
+              {isEvm && !watchOnly
+                ? cardLink(
+                    'upgrade',
+                    delegation.status?.kind === 'kernel-v3.3' ? 'Account upgraded' : 'Upgrade this account',
+                    delegation.status?.kind === 'kernel-v3.3' ? 'Upgraded ✓' : 'Upgrade',
+                    () => navigation.navigate('UpgradeAccount'),
+                  )
+                : null}
+            </>
+          ) : null}
           {/* Token approvals manager (phase 7 item 5) for the active EVM
               chain; the screen explains what it can and cannot see. */}
           {/* Linked for a watch-only account too: the Approvals screen is

@@ -23,7 +23,9 @@ import {
   setCodeIntrinsicGas,
 } from '@shiba-wallet/chains-evm';
 import { ethers } from 'ethers';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve as resolvePath } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   EIP7702_STUB_R,
   EIP7702_STUB_S,
@@ -51,13 +53,22 @@ import {
   cachedAccountDelegation,
   delegationLabelSuffix,
   invalidateAccountDelegation,
+  kernelDelegateMissingMessage,
+  PENDING_UPGRADE_UNAVAILABLE_WARNING,
   prepareSetCodeTx,
   readAccountDelegation,
   sendSetCodeTx,
   serializeUnsignedSetCode,
   subscribeDelegation,
+  upgradeActionsOffered,
+  upgradeAvailabilityUnknownText,
+  upgradeLinkShown,
+  upgradeNotAvailableText,
   waitForSetCode,
+  walletDelegateDeployed,
 } from '../src/wallet/delegation.ts';
+import { customNetworkProfile } from '../src/wallet/custom-networks.ts';
+import { setCustomEvmProfiles } from '../src/config/evm-chain.ts';
 import {
   EIP7702_WC_REFUSAL,
   ERC5792_ERRORS,
@@ -111,12 +122,18 @@ const PINNED = '0xd6CEDDe84be40893d153Be9d467CD6aD37875b28';
 const FOREIGN = '0x' + '63'.repeat(20);
 const indicator = (delegate) => ('0xef0100' + delegate.slice(2)).toLowerCase();
 
+/** Stand-in runtime code for the Kernel v3.3 delegate on networks where it is deployed. */
+const DELEGATE_CODE = '0x60806040526004361015610013575b';
+
 /**
  * Fake node for the 7702 checks. `code` maps lowercase address → eth_getCode
  * result (default '0x'); mutable, so a test can flip an account's state
- * between quote and send. Records every call and every raw transaction.
+ * between quote and send. The pinned delegate has code (DELEGATE_CODE)
+ * unless `delegateCode` says otherwise ('0x' = not deployed on this chain,
+ * as on Hoodi). Records every call and every raw transaction.
  */
-function fake7702Node({ chainIdHex = '0x1', code = {}, nonce = 5n, balance = 10n ** 18n, receipt = { status: '0x1' }, oracle = null } = {}) {
+function fake7702Node({ chainIdHex = '0x1', code = {}, nonce = 5n, balance = 10n ** 18n, receipt = { status: '0x1' }, oracle = null, delegateCode = DELEGATE_CODE } = {}) {
+  if (!(PINNED.toLowerCase() in code)) code[PINNED.toLowerCase()] = delegateCode;
   const calls = [];
   const raws = [];
   const transport = async (method, params) => {
@@ -477,6 +494,152 @@ console.log('check-7702: set-code on an OP-stack network (Base Sepolia) pays the
   const screen = readFileSync(new URL('../src/screens/UpgradeAccountScreen.tsx', import.meta.url), 'utf8');
   check('UpgradeAccountScreen shows the layer 1 data fee line when the quote has one', /quote\.opStack \? \([\s\S]{0,400}Layer 1 data fee \(estimate\)/.test(screen));
 }
+
+// ---------------------------------------------------------------------------
+console.log('check-7702: a network where the Kernel v3.3 delegate has no code (a network the user added)');
+// ---------------------------------------------------------------------------
+// Hoodi, added as a custom test network (it is on the allow-list, so the
+// readiness row allows the upgrade there): eth_getCode for the delegate
+// 0xd6CE…5b28 answered 0x on rpc.hoodi.ethpandaops.io (emulator pass,
+// 2026-10-10), which the fake node reproduces.
+const HOODI_HEX = '0x88bb0';
+const HOODI_ID = 560048n;
+setCustomEvmProfiles([
+  customNetworkProfile({ chainId: '560048', name: 'Hoodi', rpcUrl: 'https://rpc.hoodi.example', nativeSymbol: 'ETH', nativeDecimals: 18, explorerUrl: null, testnet: true, blockTimeMs: 12000, addedAt: 1 }),
+]);
+{
+  check('the refusal sentence (exact)', kernelDelegateMissingMessage('Hoodi') ===
+    'The Kernel v3.3 code this upgrade points to is not deployed on Hoodi, so delegating to it would leave your address pointing at nothing. Nothing was signed.');
+  const node = fake7702Node({ chainIdHex: HOODI_HEX, nonce: 4n, delegateCode: '0x' });
+  await checkRejects('upgrade quote on Hoodi refused: the delegate has no code there',
+    () => prepareSetCodeTx({ url: NODE_URL, from: OWNER_0, action: 'upgrade', expectedChainId: HOODI_ID, transportFor: () => node }),
+    kernelDelegateMissingMessage('Hoodi'));
+  const methods = node.calls.map((c) => c.method);
+  check('…the code was read for the pinned delegate at latest, and nothing after it (no nonce, fee or balance read; nothing broadcast)',
+    node.calls.some((c) => c.method === 'eth_getCode' && same(c.params[0], PINNED) && c.params[1] === 'latest') &&
+      !methods.includes('eth_getTransactionCount') && !methods.includes('eth_getBalance') && node.raws.length === 0, methods.join(','));
+  check('…and the result is remembered for the chain (no code)', walletDelegateDeployed(HOODI_ID) === false && walletDelegateDeployed('560048') === false);
+  for (const empty of ['0x0', '0x00']) {
+    const n = fake7702Node({ chainIdHex: HOODI_HEX, delegateCode: empty });
+    await checkRejects(`an eth_getCode answer of ${empty} counts as no code`,
+      () => prepareSetCodeTx({ url: NODE_URL, from: OWNER_0, action: 'upgrade', expectedChainId: HOODI_ID, transportFor: () => n }), 'is not deployed on Hoodi');
+  }
+  const garbled = fake7702Node({ chainIdHex: HOODI_HEX, delegateCode: null });
+  garbled.code[PINNED.toLowerCase()] = { not: 'hex' };
+  await checkRejects('an unreadable answer refuses the quote too (never assumed deployed)',
+    () => prepareSetCodeTx({ url: NODE_URL, from: OWNER_0, action: 'upgrade', expectedChainId: HOODI_ID, transportFor: () => garbled }),
+    'Could not read whether the Kernel v3.3 code this upgrade points to is deployed on Hoodi. Nothing was signed.');
+  // Revoking never depends on the delegate (it names the zero address).
+  for (const [label, delegate] of [['the pinned Kernel', PINNED], ['a foreign delegate', FOREIGN]]) {
+    const n = fake7702Node({ chainIdHex: HOODI_HEX, nonce: 9n, delegateCode: '0x', code: { [OWNER_0.toLowerCase()]: indicator(delegate) } });
+    const q = await prepareSetCodeTx({ url: NODE_URL, from: OWNER_0, action: 'revoke', expectedChainId: HOODI_ID, transportFor: () => n });
+    check(`revoking on Hoodi (account delegated to ${label}) is still quoted: zero-address tuple`, q.delegate === ZERO_ADDRESS && q.chainId === HOODI_ID);
+  }
+  // The same quote where the delegate HAS code goes through (control).
+  const ok = fake7702Node({ chainIdHex: HOODI_HEX, nonce: 4n });
+  const q = await prepareSetCodeTx({ url: NODE_URL, from: OWNER_0, action: 'upgrade', expectedChainId: HOODI_ID, transportFor: () => ok });
+  check('control: with the delegate deployed the Hoodi upgrade quote is prepared (and remembered as deployed)', same(q.delegate, PINNED) && walletDelegateDeployed(HOODI_ID) === true);
+
+  // The smart-account path (aa.ts prepareAaCalls on a kernel-7702 bundle)
+  // refuses the same way: an owner recorded for the upgrade before the
+  // network's delegate was checked must not carry a tuple to code-less code.
+  {
+    const missing = fake7702Node({ chainIdHex: HOODI_HEX, nonce: 4n, delegateCode: '0x' });
+    const { bundle: hb } = bundle7702({ node: missing, chainId: HOODI_ID });
+    await checkRejects('aa.ts: a kernel-7702 quote on Hoodi is refused when the delegate has no code there (no bundler contact)',
+      () => prepareAaSend(hb, OWNER_0, ethers.getAddress(RECIPIENT), 1000n), 'is not deployed on Hoodi');
+    check('…and that refusal came before any bundler request', missing.calls.some((c) => c.method === 'eth_getCode'));
+    const present = fake7702Node({ chainIdHex: HOODI_HEX, nonce: 4n });
+    const { bundle: hb2 } = bundle7702({ node: present, chainId: HOODI_ID });
+    const hq = await prepareAaSend(hb2, OWNER_0, ethers.getAddress(RECIPIENT), 1000n);
+    check('control: with the delegate deployed on Hoodi the kernel-7702 quote announces the upgrade', hq.eip7702?.upgrade === true && same(hq.eip7702.delegate, PINNED));
+  }
+  // The status read fills the per-chain fact the screens use.
+  invalidateAccountDelegation();
+  const statusNode = fake7702Node({ chainIdHex: HOODI_HEX, delegateCode: '0x' });
+  const st = await readAccountDelegation(NODE_URL, OWNER_0, { chainId: HOODI_ID, transportFor: () => statusNode });
+  check('readAccountDelegation on Hoodi: status plain, and the delegate recorded as not deployed there', st.kind === 'plain' && walletDelegateDeployed(HOODI_ID) === false);
+  const before = statusNode.calls.length;
+  await readAccountDelegation(NODE_URL, OWNER_0, { chainId: HOODI_ID, transportFor: () => statusNode });
+  check('…a cached status makes no request (the delegate fact is cached per chain)', statusNode.calls.length === before);
+  const brokenDelegateRead = fake7702Node({ chainIdHex: HOODI_HEX, delegateCode: null });
+  brokenDelegateRead.code[PINNED.toLowerCase()] = 42;
+  invalidateAccountDelegation();
+  const st2 = await readAccountDelegation(NODE_URL, OWNER_0, { chainId: HOODI_ID, transportFor: () => brokenDelegateRead });
+  check('a failed delegate read never fails the status read; the fact stays unknown', st2.kind === 'plain' && walletDelegateDeployed(HOODI_ID) === undefined);
+  invalidateAccountDelegation();
+  const sepStatusNode = fake7702Node({ chainIdHex: '0xaa36a7' });
+  await readAccountDelegation(NODE_URL, OWNER_0, { chainId: 11155111n, transportFor: () => sepStatusNode });
+  check('on Sepolia the delegate is recorded as deployed', walletDelegateDeployed(11155111n) === true);
+  invalidateAccountDelegation();
+
+  check('offered: deployed → yes; known missing → no, even on a verified profile; unknown → only on a verified profile',
+    upgradeActionsOffered({ kernelV33Verified: false, delegateDeployed: true }) === true &&
+      upgradeActionsOffered({ kernelV33Verified: true, delegateDeployed: false }) === false &&
+      upgradeActionsOffered({ kernelV33Verified: false, delegateDeployed: false }) === false &&
+      upgradeActionsOffered({ kernelV33Verified: false, delegateDeployed: undefined }) === false &&
+      upgradeActionsOffered({ kernelV33Verified: true, delegateDeployed: undefined }) === true);
+  check('Home link: hidden only when the delegate is known missing AND there is no delegation to review or undo',
+    upgradeLinkShown({ delegateDeployed: false, status: { kind: 'plain' } }) === false &&
+      upgradeLinkShown({ delegateDeployed: false, status: { kind: 'other', delegate: FOREIGN } }) === true &&
+      upgradeLinkShown({ delegateDeployed: false, status: { kind: 'kernel-v3.3', delegate: PINNED } }) === true &&
+      upgradeLinkShown({ delegateDeployed: false, status: null }) === true &&
+      upgradeLinkShown({ delegateDeployed: undefined, status: { kind: 'plain' } }) === true &&
+      upgradeLinkShown({ delegateDeployed: true, status: { kind: 'plain' } }) === true);
+  check('the screen sentences (exact)',
+    upgradeNotAvailableText('Hoodi') ===
+      'Not available on this network: the Kernel v3.3 code this upgrade points to (0xd6CE…5b28) is not deployed on Hoodi, so delegating to it would leave your address pointing at nothing. The wallet does not offer the upgrade here. Undoing an existing delegation stays available.' &&
+      upgradeAvailabilityUnknownText('Hoodi') ===
+        'The upgrade is not offered yet: the wallet could not check whether the Kernel v3.3 code this upgrade points to is deployed on Hoodi. Tap Refresh status to check again.' &&
+      PENDING_UPGRADE_UNAVAILABLE_WARNING.includes('Cancel it so no smart-account send carries it.'));
+
+  // Source: both upgrade actions (and "Use this upgraded account") sit
+  // behind upgradeOffered; revoke does not; Home uses upgradeLinkShown.
+  const screen = readFileSync(new URL('../src/screens/UpgradeAccountScreen.tsx', import.meta.url), 'utf8');
+  const plainBlock = screen.slice(screen.indexOf("{status?.kind === 'plain' && upgradeOffered ? ("), screen.indexOf("{status?.kind === 'kernel-v3.3' && !optedIn && upgradeOffered ? ("));
+  check('Upgrade screen: "with the next smart-account send" and "now with a transaction" render only when upgradeOffered',
+    plainBlock.includes('title="Upgrade with the next smart-account send"') && plainBlock.includes('title="Upgrade now with a transaction"') &&
+      screen.split('title="Upgrade with the next smart-account send"').length === 2 && screen.split('title="Upgrade now with a transaction"').length === 2 &&
+      screen.includes('const upgradeOffered = upgradeActionsOffered({ kernelV33Verified: evmChain.kernelV33Verified, delegateDeployed });'));
+  check('Upgrade screen: the not-available status and the unknown sentence are shown; the explanation (batching, sponsored gas) only where offered',
+    screen.includes('{delegateDeployed === false ? (\n        <WarningBox>{upgradeNotAvailableText(evmChain.label)}</WarningBox>') &&
+      screen.includes('upgradeAvailabilityUnknownText(evmChain.label)') &&
+      screen.includes('{upgradeOffered ? <Text style={[styles.body, { color: theme.text }]}>{UPGRADE_EXPLANATION}</Text> : null}'));
+  check('Upgrade screen: "Use this upgraded account" needs upgradeOffered; Revoke does not',
+    screen.includes("{status?.kind === 'kernel-v3.3' && !optedIn && upgradeOffered ? (") &&
+      screen.includes("{status?.kind === 'kernel-v3.3' || status?.kind === 'other' ? ("));
+  const home = readFileSync(new URL('../src/screens/HomeScreen.tsx', import.meta.url), 'utf8');
+  check('Home: the Upgrade link follows upgradeLinkShown for the active chain',
+    home.includes('{upgradeLinkShown({ delegateDeployed: walletDelegateDeployed(evmChain.chainIdDecimal), status: delegation.status }) ? (\n            <>\n              {isEvm && !watchOnly\n                ? cardLink(\n                    \'upgrade\','));
+}
+
+// Mutation: prepareSetCodeTx without the delegate-code check must be caught.
+{
+  const HERE = dirname(fileURLToPath(import.meta.url));
+  const MUTANT_DIR = join(HERE, `.mutants-7702-${process.pid}`);
+  process.on('exit', () => rmSync(MUTANT_DIR, { recursive: true, force: true }));
+  const rel = 'src/wallet/delegation.ts';
+  const original = readFileSync(join(HERE, '..', rel), 'utf8');
+  const anchor = 'if (!deployed) throw new Error(kernelDelegateMissingMessage(networkNameFor(chainId)));';
+  if (!original.includes(anchor)) throw new Error('mutation anchor not found');
+  const dir = dirname(join(HERE, '..', rel));
+  const source = original
+    .replace(anchor, '')
+    .replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolvePath(dir, spec)).href}'`);
+  mkdirSync(MUTANT_DIR, { recursive: true });
+  const file = join(MUTANT_DIR, 'm1-delegation.ts');
+  writeFileSync(file, source);
+  const mutant = await import(pathToFileURL(file).href);
+  const node = fake7702Node({ chainIdHex: HOODI_HEX, nonce: 4n, delegateCode: '0x' });
+  let quoted = null;
+  try {
+    quoted = await mutant.prepareSetCodeTx({ url: NODE_URL, from: OWNER_0, action: 'upgrade', expectedChainId: HOODI_ID, transportFor: () => node });
+  } catch {
+    quoted = null;
+  }
+  check('mutant (delegate-code check skipped) is caught: it quotes an upgrade to a delegate with no code', quoted !== null && same(quoted.delegate, PINNED));
+}
+setCustomEvmProfiles([]);
 
 // ---------------------------------------------------------------------------
 console.log('check-7702: "Revoke upgrade" — zero-address tuple');
