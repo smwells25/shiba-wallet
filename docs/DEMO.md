@@ -11,7 +11,7 @@ Everything in this walkthrough runs on the **Sepolia test network** with test ET
 ## Before you start: three warnings
 
 1. **Do not wipe the wallet on the demo emulator, and do not add or remove a fingerprint on it.** The emulator wallet's recovery phrase is stored in biometric-protected storage, and `AGENTS.md` records that the written phrase for that wallet is not kept anywhere ("Settings 'Recovery phrase protection' section"). Changing the fingerprint enrollment makes the phrase permanently unreadable; wiping deletes it. Either would lose Account 1, which owns the deployed Kernel smart account and the WalletConnect session this demo relies on. Show onboarding on a second, disposable emulator instead (see step 1).
-2. **Quoted labels can drift.** Every flow in steps 1 to 9 has now been run live through the app's screens on the emulator (session keys and guardians in phase 10 item 1, the counterfactual deployment in phase 11 item 2). Steps 10 to 18 (subscriptions, Base Sepolia, per-network tokens, the fee in USDC, payment requests and names, watch-only accounts, the second paymaster, the inheritance demonstration and Arbitrum Sepolia) are newer and have each been run live through the app's screens once or twice; see the "progress" sections for phases 12 to 14 in `AGENTS.md`. Later phases keep editing these screens, so if a quoted label differs slightly on screen, trust the screen, and check the latest "progress" section of `AGENTS.md` before presenting. Step 19 (recurring payments) was rehearsed on the emulator on 2026-10-09 (set-up, two payments, the banner, revoke), step 21 (the in-app browser) was rehearsed on 2026-10-10, and step 20 (multi-signature) runs from a terminal script only, with nothing in the app.
+2. **Quoted labels can drift.** Every flow in steps 1 to 9 has now been run live through the app's screens on the emulator (session keys and guardians in phase 10 item 1, the counterfactual deployment in phase 11 item 2). Steps 10 to 18 (subscriptions, Base Sepolia, per-network tokens, the fee in USDC, payment requests and names, watch-only accounts, the second paymaster, the inheritance demonstration and Arbitrum Sepolia) are newer and have each been run live through the app's screens once or twice; see the "progress" sections for phases 12 to 14 in `AGENTS.md`. Later phases keep editing these screens, so if a quoted label differs slightly on screen, trust the screen, and check the latest "progress" section of `AGENTS.md` before presenting. Step 19 (recurring payments) was rehearsed on the emulator on 2026-10-09 (set-up, two payments, the banner, revoke), step 21 (the in-app browser) and step 22 (screen protection) were rehearsed on 2026-10-10, and step 20 (multi-signature by script) runs from a terminal. **Not yet rehearsed on the emulator:** step 23 (a multi-signature account in the app), step 24 (adding a network) and the optional reminder in step 19; they are built and pass the offline checks only (phase 17 items 1 to 3), so run them completely at the rehearsal before showing them.
 3. **Bitcoin, Solana and Dogecoin in the app use their main networks.** Sepolia test mode only switches the Ethereum side. Anything you broadcast on those three chains from the app spends real coins. Step 9 explains how to show them without broadcasting.
 
 ---
@@ -393,6 +393,7 @@ Account 1's Kernel account on Ethereum Sepolia, eligible for the Sessions screen
 - Tap **Start recurring payment**. Expect two system prompts on the demo emulator: "Approve this recurring payment", then a second prompt that protects the new payment key, because the emulator wallet's recovery phrase is in protected storage.
 - The card on the Sessions screen shows the first payment as due, with **Send the payment now**. Tap it: the wallet's own dialog asks "Send this payment now?" with **Cancel** and **Send payment**. After **Send payment**, expect one system prompt, "Use the session key" (the payment key is protected; a wallet whose phrase is not protected shows no system prompt here). The recovery phrase is never opened for a payment.
 - To show the reminder, leave the app and come back while a payment is due: a banner says "1 recurring payment is due. Each is sent only after you confirm it on the Sessions screen." with **Review** and **Not now**. The due check itself raises no prompt.
+- Optional, **not yet rehearsed on the emulator** (phase 17 item 2): Settings → Privacy → Notifications → **Remind me when something is due** (off by default; the first time, Android asks for the notification permission). With it on, the wallet schedules a notification "Recurring payment due" for the moment the next payment of a schedule falls due, to be shown even while the wallet is in the background or closed (delivery has not yet been observed); tapping it opens the Sessions screen. Say that the reminder is scheduled on the phone with no notification service, names no amount, address or payee because it can appear on the lock screen, and never sends anything. After a force stop Android drops the reminder until the wallet is opened again.
 - End with **Revoke (stop the recurring payment)** on the card (one prompt). A schedule whose payments have all been sent offers **Revoke and forget** instead.
 
 **What to say:** this is "pay my rent every month" without handing anything to a third party. The account itself limits the payment key to one payee, one amount cap, one payment per period, an end date and a fee budget; the key never leaves this phone; and the wallet sends each payment only while it is open and only after the user confirms it. Nothing runs in the background: that would need a development build and a decision on whether a payment may ever go out without the user present. Be honest about the batching limit in the first box, as in step 10.
@@ -403,7 +404,7 @@ Account 1's Kernel account on Ethereum Sepolia, eligible for the Sessions screen
 
 ### Step 20. A 2-of-3 multi-signature account, by script only
 
-Nothing in this step runs in the app: multi-signature accounts exist only as engine groundwork (phase 15 item 2, `docs/MULTISIG.md`). Show it from a terminal on the host. The live run is recorded for 2026-10-09 UTC (Sepolia block timestamps).
+This step shows the engine's proof from a terminal on the host (phase 15 item 2, `docs/MULTISIG.md`). The app's own multi-signature screens, built later, are step 23. The live run is recorded for 2026-10-09 UTC (Sepolia block timestamps).
 
 - Run the dry run, which uses no dev keys, needs no bundler and broadcasts nothing (each check is a read-only `eth_simulateV1` request against the real EntryPoint, Kernel v3.3 and weighted validator on Sepolia, for an undeployed 2-of-3 account of the public BIP-39 test mnemonic):
 
@@ -418,7 +419,7 @@ Nothing in this step runs in the app: multi-signature accounts exist only as eng
 
 **What to say:** in a modular account, multi-signature is a validator choice, and with the deployed weighted validator as the account's root an operation really needs two of the three signers. The same validator's message check counts a repeated signer, and the analysis proves that no choice of weights fixes that, so this wallet will never let a multisig account sign messages, logins or permits. Co-signers approve the calls and the nonce; the submitter alone chooses the fees and any paymaster. Stronger designs (Safe with its ERC-4337 module, Rhinestone's ownable validator) were compared from their sources but none is adopted yet.
 
-**What it proves:** the dry run against the real contracts, and the live 2-of-3 on Sepolia: deployed and operated, with a second operation accepted by ZeroDev's bundler, which settled that a real bundler accepts operations from a weighted-root account (phase 15 item 2). Not shown anywhere: a bundler-accepted deployment of such an account, session keys or passkeys on it, the delayed path, and any app screen.
+**What it proves:** the dry run against the real contracts, and the live 2-of-3 on Sepolia: deployed and operated, with a second operation accepted by ZeroDev's bundler, which settled that a real bundler accepts operations from a weighted-root account (phase 15 item 2). Not shown anywhere: a bundler-accepted deployment of such an account, session keys or passkeys on it, and the delayed path. The app's screens exist since phase 17 item 1 but have not yet been rehearsed (step 23).
 
 ---
 
@@ -436,6 +437,53 @@ Account 1 on Ethereum Sepolia with a little test ETH. Rehearsed live in-app on 2
 **What to say:** the wallet now has two ways into dApps, WalletConnect and its own browser, and both go through one approval path. The browser knows the site's real origin first-hand, which WalletConnect cannot, but that proves which site asked, not that the site is honest.
 
 **What it proves:** on 2026-10-10 a swap started inside the wallet's browser was simulated, approved and included (block 11882561) with the USDC received equal to the preview, and the ENS app completed a Sign-In with Ethereum through the SIWE card. The emulator's WebView dates from 2023 and still rendered both sites.
+
+### Step 22. Screen protection: what the wallet hides from screenshots and the app switcher
+
+Rehearsed on the emulator on 2026-10-10 (phase 17 item 0). **If the demo is being recorded or screenshotted on the phone itself, do this step first, before anything else.**
+
+- Settings → **Privacy** → the switch **Hide in the app switcher and block screenshots**. It is on by default. On Android it makes every screen of the wallet come out blank in screenshots, screen recordings, `adb screencap` and the recent-apps thumbnail, so a recording of the demo would show nothing but black frames. Switch it **off** for a recorded demo; the status line reads "Screen protection is off." Switch it back **on** at the end ("Screen protection is on.").
+- To show what it does: with the switch on, open the recent-apps view. The wallet's card is blank. Switch it off and open the recent-apps view again: the card now shows Home with the balances.
+- Read the two notes under the switch: "On Android this also blocks screenshots and screen recording of every screen in this wallet, including your Receive QR; copy the address instead. On iOS, screenshots come out blank and the app switcher shows a cover." and "The screens that show or take in your recovery phrase or a private key are always protected, whatever this setting." (The private-key import screen is protected once its field holds text.)
+
+**What to say:** the wallet is meant for real value, so it errs on the side of caution: nothing on its screens reaches screenshots, recordings or the app switcher unless the user chooses otherwise. The cost on Android is that the user cannot screenshot their own Receive QR, and the setting says so.
+
+**What it proves:** on 2026-10-10, with the switch on, every `adb screencap` was empty (Home, Settings, the account-switcher dialog, the lock screen) and the recent-apps thumbnail was a blank card; with it off, screenshots worked and the thumbnail showed Home with balances; a stored "off" survived a restart. iOS has not been tested, and native alerts, system dialogs and the fingerprint prompt are not known to be covered.
+
+### Step 23. A multi-signature account in the app
+
+**Not yet rehearsed on the emulator.** Built in phase 17 item 1 and verified by the offline checks only (`check-multisig.mjs`, 155 checks); the labels below come from the screen's code, so trust the screen where it differs. Ethereum Sepolia, Account 1 active, a little test ETH on Account 1 to fund the new account. The co-signer is played from the host by a scratch helper, `multisig-cosigner.mjs`, which signs with keys of the dev seed (`.dev-wallet/mnemonic.txt`); it was written for the phase 17 emulator pass and **is not part of the repository**, so get a copy from the CTO before the rehearsal. Its usage, from the repository root with the engine built:
+
+```
+node multisig-cosigner.mjs address 5                        # the dev index-5 address, to use as the co-signer
+node multisig-cosigner.mjs approve request.json 5 > approval-5.json
+```
+
+- Home → **Multisig** (shown on test networks) → **Create a multisig**. The screen "New multi-signature account" takes this wallet's signer (Account 1) with its weight and one or more co-signers (**Add a co-signer**: paste the dev index-5 address). The app refuses any set in which one signer could act alone. Tap **Review**.
+- Read the review aloud: the account is always a new account, deployed fresh, never converted from an existing one; the exposure line (for an account that needs two signers: "Any 2 co-signers together can send an operation; for messages the deployed validator needs only 1, so this account must never be used to sign logins, orders or token permits — the wallet refuses that."); "Co-signers approve the calls and the nonce, not the network fee or paymaster, which the submitter sets."; and the note that the signer module has no published audit. Tap **Create this multisig**.
+- Send a little test ETH from Account 1 to the multisig's address (shown with a QR code on the Multisig screen). The account says it is not deployed yet: its first operation deploys it, and that operation also needs the co-signers' approvals.
+- **New operation (send)**, for example 0.0001 test ETH to the "Burn" contact, then **Build the signing request**. Share the request as a file or as text and move it to the host (this transport has not been rehearsed). On the host, sign it as the co-signer with the helper's `approve` command.
+- Back in the app, **Add approval** (paste the approval) or **Add an approval from a file**, then **Review and submit** → **Approve and submit**. Expect one device prompt for Account 1's own signature. This first operation also deploys the account.
+- To show the refusals: the multisig is never offered over WalletConnect or in the Apps browser, and the Guardians, Inheritance, Passkey and Sessions screens do not accept it.
+
+**What to say:** the same validator as step 20, now in the app: a shared account that needs two signers for every operation, with approvals collected off the device the way guardian approvals are. The screens say plainly that this account must never sign messages, logins or permits, and the wallet refuses to.
+
+**What it proves:** on the app side, only the offline checks so far (phase 17 item 1). The on-chain behaviour is the engine's live 2-of-3 of step 20. Whether ZeroDev's bundler accepts the deployment of a weighted-root account is unverified (in phase 15 it declined one for a prefund or fee reason, and the deployment was bundled by the script itself).
+
+**Fallbacks:** if the bundler refuses the first operation, the app shows its message verbatim and adds: "If the bundler refused because of the prefund or the fee, send a little more test ETH to the multisig address and try again. The approvals stay valid as long as no other operation used this nonce." Test networks only: on mainnet the Multisig link is not shown.
+
+### Step 24. Add a network: Hoodi as a test network
+
+**Not yet rehearsed on the emulator.** Built in phase 17 item 3 and verified by the offline checks only (`check-custom-networks.mjs`, 152 checks); the endpoint below was probed read-only on 2026-10-10 and accepted. No funds are needed: the wallet holds no Hoodi test ETH, so balances read 0.
+
+- Settings → Developer → **Networks you added**. In the form: name `Hoodi`, chain id `560048`, RPC `https://rpc.hoodi.ethpandaops.io`, symbol `ETH`, no explorer, and **This is a test network** on. Tap **Verify and save**. The wallet checks that the endpoint reports chain id 560048 and that its newest block is less than 10 minutes old, measures the block time (about 13.7 seconds when probed), and only then saves.
+- Choose **Hoodi** under "Networks you added". The banner reads "TESTNET — Hoodi test mode is on (a network you added). Amounts are test ETH, not real funds." Home's Ethereum row follows the network.
+- To show the refusals: enter chain id `11155111`, which is refused with "Chain id 11155111 is already built in as Ethereum Sepolia; choose it in the network list above instead. Nothing was saved."; enter Hoodi's endpoint with chain id `17000`, which is refused because the endpoint serves a different chain; tick "This is a test network" for a chain id not on the wallet's list of well-known test networks, which is refused because the wallet would then treat real funds as worthless.
+- Switch back to **Ethereum Sepolia**, then **Remove** Hoodi. The confirmation lists what is deleted for that network and what is kept (records needed to revoke or recover).
+
+**What to say:** a user can add any EVM network without a new release, and the wallet verifies the endpoint before saving it. A network the user adds counts as a main network, with real-funds caution, unless it is a well-known public test network and the user says so. The endpoint is the user's choice and the wallet trusts it for that network's balances and previews, so it should come from a source the user trusts.
+
+**What it proves:** on the app side, only the offline checks and the read-only endpoint probes of 2026-10-10 (phase 17 item 3). Swaps, prices and names are never offered on an added network, and smart accounts only after the user pastes a Kernel factory address that the wallet verifies on-chain.
 
 ## Known rough edges (development builds only)
 
