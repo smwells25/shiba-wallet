@@ -479,7 +479,7 @@ Status values: **Met** (evidence exists and was reviewed), **Unmet** (known not 
 | W15 | In-app owner change works end to end (both directions) | Met | First edition: Unmet (under investigation). Second edition: fixed in commit `37d3b89` (deposit top-up verification-gas headroom) and proven live on the emulator in both directions on Sepolia: Account 1 → Account 2 (userOpHash `0x888511f7…412c73`) and back (userOpHash `0x3ff73fcf…dd93711`), owners read back independently by the CTO (`AGENTS.md` phase 9 item 1, recorded in `a5f4dc3`); `AGENTS.md` item 6 records W15 as met. F-36 |
 | W16 | Counsel's answer on (L)GPL and AGPL contract use and the UNLICENSED SudoPolicy header | Unmet | `AGENTS.md` phase 7 frameworks findings; F-15, F-39 |
 | W17 | Lock overlay covers native alerts and modals; sessions cleared or flagged on wipe | Unmet | F-27, F-28 |
-| W18 | Android backup policy for AsyncStorage decided and configured | Unverified | N-08 |
+| W18 | Android backup policy for AsyncStorage decided and configured | Partly met (2026-10-10, local development build on the emulator, `AGENTS.md` phase 16 item 3): with `allowBackup="false"` a cloud backup of the app is refused ("Backup is not allowed"); a device-to-device transfer in test mode still runs and moves about 7.7 KB of preference files, but SecureStore.xml (the phrase and vault entries) and AsyncStorage's RKStorage database were NOT included. Whether the same holds on a real phone with a vendor transport is unverified | N-08 |
 | W19 | Screenshot blocking on the Import screen; app-switcher privacy cover | Unmet | N-04, N-05 |
 | W20 | Dependency versions in sync with the Expo SDK (`npx expo install --check` clean) | Unmet | F-45 |
 

@@ -467,5 +467,14 @@ Every item must be checked for the exact commit being built.
 - The merged Android manifest of a real build (only the plugin-generated
   manifest was inspected).
 - Whether removing `SYSTEM_ALERT_WINDOW` would be safe.
+- Seen in a local release build's merged manifest on 2026-10-10 (not in
+  the list above): `com.google.android.finsky.permission.BIND_GET_INSTALL_REFERRER_SERVICE`
+  from the installreferrer library that expo-application pulls in; ML Kit
+  barcode and Google datatransport components (from expo-camera's barcode
+  support) and androidx.credentials.playservices (from the passkey
+  module). Whether ML Kit or datatransport send anything off the device is
+  unverified and belongs in PRIVACY.md once answered. The template also
+  leaves `expo.modules.updates.*` meta-data although expo-updates is not
+  installed.
 - App Store Connect's phased-release controls.
 - The export-compliance answer (legal input).
