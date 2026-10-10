@@ -1705,13 +1705,15 @@ export function SendScreen({ route, navigation }: Props) {
                     {aaResult.txHash}
                   </Text>
                 </View>
-                <Button
-                  title="View on block explorer"
-                  variant="secondary"
-                  onPress={() =>
-                    void Linking.openURL(`${evmChain.explorerTxBase}${aaResult.txHash}`)
-                  }
-                />
+                {evmChain.explorerTxBase ? (
+                  <Button
+                    title="View on block explorer"
+                    variant="secondary"
+                    onPress={() =>
+                      void Linking.openURL(`${evmChain.explorerTxBase}${aaResult.txHash}`)
+                    }
+                  />
+                ) : null}
               </>
             ) : (
               <Text style={[styles.hint, { color: theme.textMuted }]}>

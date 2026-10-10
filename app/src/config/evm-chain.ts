@@ -132,6 +132,38 @@ export interface EvmChainProfile {
    * this flag only selects the plain-language note Settings shows.
    */
   l1CostInGas: boolean;
+  /**
+   * Present only on a network the USER added (feature 33,
+   * wallet/custom-networks.ts); absent on every built-in profile. Facts the
+   * wallet measured or was told when the network was verified and saved.
+   */
+  custom?: CustomNetworkFacts;
+}
+
+/**
+ * What the wallet knows about a user-added network beyond the profile
+ * fields. Everything here was either typed by the user (name, symbol, the
+ * explorer address, the test-network tick) or measured once through the
+ * user's RPC endpoint when the network was verified (the block time).
+ */
+export interface CustomNetworkFacts {
+  /** The RPC URL the user saved (https; verified with eth_chainId and the head block's age). */
+  rpcUrl: string;
+  /** The native coin's symbol exactly as typed (no on-chain source exists for it). */
+  nativeSymbol: string;
+  /**
+   * The explorer's base URL (https, no trailing slash), or null. Only the
+   * Etherscan-family paths are ever built from it (`<base>/tx/<hash>`,
+   * `<base>/address/<address>`); that convention is assumed, not verified.
+   */
+  explorerBase: string | null;
+  /**
+   * Seconds between blocks in milliseconds, measured at save from the head
+   * block and the block 100 below it, or null when it could not be measured.
+   */
+  blockTimeMs: number | null;
+  /** True when the user ticked "This is a test network" (it counts only for allow-listed ids). */
+  testnetRequested: boolean;
 }
 
 const MAINNET_RPC_DEFAULTS: readonly string[] = [
@@ -630,9 +662,13 @@ export const EVM_PROFILES: readonly EvmChainProfile[] = [EVM_MAINNET, ...EVM_TES
 /** The CAIP-2 id of a test-network profile (the stored Developer choice). */
 export type TestNetworkId = 'eip155:11155111' | 'eip155:84532' | 'eip155:421614';
 
-/** The profile with this CAIP-2 id, or undefined for a chain the app has no profile for. */
+/**
+ * The profile with this CAIP-2 id — a built-in one first, then a network
+ * the user added (see "Custom networks" below) — or undefined for a chain
+ * the app has no profile for.
+ */
 export function evmProfileByCaip2(caip2: string): EvmChainProfile | undefined {
-  return EVM_PROFILES.find((p) => p.caip2 === caip2);
+  return EVM_PROFILES.find((p) => p.caip2 === caip2) ?? customProfiles.find((p) => p.caip2 === caip2);
 }
 
 /** True when `caip2` names one of the test-network profiles above. */
@@ -652,5 +688,166 @@ export function isTestProfileId(caip2: unknown): caip2 is TestNetworkId {
 export function evmProfileFor(selection: boolean | string | null): EvmChainProfile {
   if (selection === false || selection === null) return EVM_MAINNET;
   if (selection === true) return EVM_SEPOLIA;
-  return EVM_TEST_PROFILES.find((p) => p.caip2 === selection) ?? EVM_SEPOLIA;
+  return (
+    EVM_TEST_PROFILES.find((p) => p.caip2 === selection) ??
+    customProfiles.find((p) => p.caip2 === selection) ??
+    EVM_SEPOLIA
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Custom networks (feature 33, phase 17 item 3)
+// ---------------------------------------------------------------------------
+//
+// A network the user adds in Settings → Developer becomes an EvmChainProfile
+// at runtime, so every consumer of this file — evmProfileFor,
+// evmProfileByCaip2, the readiness switchboard, the endpoint resolver, the
+// token, contact, WalletConnect and risk modules — serves it without change.
+//
+// THE SINGLE READ PATH. The profiles live in the module-level registry
+// below. Only wallet/custom-networks.ts writes it: (1) when it HYDRATES the
+// registry from storage (ensureCustomNetworksLoaded, which
+// config/prefs.ts loadPrefs awaits before it returns, so every code path
+// that resolves the active network through the stored preferences — React
+// (PrefsContext) and non-React (config/networks.ts, wallet/tokens.ts) — sees
+// the custom profiles first); and (2) after each successful add, removal or
+// reset, AFTER the storage write. Listeners (PrefsContext) re-render on every
+// change. This file stays free of imports so the Node check scripts load it
+// directly.
+//
+// SAFETY RULES held here, whatever the store says:
+//  - a custom profile can never take a built-in chain id (setCustomEvmProfiles
+//    refuses it), so a user-added network can never shadow Ethereum mainnet
+//    or a built-in test network;
+//  - a custom network counts as a TEST network only when the user ticked
+//    "This is a test network" AND its chain id is in
+//    KNOWN_PUBLIC_TEST_CHAIN_IDS (isCustomTestNetwork re-checks the list every
+//    time); anything else is a main network with real funds.
+
+/**
+ * Well-known PUBLIC test networks a user may add as a test network. Every
+ * entry was read from the ethereum-lists chain registry
+ * (github.com/ethereum-lists/chains, master at commit
+ * ec732e43f8b821853bb9ad2aea592751cc943bfd, fetched 2026-10-10), file
+ * _data/chains/eip155-<id>.json; each file names a testnet in its "title" or
+ * "name" and carries "slip44": 1 (SLIP-0044 coin type 1, "Testnet (all
+ * coins)"):
+ *  - 17000    Holesky — "title": "Ethereum Testnet Holesky"
+ *  - 560048   Hoodi — "title": "Ethereum Testnet Hoodi"
+ *  - 11155420 OP Sepolia — "name": "OP Sepolia Testnet"
+ *  - 80002    Polygon Amoy — "title": "Polygon Amoy Testnet"
+ *  - 59141    Linea Sepolia — "title": "Linea Sepolia Testnet"
+ *  - 534351   Scroll Sepolia — "name": "Scroll Sepolia Testnet"
+ * The built-in test networks (Ethereum Sepolia, Base Sepolia, Arbitrum
+ * Sepolia) are not listed: their chain ids cannot be added at all. An id not
+ * listed here can still be added, but only as a MAIN network, so a user can
+ * never mark mainnet funds as "test" by mistake. Adding an id here is a
+ * deliberate code change with its source cited.
+ */
+export const KNOWN_PUBLIC_TEST_CHAIN_IDS: readonly { readonly chainId: string; readonly name: string }[] = [
+  { chainId: '17000', name: 'Holesky' },
+  { chainId: '560048', name: 'Hoodi' },
+  { chainId: '11155420', name: 'OP Sepolia' },
+  { chainId: '80002', name: 'Polygon Amoy' },
+  { chainId: '59141', name: 'Linea Sepolia' },
+  { chainId: '534351', name: 'Scroll Sepolia' },
+];
+
+/** The CAIP-2 id of a user-added network ("eip155:<decimal chain id>"). */
+export type CustomNetworkId = `eip155:${string}`;
+
+/** What the stored network choice (prefs.testNetwork) may hold: a test profile or a custom network. */
+export type EvmNetworkChoice = TestNetworkId | CustomNetworkId;
+
+let customProfiles: readonly EvmChainProfile[] = [];
+const customListeners = new Set<() => void>();
+
+/** True when `caip2` is the chain id of a built-in profile (mainnet or a test network). */
+export function isBuiltInEvmChain(caip2: string): boolean {
+  return EVM_PROFILES.some((p) => p.caip2 === caip2);
+}
+
+/**
+ * Replaces the custom profiles. Called ONLY by wallet/custom-networks.ts
+ * (hydration and after a successful write). Throws, changing nothing, when
+ * a profile lacks its custom facts, takes a built-in chain id, or repeats a
+ * chain id — the store's own parser refuses those first; this is the last
+ * line of defence.
+ */
+export function setCustomEvmProfiles(profiles: readonly EvmChainProfile[]): void {
+  const seen = new Set<string>();
+  for (const p of profiles) {
+    if (!p.custom) throw new Error(`Not a custom network profile: ${p.caip2}`);
+    if (isBuiltInEvmChain(p.caip2)) throw new Error(`A custom network cannot take a built-in chain id: ${p.caip2}`);
+    if (seen.has(p.caip2)) throw new Error(`Duplicate custom network: ${p.caip2}`);
+    seen.add(p.caip2);
+  }
+  customProfiles = [...profiles];
+  for (const listener of [...customListeners]) {
+    try {
+      listener();
+    } catch {
+      // A listener only refreshes a display; the registry is already updated.
+    }
+  }
+}
+
+/** The networks the user added, in the order they were added. */
+export function customEvmProfiles(): readonly EvmChainProfile[] {
+  return customProfiles;
+}
+
+/** Every EVM profile: the built-in ones (mainnet first), then the user's. */
+export function allEvmProfiles(): readonly EvmChainProfile[] {
+  return [...EVM_PROFILES, ...customProfiles];
+}
+
+/** True when `caip2` names a network the user added (and that is currently registered). */
+export function isCustomNetworkId(caip2: unknown): caip2 is CustomNetworkId {
+  return typeof caip2 === 'string' && customProfiles.some((p) => p.caip2 === caip2);
+}
+
+/** True when `chainIdDecimal` is on the allow-list of public test networks. */
+export function isKnownPublicTestChainId(chainIdDecimal: string): boolean {
+  return KNOWN_PUBLIC_TEST_CHAIN_IDS.some((t) => t.chainId === chainIdDecimal);
+}
+
+/**
+ * True only for a registered custom network that the user marked as a test
+ * network AND whose chain id is on KNOWN_PUBLIC_TEST_CHAIN_IDS (re-checked
+ * here, never trusted from storage).
+ */
+export function isCustomTestNetwork(caip2: string): boolean {
+  const p = customProfiles.find((c) => c.caip2 === caip2);
+  return p?.custom?.testnetRequested === true && isKnownPublicTestChainId(p.chainIdDecimal);
+}
+
+/** Subscribes to changes of the custom profiles. Returns the unsubscribe function. */
+export function subscribeCustomEvmProfiles(listener: () => void): () => void {
+  customListeners.add(listener);
+  return () => {
+    customListeners.delete(listener);
+  };
+}
+
+/**
+ * Settings → Developer note for a custom network: what the wallet does NOT
+ * know about it. Layer-2 fee models are not detected (a built-in profile
+ * says when a network charges a separate layer 1 data fee or folds it into
+ * gas; a custom one is treated like Ethereum), smart-account deployments
+ * are not pre-filled, swaps are not offered, and the explorer path is
+ * assumed.
+ */
+export function customNetworkNote(profile: Pick<EvmChainProfile, 'label' | 'custom'>): string {
+  const explorer = profile.custom?.explorerBase
+    ? ` Explorer links assume the Etherscan-style paths ${profile.custom.explorerBase}/tx/… and /address/…; ` +
+      'the wallet did not check that the explorer uses them.'
+    : ' No block explorer was given, so the wallet shows no explorer links here.';
+  return (
+    `${profile.label} is a network you added. The wallet treats its fees like Ethereum’s: it does not detect ` +
+    'layer-2 fee models, so on a rollup quotes may be refused or underestimate the fee. No smart-account ' +
+    'deployment is pre-filled (paste a factory under Account Abstraction and the wallet checks it on-chain ' +
+    'before saving), swaps are not offered, and tokens start with an empty list.' +
+    explorer
+  );
 }

@@ -496,7 +496,7 @@ export function GuardiansScreen({ navigation }: Props) {
             Not included within two minutes. It may still be included; the Guardians screen reads the chain.
           </Text>
         ) : null}
-        {progress.txHash ? (
+        {progress.txHash && evmChain.explorerTxBase ? (
           <Button
             title="View bundle transaction"
             variant="secondary"

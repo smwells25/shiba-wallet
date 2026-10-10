@@ -1047,7 +1047,7 @@ export function SwapScreen({ navigation }: Props) {
             </Text>
           )
         ) : null}
-        {aaResult.txHash ? (
+        {aaResult.txHash && evmChain.explorerTxBase ? (
           <Button
             title="View on block explorer"
             variant="secondary"

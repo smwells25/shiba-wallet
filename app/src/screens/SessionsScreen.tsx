@@ -1449,7 +1449,7 @@ export function SessionsScreen({ navigation }: Props) {
             Not included within two minutes. It may still be included; the list reads the status from the chain.
           </Text>
         ) : null}
-        {progress.txHash ? (
+        {progress.txHash && evmChain.explorerTxBase ? (
           <Button
             title="View bundle transaction"
             variant="secondary"

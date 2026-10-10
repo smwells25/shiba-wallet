@@ -407,7 +407,7 @@ export function InheritanceScreen({ navigation }: Props) {
             Not included within two minutes. It may still be included; this screen reads the chain.
           </Text>
         ) : null}
-        {progress.txHash ? (
+        {progress.txHash && evmChain.explorerTxBase ? (
           <Button title="View bundle transaction" variant="secondary" onPress={() => void Linking.openURL(`${evmChain.explorerTxBase}${progress.txHash}`)} />
         ) : null}
         {progress.state === 'done' && progress.kind === 'install' ? (

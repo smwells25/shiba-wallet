@@ -1,6 +1,13 @@
 // Explicit .ts extension: this module is loaded directly by Node scripts
 // under type stripping, which resolves relative specifiers literally.
-import { EVM_BASE_SEPOLIA, EVM_MAINNET, EVM_SEPOLIA, EVM_TEST_PROFILES, type EvmChainProfile } from './evm-chain.ts';
+import {
+  EVM_BASE_SEPOLIA,
+  EVM_MAINNET,
+  EVM_SEPOLIA,
+  EVM_TEST_PROFILES,
+  customEvmProfiles,
+  type EvmChainProfile,
+} from './evm-chain.ts';
 
 /**
  * Default network endpoints, as pure data.
@@ -242,10 +249,44 @@ export const TEST_EVM_NETWORKS: readonly NetworkDefault[] = EVM_TEST_PROFILES.ma
   (p) => [SEPOLIA_NETWORK, BASE_SEPOLIA_NETWORK].find((n) => n.chainId === p.caip2) ?? testNetworkDefault(p),
 );
 
+/**
+ * The network entry of a network the user added (feature 33,
+ * wallet/custom-networks.ts), derived from its runtime profile in
+ * ./evm-chain.ts. Its only default candidate is the RPC URL the user saved
+ * (verified with eth_chainId and the head block's age before it was saved,
+ * and probed again with the same checks before each session's first use);
+ * an endpoint override in Settings is stored under the network's own CAIP-2
+ * id like every other chain's. Decimals are 18: the wallet refuses to add a
+ * network whose coin has any other number (every EVM amount, fee and Max in
+ * the app assumes 18).
+ */
+function customNetworkDefault(p: EvmChainProfile): NetworkDefault {
+  return {
+    chainId: p.caip2,
+    label: p.label,
+    kind: 'evm-jsonrpc',
+    defaultUrls: p.defaultRpcUrls,
+    defaultUrl: p.defaultRpcUrls[0] ?? null,
+    decimals: 18,
+    symbol: p.displaySymbol,
+    note: p.testnet
+      ? `${p.label} (a test network you added, chain id ${p.chainIdDecimal}) — balances and sends here are test funds, not real funds.`
+      : `${p.label} (a network you added, chain id ${p.chainIdDecimal}) — treated as a main network: its funds may be real.`,
+  };
+}
+
+/** The network entries of the networks the user added, in the order they were added. */
+export function customEvmNetworks(): NetworkDefault[] {
+  return customEvmProfiles().map(customNetworkDefault);
+}
+
 export function networkDefaultFor(chainId: string): NetworkDefault | undefined {
   const test = TEST_EVM_NETWORKS.find((n) => n.chainId === chainId);
   if (test) return test;
-  return DEFAULT_NETWORKS.find((n) => n.chainId === chainId);
+  const builtIn = DEFAULT_NETWORKS.find((n) => n.chainId === chainId);
+  if (builtIn) return builtIn;
+  const custom = customEvmProfiles().find((p) => p.caip2 === chainId);
+  return custom ? customNetworkDefault(custom) : undefined;
 }
 
 /**
@@ -266,14 +307,18 @@ export interface ActiveNetwork {
 
 /**
  * The EVM network entry for a Developer choice: null / false for mainnet,
- * a test profile's CAIP-2 id for that test network, and true (the value
- * older callers pass, from before the second test network) for Sepolia.
- * An unrecognised string resolves to Sepolia, matching evmProfileFor.
+ * a test profile's CAIP-2 id for that test network, a custom network's
+ * CAIP-2 id for that network (feature 33), and true (the value older
+ * callers pass, from before the second test network) for Sepolia. An
+ * unrecognised string resolves to Sepolia, matching evmProfileFor.
  */
 function evmNetworkFor(selection: boolean | string | null): NetworkDefault | null {
   if (selection === false || selection === null) return null;
   if (selection === true) return SEPOLIA_NETWORK;
-  return TEST_EVM_NETWORKS.find((n) => n.chainId === selection) ?? SEPOLIA_NETWORK;
+  const test = TEST_EVM_NETWORKS.find((n) => n.chainId === selection);
+  if (test) return test;
+  const custom = customEvmProfiles().find((p) => p.caip2 === selection);
+  return custom ? customNetworkDefault(custom) : SEPOLIA_NETWORK;
 }
 
 export function resolveActiveNetworks(selection: boolean | string | null): ActiveNetwork[] {

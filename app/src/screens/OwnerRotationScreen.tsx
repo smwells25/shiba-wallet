@@ -365,7 +365,7 @@ export function OwnerRotationScreen({ navigation }: Props) {
         {o?.state === 'done' && !o.recordCheck.ok ? (
           <WarningBox>The recovery record differs from the chain: {o.recordCheck.problems.join('; ')}</WarningBox>
         ) : null}
-        {progress.receiptTx || (o?.state === 'done' && o.txHash) ? (
+        {evmChain.explorerTxBase && (progress.receiptTx || (o?.state === 'done' && o.txHash)) ? (
           <Button
             title="View bundle transaction"
             variant="secondary"

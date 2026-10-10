@@ -25,12 +25,15 @@ import {
  * preserves the invariant that src/wallet/storage.ts is the only module
  * touching the secure store (which holds only the mnemonic).
  *
- * TEST NETWORKS (phase 4, item 6; phase 10, item 3): the resolvers below
+ * TEST NETWORKS (phase 4, item 6; phase 10, item 3) AND CUSTOM NETWORKS
+ * (feature 33, wallet/custom-networks.ts): the resolvers below
  * are the single place where the app's EVM "slot" ('eip155:1', the id
  * accounts and routes carry) is translated to the ACTIVE EVM network. With
  * a test network chosen in Settings → Developer, the Ethereum slot resolves
- * to that network (Sepolia or Base Sepolia; see resolveActiveNetworks in
- * ./defaults.ts); overrides are keyed by the ACTIVE chain's CAIP-2 id, so a
+ * to that network (a test network or a network the user added; see
+ * resolveActiveNetworks in ./defaults.ts — a custom network's only default
+ * candidate is the RPC URL saved with it, probed with the same identity and
+ * freshness checks as every default); overrides are keyed by the ACTIVE chain's CAIP-2 id, so a
  * custom Sepolia, Base Sepolia or mainnet RPC is stored under its own key
  * and can never bleed into another mode.
  *
@@ -314,16 +317,21 @@ export async function setEndpointOverride(
 /**
  * Removes the override so the chain returns to its verified default. Also
  * the way to remove a stored override that is ignored because it fails the
- * https rule. `options.store` exists for the offline check scripts.
+ * https rule, and the step that deletes a removed custom network's override
+ * (wallet/custom-networks.ts). Only `chainId`'s entry is touched. Returns
+ * true when an override was stored. `options.store` exists for the offline
+ * check scripts.
  */
 export async function resetEndpoint(
   chainId: string,
   options: { store?: KeyValueStore } = {},
-): Promise<void> {
+): Promise<boolean> {
   const store = options.store ?? AsyncStorage;
   const overrides = await loadOverrides(store);
   if (chainId in overrides) {
     delete overrides[chainId];
     await saveOverrides(overrides, store);
+    return true;
   }
+  return false;
 }

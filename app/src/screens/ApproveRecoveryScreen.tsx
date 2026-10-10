@@ -325,7 +325,7 @@ export function ApproveRecoveryScreen({ navigation, route }: Props) {
         {submitted.state === 'timeout' ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>Not included within two minutes; it may still be.</Text>
         ) : null}
-        {submitted.receipt?.txHash ? (
+        {submitted.receipt?.txHash && evmChain.explorerTxBase ? (
           <Button
             title="View bundle transaction"
             variant="secondary"

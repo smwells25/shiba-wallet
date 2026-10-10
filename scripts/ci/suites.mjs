@@ -34,6 +34,11 @@ export const APP_SCRIPTS = {
   'check-accounts.mjs': { kind: 'offline', summary: 'counts' },
   'check-approvals.mjs': { kind: 'offline', summary: 'counts' },
   'check-contacts.mjs': { kind: 'offline', summary: 'counts' },
+  // Phase 17 item 3: custom EVM networks (feature 33): validation and every
+  // refusal, verify-before-save against a fake RPC (chain id, head age, block
+  // time), the strict store, the registry read path, readiness as main or
+  // test network, removal of exactly that chain's data, mutations (fakes only).
+  'check-custom-networks.mjs': { kind: 'offline', summary: 'counts' },
   'check-devmode.mjs': { kind: 'offline', summary: 'counts' },
   'check-failover.mjs': { kind: 'offline', summary: 'counts' },
   // Phase 12 Base Sepolia findings: Home reload after a send, eligibility
