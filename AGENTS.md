@@ -130,7 +130,13 @@ examples/demo.mjs          Offline end-to-end engine demo
   again at the end.
 - Every slice is verified by the CTO in an isolated worktree with the
   offline runner before it is pushed, then recorded here, then CI is
-  checked. The verify worktree must resolve @shiba-wallet/* to ITS OWN
+  checked. When several agents work in the main checkout at once, a
+  slice's commit must stage shared registries (scripts/ci/suites.mjs,
+  readiness ids, check-readiness expectations) from a FILTERED copy that
+  holds only the lines whose files are in that commit; the verify run
+  and the commit must use the same snapshot of the diff (2026-10-10: a
+  registration added by another agent between the verify run and the
+  commit broke CI with "lists scripts that do not exist"). The verify worktree must resolve @shiba-wallet/* to ITS OWN
   packages: its app/node_modules is a real directory of symlinks into
   the main checkout's app/node_modules except @shiba-wallet, whose
   entries point at the worktree's packages (lesson of 2026-10-09: with
