@@ -2607,3 +2607,91 @@ emulator where Expo Go cannot carry a feature.
       build uninstalled, Metro 8082 stopped, 8081 untouched, the emulator
       cold-booted and sitting at the keyguard (PIN 1234 needed; Expo Go
       not open).
+- [x] Item 2 — THE IN-APP BROWSER, PROVEN LIVE (2026-10-10; emulator,
+      Expo Go, Metro worktree at 6f85488 with the engine built inside it
+      and react-native-webview linked, 2,325 modules; WebView
+      113.0.5672.136 / Chrome 113 of May 2023 renders Uniswap fully; no
+      repo files edited; the page's console read through the WebView's
+      debug socket, read-only). Apps screen: "Apps (test networks)",
+      "Apps on Ethereum Sepolia (test network)", the two cards with
+      "Why it is listed", the residuals box ("What this test build cannot
+      yet prevent. On Android, a page opened here can use the camera
+      without asking… Fixing these needs a native build of the wallet."),
+      no URL field. UNISWAP: bar "https://app.uniswap.org", "Not connected
+      · Ethereum Sepolia (test network)", the bridge heuristic line
+      ("…uses the newer message channel…"); the page logged "Detected
+      injected providers: Array(1)" — the provider was present before its
+      scripts ran (B4 held); its picker listed "Shiba Wallet — Detected"
+      (EIP-6963); the sheet "Connection request" with the identity line
+      "Opened in this wallet's browser: the request came from
+      https://app.uniswap.org, as reported by the web view (not a name the
+      site gives itself). This confirms which site asked, not that the
+      site is safe." and nowhere "Verified by WalletConnect"; one prompt
+      "Connect to app.uniswap.org"; bar "Connected as 0x772e…F44F ·
+      Ethereum Sepolia (test network)"; record "eip155:11155111 · 4
+      methods"; the first connect took ~2 min end to end, mostly
+      Uniswap's own backend (401s from its gateway, a 40.6 s
+      "hasMismatch" delegation check across ~23 mainnet chains); a
+      reopened page reconnected silently with 0 prompts. SWAP 0.0001 test
+      ETH → USDC (Uniswap's testnet mode; its own low-balance warning
+      passed): sheet "Transaction request" with the TESTNET badge, "FROM
+      DAPP app.uniswap.org", "SENDING ACCOUNT Account 1", TO
+      0x7E4f…043f3 (the Universal Router), 1306-byte calldata, max fee
+      0.000000147798616134, preview "You send 0.0001 test ETH" / "You
+      receive 5.286847 USDC", risk card "goes to a contract", "Pre-flight
+      simulation passed (eth_call)"; one prompt "Approve transaction for
+      app.uniswap.org"; the hash went back to the page ("Transaction
+      sent"); tx
+      0xddb89eb9fc5d162bce7ca85a1a067642958d9660b228fce2df07c2df122725cd,
+      block 11882561, status 0x1, value 1e14 wei, USDC Transfer 5,286,847
+      base units to Account 1 = the preview to the unit, gas 144,323.
+      SIWE on app.ens.dev ("Verify your wallet" → "Sign in with Wallet"):
+      sheet "Sign in to app.ens.dev", card "Sign-In with Ethereum
+      (EIP-4361)", SITE "app.ens.dev (https assumed — no scheme given)",
+      the account, "Ethereum Sepolia (test network) (chain ID 11155111)",
+      URI https://app.ens.dev, version 1, "No expiry set", "MESSAGE
+      (EXACTLY WHAT IS SIGNED)", NO mismatch gate; one prompt "Sign for
+      app.ens.dev"; the ENS modal closed (the FIRST live SIWE login
+      through the wallet; Uniswap offers none). app.ens.dev's connection
+      sheet listed the 7 requested methods and "CONNECT AS Regular
+      account (EOA) / Smart account (Kernel v3.3)". DISCONNECT from
+      Connections ("Disconnect? End the connection with
+      app.uniswap.org?"; 0 prompts; notice "Connected apps —
+      app.uniswap.org disconnected."); a reopened page showed Connect.
+      LOCK HOLD: with a second swap's sheet pending, 78 s in the
+      background → only "Shiba Wallet is locked…" visible (the compressed
+      accessibility dump listed only the lock texts); Unlock (1 prompt) →
+      the sheet reappeared re-quoted; Reject → nonce unchanged at 15.
+      EXTERNAL LINK (Uniswap → Developers): "Open outside the wallet?
+      uniswap.org is not on this wallet's list of apps… Open it in the
+      phone's own browser instead? The wallet is not connected there."
+      with the full URL; Cancel stayed on the page. MODE CHANGE: Base
+      Sepolia → "Apps on Base Sepolia (test network)", Uniswap "Not
+      connected", the Sepolia connection not served, no prompt; mainnet →
+      Home hides Apps, Settings shows only the test-networks-only card.
+      5 prompts in total, each titled as above. Funds: Account 1 EOA
+      0.00282 → 0.00272 ETH, 30.6 → 35.886847 USDC, nonce 14 → 15;
+      nothing from the dev EOA. FINDINGS (fix slice dispatched): (1) no
+      route keeps a page open while reaching Settings or Connections (the
+      page is the Apps screen's local state; "Manage connections" exists
+      only on the list view), so the in-page chainChanged /
+      accountsChanged([]) paths (notifyContextChanged) cannot be
+      exercised from the UI — steps 6 and 9 checked only what a reopened
+      page sees; (2) the "Connected apps — … disconnected." notice covers
+      the browser bar's Back / Reload / Close until dismissed; (3) the
+      screen listing "In-app browser connections" is titled
+      "WalletConnect" and the Settings blurb says "Open connections"; (4)
+      while locked, a FULL uiautomator dump still contained the bar text
+      and the WebView's virtual nodes ("Connected as 0x772e…", "Sell
+      0.0001 ETH…") although the compressed dump showed only the lock
+      screen — the WebView's accessibility subtree may not honour the
+      lock overlay's no-hide-descendants; TalkBack itself untested; (5)
+      dev only: the "Cannot connect to Expo CLI… Error: undefined" toast
+      once more; (6) the AVD slowed late in the run (~215 MB RAM free).
+      UNVERIFIED: live chainChanged / accountsChanged on an open page;
+      the Permit2 card (an ETH-input swap needs none); B5; cross-origin
+      iframe drops; the native bridge path; TalkBack under the lock; iOS.
+      End state: Home, Ethereum Sepolia, Account 1, light mode, Google
+      IME, no browser connections; Metro at 6f85488; the emulator's
+      screen_off_timeout was left at 1800000 (previous value not
+      recorded).
