@@ -171,7 +171,7 @@ function Root() {
             <Stack.Screen
               name="Connections"
               component={ConnectionsScreen}
-              options={{ title: 'WalletConnect' }}
+              options={{ title: 'Connected apps' }}
             />
             <Stack.Screen name="Contacts" component={ContactsScreen} />
             <Stack.Screen name="Nfts" component={NftsScreen} options={{ title: 'NFTs' }} />

@@ -135,9 +135,27 @@ export function LockGate({ children }: { children: React.ReactNode }) {
           and every element it contains. This wrapper is always rendered
           (locked or not), so locking never changes the element tree above
           the screens and never remounts them.
+
+          While locked the wrapper is ALSO display: 'none'. The two props above
+          only mark the screens "not important for accessibility"; Android
+          still reports such views to a client that asks for them
+          (AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS, "views
+          that are marked as not important for accessibility via …
+          IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS … are reported while
+          querying the window content", developer.android.com), which is what
+          a full uiautomator dump showed under the lock: the in-app browser's
+          bar text and the web view's own nodes. In the installed react-native
+          0.86.3, display: 'none' makes Fabric set the native view to
+          View.INVISIBLE on Android (SurfaceMountingManager.kt updateLayout)
+          and hidden = YES on iOS (UIView+ComponentViewProtocol.mm); Android's
+          ViewGroup lists only VISIBLE children for accessibility
+          (ViewGroup.java addChildrenForAccessibility, AOSP main), so nothing
+          under the lock is reported at all. The views stay mounted — React
+          state, native views and the in-app browser's page are kept, and
+          only hidden.
         */}
         <View
-          style={styles.fill}
+          style={locked ? styles.hiddenWhileLocked : styles.fill}
           importantForAccessibility={locked ? 'no-hide-descendants' : 'auto'}
           accessibilityElementsHidden={locked}
         >
@@ -164,6 +182,10 @@ export function LockGate({ children }: { children: React.ReactNode }) {
 const styles = StyleSheet.create({
   fill: {
     flex: 1,
+  },
+  hiddenWhileLocked: {
+    flex: 1,
+    display: 'none',
   },
   overlay: {
     position: 'absolute',

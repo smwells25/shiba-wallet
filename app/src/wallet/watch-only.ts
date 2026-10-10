@@ -164,7 +164,7 @@ const ROUTE_FEATURES: Record<string, string> = {
   OwnerRotation: 'Changing a smart account owner',
   ApproveRecovery: 'Approving a recovery',
   RecoverAccount: 'Recovering an account',
-  Connections: 'WalletConnect',
+  Connections: 'Connected apps (WalletConnect and the in-app browser)',
   SpendingLimits: 'Spending limits',
   Inheritance: 'Inheritance (demonstration)',
   // The in-app browser (feature 79) connects sites to an account and asks

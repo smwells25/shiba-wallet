@@ -25,7 +25,16 @@
 //    destinations only offered after a confirmation, the first URL checked
 //    before load, the library's Linking branch unreachable;
 //  - source checks: no browser file imports key storage or names signWith;
-//    mutation checks for the origin comparison and the frame rule.
+//    mutation checks for the origin comparison and the frame rule;
+//  - the four findings of the live pass (2026-10-10): a disconnect from the
+//    browser bar's Connection panel and a network change while the page
+//    stays mounted both reach the OPEN page (accountsChanged [] /
+//    chainChanged), with a mutant whose disconnect does not; the lock hold
+//    at the bridge (nothing that needs an approval is answered while
+//    locked; reads still are); the page hidden with display: 'none' under
+//    the lock without unmounting; the "Connected apps" notice drawn below
+//    the bar on the Apps page; the "Connected apps" title and the Settings
+//    blurb naming the real buttons.
 //
 //   export PATH="$HOME/.nvm/versions/node/v24.21.0/bin:$PATH"
 //   node scripts/check-browser.mjs
@@ -66,6 +75,7 @@ import {
   READ_UNAVAILABLE_MESSAGE,
   WC_TO_EIP1193,
   acceptsFrameMessage,
+  browserBarConnection,
   browserTopicFor,
   checkGetLogsFilter,
   checkReadParams,
@@ -815,6 +825,202 @@ async function approveHeadSignature() {
   const b = new BrowserBridgeClient({ getContext: () => ({ address: ACCOUNT_0.address, activeChain: SEPOLIA }), readRpc: async () => ({ result: null }), store: s });
   await b.ready;
   check('the wipe path forgets every browser connection', (await b.forgetAll(), b.connections().length === 0 && (await loadBrowserConnections(s)).length === 0));
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-browser: live-pass findings — the open page hears disconnects and network changes');
+// ---------------------------------------------------------------------------
+/**
+ * A fresh page on Uniswap, connected for ACCOUNT_0 on Sepolia through the
+ * real controller, with its accountsChanged / chainChanged listeners on.
+ */
+async function connectedLivePage() {
+  const live = fakePage({ origin: UNISWAP, nonce: NONCE, chainIdHex: '0xaa36a7', browser });
+  browser.attachPage({ origin: UNISWAP, nonce: NONCE, deliver: live.deliver });
+  live.inject();
+  await settle();
+  live.listen();
+  const connecting = live.request('eth_requestAccounts');
+  await settle();
+  const item = controller.queue[0];
+  controller.begin(item.key);
+  await approveProposal(composite, item.event, ACCOUNT_0.address, SEPOLIA, WC_SUPPORTED_METHODS);
+  controller.refreshSessions();
+  controller.complete(item.key);
+  await connecting;
+  await settle();
+  return live;
+}
+/** What WalletConnectContext.disconnect does with a topic (the Connected apps screen and the bar's panel both call it). */
+async function contextDisconnect(topic) {
+  try { await disconnectWcSession(composite, topic); } catch { /* the context swallows it too */ }
+  controller.refreshSessions();
+}
+const SCREEN_SRC = SCREEN;
+const flat = (text) => text.replace(/\s+/g, ' ');
+{
+  const live = await connectedLivePage();
+  const bar = browserBarConnection(browser, UNISWAP);
+  check('the bar panel sees the open page as connected for Account 1 on Sepolia', bar.kind === 'served' && bar.address === ACCOUNT_0.address && bar.chain === SEPOLIA && bar.topic === TOPIC);
+  const eventsBefore = live.events.length;
+  await contextDisconnect(bar.topic);
+  await settle();
+  const after = live.events.slice(eventsBefore);
+  check('Disconnect from the bar: the OPEN page\'s accountsChanged listener fires with no accounts',
+    after.length === 1 && after[0][0] === 'accountsChanged' && Array.isArray(after[0][1]) && after[0][1].length === 0, JSON.stringify(after));
+  check('…the page stays attached (still live), eth_accounts is [] and the panel shows "none"',
+    browser.page?.nonce === NONCE && JSON.stringify(await live.request('eth_accounts')) === '[]' && browserBarConnection(browser, UNISWAP).kind === 'none');
+  check('…and the "Connected apps" notice names the site', controller.notices[0]?.text === 'app.uniswap.org disconnected.');
+  check('the bar panel\'s Disconnect calls the context\'s disconnect with the page\'s browser topic, after a confirmation',
+    /Alert\.alert\('Disconnect\?', `End the connection with \$\{host\}\?`[\s\S]{0,400}onPress: \(\) => void disconnect\(browserTopicFor\(origin\)\)/.test(SCREEN_SRC) &&
+      /onPress=\{\(\) => confirmDisconnect\(topOrigin\)\}/.test(SCREEN_SRC));
+  const ctxSrc = readFileSync(join(SRC, 'wallet', 'WalletConnectContext.tsx'), 'utf8');
+  check('…and that disconnect is the Connected apps screen\'s path (disconnectWcSession on the composite client, then a refresh)',
+    /const disconnect = useCallback\(\s*async \(topic: string\) => \{[\s\S]{0,300}await disconnectWcSession\(composite, topic\);[\s\S]{0,200}controller\.refreshSessions\(\);/.test(ctxSrc));
+  check('the bar has a Connection button that opens the panel in place (no navigation)',
+    /title="Connection"[\s\S]{0,200}onPress=\{\(\) => setPanelOpen\(\(open\) => !open\)\}/.test(SCREEN_SRC) && /\{panelOpen \? \(/.test(SCREEN_SRC));
+
+  // A network change made in Settings while the page stays mounted below it.
+  const live2 = await connectedLivePage();
+  const mark = live2.events.length;
+  const deliveries = [];
+  const realDeliver = browser.page.deliver;
+  browser.page.deliver = (p) => { deliveries.push(p); realDeliver(p); };
+  ctx.activeChain = BASE_SEPOLIA;
+  browser.notifyContextChanged(); // SiteView's effect on evmChain.caip2 (runs while Settings is on top)
+  await settle();
+  const changed = live2.events.slice(mark);
+  check('a mode change while the page is mounted: chainChanged with the new chain, then accountsChanged []',
+    changed.length === 2 && changed[0][0] === 'chainChanged' && changed[0][1] === '0x14a34' && changed[1][0] === 'accountsChanged' && changed[1][1].length === 0, JSON.stringify(changed));
+  check('…the panel then shows the stored Sepolia connection as not used here', browserBarConnection(browser, UNISWAP).kind === 'elsewhere' && browserBarConnection(browser, UNISWAP).chain === SEPOLIA);
+  browser.notifyContextChanged(); // the focus effect on return
+  await settle();
+  check('…the repeat on return sends nothing more (only differences are sent)', live2.events.length === mark + 2 && deliveries.length === 2);
+  check('…and the page reads the new chain', (await live2.request('eth_chainId')) === '0x14a34');
+  ctx.activeChain = SEPOLIA;
+  browser.notifyContextChanged();
+  await settle();
+  const back = live2.events.slice(mark + 2);
+  check('switching back: chainChanged 0xaa36a7 and the connection is served again',
+    back.length === 2 && back[0][1] === '0xaa36a7' && back[1][0] === 'accountsChanged' && back[1][1][0] === ACCOUNT_0.address && browserBarConnection(browser, UNISWAP).kind === 'served');
+  browser.page.deliver = realDeliver;
+  // Mainnet: the readiness card replaces the page (SiteView unmounts and detaches); nothing reaches it afterwards.
+  ctx.activeChain = MAINNET;
+  check('mainnet: the screen\'s gate is non-null, so the page is closed (the design\'s decline)', readinessGate('dapp-browser', MAINNET) !== null);
+  const beforeMainnet = live2.events.length;
+  browser.detachPage();
+  browser.notifyContextChanged();
+  await settle();
+  check('…a detached page receives nothing', live2.events.length === beforeMainnet);
+  ctx.activeChain = SEPOLIA;
+  check('the screen tells the page on a mode change AND again on focus',
+    /useEffect\(\(\) => \{\s*browser\.notifyContextChanged\(\);\s*\}, \[browser, evmChain\.caip2, activeAccount\?\.index\]\);/.test(SCREEN_SRC) &&
+      /useFocusEffect\(\s*useCallback\(\(\) => \{[\s\S]{0,400}browser\.notifyContextChanged\(\);\s*\}, \[browser, firstDecision\.kind, blocked, nonce, attach\]\),/.test(SCREEN_SRC));
+  check('a page that lost the bridge to another Apps page is attached again and reloaded on focus',
+    /if \(firstDecision\.kind === 'allow' && !blocked && top && browser\.page\?\.nonce !== nonce\) \{\s*attach\(top\);\s*webView\.current\?\.reload\(\);/.test(SCREEN_SRC));
+  check('the panel offers Settings and the Connected apps list by PUSHING them (the page stays mounted below)',
+    SCREEN_SRC.includes("onPress={() => navigation.navigate('Settings')}") && SCREEN_SRC.includes("onPress={() => navigation.navigate('Connections')}"));
+  const routerSrc = readFileSync(join(HERE, '..', 'node_modules', '@react-navigation', 'routers', 'src', 'StackRouter.tsx'), 'utf8');
+  check('React Navigation 7 navigate() reuses only the CURRENT route unless pop is set (installed StackRouter), so it pushes Settings above Apps',
+    /\/\/ If the route matches the current one, then navigate to it\s*if \(action\.payload\.name === currentRoute\.name\) \{\s*route = currentRoute;\s*\} else if \(action\.payload\.pop\) \{/.test(routerSrc));
+  const appSrc = readFileSync(join(HERE, '..', 'App.tsx'), 'utf8');
+  check('no screen freezing is enabled in the app (inactive screens keep running effects)', !/enableFreeze\(|freezeOnBlur\s*[:=]/.test(appSrc) && !/enableFreeze\(|freezeOnBlur\s*[:=]/.test(SCREEN_SRC) && !/enableFreeze\(/.test(readFileSync(join(HERE, '..', 'index.ts'), 'utf8')));
+  check('the panel\'s network sentence says what a switch does to the open page',
+    /export function browserNetworkNote\(chainLabel: string\): string \{/.test(SCREEN_SRC) &&
+      flat(SCREEN_SRC).includes("'another test network the page is told about the new network, and its connection is not used there until ' + 'it connects on that network. Switching to mainnet closes the page, because Apps works on test networks only.'"));
+  await contextDisconnect(TOPIC);
+}
+
+// Mutation: the bridge's disconnect no longer tells the page.
+{
+  const run = async (Client) => {
+    const b = new Client({ getContext: () => ({ address: ACCOUNT_0.address, activeChain: SEPOLIA }), readRpc: async () => ({ result: null }) });
+    b.records.set(UNISWAP, { origin: UNISWAP, address: ACCOUNT_0.address, owner: ACCOUNT_0.address, chain: SEPOLIA, namespaces: { eip155: { methods: ['personal_sign'] } }, approvedAt: 1 });
+    const p = fakePage({ origin: UNISWAP, nonce: NONCE, chainIdHex: '0xaa36a7', browser: b });
+    b.attachPage({ origin: UNISWAP, nonce: NONCE, deliver: p.deliver });
+    p.inject();
+    await settle();
+    p.listen();
+    await b.disconnectSession({ topic: browserTopicFor(UNISWAP), reason: WC_ERRORS.userDisconnected });
+    await settle();
+    return p.events.some(([n, v]) => n === 'accountsChanged' && v.length === 0);
+  };
+  const m = await importMutant('wallet/browser-bridge.ts', "this.emitEvent('session_delete', { id: 0, topic: args.topic });\n    this.notifyContextChanged();", "this.emitEvent('session_delete', { id: 0, topic: args.topic });");
+  check('the real bridge: a disconnect reaches the open page', await run(BrowserBridgeClient));
+  check('mutant caught: a disconnect that does not reach the page', !(await run(m.BrowserBridgeClient)));
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-browser: live-pass findings — the lock, the notice, the titles');
+// ---------------------------------------------------------------------------
+{
+  // The lock hold at the bridge: nothing that needs an approval is answered while locked.
+  const live = await connectedLivePage();
+  const delivered = [];
+  const realDeliver = browser.page.deliver;
+  browser.page.deliver = (p) => { delivered.push(p); realDeliver(p); };
+  controller.setLocked(true);
+  const signing = rejection(live.request('personal_sign', ['0x05', ACCOUNT_0.address]));
+  await settle(20);
+  const signingId = JSON.parse(live.posted.at(-1)).id;
+  check('locked: the signing request is queued, the sheet has no head and nothing can claim it',
+    controller.queue.length === 1 && controller.getSnapshot().head === null && controller.begin(controller.queue[0].key) === null);
+  check('locked: NOTHING is delivered to the page for that request', !delivered.some((p) => p.type === 'response' && p.id === signingId) && delivered.every((p) => p.id !== signingId));
+  const readWhileLocked = await live.request('eth_blockNumber');
+  check('locked: reads and local methods are still answered (the bridge does not consult the lock; they need no approval)', readWhileLocked === '0x99');
+  controller.setLocked(false);
+  const head = controller.getSnapshot().head;
+  check('unlocked: the same request is the head again', head?.key === controller.queue[0]?.key);
+  await controller.decline(head.key, WC_ERRORS.userRejected);
+  const e = await signing;
+  check('…and only an answer given after the unlock reaches the page (4001)', e?.code === 4001);
+  browser.page.deliver = realDeliver;
+  await contextDisconnect(TOPIC);
+
+  // The screen under the lock (source): kept mounted, hidden from everything.
+  const hidesWhileLocked = (src) =>
+    /const \{ locked \} = useAppLock\(\);/.test(src) &&
+    /<View style=\{\[locked \? styles\.hiddenWhileLocked : styles\.fill, \{ backgroundColor: theme\.background \}\]\}>/.test(src) &&
+    /hiddenWhileLocked: \{ flex: 1, display: 'none' \}/.test(src) &&
+    /importantForAccessibility=\{locked \? 'no-hide-descendants' : 'auto'\}\s*accessibilityElementsHidden=\{locked\}\s*style=\{styles\.fill\}/.test(src) &&
+    // Kept mounted: the web view is never rendered conditionally on the lock.
+    !/locked[^\n]*\n[^\n]*<WebView\n/.test(src) && !/locked[^\n]*<WebView\n/.test(src) && (src.match(/<WebView\n/g) ?? []).length === 1;
+  check('BrowserScreen reads the lock state and hides the whole page (display none) while locked, without unmounting the web view', hidesWhileLocked(SCREEN_SRC));
+  const noHide = SCREEN_SRC.replace('locked ? styles.hiddenWhileLocked : styles.fill, { backgroundColor', 'styles.fill, { backgroundColor');
+  check('mutant caught: the lock hide removed from the page', noHide !== SCREEN_SRC && !hidesWhileLocked(noHide));
+  const unmounting = SCREEN_SRC.replace('      ) : (\n        <WebView', '      ) : locked ? null : (\n        <WebView');
+  check('mutant caught: unmounting the web view under the lock (it would withdraw the waiting requests)', unmounting !== SCREEN_SRC && !hidesWhileLocked(unmounting));
+
+  // The notice: inline below the bar on the Apps page, floating elsewhere.
+  const ctxSrc = readFileSync(join(SRC, 'wallet', 'WalletConnectContext.tsx'), 'utf8');
+  const noticeInline = (screen, context) =>
+    /useFocusEffect\(useCallback\(\(\) => claimInlineNotices\(\), \[claimInlineNotices\]\)\);/.test(screen) &&
+    /<ConnectedAppsNotice text=\{visibleNotice\.text\} onDismiss=\{dismissVisibleNotice\} placement="inline" \/>/.test(screen) &&
+    screen.indexOf('placement="inline"') > screen.indexOf('title="Close"') && screen.indexOf('placement="inline"') < screen.indexOf('<WebView\n') &&
+    /\{visibleNotice && inlineNoticeClaims === 0 \? \(\s*<ConnectedAppsNotice text=\{visibleNotice\.text\} onDismiss=\{dismissVisibleNotice\} placement="floating" \/>/.test(context);
+  check('the notice is drawn below the bar on the focused Apps page and floats only when no screen claims it', noticeInline(SCREEN_SRC, ctxSrc));
+  const unclaimed = SCREEN_SRC.replace('useFocusEffect(useCallback(() => claimInlineNotices(), [claimInlineNotices]));', '');
+  check('mutant caught: the Apps page no longer claims the notice (it would float over the bar again)', unclaimed !== SCREEN_SRC && !noticeInline(unclaimed, ctxSrc));
+  const alwaysFloating = ctxSrc.replace('visibleNotice && inlineNoticeClaims === 0 ?', 'visibleNotice ?');
+  check('mutant caught: the floating notice drawn even while claimed', alwaysFloating !== ctxSrc && !noticeInline(SCREEN_SRC, alwaysFloating));
+  check('the floating notice keeps its place on every other screen (absolute, top 56)', /notice: \{\s*position: 'absolute',\s*top: 56,/.test(ctxSrc));
+  check('the claim is released on blur and unmount, at most once', /return \(\) => \{\s*if \(released\) return;\s*released = true;\s*setInlineNoticeClaims\(\(n\) => Math\.max\(0, n - 1\)\);/.test(ctxSrc));
+
+  // Titles and copy.
+  const conn = readFileSync(join(SRC, 'screens', 'ConnectionsScreen.tsx'), 'utf8');
+  check('the Connections screen is titled "Connected apps", set before the first paint',
+    conn.includes("export const CONNECTIONS_SCREEN_TITLE = 'Connected apps';") && /useLayoutEffect\(\(\) => \{\s*navigation\.setOptions\(\{ title: CONNECTIONS_SCREEN_TITLE \}\);\s*\}, \[navigation\]\);/.test(conn));
+  check('its sections keep their own headings: "In-app browser connections" and the WalletConnect ones',
+    conn.includes('>In-app browser connections</Text>') && conn.includes('>Connect a dApp with WalletConnect</Text>') &&
+      conn.includes('>WalletConnect connections</Text>') && conn.includes('>WalletConnect is off</Text>') && !conn.includes('>Active connections</Text>'));
+  const settings = flat(readFileSync(join(SRC, 'screens', 'SettingsScreen.tsx'), 'utf8'));
+  check('the Settings Apps blurb names the real buttons and the screen',
+    settings.includes('Their connections are listed on the Connected apps screen (the &quot;Open connections&quot; button in the WalletConnect section above, or &quot;Manage connections&quot; in Apps), and a site that is open can be disconnected from the Connection button on its browser bar.') &&
+      !settings.includes('listed and disconnected under Open connections'));
+  check('…and those buttons exist: Settings "Open connections" → Connections, Apps "Manage connections" → Connections, the bar\'s "Connection"',
+    /title="Open connections" variant="secondary" onPress=\{\(\) => navigation\.navigate\('Connections'\)\}/.test(settings) &&
+      SCREEN_SRC.includes(`<Button title="Manage connections" variant="secondary" onPress={() => navigation.navigate('Connections')} />`) &&
+      SCREEN_SRC.includes('title="Connection"'));
 }
 
 // ---------------------------------------------------------------------------

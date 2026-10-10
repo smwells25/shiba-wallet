@@ -1778,7 +1778,9 @@ export function SettingsScreen({ navigation, route }: Props) {
         <Text style={[styles.sectionTitle, { color: theme.text }]}>Apps (in-app browser)</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           A short, fixed list of apps that open inside the wallet, on test networks only. They connect through the same
-          approval sheet as WalletConnect, and their connections are listed and disconnected under Open connections.
+          approval sheet as WalletConnect. Their connections are listed on the Connected apps screen (the &quot;Open
+          connections&quot; button in the WalletConnect section above, or &quot;Manage connections&quot; in Apps), and a
+          site that is open can be disconnected from the Connection button on its browser bar.
         </Text>
         <Button title="Open Apps" variant="secondary" onPress={() => navigation.navigate('Apps')} />
       </View>
