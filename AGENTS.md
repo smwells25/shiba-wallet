@@ -124,6 +124,10 @@ examples/demo.mjs          Offline end-to-end engine demo
   secrets only through the ADBKeyboard IME and redact every UI dump;
   never run a Gradle build while driving the AVD (2026-10-10: the
   watchdog killed system_server) — build first, close Gradle, then drive.
+  Since phase 17 item 0 the app blocks screenshots everywhere by default:
+  turn Settings → Privacy → "Hide in the app switcher and block
+  screenshots" OFF at the start of a pass that needs screencap, and ON
+  again at the end.
 - Every slice is verified by the CTO in an isolated worktree with the
   offline runner before it is pushed, then recorded here, then CI is
   checked. The verify worktree must resolve @shiba-wallet/* to ITS OWN
@@ -2878,3 +2882,61 @@ after item 0) and item 2 (App.tsx after item 0) with item 5's research
 alongside; emulator passes after each wave. Subagents on Opus.
 
 ## Phase 17 progress
+- [x] Item 0 — APP-WIDE SCREEN PROTECTION, ON BY DEFAULT (commit 6e1106f;
+      new check-screen-protection 87; offline runner ALL GREEN in the
+      CTO's isolated worktree with only this slice: engine 877, app 6,248
+      across 46 suites, lint 0/0, tsc clean; six mutants caught; not yet
+      on the emulator). FACTS from expo-screen-capture 57.0.4 (file:line
+      in the code comments): src/ScreenCapture.ts keeps a module-level
+      SET of active keys — preventScreenCaptureAsync(key) calls native
+      only for a key not yet held, allowScreenCaptureAsync(key) calls
+      native allow only when the set is then EMPTY (keys are recorded,
+      not counted); usePreventScreenCapture = prevent on mount / allow on
+      unmount with key 'default' (BackupScreen); Android: FLAG_SECURE on
+      the activity window (ScreenCaptureModule.kt:87–93; MissingActivity
+      without one; the flag also blanks the recents preview, and RN
+      0.86.3 copies FLAG_SECURE onto a Modal's dialog when it is created,
+      ReactModalHostView.kt:334–341 — which CORRECTS the earlier
+      DEVICE_BUILDS claim that Modals do not inherit it); iOS: prevent
+      moves the key window's layer into a secure-entry text field's canvas
+      (screenshots blank), a black view covers recording/mirroring,
+      enableAppSwitcherProtectionAsync (iOS-only; Android throws
+      UnavailabilityError) adds a light blur on willResignActive —
+      passed at intensity 1.0; web: prevent throws; iOS Expo Go
+      unverified. DESIGN: app/src/wallet/screen-protection.ts (Node-
+      loadable state machine with the native calls injected; dynamic
+      imports only) holds the distinct key 'app-wide' (the seed keys are
+      'default', 'seed-reveal', 'subscription-key', 'import-private-key',
+      'imported-key-reveal'; the check script scans app/src so nothing
+      else uses 'app-wide'), so a seed screen's release cannot drop it and
+      turning off cannot unprotect an open seed screen; PROTECT FIRST —
+      the first update, before the preference loads, counts as on and a
+      stored "off" then releases (a brief protected moment beats every
+      default user unprotected while loading); native calls serialized,
+      the latest setting wins; a failure → a red status line in Settings,
+      retried on every foreground and whenever Settings shows (a failed
+      module load not cached). PrefsContext screenProtection (default
+      true; a non-boolean stored value reads as on); App.tsx mounts a
+      6-line ScreenProtection component first inside PrefsProvider;
+      Settings "Privacy" section with the switch "Hide in the app
+      switcher and block screenshots", the note "On Android this also
+      blocks screenshots and screen recording of every screen in this
+      wallet, including your Receive QR; copy the address instead. On iOS,
+      screenshots come out blank and the app switcher shows a cover." and
+      "The screens that show or take in your recovery phrase or a private
+      key are always protected, whatever this setting." (the agent's
+      review found that the Import screen and the backup quiz had NO
+      capture key — the CTO gave them 'import-phrase' and 'backup-quiz'
+      in this commit so the sentence is true), status lines "Screen
+      protection is on/off", the two failure sentences with technical
+      detail. DEMO.md and DEVICE_BUILDS.md note that the toggle must be
+      OFF before screenshots or recordings. UNVERIFIED (emulator pass
+      next): the recents thumbnail blank, screencap empty on Home while on
+      and not while off, the seed screens blank while off, modals blank
+      while on; activity recreation (a new window would not get the flag
+      again — the library ignores a repeat prevent with a held key);
+      native alerts and system dialogs not covered; iOS. STALE TEXT to
+      fix with the next owners' slices: readiness.ts W19 wording (~line
+      233) and DEVICE_BUILDS item 8 / N-05 say there is no app-switcher
+      cover. STANDING EMULATOR RULE ADDED: turn Settings → Privacy off at
+      the start of a pass that needs screenshots, and back on at the end.
