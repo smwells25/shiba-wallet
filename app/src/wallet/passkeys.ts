@@ -127,10 +127,21 @@ const STORE_VERSION = 1;
 // User-facing text (one constant per statement, so every surface agrees)
 // ---------------------------------------------------------------------------
 
-export const PASSKEY_GATE_NOTE =
-  'Passkeys need a development build with a configured rpId. Expo Go does not contain the native ' +
-  'passkey module, and the passkey domain (rpId) is still the unconfigured placeholder. The project’s ' +
-  'device-build instructions (the Passkeys section) explain how to set both up.';
+// Two refusals, one per missing piece, so the sentence is true in Expo Go
+// (no native module) and in a development build (module present, domain
+// still the placeholder); a local development build on the emulator showed
+// the old combined sentence claiming "Expo Go does not contain the native
+// passkey module" while the module was compiled in (2026-10-10).
+export const PASSKEY_GATE_NOTE_NO_MODULE =
+  'Passkeys need a development build with a configured rpId. This app was opened in Expo Go, which ' +
+  'does not contain the native passkey module. The project’s device-build instructions (the ' +
+  'Passkeys section) explain how to set both up.';
+export const PASSKEY_GATE_NOTE_NO_RP_ID =
+  'Passkeys need a development build with a configured rpId. This build contains the native passkey ' +
+  'module, but the passkey domain (rpId) is still the unconfigured placeholder. The project’s ' +
+  'device-build instructions (the Passkeys section) explain how to set it up.';
+/** Kept for callers that only need "some gate note": the Expo Go wording. */
+export const PASSKEY_GATE_NOTE = PASSKEY_GATE_NOTE_NO_MODULE;
 
 export const PASSKEY_EXPLANATION =
   'A passkey becomes an ADDITIONAL signer on your smart account, protected by this phone’s ' +
@@ -215,7 +226,7 @@ export function passkeyGate(input: {
   platformSupported: boolean | null;
 }): PasskeyGate {
   if (!input.nativePresent) return { ok: false, kind: 'native-missing', reason: PASSKEY_GATE_NOTE };
-  if (!isConfiguredRpId(input.rpId)) return { ok: false, kind: 'rp-id-unset', reason: PASSKEY_GATE_NOTE };
+  if (!isConfiguredRpId(input.rpId)) return { ok: false, kind: 'rp-id-unset', reason: PASSKEY_GATE_NOTE_NO_RP_ID };
   if (input.platformSupported === false) {
     return {
       ok: false,
