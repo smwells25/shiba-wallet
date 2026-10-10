@@ -49,7 +49,6 @@ export const APP_SCRIPTS = {
   // Phase 17 item 4: transaction notes and the Activity CSV export (feature
   // 87): the note store, the UserOperation-to-transaction key rule, CSV
   // quoting and formula defusal, the export's row set (fakes only).
-  'check-notes.mjs': { kind: 'offline', summary: 'counts' },
   'check-nfts.mjs': { kind: 'offline', summary: 'counts' },
   // Phase 14 item 1: payment requests (EIP-681, BIP-321, the Dogecoin
   // format, Solana Pay): spec examples, refusals, round trips and QR codes.
