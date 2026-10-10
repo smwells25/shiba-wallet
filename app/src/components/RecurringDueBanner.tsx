@@ -37,8 +37,10 @@ export const activeEvmNodeRunner: NodeFailoverRunner = (operation, options) =>
  * not answer is repeated once on the next healthy default (recurring.ts
  * readStatusWithFailover). Before, readSubscriptionStatus turned the failure
  * into an 'unknown' answer, so withEndpoint never saw an error to fail over on.
+ * Exported for the local reminders (NotificationScheduler.tsx), which read
+ * the same status the same way.
  */
-function readStatusNow(record: SessionRecord) {
+export function readStatusNow(record: SessionRecord) {
   return readStatusWithFailover(activeEvmNodeRunner, (node) => readSubscriptionStatus(node, record));
 }
 

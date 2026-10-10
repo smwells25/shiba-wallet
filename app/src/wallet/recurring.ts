@@ -511,6 +511,49 @@ export function recurringDueHeadline(count: number): string | null {
 }
 
 /**
+ * The recurring records of `owner` on `chain` that could pay: set-up
+ * confirmed on-chain ('installed') and the payment key on this phone. The
+ * single definition shared by findDueRecurringPayments and
+ * readRecurringDueStates. Pure; no network, no key.
+ */
+export function recurringCandidates(records: readonly SessionRecord[], chain: string, owner: string): SessionRecord[] {
+  return recurringRecords(records).filter(
+    (r) => r.chain === chain && r.owner.toLowerCase() === owner.toLowerCase() && r.localStatus === 'installed' && r.keyHeld,
+  );
+}
+
+/**
+ * The due state of EVERY candidate (recurringCandidates) of `owner` on
+ * `chain`, not only the due ones: used by the local reminders
+ * (notifications.ts) to schedule the moment the next payment falls due.
+ * READ-ONLY like findDueRecurringPayments (same candidates, same status
+ * reads, no vault, no bundler); a status read that throws gives `due: null`
+ * so the caller can leave an earlier reminder in place instead of guessing.
+ * Nothing is read where session keys are not allowed (mainnet readiness).
+ */
+export async function readRecurringDueStates(args: {
+  chain: string;
+  owner: string;
+  readStatus: (record: SessionRecord) => Promise<SubscriptionStatus>;
+  store?: KeyValueStore;
+  now?: number;
+}): Promise<{ records: SessionRecord[]; states: { record: SessionRecord; due: RecurringDue | null }[] }> {
+  if (!isFeatureAllowed('session-keys', args.chain)) return { records: [], states: [] };
+  const load = args.store ? await loadSessions(args.store) : await loadSessions();
+  const candidates = recurringCandidates(load.records, args.chain, args.owner);
+  const now = args.now ?? Math.floor(Date.now() / 1000);
+  const states: { record: SessionRecord; due: RecurringDue | null }[] = [];
+  for (const record of candidates) {
+    try {
+      states.push({ record, due: recurringDueState(record, await args.readStatus(record), now) });
+    } catch {
+      states.push({ record, due: null });
+    }
+  }
+  return { records: load.records, states };
+}
+
+/**
  * The foreground check: which recurring payments of `owner` on `chain` are
  * due now. READ-ONLY by construction: it loads the public session list,
  * keeps the recurring records that could pay (set-up confirmed, key on this
@@ -529,9 +572,7 @@ export async function findDueRecurringPayments(args: {
 }): Promise<{ due: { record: SessionRecord; due: Extract<RecurringDue, { kind: 'due' }> }[]; checked: number }> {
   if (!isFeatureAllowed('session-keys', args.chain)) return { due: [], checked: 0 };
   const load = args.store ? await loadSessions(args.store) : await loadSessions();
-  const candidates = recurringRecords(load.records).filter(
-    (r) => r.chain === args.chain && r.owner.toLowerCase() === args.owner.toLowerCase() && r.localStatus === 'installed' && r.keyHeld,
-  );
+  const candidates = recurringCandidates(load.records, args.chain, args.owner);
   const now = args.now ?? Math.floor(Date.now() / 1000);
   const due: { record: SessionRecord; due: Extract<RecurringDue, { kind: 'due' }> }[] = [];
   for (const record of candidates) {

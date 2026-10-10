@@ -407,6 +407,11 @@ export function HomeScreen({ navigation }: Props) {
           evmChain.testnet
             ? cardLink('apps', 'Apps, the in-app browser', 'Apps', () => navigation.navigate('Apps'))
             : null,
+          // Multi-signature accounts (feature 24): test networks only,
+          // enforced by the readiness row `multisig`.
+          evmChain.testnet
+            ? cardLink('multisig', 'Multi-signature accounts', 'Multisig', () => navigation.navigate('Multisig'))
+            : null,
           passkey.eligible
             ? cardLink(
                 'passkey',

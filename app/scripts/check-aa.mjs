@@ -2259,5 +2259,28 @@ await (async () => {
     (e1?.message ?? '').includes(OLD_SENTENCE) && !(e1?.message ?? '').startsWith('The bundler refused to estimate'), e1?.message);
 })();
 
+// ---------------------------------------------------------------------------
+// Phase 17 item 1 pins: the multi-signature account type changes nothing for
+// the existing types, and is refused wherever it does not belong (the full
+// multisig checks are in check-multisig.mjs).
+// ---------------------------------------------------------------------------
+await (async () => {
+  const aa = await import('../src/wallet/aa.ts');
+  check('pin: aaSenderLabel unchanged for the existing types',
+    aa.aaSenderLabel({}) === 'From smart account' && aa.aaSenderLabel({ eip7702: { upgrade: false, delegate: '0x' } }) === 'From (your own address)' &&
+      aa.aaSenderLabel({ recovered: true }) === 'From recovered smart account (not found from your recovery phrase alone)' &&
+      aa.aaSenderLabel({ accountType: 'kernel-v3.3' }) === 'From smart account');
+  check('pin: aaSenderLabel names the multi-signature sender', aa.aaSenderLabel({ accountType: 'kernel-multisig' }) === 'From multi-signature account (co-signers approved)');
+  check('pin: message signing stays Kernel-only (never the multisig)', aa.aaAccountTypeSignsMessages('kernel-v3.3') && aa.aaAccountTypeSignsMessages('kernel-7702') && !aa.aaAccountTypeSignsMessages('simple') && !aa.aaAccountTypeSignsMessages('kernel-multisig'));
+  check('pin: AA_ACCOUNT_TYPES (the Settings choices) does not offer the multisig', aa.AA_ACCOUNT_TYPES.join() === 'simple,kernel-v3.3');
+  let refused = null;
+  try {
+    aa.createAaClient({ nodeUrl: 'https://node.example', bundlerUrl: 'https://bundler.example', factory: '0x' + '55'.repeat(20), accountType: 'kernel-multisig', transportFor: () => async () => '0x' });
+  } catch (e) {
+    refused = e;
+  }
+  check('pin: createAaClient refuses the multisig type (only createMultisigAaClient builds it)', refused instanceof Error && refused.message.includes('createMultisigAaClient'));
+})();
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

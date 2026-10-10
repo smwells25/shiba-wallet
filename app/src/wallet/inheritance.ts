@@ -444,6 +444,27 @@ async function writeScanState(chain: string, account: string, state: TakeoverSca
   await store.setItem(INHERITANCE_STORE_KEY, JSON.stringify({ version: STORE_VERSION, entries }));
 }
 
+/**
+ * Every takeover approval the "Check for takeover attempts" scan has found
+ * and stored, across all accounts and networks (read-only; the scan's own
+ * bookkeeping under INHERITANCE_STORE_KEY). Used by the local alerts
+ * (notifications.ts) to tell, once per proposal, that a recovery was
+ * started. Unreadable entries are skipped, as getTakeoverScanState does.
+ */
+export async function listFoundTakeoverApprovals(
+  store: KeyValueStore = AsyncStorage,
+): Promise<{ chain: string; account: string; proposalHash: string }[]> {
+  const out: { chain: string; account: string; proposalHash: string }[] = [];
+  for (const [key, value] of Object.entries(await readScanMap(store))) {
+    const split = key.lastIndexOf('|');
+    if (split <= 0) continue;
+    const state = reviveScanState(value);
+    if (!state) continue;
+    for (const f of state.found) out.push({ chain: key.slice(0, split), account: key.slice(split + 1), proposalHash: f.proposalHash });
+  }
+  return out;
+}
+
 /** Forgets the scan bookkeeping (after the heirs are removed; a new set starts its own scan). */
 export async function clearTakeoverScanState(chain: string, account: string, store: KeyValueStore = AsyncStorage): Promise<void> {
   await writeScanState(chain, account, null, store);

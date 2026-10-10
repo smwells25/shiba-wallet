@@ -167,6 +167,9 @@ const ROUTE_FEATURES: Record<string, string> = {
   Connections: 'Connected apps (WalletConnect and the in-app browser)',
   SpendingLimits: 'Spending limits',
   Inheritance: 'Inheritance (demonstration)',
+  // Multi-signature accounts (phase 17 item 1): a watch-only address is not
+  // a signer, so it can neither create nor approve nor submit.
+  Multisig: 'Multi-signature accounts',
   // The in-app browser (feature 79) connects sites to an account and asks
   // it to sign, so it stays OFF the allow list above.
   Apps: 'The in-app browser (Apps)',
@@ -198,11 +201,54 @@ export const WATCH_ONLY_WC_REFUSAL =
  * refuse proposals.
  */
 export function walletConnectAddressFor(
-  activeAccount: { watchOnly: boolean } | null,
+  activeAccount: { watchOnly: boolean; multisig?: boolean } | null,
   evmAddress: string | null,
 ): string | null {
-  if (!activeAccount || activeAccount.watchOnly) return null;
+  // A multi-signature account (phase 17 item 1) is never offered to apps:
+  // apps ask for message signatures, which it cannot give honestly
+  // (MULTISIG_ERC1271_REFUSAL). `multisig` is optional so callers that do
+  // not know the kind yet keep their behaviour.
+  if (!activeAccount || activeAccount.watchOnly || activeAccount.multisig === true) return null;
   return evmAddress;
+}
+
+// ---------------------------------------------------------------------------
+// Which screens a multi-signature account may open (feature 24)
+// ---------------------------------------------------------------------------
+
+/**
+ * Routes that work while a multi-signature account is the ACTIVE account
+ * (once WalletContext lists multisig accounts; see the phase 17 item 1
+ * report): read-only screens by address, the wallet's own management, and
+ * the Multisig screen, where its operations are built, approved and
+ * submitted. Everything else — Send and Swap (which would sign with one
+ * key), WalletConnect and the in-app browser (message signatures), session
+ * keys, guardians, inheritance, passkeys, the EIP-7702 upgrade, owner
+ * changes, proof of ownership and spending limits — is refused, and so is
+ * any route added later (an allow list on purpose).
+ */
+export const MULTISIG_ALLOWED_ROUTES: readonly string[] = [
+  'Home',
+  'Activity',
+  'Nfts',
+  'NftDetail',
+  'Tokens',
+  'Settings',
+  'Contacts',
+  'ImportKey',
+  'Receive',
+  'Multisig',
+];
+
+/** The refusal for opening `routeName` while a multisig is active, or null when allowed. */
+export function multisigRouteRefusal(routeName: string): string | null {
+  if (MULTISIG_ALLOWED_ROUTES.includes(routeName)) return null;
+  const feature = ROUTE_FEATURES[routeName] ?? 'This screen';
+  return (
+    `${feature} is not available for a multi-signature account: no single key in this wallet can sign for it. ` +
+    'Build its operations on the Multisig screen, where the co-signers approve them, or switch to one of your ' +
+    'own accounts.'
+  );
 }
 
 // ---------------------------------------------------------------------------

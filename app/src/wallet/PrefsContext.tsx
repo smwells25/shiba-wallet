@@ -35,6 +35,8 @@ interface PrefsContextValue {
    * app whatever this says.
    */
   screenProtection: boolean;
+  /** Local reminders (default off; wallet/notifications.ts). */
+  notifications: boolean;
   /**
    * The active EVM chain profile — THE config source screens use for
    * chain-id verification, explorer links, badges and AA prefill
@@ -49,6 +51,7 @@ interface PrefsContextValue {
   setAutoLockMs: (ms: number | null) => Promise<void>;
   setShowFiat: (on: boolean) => Promise<void>;
   setScreenProtection: (on: boolean) => Promise<void>;
+  setNotifications: (on: boolean) => Promise<void>;
 }
 
 const PrefsContext = createContext<PrefsContextValue | null>(null);
@@ -91,6 +94,7 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
       autoLockMs: prefs.autoLockMs,
       showFiat: prefs.showFiat,
       screenProtection: prefs.screenProtection,
+      notifications: prefs.notifications,
       evmChain: evmProfileFor(prefs.testNetwork),
       setSepolia: (on) => patch({ sepolia: on }),
       setTestNetwork: (network) => patch({ testNetwork: network }),
@@ -98,6 +102,7 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
       setAutoLockMs: (ms) => patch({ autoLockMs: ms }),
       setShowFiat: (on) => patch({ showFiat: on }),
       setScreenProtection: (on) => patch({ screenProtection: on }),
+      setNotifications: (on) => patch({ notifications: on }),
     }),
     [ready, prefs, patch],
   );

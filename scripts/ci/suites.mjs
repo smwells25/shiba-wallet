@@ -49,7 +49,16 @@ export const APP_SCRIPTS = {
   // Phase 17 item 4: transaction notes and the Activity CSV export (feature
   // 87): the note store, the UserOperation-to-transaction key rule, CSV
   // quoting and formula defusal, the export's row set (fakes only).
+  'check-notes.mjs': { kind: 'offline', summary: 'counts' },
+  // Phase 17 item 1: multi-signature accounts in the app (feature 24): ids,
+  // records, request / approval round trip, the submit pipeline recovered by
+  // ethers, gate order, refusals, mainnet gating, mutations (fakes only).
+  'check-multisig.mjs': { kind: 'offline', summary: 'counts' },
   'check-nfts.mjs': { kind: 'offline', summary: 'counts' },
+  // Phase 17 item 2: local reminders (the preference, permission once, the
+  // lock-screen content rule, stable identifiers, cancel on revoke / complete
+  // / off / wipe, takeover alerts once, the import rule; native layer faked).
+  'check-notifications.mjs': { kind: 'offline', summary: 'counts' },
   // Phase 14 item 1: payment requests (EIP-681, BIP-321, the Dogecoin
   // format, Solana Pay): spec examples, refusals, round trips and QR codes.
   'check-payment-request.mjs': { kind: 'offline', summary: 'counts' },
@@ -64,7 +73,6 @@ export const APP_SCRIPTS = {
   // Phase 17 item 0: app-wide screen protection (the preference, the state
   // machine over a fake of expo-screen-capture's key handling, the copy).
   'check-screen-protection.mjs': { kind: 'offline', summary: 'counts' },
-  'check-notes.mjs': { kind: 'offline', summary: 'counts' },
   'check-settings-protection.mjs': { kind: 'offline', summary: 'counts' },
   'check-siwe.mjs': { kind: 'offline', summary: 'counts' },
   'check-spending-policy.mjs': { kind: 'offline', summary: 'counts' },

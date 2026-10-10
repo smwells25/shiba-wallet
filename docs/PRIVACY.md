@@ -169,6 +169,35 @@ or your Google account's password manager). Whether those services copy
 the passkey to your other devices or your cloud account is decided by the
 platform and your settings, not by Shiba Wallet; we have not verified it.
 
+### 2.8 Local reminders (off by default; nothing leaves your phone)
+
+If you turn on Settings → Privacy → Notifications ("Remind me when
+something is due"), the wallet asks your phone to show a reminder when
+one of your recurring payments falls due, and an alert when the takeover
+check on the Inheritance screen finds that a recovery of one of your
+accounts was started. These are local notifications: the wallet schedules
+them on the phone itself, and the phone's own notification system shows
+them. There is no push service and no account, and no notification
+server (Expo's, Apple's or Google's) is contacted for them. The wallet
+never asks for a push token: it loads only the scheduling parts of the
+expo-notifications library, not the part that registers a device with
+Expo's push service (checked in the installed library's source,
+version 57.0.22). A development build of the app does include Google's
+Firebase Cloud Messaging library because expo-notifications links it, but
+the app ships no Firebase configuration, so Firebase is not set up and,
+as far as we know, does not contact Google; this has not been confirmed
+on a device.
+
+A notification can appear on the lock screen, so it says only what kind
+of event happened ("A recurring payment is due", "Someone started a
+recovery of one of your accounts"). It never contains an amount, an
+address, a name or a payee. The scheduled reminders are stored by the
+operating system in the app's own storage until they fire or are
+cancelled; their identifiers are short hashes, not addresses. Turning the
+setting off, or wiping the wallet, cancels every reminder the wallet
+scheduled. Android asks for permission to show notifications the first
+time you turn this on.
+
 ---
 
 ## 3. What is stored on your phone

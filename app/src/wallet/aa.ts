@@ -8,12 +8,15 @@ import {
   NodeClient,
   SmartAccountClient,
   KERNEL_V3_3_7702_DELEGATE,
+  KERNEL_MULTISIG_VALIDATOR,
+  MULTISIG_ERC1271_REFUSAL,
   PERMIT_DEADLINE_MAX,
   TokenGasChargeAboveLimitError,
   createCirclePaymasterTransport,
   createErc7677TokenPaymasterTransport,
   createKernel7702AccountSpec,
   createKernelAccountSpec,
+  createKernelMultisigSpec,
   createSimpleAccountSpec,
   decodeUint256,
   kernelRecoveredAccountSpec,
@@ -31,6 +34,8 @@ import {
   withDepositTopUpHeadroom,
   type Call,
   type JsonRpcTransport,
+  type MultisigApproval,
+  type MultisigConfig,
   type PermitRequest,
   type SignedEip7702Authorization,
   type SmartAccountSignature,
@@ -42,7 +47,7 @@ import {
 import { EVM_CHAIN_ID, validateRecipient } from './send.ts';
 import { formatUnits } from './balances.ts';
 import type { KeyValueStore } from './tokens.ts';
-import { smartAccountSaltFor } from './account-ids.ts';
+import { isMultisigAccountId, smartAccountSaltFor } from './account-ids.ts';
 import { assertSecureEndpointUrl } from '../config/endpoint-url.ts';
 import { assertWalletDelegate, invalidateAccountDelegation } from './delegation.ts';
 import {
@@ -131,9 +136,14 @@ export type AaFactoryAccountType = 'simple' | 'kernel-v3.3';
 
 /**
  * Every smart-account type a bundle can carry: the per-chain factory types,
- * plus 'kernel-7702' for an owner upgraded through the EIP-7702 flow.
+ * plus 'kernel-7702' for an owner upgraded through the EIP-7702 flow, plus
+ * 'kernel-multisig' (feature 24, phase 17 item 1) for a k-of-n account built
+ * only by createMultisigAaClient — never from the per-chain configuration,
+ * so WalletConnect, the in-app browser, session keys, guardians, passkeys and
+ * every other path that builds its bundle with createAaClientFromConfig can
+ * never produce one.
  */
-export type AaAccountType = AaFactoryAccountType | 'kernel-7702';
+export type AaAccountType = AaFactoryAccountType | 'kernel-7702' | 'kernel-multisig';
 
 /** The per-chain choices offered in Settings (kernel-7702 is per account, not here). */
 export const AA_ACCOUNT_TYPES: readonly AaFactoryAccountType[] = ['simple', 'kernel-v3.3'];
@@ -141,10 +151,17 @@ export const AA_ACCOUNT_TYPES: readonly AaFactoryAccountType[] = ['simple', 'ker
 /** Plain names for the account types (Settings, confirm screens, WC sheet). */
 export function aaAccountTypeLabel(type: AaAccountType): string {
   if (type === 'kernel-7702') return 'Kernel v3.3 via EIP-7702 (your own address)';
+  if (type === 'kernel-multisig') return 'Kernel v3.3 multi-signature account (transactions only)';
   return type === 'kernel-v3.3' ? 'Kernel v3.3 (ERC-7579)' : 'SimpleAccount (v0.7 sample)';
 }
 
-/** True when the account type can sign messages for dApps (ERC-1271). */
+/**
+ * True when the account type can sign messages for dApps (ERC-1271). False
+ * for 'kernel-multisig' on purpose: the deployed weighted validator accepts
+ * a message signature from fewer co-signers than an operation needs
+ * (docs/MULTISIG.md section 4), so the wallet never signs messages for a
+ * multi-signature account (MULTISIG_ERC1271_REFUSAL).
+ */
 export function aaAccountTypeSignsMessages(type: AaAccountType): boolean {
   return type === 'kernel-v3.3' || type === 'kernel-7702';
 }
@@ -497,6 +514,7 @@ export function hasCompleteAaSettings(config: AaChainConfig, owner?: string | nu
 /** The readiness features (config/readiness.ts) a smart-account type relies on. */
 export function aaTypeFeatures(type: AaAccountType): FeatureId[] {
   if (type === 'simple') return ['simple-account'];
+  if (type === 'kernel-multisig') return ['multisig', 'kernel-smart-account'];
   if (type === 'kernel-7702') return ['kernel-smart-account', 'eip7702-upgrade'];
   return ['kernel-smart-account'];
 }
@@ -1660,6 +1678,13 @@ export interface AaClientBundle {
    * only the check scripts do, to avoid real waits).
    */
   estimateRetries?: { attempts: number; delayMs: number };
+  /**
+   * 'kernel-multisig' only (createMultisigAaClient): the multi-signature
+   * account, its signer set, its CREATE2 index and the local submitter (one
+   * of the signers, this wallet's account). The spec carries the co-signer
+   * approvals it was built with.
+   */
+  multisig?: { account: string; config: MultisigConfig; index: bigint; submitter: string };
 }
 
 /**
@@ -1742,6 +1767,9 @@ export function createAaClient(options: {
   /** Impossible-estimate retries; defaults to AA_ESTIMATE_RETRIES (check scripts pass a no-wait policy). */
   estimateRetries?: { attempts: number; delayMs: number };
 }): AaClientBundle {
+  if (options.accountType === 'kernel-multisig') {
+    throw new Error('A multi-signature bundle is built only by createMultisigAaClient.');
+  }
   if (options.accountType === 'kernel-7702') return createKernel7702Bundle(options);
   const estimateRetries = options.estimateRetries ?? AA_ESTIMATE_RETRIES;
   const transportFor = options.transportFor ?? httpTransport;
@@ -1938,6 +1966,12 @@ export function createAaClientFromConfig(
     transportFor?: TransportFactory;
   },
 ): AaClientBundle {
+  // A multi-signature account has no owner key and no per-chain
+  // configuration of its own: every path that builds its bundle here
+  // (WalletConnect and the in-app browser smart-account connections,
+  // session keys, guardians, inheritance, passkeys, spending, proof of
+  // ownership) refuses it before any request.
+  if (isMultisigAccountId(options.accountIndex)) throw new Error(MULTISIG_CONFIG_BUNDLE_REFUSAL);
   if (isEip7702Owner(config, options.ownerAddress)) {
     if (!config.bundlerUrl) {
       throw new Error('No bundler is configured for this network (Settings → Account Abstraction).');
@@ -2003,6 +2037,109 @@ export function createAaClientFromConfig(
       : {}),
     ...(options.transportFor ? { transportFor: options.transportFor } : {}),
   });
+}
+
+/**
+ * Refusal of createAaClientFromConfig for a multi-signature account id. Its
+ * operations go through the Multisig screen only (createMultisigAaClient), so
+ * it is never offered to WalletConnect or the in-app browser as a session
+ * account and never gets session keys, guardians, inheritance or a passkey.
+ */
+export const MULTISIG_CONFIG_BUNDLE_REFUSAL =
+  'A multi-signature account is not used for this. Its operations are approved by its co-signers and ' +
+  'submitted from the Multisig screen; it is never connected to apps, and session keys, guardians, ' +
+  'inheritance and passkeys are not offered for it. Nothing was signed.';
+
+/**
+ * Builds the SmartAccountClient stack for a multi-signature account (feature
+ * 24, phase 17 item 1): the engine's createKernelMultisigSpec (a Kernel v3.3
+ * account whose ROOT validator is the deployed WeightedECDSAValidator,
+ * packages/chains-evm/src/kernel-multisig.ts) with this wallet's account as
+ * the submitter and the co-signer approvals collected off-device. The
+ * Kernel deployment addresses are the engine's pinned KERNEL_V3_3 values
+ * (the same the Settings editor pre-fills) unless the record names others.
+ *
+ * Self-paid only: no ERC-7677 paymaster and no token fee is attached,
+ * because co-signers approve only the calls and the nonce, and the wallet
+ * keeps the fee in the one form the submitter's confirm screen shows (the
+ * account's own balance and EntryPoint deposit). Everything after this —
+ * prepareAaCalls, checkAaQuoteBeforeApproval, sendAa, waitForAaReceipt —
+ * is the ordinary smart-account path; the spec re-verifies every approval
+ * against the final operation when it signs.
+ *
+ * Mainnet readiness: refused before any request unless both
+ * 'kernel-smart-account' and 'multisig' are allowed on the chain.
+ */
+export function createMultisigAaClient(options: {
+  nodeUrl: string;
+  bundlerUrl: string;
+  chainId: bigint;
+  /** The multisig's account id (multisig range of ./account-ids.ts). */
+  accountId: number;
+  /** The multisig account address the record holds (checked against the spec's prediction). */
+  account: string;
+  config: MultisigConfig;
+  /** CREATE2 index of the account (the record's). */
+  index: bigint;
+  /** This wallet's signer address; must be one of the configured signers. */
+  submitter: string;
+  approvals: readonly MultisigApproval[];
+  kernel?: { factory?: string; implementation?: string; metaFactory?: string | null; weightedValidator?: string };
+  transportFor?: TransportFactory;
+  estimateRetries?: { attempts: number; delayMs: number };
+}): AaClientBundle {
+  const caip2 = eip155Caip2(options.chainId);
+  assertFeatureAllowed('multisig', caip2);
+  assertFeatureAllowed('kernel-smart-account', caip2);
+  if (!isMultisigAccountId(options.accountId)) {
+    throw new Error(`Account ${String(options.accountId)} is not a multi-signature account.`);
+  }
+  const estimateRetries = options.estimateRetries ?? AA_ESTIMATE_RETRIES;
+  const transportFor = options.transportFor ?? httpTransport;
+  const node = transportFor(options.nodeUrl);
+  const bundler = transportFor(options.bundlerUrl);
+  const factory = options.kernel?.factory ?? KERNEL_V3_3.factory;
+  const implementation = options.kernel?.implementation ?? KERNEL_V3_3.implementation;
+  const metaFactory = options.kernel?.metaFactory === undefined ? KERNEL_V3_3.metaFactory : options.kernel.metaFactory;
+  const weightedValidator = options.kernel?.weightedValidator ?? KERNEL_MULTISIG_VALIDATOR;
+  const spec = createKernelMultisigSpec({
+    node,
+    config: options.config,
+    submitter: options.submitter,
+    approvals: [...options.approvals],
+    index: options.index,
+    factory,
+    implementation,
+    metaFactory,
+    weightedValidator,
+  });
+  const client = new SmartAccountClient({
+    chainId: options.chainId,
+    entryPoint: ENTRYPOINT_V07,
+    bundler,
+    node,
+    spec,
+    depositTopUpVerificationGas: AA_DEPOSIT_TOPUP_VERIFICATION_GAS,
+    estimateRetries,
+  });
+  return {
+    client,
+    spec,
+    node,
+    bundler,
+    chainId: options.chainId,
+    sponsored: false,
+    estimateRetries,
+    accountType: 'kernel-multisig',
+    factory,
+    accountIndex: options.accountId,
+    multisig: {
+      account: toChecksumAddress(toBytes(options.account.toLowerCase())),
+      config: options.config,
+      index: options.index,
+      submitter: options.submitter,
+    },
+  };
 }
 
 /**
@@ -3280,7 +3417,10 @@ export function aaRiskWarningTarget(
 }
 
 /** The confirm-screen label of the smart-account sender row. */
-export function aaSenderLabel(quote: Pick<AaSendQuote, 'eip7702' | 'recovered'>): string {
+export function aaSenderLabel(
+  quote: Pick<AaSendQuote, 'eip7702' | 'recovered'> & { accountType?: AaAccountType },
+): string {
+  if (quote.accountType === 'kernel-multisig') return 'From multi-signature account (co-signers approved)';
   if (quote.eip7702) return 'From (your own address)';
   if (quote.recovered) return 'From recovered smart account (not found from your recovery phrase alone)';
   return 'From smart account';
@@ -3697,6 +3837,15 @@ export async function sendAa(
   if (quote.passkey) {
     throw new Error('This operation was prepared for the passkey signer. Nothing was signed; review it again.');
   }
+  // Multi-signature accounts (phase 17 item 1): only where the readiness
+  // switchboard allows them (test networks), and only for a quote made for
+  // the same multisig bundle type.
+  if (bundle.accountType === 'kernel-multisig' || quote.accountType === 'kernel-multisig') {
+    assertFeatureAllowed('multisig', eip155Caip2(bundle.chainId));
+    if (bundle.accountType !== quote.accountType || !bundle.multisig) {
+      throw new Error('This operation was prepared for another account type. Nothing was signed.');
+    }
+  }
   // USDC fee (phase 13 item 2): only for the account type it is offered for,
   // and only where the readiness switchboard allows it (test networks).
   if (quote.tokenGas) {
@@ -3772,6 +3921,10 @@ export async function signHashAsSmartAccount(
   hash: Uint8Array,
   expectedAccount: string,
 ): Promise<SmartAccountSignature> {
+  // A multi-signature account never signs messages (docs/MULTISIG.md
+  // section 4): the deployed validator would accept fewer co-signers for a
+  // message than for an operation. Refused first, before any request.
+  if (bundle.accountType === 'kernel-multisig' || bundle.multisig) throw new Error(MULTISIG_ERC1271_REFUSAL);
   if (!bundle.spec.signErc1271) {
     throw new Error(
       `${aaAccountTypeLabel(bundle.accountType)} has no ERC-1271 support, so it cannot sign ` +

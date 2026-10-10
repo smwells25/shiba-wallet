@@ -101,7 +101,7 @@ console.log('check-readiness: table integrity');
 const EXPECTED_IDS = [
   'eoa-send', 'tokens', 'nft', 'swap', 'walletconnect', 'dogecoin-send', 'simple-account',
   'kernel-smart-account', 'eip7702-upgrade', 'session-keys', 'passkeys', 'guardians',
-  'owner-rotation', 'paymaster', 'token-gas', 'imported-key', 'inheritance', 'dapp-browser',
+  'owner-rotation', 'paymaster', 'token-gas', 'imported-key', 'inheritance', 'dapp-browser', 'multisig',
 ];
 const ids = FEATURE_READINESS.map((f) => f.id);
 check('every expected feature id is present exactly once', EXPECTED_IDS.every((id) => ids.filter((x) => x === id).length === 1) && ids.length === EXPECTED_IDS.length, ids.join());
@@ -192,7 +192,7 @@ check('walletconnect names W11 and W12 (permit decoding, dApp identity)', ['W11'
       /tested offline/.test(wc) && /live app over the WalletConnect relay/.test(wc) && /not yet cleared for real funds/.test(wc), wc);
 }
 // Every enforced feature has a gate in the app modules (static check).
-const gateSources = ['aa.ts', 'delegation.ts', 'sessions.ts', 'passkeys.ts', 'recovery.ts', 'token-gas.ts', 'inheritance.ts', 'browser-bridge.ts']
+const gateSources = ['aa.ts', 'delegation.ts', 'sessions.ts', 'passkeys.ts', 'recovery.ts', 'token-gas.ts', 'inheritance.ts', 'browser-bridge.ts', 'multisig.ts']
   .map((f) => readFileSync(join(HERE, '..', 'src', 'wallet', f), 'utf8'))
   .join('\n');
 for (const f of FEATURE_READINESS.filter((x) => x.enforced)) {
@@ -225,7 +225,16 @@ check('readinessGate: null where allowed, entry + hint where not', readinessGate
 check('eip155Caip2 formats bigints and numbers', eip155Caip2(11155111n) === SEPOLIA && eip155Caip2(1) === MAINNET);
 check('featureReadiness rejects an unknown id', (await caught(() => featureReadiness('nope'))) instanceof Error);
 check('no developer override exists in the module', !/override/i.test(Object.keys(await import('../src/config/readiness.ts')).join()));
-check('aaTypeFeatures maps every smart-account type', aaTypeFeatures('simple').join() === 'simple-account' && aaTypeFeatures('kernel-v3.3').join() === 'kernel-smart-account' && aaTypeFeatures('kernel-7702').join() === 'kernel-smart-account,eip7702-upgrade');
+check('aaTypeFeatures maps every smart-account type', aaTypeFeatures('simple').join() === 'simple-account' && aaTypeFeatures('kernel-v3.3').join() === 'kernel-smart-account' && aaTypeFeatures('kernel-7702').join() === 'kernel-smart-account,eip7702-upgrade' && aaTypeFeatures('kernel-multisig').join() === 'multisig,kernel-smart-account');
+// Phase 17 item 1: multi-signature accounts are a Kernel feature on the
+// unaudited weighted module, enforced test-networks-only, citing the
+// message-signature finding (F-62) and the co-signer threat (T-70).
+{
+  const f = featureReadiness('multisig');
+  check('multisig is testnet-only, enforced, and cites C1, F-62 and T-70', f.status === 'testnet-only' && f.enforced === true && ['C1', 'F-62', 'T-70'].every((i) => f.evidence.includes(i)), JSON.stringify(f.evidence));
+  check('multisig reason says it never signs messages and is test-networks-only', /never signs messages/.test(f.reason) && /only on test networks/.test(f.reason), f.reason);
+  check('multisig: refused on mainnet, allowed on Sepolia', !isFeatureAllowed('multisig', MAINNET) && isFeatureAllowed('multisig', SEPOLIA));
+}
 check('aaReadinessBlock: mainnet blocked, Sepolia clear, null chain blocked', aaReadinessBlock(MAINNET, 'kernel-v3.3') === 'kernel-smart-account' && aaReadinessBlock(SEPOLIA, 'kernel-7702') === null && aaReadinessBlock(null, 'simple') === 'simple-account');
 
 // ---------------------------------------------------------------------------
