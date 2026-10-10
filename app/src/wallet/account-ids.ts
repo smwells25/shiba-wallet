@@ -25,6 +25,17 @@
  *    helpers refuse it (it is outside the imported range, which
  *    isImportedAccountId bounds exactly), smartAccountSaltFor refuses it,
  *    and assertAccountCanSign refuses it before signing reads anything.
+ *  - 13 × 2^28 + k (0xD0000000 + k, k = 0, 1, 2, …): a MULTI-SIGNATURE
+ *    account (feature 24, phase 17 item 1): a Kernel v3.3 account whose
+ *    root validator is the weighted signer module, so NO single key in this
+ *    wallet controls it. Its id is neither a derivation index, an
+ *    imported-key slot nor a watch-only slot: derivationArgsFor refuses it
+ *    (it is at or above 2^31), the imported-key and watch-only helpers
+ *    refuse it (it is outside both of their exactly bounded ranges),
+ *    smartAccountSaltFor refuses it (the multisig IS the smart account; its
+ *    CREATE2 index lives in its record, ./multisig.ts), and
+ *    assertAccountCanSign refuses it before signing reads anything (its
+ *    operations are approved by co-signers on the Multisig screen).
  *
  * This module has no imports so that every other module (including the
  * Node-loaded check scripts) can use it without pulling in React Native.
@@ -122,6 +133,9 @@ export function smartAccountSaltFor(id: number): number {
   // A watch-only account has no key, so it can own no smart account: any
   // address computed for it would be one the wallet can never sign for.
   if (isWatchOnlyAccountId(id)) throw new Error(WATCH_ONLY_NO_SMART_ACCOUNT);
+  // A multi-signature account is itself the smart account; it has no owner
+  // key whose salt could be taken (its CREATE2 index is in its record).
+  if (isMultisigAccountId(id)) throw new Error(MULTISIG_NO_SMART_ACCOUNT);
   if (isImportedAccountId(id)) return 0;
   if (!Number.isSafeInteger(id) || id < 0 || id >= IMPORTED_ACCOUNT_ID_BASE) {
     throw new Error(`Invalid account index ${String(id)}.`);
@@ -223,13 +237,78 @@ export const WATCH_ONLY_NO_CHAIN =
 /**
  * Refuses, before anything is read from secure storage, every signing
  * request for an account id that has no key in this wallet: a watch-only
- * account (with the plain sentence above), or any id outside the phrase
- * and imported ranges (a malformed id). Called first by
+ * account (with the plain sentence above), a multi-signature account (no
+ * single key signs for it), or any id outside the phrase and imported
+ * ranges (a malformed id). Called first by
  * WalletContext.signWith; phrase and imported ids pass unchanged.
  */
 export function assertAccountCanSign(id: number): void {
   if (isWatchOnlyAccountId(id)) throw new Error(WATCH_ONLY_SIGN_REFUSAL);
+  if (isMultisigAccountId(id)) throw new Error(MULTISIG_SIGN_REFUSAL);
   if (!isPhraseAccountId(id) && !isImportedAccountId(id)) {
     throw new Error(`Invalid account index ${String(id)}.`);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Multi-signature accounts (feature 24, phase 17 item 1)
+// ---------------------------------------------------------------------------
+
+/**
+ * First id of the multi-signature range: 0xD0000000 (13 × 2^28). It sits
+ * above the whole watch-only range (0xC0000000 to 0xC0000000 +
+ * MAX_WATCH_ONLY_SLOT) and below 2^32, so the four ranges never overlap and
+ * every id stays an ordinary safe integer.
+ */
+export const MULTISIG_ACCOUNT_ID_BASE = 0xd0000000;
+
+/**
+ * Highest multi-signature slot number the id range allows. Slots are never
+ * reused (the multisig store keeps a high-water mark), so a per-account
+ * cache keyed by the id can never show one multisig's data under another.
+ */
+export const MAX_MULTISIG_SLOT = 0xfffff;
+
+/** True for an id in the multi-signature range (a well-formed one). */
+export function isMultisigAccountId(id: number): boolean {
+  return Number.isSafeInteger(id) && id >= MULTISIG_ACCOUNT_ID_BASE && id - MULTISIG_ACCOUNT_ID_BASE <= MAX_MULTISIG_SLOT;
+}
+
+/** The account id of multi-signature slot `slot`. */
+export function multisigAccountId(slot: number): number {
+  if (!Number.isSafeInteger(slot) || slot < 0 || slot > MAX_MULTISIG_SLOT) {
+    throw new Error(`Invalid multisig slot ${String(slot)}.`);
+  }
+  return MULTISIG_ACCOUNT_ID_BASE + slot;
+}
+
+/** The multi-signature slot of a multisig account id; throws for any other id. */
+export function multisigSlotOf(id: number): number {
+  if (!isMultisigAccountId(id)) throw new Error(`Account ${String(id)} is not a multi-signature account.`);
+  return id - MULTISIG_ACCOUNT_ID_BASE;
+}
+
+/** "Multisig 1" for slot 0, "Multisig 2" for slot 1, and so on. */
+export function defaultMultisigName(slot: number): string {
+  return `Multisig ${slot + 1}`;
+}
+
+/**
+ * The `path` a multi-signature account carries where a derivation path
+ * would be. Not a BIP-32 path on purpose (isBip32Path is false for it).
+ */
+export const MULTISIG_PATH = 'multisig';
+
+/** Thrown by every signing path while a multi-signature account is active. */
+export const MULTISIG_SIGN_REFUSAL =
+  'This is a multi-signature account: no single key in this wallet can sign for it. Its operations are ' +
+  'approved by its co-signers and submitted from the Multisig screen. Nothing was signed.';
+
+/** Thrown by smartAccountSaltFor for a multi-signature id. */
+export const MULTISIG_NO_SMART_ACCOUNT =
+  'A multi-signature account is itself a smart account; it has no owner key and no salt of its own in ' +
+  'this wallet.';
+
+/** Thrown by derivationArgsFor for a multi-signature id. */
+export const MULTISIG_NO_DERIVATION =
+  'A multi-signature account has no key and no derivation path; nothing can be derived for it.';

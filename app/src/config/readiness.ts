@@ -79,7 +79,8 @@ export type FeatureId =
   | 'token-gas'
   | 'imported-key'
   | 'inheritance'
-  | 'dapp-browser';
+  | 'dapp-browser'
+  | 'multisig';
 
 export interface FeatureReadiness {
   id: FeatureId;
@@ -375,6 +376,23 @@ export const FEATURE_READINESS: readonly FeatureReadiness[] = [
     // (wrong account or network): the threats the shared approval path
     // already answers. The browser's own threat entry is the CTO's to add.
     evidence: ['W2', 'W11', 'W12', 'T-11', 'T-14', 'T-17'],
+    enforced: true,
+  },
+  {
+    id: 'multisig',
+    title: 'Multi-signature accounts',
+    status: 'testnet-only',
+    reason:
+      'Multi-signature accounts run on the Kernel v3.3 account with ZeroDev’s weighted signer module as its root, and ' +
+      'neither has a published audit for the deployed version. That module accepts a message signature from fewer ' +
+      'co-signers than an operation needs, so this wallet never signs messages for these accounts and offers them ' +
+      'only on test networks.',
+    // C1–C3: the unaudited Kernel account and module it runs on; W9: the
+    // switchboard; F-21: the weighted validator's audit gap; F-62: the
+    // message-signature weakness on a weighted ROOT (docs/MULTISIG.md
+    // section 4); T-70: the co-signer flow (co-signers approve the calls and
+    // the nonce, not the fee or the paymaster).
+    evidence: ['C1', 'C2', 'C3', 'W9', 'F-21', 'F-62', 'T-70'],
     enforced: true,
   },
 ];

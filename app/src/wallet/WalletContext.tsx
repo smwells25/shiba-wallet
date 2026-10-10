@@ -53,6 +53,7 @@ import { addAaSentListener } from './aa';
 import { recoveryRecordListener, wipeRecoveryData } from './recovery';
 import { forgetBrowserConnections } from './browser-sites';
 import { wipeTransactionNotes } from './notes';
+import { resetMultisigRecords } from './multisig';
 import { resetPasskeys } from './passkeys';
 import { installSpendingRecorder, resetSpendingLimits } from './spending-policy';
 import {
@@ -943,6 +944,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     // clears the bridge's memory when the status becomes 'no-wallet').
     await forgetBrowserConnections(AsyncStorage).catch(() => undefined);
     await wipeTransactionNotes(AsyncStorage).catch(() => undefined);
+    await resetMultisigRecords(AsyncStorage).catch(() => undefined);
     await deleteMnemonic();
     // The public account cache (addresses only) goes with the wallet.
     await deletePublicAccounts(ALL_CACHE_INDICES);

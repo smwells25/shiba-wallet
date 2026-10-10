@@ -88,6 +88,7 @@ import {
   type AaReceiptSummary,
   type AaSendQuote,
   type AaSentEvent,
+  MULTISIG_CONFIG_BUNDLE_REFUSAL,
 } from './aa.ts';
 import { sanitizeDisplayName } from './names.ts';
 import { EVM_CHAIN_ID, notifySendAccepted, validateRecipient } from './send.ts';
@@ -1045,6 +1046,8 @@ export async function resolveGuardianAccount(
 ): Promise<GuardianAccountResolution> {
   // Refused before any request: an imported key never owns a guardian-protected account here.
   if (isImportedAccountId(bundle.accountIndex)) return { ok: false, reason: GUARDIAN_IMPORTED_REFUSAL };
+  // A multisig bundle never reaches here today (the screens refuse first); kept as defence in depth.
+  if (bundle.accountType === 'kernel-multisig') return { ok: false, reason: MULTISIG_CONFIG_BUNDLE_REFUSAL };
   const reported = await new NodeClient(bundle.node).chainId();
   if (reported !== bundle.chainId) {
     return {

@@ -43,8 +43,10 @@ import { ProveOwnershipScreen } from './src/screens/ProveOwnershipScreen';
 import { SpendingLimitsScreen } from './src/screens/SpendingLimitsScreen';
 import { ImportKeyScreen } from './src/screens/ImportKeyScreen';
 import { BrowserScreen } from './src/screens/BrowserScreen';
+import { MultisigScreen } from './src/screens/MultisigScreen';
 import { watchOnlyScreenLayout } from './src/components/WatchOnlyGate';
 import { RecurringDueBanner } from './src/components/RecurringDueBanner';
+import { NotificationScheduler } from './src/components/NotificationScheduler';
 import { appScreenProtection } from './src/wallet/screen-protection';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -225,9 +227,11 @@ function Root() {
             <Stack.Screen name="ImportKey" component={ImportKeyScreen} options={{ title: 'Import a private key' }} />
             {/* The in-app browser (feature 79): outside the watch-only allow list. */}
             <Stack.Screen name="Apps" component={BrowserScreen} options={{ title: 'Apps (test networks)' }} />
+            <Stack.Screen name="Multisig" component={MultisigScreen} options={{ title: 'Multi-signature accounts' }} />
           </>
         )}
         </Stack.Navigator>
+        <NotificationScheduler />
         {/* Recurring payments (phase 15 item 1): on start and on every return to
             the foreground, shows which are due; never sends anything. */}
         <RecurringDueBanner />

@@ -7,13 +7,17 @@ import { CHAINS } from './chains.ts';
 import { sanitizeDisplayName, type NameValidation } from './names.ts';
 import type { KeyValueStore } from './tokens.ts';
 import {
+  MULTISIG_NO_DERIVATION,
   WATCH_ONLY_NO_DERIVATION,
   defaultImportedName,
+  defaultMultisigName,
   defaultWatchOnlyName,
   importedAccountId,
   importedSlotOf,
   isImportedAccountId,
+  isMultisigAccountId,
   isWatchOnlyAccountId,
+  multisigSlotOf,
   watchOnlyAccountId,
   watchOnlySlotOf,
 } from './account-ids.ts';
@@ -24,7 +28,10 @@ export {
   importedAccountId,
   importedSlotOf,
   isImportedAccountId,
+  isMultisigAccountId,
   isWatchOnlyAccountId,
+  multisigAccountId,
+  multisigSlotOf,
   smartAccountSaltFor,
   watchOnlyAccountId,
   watchOnlySlotOf,
@@ -77,6 +84,21 @@ export {
  * deletes nothing secret), and its slot is never reused (`nextWatchSlot`,
  * written only once a watch-only account has existed, so the stored form of
  * a list without one is unchanged byte for byte).
+ *
+ * MULTI-SIGNATURE ACCOUNTS (feature 24, phase 17 item 1). A Kernel v3.3
+ * account whose root validator is the weighted signer module, so no single
+ * key of this wallet controls it. Its entry carries `multisig: true`, an id
+ * in the multisig range of ./account-ids.ts and the account's EIP-55
+ * address. The signer set, threshold, CREATE2 index and history live in the
+ * multisig store (./multisig.ts), which is the source of truth;
+ * reconcileMultisigAccounts keeps this list in step with it, exactly as
+ * reconcileImportedAccounts does for the imported-key vault. It never
+ * counts toward MAX_ACCOUNTS or nextIndex, is never hidden (it is removed
+ * from the Multisig screen, which deletes nothing secret and changes nothing
+ * on-chain), and its slot is never reused (the multisig store's high-water
+ * mark). Nothing writes such an entry until WalletContext calls
+ * reconcileMultisigAccounts: until then a multisig lives only on the
+ * Multisig screen.
  */
 
 const ACCOUNTS_KEY = 'shiba-wallet.accounts.v1';
@@ -114,7 +136,9 @@ export interface WalletAccount {
   imported?: true;
   /** Present (true) only for a watch-only account: an address with no key in this wallet. */
   watchOnly?: true;
-  /** A watch-only account's EIP-55 address (absent for every other account). */
+  /** Present (true) only for a multi-signature account: no single key of this wallet controls it. */
+  multisig?: true;
+  /** A watch-only or multi-signature account's EIP-55 address (absent for every other account). */
   address?: string;
 }
 
@@ -186,14 +210,36 @@ function reviveState(raw: unknown): AccountsState {
       hidden?: unknown;
       imported?: unknown;
       watchOnly?: unknown;
+      multisig?: unknown;
       address?: unknown;
     };
+    if (e.multisig === true) {
+      // A multi-signature account: only an id in the multisig range and a
+      // well-formed EIP-55 address are accepted, never hidden, never also an
+      // imported or watch-only entry. Anything else is dropped; the multisig
+      // store (./multisig.ts) still holds the account and the next
+      // reconcileMultisigAccounts re-adds a valid entry.
+      if (e.imported !== undefined || e.watchOnly !== undefined) continue;
+      if (typeof e.index !== 'number' || !isMultisigAccountId(e.index) || byIndex.has(e.index)) continue;
+      const multisigAddress = typeof e.address === 'string' ? e.address : null;
+      if (multisigAddress === null || canonicalEvmAddress(multisigAddress) !== multisigAddress) continue;
+      const fallback = defaultMultisigName(multisigSlotOf(e.index));
+      const name = typeof e.name === 'string' ? sanitizeAccountName(e.name) : null;
+      byIndex.set(e.index, {
+        index: e.index,
+        name: name && name.ok && name.name === e.name ? name.name : fallback,
+        hidden: false,
+        multisig: true,
+        address: multisigAddress,
+      });
+      continue;
+    }
     if (e.watchOnly === true) {
       // A watch-only account: only an id in the watch-only range and a
       // well-formed EIP-55 address are accepted (anything else is dropped:
       // nothing is lost, the user can add the address again), it is never
       // hidden, and it can never also be an imported entry.
-      if (e.imported !== undefined) continue;
+      if (e.imported !== undefined || e.multisig !== undefined) continue;
       if (typeof e.index !== 'number' || !isWatchOnlyAccountId(e.index) || byIndex.has(e.index)) continue;
       if (typeof e.address !== 'string' || canonicalEvmAddress(e.address) !== e.address) continue;
       const fallback = defaultWatchOnlyName(watchOnlySlotOf(e.index));
@@ -234,12 +280,16 @@ function reviveState(raw: unknown): AccountsState {
   const accounts = [...byIndex.values()].sort((a, b) => a.index - b.index);
   // Imported and watch-only ids sit above every derivation index, so the
   // high-water mark is taken over the derived accounts only.
-  const maxIndex = Math.max(...accounts.filter((a) => !a.imported && !a.watchOnly).map((a) => a.index));
+  // Multisig ids (phase 17 item 1) are left out as well (the trailing filter).
+  const maxIndex = Math.max(
+    ...accounts.filter((a) => !a.imported && !a.watchOnly).map((a) => a.index).filter((i) => !isMultisigAccountId(i)),
+  );
   const storedNext = isValidIndex(r.nextIndex) ? r.nextIndex : 0;
   const nextIndex = Math.max(storedNext, maxIndex + 1);
   const active =
     isValidIndex(r.activeIndex) ||
-    (typeof r.activeIndex === 'number' && (isImportedAccountId(r.activeIndex) || isWatchOnlyAccountId(r.activeIndex)))
+    (typeof r.activeIndex === 'number' &&
+      (isImportedAccountId(r.activeIndex) || isWatchOnlyAccountId(r.activeIndex) || isMultisigAccountId(r.activeIndex)))
       ? byIndex.get(r.activeIndex)
       : undefined;
   const state: AccountsState = {
@@ -318,7 +368,7 @@ export async function addAccount(
   store: KeyValueStore = AsyncStorage,
 ): Promise<{ state: AccountsState; account: WalletAccount }> {
   const state = await loadAccounts(store);
-  const derivedCount = state.accounts.filter((a) => !a.imported && !a.watchOnly).length;
+  const derivedCount = state.accounts.filter((a) => !a.imported && !a.watchOnly && !a.multisig).length;
   if (derivedCount >= MAX_ACCOUNTS || state.nextIndex >= BIP32_HARDENED_OFFSET) {
     throw new Error(`This wallet already has the maximum of ${MAX_ACCOUNTS} accounts.`);
   }
@@ -371,6 +421,7 @@ export async function hideAccount(
   const account = findAccount(state, index);
   if (account.imported) throw new Error(IMPORTED_HIDE_REFUSAL);
   if (account.watchOnly) throw new Error(WATCH_ONLY_HIDE_REFUSAL);
+  if (account.multisig) throw new Error(MULTISIG_HIDE_REFUSAL);
   if (state.activeIndex === index) {
     throw new Error(`${account.name} is the active account. Switch to another account first.`);
   }
@@ -594,6 +645,99 @@ export async function removeWatchOnlyAccountEntry(
   return next;
 }
 
+// ---------------------------------------------------------------------------
+// Multi-signature accounts (feature 24, phase 17 item 1)
+// ---------------------------------------------------------------------------
+
+/** Refusal for "Hide" on a multi-signature account. */
+export const MULTISIG_HIDE_REFUSAL =
+  'A multi-signature account cannot be hidden. Remove it from the Multisig screen instead; removing deletes ' +
+  'nothing secret and changes nothing on-chain.';
+
+/** What the account list needs from one multisig record (./multisig.ts). */
+export interface MultisigListEntry {
+  /** The account id (multisig range). */
+  id: number;
+  /** EIP-55 address of the multisig account. */
+  address: string;
+  /** The record's name ("Multisig 1"). */
+  name: string;
+}
+
+/**
+ * Brings the list in step with the multisig store (pure). `records` is the
+ * store's list, or null when it could not be read (then nothing changes):
+ * a record without an entry gets one, an entry whose record is gone is
+ * dropped (Account 1 becomes active if it was active), and an entry whose
+ * address differs from its record's is corrected from the record.
+ */
+export function reconcileMultisigAccounts(
+  state: AccountsState,
+  records: readonly MultisigListEntry[] | null,
+): { state: AccountsState; changed: boolean } {
+  if (records === null) return { state, changed: false };
+  const byId = new Map<number, MultisigListEntry>();
+  for (const r of records) {
+    if (!isMultisigAccountId(r.id) || canonicalEvmAddress(r.address) !== r.address) continue;
+    byId.set(r.id, r);
+  }
+  let changed = false;
+  const kept: WalletAccount[] = [];
+  for (const a of state.accounts) {
+    if (!a.multisig) {
+      kept.push(a);
+      continue;
+    }
+    const r = byId.get(a.index);
+    if (!r) {
+      changed = true;
+      continue;
+    }
+    if (a.address !== r.address) {
+      changed = true;
+      kept.push({ ...a, address: r.address });
+    } else {
+      kept.push(a);
+    }
+  }
+  const present = new Set(kept.map((a) => a.index));
+  for (const r of byId.values()) {
+    if (present.has(r.id)) continue;
+    changed = true;
+    const name = sanitizeAccountName(r.name);
+    kept.push({
+      index: r.id,
+      name: name.ok ? name.name : defaultMultisigName(multisigSlotOf(r.id)),
+      hidden: false,
+      multisig: true,
+      address: r.address,
+    });
+  }
+  if (!changed) return { state, changed: false };
+  const accounts = kept.sort((a, b) => a.index - b.index);
+  const activeStillThere = accounts.some((a) => a.index === state.activeIndex && !a.hidden);
+  return {
+    state: {
+      accounts,
+      activeIndex: activeStillThere ? state.activeIndex : 0,
+      nextIndex: state.nextIndex,
+      ...(state.nextWatchSlot ? { nextWatchSlot: state.nextWatchSlot } : {}),
+    },
+    changed: true,
+  };
+}
+
+/** reconcileMultisigAccounts, persisted when something changed. */
+export async function reconcileStoredMultisigAccounts(
+  records: readonly MultisigListEntry[] | null,
+  store: KeyValueStore = AsyncStorage,
+): Promise<AccountsState> {
+  const current = await loadAccounts(store);
+  const { state, changed } = reconcileMultisigAccounts(current, records);
+  if (changed) await saveAccounts(state, store);
+  return state;
+}
+
 /** Persists a new active account; it must exist and be visible. */
 export async function setActiveAccount(
   index: number,
@@ -646,6 +790,7 @@ export function derivationArgsFor(
   accountIndex: number,
 ): { account: number; addressIndex: number } {
   if (isWatchOnlyAccountId(accountIndex)) throw new Error(WATCH_ONLY_NO_DERIVATION);
+  if (isMultisigAccountId(accountIndex)) throw new Error(MULTISIG_NO_DERIVATION);
   if (!isValidIndex(accountIndex)) {
     throw new Error(`Invalid account index ${String(accountIndex)}.`);
   }

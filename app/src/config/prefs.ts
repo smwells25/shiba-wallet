@@ -69,6 +69,11 @@ export interface AppPrefs {
    * Any stored value that is not a boolean reads as ON.
    */
   screenProtection: boolean;
+  /**
+   * Local reminders (phase 17 item 2; wallet/notifications.ts). Default OFF:
+   * a notification is an opt-in. Only an explicit stored `true` reads as on.
+   */
+  notifications: boolean;
 }
 
 export const DEFAULT_PREFS: AppPrefs = {
@@ -78,6 +83,7 @@ export const DEFAULT_PREFS: AppPrefs = {
   autoLockMs: null,
   showFiat: true,
   screenProtection: true,
+  notifications: false,
 };
 
 /** The selectable auto-lock thresholds: off, 1 minute, 5 minutes. */
@@ -104,6 +110,7 @@ function sanitize(parsed: unknown): AppPrefs {
     showFiat: typeof p.showFiat === 'boolean' ? p.showFiat : DEFAULT_PREFS.showFiat,
     screenProtection:
       typeof p.screenProtection === 'boolean' ? p.screenProtection : DEFAULT_PREFS.screenProtection,
+    notifications: p.notifications === true,
   };
 }
 

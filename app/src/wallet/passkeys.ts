@@ -47,6 +47,7 @@ import {
   type AaTokenTransfer,
   AA_DEPOSIT_TOPUP_VERIFICATION_GAS,
   AA_ESTIMATE_RETRIES,
+  MULTISIG_CONFIG_BUNDLE_REFUSAL,
 } from './aa.ts';
 import { utf8Decode } from './erc20.ts';
 import type { KeyValueStore } from './tokens.ts';
@@ -1009,6 +1010,8 @@ export type PasskeyAccountResolution =
  * upgrade, an undeployed account, another owner. Read-only.
  */
 export async function resolvePasskeyAccount(bundle: AaClientBundle, ownerAddress: string): Promise<PasskeyAccountResolution> {
+  // A multisig bundle never reaches here today (the screens refuse first); kept as defence in depth.
+  if (bundle.accountType === 'kernel-multisig') return { ok: false, reason: MULTISIG_CONFIG_BUNDLE_REFUSAL };
   const reported = await new NodeClient(bundle.node).chainId();
   if (reported !== bundle.chainId) {
     return { ok: false, reason: `The RPC endpoint is chain id ${reported}, expected ${bundle.chainId}. Check the endpoint in Settings.` };

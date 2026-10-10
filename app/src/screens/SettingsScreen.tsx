@@ -7,6 +7,7 @@ import { allowScreenCaptureAsync, preventScreenCaptureAsync } from 'expo-screen-
 import { Button, WarningBox, WordGrid, screenStyle } from '../components';
 import { localDateLabel } from '../config/dates';
 import { AccountsSection } from '../components/AccountsSection';
+import { NotificationSettingsSection } from '../components/NotificationScheduler';
 import {
   NetworkEndpoint,
   getAllEndpoints,
@@ -107,6 +108,7 @@ import {
   SPENDING_SECTION_TITLE,
   SPENDING_SETTINGS_HINT,
 } from '../wallet/spending-policy';
+import { MULTISIG_SETTINGS_BLURB } from '../wallet/multisig';
 
 /** "A, B and C" / "A, B or C". */
 function listJoin(items: string[], conjunction: 'and' | 'or'): string {
@@ -1529,6 +1531,8 @@ export function SettingsScreen({ navigation, route }: Props) {
         >
           {describeScreenProtectionStatus(screenProtectionStatus)}
         </Text>
+        {/* Privacy → Notifications (phase 17 item 2): local reminders, off by default. */}
+        <NotificationSettingsSection />
       </View>
 
       <View style={styles.section}>
@@ -1829,6 +1833,12 @@ export function SettingsScreen({ navigation, route }: Props) {
           site that is open can be disconnected from the Connection button on its browser bar.
         </Text>
         <Button title="Open Apps" variant="secondary" onPress={() => navigation.navigate('Apps')} />
+      </View>
+
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: theme.text }]}>Multi-signature accounts</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{MULTISIG_SETTINGS_BLURB}</Text>
+        <Button title="Multi-signature accounts" variant="secondary" onPress={() => navigation.navigate('Multisig')} />
       </View>
 
       <View style={styles.section}>

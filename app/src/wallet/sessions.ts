@@ -52,6 +52,7 @@ import {
   type AaReceiptSummary,
   type AaSendQuote,
   AA_DEPOSIT_TOPUP_VERIFICATION_GAS,
+  MULTISIG_CONFIG_BUNDLE_REFUSAL,
 } from './aa.ts';
 import { formatUnits, parseUnits } from './balances.ts';
 import { readAtInclusionBlock } from './recovery.ts';
@@ -536,6 +537,8 @@ export async function resolveSessionAccount(
   bundle: AaClientBundle,
   ownerAddress: string,
 ): Promise<SessionAccountResolution> {
+  // A multisig bundle never reaches here today (the screens refuse first); kept as defence in depth.
+  if (bundle.accountType === 'kernel-multisig') return { ok: false, reason: MULTISIG_CONFIG_BUNDLE_REFUSAL };
   const reported = await new NodeClient(bundle.node).chainId();
   if (reported !== bundle.chainId) {
     return {
