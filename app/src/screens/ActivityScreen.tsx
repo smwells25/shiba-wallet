@@ -1,15 +1,21 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
+  KeyboardAvoidingView,
   Linking,
+  Modal,
+  Platform,
   Pressable,
   RefreshControl,
   StyleSheet,
   Text,
+  TextInput,
   View,
   type ViewToken,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { HistoryEntry } from '@shiba-wallet/core';
 import type { RootStackParamList } from '../navigation';
@@ -40,6 +46,26 @@ import {
 import { listContacts, type Contact } from '../wallet/contacts';
 import { listTokens } from '../wallet/tokens';
 import { getAaConfig } from '../wallet/aa';
+import {
+  ACTIVITY_CSV_MIME_TYPE,
+  ACTIVITY_CSV_UTI,
+  ACTIVITY_EXPORT_DIRECTORY,
+  MAX_NOTE_LENGTH,
+  NOTE_PRIVACY_LINE,
+  activityCsv,
+  activityExportFileName,
+  activityExportNote,
+  findNote,
+  indexNotes,
+  loadNotes,
+  normalizeTxId,
+  resetNotes,
+  sanitizeNote,
+  saveNote,
+  type NoteBook,
+  type TransactionNote,
+} from '../wallet/notes';
+import { shareTextFile } from '../components/RecordFileActions';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Activity'>;
 
@@ -80,6 +106,8 @@ function EntryRow({
   hidden,
   evmExplorerTxBase,
   sentence,
+  note,
+  onEditNote,
 }: {
   entry: HistoryEntry;
   chainId: string;
@@ -95,6 +123,13 @@ function EntryRow({
    * while unknown or when decoding failed — the row then looks as before.
    */
   sentence: string | null;
+  /**
+   * The user's private note for this transaction (wallet/notes.ts). Notes
+   * are the user's own words, so Hide amounts never masks them.
+   */
+  note: TransactionNote | null;
+  /** Opens the note editor; null when notes cannot be written (unsupported id or a damaged store). */
+  onEditNote: (() => void) | null;
 }) {
   const theme = useTheme();
   const url = explorerTxUrl(chainId, entry.id, evmExplorerTxBase);
@@ -139,6 +174,7 @@ function EntryRow({
     .filter(Boolean)
     .join(', ');
   return (
+    <View style={[styles.rowCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
     <Pressable
       accessibilityRole={url ? 'button' : undefined}
       accessibilityLabel={
@@ -151,14 +187,7 @@ function EntryRow({
       onPress={() => {
         if (url) void Linking.openURL(url);
       }}
-      style={({ pressed }) => [
-        styles.row,
-        {
-          backgroundColor: theme.card,
-          borderColor: theme.border,
-          opacity: pressed ? 0.8 : 1,
-        },
-      ]}
+      style={({ pressed }) => [styles.row, { opacity: pressed ? 0.8 : 1 }]}
     >
       <DirectionBadge entry={entry} theme={theme} />
       <View style={styles.rowBody}>
@@ -190,6 +219,124 @@ function EntryRow({
         </View>
       </View>
     </Pressable>
+    {note || onEditNote ? (
+      // Outside the row's Pressable, so the note and its action are their
+      // own elements for screen readers and taps on them never open the
+      // explorer.
+      <View style={[styles.noteBar, { borderTopColor: theme.border }]}>
+        {note ? (
+          <Text selectable style={[styles.noteText, { color: theme.text }]}>
+            <Text style={{ color: theme.textMuted }}>Note: </Text>
+            {note.text}
+          </Text>
+        ) : null}
+        {onEditNote ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={note ? 'Edit note' : 'Add note'}
+            accessibilityHint="Opens a private note for this transaction, kept only on this phone"
+            onPress={onEditNote}
+            hitSlop={8}
+            style={styles.noteAction}
+          >
+            <Text style={[styles.noteActionText, { color: theme.accent }]}>
+              {note ? 'Edit note' : 'Add note'}
+            </Text>
+          </Pressable>
+        ) : null}
+      </View>
+    ) : null}
+    </View>
+  );
+}
+
+/**
+ * The note editor: one text field (line breaks become spaces when saved),
+ * a live count of the cleaned length, Save, Remove note (when one exists)
+ * and Cancel. Saving an empty note removes it. Mounted with a key per
+ * transaction by the screen.
+ */
+function NoteEditor({
+  target,
+  onClose,
+  onSaved,
+}: {
+  target: { network: string; txid: string; userOpHash: string | null; current: TransactionNote | null } | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const theme = useTheme();
+  // The parent mounts a fresh editor per transaction (key), so the field
+  // starts from that transaction's note.
+  const [text, setText] = useState(target?.current?.text ?? '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const cleaned = sanitizeNote(text);
+  const length = cleaned.ok ? Array.from(cleaned.note).length : Array.from(text).length;
+  const save = (value: string) => {
+    if (!target) return;
+    setBusy(true);
+    setError(null);
+    saveNote(target.network, { txid: target.txid, userOpHash: target.userOpHash }, value).then(
+      () => {
+        setBusy(false);
+        onSaved();
+        onClose();
+      },
+      (e: unknown) => {
+        setBusy(false);
+        setError(e instanceof Error ? e.message : String(e));
+      },
+    );
+  };
+  const titleStyle = [styles.modalTitle, { color: theme.text }];
+  const labelStyle = [styles.modalLabel, { color: theme.textMuted }];
+  return (
+    <Modal visible={target !== null} animationType="slide" transparent onRequestClose={onClose}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.modalBackdrop}
+      >
+        <View style={[styles.modalSheet, { backgroundColor: theme.background, borderColor: theme.border }]}>
+          <Text accessibilityRole="header" style={titleStyle}>
+            {target?.current ? 'Edit note' : 'Add note'}
+          </Text>
+          <Text style={labelStyle}>Note (private, this phone only)</Text>
+          <TextInput
+            value={text}
+            onChangeText={setText}
+            editable={!busy}
+            multiline
+            autoFocus
+            placeholder="For example: rent for October"
+            placeholderTextColor={theme.textMuted}
+            accessibilityLabel="Note (private, this phone only)"
+            style={[
+              styles.noteInput,
+              { color: theme.text, borderColor: theme.border, backgroundColor: theme.card },
+            ]}
+          />
+          <Text style={[styles.modalHint, { color: cleaned.ok ? theme.textMuted : theme.danger }]}>
+            {cleaned.ok ? `${length} / ${MAX_NOTE_LENGTH}` : cleaned.error}
+          </Text>
+          <Text style={[styles.modalHint, { color: theme.textMuted }]}>{NOTE_PRIVACY_LINE}</Text>
+          {error ? (
+            <Text accessibilityLiveRegion="polite" style={[styles.modalHint, { color: theme.danger }]}>
+              {error}
+            </Text>
+          ) : null}
+          <Button
+            title={busy ? 'Saving…' : 'Save note'}
+            disabled={busy || !cleaned.ok || (cleaned.note === '' && !target?.current)}
+            onPress={() => save(text)}
+          />
+          {target?.current ? (
+            <Button title="Remove note" variant="secondary" disabled={busy} onPress={() => save('')} />
+          ) : null}
+          <Button title="Cancel" variant="secondary" disabled={busy} onPress={onClose} />
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
   );
 }
 
@@ -358,6 +505,39 @@ export function ActivityScreen({ navigation, route }: Props) {
     navigation.setOptions({ title: account ? `${account.name} activity` : 'Activity' });
   }, [navigation, account]);
 
+  // Transaction notes (feature 87, wallet/notes.ts) are keyed by the network
+  // the transaction is on: the active EVM profile for the EVM slot (as the
+  // contacts and the decoder), the chain itself otherwise. Re-read on focus
+  // so a note saved on the Send success screen shows on return.
+  const noteNetwork = isEvmSlot ? evmChain.caip2 : chainId;
+  const [noteBook, setNoteBook] = useState<NoteBook | null>(null);
+  const [notesVersion, setNotesVersion] = useState(0);
+  const reloadNotes = useCallback(() => {
+    loadNotes().then(
+      (book) => {
+        setNoteBook(book);
+        setNotesVersion((v) => v + 1);
+      },
+      () => setNoteBook({ notes: [], readOnly: true }),
+    );
+  }, []);
+  useFocusEffect(reloadNotes);
+  const noteIndex = useMemo(() => indexNotes(noteBook?.notes ?? []), [noteBook]);
+  const [noteTarget, setNoteTarget] = useState<{
+    network: string;
+    txid: string;
+    userOpHash: string | null;
+    current: TransactionNote | null;
+  } | null>(null);
+  // UserOperation hashes a decoded row carries: a note saved on the success
+  // screen under its UserOperation hash (before the bundle transaction was
+  // known) is found through them.
+  const userOpHashesFor = (id: string): string[] =>
+    sentences.lookup(id)?.description.userOps.map((op) => op.userOpHash) ?? [];
+  const noteFor = (id: string): TransactionNote | null =>
+    findNote(noteIndex, noteNetwork, id, isEvmSlot ? userOpHashesFor(id) : []);
+  const [exporting, setExporting] = useState(false);
+
   // The "network · account" line the other network screens open with
   // (Send, NFTs, Approvals): which network this history comes from and
   // whose address it is. The EVM slot follows the active chain profile.
@@ -426,6 +606,56 @@ export function ActivityScreen({ navigation, route }: Props) {
   }
 
   // status === 'ok'
+  const loadedEntries = state.entries;
+  // The CSV holds exactly the entries loaded on this screen, with the notes
+  // and the decoded counterparties already in memory; it makes no request.
+  const exportActivity = () => {
+    setExporting(true);
+    const contents = activityCsv({
+      network: noteNetwork,
+      networkLabel,
+      entries: loadedEntries,
+      nativeSymbol: symbol,
+      nativeDecimals: network.decimals,
+      notes: noteIndex,
+      explorerUrlFor: (id) => explorerTxUrl(chainId, id, evmChain.explorerTxBase),
+      counterpartyFor: (id) => (isEvmSlot ? sentences.lookup(id)?.description.counterparty ?? null : null),
+      userOpHashesFor: (id) => (isEvmSlot ? userOpHashesFor(id) : []),
+    });
+    shareTextFile({
+      directory: ACTIVITY_EXPORT_DIRECTORY,
+      fileName: () => activityExportFileName(noteNetwork, account.address),
+      contents: () => contents,
+      mimeType: ACTIVITY_CSV_MIME_TYPE,
+      UTI: ACTIVITY_CSV_UTI,
+      dialogTitle: 'Save the activity export',
+      unavailableMessage: 'Sharing files is not available on this device, so the activity could not be exported.',
+    }).then(
+      () => setExporting(false),
+      (e: unknown) => {
+        setExporting(false);
+        Alert.alert('File not shared', e instanceof Error ? e.message : String(e));
+      },
+    );
+  };
+  const confirmResetNotes = () => {
+    Alert.alert(
+      'Reset notes?',
+      'This deletes every transaction note on this phone, on every network, including the ones that could still be read. It cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset notes',
+          style: 'destructive',
+          onPress: () => {
+            resetNotes().then(reloadNotes, (e: unknown) =>
+              Alert.alert('Notes not reset', e instanceof Error ? e.message : String(e)),
+            );
+          },
+        },
+      ],
+    );
+  };
   // The tracked-token logs fallback reports how far back it searched; when
   // paging stopped short of block 0 (endpoint refusal or the wallet's own
   // lookback bound), the end of the list is the end of the SEARCHED range,
@@ -483,11 +713,27 @@ export function ActivityScreen({ navigation, route }: Props) {
             hidden={hideAmounts}
             evmExplorerTxBase={evmChain.explorerTxBase}
             sentence={isEvmSlot ? sentenceFor(item.id) : null}
+            note={noteFor(item.id)}
+            onEditNote={
+              noteBook && !noteBook.readOnly && normalizeTxId(noteNetwork, item.id)
+                ? () => {
+                    const current = noteFor(item.id);
+                    setNoteTarget({
+                      network: noteNetwork,
+                      txid: item.id,
+                      // Editing a note found through its UserOperation hash
+                      // moves it to this transaction id (notes.ts saveNote).
+                      userOpHash: current?.userOpHash ?? null,
+                      current,
+                    });
+                  }
+                : null
+            }
           />
         )}
         onViewableItemsChanged={isEvmSlot ? sentences.onViewableItemsChanged : undefined}
         // New decodes, Hide amounts and contact edits re-render the visible rows.
-        extraData={`${sentences.version}|${hideAmounts}|${sentences.contacts.length}`}
+        extraData={`${sentences.version}|${hideAmounts}|${sentences.contacts.length}|${notesVersion}`}
         contentContainerStyle={styles.list}
         onEndReached={() => void loadMore()}
         onEndReachedThreshold={0.4}
@@ -507,6 +753,28 @@ export function ActivityScreen({ navigation, route }: Props) {
             ) : null}
             {/* Already cleaned by history.ts (sanitizeEndpointMessage). */}
             <TechnicalDetail text={state.noteDetail} />
+            {noteBook?.readOnly ? (
+              <View style={[styles.notesDamaged, { borderColor: theme.warningBorder, backgroundColor: theme.warningSurface }]}>
+                <Text style={[styles.notesDamagedText, { color: theme.warningText }]}>
+                  Some of your transaction notes could not be read. The notes that could be read are shown;
+                  adding or changing notes is off until the notes are reset.
+                </Text>
+                <Button title="Reset notes" variant="secondary" onPress={confirmResetNotes} />
+              </View>
+            ) : null}
+            {state.entries.length > 0 ? (
+              <View style={styles.exportBlock}>
+                <Button
+                  title={exporting ? 'Preparing the file…' : 'Export activity (.csv)'}
+                  variant="secondary"
+                  disabled={exporting}
+                  onPress={exportActivity}
+                />
+                <Text style={[styles.exportNote, { color: theme.textMuted }]}>
+                  {activityExportNote(state.entries.length)}
+                </Text>
+              </View>
+            ) : null}
           </View>
         }
         ListEmptyComponent={
@@ -519,6 +787,12 @@ export function ActivityScreen({ navigation, route }: Props) {
           </Text>
         }
         ListFooterComponent={footer}
+      />
+      <NoteEditor
+        key={noteTarget ? `${noteTarget.network}|${noteTarget.txid}` : 'closed'}
+        target={noteTarget}
+        onClose={() => setNoteTarget(null)}
+        onSaved={reloadNotes}
       />
     </View>
   );
@@ -536,13 +810,85 @@ const styles = StyleSheet.create({
     gap: 10,
     flexGrow: 1,
   },
+  rowCard: {
+    borderRadius: 12,
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: 12,
-    borderWidth: 1,
     padding: 14,
     gap: 12,
+  },
+  noteBar: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    gap: 4,
+  },
+  noteText: {
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  noteAction: {
+    alignSelf: 'flex-start',
+    paddingVertical: 2,
+  },
+  noteActionText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  notesDamaged: {
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 12,
+    gap: 8,
+  },
+  notesDamagedText: {
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  exportBlock: {
+    gap: 6,
+    marginTop: 4,
+  },
+  exportNote: {
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  modalBackdrop: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0,0,0,0.4)',
+  },
+  modalSheet: {
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    borderWidth: 1,
+    padding: 20,
+    gap: 10,
+  },
+  modalTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+  },
+  modalLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  modalHint: {
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  noteInput: {
+    borderRadius: 10,
+    borderWidth: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    fontSize: 15,
+    minHeight: 80,
+    textAlignVertical: 'top',
   },
   dirBadge: {
     width: 38,

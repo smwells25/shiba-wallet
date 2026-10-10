@@ -64,6 +64,7 @@ export const APP_SCRIPTS = {
   // Phase 17 item 0: app-wide screen protection (the preference, the state
   // machine over a fake of expo-screen-capture's key handling, the copy).
   'check-screen-protection.mjs': { kind: 'offline', summary: 'counts' },
+  'check-notes.mjs': { kind: 'offline', summary: 'counts' },
   'check-settings-protection.mjs': { kind: 'offline', summary: 'counts' },
   'check-siwe.mjs': { kind: 'offline', summary: 'counts' },
   'check-spending-policy.mjs': { kind: 'offline', summary: 'counts' },
