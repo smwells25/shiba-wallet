@@ -4,7 +4,7 @@ import type { Asset, FungibleAsset } from '@shiba-wallet/core';
 // Explicit .ts extensions: this module is imported by scripts/check-tokens.mjs
 // under Node's type stripping, which resolves relative specifiers literally.
 import { USDC_MAINNET } from './erc20.ts';
-import { EVM_MAINNET, EVM_PROFILES, evmProfileByCaip2, evmProfileFor } from '../config/evm-chain.ts';
+import { EVM_MAINNET, allEvmProfiles, evmProfileByCaip2, evmProfileFor, isBuiltInEvmChain } from '../config/evm-chain.ts';
 import { loadPrefs } from '../config/prefs.ts';
 
 /**
@@ -63,7 +63,12 @@ export interface KeyValueStore {
   setItem(key: string, value: string): Promise<void>;
 }
 
-/** True when the app has an EVM profile for this CAIP-2 id (only those chains hold tokens). */
+/**
+ * True when the app has an EVM profile for this CAIP-2 id (only those chains
+ * hold tokens) — a built-in one or a network the user added (feature 33,
+ * wallet/custom-networks.ts), whose list starts empty (defaultTokensForChain)
+ * and is kept under its own key like every test network's.
+ */
 export function isTokenChain(chainCaip2: string): boolean {
   return evmProfileByCaip2(chainCaip2) !== undefined;
 }
@@ -179,7 +184,7 @@ export async function addToken(
 ): Promise<void> {
   const chain = asset.assetId.chainId;
   if (!isTokenChain(chain)) {
-    throw new Error(`Tokens can only be tracked on ${EVM_PROFILES.map((p) => p.label).join(', ')} (got ${chain}).`);
+    throw new Error(`Tokens can only be tracked on ${allEvmProfiles().map((p) => p.label).join(', ')} (got ${chain}).`);
   }
   if (asset.kind !== 'fungible' || asset.assetId.namespace !== 'erc20') {
     throw new Error('Only ERC-20 tokens can be tracked.');
@@ -318,6 +323,29 @@ export const KNOWN_TEST_NETWORK_TOKENS: Readonly<Record<string, readonly Fungibl
     },
   ],
 };
+
+/**
+ * Deletes the tracked-token list of a network the user added (feature 33),
+ * when that network is removed: its key, shiba-wallet.tokens.v1.<CAIP-2>, is
+ * removed (or, for a store without removeItem, set to an empty list — the
+ * same thing for a custom network, whose default list is empty). Every
+ * other key is untouched. Refuses a built-in chain, so a programming error
+ * can never delete the mainnet list or a test network's. Returns true when
+ * a stored list existed.
+ */
+export async function forgetTokensForChain(
+  chainCaip2: string,
+  store: KeyValueStore & { removeItem?: (key: string) => Promise<void> } = AsyncStorage,
+): Promise<boolean> {
+  if (chainCaip2 === EVM_MAINNET.caip2 || isBuiltInEvmChain(chainCaip2)) {
+    throw new Error(`The token list of a built-in network is never deleted (${chainCaip2}).`);
+  }
+  const key = tokenStoreKey(chainCaip2);
+  if ((await store.getItem(key)) === null) return false;
+  if (store.removeItem) await store.removeItem(key);
+  else await store.setItem(key, '[]');
+  return true;
+}
 
 /** The known tokens on one CAIP-2 chain (empty for mainnet and unknown chains). */
 export function knownTokensForChain(chainCaip2: string): FungibleAsset[] {

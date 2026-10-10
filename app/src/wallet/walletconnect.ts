@@ -321,12 +321,18 @@ export const WC_ERRORS = {
 
 /**
  * Human name for a CAIP-2 chain id; unknown chains show their id. Every
- * profile in config/evm-chain.ts is named (mainnet and each test network).
+ * profile in config/evm-chain.ts is named (mainnet and each test network),
+ * and so is a network the user added (feature 33), which says so and gives
+ * its chain id, because its name is the user's own word.
  */
 export function describeChain(caip2: string): string {
   if (caip2 === EVM_MAINNET.caip2) return 'Ethereum mainnet';
   const profile = evmProfileByCaip2(caip2);
-  return profile ? `${profile.label} (test network)` : caip2;
+  if (!profile) return caip2;
+  if (profile.custom) {
+    return `${profile.label} (a ${profile.testnet ? 'test ' : ''}network you added, chain id ${profile.chainIdDecimal})`;
+  }
+  return `${profile.label} (test network)`;
 }
 
 /** The wallet mode a chain belongs to, or null for chains no mode serves. */
@@ -2087,6 +2093,51 @@ export async function saveSmartBinding(
   }
   map[smartBindingKey(binding.chain, binding.address)] = binding;
   await store.setItem(WC_SMART_BINDINGS_KEY, JSON.stringify(map));
+}
+
+/**
+ * Deletes this wallet's WalletConnect bookkeeping for ONE chain when a
+ * network the user added is removed (feature 33, wallet/custom-networks.ts):
+ * the smart-account bindings approved on that chain and the ERC-5792
+ * batch records sent on it. Entries for every other chain are written back
+ * exactly as stored; a store that cannot be parsed is left untouched.
+ * Sessions themselves live in the WalletConnect SDK's own storage and are
+ * not reachable here (they stay paused while another network is active;
+ * Settings → WalletConnect connections can disconnect them). Returns how
+ * many entries were deleted.
+ */
+export async function forgetWalletConnectChainData(
+  chain: string,
+  store: KeyValueStore = AsyncStorage,
+): Promise<number> {
+  let removed = 0;
+  for (const key of [WC_SMART_BINDINGS_KEY, WC_CALLS_KEY]) {
+    let raw: string | null;
+    try {
+      raw = await store.getItem(key);
+    } catch {
+      continue;
+    }
+    if (!raw) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      continue;
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
+    const map = { ...(parsed as Record<string, unknown>) };
+    let changed = false;
+    for (const [k, v] of Object.entries(map)) {
+      if (v && typeof v === 'object' && (v as { chain?: unknown }).chain === chain) {
+        delete map[k];
+        changed = true;
+        removed += 1;
+      }
+    }
+    if (changed) await store.setItem(key, JSON.stringify(map));
+  }
+  return removed;
 }
 
 /**

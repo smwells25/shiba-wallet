@@ -1,4 +1,4 @@
-import { EVM_TEST_PROFILES } from './evm-chain.ts';
+import { EVM_TEST_PROFILES, isCustomTestNetwork } from './evm-chain.ts';
 
 /**
  * Chairperson decision (2026-10-02): the plain-feature rows ('blocked' but
@@ -408,9 +408,17 @@ export const FEATURE_READINESS: readonly FeatureReadiness[] = [
  */
 export const TEST_NETWORK_CHAINS: readonly string[] = EVM_TEST_PROFILES.map((p) => p.caip2);
 
-/** True only for a CAIP-2 id in TEST_NETWORK_CHAINS. */
+/**
+ * True for a CAIP-2 id in TEST_NETWORK_CHAINS, and for a network the user
+ * added (feature 33, wallet/custom-networks.ts) only when they marked it as
+ * a test network AND its chain id is on the allow-list of well-known public
+ * test networks (config/evm-chain.ts KNOWN_PUBLIC_TEST_CHAIN_IDS, re-checked
+ * on every call by isCustomTestNetwork). Every other custom network is a
+ * MAIN network here: the smart-account features stay refused on it and the
+ * plain features carry the same advisory status as on Ethereum mainnet.
+ */
 export function isTestNetwork(caip2: string): boolean {
-  return TEST_NETWORK_CHAINS.includes(caip2);
+  return TEST_NETWORK_CHAINS.includes(caip2) || isCustomTestNetwork(caip2);
 }
 
 /** The table entry for one feature; throws for an unknown id (a programming error). */

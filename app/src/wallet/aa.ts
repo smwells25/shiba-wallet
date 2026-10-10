@@ -57,7 +57,7 @@ import {
   isFeatureAllowed,
   type FeatureId,
 } from '../config/readiness.ts';
-import { evmProfileByCaip2 } from '../config/evm-chain.ts';
+import { evmProfileByCaip2, isBuiltInEvmChain } from '../config/evm-chain.ts';
 import { PREVIEW_AA_NOTE } from './simulation.ts';
 import { suggestFeesRetryingOnce } from './fee-read.ts';
 
@@ -436,6 +436,41 @@ function normalizeEntry(entry: Partial<AaChainConfig> | undefined, chain: string
     recoveredAccounts: normalizeRecoveredLinks(entry?.recoveredAccounts),
     chain,
   };
+}
+
+/**
+ * Deletes the stored smart-account configuration of ONE chain (bundler,
+ * factory, paymaster, and the EIP-7702 and recovered-account links kept
+ * for that chain) when a network the user added is removed (feature 33,
+ * wallet/custom-networks.ts). Every other chain's entry is written back
+ * exactly as stored. Refuses a built-in chain. Returns true when an entry
+ * existed. Nothing on-chain changes.
+ */
+export async function forgetAaConfigForChain(
+  chainId: string,
+  store: KeyValueStore = AsyncStorage,
+): Promise<boolean> {
+  if (isBuiltInEvmChain(chainId)) {
+    throw new Error(`The smart-account settings of a built-in network are never deleted (${chainId}).`);
+  }
+  const map = await loadConfigMap(store);
+  if (!(chainId in map)) return false;
+  delete map[chainId];
+  await saveConfigMap(map, store);
+  return true;
+}
+
+/**
+ * The Kernel v3.3 factory the Settings editor pre-fills on a chain: the
+ * engine's pinned KERNEL_V3_3 factory where the profile records that the
+ * deployment was checked on that chain (config/evm-chain.ts
+ * kernelV33Verified — every built-in profile), and null elsewhere — a
+ * network the user added (feature 33) gets no pre-fill: the user pastes a
+ * factory and setAaKernelFactory runs the same on-chain checks before
+ * anything is saved (docs/AA_STACK.md's verify-before-save procedure).
+ */
+export function aaKernelPrefillFor(chainId: string): string | null {
+  return evmProfileByCaip2(chainId)?.kernelV33Verified === true ? KERNEL_PREFILL.factory : null;
 }
 
 /** The stored AA configuration for one chain (empty defaults when unset). */

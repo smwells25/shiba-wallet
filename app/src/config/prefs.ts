@@ -1,7 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 // Explicit .ts extension: scripts/check-devmode.mjs loads this module under
 // Node's type stripping, which resolves relative specifiers literally.
-import { EVM_SEPOLIA, isTestProfileId, type TestNetworkId } from './evm-chain.ts';
+import { EVM_SEPOLIA, isCustomNetworkId, isTestProfileId, type EvmNetworkChoice, type TestNetworkId } from './evm-chain.ts';
+import { ensureCustomNetworksLoaded } from '../wallet/custom-networks.ts';
 
 /**
  * App preferences (phase 4, items 5 + 6; phase 6, item 2; phase 10, item
@@ -29,19 +30,23 @@ const PREFS_KEY = 'shiba-wallet.prefs.v1';
 
 export interface AppPrefs {
   /**
-   * The Developer test-network choice (phase 10, item 3): null = Ethereum
-   * mainnet everywhere, otherwise the CAIP-2 id of the test profile in use
-   * ('eip155:11155111' Sepolia or 'eip155:84532' Base Sepolia; see
-   * config/evm-chain.ts EVM_TEST_PROFILES).
+   * The Developer network choice (phase 10, item 3; feature 33): null =
+   * Ethereum mainnet everywhere, otherwise the CAIP-2 id of the test profile
+   * in use (config/evm-chain.ts EVM_TEST_PROFILES) or of a network the user
+   * added (wallet/custom-networks.ts). The field keeps its old name; a
+   * custom network may be a MAIN network — whether the active network is a
+   * test network is the profile's `testnet` flag (evmProfileFor), never this
+   * field.
    */
-  testNetwork: TestNetworkId | null;
+  testNetwork: EvmNetworkChoice | null;
   /**
-   * True while ANY test network is chosen; always equal to
-   * `testNetwork !== null`. The name dates from phase 4, when Sepolia was
-   * the only test network; it is kept (and still stored) so that code which
-   * only asks "is test mode on?" and installs from before this field keep
-   * working. Migration: a stored `sepolia: true` without `testNetwork`
-   * reads as Sepolia.
+   * Always equal to `testNetwork !== null`: true while the EVM slot is on any
+   * network other than Ethereum mainnet. The name dates from phase 4, when
+   * Sepolia was the only other network; it is kept (and still stored) so
+   * installs from before `testNetwork` keep working. Migration: a stored
+   * `sepolia: true` without `testNetwork` reads as Sepolia. It does NOT mean
+   * "test funds" once a custom main network is chosen; screens that say
+   * "test" read evmChain.testnet.
    */
   sepolia: boolean;
   /** Mask all displayed amounts as •••• (item 5.2). */
@@ -115,8 +120,12 @@ function sanitize(parsed: unknown): AppPrefs {
 }
 
 /**
- * The test-network choice from stored (or patched) preferences:
+ * The network choice from stored (or patched) preferences:
  *  - a recognised test profile id in `testNetwork` wins;
+ *  - so does the id of a REGISTERED custom network (feature 33; loadPrefs
+ *    hydrates the registry before this runs, so a stored custom choice is
+ *    recognised); the id of a custom network that is no longer registered
+ *    is treated like any other unknown id below;
  *  - `testNetwork: null` means mainnet;
  *  - otherwise (no `testNetwork` field — an install from before Base Sepolia
  *    existed — or an id this build does not know) the legacy boolean
@@ -124,14 +133,26 @@ function sanitize(parsed: unknown): AppPrefs {
  *    id therefore never moves a test-mode user onto mainnet while the
  *    stored boolean still says test mode.
  */
-function sanitizeTestNetwork(p: Record<string, unknown>): TestNetworkId | null {
+function sanitizeTestNetwork(p: Record<string, unknown>): EvmNetworkChoice | null {
   if (isTestProfileId(p.testNetwork)) return p.testNetwork;
+  if (isCustomNetworkId(p.testNetwork)) return p.testNetwork;
   if (p.testNetwork === null) return null;
   return p.sepolia === true ? (EVM_SEPOLIA.caip2 as TestNetworkId) : null;
 }
 
-/** Loads the preferences, falling back to defaults on any storage problem. */
+/**
+ * Loads the preferences, falling back to defaults on any storage problem.
+ *
+ * It first makes sure the custom-network registry (config/evm-chain.ts) is
+ * hydrated from the same store (wallet/custom-networks.ts
+ * ensureCustomNetworksLoaded: read once per store, then kept in step by
+ * that module's own writes), so a stored custom-network choice is
+ * recognised here and every caller that resolves the active network from
+ * these preferences — evmProfileFor, config/networks.ts, wallet/tokens.ts —
+ * already sees the custom profiles. This is the single read path.
+ */
 export async function loadPrefs(store: KeyValueStore = AsyncStorage): Promise<AppPrefs> {
+  await ensureCustomNetworksLoaded(store);
   try {
     const raw = await store.getItem(PREFS_KEY);
     if (!raw) return { ...DEFAULT_PREFS };

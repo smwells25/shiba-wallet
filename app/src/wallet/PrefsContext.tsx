@@ -7,7 +7,13 @@ import React, {
   useState,
 } from 'react';
 import { AppPrefs, DEFAULT_PREFS, loadPrefs, savePrefs } from '../config/prefs';
-import { evmProfileFor, type EvmChainProfile, type TestNetworkId } from '../config/evm-chain';
+import {
+  customEvmProfiles,
+  evmProfileFor,
+  subscribeCustomEvmProfiles,
+  type EvmChainProfile,
+  type EvmNetworkChoice,
+} from '../config/evm-chain';
 
 /**
  * React side of the app preferences (config/prefs.ts): one provider so
@@ -21,10 +27,23 @@ import { evmProfileFor, type EvmChainProfile, type TestNetworkId } from '../conf
 interface PrefsContextValue {
   /** False until the stored preferences finished loading. */
   ready: boolean;
-  /** True while any test network is chosen (see AppPrefs.sepolia). */
+  /**
+   * True while the active EVM network is a TEST network: equal to
+   * evmChain.testnet. For the built-in profiles this is exactly the stored
+   * AppPrefs.sepolia (any test network chosen); for a network the user
+   * added (feature 33) it is true only when that network counts as a test
+   * network, NOT merely because a non-mainnet choice is stored — the
+   * TESTNET banner (App.tsx) and the price requests (Home) key off this
+   * value, and a custom MAIN network must never be called test mode.
+   */
   sepolia: boolean;
-  /** The chosen test network's CAIP-2 id, or null for mainnet. */
-  testNetwork: TestNetworkId | null;
+  /** The chosen network's CAIP-2 id (a test profile or a custom network), or null for mainnet. */
+  testNetwork: EvmNetworkChoice | null;
+  /**
+   * The networks the user added (feature 33, wallet/custom-networks.ts), in
+   * the order they were added; updated whenever one is added or removed.
+   */
+  customNetworks: readonly EvmChainProfile[];
   hideAmounts: boolean;
   autoLockMs: number | null;
   /** Show fiat values (default on); off means no price request is made. */
@@ -45,8 +64,8 @@ interface PrefsContextValue {
   evmChain: EvmChainProfile;
   /** Legacy on/off: on keeps the chosen test network (Sepolia if none), off = mainnet. */
   setSepolia: (on: boolean) => Promise<void>;
-  /** Chooses the test network (null = mainnet). */
-  setTestNetwork: (network: TestNetworkId | null) => Promise<void>;
+  /** Chooses the network: a test profile or a custom network (null = mainnet). */
+  setTestNetwork: (network: EvmNetworkChoice | null) => Promise<void>;
   setHideAmounts: (on: boolean) => Promise<void>;
   setAutoLockMs: (ms: number | null) => Promise<void>;
   setShowFiat: (on: boolean) => Promise<void>;
@@ -59,6 +78,21 @@ const PrefsContext = createContext<PrefsContextValue | null>(null);
 export function PrefsProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
   const [prefs, setPrefs] = useState<AppPrefs>({ ...DEFAULT_PREFS });
+  // The custom-network registry (config/evm-chain.ts) as React state. It is
+  // hydrated by loadPrefs below before `ready`; afterwards every add,
+  // removal or reset in wallet/custom-networks.ts updates the registry and
+  // this listener re-reads the preferences too, because a removal or reset
+  // may have moved the choice back to mainnet.
+  const [customNetworks, setCustomNetworks] = useState<readonly EvmChainProfile[]>(() => customEvmProfiles());
+
+  useEffect(
+    () =>
+      subscribeCustomEvmProfiles(() => {
+        setCustomNetworks(customEvmProfiles());
+        loadPrefs().then(setPrefs, () => undefined);
+      }),
+    [],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -66,6 +100,7 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
       (p) => {
         if (!cancelled) {
           setPrefs(p);
+          setCustomNetworks(customEvmProfiles());
           setReady(true);
         }
       },
@@ -88,13 +123,16 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<PrefsContextValue>(
     () => ({
       ready,
-      sepolia: prefs.sepolia,
+      sepolia: evmProfileFor(prefs.testNetwork).testnet,
       testNetwork: prefs.testNetwork,
       hideAmounts: prefs.hideAmounts,
       autoLockMs: prefs.autoLockMs,
       showFiat: prefs.showFiat,
       screenProtection: prefs.screenProtection,
       notifications: prefs.notifications,
+      customNetworks,
+      // customNetworks is in the dependency list so a change to a custom
+      // network's profile re-resolves the active one.
       evmChain: evmProfileFor(prefs.testNetwork),
       setSepolia: (on) => patch({ sepolia: on }),
       setTestNetwork: (network) => patch({ testNetwork: network }),
@@ -104,7 +142,7 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
       setScreenProtection: (on) => patch({ screenProtection: on }),
       setNotifications: (on) => patch({ notifications: on }),
     }),
-    [ready, prefs, patch],
+    [ready, prefs, patch, customNetworks],
   );
 
   return <PrefsContext.Provider value={value}>{children}</PrefsContext.Provider>;

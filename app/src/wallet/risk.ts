@@ -23,6 +23,7 @@ import {
 import { groupThousands, sanitizeSymbol, simulationTransport } from './simulation.ts';
 import { WALLET_7702_DELEGATE } from './delegation.ts';
 import { walletAddressesFor, type AaAddressFacts } from './activity-sentences.ts';
+import { evmProfileByCaip2 } from '../config/evm-chain.ts';
 
 /**
  * Risk warnings for EVM confirm screens (phase 7, item 5, app half). The
@@ -159,6 +160,50 @@ export const NEW_CONTRACT_THRESHOLD_BLOCKS: Readonly<Record<string, bigint>> = {
   'eip155:84532': 302_400n,
   'eip155:421614': 2_419_200n,
 };
+
+/** The new-contract window in seconds (7 days; see NEW_CONTRACT_THRESHOLD_BLOCKS). */
+export const NEW_CONTRACT_THRESHOLD_SECONDS = 7 * 86_400;
+
+/**
+ * The block time of a network the user added (feature 33), in seconds, as
+ * MEASURED when it was saved (wallet/custom-networks.ts: the head block's
+ * timestamp minus that of the block 100 below it, divided by 100), or null
+ * for a built-in chain, an unknown chain, or a custom network whose
+ * measurement failed.
+ */
+function customSecondsPerBlock(chainCaip2: string): number | null {
+  const ms = evmProfileByCaip2(chainCaip2)?.custom?.blockTimeMs;
+  return typeof ms === 'number' && Number.isSafeInteger(ms) && ms > 0 ? ms / 1000 : null;
+}
+
+/**
+ * Seconds per block for phrasing block counts as durations: the built-in
+ * table, then a custom network's measured block time, else the Ethereum
+ * estimate (SECONDS_PER_BLOCK_ESTIMATE).
+ */
+export function secondsPerBlockFor(chainCaip2: string): number {
+  return SECONDS_PER_BLOCK_BY_CHAIN[chainCaip2] ?? customSecondsPerBlock(chainCaip2) ?? SECONDS_PER_BLOCK_ESTIMATE;
+}
+
+/**
+ * The new-contract threshold in blocks for a chain: the built-in table
+ * (NEW_CONTRACT_THRESHOLD_BLOCKS), else, for a network the user added,
+ * 7 days at its block time MEASURED when it was saved (rounded up, so the
+ * window is never shorter than 7 days at that rate), else undefined (no
+ * new-contract check, the rule for every chain the table does not list —
+ * also a custom network whose block time could not be measured). The
+ * measurement is a 100-block sample: if blocks later come faster than
+ * measured, the window covers less than 7 days; if slower, more. Stated in
+ * Settings → Developer with the measured figure.
+ */
+export function newContractThresholdBlocks(chainCaip2: string): bigint | undefined {
+  const builtIn = NEW_CONTRACT_THRESHOLD_BLOCKS[chainCaip2];
+  if (builtIn !== undefined) return builtIn;
+  const ms = evmProfileByCaip2(chainCaip2)?.custom?.blockTimeMs;
+  if (typeof ms !== 'number' || !Number.isSafeInteger(ms) || ms <= 0) return undefined;
+  const window = BigInt(NEW_CONTRACT_THRESHOLD_SECONDS) * 1000n;
+  return (window + BigInt(ms) - 1n) / BigInt(ms);
+}
 
 /** eth_getLogs window size (token-history.ts's 9,000-block window). */
 export const RISK_LOG_WINDOW_BLOCKS = 9_000n;
@@ -499,8 +544,7 @@ export interface RiskLine {
  * (approximate by design), at the chain's block time.
  */
 export function approxDuration(blocks: bigint, chainCaip2?: string): string {
-  const perBlock =
-    (chainCaip2 !== undefined ? SECONDS_PER_BLOCK_BY_CHAIN[chainCaip2] : undefined) ?? SECONDS_PER_BLOCK_ESTIMATE;
+  const perBlock = chainCaip2 !== undefined ? secondsPerBlockFor(chainCaip2) : SECONDS_PER_BLOCK_ESTIMATE;
   const seconds = Number(blocks) * perBlock;
   const hours = seconds / 3600;
   if (hours < 1) {
@@ -920,7 +964,7 @@ export async function gatherRiskFacts(options: GatherRiskOptions): Promise<RiskF
   const counterparty =
     options.counterparty && ADDRESS.test(options.counterparty) ? options.counterparty : options.to;
   const tokens = options.trackedTokens.filter((t) => ADDRESS.test(t.address));
-  const threshold = NEW_CONTRACT_THRESHOLD_BLOCKS[options.chainCaip2];
+  const threshold = newContractThresholdBlocks(options.chainCaip2);
   const indexerTransport =
     options.indexerTransport ?? (options.indexerUrl ? simulationTransport(options.indexerUrl) : null);
 

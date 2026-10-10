@@ -19,7 +19,30 @@ import { type NetworkDefault } from '../config/defaults';
 import { describeDefaultChoice, describeDefaultFallbackNote } from '../config/endpoint-probe';
 import { INSECURE_ENDPOINT_MESSAGE } from '../config/endpoint-url';
 import { AUTO_LOCK_CHOICES } from '../config/prefs';
-import { EVM_MAINNET, EVM_PROFILES, EVM_TEST_PROFILES, l1CostInGasNote, type TestNetworkId } from '../config/evm-chain';
+import {
+  EVM_MAINNET,
+  EVM_PROFILES,
+  EVM_TEST_PROFILES,
+  customNetworkNote,
+  l1CostInGasNote,
+  type EvmChainProfile,
+  type EvmNetworkChoice,
+  type TestNetworkId,
+} from '../config/evm-chain';
+import {
+  CUSTOM_NATIVE_DECIMALS,
+  CUSTOM_NETWORKS_READ_ONLY_MESSAGE,
+  NATIVE_SYMBOL_NOTE,
+  TEST_NETWORK_TICK_NOTE,
+  addCustomNetwork,
+  blockTimeLine,
+  describeRemoval,
+  loadCustomNetworks,
+  removalConfirmationText,
+  removeCustomNetwork,
+  resetCustomNetworks,
+  type CustomNetworkRecord,
+} from '../wallet/custom-networks';
 
 import {
   FEATURE_READINESS,
@@ -59,6 +82,7 @@ import {
   kernelDeploymentNote,
   KERNEL_PREFILL,
   aaAccountTypeLabel,
+  aaKernelPrefillFor,
   clearAaBundlerUrl,
   clearAaFactory,
   getAaConfig,
@@ -107,6 +131,7 @@ import {
   SPENDING_HONESTY_SENTENCE,
   SPENDING_SECTION_TITLE,
   SPENDING_SETTINGS_HINT,
+  listSpendingScopes,
 } from '../wallet/spending-policy';
 import { MULTISIG_SETTINGS_BLURB } from '../wallet/multisig';
 
@@ -792,6 +817,11 @@ function AaChainRow({ network }: { network: NetworkDefault }) {
           address; funds at the old one stay there).
         </Text>
       ) : null}
+      {type === 'kernel-v3.3' && aaKernelPrefillFor(network.chainId) === null ? (
+        <Text style={[styles.endpointNote, { color: theme.textMuted }]}>
+          {CUSTOM_NETWORK_KERNEL_NOTE}
+        </Text>
+      ) : null}
       {type === 'kernel-v3.3' ? (
         <AaField
           key="kernel-v3.3"
@@ -799,7 +829,7 @@ function AaChainRow({ network }: { network: NetworkDefault }) {
           placeholder="0x…"
           value={storedForType?.factory ?? null}
           locked={kernelGate !== null}
-          prefill={KERNEL_PREFILL.factory}
+          prefill={aaKernelPrefillFor(network.chainId)}
           prefillNote={
             `Pinned Kernel v3.3 deployment from the wallet engine (the same addresses on ` +
             `${KERNEL_VERIFIED_CHAINS_TEXT}, each checked on-chain): implementation ${KERNEL_PREFILL.implementation}, meta ` +
@@ -1064,6 +1094,275 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
  * point, reveal the seed phrase behind a confirmation gate, and wipe the
  * wallet behind a double confirmation.
  */
+/**
+ * The Account Abstraction note on a network without a pinned Kernel v3.3
+ * pre-fill (a network the user added, feature 33).
+ */
+const CUSTOM_NETWORK_KERNEL_NOTE =
+  'No Kernel v3.3 factory is pre-filled on this network: the wallet has not checked the deployment here. Paste ' +
+  'the KernelFactory address if Kernel v3.3 is deployed on this network; saving checks on-chain, through your RPC ' +
+  'endpoint, that the factory, implementation, meta factory and ECDSA validator have code, that the factory uses ' +
+  'the pinned implementation, that entrypoint() is v0.7, that accountId() is the expected version, that the ' +
+  'meta factory approves the factory and that the validator reports itself as a validator module. Nothing is saved ' +
+  'if any check fails.';
+
+/** The empty Add form (decimals start at 18, the only value accepted). */
+const EMPTY_CUSTOM_FORM = {
+  name: '',
+  chainId: '',
+  rpcUrl: '',
+  nativeSymbol: '',
+  nativeDecimals: String(CUSTOM_NATIVE_DECIMALS),
+  explorerUrl: '',
+  testnet: false,
+};
+
+/**
+ * Settings → Developer → "Networks you added" (feature 33): the custom
+ * networks as choice chips (same style as the test-network chips), one row
+ * per network with its facts and Remove, and the Add form whose button
+ * verifies before anything is saved (wallet/custom-networks.ts). A damaged
+ * list is shown read-only with a Reset.
+ */
+function CustomNetworksSection({
+  customNetworks,
+  choice,
+  onChoose,
+}: {
+  customNetworks: readonly EvmChainProfile[];
+  choice: EvmNetworkChoice | null;
+  onChoose: (choice: EvmNetworkChoice | null) => Promise<void>;
+}) {
+  const theme = useTheme();
+  const [records, setRecords] = useState<CustomNetworkRecord[]>([]);
+  const [readOnly, setReadOnly] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [form, setForm] = useState(EMPTY_CUSTOM_FORM);
+  const [verifying, setVerifying] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const reload = useCallback(() => {
+    loadCustomNetworks().then(
+      (book) => {
+        setRecords(book.networks);
+        setReadOnly(book.readOnly);
+      },
+      () => setRecords([]),
+    );
+  }, []);
+  // The profiles in the registry change after every add, removal or reset.
+  useEffect(reload, [reload, customNetworks]);
+
+  const field = (key: keyof typeof EMPTY_CUSTOM_FORM, label: string, placeholder: string, keyboard: 'default' | 'url' | 'number-pad' = 'default') => (
+    <View style={styles.aaField}>
+      <Text style={[styles.aaFieldLabel, { color: theme.textMuted }]}>{label}</Text>
+      <TextInput
+        value={String(form[key])}
+        onChangeText={(text) => setForm((f) => ({ ...f, [key]: text }))}
+        placeholder={placeholder}
+        placeholderTextColor={theme.textMuted}
+        autoCapitalize="none"
+        autoCorrect={false}
+        keyboardType={keyboard}
+        accessibilityLabel={label}
+        style={[styles.endpointInput, { color: theme.text, borderColor: theme.border, backgroundColor: theme.background }]}
+      />
+    </View>
+  );
+
+  const save = async () => {
+    setVerifying(true);
+    setFormError(null);
+    try {
+      const { record, verification } = await addCustomNetwork(form);
+      setForm(EMPTY_CUSTOM_FORM);
+      setAdding(false);
+      reload();
+      Alert.alert(
+        'Network added',
+        `${record.name} (chain id ${record.chainId}) answered as that chain, and its newest block (block ` +
+          `${verification.headNumber.toString()}) was ${Math.max(0, Math.round(verification.headAgeSeconds))} s old. ` +
+          `${blockTimeLine(record.blockTimeMs)} Choose it under “Networks you added” to use it.`,
+      );
+    } catch (e) {
+      setFormError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  const remove = (record: CustomNetworkRecord) => {
+    const caip2 = `eip155:${record.chainId}`;
+    const active = choice === caip2;
+    Alert.alert('Remove this network?', removalConfirmationText(record.name, record.chainId, active), [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: () => {
+          void (async () => {
+            setBusy(caip2);
+            try {
+              // Deleting spending limits loosens them, which always asks for
+              // the device check (as on the Spending limits screen).
+              const scopes = await listSpendingScopes();
+              if (scopes.damaged || scopes.scopes.some((x) => x.scope.chain === caip2)) {
+                const auth = await requireLocalAuth('Remove the network and its spending limits');
+                if (!auth.ok) {
+                  Alert.alert('Nothing was removed', auth.message);
+                  return;
+                }
+              }
+              // Back to mainnet in React state first, so no screen keeps
+              // using the network while its data is deleted.
+              if (active) await onChoose(null);
+              const report = await removeCustomNetwork(caip2);
+              Alert.alert(
+                report.networkRemoved ? 'Network removed' : 'Network not removed',
+                describeRemoval(record.name, { ...report, switchedToMainnet: report.switchedToMainnet || active }),
+              );
+            } catch (e) {
+              Alert.alert('Nothing was removed', e instanceof Error ? e.message : String(e));
+            } finally {
+              setBusy(null);
+              reload();
+            }
+          })();
+        },
+      },
+    ]);
+  };
+
+  const reset = () => {
+    Alert.alert(
+      'Reset custom networks?',
+      'The list of networks you added is replaced by an empty one. Tokens, contacts and settings saved for those ' +
+        'networks stay on this phone unused and come back if you add the same chain id again. If one of them is ' +
+        'active, the wallet switches back to Ethereum mainnet.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset',
+          style: 'destructive',
+          onPress: () => {
+            void resetCustomNetworks().then(reload, (e: unknown) =>
+              Alert.alert('Not reset', e instanceof Error ? e.message : String(e)),
+            );
+          },
+        },
+      ],
+    );
+  };
+
+  return (
+    <View style={styles.section}>
+      <Text style={[styles.toggleLabel, { color: theme.text }]}>Networks you added</Text>
+      {customNetworks.length > 0 ? (
+        <View style={styles.choiceChips}>
+          {customNetworks.map((p) => {
+            const selected = choice === p.caip2;
+            const label = `${p.label}${p.testnet ? ' (test)' : ''}`;
+            return (
+              <Button
+                key={p.caip2}
+                title={selected ? `✓ ${label}` : label}
+                variant={selected ? 'primary' : 'secondary'}
+                selected={selected}
+                accessibilityHint="Chooses which network the app's Ethereum account uses"
+                onPress={() => void onChoose(p.caip2 as EvmNetworkChoice)}
+                style={styles.choiceChip}
+              />
+            );
+          })}
+        </View>
+      ) : null}
+      <Text style={[styles.hint, { color: theme.textMuted }]}>
+        Add any EVM network by its chain id and an RPC endpoint. The wallet checks before saving that the endpoint
+        answers as that chain id and that its newest block is recent. A network you add is treated as a MAIN
+        network — its funds may be real — unless you mark it as one of the well-known public test networks. Your
+        addresses are the same on every EVM network.
+      </Text>
+      {readOnly ? (
+        <>
+          <WarningBox>{CUSTOM_NETWORKS_READ_ONLY_MESSAGE}</WarningBox>
+          <Button title="Reset custom networks" variant="destructive" onPress={reset} />
+        </>
+      ) : null}
+      {records.map((r) => {
+        const profile = customNetworks.find((p) => p.caip2 === `eip155:${r.chainId}`);
+        return (
+          <View key={r.chainId} style={[styles.endpointRow, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <View style={styles.endpointHeader}>
+              <Text style={[styles.endpointLabel, { color: theme.text }]}>{r.name}</Text>
+              <Text style={[styles.endpointTag, { color: theme.textMuted }]}>chain id {r.chainId}</Text>
+            </View>
+            <Text style={[styles.endpointNote, { color: profile?.testnet ? theme.testnetFill : theme.warningText }]}>
+              {profile?.testnet
+                ? `Treated as a TEST network (${r.nativeSymbol} here has no value).`
+                : 'Treated as a MAIN network: its funds may be real. Smart-account features are switched off here.'}
+            </Text>
+            <Text style={[styles.endpointNote, { color: theme.textMuted }]}>
+              {`Coin: ${r.nativeSymbol}, ${r.nativeDecimals} decimals (the symbol is your word). RPC endpoint: ${maskUrlForDisplay(r.rpcUrl)}. ` +
+                `Explorer: ${r.explorerUrl ?? 'none'}. Verified and added ${localDateLabel(r.addedAt)}.`}
+            </Text>
+            <Text style={[styles.endpointNote, { color: theme.textMuted }]}>{blockTimeLine(r.blockTimeMs)}</Text>
+            <Button
+              title={busy === `eip155:${r.chainId}` ? 'Removing…' : 'Remove'}
+              variant="secondary"
+              disabled={busy !== null || readOnly}
+              onPress={() => remove(r)}
+            />
+          </View>
+        );
+      })}
+      {adding ? (
+        <View style={[styles.endpointRow, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          {field('name', 'Network name', 'For example Hoodi')}
+          {field('chainId', 'Chain id (decimal)', 'For example 560048', 'number-pad')}
+          {field('rpcUrl', 'RPC endpoint (https)', 'https://…', 'url')}
+          {field('nativeSymbol', 'Coin symbol', 'For example ETH')}
+          <Text style={[styles.endpointNote, { color: theme.textMuted }]}>{NATIVE_SYMBOL_NOTE}</Text>
+          {field('nativeDecimals', 'Coin decimals', '18', 'number-pad')}
+          {field('explorerUrl', 'Block explorer (https, optional)', 'https://…', 'url')}
+          <View style={styles.toggleRow}>
+            <Text style={[styles.toggleLabel, styles.readinessTitle, { color: theme.text }]}>This is a test network</Text>
+            <Switch
+              accessibilityLabel="This is a test network"
+              accessibilityRole="switch"
+              accessibilityState={{ checked: form.testnet }}
+              value={form.testnet}
+              onValueChange={(v) => setForm((f) => ({ ...f, testnet: v }))}
+            />
+          </View>
+          <Text style={[styles.endpointNote, { color: theme.textMuted }]}>{TEST_NETWORK_TICK_NOTE}</Text>
+          {formError ? <WarningBox>{formError}</WarningBox> : null}
+          <View style={styles.endpointButtons}>
+            <Button
+              title={verifying ? 'Verifying…' : 'Verify and save'}
+              onPress={() => void save()}
+              disabled={verifying || readOnly}
+              style={styles.endpointButton}
+            />
+            <Button
+              title="Cancel"
+              variant="secondary"
+              disabled={verifying}
+              onPress={() => {
+                setAdding(false);
+                setFormError(null);
+              }}
+              style={styles.endpointButton}
+            />
+          </View>
+        </View>
+      ) : (
+        <Button title="Add a custom network" variant="secondary" disabled={readOnly} onPress={() => setAdding(true)} />
+      )}
+    </View>
+  );
+}
+
 export function SettingsScreen({ navigation, route }: Props) {
   const theme = useTheme();
 
@@ -1099,9 +1398,9 @@ export function SettingsScreen({ navigation, route }: Props) {
   const importedAccounts = accountList.filter((a) => a.imported);
   const importedNames = importedAccounts.map((a) => a.name).join(', ');
   const {
-    sepolia,
     testNetwork,
     setTestNetwork,
+    customNetworks,
     evmChain,
     hideAmounts,
     setHideAmounts,
@@ -1966,12 +2265,23 @@ export function SettingsScreen({ navigation, route }: Props) {
           ))}
         </View>
         <Text style={[styles.hint, { color: theme.textMuted }]}>{DEVELOPER_TEST_NETWORK_HINT}</Text>
-        {sepolia ? (
+        {/* evmChain.testnet, not the `sepolia` flag: a network the user added
+            may be a MAIN network, and must never be called test mode. */}
+        {evmChain.testnet ? (
           <Text style={[styles.hint, { color: theme.testnetFill }]}>
             Test mode is ON ({evmChain.label}). Your addresses are the same on
-            {' '}{evmChain.label} as on mainnet — but anything sent here is test
-            ETH with no value.
+            {' '}{evmChain.label} as on mainnet — but anything sent here is{' '}
+            {evmChain.displaySymbol} with no value.
           </Text>
+        ) : null}
+        {evmChain.custom && !evmChain.testnet ? (
+          <WarningBox>
+            {`${evmChain.label} is a network you added and is treated as a MAIN network: amounts here may be real ` +
+              'funds. Smart-account features are switched off on it, as on Ethereum mainnet.'}
+          </WarningBox>
+        ) : null}
+        {evmChain.custom ? (
+          <Text style={[styles.hint, { color: theme.textMuted }]}>{customNetworkNote(evmChain)}</Text>
         ) : null}
         {evmChain.l1DataFee ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
@@ -1987,6 +2297,7 @@ export function SettingsScreen({ navigation, route }: Props) {
         {evmChain.l1CostInGas ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>{l1CostInGasNote(evmChain)}</Text>
         ) : null}
+        <CustomNetworksSection customNetworks={customNetworks} choice={testNetwork} onChoose={setTestNetwork} />
       </View>
 
       <View style={styles.section}>

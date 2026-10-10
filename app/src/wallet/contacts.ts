@@ -11,7 +11,7 @@ import {
   SOLANA_CHAIN_ID,
   validateRecipient,
 } from './send.ts';
-import { EVM_TEST_PROFILES } from '../config/evm-chain.ts';
+import { EVM_TEST_PROFILES, isCustomNetworkId } from '../config/evm-chain.ts';
 
 /**
  * Contacts (Tier 1 feature 73): per-chain named addresses.
@@ -94,7 +94,11 @@ export const CONTACT_NETWORK_IDS: readonly string[] = [
  * ('eip155:1') as well, so every EVM network shares that path.
  */
 function validationChainFor(networkId: string): string | null {
-  if (networkId === EVM_CHAIN_ID || EVM_TEST_NETWORK_IDS.includes(networkId)) return EVM_CHAIN_ID;
+  // A network the user added (feature 33) holds contacts like a test
+  // network does, under its own CAIP-2 id, while it is registered.
+  if (networkId === EVM_CHAIN_ID || EVM_TEST_NETWORK_IDS.includes(networkId) || isCustomNetworkId(networkId)) {
+    return EVM_CHAIN_ID;
+  }
   if (
     networkId === BITCOIN_CHAIN_ID ||
     networkId === DOGECOIN_CHAIN_ID ||
@@ -536,6 +540,32 @@ export async function deleteContact(
     store,
   );
   return true;
+}
+
+/**
+ * Deletes every contact saved for ONE network: the step that removes a
+ * network the user added (feature 33, wallet/custom-networks.ts). The other
+ * networks' raw entries are written back verbatim. Refuses (changing
+ * nothing) when the store is unreadable, and refuses the built-in networks.
+ * Returns how many entries were stored for the network (0 when none).
+ */
+export async function forgetContactsForNetwork(
+  networkId: string,
+  store: KeyValueStore = AsyncStorage,
+): Promise<number> {
+  if (CONTACT_NETWORK_IDS.includes(networkId)) {
+    throw new Error(`The contacts of a built-in network are never deleted this way (${networkId}).`);
+  }
+  const read = await readRaw(store);
+  if (read.state === 'empty') return 0;
+  if (read.state === 'unreadable') throw new Error(UNREADABLE_MESSAGE);
+  if (!Object.prototype.hasOwnProperty.call(read.raw.networks, networkId)) return 0;
+  const stored = read.raw.networks[networkId];
+  const count = Array.isArray(stored) ? stored.length : 1;
+  const networks = { ...read.raw.networks };
+  delete networks[networkId];
+  await store.setItem(CONTACTS_KEY, JSON.stringify({ version: STORE_VERSION, networks }));
+  return count;
 }
 
 /**
