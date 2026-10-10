@@ -24,7 +24,9 @@ It is **not** a correct k-of-n for **message signing** (ERC-1271), and this
 cannot be fixed by any choice of weights. Section 4 proves that for every
 threshold of two or more there is no weight assignment that makes the
 message check as strong as the operation check, and section 9 shows a single
-signer satisfying a 2-of-3 message check live. Because a wallet that presents
+signer satisfying a 2-of-3 message check in simulation against the deployed
+validator (the live account was operated for transactions only; no live
+ERC-1271 call was made against it — corrected 2026-10-10). Because a wallet that presents
 a multisig account as able to sign logins, orders or token permits would be
 misstating the account's security, the engine spec deliberately omits
 ERC-1271 signing for multisig accounts, and the app must tell the user that a
@@ -206,7 +208,6 @@ its own validation id. They should install on a weighted-root account the
 same way they install on an ECDSA-root account, though this was not exercised
 live in this phase and is listed as unverified in section 11.
 
-## 7 is about the delay; recovery note ends here.
 
 ## 7. Determination (d): a timelocked multisig is possible, with caveats
 

@@ -133,7 +133,8 @@ examples/demo.mjs          Offline end-to-end engine demo
 - Subagents run on Opus (the Chairperson's credit directive); one agent
   drives the emulator at a time.
 - Do not contact ZeroDev / Offchain Labs: the responsible-disclosure
-  decision (six findings, listed under the phase 14 status) is the
+  decision (the findings are collected, with their evidence and
+  status, in docs/DISCLOSURE_FINDINGS.md) is the
   Chairperson's.
 
 ## Known blockers
@@ -1728,9 +1729,13 @@ Subagents on Opus.
       max(C) ≥ threshold — MULTISIG.md §4 proves that for every threshold
       k ≥ 2 no weight assignment makes the message check as strong as the
       operation check (equal-weight k-of-n is (k−1)-of-n for messages; a
-      signer with weight ≥ ⌈T/2⌉ signs alone); PROVEN LIVE on the deployed
-      2-of-3: one signer with its signature duplicated → 0x1626ba7e,
-      single → rejected; co-signers sign only Approve(keccak(sender,
+      signer with weight ≥ ⌈T/2⌉ signs alone); SIMULATED (eth_simulateV1
+      against the real deployed validator in the smoke script's dry run,
+      on a different account; the live 2-of-3 was operated for
+      transactions only and no ERC-1271 call was made against it — this
+      entry said "PROVEN LIVE" until the findings review of 2026-10-10):
+      one signer with its signature duplicated → 0x1626ba7e, single →
+      rejected; co-signers sign only Approve(keccak(sender,
       callData, nonce)) — never gas, fees, paymaster or validity, which
       the submitter alone sets; (c) a weighted-root account CANNOT also
       use the wallet's guardian recovery (same contract, same validation
@@ -1772,7 +1777,7 @@ Subagents on Opus.
       writes account-keyed storage. About 0.0017 test ETH stays in the
       2-of-3 for demos. FINDINGS FOR THE CHAIRPERSON (disclosure list,
       now seven items): the ERC-1271 threshold-before-order check restated
-      with a live multisig counterexample and the impossibility proof; no
+      with a SIMULATED multisig counterexample and the impossibility proof (corrected 2026-10-10: not live); no
       ZeroDev weighted validator refuses threshold 0 at install (the
       engine does); the incremental audit's "WeightedValidator @ 91f8fcb"
       cannot be found in any ZeroDev repo. UNVERIFIED: session keys /
@@ -2299,7 +2304,8 @@ started).
 Findings for the Chairperson this phase: ZeroDev's Arbitrum bundler
 often answers impossible (zero) gas estimates (guarded); the deployed
 weighted validator cannot give an honest multi-signature for messages
-(seventh item for the disclosure decision); Glamsterdam on Sepolia
+(an item for the disclosure decision; its message-signature
+counterexample is simulated, not live — corrected 2026-10-10); Glamsterdam on Sepolia
 made every Kernel permission install three to four times dearer and
 added protocol transfer logs that two clients report differently; a
 default fallback endpoint (0xrpc.io) has been frozen since the fork;
@@ -2342,3 +2348,59 @@ emulator where Expo Go cannot carry a feature.
 4. Leadership refresh at the end.
 
 ## Phase 16 progress
+- [x] Item 1 — docs/DISCLOSURE_FINDINGS.md (commit below; 8,601 words;
+      secret scan clean; nothing sent anywhere): front matter (purpose,
+      status definitions — proven live / simulated / reasoned from
+      source, never upgraded — the shared reproduction setup, pinned
+      sources, a summary table), sections A–G for the seven disclosure
+      items with the same seven fields each (claim; artefact with
+      addresses, repository commit and lines; how established; steps a
+      reviewer can check; impact; what would refute it; the wallet's
+      mitigation), section 8 for the related observations (Circle's
+      surcharge docs 10% vs chain 0 and its static oracle; no published
+      audit of Circle's or Pimlico's paymaster; Pimlico unstaked on
+      Ethereum Sepolia; ZeroDev's zero estimates on Arbitrum; the
+      audit-coverage gaps), section 9 where the record is thin or
+      contradicts itself, section 10 a log of what was re-confirmed
+      read-only on 2026-10-10 (every dry-run smoke passed; Sourcify
+      sources of the weighted validator and CallPolicy byte-identical to
+      the pins; the old WebAuthn sources contain the dummy-signature
+      branch; both ECDSA validators carry the AlreadyInitialized check;
+      code hashes of WebAuthn v0.0.3 and SpendingLimit match, and both
+      SpendingLimit deployments carry only the three-argument postCheck
+      selector; the multisig account's root is 0x01‖0xeD89…; every
+      checked receipt status 0x1; Circle's paymasters on Base and
+      Arbitrum Sepolia spread 0, fixed oracle, staked 0.25 ETH; Pimlico
+      unstaked on Sepolia / 5 ETH on Base Sepolia; publicnode returned
+      null for three old receipts, 1rpc served them). THE REVIEW FOUND
+      TWO ITEMS OVERSTATED IN THE RECORD, now corrected in AGENTS.md,
+      THREAT_MODEL.md F-62, MULTISIG.md and FEATURE_UNIVERSE row 24: (1)
+      the multisig ERC-1271 counterexample (item a, multisig half) was
+      SIMULATED in the smoke script's dry run on a different account —
+      the live 2-of-3's leg makes no ERC-1271 call — although three
+      documents said "proven live"; (2) item (d), "following ZeroDev's
+      single-guardian docs example would overwrite the owner", is
+      CONTRADICTED by the deployed contracts: both ECDSA validators the
+      SDK uses (0x845A…cE57 and 0x8104…1c43) revert AlreadyInitialized on
+      re-install per their Sourcify-verified source (phase 11 had already
+      noted it), and a Sepolia eth_call of onInstall from 0x1D72…4106
+      reverted with 0x93360fbf today — on the deployed code the recipe
+      FAILS rather than taking over; the document recommends withdrawing
+      or rewording (d). Also recorded: item (a) was worded too broadly in
+      phase 8 and T-31 (it applies to MESSAGE signatures only — operations
+      de-duplicate signers, so a lone guardian cannot recover an account);
+      the disclosure count was inconsistent across phases (three, four,
+      six, seven) with no single list until now; the phase 8 and phase 14
+      live ERC-1271 results were eth_calls against state that no longer
+      exists, so a vendor can only reproduce them through the
+      simulations; item (c) was never run against v0.0.1 / v0.0.2 (only
+      the v0.0.3 contrast; the SDK labels the old versions "UNPATCHED", so
+      ZeroDev likely knows); the Arbitrum zero-estimate sampling script is
+      not in the repo; the "no advisory / no audit / 91f8fcb nowhere"
+      searches have no recorded scope; the "threshold 0" note does not
+      apply to 0xeD89… (a zero threshold fails closed); a difference
+      between WebAuthn v0.0.1 (passes its sender argument) and v0.0.2
+      (msg.sender) in the ERC-1271 path was noticed but not analysed.
+      DECISION FOR THE CHAIRPERSON: confirm the document, decide whether
+      item (d) is withdrawn, and whether the list goes to ZeroDev /
+      Offchain Labs (nothing has been sent).
