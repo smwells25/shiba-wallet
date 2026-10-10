@@ -2749,3 +2749,75 @@ emulator where Expo Go cannot carry a feature.
       inline notice on a narrow screen; Uniswap's reaction to a hidden
       web view and to the re-attach reload. An emulator re-check of the
       disconnect, the network change and the locked dump is dispatched.
+- [x] Browser fixes RE-CHECKED ON THE EMULATOR (2026-10-10; Metro at
+      53e2258, 2,323 modules; provider events watched through diagnostic
+      console listeners on the page; no transactions; 3 prompts in total:
+      "Connect to app.uniswap.org" twice, "Unlock Shiba Wallet" once).
+      PASSED: (2) disconnect from the bar's Connection panel → the page's
+      accountsChanged([]) within ~2 s, Uniswap dropped to its Connect
+      button with no reload (performance.timeOrigin unchanged), the
+      inline notice below the panel covered no bar control; (3) a network
+      switch made with Settings pushed over the page → the page received
+      chainChanged "0x14a34" and accountsChanged([]) WHILE Settings was
+      up, nothing duplicated on return, Uniswap showed Connect; switching
+      back → chainChanged "0xaa36a7" and accountsChanged([address]) 34 ms
+      later, a silent reconnect with 0 prompts; (4) the FULL uncompressed
+      dump under the lock held 25 nodes and only the lock texts (0 hits
+      for "Connected as", "app.uniswap", "Sell", "Reload", 0x772e,
+      webview); unlock → the page identical, still connected, no new
+      events, nothing visibly changed anywhere; (5) "Connected apps"
+      title, the browser section with its hint, the WalletConnect
+      headings, a disconnect there reached the open page in ~1.4 s. BUG
+      FOUND AND FIXED (commit 483ac9a; check-browser 301; offline runner ALL
+      GREEN in the CTO's isolated worktree: app 6,161 across 45 suites):
+      after a network switch the bar read "Connected as … · Base Sepolia"
+      and the panel kept the served wording although the page had
+      eth_accounts [] on 0x14a34 (and the reverse on switching back) until
+      any re-render — notifyContextChanged delivered the events but never
+      bumped the bridge version; it now bumps it whenever an event is
+      delivered (a repeat with nothing new bumps nothing, pinned), and the
+      bar shows "Connected as Account 1 (0x772e…F44F)" like the panel.
+      OTHER FINDINGS: the four-button bar wraps Close onto a second row at
+      1080 px and the panel shrinks the web view to ~40% (layout,
+      follow-up); PRIVACY — the Android recents thumbnail taken at HOME
+      shows the full page, the bar's address and Uniswap's balance, and
+      the lock screen does not cover the app-switcher snapshot (the seed
+      screens' FLAG_SECURE does blank it; an app-wide "hide in the app
+      switcher" option would set the flag on every screen — a product
+      decision, related to N-05 for iOS); the WebView debug socket is
+      reachable in Expo Go despite webviewDebuggingEnabled false (the
+      library enables it under DEBUG — dev builds only); the Settings
+      button "Open connections" opens the screen titled "Connected apps"
+      (consistent with the blurb, label ≠ title). UNVERIFIED: TalkBack /
+      VoiceOver under the lock; the mainnet switch closing an open page;
+      the second-Apps-page re-attach path; app.ens.dev this pass; iOS.
+      End state: disconnected, Home, Ethereum Sepolia, Account 1, light
+      mode, Google IME; Metro at 53e2258.
+
+## Phase 16 status (2026-10-10)
+
+Items 1 to 3 are landed and pushed; item 4's documents are current
+(FEATURE_UNIVERSE row 79 proven live, DEMO step 21, THREAT_MODEL T-71 /
+F-67, the shareable page at version 14: 41 proven live, 18 built, 1
+designed, 39 not started). Proven live this phase: the in-app browser
+against Uniswap (EIP-6963 detection, a connection and a swap through the
+shared approval sheet with the preview matching the chain) and a
+Sign-In with Ethereum on the ENS app, plus the re-check of the open
+page's disconnect, network change and locked state; a local development
+build on the emulator with no Expo account (screen-capture blocking
+outside Expo Go, cloud backup refused, device-to-device transfer without
+key material, the real merged manifest). Delivered: docs/
+DISCLOSURE_FINDINGS.md with two overstated items corrected across the
+record. Engine: 877 tests. App: 45 offline suites, 6,161 checks.
+
+Waiting on the Chairperson: confirmation of the findings document and
+whether item (d) is withdrawn; whether the list goes to ZeroDev /
+Offchain Labs; whether an app-wide "hide in the app switcher" option is
+wanted.
+
+Follow-ups (no inputs): the browser bar layout at phone width; TalkBack
+on the emulator (enable it through settings and read the lock screen);
+a passkey create attempt in a dev build with a Google account signed in
+on a disposable AVD, once an rpId domain exists; PRIVACY.md entries for
+ML Kit / datatransport once their data flow is read from source; the
+"Open connections" label.
