@@ -55,6 +55,50 @@ function deleteQuietly(item: { delete: () => void }): void {
 }
 
 /**
+ * Writes `contents` to `fileName` in its own directory under the app's cache
+ * directory and opens the OS share sheet. Leftovers from earlier exports in
+ * that directory are removed first; this export's file is deleted
+ * RECORD_EXPORT_DELETE_DELAY_MS after the share sheet closes (at once if
+ * sharing fails). Shared by the recovery record and the Activity export
+ * (wallet/notes.ts), so both follow the same delete-after-share discipline.
+ * The name and the contents are produced lazily, at the same points as
+ * before this helper existed, so the record export's order of steps (and
+ * what is left behind if producing either one throws) is unchanged.
+ */
+export async function shareTextFile(options: {
+  directory: string;
+  fileName: () => string;
+  contents: () => string;
+  mimeType: string;
+  UTI: string;
+  dialogTitle: string;
+  unavailableMessage: string;
+}): Promise<void> {
+  if (!(await Sharing.isAvailableAsync())) {
+    throw new Error(options.unavailableMessage);
+  }
+  const dir = new Directory(Paths.cache, options.directory);
+  if (dir.exists) {
+    for (const item of dir.list()) deleteQuietly(item);
+  }
+  dir.create({ intermediates: true, idempotent: true });
+  const file = new File(dir, options.fileName());
+  file.create({ overwrite: true });
+  file.write(options.contents());
+  try {
+    await Sharing.shareAsync(file.uri, {
+      mimeType: options.mimeType,
+      UTI: options.UTI,
+      dialogTitle: options.dialogTitle,
+    });
+  } catch (e) {
+    deleteQuietly(file);
+    throw e;
+  }
+  setTimeout(() => deleteQuietly(file), RECORD_EXPORT_DELETE_DELAY_MS);
+}
+
+/**
  * Writes the record (the engine's canonical JSON, unchanged) to a .json file
  * in the app's cache directory and opens the OS share sheet, so the user can
  * save it to cloud storage or a files app. Leftovers from earlier exports are
@@ -63,28 +107,15 @@ function deleteQuietly(item: { delete: () => void }): void {
  * no secrets.
  */
 export async function shareRecordFile(meta: KernelRecoveryMetadata): Promise<void> {
-  if (!(await Sharing.isAvailableAsync())) {
-    throw new Error('Sharing files is not available on this device. Use Share… or Copy instead.');
-  }
-  const dir = new Directory(Paths.cache, RECORD_EXPORT_DIRECTORY);
-  if (dir.exists) {
-    for (const item of dir.list()) deleteQuietly(item);
-  }
-  dir.create({ intermediates: true, idempotent: true });
-  const file = new File(dir, recordExportFileName(meta));
-  file.create({ overwrite: true });
-  file.write(recordFileContents(meta));
-  try {
-    await Sharing.shareAsync(file.uri, {
-      mimeType: RECORD_FILE_MIME_TYPE,
-      UTI: RECORD_FILE_UTI,
-      dialogTitle: 'Save the recovery record',
-    });
-  } catch (e) {
-    deleteQuietly(file);
-    throw e;
-  }
-  setTimeout(() => deleteQuietly(file), RECORD_EXPORT_DELETE_DELAY_MS);
+  await shareTextFile({
+    directory: RECORD_EXPORT_DIRECTORY,
+    fileName: () => recordExportFileName(meta),
+    contents: () => recordFileContents(meta),
+    mimeType: RECORD_FILE_MIME_TYPE,
+    UTI: RECORD_FILE_UTI,
+    dialogTitle: 'Save the recovery record',
+    unavailableMessage: 'Sharing files is not available on this device. Use Share… or Copy instead.',
+  });
 }
 
 /**
