@@ -255,12 +255,23 @@ for (const [label, error, expected] of [
  * Fake network. `rpc[base]` decides each JSON-RPC answer for an EVM base URL
  * (return a value, or throw to simulate a dead endpoint); `rest[base]` the
  * same for Esplora paths. Every request is recorded.
+ *
+ * `probe` marks the endpoint probe's own requests (endpoint-probe.ts): its
+ * eth_chainId, and the eth_getBlockByNumber freshness read the probe sends
+ * right after a correct chain id. The freshness read is the next request to
+ * the same URL after its eth_chainId; that is how it is told apart from a
+ * fee read with the same parameters.
  */
 function installFake({ rpc = {}, rest = {} }) {
   const calls = [];
   globalThis.fetch = async (url, init = {}) => {
     const body = init.body ? JSON.parse(init.body) : null;
-    calls.push({ url, method: body?.method ?? init.method ?? 'GET' });
+    const method = body?.method ?? init.method ?? 'GET';
+    const previous = calls.findLast((c) => c.url === url);
+    const probe =
+      method === 'eth_chainId' ||
+      (method === 'eth_getBlockByNumber' && previous?.url === url && previous?.method === 'eth_chainId');
+    calls.push({ url, method, probe });
     const rpcBase = Object.keys(rpc).find((b) => url === b);
     if (rpcBase) {
       const result = rpc[rpcBase](body.method, body.params);
@@ -292,7 +303,8 @@ function evmNode(overrides = {}) {
       case 'eth_blockNumber':
         return '0x1000000';
       case 'eth_getBlockByNumber':
-        return { baseFeePerGas: '0x3b9aca00', number: '0x1000000' };
+        // timestamp: the probe's freshness check reads it (a block made now).
+        return { baseFeePerGas: '0x3b9aca00', number: '0x1000000', timestamp: `0x${Math.floor(Date.now() / 1000).toString(16)}` };
       case 'eth_maxPriorityFeePerGas':
         return '0x5f5e100';
       case 'eth_estimateGas':
@@ -310,9 +322,13 @@ const dead = () => {
   throw new TypeError('fetch failed (simulated dead endpoint)');
 };
 
-/** Primary answers the chain-id probe once, then dies for everything. */
+/**
+ * Primary answers the endpoint probe once (its eth_chainId and the
+ * freshness read sent right after it), then dies for everything.
+ */
 function dyingPrimary(overrides = {}) {
   let alive = true;
+  let probing = false;
   const node = evmNode(overrides);
   return {
     kill: () => {
@@ -320,7 +336,14 @@ function dyingPrimary(overrides = {}) {
     },
     handler: (method, params) => {
       if (!alive) dead();
-      if (method === 'eth_chainId') return node(method, params);
+      if (method === 'eth_chainId') {
+        probing = true;
+        return node(method, params);
+      }
+      if (probing && method === 'eth_getBlockByNumber') {
+        probing = false;
+        return node(method, params);
+      }
       alive = false; // the first real request finds it dead
       return dead();
     },
@@ -676,7 +699,7 @@ const delegatedCode = `0xef0100${WALLET_7702_DELEGATE.slice(2).toLowerCase()}`;
     sendError,
   );
   check('nothing was broadcast anywhere', !calls.some((c) => c.method === 'eth_sendRawTransaction'));
-  check('the refusal happened before any request to the new endpoint', !calls.some((c) => c.url === ETH_B && c.method !== 'eth_chainId'));
+  check('the refusal happened before any request to the new endpoint', !calls.some((c) => c.url === ETH_B && !c.probe));
 }
 {
   // Same endpoint at send time: the pinned send goes through the quote's URL.
@@ -755,7 +778,7 @@ const DAPP_DATA_HEX = `0x${Buffer.from(DAPP_TX.data).toString('hex')}`;
   check('the fresh quote keeps the dApp\'s request (to, value, calldata, sender)', moved.moved && moved.next.quote.to === first.quote.to && moved.next.quote.amount === 1000n && moved.next.from === WALLET && `0x${Buffer.from(moved.next.quote.data ?? []).toString('hex')}` === DAPP_DATA_HEX);
   const requoteCalls = calls.slice(before);
   check('the re-quote\'s eth_call gate ran against the new endpoint', requoteCalls.some((c) => c.url === ETH_B && c.method === 'eth_call') && moved.next.quote.simulation.ok === true);
-  check('nothing from the old endpoint was used for the re-quote', !requoteCalls.some((c) => c.url === ETH_A && c.method !== 'eth_chainId'));
+  check('nothing from the old endpoint was used for the re-quote', !requoteCalls.some((c) => c.url === ETH_A && !c.probe));
   check('the one-line note is the agreed sentence', WC_REQUOTED_NOTE === 'The network endpoint changed; the fee was re-quoted.');
   // The balance-change preview runs on the URL the sheet holds, which is now
   // the fresh quote's.

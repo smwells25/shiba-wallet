@@ -9,7 +9,12 @@
 // bypasses probing entirely; the choice is cached in memory, and a reported
 // request failure drops it so the next resolution re-probes from the top
 // (a recovered primary takes over again); a hanging candidate is abandoned
-// after the probe timeout; concurrent resolutions share one probe pass.
+// after the probe timeout; concurrent resolutions share one probe pass;
+// the freshness check (finding F-66): a candidate whose newest block is older
+// than the bound is skipped with a "behind the chain" note, a candidate that
+// cannot answer the freshness read is still accepted, the bound is inclusive,
+// a device clock behind or ahead of the chain, and the last-resort rule when
+// every candidate looks stale.
 //
 // Like check-devmode.mjs, it imports the actual TypeScript modules the app
 // runs via Node's native type stripping. Run from the app directory:
@@ -18,18 +23,24 @@
 //   node scripts/check-rpc-fallback.mjs           # offline only
 //   node scripts/check-rpc-fallback.mjs --live    # plus live candidate probes
 //
-// The --live pass also probes every Sepolia candidate for head freshness
-// (eth_blockNumber against the freshest candidate) and records whether it
-// serves eth_simulateV1 (used by the balance-change preview).
+// The --live pass runs the app's probe (chain identity and freshness against
+// the device clock) on every shipped candidate, then compares every test
+// network candidate's head with the freshest one (eth_blockNumber) and
+// records whether it serves eth_simulateV1 (used by the balance-change
+// preview). A candidate the probe calls stale is printed, not failed: the
+// app skips it, which is the behaviour under test.
 
 import { EVM_ARBITRUM_SEPOLIA, EVM_BASE_SEPOLIA, EVM_MAINNET, EVM_SEPOLIA } from '../src/config/evm-chain.ts';
 import { BASE_SEPOLIA_NETWORK, DEFAULT_NETWORKS, SEPOLIA_NETWORK, TEST_EVM_NETWORKS, networkDefaultFor } from '../src/config/defaults.ts';
 const ARBITRUM_SEPOLIA_NETWORK = networkDefaultFor('eip155:421614');
 import {
+  FRESHNESS_BOUND_SECONDS,
+  assessHeadFreshness,
   createDefaultEndpointResolver,
   describeDefaultChoice,
   describeDefaultFallbackNote,
   endpointHost,
+  findAlternateDefaultUrl,
   probeEndpoint,
   resolveNetworkUrl,
 } from '../src/config/endpoint-probe.ts';
@@ -68,23 +79,72 @@ const DOGE = networkDefaultFor('bip122:1a91e3dace36e2be3bf030a65679fe82');
 // ---------------------------------------------------------------------------
 
 /**
- * behaviors: { [baseUrl]: 'down' | 'hang' | 'http500' | 'rpc-error' | 'malformed' | { evmChainId } | { genesis } | { solGenesis } }
+ * behaviors: { [baseUrl]: 'down' | 'hang' | 'http500' | 'rpc-error' | 'malformed'
+ *                        | { evmChainId, head? } | { genesis, head? } | { solGenesis, head? } }
+ *
+ * A string behavior applies to every request to that URL. For an object
+ * behavior, the identity request (eth_chainId, GET /block-height/0,
+ * getGenesisHash) answers with the given chain, and the probe's freshness
+ * read (eth_getBlockByNumber, GET /blocks, getSlot + getBlockTime) answers
+ * according to `head`:
+ *   - a number: the newest block's timestamp in Unix seconds;
+ *   - undefined: a block made 5 seconds ago by the real clock (fresh);
+ *   - 'unsupported': a JSON-RPC "method not found" error (HTTP 404 for Esplora);
+ *   - 'hang': never answers;
+ *   - 'null': a null result (EVM block, Solana block time) or [] for Esplora;
+ *   - 'down': the request fails at the transport level.
+ *
+ * `calls` records the identity requests only (so the ordering checks read as
+ * before: one entry per probed candidate); `headCalls` records the freshness
+ * reads; `all` records both, in order.
  */
+const FRESH_HEAD = () => Math.floor(Date.now() / 1000) - 5;
+
 function fakeFetch(behaviors) {
   const calls = [];
+  const headCalls = [];
+  const all = [];
   const fn = async (url, init = {}) => {
-    calls.push(url);
+    const body = init.body ? JSON.parse(init.body) : null;
+    const isHead =
+      (body !== null && ['eth_getBlockByNumber', 'getSlot', 'getBlockTime'].includes(body.method)) ||
+      (body === null && url.endsWith('/blocks'));
+    (isHead ? headCalls : calls).push(url);
+    all.push(url);
     const base = Object.keys(behaviors).find((b) => url === b || url.startsWith(`${b}/`));
     const behavior = base ? behaviors[base] : 'down';
     if (behavior === 'down') throw new TypeError('fetch failed (simulated TLS failure)');
     if (behavior === 'hang') return new Promise(() => {});
     if (behavior === 'http500') return { ok: false, status: 500, text: async () => 'oops' };
-    const body = init.body ? JSON.parse(init.body) : null;
     const json = (obj) => ({ ok: true, status: 200, text: async () => JSON.stringify(obj) });
     if (behavior === 'rpc-error') {
       return json({ jsonrpc: '2.0', id: body?.id ?? 1, error: { code: -32603, message: 'internal' } });
     }
     if (behavior === 'malformed') return json({ jsonrpc: '2.0', id: 1, result: 42 });
+    if (isHead) {
+      const head = behavior.head ?? FRESH_HEAD();
+      if (head === 'down') throw new TypeError('fetch failed (simulated)');
+      if (head === 'hang') return new Promise(() => {});
+      if (head === 'unsupported') {
+        if (body === null) return { ok: false, status: 404, text: async () => 'Not Found' };
+        return json({ jsonrpc: '2.0', id: body.id, error: { code: -32601, message: `the method ${body.method} does not exist/is not available` } });
+      }
+      if (body === null) {
+        // Esplora GET /blocks: the 10 newest blocks, newest first.
+        if (head === 'null') return json([]);
+        return json(Array.from({ length: 10 }, (_, i) => ({ height: 900_000 - i, timestamp: head - 600 * i })));
+      }
+      if (body.method === 'eth_getBlockByNumber') {
+        if (JSON.stringify(body.params) !== JSON.stringify(['latest', false])) throw new Error(`unexpected params ${JSON.stringify(body.params)}`);
+        return json({ jsonrpc: '2.0', id: body.id, result: head === 'null' ? null : { number: '0xab12cd', timestamp: `0x${head.toString(16)}` } });
+      }
+      if (body.method === 'getSlot') {
+        if (JSON.stringify(body.params) !== JSON.stringify([{ commitment: 'finalized' }])) throw new Error(`unexpected params ${JSON.stringify(body.params)}`);
+        return json({ jsonrpc: '2.0', id: body.id, result: 455_074_738 });
+      }
+      if (JSON.stringify(body.params) !== JSON.stringify([455_074_738])) throw new Error(`unexpected params ${JSON.stringify(body.params)}`);
+      return json({ jsonrpc: '2.0', id: body.id, result: head === 'null' ? null : head });
+    }
     if (behavior.evmChainId !== undefined) {
       if (body?.method !== 'eth_chainId') throw new Error(`unexpected method ${body?.method}`);
       return json({ jsonrpc: '2.0', id: body.id, result: behavior.evmChainId });
@@ -99,7 +159,7 @@ function fakeFetch(behaviors) {
     }
     throw new Error(`no behavior for ${url}`);
   };
-  return { fn, calls };
+  return { fn, calls, headCalls, all };
 }
 
 // ---------------------------------------------------------------------------
@@ -290,6 +350,251 @@ console.log('probeEndpoint:');
   check('Solana: mainnet genesis passes (first 32 chars = CAIP-2 reference)', ok.ok === true);
   const wrong = await probeEndpoint('solana-jsonrpc', U, SOL.chainId, { fetchFn: fakeFetch({ [U]: { solGenesis: OTHER_SOL_GENESIS } }).fn });
   check('Solana: another cluster\'s genesis is wrong-chain', !wrong.ok && wrong.kind === 'wrong-chain');
+}
+
+// ---------------------------------------------------------------------------
+// 2b. Freshness (finding F-66): the newest block against the device clock
+// ---------------------------------------------------------------------------
+
+console.log('freshness:');
+
+// The figures recorded for F-66 (AGENTS.md phase 15, "SEPOLIA FORK FINDINGS
+// RESOLVED"): https://0xrpc.io/sep stuck at block 11856335 with timestamp
+// 1791294792, re-read on 2026-10-09 when the device clock said 1791595910.
+const F66_STUCK_HEAD = 1791294792;
+const F66_DEVICE_NOW_MS = 1791595910 * 1000;
+
+check(
+  'bounds are the documented judgements: EVM 10 min, Esplora 3 h, Solana 5 min',
+  FRESHNESS_BOUND_SECONDS['evm-jsonrpc'] === 600 && FRESHNESS_BOUND_SECONDS.esplora === 10_800 && FRESHNESS_BOUND_SECONDS['solana-jsonrpc'] === 300,
+  JSON.stringify(FRESHNESS_BOUND_SECONDS),
+);
+{
+  const head = 1_800_000_000;
+  check('rule: exactly at the bound is fresh (inclusive)', assessHeadFreshness(head, (head + 600) * 1000, 600).stale === false);
+  check('rule: one millisecond past the bound is stale', assessHeadFreshness(head, (head + 600) * 1000 + 1, 600).stale === true);
+  check('rule: a head ahead of the device clock is fresh (negative age)', assessHeadFreshness(head, (head - 3600) * 1000, 600).stale === false && assessHeadFreshness(head, (head - 3600) * 1000, 600).ageSeconds === -3600);
+  check('rule: the F-66 head is about 83.6 hours old by that clock', Math.round(assessHeadFreshness(F66_STUCK_HEAD, F66_DEVICE_NOW_MS, 600).ageSeconds) === 301_118);
+}
+{
+  const U = 'https://evm.fake';
+  const head = 1_800_000_000;
+  const at = (offsetSeconds) => () => (head + offsetSeconds) * 1000;
+  const fresh = await probeEndpoint('evm-jsonrpc', U, 'eip155:1', { fetchFn: fakeFetch({ [U]: { evmChainId: '0x1' } }).fn });
+  check('EVM: a block made 5 s ago passes as fresh', fresh.ok === true && fresh.freshness === 'fresh', JSON.stringify(fresh));
+  const { fn, calls, headCalls, all } = fakeFetch({ [U]: { evmChainId: '0x1', head } });
+  const atBound = await probeEndpoint('evm-jsonrpc', U, 'eip155:1', { fetchFn: fn, now: at(600) });
+  check('EVM: a head exactly 600 s old is accepted', atBound.ok === true && atBound.freshness === 'fresh', JSON.stringify(atBound));
+  check('EVM: one identity request and one freshness request per probe', calls.length === 1 && headCalls.length === 1);
+  check('EVM: identity first, then the freshness read', same(all, [U, U]) && calls.length === 1);
+  const past = await probeEndpoint('evm-jsonrpc', U, 'eip155:1', { fetchFn: fn, now: at(601) });
+  check('EVM: a head 601 s old is stale', !past.ok && past.kind === 'stale' && past.headTimestamp === head && /^the newest block is 601 s old \(timestamp 1800000000\), more than the 600 s allowed$/.test(past.reason), JSON.stringify(past));
+  const ahead = await probeEndpoint('evm-jsonrpc', U, 'eip155:1', { fetchFn: fn, now: at(-120) });
+  check('EVM: device clock 2 minutes BEHIND the chain (head in the future) is fresh', ahead.ok === true && ahead.freshness === 'fresh');
+  const clockAhead = await probeEndpoint('evm-jsonrpc', U, 'eip155:1', { fetchFn: fn, now: at(12 + 90) });
+  check('EVM: device clock 90 s AHEAD of a 12 s-old block is still fresh', clockAhead.ok === true && clockAhead.freshness === 'fresh');
+  const clockFarAhead = await probeEndpoint('evm-jsonrpc', U, 'eip155:1', { fetchFn: fn, now: at(12 * 3600) });
+  check('EVM: device clock 12 hours ahead makes a live chain look stale (handled by the resolver)', !clockFarAhead.ok && clockFarAhead.kind === 'stale');
+  const custom = await probeEndpoint('evm-jsonrpc', U, 'eip155:1', { fetchFn: fn, now: at(61), freshnessBoundSeconds: 60 });
+  check('EVM: freshnessBoundSeconds overrides the bound', !custom.ok && custom.kind === 'stale');
+  const off = await probeEndpoint('evm-jsonrpc', U, 'eip155:1', { fetchFn: fakeFetch({ [U]: { evmChainId: '0x1', head } }).fn, now: at(10_000), checkFreshness: false });
+  check('EVM: checkFreshness false checks identity only', off.ok === true && off.freshness === undefined);
+  const f66 = await probeEndpoint('evm-jsonrpc', 'https://0xrpc.io/sep', 'eip155:11155111', {
+    fetchFn: fakeFetch({ 'https://0xrpc.io/sep': { evmChainId: '0xaa36a7', head: F66_STUCK_HEAD } }).fn,
+    now: () => F66_DEVICE_NOW_MS,
+  });
+  check('EVM: the recorded F-66 endpoint (right chain id, frozen head) is stale', !f66.ok && f66.kind === 'stale' && f66.headTimestamp === F66_STUCK_HEAD, JSON.stringify(f66));
+  const wrongAndOld = await probeEndpoint('evm-jsonrpc', U, 'eip155:1', { fetchFn: fakeFetch({ [U]: { evmChainId: '0xaa36a7', head } }).fn, now: at(10_000) });
+  check('EVM: identity is decided first (wrong chain AND old head -> wrong-chain)', !wrongAndOld.ok && wrongAndOld.kind === 'wrong-chain');
+  {
+    const wrongFake = fakeFetch({ [U]: { evmChainId: '0xaa36a7' } });
+    await probeEndpoint('evm-jsonrpc', U, 'eip155:1', { fetchFn: wrongFake.fn });
+    check('EVM: a wrong-chain candidate gets no freshness read (sequential)', wrongFake.headCalls.length === 0 && wrongFake.calls.length === 1);
+  }
+  const downFake = fakeFetch({ [U]: 'down' });
+  const downAndFresh = await probeEndpoint('evm-jsonrpc', U, 'eip155:1', { fetchFn: downFake.fn });
+  check('EVM: a dead endpoint stays unreachable (not stale)', !downAndFresh.ok && downAndFresh.kind === 'unreachable');
+  check('EVM: a dead endpoint receives only the one identity request', downFake.all.length === 1);
+
+  // A freshness read that errors is UNKNOWN, never stale: the candidate is accepted.
+  for (const [what, headBehavior] of [
+    ['method not supported (-32601)', 'unsupported'],
+    ['a null block', 'null'],
+    ['a transport failure on the freshness read only', 'down'],
+  ]) {
+    const r = await probeEndpoint('evm-jsonrpc', U, 'eip155:1', { fetchFn: fakeFetch({ [U]: { evmChainId: '0x1', head: headBehavior } }).fn });
+    check(`EVM: ${what} -> accepted with freshness unknown`, r.ok === true && r.freshness === 'unknown' && typeof r.freshnessDetail === 'string', JSON.stringify(r));
+  }
+  const started = Date.now();
+  const slowHead = await probeEndpoint('evm-jsonrpc', U, 'eip155:1', { fetchFn: fakeFetch({ [U]: { evmChainId: '0x1', head: 'hang' } }).fn, timeoutMs: 50 });
+  const elapsed = Date.now() - started;
+  check('EVM: a freshness read with no answer by the deadline -> accepted, unknown', slowHead.ok === true && slowHead.freshness === 'unknown' && /50 ms/.test(slowHead.freshnessDetail ?? ''), JSON.stringify(slowHead));
+  check('EVM: the shared per-candidate deadline is honoured (well under 1 s)', elapsed < 1000, `${elapsed} ms`);
+  // The freshness read gets only what the identity answer left of the same
+  // deadline: identity answers after ~150 ms of a 250 ms budget and the
+  // freshness read never answers, so the probe ends at ~250 ms, not ~400 ms.
+  const inner = fakeFetch({ [U]: { evmChainId: '0x1', head: 'hang' } }).fn;
+  const slowIdentity = async (url, init) => {
+    const body = init?.body ? JSON.parse(init.body) : null;
+    if (body?.method === 'eth_chainId') await new Promise((resolve) => setTimeout(resolve, 150));
+    return inner(url, init);
+  };
+  const t0 = Date.now();
+  const shared = await probeEndpoint('evm-jsonrpc', U, 'eip155:1', { fetchFn: slowIdentity, timeoutMs: 250 });
+  const sharedElapsed = Date.now() - t0;
+  check('EVM: identity + freshness together stay within one timeout (shared deadline)', shared.ok === true && shared.freshness === 'unknown' && sharedElapsed >= 240 && sharedElapsed < 380, `${sharedElapsed} ms`);
+}
+{
+  const U = 'https://esplora.fake/api';
+  const head = 1_800_000_000;
+  const { fn, calls, headCalls } = fakeFetch({ [U]: { genesis: BTC_GENESIS, head } });
+  const ok = await probeEndpoint('esplora', U, BTC.chainId, { fetchFn: fn, now: () => (head + 10_800) * 1000 });
+  check('Esplora: a tip exactly 3 hours old is accepted', ok.ok === true && ok.freshness === 'fresh', JSON.stringify(ok));
+  check('Esplora: freshness reads GET /blocks (one request)', same(headCalls, [`${U}/blocks`]) && same(calls, [`${U}/block-height/0`]));
+  const old = await probeEndpoint('esplora', U, BTC.chainId, { fetchFn: fn, now: () => (head + 10_801) * 1000 });
+  check('Esplora: a tip 3 hours and 1 second old is stale', !old.ok && old.kind === 'stale' && old.headTimestamp === head, JSON.stringify(old));
+  const hourGap = await probeEndpoint('esplora', U, BTC.chainId, { fetchFn: fn, now: () => (head + 75 * 60) * 1000 });
+  check('Esplora: a 75-minute gap since the last block is still fresh', hourGap.ok === true);
+  // Timestamps are not strictly increasing: the newest among the 10 counts.
+  const unordered = async (url, init) => {
+    if (url.endsWith('/blocks')) {
+      return { ok: true, status: 200, text: async () => JSON.stringify([{ height: 2, timestamp: head - 100 }, { height: 1, timestamp: head }]) };
+    }
+    return fn(url, init);
+  };
+  const newest = await probeEndpoint('esplora', U, BTC.chainId, { fetchFn: unordered, now: () => (head + 10_800) * 1000 });
+  check('Esplora: the newest timestamp among the returned blocks is used', newest.ok === true && newest.freshness === 'fresh');
+  for (const [what, headBehavior] of [['HTTP 404 for /blocks', 'unsupported'], ['an empty list', 'null']]) {
+    const r = await probeEndpoint('esplora', U, BTC.chainId, { fetchFn: fakeFetch({ [U]: { genesis: BTC_GENESIS, head: headBehavior } }).fn });
+    check(`Esplora: ${what} -> accepted with freshness unknown`, r.ok === true && r.freshness === 'unknown', JSON.stringify(r));
+  }
+}
+{
+  const U = 'https://solana.fake';
+  const head = 1_800_000_000;
+  const { fn, headCalls } = fakeFetch({ [U]: { solGenesis: SOL_GENESIS, head } });
+  const ok = await probeEndpoint('solana-jsonrpc', U, SOL.chainId, { fetchFn: fn, now: () => (head + 300) * 1000 });
+  check('Solana: a finalized block time exactly 5 minutes old is accepted', ok.ok === true && ok.freshness === 'fresh', JSON.stringify(ok));
+  check('Solana: freshness reads getSlot (finalized) then getBlockTime for that slot', headCalls.length === 2);
+  const old = await probeEndpoint('solana-jsonrpc', U, SOL.chainId, { fetchFn: fn, now: () => (head + 301) * 1000 });
+  check('Solana: 301 s old is stale', !old.ok && old.kind === 'stale', JSON.stringify(old));
+  for (const [what, headBehavior] of [['getBlockTime null (no time recorded)', 'null'], ['method not supported', 'unsupported']]) {
+    const r = await probeEndpoint('solana-jsonrpc', U, SOL.chainId, { fetchFn: fakeFetch({ [U]: { solGenesis: SOL_GENESIS, head: headBehavior } }).fn });
+    check(`Solana: ${what} -> accepted with freshness unknown`, r.ok === true && r.freshness === 'unknown', JSON.stringify(r));
+  }
+}
+{
+  // Resolver: a stale PRIMARY is skipped, the second candidate is chosen,
+  // and Settings says the primary is behind the chain.
+  const [SEP1, SEP2, SEP3, SEP4] = SEPOLIA_NETWORK.defaultUrls;
+  const now = () => F66_DEVICE_NOW_MS;
+  const fresh = 1791595900;
+  const { fn, calls } = fakeFetch({
+    [SEP1]: { evmChainId: '0xaa36a7', head: F66_STUCK_HEAD },
+    [SEP2]: { evmChainId: '0xaa36a7', head: fresh },
+    [SEP3]: { evmChainId: '0xaa36a7', head: fresh },
+    [SEP4]: { evmChainId: '0xaa36a7', head: fresh },
+  });
+  const choice = await createDefaultEndpointResolver({ fetchFn: fn, now }).resolve(SEPOLIA_NETWORK);
+  check('stale primary -> second candidate chosen, healthy', choice.url === SEP2 && choice.index === 1 && choice.healthy === true && choice.stale === undefined, JSON.stringify(choice));
+  check('stale primary: probing stopped at the second candidate', same(calls, [SEP1, SEP2]));
+  check('stale primary: the reason and kind are recorded', choice.primaryFailureKind === 'stale' && /^the newest block is 301118 s old/.test(choice.primaryFailure ?? ''), JSON.stringify(choice));
+  check('stale primary: the tag names the fallback in use', describeDefaultChoice(choice) === 'default (2 of 4: eth-sepolia-testnet.api.pocket.network)', describeDefaultChoice(choice));
+  const note = describeDefaultFallbackNote(choice, SEPOLIA_NETWORK.defaultUrls);
+  check(
+    'stale primary: the note says the primary is behind the chain (not unreachable)',
+    note === 'The primary default (ethereum-sepolia-rpc.publicnode.com) is behind the chain right now (its newest block is older than expected), so a fallback default is in use. The primary is tried again on the next app launch or whenever the fallback fails.',
+    note,
+  );
+}
+{
+  // The F-66 situation itself: publicnode and Pocket unreachable, 0xRPC
+  // answering as Sepolia with its frozen head -> skipped for 1RPC.
+  const [SEP1, SEP2, SEP3, SEP4] = SEPOLIA_NETWORK.defaultUrls;
+  check('the third Sepolia candidate is the F-66 endpoint', SEP3 === 'https://0xrpc.io/sep');
+  const { fn, calls } = fakeFetch({
+    [SEP1]: 'down',
+    [SEP2]: 'down',
+    [SEP3]: { evmChainId: '0xaa36a7', head: F66_STUCK_HEAD },
+    [SEP4]: { evmChainId: '0xaa36a7', head: 1791595900 },
+  });
+  const choice = await createDefaultEndpointResolver({ fetchFn: fn, now: () => F66_DEVICE_NOW_MS }).resolve(SEPOLIA_NETWORK);
+  check('F-66 replay: the frozen 0xrpc.io/sep is skipped, 1RPC chosen', choice.url === SEP4 && choice.healthy === true, JSON.stringify(choice));
+  check('F-66 replay: all four probed in order', same(calls, [SEP1, SEP2, SEP3, SEP4]));
+}
+{
+  // A candidate that cannot answer the freshness read is still accepted.
+  const [ETH1A, ETH2A] = EVM_MAINNET.defaultRpcUrls;
+  const { fn, calls } = fakeFetch({ [ETH1A]: { evmChainId: '0x1', head: 'unsupported' }, [ETH2A]: { evmChainId: '0x1' } });
+  const choice = await createDefaultEndpointResolver({ fetchFn: fn }).resolve(ETH);
+  check('primary without eth_getBlockByNumber is accepted (not skipped as stale)', choice.url === ETH1A && choice.healthy === true && choice.primaryUnreachable === false && same(calls, [ETH1A]), JSON.stringify(choice));
+}
+{
+  // Device clock far ahead (2 days): EVERY candidate looks stale. The
+  // newest head among them is used, flagged unhealthy and stale, so the
+  // chain is not blanked; the note points at the phone's date and time.
+  const [SEP1, SEP2, SEP3, SEP4] = SEPOLIA_NETWORK.defaultUrls;
+  const live = 1791595900;
+  const { fn } = fakeFetch({
+    [SEP1]: { evmChainId: '0xaa36a7', head: live - 3 },
+    [SEP2]: { evmChainId: '0xaa36a7', head: live },
+    [SEP3]: { evmChainId: '0xaa36a7', head: F66_STUCK_HEAD },
+    [SEP4]: { evmChainId: '0xaa36a7', head: live - 1 },
+  });
+  const choice = await createDefaultEndpointResolver({ fetchFn: fn, now: () => (live + 2 * 86_400) * 1000 }).resolve(SEPOLIA_NETWORK);
+  check('clock 2 days ahead: the candidate with the newest head is used, flagged', choice.url === SEP2 && choice.index === 1 && choice.healthy === false && choice.stale === true, JSON.stringify(choice));
+  check('clock 2 days ahead: the frozen candidate is never the one chosen', choice.url !== SEP3);
+  check('clock 2 days ahead: the tag says behind the chain', describeDefaultChoice(choice) === 'default (2 of 4: eth-sepolia-testnet.api.pocket.network, behind the chain)', describeDefaultChoice(choice));
+  const note = describeDefaultFallbackNote(choice, SEPOLIA_NETWORK.defaultUrls);
+  check(
+    'clock 2 days ahead: the note says data may be out of date and names the phone clock',
+    note !== null && /None of the 4 default endpoints passed the last check/.test(note) && /may be out of date/.test(note) && /date and time are wrong/.test(note) && note.includes('eth-sepolia-testnet.api.pocket.network'),
+    note,
+  );
+}
+{
+  // Mixed: wrong chain, unreachable and stale only -> the stale one with
+  // the newest head (it answers as the right chain); never the wrong chain.
+  const [SEP1, SEP2, SEP3, SEP4] = SEPOLIA_NETWORK.defaultUrls;
+  const now = 1791595910;
+  const { fn } = fakeFetch({
+    [SEP1]: { evmChainId: '0x1', head: now },
+    [SEP2]: { evmChainId: '0xaa36a7', head: now - 3_000 },
+    [SEP3]: 'down',
+    [SEP4]: { evmChainId: '0xaa36a7', head: now - 2_000 },
+  });
+  const choice = await createDefaultEndpointResolver({ fetchFn: fn, now: () => now * 1000 }).resolve(SEPOLIA_NETWORK);
+  check('no healthy candidate: the newest stale one beats unreachable and wrong-chain', choice.url === SEP4 && choice.stale === true && !choice.healthy, JSON.stringify(choice));
+  check('no healthy candidate: the wrong-chain primary is recorded as such', choice.primaryFailureKind === 'wrong-chain');
+}
+{
+  // Unhealthy (stale) results are cached only briefly, then re-probed.
+  let clock = 1791595910 * 1000;
+  const [ETH1A, ETH2A] = EVM_MAINNET.defaultRpcUrls;
+  const behaviors = { [ETH1A]: { evmChainId: '0x1', head: 1791590000 }, [ETH2A]: 'down' };
+  const { fn, calls } = fakeFetch(behaviors);
+  const resolver = createDefaultEndpointResolver({ fetchFn: fn, failureRetryMs: 10_000, now: () => clock });
+  const first = await resolver.resolve(ETH);
+  check('only a stale candidate answers -> it is returned unhealthy and stale', first.url === ETH1A && first.stale === true && !first.healthy);
+  clock += 5_000;
+  await resolver.resolve(ETH);
+  check('stale result reused within the retry window', calls.length === 2);
+  behaviors[ETH1A] = { evmChainId: '0x1', head: 1791595910 };
+  clock += 6_000;
+  const later = await resolver.resolve(ETH);
+  check('after the window the caught-up primary is healthy again', later.url === ETH1A && later.healthy === true && later.stale === undefined && calls.length === 3);
+}
+{
+  // Read-only history search: a stale alternate is not offered.
+  const list = ['https://a.example', 'https://b.example', 'https://c.example'];
+  const now = 1791595910;
+  const { fn } = fakeFetch({
+    'https://a.example': { evmChainId: '0x1', head: now },
+    'https://b.example': { evmChainId: '0x1', head: now - 3_600 },
+    'https://c.example': { evmChainId: '0x1', head: now },
+  });
+  const alt = await findAlternateDefaultUrl({ kind: 'evm-jsonrpc', chainId: 'eip155:1', defaultUrls: list }, 'https://a.example', false, { fetchFn: fn, now: () => now * 1000 });
+  check('alternate search skips a stale candidate', alt === 'https://c.example', String(alt));
 }
 
 // ---------------------------------------------------------------------------
@@ -608,7 +913,7 @@ if (process.argv.includes('--live')) {
     for (const url of network.defaultUrls) {
       const result = await probeEndpoint(network.kind, url, network.chainId);
       if (result.ok) healthy += 1;
-      console.log(`  ${network.label.padEnd(17)} ${url.padEnd(45)} ${result.ok ? 'healthy' : `${result.kind}: ${result.reason}`}`);
+      console.log(`  ${network.label.padEnd(17)} ${url.padEnd(45)} ${result.ok ? `healthy (freshness ${result.freshness}${result.freshnessDetail ? `: ${result.freshnessDetail}` : ''})` : `${result.kind}: ${result.reason}`}`);
     }
     check(`${network.label}: at least one live default is healthy`, healthy > 0);
   }
@@ -671,7 +976,9 @@ if (process.argv.includes('--live')) {
       const probe = await probeEndpoint('evm-jsonrpc', url, network.chainId);
       check(`${network.label} ${endpointHost(url)}: never answers as another chain`, probe.ok || probe.kind !== 'wrong-chain', JSON.stringify(probe));
       if (!probe.ok) {
-        console.log(`  ${endpointHost(url).padEnd(40)} unreachable: ${probe.reason}`);
+        // A stale candidate (finding F-66) is skipped by the app, so it is
+        // left out of the head comparison below as well.
+        console.log(`  ${endpointHost(url).padEnd(40)} ${probe.kind}: ${probe.reason}`);
         continue;
       }
       const head = await liveRpc(url, 'eth_blockNumber');
