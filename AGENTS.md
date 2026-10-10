@@ -2821,3 +2821,60 @@ a passkey create attempt in a dev build with a Google account signed in
 on a disposable AVD, once an rpId domain exists; PRIVACY.md entries for
 ML Kit / datatransport once their data flow is read from source; the
 "Open connections" label.
+
+DECIDED by the Chairperson (2026-10-10): an app-wide "hide in the app
+switcher" protection is wanted, erring on caution because the wallet is
+meant for real value; the CTO's caveat stands — on Android the secure
+flag also blocks screenshots and recording of every screen, so it ships
+ON by default with a Settings toggle that says what it blocks, and
+emulator passes turn it off first. The Chairperson is reviewing
+docs/DISCLOSURE_FINDINGS.md.
+
+## Phase 17 plan (started 2026-10-10 on "start working on next phase"): the account types people share, and the wallet that tells you when
+
+Selection rule as before: features not started or built-only that need
+no outside input and can be shown on the emulator (Expo Go, or the local
+development build proven in phase 16), with the AA differentiator first.
+
+0. App-wide screen protection (the decision above): expo-screen-capture
+   applied at launch (Android secure flag; iOS screenshot block and the
+   app-switcher cover), default on, Settings → Privacy toggle with plain
+   copy about screenshots and recording, the seed screens unchanged;
+   verified from the installed module's source, then on the emulator
+   (recents thumbnail blank, screencap empty everywhere while on).
+1. Multi-signature accounts in the app (feature 24, the engine from
+   phase 15): a new account type created by DEPLOYING FRESH (never
+   converting), co-signer approvals collected off-device as request /
+   approval JSON by QR or file like guardian recovery, the exposure and
+   the "cannot sign messages, logins or permits" statement on every
+   screen, co-signers approve calls + nonce but not fees, test networks
+   only (readiness row), guardian recovery refused on a weighted root;
+   proven on the emulator with the dev seed's signers through a script
+   as in phase 10.
+2. Local notifications for things that fall due (features 93 partial,
+   83 groundwork): expo-notifications LOCAL notifications only (no push
+   service, no account) — a recurring payment due, a subscription slot
+   open, a guardian or heir takeover attempt detected, an auto-lock
+   reminder off by default; scheduled from the data the app already
+   reads, tap opens the right screen; verified in Expo Go where it
+   supports them and in the local development build otherwise.
+3. Custom EVM network addition (feature 33; requirement 4's
+   flexibility): add a network by chain id + RPC + explorer with the
+   same verify-before-save discipline as every endpoint (eth_chainId,
+   freshness), a user-added chain treated as MAINNET by the readiness
+   switchboard unless its id is a known test network, tokens / AA / the
+   browser scoped per chain as today, removal with its data.
+4. Transaction notes and receipts (feature 87): a private note per
+   transaction stored on-device, shown in Activity and on the success
+   screens, exported with the Activity list as a plain file.
+5. Research only: native and liquid staking on a test network
+   (features 57/58) — which protocols run on Sepolia / Hoodi, what a
+   smart-account staking flow would need; a document, no code.
+6. Leadership refresh at the end.
+
+Waves: 1 — item 0 (Settings/prefs/App.tsx owner), item 1 (new screens +
+aa.ts), item 4 (activity files) in parallel; 2 — item 3 (Settings/prefs
+after item 0) and item 2 (App.tsx after item 0) with item 5's research
+alongside; emulator passes after each wave. Subagents on Opus.
+
+## Phase 17 progress
