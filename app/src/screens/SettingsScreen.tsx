@@ -1775,6 +1775,15 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: theme.text }]}>Apps (in-app browser)</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          A short, fixed list of apps that open inside the wallet, on test networks only. They connect through the same
+          approval sheet as WalletConnect, and their connections are listed and disconnected under Open connections.
+        </Text>
+        <Button title="Open Apps" variant="secondary" onPress={() => navigation.navigate('Apps')} />
+      </View>
+
+      <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: theme.text }]}>Contacts</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Named addresses for each chain, picked from the Send screen. A name

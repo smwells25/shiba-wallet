@@ -9,6 +9,7 @@ import {
   decideSupportedExecutionPermissions,
   decideSwitchChain,
   declineProposal,
+  describeBrowserIdentity,
   describeProposal,
   describeVerifyContext,
   parseWcRequest,
@@ -168,6 +169,22 @@ export interface WcControllerContext {
 
 const MAX_NOTICES = 5;
 
+/**
+ * The in-app browser's first-hand identity of an event, or null for every
+ * WalletConnect event (feature 79; docs/DAPP_BROWSER.md section 2.7). Only
+ * the browser bridge (browser-bridge.ts) sets `browserOrigin`, and only on
+ * events it emits itself: negative ids and "browser:" topics, which the
+ * WalletConnect SDK never produces (its ids are positive, from
+ * @walletconnect/jsonrpc-utils payloadId, and its topics are hex). The
+ * composite client also strips the field from anything WalletKit emits, so
+ * a WalletConnect event can never borrow this identity.
+ */
+function browserIdentityOf(event: unknown, browserScoped: boolean): WcDappIdentity | null {
+  if (!browserScoped) return null;
+  const origin = (event as { browserOrigin?: unknown } | null)?.browserOrigin;
+  return typeof origin === 'string' && origin !== '' ? describeBrowserIdentity(origin) : null;
+}
+
 export class WcController {
   client: WcClient;
   getContext: () => WcControllerContext;
@@ -240,11 +257,13 @@ export class WcController {
     const onDelete = (e: { topic?: string }) => this.onSessionDelete(e);
     const onRequestExpire = (e: { id?: number }) => this.onRequestExpire(e);
     const onProposalExpire = (e: { id?: number }) => this.onProposalExpire(e);
+    const onWithdrawn = (e: { ids?: unknown; notice?: unknown }) => this.onRequestsWithdrawn(e);
     this.client.on('session_proposal', onProposal as never);
     this.client.on('session_request', onRequest as never);
     this.client.on('session_delete', onDelete as never);
     this.client.on('session_request_expire', onRequestExpire as never);
     this.client.on('proposal_expire', onProposalExpire as never);
+    this.client.on('browser_requests_withdrawn', onWithdrawn as never);
     if (this.bindingStore) {
       const store = this.bindingStore;
       this.bindingsReady = loadSmartBindings(store).then((list) => {
@@ -262,6 +281,7 @@ export class WcController {
       this.client.off('session_delete', onDelete as never);
       this.client.off('session_request_expire', onRequestExpire as never);
       this.client.off('proposal_expire', onProposalExpire as never);
+      this.client.off('browser_requests_withdrawn', onWithdrawn as never);
     };
   }
 
@@ -356,8 +376,11 @@ export class WcController {
       event,
       summary,
       // The SDK delivers verifyContext beside id/params (sign-client 2.25.0
-      // engine.ts onSessionProposal); it is read defensively.
-      identity: describeVerifyContext((event as { verifyContext?: unknown }).verifyContext, summary.url),
+      // engine.ts onSessionProposal); it is read defensively. A proposal from
+      // the in-app browser carries the web view's origin instead.
+      identity:
+        browserIdentityOf(event, event.id < 0) ??
+        describeVerifyContext((event as { verifyContext?: unknown }).verifyContext, summary.url),
     });
     this.emit();
   }
@@ -563,10 +586,9 @@ export class WcController {
       }
     }
     if (this.queue.some((i) => i.key === key)) return;
-    const identity = describeVerifyContext(
-      (event as { verifyContext?: unknown }).verifyContext,
-      this.dappUrl(event.topic),
-    );
+    const identity =
+      browserIdentityOf(event, typeof event.topic === 'string' && event.topic.startsWith('browser:') && event.id < 0) ??
+      describeVerifyContext((event as { verifyContext?: unknown }).verifyContext, this.dappUrl(event.topic));
     // Sign-In with Ethereum (EIP-4361): a sign-in for a site other than the
     // request origin needs the risk switch (walletconnect.ts applySiweGate).
     const siwe = siweSheetState(
@@ -615,6 +637,26 @@ export class WcController {
       );
     }
     this.refreshSessions();
+  }
+
+  /**
+   * The in-app browser withdrew requests it had queued: the page that sent
+   * them was left or closed, so no answer could reach it any more
+   * (docs/DAPP_BROWSER.md section 2.5: "Navigating to another origin
+   * declines anything queued from the old one"). Like a session_delete,
+   * the items leave the queue (also when one is being acted on; its answer
+   * is then dropped by the bridge), and the bridge's sentence is shown.
+   */
+  onRequestsWithdrawn(event: { ids?: unknown; notice?: unknown }): void {
+    const ids = Array.isArray(event?.ids) ? event.ids.filter((x): x is number => typeof x === 'number' && x < 0) : [];
+    if (ids.length === 0) return;
+    const keys = new Set(ids.flatMap((id) => [`p:${id}`, `r:${id}`]));
+    const before = this.queue.length;
+    this.queue = this.queue.filter((i) => !keys.has(i.key));
+    if (this.busyKey && keys.has(this.busyKey)) this.busyKey = null;
+    if (this.queue.length === before) return;
+    if (typeof event.notice === 'string' && event.notice !== '') this.addNotice(event.notice);
+    else this.emit();
   }
 
   onRequestExpire(event: { id?: number }): void {

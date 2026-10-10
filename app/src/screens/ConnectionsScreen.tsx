@@ -10,6 +10,7 @@ import { describeChain, validatePairingUri } from '../wallet/walletconnect';
 import { useWalletConnect, type WcSessionView } from '../wallet/WalletConnectContext';
 import { OfflineNotice, TechnicalDetail, describeNetworkError } from '../wallet/connectivity';
 import { sanitizeEndpointMessage } from '../config/endpoint-probe';
+import { isBrowserTopic } from '../wallet/browser-bridge';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Connections'>;
 
@@ -27,6 +28,10 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Connections'>;
  * listens for them on every screen and shows the approval sheet. Opening
  * this screen starts the SDK if it is not running yet (the lazy path for
  * devices where WalletConnect has not been used).
+ *
+ * In-app browser connections (feature 79) are listed in their own section,
+ * labelled with the site's origin, and can be disconnected here whether or
+ * not WalletConnect is configured or running (they do not use the relay).
  */
 export function ConnectionsScreen({ navigation }: Props) {
   const theme = useTheme();
@@ -70,6 +75,9 @@ export function ConnectionsScreen({ navigation }: Props) {
     }
   };
 
+  const wcSessions = wc.sessions.filter((session) => !isBrowserTopic(session.topic));
+  const browserSessions = wc.sessions.filter((session) => isBrowserTopic(session.topic));
+
   const onDisconnect = (session: WcSessionView) => {
     Alert.alert('Disconnect?', `End the connection with ${session.name}?`, [
       { text: 'Cancel', style: 'cancel' },
@@ -90,9 +98,24 @@ export function ConnectionsScreen({ navigation }: Props) {
     );
   }
 
+  const browserSection =
+    browserSessions.length > 0 ? (
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: theme.text }]}>In-app browser connections</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          Sites opened from Apps (test networks only). Each is connected for one account on one network; disconnecting
+          stops it from seeing your address until you connect again.
+        </Text>
+        {browserSessions.map((session) => (
+          <SessionCard key={session.topic} session={session} onDisconnect={onDisconnect} />
+        ))}
+      </View>
+    ) : null;
+
   if (wc.projectId === null) {
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+        {browserSection}
         <Text style={[styles.sectionTitle, { color: theme.text }]}>WalletConnect is off</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Connecting to dApps uses the WalletConnect relay network, which
@@ -122,6 +145,8 @@ export function ConnectionsScreen({ navigation }: Props) {
       ) : null}
 
       <OfflineNotice />
+
+      {browserSection}
 
       {wc.initError ? (
         <>
@@ -186,48 +211,13 @@ export function ConnectionsScreen({ navigation }: Props) {
 
           <View style={styles.section}>
             <Text style={[styles.sectionTitle, { color: theme.text }]}>Active connections</Text>
-            {wc.sessions.length === 0 ? (
+            {wcSessions.length === 0 ? (
               <Text style={[styles.hint, { color: theme.textMuted }]}>
                 No dApps are connected.
               </Text>
             ) : (
-              wc.sessions.map((session) => (
-                <View
-                  key={session.topic}
-                  style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}
-                >
-                  <Text style={[styles.cardTitle, { color: theme.text }]}>{session.name}</Text>
-                  {session.url ? (
-                    <Text style={[styles.cardLine, { color: theme.textMuted }]} numberOfLines={1}>
-                      {session.url}
-                    </Text>
-                  ) : null}
-                  <Text style={[styles.cardLine, { color: theme.textMuted }]}>
-                    {session.chains.join(', ') || 'no chains'} ·{' '}
-                    {session.methods.length} method{session.methods.length === 1 ? '' : 's'}
-                  </Text>
-                  {session.accountLabel || session.addresses[0] ? (
-                    <Text style={[styles.cardLine, { color: theme.textMuted }]}>
-                      Account: {session.accountLabel ?? session.addresses[0]}
-                    </Text>
-                  ) : null}
-                  {session.modeNote ? (
-                    <Text style={[styles.cardLine, { color: theme.warningText }]}>
-                      {session.modeNote}
-                    </Text>
-                  ) : null}
-                  {session.accountNote ? (
-                    <Text style={[styles.cardLine, { color: theme.warningText }]}>
-                      {session.accountNote}
-                    </Text>
-                  ) : null}
-                  <Button
-                    title="Disconnect"
-                    accessibilityLabel={`Disconnect ${session.name}`}
-                    variant="secondary"
-                    onPress={() => onDisconnect(session)}
-                  />
-                </View>
+              wcSessions.map((session) => (
+                <SessionCard key={session.topic} session={session} onDisconnect={onDisconnect} />
               ))
             )}
           </View>
@@ -258,6 +248,48 @@ export function ConnectionsScreen({ navigation }: Props) {
         onClose={() => setScannerOpen(false)}
       />
     </ScrollView>
+  );
+}
+
+/** One connection: name, URL, chains, account, pause notes and Disconnect. */
+function SessionCard({
+  session,
+  onDisconnect,
+}: {
+  session: WcSessionView;
+  onDisconnect: (session: WcSessionView) => void;
+}) {
+  const theme = useTheme();
+  return (
+    <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+      <Text style={[styles.cardTitle, { color: theme.text }]}>{session.name}</Text>
+      {session.url ? (
+        <Text style={[styles.cardLine, { color: theme.textMuted }]} numberOfLines={1}>
+          {session.url}
+        </Text>
+      ) : null}
+      <Text style={[styles.cardLine, { color: theme.textMuted }]}>
+        {session.chains.join(', ') || 'no chains'} ·{' '}
+        {session.methods.length} method{session.methods.length === 1 ? '' : 's'}
+      </Text>
+      {session.accountLabel || session.addresses[0] ? (
+        <Text style={[styles.cardLine, { color: theme.textMuted }]}>
+          Account: {session.accountLabel ?? session.addresses[0]}
+        </Text>
+      ) : null}
+      {session.modeNote ? (
+        <Text style={[styles.cardLine, { color: theme.warningText }]}>{session.modeNote}</Text>
+      ) : null}
+      {session.accountNote ? (
+        <Text style={[styles.cardLine, { color: theme.warningText }]}>{session.accountNote}</Text>
+      ) : null}
+      <Button
+        title="Disconnect"
+        accessibilityLabel={`Disconnect ${session.name}`}
+        variant="secondary"
+        onPress={() => onDisconnect(session)}
+      />
+    </View>
   );
 }
 

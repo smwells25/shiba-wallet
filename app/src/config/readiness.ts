@@ -78,7 +78,8 @@ export type FeatureId =
   | 'paymaster'
   | 'token-gas'
   | 'imported-key'
-  | 'inheritance';
+  | 'inheritance'
+  | 'dapp-browser';
 
 export interface FeatureReadiness {
   id: FeatureId;
@@ -356,6 +357,24 @@ export const FEATURE_READINESS: readonly FeatureReadiness[] = [
     // validator's behaviour and audit gap; T-68 / F-60: the inheritance
     // risks (phase 14 item 4), including the uint48 delay wrap.
     evidence: ['C1', 'W9', 'W14', 'F-20', 'F-21', 'T-68', 'F-60'],
+    enforced: true,
+  },
+  {
+    id: 'dapp-browser',
+    title: 'In-app browser (Apps)',
+    status: 'testnet-only',
+    reason:
+      'The in-app browser runs on a web-view library whose defaults the wallet has to work around, and some ' +
+      'gaps (telling which frame of a page sent a request on some Android phones, a page using the camera ' +
+      'without asking, downloads that carry the site’s cookies) can be closed only in a real build tested on ' +
+      'real phones. Until then it opens only a short fixed list of apps, and only on test networks.',
+    // W2: the development build on real phones that the native fixes need
+    // (docs/DAPP_BROWSER.md section 5.5); W11 / W12: the WalletConnect
+    // sheet's permit summaries and identity signal, which the browser
+    // reuses; T-11 (impersonation), T-14 (EIP-7702 requests) and T-17
+    // (wrong account or network): the threats the shared approval path
+    // already answers. The browser's own threat entry is the CTO's to add.
+    evidence: ['W2', 'W11', 'W12', 'T-11', 'T-14', 'T-17'],
     enforced: true,
   },
 ];

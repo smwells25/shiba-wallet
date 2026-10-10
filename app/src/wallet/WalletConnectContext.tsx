@@ -23,7 +23,7 @@ import {
   type SmartAccountOption,
   type TxQuoteState,
 } from '../components/WcApprovalSheet';
-import { getEndpoint } from '../config/networks';
+import { getEndpoint, withEndpoint } from '../config/networks';
 import { spendingGateForQuote } from '../components/SpendingPolicyViews';
 import { requireLocalAuth } from './biometric';
 import { WATCH_ONLY_WC_REFUSAL, walletConnectAddressFor } from './watch-only';
@@ -68,6 +68,7 @@ import {
   generateCallsId,
   getWcProjectId,
   getWcUsed,
+  hexChainIdOf,
   identityApprovalAllowed,
   initWalletConnect,
   respondApproved,
@@ -85,7 +86,13 @@ import {
   type WcSessionSummary,
   type WcSmartBinding,
 } from './walletconnect';
-import { WcController, type WcControllerSnapshot, type WcQueueItem } from './wc-controller';
+import { WcController, type WcQueueItem } from './wc-controller';
+import {
+  BrowserBridgeClient,
+  CompositeWcClient,
+  createEndpointReadRpc,
+  isBrowserTopic,
+} from './browser-bridge';
 import { makePasskeyAssert, passkeyRecordForAccount, signHashWithPasskey } from './passkeys';
 import { loadPasskeyNative } from './passkey-native';
 
@@ -114,6 +121,17 @@ import { loadPasskeyNative } from './passkey-native';
  *    only with the active account and only if that account controls
  *    exactly the session's bound address (multi-account, phase 6 item 3);
  *  - nothing is declined because time passed.
+ *
+ * In-app browser (feature 79, docs/DAPP_BROWSER.md section 2.7): the
+ * controller runs on a CompositeWcClient that serves the browser's
+ * per-origin connections (browser-bridge.ts) and, once it has started,
+ * WalletKit. The controller therefore exists from the first render, before
+ * WalletKit starts (which stays lazy, as above); it reads only public data
+ * from AsyncStorage at that point (smart-account bindings and browser
+ * connections) and holds every approval until a wallet is ready. Approvals
+ * answer through the composite client, which routes "browser:" topics and
+ * the browser's own proposal ids to the bridge and everything else to
+ * WalletKit, so both sources share one queue and one sheet.
  *
  * Smart-account connections (phase 7 items 2 and 3): when the active chain
  * has a verified AA configuration, the proposal sheet offers "connect as
@@ -148,6 +166,8 @@ interface WalletConnectContextValue {
   sessions: WcSessionView[];
   notices: readonly { id: number; text: string }[];
   dismissNotice: (id: number) => void;
+  /** The in-app browser's bridge (feature 79); the Apps screen attaches its web view to it. */
+  browser: BrowserBridgeClient;
   /** Pairs with a validated wc: URI (records the "used" marker first). */
   pair: (uri: string) => Promise<void>;
   disconnect: (topic: string) => Promise<void>;
@@ -155,17 +175,51 @@ interface WalletConnectContextValue {
 
 const WalletConnectContext = createContext<WalletConnectContextValue | null>(null);
 
-const EMPTY_SNAPSHOT: WcControllerSnapshot = {
-  queue: [],
-  head: null,
-  locked: false,
-  busyKey: null,
-  sessions: [],
-  notices: [],
-  smartBindings: [],
-};
-const noopSubscribe = () => () => {};
-const emptySnapshot = () => EMPTY_SNAPSHOT;
+
+type LiveContext = ReturnType<WcController['getContext']> & { activeIndex: number | null };
+
+/** Holds the provider's live context for the controller and the bridge. */
+class LiveContextBox {
+  value: LiveContext;
+  constructor(value: LiveContext) {
+    this.value = value;
+  }
+  set(value: LiveContext): void {
+    this.value = value;
+  }
+  get = (): LiveContext => this.value;
+}
+
+/**
+ * The browser bridge (reads go to the wallet's endpoint for the active
+ * chain through the shared failover rule, config/networks.ts withEndpoint),
+ * the composite client over it, and the one controller for the life of the
+ * provider (see the file comment). The controller starts held; the
+ * provider releases it once the app is unlocked and a wallet is ready.
+ */
+function createConnectionStack(live: LiveContextBox): {
+  browser: BrowserBridgeClient;
+  composite: CompositeWcClient;
+  controller: WcController;
+} {
+  const browser = new BrowserBridgeClient({
+    getContext: () => ({ address: live.get().address, activeChain: live.get().activeChain }),
+    readRpc: createEndpointReadRpc({
+      run: (operation) => withEndpoint(EVM_CHAIN_ID, (endpoint) => operation(endpoint.url)).then((o) => o.value),
+      fetchFn: (input, init) => fetch(input, init),
+      chainIdHex: () => hexChainIdOf(live.get().activeChain),
+    }),
+    store: AsyncStorage,
+  });
+  const composite = new CompositeWcClient(browser);
+  const controller = new WcController(composite, live.get, {
+    locked: true,
+    // Smart-account bindings persist next to the app's other WalletConnect
+    // state (public data only).
+    bindingStore: AsyncStorage,
+  });
+  return { browser, composite, controller };
+}
 
 export function WalletConnectProvider({ children }: { children: React.ReactNode }) {
   const theme = useTheme();
@@ -274,12 +328,19 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
     contextRef.current = liveContext;
   });
 
+  // The same live context for the controller and the browser bridge, in a
+  // box created once and refreshed after every commit like contextRef (the
+  // controller and the bridge read it from events, never while rendering).
+  const [liveBox] = useState(() => new LiveContextBox(liveContext));
+  useLayoutEffect(() => {
+    liveBox.set(liveContext);
+  });
+  // The browser bridge, the composite client and the ONE controller:
+  // created once, pure objects (no network until a page asks for a read).
+  const [{ browser, composite, controller }] = useState(() => createConnectionStack(liveBox));
+
   // Hold approvals while locked AND while no wallet is ready.
   const hold = locked || status !== 'ready';
-  const holdRef = useRef(hold);
-  useLayoutEffect(() => {
-    holdRef.current = hold;
-  });
 
   const [projectId, setProjectId] = useState<string | null | undefined>(undefined);
   const [startRequested, setStartRequested] = useState(false);
@@ -287,7 +348,21 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
   // Connections screen is reopened (the screen's error text says so).
   const [startNonce, setStartNonce] = useState(0);
   const [client, setClient] = useState<WcClient | null>(null);
-  const [controller, setController] = useState<WcController | null>(null);
+  useEffect(() => {
+    const detach = controller.attach();
+    // Browser connections loaded or changed: the session list follows.
+    const unsubscribe = browser.subscribe(() => controller.refreshSessions());
+    return () => {
+      unsubscribe();
+      detach();
+    };
+  }, [controller, browser]);
+  // A wiped wallet takes its browser connections with it (and the queue's
+  // browser items, through session_delete). WalletContext.wipe also clears
+  // the stored list; this clears the bridge's memory.
+  useEffect(() => {
+    if (status === 'no-wallet') void browser.forgetAll().catch(() => undefined);
+  }, [status, browser]);
   const [initBusy, setInitBusy] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
 
@@ -322,20 +397,12 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
     );
   }, []);
 
-  // Start the SDK and attach the controller exactly once for the life of
-  // the app. The listeners are detached only when the provider unmounts —
-  // NOT when wallet status changes (a wipe/re-import must not leave the
-  // SDK running with nobody listening; the hold covers the no-wallet
-  // window instead).
-  const detachRef = useRef<(() => void) | null>(null);
+  // Start the SDK and hand it to the controller's composite client exactly
+  // once for the life of the app. The listeners are detached only when the
+  // provider unmounts — NOT when wallet status changes (a wipe/re-import
+  // must not leave the SDK running with nobody listening; the hold covers
+  // the no-wallet window instead).
   const startedProjectIdRef = useRef<string | null>(null);
-  useEffect(
-    () => () => {
-      detachRef.current?.();
-      detachRef.current = null;
-    },
-    [],
-  );
   useEffect(() => {
     if (!startRequested || !projectId || status !== 'ready') return;
     if (startedProjectIdRef.current !== null) {
@@ -356,15 +423,11 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
         // cancelled mid-init simply picks the same client up next time.
         if (cancelled || startedProjectIdRef.current !== null) return;
         startedProjectIdRef.current = projectId;
-        const ctl = new WcController(c, () => contextRef.current, {
-          locked: holdRef.current,
-          // Smart-account bindings persist next to the app's other
-          // WalletConnect state (public data only).
-          bindingStore: AsyncStorage,
-        });
-        detachRef.current = ctl.attach();
+        // The controller's listeners, registered on the composite client at
+        // mount, are attached to WalletKit now.
+        composite.setWalletClient(c);
+        controller.refreshSessions();
         setClient(c);
-        setController(ctl);
         setInitBusy(false);
       },
       (e) => {
@@ -376,24 +439,25 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
     return () => {
       cancelled = true;
     };
-  }, [startRequested, startNonce, projectId, status]);
+  }, [startRequested, startNonce, projectId, status, composite, controller]);
 
   useEffect(() => {
-    controller?.setLocked(hold);
+    controller.setLocked(hold);
   }, [controller, hold]);
 
-  const snapshot = useSyncExternalStore(
-    controller ? controller.subscribe : noopSubscribe,
-    controller ? controller.getSnapshot : emptySnapshot,
-  );
+  const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
 
-  // Keep the launch marker in step with what the SDK reports.
-  const hasPendingProposal = snapshot.queue.some((i) => i.type === 'proposal');
+  // Keep the launch marker in step with what the SDK reports: only once
+  // WalletKit runs, and counting only WalletConnect sessions and proposals
+  // (browser connections never start WalletKit at launch). Browser
+  // proposals have negative ids (browser-bridge.ts).
+  const wcSessionCount = snapshot.sessions.filter((s) => !isBrowserTopic(s.topic)).length;
+  const hasPendingProposal = snapshot.queue.some((i) => i.type === 'proposal' && i.event.id >= 0);
   useEffect(() => {
-    if (!controller) return;
-    if (snapshot.sessions.length > 0) void setWcUsed(true).catch(() => {});
+    if (!client) return;
+    if (wcSessionCount > 0) void setWcUsed(true).catch(() => {});
     else if (!hasPendingProposal) void setWcUsed(false).catch(() => {});
-  }, [controller, snapshot.sessions.length, hasPendingProposal]);
+  }, [client, wcSessionCount, hasPendingProposal]);
 
   const pair = useCallback(
     async (uri: string) => {
@@ -406,15 +470,16 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
 
   const disconnect = useCallback(
     async (topic: string) => {
-      if (!client) return;
       try {
-        await disconnectWcSession(client, topic);
+        // Browser topics go to the bridge (WalletKit need not be running);
+        // the composite client routes the rest to WalletKit.
+        await disconnectWcSession(composite, topic);
       } catch {
         // Relay hiccups must not leave a ghost row; refresh regardless.
       }
-      controller?.refreshSessions();
+      controller.refreshSessions();
     },
-    [client, controller],
+    [composite, controller],
   );
 
   // ------------------------------------------------------------ approvals
@@ -430,7 +495,7 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
       txQuote: TxQuoteState | null,
       signer: MessageSigner = 'owner',
     ): Promise<void> => {
-      if (!controller || !client) return;
+      if (!controller) return;
       const declineWith = async (message: string, code = -32603) => {
         controller.release(item.key);
         await controller.decline(item.key, { code, message });
@@ -482,7 +547,7 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
                 ? 'the install operation reverted'
                 : `the permission could not be confirmed on-chain (${finished.status.kind})`
               : 'it was not included within two minutes';
-            await respondRejected(client, item.event.topic, item.event.id, {
+            await respondRejected(composite, item.event.topic, item.event.id, {
               code: -32603,
               message: `The session install was submitted as UserOperation ${userOpHash}, but ${why}.`,
             }).catch(() => undefined);
@@ -501,7 +566,7 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
           try {
             // ERC-7715: "An array of PermissionResponse objects is the final
             // `result` field".
-            await respondApproved(client, item.event.topic, item.event.id, [response]);
+            await respondApproved(composite, item.event.topic, item.event.id, [response]);
           } catch {
             controller.complete(item.key);
             Alert.alert(
@@ -556,7 +621,7 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
               chainId: loaded.bundle.chainId,
               expectedAccount: smart.address,
             });
-            await respondApproved(client, item.event.topic, item.event.id, toHex(passkeySignature));
+            await respondApproved(composite, item.event.topic, item.event.id, toHex(passkeySignature));
             controller.complete(item.key);
             return;
           }
@@ -565,7 +630,7 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
           const signature = await signWith(EVM_CHAIN_ID, smart.owner, (signer) =>
             signHashAsSmartAccount(loaded.bundle, signer, digest, smart.address),
           );
-          await respondApproved(client, item.event.topic, item.event.id, toHex(signature.signature));
+          await respondApproved(composite, item.event.topic, item.event.id, toHex(signature.signature));
           controller.complete(item.key);
           return;
         }
@@ -607,7 +672,7 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
             createdAt: Date.now(),
           }).catch(() => undefined);
           try {
-            await respondApproved(client, item.event.topic, item.event.id, { id });
+            await respondApproved(composite, item.event.topic, item.event.id, { id });
           } catch {
             controller.complete(item.key);
             Alert.alert(
@@ -644,7 +709,7 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
           txHash = null;
         }
         if (!txHash) {
-          await respondRejected(client, item.event.topic, item.event.id, {
+          await respondRejected(composite, item.event.topic, item.event.id, {
             code: -32603,
             message:
               `Submitted as UserOperation ${userOpHash}, but no transaction hash was ` +
@@ -660,7 +725,7 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
           return;
         }
         try {
-          await respondApproved(client, item.event.topic, item.event.id, txHash);
+          await respondApproved(composite, item.event.topic, item.event.id, txHash);
         } catch {
           controller.complete(item.key);
           Alert.alert(
@@ -681,7 +746,7 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
         Alert.alert(title, detail);
       }
     },
-    [controller, client, signWith, loadAaBundle],
+    [controller, composite, signWith, loadAaBundle],
   );
 
   const onApprove = useCallback(
@@ -693,7 +758,7 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
       messageSigner: MessageSigner = 'owner',
       identityAcknowledged = false,
     ) => {
-      if (!controller || !client) return;
+      if (!controller) return;
       if (!controller.canAct(item.key)) return;
       // WalletConnect Verify (N-06): a scam-flagged or origin-mismatched
       // proposal or request is approvable only after the explicit risk
@@ -743,7 +808,7 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
             methods = smartAccountMethodsFor(loaded.bundle.accountType);
           }
           const outcome = await approveProposal(
-            client,
+            composite,
             item.event,
             connectAddress,
             activeChain,
@@ -843,7 +908,7 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
           const signature = await signWith(EVM_CHAIN_ID, item.address, async (signer) =>
             signDigest(signer, digest),
           );
-          await respondApproved(client, item.event.topic, item.event.id, signature);
+          await respondApproved(composite, item.event.topic, item.event.id, signature);
           controller.complete(item.key);
           return;
         }
@@ -884,7 +949,7 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
         // reply must not be reported as a failed send, and the item must not
         // return to the queue as if nothing had happened.
         try {
-          await respondApproved(client, item.event.topic, item.event.id, sent.txid);
+          await respondApproved(composite, item.event.topic, item.event.id, sent.txid);
         } catch {
           controller.complete(item.key);
           Alert.alert(
@@ -902,7 +967,7 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
         Alert.alert(title, detail);
       }
     },
-    [controller, client, signWith, evmChain.explorerTxBase, loadAaBundle, approveSmartRequest, activeAccount?.watchOnly],
+    [controller, composite, signWith, evmChain.explorerTxBase, loadAaBundle, approveSmartRequest, activeAccount?.watchOnly],
   );
 
   const onReject = useCallback(
@@ -961,11 +1026,12 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
       ensureStarted,
       sessions,
       notices: snapshot.notices,
-      dismissNotice: (id: number) => controller?.dismissNotice(id),
+      dismissNotice: (id: number) => controller.dismissNotice(id),
+      browser,
       pair,
       disconnect,
     }),
-    [projectId, client, initBusy, initError, ensureStarted, sessions, snapshot.notices, controller, pair, disconnect],
+    [projectId, client, initBusy, initError, ensureStarted, sessions, snapshot.notices, controller, browser, pair, disconnect],
   );
 
   const head = hold ? null : snapshot.head;
@@ -981,7 +1047,8 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
             style={[styles.notice, { backgroundColor: theme.card, borderColor: theme.border }]}
             accessibilityLiveRegion="polite"
           >
-            <Text style={[styles.noticeTitle, { color: theme.text }]}>WalletConnect</Text>
+            {/* Notices come from WalletConnect and from the in-app browser. */}
+            <Text style={[styles.noticeTitle, { color: theme.text }]}>Connected apps</Text>
             <Text style={[styles.noticeText, { color: theme.text }]}>{latestNotice.text}</Text>
             <Pressable
               accessibilityRole="button"
@@ -997,7 +1064,7 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
             key={head.key}
             item={head}
             dappName={
-              head.type === 'request' ? (controller?.dappName(head.event.topic) ?? 'Unknown dApp') : head.summary.name
+              head.type === 'request' ? controller.dappName(head.event.topic) : head.summary.name
             }
             busy={snapshot.busyKey === head.key}
             evmChain={evmChain}

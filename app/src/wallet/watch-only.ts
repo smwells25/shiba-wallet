@@ -167,6 +167,9 @@ const ROUTE_FEATURES: Record<string, string> = {
   Connections: 'WalletConnect',
   SpendingLimits: 'Spending limits',
   Inheritance: 'Inheritance (demonstration)',
+  // The in-app browser (feature 79) connects sites to an account and asks
+  // it to sign, so it stays OFF the allow list above.
+  Apps: 'The in-app browser (Apps)',
 };
 
 /**
