@@ -2946,3 +2946,58 @@ alongside; emulator passes after each wave. Subagents on Opus.
       233) and DEVICE_BUILDS item 8 / N-05 say there is no app-switcher
       cover. STANDING EMULATOR RULE ADDED: turn Settings → Privacy off at
       the start of a pass that needs screenshots, and back on at the end.
+- [x] Item 5 — docs/STAKING.md, staking on test networks (commit below;
+      about 5,700 words; secret scan clean; every on-chain figure a
+      read-only call on 2026-10-10 through keyless PublicNode endpoints).
+      DEPLOYMENTS: Lido on ETHEREUM SEPOLIA (lidofinance/docs 140c583d)
+      — stETH 0x3e3FE7dBc6B4C189E7128855dD526361c49b40Af (symbol
+      "stETH", implementation Sourcify exact), wstETH
+      0xB82381A3fBD3FaFA77B3a7bE693342618240067b (exact), withdrawal
+      queue 0x1583C7b3…5fdd ("unstETH", isPaused() true, never a
+      request) — Lido calls it "fully deprecated", the oracle's last
+      report was 2025-07-02 so test stETH earns NOTHING, but staking is
+      OPEN (limit 150,000 ETH; a simulated 0.01 ETH submit minted
+      9,999,999,999,999,999 stETH; a real Submitted event on 2026-10-09);
+      Lido on HOODI fully working (stETH 0x3508A952…176a, wstETH
+      0x7E99eE3C…4De4 exact, queue 0xfe565731…9186; oracle report today;
+      all 5,320 withdrawals finalised); Rocket Pool on HOODI
+      (rocket-pool/smartnode 8c1dad70: RocketStorage 0x594Fb75D…d4E1,
+      rETH 0x7322c247…64F1, deposit pool 0x425E6f83…3Fd8; min 0.01 ETH,
+      fee 0.05%, a simulated deposit succeeded; rETH locked 5,760 blocks
+      after a deposit); NOTHING on Base Sepolia or Arbitrum Sepolia;
+      StakeWise documents Hoodi only (not read on-chain). NATIVE STAKING:
+      Sepolia's validator set is permissioned (its deposit contract is
+      the "BEPOLIA" token); the L2 testnets have no beacon chain and no
+      Pectra predeploys; EIP-7002 / EIP-7251 predeploys are live on
+      Sepolia and Hoodi (fee 1 wei); a smart account as withdrawal
+      address is reasoned from the EIPs, not exercised, with the caution
+      that Kernel v3.3's factory, implementation and CallPolicy have NO
+      code on Hoodi. RECOMMENDED SLICE: "Stake test ETH with Lido on
+      Ethereum Sepolia", stake-only — one call submit(address(0))
+      (0xa1903eab) with the ETH as value, through prepareEvmSend for the
+      regular account and prepareAaCalls for the smart account (no engine
+      change), the preview showing the stETH minted, Lido's risk
+      statement quoted, plain "deprecated, no rewards" lines, unstaking
+      refused after a live isPaused() read, test networks only behind a
+      readiness row; a Hoodi profile is a separate larger decision (the
+      only place to show rewards, withdrawals and Rocket Pool; regular
+      account only at first). AA FINDINGS: staking calls are unusually
+      safe for a session key — submit, the wstETH ETH shortcut, Rocket
+      Pool deposit(), claimWithdrawal and rETH burn pay only msg.sender,
+      so a CallPolicy-pinned key can at worst turn the account's ETH into
+      its own stETH within the caps (batching and the fee budget still
+      apply); a one-element requestWithdrawals looks pinnable (reasoned);
+      sponsored staking (59) needs the ZeroDev gas policy input; GAS FROM
+      YIELD (60) has nothing to stand on — Circle takes USDC only,
+      Pimlico documents stETH/wstETH on main networks only (keyless
+      pimlico_getSupportedTokens: USDC, PIM, EURe, USD₮ on Sepolia; empty
+      on Hoodi), and no deployed policy can limit a keeper to yield rather
+      than principal; stETH rebasing: simulated transfers delivered 1 wei
+      less than the Transfer event reported, so the preview can overstate
+      by up to 2 wei (Home reads balanceOf). UNVERIFIED (section 9): the
+      Hoodi implementations' bytecode-to-source, Rocket Pool head vs
+      deployed, any live transaction, the pinning rules, withdrawal
+      times, ZeroDev on Hoodi, why submit used 208k gas on Sepolia vs 94k
+      on Hoodi. DECISION FOR THE CHAIRPERSON: build the stake-only
+      Sepolia slice (cheap, honest, no rewards to show) and/or add a
+      Hoodi profile (rewards and Rocket Pool, but no Kernel there).
