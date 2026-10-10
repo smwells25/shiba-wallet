@@ -441,8 +441,8 @@ console.log('wiring:');
   const staticImports = mod.match(/^import .*$/gm) ?? [];
   check('screen-protection.ts has no static import (Node-loadable)', staticImports.length === 0);
   check(
-    'the native layer is loaded by dynamic import only',
-    /await import\('expo-screen-capture'\)/.test(mod) && /await import\('react-native'\)/.test(mod),
+    'the native layer is loaded lazily: a dynamic import of expo-screen-capture and a lazy require of react-native (never a namespace import of react-native, which reads its deprecated getters)',
+    /await import\('expo-screen-capture'\)/.test(mod) && /require\('react-native'\)/.test(mod) && !/(?:await|void)\s+import\('react-native'\)/.test(mod),
   );
   check(
     'the app-switcher functions are injected on iOS only',
