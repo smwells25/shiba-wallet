@@ -121,7 +121,9 @@ examples/demo.mjs          Offline end-to-end engine demo
   serves from (Metro runs from an isolated git worktree with real dist
   copies); never press BACK in loops; scroll Settings only with slow
   swipes at the screen edge and never fling near the Danger zone; type
-  secrets only through the ADBKeyboard IME and redact every UI dump.
+  secrets only through the ADBKeyboard IME and redact every UI dump;
+  never run a Gradle build while driving the AVD (2026-10-10: the
+  watchdog killed system_server) — build first, close Gradle, then drive.
 - Every slice is verified by the CTO in an isolated worktree with the
   offline runner before it is pushed, then recorded here, then CI is
   checked. The verify worktree must resolve @shiba-wallet/* to ITS OWN
@@ -2522,3 +2524,86 @@ emulator where Expo Go cannot carry a feature.
       Emulator checklist (10 steps, Expo Go, Sepolia, Account 1, Uniswap)
       in the builder's report — runs once the dev-build probe releases
       the AVD.
+- [x] Item 3 — LOCAL DEVELOPMENT BUILD ON THE EMULATOR, FEASIBLE (2026-10-10;
+      no Expo account, no EAS, no phone; nothing committed; the Expo Go
+      wallet untouched). TOOLCHAIN (verified): there was NO JDK on the
+      machine (/usr/bin/java is the macOS stub) — portable Temurin
+      17.0.20.1 installed into the scratchpad (sha256 checked against
+      api.adoptium.net; 17 because @react-native/gradle-plugin 0.86.3
+      declares jvmToolchain(17)); requirements from react-native's
+      libs.versions.toml: compileSdk/targetSdk 36, build-tools 36.0.0,
+      NDK 27.1.12297006, AGP 8.12.0, Gradle 9.3.1; added with sdkmanager:
+      build-tools;36.0.0 (188 MB), platforms;android-36 (134 MB),
+      cmake;3.22.1 (94 MB), ndk;27.1.12297006 (2.4 GB; expo-modules-core
+      and react-native-screens compile C++) — SDK 5.8 → 8.8 GB. ROUTE:
+      a separate worktree (scratchpad/wt-build at 40602dc) with APFS
+      CLONES of both node_modules (cp -cR, ~13 s; Gradle writes
+      node_modules/*/android/build, which symlinks would have put into the
+      main checkout — the main checkout's node_modules has no build
+      folders afterwards), @shiba-wallet pointing at the worktree's
+      packages, `npm run build` inside it, `CI=1 npx expo prebuild
+      --platform android --no-install` (4 s; it sets android.package and
+      a permissions list in the worktree's app.json / package.json), then
+      Gradle directly (`./gradlew assembleDebug -PreactNativeArchitectures=x86_64
+      -PreactNativeDevServerPort=8082`, 10 min 22 s, 83 MB APK;
+      assembleRelease 6 min 31 s, 51 MB) — not `expo run:android`, to keep
+      Metro off 8081; Gradle files 5.5 GB, worktree 3.2 GB. Repeatable via
+      scratchpad p16c/build-devclient.sh <commit> [debug|release] +
+      env.sh (the JDK and Gradle caches live in the session scratchpad —
+      keep them somewhere persistent or re-download ~180 MB + ~5.5 GB).
+      MANIFEST FACTS (answering RELEASE.md's "a real build's merged
+      manifest" unknowns): applicationId com.anonymous.shibawallet (no
+      Expo login → com.anonymous.<slug>; cannot collide with
+      host.exp.exponent); android:allowBackup="false" with
+      fullBackupContent=@xml/secure_store_backup_rules and
+      dataExtractionRules=@xml/secure_store_data_extraction_rules
+      (sharedpref included except SecureStore); RECORD_AUDIO,
+      READ_MEDIA_IMAGES, READ/WRITE_EXTERNAL_STORAGE reported REJECTED by
+      the merge; release permissions CAMERA, INTERNET, SYSTEM_ALERT_WINDOW
+      (Expo's template, kept), USE_BIOMETRIC, USE_FINGERPRINT, VIBRATE,
+      ACCESS_NETWORK_STATE, ACCESS_WIFI_STATE, DETECT_SCREEN_CAPTURE,
+      DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION and — NOT in RELEASE.md —
+      com.google.android.finsky.permission.BIND_GET_INSTALL_REFERRER_SERVICE
+      (installreferrer 2.2 via expo-application); debug-only
+      CHANGE_WIFI_MULTICAST_STATE and usesCleartextTraffic; ML Kit barcode
+      + Google datatransport (CCT) components and
+      androidx.credentials.playservices present (data flow unverified;
+      PRIVACY.md follow-up); leftover expo.modules.updates.* meta-data; no
+      Android usage strings (iOS only); FLAG_SECURE is runtime, not
+      manifest. RUNNING THE DEBUG BUILD: the Expo dev launcher, connected
+      by deep link to Metro on 8082 (1,834 modules); dev menu present,
+      LogBox not seen; ReactNativePasskeysModule compiled in (classes2.dex).
+      (a) SCREEN CAPTURE OUTSIDE EXPO GO — PROVEN: on a fresh throwaway
+      wallet's Backup screen `adb exec-out screencap` returned 0 bytes,
+      the window flags show SECURE, a system screenshot saved an all-black
+      PNG (deleted), and the flag covered the recents view and the Confirm
+      screen while Backup was mounted; Home captured normally again (the
+      Settings reveal not tested — forbidden tap). (b) ANDROID BACKUP
+      (W18, developer.android.com/identity/data/testingbackup): cloud
+      backup with LocalTransport → "Backup is not allowed"; D2D transfer
+      in test mode → Success, ~7.7 KB — the app's preferences,
+      WebViewChromiumPrefs, expo PersistentDataManager and two dev-only
+      files; SecureStore.xml (mnemonic.v1, vault-meta.v1,
+      public-account.v1.0) and AsyncStorage's RKStorage were NOT
+      included; transports and settings restored afterwards. (c)
+      PASSKEYS: the gate takes the rp-id-unset branch; COPY FINDING —
+      PASSKEY_GATE_NOTE says "Expo Go does not contain the native passkey
+      module", which is wrong inside a development build; Credential
+      Manager exists on this image (credential_service = GMS
+      PasswordAndPasskeyService, GMS 23.18.18) but the device has 0
+      accounts, so a create would most likely fail (not attempted). (d)
+      WEBVIEW: com.google.android.webview 113.0.5672.136 (May 2023) —
+      very old for the dApp browser pass; record what Uniswap does with
+      it. (e) RELEASE APK, files only: Hermes bytecode magic c61f bc03,
+      no DevLauncher / DevMenu / DevSettings entries, not debuggable, no
+      cleartext; signed with the template debug keystore; not run.
+      INCIDENT: at 00:53 the AVD's system_server was killed by the
+      watchdog ("Blocked in monitor … InputManagerService … for 66s")
+      while the release Gradle build ran beside scripted input, then
+      crash-looped (composer HAL at 100% CPU); `adb emu kill` and a cold
+      boot with -no-snapshot-load recovered it — user storage unlocked,
+      fingerprint still enrolled, Expo Go intact, nothing wiped. STANDING
+      RULE ADDED: never run Gradle while driving the AVD. End state: dev
+      build uninstalled, Metro 8082 stopped, 8081 untouched, the emulator
+      cold-booted and sitting at the keyguard (PIN 1234 needed; Expo Go
+      not open).
