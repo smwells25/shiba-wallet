@@ -166,6 +166,22 @@ interface WalletConnectContextValue {
   sessions: WcSessionView[];
   notices: readonly { id: number; text: string }[];
   dismissNotice: (id: number) => void;
+  /**
+   * The "Connected apps" notice currently shown (the newest one not yet
+   * dismissed), or null. Hidden while approvals are held (locked, no
+   * wallet) or while an approval sheet is up.
+   */
+  visibleNotice: { id: number; text: string } | null;
+  /** Dismisses visibleNotice (the same as its Dismiss link). */
+  dismissVisibleNotice: () => void;
+  /**
+   * A screen that shows the notice inside its own layout calls this while
+   * it is focused (the in-app browser renders it below its bar, so the
+   * floating notice can never cover the bar's Back / Reload / Close). While
+   * at least one claim is held the floating notice is not drawn; every
+   * other screen keeps it exactly as before. Returns the release function.
+   */
+  claimInlineNotices: () => () => void;
   /** The in-app browser's bridge (feature 79); the Apps screen attaches its web view to it. */
   browser: BrowserBridgeClient;
   /** Pairs with a validated wc: URI (records the "used" marker first). */
@@ -222,7 +238,6 @@ function createConnectionStack(live: LiveContextBox): {
 }
 
 export function WalletConnectProvider({ children }: { children: React.ReactNode }) {
-  const theme = useTheme();
   const { status, accounts, signWith, accountForEvmAddress, activeAccount } = useWallet();
   const { evmChain } = usePrefs();
   const { locked } = useAppLock();
@@ -1017,6 +1032,28 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
     });
   }, [snapshot.sessions, snapshot.smartBindings, evmChain.caip2, ethAddress, labelFor]);
 
+  // The "Connected apps" notice: the newest one, until dismissed. Computed
+  // here (before the context value) so a screen can render it inline.
+  const head = hold ? null : snapshot.head;
+  const latestNotice = !hold && !head ? (snapshot.notices[0] ?? null) : null;
+  const [seenNoticeId, setSeenNoticeId] = useState(0);
+  const visibleNotice = latestNotice && latestNotice.id > seenNoticeId ? latestNotice : null;
+  const visibleNoticeId = visibleNotice?.id ?? null;
+  const dismissVisibleNotice = useCallback(() => {
+    if (visibleNoticeId !== null) setSeenNoticeId(visibleNoticeId);
+  }, [visibleNoticeId]);
+  // How many focused screens show the notice inline (see claimInlineNotices).
+  const [inlineNoticeClaims, setInlineNoticeClaims] = useState(0);
+  const claimInlineNotices = useCallback(() => {
+    let released = false;
+    setInlineNoticeClaims((n) => n + 1);
+    return () => {
+      if (released) return;
+      released = true;
+      setInlineNoticeClaims((n) => Math.max(0, n - 1));
+    };
+  }, []);
+
   const value = useMemo<WalletConnectContextValue>(
     () => ({
       projectId,
@@ -1027,37 +1064,39 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
       sessions,
       notices: snapshot.notices,
       dismissNotice: (id: number) => controller.dismissNotice(id),
+      visibleNotice,
+      dismissVisibleNotice,
+      claimInlineNotices,
       browser,
       pair,
       disconnect,
     }),
-    [projectId, client, initBusy, initError, ensureStarted, sessions, snapshot.notices, controller, browser, pair, disconnect],
+    [
+      projectId,
+      client,
+      initBusy,
+      initError,
+      ensureStarted,
+      sessions,
+      snapshot.notices,
+      controller,
+      visibleNotice,
+      dismissVisibleNotice,
+      claimInlineNotices,
+      browser,
+      pair,
+      disconnect,
+    ],
   );
-
-  const head = hold ? null : snapshot.head;
-  const latestNotice = !hold && !head ? (snapshot.notices[0] ?? null) : null;
-  const [seenNoticeId, setSeenNoticeId] = useState(0);
 
   return (
     <WalletConnectContext.Provider value={value}>
       <View style={styles.fill}>
         {children}
-        {latestNotice && latestNotice.id > seenNoticeId ? (
-          <View
-            style={[styles.notice, { backgroundColor: theme.card, borderColor: theme.border }]}
-            accessibilityLiveRegion="polite"
-          >
-            {/* Notices come from WalletConnect and from the in-app browser. */}
-            <Text style={[styles.noticeTitle, { color: theme.text }]}>Connected apps</Text>
-            <Text style={[styles.noticeText, { color: theme.text }]}>{latestNotice.text}</Text>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => setSeenNoticeId(latestNotice.id)}
-              hitSlop={8}
-            >
-              <Text style={[styles.noticeDismiss, { color: theme.accent }]}>Dismiss</Text>
-            </Pressable>
-          </View>
+        {/* Floating over the screen, except while a screen shows it inline
+            (the in-app browser, below its bar). */}
+        {visibleNotice && inlineNoticeClaims === 0 ? (
+          <ConnectedAppsNotice text={visibleNotice.text} onDismiss={dismissVisibleNotice} placement="floating" />
         ) : null}
         {head ? (
           <WcApprovalSheet
@@ -1092,6 +1131,39 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
   );
 }
 
+/**
+ * The "Connected apps" notice (notices come from WalletConnect and from the
+ * in-app browser). 'floating' is the app-wide overlay near the top of the
+ * window; 'inline' sits in the hosting screen's own layout and covers
+ * nothing (the in-app browser puts it below its bar).
+ */
+export function ConnectedAppsNotice({
+  text,
+  onDismiss,
+  placement,
+}: {
+  text: string;
+  onDismiss: () => void;
+  placement: 'floating' | 'inline';
+}) {
+  const theme = useTheme();
+  return (
+    <View
+      style={[
+        placement === 'floating' ? styles.notice : styles.noticeInline,
+        { backgroundColor: theme.card, borderColor: theme.border },
+      ]}
+      accessibilityLiveRegion="polite"
+    >
+      <Text style={[styles.noticeTitle, { color: theme.text }]}>Connected apps</Text>
+      <Text style={[styles.noticeText, { color: theme.text }]}>{text}</Text>
+      <Pressable accessibilityRole="button" onPress={onDismiss} hitSlop={8}>
+        <Text style={[styles.noticeDismiss, { color: theme.accent }]}>Dismiss</Text>
+      </Pressable>
+    </View>
+  );
+}
+
 export function useWalletConnect(): WalletConnectContextValue {
   const ctx = useContext(WalletConnectContext);
   if (!ctx) throw new Error('useWalletConnect must be used inside WalletConnectProvider');
@@ -1116,6 +1188,12 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.15,
     shadowRadius: 6,
     shadowOffset: { width: 0, height: 2 },
+  },
+  noticeInline: {
+    borderBottomWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 4,
   },
   noticeTitle: {
     fontSize: 13,

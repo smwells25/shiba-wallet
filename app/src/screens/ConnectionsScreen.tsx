@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useState } from 'react';
 import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation';
@@ -14,9 +14,13 @@ import { isBrowserTopic } from '../wallet/browser-bridge';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Connections'>;
 
+/** The screen's title: it lists WalletConnect AND in-app browser connections. */
+export const CONNECTIONS_SCREEN_TITLE = 'Connected apps';
+
 /**
- * WalletConnect connections: QR-scan or paste-URI pairing, the active
- * session list, and recent automatic declines. Scanning (phase 4 item 4)
+ * "Connected apps": in-app browser connections, then WalletConnect —
+ * QR-scan or paste-URI pairing, the active session list, and recent
+ * automatic declines. Scanning (phase 4 item 4)
  * goes through the shared QrScanner (expo-camera, bundled in Expo Go SDK
  * 57 — see ../components/QrScanner.tsx for the verification notes) and
  * feeds the exact same pairing path as pasting: validatePairingUri, then
@@ -41,6 +45,12 @@ export function ConnectionsScreen({ navigation }: Props) {
   const [uri, setUri] = useState('');
   const [pairBusy, setPairBusy] = useState(false);
   const [scannerOpen, setScannerOpen] = useState(false);
+
+  // The route is registered with the older title "WalletConnect" (App.tsx);
+  // the screen names itself before the first paint, like other screens do.
+  useLayoutEffect(() => {
+    navigation.setOptions({ title: CONNECTIONS_SCREEN_TITLE });
+  }, [navigation]);
 
   useEffect(() => {
     ensureStarted();
@@ -104,7 +114,8 @@ export function ConnectionsScreen({ navigation }: Props) {
         <Text style={[styles.sectionTitle, { color: theme.text }]}>In-app browser connections</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Sites opened from Apps (test networks only). Each is connected for one account on one network; disconnecting
-          stops it from seeing your address until you connect again.
+          stops it from seeing your address until you connect again. A site that is open in Apps can also be
+          disconnected from the Connection button on its browser bar.
         </Text>
         {browserSessions.map((session) => (
           <SessionCard key={session.topic} session={session} onDisconnect={onDisconnect} />
@@ -171,7 +182,7 @@ export function ConnectionsScreen({ navigation }: Props) {
       {wc.client ? (
         <>
           <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: theme.text }]}>Connect a dApp</Text>
+            <Text style={[styles.sectionTitle, { color: theme.text }]}>Connect a dApp with WalletConnect</Text>
             <Text style={[styles.hint, { color: theme.textMuted }]}>
               In the dApp, choose WalletConnect, then scan its QR code — or
               copy the pairing link (wc:…) and paste it here. The wallet
@@ -210,10 +221,10 @@ export function ConnectionsScreen({ navigation }: Props) {
           </View>
 
           <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: theme.text }]}>Active connections</Text>
+            <Text style={[styles.sectionTitle, { color: theme.text }]}>WalletConnect connections</Text>
             {wcSessions.length === 0 ? (
               <Text style={[styles.hint, { color: theme.textMuted }]}>
-                No dApps are connected.
+                No dApps are connected through WalletConnect.
               </Text>
             ) : (
               wcSessions.map((session) => (

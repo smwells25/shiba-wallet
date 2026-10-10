@@ -1066,6 +1066,29 @@ export class BrowserBridgeClient implements WcClient {
   }
 }
 
+/**
+ * What the browser bar's Connection panel shows for the open page's origin
+ * (BrowserScreen). 'served': eth_accounts gives the page this address now
+ * (connected for the active account on the active network). 'elsewhere': a
+ * connection is stored for another network or another account, so this
+ * page is not served it here. 'none': no connection. The panel's
+ * Disconnect uses `topic` through the same path as the Connected apps
+ * screen, so the open page hears accountsChanged([]) at once.
+ */
+export type BrowserBarConnection =
+  | { kind: 'served'; address: string; chain: string; topic: string }
+  | { kind: 'elsewhere'; address: string; owner: string; chain: string; topic: string }
+  | { kind: 'none' };
+
+export function browserBarConnection(browser: BrowserBridgeClient, origin: string): BrowserBarConnection {
+  const record = browser.records.get(origin);
+  if (!record) return { kind: 'none' };
+  const topic = browserTopicFor(origin);
+  const served = browser.servedAccounts(origin)[0];
+  if (served) return { kind: 'served', address: served, chain: record.chain, topic };
+  return { kind: 'elsewhere', address: record.address, owner: record.owner, chain: record.chain, topic };
+}
+
 // ---------------------------------------------------------------------------
 // One controller for WalletConnect and the browser
 // ---------------------------------------------------------------------------

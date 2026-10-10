@@ -1129,19 +1129,27 @@ console.log('\n== Arbitrum Sepolia profile (third test network) ==');
   // The screens must sit inside ONE always-rendered wrapper whose two
   // documented props hide it while locked: importantForAccessibility
   // "no-hide-descendants" (Android) and accessibilityElementsHidden (iOS).
-  // Always rendered, so locking never remounts the screens.
+  // Always rendered, so locking never remounts the screens. Since the
+  // in-app browser live pass (a full uiautomator dump, which includes views
+  // that are not important for accessibility, still listed the browser bar
+  // and the web view's nodes under the lock), the wrapper is ALSO
+  // display: 'none' while locked: native INVISIBLE on Android, hidden on
+  // iOS, so nothing under the lock is reported at all.
   const lockHidesScreens = (src) =>
-    /<View\s+style=\{styles\.fill\}\s+importantForAccessibility=\{locked \? 'no-hide-descendants' : 'auto'\}\s+accessibilityElementsHidden=\{locked\}\s*>\s*\{children\}\s*<\/View>/.test(src) &&
+    /<View\s+style=\{locked \? styles\.hiddenWhileLocked : styles\.fill\}\s+importantForAccessibility=\{locked \? 'no-hide-descendants' : 'auto'\}\s+accessibilityElementsHidden=\{locked\}\s*>\s*\{children\}\s*<\/View>/.test(src) &&
+    /hiddenWhileLocked: \{\s*flex: 1,\s*display: 'none',\s*\}/.test(src) &&
     (src.match(/\{children\}/g) ?? []).length === 1 &&
     !/locked \?\s*\(?\s*<View[^>]*>\s*\{children\}/.test(src);
   const lockSrc = read('../src/components/LockGate.tsx');
   check('LockGate: the screens are hidden from accessibility while locked, on Android and iOS, without unmounting', lockHidesScreens(lockSrc));
   const noAndroid = lockSrc.replace("importantForAccessibility={locked ? 'no-hide-descendants' : 'auto'}", '');
   const noIos = lockSrc.replace('accessibilityElementsHidden={locked}', '');
-  const remounting = lockSrc.replace(/<View\s+style=\{styles\.fill\}\s+importantForAccessibility[\s\S]*?\{children\}\s*<\/View>/, "{locked ? <View importantForAccessibility='no-hide-descendants' accessibilityElementsHidden>{children}</View> : children}");
+  const remounting = lockSrc.replace(/<View\s+style=\{locked \? styles\.hiddenWhileLocked : styles\.fill\}\s+importantForAccessibility[\s\S]*?\{children\}\s*<\/View>/, "{locked ? <View importantForAccessibility='no-hide-descendants' accessibilityElementsHidden>{children}</View> : children}");
+  const noDisplayNone = lockSrc.replace('style={locked ? styles.hiddenWhileLocked : styles.fill}', 'style={styles.fill}');
   check('mutation: dropping the Android prop is caught', noAndroid !== lockSrc && !lockHidesScreens(noAndroid));
   check('mutation: dropping the iOS prop is caught', noIos !== lockSrc && !lockHidesScreens(noIos));
   check('mutation: wrapping only while locked (remounts the screens) is caught', remounting !== lockSrc && !lockHidesScreens(remounting));
+  check('mutation: dropping the display: none while locked is caught', noDisplayNone !== lockSrc && !lockHidesScreens(noDisplayNone));
   check('LockGate: the lock overlay itself stays outside the hidden wrapper',
     lockSrc.indexOf('{children}') < lockSrc.indexOf('Shiba Wallet is locked') &&
       /\{children\}\s*<\/View>\s*\{locked \? \(/.test(lockSrc));

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Alert, Linking, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useFocusEffect } from '@react-navigation/native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import type {
   ShouldStartLoadRequest,
@@ -10,12 +11,13 @@ import type {
 } from 'react-native-webview/lib/WebViewTypes';
 import type { RootStackParamList } from '../navigation';
 import { Button, TestNetworksOnlyCard, WarningBox, screenStyle } from '../components';
+import { useAppLock } from '../components/LockGate';
 import { useTheme } from '../theme';
 import { readinessGate } from '../config/readiness';
 import { usePrefs } from '../wallet/PrefsContext';
 import { useWallet } from '../wallet/WalletContext';
 import { accountLabel } from '../wallet/accounts';
-import { useWalletConnect } from '../wallet/WalletConnectContext';
+import { ConnectedAppsNotice, useWalletConnect } from '../wallet/WalletConnectContext';
 import { hexChainIdOf, describeChain } from '../wallet/walletconnect';
 import {
   BROWSER_SITES,
@@ -27,6 +29,7 @@ import {
   type BrowserSite,
 } from '../wallet/browser-sites';
 import { buildProviderScript, deliverToPageScript, uuidV4FromBytes } from '../wallet/browser-provider-script';
+import { browserBarConnection, browserTopicFor } from '../wallet/browser-bridge';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Apps'>;
 
@@ -82,6 +85,27 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Apps'>;
  *    created, but leaves DOM storage (localStorage) in place
  *    (RNCWebViewManagerImpl.kt setIncognito; domStorageEnabled defaults to
  *    true), which is stated on screen.
+ *
+ * Keeping the page open while the wallet changes (live-pass finding 1): the
+ * bar's Connection button opens a panel IN this screen (no navigation), so
+ * a Disconnect there reaches the page that is on screen at once
+ * (accountsChanged with no accounts). The panel's "Open Settings" and "All
+ * connected apps" PUSH those screens on top of this one: the native stack
+ * keeps the screens below the top one mounted, and this app does not
+ * freeze them (no enableFreeze call; native-stack 7.19.2 documents
+ * freezeOnBlur as "Defaults to `false`"), so the page stays loaded and the
+ * effect below tells it about a network change while Settings is still
+ * showing; on return a focus effect repeats the check (only differences are
+ * ever sent, so nothing is sent twice). A switch to mainnet closes the page
+ * (the readiness card replaces it); an account switch rebuilds the whole
+ * navigator (App.tsx), which closes it too.
+ *
+ * Under the app lock (live-pass finding 4) the whole page — bar, panel and
+ * web view — is display: 'none' and the web view is marked
+ * no-hide-descendants, on top of LockGate's own hiding. The web view stays
+ * MOUNTED: unmounting it would detach the page from the bridge and withdraw
+ * the requests it has waiting in the approval queue, which the lock hold is
+ * meant to keep for after the unlock.
  */
 export function BrowserScreen({ navigation, route }: Props) {
   const theme = useTheme();
@@ -108,7 +132,7 @@ export function BrowserScreen({ navigation, route }: Props) {
     // Keyed on the site only: a switch between test networks keeps the page
     // and reaches it as chainChanged (EIP-1193), while requests queued
     // before the switch are declined by the controller's chain re-check.
-    return <SiteView key={site.origin} site={site} onClose={close} />;
+    return <SiteView key={site.origin} site={site} onClose={close} navigation={navigation} />;
   }
 
   return (
@@ -170,12 +194,34 @@ function randomHex(bytes: number): string {
   return Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 }
 
-function SiteView({ site, onClose }: { site: BrowserSite; onClose: () => void }) {
+/**
+ * The network sentence of the bar's Connection panel (what a switch made in
+ * Settings does to the open page).
+ */
+export function browserNetworkNote(chainLabel: string): string {
+  return (
+    `Network: ${chainLabel}. To change it, open Settings; this page stays open behind it. After a switch to ` +
+    'another test network the page is told about the new network, and its connection is not used there until ' +
+    'it connects on that network. Switching to mainnet closes the page, because Apps works on test networks only.'
+  );
+}
+
+function SiteView({
+  site,
+  onClose,
+  navigation,
+}: {
+  site: BrowserSite;
+  onClose: () => void;
+  navigation: Props['navigation'];
+}) {
   const theme = useTheme();
   const { evmChain } = usePrefs();
-  const { activeAccount } = useWallet();
-  const { browser } = useWalletConnect();
+  const { activeAccount, accountForEvmAddress } = useWallet();
+  const { browser, disconnect, visibleNotice, dismissVisibleNotice, claimInlineNotices } = useWalletConnect();
+  const { locked } = useAppLock();
   useBrowserVersion(browser);
+  const [panelOpen, setPanelOpen] = useState(false);
   const webView = useRef<WebView>(null);
 
   // One nonce and one EIP-6963 uuid per web view (this component is keyed
@@ -249,9 +295,57 @@ function SiteView({ site, onClose }: { site: BrowserSite; onClose: () => void })
   }, [attach, detach, firstDecision.kind, site.origin]);
 
   // Mode or account changes reach the page as chainChanged / accountsChanged.
+  // This also runs while Settings, opened from the panel, is on top (the
+  // stack keeps this screen mounted and unfrozen).
   useEffect(() => {
     browser.notifyContextChanged();
   }, [browser, evmChain.caip2, activeAccount?.index]);
+
+  // Back on this screen: the same check again, before the page is used.
+  // notifyContextChanged sends only what differs from what the page was
+  // last told, so a repeat after the effect above sends nothing.
+  //
+  // The bridge serves ONE page at a time. If another Apps page was opened
+  // on top meanwhile (Settings → Open Apps), it took the bridge over and
+  // this page was detached, so its messages are now dropped and the bridge
+  // no longer knows what this document was last told. It is attached again
+  // and reloaded, so a fresh document starts with the current network and
+  // connection.
+  useFocusEffect(
+    useCallback(() => {
+      const top = topRef.current;
+      if (firstDecision.kind === 'allow' && !blocked && top && browser.page?.nonce !== nonce) {
+        attach(top);
+        webView.current?.reload();
+        return;
+      }
+      browser.notifyContextChanged();
+    }, [browser, firstDecision.kind, blocked, nonce, attach]),
+  );
+
+  // While this screen is focused, the "Connected apps" notice is drawn below
+  // the bar instead of floating over it (live-pass finding 2: the floating
+  // notice covered Back / Reload / Close). Other screens keep the floating
+  // notice; the claim is released on blur and on unmount.
+  useFocusEffect(useCallback(() => claimInlineNotices(), [claimInlineNotices]));
+
+  const confirmDisconnect = useCallback(
+    (origin: string) => {
+      const host = parseWebOrigin(origin)?.host ?? origin;
+      Alert.alert('Disconnect?', `End the connection with ${host}?`, [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Disconnect',
+          style: 'destructive',
+          // The same path as the Connected apps screen: the bridge deletes
+          // the record, answers anything waiting with "disconnected", and
+          // tells the open page accountsChanged with no accounts.
+          onPress: () => void disconnect(browserTopicFor(origin)),
+        },
+      ]);
+    },
+    [disconnect],
+  );
 
   /** Offers an off-list https link in the system browser, after a confirmation. */
   const offerExternal = useCallback((url: string, host: string) => {
@@ -372,9 +466,16 @@ function SiteView({ site, onClose }: { site: BrowserSite; onClose: () => void })
 
   const shownOrigin = topOrigin ?? site.origin;
   const served = topOrigin ? browser.servedAccounts(topOrigin)[0] ?? null : null;
+  const connection = topOrigin ? browserBarConnection(browser, topOrigin) : ({ kind: 'none' } as const);
+  const labelOf = (address: string) => {
+    const name = accountForEvmAddress(address)?.name ?? null;
+    return name ? accountLabel(name, address) : address;
+  };
 
   return (
-    <View style={[styles.fill, { backgroundColor: theme.background }]}>
+    // While locked: display 'none' (native INVISIBLE / hidden), so nothing on
+    // this page is reported to accessibility at all; the page stays mounted.
+    <View style={[locked ? styles.hiddenWhileLocked : styles.fill, { backgroundColor: theme.background }]}>
       <View style={[styles.bar, { borderColor: theme.border, backgroundColor: theme.card }]}>
         <Text style={[styles.barOrigin, { color: theme.text }]} numberOfLines={1} accessibilityLabel={`Site ${shownOrigin}`}>
           {loading && !topOrigin ? `Loading ${parseWebOrigin(shownOrigin)?.host ?? shownOrigin}…` : shownOrigin}
@@ -385,6 +486,13 @@ function SiteView({ site, onClose }: { site: BrowserSite; onClose: () => void })
         <View style={styles.barButtons}>
           <Button title="Back" variant="secondary" onPress={() => webView.current?.goBack()} />
           <Button title="Reload" variant="secondary" onPress={() => webView.current?.reload()} />
+          <Button
+            title="Connection"
+            variant="secondary"
+            selected={panelOpen}
+            accessibilityHint="Shows or hides this site's connection and the network"
+            onPress={() => setPanelOpen((open) => !open)}
+          />
           <Button title="Close" variant="secondary" onPress={onClose} />
         </View>
         {note ? (
@@ -394,6 +502,38 @@ function SiteView({ site, onClose }: { site: BrowserSite; onClose: () => void })
         ) : null}
         {bridgeNote ? <Text style={[styles.barLine, { color: theme.textMuted }]}>{bridgeNote}</Text> : null}
       </View>
+      {panelOpen ? (
+        <View style={[styles.panel, { borderColor: theme.border, backgroundColor: theme.card }]}>
+          <Text style={[styles.barLine, { color: theme.text }]}>
+            {connection.kind === 'served'
+              ? `Connected as ${labelOf(connection.address)} on ${describeChain(connection.chain)}. Disconnecting ` +
+                'ends this site’s access to your address now: the open page is told at once and has to ask again, ' +
+                'through the approval sheet, to reconnect.'
+              : connection.kind === 'elsewhere'
+                ? `This site has a stored connection for ${labelOf(connection.address)} on ` +
+                  `${describeChain(connection.chain)}. It is not used here, because another account or network is ` +
+                  'active. Disconnecting deletes it.'
+                : 'Not connected. If the site asks to connect, the approval sheet opens; nothing is shared before you approve.'}
+          </Text>
+          {connection.kind !== 'none' && topOrigin ? (
+            <Button
+              title={`Disconnect ${parseWebOrigin(topOrigin)?.host ?? topOrigin}`}
+              variant="secondary"
+              onPress={() => confirmDisconnect(topOrigin)}
+            />
+          ) : null}
+          <Text style={[styles.barLine, { color: theme.textMuted }]}>{browserNetworkNote(describeChain(evmChain.caip2))}</Text>
+          <View style={styles.barButtons}>
+            <Button title="Open Settings" variant="secondary" onPress={() => navigation.navigate('Settings')} />
+            <Button title="All connected apps" variant="secondary" onPress={() => navigation.navigate('Connections')} />
+          </View>
+        </View>
+      ) : null}
+      {/* The "Connected apps" notice, in the layout below the bar (claimed
+          above), so it never covers the bar's buttons. */}
+      {visibleNotice ? (
+        <ConnectedAppsNotice text={visibleNotice.text} onDismiss={dismissVisibleNotice} placement="inline" />
+      ) : null}
       {firstDecision.kind !== 'allow' ? (
         <WarningBox>
           {firstDecision.kind === 'refuse' ? firstDecision.reason : 'This site is not on the list.'}
@@ -435,6 +575,10 @@ function SiteView({ site, onClose }: { site: BrowserSite; onClose: () => void })
           fraudulentWebsiteWarningEnabled
           webviewDebuggingEnabled={false}
           paymentRequestEnabled={false}
+          // Also hidden on the web view itself while locked (the page
+          // container above is display 'none' then as well).
+          importantForAccessibility={locked ? 'no-hide-descendants' : 'auto'}
+          accessibilityElementsHidden={locked}
           style={styles.fill}
         />
       )}
@@ -444,6 +588,8 @@ function SiteView({ site, onClose }: { site: BrowserSite; onClose: () => void })
 
 const styles = StyleSheet.create({
   fill: { flex: 1 },
+  hiddenWhileLocked: { flex: 1, display: 'none' },
+  panel: { borderBottomWidth: 1, paddingHorizontal: 12, paddingVertical: 8, gap: 8 },
   content: { padding: 24, gap: 16 },
   title: { fontSize: 18, fontWeight: '700' },
   hint: { fontSize: 13, lineHeight: 19 },
@@ -453,5 +599,5 @@ const styles = StyleSheet.create({
   bar: { borderBottomWidth: 1, paddingHorizontal: 12, paddingVertical: 8, gap: 6 },
   barOrigin: { fontSize: 14, fontWeight: '600' },
   barLine: { fontSize: 12, lineHeight: 16 },
-  barButtons: { flexDirection: 'row', gap: 8 },
+  barButtons: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
 });
