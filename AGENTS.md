@@ -136,7 +136,11 @@ examples/demo.mjs          Offline end-to-end engine demo
   holds only the lines whose files are in that commit; the verify run
   and the commit must use the same snapshot of the diff (2026-10-10: a
   registration added by another agent between the verify run and the
-  commit broke CI with "lists scripts that do not exist"). The verify worktree must resolve @shiba-wallet/* to ITS OWN
+  commit broke CI with "lists scripts that do not exist").
+  When a record is appended from a shell heredoc, quote the delimiter
+  (<<'EOF') and substitute the commit hash afterwards: an unquoted
+  heredoc executed a backticked example command and blanked a sentence
+  (2026-10-11). The verify worktree must resolve @shiba-wallet/* to ITS OWN
   packages: its app/node_modules is a real directory of symlinks into
   the main checkout's app/node_modules except @shiba-wallet, whose
   entries point at the worktree's packages (lesson of 2026-10-09: with
