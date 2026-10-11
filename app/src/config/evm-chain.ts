@@ -1208,6 +1208,94 @@ export const MULTISIG_UNVERIFIED_NETWORK_NOTE =
   "Multi-signature accounts need the Kernel v3.3 contracts and ZeroDev's weighted signer module on this " +
   'network; the wallet has not verified them here.';
 
+/** What was verified about one network's multisig contracts (MULTISIG_VERIFIED_NETWORKS). */
+export interface MultisigNetworkFacts {
+  /** keccak256 of the deployed code (eth_getCode) of each contract the multisig needs. */
+  weightedValidatorCodeHash: string;
+  factoryCodeHash: string;
+  metaFactoryCodeHash: string;
+  implementationCodeHash: string;
+  /** UTC date of the read-only verification. */
+  verifiedOn: string;
+}
+
+/**
+ * Networks where the multi-signature contracts were VERIFIED ON-CHAIN by the
+ * project (read-only), so the Multisig screen offers Create at once and the
+ * "Check this network" step is not needed. Create and import still run the
+ * live checkMultisigNetwork (wallet/multisig.ts) on the active endpoint
+ * every time; these facts only decide what is offered. A network missing
+ * here (mainnet, Hoodi, every network the user added) is offered only after
+ * "Check this network" passes in the session.
+ *
+ * VERIFIED 2026-10-11 (phase 19 item 1) by one scratch script, read-only, on
+ * the two first default RPCs of each profile, which returned identical code
+ * (hosts: ethereum-sepolia-rpc.publicnode.com and
+ * eth-sepolia-testnet.api.pocket.network; base-sepolia-rpc.publicnode.com and
+ * sepolia.base.org; arbitrum-sepolia-rpc.publicnode.com and
+ * sepolia-rollup.arbitrum.io; optimism-sepolia-rpc.publicnode.com and
+ * sepolia.optimism.io), at blocks 11,893,001 (Ethereum Sepolia), 47,984,448
+ * (Base Sepolia), 318,135,121 (Arbitrum Sepolia) and 49,967,324 (OP Sepolia):
+ *  - WeightedECDSAValidator 0xeD89…eEEE (9,678 bytes), KernelFactory
+ *    0x2577…F2E9 (950 bytes), the meta factory 0xd703…42d5 (1,871 bytes) and
+ *    the Kernel v3.3 implementation 0xd6CE…5b28 (24,469 bytes) have code on
+ *    all four networks.
+ *  - The factory and the meta factory are BYTE-IDENTICAL to Ethereum
+ *    Sepolia's on all three other networks (same keccak).
+ *  - The weighted validator and the implementation differ from Ethereum
+ *    Sepolia's only in their cached EIP-712 chain id and domain separator
+ *    (Solady EIP712 immutables): 35 bytes differ on Base Sepolia and
+ *    Arbitrum Sepolia, 34 on OP Sepolia (the chain id word shares more
+ *    bytes with 11155111 there), and replacing Sepolia's chain-id word and
+ *    its recomputed domain separator ("WeightedECDSAValidator" / "0.0.3",
+ *    "Kernel" / "0.3.3", each at its own address) by the target network's
+ *    gives the target's code EXACTLY (one occurrence of each word). The
+ *    validator's own eip712Domain() reports "WeightedECDSAValidator", "0.0.3",
+ *    the network's chain id and its own address on all four.
+ *  - The app's checkMultisigNetwork passed with no problem on all four
+ *    (validator code present and the engine's verifyKernelDeployment:
+ *    factory → implementation, EntryPoint v0.7, accountId
+ *    "kernel.advanced.v0.3.3", the meta factory approving and staked).
+ *  - ZeroDev's bundler (the project's endpoint, path masked) answered
+ *    eth_chainId with each network's id and listed EntryPoint v0.7 in
+ *    eth_supportedEntryPoints on all four. (The wallet uses whichever
+ *    bundler the user saves; this only says the one the project tests with
+ *    serves these networks.)
+ * NOT verified: a multisig deployed or operated on Base, Arbitrum or OP
+ * Sepolia (Ethereum Sepolia only, phase 17); mainnet (not listed; multisigs
+ * are test-network only).
+ */
+export const MULTISIG_VERIFIED_NETWORKS: Readonly<Record<string, MultisigNetworkFacts>> = {
+  'eip155:11155111': {
+    weightedValidatorCodeHash: '0x9aa45e0f0d7428e7476f943c50e4f1020a3e22f4851e97eb8b2865f9b4a44606',
+    factoryCodeHash: '0xcc4b1b98f5716bf61042d87bfedd4709a5c9a597c41f3bb0e6fb6fe1a4ebd37a',
+    metaFactoryCodeHash: '0x4527f3642a53f1f4ce76beb05f955a8859b7245a1ff20da5be9a518d2fcd64aa',
+    implementationCodeHash: '0x1cacd781072bcb657a6306afd074049f35d0a9d7f50eccda9b12bdd00c636995',
+    verifiedOn: '2026-10-11',
+  },
+  'eip155:84532': {
+    weightedValidatorCodeHash: '0x7361fa860f37629639fa923064cdd3e9c4df35a1f36ef85890897c11f26a15c9',
+    factoryCodeHash: '0xcc4b1b98f5716bf61042d87bfedd4709a5c9a597c41f3bb0e6fb6fe1a4ebd37a',
+    metaFactoryCodeHash: '0x4527f3642a53f1f4ce76beb05f955a8859b7245a1ff20da5be9a518d2fcd64aa',
+    implementationCodeHash: '0x0b7b78a4c39a523ebfc23394a547dffd0b9eb0276740e8ce59b6b87287ded3af',
+    verifiedOn: '2026-10-11',
+  },
+  'eip155:421614': {
+    weightedValidatorCodeHash: '0xb67e1b70d61f6eabbcf1c4300e9d4692016a3b60f9b5af6112bd780ee2d0acdb',
+    factoryCodeHash: '0xcc4b1b98f5716bf61042d87bfedd4709a5c9a597c41f3bb0e6fb6fe1a4ebd37a',
+    metaFactoryCodeHash: '0x4527f3642a53f1f4ce76beb05f955a8859b7245a1ff20da5be9a518d2fcd64aa',
+    implementationCodeHash: '0xbf56eb9abfca858cf7aef8c86b97b93fe776547de7793b0dc25d801ae26fc9ac',
+    verifiedOn: '2026-10-11',
+  },
+  'eip155:11155420': {
+    weightedValidatorCodeHash: '0xe62253da6cdd18ba0356465a7e64a306586e8cbe152c42f4273d7ebde6a3b5e6',
+    factoryCodeHash: '0xcc4b1b98f5716bf61042d87bfedd4709a5c9a597c41f3bb0e6fb6fe1a4ebd37a',
+    metaFactoryCodeHash: '0x4527f3642a53f1f4ce76beb05f955a8859b7245a1ff20da5be9a518d2fcd64aa',
+    implementationCodeHash: '0xe1b3d0de60c8748e9117e8da595b2f54f2bfa7c739b0999924fc7978f29e9442',
+    verifiedOn: '2026-10-11',
+  },
+};
+
 /** Networks (CAIP-2) where the multisig network check passed this session. */
 const multisigCheckedNetworks = new Set<string>();
 
@@ -1225,12 +1313,17 @@ export function recordMultisigNetworkCheck(caip2: string, problems: readonly str
 
 /**
  * Whether the Home link and the Multisig screen's Create action are
- * offered: on a profile whose Kernel v3.3 deployment the project verified
- * (kernelV33Verified — the built-in networks; multisig is further limited
- * to test networks by its readiness row), or on a network where the
- * multisig check passed this session. A network the user added starts
- * unverified (custom-networks.ts sets kernelV33Verified false).
+ * offered: on a network whose multisig contracts the project verified
+ * on-chain (MULTISIG_VERIFIED_NETWORKS — a built-in profile with
+ * kernelV33Verified; multisig is further limited to test networks by its
+ * readiness row), or on a network where the multisig check passed this
+ * session. Until phase 19 a verified Kernel v3.3 deployment alone was
+ * enough; the weighted signer module is now required to be verified too. A
+ * network the user added starts unverified (custom-networks.ts sets
+ * kernelV33Verified false, and a custom network can never take a built-in
+ * chain id), as do mainnet and Hoodi.
  */
 export function multisigNetworkVerified(profile: Pick<EvmChainProfile, 'caip2' | 'kernelV33Verified'>): boolean {
-  return profile.kernelV33Verified || multisigCheckedNetworks.has(profile.caip2);
+  const statically = profile.kernelV33Verified && Object.prototype.hasOwnProperty.call(MULTISIG_VERIFIED_NETWORKS, profile.caip2);
+  return statically || multisigCheckedNetworks.has(profile.caip2);
 }

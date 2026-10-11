@@ -36,10 +36,20 @@ import {
   MULTISIG_DEPOSIT_ROW_LABEL,
   MULTISIG_FRESH_DEPLOY_NOTE,
   MULTISIG_PHRASE_SIGNER_ONLY,
+  MULTISIG_SCAN_APPROVAL_NOTE,
+  MULTISIG_SCAN_APPROVAL_RATIONALE,
+  MULTISIG_SCAN_APPROVAL_TITLE,
+  MULTISIG_SCAN_RECORD_NOTE,
+  MULTISIG_SCAN_RECORD_RATIONALE,
+  MULTISIG_SCAN_RECORD_TITLE,
+  MULTISIG_SCAN_REQUEST_NOTE,
+  MULTISIG_SCAN_REQUEST_RATIONALE,
+  MULTISIG_SCAN_REQUEST_TITLE,
   MULTISIG_TITLE,
   MultisigAuthCancelledError,
   REMOVE_MULTISIG_TITLE,
   addMultisigApproval,
+  asSentence,
   buildMultisigConfig,
   checkMultisigNetwork,
   chooseMultisigIndex,
@@ -55,11 +65,11 @@ import {
   multisigConfigOf,
   multisigExportFileName,
   multisigExposureLine,
+  multisigFileRefusal,
   multisigFileText,
   multisigFundsLine,
   multisigNotReadyHint,
   multisigOperationCalls,
-  multisigQrValue,
   multisigRequestShareText,
   multisigShapeLabel,
   multisigSubmitApprovalsLine,
@@ -91,7 +101,9 @@ import {
   MultisigCallsView,
   MultisigFileExportButton,
   MultisigHonesty,
+  MultisigPayloadQr,
   MultisigRefusedFeatures,
+  MultisigScanButton,
   MultisigWeightBar,
 } from './MultisigViews';
 
@@ -397,29 +409,30 @@ export function MultisigScreen() {
     }
   };
 
-  const onAddApproval = async (text: string) => {
+  /**
+   * Adds one approval from pasted, scanned or file text: the same
+   * addMultisigApproval (signature recovered and checked against the signer
+   * set for this exact request) whatever the text came from. Throws.
+   */
+  const addApproval = async (text: string) => {
     if (!selected || !op) return;
     setError(null);
+    const { op: next } = addMultisigApproval(selected, op, text);
+    await saveMultisigOperation(selected.id, next);
+    setOp(next);
+    setApprovalInput('');
+    await reload();
+  };
+
+  const onAddApproval = async (text: string) => {
     try {
-      const { op: next } = addMultisigApproval(selected, op, text);
-      await saveMultisigOperation(selected.id, next);
-      setOp(next);
-      setApprovalInput('');
-      await reload();
+      await addApproval(text);
     } catch (e) {
       fail(e);
     }
   };
 
-  const onPickApprovalFile = async () => {
-    try {
-      const picked = await pickRecordFile();
-      if (!picked) return;
-      await onAddApproval(multisigFileText(picked.text, picked));
-    } catch (e) {
-      fail(e);
-    }
-  };
+  const onPickApprovalFile = () => pickInto(addApproval);
 
   const onQuote = async () => {
     if (!selected || !op || !nodeUrl) return;
@@ -496,13 +509,18 @@ export function MultisigScreen() {
   // ---------------------------------------------------------------------
   // Import and co-sign
   // ---------------------------------------------------------------------
-  const onReviewImport = (text: string) => {
+  /** Reads an account record from pasted, scanned or file text (the same parser for all three). Throws. */
+  const reviewImport = (text: string) => {
     setError(null);
+    setImportParsed(parseMultisigAccountImport(text));
+    setPhase('import-review');
+  };
+
+  const onReviewImport = (text: string) => {
     try {
-      setImportParsed(parseMultisigAccountImport(text));
-      setPhase('import-review');
+      reviewImport(text);
     } catch (e) {
-      fail(e);
+      setError(asSentence(e instanceof Error ? e.message : String(e)));
     }
   };
 
@@ -530,15 +548,24 @@ export function MultisigScreen() {
     }
   };
 
-  const onReviewCosign = (text: string) => {
+  /**
+   * Reads a signing request from pasted, scanned or file text with the same
+   * checks for all three (reviewMultisigRequestAsCosigner: the engine
+   * re-derives the hashes, the account address and the call data). Throws.
+   */
+  const reviewCosign = (text: string) => {
     setError(null);
+    setCosignReview(
+      reviewMultisigRequestAsCosigner(text, { activeChain: chain, activeAddress: phraseSigner, ownAccounts, records, nativeSymbol, tokens }),
+    );
+    setPhase('cosign-review');
+  };
+
+  const onReviewCosign = (text: string) => {
     try {
-      setCosignReview(
-        reviewMultisigRequestAsCosigner(text, { activeChain: chain, activeAddress: phraseSigner, ownAccounts, records, nativeSymbol, tokens }),
-      );
-      setPhase('cosign-review');
+      reviewCosign(text);
     } catch (e) {
-      fail(e);
+      setError(asSentence(e instanceof Error ? e.message : String(e)));
     }
   };
 
@@ -558,14 +585,29 @@ export function MultisigScreen() {
     }
   };
 
-  const pickInto = async (onText: (text: string) => void) => {
+  /**
+   * Opens one .json file and hands its text to `accept` (the same reader as
+   * pasted text). A file the checks refuse is reported as "This file was not
+   * accepted. <reason>." (multisigFileRefusal).
+   */
+  const pickInto = async (accept: (text: string) => void | Promise<void>) => {
+    setError(null);
+    let picked: Awaited<ReturnType<typeof pickRecordFile>>;
     try {
-      const picked = await pickRecordFile();
-      if (picked) onText(multisigFileText(picked.text, picked));
+      picked = await pickRecordFile();
     } catch (e) {
       fail(e);
+      return;
+    }
+    if (!picked) return;
+    try {
+      await accept(multisigFileText(picked.text, picked));
+    } catch (e) {
+      setError(multisigFileRefusal(e));
     }
   };
+
+  const scanError = (message: string) => setError(asSentence(message));
 
   const back = (to: Phase) => (
     <Button
@@ -767,7 +809,7 @@ export function MultisigScreen() {
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           A co-signer adds the same account on their phone from this record (it contains no secrets).
         </Text>
-        <PayloadQr value={exported.qrValue} caption="Multisig account record" />
+        <MultisigPayloadQr payload={exported.json} caption="Multisig account record" />
         <ShareActions text={exported.shareText} shareTitle="Multisig account record" />
         <MultisigFileExportButton text={exported.json} fileName={multisigExportFileName('account', selected.chain, selected.address)} dialogTitle="Save the multisig record" />
         {finished.length > 0 ? (
@@ -877,15 +919,27 @@ export function MultisigScreen() {
           </Text>
         ))}
         <Text style={[styles.sectionTitle, { color: theme.text }]}>1. Send this request to the co-signers</Text>
-        <PayloadQr value={multisigQrValue(payload)} caption="Multisig signing request" />
+        <MultisigPayloadQr payload={payload} caption="Multisig signing request" />
         <ShareActions text={multisigRequestShareText(selected, op)} shareTitle="Multisig signing request" />
         <MultisigFileExportButton text={payload} fileName={multisigExportFileName('request', selected.chain, selected.address)} dialogTitle="Save the signing request" />
         <Text style={[styles.sectionTitle, { color: theme.text }]}>2. Add each approval you receive</Text>
-        <PasteOrScan
+        <MultisigScanButton
+          title={MULTISIG_SCAN_APPROVAL_TITLE}
+          rationale={MULTISIG_SCAN_APPROVAL_RATIONALE}
+          note={MULTISIG_SCAN_APPROVAL_NOTE}
+          onComplete={(text) => void onAddApproval(text)}
+          onError={scanError}
+        />
+        <TextInput
           value={approvalInput}
-          onChange={setApprovalInput}
+          onChangeText={setApprovalInput}
+          accessibilityLabel="Paste a co-signer’s approval (or a 65-byte signature from another wallet)"
           placeholder="Paste a co-signer’s approval (or a 65-byte signature from another wallet)"
-          rationale="Scan the approval QR code a co-signer shows you."
+          placeholderTextColor={theme.textMuted}
+          multiline
+          autoCapitalize="none"
+          autoCorrect={false}
+          style={[styles.input, { color: theme.text, borderColor: theme.border, backgroundColor: theme.card }]}
         />
         <Button title="Add approval" variant="secondary" disabled={!approvalInput.trim()} onPress={() => void onAddApproval(approvalInput)} />
         <Button title="Add an approval from a file" variant="secondary" onPress={() => void onPickApprovalFile()} />
@@ -989,13 +1043,30 @@ export function MultisigScreen() {
       <>
         <Text style={[styles.title, { color: theme.text }]}>Add a multisig from its record</Text>
         <Text style={[styles.hint, { color: theme.text }]}>
-          Paste or scan the account record another signer shared, or open its file. The wallet checks that the address
-          follows from the signer set and that one of your recovery-phrase accounts is a signer.
+          Scan the account record on another signer’s phone, paste the text they shared, or open its file. The wallet
+          checks that the address follows from the signer set and that one of your recovery-phrase accounts is a signer.
         </Text>
-        <PasteOrScan value={importInput} onChange={setImportInput} placeholder="Paste the multisig record" rationale="Scan the multisig record QR code." />
+        <MultisigScanButton
+          title={MULTISIG_SCAN_RECORD_TITLE}
+          rationale={MULTISIG_SCAN_RECORD_RATIONALE}
+          note={MULTISIG_SCAN_RECORD_NOTE}
+          onComplete={onReviewImport}
+          onError={scanError}
+        />
+        <TextInput
+          value={importInput}
+          onChangeText={setImportInput}
+          accessibilityLabel="Paste the multisig record"
+          placeholder="Paste the multisig record"
+          placeholderTextColor={theme.textMuted}
+          multiline
+          autoCapitalize="none"
+          autoCorrect={false}
+          style={[styles.input, { color: theme.text, borderColor: theme.border, backgroundColor: theme.card }]}
+        />
         {errorBox}
         <Button title="Check the record" disabled={!importInput.trim()} onPress={() => onReviewImport(importInput)} />
-        <Button title="Open a record file" variant="secondary" onPress={() => void pickInto(onReviewImport)} />
+        <Button title="Open a record file" variant="secondary" onPress={() => void pickInto(reviewImport)} />
         {back('list')}
       </>,
     );
@@ -1025,13 +1096,31 @@ export function MultisigScreen() {
       <>
         <Text style={[styles.title, { color: theme.text }]}>Approve a request (as a co-signer)</Text>
         <Text style={[styles.hint, { color: theme.text }]}>
-          Paste or scan the signing request the submitter shared, or open its file. You will see the account, the network,
-          the nonce and every call in full before anything is signed.
+          Scan the signing request on the submitter’s phone (a long request comes in several QR codes; scan each one),
+          paste the text they shared, or open its file. You will see the account, the network, the nonce and every call in
+          full before anything is signed.
         </Text>
-        <PasteOrScan value={cosignInput} onChange={setCosignInput} placeholder="Paste the multisig signing request" rationale="Scan the signing request QR code." />
+        <MultisigScanButton
+          title={MULTISIG_SCAN_REQUEST_TITLE}
+          rationale={MULTISIG_SCAN_REQUEST_RATIONALE}
+          note={MULTISIG_SCAN_REQUEST_NOTE}
+          onComplete={onReviewCosign}
+          onError={scanError}
+        />
+        <TextInput
+          value={cosignInput}
+          onChangeText={setCosignInput}
+          accessibilityLabel="Paste the multisig signing request"
+          placeholder="Paste the multisig signing request"
+          placeholderTextColor={theme.textMuted}
+          multiline
+          autoCapitalize="none"
+          autoCorrect={false}
+          style={[styles.input, { color: theme.text, borderColor: theme.border, backgroundColor: theme.card }]}
+        />
         {errorBox}
         <Button title="Review the request" disabled={!cosignInput.trim()} onPress={() => onReviewCosign(cosignInput)} />
-        <Button title="Open a request file" variant="secondary" onPress={() => void pickInto(onReviewCosign)} />
+        <Button title="Open a request file" variant="secondary" onPress={() => void pickInto(reviewCosign)} />
         {back('list')}
       </>,
     );
@@ -1077,7 +1166,7 @@ export function MultisigScreen() {
           Show the QR code to the submitter, or share the text or file. It approves only this request (these calls at nonce{' '}
           {cosignReview.request.nonce}); it is useless for anything else.
         </Text>
-        <PayloadQr value={multisigQrValue(cosignPayload)} caption="Multisig approval" />
+        <MultisigPayloadQr payload={cosignPayload} caption="Multisig approval" />
         <ShareActions text={cosignPayload} shareTitle="Multisig approval" />
         <MultisigFileExportButton
           text={cosignPayload}
@@ -1127,7 +1216,7 @@ export function MultisigScreen() {
         ))
       )}
       {errorBox}
-      {!networkVerified ? (
+      {!networkVerified && readiness === null ? (
         <>
           <WarningBox>{MULTISIG_UNVERIFIED_NETWORK_NOTE}</WarningBox>
           <Button

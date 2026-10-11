@@ -1,25 +1,33 @@
 import React, { useState } from 'react';
 import { Alert, StyleSheet, Text, View } from 'react-native';
-// expo-file-system 57 object API and expo-sharing 57, exactly as
-// components/RecordFileActions.tsx uses them (its comments carry the
-// documentation and typings checks); only the file name and contents differ.
-import { Directory, File, Paths } from 'expo-file-system';
-import * as Sharing from 'expo-sharing';
 import { toHex, type Call, type MultisigConfig } from '@shiba-wallet/chains-evm';
 import { Button, WarningBox } from '../components';
 import { useTheme } from '../theme';
 import { formatUnits } from '../wallet/balances';
-import { recoveryLayout as styles } from '../components/RecoveryViews';
-import { RECORD_EXPORT_DELETE_DELAY_MS } from '../components/RecordFileActions';
+import { PayloadQr, recoveryLayout as styles } from '../components/RecoveryViews';
+import { shareTextFile } from '../components/RecordFileActions';
+import { QrScanner } from '../components/QrScanner';
 import {
   MULTISIG_ERC1271_REFUSAL,
   MULTISIG_EXPORT_DIRECTORY,
   MULTISIG_FEES_LINE,
+  MULTISIG_FILE_MIME_TYPE,
+  MULTISIG_FILE_UTI,
+  MULTISIG_QR_TOO_LARGE,
+  MULTISIG_SCAN_NEXT_TITLE,
+  MULTISIG_SCAN_START_OVER_TITLE,
   MULTISIG_UNAUDITED_NOTE,
+  acceptMultisigQrScan,
   multisigCosignerBarLabel,
   multisigExposureLine,
   multisigFeatureRefusal,
+  multisigFileContents,
   multisigLocalSignsLine,
+  multisigQrPagedNote,
+  multisigQrPartCaption,
+  multisigQrProgressLine,
+  splitMultisigQrParts,
+  type MultisigQrScan,
   type MultisigWeightProgress,
 } from '../wallet/multisig';
 
@@ -71,6 +79,7 @@ export function MultisigWeightBar({ progress }: { progress: MultisigWeightProgre
 }
 
 const barStyles = StyleSheet.create({
+  stack: { gap: 8 },
   track: { height: 8, borderRadius: 4, overflow: 'hidden' },
   fill: { height: 8, borderRadius: 4 },
 });
@@ -128,42 +137,6 @@ export function MultisigCallsView({
   );
 }
 
-function deleteQuietly(item: { delete: () => void }): void {
-  try {
-    item.delete();
-  } catch {
-    // Already gone or locked: the next export sweeps the directory.
-  }
-}
-
-/**
- * Writes `text` (one JSON object, no secrets) to a .json file in the app's
- * cache directory and opens the share sheet, the same way
- * components/RecordFileActions.tsx shareRecordFile does for recovery records
- * (earlier exports swept first; this file deleted
- * RECORD_EXPORT_DELETE_DELAY_MS after the sheet closes, at once on failure).
- */
-async function shareJsonFile(text: string, fileName: string, dialogTitle: string): Promise<void> {
-  if (!(await Sharing.isAvailableAsync())) {
-    throw new Error('Sharing files is not available on this device. Use Share… or Copy instead.');
-  }
-  const dir = new Directory(Paths.cache, MULTISIG_EXPORT_DIRECTORY);
-  if (dir.exists) {
-    for (const item of dir.list()) deleteQuietly(item);
-  }
-  dir.create({ intermediates: true, idempotent: true });
-  const file = new File(dir, fileName);
-  file.create({ overwrite: true });
-  file.write(text);
-  try {
-    await Sharing.shareAsync(file.uri, { mimeType: 'application/json', UTI: 'public.json', dialogTitle });
-  } catch (e) {
-    deleteQuietly(file);
-    throw e;
-  }
-  setTimeout(() => deleteQuietly(file), RECORD_EXPORT_DELETE_DELAY_MS);
-}
-
 /** "Save as file (.json)" for a multisig payload; errors are shown plainly. */
 export function MultisigFileExportButton({ text, fileName, dialogTitle }: { text: string; fileName: string; dialogTitle: string }) {
   const theme = useTheme();
@@ -176,7 +149,20 @@ export function MultisigFileExportButton({ text, fileName, dialogTitle }: { text
         disabled={busy}
         onPress={() => {
           setBusy(true);
-          shareJsonFile(text, fileName, dialogTitle).then(
+          // The shared delete-after-share helper of the recovery record and
+          // the Activity export (components/RecordFileActions.tsx): earlier
+          // exports swept first, this file deleted a minute after the sheet
+          // closes (at once on failure). The text is written unchanged
+          // (multisigFileContents), so the open path reads it back byte for byte.
+          shareTextFile({
+            directory: MULTISIG_EXPORT_DIRECTORY,
+            fileName: () => fileName,
+            contents: () => multisigFileContents(text),
+            mimeType: MULTISIG_FILE_MIME_TYPE,
+            UTI: MULTISIG_FILE_UTI,
+            dialogTitle,
+            unavailableMessage: 'Sharing files is not available on this device. Use Share… or Copy instead.',
+          }).then(
             () => setBusy(false),
             (e: unknown) => {
               setBusy(false);
@@ -190,5 +176,100 @@ export function MultisigFileExportButton({ text, fileName, dialogTitle }: { text
         the temporary copy on this phone is deleted a minute after the share sheet closes.
       </Text>
     </>
+  );
+}
+
+/**
+ * A multisig payload as QR codes: one code when it fits
+ * MULTISIG_QR_PART_MAX_BYTES, otherwise numbered parts
+ * ("SW-MS:<n>/<total>:…", wallet/multisig.ts splitMultisigQrParts) shown one
+ * at a time with Previous part / Next part. The other phone joins them with
+ * MultisigScanButton.
+ */
+export function MultisigPayloadQr({ payload, caption }: { payload: string; caption: string }) {
+  const theme = useTheme();
+  const parts = splitMultisigQrParts(payload);
+  const [page, setPage] = useState(0);
+  if (!parts) {
+    return <Text style={[styles.hint, { color: theme.textMuted }]}>{MULTISIG_QR_TOO_LARGE}</Text>;
+  }
+  const total = parts.length;
+  const index = Math.min(page, total - 1);
+  return (
+    <View style={barStyles.stack}>
+      {total > 1 ? <Text style={[styles.hint, { color: theme.text }]}>{multisigQrPagedNote(total)}</Text> : null}
+      <PayloadQr value={parts[index]!} caption={multisigQrPartCaption(caption, index, total)} />
+      {total > 1 ? (
+        <View style={styles.toggleRow}>
+          <Button title="Previous part" variant="secondary" disabled={index === 0} onPress={() => setPage(index - 1)} />
+          <Button title="Next part" variant="secondary" disabled={index === total - 1} onPress={() => setPage(index + 1)} />
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+/**
+ * A scan button for a multisig payload (a request, an approval or a
+ * record). A whole code goes straight to `onComplete`; the parts of a
+ * multi-part code are collected across scans (acceptMultisigQrScan) with a
+ * progress line, "Scan the next part" and "Start over", and the joined text
+ * goes to `onComplete` once every part is in. The caller hands that text to
+ * the SAME parser as pasted text; nothing here checks or trusts the content.
+ * A malformed part, or a part of another code, is reported through `onError`.
+ */
+export function MultisigScanButton({
+  title,
+  rationale,
+  note,
+  onComplete,
+  onError,
+}: {
+  title: string;
+  rationale: string;
+  note: string;
+  onComplete: (text: string) => void;
+  onError: (message: string) => void;
+}) {
+  const theme = useTheme();
+  const [visible, setVisible] = useState(false);
+  const [scan, setScan] = useState<MultisigQrScan | null>(null);
+  const [progress, setProgress] = useState<string | null>(null);
+  const startOver = () => {
+    setScan(null);
+    setProgress(null);
+  };
+  return (
+    <View style={barStyles.stack}>
+      <Button
+        title={scan ? MULTISIG_SCAN_NEXT_TITLE : title}
+        accessibilityLabel={scan ? `${MULTISIG_SCAN_NEXT_TITLE}: ${title}` : title}
+        variant="secondary"
+        onPress={() => setVisible(true)}
+      />
+      {progress ? <Text style={[styles.hint, { color: theme.text }]}>{progress}</Text> : null}
+      {scan ? <Button title={MULTISIG_SCAN_START_OVER_TITLE} variant="secondary" onPress={startOver} /> : null}
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{note}</Text>
+      <QrScanner
+        visible={visible}
+        rationale={rationale}
+        onScanned={(data) => {
+          setVisible(false);
+          try {
+            const result = acceptMultisigQrScan(scan, data);
+            if (result.kind === 'complete') {
+              startOver();
+              onComplete(result.text);
+            } else {
+              setScan(result.scan);
+              setProgress(multisigQrProgressLine(result.received, result.total, result.repeated));
+            }
+          } catch (e) {
+            onError(e instanceof Error ? e.message : String(e));
+          }
+        }}
+        onClose={() => setVisible(false)}
+      />
+    </View>
   );
 }

@@ -1084,6 +1084,7 @@ export function exportMultisigAccount(record: MultisigRecord): MultisigAccountEx
 
 /** Reads an account record from pasted, scanned or file text. */
 export function parseMultisigAccountImport(text: string): { facts: MultisigAccountFacts; config: MultisigConfig; chain: string } {
+  refusePastedQrPart(text);
   const json = extractFirstJsonObject(text);
   if (json === null) throw new Error('No multisig record found in the text.');
   let parsed: unknown;
@@ -1652,13 +1653,29 @@ export function encodeMultisigRequestPayload(record: MultisigRecord, op: Multisi
   });
 }
 
-/** Share text for co-signers: what is asked, the payload, and the typed data for other wallets. */
-export function multisigRequestShareText(record: MultisigRecord, op: MultisigOperationRecord): string {
-  const t = guardianApprovalTypedData(BigInt(op.request.chainId), op.request.callDataAndNonceHash, {
-    weightedEcdsaValidator: op.request.weightedValidator,
+/**
+ * The EIP-712 typed data a co-signer using ANOTHER wallet signs with
+ * eth_signTypedData_v4: the weighted validator's Approve(bytes32
+ * callDataAndNonceHash) in its domain ("WeightedECDSAValidator", "0.0.3",
+ * the chain id, the validator address). Hashing it gives exactly
+ * request.approvalDigest (scripts/check-multisig.mjs signs it with ethers
+ * and feeds the bare signature back through addMultisigApproval). The share
+ * text carries it as JSON.
+ */
+export function multisigApprovalTypedData(request: MultisigSigningRequest): {
+  types: {
+    EIP712Domain: { name: string; type: string }[];
+    Approve: { name: string; type: string }[];
+  };
+  primaryType: string;
+  domain: { name: string; version: string; chainId: number; verifyingContract: string };
+  message: { callDataAndNonceHash: string };
+} {
+  const t = guardianApprovalTypedData(BigInt(request.chainId), request.callDataAndNonceHash, {
+    weightedEcdsaValidator: request.weightedValidator,
     recoveryAction: KERNEL_RECOVERY_MODULES.recoveryAction,
   });
-  const typed = JSON.stringify({
+  return {
     types: {
       EIP712Domain: [
         { name: 'name', type: 'string' },
@@ -1671,7 +1688,12 @@ export function multisigRequestShareText(record: MultisigRecord, op: MultisigOpe
     primaryType: t.primaryType,
     domain: { name: t.domain.name, version: t.domain.version, chainId: Number(t.domain.chainId), verifyingContract: t.domain.verifyingContract },
     message: t.message,
-  });
+  };
+}
+
+/** Share text for co-signers: what is asked, the payload, and the typed data for other wallets. */
+export function multisigRequestShareText(record: MultisigRecord, op: MultisigOperationRecord): string {
+  const typed = JSON.stringify(multisigApprovalTypedData(op.request));
   return (
     'MULTISIG SIGNING REQUEST — Shiba Wallet\n' +
     `Account: ${record.address}\nNetwork: ${evmProfileByCaip2(record.chain)?.label ?? record.chain}\n` +
@@ -1734,6 +1756,38 @@ export function addMultisigApproval(
   }
 }
 
+/**
+ * A bare approval signature as another wallet returns it from
+ * eth_signTypedData_v4 over multisigApprovalTypedData: "0x" + 130 hex digits
+ * (r ‖ s ‖ v), upper or lower case, optionally wrapped in one pair of double
+ * quotes (a JSON-RPC result copied as is). Returns it in lowercase with v as
+ * 27 or 28, or null when the text is not shaped like a bare signature (it is
+ * then read as JSON).
+ *
+ * v: the deployed WeightedECDSAValidator recovers each approval with Solady's
+ * ECDSA.recover (kernel v3.3 cd697c7e, src/validator/WeightedECDSAValidator.sol
+ * 215–220, Solady at the submodule pin 3f2f5345 src/utils/ECDSA.sol 50–77),
+ * which hands the v byte to the ecrecover precompile unchanged; the precompile
+ * accepts only 27 and 28. Some signers (hardware wallets through some
+ * libraries) return the recovery id as 0 or 1 instead; that is the same
+ * signature, so it is rewritten to 27 / 28 here — otherwise the operation
+ * would be refused on-chain after the approvals were collected. Any other v is
+ * refused. r and s are not changed (no malleability rewrite: the contract does
+ * not check s either, and the approval id is the keccak of the stored bytes).
+ */
+export function externalApprovalSignature(text: string): string | null {
+  const t = text.trim();
+  const unquoted = t.length >= 2 && t.startsWith('"') && t.endsWith('"') ? t.slice(1, -1).trim() : t;
+  if (!/^0x[0-9a-fA-F]{130}$/.test(unquoted)) return null;
+  const hex = unquoted.toLowerCase();
+  const v = parseInt(hex.slice(130, 132), 16);
+  if (v === 27 || v === 28) return hex;
+  if (v === 0 || v === 1) return hex.slice(0, 130) + (v + 27).toString(16);
+  throw new Error(
+    `The signature’s last byte (v) is ${v}; an Ethereum signature ends in 27 or 28 (or 0 or 1). It cannot be used as an approval.`,
+  );
+}
+
 /** `message` ending in a full stop (unchanged when it already ends a sentence). */
 export function asSentence(message: string): string {
   const t = message.trim();
@@ -1746,12 +1800,13 @@ function addApprovalChecked(
   text: string,
 ): { op: MultisigOperationRecord; added: { address: string; weight: number } } {
   if (op.status !== 'collecting') throw new Error('This operation is no longer collecting approvals.');
+  refusePastedQrPart(text);
   const trimmed = text.trim();
   let approval: MultisigApproval;
-  if (/^0x[0-9a-fA-F]{130}$/.test(trimmed)) {
-    const signature = trimmed.toLowerCase();
-    const signer = recoverSignerAddress(toBytes(op.request.approvalDigest), toBytes(signature));
-    approval = { signer, signature };
+  const bareSignature = externalApprovalSignature(trimmed);
+  if (bareSignature !== null) {
+    const signer = recoverSignerAddress(toBytes(op.request.approvalDigest), toBytes(bareSignature));
+    approval = { signer, signature: bareSignature };
   } else {
     const json = extractFirstJsonObject(trimmed);
     if (json === null) throw new Error('No approval found in the text.');
@@ -2025,6 +2080,7 @@ export interface ParsedMultisigRequest {
  * calls a co-signer is shown are the calls the signature commits to.
  */
 export function parseMultisigRequestPayload(text: string): ParsedMultisigRequest {
+  refusePastedQrPart(text);
   const json = extractFirstJsonObject(text);
   if (json === null) throw new Error('No multisig signing request found in the text.');
   let parsed: unknown;
@@ -2155,6 +2211,213 @@ export function multisigQrValue(payload: string): string | null {
 }
 
 // ---------------------------------------------------------------------------
+// QR codes in parts (phase 19 item 1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Largest QR code the multisig screens show as ONE code, in UTF-8 bytes:
+ * the byte-mode capacity of a version-20 QR code (97 × 97 modules) at
+ * error-correction level L, which the screens use (PayloadQr, ecl "L"), from
+ * the capacity table of the `qrcode` 1.5.4 encoder that
+ * react-native-qrcode-svg 6.3.26 renders with (qrcode/lib/core/version.js
+ * getCapacity(20, L, BYTE) = 858; version 25 holds 1,273, version 30 1,732,
+ * version 40 2,953). A real signing request is 1,447 to 2,173 bytes
+ * (2-of-3 to 10 signers, native or token transfer), which needs versions 26
+ * to 32: at the screens' 300-point code that is about 2.3 to 2.5 points per
+ * module, read by another phone's camera from a screen. Version 20 gives
+ * about 3.1 points per module. The limit is a JUDGEMENT for reliable
+ * phone-to-phone scanning, not a figure from a standard; larger payloads are
+ * shown as several codes (splitMultisigQrParts).
+ */
+export const MULTISIG_QR_PART_MAX_BYTES = 858;
+
+/** The prefix of one part of a multi-part multisig QR code: "SW-MS:<n>/<total>:<chunk>". */
+export const MULTISIG_QR_PART_PREFIX = 'SW-MS:';
+
+/**
+ * Most parts one payload is split into. 20 parts hold about 16 KiB, far
+ * above any request the screens build; anything larger is offered as a file
+ * or text only.
+ */
+export const MULTISIG_QR_MAX_PARTS = 20;
+
+const QR_PART = /^SW-MS:([1-9][0-9]?)\/([1-9][0-9]?):([\s\S]+)$/;
+
+/**
+ * The QR codes for a payload: the payload itself as ONE code when it fits
+ * MULTISIG_QR_PART_MAX_BYTES (unchanged, so a single code is still plain
+ * JSON or a bare signature), otherwise 2 to MULTISIG_QR_MAX_PARTS codes
+ * "SW-MS:<n>/<total>:<chunk>" whose chunks, joined in order, are exactly the
+ * payload. Chunks are cut between code points (never inside a character) and
+ * are as even as possible; every part, prefix included, fits
+ * MULTISIG_QR_PART_MAX_BYTES. Returns null for an empty payload or one that
+ * needs more than MULTISIG_QR_MAX_PARTS parts.
+ */
+export function splitMultisigQrParts(payload: string): string[] | null {
+  if (payload.length === 0) return null;
+  const bytes = utf8Length(payload);
+  if (bytes <= MULTISIG_QR_PART_MAX_BYTES) return [payload];
+  // The longest prefix is "SW-MS:20/20:" (12 bytes); every chunk gets the room left by it.
+  const budget = MULTISIG_QR_PART_MAX_BYTES - utf8Length(`${MULTISIG_QR_PART_PREFIX}${MULTISIG_QR_MAX_PARTS}/${MULTISIG_QR_MAX_PARTS}:`);
+  const total = Math.ceil(bytes / budget);
+  if (total > MULTISIG_QR_MAX_PARTS) return null;
+  const chunks = cutByBytes(payload, Math.ceil(bytes / total));
+  // Multi-byte characters can leave a remainder after `total` even chunks; fall back to full chunks.
+  const finalChunks = chunks.length === total ? chunks : cutByBytes(payload, budget);
+  if (finalChunks.length > MULTISIG_QR_MAX_PARTS) return null;
+  const parts = finalChunks.map((c, i) => `${MULTISIG_QR_PART_PREFIX}${i + 1}/${finalChunks.length}:${c}`);
+  if (parts.some((part) => utf8Length(part) > MULTISIG_QR_PART_MAX_BYTES)) return null;
+  return parts;
+}
+
+/** Cuts `text` into chunks of at most `maxBytes` UTF-8 bytes, between code points. */
+function cutByBytes(text: string, maxBytes: number): string[] {
+  const out: string[] = [];
+  let current = '';
+  let size = 0;
+  for (const ch of text) {
+    const n = utf8Length(ch);
+    if (size + n > maxBytes && current !== '') {
+      out.push(current);
+      current = '';
+      size = 0;
+    }
+    current += ch;
+    size += n;
+  }
+  if (current !== '') out.push(current);
+  return out;
+}
+
+/** The parts read so far of a multi-part code (index n − 1 holds part n). */
+export interface MultisigQrScan {
+  total: number;
+  parts: (string | null)[];
+}
+
+export type MultisigQrScanResult =
+  | { kind: 'complete'; text: string }
+  | { kind: 'partial'; scan: MultisigQrScan; received: number; total: number; repeated: boolean };
+
+/**
+ * Takes one scanned QR text. A code that is not a part ("SW-MS:…") is a
+ * whole payload and is returned as complete — but only when no multi-part
+ * code is being read. A part is checked (part number 1 to total, total 2 to
+ * MULTISIG_QR_MAX_PARTS, a non-empty chunk), must have the same total as
+ * the parts read before it, and must not contradict a part already read
+ * (the same part scanned twice is fine). When every part is in, the joined
+ * text is returned as complete.
+ *
+ * Nothing here trusts the content: the caller hands a complete text to the
+ * same parser as pasted text (parseMultisigRequestPayload /
+ * addMultisigApproval / parseMultisigAccountImport), which re-derives the
+ * request's hashes, the account address and the call data, and verifies an
+ * approval's signer. Parts of two different codes that happen to share a
+ * total and fill each other's gaps join into text those checks refuse.
+ */
+export function acceptMultisigQrScan(scan: MultisigQrScan | null, data: string): MultisigQrScanResult {
+  const text = data.trim();
+  const received = scan ? scan.parts.filter((x) => x !== null).length : 0;
+  if (!text.startsWith(MULTISIG_QR_PART_PREFIX)) {
+    if (scan && received > 0) {
+      throw new Error(
+        `This QR code is not part of the code being read (${received} of ${scan.total} parts read so far). ` +
+          'Scan the next part of the same code, or tap Start over.',
+      );
+    }
+    if (text === '') throw new Error('The QR code was empty.');
+    return { kind: 'complete', text };
+  }
+  const m = QR_PART.exec(text);
+  const n = m ? Number(m[1]) : NaN;
+  const total = m ? Number(m[2]) : NaN;
+  if (!m || total < 2 || total > MULTISIG_QR_MAX_PARTS || n > total) {
+    throw new Error('This QR code looks like part of a Shiba Wallet multisig code, but it is damaged. Scan it again.');
+  }
+  const chunk = m[3]!;
+  if (scan && received > 0 && scan.total !== total) {
+    throw new Error(
+      `This part belongs to a code in ${total} parts, but the code being read has ${scan.total}. ` +
+        'Tap Start over to read a different code.',
+    );
+  }
+  const parts = scan && received > 0 ? [...scan.parts] : new Array<string | null>(total).fill(null);
+  const previous = parts[n - 1];
+  if (previous !== null && previous !== undefined && previous !== chunk) {
+    throw new Error(`Part ${n} was already read with different contents, so this is another code. Tap Start over to read a different code.`);
+  }
+  const repeated = previous === chunk;
+  parts[n - 1] = chunk;
+  const have = parts.filter((x) => x !== null).length;
+  if (have === total) return { kind: 'complete', text: parts.join('') };
+  return { kind: 'partial', scan: { total, parts }, received: have, total, repeated };
+}
+
+/** The scanner's progress line between parts. */
+export function multisigQrProgressLine(received: number, total: number, repeated = false): string {
+  const missing = total - received;
+  return (
+    `${repeated ? 'That part was already read. ' : ''}${received} of ${total} parts read. ` +
+    `Show the next part on the other phone (Next part) and scan it; ${missing} ${missing === 1 ? 'part is' : 'parts are'} still missing.`
+  );
+}
+
+/** The caption under one code of a multi-part QR. */
+export function multisigQrPartCaption(caption: string, index: number, total: number): string {
+  return total > 1 ? `${caption} — part ${index + 1} of ${total}` : caption;
+}
+
+/** The sentence above a multi-part QR code. */
+export function multisigQrPagedNote(total: number): string {
+  return (
+    `This is too much for one reliable QR code, so it is shown as ${total} codes. The other phone scans them one ` +
+    'at a time with its scan button; tap Next part after each one is read. The order does not matter.'
+  );
+}
+
+/** Shown when a payload is too large even for the parts (never for the payloads the screens build). */
+export const MULTISIG_QR_TOO_LARGE = 'Too large for QR codes — use Share, Copy or Save as file instead.';
+
+/**
+ * Refuses one part of a multi-part QR code pasted (or read by a scanner that
+ * does not join parts) where a whole payload is expected.
+ */
+function refusePastedQrPart(text: string): void {
+  const m = QR_PART.exec(text.trim());
+  if (m) {
+    throw new Error(
+      `This is part ${m[1]} of ${m[2]} of a multi-part QR code, not the whole text. Read every part with the scan ` +
+        'button on this screen, or paste the whole text the other phone shared.',
+    );
+  }
+}
+
+/** Scan button titles and the sentences next to them (Multisig screen). */
+export const MULTISIG_SCAN_REQUEST_TITLE = 'Scan a request';
+export const MULTISIG_SCAN_APPROVAL_TITLE = 'Scan an approval';
+export const MULTISIG_SCAN_RECORD_TITLE = 'Scan a record';
+export const MULTISIG_SCAN_NEXT_TITLE = 'Scan the next part';
+export const MULTISIG_SCAN_START_OVER_TITLE = 'Start over';
+export const MULTISIG_SCAN_REQUEST_RATIONALE =
+  'Point the camera at the signing request QR code on the submitter’s phone. A request in several parts is read one part at a time.';
+export const MULTISIG_SCAN_APPROVAL_RATIONALE =
+  'Point the camera at the approval QR code on the co-signer’s phone, or at a signature QR code from another wallet.';
+export const MULTISIG_SCAN_RECORD_RATIONALE =
+  'Point the camera at the multisig record QR code on the other signer’s phone. A record in several parts is read one part at a time.';
+/** Under the request scan button (co-signer side). */
+export const MULTISIG_SCAN_REQUEST_NOTE =
+  'A scanned request is checked exactly like pasted text: the wallet recomputes the account address, the call data ' +
+  'and the request id from what it read, and you still see every call in full before anything is signed.';
+/** Under the record scan button (adding a multisig from another signer's record). */
+export const MULTISIG_SCAN_RECORD_NOTE =
+  'A scanned record is checked exactly like pasted text: the account address must follow from its signer set, ' +
+  'and one of your recovery-phrase accounts must be a signer.';
+/** Under the approval scan button (submitting side). */
+export const MULTISIG_SCAN_APPROVAL_NOTE =
+  'A scanned approval is checked exactly like pasted text: its signature must recover to a signer of this multisig ' +
+  'for this exact request (these calls at this nonce), or it is refused.';
+
+// ---------------------------------------------------------------------------
 // Files (export through the share sheet, import through the document picker)
 // ---------------------------------------------------------------------------
 
@@ -2214,4 +2477,41 @@ export function multisigFileText(
     throw new Error('This file must contain exactly one JSON object and nothing else.');
   }
   return body;
+}
+
+/** The MIME type and Apple uniform type of a multisig file (the same as the recovery record's). */
+export const MULTISIG_FILE_MIME_TYPE = 'application/json';
+export const MULTISIG_FILE_UTI = 'public.json';
+
+/**
+ * The exact text "Save as file (.json)" writes: the payload itself,
+ * unchanged, after checking that it is one JSON object of a multisig type
+ * (an account record, a signing request or an approval). The open path
+ * (multisigFileText, then the kind's parser) reads this text back byte for
+ * byte (scripts/check-multisig.mjs writes it to a real file and reads it
+ * back).
+ */
+export function multisigFileContents(payload: string): string {
+  const json = extractFirstJsonObject(payload);
+  if (json === null || json !== payload) throw new Error('Only a multisig record, request or approval can be saved as a file.');
+  let type: unknown;
+  try {
+    type = (JSON.parse(json) as { type?: unknown }).type;
+  } catch {
+    throw new Error('Only a multisig record, request or approval can be saved as a file.');
+  }
+  if (type !== MULTISIG_ACCOUNT_PAYLOAD && type !== MULTISIG_REQUEST_PAYLOAD && type !== MULTISIG_APPROVAL_PAYLOAD) {
+    throw new Error('Only a multisig record, request or approval can be saved as a file.');
+  }
+  return payload;
+}
+
+/**
+ * The sentence for a picked file that was refused (by multisigFileText or by
+ * the kind's parser): "This file was not accepted. <reason>." — the reason is
+ * the checker's own words as a sentence; nothing from the file is echoed.
+ */
+export function multisigFileRefusal(e: unknown): string {
+  const reason = e instanceof Error ? e.message : String(e);
+  return `This file was not accepted. ${asSentence(reason)}`;
 }
