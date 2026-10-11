@@ -3889,3 +3889,40 @@ Waves: 1 — items 0, 1 and 2's engine + Sepolia half in parallel
 emulator passes; 3 — item 3; 4 last. Subagents on Opus.
 
 ## Phase 18 progress
+- [x] Item 0 — NOTIFICATION ICON (commit 19f5040; check-notifications 179
+      (was 165); offline runner ALL GREEN in the CTO's isolated worktree
+      with only this slice: engine 877, app 7,045 across 50 suites, lint
+      0/0, tsc clean; expo-doctor 21/21; five manual mutants caught; the
+      icon in the shade needs a rebuilt development build). app.json:
+      ["expo-notifications", { "icon": "./assets/notification-icon.png",
+      "color": "#a65d13" }] (the light accent, theme-palette.ts:82);
+      app/assets/notification-icon.png 96×96 (933 bytes) drawn by
+      app/scripts/make-notification-icon.mjs (a front-facing Shiba head
+      as one white silhouette — upright ears with a V notch, cheek ruffs,
+      transparent eye and nose cut-outs — 8-px clear border, 4×4
+      supersampled, every pixel 255,255,255 with alpha only, byte-
+      identical on regeneration; a Node-only PNG encoder, no new
+      dependency; registered in suites.mjs as a helper because the runner
+      refuses unlisted scripts). PLUGIN FACTS (57.0.22 plugin/src): icon =
+      a 96×96 all-white transparent PNG resized to res/drawable-*/
+      notification_icon.png at 24/36/48/72/96 px with meta-data
+      expo.modules.notifications.default_notification_icon and
+      com.google.firebase.messaging.default_notification_icon; color →
+      colors.xml notification_icon_color + the two default_notification_color
+      meta-data entries; the builder uses the meta-data else
+      applicationInfo.icon (ExpoNotificationBuilder.kt 342–396); left
+      unset on purpose: defaultChannel (FCM only), sounds, mode,
+      enableBackgroundRemoteNotifications (push only). NEW FINDING: the
+      iOS aps-environment entitlement was ALREADY present before this
+      change — @expo/prebuild-config 57.0.17 applies expo-notifications'
+      own plugin automatically whenever the package is installed
+      (withDefaultPlugins.js:171, getPrebuildConfig.js:56), so the phase
+      17 note that adding the plugin would add the entitlement was
+      inaccurate; `expo config --type introspect` at HEAD already showed
+      "aps-environment": "development"; the explicit entry adds only the
+      Android icon and colour; the Chairperson accepted the entitlement
+      for now (recorded in RELEASE.md and PRIVACY.md); the plugin's own
+      resizer kept all five sizes pure white. DEVICE_BUILDS.md gained
+      "Rebuild after native configuration changes" (`expo prebuild
+      --platform android --clean` then run:android, since run:android
+      generates android/ only when missing).
