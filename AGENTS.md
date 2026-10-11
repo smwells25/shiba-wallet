@@ -5954,3 +5954,102 @@ by the Chairperson is still pending ("a few appear safe to ignore").
       whole transaction's logs (the code falls back to the op's own
       logs); swap reminders in the development build; a reverted swap or
       router residual in-app.
+- [x] Item 0a, in-app half — OP SEPOLIA PROVEN LIVE THROUGH THE APP
+      (2026-10-11; emulator, Expo Go, Metro worktree at cc831d9 with the
+      engine built inside it, 2,360 modules; no repo files edited; 2
+      prompts, one per send; nothing from the dev EOA; every hash status
+      0x1 on both optimism-sepolia-rpc.publicnode.com and
+      sepolia.optimism.io; the bundler URL typed through a 0600 file and
+      the ADBKeyboard broadcast, never printed; notes in the scratchpad
+      p19a). (A) The profile: chip "✓ OP Sepolia", the banner, the
+      test-mode line, the layer-2 note (the L1 data fee on EOA confirms,
+      "Smart-account sends pay it through the bundler's gas estimate
+      instead. Swaps are not offered here (0x does not support OP
+      Sepolia)."), endpoints "default (1 of 3:
+      optimism-sepolia-rpc.publicnode.com)", Home "OP Sepolia" 0.0001 test
+      ETH + "0 USDC", links Send / Activity / NFTs / Upgrade / Approvals /
+      Apps / Multisig (Sessions, Guardians, Inheritance and Passkey
+      appeared after the deployment, as on Arbitrum). (B) The bundler:
+      the chain-11155111 URL refused "This bundler serves Ethereum Sepolia
+      (chain id 11155111), but you are saving it for OP Sepolia (chain id
+      11155420). Nothing was saved…"; the chain-11155420 URL "Verified ✓ —
+      the bundler reported chain id 11155420 (OP Sepolia) and
+      eth_supportedEntryPoints includes EntryPoint v0.7 (checked
+      2026-10-11)", row "ready · Kernel v3.3 (ERC-7579)"; the factory
+      still saved from 2026-10-10. (C) THE SMART-ACCOUNT SEND THAT
+      DEPLOYED THE ACCOUNT (0.0001 test ETH to Account 2): "Not deployed
+      yet — the first send deploys it." and the USDC-fee note naming the
+      networks that offer it ("It is not available on OP Sepolia."); the
+      confirm DEPLOYMENT "Will deploy with this send", max fee
+      0.00000105011333952 (0.00210063 gwei × 499,904 gas), total
+      0.00010105011333952, NO Layer 1 line (as the profile note says), no
+      deposit row (deposit 0), the own-account risk line, "Bundler gas
+      estimate passed"; ONE prompt; userOpHash
+      0xa452fea2981fa35bccf4b1e0b4b091a25b7b219d88c3a08ac93102712d34194d,
+      bundle tx 0x466c078873f8129299077b7c397b4693aff6d0dc1ac5cc5a16e9144cb9274efe,
+      block 49968873, gasUsed 346,851 of 524,777, effectiveGasPrice
+      1,796,860, l1Fee 1,169 wei (l1GasUsed 6,385, l1GasPrice 17), no
+      operator-fee fields; logs RootValidatorUpdated (0x01‖845a…cE57),
+      OwnerRegistered, ModuleInstalled(1, 845a…), AccountDeployed (meta
+      factory, no paymaster), Deposited 1,050,113,339,520 (= the displayed
+      max fee), BeforeExecution, UserOperationEvent nonce 0 success,
+      actualGasCost 737,242,356,500 (70.2%), actualGasUsed 351,026; the
+      three Kernel topics left unidentified in item 0a are now named by
+      keccak: 0x6789ec0c RootValidatorUpdated(bytes21), 0xd21d0b28
+      ModuleInstalled(uint256,address), 0x88a5966d
+      Received(address,uint256); the signed op cGL 50,180 / vGL 398,217 /
+      pVG 51,507, maxFee 2,100,630 / tip 2,100,000 (ZeroDev's standard
+      ~1.05 Mwei × 2 — the 100% headroom), effective 2,100,250; Kernel
+      0.002 → 1,898,949,886,660,480 wei (= 0.002 − 0.0001 − Deposited),
+      deposit 312,870,983,020 (= Deposited − actualGasCost), code 61 B;
+      no zero estimate — the first Review accepted. (D) EOA SEND 0.00005
+      to Account 2 with the OP-stack fee: max fee 0.00000002101050042
+      (0.0010005 gwei × 21,000 "plus the layer 1 data fee below"), "LAYER
+      1 DATA FEE (ESTIMATE) 0.00000000000000042" ("The network's fee
+      oracle estimates 0.00000000000000028 test ETH for this transaction;
+      50% more is reserved…"), total 0.00005002101050042, no operator row;
+      ONE prompt; tx
+      0xeb56efaddd7ce41058b55a59b079276863d3307be818c2ce6ba9425771ef8343,
+      block 49969452, gasUsed 21,000 = limit, effectiveGasPrice 1,000,250,
+      l1Fee 280 = the oracle estimate TO THE WEI (l1GasUsed 1,600,
+      l1GasPrice 16); balance delta = value + 21,005,250,280 exactly; fee
+      paid 99.975% of the worst case. (E) The EIP-7702 upgrade quote:
+      "EIP-7702 set-code (type 0x04) to yourself, 0 test ETH",
+      "Transaction nonce 1; authorization nonce 2 …; chain id 11155420",
+      max fee 0.000000086043000567 (86,000 gas incl. 25,000 for the
+      authorization), "Layer 1 data fee (estimate) 0.000000000000000567"
+      with the stand-in-signature note; nothing signed. (F) Multisig: the
+      Home link, "No multi-signature account on OP Sepolia yet.", Create /
+      Add / Approve, every honesty bullet; NO "Check this network" (the
+      profile is kernelV33Verified and now in the verified table); the
+      weighted validator has 9,678 B of code on both RPCs; not created.
+      (G) Apps: "Apps on OP Sepolia (test network)" with the two cards
+      (both say "on Ethereum Sepolia" — copy only). (H) Back on Ethereum
+      Sepolia: Home identical to the start. Funds (OP Sepolia): Account 1
+      EOA 0.0001 → 0.00004998, Kernel 0.002 → 0.00189895 + deposit
+      0.00000031 (deployed), Account 2 0 → 0.00015. EMULATOR INCIDENT (no
+      wallet data affected): about 40 min in, qemu's CPU0 thread hung
+      ("detected a hanging thread 'QEMU2 CPU0 thread'. No response for
+      25093 ms"; qemu at macOS darwin-background priority PRI 4 / nice 5
+      and nearly idle; adb shell, screencap and uiautomator hung) on the
+      (D) confirm before Send; `adb emu kill` + a cold boot recovered it
+      (fingerprint enrolled, wallet unchanged, no prompt); the new qemu
+      was demoted again ~20 min later and slowed (dumps ~11 s) without
+      hanging; `taskpolicy -B` did not help — likely cause: qemu launched
+      from the agent shell (nice 5) and/or throttled as a background
+      process. STANDING NOTE: launch the AVD from a foreground terminal
+      for long passes. OTHER FINDINGS: the EOA transfer is quoted with
+      gas limit = estimate = 21,000, no padding (correct, 0.025% margin);
+      the first tap on "Verify & save" with the keyboard open did nothing
+      (the keyboardShouldPersistTaps default again — the F6 fix covered
+      the note views, not Settings' fields; follow-up); Activity on OP
+      Sepolia lists neither send without an indexer (by design, stated).
+      END STATE: Home, Ethereum Sepolia, Account 1, light mode, screen
+      protection OFF (left off per the new rule; the window flag could
+      not be re-read after the reboot — that command was denied to the
+      driver), the OP Sepolia bundler saved on the device, Metro at
+      cc831d9; THE IME IS STILL ADBKeyboard — the driver's `ime set` back
+      to Google's keyboard was denied by its permission classifier and
+      the CTO did not run it in the driver's place (surfaced to the
+      Chairperson; typing on the emulator by hand needs the Google IME
+      selected from the device's keyboard settings).
