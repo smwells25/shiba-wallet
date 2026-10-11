@@ -152,7 +152,7 @@ const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
  */
 function describeStakingError(e: unknown, symbol: string): string {
   if (e instanceof StakingRefusal || (e as { name?: unknown } | null)?.name === 'FeatureNotAllowedError') return errorText(e);
-  const { title, detail } = describeSendError(e, symbol);
+  const { title, detail } = describeSendError(e, symbol, symbol);
   const clean = sanitizeEndpointMessage(detail);
   return clean === '' ? title : `${title}\n${clean}`;
 }
@@ -545,7 +545,7 @@ export function StakingScreen({ navigation }: Props) {
       setNotice('Approval confirmed. The action was quoted again after the approval; these are the final numbers.');
       setPhase('confirm');
     } catch (e) {
-      const { title, detail } = describeSendError(e, symbol);
+      const { title, detail } = describeSendError(e, symbol, symbol);
       Alert.alert(title, detail);
       setPhase('approve');
     }
@@ -593,7 +593,7 @@ export function StakingScreen({ navigation }: Props) {
         .then(() => (plan.rebasing ? isStethTracked(chainAtSend) : null))
         .then(setStethTracked);
     } catch (e) {
-      const { title, detail } = describeSendError(e, symbol);
+      const { title, detail } = describeSendError(e, symbol, symbol);
       Alert.alert(title, detail);
       setPhase('confirm');
     }
@@ -613,7 +613,7 @@ export function StakingScreen({ navigation }: Props) {
     try {
       await checkAaQuoteBeforeApproval(bundle.bundler, aaQuote);
     } catch (e) {
-      const d = describeAaError(e, { accountType: aaQuote.accountType, deployed: aaQuote.deployed }) ?? describeSendError(e, symbol);
+      const d = describeAaError(e, { accountType: aaQuote.accountType, deployed: aaQuote.deployed }) ?? describeSendError(e, symbol, symbol);
       Alert.alert(d.title, d.detail);
       backToForm('Please review again.');
       return;
@@ -648,7 +648,7 @@ export function StakingScreen({ navigation }: Props) {
         () => setAaResult((prev) => (prev && prev.userOpHash === userOpHash ? { ...prev, receiptState: 'timeout' } : prev)),
       );
     } catch (e) {
-      const d = describeAaError(e, { accountType: aaQuote.accountType, deployed: aaQuote.deployed }) ?? describeSendError(e, symbol);
+      const d = describeAaError(e, { accountType: aaQuote.accountType, deployed: aaQuote.deployed }) ?? describeSendError(e, symbol, symbol);
       Alert.alert(d.title, d.detail);
       // A smart-account quote is used once (aa.ts claimQuoteForSubmission).
       backToForm('Please review again.');
@@ -817,9 +817,13 @@ export function StakingScreen({ navigation }: Props) {
         </Text>
         {eoaQuote.amount > 0n ? <Row label="Total (worst case)" value={`${exact18(eoaQuote.total)} ${symbol}`} theme={theme} /> : null}
         {planNotes}
+        {/* The outcome card above carries the fuller stETH note when the plan
+            involves stETH, so the preview's short row note is left out then
+            (phase 19 item 4: the caveat was said twice). */}
         <BalanceChangePreview
           url={quotedUrl}
           request={{ from: account.address, to: eoaQuote.to, value: eoaQuote.amount, ...(eoaQuote.data ? { data: eoaQuote.data } : {}) }}
+          rowNotes={!plan.rebasing}
         />
         <RiskWarnings url={quotedUrl} wallet={account.address} to={eoaQuote.to} data={eoaQuote.data} />
         <SpendingPolicyNotice
@@ -889,6 +893,7 @@ export function StakingScreen({ navigation }: Props) {
           request={{ from: aaQuote.sender, to: aaQuote.calls[0]!.to, value: aaQuote.calls[0]!.value, data: aaQuote.calls[0]!.data }}
           batch={aaQuote.calls.map((c) => ({ from: aaQuote.sender, to: c.to, value: c.value, data: c.data }))}
           note={batch ? PREVIEW_AA_BATCH_NOTE : PREVIEW_AA_NOTE}
+          rowNotes={!plan.rebasing}
         />
         <RiskWarnings url={url} wallet={aaQuote.sender} to={plan.main.to} data={plan.main.data} />
         <SpendingPolicyNotice

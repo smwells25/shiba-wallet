@@ -30,6 +30,7 @@ import {
   spokenAmount as spokenDisplayAmount,
 } from '../wallet/balances';
 import {
+  amountSign,
   directionLabel,
   explorerTxUrl,
   hidesZeroNativeAmount,
@@ -45,6 +46,7 @@ import { sanitizeEndpointMessage } from '../config/endpoint-probe';
 import {
   FAILED_INCOMING_TITLE,
   ROW_DETAILS_LOADING_LABEL,
+  ROW_DETAILS_UNAVAILABLE_LINE,
   activityAddressSets,
   activityRowText,
   createActivityDecoder,
@@ -53,8 +55,11 @@ import {
   isFailedIncoming,
   historySmartAccountFor,
   renderActivitySentence,
+  rowsWithoutDetailsFooter,
+  unavailableDiagnosticDetail,
   type AccountLabel,
   type ActivityDecoder,
+  type ActivityDecoderDiagnostics,
   type DecodedActivity,
 } from '../wallet/activity-sentences';
 import { involvesSmartAccount, isSmartAccountEntry, smartAccountHistoryNote } from '../wallet/smart-account-history';
@@ -130,6 +135,7 @@ function EntryRow({
   onEditNote,
   noAmount = false,
   loading = false,
+  unavailable = false,
   replacementLine = null,
 }: {
   entry: HistoryEntry;
@@ -167,6 +173,13 @@ function EntryRow({
    */
   loading?: boolean;
   /**
+   * True when no endpoint returned the row's transaction or receipt, even
+   * after the asks elsewhere (activityRowText): the row then shows
+   * ROW_DETAILS_UNAVAILABLE_LINE as a muted line and ends its label with it
+   * (phase 19 item 4).
+   */
+  unavailable?: boolean;
+  /**
    * For a row whose transaction replaced (or was replaced by) another one
    * this phone sent with the same nonce (wallet/pending-transactions.ts
    * replacementRowLine): "Speed-up of transaction 0x…", "Cancellation of …".
@@ -188,7 +201,8 @@ function EntryRow({
   // touch non-native amounts. Otherwise fall back to the native amount
   // or an em-dash.
   const rowSymbol = entry.assetSymbol ?? symbol;
-  const sign = entry.direction === 'in' ? '+' : entry.direction === 'out' ? '−' : '';
+  // No sign in front of an amount of exactly zero: never "−0" (phase 19 item 4).
+  const sign = amountSign(entry);
   // formatBalanceDisplay, not formatUnits: a non-zero dust amount reads
   // "< 0.000001" instead of a misleading "0" (phase 12 follow-up). The sign
   // goes in front of the "<" ("+<0.000001").
@@ -241,7 +255,8 @@ function EntryRow({
         (replacementLine ? `${replacementLine} ` : '') +
         (failedIncoming ? `${title}, ` : `${title} transaction, `) +
         `${spokenAmount}, ${timestampLabel(entry)}` +
-        (spokenStatus ? `, ${spokenStatus}` : '')
+        (spokenStatus ? `, ${spokenStatus}` : '') +
+        (unavailable ? `. ${ROW_DETAILS_UNAVAILABLE_LINE}` : '')
       }
       accessibilityHint={url ? 'Opens the transaction in the block explorer' : undefined}
       disabled={!url}
@@ -257,6 +272,8 @@ function EntryRow({
         </Text>
         {sentence ? (
           <Text style={[styles.rowSentence, { color: theme.text }]}>{sentence}</Text>
+        ) : unavailable ? (
+          <Text style={[styles.rowSentence, { color: theme.textMuted }]}>{ROW_DETAILS_UNAVAILABLE_LINE}</Text>
         ) : null}
         {replacementLine ? (
           <Text style={[styles.rowSentence, { color: theme.textMuted }]}>{replacementLine}</Text>
@@ -447,6 +464,10 @@ function useActivitySentences(options: {
   selfNames: { address: string; name: string }[];
   /** True while a decode may still give `id` a sentence (also while the decoder is being set up). */
   mayDecode: (id: string) => boolean;
+  /** True when no endpoint returned `id`'s transaction or receipt (until a pull-to-refresh). */
+  isUnavailable: (id: string) => boolean;
+  /** The decoder's counts for the footer's technical line (null without a decoder). */
+  diagnostics: ActivityDecoderDiagnostics | null;
 } {
   const { enabled, chainCaip2, chainIdDecimal, eoa, accountIndex, accounts, refreshing } = options;
   // Every account's index, name and address: a rename or a new account
@@ -472,6 +493,15 @@ function useActivitySentences(options: {
   const current =
     setup && setup.key === setupKey ? setup : setupKey ? (DECODER_SETUPS.get(setupKey) ?? null) : null;
   const decoder = current?.decoder ?? null;
+  // The screen's decoder, for answers that arrive after the visible rows
+  // changed (see the decode effect below).
+  const decoderRef = useRef<ActivityDecoder | null>(null);
+  useEffect(() => {
+    decoderRef.current = decoder;
+    return () => {
+      decoderRef.current = null;
+    };
+  }, [decoder]);
 
   useEffect(() => {
     if (!setupKey || !eoa || accountIndex === null) return;
@@ -529,13 +559,17 @@ function useActivitySentences(options: {
   useEffect(() => {
     const ids = visibleKey ? visibleKey.split(',') : [];
     if (!decoder || ids.length === 0) return;
-    let cancelled = false;
+    const before = decoder.revision();
     void decoder.decodeEntries(ids, { listed: (id) => listedIds.current.has(id) }).then((decoded) => {
-      if (!cancelled && decoded.size > 0) setVersion((v) => v + 1);
+      // Re-render when anything changed, including a row that went
+      // unavailable with nothing new cached (it then says why). Not tied to
+      // this effect run still being current: a batch that finishes after
+      // the visible rows changed would otherwise leave its rows unrendered
+      // until something else re-rendered (phase 19 item 4); only answers of
+      // a decoder the screen no longer uses are ignored.
+      if (decoderRef.current !== decoder) return;
+      if (decoded.size > 0 || decoder.revision() !== before) setVersion((v) => v + 1);
     });
-    return () => {
-      cancelled = true;
-    };
   }, [decoder, visibleKey, refreshing]);
 
   // FlatList requires a stable callback for onViewableItemsChanged (the
@@ -561,6 +595,7 @@ function useActivitySentences(options: {
     (id: string) => (decoder ? decoder.mayDecode(id) : settingUp),
     [decoder, settingUp],
   );
+  const isUnavailable = useCallback((id: string) => (decoder ? decoder.isUnavailable(id) : false), [decoder]);
   return {
     lookup,
     contacts: current?.contacts ?? EMPTY_CONTACTS,
@@ -570,6 +605,9 @@ function useActivitySentences(options: {
     self: current?.self ?? EMPTY_SELF,
     selfNames: current?.selfNames ?? EMPTY_SELF_NAMES,
     mayDecode,
+    isUnavailable,
+    // Read on every render (cheap counts); `version` changes with them.
+    diagnostics: decoder ? decoder.diagnostics() : null,
   };
 }
 
@@ -717,8 +755,8 @@ export function ActivityScreen({ navigation, route }: Props) {
   // a staking bundle never reads as an amount staked; else the decoded
   // transaction's sentence; a row still waiting for it says it is loading.
   const activeIsMultisig = activeAccount?.multisig === true;
-  const rowTextFor = (entry: HistoryEntry): { sentence: string | null; loading: boolean } => {
-    if (!isEvmSlot) return { sentence: null, loading: false };
+  const rowTextFor = (entry: HistoryEntry): { sentence: string | null; loading: boolean; unavailable: boolean } => {
+    if (!isEvmSlot) return { sentence: null, loading: false, unavailable: false };
     return activityRowText({
       entryPoint: entryPointRowSentence(entry, {
         smartAccountRow: isSmartAccountEntry(entry) || activeIsMultisig,
@@ -727,6 +765,7 @@ export function ActivityScreen({ navigation, route }: Props) {
       }),
       sentence: sentenceFor(entry.id),
       mayDecode: sentences.mayDecode(entry.id),
+      unavailable: sentences.isUnavailable(entry.id),
     });
   };
 
@@ -937,8 +976,23 @@ export function ActivityScreen({ navigation, route }: Props) {
   // controller ends every load within 60 s, history-controller.ts), "Could
   // not load more — tap to retry" after a failure or timeout, "Load more",
   // or the end of the list (finding F3).
+  // Rows left without details by the decoder (no endpoint returned their
+  // transaction or receipt): counted for the footer so a tester sees how
+  // many and why (phase 19 item 4). Only rows that would show the line.
+  const rowsWithoutDetails = isEvmSlot
+    ? state.entries.filter((entry) => sentences.isUnavailable(entry.id) && rowTextFor(entry).unavailable).length
+    : 0;
+  const withoutDetailsFooter = rowsWithoutDetailsFooter(rowsWithoutDetails);
   const footer = (
     <View style={styles.footer}>
+      {withoutDetailsFooter ? (
+        <>
+          <Text style={[styles.note, { color: theme.textMuted }]} accessibilityLiveRegion="polite">
+            {withoutDetailsFooter}
+          </Text>
+          <TechnicalDetail text={sentences.diagnostics ? unavailableDiagnosticDetail(sentences.diagnostics) : null} />
+        </>
+      ) : null}
       {state.loadingMore ? (
         <ActivityIndicator size="small" color={theme.textMuted} accessibilityLabel="Loading older transactions" />
       ) : state.loadMoreError ? (
@@ -996,8 +1050,9 @@ export function ActivityScreen({ navigation, route }: Props) {
             evmExplorerTxBase={evmChain.explorerTxBase}
             sentence={rowText.sentence}
             loading={rowText.loading}
+            unavailable={rowText.unavailable}
             replacementLine={isEvmSlot ? replacementRowLine(pendingRecords, evmChain.caip2, item.id) : null}
-            noAmount={hidesZeroNativeAmount(item, tokenTxIds)}
+            noAmount={hidesZeroNativeAmount(item, tokenTxIds, sentences.lookup(item.id)?.description)}
             note={noteFor(item.id)}
             onEditNote={
               noteBook && !noteBook.readOnly && normalizeTxId(noteNetwork, item.id)

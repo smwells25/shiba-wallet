@@ -66,6 +66,7 @@ import {
   utcDate,
 } from '../src/wallet/staking.ts';
 import { GasEstimateRevertError, describeSendError, sendEvm } from '../src/wallet/send.ts';
+import { describeAssetChanges } from '../src/wallet/simulation.ts';
 import { createAaClientFromConfig, sendAa } from '../src/wallet/aa.ts';
 import { featureReadiness, isFeatureAllowed, isTestNetwork } from '../src/config/readiness.ts';
 import { isBuiltInEvmChain, setCustomEvmProfiles } from '../src/config/evm-chain.ts';
@@ -601,6 +602,29 @@ console.log('check-staking: regular-account quotes through the real prepareEvmSe
   check('outcome preview: the ETH sent and the stETH minted (1 wei short), with the rebasing caveat',
     preview.ok && preview.sent === 10n ** 15n && preview.received.length === 1 && preview.received[0].symbol === 'stETH' && preview.received[0].amount === 10n ** 15n - 1n && preview.rebasingCaveat === true);
   check('the rebasing note says 1 or 2 wei and that the figure comes from the token’s own event', /1 or 2 wei/.test(STETH_REBASING_NOTE) && /own event/.test(STETH_REBASING_NOTE));
+  // Phase 19 item 4: the confirm said the rebasing caveat twice (the outcome
+  // card's STETH_REBASING_NOTE and the preview row's REBASING_TOKEN_NOTE).
+  // Both confirm previews now drop the short row note exactly when the
+  // outcome card shows the fuller one (plan.rebasing).
+  {
+    const screen = readFileSync(join(APP_ROOT, 'src/screens/StakingScreen.tsx'), 'utf8');
+    const views = readFileSync(join(APP_ROOT, 'src/screens/StakingViews.tsx'), 'utf8');
+    const once = (src, viewsSrc) =>
+      (src.match(/<BalanceChangePreview\b/g) ?? []).length === 2 &&
+      [...src.matchAll(/<BalanceChangePreview\b((?:(?!\/>)[\s\S])*)\/>/g)].filter((m) => /\n\s*rowNotes=\{!plan\.rebasing\}\s*$/.test(m[1])).length === 2 &&
+      viewsSrc.includes('{plan.rebasing ? <Text style={[styles.hint, { color: theme.textMuted }]}>{STETH_REBASING_NOTE}</Text> : null}');
+    check('the stETH confirm says the rebasing caveat once: both previews pass rowNotes={!plan.rebasing}, the outcome card keeps the fuller note (source)', once(screen, views));
+    check('…the old screen (the preview with its row note on a stETH plan) fails the check', !once(screen.replaceAll('\n          rowNotes={!plan.rebasing}', ''), views));
+    check('…a screen that drops the outcome card\'s note fails the check', !once(screen, views.replace('{plan.rebasing ? <Text', '{false ? <Text')));
+    const quiet = describeAssetChanges(
+      [{ type: 'native', callIndex: 0, direction: 'out', from: EOA, to: SEP.stETH, amount: 10n ** 15n },
+        { type: 'erc20', callIndex: 0, direction: 'in', token: SEP.stETH, from: '0x0000000000000000000000000000000000000000', to: EOA, amount: 10n ** 15n - 1n }],
+      { [SEP.stETH.toLowerCase()]: { symbol: 'stETH', decimals: 18, tracked: true } },
+      { nativeSymbol: 'test ETH', hidden: false, chainCaip2: 'eip155:11155111', rowNotes: false },
+    );
+    check('…what that preview then renders for the live stake: the two rows, no row note',
+      JSON.stringify(quiet) === JSON.stringify([{ text: 'You send 0.001 test ETH', tone: 'out' }, { text: 'You receive 0.000999999999999999 stETH', tone: 'in' }]), quiet);
+  }
   check('the device prompt names the action exactly', stakingActionTitle(plan.action, 'test ETH') === 'Stake 0.001 test ETH with Lido for stETH', stakingActionTitle(plan.action, 'test ETH'));
   fetchNode = null;
 }
@@ -817,6 +841,13 @@ console.log('check-staking: a stake the account cannot afford says so (phase 18 
   check('a funds refusal at estimation is not retried with value 0 (one estimate, the real value; no ZERO_DEPOSIT)',
     tightNode.estimates.length === 1 && BigInt(tightNode.estimates[0].value) === 10n ** 15n && !/ZERO_DEPOSIT/.test(String(t?.message)) &&
       describeSendError(t, 'test ETH').title === 'Not enough ETH to pay the network fee.', `${tightNode.estimates.length} / ${t?.message}`);
+  // Phase 19 item 4: the fee title names the profile's coin when the caller
+  // passes it (the Staking screen passes evmChain.displaySymbol); without the
+  // third argument it reads exactly as before (send-nft, send-erc20 pins).
+  check('…with the profile\'s symbol (the Staking screen\'s call) the title reads "Not enough test ETH to pay the network fee." on Sepolia',
+    describeSendError(t, 'test ETH', 'test ETH').title === 'Not enough test ETH to pay the network fee.', describeSendError(t, 'test ETH', 'test ETH').title);
+  check('…and the node\'s "insufficient funds for gas" broadcast refusal is titled the same way',
+    describeSendError(new Error('insufficient funds for gas * price + value'), 'stETH', 'test ETH').title === 'Not enough test ETH to pay the network fee.');
   fetchNode = null;
 }
 
@@ -830,13 +861,20 @@ console.log('check-staking: the unaffordable-stake title names the network\'s co
   const screenSrc = readFileSync(join(APP_ROOT, 'src/screens/StakingScreen.tsx'), 'utf8');
   const symbolOk = (src) =>
     src.includes('function describeStakingError(e: unknown, symbol: string): string {') &&
-    src.includes('const { title, detail } = describeSendError(e, symbol);') &&
+    src.includes('const { title, detail } = describeSendError(e, symbol, symbol);') &&
     !src.includes("describeSendError(e, 'ETH')") &&
     !/describeStakingError\(e\)/.test(src) &&
     (src.match(/describeStakingError\(e, symbol\)/g) ?? []).length === 2 &&
-    src.includes('const symbol = evmChain.displaySymbol;');
+    src.includes('const symbol = evmChain.displaySymbol;') &&
+    // Phase 19 item 4: every describeSendError call passes the profile's
+    // symbol as the fee coin too, so "Not enough ETH to pay the network
+    // fee." reads "Not enough test ETH …" on a test network.
+    (src.match(/describeSendError\(e, symbol, symbol\)/g) ?? []).length === 5 &&
+    !/describeSendError\(e, symbol\)/.test(src);
   check('StakingScreen words its errors with evmChain.displaySymbol, never a hard-coded "ETH" (source)', symbolOk(screenSrc));
-  check('…the old hard-coded call fails the check', !symbolOk(screenSrc.replace('describeSendError(e, symbol);', "describeSendError(e, 'ETH');")));
+  check('…the old hard-coded call fails the check', !symbolOk(screenSrc.replace('describeSendError(e, symbol, symbol);', "describeSendError(e, 'ETH');")));
+  check('…a call without the fee coin (the screen before phase 19 item 4) fails the check',
+    !symbolOk(screenSrc.replace('describeSendError(e, symbol, symbol);', 'describeSendError(e, symbol);')));
   check('…and with "test ETH" the title reads "Not enough test ETH to cover this amount plus the network fee."',
     describeSendError(new Error('Insufficient funds: sending 1000000000000000000 wei plus a worst-case fee of at least 21000672000 wei exceeds the balance of 2318893341920775 wei.'), 'test ETH').title ===
       'Not enough test ETH to cover this amount plus the network fee.');

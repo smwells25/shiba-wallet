@@ -297,20 +297,60 @@ export function transactionsWithTokenAmounts(entries: readonly HistoryEntry[]): 
 }
 
 /**
- * True when an Activity row should show no amount at all: a native entry
- * (no asset) whose amount is exactly zero, of a transaction that has a
- * token amount on another loaded row (2026-10-11 re-check, finding 8: wrap
- * and unwrap rows read "−0 test ETH" next to the token rows). A zero-value
- * transaction with no token row (an approval) keeps its "−0" amount, which
- * is what the indexer reported.
+ * The part of a decoded transaction (activity-decode.ts ActivityDescription)
+ * hidesZeroNativeAmount reads: its hash, its value and the kind of its
+ * top-level call. Structural, so this module needs no decoder import.
  */
-export function hidesZeroNativeAmount(entry: HistoryEntry, tokenTxIds: ReadonlySet<string>): boolean {
+export interface DecodedCallFacts {
+  hash: string;
+  value: bigint;
+  call: { kind: string };
+}
+
+/**
+ * True when an Activity row should show no amount at all: a native entry
+ * (no asset) whose amount is exactly zero, of a transaction that
+ *  - has a token amount on another loaded row (2026-10-11 re-check,
+ *    finding 8: wrap and unwrap rows read "−0 test ETH" next to the token
+ *    rows), or
+ *  - is DECODED as a contract call that carried no value (phase 19 item 4:
+ *    the merged-history pass's rows 21 and 112, "Approved stETH for Lido
+ *    wstETH contract …" and "Approved USDC for Permit2 (unlimited)", read
+ *    "−0 test ETH" — an approval moves no coin, so "0" is not an amount
+ *    the user sent). `decoded` is the row's decoded transaction, if any; it
+ *    counts only when its hash is the row's and its top-level call is not a
+ *    plain native transfer (a zero-value transfer, e.g. a cancellation, did
+ *    send 0 and keeps its amount).
+ * Before a decode arrives such a row keeps the indexer's "0" amount.
+ */
+export function hidesZeroNativeAmount(
+  entry: HistoryEntry,
+  tokenTxIds: ReadonlySet<string>,
+  decoded?: DecodedCallFacts | null,
+): boolean {
+  if (entry.amount !== 0n || entry.assetAmount !== undefined || entry.assetSymbol !== undefined) return false;
+  if (tokenTxIds.has(entry.id.toLowerCase())) return true;
   return (
-    entry.amount === 0n &&
-    entry.assetAmount === undefined &&
-    entry.assetSymbol === undefined &&
-    tokenTxIds.has(entry.id.toLowerCase())
+    decoded != null &&
+    decoded.hash.toLowerCase() === entry.id.toLowerCase() &&
+    decoded.value === 0n &&
+    decoded.call.kind !== 'native-transfer'
   );
+}
+
+/**
+ * The sign in front of an Activity row's amount: "+" received, "−" sent,
+ * none for a self-transfer — and none for an amount of exactly zero (the
+ * amount shown: the token amount when the provider gave one, else the
+ * native amount), so no row ever reads "−0" (phase 19 item 4).
+ */
+export function amountSign(
+  entry: Pick<HistoryEntry, 'direction' | 'amount' | 'assetAmount' | 'assetDecimals'>,
+): '+' | '−' | '' {
+  const shown =
+    entry.assetAmount !== undefined && entry.assetDecimals !== undefined ? entry.assetAmount : entry.amount;
+  if (shown === 0n) return '';
+  return entry.direction === 'in' ? '+' : entry.direction === 'out' ? '−' : '';
 }
 
 /** Human label for an entry's direction. */

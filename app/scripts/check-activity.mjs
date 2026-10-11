@@ -51,7 +51,12 @@ import {
   renderActivitySentence,
   walletAddressesFor,
 } from '../src/wallet/activity-sentences.ts';
+import * as sentencesModule from '../src/wallet/activity-sentences.ts';
 import { EVM_MAINNET } from '../src/config/evm-chain.ts';
+
+// Phase 19 item 4 constants, read from the namespace so this script still
+// runs (and fails the checks that need them) against an older module.
+const { MAX_ALTERNATE_ASKS, ALTERNATE_REFIND_AFTER_MS } = sentencesModule;
 
 let passed = 0;
 let failed = 0;
@@ -614,6 +619,18 @@ installFakeNode();
   exact('wrap', wrap, 'Wrapped stETH into wstETH with Lido (wstETH contract 0xB823…067b): sent 0.0005 stETH, received 0.000481826550135307 wstETH');
   exact('unwrap', unwrap, 'Unwrapped wstETH into stETH with Lido (wstETH contract 0xB823…067b): sent 0.0004 wstETH, received 0.000415087130304122 stETH');
   exact('the exact approval before a wrap names the pinned spender', approve, 'Approved stETH for Lido wstETH contract 0xB823…067b (up to 0.0005 stETH)');
+  // Phase 19 item 4 (the merged-history pass's row 21): the indexer lists
+  // this approval as a zero-value native row with no token movement; once
+  // decoded it shows no amount instead of "−0 test ETH".
+  {
+    const hist = await import('../src/wallet/history.ts');
+    const row = { id: approve, uid: `${approve}:external`, direction: 'out', amount: 0n, timestamp: null, confirmed: true };
+    const none = new Set();
+    check('LIVE SENTENCE row 21 — "Approved stETH for Lido wstETH contract …": its zero-value native row shows no amount once decoded',
+      hist.hidesZeroNativeAmount(row, none, out.get(approve).description) === true && hist.hidesZeroNativeAmount(row, none) === false);
+    check('…the stake (value 0.0002) and the stETH-paying calls keep their amount rules (a stake row is not zero)',
+      hist.hidesZeroNativeAmount({ ...row, id: stake, amount: 2n * 10n ** 14n }, none, out.get(stake).description) === false);
+  }
   exact('claim from the withdrawal queue', claim, 'Claimed withdrawn test ETH from Lido (withdrawal queue contract 0x1583…5fdd)');
   exact('a look-alike address (last digit changed) keeps the generic sentence', lookAlike, 'Called 0x3E3F…40AE with 0.0002 test ETH');
   exact('an unpinned selector on the pinned contract keeps the generic wording (the contract still named)', wrongSelector,
@@ -1148,9 +1165,47 @@ console.log("The smart account's history next to the account's own, merged in ti
       deadDecoder.mayDecode(known) === false && decoderF5.mayDecode('not-a-hash') === false);
   // Rows before their sentence (finding F5).
   check('a row with no sentence yet says it is loading while a decode may bring one, and not after',
-    JSON.stringify(as.activityRowText({ entryPoint: null, sentence: null, mayDecode: true })) === JSON.stringify({ sentence: null, loading: true }) &&
-      JSON.stringify(as.activityRowText({ entryPoint: null, sentence: null, mayDecode: false })) === JSON.stringify({ sentence: null, loading: false }) &&
+    JSON.stringify(as.activityRowText({ entryPoint: null, sentence: null, mayDecode: true })) === JSON.stringify({ sentence: null, loading: true, unavailable: false }) &&
+      JSON.stringify(as.activityRowText({ entryPoint: null, sentence: null, mayDecode: false })) === JSON.stringify({ sentence: null, loading: false, unavailable: false }) &&
       as.ROW_DETAILS_LOADING_LABEL === 'Transaction, details loading');
+  // Phase 19 item 4: a row the decoder left unavailable says so instead.
+  check('a row left unavailable: no sentence, not loading, unavailable (it shows ROW_DETAILS_UNAVAILABLE_LINE)',
+    JSON.stringify(as.activityRowText({ entryPoint: null, sentence: null, mayDecode: false, unavailable: true })) === JSON.stringify({ sentence: null, loading: false, unavailable: true }) &&
+      as.ROW_DETAILS_UNAVAILABLE_LINE === 'Details could not be loaded from the network endpoints; pull down to try again.');
+  check('…a row with its own sentence (a decode, or an EntryPoint row) never shows the line',
+    as.activityRowText({ entryPoint: null, sentence: 'Sent 1 test ETH', mayDecode: false, unavailable: true }).unavailable === false &&
+      as.activityRowText({ entryPoint: 'EntryPoint deposit: …', sentence: null, mayDecode: false, unavailable: true }).unavailable === false);
+  check('footer: "N rows without details — pull down to retry" (singular for one; none for zero)',
+    as.rowsWithoutDetailsFooter?.(5) === '5 rows without details — pull down to retry' &&
+      as.rowsWithoutDetailsFooter?.(1) === '1 row without details — pull down to retry' &&
+      as.rowsWithoutDetailsFooter?.(0) === null && as.rowsWithoutDetailsFooter?.(-1) === null && as.rowsWithoutDetailsFooter?.(1.5) === null);
+  check('footer technical line names the reasons; none when nothing is unavailable',
+    as.unavailableDiagnosticDetail?.({ unavailable: 5, noAlternate: 0, alternateMissing: 4, alternateFailed: 1, failed: 2 }) ===
+      'No other endpoint to ask: 0; other endpoints answered without it: 4; other endpoints did not answer: 1; other failed decodes: 2.' &&
+      as.unavailableDiagnosticDetail?.({ unavailable: 0, noAlternate: 0, alternateMissing: 0, alternateFailed: 0, failed: 3 }) === null);
+  const screenSrc = readFileSync(join(here, '..', 'src', 'screens', 'ActivityScreen.tsx'), 'utf8');
+  const unavailableWired = (src) => {
+    const flat = src.replace(/\s+/g, ' ');
+    return (
+      flat.includes("(unavailable ? `. ${ROW_DETAILS_UNAVAILABLE_LINE}` : '')") &&
+      flat.includes(') : unavailable ? ( <Text style={[styles.rowSentence, { color: theme.textMuted }]}>{ROW_DETAILS_UNAVAILABLE_LINE}</Text> ) : null}') &&
+      flat.includes('unavailable: sentences.isUnavailable(entry.id),') &&
+      flat.includes('unavailable={rowText.unavailable}') &&
+      flat.includes('const withoutDetailsFooter = rowsWithoutDetailsFooter(rowsWithoutDetails);') &&
+      flat.includes('state.entries.filter((entry) => sentences.isUnavailable(entry.id) && rowTextFor(entry).unavailable).length') &&
+      flat.includes('{withoutDetailsFooter}') &&
+      flat.includes('<TechnicalDetail text={sentences.diagnostics ? unavailableDiagnosticDetail(sentences.diagnostics) : null} />') &&
+      // A row that went unavailable re-renders even with nothing new cached.
+      flat.includes('if (decoded.size > 0 || decoder.revision() !== before) setVersion((v) => v + 1);') &&
+      flat.includes('if (decoderRef.current !== decoder) return;')
+    );
+  };
+  check('the screen draws the muted line under such a row, ends its label with it, counts the rows in the footer with the reasons, and re-renders when a row goes unavailable (source)',
+    unavailableWired(screenSrc));
+  check('…mutant caught: the line left out of the label', !unavailableWired(screenSrc.replace("(unavailable ? `. ${ROW_DETAILS_UNAVAILABLE_LINE}` : '')", "''")));
+  check('…mutant caught: the row without the line', !unavailableWired(screenSrc.replace('{ROW_DETAILS_UNAVAILABLE_LINE}</Text>', '{null}</Text>')));
+  check('…mutant caught: the old re-render rule (only when something new was cached)',
+    !unavailableWired(screenSrc.replace('if (decoded.size > 0 || decoder.revision() !== before) setVersion((v) => v + 1);', 'if (decoded.size > 0) setVersion((v) => v + 1);')));
 }
 
 console.log('The Activity list state machine (2026-10-11 pass, finding F3):');
@@ -1324,10 +1379,42 @@ console.log('Zero-value native rows next to token rows (2026-10-11 re-check, fin
   check('…the token row itself and a non-zero native row keep theirs (ids compared case-insensitively)',
     hist.hidesZeroNativeAmount(tokenOut, ids) === false && hist.hidesZeroNativeAmount(paid, ids) === false && ids.has(WRAP));
   check('…without the token row loaded the zero row keeps its amount', hist.hidesZeroNativeAmount(native0, hist.transactionsWithTokenAmounts([native0])) === false);
+
+  // Phase 19 item 4: a zero-value native row of a transaction DECODED as a
+  // contract call with no value (an approval) shows no amount either. The
+  // live Permit2 approval (fixture 0xa41da70a…, the pass's row 112).
+  reset();
+  clearActivityCache();
+  const decoder = createActivityDecoder({ chainCaip2: SEPOLIA, evmChainId: SEPOLIA_ID, wallet: [ACCOUNT_1], trackedTokens: [], run: fixedRun });
+  const decodedApprove = (await decoder.decodeEntries([H.approve])).get(H.approve);
+  check('the fixture decodes to the live sentence "Approved USDC for Permit2 (unlimited)"', render(decodedApprove) === 'Approved USDC for Permit2 (unlimited)', render(decodedApprove));
+  const row112 = { id: H.approve, uid: `${H.approve}:external`, direction: 'out', amount: 0n, timestamp: null, confirmed: true };
+  const noTokens = hist.transactionsWithTokenAmounts([row112]);
+  check('LIVE SENTENCE row 112 — "Approved USDC for Permit2 (unlimited)": no amount once decoded (was "−0 test ETH")',
+    hist.hidesZeroNativeAmount(row112, noTokens, decodedApprove.description) === true);
+  check('…before the decode arrives it keeps the indexer\'s amount (unchanged rule)', hist.hidesZeroNativeAmount(row112, noTokens) === false && hist.hidesZeroNativeAmount(row112, noTokens, null) === false);
+  const facts = (over) => ({ hash: H.approve, value: 0n, call: { kind: 'approve' }, ...over });
+  check('…any decoded contract call with no value counts (generic call, Permit2, a bundle)',
+    ['contract-call', 'permit2-approve', 'handle-ops', 'universal-router'].every((kind) => hist.hidesZeroNativeAmount(row112, noTokens, facts({ call: { kind } }))));
+  check('…but not a plain zero-value transfer (a cancellation did send 0)', hist.hidesZeroNativeAmount(row112, noTokens, facts({ call: { kind: 'native-transfer' } })) === false);
+  check('…nor a call that carried value, nor another transaction\'s decode, nor a non-zero or token row',
+    hist.hidesZeroNativeAmount(row112, noTokens, facts({ value: 1n })) === false &&
+      hist.hidesZeroNativeAmount(row112, noTokens, facts({ hash: WRAP })) === false &&
+      hist.hidesZeroNativeAmount({ ...row112, amount: 5n }, noTokens, facts({})) === false &&
+      hist.hidesZeroNativeAmount(tokenOut, noTokens, facts({ hash: WRAP })) === false);
+  check('…the hash is compared case-insensitively', hist.hidesZeroNativeAmount(row112, noTokens, facts({ hash: H.approve.toUpperCase().replace('0X', '0x') })) === true);
+  // No row ever reads "−0": the sign is dropped for an amount of exactly zero.
+  check('amountSign: "+" in, "−" out, none for self and none for exactly zero (never "−0")',
+    hist.amountSign({ direction: 'in', amount: 1n }) === '+' && hist.amountSign({ direction: 'out', amount: 1n }) === '−' &&
+      hist.amountSign({ direction: 'self', amount: 1n }) === '' && hist.amountSign({ direction: 'out', amount: 0n }) === '' &&
+      hist.amountSign({ direction: 'in', amount: 0n }) === '' &&
+      hist.amountSign({ direction: 'out', amount: 0n, assetAmount: 5n, assetDecimals: 6 }) === '−' &&
+      hist.amountSign({ direction: 'out', amount: 7n, assetAmount: 0n, assetDecimals: 6 }) === '');
   const screen = readFileSync(join(here, '..', 'src', 'screens', 'ActivityScreen.tsx'), 'utf8');
   const wired = (src) =>
     src.includes('const tokenTxIds = transactionsWithTokenAmounts(loadedEntries);') &&
-    src.includes('noAmount={hidesZeroNativeAmount(item, tokenTxIds)}') &&
+    src.includes('noAmount={hidesZeroNativeAmount(item, tokenTxIds, sentences.lookup(item.id)?.description)}') &&
+    src.includes('const sign = amountSign(entry);') && !src.includes("const sign = entry.direction === 'in' ? '+'") &&
     // Since 2026-10-11 (finding 2) a failed incoming row hides its amount
     // the same way: showAmount = !noAmount && !failedIncoming.
     src.includes('const showAmount = !noAmount && !failedIncoming;') &&
@@ -1335,6 +1422,10 @@ console.log('Zero-value native rows next to token rows (2026-10-11 re-check, fin
     /\{!showAmount \? null : \(\s*<>\s*<Text style=\{\[styles\.amount/.test(src);
   check('the Activity row renders no amount line for such an entry, and says "no amount" to a screen reader (source)', wired(screen));
   check('…a row that always renders the amount fails the check', !wired(screen.replace('{!showAmount ? null : (', '{false ? null : (')));
+  check('…the screen before phase 19 item 4 (no decoded call passed) fails the check',
+    !wired(screen.replace('noAmount={hidesZeroNativeAmount(item, tokenTxIds, sentences.lookup(item.id)?.description)}', 'noAmount={hidesZeroNativeAmount(item, tokenTxIds)}')));
+  check('…a row signing zero amounts ("−0") fails the check',
+    !wired(screen.replace('const sign = amountSign(entry);', "const sign = entry.direction === 'in' ? '+' : entry.direction === 'out' ? '−' : '';")));
   check('…a failed incoming row that keeps its amount fails the check', !wired(screen.replace('const showAmount = !noAmount && !failedIncoming;', 'const showAmount = !noAmount;')));
 }
 
@@ -1423,10 +1514,12 @@ console.log('A null answer for a listed transaction: one retry on another endpoi
   // Two fake endpoints: A (the active one) and B (another default).
   const A = URL;
   const B = 'https://fake-sepolia-2.invalid/rpc';
-  const nodes = {
-    [A]: { receiptNull: new Set(), txNull: new Set(), garbled: new Set(), pending: new Set(), dead: false },
-    [B]: { receiptNull: new Set(), txNull: new Set(), garbled: new Set(), pending: new Set(), dead: false },
-  };
+  const C = 'https://fake-sepolia-3.invalid/rpc';
+  const blankNode = () => ({ receiptNull: new Set(), txNull: new Set(), garbled: new Set(), pending: new Set(), dead: false, flaky: new Set(), reads: new Map() });
+  const nodes = { [A]: blankNode(), [B]: blankNode(), [C]: blankNode() };
+  // Synthetic mined transactions for the long-history cases (phase 19 item 4).
+  const synth = new Map();
+  const lookup = (hash) => fixtures.get(hash) ?? synth.get(hash);
   const seen = [];
   const savedFetch = globalThis.fetch;
   globalThis.fetch = async (target, init = {}) => {
@@ -1441,14 +1534,20 @@ console.log('A null answer for a listed transaction: one retry on another endpoi
     const hash = String(body.params?.[0] ?? '').toLowerCase();
     if (body.method === 'eth_getTransactionByHash') {
       if (node.txNull.has(hash)) return reply(null);
-      const f = fixtures.get(hash);
+      const f = lookup(hash);
       if (f && node.garbled.has(hash)) return reply({ ...f.transaction, hash: '0x' + '00'.repeat(32) });
       if (f && node.pending.has(hash)) return reply({ ...f.transaction, blockNumber: null, blockHash: null });
       return reply(f?.transaction ?? null);
     }
     if (body.method === 'eth_getTransactionReceipt') {
       if (node.receiptNull.has(hash)) return reply(null);
-      return reply(fixtures.get(hash)?.receipt ?? null);
+      // `flaky`: a load-balanced pool (Pocket's Sepolia endpoint, read-only
+      // probe of 2026-10-11): the first read of a receipt reaches a backend
+      // without it (null), the next one a backend that has it.
+      const reads = (node.reads.get(hash) ?? 0) + 1;
+      node.reads.set(hash, reads);
+      if (node.flaky.has(hash) && reads === 1) return reply(null);
+      return reply(lookup(hash)?.receipt ?? null);
     }
     if (body.method === 'eth_call') return reply('0x');
     throw new Error(`fake node: unexpected ${body.method}`);
@@ -1472,6 +1571,8 @@ console.log('A null answer for a listed transaction: one retry on another endpoi
       n.txNull.clear();
       n.garbled.clear();
       n.pending.clear();
+      n.flaky.clear();
+      n.reads.clear();
       n.dead = false;
     }
   };
@@ -1500,7 +1601,14 @@ console.log('A null answer for a listed transaction: one retry on another endpoi
   decoder = make(finder(B));
   out = await decoder.decodeEntries([H.approve], listedAll);
   check('null on both: no sentence, remembered as unavailable (not failed)', out.size === 0 && decoder.unavailableIds().includes(H.approve) && !decoder.failedIds().includes(H.approve));
-  check('…exactly one alternate: B asked once (2 reads), no other endpoint', onB(H.approve).length === 2 && seen.every((r) => r.url === A || r.url === B), onB(H.approve).length);
+  // Phase 19 item 4: with only one other endpoint (this finder always names
+  // B) it is asked again, up to MAX_ALTERNATE_ASKS times in all — a
+  // load-balanced endpoint can serve on its next read — and nothing else.
+  check('…only the one alternate: B asked MAX_ALTERNATE_ASKS (3) times (2 reads each), no other endpoint',
+    MAX_ALTERNATE_ASKS === 3 && onB(H.approve).length === 2 * MAX_ALTERNATE_ASKS && seen.every((r) => r.url === A || r.url === B), onB(H.approve).length);
+  check('…the reason is recorded: the other endpoint answered without it',
+    JSON.stringify(decoder.diagnostics?.()) === JSON.stringify({ unavailable: 1, noAlternate: 0, alternateMissing: 1, alternateFailed: 0, failed: 0 }) && decoder.isUnavailable?.(H.approve),
+    decoder.diagnostics?.());
   check('…the row stops saying its details are loading', decoder.mayDecode(H.approve) === false);
   const before = seen.length;
   await decoder.decodeEntries([H.approve], listedAll);
@@ -1509,7 +1617,9 @@ console.log('A null answer for a listed transaction: one retry on another endpoi
   decoder.reset();
   check('…a pull-to-refresh makes it decodable again', decoder.mayDecode(H.approve) === true && decoder.unavailableIds().length === 0);
   out = await decoder.decodeEntries([H.approve], listedAll);
-  check('…and the retry after the refresh is served (A null again, B now answers)', out.size === 1 && finderCalls.length === 2, [out.size, finderCalls.length]);
+  // Finder calls: (A, []) and (A, [B]) before the refresh, (A, []) again after it.
+  check('…and the retry after the refresh is served (A null again, B now answers)', out.size === 1 && finderCalls.length === 3, [out.size, finderCalls.length]);
+  check('…and the diagnostics are cleared by the refresh', decoder.diagnostics?.().unavailable === 0 && !decoder.isUnavailable?.(H.approve));
 
   // 4. The finder is asked once per decoder for the same failing endpoint.
   fresh();
@@ -1566,6 +1676,8 @@ console.log('A null answer for a listed transaction: one retry on another endpoi
     threw = true;
   }
   check('a dead alternate: unavailable (not failed), never throws', !threw && out.size === 0 && decoder.unavailableIds().includes(H.approve) && !decoder.failedIds().includes(H.approve));
+  check('…reason: the other endpoint did not answer (a dead endpoint is not asked again)',
+    decoder.diagnostics?.().alternateFailed === 1 && decoder.diagnostics?.().alternateMissing === 0 && seen.filter((r) => r.url === B).length === 1, decoder.diagnostics?.());
 
   // 9. A finder that throws counts as no alternate.
   fresh();
@@ -1575,6 +1687,7 @@ console.log('A null answer for a listed transaction: one retry on another endpoi
   });
   out = await decoder.decodeEntries([H.approve], listedAll);
   check('a failing finder: unavailable, never throws', out.size === 0 && decoder.unavailableIds().includes(H.approve));
+  check('…reason: no other endpoint to ask', decoder.diagnostics?.().noAlternate === 1 && decoder.diagnostics?.().unavailable === 1, decoder.diagnostics?.());
 
   // 10. With an injected runner and no finder there is never an alternate.
   fresh();
@@ -1582,6 +1695,124 @@ console.log('A null answer for a listed transaction: one retry on another endpoi
   decoder = createActivityDecoder({ chainCaip2: SEPOLIA, evmChainId: SEPOLIA_ID, wallet: [ACCOUNT_1], trackedTokens: [], run: runOn(A) });
   out = await decoder.decodeEntries([H.approve], listedAll);
   check('injected runner without a finder: no alternate, unavailable', out.size === 0 && decoder.unavailableIds().includes(H.approve) && seen.every((r) => r.url === A));
+
+  // ---------------------------------------------------------------------
+  // Phase 19 item 4: why the first-load retry did not recover the five
+  // oldest rows of the 2026-10-11 pass (they sat about 115 rows down, the
+  // 15th page of 8 decodes). The screen decodes one visible batch at a time
+  // through one decoder, so a row "20 pages old" is decoded after 20
+  // earlier decodeEntries calls of the same decoder.
+  const mined = (k) => {
+    const hash = '0x' + (0xf000 + k).toString(16).padStart(64, '0');
+    if (!synth.has(hash)) {
+      synth.set(hash, {
+        transaction: { hash, from: ACCOUNT_2.toLowerCase(), to: ACCOUNT_1.toLowerCase(), input: '0x', value: '0x38d7ea4c68000', nonce: '0x' + k.toString(16), type: '0x2', chainId: '0xaa36a7', blockNumber: '0x10', blockHash: '0x' + 'cd'.repeat(32) },
+        receipt: { transactionHash: hash, blockNumber: '0x10', blockHash: '0x' + 'cd'.repeat(32), status: '0x1', logs: [] },
+      });
+    }
+    return hash;
+  };
+  const PAGES = 21; // pages 0..20: the last one is 20 pages after the first
+  const pages = Array.from({ length: PAGES }, (_, p) => Array.from({ length: 8 }, (_, i) => mined(p * 8 + i)));
+  const oldRow = pages[PAGES - 1][7];
+  const RECEIVED = 'Received 0.001 test ETH from 0xb699…81fE';
+  /** A finder that honours `exclude`, like the real one: the first of `list` not yet asked. */
+  const finderOver = (list) => async (current, exclude = []) => {
+    finderCalls.push(current);
+    return list.find((u) => u !== current && !exclude.includes(u)) ?? null;
+  };
+  const decodePages = async (decoder, between) => {
+    for (let p = 0; p < PAGES; p += 1) {
+      for (const h of pages[p]) nodes[A].receiptNull.add(h);
+      await decoder.decodeEntries(pages[p], listedAll);
+      if (between) between(p);
+    }
+  };
+
+  // R1. The pass as first described: A (publicnode's reth) null, the
+  // alternate B serves every read. Decodes on every page, 20 pages later too.
+  fresh();
+  decoder = make(finderOver([B]));
+  await decodePages(decoder);
+  out = decoder.cachedFor([oldRow]);
+  check('R1 (two steady fakes): a row 20 pages old whose receipt A answers null is decoded on B',
+    out.size === 1 && render(out.get(oldRow)) === RECEIVED, out.size === 1 ? render(out.get(oldRow)) : decoder.diagnostics?.());
+  check('…every one of the 168 rows decoded, the alternate found once, nothing unavailable — NOT reproduced: no per-page limit and no retry budget',
+    decoder.cachedFor(pages.flat()).size === PAGES * 8 && finderCalls.length === 1 && decoder.unavailableIds().length === 0,
+    [decoder.cachedFor(pages.flat()).size, finderCalls.length]);
+
+  // R2. What a read-only probe of 2026-10-11 found instead: the alternate
+  // (Pocket) is itself a load-balanced pool whose reth / erigon backends
+  // answered null for the 27 September receipts in 5 of 8 reads. One ask
+  // there left the row unavailable until a pull-to-refresh (the old code);
+  // a second ask reaches a backend that has it.
+  fresh();
+  for (const h of pages.flat()) nodes[B].flaky.add(h);
+  decoder = make(finderOver([B]));
+  await decodePages(decoder);
+  out = decoder.cachedFor([oldRow]);
+  check('R2 (REPRODUCED, the alternate load-balanced: null on its first read): the row 20 pages old is decoded by a second ask on B',
+    out.size === 1 && render(out.get(oldRow)) === RECEIVED, decoder.diagnostics?.());
+  check('…all 168 rows decoded, each with exactly two asks on B (4 reads), the finder asked twice in all ((A) and (A, [B]))',
+    decoder.cachedFor(pages.flat()).size === PAGES * 8 && onB(oldRow).length === 4 && finderCalls.length === 2, [onB(oldRow).length, finderCalls.length]);
+
+  // R2b. The alternate keeps answering null (a pruned pool) but the
+  // network's third default serves (0xrpc.io / public.1rpc.io served both
+  // receipts in the same probe): the next default is asked.
+  fresh();
+  for (const h of pages.flat()) nodes[B].receiptNull.add(h);
+  decoder = make(finderOver([B, C]));
+  await decodePages(decoder);
+  out = decoder.cachedFor([oldRow]);
+  check('R2b (the alternate null on every read, a third default serves): the row 20 pages old is decoded on C',
+    out.size === 1 && render(out.get(oldRow)) === RECEIVED && seen.some((r) => r.url === C && r.hash === oldRow), decoder.diagnostics?.());
+  check('…B asked once per row (2 reads), then C (no repeat ask on B while a new endpoint exists)', onB(oldRow).length === 2, onB(oldRow).length);
+
+  // R3. A probe that failed once (every candidate timed out within its 4 s
+  // deadline) was remembered as "no other endpoint" for the decoder's whole
+  // life (the old code), so every later null row went unavailable until a
+  // pull-to-refresh. Now a "none" answer is probed again after
+  // ALTERNATE_REFIND_AFTER_MS; a found endpoint is kept.
+  fresh();
+  let clock = 1_000_000;
+  let probes = 0;
+  const flakyFinder = async (current) => {
+    finderCalls.push(current);
+    probes += 1;
+    return probes === 1 ? null : B;
+  };
+  decoder = createActivityDecoder({ chainCaip2: SEPOLIA, evmChainId: SEPOLIA_ID, wallet: [ACCOUNT_1, KERNEL_OF_ACCOUNT_1], trackedTokens: [], run: runOn(A), alternate: flakyFinder, now: () => clock });
+  await decodePages(decoder, (p) => {
+    if (p === 0) clock += ALTERNATE_REFIND_AFTER_MS; // the next pages come a minute later
+  });
+  out = decoder.cachedFor([oldRow]);
+  check('R3 (REPRODUCED, the first probe failed): the first page is unavailable ("no other endpoint"), the row 20 pages old a minute later is decoded on B',
+    out.size === 1 && pages[0].every((h) => decoder.isUnavailable?.(h)) && decoder.diagnostics?.().noAlternate === 8 && decoder.cachedFor(pages.slice(1).flat()).size === (PAGES - 1) * 8,
+    decoder.diagnostics?.());
+  check('…the probe ran twice in all (once failed, once found; the found endpoint kept)', probes === 2, probes);
+  check('…ALTERNATE_REFIND_AFTER_MS is one minute', ALTERNATE_REFIND_AFTER_MS === 60_000);
+  // Within the minute the "none" answer is reused (no probe per row).
+  fresh();
+  clock = 5_000_000;
+  probes = 0;
+  decoder = createActivityDecoder({ chainCaip2: SEPOLIA, evmChainId: SEPOLIA_ID, wallet: [ACCOUNT_1], trackedTokens: [], run: runOn(A), alternate: async () => { probes += 1; return null; }, now: () => clock });
+  await decodePages(decoder);
+  check('…while every probe finds nothing, at most one probe a minute (21 pages within the minute: one probe)', probes === 1 && decoder.diagnostics?.().noAlternate === PAGES * 8, [probes, decoder.diagnostics?.()]);
+  clock += ALTERNATE_REFIND_AFTER_MS;
+  nodes[A].receiptNull.add(mined(999));
+  await decoder.decodeEntries([mined(999)], listedAll);
+  check('…and one more after the minute', probes === 2, probes);
+
+  // The revision a screen re-renders on: it moves when a row goes unavailable
+  // with nothing new cached (the row then says why).
+  fresh();
+  nodes[A].receiptNull.add(H.approve);
+  decoder = make(finder(null));
+  const r0 = decoder.revision?.();
+  out = await decoder.decodeEntries([H.approve], listedAll);
+  const r1 = decoder.revision?.();
+  decoder.reset();
+  check('revision(): moves when a row goes unavailable (nothing cached) and on reset()', out.size === 0 && r1 > r0 && decoder.revision?.() > r1, [r0, r1, decoder.revision?.()]);
 
   globalThis.fetch = savedFetch;
   const screen = readFileSync(join(here, '..', 'src', 'screens', 'ActivityScreen.tsx'), 'utf8');
@@ -1591,7 +1822,8 @@ console.log('A null answer for a listed transaction: one retry on another endpoi
       screen.includes('if (refreshing) decoder?.reset();'));
   const sentencesSrc = readFileSync(join(here, '..', 'src', 'wallet', 'activity-sentences.ts'), 'utf8');
   check('the default finder is the read-only alternate-default probe (source)',
-    sentencesSrc.includes('return findAlternateDefaultUrl(endpoint.network, currentUrl, endpoint.isOverride);') &&
+    sentencesSrc.includes('defaultUrls: endpoint.network.defaultUrls.filter((u) => u === currentUrl || !exclude.includes(u)),') &&
+      sentencesSrc.includes('return findAlternateDefaultUrl(network, currentUrl, endpoint.isOverride);') &&
       sentencesSrc.includes('const alternate = options.alternate ?? (options.run ? null : activeAlternateEndpoint(options.chainCaip2));'));
 }
 

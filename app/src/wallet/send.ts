@@ -1604,10 +1604,16 @@ export function estimateRevertSentence(error: GasEstimateRevertError): string {
  * Turns engine/RPC errors into plain language for the send screen, keeping
  * the original message as detail because it names the exact protocol-level
  * failure (dust threshold, insufficient funds arithmetic, node rejection).
+ *
+ * `symbol` names what is being sent (the token for a token send).
+ * `feeSymbol` names the coin the network fee is paid in — the profile's
+ * display symbol (evmChain.displaySymbol, "test ETH" on a test network);
+ * it defaults to 'ETH' so callers that do not pass it read as before.
  */
 export function describeSendError(
   error: unknown,
   symbol: string,
+  feeSymbol: string = 'ETH',
 ): { title: string; detail: string; technical?: string } {
   // A reverted gas estimate is a quote-step failure (nothing was attempted),
   // explained in one plain sentence rather than the node's "RPC error 3".
@@ -1620,7 +1626,7 @@ export function describeSendError(
   // covers nodes rejecting a broadcast with "insufficient funds for
   // gas * price + value" on a value-0 token transaction.
   if (/not enough eth to pay the network fee/i.test(detail) || /insufficient funds for gas/i.test(detail)) {
-    return { title: 'Not enough ETH to pay the network fee.', detail };
+    return { title: `Not enough ${feeSymbol} to pay the network fee.`, detail };
   }
   if (/exceeds the token balance/i.test(detail)) {
     return { title: `Not enough ${symbol}: the amount exceeds your token balance.`, detail };
