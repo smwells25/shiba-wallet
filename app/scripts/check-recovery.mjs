@@ -1158,6 +1158,25 @@ console.log('check-recovery: record files (.json export / import)');
   check('two records in one file are refused', two && /exactly one JSON record/.test(two.message));
   const garbage = await caught(() => parseRecordFile('{"version":1', { name }));
   check('truncated JSON is refused', garbage && /exactly one JSON record/.test(garbage.message));
+  // Finding 1 (shared file helper): a truncated or wrong-kind file is refused
+  // with a PLAIN sentence — never a raw native rejection.
+  const raw = /(rejected|Missing 'READ'|Call to function|FileSystemFile|permission for accessing)/;
+  check('the truncated and wrong-kind refusals are plain (no raw native rejection text)',
+    !raw.test(garbage?.message ?? '') && !raw.test(wrongType?.message ?? ''), [garbage?.message, wrongType?.message].join(' | '));
+  // The recovery "Import from file" uses the SAME shared pickRecordFile that
+  // the multisig pass found broken in Expo Go ("Missing 'READ' permission"),
+  // so the shared fix (read the content uri; wrap any read failure in a plain
+  // RecordFileReadError) is what makes the recovery import safe too. Pinned by
+  // source (the helper is a .tsx with native imports).
+  const helper = readFileSync(new URL('../src/components/RecordFileActions.tsx', import.meta.url), 'utf8');
+  check('shared helper: pickRecordFile reads the content uri on Android and wraps any read failure in a plain RecordFileReadError (finding 1)',
+    /const copyToCacheDirectory = Platform\.OS !== 'android';/.test(helper) &&
+      /catch \(e\) \{\s*throw new RecordFileReadError\(e\);\s*\}/.test(helper) &&
+      /RECORD_FILE_READ_FAILED_MESSAGE =\s*\n?\s*'[^']*Share, Copy or the QR scan[^']*';/.test(helper));
+  const recScreen = readFileSync(new URL('../src/screens/RecoverAccountScreen.tsx', import.meta.url), 'utf8');
+  check('recovery "Import from file" wraps a read/parse failure in a plain sentence prefix, never shown raw (finding 1)',
+    /const picked = await pickRecordFile\(\);/.test(recScreen) &&
+      /catch \(e\) \{\s*setError\(`The file was not imported: \$\{e instanceof Error \? e\.message : String\(e\)\}`\);/.test(recScreen));
 }
 
 // ---------------------------------------------------------------------------

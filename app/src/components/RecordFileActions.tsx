@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Alert, Text } from 'react-native';
+import { Alert, Platform, Text } from 'react-native';
 // expo-file-system 57.0.7 (the object API: File, Directory, Paths). Verified
 // against https://docs.expo.dev/versions/v57.0.0/sdk/filesystem/ ("Included
 // in Expo Go") and the installed typings (build/File.d.ts,
@@ -119,10 +119,47 @@ export async function shareRecordFile(meta: KernelRecoveryMetadata): Promise<voi
 }
 
 /**
+ * A picked file could not be READ (as opposed to being the wrong contents).
+ * Its message is a complete, plain sentence that the callers wrap in their
+ * own refusal prefix ("This file was not accepted. …" / "The file was not
+ * imported: …"), so the raw native rejection never reaches the screen. The
+ * sentence points to Share / Copy / scan, which do not depend on a file
+ * picker's read grant.
+ */
+export const RECORD_FILE_READ_FAILED_MESSAGE =
+  'It could not be read on this device. Some file pickers do not give the app permission to read the chosen file; use Share, Copy or the QR scan instead.';
+
+export class RecordFileReadError extends Error {
+  constructor(cause?: unknown) {
+    super(RECORD_FILE_READ_FAILED_MESSAGE);
+    this.name = 'RecordFileReadError';
+    if (cause !== undefined) (this as { cause?: unknown }).cause = cause;
+  }
+}
+
+/**
  * Opens the system document picker for one JSON file and returns its text
  * and what the picker reported about it, or null when the user cancelled.
- * The picker's cache copy is deleted after reading. The caller passes the
- * result to recovery.ts parseRecordFile, then into the existing import path.
+ * The caller passes the result to recovery.ts parseRecordFile (or the
+ * multisig equivalent), then into the existing import path.
+ *
+ * Reading the picked file is the subtle part. On Android we ask the picker
+ * NOT to copy to the cache (`copyToCacheDirectory: false`) and read the
+ * original `content://` SAF uri directly: expo-file-system reads a content
+ * uri through the content resolver, which holds the ACTION_OPEN_DOCUMENT
+ * read grant, and its permission check returns true for content uris
+ * (FileSystemPath.checkPermission in expo-file-system 57.0.7). A cache COPY,
+ * by contrast, lands in Expo Go's host cache directory, OUTSIDE the scoped
+ * paths Expo Go's file-permission service grants, so `new File(copy).text()`
+ * throws "Missing 'READ' permission for accessing the file." (the 2026-10-11
+ * multisig pass). On iOS the picker returns a security-scoped original that
+ * is not reliably readable, so there we keep the cache copy (the scoped
+ * permission service does not block the app's own cache on iOS) and delete it
+ * after reading. A content uri is the user's own file and is never deleted.
+ *
+ * Any read failure is re-thrown as a RecordFileReadError with a plain
+ * sentence; callers must route it through their refusal path, never show it
+ * raw.
  */
 export async function pickRecordFile(): Promise<{
   text: string;
@@ -130,22 +167,27 @@ export async function pickRecordFile(): Promise<{
   size: number | null;
   mimeType: string | null;
 } | null> {
+  const copyToCacheDirectory = Platform.OS !== 'android';
   const result = await DocumentPicker.getDocumentAsync({
     type: RECORD_FILE_MIME_TYPE,
-    copyToCacheDirectory: true,
+    copyToCacheDirectory,
     multiple: false,
   });
   if (result.canceled) return null;
   const asset = result.assets[0];
   if (!asset) return null;
   const file = new File(asset.uri);
+  let text: string;
   try {
-    const text = await file.text();
-    return { text, name: asset.name, size: asset.size ?? null, mimeType: asset.mimeType ?? null };
+    text = await file.text();
+  } catch (e) {
+    throw new RecordFileReadError(e);
   } finally {
-    // The picker's private copy in the cache directory is no longer needed.
-    deleteQuietly(file);
+    // Only a cache COPY is ours to delete; a content:// uri is the user's own
+    // document and must never be removed.
+    if (copyToCacheDirectory) deleteQuietly(file);
   }
+  return { text, name: asset.name, size: asset.size ?? null, mimeType: asset.mimeType ?? null };
 }
 
 /** "Export as file" button with a one-line note; errors are shown plainly. */

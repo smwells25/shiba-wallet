@@ -882,7 +882,10 @@ export async function checkMultisigNetwork(node: JsonRpcTransport, chain: string
       metaFactory: MULTISIG_DEPLOYMENT.metaFactory,
     });
   } catch (e) {
-    problems.push(`The Kernel v3.3 deployment did not verify on this network: ${e instanceof Error ? e.message : String(e)}`);
+    // asSentence adds the full stop the engine's verifyKernelDeployment
+    // message does not carry (e.g. "… has no code on this chain"), so the
+    // "Check this network" sentence ends properly (finding 5).
+    problems.push(asSentence(`The Kernel v3.3 deployment did not verify on this network: ${e instanceof Error ? e.message : String(e)}`));
   }
   return problems;
 }
@@ -1623,6 +1626,15 @@ export async function prepareMultisigRequest(
     const r = state.records.find((x) => x.id === record.id);
     if (!r) throw new Error('This multisig is not in this wallet any more.');
     for (const o of r.operations) if (o.status === 'collecting') o.status = 'abandoned';
+    // Finding 2: never keep a second record for the same request id (same
+    // call data and nonce). Rebuilding an identical request — after
+    // abandoning one, or after a pre-submission failure — would otherwise
+    // leave two operations sharing one id in History, shown as e.g. both
+    // "succeeded" and "abandoned". The new operation is the live one, so any
+    // earlier record of the same id is replaced. A request id whose nonce was
+    // actually consumed on-chain can never recur, so no distinct completed
+    // operation is lost.
+    r.operations = r.operations.filter((o) => o.requestId.toLowerCase() !== op.requestId.toLowerCase());
     r.operations.unshift(op);
     trimHistory(r);
     if (chainState.deployed) r.deployed = { ...r.deployed, deployed: true };
@@ -1866,6 +1878,8 @@ export interface MultisigWeightProgress {
   cosignerWeight: number;
   /** The co-signer weight the operation needs: the threshold minus this wallet's weight (at least 0). */
   cosignerNeeded: number;
+  /** True when the co-signer approvals alone already meet the threshold (this wallet's signature is not needed to reach it). */
+  cosignersAlone: boolean;
   ready: boolean;
 }
 
@@ -1895,12 +1909,21 @@ export function multisigWeightProgress(record: MultisigRecord, op: Pick<Multisig
     approvers,
     cosignerWeight,
     cosignerNeeded,
+    cosignersAlone: cosignerWeight >= record.threshold,
     ready: weight >= record.threshold,
   };
 }
 
-/** The weight bar's label: co-signer weight collected versus needed, "ready" once enough. */
+/**
+ * The weight bar's label: co-signer weight collected versus needed, "ready"
+ * once enough. When the co-signers alone already meet the threshold (so this
+ * wallet's own weight is not needed to reach it) the label says so instead of
+ * the misleading "weight 2 of 1 needed" (finding 4).
+ */
 export function multisigCosignerBarLabel(p: MultisigWeightProgress): string {
+  if (p.cosignersAlone) {
+    return `Co-signer approvals: weight ${p.cosignerWeight} (threshold ${p.threshold} met by co-signers alone) — ready`;
+  }
   if (p.ready) return `Co-signer approvals: weight ${p.cosignerWeight} of ${p.cosignerNeeded} needed — ready`;
   return (
     `Co-signer approvals: weight ${p.cosignerWeight} of ${p.cosignerNeeded} needed ` +
@@ -1908,7 +1931,12 @@ export function multisigCosignerBarLabel(p: MultisigWeightProgress): string {
   );
 }
 
-/** The separate line for this wallet's own signer, which signs only at submission. */
+/**
+ * The separate line for this wallet's own signer, which signs only at
+ * submission. The view omits it when the co-signers alone meet the threshold
+ * (finding 4): in that case this wallet still signs as the submitter, but it
+ * is not "the remaining weight" the threshold needs.
+ */
 export function multisigLocalSignsLine(p: MultisigWeightProgress): string {
   return `This wallet signs the remaining weight ${p.localWeight} when you submit.`;
 }

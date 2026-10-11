@@ -596,7 +596,9 @@ export function MultisigScreen() {
     try {
       picked = await pickRecordFile();
     } catch (e) {
-      fail(e);
+      // A read failure (e.g. Expo Go denying a cache copy) must show the plain
+      // refusal sentence, never the raw native rejection (finding 1).
+      setError(multisigFileRefusal(e));
       return;
     }
     if (!picked) return;
@@ -796,11 +798,28 @@ export function MultisigScreen() {
           <Button
             title="New operation (send)"
             onPress={() => {
-              setRecipient('');
-              setAmount('');
-              setAsset(NATIVE);
-              setError(null);
-              setPhase('send-form');
+              const start = () => {
+                setRecipient('');
+                setAmount('');
+                setAsset(NATIVE);
+                setError(null);
+                setPhase('send-form');
+              };
+              // Building a new request abandons any operation still collecting
+              // approvals (and its approvals). Confirm first so it is never
+              // discarded silently (finding 3).
+              if (selected.operations.some((o) => o.status === 'collecting')) {
+                Alert.alert(
+                  'Start a new operation?',
+                  'The one you are collecting approvals for will be discarded.',
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Discard and start', style: 'destructive', onPress: start },
+                  ],
+                );
+              } else {
+                start();
+              }
             }}
             disabled={readiness !== null}
           />
@@ -815,8 +834,13 @@ export function MultisigScreen() {
         {finished.length > 0 ? (
           <View style={[styles.card, { borderColor: theme.border }]}>
             <Text style={[styles.cardTitle, { color: theme.text }]}>History</Text>
-            {finished.map((o) => (
-              <Text key={o.requestId} selectable style={[styles.hint, { color: theme.textMuted }]}>
+            {finished.map((o, i) => (
+              // Keyed by (index, request id, status): request ids are now
+              // deduped at storage, but an operation can still change status
+              // in place, and a record stored by an older build may hold two
+              // entries for one id — so the key must not be the request id
+              // alone (finding 2).
+              <Text key={`${i}:${o.requestId}:${o.status}`} selectable style={[styles.hint, { color: theme.textMuted }]}>
                 {o.status} · nonce {o.nonce} · request {o.requestId.slice(0, 10)}… · approvals{' '}
                 {o.approvalIds.map((a) => `${a.signer.slice(0, 6)}… (${a.approvalId.slice(0, 10)}…)`).join(', ') || 'none'}
                 {o.userOpHash ? ` · userOp ${o.userOpHash}` : ''}
@@ -923,6 +947,9 @@ export function MultisigScreen() {
         <ShareActions text={multisigRequestShareText(selected, op)} shareTitle="Multisig signing request" />
         <MultisigFileExportButton text={payload} fileName={multisigExportFileName('request', selected.chain, selected.address)} dialogTitle="Save the signing request" />
         <Text style={[styles.sectionTitle, { color: theme.text }]}>2. Add each approval you receive</Text>
+        {/* Finding 6: the error sits ABOVE the scan / paste / file inputs, so
+            it is not pushed off-screen below them when the keyboard is open. */}
+        {errorBox}
         <MultisigScanButton
           title={MULTISIG_SCAN_APPROVAL_TITLE}
           rationale={MULTISIG_SCAN_APPROVAL_RATIONALE}
@@ -943,7 +970,6 @@ export function MultisigScreen() {
         />
         <Button title="Add approval" variant="secondary" disabled={!approvalInput.trim()} onPress={() => void onAddApproval(approvalInput)} />
         <Button title="Add an approval from a file" variant="secondary" onPress={() => void onPickApprovalFile()} />
-        {errorBox}
         <Text style={[styles.sectionTitle, { color: theme.text }]}>3. Submit</Text>
         {busy ? (
           <ActivityIndicator color={theme.accent} />
