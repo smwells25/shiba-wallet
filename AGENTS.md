@@ -124,10 +124,13 @@ examples/demo.mjs          Offline end-to-end engine demo
   secrets only through the ADBKeyboard IME and redact every UI dump;
   never run a Gradle build while driving the AVD (2026-10-10: the
   watchdog killed system_server) — build first, close Gradle, then drive.
-  Since phase 17 item 0 the app blocks screenshots everywhere by default:
-  turn Settings → Privacy → "Hide in the app switcher and block
-  screenshots" OFF at the start of a pass that needs screencap, and ON
-  again at the end.
+  Since phase 17 item 0 the app blocks screenshots everywhere by default.
+  ON THE EMULATOR IT STAYS OFF (the Chairperson's request, 2026-10-11:
+  the secure flag blanks the emulator window for a human watching it
+  live): turn Settings → Privacy → "Hide in the app switcher and block
+  screenshots" OFF if a pass finds it on, and leave it OFF at the end;
+  a pass that needs to prove the protection itself turns it on for that
+  step only and off again afterwards.
 - Every slice is verified by the CTO in an isolated worktree with the
   offline runner before it is pushed, then recorded here, then CI is
   checked. When several agents work in the main checkout at once, a
@@ -5322,6 +5325,19 @@ scripts/testnet), (D) item 3 (send / activity files) in parallel on
 disjoint files; the Hoodi watcher starts item 0b when the balance is
 non-zero; then the emulator passes one at a time (0a, 1, 2's app half,
 3); 4 alongside; 5 last. Subagents on Opus.
+
+INPUTS RECEIVED (2026-10-11, later): 33.0 Hoodi test ETH at the dev EOA
+(read live on ethereum-hoodi-rpc.publicnode.com; item 0b dispatched).
+The Chairperson asked for (a) the emulator's screen protection to stay
+OFF so the emulator window can be watched live (standing rule above
+amended), and (b) an independent security-researcher review of every
+item in docs/DISCLOSURE_FINDINGS.md in a CVE-style (NIST NVD) format
+that weighs real-world assumptions before anything is reported — e.g.
+that a threshold's worth of multisig keys is not given to one entity
+without accepting that risk, and that nobody sets a guardian delay
+near 2^48 seconds and funds the account (item F); the review is in
+progress (docs/SECURITY_ADVISORIES.md). The disclosure findings review
+by the Chairperson is still pending ("a few appear safe to ignore").
 
 ## Phase 19 progress
 - [x] Item 0a — OP SEPOLIA PROVEN LIVE BY SCRIPT (commit 42099d5;
