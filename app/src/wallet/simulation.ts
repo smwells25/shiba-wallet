@@ -367,9 +367,17 @@ export function describeAssetChanges(
      * amount can differ from what arrives by a wei or two.
      */
     chainCaip2?: string;
+    /**
+     * False when the screen shows a fuller rebasing note of its own (the
+     * Staking confirm's STETH_REBASING_NOTE, phase 19 item 4): the rows
+     * then carry no REBASING_TOKEN_NOTE, so the caveat is not said twice.
+     * Default true.
+     */
+    rowNotes?: boolean;
   },
 ): PreviewLine[] {
   const { nativeSymbol, hidden, chainCaip2 } = options;
+  const rowNotes = options.rowNotes !== false;
   type Bucket = {
     direction: 'out' | 'in' | 'self';
     type: 'native' | 'erc20';
@@ -477,7 +485,7 @@ export function describeAssetChanges(
       b.type === 'native'
         ? `${maskAmount(exactAmount(b.amount, 18), hidden)} ${nativeSymbol}`
         : tokenAmountPhrase(b.amount, b.token!, meta[b.key!], hidden);
-    const note = b.type === 'erc20' && chainCaip2 ? rebasingTokenNote(chainCaip2, b.token!) : null;
+    const note = rowNotes && b.type === 'erc20' && chainCaip2 ? rebasingTokenNote(chainCaip2, b.token!) : null;
     const extra = note ? { note } : {};
     if (b.direction === 'out') return { text: `You send ${phrase}`, tone: 'out', ...extra };
     if (b.direction === 'in') return { text: `You receive ${phrase}`, tone: 'in', ...extra };

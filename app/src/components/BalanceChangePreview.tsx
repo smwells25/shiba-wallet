@@ -48,6 +48,7 @@ export function BalanceChangePreview({
   request,
   batch,
   note,
+  rowNotes = true,
 }: {
   url: string | null;
   request: PreviewRequest;
@@ -60,6 +61,12 @@ export function BalanceChangePreview({
   batch?: PreviewRequest[];
   /** Optional extra context line (e.g. the smart-account note). */
   note?: string;
+  /**
+   * False when the screen already shows a fuller rebasing note (the
+   * Staking confirm, phase 19 item 4): token rows then carry no
+   * REBASING_TOKEN_NOTE. Default true, so every other screen keeps it.
+   */
+  rowNotes?: boolean;
 }) {
   const theme = useTheme();
   const { hideAmounts, evmChain } = usePrefs();
@@ -123,9 +130,10 @@ export function BalanceChangePreview({
             // The chain the simulation ran on: a rebasing token's row (stETH)
             // carries its note.
             chainCaip2: evmChain.caip2,
+            rowNotes,
           })
         : [],
-    [state, evmChain.displaySymbol, evmChain.caip2, hideAmounts],
+    [state, evmChain.displaySymbol, evmChain.caip2, hideAmounts, rowNotes],
   );
 
   if (state?.status === 'unavailable') {

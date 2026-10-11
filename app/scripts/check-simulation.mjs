@@ -491,6 +491,36 @@ console.log('check-simulation: the rebasing note under a stETH row (phase 18)');
     src.includes("{line.note ? <Text style={[styles.muted, { color: theme.textMuted }]}>{line.note}</Text> : null}");
   check('BalanceChangePreview passes the active chain and renders the note under its row', cardOk(card));
   check('mutant caught: the card without the chain', !cardOk(card.replace('            chainCaip2: evmChain.caip2,\n', '')));
+
+  // Phase 19 item 4: the Staking confirm already shows the fuller stETH note
+  // (staking.ts STETH_REBASING_NOTE), so it asks the preview for rows
+  // without the short one; every other caller keeps it (the default).
+  const quiet = describeAssetChanges([native, minted], meta, { nativeSymbol: 'test ETH', hidden: false, chainCaip2: SEPOLIA, rowNotes: false });
+  check('rowNotes: false — the same rows, and no rebasing note on the stETH row',
+    JSON.stringify(texts(quiet)) === JSON.stringify(texts(lines)) && quiet.every((l) => !('note' in l)), quiet);
+  const explicitOn = describeAssetChanges([native, minted], meta, { nativeSymbol: 'test ETH', hidden: false, chainCaip2: SEPOLIA, rowNotes: true });
+  check('…rowNotes: true and an absent rowNotes both keep the note (the default for every other screen)',
+    explicitOn[1]?.note === REBASING_TOKEN_NOTE && lines[1]?.note === REBASING_TOKEN_NOTE);
+  const rowNotesOk = (src) =>
+    src.includes('  rowNotes = true,\n}: {') &&
+    /describeAssetChanges\(state\.changes, state\.meta, \{[\s\S]{0,300}chainCaip2: evmChain\.caip2,\s*rowNotes,\s*\}\)/.test(src) &&
+    src.includes('[state, evmChain.displaySymbol, evmChain.caip2, hideAmounts, rowNotes],');
+  check('BalanceChangePreview takes rowNotes (default true) and hands it to describeAssetChanges (source)', rowNotesOk(card));
+  check('…mutant caught: the card ignoring the prop', !rowNotesOk(card.replace('            rowNotes,\n', '')));
+  check('…mutant caught: the prop defaulting to false', !rowNotesOk(card.replace('  rowNotes = true,\n}: {', '  rowNotes = false,\n}: {')));
+  // Only the Staking screen turns it off.
+  const { readdirSync } = await import('node:fs');
+  const srcRoot = new globalThis.URL('../src/', import.meta.url);
+  const offenders = [];
+  const walk = (dir) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const u = new globalThis.URL(e.name + (e.isDirectory() ? '/' : ''), dir);
+      if (e.isDirectory()) walk(u);
+      else if (/\.tsx?$/.test(e.name) && /rowNotes=\{/.test(readFileSync(u, 'utf8')) && !u.pathname.endsWith('/screens/StakingScreen.tsx')) offenders.push(u.pathname);
+    }
+  };
+  walk(srcRoot);
+  check('…no screen other than Staking passes rowNotes (everywhere else the row note stays)', offenders.length === 0, offenders);
 }
 
 console.log(`\ncheck-simulation: ${passed} passed, ${failed} failed`);

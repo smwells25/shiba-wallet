@@ -874,7 +874,7 @@ export function SendScreen({ route, navigation }: Props) {
   const aaType = aaConfig ? effectiveAaAccountType(aaConfig, account.address) : null;
   /** NFT sends get NFT-specific error titles; everything else is unchanged. */
   const describeError = (e: unknown) =>
-    nftMode ? describeNftSendError(e) : describeSendError(e, symbol);
+    nftMode ? describeNftSendError(e) : describeSendError(e, symbol, evmChain.displaySymbol);
   const aaActive = aaAvailable && aaEnabled;
   // The passkey signs only for a Kernel v3.3 smart account (not SimpleAccount,
   // not an EIP-7702 upgrade) whose passkey this device installed.
