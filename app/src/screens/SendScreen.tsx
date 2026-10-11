@@ -175,6 +175,8 @@ import { BITCOIN, DOGECOIN } from '@shiba-wallet/chains-utxo';
 import { usePasskeyInfo } from '../wallet/usePasskeyInfo';
 import { NOTE_VIEW_SCROLL_PROPS, TransactionNoteField, dismissKeyboardThenClose } from '../components/TransactionNoteField';
 import { OfflineNotice, TechnicalDetail } from '../wallet/connectivity';
+import { PendingTransactionsSection } from '../components/PendingTransactions';
+import { recordPendingUserOperation, userOpResendFor } from '../wallet/pending-transactions';
 import { loadPasskeyNative } from '../wallet/passkey-native';
 import {
   createPasskeyBundle,
@@ -1417,6 +1419,26 @@ export function SendScreen({ route, navigation }: Props) {
     }
   };
 
+  // Smart-account operations accepted by the bundler are remembered on this
+  // phone (feature 95, wallet/pending-transactions.ts) so Activity can show
+  // them while they wait, check their status and, once the bundler has
+  // dropped one, offer "Send again". Best effort; never blocks the send.
+  const rememberUserOperation = (q: AaSendQuote, userOpHash: string) => {
+    if (!quotedFrom) return;
+    void recordPendingUserOperation({
+      chain: evmChain.caip2,
+      userOpHash,
+      sender: q.sender,
+      owner: quotedFrom,
+      resend: userOpResendFor(q, {
+        nativeSymbol: evmChain.displaySymbol,
+        nativeDecimals,
+        tokenId: tokenId ?? null,
+        nft: nftMode,
+      }),
+    });
+  };
+
   const onSend = async () => {
     if (!quote || !quotedFrom || !quotedUrl) return;
     // Quote pinning: the quote is one endpoint's answer. If the wallet would
@@ -1499,6 +1521,7 @@ export function SendScreen({ route, navigation }: Props) {
           ref: userOpHash,
         });
         setAaResult({ userOpHash, receiptState: 'pending', success: null, txHash: null });
+        rememberUserOperation(quote, userOpHash);
         setPhase('success');
         void waitForAaReceipt(bundle, userOpHash, { timeoutMs: 120_000, pollMs: 3_000 }).then(
           ({ summary }) =>
@@ -1555,6 +1578,7 @@ export function SendScreen({ route, navigation }: Props) {
           sendAa(bundle, signer, quote),
         );
         setAaResult({ userOpHash, receiptState: 'pending', success: null, txHash: null });
+        rememberUserOperation(quote, userOpHash);
         setPhase('success');
         // Poll for the receipt in the background; the success screen shows
         // "bundling…" until it lands (or the poll times out — the op may
@@ -1762,6 +1786,10 @@ export function SendScreen({ route, navigation }: Props) {
         )}
         {endpoint?.network.chainId ? (
           <TransactionNoteField network={endpoint.network.chainId} txid={result.txid} userOpHash={null} />
+        ) : null}
+        {/* While it waits to be included: Speed up and Cancel (feature 95). */}
+        {quotedFrom && (quote?.kind === 'evm' || quote?.kind === 'erc20' || quote?.kind === 'nft') ? (
+          <PendingTransactionsSection from={quotedFrom} onlyHash={result.txid} />
         ) : null}
         {quote ? renderSuccessContact(quote.to) : null}
         <Button title="Done" onPress={() => dismissKeyboardThenClose(() => navigation.popToTop())} />

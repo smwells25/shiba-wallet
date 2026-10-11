@@ -50,6 +50,26 @@ import { endpointHost, isEndpointFailure, sanitizeEndpointMessage } from '../con
 // Pure data with no imports (see its file comment), so no cycle.
 import { evmProfileByCaip2 } from '../config/evm-chain.ts';
 import { suggestFeesRetryingOnce } from './fee-read.ts';
+// pending-transactions.ts imports only types from this module, so the graph
+// stays a DAG (send.ts → pending-transactions.ts).
+import {
+  REPLACEMENT_FEES_STALE,
+  REPLACEMENT_QUOTE_USED,
+  REPLACEMENT_UNDERPRICED_SENTENCE,
+  alreadyIncludedSentence,
+  groupStatus,
+  meetsReplacementRule,
+  nodeReader,
+  nonceUsedSentence,
+  pooledFees,
+  recordPendingTransaction,
+  replacementFees,
+  txRecordFromQuote,
+  type NonceGroup,
+  type PendingStore,
+  type ReplacementAction,
+  type ReplacementFees,
+} from './pending-transactions.ts';
 
 /**
  * Send-flow engine glue: recipient validation, fee quoting, max-amount
@@ -1049,6 +1069,8 @@ export function addEvmSentListener(listener: EvmSentListener): () => void {
   };
 }
 
+addEvmSentListener(recordSentForPending);
+
 export type SendAcceptedListener = () => void;
 
 const sendAcceptedListeners = new Set<SendAcceptedListener>();
@@ -1093,6 +1115,40 @@ function notifyEvmSent(event: EvmSentEvent): void {
       // Listeners are bookkeeping; the transaction was already accepted.
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// The pending registry (feature 95): every transaction sendEvm broadcasts
+// ---------------------------------------------------------------------------
+
+let pendingRecordStore: PendingStore | null = null;
+
+/**
+ * The store the pending recorder writes to (AsyncStorage when unset). For
+ * the check scripts, which run under Node where AsyncStorage is not
+ * available; null restores the default.
+ */
+export function setPendingRecordStore(store: PendingStore | null): void {
+  pendingRecordStore = store;
+}
+
+/**
+ * Records every transaction sendEvm broadcast (native, ERC-20 and NFT sends,
+ * swaps, staking, revokes, WalletConnect) in the pending registry
+ * (./pending-transactions.ts), so Activity can offer Speed up and Cancel
+ * while it waits to be included. Registered once, when this module loads;
+ * best effort like every sent listener. The EIP-7702 set-code transaction
+ * (delegation.ts) and the guardian approveWithSig transaction (recovery.ts)
+ * do not go through sendEvm and are not recorded.
+ */
+function recordSentForPending(event: EvmSentEvent): Promise<void> {
+  let record;
+  try {
+    record = txRecordFromQuote(event.from, event.quote, event.txid, Date.now());
+  } catch {
+    return Promise.resolve();
+  }
+  return recordPendingTransaction(record, pendingRecordStore ?? undefined).then(() => undefined);
 }
 
 /**
@@ -1183,6 +1239,266 @@ export async function sendSol(
   const signature = await client.sendTransaction(signed.wireBytes);
   notifySendAccepted();
   return { txid: signature, explorerUrl: `https://solscan.io/tx/${signature}` };
+}
+
+// ---------------------------------------------------------------------------
+// Speed up / cancel a pending transaction (feature 95)
+// ---------------------------------------------------------------------------
+
+/**
+ * A replacement quote: an ordinary EvmSendQuote (so the confirm screen, the
+ * eth_call pre-flight and the signing are the ones every send uses) with the
+ * facts of what it replaces.
+ */
+export interface EvmReplacementQuote extends EvmSendQuote {
+  replacement: {
+    action: ReplacementAction;
+    /** What is recorded for the new transaction: a speed-up of a cancellation stays a cancellation. */
+    recordedAction: ReplacementAction;
+    /** Lower-case sender (the account that sent the original). */
+    from: string;
+    /** CAIP-2 id of the network. */
+    chain: string;
+    /** The wallet's original transaction for this nonce. */
+    original: string;
+    /** The newest broadcast for this nonce (the one the pool should now hold). */
+    replaces: string;
+    /** Every hash broadcast for this nonce so far. */
+    hashes: string[];
+    /** The highest fees broadcast for this nonce, the minimums over them and the node's suggestion. */
+    pooled: { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint };
+    fees: ReplacementFees;
+  };
+}
+
+/**
+ * A replacement refused before anything was signed (already included, the
+ * nonce used, the fees no longer high enough, the quote used once) or by the
+ * node at broadcast (underpriced, nonce too low). `message` is the plain
+ * sentence; `technical` the node's own text when there is one.
+ */
+export class ReplacementRefusedError extends Error {
+  technical: string | null;
+  // No TS parameter properties: Node's strip-only type stripping rejects them.
+  constructor(message: string, technical: string | null = null) {
+    super(message);
+    this.name = 'ReplacementRefusedError';
+    this.technical = technical;
+  }
+}
+
+const usedReplacementQuotes = new WeakSet<object>();
+
+/** True when this replacement quote was already submitted (checked before the device check). */
+export function replacementQuoteUsed(quote: object): boolean {
+  return usedReplacementQuotes.has(quote);
+}
+
+/**
+ * Reads the nonce's status and refuses (ReplacementRefusedError) when a
+ * broadcast for it is already in a block or the account's nonce has moved
+ * past it. Shared by the quote and the check before approval.
+ */
+async function assertStillPending(transport: JsonRpcTransport, group: NonceGroup): Promise<void> {
+  const status = await groupStatus(nodeReader(transport), group);
+  if (status.state === 'mined') throw new ReplacementRefusedError(alreadyIncludedSentence(status.block));
+  if (status.state === 'nonce-used') throw new ReplacementRefusedError(nonceUsedSentence(group.nonce));
+}
+
+/**
+ * Prices a speed-up or a cancellation of the pending transaction `group`
+ * (all broadcasts the wallet made for one nonce, from the pending registry).
+ *
+ *  - Refuses before anything else when the endpoint is not the group's
+ *    chain, when any of its broadcasts is already included ("This
+ *    transaction is already included in block N.") or when the account's
+ *    'latest' nonce is past it.
+ *  - Fees: per field, the larger of the 10% bumped minimum over the highest
+ *    fees broadcast for this nonce (pending-transactions.ts replacementFees,
+ *    the go-ethereum and reth replacement rules) and the node's current
+ *    suggestion (suggestFeesRetryingOnce).
+ *  - Speed-up: the NEWEST broadcast's recipient, value, calldata and gas
+ *    limit, unchanged (so a speed-up of a cancellation stays a
+ *    cancellation). Cancel: 0 to the sender's own address, no calldata, the
+ *    gas limit from eth_estimateGas.
+ *  - The worst case (gas limit × max fee, plus the layer 1 data fee on
+ *    OP-stack chains, as prepareEvmSend) plus the value must fit the
+ *    balance, which still holds the value because nothing for this nonce is
+ *    included yet.
+ *  - The eth_call pre-flight runs on the transaction that will be signed.
+ */
+export async function prepareEvmReplacement(
+  url: string,
+  group: NonceGroup,
+  action: ReplacementAction,
+  expectedCaip2: string,
+  options: { transport?: JsonRpcTransport } = {},
+): Promise<EvmReplacementQuote> {
+  const transport = options.transport ?? evmHttpTransport(url);
+  const node = new NodeClient(transport);
+  const chainId = await node.chainId();
+  if (`eip155:${chainId}` !== expectedCaip2 || group.chain !== expectedCaip2) {
+    throw new ReplacementRefusedError(
+      `The network endpoint serves chain id ${chainId}, but this transaction is on ${group.chain}. Nothing was signed.`,
+    );
+  }
+  await assertStillPending(transport, group);
+
+  const latest = group.latest;
+  const from = group.from;
+  const suggested = await suggestFeesRetryingOnce(node);
+  const pooled = pooledFees(group.txs);
+  const fees = replacementFees(pooled, suggested);
+
+  const cancelling = action === 'cancel' || latest.action === 'cancel';
+  const to = cancelling ? from : latest.to;
+  const amount = cancelling ? 0n : BigInt(latest.value);
+  const data = cancelling || latest.data === '0x' ? undefined : toBytes(latest.data);
+  let gasLimit: bigint;
+  if (action === 'cancel' && latest.action !== 'cancel') {
+    try {
+      gasLimit = await node.estimateGas({ from, to: from, value: 0n });
+    } catch (error) {
+      throw asEstimateRevert(error, true);
+    }
+  } else {
+    gasLimit = BigInt(latest.gasLimit);
+  }
+
+  const nonce = BigInt(group.nonce);
+  const opStack = chainHasL1DataFee(chainId)
+    ? await quoteOpStackFees(transport, {
+        chainId,
+        nonce,
+        maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+        maxFeePerGas: fees.maxFeePerGas,
+        gasLimit,
+        to,
+        value: amount,
+        ...(data ? { data } : {}),
+      })
+    : undefined;
+  const fee = gasLimit * fees.maxFeePerGas + opStackFeeTotal(opStack);
+  const balance = await node.getBalance(from);
+  if (amount + fee > balance) {
+    throw new Error(
+      `Insufficient funds: sending ${amount} wei plus a worst-case fee of ${fee} wei ` +
+        `exceeds the balance of ${balance} wei`,
+    );
+  }
+  const simulation = await simulateCall(transport, { from, to, value: amount, data });
+  return {
+    kind: 'evm',
+    to,
+    amount,
+    balance,
+    nonce,
+    chainId,
+    gasLimit,
+    maxFeePerGas: fees.maxFeePerGas,
+    maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+    fee,
+    total: amount + fee,
+    simulation,
+    ...(data ? { data } : {}),
+    ...(opStack ? { opStack } : {}),
+    replacement: {
+      action,
+      recordedAction: cancelling ? 'cancel' : 'speed-up',
+      from,
+      chain: group.chain,
+      original: group.original.hash,
+      replaces: latest.hash,
+      hashes: group.txs.map((t) => t.hash),
+      pooled,
+      fees,
+    },
+  };
+}
+
+/**
+ * The checks run BEFORE the device check (as checkAaQuoteBeforeApproval for
+ * smart accounts): the quote was not submitted already, nothing for this
+ * nonce is included and the nonce is still unused, and the quoted fees
+ * still clear the bump over every broadcast for this nonce — `group` is the
+ * group re-read from the registry just now, so a replacement sent in the
+ * meantime (another screen) is seen. Throws ReplacementRefusedError.
+ */
+export async function checkReplacementBeforeApproval(
+  url: string,
+  quote: EvmReplacementQuote,
+  group: NonceGroup,
+  options: { transport?: JsonRpcTransport } = {},
+): Promise<void> {
+  if (usedReplacementQuotes.has(quote)) throw new ReplacementRefusedError(REPLACEMENT_QUOTE_USED);
+  const transport = options.transport ?? evmHttpTransport(url);
+  await assertStillPending(transport, group);
+  if (!meetsReplacementRule(pooledFees(group.txs), quote)) throw new ReplacementRefusedError(REPLACEMENT_FEES_STALE);
+}
+
+/**
+ * Signs and broadcasts a replacement, after the device check. A quote goes
+ * out at most once. The signer must be the original's sender. Does NOT fan
+ * out to the sent listeners (the spending recorder would count the value a
+ * second time): the caller records the fee with recordAcceptedSpend
+ * (pending-transactions.ts replacementSpendingInput). On acceptance the new
+ * transaction is recorded in the pending registry, linked to the one it
+ * replaces. A node refusal is translated: "replacement transaction
+ * underpriced" (go-ethereum txpool.ErrReplaceUnderpriced; reth's wording
+ * contains "underpriced" too) and "nonce too low" (the nonce was used
+ * meanwhile).
+ */
+export async function sendEvmReplacement(
+  url: string,
+  signer: DerivedAccount,
+  quote: EvmReplacementQuote,
+  explorerTxBase: string | null,
+  options: { transport?: JsonRpcTransport; store?: PendingStore; now?: () => number } = {},
+): Promise<SendResult> {
+  if (usedReplacementQuotes.has(quote)) throw new ReplacementRefusedError(REPLACEMENT_QUOTE_USED);
+  usedReplacementQuotes.add(quote);
+  if (signer.address.toLowerCase() !== quote.replacement.from) {
+    throw new ReplacementRefusedError(
+      'The signing account is not the one that sent this transaction. Nothing was signed.',
+    );
+  }
+  const tx: Eip1559Transaction = {
+    chainId: quote.chainId,
+    nonce: quote.nonce,
+    maxPriorityFeePerGas: quote.maxPriorityFeePerGas,
+    maxFeePerGas: quote.maxFeePerGas,
+    gasLimit: quote.gasLimit,
+    to: quote.to,
+    value: quote.amount,
+    ...(quote.data && quote.data.length > 0 ? { data: quote.data } : {}),
+  };
+  const signed = signEip1559(tx, signer);
+  const node = new NodeClient(options.transport ?? evmHttpTransport(url));
+  let txid: string;
+  try {
+    txid = await node.sendRawTransaction(signed.rawHex);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/underpriced/i.test(message)) throw new ReplacementRefusedError(REPLACEMENT_UNDERPRICED_SENTENCE, message);
+    if (/nonce too low/i.test(message)) {
+      throw new ReplacementRefusedError(
+        `The network refused the replacement because nonce ${quote.nonce} was already used: a transaction ` +
+          'with this nonce was included in the meantime, so nothing more was sent. Activity shows which one ' +
+          'once it refreshes.',
+        message,
+      );
+    }
+    throw error;
+  }
+  await recordPendingTransaction(
+    txRecordFromQuote(quote.replacement.from, quote, txid, (options.now ?? Date.now)(), {
+      action: quote.replacement.recordedAction,
+      replaces: quote.replacement.replaces,
+    }),
+    options.store ?? pendingRecordStore ?? undefined,
+  );
+  notifySendAccepted();
+  return { txid, explorerUrl: explorerTxBase ? `${explorerTxBase}${txid}` : null };
 }
 
 // ---------------------------------------------------------------------------

@@ -84,6 +84,8 @@ import {
   type TransactionNote,
 } from '../wallet/notes';
 import { shareTextFile } from '../components/RecordFileActions';
+import { PendingTransactionsSection, resendPrefill } from '../components/PendingTransactions';
+import { loadPendingRegistry, replacementRowLine, type PendingRecord } from '../wallet/pending-transactions';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Activity'>;
 
@@ -128,6 +130,7 @@ function EntryRow({
   onEditNote,
   noAmount = false,
   loading = false,
+  replacementLine = null,
 }: {
   entry: HistoryEntry;
   chainId: string;
@@ -163,6 +166,12 @@ function EntryRow({
    * finding F5).
    */
   loading?: boolean;
+  /**
+   * For a row whose transaction replaced (or was replaced by) another one
+   * this phone sent with the same nonce (wallet/pending-transactions.ts
+   * replacementRowLine): "Speed-up of transaction 0x…", "Cancellation of …".
+   */
+  replacementLine?: string | null;
 }) {
   const theme = useTheme();
   const url = explorerTxUrl(chainId, entry.id, evmExplorerTxBase);
@@ -229,6 +238,7 @@ function EntryRow({
       accessibilityRole={url ? 'button' : undefined}
       accessibilityLabel={
         (sentence ? `${sentence}. ` : loading ? `${ROW_DETAILS_LOADING_LABEL}. ` : '') +
+        (replacementLine ? `${replacementLine} ` : '') +
         (failedIncoming ? `${title}, ` : `${title} transaction, `) +
         `${spokenAmount}, ${timestampLabel(entry)}` +
         (spokenStatus ? `, ${spokenStatus}` : '')
@@ -247,6 +257,9 @@ function EntryRow({
         </Text>
         {sentence ? (
           <Text style={[styles.rowSentence, { color: theme.text }]}>{sentence}</Text>
+        ) : null}
+        {replacementLine ? (
+          <Text style={[styles.rowSentence, { color: theme.textMuted }]}>{replacementLine}</Text>
         ) : null}
         <Text style={[styles.rowTime, { color: theme.textMuted }]}>
           {timestampLabel(entry)}
@@ -740,6 +753,17 @@ export function ActivityScreen({ navigation, route }: Props) {
     );
   }, []);
   useFocusEffect(reloadNotes);
+  // Transactions this phone replaced (feature 95): the rows of included
+  // replacements say what they were. Re-read on focus and when the pending
+  // section settles a nonce.
+  const [pendingRecords, setPendingRecords] = useState<PendingRecord[]>([]);
+  const reloadPendingRecords = useCallback(() => {
+    loadPendingRegistry().then(
+      (r) => setPendingRecords(r.records),
+      () => setPendingRecords([]),
+    );
+  }, []);
+  useFocusEffect(reloadPendingRecords);
   const noteIndex = useMemo(() => indexNotes(noteBook?.notes ?? []), [noteBook]);
   const [noteTarget, setNoteTarget] = useState<{
     network: string;
@@ -773,6 +797,27 @@ export function ActivityScreen({ navigation, route }: Props) {
     </View>
   ) : null;
 
+  // Pending transactions on this phone (feature 95): a regular account on
+  // the EVM slot only (watch-only and multisig accounts send nothing from
+  // this phone through sendEvm). Shown above every state of the history,
+  // because a pending transaction is in no history yet.
+  const pendingSection =
+    isEvmSlot && account && activeAccount?.watchOnly !== true && activeAccount?.multisig !== true ? (
+      <PendingTransactionsSection
+        from={account.address}
+        onChanged={reloadPendingRecords}
+        onSendAgain={(record) => {
+          const prefill = resendPrefill(record);
+          if (!prefill) return;
+          navigation.navigate('Send', {
+            chainId: EVM_CHAIN_ID,
+            ...(prefill.tokenId ? { tokenId: prefill.tokenId } : {}),
+            request: { recipient: prefill.recipient, amountText: prefill.amountText, lines: prefill.lines },
+          });
+        }}
+      />
+    ) : null;
+
   if (!account || !network) {
     return (
       <View style={[screenStyle(theme), styles.center]}>
@@ -793,6 +838,7 @@ export function ActivityScreen({ navigation, route }: Props) {
     return (
       <View style={[screenStyle(theme), styles.center]}>
         {networkHeader}
+        {pendingSection}
         {/* Decorative dash: the note below says what is unavailable. */}
         <Text
           accessibilityElementsHidden
@@ -812,6 +858,7 @@ export function ActivityScreen({ navigation, route }: Props) {
     return (
       <View style={[screenStyle(theme), styles.center]}>
         {networkHeader}
+        {pendingSection}
         <OfflineNotice />
         <Text accessibilityLiveRegion="polite" style={[styles.note, { color: theme.text }]}>
           The history could not be loaded right now. Check your connection
@@ -949,6 +996,7 @@ export function ActivityScreen({ navigation, route }: Props) {
             evmExplorerTxBase={evmChain.explorerTxBase}
             sentence={rowText.sentence}
             loading={rowText.loading}
+            replacementLine={isEvmSlot ? replacementRowLine(pendingRecords, evmChain.caip2, item.id) : null}
             noAmount={hidesZeroNativeAmount(item, tokenTxIds)}
             note={noteFor(item.id)}
             onEditNote={
@@ -971,7 +1019,7 @@ export function ActivityScreen({ navigation, route }: Props) {
         }}
         onViewableItemsChanged={isEvmSlot ? sentences.onViewableItemsChanged : undefined}
         // New decodes, Hide amounts and contact edits re-render the visible rows.
-        extraData={`${sentences.version}|${hideAmounts}|${sentences.contacts.length}|${notesVersion}`}
+        extraData={`${sentences.version}|${hideAmounts}|${sentences.contacts.length}|${notesVersion}|${pendingRecords.length}`}
         contentContainerStyle={styles.list}
         onEndReached={() => void loadMore()}
         onEndReachedThreshold={0.4}
@@ -986,6 +1034,7 @@ export function ActivityScreen({ navigation, route }: Props) {
         ListHeaderComponent={
           <View style={styles.listHeader}>
             {networkHeader}
+            {pendingSection}
             {state.note ? (
               <Text style={[styles.note, { color: theme.textMuted }]}>{state.note}</Text>
             ) : null}

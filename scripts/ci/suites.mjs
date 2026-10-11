@@ -67,6 +67,10 @@ export const APP_SCRIPTS = {
   // Phase 14 item 1: payment requests (EIP-681, BIP-321, the Dogecoin
   // format, Solana Pay): spec examples, refusals, round trips and QR codes.
   'check-payment-request.mjs': { kind: 'offline', summary: 'counts' },
+  // Phase 19 item 3: stuck transactions (feature 95): the pending registry,
+  // the 10% replacement bump, speed up / cancel, nonce outcomes, the
+  // smart-account status (fakes only).
+  'check-pending.mjs': { kind: 'offline', summary: 'counts' },
   'check-passkeys.mjs': { kind: 'offline', summary: 'counts' },
   'check-proof.mjs': { kind: 'offline', summary: 'counts' },
   'check-qr.mjs': { kind: 'offline', summary: 'counts' },
