@@ -6395,3 +6395,63 @@ by the Chairperson is still pending ("a few appear safe to ignore").
       individually. END STATE: Home, Ethereum Sepolia, Account 1, light
       mode, screen protection OFF, no active DCA records (both revoked
       on-chain; plan 2 forgotten), Metro at 1310f3e, IME ADBKeyboard.
+- [x] DCA pass findings FIXED, shared fee-budget bug across DCA /
+      recurring / subscriptions (commit 462989f; check-dca 135 (was 124),
+      check-recurring 192 (185), check-subscriptions 195 (188); offline
+      runner ALL GREEN in the CTO's isolated worktree on HEAD 3132ba6:
+      engine 981, app 8,132 across 53 suites, lint 0/0, tsc clean; mutants
+      caught by restoring scratch copies; not seen on a device). (1) THE
+      BUG lived entirely in the shared subscriptions.ts fitFeeBudgetToInstall
+      that DCA, recurring payments and merchant subscriptions all call
+      (dca.ts / recurring.ts only pass their own gasAllowance), so ALL
+      THREE carried it: the fit lowered the auto-suggested budget to
+      whatever the account could spare after the install and only refused
+      (cannot-fit) when NOTHING could be spared; a positive but tiny spare
+      below one period's worst-case fee returned fitted/fits:true, so
+      Review said "Bundler gas estimate passed" and installed a plan whose
+      first op the account refused on-chain (AA23 PolicyFailed, GasPolicy)
+      after the set-up fee was spent. FIX: minimumViableFeeBudgetWei(maxFee,
+      gasAllowance = SUBSCRIPTION_PULL_GAS_ALLOWANCE) = one op's worst-case
+      fee (500,000 gas for payments/pulls, DCA_SWAP_GAS_ALLOWANCE 1,000,000
+      for swaps; null when the fee is unknown → nothing blocked);
+      fitFeeBudgetToInstall now checks the settled keep-back against it and
+      returns cannot-fit with reason 'no-spare' | 'too-small' (+ minViable,
+      fittedBudget), and both review handlers route cannot-fit back to the
+      form so Start is withheld and NOTHING is installed; the auto-fit
+      too-small block (feeBudgetTooSmallBlock, word-parametrised
+      swap/payment/pull) reads e.g. "This plan cannot run: after the
+      one-time set-up fee, only 0.001 test ETH could be kept back for the
+      swaps, but one swap can cost up to 0.002310000004 test ETH at
+      today's fee. Add about 0.001310000004 test ETH to the smart account,
+      or set a larger fee budget. Nothing was signed."; a TYPED budget is
+      never lowered but, when below one period's fee, shows
+      feeBudgetTooSmallWarning (a WarningBox, Start still offered) — CTO
+      ACCEPTED the agent's deviation from the brief: warn whenever typed <
+      one-period fee regardless of affordability, because such a budget
+      fails on-chain no matter how funded the account is (the brief's
+      "AND cannot be afforded" conjunction would hide a genuinely broken
+      plan's warning); a well-funded plan is UNCHANGED (pinned). (2) The
+      DCA custom-period control was ALREADY wired in HEAD (3132ba6: the
+      preset row incl. "2 minutes (testing)" on test networks and 1 hour /
+      1 day / 7 / 30 days, plus the same Custom minutes/hours/days as the
+      recurring form; onDcaReview resolves it to periodSeconds); this slice
+      adds regression pins (custom "1" hours → 3600; a 1-hour plan →
+      terms.periodSeconds 3600 and grant.rateLimit.intervalSeconds 3600,
+      validUntil = now + 4×3600 with the one-period grace). (3) STALE
+      BANNER: the due functions were correct (an expired grant → 'ended' →
+      completed; a revoked record filtered out); the staleness was in
+      RecurringDueBanner, which re-checked only on a background→foreground
+      cycle, so a plan expiring or revoked while foregrounded kept showing
+      "1 recurring swap is due"; it now re-checks on a 60 s tick
+      (useClockTick) ONLY while a banner is up (eligible && result !== null
+      — an idle wallet polls nothing) and clears when the fresh read finds
+      nothing due, without touching checkKey (a dismissed banner is not
+      reopened); BANNER_RECHECK_INTERVAL_MS = 60,000. (4) The Android Alert
+      a11y-tree limit, the chip-row scroll and the IME are platform issues,
+      left alone. EMULATOR RE-CHECK (queued): an under-funded plan showing
+      the block, a typed tiny budget showing the warning with Start still
+      offered, a 1-hour DCA plan, and a banner clearing on its own within
+      ~60 s; repeat the under-funded and banner cases for a recurring
+      payment (shared path). UNVERIFIED (device): the 60 s cadence under
+      Android throttling; that the live under-funded AA23 is now never
+      reached before install.
