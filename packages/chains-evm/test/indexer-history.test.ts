@@ -1,4 +1,6 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { EIP7708_TRANSFER_LOG_ADDRESS } from '../src/asset-diff.js';
 import {
   DEFAULT_TRANSFER_CATEGORIES,
   indexerHistoryProvider,
@@ -375,5 +377,165 @@ describe('erc20 asset amounts', () => {
       direction: 'in',
     });
     expect(page.entries[0]!.amount).toBeUndefined();
+  });
+});
+
+describe('EIP-7708 protocol logs (Glamsterdam; the indexer reports them as "erc20")', () => {
+  /**
+   * A REAL raw answer (test/fixtures/indexer-history/, read 2026-10-11):
+   * the sent side of the Kernel account 0xD31c…D8FA for the block of the
+   * staking bundle 0x65d23913…7204. Each ETH movement is listed twice: as
+   * "internal" (asset "ETH", exact wei in rawContract.value) and as "erc20"
+   * from 0xff…fe (value null, asset "", decimal null, the same wei in
+   * rawContract.value). Before the fix the two "erc20" records became two
+   * token entries with no amount and an empty symbol ("no amount" rows).
+   */
+  const FIXTURE = JSON.parse(
+    readFileSync(new URL('./fixtures/indexer-history/sepolia-staking-bundle-sent.json', import.meta.url), 'utf8'),
+  ) as { request: { fromAddress: string }; result: { transfers: Record<string, unknown>[] } };
+  const KERNEL = FIXTURE.request.fromAddress;
+  const HASH = '0x65d23913c0c8af86e779f529f335d9b833d223fbfe7461a876beabe92ddf7204';
+  const ENTRYPOINT = '0x0000000071727de22e5e9d8baf0edac6f37da032';
+  const STETH = '0x3e3fe7dbc6b4c189e7128855dd526361c49b40af';
+  const raw = () => FIXTURE.result.transfers.map((t) => structuredClone(t));
+  const internals = () => raw().filter((t) => t.category === 'internal');
+  const logs = () => raw().filter((t) => t.category === 'erc20');
+
+  it('the fixture is what the indexer answered: two internal transfers and their two protocol logs', () => {
+    expect(raw().map((t) => [t.category, (t.rawContract as { address: string | null }).address, t.value, t.asset])).toEqual([
+      ['internal', null, 0.000747174110161719, 'ETH'],
+      ['internal', null, 0.0001, 'ETH'],
+      ['erc20', EIP7708_TRANSFER_LOG_ADDRESS, null, ''],
+      ['erc20', EIP7708_TRANSFER_LOG_ADDRESS, null, ''],
+    ]);
+  });
+
+  for (const direction of ['sent', 'both'] as const) {
+    it(`lists each ETH movement of the real bundle once, as native (${direction})`, async () => {
+      const { transport } = fakeTransport((p) => (p.fromAddress ? { transfers: raw() } : { transfers: [] }));
+      const page = await indexerHistoryProvider(transport, { direction }).getHistory(KERNEL);
+      expect(page.entries.map((e) => [e.uid, e.direction, e.amount, e.assetSymbol, e.counterparty])).toEqual([
+        [`${HASH}:internal:1_0_0_0`, 'out', 100_000_000_000_000n, undefined, STETH],
+        [`${HASH}:internal:0_0_1`, 'out', 747_174_110_161_719n, undefined, ENTRYPOINT],
+      ]);
+      expect(page.entries.some((e) => e.uid?.includes(':log:'))).toBe(false);
+      expect(page.omitted).toEqual({ 'eip7708-duplicate': 2 });
+      expect(page.nextCursor).toBeUndefined();
+    });
+  }
+
+  it('turns a protocol log without a native twin into a native entry (amount from rawContract.value)', async () => {
+    // As if the native categories had missed the stETH call's value.
+    const answer = [internals()[0]!, ...logs()];
+    const { transport } = fakeTransport(() => ({ transfers: answer }));
+    const page = await indexerHistoryProvider(transport, { direction: 'sent' }).getHistory(KERNEL);
+    expect(page.entries.map((e) => [e.uid, e.direction, e.amount, e.assetSymbol, e.assetAmount, e.counterparty])).toEqual([
+      [`${HASH}:log:21`, 'out', 100_000_000_000_000n, undefined, undefined, STETH],
+      [`${HASH}:internal:0_0_1`, 'out', 747_174_110_161_719n, undefined, undefined, ENTRYPOINT],
+    ]);
+    expect(page.omitted).toEqual({ 'eip7708-duplicate': 1 });
+  });
+
+  it('drops an unmatched protocol log without a readable amount and counts it', async () => {
+    const unreadable = logs().map((t) => ({ ...t, rawContract: { value: null, address: EIP7708_TRANSFER_LOG_ADDRESS, decimal: null } }));
+    const { transport } = fakeTransport(() => ({ transfers: unreadable }));
+    const page = await indexerHistoryProvider(transport, { direction: 'sent' }).getHistory(KERNEL);
+    expect(page.entries).toEqual([]);
+    expect(page.omitted).toEqual({ 'eip7708-unreadable': 2 });
+  });
+
+  it('matches one to one: a second identical movement without its own native record is kept', async () => {
+    const twin = { ...logs()[0]!, uniqueId: `${HASH}:log:99` };
+    const { transport } = fakeTransport(() => ({ transfers: [...raw(), twin] }));
+    const page = await indexerHistoryProvider(transport, { direction: 'sent' }).getHistory(KERNEL);
+    expect(page.entries.map((e) => [e.uid, e.amount])).toEqual([
+      [`${HASH}:log:99`, 100_000_000_000_000n],
+      [`${HASH}:internal:1_0_0_0`, 100_000_000_000_000n],
+      [`${HASH}:internal:0_0_1`, 747_174_110_161_719n],
+    ]);
+    expect(page.omitted).toEqual({ 'eip7708-duplicate': 2 });
+  });
+
+  it('a protocol log never matches a native transfer of another transaction, sender, recipient or amount', async () => {
+    const native = internals()[1]!; // Kernel → stETH, 1e14
+    const variants = [
+      { ...logs()[0]!, hash: '0x' + '12'.repeat(32), uniqueId: 'x:log:1' },
+      { ...logs()[0]!, to: OTHER.toLowerCase(), uniqueId: 'x:log:2' },
+      { ...logs()[0]!, rawContract: { value: '0x5af3107a4001', address: EIP7708_TRANSFER_LOG_ADDRESS, decimal: null }, uniqueId: 'x:log:3' },
+    ];
+    for (const log of variants) {
+      const { transport } = fakeTransport(() => ({ transfers: [native, log] }));
+      const page = await indexerHistoryProvider(transport, { direction: 'sent' }).getHistory(KERNEL);
+      expect(page.entries).toHaveLength(2);
+      expect(page.entries.every((e) => e.amount !== undefined && e.assetSymbol === undefined)).toBe(true);
+      expect(page.omitted).toBeUndefined();
+    }
+  });
+
+  it('matches across a page boundary: natives at the end of one page, their logs at the start of the next', async () => {
+    const newer = { ...internals()[0]!, hash: '0x' + '34'.repeat(32), blockNum: '0xb56c80', uniqueId: 'newer:internal:0' };
+    const newerLog = { ...logs()[1]!, hash: newer.hash, blockNum: '0xb56c80', uniqueId: 'newer:log:1' };
+    const older = { ...internals()[0]!, hash: '0x' + '56'.repeat(32), blockNum: '0xb56c00', uniqueId: 'older:internal:0' };
+    const pages: Record<string, { transfers: Record<string, unknown>[]; pageKey?: string }> = {
+      first: { transfers: [newer, newerLog, ...internals()], pageKey: 'k2' },
+      k2: { transfers: [...logs(), older], pageKey: 'k3' },
+      k3: { transfers: [] },
+    };
+    const { transport } = fakeTransport((p) => pages[(p.pageKey as string | undefined) ?? 'first']);
+    const provider = indexerHistoryProvider(transport, { direction: 'sent' });
+    const page1 = await provider.getHistory(KERNEL);
+    const page2 = await provider.getHistory(KERNEL, page1.nextCursor);
+    const page3 = await provider.getHistory(KERNEL, page2.nextCursor);
+    const all = [...page1.entries, ...page2.entries, ...page3.entries];
+    expect(all.map((e) => e.uid)).toEqual([
+      'newer:internal:0',
+      `${HASH}:internal:1_0_0_0`,
+      `${HASH}:internal:0_0_1`,
+      'older:internal:0',
+    ]);
+    expect(page2.omitted).toEqual({ 'eip7708-duplicate': 2 });
+    // Page 1's carry held the bundle's two natives (its oldest block);
+    // page 2's holds only its own oldest block's unmatched native.
+    expect(JSON.parse(page1.nextCursor!).co.map((c: { h: string; k: string }) => [c.h, c.k])).toEqual([
+      [HASH, 'n'],
+      [HASH, 'n'],
+    ]);
+    expect(JSON.parse(page2.nextCursor!).co.map((c: { h: string; b: string }) => [c.h, c.b])).toEqual([
+      ['0x' + '56'.repeat(32), BigInt('0xb56c00').toString()],
+    ]);
+  });
+
+  it('matches across a page boundary the other way: a log converted on one page absorbs its native on the next', async () => {
+    const pages: Record<string, { transfers: Record<string, unknown>[]; pageKey?: string }> = {
+      first: { transfers: [logs()[0]!], pageKey: 'k2' },
+      k2: { transfers: [internals()[1]!] },
+    };
+    const { transport } = fakeTransport((p) => pages[(p.pageKey as string | undefined) ?? 'first']);
+    const provider = indexerHistoryProvider(transport, { direction: 'sent' });
+    const page1 = await provider.getHistory(KERNEL);
+    const page2 = await provider.getHistory(KERNEL, page1.nextCursor);
+    expect(page1.entries.map((e) => [e.uid, e.amount])).toEqual([[`${HASH}:log:21`, 100_000_000_000_000n]]);
+    expect(page2.entries).toEqual([]);
+    expect(page2.omitted).toEqual({ 'eip7708-duplicate': 1 });
+  });
+
+  it('an answer without protocol logs keeps its cursor and entries exactly as before', async () => {
+    const usdc = transfer({
+      category: 'erc20', asset: 'USDC', uniqueId: 'usdc:log:1', value: 1,
+      rawContract: { value: '0xf4240', address: '0x1c7d4b196cb0c7b01d743fbc6116a902379c7238', decimal: '0x6' },
+    });
+    const { transport } = fakeTransport(() => ({ transfers: [transfer({ uniqueId: 'eth:external' }), usdc], pageKey: 'k' }));
+    const page = await indexerHistoryProvider(transport, { direction: 'received' }).getHistory(ME);
+    expect(JSON.parse(page.nextCursor!)).toEqual({ v: 1, in: 'k' });
+    expect(page.omitted).toBeUndefined();
+    expect(page.entries.find((e) => e.uid === 'usdc:log:1')).toMatchObject({ assetSymbol: 'USDC', assetAmount: 1_000_000n, assetDecimals: 6 });
+  });
+
+  it('refuses a cursor whose carry is malformed', async () => {
+    const { transport } = fakeTransport(() => ({ transfers: [] }));
+    const bad = JSON.stringify({ v: 1, out: 'k', co: [{ h: 1 }] });
+    await expect(indexerHistoryProvider(transport, { direction: 'sent' }).getHistory(ME, bad)).rejects.toThrow(
+      'Unrecognized history cursor',
+    );
   });
 });

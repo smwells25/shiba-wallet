@@ -336,6 +336,42 @@ check('real timestamps unchanged', timestampLabel(
   1_700_000_030_000) === 'just now');
 
 // ---------------------------------------------------------------------------
+// EIP-7708 (Glamsterdam; on Sepolia since 2026-10-06): the protocol logs
+// every ETH transfer as a Transfer event from 0xff…fe. The logs fallback
+// queries one TRACKED token contract at a time, and the engine's
+// getErc20Transfers also drops any log from that address, so a protocol log
+// is never listed as a token — not even when an endpoint ignores the
+// address filter, nor when 0xff…fe itself was stored as a tracked token.
+console.log('check-token-history: EIP-7708 protocol logs are never tokens');
+{
+  const SYSTEM = '0xfffffffffffffffffffffffffffffffffffffffe';
+  const protocolLog = makeLog(SYSTEM, 99_980, 4, ME, OTHER, '0x5af3107a4000');
+  const sloppy = async (method, params) => {
+    if (method === 'eth_blockNumber') return '0x186a0';
+    if (method === 'eth_getLogs') {
+      // An endpoint that ignores the address filter: every query gets the
+      // protocol log, the USDC query also its real transfer.
+      const filter = params[0];
+      const out = [protocolLog];
+      if (filter.address === USDC && filter.topics[1] === addressTopic(ME)) out.push(makeLog(USDC, 99_950, 3, ME, OTHER, '0xf4240'));
+      return out;
+    }
+    throw new Error(`unexpected ${method}`);
+  };
+  for (const tokens of [
+    [{ address: USDC, symbol: 'USDC', decimals: 6 }],
+    [{ address: SYSTEM, symbol: 'ETH?', decimals: 18 }],
+  ]) {
+    const p = tokenLogsHistoryProvider({ rpcUrl: 'http://fake', walletAddress: ME, tokens, transport: sloppy, windowBlocks: 9_000n, maxWindows: 1 });
+    const page = await p.getHistory(ME);
+    check(
+      `no entry for a 0xff…fe log (tracked: ${tokens[0].symbol})`,
+      page.entries.every((e) => !e.uid.startsWith('0xtx999804')) &&
+        page.entries.length === (tokens[0].address === USDC ? 1 : 0),
+    );
+  }
+}
+
 // Optional LIVE pass (read-only): the exact app glue (historySourceFor →
 // tokenLogsHistoryProvider → tokenLogsTransport) against the working
 // keyless mainnet default. Only eth_blockNumber and eth_getLogs are sent.

@@ -1,0 +1,109 @@
+{
+  "source": "One read-only alchemy_getAssetTransfers call against the Alchemy Sepolia endpoint on 2026-10-11 (the endpoint URL and its key are not recorded; the answer contained neither). The query is the provider's own sent-side query narrowed to the block of Sepolia transaction 0x65d23913c0c8af86e779f529f335d9b833d223fbfe7461a876beabe92ddf7204 (a ZeroDev bundle whose operation, from the Kernel account 0xD31c…D8FA, topped up its EntryPoint deposit and staked 0.0001 test ETH with Lido). Its receipt (read on ethereum-sepolia-rpc.publicnode.com) holds two EIP-7708 Transfer logs from 0xff…fe: log index 0x12 (Kernel to the EntryPoint, data 0x2a78d076beb37) and 0x15 (Kernel to Lido stETH, data 0x5af3107a4000).",
+  "method": "alchemy_getAssetTransfers",
+  "httpStatus": 200,
+  "request": {
+    "fromBlock": "0xb56c73",
+    "toBlock": "0xb56c73",
+    "fromAddress": "0xD31c2C54F21684eE2026a6C41e391130BdEeD8FA",
+    "category": [
+      "external",
+      "internal",
+      "erc20",
+      "erc721",
+      "erc1155"
+    ],
+    "withMetadata": true,
+    "excludeZeroValue": false,
+    "maxCount": "0x19",
+    "order": "desc"
+  },
+  "result": {
+    "transfers": [
+      {
+        "blockNum": "0xb56c73",
+        "uniqueId": "0x65d23913c0c8af86e779f529f335d9b833d223fbfe7461a876beabe92ddf7204:internal:0_0_1",
+        "hash": "0x65d23913c0c8af86e779f529f335d9b833d223fbfe7461a876beabe92ddf7204",
+        "from": "0xd31c2c54f21684ee2026a6c41e391130bdeed8fa",
+        "to": "0x0000000071727de22e5e9d8baf0edac6f37da032",
+        "value": 0.000747174110161719,
+        "erc721TokenId": null,
+        "erc1155Metadata": null,
+        "tokenId": null,
+        "asset": "ETH",
+        "category": "internal",
+        "rawContract": {
+          "value": "0x02a78d076beb37",
+          "address": null,
+          "decimal": "0x12"
+        },
+        "metadata": {
+          "blockTimestamp": "2026-10-11T06:00:24.000Z"
+        }
+      },
+      {
+        "blockNum": "0xb56c73",
+        "uniqueId": "0x65d23913c0c8af86e779f529f335d9b833d223fbfe7461a876beabe92ddf7204:internal:1_0_0_0",
+        "hash": "0x65d23913c0c8af86e779f529f335d9b833d223fbfe7461a876beabe92ddf7204",
+        "from": "0xd31c2c54f21684ee2026a6c41e391130bdeed8fa",
+        "to": "0x3e3fe7dbc6b4c189e7128855dd526361c49b40af",
+        "value": 0.0001,
+        "erc721TokenId": null,
+        "erc1155Metadata": null,
+        "tokenId": null,
+        "asset": "ETH",
+        "category": "internal",
+        "rawContract": {
+          "value": "0x5af3107a4000",
+          "address": null,
+          "decimal": "0x12"
+        },
+        "metadata": {
+          "blockTimestamp": "2026-10-11T06:00:24.000Z"
+        }
+      },
+      {
+        "blockNum": "0xb56c73",
+        "uniqueId": "0x65d23913c0c8af86e779f529f335d9b833d223fbfe7461a876beabe92ddf7204:log:21",
+        "hash": "0x65d23913c0c8af86e779f529f335d9b833d223fbfe7461a876beabe92ddf7204",
+        "from": "0xd31c2c54f21684ee2026a6c41e391130bdeed8fa",
+        "to": "0x3e3fe7dbc6b4c189e7128855dd526361c49b40af",
+        "value": null,
+        "erc721TokenId": null,
+        "erc1155Metadata": [],
+        "tokenId": null,
+        "asset": "",
+        "category": "erc20",
+        "rawContract": {
+          "value": "0x5af3107a4000",
+          "address": "0xfffffffffffffffffffffffffffffffffffffffe",
+          "decimal": null
+        },
+        "metadata": {
+          "blockTimestamp": "2026-10-11T06:00:24.000Z"
+        }
+      },
+      {
+        "blockNum": "0xb56c73",
+        "uniqueId": "0x65d23913c0c8af86e779f529f335d9b833d223fbfe7461a876beabe92ddf7204:log:18",
+        "hash": "0x65d23913c0c8af86e779f529f335d9b833d223fbfe7461a876beabe92ddf7204",
+        "from": "0xd31c2c54f21684ee2026a6c41e391130bdeed8fa",
+        "to": "0x0000000071727de22e5e9d8baf0edac6f37da032",
+        "value": null,
+        "erc721TokenId": null,
+        "erc1155Metadata": [],
+        "tokenId": null,
+        "asset": "",
+        "category": "erc20",
+        "rawContract": {
+          "value": "0x2a78d076beb37",
+          "address": "0xfffffffffffffffffffffffffffffffffffffffe",
+          "decimal": null
+        },
+        "metadata": {
+          "blockTimestamp": "2026-10-11T06:00:24.000Z"
+        }
+      }
+    ]
+  }
+}

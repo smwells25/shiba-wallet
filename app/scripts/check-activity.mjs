@@ -1328,10 +1328,14 @@ console.log('Zero-value native rows next to token rows (2026-10-11 re-check, fin
   const wired = (src) =>
     src.includes('const tokenTxIds = transactionsWithTokenAmounts(loadedEntries);') &&
     src.includes('noAmount={hidesZeroNativeAmount(item, tokenTxIds)}') &&
-    src.includes('const hasAmount = !noAmount && (entry.assetAmount !== undefined || entry.amount !== undefined);') &&
-    /\{noAmount \? null : \(\s*<>\s*<Text style=\{\[styles\.amount/.test(src);
+    // Since 2026-10-11 (finding 2) a failed incoming row hides its amount
+    // the same way: showAmount = !noAmount && !failedIncoming.
+    src.includes('const showAmount = !noAmount && !failedIncoming;') &&
+    src.includes('const hasAmount = showAmount && (entry.assetAmount !== undefined || entry.amount !== undefined);') &&
+    /\{!showAmount \? null : \(\s*<>\s*<Text style=\{\[styles\.amount/.test(src);
   check('the Activity row renders no amount line for such an entry, and says "no amount" to a screen reader (source)', wired(screen));
-  check('…a row that always renders the amount fails the check', !wired(screen.replace('{noAmount ? null : (', '{false ? null : (')));
+  check('…a row that always renders the amount fails the check', !wired(screen.replace('{!showAmount ? null : (', '{false ? null : (')));
+  check('…a failed incoming row that keeps its amount fails the check', !wired(screen.replace('const showAmount = !noAmount && !failedIncoming;', 'const showAmount = !noAmount;')));
 }
 
 console.log('ActivityScreen source:');
@@ -1409,6 +1413,294 @@ console.log('ActivityScreen source:');
     !/setState\(\(prev\)/.test(src) && !src.includes('cursor = prev.nextCursor');
   check('the hook: an indexer is read through the time-ordered merge, the logs fallback reports the smart account skipped, the state machine is the controller (no cursor in a state updater) (source)',
     hookOk(useHistorySrc));
+}
+
+console.log('A null answer for a listed transaction: one retry on another endpoint (2026-10-11 pass, finding 3):');
+{
+  // ethereum-sepolia-rpc.publicnode.com balances a reth backend that answers
+  // null for old receipts (2026-10-11: 4 of 8 batched reads of 0x8b7463c4…
+  // answered null on reth/v2.7.0, 4 served status 0x0 on Geth/v1.17.7).
+  // Two fake endpoints: A (the active one) and B (another default).
+  const A = URL;
+  const B = 'https://fake-sepolia-2.invalid/rpc';
+  const nodes = {
+    [A]: { receiptNull: new Set(), txNull: new Set(), garbled: new Set(), pending: new Set(), dead: false },
+    [B]: { receiptNull: new Set(), txNull: new Set(), garbled: new Set(), pending: new Set(), dead: false },
+  };
+  const seen = [];
+  const savedFetch = globalThis.fetch;
+  globalThis.fetch = async (target, init = {}) => {
+    const body = JSON.parse(init.body);
+    seen.push({ url: target, method: body.method, hash: typeof body.params?.[0] === 'string' ? body.params[0] : null });
+    const node = nodes[target];
+    if (!node || node.dead) throw new TypeError('fetch failed (unknown or dead fake endpoint)');
+    const reply = (result) => {
+      const text = JSON.stringify({ jsonrpc: '2.0', id: body.id, result });
+      return { ok: true, status: 200, json: async () => JSON.parse(text), text: async () => text };
+    };
+    const hash = String(body.params?.[0] ?? '').toLowerCase();
+    if (body.method === 'eth_getTransactionByHash') {
+      if (node.txNull.has(hash)) return reply(null);
+      const f = fixtures.get(hash);
+      if (f && node.garbled.has(hash)) return reply({ ...f.transaction, hash: '0x' + '00'.repeat(32) });
+      if (f && node.pending.has(hash)) return reply({ ...f.transaction, blockNumber: null, blockHash: null });
+      return reply(f?.transaction ?? null);
+    }
+    if (body.method === 'eth_getTransactionReceipt') {
+      if (node.receiptNull.has(hash)) return reply(null);
+      return reply(fixtures.get(hash)?.receipt ?? null);
+    }
+    if (body.method === 'eth_call') return reply('0x');
+    throw new Error(`fake node: unexpected ${body.method}`);
+  };
+  const runOn = (url) => (operation) => operation(url);
+  let finderCalls = [];
+  const finder = (answer) => async (current) => {
+    finderCalls.push(current);
+    return answer;
+  };
+  const make = (alternate) =>
+    createActivityDecoder({ chainCaip2: SEPOLIA, evmChainId: SEPOLIA_ID, wallet: [ACCOUNT_1, KERNEL_OF_ACCOUNT_1], trackedTokens: [], run: runOn(A), alternate });
+  const listedAll = { listed: () => true };
+  const onB = (hash) => seen.filter((r) => r.url === B && r.hash?.toLowerCase() === hash);
+  const fresh = () => {
+    clearActivityCache();
+    seen.length = 0;
+    finderCalls = [];
+    for (const n of Object.values(nodes)) {
+      n.receiptNull.clear();
+      n.txNull.clear();
+      n.garbled.clear();
+      n.pending.clear();
+      n.dead = false;
+    }
+  };
+
+  // 1. Null receipt on A, served on B.
+  fresh();
+  nodes[A].receiptNull.add(H.approve);
+  let decoder = make(finder(B));
+  let out = await decoder.decodeEntries([H.approve], listedAll);
+  check('a listed transaction whose receipt A answers null is decoded on B', out.size === 1 && render(out.get(H.approve)) === 'Approved USDC for Permit2 (unlimited)', out.size);
+  check('…B was asked once for it (transaction + receipt) and the finder once', onB(H.approve).length === 2 && finderCalls.length === 1 && finderCalls[0] === A, [onB(H.approve).length, finderCalls]);
+  check('…nothing is left failed or unavailable', decoder.failedIds().length === 0 && decoder.unavailableIds().length === 0);
+
+  // 2. A null transaction (not-found) on A is retried the same way.
+  fresh();
+  nodes[A].txNull.add(H.swapEurc);
+  decoder = make(finder(B));
+  out = await decoder.decodeEntries([H.swapEurc], listedAll);
+  check('a listed transaction A does not know at all is decoded on B', out.size === 1 && onB(H.swapEurc).length >= 2);
+
+  // 3. Both null: unavailable (not failed), no third endpoint, not retried
+  // until a pull-to-refresh, then retried and served.
+  fresh();
+  nodes[A].receiptNull.add(H.approve);
+  nodes[B].receiptNull.add(H.approve);
+  decoder = make(finder(B));
+  out = await decoder.decodeEntries([H.approve], listedAll);
+  check('null on both: no sentence, remembered as unavailable (not failed)', out.size === 0 && decoder.unavailableIds().includes(H.approve) && !decoder.failedIds().includes(H.approve));
+  check('…exactly one alternate: B asked once (2 reads), no other endpoint', onB(H.approve).length === 2 && seen.every((r) => r.url === A || r.url === B), onB(H.approve).length);
+  check('…the row stops saying its details are loading', decoder.mayDecode(H.approve) === false);
+  const before = seen.length;
+  await decoder.decodeEntries([H.approve], listedAll);
+  check('…not asked again on the next render', seen.length === before, seen.length - before);
+  nodes[B].receiptNull.clear();
+  decoder.reset();
+  check('…a pull-to-refresh makes it decodable again', decoder.mayDecode(H.approve) === true && decoder.unavailableIds().length === 0);
+  out = await decoder.decodeEntries([H.approve], listedAll);
+  check('…and the retry after the refresh is served (A null again, B now answers)', out.size === 1 && finderCalls.length === 2, [out.size, finderCalls.length]);
+
+  // 4. The finder is asked once per decoder for the same failing endpoint.
+  fresh();
+  nodes[A].receiptNull.add(H.approve);
+  nodes[A].receiptNull.add(H.swapEth1);
+  decoder = make(finder(B));
+  out = await decoder.decodeEntries([H.approve, H.swapEth1], listedAll);
+  check('two null receipts on A: both served on B, the alternate found once', out.size === 2 && finderCalls.length === 1, [out.size, finderCalls.length]);
+
+  // 5. No alternate (an override, or no other healthy default): unavailable after one try.
+  fresh();
+  nodes[A].receiptNull.add(H.approve);
+  decoder = make(finder(null));
+  out = await decoder.decodeEntries([H.approve], listedAll);
+  check('no alternate endpoint: unavailable, nothing asked elsewhere', out.size === 0 && decoder.unavailableIds().includes(H.approve) && seen.every((r) => r.url === A));
+
+  // 6. A row the history did not list as mined: the old rule (failed, no alternate).
+  fresh();
+  nodes[A].receiptNull.add(H.approve);
+  decoder = make(finder(B));
+  out = await decoder.decodeEntries([H.approve]);
+  check('not listed: failed as before, no alternate asked', out.size === 0 && decoder.failedIds().includes(H.approve) && finderCalls.length === 0 && onB(H.approve).length === 0);
+
+  // 7. A reverted transaction is an answer: never retried elsewhere.
+  fresh();
+  const REVERTED = '0x8b7463c415b02061f43ab15d852531a34b835afb5c8ae717eef72d06b0a8871e';
+  decoder = make(finder(B));
+  out = await decoder.decodeEntries([REVERTED], listedAll);
+  check('a reverted transaction (status 0x0) is decoded on A and never retried on B', out.size === 1 && out.get(REVERTED).description.status === 'failed' && finderCalls.length === 0 && onB(REVERTED).length === 0);
+
+  // 8. A malformed answer is a failure: never retried elsewhere.
+  fresh();
+  nodes[A].garbled.add(H.approve);
+  decoder = make(finder(B));
+  out = await decoder.decodeEntries([H.approve], listedAll);
+  check('a malformed answer (another transaction) fails without an alternate', out.size === 0 && decoder.failedIds().includes(H.approve) && finderCalls.length === 0 && onB(H.approve).length === 0);
+
+  // 8b. A "pending" answer (no block) is not a missing answer: no alternate.
+  fresh();
+  nodes[A].pending.add(H.approve);
+  decoder = make(finder(B));
+  out = await decoder.decodeEntries([H.approve], listedAll);
+  check('a pending answer for a listed row fails as before, without an alternate', out.size === 0 && decoder.failedIds().includes(H.approve) && finderCalls.length === 0 && onB(H.approve).length === 0);
+
+  // 8c. The alternate endpoint itself is down: unavailable (retried after a refresh), never throws.
+  fresh();
+  nodes[A].receiptNull.add(H.approve);
+  nodes[B].dead = true;
+  decoder = make(finder(B));
+  let threw = false;
+  try {
+    out = await decoder.decodeEntries([H.approve], listedAll);
+  } catch {
+    threw = true;
+  }
+  check('a dead alternate: unavailable (not failed), never throws', !threw && out.size === 0 && decoder.unavailableIds().includes(H.approve) && !decoder.failedIds().includes(H.approve));
+
+  // 9. A finder that throws counts as no alternate.
+  fresh();
+  nodes[A].receiptNull.add(H.approve);
+  decoder = make(async () => {
+    throw new Error('probe failed');
+  });
+  out = await decoder.decodeEntries([H.approve], listedAll);
+  check('a failing finder: unavailable, never throws', out.size === 0 && decoder.unavailableIds().includes(H.approve));
+
+  // 10. With an injected runner and no finder there is never an alternate.
+  fresh();
+  nodes[A].receiptNull.add(H.approve);
+  decoder = createActivityDecoder({ chainCaip2: SEPOLIA, evmChainId: SEPOLIA_ID, wallet: [ACCOUNT_1], trackedTokens: [], run: runOn(A) });
+  out = await decoder.decodeEntries([H.approve], listedAll);
+  check('injected runner without a finder: no alternate, unavailable', out.size === 0 && decoder.unavailableIds().includes(H.approve) && seen.every((r) => r.url === A));
+
+  globalThis.fetch = savedFetch;
+  const screen = readFileSync(join(here, '..', 'src', 'screens', 'ActivityScreen.tsx'), 'utf8');
+  check('the screen passes the listed (confirmed) rows to the decoder (source)',
+    screen.includes('for (const item of items) if (item.confirmed) listedIds.current.add(item.id);') &&
+      screen.includes('decoder.decodeEntries(ids, { listed: (id) => listedIds.current.has(id) })') &&
+      screen.includes('if (refreshing) decoder?.reset();'));
+  const sentencesSrc = readFileSync(join(here, '..', 'src', 'wallet', 'activity-sentences.ts'), 'utf8');
+  check('the default finder is the read-only alternate-default probe (source)',
+    sentencesSrc.includes('return findAlternateDefaultUrl(endpoint.network, currentUrl, endpoint.isOverride);') &&
+      sentencesSrc.includes('const alternate = options.alternate ?? (options.run ? null : activeAlternateEndpoint(options.chainCaip2));'));
+}
+
+console.log('Default finder through config/networks.ts (mainnet defaults; primary answers null, secondary serves):');
+reset({ chainId: '0x1' });
+{
+  const { forgetDefaultEndpointChoices } = await import('../src/config/networks.ts');
+  forgetDefaultEndpointChoices();
+  const [primary, secondary] = EVM_MAINNET.defaultRpcUrls;
+  const hash = '0x' + 'ab'.repeat(32);
+  const tx = { hash, from: ACCOUNT_2, to: ACCOUNT_1, input: '0x', value: '0x2386f26fc10000', nonce: '0x1', type: '0x2', chainId: '0x1', blockNumber: '0x10', blockHash: '0x' + 'cd'.repeat(32) };
+  const receipt = { transactionHash: hash, blockNumber: '0x10', blockHash: '0x' + 'cd'.repeat(32), status: '0x1', logs: [] };
+  const log = [];
+  const savedFetch = globalThis.fetch;
+  globalThis.fetch = async (target, init = {}) => {
+    const body = JSON.parse(init.body);
+    log.push({ url: target, method: body.method });
+    const reply = (result) => {
+      const text = JSON.stringify({ jsonrpc: '2.0', id: body.id, result });
+      return { ok: true, status: 200, json: async () => JSON.parse(text), text: async () => text };
+    };
+    if (target !== primary && target !== secondary) throw new TypeError('fetch failed (other candidate)');
+    switch (body.method) {
+      case 'eth_chainId':
+        return reply('0x1');
+      case 'eth_getBlockByNumber':
+        return reply({ number: '0x20', timestamp: '0x' + Math.floor(Date.now() / 1000).toString(16) });
+      case 'eth_getTransactionByHash':
+        return reply(tx);
+      case 'eth_getTransactionReceipt':
+        return reply(target === primary ? null : receipt);
+      default:
+        throw new Error(`unexpected ${body.method}`);
+    }
+  };
+  const decoder = createActivityDecoder({ chainCaip2: 'eip155:1', evmChainId: 1n, wallet: [ACCOUNT_1], trackedTokens: [] });
+  const out = await decoder.decodeEntries([hash], { listed: () => true });
+  globalThis.fetch = savedFetch;
+  check('the default decoder retried the null receipt on the next default and decoded it',
+    out.size === 1 && render(out.get(hash), { networkId: 'eip155:1', nativeSymbol: 'ETH', contacts: [] }) === 'Received 0.01 ETH from 0xb699…81fE',
+    out.size === 1 ? render(out.get(hash), { networkId: 'eip155:1', nativeSymbol: 'ETH', contacts: [] }) : log);
+  check('…the receipt was read on the primary, then on the secondary after its identity probe',
+    log.some((r) => r.url === primary && r.method === 'eth_getTransactionReceipt') &&
+      log.some((r) => r.url === secondary && r.method === 'eth_chainId') &&
+      log.some((r) => r.url === secondary && r.method === 'eth_getTransactionReceipt'),
+    log);
+  forgetDefaultEndpointChoices();
+}
+
+console.log('A reverted incoming transfer (2026-10-11 pass, finding 2):');
+reset();
+{
+  const REVERTED = '0x8b7463c415b02061f43ab15d852531a34b835afb5c8ae717eef72d06b0a8871e';
+  const f = fixtures.get(REVERTED);
+  check('the fixture is the real status-0 receipt of an incoming 0.003 test ETH transfer',
+    f?.receipt.status === '0x0' && f.transaction.to.toLowerCase() === KERNEL_OF_ACCOUNT_1.toLowerCase() && BigInt(f.transaction.value) === 3_000_000_000_000_000n);
+  const {
+    entryWithReceiptStatus,
+    isFailedIncoming,
+    FAILED_INCOMING_TITLE,
+    entryPointRowSentence,
+  } = await import('../src/wallet/activity-sentences.ts');
+  const decoder = createActivityDecoder({ chainCaip2: SEPOLIA, evmChainId: SEPOLIA_ID, wallet: wallet1, trackedTokens: [], run: fixedRun });
+  const out = await decoder.decodeEntries([REVERTED]);
+  const decoded = out.get(REVERTED);
+  const sets = { selfAddresses: wallet1, selfNames: [{ address: KERNEL_OF_ACCOUNT_1.toLowerCase(), name: 'your smart account' }] };
+  const sentence = render(decoded, sets);
+  check('the sentence names the outside sender and says nothing was received',
+    sentence === 'Failed: an incoming transaction from 0x16DA…aC5C to your smart account (0.003 test ETH) was reverted, so nothing was received', sentence);
+  check('…never "tried to send"', !sentence.includes('tried to'));
+  check('…Hide amounts masks its value',
+    render(decoded, { ...sets, hidden: true }) === 'Failed: an incoming transaction from 0x16DA…aC5C to your smart account (•••• test ETH) was reverted, so nothing was received');
+  // The row as the indexer listed it (Alchemy listed this reverted transfer as "external").
+  const row = { id: REVERTED, uid: `${REVERTED}:external`, timestamp: 0x6abedc9c, confirmed: true, blockHeight: 11824758, direction: 'in', amount: 3_000_000_000_000_000n, counterparty: '0x16da2caeada26516f919c6872f6c38ab378cac5c', smartAccount: true };
+  const shown = entryWithReceiptStatus(row, decoded);
+  check('the decoded status 0 marks the row failed', shown.failed === true && shown !== row && row.failed === undefined);
+  check('…a failed incoming row: "Failed — nothing was received", no amount', isFailedIncoming(shown) && FAILED_INCOMING_TITLE === 'Failed — nothing was received');
+  const okRow = { ...row, id: H.approve };
+  const okDecoded = (await decoder.decodeEntries([H.approve])).get(H.approve);
+  check('…an undecoded row and a successful one are returned unchanged',
+    entryWithReceiptStatus(row, undefined) === row && okDecoded?.description.status === 'success' && entryWithReceiptStatus(okRow, okDecoded) === okRow);
+  check('…a decode of another hash never marks the row', entryWithReceiptStatus({ ...row, id: H.approve }, decoded).failed === undefined);
+  check('…an outgoing row of a reverted transaction stays a sent row (failed chip), not "nothing received"',
+    isFailedIncoming(entryWithReceiptStatus({ ...row, direction: 'out' }, decoded)) === false && entryWithReceiptStatus({ ...row, direction: 'out' }, decoded).failed === true);
+  check('…an EntryPoint row of a reverted transaction says no deposit',
+    entryPointRowSentence({ ...row, direction: 'out', counterparty: ENTRYPOINT_V07.toLowerCase(), failed: true }, { smartAccountRow: true, nativeSymbol: 'test ETH', hidden: false }) === null &&
+      entryPointRowSentence({ ...row, direction: 'out', counterparty: ENTRYPOINT_V07.toLowerCase() }, { smartAccountRow: true, nativeSymbol: 'test ETH', hidden: false }) !== null);
+  const notes = await import('../src/wallet/notes.ts');
+  const csvRows = notes.activityExportRows({
+    network: SEPOLIA,
+    networkLabel: 'Ethereum Sepolia',
+    entries: [shown, row],
+    nativeSymbol: 'test ETH',
+    nativeDecimals: 18,
+    notes: notes.indexNotes([]),
+    explorerUrlFor: () => null,
+  });
+  const [failedRow, oldRow] = csvRows;
+  check('the export: "Received (smart account) (failed)" with an empty amount and the asset named',
+    failedRow[2] === 'Received (smart account) (failed)' && failedRow[3] === '' && failedRow[4] === 'test ETH', failedRow);
+  check('…the same row without the decoded status still exports its amount (old behaviour, the control)',
+    oldRow[2] === 'Received (smart account)' && oldRow[3] === '0.003', oldRow);
+  const screen = readFileSync(join(here, '..', 'src', 'screens', 'ActivityScreen.tsx'), 'utf8');
+  check('the screen applies the decoded status to every row and to the export, and a failed incoming row shows its title and no amount (source)',
+    screen.includes('const item = isEvmSlot ? entryWithReceiptStatus(listed, sentences.lookup(listed.id)) : listed;') &&
+      screen.includes('entries: isEvmSlot ? loadedEntries.map((e) => entryWithReceiptStatus(e, sentences.lookup(e.id))) : loadedEntries,') &&
+      screen.includes('const title = failedIncoming ? FAILED_INCOMING_TITLE : directionLabel(entry.direction);') &&
+      screen.includes('const showAmount = !noAmount && !failedIncoming;') &&
+      screen.includes('{!showAmount ? null : ('));
 }
 
 console.log(`\ncheck-activity: ${passed} passed, ${failed} failed`);

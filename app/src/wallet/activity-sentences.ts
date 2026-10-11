@@ -13,7 +13,8 @@ import {
 import type { ActivityDescription, ActivitySentenceContext, AssetChange } from '@shiba-wallet/chains-evm';
 // Explicit .ts extensions: scripts/check-activity.mjs loads this module
 // under Node's type stripping, which resolves relative specifiers literally.
-import { withEndpoint } from '../config/networks.ts';
+import { getEndpoint, withEndpoint } from '../config/networks.ts';
+import { findAlternateDefaultUrl } from '../config/endpoint-probe.ts';
 import { maskAmount } from '../config/prefs.ts';
 import { findExactContact, type Contact } from './contacts.ts';
 import { resolveTokenMeta, type TokenMetaMap } from './simulation.ts';
@@ -43,6 +44,20 @@ import type { PinnedStakingContract } from './risk.ts';
  *    screen costs nothing. Failures and "not available yet" answers are
  *    NOT cached; they are remembered per decoder so the same row is not
  *    retried on every render, and a pull-to-refresh (reset()) tries again.
+ *  - Another endpoint for a missing answer (emulator pass of 2026-10-11,
+ *    finding 3): an endpoint can answer null for a transaction or its
+ *    receipt that is mined (ethereum-sepolia-rpc.publicnode.com balances
+ *    a reth backend that answered null for the receipts of 1 October and
+ *    a geth backend that served them). For a row the history LISTED as
+ *    mined (so the transaction exists), such an answer is asked ONCE more
+ *    on another of the network's built-in default endpoints, chosen by the
+ *    same identity and freshness probe as the default choice
+ *    (endpoint-probe.ts findAlternateDefaultUrl; never around a user
+ *    override). Read-only and bounded: one alternate per transaction, the
+ *    alternate found once per decoder; a reverted transaction is an answer
+ *    (no retry) and a malformed answer is a failure (no retry). A row
+ *    still without an answer is remembered as "unavailable" until the next
+ *    pull-to-refresh, not for the rest of the session.
  *  - Failure policy: any failure leaves the row exactly as it was — no
  *    sentence, no error text. The sentence is an addition to the row, never
  *    a replacement for the amount/fee line.
@@ -104,6 +119,22 @@ export function activeEndpointRunner(chainId: string): EndpointRunner {
   return async (operation) => (await withEndpoint(chainId, (ep) => operation(ep.url))).value;
 }
 
+/**
+ * Another endpoint for a read-only retry of a missing answer: given the URL
+ * that answered null, another built-in default URL of the network, or null
+ * when there is none (or the user set an override).
+ */
+export type AlternateEndpointFinder = (currentUrl: string) => Promise<string | null>;
+
+/** The default finder: the active network's next healthy default (findAlternateDefaultUrl). */
+export function activeAlternateEndpoint(chainId: string): AlternateEndpointFinder {
+  return async (currentUrl) => {
+    const endpoint = await getEndpoint(chainId);
+    if (!endpoint) return null;
+    return findAlternateDefaultUrl(endpoint.network, currentUrl, endpoint.isOverride);
+  };
+}
+
 export interface ActivityDecoderOptions {
   /** CAIP-2 id of the active EVM network (e.g. 'eip155:11155111'). */
   chainCaip2: string;
@@ -115,6 +146,12 @@ export interface ActivityDecoderOptions {
   trackedTokens: FungibleAsset[];
   /** Where requests go; defaults to activeEndpointRunner(chainCaip2). */
   run?: EndpointRunner;
+  /**
+   * Where a missing answer for a listed transaction is asked once more.
+   * Defaults to activeAlternateEndpoint(chainCaip2) when `run` is the
+   * default too; with an injected `run` and no `alternate`, never.
+   */
+  alternate?: AlternateEndpointFinder;
   maxPerCall?: number;
   /** Metadata reader override (tests). */
   fetchMetadata?: (url: string, contract: string) => Promise<Erc20Metadata>;
@@ -124,15 +161,22 @@ export interface ActivityDecoder {
   /**
    * Decodes up to maxPerCall of `ids` (transaction hashes) that are not
    * cached and have not failed in this decoder, in the given order, then
-   * returns every cached result for `ids`. Never throws.
+   * returns every cached result for `ids`. Never throws. `listed` says
+   * which ids a history listed as mined: only those get the one retry on
+   * another endpoint when the first answers null (none by default).
    */
-  decodeEntries(ids: string[]): Promise<Map<string, DecodedActivity>>;
+  decodeEntries(ids: string[], options?: { listed?: (id: string) => boolean }): Promise<Map<string, DecodedActivity>>;
   /** Cached results for `ids`, without any request. */
   cachedFor(ids: string[]): Map<string, DecodedActivity>;
-  /** Forgets this decoder's failures so they are tried again. */
+  /** Forgets this decoder's failures and unavailable answers so they are tried again (pull-to-refresh). */
   reset(): void;
   /** Hashes that failed in this decoder (tests). */
   failedIds(): string[];
+  /**
+   * Listed hashes whose transaction or receipt no endpoint returned, even
+   * after the one retry on another endpoint; tried again after reset().
+   */
+  unavailableIds(): string[];
   /**
    * True when a decode of `id` could still give a sentence: a transaction
    * hash that is neither cached nor failed in this decoder. A row for such
@@ -145,9 +189,26 @@ export function createActivityDecoder(options: ActivityDecoderOptions): Activity
   const walletKey = options.wallet.map((a) => a.toLowerCase()).sort().join(',');
   const keyFor = (hash: string) => `${options.chainCaip2}|${walletKey}|${hash.toLowerCase()}`;
   const run = options.run ?? activeEndpointRunner(options.chainCaip2);
+  const alternate = options.alternate ?? (options.run ? null : activeAlternateEndpoint(options.chainCaip2));
   const maxPerCall = options.maxPerCall ?? MAX_DECODES_PER_CALL;
   const failed = new Set<string>();
+  const unavailable = new Set<string>();
   const inFlight = new Set<string>();
+  // The alternate for each URL that answered null, found once per decoder
+  // (a probe costs requests); forgotten on reset().
+  const alternates = new Map<string, Promise<string | null>>();
+  const alternateFor = (url: string): Promise<string | null> => {
+    if (!alternate) return Promise.resolve(null);
+    let found = alternates.get(url);
+    if (!found) {
+      found = alternate(url).then(
+        (u) => (u && u !== url ? u : null),
+        () => null,
+      );
+      alternates.set(url, found);
+    }
+    return found;
+  };
 
   const cachedFor = (ids: string[]) => {
     const out = new Map<string, DecodedActivity>();
@@ -158,61 +219,96 @@ export function createActivityDecoder(options: ActivityDecoderOptions): Activity
     return out;
   };
 
-  async function decodeOne(hash: string): Promise<DecodedActivity | null> {
-    return run(async (url) => {
-      const outcome = await decodeActivity(httpTransport(url), hash, {
-        wallet: options.wallet,
-        chainId: options.evmChainId,
-      });
-      if (outcome.status !== 'ok') return null;
-      const description = outcome.description;
-      // The preview's resolver takes balance changes; present each contract
-      // the sentence may name as a zero-amount change so the same tracked-
-      // list matching, eth_call reads, cap and sanitizing apply.
-      const contracts = activityTokenContracts(description);
-      const asChanges: AssetChange[] = contracts.map((token) => ({
-        type: 'erc20',
-        callIndex: 0,
-        direction: 'in',
-        token,
-        from: token,
-        to: token,
-        amount: 0n,
-      }));
-      const tokens = contracts.length
-        ? await resolveTokenMeta(asChanges, {
-            url,
-            chainCaip2: options.chainCaip2,
-            trackedTokens: options.trackedTokens,
-            ...(options.fetchMetadata ? { fetchMetadata: options.fetchMetadata } : {}),
-          })
-        : {};
-      return { description, tokens };
+  /** Token metadata for a description, read through `url`. */
+  async function withTokens(url: string, description: ActivityDescription): Promise<DecodedActivity> {
+    // The preview's resolver takes balance changes; present each contract
+    // the sentence may name as a zero-amount change so the same tracked-
+    // list matching, eth_call reads, cap and sanitizing apply.
+    const contracts = activityTokenContracts(description);
+    const asChanges: AssetChange[] = contracts.map((token) => ({
+      type: 'erc20',
+      callIndex: 0,
+      direction: 'in',
+      token,
+      from: token,
+      to: token,
+      amount: 0n,
+    }));
+    const tokens = contracts.length
+      ? await resolveTokenMeta(asChanges, {
+          url,
+          chainCaip2: options.chainCaip2,
+          trackedTokens: options.trackedTokens,
+          ...(options.fetchMetadata ? { fetchMetadata: options.fetchMetadata } : {}),
+        })
+      : {};
+    return { description, tokens };
+  }
+
+  type Attempt = { kind: 'ok'; value: DecodedActivity } | { kind: 'missing' | 'other'; url: string };
+
+  /** One decode through `url`: a description, a missing answer (null transaction or receipt), or another outcome. */
+  async function attempt(url: string, hash: string): Promise<Attempt> {
+    const outcome = await decodeActivity(httpTransport(url), hash, {
+      wallet: options.wallet,
+      chainId: options.evmChainId,
     });
+    if (outcome.status === 'ok') return { kind: 'ok', value: await withTokens(url, outcome.description) };
+    // 'not-found' and 'receipt-unavailable' are answers that leave out a
+    // transaction known to exist (when the history listed it); 'pending'
+    // is not retried elsewhere.
+    return { kind: outcome.status === 'pending' ? 'other' : 'missing', url };
+  }
+
+  /**
+   * A description, or 'failed' / 'unavailable'. A missing answer for a
+   * listed transaction is asked once on another default endpoint.
+   */
+  async function decodeOne(hash: string, listed: boolean): Promise<DecodedActivity | 'failed' | 'unavailable'> {
+    const first = await run((url) => attempt(url, hash));
+    if (first.kind === 'ok') return first.value;
+    if (first.kind === 'other' || !listed) return 'failed';
+    const other = await alternateFor(first.url);
+    if (!other) return 'unavailable';
+    try {
+      const second = await attempt(other, hash);
+      return second.kind === 'ok' ? second.value : 'unavailable';
+    } catch {
+      return 'unavailable';
+    }
   }
 
   return {
     cachedFor,
     reset() {
       failed.clear();
+      unavailable.clear();
+      alternates.clear();
     },
     failedIds() {
       return [...failed];
     },
-    mayDecode(id) {
-      return HASH_RE.test(id) && !cache.has(keyFor(id)) && !failed.has(id);
+    unavailableIds() {
+      return [...unavailable];
     },
-    async decodeEntries(ids) {
+    mayDecode(id) {
+      return HASH_RE.test(id) && !cache.has(keyFor(id)) && !failed.has(id) && !unavailable.has(id);
+    },
+    async decodeEntries(ids, decodeOptions = {}) {
       const unique = [...new Set(ids)];
       const todo = unique
-        .filter((id) => HASH_RE.test(id) && !cache.has(keyFor(id)) && !failed.has(id) && !inFlight.has(id))
+        .filter(
+          (id) =>
+            HASH_RE.test(id) && !cache.has(keyFor(id)) && !failed.has(id) && !unavailable.has(id) && !inFlight.has(id),
+        )
         .slice(0, maxPerCall);
       for (const id of todo) {
         inFlight.add(id);
         try {
-          const decoded = await decodeOne(id);
-          if (decoded) remember(keyFor(id), decoded);
-          else failed.add(id);
+          const decoded = await decodeOne(id, decodeOptions.listed?.(id) === true);
+          if (decoded === 'failed') failed.add(id);
+          else if (decoded === 'unavailable') unavailable.add(id);
+          else remember(keyFor(id), decoded);
         } catch {
           failed.add(id);
         } finally {
@@ -408,6 +504,8 @@ export function entryPointRowSentence(
   options: { smartAccountRow: boolean; nativeSymbol: string; hidden: boolean },
 ): string | null {
   if (!options.smartAccountRow) return null;
+  // A reverted transaction deposited and paid out nothing.
+  if (entry.failed) return null;
   if (entry.assetSymbol !== undefined || entry.assetAmount !== undefined) return null;
   if (entry.amount === undefined || entry.amount <= 0n) return null;
   if (!entry.counterparty || entry.counterparty.toLowerCase() !== ENTRYPOINT_V07.toLowerCase()) return null;
@@ -432,6 +530,34 @@ export function activityRowText(input: {
   if (input.entryPoint) return { sentence: input.entryPoint, loading: false };
   if (input.sentence) return { sentence: input.sentence, loading: false };
   return { sentence: null, loading: input.mayDecode };
+}
+
+/**
+ * The row's entry with the decoded receipt's status applied (emulator pass
+ * of 2026-10-11, finding 2). A history indexer reports value movements, not
+ * receipts, and can still list the transfer of a transaction that reverted
+ * (Sepolia 0x8b7463c4…8871e, receipt status 0x0, was listed as a received
+ * 0.003 ETH); a reverted transaction moved nothing, so every row of it is
+ * marked failed once its receipt is decoded. Returns the same object when
+ * nothing changes (no decode yet, a successful transaction, or a row
+ * already marked failed).
+ */
+export function entryWithReceiptStatus(entry: HistoryEntry, decoded: DecodedActivity | undefined): HistoryEntry {
+  if (!decoded || entry.failed || decoded.description.status !== 'failed') return entry;
+  if (decoded.description.hash.toLowerCase() !== entry.id.toLowerCase()) return entry;
+  return { ...entry, failed: true };
+}
+
+/** The title of a failed incoming row: nothing arrived, so no amount is shown. */
+export const FAILED_INCOMING_TITLE = 'Failed — nothing was received';
+
+/**
+ * True for a row that would say something was received but whose
+ * transaction failed: it shows FAILED_INCOMING_TITLE and no amount, and the
+ * export leaves its amount empty ("Received (failed)").
+ */
+export function isFailedIncoming(entry: Pick<HistoryEntry, 'failed' | 'direction'>): boolean {
+  return entry.failed === true && entry.direction === 'in';
 }
 
 /** The accessibility label of a row whose details are still loading (prefix). */
@@ -541,6 +667,9 @@ export function renderActivitySentence(decoded: DecodedActivity, options: Senten
     ...(describeCall ? { describeCall } : {}),
     ...(options.selfAddresses ? { selfAddresses: options.selfAddresses } : {}),
     ...(options.selfNames ? { selfNames: options.selfNames } : {}),
+    // Someone else's reverted transaction names its sender, never this
+    // account, as the actor (emulator pass of 2026-10-11, finding 2).
+    recipientSideFailures: true,
   });
 }
 

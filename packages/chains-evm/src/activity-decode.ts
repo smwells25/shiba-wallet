@@ -1367,6 +1367,25 @@ export interface ActivitySentenceContext {
    * what it was before this option existed.
    */
   selfNames?: readonly { address: string; name: string }[];
+  /**
+   * Names the right actor when a transaction reverted that the viewing
+   * account did NOT send (its sender is not a "yourself" address, see
+   * selfAddresses). Without it a failed transaction always reads "Failed:
+   * tried to …", which describes someone else's reverted transfer to the
+   * wallet as if the wallet had tried to send it (emulator pass of
+   * 2026-10-11, finding 2: a reverted 0.003 ETH transfer from an outside
+   * address to the smart account read "Failed: tried to send 0.003 test
+   * ETH to your smart account"). With it:
+   *  - when the recipient is a wallet address: "Failed: an incoming
+   *    transaction from <sender> to <recipient> (<value>) was reverted, so
+   *    nothing was received" (the value only when nonzero);
+   *  - otherwise: "Failed: a transaction from <sender> to <recipient> was
+   *    reverted, so nothing in it happened".
+   * A failed transaction the viewing account sent, and a failed EntryPoint
+   * bundle, read exactly as before. Absent (the default), every sentence is
+   * exactly what it was before this option existed.
+   */
+  recipientSideFailures?: boolean;
 }
 
 /** Every token contract whose metadata a sentence for `desc` may need (lowercase). */
@@ -1448,6 +1467,19 @@ class SentenceWriter {
     const known = knownContract(this.desc.chainId, address);
     if (known) return known.name;
     return shortActivityAddress(address);
+  }
+
+  /**
+   * A wallet address as the recipient of someone else's transaction: its
+   * ctx.selfNames name ("your smart account"), "this account" for the
+   * viewing account's own address, else party() (another wallet address's
+   * label or a short address).
+   */
+  recipientName(address: string): string {
+    if (this.isSelf(address)) {
+      return this.ctx.selfNames?.find((n) => sameAddress(n.address, address))?.name ?? 'this account';
+    }
+    return this.party(address);
   }
 
   /** Token label: tracked symbol, else pinned symbol, else "SYM (untracked token 0x…)". */
@@ -1707,6 +1739,20 @@ class SentenceWriter {
     }
 
     if (d.status === 'failed') {
+      if (this.ctx.recipientSideFailures && !this.isSelf(d.from)) {
+        // Someone else's reverted transaction (ctx.recipientSideFailures):
+        // name its sender, never the viewing account, as the actor.
+        if (d.to && this.isWallet(d.to)) {
+          const value = d.value > 0n ? ` (${this.native(d.value)})` : '';
+          clauses.push(
+            `failed: an incoming transaction from ${this.party(d.from)} to ${this.recipientName(d.to)}${value} was reverted, so nothing was received`,
+          );
+        } else {
+          const to = d.to ? ` to ${this.party(d.to)}` : '';
+          clauses.push(`failed: a transaction from ${this.party(d.from)}${to} was reverted, so nothing in it happened`);
+        }
+        return capitalize(clauses.join('; '));
+      }
       // Calldata only: a reverted transaction moves nothing and emits no logs.
       const attempt = this.callPhrase(d.call, d.from);
       const fee = d.fromWallet ? '; only the network fee was paid' : '';

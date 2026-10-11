@@ -1,4 +1,5 @@
 import type { HistoryEntry, HistoryPage, HistoryProvider } from '@shiba-wallet/core';
+import { isEip7708TransferLogAddress } from './asset-diff.js';
 import type { JsonRpcTransport } from './rpc.js';
 
 /**
@@ -46,9 +47,32 @@ import type { JsonRpcTransport } from './rpc.js';
  *    they keep the correct id, uid, timestamp, direction and the
  *    API-reported asset symbol for display.
  *  - Failed-transaction detection is NOT available: the Transfers API
- *    reports value movements, not receipts, and a reverted transaction
- *    moves nothing, so it simply never appears. Entries are never marked
- *    `failed`, and fees are not reported either.
+ *    reports value movements, not receipts. A reverted transaction moves
+ *    nothing, but the API can still list its top-level ETH transfer as an
+ *    "external" transfer: on 2026-10-11 it listed Sepolia transaction
+ *    0x8b7463c4…8871e (receipt status 0x0, read on two endpoints) as a
+ *    received 0.003 ETH. Entries are never marked `failed` here and fees
+ *    are not reported; a caller that decodes the receipt (the app's
+ *    Activity list) must apply the receipt's status itself.
+ *  - EIP-7708 protocol logs (Glamsterdam; active on Sepolia since
+ *    2026-10-06, see asset-diff.ts): the protocol logs every nonzero ETH
+ *    transfer as a Transfer event from the system address 0xff…fe, and the
+ *    API reports each such log as an "erc20" transfer whose
+ *    rawContract.address is that system address. A raw answer read on
+ *    2026-10-11 (test/fixtures/indexer-history/) showed, for one
+ *    smart-account bundle, every ETH movement twice: once as "internal"
+ *    (uniqueId "<hash>:internal:<trace>", asset "ETH", rawContract.value =
+ *    the exact wei, decimal "0x12") and once as "erc20" (uniqueId
+ *    "<hash>:log:<n>", value null, asset "", rawContract.value = the same
+ *    wei — equal to the log's data word — and decimal null). Such a log is
+ *    NOT a token transfer, so this provider reconciles them per query
+ *    (reconcileProtocolLogs): a log matching a native transfer of the same
+ *    transaction (same hash, same from and to, same amount) is dropped; an
+ *    unmatched log with a readable rawContract.value becomes a NATIVE
+ *    entry (so an ETH movement the native categories missed is not lost);
+ *    an unmatched log without a readable amount is dropped and counted in
+ *    the page's `omitted` diagnostics. Matching continues across a page
+ *    boundary through the cursor (see CursorState.co / .ci).
  *  - The two direction streams (sent/received) paginate independently, so
  *    across a page boundary an older received entry can arrive after a
  *    newer sent entry already shown. Each page itself is sorted
@@ -85,7 +109,7 @@ interface RawTransfer {
   category: string;
   uniqueId?: string;
   asset?: string | null;
-  rawContract?: { value?: string | null; decimal?: string | null };
+  rawContract?: { value?: string | null; address?: string | null; decimal?: string | null };
   metadata?: { blockTimestamp?: string };
 }
 
@@ -114,18 +138,76 @@ export interface IndexerHistoryOptions {
 }
 
 /**
+ * One ETH movement still waiting for its counterpart across a page
+ * boundary (reconcileProtocolLogs): the transaction hash, from, to
+ * (lowercase), the exact amount in wei as a decimal string (null when the
+ * API gave none), the block number, and whether it was a native transfer
+ * ('n') or an EIP-7708 log already turned into a native entry ('l').
+ */
+interface CarryItem {
+  h: string;
+  f: string;
+  t: string;
+  a: string | null;
+  b: string;
+  k: 'n' | 'l';
+}
+
+/** At most this many carried movements per direction (judgement: a page boundary splits one block). */
+const MAX_CARRY_ITEMS = 64;
+
+/**
  * Opaque cursor: the pair of per-direction pageKeys, JSON-encoded. A
  * direction absent from the cursor is exhausted and is not queried again.
+ * `co` / `ci` (sent / received side) carry the unmatched ETH movements of
+ * the page's oldest block, present only when that side's page held EIP-7708
+ * protocol logs (or received a carry itself), so a cursor of a chain or
+ * history without them is exactly what it was before they existed.
  */
 interface CursorState {
   v: 1;
   out?: string;
   in?: string;
+  co?: CarryItem[];
+  ci?: CarryItem[];
 }
 
-function encodeCursor(state: { out?: string; in?: string }): string | undefined {
+function encodeCursor(state: {
+  out?: string;
+  in?: string;
+  co?: CarryItem[];
+  ci?: CarryItem[];
+}): string | undefined {
   if (state.out === undefined && state.in === undefined) return undefined;
-  return JSON.stringify({ v: 1, ...state });
+  return JSON.stringify({
+    v: 1,
+    ...(state.out !== undefined ? { out: state.out } : {}),
+    ...(state.in !== undefined ? { in: state.in } : {}),
+    // A carry is kept only for a side that has a next page.
+    ...(state.out !== undefined && state.co?.length ? { co: state.co } : {}),
+    ...(state.in !== undefined && state.ci?.length ? { ci: state.ci } : {}),
+  });
+}
+
+function isCarryItem(value: unknown): value is CarryItem {
+  if (typeof value !== 'object' || value === null) return false;
+  const c = value as Record<string, unknown>;
+  return (
+    typeof c.h === 'string' &&
+    typeof c.f === 'string' &&
+    typeof c.t === 'string' &&
+    (c.a === null || (typeof c.a === 'string' && /^[0-9]+$/.test(c.a))) &&
+    typeof c.b === 'string' &&
+    (c.k === 'n' || c.k === 'l')
+  );
+}
+
+function decodeCarry(value: unknown): CarryItem[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > MAX_CARRY_ITEMS || !value.every(isCarryItem)) {
+    throw new Error('Unrecognized history cursor');
+  }
+  return value;
 }
 
 function decodeCursor(cursor: string): CursorState {
@@ -142,18 +224,173 @@ function decodeCursor(cursor: string): CursorState {
   ) {
     throw new Error('Unrecognized history cursor');
   }
-  const p = parsed as { v: 1; out?: unknown; in?: unknown };
+  const p = parsed as { v: 1; out?: unknown; in?: unknown; co?: unknown; ci?: unknown };
+  const co = decodeCarry(p.co);
+  const ci = decodeCarry(p.ci);
   return {
     v: 1,
     ...(typeof p.out === 'string' ? { out: p.out } : {}),
     ...(typeof p.in === 'string' ? { in: p.in } : {}),
+    ...(co ? { co } : {}),
+    ...(ci ? { ci } : {}),
   };
 }
 
 const NATIVE_CATEGORIES = new Set(['external', 'internal']);
 const HEX_VALUE = /^0x[0-9a-fA-F]+$/;
 
-function mapTransfer(transfer: RawTransfer, me: string): HistoryEntry {
+/** True for an "erc20" transfer that is really an EIP-7708 protocol log of an ETH movement. */
+function isProtocolLog(transfer: RawTransfer): boolean {
+  const contract = transfer.rawContract?.address;
+  return transfer.category === 'erc20' && typeof contract === 'string' && isEip7708TransferLogAddress(contract);
+}
+
+/** The exact amount in rawContract.value, or null when absent or not hex. */
+function rawAmount(transfer: RawTransfer): bigint | null {
+  const raw = transfer.rawContract?.value;
+  return raw && HEX_VALUE.test(raw) ? BigInt(raw) : null;
+}
+
+/** How many entries a page left out, by reason (HistoryPage.omitted). */
+type OmittedCounts = Record<'eip7708-duplicate' | 'eip7708-unreadable', number>;
+
+interface Reconciled {
+  /** The transfers to map, in the API's order; `native` marks a converted protocol log. */
+  kept: { transfer: RawTransfer; native: boolean }[];
+  omitted: OmittedCounts;
+  /** What the next page of this side must still match (see CarryItem). */
+  carry: CarryItem[];
+}
+
+/**
+ * Reconciles one query's answer with EIP-7708 protocol logs (see LIMITS in
+ * the module comment). Every transfer that is not a protocol log is kept
+ * as it was, in the same order, so an answer without protocol logs maps to
+ * exactly the entries it always did. One-to-one matching: each native
+ * transfer (or carried movement) absorbs at most one protocol log with the
+ * same transaction hash, from and to, and the same amount (a native
+ * transfer whose amount the API did not give matches any amount). A native
+ * transfer arriving after a protocol log of the previous page was already
+ * turned into a native entry is dropped as that entry's duplicate.
+ */
+function reconcileProtocolLogs(transfers: RawTransfer[], incoming: CarryItem[]): Reconciled {
+  const omitted: OmittedCounts = { 'eip7708-duplicate': 0, 'eip7708-unreadable': 0 };
+  const hasProtocolLog = transfers.some(isProtocolLog);
+  if (!hasProtocolLog && incoming.length === 0) {
+    return { kept: transfers.map((transfer) => ({ transfer, native: false })), omitted, carry: [] };
+  }
+  const lower = (a: string | null | undefined) => (typeof a === 'string' ? a.toLowerCase() : '');
+  const keyOf = (h: string, f: string, t: string) => `${h.toLowerCase()}|${f}|${t}`;
+  const blockOf = (t: RawTransfer) => {
+    try {
+      return BigInt(t.blockNum).toString();
+    } catch {
+      return '';
+    }
+  };
+
+  // Natives able to absorb a protocol log: carried ones first, then this page's.
+  type Pool = { amount: bigint | null; carried: CarryItem | null; transfer: RawTransfer | null; used: boolean };
+  const pools = new Map<string, Pool[]>();
+  const addPool = (key: string, pool: Pool) => {
+    const list = pools.get(key) ?? [];
+    list.push(pool);
+    pools.set(key, list);
+  };
+  // Converted logs of the previous page, waiting for a native duplicate.
+  const convertedCarry = new Map<string, CarryItem[]>();
+  const carriedNatives: Pool[] = [];
+  for (const item of incoming) {
+    const key = keyOf(item.h, item.f, item.t);
+    if (item.k === 'l') {
+      convertedCarry.set(key, [...(convertedCarry.get(key) ?? []), item]);
+    } else {
+      const pool: Pool = { amount: item.a === null ? null : BigInt(item.a), carried: item, transfer: null, used: false };
+      carriedNatives.push(pool);
+      addPool(key, pool);
+    }
+  }
+
+  const dropped = new Set<RawTransfer>();
+  const nativePools: Pool[] = [];
+  for (const t of transfers) {
+    if (!NATIVE_CATEGORIES.has(t.category)) continue;
+    const key = keyOf(t.hash, lower(t.from), lower(t.to));
+    const amount = rawAmount(t);
+    const waiting = convertedCarry.get(key);
+    const twin = waiting?.findIndex((c) => c.a === null || amount === null || BigInt(c.a) === amount) ?? -1;
+    if (waiting && twin >= 0) {
+      // The previous page already listed this movement from its protocol log.
+      waiting.splice(twin, 1);
+      dropped.add(t);
+      omitted['eip7708-duplicate'] += 1;
+      continue;
+    }
+    const pool: Pool = { amount, carried: null, transfer: t, used: false };
+    nativePools.push(pool);
+    addPool(key, pool);
+  }
+
+  const converted = new Set<RawTransfer>();
+  for (const t of transfers) {
+    if (!isProtocolLog(t)) continue;
+    const key = keyOf(t.hash, lower(t.from), lower(t.to));
+    const amount = rawAmount(t);
+    const candidates = (pools.get(key) ?? []).filter((p) => !p.used);
+    const match =
+      candidates.find((p) => amount !== null && p.amount === amount) ??
+      candidates.find((p) => p.amount === null || amount === null);
+    dropped.add(t);
+    if (match) {
+      match.used = true;
+      omitted['eip7708-duplicate'] += 1;
+    } else if (amount !== null) {
+      dropped.delete(t);
+      converted.add(t);
+    } else {
+      omitted['eip7708-unreadable'] += 1;
+    }
+  }
+
+  // Carry what is still unmatched in the page's oldest block (the next page
+  // of this side may continue that block).
+  let oldest: bigint | null = null;
+  for (const t of transfers) {
+    try {
+      const b = BigInt(t.blockNum);
+      if (oldest === null || b < oldest) oldest = b;
+    } catch {
+      // An unreadable block number is never carried.
+    }
+  }
+  const carry: CarryItem[] = [];
+  if (oldest !== null) {
+    const ob = oldest.toString();
+    for (const pool of carriedNatives) {
+      if (!pool.used && pool.carried && pool.carried.b === ob) carry.push(pool.carried);
+    }
+    for (const list of convertedCarry.values()) for (const item of list) if (item.b === ob) carry.push(item);
+    for (const pool of nativePools) {
+      const t = pool.transfer!;
+      if (pool.used || blockOf(t) !== ob) continue;
+      if (pool.amount === 0n || lower(t.from) === lower(t.to)) continue; // EIP-7708 logs neither
+      carry.push({ h: t.hash.toLowerCase(), f: lower(t.from), t: lower(t.to), a: pool.amount === null ? null : pool.amount.toString(), b: ob, k: 'n' });
+    }
+    for (const t of converted) {
+      if (blockOf(t) !== ob) continue;
+      const amount = rawAmount(t);
+      carry.push({ h: t.hash.toLowerCase(), f: lower(t.from), t: lower(t.to), a: amount === null ? null : amount.toString(), b: ob, k: 'l' });
+    }
+  }
+
+  return {
+    kept: transfers.filter((t) => !dropped.has(t)).map((transfer) => ({ transfer, native: converted.has(transfer) })),
+    omitted,
+    carry: carry.slice(0, MAX_CARRY_ITEMS),
+  };
+}
+
+function mapTransfer(transfer: RawTransfer, me: string, asNative = false): HistoryEntry {
   const from = transfer.from?.toLowerCase();
   const to = transfer.to?.toLowerCase() ?? null;
   const direction: HistoryEntry['direction'] =
@@ -182,9 +419,11 @@ function mapTransfer(transfer: RawTransfer, me: string): HistoryEntry {
   let amount: bigint | undefined;
   let assetAmount: bigint | undefined;
   let assetDecimals: number | undefined;
+  // A converted EIP-7708 protocol log (asNative) is an ETH movement.
+  const native = asNative || NATIVE_CATEGORIES.has(transfer.category);
   const rawValue = transfer.rawContract?.value;
   if (rawValue && HEX_VALUE.test(rawValue)) {
-    if (NATIVE_CATEGORIES.has(transfer.category)) {
+    if (native) {
       amount = BigInt(rawValue);
     } else if (transfer.category === 'erc20') {
       const rawDecimals = transfer.rawContract?.decimal;
@@ -204,7 +443,7 @@ function mapTransfer(transfer: RawTransfer, me: string): HistoryEntry {
   const counterparty = direction === 'in' ? from : direction === 'out' ? to : from;
 
   const assetSymbol =
-    !NATIVE_CATEGORIES.has(transfer.category) && typeof transfer.asset === 'string'
+    !native && typeof transfer.asset === 'string'
       ? transfer.asset
       : undefined;
 
@@ -296,16 +535,23 @@ export function indexerHistoryProvider(
       ]);
 
       const me = address.toLowerCase();
+      // EIP-7708 protocol logs are reconciled per query (each side pages
+      // alone and carries its own unmatched movements).
+      const outSide = reconcileProtocolLogs(outResult?.transfers ?? [], state.co ?? []);
+      const inSide = reconcileProtocolLogs(inResult?.transfers ?? [], state.ci ?? []);
       const seen = new Set<string>();
       const entries: HistoryEntry[] = [];
-      for (const transfer of [
-        ...(outResult?.transfers ?? []),
-        ...(inResult?.transfers ?? []),
-      ]) {
+      for (const { transfer, native } of [...outSide.kept, ...inSide.kept]) {
         const key = dedupeKey(transfer);
         if (seen.has(key)) continue;
         seen.add(key);
-        entries.push(mapTransfer(transfer, me));
+        entries.push(mapTransfer(transfer, me, native));
+      }
+      const omitted: Record<string, number> = {};
+      for (const side of [outSide, inSide]) {
+        for (const [reason, n] of Object.entries(side.omitted)) {
+          if (n > 0) omitted[reason] = (omitted[reason] ?? 0) + n;
+        }
       }
       // Newest first across the merged set; stable within a block by uid.
       entries.sort((a, b) => {
@@ -319,8 +565,14 @@ export function indexerHistoryProvider(
       const nextCursor = encodeCursor({
         ...(outResult?.pageKey ? { out: outResult.pageKey } : {}),
         ...(inResult?.pageKey ? { in: inResult.pageKey } : {}),
+        co: outSide.carry,
+        ci: inSide.carry,
       });
-      return { entries, ...(nextCursor ? { nextCursor } : {}) };
+      return {
+        entries,
+        ...(nextCursor ? { nextCursor } : {}),
+        ...(Object.keys(omitted).length ? { omitted } : {}),
+      };
     },
   };
 }

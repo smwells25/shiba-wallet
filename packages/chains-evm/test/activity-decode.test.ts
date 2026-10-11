@@ -639,6 +639,82 @@ describe('describeCall (wording supplied by the caller)', () => {
   });
 });
 
+describe('recipientSideFailures (someone else\'s reverted transaction)', () => {
+  // The REAL reverted transfer of the emulator pass of 2026-10-11 (finding
+  // 2): the dev EOA 0x16DA…aC5C sent 0.003 test ETH with a 21,000 gas limit
+  // to Account 1's Kernel account; the receipt (status 0x0, gasUsed 21,000,
+  // no logs) was read on 1rpc.io/sepolia and the transaction on
+  // ethereum-sepolia-rpc.publicnode.com on 2026-10-11.
+  const REVERTED = '0x8b7463c4';
+  const DEV_EOA = getAddress('0x16da2caeada26516f919c6872f6c38ab378cac5c');
+  const wallet = [ACCOUNT_1, KERNEL_OF_ACCOUNT_1];
+  const self = { selfAddresses: wallet, selfNames: [{ address: KERNEL_OF_ACCOUNT_1.toLowerCase(), name: 'your smart account' }] };
+
+  it('the fixture is a reverted incoming transfer the wallet did not send', () => {
+    const d = describeFixture(REVERTED, wallet);
+    expect(d.status).toBe('failed');
+    expect(d.fromWallet).toBe(false);
+    expect(d.from.toLowerCase()).toBe(DEV_EOA.toLowerCase());
+    expect(d.to?.toLowerCase()).toBe(KERNEL_OF_ACCOUNT_1.toLowerCase());
+    expect(d.value).toBe(3_000_000_000_000_000n);
+  });
+
+  it('without the option the old wording stays (byte for byte)', () => {
+    const d = describeFixture(REVERTED, wallet);
+    expect(activitySentence(d, ctx({ nativeSymbol: 'test ETH', ...self }))).toBe(
+      'Failed: tried to send 0.003 test ETH to your smart account',
+    );
+  });
+
+  it('with it the sender is named and nothing is said to be received', () => {
+    const d = describeFixture(REVERTED, wallet);
+    const on = { nativeSymbol: 'test ETH', recipientSideFailures: true };
+    expect(activitySentence(d, ctx({ ...on, ...self }))).toBe(
+      'Failed: an incoming transaction from 0x16DA…aC5C to your smart account (0.003 test ETH) was reverted, so nothing was received',
+    );
+    // Hide amounts masks the value; a contact names the sender.
+    expect(activitySentence(d, ctx({ ...on, ...self, maskAmount: () => '••••' }))).toBe(
+      'Failed: an incoming transaction from 0x16DA…aC5C to your smart account (•••• test ETH) was reverted, so nothing was received',
+    );
+    expect(activitySentence(d, ctx({ ...on, ...self, nameFor: (a) => (a.toLowerCase() === DEV_EOA.toLowerCase() ? 'Dev' : null) }))).toBe(
+      'Failed: an incoming transaction from Dev to your smart account (0.003 test ETH) was reverted, so nothing was received',
+    );
+    // Without selfNames the viewing account's own address is "this account".
+    expect(activitySentence(d, ctx({ ...on, selfAddresses: wallet }))).toBe(
+      'Failed: an incoming transaction from 0x16DA…aC5C to this account (0.003 test ETH) was reverted, so nothing was received',
+    );
+    // Seen from another account of the wallet, the recipient is named by its label.
+    expect(
+      activitySentence(d, ctx({ ...on, selfAddresses: [ACCOUNT_1], nameFor: (a) => (a.toLowerCase() === KERNEL_OF_ACCOUNT_1.toLowerCase() ? 'Account 1’s smart account' : null) })),
+    ).toBe(
+      'Failed: an incoming transaction from 0x16DA…aC5C to Account 1’s smart account (0.003 test ETH) was reverted, so nothing was received',
+    );
+  });
+
+  it('a zero-value incoming failure has no amount; a failure that does not reach the wallet names both parties', () => {
+    const zero = describe1(syntheticTx({ from: STRANGER, to: ACCOUNT_1, value: '0x0' }), syntheticReceipt([], '0x0'), [ACCOUNT_1]);
+    expect(activitySentence(zero, ctx({ recipientSideFailures: true }))).toBe(
+      'Failed: an incoming transaction from 0x2222…2222 to this account was reverted, so nothing was received',
+    );
+    const elsewhere = describe1(
+      syntheticTx({ from: STRANGER, to: USDC, input: erc20.encodeFunctionData('transfer', [ACCOUNT_1, 5_000_000n]) }),
+      syntheticReceipt([], '0x0'),
+      [ACCOUNT_1],
+    );
+    expect(activitySentence(elsewhere, ctx({ recipientSideFailures: true }))).toBe(
+      'Failed: a transaction from 0x2222…2222 to USDC was reverted, so nothing in it happened',
+    );
+  });
+
+  it("the viewing account's own failed transaction keeps the old wording", () => {
+    const tx = syntheticTx({ to: USDC, input: erc20.encodeFunctionData('transfer', [BURN, 5_000_000n]) });
+    const d = describe1(tx, syntheticReceipt([], '0x0'));
+    expect(activitySentence(d, ctx({ recipientSideFailures: true }))).toBe(
+      'Failed: tried to send 5 USDC to Burn; only the network fee was paid',
+    );
+  });
+});
+
 describe('selfAddresses (whose Activity this is)', () => {
   // The wallet's other own addresses (another account's smart account, a
   // multisig) stay in the wallet set so their operations and movements are
