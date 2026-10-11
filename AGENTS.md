@@ -5324,3 +5324,105 @@ non-zero; then the emulator passes one at a time (0a, 1, 2's app half,
 3); 4 alongside; 5 last. Subagents on Opus.
 
 ## Phase 19 progress
+- [x] Item 0a — OP SEPOLIA PROVEN LIVE BY SCRIPT (commit 42099d5;
+      scripts/testnet only — fund.mjs, kernel-smoke.mjs, new
+      l2-receipt.mjs; the offline runner ALL GREEN in the CTO's isolated
+      worktree with only these files on HEAD (engine 936, app 7,739,
+      check-devmode 305) and the read-only dry runs passing there on
+      11155111 / 84532 / 421614 / 11155420; every hash re-read on
+      sepolia.optimism.io (op-reth 2.4.4) and the Pocket endpoint (op-reth
+      2.4.2); no secret printed, the three files secret-scan clean; the
+      dev EOA spent 0.0051 ETH in transfers and about 0.0000703 in fees
+      on OP Sepolia, nothing elsewhere). SCRIPTS: fund.mjs prices the
+      exact unsigned transaction on OP-stack chains with the app's own
+      quoteOpStackFees (CORRECTION to the brief: the engine has no
+      OP-stack fee function; the only implementation is
+      app/src/wallet/send.ts, imported through Node type stripping as
+      check-base already does — so fund.mjs now depends on send.ts
+      loading cleanly, and Node prints a MODULE_TYPELESS_PACKAGE_JSON
+      warning), prints gas worst case + L1 estimate (and the 50% reserve)
+      + operator fee, refuses to send when the balance cannot cover value
+      + worst case, offers FUND_DRY_RUN=1, and after inclusion prints the
+      receipt's layer 2 fields, the fee paid as a share of the worst case
+      and an exact balance-delta check; the transaction built is
+      unchanged on every chain (Base live not re-run — dry run only).
+      kernel-smoke.mjs re-reads each bundle receipt (status, block, the
+      bundler EOA, fees with the layer 2 fields, every log whose topic
+      equals keccak of a known signature: AccountDeployed, Deposited,
+      OwnerRegistered, BeforeExecution, UserOperationEvent decoded), the
+      signed-gas line prints the worst-case prefund, the operator fee is
+      read only for OP_STACK_CHAINS {84532, 11155420} (a separate set
+      because check-devmode pins the CHAINS literal — that refactor came
+      after the live run; equivalent condition, re-checked by dry run).
+      LIVE (every status 0x1): (a) 0.003 ETH to the dev Kernel
+      0xc995E49acA5C888F4FF1E50E8467E9fFc31CC5AC — tx
+      0xe4f16359c7dcdb0af263d668b302dc91544d766977df1a2e85453ad8ac047407,
+      block 49967408, estimate 21,000 / limit 25,200, maxFee 1,000,500 /
+      tip 1,000,000, L1 estimate 244 wei on the 49-byte unsigned tx,
+      worst case 25,212,600,366; receipt gasUsed 21,000, effectiveGasPrice
+      1,000,250 (base fee 250), l1Fee 244 (= the quote to the wei),
+      operator fee 0; fee paid 21,005,250,244 = 83.31% of the worst case;
+      balance delta exactly value + gasUsed × price + l1Fee; receipt
+      fields present: l1Fee, l1GasUsed 1,600, l1GasPrice 13,
+      l1BaseFeeScalar 7,600, l1BlobBaseFee 1, l1BlobBaseFeeScalar
+      862,000, daFootprintGasScalar 400, blobGasUsed 40,000 (absent:
+      l1FeeScalar, operatorFeeScalar, operatorFeeConstant). (b) KERNEL
+      DEPLOYMENT THROUGH ZERODEV on 11155420 (EntryPoints v0.6, v0.7 and
+      two others served): op 1 (deployment + batch) userOp
+      0xd9a0d7c2f10df02c8dc7888f01aac9be525793f8376717454ecbcaa3485deda9,
+      bundle tx 0xddfba4a6d99d745776d9c924a4284bcc35dcf6b2e72651584c4b80c5484dbd28,
+      block 49967417, signed pVG / vGL / cGL 56,041 / 394,038 / 39,016,
+      fees 150,000,500 / 150,000,000, worst-case prefund
+      73,364,494,547,500, actualGasUsed 334,973, actualGasCost
+      50,246,033,743,250 (68.5%), effective user-op price 150,000,250,
+      bundle gasUsed 326,899, bundler effectiveGasPrice 129,790,855,
+      bundle l1Fee 1,013 wei (l1GasUsed 6,639), AccountDeployed (meta
+      factory 0xd703…42d5, no paymaster), OwnerRegistered, Deposited
+      73,364,494,547,500, UserOperationEvent nonce 0 success;
+      rootValidator() = 0x01‖845a…cE57, owner = the dev EOA; Kernel
+      balance −73,364,494,547,501, deposit 0 → 23,118,460,804,250 (=
+      prefund − actualGasCost); op 2 (deployed path) userOp
+      0xf92a8ca28c54553eee3ace79584738c60474b61c583a8a25a4b3d0fa2f446838,
+      tx 0x8b3abc215c634ea2082a77c0c06759b371961017ee6985f2c20ecd740c6e8331,
+      block 49967420, signed 50,492 / 100,373 / 26,932, prefund
+      26,669,638,898,500, actualGasUsed 133,009, cost 19,951,383,252,250
+      (74.8%), bundle gasUsed 125,860, l1Fee 647, nonce 1 success,
+      deposit → 6,718,255,646,250; three Kernel event topics
+      unrecognised (0x6789ec0c…, 0xd21d0b28…, 0x88a5966d…). (c) Emulator
+      funding: Account 1 EOA 0.0001 (tx
+      0x97329ead971b60eb0a17dbf62aad4f38c3516fdf27434e2c40051d2248f53e2a,
+      block 49967430) and the emulator Kernel 0xD31c…D8FA (=
+      predictKernelAddress(0x772e…F44F, 0), undeployed) 0.002 (tx
+      0x0bd37f012ebf35b509d4fa3957d39a172860daf6e93edbf2e9cac4aabe7b912b,
+      block 49967433), same fee figures. VERSUS BASE / ARBITRUM: op 1
+      signed pVG 56,041 = Arbitrum's (Base 61,454 carried its L1 cost),
+      actualGasUsed 334,973 = Arbitrum's, bundle gasUsed 326,899 vs
+      326,911 / 326,887; effective price 150.00025 Mwei vs 208 / 155 (all
+      mostly the script's 0.15 gwei priority floor); op 1 cost 0.0000502
+      vs 0.0000697 / 0.0000528 ETH; the sampled deployment estimate vGL
+      358,217 / cGL 17,955 = Arbitrum's. NEW FACTS: ZeroDev's OP Sepolia
+      estimates were NEVER impossible (both live estimates usable at
+      once; 30 raw samples 3 s apart: 0 zero limits, constant answers —
+      unlike Arbitrum, over a few minutes only); the L1 data fee is
+      negligible today (244 wei per transfer, ~1.2e-8 of the fee; L1
+      inputs l1BaseFee 13 wei, blobBaseFee 1) and the quote matched the
+      charge to the wei — the "L1 fee on top of gas × price" model held
+      exactly by balance delta, only at a near-zero L1 price; operator
+      fee 0 (L1Block scalars 0); GasPriceOracle 1.6.0 with Ecotone, Fjord
+      and Isthmus true, baseFeeScalar 7,600, blobBaseFeeScalar 862,000;
+      the receipt fields daFootprintGasScalar and blobGasUsed are new —
+      in all five receipts blobGasUsed = floor(l1GasUsed / 16) × 400
+      (empirical; probably the Jovian DA-footprint accounting, not
+      checked against the specs) and NOT charged to the sender; ZeroDev's
+      tiers constant at 1,000,300 / 1,050,315 / 1,100,330 wei maxFee (tip
+      1.0 / 1.05 / 1.1 Mwei), the node's eth_maxPriorityFeePerGas
+      1,000,000, base fee 250 wei — the smoke's 0.15 gwei floor is ~143×
+      ZeroDev's standard tier (the app's floor + 100% would be ~2.1
+      Mwei); a plain transfer to a never-used address costs 21,000 gas
+      (no EIP-2780 / 8037 there). FUNDS (OP Sepolia): dev EOA 0.1 →
+      0.094900 ETH (USDC 20 unchanged, nonce 0 → 3); dev Kernel 0.002923
+      + deposit 0.0000067, deployed; Account 1 EOA 0.0001; emulator
+      Kernel 0.002. UNVERIFIED: a non-zero L1 price or operator fee;
+      longer-window estimate behaviour; the three Kernel topics; fund.mjs's
+      new printing on Base live; the DA-footprint formula; the bundle
+      beneficiary. The in-app OP Sepolia pass is the next emulator slot.
