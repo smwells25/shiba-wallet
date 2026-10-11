@@ -6509,3 +6509,99 @@ recorded in the two review files.
       build). An emulator re-check of the DCA and multisig fix slices is
       in flight; the stuck-transactions and Hoodi in-app passes and the
       Hoodi claim remain.
+- [x] FIX SLICES RE-CHECKED ON THE EMULATOR (2026-10-11; Expo Go, Metro
+      worktree moved to HEAD 48f60c9, 2,365 modules; 0 prompts, nothing
+      signed or submitted, no funds touched, every balance on two RPCs;
+      screen protection OFF, IME ADBKeyboard; notes in the scratchpad
+      p19d). PART B — MULTISIG FIXES, ALL PASS LIVE on Base Sepolia
+      (Multisig 3 0x944c…0d38): (5) FILE OPEN — the key fix — a valid
+      request file opened through "Open a request file" and READ in Expo
+      Go (the content:// SAF read now works), showing the co-signer
+      review; a truncated request → "This file was not accepted. This
+      file must contain exactly one JSON object and nothing else." (the
+      clean parse refusal, NOT the old raw "Call to function
+      'FileSystemFile.text' has been rejected"); (6) GUARDIAN RECOVERY
+      IMPORT — a truncated recovery file → "The file was not imported:
+      This file is not a recovery record: it must contain exactly one
+      JSON record and nothing else." (plain, through the same fixed
+      shared helper); (7) HISTORY — no "two children with the same key"
+      LogBox warning (checked metro.log, logcat and screen); the
+      index:requestId:status keying holds (an OLD pre-fix record still
+      shows request 0xa8bf3dc1… as both "succeeded" and "abandoned" — the
+      fix prevents NEW duplicates and keys old ones distinctly without a
+      crash, it does not retroactively clean old data; cosmetic); (8)
+      NEW-OPERATION CONFIRM — "Start a new operation?" / "The one you are
+      collecting approvals for will be discarded." / Cancel / Discard and
+      start; (9) WEIGHT BAR — dev5 alone "weight 1 of 1 needed — ready" +
+      "This wallet signs the remaining weight 1 when you submit."; after
+      dev6 (co-signers alone = threshold) "Co-signer approvals: weight 2
+      (threshold 2 met by co-signers alone) — ready" with the
+      remaining-weight line DROPPED; the detail shows the "EntryPoint
+      deposit (pays fees first)" row. Nothing submitted; Multisig 3
+      balance unchanged (a harmless local 'collecting' operation left on
+      it, no on-chain effect). PART A — DCA FIXES, NOT EXERCISABLE LIVE
+      at the emulator's funds: the Kernel 0xD31c holds ~0.0059 ETH total,
+      below the ~0.012 the bundler needs just to ESTIMATE a ~7M-gas DCA
+      set-up, and every Review-time string renders only after a
+      successful estimate, so Review cannot open; at these funds the
+      wallet blocks at Review with the AA21 reservation message ("Your
+      smart account needs funds first… A recurring swap's set-up is
+      unusually large…") and installs NOTHING (Kernel balance unchanged,
+      both RPCs) — so a user cannot install an unusable DCA plan here
+      regardless. The fix code and the exact strings are confirmed
+      PRESENT at HEAD (SessionsScreen feeBudgetTooSmallBlock ×3, DcaViews
+      feeBudgetTooSmallWarning ×2, matching the designed text;
+      RecurringDueBanner BANNER_RECHECK_INTERVAL_MS 60000 with the
+      guarded useClockTick) and pinned by the green offline suites
+      (check-dca 135, check-recurring 192, check-subscriptions 195); the
+      too-small BLOCK, the typed-tiny WARNING, the 1-hour cadence and the
+      60 s banner were NOT seen on screen. Exercising them live needs the
+      Kernel funded into a narrow band (enough to estimate, not enough to
+      keep back one swap's fee), from the dev EOA — a follow-up, judged
+      not worth the spend given the offline pins and the sibling AA21
+      guard. END STATE: Home, Ethereum Sepolia, Account 1, light mode,
+      screen protection OFF, Metro at 48f60c9, dev EOA untouched.
+
+## Phase 19 status (2026-10-11)
+
+Items 0 to 5 are landed and pushed. PROVEN LIVE this phase: OP Sepolia
+by script and through the app (Kernel deployment, the OP-stack L1 fee,
+an EOA send, a USDC-fee op); Hoodi staking by script (Lido and Rocket
+Pool — stake, wrap, unwrap, a withdrawal request, a deposit and a burn,
+F-72 confirmed live and F-73 by trace; the withdrawal CLAIM pends Lido's
+daily oracle); multi-signature accounts for everyday use through the app
+on Base Sepolia (the FIRST off Ethereum Sepolia, same CREATE2 address,
+QR and files, an external wallet's signature), with the weighted
+validator verified on four test networks; dollar-cost averaging on a
+session key (engine + script on Sepolia Uniswap v3, then in-app — one
+swap verified to the base unit, revoke); stuck transactions (speed up /
+cancel) by script. Built and verified offline: the stuck-transaction
+registry and UI; the fixes from every pass. Two latent bugs were caught
+and fixed: the record-file open path (which also broke guardian
+recovery-file import in Expo Go), fixed and PROVEN LIVE; and the
+fee-budget keep-back that could install an unusable plan, shared across
+DCA, recurring payments and subscriptions. Engine: 981 tests. App: 53
+offline suites, 8,132 checks. The shareable page shows 49 proven live,
+17 built, 1 designed, 32 not started; docs/MAINNET_READINESS.md is the
+new decision memo.
+
+Security: the Chairperson's determination (proceed; the one CVSS-9.1
+finding — WebAuthn v0.0.1/v0.0.2 replay — is theirs to investigate; the
+wallet pins the patched v0.0.3 so its own users are unaffected; the rest
+deferred) is recorded; both review files stay in the git-ignored
+docs/private/; nothing has been or will be sent to the vendor without a
+further decision.
+
+Pending (no new code): the Hoodi withdrawal claim after the oracle
+reports (~12:03 UTC 2026-10-12; run STAKING_LIVE=hoodi-claim); the
+in-app passes of stuck transactions and Hoodi staking (both script-
+proven); the DCA Review-time strings live (offline-pinned; needs a
+narrow Kernel funding band); the stuck-transaction smart-account
+operations from Swap/Staking/WalletConnect (an addAaSentListener); the
+multisig confirm's balance-change preview and co-signer History record.
+
+Inputs that would unlock more: a mainnet audit, a bug bounty and a
+support horizon (C1–C3) plus on-chain verification of every mainnet
+address, before any mainnet profile; a real phone and an Expo account
+for the device-only checks (passkeys, hardware-backed storage, Face ID,
+screen readers); the ZeroDev disclosure decision.
