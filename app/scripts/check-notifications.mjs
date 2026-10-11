@@ -49,6 +49,11 @@ import {
   recurringDueContent,
   recurringNotificationId,
   recurringReminderAt,
+  recurringTermsReminderAt,
+  FOREGROUND_BEHAVIOR,
+  walletIdentifierOf,
+  requestReminderSync,
+  onReminderSyncRequest,
   screenFromNotificationData,
   takeoverContent,
   takeoverNotificationId,
@@ -206,9 +211,27 @@ function fakeNative({ permission = { granted: false, canAskAgain: true }, grantO
       n.log.push(`cancel:${id}`);
       n.scheduled.delete(id);
     },
-    async dismiss() {},
+    // The tray: shown notifications by the identifier the system lists
+    // (the request identifier; ExpoPresentationDelegate.kt posts with it as
+    // the tag), so a dismiss by that identifier removes exactly that one.
+    presented: new Map(),
+    dismissed: [],
+    async dismiss(id) {
+      n.log.push(`dismiss:${id}`);
+      n.dismissed.push(id);
+      n.presented.delete(id);
+    },
     async scheduledIdentifiers() {
       return [...n.scheduled.keys()];
+    },
+    async presentedIdentifiers() {
+      return [...n.presented.keys()];
+    },
+    /** The alarm fires: the request leaves the schedule and is shown in the tray. */
+    fire(id) {
+      const req = n.scheduled.get(id);
+      n.scheduled.delete(id);
+      n.presented.set(id, req ?? { identifier: id });
     },
     lastResponseData: () => null,
     clearLastResponse: () => {},
@@ -705,6 +728,250 @@ const EXPO_GO_REJECTION =
   check('a storage failure while turning on → "failed" (not "unavailable"), reminders not reported on', sfOut.ok === false && sfOut.reason === 'failed' && storeFail.status()?.state === 'failed');
 }
 
+// ---------------------------------------------------------------------------
+console.log('check-notifications: a payment set up just now is reminded without leaving Sessions (finding 1)');
+// ---------------------------------------------------------------------------
+{
+  const P2 = 120;
+  const rec = recurringRecord({ periodSeconds: P2, payments: '3', start: S, permissionId: '0x0000f001' });
+  const id = recurringNotificationId(rec);
+  check('recurringTermsReminderAt: before the start → the start; just after it → the next slot; on a boundary → the one after',
+    recurringTermsReminderAt(rec, S - 50) === S && recurringTermsReminderAt(rec, S + 10) === S + P2 && recurringTermsReminderAt(rec, S + P2) === S + 2 * P2);
+  check('recurringTermsReminderAt: no slot left (k ≥ payments) → none; a broken grant → none',
+    recurringTermsReminderAt(rec, S + 2 * P2 + 1) === null && recurringTermsReminderAt({ ...rec, grant: '{' }, S) === null);
+
+  // The app's sequence on the emulator: Start → install accepted (record
+  // 'installing') → the install settles ('installed') → the user leaves the
+  // app FROM the Sessions screen (no screen change) → the background pass.
+  const sessions = memoryStore();
+  const native = fakeNative({ permission: { granted: true, canAskAgain: true } });
+  let now = S + 5;
+  const { center } = centerWith(native, { now: () => now });
+  await center.enable({ found: [] });
+  const scope = { chain: M, owner: OWNER };
+  await saveSessionRecord({ ...rec, localStatus: 'installing' }, sessions);
+  await center.syncRecurring({ enabled: true, records: (await loadSessions(sessions)).records, states: [], scope });
+  check('while the set-up is not confirmed: nothing scheduled', native.scheduled.size === 0);
+  await saveSessionRecord(rec, sessions);
+  now = S + 12;
+  // The background pass (NotificationScheduler localRecurringPass): no network, states [].
+  await center.syncRecurring({ enabled: true, records: (await loadSessions(sessions)).records, states: [], scope });
+  check('install → background without leaving Sessions → a reminder exists, at the next slot (start + period)',
+    native.scheduled.size === 1 && native.scheduled.get(id)?.at === S + P2 && native.scheduled.get(id)?.channelId === 'payments-due',
+    JSON.stringify([...native.scheduled.values()].map((r) => r.at - S)));
+  await center.syncRecurring({ enabled: true, records: (await loadSessions(sessions)).records, states: [], scope });
+  check('a second background pass does not move or duplicate it', native.scheduled.size === 1 && native.scheduled.get(id)?.at === S + P2);
+
+  // Without a scope (no active account) nothing is scheduled from the grant.
+  const n2 = fakeNative({ permission: { granted: true, canAskAgain: true } });
+  const c2 = centerWith(n2, { now: () => S + 12 });
+  await c2.center.syncRecurring({ enabled: true, records: [rec], states: [] });
+  check('no scope: the local pass schedules nothing (it only cancels)', n2.scheduled.size === 0);
+  const otherOwner = recurringRecord({ periodSeconds: P2, start: S, owner: '0x16DA000000000000000000000000000000000C5C' });
+  const otherChain = { ...recurringRecord({ periodSeconds: P2, start: S }), chain: 'eip155:84532' };
+  const plan = planRecurringSync({ scheduled: [], records: [rec, otherOwner, otherChain], states: [], now: S + 12, scope });
+  check('only the active network + owner are scheduled from the grant', plan.schedule.length === 1 && plan.schedule[0].identifier === id);
+  const failedRead = planRecurringSync({ scheduled: [], records: [rec], states: [{ record: rec, due: null }], now: S + 12, scope });
+  check('a failed read with NOTHING scheduled: scheduled from the grant', failedRead.schedule.length === 1 && failedRead.schedule[0].at === S + P2);
+  const failedReadKeep = planRecurringSync({ scheduled: [id], records: [rec], states: [{ record: rec, due: null }], now: S + 12, scope });
+  check('a failed read with a reminder scheduled: left in place (not moved, not cancelled)', failedReadKeep.schedule.length === 0 && failedReadKeep.cancel.length === 0);
+  const decided = planRecurringSync({
+    scheduled: [],
+    records: [rec],
+    states: [{ record: rec, due: recurringDueState(rec, status({ remainingPulls: 0, nextSlotAt: S + 3 * P2, intervalSeconds: P2 }), S + 12) }],
+    now: S + 12,
+    scope,
+  });
+  check('a record the status read decided (completed) is never re-added from the grant', decided.schedule.length === 0);
+  const notEligible = planRecurringSync({ scheduled: [], records: [{ ...rec, localStatus: 'revoking', keyHeld: false }], states: [], now: S + 12, scope });
+  check('a revoked or keyless record is never scheduled from the grant', notEligible.schedule.length === 0);
+
+  // Wiring (source): the background pass passes the scope; the scheduler
+  // listens to the screens' requests; the Sessions screen requests a full sync
+  // as soon as a recurring set-up settles (a promise callback, not focus).
+  const scheduler = read('src/components/NotificationScheduler.tsx');
+  const localPass = scheduler.slice(scheduler.indexOf('const localRecurringPass = useCallback'), scheduler.indexOf('const fullSync = useCallback'));
+  check('the local (background) pass passes the active network + owner as the scope',
+    /const scope = canPay && owner !== null \? \{ chain, owner \} : null;/.test(localPass) && /syncRecurring\(\{ enabled: true, records, states: \[\], scope \}\)/.test(localPass));
+  check('the background handler still runs the local pass',
+    /if \(next === 'background'\) \{[\s\S]{0,160}localRecurringPass\(\)/.test(scheduler));
+  check('the scheduler subscribes to the screens\' requests: local pass first, then the full sync for "full"',
+    /return onReminderSyncRequest\(\(kind\) => \{\s*\n\s*void localRecurringPass\(\)\s*\n\s*\.catch\(\(\) => undefined\)\s*\n\s*\.then\(\(\) => \(kind === 'full' \? fullSync\(\) : undefined\)\)/.test(scheduler));
+  const screen = read('src/screens/SessionsScreen.tsx');
+  const subInstall = screen.slice(screen.indexOf('const onSubInstall = async'), screen.indexOf('const onShowKey = async'));
+  check('Sessions: a recurring set-up that settled requests a full reminder sync inside the finalizeSessionInstall callback',
+    /void finalizeSessionInstall\(sendBundle, record, AsyncStorage\)\.then\(\s*\n\s*\(\{ receipt, status \}\) => \{[\s\S]{0,400}if \(p\.mode === 'recurring'\) requestReminderSync\('full'\);/.test(subInstall));
+  check('Sessions: a resumed set-up or revocation that settled requests a full sync',
+    /void settle\(bundle, r, AsyncStorage\)\.then\(\s*\n\s*\(\) => \{[\s\S]{0,200}requestReminderSync\('full'\);/.test(screen));
+  // The request channel itself.
+  const got = [];
+  const off = onReminderSyncRequest((k) => got.push(k));
+  const offBad = onReminderSyncRequest(() => {
+    throw new Error('listener failure');
+  });
+  requestReminderSync('full');
+  requestReminderSync('local');
+  off();
+  offBad();
+  requestReminderSync('full');
+  check('requestReminderSync reaches the subscribed scheduler, never throws, and stops after unsubscribe', JSON.stringify(got) === JSON.stringify(['full', 'local']));
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-notifications: revoke, forget, completion and Off clear the tray too (finding 3)');
+// ---------------------------------------------------------------------------
+{
+  const P2 = 120;
+  const rec = recurringRecord({ periodSeconds: P2, payments: '3', start: S, permissionId: '0x0000f003' });
+  const other = recurringRecord({ periodSeconds: P2, payments: '3', start: S, permissionId: '0x0000f004' });
+  const id = recurringNotificationId(rec);
+  const idOther = recurringNotificationId(other);
+  const scope = { chain: M, owner: OWNER };
+  const setup = async () => {
+    const native = fakeNative({ permission: { granted: true, canAskAgain: true } });
+    const store = memoryStore();
+    const { center } = centerWith(native, { store, now: () => S + 12 });
+    await center.enable({ found: [] });
+    const states = [rec, other].map((r) => ({ record: r, due: recurringDueState(r, status({ intervalSeconds: P2 }), S + 12) }));
+    await center.syncRecurring({ enabled: true, records: [rec, other], states, scope });
+    return { native, center, store };
+  };
+  {
+    const { native, center } = await setup();
+    check('set-up: two reminders scheduled', native.scheduled.has(id) && native.scheduled.has(idOther));
+    native.fire(idOther);
+    native.presented.set(id, { identifier: id });
+    // The bundler accepted the revocation: the record is 'revoking' with its key deleted (sessions.ts revokeSession).
+    await center.syncRecurring({ enabled: true, records: [{ ...rec, localStatus: 'revoking', keyHeld: false }, other], states: [], scope });
+    check('revoke accepted → its reminder is cancelled at once by the local pass (no status read)', !native.scheduled.has(id));
+    check('…and its shown reminder is dismissed by its identifier; the other payment\'s shown reminder stays',
+      native.dismissed.includes(id) && !native.presented.has(id) && native.presented.has(idOther));
+  }
+  {
+    const { native, center } = await setup();
+    native.presented.set(id, { identifier: id });
+    await center.syncRecurring({ enabled: true, records: [other], states: [], scope });
+    check('forgotten (record gone) → cancelled and its shown reminder dismissed', !native.scheduled.has(id) && native.dismissed.includes(id) && native.scheduled.has(idOther));
+  }
+  {
+    const { native } = await setup();
+    native.fire(id);
+    native.fire(idOther);
+    const done = recurringDueState(rec, status({ remainingPulls: 0, nextSlotAt: S + 3 * P2, intervalSeconds: P2 }), S + 130);
+    const stillDue = recurringDueState(other, status({ intervalSeconds: P2 }), S + 130);
+    const c = centerWith(native, { now: () => S + 130 });
+    await c.center.syncRecurring({ enabled: true, records: [rec, other], states: [{ record: rec, due: done }, { record: other, due: stillDue }], scope });
+    check('completed → its shown reminder is dismissed; a payment still due keeps its shown reminder',
+      done.kind === 'completed' && stillDue.kind === 'due' && native.dismissed.includes(id) && !native.dismissed.includes(idOther) && native.presented.has(idOther));
+  }
+  {
+    const native = fakeNative({ permission: { granted: true, canAskAgain: true } });
+    const { center } = centerWith(native, { now: () => S + 130 });
+    native.presented.set(id, { identifier: id });
+    // The payment that was due was sent: the chain moved the next slot to S + 2P (after now).
+    const paid = recurringDueState(rec, status({ remainingPulls: 2, nextSlotAt: S + 2 * P2, intervalSeconds: P2 }), S + 130);
+    await center.syncRecurring({ enabled: true, records: [rec], states: [{ record: rec, due: paid }], scope });
+    check('the payment it announced was sent (next slot after now) → the shown reminder is dismissed and the next one scheduled',
+      paid.kind === 'later' && native.dismissed.includes(id) && native.scheduled.get(id)?.at === S + 2 * P2);
+    const stale = { kind: 'later', at: S + 100, remaining: 2, sent: 1, total: 3, feeBudgetLeftWei: 0n };
+    const keep = planRecurringSync({ scheduled: [], presented: [id], records: [rec], states: [{ record: rec, due: stale }], now: S + 130, scope });
+    check('a "later" state whose time already passed (read before the reminder fired) does not dismiss it', keep.dismiss.length === 0);
+  }
+  {
+    // A shown notification the library could not unmarshal is listed under a
+    // "foreign" identifier carrying our identifier as its tag.
+    const foreignOurs = `expo-notifications://foreign_notifications?tag=${encodeURIComponent(id)}&id=0`;
+    const foreignOther = 'expo-notifications://foreign_notifications?tag=other-app.thing&id=0';
+    check('walletIdentifierOf: ours, ours through a foreign listing, and nothing else',
+      walletIdentifierOf(id) === id && walletIdentifierOf(foreignOurs) === id && walletIdentifierOf(foreignOther) === null &&
+        walletIdentifierOf('other-app.reminder') === null && walletIdentifierOf('expo-notifications://foreign_notifications?id=3') === null);
+    const plan = planRecurringSync({ scheduled: [], presented: [foreignOurs, foreignOther], records: [], states: [], now: S });
+    check('a revoked payment\'s reminder listed under a foreign identifier is dismissed with that listed identifier', JSON.stringify(plan.dismiss) === JSON.stringify([foreignOurs]));
+
+    const { native, center } = await setup();
+    native.presented.set(id, {});
+    native.presented.set(foreignOther, {});
+    native.presented.set('other-app.reminder', {});
+    native.presented.set(takeoverNotificationId({ chain: M, account: ACCOUNT, proposalHash: `0x${'ab'.repeat(32)}` }), {});
+    native.presented.set(`expo-notifications://foreign_notifications?tag=${encodeURIComponent(idOther)}&id=0`, {});
+    await center.disable();
+    check('Off: every scheduled reminder of the wallet cancelled', native.scheduled.size === 0);
+    check('Off: every SHOWN notification of the wallet dismissed (recurring, takeover, a foreign-listed one), the others left in the tray',
+      [...native.presented.keys()].sort().join('|') === [foreignOther, 'other-app.reminder'].sort().join('|'), [...native.presented.keys()].join('|'));
+  }
+  {
+    // The wipe / turned-off-elsewhere path dismisses too.
+    const { native, center } = await setup();
+    native.fire(id);
+    await center.cleanupIfOff();
+    check('cleanupIfOff (wipe): the shown reminder is dismissed as well', native.presented.size === 0 && native.scheduled.size === 0);
+  }
+  {
+    // Best effort: a tray listing or a dismiss that fails never stops the schedule.
+    const native = fakeNative({ permission: { granted: true, canAskAgain: true } });
+    native.presentedIdentifiers = async () => {
+      throw new Error('listing failed');
+    };
+    const { center } = centerWith(native, { now: () => S + 12 });
+    await center.syncRecurring({ enabled: true, records: [rec], states: [{ record: rec, due: recurringDueState(rec, status({ intervalSeconds: P2 }), S + 12) }], scope });
+    check('a failing tray listing: reminders are still scheduled and the status is not "failed"', native.scheduled.has(id) && center.status()?.state !== 'failed');
+    const n3 = fakeNative({ permission: { granted: true, canAskAgain: true } });
+    n3.presented.set(id, {});
+    n3.presented.set(idOther, {});
+    n3.dismiss = async (x) => {
+      n3.dismissed.push(x);
+      if (x === id) throw new Error('dismiss failed');
+      n3.presented.delete(x);
+    };
+    const c3 = centerWith(n3);
+    await c3.center.disable();
+    check('a failing dismiss does not stop the others', n3.dismissed.length === 2 && !n3.presented.has(idOther));
+  }
+  // Wiring (source): the Sessions screen reports each change where it happens.
+  const screen = read('src/screens/SessionsScreen.tsx');
+  const revoke = screen.slice(screen.indexOf('const onRevoke = async'), screen.indexOf('const onForget = '));
+  check('Sessions: right after revokeSession resolved (bundler accepted) → local pass, before anything else',
+    /\}\);\s*\n(\s*\/\/[^\n]*\n)*\s*requestReminderSync\('local'\);\s*\n\s*setRevokeTarget\(null\);/.test(revoke) && revoke.indexOf("requestReminderSync('local')") > revoke.indexOf('await revokeSession('));
+  check('Sessions: the revocation settled → full sync; revoke-and-forget done → local pass',
+    /\(\{ record: settled, receipt, status \}\) => \{\s*\n\s*requestReminderSync\('full'\);/.test(revoke) &&
+      /forgetSession\(\{ record: settled[\s\S]{0,120}\(\) => \{\s*\n\s*requestReminderSync\('local'\);/.test(revoke));
+  const forget = screen.slice(screen.indexOf('const onForget = '), screen.indexOf('const onResetList = '));
+  check('Sessions: Forget done → local pass', /forgetSession\(\{ record, node: bundle\.node[\s\S]{0,80}\(\) => \{\s*\n\s*requestReminderSync\('local'\);/.test(forget));
+  const reset = screen.slice(screen.indexOf('const onResetList = '), screen.indexOf('const draftMatches'));
+  check('Sessions: list reset → local pass', /resetSessions\(\)\s*\n\s*\.then\(\(\) => requestReminderSync\('local'\)/.test(reset));
+  const pay = screen.slice(screen.indexOf('const onPayNow = async'), screen.indexOf('const onRevokeQuote = async'));
+  check('Sessions: a payment included → full sync (its shown reminder is stale; the next one moves)',
+    /waitForReceipt\(userOpHash[\s\S]{0,80}\(raw\) => \{[\s\S]{0,200}requestReminderSync\('full'\);/.test(pay));
+  check('NotificationsNative lists the tray through getPresentedNotificationsAsync and dismisses by identifier; dismissAll is not used',
+    /getPresentedNotificationsAsync \} = await import\('expo-notifications\/build\/getPresentedNotificationsAsync'\)/.test(read('src/wallet/notifications.ts')) &&
+      /presentedIdentifiers: async \(\) => \(await getPresentedNotificationsAsync\(\)\)\.map\(\(n\) => n\.request\.identifier\)/.test(read('src/wallet/notifications.ts')) &&
+      !/dismissAllNotificationsAsync\b(?![^\n]*\*)/.test(read('src/wallet/notifications.ts').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')));
+  const delegate = read('node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/service/delegates/ExpoPresentationDelegate.kt');
+  check('installed library: a notification is posted under its request identifier (tag) and dismissed by that identifier',
+    /notify\(\s*\n\s*notification\.notificationRequest\.identifier,/.test(delegate) && /cancel\(identifier, getNotifyId\(existingNotification\?\.notificationRequest\)\)/.test(delegate) &&
+      /override fun dismissAllNotifications\(\) = NotificationManagerCompat\.from\(context\)\.cancelAll\(\)/.test(delegate));
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-notifications: the foreground behaviour (finding 4)');
+// ---------------------------------------------------------------------------
+{
+  check('the handler answer (exact): banner and list shown, sound allowed (the channel decides), no badge',
+    JSON.stringify(FOREGROUND_BEHAVIOR) === JSON.stringify({ shouldShowBanner: true, shouldShowList: true, shouldPlaySound: true, shouldSetBadge: false }));
+  const lib = read('src/wallet/notifications.ts');
+  check('setNotificationHandler answers FOREGROUND_BEHAVIOR (source)',
+    /setNotificationHandler\(\{\s*\n\s*handleNotification: async \(\) => \(\{ \.\.\.FOREGROUND_BEHAVIOR \}\),\s*\n\s*\}\);/.test(lib) &&
+      !/shouldPlaySound: false/.test(lib.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')));
+  const builder = read('node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/presentation/builders/ExpoNotificationBuilder.kt');
+  const types = read('node_modules/expo-notifications/src/Notifications.types.ts');
+  check('why (installed 57.0.22): without sound the builder marks the notification silent; the types say the alert then never shows',
+    /if \(!shouldPlaySound && !shouldVibrate\) \{[\s\S]{0,120}builder\.setSilent\(true\)/.test(builder) &&
+      /val behaviorAllowsSound = notificationBehavior\?\.shouldPlaySound \?: true/.test(builder) && /val behaviorAllowsVibration = notificationBehavior\?\.shouldPlaySound \?: true/.test(builder) &&
+      types.includes('On Android, setting `shouldPlaySound: false` will result in the drop-down notification alert **not** showing, no matter what the priority is.'));
+  check('channels: payments due stay DEFAULT (no heads-up, by decision), security alerts HIGH (heads-up)',
+    CHANNEL_PAYMENTS.importance === 'default' && CHANNEL_SECURITY.importance === 'high');
+}
+
 // Mutation checks: copies of notifications.ts with one rule removed must fail.
 {
   const MUTANT_DIR = join(appDir, 'scripts', `.mutants-notifications-${process.pid}`);
@@ -733,6 +1000,39 @@ const EXPO_GO_REJECTION =
   const c2 = m2.createNotificationCenter({ loadNative: async () => n2, store: memoryStore() });
   const o2 = await c2.enable({ found: [] });
   check('mutant (a rejected channel call reported as a missing module, the bug seen live) is caught', o2.cause === 'missing' && o2.cause !== 'expo-go');
+
+  // Findings 1, 3 and 4 of the development-build pass.
+  const P2 = 120;
+  const mrec = recurringRecord({ periodSeconds: P2, payments: '3', start: S, permissionId: '0x0000fa01' });
+  const mid = recurringNotificationId(mrec);
+  const mscope = { chain: M, owner: OWNER };
+  const m3 = await importMutant('  if (scope) {\n    for (const record of eligibleRecords) {', '  if (false) {\n    for (const record of eligibleRecords) {');
+  const n3 = fakeNative({ permission: { granted: true, canAskAgain: true } });
+  const c3 = m3.createNotificationCenter({ loadNative: async () => n3, store: memoryStore(), now: () => S + 12 });
+  await c3.syncRecurring({ enabled: true, records: [mrec], states: [], scope: mscope });
+  check('mutant (the background pass schedules nothing from the grant — the bug seen live) is caught', n3.scheduled.size === 0);
+  const m4 = await importMutant('          await dismissAll(n, plan.dismiss);\n', '');
+  const n4 = fakeNative({ permission: { granted: true, canAskAgain: true } });
+  n4.presented.set(mid, {});
+  const c4 = m4.createNotificationCenter({ loadNative: async () => n4, store: memoryStore(), now: () => S + 12 });
+  await c4.syncRecurring({ enabled: true, records: [{ ...mrec, localStatus: 'revoking', keyHeld: false }], states: [], scope: mscope });
+  check('mutant (a revoke leaves the shown reminder in the tray — the bug seen live) is caught', n4.presented.has(mid));
+  const m5 = await importMutant("    await dismissAll(n, (await presented(n)).filter((id) => walletIdentifierOf(id) !== null));\n", '');
+  const n5 = fakeNative({ permission: { granted: true, canAskAgain: true } });
+  n5.presented.set(mid, {});
+  const c5 = m5.createNotificationCenter({ loadNative: async () => n5, store: memoryStore() });
+  await c5.disable();
+  check('mutant (Off cancels the schedule but leaves shown reminders) is caught', n5.presented.has(mid));
+  const m6 = await importMutant("  if (!identifier.startsWith(FOREIGN_IDENTIFIER_PREFIX)) return null;", '  return null;');
+  check('mutant (a foreign-listed reminder of the wallet is not recognised) is caught',
+    m6.walletIdentifierOf(`expo-notifications://foreign_notifications?tag=${mid}&id=0`) === null);
+  const m7 = await importMutant('  shouldPlaySound: true,\n  shouldSetBadge: false,\n} as const;', '  shouldPlaySound: false,\n  shouldSetBadge: false,\n} as const;');
+  check('mutant (the silent foreground answer seen live) is caught', m7.FOREGROUND_BEHAVIOR.shouldPlaySound === false &&
+    JSON.stringify(m7.FOREGROUND_BEHAVIOR) !== JSON.stringify({ shouldShowBanner: true, shouldShowList: true, shouldPlaySound: true, shouldSetBadge: false }));
+  const m8 = await importMutant("    if (listed !== undefined && (due.kind === 'completed' || due.kind === 'inactive' || (due.kind === 'later' && due.at > args.now))) {",
+    "    if (listed !== undefined && false) {");
+  const p8 = m8.planRecurringSync({ scheduled: [], presented: [mid], records: [mrec], states: [{ record: mrec, due: { kind: 'completed', reason: 'all-sent', sent: 3, total: 3, feeBudgetLeftWei: 0n } }], now: S + 400 });
+  check('mutant (a completed payment keeps its shown reminder) is caught', p8.dismiss.length === 0);
 }
 
 // ---------------------------------------------------------------------------

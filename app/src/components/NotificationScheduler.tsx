@@ -18,6 +18,7 @@ import {
   appNotifications,
   describeNotificationError,
   describeNotificationsStatus,
+  onReminderSyncRequest,
   screenFromNotificationData,
   type NotificationScreen,
   type NotificationsStatus,
@@ -37,14 +38,21 @@ const AFTER_LEAVE_REREADS_MS = [20_000, 60_000] as const;
  * earlier "on" may have left scheduled.
  *
  * With it on:
- *  - on start, on every return to the foreground and after leaving the
- *    Sessions screen it reads the recurring payments' on-chain status the
- *    way the banner does (read-only; no key, no bundler) and (re)schedules
- *    one reminder per payment at the moment its next payment falls due;
- *  - when the app goes to the background and on every screen change it
- *    cancels reminders of payments that were revoked or forgotten (local
- *    data only) and announces takeover attempts found by the Inheritance
- *    screen's check that the user has not seen;
+ *  - on start, on every return to the foreground, after leaving the
+ *    Sessions screen and when the Sessions screen reports that a set-up, a
+ *    revocation or a payment settled (requestReminderSync('full')) it reads
+ *    the recurring payments' on-chain status the way the banner does
+ *    (read-only; no key, no bundler) and (re)schedules one reminder per
+ *    payment at the moment its next payment falls due;
+ *  - when the app goes to the background, on every screen change and when
+ *    the Sessions screen reports a revoke, a forget or a reset
+ *    (requestReminderSync('local')) it runs the local pass (no network):
+ *    reminders of payments that were revoked or forgotten are cancelled and
+ *    their shown notifications dismissed, and a payment of the active
+ *    account and network with no reminder gets one from its grant's
+ *    schedule (so a payment set up just before the app went to the
+ *    background is reminded too); it also announces takeover attempts found
+ *    by the Inheritance screen's check that the user has not seen;
  *  - a tapped notification opens Sessions or Inheritance.
  * When the wallet is wiped (status 'no-wallet') every reminder is cancelled.
  */
@@ -85,12 +93,18 @@ export function NotificationScheduler() {
     [on],
   );
 
-  /** No network: cancels reminders whose payment was revoked or forgotten. */
+  /**
+   * No network: cancels (and dismisses) reminders whose payment was revoked
+   * or forgotten, and schedules a payment of the active account and network
+   * that has no reminder from its installed grant (notifications.ts
+   * planRecurringSync, scope).
+   */
   const localRecurringPass = useCallback(async () => {
     if (!on) return;
     const { records } = await loadSessions();
-    await appNotifications().syncRecurring({ enabled: true, records, states: [] });
-  }, [on]);
+    const scope = canPay && owner !== null ? { chain, owner } : null;
+    await appNotifications().syncRecurring({ enabled: true, records, states: [], scope });
+  }, [on, canPay, owner, chain]);
 
   /** Reads the on-chain status (read-only, as the banner does) and schedules. */
   const fullSync = useCallback(async () => {
@@ -98,7 +112,7 @@ export function NotificationScheduler() {
     await observeTakeovers(lookingNow());
     if (canPay && owner !== null) {
       const { records, states } = await readRecurringDueStates({ chain, owner, readStatus: readStatusNow });
-      await appNotifications().syncRecurring({ enabled: true, records, states });
+      await appNotifications().syncRecurring({ enabled: true, records, states, scope: { chain, owner } });
     } else {
       await localRecurringPass();
     }
@@ -108,6 +122,19 @@ export function NotificationScheduler() {
     void fullSync().catch(() => undefined);
   }, [fullSync]);
   useOnAppActive(useCallback(() => void fullSync().catch(() => undefined), [fullSync]), on);
+
+  // The Sessions screen reports a change where it happens (a set-up or a
+  // revocation settled, a revoke accepted, a record forgotten, a payment
+  // included): the local pass at once, then the full sync for 'full'.
+  useEffect(() => {
+    if (!on) return undefined;
+    return onReminderSyncRequest((kind) => {
+      void localRecurringPass()
+        .catch(() => undefined)
+        .then(() => (kind === 'full' ? fullSync() : undefined))
+        .catch(() => undefined);
+    });
+  }, [on, localRecurringPass, fullSync]);
 
   // Going to the background: local passes only (the network may be cut).
   useEffect(() => {

@@ -53,6 +53,7 @@ import { AaDepositNote } from '../components/AaDepositNote';
 import { findExactContact, listContacts, matchRecipient, type Contact } from '../wallet/contacts';
 import { sessionKeyVault } from '../wallet/storage';
 import { readinessGate } from '../config/readiness';
+import { requestReminderSync } from '../wallet/notifications';
 import {
   SESSIONS_AUDIT_NOTE,
   SESSIONS_INSTALL_MODE_NOTE,
@@ -108,6 +109,8 @@ import {
   SUBSCRIPTION_REQUOTE_MESSAGE,
   SUBSCRIPTION_REQUOTE_TITLE,
   SUBSCRIPTION_START_NOTE,
+  INSTALLED_PERMISSION_ID_LABEL,
+  permissionIdAtStartNote,
   buildSubscription,
   buildSubscriptionKeyExport,
   customPeriodSeconds,
@@ -284,6 +287,8 @@ interface Progress {
   kind: SessionProgressKind;
   /** Subscriptions: the final dates the install carries (subscriptionFinalDatesLine). */
   finalTerms?: string | null;
+  /** Subscriptions and recurring payments: the permission id that was installed (assigned at Start). */
+  permissionId?: string | null;
   userOpHash: string;
   state: 'pending' | 'done' | 'failed' | 'timeout';
   txHash: string | null;
@@ -496,7 +501,12 @@ export function SessionsScreen({ navigation }: Props) {
         waitingFor.current.add(op.userOpHash);
         const settle = op.kind === 'install' ? finalizeSessionInstall : finalizeSessionRevoke;
         void settle(bundle, r, AsyncStorage).then(
-          () => reloadRef.current(),
+          () => {
+            // Local reminders: a set-up or revocation that settled changes
+            // what is scheduled (notifications.ts requestReminderSync).
+            requestReminderSync('full');
+            reloadRef.current();
+          },
           // Not included yet (or unreadable): "Refresh status" tries again.
           () => waitingFor.current.delete(op.userOpHash),
         );
@@ -1024,10 +1034,16 @@ export function SessionsScreen({ navigation }: Props) {
         txHash: null,
         detail: null,
         finalTerms,
+        permissionId: record.permissionId,
       });
       setPhase('progress');
       void finalizeSessionInstall(sendBundle, record, AsyncStorage).then(
-        ({ receipt, status }) =>
+        ({ receipt, status }) => {
+          // Finding 1 of the development-build pass (2026-10-10): the
+          // reminder for a recurring payment is armed as soon as its set-up
+          // is confirmed, not only when the user leaves this screen (a
+          // promise callback, so it runs even if the screen is gone).
+          if (p.mode === 'recurring') requestReminderSync('full');
           setProgress((prev) =>
             prev && prev.userOpHash === userOpHash
               ? {
@@ -1037,7 +1053,8 @@ export function SessionsScreen({ navigation }: Props) {
                   detail: sessionStatusText(status),
                 }
               : prev,
-          ),
+          );
+        },
         () => setProgress((prev) => (prev && prev.userOpHash === userOpHash ? { ...prev, state: 'timeout' } : prev)),
       );
       reloadList();
@@ -1228,6 +1245,9 @@ export function SessionsScreen({ navigation }: Props) {
       setPhase('progress');
       void client.waitForReceipt(userOpHash, { timeoutMs: 120_000, pollMs: 3_000 }).then(
         (raw) => {
+          // The shown reminder for this payment is stale now, and the next
+          // one moves (or none is left): full reminder sync.
+          requestReminderSync('full');
           const summary = summarizeAaReceipt(raw);
           setProgress((prev) =>
             prev && prev.userOpHash === userOpHash
@@ -1287,6 +1307,10 @@ export function SessionsScreen({ navigation }: Props) {
         vault: sessionKeyVault,
         submit: (q) => signWith(EVM_CHAIN_ID, owner, (signer) => sendAa(sendBundle, signer, q)),
       });
+      // Finding 3 of the development-build pass: the bundler accepted the
+      // revocation and the record is now 'revoking', so its reminder is
+      // cancelled and a shown one dismissed at once (local pass, no network).
+      requestReminderSync('local');
       setRevokeTarget(null);
       waitingFor.current.add(userOpHash);
       setProgress({
@@ -1304,6 +1328,7 @@ export function SessionsScreen({ navigation }: Props) {
       setPhase('progress');
       void finalizeSessionRevoke(sendBundle, record, AsyncStorage).then(
         ({ record: settled, receipt, status }) => {
+          requestReminderSync('full');
           setProgress((prev) =>
             prev && prev.userOpHash === userOpHash
               ? {
@@ -1320,6 +1345,7 @@ export function SessionsScreen({ navigation }: Props) {
           if (target.forgetAfter && receipt.success !== false && status.kind === 'revoked') {
             forgetSession({ record: settled, node: sendBundle.node, store: AsyncStorage, vault: sessionKeyVault }).then(
               () => {
+                requestReminderSync('local');
                 setProgress((prev) =>
                   prev && prev.userOpHash === userOpHash ? { ...prev, detail: 'Revoked and forgotten' } : prev,
                 );
@@ -1354,7 +1380,10 @@ export function SessionsScreen({ navigation }: Props) {
         style: 'destructive',
         onPress: () => {
           forgetSession({ record, node: bundle.node, store: AsyncStorage, vault: sessionKeyVault }).then(
-            () => reloadList(),
+            () => {
+              requestReminderSync('local');
+              reloadList();
+            },
             (e: unknown) => {
               Alert.alert('Kept', e instanceof Error ? e.message : String(e));
               // A failed action re-reads the card (finding 8).
@@ -1373,7 +1402,14 @@ export function SessionsScreen({ navigation }: Props) {
         'they expire, and the session keys the old list referenced stay unused in secure storage.',
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Reset', style: 'destructive', onPress: () => void resetSessions().then(reloadList, reloadList) },
+        {
+          text: 'Reset',
+          style: 'destructive',
+          onPress: () =>
+            void resetSessions()
+              .then(() => requestReminderSync('local'), () => undefined)
+              .then(reloadList),
+        },
       ],
     );
   };
@@ -1428,6 +1464,9 @@ export function SessionsScreen({ navigation }: Props) {
           </Text>
         ) : null}
         {progress.finalTerms ? <Text style={[styles.hint, { color: theme.text }]}>{progress.finalTerms}</Text> : null}
+        {progress.permissionId ? (
+          <Row label={INSTALLED_PERMISSION_ID_LABEL} value={progress.permissionId} mono theme={theme} />
+        ) : null}
         {progress.state === 'pending' ? (
           <View style={styles.center}>
             <ActivityIndicator color={theme.accent} />
@@ -1614,8 +1653,9 @@ export function SessionsScreen({ navigation }: Props) {
           symbol={symbol}
           nameFor={nameFor}
           sessionKeyHolder={recurring ? RECURRING_KEY_HOLDER_TEXT : SUBSCRIPTION_KEY_HOLDER_TEXT}
-          permissionId={toHex(subPendingView.install.permissionId)}
+          permissionId={null}
         />
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{permissionIdAtStartNote(startButton)}</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>{SESSIONS_INSTALL_MODE_NOTE}</Text>
         <Row
           label="Install operation"

@@ -50,6 +50,7 @@ readiness conditions C1–C3 and W1–W20).
 | Privacy policy URL and support URL | Both stores | `docs/STORE_LISTING.md` section 1 |
 | Export-compliance answer for encryption | Every App Store submission | Section 6 |
 | A real website for the WalletConnect metadata | dApps display it as the wallet's identity | `app/src/wallet/walletconnect.ts` currently uses the placeholder `https://shiba-wallet.example` |
+| The Android notification icon (an all-white image on a transparent background) and its tint colour | The small icon of the local reminders in the status bar and the shade | An `expo-notifications` entry in `app/app.json` `plugins`; see "Notification icon" in section 3. Until then reminders show a placeholder |
 
 ### Step 2. Install the development client
 
@@ -187,6 +188,97 @@ Findings:
   test procedure (developer.android.com/identity/data/testingbackup, which
   covers both cloud backup with `adb shell bmgr backupnow` and the
   device-to-device test mode `backup_enable_d2d_test_mode`).
+
+**Notification icon (placeholder today).** The local reminders (phase 17
+item 2) show a placeholder in the status bar: no notification icon is
+configured, so the library falls back to the app's launcher icon
+(`expo-notifications` 57.0.22, `ExpoNotificationBuilder.kt`, property
+`icon`: the manifest meta-data `expo.modules.notifications.default_notification_icon`
+if present, else `context.applicationInfo.icon`), and Android draws a
+small icon only from its transparency, so a full-colour square becomes a
+plain shape (seen as a ring on the emulator on 2026-10-10). The fix needs
+an icon the Chairperson has not chosen yet, so nothing was added. The
+exact entry to add to `expo.plugins` in `app/app.json` once the artwork
+exists (paths and colour are examples):
+
+```json
+[
+  "expo-notifications",
+  {
+    "icon": "./assets/notification-icon.png",
+    "color": "#E6F4FE"
+  }
+]
+```
+
+What it does, from the installed plugin
+(`plugin/src/withNotificationsAndroid.ts`) and the SDK 57 documentation
+(docs.expo.dev/versions/v57.0.0/sdk/notifications, "Configurable
+properties"): `icon` is a "Local path to an image to use as the icon for
+push notifications. 96x96 all-white png with transparency" (Android only;
+the plugin resizes it into `drawable-mdpi` … `drawable-xxxhdpi` as
+`notification_icon.png`, 24 px times the density scale, and writes the
+meta-data `expo.modules.notifications.default_notification_icon`, which
+local notifications read, and `com.google.firebase.messaging.default_notification_icon`);
+`color` is the "Tint color for the push notification image when it
+appears in the notification tray", default `#ffffff` (written as
+`@color/notification_icon_color` with the matching `default_notification_color`
+meta-data). Two consequences to decide with it:
+
+- The same plugin ALWAYS adds the iOS push entitlement: `withNotificationsIOS.ts`
+  sets `aps-environment` to its `mode` (default `development`) when the
+  entitlements do not have one. The wallet uses no push notifications, so
+  either accept an unused push entitlement on iOS (and set `"mode":
+  "production"` for store builds) or add the Android meta-data and
+  drawables another way. `app/scripts/check-notifications.mjs` currently
+  pins that the plugin is absent; that check must be updated in the same
+  change.
+- A new native build is needed (the icon is a resource); Expo Go cannot
+  show it.
+
+**Local reminders: what the notification library adds to the Android
+manifest.** Seen in the merged manifest of the local debug development
+build of 2026-10-10 (made from commit ccead60; `AGENTS.md`, phase 17,
+"LOCAL REMINDERS PROVEN LIVE IN THE WALLET'S OWN DEVELOPMENT BUILD"):
+
+- From `expo-notifications`' own manifest (`android/src/main/AndroidManifest.xml`
+  in 57.0.22): the permissions `POST_NOTIFICATIONS` and
+  `RECEIVE_BOOT_COMPLETED`; the non-exported receiver `NotificationsService`
+  (its own event, `BOOT_COMPLETED`, `REBOOT`, the two `QUICKBOOT_POWERON`
+  actions and `MY_PACKAGE_REPLACED`, which re-arm scheduled reminders); the
+  non-exported `NotificationForwarderActivity`; and the non-exported
+  `ExpoFirebaseMessagingService`.
+- From the Firebase Cloud Messaging library that `expo-notifications`
+  depends on (`android/build.gradle`: `com.google.firebase:firebase-messaging:25.0.1`),
+  merged in although the wallet sends and receives no push messages: the
+  permissions `WAKE_LOCK` and `com.google.android.c2dm.permission.RECEIVE`;
+  an EXPORTED receiver `FirebaseInstanceIdReceiver`
+  guarded by the permission `com.google.android.c2dm.permission.SEND`;
+  the service `FirebaseMessagingService`;
+  Firebase's component registrars; and the content provider
+  `FirebaseInitProvider`, which runs at every app start.
+- At every start logcat showed "Default FirebaseApp failed to initialize
+  because no default options were found". The app ships no
+  `google-services.json`, so Firebase has no project to start with.
+
+Open question: is the exported receiver a concern? What it would receive:
+Firebase Cloud Messaging broadcasts that Google Play services delivers for
+this app (push messages addressed to the app's registration token), and
+only a sender holding `com.google.android.c2dm.permission.SEND` can send to it.
+That this permission is held only by Google Play services (a
+signature-level permission) is the usual reading but was NOT verified here;
+it can be checked on a device with `adb shell dumpsys package com.google.android.gms`
+(the permission's protection level) or `adb shell pm list permissions -f`.
+Without `google-services.json` Firebase does not initialise, so the app
+never obtains a registration token, and without a token no server can
+address a message to this app; the receiver should therefore never be
+used. Whether any Firebase code still contacts Google at start or later
+was not measured (a network capture of a fresh install would answer it).
+Removing the Firebase parts with `tools:node="remove"` was not tried: the
+library's own `ExpoFirebaseMessagingService` extends Firebase's
+`FirebaseMessagingService` (`ExpoFirebaseMessagingService.kt:7`), so a
+removal would need a build and a reminders test on a device first. These entries also matter
+for the store data-safety answers (`docs/PRIVACY.md` 2.8).
 
 **Blocked permissions.** `expo-screen-capture` 57.0.3's library manifest
 requests `READ_EXTERNAL_STORAGE` (up to API 32) and `READ_MEDIA_IMAGES`
@@ -446,7 +538,8 @@ Every item must be checked for the exact commit being built.
       privacy-policy URL with its open items closed.
 - [ ] No placeholder remains in a shipped feature: passkey rpId (or
       passkeys hidden), the WalletConnect metadata URL, the publisher
-      contact in `docs/PRIVACY.md`.
+      contact in `docs/PRIVACY.md`, the Android notification icon and
+      colour (section 3, "Notification icon").
 
 **Build hygiene**
 
@@ -476,5 +569,10 @@ Every item must be checked for the exact commit being built.
   unverified and belongs in PRIVACY.md once answered. The template also
   leaves `expo.modules.updates.*` meta-data although expo-updates is not
   installed.
+- Whether the Firebase parts that `expo-notifications` merges into the
+  Android manifest (section 3, "Local reminders") contact Google when
+  Firebase has no configuration, and the protection level of
+  `com.google.android.c2dm.permission.SEND` that guards the exported
+  `FirebaseInstanceIdReceiver`.
 - App Store Connect's phased-release controls.
 - The export-compliance answer (legal input).

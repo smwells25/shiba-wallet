@@ -36,6 +36,7 @@ import {
   encodePermissionInstall,
   getUserOpHash,
   kernelPermissionFromGrant,
+  computePermissionId,
   sessionNonceKey,
   subscriptionToGrant,
   toBytes,
@@ -67,6 +68,8 @@ import {
   SUBSCRIPTION_KEY_HOLDER_TEXT,
   SUBSCRIPTION_REQUOTE_FEE_TOLERANCE_PERCENT,
   SUBSCRIPTION_START_NOTE,
+  INSTALLED_PERMISSION_ID_LABEL,
+  permissionIdAtStartNote,
   SUBSCRIPTION_KEY_EXPORT_TYPE,
   SUBSCRIPTION_KEY_WARNING,
   createClipboardAutoClear,
@@ -525,6 +528,30 @@ const screenSrc = readFileSync(new URL('../src/screens/SessionsScreen.tsx', impo
       at("requireLocalAuth('Approve this subscription')") < at('installSession(') && /quote: p\.quote,\s*\n\s*install: p\.install,\s*\n\s*grant: p\.grant/.test(inst));
   check('the review explains that the start is fixed when Start is tapped', screenSrc.includes('{recurring ? RECURRING_START_NOTE : SUBSCRIPTION_START_NOTE}') && /when you tap Start subscription/.test(SUBSCRIPTION_START_NOTE));
 
+  // Finding 6 of the development-build pass (2026-10-10): the review showed
+  // one permission id and Start installed another.
+  {
+    const gReviewed = subscriptionGrantFor(reviewed, key2Account.address, { account: ACCOUNT, now: REVIEW_OPENED });
+    const pidReviewed = toHex(computePermissionId(kernelPermissionFromGrant(gReviewed)));
+    const pidStarted = toHex(computePermissionId(kernelPermissionFromGrant(g2)));
+    check('the permission id depends on the start time: the reviewed grant and the restarted one (same session key) have different ids',
+      pidReviewed !== pidStarted && gReviewed.sessionKey === g2.sessionKey);
+    check('…and the id that is installed is the restarted grant\'s (the record carries it)',
+      res2.record.permissionId === pidStarted.toLowerCase() && res2.record.permissionId === toHex(inst2.permissionId).toLowerCase());
+    check('the review line says the id is assigned at Start and shown on the next screen (exact)',
+      permissionIdAtStartNote('Start subscription') ===
+        'Kernel permission id: assigned when you tap Start subscription. It is computed from the terms, which restart at that moment, so the id that is installed is shown on the next screen. The session key above stays the same.');
+    const reviewSrc = screenSrc.slice(screenSrc.indexOf('key="sub-confirm"'), screenSrc.indexOf("if ((phase === 'sub-form'"));
+    check('the subscription / recurring review shows no permission id, only the note (source)',
+      /permissionId=\{null\}\s*\n\s*\/>\s*\n\s*<Text[^>]*>\{permissionIdAtStartNote\(startButton\)\}<\/Text>/.test(reviewSrc) &&
+        !reviewSrc.includes('install.permissionId'));
+    const progressSrc = screenSrc.slice(screenSrc.indexOf('key="progress"'), screenSrc.indexOf("if ((phase === 'confirm'"));
+    check('the success screen shows the installed id, set from the stored record by onSubInstall (source)',
+      INSTALLED_PERMISSION_ID_LABEL === 'Kernel permission id (installed)' &&
+        /<Row label=\{INSTALLED_PERMISSION_ID_LABEL\} value=\{progress\.permissionId\} mono theme=\{theme\} \/>/.test(progressSrc) &&
+        /finalTerms,\s*\n\s*permissionId: record\.permissionId,/.test(inst));
+  }
+
   // Finding 2: review order and scroll position.
   const confirm = screenSrc.slice(screenSrc.indexOf('key="sub-confirm"'), screenSrc.indexOf('Technical details (the grant as installed)'));
   const w = confirm.indexOf('<WarningBox>{batchCaveat}</WarningBox>');
@@ -661,7 +688,7 @@ console.log('check-subscriptions: phase 13 item 4 follow-ups (custom period, ins
   const short = buildSubscription({ ...draft, periodSeconds: 120, payments: '3' }, { now: NOW, account: ACCOUNT, testnet: true });
   const warn = subscriptionShortWindowWarning(short);
   check('short terms (3 × 2 min = 6 min) warn on the review, naming the total and the hand-over',
-    SUBSCRIPTION_SHORT_WINDOW_SECONDS === 600 && warn === 'These terms last only 6 minutes in total (3 payments of 2 minutes). Handing the key to the merchant and the merchant\'s first pull happen inside the first period, so some payments may never be taken. Choose a longer period or more payments unless this is a quick test.', warn);
+    SUBSCRIPTION_SHORT_WINDOW_SECONDS === 600 && warn === 'These terms last only 6 minutes in total (3 payments, one every 2 minutes). Handing the key to the merchant and the merchant\'s first pull happen inside the first period, so some payments may never be taken. Choose a longer period or more payments unless this is a quick test.', warn);
   check('exactly ten minutes or more: no warning', subscriptionShortWindowWarning({ startAt: 1000, validUntil: 1600, periodSeconds: 120 }) === null && subscriptionShortWindowWarning({ startAt: 1000, validUntil: 1599, periodSeconds: 60 }) !== null);
 
   // 2. The install's own fee: kept back by the pre-fill, checked on the review.

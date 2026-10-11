@@ -12,7 +12,12 @@
  *      recurringDueState). Rescheduled on every check, cancelled when the
  *      payment is revoked, forgotten, completed or its key is gone. A
  *      payment that is already due when the wallet checks is shown by the
- *      in-app banner (RecurringDueBanner), not by a notification.
+ *      in-app banner (RecurringDueBanner), not by a notification. When no
+ *      status could be read yet (just after the set-up, or while the app
+ *      goes to the background), the reminder is scheduled from the installed
+ *      grant's own schedule (recurringTermsReminderAt). A reminder already
+ *      shown in the tray is dismissed once it is stale (revoked, forgotten,
+ *      completed, or the payment it announced was sent).
  *  (b) "A recovery of one of your accounts was started" — fired once per
  *      takeover proposal found by the existing "Check for takeover
  *      attempts" scan of the Inheritance screen (inheritance.ts
@@ -90,6 +95,26 @@
  *    payment slot stays open for a whole period, so that is acceptable.
  *  - Foreground: without setNotificationHandler a notification received
  *    while the app is open is not shown (src/NotificationsHandler.ts:63-87).
+ *    The handler's answer is FOREGROUND_BEHAVIOR (see there for why it
+ *    allows sound: on Android, shouldPlaySound false makes the library mark
+ *    the notification silent, which also suppresses the banner).
+ *  - Posted identifier = scheduled identifier: Android posts a notification
+ *    with the request's identifier as its tag and id 0
+ *    (ExpoPresentationDelegate.kt:105-113, getNotifyId:127-129), and
+ *    dismissNotificationAsync(identifier) cancels exactly that tag and id
+ *    (ExpoPresentationDelegate.kt:143-155; src/dismissNotificationAsync.ts).
+ *    Dismissing touches only the tray, never the scheduled store, and
+ *    cancelling a scheduled request never removes a shown notification. A
+ *    shown notification whose request the library cannot unmarshal is
+ *    listed by getPresentedNotificationsAsync under a "foreign" identifier
+ *    "expo-notifications://foreign_notifications?tag=<tag>&id=<id>"
+ *    (ExpoPresentationDelegate.kt:69-84, 185-200); walletIdentifierOf reads
+ *    the tag back, so such a notification is still recognised as ours.
+ *  - dismissAllNotificationsAsync cancels EVERY notification of the app
+ *    (ExpoPresentationDelegate.kt:157, NotificationManagerCompat.cancelAll),
+ *    so it is not used: turning reminders off dismisses only the shown
+ *    notifications whose identifier is the wallet's ("shiba-wallet."),
+ *    one by one.
  *
  * Node-loadable: no React, React Native or expo-notifications import at the
  * top level (scripts/check-notifications.mjs drives the real logic with an
@@ -100,6 +125,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 // Explicit .ts extensions: scripts/check-notifications.mjs loads this module
 // under Node's type stripping, which resolves relative specifiers literally.
+import { parseSessionKeyGrant } from '@shiba-wallet/chains-evm';
 import { RECURRING_SOURCE, recurringEndsAt, type RecurringDue } from './recurring.ts';
 import type { SessionRecord } from './sessions.ts';
 import { termsOf } from './subscriptions.ts';
@@ -134,9 +160,60 @@ export const TAKEOVER_TITLE = 'Account recovery started';
 export const TAKEOVER_BODY =
   'Someone started a recovery of one of your accounts. Open the wallet to review it, and veto it if you did not expect it.';
 
-/** Android notification channels (names are shown in the system's notification settings). */
+/**
+ * Android notification channels (names are shown in the system's notification
+ * settings). Importance, per Android's channel documentation
+ * (developer.android.com/develop/ui/views/notifications/channels, read
+ * 2026-10-10): IMPORTANCE_DEFAULT "Makes a sound"; IMPORTANCE_HIGH "Makes a
+ * sound and appears as a heads-up notification".
+ *  - "payments-due" stays DEFAULT (decision of 2026-10-10, finding 4 of the
+ *    development-build pass): a payment slot stays open for a whole period
+ *    and a missed one can still be sent until the end date, so a reminder is
+ *    not urgent enough to pop up over whatever the user is doing (with
+ *    two-minute test periods that would be every two minutes). It appears in
+ *    the status bar and the shade, with the channel's sound.
+ *  - "security-alerts" is HIGH: a takeover attempt may need a veto before
+ *    its delay ends, so it appears as a heads-up banner.
+ * The same documentation says an app cannot change a channel's importance
+ * once it exists ("Once you submit the channel to the NotificationManager,
+ * you can't change the importance level"), so a heads-up for payments would
+ * need a NEW channel id, not a change here.
+ */
 export const CHANNEL_PAYMENTS = { id: 'payments-due', name: 'Payments due', importance: 'default' } as const;
 export const CHANNEL_SECURITY = { id: 'security-alerts', name: 'Security alerts', importance: 'high' } as const;
+
+/**
+ * The foreground handler's answer for every notification of this wallet
+ * (setNotificationHandler; finding 4 of the development-build pass, where a
+ * reminder that arrived while the wallet was open was posted silently with
+ * no banner).
+ *
+ * Why shouldPlaySound is true although the first design wanted "a banner
+ * without sound": on Android the library marks the notification SILENT
+ * whenever the behaviour forbids sound (ExpoNotificationBuilder.kt
+ * applySoundsAndVibrations: neither sound nor vibration → builder.setSilent(true);
+ * shouldPlaySound and shouldVibrate both read behavior.shouldPlaySound), and a
+ * silent notification never alerts. The installed types say so directly: "On
+ * Android, setting `shouldPlaySound: false` will result in the drop-down
+ * notification alert **not** showing, no matter what the priority is."
+ * (src/Notifications.types.ts, NotificationBehavior; the same sentence is in
+ * the SDK 57 documentation). With true, a notification arriving while the
+ * wallet is open is presented exactly as one arriving while it is closed: the
+ * CHANNEL decides — a heads-up banner with sound for "security-alerts"
+ * (high), the status bar and the shade with sound for "payments-due"
+ * (default; no heads-up, see CHANNEL_PAYMENTS). On Android 8+ the sound
+ * itself comes from the channel. On iOS the behaviour maps to the
+ * presentation options and the wallet's content sets no sound, so a banner
+ * shows without one. shouldShowBanner / shouldShowList: shown in both places
+ * (shouldPresentAlert = banner || list, NotificationBehaviorRecord.kt:25-27);
+ * shouldSetBadge: never (iOS only).
+ */
+export const FOREGROUND_BEHAVIOR = {
+  shouldShowBanner: true,
+  shouldShowList: true,
+  shouldPlaySound: true,
+  shouldSetBadge: false,
+} as const;
 export type NotificationChannelSpec = { id: string; name: string; importance: 'default' | 'high' };
 
 // ---------------------------------------------------------------------------
@@ -248,6 +325,68 @@ export function recurringReminderAt(record: SessionRecord, due: RecurringDue | n
   return at > now && at <= end ? at : null;
 }
 
+/**
+ * When the reminder for one recurring payment should fire, worked out from
+ * the INSTALLED grant alone (no network): the next slot boundary strictly
+ * after `now`, i.e. startAt + k × interval of the grant's RateLimitPolicy
+ * (subscriptionGrantFor installs startAt = the terms' start, interval = the
+ * period, count = the number of payments), if slot k exists (k < count) and
+ * opens no later than the grant's validUntil. Used only when no status read
+ * decided the record's reminder (just after the set-up; the background pass;
+ * a failed read with nothing scheduled).
+ *
+ * Why it cannot announce a payment that is not due: RateLimitPolicy moves its
+ * start forward by one interval per operation, so after s payments the next
+ * one opens at startAt + s × interval, and s can never exceed the number of
+ * slots already open (at most k at any time before boundary k). At boundary
+ * k, with k < count, a payment is therefore always due — unless the
+ * permission was revoked somewhere else, which the next status read corrects.
+ */
+export function recurringTermsReminderAt(record: SessionRecord, now: number): number | null {
+  let start: number;
+  let interval: number;
+  let count: number;
+  let end: number;
+  try {
+    const grant = parseSessionKeyGrant(record.grant);
+    if (!grant.rateLimit) return null;
+    start = grant.rateLimit.startAt ?? 0;
+    interval = grant.rateLimit.intervalSeconds;
+    count = grant.rateLimit.count;
+    end = grant.validUntil;
+  } catch {
+    return null;
+  }
+  if (!(interval > 0) || !(count > 0) || !Number.isFinite(start)) return null;
+  const k = now < start ? 0 : Math.floor((now - start) / interval) + 1;
+  if (k >= count) return null;
+  const at = start + k * interval;
+  return at > now && at <= end ? at : null;
+}
+
+/** The prefix of the identifiers getPresentedNotificationsAsync gives a shown notification it cannot unmarshal. */
+const FOREIGN_IDENTIFIER_PREFIX = 'expo-notifications://foreign_notifications';
+
+/**
+ * The wallet identifier behind a shown notification's identifier, or null
+ * when it is not one of the wallet's: the identifier itself when it starts
+ * with "shiba-wallet.", or the tag of a "foreign" identifier (see the module
+ * header) when that tag does.
+ */
+export function walletIdentifierOf(identifier: string): string | null {
+  if (identifier.startsWith(NOTIFICATION_ID_PREFIX)) return identifier;
+  if (!identifier.startsWith(FOREIGN_IDENTIFIER_PREFIX)) return null;
+  const m = /[?&]tag=([^&#]*)/.exec(identifier);
+  if (!m) return null;
+  let tag: string;
+  try {
+    tag = decodeURIComponent(m[1]!);
+  } catch {
+    return null;
+  }
+  return tag.startsWith(NOTIFICATION_ID_PREFIX) ? tag : null;
+}
+
 /** A record whose reminder may exist at all: recurring, set-up confirmed, key on this phone. */
 export function recurringReminderEligible(record: SessionRecord): boolean {
   return record.source === RECURRING_SOURCE && !!record.subscription && record.localStatus === 'installed' && record.keyHeld;
@@ -256,29 +395,53 @@ export function recurringReminderEligible(record: SessionRecord): boolean {
 export interface RecurringSyncPlan {
   schedule: { identifier: string; at: number }[];
   cancel: string[];
+  /** Shown notifications to remove from the tray (identifiers exactly as listed by the system). */
+  dismiss: string[];
 }
 
 /**
- * What to schedule and cancel for recurring payments.
+ * What to schedule, cancel and dismiss for recurring payments.
  *  - Everywhere (no network needed): a scheduled recurring reminder whose
  *    record is gone or no longer eligible (revoked, revoking, failed,
- *    forgotten, key gone) is cancelled.
+ *    forgotten, key gone) is cancelled, and a SHOWN one is dismissed.
  *  - For the states just read (one network + owner): each record's reminder
  *    is (re)scheduled at recurringReminderAt, or cancelled when there is no
  *    future time (completed, inactive, already due with nothing after it). A
- *    record whose status read failed (`due: null`) is left as it is.
+ *    record whose status read failed (`due: null`) keeps its existing
+ *    reminder. A shown reminder is dismissed when the state says no payment
+ *    is due: completed, inactive, or the next payment opens after `now`
+ *    (the one it announced was sent). It stays while a payment is due.
+ *  - Records of `scope` (the active network + owner) that are eligible, have
+ *    no reminder scheduled and were not decided by a state above (no state,
+ *    or a failed read) get one from the installed grant's schedule
+ *    (recurringTermsReminderAt). This is how a payment set up just now gets
+ *    its first reminder even when the app goes to the background before any
+ *    status read (finding 1 of the development-build pass, 2026-10-10).
  * Identifiers are stable, so scheduling never duplicates.
  */
 export function planRecurringSync(args: {
   scheduled: readonly string[];
+  /** Identifiers of the notifications shown in the tray now (getPresentedNotificationsAsync). */
+  presented?: readonly string[];
   records: readonly SessionRecord[];
   states: readonly { record: SessionRecord; due: RecurringDue | null }[];
   now: number;
+  /** The network + owner whose eligible records may be scheduled from their grant when nothing decided them. */
+  scope?: { chain: string; owner: string } | null;
 }): RecurringSyncPlan {
-  const eligible = new Set(args.records.filter(recurringReminderEligible).map(recurringNotificationId));
+  const eligibleRecords = args.records.filter(recurringReminderEligible);
+  const eligible = new Set(eligibleRecords.map(recurringNotificationId));
   const scheduled = new Set(args.scheduled.filter((id) => id.startsWith(RECURRING_ID_PREFIX)));
+  // Shown notifications: wallet identifier → the identifier the system listed.
+  const shown = new Map<string, string>();
+  for (const listed of args.presented ?? []) {
+    const id = walletIdentifierOf(listed);
+    if (id !== null && id.startsWith(RECURRING_ID_PREFIX) && !shown.has(id)) shown.set(id, listed);
+  }
   const cancel = new Set<string>();
+  const dismiss = new Set<string>();
   for (const id of scheduled) if (!eligible.has(id)) cancel.add(id);
+  for (const [id, listed] of shown) if (!eligible.has(id)) dismiss.add(listed);
   const schedule: { identifier: string; at: number }[] = [];
   const planned = new Set<string>();
   for (const { record, due } of args.states) {
@@ -289,6 +452,10 @@ export function planRecurringSync(args: {
       if (scheduled.has(identifier)) cancel.add(identifier);
       continue;
     }
+    const listed = shown.get(identifier);
+    if (listed !== undefined && (due.kind === 'completed' || due.kind === 'inactive' || (due.kind === 'later' && due.at > args.now))) {
+      dismiss.add(listed);
+    }
     const at = recurringReminderAt(record, due, args.now);
     if (at === null) {
       if (scheduled.has(identifier)) cancel.add(identifier);
@@ -297,7 +464,18 @@ export function planRecurringSync(args: {
       schedule.push({ identifier, at });
     }
   }
-  return { schedule, cancel: [...cancel] };
+  const scope = args.scope ?? null;
+  if (scope) {
+    for (const record of eligibleRecords) {
+      const identifier = recurringNotificationId(record);
+      if (planned.has(identifier) || scheduled.has(identifier)) continue;
+      if (record.chain !== scope.chain || record.owner.toLowerCase() !== scope.owner.toLowerCase()) continue;
+      planned.add(identifier);
+      const at = recurringTermsReminderAt(record, args.now);
+      if (at !== null) schedule.push({ identifier, at });
+    }
+  }
+  return { schedule, cancel: [...cancel], dismiss: [...dismiss] };
 }
 
 /**
@@ -350,6 +528,8 @@ export interface NotificationsNative {
   /** Removes a shown notification from the tray (best effort). */
   dismiss(identifier: string): Promise<void>;
   scheduledIdentifiers(): Promise<string[]>;
+  /** Identifiers of the notifications shown in the tray now (getPresentedNotificationsAsync). */
+  presentedIdentifiers(): Promise<string[]>;
   /** The data of the notification the user last tapped, if not yet handled. */
   lastResponseData(): unknown;
   clearLastResponse(): void;
@@ -575,10 +755,17 @@ export interface NotificationCenter {
    * forgets the bookkeeping. Loads the native module only in the first case.
    */
   cleanupIfOff(): Promise<void>;
+  /**
+   * Plans and applies recurring reminders (planRecurringSync): cancels,
+   * dismisses stale shown reminders, schedules. `scope` (the active network
+   * and owner) lets records without a status read be scheduled from their
+   * grant; the background pass passes it with `states: []`.
+   */
   syncRecurring(args: {
     enabled: boolean;
     records: readonly SessionRecord[];
     states: readonly { record: SessionRecord; due: RecurringDue | null }[];
+    scope?: { chain: string; owner: string } | null;
   }): Promise<void>;
   observeTakeovers(args: {
     enabled: boolean;
@@ -632,9 +819,35 @@ export function createNotificationCenter(deps: {
     return run;
   }
 
+  /** Shown notifications, best effort: a listing that fails counts as none (the tray is not the schedule). */
+  async function presented(n: NotificationsNative): Promise<string[]> {
+    try {
+      return await n.presentedIdentifiers();
+    } catch {
+      return [];
+    }
+  }
+
+  /** Removes shown notifications from the tray, best effort (one failure does not stop the others). */
+  async function dismissAll(n: NotificationsNative, listed: readonly string[]): Promise<void> {
+    for (const id of listed) {
+      try {
+        await n.dismiss(id);
+      } catch {
+        // The tray is cosmetic; the scheduled reminders are what matter.
+      }
+    }
+  }
+
+  /**
+   * Cancels every scheduled reminder of this wallet and dismisses every
+   * shown notification of this wallet (identifier, or a "foreign" listing's
+   * tag, starting with "shiba-wallet."); anything else is left alone.
+   */
   async function cancelAllOurs(n: NotificationsNative): Promise<void> {
     const ids = (await n.scheduledIdentifiers()).filter((id) => id.startsWith(NOTIFICATION_ID_PREFIX));
     for (const id of ids) await n.cancel(id);
+    await dismissAll(n, (await presented(n)).filter((id) => walletIdentifierOf(id) !== null));
   }
 
   return {
@@ -703,17 +916,25 @@ export function createNotificationCenter(deps: {
         if (lastStatus?.state !== 'blocked' && lastStatus?.state !== 'unavailable') setStatus({ state: 'off' });
       }),
 
-    syncRecurring: ({ enabled, records, states }) =>
+    syncRecurring: ({ enabled, records, states, scope }) =>
       serial(async () => {
         if (!enabled) return;
         try {
           const n = await native();
-          const plan = planRecurringSync({ scheduled: await n.scheduledIdentifiers(), records, states, now: now() });
+          const plan = planRecurringSync({
+            scheduled: await n.scheduledIdentifiers(),
+            presented: await presented(n),
+            records,
+            states,
+            now: now(),
+            scope: scope ?? null,
+          });
           if (plan.schedule.length > 0) {
             const state = await readState(deps.store);
             if (!state.mayHaveScheduled) await writeState(deps.store, { ...state, mayHaveScheduled: true });
           }
           for (const id of plan.cancel) await n.cancel(id);
+          await dismissAll(n, plan.dismiss);
           for (const s of plan.schedule) {
             await n.schedule({ identifier: s.identifier, content: recurringDueContent(), at: s.at, channelId: CHANNEL_PAYMENTS.id });
           }
@@ -760,6 +981,46 @@ export function createNotificationCenter(deps: {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Requests from the screens where a recurring payment changes
+// ---------------------------------------------------------------------------
+
+/**
+ * What a screen asks the scheduler (components/NotificationScheduler.tsx) to
+ * do right after a recurring payment changed where the change happens
+ * (findings 1 and 3 of the development-build pass, 2026-10-10):
+ *  - 'local': no network — cancel the reminders and dismiss the shown ones of
+ *    records that are no longer eligible (a revoke the bundler accepted, a
+ *    record forgotten, the list reset) and schedule records of the active
+ *    network and owner that have none, from their grant;
+ *  - 'full': the local pass, then the status read and a full sync (a set-up
+ *    or a revocation that settled, a payment that was included).
+ * With reminders off the scheduler ignores both. The request carries no
+ * record: the scheduler reads the stored session list itself.
+ */
+export type ReminderSyncKind = 'local' | 'full';
+
+const reminderSyncListeners = new Set<(kind: ReminderSyncKind) => void>();
+
+/** Called by a screen right after a recurring payment changed. Never throws. */
+export function requestReminderSync(kind: ReminderSyncKind): void {
+  for (const listener of [...reminderSyncListeners]) {
+    try {
+      listener(kind);
+    } catch {
+      // A failing listener never affects the screen's own work.
+    }
+  }
+}
+
+/** Subscribes the scheduler; returns the unsubscribe function. */
+export function onReminderSyncRequest(listener: (kind: ReminderSyncKind) => void): () => void {
+  reminderSyncListeners.add(listener);
+  return () => {
+    reminderSyncListeners.delete(listener);
   };
 }
 
@@ -823,6 +1084,7 @@ export async function loadNotificationsNative(): Promise<NotificationsNative> {
   const { cancelScheduledNotificationAsync } = await import('expo-notifications/build/cancelScheduledNotificationAsync');
   const { getAllScheduledNotificationsAsync } = await import('expo-notifications/build/getAllScheduledNotificationsAsync');
   const { dismissNotificationAsync } = await import('expo-notifications/build/dismissNotificationAsync');
+  const { getPresentedNotificationsAsync } = await import('expo-notifications/build/getPresentedNotificationsAsync');
   const { getPermissionsAsync, requestPermissionsAsync } = await import('expo-notifications/build/NotificationPermissions');
   const { setNotificationHandler } = await import('expo-notifications/build/NotificationsHandler');
   const emitter = await import('expo-notifications/build/NotificationsEmitter');
@@ -832,14 +1094,10 @@ export async function loadNotificationsNative(): Promise<NotificationsNative> {
   const { AndroidImportance } = await import('expo-notifications/build/NotificationChannelManager.types');
 
   // Shown while the app is open too (otherwise a notification arriving in the
-  // foreground is not displayed); no sound, no badge.
+  // foreground is not displayed), exactly as in the background: see
+  // FOREGROUND_BEHAVIOR for why sound must be allowed on Android.
   setNotificationHandler({
-    handleNotification: async () => ({
-      shouldShowBanner: true,
-      shouldShowList: true,
-      shouldPlaySound: false,
-      shouldSetBadge: false,
-    }),
+    handleNotification: async () => ({ ...FOREGROUND_BEHAVIOR }),
   });
 
   const toPermission = (p: { granted: boolean; canAskAgain: boolean }): NotificationPermission => ({
@@ -880,6 +1138,7 @@ export async function loadNotificationsNative(): Promise<NotificationsNative> {
     cancel: (identifier) => cancelScheduledNotificationAsync(identifier),
     dismiss: (identifier) => dismissNotificationAsync(identifier),
     scheduledIdentifiers: async () => (await getAllScheduledNotificationsAsync()).map((r) => r.identifier),
+    presentedIdentifiers: async () => (await getPresentedNotificationsAsync()).map((n) => n.request.identifier),
     lastResponseData: () => emitter.getLastNotificationResponse()?.notification.request.content.data ?? null,
     clearLastResponse: () => emitter.clearLastNotificationResponse(),
     onResponse: (listener) =>

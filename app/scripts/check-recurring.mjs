@@ -97,6 +97,7 @@ import {
   RECURRING_OUTCOME_UNKNOWN_SENTENCE,
   RECURRING_OUTCOME_UNKNOWN_TITLE,
   RECURRING_KEY_HOLDER_TEXT,
+  RECURRING_LATER_SLICE_NOTE,
   RECURRING_PAY_PROMPT_NOTE,
   RECURRING_REFUSED_TITLE,
   RECURRING_SPENDING_NOTE,
@@ -375,10 +376,10 @@ console.log('check-recurring: review copy');
   check('"Nothing after" is the grant\'s end, with when the last payment falls due',
     r.enforced[2] === 'Nothing after 2027-01-08 00:00 UTC. The last payment falls due 2026-11-09 00:00 UTC and can be sent until then.', r.enforced[2]);
   check('the catch-up caveat explains the grace and that it allows no extra payment',
-    /The end date is one period after the last payment falls due, so a late last payment can still be sent too; this does not allow any extra payment\.$/.test(r.caveats[1]), r.caveats[1]);
+    /The end date is two periods after the last payment falls due \(one period more than the terms alone would allow, as a grace period\), so a late last payment can still be sent too; this does not allow any extra payment\.$/.test(r.caveats[1]), r.caveats[1]);
   const installedOld = recurringReview(sub, { tokenSymbol: 'USDC', tokenDecimals: 6, nativeSymbol: 'test ETH', endsAt: sub.validUntil });
   check('an installed record WITHOUT grace (set up before this change) prints its own end and no grace sentence',
-    /until 2026-12-09 00:00 UTC:/.test(installedOld.sentence) && installedOld.enforced[2].startsWith('Nothing after 2026-12-09 00:00 UTC.') && !/one period after/.test(installedOld.caveats[1]));
+    /until 2026-12-09 00:00 UTC:/.test(installedOld.sentence) && installedOld.enforced[2].startsWith('Nothing after 2026-12-09 00:00 UTC.') && !/periods after/.test(installedOld.caveats[1]));
   check('recurringEndOf = terms end + one period', recurringEndOf(sub) === sub.validUntil + 30 * DAY);
   check('the FIRST caveat is the batching residual: per-transfer cap, up to the whole balance, payee only',
     /^ONE PAYMENT OPERATION CAN HOLD SEVERAL TRANSFERS\./.test(r.caveats[0]) && /does not add them up/.test(r.caveats[0]) && /up to everything this account holds in USDC/.test(r.caveats[0]) && r.caveats[0].includes(`only to ${PAYEE}`));
@@ -390,11 +391,44 @@ console.log('check-recurring: review copy');
     /Missed payments are not lost/.test(r.caveats[1]) && /Wiping the wallet[\s\S]*payments then stop/.test(r.caveats[2]) && /Revoke/.test(r.caveats[3]));
   check('"only while the wallet is open" is stated plainly, with no background work',
     /sent only while this wallet is open/.test(RECURRING_WHILE_OPEN_NOTE) && /Nothing is sent in the\s+background/.test(RECURRING_WHILE_OPEN_NOTE) && /only after you confirm/.test(RECURRING_WHILE_OPEN_NOTE) && /only while this wallet is open/.test(RECURRING_CARD_NOTE));
+  // Finding 5 of the development-build pass: reminders exist now.
+  check('the card note no longer says "Nothing runs in the background"; it says no PAYMENT is sent in the background and that a reminder can arrive while the wallet is closed',
+    RECURRING_CARD_NOTE === 'Sent only while this wallet is open, and only after you confirm each payment; no payment is ever sent in the background. With reminders on (Settings → Privacy → Notifications), this phone can remind you when a payment falls due, even while the wallet is closed; the payment still waits for you.' &&
+      !/Nothing runs in the background/.test(RECURRING_CARD_NOTE));
+  check('the form note says reminders exist, need the wallet’s own build (not Expo Go) and never send anything; no longer "would need … notifications"',
+    /Reminders need the wallet’s own build of the app; they do not work inside Expo Go\./.test(RECURRING_LATER_SLICE_NOTE) &&
+      /A reminder never sends anything/.test(RECURRING_LATER_SLICE_NOTE) && /always asks you first/.test(RECURRING_LATER_SLICE_NOTE) &&
+      !/would need a background task or notifications/.test(RECURRING_LATER_SLICE_NOTE) && !/development build/.test(RECURRING_LATER_SLICE_NOTE));
   check(`the prompt note quotes the vault's real session-key prompt ("${PROMPTS.sessionKeyRead}") and says the phrase is never opened`,
     RECURRING_PAY_PROMPT_NOTE.includes(`"${PROMPTS.sessionKeyRead}"`) && /recovery phrase is never opened/.test(RECURRING_PAY_PROMPT_NOTE));
   check('spending note: limits checked before each payment; the fee is not counted', /checked before each payment/.test(RECURRING_SPENDING_NOTE) && /not counted/.test(RECURRING_SPENDING_NOTE));
   check('short terms warn (2 min × 3 = 8 minutes with the grace) and long ones do not',
-    /last only 8 minutes in total \(3 payments of 2 minutes\)/.test(recurringShortWindowWarning({ startAt: 1000, validUntil: 1360, periodSeconds: 120 }) ?? '') && recurringShortWindowWarning({ startAt: 0, validUntil: 3 * DAY, periodSeconds: DAY }) === null);
+    (recurringShortWindowWarning({ startAt: 1000, validUntil: 1360, periodSeconds: 120 }) ?? '').startsWith(
+      'These terms last only 8 minutes in total: 3 payments, one every 2 minutes, and the last one can still be sent for 4 minutes after it falls due. ') &&
+      recurringShortWindowWarning({ startAt: 0, validUntil: 3 * DAY, periodSeconds: DAY }) === null);
+  // Finding 5 of the development-build pass (2026-10-10): every sentence of
+  // a 3 × 2-minute recurring payment must agree with the grant's validUntil.
+  // Fixed start 2027-01-15 08:00:00 UTC: slots open 08:00, 08:02, 08:04; the
+  // terms end 08:06; the grant (grace of one period) ends 08:08.
+  {
+    const T0 = 1_800_000_000;
+    const short = { ...sub, startAt: T0, validUntil: T0 + 3 * 120, periodSeconds: 120 };
+    const grant = recurringGrantFor(short, '0x484B87B8D4D73d88ccF7D39C006cC1b078384640', { account: ACCOUNT, now: T0 });
+    const sr = recurringReview(short, { tokenSymbol: 'USDC', tokenDecimals: 6, nativeSymbol: 'test ETH' });
+    const warn = recurringShortWindowWarning(short) ?? '';
+    const fin = recurringFinalDatesLine(short);
+    check('arithmetic (fixed start): the grant ends at start + (3 + 1) × 2 min = 08:08, the last payment falls due at 08:04',
+      grant.validUntil === T0 + 480 && recurringEndOf(short) === T0 + 480 && grant.rateLimit.count === 3 && grant.rateLimit.startAt === T0 && grant.rateLimit.intervalSeconds === 120);
+    check('arithmetic: the review, the warning and the final line all name the same end and last-due time',
+      sr.enforced[1] === 'At most 3 payments in total: the first from 2027-01-15 08:00 UTC, then one more every 2 minutes.' &&
+        sr.enforced[2] === 'Nothing after 2027-01-15 08:08 UTC. The last payment falls due 2027-01-15 08:04 UTC and can be sent until then.' &&
+        /The end date is two periods after the last payment falls due/.test(sr.caveats[1]) &&
+        warn.startsWith('These terms last only 8 minutes in total: 3 payments, one every 2 minutes, and the last one can still be sent for 4 minutes after it falls due.') &&
+        fin.endsWith('nothing after 2027-01-15 08:08 UTC.'),
+      `${sr.enforced[2]} | ${warn} | ${fin}`);
+    check('arithmetic: 8 minutes = 2 periods to the last due time + the 2 periods it stays open (4 + 4); end − last due = 2 periods',
+      (grant.validUntil - T0) === 8 * 60 && (grant.validUntil - (T0 + 2 * 120)) === 2 * 120);
+  }
   check('final dates line: nothing after the grant\'s end (3 × 2 min + 2 min grace)', recurringFinalDatesLine({ ...sub, startAt: 1_800_000_000, validUntil: 1_800_000_000 + 3 * 120, periodSeconds: 120 }) ===
     'Final terms: the first payment is due from 2027-01-15 08:00 UTC, then one more every 2 minutes (3 in total); nothing after 2027-01-15 08:08 UTC.');
 }
