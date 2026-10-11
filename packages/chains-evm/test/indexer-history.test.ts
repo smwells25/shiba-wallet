@@ -247,6 +247,58 @@ describe('indexerHistoryProvider', () => {
     expect(page3.nextCursor).toBeUndefined();
   });
 
+  it("direction 'sent' / 'received' issue only that side's query and page it alone", async () => {
+    const handler = (p: Record<string, unknown>) =>
+      p.fromAddress === ME
+        ? { transfers: [transfer({ from: ME.toLowerCase(), to: OTHER, blockNum: '0x90', uniqueId: 'out:1' })], pageKey: 'out-key' }
+        : { transfers: [transfer({ blockNum: '0x80', uniqueId: 'in:1' })], pageKey: 'in-key' };
+    const sent = fakeTransport(handler);
+    const sentPage = await indexerHistoryProvider(sent.transport, { direction: 'sent' }).getHistory(ME);
+    expect(sent.calls.map((c) => Object.keys(c.params).filter((k) => k.endsWith('Address')))).toEqual([['fromAddress']]);
+    expect(sentPage.entries.map((e) => [e.uid, e.direction])).toEqual([['out:1', 'out']]);
+    expect(JSON.parse(sentPage.nextCursor!)).toEqual({ v: 1, out: 'out-key' });
+
+    const received = fakeTransport(handler);
+    const receivedPage = await indexerHistoryProvider(received.transport, { direction: 'received' }).getHistory(ME);
+    expect(received.calls.map((c) => c.params.toAddress)).toEqual([ME]);
+    expect(receivedPage.entries.map((e) => [e.uid, e.direction])).toEqual([['in:1', 'in']]);
+    expect(JSON.parse(receivedPage.nextCursor!)).toEqual({ v: 1, in: 'in-key' });
+
+    // A cursor that also holds the other side's key never makes a one-sided
+    // provider query that side.
+    const later = fakeTransport((p) => {
+      expect(p.pageKey).toBe('out-key');
+      return { transfers: [] };
+    });
+    const both = JSON.stringify({ v: 1, out: 'out-key', in: 'in-key' });
+    const done = await indexerHistoryProvider(later.transport, { direction: 'sent' }).getHistory(ME, both);
+    expect(later.calls).toHaveLength(1);
+    expect(later.calls[0]!.params.fromAddress).toBe(ME);
+    expect(done.nextCursor).toBeUndefined();
+  });
+
+  it('reports the counterparty: the recipient of a sent entry, the sender of a received one', async () => {
+    const { transport } = fakeTransport((p) =>
+      p.fromAddress === ME
+        ? { transfers: [transfer({ from: ME.toLowerCase(), to: OTHER.toLowerCase(), blockNum: '0x90', uniqueId: 'out:1' })] }
+        : { transfers: [transfer({ blockNum: '0x80', uniqueId: 'in:1' }), transfer({ from: ME.toLowerCase(), to: ME.toLowerCase(), blockNum: '0x70', uniqueId: 'self:1' }), transfer({ to: null, blockNum: '0x60', uniqueId: 'create:1' })] },
+    );
+    const page = await indexerHistoryProvider(transport).getHistory(ME);
+    expect(page.entries.map((e) => [e.uid, e.direction, e.counterparty])).toEqual([
+      ['out:1', 'out', OTHER.toLowerCase()],
+      ['in:1', 'in', OTHER.toLowerCase()],
+      ['self:1', 'self', ME.toLowerCase()],
+      ['create:1', 'in', OTHER.toLowerCase()],
+    ]);
+  });
+
+  it("the default ('both') is unchanged: two queries per first page", async () => {
+    const { transport, calls } = fakeTransport(() => ({ transfers: [] }));
+    await indexerHistoryProvider(transport, { direction: 'both' }).getHistory(ME);
+    await indexerHistoryProvider(transport).getHistory(ME);
+    expect(calls).toHaveLength(4);
+  });
+
   it('treats an empty-string pageKey as exhausted (documented empty form)', async () => {
     const { transport } = fakeTransport(() => ({ transfers: [], pageKey: '' }));
     const page = await indexerHistoryProvider(transport).getHistory(ME);

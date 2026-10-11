@@ -12,6 +12,8 @@ import type { NetworkKind } from '../config/defaults';
 import { tokenLogsCoverageOf, tokenLogsHistoryProvider } from './token-history.ts';
 import type { TokenLogsCoverage, TrackedTokenRef } from './token-history.ts';
 import { sanitizeEndpointMessage } from '../config/endpoint-probe.ts';
+import type { HistoryStream } from './smart-account-history.ts';
+import type { JsonRpcTransport } from '@shiba-wallet/chains-evm';
 
 /**
  * Transaction-history engine glue: resolves the right HistoryProvider for a
@@ -231,6 +233,32 @@ export function historySourceFor(
         }),
       };
   }
+}
+
+/**
+ * The cursored streams the Activity list merges by time
+ * (smart-account-history.ts createMergedHistoryFeed) when a history
+ * indexer is configured: the account's sent and received transfers, and,
+ * with `smartAccount`, the smart account's sent and received transfers —
+ * each the engine's indexer provider used one-sided (its `direction`
+ * option), so each is one stream in block order. `transport` is for the
+ * check scripts; the app passes the indexer URL only.
+ */
+export function indexerHistoryStreams(
+  indexerUrl: string,
+  address: string,
+  smartAccount: string | null,
+  transport: JsonRpcTransport = evmHttpTransport(indexerUrl),
+): HistoryStream[] {
+  const side = (group: 'own' | 'smart', who: string, direction: 'sent' | 'received'): HistoryStream => {
+    const provider = indexerHistoryProvider(transport, { direction });
+    return { group, fetch: (cursor) => provider.getHistory(who, cursor) };
+  };
+  return [
+    side('own', address, 'sent'),
+    side('own', address, 'received'),
+    ...(smartAccount ? [side('smart', smartAccount, 'sent'), side('smart', smartAccount, 'received')] : []),
+  ];
 }
 
 /**

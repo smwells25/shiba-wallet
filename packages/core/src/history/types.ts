@@ -48,6 +48,13 @@ export interface HistoryEntry {
    */
   assetAmount?: bigint;
   assetDecimals?: number;
+  /**
+   * The other address of this movement as the backend reports it: the
+   * recipient of an outgoing entry, the sender of an incoming one (the
+   * address itself for a self-transfer). Display-only; absent when the
+   * provider does not know it.
+   */
+  counterparty?: string;
 }
 
 export interface HistoryPage {

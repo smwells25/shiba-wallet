@@ -1,35 +1,69 @@
-import type { HistoryEntry, HistoryPage, HistoryProvider } from '@shiba-wallet/core';
+import type { HistoryEntry, HistoryPage } from '@shiba-wallet/core';
 
 /**
- * The active account's smart-account history next to its own (emulator
- * re-check of 2026-10-11, finding 4: the Activity screen listed only the
- * account's own address, so the transactions of its Kernel smart account —
- * EntryPoint bundles sent by a bundler, which move value from the smart
- * account in internal calls — never appeared, and a note saved for a
- * smart-account send could not be seen).
+ * The Activity list of one EVM account through a history indexer, merged
+ * IN TIME ORDER from several cursored streams, with the account's smart
+ * account listed next to it (emulator re-check of 2026-10-11, finding 4;
+ * redesigned after the pass of the same day, findings F1 and F2: the
+ * first version paged the account's stream and the smart account's stream
+ * independently and appended each page below the last, so a later page
+ * could repeat a transaction already listed as a smart-account row, and
+ * the list went out of time order across pages and even within one page).
  *
- * The EVM history indexer (packages/chains-evm/src/indexer-history.ts,
- * alchemy_getAssetTransfers) is queried by address: HistoryProvider
- * .getHistory(address, cursor) takes any address, and the provider's own
- * cursor carries only that query's pageKeys. So the smart account's
- * history is one more getHistory call on the same provider per page (the
- * provider sends its usual two requests for it: transfers sent by the
- * address and transfers received by it). The two streams are merged here:
+ * STREAMS. The engine's indexer provider (packages/chains-evm/src/
+ * indexer-history.ts, alchemy_getAssetTransfers ordered by block, newest
+ * first) is used ONE-SIDED (its `direction` option): transfers sent by an
+ * address, and transfers received by it, are separate streams, each in
+ * block order. The two-sided provider cannot be merged by time, because
+ * its two queries page independently and one of its pages already mixes
+ * time ranges. So the account has two streams (sent, received) and its
+ * smart account two more.
  *
- *  - the account's own entries are kept exactly as the provider returned
- *    them (the same objects, in the same order);
- *  - a smart-account entry whose transaction hash is already listed for
- *    the account's own address is dropped (one transaction, one place:
- *    for example a top-up from the account to its own smart account);
- *  - every other smart-account entry is marked (`smartAccount: true`, its
- *    uid prefixed so list keys never collide) and inserted by block,
- *    newest first, after the account's own entries of the same block.
+ * THE MERGE RULE. Each stream keeps a buffer of entries fetched but not
+ * yet listed, and a frontier: the block of the oldest entry it has fetched
+ * (before its first fetch, +infinity). A stream that has nothing more
+ * (no cursor) has no frontier. The bound is the LATEST (highest) frontier
+ * among the streams that still have more. An entry is listed only when its
+ * block is STRICTLY above the bound: then every stream has fetched every
+ * entry of that block, because a stream is in block order. (Strictly, not
+ * "at or after": a page boundary can split one block, and one transaction
+ * can produce several entries — a token transfer and a native movement —
+ * so the rest of the bound's block may still be on the next page.) While
+ * fewer than PAGE_TARGET entries are listable, the stream(s) whose
+ * frontier IS the bound are fetched (the stream "ahead" holds the others
+ * back), at most MAX_FETCH_ROUNDS times per page. When no stream has more,
+ * everything left is listable. Listed entries are ordered by block, newest
+ * first; within one block, the account's own entries come before the
+ * smart account's, each stream's own order kept. So the list is in time
+ * order across every page.
  *
- * The cursor holds both streams' cursors; a stream that is exhausted is
- * not queried again. A failure of the smart-account query never hides the
- * account's own entries: the page carries them, reports the failure, and
- * the smart-account stream is not queried again until a reload. A failure
- * of the account's own query fails the page as before.
+ * ONE TRANSACTION, ONE PLACE. Every entry of a transaction is in one
+ * block, so when it is listed every stream has already fetched all of that
+ * transaction's entries. Then:
+ *  - the account's own entries are listed as the SAME objects the provider
+ *    returned; if the smart account's streams also hold an entry with the
+ *    same transaction hash, the own entries are marked as involving the
+ *    smart account (involvesSmartAccount(entry) — a side record, so the
+ *    objects are not changed) and the row shows "with smart account";
+ *  - the smart account's entries of a transaction that has ANY entry of
+ *    the account's own are NOT listed (no mirror row: the live case
+ *    0x341db91c…, Account 1 → its Kernel account 0.0015, is listed once,
+ *    as Account 1's "−0.0015" row whose sentence reads "Sent 0.0015 test
+ *    ETH to your smart account");
+ *  - every other smart-account entry is listed as a copy marked
+ *    `smartAccount: true` with its uid prefixed "smart-account:" (so list
+ *    keys never collide); its direction and amount are the smart
+ *    account's;
+ *  - an entry listed by both one-sided streams of one address (a
+ *    self-transfer: the same uid) is listed once.
+ *
+ * FAILURES. A failure of one of the account's own streams fails the page;
+ * whatever the other streams fetched in the same round is kept, and the
+ * next call fetches again (nothing is listed twice and nothing skipped). A
+ * failure of a smart-account stream never hides the account's own
+ * entries: both smart-account streams stop, their unlisted entries are
+ * dropped, the page reports 'failed', and they are not queried again until
+ * a reload (pull to refresh).
  *
  * The tracked-token logs fallback (token-history.ts) is built for one
  * wallet address and searches block windows of Transfer logs; a second
@@ -52,133 +86,203 @@ export function isSmartAccountEntry(entry: HistoryEntry): boolean {
 /** Whether a page includes the smart account's entries. */
 export type SmartAccountHistoryStatus = 'included' | 'failed' | 'skipped';
 
-/** A page built by withSmartAccountHistory. */
-export interface SmartAccountHistoryPage extends HistoryPage {
-  smartAccountHistory: { address: string; status: 'included' | 'failed'; error?: string };
+/** Entries listed per page when the streams have that many (a judgement; the first version listed up to 100). */
+export const PAGE_TARGET = 50;
+/** Fetch rounds per page at most (each fetches the stream or streams holding the others back). */
+export const MAX_FETCH_ROUNDS = 8;
+
+/** One cursored stream: one side of one address, in block order, newest first. */
+export interface HistoryStream {
+  /** 'own' = the account's own address; 'smart' = its smart account. */
+  group: 'own' | 'smart';
+  /** The page after `cursor` (the first page when undefined). */
+  fetch(cursor: string | undefined): Promise<HistoryPage>;
 }
 
-/** The smart-account report of a page, if it came from withSmartAccountHistory. */
-export function smartAccountHistoryOf(page: HistoryPage): SmartAccountHistoryPage['smartAccountHistory'] | undefined {
-  const report = (page as Partial<SmartAccountHistoryPage>).smartAccountHistory;
-  return report && typeof report === 'object' ? report : undefined;
+/** What one fill() of a merged feed makes ready. */
+export interface MergedHistoryPage {
+  /** The entries to append, newest first, all older than everything listed before. */
+  entries: HistoryEntry[];
+  /** True while a stream has more or entries are still held back. */
+  hasMore: boolean;
+  /** Present when smart-account streams were given. */
+  smartAccount?: 'included' | 'failed';
 }
 
-/** Marks the composite cursor, so a provider's own cursor is never mistaken for it. */
-const CURSOR_VERSION = 'own+smart-account-1';
-
-interface CompositeCursor {
-  v: typeof CURSOR_VERSION;
-  own?: string;
-  smart?: string;
+/** A merged feed: fill() loads the next page (one at a time), take() hands it over. */
+export interface MergedHistoryFeed {
+  /**
+   * Loads the next page. A call while one is loading returns the same
+   * promise; a call while a page is ready resolves at once. A rejection
+   * leaves the feed able to try again.
+   */
+  fill(): Promise<void>;
+  /** The page made ready by fill(), removed from the feed; null when none is ready. */
+  take(): MergedHistoryPage | null;
 }
 
-function encodeCursor(state: { own?: string; smart?: string }): string | undefined {
-  if (state.own === undefined && state.smart === undefined) return undefined;
-  return JSON.stringify({ v: CURSOR_VERSION, ...state });
-}
+const involved = new WeakSet<HistoryEntry>();
 
-function decodeCursor(cursor: string): CompositeCursor {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(cursor);
-  } catch {
-    throw new Error('Unrecognized history cursor');
-  }
-  if (typeof parsed !== 'object' || parsed === null || (parsed as { v?: unknown }).v !== CURSOR_VERSION) {
-    throw new Error('Unrecognized history cursor');
-  }
-  const p = parsed as { own?: unknown; smart?: unknown };
-  return {
-    v: CURSOR_VERSION,
-    ...(typeof p.own === 'string' ? { own: p.own } : {}),
-    ...(typeof p.smart === 'string' ? { smart: p.smart } : {}),
-  };
+/**
+ * True for one of the account's own entries whose transaction the smart
+ * account's history also lists (its mirror row is not shown; the row says
+ * "with smart account").
+ */
+export function involvesSmartAccount(entry: HistoryEntry): boolean {
+  return involved.has(entry);
 }
 
 /** Block height for ordering; an entry without one (pending) counts as newest. */
 function heightOf(entry: HistoryEntry): number {
-  return entry.blockHeight ?? Number.POSITIVE_INFINITY;
+  return entry.blockHeight ?? Number.MAX_SAFE_INTEGER;
+}
+
+interface StreamState {
+  stream: HistoryStream;
+  buffer: HistoryEntry[];
+  cursor: string | undefined;
+  fetched: boolean;
+  /** No more pages. */
+  done: boolean;
+  /** Block of the oldest entry fetched so far; +Infinity before the first fetch. */
+  frontier: number;
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /**
- * Merges one page of the account's own entries with one page of its smart
- * account's entries (see the file comment). `shownIds` are transaction
- * hashes already listed on earlier pages; smart-account entries for them
- * are dropped too.
+ * The time-ordered merge described in the file comment. `streams` are
+ * fetched in their given order within a round (the account's sent and
+ * received streams first, then the smart account's).
  */
-export function mergeSmartAccountEntries(
-  own: readonly HistoryEntry[],
-  smart: readonly HistoryEntry[],
-  shownIds: Iterable<string> = [],
-): HistoryEntry[] {
-  const listed = new Set<string>([...shownIds].map((id) => id.toLowerCase()));
-  for (const entry of own) listed.add(entry.id.toLowerCase());
-  const marked: SmartAccountHistoryEntry[] = smart
-    .filter((entry) => !listed.has(entry.id.toLowerCase()))
-    .map((entry) => ({ ...entry, smartAccount: true as const, uid: `smart-account:${entry.uid ?? entry.id}` }))
-    // Stable: equal heights keep the provider's order.
-    .sort((a, b) => heightOf(b) - heightOf(a));
-  const out: HistoryEntry[] = [];
-  let next = 0;
-  for (const entry of own) {
-    while (next < marked.length && heightOf(marked[next]!) > heightOf(entry)) out.push(marked[next++]!);
-    out.push(entry);
+export function createMergedHistoryFeed(
+  streams: readonly HistoryStream[],
+  options: { pageTarget?: number; maxRounds?: number } = {},
+): MergedHistoryFeed {
+  const pageTarget = options.pageTarget ?? PAGE_TARGET;
+  const maxRounds = options.maxRounds ?? MAX_FETCH_ROUNDS;
+  const states: StreamState[] = streams.map((stream) => ({
+    stream,
+    buffer: [],
+    cursor: undefined,
+    fetched: false,
+    done: false,
+    frontier: Number.POSITIVE_INFINITY,
+  }));
+  const hasSmart = streams.some((s) => s.group === 'smart');
+  let smartFailed = false;
+  const hashes = { own: new Set<string>(), smart: new Set<string>() };
+  const listedUids = { own: new Set<string>(), smart: new Set<string>() };
+  let ready: MergedHistoryPage | null = null;
+  let inflight: Promise<void> | null = null;
+
+  const live = () => states.filter((s) => !s.done);
+  const bound = () => live().reduce((max, s) => Math.max(max, s.frontier), Number.NEGATIVE_INFINITY);
+  const listable = () => {
+    const b = bound();
+    return states.reduce((n, s) => n + s.buffer.filter((e) => heightOf(e) > b).length, 0);
+  };
+
+  const dropSmart = () => {
+    smartFailed = true;
+    for (const s of states) {
+      if (s.stream.group !== 'smart') continue;
+      s.done = true;
+      s.buffer = [];
+    }
+  };
+
+  async function fetchRound(targets: StreamState[]): Promise<void> {
+    const results = await Promise.allSettled(targets.map((s) => s.stream.fetch(s.fetched ? s.cursor : undefined)));
+    let ownError: unknown = null;
+    let smartError = false;
+    results.forEach((result, i) => {
+      const s = targets[i]!;
+      if (s.done) return; // a smart stream dropped by another's failure in this round
+      if (result.status === 'rejected') {
+        if (s.stream.group === 'own') ownError ??= result.reason;
+        else smartError = true;
+        return;
+      }
+      const page = result.value;
+      s.fetched = true;
+      s.buffer.push(...page.entries);
+      for (const entry of page.entries) hashes[s.stream.group].add(entry.id.toLowerCase());
+      if (page.entries.length > 0) s.frontier = Math.min(s.frontier, heightOf(page.entries[page.entries.length - 1]!));
+      s.cursor = page.nextCursor || undefined;
+      if (!s.cursor) s.done = true;
+    });
+    if (smartError) dropSmart();
+    if (ownError !== null) throw ownError instanceof Error ? ownError : new Error(errorText(ownError));
   }
-  while (next < marked.length) out.push(marked[next++]!);
-  return out;
-}
 
-/**
- * Entries of a later page that are not yet listed: the uid rule the
- * Activity list always applied, plus a smart-account entry whose
- * transaction is already listed (from either stream) is dropped. The
- * account's own entries are never dropped for a smart-account row.
- */
-export function freshHistoryEntries(previous: readonly HistoryEntry[], page: readonly HistoryEntry[]): HistoryEntry[] {
-  const seenUids = new Set(previous.map((entry) => entry.uid ?? entry.id));
-  const seenIds = new Set(previous.map((entry) => entry.id.toLowerCase()));
-  return page.filter((entry) => {
-    if (seenUids.has(entry.uid ?? entry.id)) return false;
-    return !(isSmartAccountEntry(entry) && seenIds.has(entry.id.toLowerCase()));
-  });
-}
+  function emit(): HistoryEntry[] {
+    const b = bound();
+    const candidates: { entry: HistoryEntry; group: 'own' | 'smart'; order: number }[] = [];
+    let order = 0;
+    for (const s of states) {
+      const keep: HistoryEntry[] = [];
+      for (const entry of s.buffer) {
+        if (heightOf(entry) > b) candidates.push({ entry, group: s.stream.group, order: order++ });
+        else keep.push(entry);
+      }
+      s.buffer = keep;
+    }
+    // Newest block first; within a block the account's own entries first,
+    // then each stream's own order.
+    candidates.sort(
+      (x, y) =>
+        heightOf(y.entry) - heightOf(x.entry) ||
+        (x.group === y.group ? 0 : x.group === 'own' ? -1 : 1) ||
+        x.order - y.order,
+    );
+    const out: HistoryEntry[] = [];
+    for (const { entry, group } of candidates) {
+      const uid = entry.uid ?? entry.id;
+      if (listedUids[group].has(uid)) continue;
+      listedUids[group].add(uid);
+      const hash = entry.id.toLowerCase();
+      if (group === 'own') {
+        if (hashes.smart.has(hash)) involved.add(entry);
+        out.push(entry);
+      } else if (!hashes.own.has(hash)) {
+        const marked: SmartAccountHistoryEntry = { ...entry, smartAccount: true, uid: `smart-account:${uid}` };
+        out.push(marked);
+      }
+    }
+    return out;
+  }
 
-/**
- * A provider that lists `smartAccount`'s history next to the queried
- * address's, through the same `base` provider (one more getHistory call
- * per page while the smart-account stream has more).
- */
-export function withSmartAccountHistory(base: HistoryProvider, smartAccount: string): HistoryProvider {
+  async function load(): Promise<void> {
+    for (let round = 0; ; round++) {
+      const streamsLeft = live();
+      if (streamsLeft.length === 0 || listable() >= pageTarget || round >= maxRounds) break;
+      const b = bound();
+      await fetchRound(streamsLeft.filter((s) => s.frontier === b));
+    }
+    const entries = emit();
+    ready = {
+      entries,
+      hasMore: live().length > 0 || states.some((s) => s.buffer.length > 0),
+      ...(hasSmart ? { smartAccount: smartFailed ? ('failed' as const) : ('included' as const) } : {}),
+    };
+  }
+
   return {
-    async getHistory(address: string, cursor?: string): Promise<SmartAccountHistoryPage> {
-      const state = cursor === undefined ? null : decodeCursor(cursor);
-      const queryOwn = state === null || state.own !== undefined;
-      const querySmart = state === null || state.smart !== undefined;
-      const [ownPage, smartResult] = await Promise.all([
-        queryOwn ? base.getHistory(address, state?.own) : Promise.resolve(null),
-        querySmart
-          ? base.getHistory(smartAccount, state?.smart).then(
-              (page) => ({ ok: true as const, page }),
-              (error: unknown) => ({ ok: false as const, error: error instanceof Error ? error.message : String(error) }),
-            )
-          : Promise.resolve(null),
-      ]);
-      const smartPage = smartResult?.ok ? smartResult.page : null;
-      const entries = mergeSmartAccountEntries(ownPage?.entries ?? [], smartPage?.entries ?? []);
-      const nextCursor = encodeCursor({
-        ...(ownPage?.nextCursor ? { own: ownPage.nextCursor } : {}),
-        ...(smartPage?.nextCursor ? { smart: smartPage.nextCursor } : {}),
+    fill() {
+      if (ready) return Promise.resolve();
+      if (inflight) return inflight;
+      inflight = load().finally(() => {
+        inflight = null;
       });
-      const failed = smartResult !== null && !smartResult.ok;
-      return {
-        entries,
-        ...(nextCursor ? { nextCursor } : {}),
-        smartAccountHistory: {
-          address: smartAccount,
-          status: failed ? 'failed' : 'included',
-          ...(failed && smartResult && !smartResult.ok ? { error: smartResult.error } : {}),
-        },
-      };
+      return inflight;
+    },
+    take() {
+      const page = ready;
+      ready = null;
+      return page;
     },
   };
 }

@@ -14,7 +14,7 @@ import { BalanceChangePreview } from '../components/BalanceChangePreview';
 import { RiskWarnings } from '../components/RiskWarnings';
 import { SpendingPolicyNotice, spendingGateForQuote } from '../components/SpendingPolicyViews';
 import { AaDepositNote } from '../components/AaDepositNote';
-import { TransactionNoteField } from '../components/TransactionNoteField';
+import { NOTE_VIEW_SCROLL_PROPS, TransactionNoteField, dismissKeyboardThenClose } from '../components/TransactionNoteField';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
 import { requireLocalAuth } from '../wallet/biometric';
@@ -673,7 +673,7 @@ export function StakingScreen({ navigation }: Props) {
   // ------------------------------------------------------------ success
   if (phase === 'success' && (result || aaResult) && plan) {
     return (
-      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content} {...NOTE_VIEW_SCROLL_PROPS}>
         <Text style={[styles.successTitle, { color: theme.success }]}>{aaResult ? 'Sent to the bundler ✓' : 'Sent ✓'}</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>{stakingActionTitle(plan.action, symbol)}.</Text>
         {approveTxid ? <Text style={[styles.hint, { color: theme.textMuted }]}>Approval transaction: {approveTxid}</Text> : null}
@@ -748,17 +748,19 @@ export function StakingScreen({ navigation }: Props) {
         ) : null}
         <Button
           title="Done"
-          onPress={() => {
-            setResult(null);
-            setAaResult(null);
-            setSentNetwork(null);
-            setStethTracked(null);
-            setApproveTxid(null);
-            setPlan(null);
-            setAmountText('');
-            setPhase('form');
-            setReloadTick((t) => t + 1);
-          }}
+          onPress={() =>
+            dismissKeyboardThenClose(() => {
+              setResult(null);
+              setAaResult(null);
+              setSentNetwork(null);
+              setStethTracked(null);
+              setApproveTxid(null);
+              setPlan(null);
+              setAmountText('');
+              setPhase('form');
+              setReloadTick((t) => t + 1);
+            })
+          }
         />
       </ScrollView>
     );
