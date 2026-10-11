@@ -127,7 +127,7 @@ import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 // under Node's type stripping, which resolves relative specifiers literally.
 import { parseSessionKeyGrant } from '@shiba-wallet/chains-evm';
 import { RECURRING_SOURCE, recurringEndsAt, type RecurringDue } from './recurring.ts';
-import type { SessionRecord } from './sessions.ts';
+import { DCA_SOURCE, type SessionRecord } from './sessions.ts';
 import { termsOf } from './subscriptions.ts';
 import type { KeyValueStore } from './tokens.ts';
 // Type-only (erased under Node): the trigger shape of the installed package.
@@ -140,9 +140,10 @@ import type { NotificationTriggerInput } from 'expo-notifications/build/Notifica
 export const NOTIFICATIONS_SECTION_TITLE = 'Notifications';
 export const NOTIFICATIONS_SWITCH_LABEL = 'Remind me when something is due';
 export const NOTIFICATIONS_WHAT_NOTE =
-  'When this is on, this phone shows a reminder when one of your recurring payments falls due, and an alert ' +
-  'when the takeover check on the Inheritance screen finds that a recovery of one of your accounts was ' +
-  'started. A reminder never sends anything: each payment is still sent only after you confirm it in the wallet.';
+  'When this is on, this phone shows a reminder when one of your recurring payments falls due or one of your ' +
+  'recurring swaps does, and an alert when the takeover check on the Inheritance screen finds that a recovery of ' +
+  'one of your accounts was started. A reminder never sends anything: each payment or swap is still sent only ' +
+  'after you confirm it in the wallet.';
 export const NOTIFICATIONS_PRIVACY_NOTE =
   'The reminders are scheduled on this phone by the wallet itself. No notification service is used and ' +
   'nothing about them leaves the device. They say only what kind of event happened, never an amount, an ' +
@@ -156,6 +157,10 @@ export const NOTIFICATIONS_LIMITS_NOTE =
 export const RECURRING_DUE_TITLE = 'Recurring payment due';
 export const RECURRING_DUE_BODY =
   'A recurring payment is due. Open the wallet to review it; nothing is sent until you confirm it.';
+/** The reminder of a due recurring swap (phase 19 item 2, ./dca.ts): same rules, swap words. */
+export const RECURRING_SWAP_DUE_TITLE = 'Recurring swap due';
+export const RECURRING_SWAP_DUE_BODY =
+  'A recurring swap is due. Open the wallet to review it; nothing is swapped until you confirm it.';
 export const TAKEOVER_TITLE = 'Account recovery started';
 export const TAKEOVER_BODY =
   'Someone started a recovery of one of your accounts. Open the wallet to review it, and veto it if you did not expect it.';
@@ -277,6 +282,11 @@ export function recurringDueContent(): NotificationContent {
   return { title: RECURRING_DUE_TITLE, body: RECURRING_DUE_BODY, data: { screen: 'Sessions', kind: 'recurring-due' } };
 }
 
+/** The reminder for a due recurring swap. Takes no record, for the same reason. */
+export function recurringSwapDueContent(): NotificationContent {
+  return { title: RECURRING_SWAP_DUE_TITLE, body: RECURRING_SWAP_DUE_BODY, data: { screen: 'Sessions', kind: 'recurring-due' } };
+}
+
 /** The alert for a takeover attempt. Takes no record, for the same reason. */
 export function takeoverContent(): NotificationContent {
   return { title: TAKEOVER_TITLE, body: TAKEOVER_BODY, data: { screen: 'Inheritance', kind: 'takeover' } };
@@ -315,7 +325,14 @@ export function recurringReminderAt(record: SessionRecord, due: RecurringDue | n
   let period: number;
   let end: number;
   try {
-    period = termsOf(record).periodSeconds;
+    // A recurring swap's period is its grant's RateLimitPolicy interval (the
+    // engine's dcaGrantFor installs interval = the terms' period); a recurring
+    // payment's is its terms' period, which subscriptionGrantFor installs the
+    // same way.
+    period =
+      record.source === DCA_SOURCE
+        ? (parseSessionKeyGrant(record.grant).rateLimit?.intervalSeconds ?? 0)
+        : termsOf(record).periodSeconds;
     end = recurringEndsAt(record);
   } catch {
     return null;
@@ -387,13 +404,18 @@ export function walletIdentifierOf(identifier: string): string | null {
   return tag.startsWith(NOTIFICATION_ID_PREFIX) ? tag : null;
 }
 
-/** A record whose reminder may exist at all: recurring, set-up confirmed, key on this phone. */
+/**
+ * A record whose reminder may exist at all: a recurring payment or a
+ * recurring swap (./dca.ts), set-up confirmed, key on this phone.
+ */
 export function recurringReminderEligible(record: SessionRecord): boolean {
-  return record.source === RECURRING_SOURCE && !!record.subscription && record.localStatus === 'installed' && record.keyHeld;
+  const scheduled = (record.source === RECURRING_SOURCE && !!record.subscription) || (record.source === DCA_SOURCE && !!record.dca);
+  return scheduled && record.localStatus === 'installed' && record.keyHeld;
 }
 
 export interface RecurringSyncPlan {
-  schedule: { identifier: string; at: number }[];
+  /** `swap` marks a recurring swap's reminder (its words differ: recurringSwapDueContent). */
+  schedule: { identifier: string; at: number; swap?: true }[];
   cancel: string[];
   /** Shown notifications to remove from the tray (identifiers exactly as listed by the system). */
   dismiss: string[];
@@ -442,7 +464,9 @@ export function planRecurringSync(args: {
   const dismiss = new Set<string>();
   for (const id of scheduled) if (!eligible.has(id)) cancel.add(id);
   for (const [id, listed] of shown) if (!eligible.has(id)) dismiss.add(listed);
-  const schedule: { identifier: string; at: number }[] = [];
+  const schedule: { identifier: string; at: number; swap?: true }[] = [];
+  const entry = (record: SessionRecord, identifier: string, at: number) =>
+    record.source === DCA_SOURCE ? { identifier, at, swap: true as const } : { identifier, at };
   const planned = new Set<string>();
   for (const { record, due } of args.states) {
     const identifier = recurringNotificationId(record);
@@ -461,7 +485,7 @@ export function planRecurringSync(args: {
       if (scheduled.has(identifier)) cancel.add(identifier);
     } else {
       cancel.delete(identifier);
-      schedule.push({ identifier, at });
+      schedule.push(entry(record, identifier, at));
     }
   }
   const scope = args.scope ?? null;
@@ -472,7 +496,7 @@ export function planRecurringSync(args: {
       if (record.chain !== scope.chain || record.owner.toLowerCase() !== scope.owner.toLowerCase()) continue;
       planned.add(identifier);
       const at = recurringTermsReminderAt(record, args.now);
-      if (at !== null) schedule.push({ identifier, at });
+      if (at !== null) schedule.push(entry(record, identifier, at));
     }
   }
   return { schedule, cancel: [...cancel], dismiss: [...dismiss] };
@@ -936,7 +960,12 @@ export function createNotificationCenter(deps: {
           for (const id of plan.cancel) await n.cancel(id);
           await dismissAll(n, plan.dismiss);
           for (const s of plan.schedule) {
-            await n.schedule({ identifier: s.identifier, content: recurringDueContent(), at: s.at, channelId: CHANNEL_PAYMENTS.id });
+            await n.schedule({
+              identifier: s.identifier,
+              content: s.swap ? recurringSwapDueContent() : recurringDueContent(),
+              at: s.at,
+              channelId: CHANNEL_PAYMENTS.id,
+            });
           }
           if (lastStatus?.state !== 'blocked') setStatus({ state: 'on' });
         } catch (e) {

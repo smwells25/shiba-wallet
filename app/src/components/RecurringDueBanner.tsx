@@ -14,10 +14,10 @@ import {
   findDueRecurringPayments,
   readStatusWithFailover,
   recurringChecksApplyTo,
-  recurringDueHeadline,
+  scheduledDueHeadline,
   type NodeFailoverRunner,
 } from '../wallet/recurring';
-import { markNodeErrors, type SessionRecord } from '../wallet/sessions';
+import { DCA_SOURCE, markNodeErrors, type SessionRecord } from '../wallet/sessions';
 
 /**
  * Runs a node operation on the active EVM endpoint under the shared failover
@@ -93,7 +93,9 @@ export function useClockTick(intervalMs: number, enabled: boolean): number {
 }
 
 /**
- * The foreground check for recurring payments (phase 15 item 1). Mounted once
+ * The foreground check for recurring payments (phase 15 item 1) and recurring
+ * swaps (phase 19 item 2, ../wallet/dca.ts: the same policies, the same
+ * read-only status read, the same confirm-before-send rule). Mounted once
  * inside the navigation container (App.tsx), below the screens. When the
  * wallet starts, and every time it returns to the foreground, it asks
  * ../wallet/recurring findDueRecurringPayments which recurring payments of
@@ -120,7 +122,7 @@ export function RecurringDueBanner() {
   const eligible = recurringChecksApplyTo({ status, owner, account: activeAccount });
   // Each return to the foreground starts a new check (and shows a dismissed banner again).
   const [generation, setGeneration] = useState(0);
-  const [result, setResult] = useState<{ key: string; count: number } | null>(null);
+  const [result, setResult] = useState<{ key: string; payments: number; swaps: number } | null>(null);
   const [dismissed, setDismissed] = useState<string | null>(null);
   const checkKey = `${evmChain.caip2}|${owner ?? ''}|${generation}`;
 
@@ -131,7 +133,8 @@ export function RecurringDueBanner() {
     let cancelled = false;
     findDueRecurringPayments({ chain: evmChain.caip2, owner, readStatus: readStatusNow }).then(
       ({ due }) => {
-        if (!cancelled) setResult({ key: checkKey, count: due.length });
+        const swaps = due.filter((d) => d.record.source === DCA_SOURCE).length;
+        if (!cancelled) setResult({ key: checkKey, payments: due.length - swaps, swaps });
       },
       () => undefined,
     );
@@ -140,7 +143,7 @@ export function RecurringDueBanner() {
     };
   }, [eligible, owner, evmChain.caip2, checkKey]);
 
-  const headline = eligible && result && result.key === checkKey ? recurringDueHeadline(result.count) : null;
+  const headline = eligible && result && result.key === checkKey ? scheduledDueHeadline(result.payments, result.swaps) : null;
   if (!headline || dismissed === checkKey) return null;
   return (
     <View style={[styles.banner, { backgroundColor: theme.card, borderColor: theme.accent }]}>
@@ -150,7 +153,7 @@ export function RecurringDueBanner() {
       <View style={styles.buttons}>
         <Button
           title="Review"
-          accessibilityHint="Opens the Sessions screen, where each due payment is sent only after you confirm it."
+          accessibilityHint="Opens the Sessions screen, where each due payment or swap is sent only after you confirm it."
           onPress={() => {
             setDismissed(checkKey);
             navigation.navigate('Sessions');

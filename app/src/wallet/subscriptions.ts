@@ -38,6 +38,8 @@ import {
   type AaSendQuote,
 } from './aa.ts';
 import {
+  DCA_SOURCE,
+  dcaTermsOf,
   eip155Decimal,
   releaseSessionKey,
   sessionVaultId,
@@ -206,6 +208,14 @@ export const SUBSCRIPTION_KEY_EXPORT_TYPE = 'shiba-wallet:subscription-key';
 export const RECURRING_KEY_NEVER_EXPORTED =
   'A recurring payment’s key stays on this phone and is never shown or handed over. Nothing was shown.';
 
+/**
+ * The same refusal for a recurring swap's key (./dca.ts): the wallet itself
+ * sends each swap after the user confirms it, so the key never leaves this
+ * phone.
+ */
+export const DCA_KEY_NEVER_EXPORTED =
+  'A recurring swap’s key stays on this phone and is never shown or handed over. Nothing was shown.';
+
 export const SUBSCRIPTION_KEY_WARNING =
   'This is the subscription key. Whoever holds it can take payments from your account within the ' +
   'limits above until you revoke or it expires. Give it only to the merchant, over a channel you trust. ' +
@@ -281,8 +291,13 @@ export async function loadSubscriptionTokenChoices(
  * payments were signed at about 2.31 gwei, so the default budget could not
  * pay even the first payment.
  */
-export function defaultFeeBudgetWei(payments: number, maxFeePerGas: bigint): bigint {
-  return BigInt(payments) * SUBSCRIPTION_PULL_GAS_ALLOWANCE * maxFeePerGas * 2n;
+export function defaultFeeBudgetWei(
+  payments: number,
+  maxFeePerGas: bigint,
+  /** Declared gas per operation; recurring swaps pass their own allowance (dca.ts DCA_SWAP_GAS_ALLOWANCE). */
+  gasAllowance: bigint = SUBSCRIPTION_PULL_GAS_ALLOWANCE,
+): bigint {
+  return BigInt(payments) * gasAllowance * maxFeePerGas * 2n;
 }
 
 export interface SubscriptionDraft {
@@ -487,11 +502,13 @@ export function suggestedFeeBudget(p: {
   nativeAmountPerPayment: bigint;
   /** The part of the install's worst-case fee the balance pays (null or absent = not known yet). */
   installFeeFromBalance?: bigint | null;
+  /** Declared gas per operation (default SUBSCRIPTION_PULL_GAS_ALLOWANCE). */
+  gasAllowance?: bigint;
 }): { wei: bigint | null; capped: boolean; uncapped: bigint | null; spare: bigint | null } {
   if (!Number.isInteger(p.payments) || p.payments < 1 || p.maxFeePerGas === null) {
     return { wei: null, capped: false, uncapped: null, spare: null };
   }
-  const uncapped = defaultFeeBudgetWei(p.payments, p.maxFeePerGas);
+  const uncapped = defaultFeeBudgetWei(p.payments, p.maxFeePerGas, p.gasAllowance);
   if (p.balance === null) return { wei: uncapped, capped: false, uncapped, spare: null };
   const committed = BigInt(p.payments) * p.nativeAmountPerPayment + (p.installFeeFromBalance ?? 0n);
   const spare = p.balance > committed ? p.balance - committed : 0n;
@@ -842,6 +859,8 @@ export async function fitFeeBudgetToInstall<A extends QuotedAttempt>(args: {
   maxFeePerGas: bigint | null;
   nativeAmountPerPayment: bigint;
   requote: (feeBudgetWei: bigint) => Promise<A>;
+  /** Declared gas per operation (default SUBSCRIPTION_PULL_GAS_ALLOWANCE). */
+  gasAllowance?: bigint;
 }): Promise<FeeBudgetFit<A>> {
   let attempt = args.attempt;
   let budget = args.feeBudgetWei;
@@ -854,6 +873,7 @@ export async function fitFeeBudgetToInstall<A extends QuotedAttempt>(args: {
       balance: attempt.quote.senderBalance,
       nativeAmountPerPayment: args.nativeAmountPerPayment,
       installFeeFromBalance: keptBack,
+      ...(args.gasAllowance !== undefined ? { gasAllowance: args.gasAllowance } : {}),
     });
     if (refit.wei === null) return { kind: 'cannot-fit', attempt, keptBack, spare: refit.spare, uncapped: refit.uncapped };
     const fits = refit.wei >= budget;
@@ -1061,6 +1081,7 @@ export async function buildSubscriptionKeyExport(
   now: number = Math.floor(Date.now() / 1000),
 ): Promise<SubscriptionKeyExport> {
   if (record.source === 'recurring') throw new Error(RECURRING_KEY_NEVER_EXPORTED);
+  if (record.source === DCA_SOURCE) throw new Error(DCA_KEY_NEVER_EXPORTED);
   if (record.source !== 'subscription' || !record.subscription) throw new Error('Not a subscription.');
   if (!record.keyHeld || record.subscription.keyExportedAt !== null) {
     throw new Error('The key was already handed over and is no longer on this device. Revoke and create a new subscription if it was lost.');
@@ -1272,6 +1293,7 @@ export async function markSubscriptionKeyExported(
   now: number = Date.now(),
 ): Promise<SessionRecord> {
   if (record.source === 'recurring') throw new Error(RECURRING_KEY_NEVER_EXPORTED);
+  if (record.source === DCA_SOURCE) throw new Error(DCA_KEY_NEVER_EXPORTED);
   if (record.source !== 'subscription' || !record.subscription) throw new Error('Not a subscription.');
   return releaseSessionKey(record, store, vault, { subscription: { ...record.subscription, keyExportedAt: now } });
 }
@@ -1316,11 +1338,16 @@ export async function readSubscriptionStatus(
   now: number = Math.floor(Date.now() / 1000),
 ): Promise<SubscriptionStatus> {
   try {
-    termsOf(record);
+    // A recurring swap (./dca.ts) uses the same RateLimitPolicy / GasPolicy
+    // pair and getters (engine readDcaState is this read), so its status is
+    // read here too; its terms are checked instead of subscription terms.
+    if (record.source === DCA_SOURCE) dcaTermsOf(record);
+    else termsOf(record);
     // The end that the account enforces is the INSTALLED grant's validUntil
     // (TimestampPolicy). For a subscription it equals the terms' end; a
     // recurring payment's grant ends one grace period later
-    // (sessions.ts recurringGraceSeconds).
+    // (sessions.ts recurringGraceSeconds); a recurring swap's grant ends at
+    // its terms' end, which carries its own grace (engine dcaValidUntil).
     const validUntil = parseSessionKeyGrant(record.grant).validUntil;
     const state = await readSubscriptionState(node, record.account, record.permissionId, { validUntil });
     return { kind: 'ok', state, next: nextPullAllowedAt(state, now) };

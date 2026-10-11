@@ -105,6 +105,8 @@ const EXPECTED_IDS = [
   'owner-rotation', 'paymaster', 'token-gas', 'imported-key', 'inheritance', 'dapp-browser', 'multisig',
   // Phase 18 item 2: staking on test networks (gate in wallet/staking.ts).
   'staking',
+  // Phase 19 item 2: recurring swaps (gate in wallet/sessions.ts and wallet/dca.ts).
+  'dca',
 ];
 const ids = FEATURE_READINESS.map((f) => f.id);
 check('every expected feature id is present exactly once', EXPECTED_IDS.every((id) => ids.filter((x) => x === id).length === 1) && ids.length === EXPECTED_IDS.length, ids.join());

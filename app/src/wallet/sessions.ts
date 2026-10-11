@@ -5,6 +5,10 @@ import {
   NodeClient,
   SmartAccountClient,
   assertCallsAllowed,
+  assertDcaSwap,
+  dcaTermsMatchGrant,
+  kernelDcaSpec,
+  parseDcaTerms,
   createSessionKeyAccount,
   generateSessionPrivateKey,
   grantToErc7715Request,
@@ -33,6 +37,8 @@ import {
   type SessionAllowedCall,
   type SessionKeyGrant,
   type SubscriptionGrant,
+  type DcaTerms,
+  type SerializedDcaTerms,
 } from '@shiba-wallet/chains-evm';
 import { toChecksumAddress, type DerivedAccount } from '@shiba-wallet/core';
 // Explicit .ts extensions: this module is imported by scripts/check-sessions.mjs
@@ -170,12 +176,29 @@ export type SessionAccountKind = 'kernel-v3.3' | 'kernel-7702';
 
 /**
  * Where a session came from: the manual grant form, a dApp's ERC-7715
- * request, the subscription template (./subscriptions.ts), or a recurring
+ * request, the subscription template (./subscriptions.ts), a recurring
  * payment (./recurring.ts): the same grant template as a subscription, but
  * its key never leaves this device and the wallet itself sends each payment
- * after the user confirms it.
+ * after the user confirms it, or a recurring swap (./dca.ts, phase 19 item
+ * 2): the engine's DCA grant (kernel-dca.ts dcaGrantFor, on the subscription
+ * template with a pinned Uniswap SwapRouter02 call instead of a transfer),
+ * whose key also never leaves this device and whose swaps the wallet sends
+ * only after the user confirms each one.
  */
-export type SessionSource = 'manual' | 'erc7715' | 'subscription' | 'recurring';
+export type SessionSource = 'manual' | 'erc7715' | 'subscription' | 'recurring' | 'dca';
+
+/** The SessionRecord source of a recurring swap (dollar-cost averaging). */
+export const DCA_SOURCE = 'dca' as const;
+
+/**
+ * True for the sources whose permission is a schedule the wallet shows as
+ * its own card (subscriptions, recurring payments, recurring swaps): never
+ * listed among the plain sessions and never offered "Test this session",
+ * because any operation would use up one of the rate-limited slots.
+ */
+export function sessionIsScheduled(source: SessionSource): boolean {
+  return source === 'subscription' || source === 'recurring' || source === 'dca';
+}
 
 /**
  * True for the sources whose record carries subscription terms
@@ -203,6 +226,49 @@ export interface SessionSubscriptionMeta {
    * key is still on this device waiting to be exported.
    */
   keyExportedAt: number | null;
+}
+
+/** The outcome of the last swap a recurring swap's card shows (decoded from the receipt, ./dca.ts). */
+export interface DcaLastSwap {
+  userOpHash: string;
+  /** The bundle transaction, when the receipt gave one. */
+  txHash: string | null;
+  /** Unix seconds when the swap was handed to the bundler. */
+  at: number;
+  /** The fresh QuoterV2 quote just before sending (tokenOut base units, decimal string). */
+  quotedOut: string;
+  /** The minimum the swap asked for (base units, decimal string; never below the plan's floor). */
+  askedMinimum: string;
+  /** 'swapped' (UserOperationEvent success), 'reverted' (included, the swap reverted), 'pending' (no receipt yet). */
+  outcome: 'swapped' | 'reverted' | 'pending';
+  /** tokenOut received by the account from the pinned pool (base units, decimal string), when swapped. */
+  received: string | null;
+  /** More than one swap of the pinned pool paid this account in the operation (not something this wallet sends). */
+  batched: boolean;
+}
+
+/**
+ * The terms of a recurring swap stored with its session record (source
+ * 'dca'). Public data only. On every load the terms are re-parsed with the
+ * engine's parseDcaTerms and must map to exactly the record's grant
+ * (dcaTermsMatchGrant), so the stored description can never disagree with
+ * what is installed. `keyExportedAt` exists only so that an altered record
+ * claiming a hand-over can be recognised and dropped: a recurring swap's key
+ * is never handed over, so any value other than null makes the record
+ * corrupt.
+ */
+export interface SessionDcaMeta {
+  terms: SerializedDcaTerms;
+  symbolIn: string;
+  decimalsIn: number;
+  symbolOut: string;
+  decimalsOut: number;
+  /** The floor as a share of the review's quote, in basis points (shown on the card). */
+  floorBps: number;
+  /** The QuoterV2 quote the floor was computed from (tokenOut base units, decimal string). */
+  quoteAtReview: string;
+  keyExportedAt: null;
+  lastSwap: DcaLastSwap | null;
 }
 
 /**
@@ -245,6 +311,8 @@ export interface SessionRecord {
   localStatus: SessionLocalStatus;
   /** Present exactly when source is 'subscription' or 'recurring' (sessionCarriesTerms). */
   subscription?: SessionSubscriptionMeta | null;
+  /** Present exactly when source is 'dca' (a recurring swap). */
+  dca?: SessionDcaMeta | null;
 }
 
 export interface SessionListLoad {
@@ -306,13 +374,25 @@ function reviveRecord(value: unknown): SessionRecord | null {
     // Re-validates the stored grant (shape and rules; no clock check).
     parseSessionKeyGrant(v.grant);
     if (typeof v.label !== 'string' || v.label.length === 0 || v.label.length > 200) return null;
-    if (v.source !== 'manual' && v.source !== 'erc7715' && v.source !== 'subscription' && v.source !== 'recurring') {
+    if (
+      v.source !== 'manual' &&
+      v.source !== 'erc7715' &&
+      v.source !== 'subscription' &&
+      v.source !== 'recurring' &&
+      v.source !== DCA_SOURCE
+    ) {
       return null;
     }
     const subscription = reviveSubscriptionMeta(v.subscription, v.grant, v.source);
     if (sessionCarriesTerms(v.source) ? subscription === null : v.subscription !== undefined && v.subscription !== null) {
       return null;
     }
+    // A recurring swap carries its own terms (and nothing else does). Strict:
+    // terms that do not parse or do not map to exactly this grant, or a
+    // hand-over time (a recurring swap's key is never handed over), drop the
+    // record as corrupt.
+    const dca = v.source === DCA_SOURCE ? reviveDcaMeta(v.dca, v.grant, v.account) : null;
+    if (v.source === DCA_SOURCE ? dca === null : v.dca !== undefined && v.dca !== null) return null;
     // A recurring payment's key is never handed over: a stored hand-over
     // time on one means the record was altered, so it is dropped.
     if (v.source === 'recurring' && subscription !== null && subscription.keyExportedAt !== null) return null;
@@ -342,10 +422,100 @@ function reviveRecord(value: unknown): SessionRecord | null {
       revokeUserOpHash: (v.revokeUserOpHash as string | null) ?? null,
       localStatus: v.localStatus as SessionLocalStatus,
       ...(subscription ? { subscription } : {}),
+      ...(dca ? { dca } : {}),
     };
   } catch {
     return null;
   }
+}
+
+const DECIMAL = /^(0|[1-9][0-9]*)$/;
+
+/** Strict revival of a recurring swap's last outcome; null when absent, undefined when malformed. */
+function reviveDcaLastSwap(value: unknown): DcaLastSwap | null | undefined {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== 'object') return undefined;
+  const v = value as Record<string, unknown>;
+  if (typeof v.userOpHash !== 'string' || !USEROP_HASH.test(v.userOpHash)) return undefined;
+  if (v.txHash !== null && (typeof v.txHash !== 'string' || !USEROP_HASH.test(v.txHash))) return undefined;
+  if (typeof v.at !== 'number' || !Number.isSafeInteger(v.at) || v.at <= 0) return undefined;
+  if (typeof v.quotedOut !== 'string' || !DECIMAL.test(v.quotedOut)) return undefined;
+  if (typeof v.askedMinimum !== 'string' || !DECIMAL.test(v.askedMinimum)) return undefined;
+  if (v.outcome !== 'swapped' && v.outcome !== 'reverted' && v.outcome !== 'pending') return undefined;
+  if (v.received !== null && (typeof v.received !== 'string' || !DECIMAL.test(v.received))) return undefined;
+  if (typeof v.batched !== 'boolean') return undefined;
+  return {
+    userOpHash: v.userOpHash,
+    txHash: (v.txHash as string | null) ?? null,
+    at: v.at,
+    quotedOut: v.quotedOut,
+    askedMinimum: v.askedMinimum,
+    outcome: v.outcome,
+    received: (v.received as string | null) ?? null,
+    batched: v.batched,
+  };
+}
+
+/**
+ * Strict revival of a recurring swap's terms; null unless the terms parse
+ * (engine parseDcaTerms re-validates them), are for the record's own
+ * account, map to exactly `grant` (dcaTermsMatchGrant) and carry no
+ * hand-over time.
+ */
+function reviveDcaMeta(value: unknown, grant: unknown, account: unknown): SessionDcaMeta | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const v = value as Record<string, unknown>;
+  try {
+    // A recurring swap's key is never handed over: a stored hand-over time
+    // means the record was altered, so it is dropped.
+    if (v.keyExportedAt !== null) return null;
+    const terms = parseDcaTerms(v.terms);
+    if (typeof account !== 'string' || !same(terms.account, account)) return null;
+    if (!dcaTermsMatchGrant(terms, parseSessionKeyGrant(grant))) return null;
+    const symbol = (x: unknown) => typeof x === 'string' && x.length > 0 && x.length <= 32;
+    const decimals = (x: unknown) => typeof x === 'number' && Number.isInteger(x) && x >= 0 && x <= 36;
+    if (!symbol(v.symbolIn) || !symbol(v.symbolOut) || !decimals(v.decimalsIn) || !decimals(v.decimalsOut)) return null;
+    if (typeof v.floorBps !== 'number' || !Number.isInteger(v.floorBps) || v.floorBps < 1 || v.floorBps > 10_000) return null;
+    if (typeof v.quoteAtReview !== 'string' || !DECIMAL.test(v.quoteAtReview)) return null;
+    const lastSwap = reviveDcaLastSwap(v.lastSwap);
+    if (lastSwap === undefined) return null;
+    return {
+      terms: v.terms as SerializedDcaTerms,
+      symbolIn: v.symbolIn as string,
+      decimalsIn: v.decimalsIn as number,
+      symbolOut: v.symbolOut as string,
+      decimalsOut: v.decimalsOut as number,
+      floorBps: v.floorBps,
+      quoteAtReview: v.quoteAtReview,
+      keyExportedAt: null,
+      lastSwap,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** The parsed terms of a recurring swap record (throws for any other record). */
+export function dcaTermsOf(record: Pick<SessionRecord, 'source' | 'dca'>): DcaTerms {
+  if (record.source !== DCA_SOURCE || !record.dca) throw new Error('Not a recurring swap.');
+  return parseDcaTerms(record.dca.terms);
+}
+
+/** Stores the outcome of a recurring swap's last swap on its record (the card shows it). */
+export async function saveDcaLastSwap(
+  record: SessionRecord,
+  lastSwap: DcaLastSwap,
+  store: KeyValueStore = AsyncStorage,
+): Promise<SessionRecord> {
+  if (record.source !== DCA_SOURCE || !record.dca) throw new Error('Not a recurring swap.');
+  if (reviveDcaLastSwap(lastSwap) === undefined) throw new Error('The swap outcome is malformed.');
+  // Re-read the stored record so a concurrent change (a revoke) is not overwritten.
+  const { records } = await loadSessions(store);
+  const current = records.find(
+    (r) => sessionRecordKey(r.chain, r.account, r.permissionId) === sessionRecordKey(record.chain, record.account, record.permissionId),
+  );
+  if (!current || !current.dca) throw new Error('This recurring swap is no longer on this device.');
+  return updateRecord(current, { dca: { ...current.dca, lastSwap } }, store);
 }
 
 /**
@@ -849,6 +1019,8 @@ export async function installSession(args: {
   dappUrl?: string | null;
   /** Required for sources 'subscription' and 'recurring' (and refused for the others). */
   subscription?: SessionSubscriptionMeta | null;
+  /** Required for source 'dca' (and refused for the others). */
+  dca?: SessionDcaMeta | null;
   /**
    * Manual grants, subscriptions and recurring payments: the session's
    * private key (stored in the vault; a subscription's key leaves it when it
@@ -889,6 +1061,20 @@ export async function installSession(args: {
   if (args.subscription && !termsMatchGrant(args.source, parseSubscription(args.subscription.terms), args.grant)) {
     throw new Error('The subscription terms do not match the grant being installed. Nothing was signed.');
   }
+  if ((args.source === DCA_SOURCE) !== Boolean(args.dca)) {
+    throw new Error('Recurring-swap terms belong exactly to recurring-swap grants. Nothing was signed.');
+  }
+  if (args.source === DCA_SOURCE) {
+    // The wallet sends each swap itself, so the key must be stored on this
+    // device, and it is never handed over.
+    assertFeatureAllowed('dca', args.chain);
+    if (!args.sessionPrivateKey) throw new Error('A recurring swap needs its key on this device. Nothing was signed.');
+    if (args.dca!.keyExportedAt !== null) throw new Error('A recurring swap’s key is never handed over. Nothing was signed.');
+    const terms = parseDcaTerms(args.dca!.terms);
+    if (!same(terms.account, args.account) || !dcaTermsMatchGrant(terms, args.grant)) {
+      throw new Error('The recurring-swap terms do not match the grant being installed. Nothing was signed.');
+    }
+  }
   if (args.sessionPrivateKey) {
     const derived = createSessionKeyAccount(args.sessionPrivateKey).address;
     if (!same(derived, args.grant.sessionKey)) {
@@ -919,6 +1105,7 @@ export async function installSession(args: {
     revokeUserOpHash: null,
     localStatus: 'installing',
     ...(args.subscription ? { subscription: { ...args.subscription } } : {}),
+    ...(args.dca ? { dca: { ...args.dca, lastSwap: null } } : {}),
   };
   try {
     await saveSessionRecord(record, args.store);
@@ -1322,6 +1509,17 @@ export async function sendSessionCalls(args: {
   assertFeatureAllowed('session-keys', record.chain);
   assertFeatureAllowed('session-keys', eip155Caip2(bundle.chainId));
   const grant = parseSessionKeyGrant(record.grant);
+  // A recurring swap: its own readiness row, then the engine's exact-shape
+  // check (assertDcaSwap: one swap, every field equal to the plan, the
+  // minimum at least the floor, the account as recipient, no batch) BEFORE
+  // any network request or vault read. The account's CallPolicy cannot
+  // refuse a batch of in-rule swaps, so this local check is what keeps this
+  // wallet from ever sending one.
+  const dcaTerms = record.source === DCA_SOURCE ? dcaTermsOf(record) : null;
+  if (dcaTerms) {
+    assertFeatureAllowed('dca', record.chain);
+    assertDcaSwap(dcaTerms, grant.sessionKey, args.calls, args.now ?? Math.floor(Date.now() / 1000));
+  }
   assertCallsAllowed(grant, args.calls, args.now ?? Math.floor(Date.now() / 1000));
   if (record.localStatus === 'revoking' || record.localStatus === 'revoked') {
     throw new Error('This session was revoked.');
@@ -1332,7 +1530,9 @@ export async function sendSessionCalls(args: {
         ? 'This subscription’s key was handed to the merchant and is no longer on this device.'
         : record.source === 'recurring'
           ? 'This recurring payment’s key is no longer on this device (it was revoked or removed), so it cannot pay.'
-          : record.source === 'erc7715'
+          : record.source === DCA_SOURCE
+            ? 'This recurring swap’s key is no longer on this device (it was revoked or removed), so it cannot swap.'
+            : record.source === 'erc7715'
             ? 'This session’s key is held by the dApp that requested it, not by this wallet.'
             : 'This session’s key is no longer on this device.',
     );
@@ -1369,13 +1569,23 @@ export async function sendSessionCalls(args: {
   if (!same(sessionAccount.address, grant.sessionKey)) {
     throw new Error('The stored session key does not match this session. Nothing was signed.');
   }
-  const spec = kernelSessionSpec({
-    account: record.account,
-    sessionKey: grant.sessionKey,
-    permissionId: record.permissionId,
-    grant,
-    ...(args.now !== undefined ? { now: () => args.now! } : {}),
-  });
+  // A recurring swap signs through the engine's kernelDcaSpec, which runs
+  // assertDcaSwap again right before encoding (and so before signing).
+  const spec = dcaTerms
+    ? kernelDcaSpec({
+        account: record.account,
+        sessionKey: grant.sessionKey,
+        permissionId: record.permissionId,
+        terms: dcaTerms,
+        ...(args.now !== undefined ? { now: () => args.now! } : {}),
+      })
+    : kernelSessionSpec({
+        account: record.account,
+        sessionKey: grant.sessionKey,
+        permissionId: record.permissionId,
+        grant,
+        ...(args.now !== undefined ? { now: () => args.now! } : {}),
+      });
   // No quote is shown for a session-key operation; the fees are read here,
   // right before sending, with the same floor rule as every smart-account
   // quote (aa.ts quoteFeesOverFloor, which also meets a bundler's
@@ -1410,7 +1620,7 @@ export function sessionOperationNonceKey(record: SessionRecord): bigint {
  * rate-limited payments (RateLimitPolicy counts operations).
  */
 export function sessionCanBeTested(record: SessionRecord): boolean {
-  return !sessionCarriesTerms(record.source) && record.keyHeld;
+  return !sessionIsScheduled(record.source) && record.keyHeld;
 }
 
 /**
@@ -1423,6 +1633,12 @@ export function sessionCanBeTested(record: SessionRecord): boolean {
 export function sessionRevokeKeySentence(record: Pick<SessionRecord, 'keyHeld' | 'source' | 'subscription'>): string {
   // A recurring payment's key is the "payment key" everywhere else on its
   // screens (finding 5 of the 2026-10-09 recurring-payments rehearsal).
+  if (record.source === DCA_SOURCE) {
+    return record.keyHeld
+      ? 'Signed by your account key. Once the bundler accepts it, the swap key is deleted from this phone.'
+      : 'Signed by your account key. The swap key is no longer on this phone; once the revocation is included ' +
+          'on-chain, any copy of it stops working.';
+  }
   if (record.source === 'recurring') {
     return record.keyHeld
       ? 'Signed by your account key. Once the bundler accepts it, the payment key is deleted from this phone.'
@@ -1455,7 +1671,10 @@ export type SessionProgressKind =
   | 'test'
   | 'recurring'
   | 'recurring-payment'
-  | 'recurring-revoke';
+  | 'recurring-revoke'
+  | 'dca'
+  | 'dca-swap'
+  | 'dca-revoke';
 
 /** Title of the Sessions screen's progress view. */
 export function sessionProgressTitle(kind: SessionProgressKind): string {
@@ -1476,6 +1695,12 @@ export function sessionProgressTitle(kind: SessionProgressKind): string {
       return 'Payment sent to the bundler';
     case 'recurring-revoke':
       return 'Recurring payment revocation sent to the bundler';
+    case 'dca':
+      return 'Recurring swap set-up sent to the bundler';
+    case 'dca-swap':
+      return 'Swap sent to the bundler';
+    case 'dca-revoke':
+      return 'Recurring swap revocation sent to the bundler';
   }
 }
 
@@ -1491,6 +1716,7 @@ export function revokeConfirmCopy(
 ): { heading: string; button: string } {
   if (record.source === 'subscription') return { heading: `Revoke subscription “${title}”`, button: 'Revoke subscription' };
   if (record.source === 'recurring') return { heading: `Stop recurring payment “${title}”`, button: 'Revoke recurring payment' };
+  if (record.source === DCA_SOURCE) return { heading: `Stop recurring swap “${title}”`, button: 'Revoke recurring swap' };
   return { heading: `Revoke session “${title}”`, button: 'Revoke session' };
 }
 
@@ -1498,6 +1724,7 @@ export function revokeConfirmCopy(
 export function revokeApprovalPrompt(record: Pick<SessionRecord, 'source'>): string {
   if (record.source === 'subscription') return 'Approve revoking this subscription';
   if (record.source === 'recurring') return 'Approve revoking this recurring payment';
+  if (record.source === DCA_SOURCE) return 'Approve revoking this recurring swap';
   return 'Approve revoking this session';
 }
 
@@ -1517,6 +1744,9 @@ export async function releaseSessionKey(
   // leaves the vault only through revokeSession, forgetSession or a wipe.
   if (record.source === 'recurring') {
     throw new Error('A recurring payment’s key never leaves this device. Revoke the recurring payment instead.');
+  }
+  if (record.source === DCA_SOURCE) {
+    throw new Error('A recurring swap’s key never leaves this device. Revoke the recurring swap instead.');
   }
   if (!record.keyHeld) throw new Error('This session’s key is not on this device.');
   await vault.remove(sessionVaultId(record.chain, record.account, record.permissionId));
