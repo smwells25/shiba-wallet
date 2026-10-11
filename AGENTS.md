@@ -4376,3 +4376,88 @@ emulator passes; 3 — item 3; 4 last. Subagents on Opus.
       120 s poll, the note variants after a real stake, the holder line,
       the hidden Hoodi footer, the placeholders, the unaffordable-stake
       refusal on a live node (the stake-limit reads run first).
+- [x] Item 3 PROVEN ON THE EMULATOR (2026-10-11; Expo Go, Metro worktree
+      moved to 4f9c946 with the engine built inside it, 2,333 modules; no
+      repo files edited; 2 prompts in total — one unlock, one stake; the
+      Privacy switch off for the pass and on again after; notes and
+      screenshots in the scratchpad p18c). MULTISIG IN THE SWITCHER:
+      "Multisig 2 (2-of-3)" listed last with the "Multisig" chip and
+      "Multisig — operations need co-signers; Ethereum networks only"
+      (content description "…, multi-signature account, 0x944c…0d38");
+      chosen with 0 prompts: the notice ("…It cannot sign messages or
+      connect to apps."), the EVM card 0.000506 test ETH with links
+      Activity / NFTs / Approvals / Multisig only, "EntryPoint deposit
+      (pays fees first): 0.000697 test ETH" masked to "•••• test ETH" by
+      Hide amounts (a11y "…: hidden"), BTC/DOGE/SOL "Not available for a
+      multi-signature account…", the footer sentence; Base Sepolia → "…is
+      recorded on Ethereum Sepolia, and the Multisig screen builds its
+      operations only there…"; Receive: the label, the sentence, a QR
+      decoding (jsQR) to 0x944caA404e389b18b2fe251e969EdD7A220d0d38 and
+      only "Copy address" (no Send, request, proof or smart-account box);
+      Activity "Ethereum Sepolia · TESTNET · Multisig 2 (2-of-3)", 16
+      rows, the deploying op read as "Smart-account operation (first
+      operation; deployed the account): sent 0.0001 test ETH to
+      0xb699…81fE" −0.003593 — the multisig is the sender, no row says
+      "yourself"; refusals: Apps ("The in-app browser (Apps) is not
+      available for a multi-signature account…" + the signer hint naming
+      Account 1 in full + "Open the Multisig screen", which opened the
+      list), Connected apps, Tokens → Send USDC ("Sends from a
+      multi-signature account are signing requests for the co-signers;
+      build one on the Multisig screen."); Approvals read-only ("No active
+      approvals found in the searched range." — no Revoke to observe);
+      the detail "Deployed; its signer set and threshold on-chain match
+      this record."; after 70 s in the background the lock, Unlock = the
+      ORDINARY prompt with "Use PIN"; back to Account 1 with 0 prompts.
+      POLISH: Settings button "Connected apps" and the Apps blurb quoting
+      it; "Find my tokens" listed stETH ("Liquid staked Ether 2.0",
+      0.000915, 0x3e3F…40Af) and wstETH (0xB823…067b = the pinned Sepolia
+      address), each tracked after "Track stETH?" / "Track wstETH?" (a
+      fake "USDC" 0x240b…14aa got the look-alike warning; an untracked DAI
+      left alone); Home shows "Rebasing token: the balance changes by
+      itself; the preview can be off by a wei or two." under stETH and
+      nothing under wstETH. STAKE 0.0002 → stETH (Account 1): the risk
+      card is the single pinned line "This transaction goes to Lido's
+      stETH contract on Ethereum Sepolia (0x3e3FE7dBc6B4C189E7128855dD526361c49b40Af),
+      pinned by this wallet from Lido's published list of deployed
+      contracts." (no generic contract or contract-age line), preview "You
+      receive 0.000199999999999999 stETH", prompt "Stake 0.0002 test ETH
+      with Lido for stETH"; tx
+      0xb6e51daa7520c386d7dafb230389421ea3845a4bddcc87f0ac2657f093820c9d,
+      block 11889379, status 0x1, input 0xa1903eab, value 2e14, gasUsed
+      110,501, Submitted / mint 199,999,999,999,999 / TransferShares
+      192,730,620,054,123 and the EIP-7708 log; Account 1 stETH +2e14
+      (1 wei more than the mint event — the rebasing case). A note added
+      through Activity ("staking test") shows on all three rows of the
+      transaction. Swap (no 0x key) and Sessions (nothing installed) had
+      no success view to check. FINDINGS (fix slice dispatched): (1) the
+      Staking success screen has NO private-note field (TransactionNoteField
+      was wired into Send, Swap, Sessions and the WalletConnect sheet
+      only); (2) the Tokens screen keeps Send buttons while a multisig is
+      active (the gate refuses, so safe, but Home hides Send); (3) the
+      Multisig list said "· not deployed yet" for the deployed multisig
+      until its detail was opened (only openDetail refreshes); (4) the
+      Activity sentence for a stake reads "Called 0x3e3F…40Af with 0.0002
+      test ETH: received … stETH" without the pinned Lido label; (5)
+      existing stETH / wstETH holdings are not tracked automatically and
+      "Find my tokens" shows them as plain UNTRACKED tokens with no sign
+      the wallet pins them; (6) the Home staking rows are titled by token
+      NAME ("Liquid staked Ether 2.0", cut off) where USDC / EURC rows
+      show the symbol, and the badges truncate to "stET" / "wstE"; (7)
+      copy — (a) the switcher intro "Every account comes from your one
+      recovery phrase…" with a multisig listed, (b) multisig Receive says
+      "Ethereum" / "Only send ETH on the Ethereum network" on Sepolia, (c)
+      NFTs says "this account's regular address" for a multisig, (d) the
+      gate hint says "Switch to that account on Home, then open the
+      Multisig screen" while offering "Open the Multisig screen" with the
+      multisig still active, and the detail shows "New operation (send)"
+      beside "Switch to that account on Home…", (e) Activity shows Account
+      1 as "0x772e…F44F" rather than its label (the party() follow-up),
+      (f) the Activity title "Ethereum activity" on Sepolia (pre-existing).
+      NOT VERIFIED: the NFT-detail Send refusal (no NFTs), Revoke on
+      Approvals (none in range), note fields on Swap and Sessions, the
+      automatic tracking after a stake (both tokens were tracked before
+      step 11). Funds: Account 1 ETH 0.002619 → 0.002419, stETH 0.000915
+      → 0.001115, wstETH 0.000564; multisig unchanged. End state: Home,
+      Ethereum Sepolia, Account 1, light mode, Google IME, protection ON,
+      auto-lock 1 min; stETH and wstETH tracked on Sepolia; Metro at
+      4f9c946.
