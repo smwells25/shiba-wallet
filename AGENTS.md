@@ -6455,3 +6455,20 @@ by the Chairperson is still pending ("a few appear safe to ignore").
       payment (shared path). UNVERIFIED (device): the 60 s cadence under
       Android throttling; that the live under-funded AA23 is now never
       reached before install.
+
+DECIDED by the Chairperson (2026-10-11, on the security review): proceed
+with phase 19. Of the classified findings, only the one scored CVSS 9.1
+concerns the Chairperson, who will investigate it personally; all the
+others are low enough to revisit later. THAT 9.1 IS FINDING C —
+WebAuthn validator v0.0.1 and v0.0.2 accept a replayed assertion
+(SW-ADV-2026-004 in the second review / 003 in the first;
+docs/private/SECURITY_ADVISORIES*.md). IMPORTANT: the wallet's own
+passkey code pins the PATCHED WebAuthn validator v0.0.3
+(0x7ab16Ff354AcB328452F1D445b3Ddee9a91e9e69, kernel-webauthn.ts), so
+this wallet's own users are NOT exposed to the replay; the finding
+concerns the older v0.0.1/v0.0.2 that the wallet never installs. No
+disclosure has been or will be sent without a further explicit
+decision; both review files stay in the git-ignored docs/private/. The
+other findings (A, B, D, E, F, G and the section-8 observations) are
+deferred by the Chairperson, with their determinations and corrections
+recorded in the two review files.
