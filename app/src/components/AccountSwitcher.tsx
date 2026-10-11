@@ -19,6 +19,7 @@ import {
 } from '../wallet/imported-keys';
 import { useWallet, type AccountView } from '../wallet/WalletContext';
 import {
+  MULTISIG_SWITCHER_LINE,
   PHRASE_ACCOUNT_WAS_WATCHED_TITLE,
   WATCH_ONLY_LIST_HINT,
   phraseAccountSameAsWatchedNote,
@@ -36,16 +37,21 @@ import {
  * recovery phrase does not back them up. Watch-only accounts (feature 10)
  * are listed after them with a "Watch-only" label; choosing one shows its
  * balances, tokens, activity and NFTs, and every signing path refuses it.
+ * Multi-signature accounts (feature 24; phase 18 item 3) come last, named
+ * with their shape ("Multisig 2 (2-of-3)") and a "Multisig" chip; choosing
+ * one shows its balance and EntryPoint deposit, and its operations are
+ * built on the Multisig screen (every signing route refuses it).
  */
 export function AccountSwitcher({ onManage, onImportKey }: { onManage: () => void; onImportKey: () => void }) {
   const theme = useTheme();
-  const { activeAccount, accountList, watchOnlyAccounts, switchAccount, addAccount } = useWallet();
+  const { activeAccount, accountList, watchOnlyAccounts, multisigAccounts, switchAccount, addAccount } = useWallet();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
   if (!activeAccount) return null;
-  // Accounts with a key first, then the watch-only ones (never hidden).
-  const visible = [...accountList.filter((a) => !a.hidden), ...watchOnlyAccounts];
+  // Accounts with a key first, then the watch-only ones and the multisigs
+  // (neither is ever hidden).
+  const visible = [...accountList.filter((a) => !a.hidden), ...watchOnlyAccounts, ...multisigAccounts];
   const anyImported = accountList.some((a) => a.imported);
   const anyWatched = watchOnlyAccounts.length > 0;
 
@@ -86,7 +92,7 @@ export function AccountSwitcher({ onManage, onImportKey }: { onManage: () => voi
     <>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`Active account: ${activeAccount.name}${activeAccount.watchOnly ? ', watch-only, no key in this wallet' : ''}. Switch account`}
+        accessibilityLabel={`Active account: ${activeAccount.name}${activeAccount.watchOnly ? ', watch-only, no key in this wallet' : ''}${activeAccount.multisig ? ', multi-signature account, operations need co-signers' : ''}. Switch account`}
         onPress={() => setOpen(true)}
         style={({ pressed }) => [
           styles.header,
@@ -104,6 +110,9 @@ export function AccountSwitcher({ onManage, onImportKey }: { onManage: () => voi
           ) : null}
           {activeAccount.watchOnly ? (
             <Text style={[styles.headerAddress, { color: theme.warningText }]}>Watch-only — no key in this wallet</Text>
+          ) : null}
+          {activeAccount.multisig ? (
+            <Text style={[styles.headerAddress, { color: theme.warningText }]}>{MULTISIG_SWITCHER_LINE}</Text>
           ) : null}
         </View>
         {busy ? (
@@ -132,7 +141,9 @@ export function AccountSwitcher({ onManage, onImportKey }: { onManage: () => voi
                   accessibilityState={{ selected: active }}
                   {...(item.watchOnly
                     ? { accessibilityLabel: `${item.name}, watch-only, ${item.evmAddress ?? 'unknown address'}` }
-                    : {})}
+                    : item.multisig
+                      ? { accessibilityLabel: `${item.name}, multi-signature account, ${item.evmAddress ?? 'unknown address'}` }
+                      : {})}
                   onPress={() => void choose(item)}
                   style={({ pressed }) => [
                     styles.row,
@@ -144,9 +155,14 @@ export function AccountSwitcher({ onManage, onImportKey }: { onManage: () => voi
                   ]}
                 >
                   <View style={styles.headerBody}>
-                    <Text style={[styles.rowName, { color: theme.text }]} numberOfLines={1}>
-                      {item.name}
-                    </Text>
+                    <View style={styles.nameRow}>
+                      <Text style={[styles.rowName, styles.nameText, { color: theme.text }]} numberOfLines={1}>
+                        {item.name}
+                      </Text>
+                      {item.multisig ? (
+                        <Text style={[styles.chip, { color: theme.accent, borderColor: theme.accent }]}>Multisig</Text>
+                      ) : null}
+                    </View>
                     {item.evmAddress ? (
                       <Text style={[styles.headerAddress, { color: theme.textMuted }]}>
                         {shortAccountAddress(item.evmAddress)}
@@ -161,6 +177,9 @@ export function AccountSwitcher({ onManage, onImportKey }: { onManage: () => voi
                       <Text style={[styles.headerAddress, { color: theme.warningText }]}>
                         Watch-only — the wallet holds no key; it cannot send or sign
                       </Text>
+                    ) : null}
+                    {item.multisig ? (
+                      <Text style={[styles.headerAddress, { color: theme.warningText }]}>{MULTISIG_SWITCHER_LINE}</Text>
                     ) : null}
                   </View>
                   {active ? <Text style={[styles.check, { color: theme.accent }]}>✓</Text> : null}
@@ -247,6 +266,23 @@ const styles = StyleSheet.create({
   rowName: {
     fontSize: 16,
     fontWeight: '600',
+  },
+  nameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  nameText: {
+    flexShrink: 1,
+  },
+  chip: {
+    fontSize: 11,
+    fontWeight: '700',
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    overflow: 'hidden',
   },
   check: {
     fontSize: 18,

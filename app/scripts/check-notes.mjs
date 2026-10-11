@@ -409,6 +409,130 @@ async function exportFixture(mod = notes) {
 }
 
 // ---------------------------------------------------------------------------
+console.log('TransactionNoteField on every success view (source checks)');
+// ---------------------------------------------------------------------------
+// Phase 18 item 3: SendScreen's SuccessNoteField moved unchanged to
+// src/components/TransactionNoteField.tsx and is rendered above "Done" on the
+// Send, Swap and Sessions success views and on the WalletConnect sent view.
+const readSrc = (rel) => readFileSync(join(HERE, '..', rel), 'utf8');
+const FIELD = readSrc('src/components/TransactionNoteField.tsx');
+const SEND = readSrc('src/screens/SendScreen.tsx');
+const SWAP = readSrc('src/screens/SwapScreen.tsx');
+const SESSIONS = readSrc('src/screens/SessionsScreen.tsx');
+const WC = readSrc('src/components/WcApprovalSheet.tsx');
+const IMPORT = (from) => `import { TransactionNoteField } from '${from}';`;
+/** The text between `start` and the first `end` after it, or ''. */
+function between(src, start, end) {
+  const a = src.indexOf(start);
+  if (a < 0) return '';
+  const b = src.indexOf(end, a);
+  return b < 0 ? '' : src.slice(a, b + end.length);
+}
+/** True when `view` renders `render` and it comes before the view's Done button. */
+function rendersBeforeDone(view, render, done = '<Button title="Done"') {
+  const r = view.indexOf(render);
+  const d = view.indexOf(done);
+  return r >= 0 && d >= 0 && r < d;
+}
+function fieldOk(src) {
+  return (
+    src.includes('export function TransactionNoteField({') &&
+    src.includes("import { linkUserOperation, NOTE_PRIVACY_LINE, sanitizeNote, saveNote } from '../wallet/notes';") &&
+    src.includes('saveNote(net, { txid: tx, userOpHash: op }, value)') &&
+    src.includes('linkUserOperation(network, userOpHash, txid)') &&
+    src.includes('useEffect(() => () => save(), [save]);') &&
+    src.includes('>Note (private, this phone only)</Text>') &&
+    src.includes('{NOTE_PRIVACY_LINE}</Text>')
+  );
+}
+function sendOk(src) {
+  return (
+    src.includes(IMPORT('../components/TransactionNoteField')) &&
+    !src.includes('function SuccessNoteField') &&
+    !src.includes('SuccessNoteField') &&
+    /<TransactionNoteField\s+network=\{endpoint\.network\.chainId\}\s+txid=\{aaResult\.txHash\}\s+userOpHash=\{aaResult\.userOpHash\}\s*\/>/.test(src) &&
+    src.includes('<TransactionNoteField network={endpoint.network.chainId} txid={result.txid} userOpHash={null} />')
+  );
+}
+function swapOk(src) {
+  const aaView = between(src, "if (phase === 'success' && aaResult) {", '</ScrollView>');
+  const eoaView = between(src, "if (phase === 'success' && result) {", '</ScrollView>');
+  return (
+    src.includes(IMPORT('../components/TransactionNoteField')) &&
+    rendersBeforeDone(aaView, '<TransactionNoteField network={sentNetwork} txid={aaResult.txHash} userOpHash={aaResult.userOpHash} />') &&
+    rendersBeforeDone(eoaView, '<TransactionNoteField network={sentNetwork} txid={result.txid} userOpHash={null} />') &&
+    // The network is captured when the swap is sent, before the success view shows.
+    src.includes("setSentNetwork(evmChain.caip2);\n      setResult(sent);") &&
+    src.includes("setSentNetwork(evmChain.caip2);\n      setAaResult({ userOpHash, receiptState: 'pending', success: null, txHash: null });")
+  );
+}
+function sessionsOk(src) {
+  const view = between(src, "if (phase === 'progress' && progress) {", '</ScrollView>');
+  const creations = src.match(/setProgress\(\{\s*kind:/g) ?? [];
+  const withNetwork = src.match(/setProgress\(\{\s*kind:[^}]*?network: record\.chain,/g) ?? [];
+  return (
+    src.includes(IMPORT('../components/TransactionNoteField')) &&
+    /<TransactionNoteField\s+key=\{progress\.userOpHash\}\s+network=\{progress\.network\}\s+txid=\{progress\.txHash\}\s+userOpHash=\{progress\.userOpHash\}\s*\/>/.test(view) &&
+    rendersBeforeDone(view, '<TransactionNoteField', 'title="Done"') &&
+    creations.length >= 5 && withNetwork.length === creations.length
+  );
+}
+function wcOk(src) {
+  const view = between(src, 'export function WcSentView(', '</ScrollView>');
+  return (
+    src.includes(IMPORT('./TransactionNoteField')) &&
+    /<TransactionNoteField\s+key=\{result\.key\}\s+network=\{result\.network\}\s+txid=\{result\.txid\}\s+userOpHash=\{result\.userOpHash\}\s*\/>/.test(view) &&
+    rendersBeforeDone(view, '<TransactionNoteField', '<Button title="Done" onPress={onDone} />')
+  );
+}
+check('the moved field: saves through notes.ts, links a UserOperation note, saves on unmount, shows the privacy line', fieldOk(FIELD));
+check('Send: imports the moved field and renders it on both success views (no local copy left)', sendOk(SEND));
+check('Swap: the field above "Done" on both success views, with the network captured at sending', swapOk(SWAP));
+check('Sessions: the field above "Done" on the progress view (install, revoke, test, payment), every progress record carrying its record\'s chain', sessionsOk(SESSIONS));
+check('WalletConnect: the sent view renders the field above "Done"', wcOk(WC));
+check('mutant: a Swap AA view that drops the UserOperation hash is caught',
+  !swapOk(SWAP.replace('txid={aaResult.txHash} userOpHash={aaResult.userOpHash} />', 'txid={aaResult.txHash} userOpHash={null} />')));
+check('mutant: the field placed after "Done" on the Swap view is caught',
+  !swapOk(SWAP.replace(
+    "        {sentNetwork ? <TransactionNoteField network={sentNetwork} txid={result.txid} userOpHash={null} /> : null}\n        <Button title=\"Done\" onPress={() => navigation.popToTop()} />",
+    "        <Button title=\"Done\" onPress={() => navigation.popToTop()} />\n        {sentNetwork ? <TransactionNoteField network={sentNetwork} txid={result.txid} userOpHash={null} /> : null}")));
+check('mutant: a Sessions progress record without its network is caught',
+  !sessionsOk(SESSIONS.replace("setProgress({ kind: 'test', network: record.chain,", "setProgress({ kind: 'test',")));
+check('mutant: the Sessions render removed is caught', !sessionsOk(SESSIONS.replace(/<TransactionNoteField[\s\S]*?\/>/, '')));
+check('mutant: the WalletConnect render removed is caught', !wcOk(WC.replace(/<TransactionNoteField[\s\S]*?\/>/, '')));
+check('mutant: SendScreen keeping its own copy is caught', !sendOk(SEND + '\nfunction SuccessNoteField() {}\n'));
+
+// The key rule on those paths: the field saves with the hashes it has at
+// that moment. A smart-account note is first saved under the UserOperation
+// hash (no bundle transaction yet), moved when the bundle hash arrives, and
+// a later save with both hashes updates the moved note instead of creating
+// a second one. A WalletConnect batch (ERC-5792) never learns its bundle
+// hash on the sent view; Activity still finds the note through the row's
+// decoded UserOperation hash.
+{
+  const store = memoryStore();
+  await saveNote(SEPOLIA, { txid: null, userOpHash: OP_1 }, 'swap via smart account', { store });
+  let book = (await loadNotes(store)).notes;
+  check('userOpHash-first: stored under the UserOperation hash only', book.length === 1 && book[0].txid === null && book[0].userOpHash === OP_1);
+  check('…found by Activity through the decoded row\'s UserOperation hash before linking',
+    findNote(indexNotes(book), SEPOLIA, TX_C, [OP_1])?.text === 'swap via smart account');
+  check('…link when the bundle hash arrives', (await linkUserOperation(SEPOLIA, OP_1, TX_C, store)) === 'moved');
+  await saveNote(SEPOLIA, { txid: TX_C, userOpHash: OP_1 }, 'swap via smart account, edited', { store });
+  book = (await loadNotes(store)).notes;
+  check('…a later save with both hashes updates the moved note (one note, under the transaction, keeping the hash)',
+    book.length === 1 && book[0].txid === TX_C && book[0].userOpHash === OP_1 && book[0].text === 'swap via smart account, edited');
+  await saveNote(SEPOLIA, { txid: null, userOpHash: OP_1 }, 'saved again before the field saw the hash', { store });
+  book = (await loadNotes(store)).notes;
+  check('…a save with only the UserOperation hash after the link updates the linked note (no second record)',
+    book.length === 1 && book[0].txid === TX_C && book[0].text === 'saved again before the field saw the hash');
+  const batch = memoryStore();
+  await saveNote(SEPOLIA, { txid: null, userOpHash: OP_2 }, 'batch from a dApp', { store: batch });
+  check('WalletConnect batch: the note stays under the UserOperation hash and Activity finds it through the decoded row',
+    findNote(indexNotes((await loadNotes(batch)).notes), SEPOLIA, TX_A, [OP_2])?.text === 'batch from a dApp' &&
+      findNote(indexNotes((await loadNotes(batch)).notes), SEPOLIA, TX_A) === null);
+}
+
+// ---------------------------------------------------------------------------
 console.log('Mutation checks');
 // ---------------------------------------------------------------------------
 const MUTANT_DIR = join(HERE, `.mutants-notes-${process.pid}`);

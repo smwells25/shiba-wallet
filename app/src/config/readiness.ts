@@ -419,7 +419,7 @@ export const FEATURE_READINESS: readonly FeatureReadiness[] = [
     // that shows the stETH or rETH received comes from a single provider.
     // The protocols' audits are theirs, not this wallet's; no threat-model
     // entry of its own exists yet (the CTO's to add at the refresh).
-    evidence: ['W1', 'W2', 'W9', 'W13'],
+    evidence: ['W1', 'W2', 'W9', 'W13', 'T-76'],
     enforced: true,
   },
 ];

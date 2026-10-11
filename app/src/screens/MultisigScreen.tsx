@@ -150,7 +150,10 @@ export function MultisigScreen() {
   const nativeSymbol = evmChain.displaySymbol;
   const evm = accounts.find((a) => a.chainId === EVM_CHAIN_ID) ?? null;
   const activeAddress = evm?.address ?? null;
-  const phraseSigner = activeAccount && !activeAccount.imported && !activeAccount.watchOnly ? activeAddress : null;
+  // A multisig as the active account (listed in the switcher since phase 18
+  // item 3) is never this wallet's signer: its address is the multisig's own.
+  const phraseSigner =
+    activeAccount && !activeAccount.imported && !activeAccount.watchOnly && !activeAccount.multisig ? activeAddress : null;
   const readiness = readinessGate('multisig', chain);
 
   const ownAccounts = useMemo<OwnAccount[]>(

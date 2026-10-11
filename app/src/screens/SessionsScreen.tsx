@@ -50,6 +50,7 @@ import {
   type AaSendQuote,
 } from '../wallet/aa';
 import { AaDepositNote } from '../components/AaDepositNote';
+import { TransactionNoteField } from '../components/TransactionNoteField';
 import { findExactContact, listContacts, matchRecipient, type Contact } from '../wallet/contacts';
 import { sessionKeyVault } from '../wallet/storage';
 import { readinessGate } from '../config/readiness';
@@ -289,6 +290,8 @@ interface Progress {
   finalTerms?: string | null;
   /** Subscriptions and recurring payments: the permission id that was installed (assigned at Start). */
   permissionId?: string | null;
+  /** CAIP-2 id of the network the operation was sent on (its record's chain), for the note. */
+  network: string;
   userOpHash: string;
   state: 'pending' | 'done' | 'failed' | 'timeout';
   txHash: string | null;
@@ -726,7 +729,7 @@ export function SessionsScreen({ navigation }: Props) {
       });
       discardPending();
       waitingFor.current.add(userOpHash);
-      setProgress({ kind: 'install', userOpHash, state: 'pending', txHash: null, detail: null });
+      setProgress({ kind: 'install', network: record.chain, userOpHash, state: 'pending', txHash: null, detail: null });
       setPhase('progress');
       void finalizeSessionInstall(sendBundle, record, AsyncStorage).then(
         ({ receipt, status }) =>
@@ -1029,6 +1032,7 @@ export function SessionsScreen({ navigation }: Props) {
       waitingFor.current.add(userOpHash);
       setProgress({
         kind: p.mode === 'recurring' ? 'recurring' : 'subscription',
+        network: record.chain,
         userOpHash,
         state: 'pending',
         txHash: null,
@@ -1140,7 +1144,7 @@ export function SessionsScreen({ navigation }: Props) {
                   calls: [call],
                   vault: sessionKeyVault,
                 });
-                setProgress({ kind: 'test', userOpHash, state: 'pending', txHash: null, detail: null });
+                setProgress({ kind: 'test', network: record.chain, userOpHash, state: 'pending', txHash: null, detail: null });
                 setPhase('progress');
                 void client.waitForReceipt(userOpHash, { timeoutMs: 120_000, pollMs: 3_000 }).then(
                   (raw) => {
@@ -1241,7 +1245,7 @@ export function SessionsScreen({ navigation }: Props) {
         delete next[key];
         return next;
       });
-      setProgress({ kind: 'recurring-payment', userOpHash, state: 'pending', txHash: null, detail: null });
+      setProgress({ kind: 'recurring-payment', network: record.chain, userOpHash, state: 'pending', txHash: null, detail: null });
       setPhase('progress');
       void client.waitForReceipt(userOpHash, { timeoutMs: 120_000, pollMs: 3_000 }).then(
         (raw) => {
@@ -1320,6 +1324,7 @@ export function SessionsScreen({ navigation }: Props) {
             : target.record.source === 'recurring'
               ? 'recurring-revoke'
               : 'revoke',
+        network: record.chain,
         userOpHash,
         state: 'pending',
         txHash: null,
@@ -1495,6 +1500,12 @@ export function SessionsScreen({ navigation }: Props) {
             onPress={() => void Linking.openURL(`${evmChain.explorerTxBase}${progress.txHash}`)}
           />
         ) : null}
+        <TransactionNoteField
+          key={progress.userOpHash}
+          network={progress.network}
+          txid={progress.txHash}
+          userOpHash={progress.userOpHash}
+        />
         <Button
           title="Done"
           onPress={() => {

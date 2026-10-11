@@ -200,13 +200,19 @@ time the app starts. The app ships no Firebase configuration file
 FirebaseApp failed to initialize because no default options were found",
 so Firebase does not start. Without it the app never gets a push
 registration token, and without a token no server can send a message to
-this app, so the receiver should never be used. Two things are not yet
-confirmed: that only Google Play services holds the permission that guards
-the receiver, and that the Firebase code makes no network request at all
-when it is not configured (a network capture of a fresh install would
-show it). Until then we describe this as "not set up, no contact expected"
-rather than "no contact verified"; `docs/RELEASE.md` section 3 has the
-technical detail.
+this app, so the receiver should never be used. Reading the library code
+(2026-10-11) confirmed the start-up path: without the configuration,
+Firebase's start-up code stops before any of its parts (push messaging,
+installation ids, data transport) is created, and the notification
+library calls Firebase only to fetch or delete a push token or to join a
+topic, which the wallet never does. Google's documentation says that the
+permission guarding the receiver is held by Google Play services, so other
+apps cannot send to it. Two things are still not confirmed on a phone: the
+permission's exact protection level, and that no Firebase code sends any
+network request (a network capture of a fresh install would show it).
+Until then we describe this as "not set up, no contact expected" rather
+than "no contact verified"; `docs/RELEASE.md` section 3 has the technical
+detail and the sources.
 
 A notification can appear on the lock screen, so it says only what kind
 of event happened ("A recurring payment is due", "Someone started a

@@ -46,6 +46,7 @@ import {
 import { listContacts, type Contact } from '../wallet/contacts';
 import { listTokens } from '../wallet/tokens';
 import { getAaConfig } from '../wallet/aa';
+import { ownMultisigAddresses } from '../wallet/multisig';
 import {
   ACTIVITY_CSV_MIME_TYPE,
   ACTIVITY_CSV_UTI,
@@ -380,10 +381,13 @@ function useActivitySentences(options: {
     let cancelled = false;
     void (async () => {
       try {
-        const [tokens, savedContacts, aa] = await Promise.all([
+        const [tokens, savedContacts, aa, multisigs] = await Promise.all([
           listTokens(chainCaip2),
           listContacts(chainCaip2),
           getAaConfig(chainCaip2).catch(() => null),
+          // The wallet's own multisigs on this network read as its own
+          // addresses in the sentences (phase 18 item 3).
+          ownMultisigAddresses(chainCaip2),
         ]);
         if (cancelled) return;
         setSetup({
@@ -392,7 +396,7 @@ function useActivitySentences(options: {
           decoder: createActivityDecoder({
             chainCaip2,
             evmChainId: BigInt(chainIdDecimal),
-            wallet: walletAddressesFor(eoa, accountIndex, aa),
+            wallet: walletAddressesFor(eoa, accountIndex, aa, multisigs),
             trackedTokens: tokens,
           }),
         });

@@ -232,8 +232,9 @@ for (const [file, name] of [
     // Feature 10: the owner and index are null for a watch-only account (no
     // smart-account checks for an address the wallet cannot sign for), and
     // otherwise exactly the active account's address and index as before.
-    home.includes('const toolsOwner = watchOnly ? null : evmAccount?.address;') &&
-      home.includes('const toolsIndex = watchOnly ? null : (activeAccount?.index ?? null);') &&
+    // Phase 18 item 3: the same for a multisig account (noKey).
+    home.includes('const toolsOwner = noKey ? null : evmAccount?.address;') &&
+      home.includes('const toolsIndex = noKey ? null : (activeAccount?.index ?? null);') &&
       home.includes('useSessionEligibility(toolsOwner, toolsIndex, toolsRefresh)') &&
       home.includes('useRecoveryInfo(toolsOwner, toolsIndex, toolsRefresh)') &&
       home.includes('usePasskeyInfo(toolsOwner, toolsIndex, toolsRefresh)'),
@@ -337,7 +338,7 @@ console.log('check-home: the Multisig link only where the multisig contracts are
   const home = source('../src/screens/HomeScreen.tsx');
   check('Home: the Multisig link needs a test network AND multisigNetworkVerified(evmChain)',
     home.includes("evmChain.testnet && multisigNetworkVerified(evmChain)\n            ? cardLink('multisig', 'Multi-signature accounts', 'Multisig', () => navigation.navigate('Multisig'))") &&
-      home.includes("import { multisigNetworkVerified } from '../config/evm-chain';"));
+      /import \{[^}]*\bmultisigNetworkVerified\b[^}]*\} from '\.\.\/config\/evm-chain';/.test(home));
   const { multisigNetworkVerified, recordMultisigNetworkCheck, setCustomEvmProfiles, MULTISIG_UNVERIFIED_NETWORK_NOTE } = evmChainModule;
   check('the note (exact)', MULTISIG_UNVERIFIED_NETWORK_NOTE ===
     "Multi-signature accounts need the Kernel v3.3 contracts and ZeroDev's weighted signer module on this network; the wallet has not verified them here.");
@@ -359,6 +360,73 @@ console.log('check-home: the Multisig link only where the multisig contracts are
   recordMultisigNetworkCheck(EVM_SEPOLIA.caip2, ['problem']);
   check('a failed check never withdraws a built-in verified profile (the profile flag decides there)', multisigNetworkVerified(EVM_SEPOLIA) === true);
   recordMultisigNetworkCheck(EVM_SEPOLIA.caip2, []);
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-home: a multi-signature account as the active account (phase 18 item 3)');
+// ---------------------------------------------------------------------------
+// Source checks (the screen needs React): the links for a multisig are only
+// Activity, Receive (the address), Multisig (its operations), Tokens, NFTs
+// and Approvals (read-only); its EVM card shows the balance and the
+// EntryPoint deposit; the other networks say why they are not available.
+function homeMultisigProblems(home) {
+  const problems = [];
+  const need = (what, ok) => {
+    if (!ok) problems.push(what);
+  };
+  need('multisig from the active account', home.includes('const multisig = activeAccount?.multisig === true;'));
+  need('noKey covers multisig', home.includes('const noKey = watchOnly || multisig;'));
+  need('no Send link (chain card)', /\{noKey\s*\?\s*null\s*:\s*cardLink\('send'/.test(home));
+  need('no Send link (token rows)', /\.\.\.\(noKey\s*\?\s*\{\}\s*:\s*\{ onSend:/.test(home));
+  need('no Swap link', home.includes('isEvm && evmChain.swapsOffered && !noKey'));
+  need('no Upgrade link', /\{isEvm && !noKey\s*\?\s*cardLink\(\s*'upgrade'/.test(home));
+  need('no account tools (Sessions, Guardians, Inheritance, Apps, Staking, Passkey)', home.includes('const tools = isEvm && !noKey'));
+  need('the tool checks get no owner or index', home.includes('const toolsOwner = noKey ? null') && home.includes('const toolsIndex = noKey ? null'));
+  need('no delegation read', home.includes('useAccountDelegation(noKey ? undefined'));
+  need('the Multisig operations link',
+    home.includes("{isEvm && multisig\n            ? cardLink('multisig-operations', 'Multisig operations', 'Multisig', () => navigation.navigate('Multisig'))"));
+  need('Activity, NFTs and Approvals stay linked', /cardLink\('activity'/.test(home) && /isEvm \? cardLink\('nfts'/.test(home) && /cardLink\('approvals', 'Token approvals'/.test(home));
+  need('the EntryPoint deposit read with the Multisig screen\'s reader', home.includes('readMultisigFunds(httpTransport(endpoint.url), multisigAddress)'));
+  need('the deposit row', home.includes("{MULTISIG_DEPOSIT_ROW_LABEL}:{' '}") && home.includes('maskAmount(formatBalanceDisplay(shownDeposit.deposit, 18), hideAmounts)'));
+  need('the notice under the switcher', home.includes('{multisig ? <WarningBox>{MULTISIG_ACCOUNT_NOTICE}</WarningBox> : null}'));
+  need('the other-network note', home.includes('{multisigNetworkNote ? <WarningBox>{multisigNetworkNote}</WarningBox> : null}') && home.includes('multisigInfo.chain !== evmChain.caip2'));
+  need('Bitcoin, Dogecoin and Solana not available', home.includes('<UnavailableChains accounts={accounts} sentence={MULTISIG_NO_CHAIN} />'));
+  need('no guardian-recovery link', /\{noKey \? null : \(\s*<>\s*\{activeAccount\?\.imported \? null : \(/.test(home));
+  need('the multisig footer', home.includes('{multisigFooterText(activeAccount.name)}'));
+  return problems;
+}
+{
+  const home = source('../src/screens/HomeScreen.tsx');
+  const problems = homeMultisigProblems(home);
+  check('Home for a multisig: read-only links + Multisig, balance and deposit, notices, no signing links', problems.length === 0, problems.join('; '));
+  for (const [name, from, to] of [
+    ['M-h1 Send offered from a multisig (noKey without multisig)', 'const noKey = watchOnly || multisig;', 'const noKey = watchOnly;'],
+    ['M-h2 the Multisig operations link dropped', "cardLink('multisig-operations',", "cardLink('multisig-gone',"],
+    ['M-h3 the deposit row dropped', "{MULTISIG_DEPOSIT_ROW_LABEL}:{' '}", ''],
+    ['M-h4 the notice dropped', '{multisig ? <WarningBox>{MULTISIG_ACCOUNT_NOTICE}</WarningBox> : null}', ''],
+  ]) {
+    check(`mutation anchor present (${name})`, home.includes(from));
+    check(`${name}: caught`, homeMultisigProblems(home.replace(from, to)).length > 0);
+  }
+  const {
+    MULTISIG_ACCOUNT_NOTICE,
+    MULTISIG_RECEIVE_NOTE,
+    MULTISIG_SWITCHER_LINE,
+    multisigFooterText,
+    multisigOtherNetworkNote,
+  } = await import('../src/wallet/watch-only.ts');
+  const { MULTISIG_NO_CHAIN } = await import('../src/wallet/account-ids.ts');
+  check('the notice (exact)', MULTISIG_ACCOUNT_NOTICE ===
+    'Multi-signature account: no single key in this wallet can send from it. Its operations are signing requests that its co-signers approve on the Multisig screen. It cannot sign messages or connect to apps.');
+  check('the Receive sentence (exact)', MULTISIG_RECEIVE_NOTE ===
+    'This is the multi-signature account’s own address. Anyone can send to it, but every operation that moves anything out of it needs its co-signers’ approvals, built on the Multisig screen.');
+  check('the switcher line (exact)', MULTISIG_SWITCHER_LINE === 'Multisig — operations need co-signers; Ethereum networks only');
+  check('the not-available sentence (exact)', MULTISIG_NO_CHAIN ===
+    'Not available for a multi-signature account. A multisig is an Ethereum smart account; it has no address on this network.');
+  check('the other-network note (exact)', multisigOtherNetworkNote('Multisig 2 (2-of-3)', 'Ethereum Sepolia', 'Base Sepolia') ===
+    'Multisig 2 (2-of-3) is recorded on Ethereum Sepolia, and the Multisig screen builds its operations only there. The active network here is Base Sepolia; send to this address only on Ethereum Sepolia.');
+  check('the footer (exact start)', multisigFooterText('Multisig 2 (2-of-3)').startsWith(
+    'Multisig 2 (2-of-3) is a multi-signature account: its operations are built on the Multisig screen and need its co-signers’ approvals.'));
 }
 
 console.log(`\ncheck-home: ${passed} passed, ${failed} failed`);

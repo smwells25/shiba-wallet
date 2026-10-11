@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Linking, ScrollView, Switch, Text, TextInput, View } from 'react-native';
+import { addToken, knownStakingTokensForChain } from '../wallet/tokens';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { httpTransport as evmHttpTransport } from '@shiba-wallet/chains-evm';
 import type { RootStackParamList } from '../navigation';
@@ -165,6 +166,31 @@ function describeStakingError(e: unknown): string {
  * rebasing note), the balance-change preview, the risk card, the spending
  * limits, the eth_call (or bundler) gate, then the device check.
  */
+/**
+ * After a successful stake, wrap or unwrap, make sure the token the user now
+ * holds is on the tracked list for this chain, so Home shows it. Known
+ * staking tokens are deliberately not default-tracked (tokens.ts); tracking
+ * one here is the cheap path the notes slice suggested. Duplicates and any
+ * store error are ignored: the stake itself has already succeeded.
+ */
+async function trackReceivedStakingToken(chainCaip2: string, action: StakingAction): Promise<void> {
+  const symbol =
+    action.kind === 'stake' && action.protocol === 'lido' ? action.receive
+    : action.kind === 'stake' && action.protocol === 'rocket-pool' ? 'rETH'
+    : action.kind === 'wrap' ? 'wstETH'
+    : action.kind === 'unwrap' ? 'stETH'
+    : null;
+  if (!symbol) return;
+  const known = knownStakingTokensForChain(chainCaip2).find((t) => t.symbol === symbol);
+  if (!known) return;
+  try {
+    // Only the asset fields: the stored list has a strict parser.
+    await addToken({ kind: 'fungible', assetId: known.assetId, symbol: known.symbol, name: known.name, decimals: known.decimals });
+  } catch {
+    // already tracked, or the store refused: nothing to do
+  }
+}
+
 export function StakingScreen({ navigation }: Props) {
   const theme = useTheme();
   const { accounts, signWith, activeAccount } = useWallet();
@@ -517,6 +543,7 @@ export function StakingScreen({ navigation }: Props) {
       );
       setResult(sent);
       setPhase('success');
+      void trackReceivedStakingToken(evmChain.caip2, plan.action);
     } catch (e) {
       const { title, detail } = describeSendError(e, symbol);
       Alert.alert(title, detail);
@@ -562,6 +589,7 @@ export function StakingScreen({ navigation }: Props) {
       const { userOpHash } = await signWith(EVM_CHAIN_ID, preparedFrom.current ?? '', (signer) => sendAa(bundle, signer, aaQuote));
       setAaResult({ userOpHash, receiptState: 'pending', success: null, txHash: null });
       setPhase('success');
+      void trackReceivedStakingToken(evmChain.caip2, plan.action);
       void waitForAaReceipt(bundle, userOpHash, { timeoutMs: 120_000, pollMs: 3_000 }).then(
         ({ summary }) =>
           setAaResult((prev) =>

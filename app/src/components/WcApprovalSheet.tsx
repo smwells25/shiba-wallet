@@ -18,6 +18,7 @@ import {
 import { Button, ImportedKeyNotice, WarningBox } from '../components';
 import { BalanceChangePreview } from './BalanceChangePreview';
 import { AaDepositNote } from './AaDepositNote';
+import { TransactionNoteField } from './TransactionNoteField';
 import { GrantReview } from './SessionGrantViews';
 import { RiskWarnings } from './RiskWarnings';
 import { SpendingPolicyNotice } from './SpendingPolicyViews';
@@ -543,6 +544,88 @@ export function WcApprovalSheet({
               onReject={onReject}
             />
           )}
+        </ScrollView>
+      </View>
+    </View>
+  );
+}
+
+/**
+ * A request the WalletConnect context has just sent (a transaction from the
+ * regular account, or a smart-account operation), shown in place of the
+ * approval sheet so the user can add a private note to it. The context
+ * builds the result from the queue item it completed.
+ */
+export interface WcSentResult {
+  /** Unique per sent request: the queue item's key. */
+  key: string;
+  /** For example "Transaction sent" or "Batch sent to the bundler". */
+  title: string;
+  dappName: string;
+  /** CAIP-2 id of the network the request was validated against (the queue item's chain). */
+  network: string;
+  /**
+   * The transaction hash: the regular account's transaction, or the bundle
+   * transaction of a smart-account operation once it is known.
+   */
+  txid: string | null;
+  /** The UserOperation hash of a smart-account operation, else null. */
+  userOpHash: string | null;
+  /** An optional sentence under the title (for example that the dApp was not notified). */
+  detail?: string | null;
+}
+
+/**
+ * The WalletConnect sent view: the hashes of what was sent and the private
+ * note field (TransactionNoteField, the same one as on Send, Swap and
+ * Sessions). A note for an operation whose bundle transaction is not yet
+ * known is kept under the UserOperation hash; Activity finds it through the
+ * decoded row (notes.ts findNote). The hardware back button closes the view
+ * like Done, which saves a typed note.
+ */
+export function WcSentView({ result, onDone }: { result: WcSentResult; onDone: () => void }) {
+  const theme = useTheme();
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      onDone();
+      return true;
+    });
+    return () => sub.remove();
+  }, [onDone]);
+  return (
+    <View style={styles.backdrop}>
+      <View style={[styles.card, { backgroundColor: theme.background, borderColor: theme.border }]}>
+        <ScrollView key={result.key} contentContainerStyle={styles.content}>
+          <Text style={[styles.modalTitle, { color: theme.success }]}>{result.title}</Text>
+          <Text style={[styles.hint, { color: theme.textMuted }]}>Sent for {result.dappName}.</Text>
+          {result.detail ? <Text style={[styles.hint, { color: theme.text }]}>{result.detail}</Text> : null}
+          {result.txid ? (
+            <>
+              <Text style={[styles.fieldLabel, { color: theme.textMuted }]}>Transaction</Text>
+              <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border }]}>
+                <Text selectable style={[styles.monoText, { color: theme.text }]}>
+                  {result.txid}
+                </Text>
+              </View>
+            </>
+          ) : null}
+          {result.userOpHash ? (
+            <>
+              <Text style={[styles.fieldLabel, { color: theme.textMuted }]}>UserOperation hash</Text>
+              <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border }]}>
+                <Text selectable style={[styles.monoText, { color: theme.text }]}>
+                  {result.userOpHash}
+                </Text>
+              </View>
+            </>
+          ) : null}
+          <TransactionNoteField
+            key={result.key}
+            network={result.network}
+            txid={result.txid}
+            userOpHash={result.userOpHash}
+          />
+          <Button title="Done" onPress={onDone} />
         </ScrollView>
       </View>
     </View>

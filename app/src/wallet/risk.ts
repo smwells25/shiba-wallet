@@ -1,6 +1,8 @@
 import { toChecksumAddress } from '@shiba-wallet/core';
 import {
+  LIDO_DEPLOYMENTS,
   MAX_UINT256,
+  ROCKET_POOL_DEPLOYMENTS,
   SET_APPROVAL_FOR_ALL_SELECTOR,
   classifyRecipient,
   encodeErc20Approve,
@@ -25,6 +27,7 @@ import { WALLET_7702_DELEGATE } from './delegation.ts';
 import { walletAddressesFor, type AaAddressFacts } from './activity-sentences.ts';
 import { ownMultisigAddresses } from './multisig.ts';
 import { evmProfileByCaip2 } from '../config/evm-chain.ts';
+import { knownStakingTokensForChain } from './tokens.ts';
 
 /**
  * Risk warnings for EVM confirm screens (phase 7, item 5, app half). The
@@ -72,6 +75,24 @@ import { evmProfileByCaip2 } from '../config/evm-chain.ts';
  *    a plain transfer to the named recipient, or a "token" address without
  *    code — keeps every existing line about the contract (see
  *    tokenTransferTarget).
+ *
+ *  - Staking contracts (phase 18): a transaction whose `to` is one of the
+ *    staking contracts the engine pins for the ACTIVE chain (staking.ts
+ *    LIDO_DEPLOYMENTS and ROCKET_POOL_DEPLOYMENTS: Lido's stETH, wstETH and
+ *    withdrawal queue on Ethereum Sepolia and Hoodi, Rocket Pool's rETH on
+ *    Hoodi; docs/STAKING.md 4.1 and 5.3), and that holds code, gets one line
+ *    naming the protocol and the contract — "This transaction goes to
+ *    Lido's stETH contract on Ethereum Sepolia (0x…), pinned by this
+ *    wallet…" — instead of "goes to a contract", the contract-age line and
+ *    the first-interaction line, the same way the pinned Universal Router
+ *    addresses are named in the engine's activity-decode.ts. The match is on
+ *    the exact (chain, address) pair (address compared case-insensitively,
+ *    all 40 hex digits); a look-alike address or the same address on
+ *    another chain keeps every generic line. Approval warnings decoded from
+ *    the calldata are kept. Rocket Pool's deposit pool is NOT pinned (the
+ *    wallet resolves it from RocketStorage at every quote), so a deposit
+ *    keeps the generic lines; RocketStorage itself is never a transaction
+ *    target of the wallet and is not listed.
  *
  * The look-alike-contact warning is NOT produced here; it stays in
  * ./contacts.ts and the send screens' RecipientContactNotice.
@@ -475,6 +496,74 @@ export function findOwnAddress(address: string, own: readonly OwnAddress[]): Own
   return own.find((o) => o.address.toLowerCase() === lower) ?? null;
 }
 
+/** A staking contract the engine pins for one chain (see the file comment). */
+export interface PinnedStakingContract {
+  /** CAIP-2 id of the chain the address is pinned for. */
+  chain: string;
+  /** The address as the engine's table lists it (EIP-55). */
+  address: string;
+  protocol: 'Lido' | 'Rocket Pool';
+  /** What the contract is: "stETH", "wstETH", "withdrawal queue" or "rETH". */
+  name: string;
+}
+
+/**
+ * Every staking contract the card names, built from the engine's pinned
+ * deployment tables (packages/chains-evm/src/staking.ts; addresses from
+ * lidofinance/docs 140c583d and rocket-pool/smartnode 8c1dad70, checked
+ * on-chain in phase 18 — docs/STAKING.md 4.1).
+ */
+export function pinnedStakingContracts(): PinnedStakingContract[] {
+  const out: PinnedStakingContract[] = [];
+  for (const d of Object.values(LIDO_DEPLOYMENTS)) {
+    out.push({ chain: d.chain, address: d.stETH, protocol: 'Lido', name: 'stETH' });
+    out.push({ chain: d.chain, address: d.wstETH, protocol: 'Lido', name: 'wstETH' });
+    out.push({ chain: d.chain, address: d.withdrawalQueue, protocol: 'Lido', name: 'withdrawal queue' });
+  }
+  for (const d of Object.values(ROCKET_POOL_DEPLOYMENTS)) {
+    out.push({ chain: d.chain, address: d.rETH, protocol: 'Rocket Pool', name: 'rETH' });
+  }
+  return out;
+}
+
+/**
+ * The pinned staking contract at exactly `address` on `chainCaip2`, or
+ * null. All 40 hex digits must match (case-insensitively) and the chain
+ * must be the one the address is pinned for.
+ */
+export function stakingContractAt(chainCaip2: string, address: string): PinnedStakingContract | null {
+  if (!ADDRESS.test(address)) return null;
+  const lower = address.toLowerCase();
+  return (
+    pinnedStakingContracts().find((c) => c.chain === chainCaip2 && c.address.toLowerCase() === lower) ?? null
+  );
+}
+
+/**
+ * `tokens` plus the chain's known liquid-staking tokens (tokens.ts
+ * KNOWN_STAKING_TOKENS) that are not already in it (compared by address,
+ * case-insensitively), so a stETH, wstETH or rETH transfer is described by
+ * its recipient and the first-interaction search covers them. The caller's
+ * entries come first and win.
+ */
+export function withStakingTokens(tokens: readonly RiskTokenRef[], chainCaip2: string): RiskTokenRef[] {
+  const seen = new Set(tokens.map((t) => t.address.toLowerCase()));
+  const extra = knownStakingTokensForChain(chainCaip2)
+    .map((t) => ({ address: t.assetId.reference, symbol: t.symbol }))
+    .filter((t) => !seen.has(t.address.toLowerCase()));
+  return [...tokens, ...extra];
+}
+
+/** The card's one line for a pinned staking contract (RiskFacts.stakingContract). */
+export function stakingContractText(contract: PinnedStakingContract): string {
+  const network = evmProfileByCaip2(contract.chain)?.label ?? contract.chain;
+  return (
+    `This transaction goes to ${contract.protocol}'s ${contract.name} contract on ${network} ` +
+    `(${contract.address}), pinned by this wallet from ${contract.protocol}'s published list of ` +
+    'deployed contracts.'
+  );
+}
+
 export interface RiskFacts {
   /** The transaction's `to` (what classification and age describe, unless tokenTransfer is set). */
   to: string;
@@ -486,6 +575,12 @@ export interface RiskFacts {
    * not the token contract.
    */
   tokenTransfer?: { contract: string; symbol: string; recipient: string };
+  /**
+   * Set when `to` is a staking contract the wallet pins for this chain
+   * (stakingContractAt) and was seen to hold code. Then no contract-age or
+   * first-interaction check runs for it, and the card names it.
+   */
+  stakingContract?: PinnedStakingContract;
   /** Set when `to` is one of the wallet's own addresses (no age or first-interaction checks then). */
   ownRecipient?: OwnAddress;
   /** Set when the paid party differs from `to` and is one of the wallet's own addresses. */
@@ -749,6 +844,15 @@ export function computeRiskLines(facts: RiskFacts): RiskLine[] {
       text: tokenTransferText({ ...facts, tokenTransfer: transfer }),
       subject,
     });
+  } else if (facts.stakingContract) {
+    // A pinned staking contract on this chain: one line naming it, nothing
+    // about its class or age (see the file comment).
+    lines.push({
+      type: 'recipient-class',
+      tone: 'notice',
+      text: stakingContractText(facts.stakingContract),
+      subject: facts.to,
+    });
   } else if (facts.ownRecipient && !facts.expectedOwnDelegation) {
     // A send between the wallet's own accounts: one calm line, whatever the
     // address's code (an own smart account is a contract, possibly a new one).
@@ -849,7 +953,9 @@ export interface GatherRiskOptions {
    * tracked tokens plus the known test-network tokens (approvals.ts
    * approvalTokensForChain). Also the only contracts whose transfer the card
    * describes in terms of the recipient (tokenTransferTarget), so callers
-   * must pass the active chain's tokens and nothing else.
+   * must pass the active chain's tokens and nothing else. The chain's known
+   * liquid-staking tokens (tokens.ts knownStakingTokensForChain: stETH,
+   * wstETH, rETH where the wallet offers staking) are added here, once each.
    */
   trackedTokens: RiskTokenRef[];
   /** Injectable for scripts; defaults to simulationTransport(url). */
@@ -1020,7 +1126,7 @@ export async function gatherRiskFacts(options: GatherRiskOptions): Promise<RiskF
 
   const counterparty =
     options.counterparty && ADDRESS.test(options.counterparty) ? options.counterparty : options.to;
-  const tokens = options.trackedTokens.filter((t) => ADDRESS.test(t.address));
+  const tokens = withStakingTokens(options.trackedTokens, options.chainCaip2).filter((t) => ADDRESS.test(t.address));
   const threshold = newContractThresholdBlocks(options.chainCaip2);
   const indexerTransport =
     options.indexerTransport ?? (options.indexerUrl ? simulationTransport(options.indexerUrl) : null);
@@ -1030,6 +1136,10 @@ export async function gatherRiskFacts(options: GatherRiskOptions): Promise<RiskF
   const tokenRef = facts.ownRecipient
     ? null
     : tokenTransferTarget(options.to, options.counterparty, options.data, tokens);
+  // A staking contract the wallet pins for this chain (not a token transfer
+  // through it, which tokenRef describes); confirmed below only if `to`
+  // holds code.
+  const stakingRef = facts.ownRecipient || tokenRef ? null : stakingContractAt(options.chainCaip2, options.to);
 
   // Class, delegation and age of `address`, recorded as the card's subject.
   const describeSubject = async (address: string, known?: RecipientClass) => {
@@ -1058,6 +1168,12 @@ export async function gatherRiskFacts(options: GatherRiskOptions): Promise<RiskF
       // or age check (the same rule as a send to an own `to`).
       if (facts.ownCounterparty) return;
       await describeSubject(counterparty);
+      return;
+    }
+    if (stakingRef && toClass.kind === 'contract') {
+      // Named by the card; no age check for a pinned contract.
+      facts.recipientClass = toClass;
+      facts.stakingContract = stakingRef;
       return;
     }
     await describeSubject(options.to, toClass);
@@ -1108,6 +1224,18 @@ export async function gatherRiskFacts(options: GatherRiskOptions): Promise<RiskF
   // a first interaction worth a warning (finding 13), so no search runs.
   const selfSend = ownParty !== null;
   facts.firstInteractionApplicable = !selfSend;
+  if (stakingRef && !selfSend && counterparty.toLowerCase() === options.to.toLowerCase()) {
+    // The paid party is the pinned staking contract itself: when its code is
+    // confirmed, "have you sent here before" adds nothing, so no search
+    // runs; otherwise the searches run as for any other address.
+    await classifyTask();
+    if (facts.stakingContract) {
+      facts.firstInteractionApplicable = false;
+      return facts;
+    }
+    await Promise.all([tokenSearchTask(), nativeSearchTask()]);
+    return facts;
+  }
   await Promise.all([
     classifyTask(),
     ...(selfSend ? [] : [tokenSearchTask(), nativeSearchTask()]),

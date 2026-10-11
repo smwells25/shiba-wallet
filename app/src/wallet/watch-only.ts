@@ -29,7 +29,7 @@ export interface KnownAccount {
   name: string;
   /** Its Ethereum address, or null when it is not known without the phrase. */
   evmAddress: string | null;
-  kind: 'phrase' | 'imported' | 'watch-only';
+  kind: 'phrase' | 'imported' | 'watch-only' | 'multisig';
 }
 
 export type WatchAddressCheck =
@@ -47,6 +47,14 @@ export function watchOnlyOwnAccountError(name: string, address: string): string 
   return (
     `This address is already one of your accounts: ${name} (${address}). The wallet holds its key, so ` +
     'there is nothing to watch.'
+  );
+}
+
+/** Refusal when the address is one of the wallet's multi-signature accounts. */
+export function watchOnlyMultisigError(name: string, address: string): string {
+  return (
+    `This address is one of your multi-signature accounts: ${name} (${address}). It is already listed in this ` +
+    'wallet, so there is nothing to watch.'
   );
 }
 
@@ -73,6 +81,7 @@ export function checkWatchAddress(raw: string, known: readonly KnownAccount[]): 
   const match = known.find((a) => a.evmAddress !== null && a.evmAddress.toLowerCase() === lower);
   if (match) {
     if (match.kind === 'watch-only') return { ok: false, error: watchOnlyDuplicateError(match.name, address) };
+    if (match.kind === 'multisig') return { ok: false, error: watchOnlyMultisigError(match.name, address) };
     return { ok: false, error: watchOnlyOwnAccountError(match.name, address) };
   }
   return validation.note ? { ok: true, address, note: validation.note } : { ok: true, address };
@@ -219,14 +228,17 @@ export function walletConnectAddressFor(
 
 /**
  * Routes that work while a multi-signature account is the ACTIVE account
- * (once WalletContext lists multisig accounts; see the phase 17 item 1
- * report): read-only screens by address, the wallet's own management, and
- * the Multisig screen, where its operations are built, approved and
- * submitted. Everything else — Send and Swap (which would sign with one
- * key), WalletConnect and the in-app browser (message signatures), session
- * keys, guardians, inheritance, passkeys, the EIP-7702 upgrade, owner
- * changes, proof of ownership and spending limits — is refused, and so is
- * any route added later (an allow list on purpose).
+ * (WalletContext lists stored multisigs as accounts since phase 18 item 3):
+ * read-only screens by address, the wallet's own management, and the
+ * Multisig screen, where its operations are built, approved and submitted.
+ * Approvals is on the list because its screen has a read-only form for a
+ * multisig (no Revoke buttons; the revoke handler refuses first), as for a
+ * watch-only account. Everything else — Send and Swap (which would sign with
+ * one key), WalletConnect and the in-app browser (Apps: message signatures,
+ * and the browser never offers a multisig as a session account), session
+ * keys, guardians, inheritance, passkeys, staking, the EIP-7702 upgrade,
+ * owner changes, proof of ownership and spending limits — is refused, and so
+ * is any route added later (an allow list on purpose).
  */
 export const MULTISIG_ALLOWED_ROUTES: readonly string[] = [
   'Home',
@@ -234,6 +246,7 @@ export const MULTISIG_ALLOWED_ROUTES: readonly string[] = [
   'Nfts',
   'NftDetail',
   'Tokens',
+  'Approvals',
   'Settings',
   'Contacts',
   'ImportKey',
@@ -241,9 +254,21 @@ export const MULTISIG_ALLOWED_ROUTES: readonly string[] = [
   'Multisig',
 ];
 
+/**
+ * The Send route's refusal for a multisig (the gate shows it with a button
+ * to the Multisig screen): a send from a multisig is a signing request the
+ * co-signers approve, which only the Multisig screen builds.
+ */
+export const MULTISIG_SEND_REFUSAL =
+  'Sends from a multi-signature account are signing requests for the co-signers; build one on the Multisig screen.';
+
+/** The button under every multisig refusal. */
+export const MULTISIG_OPEN_SCREEN_BUTTON = 'Open the Multisig screen';
+
 /** The refusal for opening `routeName` while a multisig is active, or null when allowed. */
 export function multisigRouteRefusal(routeName: string): string | null {
   if (MULTISIG_ALLOWED_ROUTES.includes(routeName)) return null;
+  if (routeName === 'Send') return MULTISIG_SEND_REFUSAL;
   const feature = ROUTE_FEATURES[routeName] ?? 'This screen';
   return (
     `${feature} is not available for a multi-signature account: no single key in this wallet can sign for it. ` +
@@ -295,5 +320,57 @@ export function watchOnlyFooterText(name: string): string {
     `${name} is an address you watch; this wallet holds no key for it, so it cannot send, swap or sign ` +
     'for it. Balances come from the RPC endpoints in Settings; pull down to refresh. Activity and NFTs ' +
     'read this address from the indexers in Settings.'
+  );
+}
+
+// ---------------------------------------------------------------------------
+// A multi-signature account as the ACTIVE account (phase 18 item 3; pinned by
+// scripts/check-multisig.mjs)
+// ---------------------------------------------------------------------------
+
+/** Under the account switcher on Home while a multisig is the active account. */
+export const MULTISIG_ACCOUNT_NOTICE =
+  'Multi-signature account: no single key in this wallet can send from it. Its operations are signing requests ' +
+  'that its co-signers approve on the Multisig screen. It cannot sign messages or connect to apps.';
+
+/** Receive for a multisig: what the code on the screen is, and that moving funds out needs the co-signers. */
+export const MULTISIG_RECEIVE_NOTE =
+  'This is the multi-signature account’s own address. Anyone can send to it, but every operation that moves ' +
+  'anything out of it needs its co-signers’ approvals, built on the Multisig screen.';
+
+/** The switcher's line under a multisig row and under the header while one is active. */
+export const MULTISIG_SWITCHER_LINE = 'Multisig — operations need co-signers; Ethereum networks only';
+
+/**
+ * Said on Home and Receive when the active network is not the one the
+ * multisig's record belongs to: the Multisig screen lists and builds its
+ * operations only on the record's network.
+ */
+export function multisigOtherNetworkNote(label: string, recordNetwork: string, activeNetwork: string): string {
+  return (
+    `${label} is recorded on ${recordNetwork}, and the Multisig screen builds its operations only there. ` +
+    `The active network here is ${activeNetwork}; send to this address only on ${recordNetwork}.`
+  );
+}
+
+/**
+ * Which account builds a multisig's operations: the Multisig screen submits
+ * and co-signs with this wallet's signer, so that account must be active.
+ * `signerName` is null when the signer is not listed in this wallet.
+ */
+export function multisigSignerHint(label: string, signerName: string | null, signerAddress: string): string {
+  const who = signerName ? `${signerName} (${signerAddress})` : signerAddress;
+  return (
+    `This wallet’s signer for ${label} is ${who}. Switch to that account on Home, then open the Multisig screen ` +
+    'to build, approve or submit its operations.'
+  );
+}
+
+/** Home's footer for a multisig account. */
+export function multisigFooterText(name: string): string {
+  return (
+    `${name} is a multi-signature account: its operations are built on the Multisig screen and need its ` +
+    'co-signers’ approvals. Balances come from the RPC endpoints in Settings; pull down to refresh. Activity and ' +
+    'NFTs read this address from the indexers in Settings.'
   );
 }

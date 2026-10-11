@@ -737,6 +737,33 @@ async function readStore(store: KeyValueStore): Promise<{ state: StoreState; dam
 
 async function writeStore(state: StoreState, store: KeyValueStore): Promise<void> {
   await store.setItem(MULTISIG_STORE_KEY, JSON.stringify({ version: STORE_VERSION, nextSlot: state.nextSlot, records: state.records }));
+  notifyMultisigStoreChanged();
+}
+
+// The account switcher lists every stored multisig as an account
+// (WalletContext reconciles the account list with this store at launch and
+// whenever the store is written: a create, an import, a rename, a removal or
+// an operation's progress). Listeners get no data; they re-read the list.
+// The wallet wipe (resetMultisigRecords) does not notify: the wipe resets the
+// account list itself.
+const storeListeners = new Set<() => void>();
+
+/** Calls `listener` after every write of the multisig store; returns the unsubscribe function. */
+export function addMultisigStoreListener(listener: () => void): () => void {
+  storeListeners.add(listener);
+  return () => {
+    storeListeners.delete(listener);
+  };
+}
+
+function notifyMultisigStoreChanged(): void {
+  for (const listener of [...storeListeners]) {
+    try {
+      listener();
+    } catch {
+      // A listener's failure never fails the write that already happened.
+    }
+  }
 }
 
 async function mutate<T>(store: KeyValueStore, fn: (state: StoreState) => T): Promise<T> {
@@ -759,11 +786,38 @@ export async function getMultisigRecord(id: number, store: KeyValueStore = Async
   return state.records.find((r) => r.id === id) ?? null;
 }
 
-/** For accounts.ts reconcileMultisigAccounts (WalletContext; see the CTO note in the phase 17 report). */
-export async function multisigListEntries(store: KeyValueStore = AsyncStorage): Promise<{ id: number; address: string; name: string }[] | null> {
+/** One stored multisig as the account list and the account switcher need it (public data only). */
+export interface MultisigAccountEntry {
+  /** The account id (multisig range). */
+  id: number;
+  /** EIP-55 address of the multisig account. */
+  address: string;
+  /** The record's name ("Multisig 2"). */
+  name: string;
+  /** How every screen names it: multisigDisplayName, e.g. "Multisig 2 (2-of-3)". */
+  label: string;
+  /** CAIP-2 network the record belongs to (the Multisig screen builds its operations only there). */
+  chain: string;
+  /** This wallet's signer for it (a recovery-phrase account's EVM address). */
+  localSigner: string;
+}
+
+/**
+ * For accounts.ts reconcileMultisigAccounts and the account switcher
+ * (WalletContext). null when the stored list cannot be read, so the account
+ * list is left as it is rather than emptied.
+ */
+export async function multisigListEntries(store: KeyValueStore = AsyncStorage): Promise<MultisigAccountEntry[] | null> {
   const { state, damaged } = await readStore(store);
   if (damaged) return null;
-  return state.records.map((r) => ({ id: r.id, address: r.address, name: r.name }));
+  return state.records.map((r) => ({
+    id: r.id,
+    address: r.address,
+    name: r.name,
+    label: multisigDisplayName(r),
+    chain: r.chain,
+    localSigner: r.localSigner,
+  }));
 }
 
 /** Removes every record (wallet wipe). Nothing on-chain changes. */

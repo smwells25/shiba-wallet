@@ -904,10 +904,11 @@ console.log('check-multisig: refusals (WalletConnect, browser, ERC-1271, guardia
   check('a stored WalletConnect smart binding accepts only kernel-v3.3 or simple (source pin)', wcSrc.includes("(v.accountType !== 'kernel-v3.3' && v.accountType !== 'simple')"));
   const browserSrc = readFileSync(join(HERE, '..', 'src', 'wallet', 'browser-bridge.ts'), 'utf8');
   check('the browser bridge never builds a multisig bundle (source check)', !/createMultisigAaClient|kernel-multisig/.test(browserSrc));
-  check('route allow list for an active multisig: Multisig and Receive allowed; Send, Swap, Connections, Apps, Sessions, Guardians, Inheritance, Passkey, UpgradeAccount refused',
-    multisigRouteRefusal('Multisig') === null && multisigRouteRefusal('Receive') === null &&
-      ['Send', 'Swap', 'Connections', 'Apps', 'Sessions', 'Guardians', 'Inheritance', 'Passkey', 'UpgradeAccount', 'OwnerRotation', 'ProveOwnership', 'SpendingLimits', 'SomeFutureRoute'].every((r) => multisigRouteRefusal(r) !== null) &&
-      MULTISIG_ALLOWED_ROUTES.length === 10);
+  check('route allow list for an active multisig: Multisig, Receive and (read-only) Approvals allowed; Send, Swap, Connections, Apps, Sessions, Guardians, Inheritance, Passkey, UpgradeAccount, Staking refused',
+    multisigRouteRefusal('Multisig') === null && multisigRouteRefusal('Receive') === null && multisigRouteRefusal('Approvals') === null &&
+      ['Send', 'Swap', 'Connections', 'Apps', 'Sessions', 'Guardians', 'Inheritance', 'Passkey', 'UpgradeAccount', 'OwnerRotation', 'ProveOwnership', 'SpendingLimits', 'Staking', 'SomeFutureRoute'].every((r) => multisigRouteRefusal(r) !== null) &&
+      MULTISIG_ALLOWED_ROUTES.length === 11 &&
+      JSON.stringify(MULTISIG_ALLOWED_ROUTES) === JSON.stringify(['Home', 'Activity', 'Nfts', 'NftDetail', 'Tokens', 'Approvals', 'Settings', 'Contacts', 'ImportKey', 'Receive', 'Multisig']));
   check('…and a watch-only account is refused the Multisig screen by name', watchOnlyRouteRefusal('Multisig')?.startsWith('Multi-signature accounts is not available for a watch-only account'));
   check('aaTypeFeatures / aaReadinessBlock: the multisig row first, then Kernel', aaTypeFeatures('kernel-multisig').join() === 'multisig,kernel-smart-account' && aaReadinessBlock(MAINNET, 'kernel-multisig') === 'multisig' && aaReadinessBlock(SEPOLIA, 'kernel-multisig') === null);
 }
@@ -1053,6 +1054,240 @@ console.log('check-multisig: mutation checks (broken copies must be caught)');
   const m15Facts = await m15.gatherRiskFacts(riskOpts);
   check('M15 caught: without the merge a send to the own multisig is not "one of your own accounts" (the real one is)',
     realFacts.ownRecipient?.label === 'Multisig 1 (2-of-3)' && realFacts.firstInteractionApplicable === false && m15Facts.ownRecipient === undefined && m15Facts.firstInteractionApplicable === true);
+}
+
+
+// ===========================================================================
+console.log('check-multisig: the multisig as an account in the switcher (phase 18 item 3)');
+// ===========================================================================
+{
+  const M0 = multisigAccountId(0);
+  const ids = await import('../src/wallet/account-ids.ts');
+  const wo = await import('../src/wallet/watch-only.ts');
+  const ms = await import('../src/wallet/multisig.ts');
+  const acc = await import('../src/wallet/accounts.ts');
+  const { createKeyVault } = await import('../src/wallet/storage.ts');
+  const read = (rel) => readFileSync(join(HERE, '..', rel), 'utf8');
+
+  // --- The approval gate's target: NOTHING for a multisig (the phrase is never opened by a device check).
+  check('approvalTargetFor: phrase → phrase, imported → its slot, watch-only / multisig / malformed → none',
+    JSON.stringify(ids.approvalTargetFor(0)) === '{"kind":"phrase"}' && JSON.stringify(ids.approvalTargetFor(7)) === '{"kind":"phrase"}' &&
+      JSON.stringify(ids.approvalTargetFor(IMPORTED_ACCOUNT_ID_BASE + 2)) === '{"kind":"imported","slot":2}' &&
+      JSON.stringify(ids.approvalTargetFor(WATCH_ONLY_ACCOUNT_ID_BASE)) === '{"kind":"none"}' &&
+      JSON.stringify(ids.approvalTargetFor(M0)) === '{"kind":"none"}' &&
+      JSON.stringify(ids.approvalTargetFor(IMPORTED_ACCOUNT_ID_BASE + MAX_IMPORTED_SLOT + 1)) === '{"kind":"none"}' &&
+      JSON.stringify(ids.approvalTargetFor(-1)) === '{"kind":"none"}');
+  const countingBackend = () => {
+    const items = new Map();
+    const calls = { get: 0, set: 0, delete: 0 };
+    const key = (k, o) => `${o?.keychainService ?? 'default'}|${k}`;
+    return {
+      calls,
+      whenUnlockedThisDeviceOnly: 5,
+      async getItemAsync(k, o) { calls.get += 1; return items.has(key(k, o)) ? items.get(key(k, o)) : null; },
+      async setItemAsync(k, v, o) { calls.set += 1; items.set(key(k, o), v); },
+      async deleteItemAsync(k, o) { calls.delete += 1; items.delete(key(k, o)); },
+      canUseBiometricAuthentication: () => false,
+    };
+  };
+  const gateReads = async (targetFor, id) => {
+    const backend = countingBackend();
+    const vault = createKeyVault(backend, { policy: 'off' });
+    await vault.saveNewPhrase(TEST_MNEMONIC);
+    vault.setApprovalTarget(targetFor(id));
+    backend.calls.get = 0;
+    const result = await vault.openPhraseForApproval('Unlock Shiba Wallet');
+    return { result, reads: backend.calls.get };
+  };
+  const msGate = await gateReads(ids.approvalTargetFor, M0);
+  const phraseGate = await gateReads(ids.approvalTargetFor, 0);
+  check('a device check while a multisig is active: the ordinary prompt (fallback), ZERO secure-store reads',
+    msGate.result.kind === 'fallback' && msGate.result.detail === null && msGate.reads === 0, JSON.stringify(msGate));
+  check('…while a phrase account reads the secure store for the same check (the comparison is meaningful)', phraseGate.reads >= 1, JSON.stringify(phraseGate));
+  const ctx = read('src/wallet/WalletContext.tsx');
+  check('WalletContext.commitAccounts sets the target through approvalTargetFor(active)', ctx.includes('setApprovalTarget(approvalTargetFor(active));'));
+  const mTarget = await importMutant('src/wallet/account-ids.ts', "  if (isPhraseAccountId(id)) return { kind: 'phrase' };\n  return { kind: 'none' };", "  return { kind: 'phrase' };");
+  const mGate = await gateReads(mTarget.approvalTargetFor, M0);
+  check('M16 caught: a target that treats a multisig like a phrase account opens the phrase (secure-store reads)', mGate.reads >= 1, JSON.stringify(mGate));
+
+  // --- The multisig store feeds the account list: entries, the change listener, the name.
+  const sL = memoryStore();
+  let fired = 0;
+  const off = ms.addMultisigStoreListener(() => {
+    fired += 1;
+  });
+  const offThrowing = ms.addMultisigStoreListener(() => {
+    throw new Error('listener failure');
+  });
+  const rec = await ms.createMultisigRecord({ chain: SEPOLIA, config: CONFIG_2_OF_3, localSigner: S0.address }, sL);
+  check('a write of the multisig store notifies the listeners (a throwing listener never fails the write)', fired >= 1 && (await ms.listMultisigRecords(SEPOLIA, sL)).length === 1);
+  const entries = await ms.multisigListEntries(sL);
+  check('multisigListEntries: id, address, name, the shape label, the network and this wallet’s signer',
+    entries.length === 1 && entries[0].id === rec.id && entries[0].address === rec.address && entries[0].name === 'Multisig 1' &&
+      entries[0].label === 'Multisig 1 (2-of-3)' && entries[0].chain === SEPOLIA && entries[0].localSigner === S0.address, JSON.stringify(entries));
+  const beforeRename = fired;
+  await ms.renameMultisigRecord(rec.id, 'Treasury', sL);
+  const renamed = await ms.multisigListEntries(sL);
+  check('a rename notifies too and the label follows it', fired > beforeRename && renamed[0].label === 'Treasury (2-of-3)');
+  const listed = acc.reconcileMultisigAccounts(acc.reconcileMultisigAccounts(acc.defaultAccountsState(), entries).state, renamed);
+  check('reconcile takes the name from the record (the Multisig screen renames it)', listed.changed && listed.state.accounts.find((a) => a.index === rec.id)?.name === 'Treasury');
+  const beforeWipe = fired;
+  await ms.resetMultisigRecords(sL);
+  check('the wipe (resetMultisigRecords) does not notify (the wipe resets the account list itself)', fired === beforeWipe);
+  off();
+  offThrowing();
+  await ms.createMultisigRecord({ chain: SEPOLIA, config: CONFIG_2_OF_3, localSigner: S0.address }, memoryStore());
+  check('an unsubscribed listener is not called', fired === beforeWipe);
+
+  // --- WalletContext: multisigs are listed as accounts, never derived, never "accounts with a key".
+  const derivedSrc = ctx.slice(ctx.indexOf('function derivedIndices('), ctx.indexOf('\n}\n', ctx.indexOf('function derivedIndices(')) + 2);
+  const runDerived = async (text) => {
+    mkdirSync(MUTANT_DIR, { recursive: true });
+    mutants += 1;
+    const file = join(MUTANT_DIR, `derived-${mutants}.ts`);
+    writeFileSync(file, `type AccountsState = any;\nexport ${text}`);
+    return (await import(pathToFileURL(file).href)).derivedIndices;
+  };
+  const listState = {
+    accounts: [
+      { index: 0, name: 'Account 1', hidden: false },
+      { index: 1, name: 'Account 2', hidden: true },
+      { index: IMPORTED_ACCOUNT_ID_BASE, name: 'Imported 1', hidden: false, imported: true },
+      { index: WATCH_ONLY_ACCOUNT_ID_BASE, name: 'Watched 1', hidden: false, watchOnly: true, address: RECIPIENT },
+      { index: M0, name: 'Multisig 1', hidden: false, multisig: true, address: rec.address },
+    ],
+    activeIndex: M0,
+    nextIndex: 2,
+  };
+  const derivedIndices = await runDerived(derivedSrc);
+  check('launch derives phrase indices only (the REAL derivedIndices from WalletContext.tsx): never a multisig id', JSON.stringify(derivedIndices(listState)) === '[0,1]');
+  const mDerived = await runDerived(derivedSrc.replace(' && !a.multisig', ''));
+  const mIdx = mDerived(listState);
+  check('M17 caught: without the multisig filter the launch would derive the multisig id, which fails (MULTISIG_NO_DERIVATION) and would drop the wallet to onboarding',
+    mIdx.includes(M0) && throwsWith(() => acc.deriveChainAccounts(seed, M0), MULTISIG_NO_DERIVATION));
+  check('ensureDerived: a multisig row comes from the account store, never the phrase',
+    ctx.includes('const all = multisigRowsFrom(await loadAccounts());') &&
+      ctx.includes('!isImportedAccountId(i) && !isWatchOnlyAccountId(i) && !isMultisigAccountId(i) && derivedRef.current[i] === undefined'));
+  check('launch and a new wallet reconcile the multisig store into the account list (public data, no prompt)',
+    (ctx.match(/const \{ state, entries \} = await withStoredMultisigs\(withImported\);/g) ?? []).length === 2 &&
+      ctx.includes('const next = reconcileMultisigAccounts(state, entries);') &&
+      ctx.includes('if (next.changed) await reconcileStoredMultisigAccounts(entries).catch(() => undefined);'));
+  check('…and every multisig store write reconciles again (listener), only while a wallet is open',
+    ctx.includes('useEffect(() => addMultisigStoreListener(() => void refreshMultisigAccounts().catch(() => undefined)), [refreshMultisigAccounts]);') &&
+      /const refreshMultisigAccounts = useCallback\(\s*\(\) =>\s*serialized\(async \(\) => \{\s*if \(statusRef\.current !== 'ready'\) return;/.test(ctx));
+  check('accountList excludes multisigs; multisigAccounts carries the shape label; the active account can be a multisig',
+    ctx.includes('.filter((a) => !a.watchOnly && !a.multisig).map((a) => ({') && ctx.includes('name: info?.label ?? a.name,') &&
+      ctx.includes('multisigAccounts.find((a) => a.index === activeIndex) ??') && ctx.includes('multisig: true,\n            multisigInfo: info,'));
+  check('the key import and the watch-only form treat a multisig as neither a phrase account nor a key',
+    ctx.includes(".filter((a) => !a.imported && !a.watchOnly && !a.multisig)") && ctx.includes("kind: 'multisig' });"));
+  check('watching a multisig address is refused with its own sentence',
+    (() => {
+      const r = wo.checkWatchAddress(rec.address, [{ name: 'Multisig 1 (2-of-3)', evmAddress: rec.address, kind: 'multisig' }]);
+      return !r.ok && r.error === `This address is one of your multi-signature accounts: Multisig 1 (2-of-3) (${rec.address}). It is already listed in this wallet, so there is nothing to watch.`;
+    })());
+
+  // --- WalletConnect: loadAaBundle never builds a bundle for a multisig (the REAL callback body, run with fakes).
+  const wc = read('src/wallet/WalletConnectContext.tsx');
+  const start = wc.indexOf('const loadAaBundle = useCallback<AaBundleLoader>(');
+  const bodyStart = wc.indexOf('async (accountIndex: number) => {', start);
+  const bodyEnd = wc.indexOf('\n    [evmChain.caip2, evmChain.chainIdDecimal],', bodyStart);
+  const loaderText = wc.slice(bodyStart, bodyEnd).replace(/,\s*$/, '');
+  const runLoader = async (text) => {
+    mkdirSync(MUTANT_DIR, { recursive: true });
+    mutants += 1;
+    const file = join(MUTANT_DIR, `loader-${mutants}.ts`);
+    const idsUrl = pathToFileURL(join(HERE, '..', 'src', 'wallet', 'account-ids.ts')).href;
+    writeFileSync(file, `import { isMultisigAccountId } from '${idsUrl}';\nexport function make(deps: any) {\n  const { getAaConfig, isAaConfigured, getEndpoint, createAaClientFromConfig, evmChain, EVM_CHAIN_ID } = deps;\n  return ${text};\n}\n`);
+    const { make } = await import(pathToFileURL(file).href);
+    const calls = { config: 0, endpoint: 0, build: 0 };
+    const loader = make({
+      getAaConfig: async () => { calls.config += 1; return { configured: true }; },
+      isAaConfigured: () => true,
+      getEndpoint: async () => { calls.endpoint += 1; return { url: NODE_URL }; },
+      createAaClientFromConfig: () => { calls.build += 1; return { fake: true }; },
+      evmChain: { caip2: SEPOLIA, chainIdDecimal: '11155111' },
+      EVM_CHAIN_ID: 'eip155:1',
+    });
+    return { loader, calls };
+  };
+  {
+    const { loader, calls } = await runLoader(loaderText);
+    const forMultisig = await loader(M0);
+    check('loadAaBundle (WalletConnect and the browser): null for a multisig id, before any configuration read', forMultisig === null && calls.config === 0 && calls.endpoint === 0 && calls.build === 0, JSON.stringify(calls));
+    const forPhrase = await loader(0);
+    check('…while a phrase account still gets its bundle', forPhrase?.bundle?.fake === true && calls.build === 1);
+    const m = await runLoader(loaderText.replace('      if (isMultisigAccountId(accountIndex)) return null;\n', ''));
+    await m.loader(M0);
+    check('M18 caught: without the line a multisig id reaches the configuration and the bundle builder', m.calls.config === 1 && m.calls.build === 1);
+  }
+
+  // --- Routes: the gate, the Send refusal with its button, Apps refused.
+  check('Send from a multisig: the exact refusal', multisigRouteRefusal('Send') === wo.MULTISIG_SEND_REFUSAL &&
+    wo.MULTISIG_SEND_REFUSAL === 'Sends from a multi-signature account are signing requests for the co-signers; build one on the Multisig screen.');
+  check('Apps (the in-app browser) refused by name',
+    multisigRouteRefusal('Apps') === 'The in-app browser (Apps) is not available for a multi-signature account: no single key in this wallet can sign for it. Build its operations on the Multisig screen, where the co-signers approve them, or switch to one of your own accounts.');
+  check('Swap refused by name', multisigRouteRefusal('Swap')?.startsWith('Swapping is not available for a multi-signature account'));
+  const app = read('App.tsx');
+  // The main stack (the onboarding routes exist only while there is no wallet).
+  const routes = [...app.slice(app.indexOf('name="Home"')).matchAll(/name="([A-Za-z]+)"/g)].map((m) => m[1]);
+  const unnamed = routes.filter((r) => multisigRouteRefusal(r)?.startsWith('This screen') === true);
+  check('every refused route of the main stack names its feature in the multisig refusal', routes.length >= 20 && unnamed.length === 0, unnamed.join(', '));
+  const gate = read('src/components/WatchOnlyGate.tsx');
+  check('the route gate refuses through multisigRouteRefusal for a multisig, with the notice, the signer hint and a button to the Multisig screen',
+    /: multisig\s*\? multisigRouteRefusal\(routeName\)/.test(gate) && gate.includes('{multisig ? <WarningBox>{MULTISIG_ACCOUNT_NOTICE}</WarningBox> : <WatchOnlyNotice />}') &&
+      gate.includes('multisigSignerHint(info.label, accountForEvmAddress(info.localSigner)?.name ?? null, info.localSigner)') &&
+      gate.includes('<Button title={MULTISIG_OPEN_SCREEN_BUTTON} onPress={onOpenMultisig} />') &&
+      gate.includes("onOpenMultisig: () => navigation.navigate('Multisig')"));
+  check('the signer hint and the button (exact)', wo.MULTISIG_OPEN_SCREEN_BUTTON === 'Open the Multisig screen' &&
+    wo.multisigSignerHint('Multisig 2 (2-of-3)', 'Account 1', S0.address) ===
+      `This wallet’s signer for Multisig 2 (2-of-3) is Account 1 (${S0.address}). Switch to that account on Home, then open the Multisig screen to build, approve or submit its operations.`);
+  const mApps = await importMutant('src/wallet/watch-only.ts', "  'Receive',\n  'Multisig',\n];", "  'Receive',\n  'Multisig',\n  'Apps',\n];");
+  check('M19 caught: an allow list that offers Apps to a multisig is detected', mApps.multisigRouteRefusal('Apps') === null && multisigRouteRefusal('Apps') !== null);
+  const mSend = await importMutant('src/wallet/watch-only.ts', "  'Receive',\n  'Multisig',\n];", "  'Receive',\n  'Multisig',\n  'Send',\n];");
+  check('M20 caught: an allow list that lets a multisig open Send (no refusal) is detected', mSend.multisigRouteRefusal('Send') === null && multisigRouteRefusal('Send') === wo.MULTISIG_SEND_REFUSAL);
+
+  // --- Receive for a multisig: the address with its label and the co-signer sentence; nothing that signs.
+  const receive = read('src/screens/ReceiveScreen.tsx');
+  const receiveProblems = (src) => {
+    const p = [];
+    const need = (what, ok) => { if (!ok) p.push(what); };
+    need('multisig from the active account', src.includes('const multisig = activeAccount?.multisig === true;'));
+    need('noKey covers multisig', src.includes('const noKey = watchOnly || multisig;'));
+    need('the co-signer sentence', src.includes('{multisig ? <Text style={[styles.note, { color: theme.text }]}>{MULTISIG_RECEIVE_NOTE}</Text> : null}'));
+    need('the label (the account name line)', src.includes('{activeAccount.name}\n          {delegationLabelSuffix(delegation.status)}'));
+    need('the QR code of the address', src.includes('<QRCode value={account.address}'));
+    need('no payment request', src.includes('account && !watchOnly && !multisig ? familyForSlot(account.chainId) : null'));
+    need('no Send button', src.includes('{noKey ? null : (\n        <Button\n          title={`Send ${account.symbol}`}'));
+    need('no proof of ownership', src.includes('account.chainId === EVM_CHAIN_ID && !noKey ? ('));
+    need('no smart-account box or reads', src.includes('{smartInfo && !noKey ? (') && src.includes('const smartIndex = noKey ? null'));
+    need('the other-network note', src.includes('multisigInfo && multisigInfo.chain !== evmChain.caip2 ? ('));
+    return p;
+  };
+  const rp = receiveProblems(receive);
+  check('Receive for a multisig: address, label, QR, co-signer sentence; no Send, request, proof or smart box', rp.length === 0, rp.join('; '));
+  for (const [name, from, to] of [
+    ['M21 Send offered on Receive (noKey without multisig)', 'const noKey = watchOnly || multisig;', 'const noKey = watchOnly;'],
+    ['M22 request card for a multisig', 'account && !watchOnly && !multisig ? familyForSlot', 'account && !watchOnly ? familyForSlot'],
+    ['M23 co-signer sentence dropped', '{multisig ? <Text style={[styles.note, { color: theme.text }]}>{MULTISIG_RECEIVE_NOTE}</Text> : null}', ''],
+  ]) {
+    check(`mutation anchor present (${name})`, receive.includes(from));
+    check(`${name}: caught`, receiveProblems(receive.replace(from, to)).length > 0);
+  }
+
+  // --- The switcher, the Multisig screen's signer, Approvals read-only.
+  const sw = read('src/components/AccountSwitcher.tsx');
+  check('the switcher lists multisigs last, with their shape label (the view name), a "Multisig" chip and the co-signer line',
+    sw.includes('const visible = [...accountList.filter((a) => !a.hidden), ...watchOnlyAccounts, ...multisigAccounts];') &&
+      sw.includes('>Multisig</Text>') && (sw.match(/\{MULTISIG_SWITCHER_LINE\}/g) ?? []).length === 2);
+  const msScreen = read('src/screens/MultisigScreen.tsx');
+  check('the Multisig screen never takes an active multisig as this wallet’s signer',
+    msScreen.includes('activeAccount && !activeAccount.imported && !activeAccount.watchOnly && !activeAccount.multisig ? activeAddress : null'));
+  const approvals = read('src/screens/ApprovalsScreen.tsx');
+  check('Approvals is read-only for a multisig (no Revoke button; the handler refuses first)',
+    approvals.includes('{withRevoke && !activeAccount?.watchOnly && !activeAccount?.multisig ? (') &&
+      approvals.includes('if (activeAccount?.watchOnly || activeAccount?.multisig) return;'));
+  check('Bitcoin, Dogecoin and Solana rows for a multisig (exact)', ids.MULTISIG_NO_CHAIN ===
+    'Not available for a multi-signature account. A multisig is an Ethereum smart account; it has no address on this network.');
 }
 
 // ===========================================================================

@@ -29,10 +29,12 @@
 // The signing key derives from the standard BIP-39 test mnemonic
 // ("abandon ... about"), which is public knowledge.
 
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve as resolvePath } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Interface, Transaction, id as ethersId, zeroPadValue, getAddress } from 'ethers';
 import { evmKeyProvider, mnemonicToSeed } from '@shiba-wallet/core';
-import { MAX_UINT256, toHex } from '@shiba-wallet/chains-evm';
+import { LIDO_DEPLOYMENTS, MAX_UINT256, ROCKET_POOL_DEPLOYMENTS, STAKING_SELECTORS, toHex } from '@shiba-wallet/chains-evm';
 import {
   APPROVAL_WINDOW_BLOCKS,
   USDT_MAINNET,
@@ -84,6 +86,10 @@ import {
   ownAccountText,
   ownWalletAddresses,
   searchNativeInteraction,
+  pinnedStakingContracts,
+  stakingContractAt,
+  stakingContractText,
+  withStakingTokens,
 } from '../src/wallet/risk.ts';
 import { walletAddressesFor } from '../src/wallet/activity-sentences.ts';
 import { KERNEL_V3_3 } from '@shiba-wallet/chains-evm';
@@ -824,9 +830,14 @@ node.codes[DELEGATED.toLowerCase()] = '0xef0100' + DELEGATE_TARGET.slice(2);
   const sepTokens = approvalTokensForChain([USDC_MAINNET], SEPOLIA).map((t) => ({ address: t.address, symbol: t.symbol }));
   const sepFacts = await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: DRAINER, chainCaip2: SEPOLIA, trackedTokens: sepTokens });
   const q = calls.find((c) => c.method === 'eth_getLogs');
-  check('Sepolia first-interaction search covers the known USDC and EURC', q && Array.isArray(q.params[0].address) && q.params[0].address.includes(SEP_USDC.toLowerCase()) && q.params[0].address.length === 2, JSON.stringify(q?.params[0].address));
+  // Since phase 18 item 3 the chain's known staking tokens (tokens.ts
+  // KNOWN_STAKING_TOKENS: stETH and wstETH on Sepolia) are searched too.
+  check('Sepolia first-interaction search covers the known USDC and EURC, then stETH and wstETH',
+    q && Array.isArray(q.params[0].address) && q.params[0].address.includes(SEP_USDC.toLowerCase()) &&
+      JSON.stringify(q.params[0].address) === JSON.stringify([SEP_USDC, '0x08210F9170F89Ab7658F0B5E3fF39b0E03C594D4', LIDO_DEPLOYMENTS[SEPOLIA].stETH, LIDO_DEPLOYMENTS[SEPOLIA].wstETH].map((a) => a.toLowerCase())),
+    JSON.stringify(q?.params[0].address));
   const sepNotice = computeRiskLines(sepFacts).find((l) => l.type === 'first-interaction-unknown');
-  check('Sepolia notice names USDC, EURC and says ETH needs an indexer', sepNotice && /USDC, EURC transfers/.test(sepNotice.text) && /without a history indexer/.test(sepNotice.text), sepNotice?.text);
+  check('Sepolia notice names USDC, EURC, stETH, wstETH and says ETH needs an indexer', sepNotice && /USDC, EURC, stETH, wstETH transfers/.test(sepNotice.text) && /without a history indexer/.test(sepNotice.text), sepNotice?.text);
 
   // (c) Native ETH through the history indexer.
   const indexerCalls = [];
@@ -848,9 +859,12 @@ node.codes[DELEGATED.toLowerCase()] = '0xef0100' + DELEGATE_TARGET.slice(2);
   check('more pages exist -> the scope says only the latest N were searched', partial.complete === false && partial.checkedTransfers === 2);
   const spoofIn = await searchNativeInteraction(indexer([{ from: DRAINER.toLowerCase(), to: ME.toLowerCase(), category: 'external' }]), ME, DRAINER);
   check('a transfer FROM the counterparty is not evidence of sending to it', spoofIn.known === false);
-  const failedIndexer = await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: DRAINER, chainCaip2: SEPOLIA, trackedTokens: [], indexerTransport: async () => { throw new Error('indexer down'); } });
+  // Base Sepolia: no tracked tokens and no known staking tokens there.
+  const failedIndexer = await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: DRAINER, chainCaip2: 'eip155:84532', trackedTokens: [], indexerTransport: async () => { throw new Error('indexer down'); } });
   const failedLine = computeRiskLines(failedIndexer).find((l) => /^first-interaction/.test(l.type));
   check('indexer down and no tokens -> "could not be checked", naming the indexer', failedLine?.type === 'first-interaction-unchecked' && /history indexer did not answer/.test(failedLine.text), failedLine?.text);
+  const sepNoTracked = computeRiskLines(await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: DRAINER, chainCaip2: SEPOLIA, trackedTokens: [], indexerTransport: async () => { throw new Error('indexer down'); } })).find((l) => /^first-interaction/.test(l.type));
+  check('Sepolia with no tracked tokens still searches the known staking tokens', /Searched: stETH, wstETH transfers/.test(sepNoTracked?.text ?? ''), sepNoTracked?.text);
   await checkRejects('a malformed indexer answer is an error, not "no transfers"', () => searchNativeInteraction(async () => ({ nope: true }), ME, DRAINER), /no transfers array/);
 }
 
@@ -1036,6 +1050,144 @@ console.log('token transfers on the risk card:');
     toOwn.map((l) => l.text).join(' | '));
   const sym = computeRiskLines(await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: USDC, counterparty: SMART, data: transferTo(SMART), chainCaip2: MAINNET, trackedTokens: [{ address: USDC, symbol: 'US‮DC' }], ownAccounts: ownList }));
   check('the tracked symbol is cleaned with the preview rule (bidi override stripped)', /^This sends USDC through/.test(sym[0]?.text ?? ''), sym[0]?.text);
+}
+
+console.log('pinned staking contracts on the risk card:');
+{
+  const HOODI = 'eip155:560048';
+  const SEP_STETH = LIDO_DEPLOYMENTS[SEPOLIA].stETH;
+  const SEP_WSTETH = LIDO_DEPLOYMENTS[SEPOLIA].wstETH;
+  const HOODI_QUEUE = LIDO_DEPLOYMENTS[HOODI].withdrawalQueue;
+  const HOODI_RETH = ROCKET_POOL_DEPLOYMENTS[HOODI].rETH;
+  // The addresses as docs/STAKING.md 4.1 lists them (lidofinance/docs
+  // 140c583d; rocket-pool/smartnode 8c1dad70), pinned here independently.
+  check('the engine table holds the documented Sepolia stETH / wstETH',
+    SEP_STETH === '0x3e3FE7dBc6B4C189E7128855dD526361c49b40Af' && SEP_WSTETH === '0xB82381A3fBD3FaFA77B3a7bE693342618240067b');
+  check('the engine table holds the documented Hoodi withdrawal queue / rETH',
+    HOODI_QUEUE === '0xfe56573178f1bcdf53F01A6E9977670dcBBD9186' && HOODI_RETH === '0x7322c24752f79c05FFD1E2a6FCB97020C1C264F1');
+  const all = pinnedStakingContracts();
+  check('seven pinned staking contracts (Lido x3 on Sepolia and Hoodi, rETH on Hoodi)', all.length === 7,
+    all.map((c) => `${c.chain}:${c.name}`).join(', '));
+  check('no Rocket Pool deposit pool or RocketStorage among them (not pinned / never a target)',
+    !all.some((c) => c.address.toLowerCase() === ROCKET_POOL_DEPLOYMENTS[HOODI].storage.toLowerCase()));
+  check('no staking contract is pinned on mainnet', !all.some((c) => c.chain === MAINNET));
+  check('stakingContractAt: exact address on its chain', stakingContractAt(SEPOLIA, SEP_STETH)?.name === 'stETH');
+  check('withStakingTokens: adds stETH and wstETH on Sepolia after the caller\'s tokens, once each',
+    withStakingTokens([{ address: SEP_STETH.toLowerCase(), symbol: 'stETH (tracked)' }], SEPOLIA).map((t) => t.symbol).join() === 'stETH (tracked),wstETH' &&
+      withStakingTokens([], 'eip155:84532').length === 0 && withStakingTokens([], MAINNET).length === 0);
+  check('stakingContractAt: lowercase address matches', stakingContractAt(SEPOLIA, SEP_STETH.toLowerCase())?.name === 'stETH');
+  // A look-alike: the same first 39 hex digits, the last one changed.
+  const lookAlike = SEP_STETH.slice(0, -1) + (SEP_STETH.slice(-1).toLowerCase() === 'f' ? '0' : 'f');
+  check('stakingContractAt: a look-alike (last digit changed) -> null', stakingContractAt(SEPOLIA, lookAlike) === null);
+  check('stakingContractAt: the Sepolia stETH address on Hoodi -> null', stakingContractAt(HOODI, SEP_STETH) === null);
+  check('stakingContractAt: the Hoodi rETH address on Sepolia -> null', stakingContractAt(SEPOLIA, HOODI_RETH) === null);
+  check('stakingContractAt: a malformed address -> null', stakingContractAt(SEPOLIA, SEP_STETH + '00') === null);
+  check('the line for Sepolia stETH',
+    stakingContractText(stakingContractAt(SEPOLIA, SEP_STETH)) ===
+      `This transaction goes to Lido's stETH contract on Ethereum Sepolia (${SEP_STETH}), pinned by this wallet from Lido's published list of deployed contracts.`);
+  check('the line for Hoodi rETH',
+    stakingContractText(stakingContractAt(HOODI, HOODI_RETH)) ===
+      `This transaction goes to Rocket Pool's rETH contract on Hoodi (${HOODI_RETH}), pinned by this wallet from Rocket Pool's published list of deployed contracts.`);
+  check('the line for the Hoodi withdrawal queue names it', /^This transaction goes to Lido's withdrawal queue contract on Hoodi \(/.test(stakingContractText(stakingContractAt(HOODI, HOODI_QUEUE))));
+
+  // The card, gathered over the fake node. Every pinned contract and the
+  // look-alike hold code deployed 150 blocks ago (a "new contract" by the
+  // threshold), with archive depth, so the generic path WOULD warn.
+  node = defaultNode();
+  node.chainId = '0xaa36a7';
+  for (const a of [SEP_STETH, SEP_WSTETH, lookAlike, HOODI_QUEUE, HOODI_RETH]) {
+    node.codes[a.toLowerCase()] = '0x6080604052';
+    node.deployedAt[a.toLowerCase()] = HEAD - 150n;
+  }
+  const submit = STAKING_SELECTORS.submit + '00'.repeat(32);
+  const sepKnown = approvalTokensForChain([], SEPOLIA).map((t) => ({ address: t.address, symbol: t.symbol }));
+  const gatherStake = (to, chainCaip2 = SEPOLIA, extra = {}) =>
+    gatherRiskFacts({ transport, url: RPC, wallet: ME, to, data: submit, chainCaip2, trackedTokens: sepKnown, ...extra });
+  calls = [];
+  const stake = computeRiskLines(await gatherStake(SEP_STETH));
+  check('Lido stake on Sepolia: exactly one line, naming the pinned contract',
+    stake.length === 1 && stake[0].text === stakingContractText(stakingContractAt(SEPOLIA, SEP_STETH)) && stake[0].tone === 'notice',
+    stake.map((l) => l.text).join(' | '));
+  check('…no "goes to a contract", no new-contract or age line, no first-interaction line',
+    !stake.some((l) => /goes to a contract \(/.test(l.text) || l.type === 'new-contract' || l.type === 'contract-age-unknown' || /^first-interaction/.test(l.type)));
+  check('…and no first-interaction search ran (no eth_getLogs)', !calls.some((c) => c.method === 'eth_getLogs'));
+  const wrapShortcut = computeRiskLines(await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: SEP_WSTETH, chainCaip2: SEPOLIA, trackedTokens: sepKnown }));
+  check('ETH straight to wstETH (the stake-and-wrap shortcut): the wstETH line',
+    wrapShortcut.length === 1 && /^This transaction goes to Lido's wstETH contract on Ethereum Sepolia/.test(wrapShortcut[0].text), wrapShortcut.map((l) => l.text).join(' | '));
+  const approveForWrap = computeRiskLines(await gatherStake(SEP_STETH, SEPOLIA, { data: erc20Iface.encodeFunctionData('approve', [SEP_WSTETH, MAX_UINT256]) }));
+  check('an approval on stETH keeps its approval warning beside the staking line',
+    approveForWrap.some((l) => l.tone === 'warning' && /^unlimited-approval|approval/.test(l.type)) &&
+      approveForWrap.some((l) => l.text === stakingContractText(stakingContractAt(SEPOLIA, SEP_STETH))),
+    approveForWrap.map((l) => `${l.type}: ${l.text}`).join(' | '));
+  node.chainId = '0x88bb0';
+  const burn = computeRiskLines(await gatherStake(HOODI_RETH, HOODI, { data: STAKING_SELECTORS.burn + '00'.repeat(31) + '01' }));
+  check('rETH burn on Hoodi: the Rocket Pool line only',
+    burn.length === 1 && burn[0].text === stakingContractText(stakingContractAt(HOODI, HOODI_RETH)), burn.map((l) => l.text).join(' | '));
+  node.chainId = '0xaa36a7';
+
+  // Controls: anything but the exact pinned pair keeps the generic lines.
+  const lookAlikeLines = computeRiskLines(await gatherStake(lookAlike));
+  check('control: a LOOK-ALIKE address keeps "goes to a contract", the new-contract warning and the first-interaction line',
+    lookAlikeLines.some((l) => l.text === `This transaction goes to a contract (${lookAlike}).`) &&
+      lookAlikeLines.some((l) => l.type === 'new-contract') &&
+      lookAlikeLines.some((l) => /^first-interaction/.test(l.type)) &&
+      !lookAlikeLines.some((l) => /pinned by this wallet/.test(l.text)),
+    lookAlikeLines.map((l) => l.text).join(' | '));
+  const otherChain = computeRiskLines(await gatherStake(HOODI_RETH, SEPOLIA));
+  check('control: the Hoodi rETH address on Sepolia keeps the generic lines',
+    otherChain.some((l) => /goes to a contract \(/.test(l.text)) && !otherChain.some((l) => /pinned by this wallet/.test(l.text)));
+  delete node.codes[SEP_STETH.toLowerCase()];
+  const noCode = computeRiskLines(await gatherStake(SEP_STETH));
+  check('control: the pinned address WITHOUT code keeps the no-code warning and no staking line',
+    noCode.some((l) => l.type === 'no-code-recipient-with-calldata' && l.tone === 'warning') && !noCode.some((l) => /pinned by this wallet/.test(l.text)),
+    noCode.map((l) => l.text).join(' | '));
+  node.codes[SEP_STETH.toLowerCase()] = '0x6080604052';
+  const blind = computeRiskLines(await gatherStake(SEP_STETH, SEPOLIA, {
+    transport: async (method, params) => { if (method === 'eth_getCode') throw new Error('down'); return transport(method, params); },
+  }));
+  check('control: code unreadable -> "could not be checked" and the first-interaction line, never the staking line',
+    blind.some((l) => /could not be checked on this endpoint/.test(l.text)) && blind.some((l) => /^first-interaction/.test(l.type)) && !blind.some((l) => /pinned by this wallet/.test(l.text)),
+    blind.map((l) => l.text).join(' | '));
+
+  // Mutation checks on a rewritten copy of risk.ts.
+  const HERE = dirname(fileURLToPath(import.meta.url));
+  const MUTANT_DIR = join(HERE, `.mutants-approvals-${process.pid}`);
+  process.on('exit', () => rmSync(MUTANT_DIR, { recursive: true, force: true }));
+  let mutantCount = 0;
+  const importRiskMutant = async (from, to) => {
+    const relPath = 'src/wallet/risk.ts';
+    const original = readFileSync(join(HERE, '..', relPath), 'utf8');
+    if (!original.includes(from)) throw new Error(`mutation anchor not found: ${from}`);
+    const originalDir = dirname(join(HERE, '..', relPath));
+    const rewritten = original
+      .replace(from, to)
+      .replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolvePath(originalDir, spec)).href}'`);
+    mkdirSync(MUTANT_DIR, { recursive: true });
+    mutantCount += 1;
+    const file = join(MUTANT_DIR, `m${mutantCount}-risk.ts`);
+    writeFileSync(file, rewritten);
+    return import(pathToFileURL(file).href);
+  };
+  // 1. A prefix match (the first 39 hex digits) labels the look-alike.
+  const m1 = await importRiskMutant(
+    "pinnedStakingContracts().find((c) => c.chain === chainCaip2 && c.address.toLowerCase() === lower)",
+    "pinnedStakingContracts().find((c) => c.chain === chainCaip2 && c.address.toLowerCase().slice(0, 41) === lower.slice(0, 41))",
+  );
+  const m1Lines = m1.computeRiskLines(await m1.gatherRiskFacts({ transport, url: RPC, wallet: ME, to: lookAlike, data: submit, chainCaip2: SEPOLIA, trackedTokens: sepKnown, loadOwnMultisigs: null }));
+  check('mutant (look-alike labelled as the pinned contract) is caught',
+    m1Lines.some((l) => /pinned by this wallet/.test(l.text)) && !m1Lines.some((l) => l.type === 'new-contract'));
+  // 2. The chain is ignored: the Hoodi address is labelled on Sepolia.
+  const m2 = await importRiskMutant(
+    "pinnedStakingContracts().find((c) => c.chain === chainCaip2 && c.address.toLowerCase() === lower)",
+    "pinnedStakingContracts().find((c) => c.address.toLowerCase() === lower)",
+  );
+  check('mutant (chain not compared) is caught', m2.stakingContractAt(SEPOLIA, HOODI_RETH) !== null);
+  // 3. The code check is dropped: a code-less pinned address gets the calm line.
+  const m3 = await importRiskMutant("if (stakingRef && toClass.kind === 'contract') {", 'if (stakingRef) {');
+  delete node.codes[SEP_STETH.toLowerCase()];
+  const m3Lines = m3.computeRiskLines(await m3.gatherRiskFacts({ transport, url: RPC, wallet: ME, to: SEP_STETH, data: submit, chainCaip2: SEPOLIA, trackedTokens: sepKnown, loadOwnMultisigs: null }));
+  node.codes[SEP_STETH.toLowerCase()] = '0x6080604052';
+  check('mutant (code not required) is caught', m3Lines.some((l) => /pinned by this wallet/.test(l.text)));
 }
 
 check('approximate durations', approxDuration(9000n) === 'about 30 hours' && approxDuration(72000n) === 'about 10 days' && approxDuration(1n) === 'about 1 minute' && approxDuration(64n) === 'about 13 minutes' && approxDuration(300n) === 'about 1 hour');

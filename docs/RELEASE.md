@@ -319,19 +319,77 @@ build of 2026-10-10 (made from commit ccead60; `AGENTS.md`, phase 17,
   because no default options were found". The app ships no
   `google-services.json`, so Firebase has no project to start with.
 
-Open question: is the exported receiver a concern? What it would receive:
-Firebase Cloud Messaging broadcasts that Google Play services delivers for
-this app (push messages addressed to the app's registration token), and
-only a sender holding `com.google.android.c2dm.permission.SEND` can send to it.
-That this permission is held only by Google Play services (a
-signature-level permission) is the usual reading but was NOT verified here;
-it can be checked on a device with `adb shell dumpsys package com.google.android.gms`
-(the permission's protection level) or `adb shell pm list permissions -f`.
-Without `google-services.json` Firebase does not initialise, so the app
-never obtains a registration token, and without a token no server can
-address a message to this app; the receiver should therefore never be
-used. Whether any Firebase code still contacts Google at start or later
-was not measured (a network capture of a fresh install would answer it).
+**The two Firebase questions, answered from the library code (phase 18
+item 3, 2026-10-11).** Read from the Android archives that the development
+builds of phases 16 and 17 downloaded into their Gradle cache:
+`firebase-messaging-25.0.1.aar`, `firebase-common-22.0.1.aar`,
+`firebase-installations-18.0.0.aar`, `firebase-datatransport-18.2.0.aar`
+and `firebase-iid-interop-17.1.0.aar` (their `AndroidManifest.xml` files,
+and their classes disassembled with `javap` from JDK 17.0.20.1), plus
+`expo-notifications` 57.0.22's own Kotlin sources.
+
+1. *What `FirebaseInstanceIdReceiver` does, and who can address it.* It is
+   declared in `firebase-messaging`'s manifest as an exported receiver for
+   the action `com.google.android.c2dm.intent.RECEIVE`, with
+   `android:permission="com.google.android.c2dm.permission.SEND"`. The class
+   extends Google Play services' `CloudMessagingReceiver`; its
+   `onMessageReceive` hands the broadcast to `FcmBroadcastProcessor.process`,
+   which starts the app's `com.google.firebase.MESSAGING_EVENT` service (here
+   `ExpoFirebaseMessagingService`), and its `onNotificationDismissed` can log a
+   dismissal for Firebase's analytics (`MessagingAnalytics`) when the
+   message asked for it. In other words it is the entry point
+   for Firebase push messages that Google Play services delivers. The
+   permission is NOT declared in any of these manifests (they only use it),
+   so its protection level is set by the app that declares it. Google's
+   documentation for the earlier `GoogleCloudMessaging` API said: "The
+   `com.google.android.c2dm.permission.SEND` permission is held by Google
+   Play services. This prevents other code from invoking the broadcast
+   receiver." (the `GoogleCloudMessaging` class reference, read 2026-10-11
+   through a copy of developer.android.com kept at
+   spot.pcc.edu/~mgoodman/developer.android.com/reference/com/google/android/gms/gcm/GoogleCloudMessaging.html,
+   because the original page is no longer published; its "Implementing GCM
+   Client" page in the same copy says the receiver should require the
+   permission "so that only the GCM Framework can send a message to it").
+   A third-party package index (sysapps.bayton.org, "com.google.android.gsf",
+   synced 2026-10-11) lists the permission among those DECLARED by the Google
+   Services Framework package but shows no protection level. **Still
+   unverified:** the protection level itself (that it is a signature-level
+   permission, so that no ordinary app can hold it). It can be read on any
+   Android phone or emulator with Google Play services, for example with
+   `adb shell pm list permissions -f | grep -A 5 c2dm.permission.SEND` or
+   `adb shell dumpsys package com.google.android.gsf`; it was not read here
+   because the emulator is reserved for another agent.
+2. *Does unconfigured Firebase make any network call?* Not from the code
+   paths this app reaches. `FirebaseInitProvider.onCreate` (the content
+   provider that runs at every start) only calls
+   `FirebaseApp.initializeApp(Context)` and logs "FirebaseApp initialization
+   unsuccessful" when that returns null. `initializeApp(Context)` calls
+   `FirebaseOptions.fromResource`, which reads the string resource
+   `google_app_id` and returns null when it is empty or absent;
+   `initializeApp` then logs "Default FirebaseApp failed to initialize
+   because no default options were found. This usually means that
+   com.google.gms:google-services was not applied to your gradle project."
+   (the line seen in logcat) and returns null without constructing a
+   `FirebaseApp`. Firebase's components (installations, messaging, the data
+   transport) are created only by the `FirebaseApp` constructor's component
+   runtime (`ComponentDiscovery.forContext(…, ComponentDiscoveryService)` →
+   `ComponentRuntime.builder`), and `FirebaseMessaging.getInstance()` starts
+   with `FirebaseApp.getInstance()`, which throws when no app exists. The
+   app has no `google-services.json` and `app.json` sets no
+   `googleServicesFile`, so nothing generates `google_app_id`. In
+   `expo-notifications`, the only callers of `FirebaseMessaging.getInstance()`
+   are `getDevicePushTokenAsync` / `unregisterForNotificationsAsync`
+   (`tokens/PushTokenModule.kt` 54–98, through `getFirebaseMessagingInstance` at line 87) and the topic functions
+   (`topics/TopicSubscriptionModule.kt` 22, 40); the wallet calls none of
+   them (it imports only the scheduling, permission, presented-notification
+   and handler files, `app/src/wallet/notifications.ts`). Without a
+   registration token no server can address a push message to this app, so
+   the receiver above has nothing to receive. **Still unverified:** a
+   network capture of a fresh install, which would also cover anything the
+   other bundled Google components do (ML Kit and data transport from
+   `expo-camera`, section 10). Google Play services itself is a separate app
+   whose own traffic is outside the wallet.
+
 Removing the Firebase parts with `tools:node="remove"` was not tried: the
 library's own `ExpoFirebaseMessagingService` extends Firebase's
 `FirebaseMessagingService` (`ExpoFirebaseMessagingService.kt:7`), so a
@@ -629,10 +687,12 @@ Every item must be checked for the exact commit being built.
   unverified and belongs in PRIVACY.md once answered. The template also
   leaves `expo.modules.updates.*` meta-data although expo-updates is not
   installed.
-- Whether the Firebase parts that `expo-notifications` merges into the
-  Android manifest (section 3, "Local reminders") contact Google when
-  Firebase has no configuration, and the protection level of
-  `com.google.android.c2dm.permission.SEND` that guards the exported
-  `FirebaseInstanceIdReceiver`.
+- The Firebase parts that `expo-notifications` merges into the Android
+  manifest (section 3, "Local reminders"): answered from the library code
+  on 2026-10-11 (Firebase does not initialise without a configuration, so
+  none of its components start; the exported receiver is guarded by
+  `com.google.android.c2dm.permission.SEND`, which Google's documentation
+  says Google Play services holds). Still open: the permission's protection
+  level read on a device, and a network capture of a fresh install.
 - App Store Connect's phased-release controls.
 - The export-compliance answer (legal input).

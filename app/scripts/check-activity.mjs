@@ -19,13 +19,15 @@
  * after reset()), the wallet's Kernel counterfactual address, the default
  * runner through config/networks.ts withEndpoint in Sepolia test mode, and
  * source checks on ActivityScreen (sentence above the time/fee line, Hide
- * amounts passed, tap-to-explorer unchanged).
+ * amounts passed, tap-to-explorer unchanged), and (phase 18 item 3) the
+ * wallet's stored multisigs counted as its own addresses: their operations
+ * inside an EntryPoint bundle and transfers to them read as the wallet's own.
  *
  * Run from app/: node scripts/check-activity.mjs
  */
-import { readFileSync, readdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve as resolvePath } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { getAddress } from 'ethers';
 import { KERNEL_V3_3, encodeFunctionCall, toHex } from '@shiba-wallet/chains-evm';
 import {
@@ -460,6 +462,85 @@ installFakeNode(); // the previous section served another URL
     !requests.some((r) => r.method === 'eth_call' && r.params[0].to.toLowerCase() === SYSTEM), requests.filter((r) => r.method === 'eth_call').map((r) => r.params[0].to));
 }
 
+console.log("Multi-signature accounts read as the wallet's own (phase 18 item 3):");
+reset();
+installFakeNode();
+{
+  // The handleOps fixture's operation sender (the emulator's Kernel account
+  // 0xD31c…D8FA) stands in for a stored multisig: the decoder keys a bundle's
+  // operations on the sender address only, so the same transaction shows
+  // whether a multisig in the wallet set is described as the wallet's own.
+  const MULTISIG = KERNEL_OF_ACCOUNT_1;
+  const LABEL = 'Multisig 1 (2-of-3)';
+  const MULTISIG_ID = 0xd0000000;
+  const stored = [{ address: MULTISIG, label: LABEL }];
+  const kernelConfig = {
+    accountType: 'kernel-v3.3',
+    factory: KERNEL_V3_3.factory,
+    factoryImplementation: KERNEL_V3_3.implementation,
+    kernelValidator: KERNEL_V3_3.ecdsaValidator,
+    recoveredAccounts: [],
+  };
+  const w = walletAddressesFor(ACCOUNT_2, 1, null, stored);
+  check('walletAddressesFor adds every stored multisig of the network (the EOA stays first)', w.length === 2 && w[0] === ACCOUNT_2 && w[1] === MULTISIG, w);
+  const wk = walletAddressesFor(ACCOUNT_2, 1, kernelConfig, stored);
+  check('…next to the Kernel counterfactual (EOA, multisig, Kernel)', wk.length === 3 && wk[0] === ACCOUNT_2 && wk[1] === MULTISIG, wk);
+  check('…listed once when the multisig is the active account itself (compared over the 20 bytes)',
+    JSON.stringify(walletAddressesFor(MULTISIG, MULTISIG_ID, null, [{ address: MULTISIG.toLowerCase(), label: LABEL }])) === JSON.stringify([MULTISIG]));
+  check('…a multisig as the active account gets no Kernel counterfactual (its id has no salt)', walletAddressesFor(MULTISIG, MULTISIG_ID, kernelConfig).length === 1);
+  check('…a malformed stored address is skipped', walletAddressesFor(ACCOUNT_2, 1, null, [{ address: '0x1234', label: LABEL }]).length === 1);
+  check('…and without multisigs the result is unchanged (default argument)', JSON.stringify(walletAddressesFor(ACCOUNT_1, 0, kernelConfig)) === JSON.stringify([ACCOUNT_1, KERNEL_OF_ACCOUNT_1]));
+
+  const decodeWith = async (wallet, hashes) => {
+    clearActivityCache();
+    const decoder = createActivityDecoder({ chainCaip2: SEPOLIA, evmChainId: SEPOLIA_ID, wallet, trackedTokens: [], run: fixedRun });
+    return decoder.decodeEntries(hashes);
+  };
+  // A plain transfer from Account 2 to the multisig, and one from a third
+  // party (Burn) to the multisig.
+  const TO_MULTISIG = '0x' + '5a'.repeat(32);
+  const FROM_OTHER = '0x' + '5b'.repeat(32);
+  const plain = (hash, from, to) => ({
+    transaction: { hash, from, to, input: '0x', value: '0x1', nonce: '0x1', type: '0x2', chainId: '0xaa36a7', blockNumber: '0x10', blockHash: '0x' + 'cd'.repeat(32) },
+    receipt: { transactionHash: hash, blockNumber: '0x10', blockHash: '0x' + 'cd'.repeat(32), status: '0x1', logs: [] },
+  });
+  mode.extraTx = (h) => (h === TO_MULTISIG ? plain(h, ACCOUNT_2, MULTISIG) : h === FROM_OTHER ? plain(h, BURN, MULTISIG) : null);
+  const ids = [H.handleOps, TO_MULTISIG, FROM_OTHER];
+  const withMs = await decodeWith(w, ids);
+  const without = await decodeWith([ACCOUNT_2], ids);
+  check("the multisig's operation in an EntryPoint bundle is the wallet's own, with the multisig as sender",
+    render(withMs.get(H.handleOps)) === 'Smart-account operation: sent 0.0001 test ETH to Burn' &&
+      withMs.get(H.handleOps).description.userOps.length === 1 && withMs.get(H.handleOps).description.userOps[0].sender === MULTISIG,
+    render(withMs.get(H.handleOps)));
+  check('…which without the multisig reads as other accounts\' operation', render(without.get(H.handleOps)) === 'Smart-account bundle with 1 operation from other accounts', render(without.get(H.handleOps)));
+  check('a transfer to the multisig reads as to "yourself"', render(withMs.get(TO_MULTISIG)) === 'Sent 0.000000000000000001 test ETH to yourself', render(withMs.get(TO_MULTISIG)));
+  check('…which without the multisig names a stranger\'s short address', render(without.get(TO_MULTISIG)) === 'Sent 0.000000000000000001 test ETH to 0xD31c…D8FA', render(without.get(TO_MULTISIG)));
+  check("a third party's transfer to the multisig reads as received by the wallet", render(withMs.get(FROM_OTHER)) === 'Received 0.000000000000000001 test ETH from Burn', render(withMs.get(FROM_OTHER)));
+  check('…which without the multisig is a stranger\'s transaction', render(without.get(FROM_OTHER)) === 'Transaction by Burn to 0xD31c…D8FA', render(without.get(FROM_OTHER)));
+
+  // Mutation: walletAddressesFor without the multisig loop.
+  const srcPath = join(here, '..', 'src', 'wallet', 'activity-sentences.ts');
+  const original = readFileSync(srcPath, 'utf8');
+  const anchor = '    if (/^0x[0-9a-fA-F]{40}$/.test(m.address)) out.push(m.address);\n';
+  check('mutation anchor present (multisig loop)', original.includes(anchor));
+  const mutantDir = join(here, `.mutants-activity-${process.pid}`);
+  mkdirSync(mutantDir, { recursive: true });
+  try {
+    const rewritten = original
+      .replace(anchor, '')
+      .replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolvePath(dirname(srcPath), spec)).href}'`);
+    const file = join(mutantDir, 'activity-sentences.ts');
+    writeFileSync(file, rewritten);
+    const mutant = await import(pathToFileURL(file).href);
+    const mw = mutant.walletAddressesFor(ACCOUNT_2, 1, null, stored);
+    const mout = await decodeWith(mw, [H.handleOps]);
+    check('M-activity caught: without the multisig loop the multisig\'s operation is "from other accounts"',
+      render(mout.get(H.handleOps)) !== render(withMs.get(H.handleOps)), render(mout.get(H.handleOps)));
+  } finally {
+    rmSync(mutantDir, { recursive: true, force: true });
+  }
+}
+
 console.log('ActivityScreen source:');
 {
   const screen = readFileSync(join(here, '..', 'src', 'screens', 'ActivityScreen.tsx'), 'utf8');
@@ -476,6 +557,8 @@ console.log('ActivityScreen source:');
   );
   check('the amount/fee line is still rendered', /fee \{maskAmount\(formatUnits\(entry\.fee, decimals, decimals\), hidden\)\}/.test(screen));
   check('screen readers hear the sentence first', /\(sentence \? `\$\{sentence\}\. ` : ''\)/.test(screen));
+  check("the decoder's wallet set includes the network's stored multisigs (phase 18 item 3)",
+    /ownMultisigAddresses\(chainCaip2\),/.test(screen) && /wallet: walletAddressesFor\(eoa, accountIndex, aa, multisigs\),/.test(screen));
 }
 
 console.log(`\ncheck-activity: ${passed} passed, ${failed} failed`);
