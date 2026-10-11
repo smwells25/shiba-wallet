@@ -4774,3 +4774,90 @@ DEMO step 24 rewritten for a non-built-in custom network.
       state: Home, Ethereum Sepolia, Account 1, light mode, Google IME,
       protection ON, no watch-only account, the Staking amount field
       still holding "1"; Metro at 5eb9dd1.
+- [x] Re-check findings FIXED, incl. SMART-ACCOUNT HISTORY IN ACTIVITY
+      (commit 5eda245; engine 916 — chains-evm 654, +3 — check-activity
+      138 (was 95), check-multisig 297 (282), check-tokens 158 (150),
+      check-staking 108 (104), check-failover 156 (153), check-home 95
+      (94); offline runner ALL GREEN in the CTO's isolated worktree on
+      HEAD plus the slice: app 7,635 across 51 suites, lint 0/0, tsc
+      clean; every old file fails its suite from a scratch copy; not seen
+      on a device). (1) AccountSwitcher: the intro is a one-line "What is
+      backed up?" expander (▸ / ▾) inside the FlatList's header, closed by
+      default, so it scrolls with the rows; the list is the only scrolling
+      area (grow / shrink explicit), persistentScrollbar (Android, in the
+      installed ScrollView.d.ts), and "More accounts below — scroll the
+      list." while rows sit below the fold (switcherListOverflows);
+      reachability at 1080×2400 REASONED from the styles (about 470 dp for
+      the list; three phrase rows plus a multisig row about 440 dp), not
+      measured; four mutants caught. (2) ACTIVITY LABELS: engine
+      ActivitySentenceContext.selfAddresses (optional; without it every
+      sentence unchanged; 3 tests); app activityAddressSets — "yourself"
+      only for the active account's own address and, for a regular
+      account, its own smart account; every other account's smart account
+      and every stored multisig are DECODED with amounts and NAMED; other
+      accounts' own addresses are not added (a transfer from Account 2
+      still reads "from Account 2"); new shapes "Smart-account operation
+      by <name>: …" and "<name> received / sent …"; the label "Account 1's
+      smart account" uses the typographic apostrophe like risk.ts; pinned
+      from the two live transfers rebuilt synthetically: Account 1's side
+      "Sent 0.0006 test ETH to Multisig 2 (2-of-3)", the multisig's side
+      "Received 0.0006 test ETH from Account 1", the top-up "Smart-account
+      operation by Account 1's smart account: sent 0.0006 test ETH to
+      yourself" (was "Smart-account bundle with 1 operation from other
+      accounts"), Account 1's side "Smart-account operation: sent 0.0006
+      test ETH to Multisig 2 (2-of-3)". (3) SMART-ACCOUNT HISTORY: the
+      engine's indexerHistoryProvider().getHistory(address, cursor) takes
+      any address with a cursor holding only that query's pageKeys and
+      two alchemy_getAssetTransfers requests (from / to) per call
+      (indexer-history.ts ~263–299), so new app/src/wallet/
+      smart-account-history.ts (withSmartAccountHistory,
+      mergeSmartAccountEntries, freshHistoryEntries, isSmartAccountEntry)
+      wraps the INDEXER provider only: ONE extra getHistory per page (two
+      requests, pinned), the account's own rows the same objects in the
+      same order, a smart-account row whose hash is already listed
+      dropped within and across pages, a failed smart-account query
+      leaves the own rows and stops that stream until pull-to-refresh;
+      useHistory({ smartAccount, ready }) / loadHistoryPage(…,
+      smartAccount); historySmartAccountFor = the recovered account else
+      the Kernel counterfactual, none for a 7702 owner, SimpleAccount,
+      multisig or watch-only; ActivityScreen waits for the AA config so
+      the list is fetched once and shows a "smart account" chip; strings
+      'Your smart account (0x…) is listed too. Its rows are marked "smart
+      account", and their direction and amount are what the smart account
+      sent or received.', "Your smart account's transactions (…) could not
+      be loaded right now, so only this account's own address is listed.
+      Pull down to try again.", "…are not listed: without a history
+      indexer the wallet searches only this account's own address. A
+      history indexer (Settings → Ethereum history indexer) lists both."
+      (the logs fallback scans windows per address and is skipped);
+      the CSV direction cell reads "Sent (smart account)"; a note under
+      op:<userOpHash> resolves on the bundle row (pinned). CAVEAT: an
+      operation that moves no value (a revoke, a session install) produces
+      no asset transfer and will not appear; the live Alchemy answers for
+      a Kernel account, Base and Arbitrum are unverified. (4)
+      describeStakingError(e, evmChain.displaySymbol) → "Not enough test
+      ETH to cover this amount plus the network fee."; the same hard-coded
+      'ETH' fixed in WcApprovalSheet (two calls) and WalletConnectContext
+      (two, via evmProfileByCaip2(item.chain)?.displaySymbol); LEFT: "Not
+      enough ETH to pay the network fee." (send.ts ~1307; pinned in
+      check-nfts and check-staking; needs a symbol argument across ~30
+      callers — follow-up). (5) trackDiscoveredPrompt appends
+      knownStakingPinnedSentence for a pinned token ("Contract 0xB823…067b
+      on Ethereum Sepolia. This is the wstETH contract this wallet pins
+      from Lido's published list of deployed contracts. Anyone can create
+      a token with any name and symbol; track it only if this is the
+      contract you expect."); a look-alike never gets it. (6)
+      token-gas.ts tokenSendFeeSentence(chain, { keyless }) drops the
+      USDC clause for a watch-only or multisig account ("The network fee
+      for a token send is normally paid in test ETH, not in the token.");
+      AccountsSection passes the keyless kinds to accountsBackupHint;
+      Settings → Backup says "ALL" only with no watch-only or multisig
+      account listed and adds MULTISIG_LIST_HINT when a multisig exists.
+      (7) Home token subtitles numberOfLines 2; history.ts
+      transactionsWithTokenAmounts / hidesZeroNativeAmount hide the
+      "−0 test ETH" line of a zero-value native row whose token row is
+      loaded (a screen reader hears "no amount"); approve rows keep "−0"
+      (the indexer reports no token transfer); the duplicate rows per
+      transaction unchanged. UNVERIFIED (device): every layout change,
+      font scaling, TalkBack, dark mode, the real indexer answers for the
+      smart account and the chip.
