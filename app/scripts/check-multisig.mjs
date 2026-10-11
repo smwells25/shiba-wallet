@@ -162,6 +162,9 @@ import {
   multisigFundingFigure,
   multisigFundsLine,
   multisigListEntries,
+  MULTISIG_ACCOUNTS_HEADING,
+  MULTISIG_ACCOUNTS_LIST_HINT,
+  multisigAccountListLine,
   multisigLocalSignsLine,
   multisigNotReadyHint,
   multisigShapeLabel,
@@ -1381,6 +1384,47 @@ console.log('check-multisig: the multisig as an account in the switcher (phase 1
       approvals.includes('if (activeAccount?.watchOnly || activeAccount?.multisig) return;'));
   check('Bitcoin, Dogecoin and Solana rows for a multisig (exact)', ids.MULTISIG_NO_CHAIN ===
     'Not available for a multi-signature account. A multisig is an Ethereum smart account; it has no address on this network.');
+}
+
+// ===========================================================================
+console.log('check-multisig: Settings → Accounts lists multisigs read-only (phase 18 polish)');
+// ===========================================================================
+{
+  const read = (rel) => readFileSync(join(HERE, '..', rel), 'utf8');
+  const ADDR = '0x944caA404e389b18b2fe251e969EdD7A220d0d38'; // the emulator's 2-of-3 of 2026-10-10
+  check('heading and sentence (exact)', MULTISIG_ACCOUNTS_HEADING === 'Multi-signature accounts' &&
+    MULTISIG_ACCOUNTS_LIST_HINT === 'Listed here for reference only. They are managed on the Multisig screen (Settings → Multi-signature accounts) and cannot be hidden here.');
+  check('one line: shape label · short address · network',
+    multisigAccountListLine({ name: 'ignored', evmAddress: ADDR, multisigInfo: { chain: 'eip155:11155111', label: 'Multisig 2 (2-of-3)' } }) ===
+      'Multisig 2 (2-of-3) · 0x944c…0d38 · Ethereum Sepolia');
+  check('…on Base Sepolia', multisigAccountListLine({ name: 'x', evmAddress: ADDR, multisigInfo: { chain: 'eip155:84532', label: 'Multisig 1 (3-of-3)' } }) ===
+    'Multisig 1 (3-of-3) · 0x944c…0d38 · Base Sepolia');
+  check('…a network no longer known shows its CAIP-2 id; no record facts fall back to the view name',
+    multisigAccountListLine({ name: 'x', evmAddress: ADDR, multisigInfo: { chain: 'eip155:999999', label: 'Multisig 3 (2-of-2)' } }) === 'Multisig 3 (2-of-2) · 0x944c…0d38 · eip155:999999' &&
+      multisigAccountListLine({ name: 'Multisig 4', evmAddress: null, multisigInfo: null }) === 'Multisig 4 · address not known yet · network unknown');
+  const section = read('src/components/AccountsSection.tsx');
+  const listOk = (src) => {
+    const start = src.indexOf('{multisigAccounts.length > 0 ? (');
+    if (start < 0) return false;
+    const block = src.slice(start, src.indexOf(') : null}', start));
+    return (
+      src.includes('    multisigAccounts,\n  } = useWallet();') &&
+      block.includes('{MULTISIG_ACCOUNTS_HEADING}</Text>') &&
+      block.includes('{MULTISIG_ACCOUNTS_LIST_HINT}</Text>') &&
+      block.includes('{multisigAccounts.map((account) => (') &&
+      block.includes('{multisigAccountListLine(account)}') &&
+      // Read-only: no buttons, links, switches or handlers in the list.
+      !/Button|Pressable|onPress|Switch|renderRow/.test(block)
+    );
+  };
+  check('Settings → Accounts renders the list only when there is a multisig, one read-only line each', listOk(section));
+  check('…the multisigs never enter the phrase / imported rows (accountList holds no multisig)',
+    !/accountList\.filter\(\(a\) => a\.multisig\)/.test(section) && !section.includes('multisigAccounts.map(renderRow)'));
+  check('mutant caught: the list rendered with the editable row (hide / rename actions)',
+    !listOk(section.replace('{multisigAccounts.map((account) => (', '{multisigAccounts.map(renderRow)}{[].map((account) => (')));
+  check('mutant caught: the list removed', !listOk(section.replace('{multisigAccounts.length > 0 ? (', '{false ? (')));
+  const demo = readFileSync(join(HERE, '..', '..', 'docs', 'DEMO.md'), 'utf8');
+  check('DEMO.md step 27 no longer says the Settings list does not exist', !/Settings → Accounts does not list (the )?multisig/i.test(demo));
 }
 
 // ===========================================================================

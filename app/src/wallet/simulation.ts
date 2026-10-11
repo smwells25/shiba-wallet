@@ -15,6 +15,7 @@ import { formatUnits, groupThousands } from './balances.ts';
 import { fetchErc20Metadata, type Erc20Metadata } from './erc20.ts';
 import { maskAmount } from '../config/prefs.ts';
 import { isEndpointFailure } from '../config/endpoint-probe.ts';
+import { rebasingTokenNote } from './tokens.ts';
 
 /**
  * Balance-change preview (asset-diff simulation) for the EVM confirm
@@ -297,6 +298,12 @@ export type PreviewTone = 'out' | 'in' | 'neutral' | 'approval' | 'warning';
 export interface PreviewLine {
   text: string;
   tone: PreviewTone;
+  /**
+   * A muted sentence shown under the line. Set only for a token row whose
+   * token is a known rebasing token on the chain the preview ran on
+   * (tokens.ts REBASING_TOKEN_NOTE, for Lido's stETH); absent otherwise.
+   */
+  note?: string;
 }
 
 /** 0x1234…abcd — enough to recognize, never enough to be mistaken for the full value. */
@@ -350,9 +357,19 @@ function tokenAmountPhrase(amount: bigint, token: string, meta: TokenMeta | unde
 export function describeAssetChanges(
   changes: AssetChange[],
   meta: TokenMetaMap,
-  options: { nativeSymbol: string; hidden: boolean },
+  options: {
+    nativeSymbol: string;
+    hidden: boolean;
+    /**
+     * CAIP-2 id of the chain the preview ran on. When given, a token row
+     * whose token is a known rebasing token on exactly that chain carries
+     * REBASING_TOKEN_NOTE (tokens.ts rebasingTokenNote): its simulated
+     * amount can differ from what arrives by a wei or two.
+     */
+    chainCaip2?: string;
+  },
 ): PreviewLine[] {
-  const { nativeSymbol, hidden } = options;
+  const { nativeSymbol, hidden, chainCaip2 } = options;
   type Bucket = {
     direction: 'out' | 'in' | 'self';
     type: 'native' | 'erc20';
@@ -460,9 +477,11 @@ export function describeAssetChanges(
       b.type === 'native'
         ? `${maskAmount(exactAmount(b.amount, 18), hidden)} ${nativeSymbol}`
         : tokenAmountPhrase(b.amount, b.token!, meta[b.key!], hidden);
-    if (b.direction === 'out') return { text: `You send ${phrase}`, tone: 'out' };
-    if (b.direction === 'in') return { text: `You receive ${phrase}`, tone: 'in' };
-    return { text: `You send ${phrase} to yourself (no net change)`, tone: 'neutral' };
+    const note = b.type === 'erc20' && chainCaip2 ? rebasingTokenNote(chainCaip2, b.token!) : null;
+    const extra = note ? { note } : {};
+    if (b.direction === 'out') return { text: `You send ${phrase}`, tone: 'out', ...extra };
+    if (b.direction === 'in') return { text: `You receive ${phrase}`, tone: 'in', ...extra };
+    return { text: `You send ${phrase} to yourself (no net change)`, tone: 'neutral', ...extra };
   };
 
   const lines: PreviewLine[] = [];

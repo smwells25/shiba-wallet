@@ -7,7 +7,7 @@ import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
 import { EVM_CHAIN_ID } from '../wallet/send';
 import { loadSessions } from '../wallet/sessions';
-import { readRecurringDueStates } from '../wallet/recurring';
+import { readRecurringDueStates, recurringChecksApplyTo } from '../wallet/recurring';
 import { listFoundTakeoverApprovals } from '../wallet/inheritance';
 import {
   NOTIFICATIONS_LIMITS_NOTE,
@@ -61,7 +61,11 @@ export function NotificationScheduler() {
   const { status, accounts, activeAccount } = useWallet();
   const { ready, notifications, evmChain, setNotifications } = usePrefs();
   const owner = accounts.find((a) => a.chainId === EVM_CHAIN_ID)?.address ?? null;
-  const canPay = status === 'ready' && owner !== null && activeAccount !== null && !activeAccount.watchOnly;
+  // The recurring-payment status reads run only for an account that can sign
+  // its own payments: not for a watch-only or a multi-signature account
+  // (recurring.ts recurringChecksApplyTo). Otherwise only the local,
+  // network-free pass runs, with no scope.
+  const canPay = recurringChecksApplyTo({ status, owner, account: activeAccount });
   const on = ready && notifications && status === 'ready';
   const chain = evmChain.caip2;
 

@@ -78,6 +78,12 @@ import {
   type WcTypedData,
 } from '../wallet/walletconnect';
 import type { WcQueueItem } from '../wallet/wc-controller';
+import {
+  WC_SENT_PENDING_LINE,
+  WC_SENT_REVERTED_LINE,
+  WC_SENT_TIMEOUT_LINE,
+  type WcSentResult,
+} from '../wallet/wc-sent';
 import { passkeyRecordForAccount } from '../wallet/passkeys';
 import { passkeyGateNow } from '../wallet/passkey-native';
 
@@ -550,30 +556,9 @@ export function WcApprovalSheet({
   );
 }
 
-/**
- * A request the WalletConnect context has just sent (a transaction from the
- * regular account, or a smart-account operation), shown in place of the
- * approval sheet so the user can add a private note to it. The context
- * builds the result from the queue item it completed.
- */
-export interface WcSentResult {
-  /** Unique per sent request: the queue item's key. */
-  key: string;
-  /** For example "Transaction sent" or "Batch sent to the bundler". */
-  title: string;
-  dappName: string;
-  /** CAIP-2 id of the network the request was validated against (the queue item's chain). */
-  network: string;
-  /**
-   * The transaction hash: the regular account's transaction, or the bundle
-   * transaction of a smart-account operation once it is known.
-   */
-  txid: string | null;
-  /** The UserOperation hash of a smart-account operation, else null. */
-  userOpHash: string | null;
-  /** An optional sentence under the title (for example that the dApp was not notified). */
-  detail?: string | null;
-}
+// The sent view's content (WcSentResult) and its sentences live in
+// wallet/wc-sent.ts, which the check scripts load directly.
+export type { WcSentResult } from '../wallet/wc-sent';
 
 /**
  * The WalletConnect sent view: the hashes of what was sent and the private
@@ -618,6 +603,21 @@ export function WcSentView({ result, onDone }: { result: WcSentResult; onDone: (
                 </Text>
               </View>
             </>
+          ) : null}
+          {result.receiptState === 'pending' ? (
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{WC_SENT_PENDING_LINE}</Text>
+          ) : null}
+          {result.receiptState === 'timeout' ? (
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{WC_SENT_TIMEOUT_LINE}</Text>
+          ) : null}
+          {result.receiptState === 'found' ? (
+            result.success === false ? (
+              <WarningBox>{WC_SENT_REVERTED_LINE}</WarningBox>
+            ) : (
+              <Text style={[styles.simulationOk, { color: theme.success }]}>
+                Included on-chain{result.success === true ? ' — succeeded.' : '.'}
+              </Text>
+            )
           ) : null}
           <TransactionNoteField
             key={result.key}

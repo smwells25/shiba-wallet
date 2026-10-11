@@ -1289,5 +1289,145 @@ console.log('check-wc: layer 1 data fee line on the transaction sheet (OP-stack,
 }
 
 console.log('');
+console.log('check-wc: the sent view after a dApp transaction, batch or browser transaction (phase 18 polish)');
+{
+  const { mkdirSync, writeFileSync, rmSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const { pathToFileURL } = await import('node:url');
+  const sentUrl = new URL('../src/wallet/wc-sent.ts', import.meta.url);
+  const sentSrc = readFileSync(sentUrl, 'utf8');
+  const realSent = await import(sentUrl.href);
+  const mutantDir = new URL(`./.mutants-wc-sent-${process.pid}/`, import.meta.url);
+  process.on('exit', () => rmSync(mutantDir, { recursive: true, force: true }));
+  let mutantNo = 0;
+  const sentMutant = async (from, to) => {
+    if (!sentSrc.includes(from)) throw new Error(`mutation anchor not found: ${from}`);
+    mkdirSync(mutantDir, { recursive: true });
+    mutantNo += 1;
+    const file = join(mutantDir.pathname, `m${mutantNo}-wc-sent.ts`);
+    writeFileSync(file, sentSrc.replace(from, to));
+    return import(pathToFileURL(file).href);
+  };
+
+  // Behaviour of the ordering helper with fakes: the dApp's answer is
+  // awaited first; the view is shown only after it settled and after the
+  // queue item was completed; a failed reply still completes and shows the
+  // view with the not-notified wording.
+  const orderOf = async (mod, respondOk) => {
+    const log = [];
+    let release;
+    const answered = new Promise((r) => { release = r; });
+    const run = mod.answerDappThenShow({
+      respond: async () => {
+        log.push('respond:start');
+        await answered;
+        log.push('respond:end');
+        if (!respondOk) throw new Error('relay down');
+      },
+      complete: () => log.push('complete'),
+      show: (notified) => log.push(`show:${notified}`),
+    });
+    await Promise.resolve();
+    const beforeAnswer = [...log];
+    release();
+    const result = await run;
+    return { log, beforeAnswer, result };
+  };
+  const ok = await orderOf(realSent, true);
+  check('answered dApp: nothing is shown or completed while the answer is in flight', ok.beforeAnswer.join() === 'respond:start');
+  check('answered dApp: respond → complete → show(true), resolves true', ok.log.join() === 'respond:start,respond:end,complete,show:true' && ok.result === true);
+  const bad = await orderOf(realSent, false);
+  check('failed reply: still completed, then show(false) (a failed reply is not a failed send)', bad.log.join() === 'respond:start,respond:end,complete,show:false' && bad.result === false);
+  const early = await sentMutant('  let notified = true;\n  try {', '  steps.show(true);\n  let notified = true;\n  try {');
+  check('mutant caught: a helper that shows the view before the dApp is answered', (await orderOf(early, true)).beforeAnswer.join() !== 'respond:start');
+  const noComplete = await sentMutant('  steps.complete();\n', '');
+  check('mutant caught: a helper that never completes the queue item', !(await orderOf(noComplete, true)).log.includes('complete'));
+
+  // The view's content per path (exact strings).
+  const S = realSent;
+  const base = { key: 'r:7', dappName: 'app.uniswap.org', network: 'eip155:11155111' };
+  const TX = `0x${'ab'.repeat(32)}`;
+  const OP = `0x${'cd'.repeat(32)}`;
+  const eoa = S.wcSentResult({ ...base, kind: 'eoa-transaction', txid: TX, userOpHash: null, dappNotified: true });
+  check('regular account: "Transaction sent", the transaction hash, no UserOperation, no receipt line, no detail',
+    eoa.title === 'Transaction sent' && eoa.txid === TX && eoa.userOpHash === null && eoa.receiptState === undefined && eoa.detail === null && eoa.network === 'eip155:11155111');
+  const eoaBad = S.wcSentResult({ ...base, kind: 'eoa-transaction', txid: TX, userOpHash: null, dappNotified: false });
+  check('regular account, reply failed: the not-notified title and sentence are kept on the view',
+    eoaBad.title === 'Transaction sent, dApp not notified' &&
+      eoaBad.detail === 'The transaction was broadcast, but the reply to the dApp failed. The dApp may not show it; check the transaction in a block explorer before retrying anything.');
+  const smart = S.wcSentResult({ ...base, kind: 'smart-transaction', txid: TX, userOpHash: OP, dappNotified: true, success: true });
+  check('smart account: both hashes, receipt found with its success flag',
+    smart.title === 'Transaction sent' && smart.txid === TX && smart.userOpHash === OP && smart.receiptState === 'found' && smart.success === true);
+  const smartBad = S.wcSentResult({ ...base, kind: 'smart-transaction', txid: TX, userOpHash: OP, dappNotified: false, success: true });
+  check('smart account, reply failed: not-notified title and sentence',
+    smartBad.title === 'Transaction sent, dApp not notified' &&
+      smartBad.detail === 'The operation was included, but the reply to the dApp failed. The dApp may not show it; check the transaction in a block explorer before retrying anything.');
+  const batch = S.wcSentResult({ ...base, kind: 'batch', txid: null, userOpHash: OP, dappNotified: true });
+  check('batch: "Batch sent to the bundler", UserOperation hash first, no transaction yet, receipt pending',
+    batch.title === 'Batch sent to the bundler' && batch.userOpHash === OP && batch.txid === null && batch.receiptState === 'pending' && batch.detail === null);
+  const batchBad = S.wcSentResult({ ...base, kind: 'batch', txid: null, userOpHash: OP, dappNotified: false });
+  check('batch, reply failed: not-notified title and sentence',
+    batchBad.title === 'Batch sent, dApp not notified' &&
+      batchBad.detail === 'The operation was submitted, but the reply to the dApp failed. Check it in an ERC-4337 explorer before retrying anything.');
+  const late = S.wcSentResult({ ...base, kind: 'not-included', txid: null, userOpHash: OP, dappNotified: true });
+  check('not included in two minutes: its title and sentence, UserOperation hash only, nothing awaited',
+    late.title === 'Submitted, not yet included' && late.txid === null && late.userOpHash === OP && late.receiptState === undefined &&
+      late.detail === 'The bundler accepted the operation, but it was not included within two minutes, so the dApp was told no transaction hash is available yet. Look the UserOperation hash up in an ERC-4337 explorer before retrying anything.');
+  // The bundle hash arrives later (the batch path): only the same view gains it.
+  const linked = S.withSentReceipt(batch, 'r:7', { kind: 'found', success: true, txHash: TX });
+  check('batch receipt: the same view gains the bundle transaction hash (so the note field links its note)', linked.txid === TX && linked.userOpHash === OP && linked.receiptState === 'found' && linked.success === true);
+  check('batch receipt for another request (the user already pressed Done and a new view shows): unchanged',
+    S.withSentReceipt(eoa, 'r:7', { kind: 'found', success: true, txHash: TX }) === eoa &&
+      S.withSentReceipt({ ...batch, key: 'r:8' }, 'r:7', { kind: 'found', success: true, txHash: TX }).txid === null &&
+      S.withSentReceipt(null, 'r:7', { kind: 'timeout' }) === null);
+  check('batch wait ended without a receipt: "timeout", no transaction hash', S.withSentReceipt(batch, 'r:7', { kind: 'timeout' }).receiptState === 'timeout' && S.withSentReceipt(batch, 'r:7', { kind: 'timeout' }).txid === null);
+  check('the view\'s receipt sentences', S.WC_SENT_PENDING_LINE === 'Waiting for the UserOperation receipt. The bundle transaction appears here once the operation is included.' &&
+    S.WC_SENT_TIMEOUT_LINE === 'No receipt yet. The operation may still be included — keep the UserOperation hash above to look it up later.' &&
+    S.WC_SENT_REVERTED_LINE === 'The bundler reports the operation was included but reverted on-chain. The gas was still charged to the smart account.');
+
+  // Wiring in the provider (React Native; source checks).
+  const provider = readFileSync(new URL('../src/wallet/WalletConnectContext.tsx', import.meta.url), 'utf8');
+  const sheetSrc = readFileSync(new URL('../src/components/WcApprovalSheet.tsx', import.meta.url), 'utf8');
+  /** Every completion path: the dApp answer comes first and the view is shown from the helper's show step (or, for the not-included path, after the rejection was sent and the item completed). */
+  const wiringOk = (src) => {
+    const blocks = src.split('await answerDappThenShow({').slice(1).map((b) => b.slice(0, b.indexOf('\n        });') + 1 || 1200));
+    const kinds = ['batch', 'smart-transaction', 'eoa-transaction'];
+    const perKind = kinds.every((kind) => blocks.some((b) => {
+      const r = b.indexOf('respond: () => respondApproved(composite, item.event.topic, item.event.id,');
+      const c = b.indexOf('complete: () => controller.complete(item.key)');
+      const v = b.indexOf(`kind: '${kind}'`);
+      return r >= 0 && c > r && v > c && b.includes('network: item.chain,') && b.includes('setSent(');
+    }));
+    const lateStart = src.indexOf("message:\n              `Submitted as UserOperation ${userOpHash}, but no transaction hash was ` +");
+    const late = lateStart < 0 ? '' : src.slice(lateStart, src.indexOf('return;', lateStart));
+    const lateOk = late.indexOf('controller.complete(item.key);') > 0 && late.indexOf("kind: 'not-included'") > late.indexOf('controller.complete(item.key);');
+    return blocks.length === 3 && perKind && lateOk;
+  };
+  check('provider: transaction (regular and smart account), batch and the not-included operation each show the sent view after the dApp is answered and the item completed', wiringOk(provider));
+  check('provider: the batch view learns the bundle hash later (receipt wait AFTER the answer, matched by the item key)',
+    /await answerDappThenShow\(\{[\s\S]{0,900}kind: 'batch'[\s\S]{0,400}\}\);\s*\/\/[^\n]*\n[\s\S]{0,200}void waitForAaReceipt\(bundle, userOpHash, \{ timeoutMs: 120_000, pollMs: 3_000 \}\)\.then\(\s*\(\{ summary \}\) =>\s*setSent\(\(prev\) =>\s*withSentReceipt\(prev, item\.key,/.test(provider));
+  check('provider: the view is rendered (before the next sheet) with Done clearing it',
+    provider.includes('<WcSentView key={sentShown.key} result={sentShown} onDone={onSentDone} />') &&
+      provider.indexOf('<WcSentView') < provider.indexOf('<WcApprovalSheet\n') &&
+      provider.includes('const onSentDone = useCallback(() => setSent(null), []);'));
+  check('provider: the browser shares the paths (one onApprove for WalletConnect and in-app browser items)', /onApprove=\{\(q, o, c, signer, ack\) => onApprove\(head, q, o, c, signer, ack\)\}/.test(provider));
+  const alertsGone = (src) =>
+    !/Alert\.alert\(\s*'Transaction sent/.test(src) &&
+    !/Alert\.alert\(\s*'Batch sent/.test(src) &&
+    !/Alert\.alert\(\s*'Submitted, not yet included'/.test(src);
+  check('provider: the "Transaction sent", "Batch sent to the bundler", "… dApp not notified" and "Submitted, not yet included" alerts are gone', alertsGone(provider));
+  check('the sent view renders the note field and the receipt lines', /<TransactionNoteField\s+key=\{result\.key\}/.test(sheetSrc) &&
+    sheetSrc.includes('{WC_SENT_PENDING_LINE}') && sheetSrc.includes('{WC_SENT_TIMEOUT_LINE}') && sheetSrc.includes('<WarningBox>{WC_SENT_REVERTED_LINE}</WarningBox>'));
+  // Source mutants of the provider.
+  check('mutant caught: the old success alert restored', !alertsGone(provider.replace("        const includedTx = txHash;", "        Alert.alert('Transaction sent', txHash);\n        const includedTx = txHash;")));
+  check('mutant caught: the EOA path showing the view before answering the dApp',
+    !wiringOk(provider.replace(
+      "          respond: () => respondApproved(composite, item.event.topic, item.event.id, broadcast.txid),\n          complete: () => controller.complete(item.key),\n          show: (dappNotified) =>\n            setSent(\n              wcSentResult({\n                kind: 'eoa-transaction',",
+      "          show: (dappNotified) =>\n            setSent(\n              wcSentResult({\n                kind: 'eoa-transaction',\n          respond: () => respondApproved(composite, item.event.topic, item.event.id, broadcast.txid),\n          complete: () => controller.complete(item.key),")));
+  check('mutant caught: the batch path without the view', !wiringOk(provider.replace("kind: 'batch',", "kind: 'batch-gone',")));
+  check('mutant caught: the not-included path without the view', !wiringOk(provider.replace("kind: 'not-included',", "kind: 'gone',")));
+}
+
+console.log('');
 console.log(`check-wc: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

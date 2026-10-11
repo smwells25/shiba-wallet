@@ -448,5 +448,50 @@ installFakeNode(() => ({ result: block([okCall([])]) }));
   check('no wallet-relevant events -> no lines', s.status === 'ok' && lines.length === 0);
 }
 
+// ------------------------------------------------- rebasing token note
+// Phase 18 polish: a preview row whose token is a KNOWN rebasing token on the
+// chain the preview ran on (Lido's stETH; tokens.ts KNOWN_STAKING_TOKENS)
+// carries tokens.ts REBASING_TOKEN_NOTE under it. The row's text is
+// unchanged. The live stake of 2026-10-11 (block 11889090) minted
+// 999,999,999,999,999 stETH for 0.001 test ETH: the case below.
+console.log('check-simulation: the rebasing note under a stETH row (phase 18)');
+{
+  const { REBASING_TOKEN_NOTE } = await import('../src/wallet/tokens.ts');
+  const SEPOLIA = 'eip155:11155111';
+  const STETH = '0x3e3FE7dBc6B4C189E7128855dD526361c49b40Af'; // Lido stETH on Ethereum Sepolia (lidofinance/docs 140c583d)
+  const WSTETH = '0xB82381A3fBD3FaFA77B3a7bE693342618240067b';
+  const native = { type: 'native', callIndex: 0, direction: 'out', from: ME, to: STETH, amount: 1_000_000_000_000_000n };
+  const minted = { type: 'erc20', callIndex: 0, direction: 'in', token: STETH, from: '0x0000000000000000000000000000000000000000', to: ME, amount: 999_999_999_999_999n };
+  const meta = { [STETH.toLowerCase()]: { symbol: 'stETH', decimals: 18, tracked: true } };
+  const lines = describeAssetChanges([native, minted], meta, { nativeSymbol: 'test ETH', hidden: false, chainCaip2: SEPOLIA });
+  check('stETH stake: the rows read exactly as before',
+    JSON.stringify(texts(lines)) === JSON.stringify(['You send 0.001 test ETH', 'You receive 0.000999999999999999 stETH']), texts(lines));
+  check('stETH stake: the stETH row carries the rebasing note', lines[1]?.note === REBASING_TOKEN_NOTE, lines[1]);
+  check('the note text', REBASING_TOKEN_NOTE === 'Rebasing token: the balance changes by itself; the preview can be off by a wei or two.');
+  check('stETH stake: the native row carries no note (no key at all)', !('note' in lines[0]), lines[0]);
+  const out = describeAssetChanges([{ ...minted, direction: 'out', from: ME, to: WSTETH }], meta, { nativeSymbol: 'test ETH', hidden: false, chainCaip2: SEPOLIA });
+  check('stETH sent (wrap): the outgoing row carries the note too', out[0]?.text === 'You send 0.000999999999999999 stETH' && out[0]?.note === REBASING_TOKEN_NOTE, out);
+  const hidden = describeAssetChanges([minted], meta, { nativeSymbol: 'test ETH', hidden: true, chainCaip2: SEPOLIA });
+  check('Hide amounts: amount masked, note still shown', hidden[0]?.text === 'You receive •••• stETH' && hidden[0]?.note === REBASING_TOKEN_NOTE, hidden);
+  const wst = describeAssetChanges([{ ...minted, token: WSTETH }], { [WSTETH.toLowerCase()]: { symbol: 'wstETH', decimals: 18, tracked: true } }, { nativeSymbol: 'test ETH', hidden: false, chainCaip2: SEPOLIA });
+  check('wstETH (not rebasing): no note', wst.length === 1 && !('note' in wst[0]), wst);
+  const otherChain = describeAssetChanges([minted], meta, { nativeSymbol: 'ETH', hidden: false, chainCaip2: 'eip155:1' });
+  check('the same address on another chain: no note (the whole address on that exact chain)', !('note' in otherChain[0]), otherChain);
+  const noChain = describeAssetChanges([minted], meta, { nativeSymbol: 'test ETH', hidden: false });
+  check('no chain given (older callers): no note', !('note' in noChain[0]), noChain);
+  const lookalike = describeAssetChanges([{ ...minted, token: `${STETH.slice(0, -1)}B` }], {}, { nativeSymbol: 'test ETH', hidden: false, chainCaip2: SEPOLIA });
+  check('a look-alike contract (last digit changed): no note', !('note' in lookalike[0]), lookalike);
+  const approval = describeAssetChanges([{ type: 'erc20-approval', callIndex: 0, token: STETH, owner: ME, spender: WSTETH, amount: 500_000_000_000_000n, unlimited: false }], meta, { nativeSymbol: 'test ETH', hidden: false, chainCaip2: SEPOLIA });
+  check('an stETH approval row: no note (no balance moves)', approval.length === 1 && approval[0].text.startsWith('Approval: ') && !('note' in approval[0]), approval);
+  // The card renders it (React Native; source check).
+  const { readFileSync } = await import('node:fs');
+  const card = readFileSync(new globalThis.URL('../src/components/BalanceChangePreview.tsx', import.meta.url), 'utf8');
+  const cardOk = (src) =>
+    /describeAssetChanges\(state\.changes, state\.meta, \{[\s\S]{0,300}chainCaip2: evmChain\.caip2,[\s\S]{0,40}\}\)/.test(src) &&
+    src.includes("{line.note ? <Text style={[styles.muted, { color: theme.textMuted }]}>{line.note}</Text> : null}");
+  check('BalanceChangePreview passes the active chain and renders the note under its row', cardOk(card));
+  check('mutant caught: the card without the chain', !cardOk(card.replace('            chainCaip2: evmChain.caip2,\n', '')));
+}
+
 console.log(`\ncheck-simulation: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

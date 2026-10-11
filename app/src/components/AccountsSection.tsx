@@ -26,6 +26,7 @@ import { formatUnits } from '../wallet/balances';
 import { EVM_CHAIN_ID } from '../wallet/send';
 import { useWallet, type AccountView } from '../wallet/WalletContext';
 import { ImportedKeyReveal } from './ImportedKeyReveal';
+import { MULTISIG_ACCOUNTS_HEADING, MULTISIG_ACCOUNTS_LIST_HINT, multisigAccountListLine } from '../wallet/multisig';
 import { QrScanner } from './QrScanner';
 import {
   PHRASE_ACCOUNT_WAS_WATCHED_TITLE,
@@ -73,6 +74,7 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
     watchOnlyAccounts,
     addWatchOnly,
     removeWatchOnly,
+    multisigAccounts,
   } = useWallet();
   const [revealed, setRevealed] = useState<{ name: string; address: string; key: string } | null>(null);
   const [editing, setEditing] = useState<number | null>(null);
@@ -420,6 +422,20 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
           <Text style={[styles.hint, { color: theme.textMuted }]}>{WATCH_ONLY_LIST_HINT}</Text>
           <WatchOnlyNotice />
           {watchOnlyAccounts.map(renderRow)}
+        </>
+      ) : null}
+      {/* Multi-signature accounts (feature 24): read-only here — one line
+          each, no actions; they are managed on the Multisig screen. Nothing
+          is shown when there are none. */}
+      {multisigAccounts.length > 0 ? (
+        <>
+          <Text style={[styles.subTitle, { color: theme.text }]}>{MULTISIG_ACCOUNTS_HEADING}</Text>
+          <Text style={[styles.hint, { color: theme.textMuted }]}>{MULTISIG_ACCOUNTS_LIST_HINT}</Text>
+          {multisigAccounts.map((account) => (
+            <Text key={account.index} style={[styles.address, { color: theme.textMuted }]}>
+              {multisigAccountListLine(account)}
+            </Text>
+          ))}
         </>
       ) : null}
       {watchOpen ? (

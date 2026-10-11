@@ -111,7 +111,7 @@ const hex = (n) => `0x${BigInt(n).toString(16)}`;
  * `head` the newest block; `blockTimeS` the seconds per block used for the
  * block 100 below the head. Overrides per method can throw or return.
  */
-function fakeRpc({ chainId = '17000', headNumber = 1_000_000n, headAgeS = 6, blockTimeS = 12, methods = {} } = {}) {
+function fakeRpc({ chainId = '59141', headNumber = 1_000_000n, headAgeS = 6, blockTimeS = 12, methods = {} } = {}) {
   const calls = [];
   const headTs = NOW_S - headAgeS;
   const fetchFn = async (url, init) => {
@@ -131,16 +131,16 @@ function fakeRpc({ chainId = '17000', headNumber = 1_000_000n, headAgeS = 6, blo
   return { fetchFn, calls };
 }
 
-const HOLESKY = 'eip155:17000';
+const LINEA = 'eip155:59141';
 const POLYGON = 'eip155:137';
 const SEPOLIA = 'eip155:11155111';
-const HOLESKY_INPUT = {
-  name: 'Holesky',
-  chainId: '17000',
-  rpcUrl: 'https://ethereum-holesky-rpc.publicnode.com',
+const LINEA_INPUT = {
+  name: 'Linea Sepolia',
+  chainId: '59141',
+  rpcUrl: 'https://rpc.linea-sepolia.example',
   nativeSymbol: 'ETH',
   nativeDecimals: '18',
-  explorerUrl: 'https://holesky.etherscan.io/',
+  explorerUrl: 'https://sepolia.lineascan.example/',
   testnet: true,
 };
 const POLYGON_INPUT = {
@@ -178,13 +178,13 @@ console.log('Validation and refusal sentences (no network)');
   check('an unlisted id with the test tick is refused with a sentence',
     v({ testnet: true }) === cn.unlistedTestNetworkMessage('137') &&
       cn.unlistedTestNetworkMessage('137') ===
-        'Chain id 137 is not on this wallet’s list of well-known public test networks (Holesky (17000), ' +
+        'Chain id 137 is not on this wallet’s list of well-known public test networks (' +
           'Polygon Amoy (80002), Linea Sepolia (59141), Scroll Sepolia (534351)), so it cannot be ' +
           'added as a test network: the wallet would then treat its funds as worthless and allow features that are ' +
           'switched off where funds are real. Untick “This is a test network” to add it as a main network. Nothing was saved.',
     v({ testnet: true }));
-  check('an allow-listed id with the tick is accepted', v({ chainId: '17000', name: 'Holesky', testnet: true }) === null);
-  check('an allow-listed id WITHOUT the tick is accepted as a main network (the safe direction)', v({ chainId: '17000', name: 'My chain' }) === null);
+  check('an allow-listed id with the tick is accepted', v({ chainId: '59141', name: 'Linea Sepolia', testnet: true }) === null);
+  check('an allow-listed id WITHOUT the tick is accepted as a main network (the safe direction)', v({ chainId: '59141', name: 'My chain' }) === null);
   check('the shared https sentence itself is unchanged (other Settings sections show it as a standing rule)',
     INSECURE_ENDPOINT_MESSAGE === 'Endpoints must use https:// (plain http:// is accepted only for localhost or 10.0.2.2 during development).');
   check('the form’s http refusal is that sentence + "Nothing was saved." (exact)',
@@ -224,37 +224,37 @@ console.log('Verify before save (fake RPC)');
 {
   const store = memoryStore();
   const wrong = fakeRpc({ chainId: '1' });
-  let e = await rejects(() => cn.addCustomNetwork(HOLESKY_INPUT, opts(wrong, store)));
+  let e = await rejects(() => cn.addCustomNetwork(LINEA_INPUT, opts(wrong, store)));
   check('chain-id mismatch refused with both numbers (exact)',
-    e === 'This RPC endpoint serves chain id 1, but you entered chain id 17000. Nothing was saved. Check the chain id or the RPC URL.', e);
-  check('…nothing stored', !store.map.has(cn.CUSTOM_NETWORKS_KEY) && evm.evmProfileByCaip2(HOLESKY) === undefined);
+    e === 'This RPC endpoint serves chain id 1, but you entered chain id 59141. Nothing was saved. Check the chain id or the RPC URL.', e);
+  check('…nothing stored', !store.map.has(cn.CUSTOM_NETWORKS_KEY) && evm.evmProfileByCaip2(LINEA) === undefined);
 
   const stale = fakeRpc({ headAgeS: 3600 });
-  e = await rejects(() => cn.addCustomNetwork(HOLESKY_INPUT, opts(stale, store)));
+  e = await rejects(() => cn.addCustomNetwork(LINEA_INPUT, opts(stale, store)));
   check('stale head refused with its age (exact)',
     e === 'The newest block this endpoint reports (block 1000000) is 60 minutes old, more than the 10 minutes allowed, so the network looks stopped or the endpoint is behind. Nothing was saved. Try another RPC endpoint, or check this phone’s clock.', e);
   check('…nothing stored', !store.map.has(cn.CUSTOM_NETWORKS_KEY));
   const edge = fakeRpc({ headAgeS: 600 });
-  check('a head exactly at the 600 s bound is fresh', (await cn.verifyCustomNetworkEndpoint(HOLESKY_INPUT.rpcUrl, '17000', { fetchFn: edge.fetchFn, now: () => NOW_MS })).headAgeSeconds === 600);
+  check('a head exactly at the 600 s bound is fresh', (await cn.verifyCustomNetworkEndpoint(LINEA_INPUT.rpcUrl, '59141', { fetchFn: edge.fetchFn, now: () => NOW_MS })).headAgeSeconds === 600);
 
   const noHead = fakeRpc({ methods: { eth_getBlockByNumber: () => { throw new Error('socket hang up'); } } });
-  e = await rejects(() => cn.addCustomNetwork(HOLESKY_INPUT, opts(noHead, store)));
+  e = await rejects(() => cn.addCustomNetwork(LINEA_INPUT, opts(noHead, store)));
   check('an unreadable head refuses the save',
     e === 'The RPC endpoint did not return its newest block, so the wallet cannot check that the network is running and up to date. Nothing was saved. (socket hang up)', e);
   const nullHead = fakeRpc({ methods: { eth_getBlockByNumber: (_p, answer) => answer(null) } });
-  e = await rejects(() => cn.addCustomNetwork(HOLESKY_INPUT, opts(nullHead, store)));
+  e = await rejects(() => cn.addCustomNetwork(LINEA_INPUT, opts(nullHead, store)));
   check('a null head refuses the save', e?.startsWith('The RPC endpoint did not return its newest block'), e);
 
   const noChain = fakeRpc({ methods: { eth_chainId: () => ({ ok: false, status: 503, text: async () => '' }) } });
-  e = await rejects(() => cn.addCustomNetwork(HOLESKY_INPUT, opts(noChain, store)));
+  e = await rejects(() => cn.addCustomNetwork(LINEA_INPUT, opts(noChain, store)));
   check('no chain id refuses the save', e === 'The RPC endpoint did not answer eth_chainId with a chain id, so the wallet cannot confirm which network it serves. Nothing was saved. (HTTP 503)', e);
 
   const hang = { fetchFn: () => new Promise(() => {}) };
-  e = await rejects(() => cn.addCustomNetwork(HOLESKY_INPUT, { ...opts(hang, store), timeoutMs: 30 }));
+  e = await rejects(() => cn.addCustomNetwork(LINEA_INPUT, { ...opts(hang, store), timeoutMs: 30 }));
   check('a silent endpoint times out', e?.includes('(no answer within 30 ms)'), e);
 
   const http = fakeRpc();
-  e = await rejects(() => cn.addCustomNetwork({ ...HOLESKY_INPUT, rpcUrl: 'http://rpc.example.org' }, opts(http, store)));
+  e = await rejects(() => cn.addCustomNetwork({ ...LINEA_INPUT, rpcUrl: 'http://rpc.example.org' }, opts(http, store)));
   check('an http URL is refused before any request', e === cn.CUSTOM_RPC_INSECURE_MESSAGE && http.calls.length === 0);
   const unlisted = fakeRpc({ chainId: '137' });
   e = await rejects(() => cn.addCustomNetwork({ ...POLYGON_INPUT, testnet: true }, opts(unlisted, store)));
@@ -262,31 +262,32 @@ console.log('Verify before save (fake RPC)');
   check('no refusal wrote anything', store.writes === 0);
 
   const ok = fakeRpc();
-  const { record, verification } = await cn.addCustomNetwork(HOLESKY_INPUT, opts(ok, store));
+  const { record, verification } = await cn.addCustomNetwork(LINEA_INPUT, opts(ok, store));
   check('reads in order: eth_chainId, latest block, the block 100 below',
     ok.calls.map((c) => `${c.method}:${c.params[0] ?? ''}`).join(',') === `eth_chainId:,eth_getBlockByNumber:latest,eth_getBlockByNumber:${hex(1_000_000n - 100n)}`,
     ok.calls);
-  check('every read went to the typed RPC URL', ok.calls.every((c) => c.url === 'https://ethereum-holesky-rpc.publicnode.com'));
+  check('every read went to the typed RPC URL', ok.calls.every((c) => c.url === 'https://rpc.linea-sepolia.example'));
   check('measured block time: 12 s over 100 blocks → 12000 ms', record.blockTimeMs === 12000 && verification.blockTimeMs === 12000);
   check('head facts reported', verification.headNumber === 1_000_000n && verification.headAgeSeconds === 6);
   const raw = JSON.parse(store.map.get(cn.CUSTOM_NETWORKS_KEY));
   check('stored as versioned JSON with exactly the record fields',
     raw.version === 1 && raw.networks.length === 1 &&
       JSON.stringify(Object.keys(raw.networks[0])) === JSON.stringify(['chainId', 'name', 'rpcUrl', 'nativeSymbol', 'nativeDecimals', 'explorerUrl', 'testnet', 'blockTimeMs', 'addedAt']), raw);
-  check('stored values normalized', raw.networks[0].explorerUrl === 'https://holesky.etherscan.io' && raw.networks[0].nativeDecimals === 18 &&
+  check('stored values normalized', raw.networks[0].explorerUrl === 'https://sepolia.lineascan.example' && raw.networks[0].nativeDecimals === 18 &&
     raw.networks[0].testnet === true && raw.networks[0].addedAt === '2026-10-10T12:00:00.000Z');
 
   const young = fakeRpc({ chainId: '534351', headNumber: 50n });
-  const y = await cn.addCustomNetwork({ ...HOLESKY_INPUT, chainId: '534351', name: 'Scroll Sepolia' }, opts(young, store));
+  const y = await cn.addCustomNetwork({ ...LINEA_INPUT, chainId: '534351', name: 'Scroll Sepolia' }, opts(young, store));
   check('fewer than 100 blocks: saved without a block time', y.record.blockTimeMs === null && y.verification.blockTimeUnavailable === 'the chain has fewer than 100 blocks');
   const flat = fakeRpc({ chainId: '80002', blockTimeS: 0 });
-  const f = await cn.addCustomNetwork({ ...HOLESKY_INPUT, chainId: '80002', name: 'Amoy', nativeSymbol: 'POL' }, opts(flat, store));
+  const f = await cn.addCustomNetwork({ ...LINEA_INPUT, chainId: '80002', name: 'Amoy', nativeSymbol: 'POL' }, opts(flat, store));
   check('no time difference over 100 blocks: saved without a block time', f.record.blockTimeMs === null);
-  const fast = fakeRpc({ chainId: '59141', blockTimeS: 2 });
-  const fa = await cn.addCustomNetwork({ ...HOLESKY_INPUT, chainId: '59141', name: 'Linea Sepolia' }, opts(fast, store));
+  // (A main network here: the fixture LINEA_INPUT already takes Linea Sepolia, and Holesky is retired.)
+  const fast = fakeRpc({ chainId: '59144', blockTimeS: 2 });
+  const fa = await cn.addCustomNetwork({ ...LINEA_INPUT, chainId: '59144', name: 'Linea', testnet: false }, opts(fast, store));
   check('2-second blocks measured as 2000 ms', fa.record.blockTimeMs === 2000);
-  e = await rejects(() => cn.addCustomNetwork(HOLESKY_INPUT, opts(fakeRpc(), store)));
-  check('adding the same chain id again is refused', e === 'Chain id 17000 is already added as “Holesky”. Nothing was saved.', e);
+  e = await rejects(() => cn.addCustomNetwork(LINEA_INPUT, opts(fakeRpc(), store)));
+  check('adding the same chain id again is refused', e === 'Chain id 59141 is already added as “Linea Sepolia”. Nothing was saved.', e);
   check('block-time lines', cn.blockTimeLine(12000).startsWith('Block time: about 12 s per block, measured over 100 blocks') &&
     cn.blockTimeLine(null).startsWith('Block time: not measured, so the warning about recently created contracts is not shown'));
 }
@@ -298,24 +299,24 @@ const store = memoryStore();
 {
   await loadPrefs(store); // hydrates from this (empty) store: the single read path
   check('a fresh store: no custom profiles', evm.customEvmProfiles().length === 0);
-  await cn.addCustomNetwork(HOLESKY_INPUT, opts(fakeRpc(), store));
+  await cn.addCustomNetwork(LINEA_INPUT, opts(fakeRpc(), store));
   await cn.addCustomNetwork(POLYGON_INPUT, opts(fakeRpc({ chainId: '137', blockTimeS: 2 }), store));
-  const holesky = evm.evmProfileByCaip2(HOLESKY);
+  const linea = evm.evmProfileByCaip2(LINEA);
   const polygon = evm.evmProfileByCaip2(POLYGON);
-  check('evmProfileByCaip2 returns the custom profiles', holesky?.label === 'Holesky' && polygon?.label === 'Polygon PoS');
-  check('Holesky (allow-listed, ticked) is a test network: test symbol, banner',
-    holesky.testnet === true && holesky.displaySymbol === 'test ETH' && holesky.modeLabel === 'Holesky test mode' &&
-      holesky.bannerText === 'TESTNET — Holesky test mode is on (a network you added). Amounts are test ETH, not real funds.');
+  check('evmProfileByCaip2 returns the custom profiles', linea?.label === 'Linea Sepolia' && polygon?.label === 'Polygon PoS');
+  check('Linea Sepolia (allow-listed, ticked) is a test network: test symbol, banner',
+    linea.testnet === true && linea.displaySymbol === 'test ETH' && linea.modeLabel === 'Linea Sepolia test mode' &&
+      linea.bannerText === 'TESTNET — Linea Sepolia test mode is on (a network you added). Amounts are test ETH, not real funds.');
   check('Polygon (unticked) is a main network: no banner, its own symbol',
     polygon.testnet === false && polygon.bannerText === null && polygon.displaySymbol === 'POL' && polygon.modeLabel === 'Polygon PoS mode (a network you added)');
   check('no Kernel or SimpleAccount pre-fill, no swaps, no layer-2 fee model',
-    [holesky, polygon].every((p) => p.kernelV33Verified === false && p.aaPrefill === null && p.swapsOffered === false && p.l1DataFee === false && p.l1CostInGas === false));
+    [linea, polygon].every((p) => p.kernelV33Verified === false && p.aaPrefill === null && p.swapsOffered === false && p.l1DataFee === false && p.l1CostInGas === false));
   check('explorer: the Etherscan-family /tx/ path from the user’s base; none → no link',
-    holesky.explorerTxBase === 'https://holesky.etherscan.io/tx/' && polygon.explorerTxBase === '' &&
-      cn.customExplorerAddressUrl({ explorerUrl: 'https://holesky.etherscan.io' }, '0xabc') === 'https://holesky.etherscan.io/address/0xabc');
+    linea.explorerTxBase === 'https://sepolia.lineascan.example/tx/' && polygon.explorerTxBase === '' &&
+      cn.customExplorerAddressUrl({ explorerUrl: 'https://sepolia.lineascan.example' }, '0xabc') === 'https://sepolia.lineascan.example/address/0xabc');
   check('the RPC URL is the profile’s only default candidate', JSON.stringify(polygon.defaultRpcUrls) === JSON.stringify(['https://polygon-rpc.example.org/key/abc']));
   check('built-in profiles unchanged and still first', evm.allEvmProfiles().slice(0, 6).map((p) => p.caip2).join() === evm.EVM_PROFILES.map((p) => p.caip2).join() && evm.EVM_PROFILES.length === 6);
-  check('evmProfileFor(custom id) is the custom profile', evm.evmProfileFor(HOLESKY) === holesky && evm.evmProfileFor(POLYGON) === polygon);
+  check('evmProfileFor(custom id) is the custom profile', evm.evmProfileFor(LINEA) === linea && evm.evmProfileFor(POLYGON) === polygon);
   check('evmProfileFor(an unregistered id) still resolves to Sepolia, never mainnet', evm.evmProfileFor('eip155:999') === evm.EVM_SEPOLIA);
 
   let prefs = await savePrefs({ testNetwork: POLYGON }, store);
@@ -326,10 +327,10 @@ const store = memoryStore();
   check('the Ethereum slot resolves to the custom network’s entry',
     slot.network.chainId === POLYGON && slot.network.label === 'Polygon PoS' && slot.network.decimals === 18 && slot.network.symbol === 'POL' &&
       slot.network.defaultUrls[0] === 'https://polygon-rpc.example.org/key/abc');
-  check('networkDefaultFor finds a custom network', networkDefaultFor(HOLESKY)?.symbol === 'test ETH');
+  check('networkDefaultFor finds a custom network', networkDefaultFor(LINEA)?.symbol === 'test ETH');
   check('resolveActiveNetworks(an unregistered id) is still Sepolia', resolveActiveNetworks('eip155:999').find((n) => n.slot === 'eip155:1').network === SEPOLIA_NETWORK);
 
-  check('readiness: Holesky (ticked, allow-listed) is a test network', isTestNetwork(HOLESKY) && isFeatureAllowed('kernel-smart-account', HOLESKY) && isFeatureAllowed('session-keys', HOLESKY));
+  check('readiness: Linea Sepolia (ticked, allow-listed) is a test network', isTestNetwork(LINEA) && isFeatureAllowed('kernel-smart-account', LINEA) && isFeatureAllowed('session-keys', LINEA));
   check('readiness: Polygon is a MAIN network', !isTestNetwork(POLYGON));
   check('readiness: every feature is allowed on Polygon exactly as on Ethereum mainnet',
     FEATURE_READINESS.every((f) => isFeatureAllowed(f.id, POLYGON) === isFeatureAllowed(f.id, 'eip155:1')));
@@ -346,30 +347,30 @@ const store = memoryStore();
   check('the registry refuses a profile without custom facts', syncRejects(() => evm.setCustomEvmProfiles([{ ...polygon, custom: undefined }])) !== null);
 
   check('AA: no Kernel pre-fill on a custom network; built-ins keep it',
-    aaKernelPrefillFor(HOLESKY) === null && aaKernelPrefillFor(POLYGON) === null &&
+    aaKernelPrefillFor(LINEA) === null && aaKernelPrefillFor(POLYGON) === null &&
       aaKernelPrefillFor(SEPOLIA) === KERNEL_PREFILL.factory && aaKernelPrefillFor('eip155:1') === KERNEL_PREFILL.factory);
-  check('tokens: custom chains hold tokens and start empty', isTokenChain(HOLESKY) && defaultTokensForChain(HOLESKY).length === 0 && (await listTokens(HOLESKY, store)).length === 0);
-  await addToken({ kind: 'fungible', assetId: { chainId: HOLESKY, namespace: 'erc20', reference: '0x1111111111111111111111111111111111111111' }, symbol: 'TKN', name: 'Token', decimals: 6 }, store);
-  check('tokens: a token added on Holesky is listed on Holesky only', (await listTokens(HOLESKY, store)).length === 1 && (await listTokens(POLYGON, store)).length === 0 && store.map.has(tokenStoreKey(HOLESKY)));
-  check('contacts: a registered custom network accepts EVM addresses', validateContactAddress(HOLESKY, '0x000000000000000000000000000000000000dead').ok === true);
+  check('tokens: custom chains hold tokens and start empty', isTokenChain(LINEA) && defaultTokensForChain(LINEA).length === 0 && (await listTokens(LINEA, store)).length === 0);
+  await addToken({ kind: 'fungible', assetId: { chainId: LINEA, namespace: 'erc20', reference: '0x1111111111111111111111111111111111111111' }, symbol: 'TKN', name: 'Token', decimals: 6 }, store);
+  check('tokens: a token added on Linea Sepolia is listed on Linea Sepolia only', (await listTokens(LINEA, store)).length === 1 && (await listTokens(POLYGON, store)).length === 0 && store.map.has(tokenStoreKey(LINEA)));
+  check('contacts: a registered custom network accepts EVM addresses', validateContactAddress(LINEA, '0x000000000000000000000000000000000000dead').ok === true);
   check('contacts: an unregistered chain still does not', validateContactAddress('eip155:8453', '0x000000000000000000000000000000000000dead').ok === false);
   check('WalletConnect names a custom network as one the user added',
-    describeChain(HOLESKY) === 'Holesky (a test network you added, chain id 17000)' && describeChain(POLYGON) === 'Polygon PoS (a network you added, chain id 137)' &&
+    describeChain(LINEA) === 'Linea Sepolia (a test network you added, chain id 59141)' && describeChain(POLYGON) === 'Polygon PoS (a network you added, chain id 137)' &&
       describeChain(SEPOLIA) === 'Ethereum Sepolia (test network)');
   check('risk: new-contract window = 7 days at the measured block time (rounded up)',
-    newContractThresholdBlocks(HOLESKY) === 50_400n && newContractThresholdBlocks(POLYGON) === 302_400n && secondsPerBlockFor(POLYGON) === 2);
+    newContractThresholdBlocks(LINEA) === 50_400n && newContractThresholdBlocks(POLYGON) === 302_400n && secondsPerBlockFor(POLYGON) === 2);
   check('risk: built-in thresholds unchanged', newContractThresholdBlocks('eip155:1') === NEW_CONTRACT_THRESHOLD_BLOCKS['eip155:1'] && newContractThresholdBlocks('eip155:421614') === 2_419_200n);
   check('risk: an unknown chain still has no new-contract check', newContractThresholdBlocks('eip155:8453') === undefined && secondsPerBlockFor('eip155:8453') === 12);
-  check('prices: a custom network’s coin is never priced', nativePriceAssetId('eip155:1', POLYGON) === null && nativePriceAssetId('eip155:1', HOLESKY) === null);
-  check('ENS: names are not looked up on a custom network', ensRegistryFor(polygon).ok === false && ensRegistryFor(holesky).ok === false);
+  check('prices: a custom network’s coin is never priced', nativePriceAssetId('eip155:1', POLYGON) === null && nativePriceAssetId('eip155:1', LINEA) === null);
+  check('ENS: names are not looked up on a custom network', ensRegistryFor(polygon).ok === false && ensRegistryFor(linea).ok === false);
   check('the Settings note names the unknowns', evm.customNetworkNote(polygon).includes('does not detect layer-2 fee models, so on a rollup quotes may be refused or underestimate the fee') &&
-    evm.customNetworkNote(polygon).includes('No block explorer was given') && evm.customNetworkNote(holesky).includes('assume the Etherscan-style paths https://holesky.etherscan.io/tx/… and /address/…'));
+    evm.customNetworkNote(polygon).includes('No block explorer was given') && evm.customNetworkNote(linea).includes('assume the Etherscan-style paths https://sepolia.lineascan.example/tx/… and /address/…'));
   {
     // Finding 6 of the custom-networks pass: a MAIN network cannot save an
     // Account Abstraction setup, so its note must not invite pasting a factory.
     const refusal = (await import('../src/config/readiness.ts')).readinessRefusal('kernel-smart-account');
     const mainNote = evm.customNetworkNote(polygon, { smartAccountRefusal: refusal });
-    const testNote = evm.customNetworkNote(holesky, { smartAccountRefusal: refusal });
+    const testNote = evm.customNetworkNote(linea, { smartAccountRefusal: refusal });
     check('a custom MAIN network’s note carries the readiness refusal, never the "paste a factory" pre-fill note',
       !mainNote.includes('paste a factory') && mainNote.includes(`Smart-account features cannot be set up on it, because the wallet treats it as a main network: ${refusal} Swaps are not offered`), mainNote);
     check('…without a refusal passed, it still says they are switched off (and still no pre-fill note)',
@@ -407,14 +408,14 @@ console.log('Store discipline (strict parse, read-only, Reset)');
   const variants = {
     'damaged JSON': '{nope',
     'wrong version': JSON.stringify({ version: 2, networks: [good] }),
-    'an extra field': doc([good, { ...good, chainId: '17000', name: 'Holesky', extra: 1 }]),
+    'an extra field': doc([good, { ...good, chainId: '59141', name: 'Linea Sepolia', extra: 1 }]),
     'the test tick on an unlisted id': doc([good, { ...good, chainId: '137', name: 'Polygon PoS', testnet: true }]),
-    'an http RPC URL': doc([good, { ...good, chainId: '17000', name: 'Holesky', rpcUrl: 'http://rpc.example.org' }]),
-    'a name not in sanitized form': doc([good, { ...good, chainId: '17000', name: ' Holesky' }]),
+    'an http RPC URL': doc([good, { ...good, chainId: '59141', name: 'Linea Sepolia', rpcUrl: 'http://rpc.example.org' }]),
+    'a name not in sanitized form': doc([good, { ...good, chainId: '59141', name: ' Linea Sepolia' }]),
     'a built-in chain id': doc([good, { ...good, chainId: '11155111', name: 'Mine' }]),
-    'a duplicate chain id': doc([good, { ...good, name: 'Holesky 2' }]),
-    'decimals other than 18': doc([good, { ...good, chainId: '17000', name: 'Holesky', nativeDecimals: 6 }]),
-    'a zero block time': doc([good, { ...good, chainId: '17000', name: 'Holesky', blockTimeMs: 0 }]),
+    'a duplicate chain id': doc([good, { ...good, name: 'Linea Sepolia 2' }]),
+    'decimals other than 18': doc([good, { ...good, chainId: '59141', name: 'Linea Sepolia', nativeDecimals: 6 }]),
+    'a zero block time': doc([good, { ...good, chainId: '59141', name: 'Linea Sepolia', blockTimeMs: 0 }]),
     'eleven networks': doc(Array.from({ length: 11 }, (_, i) => ({ ...good, chainId: String(2000 + i), name: `Net ${i}`, testnet: false }))),
   };
   for (const [what, raw] of Object.entries(variants)) {
@@ -425,9 +426,9 @@ console.log('Store discipline (strict parse, read-only, Reset)');
   }
   const mixed = memoryStore({ [cn.CUSTOM_NETWORKS_KEY]: variants['an extra field'] });
   await loadPrefs(mixed);
-  check('a damaged store still exposes its readable networks', evm.customEvmProfiles().map((p) => p.caip2).join() === HOLESKY && cn.customNetworksReadOnly());
-  check('removal refused on a read-only store', (await rejects(() => cn.removeCustomNetwork(HOLESKY, { store: mixed }))) === cn.CUSTOM_NETWORKS_READ_ONLY_MESSAGE);
-  await savePrefs({ testNetwork: HOLESKY }, mixed);
+  check('a damaged store still exposes its readable networks', evm.customEvmProfiles().map((p) => p.caip2).join() === LINEA && cn.customNetworksReadOnly());
+  check('removal refused on a read-only store', (await rejects(() => cn.removeCustomNetwork(LINEA, { store: mixed }))) === cn.CUSTOM_NETWORKS_READ_ONLY_MESSAGE);
+  await savePrefs({ testNetwork: LINEA }, mixed);
   await cn.resetCustomNetworks(mixed);
   check('Reset: an empty, writable list', JSON.parse(mixed.map.get(cn.CUSTOM_NETWORKS_KEY)).networks.length === 0 && !(await cn.loadCustomNetworks(mixed)).readOnly && evm.customEvmProfiles().length === 0);
   check('Reset: an active custom network falls back to Ethereum mainnet', (await loadPrefs(mixed)).testNetwork === null);
@@ -449,43 +450,43 @@ const OWNER = '0x000000000000000000000000000000000000dEaD';
 const OTHER = '0x1111111111111111111111111111111111111111';
 const TX = (b) => '0x' + b.repeat(32);
 
-/** Fills `s` with data for HOLESKY, Sepolia and POLYGON in every per-chain store. */
+/** Fills `s` with data for LINEA, Sepolia and POLYGON in every per-chain store. */
 async function seedAllStores(s) {
   await addToken({ kind: 'fungible', assetId: { chainId: SEPOLIA, namespace: 'erc20', reference: '0x2222222222222222222222222222222222222222' }, symbol: 'SEP', name: 'Sep', decimals: 6 }, s);
-  await addToken({ kind: 'fungible', assetId: { chainId: HOLESKY, namespace: 'erc20', reference: '0x3333333333333333333333333333333333333333' }, symbol: 'HOO', name: 'Hoo', decimals: 6 }, s);
-  await s.setItem('shiba-wallet.rpc-endpoints.v1', JSON.stringify({ [HOLESKY]: 'https://h.example', [SEPOLIA]: 'https://s.example', [POLYGON]: 'https://p.example' }));
-  await s.setItem('shiba-wallet.aa-config.v1', JSON.stringify({ [HOLESKY]: { bundlerUrl: 'https://b.example/h' }, [SEPOLIA]: { bundlerUrl: 'https://b.example/s' } }));
-  await s.setItem('shiba-wallet.evm-indexer.v1', JSON.stringify({ [HOLESKY]: { url: 'https://i.example/h', verifiedAt: '2026-10-10' }, [SEPOLIA]: { url: 'https://i.example/s', verifiedAt: '2026-10-10' } }));
-  await s.setItem('shiba-wallet.nft-indexer.v1', JSON.stringify({ [HOLESKY]: { url: 'https://n.example/h' }, [SEPOLIA]: { url: 'https://n.example/s' } }));
-  await addContact(HOLESKY, 'Alice', OWNER.toLowerCase(), { store: s });
+  await addToken({ kind: 'fungible', assetId: { chainId: LINEA, namespace: 'erc20', reference: '0x3333333333333333333333333333333333333333' }, symbol: 'HOO', name: 'Hoo', decimals: 6 }, s);
+  await s.setItem('shiba-wallet.rpc-endpoints.v1', JSON.stringify({ [LINEA]: 'https://h.example', [SEPOLIA]: 'https://s.example', [POLYGON]: 'https://p.example' }));
+  await s.setItem('shiba-wallet.aa-config.v1', JSON.stringify({ [LINEA]: { bundlerUrl: 'https://b.example/h' }, [SEPOLIA]: { bundlerUrl: 'https://b.example/s' } }));
+  await s.setItem('shiba-wallet.evm-indexer.v1', JSON.stringify({ [LINEA]: { url: 'https://i.example/h', verifiedAt: '2026-10-10' }, [SEPOLIA]: { url: 'https://i.example/s', verifiedAt: '2026-10-10' } }));
+  await s.setItem('shiba-wallet.nft-indexer.v1', JSON.stringify({ [LINEA]: { url: 'https://n.example/h' }, [SEPOLIA]: { url: 'https://n.example/s' } }));
+  await addContact(LINEA, 'Alice', OWNER.toLowerCase(), { store: s });
   await addContact(SEPOLIA, 'Alice', OWNER.toLowerCase(), { store: s });
   await addContact(POLYGON, 'Bob', OTHER, { store: s });
-  await saveNote(HOLESKY, { txid: TX('a1') }, 'holesky note', { store: s });
-  await saveNote(HOLESKY, { userOpHash: TX('b2') }, 'holesky op note', { store: s });
+  await saveNote(LINEA, { txid: TX('a1') }, 'linea note', { store: s });
+  await saveNote(LINEA, { userOpHash: TX('b2') }, 'linea op note', { store: s });
   await saveNote(SEPOLIA, { txid: TX('c3') }, 'sepolia note', { store: s });
   const policy = { token: NATIVE_TOKEN, symbol: 'ETH', decimals: 18, cap: 100n, windowSeconds: 86400 };
-  await saveSpendingPolicy({ chain: HOLESKY, owner: OWNER }, policy, [], { store: s, now: NOW_S });
+  await saveSpendingPolicy({ chain: LINEA, owner: OWNER }, policy, [], { store: s, now: NOW_S });
   await saveSpendingPolicy({ chain: SEPOLIA, owner: OWNER }, policy, [], { store: s, now: NOW_S });
   const spend = { token: NATIVE_TOKEN, amount: '5', at: NOW_S, kind: 'transfer', ref: TX('f6') };
   await s.setItem('shiba-wallet.spending-history.v1', JSON.stringify({ version: 1, entries: {
-    [`${HOLESKY}|${OWNER.toLowerCase()}`]: [spend],
+    [`${LINEA}|${OWNER.toLowerCase()}`]: [spend],
     [`${SEPOLIA}|${OWNER.toLowerCase()}`]: [spend],
   } }));
   await s.setItem(BROWSER_CONNECTIONS_KEY, JSON.stringify([
-    { origin: 'https://app.example', address: OWNER, owner: OWNER, chain: HOLESKY, namespaces: {}, approvedAt: 1 },
+    { origin: 'https://app.example', address: OWNER, owner: OWNER, chain: LINEA, namespaces: {}, approvedAt: 1 },
     { origin: 'https://app.example', address: OWNER, owner: OWNER, chain: SEPOLIA, namespaces: {}, approvedAt: 2 },
   ]));
   await s.setItem('shiba-wallet.wc-smart-bindings.v1', JSON.stringify({
-    [`${HOLESKY}:${OWNER.toLowerCase()}`]: { chain: HOLESKY, address: OWNER, owner: OWNER, accountIndex: 0, accountType: 'kernel-v3.3', factory: OTHER },
+    [`${LINEA}:${OWNER.toLowerCase()}`]: { chain: LINEA, address: OWNER, owner: OWNER, accountIndex: 0, accountType: 'kernel-v3.3', factory: OTHER },
     [`${SEPOLIA}:${OWNER.toLowerCase()}`]: { chain: SEPOLIA, address: OWNER, owner: OWNER, accountIndex: 0, accountType: 'kernel-v3.3', factory: OTHER },
   }));
   await s.setItem('shiba-wallet.wc-calls.v1', JSON.stringify({
-    a: { id: 'a', userOpHash: TX('d4'), chain: HOLESKY, from: OWNER, dappUrl: 'https://x', createdAt: 1 },
+    a: { id: 'a', userOpHash: TX('d4'), chain: LINEA, from: OWNER, dappUrl: 'https://x', createdAt: 1 },
     b: { id: 'b', userOpHash: TX('e5'), chain: SEPOLIA, from: OWNER, dappUrl: 'https://x', createdAt: 1 },
   }));
 }
 
-/** Every place HOLESKY data could remain; returns the names of stores that still hold some. */
+/** Every place LINEA data could remain; returns the names of stores that still hold some. */
 async function leftovers(s, chain) {
   const left = [];
   const json = (k) => (s.map.has(k) ? JSON.parse(s.map.get(k)) : null);
@@ -507,7 +508,7 @@ async function leftovers(s, chain) {
 /** The other chains' share of each store, for a before/after comparison. */
 async function othersSnapshot(s) {
   const json = (k) => (s.map.has(k) ? JSON.parse(s.map.get(k)) : null);
-  const strip = (obj) => Object.fromEntries(Object.entries(obj ?? {}).filter(([k]) => k !== HOLESKY));
+  const strip = (obj) => Object.fromEntries(Object.entries(obj ?? {}).filter(([k]) => k !== LINEA));
   return JSON.stringify({
     sepTokens: s.map.get(tokenStoreKey(SEPOLIA)),
     endpoints: strip(json('shiba-wallet.rpc-endpoints.v1')),
@@ -515,12 +516,12 @@ async function othersSnapshot(s) {
     idx: strip(json('shiba-wallet.evm-indexer.v1')),
     nft: strip(json('shiba-wallet.nft-indexer.v1')),
     contacts: strip(json('shiba-wallet.contacts.v1')?.networks),
-    notes: (await loadNotes(s)).notes.filter((n) => n.network !== HOLESKY),
-    spending: (await listSpendingScopes(s)).scopes.filter((x) => x.scope.chain !== HOLESKY),
-    history: Object.entries(json('shiba-wallet.spending-history.v1')?.entries ?? {}).filter(([k]) => !k.startsWith(`${HOLESKY}|`)),
-    browser: (json(BROWSER_CONNECTIONS_KEY) ?? []).filter((r) => r.chain !== HOLESKY),
-    wcb: Object.values(json('shiba-wallet.wc-smart-bindings.v1') ?? {}).filter((r) => r.chain !== HOLESKY),
-    wcc: Object.values(json('shiba-wallet.wc-calls.v1') ?? {}).filter((r) => r.chain !== HOLESKY),
+    notes: (await loadNotes(s)).notes.filter((n) => n.network !== LINEA),
+    spending: (await listSpendingScopes(s)).scopes.filter((x) => x.scope.chain !== LINEA),
+    history: Object.entries(json('shiba-wallet.spending-history.v1')?.entries ?? {}).filter(([k]) => !k.startsWith(`${LINEA}|`)),
+    browser: (json(BROWSER_CONNECTIONS_KEY) ?? []).filter((r) => r.chain !== LINEA),
+    wcb: Object.values(json('shiba-wallet.wc-smart-bindings.v1') ?? {}).filter((r) => r.chain !== LINEA),
+    wcc: Object.values(json('shiba-wallet.wc-calls.v1') ?? {}).filter((r) => r.chain !== LINEA),
   });
 }
 
@@ -528,27 +529,27 @@ async function othersSnapshot(s) {
   const s = memoryStore({ [cn.CUSTOM_NETWORKS_KEY]: store.map.get(cn.CUSTOM_NETWORKS_KEY) });
   await loadPrefs(s);
   await seedAllStores(s);
-  await savePrefs({ testNetwork: HOLESKY }, s);
-  check('seeded: Holesky data in every store', (await leftovers(s, HOLESKY)).length === 12, await leftovers(s, HOLESKY));
+  await savePrefs({ testNetwork: LINEA }, s);
+  check('seeded: Linea Sepolia data in every store', (await leftovers(s, LINEA)).length === 12, await leftovers(s, LINEA));
   const othersBefore = await othersSnapshot(s);
   const mainnetTokensBefore = s.map.get('shiba-wallet.tokens.v1');
-  const report = await cn.removeCustomNetwork(HOLESKY, { store: s });
+  const report = await cn.removeCustomNetwork(LINEA, { store: s });
   check('the network is removed and the choice is back on mainnet', report.networkRemoved && report.switchedToMainnet && (await loadPrefs(s)).testNetwork === null);
-  check('no Holesky entry remains in any store', (await leftovers(s, HOLESKY)).length === 0, await leftovers(s, HOLESKY));
+  check('no Linea Sepolia entry remains in any store', (await leftovers(s, LINEA)).length === 0, await leftovers(s, LINEA));
   check('every other chain’s entries are exactly as before', (await othersSnapshot(s)) === othersBefore);
   check('the mainnet token key was not touched', s.map.get('shiba-wallet.tokens.v1') === mainnetTokensBefore);
   check('the report counts what was deleted',
     JSON.stringify(report.removed.map((r) => `${r.id}:${r.count}`)) ===
       JSON.stringify(['tokens:1', 'endpoint:1', 'aa:1', 'history-indexer:1', 'nft-indexer:1', 'contacts:1', 'notes:2', 'spending:1', 'browser:1', 'walletconnect:2']) &&
       report.failed.length === 0, report.removed);
-  check('the registry no longer has Holesky; Polygon stays', evm.evmProfileByCaip2(HOLESKY) === undefined && evm.evmProfileByCaip2(POLYGON)?.label === 'Polygon PoS');
-  check('the stored list no longer has Holesky', JSON.parse(s.map.get(cn.CUSTOM_NETWORKS_KEY)).networks.map((n) => n.chainId).join() === '137');
-  check('contacts on the removed chain are refused again', validateContactAddress(HOLESKY, OWNER).ok === false);
+  check('the registry no longer has Linea Sepolia; Polygon stays', evm.evmProfileByCaip2(LINEA) === undefined && evm.evmProfileByCaip2(POLYGON)?.label === 'Polygon PoS');
+  check('the stored list no longer has Linea Sepolia', JSON.parse(s.map.get(cn.CUSTOM_NETWORKS_KEY)).networks.map((n) => n.chainId).join() === '137');
+  check('contacts on the removed chain are refused again', validateContactAddress(LINEA, OWNER).ok === false);
   check('Polygon’s contacts kept', (await listContacts(POLYGON, s)).length === 1);
-  check('the describeRemoval sentence', cn.describeRemoval('Holesky', report).startsWith('“Holesky” was removed. The wallet is back on Ethereum mainnet. Deleted for this chain: tracked tokens (1), endpoint override (1)'));
+  check('the describeRemoval sentence', cn.describeRemoval('Linea Sepolia', report).startsWith('“Linea Sepolia” was removed. The wallet is back on Ethereum mainnet. Deleted for this chain: tracked tokens (1), endpoint override (1)'));
   check('the confirmation names the data removed and what is kept',
-    cn.removalConfirmationText('Holesky', '17000', true) ===
-      'Remove “Holesky” (chain id 17000) from this wallet? This also deletes, for this chain only: tracked tokens, endpoint override, ' +
+    cn.removalConfirmationText('Linea Sepolia', '59141', true) ===
+      'Remove “Linea Sepolia” (chain id 59141) from this wallet? This also deletes, for this chain only: tracked tokens, endpoint override, ' +
         'smart-account settings, history indexer, NFT indexer, contacts, transaction notes, spending limits, in-app browser connections ' +
         'and WalletConnect smart-account records. The wallet switches back to Ethereum mainnet first. ' + cn.KEPT_ON_REMOVAL_SENTENCE);
   check('the AA settings of Sepolia are intact', (await getAaConfig(SEPOLIA, s)).bundlerUrl === 'https://b.example/s');
@@ -619,10 +620,10 @@ const PHASE18_DOC = JSON.stringify({ version: 1, networks: [PHASE18_HOODI_RECORD
   check('adding OP Sepolia (11155420) is refused: already built in (exact), ticked or not',
     v({ chainId: '11155420', name: 'Rollup', testnet: true }) === 'Chain id 11155420 is already built in as OP Sepolia; choose it in the network list above instead. Nothing was saved.' &&
       v({ chainId: '11155420', name: 'Rollup' }) === 'Chain id 11155420 is already built in as OP Sepolia; choose it in the network list above instead. Nothing was saved.');
-  check('the test allow-list still holds both ids (it never shrinks)',
-    evm.isKnownPublicTestChainId('560048') && evm.isKnownPublicTestChainId('11155420') && evm.KNOWN_PUBLIC_TEST_CHAIN_IDS.length === 6);
+  check('the test allow-list still holds both ids (only an end-of-life network leaves it: Holesky, now retired)',
+    evm.isKnownPublicTestChainId('560048') && evm.isKnownPublicTestChainId('11155420') && evm.KNOWN_PUBLIC_TEST_CHAIN_IDS.length === 5);
   check('…but the sentences name only the ids that can still be added (exact)',
-    cn.TEST_NETWORK_TICK_NOTE === 'Only the well-known public test networks can be marked as test networks: Holesky (17000), Polygon Amoy (80002), ' +
+    cn.TEST_NETWORK_TICK_NOTE === 'Only the well-known public test networks can be marked as test networks: Polygon Amoy (80002), ' +
       'Linea Sepolia (59141), Scroll Sepolia (534351). Any other network is treated as a main network whose funds may be real, so the ' +
       'smart-account features stay switched off on it and the other features carry the same “not yet cleared” status as on Ethereum mainnet.',
     cn.TEST_NETWORK_TICK_NOTE);
@@ -711,10 +712,10 @@ async function importMutant(relPath, from, to) {
   check('mutant (built-in collision allowed) is caught', syncRejects(() => m1.validateCustomNetworkInput({ ...POLYGON_INPUT, chainId: '11155111', name: 'Mine' }, [])) === null);
 
   // 2a. The test tick honoured for an unlisted id at save time.
-  const m2 = await importMutant('src/wallet/custom-networks.ts', 'if (testnet && !isKnownPublicTestChainId(chainId)) throw new Error(unlistedTestNetworkMessage(chainId));', '');
+  const m2 = await importMutant('src/wallet/custom-networks.ts', 'if (testnet && !(options.stored ? isStoredTestChainIdAccepted(chainId) : isKnownPublicTestChainId(chainId))) {', 'if (false) {');
   check('mutant (test tick honoured for an unlisted id, save) is caught', syncRejects(() => m2.validateCustomNetworkInput({ ...POLYGON_INPUT, testnet: true }, [])) === null);
   // 2b. …and on read, in the registry.
-  const m2b = await importMutant('src/config/evm-chain.ts', "return p?.custom?.testnetRequested === true && isKnownPublicTestChainId(p.chainIdDecimal);", "return p?.custom?.testnetRequested === true;");
+  const m2b = await importMutant('src/config/evm-chain.ts', "return p?.custom?.testnetRequested === true && isStoredTestChainIdAccepted(p.chainIdDecimal);", "return p?.custom?.testnetRequested === true;");
   const polygon = evm.evmProfileByCaip2(POLYGON);
   m2b.setCustomEvmProfiles([{ ...polygon, testnet: true, custom: { ...polygon.custom, testnetRequested: true } }]);
   check('mutant (allow-list not re-checked on read) is caught', m2b.isCustomTestNetwork(POLYGON) === true && !isTestNetwork(POLYGON));
@@ -724,21 +725,21 @@ async function importMutant(relPath, from, to) {
   const s3 = memoryStore({ [cn.CUSTOM_NETWORKS_KEY]: store.map.get(cn.CUSTOM_NETWORKS_KEY) });
   await loadPrefs(s3);
   await seedAllStores(s3);
-  await m3.removeCustomNetwork(HOLESKY, { store: s3 });
-  const left3 = await leftovers(s3, HOLESKY);
+  await m3.removeCustomNetwork(LINEA, { store: s3 });
+  const left3 = await leftovers(s3, LINEA);
   check('mutant (removal leaving the contacts store) is caught', left3.join() === 'contacts', left3);
   await loadPrefs(store);
 
   // 4. A stale head accepted.
   const m4 = await importMutant('src/wallet/custom-networks.ts', 'if (stale) throw new Error(staleHeadMessage(head.number, ageSeconds, bound));', '');
   const s4 = memoryStore();
-  const e4 = await rejects(() => m4.addCustomNetwork({ ...HOLESKY_INPUT, chainId: '534351', name: 'Scroll Sepolia' }, opts(fakeRpc({ chainId: '534351', headAgeS: 86_400 }), s4)));
+  const e4 = await rejects(() => m4.addCustomNetwork({ ...LINEA_INPUT, chainId: '534351', name: 'Scroll Sepolia' }, opts(fakeRpc({ chainId: '534351', headAgeS: 86_400 }), s4)));
   check('mutant (stale head accepted) is caught', e4 === null && s4.map.has(cn.CUSTOM_NETWORKS_KEY));
 
   // 5. A chain-id mismatch accepted.
   const m5 = await importMutant('src/wallet/custom-networks.ts', 'if (reported !== chainIdDecimal) throw new Error(chainIdMismatchMessage(reported, chainIdDecimal));', '');
   const s5 = memoryStore();
-  const e5 = await rejects(() => m5.addCustomNetwork({ ...HOLESKY_INPUT, chainId: '59141', name: 'Linea Sepolia' }, opts(fakeRpc({ chainId: '1' }), s5)));
+  const e5 = await rejects(() => m5.addCustomNetwork({ ...LINEA_INPUT, chainId: '59141', name: 'Linea Sepolia' }, opts(fakeRpc({ chainId: '1' }), s5)));
   check('mutant (chain-id mismatch accepted) is caught', e5 === null && s5.map.has(cn.CUSTOM_NETWORKS_KEY));
   await loadPrefs(store);
 
@@ -769,6 +770,52 @@ console.log('the form’s example placeholders are not refusals (phase 18 emulat
   // placeholder must never invite.
   const old = syncRejects(() => cn.validateCustomNetworkInput({ ...POLYGON_INPUT, name: 'Hoodi', chainId: '560048', testnet: true }, []));
   check('mutant (the old Hoodi / 560048 example) would be refused, so the check above is meaningful', typeof old === 'string' && /already built in/.test(old), String(old));
+}
+
+// ---------------------------------------------------------------------------
+console.log('Holesky retired from the test allow-list (phase 18 polish)');
+// ---------------------------------------------------------------------------
+// Source: the Ethereum Foundation's "Holešky Testnet Shutdown Announcement"
+// (https://blog.ethereum.org/2025/09/01/holesky-shutdown-announcement,
+// 1 September 2025): "As previously announced, the Holešky testnet has
+// reached its planned end-of-life date and will be sunset shortly."
+{
+  check('the allow-list no longer holds 17000; the remaining order is unchanged',
+    evm.KNOWN_PUBLIC_TEST_CHAIN_IDS.map((t) => `${t.chainId}:${t.name}`).join() ===
+      '560048:Hoodi,11155420:OP Sepolia,80002:Polygon Amoy,59141:Linea Sepolia,534351:Scroll Sepolia' &&
+      !evm.isKnownPublicTestChainId('17000'));
+  check('Holesky is the one retired public test network', evm.RETIRED_PUBLIC_TEST_CHAIN_IDS.map((t) => `${t.chainId}:${t.name}`).join() === '17000:Holesky' &&
+    evm.isStoredTestChainIdAccepted('17000') && !evm.isStoredTestChainIdAccepted('137'));
+  const v = (patch) => syncRejects(() => cn.validateCustomNetworkInput({ ...POLYGON_INPUT, ...patch }, []));
+  const retired = v({ chainId: '17000', name: 'Holesky', testnet: true });
+  check('adding Holesky ticked as a test network is refused with its own sentence (exact)',
+    retired === 'Chain id 17000 is Holesky, a public test network that has reached its end of life and is no longer supported by ' +
+      'Ethereum’s client, testing and infrastructure teams, so it can no longer be added as a test network. Nothing was saved.', retired);
+  check('…no sentence of the form lists Holesky any more',
+    !/Holesky/.test(cn.TEST_NETWORK_TICK_NOTE) && !/Holesky/.test(cn.unlistedTestNetworkMessage('137')));
+  check('…unticked, the name "Holesky" is still refused as test-like (main networks only)', /test network/.test(v({ chainId: '17000', name: 'Holesky' }) ?? ''));
+  check('…unticked under another name it can be added as a MAIN network (the safe direction)', v({ chainId: '17000', name: 'Old chain' }) === null);
+  // A record stored while Holesky was on the list keeps loading and stays a test network.
+  const stored = {
+    chainId: '17000', name: 'Holesky', rpcUrl: 'https://rpc.holesky.example', nativeSymbol: 'ETH', nativeDecimals: 18,
+    explorerUrl: null, testnet: true, blockTimeMs: 12000, addedAt: '2026-10-10T12:00:00.000Z',
+  };
+  const sh = memoryStore({ [cn.CUSTOM_NETWORKS_KEY]: JSON.stringify({ version: 1, networks: [stored] }) });
+  const book = await cn.loadCustomNetworks(sh);
+  check('a stored ticked Holesky record is not damage: loaded, list writable', !book.readOnly && book.networks.length === 1 && book.networks[0].testnet === true, book);
+  const profile = cn.customNetworkProfile(book.networks[0]);
+  check('…its profile stays a test network (test coins), with the test banner',
+    profile.testnet === true && profile.displaySymbol === 'test ETH' &&
+      profile.bannerText === 'TESTNET — Holesky test mode is on (a network you added). Amounts are test ETH, not real funds.');
+  const saved = evm.customEvmProfiles();
+  evm.setCustomEvmProfiles([profile]);
+  check('…and readiness still counts it as a test network', evm.isCustomTestNetwork('eip155:17000') && isTestNetwork('eip155:17000'));
+  evm.setCustomEvmProfiles(saved);
+  const mr = await importMutant('src/wallet/custom-networks.ts', '      earlier,\n      { stored: true },\n', '      earlier,\n');
+  check('mutant (stored records validated like new entries) is caught: the stored Holesky list would turn read-only',
+    (await mr.loadCustomNetworks(memoryStore({ [cn.CUSTOM_NETWORKS_KEY]: JSON.stringify({ version: 1, networks: [stored] }) }))).readOnly === true);
+  const ma = await importMutant('src/config/evm-chain.ts', "export const KNOWN_PUBLIC_TEST_CHAIN_IDS: readonly { readonly chainId: string; readonly name: string }[] = [\n", "export const KNOWN_PUBLIC_TEST_CHAIN_IDS: readonly { readonly chainId: string; readonly name: string }[] = [\n  { chainId: '17000', name: 'Holesky' },\n");
+  check('mutant (Holesky back on the allow-list) is caught', ma.isKnownPublicTestChainId('17000') === true && !evm.isKnownPublicTestChainId('17000'));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

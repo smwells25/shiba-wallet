@@ -7,6 +7,8 @@ import {
   EVM_PROFILES,
   KNOWN_PUBLIC_TEST_CHAIN_IDS,
   isKnownPublicTestChainId,
+  isStoredTestChainIdAccepted,
+  retiredPublicTestChain,
   setCustomEvmProfiles,
   type EvmChainProfile,
 } from '../config/evm-chain.ts';
@@ -290,6 +292,18 @@ export function duplicateChainMessage(chainId: string, existingName: string): st
   return `Chain id ${chainId} is already added as “${existingName}”. Nothing was saved.`;
 }
 
+/**
+ * The refusal for a retired public test network ticked as a test network
+ * (config/evm-chain.ts RETIRED_PUBLIC_TEST_CHAIN_IDS; Holesky).
+ */
+export function retiredTestNetworkMessage(chain: { chainId: string; name: string }): string {
+  return (
+    `Chain id ${chain.chainId} is ${chain.name}, a public test network that has reached its end of life and is no ` +
+    'longer supported by Ethereum’s client, testing and infrastructure teams, so it can no longer be added as a test ' +
+    'network. Nothing was saved.'
+  );
+}
+
 export function unlistedTestNetworkMessage(chainId: string): string {
   return (
     `Chain id ${chainId} is not on this wallet’s list of well-known public test networks ` +
@@ -415,6 +429,12 @@ function sameText(a: string, b: string): boolean {
 export function validateCustomNetworkInput(
   input: CustomNetworkInput,
   existing: readonly CustomNetworkRecord[],
+  /**
+   * Set only when re-validating a STORED record: a record ticked as a test
+   * network on a retired public test network (Holesky) was valid when it was
+   * saved and stays loadable. A new entry is never validated this way.
+   */
+  options: { stored?: boolean } = {},
 ): Omit<CustomNetworkRecord, 'blockTimeMs' | 'addedAt'> {
   const chainId = parseCustomChainId(input.chainId);
   if (chainId === null) throw new Error(CHAIN_ID_FORMAT_MESSAGE);
@@ -424,7 +444,10 @@ export function validateCustomNetworkInput(
   const duplicate = existing.find((n) => n.chainId === chainId);
   if (duplicate) throw new Error(duplicateChainMessage(chainId, duplicate.name));
   const testnet = input.testnet === true;
-  if (testnet && !isKnownPublicTestChainId(chainId)) throw new Error(unlistedTestNetworkMessage(chainId));
+  if (testnet && !(options.stored ? isStoredTestChainIdAccepted(chainId) : isKnownPublicTestChainId(chainId))) {
+    const retired = retiredPublicTestChain(chainId);
+    throw new Error(retired ? retiredTestNetworkMessage(retired) : unlistedTestNetworkMessage(chainId));
+  }
 
   const name = sanitizeDisplayName(input.name ?? '', MAX_NETWORK_NAME_LENGTH, 'network');
   if (!name.ok) throw new Error(name.error);
@@ -469,7 +492,7 @@ export function validateCustomNetworkInput(
  * every explorer-link builder treats as "no link").
  */
 export function customNetworkProfile(r: CustomNetworkRecord): EvmChainProfile {
-  const testnet = r.testnet && isKnownPublicTestChainId(r.chainId);
+  const testnet = r.testnet && isStoredTestChainIdAccepted(r.chainId);
   return {
     caip2: `eip155:${r.chainId}`,
     chainIdDecimal: r.chainId,
@@ -552,6 +575,7 @@ function reviveRecord(value: unknown, earlier: readonly CustomNetworkRecord[]): 
         testnet: v.testnet,
       },
       earlier,
+      { stored: true },
     );
   } catch {
     return null;
