@@ -82,7 +82,9 @@ export type FeatureId =
   | 'dapp-browser'
   | 'multisig'
   // Phase 18 item 2: liquid staking (Lido, Rocket Pool) on test networks.
-  | 'staking';
+  | 'staking'
+  // Phase 19 item 2: recurring swaps (dollar-cost averaging) on a session key.
+  | 'dca';
 
 export interface FeatureReadiness {
   id: FeatureId;
@@ -420,6 +422,29 @@ export const FEATURE_READINESS: readonly FeatureReadiness[] = [
     // The protocols' audits are theirs, not this wallet's; no threat-model
     // entry of its own exists yet (the CTO's to add at the refresh).
     evidence: ['W1', 'W2', 'W9', 'W13', 'T-76'],
+    enforced: true,
+  },
+  // Phase 19 item 2 (feature 63, the DCA design note in AGENTS.md): recurring
+  // swaps on a session key held by this phone. Appended at the end of the
+  // table, like the staking row.
+  {
+    id: 'dca',
+    title: 'Recurring swaps (dollar-cost averaging)',
+    status: 'testnet-only',
+    reason:
+      'A recurring swap gives a key on this phone a Uniswap swap permission whose minimum price is fixed at set-up ' +
+      'and does not follow the market, and the account cannot refuse an operation that batches several swaps, so ' +
+      'whoever holds the key could sell the account’s ETH at that minimum. It relies on Kernel’s permission modules, ' +
+      'which have no published audit, on Uniswap pools whose code is not verified against published source, and on a ' +
+      'bundler that asks for an unusually large balance just to estimate the set-up. This wallet offers recurring ' +
+      'swaps only on test networks.',
+    // C1–C3: the unaudited Kernel account and permission modules; W9: the
+    // switchboard that enforces this row; F-14: no audit of the permission
+    // policies or ECDSASigner; T-64: bundler strictness (ZeroDev's estimate
+    // reservation for the 7M-gas install); T-69: a key held by this phone that
+    // sends operations within its limits (the recurring-payment row; a
+    // DCA-specific threat-model row is the CTO's to add at the refresh).
+    evidence: ['C1', 'C2', 'C3', 'W9', 'F-14', 'T-64', 'T-69'],
     enforced: true,
   },
 ];

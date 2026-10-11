@@ -22,6 +22,7 @@ import {
   subscriptionPeriodCount,
   toHex,
   type JsonRpcTransport,
+  type DcaTerms,
   type KernelPermissionInstall,
   type SessionKeyGrant,
   type SubscriptionGrant,
@@ -33,6 +34,7 @@ import { GrantReview } from '../components/SessionGrantViews';
 import { PayloadQr } from '../components/RecoveryViews';
 import { SubscriptionKeyHandoverActions } from '../components/SubscriptionKeyHandover';
 import { activeEvmNodeRunner, useClockTick, useOnAppActive } from '../components/RecurringDueBanner';
+import { DcaCard, DcaFormView, DcaListHeading, DcaReviewView, type DcaFormState } from './DcaViews';
 import { useTheme, type Theme } from '../theme';
 import { getEndpoint, withEndpoint } from '../config/networks';
 import { useWallet } from '../wallet/WalletContext';
@@ -53,9 +55,10 @@ import { AaDepositNote } from '../components/AaDepositNote';
 import { NOTE_VIEW_SCROLL_PROPS, TransactionNoteField, dismissKeyboardThenClose } from '../components/TransactionNoteField';
 import { findExactContact, listContacts, matchRecipient, type Contact } from '../wallet/contacts';
 import { sessionKeyVault } from '../wallet/storage';
-import { readinessGate } from '../config/readiness';
+import { readinessGate, readinessRefusal } from '../config/readiness';
 import { requestReminderSync } from '../wallet/notifications';
 import {
+  DCA_SOURCE,
   SESSIONS_AUDIT_NOTE,
   SESSIONS_INSTALL_MODE_NOTE,
   SESSIONS_WIPE_WARNING,
@@ -89,6 +92,9 @@ import {
   revokeApprovalPrompt,
   revokeConfirmCopy,
   sessionCarriesTerms,
+  sessionIsScheduled,
+  dcaTermsOf,
+  saveDcaLastSwap,
   unknownStatusFrom,
   validateGrantForAccount,
   type AllowedCallDraft,
@@ -168,7 +174,6 @@ import {
   planRecurringPayment,
   runRecurringPayment,
   recurringConfirmMessage,
-  recurringDueHeadline,
   recurringAttemptLine,
   recurringDueState,
   recurringEndsAt,
@@ -183,8 +188,33 @@ import {
   recurringStatusLines,
   recurringSummary,
   readStatusWithFailover,
+  dcaDueState,
+  scheduledDueHeadline,
   type RecurringPaymentPlan,
 } from '../wallet/recurring';
+import {
+  DCA_DEFAULT_FLOOR_PERCENT,
+  DCA_ESTIMATE_RESERVATION_NOTE,
+  DCA_SWAP_GAS_ALLOWANCE,
+  buildDcaTerms,
+  dcaAttemptLine,
+  dcaFeeBudgetCapNote,
+  dcaConfirmMessage,
+  dcaFinalDatesLine,
+  dcaGrantForTerms,
+  dcaLastSwapFrom,
+  dcaMeta,
+  dcaNetworkRefusal,
+  dcaOutcomeLine,
+  describeDcaSwapError,
+  parseFloorPercent,
+  payDcaSwap,
+  planDcaSwap,
+  readDcaMarket,
+  restartDcaAt,
+  runDcaSwap,
+  type DcaSwapPlan,
+} from '../wallet/dca';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Sessions'>;
 
@@ -248,6 +278,30 @@ interface PendingSubscription extends PendingInstall {
   feePricing: { maxFeePerGas: bigint | null; source: SubscriptionFeeSource | null; edited: boolean };
 }
 
+/** A reviewed recurring swap waiting for the owner's approval (same lifetime rules as PendingInstall). */
+interface PendingDca extends PendingInstall {
+  terms: DcaTerms;
+  recordLabel: string;
+  floorBps: number;
+  /** The QuoterV2 quote the floor was computed from (USDC base units). */
+  quoteAtReview: bigint;
+  feeBudgetLowered: { from: bigint; to: bigint; keptBack: bigint } | null;
+  feePricing: { maxFeePerGas: bigint | null; source: SubscriptionFeeSource | null; edited: boolean };
+}
+
+const EMPTY_DCA_FORM: DcaFormState = {
+  amount: '',
+  floorPercent: DCA_DEFAULT_FLOOR_PERCENT,
+  periodSeconds: SUBSCRIPTION_PERIOD_PRESETS[0]!.seconds,
+  periodCustom: false,
+  customCount: '',
+  customUnit: 86400,
+  count: '3',
+  feeBudget: '',
+  feeEdited: false,
+  label: '',
+};
+
 interface SubscriptionFormState {
   merchant: string;
   choiceIndex: number;
@@ -290,6 +344,8 @@ interface Progress {
   finalTerms?: string | null;
   /** Subscriptions and recurring payments: the permission id that was installed (assigned at Start). */
   permissionId?: string | null;
+  /** A recurring swap's decoded outcome (dca.ts dcaOutcomeLine). */
+  outcomeLine?: string | null;
   /** CAIP-2 id of the network the operation was sent on (its record's chain), for the note. */
   network: string;
   userOpHash: string;
@@ -351,8 +407,19 @@ export function SessionsScreen({ navigation }: Props) {
   const subPending = useRef<PendingSubscription | null>(null);
   const [subPendingView, setSubPendingView] = useState<PendingSubscription | null>(null);
   const [subStatuses, setSubStatuses] = useState<Record<string, SubscriptionStatus | 'loading'>>({});
-  /** Which grant the subscription form builds: a merchant-pulled subscription, or a recurring payment this phone sends. */
-  const [subMode, setSubMode] = useState<'subscription' | 'recurring'>('subscription');
+  /**
+   * Which grant the subscription form builds: a merchant-pulled subscription,
+   * a recurring payment this phone sends, or a recurring swap this phone sends
+   * (phase 19 item 2; its own form and review, ./DcaViews.tsx).
+   */
+  const [subMode, setSubMode] = useState<'subscription' | 'recurring' | 'dca'>('subscription');
+  const [dcaForm, setDcaForm] = useState<DcaFormState>(EMPTY_DCA_FORM);
+  const dcaPending = useRef<PendingDca | null>(null);
+  const [dcaPendingView, setDcaPendingView] = useState<PendingDca | null>(null);
+  /** The last live quote read on the form (for the amount it was read for). */
+  const [dcaQuote, setDcaQuote] = useState<{ amountIn: bigint; amountOut: bigint } | null>(null);
+  const [dcaQuoteError, setDcaQuoteError] = useState<string | null>(null);
+  const [dcaQuoting, setDcaQuoting] = useState(false);
   /** The last refused payment attempt per recurring card (plain sentence; the card stays). */
   const [payRefusals, setPayRefusals] = useState<Record<string, string>>({});
   /** The recurring card whose payment is being checked or sent (its buttons are disabled meanwhile). */
@@ -425,6 +492,9 @@ export function SessionsScreen({ navigation }: Props) {
     subPending.current?.privateKey.fill(0);
     subPending.current = null;
     setSubPendingView(null);
+    dcaPending.current?.privateKey.fill(0);
+    dcaPending.current = null;
+    setDcaPendingView(null);
   }, []);
   useEffect(() => discardPending, [discardPending]);
 
@@ -488,7 +558,7 @@ export function SessionsScreen({ navigation }: Props) {
       void readWithFailover((node) => readSessionStatus(node, r))
         .catch((e: unknown) => unknownStatusFrom(e))
         .then((st) => setStatuses((prev) => ({ ...prev, [key]: st })));
-      if (sessionCarriesTerms(r.source) && r.subscription) {
+      if ((sessionCarriesTerms(r.source) && r.subscription) || (r.source === DCA_SOURCE && r.dca)) {
         setSubStatuses((prev) => ({ ...prev, [key]: 'loading' }));
         void readWithFailover((node) => readSubscriptionStatus(node, r))
           .catch((e: unknown): SubscriptionStatus => unknownStatusFrom(e))
@@ -499,6 +569,40 @@ export function SessionsScreen({ navigation }: Props) {
       // phase 10 emulator run lost the install's success screen that way) —
       // is resumed from the stored record, so its hash and outcome are never
       // lost.
+      // A recurring swap whose last swap was handed to the bundler but whose
+      // receipt was never read (the screen closed, or two minutes passed):
+      // asked once more, briefly; the decoded outcome then replaces 'pending'.
+      const lastSwap = r.source === DCA_SOURCE ? r.dca?.lastSwap : null;
+      if (lastSwap && lastSwap.outcome === 'pending' && !waitingFor.current.has(lastSwap.userOpHash)) {
+        waitingFor.current.add(lastSwap.userOpHash);
+        void bundle.client
+          .waitForReceipt(lastSwap.userOpHash, { timeoutMs: 6_000, pollMs: 2_000 })
+          .then(async (raw) => {
+            const summary = summarizeAaReceipt(raw);
+            const settled = dcaLastSwapFrom({
+              terms: dcaTermsOf(r),
+              quotedOut: BigInt(lastSwap.quotedOut),
+              minimumOut: BigInt(lastSwap.askedMinimum),
+              userOpHash: lastSwap.userOpHash,
+              at: lastSwap.at,
+              receipt: raw,
+              txHash: summary.txHash,
+              success: summary.success,
+            });
+            // Still undecided: nothing is stored, so the list is not reloaded
+            // (a reload would ask again at once).
+            if (settled.outcome === 'pending') return false;
+            await saveDcaLastSwap(r, settled, AsyncStorage);
+            return true;
+          })
+          .then(
+            (changed) => {
+              if (changed) reloadRef.current();
+            },
+            () => undefined,
+          )
+          .finally(() => waitingFor.current.delete(lastSwap.userOpHash));
+      }
       const op = pendingSessionOperation(r);
       if (op && !waitingFor.current.has(op.userOpHash)) {
         waitingFor.current.add(op.userOpHash);
@@ -761,9 +865,14 @@ export function SessionsScreen({ navigation }: Props) {
 
   // ------------------------------------------------------------ subscriptions
 
-  const onSubOpen = (mode: 'subscription' | 'recurring') => {
+  const onSubOpen = (mode: 'subscription' | 'recurring' | 'dca') => {
     setFormError(null);
     setSubMode(mode);
+    if (mode === 'dca') {
+      setDcaForm({ ...EMPTY_DCA_FORM, periodSeconds: subscriptionPeriodPresets(evmChain.testnet)[0]!.seconds });
+      setDcaQuote(null);
+      setDcaQuoteError(null);
+    }
     // "2 minutes (testing)" exists only on test networks: start from the
     // first preset this network offers.
     setSubForm({ ...EMPTY_SUBSCRIPTION_FORM, periodSeconds: subscriptionPeriodPresets(evmChain.testnet)[0]!.seconds });
@@ -840,7 +949,8 @@ export function SessionsScreen({ navigation }: Props) {
     const now = Math.floor(Date.now() / 1000);
     let subscription: SubscriptionGrant;
     let grant: SessionKeyGrant;
-    const mode = subMode;
+    // This review builds subscriptions and recurring payments; a recurring swap has its own (onDcaReview).
+    const mode: 'subscription' | 'recurring' = subMode === 'recurring' ? 'recurring' : 'subscription';
     const names =
       mode === 'recurring'
         ? recurringNames(subForm.label, subForm.merchant, nameFor(subForm.merchant.trim()))
@@ -1069,6 +1179,399 @@ export function SessionsScreen({ navigation }: Props) {
       // restarts), so the used-up quote is never sent a second time.
       setPhase('sub-confirm');
       reloadList();
+    }
+  };
+
+  // ------------------------------------------------------------ recurring swaps (phase 19 item 2)
+
+  /** The amount typed on the recurring-swap form, in wei (0 when it does not parse). */
+  const dcaAmountWei = safeParseNative(dcaForm.amount);
+  let dcaFloorBps: number | null = null;
+  try {
+    dcaFloorBps = parseFloorPercent(dcaForm.floorPercent);
+  } catch {
+    dcaFloorBps = null;
+  }
+  const dcaCount = Number(dcaForm.count.trim());
+  /**
+   * The fee budget the form shows: the user's own figure once typed, else
+   * the suggestion for the current number of swaps (DCA_SWAP_GAS_ALLOWANCE ×
+   * the signed fee × 2), capped at what the account can spare after every
+   * swap's amount and the set-up's own fee (kept back after the first
+   * review), exactly as the subscription form does.
+   */
+  const dcaFeeSuggestion = suggestedFeeBudget({
+    payments: dcaCount,
+    maxFeePerGas: subFeeFacts.maxFeePerGas,
+    balance: subFeeFacts.balance,
+    nativeAmountPerPayment: dcaAmountWei,
+    installFeeFromBalance: subInstallKeepBack,
+    gasAllowance: DCA_SWAP_GAS_ALLOWANCE,
+  });
+  const dcaFeeBudgetText = dcaForm.feeEdited
+    ? dcaForm.feeBudget
+    : dcaFeeSuggestion.wei !== null
+      ? formatUnits(dcaFeeSuggestion.wei, 18, 18)
+      : '';
+
+  /** A live quote for the amount typed (read-only: the pinned pool re-checked, then QuoterV2). */
+  const onDcaQuote = async () => {
+    setDcaQuoteError(null);
+    if (dcaAmountWei <= 0n) {
+      setDcaQuoteError(`Enter the amount of ${symbol} to swap each period first.`);
+      return;
+    }
+    setDcaQuoting(true);
+    try {
+      const market = await activeEvmNodeRunner((node) => readDcaMarket(node, BigInt(evmChain.chainIdDecimal), dcaAmountWei), {
+        isFailure: isNodeEndpointFailure,
+      });
+      setDcaQuote({ amountIn: dcaAmountWei, amountOut: market.quote.amountOut });
+    } catch (e) {
+      const { title, detail } = describe(e, 'quote');
+      setDcaQuoteError(detail ? `${title}\n${detail}` : title);
+    } finally {
+      setDcaQuoting(false);
+    }
+  };
+
+  /**
+   * Review: fresh fee facts, a fresh pool check and quote, the terms (the
+   * engine's refusals verbatim), a new swap key, the install quoted through
+   * the bundler, and an UNEDITED fee-budget pre-fill fitted beside the
+   * set-up's own worst-case fee (fitFeeBudgetToInstall, with the swap gas
+   * allowance and every swap's amount counted as committed).
+   */
+  const onDcaReview = async () => {
+    if (!bundle || !account || !owner) return;
+    setFormError(null);
+    discardPending();
+    const networkRefusal = dcaNetworkRefusal(evmChain.caip2);
+    if (networkRefusal) {
+      setFormError(networkRefusal);
+      return;
+    }
+    let periodSeconds = dcaForm.periodSeconds;
+    if (dcaForm.periodCustom) {
+      const custom = customPeriodSeconds(dcaForm.customCount, dcaForm.customUnit, evmChain.testnet);
+      if (!custom.ok) {
+        setFormError(custom.error);
+        return;
+      }
+      periodSeconds = custom.seconds;
+    }
+    setPhase('sub-quoting');
+    const facts = (await refreshSubFeeFacts()) ?? subFeeFacts;
+    const chainId = BigInt(evmChain.chainIdDecimal);
+    let quotedOut: bigint;
+    try {
+      if (dcaAmountWei <= 0n) {
+        // Nothing to quote: the terms refuse the amount in the engine's words below.
+        quotedOut = 1n;
+      } else {
+        const market = await activeEvmNodeRunner((node) => readDcaMarket(node, chainId, dcaAmountWei), {
+          isFailure: isNodeEndpointFailure,
+        });
+        quotedOut = market.quote.amountOut;
+        setDcaQuote({ amountIn: dcaAmountWei, amountOut: quotedOut });
+        setDcaQuoteError(null);
+      }
+    } catch (e) {
+      const { title, detail } = describe(e, 'quote');
+      setFormError(detail ? `${title}\n${detail}` : title);
+      setPhase('sub-form');
+      return;
+    }
+    let feeBudgetText = dcaForm.feeBudget;
+    if (!dcaForm.feeEdited) {
+      const fresh = suggestedFeeBudget({
+        payments: dcaCount,
+        maxFeePerGas: facts.maxFeePerGas,
+        balance: facts.balance,
+        nativeAmountPerPayment: dcaAmountWei,
+        installFeeFromBalance: subInstallKeepBack,
+        gasAllowance: DCA_SWAP_GAS_ALLOWANCE,
+      });
+      feeBudgetText = fresh.wei !== null ? formatUnits(fresh.wei, 18, 18) : '';
+    }
+    const key = newSessionKey();
+    const now = Math.floor(Date.now() / 1000);
+    let terms: DcaTerms;
+    let floorBps: number;
+    let grant: SessionKeyGrant;
+    try {
+      ({ terms, floorBps } = buildDcaTerms(
+        { ...dcaForm, periodSeconds, feeBudget: feeBudgetText },
+        { now, account, chainId, quotedOut, nativeSymbol: symbol },
+      ));
+      // The engine's refusal (validateDcaTerms / validateSessionKeyGrant) verbatim.
+      grant = dcaGrantForTerms(terms, key.address, now);
+    } catch (e) {
+      key.privateKey.fill(0);
+      setFormError(e instanceof Error ? e.message : String(e));
+      setPhase('sub-form');
+      return;
+    }
+    try {
+      let {
+        value: { install, quote },
+        bundle: quotedOn,
+      } = await quoteOnNode((b) => prepareSessionInstall(b, owner, account, grant, { now }));
+      let feeBudgetLowered: PendingDca['feeBudgetLowered'] = null;
+      if (!dcaForm.feeEdited) {
+        const terms0 = terms;
+        const fit = await fitFeeBudgetToInstall({
+          feeBudgetWei: terms0.feeBudgetWei,
+          attempt: { install, quote, bundle: quotedOn },
+          payments: terms0.count,
+          maxFeePerGas: facts.maxFeePerGas,
+          nativeAmountPerPayment: terms0.amountIn,
+          gasAllowance: DCA_SWAP_GAS_ALLOWANCE,
+          requote: async (feeBudgetWei) => {
+            const lowered = dcaGrantForTerms({ ...terms0, feeBudgetWei }, key.address, now);
+            const r = await quoteOnNode((b) => prepareSessionInstall(b, owner, account, lowered, { now }));
+            return { install: r.value.install, quote: r.value.quote, bundle: r.bundle };
+          },
+        });
+        setSubInstallKeepBack(fit.keptBack);
+        if (fit.kind === 'cannot-fit') {
+          key.privateKey.fill(0);
+          setFormError(
+            fit.spare !== null && fit.uncapped !== null
+              ? dcaFeeBudgetCapNote(fit.spare, fit.uncapped, symbol, fit.keptBack)
+              : 'The fee budget could not be suggested: the network fee is not known yet. Enter a budget by hand.',
+          );
+          setPhase('sub-form');
+          return;
+        }
+        if (fit.lowered) {
+          feeBudgetLowered = fit.lowered;
+          terms = { ...terms0, feeBudgetWei: fit.feeBudgetWei };
+          grant = dcaGrantForTerms(terms, key.address, now);
+          ({ install, quote, bundle: quotedOn } = fit.attempt);
+        }
+      }
+      dcaPending.current = {
+        privateKey: key.privateKey,
+        grant,
+        install,
+        quote,
+        bundle: quotedOn,
+        terms,
+        recordLabel: `Recurring swap: ${terms.label}`,
+        floorBps,
+        quoteAtReview: quotedOut,
+        feeBudgetLowered,
+        feePricing: { maxFeePerGas: facts.maxFeePerGas, source: facts.feeSource, edited: dcaForm.feeEdited },
+      };
+      setDcaPendingView(dcaPending.current);
+      setPhase('sub-confirm');
+    } catch (e) {
+      key.privateKey.fill(0);
+      const { title, detail } = describe(e, 'quote');
+      const raw = e instanceof Error ? e.message : String(e);
+      // An AA21 while estimating a recurring swap's set-up: say why it is so large.
+      const extra = /aa21|prefund/i.test(`${raw} ${detail}`) ? `\n\n${DCA_ESTIMATE_RESERVATION_NOTE}` : '';
+      setFormError(`${title}\n${detail}${extra}`);
+      setPhase('sub-form');
+    }
+  };
+
+  /** Start: the clock restarts now (same floor, amount and key), the set-up is quoted again, then the device check. */
+  const onDcaInstall = async () => {
+    const reviewed = dcaPending.current;
+    if (!reviewed || !account || !owner || !resolution?.ok || !activeAccount) return;
+    setSubSendStage('requote');
+    setPhase('sub-sending');
+    let p: PendingDca;
+    try {
+      const now = Math.floor(Date.now() / 1000);
+      const restarted = restartDcaAt(reviewed.terms, now);
+      const grant = dcaGrantForTerms(restarted, reviewed.grant.sessionKey, now);
+      const {
+        value: { install, quote },
+        bundle: quotedOn,
+      } = await quoteOnNode((b) => prepareSessionInstall(b, owner, account, grant, { now }));
+      p = { ...reviewed, terms: restarted, grant, install, quote, bundle: quotedOn };
+    } catch (e) {
+      const { title, detail } = describe(e, 'quote');
+      Alert.alert(title, detail);
+      setPhase('sub-confirm');
+      return;
+    }
+    if (dcaPending.current !== reviewed) return;
+    dcaPending.current = p;
+    setDcaPendingView(p);
+    if (subscriptionRequoteNeedsReview(reviewed.quote, p.quote)) {
+      Alert.alert(SUBSCRIPTION_REQUOTE_TITLE, SUBSCRIPTION_REQUOTE_MESSAGE);
+      setPhase('sub-confirm');
+      return;
+    }
+    const auth = await requireLocalAuth('Approve this recurring swap');
+    if (!auth.ok) {
+      Alert.alert('Not granted', auth.message);
+      setPhase('sub-confirm');
+      return;
+    }
+    setSubSendStage('signing');
+    const sendBundle = p.bundle;
+    try {
+      const { record, userOpHash } = await installSession({
+        quote: p.quote,
+        install: p.install,
+        grant: p.grant,
+        chain: evmChain.caip2,
+        account,
+        owner,
+        accountIndex: activeAccount.index,
+        accountKind: resolution.kind,
+        label: p.recordLabel,
+        // The swap key stays in the vault for its whole life (never handed
+        // over); this wallet sends each swap with it after a confirmation.
+        source: DCA_SOURCE,
+        dca: dcaMeta(p.terms, { nativeSymbol: symbol, floorBps: p.floorBps, quoteAtReview: p.quoteAtReview }),
+        sessionPrivateKey: p.privateKey,
+        store: AsyncStorage,
+        vault: sessionKeyVault,
+        submit: (q) => signWith(EVM_CHAIN_ID, owner, (signer) => sendAa(sendBundle, signer, q)),
+      });
+      const finalTerms = dcaFinalDatesLine(p.terms);
+      discardPending();
+      waitingFor.current.add(userOpHash);
+      setProgress({
+        kind: 'dca',
+        network: record.chain,
+        userOpHash,
+        state: 'pending',
+        txHash: null,
+        detail: null,
+        finalTerms,
+        permissionId: record.permissionId,
+      });
+      setPhase('progress');
+      void finalizeSessionInstall(sendBundle, record, AsyncStorage).then(
+        ({ receipt, status }) => {
+          // Reminders for recurring swaps are armed like recurring payments'.
+          requestReminderSync('full');
+          setProgress((prev) =>
+            prev && prev.userOpHash === userOpHash
+              ? {
+                  ...prev,
+                  state: receipt.success === false ? 'failed' : 'done',
+                  txHash: receipt.txHash,
+                  detail: sessionStatusText(status),
+                }
+              : prev,
+          );
+        },
+        () => setProgress((prev) => (prev && prev.userOpHash === userOpHash ? { ...prev, state: 'timeout' } : prev)),
+      );
+      reloadList();
+    } catch (e) {
+      const { title, detail } = describe(e, 'send');
+      Alert.alert(title, detail);
+      setPhase('sub-confirm');
+      reloadList();
+    }
+  };
+
+  /** A refused or failed swap attempt in plain words, kept on the card. */
+  const showSwapRefusal = (record: SessionRecord, e: unknown) => {
+    const key = sessionRecordKey(record.chain, record.account, record.permissionId);
+    const { title, detail, outcome } = describeDcaSwapError(
+      e,
+      { accountType: bundle?.accountType ?? 'kernel-v3.3', symbol },
+      describeSendError,
+    );
+    Alert.alert(title, detail);
+    setPayRefusals((prev) => ({ ...prev, [key]: dcaAttemptLine(outcome, detail) }));
+    refreshRecord(record);
+  };
+
+  /** The confirmation dialog of a swap: true ONLY for "Swap now"; Cancel, back and outside resolve false. */
+  const confirmSwapDialog = (plan: DcaSwapPlan) =>
+    new Promise<boolean>((resolve) => {
+      Alert.alert(
+        'Swap now?',
+        dcaConfirmMessage(plan, { nativeSymbol: symbol }),
+        [
+          { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+          { text: 'Swap now', onPress: () => resolve(true) },
+        ],
+        { cancelable: true, onDismiss: () => resolve(false) },
+      );
+    });
+
+  /**
+   * A due recurring swap. NEVER automatic: the plan re-reads the chain, the
+   * pool and a fresh quote (no key, no bundler), the dialog opens, and only
+   * "Swap now" sends, signed by the swap key alone (no requireLocalAuth: that
+   * gate opens the recovery phrase when it is protected). The outcome is
+   * decoded from the receipt and kept on the card.
+   */
+  const onSwapNow = async (record: SessionRecord) => {
+    if (!bundle) return;
+    const key = sessionRecordKey(record.chain, record.account, record.permissionId);
+    setPayingKey(key);
+    try {
+      const run = await runDcaSwap({
+        plan: () => activeEvmNodeRunner((node) => planDcaSwap({ node, record }), { isFailure: isRecurringNodeFailure }),
+        confirm: (plan) => {
+          setPayingKey(null);
+          return confirmSwapDialog(plan);
+        },
+        pay: (plan) => {
+          setPayingKey(key);
+          return quoteOnNode((b) => payDcaSwap({ bundle: b, plan, vault: sessionKeyVault })).then(({ value }) => value);
+        },
+      });
+      if (run.outcome !== 'sent') return;
+      const { userOpHash, client } = run.result;
+      const plan = run.plan;
+      const at = plan.plannedAt;
+      const settle = (raw: unknown | null, txHash: string | null, success: boolean | null) =>
+        dcaLastSwapFrom({
+          terms: plan.terms,
+          quotedOut: plan.quote.amountOut,
+          minimumOut: plan.minimumOut,
+          userOpHash,
+          at,
+          receipt: raw,
+          txHash,
+          success,
+        });
+      // Kept on the card at once ('pending'), so the hash survives a closed screen.
+      void saveDcaLastSwap(record, settle(null, null, null), AsyncStorage).catch(() => undefined);
+      setPayRefusals((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+      setProgress({ kind: 'dca-swap', network: record.chain, userOpHash, state: 'pending', txHash: null, detail: null });
+      setPhase('progress');
+      void client.waitForReceipt(userOpHash, { timeoutMs: 120_000, pollMs: 3_000 }).then(
+        (raw) => {
+          requestReminderSync('full');
+          const summary = summarizeAaReceipt(raw);
+          const last = settle(raw, summary.txHash, summary.success);
+          void saveDcaLastSwap(record, last, AsyncStorage).then(() => reloadList(), () => undefined);
+          setProgress((prev) =>
+            prev && prev.userOpHash === userOpHash
+              ? {
+                  ...prev,
+                  state: summary.success === false || last.outcome === 'reverted' ? 'failed' : 'done',
+                  txHash: summary.txHash,
+                  outcomeLine: dcaOutcomeLine(last, plan.terms, symbol),
+                }
+              : prev,
+          );
+        },
+        () => setProgress((prev) => (prev && prev.userOpHash === userOpHash ? { ...prev, state: 'timeout' } : prev)),
+      );
+    } catch (e) {
+      showSwapRefusal(record, e);
+    } finally {
+      setPayingKey(null);
     }
   };
 
@@ -1323,7 +1826,9 @@ export function SessionsScreen({ navigation }: Props) {
             ? 'subscription-revoke'
             : target.record.source === 'recurring'
               ? 'recurring-revoke'
-              : 'revoke',
+              : target.record.source === DCA_SOURCE
+                ? 'dca-revoke'
+                : 'revoke',
         network: record.chain,
         userOpHash,
         state: 'pending',
@@ -1468,6 +1973,12 @@ export function SessionsScreen({ navigation }: Props) {
             Signed by this recurring payment’s own key only, not by your account key.
           </Text>
         ) : null}
+        {progress.kind === 'dca-swap' ? (
+          <Text style={[styles.hint, { color: theme.textMuted }]}>
+            Signed by this recurring swap’s own key only, not by your account key.
+          </Text>
+        ) : null}
+        {progress.outcomeLine ? <Text style={[styles.hint, { color: theme.text }]}>{progress.outcomeLine}</Text> : null}
         {progress.finalTerms ? <Text style={[styles.hint, { color: theme.text }]}>{progress.finalTerms}</Text> : null}
         {progress.permissionId ? (
           <Row label={INSTALLED_PERMISSION_ID_LABEL} value={progress.permissionId} mono theme={theme} />
@@ -1595,6 +2106,37 @@ export function SessionsScreen({ navigation }: Props) {
             setKeyExport(null);
             setPhase('list');
           }}
+        />
+      </ScrollView>
+    );
+  }
+
+  if ((phase === 'sub-confirm' || phase === 'sub-sending') && subMode === 'dca' && dcaPendingView && account) {
+    return (
+      <ScrollView key="dca-confirm" style={screenStyle(theme)} contentContainerStyle={styles.content}>
+        <DcaReviewView
+          badge={<NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />}
+          header={header}
+          terms={dcaPendingView.terms}
+          grant={dcaPendingView.grant}
+          quote={dcaPendingView.quote}
+          quoteAtReview={dcaPendingView.quoteAtReview}
+          floorBps={dcaPendingView.floorBps}
+          account={account}
+          symbol={symbol}
+          nameFor={nameFor}
+          feeBudgetLowered={dcaPendingView.feeBudgetLowered}
+          feePricing={dcaPendingView.feePricing}
+          sending={phase === 'sub-sending'}
+          sendStage={subSendStage}
+          onStart={() => void onDcaInstall()}
+          onBack={() => {
+            discardPending();
+            setPhase('sub-form');
+          }}
+          row={(label, value, sub = null, monoFont = false) => (
+            <Row label={label} value={value} sub={sub} mono={monoFont} theme={theme} />
+          )}
         />
       </ScrollView>
     );
@@ -1739,6 +2281,32 @@ export function SessionsScreen({ navigation }: Props) {
             />
           </>
         )}
+      </ScrollView>
+    );
+  }
+
+  if ((phase === 'sub-form' || phase === 'sub-quoting') && subMode === 'dca' && account) {
+    return (
+      <ScrollView key="dca-form" style={screenStyle(theme)} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <DcaFormView
+          header={header}
+          form={dcaForm}
+          setForm={setDcaForm}
+          testnet={evmChain.testnet}
+          symbol={symbol}
+          account={account}
+          feeBudgetText={dcaFeeBudgetText}
+          feeFacts={subFeeFacts}
+          quote={dcaQuote && dcaQuote.amountIn === dcaAmountWei ? dcaQuote : null}
+          quoteError={dcaQuoteError}
+          quoting={dcaQuoting}
+          floorBps={dcaFloorBps}
+          error={formError}
+          busy={phase === 'sub-quoting'}
+          onQuote={() => void onDcaQuote()}
+          onReview={() => void onDcaReview()}
+          onCancel={() => setPhase('list')}
+        />
       </ScrollView>
     );
   }
@@ -2110,7 +2678,27 @@ export function SessionsScreen({ navigation }: Props) {
       };
     },
   );
-  const dueHeadline = recurringDueHeadline(recurringList.filter((x) => x.due?.kind === 'due').length);
+  // Recurring swaps (phase 19 item 2): the same due rules and the same
+  // confirm-before-send flow as recurring payments.
+  const dcaList = records
+    .filter((r) => r.source === DCA_SOURCE && r.dca)
+    .map((record) => {
+      const key = sessionRecordKey(record.chain, record.account, record.permissionId);
+      const subStatus = subStatuses[key];
+      return {
+        record,
+        key,
+        due: subStatus === undefined || subStatus === 'loading' ? null : dcaDueState(record, subStatus, nowTick),
+      };
+    });
+  const dueHeadline = scheduledDueHeadline(
+    recurringList.filter((x) => x.due?.kind === 'due').length,
+    dcaList.filter((x) => x.due?.kind === 'due').length,
+  );
+  // Recurring swaps are offered only where the engine pins a router and pool
+  // (Ethereum Sepolia) and only where the 'dca' readiness row allows them.
+  const dcaReadiness = readinessGate('dca', evmChain.caip2);
+  const dcaNetworkNote = dcaNetworkRefusal(evmChain.caip2);
   return (
     <ScrollView key="list" style={screenStyle(theme)} contentContainerStyle={styles.content}>
       {readiness ? <TestNetworksOnlyCard feature={readiness.feature} hint={readiness.hint} /> : null}
@@ -2143,6 +2731,18 @@ export function SessionsScreen({ navigation }: Props) {
             onPress={() => onSubOpen('recurring')}
             disabled={listFlags.unreadable || readiness !== null}
           />
+          <Button
+            title="New recurring swap"
+            variant="secondary"
+            accessibilityHint="Swap a fixed amount of test ETH for USDC once per period, each swap after you confirm it."
+            onPress={() => onSubOpen('dca')}
+            disabled={listFlags.unreadable || readiness !== null || dcaReadiness !== null || dcaNetworkNote !== null}
+          />
+          {dcaReadiness ? (
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{readinessRefusal('dca')}</Text>
+          ) : dcaNetworkNote ? (
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{dcaNetworkNote}</Text>
+          ) : null}
           {dueHeadline ? <WarningBox>{dueHeadline}</WarningBox> : null}
           {listFlags.unreadable ? (
             <>
@@ -2243,6 +2843,27 @@ export function SessionsScreen({ navigation }: Props) {
               </View>
             );
           })}
+          <DcaListHeading count={dcaList.length} />
+          {dcaList.map(({ record: r, key, due }) => (
+            <DcaCard
+              key={key}
+              record={r}
+              status={statuses[key]}
+              due={due}
+              symbol={symbol}
+              attemptLine={payRefusals[key] ?? null}
+              swapping={payingKey === key}
+              busy={payingKey !== null}
+              readinessBlocked={readiness !== null || dcaReadiness !== null}
+              onSwapNow={() => void onSwapNow(r)}
+              onRefresh={() => refreshRecord(r)}
+              onRevoke={(options) => void onRevokeQuote(r, options)}
+              onForget={() => onForget(r)}
+              row={(label, value, sub = null, monoFont = false) => (
+                <Row label={label} value={value} sub={sub} mono={monoFont} theme={theme} />
+              )}
+            />
+          ))}
           <Text style={[styles.sectionTitle, { color: theme.text }]}>Subscriptions</Text>
           {records.filter((r) => r.source === 'subscription').length === 0 ? (
             <Text style={[styles.hint, { color: theme.textMuted }]}>None on this device.</Text>
@@ -2320,10 +2941,10 @@ export function SessionsScreen({ navigation }: Props) {
             },
           )}
           <Text style={[styles.sectionTitle, { color: theme.text }]}>Sessions on this account</Text>
-          {records.filter((r) => !sessionCarriesTerms(r.source)).length === 0 ? (
+          {records.filter((r) => !sessionIsScheduled(r.source)).length === 0 ? (
             <Text style={[styles.hint, { color: theme.textMuted }]}>None on this device.</Text>
           ) : null}
-          {records.filter((r) => !sessionCarriesTerms(r.source)).map((r) => {
+          {records.filter((r) => !sessionIsScheduled(r.source)).map((r) => {
             const key = sessionRecordKey(r.chain, r.account, r.permissionId);
             const status = statuses[key];
             const grant = parseSessionKeyGrant(r.grant);

@@ -20,7 +20,9 @@ import {
 // Explicit .ts extensions: this module is imported by
 // scripts/check-recurring.mjs under Node's type stripping.
 import {
+  DCA_SOURCE,
   SESSION_UNREACHABLE_TITLE,
+  dcaTermsOf,
   describeSessionError,
   isBundlerTransportFailureBeforeSubmit,
   isNodeEndpointFailure,
@@ -445,8 +447,39 @@ export function recurringDueState(record: SessionRecord, status: SubscriptionSta
   }
   if (!record.keyHeld) return { kind: 'not-ready', reason: RECURRING_KEY_GONE_TEXT };
   if (status.kind === 'unknown') return { kind: 'unknown', reason: status.reason };
-  const total = subscriptionPeriodCount(termsOf(record));
-  const state = status.state;
+  return dueFromChainState(status.state, subscriptionPeriodCount(termsOf(record)), now);
+}
+
+/** Shown on a recurring swap's card when its key is no longer on this phone. */
+export const DCA_KEY_GONE_TEXT = 'Swap key no longer on this phone, so this wallet cannot send swaps for it.';
+
+/**
+ * The due state of one recurring SWAP (./dca.ts) from its on-chain status:
+ * the same RateLimitPolicy rules as a recurring payment (a "payment" below is
+ * one swap). Pure; no network, no key.
+ */
+export function dcaDueState(record: SessionRecord, status: SubscriptionStatus, now: number): RecurringDue {
+  if (record.source !== DCA_SOURCE || !record.dca) return { kind: 'not-ready', reason: 'Not a recurring swap.' };
+  if (record.localStatus === 'installing') return { kind: 'not-ready', reason: 'The set-up is not confirmed on-chain yet.' };
+  if (record.localStatus === 'failed') return { kind: 'not-ready', reason: 'The set-up was refused or reverted.' };
+  if (record.localStatus === 'revoking' || record.localStatus === 'revoked') {
+    return { kind: 'not-ready', reason: 'This recurring swap was revoked.' };
+  }
+  if (!record.keyHeld) return { kind: 'not-ready', reason: DCA_KEY_GONE_TEXT };
+  if (status.kind === 'unknown') return { kind: 'unknown', reason: status.reason };
+  return dueFromChainState(status.state, dcaTermsOf(record).count, now);
+}
+
+/** recurringDueState or dcaDueState, by the record's source. */
+export function scheduledDueState(record: SessionRecord, status: SubscriptionStatus, now: number): RecurringDue {
+  return record.source === DCA_SOURCE ? dcaDueState(record, status, now) : recurringDueState(record, status, now);
+}
+
+/**
+ * The shared part of the due state: what RateLimitPolicy / GasPolicy say
+ * (engine nextPullAllowedAt), for `total` operations in all.
+ */
+function dueFromChainState(state: SubscriptionChainState, total: number, now: number): RecurringDue {
   const sent = Math.max(0, total - state.remainingPulls);
   const next = nextPullAllowedAt(state, now);
   switch (next.kind) {
@@ -545,6 +578,21 @@ export function recurringDueHeadline(count: number): string | null {
 }
 
 /**
+ * The headline for due recurring payments and recurring swaps together
+ * (the banner and the Sessions list): exactly recurringDueHeadline when no
+ * swap is due.
+ */
+export function scheduledDueHeadline(payments: number, swaps: number): string | null {
+  if (swaps <= 0) return recurringDueHeadline(payments);
+  const swapPart = swaps === 1 ? '1 recurring swap' : `${swaps} recurring swaps`;
+  if (payments <= 0) {
+    return `${swapPart} ${swaps === 1 ? 'is' : 'are'} due. Each is sent only after you confirm it on the Sessions screen.`;
+  }
+  const payPart = payments === 1 ? '1 recurring payment' : `${payments} recurring payments`;
+  return `${payPart} and ${swapPart} are due. Each is sent only after you confirm it on the Sessions screen.`;
+}
+
+/**
  * The recurring records of `owner` on `chain` that could pay: set-up
  * confirmed on-chain ('installed') and the payment key on this phone. The
  * single definition shared by findDueRecurringPayments and
@@ -554,6 +602,22 @@ export function recurringCandidates(records: readonly SessionRecord[], chain: st
   return recurringRecords(records).filter(
     (r) => r.chain === chain && r.owner.toLowerCase() === owner.toLowerCase() && r.localStatus === 'installed' && r.keyHeld,
   );
+}
+
+/** The recurring-swap records of a session list (source 'dca' with valid terms). */
+export function dcaRecords(records: readonly SessionRecord[]): SessionRecord[] {
+  return records.filter((r) => r.source === DCA_SOURCE && r.dca);
+}
+
+/**
+ * The recurring payments AND recurring swaps of `owner` on `chain` that
+ * could be sent (same rule as recurringCandidates). Pure; no network, no key.
+ */
+export function scheduledCandidates(records: readonly SessionRecord[], chain: string, owner: string): SessionRecord[] {
+  const swaps = dcaRecords(records).filter(
+    (r) => r.chain === chain && r.owner.toLowerCase() === owner.toLowerCase() && r.localStatus === 'installed' && r.keyHeld,
+  );
+  return [...recurringCandidates(records, chain, owner), ...swaps];
 }
 
 /**
@@ -597,12 +661,13 @@ export async function readRecurringDueStates(args: {
 }): Promise<{ records: SessionRecord[]; states: { record: SessionRecord; due: RecurringDue | null }[] }> {
   if (!isFeatureAllowed('session-keys', args.chain)) return { records: [], states: [] };
   const load = args.store ? await loadSessions(args.store) : await loadSessions();
-  const candidates = recurringCandidates(load.records, args.chain, args.owner);
+  // Recurring swaps (./dca.ts) are reminded like recurring payments.
+  const candidates = scheduledCandidates(load.records, args.chain, args.owner);
   const now = args.now ?? Math.floor(Date.now() / 1000);
   const states: { record: SessionRecord; due: RecurringDue | null }[] = [];
   for (const record of candidates) {
     try {
-      states.push({ record, due: recurringDueState(record, await args.readStatus(record), now) });
+      states.push({ record, due: scheduledDueState(record, await args.readStatus(record), now) });
     } catch {
       states.push({ record, due: null });
     }
@@ -629,7 +694,9 @@ export async function findDueRecurringPayments(args: {
 }): Promise<{ due: { record: SessionRecord; due: Extract<RecurringDue, { kind: 'due' }> }[]; checked: number }> {
   if (!isFeatureAllowed('session-keys', args.chain)) return { due: [], checked: 0 };
   const load = args.store ? await loadSessions(args.store) : await loadSessions();
-  const candidates = recurringCandidates(load.records, args.chain, args.owner);
+  // Recurring swaps (./dca.ts) are checked the same way: the same policies
+  // and the same read-only status read; nothing here can sign or submit.
+  const candidates = scheduledCandidates(load.records, args.chain, args.owner);
   const now = args.now ?? Math.floor(Date.now() / 1000);
   const due: { record: SessionRecord; due: Extract<RecurringDue, { kind: 'due' }> }[] = [];
   for (const record of candidates) {
@@ -639,7 +706,7 @@ export async function findDueRecurringPayments(args: {
     } catch {
       continue;
     }
-    const state = recurringDueState(record, status, now);
+    const state = scheduledDueState(record, status, now);
     if (state.kind === 'due') due.push({ record, due: state });
   }
   return { due, checked: candidates.length };

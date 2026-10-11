@@ -887,7 +887,7 @@ console.log('\ncheck-subscriptions: fixes from the 2026-10-04 emulator run (bugs
       revokeApprovalPrompt({ source: 'erc7715' }) === 'Approve revoking this session');
   check('the screen uses them (source)',
     screenSrc.includes('await requireLocalAuth(revokeApprovalPrompt(target.record))') && screenSrc.includes('title={revokeCopy.button}') &&
-      /kind:\s*target\.record\.source === 'subscription'\s*\?\s*'subscription-revoke'\s*:\s*target\.record\.source === 'recurring'\s*\?\s*'recurring-revoke'\s*:\s*'revoke',/.test(screenSrc));
+      /kind:\s*target\.record\.source === 'subscription'\s*\?\s*'subscription-revoke'\s*:\s*target\.record\.source === 'recurring'\s*\?\s*'recurring-revoke'\s*:\s*(?:target\.record\.source === DCA_SOURCE\s*\?\s*'dca-revoke'\s*:\s*)?'revoke',/.test(screenSrc));
 
   // Bug 8 and the used-up quote: after a failed revoke the card is re-read
   // and the retry quotes again.

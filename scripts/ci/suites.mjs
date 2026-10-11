@@ -78,6 +78,8 @@ export const APP_SCRIPTS = {
   'check-recovery.mjs': { kind: 'offline', summary: 'counts' },
   // Phase 15 item 1: recurring payments pushed by this phone (subscription grant, key kept on the device, confirm before each payment; fakes only).
   'check-recurring.mjs': { kind: 'offline', summary: 'counts' },
+  // Phase 19 item 2, app half: recurring swaps (DCA) on a session key held by this phone (engine kernel-dca; fakes only).
+  'check-dca.mjs': { kind: 'offline', summary: 'counts' },
   'check-sessions.mjs': { kind: 'offline', summary: 'counts' },
   // Phase 17 item 0: app-wide screen protection (the preference, the state
   // machine over a fake of expo-screen-capture's key handling, the copy).
