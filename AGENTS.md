@@ -6053,3 +6053,74 @@ by the Chairperson is still pending ("a few appear safe to ignore").
       the CTO did not run it in the driver's place (surfaced to the
       Chairperson; typing on the emulator by hand needs the Google IME
       selected from the device's keyboard settings).
+- [x] Item 0b — HOODI STAKING PROVEN LIVE BY SCRIPT (commit recorded
+      below; scripts/testnet/staking-smoke.mjs only, +749/−34; the CTO
+      verified in the isolated worktree on HEAD 33683b5: node --check
+      clean, offline runner ALL GREEN (engine 981, app 8,090 across 53
+      suites — staking-smoke is a testnet script, not in the suites) and
+      independently re-read two hashes on publicnode (the Lido stake
+      0x4d95…d58c block 3797182 status 0x1 gasUsed 94,167 / 3 logs, the
+      Rocket Pool burn 0x6772…60b6 block 3797198 status 0x1 gasUsed
+      137,152 / 2 logs) and the dev EOA state after (nonce 0 → 9, 33.0 →
+      32.8196 Hoodi ETH, stETH 0.060327 — all matching the report); the
+      script diff carries no secret (scan clean); the agent's classifier
+      review had TIMED OUT, hence the independent re-read. The run is
+      driven through the app's own staking.ts / send.ts; STAKING_LIVE now
+      takes modes sepolia / hoodi / hoodi-claim / hoodi-f73 / 1, with a
+      1.5-ETH value cap and a 0.01-ETH per-tx fee cap, every Hoodi
+      receipt re-read on three RPCs (publicnode geth 1.17.7, ethpandaops
+      erigon 3.7.1, 0xrpc.io geth 1.17.7) and checked to agree, deltas
+      reconciled to the wei, a public-facts record at
+      scripts/testnet/runs/hoodi-staking-run.json (git-ignored); the
+      Sepolia leg is unchanged and both dry runs still pass. LIVE (every
+      status 0x1): Lido stake 0.1 → stETH (tx 0x4d95…d58c, block 3797182,
+      94,167 gas, minted 99,999,999,999,999,999 — 1 wei short, shares =
+      getSharesByPooledEth); 0.05 → wstETH by a plain transfer (tx
+      0x252c…f194, block 3797184, 118,075, minted = getWstETHByStETH);
+      wrap 0.02 — exact approve (tx 0x7f40…6a39, block 3797186) then wrap
+      (tx 0x5b29…ece6, block 3797188, 92,583, allowance 0 after); unwrap
+      0.01 (tx 0xac60…f728, block 3797190, stETH = getStETHByWstETH);
+      withdrawal request 0.03 — exact approve (tx 0x25f6…080e, block
+      3797192) then requestWithdrawals (tx 0x0b4d…0b63, block 3797194,
+      233,047 gas, WithdrawalRequested id 5328, NFT #5328, allowance 0
+      after); Rocket Pool deposit 0.05 → rETH (tx 0xa982…6560, block
+      3797196, 177,986, minted = getRethValue(net 0.049975), fee 0.000025,
+      rate 1.036810042248181492; the deposit pool resolved from
+      RocketStorage = 0x425E6f83e27f1676AD78BC39dA79C2C7b33d3Fd8, SAME as
+      phase 18); Rocket Pool burn 0.02 rETH (tx 0x6772…60b6, block
+      3797198, 137,152, SUCCEEDED 2 blocks after the deposit, TokensBurned
+      0.02 → 0.020736 ETH = getEthValue). CLAIM LEFT PENDING (not a
+      failure): request 5328 stayed isFinalized false across 10 polls over
+      90 min; Lido's Hoodi oracle reports daily (last reference slot
+      2026-10-11 12:03:24 UTC, next est. 2026-10-12 12:03:24 UTC), so
+      planLidoClaim correctly returned nothing; hoodi-claim mode re-reads
+      the request and claims through findCheckpointHints →
+      getClaimableEther → claimWithdrawals after the next report — THE
+      CLAIM HALF IS NOT YET EXERCISED LIVE. F-72 CONFIRMED LIVE: the
+      stored user.deposit.block for the dev EOA was 0 before and after the
+      deposit and the burn succeeded inside the 5,760-block delay. F-73
+      CONFIRMED BY TRACE (read-only eth_call with code overrides +
+      callTracer; nothing sent, the engine refuses a contract burn): the
+      rETH burn pays with a 2,300-gas stipend — a plain EOA, code 0x00 and
+      a bare PUSH0/LOG0/STOP (~379 gas) succeed; a storage write
+      ("not enough gas for reentrancy sentry"), a 7702 designator to a
+      forwarding delegate, and a full Kernel ERC-1967 proxy account all
+      REVERT out of gas; a 7702 designator to the bare Kernel
+      implementation (cheap receive()) succeeds using 1,387 gas — so a
+      code-carrying holder can redeem only when its receive path fits the
+      stipend; the wallet's eth_call pre-flight blocks the reverting
+      cases. FINDING FOR THE DOC REFRESH: the STAKING.md §4.3 Hoodi-vs-
+      Sepolia submit-gas gap ("not investigated") is resolved — NOT a
+      first-vs-later shares-slot matter (the Hoodi stake here was a first
+      stake and used 94,167 vs Sepolia's first-stake 208,421); Hoodi is
+      PRE-GLAMSTERDAM (forkId 0x23aa1351, activated 2025-11-12, only the
+      Pectra system contracts) while Sepolia is on Glamsterdam, whose
+      EIP-8037 raised a fresh storage slot to ~110,020 gas — the ~114k
+      difference matches one new-slot creation (a strong inference from
+      the two first-stake figures and the fork configs, not an opcode
+      trace; the Hoodi endpoints do not serve a struct/opcode tracer).
+      Holdings after the leg: stETH 0.060327, wstETH 0.057782, rETH
+      0.028201. UNVERIFIED: the live claim (pending the oracle; hoodi-claim
+      ready); the F-73 code-holder cases are eth_call/trace only; the
+      STAKING.md gas explanation is an inference, not a per-opcode trace.
+      The in-app Hoodi pass is a later emulator slot.
