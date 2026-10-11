@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Linking, ScrollView, Switch, Text, TextInput, View } from 'react-native';
-import { addToken, knownStakingTokensForChain } from '../wallet/tokens';
+import { addToken, knownStakingTokensForChain, listTokens } from '../wallet/tokens';
+import { formatAssetId } from '@shiba-wallet/core';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { httpTransport as evmHttpTransport } from '@shiba-wallet/chains-evm';
 import type { RootStackParamList } from '../navigation';
@@ -57,7 +58,9 @@ import {
   readRocketPoolAvailability,
   readStakingBalances,
   stakingActionTitle,
+  stakingBalancesHolderLine,
   stakingOfferFor,
+  stakingSuccessBalanceNote,
   type LidoAvailability,
   type RocketPoolAvailability,
   type StakingAction,
@@ -191,6 +194,21 @@ async function trackReceivedStakingToken(chainCaip2: string, action: StakingActi
   }
 }
 
+/**
+ * Whether stETH is on this chain's tracked token list now (Home lists only
+ * tracked tokens), for the success note; null when the list cannot be read.
+ */
+async function isStethTracked(chainCaip2: string): Promise<boolean | null> {
+  const steth = knownStakingTokensForChain(chainCaip2).find((t) => t.symbol === 'stETH');
+  if (!steth) return false;
+  try {
+    const id = formatAssetId(steth.assetId).toLowerCase();
+    return (await listTokens(chainCaip2)).some((t) => formatAssetId(t.assetId).toLowerCase() === id);
+  } catch {
+    return null;
+  }
+}
+
 export function StakingScreen({ navigation }: Props) {
   const theme = useTheme();
   const { accounts, signWith, activeAccount } = useWallet();
@@ -213,6 +231,9 @@ export function StakingScreen({ navigation }: Props) {
   const [quotedUrl, setQuotedUrl] = useState<string | null>(null);
   const [result, setResult] = useState<SendResult | null>(null);
   const [approveTxid, setApproveTxid] = useState<string | null>(null);
+  // After a send whose plan involves stETH: is stETH tracked now (so Home
+  // lists it)? null until known or when the list could not be read.
+  const [stethTracked, setStethTracked] = useState<boolean | null>(null);
   // The EOA the quote was prepared for; signWith signs only for exactly it.
   const preparedFrom = useRef<string | null>(null);
 
@@ -304,6 +325,8 @@ export function StakingScreen({ navigation }: Props) {
     lido: LidoAvailability | null;
     rocket: RocketPoolAvailability | null;
     balances: StakingBalances | null;
+    /** The address the balances were read for, and whether it is the smart account. */
+    holder: { address: string; smartAccount: boolean } | null;
     error: string | null;
   } | null>(null);
   useEffect(() => {
@@ -319,11 +342,20 @@ export function StakingScreen({ navigation }: Props) {
           const b = await readStakingBalances(node, caip2, holder, r);
           return { l, r, b };
         });
-        if (!cancelled) setLoaded({ key: loadKey, lido: value.l, rocket: value.r, balances: value.b, error: null });
+        if (!cancelled) {
+          setLoaded({
+            key: loadKey,
+            lido: value.l,
+            rocket: value.r,
+            balances: value.b,
+            holder: { address: holder, smartAccount: bundle !== null },
+            error: null,
+          });
+        }
       } catch (e) {
         if (cancelled) return;
         const text = sanitizeEndpointMessage(errorText(e));
-        setLoaded({ key: loadKey, lido: null, rocket: null, balances: null, error: text === '' ? 'No details were given.' : text });
+        setLoaded({ key: loadKey, lido: null, rocket: null, balances: null, holder: null, error: text === '' ? 'No details were given.' : text });
       }
     })();
     return () => {
@@ -335,6 +367,7 @@ export function StakingScreen({ navigation }: Props) {
   const lido = current?.lido ?? null;
   const rocket = current?.rocket ?? null;
   const balances = current?.balances ?? null;
+  const balancesHolder = current?.holder ?? null;
   const loadError = current?.error ?? null;
 
   // ------------------------------------------------------------ guards
@@ -542,8 +575,12 @@ export function StakingScreen({ navigation }: Props) {
         sendEvm(sendUrl, signer, eoaQuote, evmChain.explorerTxBase),
       );
       setResult(sent);
+      setStethTracked(null);
       setPhase('success');
-      void trackReceivedStakingToken(evmChain.caip2, plan.action);
+      const chainAtSend = evmChain.caip2;
+      void trackReceivedStakingToken(chainAtSend, plan.action)
+        .then(() => (plan.rebasing ? isStethTracked(chainAtSend) : null))
+        .then(setStethTracked);
     } catch (e) {
       const { title, detail } = describeSendError(e, symbol);
       Alert.alert(title, detail);
@@ -588,6 +625,7 @@ export function StakingScreen({ navigation }: Props) {
     try {
       const { userOpHash } = await signWith(EVM_CHAIN_ID, preparedFrom.current ?? '', (signer) => sendAa(bundle, signer, aaQuote));
       setAaResult({ userOpHash, receiptState: 'pending', success: null, txHash: null });
+      setStethTracked(null);
       setPhase('success');
       void trackReceivedStakingToken(evmChain.caip2, plan.action);
       void waitForAaReceipt(bundle, userOpHash, { timeoutMs: 120_000, pollMs: 3_000 }).then(
@@ -633,26 +671,57 @@ export function StakingScreen({ navigation }: Props) {
             {aaResult ? aaResult.userOpHash : result!.txid}
           </Text>
         </View>
-        {aaResult?.receiptState === 'pending' ? sendingView('Waiting for the UserOperation receipt…') : null}
-        {aaResult?.receiptState === 'timeout' ? (
-          <Text style={[styles.hint, { color: theme.textMuted }]}>No receipt yet. Keep the hash above to look it up later.</Text>
-        ) : null}
-        {aaResult?.receiptState === 'found' && aaResult.success === false ? (
-          <WarningBox>The operation was included but reverted: none of it took effect, and the fee was still charged.</WarningBox>
-        ) : null}
         {result?.explorerUrl ? (
           <Button title="View on block explorer" variant="secondary" onPress={() => void Linking.openURL(result.explorerUrl!)} />
         ) : null}
-        {aaResult?.txHash && evmChain.explorerTxBase ? (
-          <Button
-            title="View on block explorer"
-            variant="secondary"
-            onPress={() => void Linking.openURL(`${evmChain.explorerTxBase}${aaResult.txHash}`)}
-          />
+        {/* Smart account: the receipt poll, the bundle transaction and its
+            explorer link, mirroring SendScreen's smart-account success view
+            (waitForAaReceipt / summarizeAaReceipt in wallet/aa.ts). */}
+        {aaResult?.receiptState === 'pending' ? sendingView('Bundling… waiting for the UserOperation receipt.') : null}
+        {aaResult?.receiptState === 'timeout' ? (
+          <Text style={[styles.hint, { color: theme.textMuted }]}>
+            No receipt yet. The operation may still be included — keep the UserOperation hash above to look it up later.
+          </Text>
+        ) : null}
+        {aaResult?.receiptState === 'found' ? (
+          <>
+            {aaResult.success === false ? (
+              <WarningBox>
+                The bundler reports the operation was included but reverted on-chain. The gas was still charged to the
+                smart account. None of the operation’s calls took effect.
+              </WarningBox>
+            ) : (
+              <Text style={[styles.simulationOk, { color: theme.success }]}>
+                Included on-chain{aaResult.success === true ? ' — succeeded.' : '.'}
+              </Text>
+            )}
+            {aaResult.txHash ? (
+              <>
+                <Text style={[styles.label, { color: theme.textMuted }]}>Transaction</Text>
+                <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border }]}>
+                  <Text selectable style={[styles.monoText, { color: theme.text }]}>
+                    {aaResult.txHash}
+                  </Text>
+                </View>
+                {evmChain.explorerTxBase ? (
+                  <Button
+                    title="View on block explorer"
+                    variant="secondary"
+                    onPress={() => void Linking.openURL(`${evmChain.explorerTxBase}${aaResult.txHash}`)}
+                  />
+                ) : null}
+              </>
+            ) : (
+              <Text style={[styles.hint, { color: theme.textMuted }]}>
+                The bundler&apos;s receipt did not include a recognizable transaction hash; look the UserOperation hash
+                up in an ERC-4337 explorer you trust.
+              </Text>
+            )}
+          </>
         ) : null}
         {plan.rebasing ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            The stETH balance on Home and here is read from the token itself, so it is exact whenever it is read.
+            {stakingSuccessBalanceNote({ smartAccount: aaResult !== null, stethTracked })}
           </Text>
         ) : null}
         <Button
@@ -660,6 +729,7 @@ export function StakingScreen({ navigation }: Props) {
           onPress={() => {
             setResult(null);
             setAaResult(null);
+            setStethTracked(null);
             setApproveTxid(null);
             setPlan(null);
             setAmountText('');
@@ -875,7 +945,15 @@ export function StakingScreen({ navigation }: Props) {
           <Button title="Try again" variant="secondary" onPress={() => setReloadTick((t) => t + 1)} />
         </>
       ) : null}
-      {balances ? <StakingBalancesCard balances={balances} hidden={hideAmounts} nativeSymbol={symbol} theme={theme} /> : null}
+      {balances && balancesHolder ? (
+        <StakingBalancesCard
+          balances={balances}
+          hidden={hideAmounts}
+          nativeSymbol={symbol}
+          holderLine={stakingBalancesHolderLine(balancesHolder.smartAccount, balancesHolder.address)}
+          theme={theme}
+        />
+      ) : null}
 
       <Text style={[styles.label, { color: theme.textMuted }]}>What to do</Text>
       <View style={styles.choiceRow}>

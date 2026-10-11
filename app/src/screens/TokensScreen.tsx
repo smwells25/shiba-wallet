@@ -26,7 +26,7 @@ import {
   validateErc20ContractAddress,
   type Erc20Metadata,
 } from '../wallet/erc20';
-import { addToken, listTokens, removeToken } from '../wallet/tokens';
+import { addToken, listTokens, removeToken, testNetworkTokenValueSentence } from '../wallet/tokens';
 import { tokenSendFeeSentence } from '../wallet/token-gas';
 import {
   FIND_TOKENS_WARNING,
@@ -288,7 +288,7 @@ export function TokensScreen({ navigation }: Props) {
           keeps its own list. Tokens arrive at your address, and Send starts
           a token transfer. {tokenSendFeeSentence(evmChain.caip2)}
           {evmChain.testnet
-            ? ' This is a test network: its tokens (such as Circle\'s test USDC and EURC) have no value.'
+            ? ` ${testNetworkTokenValueSentence(evmChain.caip2)}`
             : ''}
         </Text>
         {tokens.length === 0 ? (

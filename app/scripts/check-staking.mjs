@@ -58,12 +58,14 @@ import {
   readRocketPoolAvailability,
   readStakingBalances,
   stakingActionTitle,
+  stakingBalancesHolderLine,
   stakingOfferFor,
   stakingSmartAccountRefusal,
+  stakingSuccessBalanceNote,
   stakingSummaryLines,
   utcDate,
 } from '../src/wallet/staking.ts';
-import { sendEvm } from '../src/wallet/send.ts';
+import { GasEstimateRevertError, describeSendError, sendEvm } from '../src/wallet/send.ts';
 import { createAaClientFromConfig, sendAa } from '../src/wallet/aa.ts';
 import { featureReadiness, isFeatureAllowed, isTestNetwork } from '../src/config/readiness.ts';
 import { isBuiltInEvmChain, setCustomEvmProfiles } from '../src/config/evm-chain.ts';
@@ -750,6 +752,125 @@ if (HOODI_BUILT_IN) {
 } else {
   const { e } = await hoodiAaAttempt({ prepareStakingAa });
   check('without a built-in Hoodi profile, a Hoodi smart-account plan is refused by the readiness gate', e?.name === 'FeatureNotAllowedError', String(e));
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-staking: a stake the account cannot afford says so (phase 18 emulator finding 1)');
+// ---------------------------------------------------------------------------
+{
+  // A node that answers like geth: an estimate whose value exceeds the
+  // balance fails for funds; Lido's submit() with value 0 reverts
+  // ZERO_DEPOSIT and Rocket Pool's deposit() with value 0 reverts with its
+  // minimum-deposit text (the two texts seen on the emulator).
+  const withEstimates = (state) => {
+    const base = stakingNode(state);
+    const estimates = [];
+    const node = async (method, params) => {
+      if (method !== 'eth_estimateGas') return base(method, params);
+      estimates.push(params[0]);
+      const value = BigInt(params[0].value ?? '0x0');
+      if (value > state.ethBalance) throw new Error('insufficient funds for transfer');
+      if (value === 0n && same(params[0].to, state.lido.stETH)) throw new Error('execution reverted: ZERO_DEPOSIT');
+      if (value === 0n) throw new Error('execution reverted: The deposited amount is less than the minimum deposit size');
+      return '0x' + (120_000).toString(16);
+    };
+    node.estimates = estimates;
+    return node;
+  };
+  const minFee = 21_000n * 3n * GWEI;
+  const st = sepoliaState({ ethBalance: 10n ** 14n });
+  fetchNode = withEstimates(st);
+  const plan = await planStakingAction(fetchNode, STAKING_SEPOLIA, EOA, stakeAction(10n ** 15n), 'test ETH');
+  const e = await rejection(() => prepareStakingSend(RPC_URL, EOA, plan));
+  const d = describeSendError(e, 'test ETH');
+  check('Lido stake above the balance → "Not enough test ETH to cover this amount plus the network fee." (not ZERO_DEPOSIT)',
+    !(e instanceof GasEstimateRevertError) && d.title === 'Not enough test ETH to cover this amount plus the network fee.' && !/ZERO_DEPOSIT|revert/i.test(`${d.title} ${d.detail}`), `${d.title} / ${d.detail}`);
+  check('…detail is the exact funds sentence with the smallest possible fee',
+    d.detail === `Insufficient funds: sending ${10n ** 15n} wei plus a worst-case fee of at least ${minFee} wei exceeds the balance of ${10n ** 14n} wei`, d.detail);
+  check('…and no estimate was requested at all (never one with value 0)', fetchNode.estimates.length === 0, JSON.stringify(fetchNode.estimates));
+  fetchNode = null;
+
+  if (HOODI_BUILT_IN) {
+    const hs = hoodiState({ ethBalance: 0n });
+    fetchNode = withEstimates(hs);
+    const dep = await planStakingAction(fetchNode, STAKING_HOODI, EOA, { kind: 'stake', protocol: 'rocket-pool', amount: 10n ** 16n }, 'test ETH');
+    const r = await rejection(() => prepareStakingSend(RPC_URL, EOA, dep));
+    const rd = describeSendError(r, 'test ETH');
+    check('Rocket Pool deposit at exactly the minimum with an empty account → the funds title, not the minimum-deposit revert',
+      rd.title === 'Not enough test ETH to cover this amount plus the network fee.' && !/minimum deposit/i.test(rd.detail) && fetchNode.estimates.length === 0, `${rd.title} / ${rd.detail}`);
+    fetchNode = null;
+  }
+
+  // Affordable value, but the node refuses the estimate for funds once the
+  // fee is counted: one estimate at the real value, never a value-0 retry.
+  const tight = sepoliaState({ ethBalance: 10n ** 15n + minFee });
+  const tightNode = withEstimates(tight);
+  fetchNode = async (method, params) => {
+    if (method === 'eth_estimateGas' && BigInt(params[0].value ?? '0x0') + 120_000n * 3n * GWEI > tight.ethBalance) {
+      tightNode.estimates.push(params[0]);
+      throw new Error('insufficient funds for gas * price + value');
+    }
+    return tightNode(method, params);
+  };
+  const tplan = await planStakingAction(fetchNode, STAKING_SEPOLIA, EOA, stakeAction(10n ** 15n), 'test ETH');
+  const t = await rejection(() => prepareStakingSend(RPC_URL, EOA, tplan));
+  check('a funds refusal at estimation is not retried with value 0 (one estimate, the real value; no ZERO_DEPOSIT)',
+    tightNode.estimates.length === 1 && BigInt(tightNode.estimates[0].value) === 10n ** 15n && !/ZERO_DEPOSIT/.test(String(t?.message)) &&
+      describeSendError(t, 'test ETH').title === 'Not enough ETH to pay the network fee.', `${tightNode.estimates.length} / ${t?.message}`);
+  fetchNode = null;
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-staking: success notes, the balances holder line and the smart-account success view (phase 18 findings 2, 4, 7)');
+// ---------------------------------------------------------------------------
+{
+  check('success note, regular account, stETH tracked (exact)',
+    stakingSuccessBalanceNote({ smartAccount: false, stethTracked: true }) ===
+      'The stETH balance on this screen and on Home is read from the token itself, so it is exact whenever it is read.');
+  const untracked = 'The stETH balance on this screen is read from the token itself, so it is exact whenever it is read. Home shows it once stETH is on this network’s tracked tokens (Manage tokens).';
+  check('success note, regular account, stETH not tracked or unknown: points at this screen (exact)',
+    stakingSuccessBalanceNote({ smartAccount: false, stethTracked: false }) === untracked && stakingSuccessBalanceNote({ smartAccount: false, stethTracked: null }) === untracked);
+  check('success note, smart account: says Home shows the regular account’s balances (exact), whatever the tracking',
+    [true, false, null].every((t) => stakingSuccessBalanceNote({ smartAccount: true, stethTracked: t }) ===
+      'The stETH balance on this screen is your smart account’s, read from the token itself, so it is exact whenever it is read. Home’s token rows show your regular account’s balances, not the smart account’s.'));
+  check('only the tracked regular-account note claims a Home row',
+    stakingSuccessBalanceNote({ smartAccount: false, stethTracked: false }).includes('on Home') === false &&
+      stakingSuccessBalanceNote({ smartAccount: true, stethTracked: true }).includes('on Home') === false);
+  check('holder line (exact): smart account / regular account',
+    stakingBalancesHolderLine(true, KERNEL_ACCOUNT_0) === `Balances of your smart account ${KERNEL_ACCOUNT_0}` &&
+      stakingBalancesHolderLine(false, EOA) === `Balances of your regular account ${EOA}`);
+
+  const screen = readFileSync(join(APP_ROOT, 'src/screens/StakingScreen.tsx'), 'utf8');
+  const views = readFileSync(join(APP_ROOT, 'src/screens/StakingViews.tsx'), 'utf8');
+  check('the old sentence naming Home unconditionally is gone',
+    !screen.includes('The stETH balance on Home and here is read from the token itself'));
+  check('the success note comes from stakingSuccessBalanceNote with the path and the tracked state',
+    screen.includes('{stakingSuccessBalanceNote({ smartAccount: aaResult !== null, stethTracked })}') &&
+      screen.includes('.then(() => (plan.rebasing ? isStethTracked(chainAtSend) : null))'));
+  check('the balances card names its holder, read with the balances (smart account when the toggle is on)',
+    views.includes('{holderLine}') &&
+      screen.includes('holderLine={stakingBalancesHolderLine(balancesHolder.smartAccount, balancesHolder.address)}') &&
+      screen.includes('holder: { address: holder, smartAccount: bundle !== null },'));
+  // The smart-account success view mirrors SendScreen's: the receipt poll,
+  // "Bundling…", the included / reverted line, the bundle transaction and
+  // the explorer link gated on the profile's explorerTxBase.
+  const send = readFileSync(join(APP_ROOT, 'src/screens/SendScreen.tsx'), 'utf8');
+  const flat = (t) => t.replace(/\s+/g, ' ');
+  const shared = [
+    'Bundling… waiting for the UserOperation receipt.',
+    'No receipt yet. The operation may still be included — keep the UserOperation hash above to look it up later.',
+    'The bundler reports the operation was included but reverted on-chain. The gas was still charged to the smart account.',
+    "Included on-chain{aaResult.success === true ? ' — succeeded.' : '.'}",
+    'The bundler&apos;s receipt did not include a recognizable transaction hash; look the UserOperation hash up in an ERC-4337 explorer you trust.',
+    '{evmChain.explorerTxBase ? (',
+    'void Linking.openURL(`${evmChain.explorerTxBase}${aaResult.txHash}`)',
+    '<Text style={[styles.label, { color: theme.textMuted }]}>Transaction</Text>',
+  ];
+  const missing = shared.filter((t) => !flat(screen).includes(flat(t)) || !flat(send).includes(flat(t)));
+  check('the smart-account success view carries SendScreen’s receipt texts, the bundle transaction and the gated explorer link', missing.length === 0, missing.join(' | '));
+  check('…the receipt is polled with waitForAaReceipt and the bundle transaction shown as text, not only as a button',
+    screen.includes('void waitForAaReceipt(bundle, userOpHash, { timeoutMs: 120_000, pollMs: 3_000 })') &&
+      /\{aaResult\.txHash\}\s*<\/Text>/.test(screen));
 }
 
 // ---------------------------------------------------------------------------
