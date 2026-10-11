@@ -6472,3 +6472,40 @@ decision; both review files stay in the git-ignored docs/private/. The
 other findings (A, B, D, E, F, G and the section-8 observations) are
 deferred by the Chairperson, with their determinations and corrections
 recorded in the two review files.
+- [x] Item 5 — LEADERSHIP REFRESH (docs commit 94950ae; offline runner
+      ALL GREEN in the CTO's isolated worktree on HEAD 48f60c9: engine
+      981, app 8,132 across 53 suites, check-readiness 194, lint 0/0, tsc
+      clean; docs only). FEATURE_UNIVERSE section 15: feature 63
+      (dollar-cost averaging) and feature 95 (in-app support, the
+      transaction half) → Proven live; feature 57 (native staking) Built
+      → Proven live (Rocket Pool on Hoodi by script); features 24, 58, 29
+      and 33 extended with the phase 19 live runs; the tally is now
+      PROVEN LIVE 49 (T1 29, T2 20), BUILT 17 (9/8), DESIGNED 1, NOT
+      STARTED 32 (T1 1, T2 16, T3 15), and every count sentence agrees.
+      Limits stated, not inflated: DCA's second in-app swap and catch-up
+      were proven by script not in-app; the Hoodi withdrawal claim is
+      pending the oracle; the stuck-transactions and Hoodi in-app passes
+      are pending. DEMO.md gained steps 28–32 (OP Sepolia, Hoodi staking
+      by script, multisig by QR on Base, a recurring swap, speed up /
+      cancel) each with its true rehearsal status, and the drift warning
+      updated. THREAT_MODEL.md: F-74 (DCA readiness and limits + the
+      shared fee-budget fix), F-75 (the stuck-transaction replacement
+      rules), F-76 (the record-file open bug that also broke guardian
+      recovery import, fixed); F-72 and F-73 marked confirmed live / by
+      trace; the current-state suite counts updated. NEW docs/
+      MAINNET_READINESS.md: a decision memo for the Chairperson —
+      pinned-for-mainnet vs testnet-only addresses, the unmet C1–C3, the
+      real-phone checks, a public-safe reference to the private security
+      classification (no exploit detail; the one high-severity item is
+      the Chairperson's and the wallet pins the patched component), the
+      test-network fee economics, the honest module limits, and a staged
+      path holding every AA feature off mainnet. THE SHAREABLE PAGE
+      REBUILT (counts 49/17/1/32 asserted in the tiles and header) and
+      PUBLISHED as the live version of
+      https://claude.ai/artifact/JEfyMuPcMJ8YW5x3ZKitsw (the CTO scanned
+      the built HTML before publishing: one Google-Fonts stylesheet, one
+      benign client-side filter script, no secrets; the built file copied
+      to scratchpad/fu/feature-universe.html as the new base for the next
+      build). An emulator re-check of the DCA and multisig fix slices is
+      in flight; the stuck-transactions and Hoodi in-app passes and the
+      Hoodi claim remain.
