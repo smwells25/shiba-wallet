@@ -5845,3 +5845,96 @@ non-zero; then the emulator passes one at a time (0a, 1, 2's app half,
       on the live backends); approve rows switching from "0 test ETH" to
       no amount once decoded; the single rebasing note; the staking fee
       title (hard to trigger live).
+- [x] Item 2, app half — RECURRING SWAPS (DCA) IN THE APP (commit 530a688;
+      new check-dca 124 registered in suites.mjs, check-readiness 194
+      (was 190); offline runner ALL GREEN in the CTO's isolated worktree
+      on HEAD a86eead plus the slice: engine 981, app 8,090 across 53
+      suites, lint 0/0, tsc clean; 15 mutants caught; every old file
+      fails check-dca; no engine change; not seen on a device). FILES:
+      new app/src/wallet/dca.ts (terms, review, funding, market lines,
+      plan / confirm / swap, outcome, refusals) and
+      app/src/screens/DcaViews.tsx; sessions.ts — source 'dca'
+      (DCA_SOURCE, SessionDcaMeta, DcaLastSwap, sessionIsScheduled), the
+      stored record parsed strictly (the terms through the engine's
+      parseDcaTerms, must match the grant via dcaTermsMatchGrant and be
+      for the record's own account; a hand-over time, a malformed last
+      swap or DCA terms on another source → dropped as corrupt),
+      installSession requires the key on the device, sendSessionCalls
+      checks assertFeatureAllowed('dca') and the engine's assertDcaSwap
+      before any request or key read then signs through kernelDcaSpec,
+      releaseSessionKey refuses, no test op, DCA revoke wording;
+      subscriptions.ts — DCA_KEY_NEVER_EXPORTED (export and hand-over
+      refused), readSubscriptionStatus accepts DCA records, an optional
+      gasAllowance on the fee-budget helpers; recurring.ts — dcaDueState
+      / scheduledDueState on one dueFromChainState core, the banner
+      check and the reminders' status read include DCA records
+      (read-only); notifications.ts — a DCA record is eligible with its
+      period from the grant's interval, swap entries carry swap: true
+      with recurringSwapDueContent() ("Recurring swap due" / "A
+      recurring swap is due. Open the wallet to review it; nothing is
+      swapped until you confirm it."); RecurringDueBanner counts swaps
+      ("1 recurring swap is due. Each is sent only after you confirm it
+      on the Sessions screen."); readiness row dca (testnet-only,
+      enforced; evidence C1 C2 C3 W9 F-14 T-64 T-69; a DCA threat-model
+      row is still to add at the refresh); SessionsScreen subMode 'dca'
+      (form, review, Start, "Swap now", revoke-and-forget, a "Recurring
+      swaps" section; DCA records out of the plain sessions list); pins
+      changed: check-readiness EXPECTED_IDS + 'dca', check-subscriptions'
+      revoke-kind regex. COPY: intro "Swaps a fixed amount of test ETH
+      from your smart account for USDC once per period, always through
+      the same Uniswap pool, until the swaps run out or you revoke. A new
+      swap key is created on this phone and never leaves it; your account
+      enforces the limits on-chain."; market lines with the FULL pool
+      (0x3289680dD4d6C10bb19b899729cda5eEF58AEfF1, "checked against
+      Uniswap's factory … on every read"), router and quoter addresses,
+      "Quote just now (…): 0.00001 test ETH → 0.468502 USDC. A quote is a
+      reading at one block, not a promise.", "Minimum to receive per swap:
+      95% of that quote = 0.445076 USDC, fixed at set-up."; REVIEW ORDER
+      as designed (the batching box, "THE MINIMUM DOES NOT FOLLOW THE
+      PRICE…", no deadline, a reverting swap uses up its period, ETH left
+      in the router, "The swap key can only buy USDC for this account: it
+      may call only Uniswap's SwapRouter02 to sell exactly the plan's
+      amount in the pinned pool, with this smart account (0x…) as the
+      only recipient. It cannot send your ETH or tokens anywhere else,
+      approve a spender, or sign messages, logins or permits.", catch-up
+      with the two-period grace, revoke, where the key lives); the
+      set-up cost note quoting the live run (7,015,028 gas, ~0.0081 ETH
+      at ~1.155 gwei, the bundler refusing to estimate below ~0.012 ETH)
+      plus today's equivalents at the signed fee and a funding warning
+      under 8,000,000 gas × that fee; fee budget 1,000,000 gas per swap ×
+      the signed fee × 2 (the two live swaps charged ~1.3–1.5M gas), the
+      set-up fee kept back as the subscription form does; refusals: the
+      engine's DCA_* sentences verbatim, DCA_FLOOR_PERCENT_REFUSAL, "This
+      wallet offers at most 120 swaps per plan."; the dialog "Swap now?"
+      (Cancel / Swap now) with the quote, the fresh-quote-less-1% ask
+      never below the plan's minimum, the revert consequence and the fee
+      budget left; card lines "Swap due now (since …).", "Next swap: not
+      before …", "Last swap (…): received X USDC for …; the quote just
+      before sending was Y USDC, and the swap asked for at least Z USDC
+      (the plan's minimum is F USDC).", the reverted-swap line, a batched
+      operation flagged "If you did not send it, revoke this plan now.";
+      buttons "New recurring swap" / "Get a live quote" / "Start
+      recurring swap" / "Swap now" / "Revoke (stop the recurring swap)" /
+      "Revoke and forget"; prompts "Approve this recurring swap" /
+      "Approve revoking this recurring swap". NOT POSSIBLE WITHOUT aa.ts:
+      the 110% install call-gas padding — prepareAaCalls takes no padding
+      option and sendAa re-estimates at signing, so the set-up is signed
+      at the bundler's own estimate and the screen says so
+      (DCA_INSTALL_PADDING_NOTE); follow-up: a per-operation padding
+      option on prepareAaCalls and the signed-fee guard. FUNDING FOR THE
+      IN-APP RUN (the agent's arithmetic at ZeroDev's standard 1.155 gwei
+      signed at 2.31: set-up ~0.016 ETH, the estimate needing ~0.0185
+      available, Start needing ~0.022 incl. the +20% ceiling, ~0.003 per
+      swap; half of that in the 0.58–0.65 gwei regime): THE CTO SENT 0.03
+      SEPOLIA ETH from the dev EOA to the emulator's Kernel account
+      0xD31c…D8FA through fund.mjs on 2026-10-11 (balance 0.0114 → 0.0415,
+      the dev EOA → 0.0621; the console output was lost to a bad filter
+      regex, the delta verified on publicnode). Emulator checklist (9
+      steps) in the builder's report — runs after the OP Sepolia pass.
+      UNVERIFIED: anything on a device; that ZeroDev estimates and
+      accepts the app-built set-up and swap (only the script proved it);
+      live fee-budget fitting; ZeroDev's wording for a "Too little
+      received" estimate failure; whether receipt.logs is always the
+      whole transaction's logs (the code falls back to the op's own
+      logs); swap reminders in the development build; a reverted swap or
+      router residual in-app.
