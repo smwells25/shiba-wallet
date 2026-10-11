@@ -41,10 +41,13 @@
 //   node scripts/check-multisig.mjs
 
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { ethers } from 'ethers';
-import { evmKeyProvider, mnemonicToSeed } from '@shiba-wallet/core';
+import QRCode from 'qrcode';
+import jsQR from 'jsqr';
+import { evmAccountFromPrivateKey, evmKeyProvider, mnemonicToSeed } from '@shiba-wallet/core';
 import {
   ENTRYPOINT_V07,
   KERNEL_MULTISIG_VALIDATOR,
@@ -118,6 +121,7 @@ import {
   featureReadiness,
   readinessRefusal,
 } from '../src/config/readiness.ts';
+import { EVM_PROFILES, MULTISIG_VERIFIED_NETWORKS, multisigNetworkVerified } from '../src/config/evm-chain.ts';
 import {
   MULTISIG_ACCOUNT_PAYLOAD,
   MULTISIG_APPROVAL_PAYLOAD,
@@ -136,7 +140,33 @@ import {
   MULTISIG_STORE_DAMAGED,
   MULTISIG_SUBMITTER_APPROVAL_REFUSAL,
   MULTISIG_UNAUDITED_NOTE,
+  MULTISIG_FILE_MIME_TYPE,
+  MULTISIG_FILE_NAME_PATTERN,
+  MULTISIG_FILE_UTI,
+  MULTISIG_QR_PART_MAX_BYTES,
+  MULTISIG_QR_TOO_LARGE,
+  MULTISIG_SCAN_APPROVAL_NOTE,
+  MULTISIG_SCAN_APPROVAL_RATIONALE,
+  MULTISIG_SCAN_APPROVAL_TITLE,
+  MULTISIG_SCAN_NEXT_TITLE,
+  MULTISIG_SCAN_RECORD_NOTE,
+  MULTISIG_SCAN_RECORD_RATIONALE,
+  MULTISIG_SCAN_RECORD_TITLE,
+  MULTISIG_SCAN_REQUEST_NOTE,
+  MULTISIG_SCAN_REQUEST_RATIONALE,
+  MULTISIG_SCAN_REQUEST_TITLE,
+  MULTISIG_SCAN_START_OVER_TITLE,
   MultisigAuthCancelledError,
+  acceptMultisigQrScan,
+  externalApprovalSignature,
+  multisigApprovalTypedData,
+  multisigFileContents,
+  multisigFileRefusal,
+  multisigQrPagedNote,
+  multisigQrPartCaption,
+  multisigQrProgressLine,
+  multisigRequestShareText,
+  splitMultisigQrParts,
   addMultisigApproval,
   asSentence,
   buildMultisigConfig,
@@ -1517,6 +1547,300 @@ console.log('check-multisig: Settings → Accounts lists multisigs read-only (ph
   check('mutant caught: the list removed', !listOk(section.replace('{multisigAccounts.length > 0 ? (', '{false ? (')));
   const demo = readFileSync(join(HERE, '..', '..', 'docs', 'DEMO.md'), 'utf8');
   check('DEMO.md step 27 no longer says the Settings list does not exist', !/Settings → Accounts does not list (the )?multisig/i.test(demo));
+}
+
+// ===========================================================================
+console.log('check-multisig: phase 19 item 1 — QR codes in parts, scanning, files, other networks, approvals from another wallet');
+// ===========================================================================
+{
+  const require = createRequire(import.meta.url);
+  const QRVersion = require('qrcode/lib/core/version.js');
+  const QRECL = require('qrcode/lib/core/error-correction-level.js');
+  const QRMode = require('qrcode/lib/core/mode.js');
+  const screen = readFileSync(join(HERE, '..', 'src', 'screens', 'MultisigScreen.tsx'), 'utf8');
+  const views = readFileSync(join(HERE, '..', 'src', 'screens', 'MultisigViews.tsx'), 'utf8');
+  const recoveryViews = readFileSync(join(HERE, '..', 'src', 'components', 'RecoveryViews.tsx'), 'utf8');
+  /** Renders a QR text exactly as PayloadQr does (react-native-qrcode-svg → qrcode.create, ecl "L") and decodes it with jsqr. */
+  const qrRoundTrip = (text) => {
+    const code = QRCode.create(text, { errorCorrectionLevel: 'L' });
+    const size = code.modules.size;
+    const scale = 6;
+    const quiet = 4;
+    const px = (size + 2 * quiet) * scale;
+    const rgba = new Uint8ClampedArray(px * px * 4).fill(255);
+    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+      if (!code.modules.get(y, x)) continue;
+      for (let dy = 0; dy < scale; dy++) for (let dx = 0; dx < scale; dx++) {
+        const p = (((y + quiet) * scale + dy) * px + (x + quiet) * scale + dx) * 4;
+        rgba[p] = rgba[p + 1] = rgba[p + 2] = 0;
+      }
+    }
+    return { version: code.version, decoded: jsQR(rgba, px, px)?.data ?? null };
+  };
+  const bytes = (t) => Buffer.byteLength(t, 'utf8');
+
+  // --- Fixtures: a real 2-of-3 request (native transfer), a 10-signer token request, an approval, a record.
+  const qs = memoryStore();
+  const qRecord = await createMultisigRecord({ chain: SEPOLIA, config: CONFIG_2_OF_3, localSigner: S0.address }, qs);
+  const qOp = await prepareMultisigRequest({ record: qRecord, calls: [{ to: RECIPIENT, value: 10n ** 14n, data: new Uint8Array(0) }], node: multisigNode(), nativeSymbol: 'test ETH' }, qs);
+  const requestPayload = encodeMultisigRequestPayload(qRecord, qOp);
+  const bigSigners = [S0, ...Array.from({ length: 9 }, (_, i) => evmKeyProvider.deriveAccount(seed, 0, 10 + i))].map((a) => ({ address: a.address, weight: 1 }));
+  const bigConfig = { signers: bigSigners, threshold: 2, delaySeconds: 0 };
+  const bigRecord = await createMultisigRecord({ chain: SEPOLIA, config: bigConfig, localSigner: S0.address }, qs);
+  const USDC_SEPOLIA = '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238';
+  const tokenCall = { to: USDC_SEPOLIA, value: 0n, data: ethers.getBytes(new ethers.Interface(['function transfer(address,uint256)']).encodeFunctionData('transfer', [RECIPIENT, 1_500_000n])) };
+  const bigOp = await prepareMultisigRequest({ record: bigRecord, calls: [tokenCall], node: multisigNode({ onChainSet: bigConfig }), nativeSymbol: 'test ETH' }, qs);
+  const bigPayload = encodeMultisigRequestPayload(bigRecord, bigOp);
+  const approval = approveMultisigRequest(qOp.request, S5);
+  const approvalPayloadQ = encodeMultisigApprovalPayload(qOp.request, approval);
+  const recordJson = exportMultisigAccount(bigRecord).json;
+
+  // --- Capacity facts from the installed encoder.
+  check('capacity: the qrcode encoder react-native-qrcode-svg uses holds 858 bytes at version 20 / level L (= MULTISIG_QR_PART_MAX_BYTES), 2,953 at version 40',
+    QRVersion.getCapacity(20, QRECL.L, QRMode.BYTE) === 858 && MULTISIG_QR_PART_MAX_BYTES === 858 && QRVersion.getCapacity(40, QRECL.L, QRMode.BYTE) === 2953 &&
+      /ecl="L"/.test(recoveryViews), String(QRVersion.getCapacity(20, QRECL.L, QRMode.BYTE)));
+  const reqVersion = QRCode.create(requestPayload, { errorCorrectionLevel: 'L' }).version;
+  const bigVersion = QRCode.create(bigPayload, { errorCorrectionLevel: 'L' }).version;
+  check(`a real signing request is too large for one reliable code: 2-of-3 native ${bytes(requestPayload)} bytes (version ${reqVersion}), 10 signers + token ${bytes(bigPayload)} bytes (version ${bigVersion})`,
+    bytes(requestPayload) > 858 && bytes(bigPayload) > 858 && reqVersion > 20 && bigVersion > 20);
+
+  // --- Splitting.
+  const reqParts = splitMultisigQrParts(requestPayload);
+  const bigParts = splitMultisigQrParts(bigPayload);
+  check('the 2-of-3 request becomes 2 parts, the 10-signer token request 3 parts; "SW-MS:<n>/<total>:" prefixes; chunks join to the payload exactly',
+    reqParts.length === 2 && bigParts.length === 3 && reqParts.every((p, i) => p.startsWith(`SW-MS:${i + 1}/2:`)) && bigParts.every((p, i) => p.startsWith(`SW-MS:${i + 1}/3:`)) &&
+      reqParts.map((p) => p.slice(p.indexOf(':', 6) + 1)).join('') === requestPayload && bigParts.map((p) => p.slice(p.indexOf(':', 6) + 1)).join('') === bigPayload);
+  check('every part fits 858 bytes and encodes at version 20 or lower (level L)',
+    [...reqParts, ...bigParts].every((p) => bytes(p) <= 858 && QRCode.create(p, { errorCorrectionLevel: 'L' }).version <= 20),
+    [...reqParts, ...bigParts].map((p) => `${bytes(p)}B/v${QRCode.create(p, { errorCorrectionLevel: 'L' }).version}`).join(' '));
+  const smallRecordJson = exportMultisigAccount(qRecord).json;
+  check(`an approval (${bytes(approvalPayloadQ)} bytes) and a 2-of-3 record (${bytes(smallRecordJson)} bytes) stay ONE plain code (the payload itself, version ≤ 20); a 10-signer record (${bytes(recordJson)} bytes) gets 2 parts`,
+    JSON.stringify(splitMultisigQrParts(approvalPayloadQ)) === JSON.stringify([approvalPayloadQ]) && JSON.stringify(splitMultisigQrParts(smallRecordJson)) === JSON.stringify([smallRecordJson]) &&
+      QRCode.create(approvalPayloadQ, { errorCorrectionLevel: 'L' }).version <= 20 && QRCode.create(smallRecordJson, { errorCorrectionLevel: 'L' }).version <= 20 && splitMultisigQrParts(recordJson).length === 2);
+  const wide = JSON.stringify({ type: MULTISIG_REQUEST_PAYLOAD, note: 'é😀'.repeat(400) });
+  const wideParts = splitMultisigQrParts(wide);
+  check('multi-byte text is cut between characters, never inside one, and every part still fits',
+    wideParts !== null && wideParts.length > 1 && wideParts.every((p) => bytes(p) <= 858 && !/[\uD800-\uDBFF]$/.test(p) && !/^SW-MS:\d+\/\d+:[\uDC00-\uDFFF]/.test(p)) &&
+      wideParts.map((p) => p.replace(/^SW-MS:\d+\/\d+:/, '')).join('') === wide);
+  check('nothing to show, or more than 20 parts: no QR code (null)', splitMultisigQrParts('') === null && splitMultisigQrParts('x'.repeat(20 * 846 + 1)) === null && splitMultisigQrParts('x'.repeat(20 * 846)).length === 20);
+
+  // --- Rendered and scanned: every part decodes (jsqr) and the joined text is what the pasted text gives.
+  const decoded = bigParts.map((p) => qrRoundTrip(p));
+  check('each rendered part decodes back to itself through the independent jsqr decoder', decoded.every((d, i) => d.decoded === bigParts[i]), decoded.map((d) => d.version).join(','));
+  let scan = null;
+  let result = null;
+  for (const d of [decoded[2], decoded[0], decoded[0], decoded[1]]) {
+    result = acceptMultisigQrScan(scan, d.decoded);
+    if (result.kind === 'partial') scan = result.scan;
+  }
+  check('scanned in any order, with a part read twice: complete, and the joined text equals the payload', result.kind === 'complete' && result.text === bigPayload);
+  const viaScan = parseMultisigRequestPayload(result.text);
+  const viaPaste = parseMultisigRequestPayload(bigPayload);
+  check('the scanned text goes through the SAME parser as pasted text (identical result)', JSON.stringify(viaScan, (_k, v) => (typeof v === 'bigint' ? v.toString() : v instanceof Uint8Array ? toHex(v) : v)) ===
+    JSON.stringify(viaPaste, (_k, v) => (typeof v === 'bigint' ? v.toString() : v instanceof Uint8Array ? toHex(v) : v)));
+  const p1 = acceptMultisigQrScan(null, bigParts[0]);
+  check('progress after the first part: 1 of 3, exact line',
+    p1.kind === 'partial' && p1.received === 1 && p1.total === 3 && !p1.repeated &&
+      multisigQrProgressLine(1, 3) === '1 of 3 parts read. Show the next part on the other phone (Next part) and scan it; 2 parts are still missing.' &&
+      multisigQrProgressLine(2, 3, true) === 'That part was already read. 2 of 3 parts read. Show the next part on the other phone (Next part) and scan it; 1 part is still missing.');
+  const again = acceptMultisigQrScan(p1.scan, bigParts[0]);
+  check('the same part twice: accepted as a repeat, nothing changes', again.kind === 'partial' && again.repeated && again.received === 1);
+  check('a whole code scanned while parts are being read is refused (no silent switch)', throwsWith(() => acceptMultisigQrScan(p1.scan, approvalPayloadQ), '1 of 3 parts read so far'));
+  check('a part of a code with another total is refused', throwsWith(() => acceptMultisigQrScan(p1.scan, reqParts[1]), 'code in 2 parts, but the code being read has 3'));
+  const conflicting = `SW-MS:1/3:${bigParts[0].slice(10, -1)}x`;
+  check('a part number already read with different contents is refused', throwsWith(() => acceptMultisigQrScan(p1.scan, conflicting), 'Part 1 was already read with different contents'));
+  check('damaged parts are refused: part 0, part above the total, total 1, total 21, empty chunk',
+    ['SW-MS:0/2:abc', 'SW-MS:3/2:abc', 'SW-MS:1/1:abc', 'SW-MS:1/21:abc', 'SW-MS:1/2:', 'SW-MS:1/2abc'].every((t) => throwsWith(() => acceptMultisigQrScan(null, t), 'damaged')));
+  check('a whole code is complete at once (unchanged); an empty code is refused',
+    acceptMultisigQrScan(null, ` ${approvalPayloadQ} `).text === approvalPayloadQ && throwsWith(() => acceptMultisigQrScan(null, '   '), 'empty'));
+  // Parts of two different codes that share a total: the join is refused by the parser.
+  const os = memoryStore();
+  const oRecord = await createMultisigRecord({ chain: SEPOLIA, config: CONFIG_2_OF_3, localSigner: S0.address }, os);
+  const otherOp = await prepareMultisigRequest({ record: oRecord, calls: [{ to: RECIPIENT, value: 2n * 10n ** 14n, data: new Uint8Array(0) }], node: multisigNode({ nonce: 1n }), nativeSymbol: 'test ETH' }, os);
+  const otherParts = splitMultisigQrParts(encodeMultisigRequestPayload(oRecord, otherOp));
+  const mixed = acceptMultisigQrScan(acceptMultisigQrScan(null, reqParts[0]).scan, otherParts[1]);
+  check('parts of two requests joined (same total) are refused by the strict parser, never reviewed',
+    otherParts.length === 2 && mixed.kind === 'complete' && mixed.text !== requestPayload && throwsWith(() => parseMultisigRequestPayload(mixed.text)));
+  const tamperedPart = reqParts[0].replace(/"callData":"0x([0-9a-f])/, (_m, d) => `"callData":"0x${d === 'a' ? 'b' : 'a'}`);
+  const tamperedJoin = acceptMultisigQrScan(acceptMultisigQrScan(null, tamperedPart).scan, reqParts[1]);
+  check('a part with one changed hex digit joins into text the engine refuses (hash re-derivation)', tamperedPart !== reqParts[0] && throwsWith(() => parseMultisigRequestPayload(tamperedJoin.text), 'does not match'));
+  const partSentence = 'This is part 1 of 2 of a multi-part QR code, not the whole text. Read every part with the scan button on this screen, or paste the whole text the other phone shared.';
+  check('one part pasted (or read by another scanner) is refused with a plain sentence by the request, approval and record readers',
+    throwsWith(() => parseMultisigRequestPayload(reqParts[0]), partSentence) && throwsWith(() => addMultisigApproval(qRecord, qOp, reqParts[0]), partSentence) &&
+      throwsWith(() => parseMultisigAccountImport(` ${reqParts[0]}`), partSentence));
+  check('copy: the paged note and the part caption (exact)',
+    multisigQrPagedNote(2) === 'This is too much for one reliable QR code, so it is shown as 2 codes. The other phone scans them one at a time with its scan button; tap Next part after each one is read. The order does not matter.' &&
+      multisigQrPartCaption('Multisig signing request', 1, 2) === 'Multisig signing request — part 2 of 2' && multisigQrPartCaption('Multisig approval', 0, 1) === 'Multisig approval' &&
+      MULTISIG_QR_TOO_LARGE === 'Too large for QR codes — use Share, Copy or Save as file instead.');
+  check('copy: the scan buttons and their sentences (exact)',
+    MULTISIG_SCAN_REQUEST_TITLE === 'Scan a request' && MULTISIG_SCAN_APPROVAL_TITLE === 'Scan an approval' && MULTISIG_SCAN_RECORD_TITLE === 'Scan a record' &&
+      MULTISIG_SCAN_NEXT_TITLE === 'Scan the next part' && MULTISIG_SCAN_START_OVER_TITLE === 'Start over' &&
+      MULTISIG_SCAN_REQUEST_NOTE === 'A scanned request is checked exactly like pasted text: the wallet recomputes the account address, the call data and the request id from what it read, and you still see every call in full before anything is signed.' &&
+      MULTISIG_SCAN_APPROVAL_NOTE === 'A scanned approval is checked exactly like pasted text: its signature must recover to a signer of this multisig for this exact request (these calls at this nonce), or it is refused.' &&
+      MULTISIG_SCAN_RECORD_NOTE === 'A scanned record is checked exactly like pasted text: the account address must follow from its signer set, and one of your recovery-phrase accounts must be a signer.' &&
+      MULTISIG_SCAN_REQUEST_RATIONALE === 'Point the camera at the signing request QR code on the submitter’s phone. A request in several parts is read one part at a time.' &&
+      MULTISIG_SCAN_APPROVAL_RATIONALE === 'Point the camera at the approval QR code on the co-signer’s phone, or at a signature QR code from another wallet.' &&
+      MULTISIG_SCAN_RECORD_RATIONALE === 'Point the camera at the multisig record QR code on the other signer’s phone. A record in several parts is read one part at a time.');
+
+  // --- The screen wires scanning, paste and files to the same readers (source pins).
+  const phaseOf = (name, next) => screen.slice(screen.indexOf(`if (phase === '${name}'`), screen.indexOf(next));
+  const cosignInput = phaseOf('cosign-input', "if (phase === 'cosign-review'");
+  const collect = phaseOf('collect', "if ((phase === 'confirm'");
+  const importPhase = phaseOf('import', "if (phase === 'import-review'");
+  const scanWired = (src, title, done) => new RegExp(`<MultisigScanButton\\s+title=\\{${title}\\}[\\s\\S]{0,200}onComplete=\\{${done.replace(/[()]/g, '\\$&')}\\}`).test(src);
+  check('co-signer side: "Scan a request" hands the scanned text to onReviewCosign — the paste button\'s reader — and the file button to reviewCosign',
+    scanWired(cosignInput, 'MULTISIG_SCAN_REQUEST_TITLE', 'onReviewCosign') && cosignInput.includes('onPress={() => onReviewCosign(cosignInput)}') && cosignInput.includes('onPress={() => void pickInto(reviewCosign)}') &&
+      /const reviewCosign = \(text: string\) => \{\s*setError\(null\);\s*setCosignReview\(\s*reviewMultisigRequestAsCosigner\(text,/.test(screen));
+  check('submitting side: "Scan an approval" hands the scanned text to onAddApproval — the paste button\'s reader — and the file button to addApproval',
+    scanWired(collect, 'MULTISIG_SCAN_APPROVAL_TITLE', '(text) => void onAddApproval(text)') && collect.includes('onPress={() => void onAddApproval(approvalInput)}') &&
+      /const onPickApprovalFile = \(\) => pickInto\(addApproval\);/.test(screen) && /const \{ op: next \} = addMultisigApproval\(selected, op, text\);/.test(screen));
+  check('adding a multisig: "Scan a record" hands the text to onReviewImport, the paste reader; the file button to reviewImport',
+    scanWired(importPhase, 'MULTISIG_SCAN_RECORD_TITLE', 'onReviewImport') && importPhase.includes('onPress={() => onReviewImport(importInput)}') && importPhase.includes('onPress={() => void pickInto(reviewImport)}'));
+  check('the request, approval and record QR codes are shown through MultisigPayloadQr (parts when needed); no single oversized code is left',
+    screen.includes('<MultisigPayloadQr payload={payload} caption="Multisig signing request" />') && screen.includes('<MultisigPayloadQr payload={cosignPayload} caption="Multisig approval" />') &&
+      screen.includes('<MultisigPayloadQr payload={exported.json} caption="Multisig account record" />') && !/multisigQrValue\(/.test(screen) && !/exported\.qrValue/.test(screen));
+  check('views: the scan button uses the existing QrScanner and passes the joined text on unchanged; the paged QR uses PayloadQr with Previous / Next part',
+    views.includes("import { QrScanner } from '../components/QrScanner';") && /const result = acceptMultisigQrScan\(scan, data\);/.test(views) && /onComplete\(result\.text\);/.test(views) &&
+      /const parts = splitMultisigQrParts\(payload\);/.test(views) && /<PayloadQr value=\{parts\[index\]!\} caption=\{multisigQrPartCaption\(caption, index, total\)\} \/>/.test(views) &&
+      views.includes('title="Previous part"') && views.includes('title="Next part"') && /onError\(e instanceof Error \? e\.message : String\(e\)\)/.test(views));
+  check('scan errors are shown as sentences in the phase\'s error box', /const scanError = \(message: string\) => setError\(asSentence\(message\)\);/.test(screen) && (screen.match(/onError=\{scanError\}/g) ?? []).length === 3);
+
+  // --- Files: save writes the payload unchanged; open reads it back byte for byte; damage is refused plainly.
+  const dir = join(MUTANT_DIR, 'files');
+  mkdirSync(dir, { recursive: true });
+  const roundTripFile = (kind, payload, account) => {
+    const name = multisigExportFileName(kind, SEPOLIA, account, new Date('2026-10-11T08:00:00Z'));
+    const path = join(dir, name);
+    writeFileSync(path, multisigFileContents(payload), 'utf8');
+    const raw = readFileSync(path);
+    const text = raw.toString('utf8');
+    return { name, raw, text, opened: multisigFileText(text, { name, size: raw.length, mimeType: MULTISIG_FILE_MIME_TYPE }) };
+  };
+  const reqFile = roundTripFile('request', requestPayload, qRecord.address);
+  const apprFile = roundTripFile('approval', approvalPayloadQ, qRecord.address);
+  const recFile = roundTripFile('account', recordJson, bigRecord.address);
+  check('saved request / approval / record files round-trip through the open path byte for byte (real files on disk)',
+    [[reqFile, requestPayload], [apprFile, approvalPayloadQ], [recFile, recordJson]].every(([f, p]) => Buffer.compare(f.raw, Buffer.from(p, 'utf8')) === 0 && f.opened === p) &&
+      MULTISIG_FILE_NAME_PATTERN.test(reqFile.name) && reqFile.name === `shiba-multisig-request_sepolia_${qRecord.address.slice(0, 6)}-${qRecord.address.slice(-4)}_2026-10-11.json`);
+  check('…and the opened texts give the same results as the pasted ones (request id, approval added, record facts)',
+    parseMultisigRequestPayload(reqFile.opened).request.callDataAndNonceHash === qOp.requestId &&
+      JSON.stringify(addMultisigApproval(qRecord, qOp, apprFile.opened).op) === JSON.stringify(addMultisigApproval(qRecord, qOp, approvalPayloadQ).op) &&
+      parseMultisigAccountImport(recFile.opened).facts.account === bigRecord.address);
+  check('only a multisig payload can be saved as a file (share text, other JSON refused)',
+    throwsWith(() => multisigFileContents(multisigRequestShareText(qRecord, qOp)), 'Only a multisig record') && throwsWith(() => multisigFileContents('{"type":"other"}'), 'Only a multisig record') &&
+      MULTISIG_FILE_MIME_TYPE === 'application/json' && MULTISIG_FILE_UTI === 'public.json');
+  const refusalFor = (fn) => {
+    try {
+      fn();
+      return null;
+    } catch (e) {
+      return multisigFileRefusal(e);
+    }
+  };
+  const info = { name: reqFile.name, size: null, mimeType: MULTISIG_FILE_MIME_TYPE };
+  const truncated = refusalFor(() => parseMultisigRequestPayload(multisigFileText(requestPayload.slice(0, -40), info)));
+  const flipped = refusalFor(() => parseMultisigRequestPayload(multisigFileText(requestPayload.replace(/"callData":"0x([0-9a-f])/, (_m, d) => `"callData":"0x${d === 'a' ? 'b' : 'a'}`), info)));
+  const garbage = refusalFor(() => parseMultisigRequestPayload(multisigFileText('\u0000\u0001PK\u0003\u0004 not json', info)));
+  const wrongKind = refusalFor(() => addMultisigApproval(qRecord, qOp, multisigFileText(requestPayload, info)));
+  const recordAsRequest = refusalFor(() => parseMultisigRequestPayload(multisigFileText(recordJson, info)));
+  check('damaged files are refused with a plain sentence (exact): truncated, one hex digit changed, not JSON, a request where an approval goes, a record where a request goes',
+    truncated === 'This file was not accepted. This file must contain exactly one JSON object and nothing else.' &&
+      flipped === 'This file was not accepted. Request callDataAndNonceHash does not match its sender, callData and nonce.' &&
+      garbage === 'This file was not accepted. This file must contain exactly one JSON object and nothing else.' &&
+      wrongKind === 'This file was not accepted. This is a signing request, not an approval.' &&
+      recordAsRequest === 'This file was not accepted. This is an account record, not a signing request.',
+    [truncated, flipped, garbage, wrongKind, recordAsRequest].join(' | '));
+  check('screen + views: the save button writes through the shared shareTextFile with multisigFileContents; opening refuses through multisigFileRefusal',
+    /shareTextFile\(\{\s*directory: MULTISIG_EXPORT_DIRECTORY,\s*fileName: \(\) => fileName,\s*contents: \(\) => multisigFileContents\(text\),/.test(views) && !/shareJsonFile|new File\(/.test(views) &&
+      /await accept\(multisigFileText\(picked\.text, picked\)\);\s*\} catch \(e\) \{\s*setError\(multisigFileRefusal\(e\)\);/.test(screen));
+  const mFile = await importMutant('src/wallet/multisig.ts', "  return payload;\n}\n\n/**\n * The sentence for a picked file", "  return JSON.stringify(JSON.parse(payload), null, 2);\n}\n\n/**\n * The sentence for a picked file");
+  const mPath = join(dir, 'mutant.json');
+  writeFileSync(mPath, mFile.multisigFileContents(requestPayload), 'utf8');
+  check('M-file caught: a save that re-formats the JSON is not byte for byte', Buffer.compare(readFileSync(mPath), Buffer.from(requestPayload, 'utf8')) !== 0);
+
+  // --- Mutants of the scan accumulator and the pasted-part refusal.
+  const mTotal = await importMutant('src/wallet/multisig.ts', '  if (scan && received > 0 && scan.total !== total) {', '  if (false) {');
+  check('M-total caught: without the total check a part of another code is not refused', !throwsWith(() => mTotal.acceptMultisigQrScan(p1.scan, reqParts[1]), 'code in 2 parts'));
+  const mConflict = await importMutant('src/wallet/multisig.ts', '  if (previous !== null && previous !== undefined && previous !== chunk) {', '  if (false) {');
+  check('M-conflict caught: without the contents check a contradicting part replaces the first silently', !throwsWith(() => mConflict.acceptMultisigQrScan(p1.scan, conflicting), 'already read'));
+  const mPaste = await importMutant('src/wallet/multisig.ts', 'export function parseMultisigRequestPayload(text: string): ParsedMultisigRequest {\n  refusePastedQrPart(text);', 'export function parseMultisigRequestPayload(text: string): ParsedMultisigRequest {');
+  check('M-paste caught: without the refusal a pasted part gets a confusing message', !throwsWith(() => mPaste.parseMultisigRequestPayload(reqParts[0]), partSentence));
+  const mPrefix = await importMutant('src/wallet/multisig.ts', '  const budget = MULTISIG_QR_PART_MAX_BYTES - utf8Length(', '  const budget = MULTISIG_QR_PART_MAX_BYTES + 0 * utf8Length(');
+  const tight = 'y'.repeat(858 * 3);
+  check('M-prefix caught: a budget that ignores the "SW-MS:n/t:" prefix gives parts above 858 bytes (or none)',
+    splitMultisigQrParts(tight).every((p) => bytes(p) <= 858) && !(mPrefix.splitMultisigQrParts(tight) ?? ['x'.repeat(900)]).every((p) => bytes(p) <= 858));
+
+  // --- Other networks: the verified facts decide what is offered.
+  const profile = (caip2) => EVM_PROFILES.find((p) => p.caip2 === caip2);
+  const keys = Object.keys(MULTISIG_VERIFIED_NETWORKS).sort();
+  const facts = Object.values(MULTISIG_VERIFIED_NETWORKS);
+  check('verified networks: exactly Ethereum Sepolia, Base Sepolia, Arbitrum Sepolia and OP Sepolia, read 2026-10-11, every hash 32 bytes',
+    JSON.stringify(keys) === JSON.stringify(['eip155:11155111', 'eip155:11155420', 'eip155:421614', 'eip155:84532']) &&
+      facts.every((f) => f.verifiedOn === '2026-10-11' && [f.weightedValidatorCodeHash, f.factoryCodeHash, f.metaFactoryCodeHash, f.implementationCodeHash].every((h) => /^0x[0-9a-f]{64}$/.test(h))));
+  check('the factory and meta factory code is identical on all four; the validator and implementation differ per network (cached EIP-712 chain id)',
+    new Set(facts.map((f) => f.factoryCodeHash)).size === 1 && new Set(facts.map((f) => f.metaFactoryCodeHash)).size === 1 &&
+      new Set(facts.map((f) => f.weightedValidatorCodeHash)).size === 4 && new Set(facts.map((f) => f.implementationCodeHash)).size === 4 &&
+      MULTISIG_VERIFIED_NETWORKS['eip155:11155111'].weightedValidatorCodeHash === '0x9aa45e0f0d7428e7476f943c50e4f1020a3e22f4851e97eb8b2865f9b4a44606');
+  check('Create is offered at once on the four verified networks; not on mainnet or Hoodi (weighted module not verified there) until a check passes',
+    ['eip155:11155111', 'eip155:84532', 'eip155:421614', 'eip155:11155420'].every((c) => multisigNetworkVerified(profile(c))) &&
+      !multisigNetworkVerified(profile('eip155:1')) && !multisigNetworkVerified(profile('eip155:560048')));
+  check('…a table entry alone is not enough without a verified Kernel profile', !multisigNetworkVerified({ caip2: 'eip155:84532', kernelV33Verified: false }));
+  const mVerified = await importMutant('src/config/evm-chain.ts',
+    "  const statically = profile.kernelV33Verified && Object.prototype.hasOwnProperty.call(MULTISIG_VERIFIED_NETWORKS, profile.caip2);",
+    '  const statically = profile.kernelV33Verified;');
+  check('M-networks caught: the old rule (any verified Kernel profile) offers mainnet without the weighted module verified', mVerified.multisigNetworkVerified(profile('eip155:1')) === true);
+  check('screen: the unverified-network box and "Check this network" appear only where readiness allows a multisig',
+    screen.includes('{!networkVerified && readiness === null ? (') && screen.includes('title="Check this network"'));
+  check('file names know every network the multisig is verified on', ['eip155:84532', 'eip155:421614', 'eip155:11155420'].every((c) => /^shiba-multisig-request_(base-sepolia|arbitrum-sepolia|op-sepolia)_/.test(multisigExportFileName('request', c, qRecord.address))));
+
+  // --- Approvals from another wallet: eth_signTypedData_v4 over the share text's typed data.
+  const EXT = new ethers.Wallet(ethers.id('shiba-wallet check-multisig external co-signer (test key, never funded)'));
+  const extConfig = { signers: [{ address: S0.address, weight: 1 }, { address: EXT.address, weight: 1 }, { address: S6.address, weight: 1 }], threshold: 2, delaySeconds: 0 };
+  const xs = memoryStore();
+  const xRecord = await createMultisigRecord({ chain: SEPOLIA, config: extConfig, localSigner: S0.address }, xs);
+  const xOp = await prepareMultisigRequest({ record: xRecord, calls: [{ to: RECIPIENT, value: 10n ** 14n, data: new Uint8Array(0) }], node: multisigNode({ onChainSet: extConfig }), nativeSymbol: 'test ETH' }, xs);
+  const share = multisigRequestShareText(xRecord, xOp);
+  const marker = 'send back the signature:\n';
+  const typed = JSON.parse(share.slice(share.indexOf(marker) + marker.length));
+  check('the share text ends with exactly multisigApprovalTypedData(request) as JSON', share.endsWith(marker + JSON.stringify(multisigApprovalTypedData(xOp.request))));
+  check('that typed data hashes (ethers TypedDataEncoder) to the request\'s approval digest',
+    typed.primaryType === 'Approve' && ethers.TypedDataEncoder.hash(typed.domain, { Approve: typed.types.Approve }, typed.message) === xOp.request.approvalDigest);
+  const extSig = await EXT.signTypedData(typed.domain, { Approve: typed.types.Approve }, typed.message);
+  const extAccount = evmAccountFromPrivateKey(ethers.getBytes(EXT.privateKey), 'test');
+  const engineApproval = approveMultisigRequest(xOp.request, extAccount);
+  const viaBare = addMultisigApproval(xRecord, xOp, extSig);
+  const viaEngine = addMultisigApproval(xRecord, xOp, JSON.stringify(engineApproval));
+  check('a bare 65-byte signature from another wallet (ethers signTypedData, v 27/28) is accepted exactly as the engine\'s JSON is (same stored approval and id)',
+    viaBare.added.address === EXT.address && JSON.stringify(viaBare.op) === JSON.stringify(viaEngine.op) && engineApproval.signature === extSig.toLowerCase() &&
+      viaBare.op.approvals[0].signature === extSig.toLowerCase(), `${extSig} vs ${engineApproval.signature}`);
+  const v = parseInt(extSig.slice(-2), 16);
+  const recId = extSig.slice(0, -2) + (v - 27).toString(16).padStart(2, '0');
+  check('…as 0/1 recovery id (some hardware signers), quoted, or in upper case: the same stored approval (v rewritten to 27/28)',
+    [recId, `"${extSig}"`, '0x' + extSig.slice(2).toUpperCase(), `  "${recId}"  `].every((t) => JSON.stringify(addMultisigApproval(xRecord, xOp, t).op) === JSON.stringify(viaBare.op)) &&
+      externalApprovalSignature(recId) === extSig.toLowerCase() && externalApprovalSignature('{"signer":"0x"}') === null);
+  check('…a v of 29 is refused with a plain sentence', throwsWith(() => addMultisigApproval(xRecord, xOp, extSig.slice(0, -2) + '1d'), 'The signature’s last byte (v) is 29; an Ethereum signature ends in 27 or 28 (or 0 or 1). It cannot be used as an approval.'));
+  const otherTyped = multisigApprovalTypedData(buildMultisigSigningRequest({ chainId: 11155111n, account: xRecord.address, calls: [{ to: RECIPIENT, value: 10n ** 14n, data: new Uint8Array(0) }], nonce: 5n }));
+  const staleSig = await EXT.signTypedData(otherTyped.domain, { Approve: otherTyped.types.Approve }, otherTyped.message);
+  const stranger = new ethers.Wallet(ethers.id('shiba-wallet check-multisig stranger (test key)'));
+  const strangerSig = await stranger.signTypedData(typed.domain, { Approve: typed.types.Approve }, typed.message);
+  check('…a signature over another request\'s typed data, or from a wallet outside the signer set, is refused',
+    throwsWith(() => addMultisigApproval(xRecord, xOp, staleSig), 'is not a signer of this multisig.') &&
+      throwsWith(() => addMultisigApproval(xRecord, xOp, strangerSig), `${stranger.address} is not a signer of this multisig.`));
+  const mV = await importMutant('src/wallet/multisig.ts', '  if (v === 0 || v === 1) return hex.slice(0, 130) + (v + 27).toString(16);\n', '');
+  check('M-v caught: without the v rewrite a 0/1 signature is refused', throwsWith(() => mV.addMultisigApproval(xRecord, xOp, recId)));
+  // The external approval in the submitted operation, recovered by ethers.
+  await saveMultisigOperation(xRecord.id, viaBare.op, xs);
+  const bundler = fakeBundler();
+  const node = multisigNode({ onChainSet: extConfig });
+  const xr = (await listMultisigRecords(SEPOLIA, xs))[0];
+  const { bundle, quote } = await prepareMultisigSubmission({ record: xr, op: viaBare.op, nodeUrl: NODE_URL, bundlerUrl: BUNDLER_URL, transportFor: transportsFor(node, bundler) });
+  await submitMultisigWithGate({ record: xr, op: viaBare.op, bundle, quote, requireAuth: authOk([]), signWith: signWithAs(S0, []), store: xs });
+  const sent = bundler.lastOp;
+  const cdnh = ethers.keccak256(abi.encode(['address', 'bytes', 'uint256'], [sent.sender, sent.callData, BigInt(sent.nonce)]));
+  const digest = ethers.TypedDataEncoder.hash(typed.domain, { Approve: typed.types.Approve }, { callDataAndNonceHash: cdnh });
+  check('submitted: the operation\'s first 65 bytes are the other wallet\'s signature (v 27/28), recovered by ethers over the FINAL op\'s Approve digest',
+    sent.signature.slice(2, 132) === extSig.slice(2).toLowerCase() && ethers.recoverAddress(digest, '0x' + sent.signature.slice(2, 132)) === EXT.address &&
+      ethers.verifyMessage(getUserOpHash(fromRpcOp(sent), ENTRYPOINT_V07, 11155111n), '0x' + sent.signature.slice(132)) === S0.address);
 }
 
 // ===========================================================================
