@@ -125,6 +125,8 @@ import {
   feeBudgetCapNote,
   feeBudgetPricingNote,
   feeBudgetSuggestionHint,
+  feeBudgetTooSmallBlock,
+  feeBudgetTooSmallWarning,
   fitFeeBudgetToInstall,
   type SubscriptionFeeSource,
   markSubscriptionKeyExported,
@@ -1015,20 +1017,23 @@ export function SessionsScreen({ navigation }: Props) {
         setSubInstallKeepBack(fit.keptBack);
         if (fit.kind === 'cannot-fit') {
           key.privateKey.fill(0);
+          const word = mode === 'recurring' ? 'payment' : 'pull';
           setFormError(
-            fit.spare !== null && fit.uncapped !== null
-              ? feeBudgetCapNote(
-                  fit.spare,
-                  fit.uncapped,
-                  symbol,
-                  fit.keptBack,
-                  tokenNoteContext(
-                    choice,
-                    { balance: fit.attempt.quote.senderBalance, deposit: fit.attempt.quote.deposit ?? null },
-                    subscriptionInstallFeeCeiling(fit.attempt.quote),
-                  ),
-                )
-              : 'The fee budget could not be suggested: the network fee is not known yet. Enter a budget by hand.',
+            fit.reason === 'too-small' && fit.fittedBudget !== null && fit.minViable !== null
+              ? feeBudgetTooSmallBlock({ fittedBudget: fit.fittedBudget, minViable: fit.minViable, nativeSymbol: symbol, word })
+              : fit.spare !== null && fit.uncapped !== null
+                ? feeBudgetCapNote(
+                    fit.spare,
+                    fit.uncapped,
+                    symbol,
+                    fit.keptBack,
+                    tokenNoteContext(
+                      choice,
+                      { balance: fit.attempt.quote.senderBalance, deposit: fit.attempt.quote.deposit ?? null },
+                      subscriptionInstallFeeCeiling(fit.attempt.quote),
+                    ),
+                  )
+                : 'The fee budget could not be suggested: the network fee is not known yet. Enter a budget by hand.',
           );
           setPhase('sub-form');
           return;
@@ -1337,9 +1342,11 @@ export function SessionsScreen({ navigation }: Props) {
         if (fit.kind === 'cannot-fit') {
           key.privateKey.fill(0);
           setFormError(
-            fit.spare !== null && fit.uncapped !== null
-              ? dcaFeeBudgetCapNote(fit.spare, fit.uncapped, symbol, fit.keptBack)
-              : 'The fee budget could not be suggested: the network fee is not known yet. Enter a budget by hand.',
+            fit.reason === 'too-small' && fit.fittedBudget !== null && fit.minViable !== null
+              ? feeBudgetTooSmallBlock({ fittedBudget: fit.fittedBudget, minViable: fit.minViable, nativeSymbol: symbol, word: 'swap' })
+              : fit.spare !== null && fit.uncapped !== null
+                ? dcaFeeBudgetCapNote(fit.spare, fit.uncapped, symbol, fit.keptBack)
+                : 'The fee budget could not be suggested: the network fee is not known yet. Enter a budget by hand.',
           );
           setPhase('sub-form');
           return;
@@ -2246,6 +2253,16 @@ export function SessionsScreen({ navigation }: Props) {
         ) : null}
         {funding.shortfall ? <WarningBox>{funding.shortfall}</WarningBox> : null}
         {funding.block ? <WarningBox>{funding.block}</WarningBox> : null}
+        {(() => {
+          const tooSmall = feeBudgetTooSmallWarning({
+            feeBudgetWei: sub.feeBudgetWei,
+            edited: subPendingView.feePricing.edited,
+            maxFeePerGas: subPendingView.feePricing.maxFeePerGas,
+            nativeSymbol: symbol,
+            word: recurring ? 'payment' : 'pull',
+          });
+          return tooSmall ? <WarningBox>{tooSmall}</WarningBox> : null;
+        })()}
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           {feeBudgetPricingNote({
             budgetWei: sub.feeBudgetWei,

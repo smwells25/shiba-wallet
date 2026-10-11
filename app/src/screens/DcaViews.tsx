@@ -13,6 +13,7 @@ import {
   SUBSCRIPTION_REQUOTE_FEE_TOLERANCE_PERCENT,
   cardShowsBatchingWarning,
   customPeriodSeconds,
+  feeBudgetTooSmallWarning,
   permissionIdAtStartNote,
   subscriptionMinPeriodSeconds,
   subscriptionPeriodPresets,
@@ -38,6 +39,7 @@ import {
   DCA_PAY_PROMPT_NOTE,
   DCA_SPENDING_NOTE,
   DCA_START_NOTE,
+  DCA_SWAP_GAS_ALLOWANCE,
   DCA_WHILE_OPEN_NOTE,
   dcaFeeBudgetHint,
   dcaFeeBudgetPricingNote,
@@ -370,6 +372,17 @@ export function DcaReviewView(props: {
       ) : null}
       {funding.shortfall ? <WarningBox>{funding.shortfall}</WarningBox> : null}
       {funding.block ? <WarningBox>{funding.block}</WarningBox> : null}
+      {(() => {
+        const tooSmall = feeBudgetTooSmallWarning({
+          feeBudgetWei: terms.feeBudgetWei,
+          edited: props.feePricing.edited,
+          maxFeePerGas: props.feePricing.maxFeePerGas,
+          gasAllowance: DCA_SWAP_GAS_ALLOWANCE,
+          nativeSymbol: symbol,
+          word: 'swap',
+        });
+        return tooSmall ? <WarningBox>{tooSmall}</WarningBox> : null;
+      })()}
       <Text style={[styles.hint, { color: theme.textMuted }]}>
         {dcaFeeBudgetPricingNote({
           budgetWei: terms.feeBudgetWei,
