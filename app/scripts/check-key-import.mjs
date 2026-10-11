@@ -1064,7 +1064,7 @@ console.log('check-key-import: honesty and input hygiene in the screens (source 
     accountsBackupHint(true) === 'Every account except the imported ones comes from your one recovery phrase. Imported accounts are NOT backed up by the phrase: keep their private keys yourself.' &&
       accountsBackupHint(false) === 'Every account comes from your one recovery phrase — backing up the phrase backs up all of them.');
   check('Settings → Accounts and the switcher both use it; the old opening sentence is gone from Settings',
-    /\{accountsBackupHint\(importedCount > 0\)\}/.test(acc) && /\{accountsBackupHint\(anyImported\)\}/.test(src('components/AccountSwitcher.tsx')) &&
+    /\{accountsBackupHint\(importedCount > 0\)\}/.test(acc) && /\{accountsBackupHint\(anyImported, \{ watchOnly: anyWatched, multisig: anyMultisig \}\)\}/.test(src('components/AccountSwitcher.tsx')) &&
       !/Every account comes from your one recovery phrase, so the phrase backs/.test(acc) && !/Imported accounts are the exception/.test(acc));
   const settings = src('screens/SettingsScreen.tsx');
   check('Backup section names the imported accounts the phrase does NOT back up', /It does NOT back up your imported accounts/.test(settings));

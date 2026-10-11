@@ -458,5 +458,33 @@ console.log('check-home: the guardian-recovery footer only where Kernel v3.3 is 
     shown === 'Ethereum, Ethereum Sepolia, Base Sepolia, Arbitrum Sepolia, OP Sepolia' && hidden === 'Hoodi', `${shown} | ${hidden}`);
 }
 
+// Phase 18 item 3 emulator finding 6: the staking token rows were titled by
+// the token NAME ("Liquid staked Ether 2.0", cut off) and the badges cut the
+// symbol to four characters ("stET", "wstE").
+console.log('Home token rows: symbol as the title, the name below, the whole symbol in the badge:');
+{
+  const { tokenRowSubtitle, knownStakingTokensForChain, knownTokensForChain } = await import('../src/wallet/tokens.ts');
+  const steth = knownStakingTokensForChain('eip155:11155111').find((t) => t.symbol === 'stETH');
+  check('subtitle: the name and ERC-20 when the name differs from the symbol (exact)',
+    tokenRowSubtitle(steth) === 'Liquid staked Ether 2.0 · ERC-20' && tokenRowSubtitle({ symbol: 'USDC', name: 'USD Coin' }) === 'USD Coin · ERC-20');
+  check('subtitle: just "ERC-20" when the name is the symbol again (Sepolia USDC and EURC) or empty',
+    knownTokensForChain('eip155:11155111').every((t) => tokenRowSubtitle(t) === 'ERC-20') && tokenRowSubtitle({ symbol: 'X', name: '' }) === 'ERC-20');
+  const home = source('../src/screens/HomeScreen.tsx');
+  const row = home.slice(home.indexOf('function TokenRow('), home.indexOf('function TokenRow(') + 2200);
+  const rowProblems = (src) => [
+    /<Text style=\{\[styles\.tokenName, \{ color: theme\.text \}\]\} numberOfLines=\{1\}>\s*\{token\.symbol\}\s*<\/Text>/.test(src) || 'the title is the symbol',
+    /<Text style=\{\[styles\.tokenKind, \{ color: theme\.textMuted \}\]\} numberOfLines=\{1\}>\s*\{tokenRowSubtitle\(token\)\}/.test(src) || 'the name on the second line',
+    /<Text style=\{\[styles\.tokenBadgeText, \{ color: theme\.textMuted \}\]\} numberOfLines=\{1\}>\s*\{token\.symbol\}\s*<\/Text>/.test(src) || 'the whole symbol in the badge',
+    !src.includes('token.symbol.slice(0, 4)') || 'no four-character cut',
+    !/\{token\.name\}/.test(src) || 'the name is not the title',
+  ].filter((x) => x !== true);
+  check('TokenRow: symbol title, name subtitle, the whole symbol in the badge (source)', rowProblems(row).length === 0, rowProblems(row).join('; '));
+  check('…mutant: the old four-character badge is caught', rowProblems(row.replace(/\{token\.symbol\}(\s*<\/Text>\s*<\/View>\s*<View style=\{styles\.cardBody\}>)/, '{token.symbol.slice(0, 4)}$1')).length > 0);
+  check('…mutant: the old name title is caught', rowProblems(row.replace(/(styles\.tokenName[^>]*>\s*)\{token\.symbol\}/, '$1{token.name}')).length > 0);
+  const badge = home.slice(home.indexOf('  tokenBadge: {'), home.indexOf('  tokenBadgeText: {'));
+  check('the badge is a pill from 36 to 72 px wide with side padding, 36 px high (fits "wstETH")',
+    /minWidth: 36,/.test(badge) && /maxWidth: 72,/.test(badge) && /height: 36,/.test(badge) && /paddingHorizontal: 5,/.test(badge) && !/\bwidth: 36,/.test(badge.replace('minWidth', 'min')));
+}
+
 console.log(`\ncheck-home: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

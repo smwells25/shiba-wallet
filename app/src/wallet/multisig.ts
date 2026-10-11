@@ -1166,9 +1166,14 @@ export interface MultisigChainState {
  * (weightedStorage(account) and the guardian(signer, account) list, the
  * reads of engine readGuardianState) equal the record's.
  */
+/** True when an eth_getCode answer shows contract code (the deployment rule of readMultisigOnChain). */
+function hasAccountCode(code: unknown): boolean {
+  return typeof code === 'string' && code !== '0x' && code !== '0x0';
+}
+
 export async function readMultisigOnChain(node: JsonRpcTransport, record: MultisigRecord): Promise<MultisigChainState> {
   const code = (await node('eth_getCode', [record.address, 'latest'])) as string;
-  const deployed = typeof code === 'string' && code !== '0x' && code !== '0x0';
+  const deployed = hasAccountCode(code);
   if (!deployed) return { deployed: false, problems: [] };
   const problems: string[] = [];
   const root = await ethCallBytes(node, record.address, encodeFunctionCall('rootValidator()', []));
@@ -1272,6 +1277,37 @@ export async function refreshMultisigDeployment(
   const stored = (await getMultisigRecord(record.id, store).catch(() => null)) ?? record;
   const fresh = state.deployed && !stored.deployed.deployed ? { ...stored, deployed: { ...stored.deployed, deployed: true } } : stored;
   return { record: fresh, state, note: multisigChainNote(fresh, state) };
+}
+
+/**
+ * The list view's deployment refresh (phase 18 item 3 emulator finding 3:
+ * the list said "not deployed yet" for a deployed multisig until its detail
+ * was opened). For every record stored as NOT deployed, one eth_getCode
+ * read; a record whose address now holds code is stored as deployed
+ * (markMultisigDeployed, as refreshMultisigDeployment does for the detail
+ * view). Records already stored as deployed are not read, because nothing
+ * ever marks a record undeployed again. A failed read leaves that record's
+ * stored facts as they are; this never throws. Returns the ids newly
+ * stored as deployed (the screen re-reads the list when there are any).
+ */
+export async function refreshMultisigListDeployments(
+  node: JsonRpcTransport,
+  records: readonly MultisigRecord[],
+  store: KeyValueStore = AsyncStorage,
+): Promise<number[]> {
+  const changed: number[] = [];
+  for (const record of records) {
+    if (record.deployed.deployed) continue;
+    try {
+      const code = await node('eth_getCode', [record.address, 'latest']);
+      if (!hasAccountCode(code)) continue;
+      await markMultisigDeployed(record.id, {}, store);
+      changed.push(record.id);
+    } catch {
+      // Unreadable now: the stored facts stay; the detail view reads again.
+    }
+  }
+  return changed;
 }
 
 /** The multisig's EntryPoint deposit row label (aa.ts AA_DEPOSIT_ROW_LABEL, as on every smart-account confirm). */

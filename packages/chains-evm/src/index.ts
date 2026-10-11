@@ -627,6 +627,7 @@ export {
   USER_OPERATION_EVENT_TOPIC,
   USER_OPERATION_REVERT_REASON_TOPIC,
   V4_ACTIONS,
+  ACTIVITY_CALL_VERBS,
   activitySentence,
   activityTokenContracts,
   decodeActivity,

@@ -49,7 +49,7 @@ import { stakingOfferFor } from '../wallet/staking';
 import { evmProfileByCaip2, multisigNetworkVerified } from '../config/evm-chain';
 import { usePrices } from '../wallet/usePrices';
 import { tokenSendFeeSentence } from '../wallet/token-gas';
-import { rebasingTokenNote } from '../wallet/tokens';
+import { rebasingTokenNote, tokenRowSubtitle } from '../wallet/tokens';
 import {
   formatFiat,
   nativePriceAssetId,
@@ -183,16 +183,21 @@ function TokenRow({
   const theme = useTheme();
   return (
     <View style={[styles.tokenRow, { backgroundColor: theme.card, borderColor: theme.border }]}>
+      {/* The whole symbol, on one line: the badge grows from a 36-px circle
+          into a pill (up to 72 px) instead of cutting "wstETH" to "wstE";
+          a symbol longer than that ends in an ellipsis. */}
       <View style={[styles.tokenBadge, { borderColor: theme.border }]}>
-        <Text style={[styles.tokenBadgeText, { color: theme.textMuted }]}>
-          {token.symbol.slice(0, 4)}
+        <Text style={[styles.tokenBadgeText, { color: theme.textMuted }]} numberOfLines={1}>
+          {token.symbol}
         </Text>
       </View>
       <View style={styles.cardBody}>
         <Text style={[styles.tokenName, { color: theme.text }]} numberOfLines={1}>
-          {token.name}
+          {token.symbol}
         </Text>
-        <Text style={[styles.tokenKind, { color: theme.textMuted }]}>ERC-20</Text>
+        <Text style={[styles.tokenKind, { color: theme.textMuted }]} numberOfLines={1}>
+          {tokenRowSubtitle(token)}
+        </Text>
         {onSend ? (
           <Pressable
             accessibilityRole="button"
@@ -960,8 +965,10 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   tokenBadge: {
-    width: 36,
+    minWidth: 36,
+    maxWidth: 72,
     height: 36,
+    paddingHorizontal: 5,
     borderRadius: 18,
     borderWidth: 1,
     alignItems: 'center',

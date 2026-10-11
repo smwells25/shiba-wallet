@@ -71,6 +71,7 @@ import {
   readMultisigFunds,
   recordMultisigOutcome,
   refreshMultisigDeployment,
+  refreshMultisigListDeployments,
   removeMultisigMessage,
   removeMultisigRecord,
   reviewMultisigRequestAsCosigner,
@@ -245,8 +246,23 @@ export function MultisigScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      reload().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
-    }, [reload, setError]),
+      let active = true;
+      reload()
+        .then(async (list) => {
+          // The list's "deployed / not deployed yet" follows the chain, not
+          // only the record (finding 3 of the item 3 emulator pass): one
+          // eth_getCode read per record still stored as not deployed; a
+          // deployment found is stored and the list re-read. A failed read
+          // keeps the stored facts and never blocks the list.
+          if (!node || !active) return;
+          const changed = await refreshMultisigListDeployments(node, list);
+          if (changed.length > 0 && active) await reload();
+        })
+        .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+      return () => {
+        active = false;
+      };
+    }, [reload, setError, node]),
   );
 
   const symbolFor = (assetKey: string) => (assetKey === NATIVE ? nativeSymbol : tokens.find((t) => t.assetId === assetKey)?.symbol ?? '');
@@ -730,17 +746,23 @@ export function MultisigScreen() {
         {op ? (
           <Button title="Continue the operation being approved" onPress={() => setPhase('collect')} />
         ) : null}
-        <Button
-          title="New operation (send)"
-          onPress={() => {
-            setRecipient('');
-            setAmount('');
-            setAsset(NATIVE);
-            setError(null);
-            setPhase('send-form');
-          }}
-          disabled={readiness !== null || selected.localSigner.toLowerCase() !== (phraseSigner ?? '').toLowerCase()}
-        />
+        {/* Only this wallet's signer builds operations: while another
+            account (the multisig itself included) is active the button is
+            not shown at all, next to the sentence saying which account to
+            switch to (item 3 emulator finding 7d). */}
+        {selected.localSigner.toLowerCase() === (phraseSigner ?? '').toLowerCase() ? (
+          <Button
+            title="New operation (send)"
+            onPress={() => {
+              setRecipient('');
+              setAmount('');
+              setAsset(NATIVE);
+              setError(null);
+              setPhase('send-form');
+            }}
+            disabled={readiness !== null}
+          />
+        ) : null}
         <Text style={[styles.sectionTitle, { color: theme.text }]}>Share the account with the co-signers</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           A co-signer adds the same account on their phone from this record (it contains no secrets).

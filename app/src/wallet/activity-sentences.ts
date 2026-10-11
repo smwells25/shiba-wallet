@@ -1,12 +1,14 @@
 import type { FungibleAsset } from '@shiba-wallet/core';
 import {
+  STAKING_SELECTORS,
   activitySentence,
   activityTokenContracts,
   decodeActivity,
   httpTransport,
   predictKernelAddress,
+  shortActivityAddress,
 } from '@shiba-wallet/chains-evm';
-import type { ActivityDescription, AssetChange } from '@shiba-wallet/chains-evm';
+import type { ActivityDescription, ActivitySentenceContext, AssetChange } from '@shiba-wallet/chains-evm';
 // Explicit .ts extensions: scripts/check-activity.mjs loads this module
 // under Node's type stripping, which resolves relative specifiers literally.
 import { withEndpoint } from '../config/networks.ts';
@@ -15,6 +17,10 @@ import { findExactContact, type Contact } from './contacts.ts';
 import { resolveTokenMeta, type TokenMetaMap } from './simulation.ts';
 import type { Erc20Metadata } from './erc20.ts';
 import { smartAccountSaltFor } from './account-ids.ts';
+// A type-only import (erased at run time): risk.ts imports this module, so a
+// value import back would be a require cycle, which Metro warns about. The
+// lookup itself (risk.ts stakingContractAt) is passed in by the screen.
+import type { PinnedStakingContract } from './risk.ts';
 
 /**
  * Human-readable Activity rows (phase 11 item 4): app glue around the
@@ -216,15 +222,141 @@ export interface SentenceRenderOptions {
   contacts: readonly Contact[];
   /** The contacts network id (the active EVM network's CAIP-2 id). */
   networkId: string;
+  /**
+   * The wallet's own accounts on this network with the names every screen
+   * shows (activityAccountLabels). An address the sentence names that is
+   * not one of the decoded account's own addresses (those read "yourself")
+   * is called by its account name — "Account 1", "Imported 1 (imported
+   * key)", "Multisig 2 (2-of-3)" — instead of a short address. A contact's
+   * name for the same address is still used first.
+   */
+  accountLabels?: readonly AccountLabel[];
+  /**
+   * risk.ts stakingContractAt bound to the active network: the pinned
+   * staking contract at an address, or null. With it, a call to a pinned
+   * staking contract whose selector is one the engine pins
+   * (packages/chains-evm/src/staking.ts STAKING_SELECTORS) is described by
+   * what it does (stakingCallPhrase), and the contract is named by its
+   * label wherever the sentence mentions it (stakingContractLabel). Passed
+   * in rather than imported because risk.ts imports this module.
+   */
+  stakingContractAt?: (address: string) => PinnedStakingContract | null;
+}
+
+/** One of the wallet's own accounts, for the sentences (activityAccountLabels). */
+export interface AccountLabel {
+  address: string;
+  label: string;
+}
+
+/**
+ * The labels of the wallet's own accounts on one network: every account
+ * the wallet holds a key for (recovery-phrase and imported accounts, by
+ * their shown names) and the stored multi-signature accounts of that
+ * network (multisig.ts ownMultisigAddresses, "Multisig 1 (2-of-3)").
+ * Watch-only addresses are not the wallet's own and are not included.
+ * Malformed addresses are skipped; an address listed twice keeps its first
+ * label.
+ */
+export function activityAccountLabels(
+  accounts: readonly { name: string; evmAddress: string | null }[],
+  multisigs: readonly { address: string; label: string }[] = [],
+): AccountLabel[] {
+  const out: AccountLabel[] = [];
+  const seen = new Set<string>();
+  const add = (address: string | null, label: string) => {
+    if (!address || !/^0x[0-9a-fA-F]{40}$/.test(address)) return;
+    const key = address.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ address, label });
+  };
+  for (const a of accounts) add(a.evmAddress, a.name);
+  for (const m of multisigs) add(m.address, m.label);
+  return out;
+}
+
+/** "Lido wstETH contract 0xB823…067b": how a sentence names a pinned staking contract. */
+export function stakingContractLabel(contract: PinnedStakingContract): string {
+  return `${contract.protocol} ${contract.name} contract ${shortActivityAddress(contract.address)}`;
+}
+
+/**
+ * The phrase for a call to a pinned staking contract, or null for the
+ * generic wording ("Called 0x… with …"). Only the selectors the wallet
+ * itself builds (STAKING_SELECTORS, each copied from the protocol's
+ * source in staking.ts) are described, each only on the contract it
+ * belongs to, and only with a value that call can carry (a payable stake
+ * needs a value; every other call none). What the logs show the account
+ * sent or received follows after a colon (added by the engine).
+ *
+ * A Rocket Pool deposit goes to the deposit pool, whose address the
+ * wallet resolves from RocketStorage when it quotes and does not pin, so
+ * it keeps the generic wording.
+ */
+export function stakingCallPhrase(
+  contract: PinnedStakingContract | null,
+  call: { to: string; selector: string | null; value: bigint },
+  format: { native: (amount: bigint) => string; nativeSymbol: string },
+): string | null {
+  if (!contract) return null;
+  const short = shortActivityAddress(contract.address);
+  const selector = call.selector === null ? null : call.selector.toLowerCase();
+  const is = (key: keyof typeof STAKING_SELECTORS) => selector === STAKING_SELECTORS[key].toLowerCase();
+  if (contract.protocol === 'Lido' && contract.name === 'stETH') {
+    if (is('lidoSubmit') && call.value > 0n) return `staked ${format.native(call.value)} with Lido (stETH contract ${short})`;
+    return null;
+  }
+  if (contract.protocol === 'Lido' && contract.name === 'wstETH') {
+    // Lido's wstETH contract stakes ETH sent to it and wraps the stETH in
+    // one step (its receive function; the Staking screen's "Stake → wstETH").
+    if (selector === null) {
+      return call.value > 0n ? `staked ${format.native(call.value)} with Lido and wrapped it into wstETH (wstETH contract ${short})` : null;
+    }
+    if (call.value !== 0n) return null;
+    if (is('wstethWrap')) return `wrapped stETH into wstETH with Lido (wstETH contract ${short})`;
+    if (is('wstethUnwrap')) return `unwrapped wstETH into stETH with Lido (wstETH contract ${short})`;
+    return null;
+  }
+  if (contract.protocol === 'Lido' && contract.name === 'withdrawal queue') {
+    if (call.value !== 0n) return null;
+    if (is('requestWithdrawals') || is('requestWithdrawalsWstETH')) {
+      return `requested a withdrawal from Lido (withdrawal queue contract ${short})`;
+    }
+    if (is('claimWithdrawals') || is('claimWithdrawal')) {
+      return `claimed withdrawn ${format.nativeSymbol} from Lido (withdrawal queue contract ${short})`;
+    }
+    return null;
+  }
+  if (contract.protocol === 'Rocket Pool' && contract.name === 'rETH') {
+    if (call.value === 0n && is('rethBurn')) return `burned rETH for ${format.nativeSymbol} with Rocket Pool (rETH contract ${short})`;
+    return null;
+  }
+  return null;
 }
 
 /** The sentence for one decoded transaction, rendered for the current preferences. */
 export function renderActivitySentence(decoded: DecodedActivity, options: SentenceRenderOptions): string {
+  const pinnedAt = options.stakingContractAt;
+  const labels = options.accountLabels ?? [];
+  const nameFor = (address: string): string | null => {
+    const contact = findExactContact(options.networkId, address, options.contacts)?.name ?? null;
+    if (contact) return contact;
+    const lower = address.toLowerCase();
+    const own = labels.find((l) => l.address.toLowerCase() === lower);
+    if (own) return own.label;
+    const pinned = pinnedAt ? pinnedAt(address) : null;
+    return pinned ? stakingContractLabel(pinned) : null;
+  };
+  const describeCall: ActivitySentenceContext['describeCall'] = pinnedAt
+    ? (call, format) => stakingCallPhrase(pinnedAt(call.to), call, format)
+    : undefined;
   return activitySentence(decoded.description, {
     nativeSymbol: options.nativeSymbol,
     tokens: decoded.tokens,
-    nameFor: (address) => findExactContact(options.networkId, address, options.contacts)?.name ?? null,
+    nameFor,
     maskAmount: (text) => maskAmount(text, options.hidden),
+    ...(describeCall ? { describeCall } : {}),
   });
 }
 
