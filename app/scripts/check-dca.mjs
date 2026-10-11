@@ -69,6 +69,7 @@ import {
   revokeApprovalPrompt,
   revokeConfirmCopy,
   saveDcaLastSwap,
+  saveSessionRecord,
   sendSessionCalls,
   sessionCanBeTested,
   sessionIsScheduled,
@@ -79,7 +80,13 @@ import {
 import {
   DCA_KEY_NEVER_EXPORTED,
   buildSubscriptionKeyExport,
+  customPeriodSeconds,
+  defaultFeeBudgetWei,
+  feeBudgetTooSmallBlock,
+  feeBudgetTooSmallWarning,
+  fitFeeBudgetToInstall,
   markSubscriptionKeyExported,
+  minimumViableFeeBudgetWei,
   readSubscriptionStatus,
   subscriptionHandoverOffer,
   suggestedFeeBudget,
@@ -403,6 +410,23 @@ console.log('check-dca: terms from the form, refusals verbatim');
   const floorRule = g.calls[0].rules.find((r) => r.offset === 160);
   check('the call rules pin the recipient to the account (EQUAL) and the minimum to the floor (GTE)',
     recipientRule?.condition === 'equal' && same('0x' + recipientRule.params[0].slice(26), ACCOUNT) && floorRule?.condition === 'greaterThanOrEqual' && BigInt(floorRule.params[0]) === FLOOR);
+
+  // Custom period (shared with the recurring-payment form): the form offers
+  // whole minutes/hours/days as well as the presets, so a plan can run on a
+  // real cadence, not only the 2-minute test preset. The engine's dcaGrantFor
+  // takes periodSeconds, so a 1-hour custom period builds the grant with
+  // intervalSeconds 3600 and the terms carry it.
+  const oneHour = customPeriodSeconds('1', 3600, true);
+  check('customPeriodSeconds("1", hours) = 3600 (shared with the recurring form)', oneHour.ok && oneHour.seconds === 3600);
+  const { terms: hourlyTerms } = termsAt(NOW, { ...DRAFT, periodSeconds: 3600 });
+  const hourlyGrant = dcaGrantForTerms(hourlyTerms, KEY, NOW);
+  check('a 1-hour custom period builds the grant with periodSeconds 3600 and the RateLimitPolicy interval 3600',
+    hourlyTerms.periodSeconds === 3600 && hourlyTerms.graceSeconds === 3600 && hourlyGrant.rateLimit.intervalSeconds === 3600 && hourlyGrant.validUntil === NOW + 4 * 3600);
+  check('the DCA form offers the preset row and the same custom minutes/hours/days control as the recurring form (source)', (() => {
+    const dv = src('../src/screens/DcaViews.tsx');
+    return /subscriptionPeriodPresets\(props\.testnet\)\.map/.test(dv) && /form\.periodCustom/.test(dv) && /SUBSCRIPTION_PERIOD_UNITS\.map/.test(dv) &&
+      /customPeriodSeconds\(dcaForm\.customCount, dcaForm\.customUnit, evmChain\.testnet\)/.test(src('../src/screens/SessionsScreen.tsx'));
+  })());
 }
 
 // ---------------------------------------------------------------------------
@@ -466,6 +490,38 @@ console.log('check-dca: review, market, funding and fee budget');
     f.canStart && f.block === null && /the swaps \(3 × 0\.00001 test ETH\) and the fee budget can use up to/.test(f.shortfall ?? ''), f.shortfall);
   const blocked = dcaInstallFunding({ ...quote, senderBalance: 1n }, { amountIn: AMOUNT, count: 3, feeBudgetWei: 1n }, 'test ETH');
   check('funding: no Start when the balance and deposit cannot cover the set-up’s worst case', !blocked.canStart && /cannot pay for the set-up/.test(blocked.block ?? '') && blocked.block.includes(ACCOUNT));
+
+  // The 2026-10-11 DCA in-app finding: the keep-back could auto-fit a budget
+  // below ONE swap's worst-case fee (DCA_SWAP_GAS_ALLOWANCE × the signed fee),
+  // so the plan installed but the account refused its first swap on-chain
+  // after the set-up fee was spent. The fit now refuses that (too-small) and
+  // Start is withheld; a too-small TYPED budget is warned about, not blocked.
+  const FEE = 2_310_000_004n;
+  const swapMin = minimumViableFeeBudgetWei(FEE, DCA_SWAP_GAS_ALLOWANCE);
+  check('one swap’s worst-case fee = DCA_SWAP_GAS_ALLOWANCE (1,000,000 gas) × the signed fee',
+    DCA_SWAP_GAS_ALLOWANCE === 1_000_000n && swapMin === DCA_SWAP_GAS_ALLOWANCE * FEE && swapMin === 2_310_000_004_000_000n);
+  const quoteAt = (balance) => ({ amount: 0n, fee: 1_000_000_000_000_000n, total: 1_000_000_000_000_000n, senderBalance: balance, deposit: 10n ** 18n, sponsored: false, sender: ACCOUNT });
+  const tinySwap = await fitFeeBudgetToInstall({
+    payments: 3, maxFeePerGas: FEE, nativeAmountPerPayment: 0n, gasAllowance: DCA_SWAP_GAS_ALLOWANCE,
+    feeBudgetWei: defaultFeeBudgetWei(3, FEE, DCA_SWAP_GAS_ALLOWANCE), attempt: { quote: quoteAt(1_000_000_000_000_000n) }, requote: async () => ({ quote: quoteAt(1_000_000_000_000_000n) }),
+  });
+  check('a swap budget fitted below one swap’s worst-case fee is refused (cannot-fit, too-small)',
+    tinySwap.kind === 'cannot-fit' && tinySwap.reason === 'too-small' && tinySwap.fittedBudget === 1_000_000_000_000_000n && tinySwap.minViable === swapMin);
+  check('the DCA block and typed warning use the word "swap"',
+    feeBudgetTooSmallBlock({ fittedBudget: tinySwap.fittedBudget, minViable: swapMin, nativeSymbol: 'test ETH', word: 'swap' }) ===
+      'This plan cannot run: after the one-time set-up fee, only 0.001 test ETH could be kept back for the swaps, but one swap can cost up to 0.002310000004 test ETH at today’s fee. Add about 0.001310000004 test ETH to the smart account, or set a larger fee budget. Nothing was signed.' &&
+      feeBudgetTooSmallWarning({ feeBudgetWei: 1n, edited: true, maxFeePerGas: FEE, gasAllowance: DCA_SWAP_GAS_ALLOWANCE, nativeSymbol: 'test ETH', word: 'swap' })
+        === 'The fee budget you entered (0.000000000000000001 test ETH) is below one swap’s worst-case network fee (0.002310000004 test ETH) at today’s fee, so your account will probably refuse the first swap and the plan will not run. Set a larger fee budget unless you are sure the fee will be lower.');
+  // Well-funded: unchanged — no regression to the set-up keep-back.
+  const richSwap = await fitFeeBudgetToInstall({
+    payments: 3, maxFeePerGas: FEE, nativeAmountPerPayment: 0n, gasAllowance: DCA_SWAP_GAS_ALLOWANCE,
+    feeBudgetWei: defaultFeeBudgetWei(3, FEE, DCA_SWAP_GAS_ALLOWANCE), attempt: { quote: quoteAt(10n ** 18n) }, requote: async () => { throw new Error('should not re-quote a well-funded plan'); },
+  });
+  check('a well-funded recurring-swap plan is unchanged (fitted, nothing lowered, budget ≥ one swap)',
+    richSwap.kind === 'fitted' && richSwap.lowered === null && richSwap.feeBudgetWei === defaultFeeBudgetWei(3, FEE, DCA_SWAP_GAS_ALLOWANCE) && richSwap.feeBudgetWei >= swapMin);
+  check('the DCA review withholds Start on a too-small auto-fit and renders the swap too-small warning (source)',
+    /fit\.reason === 'too-small'[\s\S]{0,180}feeBudgetTooSmallBlock\(\{ fittedBudget: fit\.fittedBudget, minViable: fit\.minViable, nativeSymbol: symbol, word: 'swap' \}\)/.test(src('../src/screens/SessionsScreen.tsx')) &&
+      /feeBudgetTooSmallWarning\(\{[\s\S]{0,260}word: 'swap'/.test(src('../src/screens/DcaViews.tsx')));
   check('final dates line', dcaFinalDatesLine(terms) === 'Final terms: the first swap is due from 2026-10-11 12:00 UTC, then one more every 5 minutes (3 in total); nothing after 2026-10-11 12:20 UTC. Each swap must return at least 0.445076 USDC.', dcaFinalDatesLine(terms));
   check('notes: while-open, prompts, audit', /Nothing is swapped in the background/.test(DCA_WHILE_OPEN_NOTE) && /"Use the session key"/.test(DCA_PAY_PROMPT_NOTE) && /recovery phrase is\s+never opened/.test(DCA_PAY_PROMPT_NOTE) &&
     /no swap is ever sent in the background/.test(DCA_CARD_NOTE) && /not verified against published source/.test(DCA_AUDIT_NOTE));
@@ -564,6 +620,19 @@ console.log('check-dca: due detection, banner, reminders');
   check('the foreground check includes recurring swaps (one read, due)', found.checked === 1 && reads === 1 && found.due.length === 1 && found.due[0].record.source === 'dca');
   const states = await readRecurringDueStates({ chain: M, owner: OWNER_0, store, now: NOW + 1, readStatus: (r) => readSubscriptionStatus(node, r, NOW + 1) });
   check('the reminders’ status read includes recurring swaps', states.states.length === 1 && states.states[0].due?.kind === 'due');
+
+  // The 2026-10-11 DCA pass: an ENDED (or revoked) plan still showed "1
+  // recurring swap is due". The due computation must never call an ended or
+  // revoked plan due, and the foreground check must drop it.
+  const END = parseSessionKeyGrant(record.grant).validUntil;
+  const endedStatus = await readSubscriptionStatus(node, record, END + 1000);
+  const ended = dcaDueState(record, endedStatus, END + 1000);
+  check('an ended plan (now past the grant end) with swaps still unsent is completed (ended), never due', ended.kind === 'completed' && ended.reason === 'ended');
+  const endedFound = await findDueRecurringPayments({ chain: M, owner: OWNER_0, store, now: END + 1000, readStatus: (r) => readSubscriptionStatus(node, r, END + 1000) });
+  check('the foreground check counts no due swap once the plan has ended (candidate still installed, but not due)', endedFound.checked === 1 && endedFound.due.length === 0);
+  const revoked = dcaDueState({ ...record, localStatus: 'revoked' }, endedStatus, NOW + 1);
+  check('a revoked recurring swap is never due (not-ready locally, and dropped from the foreground candidates)',
+    revoked.kind === 'not-ready' && (await findDueRecurringPayments({ chain: M, owner: OWNER_0, store: await (async () => { const s = memoryStore(); await saveSessionRecord({ ...record, localStatus: 'revoked' }, s); return s; })(), now: NOW + 1, readStatus: async () => status })).due.length === 0);
   check('headline: payments unchanged, swaps named',
     scheduledDueHeadline(1, 0) === '1 recurring payment is due. Each is sent only after you confirm it on the Sessions screen.' &&
       scheduledDueHeadline(0, 1) === '1 recurring swap is due. Each is sent only after you confirm it on the Sessions screen.' &&

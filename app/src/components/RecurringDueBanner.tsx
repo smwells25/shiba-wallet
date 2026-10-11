@@ -69,6 +69,14 @@ function nowSeconds(): number {
 }
 
 /**
+ * How often the banner re-checks WHILE it is showing, so an ended or revoked
+ * plan drops off without a background/foreground cycle (the 2026-10-11 DCA
+ * pass). A judgement: a test period is as short as two minutes, so a minute
+ * clears a stale banner promptly; no re-check runs while no banner is up.
+ */
+export const BANNER_RECHECK_INTERVAL_MS = 60_000;
+
+/**
  * The current time in unix seconds, refreshed every `intervalMs` while
  * `enabled`, right after it becomes enabled, and whenever the app returns to
  * the foreground (timers do not run while the app is in the background).
@@ -128,20 +136,36 @@ export function RecurringDueBanner() {
 
   useOnAppActive(useCallback(() => setGeneration((g) => g + 1), []));
 
+  // Re-check while a banner is showing so a plan that has since EXPIRED or
+  // been REVOKED stops being announced without a background/foreground cycle
+  // (the 2026-10-11 DCA pass: an ended recurring swap still showed "1
+  // recurring swap is due"). The re-check is the same read-only status read
+  // findDueRecurringPayments makes; it runs only while `result` is set (a
+  // banner is up), so an idle wallet polls nothing. It does not change
+  // `checkKey`, so a dismissed banner is not reopened by it.
+  const tick = useClockTick(BANNER_RECHECK_INTERVAL_MS, eligible && result !== null);
+
   useEffect(() => {
     if (!eligible || owner === null) return undefined;
     let cancelled = false;
     findDueRecurringPayments({ chain: evmChain.caip2, owner, readStatus: readStatusNow }).then(
       ({ due }) => {
+        if (cancelled) return;
+        // Nothing due now (the plan ended, was revoked or was sent): clear the
+        // result so the banner hides and the re-check loop above stops.
+        if (due.length === 0) {
+          setResult(null);
+          return;
+        }
         const swaps = due.filter((d) => d.record.source === DCA_SOURCE).length;
-        if (!cancelled) setResult({ key: checkKey, payments: due.length - swaps, swaps });
+        setResult({ key: checkKey, payments: due.length - swaps, swaps });
       },
       () => undefined,
     );
     return () => {
       cancelled = true;
     };
-  }, [eligible, owner, evmChain.caip2, checkKey]);
+  }, [eligible, owner, evmChain.caip2, checkKey, tick]);
 
   const headline = eligible && result && result.key === checkKey ? scheduledDueHeadline(result.payments, result.swaps) : null;
   if (!headline || dismissed === checkKey) return null;

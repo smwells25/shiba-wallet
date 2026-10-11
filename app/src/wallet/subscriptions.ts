@@ -300,6 +300,80 @@ export function defaultFeeBudgetWei(
   return BigInt(payments) * gasAllowance * maxFeePerGas * 2n;
 }
 
+/**
+ * The smallest fee budget under which a grant cannot run even ONE period:
+ * one operation's worst-case fee = `gasAllowance` × the fee each operation is
+ * signed at. GasPolicy charges (preVerificationGas + verificationGasLimit +
+ * callGasLimit) × the signed maxFeePerGas against the budget per operation,
+ * and `gasAllowance` is the wallet's declared value for that gas sum
+ * (SUBSCRIPTION_PULL_GAS_ALLOWANCE, or DCA_SWAP_GAS_ALLOWANCE for a swap).
+ * If the budget left after the install is below this, the account refuses
+ * the very FIRST payment/swap/pull on-chain (AA23 PolicyFailed, GasPolicy,
+ * "the fee budget is used up") although the install fee was already spent —
+ * the finding of the 2026-10-11 DCA in-app pass. Null when the fee is not
+ * known yet (nothing can be compared).
+ */
+export function minimumViableFeeBudgetWei(
+  maxFeePerGas: bigint | null,
+  gasAllowance: bigint = SUBSCRIPTION_PULL_GAS_ALLOWANCE,
+): bigint | null {
+  if (maxFeePerGas === null || maxFeePerGas <= 0n) return null;
+  return gasAllowance * maxFeePerGas;
+}
+
+/**
+ * The block shown (and Start withheld) when the fee budget that could be
+ * kept back after the install is below one period's worst-case fee
+ * (minimumViableFeeBudgetWei): the plan would install but the account would
+ * refuse its very first operation on-chain, after the set-up fee was already
+ * spent. Names what to add. `word` is the operation noun ("swap", "payment",
+ * "pull"); `setUpWord` is how the install is named ("set-up" for a swap,
+ * "install"/"set-up" otherwise).
+ */
+export function feeBudgetTooSmallBlock(p: {
+  fittedBudget: bigint;
+  minViable: bigint;
+  nativeSymbol: string;
+  word: string;
+  setUpWord?: string;
+}): string {
+  const fmt = (wei: bigint) => `${formatUnits(wei, 18, 18)} ${p.nativeSymbol}`;
+  const toAdd = p.minViable > p.fittedBudget ? p.minViable - p.fittedBudget : 0n;
+  const setUp = p.setUpWord ?? 'set-up';
+  return (
+    `This plan cannot run: after the one-time ${setUp} fee, only ${fmt(p.fittedBudget)} could be kept back for the ` +
+    `${p.word}s, but one ${p.word} can cost up to ${fmt(p.minViable)} at today’s fee. Add about ${fmt(toAdd)} to the ` +
+    `smart account, or set a larger fee budget. Nothing was signed.`
+  );
+}
+
+/**
+ * A WARNING for the review when the user TYPED a fee budget below one
+ * period's worst-case fee (minimumViableFeeBudgetWei). A typed budget is the
+ * user's choice and is never lowered, so this only warns and Start stays
+ * offered, but the account will refuse the first operation on-chain, so the
+ * plan would not run. Null when the budget was not typed, the fee is not
+ * known, or the budget covers at least one period.
+ */
+export function feeBudgetTooSmallWarning(p: {
+  feeBudgetWei: bigint;
+  edited: boolean;
+  maxFeePerGas: bigint | null;
+  gasAllowance?: bigint;
+  nativeSymbol: string;
+  word: string;
+}): string | null {
+  if (!p.edited) return null;
+  const minViable = minimumViableFeeBudgetWei(p.maxFeePerGas, p.gasAllowance);
+  if (minViable === null || p.feeBudgetWei >= minViable) return null;
+  const fmt = (wei: bigint) => `${formatUnits(wei, 18, 18)} ${p.nativeSymbol}`;
+  return (
+    `The fee budget you entered (${fmt(p.feeBudgetWei)}) is below one ${p.word}’s worst-case network fee ` +
+    `(${fmt(minViable)}) at today’s fee, so your account will probably refuse the first ${p.word} and the plan ` +
+    `will not run. Set a larger fee budget unless you are sure the fee will be lower.`
+  );
+}
+
 export interface SubscriptionDraft {
   merchant: string;
   /** One of subscriptionTokenChoices(). */
@@ -836,7 +910,26 @@ export type FeeBudgetFit<A extends QuotedAttempt> =
       fits: boolean;
       rounds: number;
     }
-  | { kind: 'cannot-fit'; attempt: A; keptBack: bigint; spare: bigint | null; uncapped: bigint | null };
+  | {
+      kind: 'cannot-fit';
+      /**
+       * 'no-spare': the account cannot spare anything for fees after the
+       * payments and the install (the historical case). 'too-small': after
+       * the install, the most that could be kept back is below one period's
+       * worst-case fee (minimumViableFeeBudgetWei), so the plan would install
+       * but refuse its very first operation on-chain (the 2026-10-11 DCA
+       * in-app finding). Both withhold Start.
+       */
+      reason: 'no-spare' | 'too-small';
+      attempt: A;
+      keptBack: bigint;
+      spare: bigint | null;
+      uncapped: bigint | null;
+      /** One period's worst-case fee; null when the fee is not known (no-spare without a fee). */
+      minViable: bigint | null;
+      /** The budget that could be kept back (too-small only); null for no-spare. */
+      fittedBudget: bigint | null;
+    };
 
 /**
  * Lowers an UNEDITED fee-budget pre-fill until it fits beside the install's
@@ -851,6 +944,13 @@ export type FeeBudgetFit<A extends QuotedAttempt> =
  * worst-case fee), expressed through suggestedFeeBudget's spare amount, so
  * when this returns fits: true the review cannot show the shortfall warning
  * for the app's own suggestion. A typed budget never comes here.
+ *
+ * When the budget that would be kept back is below one period's worst-case
+ * fee (minimumViableFeeBudgetWei) the plan would install but the account
+ * would refuse its very first operation on-chain, so this returns
+ * `cannot-fit` with reason 'too-small' and Start is withheld (the 2026-10-11
+ * DCA in-app finding): an auto-fitted budget is never allowed to install a
+ * plan that cannot run even once.
  */
 export async function fitFeeBudgetToInstall<A extends QuotedAttempt>(args: {
   feeBudgetWei: bigint;
@@ -865,6 +965,7 @@ export async function fitFeeBudgetToInstall<A extends QuotedAttempt>(args: {
   let attempt = args.attempt;
   let budget = args.feeBudgetWei;
   let lowered: { from: bigint; to: bigint } | null = null;
+  const minViable = minimumViableFeeBudgetWei(args.maxFeePerGas, args.gasAllowance);
   for (let rounds = 0; ; rounds += 1) {
     const keptBack = subscriptionInstallKeepBack(withSubscriptionFeeCeiling(attempt.quote));
     const refit = suggestedFeeBudget({
@@ -875,9 +976,16 @@ export async function fitFeeBudgetToInstall<A extends QuotedAttempt>(args: {
       installFeeFromBalance: keptBack,
       ...(args.gasAllowance !== undefined ? { gasAllowance: args.gasAllowance } : {}),
     });
-    if (refit.wei === null) return { kind: 'cannot-fit', attempt, keptBack, spare: refit.spare, uncapped: refit.uncapped };
+    if (refit.wei === null) {
+      return { kind: 'cannot-fit', reason: 'no-spare', attempt, keptBack, spare: refit.spare, uncapped: refit.uncapped, minViable, fittedBudget: null };
+    }
     const fits = refit.wei >= budget;
     if (fits || rounds >= SUBSCRIPTION_FEE_BUDGET_REFIT_ROUNDS) {
+      // `budget` is what the plan would actually keep back for the swaps.
+      // Below one period's worst-case fee it cannot run even once.
+      if (minViable !== null && budget < minViable) {
+        return { kind: 'cannot-fit', reason: 'too-small', attempt, keptBack, spare: refit.spare, uncapped: refit.uncapped, minViable, fittedBudget: budget };
+      }
       return {
         kind: 'fitted',
         attempt,

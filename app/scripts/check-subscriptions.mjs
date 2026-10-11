@@ -120,6 +120,9 @@ import {
   withSubscriptionFeeCeiling,
   SUBSCRIPTION_FEE_BUDGET_REFIT_ROUNDS,
   fitFeeBudgetToInstall,
+  minimumViableFeeBudgetWei,
+  feeBudgetTooSmallBlock,
+  feeBudgetTooSmallWarning,
 } from '../src/wallet/subscriptions.ts';
 import {
   KERNEL_ACCOUNT_0,
@@ -757,10 +760,59 @@ console.log('check-subscriptions: phase 13 item 4 follow-ups (custom period, ins
     const fell = await fitFeeBudgetToInstall({ ...base, feeBudgetWei: uncapped, attempt: { quote: quoteOf(F1) }, requote: async (b) => (falling.push(b), { quote: quoteOf(F1 / 2n) }) });
     check('never raised: a re-quote that came back LOWER keeps the lowered budget (one re-quote)', fell.kind === 'fitted' && fell.fits && falling.length === 1 && fell.feeBudgetWei === falling[0]);
     let unexpected = 0;
-    const roomy = await fitFeeBudgetToInstall({ ...base, feeBudgetWei: 1_000n, attempt: { quote: quoteOf(F1) }, requote: async () => (unexpected += 1, { quote: quoteOf(F1) }) });
-    check('a budget that already fits is left alone (no re-quote, nothing lowered)', unexpected === 0 && roomy.kind === 'fitted' && roomy.fits && roomy.lowered === null && roomy.feeBudgetWei === 1_000n);
+    const roomyBudget = 2_000_000_000_000_000n; // fits beside the install and is above one period's worst-case fee
+    const roomy = await fitFeeBudgetToInstall({ ...base, feeBudgetWei: roomyBudget, attempt: { quote: quoteOf(F1) }, requote: async () => (unexpected += 1, { quote: quoteOf(F1) }) });
+    check('a budget that already fits is left alone (no re-quote, nothing lowered)', unexpected === 0 && roomy.kind === 'fitted' && roomy.fits && roomy.lowered === null && roomy.feeBudgetWei === roomyBudget);
     const broke = await fitFeeBudgetToInstall({ ...base, feeBudgetWei: uncapped, attempt: { quote: { ...quoteOf(F1), senderBalance: 1_000n } }, requote: async () => (unexpected += 1, { quote: quoteOf(F1) }) });
-    check('nothing to spare: cannot-fit with the figures for the cap note (no re-quote)', unexpected === 0 && broke.kind === 'cannot-fit' && broke.spare === 0n && broke.uncapped === uncapped);
+    check('nothing to spare: cannot-fit (no-spare) with the figures for the cap note (no re-quote)',
+      unexpected === 0 && broke.kind === 'cannot-fit' && broke.reason === 'no-spare' && broke.spare === 0n && broke.uncapped === uncapped);
+  }
+
+  // The 2026-10-11 DCA in-app finding: the keep-back can auto-fit a budget
+  // BELOW one period's worst-case fee, so the plan installs but its very first
+  // operation is refused on-chain (AA23 PolicyFailed, GasPolicy). The fit now
+  // refuses that case (cannot-fit, too-small) and Start is withheld. The
+  // minimum-viable rule and its messages are shared by subscriptions,
+  // recurring payments (check-recurring) and recurring swaps (check-dca).
+  {
+    const GAS = SUBSCRIPTION_PULL_GAS_ALLOWANCE;
+    const FEE = 2_310_000_004n;
+    const minViable = minimumViableFeeBudgetWei(FEE, GAS);
+    check('minimumViableFeeBudgetWei = one period at the signed fee (gasAllowance × maxFeePerGas); null without a fee',
+      minViable === GAS * FEE && minViable === 1_155_000_002_000_000n && minimumViableFeeBudgetWei(null, GAS) === null && minimumViableFeeBudgetWei(0n, GAS) === null);
+    const bigDeposit = 10n ** 18n; // the deposit covers the install fee, so nothing is kept back from the balance
+    const quoteAt = (balance) => ({ amount: 0n, fee: 1_000_000_000_000_000n, total: 1_000_000_000_000_000n, senderBalance: balance, deposit: bigDeposit, sponsored: false, sender: ACCOUNT });
+    const low = 500_000_000_000_000n; // 0.0005 test ETH spare, below minViable (0.001155000002)
+    const tiny = await fitFeeBudgetToInstall({
+      payments: 3, maxFeePerGas: FEE, nativeAmountPerPayment: 0n, feeBudgetWei: defaultFeeBudgetWei(3, FEE),
+      attempt: { quote: quoteAt(low) }, requote: async () => ({ quote: quoteAt(low) }),
+    });
+    check('an auto-fitted budget below one period\'s worst-case fee is REFUSED (cannot-fit, too-small) rather than installed',
+      tiny.kind === 'cannot-fit' && tiny.reason === 'too-small' && tiny.fittedBudget === low && tiny.minViable === minViable);
+    check('feeBudgetTooSmallBlock names what could be kept back, one period’s cost and what to add',
+      feeBudgetTooSmallBlock({ fittedBudget: tiny.fittedBudget, minViable: tiny.minViable, nativeSymbol: 'test ETH', word: 'payment' }) ===
+        'This plan cannot run: after the one-time set-up fee, only 0.0005 test ETH could be kept back for the payments, but one payment can cost up to 0.001155000002 test ETH at today’s fee. Add about 0.000655000002 test ETH to the smart account, or set a larger fee budget. Nothing was signed.');
+    // Well-funded: unchanged — no regression to the existing keep-back.
+    let reqs = 0;
+    const rich = await fitFeeBudgetToInstall({
+      payments: 3, maxFeePerGas: FEE, nativeAmountPerPayment: 0n, feeBudgetWei: defaultFeeBudgetWei(3, FEE),
+      attempt: { quote: quoteAt(10n ** 18n) }, requote: async () => (reqs += 1, { quote: quoteAt(10n ** 18n) }),
+    });
+    check('a well-funded plan is unchanged: fitted, nothing lowered, budget well above one period (no regression)',
+      reqs === 0 && rich.kind === 'fitted' && rich.lowered === null && rich.feeBudgetWei === defaultFeeBudgetWei(3, FEE) && rich.feeBudgetWei >= minViable);
+    // A TYPED budget is never lowered: it is warned about, not blocked.
+    check('feeBudgetTooSmallWarning fires only for a TYPED budget below one period; null otherwise',
+      feeBudgetTooSmallWarning({ feeBudgetWei: 1n, edited: true, maxFeePerGas: FEE, nativeSymbol: 'test ETH', word: 'payment' }) !== null &&
+        feeBudgetTooSmallWarning({ feeBudgetWei: 1n, edited: false, maxFeePerGas: FEE, nativeSymbol: 'test ETH', word: 'payment' }) === null &&
+        feeBudgetTooSmallWarning({ feeBudgetWei: minViable, edited: true, maxFeePerGas: FEE, nativeSymbol: 'test ETH', word: 'payment' }) === null &&
+        feeBudgetTooSmallWarning({ feeBudgetWei: 1n, edited: true, maxFeePerGas: null, nativeSymbol: 'test ETH', word: 'payment' }) === null);
+    check('the typed warning names the entered budget, one period’s cost and the consequence',
+      feeBudgetTooSmallWarning({ feeBudgetWei: 1n, edited: true, maxFeePerGas: FEE, nativeSymbol: 'test ETH', word: 'payment' }) ===
+        'The fee budget you entered (0.000000000000000001 test ETH) is below one payment’s worst-case network fee (0.001155000002 test ETH) at today’s fee, so your account will probably refuse the first payment and the plan will not run. Set a larger fee budget unless you are sure the fee will be lower.');
+    check('the subscription/recurring review withholds Start on a too-small auto-fit and warns on a too-small typed budget (source)',
+      /fit\.reason === 'too-small'[\s\S]{0,200}feeBudgetTooSmallBlock\(\{ fittedBudget: fit\.fittedBudget, minViable: fit\.minViable, nativeSymbol: symbol, word \}\)/.test(screenSrc) &&
+        screenSrc.includes('const word = mode === \'recurring\' ? \'payment\' : \'pull\';') &&
+        /feeBudgetTooSmallWarning\(\{[\s\S]{0,320}word: recurring \? 'payment' : 'pull'/.test(screenSrc));
   }
 
   // 3. Expired before the hand-over: no hand-over, only Revoke / Forget.

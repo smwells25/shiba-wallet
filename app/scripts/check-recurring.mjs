@@ -78,9 +78,15 @@ import {
 import { NO_ANSWER_SENTENCE, isEndpointFailure, runWithEndpointFailover } from '../src/config/endpoint-probe.ts';
 import {
   RECURRING_KEY_NEVER_EXPORTED,
+  SUBSCRIPTION_PULL_GAS_ALLOWANCE,
   buildSubscription,
   buildSubscriptionKeyExport,
+  defaultFeeBudgetWei,
+  feeBudgetTooSmallBlock,
+  feeBudgetTooSmallWarning,
+  fitFeeBudgetToInstall,
   markSubscriptionKeyExported,
+  minimumViableFeeBudgetWei,
   subscriptionGrantFor,
   subscriptionHandoverOffer,
   readSubscriptionStatus,
@@ -565,6 +571,38 @@ console.log('check-recurring: due detection (RateLimitPolicy semantics)');
 }
 
 // ---------------------------------------------------------------------------
+console.log('check-recurring: the fee-budget keep-back cannot install an unusable plan (DCA in-app finding)');
+// ---------------------------------------------------------------------------
+{
+  // Recurring payments use the shared keep-back at SUBSCRIPTION_PULL_GAS_ALLOWANCE
+  // (500,000 gas per payment). A budget auto-fitted below one payment's
+  // worst-case fee would install a plan whose very first payment the account
+  // refuses on-chain (GasPolicy); the fit now refuses that (too-small) and the
+  // word is "payment".
+  const FEE = 2_310_000_004n;
+  const minViable = minimumViableFeeBudgetWei(FEE);
+  check('one payment’s worst-case fee = 500,000 gas × the signed fee',
+    minViable === SUBSCRIPTION_PULL_GAS_ALLOWANCE * FEE && minViable === 1_155_000_002_000_000n);
+  const quoteAt = (balance) => ({ amount: 0n, fee: 1_000_000_000_000_000n, total: 1_000_000_000_000_000n, senderBalance: balance, deposit: 10n ** 18n, sponsored: false, sender: ACCOUNT });
+  const tiny = await fitFeeBudgetToInstall({
+    payments: 3, maxFeePerGas: FEE, nativeAmountPerPayment: 0n, feeBudgetWei: defaultFeeBudgetWei(3, FEE),
+    attempt: { quote: quoteAt(500_000_000_000_000n) }, requote: async () => ({ quote: quoteAt(500_000_000_000_000n) }),
+  });
+  check('an auto-fitted recurring budget below one payment’s fee is refused (cannot-fit, too-small)',
+    tiny.kind === 'cannot-fit' && tiny.reason === 'too-small' && tiny.fittedBudget === 500_000_000_000_000n && tiny.minViable === minViable);
+  check('the recurring block and the typed warning use the word "payment"',
+    feeBudgetTooSmallBlock({ fittedBudget: tiny.fittedBudget, minViable, nativeSymbol: 'test ETH', word: 'payment' }).includes('for the payments, but one payment can cost up to') &&
+      feeBudgetTooSmallWarning({ feeBudgetWei: 1n, edited: true, maxFeePerGas: FEE, nativeSymbol: 'test ETH', word: 'payment' }).includes('one payment’s worst-case network fee'));
+  // A well-funded recurring plan is unchanged (no regression).
+  const rich = await fitFeeBudgetToInstall({
+    payments: 3, maxFeePerGas: FEE, nativeAmountPerPayment: 0n, feeBudgetWei: defaultFeeBudgetWei(3, FEE),
+    attempt: { quote: quoteAt(10n ** 18n) }, requote: async () => { throw new Error('should not re-quote a well-funded plan'); },
+  });
+  check('a well-funded recurring plan is unchanged (fitted, nothing lowered)',
+    rich.kind === 'fitted' && rich.lowered === null && rich.feeBudgetWei === defaultFeeBudgetWei(3, FEE));
+}
+
+// ---------------------------------------------------------------------------
 console.log('check-recurring: the foreground check never reads a key or sends');
 // ---------------------------------------------------------------------------
 {
@@ -606,6 +644,19 @@ console.log('check-recurring: the foreground check never reads a key or sends');
   check('App.tsx mounts the banner inside the navigation container, after the navigator',
     /<\/Stack\.Navigator>[\s\S]{0,300}<RecurringDueBanner \/>[\s\S]{0,40}<\/NavigationContainer>/.test(app));
   check('the banner re-checks when the app returns to the foreground (source)', /AppState\.addEventListener\('change'/.test(banner) && /next === 'active'/.test(banner));
+  // The 2026-10-11 DCA pass: an ended or revoked plan still showed "due"
+  // because the banner only re-checked on a background/foreground cycle. It
+  // now re-checks on a clock tick WHILE a banner is up (result !== null), and
+  // clears the result when nothing is due, so an ended/revoked plan drops off.
+  const tickDriven = (b) =>
+    /const tick = useClockTick\(BANNER_RECHECK_INTERVAL_MS, eligible && result !== null\);/.test(b) &&
+    /\}, \[eligible, owner, evmChain\.caip2, checkKey, tick\]\);/.test(b) &&
+    /if \(due\.length === 0\) \{\s*setResult\(null\);/.test(b);
+  check('the banner re-checks on a clock tick while shown and clears a no-longer-due plan (source)', tickDriven(banner));
+  check('MUTANT caught: without the tick in the effect deps the re-check does not run',
+    !tickDriven(banner.replace(', checkKey, tick]);', ', checkKey]);')));
+  check('MUTANT caught: without clearing the result a stale banner never hides',
+    !tickDriven(banner.replace('if (due.length === 0) {\n          setResult(null);\n          return;\n        }', '')));
 }
 
 // ---------------------------------------------------------------------------
