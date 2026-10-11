@@ -5120,3 +5120,78 @@ DEMO step 24 rewritten for a non-built-in custom network.
       +32 against 88 + 50 before; (5) the module count 2,360. End state:
       Home, Ethereum Sepolia, Account 1, light mode, Google IME,
       protection ON; Metro at 5d5aeaf.
+- [x] Merged-history pass findings FIXED (commit 5bc71e5; engine 936 —
+      chains-evm 674, +16 — check-activity 225 (was 188), check-notes 206
+      (204), check-token-history 51 (49); offline runner ALL GREEN in the
+      CTO's isolated worktree on HEAD plus the slice: app 7,739 across 51
+      suites, lint 0/0, tsc clean; 35 hand mutants caught; every old file
+      fails its suite from a scratch copy; the two new fixtures hold no
+      key-like strings (CTO grep); not seen on a device). (1) RAW ANSWER
+      (one read-only alchemy_getAssetTransfers for the staking bundle,
+      the key only inside the script's process, nothing but the JSON
+      printed; now the fixture
+      test/fixtures/indexer-history/sepolia-staking-bundle-sent.json):
+      each ETH movement appears TWICE — an "internal" record (asset
+      "ETH", rawContract.address null, rawContract.value the exact wei:
+      0x02a78d076beb37 = 747,174,110,161,719 to the EntryPoint,
+      0x5af3107a4000 = 1e14 to stETH) and an "erc20" record (uniqueId
+      <hash>:log:18 / :log:21, rawContract.address 0xff…fe, value null,
+      asset "", decimal null, rawContract.value the same wei, equal to
+      the receipt's log data). ENGINE indexer-history.ts
+      reconcileProtocolLogs (per query): an "erc20" record at the
+      EIP-7708 system address (isEip7708TransferLogAddress) is never a
+      token — dropped when a native record of the same hash, from, to
+      and amount exists; converted to a native entry (its log uid, no
+      symbol) when rawContract.value is readable; otherwise dropped;
+      counts in the new optional HistoryPage.omitted
+      ('eip7708-duplicate' / 'eip7708-unreadable'; core/history/types.ts).
+      BEYOND THE BRIEF (accepted): the indexer lists a transaction's
+      natives before its logs, so a page boundary can split them — the
+      cursor gains optional co / ci fields carrying the unmatched
+      movements of the page's oldest block (at most 64; written only when
+      that side's page held protocol logs or received a carry; a
+      malformed carry is refused "Unrecognized history cursor"). Answers
+      without protocol logs yield byte-identical entries and cursors
+      (2,000 random answers old vs new). The app's logs fallback
+      (token-history.ts) needed no change: it queries one tracked
+      contract at a time and the engine's getErc20Transfers already drops
+      0xff…fe — now pinned incl. an endpoint ignoring the address filter
+      and a stored "token" at 0xff…fe. (2) tx 0x8b7463c4…8871e (dev EOA
+      → the Kernel account, 0.003 ETH, gas limit 21,000, status 0x0, no
+      logs; fixture from publicnode + 1rpc): activity-sentences.ts
+      entryWithReceiptStatus marks every row of a decoded status-0
+      transaction failed — an incoming row is titled "Failed — nothing
+      was received" with no amount (spoken "…, no amount, …"), the CSV
+      direction "Received (failed)" / "Received (smart account) (failed)"
+      with an empty amount cell and the asset named; a failed sent row
+      keeps "Sent (failed)" with its attempted amount; an EntryPoint row
+      of a reverted transaction no longer claims a deposit; the engine's
+      activity-decode.ts gains the optional recipientSideFailures setting
+      (the app passes it): when the viewing account did not send —
+      "Failed: an incoming transaction from 0x16DA…aC5C to your smart
+      account (0.003 test ETH) was reverted, so nothing was received"
+      (the own address reads "this account"; the amount omitted at 0) /
+      "Failed: a transaction from <sender> to <recipient> was reverted,
+      so nothing in it happened"; unchanged without the setting and for
+      the account's own failures. (3) ROOT CAUSE READ TODAY: publicnode's
+      Sepolia endpoint balances two backends — in eight batched
+      eth_getTransactionReceipt reads paired with web3_clientVersion, the
+      four answered by reth/v2.7.0 returned a NULL receipt (while still
+      returning the transaction) and the four by Geth/v1.17.7 returned
+      status 0x0; 1rpc served the receipt (one eth_getTransactionByHash
+      there answered HTTP 502). FIX: for a row the history listed as
+      mined, a null transaction or receipt is asked ONCE more on the next
+      healthy built-in default endpoint (findAlternateDefaultUrl — never
+      around a user override; found once per decoder); still null → the
+      row is "unavailable" (unavailableIds()), not failed, cleared by a
+      pull-to-refresh; reverted, malformed and pending answers are never
+      retried; pinned with two fake endpoints (null then served; both
+      null → unavailable then retried after refresh; reverted never
+      retried; malformed, pending, a dead alternate, no alternate, a
+      failing finder, a row not listed; the finder called once; one test
+      through the real config/networks.ts with a probe). THREAT_MODEL 7.4
+      counts updated. UNVERIFIED: the row title, label and export on a
+      device; whether the indexer lists every value transfer as
+      "internal" (if it misses one, the matching log becomes a native
+      row — reasoned); a live page boundary splitting a transaction; how
+      many of the 35 sentence-less rows the retry recovers.
