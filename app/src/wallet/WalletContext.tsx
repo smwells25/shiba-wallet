@@ -56,6 +56,7 @@ import { addAaSentListener } from './aa';
 import { recoveryRecordListener, wipeRecoveryData } from './recovery';
 import { forgetBrowserConnections } from './browser-sites';
 import { wipeTransactionNotes } from './notes';
+import { resetPendingRegistry } from './pending-transactions';
 import {
   addMultisigStoreListener,
   multisigListEntries,
@@ -1110,6 +1111,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     await forgetBrowserConnections(AsyncStorage).catch(() => undefined);
     await wipeTransactionNotes(AsyncStorage).catch(() => undefined);
     await resetMultisigRecords(AsyncStorage).catch(() => undefined);
+    // The pending-transaction registry holds only hashes, nonces and fees
+    // of this wallet's own broadcasts; a wipe forgets them with the rest.
+    await resetPendingRegistry(AsyncStorage).catch(() => undefined);
     await deleteMnemonic();
     // The public account cache (addresses only) goes with the wallet.
     await deletePublicAccounts(ALL_CACHE_INDICES);
