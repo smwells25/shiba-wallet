@@ -6124,3 +6124,114 @@ by the Chairperson is still pending ("a few appear safe to ignore").
       ready); the F-73 code-holder cases are eth_call/trace only; the
       STAKING.md gas explanation is an inference, not a per-opcode trace.
       The in-app Hoodi pass is a later emulator slot.
+- [x] Item 1 — MULTISIG FOR EVERYDAY USE, PROVEN LIVE IN-APP ON BASE
+      SEPOLIA (2026-10-11; Expo Go, Metro worktree at a847c2c, 2,365
+      modules; no repo files edited; 4 prompts, each expected; no dev-EOA
+      spending; every hash status 0x1 on base-sepolia-rpc.publicnode.com
+      and sepolia.base.org; the Base bundler URL built inside the submit
+      wrapper's process, never printed; notes in the scratchpad p19b).
+      THE FIRST LIVE MULTISIG OFF ETHEREUM SEPOLIA. (1) Networks: Base,
+      Arbitrum and OP Sepolia offer Create with no "not verified" box;
+      Hoodi hides the Home link and "Check this network" gives "The Kernel
+      v3.3 deployment did not verify on this network: KernelFactory
+      0x2577…F2E9 has no code on this chain" (no final period — finding);
+      mainnet shows only the readiness card, Create/Add/Approve disabled.
+      (2) Create 2-of-3 with dev 5 (0x69F0…7E8a) and dev 6 (0xCCB4…b107),
+      weights 1, threshold 2 → "Multisig 3 (2-of-3)", CREATE2 index 0,
+      address 0x944caA404e389b18b2fe251e969EdD7A220d0d38 — THE SAME
+      ADDRESS AS THE SEPOLIA MULTISIG (KernelFactory.getAddress(initData,
+      0) returns it on both Base RPCs and Sepolia: the same set gives the
+      same address on every chain); funded 0.0005 from Account 1's EOA
+      (risk card "…one of your own accounts in this wallet: Multisig 3
+      (2-of-3)", fee 21,000 gas + l1Fee 92 wei = the oracle estimate; tx
+      0x863aa6d16c28744a4bfd091d9a601f857516b4f4f93221baa6a9cd9a09e75897,
+      block 47988769). (3) Request: "…shown as 2 codes", "Multisig
+      signing request — part 1 of 2", Previous/Next disabled at the ends;
+      both QR codes decoded "SW-MS:1/2:" / "SW-MS:2/2:" and joined equal
+      the share text (share text 2,622 B, request JSON 1,441 B, parts 731
+      / 730 B). (4) Another wallet signs: the bare signature from the
+      co-signer helper (v 0x1c) → "✓ 0x69F0… (weight 1)", "Co-signer
+      approvals: weight 1 of 1 needed — ready"; a --v01 signature (ending
+      01) accepted the same. (5) SCAN AN APPROVAL — PASS: dev 6's approval
+      PNG read by the emulator camera → "✓ 0xCCB4… (weight 1)" (the AVD's
+      default virtual-scene poster is a bc1 QR that the scanner reads at
+      the origin — gave "No approval found in the text."; the driver set
+      the camera pose with adb emu virtualscene-image + an automation
+      macro, p19b/pose.sh; the SDK poster custom.png was swapped and
+      RESTORED, md5 matches; it only reloads on emulator restart — scene
+      images and pose reset). (6) MIRROR multi-part: part 2 first → "1 of
+      2 parts read… 1 part is still missing.", re-read → "That part was
+      already read.", request A's part 2 → "Part 2 was already read with
+      different contents, so this is another code…", the bc1 poster
+      mid-collection → "This QR code is not part of the code being read…";
+      part 1 then opened the review (Multisig 3, "Base Sepolia (chain id
+      84532)", nonce 1, "You approve as 0x772e…F44F weight 1 of the
+      threshold 2", the full call); the approval QR = the 408 B Copy JSON.
+      (7) Pasted part → "This is part 1 of 2 of a multi-part QR code, not
+      the whole text…" on both fields. (8) FILES — SAVE partial / OPEN
+      FAILS: save names shiba-multisig-request_base-sepolia_0x944c-0d38_2026-10-11.json
+      but the chooser offers only Nearby Share / Drive / Gmail with no
+      accounts (cannot store on this AVD); OPEN ("Add an approval from a
+      file" / "Open a request file") FAILS FOR EVERY FILE with the raw
+      text "Call to function 'FileSystemFile.text' has been rejected. →
+      Caused by: Missing 'READ' permission for accessing the file." —
+      multisigFileRefusal never shows; pickRecordFile (getDocumentAsync
+      copyToCacheDirectory:true then new File(uri).text()) is the shared
+      helper, so GUARDIAN RECOVERY-FILE IMPORT IS LIKELY AFFECTED TOO
+      (untested; may work in a dev build). (9) SUBMIT THROUGH ZERODEV —
+      PASS: op 1 (deployment, nonce 0, dev 5's approval, one prompt
+      "Approve submitting this multisig operation (2 of weight 2)"):
+      confirm "Network fee (worst case, set by you as the submitter)
+      0.0000102675237", "Total (worst case) 0.0001102675237", "This
+      operation also deploys the multisig account (its first operation).";
+      userOp 0x6c5cc54aa3ee81c203e2f5d0421a64a3f0abd9bae4e301ba80a6198b9407fd1e,
+      bundle tx 0xc42698d3a2a10ed6caacc336623a0ebe6284447e2fe92bf3b154ff5179ccc84f,
+      block 47989600; logs RootValidatorUpdated(0x01‖eD89…eEEE), three
+      weighted-validator events (dev 6, Account 1, dev 5), ModuleInstalled(1,
+      eD89…), AccountDeployed (meta factory 0xd703…42d5), Deposited
+      10,267,523,700,000 (= the displayed fee), UserOperationEvent success
+      actualGasCost 3,488,656,000,000 actualGasUsed 491,360; rootValidator()
+      = 0x01‖eD89…eEEE; Account 2 +0.0001; code 61 B; signed vGL 625,634 /
+      cGL 17,955 / pVG 54,882, maxFee 14.7 Mwei / tip 2.1 Mwei (100%
+      headroom); after: "Deployed; its signer set and threshold on-chain
+      match this record." op 2 (helper submitter, this wallet co-signer,
+      nonce 1; prompts "Unlock" after an auto-lock + "Approve this
+      multisig operation as a co-signer"): userOp
+      0x20587ab06eb3c6e3b669318fcd11a25b7e13b4c047346db6e3e41c26652f6670,
+      tx 0x342d52857f4d06b96dac10651a156995d51d50013609d7d358cac45caa41eb67,
+      block 47989869, success, actualGasCost 1,530,248,800,000, paid
+      entirely from the EntryPoint deposit (multisig balance −0.0001),
+      Account 2 +0.0001. Funds (Base Sepolia): Account 1 EOA 0.0081 →
+      0.00760, Kernel 0xD31c unchanged (0.002794 + deposit + 1.4888 USDC),
+      Account 2 +0.0002, Multisig 3 0 → 0.000290 + deposit 0.0000052;
+      deployment cost 0.0000035 ETH (far below the 0.00005 assumed from
+      phase 13 prices). FINDINGS (fix slice dispatched): (1) BUG — file
+      OPEN fails in Expo Go for every file with the raw rejection above
+      (pickRecordFile: getDocumentAsync copyToCacheDirectory:true then new
+      File(uri).text() → "Missing READ permission"), shown through fail(e)
+      not multisigFileRefusal; the guardian recovery import uses the same
+      helper and is likely affected; may work in a dev build; (2) BUG
+      (dev warning) — duplicate React key MultisigScreen.tsx:819 (History
+      keyed by requestId): rebuilding an identical request leaves two
+      records with one id, History then shows the same request id as both
+      "succeeded" and "abandoned"; (3) starting "New operation (send)"
+      while one is collecting silently abandons it and its approvals with
+      no warning; (4) COPY over-approval — when co-signers alone reach the
+      threshold the bar reads "Co-signer approvals: weight 2 of 1 needed —
+      ready" and still "This wallet signs the remaining weight 1 when you
+      submit."; (5) the Hoodi "Check this network" sentence lacks a final
+      period; (6) observations: the multisig confirm has no balance-change
+      preview or risk card; approving as a co-signer is not in this
+      phone's History; errors render below "Add an approval from a file",
+      off-screen with the keyboard open; add-approval needs two taps with
+      the keyboard open (the keyboardShouldPersistTaps default again).
+      EMULATOR NOTE: QR scanning works via adb emu virtualscene-image +
+      an automation macro (p19b/pose.sh, scan.sh); the open scanner reads
+      the bc1 poster at the origin, so set the pose before opening it; the
+      driver opened the system camera once and unchecked its location
+      tagging. END STATE: Home, Ethereum Sepolia, Account 1, light mode,
+      screen protection OFF, IME still ADBKeyboard, Multisig 3 left in the
+      wallet (deployed on Base Sepolia), Metro at a847c2c, pushed test
+      files deleted from /sdcard/Download. UNVERIFIED: file open in a dev
+      build; whether guardian recovery import is actually broken; dark
+      mode; TalkBack; iOS.
