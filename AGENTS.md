@@ -3926,3 +3926,172 @@ emulator passes; 3 — item 3; 4 last. Subagents on Opus.
       "Rebuild after native configuration changes" (`expo prebuild
       --platform android --clean` then run:android, since run:android
       generates android/ only when missing).
+- [x] Items 1 and 2 (engine + Sepolia half) — HOODI AND OP SEPOLIA
+      PROFILES; STAKING WITH LIDO AND ROCKET POOL (one commit, 3c9ecc8,
+      verified as one snapshot in the CTO's isolated worktree: engine 906
+      — chains-evm 644, +29 — app 7,212 across 51 suites, lint 0/0, tsc
+      clean; suites: check-staking 82 new, check-devmode 297,
+      check-readiness 190, check-rpc-fallback 178 (221 live), check-base
+      118, check-custom-networks 183, check-tokens 114; not seen on a
+      device). HOODI (eip155:560048; reads 2026-10-11 agreeing on two
+      RPCs): chains data eip155-560048.json (ETH, 18 decimals, rpc
+      rpc.hoodi.ethpandaops.io; NO EIP-3091 explorer — only "dora");
+      explorer https://hoodi.etherscan.io (the network homepage's
+      blockExplorerUrls and the eth-clients/hoodi README ef899890; the
+      /tx/ path assumed, Cloudflare 403); RPC order
+      ethereum-hoodi-rpc.publicnode.com (simulateV1 with tracing),
+      rpc.hoodi.ethpandaops.io (simulateV1 refused -32601 "method ignored
+      by upstream configuration"), 0xrpc.io/hoodi (simulateV1 works) —
+      all pass chain id, freshness, head−100/−1000, a 9,000-block
+      eth_getLogs and a refused malformed sendRawTransaction; rejected
+      public.1rpc.io/hoodi (timeouts / HTTP 522). NO KERNEL: the factory
+      0x2577…F2E9 and implementation 0xd6CE…5b28 have no code
+      (verifyKernelDeployment: "KernelFactory … has no code on this
+      chain"); the meta factory and ECDSA validator have Sepolia-identical
+      code but the meta factory is unstaked; no permission modules,
+      RecoveryAction or WebAuthnValidator; the weighted validator present
+      (only chain id / domain separator differ); P-256 precompile true;
+      ZeroDev /chain/560048 → HTTP 400 "No API provider supports the
+      requested chainId."; no ENS, no Circle paymaster, no GasPriceOracle;
+      block time 13.37–13.52 s measured (12 s slots with misses);
+      profile: kernelV33Verified false, aaPrefill null, l1DataFee false,
+      l1CostInGas false, swapsOffered false, "test ETH", "Hoodi test
+      mode", risk window 50,400 blocks, NFT path hoodi.etherscan.io/nft/
+      (assumed), recovery label "hoodi", no known tokens (Circle's "Morph
+      Hoodi" is a different chain). OP SEPOLIA (eip155:11155420): chains
+      data eip155-11155420.json; explorer sepolia-optimism.etherscan.io
+      (a real /tx/ page answered 200); RPC order
+      optimism-sepolia-rpc.publicnode.com (PublicNode's page and
+      Optimism's RPC directory), sepolia.optimism.io (Optimism's directory;
+      "rate-limited"; today all head−100 / head−9000 / head−302,400 reads
+      answered), op-sepolia-testnet.api.pocket.network ("No API key
+      required"); rejected optimism-sepolia.drpc.org (free plan refuses
+      the log window) and blockreq (last 1,024 blocks only); OP-stack:
+      GasPriceOracle 0x4200…000F (2,055 bytes, version 1.6.0, Ecotone /
+      Fjord / Isthmus active; getL1Fee 268 wei for a 47-byte probe;
+      getOperatorFee 0) → l1DataFee true; KERNEL PRESENT:
+      verifyKernelDeployment PASSED on two RPCs (implementation 0xd6CE…5b28,
+      EntryPoint v0.7, kernel.advanced.v0.3.3, the meta factory approves
+      the factory and is staked 0.1 ETH / 86,400 s); the factory, meta
+      factory, ECDSA validator, all six permission modules, RecoveryAction,
+      WebAuthnValidator (pinned hash) and Daimo's verifier byte-identical
+      to Sepolia's (the implementation and weighted validator differ in the
+      34 cached chain-id / domain bytes, recomputed); P-256 true; ZeroDev
+      /chain/11155420: eth_chainId 0xaa37dc, v0.7 supported (also v0.6,
+      v0.8 and an unidentified 0x433709…), pimlico_getUserOperationGasPrice
+      served, rundler_maxPriorityFeePerGas not; NO Circle v0.7 paymaster
+      (Circle's page lists Arbitrum and Base Sepolia only; 0x31BE…0b58 has
+      no code there; Circle's v0.8 paymaster 0x3BA9…8966 is listed but
+      reports EntryPoint v0.8, unused) → the USDC fee is not offered; USDC
+      0x5fd84259d66Cd46123540766Be93DFE6D43130D7 (Circle's USDC page;
+      symbol "USDC", name "USDC", 6 decimals live on two RPCs; no EURC);
+      block time exactly 2.000 s; profile: kernelV33Verified true,
+      aaPrefill null (SimpleAccount not checked), l1DataFee true,
+      l1CostInGas false, swapsOffered false, ENS refused, risk window
+      302,400, recovery label "op-sepolia". BOTH: in TEST_NETWORK_CHAINS /
+      isTestNetwork; readiness rows read "Test networks only" everywhere
+      (funds are test funds; on Hoodi the smart-account features are
+      stopped by the DEPLOYMENT checks, not by readiness — no pre-fill,
+      the factory refused on save, the 7702 upgrade not offered, the
+      Multisig link hidden); the profile table drives the readiness intro
+      and hint, the Developer hint and the WalletConnect "test network
+      (…)" sentence, now naming five networks; describeChain "Hoodi (test
+      network)" / "OP Sepolia (test network)"; the custom allow-list keeps
+      both ids but adding either refuses "Chain id 560048 is already built
+      in as Hoodi; choose it in the network list above instead…" and the
+      tick note lists only Holesky, Polygon Amoy, Linea Sepolia and Scroll
+      Sepolia; a custom record stored earlier for either id is SUPERSEDED
+      (CHAIN_IDS_BUILT_IN_SINCE_CUSTOM_NETWORKS): dropped on load without
+      marking damage, the list rewritten once, every per-chain datum kept
+      and now belonging to the built-in profile, a stored choice of
+      "eip155:560048" selecting built-in Hoodi, a one-time note
+      (supersededCustomNetworkNote — the CTO rendered it in Settings)
+      saying the typed RPC and explorer are no longer used and how to keep
+      the RPC as the endpoint override, with a sentence for a record saved
+      as a main network; older built-in ids still count as damage; a
+      stored record for another chain NAMED "Hoodi" / "OP Sepolia" now
+      collides with a built-in name (known edge). The CTO also: rendered
+      the superseded notes, made the Account Abstraction note
+      profile-aware ("…the wallet checked this network and found the
+      Kernel v3.3 factory and implementation have no code there…" on a
+      built-in network without Kernel, the custom wording otherwise),
+      added 'hoodi' / 'op-sepolia' to the multisig file labels, applied
+      the agent's patch to the cross-slice pins (check-aa, check-wc,
+      check-prices, check-7702 now using the built-in Hoodi, check-home's
+      custom fixture moved to Holesky), and left the readiness hint
+      table-driven (it names Hoodi among the test networks although Kernel
+      features are refused there by the deployment checks — acceptable:
+      the hint is about readiness, not deployment). Scripts: kernel-smoke
+      / fund / token-gas-smoke know both chains (OP Sepolia Kernel dry run
+      PASSED through the real EntryPoint; Hoodi and the token-gas dry run
+      on both refused before any request, pinned). Emulator checklist (9
+      steps) in the builder's report. STAKING (features 57/58; readiness
+      row `staking` testnet-only enforced: "Staking hands your ETH to
+      Lido's or Rocket Pool's contracts, whose own audits cover the
+      protocols but not how this wallet builds, previews and sends these
+      calls…", evidence W1 W2 W9 W13): packages/chains-evm/src/staking.ts
+      (exported, append-only in index.ts) with the Lido addresses from
+      lidofinance/docs 140c583d — Sepolia stETH
+      0x3e3FE7dBc6B4C189E7128855dD526361c49b40Af (impl Sourcify exact),
+      wstETH 0xB82381A3fBD3FaFA77B3a7bE693342618240067b (exact), queue
+      0x1583C7b3f4C3B008720E6BcE5726336b0aB25fdd (impl exact; the locator
+      agrees); Hoodi stETH 0x3508A952176b3c15387C97BE809eaffB1982176a,
+      wstETH 0x7E99eE3C66636DE415D2d7C880938F2f40f94De4 (exact), queue
+      0xfe56573178f1bcdf53F01A6E9977670dcBBD9186 (locator agrees; its impl
+      0xD0a60e52…eCD5 is not on Sourcify but byte-identical to the verified
+      Sepolia impl except nine 20-byte address slots) — and Rocket Pool
+      on Hoodi from smartnode 8c1dad70: RocketStorage
+      0x594Fb75D3dc2DFa0150Ad03F99F97817747dd4E1 (getDeployedStatus true),
+      rETH 0x7322c24752f79c05FFD1E2a6FCB97020C1C264F1 (the registry's
+      entry must equal it or the wallet refuses), the deposit pool
+      resolved from storage at every quote (keccak("contract.address" +
+      name), RocketBase.sol 106 at fef41a4f; today 0x425E6f83…3Fd8);
+      selectors pinned against ethers: submit 0xa1903eab, wrap 0xea598cb0,
+      unwrap 0xde0e9a3e, requestWithdrawals 0xd6681042,
+      requestWithdrawalsWstETH 0x19aa6257, claimWithdrawals 0xe3afe0a3,
+      claimWithdrawal 0xf8444436, deposit 0xd0e30db0, burn 0x42966c68;
+      CLAIM FLOW from WithdrawalQueue.sol at lidofinance/core 2da0f48f
+      (v4.0.1, 223–311, Base 418–452): getWithdrawalRequests(owner) →
+      getWithdrawalStatus → keep finalized, unclaimed, owned, ascending →
+      findCheckpointHints(ids, 1, getLastCheckpointIndex()) → hints
+      checked (none 0, none past the last, non-decreasing) →
+      getClaimableEther → claimWithdrawals(ids, hints) paying msg.sender —
+      tested against a read-only Hoodi capture (8 finalized requests,
+      hints 542…1030, last checkpoint 1033; the claim succeeds as an
+      eth_call from the owner and reverts from anyone else). APP
+      staking.ts + StakingScreen/Views (route Staking, the Home link when
+      a protocol is set up; watch-only refused by the gate): availability
+      per chain (Sepolia: Lido's queue isPaused() true → unstake refused
+      live with ResumedExpected() 0x14378398, oracle last report 2 July
+      2025 → "Lido calls its deployment on this network deprecated. Test
+      stETH here does not earn rewards…"), Lido's four risk sentences
+      quoted with source and date, Rocket Pool's two FAQ sentences (it has
+      no risk page — stated), stake → stETH (submit) / → wstETH (a plain
+      transfer), wrap (exact approve then wrap) / unwrap, unstake request
+      (approve + requestWithdrawals, Hoodi), claim, Rocket Pool deposit
+      (min 0.01, fee 0.05%) and rETH burn, all through prepareEvmSend or
+      prepareAaCalls (the smart account refused on Hoodi with
+      HOODI_NO_SMART_ACCOUNT) with the preview ("You receive ≈ 0.001
+      stETH", the simulated 0.000999999999999999 and the rebasing note),
+      the risk card and the eth_call gate. LIVE ON SEPOLIA through the
+      app's own code (dev EOA): tx
+      0xb69f49ec8e3ab8a49ca92d7593d7828720fd37ed3fcf8a09fdfa8e0b266b019b,
+      block 11888829, input 0xa1903eab‖zero word, value 0.001 ETH,
+      Submitted 1e15, stETH minted 999,999,999,999,999 wei (1 wei short,
+      as the math says), shares 963,653,100,270,615, gas 208,421 (exactly
+      the simulated figure); the Hoodi leg skipped (0 Hoodi ETH).
+      FINDINGS: (1) the rETH deposit lock NEVER STARTS in the deployed
+      code — nothing at rocketpool fef41a4f or in the Hoodi deposit pool
+      writes "user.deposit.block"; a simulated deposit then burn in the
+      next block succeeded (corrects STAKING.md 4.6; the wallet still
+      reads the stored block); (2) rETH burn() pays out with transfer()
+      (2,300-gas stipend) — it reverted in simulation for the
+      7702-delegated 0x9858… and succeeded for a plain EOA (inferred; the
+      eth_call gate blocks it); (3) Rocket Pool's docs have no risk page.
+      Mutants caught: the live pause check, the readiness asserts, the
+      Hoodi sentence/refusal, an unlimited approval. FOLLOW-UPS: risk.ts
+      should describe the pinned staking contracts; tokens.ts could list
+      stETH / wstETH / rETH with a rebasing flag; a threat-model row for
+      staking; the Hoodi pass needs Hoodi ETH (INPUT) and covers Lido
+      stake, unstake request, claim after finalisation, a Rocket Pool
+      deposit ≥ 0.01 and burn, and the smart-account refusal.

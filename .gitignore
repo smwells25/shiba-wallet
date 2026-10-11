@@ -5,3 +5,6 @@ coverage/
 *.log
 .dev-wallet/
 scripts/testnet/runs/
+
+# TypeScript incremental build state
+*.tsbuildinfo
