@@ -73,7 +73,9 @@ export function MultisigWeightBar({ progress }: { progress: MultisigWeightProgre
       <View style={[barStyles.track, { backgroundColor: theme.border }]}>
         <View style={[barStyles.fill, { width: `${Math.round(pct * 100)}%`, backgroundColor: theme.accent }]} />
       </View>
-      <Text style={[styles.hint, { color: theme.text }]}>{multisigLocalSignsLine(progress)}</Text>
+      {progress.cosignersAlone ? null : (
+        <Text style={[styles.hint, { color: theme.text }]}>{multisigLocalSignsLine(progress)}</Text>
+      )}
     </View>
   );
 }

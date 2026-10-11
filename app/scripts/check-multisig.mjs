@@ -520,6 +520,15 @@ let record;
   const noModule = fakeKernelNode({ chainIdHex: '0xaa36a7' });
   check('network check names a missing weighted signer module', (await checkMultisigNetwork(noModule, SEPOLIA)).some((p) => p.includes('has no code')));
   check('network check refuses another chain id', (await checkMultisigNetwork(fakeKernelNode({ chainIdHex: '0x1' }), SEPOLIA))[0]?.includes('chain id 1'));
+  // Finding 5: the "Check this network" sentence must end with a full stop.
+  // The engine's verifyKernelDeployment message (e.g. "KernelFactory … has no
+  // code on this chain") carries none, so checkMultisigNetwork adds it.
+  const noFactory = fakeKernelNode({ chainIdHex: '0xaa36a7', codeAt: { [KERNEL_MULTISIG_VALIDATOR.toLowerCase()]: true, [KERNEL_V3_3.factory.toLowerCase()]: false } });
+  const kProblems = await checkMultisigNetwork(noFactory, SEPOLIA);
+  check('the Kernel-deployment-did-not-verify sentence ends with a full stop (finding 5)',
+    kProblems.some((p) => /^The Kernel v3\.3 deployment did not verify on this network: .+\.$/.test(p)), kProblems.join(' | '));
+  check('every network-check problem ends with terminal punctuation',
+    (await checkMultisigNetwork(noModule, SEPOLIA)).every((p) => /[.!?]$/.test(p)) && kProblems.every((p) => /[.!?]$/.test(p)));
 
   record = await createMultisigRecord({ chain: SEPOLIA, config: CONFIG_2_OF_3, localSigner: S0.address, now: 1 }, store);
   check('created: id in the multisig range, "Multisig 1 (2-of-3)", index 0, the engine address, not deployed, delay 0',
@@ -642,13 +651,23 @@ let approvalPayload;
   // co-signer weight collected versus co-signer weight needed, and a separate
   // line says this wallet signs only when you submit.
   check('progress before approvals: co-signer weight 0 of 1 needed',
-    p0.cosignerWeight === 0 && p0.cosignerNeeded === 1 && multisigCosignerBarLabel(p0) === 'Co-signer approvals: weight 0 of 1 needed (1 still needed)', multisigCosignerBarLabel(p0));
+    p0.cosignerWeight === 0 && p0.cosignerNeeded === 1 && !p0.cosignersAlone && multisigCosignerBarLabel(p0) === 'Co-signer approvals: weight 0 of 1 needed (1 still needed)', multisigCosignerBarLabel(p0));
   check('the wallet’s own signer has its own line, exact', multisigLocalSignsLine(p0) === 'This wallet signs the remaining weight 1 when you submit.');
   check('the not-ready hint names co-signer weight, exact', multisigNotReadyHint(p0) === 'Submitting needs co-signer approvals of weight 1; the approvals so far reach 0.');
   const { op: op2, added } = addMultisigApproval(record, op, approvalPayload);
   check('an approval payload is added: weight 2 of 2, ready, approval id = keccak256(signature)', added.address === S5.address && multisigWeightProgress(record, op2).ready && op2.approvalIds[0].approvalId === ethers.keccak256(appr.signature));
   const p1 = multisigWeightProgress(record, op2);
-  check('after one co-signer approval: "weight 1 of 1 needed — ready", exact', multisigCosignerBarLabel(p1) === 'Co-signer approvals: weight 1 of 1 needed — ready', multisigCosignerBarLabel(p1));
+  check('after one co-signer approval (threshold met WITH this wallet): "weight 1 of 1 needed — ready", not cosignersAlone, local line kept (finding 4)',
+    !p1.cosignersAlone && multisigCosignerBarLabel(p1) === 'Co-signer approvals: weight 1 of 1 needed — ready', multisigCosignerBarLabel(p1));
+  // Finding 4: when the co-signers alone already meet the threshold, the bar
+  // must not read "weight 2 of 1 needed" and the "this wallet signs the
+  // remaining weight" clause is dropped.
+  const { op: opBoth } = addMultisigApproval(record, op2, approveMultisigRequest(op.request, S6).signature);
+  const pBoth = multisigWeightProgress(record, opBoth);
+  check('both co-signers approve (co-signers alone meet the threshold): cosignersAlone true and the bar says so, exact',
+    pBoth.cosignersAlone === true && pBoth.cosignerWeight === 2 && pBoth.ready &&
+      multisigCosignerBarLabel(pBoth) === 'Co-signer approvals: weight 2 (threshold 2 met by co-signers alone) — ready',
+    multisigCosignerBarLabel(pBoth));
   check('the confirm sentence separates co-signer weight from what this wallet signs, exact',
     multisigSubmitApprovalsLine(p1) ===
       'Co-signer approvals: weight 1 (1 needed). This wallet signs the remaining weight 1 when you submit, for weight 2 of the threshold 2. Your device check comes next; this wallet’s signer then signs the final operation, and the signer module checks every approval again.',
@@ -777,6 +796,35 @@ console.log('check-multisig: a deployed account is checked on-chain before a req
       `Transfer 1.5 USDC (1500000 base units) to ${S5.address}, through the token contract ${RECIPIENT}.` &&
       describeMultisigCall({ to: RECIPIENT, value: 0n, data: new Uint8Array([1, 2, 3, 4, 5]) }, 'test ETH').includes('function selector 0x01020304') &&
       describeMultisigCall({ to: RECIPIENT, value: 1000n, data: new Uint8Array(0) }, 'test ETH') === `Send 0.000000000000001 test ETH (1000 wei) to ${RECIPIENT}.`);
+}
+
+// ===========================================================================
+console.log('check-multisig: a rebuilt identical request replaces the stale record (finding 2)');
+// ===========================================================================
+{
+  const fresh = memoryStore();
+  const r0 = await createMultisigRecord({ chain: SEPOLIA, config: CONFIG_2_OF_3, localSigner: S0.address }, fresh);
+  const calls = [{ to: RECIPIENT, value: 10n ** 14n, data: new Uint8Array(0) }];
+  const node = multisigNode();
+  const first = await prepareMultisigRequest({ record: r0, calls, node, nativeSymbol: 'test ETH' }, fresh);
+  const again = await prepareMultisigRequest({ record: r0, calls, node, nativeSymbol: 'test ETH' }, fresh);
+  check('rebuilding an identical request yields the same request id (same call data and nonce)', again.requestId === first.requestId);
+  const stored = (await listMultisigRecords(SEPOLIA, fresh))[0];
+  const sameId = stored.operations.filter((o) => o.requestId.toLowerCase() === first.requestId.toLowerCase());
+  check('only ONE operation is kept for that request id — the new collecting one, not a stale abandoned duplicate (finding 2)',
+    sameId.length === 1 && sameId[0].status === 'collecting' && stored.operations.length === 1, JSON.stringify(stored.operations.map((o) => o.status)));
+  // The mutant: without the dedupe filter, the stale abandoned record survives
+  // and History would show the request id twice.
+  const mDedupe = await importMutant('src/wallet/multisig.ts',
+    '    r.operations = r.operations.filter((o) => o.requestId.toLowerCase() !== op.requestId.toLowerCase());\n    r.operations.unshift(op);',
+    '    r.operations.unshift(op);');
+  const ms = memoryStore();
+  const mr = await mDedupe.createMultisigRecord({ chain: SEPOLIA, config: CONFIG_2_OF_3, localSigner: S0.address }, ms);
+  await mDedupe.prepareMultisigRequest({ record: mr, calls, node: multisigNode(), nativeSymbol: 'test ETH' }, ms);
+  await mDedupe.prepareMultisigRequest({ record: mr, calls, node: multisigNode(), nativeSymbol: 'test ETH' }, ms);
+  const mStored = (await mDedupe.listMultisigRecords(SEPOLIA, ms))[0];
+  check('M-dedupe caught: without the filter two records share one request id', mStored.operations.length === 2 &&
+    mStored.operations[0].requestId.toLowerCase() === mStored.operations[1].requestId.toLowerCase());
 }
 
 // ===========================================================================
@@ -912,12 +960,24 @@ console.log('check-multisig: deployment refresh, deposit, own addresses (finding
   check('screen: the shell no longer renders the error after the phase (below Back); every phase places {errorBox} itself',
     !/\{children\}\s*\{errorBox\}/.test(screenSrc) && (screenSrc.match(/\{errorBox\}/g) ?? []).length >= 13);
   const collect = screenSrc.slice(screenSrc.indexOf("if (phase === 'collect'"), screenSrc.indexOf("if ((phase === 'confirm'"));
-  check('screen: in the collect phase the error sits after the approval inputs and before "3. Submit" and Back',
-    collect.indexOf('{errorBox}') > collect.indexOf('Add an approval from a file') && collect.indexOf('{errorBox}') < collect.indexOf('3. Submit') && collect.indexOf('{errorBox}') < collect.indexOf("back('detail')"));
+  // Finding 6: the error now sits ABOVE the approval inputs (right under
+  // "2. Add each approval you receive"), so a keyboard-open error is not
+  // pushed off-screen below "Add an approval from a file".
+  check('screen: in the collect phase the error sits above the approval inputs (after "2. Add each approval", before the scan/paste/file buttons and "3. Submit")',
+    collect.indexOf('{errorBox}') > collect.indexOf('2. Add each approval you receive') &&
+      collect.indexOf('{errorBox}') < collect.indexOf('Add approval') &&
+      collect.indexOf('{errorBox}') < collect.indexOf('Add an approval from a file') &&
+      collect.indexOf('{errorBox}') < collect.indexOf('3. Submit'));
+  check('screen: the shell scroll view keeps keyboardShouldPersistTaps="handled" (one tap on the approval buttons with the keyboard open, as the note views do — finding 6)',
+    /<ScrollView style=\{screenStyle\(theme\)\}[^>]*keyboardShouldPersistTaps="handled"/.test(screenSrc));
+  check('screen: the file-pick catch routes through multisigFileRefusal, never raw fail(e) (finding 1)',
+    /picked = await pickRecordFile\(\);\s*\}\s*catch \(e\) \{[\s\S]*?setError\(multisigFileRefusal\(e\)\);/.test(screenSrc));
   check('screen: the collect phase uses the co-signer bar (no "✓ This wallet’s signer … signs last" line)',
     /<MultisigWeightBar progress=\{p\} \/>/.test(collect) && !/signs last when you submit/.test(screenSrc) && /multisigNotReadyHint\(p\)/.test(collect) && /multisigSubmitApprovalsLine\(/.test(screenSrc));
   const viewsSrc = readFileSync(join(HERE, '..', 'src', 'screens', 'MultisigViews.tsx'), 'utf8');
-  check('views: the bar shows multisigCosignerBarLabel and, separately, multisigLocalSignsLine', /multisigCosignerBarLabel\(progress\)/.test(viewsSrc) && /multisigLocalSignsLine\(progress\)/.test(viewsSrc) && /progress\.cosignerWeight \/ need/.test(viewsSrc));
+  check('views: the bar shows multisigCosignerBarLabel and, separately, multisigLocalSignsLine only when the co-signers do NOT meet the threshold alone (finding 4)',
+    /multisigCosignerBarLabel\(progress\)/.test(viewsSrc) && /multisigLocalSignsLine\(progress\)/.test(viewsSrc) && /progress\.cosignerWeight \/ need/.test(viewsSrc) &&
+      /progress\.cosignersAlone \? null : \(/.test(viewsSrc));
 
   // (7) The EntryPoint deposit next to the balance.
   const DEP = 697_000_000_000_000n;
@@ -1319,10 +1379,23 @@ console.log('check-multisig: the multisig as an account in the switcher (phase 1
     const detail = screen.slice(screen.indexOf("if (phase === 'detail' && selected) {"), screen.indexOf('title="Remove from this wallet"'));
     const newOpOk = (src) =>
       /\{selected\.localSigner\.toLowerCase\(\) === \(phraseSigner \?\? ''\)\.toLowerCase\(\) \? \(\s*<Button\s*title="New operation \(send\)"/.test(src) &&
-      /title="New operation \(send\)"[\s\S]{0,400}disabled=\{readiness !== null\}\s*\/>\s*\) : null\}/.test(src);
+      /title="New operation \(send\)"[\s\S]{0,1400}disabled=\{readiness !== null\}\s*\/>\s*\) : null\}/.test(src);
     check('detail: "New operation (send)" is shown only while this wallet\'s signer is the active account (finding 7d)', newOpOk(detail));
     check('…the old always-shown, disabled button fails the check',
       !newOpOk(detail.replace(/\{selected\.localSigner\.toLowerCase\(\) === \(phraseSigner \?\? ''\)\.toLowerCase\(\) \? \(/, '{true ? (')));
+    // Finding 3: tapping "New operation (send)" while an operation is still
+    // collecting confirms before discarding it (it is abandoned when the new
+    // request is built), with the exact wording.
+    check('detail: "New operation (send)" confirms before discarding a collecting operation (finding 3)',
+      /if \(selected\.operations\.some\(\(o\) => o\.status === 'collecting'\)\) \{\s*Alert\.alert\(\s*'Start a new operation\?',\s*'The one you are collecting approvals for will be discarded\.',/.test(detail) &&
+        /\{ text: 'Cancel', style: 'cancel' \}/.test(detail) &&
+        /\{ text: 'Discard and start', style: 'destructive', onPress: start \}/.test(detail) &&
+        /\} else \{\s*start\(\);\s*\}/.test(detail));
+    // Finding 2: the History list key is not the request id alone (a legacy
+    // store, or an in-place status change, could otherwise collide).
+    check('detail: the History list is keyed by index + request id + status, never the request id alone (finding 2)',
+      /finished\.map\(\(o, i\) =>/.test(detail) && /key=\{`\$\{i\}:\$\{o\.requestId\}:\$\{o\.status\}`\}/.test(detail) &&
+        !/key=\{o\.requestId\}/.test(detail));
     // Finding 7c: the NFT gallery's sentence for a multisig.
     check('NFTs: the gallery names a multisig\'s and a watched address as such; other accounts keep the old sentence (exact)',
       wo.nftsOwnerSentence({ watchOnly: false, multisig: true }, S0.address) === `Shows the NFTs held by this multi-signature account's address, ${S0.address}.` &&
@@ -1750,9 +1823,34 @@ console.log('check-multisig: phase 19 item 1 — QR codes in parts, scanning, fi
       wrongKind === 'This file was not accepted. This is a signing request, not an approval.' &&
       recordAsRequest === 'This file was not accepted. This is an account record, not a signing request.',
     [truncated, flipped, garbage, wrongKind, recordAsRequest].join(' | '));
+  // Finding 1: a truncated file AND a wrong-kind file are refused with a PLAIN
+  // sentence — never a raw native rejection (mirrors the recovery pin).
+  const wrongNameRefusal = refusalFor(() => multisigFileText(requestPayload, { name: 'request.txt', mimeType: 'text/plain' }));
+  check('multisig: the truncated and wrong-kind refusals are plain (no raw native rejection text)',
+    /\.json file exported by Shiba Wallet\.$/.test(wrongNameRefusal ?? '') &&
+      ![truncated, wrongKind, wrongNameRefusal].some((s) => /(rejected|Missing 'READ'|Call to function|FileSystemFile|permission for accessing)/.test(s ?? '')),
+    wrongNameRefusal);
   check('screen + views: the save button writes through the shared shareTextFile with multisigFileContents; opening refuses through multisigFileRefusal',
     /shareTextFile\(\{\s*directory: MULTISIG_EXPORT_DIRECTORY,\s*fileName: \(\) => fileName,\s*contents: \(\) => multisigFileContents\(text\),/.test(views) && !/shareJsonFile|new File\(/.test(views) &&
       /await accept\(multisigFileText\(picked\.text, picked\)\);\s*\} catch \(e\) \{\s*setError\(multisigFileRefusal\(e\)\);/.test(screen));
+  // Finding 1: a FILE-READ failure (not a wrong-contents one) is wrapped in a
+  // plain sentence and routed through the refusal path, never shown raw.
+  const readRefusal = multisigFileRefusal(new Error('It could not be read on this device. Some file pickers do not give the app permission to read the chosen file; use Share, Copy or the QR scan instead.'));
+  check('a file-read failure becomes a plain refusal that points to Share/Copy/scan, with no raw native rejection text',
+    readRefusal.startsWith('This file was not accepted. ') && /Share, Copy or the QR scan/.test(readRefusal) &&
+      !/rejected|Missing 'READ'|Call to function|FileSystemFile/.test(readRefusal), readRefusal);
+  // The shared helper is a .tsx with native imports, so it is pinned by source.
+  const helper = readFileSync(join(HERE, '..', 'src', 'components', 'RecordFileActions.tsx'), 'utf8');
+  check('shared helper: pickRecordFile reads the content uri on Android (copyToCacheDirectory false) and wraps any read failure in RecordFileReadError, deleting only a cache copy (finding 1)',
+    /const copyToCacheDirectory = Platform\.OS !== 'android';/.test(helper) &&
+      /getDocumentAsync\(\{\s*type: RECORD_FILE_MIME_TYPE,\s*copyToCacheDirectory,/.test(helper) &&
+      /catch \(e\) \{\s*throw new RecordFileReadError\(e\);\s*\}/.test(helper) &&
+      /if \(copyToCacheDirectory\) deleteQuietly\(file\);/.test(helper) &&
+      !/new File\(asset\.uri\)[\s\S]{0,40}await file\.text\(\);\s*return \{/.test(helper));
+  const readMsg = helper.match(/RECORD_FILE_READ_FAILED_MESSAGE =\s*\n?\s*'([^']*)';/);
+  check('shared helper: the read-failure message points to Share, Copy and the QR scan, with no raw native rejection term (finding 1)',
+    !!readMsg && /Share/.test(readMsg[1]) && /Copy/.test(readMsg[1]) && /scan/.test(readMsg[1]) &&
+      !/(rejected|Missing 'READ'|Call to function|FileSystemFile)/.test(readMsg[1]), readMsg?.[1]);
   const mFile = await importMutant('src/wallet/multisig.ts', "  return payload;\n}\n\n/**\n * The sentence for a picked file", "  return JSON.stringify(JSON.parse(payload), null, 2);\n}\n\n/**\n * The sentence for a picked file");
   const mPath = join(dir, 'mutant.json');
   writeFileSync(mPath, mFile.multisigFileContents(requestPayload), 'utf8');
