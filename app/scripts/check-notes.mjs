@@ -506,9 +506,11 @@ check('mutant: SendScreen keeping its own copy is caught', !sendOk(SEND + '\nfun
 // that moment. A smart-account note is first saved under the UserOperation
 // hash (no bundle transaction yet), moved when the bundle hash arrives, and
 // a later save with both hashes updates the moved note instead of creating
-// a second one. A WalletConnect batch (ERC-5792) never learns its bundle
-// hash on the sent view; Activity still finds the note through the row's
-// decoded UserOperation hash.
+// a second one. A WalletConnect batch (ERC-5792) learns its bundle hash on
+// the sent view only if the receipt arrives while the view is open (the
+// provider waits up to two minutes after answering the dApp); otherwise
+// Activity still finds the note through the row's decoded UserOperation
+// hash.
 {
   const store = memoryStore();
   await saveNote(SEPOLIA, { txid: null, userOpHash: OP_1 }, 'swap via smart account', { store });

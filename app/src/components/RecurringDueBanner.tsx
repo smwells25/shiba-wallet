@@ -13,6 +13,7 @@ import { readSubscriptionStatus } from '../wallet/subscriptions';
 import {
   findDueRecurringPayments,
   readStatusWithFailover,
+  recurringChecksApplyTo,
   recurringDueHeadline,
   type NodeFailoverRunner,
 } from '../wallet/recurring';
@@ -103,8 +104,10 @@ export function useClockTick(intervalMs: number, enabled: boolean): number {
  * It NEVER sends anything: findDueRecurringPayments has no key vault and no
  * bundler, and this component has no path to a payment (a check script pins
  * that). With no recurring payment on this device it makes no network
- * request. Hidden for a watch-only account (nothing can be signed) and while
- * no wallet exists; the lock overlay covers it like every screen.
+ * request. Hidden, with no request, for a watch-only account (nothing can be
+ * signed), for a multi-signature account (no single key of this wallet signs
+ * for it) and while no wallet exists; the lock overlay covers it like every
+ * screen.
  */
 export function RecurringDueBanner() {
   const theme = useTheme();
@@ -112,7 +115,9 @@ export function RecurringDueBanner() {
   const { status, accounts, activeAccount } = useWallet();
   const { evmChain } = usePrefs();
   const owner = accounts.find((a) => a.chainId === EVM_CHAIN_ID)?.address ?? null;
-  const eligible = status === 'ready' && owner !== null && activeAccount !== null && !activeAccount.watchOnly;
+  // Not for a watch-only or a multi-signature account (recurring.ts
+  // recurringChecksApplyTo): no check runs, so no network request is made.
+  const eligible = recurringChecksApplyTo({ status, owner, account: activeAccount });
   // Each return to the foreground starts a new check (and shows a dismissed banner again).
   const [generation, setGeneration] = useState(0);
   const [result, setResult] = useState<{ key: string; count: number } | null>(null);

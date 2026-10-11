@@ -16,6 +16,7 @@ import { useTheme } from '../theme';
 import { useAppLock } from '../components/LockGate';
 import {
   WcApprovalSheet,
+  WcSentView,
   txApprovalAllowed,
   type AaBundleLoader,
   type ConnectAs,
@@ -88,6 +89,7 @@ import {
   type WcSmartBinding,
 } from './walletconnect';
 import { WcController, type WcQueueItem } from './wc-controller';
+import { answerDappThenShow, wcSentResult, withSentReceipt, type WcSentResult } from './wc-sent';
 import {
   BrowserBridgeClient,
   CompositeWcClient,
@@ -362,6 +364,14 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
 
   // Hold approvals while locked AND while no wallet is ready.
   const hold = locked || status !== 'ready';
+
+  // The sent view (a transaction, batch or operation just sent for a dApp or
+  // the in-app browser), shown after the dApp has been answered so the user
+  // can add a private note (wc-sent.ts; feature 87). Null when none.
+  const [sent, setSent] = useState<WcSentResult | null>(null);
+  // A wiped wallet takes its notes with it; drop a view still held (React's
+  // "adjust state while rendering" pattern, so no effect is needed).
+  if (status === 'no-wallet' && sent !== null) setSent(null);
 
   const [projectId, setProjectId] = useState<string | null | undefined>(undefined);
   const [startRequested, setStartRequested] = useState(false);
@@ -692,19 +702,35 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
             dappUrl,
             createdAt: Date.now(),
           }).catch(() => undefined);
-          try {
-            await respondApproved(composite, item.event.topic, item.event.id, { id });
-          } catch {
-            controller.complete(item.key);
-            Alert.alert(
-              'Batch sent, dApp not notified',
-              `The operation was submitted (UserOperation ${userOpHash}), but the reply to the ` +
-                'dApp failed. Check it in an ERC-4337 explorer before retrying anything.',
-            );
-            return;
-          }
-          controller.complete(item.key);
-          Alert.alert('Batch sent to the bundler', `UserOperation ${userOpHash}`);
+          // The dApp is answered first, exactly as before; the sent view
+          // (with the note field) follows. A failed reply is not a failed send.
+          const batchDapp = controller.dappName(item.event.topic);
+          await answerDappThenShow({
+            respond: () => respondApproved(composite, item.event.topic, item.event.id, { id }),
+            complete: () => controller.complete(item.key),
+            show: (dappNotified) =>
+              setSent(
+                wcSentResult({
+                  kind: 'batch',
+                  key: item.key,
+                  dappName: batchDapp,
+                  network: item.chain,
+                  txid: null,
+                  userOpHash,
+                  dappNotified,
+                }),
+              ),
+          });
+          // ERC-5792 answers before inclusion; the view still learns the
+          // bundle transaction's hash when it arrives, so a note saved under
+          // the UserOperation hash moves to it (as on the Send screen).
+          void waitForAaReceipt(bundle, userOpHash, { timeoutMs: 120_000, pollMs: 3_000 }).then(
+            ({ summary }) =>
+              setSent((prev) =>
+                withSentReceipt(prev, item.key, { kind: 'found', success: summary.success, txHash: summary.txHash }),
+              ),
+            () => setSent((prev) => withSentReceipt(prev, item.key, { kind: 'timeout' })),
+          );
           return;
         }
 
@@ -720,15 +746,18 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
           sendAa(bundle, signer, quote),
         );
         let txHash: string | null = null;
+        let included: boolean | null = null;
         try {
           const { summary } = await waitForAaReceipt(bundle, userOpHash, {
             timeoutMs: 120_000,
             pollMs: 3_000,
           });
           txHash = summary.txHash;
+          included = summary.success;
         } catch {
           txHash = null;
         }
+        const txDapp = controller.dappName(item.event.topic);
         if (!txHash) {
           await respondRejected(composite, item.event.topic, item.event.id, {
             code: -32603,
@@ -737,26 +766,39 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
               'available within two minutes. It may still be included.',
           }).catch(() => undefined);
           controller.complete(item.key);
-          Alert.alert(
-            'Submitted, not yet included',
-            `UserOperation ${userOpHash} was accepted by the bundler but not included within ` +
-              'two minutes, so the dApp was told no transaction hash is available yet. Look the ' +
-              'UserOperation hash up in an ERC-4337 explorer before retrying anything.',
+          // Shown after the dApp was told; the note is kept under the
+          // UserOperation hash (Activity finds it through the decoded row).
+          setSent(
+            wcSentResult({
+              kind: 'not-included',
+              key: item.key,
+              dappName: txDapp,
+              network: item.chain,
+              txid: null,
+              userOpHash,
+              dappNotified: true,
+            }),
           );
           return;
         }
-        try {
-          await respondApproved(composite, item.event.topic, item.event.id, txHash);
-        } catch {
-          controller.complete(item.key);
-          Alert.alert(
-            'Transaction sent, dApp not notified',
-            `The operation was included (${txHash}), but the reply to the dApp failed.`,
-          );
-          return;
-        }
-        controller.complete(item.key);
-        Alert.alert('Transaction sent', txHash);
+        const includedTx = txHash;
+        await answerDappThenShow({
+          respond: () => respondApproved(composite, item.event.topic, item.event.id, includedTx),
+          complete: () => controller.complete(item.key),
+          show: (dappNotified) =>
+            setSent(
+              wcSentResult({
+                kind: 'smart-transaction',
+                key: item.key,
+                dappName: txDapp,
+                network: item.chain,
+                txid: includedTx,
+                userOpHash,
+                dappNotified,
+                success: included,
+              }),
+            ),
+        });
       } catch (e) {
         controller.release(item.key);
         const { title, detail } =
@@ -963,25 +1005,30 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
           );
           return;
         }
-        const sent = await signWith(EVM_CHAIN_ID, item.address, (signer) =>
+        const broadcast = await signWith(EVM_CHAIN_ID, item.address, (signer) =>
           sendEvm(url, signer, quote, evmChain.explorerTxBase),
         );
         // The transaction is on the network from here on. A failed relay
         // reply must not be reported as a failed send, and the item must not
-        // return to the queue as if nothing had happened.
-        try {
-          await respondApproved(composite, item.event.topic, item.event.id, sent.txid);
-        } catch {
-          controller.complete(item.key);
-          Alert.alert(
-            'Transaction sent, dApp not notified',
-            `The transaction was broadcast (${sent.txid}), but the reply to the dApp failed. ` +
-              'The dApp may not show it; check the transaction in a block explorer before retrying anything.',
-          );
-          return;
-        }
-        controller.complete(item.key);
-        Alert.alert('Transaction sent', sent.txid);
+        // return to the queue as if nothing had happened. The dApp is
+        // answered first; the sent view (with the note field) follows.
+        const eoaDapp = controller.dappName(item.event.topic);
+        await answerDappThenShow({
+          respond: () => respondApproved(composite, item.event.topic, item.event.id, broadcast.txid),
+          complete: () => controller.complete(item.key),
+          show: (dappNotified) =>
+            setSent(
+              wcSentResult({
+                kind: 'eoa-transaction',
+                key: item.key,
+                dappName: eoaDapp,
+                network: item.chain,
+                txid: broadcast.txid,
+                userOpHash: null,
+                dappNotified,
+              }),
+            ),
+        });
       } catch (e) {
         controller.release(item.key);
         const { title, detail } = describeSendError(e, 'ETH');
@@ -1041,7 +1088,12 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
   // The "Connected apps" notice: the newest one, until dismissed. Computed
   // here (before the context value) so a screen can render it inline.
   const head = hold ? null : snapshot.head;
-  const latestNotice = !hold && !head ? (snapshot.notices[0] ?? null) : null;
+  // The sent view needs a wallet (its note belongs to it). It is NOT
+  // removed while the app is locked: LockGate hides everything it wraps,
+  // this provider included, and keeping the view mounted keeps a note being
+  // typed when the lock comes down.
+  const sentShown = status === 'ready' ? sent : null;
+  const latestNotice = !hold && !head && !sentShown ? (snapshot.notices[0] ?? null) : null;
   const [seenNoticeId, setSeenNoticeId] = useState(0);
   const visibleNotice = latestNotice && latestNotice.id > seenNoticeId ? latestNotice : null;
   const visibleNoticeId = visibleNotice?.id ?? null;
@@ -1059,6 +1111,8 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
       setInlineNoticeClaims((n) => Math.max(0, n - 1));
     };
   }, []);
+
+  const onSentDone = useCallback(() => setSent(null), []);
 
   const value = useMemo<WalletConnectContextValue>(
     () => ({
@@ -1104,7 +1158,11 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
         {visibleNotice && inlineNoticeClaims === 0 ? (
           <ConnectedAppsNotice text={visibleNotice.text} onDismiss={dismissVisibleNotice} placement="floating" />
         ) : null}
-        {head ? (
+        {/* The sent view comes first: the user finishes it (Done) before the
+            next request's sheet shows. The dApp has already been answered. */}
+        {sentShown ? (
+          <WcSentView key={sentShown.key} result={sentShown} onDone={onSentDone} />
+        ) : head ? (
           <WcApprovalSheet
             key={head.key}
             item={head}

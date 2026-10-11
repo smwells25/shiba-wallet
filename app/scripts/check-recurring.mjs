@@ -113,6 +113,7 @@ import {
   recurringEndsAt,
   describeRecurringPaymentError,
   findDueRecurringPayments,
+  recurringChecksApplyTo,
   openSlotCount,
   payRecurringPayment,
   planRecurringPayment,
@@ -605,6 +606,73 @@ console.log('check-recurring: the foreground check never reads a key or sends');
   check('App.tsx mounts the banner inside the navigation container, after the navigator',
     /<\/Stack\.Navigator>[\s\S]{0,300}<RecurringDueBanner \/>[\s\S]{0,40}<\/NavigationContainer>/.test(app));
   check('the banner re-checks when the app returns to the foreground (source)', /AppState\.addEventListener\('change'/.test(banner) && /next === 'active'/.test(banner));
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-recurring: no due check for a watch-only or multi-signature account (phase 18 polish)');
+// ---------------------------------------------------------------------------
+{
+  const { record } = main;
+  const store = memoryStore();
+  await saveSessionRecord(record, store);
+  const phrase = { watchOnly: false, multisig: false };
+  const watch = { watchOnly: true, multisig: false };
+  const multi = { watchOnly: false, multisig: true };
+  check('recurringChecksApplyTo: a phrase / imported account on a ready wallet → checked',
+    recurringChecksApplyTo({ status: 'ready', owner: OWNER_0, account: phrase }) === true);
+  check('…a watch-only account → not checked', recurringChecksApplyTo({ status: 'ready', owner: OWNER_0, account: watch }) === false);
+  check('…a multi-signature account → not checked', recurringChecksApplyTo({ status: 'ready', owner: OWNER_0, account: multi }) === false);
+  check('…no wallet, no address or no account → not checked',
+    !recurringChecksApplyTo({ status: 'no-wallet', owner: OWNER_0, account: phrase }) &&
+      !recurringChecksApplyTo({ status: 'ready', owner: null, account: phrase }) &&
+      !recurringChecksApplyTo({ status: 'ready', owner: OWNER_0, account: null }));
+  // The banner's gate, run with a counting fetch and a counting status read:
+  // even when the store holds a due recurring payment of exactly that owner,
+  // a multisig active account makes ZERO requests.
+  const realFetch = globalThis.fetch;
+  let fetches = 0;
+  globalThis.fetch = async () => {
+    fetches += 1;
+    throw new Error('no network in this check');
+  };
+  const gate = async (account) => {
+    let reads = 0;
+    if (recurringChecksApplyTo({ status: 'ready', owner: OWNER_0, account })) {
+      await findDueRecurringPayments({ chain: M, owner: OWNER_0, store, now: NOW, readStatus: async () => { reads += 1; throw new Error('read'); } });
+    }
+    return reads;
+  };
+  const multiReads = await gate(multi);
+  const multiFetches = fetches;
+  const phraseReads = await gate(phrase);
+  globalThis.fetch = realFetch;
+  check('multisig active: zero status reads and zero fetches', multiReads === 0 && multiFetches === 0);
+  check('control: the same store with a phrase account is read (the gate is what stopped it)', phraseReads === 1);
+  // Wiring (React Native; source checks).
+  const bannerSrc = src('../src/components/RecurringDueBanner.tsx');
+  const schedulerSrc = src('../src/components/NotificationScheduler.tsx');
+  const bannerOk = (b) =>
+    b.includes('const eligible = recurringChecksApplyTo({ status, owner, account: activeAccount });') &&
+    /useEffect\(\(\) => \{\s*if \(!eligible \|\| owner === null\) return undefined;[\s\S]{0,120}findDueRecurringPayments\(/.test(b);
+  const schedulerOk = (n) =>
+    n.includes('const canPay = recurringChecksApplyTo({ status, owner, account: activeAccount });') &&
+    /if \(canPay && owner !== null\) \{\s*const \{ records, states \} = await readRecurringDueStates\(/.test(n) &&
+    (n.match(/readRecurringDueStates\(/g) ?? []).length === 1;
+  check('the banner checks only through the gate (source)', bannerOk(bannerSrc));
+  check('the reminders\' status read runs only through the same gate (source)', schedulerOk(schedulerSrc));
+  const oldLine = "const eligible = status === 'ready' && owner !== null && activeAccount !== null && !activeAccount.watchOnly;";
+  check('mutant caught: the banner\'s old watch-only-only condition',
+    !bannerOk(bannerSrc.replace('const eligible = recurringChecksApplyTo({ status, owner, account: activeAccount });', oldLine)));
+  check('mutant caught: the scheduler\'s old watch-only-only condition',
+    !schedulerOk(schedulerSrc.replace('const canPay = recurringChecksApplyTo({ status, owner, account: activeAccount });',
+      "const canPay = status === 'ready' && owner !== null && activeAccount !== null && !activeAccount.watchOnly;")));
+  const rsrc = src('../src/wallet/recurring.ts');
+  const predicate = rsrc.slice(rsrc.indexOf('export function recurringChecksApplyTo('), rsrc.indexOf('\n}\n', rsrc.indexOf('export function recurringChecksApplyTo(')) + 3);
+  const mutated = predicate.replace(' &&\n    !args.account.multisig', '').replace('export function', 'function').replace(/: \{[\s\S]*?\}\): boolean \{/, ') {');
+  // eslint-disable-next-line no-new-func
+  const mutantFn = new Function(`${mutated}\nreturn recurringChecksApplyTo;`)();
+  check('mutant caught: the predicate without the multisig clause lets a multisig through',
+    mutated !== predicate && mutantFn({ status: 'ready', owner: OWNER_0, account: multi }) === true);
 }
 
 // ---------------------------------------------------------------------------

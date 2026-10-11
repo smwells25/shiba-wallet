@@ -120,9 +120,12 @@ export function BalanceChangePreview({
         ? describeAssetChanges(state.changes, state.meta, {
             nativeSymbol: evmChain.displaySymbol,
             hidden: hideAmounts,
+            // The chain the simulation ran on: a rebasing token's row (stETH)
+            // carries its note.
+            chainCaip2: evmChain.caip2,
           })
         : [],
-    [state, evmChain.displaySymbol, hideAmounts],
+    [state, evmChain.displaySymbol, evmChain.caip2, hideAmounts],
   );
 
   if (state?.status === 'unavailable') {
@@ -160,7 +163,10 @@ export function BalanceChangePreview({
         <Text style={[styles.line, { color: theme.text }]}>{PREVIEW_NO_CHANGES}</Text>
       ) : null}
       {lines.map((line, i) => (
-        <PreviewLineView key={`${i}-${line.text}`} text={line.text} tone={line.tone} theme={theme} />
+        <React.Fragment key={`${i}-${line.text}`}>
+          <PreviewLineView text={line.text} tone={line.tone} theme={theme} />
+          {line.note ? <Text style={[styles.muted, { color: theme.textMuted }]}>{line.note}</Text> : null}
+        </React.Fragment>
       ))}
       {state?.status === 'ok' && state.skippedLogs > 0 ? (
         <Text style={[styles.muted, { color: theme.textMuted }]}>{skippedLogsNote(state.skippedLogs)}</Text>

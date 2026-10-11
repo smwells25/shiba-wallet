@@ -1016,7 +1016,6 @@ export function evmProfileFor(selection: boolean | string | null): EvmChainProfi
  * _data/chains/eip155-<id>.json; each file names a testnet in its "title" or
  * "name" and carries "slip44": 1 (SLIP-0044 coin type 1, "Testnet (all
  * coins)"):
- *  - 17000    Holesky — "title": "Ethereum Testnet Holesky"
  *  - 560048   Hoodi — "title": "Ethereum Testnet Hoodi"
  *  - 11155420 OP Sepolia — "name": "OP Sepolia Testnet"
  *  - 80002    Polygon Amoy — "title": "Polygon Amoy Testnet"
@@ -1029,19 +1028,40 @@ export function evmProfileFor(selection: boolean | string | null): EvmChainProfi
  * refused as "already built in" (wallet/custom-networks.ts checks built-in
  * ids first), and a custom record stored for either id before phase 18 is
  * superseded by the built-in profile when the list is loaded (see
- * custom-networks.ts, "Records superseded by a built-in profile"). Keeping
- * the ids here means the allow-list itself never shrinks. An id not
+ * custom-networks.ts, "Records superseded by a built-in profile"). A
+ * network that reaches its end of life moves to RETIRED_PUBLIC_TEST_CHAIN_IDS
+ * instead of disappearing, so a record stored for it stays valid. An id not
  * listed here can still be added, but only as a MAIN network, so a user can
  * never mark mainnet funds as "test" by mistake. Adding an id here is a
- * deliberate code change with its source cited.
+ * deliberate code change with its source cited. Holesky (17000) was on this
+ * list until its end of life; it is now in RETIRED_PUBLIC_TEST_CHAIN_IDS.
  */
 export const KNOWN_PUBLIC_TEST_CHAIN_IDS: readonly { readonly chainId: string; readonly name: string }[] = [
-  { chainId: '17000', name: 'Holesky' },
   { chainId: '560048', name: 'Hoodi' },
   { chainId: '11155420', name: 'OP Sepolia' },
   { chainId: '80002', name: 'Polygon Amoy' },
   { chainId: '59141', name: 'Linea Sepolia' },
   { chainId: '534351', name: 'Scroll Sepolia' },
+];
+
+/**
+ * Public test networks that have reached their end of life. They can no
+ * longer be ADDED as test networks (the form refuses them with
+ * retiredTestNetworkMessage in wallet/custom-networks.ts), but a record the
+ * user stored while the network was on KNOWN_PUBLIC_TEST_CHAIN_IDS keeps
+ * loading and stays a test network: its coins were test coins then and are
+ * now, and treating such a record as damage would make the whole list
+ * read-only.
+ *  - 17000 Holesky — the Ethereum Foundation's "Holešky Testnet Shutdown
+ *    Announcement" (https://blog.ethereum.org/2025/09/01/holesky-shutdown-announcement,
+ *    1 September 2025, Protocol Support): "As previously announced, the
+ *    Holešky testnet has reached its planned end-of-life date and will be
+ *    sunset shortly." and "After this, Holešky will no longer be supported by
+ *    client, testing or infrastructure teams." (read 2026-10-11). On
+ *    2026-10-11 holesky.drpc.org served a newest block about 130 days old.
+ */
+export const RETIRED_PUBLIC_TEST_CHAIN_IDS: readonly { readonly chainId: string; readonly name: string }[] = [
+  { chainId: '17000', name: 'Holesky' },
 ];
 
 /** The CAIP-2 id of a user-added network ("eip155:<decimal chain id>"). */
@@ -1103,19 +1123,35 @@ export function isCustomNetworkId(caip2: unknown): caip2 is CustomNetworkId {
   return typeof caip2 === 'string' && customProfiles.some((p) => p.caip2 === caip2);
 }
 
-/** True when `chainIdDecimal` is on the allow-list of public test networks. */
+/** True when `chainIdDecimal` is on the allow-list of public test networks (the ids that can be ADDED as test networks). */
 export function isKnownPublicTestChainId(chainIdDecimal: string): boolean {
   return KNOWN_PUBLIC_TEST_CHAIN_IDS.some((t) => t.chainId === chainIdDecimal);
 }
 
+/** The retired public test network with this chain id (RETIRED_PUBLIC_TEST_CHAIN_IDS), or null. */
+export function retiredPublicTestChain(chainIdDecimal: string): { readonly chainId: string; readonly name: string } | null {
+  return RETIRED_PUBLIC_TEST_CHAIN_IDS.find((t) => t.chainId === chainIdDecimal) ?? null;
+}
+
+/**
+ * True when a STORED custom record ticked as a test network may stay one:
+ * its chain id is on the allow-list or is a retired public test network
+ * (a record saved before the network's end of life).
+ */
+export function isStoredTestChainIdAccepted(chainIdDecimal: string): boolean {
+  return isKnownPublicTestChainId(chainIdDecimal) || retiredPublicTestChain(chainIdDecimal) !== null;
+}
+
 /**
  * True only for a registered custom network that the user marked as a test
- * network AND whose chain id is on KNOWN_PUBLIC_TEST_CHAIN_IDS (re-checked
- * here, never trusted from storage).
+ * network AND whose chain id is on KNOWN_PUBLIC_TEST_CHAIN_IDS or
+ * RETIRED_PUBLIC_TEST_CHAIN_IDS (re-checked here, never trusted from
+ * storage; a retired id can only come from a record stored before its end of
+ * life, because the form refuses to add one as a test network).
  */
 export function isCustomTestNetwork(caip2: string): boolean {
   const p = customProfiles.find((c) => c.caip2 === caip2);
-  return p?.custom?.testnetRequested === true && isKnownPublicTestChainId(p.chainIdDecimal);
+  return p?.custom?.testnetRequested === true && isStoredTestChainIdAccepted(p.chainIdDecimal);
 }
 
 /** Subscribes to changes of the custom profiles. Returns the unsubscribe function. */

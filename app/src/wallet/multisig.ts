@@ -44,7 +44,7 @@ import {
   isMultisigAccountId,
   multisigAccountId,
 } from './account-ids.ts';
-import { sanitizeAccountName } from './accounts.ts';
+import { sanitizeAccountName, shortAccountAddress } from './accounts.ts';
 import { QR_MAX_BYTES, extractFirstJsonObject, utf8Length } from './recovery.ts';
 import {
   AA_DEPOSIT_ROW_LABEL,
@@ -136,6 +136,33 @@ export const MULTISIG_SETTINGS_BLURB =
   'Accounts that need several signers for every operation: this wallet’s account plus co-signers on other phones. ' +
   'Transactions only: a multi-signature account never signs messages, logins or token permits. Test networks only; ' +
   'the signer module has no published audit.';
+
+/** Settings → Accounts: the heading of the read-only list of multi-signature accounts. */
+export const MULTISIG_ACCOUNTS_HEADING = 'Multi-signature accounts';
+
+/** Settings → Accounts: the sentence under that heading. */
+export const MULTISIG_ACCOUNTS_LIST_HINT =
+  'Listed here for reference only. They are managed on the Multisig screen (Settings → Multi-signature ' +
+  'accounts) and cannot be hidden here.';
+
+/**
+ * One line of the Settings → Accounts list of multi-signature accounts:
+ * shape label, short address and network, for example
+ * "Multisig 2 (2-of-3) · 0x944c…0d38 · Ethereum Sepolia". The network label
+ * comes from the profile table (a network no longer known shows its CAIP-2
+ * id); a record whose address is not known yet says so.
+ */
+export function multisigAccountListLine(account: {
+  name: string;
+  evmAddress: string | null;
+  multisigInfo: { chain: string; label: string } | null;
+}): string {
+  const label = account.multisigInfo?.label ?? account.name;
+  const address = account.evmAddress ? shortAccountAddress(account.evmAddress) : 'address not known yet';
+  const chain = account.multisigInfo?.chain ?? null;
+  const network = chain ? (evmProfileByCaip2(chain)?.label ?? chain) : 'network unknown';
+  return `${label} · ${address} · ${network}`;
+}
 
 /** Why a multisig is deployed fresh (shown on the create form and the overview). */
 export const MULTISIG_FRESH_DEPLOY_NOTE =

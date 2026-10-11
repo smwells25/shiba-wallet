@@ -557,6 +557,29 @@ export function recurringCandidates(records: readonly SessionRecord[], chain: st
 }
 
 /**
+ * Whether this phone checks (the due banner) or reads for reminders (the
+ * local reminders' status read) the recurring payments of the ACTIVE
+ * account: only with a ready wallet, an EVM address, and an account that
+ * can sign its own payments. Not for a watch-only account (the wallet holds
+ * no key for it) and not for a multi-signature account (no single key of
+ * this wallet signs for it; its operations are built on the Multisig
+ * screen). When false, the callers make no network request at all.
+ */
+export function recurringChecksApplyTo(args: {
+  status: string;
+  owner: string | null;
+  account: { watchOnly: boolean; multisig: boolean } | null;
+}): boolean {
+  return (
+    args.status === 'ready' &&
+    args.owner !== null &&
+    args.account !== null &&
+    !args.account.watchOnly &&
+    !args.account.multisig
+  );
+}
+
+/**
  * The due state of EVERY candidate (recurringCandidates) of `owner` on
  * `chain`, not only the due ones: used by the local reminders
  * (notifications.ts) to schedule the moment the next payment falls due.
