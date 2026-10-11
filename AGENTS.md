@@ -4861,3 +4861,100 @@ DEMO step 24 rewritten for a non-built-in custom network.
       transaction unchanged. UNVERIFIED (device): every layout change,
       font scaling, TalkBack, dark mode, the real indexer answers for the
       smart account and the chip.
+- [x] Smart-account history and the sent view PROVEN ON THE EMULATOR
+      (2026-10-11; Expo Go, Metro worktree at b80b19d with the engine
+      built inside it, 2,359 modules; no repo files edited; 2 prompts in
+      total, both for the Uniswap swap; no dev-EOA spending; notes in the
+      scratchpad p18e). (A) ACTIVITY AS ACCOUNT 1 on the saved Sepolia
+      indexer: the "listed too" note exactly as pinned; 88 entries of
+      which 38 carry the "smart account" chip; the staking bundle
+      0x65d23913… (block 11889779, status 0x1) shows as five
+      smart-account rows reading "Smart-account operation: staked 0.0001
+      test ETH with Lido (stETH contract 0x3e3F…40Af): received
+      0.000099999999999999 stETH" (+0.000099 stETH, two "no amount",
+      −0.0001 test ETH, −0.000747 test ETH the EntryPoint top-up), EVERY
+      ONE with "Note: p18d kernel stake note" — THE NOTE SAVED UNDER THE
+      USEROPHASH RESOLVES ON THE BUNDLE TRANSACTION; Kernel top-ups
+      "Smart-account operation: sent 0.0006 / 0.0012 test ETH to Multisig
+      2 (2-of-3)"; Account 1's own sends "Sent 0.0006 / 0.002 test ETH to
+      Multisig 2 (2-of-3)" (no "yourself"); pull to refresh: still 88, no
+      duplicates; as Multisig 2 (0 prompts each way, 16 entries, "End of
+      history."): "Smart-account operation by Account 1's smart account:
+      sent 0.0006 test ETH to yourself", "Received 0.0006 test ETH from
+      Account 1", "Smart-account operation (first operation; deployed the
+      account): sent 0.0001 test ETH to Account 2". (B) WITHOUT THE
+      INDEXER (cleared through its dialog and re-entered from a 0600 file
+      through the ADBKeyboard broadcast; the stored value matched
+      ALCHEMY_SEPOLIA without being printed): "Showing tracked-token
+      transfers from recent blocks (no indexer is configured)…" and
+      "Your smart account's transactions (0xD31c…D8FA) are not listed:
+      without a history indexer…", 9 entries; restored → "Verified ✓",
+      88 entries with the note again. HYGIENE: the driver printed the
+      indexer field ONCE into its local tool output before its dump helper
+      masked keys; the key went nowhere else (no file, no log kept); the
+      helper now masks it. (C) SWITCHER: "What is backed up? ▸" collapsed
+      by default, the Multisig 2 row fully visible (list ends at y 1405
+      of 2400); expanded ▾ shows the full pinned text and the hint "More
+      accounts below — scroll the list." (D) wstETH removed and found
+      again under KNOWN STAKING TOKEN; "Track wstETH?" reads "Contract
+      0xB82381A3fBD3FaFA77B3a7bE693342618240067b on Ethereum Sepolia. This
+      is the wstETH contract this wallet pins from Lido's published list
+      of deployed contracts. Anyone can create a token with any name and
+      symbol; track it only if this is the contract you expect."; tracked
+      again. (E) MULTISIG 2 ACTIVE: the Tokens intro without the USDC
+      clause plus the multisig sentence; Settings → Accounts
+      "Multi-signature accounts" / "Listed here for reference only…" /
+      "Multisig 2 (2-of-3) · 0x944c…0d38 · Ethereum Sepolia"; Backup "One
+      recovery phrase backs up every account in the list above that this
+      wallet holds a key for, including hidden ones, on every chain." +
+      MULTISIG_LIST_HINT. (F) Staking with amount 1: "Not enough test ETH
+      to cover this amount plus the network fee." + the exact insufficient-
+      funds sentence; nothing sent (the field had reset to 0.001 on
+      relaunch, expected after the force-stop). (G) Home: the wstETH
+      subtitle wraps to two lines; Activity wrap rows "−0.0005 stETH" /
+      "+0.000481 wstETH" / "no amount", unwrap "+0.000415 stETH" /
+      "−0.0004 wstETH" / "no amount" (no "−0 test ETH"); the approve row
+      keeps "−0 test ETH" as designed. (H) THE SENT VIEW, LIVE THROUGH
+      THE IN-APP BROWSER: Uniswap connect (1 prompt), a 0.0001 test ETH →
+      USDC swap ("You receive 5.202756 USDC", "Pre-flight simulation
+      passed", 1 prompt) → the NEW "Transaction sent" view with "Sent for
+      app.uniswap.org.", the hash and "Note (private, this phone only)";
+      no alert; tx
+      0x105905d48c3a5eb21a4845c3adaa9df329d8f2f47abf82f75e90f75dd751c5bb,
+      block 11890525, status 0x1, gasUsed 144,120, USDC Transfer
+      5,202,756 to Account 1 (= the preview); the note "p18e uniswap swap
+      note" shows on all three Activity rows; disconnected from the bar's
+      panel. Funds: Account 1 ETH 0.002319 → 0.002219, USDC +5.202756,
+      nonce 24 → 25; Kernel and the multisig unchanged. FINDINGS (fix
+      slice dispatched): (F1) LOAD MORE DUPLICATES ACROSS PAGES — tx
+      0x341db91c (Account 1 → Kernel, 0.0015) appears on page 1 as the
+      smart-account row "Sent 0.0015 test ETH to yourself · +0.0015 ·
+      smart account" and on page 2 as Account 1's own "−0.0015":
+      freshHistoryEntries drops a smart row whose hash is already listed
+      but never removes an earlier smart row when the own row arrives
+      later, and the two streams page independently (25 per direction);
+      (F2) AFTER LOAD MORE THE LIST IS OUT OF TIME ORDER — page 2 is
+      appended below page 1 (88 → 138 entries: 28 Sep rows, then 9 Oct, 5
+      Oct, 4 Oct … 27 Sep, then 3 Oct to 1 Oct smart-account rows); even
+      page 1 mixes ranges (the smart account's incoming transfers reach 1
+      Oct while its outgoing stop about 3 Oct); (F3) the Load more footer
+      once showed only a spinner for over 10 minutes ("VirtualizedList:
+      … slow to update", dt 9,506 ms); after reopening, page 2 loaded
+      normally; lead, unverified: loadMore reads the cursor inside a
+      setState updater (a phase 3 pattern); (F4) EntryPoint prefund and
+      top-up transfers (Kernel → EntryPoint, internal) show as plain "Sent
+      transaction, −0.000923 test ETH, smart account" rows with no
+      sentence, and the staking bundle's "−0.000747" row could be read as
+      an amount staked; (F5) rows render before their sentence (about a
+      page behind while scrolling; a screen reader hears the shorter
+      label first); (F6) Done on the sent view with the keyboard open
+      saves the note ("Note saved.") but needs a second tap to close;
+      (F7) observations: the Uniswap risk card adds "Contract age could
+      not be checked on this endpoint. It has had code for at least the
+      last 1,024 blocks (about 3 hours), the oldest state this endpoint
+      serves."; the floating "Connected apps — … disconnected." notice
+      followed onto Activity until dismissed; (F9) the module count
+      (2,359 vs 2,232 / 2,411) is still unexplained. End state: Home,
+      Ethereum Sepolia, Account 1, light mode, Google IME, protection ON,
+      indexer restored and verified, no browser connection, wstETH
+      tracked; Metro at b80b19d.
