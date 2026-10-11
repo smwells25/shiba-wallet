@@ -386,7 +386,7 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
     <View style={styles.section}>
       <Text style={[styles.sectionTitle, { color: theme.text }]}>Accounts</Text>
       <Text style={[styles.hint, { color: theme.textMuted }]}>
-        {accountsBackupHint(importedCount > 0)} Account addresses from the
+        {accountsBackupHint(importedCount > 0, { watchOnly: watchOnlyAccounts.length > 0, multisig: multisigAccounts.length > 0 })} Account addresses from the
         phrase follow the common conventions: Ethereum m/44&apos;/60&apos;/0&apos;/0/N (as
         MetaMask), Solana m/44&apos;/501&apos;/N&apos;/0&apos; (as Phantom), Bitcoin
         m/84&apos;/0&apos;/N&apos;/0/0 and Dogecoin m/44&apos;/3&apos;/N&apos;/0/0. After restoring the

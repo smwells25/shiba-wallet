@@ -134,6 +134,7 @@ import { exportAllRecordsText, loadRecoveryRecords } from '../wallet/recovery';
 import { passkeyGateNow } from '../wallet/passkey-native';
 import { PASSKEY_AUDIT_NOTE, PASSKEY_EXPLANATION, PASSKEY_SELF_CALL_RISK } from '../wallet/passkeys';
 import { settingsTokensFeeSentence } from '../wallet/token-gas';
+import { MULTISIG_LIST_HINT } from '../wallet/watch-only';
 import {
   SPENDING_HONESTY_SENTENCE,
   SPENDING_SECTION_TITLE,
@@ -1423,10 +1424,12 @@ export function SettingsScreen({ navigation, route }: Props) {
     },
     [scrollToSection],
   );
-  const { revealMnemonic, wipe, accounts, accountList, watchOnlyAccounts } = useWallet();
+  const { revealMnemonic, wipe, accounts, accountList, watchOnlyAccounts, multisigAccounts } = useWallet();
   // Imported accounts (feature 12, ADR D9): the phrase does not back them up,
   // so the backup, reveal and wipe texts name them.
   const importedAccounts = accountList.filter((a) => a.imported);
+  // Accounts the list above shows that have no key of their own.
+  const keylessListed = watchOnlyAccounts.length > 0 || multisigAccounts.length > 0;
   const importedNames = importedAccounts.map((a) => a.name).join(', ');
   const {
     testNetwork,
@@ -1699,7 +1702,11 @@ export function SettingsScreen({ navigation, route }: Props) {
         <Text style={[styles.sectionTitle, { color: theme.text }]}>Backup</Text>
         {importedAccounts.length === 0 ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            {watchOnlyAccounts.length === 0
+            {/* "ALL" only while the list above holds nothing but phrase
+                accounts: watch-only addresses and multi-signature accounts
+                (listed read-only since phase 18) have no key of their own
+                (2026-10-11 re-check, finding 7). */}
+            {!keylessListed
               ? 'One recovery phrase backs up ALL of your accounts — every account in the list above, including hidden ones, on every chain.'
               : 'One recovery phrase backs up every account in the list above that this wallet holds a key for, including hidden ones, on every chain.'}
           </Text>
@@ -1721,6 +1728,9 @@ export function SettingsScreen({ navigation, route }: Props) {
             Watch-only addresses have no key in this wallet, so the recovery phrase does not back them up and
             is not needed for them: to watch one again on another phone, add its address again.
           </Text>
+        ) : null}
+        {multisigAccounts.length > 0 ? (
+          <Text style={[styles.hint, { color: theme.textMuted }]}>{MULTISIG_LIST_HINT}</Text>
         ) : null}
         {revealed ? (
           <View style={styles.revealBlock}>

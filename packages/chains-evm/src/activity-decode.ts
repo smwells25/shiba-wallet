@@ -1341,6 +1341,21 @@ export interface ActivitySentenceContext {
     call: { to: string; selector: string | null; value: bigint },
     format: { native: (amount: bigint) => string; nativeSymbol: string },
   ) => string | null;
+  /**
+   * The addresses that read "yourself": the account whose Activity this is
+   * (its own address and its own smart account), a subset of the
+   * description's wallet addresses. The description's OTHER wallet
+   * addresses — the wallet's other accounts' smart accounts and its
+   * multi-signature accounts, decoded as the wallet's own so their
+   * operations and movements are described — are then named through
+   * nameFor (else a pinned label, else a short address) instead of
+   * "yourself"; an operation one of them sent reads "smart-account
+   * operation by <name>", and what one of them received or sent in someone
+   * else's transaction starts with its name. Absent (the default), every
+   * wallet address reads "yourself" and every sentence is exactly what it
+   * was before this option existed.
+   */
+  selfAddresses?: readonly string[];
 }
 
 /** Every token contract whose metadata a sentence for `desc` may need (lowercase). */
@@ -1392,9 +1407,29 @@ class SentenceWriter {
     return this.desc.wallet.some((w) => sameAddress(w, address));
   }
 
+  /**
+   * True for the addresses that read "yourself": ctx.selfAddresses when
+   * given (only those that are also wallet addresses), else every wallet
+   * address (the original rule).
+   */
+  isSelf(address: string): boolean {
+    const self = this.ctx.selfAddresses;
+    if (self === undefined) return this.isWallet(address);
+    return this.isWallet(address) && self.some((a) => sameAddress(a, address));
+  }
+
+  /**
+   * "" for a "yourself" address; otherwise its name and a space, put in
+   * front of what that wallet address received or sent ("Multisig 2
+   * (2-of-3) received …"). Always "" without ctx.selfAddresses.
+   */
+  subject(address: string): string {
+    return this.isSelf(address) ? '' : `${this.party(address)} `;
+  }
+
   /** Contact name, else pinned label, else "yourself" / short address. */
   party(address: string): string {
-    if (this.isWallet(address)) return 'yourself';
+    if (this.isSelf(address)) return 'yourself';
     const contact = this.ctx.nameFor?.(address) ?? null;
     if (contact) return contact;
     const known = knownContract(this.desc.chainId, address);
@@ -1619,16 +1654,18 @@ class SentenceWriter {
 
   userOpPhrase(op: UserOpOutcome): string {
     const deployed = op.deployed ? ' (first operation; deployed the account)' : '';
+    // "by <name>" only for an operation of another wallet address (ctx.selfAddresses).
+    const opLabel = this.isSelf(op.sender) ? 'smart-account operation' : `smart-account operation by ${this.party(op.sender)}`;
     const calls = op.calls?.map((c) => this.callPhrase(c.decoded, op.sender)) ?? [];
     if (!op.success) {
       const reason = op.revertReason ? ` (${op.revertReason})` : '';
       const tried = calls.length ? `: tried to ${calls.map(toPresent).join(', ')}` : '';
-      return `smart-account operation failed${reason}${deployed}${tried}`;
+      return `${opLabel} failed${reason}${deployed}${tried}`;
     }
-    if (calls.length && op.callsGuaranteed) return `smart-account operation${deployed}: ${calls.join(', ')}`;
-    if (calls.length) return `smart-account operation${deployed} (individual calls may have failed): ${calls.join(', ')}`;
+    if (calls.length && op.callsGuaranteed) return `${opLabel}${deployed}: ${calls.join(', ')}`;
+    if (calls.length) return `${opLabel}${deployed} (individual calls may have failed): ${calls.join(', ')}`;
     const moved = this.movementPhrase(op.sender);
-    return moved ? `smart-account operation${deployed}: ${moved}` : `smart-account operation${deployed}`;
+    return moved ? `${opLabel}${deployed}: ${moved}` : `${opLabel}${deployed}`;
   }
 
   sentence(): string {
@@ -1641,7 +1678,12 @@ class SentenceWriter {
       } else if (d.userOps.length) {
         for (const op of d.userOps) clauses.push(this.userOpPhrase(op));
       } else {
-        const moved = d.wallet.map((w) => this.movementPhrase(w)).filter((p): p is string => !!p);
+        const moved = d.wallet
+          .map((w) => {
+            const phrase = this.movementPhrase(w);
+            return phrase ? `${this.subject(w)}${phrase}` : null;
+          })
+          .filter((p): p is string => !!p);
         clauses.push(
           moved.length
             ? `${moved.join('; ')} (in another account's smart-account operation)`
@@ -1665,7 +1707,9 @@ class SentenceWriter {
         d.call.kind === 'native-transfer' &&
         d.call.value === 0n &&
         sameAddress(d.to, d.from);
-      if (!selfCallOnlyForAuth) clauses.push(this.callPhrase(d.call, d.from));
+      // subject(): "" for the account itself; another wallet address's name
+      // (ctx.selfAddresses) so its transaction never reads as the viewer's.
+      if (!selfCallOnlyForAuth) clauses.push(`${this.subject(d.from)}${this.callPhrase(d.call, d.from)}`);
       for (const grant of d.permit2) {
         // A permit2-approve call already says this.
         if (d.call.kind !== 'permit2-approve') clauses.push(this.permit2Phrase(grant));
@@ -1676,10 +1720,11 @@ class SentenceWriter {
     // Someone else's transaction that involves the wallet.
     const received: string[] = [];
     if (d.call.kind === 'native-transfer' && d.to && this.isWallet(d.to) && d.value > 0n) {
-      received.push(`received ${this.native(d.value)} from ${this.party(d.from)}`);
+      received.push(`${this.subject(d.to)}received ${this.native(d.value)} from ${this.party(d.from)}`);
     }
     for (const account of d.wallet) {
       const { outs, ins } = this.fungibleTotals(account);
+      const who = this.subject(account);
       if (ins.length) {
         const senders = new Set(
           d.movements.flatMap((m) =>
@@ -1689,10 +1734,10 @@ class SentenceWriter {
           ),
         );
         const fromParty = senders.size === 1 ? ` from ${this.party([...senders][0]!)}` : '';
-        received.push(`received ${joinList(ins)}${fromParty}`);
+        received.push(`${who}received ${joinList(ins)}${fromParty}`);
       }
-      if (outs.length) received.push(`sent ${joinList(outs)}`);
-      received.push(...this.nftPhrases(account));
+      if (outs.length) received.push(`${who}sent ${joinList(outs)}`);
+      received.push(...this.nftPhrases(account).map((phrase) => `${who}${phrase}`));
     }
     for (const grant of d.permit2) received.push(this.permit2Phrase(grant));
     if (received.length) clauses.push(...received);

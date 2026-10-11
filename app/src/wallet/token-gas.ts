@@ -232,10 +232,15 @@ function joinLabels(labels: string[]): string {
  * a token paymaster exists, and says the Send screen must offer the choice
  * (it needs a verified Kernel smart account, tokenGasOffer).
  */
-export function tokenSendFeeSentence(chainCaip2: string): string {
+export function tokenSendFeeSentence(chainCaip2: string, account: { keyless?: boolean } = {}): string {
   const profile = evmProfileByCaip2(chainCaip2);
   const native = profile?.displaySymbol ?? 'ETH';
   const base = `The network fee for a token send is normally paid in ${native}, not in the token.`;
+  // A watch-only or multi-signature account has no smart-account send of
+  // its own on the Send screen (a multisig's operations are self-paid in
+  // ETH and built on the Multisig screen), so the USDC clause would not be
+  // true for it (2026-10-11 re-check, finding 7).
+  if (account.keyless) return base;
   // Either source: the Send screen offers the ERC-7677 source as well.
   if (!tokenGasSourceFor(chainCaip2, { acceptsErc7677: true })) return base;
   return (

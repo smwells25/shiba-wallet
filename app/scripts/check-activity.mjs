@@ -28,9 +28,19 @@
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { getAddress } from 'ethers';
-import { KERNEL_V3_3, encodeFunctionCall, toHex } from '@shiba-wallet/chains-evm';
+import { Interface, getAddress } from 'ethers';
 import {
+  ENTRYPOINT_V07,
+  KERNEL_V3_3,
+  USER_OPERATION_EVENT_TOPIC,
+  encodeFunctionCall,
+  encodeKernelExecute,
+  indexerHistoryProvider,
+  toHex,
+} from '@shiba-wallet/chains-evm';
+import {
+  activityAddressSets,
+  historySmartAccountFor,
   activityAccountLabels,
   ACTIVITY_CACHE_LIMIT,
   MAX_DECODES_PER_CALL,
@@ -668,6 +678,276 @@ installFakeNode();
   }
 }
 
+console.log("Whose Activity it is: \"yourself\" only for the account's own addresses (2026-10-11 re-check, findings 2 and 3):");
+reset();
+installFakeNode();
+{
+  // The recorded addresses of the emulator pass (AGENTS.md, phase 17 item 1
+  // and the 2026-10-11 re-check): Account 1 0x772e…F44F, its Kernel smart
+  // account 0xD31c…D8FA, Account 2 0xb699…81fE, and Multisig 2 (2-of-3)
+  // 0x944c…0d38. The two transactions are rebuilt from the recorded facts
+  // (sender, recipient, 0.0006 test ETH) — their receipts are not among the
+  // pinned fixtures, so they are synthetic with the real addresses.
+  const MULTISIG = getAddress('0x944caa404e389b18b2fe251e969edd7a220d0d38');
+  const MULTISIG_ID = 0xd0000000;
+  const kernelConfig = {
+    accountType: 'kernel-v3.3',
+    factory: KERNEL_V3_3.factory,
+    factoryImplementation: KERNEL_V3_3.implementation,
+    kernelValidator: KERNEL_V3_3.ecdsaValidator,
+    recoveredAccounts: [],
+  };
+  const accounts = [
+    { index: 0, name: 'Account 1', evmAddress: ACCOUNT_1 },
+    { index: 1, name: 'Account 2', evmAddress: ACCOUNT_2 },
+  ];
+  const multisigs = [{ address: MULTISIG, label: 'Multisig 2 (2-of-3)' }];
+  const KERNEL_OF_ACCOUNT_2 = walletAddressesFor(ACCOUNT_2, 1, kernelConfig)[1];
+
+  const a1 = activityAddressSets({ eoa: ACCOUNT_1, accountIndex: 0, aa: kernelConfig, accounts, multisigs });
+  check('Account 1: "yourself" is its address and its own smart account', JSON.stringify(a1.self) === JSON.stringify([ACCOUNT_1, KERNEL_OF_ACCOUNT_1]), a1.self);
+  check("…decoded as the wallet's own: those, Account 2's smart account and the multisig — never Account 2's own address",
+    JSON.stringify(a1.wallet) === JSON.stringify([ACCOUNT_1, KERNEL_OF_ACCOUNT_1, KERNEL_OF_ACCOUNT_2, MULTISIG]) && !a1.wallet.includes(ACCOUNT_2), a1.wallet);
+  check('…labels: every account, then their smart accounts ("Account 1’s smart account"), then the multisig',
+    JSON.stringify(a1.labels) === JSON.stringify([
+      { address: ACCOUNT_1, label: 'Account 1' },
+      { address: ACCOUNT_2, label: 'Account 2' },
+      { address: KERNEL_OF_ACCOUNT_1, label: 'Account 1’s smart account' },
+      { address: KERNEL_OF_ACCOUNT_2, label: 'Account 2’s smart account' },
+      { address: MULTISIG, label: 'Multisig 2 (2-of-3)' },
+    ]), a1.labels);
+  const ms = activityAddressSets({ eoa: MULTISIG, accountIndex: MULTISIG_ID, aa: kernelConfig, accounts, multisigs });
+  check('Multisig 2 active: "yourself" is only the multisig; both Kernel accounts are decoded and named',
+    JSON.stringify(ms.self) === JSON.stringify([MULTISIG]) &&
+      JSON.stringify(ms.wallet) === JSON.stringify([MULTISIG, KERNEL_OF_ACCOUNT_1, KERNEL_OF_ACCOUNT_2]), ms);
+  const noAa = activityAddressSets({ eoa: ACCOUNT_1, accountIndex: 0, aa: null, accounts, multisigs });
+  check('without smart-account settings: the account and the multisigs; labels as before (no smart accounts)',
+    JSON.stringify(noAa.wallet) === JSON.stringify([ACCOUNT_1, MULTISIG]) &&
+      JSON.stringify(noAa.labels) === JSON.stringify(activityAccountLabels(accounts, multisigs)), noAa);
+  check('activityAccountLabels without aa is unchanged by the index field', activityAccountLabels(accounts, multisigs).length === 3);
+
+  const ETH_0_0006 = 600_000_000_000_000n;
+  const hex = (v) => '0x' + v.toString(16);
+  const SEND_TO_MS = '0x' + '6a'.repeat(32);
+  const TOPUP_BY_KERNEL = '0x' + '6b'.repeat(32);
+  const plain = (hash, from, to, value) => ({
+    transaction: { hash, from: from.toLowerCase(), to: to.toLowerCase(), input: '0x', value: hex(value), nonce: '0x1', type: '0x2', chainId: '0xaa36a7', blockNumber: '0x10', blockHash: '0x' + 'cd'.repeat(32) },
+    receipt: { transactionHash: hash, blockNumber: '0x10', blockHash: '0x' + 'cd'.repeat(32), status: '0x1', logs: [] },
+  });
+  // Account 1's Kernel account sends 0.0006 test ETH to the multisig in an
+  // EntryPoint bundle submitted by a bundler (a stranger's EOA).
+  const pad = (a) => '0x' + '0'.repeat(24) + a.slice(2).toLowerCase();
+  const word = (v) => v.toString(16).padStart(64, '0');
+  const kernelTopUp = (() => {
+    const callData = toHex(encodeKernelExecute([{ to: MULTISIG, value: ETH_0_0006, data: new Uint8Array() }]));
+    // The same encoding the engine test uses (ethers' ABI coder).
+    const op = [KERNEL_OF_ACCOUNT_1, 32n, '0x', callData, '0x' + '00'.repeat(32), 0n, '0x' + '00'.repeat(32), '0x', '0x'];
+    let input;
+    try {
+      input = new Interface(['function handleOps((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes)[],address)'])
+        .encodeFunctionData('handleOps', [[op], BURN]);
+    } catch {
+      input = null;
+    }
+    return {
+      transaction: { hash: TOPUP_BY_KERNEL, from: BURN.toLowerCase(), to: ENTRYPOINT_V07.toLowerCase(), input, value: '0x0', nonce: '0x2', type: '0x2', chainId: '0xaa36a7', blockNumber: '0x11', blockHash: '0x' + 'ce'.repeat(32) },
+      receipt: {
+        transactionHash: TOPUP_BY_KERNEL, blockNumber: '0x11', blockHash: '0x' + 'ce'.repeat(32), status: '0x1',
+        logs: [{
+          address: ENTRYPOINT_V07,
+          topics: [USER_OPERATION_EVENT_TOPIC, '0x' + '90'.repeat(32), pad(KERNEL_OF_ACCOUNT_1), pad('0x0000000000000000000000000000000000000000')],
+          data: '0x' + word(32n) + word(1n) + word(1234n) + word(99n),
+        }],
+      },
+    };
+  })();
+  check('the synthetic bundle encodes (engine encoder)', typeof kernelTopUp.transaction.input === 'string');
+  mode.extraTx = (h) => (h === SEND_TO_MS ? plain(h, ACCOUNT_1, MULTISIG, ETH_0_0006) : h === TOPUP_BY_KERNEL ? kernelTopUp : null);
+  const decodeWith = async (wallet, hashes) => {
+    clearActivityCache();
+    const decoder = createActivityDecoder({ chainCaip2: SEPOLIA, evmChainId: SEPOLIA_ID, wallet, trackedTokens: [], run: fixedRun });
+    return decoder.decodeEntries(hashes);
+  };
+  const renderAs = (decoded, sets) => render(decoded, { contacts: [], accountLabels: sets.labels, selfAddresses: sets.self });
+
+  const fromA1 = await decodeWith(a1.wallet, [SEND_TO_MS]);
+  check('LIVE CASE 1 — Account 1\'s side: "Sent 0.0006 test ETH to Multisig 2 (2-of-3)" (was "…to yourself")',
+    renderAs(fromA1.get(SEND_TO_MS), a1) === 'Sent 0.0006 test ETH to Multisig 2 (2-of-3)', renderAs(fromA1.get(SEND_TO_MS), a1));
+  check('…without the self list (the old wording) it read "to yourself"',
+    render(fromA1.get(SEND_TO_MS), { contacts: [], accountLabels: a1.labels }) === 'Sent 0.0006 test ETH to yourself');
+  const fromMs = await decodeWith(ms.wallet, [SEND_TO_MS, TOPUP_BY_KERNEL]);
+  check("…the multisig's side: \"Received 0.0006 test ETH from Account 1\"",
+    renderAs(fromMs.get(SEND_TO_MS), ms) === 'Received 0.0006 test ETH from Account 1', renderAs(fromMs.get(SEND_TO_MS), ms));
+  check('LIVE CASE 2 — the multisig\'s side of a top-up from Account 1\'s smart account names it, with the amount',
+    renderAs(fromMs.get(TOPUP_BY_KERNEL), ms) === 'Smart-account operation by Account 1’s smart account: sent 0.0006 test ETH to yourself',
+    renderAs(fromMs.get(TOPUP_BY_KERNEL), ms));
+  const oldWallet = walletAddressesFor(MULTISIG, MULTISIG_ID, kernelConfig, multisigs);
+  const oldMs = await decodeWith(oldWallet, [TOPUP_BY_KERNEL]);
+  check('…which the old decode set read as "Smart-account bundle with 1 operation from other accounts"',
+    render(oldMs.get(TOPUP_BY_KERNEL), { contacts: [], accountLabels: ms.labels }) === 'Smart-account bundle with 1 operation from other accounts');
+  const fromA1Bundle = await decodeWith(a1.wallet, [TOPUP_BY_KERNEL]);
+  check("…and Account 1's own side of the same bundle is its own operation, to the multisig by name",
+    renderAs(fromA1Bundle.get(TOPUP_BY_KERNEL), a1) === 'Smart-account operation: sent 0.0006 test ETH to Multisig 2 (2-of-3)',
+    renderAs(fromA1Bundle.get(TOPUP_BY_KERNEL), a1));
+  check('…a contact saved for the multisig address is still used first',
+    render(fromA1.get(SEND_TO_MS), { contacts: [contact('Team vault', MULTISIG)], accountLabels: a1.labels, selfAddresses: a1.self }) === 'Sent 0.0006 test ETH to Team vault');
+  check('…the decoded row carries the operation\'s UserOperation hash (a note saved under it is found on this row)',
+    fromA1Bundle.get(TOPUP_BY_KERNEL)?.description.userOps.map((o) => o.userOpHash).join() === '0x' + '90'.repeat(32));
+
+  // Mutation of the app glue: the renderer without selfAddresses.
+  const srcPath = join(here, '..', 'src', 'wallet', 'activity-sentences.ts');
+  const original = readFileSync(srcPath, 'utf8');
+  const anchorSelf = "    ...(options.selfAddresses ? { selfAddresses: options.selfAddresses } : {}),\n";
+  const anchorSets = "      others.push(...walletAddressesFor(a.evmAddress, a.index, input.aa).slice(1));\n";
+  check('mutation anchors present (self list, other smart accounts)', original.includes(anchorSelf) && original.includes(anchorSets));
+  const mutantDir = join(here, `.mutants-activity-self-${process.pid}`);
+  mkdirSync(mutantDir, { recursive: true });
+  try {
+    const load = async (name, from, to) => {
+      const file = join(mutantDir, `${name}-activity-sentences.ts`);
+      writeFileSync(file, original.replace(from, to).replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolvePath(dirname(srcPath), spec)).href}'`));
+      return import(pathToFileURL(file).href);
+    };
+    const m1 = await load('m1', anchorSelf, '');
+    check('M-self-1 caught: without the self list the send to the multisig reads "to yourself" again',
+      m1.renderActivitySentence(fromA1.get(SEND_TO_MS), { nativeSymbol: 'test ETH', hidden: false, contacts: [], networkId: SEPOLIA, accountLabels: a1.labels, selfAddresses: a1.self }) === 'Sent 0.0006 test ETH to yourself');
+    const m2 = await load('m2', anchorSets, '');
+    const mSets = m2.activityAddressSets({ eoa: MULTISIG, accountIndex: MULTISIG_ID, aa: kernelConfig, accounts, multisigs });
+    const mOut = await decodeWith(mSets.wallet, [TOPUP_BY_KERNEL]);
+    check("M-self-2 caught: without the other accounts' smart accounts the top-up is \"from other accounts\" again",
+      renderAs(mOut.get(TOPUP_BY_KERNEL), mSets) === 'Smart-account bundle with 1 operation from other accounts', renderAs(mOut.get(TOPUP_BY_KERNEL), mSets));
+  } finally {
+    rmSync(mutantDir, { recursive: true, force: true });
+  }
+
+  // The smart account whose history Activity lists next to the account (finding 4).
+  check('historySmartAccountFor: the Kernel counterfactual of a regular account',
+    historySmartAccountFor(ACCOUNT_1, 0, kernelConfig) === KERNEL_OF_ACCOUNT_1);
+  check('…none without settings, for SimpleAccount, for an EIP-7702 owner, for a multisig or a watch-only id',
+    historySmartAccountFor(ACCOUNT_1, 0, null) === null &&
+      historySmartAccountFor(ACCOUNT_1, 0, { ...kernelConfig, accountType: 'simple' }) === null &&
+      historySmartAccountFor(ACCOUNT_1, 0, { ...kernelConfig, eip7702Owners: [ACCOUNT_1.toLowerCase()] }) === null &&
+      historySmartAccountFor(MULTISIG, MULTISIG_ID, kernelConfig) === null &&
+      historySmartAccountFor(ACCOUNT_2, 0xc0000000, kernelConfig) === null);
+  check('…a recovered account attached to this owner wins over the counterfactual',
+    historySmartAccountFor(ACCOUNT_1, 0, { ...kernelConfig, recoveredAccounts: [{ owner: ACCOUNT_1.toLowerCase(), account: BURN }] }) === BURN);
+  check('…an imported account (id 2^31) uses salt 0',
+    historySmartAccountFor(ACCOUNT_2, 0x80000000, kernelConfig) === walletAddressesFor(ACCOUNT_2, 0, kernelConfig)[1]);
+}
+
+console.log("The smart account's history next to the account's own (2026-10-11 re-check, finding 4):");
+{
+  const sah = await import('../src/wallet/smart-account-history.ts');
+  const notes = await import('../src/wallet/notes.ts');
+  // A fake alchemy_getAssetTransfers indexer behind the REAL engine
+  // provider (indexerHistoryProvider), answering per address and side.
+  const SMART = KERNEL_OF_ACCOUNT_1;
+  const h = (n) => '0x' + n.toString(16).padStart(64, '0');
+  const t = (hash, block, from, to, category, value, extra = {}) => ({
+    hash, blockNum: '0x' + block.toString(16), from: from.toLowerCase(), to: to?.toLowerCase() ?? null, category,
+    uniqueId: `${hash}:${category}`, asset: 'ETH', rawContract: { value: '0x' + value.toString(16), decimal: '0x12' },
+    metadata: { blockTimestamp: new Date(1_790_000_000_000 + block * 12_000).toISOString() }, ...extra,
+  });
+  const book = {
+    // Account 1's own address: a send at block 100 (to its smart account,
+    // so the smart account also lists it) and a receive at block 90.
+    [`${ACCOUNT_1.toLowerCase()}|fromAddress`]: [[t(h(1), 100, ACCOUNT_1, SMART, 'external', 5n)]],
+    [`${ACCOUNT_1.toLowerCase()}|toAddress`]: [[t(h(2), 90, BURN, ACCOUNT_1, 'external', 7n)]],
+    // The smart account: an internal send at block 110 (a bundle), the
+    // top-up at block 100 (already listed for Account 1), and on page 2
+    // an internal send at block 95.
+    [`${SMART.toLowerCase()}|fromAddress`]: [[t(h(3), 110, SMART, BURN, 'internal', 3n, { uniqueId: `${h(3)}:internal:0` })], [t(h(4), 95, SMART, ACCOUNT_2, 'internal', 2n, { uniqueId: `${h(4)}:internal:0` })]],
+    [`${SMART.toLowerCase()}|toAddress`]: [[t(h(1), 100, ACCOUNT_1, SMART, 'external', 5n)]],
+  };
+  const requests = [];
+  let failSmart = false;
+  const transport = async (method, [params]) => {
+    if (method !== 'alchemy_getAssetTransfers') throw new Error(`unexpected ${method}`);
+    const side = params.fromAddress ? 'fromAddress' : 'toAddress';
+    const address = (params.fromAddress ?? params.toAddress).toLowerCase();
+    requests.push(`${address.slice(0, 6)}|${side}|${params.pageKey ?? ''}`);
+    if (failSmart && address === SMART.toLowerCase()) throw new TypeError('fetch failed: simulated');
+    const pages = book[`${address}|${side}`] ?? [[]];
+    const index = params.pageKey ? Number(params.pageKey) : 0;
+    return { transfers: pages[index] ?? [], ...(index + 1 < pages.length ? { pageKey: String(index + 1) } : {}) };
+  };
+  const base = indexerHistoryProvider(transport);
+  const plainPage = await base.getHistory(ACCOUNT_1);
+  const page1 = await sah.withSmartAccountHistory(base, SMART).getHistory(ACCOUNT_1);
+  check("page 1: the account's own entries are the provider's own, unchanged and in order",
+    JSON.stringify(page1.entries.filter((e) => !sah.isSmartAccountEntry(e)), (_k, v) => (typeof v === 'bigint' ? v.toString() : v)) ===
+      JSON.stringify(plainPage.entries, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)));
+  check('…the smart account\'s bundle at block 110 is added first, marked, with a prefixed uid; the top-up (already listed) is not repeated',
+    page1.entries.map((e) => `${e.id.slice(-2)}:${sah.isSmartAccountEntry(e) ? 'sa' : 'own'}:${e.direction}`).join(',') === '03:sa:out,01:own:out,02:own:in' &&
+      page1.entries[0].uid === `smart-account:${h(3)}:internal:0` && page1.entries[0].amount === 3n,
+    page1.entries.map((e) => `${e.id.slice(-2)}:${sah.isSmartAccountEntry(e) ? 'sa' : 'own'}:${e.direction}`).join(','));
+  check('…the page reports the smart account as included; one extra getHistory = two extra indexer requests',
+    sah.smartAccountHistoryOf(page1)?.status === 'included' && requests.length === 2 + 4, requests);
+  check('…and a cursor that only this provider reads', typeof page1.nextCursor === 'string' && JSON.parse(page1.nextCursor).v === 'own+smart-account-1');
+  requests.length = 0;
+  const page2 = await sah.withSmartAccountHistory(base, SMART).getHistory(ACCOUNT_1, page1.nextCursor);
+  check('page 2: only the stream with more is queried (the smart account\'s sent side), and its entry is marked',
+    requests.length === 1 && requests[0].endsWith('|fromAddress|1') && page2.entries.length === 1 && sah.isSmartAccountEntry(page2.entries[0]) && page2.nextCursor === undefined, requests);
+  check("…a plain provider cursor is refused (never mixed up with this one's)",
+    await sah.withSmartAccountHistory(base, SMART).getHistory(ACCOUNT_1, JSON.stringify({ v: 1, out: '1' })).then(() => false, (e) => /Unrecognized history cursor/.test(e.message)));
+  failSmart = true;
+  const failedPage = await sah.withSmartAccountHistory(base, SMART).getHistory(ACCOUNT_1);
+  check("a failing smart-account query never hides the account's own entries; the page says it failed and drops that stream",
+    failedPage.entries.length === plainPage.entries.length && !failedPage.entries.some(sah.isSmartAccountEntry) &&
+      sah.smartAccountHistoryOf(failedPage)?.status === 'failed' && failedPage.nextCursor === undefined);
+  failSmart = false;
+  const ownFails = sah.withSmartAccountHistory({ getHistory: async (a) => { if (a === ACCOUNT_1) throw new Error('own down'); return { entries: [] }; } }, SMART);
+  check("a failing query for the account's own address fails the page as before", await ownFails.getHistory(ACCOUNT_1).then(() => false, (e) => e.message === 'own down'));
+  const fresh = sah.freshHistoryEntries(page1.entries, [
+    { id: h(3), uid: 'smart-account:x', smartAccount: true, direction: 'out', timestamp: null, confirmed: true },
+    { id: h(1), uid: `${h(1)}:external:later`, direction: 'out', timestamp: null, confirmed: true },
+    { id: h(9), uid: 'smart-account:y', smartAccount: true, direction: 'in', timestamp: null, confirmed: true },
+  ]);
+  check('across pages: a smart-account row for a listed transaction is dropped; the account\'s own rows never are',
+    fresh.map((e) => e.id.slice(-2)).join(',') === '01,09', fresh.map((e) => e.id.slice(-2)));
+  check('the notes: included / failed / skipped (exact)',
+    sah.smartAccountHistoryNote('included', SMART) === 'Your smart account (0xD31c…D8FA) is listed too. Its rows are marked "smart account", and their direction and amount are what the smart account sent or received.' &&
+      sah.smartAccountHistoryNote('failed', SMART) === 'Your smart account’s transactions (0xD31c…D8FA) could not be loaded right now, so only this account’s own address is listed. Pull down to try again.' &&
+      sah.smartAccountHistoryNote('skipped', SMART) === 'Your smart account’s transactions (0xD31c…D8FA) are not listed: without a history indexer the wallet searches only this account’s own address. A history indexer (Settings → Ethereum history indexer) lists both.' &&
+      sah.smartAccountHistoryNote(undefined, SMART) === null && sah.smartAccountHistoryNote('included', null) === null);
+  // A note saved under the UserOperation hash shows on the smart account's row.
+  const OP = '0x' + '90'.repeat(32);
+  const index = notes.indexNotes([{ network: SEPOLIA, txid: null, userOpHash: OP, text: 'smart note', updatedAt: '2026-10-11T00:00:00Z' }]);
+  check("a note saved under op:<userOpHash> resolves on the smart account's bundle row through its decoded UserOperation",
+    notes.findNote(index, SEPOLIA, h(3), [OP])?.text === 'smart note');
+  const csv = notes.activityExportRows({
+    network: SEPOLIA, networkLabel: 'Ethereum Sepolia', entries: page1.entries, nativeSymbol: 'test ETH', nativeDecimals: 18,
+    notes: notes.indexNotes([]), explorerUrlFor: () => null,
+  });
+  check('the CSV direction cell says "(smart account)" on those rows only',
+    csv.map((r) => r[2]).join(',') === 'Sent (smart account),Sent,Received', csv.map((r) => r[2]));
+}
+
+console.log('Zero-value native rows next to token rows (2026-10-11 re-check, finding 8):');
+{
+  const hist = await import('../src/wallet/history.ts');
+  const WRAP = '0x' + 'a1'.repeat(32);
+  const APPROVE = '0x' + 'a2'.repeat(32);
+  const native0 = { id: WRAP, uid: `${WRAP}:external`, direction: 'out', amount: 0n, timestamp: null, confirmed: true };
+  const tokenOut = { id: WRAP, uid: `${WRAP}:log:1`, direction: 'out', assetSymbol: 'stETH', assetAmount: 5n * 10n ** 14n, assetDecimals: 18, timestamp: null, confirmed: true };
+  const approve0 = { id: APPROVE, uid: `${APPROVE}:external`, direction: 'out', amount: 0n, timestamp: null, confirmed: true };
+  const paid = { id: WRAP.toUpperCase().replace('0X', '0x'), uid: 'x', direction: 'out', amount: 1n, timestamp: null, confirmed: true };
+  const ids = hist.transactionsWithTokenAmounts([native0, tokenOut, approve0]);
+  check('a wrap\'s zero-value native row shows no amount when its token row is loaded', hist.hidesZeroNativeAmount(native0, ids) === true);
+  check('…an approval with no token row keeps its amount (what the indexer reported)', hist.hidesZeroNativeAmount(approve0, ids) === false);
+  check('…the token row itself and a non-zero native row keep theirs (ids compared case-insensitively)',
+    hist.hidesZeroNativeAmount(tokenOut, ids) === false && hist.hidesZeroNativeAmount(paid, ids) === false && ids.has(WRAP));
+  check('…without the token row loaded the zero row keeps its amount', hist.hidesZeroNativeAmount(native0, hist.transactionsWithTokenAmounts([native0])) === false);
+  const screen = readFileSync(join(here, '..', 'src', 'screens', 'ActivityScreen.tsx'), 'utf8');
+  const wired = (src) =>
+    src.includes('const tokenTxIds = transactionsWithTokenAmounts(loadedEntries);') &&
+    src.includes('noAmount={hidesZeroNativeAmount(item, tokenTxIds)}') &&
+    src.includes('const hasAmount = !noAmount && (entry.assetAmount !== undefined || entry.amount !== undefined);') &&
+    /\{noAmount \? null : \(\s*<>\s*<Text style=\{\[styles\.amount/.test(src);
+  check('the Activity row renders no amount line for such an entry, and says "no amount" to a screen reader (source)', wired(screen));
+  check('…a row that always renders the amount fails the check', !wired(screen.replace('{noAmount ? null : (', '{false ? null : (')));
+}
+
 console.log('ActivityScreen source:');
 {
   const screen = readFileSync(join(here, '..', 'src', 'screens', 'ActivityScreen.tsx'), 'utf8');
@@ -685,11 +965,37 @@ console.log('ActivityScreen source:');
   check('the amount/fee line is still rendered', /fee \{maskAmount\(formatUnits\(entry\.fee, decimals, decimals\), hidden\)\}/.test(screen));
   check('screen readers hear the sentence first', /\(sentence \? `\$\{sentence\}\. ` : ''\)/.test(screen));
   check('the screen passes the account labels and the pinned-staking lookup for the active network, and names the EVM slot by the network (findings 4, 7e, 7f)',
-    /accountLabels,\n\s*stakingContractAt: pinnedStakingAt,/.test(screen) && screen.includes('activityAccountLabels(accountList, sentences.multisigs)') &&
+    /accountLabels,\n\s*stakingContractAt: pinnedStakingAt,/.test(screen) && screen.includes('const accountLabels = sentences.labels;') &&
       screen.includes('(address: string) => stakingContractAt(evmChain.caip2, address)') &&
       screen.includes('title: account ? `${isEvmSlot ? evmChain.label : account.name} activity` : \'Activity\''));
-  check("the decoder's wallet set includes the network's stored multisigs (phase 18 item 3)",
-    /ownMultisigAddresses\(chainCaip2\),/.test(screen) && /wallet: walletAddressesFor\(eoa, accountIndex, aa, multisigs\),/.test(screen));
+  // Emulator re-check of 2026-10-11, findings 2 and 3: the decode set holds
+  // the wallet's other smart accounts and the network's multisigs, but only
+  // the account's own addresses read "yourself".
+  const setsOk = (src) =>
+    /ownMultisigAddresses\(chainCaip2\),/.test(src) &&
+    src.includes('const sets = activityAddressSets({ eoa, accountIndex, aa, accounts, multisigs });') &&
+    src.includes('wallet: sets.wallet,') && src.includes('self: sets.self,') && src.includes('labels: sets.labels,') &&
+    src.includes('selfAddresses: sentences.self,') && src.includes('accounts: accountList,') &&
+    !src.includes('walletAddressesFor(eoa, accountIndex, aa, multisigs)');
+  check("the decoder's wallet set comes from activityAddressSets and the renderer gets the account's own addresses as \"yourself\" (source)", setsOk(screen));
+  check('…the old wiring (multisigs in walletAddressesFor, no self list) fails the check',
+    !setsOk(screen.replace('selfAddresses: sentences.self,', '')));
+  // Finding 4: the active account's smart-account history is listed too.
+  const smartOk = (src) =>
+    src.includes('address = historySmartAccountFor(smartOwner, smartOwnerIndex, aa);') &&
+    src.includes('activeAccount?.watchOnly !== true &&') && src.includes('activeAccount?.multisig !== true;') &&
+    src.includes('const smartReady = !smartCandidate || (historySmart !== null && historySmart.key === smartKey);') &&
+    /useHistory\(chainId, account\?\.address \?\? '', \{\s*smartAccount: historySmartAccount,\s*ready: smartReady,\s*\}\)/.test(src) &&
+    src.includes('{smartAccountRow ? <StatusChip label="smart account" color={theme.accent} theme={theme} /> : null}') &&
+    src.includes("smartAccountRow ? 'smart account' : null,") &&
+    src.includes('const smartHistoryNote = smartAccountHistoryNote(state.smartAccount, historySmartAccount);');
+  check('the screen lists the smart account next to the account (not for watch-only or multisig), waits for the settings, marks its rows and says what it did (source)', smartOk(screen));
+  const useHistorySrc = readFileSync(join(here, '..', 'src', 'wallet', 'useHistory.ts'), 'utf8');
+  check('loadHistoryPage wraps the INDEXER provider only, and the hook waits until ready and drops smart-account duplicates (source)',
+    useHistorySrc.includes('first.viaIndexer && smartAccount ? withSmartAccountHistory(firstSource.provider, smartAccount) : firstSource.provider') &&
+      useHistorySrc.includes("...(smartAccount ? { smartAccount: 'skipped' as const } : {}),") &&
+      useHistorySrc.includes('if (!ready) return;') &&
+      useHistorySrc.includes('const fresh = freshHistoryEntries(prev.entries, page.entries);'));
 }
 
 console.log(`\ncheck-activity: ${passed} passed, ${failed} failed`);

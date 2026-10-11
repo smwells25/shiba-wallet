@@ -257,6 +257,34 @@ export function explorerTxUrl(
   return null;
 }
 
+/**
+ * Transaction ids (lowercase) that have a loaded entry with an exact token
+ * amount (assetAmount): a wrap, an unwrap or a stake whose token movement
+ * the history lists next to the transaction's own zero-value native entry.
+ */
+export function transactionsWithTokenAmounts(entries: readonly HistoryEntry[]): Set<string> {
+  const out = new Set<string>();
+  for (const entry of entries) if (entry.assetAmount !== undefined) out.add(entry.id.toLowerCase());
+  return out;
+}
+
+/**
+ * True when an Activity row should show no amount at all: a native entry
+ * (no asset) whose amount is exactly zero, of a transaction that has a
+ * token amount on another loaded row (2026-10-11 re-check, finding 8: wrap
+ * and unwrap rows read "−0 test ETH" next to the token rows). A zero-value
+ * transaction with no token row (an approval) keeps its "−0" amount, which
+ * is what the indexer reported.
+ */
+export function hidesZeroNativeAmount(entry: HistoryEntry, tokenTxIds: ReadonlySet<string>): boolean {
+  return (
+    entry.amount === 0n &&
+    entry.assetAmount === undefined &&
+    entry.assetSymbol === undefined &&
+    tokenTxIds.has(entry.id.toLowerCase())
+  );
+}
+
 /** Human label for an entry's direction. */
 export function directionLabel(direction: HistoryEntry['direction']): string {
   switch (direction) {

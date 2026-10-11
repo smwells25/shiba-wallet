@@ -1030,9 +1030,10 @@ console.log('check-key-import: findings 2–8 of the 2026-10-04 private-key run'
   const homeMutant = home.replace('{activeAccount?.imported ? null : (', '{(');
   check('M12 caught: a Home screen that always shows the recover link fails the check',
     !/\{activeAccount\?\.imported \? null : \(\s*<Pressable[\s\S]{0,600}Lost a recovery phrase\? Recover an account with guardians/.test(homeMutant));
-  const accMutant = acc.replace('{accountsBackupHint(importedCount > 0)}', 'Every account comes from your one recovery phrase, so the phrase backs up all of them.');
+  const accCall = '{accountsBackupHint(importedCount > 0, { watchOnly: watchOnlyAccounts.length > 0, multisig: multisigAccounts.length > 0 })}';
+  const accMutant = acc.replace(accCall, 'Every account comes from your one recovery phrase, so the phrase backs up all of them.');
   check('M13 caught: the old Settings opening sentence fails the shared-sentence check',
-    !/\{accountsBackupHint\(importedCount > 0\)\}/.test(accMutant) && /Every account comes from your one recovery phrase, so the phrase backs/.test(accMutant));
+    acc.includes(accCall) && !accMutant.includes(accCall) && /Every account comes from your one recovery phrase, so the phrase backs/.test(accMutant));
 }
 
 // ===========================================================================
@@ -1064,7 +1065,8 @@ console.log('check-key-import: honesty and input hygiene in the screens (source 
     accountsBackupHint(true) === 'Every account except the imported ones comes from your one recovery phrase. Imported accounts are NOT backed up by the phrase: keep their private keys yourself.' &&
       accountsBackupHint(false) === 'Every account comes from your one recovery phrase — backing up the phrase backs up all of them.');
   check('Settings → Accounts and the switcher both use it; the old opening sentence is gone from Settings',
-    /\{accountsBackupHint\(importedCount > 0\)\}/.test(acc) && /\{accountsBackupHint\(anyImported, \{ watchOnly: anyWatched, multisig: anyMultisig \}\)\}/.test(src('components/AccountSwitcher.tsx')) &&
+    acc.includes('{accountsBackupHint(importedCount > 0, { watchOnly: watchOnlyAccounts.length > 0, multisig: multisigAccounts.length > 0 })}') &&
+      /\{accountsBackupHint\(anyImported, \{ watchOnly: anyWatched, multisig: anyMultisig \}\)\}/.test(src('components/AccountSwitcher.tsx')) &&
       !/Every account comes from your one recovery phrase, so the phrase backs/.test(acc) && !/Imported accounts are the exception/.test(acc));
   const settings = src('screens/SettingsScreen.tsx');
   check('Backup section names the imported accounts the phrase does NOT back up', /It does NOT back up your imported accounts/.test(settings));

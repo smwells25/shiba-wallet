@@ -420,6 +420,27 @@ console.log('\nHistory (useHistory.ts loadHistoryPage):');
   );
   check('the logs-fallback note is kept', load.status === 'ok' && typeof load.note === 'string' && load.note.length > 0);
 }
+{
+  // 2026-10-11 re-check, finding 4: the smart account's history is listed
+  // only through a history indexer; the tracked-token logs fallback is
+  // built for one address, so it reports the smart account as skipped and
+  // never searches for it.
+  forgetDefaultEndpointChoices();
+  const SMART = '0xD31C2c54F21684ee2026a6C41E391130bDEED8fa';
+  const seen = [];
+  const record = (node) => (method, params) => {
+    seen.push(JSON.stringify(params ?? null).toLowerCase());
+    return node(method, params);
+  };
+  installFake({ rpc: { [ETH_A]: record(evmNode()), [ETH_B]: record(evmNode()) } });
+  const load = await loadHistoryPage(ETH_CHAIN, WALLET, undefined, { smartAccount: SMART });
+  check('logs fallback with a smart account: the page loads and reports the smart account as skipped',
+    load.status === 'ok' && load.smartAccount === 'skipped', load);
+  check("…and no request mentions the smart account (the account's own address is searched, as the control)",
+    seen.some((p) => p.includes(WALLET.slice(2).toLowerCase())) && !seen.some((p) => p.includes(SMART.slice(2).toLowerCase())), seen.length);
+  const without = await loadHistoryPage(ETH_CHAIN, WALLET);
+  check('…without a smart account nothing is reported (unchanged)', without.status === 'ok' && without.smartAccount === undefined);
+}
 
 console.log('\nSend quote (prepareEvmSend through callWithFailover):');
 let quotedOn = null;

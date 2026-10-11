@@ -378,6 +378,33 @@ export const MULTISIG_LIST_HINT =
 export const MULTISIG_SWITCHER_LINE = 'Multisig — operations need co-signers; Ethereum networks only';
 
 /**
+ * The account switcher's one-line expander above its rows. The full
+ * backup text (accountsBackupHint plus WATCH_ONLY_LIST_HINT and
+ * MULTISIG_LIST_HINT) opens under it, inside the scrolling list, so it no
+ * longer squeezes the rows (emulator re-check of 2026-10-11, finding 1:
+ * with a multisig listed, the intro took about eight lines and cut off the
+ * last row). Every row the phrase does not back up (imported, watch-only,
+ * multisig) keeps its own line saying so.
+ */
+export const SWITCHER_INTRO_TOGGLE = 'What is backed up?';
+
+/** Under the switcher's list while rows are still below the visible part. */
+export const SWITCHER_SCROLL_HINT = 'More accounts below — scroll the list.';
+
+/**
+ * True while the switcher's list holds more than it shows and the user has
+ * not scrolled to its end: the content is taller than the list's own
+ * height and the bottom of the content is still more than 1 point below
+ * the visible area (1 point of slack for fractional layout sizes). False
+ * before both sizes are known.
+ */
+export function switcherListOverflows(sizes: { listHeight: number; contentHeight: number; scrollY: number }): boolean {
+  const { listHeight, contentHeight, scrollY } = sizes;
+  if (!(listHeight > 0) || !(contentHeight > 0)) return false;
+  return contentHeight - (scrollY + listHeight) > 1;
+}
+
+/**
  * Said on Home and Receive when the active network is not the one the
  * multisig's record belongs to: the Multisig screen lists and builds its
  * operations only on the record's network.

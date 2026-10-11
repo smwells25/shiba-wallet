@@ -144,10 +144,15 @@ function actionFor(choice: Choice, amount: bigint): StakingAction {
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** A refusal is shown as its own sentence; anything else in the send screens' wording. */
-function describeStakingError(e: unknown): string {
+/**
+ * A refusal is shown as its own sentence; anything else in the send screens'
+ * wording, with the network's own coin name (`symbol`: evmChain.displaySymbol,
+ * "test ETH" on a test network — the 2026-10-11 re-check found "Not enough
+ * ETH to cover this amount plus the network fee." on Sepolia).
+ */
+function describeStakingError(e: unknown, symbol: string): string {
   if (e instanceof StakingRefusal || (e as { name?: unknown } | null)?.name === 'FeatureNotAllowedError') return errorText(e);
-  const { title, detail } = describeSendError(e, 'ETH');
+  const { title, detail } = describeSendError(e, symbol);
   const clean = sanitizeEndpointMessage(detail);
   return clean === '' ? title : `${title}\n${clean}`;
 }
@@ -485,7 +490,7 @@ export function StakingScreen({ navigation }: Props) {
         setPhase('aa-confirm');
       } catch (e) {
         const described = e instanceof StakingRefusal || !aaType ? null : describeAaError(e, { accountType: aaType, deployed: null });
-        backToForm(described ? `${described.title}\n${described.detail}` : describeStakingError(e));
+        backToForm(described ? `${described.title}\n${described.detail}` : describeStakingError(e, symbol));
       }
       return;
     }
@@ -493,7 +498,7 @@ export function StakingScreen({ navigation }: Props) {
       const step = await quoteEoa(action);
       setPhase(step === 'approve' ? 'approve' : 'confirm');
     } catch (e) {
-      backToForm(describeStakingError(e));
+      backToForm(describeStakingError(e, symbol));
     }
   };
 

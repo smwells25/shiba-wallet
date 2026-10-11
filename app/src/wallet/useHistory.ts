@@ -12,6 +12,12 @@ import {
 import { listTokens } from './tokens.ts';
 import type { TrackedTokenRef } from './token-history.ts';
 import { getIndexerConfig } from './indexer.ts';
+import {
+  freshHistoryEntries,
+  smartAccountHistoryOf,
+  withSmartAccountHistory,
+  type SmartAccountHistoryStatus,
+} from './smart-account-history.ts';
 
 /**
  * State machine for one chain's activity list, with the same discipline as
@@ -43,6 +49,12 @@ export type HistoryState =
        * (token-history.ts); absent for other sources.
        */
       coverage?: HistoryNotes['coverage'];
+      /**
+       * Whether the active account's smart-account history is listed too
+       * (smart-account-history.ts); absent when no smart account was
+       * passed in.
+       */
+      smartAccount?: SmartAccountHistoryStatus;
     };
 
 export interface HistoryHook {
@@ -104,7 +116,20 @@ async function sourceForEndpoint(
 /** One page of a chain's history, or why there is none. */
 export type HistoryPageLoad =
   | { status: 'unavailable'; note: string }
-  | { status: 'ok'; page: HistoryPage; note?: string };
+  | {
+      status: 'ok';
+      page: HistoryPage;
+      note?: string;
+      /** Set when a smart account was passed in: whether its history is on this page. */
+      smartAccount?: SmartAccountHistoryStatus;
+    };
+
+/** What a page says about the smart account (undefined when none was passed in). */
+function smartAccountStatusOf(page: HistoryPage, smartAccount: string | null, viaIndexer: boolean): SmartAccountHistoryStatus | undefined {
+  if (!smartAccount) return undefined;
+  if (!viaIndexer) return 'skipped';
+  return smartAccountHistoryOf(page)?.status ?? 'skipped';
+}
 
 /**
  * Fetches one history page (the first when `cursor` is undefined) through
@@ -122,15 +147,29 @@ export async function loadHistoryPage(
   chainId: string,
   address: string,
   cursor?: string,
+  options: { smartAccount?: string | null } = {},
 ): Promise<HistoryPageLoad> {
   const endpoint = await getEndpoint(chainId);
   if (!endpoint) return { status: 'unavailable', note: 'No network configuration for this chain.' };
   const first = await sourceForEndpoint(endpoint, address);
   if (first.source.status === 'unavailable') return { status: 'unavailable', note: first.source.note };
   const firstSource = first.source;
+  // The active account's smart account (smart-account-history.ts): listed
+  // only through a history indexer, which is queried by address (one more
+  // page request per load); the tracked-token logs fallback is built for
+  // one address and reports it as skipped.
+  const smartAccount = options.smartAccount ?? null;
   if (first.viaIndexer || endpoint.url === null) {
-    const page = await firstSource.provider.getHistory(address, cursor);
-    return { status: 'ok', page, ...(firstSource.note ? { note: firstSource.note } : {}) };
+    const provider =
+      first.viaIndexer && smartAccount ? withSmartAccountHistory(firstSource.provider, smartAccount) : firstSource.provider;
+    const page = await provider.getHistory(address, cursor);
+    const smartStatus = smartAccountStatusOf(page, smartAccount, first.viaIndexer);
+    return {
+      status: 'ok',
+      page,
+      ...(firstSource.note ? { note: firstSource.note } : {}),
+      ...(smartStatus ? { smartAccount: smartStatus } : {}),
+    };
   }
   const outcome = await callWithFailover({ ...endpoint, url: endpoint.url }, async (ep) => {
     // The first attempt reuses the source built above; a retry builds a
@@ -144,10 +183,22 @@ export async function loadHistoryPage(
     status: 'ok',
     page: outcome.value.page,
     ...(outcome.value.note ? { note: outcome.value.note } : {}),
+    ...(smartAccount ? { smartAccount: 'skipped' as const } : {}),
   };
 }
 
-export function useHistory(chainId: string, address: string): HistoryHook {
+/**
+ * `extra.smartAccount` is the active account's smart-account address to
+ * list next to `address` (null for none); while `extra.ready` is false
+ * (the screen is still reading the smart-account settings) nothing is
+ * loaded, so the list is fetched once with its final address set.
+ */
+export function useHistory(
+  chainId: string,
+  address: string,
+  extra: { smartAccount: string | null; ready: boolean } = { smartAccount: null, ready: true },
+): HistoryHook {
+  const { smartAccount, ready } = extra;
   const [state, setState] = useState<HistoryState>({ status: 'loading' });
   const [refreshing, setRefreshing] = useState(false);
   const generation = useRef(0);
@@ -156,11 +207,12 @@ export function useHistory(chainId: string, address: string): HistoryHook {
   const loadingMoreRef = useRef(false);
 
   const reload = useCallback(async () => {
+    if (!ready) return;
     const gen = ++generation.current;
     setRefreshing(true);
     setState((prev) => (prev.status === 'ok' ? prev : { status: 'loading' }));
     try {
-      const load = await loadHistoryPage(chainId, address);
+      const load = await loadHistoryPage(chainId, address, undefined, { smartAccount });
       if (gen !== generation.current) return;
       if (load.status === 'unavailable') {
         setState({ status: 'unavailable', note: load.note });
@@ -175,6 +227,7 @@ export function useHistory(chainId: string, address: string): HistoryHook {
         loadingMore: false,
         loadMoreError: null,
         ...notes,
+        ...(load.smartAccount ? { smartAccount: load.smartAccount } : {}),
       });
     } catch (e) {
       if (gen === generation.current) {
@@ -183,7 +236,7 @@ export function useHistory(chainId: string, address: string): HistoryHook {
     } finally {
       if (gen === generation.current) setRefreshing(false);
     }
-  }, [chainId, address]);
+  }, [chainId, address, smartAccount, ready]);
 
   const loadMore = useCallback(async () => {
     if (loadingMoreRef.current) return;
@@ -197,7 +250,7 @@ export function useHistory(chainId: string, address: string): HistoryHook {
     if (!cursor) return;
     loadingMoreRef.current = true;
     try {
-      const load = await loadHistoryPage(chainId, address, cursor);
+      const load = await loadHistoryPage(chainId, address, cursor, { smartAccount });
       if (gen !== generation.current) return;
       if (load.status === 'unavailable') {
         // The endpoint was removed between pages; keep what is shown.
@@ -215,8 +268,9 @@ export function useHistory(chainId: string, address: string): HistoryHook {
         // (mempool + confirmed) page and this confirmed-only page. Keyed
         // by uid when present (one EVM transaction can yield several
         // legitimate entries sharing its hash), by id otherwise.
-        const seen = new Set(prev.entries.map((entry) => entry.uid ?? entry.id));
-        const fresh = page.entries.filter((entry) => !seen.has(entry.uid ?? entry.id));
+        // A smart-account row whose transaction is already listed is
+        // dropped as well (smart-account-history.ts freshHistoryEntries).
+        const fresh = freshHistoryEntries(prev.entries, page.entries);
         // The note fields carry over (a logs-fallback page updates them
         // with the range answered so far, including a refusal that ended
         // paging); without this the partial-history caveat would vanish
@@ -236,6 +290,13 @@ export function useHistory(chainId: string, address: string): HistoryHook {
           loadingMore: false,
           loadMoreError: null,
           ...notes,
+          // A later page can report the smart-account stream as failed;
+          // once failed it is not queried again until a reload.
+          ...(prev.smartAccount === 'failed' || load.smartAccount === 'failed'
+            ? { smartAccount: 'failed' as const }
+            : prev.smartAccount !== undefined
+              ? { smartAccount: prev.smartAccount }
+              : {}),
         };
       });
     } catch (e) {
@@ -247,7 +308,7 @@ export function useHistory(chainId: string, address: string): HistoryHook {
     } finally {
       loadingMoreRef.current = false;
     }
-  }, [chainId, address]);
+  }, [chainId, address, smartAccount]);
 
   // Initial load; re-run if the chain or address changes.
   useEffect(() => {

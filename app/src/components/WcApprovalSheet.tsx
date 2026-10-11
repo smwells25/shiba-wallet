@@ -434,7 +434,7 @@ export function WcApprovalSheet({
       },
       (e) => {
         if (!cancelled) {
-          const { title, detail } = describeSendError(e, 'ETH');
+          const { title, detail } = describeSendError(e, evmChain.displaySymbol);
           setTxQuote({ status: 'error', message: `${title}\n${detail}` });
         }
       },
@@ -452,7 +452,7 @@ export function WcApprovalSheet({
     // the request on the sheet, so a used-up smart-account quote is replaced.
     // The in-render reset above (quotedInputs) clears the override and the
     // old quote on the same changes.
-  }, [item, address, evmChain.caip2, permissionGrant, loadAaBundle, aaQuoteGeneration]);
+  }, [item, address, evmChain.caip2, evmChain.displaySymbol, permissionGrant, loadAaBundle, aaQuoteGeneration]);
 
   // Approval-time quote pinning for regular-account transactions: the
   // quote is one endpoint's answer, and the wallet may have moved to
@@ -491,7 +491,7 @@ export function WcApprovalSheet({
         }
       } catch (e) {
         if (currentItemKey.current !== key) return;
-        const { title, detail } = describeSendError(e, 'ETH');
+        const { title, detail } = describeSendError(e, evmChain.displaySymbol);
         setOverrideSimulation(false);
         setTxQuote({
           status: 'error',

@@ -881,7 +881,8 @@ console.log('check-token-gas: footnote, fee copy and funding titles');
   const tokensSrc = readFileSync(new URL('../src/screens/TokensScreen.tsx', import.meta.url), 'utf8');
   const settingsSrc = readFileSync(new URL('../src/screens/SettingsScreen.tsx', import.meta.url), 'utf8');
   check('the screens use the helpers and the old absolute wording is gone',
-    tokensSrc.includes('{tokenSendFeeSentence(evmChain.caip2)}') && !tokensSrc.includes('the network fee for a token send is paid in') &&
+    /\{tokenSendFeeSentence\(evmChain\.caip2, \{\s*keyless: activeAccount\?\.watchOnly === true \|\| activeAccount\?\.multisig === true,\s*\}\)\}/.test(tokensSrc) &&
+      !tokensSrc.includes('the network fee for a token send is paid in') &&
       settingsSrc.includes('{settingsTokensFeeSentence()}') && !settingsSrc.includes('with the network fee paid in ETH'));
 
   // Funding titles with the USDC fee (Base Sepolia).
