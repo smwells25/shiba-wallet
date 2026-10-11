@@ -420,7 +420,9 @@ const SEND = readSrc('src/screens/SendScreen.tsx');
 const SWAP = readSrc('src/screens/SwapScreen.tsx');
 const SESSIONS = readSrc('src/screens/SessionsScreen.tsx');
 const WC = readSrc('src/components/WcApprovalSheet.tsx');
-const IMPORT = (from) => `import { TransactionNoteField } from '${from}';`;
+/** The import of the field (it may share the line with the field's view helpers). */
+const IMPORT_RE = (from) => new RegExp(`import \\{[^}]*\\bTransactionNoteField\\b[^}]*\\} from '${from.replace(/[./]/g, (c) => `\\${c}`)}';`);
+const importsField = (src, from) => IMPORT_RE(from).test(src);
 /** The text between `start` and the first `end` after it, or ''. */
 function between(src, start, end) {
   const a = src.indexOf(start);
@@ -437,7 +439,7 @@ function rendersBeforeDone(view, render, done = '<Button title="Done"') {
 function fieldOk(src) {
   return (
     src.includes('export function TransactionNoteField({') &&
-    src.includes("import { linkUserOperation, NOTE_PRIVACY_LINE, sanitizeNote, saveNote } from '../wallet/notes';") &&
+    src.includes("import { closeNoteView, linkUserOperation, NOTE_PRIVACY_LINE, sanitizeNote, saveNote } from '../wallet/notes';") &&
     src.includes('saveNote(net, { txid: tx, userOpHash: op }, value)') &&
     src.includes('linkUserOperation(network, userOpHash, txid)') &&
     src.includes('useEffect(() => () => save(), [save]);') &&
@@ -447,7 +449,7 @@ function fieldOk(src) {
 }
 function sendOk(src) {
   return (
-    src.includes(IMPORT('../components/TransactionNoteField')) &&
+    importsField(src, '../components/TransactionNoteField') &&
     !src.includes('function SuccessNoteField') &&
     !src.includes('SuccessNoteField') &&
     /<TransactionNoteField\s+network=\{endpoint\.network\.chainId\}\s+txid=\{aaResult\.txHash\}\s+userOpHash=\{aaResult\.userOpHash\}\s*\/>/.test(src) &&
@@ -458,7 +460,7 @@ function swapOk(src) {
   const aaView = between(src, "if (phase === 'success' && aaResult) {", '</ScrollView>');
   const eoaView = between(src, "if (phase === 'success' && result) {", '</ScrollView>');
   return (
-    src.includes(IMPORT('../components/TransactionNoteField')) &&
+    importsField(src, '../components/TransactionNoteField') &&
     rendersBeforeDone(aaView, '<TransactionNoteField network={sentNetwork} txid={aaResult.txHash} userOpHash={aaResult.userOpHash} />') &&
     rendersBeforeDone(eoaView, '<TransactionNoteField network={sentNetwork} txid={result.txid} userOpHash={null} />') &&
     // The network is captured when the swap is sent, before the success view shows.
@@ -471,7 +473,7 @@ function sessionsOk(src) {
   const creations = src.match(/setProgress\(\{\s*kind:/g) ?? [];
   const withNetwork = src.match(/setProgress\(\{\s*kind:[^}]*?network: record\.chain,/g) ?? [];
   return (
-    src.includes(IMPORT('../components/TransactionNoteField')) &&
+    importsField(src, '../components/TransactionNoteField') &&
     /<TransactionNoteField\s+key=\{progress\.userOpHash\}\s+network=\{progress\.network\}\s+txid=\{progress\.txHash\}\s+userOpHash=\{progress\.userOpHash\}\s*\/>/.test(view) &&
     rendersBeforeDone(view, '<TransactionNoteField', 'title="Done"') &&
     creations.length >= 5 && withNetwork.length === creations.length
@@ -480,11 +482,67 @@ function sessionsOk(src) {
 function wcOk(src) {
   const view = between(src, 'export function WcSentView(', '</ScrollView>');
   return (
-    src.includes(IMPORT('./TransactionNoteField')) &&
+    importsField(src, './TransactionNoteField') &&
     /<TransactionNoteField\s+key=\{result\.key\}\s+network=\{result\.network\}\s+txid=\{result\.txid\}\s+userOpHash=\{result\.userOpHash\}\s*\/>/.test(view) &&
-    rendersBeforeDone(view, '<TransactionNoteField', '<Button title="Done" onPress={onDone} />')
+    rendersBeforeDone(view, '<TransactionNoteField', '<Button title="Done" onPress={() => dismissKeyboardThenClose(onDone)} />')
   );
 }
+// ---------------------------------------------------------------------------
+console.log('One tap on Done saves the note and closes (emulator pass of 2026-10-11, finding F6)');
+// ---------------------------------------------------------------------------
+// React Native's default keyboardShouldPersistTaps ('never') swallows the
+// first tap outside a focused field to dismiss the keyboard, so Done needed
+// two taps while a note was being typed. Every view that renders the field
+// now spreads NOTE_VIEW_SCROLL_PROPS ('handled') on its ScrollView and its
+// Done handler dismisses the keyboard, then closes.
+{
+  const { closeNoteView } = await import('../src/wallet/notes.ts');
+  const calls = [];
+  closeNoteView(() => calls.push('dismiss keyboard'), () => calls.push('close'));
+  check('closeNoteView: the keyboard is dismissed, then the view closes — in one call (one tap)',
+    calls.join(',') === 'dismiss keyboard,close', calls);
+  const fieldViewProps = (src) =>
+    src.includes("export const NOTE_VIEW_SCROLL_PROPS = { keyboardShouldPersistTaps: 'handled' } as const;") &&
+    /export function dismissKeyboardThenClose\(close: \(\) => void\): void \{\s*closeNoteView\(\(\) => Keyboard\.dismiss\(\), close\);\s*\}/.test(src);
+  check('TransactionNoteField.tsx owns the scroll props (taps reach the buttons) and the Done helper (keyboard first, then close)', fieldViewProps(FIELD));
+  check('…a field file whose scroll props keep the default is caught', !fieldViewProps(FIELD.replace("keyboardShouldPersistTaps: 'handled'", "keyboardShouldPersistTaps: 'never'")));
+  const STAKING = readSrc('src/screens/StakingScreen.tsx');
+  /**
+   * Every view of `src` that renders <TransactionNoteField: the ScrollView
+   * that opens it carries {...NOTE_VIEW_SCROLL_PROPS} and the Done button
+   * after it calls dismissKeyboardThenClose. Returns the problems.
+   */
+  const oneTapProblems = (src, label) => {
+    const problems = [];
+    let at = src.indexOf('<TransactionNoteField');
+    if (at < 0) problems.push(`${label}: no field`);
+    while (at >= 0) {
+      const open = src.lastIndexOf('<ScrollView', at);
+      const openTag = open < 0 ? '' : src.slice(open, src.indexOf('>', open) + 1);
+      if (!openTag.includes('{...NOTE_VIEW_SCROLL_PROPS}')) problems.push(`${label}: the ScrollView at ${open} keeps the default taps`);
+      const done = src.indexOf('title="Done"', at);
+      const doneEnd = src.indexOf('/>', done);
+      const doneTag = done < 0 ? '' : src.slice(done, doneEnd);
+      if (!/onPress=\{\(\) =>\s*dismissKeyboardThenClose\(/.test(doneTag)) problems.push(`${label}: Done at ${done} does not dismiss the keyboard first`);
+      at = src.indexOf('<TransactionNoteField', at + 1);
+    }
+    return problems;
+  };
+  const views = [['Send', SEND], ['Swap', SWAP], ['Staking', STAKING], ['Sessions', SESSIONS], ['WalletConnect sent view', WC]];
+  for (const [label, src] of views) {
+    const problems = oneTapProblems(src, label);
+    check(`${label}: every view with a note field passes taps through and closes with one tap on Done`, problems.length === 0, problems);
+  }
+  // The pre-fix sources (the scroll props and the Done helper removed) are caught.
+  const undo = (src) =>
+    src
+      .replaceAll(' {...NOTE_VIEW_SCROLL_PROPS}', '')
+      .replace(/onPress=\{\(\) =>\s*dismissKeyboardThenClose\(([\s\S]*?)\)\s*\}\s*\n(\s*)\/>/g, 'onPress={$1}\n$2/>');
+  for (const [label, src] of views) {
+    check(`…${label} without the scroll props or the Done helper is caught`, oneTapProblems(undo(src), label).length > 0);
+  }
+}
+
 check('the moved field: saves through notes.ts, links a UserOperation note, saves on unmount, shows the privacy line', fieldOk(FIELD));
 check('Send: imports the moved field and renders it on both success views (no local copy left)', sendOk(SEND));
 check('Swap: the field above "Done" on both success views, with the network captured at sending', swapOk(SWAP));
@@ -494,8 +552,8 @@ check('mutant: a Swap AA view that drops the UserOperation hash is caught',
   !swapOk(SWAP.replace('txid={aaResult.txHash} userOpHash={aaResult.userOpHash} />', 'txid={aaResult.txHash} userOpHash={null} />')));
 check('mutant: the field placed after "Done" on the Swap view is caught',
   !swapOk(SWAP.replace(
-    "        {sentNetwork ? <TransactionNoteField network={sentNetwork} txid={result.txid} userOpHash={null} /> : null}\n        <Button title=\"Done\" onPress={() => navigation.popToTop()} />",
-    "        <Button title=\"Done\" onPress={() => navigation.popToTop()} />\n        {sentNetwork ? <TransactionNoteField network={sentNetwork} txid={result.txid} userOpHash={null} /> : null}")));
+    "        {sentNetwork ? <TransactionNoteField network={sentNetwork} txid={result.txid} userOpHash={null} /> : null}\n        <Button title=\"Done\" onPress={() => dismissKeyboardThenClose(() => navigation.popToTop())} />",
+    "        <Button title=\"Done\" onPress={() => dismissKeyboardThenClose(() => navigation.popToTop())} />\n        {sentNetwork ? <TransactionNoteField network={sentNetwork} txid={result.txid} userOpHash={null} /> : null}")));
 check('mutant: a Sessions progress record without its network is caught',
   !sessionsOk(SESSIONS.replace("setProgress({ kind: 'test', network: record.chain,", "setProgress({ kind: 'test',")));
 check('mutant: the Sessions render removed is caught', !sessionsOk(SESSIONS.replace(/<TransactionNoteField[\s\S]*?\/>/, '')));

@@ -794,6 +794,29 @@ installFakeNode();
   check('…the decoded row carries the operation\'s UserOperation hash (a note saved under it is found on this row)',
     fromA1Bundle.get(TOPUP_BY_KERNEL)?.description.userOps.map((o) => o.userOpHash).join() === '0x' + '90'.repeat(32));
 
+  // Finding F1 (pass of 2026-10-11): tx 0x341db91c…, Account 1 → its own
+  // Kernel account, 0.0015 test ETH. Listed once (the account's own row);
+  // its sentence names the smart account instead of "yourself".
+  check('Account 1: its own smart account is named "your smart account"; a multisig has no such name',
+    JSON.stringify(a1.selfNames) === JSON.stringify([{ address: KERNEL_OF_ACCOUNT_1, name: 'your smart account' }]) &&
+      JSON.stringify(ms.selfNames) === '[]', a1.selfNames);
+  const TOPUP_0X341 = '0x341db91c' + '00'.repeat(28);
+  const ETH_0_0015 = 1_500_000_000_000_000n;
+  mode.extraTx = (hh) => (hh === TOPUP_0X341 ? plain(hh, ACCOUNT_1, KERNEL_OF_ACCOUNT_1, ETH_0_0015) : null);
+  const topUp = await decodeWith(a1.wallet, [TOPUP_0X341]);
+  const withNames = render(topUp.get(TOPUP_0X341), { contacts: [], accountLabels: a1.labels, selfAddresses: a1.self, selfNames: a1.selfNames });
+  check('LIVE CASE 0x341db91c… — "Sent 0.0015 test ETH to your smart account" (was "…to yourself")',
+    withNames === 'Sent 0.0015 test ETH to your smart account', withNames);
+  check('…without the names (the previous wording) it read "to yourself"',
+    render(topUp.get(TOPUP_0X341), { contacts: [], accountLabels: a1.labels, selfAddresses: a1.self }) === 'Sent 0.0015 test ETH to yourself');
+  check("…the smart account's own operations still read \"Smart-account operation\" with the names on",
+    render(fromA1Bundle.get(TOPUP_BY_KERNEL), { contacts: [], accountLabels: a1.labels, selfAddresses: a1.self, selfNames: a1.selfNames }) ===
+      'Smart-account operation: sent 0.0006 test ETH to Multisig 2 (2-of-3)');
+  mode.extraTx = (h) => (h === SEND_TO_MS ? plain(h, ACCOUNT_1, MULTISIG, ETH_0_0006) : h === TOPUP_BY_KERNEL ? kernelTopUp : null);
+  const screenSrc = readFileSync(join(here, '..', 'src', 'screens', 'ActivityScreen.tsx'), 'utf8');
+  check('…the screen passes the names to the renderer (source)',
+    screenSrc.includes('selfNames: sentences.selfNames,') && screenSrc.includes('selfNames: sets.selfNames,'));
+
   // Mutation of the app glue: the renderer without selfAddresses.
   const srcPath = join(here, '..', 'src', 'wallet', 'activity-sentences.ts');
   const original = readFileSync(srcPath, 'utf8');
@@ -835,76 +858,242 @@ installFakeNode();
     historySmartAccountFor(ACCOUNT_2, 0x80000000, kernelConfig) === walletAddressesFor(ACCOUNT_2, 0, kernelConfig)[1]);
 }
 
-console.log("The smart account's history next to the account's own (2026-10-11 re-check, finding 4):");
+console.log("The smart account's history next to the account's own, merged in time order (2026-10-11 pass, findings F1 and F2):");
 {
   const sah = await import('../src/wallet/smart-account-history.ts');
+  const hist = await import('../src/wallet/history.ts');
   const notes = await import('../src/wallet/notes.ts');
-  // A fake alchemy_getAssetTransfers indexer behind the REAL engine
-  // provider (indexerHistoryProvider), answering per address and side.
   const SMART = KERNEL_OF_ACCOUNT_1;
   const h = (n) => '0x' + n.toString(16).padStart(64, '0');
+  const big = (v) => (typeof v === 'bigint' ? v.toString() : v);
+  /** A history entry as the engine's indexer provider makes it. */
+  const e = (n, block, direction, amount, uid = `${h(n)}:external`) => ({
+    id: h(n), uid, timestamp: 1_790_000_000 + block * 12, confirmed: true, blockHeight: block, direction, amount,
+  });
+  /** A cursored stream over fixed pages; `failAt` makes that fetch (0-based) reject once. */
+  const streamOf = (group, pages, { failAt = -1, log = [] } = {}) => {
+    let calls = 0;
+    return {
+      group,
+      log,
+      async fetch(cursor) {
+        const n = calls++;
+        log.push(`${group}:${cursor ?? 'first'}`);
+        if (n === failAt) throw new TypeError(`fetch failed: simulated ${group} failure`);
+        const index = cursor === undefined ? 0 : Number(cursor);
+        return { entries: pages[index] ?? [], ...(index + 1 < pages.length ? { nextCursor: String(index + 1) } : {}) };
+      },
+    };
+  };
+  /** Every page of a feed until it has no more (bounded). */
+  const drain = async (feed, max = 40) => {
+    const pages = [];
+    for (let i = 0; i < max; i++) {
+      await feed.fill();
+      const page = feed.take();
+      pages.push(page);
+      if (!page.hasMore) break;
+    }
+    return pages;
+  };
+  const heights = (entries) => entries.map((x) => x.blockHeight);
+  const nonIncreasing = (entries) => entries.every((x, i) => i === 0 || entries[i - 1].blockHeight >= x.blockHeight);
+  const keyOf = (x) => `${sah.isSmartAccountEntry(x) ? 'sa' : 'own'}:${x.uid}`;
+
+  // Case A — the account's own pages end EARLIER (older) than the smart
+  // account's: own sent [100, 60] then [50, 5]; own received [95, 94] (one
+  // page); smart sent [99, 98] then [70, 20]; smart received EMPTY.
+  const ownSent = [[e(1, 100, 'out', 1n), e(2, 60, 'out', 2n)], [e(3, 50, 'out', 3n), e(4, 5, 'out', 4n)]];
+  const ownReceived = [[e(5, 95, 'in', 5n), e(6, 94, 'in', 6n)]];
+  const smartSent = [[e(7, 99, 'out', 7n), e(8, 98, 'out', 8n)], [e(9, 70, 'out', 9n), e(10, 20, 'out', 10n)]];
+  const all = [...ownSent.flat(), ...ownReceived.flat(), ...smartSent.flat()];
+  const feedA = sah.createMergedHistoryFeed(
+    [streamOf('own', ownSent), streamOf('own', ownReceived), streamOf('smart', smartSent), streamOf('smart', [[]])],
+    { pageTarget: 3 },
+  );
+  const pagesA = await drain(feedA);
+  const listedA = pagesA.flatMap((p) => p.entries);
+  check('A (own pages end earlier): the whole list is in time order across pages', nonIncreasing(listedA), heights(listedA));
+  check('…every entry listed exactly once, nothing skipped', listedA.length === all.length && new Set(listedA.map(keyOf)).size === all.length, listedA.map(keyOf));
+  check('…several pages, each in time order, each older than the one before',
+    pagesA.length > 1 && pagesA.every((p) => nonIncreasing(p.entries)) &&
+      pagesA.every((p, i) => i === 0 || p.entries.length === 0 || pagesA.slice(0, i).flatMap((q) => q.entries).every((x) => x.blockHeight >= p.entries[0].blockHeight)),
+    pagesA.map((p) => heights(p.entries)));
+  check("…the account's own entries are the provider's own objects; the smart account's are marked copies",
+    listedA.filter((x) => !sah.isSmartAccountEntry(x)).every((x) => all.includes(x)) &&
+      listedA.filter(sah.isSmartAccountEntry).every((x) => x.uid.startsWith('smart-account:') && !all.includes(x)));
+  check('…the last page says there is no more, and the feed reports the smart account as included',
+    pagesA.at(-1).hasMore === false && pagesA.every((p) => p.smartAccount === 'included'));
+
+  // Case B — vice versa: the smart account's pages end earlier; the own
+  // received stream is empty and the own sent stream ends first.
+  const feedB = sah.createMergedHistoryFeed(
+    [
+      streamOf('own', [[e(21, 200, 'out', 1n), e(22, 199, 'out', 1n)]]),
+      streamOf('own', [[]]),
+      streamOf('smart', [[e(23, 210, 'out', 1n), e(24, 150, 'out', 1n)], [e(25, 100, 'out', 1n)], [e(26, 10, 'out', 1n)]]),
+      streamOf('smart', [[e(27, 205, 'in', 1n), e(28, 120, 'in', 1n)], [e(29, 11, 'in', 1n)]]),
+    ],
+    { pageTarget: 2 },
+  );
+  const listedB = (await drain(feedB)).flatMap((p) => p.entries);
+  check('B (smart pages end earlier, one stream ends first, one is empty): time order and completeness',
+    nonIncreasing(listedB) && listedB.length === 9 && new Set(listedB.map(keyOf)).size === 9, heights(listedB));
+
+  // Case C — THE LIVE CASE (tx 0x341db91c…, Account 1 → its Kernel account,
+  // 0.0015): the smart account's page 1 holds the transfer while Account
+  // 1's own row arrives only on its page 2. Listed ONCE, as Account 1's own
+  // row (the same object), marked as involving the smart account.
+  const TOPUP = 0x341db91c;
+  const ownTopUp = e(TOPUP, 300, 'out', 1_500_000_000_000_000n);
+  const smartTopUp = e(TOPUP, 300, 'in', 1_500_000_000_000_000n);
+  const feedC = sah.createMergedHistoryFeed(
+    [
+      streamOf('own', [[e(31, 400, 'out', 1n), e(32, 350, 'out', 1n)], [ownTopUp, e(33, 100, 'out', 1n)]]),
+      streamOf('own', [[]]),
+      streamOf('smart', [[e(34, 380, 'out', 1n)]]),
+      streamOf('smart', [[smartTopUp, e(35, 200, 'in', 1n)]]),
+    ],
+    { pageTarget: 1 },
+  );
+  const pagesC = await drain(feedC);
+  const listedC = pagesC.flatMap((p) => p.entries);
+  const topUpRows = listedC.filter((x) => x.id === h(TOPUP));
+  check('LIVE CASE 0x341db91c…: listed once, even though the smart account fetched it a page earlier',
+    topUpRows.length === 1, listedC.map(keyOf));
+  check("…as Account 1's own row, the provider's own object (−0.0015), not the smart account's mirror (+0.0015)",
+    topUpRows[0] === ownTopUp && !sah.isSmartAccountEntry(topUpRows[0]) && topUpRows[0].direction === 'out');
+  check('…marked as involving the smart account (the row shows "with smart account"); other own rows are not',
+    sah.involvesSmartAccount(ownTopUp) && !sah.involvesSmartAccount(smartTopUp) &&
+      listedC.filter((x) => x !== ownTopUp && !sah.isSmartAccountEntry(x)).every((x) => !sah.involvesSmartAccount(x)));
+  check('…and the list stays in time order across its pages', nonIncreasing(listedC) && pagesC.length > 1, pagesC.map((p) => heights(p.entries)));
+
+  // Within one block: the account's own entries first; a self-transfer
+  // (listed by both of its streams with one uid) once.
+  const selfT = e(41, 500, 'self', 7n);
+  const feedD = sah.createMergedHistoryFeed([
+    streamOf('own', [[selfT]]),
+    streamOf('own', [[{ ...selfT }]]),
+    streamOf('smart', [[e(42, 500, 'out', 1n)]]),
+    streamOf('smart', [[]]),
+  ]);
+  const listedD = (await drain(feedD)).flatMap((p) => p.entries);
+  check('a self-transfer listed by both one-sided streams appears once; within a block own rows come first',
+    listedD.map(keyOf).join(',') === `own:${h(41)}:external,sa:smart-account:${h(42)}:external`, listedD.map(keyOf));
+
+  // A smart-account stream failing MID-WAY: its second fetch fails.
+  const log = [];
+  const feedE = sah.createMergedHistoryFeed(
+    [
+      streamOf('own', [[e(51, 100, 'out', 1n), e(52, 80, 'out', 1n)], [e(53, 40, 'out', 1n)]], { log }),
+      streamOf('own', [[]], { log }),
+      streamOf('smart', [[e(54, 90, 'out', 1n)], [e(55, 60, 'out', 1n)], [e(56, 30, 'out', 1n)]], { failAt: 1, log }),
+      streamOf('smart', [[e(57, 95, 'in', 1n)]], { log }),
+    ],
+    { pageTarget: 2 },
+  );
+  const pagesE = await drain(feedE);
+  const listedE = pagesE.flatMap((p) => p.entries);
+  check("a smart-account stream failing mid-way: the account's own entries are all listed, in time order",
+    nonIncreasing(listedE) && [51, 52, 53].every((n) => listedE.some((x) => x.id === h(n) && !sah.isSmartAccountEntry(x))), listedE.map(keyOf));
+  check('…the smart account is reported failed from that page on, and its streams are not queried again',
+    pagesE.at(-1).smartAccount === 'failed' && !listedE.some((x) => x.id === h(55) || x.id === h(56)) &&
+      log.filter((l) => l.startsWith('smart:')).length === 3, { log, status: pagesE.map((p) => p.smartAccount) });
+
+  // The account's own stream failing: the page fails; the next call tries
+  // again and nothing is listed twice or skipped.
+  const ownLog = [];
+  const feedF = sah.createMergedHistoryFeed(
+    [
+      streamOf('own', [[e(61, 100, 'out', 1n)], [e(62, 50, 'out', 1n)], [e(63, 20, 'out', 1n)]], { failAt: 2, log: ownLog }),
+      streamOf('own', [[]]),
+    ],
+    { pageTarget: 1 },
+  );
+  await feedF.fill();
+  const f1 = feedF.take();
+  const f2error = await feedF.fill().then(() => null, (err) => err.message);
+  await feedF.fill();
+  const f2 = feedF.take();
+  check("the account's own stream failing fails the page; the retry lists the rest once",
+    f2error === 'fetch failed: simulated own failure' && f1.entries.map((x) => x.id).join() === h(61) &&
+      f2.entries.map((x) => x.id).join() === `${h(62)},${h(63)}` && f2.hasMore === false && ownLog.length === 4, { f2error, f1, f2, ownLog });
+  check('…a fill() while one is loading returns the same promise', (() => {
+    const feed = sah.createMergedHistoryFeed([streamOf('own', [[e(71, 1, 'out', 1n)]])]);
+    return feed.fill() === feed.fill();
+  })());
+
+  // The real engine provider, one-sided, through indexerHistoryStreams
+  // (fake alchemy_getAssetTransfers answers per address and side).
   const t = (hash, block, from, to, category, value, extra = {}) => ({
     hash, blockNum: '0x' + block.toString(16), from: from.toLowerCase(), to: to?.toLowerCase() ?? null, category,
     uniqueId: `${hash}:${category}`, asset: 'ETH', rawContract: { value: '0x' + value.toString(16), decimal: '0x12' },
     metadata: { blockTimestamp: new Date(1_790_000_000_000 + block * 12_000).toISOString() }, ...extra,
   });
+  const STAKE_TOP_UP = 747_174_110_161_719n; // the staking bundle's Deposited figure (block 11889779)
   const book = {
-    // Account 1's own address: a send at block 100 (to its smart account,
-    // so the smart account also lists it) and a receive at block 90.
+    // Account 1: the top-up of its smart account at block 100 and a receive at block 90.
     [`${ACCOUNT_1.toLowerCase()}|fromAddress`]: [[t(h(1), 100, ACCOUNT_1, SMART, 'external', 5n)]],
     [`${ACCOUNT_1.toLowerCase()}|toAddress`]: [[t(h(2), 90, BURN, ACCOUNT_1, 'external', 7n)]],
-    // The smart account: an internal send at block 110 (a bundle), the
-    // top-up at block 100 (already listed for Account 1), and on page 2
-    // an internal send at block 95.
-    [`${SMART.toLowerCase()}|fromAddress`]: [[t(h(3), 110, SMART, BURN, 'internal', 3n, { uniqueId: `${h(3)}:internal:0` })], [t(h(4), 95, SMART, ACCOUNT_2, 'internal', 2n, { uniqueId: `${h(4)}:internal:0` })]],
+    // The smart account: a bundle at block 110 (an internal send and the
+    // EntryPoint top-up), the top-up from Account 1 at block 100, and on
+    // page 2 an internal send at block 95.
+    [`${SMART.toLowerCase()}|fromAddress`]: [
+      [t(h(3), 110, SMART, BURN, 'internal', 3n, { uniqueId: `${h(3)}:internal:0` }), t(h(3), 110, SMART, ENTRYPOINT_V07, 'internal', STAKE_TOP_UP, { uniqueId: `${h(3)}:internal:1` })],
+      [t(h(4), 95, SMART, ACCOUNT_2, 'internal', 2n, { uniqueId: `${h(4)}:internal:0` })],
+    ],
     [`${SMART.toLowerCase()}|toAddress`]: [[t(h(1), 100, ACCOUNT_1, SMART, 'external', 5n)]],
   };
   const requests = [];
-  let failSmart = false;
   const transport = async (method, [params]) => {
     if (method !== 'alchemy_getAssetTransfers') throw new Error(`unexpected ${method}`);
     const side = params.fromAddress ? 'fromAddress' : 'toAddress';
     const address = (params.fromAddress ?? params.toAddress).toLowerCase();
     requests.push(`${address.slice(0, 6)}|${side}|${params.pageKey ?? ''}`);
-    if (failSmart && address === SMART.toLowerCase()) throw new TypeError('fetch failed: simulated');
     const pages = book[`${address}|${side}`] ?? [[]];
     const index = params.pageKey ? Number(params.pageKey) : 0;
     return { transfers: pages[index] ?? [], ...(index + 1 < pages.length ? { pageKey: String(index + 1) } : {}) };
   };
-  const base = indexerHistoryProvider(transport);
-  const plainPage = await base.getHistory(ACCOUNT_1);
-  const page1 = await sah.withSmartAccountHistory(base, SMART).getHistory(ACCOUNT_1);
-  check("page 1: the account's own entries are the provider's own, unchanged and in order",
-    JSON.stringify(page1.entries.filter((e) => !sah.isSmartAccountEntry(e)), (_k, v) => (typeof v === 'bigint' ? v.toString() : v)) ===
-      JSON.stringify(plainPage.entries, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)));
-  check('…the smart account\'s bundle at block 110 is added first, marked, with a prefixed uid; the top-up (already listed) is not repeated',
-    page1.entries.map((e) => `${e.id.slice(-2)}:${sah.isSmartAccountEntry(e) ? 'sa' : 'own'}:${e.direction}`).join(',') === '03:sa:out,01:own:out,02:own:in' &&
-      page1.entries[0].uid === `smart-account:${h(3)}:internal:0` && page1.entries[0].amount === 3n,
-    page1.entries.map((e) => `${e.id.slice(-2)}:${sah.isSmartAccountEntry(e) ? 'sa' : 'own'}:${e.direction}`).join(','));
-  check('…the page reports the smart account as included; one extra getHistory = two extra indexer requests',
-    sah.smartAccountHistoryOf(page1)?.status === 'included' && requests.length === 2 + 4, requests);
-  check('…and a cursor that only this provider reads', typeof page1.nextCursor === 'string' && JSON.parse(page1.nextCursor).v === 'own+smart-account-1');
-  requests.length = 0;
-  const page2 = await sah.withSmartAccountHistory(base, SMART).getHistory(ACCOUNT_1, page1.nextCursor);
-  check('page 2: only the stream with more is queried (the smart account\'s sent side), and its entry is marked',
-    requests.length === 1 && requests[0].endsWith('|fromAddress|1') && page2.entries.length === 1 && sah.isSmartAccountEntry(page2.entries[0]) && page2.nextCursor === undefined, requests);
-  check("…a plain provider cursor is refused (never mixed up with this one's)",
-    await sah.withSmartAccountHistory(base, SMART).getHistory(ACCOUNT_1, JSON.stringify({ v: 1, out: '1' })).then(() => false, (e) => /Unrecognized history cursor/.test(e.message)));
-  failSmart = true;
-  const failedPage = await sah.withSmartAccountHistory(base, SMART).getHistory(ACCOUNT_1);
-  check("a failing smart-account query never hides the account's own entries; the page says it failed and drops that stream",
-    failedPage.entries.length === plainPage.entries.length && !failedPage.entries.some(sah.isSmartAccountEntry) &&
-      sah.smartAccountHistoryOf(failedPage)?.status === 'failed' && failedPage.nextCursor === undefined);
-  failSmart = false;
-  const ownFails = sah.withSmartAccountHistory({ getHistory: async (a) => { if (a === ACCOUNT_1) throw new Error('own down'); return { entries: [] }; } }, SMART);
-  check("a failing query for the account's own address fails the page as before", await ownFails.getHistory(ACCOUNT_1).then(() => false, (e) => e.message === 'own down'));
-  const fresh = sah.freshHistoryEntries(page1.entries, [
-    { id: h(3), uid: 'smart-account:x', smartAccount: true, direction: 'out', timestamp: null, confirmed: true },
-    { id: h(1), uid: `${h(1)}:external:later`, direction: 'out', timestamp: null, confirmed: true },
-    { id: h(9), uid: 'smart-account:y', smartAccount: true, direction: 'in', timestamp: null, confirmed: true },
-  ]);
-  check('across pages: a smart-account row for a listed transaction is dropped; the account\'s own rows never are',
-    fresh.map((e) => e.id.slice(-2)).join(',') === '01,09', fresh.map((e) => e.id.slice(-2)));
+  const streams = hist.indexerHistoryStreams('https://indexer.invalid', ACCOUNT_1, SMART, transport);
+  check('indexerHistoryStreams: four one-sided streams (own sent, own received, smart sent, smart received); two without a smart account',
+    streams.map((s) => s.group).join() === 'own,own,smart,smart' &&
+      hist.indexerHistoryStreams('https://indexer.invalid', ACCOUNT_1, null, transport).length === 2);
+  const live = sah.createMergedHistoryFeed(streams);
+  await live.fill();
+  const livePage = live.take();
+  check('the first page queries each stream once (four requests, each ONE side of ONE address), then only the stream holding the others back (the smart account\'s sent side, its page 2)',
+    requests.length === 5 && new Set(requests.slice(0, 4)).size === 4 && requests.slice(0, 4).every((r) => r.endsWith('|')) &&
+      requests[4] === `${SMART.toLowerCase().slice(0, 6)}|fromAddress|1`, requests);
+  check("…the list: the bundle's two smart-account rows (block 110), Account 1's top-up once (block 100, own row), the smart account's send (95), the receive (90)",
+    livePage.entries.map((x) => `${x.id.slice(-2)}:${sah.isSmartAccountEntry(x) ? 'sa' : 'own'}:${x.direction}`).join(',') === '03:sa:out,03:sa:out,01:own:out,04:sa:out,02:own:in' &&
+      livePage.hasMore === false,
+    livePage.entries.map((x) => `${x.id.slice(-2)}:${sah.isSmartAccountEntry(x) ? 'sa' : 'own'}:${x.direction}`));
+  const ownTopUpRow = livePage.entries.find((x) => x.id === h(1));
+  check('…the top-up row is Account 1\'s own (out, 5 wei), marked as involving the smart account', ownTopUpRow.direction === 'out' && sah.involvesSmartAccount(ownTopUpRow));
+  const realTopUp = livePage.entries.find((x) => x.uid === `smart-account:${h(3)}:internal:1`);
+  const realSend = livePage.entries.find((x) => x.uid === `smart-account:${h(3)}:internal:0`);
+  check('…the engine reports the counterparty of each row (the EntryPoint for the top-up)',
+    realTopUp?.counterparty === ENTRYPOINT_V07.toLowerCase() && realSend?.counterparty === BURN.toLowerCase(), livePage.entries.map((x) => x.counterparty));
+
+  // The CSV follows the list's order and has no duplicate rows.
+  const csvRows = notes.activityExportRows({
+    network: SEPOLIA, networkLabel: 'Ethereum Sepolia', entries: livePage.entries, nativeSymbol: 'test ETH', nativeDecimals: 18,
+    notes: notes.indexNotes([]), explorerUrlFor: () => null,
+  });
+  const csvKeys = csvRows.map((r) => `${r[8]}|${r[2]}|${r[3]}`);
+  check('the CSV export: the same order as the list, no duplicate transaction + direction + amount rows',
+    csvRows.map((r) => r[8]).join() === livePage.entries.map((x) => x.id).join() && new Set(csvKeys).size === csvKeys.length, csvKeys);
+  check('…the direction cell says "(smart account)" on the smart account\'s rows only',
+    csvRows.map((r) => r[2]).join(',') === 'Sent (smart account),Sent (smart account),Sent,Sent (smart account),Received', csvRows.map((r) => r[2]));
+
+  // Over several pages of the merged list (case A), no duplicates either.
+  const csvA = notes.activityExportRows({
+    network: SEPOLIA, networkLabel: 'Ethereum Sepolia', entries: listedA, nativeSymbol: 'test ETH', nativeDecimals: 18,
+    notes: notes.indexNotes([]), explorerUrlFor: () => null,
+  });
+  const keysA = csvA.map((r) => `${r[8]}|${r[2]}|${r[3]}`);
+  check('…and across the pages of case A', new Set(keysA).size === keysA.length && csvA.map((r) => r[8]).join() === listedA.map((x) => x.id).join());
+
   check('the notes: included / failed / skipped (exact)',
     sah.smartAccountHistoryNote('included', SMART) === 'Your smart account (0xD31c…D8FA) is listed too. Its rows are marked "smart account", and their direction and amount are what the smart account sent or received.' &&
       sah.smartAccountHistoryNote('failed', SMART) === 'Your smart account’s transactions (0xD31c…D8FA) could not be loaded right now, so only this account’s own address is listed. Pull down to try again.' &&
@@ -915,12 +1104,209 @@ console.log("The smart account's history next to the account's own (2026-10-11 r
   const index = notes.indexNotes([{ network: SEPOLIA, txid: null, userOpHash: OP, text: 'smart note', updatedAt: '2026-10-11T00:00:00Z' }]);
   check("a note saved under op:<userOpHash> resolves on the smart account's bundle row through its decoded UserOperation",
     notes.findNote(index, SEPOLIA, h(3), [OP])?.text === 'smart note');
-  const csv = notes.activityExportRows({
-    network: SEPOLIA, networkLabel: 'Ethereum Sepolia', entries: page1.entries, nativeSymbol: 'test ETH', nativeDecimals: 18,
-    notes: notes.indexNotes([]), explorerUrlFor: () => null,
-  });
-  check('the CSV direction cell says "(smart account)" on those rows only',
-    csv.map((r) => r[2]).join(',') === 'Sent (smart account),Sent,Received', csv.map((r) => r[2]));
+
+  // EntryPoint deposit and payout rows (finding F4), with the two live figures.
+  const as = await import('../src/wallet/activity-sentences.ts');
+  const epRow = (amount, direction = 'out', over = {}) => ({ ...e(81, 11889779, direction, amount), counterparty: ENTRYPOINT_V07.toLowerCase(), ...over });
+  const opts = { smartAccountRow: true, nativeSymbol: 'test ETH', hidden: false };
+  check('LIVE FIGURE 1 — the staking bundle\'s top-up (747,174,110,161,719 wei) reads as an EntryPoint deposit',
+    as.entryPointRowSentence(epRow(STAKE_TOP_UP), opts) === 'EntryPoint deposit: 0.000747174110161719 test ETH set aside for this smart account’s network fees',
+    as.entryPointRowSentence(epRow(STAKE_TOP_UP), opts));
+  // The pass recorded only the rounded display "−0.000923"; the exact wei
+  // amount of that row is not recorded, so 0.000923 ETH stands in for it.
+  check('LIVE FIGURE 2 — the "−0.000923" row (exact amount not recorded; 0.000923 used)',
+    as.entryPointRowSentence(epRow(923_000_000_000_000n), opts) === 'EntryPoint deposit: 0.000923 test ETH set aside for this smart account’s network fees');
+  check('…ETH from the EntryPoint back to the smart account reads as a payout',
+    as.entryPointRowSentence(epRow(1_000n, 'in'), opts) === 'EntryPoint payout: 0.000000000000001 test ETH paid to this smart account by the EntryPoint');
+  check('…Hide amounts masks the amount',
+    as.entryPointRowSentence(epRow(STAKE_TOP_UP), { ...opts, hidden: true }) === 'EntryPoint deposit: •••• test ETH set aside for this smart account’s network fees');
+  check('…not for a regular account\'s own row, a token row, another counterparty, a zero amount or a self row',
+    as.entryPointRowSentence(epRow(STAKE_TOP_UP), { ...opts, smartAccountRow: false }) === null &&
+      as.entryPointRowSentence(epRow(STAKE_TOP_UP, 'out', { assetSymbol: 'USDC', assetAmount: 1n, assetDecimals: 6 }), opts) === null &&
+      as.entryPointRowSentence(epRow(STAKE_TOP_UP, 'out', { counterparty: BURN.toLowerCase() }), opts) === null &&
+      as.entryPointRowSentence(epRow(0n), opts) === null && as.entryPointRowSentence(epRow(5n, 'self'), opts) === null);
+  const staked = 'Smart-account operation: staked 0.0001 test ETH with Lido (stETH contract 0x3e3F…40Af): received 0.000099999999999999 stETH';
+  const topUpText = as.activityRowText({ entryPoint: as.entryPointRowSentence(epRow(STAKE_TOP_UP), opts), sentence: staked, mayDecode: false });
+  check("…so the staking bundle's −0.000747 row no longer carries the bundle's \"staked\" sentence",
+    topUpText.sentence.startsWith('EntryPoint deposit: 0.000747174110161719') && !topUpText.sentence.includes('staked') && topUpText.loading === false);
+  check('…its other rows keep the bundle\'s sentence',
+    as.activityRowText({ entryPoint: null, sentence: staked, mayDecode: false }).sentence === staked);
+  check('…end to end: the indexer row of the top-up (smart-account stream) gets the deposit sentence',
+    as.entryPointRowSentence(realTopUp, { ...opts, smartAccountRow: sah.isSmartAccountEntry(realTopUp) }) === 'EntryPoint deposit: 0.000747174110161719 test ETH set aside for this smart account’s network fees');
+
+  // Rows before their sentence (finding F5): the decoder says which rows may still get one.
+  installFakeNode();
+  clearActivityCache();
+  const known = [...fixtures.keys()][0];
+  const decoderF5 = createActivityDecoder({ chainCaip2: SEPOLIA, evmChainId: SEPOLIA_ID, wallet: [ACCOUNT_1, KERNEL_OF_ACCOUNT_1], trackedTokens: [], run: fixedRun });
+  const before = decoderF5.mayDecode(known);
+  await decoderF5.decodeEntries([known]);
+  const deadDecoder = createActivityDecoder({ chainCaip2: SEPOLIA, evmChainId: SEPOLIA_ID, wallet: [ACCOUNT_1], trackedTokens: [], run: async () => { throw new Error('down'); } });
+  await deadDecoder.decodeEntries([known]);
+  check('decoder.mayDecode: true before a decode, false once decoded or failed, false for a non-hash id',
+    before === true && decoderF5.cachedFor([known]).size === 1 && decoderF5.mayDecode(known) === false &&
+      deadDecoder.mayDecode(known) === false && decoderF5.mayDecode('not-a-hash') === false);
+  // Rows before their sentence (finding F5).
+  check('a row with no sentence yet says it is loading while a decode may bring one, and not after',
+    JSON.stringify(as.activityRowText({ entryPoint: null, sentence: null, mayDecode: true })) === JSON.stringify({ sentence: null, loading: true }) &&
+      JSON.stringify(as.activityRowText({ entryPoint: null, sentence: null, mayDecode: false })) === JSON.stringify({ sentence: null, loading: false }) &&
+      as.ROW_DETAILS_LOADING_LABEL === 'Transaction, details loading');
+}
+
+console.log('The Activity list state machine (2026-10-11 pass, finding F3):');
+{
+  const hc = await import('../src/wallet/history-controller.ts');
+  /** A session like the real ones: one load at a time, the page kept until taken. */
+  const fakeSession = () => {
+    const loads = [];
+    let ready = null;
+    let inflight = null;
+    const session = {
+      loads,
+      fill() {
+        if (ready) return Promise.resolve();
+        if (inflight) return inflight;
+        let resolve;
+        let reject;
+        const p = new Promise((res, rej) => {
+          resolve = res;
+          reject = rej;
+        });
+        const load = {
+          answer: (page) => {
+            ready = page;
+            inflight = null;
+            resolve();
+          },
+          fail: (message) => {
+            inflight = null;
+            reject(new Error(message));
+          },
+        };
+        loads.push(load);
+        inflight = p;
+        return p;
+      },
+      take() {
+        const page = ready;
+        ready = null;
+        return page;
+      },
+    };
+    return session;
+  };
+  const okPage = (ids, hasMore) => ({ status: 'ok', page: { entries: ids.map((id) => ({ id, uid: id, timestamp: null, confirmed: true, direction: 'in' })) }, hasMore });
+  const timers = [];
+  const make = () => {
+    const sessions = [];
+    const changes = [];
+    const controller = hc.createHistoryController({
+      open: () => {
+        const s = fakeSession();
+        sessions.push(s);
+        return s;
+      },
+      onChange: (snap) => changes.push(snap),
+      setTimer: (fn, ms) => {
+        const timer = { fn, ms, cleared: false };
+        timers.push(timer);
+        return timer;
+      },
+      clearTimer: (timer) => {
+        timer.cleared = true;
+      },
+    });
+    return { controller, sessions, changes, state: () => controller.snapshot().state };
+  };
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+  const fireTimeouts = () => {
+    for (const timer of timers.splice(0)) if (!timer.cleared) timer.fn();
+  };
+
+  const c = make();
+  const first = c.controller.reload();
+  check('reload: loading at once, then the first page', c.state().status === 'loading' && c.controller.snapshot().refreshing === true);
+  c.sessions[0].loads[0].answer(okPage(['a', 'b'], true));
+  await first;
+  check('…ok, two entries, more to load, the 60-second timer cleared',
+    c.state().status === 'ok' && c.state().entries.length === 2 && c.state().hasMore && !c.controller.snapshot().refreshing &&
+      hc.HISTORY_PAGE_TIMEOUT_MS === 60_000 && timers.every((t) => t.cleared || t.ms === 60_000));
+  // In-flight guard: two calls while one page loads list that page once.
+  const g1 = c.controller.loadMore();
+  const g2 = c.controller.loadMore();
+  c.sessions[0].loads[1].answer(okPage(['b2'], true));
+  await Promise.all([g1, g2]);
+  check('load more twice while one is in flight: one load, its page listed once, no error',
+    c.sessions[0].loads.length === 2 && c.state().entries.map((x) => x.id).join() === 'a,b,b2' && c.state().loadMoreError === null, c.state());
+  const more1 = c.controller.loadMore();
+  const more2 = c.controller.loadMore();
+  check('load more: the spinner shows and a second call while one is in flight starts nothing',
+    c.state().loadingMore === true && c.sessions[0].loads.length === 3);
+  c.sessions[0].loads[2].fail('fetch failed: simulated');
+  await Promise.all([more1, more2]);
+  check('…a failure ends the spinner with the retry footer ("Could not load more — tap to retry"), entries kept',
+    c.state().loadingMore === false && c.state().loadMoreError === 'fetch failed: simulated' && c.state().entries.length === 3 &&
+      hc.LOAD_MORE_RETRY_FOOTER === 'Could not load more — tap to retry');
+  const retry = c.controller.loadMore();
+  c.sessions[0].loads[3].answer(okPage(['c'], true));
+  await retry;
+  check('…the retry appends the page and clears the footer', c.state().entries.map((x) => x.id).join() === 'a,b,b2,c' && c.state().loadMoreError === null);
+  // Timeout.
+  const slow = c.controller.loadMore();
+  await tick();
+  fireTimeouts();
+  await slow;
+  check('a page that takes longer than 60 s ends the spinner with the retry footer and the timeout line',
+    c.state().loadingMore === false && c.state().loadMoreError === hc.HISTORY_PAGE_TIMEOUT_MESSAGE &&
+      hc.HISTORY_PAGE_TIMEOUT_MESSAGE === 'The history endpoint did not answer within 60 seconds.');
+  // The late answer is kept by the session; the retry takes it without a new load.
+  c.sessions[0].loads[4].answer(okPage(['d'], false));
+  await tick();
+  check('…the late answer is not listed by itself', c.state().entries.length === 4);
+  await c.controller.loadMore();
+  check('…the retry lists it once, with no new request, and the list ends ("End of history.")',
+    c.state().entries.map((x) => x.id).join() === 'a,b,b2,c,d' && c.sessions[0].loads.length === 5 && c.state().hasMore === false);
+  const beforeEnd = c.sessions[0].loads.length;
+  await c.controller.loadMore();
+  check('…at the end, load more does nothing', c.sessions[0].loads.length === beforeEnd && c.state().loadingMore === false);
+
+  // A reload while a load more is in flight drops the old answer.
+  const c2 = make();
+  const r1 = c2.controller.reload();
+  c2.sessions[0].loads[0].answer(okPage(['x'], true));
+  await r1;
+  const stale = c2.controller.loadMore();
+  const r2 = c2.controller.reload();
+  check('a reload during a load more ends the old spinner at once', c2.state().loadingMore === false && c2.sessions.length === 2);
+  c2.sessions[0].loads[1].answer(okPage(['stale'], true));
+  await stale;
+  check('…the old session\'s late answer is never listed', !c2.state().entries.some((x) => x.id === 'stale'), c2.state());
+  c2.sessions[1].loads[0].answer(okPage(['y'], true));
+  await r2;
+  check('…the old session\'s answer is dropped; the new first page is shown', c2.state().entries.map((x) => x.id).join() === 'y');
+  const after = c2.controller.loadMore();
+  check('…and a load more works again in the new session', c2.state().loadingMore === true && c2.sessions[1].loads.length === 2);
+  c2.sessions[1].loads[1].answer(okPage(['z'], false));
+  await after;
+  check('…appending to the new list', c2.state().entries.map((x) => x.id).join() === 'y,z');
+
+  // The first page timing out is an error with Retry; dispose stops updates.
+  const c3 = make();
+  const r3 = c3.controller.reload();
+  await tick();
+  fireTimeouts();
+  await r3;
+  check('a first page that takes longer than 60 s shows the error with Retry (never a spinner)',
+    c3.state().status === 'error' && c3.state().message === hc.HISTORY_PAGE_TIMEOUT_MESSAGE && !c3.controller.snapshot().refreshing);
+  const c4 = make();
+  void c4.controller.reload();
+  c4.controller.dispose();
+  const count = c4.changes.length;
+  c4.sessions[0].loads[0].answer(okPage(['q'], false));
+  await tick();
+  await c4.controller.reload();
+  await c4.controller.loadMore();
+  check('after dispose (the screen left) nothing is published and nothing new is loaded', c4.changes.length === count && c4.sessions.length === 1);
 }
 
 console.log('Zero-value native rows next to token rows (2026-10-11 re-check, finding 8):');
@@ -951,7 +1337,11 @@ console.log('Zero-value native rows next to token rows (2026-10-11 re-check, fin
 console.log('ActivityScreen source:');
 {
   const screen = readFileSync(join(here, '..', 'src', 'screens', 'ActivityScreen.tsx'), 'utf8');
-  check('rows render the sentence', /styles\.rowSentence/.test(screen) && /sentence=\{isEvmSlot \? sentenceFor\(item\.id\) : null\}/.test(screen));
+  check('rows render the sentence (the row text: EntryPoint sentence, else the decoded one, else loading)',
+    /styles\.rowSentence/.test(screen) && screen.includes('const rowText = rowTextFor(item);') &&
+      screen.includes('sentence={rowText.sentence}') && screen.includes('loading={rowText.loading}') &&
+      screen.includes('smartAccountRow: isSmartAccountEntry(entry) || activeIsMultisig,') &&
+      screen.includes('sentence: sentenceFor(entry.id),') && screen.includes('mayDecode: sentences.mayDecode(entry.id),'));
   check(
     'sentence sits above the time and fee lines',
     screen.indexOf('styles.rowSentence') < screen.indexOf('styles.rowTime') &&
@@ -963,7 +1353,26 @@ console.log('ActivityScreen source:');
     /const url = explorerTxUrl\(chainId, entry\.id, evmExplorerTxBase\);/.test(screen) && /if \(url\) void Linking\.openURL\(url\);/.test(screen),
   );
   check('the amount/fee line is still rendered', /fee \{maskAmount\(formatUnits\(entry\.fee, decimals, decimals\), hidden\)\}/.test(screen));
-  check('screen readers hear the sentence first', /\(sentence \? `\$\{sentence\}\. ` : ''\)/.test(screen));
+  const loadingLabel = (src) => src.includes("(sentence ? `${sentence}. ` : loading ? `${ROW_DETAILS_LOADING_LABEL}. ` : '') +");
+  check('screen readers hear the sentence first, or "Transaction, details loading" while it may still come (finding F5)', loadingLabel(screen));
+  check('…a row label without the loading placeholder is caught', !loadingLabel(screen.replace(' : loading ? `${ROW_DETAILS_LOADING_LABEL}. ` : ', ' : ')));
+  const memo = (src) =>
+    src.includes('setup && setup.key === setupKey ? setup : setupKey ? (DECODER_SETUPS.get(setupKey) ?? null) : null;') &&
+    src.includes('rememberDecoderSetup(built);') && src.includes('if (!cancelled) setSetupFailedKey(setupKey);');
+  check('…a return to the screen uses the last decoder setup at once, so decoded rows have their sentence on the first render (source)', memo(screen));
+  const marker = (src) =>
+    src.includes('const withSmartAccount = involvesSmartAccount(entry);') &&
+    src.includes('{withSmartAccount ? <StatusChip label="with smart account" color={theme.textMuted} theme={theme} /> : null}') &&
+    src.includes("withSmartAccount ? 'with your smart account' : null,");
+  check('the account\'s own row of a transaction its smart account also lists shows "with smart account" (finding F1, source)', marker(screen));
+  const footerOk = (src) =>
+    /state\.loadingMore \? \(\s*<ActivityIndicator[^>]*\/>\s*\) : state\.loadMoreError \? \(/.test(src) &&
+    src.includes('accessibilityLabel={LOAD_MORE_RETRY_FOOTER}') &&
+    src.includes('{LOAD_MORE_RETRY_FOOTER}</Text>') &&
+    src.includes(') : state.hasMore ? (') && !src.includes('state.nextCursor');
+  check('the footer: spinner while loading, else "Could not load more — tap to retry", else Load more, else the end (finding F3, source)', footerOk(screen));
+  check('…the old footer (spinner over the error, keyed on nextCursor) is caught',
+    !footerOk(screen.replace(') : state.hasMore ? (', ') : state.nextCursor ? (')));
   check('the screen passes the account labels and the pinned-staking lookup for the active network, and names the EVM slot by the network (findings 4, 7e, 7f)',
     /accountLabels,\n\s*stakingContractAt: pinnedStakingAt,/.test(screen) && screen.includes('const accountLabels = sentences.labels;') &&
       screen.includes('(address: string) => stakingContractAt(evmChain.caip2, address)') &&
@@ -991,11 +1400,15 @@ console.log('ActivityScreen source:');
     src.includes('const smartHistoryNote = smartAccountHistoryNote(state.smartAccount, historySmartAccount);');
   check('the screen lists the smart account next to the account (not for watch-only or multisig), waits for the settings, marks its rows and says what it did (source)', smartOk(screen));
   const useHistorySrc = readFileSync(join(here, '..', 'src', 'wallet', 'useHistory.ts'), 'utf8');
-  check('loadHistoryPage wraps the INDEXER provider only, and the hook waits until ready and drops smart-account duplicates (source)',
-    useHistorySrc.includes('first.viaIndexer && smartAccount ? withSmartAccountHistory(firstSource.provider, smartAccount) : firstSource.provider') &&
-      useHistorySrc.includes("...(smartAccount ? { smartAccount: 'skipped' as const } : {}),") &&
-      useHistorySrc.includes('if (!ready) return;') &&
-      useHistorySrc.includes('const fresh = freshHistoryEntries(prev.entries, page.entries);'));
+  const hookOk = (src) =>
+    src.includes('const feed = createMergedHistoryFeed(streamsFor(first.indexerUrl, address, smartAccount));') &&
+    src.includes("...(smartAccount && !first.viaIndexer ? { smartAccount: 'skipped' as const } : {}),") &&
+    src.includes('if (!ready) return;') &&
+    src.includes('open: () => openHistorySession(chainId, address, { smartAccount }),') &&
+    // The cursor is never read from React state (finding F3).
+    !/setState\(\(prev\)/.test(src) && !src.includes('cursor = prev.nextCursor');
+  check('the hook: an indexer is read through the time-ordered merge, the logs fallback reports the smart account skipped, the state machine is the controller (no cursor in a state updater) (source)',
+    hookOk(useHistorySrc));
 }
 
 console.log(`\ncheck-activity: ${passed} passed, ${failed} failed`);

@@ -642,3 +642,19 @@ export function activityExportFileName(network: string, address: string, now: Da
   const date = now.toISOString().slice(0, 10);
   return `shiba-activity_${safe(network)}_${safe(short)}_${date}.csv`;
 }
+
+/**
+ * What Done (or another closing button) does on a view that holds a note
+ * field (TransactionNoteField): dismiss the keyboard, then close, in ONE
+ * tap (emulator pass of 2026-10-11, finding F6: with the keyboard open the
+ * first tap only dismissed the keyboard and saved the note, and a second
+ * tap was needed to close). Dismissing blurs the field, which saves the
+ * note; closing unmounts it, which saves anything not yet saved (an
+ * unchanged text is never saved twice). The success views' scroll views
+ * pass the tap through to the button (NOTE_VIEW_SCROLL_PROPS in
+ * TransactionNoteField.tsx). Pure, so check-notes runs it with fakes.
+ */
+export function closeNoteView(dismissKeyboard: () => void, close: () => void): void {
+  dismissKeyboard();
+  close();
+}

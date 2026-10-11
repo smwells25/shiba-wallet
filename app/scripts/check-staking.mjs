@@ -909,7 +909,7 @@ console.log('check-staking: success notes, the balances holder line and the smar
     const done = success.indexOf('title="Done"');
     const aaField = '<TransactionNoteField network={sentNetwork} txid={aaResult.txHash} userOpHash={aaResult.userOpHash} />';
     const eoaField = '<TransactionNoteField network={sentNetwork} txid={result.txid} userOpHash={null} />';
-    need('the component is imported', src.includes("import { TransactionNoteField } from '../components/TransactionNoteField';"));
+    need('the component is imported', /import \{[^}]*\bTransactionNoteField\b[^}]*\} from '\.\.\/components\/TransactionNoteField';/.test(src));
     need('smart-account view: the UserOperation hash first, the bundle hash when it arrives', success.includes('{sentNetwork && aaResult ? (') && success.includes(aaField));
     need('regular-account view: the transaction id', success.includes('{sentNetwork && !aaResult && result ? (') && success.includes(eoaField));
     need('both above Done', done > 0 && success.indexOf(aaField) > 0 && success.indexOf(aaField) < done && success.indexOf(eoaField) > 0 && success.indexOf(eoaField) < done);

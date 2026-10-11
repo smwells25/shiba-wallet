@@ -1,7 +1,26 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { StyleSheet, Text, TextInput } from 'react-native';
+import { Keyboard, StyleSheet, Text, TextInput } from 'react-native';
 import { useTheme } from '../theme';
-import { linkUserOperation, NOTE_PRIVACY_LINE, sanitizeNote, saveNote } from '../wallet/notes';
+import { closeNoteView, linkUserOperation, NOTE_PRIVACY_LINE, sanitizeNote, saveNote } from '../wallet/notes';
+
+/**
+ * Props for the ScrollView of every view that shows a TransactionNoteField
+ * (Send, Swap, Staking and Sessions success views, the WalletConnect sent
+ * view). React Native's default keyboardShouldPersistTaps ('never')
+ * dismisses the keyboard on a tap outside the focused field and the tap
+ * does not reach the button, so Done needed two taps while typing a note
+ * (finding F6). With 'handled' a tap on a button reaches it; a tap on empty
+ * space still dismisses the keyboard.
+ */
+export const NOTE_VIEW_SCROLL_PROPS = { keyboardShouldPersistTaps: 'handled' } as const;
+
+/**
+ * Done on a view with a note field: dismiss the keyboard, then close — one
+ * tap (notes.ts closeNoteView). Called inside the button's handler.
+ */
+export function dismissKeyboardThenClose(close: () => void): void {
+  closeNoteView(() => Keyboard.dismiss(), close);
+}
 
 /**
  * "Note (private, this phone only)" on the success screens (feature 87,
@@ -10,7 +29,10 @@ import { linkUserOperation, NOTE_PRIVACY_LINE, sanitizeNote, saveNote } from '..
  * or a recurring payment) and the WalletConnect sent view.
  *
  * Saved when the field loses focus, on the keyboard's Done and when the
- * screen goes away; an unchanged text is not saved again. A smart-account
+ * screen goes away; an unchanged text is not saved again. The view around
+ * it spreads NOTE_VIEW_SCROLL_PROPS on its ScrollView and wraps its closing
+ * button's handler in dismissKeyboardThenClose, so one tap on Done saves and
+ * closes. A smart-account
  * note is saved against the UserOperation hash until the bundle
  * transaction's hash arrives, then moved to it (linkUserOperation), so
  * Activity — which lists the bundle transaction — shows it.

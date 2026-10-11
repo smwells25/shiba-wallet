@@ -43,15 +43,19 @@ import { useWallet } from '../wallet/WalletContext';
 import { OfflineNotice, TechnicalDetail } from '../wallet/connectivity';
 import { sanitizeEndpointMessage } from '../config/endpoint-probe';
 import {
+  ROW_DETAILS_LOADING_LABEL,
   activityAddressSets,
+  activityRowText,
   createActivityDecoder,
+  entryPointRowSentence,
   historySmartAccountFor,
   renderActivitySentence,
   type AccountLabel,
   type ActivityDecoder,
   type DecodedActivity,
 } from '../wallet/activity-sentences';
-import { isSmartAccountEntry, smartAccountHistoryNote } from '../wallet/smart-account-history';
+import { involvesSmartAccount, isSmartAccountEntry, smartAccountHistoryNote } from '../wallet/smart-account-history';
+import { LOAD_MORE_RETRY_FOOTER } from '../wallet/history-controller';
 import { listContacts, type Contact } from '../wallet/contacts';
 import { listTokens } from '../wallet/tokens';
 import { getAaConfig } from '../wallet/aa';
@@ -120,6 +124,7 @@ function EntryRow({
   note,
   onEditNote,
   noAmount = false,
+  loading = false,
 }: {
   entry: HistoryEntry;
   chainId: string;
@@ -148,6 +153,13 @@ function EntryRow({
    * then shows no amount instead of "−0".
    */
   noAmount?: boolean;
+  /**
+   * True while the row's sentence may still arrive (activityRowText): a
+   * screen reader then hears that the details are loading first, instead of
+   * a shorter label that changes later (emulator pass of 2026-10-11,
+   * finding F5).
+   */
+  loading?: boolean;
 }) {
   const theme = useTheme();
   const url = explorerTxUrl(chainId, entry.id, evmExplorerTxBase);
@@ -191,8 +203,12 @@ function EntryRow({
   // Rows from the smart account's history (smart-account-history.ts): the
   // direction and amount are the smart account's, so the row says so.
   const smartAccountRow = isSmartAccountEntry(entry);
+  // The account's own row of a transaction the smart account's history
+  // also lists; that mirror row is not shown (smart-account-history.ts).
+  const withSmartAccount = involvesSmartAccount(entry);
   const spokenStatus = [
     smartAccountRow ? 'smart account' : null,
+    withSmartAccount ? 'with your smart account' : null,
     entry.failed ? 'failed' : null,
     !entry.confirmed ? 'pending' : null,
   ]
@@ -203,7 +219,7 @@ function EntryRow({
     <Pressable
       accessibilityRole={url ? 'button' : undefined}
       accessibilityLabel={
-        (sentence ? `${sentence}. ` : '') +
+        (sentence ? `${sentence}. ` : loading ? `${ROW_DETAILS_LOADING_LABEL}. ` : '') +
         `${directionLabel(entry.direction)} transaction, ${spokenAmount}, ${timestampLabel(entry)}` +
         (spokenStatus ? `, ${spokenStatus}` : '')
       }
@@ -242,6 +258,7 @@ function EntryRow({
         )}
         <View style={styles.chips}>
           {smartAccountRow ? <StatusChip label="smart account" color={theme.accent} theme={theme} /> : null}
+          {withSmartAccount ? <StatusChip label="with smart account" color={theme.textMuted} theme={theme} /> : null}
           {entry.failed ? <StatusChip label="failed" color={theme.danger} theme={theme} /> : null}
           {!entry.confirmed ? (
             <StatusChip label="pending" color={theme.warningText} theme={theme} />
@@ -403,6 +420,10 @@ function useActivitySentences(options: {
   labels: AccountLabel[];
   /** The addresses that read "yourself" (activityAddressSets().self). */
   self: string[];
+  /** How "yourself" addresses other than the account's own are named (activityAddressSets().selfNames). */
+  selfNames: { address: string; name: string }[];
+  /** True while a decode may still give `id` a sentence (also while the decoder is being set up). */
+  mayDecode: (id: string) => boolean;
 } {
   const { enabled, chainCaip2, chainIdDecimal, eoa, accountIndex, accounts, refreshing } = options;
   // Every account's index, name and address: a rename or a new account
@@ -412,17 +433,17 @@ function useActivitySentences(options: {
     enabled && eoa && accountIndex !== null
       ? `${chainCaip2}|${chainIdDecimal}|${eoa}|${accountIndex}|${accountsKey}`
       : null;
-  const [setup, setSetup] = useState<{
-    key: string;
-    decoder: ActivityDecoder;
-    contacts: Contact[];
-    labels: AccountLabel[];
-    self: string[];
-  } | null>(null);
+  const [setup, setSetup] = useState<DecoderSetup | null>(null);
+  const [setupFailedKey, setSetupFailedKey] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
   const [visibleIds, setVisibleIds] = useState<string[]>([]);
-  // A decoder built for another chain/account is never used.
-  const current = setup && setup.key === setupKey ? setup : null;
+  // A decoder built for another chain/account is never used. On a return to
+  // the screen the last setup for the same key is used at once (its decodes
+  // are cached in memory), so the rows decoded before have their sentence
+  // on the first render (finding F5); the effect below still rebuilds it
+  // with fresh contacts and tokens.
+  const current =
+    setup && setup.key === setupKey ? setup : setupKey ? (DECODER_SETUPS.get(setupKey) ?? null) : null;
   const decoder = current?.decoder ?? null;
 
   useEffect(() => {
@@ -444,20 +465,24 @@ function useActivitySentences(options: {
         // the wallet's own but named (emulator re-check of 2026-10-11,
         // findings 2 and 3).
         const sets = activityAddressSets({ eoa, accountIndex, aa, accounts, multisigs });
-        setSetup({
+        const built: DecoderSetup = {
           key: setupKey,
           contacts: savedContacts,
           labels: sets.labels,
           self: sets.self,
+          selfNames: sets.selfNames,
           decoder: createActivityDecoder({
             chainCaip2,
             evmChainId: BigInt(chainIdDecimal),
             wallet: sets.wallet,
             trackedTokens: tokens,
           }),
-        });
+        };
+        rememberDecoderSetup(built);
+        setSetup(built);
       } catch {
-        // No decoder: rows stay as they are.
+        // No decoder: rows stay as they are (and stop saying they are loading).
+        if (!cancelled) setSetupFailedKey(setupKey);
       }
     })();
     return () => {
@@ -502,6 +527,11 @@ function useActivitySentences(options: {
     (id: string) => (decoder ? decoder.cachedFor([id]).get(id) : undefined),
     [decoder],
   );
+  const settingUp = setupKey !== null && decoder === null && setupFailedKey !== setupKey;
+  const mayDecode = useCallback(
+    (id: string) => (decoder ? decoder.mayDecode(id) : settingUp),
+    [decoder, settingUp],
+  );
   return {
     lookup,
     contacts: current?.contacts ?? EMPTY_CONTACTS,
@@ -509,12 +539,38 @@ function useActivitySentences(options: {
     onViewableItemsChanged,
     labels: current?.labels ?? EMPTY_LABELS,
     self: current?.self ?? EMPTY_SELF,
+    selfNames: current?.selfNames ?? EMPTY_SELF_NAMES,
+    mayDecode,
   };
+}
+
+interface DecoderSetup {
+  key: string;
+  decoder: ActivityDecoder;
+  contacts: Contact[];
+  labels: AccountLabel[];
+  self: string[];
+  selfNames: { address: string; name: string }[];
+}
+
+/** The last decoder setups by key (chain, account, every account's name and address), newest last. */
+const DECODER_SETUPS = new Map<string, DecoderSetup>();
+const DECODER_SETUPS_KEPT = 8;
+
+function rememberDecoderSetup(setup: DecoderSetup): void {
+  DECODER_SETUPS.delete(setup.key);
+  DECODER_SETUPS.set(setup.key, setup);
+  while (DECODER_SETUPS.size > DECODER_SETUPS_KEPT) {
+    const oldest = DECODER_SETUPS.keys().next().value;
+    if (oldest === undefined) break;
+    DECODER_SETUPS.delete(oldest);
+  }
 }
 
 const EMPTY_CONTACTS: Contact[] = [];
 const EMPTY_LABELS: AccountLabel[] = [];
 const EMPTY_SELF: string[] = [];
+const EMPTY_SELF_NAMES: { address: string; name: string }[] = [];
 
 /**
  * The muted technical line for a history failure. useHistory keeps only the
@@ -616,6 +672,7 @@ export function ActivityScreen({ navigation, route }: Props) {
     accountLabels,
     stakingContractAt: pinnedStakingAt,
     selfAddresses: sentences.self,
+    selfNames: sentences.selfNames,
   };
   const sentenceFor = (id: string): string | null => {
     const decoded = sentences.lookup(id);
@@ -625,6 +682,23 @@ export function ActivityScreen({ navigation, route }: Props) {
     } catch {
       return null;
     }
+  };
+  // What a row says (finding F5): an EntryPoint deposit or payout row of a
+  // smart account says so from the row itself (finding F4), so a top-up in
+  // a staking bundle never reads as an amount staked; else the decoded
+  // transaction's sentence; a row still waiting for it says it is loading.
+  const activeIsMultisig = activeAccount?.multisig === true;
+  const rowTextFor = (entry: HistoryEntry): { sentence: string | null; loading: boolean } => {
+    if (!isEvmSlot) return { sentence: null, loading: false };
+    return activityRowText({
+      entryPoint: entryPointRowSentence(entry, {
+        smartAccountRow: isSmartAccountEntry(entry) || activeIsMultisig,
+        nativeSymbol: evmChain.displaySymbol,
+        hidden: hideAmounts,
+      }),
+      sentence: sentenceFor(entry.id),
+      mayDecode: sentences.mayDecode(entry.id),
+    });
   };
 
   useEffect(() => {
@@ -794,29 +868,37 @@ export function ActivityScreen({ navigation, route }: Props) {
   const rangeLimited =
     coverage !== undefined && (coverage.stop === 'refused' || coverage.stop === 'lookback-limit');
   const nothingAnswered = coverage !== undefined && coverage.answeredFromBlock === null;
+  // The footer is always one of: a spinner while a page loads (the
+  // controller ends every load within 60 s, history-controller.ts), "Could
+  // not load more — tap to retry" after a failure or timeout, "Load more",
+  // or the end of the list (finding F3).
   const footer = (
     <View style={styles.footer}>
-      {state.loadMoreError ? (
+      {state.loadingMore ? (
+        <ActivityIndicator size="small" color={theme.textMuted} accessibilityLabel="Loading older transactions" />
+      ) : state.loadMoreError ? (
         <>
-          <Text accessibilityLiveRegion="polite" style={[styles.note, { color: theme.text }]}>
-            Older entries could not be loaded. The entries above are unchanged.
-          </Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={LOAD_MORE_RETRY_FOOTER}
+            accessibilityHint="Tries again to load older transactions; the entries above are unchanged"
+            accessibilityLiveRegion="polite"
+            onPress={() => void loadMore()}
+            hitSlop={8}
+          >
+            <Text style={[styles.loadMore, { color: theme.accent }]}>{LOAD_MORE_RETRY_FOOTER}</Text>
+          </Pressable>
           <TechnicalDetail text={historyTechnicalText(state.loadMoreError)} />
         </>
-      ) : null}
-      {state.loadingMore ? (
-        <ActivityIndicator size="small" color={theme.textMuted} />
-      ) : state.nextCursor ? (
+      ) : state.hasMore ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={state.loadMoreError ? 'Try loading older transactions again' : 'Load more transactions'}
+          accessibilityLabel="Load more transactions"
           accessibilityHint="Loads older transactions"
           onPress={() => void loadMore()}
           hitSlop={8}
         >
-          <Text style={[styles.loadMore, { color: theme.accent }]}>
-            {state.loadMoreError ? 'Try again' : 'Load more'}
-          </Text>
+          <Text style={[styles.loadMore, { color: theme.accent }]}>Load more</Text>
         </Pressable>
       ) : state.entries.length > 0 ? (
         <Text style={[styles.note, { color: theme.textMuted }]}>
@@ -834,7 +916,9 @@ export function ActivityScreen({ navigation, route }: Props) {
         // uid distinguishes several entries born from one EVM transaction
         // (e.g. a token transfer plus an internal native movement).
         keyExtractor={(entry) => entry.uid ?? entry.id}
-        renderItem={({ item }) => (
+        renderItem={({ item }) => {
+          const rowText = rowTextFor(item);
+          return (
           <EntryRow
             entry={item}
             chainId={chainId}
@@ -842,7 +926,8 @@ export function ActivityScreen({ navigation, route }: Props) {
             symbol={symbol}
             hidden={hideAmounts}
             evmExplorerTxBase={evmChain.explorerTxBase}
-            sentence={isEvmSlot ? sentenceFor(item.id) : null}
+            sentence={rowText.sentence}
+            loading={rowText.loading}
             noAmount={hidesZeroNativeAmount(item, tokenTxIds)}
             note={noteFor(item.id)}
             onEditNote={
@@ -861,7 +946,8 @@ export function ActivityScreen({ navigation, route }: Props) {
                 : null
             }
           />
-        )}
+          );
+        }}
         onViewableItemsChanged={isEvmSlot ? sentences.onViewableItemsChanged : undefined}
         // New decodes, Hide amounts and contact edits re-render the visible rows.
         extraData={`${sentences.version}|${hideAmounts}|${sentences.contacts.length}|${notesVersion}`}

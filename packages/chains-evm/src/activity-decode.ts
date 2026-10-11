@@ -1356,6 +1356,17 @@ export interface ActivitySentenceContext {
    * was before this option existed.
    */
   selfAddresses?: readonly string[];
+  /**
+   * How a "yourself" address is named when the sentence mentions it as the
+   * OTHER party (a recipient, a sender, a spender), for example the
+   * viewing regular account's own smart account as "your smart account".
+   * Only addresses that read "yourself" (see selfAddresses) are affected;
+   * such an address still opens no sentence with its name and its
+   * operations still read "smart-account operation". Absent (the default),
+   * every "yourself" address reads "yourself" and every sentence is exactly
+   * what it was before this option existed.
+   */
+  selfNames?: readonly { address: string; name: string }[];
 }
 
 /** Every token contract whose metadata a sentence for `desc` may need (lowercase). */
@@ -1427,9 +1438,11 @@ class SentenceWriter {
     return this.isSelf(address) ? '' : `${this.party(address)} `;
   }
 
-  /** Contact name, else pinned label, else "yourself" / short address. */
+  /** Contact name, else pinned label, else "yourself" (or its ctx.selfNames name) / short address. */
   party(address: string): string {
-    if (this.isSelf(address)) return 'yourself';
+    if (this.isSelf(address)) {
+      return this.ctx.selfNames?.find((n) => sameAddress(n.address, address))?.name ?? 'yourself';
+    }
     const contact = this.ctx.nameFor?.(address) ?? null;
     if (contact) return contact;
     const known = knownContract(this.desc.chainId, address);

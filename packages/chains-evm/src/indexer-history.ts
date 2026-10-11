@@ -52,7 +52,11 @@ import type { JsonRpcTransport } from './rpc.js';
  *  - The two direction streams (sent/received) paginate independently, so
  *    across a page boundary an older received entry can arrive after a
  *    newer sent entry already shown. Each page itself is sorted
- *    newest-first; the app's per-page append tolerates the boundary skew.
+ *    newest-first, but one page can already mix time ranges (the sent
+ *    side may reach older blocks than the received side). A caller that
+ *    needs the whole list in time order uses the one-sided providers
+ *    (options.direction), each one stream in block order, and merges them
+ *    itself (the app's Activity list does, since 2026-10-11).
  */
 
 export type TransferCategory =
@@ -94,6 +98,19 @@ export interface IndexerHistoryOptions {
   /** maxCount per direction query (the merged page can hold up to 2×). */
   pageSize?: number;
   categories?: TransferCategory[];
+  /**
+   * Which side of the address to list: 'both' (the default, unchanged —
+   * the fromAddress and toAddress queries merged per page), 'sent' (only
+   * the fromAddress query) or 'received' (only the toAddress query). A
+   * one-sided provider is ONE stream ordered by block, newest first (the
+   * API's order "desc"), so a caller that merges several of them by time
+   * can tell exactly how far each has been read; the two-sided provider
+   * cannot, because its two queries page independently (see LIMITS
+   * above). A self-transfer is listed by both one-sided providers with the
+   * same uid. The cursor format is the same; a one-sided provider never
+   * queries the other side, whatever its cursor holds.
+   */
+  direction?: 'both' | 'sent' | 'received';
 }
 
 /**
@@ -181,6 +198,11 @@ function mapTransfer(transfer: RawTransfer, me: string): HistoryEntry {
     }
   }
 
+  // The other side of the movement, as the indexer reports it (lowercase,
+  // as the API returns addresses). Absent when the API gave none (a
+  // contract creation has no `to`).
+  const counterparty = direction === 'in' ? from : direction === 'out' ? to : from;
+
   const assetSymbol =
     !NATIVE_CATEGORIES.has(transfer.category) && typeof transfer.asset === 'string'
       ? transfer.asset
@@ -200,6 +222,7 @@ function mapTransfer(transfer: RawTransfer, me: string): HistoryEntry {
     ...(assetAmount !== undefined && assetDecimals !== undefined
       ? { assetAmount, assetDecimals }
       : {}),
+    ...(typeof counterparty === 'string' && /^0x[0-9a-f]{40}$/.test(counterparty) ? { counterparty } : {}),
   };
 }
 
@@ -227,6 +250,9 @@ export function indexerHistoryProvider(
 ): HistoryProvider {
   const pageSize = options.pageSize ?? 25;
   const categories = options.categories ?? DEFAULT_TRANSFER_CATEGORIES;
+  const direction = options.direction ?? 'both';
+  const listSent = direction !== 'received';
+  const listReceived = direction !== 'sent';
 
   async function query(
     side: 'fromAddress' | 'toAddress',
@@ -260,8 +286,9 @@ export function indexerHistoryProvider(
       const state: CursorState = cursor ? decodeCursor(cursor) : { v: 1 };
       // First page: both directions start fresh. Later pages: a direction
       // missing from the cursor is exhausted and must not restart.
-      const queryOut = !cursor || state.out !== undefined;
-      const queryIn = !cursor || state.in !== undefined;
+      // A one-sided provider (options.direction) never queries the other side.
+      const queryOut = listSent && (!cursor || state.out !== undefined);
+      const queryIn = listReceived && (!cursor || state.in !== undefined);
 
       const [outResult, inResult] = await Promise.all([
         queryOut ? query('fromAddress', address, state.out) : Promise.resolve(null),

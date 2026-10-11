@@ -50,7 +50,7 @@ import {
   type AaSendQuote,
 } from '../wallet/aa';
 import { AaDepositNote } from '../components/AaDepositNote';
-import { TransactionNoteField } from '../components/TransactionNoteField';
+import { NOTE_VIEW_SCROLL_PROPS, TransactionNoteField, dismissKeyboardThenClose } from '../components/TransactionNoteField';
 import { findExactContact, listContacts, matchRecipient, type Contact } from '../wallet/contacts';
 import { sessionKeyVault } from '../wallet/storage';
 import { readinessGate } from '../config/readiness';
@@ -1454,7 +1454,7 @@ export function SessionsScreen({ navigation }: Props) {
   // scrolled to the middle in the rehearsal (finding 2).
   if (phase === 'progress' && progress) {
     return (
-      <ScrollView key="progress" style={screenStyle(theme)} contentContainerStyle={styles.content}>
+      <ScrollView key="progress" style={screenStyle(theme)} contentContainerStyle={styles.content} {...NOTE_VIEW_SCROLL_PROPS}>
         <Text style={[styles.title, { color: theme.success }]}>{sessionProgressTitle(progress.kind)}</Text>
         <Text style={[styles.label, { color: theme.textMuted }]}>UserOperation hash</Text>
         <Text selectable style={[styles.monoText, { color: theme.text }]}>
@@ -1508,11 +1508,13 @@ export function SessionsScreen({ navigation }: Props) {
         />
         <Button
           title="Done"
-          onPress={() => {
-            setProgress(null);
-            setPhase('list');
-            reloadList();
-          }}
+          onPress={() =>
+            dismissKeyboardThenClose(() => {
+              setProgress(null);
+              setPhase('list');
+              reloadList();
+            })
+          }
         />
       </ScrollView>
     );

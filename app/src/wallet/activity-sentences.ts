@@ -1,9 +1,11 @@
-import type { FungibleAsset } from '@shiba-wallet/core';
+import type { FungibleAsset, HistoryEntry } from '@shiba-wallet/core';
 import {
+  ENTRYPOINT_V07,
   STAKING_SELECTORS,
   activitySentence,
   activityTokenContracts,
   decodeActivity,
+  formatExactUnits,
   httpTransport,
   predictKernelAddress,
   shortActivityAddress,
@@ -131,6 +133,12 @@ export interface ActivityDecoder {
   reset(): void;
   /** Hashes that failed in this decoder (tests). */
   failedIds(): string[];
+  /**
+   * True when a decode of `id` could still give a sentence: a transaction
+   * hash that is neither cached nor failed in this decoder. A row for such
+   * an id says its details are loading.
+   */
+  mayDecode(id: string): boolean;
 }
 
 export function createActivityDecoder(options: ActivityDecoderOptions): ActivityDecoder {
@@ -191,6 +199,9 @@ export function createActivityDecoder(options: ActivityDecoderOptions): Activity
     failedIds() {
       return [...failed];
     },
+    mayDecode(id) {
+      return HASH_RE.test(id) && !cache.has(keyFor(id)) && !failed.has(id);
+    },
     async decodeEntries(ids) {
       const unique = [...new Set(ids)];
       const todo = unique
@@ -250,6 +261,14 @@ export interface SentenceRenderOptions {
    * "yourself" (the engine's original rule).
    */
   selfAddresses?: readonly string[];
+  /**
+   * How a "yourself" address is named when a sentence mentions it as the
+   * other party (activityAddressSets().selfNames): the viewing regular
+   * account's own smart account reads "your smart account", so Account 1's
+   * top-up of its Kernel account reads "Sent 0.0015 test ETH to your smart
+   * account" (emulator pass of 2026-10-11, finding F1), not "to yourself".
+   */
+  selfNames?: readonly { address: string; name: string }[];
 }
 
 /** One of the wallet's own accounts, for the sentences (activityAccountLabels). */
@@ -330,7 +349,7 @@ export function activityAddressSets(input: {
   accounts: readonly { name: string; evmAddress: string | null; index: number }[];
   /** The network's stored multisigs (multisig.ts ownMultisigAddresses). */
   multisigs: readonly { address: string; label: string }[];
-}): { self: string[]; wallet: string[]; labels: AccountLabel[] } {
+}): { self: string[]; wallet: string[]; labels: AccountLabel[]; selfNames: { address: string; name: string }[] } {
   const self = walletAddressesFor(input.eoa, input.accountIndex, input.aa);
   const others: string[] = [];
   if (input.aa) {
@@ -346,8 +365,77 @@ export function activityAddressSets(input: {
     self,
     wallet: dedupe([...self, ...others]),
     labels: activityAccountLabels(input.accounts, input.multisigs, input.aa),
+    // Every "yourself" address after the account's own is its smart
+    // account (walletAddressesFor: the Kernel counterfactual, a recovered
+    // account); as the other party of a sentence it reads "your smart
+    // account" (finding F1).
+    selfNames: self.slice(1).map((address) => ({ address, name: YOUR_SMART_ACCOUNT })),
   };
 }
+
+/** How the viewing regular account's own smart account is named in its sentences. */
+export const YOUR_SMART_ACCOUNT = 'your smart account';
+
+/**
+ * The row-level sentence for a native movement between the smart account
+ * whose history the row is and the ERC-4337 EntryPoint v0.7
+ * (0x0000000071727De22E5E9d8BAf0edAc6f37da032, the engine's ENTRYPOINT_V07),
+ * or null for every other row (emulator pass of 2026-10-11, finding F4:
+ * such rows read only "Sent, −0.000923 test ETH", and the staking bundle's
+ * "−0.000747" top-up row carried the bundle's "staked 0.0001 test ETH"
+ * sentence, so it could be read as an amount staked).
+ *
+ * Facts, from eth-infinitism/account-abstraction v0.7.0
+ * (contracts/core/StakeManager.sol and EntryPoint.sol):
+ *  - ETH sent to the EntryPoint (its receive function) is added to the
+ *    SENDER's deposit (depositTo(msg.sender)); a smart account sends it
+ *    while it validates an operation (missingAccountFunds) or a top-up, and
+ *    the deposit pays that account's network fees first; the unused part
+ *    of a prefund is credited back to the deposit (_incrementDeposit), not
+ *    sent back;
+ *  - ETH leaves the EntryPoint only through withdrawTo (from a deposit),
+ *    withdrawStake (from a stake) or the fee payment to a bundle's
+ *    beneficiary (_compensate), so ETH from the EntryPoint is "paid out by
+ *    the EntryPoint", without guessing which.
+ *
+ * Only rows whose queried address is a smart account qualify:
+ * `smartAccountRow` is true for a row of the smart account's history next
+ * to a regular account (isSmartAccountEntry) and for every row of an active
+ * multisig. The amount is exact (no rounding) and masked by Hide amounts.
+ */
+export function entryPointRowSentence(
+  entry: HistoryEntry,
+  options: { smartAccountRow: boolean; nativeSymbol: string; hidden: boolean },
+): string | null {
+  if (!options.smartAccountRow) return null;
+  if (entry.assetSymbol !== undefined || entry.assetAmount !== undefined) return null;
+  if (entry.amount === undefined || entry.amount <= 0n) return null;
+  if (!entry.counterparty || entry.counterparty.toLowerCase() !== ENTRYPOINT_V07.toLowerCase()) return null;
+  const amount = `${maskAmount(formatExactUnits(entry.amount, 18), options.hidden)} ${options.nativeSymbol}`;
+  if (entry.direction === 'out') return `EntryPoint deposit: ${amount} set aside for this smart account’s network fees`;
+  if (entry.direction === 'in') return `EntryPoint payout: ${amount} paid to this smart account by the EntryPoint`;
+  return null;
+}
+
+/**
+ * What one Activity row says (finding F5): the row-level EntryPoint
+ * sentence when there is one (computed from the row itself, so it is there
+ * on the first render); else the decoded transaction's sentence; else
+ * nothing, with `loading` true while a decode may still bring one (the row
+ * then tells a screen reader its details are loading).
+ */
+export function activityRowText(input: {
+  entryPoint: string | null;
+  sentence: string | null;
+  mayDecode: boolean;
+}): { sentence: string | null; loading: boolean } {
+  if (input.entryPoint) return { sentence: input.entryPoint, loading: false };
+  if (input.sentence) return { sentence: input.sentence, loading: false };
+  return { sentence: null, loading: input.mayDecode };
+}
+
+/** The accessibility label of a row whose details are still loading (prefix). */
+export const ROW_DETAILS_LOADING_LABEL = 'Transaction, details loading';
 
 /**
  * The one smart-account address whose history the Activity screen lists
@@ -452,6 +540,7 @@ export function renderActivitySentence(decoded: DecodedActivity, options: Senten
     maskAmount: (text) => maskAmount(text, options.hidden),
     ...(describeCall ? { describeCall } : {}),
     ...(options.selfAddresses ? { selfAddresses: options.selfAddresses } : {}),
+    ...(options.selfNames ? { selfNames: options.selfNames } : {}),
   });
 }
 

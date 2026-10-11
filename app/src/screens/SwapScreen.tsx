@@ -94,7 +94,7 @@ import {
 import { PREVIEW_AA_NOTE } from '../wallet/simulation';
 import { Eip7702QuoteNotice } from '../components/DelegationViews';
 import { AaDepositNote } from '../components/AaDepositNote';
-import { TransactionNoteField } from '../components/TransactionNoteField';
+import { NOTE_VIEW_SCROLL_PROPS, TransactionNoteField, dismissKeyboardThenClose } from '../components/TransactionNoteField';
 import { usePrices } from '../wallet/usePrices';
 import { fiatLine, formatFiat, nativePriceAssetId, tokenPriceAssetId } from '../wallet/prices';
 
@@ -1012,7 +1012,7 @@ export function SwapScreen({ navigation }: Props) {
   // ------------------------------------------- success (smart account)
   if (phase === 'success' && aaResult) {
     return (
-      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content} {...NOTE_VIEW_SCROLL_PROPS}>
         <Text style={[styles.successTitle, { color: theme.success }]}>Swap sent to bundler ✓</Text>
         {quote ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
@@ -1064,7 +1064,7 @@ export function SwapScreen({ navigation }: Props) {
         {sentNetwork ? (
           <TransactionNoteField network={sentNetwork} txid={aaResult.txHash} userOpHash={aaResult.userOpHash} />
         ) : null}
-        <Button title="Done" onPress={() => navigation.popToTop()} />
+        <Button title="Done" onPress={() => dismissKeyboardThenClose(() => navigation.popToTop())} />
       </ScrollView>
     );
   }
@@ -1216,7 +1216,7 @@ export function SwapScreen({ navigation }: Props) {
   // -------------------------------------------------------------- success
   if (phase === 'success' && result) {
     return (
-      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content} {...NOTE_VIEW_SCROLL_PROPS}>
         <Text style={[styles.successTitle, { color: theme.success }]}>Swap sent ✓</Text>
         {quote ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
@@ -1244,7 +1244,7 @@ export function SwapScreen({ navigation }: Props) {
           />
         ) : null}
         {sentNetwork ? <TransactionNoteField network={sentNetwork} txid={result.txid} userOpHash={null} /> : null}
-        <Button title="Done" onPress={() => navigation.popToTop()} />
+        <Button title="Done" onPress={() => dismissKeyboardThenClose(() => navigation.popToTop())} />
       </ScrollView>
     );
   }

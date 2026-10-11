@@ -1,74 +1,39 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { HistoryEntry, HistoryPage } from '@shiba-wallet/core';
+import type { HistoryPage } from '@shiba-wallet/core';
 // Explicit .ts extensions: scripts/check-failover.mjs imports
 // loadHistoryPage from this module under Node's type stripping.
 import { callWithFailover, getEndpoint, type NetworkEndpoint } from '../config/networks.ts';
-import {
-  historyNotesAfterPage,
-  historySourceFor,
-  type HistoryNotes,
-  type HistorySource,
-} from './history.ts';
+import { historySourceFor, indexerHistoryStreams, type HistorySource } from './history.ts';
 import { listTokens } from './tokens.ts';
 import type { TrackedTokenRef } from './token-history.ts';
 import { getIndexerConfig } from './indexer.ts';
+import { createMergedHistoryFeed, type HistoryStream, type SmartAccountHistoryStatus } from './smart-account-history.ts';
 import {
-  freshHistoryEntries,
-  smartAccountHistoryOf,
-  withSmartAccountHistory,
-  type SmartAccountHistoryStatus,
-} from './smart-account-history.ts';
+  createHistoryController,
+  type HistoryController,
+  type HistorySession,
+  type HistorySnapshot,
+  type HistoryState,
+  type SessionPage,
+} from './history-controller.ts';
+
+export type { HistoryState } from './history-controller.ts';
 
 /**
- * State machine for one chain's activity list, with the same discipline as
- * useBalances: endpoints are re-resolved from config on every reload (so
- * Settings edits take effect without a restart), a generation counter drops
- * late responses after unmount or reload, and errors are retryable without
- * losing what already rendered.
+ * The Activity list of one chain: the state machine lives in
+ * history-controller.ts (React-free, pinned by check-activity); this file
+ * resolves where a page comes from and wraps the controller in a hook.
+ * Endpoints are re-resolved from config on every reload (so Settings edits
+ * take effect without a restart).
  */
-export type HistoryState =
-  | { status: 'loading' }
-  /** No provider can serve this chain right now (EVM, or no endpoint). */
-  | { status: 'unavailable'; note: string }
-  /** The first page failed; retryable. */
-  | { status: 'error'; message: string }
-  | {
-      status: 'ok';
-      entries: HistoryEntry[];
-      /** Cursor for the next (older) page; undefined when exhausted. */
-      nextCursor?: string;
-      loadingMore: boolean;
-      /** A load-more failure; the entries already shown are kept. */
-      loadMoreError: string | null;
-      /** Source-level caveat (e.g. the tracked-token logs fallback). */
-      note?: string;
-      /** The endpoint's own refusal text, verbatim, shown under the note. */
-      noteDetail?: string;
-      /**
-       * Block range answered so far by the tracked-token logs fallback
-       * (token-history.ts); absent for other sources.
-       */
-      coverage?: HistoryNotes['coverage'];
-      /**
-       * Whether the active account's smart-account history is listed too
-       * (smart-account-history.ts); absent when no smart account was
-       * passed in.
-       */
-      smartAccount?: SmartAccountHistoryStatus;
-    };
-
 export interface HistoryHook {
   state: HistoryState;
   /** True while a pull-to-refresh reload is in flight. */
   refreshing: boolean;
   /** Re-fetches the first page (initial load, retry, pull-to-refresh). */
   reload: () => Promise<void>;
-  /** Fetches the next page and appends it. No-op when already exhausted. */
+  /** Fetches the next page and appends it. No-op when exhausted or while one is loading. */
   loadMore: () => Promise<void>;
-}
-
-function errorMessage(e: unknown): string {
-  return e instanceof Error ? e.message : 'History fetch failed';
 }
 
 /**
@@ -80,7 +45,7 @@ function errorMessage(e: unknown): string {
 async function sourceForEndpoint(
   endpoint: NetworkEndpoint,
   walletAddress: string,
-): Promise<{ source: HistorySource; viaIndexer: boolean }> {
+): Promise<{ source: HistorySource; viaIndexer: boolean; indexerUrl: string | null }> {
   const isEvm = endpoint.network.kind === 'evm-jsonrpc';
   const indexerUrl = isEvm ? (await getIndexerConfig(endpoint.network.chainId)).url : null;
   // Tracked tokens power the logs fallback when no indexer is configured.
@@ -110,6 +75,7 @@ async function sourceForEndpoint(
       evmTokenLogs,
     ),
     viaIndexer: indexerUrl !== null,
+    indexerUrl,
   };
 }
 
@@ -123,13 +89,6 @@ export type HistoryPageLoad =
       /** Set when a smart account was passed in: whether its history is on this page. */
       smartAccount?: SmartAccountHistoryStatus;
     };
-
-/** What a page says about the smart account (undefined when none was passed in). */
-function smartAccountStatusOf(page: HistoryPage, smartAccount: string | null, viaIndexer: boolean): SmartAccountHistoryStatus | undefined {
-  if (!smartAccount) return undefined;
-  if (!viaIndexer) return 'skipped';
-  return smartAccountHistoryOf(page)?.status ?? 'skipped';
-}
 
 /**
  * Fetches one history page (the first when `cursor` is undefined) through
@@ -154,21 +113,20 @@ export async function loadHistoryPage(
   const first = await sourceForEndpoint(endpoint, address);
   if (first.source.status === 'unavailable') return { status: 'unavailable', note: first.source.note };
   const firstSource = first.source;
-  // The active account's smart account (smart-account-history.ts): listed
-  // only through a history indexer, which is queried by address (one more
-  // page request per load); the tracked-token logs fallback is built for
-  // one address and reports it as skipped.
+  // The active account's smart account (smart-account-history.ts) is
+  // listed only through a history indexer, by openHistorySession's
+  // time-ordered merge; this cursor path never lists it. With an indexer it
+  // serves the account's own pages (no smart account); the tracked-token
+  // logs fallback is built for one address and reports the smart account
+  // as skipped.
   const smartAccount = options.smartAccount ?? null;
   if (first.viaIndexer || endpoint.url === null) {
-    const provider =
-      first.viaIndexer && smartAccount ? withSmartAccountHistory(firstSource.provider, smartAccount) : firstSource.provider;
-    const page = await provider.getHistory(address, cursor);
-    const smartStatus = smartAccountStatusOf(page, smartAccount, first.viaIndexer);
+    const page = await firstSource.provider.getHistory(address, cursor);
     return {
       status: 'ok',
       page,
       ...(firstSource.note ? { note: firstSource.note } : {}),
-      ...(smartStatus ? { smartAccount: smartStatus } : {}),
+      ...(smartAccount && !first.viaIndexer ? { smartAccount: 'skipped' as const } : {}),
     };
   }
   const outcome = await callWithFailover({ ...endpoint, url: endpoint.url }, async (ep) => {
@@ -188,6 +146,106 @@ export async function loadHistoryPage(
 }
 
 /**
+ * One reading of a chain's history (history-controller.ts HistorySession).
+ * The first fill() resolves the source NOW: with a history indexer every
+ * page comes from the time-ordered merge of one-sided streams
+ * (smart-account-history.ts createMergedHistoryFeed — the account's sent
+ * and received transfers, plus its smart account's when `smartAccount` is
+ * given); otherwise each page comes from loadHistoryPage with the cursor
+ * held here (the failover rule unchanged). `streamsFor` lets the check
+ * scripts give the indexer streams a fake transport.
+ */
+export function openHistorySession(
+  chainId: string,
+  address: string,
+  options: {
+    smartAccount?: string | null;
+    streamsFor?: (indexerUrl: string, address: string, smartAccount: string | null) => HistoryStream[];
+  } = {},
+): HistorySession {
+  const smartAccount = options.smartAccount ?? null;
+  const streamsFor = options.streamsFor ?? ((url, who, smart) => indexerHistoryStreams(url, who, smart));
+  let route: null | { kind: 'merged'; fill: () => Promise<void>; take: () => SessionPage | null } | { kind: 'cursor' } = null;
+  let cursor: string | undefined;
+  let ready: SessionPage | null = null;
+  let inflight: Promise<void> | null = null;
+
+  async function cursorPage(): Promise<void> {
+    const load = await loadHistoryPage(chainId, address, cursor, { smartAccount });
+    if (load.status === 'unavailable') {
+      ready = { status: 'unavailable', note: load.note };
+      return;
+    }
+    cursor = load.page.nextCursor;
+    ready = {
+      status: 'ok',
+      page: load.page,
+      hasMore: Boolean(load.page.nextCursor),
+      ...(load.note ? { note: load.note } : {}),
+      ...(load.smartAccount ? { smartAccount: load.smartAccount } : {}),
+    };
+  }
+
+  async function load(): Promise<void> {
+    if (route === null) {
+      const endpoint = await getEndpoint(chainId);
+      if (!endpoint) {
+        ready = { status: 'unavailable', note: 'No network configuration for this chain.' };
+        return;
+      }
+      const first = await sourceForEndpoint(endpoint, address);
+      if (first.source.status === 'unavailable') {
+        ready = { status: 'unavailable', note: first.source.note };
+        return;
+      }
+      if (first.indexerUrl !== null) {
+        const feed = createMergedHistoryFeed(streamsFor(first.indexerUrl, address, smartAccount));
+        const note = first.source.note;
+        route = {
+          kind: 'merged',
+          fill: () => feed.fill(),
+          take: () => {
+            const page = feed.take();
+            if (!page) return null;
+            return {
+              status: 'ok',
+              page: { entries: page.entries },
+              hasMore: page.hasMore,
+              ...(note ? { note } : {}),
+              ...(page.smartAccount ? { smartAccount: page.smartAccount } : {}),
+            };
+          },
+        };
+      } else {
+        route = { kind: 'cursor' };
+      }
+    }
+    if (route.kind === 'merged') {
+      await route.fill();
+      ready = route.take();
+      return;
+    }
+    await cursorPage();
+  }
+
+  return {
+    fill() {
+      if (ready) return Promise.resolve();
+      if (inflight) return inflight;
+      inflight = load().finally(() => {
+        inflight = null;
+      });
+      return inflight;
+    },
+    take() {
+      const page = ready;
+      ready = null;
+      return page;
+    },
+  };
+}
+
+/**
  * `extra.smartAccount` is the active account's smart-account address to
  * list next to `address` (null for none); while `extra.ready` is false
  * (the screen is still reading the smart-account settings) nothing is
@@ -199,124 +257,30 @@ export function useHistory(
   extra: { smartAccount: string | null; ready: boolean } = { smartAccount: null, ready: true },
 ): HistoryHook {
   const { smartAccount, ready } = extra;
-  const [state, setState] = useState<HistoryState>({ status: 'loading' });
-  const [refreshing, setRefreshing] = useState(false);
-  const generation = useRef(0);
-  // Serializes load-more calls: FlatList's onEndReached can fire repeatedly
-  // while one page is already in flight.
-  const loadingMoreRef = useRef(false);
+  const [snap, setSnap] = useState<HistorySnapshot>({ state: { status: 'loading' }, refreshing: false });
+  const controller = useRef<HistoryController | null>(null);
 
-  const reload = useCallback(async () => {
+  useEffect(() => {
     if (!ready) return;
-    const gen = ++generation.current;
-    setRefreshing(true);
-    setState((prev) => (prev.status === 'ok' ? prev : { status: 'loading' }));
-    try {
-      const load = await loadHistoryPage(chainId, address, undefined, { smartAccount });
-      if (gen !== generation.current) return;
-      if (load.status === 'unavailable') {
-        setState({ status: 'unavailable', note: load.note });
-        return;
-      }
-      const { page } = load;
-      const notes = historyNotesAfterPage(load.note ? { note: load.note } : {}, page);
-      setState({
-        status: 'ok',
-        entries: page.entries,
-        nextCursor: page.nextCursor,
-        loadingMore: false,
-        loadMoreError: null,
-        ...notes,
-        ...(load.smartAccount ? { smartAccount: load.smartAccount } : {}),
-      });
-    } catch (e) {
-      if (gen === generation.current) {
-        setState({ status: 'error', message: errorMessage(e) });
-      }
-    } finally {
-      if (gen === generation.current) setRefreshing(false);
-    }
+    const c = createHistoryController({
+      open: () => openHistorySession(chainId, address, { smartAccount }),
+      onChange: setSnap,
+    });
+    controller.current = c;
+    // reload() publishes its first state (loading) at once.
+    void c.reload();
+    return () => {
+      c.dispose();
+      if (controller.current === c) controller.current = null;
+    };
   }, [chainId, address, smartAccount, ready]);
 
+  const reload = useCallback(async () => {
+    await controller.current?.reload();
+  }, []);
   const loadMore = useCallback(async () => {
-    if (loadingMoreRef.current) return;
-    const gen = generation.current;
-    let cursor: string | undefined;
-    setState((prev) => {
-      if (prev.status !== 'ok' || !prev.nextCursor) return prev;
-      cursor = prev.nextCursor;
-      return { ...prev, loadingMore: true, loadMoreError: null };
-    });
-    if (!cursor) return;
-    loadingMoreRef.current = true;
-    try {
-      const load = await loadHistoryPage(chainId, address, cursor, { smartAccount });
-      if (gen !== generation.current) return;
-      if (load.status === 'unavailable') {
-        // The endpoint was removed between pages; keep what is shown.
-        setState((prev) =>
-          prev.status === 'ok'
-            ? { ...prev, loadingMore: false, loadMoreError: 'Endpoint no longer configured' }
-            : prev,
-        );
-        return;
-      }
-      const { page } = load;
-      setState((prev) => {
-        if (prev.status !== 'ok') return prev;
-        // Cheap dedupe, in case a transaction confirmed between the first
-        // (mempool + confirmed) page and this confirmed-only page. Keyed
-        // by uid when present (one EVM transaction can yield several
-        // legitimate entries sharing its hash), by id otherwise.
-        // A smart-account row whose transaction is already listed is
-        // dropped as well (smart-account-history.ts freshHistoryEntries).
-        const fresh = freshHistoryEntries(prev.entries, page.entries);
-        // The note fields carry over (a logs-fallback page updates them
-        // with the range answered so far, including a refusal that ended
-        // paging); without this the partial-history caveat would vanish
-        // after the first "Load more".
-        const notes = historyNotesAfterPage(
-          {
-            ...(prev.note !== undefined ? { note: prev.note } : {}),
-            ...(prev.noteDetail !== undefined ? { noteDetail: prev.noteDetail } : {}),
-            ...(prev.coverage !== undefined ? { coverage: prev.coverage } : {}),
-          },
-          page,
-        );
-        return {
-          status: 'ok',
-          entries: [...prev.entries, ...fresh],
-          nextCursor: page.nextCursor,
-          loadingMore: false,
-          loadMoreError: null,
-          ...notes,
-          // A later page can report the smart-account stream as failed;
-          // once failed it is not queried again until a reload.
-          ...(prev.smartAccount === 'failed' || load.smartAccount === 'failed'
-            ? { smartAccount: 'failed' as const }
-            : prev.smartAccount !== undefined
-              ? { smartAccount: prev.smartAccount }
-              : {}),
-        };
-      });
-    } catch (e) {
-      if (gen === generation.current) {
-        setState((prev) =>
-          prev.status === 'ok' ? { ...prev, loadingMore: false, loadMoreError: errorMessage(e) } : prev,
-        );
-      }
-    } finally {
-      loadingMoreRef.current = false;
-    }
-  }, [chainId, address, smartAccount]);
+    await controller.current?.loadMore();
+  }, []);
 
-  // Initial load; re-run if the chain or address changes.
-  useEffect(() => {
-    void reload();
-    return () => {
-      generation.current += 1;
-    };
-  }, [reload]);
-
-  return { state, refreshing, reload, loadMore };
+  return { state: snap.state, refreshing: snap.refreshing, reload, loadMore };
 }

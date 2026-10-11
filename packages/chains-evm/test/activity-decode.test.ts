@@ -666,6 +666,21 @@ describe('selfAddresses (whose Activity this is)', () => {
     );
   });
 
+  it('selfNames names a "yourself" address only where it is the other party', () => {
+    // Account 1 sends to its own Kernel account (the live 0x341db91c… case shape).
+    const toKernel = describe1(syntheticTx({ to: KERNEL_OF_ACCOUNT_1, value: '0x5543df729c000' }), syntheticReceipt([]), [ACCOUNT_1, KERNEL_OF_ACCOUNT_1]);
+    const self = { selfAddresses: [ACCOUNT_1, KERNEL_OF_ACCOUNT_1] };
+    expect(activitySentence(toKernel, named(self))).toBe('Sent 0.0015 ETH to yourself');
+    const selfNames = [{ address: KERNEL_OF_ACCOUNT_1.toLowerCase(), name: 'your smart account' }];
+    expect(activitySentence(toKernel, named({ ...self, selfNames }))).toBe('Sent 0.0015 ETH to your smart account');
+    // The smart account's own operation still reads "Smart-account operation", and Burn is still Burn.
+    expect(activitySentence(describeFixture('0xe189', [ACCOUNT_1, KERNEL_OF_ACCOUNT_1]), named({ ...self, selfNames }))).toBe(
+      'Smart-account operation: sent 0.0001 ETH to Burn',
+    );
+    // A name for an address that is not "yourself" changes nothing.
+    expect(activitySentence(toKernel, named({ selfAddresses: [ACCOUNT_1], selfNames }))).toBe('Sent 0.0015 ETH to Account 1’s smart account');
+  });
+
   it("another own account's smart-account operation is named as its sender", () => {
     // The pinned handleOps fixture: Account 1's Kernel account sends 0.0001 ETH to Burn.
     const d = describeFixture('0xe189', [MULTISIG, KERNEL_OF_ACCOUNT_1]);
