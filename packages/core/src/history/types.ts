@@ -61,6 +61,14 @@ export interface HistoryPage {
   entries: HistoryEntry[];
   /** Opaque cursor for the next (older) page; absent when exhausted. */
   nextCursor?: string;
+  /**
+   * Diagnostics: how many records the backend reported that the provider
+   * deliberately left out of `entries`, by reason (for example
+   * 'eip7708-duplicate' and 'eip7708-unreadable' from the EVM indexer
+   * provider, for the protocol's ETH-transfer logs). Absent when nothing
+   * was left out. Nothing a user has to act on.
+   */
+  omitted?: Readonly<Record<string, number>>;
 }
 
 export interface HistoryProvider {

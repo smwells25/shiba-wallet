@@ -401,6 +401,21 @@ async function exportFixture(mod = notes) {
   check('CSV: a note starting with @ is defused', lines[4].endsWith(',"\'@via the operation"'));
   check('CSV: no float artefacts', !/e-\d|e\+\d/.test(csv));
   check('empty export: header only', activityCsv({ ...input, entries: [] }) === csvDocument([ACTIVITY_CSV_HEADER]));
+  // 2026-10-11 pass, finding 2: a reverted incoming transfer received
+  // nothing, so its amount is empty ("Received (failed)"); a failed sent row
+  // keeps the attempted amount as before.
+  const failedRows = activityExportRows({
+    ...input,
+    entries: [
+      { id: TX_A, timestamp: 1760084100, confirmed: true, direction: 'in', amount: 3n * 10n ** 15n, failed: true },
+      { id: TX_B, timestamp: 1760084000, confirmed: true, direction: 'in', assetSymbol: 'USDC', assetAmount: 5n, assetDecimals: 6, failed: true },
+      { id: TX_C, timestamp: 1760083900, confirmed: true, direction: 'out', amount: 3n * 10n ** 15n, failed: true },
+    ],
+  });
+  check('failed incoming: "Received (failed)", amount empty, asset named',
+    failedRows[0][2] === 'Received (failed)' && failedRows[0][3] === '' && failedRows[0][4] === 'test ETH' &&
+      failedRows[1][2] === 'Received (failed)' && failedRows[1][3] === '' && failedRows[1][4] === 'USDC');
+  check('failed outgoing keeps its attempted amount ("Sent (failed)")', failedRows[2][2] === 'Sent (failed)' && failedRows[2][3] === '0.003');
   check('file name',
     activityExportFileName(SEPOLIA, '0x772e9f0A3B6f3b1F0c2e1C0D6dB34b7aE9cAF44F', new Date('2026-10-10T23:59:00Z')) ===
       'shiba-activity_eip155-11155111_0x772e-F44F_2026-10-10.csv');

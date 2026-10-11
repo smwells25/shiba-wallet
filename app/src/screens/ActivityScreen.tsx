@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -43,11 +43,14 @@ import { useWallet } from '../wallet/WalletContext';
 import { OfflineNotice, TechnicalDetail } from '../wallet/connectivity';
 import { sanitizeEndpointMessage } from '../config/endpoint-probe';
 import {
+  FAILED_INCOMING_TITLE,
   ROW_DETAILS_LOADING_LABEL,
   activityAddressSets,
   activityRowText,
   createActivityDecoder,
   entryPointRowSentence,
+  entryWithReceiptStatus,
+  isFailedIncoming,
   historySmartAccountFor,
   renderActivitySentence,
   type AccountLabel,
@@ -163,6 +166,12 @@ function EntryRow({
 }) {
   const theme = useTheme();
   const url = explorerTxUrl(chainId, entry.id, evmExplorerTxBase);
+  // A failed incoming row received nothing (entryWithReceiptStatus): it
+  // says so in its title and shows no amount (emulator pass of 2026-10-11,
+  // finding 2).
+  const failedIncoming = isFailedIncoming(entry);
+  const showAmount = !noAmount && !failedIncoming;
+  const title = failedIncoming ? FAILED_INCOMING_TITLE : directionLabel(entry.direction);
 
   // Token entries carry the asset symbol; when the provider also knows
   // the exact token amount and decimals (log data, indexer raw values),
@@ -182,7 +191,7 @@ function EntryRow({
         : formatBalanceDisplay(entry.amount, decimals);
   const amountText =
     display === null ? '—' : maskAmount(signedDisplay(sign, display), hidden);
-  const hasAmount = !noAmount && (entry.assetAmount !== undefined || entry.amount !== undefined);
+  const hasAmount = showAmount && (entry.assetAmount !== undefined || entry.amount !== undefined);
   const amountColor =
     entry.failed || !hasAmount
       ? theme.textMuted
@@ -220,7 +229,8 @@ function EntryRow({
       accessibilityRole={url ? 'button' : undefined}
       accessibilityLabel={
         (sentence ? `${sentence}. ` : loading ? `${ROW_DETAILS_LOADING_LABEL}. ` : '') +
-        `${directionLabel(entry.direction)} transaction, ${spokenAmount}, ${timestampLabel(entry)}` +
+        (failedIncoming ? `${title}, ` : `${title} transaction, `) +
+        `${spokenAmount}, ${timestampLabel(entry)}` +
         (spokenStatus ? `, ${spokenStatus}` : '')
       }
       accessibilityHint={url ? 'Opens the transaction in the block explorer' : undefined}
@@ -233,7 +243,7 @@ function EntryRow({
       <DirectionBadge entry={entry} theme={theme} />
       <View style={styles.rowBody}>
         <Text style={[styles.rowTitle, { color: theme.text }]}>
-          {directionLabel(entry.direction)}
+          {title}
         </Text>
         {sentence ? (
           <Text style={[styles.rowSentence, { color: theme.text }]}>{sentence}</Text>
@@ -248,7 +258,7 @@ function EntryRow({
         ) : null}
       </View>
       <View style={styles.rowRight}>
-        {noAmount ? null : (
+        {!showAmount ? null : (
           <>
             <Text style={[styles.amount, { color: amountColor }]} numberOfLines={1}>
               {amountText}
@@ -437,6 +447,10 @@ function useActivitySentences(options: {
   const [setupFailedKey, setSetupFailedKey] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
   const [visibleIds, setVisibleIds] = useState<string[]>([]);
+  // Ids of rows a history listed as mined (confirmed): only these get the
+  // decoder's one retry on another endpoint when the first answers null
+  // (finding 3 of the emulator pass of 2026-10-11).
+  const listedIds = useRef(new Set<string>());
   // A decoder built for another chain/account is never used. On a return to
   // the screen the last setup for the same key is used at once (its decodes
   // are cached in memory), so the rows decoded before have their sentence
@@ -503,7 +517,7 @@ function useActivitySentences(options: {
     const ids = visibleKey ? visibleKey.split(',') : [];
     if (!decoder || ids.length === 0) return;
     let cancelled = false;
-    void decoder.decodeEntries(ids).then((decoded) => {
+    void decoder.decodeEntries(ids, { listed: (id) => listedIds.current.has(id) }).then((decoded) => {
       if (!cancelled && decoded.size > 0) setVersion((v) => v + 1);
     });
     return () => {
@@ -514,9 +528,11 @@ function useActivitySentences(options: {
   // FlatList requires a stable callback for onViewableItemsChanged (the
   // state setter is stable, so no dependencies).
   const onViewableItemsChanged = useCallback((info: { viewableItems: ViewToken[] }) => {
-    const ids = info.viewableItems
-      .map((v) => (v.item as HistoryEntry | undefined)?.id)
-      .filter((id): id is string => typeof id === 'string');
+    const items = info.viewableItems
+      .map((v) => v.item as HistoryEntry | undefined)
+      .filter((item): item is HistoryEntry => typeof item?.id === 'string');
+    for (const item of items) if (item.confirmed) listedIds.current.add(item.id);
+    const ids = items.map((item) => item.id);
     setVisibleIds((prev) => {
       const next = [...new Set(ids)];
       return next.join(',') === prev.join(',') ? prev : next;
@@ -818,7 +834,9 @@ export function ActivityScreen({ navigation, route }: Props) {
     const contents = activityCsv({
       network: noteNetwork,
       networkLabel,
-      entries: loadedEntries,
+      // Each row with its decoded receipt's status, as on screen ("Received
+      // (failed)" with no amount for a reverted incoming transfer).
+      entries: isEvmSlot ? loadedEntries.map((e) => entryWithReceiptStatus(e, sentences.lookup(e.id))) : loadedEntries,
       nativeSymbol: symbol,
       nativeDecimals: network.decimals,
       notes: noteIndex,
@@ -916,7 +934,10 @@ export function ActivityScreen({ navigation, route }: Props) {
         // uid distinguishes several entries born from one EVM transaction
         // (e.g. a token transfer plus an internal native movement).
         keyExtractor={(entry) => entry.uid ?? entry.id}
-        renderItem={({ item }) => {
+        renderItem={({ item: listed }) => {
+          // The row with its decoded receipt's status (a reverted
+          // transaction moved nothing).
+          const item = isEvmSlot ? entryWithReceiptStatus(listed, sentences.lookup(listed.id)) : listed;
           const rowText = rowTextFor(item);
           return (
           <EntryRow

@@ -595,6 +595,10 @@ export function activityExportRows(input: ActivityExportInput): string[][] {
   return input.entries.map((entry) => {
     let amount = '';
     let asset = '';
+    // A failed incoming row received nothing ("Received (failed)"): its
+    // amount stays empty so a sum of the column is never inflated by it
+    // (emulator pass of 2026-10-11, finding 2). The asset is still named.
+    const nothingReceived = entry.failed === true && entry.direction === 'in';
     if (entry.assetAmount !== undefined && entry.assetDecimals !== undefined) {
       amount = formatUnits(entry.assetAmount, entry.assetDecimals, entry.assetDecimals);
       asset = entry.assetSymbol ?? '';
@@ -606,6 +610,7 @@ export function activityExportRows(input: ActivityExportInput): string[][] {
       amount = formatUnits(entry.amount, input.nativeDecimals, input.nativeDecimals);
       asset = input.nativeSymbol;
     }
+    if (nothingReceived) amount = '';
     const fee = entry.fee !== undefined ? formatUnits(entry.fee, input.nativeDecimals, input.nativeDecimals) : '';
     const note = findNote(input.notes, input.network, entry.id, input.userOpHashesFor?.(entry.id) ?? []);
     return [
