@@ -3829,3 +3829,63 @@ views; a UTF-8 BOM option for the CSV export; Activity sentences
 recognising the wallet's multisig; the Firebase questions above; the
 "Open connections" label; TalkBack on the emulator; re-running the
 reminders fixes in the development build.
+
+INPUTS RECEIVED (2026-10-11, verified read-only the same day): the dev
+EOA 0x16DA…C5C now holds 0.1025 Sepolia ETH, and 20 USDC on each of
+Ethereum Sepolia (0x1c7D…7238), Base Sepolia (0x036C…CF7e, 36 total),
+Arbitrum Sepolia (0x75fa…AA4d, 37 total) and OP Sepolia
+(0x5fd84259d66Cd46123540766Be93DFE6D43130D7, chain 11155420; it holds NO
+ETH there, so nothing can be sent on OP Sepolia until some arrives).
+DECIDED by the Chairperson (2026-10-11): (a) staking — build BOTH the
+stake-only Lido slice on Sepolia and a Hoodi profile, Hoodi first ("it
+is designed for staking testing whereas Sepolia is for dApp testing and
+everything else"); (b) add the notification icon through the
+expo-notifications plugin; the iOS push entitlement it adds is
+acceptable for now; Firebase (FCM) is noted as the likely longer-term
+push option (feature 93 in full); (c) the findings document review is
+pending. The emulator's "black screen" was the AVD asleep; a wake and
+fingerprint unlock restored it (nothing wrong with the app).
+
+## Phase 18 plan (started 2026-10-11): staking on test networks, more test networks, the polish list
+
+0. Notification icon: the expo-notifications plugin entry with a
+   wallet-drawn monochrome icon and colour (assets/notification-icon.png,
+   generated and checked into the repo with its source), the
+   check-notifications pin updated, RELEASE.md / DEVICE_BUILDS.md
+   updated, the iOS aps-environment entitlement recorded as accepted.
+1. Built-in test profiles for Hoodi (560048) and OP Sepolia (11155420):
+   RPC candidates from ethereum-lists/chains and the providers' own
+   pages, verified live (chain id, freshness, eth_simulateV1 where
+   served); Hoodi has NO Kernel contracts (AA features refused honestly;
+   EOA sends, tokens, ENS if deployed, staking); OP Sepolia is OP-stack
+   (l1DataFee like Base), Kernel presence verified on-chain, Circle's
+   USDC paymaster NOT there (Circle lists Arbitrum and Base only), OP
+   Sepolia USDC as a known token; both reachable from Developer; the
+   custom-network allow-list keeps them so an older custom entry still
+   loads; readiness treats both as test networks.
+2. Staking (features 57/58, per docs/STAKING.md): engine lido.ts /
+   rocket-pool.ts (stake = submit(address(0)) / wstETH shortcut /
+   RocketPool deposit(); unstake = requestWithdrawals + claimWithdrawal
+   on Hoodi; rETH burn after the lock; selectors from verified source;
+   exact bigint; balances through balanceOf; the rebasing caveat for
+   the preview), a Staking screen behind a readiness row (test networks
+   only): on Sepolia stake-only with Lido's own risk statement and the
+   "deprecated, no rewards" lines, unstaking refused after a live
+   isPaused(); on Hoodi stake, the stETH/wstETH/rETH balances, request
+   and claim withdrawals with the queue state; sends through the
+   existing confirm (preview showing the stETH or rETH received); the
+   AA angle recorded, not built (Kernel absent on Hoodi). INPUT: Hoodi
+   test ETH at the dev EOA for the live run (faucets need a social
+   login — the Chairperson's call).
+3. Polish: the multisig in the account switcher; TransactionNoteField on
+   the Swap, WalletConnect and Sessions success views; Activity
+   sentences aware of the multisig; the Firebase questions answered from
+   source; the "Open connections" label; a TalkBack pass on the
+   emulator; the reminders fixes re-run in the development build.
+4. Leadership refresh at the end.
+
+Waves: 1 — items 0, 1 and 2's engine + Sepolia half in parallel
+(disjoint files); 2 — item 2's Hoodi half on the new profile, then the
+emulator passes; 3 — item 3; 4 last. Subagents on Opus.
+
+## Phase 18 progress
