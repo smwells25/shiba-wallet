@@ -3617,3 +3617,99 @@ alongside; emulator passes after each wave. Subagents on Opus.
       the Expo Go sentence with the real "Caused by" text, no toasts on
       toggle, reminders working in a development build, the Hoodi Upgrade
       screen and hidden links, the Multisig "Check this network" flow.
+- [x] Item 2 — LOCAL REMINDERS PROVEN LIVE IN THE WALLET'S OWN
+      DEVELOPMENT BUILD (2026-10-10 US Eastern / 2026-10-11 UTC; debug
+      dev-client APK built from ccead60 in 4 min 5 s — 695 tasks, 84.8 MB
+      — with `./gradlew --stop` before any emulator input; Metro 8082;
+      installed as com.anonymous.shibawallet beside Expo Go; a THROWAWAY
+      wallet, deleted with the app; all 14 userOps success=1, each re-read
+      from EntryPoint logs). DEVIATIONS: Base Sepolia instead of Ethereum
+      Sepolia — the dev EOA holds only 0.0025 Sepolia ETH (INPUT NEEDED:
+      Sepolia test ETH at 0x16DA…C5C), too little for a 2.9M-gas install
+      at ZeroDev's ~0.58 gwei; the five permission modules have identical
+      code sizes on 84532; only the throwaway's Kernel was funded (0.003
+      from the dev EOA, tx 0x72aeb9ac…1a860, block 47954352; net cost to
+      the dev EOA 0.0000492 ETH after the sweep); five short grants
+      instead of one; `am kill` added after a swipe-away because this
+      image keeps the process cached. MANIFEST (merged, debug): the
+      POST_NOTIFICATIONS and RECEIVE_BOOT_COMPLETED permissions, the
+      NotificationsService receiver (NOTIFICATION_EVENT, BOOT_COMPLETED,
+      REBOOT, QUICKBOOT_POWERON ×2, MY_PACKAGE_REPLACED),
+      NotificationForwarderActivity, ExpoFirebaseMessagingService; NEW,
+      NOT IN RELEASE.md: WAKE_LOCK and c2dm.RECEIVE permissions, an
+      EXPORTED FirebaseInstanceIdReceiver (c2dm.SEND), the
+      FirebaseMessagingService, the registrar components and
+      FirebaseInitProvider — at every start logcat says "Default
+      FirebaseApp failed to initialize because no default options were
+      found", so Firebase does not initialise (data flow otherwise
+      unverified; RELEASE.md / PRIVACY.md follow-up). PROVEN: status
+      "Reminders are off. Nothing is scheduled." → the system prompt
+      "Allow Shiba Wallet to send you notifications?" (Allow) →
+      "Reminders are on."; channels payments-due "Payments due"
+      (importance 3) and security-alerts "Security alerts" (importance 4);
+      no LogBox toast at any point (the faad88a fix held). Grant 1 (2 min
+      × 3; install userOp 0x4d2540b3…b8e71, tx 0xe73c87de…35fd0, block
+      47955213; "Final terms: the first payment is due from 2026-10-11
+      00:31 UTC… nothing after 00:39 UTC"): the reminder for slot 2
+      (00:35:32) POSTED 00:35:59 (+27.7 s, inside Android's inexact
+      window) with the shade text "Recurring payment due / A recurring
+      payment is due. Open the wallet to review it; nothing is sent until
+      you confirm it." (visibility PRIVATE, auto-cancel); a tap opened the
+      app on Sessions; one payment (0 prompts — the throwaway's key was
+      unprotected; userOp 0x15c32d96…a828a, tx 0xd66015bc…eb3f9), "2
+      payments due now… 1 was missed…", revoke (1 prompt), Forget. Grant 2
+      (install userOp 0x6e0ac5de…41cac): a reminder armed on leaving
+      Sessions posted +45.1 s; a WARM tap from Settings opened Sessions and
+      re-armed slot 2 (posted +40.5 s); after a swipe-away and `am kill` a
+      COLD tap started the app on Sessions (logcat "unmarshalled
+      notification response. Skipping." — navigation still worked);
+      "Revoke and forget" after expiry. Grant 3 (install userOp
+      0xec50e228…a23a8): with the task swiped away and the process killed,
+      Android STARTED THE PROCESS "for broadcast NotificationsService" and
+      posted +40.4 s; a tap with no activity opened Sessions; a payment (0
+      prompts) and revoke-and-forget. Grant 4: a reminder that fired while
+      the app was in front posted silently (group silent, no heads-up);
+      revoked on Sessions — the pending alarm STILL FIRED 20 s after the
+      revoke was included (bug). Grant 5 (5 min × 3): reminders Off →
+      "Reminders are off. Nothing is scheduled." with the alarm and the
+      library store gone; On again → no system prompt, re-armed; revoke →
+      the alarm stayed pending on Sessions and was cancelled the moment
+      the screen was left; nothing arrived afterwards; final `dumpsys
+      alarm` shows no RTC alarm for the package. Sweep: Kernel Max to the
+      dev EOA (userOp 0x46c02a97…2d2a1b, tx 0xf0c628de…721a3; Max
+      auto-lowered with the fee-rose note); about 0.0000072 ETH stranded
+      (fee keep-back plus a deposit the app cannot withdraw); the app
+      uninstalled, Metro 8082 stopped, Expo Go untouched. FINDINGS (fix
+      slice dispatched): (1) NO reminder is armed for a grant just started
+      if the user leaves the app from Sessions — the full sync runs only
+      on start, foreground, a toggle change or LEAVING Sessions, and the
+      background pass never schedules (fix: sync after an install and
+      schedule from stored states in the background pass); (2) lateness
+      +27 to +45 s at 2-minute periods and a +3 min 14 s window at 5
+      minutes — a 30-day period could be minutes to hours late (matches
+      the stated design); (3) a revoke on Sessions does not cancel the
+      pending reminder until the screen is left or the app backgrounds,
+      and delivered reminders are never dismissed by revoke / Forget /
+      Off (disable cancels scheduled ones only) — one stale reminder
+      stayed in the shade; (4) foreground delivery was silent — the
+      intended foreground banner is unverified; (5) stale copy: the
+      Sessions header "Nothing runs in the background.", the form's
+      "Sending while the wallet is closed would need a background task or
+      notifications, which need a development build…", the terms "These
+      terms last only 8 minutes in total (3 payments of 2 minutes)" and
+      "The end date is one period after the last payment falls due" while
+      showing last due 00:33 and end 00:37 (two periods, or the copy is
+      wrong — check the grace arithmetic); (6) the review shows one
+      permission id (0xfc1d56ae) and Start installs another (0xc0f4859d)
+      — consistent with "the clock restarts" but the reviewed key differs;
+      (7) the notification icon is a placeholder ring (no app icon); (8)
+      the exported Firebase receiver and c2dm / WAKE_LOCK permissions
+      (privacy follow-up); (9) emulator: recents swipes are flaky; the
+      dev-launcher "Tools" bubble swallows taps near the gear and Max.
+      HYGIENE NOTE: one early UI dump printed six quiz-option words of the
+      throwaway phrase (two answers, four decoys) into the agent's local
+      log before masking was fixed; the wallet was throwaway and is
+      deleted; nothing of the emulator's real wallet was exposed.
+      UNVERIFIED: re-arming after a reboot; delivery after a real force
+      stop (expected none); the lock-screen presentation; TalkBack; exact
+      alarms; anything on Ethereum Sepolia.
