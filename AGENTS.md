@@ -4461,3 +4461,152 @@ emulator passes; 3 — item 3; 4 last. Subagents on Opus.
       Ethereum Sepolia, Account 1, light mode, Google IME, protection ON,
       auto-lock 1 min; stETH and wstETH tracked on Sepolia; Metro at
       4f9c946.
+- [x] Item 3 pass findings FIXED (commit 1b6b322; engine 913 — chains-evm
+      651, +7 — check-activity 95 (was 73), check-staking 104 (97),
+      check-tokens 150 (136), check-multisig 273 (252), check-home 94
+      (88); offline runner ALL GREEN in the CTO's isolated worktree on
+      HEAD plus the slice: app 7,491 across 51 suites, lint 0/0, tsc
+      clean; every changed file's HEAD version fails its suite (restored
+      from scratch copies, confirmed with cmp); not seen on a device). (1)
+      Both Staking success views render TransactionNoteField above Done
+      with the network captured at sending (sentNetwork set when sendEvm /
+      sendAa resolve); the AA note moves from op:<userOpHash> to the
+      bundle hash through the component's linkUserOperation, as on Send
+      and Swap. (2) watch-only.ts tokensSendNote(account): the Tokens
+      screen hides Send for a multisig ("Token sends from a
+      multi-signature account are signing requests for its co-signers;
+      build one on the Multisig screen.") and for a watch-only account
+      ("This is a watch-only address: the wallet holds no key for it, so
+      it cannot send these tokens." — watch-only had Send buttons too);
+      the gate is unchanged. (3) multisig.ts refreshMultisigListDeployments
+      (one eth_getCode per record STILL STORED UNDEPLOYED — deployed
+      records are never re-read since nothing marks one undeployed; a
+      failed read keeps the facts), run by the list's focus effect, then a
+      reload if anything changed. (4) ENGINE (additive):
+      ActivitySentenceContext.describeCall?(call {to, selector, value},
+      {native, nativeSymbol}) consulted only for plain transfers and
+      undecoded calls, the logs' sent/received text appended after a
+      colon, a phrase accepted only when it starts with a verb in the
+      exported ACTIVITY_CALL_VERBS (staked, wrapped, unwrapped, requested,
+      claimed, burned added so a failure reads "tried to stake …"); seven
+      tests incl. byte-identical fixture output with no hook, a null hook
+      or an unknown verb. APP: activity-sentences.ts stakingCallPhrase /
+      stakingContractLabel match the engine's STAKING_SELECTORS on the
+      exact pinned contract (a stake needs a value, the others none),
+      with the pinned contract passed in from ActivityScreen through
+      SentenceRenderOptions.stakingContractAt (risk.ts already imports
+      activity-sentences, so a value import back would be a require
+      cycle); wordings "Staked X with Lido (stETH contract 0x3e3F…40Af)",
+      "Staked X with Lido and wrapped it into wstETH (wstETH contract …)",
+      "Wrapped stETH into wstETH with Lido (…)", "Unwrapped wstETH into
+      stETH with Lido (…)", "Requested a withdrawal from Lido (withdrawal
+      queue contract …)", "Claimed withdrawn test ETH from Lido (…)",
+      "Burned rETH for test ETH with Rocket Pool (rETH contract …)";
+      pinned contracts are named wherever a sentence mentions them
+      ("Approved stETH for Lido wstETH contract 0xB823…067b (up to 0.0005
+      stETH)"); the Rocket Pool deposit keeps the generic sentence (the
+      pool is resolved per quote, not pinned). (5) token-discovery
+      DiscoveredToken.knownStaking from tokens.ts knownStakingTokenAt
+      (exact contract on that chain; Rocket Pool for rETH, Lido
+      otherwise): tag "KNOWN STAKING TOKEN", sentence "This is the stETH
+      contract this wallet pins from Lido's published list of deployed
+      contracts. It is tracked only if you choose Track stETH."; the Track
+      prompt unchanged, nothing auto-tracked; the pinned staking tokens
+      join the look-alike reference set (a fake "stETH" elsewhere is
+      flagged). (6) CAUSE: TokenRow titled every row by token.name and
+      cut the badge with symbol.slice(0, 4) — storage was fine (discovery
+      and the known-token table store the same symbol and name; Sepolia /
+      Base USDC and EURC only looked right because name = symbol; Arbitrum
+      USDC was already "USD Coin"); now the title is the symbol, the
+      second line tokenRowSubtitle ("Liquid staked Ether 2.0 · ERC-20", or
+      "ERC-20" when the name equals the symbol), the badge the whole
+      symbol with numberOfLines 1 in a pill (minWidth 36, maxWidth 72,
+      height 36, paddingHorizontal 5; adjustsFontSizeToFit avoided because
+      RN 0.86.3's TextProps labels it iOS-only while ReactTextView.java
+      implements it — contradictory; whether "wstETH" fits at 10 px bold
+      is an estimate). (7a) accountsBackupHint(anyImported, keyless)
+      gained an optional second argument (Settings → Accounts unchanged):
+      the switcher reads "Every account here except the multi-signature
+      ones comes from your one recovery phrase — backing up the phrase
+      backs up all of those." (with imported accounts: "…except the
+      imported, watch-only and multi-signature ones… Imported accounts
+      are NOT backed up by the phrase: keep their private keys
+      yourself.") plus MULTISIG_LIST_HINT ("Multi-signature accounts have
+      no key of their own: this wallet holds one of their signers, a
+      recovery-phrase account, and every operation also needs the
+      co-signers. On another phone, add one again from its record on the
+      Multisig screen."). (7b) Receive had the same bug for EVERY account
+      (account.name / account.symbol): the EVM slot now uses
+      evmChain.label and displaySymbol for the chain line, the title
+      ("Receive test ETH"), the QR labels and "Only send test ETH on the
+      Ethereum Sepolia network to this address."; its Send button keeps
+      "Send ETH" (two suites pin the literal). (7c) watch-only.ts
+      nftsOwnerSentence: "Shows the NFTs held by this multi-signature
+      account's address, 0x…." / "…by the watched address, 0x…."; the
+      other sentence byte-identical; no smart-account address lookup for
+      either. (7d) multisigSignerHint: "This wallet's signer for {label}
+      is {who}. While {label} is the active account, the Multisig screen
+      only shows it; to build, approve or submit its operations, switch to
+      that account on Home first."; "New operation (send)" only while this
+      wallet's signer is the active account. (7e) NO engine change needed:
+      the engine labels through nameFor; activityAccountLabels(accountList,
+      multisigs) covers phrase and imported accounts plus the network's
+      multisig records (watch-only excluded), order contact → account
+      label → pinned staking label; the decoded account stays "yourself".
+      (7f) The Activity title is "<network label> activity" ("Ethereum
+      Sepolia activity"). THREAT_MODEL 7.4's current-state counts updated.
+      UNVERIFIED (emulator): the note field on both staking views and the
+      note moving after the receipt; the Tokens sentence and layout for a
+      multisig / watch-only account; the list flipping to "deployed" on
+      focus; the live stake tx 0xb6e51daa… reading "Staked 0.0002 test
+      ETH with Lido (…)"; the KNOWN STAKING TOKEN rows; the badge fit; the
+      switcher, Receive, NFTs, gate and detail copy; "Account 1" in the
+      multisig's Activity; TalkBack and dark mode.
+
+## Phase 18 status (2026-10-11)
+
+Items 0 to 4 are landed and pushed. Proven live this phase: the Hoodi and
+OP Sepolia built-in profiles through the app (Hoodi with every
+smart-account feature stopped by the deployment checks; OP Sepolia with
+its Kernel pre-fill verified and saved), staking with Lido on Ethereum
+Sepolia from the regular account (stake to stETH and to wstETH, wrap,
+unwrap, the paused-queue refusal) and from the smart account through
+ZeroDev, the multisig in the account switcher with every refusal and the
+ordinary unlock prompt, the pinned-contract risk line on a stake and the
+rebasing note on Home. Built and verified offline: the notification icon
+through the expo-notifications plugin, the staking engine with the Hoodi
+claim flow and Rocket Pool, the polish list (notes on Swap and Sessions
+success views, the Firebase questions answered from source), and the
+fixes from both passes. Engine: 913 tests. App: 51 offline suites, 7,491
+checks at 1b6b322. The shareable page is at version 19 (46 proven live,
+18 built, 1 designed, 34 not started); DEMO.md has steps 25 to 27;
+THREAT_MODEL.md has T-77 and F-70 to F-73.
+
+Findings for the Chairperson this phase: the rETH deposit lock documented
+by Rocket Pool never starts in the deployed Hoodi code (F-72), and the
+rETH burn pays out with a 2,300-gas stipend that likely fails for an
+address running code (F-73, inferred); a stake from the smart account on
+Sepolia cost about twice the staked amount in fees because ZeroDev's
+price is far above the base fee there (F-71, the headroom economics; a
+test-network cost); Holesky has stopped (its public RPCs serve a head
+about 130 days old), so the custom-network form's example is now Polygon
+Amoy; the iOS push entitlement was already present through
+prebuild-config before the icon plugin entry was added.
+
+Inputs that would unlock more: Hoodi test ETH at the dev EOA
+0x16DA2CAeaDa26516F919C6872F6C38AB378CaC5C (the Hoodi staking leg: a
+Lido stake, a withdrawal request and claim, a Rocket Pool deposit and
+burn); a little OP Sepolia ETH there (the OP Sepolia smart-account path
+with a bundler saved); the review of docs/DISCLOSURE_FINDINGS.md and the
+disclosure decision; a decision on Firebase Cloud Messaging as the
+longer-term push option (feature 93 in full).
+
+Follow-ups (no inputs): an emulator re-check of the two fix slices
+(9290864, 1b6b322); wiring WcSentView into WalletConnectContext so the
+WalletConnect success view carries a note field; the preview's rebasing
+note in BalanceChangePreview; Settings → Accounts listing multisigs
+read-only; RecurringDueBanner / NotificationScheduler skipping a
+multisig; dropping Holesky from the custom allow-list once its sunset
+is confirmed from an Ethereum Foundation source; a TalkBack pass; the
+reminders fixes re-run in the development build with the new icon;
+DEMO step 24 rewritten for a non-built-in custom network.
