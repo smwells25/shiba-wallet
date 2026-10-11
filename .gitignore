@@ -8,3 +8,6 @@ scripts/testnet/runs/
 
 # TypeScript incremental build state
 *.tsbuildinfo
+
+# Security advisories awaiting the disclosure decision (the repository is public)
+docs/private/
