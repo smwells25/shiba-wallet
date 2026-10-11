@@ -5255,3 +5255,72 @@ DEMO step 24; reading the exported CSV in a development build.
       Privacy switch and opened the dev menu once; uiautomator dumps take
       14–17 s. End state: Home, Ethereum Sepolia, Account 1, light mode,
       Google IME, protection ON; Metro at ace3451.
+
+INPUTS RECEIVED (2026-10-11): 0.1 OP Sepolia test ETH at the dev EOA
+0x16DA…C5C (read live on optimism-sepolia-rpc.publicnode.com); Hoodi
+test ETH is being mined and should arrive within the hour (0 at the
+time of writing; a watcher polls the balance). The Chairperson is still
+reviewing docs/DISCLOSURE_FINDINGS.md ("a few appear safe to ignore";
+the final determination follows), is not concerned about the Alchemy
+Sepolia key (test funds; rotate before mainnet), and APPROVED PHASE 19.
+
+## Phase 19 plan (approved 2026-10-11): the networks go live, multisig for everyday use, DCA on a session key, stuck transactions
+
+Selection rule as before: features not started that need no outside
+input beyond the funds just received, each showable on the emulator,
+with the account-abstraction angle first; plus the live legs the new
+funds unlock and the recorded follow-ups.
+
+0. The funded networks live: (a) OP Sepolia — the Kernel deployment
+   through ZeroDev on 11155420 with the OP-stack L1 data fee, an EOA
+   send and the fee model checked against the receipt, by script
+   (kernel-smoke / fund) and then through the app (the smart-account
+   send, Upgrade's L1 line, the multisig if the weighted validator is
+   verified there); (b) Hoodi, when the ETH arrives — the staking leg
+   by script (staking-smoke: a Lido stake, a withdrawal request, the
+   claim after finalisation, a Rocket Pool deposit of at least 0.01 and
+   a burn) and then in-app, with the emulator's Account 1 funded from
+   the dev EOA.
+1. Multisig for everyday use (feature 24): QR scanning of requests and
+   approvals (never rehearsed), the file save / open paths, approvals
+   from another wallet through the EIP-712 typed data (the co-signer
+   helper standing in), the multisig on Base, Arbitrum and OP Sepolia
+   with the weighted validator verified on-chain first, a Base or OP
+   Sepolia multisig proven live; the "Check this network" flow.
+2. Dollar-cost averaging on a session key (feature 63, "only with AA"):
+   per docs/SCHEDULED_PAYMENTS.md, a CallPolicy-pinned Uniswap v3
+   SwapRouter02 exactInputSingle (recipient = the account, a STATIC
+   minimum-out floor, fixed token pair and amount) held by the user's
+   own phone like the recurring payment, with the honest caveats on
+   every screen (the floor does not follow the price; no deadline; the
+   key can only buy the chosen token for the account); engine spec and
+   tests, proven live on Sepolia Uniswap v3 by script, then the app's
+   recurring form variant "swap X test ETH for USDC every N" and a live
+   in-app run.
+3. Stuck and failed transactions (feature 95, the transaction half):
+   speed up / cancel a pending regular-account transaction by a
+   replacement with the same nonce and a higher fee (EIP-1559 rules
+   verified from the spec; the Activity "pending" row offers it); for a
+   smart account, say plainly why the wallet cannot replace a submitted
+   UserOperation and offer a re-quote once the bundler has dropped it;
+   proven live on Sepolia with a deliberately under-priced send.
+4. The phase 18 follow-ups (no inputs): the unavailable-receipt
+   diagnostic line, the "−0 test ETH" approve rows, "Not enough ETH to
+   pay the network fee." with the profile's symbol, the doubled rebasing
+   sentence, the Multisig list refresh observed with a fresh record, the
+   CSV read in a development build; a TalkBack and dark-mode pass over
+   the phase 17–18 screens.
+5. Leadership refresh at the end: feature rows, the shareable page,
+   DEMO.md (OP Sepolia, Hoodi staking, QR multisig, DCA, speed-up), the
+   threat model, and a mainnet-readiness decision memo for the
+   Chairperson (what C1–C3 and the audits still need, which addresses
+   are pinned for mainnet and which are not).
+
+Waves: 1 — (A) item 0a by script (scripts/testnet only), (B) item 1
+(the multisig files), (C) item 2's engine + script (engine and
+scripts/testnet), (D) item 3 (send / activity files) in parallel on
+disjoint files; the Hoodi watcher starts item 0b when the balance is
+non-zero; then the emulator passes one at a time (0a, 1, 2's app half,
+3); 4 alongside; 5 last. Subagents on Opus.
+
+## Phase 19 progress
