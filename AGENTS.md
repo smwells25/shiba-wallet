@@ -4314,3 +4314,65 @@ emulator passes; 3 — item 3; 4 last. Subagents on Opus.
       Pool deposit (0 Hoodi ETH); the OP Sepolia smart-account path (no
       bundler saved there); whether the Hoodi Upgrade link flickers
       before the delegate read; TalkBack, dark mode.
+- [x] Phase 18 pass findings FIXED (commit 9290864; check-token-send 70
+      (was 56), check-staking 97 (82), check-home 88 (84), check-devmode
+      305 (299), check-custom-networks 188 (183), check-tokens 136 (128);
+      offline runner ALL GREEN in the CTO's isolated worktree on HEAD plus
+      the slice: engine 906, app 7,421 across 51 suites, lint 0/0, tsc
+      clean; five in-suite and five manual mutants caught; not seen on a
+      device). (1) send.ts prepareEvmSend: a transaction WITH calldata is
+      never re-estimated with value 0 (a payable call's behaviour depends
+      on its value — the retry had turned "not enough ETH" into
+      ZERO_DEPOSIT / the rETH minimum-deposit revert); plain transfers keep
+      the retry request for request (pinned [value=amount, value=0] with
+      the old sentence byte for byte); before any estimate a calldata
+      transaction with a non-zero value is checked against amount +
+      MIN_TRANSACTION_GAS (21,000) × maxFeePerGas — the intrinsic gas, a
+      lower bound that never refuses something payable — with the refusal
+      "Insufficient funds: sending X wei plus a worst-case fee of at least
+      Y wei exceeds the balance of Z wei" under the existing title; an
+      estimate the node refuses for funds gets one estimate and the fee
+      title. (2) stakingSuccessBalanceNote has three pinned variants
+      (regular account with stETH tracked → "on this screen and on Home";
+      not tracked → "Home shows it once stETH is on this network's tracked
+      tokens (Manage tokens)"; smart account → Home's rows show the regular
+      account's balances); the screen checks the tracked list after the
+      tracking step. (3) The smart-account staking success view mirrors
+      SendScreen's block (waitForAaReceipt, "Bundling…", the timeout text,
+      "Included on-chain — succeeded." / the revert box, the bundle hash as
+      selectable text, the explorer button gated on explorerTxBase; eight
+      strings pinned equal in both screens) — why the pass saw only the
+      userOpHash is not known from the code (a receipt timeout is
+      possible). (4) Home's guardian-recovery footer is gated on
+      evmChain.kernelV33Verified (hidden on Hoodi AND on every network the
+      user added, custom test networks included — CTO accepted: the
+      recovery flow needs the Kernel guardian modules and RecoveryAction,
+      which are not known to exist there). (5) The custom form's example
+      is CUSTOM_NETWORK_EXAMPLE = Polygon Amoy / 80002 (the CTO's choice
+      over the agent's Holesky / 17000: Holesky HAS STOPPED — on 2026-10-11
+      holesky.drpc.org served block 5,765,077 about 130 days old and
+      publicnode answered HTTP 404, so the form's freshness rule would
+      refuse its own example; Polygon Amoy's public RPC served a head 1 s
+      old, chain id 0x13882 re-read by the CTO; Linea Sepolia 59141 was
+      the other live candidate); pinned: on the allow-list, not built in,
+      passes the form's checks, the old Hoodi / 560048 pair refused.
+      Holesky stays on the allow-list (a stale chain is refused by
+      freshness, not by the list) — follow-up: drop it if the sunset is
+      confirmed from an Ethereum Foundation source. (6) Copy from the
+      profile table: tokens.ts testNetworkTokenValueSentence (USDC and
+      EURC on Ethereum / Base Sepolia, USDC on Arbitrum / OP Sepolia,
+      none on Hoodi or a custom network; every symbol named is a known
+      token on that chain) — the CTO wired it into TokensScreen (outside
+      the agent's allow-list); the Developer hint names the networks where
+      the smart-account path runs, Hoodi excluded (check-devmode evaluates
+      the clause from the screen's source against the real profiles);
+      stakingBalancesHolderLine "Balances of your smart account 0x…" /
+      "…regular account 0x…" from the address the balances were read for.
+      Finding (8) (the smart-account stake's fee economics) is the known
+      headroom cost, no change. Agent note: HEAD moved under it (795ddae,
+      9482223, docs only) and it used git stash / pop once to measure
+      baselines — the CTO confirmed 9482223 holds the intended STAKING.md
+      text. UNVERIFIED (emulator): the success view's receipt within the
+      120 s poll, the note variants after a real stake, the holder line,
+      the hidden Hoodi footer, the placeholders, the unaffordable-stake
+      refusal on a live node (the stake-limit reads run first).
