@@ -69,6 +69,8 @@ import {
   recurringMeta,
 } from '../src/wallet/recurring.ts';
 import { INHERITANCE_STORE_KEY, listFoundTakeoverApprovals } from '../src/wallet/inheritance.ts';
+import { lightTheme } from '../src/theme-palette.ts';
+import { NOTIFICATION_ICON_PATH, NOTIFICATION_ICON_SIZE, decodePng, renderNotificationIcon } from './make-notification-icon.mjs';
 
 let passed = 0;
 let failed = 0;
@@ -1124,9 +1126,84 @@ console.log('check-notifications: wiring and the import rule (source)');
   const androidList = lib.slice(lib.indexOf('android: ['), lib.indexOf('],', lib.indexOf('android: [')));
   const missing = [...nativeNames].filter((n) => !androidList.includes(`'${n}'`));
   check('every native module the imported files bind is checked before loading them (Android list)', nativeNames.size >= 5 && missing.length === 0, `missing: ${missing.join(', ')}`);
+  // Phase 18 item 0: the notification icon through the expo-notifications
+  // config plugin (the Chairperson's decision of 2026-10-11). The entry
+  // carries exactly the small icon and its tint; sounds, defaultChannel (an
+  // FCM setting), mode and enableBackgroundRemoteNotifications (iOS remote
+  // pushes) stay unset because the wallet uses no push service.
   const appJson = JSON.parse(read('app.json'));
-  check('no expo-notifications config plugin (no push entitlement; the library manifest carries the permissions)',
-    !(appJson.expo.plugins ?? []).some((p) => (Array.isArray(p) ? p[0] : p) === 'expo-notifications'));
+  const notificationPlugins = (appJson.expo.plugins ?? []).filter((p) => (Array.isArray(p) ? p[0] : p) === 'expo-notifications');
+  const notificationProps = Array.isArray(notificationPlugins[0]) ? notificationPlugins[0][1] : undefined;
+  check('app.json lists the expo-notifications config plugin exactly once, with properties',
+    notificationPlugins.length === 1 && notificationProps !== null && typeof notificationProps === 'object', JSON.stringify(notificationPlugins));
+  check('its properties are exactly { icon, color }: no sounds, defaultChannel, mode or enableBackgroundRemoteNotifications',
+    JSON.stringify(Object.keys(notificationProps ?? {}).sort()) === JSON.stringify(['color', 'icon']), JSON.stringify(notificationProps));
+  check('the icon is ./assets/notification-icon.png', notificationProps?.icon === './assets/notification-icon.png', String(notificationProps?.icon));
+  check('the tint colour is the light theme accent #a65d13 (src/theme-palette.ts lightTheme.accent)',
+    notificationProps?.color === '#a65d13' && lightTheme.accent === notificationProps?.color, `${notificationProps?.color} vs ${lightTheme.accent}`);
+  const iconFile = join(appDir, 'assets/notification-icon.png');
+  check('the generator writes the same path the plugin entry names', resolvePath(NOTIFICATION_ICON_PATH) === resolvePath(iconFile), NOTIFICATION_ICON_PATH);
+  let icon = null;
+  try {
+    icon = existsSync(iconFile) ? decodePng(readFileSync(iconFile)) : null;
+  } catch (e) {
+    check('the icon decodes as an 8-bit RGBA PNG with valid chunk CRCs', false, String(e));
+  }
+  check('the icon file exists and is a 96 x 96 PNG (the plugin documentation\'s "96x96 all-white png with transparency")',
+    icon !== null && icon.width === 96 && icon.height === 96 && NOTIFICATION_ICON_SIZE === 96, icon ? `${icon.width} x ${icon.height}` : 'missing');
+  const allWhite = (rgba) => {
+    for (let i = 0; i < rgba.length; i += 4) if (rgba[i] !== 255 || rgba[i + 1] !== 255 || rgba[i + 2] !== 255) return false;
+    return true;
+  };
+  check('every pixel of the icon is white (R = G = B = 255, transparent ones too); only alpha varies', icon !== null && allWhite(icon.rgba));
+  if (icon) {
+    let opaque = 0;
+    let clear = 0;
+    let borderClear = true;
+    for (let y = 0; y < icon.height; y++) {
+      for (let x = 0; x < icon.width; x++) {
+        const a = icon.rgba[(y * icon.width + x) * 4 + 3];
+        if (a === 255) opaque++;
+        if (a === 0) clear++;
+        if ((x < 8 || y < 8 || x >= 88 || y >= 88) && a !== 0) borderClear = false;
+      }
+    }
+    check('the icon has both a solid mark and a transparent background (about a third to two thirds opaque)',
+      opaque > 96 * 96 * 0.3 && clear > 96 * 96 * 0.3, `opaque ${opaque}, transparent ${clear}`);
+    check('the 8-pixel border (2 dp at 24 dp) is fully transparent', borderClear);
+    const flipped = new Uint8Array(icon.rgba);
+    flipped[(48 * 96 + 48) * 4] = 254;
+    check('the whiteness test refuses a single off-white pixel (self-test)', !allWhite(flipped));
+  }
+  const model = renderNotificationIcon();
+  check('the checked-in icon is exactly what scripts/make-notification-icon.mjs draws (reproducible from source)',
+    icon !== null && Buffer.from(icon.rgba).equals(Buffer.from(model)));
+  if (existsSync(iconFile)) {
+    const corrupt = Buffer.from(readFileSync(iconFile));
+    corrupt[40] ^= 0xff;
+    let refused = false;
+    try {
+      decodePng(corrupt);
+    } catch {
+      refused = true;
+    }
+    check('the PNG reader refuses a file with one corrupted byte (self-test)', refused);
+  }
+  // The installed plugin's behaviour this entry relies on (expo-notifications
+  // 57.0.22, plugin/build/withNotificationsAndroid.js and withNotificationsIOS.js).
+  const pluginAndroid = read('node_modules/expo-notifications/plugin/build/withNotificationsAndroid.js');
+  check('the installed plugin writes the icon as @drawable/notification_icon at 24 px x density and the local-notification meta-data',
+    /BASELINE_PIXEL_SIZE = 24/.test(pluginAndroid) &&
+      pluginAndroid.includes("'expo.modules.notifications.default_notification_icon'") &&
+      pluginAndroid.includes("'expo.modules.notifications.default_notification_color'") &&
+      pluginAndroid.includes("NOTIFICATION_ICON = 'notification_icon'") &&
+      pluginAndroid.includes("NOTIFICATION_ICON_COLOR = 'notification_icon_color'"));
+  const pluginIos = read('node_modules/expo-notifications/plugin/build/withNotificationsIOS.js');
+  check('the installed iOS plugin sets aps-environment (default development) only when absent — the entitlement recorded as accepted in docs/RELEASE.md',
+    /mode = 'development'/.test(pluginIos) && /config\.modResults\['aps-environment'\] = mode/.test(pluginIos));
+  const releaseDoc = readFileSync(join(appDir, '../docs/RELEASE.md'), 'utf8');
+  check('docs/RELEASE.md records the icon as done and the aps-environment entitlement as accepted',
+    /Notification icon \(done/.test(releaseDoc) && /aps-environment/.test(releaseDoc) && /accepted/i.test(releaseDoc) && !/Notification icon \(placeholder today\)/.test(releaseDoc));
   const manifest = read('node_modules/expo-notifications/android/src/main/AndroidManifest.xml');
   check('the installed library declares POST_NOTIFICATIONS and RECEIVE_BOOT_COMPLETED itself',
     manifest.includes('android.permission.POST_NOTIFICATIONS') && manifest.includes('android.permission.RECEIVE_BOOT_COMPLETED'));
