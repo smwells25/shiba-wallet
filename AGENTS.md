@@ -5426,3 +5426,91 @@ non-zero; then the emulator passes one at a time (0a, 1, 2's app half,
       longer-window estimate behaviour; the three Kernel topics; fund.mjs's
       new printing on Base live; the DA-footprint formula; the bundle
       beneficiary. The in-app OP Sepolia pass is the next emulator slot.
+- [x] Item 1 — MULTISIG FOR EVERYDAY USE (commit 0f7975d; check-multisig 350
+      (was 297), 30 in-suite mutants (was 23); offline runner ALL GREEN in
+      the CTO's isolated worktree with only the five files on HEAD
+      cc831d9: engine 936, app 7,792 across 51 suites, lint 0/0, tsc
+      clean; seven new mutants caught; the old screens fail 8 source
+      pins and the old multisig.ts / evm-chain.ts stop the suite at
+      import; nothing sent, not seen on a device; docs/MULTISIG.md
+      section 12 added by the CTO). QR: react-native-qrcode-svg 6.3.26
+      draws through qrcode 1.5.4 at level L (PayloadQr); byte capacities
+      from qrcode/lib/core/version.js — v20 858 B, v25 1,273, v30 1,732,
+      v40 2,953; measured payloads: a 2-of-3 native request 1,447 B
+      (v26), a 10-signer USDC request 2,173 (v32), an approval 411 (v13),
+      a 2-of-3 record 628 (v17), a 10-signer record 1,104 (v24);
+      MULTISIG_QR_PART_MAX_BYTES = 858 (v20, ~3.1 pt per module at the
+      300-pt code; a judgement); larger payloads become "SW-MS:<n>/<total>:
+      <chunk>" parts (2–20, cut evenly between characters, each ≤ 858 B
+      with its prefix; a 2-of-3 request → 2 parts, a 10-signer request →
+      3, a 10-signer record → 2); acceptMultisigQrScan collects parts in
+      any order, tolerates repeats, refuses a part of a code with another
+      total, a part number re-read with different contents, a damaged
+      part, and a whole code while parts are being collected; the joined
+      text goes through the SAME parser as pasted text; a single part
+      pasted or read elsewhere is refused by all three readers.
+      MultisigPayloadQr (Previous part / Next part) and MultisigScanButton
+      (reusing QrScanner) wired on the co-signer side ("Scan a request"),
+      the submitting side ("Scan an approval") and add-a-multisig ("Scan
+      a record"); scan.ts unchanged. FILES: "Save as file" through the
+      shared shareTextFile (the duplicate in MultisigViews removed),
+      contents = the payload unchanged; opening through pickInto →
+      multisigFileText → the kind's parser; "This file was not accepted.
+      <reason>."; pinned: real files round-trip byte for byte and parse
+      equal to pasted text; refusals for a truncated file, one changed
+      hex digit, non-JSON, a request where an approval goes and a record
+      where a request goes. NETWORKS (read-only probe 2026-10-11, two
+      RPCs each, copies identical; blocks 11,893,001 / 47,984,448 /
+      318,135,121 / 49,967,324): weighted validator 0xeD89…eEEE 9,678 B
+      (keccak 0x9aa45e0f… Sepolia / 0x7361fa86… Base / 0xb67e1b70…
+      Arbitrum / 0xe62253da… OP), implementation 0xd6CE…5b28 24,469 B
+      (0x1cacd781… / 0x0b7b78a4… / 0xbf56eb9a… / 0xe1b3d0de…), factory
+      0x2577…F2E9 950 B and meta factory 0xd703…42d5 1,871 B identical on
+      all four; the validator and implementation differ from Sepolia's
+      by 35 bytes (Base, Arbitrum) / 34 (OP) = the cached chain-id word
+      and the recomputed EIP-712 domain separator (swapping them gives
+      the target code exactly; Solady EIP712 confirmed in Kernel.sol and
+      the validator); eip712Domain() = ("WeightedECDSAValidator",
+      "0.0.3", chain id, own address) on all four; the app's own
+      checkMultisigNetwork passed on all four; ZeroDev answers each chain
+      with EntryPoint v0.7 → MULTISIG_VERIFIED_NETWORKS in evm-chain.ts
+      (sources and date in the comment); BEHAVIOUR CHANGE:
+      multisigNetworkVerified needs kernelV33Verified AND a table entry,
+      or a live pass in the session — Create offered at once on the four
+      networks, mainnet and Hoodi now read as unverified (mainnet was
+      "verified" before; readiness blocks it either way), the box and
+      "Check this network" shown only where readiness allows a multisig,
+      the live check still runs on create and import; runtime does not
+      compare code hashes against the table (possible later). EXTERNAL
+      APPROVALS: multisigApprovalTypedData(request) feeds the share text
+      (byte-identical to HEAD's on 3 chains); externalApprovalSignature
+      accepts a bare 65-byte signature in any case, optionally quoted,
+      rewriting v 0 / 1 → 27 / 28 (the validator recovers with Solady
+      ECDSA.recover, which passes v straight to the ecrecover precompile:
+      kernel cd697c7e WeightedECDSAValidator.sol 215–220, Solady 3f2f5345
+      ECDSA.sol 50–77), refusing any other v ("The signature's last byte
+      (v) is V; an Ethereum signature ends in 27 or 28 (or 0 or 1)…");
+      pinned with a fixed test key: the typed data hashes to
+      approvalDigest, ethers signTypedData gives the same stored approval
+      and id as the engine's JSON, 0/1 / quoted / upper-case forms equal,
+      v 29 / a stale request / a stranger refused, the submitted
+      operation's first 65 bytes recover to the outside wallet over the
+      final digest. STRINGS: "Scan a request" / "Scan an approval" / "Scan
+      a record" / "Scan the next part" / "Start over" / "Previous part" /
+      "Next part"; the three under-button sentences ("A scanned request
+      is checked exactly like pasted text: …"); camera rationales; the
+      paged-code sentence ("This is too much for one reliable QR code, so
+      it is shown as N codes…"), "<caption> — part i of N"; progress "1
+      of 3 parts read. Show the next part on the other phone (Next part)
+      and scan it; 2 parts are still missing."; "Too large for QR codes —
+      use Share, Copy or Save as file instead."; the four scan refusals
+      and "The QR code was empty."; the pasted-part sentence; the file
+      sentences. The scratch co-signer helper gained typed-sign and
+      qr-png (rehearsed offline and against Base Sepolia's nonce read
+      with the public mnemonic). Emulator checklist (9 steps, Base
+      Sepolia) in the builder's report — needs the emulator after the OP
+      Sepolia pass. UNVERIFIED: QR legibility at v20 on a phone; camera
+      scanning of multi-part codes (the emulator's virtual-scene camera
+      as a source); the paged layout; the file picker's MIME labelling;
+      TalkBack; dark mode; any multisig deployed or operated off
+      Ethereum Sepolia; hardware wallets returning v 0/1.
