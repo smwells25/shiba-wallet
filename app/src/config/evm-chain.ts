@@ -1,8 +1,9 @@
 /**
  * The active-EVM-chain profiles: Ethereum mainnet (the default) and the
  * test networks chosen under Settings → Developer: Ethereum Sepolia (phase
- * 4, item 6), Base Sepolia (phase 10, item 3) and Arbitrum Sepolia (phase
- * 14 item 3). Base Sepolia, the second test profile, proved that a new EVM
+ * 4, item 6), Base Sepolia (phase 10, item 3), Arbitrum Sepolia (phase
+ * 14 item 3), Hoodi and OP Sepolia (phase 18 item 1). Base Sepolia, the
+ * second test profile, proved that a new EVM
  * chain — smart accounts included — is a data entry here rather than a code
  * change. This file is pure data with NO
  * imports, like ./defaults.ts, so
@@ -103,7 +104,7 @@ export interface EvmChainProfile {
    */
   kernelV33Verified: boolean;
   /**
-   * True for OP-stack L2s (Base): every transaction also pays an L1 data
+   * True for OP-stack L2s (Base Sepolia, OP Sepolia): every transaction also pays an L1 data
    * fee on top of gas × price, charged from the sender's balance
    * (https://docs.base.org/specifications/transactions/network-fees: "Every
    * Base transaction consists of two costs: an L2 (execution) fee and an L1
@@ -640,6 +641,274 @@ export const EVM_ARBITRUM_SEPOLIA: EvmChainProfile = {
 };
 
 /**
+ * Hoodi default RPC candidates, in order (config/networks.ts uses the first
+ * one whose eth_chainId probe answers 0x88bb0 = 560048). Each was probed
+ * live, read-only, on 2026-10-11 UTC from the development machine:
+ * eth_chainId 0x88bb0, the same head block at the same moment (about 11 to
+ * 18 s old), the block 100 and the block 1,000 below the head, a 9,000-block
+ * eth_getLogs window, eth_maxPriorityFeePerGas, eth_estimateGas, and
+ * eth_sendRawTransaction (a malformed one-byte payload was refused, so
+ * sending is served and nothing could be broadcast).
+ *
+ *  1. https://ethereum-hoodi-rpc.publicnode.com — PublicNode (Allnodes). Its
+ *     Ethereum page https://ethereum.publicnode.com lists it (page data:
+ *     "platform":"ethereum-hoodi-rpc", "network":"Testnet",
+ *     "network_type":"Hoodi", "endpoint":"https://ethereum-hoodi-rpc.publicnode.com").
+ *     eth_simulateV1 with traceTransfers: SUPPORTED (the ETH pseudo-Transfer
+ *     log from 0xeeee…eeee was returned), so the balance-change preview works.
+ *  2. https://rpc.hoodi.ethpandaops.io — run by ethPandaOps, the network's
+ *     operators. It is the only RPC in the chain registry entry
+ *     (ethereum-lists/chains at commit ec732e43f8b821853bb9ad2aea592751cc943bfd,
+ *     _data/chains/eip155-560048.json: "rpc": ["https://rpc.hoodi.ethpandaops.io"])
+ *     and the "JSON RPC" entry on the network's homepage
+ *     https://hoodi.ethpandaops.io (the homepage the eth-clients/hoodi README
+ *     names). eth_simulateV1: NOT SERVED — three calls each answered
+ *     -32601 "method ignored by upstream configuration" after about 18 s, so
+ *     while this candidate is in use the preview shows its "does not support
+ *     eth_simulateV1" note (after that wait). Ranked second anyway, as the
+ *     operator's own endpoint, ahead of a donation-funded service.
+ *  3. https://0xrpc.io/hoodi — 0xRPC, the same community service as Sepolia's
+ *     third candidate. https://0xrpc.io (served from https://0xrpc.github.io/)
+ *     lists "Ethereum Hoodi Testnet (Full, 128 state with all blocks)
+ *     https://0xrpc.io/hoodi" and records "Added Hoodi Testnet endpoint
+ *     ( 25.03.20 )"; the same update log records chains it later disabled
+ *     "due to low usage & saving costs", hence last. eth_simulateV1:
+ *     SUPPORTED (traceTransfers ETH log present).
+ *
+ * Checked and NOT added (2026-10-11 UTC):
+ *  - https://public.1rpc.io/hoodi is listed on
+ *    https://docs.1rpc.io/using-the-web3-api/networks ("Ethereum Hoodi
+ *    https://public.1rpc.io/hoodi EVM JSON-RPC 560048"), but every request
+ *    timed out or answered HTTP 522 (a Cloudflare origin timeout page).
+ */
+const HOODI_RPC_DEFAULTS: readonly string[] = [
+  'https://ethereum-hoodi-rpc.publicnode.com',
+  'https://rpc.hoodi.ethpandaops.io',
+  'https://0xrpc.io/hoodi',
+];
+
+/**
+ * Hoodi (phase 18 item 1), Ethereum's permissionless proof-of-stake test
+ * network: a layer 1 chain like Ethereum Sepolia, launched 2025-03-17 "to
+ * replace Holešky" as a "staking, infrastructure and protocol-developer
+ * testnet" (eth-clients/hoodi README at commit
+ * ef8998901c1350f41a0bcc0a2a8d4baad973abcf, which also says "LTS: Dec/2027,
+ * EOL: Dec/2028" and schedules Glamsterdam for 2026-10-26 17:42:48 UTC).
+ * The project wants it for staking (docs/STAKING.md); the Lido and Rocket
+ * Pool addresses belong to the staking slice, not to this profile. Facts and
+ * sources (read on-chain 2026-10-11 UTC through candidates 1 and 2 above,
+ * which agreed on every value):
+ *
+ *  - chain id 560048 (0x88bb0), native currency "Hoodi Ether", symbol ETH,
+ *    18 decimals: the chain registry entry cited on HOODI_RPC_DEFAULTS
+ *    ("title": "Ethereum Testnet Hoodi", "slip44": 1) and the eth-clients
+ *    README ("Chain ID: `560048`").
+ *  - EXPLORER https://hoodi.etherscan.io. The chain registry entry lists
+ *    only "dora" (https://light-hoodi.beaconcha.in, "standard": "none"), a
+ *    beacon-chain explorer with no EIP-3091 transaction pages, so the
+ *    registry names NO EIP-3091 explorer for Hoodi. The network's homepage
+ *    https://hoodi.ethpandaops.io lists "Explorer https://hoodi.etherscan.io"
+ *    and passes blockExplorerUrls ["https://hoodi.etherscan.io/"] in its
+ *    wallet_addEthereumChain button, and the eth-clients README's "Block
+ *    Explorers" list includes hoodi.etherscan.io. The /tx/<hash> path is
+ *    the Etherscan-family convention: a headless request for a real Hoodi
+ *    transaction got a Cloudflare challenge (HTTP 403), so the path itself
+ *    is ASSUMED, not confirmed.
+ *  - NO KERNEL v3.3 (kernelV33Verified false, no pre-fill): the
+ *    KernelFactory 0x2577…F2E9 and the Kernel v3.3 implementation
+ *    0xd6CE…5b28 have NO code, and the engine's verifyKernelDeployment
+ *    refuses ("KernelFactory 0x2577507b78c2008Ff367261CB6285d44ba5eF2E9 has
+ *    no code on this chain"). Present but useless without them: EntryPoint
+ *    v0.7 (byte-identical to Ethereum Sepolia's), the meta factory
+ *    0xd703…42d5 (byte-identical, but NOT staked: getDepositInfo all zero)
+ *    and the ECDSA validator 0x845A…cE57 (byte-identical). Also absent: the
+ *    session-key signer and every policy module (CallPolicy 0x9a52…eaf2
+ *    included), RecoveryAction 0xe884…DC6E and WebAuthnValidator
+ *    0x7ab1…9e69; the WeightedECDSAValidator 0xeD89…eEEE has code (it differs
+ *    from Ethereum Sepolia's only in the cached EIP-712 chain id and domain
+ *    separator, recomputed and matching), but multisig and guardians stay
+ *    unavailable because no Kernel account can be deployed (and guardian
+ *    recovery would also need the missing RecoveryAction).
+ *    SimpleAccountFactory 0x91E6…8985 has byte-identical code, but the
+ *    AA_STACK check was not run here, so it is not pre-filled either.
+ *    Consequences in the app: Settings pre-fills no factory (aaKernelPrefillFor
+ *    returns null) and saving a Kernel factory re-runs the same on-chain
+ *    checks, which refuse; the EIP-7702 upgrade is not offered (the delegate
+ *    is the missing implementation; wallet/delegation.ts upgradeActionsOffered);
+ *    the Multisig link is hidden (multisigNetworkVerified). The readiness
+ *    switchboard still lists the smart-account rows as "Test networks only"
+ *    because they are about the network's funds, not about the deployment.
+ *  - Bundler: ZeroDev's project endpoint for chain 560048 answered HTTP 400
+ *    {"error":"No API provider supports the requested chainId."} to
+ *    eth_chainId, eth_supportedEntryPoints and the gas-price methods.
+ *  - Token paymasters: Circle's 0x31BE…0b58 has no code; Pimlico's singleton
+ *    0x7777…834C has byte-identical code, but Pimlico reported no supported
+ *    tokens on Hoodi (docs/STAKING.md section 5.2).
+ *  - secp256r1 precompile at 0x100: the engine's detectP256Precompile
+ *    returned true.
+ *  - ENS: no code at the ENS registry 0x0000…2e1e or the Universal Resolver
+ *    0xeEeE…EeEe, so names are refused (wallet/ens-names.ts ensRegistryFor
+ *    allows only chain ids 1 and 11155111).
+ *  - Fees: a layer 1 network with no GasPriceOracle predeploy (no code at
+ *    0x4200…000F), so l1DataFee and l1CostInGas are false and the EOA fee is
+ *    gas limit × max fee, as on Ethereum.
+ *  - Swaps: 0x's supported-chain list
+ *    (https://docs.0x.org/docs/introduction/supported-chains, read
+ *    2026-10-11) lists main networks only.
+ *  - Block time: 12-second slots, but empty slots are common: measured
+ *    13.37 s per block over the latest 1,000 blocks, 13.52 s over 10,000 and
+ *    13.42 s over 50,400 (head 3,792,972).
+ */
+export const EVM_HOODI: EvmChainProfile = {
+  caip2: 'eip155:560048',
+  chainIdDecimal: '560048',
+  label: 'Hoodi',
+  testnet: true,
+  displaySymbol: 'test ETH',
+  defaultRpcUrls: HOODI_RPC_DEFAULTS,
+  defaultRpcUrl: HOODI_RPC_DEFAULTS[0],
+  explorerTxBase: 'https://hoodi.etherscan.io/tx/',
+  aaPrefill: null,
+  modeLabel: 'Hoodi test mode',
+  bannerText: 'TESTNET — Hoodi test mode is on. Amounts are test ETH, not real funds.',
+  kernelV33Verified: false,
+  l1DataFee: false,
+  swapsOffered: false,
+  l1CostInGas: false,
+};
+
+/**
+ * OP Sepolia default RPC candidates, in order (config/networks.ts uses the
+ * first one whose eth_chainId probe answers 0xaa37dc = 11155420). Each was
+ * probed live, read-only, on 2026-10-11 UTC: eth_chainId 0xaa37dc, the same
+ * head block within two blocks, the blocks 100 and 1,000 below the head, a
+ * 9,000-block eth_getLogs window, eth_maxPriorityFeePerGas (0.001 gwei on
+ * all three), eth_estimateGas, eth_sendRawTransaction (a malformed payload
+ * refused, so sending is served) and eth_simulateV1 with traceTransfers
+ * (the ETH pseudo-Transfer log from 0xeeee…eeee returned by all three, so
+ * the balance-change preview works).
+ *
+ *  1. https://optimism-sepolia-rpc.publicnode.com — PublicNode (Allnodes).
+ *     Its Optimism page https://optimism.publicnode.com lists it (page data:
+ *     "platform":"optimism-sepolia-rpc", "network":"Testnet",
+ *     "network_type":"Sepolia", "endpoint":"https://optimism-sepolia-rpc.publicnode.com"),
+ *     and Optimism's "OP Stack RPC directory"
+ *     (https://docs.optimism.io/app-developers/reference/rpc-providers.md,
+ *     read 2026-10-11) lists PublicNode among the providers whose
+ *     "Supported Testnets" include OP Sepolia.
+ *  2. https://sepolia.optimism.io — the chain operator's endpoint: the same
+ *     directory's public-endpoint table ("| OP Sepolia |
+ *     [https://sepolia.optimism.io]…"), which adds that these endpoints are
+ *     "rate-limited and not suitable for production use", and the first
+ *     "rpc" entry of the chain registry (ethereum-lists/chains ec732e43,
+ *     _data/chains/eip155-11155420.json). Phase 17's custom-network probe
+ *     saw it answer HTTP 503 to the read of the block 100 below the head;
+ *     on 2026-10-11 twelve rounds of the head−100 and head−9,000 block reads
+ *     and an eth_getCode at head−302,400 all answered. Ranked second
+ *     because of the documented rate limit and that earlier 503.
+ *  3. https://op-sepolia-testnet.api.pocket.network — Pocket Network
+ *     Foundation; https://api.pocket.network/ lists "Optimism Sepolia
+ *     Testnet RPC" — "Public Optimism Sepolia testnet JSON-RPC endpoint by
+ *     Pocket Network. No API key required; fair-use limits apply." —
+ *     "endpointURL": "https://op-sepolia-testnet.api.pocket.network".
+ *
+ * Checked and NOT added (2026-10-11 UTC):
+ *  - https://optimism-sepolia.drpc.org (in the chain registry): answered,
+ *    but refused the 9,000-block eth_getLogs window ("ranges over 10000
+ *    blocks are not supported on free plan"), and no dRPC page documenting
+ *    keyless use was found.
+ *  - https://optimism-sepolia-rpc.blockreq.com/v1/rpc/public (in the chain
+ *    registry): "public endpoint only serves recent blocks (last 1024)",
+ *    which breaks the same log windows.
+ */
+const OP_SEPOLIA_RPC_DEFAULTS: readonly string[] = [
+  'https://optimism-sepolia-rpc.publicnode.com',
+  'https://sepolia.optimism.io',
+  'https://op-sepolia-testnet.api.pocket.network',
+];
+
+/**
+ * OP Sepolia (phase 18 item 1), Optimism's test network: an OP-stack layer 2
+ * that settles to Ethereum Sepolia, like Base Sepolia. Facts and sources
+ * (read on-chain 2026-10-11 UTC through candidates 1 and 2 above, which
+ * agreed on every value):
+ *
+ *  - chain id 11155420 (0xaa37dc), native currency "Sepolia Ether", symbol
+ *    ETH, 18 decimals: the chain registry entry cited on
+ *    OP_SEPOLIA_RPC_DEFAULTS ("name": "OP Sepolia Testnet", "slip44": 1).
+ *  - EXPLORER https://sepolia-optimism.etherscan.io: the first entry of the
+ *    registry's "explorers" ("name": "etherscan-sepolia-optimism",
+ *    "standard": "EIP3091"; the second is Blockscout,
+ *    https://optimism-sepolia.blockscout.com). A headless request for
+ *    /tx/<a real OP Sepolia transaction> answered HTTP 200 with the title
+ *    "OP Transaction Hash: 0x5799… | OP Sepolia". Optimism's own
+ *    block-explorer page (https://docs.optimism.io/app-developers/tools-sdks/block-explorers.md)
+ *    links its OP Sepolia Etherscan as https://testnet-explorer.optimism.io/,
+ *    which also answered the same /tx/ path; the registry's EIP-3091 host is
+ *    used here.
+ *  - FEES (l1DataFee true, as on Base Sepolia): the GasPriceOracle predeploy
+ *    0x420000000000000000000000000000000000000F has code (2,055 bytes);
+ *    version() "1.6.0", isEcotone() / isFjord() / isIsthmus() all true,
+ *    getL1Fee(bytes) answered (268 wei for a 47-byte probe payload, the
+ *    parent chain's base fee being tiny) and getOperatorFee(21000) is 0.
+ *    The OP-stack quote code in wallet/send.ts therefore runs here; the
+ *    sources for that code are on EVM_BASE_SEPOLIA and in send.ts.
+ *  - ERC-4337 / Kernel v3.3 (kernelV33Verified true): the engine's
+ *    verifyKernelDeployment PASSED through both candidates (implementation
+ *    0xd6CE…5b28, entryPoint() v0.7, accountId "kernel.advanced.v0.3.3",
+ *    the meta factory approves the factory), and EntryPoint.getDepositInfo
+ *    shows the meta factory staked with 0.1 ETH and an 86,400 s unstake
+ *    delay, as on the other test networks. EntryPoint v0.7, the
+ *    KernelFactory, meta factory, ECDSA validator, the session-key signer
+ *    and the five policy modules, RecoveryAction, WebAuthnValidator v0.0.3
+ *    (its pinned code hash 0x726d…9eea) and Daimo's P256Verifier are
+ *    byte-identical to Ethereum Sepolia; the Kernel implementation and the
+ *    WeightedECDSAValidator differ in 34 bytes, which are exactly the
+ *    cached EIP-712 chain id (0xaa37dc) and domain separator — recomputed
+ *    for this chain and matching, and the rest identical once both are
+ *    masked. SimpleAccountFactory has byte-identical code but is not
+ *    pre-filled (the AA_STACK check was not run here).
+ *  - secp256r1 precompile at 0x100: detectP256Precompile returned true.
+ *  - Bundler: ZeroDev's project endpoint for chain 11155420 answered
+ *    eth_chainId 0xaa37dc, eth_supportedEntryPoints including v0.7
+ *    0x0000000071727De22E5E9d8BAf0edAc6f37da032, and
+ *    pimlico_getUserOperationGasPrice; rundler_maxPriorityFeePerGas: not
+ *    served (-32601). Bundler URLs embed keys, so none is shipped.
+ *  - Token paymaster: Circle documents its EntryPoint v0.7 paymaster for
+ *    Arbitrum Sepolia and Base Sepolia only
+ *    (https://developers.circle.com/paymaster/addresses-and-events.md, read
+ *    2026-10-11), and 0x31BE…0b58 has NO code on OP Sepolia (its entryPoint()
+ *    call returns empty data). Circle's v0.8 paymaster
+ *    0x3BA9A96eE3eFf3A69E2B18886AcF52027EFF8966 is listed for OP Sepolia,
+ *    but it reports entryPoint() = EntryPoint v0.8
+ *    0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108, which this wallet does not
+ *    use. So the USDC network fee is not offered here.
+ *  - Not available here: ENS (no code at the registry or the Universal
+ *    Resolver; names refused), 0x swap quotes (main networks only on
+ *    https://docs.0x.org/docs/introduction/supported-chains, read
+ *    2026-10-11), fiat prices (test assets are never priced).
+ *  - Block time: exactly 2.000 s per block over the latest 1,000, 10,000 and
+ *    50,400 blocks (head 49,941,514).
+ */
+export const EVM_OP_SEPOLIA: EvmChainProfile = {
+  caip2: 'eip155:11155420',
+  chainIdDecimal: '11155420',
+  label: 'OP Sepolia',
+  testnet: true,
+  displaySymbol: 'test ETH',
+  defaultRpcUrls: OP_SEPOLIA_RPC_DEFAULTS,
+  defaultRpcUrl: OP_SEPOLIA_RPC_DEFAULTS[0],
+  explorerTxBase: 'https://sepolia-optimism.etherscan.io/tx/',
+  aaPrefill: null,
+  modeLabel: 'OP Sepolia test mode',
+  bannerText: 'TESTNET — OP Sepolia test mode is on. Amounts are test ETH, not real funds.',
+  kernelV33Verified: true,
+  l1DataFee: true,
+  swapsOffered: false,
+  l1CostInGas: false,
+};
+
+/**
  * Settings → Developer note for a profile with l1CostInGas (Arbitrum): what
  * the fee covers there, in plain words (sources on EVM_ARBITRUM_SEPOLIA).
  */
@@ -653,14 +922,29 @@ export function l1CostInGasNote(profile: Pick<EvmChainProfile, 'label' | 'swapsO
   );
 }
 
-/** The test-network profiles, in the order Settings → Developer lists them. */
-export const EVM_TEST_PROFILES: readonly EvmChainProfile[] = [EVM_SEPOLIA, EVM_BASE_SEPOLIA, EVM_ARBITRUM_SEPOLIA];
+/**
+ * The test-network profiles, in the order Settings → Developer lists them.
+ * Hoodi and OP Sepolia (phase 18) are appended, so the earlier profiles keep
+ * their positions.
+ */
+export const EVM_TEST_PROFILES: readonly EvmChainProfile[] = [
+  EVM_SEPOLIA,
+  EVM_BASE_SEPOLIA,
+  EVM_ARBITRUM_SEPOLIA,
+  EVM_HOODI,
+  EVM_OP_SEPOLIA,
+];
 
 /** Every EVM profile the app knows (mainnet first). */
 export const EVM_PROFILES: readonly EvmChainProfile[] = [EVM_MAINNET, ...EVM_TEST_PROFILES];
 
 /** The CAIP-2 id of a test-network profile (the stored Developer choice). */
-export type TestNetworkId = 'eip155:11155111' | 'eip155:84532' | 'eip155:421614';
+export type TestNetworkId =
+  | 'eip155:11155111'
+  | 'eip155:84532'
+  | 'eip155:421614'
+  | 'eip155:560048'
+  | 'eip155:11155420';
 
 /**
  * The profile with this CAIP-2 id — a built-in one first, then a network
@@ -738,8 +1022,15 @@ export function evmProfileFor(selection: boolean | string | null): EvmChainProfi
  *  - 80002    Polygon Amoy — "title": "Polygon Amoy Testnet"
  *  - 59141    Linea Sepolia — "title": "Linea Sepolia Testnet"
  *  - 534351   Scroll Sepolia — "name": "Scroll Sepolia Testnet"
- * The built-in test networks (Ethereum Sepolia, Base Sepolia, Arbitrum
- * Sepolia) are not listed: their chain ids cannot be added at all. An id not
+ * The first three built-in test networks (Ethereum Sepolia, Base Sepolia,
+ * Arbitrum Sepolia) are not listed: their chain ids cannot be added at all.
+ * Hoodi and OP Sepolia STAY on the list although they became built-in
+ * profiles in phase 18 (EVM_HOODI, EVM_OP_SEPOLIA): adding either is now
+ * refused as "already built in" (wallet/custom-networks.ts checks built-in
+ * ids first), and a custom record stored for either id before phase 18 is
+ * superseded by the built-in profile when the list is loaded (see
+ * custom-networks.ts, "Records superseded by a built-in profile"). Keeping
+ * the ids here means the allow-list itself never shrinks. An id not
  * listed here can still be added, but only as a MAIN network, so a user can
  * never mark mainnet funds as "test" by mistake. Adding an id here is a
  * deliberate code change with its source cited.

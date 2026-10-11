@@ -10,8 +10,14 @@
  *
  * Environment variables:
  *   CHAIN_ID      optional; 11155111 (Ethereum Sepolia, the default),
- *                 84532 (Base Sepolia, phase 10 item 3) or 421614 (Arbitrum
- *                 Sepolia, phase 15 item 0). Any other value is refused. The
+ *                 84532 (Base Sepolia, phase 10 item 3), 421614 (Arbitrum
+ *                 Sepolia, phase 15 item 0) or 11155420 (OP Sepolia, phase 18
+ *                 item 1: verifyKernelDeployment passed there read-only on
+ *                 2026-10-11 UTC, app/src/config/evm-chain.ts
+ *                 EVM_OP_SEPOLIA). 560048 (Hoodi) is known but REFUSED
+ *                 before anything else runs, because the KernelFactory and
+ *                 the Kernel v3.3 implementation have no code there
+ *                 (EVM_HOODI). Any other value is refused. The
  *                 node's eth_chainId must match it, and every chain-bound
  *                 value (userOpHash, self-bundled transaction) uses it. The
  *                 Kernel v3.3 addresses and EntryPoint v0.7 were verified
@@ -60,7 +66,8 @@
  *     CHAIN_ID=84532 KERNEL_FUND_ETH=0.004 \
  *       BUNDLER_URL="https://rpc.zerodev.app/api/v3/$ZERODEV_PROJECT_ID/chain/84532" \
  *       node scripts/testnet/kernel-smoke.mjs
- *   Dry run (anyone, read-only; add CHAIN_ID=84532 or CHAIN_ID=421614):
+ *   Dry run (anyone, read-only; add CHAIN_ID=84532, CHAIN_ID=421614 or
+ *   CHAIN_ID=11155420):
  *     KERNEL_SMOKE_DRY_RUN=1 node scripts/testnet/kernel-smoke.mjs
  *
  * Layer 2 fees. Base Sepolia is an OP-stack L2: each transaction also pays
@@ -116,12 +123,28 @@ const CHAINS = {
   // Arbitrum Sepolia: the first default candidate of the app's profile
   // (app/src/config/evm-chain.ts ARBITRUM_SEPOLIA_RPC_DEFAULTS).
   '421614': { name: 'Arbitrum Sepolia', rpc: 'https://arbitrum-sepolia-rpc.publicnode.com' },
+  // OP Sepolia and Hoodi (phase 18 item 1): the first default candidate of
+  // each app profile (app/src/config/evm-chain.ts OP_SEPOLIA_RPC_DEFAULTS,
+  // HOODI_RPC_DEFAULTS). Hoodi carries `noKernel`, the reason this smoke
+  // cannot run there.
+  '11155420': { name: 'OP Sepolia', rpc: 'https://optimism-sepolia-rpc.publicnode.com' },
+  '560048': {
+    name: 'Hoodi',
+    rpc: 'https://ethereum-hoodi-rpc.publicnode.com',
+    noKernel:
+      'Kernel v3.3 is not deployed on Hoodi: the KernelFactory 0x2577507b78c2008Ff367261CB6285d44ba5eF2E9 and the ' +
+      'Kernel implementation 0xd6CEDDe84be40893d153Be9d467CD6aD37875b28 have no code there (read 2026-10-11 UTC; ' +
+      'app/src/config/evm-chain.ts EVM_HOODI), so no Kernel account can be deployed and this smoke cannot run on ' +
+      'chain 560048. Nothing was read, signed or sent.',
+  },
 };
 /** Explorer transaction links, as in the app's profiles (explorerTxBase). */
 const EXPLORER_TX = {
   '11155111': 'https://sepolia.etherscan.io/tx/',
   '84532': 'https://sepolia.basescan.org/tx/',
   '421614': 'https://sepolia.arbiscan.io/tx/',
+  '11155420': 'https://sepolia-optimism.etherscan.io/tx/',
+  '560048': 'https://hoodi.etherscan.io/tx/',
 };
 const CHAIN_ID_TEXT = process.env.CHAIN_ID ?? '11155111';
 if (!Object.hasOwn(CHAINS, CHAIN_ID_TEXT)) {
@@ -129,6 +152,12 @@ if (!Object.hasOwn(CHAINS, CHAIN_ID_TEXT)) {
   process.exit(1);
 }
 const CHAIN = CHAINS[CHAIN_ID_TEXT];
+if (CHAIN.noKernel) {
+  // Refused before any network request, key read or bundler contact (pinned
+  // offline by app/scripts/check-devmode.mjs).
+  console.error(CHAIN.noKernel);
+  process.exit(2);
+}
 const EXPECTED_CHAIN_ID = BigInt(CHAIN_ID_TEXT);
 const NODE_URL = process.env.NODE_URL ?? CHAIN.rpc;
 const INDEX = BigInt(process.env.KERNEL_INDEX ?? '0');

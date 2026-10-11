@@ -30,9 +30,11 @@
 // preview). A candidate the probe calls stale is printed, not failed: the
 // app skips it, which is the behaviour under test.
 
-import { EVM_ARBITRUM_SEPOLIA, EVM_BASE_SEPOLIA, EVM_MAINNET, EVM_SEPOLIA } from '../src/config/evm-chain.ts';
+import { EVM_ARBITRUM_SEPOLIA, EVM_BASE_SEPOLIA, EVM_HOODI, EVM_MAINNET, EVM_OP_SEPOLIA, EVM_SEPOLIA } from '../src/config/evm-chain.ts';
 import { BASE_SEPOLIA_NETWORK, DEFAULT_NETWORKS, SEPOLIA_NETWORK, TEST_EVM_NETWORKS, networkDefaultFor } from '../src/config/defaults.ts';
 const ARBITRUM_SEPOLIA_NETWORK = networkDefaultFor('eip155:421614');
+const HOODI_NETWORK = networkDefaultFor('eip155:560048');
+const OP_SEPOLIA_NETWORK = networkDefaultFor('eip155:11155420');
 import {
   FRESHNESS_BOUND_SECONDS,
   assessHeadFreshness,
@@ -246,6 +248,41 @@ check(
   check('Arbitrum Sepolia row list is the profile list (no drift)', ARBITRUM_SEPOLIA_NETWORK?.defaultUrls === EVM_ARBITRUM_SEPOLIA.defaultRpcUrls);
 }
 check(
+  'Hoodi EVM: publicnode primary, then ethPandaOps (the chain registry’s RPC), then 0xRPC (phase 18 item 1)',
+  same(EVM_HOODI.defaultRpcUrls, [
+    'https://ethereum-hoodi-rpc.publicnode.com',
+    'https://rpc.hoodi.ethpandaops.io',
+    'https://0xrpc.io/hoodi',
+  ]),
+);
+check(
+  'OP Sepolia EVM: publicnode primary, then sepolia.optimism.io, then Pocket (phase 18 item 1)',
+  same(EVM_OP_SEPOLIA.defaultRpcUrls, [
+    'https://optimism-sepolia-rpc.publicnode.com',
+    'https://sepolia.optimism.io',
+    'https://op-sepolia-testnet.api.pocket.network',
+  ]),
+);
+{
+  // Recorded in evm-chain.ts (2026-10-11 UTC): 1RPC's Hoodi URL timed out /
+  // answered HTTP 522; dRPC's OP Sepolia URL refused the 9,000-block log
+  // window on its free plan; BlockReq serves only the last 1,024 blocks.
+  const rejected = [
+    'https://public.1rpc.io/hoodi',
+    'https://optimism-sepolia.drpc.org',
+    'https://optimism-sepolia-rpc.blockreq.com/v1/rpc/public',
+  ];
+  check('Hoodi / OP Sepolia EVM: none of the recorded rejected candidates is listed',
+    [...EVM_HOODI.defaultRpcUrls, ...EVM_OP_SEPOLIA.defaultRpcUrls].every((u) => !rejected.includes(u)));
+  const others = [EVM_MAINNET, EVM_SEPOLIA, EVM_BASE_SEPOLIA, EVM_ARBITRUM_SEPOLIA];
+  check('Hoodi / OP Sepolia EVM: no candidate is shared with another profile or with each other',
+    [...EVM_HOODI.defaultRpcUrls, ...EVM_OP_SEPOLIA.defaultRpcUrls].every((u) => !others.some((p) => p.defaultRpcUrls.includes(u))) &&
+      EVM_HOODI.defaultRpcUrls.every((u) => !EVM_OP_SEPOLIA.defaultRpcUrls.includes(u)));
+  check('Hoodi and OP Sepolia row lists are the profile lists (no drift)',
+    HOODI_NETWORK?.defaultUrls === EVM_HOODI.defaultRpcUrls && OP_SEPOLIA_NETWORK?.defaultUrls === EVM_OP_SEPOLIA.defaultRpcUrls &&
+      HOODI_NETWORK.defaultUrl === EVM_HOODI.defaultRpcUrls[0] && OP_SEPOLIA_NETWORK.defaultUrl === EVM_OP_SEPOLIA.defaultRpcUrls[0]);
+}
+check(
   'Bitcoin Esplora: blockstream.info then mempool.space',
   same(BTC.defaultUrls, ['https://blockstream.info/api', 'https://mempool.space/api']),
 );
@@ -273,7 +310,9 @@ check('networkDefaultFor(eip155:84532) is the Base Sepolia row', networkDefaultF
     EVM_MAINNET.defaultRpcUrl === EVM_MAINNET.defaultRpcUrls[0] &&
       EVM_SEPOLIA.defaultRpcUrl === EVM_SEPOLIA.defaultRpcUrls[0] &&
       EVM_BASE_SEPOLIA.defaultRpcUrl === EVM_BASE_SEPOLIA.defaultRpcUrls[0] &&
-      EVM_ARBITRUM_SEPOLIA.defaultRpcUrl === EVM_ARBITRUM_SEPOLIA.defaultRpcUrls[0],
+      EVM_ARBITRUM_SEPOLIA.defaultRpcUrl === EVM_ARBITRUM_SEPOLIA.defaultRpcUrls[0] &&
+      EVM_HOODI.defaultRpcUrl === EVM_HOODI.defaultRpcUrls[0] &&
+      EVM_OP_SEPOLIA.defaultRpcUrl === EVM_OP_SEPOLIA.defaultRpcUrls[0],
   );
   const urls = all.flatMap((n) => n.defaultUrls);
   check('every candidate is https:// with no trailing slash', urls.every((u) => /^https:\/\/[^\s]+[^/]$/.test(u)));
@@ -850,6 +889,47 @@ const [ETH1, ETH2] = EVM_MAINNET.defaultRpcUrls;
   }
 }
 {
+  // Hoodi and OP Sepolia (phase 18 item 1): the same ordering and
+  // wrong-chain refusal. Hoodi's ethPandaOps candidate is the network
+  // operator's; a primary answering Ethereum Sepolia (another layer 1 test
+  // network) or Base Sepolia (another OP-stack test network) is skipped.
+  const [H1, H2, H3] = HOODI_NETWORK.defaultUrls;
+  {
+    const { fn, calls } = fakeFetch({ [H1]: { evmChainId: '0xaa36a7' }, [H2]: { evmChainId: '0x88bb0' }, [H3]: { evmChainId: '0x88bb0' } });
+    const choice = await createDefaultEndpointResolver({ fetchFn: fn }).resolve(HOODI_NETWORK);
+    check('Hoodi: a primary answering Sepolia is skipped for rpc.hoodi.ethpandaops.io', choice.url === H2 && choice.healthy && choice.index === 1 && same(calls, [H1, H2]));
+    check('Hoodi: the reason is recorded and the Settings tag names the host',
+      /identifies as 11155111, expected 560048/.test(choice.primaryFailure ?? '') && describeDefaultChoice(choice) === 'default (2 of 3: rpc.hoodi.ethpandaops.io)',
+      `${choice.primaryFailure} | ${describeDefaultChoice(choice)}`);
+  }
+  {
+    const { fn, calls } = fakeFetch({ [H1]: 'down', [H2]: 'hang', [H3]: { evmChainId: '0x88bb0' } });
+    const choice = await createDefaultEndpointResolver({ fetchFn: fn, timeoutMs: 50 }).resolve(HOODI_NETWORK);
+    check('Hoodi: down + hanging -> the third candidate (0xRPC), probed strictly in order', choice.url === H3 && choice.index === 2 && choice.healthy && same(calls, [H1, H2, H3]));
+  }
+  const [O1, O2, O3] = OP_SEPOLIA_NETWORK.defaultUrls;
+  {
+    const { fn, calls } = fakeFetch({ [O1]: { evmChainId: '0x14a34' }, [O2]: { evmChainId: '0xaa37dc' }, [O3]: { evmChainId: '0xaa37dc' } });
+    const choice = await createDefaultEndpointResolver({ fetchFn: fn }).resolve(OP_SEPOLIA_NETWORK);
+    check('OP Sepolia: a primary answering Base Sepolia is skipped for sepolia.optimism.io', choice.url === O2 && choice.healthy && choice.index === 1 && same(calls, [O1, O2]));
+    check('OP Sepolia: the reason is recorded', /identifies as 84532, expected 11155420/.test(choice.primaryFailure ?? ''), choice.primaryFailure);
+  }
+  {
+    const { fn } = fakeFetch({ [O1]: { evmChainId: '0x88bb0' }, [O2]: 'down', [O3]: { evmChainId: '0x1' } });
+    const choice = await createDefaultEndpointResolver({ fetchFn: fn }).resolve(OP_SEPOLIA_NETWORK);
+    check('OP Sepolia: only other chains answer + one unreachable -> the unreachable one, unhealthy', choice.url === O2 && !choice.healthy);
+  }
+  {
+    const behaviors = { [H1]: { evmChainId: '0x88bb0' }, [O1]: { evmChainId: '0xaa37dc' } };
+    const resolver = createDefaultEndpointResolver({ fetchFn: fakeFetch(behaviors).fn });
+    const h = await resolver.resolve(HOODI_NETWORK);
+    const o = await resolver.resolve(OP_SEPOLIA_NETWORK);
+    check('Hoodi and OP Sepolia resolve independently; a failure on one leaves the other cached',
+      h.url === H1 && o.url === O1 && resolver.reportFailure(HOODI_NETWORK.chainId, H1) === true &&
+        resolver.peek(OP_SEPOLIA_NETWORK.chainId)?.url === O1 && resolver.peek(HOODI_NETWORK.chainId) === undefined);
+  }
+}
+{
   // Other chain kinds go through the same ordering.
   const [B1, B2] = BTC.defaultUrls;
   const [S1, S2, S3] = SOL.defaultUrls;
@@ -939,6 +1019,15 @@ if (process.argv.includes('--live')) {
     'https://arbitrum-sepolia-rpc.publicnode.com': 'supported',
     'https://sepolia-rollup.arbitrum.io/rpc': 'supported',
     'https://arb-sepolia-testnet.api.pocket.network': 'supported',
+    // Probed 2026-10-11 UTC (phase 18 item 1). ethPandaOps answered -32601
+    // "method ignored by upstream configuration" after about 18 s, so this
+    // 8 s probe records it as unsupported or failed (aborted).
+    'https://ethereum-hoodi-rpc.publicnode.com': 'supported',
+    'https://rpc.hoodi.ethpandaops.io': 'unsupported',
+    'https://0xrpc.io/hoodi': 'supported',
+    'https://optimism-sepolia-rpc.publicnode.com': 'supported',
+    'https://sepolia.optimism.io': 'supported',
+    'https://op-sepolia-testnet.api.pocket.network': 'supported',
   };
   const liveRpc = async (url, method, params = []) => {
     const controller = new AbortController();
@@ -965,7 +1054,14 @@ if (process.argv.includes('--live')) {
       clearTimeout(timer);
     }
   };
-  for (const [network, headTolerance] of [[SEPOLIA_NETWORK, 5n], [BASE_SEPOLIA_NETWORK, 15n], [ARBITRUM_SEPOLIA_NETWORK, 240n]]) {
+  for (const [network, headTolerance] of [
+    [SEPOLIA_NETWORK, 5n],
+    [BASE_SEPOLIA_NETWORK, 15n],
+    [ARBITRUM_SEPOLIA_NETWORK, 240n],
+    // Hoodi: 12-second slots like Sepolia; OP Sepolia: 2 s blocks like Base.
+    [HOODI_NETWORK, 5n],
+    [OP_SEPOLIA_NETWORK, 15n],
+  ]) {
     console.log(`\nlive ${network.label} candidate detail (read-only):`);
     check(
       `every ${network.label} candidate has a documented eth_simulateV1 status`,

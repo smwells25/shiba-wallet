@@ -33,8 +33,11 @@ import {
 import {
   EVM_ARBITRUM_SEPOLIA,
   EVM_BASE_SEPOLIA,
+  EVM_HOODI,
   EVM_MAINNET,
+  EVM_OP_SEPOLIA,
   l1CostInGasNote,
+  multisigNetworkVerified,
   EVM_PROFILES,
   EVM_SEPOLIA,
   EVM_TEST_PROFILES,
@@ -717,7 +720,7 @@ console.log('\n== Base Sepolia profile and the test-network choice ==');
   check('Base Sepolia: flagged as paying an L1 data fee (OP-stack); Ethereum profiles are not', B.l1DataFee === true && !EVM_SEPOLIA.l1DataFee && !EVM_MAINNET.l1DataFee);
   check('Base Sepolia: banner and mode wording name Base Sepolia', B.bannerText?.includes('Base Sepolia') && B.modeLabel === 'Base Sepolia test mode');
   check('mainnet has no banner; Sepolia keeps its wording', EVM_MAINNET.bannerText === null && EVM_SEPOLIA.modeLabel === 'Sepolia test mode');
-  check('test profiles listed Sepolia, Base Sepolia, Arbitrum Sepolia', EVM_TEST_PROFILES.map((p) => p.caip2).join() === 'eip155:11155111,eip155:84532,eip155:421614');
+  check('test profiles listed Sepolia, Base Sepolia, Arbitrum Sepolia, Hoodi, OP Sepolia', EVM_TEST_PROFILES.map((p) => p.caip2).join() === 'eip155:11155111,eip155:84532,eip155:421614,eip155:560048,eip155:11155420');
   check('EVM_PROFILES = mainnet + test profiles', EVM_PROFILES.length === 1 + EVM_TEST_PROFILES.length && EVM_PROFILES[0] === EVM_MAINNET);
   check('evmProfileFor(Base Sepolia id) / (Sepolia id) / null', evmProfileFor('eip155:84532') === B && evmProfileFor('eip155:11155111') === EVM_SEPOLIA && evmProfileFor(null) === EVM_MAINNET);
   check('evmProfileFor: an unknown id stays on a test network (Sepolia), never mainnet', evmProfileFor('eip155:999') === EVM_SEPOLIA);
@@ -1118,6 +1121,123 @@ console.log('\n== Arbitrum Sepolia profile (third test network) ==');
   check('readiness hints are built from the profiles', !read('../src/config/readiness.ts').includes("'Turn on a test network (Ethereum Sepolia or Base Sepolia)"));
 }
 
+// Phase 18 item 1: the fourth and fifth test profiles, Hoodi (eip155:560048,
+// a layer 1 network with NO Kernel v3.3 deployment) and OP Sepolia
+// (eip155:11155420, OP-stack, Kernel verified on-chain), and the testnet
+// smoke scripts' offline refusals for the chains where they cannot run.
+console.log('\n== Hoodi and OP Sepolia profiles (phase 18) ==');
+{
+  const H = EVM_HOODI;
+  const O = EVM_OP_SEPOLIA;
+  check('Hoodi: CAIP-2 eip155:560048, chain id 560048, label, test ETH', H.caip2 === 'eip155:560048' && H.chainIdDecimal === '560048' && H.label === 'Hoodi' && H.testnet === true && H.displaySymbol === 'test ETH');
+  check('Hoodi: the verified keyless RPC candidates in order (publicnode, ethPandaOps, 0xRPC)',
+    H.defaultRpcUrls.join() === 'https://ethereum-hoodi-rpc.publicnode.com,https://rpc.hoodi.ethpandaops.io,https://0xrpc.io/hoodi' &&
+      H.defaultRpcUrl === H.defaultRpcUrls[0] && H.defaultRpcUrls.every((u) => u.startsWith('https://')));
+  check('Hoodi: the rejected 1RPC endpoint is not a candidate', !H.defaultRpcUrls.some((u) => u.includes('1rpc.io')));
+  check('Hoodi: explorer hoodi.etherscan.io/tx/', H.explorerTxBase === 'https://hoodi.etherscan.io/tx/');
+  check('Hoodi: NO Kernel v3.3 (kernelV33Verified false), no SimpleAccount pre-fill, no swaps', H.kernelV33Verified === false && H.aaPrefill === null && H.swapsOffered === false);
+  check('Hoodi: a layer 1 network (no L1 data fee, no L1 cost in gas)', H.l1DataFee === false && H.l1CostInGas === false);
+  check('Hoodi: banner and mode wording', H.bannerText === 'TESTNET — Hoodi test mode is on. Amounts are test ETH, not real funds.' && H.modeLabel === 'Hoodi test mode');
+  check('OP Sepolia: CAIP-2 eip155:11155420, chain id 11155420, label, test ETH', O.caip2 === 'eip155:11155420' && O.chainIdDecimal === '11155420' && O.label === 'OP Sepolia' && O.testnet === true && O.displaySymbol === 'test ETH');
+  check('OP Sepolia: the verified keyless RPC candidates in order (publicnode, sepolia.optimism.io, Pocket)',
+    O.defaultRpcUrls.join() === 'https://optimism-sepolia-rpc.publicnode.com,https://sepolia.optimism.io,https://op-sepolia-testnet.api.pocket.network' &&
+      O.defaultRpcUrl === O.defaultRpcUrls[0]);
+  check('OP Sepolia: the rejected dRPC and BlockReq endpoints are not candidates', !O.defaultRpcUrls.some((u) => u.includes('drpc.org') || u.includes('blockreq')));
+  check('OP Sepolia: explorer sepolia-optimism.etherscan.io/tx/ (the registry’s EIP-3091 explorer)', O.explorerTxBase === 'https://sepolia-optimism.etherscan.io/tx/');
+  check('OP Sepolia: OP-stack (L1 data fee, not L1 cost in gas)', O.l1DataFee === true && O.l1CostInGas === false);
+  check('OP Sepolia: Kernel v3.3 verified, no SimpleAccount pre-fill, no swaps', O.kernelV33Verified === true && O.aaPrefill === null && O.swapsOffered === false);
+  check('OP Sepolia: banner and mode wording', O.bannerText === 'TESTNET — OP Sepolia test mode is on. Amounts are test ETH, not real funds.' && O.modeLabel === 'OP Sepolia test mode');
+  check('both listed after Arbitrum Sepolia (Hoodi fourth, OP Sepolia fifth); evmProfileFor / evmProfileByCaip2 / isTestProfileId know them',
+    EVM_TEST_PROFILES[3] === H && EVM_TEST_PROFILES[4] === O &&
+      evmProfileFor('eip155:560048') === H && evmProfileFor('eip155:11155420') === O &&
+      evmProfileByCaip2('eip155:560048') === H && evmProfileByCaip2('eip155:11155420') === O &&
+      isTestProfileId('eip155:560048') && isTestProfileId('eip155:11155420') &&
+      evmProfileByCaip2('eip155:10') === undefined && !isTestProfileId('eip155:10') && !isTestProfileId('eip155:17000'));
+  for (const P of [H, O]) {
+    const row = networkDefaultFor(P.caip2);
+    check(`${P.label}: its network row is derived from the profile`, row?.chainId === P.caip2 && row.defaultUrls === P.defaultRpcUrls && row.symbol === 'test ETH' &&
+      row.kind === 'evm-jsonrpc' && row.decimals === 18 && row.note === `${P.label} test network — balances and sends here are test ETH, not real funds.`);
+    const mode = resolveActiveNetworks(P.caip2);
+    check(`${P.label} mode: the EVM slot (eip155:1) serves ${P.caip2}; other chains unchanged`,
+      mode.find((e) => e.slot === 'eip155:1')?.network === row && mode.filter((e) => e.slot !== 'eip155:1').every((e) => e.network === resolveActiveNetworks(null).find((m) => m.slot === e.slot).network));
+    const store = memoryStore();
+    let p = await savePrefs({ testNetwork: P.caip2 }, store);
+    check(`choosing ${P.label} persists (prefs.testNetwork accepts it) and sets the test flag`, p.testNetwork === P.caip2 && p.sepolia === true && JSON.parse(await store.getItem('shiba-wallet.prefs.v1')).testNetwork === P.caip2);
+    p = await loadPrefs(store);
+    check(`…and reads back as ${P.label}`, p.testNetwork === P.caip2 && evmProfileFor(p.testNetwork) === P);
+  }
+  check('TEST_EVM_NETWORKS still follows EVM_TEST_PROFILES one to one', TEST_EVM_NETWORKS.map((n) => n.chainId).join() === EVM_TEST_PROFILES.map((p) => p.caip2).join());
+
+  // Send flow: Hoodi has no oracle; OP Sepolia asks it (check-base.mjs pins the math).
+  scenario = { chainId: '0x88bb0' };
+  oracleCalls = 0;
+  const hq = await prepareEvmSend(URL, FROM, TO, 1000n, undefined, H.caip2);
+  check('Hoodi-mode quote: chain 560048, no oracle call, fee = gas × max fee', hq.chainId === 560048n && oracleCalls === 0 && hq.opStack === undefined && hq.fee === 21000n * 3n * GWEI);
+  await checkRejects('Hoodi-mode quote refuses a Sepolia node', async () => {
+    scenario = { chainId: '0xaa36a7' };
+    return prepareEvmSend(URL, FROM, TO, 1000n, undefined, H.caip2);
+  }, /chain id 11155111, expected 560048 \(Hoodi\)/);
+  scenario = { chainId: '0xaa37dc' };
+  oracleCalls = 0;
+  const oq = await prepareEvmSend(URL, FROM, TO, 1000n, undefined, O.caip2);
+  check('OP Sepolia-mode quote: chain 11155420, asks the GasPriceOracle, adds the reserve (1000 + 50%)',
+    oq.chainId === 11155420n && oracleCalls === 2 && oq.opStack?.l1DataFee === 1500n && oq.fee === 21000n * 3n * GWEI + 1500n);
+  await checkRejects('OP Sepolia-mode quote refuses a Base Sepolia node', async () => {
+    scenario = { chainId: '0x14a34' };
+    return prepareEvmSend(URL, FROM, TO, 1000n, undefined, O.caip2);
+  }, /chain id 84532, expected 11155420 \(OP Sepolia\)/);
+  scenario = { chainId: '0x1' };
+
+  // WalletConnect names both from the profile table.
+  check('WalletConnect: describeChain and the mode-mismatch sentence for both',
+    describeChain('eip155:560048') === 'Hoodi (test network)' && describeChain('eip155:11155420') === 'OP Sepolia (test network)' &&
+      modeMismatchMessage('eip155:560048', 'eip155:1', 'connect') ===
+        'This dApp asked for Hoodi (test network); the wallet is in mainnet mode. Turn on Hoodi test mode in Settings → Developer to connect.' &&
+      modeMismatchMessage('eip155:11155420', 'eip155:84532', 'use this connection') ===
+        'This dApp asked for OP Sepolia (test network); the wallet is in Base Sepolia test mode. Turn on OP Sepolia test mode in Settings → Developer to use this connection.');
+  check('WalletConnect: requests for Hoodi / OP Sepolia are accepted only in their own mode',
+    parseWcRequest(signEvent('eip155:560048'), WALLET, 'eip155:560048').kind === 'personal_sign' &&
+      parseWcRequest(signEvent('eip155:11155420'), WALLET, 'eip155:11155420').kind === 'personal_sign' &&
+      (() => { try { parseWcRequest(signEvent('eip155:11155420'), WALLET, 'eip155:560048'); return false; } catch (e) { return e instanceof WcRequestRejection; } })());
+
+  // The Kernel pre-fill and the multisig link follow kernelV33Verified.
+  const { aaKernelPrefillFor, KERNEL_PREFILL } = await import('../src/wallet/aa.ts');
+  const { upgradeActionsOffered } = await import('../src/wallet/delegation.ts');
+  check('Kernel pre-fill: none on Hoodi, the pinned factory on OP Sepolia', aaKernelPrefillFor('eip155:560048') === null && aaKernelPrefillFor('eip155:11155420') === KERNEL_PREFILL.factory);
+  check('Multisig link: hidden on Hoodi (no verified Kernel), offered on OP Sepolia', !multisigNetworkVerified(H) && multisigNetworkVerified(O));
+  check('EIP-7702 upgrade: not offered on Hoodi before or after the delegate read finds no code; offered on OP Sepolia',
+    !upgradeActionsOffered({ kernelV33Verified: H.kernelV33Verified, delegateDeployed: undefined }) &&
+      !upgradeActionsOffered({ kernelV33Verified: H.kernelV33Verified, delegateDeployed: false }) &&
+      upgradeActionsOffered({ kernelV33Verified: O.kernelV33Verified, delegateDeployed: undefined }));
+
+  // The testnet smoke scripts refuse Hoodi (and token-gas refuses OP Sepolia) before any network request.
+  const { spawnSync } = await import('node:child_process');
+  const repo = new globalThis.URL('../../', import.meta.url).pathname;
+  const run = (script, env) => spawnSync(process.execPath, [`scripts/testnet/${script}`], {
+    cwd: repo, env: { ...process.env, ...env }, encoding: 'utf8', timeout: 60_000, // inherits the CI offline guard
+  });
+  const ks = run('kernel-smoke.mjs', { CHAIN_ID: '560048', KERNEL_SMOKE_DRY_RUN: '1' });
+  check('kernel-smoke: CHAIN_ID=560048 (dry run) refuses plainly, exit 2, before any request',
+    ks.status === 2 && ks.stderr.trim() ===
+      'Kernel v3.3 is not deployed on Hoodi: the KernelFactory 0x2577507b78c2008Ff367261CB6285d44ba5eF2E9 and the Kernel implementation ' +
+        '0xd6CEDDe84be40893d153Be9d467CD6aD37875b28 have no code there (read 2026-10-11 UTC; app/src/config/evm-chain.ts EVM_HOODI), so no ' +
+        'Kernel account can be deployed and this smoke cannot run on chain 560048. Nothing was read, signed or sent.' && ks.stdout === '',
+    `${ks.status} ${ks.stderr}`);
+  const tgH = run('token-gas-smoke.mjs', { CHAIN_ID: '560048' });
+  const tgO = run('token-gas-smoke.mjs', { CHAIN_ID: '11155420' });
+  check('token-gas-smoke: Hoodi and OP Sepolia refused plainly, exit 2, before any request',
+    tgH.status === 2 && tgH.stderr.startsWith('Hoodi: Kernel v3.3 is not deployed there') && tgH.stderr.includes('Nothing was read, signed or sent.') &&
+      tgO.status === 2 && tgO.stderr.startsWith('OP Sepolia: Circle documents its EntryPoint v0.7 paymaster for Arbitrum Sepolia and Base Sepolia only') &&
+      tgO.stderr.includes('Nothing was read, signed or sent.'),
+    `${tgH.status} ${tgH.stderr} | ${tgO.status} ${tgO.stderr}`);
+  const { readFileSync: readSrc } = await import('node:fs');
+  const ksSrc = readSrc(new globalThis.URL('../../scripts/testnet/kernel-smoke.mjs', import.meta.url), 'utf8');
+  const fundSrc = readSrc(new globalThis.URL('../../scripts/testnet/fund.mjs', import.meta.url), 'utf8');
+  check('kernel-smoke CHAINS: OP Sepolia uses the profile’s first candidate; fund.mjs allows both test chains',
+    ksSrc.includes(`'11155420': { name: 'OP Sepolia', rpc: '${O.defaultRpcUrls[0]}' }`) && ksSrc.includes(`rpc: '${H.defaultRpcUrls[0]}'`) &&
+      fundSrc.includes('const ALLOWED_TEST_CHAINS = [11155111n, 84532n, 421614n, 560048n, 11155420n];'));
+}
+
 // ---------------------------------------------------------------------------
 // Phase 14 emulator pass: the lock screen hides the screens from screen
 // readers (finding 6), and copy built from the profile table (finding 7).
@@ -1162,7 +1282,7 @@ console.log('\n== Arbitrum Sepolia profile (third test network) ==');
     settingsSrc.includes('(${EVM_MAINNET.label} mainnet, or ${testNetworkLabelsOr()} while test mode is on)') &&
       !settingsSrc.includes('(Ethereum mainnet, or Sepolia while test mode is on)') &&
       `${MAIN.label} mainnet, or ${testNetworkLabelsOr()} while test mode is on` ===
-        'Ethereum mainnet, or Ethereum Sepolia, Base Sepolia or Arbitrum Sepolia while test mode is on');
+        'Ethereum mainnet, or Ethereum Sepolia, Base Sepolia, Arbitrum Sepolia, Hoodi or OP Sepolia while test mode is on');
   check('Settings Backup text: no "every account in the list above" claim while watch-only addresses are listed',
     settingsSrc.includes("watchOnlyAccounts.length === 0\n              ? 'One recovery phrase backs up ALL of your accounts") &&
       settingsSrc.includes('that this wallet holds a key for') &&
@@ -1173,9 +1293,9 @@ console.log('\n== Arbitrum Sepolia profile (third test network) ==');
       sendSrc.includes("(namesOffered ? ' or ENS name' : '')") &&
       !/'Ethereum address or ENS name'|address or ENS name`/.test(sendSrc));
   const { ensRegistryFor } = await import('../src/wallet/ens-names.ts');
-  check('…which is false on Base Sepolia and Arbitrum Sepolia, true on mainnet and Sepolia',
+  check('…which is false on Base Sepolia, Arbitrum Sepolia, Hoodi and OP Sepolia (no ENS contracts there), true on mainnet and Sepolia',
     EVM_PROFILES.map((p) => `${p.caip2}=${ensRegistryFor(p).ok}`).join(',') ===
-      'eip155:1=true,eip155:11155111=true,eip155:84532=false,eip155:421614=false');
+      'eip155:1=true,eip155:11155111=true,eip155:84532=false,eip155:421614=false,eip155:560048=false,eip155:11155420=false');
   const homeSrc = read('../src/screens/HomeScreen.tsx');
   check('Home: the EVM row is titled with the active profile’s label; other rows keep their own names',
     homeSrc.includes('const title = isEvm ? evmChain.label : item.name;') &&

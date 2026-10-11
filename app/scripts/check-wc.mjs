@@ -232,10 +232,11 @@ console.log('check-wc: namespaces + proposals');
     JSON.stringify(client2.calls.reject),
   );
   // Phase 14 integration: the test networks in this sentence come from the
-  // profiles (three since Arbitrum Sepolia), not a hard-coded pair.
+  // profiles (three since Arbitrum Sepolia, five since Hoodi and OP Sepolia
+  // in phase 18), not a hard-coded pair.
   check('the test networks named to a dApp come from the profiles',
-    testNetworkLabelsOr() === 'Ethereum Sepolia, Base Sepolia or Arbitrum Sepolia' &&
-      JSON.stringify(client2.calls.reject).includes('(Ethereum Sepolia, Base Sepolia or Arbitrum Sepolia) while test mode is on') &&
+    testNetworkLabelsOr() === 'Ethereum Sepolia, Base Sepolia, Arbitrum Sepolia, Hoodi or OP Sepolia' &&
+      JSON.stringify(client2.calls.reject).includes('(Ethereum Sepolia, Base Sepolia, Arbitrum Sepolia, Hoodi or OP Sepolia) while test mode is on') &&
       !readFileSync(new URL('../src/wallet/walletconnect.ts', import.meta.url), 'utf8').includes('(Sepolia or Base Sepolia)'),
     JSON.stringify(client2.calls.reject));
 

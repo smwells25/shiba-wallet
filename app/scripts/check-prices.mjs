@@ -219,8 +219,9 @@ console.log('\nCAIP-19 mapping');
   const testDefaults = Object.values(KNOWN_TEST_NETWORK_TOKENS).flat();
   check(
     'every test-network default token stays unpriced in every mode',
-    // Five since phase 14: Arbitrum Sepolia USDC joined (tokens.ts).
-    testDefaults.length === 5 &&
+    // Five since phase 14 (Arbitrum Sepolia USDC), six since phase 18 item 1
+    // (OP Sepolia USDC; tokens.ts).
+    testDefaults.length === 6 &&
       testDefaults.every((t) =>
         ['eip155:1', 'eip155:11155111', 'eip155:84532', 'eip155:421614'].every((mode) => tokenPriceAssetId(t, mode) === null),
       ),

@@ -68,7 +68,7 @@ import {
   walletDelegateDeployed,
 } from '../src/wallet/delegation.ts';
 import { customNetworkProfile } from '../src/wallet/custom-networks.ts';
-import { setCustomEvmProfiles } from '../src/config/evm-chain.ts';
+import { evmProfileByCaip2, setCustomEvmProfiles } from '../src/config/evm-chain.ts';
 import {
   EIP7702_WC_REFUSAL,
   ERC5792_ERRORS,
@@ -498,15 +498,20 @@ console.log('check-7702: set-code on an OP-stack network (Base Sepolia) pays the
 // ---------------------------------------------------------------------------
 console.log('check-7702: a network where the Kernel v3.3 delegate has no code (a network the user added)');
 // ---------------------------------------------------------------------------
-// Hoodi, added as a custom test network (it is on the allow-list, so the
-// readiness row allows the upgrade there): eth_getCode for the delegate
-// 0xd6CE…5b28 answered 0x on rpc.hoodi.ethpandaops.io (emulator pass,
-// 2026-10-10), which the fake node reproduces.
+// Hoodi: first added as a custom test network (emulator pass, 2026-10-10),
+// a BUILT-IN test profile since phase 18 item 1 with kernelV33Verified
+// false: eth_getCode for the delegate 0xd6CE…5b28 answered 0x on
+// rpc.hoodi.ethpandaops.io (2026-10-10) and on both Hoodi candidates
+// (2026-10-11 UTC), which the fake node reproduces. A network the user adds
+// gets the same treatment (custom profiles are never Kernel-verified).
 const HOODI_HEX = '0x88bb0';
 const HOODI_ID = 560048n;
-setCustomEvmProfiles([
-  customNetworkProfile({ chainId: '560048', name: 'Hoodi', rpcUrl: 'https://rpc.hoodi.example', nativeSymbol: 'ETH', nativeDecimals: 18, explorerUrl: null, testnet: true, blockTimeMs: 12000, addedAt: 1 }),
-]);
+{
+  const hoodi = evmProfileByCaip2('eip155:560048');
+  check('Hoodi is a built-in test profile without a verified Kernel deployment (phase 18)',
+    hoodi?.label === 'Hoodi' && hoodi.testnet === true && hoodi.kernelV33Verified === false && hoodi.custom === undefined &&
+      customNetworkProfile({ chainId: '17000', name: 'Holesky', rpcUrl: 'https://rpc.holesky.example', nativeSymbol: 'ETH', nativeDecimals: 18, explorerUrl: null, testnet: true, blockTimeMs: 12000, addedAt: 1 }).kernelV33Verified === false);
+}
 {
   check('the refusal sentence (exact)', kernelDelegateMissingMessage('Hoodi') ===
     'The Kernel v3.3 code this upgrade points to is not deployed on Hoodi, so delegating to it would leave your address pointing at nothing. Nothing was signed.');

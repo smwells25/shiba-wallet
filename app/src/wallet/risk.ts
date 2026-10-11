@@ -107,6 +107,12 @@ export const SECONDS_PER_BLOCK_BY_CHAIN: Readonly<Record<string, number>> = {
   // Arbitrum Sepolia: 0.25 s, measured (sources under
   // NEW_CONTRACT_THRESHOLD_BLOCKS below).
   'eip155:421614': 0.25,
+  // Hoodi: 12-second slots like Ethereum (the same figure the unlisted
+  // chains get, listed so the choice is explicit); measured blocks are
+  // slower because slots go empty (see NEW_CONTRACT_THRESHOLD_BLOCKS).
+  'eip155:560048': 12,
+  // OP Sepolia: 2 s, measured (see NEW_CONTRACT_THRESHOLD_BLOCKS).
+  'eip155:11155420': 2,
 };
 
 /**
@@ -150,6 +156,19 @@ export const SECONDS_PER_BLOCK_BY_CHAIN: Readonly<Record<string, number>> = {
  * cover MORE than 7 days, so the warning errs towards showing, never towards
  * hiding.
  *
+ * Hoodi (phase 18 item 1): the same 50,400 blocks as Ethereum, the 7 days
+ * at Ethereum's 12-second slots. Hoodi skips more slots: measured on
+ * 2026-10-11 UTC through ethereum-hoodi-rpc.publicnode.com (eth_chainId
+ * 0x88bb0), the latest 1,000 blocks took 13.37 s each on average, 10,000
+ * blocks 13.52 s and 50,400 blocks 676,608 s (7.8 days). Slower blocks make
+ * the window LONGER than 7 days, so the warning errs towards showing.
+ *
+ * OP Sepolia (phase 18 item 1): an OP-stack chain like Base Sepolia, so the
+ * same 302,400 two-second blocks. Measured on 2026-10-11 UTC through
+ * optimism-sepolia-rpc.publicnode.com (eth_chainId 0xaa37dc): exactly 2,000
+ * s over the latest 1,000 blocks, 20,000 s over 10,000 and 100,800 s over
+ * 50,400.
+ *
  * The search runs from (head - threshold) to head: if code already exists
  * at the start, the contract is older than the threshold and no signal is
  * raised (the engine reports atOrBefore). On free endpoints the very first
@@ -160,6 +179,8 @@ export const NEW_CONTRACT_THRESHOLD_BLOCKS: Readonly<Record<string, bigint>> = {
   'eip155:11155111': 50_400n,
   'eip155:84532': 302_400n,
   'eip155:421614': 2_419_200n,
+  'eip155:560048': 50_400n,
+  'eip155:11155420': 302_400n,
 };
 
 /** The new-contract window in seconds (7 days; see NEW_CONTRACT_THRESHOLD_BLOCKS). */

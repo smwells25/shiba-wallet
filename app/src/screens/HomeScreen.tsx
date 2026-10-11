@@ -36,6 +36,8 @@ import { useRecoveryInfo } from '../wallet/useRecoveryInfo';
 import { usePasskeyInfo } from '../wallet/usePasskeyInfo';
 import { shortAccountAddress } from '../wallet/accounts';
 import { delegationLabelSuffix, FOREIGN_DELEGATE_WARNING, upgradeLinkShown, walletDelegateDeployed } from '../wallet/delegation';
+import { isFeatureAllowed } from '../config/readiness';
+import { stakingOfferFor } from '../wallet/staking';
 import { multisigNetworkVerified } from '../config/evm-chain';
 import { usePrices } from '../wallet/usePrices';
 import { tokenSendFeeSentence } from '../wallet/token-gas';
@@ -415,6 +417,12 @@ export function HomeScreen({ navigation }: Props) {
           // test network, or a network the multisig check passed on).
           evmChain.testnet && multisigNetworkVerified(evmChain)
             ? cardLink('multisig', 'Multi-signature accounts', 'Multisig', () => navigation.navigate('Multisig'))
+            : null,
+          // Staking (features 57/58): test networks only, and only where a
+          // staking protocol is set up for the active chain (Lido on
+          // Ethereum Sepolia and Hoodi; Rocket Pool on Hoodi).
+          isFeatureAllowed('staking', evmChain.caip2) && stakingOfferFor(evmChain.caip2).unavailable === null
+            ? cardLink('staking', 'Staking', 'Staking', () => navigation.navigate('Staking'))
             : null,
           passkey.eligible
             ? cardLink(

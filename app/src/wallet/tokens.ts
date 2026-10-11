@@ -10,7 +10,8 @@ import { loadPrefs } from '../config/prefs.ts';
 /**
  * The user's tracked ERC-20 token lists, ONE PER EVM CHAIN (phase 13 item
  * 1): Ethereum mainnet (eip155:1), Ethereum Sepolia (eip155:11155111),
- * Base Sepolia (eip155:84532) and Arbitrum Sepolia (eip155:421614) — every
+ * Base Sepolia (eip155:84532), Arbitrum Sepolia (eip155:421614) and, since
+ * phase 18, Hoodi (eip155:560048) and OP Sepolia (eip155:11155420) — every
  * profile in config/evm-chain.ts. Each
  * list is persisted in AsyncStorage as the JSON produced by core's
  * AssetRegistry.toJSON and rehydrated with AssetRegistry.fromJSON. Tokens
@@ -259,6 +260,18 @@ export async function removeToken(
  *    four; and for Arbitrum Sepolia USDC, both
  *    arbitrum-sepolia-rpc.publicnode.com and sepolia-rollup.arbitrum.io/rpc
  *    (eth_chainId 0x66eee): symbol() "USDC", name() "USD Coin", decimals() 6.
+ *  - phase 18 item 1: OP Sepolia USDC 0x5fd84259d66Cd46123540766Be93DFE6D43130D7
+ *    from the same Circle USDC page (fetched 2026-10-11 UTC: "| OP Sepolia |
+ *    [`0x5fd84259d66Cd46123540766Be93DFE6D43130D7`]…"), read live the same
+ *    day through optimism-sepolia-rpc.publicnode.com and sepolia.optimism.io
+ *    (both eth_chainId 0xaa37dc): symbol() "USDC", name() "USDC",
+ *    decimals() 6. Circle's EURC page (fetched the same day) lists no OP
+ *    Sepolia or Hoodi EURC, so none is known there. Hoodi has NO known
+ *    tokens: Circle's USDC page lists no USDC on Ethereum Hoodi (its "Morph
+ *    Hoodi Testnet" row is Morph's own network, a different chain), and the
+ *    liquid-staking tokens there (stETH, wstETH, rETH; docs/STAKING.md
+ *    section 4.1) belong to the staking slice, which decides how a rebasing
+ *    token is shown.
  */
 export const KNOWN_TEST_NETWORK_TOKENS: Readonly<Record<string, readonly FungibleAsset[]>> = {
   'eip155:11155111': [
@@ -319,6 +332,19 @@ export const KNOWN_TEST_NETWORK_TOKENS: Readonly<Record<string, readonly Fungibl
       },
       symbol: 'USDC',
       name: 'USD Coin',
+      decimals: 6,
+    },
+  ],
+  'eip155:11155420': [
+    {
+      kind: 'fungible',
+      assetId: {
+        chainId: 'eip155:11155420',
+        namespace: 'erc20',
+        reference: '0x5fd84259d66Cd46123540766Be93DFE6D43130D7',
+      },
+      symbol: 'USDC',
+      name: 'USDC',
       decimals: 6,
     },
   ],

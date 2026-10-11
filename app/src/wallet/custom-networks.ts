@@ -61,6 +61,28 @@ import { sanitizeDisplayName } from './names.ts';
  * MAX_CUSTOM_NETWORKS. Every function takes an injectable store so
  * scripts/check-custom-networks.mjs runs the exact logic under Node.
  *
+ * RECORDS SUPERSEDED BY A BUILT-IN PROFILE (phase 18 item 1): Hoodi
+ * (560048) and OP Sepolia (11155420) became built-in test profiles
+ * (CHAIN_IDS_BUILT_IN_SINCE_CUSTOM_NETWORKS). A record stored for either
+ * chain id, ticked or not, is DROPPED when the
+ * list is loaded, never treated as damage (so the list stays writable):
+ * it is left out of the registry, so the built-in profile, with its own
+ * checked RPC candidates and explorer, serves that chain id; the list is
+ * rewritten once without it (only when nothing else in the list is
+ * damaged; a damaged list is never written until the explicit Reset); and
+ * supersededCustomNetworks() / supersededCustomNetworkNote() give Settings
+ * a one-time sentence saying what happened. Nothing else is deleted: every
+ * other per-chain store is keyed by the CAIP-2 id, which the built-in
+ * profile shares, so the tracked tokens, contacts, notes, endpoint
+ * override, smart-account settings and the rest carry over unchanged, and a
+ * stored network choice "eip155:560048" now selects the built-in Hoodi
+ * (config/prefs.ts accepts every built-in test profile id). What is lost is
+ * the RPC address and explorer the user typed; the note says so and how to
+ * keep the RPC address (as the network's endpoint override in Settings).
+ * Migrating the record's RPC URL into an endpoint override automatically
+ * was rejected: the built-in candidates are verified and cited, and a URL
+ * typed for a custom network should not silently outrank them.
+ *
  * REMOVAL deletes the network and the data this wallet keeps for ITS chain
  * id only (see removeCustomNetwork for the list, and the stores it
  * deliberately keeps); if the network is active, the choice returns to
@@ -144,6 +166,19 @@ export interface CustomNetworkBook {
   readOnly: boolean;
 }
 
+/**
+ * A stored record whose chain id is now a built-in profile (see "RECORDS
+ * SUPERSEDED BY A BUILT-IN PROFILE" above). `name` is the stored name when
+ * it is still a valid display name, else null; `testnet` is the stored tick.
+ */
+export interface SupersededCustomNetwork {
+  chainId: string;
+  name: string | null;
+  testnet: boolean;
+  /** The built-in profile's label ("Hoodi", "OP Sepolia"). */
+  builtInLabel: string;
+}
+
 // ---------------------------------------------------------------------------
 // Sentences (exported so the check script pins them)
 // ---------------------------------------------------------------------------
@@ -179,8 +214,16 @@ export const TEST_NETWORK_TICK_NOTE =
   'smart-account features stay switched off on it and the other features carry the same “not yet cleared” ' +
   'status as on Ethereum mainnet.';
 
+/**
+ * The allow-listed test networks a user can still ADD, for the sentences
+ * below: Hoodi and OP Sepolia stay on KNOWN_PUBLIC_TEST_CHAIN_IDS but are
+ * built in since phase 18, so naming them here would invite a refused
+ * action.
+ */
 function knownTestNetworkList(): string {
-  return KNOWN_PUBLIC_TEST_CHAIN_IDS.map((t) => `${t.name} (${t.chainId})`).join(', ');
+  return KNOWN_PUBLIC_TEST_CHAIN_IDS.filter((t) => !EVM_PROFILES.some((p) => p.chainIdDecimal === t.chainId))
+    .map((t) => `${t.name} (${t.chainId})`)
+    .join(', ');
 }
 
 /** "Ethereum mainnet" / "Ethereum Sepolia": how a built-in profile is named in refusals. */
@@ -508,9 +551,39 @@ function reviveRecord(value: unknown, earlier: readonly CustomNetworkRecord[]): 
 
 type ReadResult =
   | { state: 'empty' }
-  | { state: 'ok'; networks: CustomNetworkRecord[]; dropped: number }
+  | { state: 'ok'; networks: CustomNetworkRecord[]; dropped: number; superseded: SupersededCustomNetwork[] }
   | { state: 'unreadable' }
   | { state: 'storage-error' };
+
+/**
+ * Chain ids a user could add as custom networks before they became built-in
+ * profiles (phase 18 item 1: Hoodi and OP Sepolia). Only a stored record for
+ * one of THESE ids is superseded; a stored record for any other built-in id
+ * (mainnet, Ethereum Sepolia, Base Sepolia, Arbitrum Sepolia, all built in
+ * before custom networks existed) was never written by this module, so it
+ * still counts as damage and makes the list read-only.
+ */
+export const CHAIN_IDS_BUILT_IN_SINCE_CUSTOM_NETWORKS: readonly string[] = ['560048', '11155420'];
+
+/**
+ * The superseded-record test: a stored entry (whatever else it holds) whose
+ * chainId is in CHAIN_IDS_BUILT_IN_SINCE_CUSTOM_NETWORKS and names a
+ * built-in profile. Returns what the note needs, or null.
+ */
+function supersededEntry(value: unknown): SupersededCustomNetwork | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
+  const v = value as Record<string, unknown>;
+  if (typeof v.chainId !== 'string' || !CHAIN_IDS_BUILT_IN_SINCE_CUSTOM_NETWORKS.includes(v.chainId)) return null;
+  const builtIn = EVM_PROFILES.find((p) => p.chainIdDecimal === v.chainId);
+  if (!builtIn) return null;
+  const name = typeof v.name === 'string' ? sanitizeDisplayName(v.name, MAX_NETWORK_NAME_LENGTH, 'network') : null;
+  return {
+    chainId: v.chainId,
+    name: name?.ok === true && name.name === v.name ? name.name : null,
+    testnet: v.testnet === true,
+    builtInLabel: builtIn.label,
+  };
+}
 
 async function readStore(store: CustomNetworkStore): Promise<ReadResult> {
   let text: string | null;
@@ -536,15 +609,22 @@ async function readStore(store: CustomNetworkStore): Promise<ReadResult> {
     return { state: 'unreadable' };
   }
   const networks: CustomNetworkRecord[] = [];
+  const superseded: SupersededCustomNetwork[] = [];
   let dropped = 0;
   for (const entry of (parsed as { networks: unknown[] }).networks) {
+    // A record for a chain id that is now built in is superseded, not damage.
+    const replaced = supersededEntry(entry);
+    if (replaced) {
+      superseded.push(replaced);
+      continue;
+    }
     // Each record is checked against the ones before it, so a duplicate
     // chain id or name and anything past MAX_CUSTOM_NETWORKS is dropped.
     const record = reviveRecord(entry, networks);
     if (record) networks.push(record);
     else dropped += 1;
   }
-  return { state: 'ok', networks, dropped };
+  return { state: 'ok', networks, dropped, superseded };
 }
 
 /** Loads the custom networks. Never throws. */
@@ -583,6 +663,7 @@ let hydratedFrom: object | null = null;
 let hydratingFor: object | null = null;
 let hydrating: Promise<void> | null = null;
 let registryReadOnly = false;
+let lastSuperseded: readonly SupersededCustomNetwork[] = [];
 
 function applyRegistry(networks: readonly CustomNetworkRecord[]): void {
   setCustomEvmProfiles(networks.map(customNetworkProfile));
@@ -616,6 +697,19 @@ export function ensureCustomNetworksLoaded(store: CustomNetworkStore = AsyncStor
       applyRegistry([]);
     }
     registryReadOnly = read.state === 'unreadable' || (read.state === 'ok' && read.dropped > 0);
+    lastSuperseded = read.state === 'ok' ? read.superseded : [];
+    if (read.state === 'ok' && read.superseded.length > 0 && read.dropped === 0) {
+      // Rewrite the list once without the superseded records, so the note is
+      // shown once. Not through serialized(): hydration can run inside a
+      // queued task (resetCustomNetworks → loadPrefs), which would wait on
+      // itself. A failed write only means the same records are superseded
+      // again at the next launch.
+      try {
+        await writeStore(store, read.networks);
+      } catch {
+        // Nothing else depends on it.
+      }
+    }
     hydratedFrom = store;
   })().catch(() => undefined);
   const pending: Promise<void> = run.finally(() => {
@@ -628,6 +722,34 @@ export function ensureCustomNetworksLoaded(store: CustomNetworkStore = AsyncStor
 /** True when the store last loaded was damaged (Settings shows the Reset). */
 export function customNetworksReadOnly(): boolean {
   return registryReadOnly;
+}
+
+/**
+ * The records the last hydration found superseded by a built-in profile
+ * (empty when none). The list was rewritten without them, so after the next
+ * launch this is empty again: the note is shown once.
+ */
+export function supersededCustomNetworks(): readonly SupersededCustomNetwork[] {
+  return lastSuperseded;
+}
+
+/**
+ * The plain sentence Settings shows for a superseded record (pinned by
+ * scripts/check-custom-networks.mjs).
+ */
+export function supersededCustomNetworkNote(entry: SupersededCustomNetwork): string {
+  const named = entry.name ? `The network “${entry.name}” you added` : 'A network you added';
+  const mainNote = entry.testnet
+    ? ''
+    : ` You had added it as a main network; chain id ${entry.chainId} is the ${entry.builtInLabel} test network, ` +
+      'so the wallet now treats it as a test network.';
+  return (
+    `${named} (chain id ${entry.chainId}) is now built into the wallet as ${entry.builtInLabel}, so your entry ` +
+    `was removed and the built-in ${entry.builtInLabel} is used instead, with the wallet’s own checked RPC ` +
+    `endpoints and explorer.${mainNote} Your tokens, contacts, notes and other data for chain id ` +
+    `${entry.chainId} were kept. The RPC address and explorer you typed are no longer used; to keep using that ` +
+    `RPC address, set it as the ${entry.builtInLabel} endpoint in Settings.`
+  );
 }
 
 /** Re-reads `store` into the registry after this module wrote it. */

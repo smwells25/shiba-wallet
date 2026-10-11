@@ -28,6 +28,8 @@ import {
   type EvmChainProfile,
   type EvmNetworkChoice,
   type TestNetworkId,
+  evmProfileByCaip2,
+  isCustomNetworkId,
 } from '../config/evm-chain';
 import {
   CUSTOM_NATIVE_DECIMALS,
@@ -41,6 +43,8 @@ import {
   removalConfirmationText,
   removeCustomNetwork,
   resetCustomNetworks,
+  supersededCustomNetworkNote,
+  supersededCustomNetworks,
   type CustomNetworkRecord,
 } from '../wallet/custom-networks';
 
@@ -822,7 +826,7 @@ function AaChainRow({ network }: { network: NetworkDefault }) {
       ) : null}
       {type === 'kernel-v3.3' && aaKernelPrefillFor(network.chainId) === null ? (
         <Text style={[styles.endpointNote, { color: theme.textMuted }]}>
-          {CUSTOM_NETWORK_KERNEL_NOTE}
+          {kernelPrefillAbsentNote(network.chainId)}
         </Text>
       ) : null}
       {type === 'kernel-v3.3' ? (
@@ -1101,6 +1105,24 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
  * The Account Abstraction note on a network without a pinned Kernel v3.3
  * pre-fill (a network the user added, feature 33).
  */
+/**
+ * A built-in test network the wallet DID check and found without the Kernel
+ * v3.3 contracts (Hoodi, phase 18 item 1: the factory and implementation
+ * have no code there). The custom-network wording below would wrongly say
+ * "has not checked".
+ */
+const BUILT_IN_NO_KERNEL_NOTE = (label: string) =>
+  `No Kernel v3.3 factory is pre-filled on ${label}: the wallet checked this network and found the Kernel v3.3 ` +
+  'factory and implementation have no code there, so smart-account features are not available on it. If a ' +
+  'deployment appears later, paste the KernelFactory address; saving checks it on-chain and nothing is saved if ' +
+  'any check fails.';
+
+function kernelPrefillAbsentNote(caip2: string): string {
+  const profile = evmProfileByCaip2(caip2);
+  if (profile && !isCustomNetworkId(caip2) && !profile.kernelV33Verified) return BUILT_IN_NO_KERNEL_NOTE(profile.label);
+  return CUSTOM_NETWORK_KERNEL_NOTE;
+}
+
 const CUSTOM_NETWORK_KERNEL_NOTE =
   'No Kernel v3.3 factory is pre-filled on this network: the wallet has not checked the deployment here. Paste ' +
   'the KernelFactory address if Kernel v3.3 is deployed on this network; saving checks on-chain, through your RPC ' +
@@ -1286,6 +1308,9 @@ function CustomNetworksSection({
         network — its funds may be real — unless you mark it as one of the well-known public test networks. Your
         addresses are the same on every EVM network.
       </Text>
+      {supersededCustomNetworks().map((entry) => (
+        <WarningBox key={`superseded-${entry.chainId}`}>{supersededCustomNetworkNote(entry)}</WarningBox>
+      ))}
       {readOnly ? (
         <>
           <WarningBox>{CUSTOM_NETWORKS_READ_ONLY_MESSAGE}</WarningBox>

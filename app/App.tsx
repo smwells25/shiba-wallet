@@ -44,6 +44,7 @@ import { SpendingLimitsScreen } from './src/screens/SpendingLimitsScreen';
 import { ImportKeyScreen } from './src/screens/ImportKeyScreen';
 import { BrowserScreen } from './src/screens/BrowserScreen';
 import { MultisigScreen } from './src/screens/MultisigScreen';
+import { StakingScreen } from './src/screens/StakingScreen';
 import { watchOnlyScreenLayout } from './src/components/WatchOnlyGate';
 import { RecurringDueBanner } from './src/components/RecurringDueBanner';
 import { NotificationScheduler } from './src/components/NotificationScheduler';
@@ -228,6 +229,7 @@ function Root() {
             {/* The in-app browser (feature 79): outside the watch-only allow list. */}
             <Stack.Screen name="Apps" component={BrowserScreen} options={{ title: 'Apps (test networks)' }} />
             <Stack.Screen name="Multisig" component={MultisigScreen} options={{ title: 'Multi-signature accounts' }} />
+            <Stack.Screen name="Staking" component={StakingScreen} options={{ title: 'Staking (test networks)' }} />
           </>
         )}
         </Stack.Navigator>

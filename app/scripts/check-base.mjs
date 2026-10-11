@@ -26,7 +26,11 @@
 //
 //   export PATH="$HOME/.nvm/versions/node/v24.21.0/bin:$PATH"
 //   node scripts/check-base.mjs           # offline
-//   node scripts/check-base.mjs --live    # plus a read-only Base Sepolia probe
+//   node scripts/check-base.mjs --live    # plus read-only Base Sepolia and OP Sepolia probes
+//
+// Since phase 18 item 1 the same OP-stack path is pinned for OP Sepolia
+// (eip155:11155420, l1DataFee true), and Hoodi (eip155:560048, a layer 1
+// network) is pinned to make no oracle call.
 //
 // The --live pass quotes a sample transfer through the app glue against the
 // Base Sepolia default RPC (read-only: eth_call, eth_estimateGas and fee
@@ -53,7 +57,7 @@ import {
 } from '../src/wallet/send.ts';
 import { prepareNftSend, sendNft } from '../src/wallet/send-nft.ts';
 import { maxErc20Send, prepareErc20Send } from '../src/wallet/send-erc20.ts';
-import { EVM_BASE_SEPOLIA, EVM_MAINNET, EVM_SEPOLIA } from '../src/config/evm-chain.ts';
+import { EVM_BASE_SEPOLIA, EVM_HOODI, EVM_MAINNET, EVM_OP_SEPOLIA, EVM_SEPOLIA } from '../src/config/evm-chain.ts';
 import { RECORD_FILE_NAME_PATTERN, rebuildRecoveryRecord, recordExportFileName } from '../src/wallet/recovery.ts';
 import { KERNEL_ACCOUNT_0, OWNER_0 } from './fakes-kernel.mjs';
 
@@ -728,6 +732,86 @@ console.log('Base Sepolia names:');
 }
 
 // ---------------------------------------------------------------------------
+// 6b. OP Sepolia (phase 18 item 1): an OP-stack chain like Base Sepolia, so
+//     the same L1 data fee path; Hoodi, a layer 1 chain, never asks the
+//     oracle.
+// ---------------------------------------------------------------------------
+
+console.log('OP Sepolia (OP-stack) and Hoodi (layer 1):');
+{
+  check('OP Sepolia profile: l1DataFee true, l1CostInGas false', EVM_OP_SEPOLIA.l1DataFee === true && EVM_OP_SEPOLIA.l1CostInGas === false);
+  check('chainHasL1DataFee(11155420) is true; chainHasL1DataFee(560048) is false',
+    chainHasL1DataFee(11155420n) && !chainHasL1DataFee(560048n) && EVM_HOODI.l1DataFee === false && EVM_HOODI.l1CostInGas === false);
+
+  scenario = defaultScenario('0xaa37dc');
+  requests = [];
+  const q = await prepareEvmSend(URL, FROM, TO, AMOUNT, undefined, EVM_OP_SEPOLIA.caip2);
+  check('OP Sepolia quote: chain 11155420 with opStack fields from the oracle',
+    q.chainId === 11155420n && q.opStack?.l1DataFeeEstimate === scenario.l1Fee && q.opStack.l1DataFee === reserve && q.opStack.operatorFee === 0n);
+  check('OP Sepolia fee = gasLimit × maxFeePerGas + L1 reserve; total = amount + fee', q.fee === l2Fee + reserve && q.total === AMOUNT + l2Fee + reserve, `${q.fee}`);
+  const opPriced = pricedUnsignedTx();
+  const opExpected = ethers.Transaction.from({
+    type: 2, chainId: 11155420n, nonce: 7, maxPriorityFeePerGas: q.maxPriorityFeePerGas, maxFeePerGas: q.maxFeePerGas,
+    gasLimit: q.gasLimit, to: TO, value: AMOUNT, data: '0x', accessList: [],
+  }).unsignedSerialized;
+  check('OP Sepolia: the oracle priced the exact unsigned transaction (ethers)', opPriced === opExpected, `${opPriced}`);
+  const sent = await sendEvm(URL, signer(), q, EVM_OP_SEPOLIA.explorerTxBase);
+  const opSigned = ethers.Transaction.from(lastRawTx);
+  check('OP Sepolia: sendEvm signs exactly the priced transaction, for chain 11155420, from the sender',
+    opSigned.unsignedSerialized === opPriced && opSigned.chainId === 11155420n && opSigned.from === FROM);
+  check('OP Sepolia: the explorer link is sepolia-optimism.etherscan.io/tx/', sent.explorerUrl === `https://sepolia-optimism.etherscan.io/tx/${sent.txid}`, sent.explorerUrl);
+
+  scenario = defaultScenario('0xaa37dc');
+  scenario.balance = AMOUNT + l2Fee + reserve - 1n;
+  await checkRejects('OP Sepolia: a balance one wei short of the L1 reserve is refused',
+    () => prepareEvmSend(URL, FROM, TO, AMOUNT, undefined, EVM_OP_SEPOLIA.caip2), /Insufficient funds/);
+  scenario = defaultScenario('0xaa37dc');
+  requests = [];
+  const opMax = await maxEvmSend(URL, FROM, TO);
+  check('OP Sepolia Max (chain from the node) asks the oracle and leaves the L2 worst case + reserve',
+    oracleCalls().some((r) => r.params[0].data.startsWith(GET_L1_FEE)) && opMax === scenario.balance - l2Fee - reserve, `${opMax}`);
+
+  const OP_USDC = '0x5fd84259d66Cd46123540766Be93DFE6D43130D7';
+  scenario = defaultScenario('0xaa37dc');
+  requests = [];
+  const ercQuote = await prepareErc20Send({
+    url: URL, from: FROM, to: TO, contract: OP_USDC, amount: 1n, symbol: 'USDC', decimals: 6, chainCaip2: EVM_OP_SEPOLIA.caip2,
+  });
+  check('OP Sepolia USDC quotes on OP Sepolia with the L1 data fee reserve',
+    ercQuote.chainId === 11155420n && ercQuote.opStack?.l1DataFee === reserve && ercQuote.fee === 21000n * 3_000_000n + reserve);
+
+  scenario = defaultScenario('0x14a34');
+  await checkRejects('a Base Sepolia endpoint in OP Sepolia mode is refused, naming OP Sepolia',
+    () => prepareEvmSend(URL, FROM, TO, AMOUNT, undefined, EVM_OP_SEPOLIA.caip2), /expected 11155420 \(OP Sepolia\)/);
+
+  // Hoodi: a layer 1 network, so no oracle call and no OP-stack fields.
+  scenario = defaultScenario('0x88bb0');
+  requests = [];
+  const h = await prepareEvmSend(URL, FROM, TO, AMOUNT, undefined, EVM_HOODI.caip2);
+  check('Hoodi quote: chain 560048, NO oracle call, no opStack part, fee = gasLimit × maxFeePerGas',
+    h.chainId === 560048n && oracleCalls().length === 0 && !('opStack' in h) && h.fee === l2Fee, `${h.fee}`);
+  const hSent = await sendEvm(URL, signer(), h, EVM_HOODI.explorerTxBase);
+  check('Hoodi: the explorer link is hoodi.etherscan.io/tx/', hSent.explorerUrl === `https://hoodi.etherscan.io/tx/${hSent.txid}`);
+  scenario = defaultScenario('0x88bb0');
+  scenario.balance = AMOUNT + l2Fee - 1n;
+  await checkRejects('Hoodi: a send the balance cannot cover is refused for funds (no L1 part)',
+    () => prepareEvmSend(URL, FROM, TO, AMOUNT, undefined, EVM_HOODI.caip2), /Insufficient funds/);
+  scenario = defaultScenario('0xaa36a7');
+  await checkRejects('a Sepolia endpoint in Hoodi mode is refused, naming Hoodi',
+    () => prepareEvmSend(URL, FROM, TO, AMOUNT, undefined, EVM_HOODI.caip2), /expected 560048 \(Hoodi\)/);
+
+  const meta = rebuildRecoveryRecord({ chainId: 11155420n, account: KERNEL_ACCOUNT_0, originalOwner: OWNER_0, index: 0, recordedAt: 1 });
+  const name = recordExportFileName(meta, new Date(Date.UTC(2026, 9, 11)));
+  check('recovery record file name on OP Sepolia says "op-sepolia"',
+    name === 'shiba-recovery-record_op-sepolia_0xB67b-9a42_2026-10-11.json' && RECORD_FILE_NAME_PATTERN.test(name), name);
+  const hoodiName = recordExportFileName(
+    rebuildRecoveryRecord({ chainId: 560048n, account: KERNEL_ACCOUNT_0, originalOwner: OWNER_0, index: 0, recordedAt: 1 }),
+    new Date(Date.UTC(2026, 9, 11)),
+  );
+  check('…and on Hoodi "hoodi"', hoodiName === 'shiba-recovery-record_hoodi_0xB67b-9a42_2026-10-11.json', hoodiName);
+}
+
+// ---------------------------------------------------------------------------
 // 7. Optional live probe (read-only) on Base Sepolia
 // ---------------------------------------------------------------------------
 
@@ -768,6 +852,19 @@ if (process.argv.includes('--live')) {
     check('live: Max leaves at least the L2 worst case + reserve', q.balance - m >= l2);
   } catch (e) {
     check('live probe ran', false, e instanceof Error ? e.message : String(e));
+  }
+  try {
+    // OP Sepolia (phase 18 item 1): the same read-only quote through its
+    // first default candidate; the same predeploy holds withdrawn ETH there.
+    const opUrl = EVM_OP_SEPOLIA.defaultRpcUrls[0];
+    const q = await prepareEvmSend(opUrl, sender, TO, 10n ** 12n, undefined, EVM_OP_SEPOLIA.caip2);
+    const l2 = q.gasLimit * q.maxFeePerGas;
+    console.log(`  OP Sepolia endpoint ${new globalThis.URL(opUrl).host}: gasLimit ${q.gasLimit}, maxFeePerGas ${q.maxFeePerGas} wei`);
+    console.log(`  OP Sepolia getL1Fee estimate ${q.opStack.l1DataFeeEstimate} wei for ${q.opStack.unsignedTxBytes} bytes; reserve ${q.opStack.l1DataFee}; operator fee ${q.opStack.operatorFee}`);
+    check('live OP Sepolia: the quote is for chain 11155420 and carries a positive L1 estimate', q.chainId === 11155420n && q.opStack.l1DataFeeEstimate > 0n);
+    check('live OP Sepolia: fee includes the reserve', q.fee === l2 + q.opStack.l1DataFee + q.opStack.operatorFee);
+  } catch (e) {
+    check('live OP Sepolia probe ran', false, e instanceof Error ? e.message : String(e));
   }
   try {
     const sepUrl = EVM_SEPOLIA.defaultRpcUrls[0];
