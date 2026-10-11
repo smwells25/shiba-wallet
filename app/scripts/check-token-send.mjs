@@ -14,6 +14,9 @@
 // The signing key derives from the standard BIP-39 test mnemonic
 // ("abandon ... about"), which is public knowledge.
 
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { evmKeyProvider, mnemonicToSeed } from '@shiba-wallet/core';
 import { encodeErc20Transfer, toHex } from '@shiba-wallet/chains-evm';
 import {
@@ -122,6 +125,7 @@ function rpcResult(method, params) {
     case 'eth_maxPriorityFeePerGas':
       return '0x' + s.priorityFee.toString(16);
     case 'eth_estimateGas':
+      if (s.estimateGasFn) return s.estimateGasFn(params[0]);
       if (s.estimateGasError) throw { code: -32000, message: s.estimateGasError };
       return '0x' + s.estimateGas.toString(16);
     case 'eth_call': {
@@ -142,8 +146,12 @@ function rpcResult(method, params) {
   }
 }
 
+// Every JSON-RPC request the code under test makes, in order (method and
+// params exactly as sent), for the request-sequence pins below.
+let rpcLog = [];
 globalThis.fetch = async (_url, init) => {
   const { method, params, id } = JSON.parse(init.body);
+  rpcLog.push({ method, params });
   let body;
   try {
     body = { jsonrpc: '2.0', id, result: rpcResult(method, params) };
@@ -566,6 +574,146 @@ console.log('estimate revert (F3):');
     funds = e;
   }
   check('a non-revert estimate failure keeps its own title', !(funds instanceof GasEstimateRevertError) && describeSendError(funds, 'ETH').title === 'Not enough ETH to pay the network fee.', String(funds));
+}
+
+// ---------------------------------------------------------------------------
+// Phase 18 emulator finding 1: a payable call the account cannot afford
+// (Lido's submit(), Rocket Pool's deposit()) showed the contract's revert
+// ("execution reverted: ZERO_DEPOSIT") because a failed estimate was retried
+// with value 0. Now: a payable call is compared with the balance at the
+// smallest possible fee (21,000 gas × max fee) BEFORE any estimate, and a
+// transaction with calldata is never re-estimated with value 0. Plain
+// transfers keep their old behaviour (pinned request by request).
+// ---------------------------------------------------------------------------
+
+console.log('payable calls: the funds sentence, never a value-0 re-estimate:');
+const SEND_SOURCE = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../src/wallet/send.ts'), 'utf8');
+const SEND_MUTANT_DIR = join(dirname(fileURLToPath(import.meta.url)), `.mutants-token-send-${process.pid}`);
+process.on('exit', () => rmSync(SEND_MUTANT_DIR, { recursive: true, force: true }));
+let sendMutants = 0;
+async function sendMutant(from, to) {
+  if (!SEND_SOURCE.includes(from)) throw new Error(`mutation anchor not found: ${from}`);
+  const originalDir = resolve(dirname(fileURLToPath(import.meta.url)), '../src/wallet');
+  const rewritten = SEND_SOURCE.replace(from, to).replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolve(originalDir, spec)).href}'`);
+  mkdirSync(SEND_MUTANT_DIR, { recursive: true });
+  sendMutants += 1;
+  const file = join(SEND_MUTANT_DIR, `m${sendMutants}-send.ts`);
+  writeFileSync(file, rewritten);
+  return import(pathToFileURL(file).href);
+}
+{
+  const LIDO = '0x3e3FE7dBc6B4C189E7128855dD526361c49b40Af'; // the payable target (any contract address works here)
+  const SUBMIT = new Uint8Array([0xa1, 0x90, 0x3e, 0xab, ...new Uint8Array(32)]); // submit(address(0))
+  const MAX_FEE = 3n * GWEI; // 2 × 1 gwei base + 1 gwei tip
+  const MIN_FEE = 21_000n * MAX_FEE;
+  const STAKE = 10n ** 15n;
+  // A node that behaves like geth for this contract: an estimate whose value
+  // exceeds the balance fails "insufficient funds"; with value 0 the
+  // contract reverts ZERO_DEPOSIT (Lido's own revert string); otherwise
+  // 120,000 gas. `feeChecked` also refuses when value + gas × max fee
+  // exceeds the balance (a node that checks the fee, too).
+  const payableNode = (balance, { feeChecked = false } = {}) => (tx) => {
+    const value = BigInt(tx.value ?? '0x0');
+    if (value > balance || (feeChecked && value + 120_000n * MAX_FEE > balance)) {
+      throw { code: -32000, message: 'insufficient funds for gas * price + value' };
+    }
+    if (value === 0n && tx.data) throw { code: 3, message: 'execution reverted: ZERO_DEPOSIT' };
+    return '0x' + (120_000).toString(16);
+  };
+  const estimates = () => rpcLog.filter((r) => r.method === 'eth_estimateGas').map((r) => r.params[0]);
+  const attempt = async (mod, balance, opts) => {
+    scenario = defaultScenario();
+    scenario.ethBalance = balance;
+    scenario.estimateGasFn = payableNode(balance, opts);
+    rpcLog = [];
+    try {
+      await mod.prepareEvmSend(URL, FROM, LIDO, STAKE, SUBMIT);
+      return { error: null, estimates: estimates() };
+    } catch (e) {
+      return { error: e, estimates: estimates() };
+    }
+  };
+  const real = { prepareEvmSend };
+
+  // A: the stake exceeds the balance outright.
+  const a = await attempt(real, 10n ** 14n);
+  const aWant = `Insufficient funds: sending ${STAKE} wei plus a worst-case fee of at least ${MIN_FEE} wei exceeds the balance of ${10n ** 14n} wei`;
+  check('A: a stake above the balance → the insufficient-funds sentence (exact)', a.error?.message === aWant, a.error?.message);
+  check('A: …refused BEFORE any estimate (zero eth_estimateGas requests)', a.estimates.length === 0, JSON.stringify(a.estimates));
+  check('A: …titled "Not enough test ETH to cover this amount plus the network fee." (no contract revert)',
+    !(a.error instanceof GasEstimateRevertError) && describeSendError(a.error, 'test ETH').title === 'Not enough test ETH to cover this amount plus the network fee.' &&
+      !/ZERO_DEPOSIT|revert/i.test(describeSendError(a.error, 'test ETH').detail));
+  // A2: the balance covers the value but not even the smallest fee on top.
+  const a2 = await attempt(real, STAKE + MIN_FEE - 1n);
+  check('A2: value ≤ balance < value + 21,000 × max fee → refused before estimating', a2.estimates.length === 0 && /^Insufficient funds: /.test(a2.error?.message ?? ''), a2.error?.message);
+  // At exactly value + the smallest fee the pre-check lets it through (a lower bound never refuses an affordable send).
+  const edge = await attempt(real, STAKE + MIN_FEE);
+  check('the pre-check is a lower bound: at exactly value + 21,000 × max fee it estimates (then the real fee refuses it)',
+    edge.estimates.length === 1 && /^Insufficient funds: sending \d+ wei plus a worst-case fee of 360000000000000 wei/.test(edge.error?.message ?? ''), edge.error?.message);
+
+  // B: the pre-check passes, the node refuses the estimate for funds (it
+  // checks the fee too). The answer is the node's funds error, never a
+  // value-0 re-estimate and its ZERO_DEPOSIT revert.
+  const b = await attempt(real, STAKE + MIN_FEE, { feeChecked: true });
+  check('B: an estimate refused for funds is NOT retried with value 0 (one estimate, with the real value)',
+    b.estimates.length === 1 && BigInt(b.estimates[0].value) === STAKE, JSON.stringify(b.estimates));
+  check('B: …and reads "Not enough ETH to pay the network fee." (the node’s own text as detail, no revert)',
+    !(b.error instanceof GasEstimateRevertError) && describeSendError(b.error, 'ETH').title === 'Not enough ETH to pay the network fee.' && !/ZERO_DEPOSIT/.test(String(b.error?.message)), String(b.error?.message));
+
+  // An affordable stake quotes normally with one estimate.
+  const ok = await attempt(real, 10n ** 18n);
+  check('an affordable stake quotes with exactly one estimate at the real value', ok.error === null && ok.estimates.length === 1 && BigInt(ok.estimates[0].value) === STAKE, String(ok.error));
+
+  // C: a plain transfer keeps today's behaviour byte for byte: the estimate
+  // at the value fails, the value-0 retry gives 21,000, and the balance
+  // check refuses with the old wording (no "at least").
+  scenario = defaultScenario();
+  scenario.ethBalance = 10n ** 14n;
+  scenario.estimateGasFn = (tx) => {
+    if (BigInt(tx.value ?? '0x0') > 10n ** 14n) throw { code: -32000, message: 'insufficient funds for transfer' };
+    return '0x' + (21_000).toString(16);
+  };
+  rpcLog = [];
+  const c = await rejection(() => prepareEvmSend(URL, FROM, TO, STAKE));
+  check('C: plain transfer — the same two estimates as before: [value = amount, value = 0], no data field',
+    JSON.stringify(estimates()) === JSON.stringify([
+      { from: FROM, to: TO, value: '0x' + STAKE.toString(16) },
+      { from: FROM, to: TO, value: '0x0' },
+    ]), JSON.stringify(estimates()));
+  check('C: …and the old sentence, byte for byte',
+    c?.message === `Insufficient funds: sending ${STAKE} wei plus a worst-case fee of ${21_000n * MAX_FEE} wei exceeds the balance of ${10n ** 14n} wei`, c?.message);
+  check('C: …request sequence: chain id, balance, nonce, fee reads, then the two estimates (nothing new before them)',
+    rpcLog.slice(-2).every((r) => r.method === 'eth_estimateGas') && rpcLog.filter((r) => r.method === 'eth_estimateGas').length === 2);
+
+  // D: a value-0 call (a token approval) whose estimate reverts: one
+  // estimate, the contract-call sentence (the duplicate value-0 retry is gone).
+  scenario = defaultScenario();
+  scenario.estimateGasFn = () => { throw { code: 3, message: 'execution reverted: Not allowed' }; };
+  rpcLog = [];
+  const d = await rejection(() => prepareEvmSend(URL, FROM, CONTRACT, 0n, new Uint8Array([0x09, 0x5e, 0xa7, 0xb3])));
+  check('D: a value-0 contract call that reverts: one estimate, the contract-call sentence',
+    estimates().length === 1 && describeSendError(d, 'ETH').detail === 'The contract rejected this transaction during estimation (execution reverted: Not allowed). Nothing was sent.', describeSendError(d, 'ETH').detail);
+
+  // Mutants (each must be caught).
+  const keepsRetry = await sendMutant('  if (dataHex === undefined) {\n    try {\n      gasLimit = await node.estimateGas', '  if (true) {\n    try {\n      gasLimit = await node.estimateGas');
+  const mb = await attempt(keepsRetry, STAKE + MIN_FEE, { feeChecked: true });
+  check('mutant (the value-0 retry kept for calldata) is caught: it re-estimates with value 0 and shows ZERO_DEPOSIT',
+    mb.estimates.length === 2 && BigInt(mb.estimates[1].value) === 0n && mb.error instanceof keepsRetry.GasEstimateRevertError && /ZERO_DEPOSIT/.test(mb.error.message),
+    String(mb.error?.message));
+  const noPrecheck = await sendMutant('  if (dataHex !== undefined && amount > 0n) {', '  if (false) {');
+  const ma = await attempt(noPrecheck, 10n ** 14n);
+  check('mutant (no balance pre-check) is caught: it estimates first and loses the exact sentence',
+    ma.estimates.length > 0 && ma.error?.message !== aWant, `${ma.estimates.length} / ${ma.error?.message}`);
+  scenario = defaultScenario();
+}
+
+async function rejection(fn) {
+  try {
+    await fn();
+    return null;
+  } catch (e) {
+    return e;
+  }
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

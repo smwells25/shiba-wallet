@@ -232,6 +232,15 @@ export interface PrepareEvmSendOptions {
  */
 const MAX_TRIM_ROUNDS = 3;
 
+/**
+ * The intrinsic gas of the cheapest possible transaction (21,000; the
+ * Ethereum yellow paper's G_transaction, charged to every transaction). A
+ * lower bound for any transaction's gas, used only for the payable-call
+ * balance pre-check in prepareEvmSend, where a lower bound guarantees the
+ * pre-check never refuses a transaction the balance could pay for.
+ */
+const MIN_TRANSACTION_GAS = 21_000n;
+
 /** What SendScreen remembers about the last Max result (public data only). */
 export interface LastMaxResult {
   /** The amount text the Max button wrote into the form. */
@@ -490,10 +499,19 @@ export type SendQuote = EvmSendQuote | UtxoSendQuote | SolSendQuote;
  * signature.
  *
  * Fees per NodeClient.suggestFees (latest base fee doubled + node priority
- * fee); gas via eth_estimateGas. When estimateGas rejects because the
- * amount+fee exceeds the balance, it is retried with value 0 — intrinsic
- * gas for a transfer does not depend on the value, and the insufficient
- * funds condition is reported separately via the simulation/balance checks.
+ * fee); gas via eth_estimateGas. For a PLAIN transfer (no calldata), when
+ * estimateGas rejects (typically because the amount exceeds the balance),
+ * it is retried with value 0 — intrinsic gas for a transfer does not
+ * depend on the value, and the insufficient-funds condition is reported
+ * by the balance check after it. A transaction WITH calldata is never
+ * retried with value 0: a payable call's behaviour depends on its value
+ * (Lido's submit() reverts "ZERO_DEPOSIT" and Rocket Pool's deposit()
+ * reverts below its minimum when the value is 0), so the retry would
+ * replace the real problem with a misleading revert. Instead, a payable
+ * call (calldata and a non-zero value) is first compared with the balance
+ * at the smallest fee any transaction can cost (MIN_TRANSACTION_GAS at
+ * the suggested max fee) and refused with the insufficient-funds wording
+ * before any estimate is requested.
  *
  * `options.fromMax` marks an amount produced by the Max button; see
  * PrepareEvmSendOptions for how such an amount is lowered when the fee
@@ -535,14 +553,47 @@ export async function prepareEvmSend(
   }
 
   const dataHex = data && data.length > 0 ? toHex(data) : undefined;
+
+  // Payable contract calls only (calldata and a non-zero value): refuse a
+  // value the balance cannot cover even at the smallest possible fee
+  // BEFORE estimating, so the user reads "not enough ETH" rather than the
+  // contract's reaction to a value it never receives. The bound is a lower
+  // bound (every transaction costs at least MIN_TRANSACTION_GAS), so this
+  // never refuses a transaction the balance could pay for; the exact
+  // check with the estimated gas still follows below. Plain transfers and
+  // value-0 calls are unchanged.
+  if (dataHex !== undefined && amount > 0n) {
+    const minimumFee = MIN_TRANSACTION_GAS * fees.maxFeePerGas;
+    if (amount + minimumFee > balance) {
+      throw new Error(
+        `Insufficient funds: sending ${amount} wei plus a worst-case fee of at least ${minimumFee} wei ` +
+          `exceeds the balance of ${balance} wei`,
+      );
+    }
+  }
+
   let gasLimit: bigint;
-  try {
-    gasLimit = await node.estimateGas({ from, to, value: amount, data: dataHex });
-  } catch {
+  if (dataHex === undefined) {
     try {
-      gasLimit = await node.estimateGas({ from, to, value: 0n, data: dataHex });
+      gasLimit = await node.estimateGas({ from, to, value: amount, data: dataHex });
+    } catch {
+      // Plain transfer: intrinsic gas does not depend on the value, so a
+      // failure caused by the value exceeding the balance is retried with
+      // value 0 and the balance check below reports the shortfall.
+      try {
+        gasLimit = await node.estimateGas({ from, to, value: 0n, data: dataHex });
+      } catch (error) {
+        throw asEstimateRevert(error, true);
+      }
+    }
+  } else {
+    // A transaction carrying calldata is NEVER retried with value 0: a
+    // contract's behaviour can depend on the value (a payable stake or
+    // deposit reverts with value 0), so the first failure is the answer.
+    try {
+      gasLimit = await node.estimateGas({ from, to, value: amount, data: dataHex });
     } catch (error) {
-      throw asEstimateRevert(error, dataHex === undefined);
+      throw asEstimateRevert(error, false);
     }
   }
 

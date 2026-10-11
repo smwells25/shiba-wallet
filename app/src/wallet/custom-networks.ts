@@ -215,6 +215,26 @@ export const TEST_NETWORK_TICK_NOTE =
   'status as on Ethereum mainnet.';
 
 /**
+ * The example shown in the custom-network form's empty name and chain-id
+ * fields (Settings → Networks you added). Polygon Amoy, chain id 80002: on
+ * KNOWN_PUBLIC_TEST_CHAIN_IDS (ethereum-lists/chains
+ * _data/chains/eip155-80002.json, "title": "Polygon Amoy Testnet", as cited
+ * in config/evm-chain.ts) and not a built-in profile, so neither the name
+ * nor the chain id is refused as "already built in", and its public RPC
+ * served a head 1 s old on 2026-10-11 (polygon-amoy-bor-rpc.publicnode.com,
+ * eth_chainId 0x13882). Holesky (17000) was not chosen because its chain has
+ * stopped: on 2026-10-11 holesky.drpc.org served a newest block about 130
+ * days old and ethereum-holesky-rpc.publicnode.com answered HTTP 404, so the
+ * form's 600-second freshness rule would refuse the very example it showed.
+ * The earlier example, Hoodi / 560048, became a built-in profile in phase 18
+ * and is refused there. Only the name and the chain id carry an example; the
+ * RPC and explorer fields show just "https://…", so no endpoint is suggested.
+ */
+export const CUSTOM_NETWORK_EXAMPLE = { name: 'Polygon Amoy', chainId: '80002' } as const;
+export const CUSTOM_NETWORK_NAME_PLACEHOLDER = `For example ${CUSTOM_NETWORK_EXAMPLE.name}`;
+export const CUSTOM_NETWORK_CHAIN_ID_PLACEHOLDER = `For example ${CUSTOM_NETWORK_EXAMPLE.chainId}`;
+
+/**
  * The allow-listed test networks a user can still ADD, for the sentences
  * below: Hoodi and OP Sepolia stay on KNOWN_PUBLIC_TEST_CHAIN_IDS but are
  * built in since phase 18, so naming them here would invite a refused

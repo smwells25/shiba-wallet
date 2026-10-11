@@ -579,7 +579,7 @@ console.log('Settings source checks');
   check('Developer shows the custom networks section with chips', settings.includes('<CustomNetworksSection customNetworks={customNetworks} choice={testNetwork} onChoose={setTestNetwork} />') && settings.includes('style={styles.choiceChip}'));
   check('removal asks for the device check when spending limits would be deleted', settings.includes("requireLocalAuth('Remove the network and its spending limits')"));
   check('the Developer intro mentions a test network you added (finding 9)',
-    settings.includes('`Switches the app’s EVM chain to a test network — ${nets}, each paid in test ETH, or a test network you ` +\n    \'added under “Networks you added” below: balances, sends, \' +') &&
+    settings.includes('`Switches the app’s EVM chain to a test network — ${nets}, each paid in test ETH, or a test network you ` +\n    \'added under “Networks you added” below: balances, sends and WalletConnect run against the chosen \' +') &&
       settings.includes('(on a network you added, to the explorer ` +\n    \'you gave, if any).'));
   const readiness = await import('../src/config/readiness.ts');
   check('the readiness hint and intro mention a test network you added (finding 9)',
@@ -746,6 +746,29 @@ async function importMutant(relPath, from, to) {
   const m6 = await importMutant('src/wallet/custom-networks.ts', 'const replaced = supersededEntry(entry);', 'const replaced = null;');
   const s6 = memoryStore({ [cn.CUSTOM_NETWORKS_KEY]: PHASE18_DOC });
   check('mutant (superseded records counted as damage) is caught', (await m6.loadCustomNetworks(s6)).readOnly === true && !(await cn.loadCustomNetworks(s6)).readOnly);
+}
+
+// ---------------------------------------------------------------------------
+console.log('the form’s example placeholders are not refusals (phase 18 emulator finding 6)');
+// ---------------------------------------------------------------------------
+{
+  check('the placeholders read "For example Polygon Amoy" / "For example 80002" (exact)',
+    cn.CUSTOM_NETWORK_NAME_PLACEHOLDER === 'For example Polygon Amoy' && cn.CUSTOM_NETWORK_CHAIN_ID_PLACEHOLDER === 'For example 80002');
+  const ex = cn.CUSTOM_NETWORK_EXAMPLE;
+  check('the example is on the test allow-list under the same name, and is NOT a built-in profile',
+    evm.KNOWN_PUBLIC_TEST_CHAIN_IDS.some((t) => t.chainId === ex.chainId && t.name === ex.name) &&
+      !evm.isBuiltInEvmChain(`eip155:${ex.chainId}`) && !evm.EVM_PROFILES.some((p) => p.label === ex.name));
+  const typed = syncRejects(() => cn.validateCustomNetworkInput({ ...POLYGON_INPUT, name: ex.name, chainId: ex.chainId, testnet: true }, []));
+  check('typing the example (name and chain id, ticked as a test network) passes the form’s checks', typed === null, String(typed));
+  const settingsSrc = readFileSync(join(HERE, '../src/screens/SettingsScreen.tsx'), 'utf8');
+  check('Settings uses the constants and no longer shows the built-in Hoodi / 560048 as the example',
+    settingsSrc.includes("{field('name', 'Network name', CUSTOM_NETWORK_NAME_PLACEHOLDER)}") &&
+      settingsSrc.includes("{field('chainId', 'Chain id (decimal)', CUSTOM_NETWORK_CHAIN_ID_PLACEHOLDER, 'number-pad')}") &&
+      !settingsSrc.includes('For example Hoodi') && !settingsSrc.includes('For example 560048'));
+  // Mutant: the old example is refused by the same checks, which is what the
+  // placeholder must never invite.
+  const old = syncRejects(() => cn.validateCustomNetworkInput({ ...POLYGON_INPUT, name: 'Hoodi', chainId: '560048', testnet: true }, []));
+  check('mutant (the old Hoodi / 560048 example) would be refused, so the check above is meaningful', typeof old === 'string' && /already built in/.test(old), String(old));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -92,11 +92,14 @@ export function StakingBalancesCard({
   balances,
   hidden,
   nativeSymbol,
+  holderLine,
   theme,
 }: {
   balances: StakingBalances;
   hidden: boolean;
   nativeSymbol: string;
+  /** Whose balances these are (staking.ts stakingBalancesHolderLine). */
+  holderLine: string;
   theme: Theme;
 }) {
   const show = (amount: bigint, symbol: string) => (hidden ? `•••• ${symbol}` : `${exact18(amount)} ${symbol}`);
@@ -122,6 +125,9 @@ export function StakingBalancesCard({
   return (
     <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
       <Text style={[styles.cardTitle, { color: theme.text }]}>Your staking balances</Text>
+      <Text selectable style={[styles.hint, { color: theme.textMuted }]}>
+        {holderLine}
+      </Text>
       {lines.map((l) => (
         <Row key={l.label} label={l.label} value={l.value} sub={l.sub ?? null} theme={theme} />
       ))}

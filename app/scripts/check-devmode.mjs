@@ -1314,5 +1314,34 @@ console.log('\n== Hoodi and OP Sepolia profiles (phase 18) ==');
       !homeSrc.includes('{item.name}</Text>'));
 }
 
+// Phase 18 emulator finding 7: the Developer hint said the smart-account
+// path runs on every test network, Hoodi included (no Kernel v3.3 there).
+// The hint is evaluated from SettingsScreen.tsx's own source (the IIFE and
+// its listJoin helper) against the real profile table.
+console.log('\n# Developer hint: the smart-account clause follows kernelV33Verified');
+{
+  const { readFileSync: readFs } = await import('node:fs');
+  const settingsSrc = readFs(new globalThis.URL('../src/screens/SettingsScreen.tsx', import.meta.url), 'utf8');
+  const listJoinTs = /function listJoin\([\s\S]*?\n\}\n/.exec(settingsSrc)?.[0] ?? '';
+  const listJoinJs = listJoinTs.replace("items: string[], conjunction: 'and' | 'or'): string", 'items, conjunction)');
+  const iife = /const DEVELOPER_TEST_NETWORK_HINT = (\(\(\) => \{[\s\S]*?\n\}\)\(\));/.exec(settingsSrc)?.[1] ?? '';
+  check('the hint builder and its helper were found in SettingsScreen.tsx (and the helper is type-free once stripped)',
+    listJoinJs !== listJoinTs && iife !== '' && !/:\s*string/.test(listJoinJs));
+  const hintFor = (profiles) => new Function('EVM_TEST_PROFILES', `${listJoinJs}\nreturn ${iife};`)(profiles);
+  const hint = hintFor(EVM_TEST_PROFILES);
+  const clause = /as does the smart-account path on ([^(]+) \(the test networks where the Kernel v3\.3 contracts were verified\)/.exec(hint);
+  check('the clause names exactly the Kernel-verified test networks (exact)',
+    clause?.[1] === 'Ethereum Sepolia, Base Sepolia, Arbitrum Sepolia and OP Sepolia', clause?.[1] ?? hint);
+  check('Hoodi is NOT named in the smart-account clause', clause !== null && !clause[0].includes('Hoodi'));
+  check('…while the hint still lists Hoodi among the test networks (chain id 560048)', hint.includes('Hoodi (chain id 560048)'));
+  check('the old "WalletConnect and the smart-account path all run against the chosen network" is gone',
+    !hint.includes('the smart-account path all run') && hint.includes('balances, sends and WalletConnect run against the chosen network'));
+  // Table-driven: a profile table where Hoodi had Kernel v3.3 would name it.
+  const flipped = EVM_TEST_PROFILES.map((p) => (p.caip2 === 'eip155:560048' ? { ...p, kernelV33Verified: true } : p));
+  const flippedClause = /smart-account path on ([^(]+) \(/.exec(hintFor(flipped))?.[1] ?? '';
+  check('mutation: with Hoodi marked Kernel-verified the clause would name it (the clause is built from the table)',
+    flippedClause.includes('Hoodi'), flippedClause);
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

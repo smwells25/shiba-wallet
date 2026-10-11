@@ -429,5 +429,34 @@ function homeMultisigProblems(home) {
     'Multisig 2 (2-of-3) is a multi-signature account: its operations are built on the Multisig screen and need its co-signers’ approvals.'));
 }
 
+// Phase 18 emulator finding 5: Hoodi's Home offered "Lost a recovery phrase?
+// Recover an account with guardians" although Hoodi has no Kernel v3.3 stack
+// (no guardian modules, no RecoveryAction). The footer link now follows the
+// profile's kernelV33Verified.
+console.log('check-home: the guardian-recovery footer only where Kernel v3.3 is verified');
+{
+  const home = source('../src/screens/HomeScreen.tsx');
+  const GATE = '{!evmChain.kernelV33Verified ? null : (';
+  // The footer link's block: the kernelV33Verified gate wraps the existing
+  // watch-only / multisig (noKey) and imported-key gates, which stay as they
+  // were, then the link text.
+  const footerGated = (src) => {
+    const at = src.indexOf('Lost a recovery phrase? Recover an account with guardians');
+    const gate = src.lastIndexOf(GATE, at);
+    return at > 0 && gate > 0 &&
+      /^\{!evmChain\.kernelV33Verified \? null : \(\s*<>\s*\{noKey \? null : \(\s*<>\s*\{activeAccount\?\.imported \? null : \(\s*<Pressable/.test(src.slice(gate, at));
+  };
+  check('the footer link sits inside the kernelV33Verified gate, around the noKey and imported-key gates', footerGated(home));
+  check('mutation: the footer without the kernelV33Verified gate is caught',
+    !footerGated(home.replace(GATE, '{false ? null : (')));
+  check('the link text appears once (no second, ungated copy)',
+    home.split('Lost a recovery phrase? Recover an account with guardians').length === 2);
+  const { EVM_PROFILES } = evmChainModule;
+  const shown = EVM_PROFILES.filter((p) => p.kernelV33Verified).map((p) => p.label).join(', ');
+  const hidden = EVM_PROFILES.filter((p) => !p.kernelV33Verified).map((p) => p.label).join(', ');
+  check('the footer shows on Ethereum, Ethereum Sepolia, Base Sepolia, Arbitrum Sepolia and OP Sepolia; hidden on Hoodi',
+    shown === 'Ethereum, Ethereum Sepolia, Base Sepolia, Arbitrum Sepolia, OP Sepolia' && hidden === 'Hoodi', `${shown} | ${hidden}`);
+}
+
 console.log(`\ncheck-home: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

@@ -33,6 +33,8 @@ import {
 } from '../config/evm-chain';
 import {
   CUSTOM_NATIVE_DECIMALS,
+  CUSTOM_NETWORK_CHAIN_ID_PLACEHOLDER,
+  CUSTOM_NETWORK_NAME_PLACEHOLDER,
   CUSTOM_NETWORKS_READ_ONLY_MESSAGE,
   NATIVE_SYMBOL_NOTE,
   TEST_NETWORK_TICK_NOTE,
@@ -160,8 +162,9 @@ const DEVELOPER_TEST_NETWORK_HINT = (() => {
   const simple = EVM_TEST_PROFILES.filter((p) => p.aaPrefill !== null).map((p) => p.label);
   return (
     `Switches the app’s EVM chain to a test network — ${nets}, each paid in test ETH, or a test network you ` +
-    'added under “Networks you added” below: balances, sends, ' +
-    'WalletConnect and the smart-account path all run against the chosen network, an orange TESTNET banner ' +
+    'added under “Networks you added” below: balances, sends and WalletConnect run against the chosen ' +
+    `network, as does the smart-account path on ${listJoin(kernel, 'and')} (the test networks where the ` +
+    'Kernel v3.3 contracts were verified); an orange TESTNET banner ' +
     `replaces the mainnet warning, and explorer links go to ${hosts} (on a network you added, to the explorer ` +
     'you gave, if any). Each network keeps its own endpoint, ' +
     'indexer and Account Abstraction configuration — nothing is shared between mainnet and the test networks ' +
@@ -1346,8 +1349,8 @@ function CustomNetworksSection({
       })}
       {adding ? (
         <View style={[styles.endpointRow, { backgroundColor: theme.card, borderColor: theme.border }]}>
-          {field('name', 'Network name', 'For example Hoodi')}
-          {field('chainId', 'Chain id (decimal)', 'For example 560048', 'number-pad')}
+          {field('name', 'Network name', CUSTOM_NETWORK_NAME_PLACEHOLDER)}
+          {field('chainId', 'Chain id (decimal)', CUSTOM_NETWORK_CHAIN_ID_PLACEHOLDER, 'number-pad')}
           {field('rpcUrl', 'RPC endpoint (https)', 'https://…', 'url')}
           {field('nativeSymbol', 'Coin symbol', 'For example ETH')}
           <Text style={[styles.endpointNote, { color: theme.textMuted }]}>{NATIVE_SYMBOL_NOTE}</Text>

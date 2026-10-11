@@ -799,7 +799,13 @@ export function HomeScreen({ navigation }: Props) {
               imported key is refused (recovery.ts
               RECOVERY_IMPORTED_OWNER_REFUSAL), so the link would lead to a
               refusal. Not offered from a watch-only account either (no key
-              to become the new owner). */}
+              to become the new owner). Not offered on a network whose
+              profile has no verified Kernel v3.3 stack (kernelV33Verified
+              false: Hoodi and every network you added), because guardian
+              recovery runs on the Kernel guardian modules and RecoveryAction,
+              which are not known to exist there. */}
+          {!evmChain.kernelV33Verified ? null : (
+            <>
           {noKey ? null : (
             <>
           {activeAccount?.imported ? null : (
@@ -813,6 +819,8 @@ export function HomeScreen({ navigation }: Props) {
                 Lost a recovery phrase? Recover an account with guardians
               </Text>
             </Pressable>
+          )}
+            </>
           )}
             </>
           )}

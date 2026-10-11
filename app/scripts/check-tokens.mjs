@@ -53,6 +53,7 @@ import {
   loadTokenRegistry,
   removeToken,
   tokenStoreKey,
+  testNetworkTokenValueSentence,
 } from '../src/wallet/tokens.ts';
 import {
   DISCOVERY_UNSUPPORTED_NOTE,
@@ -708,6 +709,29 @@ if (process.argv.includes('--live')) {
   }
 } else {
   console.log('\nLive RPC section skipped (run with --live to read USDC from the default endpoint).');
+}
+
+// Phase 18 emulator finding 7: OP Sepolia's Tokens text named EURC, which
+// Circle does not list there. The sentence's example now comes from the
+// chain's known tokens.
+console.log('\ntest-network token sentence (built from the known tokens):');
+{
+  const want = {
+    'eip155:11155111': 'This is a test network: its tokens (such as test USDC and EURC) have no value.',
+    'eip155:84532': 'This is a test network: its tokens (such as test USDC and EURC) have no value.',
+    'eip155:421614': 'This is a test network: its tokens (such as test USDC) have no value.',
+    'eip155:11155420': 'This is a test network: its tokens (such as test USDC) have no value.',
+    'eip155:560048': 'This is a test network: its tokens have no value.',
+    'eip155:17000': 'This is a test network: its tokens have no value.',
+  };
+  for (const [chain, sentence] of Object.entries(want)) {
+    check(`${chain}: ${JSON.stringify(sentence)}`, testNetworkTokenValueSentence(chain) === sentence, testNetworkTokenValueSentence(chain));
+  }
+  check('OP Sepolia’s sentence does not mention EURC', !testNetworkTokenValueSentence('eip155:11155420').includes('EURC'));
+  check('every symbol named is a known token on that chain (table-driven, no fixed list)',
+    Object.keys(KNOWN_TEST_NETWORK_TOKENS).every((chain) =>
+      knownTokensForChain(chain).every((t) => testNetworkTokenValueSentence(chain).includes(t.symbol)) &&
+      ['USDC', 'EURC'].filter((sym) => testNetworkTokenValueSentence(chain).includes(sym)).every((sym) => knownTokensForChain(chain).some((t) => t.symbol === sym))));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

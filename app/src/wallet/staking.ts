@@ -159,6 +159,41 @@ export const STETH_REBASING_NOTE =
   'Because stETH is accounted in shares, a stake or a transfer often arrives 1 or 2 wei below the amount, ' +
   'and the figure shown here comes from the token’s own event, so it can be 1 or 2 wei above what really arrives.';
 
+/**
+ * The success screen's note about where the stETH balance can be read
+ * (shown when the plan involves stETH). Home's token rows read the REGULAR
+ * account's address (HomeScreen useTokenBalances) and only for tracked
+ * tokens; the Staking screen tracks the token a stake gives, but the store
+ * can refuse, so the note says "on Home" only when stETH was found on this
+ * network's tracked list after the send (stethTracked true) and the stake
+ * came from the regular account. Phase 18 emulator finding 2: the old
+ * sentence named Home while Home had no stETH row.
+ */
+export function stakingSuccessBalanceNote(p: { smartAccount: boolean; stethTracked: boolean | null }): string {
+  if (p.smartAccount) {
+    return (
+      'The stETH balance on this screen is your smart account’s, read from the token itself, so it is exact ' +
+      'whenever it is read. Home’s token rows show your regular account’s balances, not the smart account’s.'
+    );
+  }
+  if (p.stethTracked === true) {
+    return 'The stETH balance on this screen and on Home is read from the token itself, so it is exact whenever it is read.';
+  }
+  return (
+    'The stETH balance on this screen is read from the token itself, so it is exact whenever it is read. Home ' +
+    'shows it once stETH is on this network’s tracked tokens (Manage tokens).'
+  );
+}
+
+/**
+ * The line under "Your staking balances" naming whose balances they are:
+ * the smart account's when the smart-account toggle is on, else the
+ * regular account's (phase 18 emulator finding 7).
+ */
+export function stakingBalancesHolderLine(smartAccount: boolean, address: string): string {
+  return smartAccount ? `Balances of your smart account ${address}` : `Balances of your regular account ${address}`;
+}
+
 /** Why the smart account is not offered on Hoodi (docs/STAKING.md section 8, read 2026-10-10). */
 export const HOODI_NO_SMART_ACCOUNT =
   'Hoodi has no Kernel smart-account contracts: the account factory, the account implementation and the ' +

@@ -507,6 +507,22 @@ export function knownTokensForChain(chainCaip2: string): FungibleAsset[] {
   return [...(KNOWN_TEST_NETWORK_TOKENS[chainCaip2] ?? [])];
 }
 
+/**
+ * The Tokens screen's test-network sentence, with its example built from
+ * the tokens known on that chain (knownTokensForChain), so it names only
+ * tokens that exist there: "…(such as test USDC and EURC)…" on Ethereum
+ * Sepolia and Base Sepolia, "…(such as test USDC)…" on Arbitrum Sepolia and
+ * OP Sepolia (Circle lists no EURC there), and no example on a test network
+ * with no known token (Hoodi, a test network you added). Phase 18 emulator
+ * finding 7: OP Sepolia's text named EURC, which does not exist there.
+ */
+export function testNetworkTokenValueSentence(chainCaip2: string): string {
+  const symbols = knownTokensForChain(chainCaip2).map((t) => t.symbol);
+  if (symbols.length === 0) return 'This is a test network: its tokens have no value.';
+  const list = symbols.length > 1 ? `${symbols.slice(0, -1).join(', ')} and ${symbols[symbols.length - 1]!}` : symbols[0]!;
+  return `This is a test network: its tokens (such as test ${list}) have no value.`;
+}
+
 /** The known liquid-staking tokens on one CAIP-2 chain (KNOWN_STAKING_TOKENS; empty elsewhere). */
 export function knownStakingTokensForChain(chainCaip2: string): KnownToken[] {
   return [...(KNOWN_STAKING_TOKENS[chainCaip2] ?? [])];
