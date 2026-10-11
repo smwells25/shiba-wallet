@@ -4095,3 +4095,119 @@ emulator passes; 3 — item 3; 4 last. Subagents on Opus.
       staking; the Hoodi pass needs Hoodi ETH (INPUT) and covers Lido
       stake, unstake request, claim after finalisation, a Rocket Pool
       deposit ≥ 0.01 and burn, and the smart-account refusal.
+- [x] Item 3 — THE POLISH LIST (one commit, cd120b1, two slices verified as
+      one snapshot in the CTO's isolated worktree: engine 906, app 7,369
+      across 51 suites, lint 0/0, tsc clean; every mutant caught; not
+      seen on a device). MULTISIG IN THE SWITCHER: AccountView gains
+      multisig + multisigInfo {chain, localSigner, label}; the name is the
+      shape label ("Multisig 2 (2-of-3)"); WalletContext.multisigAccounts;
+      the "accounts with a key" filters gain !a.multisig; a multisig gets
+      an EVM-only row and ensureDerived never sends its id to the phrase;
+      withStoredMultisigs reconciles at launch, on a new wallet and on
+      every multisig store write (addMultisigStoreListener), persisting
+      only on change; approvalTargetFor(id) → phrase / imported / none
+      (watch-only, multisig, malformed) and commitAccounts sets it;
+      loadAaBundle returns null for isMultisigAccountId before any read;
+      the route allow list for an active multisig (MULTISIG_ALLOWED_ROUTES,
+      11 routes: Home, Activity, Nfts, NftDetail, Tokens, Approvals
+      (read-only — no Revoke, the handler refuses first), Settings,
+      Contacts, ImportKey, Receive, Multisig) with every other route
+      refused by name; SEND REFUSED PLAINLY (the smaller option: the
+      Multisig route takes no parameters) with "Sends from a
+      multi-signature account are signing requests for the co-signers;
+      build one on the Multisig screen.", the signer hint naming the
+      wallet's signer account and an "Open the Multisig screen" button;
+      Home: the switcher lists multisigs last with a "Multisig" chip and
+      the line "Multisig — operations need co-signers; Ethereum networks
+      only", the EVM card shows the balance and an EntryPoint deposit row
+      (masked by Hide amounts), links Activity / Receive (the address) /
+      Multisig / Manage tokens / NFTs / Approvals, Send / Swap / Upgrade /
+      the tools row / the recovery link hidden via noKey = watchOnly ||
+      multisig, the notice "Multi-signature account: no single key in this
+      wallet can send from it…", BTC/DOGE/SOL rows "Not available for a
+      multi-signature account…", an other-network note; Receive: address,
+      QR, label, the co-signer sentence, no Send / request / proof /
+      smart-account box; watching a multisig address refused ("…already
+      listed in this wallet…"); Apps refused with its own sentence;
+      Activity's walletAddressesFor(eoa, index, aa, multisigs) includes
+      every stored multisig on the network (sentences read "yourself" —
+      a label needs an engine change in activity-decode party(), follow-
+      up); the MultisigScreen never takes an active multisig as "this
+      wallet's signer"; if the active multisig's record is removed the
+      wallet hands over to Account 1. Mutants: a multisig that can sign
+      (the real signWith refuses with MULTISIG_SIGN_REFUSAL, zero
+      secure-store reads), a device check opening the phrase (zero reads
+      vs ≥ 1 for a phrase account), Apps offered, Send not refused (gate,
+      Home, Receive), Activity not recognising it, derivedIndices without
+      the filter, loadAaBundle without its line, and the card / sentence /
+      link / deposit / notice pins. NOTES: app/src/components/
+      TransactionNoteField.tsx (SendScreen's SuccessNoteField moved,
+      behaviour identical); rendered above Done on both Swap success
+      views (the network captured at sending so a mode switch cannot
+      misfile the note) and on every Sessions progress view (Progress
+      gained network; five creators set it); a WcSentView + WcSentResult
+      exist in WcApprovalSheet but are NOT wired — WalletConnectContext
+      still completes with Alerts ("Transaction sent", "Batch sent to the
+      bundler", "…dApp not notified"); wiring it is a follow-up (lines
+      701 / 753 / 978). RISK: pinnedStakingContracts() from the engine's
+      LIDO_DEPLOYMENTS / ROCKET_POOL_DEPLOYMENTS (seven: stETH, wstETH and
+      the queue on Sepolia and Hoodi; rETH on Hoodi — not RocketStorage,
+      never a send target, nor the deposit pool, resolved per quote);
+      stakingContractAt matches all 40 hex digits on the exact chain;
+      the card's one line "This transaction goes to Lido's stETH contract
+      on Ethereum Sepolia (0x…), pinned by this wallet from Lido's
+      published list of deployed contracts." replaces the generic contract
+      / contract-age lines and skips the first-interaction search when
+      the contract itself is paid; approvals kept; withStakingTokens adds
+      the chain's staking tokens to the risk card's token list (so a
+      stETH transfer is described by its recipient); a look-alike (last
+      digit changed) keeps every warning (pinned + mutants). TOKENS:
+      KNOWN_STAKING_TOKENS (Sepolia stETH + wstETH; Hoodi stETH, wstETH,
+      rETH; metadata read live on two endpoints: "Liquid staked Ether
+      2.0", "Wrapped liquid staked Ether 2.0", "Rocket Pool ETH", 18
+      decimals), KnownToken gains rebasing?: true (stETH only),
+      knownStakingTokensForChain / isRebasingToken (table-only, so a
+      stored entry cannot switch the note on) / rebasingTokenNote with
+      REBASING_TOKEN_NOTE "Rebasing token: the balance changes by itself;
+      the preview can be off by a wei or two."; DELIBERATELY NOT in
+      knownTokensForChain nor the default lists (that list also feeds
+      subscriptions and spending limits — a rebasing subscription asset
+      is their owners' decision; pinned: stETH not default on Sepolia);
+      the CTO added the Home note under a rebasing token row and
+      trackReceivedStakingToken on the Staking screen's success paths
+      (asset fields only, duplicates ignored). THREAT MODEL: T-76
+      (staking: Lido's contracts and accounting oracle; RocketStorage, the
+      deposit pool and rETH; what the wallet verifies — pinned addresses,
+      verifyLidoDeployment, the rETH registry check, exact approvals,
+      claim hints; the live pause checks; the rebasing caveat; test
+      networks only; residuals: no mainnet addresses pinned, only the
+      Sepolia stake run live) with 'T-76' in the staking row's evidence;
+      a note under the chain table (Hoodi no Kernel stack; OP Sepolia the
+      stack byte-identical to Sepolia's; no Circle v0.7 paymaster there);
+      section 1.3 no longer lists staking or the browser as absent.
+      FIREBASE (from the Gradle cache jars of the dev builds via javap and
+      expo-notifications 57.0.22): FirebaseInstanceIdReceiver is an
+      exported receiver for com.google.android.c2dm.intent.RECEIVE guarded
+      by android:permission c2dm.permission.SEND, passing push messages
+      from Google Play services to the messaging service; the permission
+      is declared by com.google.android.gsf, "held by Google Play
+      services" per Google's GCM reference (read through a mirror; the
+      protection level, expected signature, is unverified —  would show it);
+      NO NETWORK CALL on the app's paths: FirebaseInitProvider.onCreate →
+      FirebaseApp.initializeApp(Context) → FirebaseOptions.fromResource
+      returns null without google_app_id → logs "Default FirebaseApp
+      failed to initialize…" and returns null, so no FirebaseApp, no
+      component runtime, no messaging / installations / data transport;
+      expo-notifications touches Firebase only in the push-token and topic
+      functions, never called; a network capture of a fresh install is
+      still not done; recorded in RELEASE.md §3 / §10 and PRIVACY.md 2.8.
+      LABEL: the Settings button is "Connected apps" (= the screen title)
+      and the Apps blurb quotes it. FOLLOW-UPS: wire WcSentView; the
+      preview's REBASING_TOKEN_NOTE (BalanceChangePreview / simulation.ts
+      — its suite pins exact lines); Settings → Accounts does not list
+      multisigs (say so or list read-only); RecurringDueBanner /
+      NotificationScheduler could add !activeAccount.multisig; a
+      multisig-specific WalletConnect proposal alert; the engine's party()
+      label for multisigs; whether subscriptions / spending limits /
+      approvals list the staking tokens. Emulator checklist (9 steps) in
+      the switcher builder's report.
