@@ -5054,3 +5054,69 @@ DEMO step 24 rewritten for a non-built-in custom network.
       close order incl. whether the keyboard stays open after popToTop;
       the real Alchemy answers for one-sided queries on a Kernel account;
       "Load more" after an empty 8-round page.
+- [x] Merged history PROVEN ON THE EMULATOR (2026-10-11; Expo Go, Metro
+      worktree at 5d5aeaf with the engine built inside it, 2,360 modules;
+      no repo files edited; 1 prompt in total, the stake; no dev-EOA
+      spending; notes and the full masked row lists in the scratchpad
+      p18f). (A) First page 59 entries (26 "smart account", 0 "with smart
+      account"), dates non-increasing; the staking bundle's −0.000747 row
+      reads exactly "EntryPoint deposit: 0.000747174110161719 test ETH set
+      aside for this smart account's network fees" and its other four
+      rows keep the staked sentence and "Note: p18d kernel stake note";
+      the −0.000923 row reads "EntryPoint deposit: 0.000923697750716462
+      test ETH …" (now on record: 923,697,750,716,462 wei, tx
+      0xb62e5573…fb47d, 2026-10-03); all 20 Kernel → EntryPoint rows read
+      as deposits; no row anywhere says "to yourself" for the smart
+      account. (B) LOAD MORE to the end: 59 → 107 → 139 with "End of
+      history."; NO TIME-ORDER VIOLATION over all 139 rows (18 h → 10 Oct
+      → 9 Oct → 5 → 4 → 3 → 2 → 1 Oct → 28 → 27 Sep, incl. across page
+      boundaries; rows 75–115 matched minute by minute against both
+      addresses' indexer timestamps); tx 0x341db91c appears exactly ONCE
+      (row 102, Account 1's own −0.0015 with "with smart account" and
+      "Sent 0.0015 test ETH to your smart account"); the 7 hashes both
+      streams share appear only as Account 1 rows with that chip (10 rows);
+      66 "smart account" rows; the footer never showed "Load more", a
+      spinner or the retry text because onEndReached (threshold 0.4)
+      prefetched every page within one ~12 s scroll step — the F3 retry
+      and timeout path is unobservable without a slow or failing indexer.
+      (C) Pull to refresh after the full load: back to 59, the first 62
+      rows identical incl. sentences and notes. (D) Multisig 2 (0 prompts
+      each way): 16 entries, "Smart-account operation by Account 1's smart
+      account: sent 0.0006 test ETH to yourself", "Received 0.0006 test
+      ETH from Account 1", the deploying op, "EntryPoint deposit:
+      0.00359334246196974 test ETH …". (E) ONE-TAP DONE: stake 0.0001 →
+      stETH, confirm as before (max fee 0.00000003 gwei × 121,752 gas),
+      prompt "Stake 0.0001 test ETH with Lido for stETH", the note "p18f
+      one-tap" typed with the keyboard open and ONE tap on Done closed
+      keyboard and view together; Activity shows the note on all three new
+      rows with the staked sentence; tx
+      0x1fd6109a1d263ce35447a93b9dfdab48e66540ea723b98f22ba8b03cc61e4812,
+      block 11891250, status 0x1, gasUsed 110,501 at 16 wei, Submitted
+      1e14, mint 99,999,999,999,999; Account 1 stETH exactly +1e14 (the
+      rebasing case again). (F) The "Transaction, details loading." label
+      was caught on rows while scrolling and gone on later reads; the
+      first ~6 s cannot be observed with uiautomator. (G) The export
+      opened the chooser with shiba-activity_eip155-11155111_0x772e-F44F_2026-10-11.csv;
+      the file is unreadable in Expo Go (run-as: not debuggable), so its
+      order was not checked. Funds: Account 1 ETH 0.002219 → 0.002119,
+      stETH 0.001315; Kernel and multisig unchanged. FINDINGS (fix slice
+      dispatched): (1) EVERY POST-GLAMSTERDAM ETH MOVEMENT IS LISTED
+      TWICE — the indexer reports each EIP-7708 protocol log as an ERC-20
+      transfer (category "erc20", rawContract 0xff…fe, value null;
+      confirmed in the raw alchemy_getAssetTransfers answer for the
+      staking bundle), which Activity shows as extra "no amount" rows (34
+      of 139; 8 of the multisig's 16) and exports to the CSV; asset-diff /
+      erc20-logs / activity-decode already treat 0xff…fe as native, the
+      indexer history path does not; (2) A REVERTED INCOMING TRANSFER
+      SHOWS AS RECEIVED — row "Failed: tried to send 0.003 test ETH to
+      your smart account. Received transaction, +0.003 test ETH, 1 Oct
+      2026, smart account" for tx 0x8b7463c4…8871e (status 0x0 on 1rpc
+      and drpc; publicnode returns null), sent by the dev EOA, not the
+      wallet, so the sentence also names the wrong actor (age unknown);
+      (3) 35 of 139 rows have no sentence, all 9 Oct or older, some of
+      which had sentences in p18e — lead: publicnode returned null for
+      every 1–4 Oct receipt asked (1rpc served them) and a failed decode
+      stays failed for the session; (4) the new merge pages 59 / +48 /
+      +32 against 88 + 50 before; (5) the module count 2,360. End state:
+      Home, Ethereum Sepolia, Account 1, light mode, Google IME,
+      protection ON; Metro at 5d5aeaf.
