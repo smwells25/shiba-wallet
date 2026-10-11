@@ -6293,3 +6293,105 @@ by the Chairperson is still pending ("a few appear safe to ignore").
       read in Expo Go on a device; iOS; the single-tap add-approval; the
       live look of the confirm dialog, the deduped History and the new
       bar wording.
+- [x] Item 2, app half — RECURRING SWAPS (DCA) PROVEN LIVE IN-APP ON
+      ETHEREUM SEPOLIA (2026-10-11; Expo Go, Metro worktree at 1310f3e,
+      2,365 modules; no repo files edited; every hash status 0x1 on
+      publicnode and sepolia.drpc.org; no dev-EOA spending; screen
+      protection OFF throughout; notes in the scratchpad p19c). The flow
+      works end to end: install → a swap verified on-chain → revoke, the
+      swap signed by the session key with the phrase never opened. (1)
+      "New recurring swap" present on Ethereum Sepolia; INERT on Base
+      Sepolia with the engine sentence "Recurring swaps are offered only
+      on Ethereum Sepolia in this version: no swap router or pool is
+      pinned for this network."; on mainnet the Sessions link is hidden
+      entirely (session keys test-networks-only) so DCA is unreachable;
+      Arbitrum / OP / Hoodi share Base's code path (offline-tested, not
+      individually switched — see finding 5). (2) Form + live quote: pool
+      0x3289680dD4d6C10bb19b899729cda5eEF58AEfF1 (checked vs factory
+      0x0227…DaC1c), router 0x3bFA…e48E, quoter 0xEd1f…2FB3 all in full;
+      "0.00001 test ETH → 0.468907 USDC", "Minimum … 95% = 0.445461
+      USDC", the set-up cost note (7,015,028 gas / ~0.0081 ETH at 1.155
+      gwei, bundler refuses below ~0.012, today ~0.0162 at 2.31,
+      reservation ~0.01848); the balance line matched the chain. (3)
+      Refusals: amount 0, floor "abc", 121 swaps each exact; empty fee
+      budget not exercised live (the ADBKeyboard field would not fully
+      clear a controlled value — offline-tested). (4) Review order exactly
+      as designed (batching box → "THE MINIMUM DOES NOT FOLLOW THE PRICE"
+      → no deadline → reverting swap uses its period → router residual →
+      swap-key scope → catch-up with the two-period grace → revoke → key
+      location → fresh quote + 95% → short-plan warning → on-chain bullets
+      → audit note → technical details, selector 0x04e45aaf, CallPolicy
+      offsets 0/32/64/96/128 EQUAL, 160 GTE the floor, 192 EQUAL → Max
+      network fee = estimate + ≤20% → padding note → fee budget kept back
+      → balance/deposit rows → "Bundler gas estimate passed"). (5) START
+      plan 1 (2 prompts: "Approve this recurring swap" + "Protect the new
+      session key"): permission id 0x50943d6a, install userOp
+      0xb07c45c9e48e74156932a99d8a6d4b3369f322fde7e07810ec257b1c4f1635c7,
+      tx 0x26a342c31e41d205bbf6fd4f10fd9ca9bfedfffda4c2fa1abb02bec583f13fd1,
+      block 11894109, actualGasUsed 6,936,806 (~7M), cost 0.016024 ETH.
+      (6) FIRST SWAP: "Swap due now (since 20:27 UTC). 0 of 3 swaps sent.";
+      the "Swap now?" dialog (read from a screenshot — Android Alert
+      bodies are not in the a11y tree) with the quote, the fresh-quote-
+      less-1% ask never below the plan minimum, the revert consequence,
+      the budget left, and "The swap key signs it, not your account key";
+      CANCEL left 0 of 3; SWAP NOW → ONE "Use the session key" prompt, NO
+      phrase prompt; progress "Received 0.468907 USDC for 0.00001 test
+      ETH (the quote just before sending was 0.468907 USDC; the swap asked
+      for at least 0.464217 USDC)."; swap userOp
+      0xc5047b0e0a609c15c6200ba3350b67a6050497234a42be4ddf8be46ba3b65557,
+      tx 0x1f43c9aaff381aff88ee20aa222082fc317e8ddfb89584eebec1935ac1116ba9,
+      block 11894126, gas 697,977, cost 0.001612 ETH; on-chain (both RPCs)
+      Pool Swap amount0 −468,907 / amount1 +1e13 (EXACTLY 0.00001 ETH in),
+      USDC Transfer 468,907 pool → Kernel. (7) Background → return →
+      auto-lock → Unlock: the catch-up line persisted ("2 swaps due now …
+      1 was missed; your account allows them … one at a time."), count
+      stayed 1 of 3, the app-wide banner shown inline and as a sheet; the
+      "Not due yet" state and a second SUCCESSFUL swap were NOT captured —
+      the 2-minute testing period's inter-slot window (~2 s) and ~8-min
+      lifetime are shorter than the driving overhead, so plan 1 expired
+      after one swap; swap 2 was correctly REFUSED ON-CHAIN (AA23 "AA22
+      expired or not due", no tx) — proof the account enforces the end
+      date; card "Ended … 1 of 3 swaps were sent; 2 were not sent before
+      the end date." (8) REVOKE demonstrated twice: plan 1 "Revoke and
+      forget" (ended) userOp 0xec094cae…9ca0, tx 0x9429bc3d…3800, block
+      11894178, "Revoked and forgotten"; plan 2 "Revoke (stop …)" (active)
+      userOp 0xb25213f8…0e66, tx 0xcd36fa87…24ef, block 11894217,
+      "Revoked". (9) Mainnet: no banner, the Sessions/Multisig/Staking
+      links hidden. ECONOMICS: install ~7M gas ~0.016 ETH; the one swap
+      697,977 gas (0.001612) to move 0.00001 test ETH — ~160× the swapped
+      amount on Sepolia (fees dominate at tiny test amounts). Funds
+      (Kernel 0xD31c): 0.041452 ETH + deposit 0.000416 + 4.443547 USDC →
+      0.004837 + deposit 0.001105 + 4.912454 USDC (spent 0.035926,
+      reconciled: install1 + swap1 + revoke1 + install2 + revoke2 +
+      0.00001 swapped; USDC +0.468907 = one swap); Account 1 EOA
+      untouched. FINDINGS (fix slice dispatched): (1) LIKELY BUG — the
+      fee-budget keep-back can install an UNUSABLE plan: on plan 2 (the
+      account at ~0.023 ETH after plan 1) the form auto-fit the GasPolicy
+      fee budget to (balance + deposit − the install MAX fee at estimate
+      +20%) = 0.001158677365341602 ETH, below a single swap's worst-case
+      fee, so the first swap was refused on-chain AA23 PolicyFailed(2)
+      "the fee budget is used up", 0 swaps sent, after ~0.0171 ETH was
+      spent on install + revoke; Review still said "Bundler gas estimate
+      passed" with no warning. FIX WANTED: at Review, when the kept-back
+      budget cannot cover at least one swap's worst-case fee, warn or
+      refuse; or keep back the install's ACTUAL (not +20% max) fee; or
+      price the budget independently of balance. (A typed budget is not
+      lowered, so typing one works around it today, but that is not
+      obvious.) (2) the 2-minute testing period is too short to rehearse
+      multi-swap/catch-up in-app (inter-slot ~2 s, lifetime ~8 min vs the
+      driving overhead); a longer custom period is needed (the engine half
+      already proved 2 swaps + revoke by script). (3) minor UI staleness:
+      after plan 1 expired the card said "Ended …" while the banner sheet
+      still said "1 recurring swap is due". (4) Android Alert bodies (the
+      Swap-now confirm, the error alerts) are not in the a11y tree — only
+      title and buttons; relevant for TalkBack. (5) driving friction (not
+      an app bug): the Settings test-network chip row sits below the long
+      mainnet-readiness list and scripted scroll overshoots it. (6) IME
+      still ADBKeyboard (the `ime set` back to Google is denied to the
+      driver). NOT EXERCISED LIVE: the empty-budget refusal (field clear
+      unreliable; offline-tested), the "not due yet" state, a second
+      successful swap (short period + the plan-2 budget bug + no
+      affordable third install), the Arbitrum/OP/Hoodi inert button
+      individually. END STATE: Home, Ethereum Sepolia, Account 1, light
+      mode, screen protection OFF, no active DCA records (both revoked
+      on-chain; plan 2 forgotten), Metro at 1310f3e, IME ADBKeyboard.
