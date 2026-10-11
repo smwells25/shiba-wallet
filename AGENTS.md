@@ -3713,3 +3713,119 @@ alongside; emulator passes after each wave. Subagents on Opus.
       UNVERIFIED: re-arming after a reboot; delivery after a real force
       stop (expected none); the lock-screen presentation; TalkBack; exact
       alarms; anything on Ethereum Sepolia.
+- [x] Reminders dev-build findings FIXED (commit 8931447; check-notifications
+      165 (was 117), check-recurring 174, check-subscriptions 188; offline
+      runner ALL GREEN in the CTO's isolated worktree: engine 877, app
+      7,031 across 50 suites, lint 0/0, tsc clean; six in-suite and six
+      manual mutants caught; not re-run in the development build). (1)
+      recurringTermsReminderAt(record, now) computes the next slot from
+      the INSTALLED GRANT alone (startAt + k × interval, k < count, no
+      later than the grant's end — RateLimitPolicy moves its start forward
+      per payment, so such a reminder can never announce a payment that is
+      not due; a revoke elsewhere is corrected by the next read);
+      planRecurringSync takes a scope and schedules an eligible record
+      with nothing scheduled and no read state from its grant (a failed
+      read with a reminder keeps it); the background pass passes the
+      scope, so leaving from Sessions arms the reminder; requestReminderSync
+      ('local' | 'full') is called in SessionsScreen's settle callbacks
+      (install settled, resumed install/revoke settled, payment receipt,
+      revoke settled → full; bundler accepted a revoke, revoke-and-forget,
+      Forget, list reset → local). (3) From ExpoPresentationDelegate.kt
+      (105–113, 127–129, 143–155, 69–84, 185–200): a posted notification
+      carries the request identifier as its tag with id 0, so
+      dismissNotificationAsync(identifier) hits exactly it, and an
+      unreadable one is listed as expo-notifications://foreign_notifications?tag=…
+      (walletIdentifierOf reads the tag); dismissAllNotificationsAsync
+      deliberately NOT used (cancelAll); the native layer gained
+      presentedIdentifiers(); Off, wipe and cleanup dismiss only shown
+      identifiers starting "shiba-wallet."; planRecurringSync returns
+      dismiss for no-longer-eligible, completed/inactive, and "later"
+      states whose next slot is after now (a past "later" is kept to avoid
+      a race); best effort, never blocks scheduling. (4) From
+      ExpoNotificationBuilder.applySoundsAndVibrations (setSilent(true)
+      when neither sound nor vibration) and the SDK 57 docs ("setting
+      shouldPlaySound: false will result in the drop-down notification
+      alert not showing"): FOREGROUND_BEHAVIOR = banner + list + SOUND, no
+      badge (iOS content sets no sound); DECISION — payments-due stays
+      DEFAULT importance (no heads-up: a slot stays open a whole period
+      and a pop-up every 2 minutes in testing would be intrusive; a
+      channel's importance cannot change after creation, so a heads-up
+      would need a new channel id); security-alerts stays HIGH and now
+      pops in the foreground too. (5) RECURRING_CARD_NOTE "…no payment is
+      ever sent in the background. With reminders on (Settings → Privacy →
+      Notifications), this phone can remind you when a payment falls due,
+      even while the wallet is closed; the payment still waits for you.";
+      RECURRING_LATER_SLICE_NOTE now describes reminders (need the
+      wallet's own build; never send); GRACE ARITHMETIC CORRECTED — the
+      CTO's brief said "one period after the last due"; in code the terms
+      end at start + payments × period and the grace adds one period, so
+      the grant ends at start + (payments + 1) × period, TWO periods after
+      the last slot (00:31/00:33/00:35, end 00:39 — matching the live
+      "nothing after 00:39"); the caveat now says "two periods after the
+      last payment falls due (one period more than the terms alone would
+      allow, as a grace period)…" and the warning "These terms last only 8
+      minutes in total: 3 payments, one every 2 minutes, and the last one
+      can still be sent for 4 minutes after it falls due."; pinned with a
+      fixed start (08:00 → last due 08:04, end 08:08, rateLimit {3, 120,
+      start}). (6) The review shows "Kernel permission id: assigned when
+      you tap Start subscription…" instead of an id that changes at Start
+      (the session key does NOT change — only the permission id; the
+      finding's wording corrected); the success screen shows "Kernel
+      permission id (installed)". (7) No native config added: the small
+      icon falls back to the launcher icon
+      (expo.modules.notifications.default_notification_icon else
+      applicationInfo.icon); RELEASE.md records the plugin entry
+      ["expo-notifications", {"icon", "color"}] in the placeholders and
+      the DECISION that adding it always adds the iOS aps-environment push
+      entitlement (withNotificationsIOS.ts) although the wallet uses no
+      push; check-notifications pins the plugin's absence. (8) RELEASE.md
+      §3 and PRIVACY.md 2.8 record the firebase-messaging 25.0.1 manifest
+      entries and the "Default FirebaseApp failed to initialize" line; open:
+      that only Google Play services holds c2dm.SEND (adb command given)
+      and whether unconfigured Firebase makes any network call. KNOWN GAP:
+      if Sessions is closed before an install settles, the resumed settle
+      runs when Sessions next loads; the next start/foreground sync arms
+      the reminder. UNVERIFIED (dev build): the background pass firing on
+      leave, dismissal in the real shade incl. foreign listings, the
+      foreground presentation with sound, the review/success rows.
+
+## Phase 17 status (2026-10-11)
+
+Items 0 to 6 are landed and pushed. Proven live this phase: app-wide
+screen protection (default on; the recents card blank, every screencap
+empty, the control with the switch off), multi-signature accounts in the
+app (a 2-of-3 created, deployed through ZeroDev's bundler by its first
+operation, operated twice, this wallet co-signing a third request), a
+custom network added, used and removed with every refusal exact, and
+local reminders in the wallet's own development build on Base Sepolia
+(the permission prompt, both channels, delivery after a slot with the
+process killed, taps into Sessions warm and cold, Off clearing all).
+Built and verified offline: transaction notes with the CSV export; the
+fixes from each pass. Designed: staking on test networks (docs/
+STAKING.md). Engine: 877 tests. App: 50 offline suites, 7,031 checks.
+The shareable page is at version 18 (45 proven live, 17 built, 3
+designed, 34 not started).
+
+Findings for the Chairperson this phase: Expo Go cannot create
+notification channels (confirmed in its source), so reminders exist only
+in the wallet's own build; the notifications dependency brings Firebase
+messaging components into the Android manifest although the wallet uses
+no push service (recorded in RELEASE.md / PRIVACY.md); on Sepolia the
+100% fee headroom is paid in full because the base fee is ~14 wei (a
+test-network cost; revisit for mainnet); an EIP-7702 upgrade must never
+be offered where the Kernel delegate has no code (now enforced); the
+disclosure findings document still awaits your review.
+
+Inputs that would unlock more: Sepolia test ETH at the dev EOA
+0x16DA2CAeaDa26516F919C6872F6C38AB378CaC5C (about 0.0025 left); a
+decision on the stake-only Lido slice and/or a Hoodi profile
+(docs/STAKING.md); the notification icon (and whether to accept the
+plugin's iOS push entitlement); the ZeroDev disclosure decision; the
+phone and Expo account remain held by your decision.
+
+Follow-ups (no inputs): the multisig in the account switcher; a
+TransactionNoteField on the Swap, WalletConnect and Sessions success
+views; a UTF-8 BOM option for the CSV export; Activity sentences
+recognising the wallet's multisig; the Firebase questions above; the
+"Open connections" label; TalkBack on the emulator; re-running the
+reminders fixes in the development build.
