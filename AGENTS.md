@@ -5514,3 +5514,274 @@ non-zero; then the emulator passes one at a time (0a, 1, 2's app half,
       as a source); the paged layout; the file picker's MIME labelling;
       TalkBack; dark mode; any multisig deployed or operated off
       Ethereum Sepolia; hardware wallets returning v 0/1.
+- [x] Item 2, engine + script — DCA ON A SESSION KEY, PROVEN LIVE ON
+      SEPOLIA (commit e9c2b56; packages/chains-evm/src/kernel-dca.ts with 45
+      tests, index.ts additively, scripts/testnet/dca-smoke.mjs; offline
+      runner ALL GREEN in the CTO's isolated worktree with only these
+      files on HEAD ca934a2: engine 981 — chains-evm 719 — app 7,792; the
+      dry run passed there; every tx re-read on sepolia.drpc.org; the
+      dev EOA spent 0.008 ETH in top-ups (above the 0.005 named, within
+      the 0.01 budget) + 2 × 27,539 gas; 0.94 USDC-equivalent bought;
+      the DCA key file deleted after the revoke). SOURCE FACTS (fetched
+      2026-10-11): Uniswap v3 Sepolia from docs.uniswap.org — SwapRouter02
+      0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E, factory
+      0x0227628f3F023bb0B980b67D528571c95c6DaC1c, QuoterV2
+      0xEd1f6473345F45b75F8179591dd5bA1888cf2FB3, WETH9 0xfff9…6b14 — the
+      router, factory and QuoterV2 Sourcify full matches (solc 0.7.6, all
+      deployed by 0x3344…432A; the router's deployment tx 0x472b2240…ff02,
+      block 3,518,296), router factory() / WETH9() and QuoterV2 factory()
+      read back; the v1 SwapRouter and old Quoter are not on Sepolia.
+      exactInputSingle(ExactInputSingleParams{tokenIn, tokenOut, uint24
+      fee, recipient, amountIn, amountOutMinimum, uint160
+      sqrtPriceLimitX96}) selector 0x04e45aaf (in the router's code;
+      SwapRouter02 keeps its deadline only in multicall(uint256, bytes[]),
+      which cannot be pinned; the v1 struct with a deadline is
+      0x414bf389, refused); every field static at offsets 0…192; router
+      special values: amountIn 0 = "use the router's balance", recipient
+      address(1)/(2) substituted, "Too little received" below the
+      minimum; PeripheryPayments.pay wraps exactly the amount owed from
+      msg.value when token == WETH9 and the router holds the balance →
+      DECISION: sell ETH by sending amountIn as value with tokenIn =
+      WETH9, no separate wrap (RESIDUAL: a partial fill leaves ETH in the
+      router for the next refundETH caller; the floor still bounds what
+      the account receives). CallPolicy v0.0.4: ParamCondition {EQUAL, GT,
+      LT, GTE, LTE, NOT_EQUAL, ONE_OF}, raw word at data[4+offset …],
+      CallViolatesValueRule / CallViolatesParamRule. POOLS (factory
+      getPool, USDC token0): 0.01% 0xFeEd…40b5 liquidity 7.9e14; 0.05%
+      0x3289680dD4d6C10bb19b899729cda5eEF58AEfF1 1.3157e16 (101 WETH) —
+      CHOSEN, quote within 0.9% of the best; 0.3% 0x6Ce0…9b50 8.8e15; 1%
+      0x6418…7C47 1.07e17; pools are not on Sourcify — readDcaPool
+      re-checks getPool, the pool's factory, tokens, fee and liquidity on
+      every read. ENGINE: DcaTerms {chainId, account, router, tokenIn
+      (DCA_NATIVE or an ERC-20), tokenOut, fee, amountIn, minimumOut (the
+      static floor), periodSeconds, count, startAt, graceSeconds?,
+      feeBudgetWei, label, recipient?}; dcaGrantFor on the subscription
+      template (CallPolicy, TimestampPolicy, GasPolicy, RateLimitPolicy
+      {period, count, startAt}, signer SKIP_SIGNATURE) — rules tokenIn,
+      tokenOut, fee, recipient (= the account) and amountIn EQUAL (0 is
+      the router's own-balance flag; a smaller amountIn than the value
+      sent strands ETH; a plan buys a fixed amount), amountOutMinimum GTE
+      the floor, sqrtPriceLimitX96 EQUAL 0 (a limit forces a partial
+      fill), value cap = amountIn for ETH else 0, plus approve(router,
+      amountIn) EQUAL/EQUAL when selling an ERC-20; validUntil = startAt +
+      count × period + grace; buildDcaSwapCall(s), dcaMinimumOutFor
+      (max(floor, quote − slippage)), dcaFloorFromQuote (refuses 0),
+      assertDcaSwap (exact shape, no batches, every field, minimum ≥
+      floor, value exactly amountIn or 0, calldata exactly 228 bytes,
+      then assertCallsAllowed; kernelDcaSpec runs it before signing),
+      encode/decodeDcaSwapData (dirty high bits rejected), readDcaPool,
+      quoteDcaSwap (QuoterV2), readDcaState, decodeDcaOutcome (the pinned
+      pool's Swap events paying the account, the tokenOut Transfers,
+      batched, atOrAboveFloor, the UserOperationEvent success / revert
+      reason), validateDcaTerms (floor 0, another recipient, the deadline
+      router, the Universal Router, unknown router / pool, non-Sepolia,
+      same token in and out, native out, a non-tier fee, amountIn 0, no
+      fee budget, bad period / count / label, expired), DCA_* refusal
+      constants, UNISWAP_V3_SEPOLIA / DCA_PINNED_POOLS /
+      DCA_REFUSED_ROUTERS, serialize/parseDcaTerms, dcaTermsMatchGrant,
+      describeDca (caveats opening "THE MINIMUM DOES NOT FOLLOW THE
+      PRICE", then no deadline, batching, a reverted swap uses up its
+      period, ETH left in the router, catch-up). TESTS: the timestamp,
+      gas and rate-limit policy data and the signer entry byte-identical
+      to a subscription's; the CallPolicy data equal to an independent
+      ethers AbiCoder encoding (native hash pinned literally); the swap
+      calldata equal to ethers Interface output; every refusal, each
+      checked against the CallPolicy mirror — which ACCEPTS a batch of
+      in-rule swaps (the documented residual); fake-node pool / quoter /
+      outcome tests. DRY RUN (eth_simulateV1, the public test mnemonic,
+      against the real EntryPoint, Kernel, policies and pool): deploy +
+      install; before the first slot → AA22; swap 1 accepted (468,502
+      USDC ≥ floor); a second in the slot → AA22; lower floor / another
+      recipient / another tokenOut / a price limit → CallViolatesParamRule;
+      larger amountIn with matching value → CallViolatesValueRule, with
+      the value unchanged → CallViolatesParamRule; two in-rule swaps in
+      one op ACCEPTED (residual); asking 100× the quote → validation
+      passed, execution reverted "Too little received", no ETH left the
+      account, the slot used up; the next slot accepted; one more →
+      PolicyFailed(3); after revoke → AA23; selling USDC (state-override
+      balance): approve + swap accepted twice, an approval one base unit
+      high refused. LIVE (dev index-2 Kernel
+      0x1D723b78e1D0D84Fd0531e2686285fb1B6414106; every status 0x1):
+      top-ups 0x75bbc3abbc76d6533db6c8eb2519a0994c8b0aabc6b90bf990f862541c12f439
+      (block 11893079, 0.005) and 0x050942d1fa6feab9cd0383fbcb3a8b2e00fd8ee0fd21f659fd6d31065ef8a159
+      (11893088, 0.003); INSTALL userOp
+      0xaf6c5cd830648661c3e856285280d08f3f04e467fa6fcb85ea37408e96512e4c,
+      tx 0x9f970b8380b79438338f0653ee24222fb1e32cb9d2b10179ab2700b11e77fca7,
+      block 11893100, permission 0x5ad60861 (4 policies, signer = the
+      session key), actualGasUsed 7,015,028, cost 0.0081024 ETH; SWAP 1
+      (signed by the session signer, submitted through ZeroDev) userOp
+      0x1a268aebd7d08dc4442bb6a62f1f273b737fcdd33a8168c0c395475fb5b684d2,
+      tx 0xb7a50c1cdd84c64c408abbf9f4fbf14d2f24b4338b7a61fa6a33ee466f7a60f1,
+      block 11893108, Swap amount0 −468,502 / amount1 +1e13, USDC
+      +468,502, gas 698,196, cost 0.0008064; SWAP 2 userOp
+      0x2ebbf9c20134b7731240e88c18d46ad459a3437fe616195a8f81f89f02858909,
+      tx 0x93c17899a6be1a8c79b4230b74d0ac6da378483385faaa603ce9bdf6bb9da7d7,
+      block 11893119, +468,502 USDC, gas 611,324; REVOKE userOp
+      0x4172306cc1314a1ed5111057cb102860fb7682919db645063609f9f456d0fcd7,
+      tx 0x99a771b050c82050d10ed13d83a3ba11e3b50ae3ac10964d1b8186da3aff12fd,
+      block 11893120, installed false; floor 445,076 (95% of the
+      QuoterV2 quote 468,502), each swap asked ≥ 463,816 (fresh quote −
+      1%) and received exactly 468,502 (46,850.2 USDC per test ETH, no
+      measurable slippage at 0.00001 ETH); negatives blocked from
+      submission by a wrapper then checked by a decoded handleOps
+      eth_call: over-amount refused at ZeroDev's estimate "AA23 reverted
+      0x7b5812d4" (CallViolatesValueRule); the EARLY SECOND SWAP PASSED
+      THE ESTIMATE (ZeroDev does not check time at estimation) and
+      reverted in handleOps with FailedOp("AA22 expired or not due");
+      after revocation "AA23 reverted 0x"; signed limits install vGL
+      372,655 / cGL 8,226,245 / pVG 72,204, swaps vGL 987,890 (772,557) /
+      cGL 379,444; GasPolicy charged ~1.4–1.64e15 per swap of the 6.93e15
+      budget; Kernel 0.002287 + 0.000693 deposit → 0.000420 + 0.000341
+      (spent 0.0102185 = the four costs + 2e13 swapped, reconciled), USDC
+      46.220977 → 47.157981. FINDINGS: (1) THE INSTALL IS VERY EXPENSIVE
+      AFTER GLAMSTERDAM — 7,015,028 gas (cGL estimated 7,478,405), ~2.4×
+      a subscription install, because seven CallPolicy rules are written
+      to fresh storage: ~0.0081 ETH at ZeroDev's price; (2) ZEROD​EV NEEDS
+      MORE BALANCE JUST TO ESTIMATE — AA21 unless balance + deposit
+      covers ~7.3–8M gas × maxFee (0.00798 ETH failed at 1.1 gwei, passed
+      at 1.0); with 130% call padding the signed prefund (~10.2M gas,
+      ~0.0117 ETH) was refused at submission with AA21; the run used
+      DCA_INSTALL_CALL_PADDING=110; two earlier attempts stopped before
+      any submission (their key files deleted) — the app needs about
+      0.011–0.012 ETH available to set up a plan on Sepolia today; (3)
+      ZeroDev does not refuse a not-yet-due op at estimation (as in phase
+      13); (4) fees dominate — each swap's fee (~0.0007–0.0008 ETH) was
+      ~75× the 0.00001 ETH swapped at 1.1–1.155 gwei against a 14-wei
+      base fee; (5) a reverted swap uses up its slot (simulation). APP
+      DESIGN NOTE (next slice): form — amount of test ETH, period, count,
+      fee budget; Sepolia only, smart account only, readiness
+      test-networks-only; show the pool (0.05% USDC/WETH, full address),
+      the router, a live QuoterV2 quote and the floor from it with a
+      visible percentage (default 95%) in exact USDC; refuse what
+      validateDcaTerms refuses with the DCA_* sentences verbatim; review
+      in order — the batching box, "THE MINIMUM DOES NOT FOLLOW THE
+      PRICE", no deadline, a reverting swap uses up its period, ETH left
+      in the router on a partial fill, the key can only buy USDC for this
+      account, catch-up; funding — state the ~7M-gas / ~0.008 ETH install
+      and the ~0.012 ETH needed to be estimated, keep the install fee
+      back, size the budget from ~1M declared gas per swap × 2; each
+      period — confirm, ask dcaMinimumOutFor(fresh quote, 1%) never below
+      the floor, show decodeDcaOutcome (USDC received vs quote; a
+      reverted swap used its slot); the key never leaves the device.
+      UNVERIFIED: the pool contracts against source; a partial fill or
+      router residual live; selling an ERC-20 live; a floor revert live;
+      ZeroDev's estimate reservation over time; other networks; whether
+      the bundler's mempool exposes pending ops (sandwich exposure).
+- [x] Item 3 — STUCK AND FAILED TRANSACTIONS (commit 516c023; new
+      check-pending 121 registered in suites.mjs; offline runner ALL GREEN
+      in the CTO's isolated worktree on e9c2b56 plus the slice: engine 981,
+      app 7,913 across 52 suites, lint 0/0, tsc clean; 20 hand mutants
+      caught; the CTO added the wipe line in WalletContext
+      (resetPendingRegistry) and its pin; proven live by script, not
+      seen on a device). SPEC FACTS: go-ethereum master 3a6c2e3b
+      core/txpool/legacypool/list.go 303–325 — a replacement is refused
+      unless BOTH the fee cap and the tip are strictly higher, each at
+      least old × (100 + PriceBump) / 100 rounded DOWN (PriceBump 10,
+      legacypool.go 147 / 163; ErrReplaceUnderpriced "replacement
+      transaction underpriced", errors.go 43); reth main 1a4dbbe1
+      config.rs 24 DEFAULT_PRICE_BUMP 10, 227–255 div_ceil → the wallet's
+      rule max(old + 1, ceil(old × 110 / 100)) per field satisfies both
+      (the Sepolia default endpoint balances both); cancel = a 0-value
+      transfer to self at the same nonce; ERC-4337 (ethereum/ERCs
+      0578f46b, erc-4337.md 405) says a replacement needs "a higher
+      maxPriorityFeePerGas and an equally increased maxFeePerGas" — NO
+      10% in the spec text; Alto ed03b9cb mempool.ts 366–387 enforces
+      110% on both else "AA25 invalid account nonce: User operation
+      already present in mempool"; ERC-7769 218–247:
+      eth_getUserOperationReceipt null until included,
+      eth_getUserOperationByHash MAY be null while pending (a null cannot
+      prove a drop); no ZeroDev page on replacement found (two searches;
+      their docs not crawled), Alchemy documents drop-and-replace at
+      10%; the engine's NodeClient exposes only eth_getTransactionCount
+      'pending' (rpc.ts 323–384) — the app reads the node directly; FACT:
+      before this slice there was NO pending row for an EVM send in
+      Activity (both history providers mark every entry confirmed; the
+      "pending" chip applied only to provider-unconfirmed entries) and
+      sendEvm's listeners served only the spending recorder. BUILT:
+      app/src/wallet/pending-transactions.ts — the registry
+      shiba-wallet.pending-tx.v1 (secret-free; strict parse, any bad
+      record → read-only; cap 64 — resolved notices evicted first, then
+      the oldest pending; resolved notices kept 24 h; "Send again"
+      offered after 10 min with no record of the op; a 15 s poll — all
+      judgements), the bump and fee rules, nonce resolution, the
+      smart-account status check and the copy; send.ts
+      prepareEvmReplacement / checkReplacementBeforeApproval /
+      sendEvmReplacement / ReplacementRefusedError / replacementQuoteUsed
+      / setPendingRecordStore, every sendEvm broadcast recorded by a
+      listener registered at load, a replacement broadcast NOT fanned out
+      to the sent listeners (its value never counted again; the screen
+      records the fee); app/src/components/PendingTransactions.tsx — the
+      "Pending on this phone" section with its inline confirm, in
+      Activity's list header (and its unavailable / error states) and on
+      the Send success view; both smart-account submit paths record the
+      op. APPROVE ORDER: endpoint pinning → still pending and the fees
+      still clear the bump → spending limits (calls [], the fee counted,
+      no simulation) → device check → sign → record the fee; a quote
+      submitted once; a failed pre-flight disables Approve for a
+      speed-up; a speed-up of a cancellation stays a cancellation; the
+      cancel confirm shows "This cancellation sends 0 to yourself (0x…),
+      the account it comes from. Only the network fee is paid." instead of
+      the risk card. STRINGS: prompts "Approve speeding up the
+      transaction" / "Approve cancelling the transaction"; "This
+      transaction is already included in block N."; "This transaction is
+      no longer pending: the network already counts a transaction with
+      nonce N from this account, but did not return a receipt for any
+      transaction this wallet sent with that nonce. It may have been
+      replaced outside this wallet. Nothing was signed."; "The original
+      transaction was included before the replacement; the replacement
+      will be rejected by the network."; the underpriced, already-
+      submitted and stale-fee sentences; notices "Sped up: transaction
+      0x… (nonce N) was replaced by 0x…, included in block N." /
+      "Cancelled: the cancellation 0x… was included in block N, so
+      transaction 0x… (nonce N) will never be included."; row lines
+      "Speed-up of transaction 0x… (nonce N)." / "Cancellation of …";
+      the smart-account sentence ("A smart-account operation cannot be
+      sped up or cancelled from this wallet. Once the bundler accepted
+      it, the bundler holds it and the account's EntryPoint nonce decides
+      what runs; replacing it would mean asking the same bundler to
+      accept a new operation with the same nonce and fees at least 10%
+      higher, which this wallet does not attempt."); buttons Speed up /
+      Speed up the cancellation / Cancel / Approve speed-up / Approve
+      cancellation / Check status / Send again / Dismiss / Remove from
+      this list / Reset the pending list. BUG CAUGHT BY THE LIVE RUN: a
+      queued registry write waited for the queue it was in (deadlock —
+      nothing recorded, later reads hung; would have hit the app); fixed
+      in readRegistry, pinned with a check and the mutant. LIVE (Sepolia,
+      publicnode, a scratch script driving the app's own send.ts and
+      pending-transactions.ts; dev account 2 0xA4da…2378 funded 0.0015 by
+      0xc6478c3dfd61f3616dbfec1ca6fe6dc8fa962d3f78e4d776c676fab888b2d96f,
+      block 11893076, gasUsed 204,600 — EIP-2780 first transfer): SPEED
+      UP — original nonce 0, 0.0001 ETH, maxFee 1 wei / tip 1 (base fee
+      14), 0x79848f959e73020d842fd563554736236bc91c6467290b89540eda837321381d,
+      pending ≥ 2 min 20 s; replacement
+      0xfd0d6370d29084b32c6e28d3074a27c29979a401797f45375d279f5d1e693c96,
+      block 11893089, status 0x1 (minimum 2/2, the node's suggestion
+      1,000,034 / 1,000,004 chosen, effective 1,000,019); CANCEL —
+      original nonce 1, maxFee 7 / tip 1,
+      0x8a0b5a59284edcdbc7e372f1a9477c4c2edccd4ea72ca7281a780081d98fbc79,
+      pending 74 s; cancellation 0 to self
+      0xc9abe51ddb970983d2e0f790cb60528a3a142f480c560e38279e2c7f9a1ede89,
+      block 11893098, status 0x1, gasUsed 12,000 (EIP-2780 self-transfer);
+      both originals null for transaction and receipt afterwards
+      (dropped); the registry marked 'replaced' and 'cancelled'; a second
+      submission of the same quote refused; a replacement of the included
+      nonce refused "already included in block 11893098"; pool
+      observations: the stuck tx alternated between null and blockNumber
+      null read to read (publicnode's two backends) and the 'pending'
+      nonce flickered 1 ↔ 2; node fee acceptance varied by backend (1/1
+      accepted on the first run; later "transaction underpriced" and
+      "gas tip cap 0, minimum needed 1", 7/1 accepted); fees spent
+      ~0.000033 ETH; account 2 ends 0.0013999670 ETH. DECISIONS (CTO):
+      the wipe line added; NO readiness gate (a replacement is an
+      ordinary regular-account transaction, offered wherever Send is);
+      a replacement's full worst-case fee counts toward spending limits
+      (conservative); FOLLOW-UPS: smart-account ops from Swap, Staking and
+      WalletConnect are not recorded (an addAaSentListener in
+      WalletContext would cover them); the 7702 set-code and guardian
+      transactions are not recorded; the small "Send again" race (an old
+      op included between the final status check and the new quote).
+      Emulator checklist (9 steps) in the builder's report. UNVERIFIED: a
+      device; "original included first" live; a bundler-dropped op and
+      "Send again" live; a non-publicnode node's treatment of a fee cap
+      below the base fee; the "nonce too low" wording from a real node;
+      whether ZeroDev accepts a user-operation replacement.
