@@ -4192,7 +4192,7 @@ emulator passes; 3 — item 3; 4 last. Subagents on Opus.
       from Google Play services to the messaging service; the permission
       is declared by com.google.android.gsf, "held by Google Play
       services" per Google's GCM reference (read through a mirror; the
-      protection level, expected signature, is unverified —  would show it);
+      protection level, expected signature, is unverified — the command `adb shell pm list permissions -f | grep -A5 c2dm.permission.SEND` would show it);
       NO NETWORK CALL on the app's paths: FirebaseInitProvider.onCreate →
       FirebaseApp.initializeApp(Context) → FirebaseOptions.fromResource
       returns null without google_app_id → logs "Default FirebaseApp
