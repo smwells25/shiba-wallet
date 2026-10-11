@@ -4610,3 +4610,87 @@ multisig; dropping Holesky from the custom allow-list once its sunset
 is confirmed from an Ethereum Foundation source; a TalkBack pass; the
 reminders fixes re-run in the development build with the new icon;
 DEMO step 24 rewritten for a non-built-in custom network.
+- [x] Phase 18 follow-ups, no inputs (commit c7400ee; check-wc 298 (was
+      272), check-simulation 75 (62), check-multisig 282 (273),
+      check-recurring 185 (174), check-custom-networks 199 (188); offline
+      runner ALL GREEN in the CTO's isolated worktree on HEAD plus the
+      slice: engine 913, app 7,561 across 51 suites, lint 0/0, tsc clean;
+      every old file fails its suite from a scratch copy; not seen on a
+      device). (1) WcSentView WIRED: new app/src/wallet/wc-sent.ts
+      (WcSentResult with receiptState / success, wcSentResult,
+      withSentReceipt, answerDappThenShow); on the regular-account
+      transaction, smart-account transaction and wallet_sendCalls paths —
+      and so the in-app browser's — the dApp is answered FIRST exactly as
+      before, then the queue item completes, then the view shows (fakes
+      prove nothing shows or completes while the answer is in flight; a
+      failed reply still completes and shows); a batch shows the
+      userOpHash and a 120 s background receipt wait adds the bundle hash
+      to the same view (matched by item key) so the note moves; the view
+      stays mounted under the lock and is drawn before the next request's
+      sheet; Done clears it; the three Alerts are gone. BEYOND THE BRIEF
+      (CTO accepted): the "Submitted, not yet included" alert is a view
+      too (the dApp still rejected first, the note kept under the
+      userOpHash), and a smart-account transaction whose receipt reports
+      failure shows the revert warning (the old alert ignored the flag).
+      Titles "Transaction sent" / "Transaction sent, dApp not notified" /
+      "Batch sent to the bundler" / "Batch sent, dApp not notified" /
+      "Submitted, not yet included"; the not-notified details end "…check
+      the transaction in a block explorer before retrying anything." (the
+      hash is on the view, not inline); the not-included detail names the
+      two-minute wait and an ERC-4337 explorer; receipt lines "Waiting for
+      the UserOperation receipt. The bundle transaction appears here once
+      the operation is included.", Send's timeout and revert sentences,
+      "Included on-chain — succeeded.". (2) simulation.ts
+      describeAssetChanges(…, chainCaip2?) sets note: REBASING_TOKEN_NOTE
+      on a token row that passes rebasingTokenNote on that chain (row text
+      unchanged, pins untouched); BalanceChangePreview passes
+      evmChain.caip2 and draws the muted line (the live stake case, the
+      outgoing row, Hide amounts; no note for wstETH, another chain, a
+      look-alike address, an approval, no chain). NOTED: the staking
+      confirm already shows its own STETH_REBASING_NOTE, so a stETH stake
+      may show two rebasing sentences — follow-up (drop one). (3)
+      AccountsSection lists multisigs READ-ONLY under "Multi-signature
+      accounts" — "Listed here for reference only. They are managed on
+      the Multisig screen (Settings → Multi-signature accounts) and cannot
+      be hidden here." — one line each ("Multisig 2 (2-of-3) · 0x944c…0d38
+      · Ethereum Sepolia"; an unknown network shows its CAIP-2 id); nothing
+      when there are none; the block holds no Button / Pressable / onPress
+      / Switch (pinned); DEMO step 27's fallback line updated. (4)
+      recurring.ts recurringChecksApplyTo (ready, address present, not
+      watch-only, not multisig) used by RecurringDueBanner's eligible and
+      NotificationScheduler's canPay — for a multisig only the local
+      network-free pass runs (0 status reads and 0 fetches with a due
+      payment stored for that owner; a phrase account makes 1 as the
+      control). (5) DEMO step 24 rewritten for POLYGON AMOY (80002,
+      polygon-amoy-bor-rpc.publicnode.com — agent probe 2026-10-11 05:27
+      UTC: eth_chainId 0x13882, head 49,873,916 1 s old, ~1 s blocks;
+      coin POL per ethereum-lists eip155-80002.json), the refusals and
+      removal kept, stating the 2026-10-10 rehearsal used Hoodi before it
+      became built in and that the Polygon Amoy walk-through is not
+      rehearsed; warning 2's step-24 sentence updated. (6) HOLESKY
+      RETIRED: the Ethereum Foundation's "Holešky Testnet Shutdown
+      Announcement" (blog.ethereum.org/2025/09/01/holesky-shutdown-announcement,
+      EF Protocol Support; the CTO re-fetched it: "As previously
+      announced, the Holešky testnet has reached its planned end-of-life
+      date and will be sunset shortly." / "…After this, Holešky will no
+      longer be supported by client, testing or infrastructure teams.") —
+      17000 removed from KNOWN_PUBLIC_TEST_CHAIN_IDS (order of the rest
+      unchanged; the "never shrinks" comment corrected), new
+      RETIRED_PUBLIC_TEST_CHAIN_IDS / retiredPublicTestChain /
+      isStoredTestChainIdAccepted; the listing sentences are generated
+      from the list; new refusal "Chain id 17000 is Holesky, a public test
+      network that has reached its end of life and is no longer supported
+      by Ethereum's client, testing and infrastructure teams, so it can no
+      longer be added as a test network. Nothing was saved."; DESIGN (CTO
+      accepted): a stored record for 17000 saved earlier as a test
+      network is re-validated with { stored: true } and keeps loading as
+      a test network — otherwise the strict parse would turn the whole
+      custom list read-only; only new additions are refused; THREAT_MODEL
+      T-72's network list and the DEMO text updated; the check fixtures
+      moved to Linea Sepolia (59141) and main-network 59144. UNVERIFIED
+      (emulator): the sent view's layout, back button, dark mode and the
+      receipt line updating while open (WalletConnect and the browser);
+      a new request's sheet waiting behind the view; the preview note
+      under a stETH row; the Accounts list layout; the silent banner with
+      a multisig active; the Polygon Amoy walk-through; the Holesky
+      refusal on screen.
