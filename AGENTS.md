@@ -6235,3 +6235,61 @@ by the Chairperson is still pending ("a few appear safe to ignore").
       files deleted from /sdcard/Download. UNVERIFIED: file open in a dev
       build; whether guardian recovery import is actually broken; dark
       mode; TalkBack; iOS.
+- [x] Multisig pass findings FIXED, incl. the file-open bug that also hit
+      guardian recovery import (commit 1ed6b1c; check-multisig 364 (was 350,
+      31 mutants), check-recovery 264 (261); offline runner ALL GREEN in
+      the CTO's isolated worktree on HEAD 1310f3e: engine 981, app 8,107
+      across 53 suites, lint 0/0, tsc clean; every old file fails its
+      suite from a scratch copy; not seen on a device). (1) THE FILE-OPEN
+      BUG — installed-source finding (expo-document-picker 57.0.3,
+      expo-file-system 57.0.7): getDocumentAsync({copyToCacheDirectory:
+      true}) on Android copies the picked file into the HOST app's cache
+      and returns a file:// uri; in Expo Go that cache copy is OUTSIDE the
+      scoped paths the file-permission service grants, so new
+      File(copy).text() throws InvalidPermissionException "Missing 'READ'
+      permission" (the raw error the pass saw); a content:// SAF uri, by
+      contrast, reads through contentResolver.openInputStream with the
+      open-document grant and checkPermission returns true. FIX in the
+      shared RecordFileActions.tsx pickRecordFile: on Android pick with
+      copyToCacheDirectory FALSE and read the original content:// uri
+      (works in Expo Go and dev builds); on iOS keep the cache copy (the
+      security-scoped original is not reliably readable) and delete it
+      after reading; a content uri (the user's own file) is never
+      deleted; ANY read failure is wrapped in RecordFileReadError whose
+      message is the plain sentence RECORD_FILE_READ_FAILED_MESSAGE ("It
+      could not be read on this device. Some file pickers do not give the
+      app permission to read the chosen file; use Share, Copy or the QR
+      scan instead."), shown as "This file was not accepted. It could not
+      be read…" (multisig) / "The file was not imported: It could not be
+      read…" (recovery), never raw. GUARDIAN RECOVERY-FILE IMPORT WAS
+      BROKEN BY THE SAME HELPER (RecoverAccountScreen.onImportFile) and is
+      fixed at once (check-recovery pins it; the old helper fails a
+      recovery pin). VERIFIED against the installed native source, NOT
+      executed on a device — reading the content:// SAF uri in Expo Go on
+      real Android, and iOS entirely, remain to confirm. (2) History no
+      longer shows one request id as two rows: prepareMultisigRequest
+      filters any existing operation with the new request id before
+      unshifting (a request id whose nonce was consumed on-chain can never
+      recur, so no completed op is lost), and the list is keyed by
+      index:requestId:status, not the request id alone. (3) "New operation
+      (send)" while one is collecting now asks first ("Start a new
+      operation?" / "The one you are collecting approvals for will be
+      discarded." / Cancel / "Discard and start"). (4) The weight bar
+      reads "Co-signer approvals: weight 2 (threshold 2 met by co-signers
+      alone) — ready" and drops the "This wallet signs the remaining
+      weight" line when the co-signers alone meet the threshold
+      (under-threshold wording unchanged). (5) The "Check this network"
+      failure sentence ends with a period (asSentence; the engine's
+      verifyKernelDeployment message carries none). (6a) the collect-phase
+      error renders ABOVE the scan/paste/file inputs. (6b) the shell
+      ScrollView already uses keyboardShouldPersistTaps "handled" (= the
+      note views), so nothing changed for the double-tap; a regression pin
+      keeps it "handled" — if the double-tap is still seen on a device the
+      next step is "always", a deviation from the note views, so it was
+      left matching them. FOLLOW-UPS (non-trivial, left): the multisig
+      confirm has no balance-change preview (needs eth_simulateV1 plumbed
+      into that screen); approving as a co-signer is not recorded in this
+      phone's History (a data-model addition). UNVERIFIED: the content://
+      read in Expo Go on a device; iOS; the single-tap add-approval; the
+      live look of the confirm dialog, the deduped History and the new
+      bar wording.
