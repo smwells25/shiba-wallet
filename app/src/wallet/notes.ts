@@ -5,6 +5,7 @@ import type { HistoryEntry } from '@shiba-wallet/core';
 import type { KeyValueStore } from './tokens.ts';
 import { sanitizeDisplayName } from './names.ts';
 import { formatUnits } from './balances.ts';
+import { isSmartAccountEntry } from './smart-account-history.ts';
 
 /**
  * Transaction notes and receipts (feature 87).
@@ -610,7 +611,9 @@ export function activityExportRows(input: ActivityExportInput): string[][] {
     return [
       networkCell,
       exportDate(entry),
-      directionWord(entry.direction) + (entry.failed ? ' (failed)' : ''),
+      // A row from the smart account's history (smart-account-history.ts)
+      // says so: its direction and amount are the smart account's.
+      directionWord(entry.direction) + (isSmartAccountEntry(entry) ? ' (smart account)' : '') + (entry.failed ? ' (failed)' : ''),
       amount,
       asset,
       fee,

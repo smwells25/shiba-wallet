@@ -29,7 +29,13 @@ import {
   signedDisplay,
   spokenAmount as spokenDisplayAmount,
 } from '../wallet/balances';
-import { directionLabel, explorerTxUrl, timestampLabel } from '../wallet/history';
+import {
+  directionLabel,
+  explorerTxUrl,
+  hidesZeroNativeAmount,
+  timestampLabel,
+  transactionsWithTokenAmounts,
+} from '../wallet/history';
 import { EVM_CHAIN_ID } from '../wallet/send';
 import { useHistory } from '../wallet/useHistory';
 import { usePrefs } from '../wallet/PrefsContext';
@@ -37,13 +43,15 @@ import { useWallet } from '../wallet/WalletContext';
 import { OfflineNotice, TechnicalDetail } from '../wallet/connectivity';
 import { sanitizeEndpointMessage } from '../config/endpoint-probe';
 import {
-  activityAccountLabels,
+  activityAddressSets,
   createActivityDecoder,
+  historySmartAccountFor,
   renderActivitySentence,
-  walletAddressesFor,
+  type AccountLabel,
   type ActivityDecoder,
   type DecodedActivity,
 } from '../wallet/activity-sentences';
+import { isSmartAccountEntry, smartAccountHistoryNote } from '../wallet/smart-account-history';
 import { listContacts, type Contact } from '../wallet/contacts';
 import { listTokens } from '../wallet/tokens';
 import { getAaConfig } from '../wallet/aa';
@@ -111,6 +119,7 @@ function EntryRow({
   sentence,
   note,
   onEditNote,
+  noAmount = false,
 }: {
   entry: HistoryEntry;
   chainId: string;
@@ -133,6 +142,12 @@ function EntryRow({
   note: TransactionNote | null;
   /** Opens the note editor; null when notes cannot be written (unsupported id or a damaged store). */
   onEditNote: (() => void) | null;
+  /**
+   * True for a zero-value native entry of a transaction whose token
+   * movement is on another row (history.ts hidesZeroNativeAmount): the row
+   * then shows no amount instead of "−0".
+   */
+  noAmount?: boolean;
 }) {
   const theme = useTheme();
   const url = explorerTxUrl(chainId, entry.id, evmExplorerTxBase);
@@ -155,7 +170,7 @@ function EntryRow({
         : formatBalanceDisplay(entry.amount, decimals);
   const amountText =
     display === null ? '—' : maskAmount(signedDisplay(sign, display), hidden);
-  const hasAmount = entry.assetAmount !== undefined || entry.amount !== undefined;
+  const hasAmount = !noAmount && (entry.assetAmount !== undefined || entry.amount !== undefined);
   const amountColor =
     entry.failed || !hasAmount
       ? theme.textMuted
@@ -173,7 +188,14 @@ function EntryRow({
         : // The row's direction is already spoken; a dust amount reads
           // "less than 0.000001" without a sign in front of "less".
           `${display.startsWith('< ') ? '' : sign}${spokenDisplayAmount(display)} ${rowSymbol}`;
-  const spokenStatus = [entry.failed ? 'failed' : null, !entry.confirmed ? 'pending' : null]
+  // Rows from the smart account's history (smart-account-history.ts): the
+  // direction and amount are the smart account's, so the row says so.
+  const smartAccountRow = isSmartAccountEntry(entry);
+  const spokenStatus = [
+    smartAccountRow ? 'smart account' : null,
+    entry.failed ? 'failed' : null,
+    !entry.confirmed ? 'pending' : null,
+  ]
     .filter(Boolean)
     .join(', ');
   return (
@@ -210,11 +232,16 @@ function EntryRow({
         ) : null}
       </View>
       <View style={styles.rowRight}>
-        <Text style={[styles.amount, { color: amountColor }]} numberOfLines={1}>
-          {amountText}
-        </Text>
-        <Text style={[styles.amountSymbol, { color: theme.textMuted }]}>{rowSymbol}</Text>
+        {noAmount ? null : (
+          <>
+            <Text style={[styles.amount, { color: amountColor }]} numberOfLines={1}>
+              {amountText}
+            </Text>
+            <Text style={[styles.amountSymbol, { color: theme.textMuted }]}>{rowSymbol}</Text>
+          </>
+        )}
         <View style={styles.chips}>
+          {smartAccountRow ? <StatusChip label="smart account" color={theme.accent} theme={theme} /> : null}
           {entry.failed ? <StatusChip label="failed" color={theme.danger} theme={theme} /> : null}
           {!entry.confirmed ? (
             <StatusChip label="pending" color={theme.warningText} theme={theme} />
@@ -359,6 +386,8 @@ function useActivitySentences(options: {
   chainIdDecimal: string;
   eoa: string | null;
   accountIndex: number | null;
+  /** The accounts the wallet holds a key for (their smart accounts are labelled). */
+  accounts: readonly { name: string; evmAddress: string | null; index: number }[];
   refreshing: boolean;
 }): {
   /** The decoded transaction for a row id, or undefined. */
@@ -367,17 +396,28 @@ function useActivitySentences(options: {
   /** Changes whenever new decodes arrived (for memoization). */
   version: number;
   onViewableItemsChanged: (info: { viewableItems: ViewToken[] }) => void;
-  /** The wallet's stored multisigs on this network, with their labels (for the account labels). */
-  multisigs: { address: string; label: string }[];
+  /**
+   * The labels of the wallet's own accounts, their smart accounts and the
+   * network's stored multisigs (activityAddressSets().labels).
+   */
+  labels: AccountLabel[];
+  /** The addresses that read "yourself" (activityAddressSets().self). */
+  self: string[];
 } {
-  const { enabled, chainCaip2, chainIdDecimal, eoa, accountIndex, refreshing } = options;
+  const { enabled, chainCaip2, chainIdDecimal, eoa, accountIndex, accounts, refreshing } = options;
+  // Every account's index, name and address: a rename or a new account
+  // rebuilds the labels and the decode set.
+  const accountsKey = accounts.map((a) => `${a.index}:${a.name}:${a.evmAddress ?? ''}`).join(',');
   const setupKey =
-    enabled && eoa && accountIndex !== null ? `${chainCaip2}|${chainIdDecimal}|${eoa}|${accountIndex}` : null;
+    enabled && eoa && accountIndex !== null
+      ? `${chainCaip2}|${chainIdDecimal}|${eoa}|${accountIndex}|${accountsKey}`
+      : null;
   const [setup, setSetup] = useState<{
     key: string;
     decoder: ActivityDecoder;
     contacts: Contact[];
-    multisigs: { address: string; label: string }[];
+    labels: AccountLabel[];
+    self: string[];
   } | null>(null);
   const [version, setVersion] = useState(0);
   const [visibleIds, setVisibleIds] = useState<string[]>([]);
@@ -394,19 +434,25 @@ function useActivitySentences(options: {
           listTokens(chainCaip2),
           listContacts(chainCaip2),
           getAaConfig(chainCaip2).catch(() => null),
-          // The wallet's own multisigs on this network read as its own
-          // addresses in the sentences (phase 18 item 3).
+          // The wallet's own multisigs on this network are decoded as its
+          // own addresses (phase 18 item 3) and named by their labels.
           ownMultisigAddresses(chainCaip2),
         ]);
         if (cancelled) return;
+        // "Yourself" is only this account (and its own smart account); the
+        // wallet's other smart accounts and its multisigs are decoded as
+        // the wallet's own but named (emulator re-check of 2026-10-11,
+        // findings 2 and 3).
+        const sets = activityAddressSets({ eoa, accountIndex, aa, accounts, multisigs });
         setSetup({
           key: setupKey,
           contacts: savedContacts,
-          multisigs,
+          labels: sets.labels,
+          self: sets.self,
           decoder: createActivityDecoder({
             chainCaip2,
             evmChainId: BigInt(chainIdDecimal),
-            wallet: walletAddressesFor(eoa, accountIndex, aa, multisigs),
+            wallet: sets.wallet,
             trackedTokens: tokens,
           }),
         });
@@ -417,6 +463,7 @@ function useActivitySentences(options: {
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `setupKey` covers every account's index, name and address; `accounts` is a new array on every wallet-context render.
   }, [setupKey, chainCaip2, chainIdDecimal, eoa, accountIndex]);
 
   // A pull-to-refresh retries rows whose decode failed earlier.
@@ -460,12 +507,14 @@ function useActivitySentences(options: {
     contacts: current?.contacts ?? EMPTY_CONTACTS,
     version,
     onViewableItemsChanged,
-    multisigs: current?.multisigs ?? EMPTY_MULTISIGS,
+    labels: current?.labels ?? EMPTY_LABELS,
+    self: current?.self ?? EMPTY_SELF,
   };
 }
 
 const EMPTY_CONTACTS: Contact[] = [];
-const EMPTY_MULTISIGS: { address: string; label: string }[] = [];
+const EMPTY_LABELS: AccountLabel[] = [];
+const EMPTY_SELF: string[] = [];
 
 /**
  * The muted technical line for a history failure. useHistory keeps only the
@@ -489,12 +538,52 @@ export function ActivityScreen({ navigation, route }: Props) {
   const { hideAmounts, evmChain } = usePrefs();
   const account = accounts.find((a) => a.chainId === chainId);
   const network = networkDefaultFor(chainId);
-  const { state, refreshing, reload, loadMore } = useHistory(chainId, account?.address ?? '');
+  // The active regular account's smart account is listed too, when the
+  // network's smart-account settings give one without a network request
+  // (activity-sentences.ts historySmartAccountFor; not for a watch-only or
+  // multisig account). The history waits until the settings are read, so
+  // it is fetched once with its final address set.
+  const isEvmSlot = chainId === EVM_CHAIN_ID;
+  const smartOwner = account?.address ?? null;
+  const smartOwnerIndex = activeAccount?.index ?? null;
+  // Only a regular account on the EVM slot has a smart account to list.
+  const smartCandidate =
+    isEvmSlot &&
+    smartOwner !== null &&
+    smartOwnerIndex !== null &&
+    activeAccount?.watchOnly !== true &&
+    activeAccount?.multisig !== true;
+  const smartKey = `${evmChain.caip2}|${smartOwner ?? ''}|${smartOwnerIndex ?? ''}`;
+  const [historySmart, setHistorySmart] = useState<{ key: string; address: string | null } | null>(null);
+  useEffect(() => {
+    if (!smartCandidate || smartOwner === null || smartOwnerIndex === null) return;
+    let cancelled = false;
+    getAaConfig(evmChain.caip2)
+      .catch(() => null)
+      .then((aa) => {
+        if (cancelled) return;
+        let address: string | null = null;
+        try {
+          address = historySmartAccountFor(smartOwner, smartOwnerIndex, aa);
+        } catch {
+          address = null;
+        }
+        setHistorySmart({ key: smartKey, address });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [smartCandidate, smartKey, smartOwner, smartOwnerIndex, evmChain.caip2]);
+  const smartReady = !smartCandidate || (historySmart !== null && historySmart.key === smartKey);
+  const historySmartAccount = smartCandidate && smartReady && historySmart ? historySmart.address : null;
+  const { state, refreshing, reload, loadMore } = useHistory(chainId, account?.address ?? '', {
+    smartAccount: historySmartAccount,
+    ready: smartReady,
+  });
   // The EVM slot's symbol/explorer follow the active chain profile
   // (test ETH + sepolia.etherscan.io in Sepolia test mode). useHistory
   // already resolves the endpoint and indexer config through the same
   // active-chain translation in config/networks.ts.
-  const isEvmSlot = chainId === EVM_CHAIN_ID;
   const symbol = isEvmSlot ? evmChain.displaySymbol : network?.symbol ?? '';
   const sentences = useActivitySentences({
     enabled: isEvmSlot,
@@ -502,6 +591,7 @@ export function ActivityScreen({ navigation, route }: Props) {
     chainIdDecimal: evmChain.chainIdDecimal,
     eoa: isEvmSlot ? account?.address ?? null : null,
     accountIndex: activeAccount?.index ?? null,
+    accounts: accountList,
     refreshing,
   });
   // Rendered on every render (cheap: cached decodes only), so Hide amounts
@@ -511,10 +601,9 @@ export function ActivityScreen({ navigation, route }: Props) {
   // decoded account itself, and calls to the staking contracts the wallet
   // pins on this network are described by what they do (phase 18 item 3
   // emulator findings 4 and 7e).
-  const accountLabels = useMemo(
-    () => activityAccountLabels(accountList, sentences.multisigs),
-    [accountList, sentences.multisigs],
-  );
+  // "Yourself" only for this account's own addresses (sentences.self); the
+  // labels name every other account, smart account and multisig.
+  const accountLabels = sentences.labels;
   const pinnedStakingAt = useCallback(
     (address: string) => stakingContractAt(evmChain.caip2, address),
     [evmChain.caip2],
@@ -526,6 +615,7 @@ export function ActivityScreen({ navigation, route }: Props) {
     networkId: evmChain.caip2,
     accountLabels,
     stakingContractAt: pinnedStakingAt,
+    selfAddresses: sentences.self,
   };
   const sentenceFor = (id: string): string | null => {
     const decoded = sentences.lookup(id);
@@ -645,6 +735,8 @@ export function ActivityScreen({ navigation, route }: Props) {
 
   // status === 'ok'
   const loadedEntries = state.entries;
+  const tokenTxIds = transactionsWithTokenAmounts(loadedEntries);
+  const smartHistoryNote = smartAccountHistoryNote(state.smartAccount, historySmartAccount);
   // The CSV holds exactly the entries loaded on this screen, with the notes
   // and the decoded counterparties already in memory; it makes no request.
   const exportActivity = () => {
@@ -751,6 +843,7 @@ export function ActivityScreen({ navigation, route }: Props) {
             hidden={hideAmounts}
             evmExplorerTxBase={evmChain.explorerTxBase}
             sentence={isEvmSlot ? sentenceFor(item.id) : null}
+            noAmount={hidesZeroNativeAmount(item, tokenTxIds)}
             note={noteFor(item.id)}
             onEditNote={
               noteBook && !noteBook.readOnly && normalizeTxId(noteNetwork, item.id)
@@ -791,6 +884,9 @@ export function ActivityScreen({ navigation, route }: Props) {
             ) : null}
             {/* Already cleaned by history.ts (sanitizeEndpointMessage). */}
             <TechnicalDetail text={state.noteDetail} />
+            {smartHistoryNote ? (
+              <Text style={[styles.note, { color: theme.textMuted }]}>{smartHistoryNote}</Text>
+            ) : null}
             {noteBook?.readOnly ? (
               <View style={[styles.notesDamaged, { borderColor: theme.warningBorder, backgroundColor: theme.warningSurface }]}>
                 <Text style={[styles.notesDamagedText, { color: theme.warningText }]}>

@@ -638,3 +638,60 @@ describe('describeCall (wording supplied by the caller)', () => {
     expect(ACTIVITY_CALL_VERBS).toEqual(expect.arrayContaining(['staked', 'wrapped', 'unwrapped', 'requested', 'claimed', 'burned', 'sent', 'called']));
   });
 });
+
+describe('selfAddresses (whose Activity this is)', () => {
+  // The wallet's other own addresses (another account's smart account, a
+  // multisig) stay in the wallet set so their operations and movements are
+  // decoded, but only the viewing account reads "yourself"; the others are
+  // named through nameFor.
+  const MULTISIG = getAddress('0x944caa404e389b18b2fe251e969edd7a220d0d38');
+  const names: Record<string, string> = {
+    [MULTISIG.toLowerCase()]: 'Multisig 2 (2-of-3)',
+    [KERNEL_OF_ACCOUNT_1.toLowerCase()]: 'Account 1’s smart account',
+    [ACCOUNT_1.toLowerCase()]: 'Account 1',
+    [BURN.toLowerCase()]: 'Burn',
+  };
+  const named = (over: Partial<ActivitySentenceContext> = {}) =>
+    ctx({ nameFor: (a) => names[a.toLowerCase()] ?? null, ...over });
+
+  it('without the option nothing changes; with it every wallet address that is not self is named', () => {
+    const toMultisig = describe1(syntheticTx({ to: MULTISIG, value: '0x2386f26fc10000' }), syntheticReceipt([]), [ACCOUNT_1, MULTISIG]);
+    expect(activitySentence(toMultisig, named())).toBe('Sent 0.01 ETH to yourself');
+    expect(activitySentence(toMultisig, named({ selfAddresses: [ACCOUNT_1] }))).toBe('Sent 0.01 ETH to Multisig 2 (2-of-3)');
+    // A self address that is not in the wallet set never reads "yourself".
+    expect(activitySentence(toMultisig, named({ selfAddresses: [ACCOUNT_1, STRANGER] }))).toBe('Sent 0.01 ETH to Multisig 2 (2-of-3)');
+    // From the multisig's side the same transfer is received from Account 1.
+    expect(activitySentence(describe1(syntheticTx({ to: MULTISIG, value: '0x2386f26fc10000' }), syntheticReceipt([]), [MULTISIG]), named({ selfAddresses: [MULTISIG] }))).toBe(
+      'Received 0.01 ETH from Account 1',
+    );
+  });
+
+  it("another own account's smart-account operation is named as its sender", () => {
+    // The pinned handleOps fixture: Account 1's Kernel account sends 0.0001 ETH to Burn.
+    const d = describeFixture('0xe189', [MULTISIG, KERNEL_OF_ACCOUNT_1]);
+    expect(activitySentence(d, named())).toBe('Smart-account operation: sent 0.0001 ETH to Burn');
+    expect(activitySentence(d, named({ selfAddresses: [MULTISIG] }))).toBe(
+      'Smart-account operation by Account 1’s smart account: sent 0.0001 ETH to Burn',
+    );
+    // The account's own smart account is still "Smart-account operation".
+    expect(activitySentence(describeFixture('0xe189', [ACCOUNT_1, KERNEL_OF_ACCOUNT_1]), named({ selfAddresses: [ACCOUNT_1, KERNEL_OF_ACCOUNT_1] }))).toBe(
+      'Smart-account operation: sent 0.0001 ETH to Burn',
+    );
+    // Without a name the short address is used.
+    expect(activitySentence(d, ctx({ nameFor: () => null, selfAddresses: [MULTISIG] }))).toBe(
+      'Smart-account operation by 0xD31c…D8FA: sent 0.0001 ETH to 0x0000…dEaD',
+    );
+  });
+
+  it("what another own address received in someone else's transaction starts with its name", () => {
+    const d = describe1(
+      syntheticTx({ from: STRANGER, to: USDC, input: erc20.encodeFunctionData('transfer', [MULTISIG, 2_500_000n]) }),
+      syntheticReceipt([transferLog(USDC, STRANGER, MULTISIG, 2_500_000n)]),
+      [ACCOUNT_1, MULTISIG],
+    );
+    expect(activitySentence(d, named())).toBe('Received 2.5 USDC from 0x2222…2222');
+    expect(activitySentence(d, named({ selfAddresses: [ACCOUNT_1] }))).toBe('Multisig 2 (2-of-3) received 2.5 USDC from 0x2222…2222');
+    const eth = describe1(syntheticTx({ from: STRANGER, to: MULTISIG, value: '0x1' }), syntheticReceipt([]), [ACCOUNT_1, MULTISIG]);
+    expect(activitySentence(eth, named({ selfAddresses: [ACCOUNT_1] }))).toBe('Multisig 2 (2-of-3) received 0.000000000000000001 ETH from 0x2222…2222');
+  });
+});

@@ -22,8 +22,11 @@ import {
   MULTISIG_LIST_HINT,
   MULTISIG_SWITCHER_LINE,
   PHRASE_ACCOUNT_WAS_WATCHED_TITLE,
+  SWITCHER_INTRO_TOGGLE,
+  SWITCHER_SCROLL_HINT,
   WATCH_ONLY_LIST_HINT,
   phraseAccountSameAsWatchedNote,
+  switcherListOverflows,
 } from '../wallet/watch-only';
 
 /**
@@ -48,6 +51,12 @@ export function AccountSwitcher({ onManage, onImportKey }: { onManage: () => voi
   const { activeAccount, accountList, watchOnlyAccounts, multisigAccounts, switchAccount, addAccount } = useWallet();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  // The "What is backed up?" expander (closed each time the list opens) and
+  // the sizes the scroll hint is computed from.
+  const [introOpen, setIntroOpen] = useState(false);
+  const [listHeight, setListHeight] = useState(0);
+  const [contentHeight, setContentHeight] = useState(0);
+  const [scrollY, setScrollY] = useState(0);
 
   if (!activeAccount) return null;
   // Accounts with a key first, then the watch-only ones and the multisigs
@@ -95,7 +104,11 @@ export function AccountSwitcher({ onManage, onImportKey }: { onManage: () => voi
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`Active account: ${activeAccount.name}${activeAccount.watchOnly ? ', watch-only, no key in this wallet' : ''}${activeAccount.multisig ? ', multi-signature account, operations need co-signers' : ''}. Switch account`}
-        onPress={() => setOpen(true)}
+        onPress={() => {
+          setIntroOpen(false);
+          setScrollY(0);
+          setOpen(true);
+        }}
         style={({ pressed }) => [
           styles.header,
           { backgroundColor: theme.card, borderColor: theme.border, opacity: pressed ? 0.8 : 1 },
@@ -127,15 +140,51 @@ export function AccountSwitcher({ onManage, onImportKey }: { onManage: () => voi
       <Modal visible={open} animationType="slide" onRequestClose={() => setOpen(false)}>
         <View style={[styles.modal, { backgroundColor: theme.background }]}>
           <Text style={[styles.modalTitle, { color: theme.text }]}>Accounts</Text>
-          <Text style={[styles.hint, { color: theme.textMuted }]}>
-            {accountsBackupHint(anyImported, { watchOnly: anyWatched, multisig: anyMultisig })}
-            {anyWatched ? ` ${WATCH_ONLY_LIST_HINT}` : ''}
-            {anyMultisig ? ` ${MULTISIG_LIST_HINT}` : ''} To watch an address, use Manage accounts.
-          </Text>
+          {/*
+            The account list is the one scrolling area between the title and
+            the buttons (FlatList, flex 1). The intro used to sit above it
+            and, with a multisig listed, took about eight lines at phone
+            width, so the last row was cut off with no sign that the list
+            scrolls. It is now a one-line "What is backed up?" expander in
+            the list's header (collapsed by default, so it scrolls with the
+            rows when opened); every row the phrase does not back up
+            (imported, watch-only, multisig) keeps its own line saying so,
+            and a scroll hint appears under the list while rows are still
+            below.
+          */}
           <FlatList
             data={visible}
             keyExtractor={(a) => String(a.index)}
+            style={styles.listArea}
             contentContainerStyle={styles.list}
+            persistentScrollbar
+            onLayout={(e) => setListHeight(e.nativeEvent.layout.height)}
+            onContentSizeChange={(_w, h) => setContentHeight(h)}
+            onScroll={(e) => setScrollY(e.nativeEvent.contentOffset.y)}
+            scrollEventThrottle={100}
+            ListHeaderComponent={
+              <View style={styles.introBlock}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={SWITCHER_INTRO_TOGGLE}
+                  accessibilityState={{ expanded: introOpen }}
+                  accessibilityHint="Shows which accounts your recovery phrase backs up"
+                  onPress={() => setIntroOpen((v) => !v)}
+                  hitSlop={8}
+                >
+                  <Text style={[styles.introToggle, { color: theme.accent }]} numberOfLines={1}>
+                    {introOpen ? `${SWITCHER_INTRO_TOGGLE} ▾` : `${SWITCHER_INTRO_TOGGLE} ▸`}
+                  </Text>
+                </Pressable>
+                {introOpen ? (
+                  <Text style={[styles.hint, { color: theme.textMuted }]}>
+                    {accountsBackupHint(anyImported, { watchOnly: anyWatched, multisig: anyMultisig })}
+                    {anyWatched ? ` ${WATCH_ONLY_LIST_HINT}` : ''}
+                    {anyMultisig ? ` ${MULTISIG_LIST_HINT}` : ''} To watch an address, use Manage accounts.
+                  </Text>
+                ) : null}
+              </View>
+            }
             renderItem={({ item }) => {
               const active = item.index === activeAccount.index;
               return (
@@ -190,6 +239,9 @@ export function AccountSwitcher({ onManage, onImportKey }: { onManage: () => voi
               );
             }}
           />
+          {switcherListOverflows({ listHeight, contentHeight, scrollY }) ? (
+            <Text style={[styles.scrollHint, { color: theme.textMuted }]}>{SWITCHER_SCROLL_HINT}</Text>
+          ) : null}
           <Button title="Add account" onPress={() => void add()} disabled={busy} />
           <Button
             title="Import a private key"
@@ -254,9 +306,28 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
   },
+  introBlock: {
+    gap: 6,
+  },
+  introToggle: {
+    fontSize: 14,
+    fontWeight: '600',
+    paddingVertical: 2,
+  },
+  // Explicit, although a vertical ScrollView already grows and shrinks by
+  // default: the list takes the space between the title and the buttons
+  // and scrolls inside it.
+  listArea: {
+    flexGrow: 1,
+    flexShrink: 1,
+  },
   list: {
     gap: 10,
     paddingVertical: 8,
+  },
+  scrollHint: {
+    fontSize: 12,
+    textAlign: 'center',
   },
   row: {
     flexDirection: 'row',

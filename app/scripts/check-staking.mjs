@@ -821,6 +821,34 @@ console.log('check-staking: a stake the account cannot afford says so (phase 18 
 }
 
 // ---------------------------------------------------------------------------
+console.log('check-staking: the unaffordable-stake title names the network\'s coin (2026-10-11 re-check, finding 5)');
+// ---------------------------------------------------------------------------
+{
+  // The emulator showed "Not enough ETH to cover this amount plus the network
+  // fee." on Ethereum Sepolia: the screen passed a hard-coded 'ETH' to
+  // describeSendError. It now passes evmChain.displaySymbol ("test ETH").
+  const screenSrc = readFileSync(join(APP_ROOT, 'src/screens/StakingScreen.tsx'), 'utf8');
+  const symbolOk = (src) =>
+    src.includes('function describeStakingError(e: unknown, symbol: string): string {') &&
+    src.includes('const { title, detail } = describeSendError(e, symbol);') &&
+    !src.includes("describeSendError(e, 'ETH')") &&
+    !/describeStakingError\(e\)/.test(src) &&
+    (src.match(/describeStakingError\(e, symbol\)/g) ?? []).length === 2 &&
+    src.includes('const symbol = evmChain.displaySymbol;');
+  check('StakingScreen words its errors with evmChain.displaySymbol, never a hard-coded "ETH" (source)', symbolOk(screenSrc));
+  check('…the old hard-coded call fails the check', !symbolOk(screenSrc.replace('describeSendError(e, symbol);', "describeSendError(e, 'ETH');")));
+  check('…and with "test ETH" the title reads "Not enough test ETH to cover this amount plus the network fee."',
+    describeSendError(new Error('Insufficient funds: sending 1000000000000000000 wei plus a worst-case fee of at least 21000672000 wei exceeds the balance of 2318893341920775 wei.'), 'test ETH').title ===
+      'Not enough test ETH to cover this amount plus the network fee.');
+  const sheet = readFileSync(join(APP_ROOT, 'src/components/WcApprovalSheet.tsx'), 'utf8');
+  const wcContext = readFileSync(join(APP_ROOT, 'src/wallet/WalletConnectContext.tsx'), 'utf8');
+  check('the WalletConnect sheet and the smart-account WalletConnect path name the network\'s coin too (same bug)',
+    !sheet.includes("describeSendError(e, 'ETH')") && (sheet.match(/describeSendError\(e, evmChain\.displaySymbol\)/g) ?? []).length === 2 &&
+      !wcContext.includes("describeSendError(e, 'ETH')") &&
+      (wcContext.match(/describeSendError\(e, evmProfileByCaip2\(item\.chain\)\?\.displaySymbol \?\? 'ETH'\)/g) ?? []).length === 2);
+}
+
+// ---------------------------------------------------------------------------
 console.log('check-staking: success notes, the balances holder line and the smart-account success view (phase 18 findings 2, 4, 7)');
 // ---------------------------------------------------------------------------
 {

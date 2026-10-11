@@ -1283,8 +1283,9 @@ console.log('\n== Hoodi and OP Sepolia profiles (phase 18) ==');
       !settingsSrc.includes('(Ethereum mainnet, or Sepolia while test mode is on)') &&
       `${MAIN.label} mainnet, or ${testNetworkLabelsOr()} while test mode is on` ===
         'Ethereum mainnet, or Ethereum Sepolia, Base Sepolia, Arbitrum Sepolia, Hoodi or OP Sepolia while test mode is on');
-  check('Settings Backup text: no "every account in the list above" claim while watch-only addresses are listed',
-    settingsSrc.includes("watchOnlyAccounts.length === 0\n              ? 'One recovery phrase backs up ALL of your accounts") &&
+  check('Settings Backup text: no "every account in the list above" claim while watch-only addresses or multisigs are listed',
+    settingsSrc.includes("{!keylessListed\n              ? 'One recovery phrase backs up ALL of your accounts") &&
+      settingsSrc.includes('const keylessListed = watchOnlyAccounts.length > 0 || multisigAccounts.length > 0;') &&
       settingsSrc.includes('that this wallet holds a key for') &&
       settingsSrc.includes('Watch-only addresses have no key in this wallet, so the recovery phrase does not back them up'));
   // Phase 16 browser re-check finding: the Settings button that opens the

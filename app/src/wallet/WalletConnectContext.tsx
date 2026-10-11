@@ -25,6 +25,7 @@ import {
   type TxQuoteState,
 } from '../components/WcApprovalSheet';
 import { getEndpoint, withEndpoint } from '../config/networks';
+import { evmProfileByCaip2 } from '../config/evm-chain';
 import { spendingGateForQuote } from '../components/SpendingPolicyViews';
 import { requireLocalAuth } from './biometric';
 import { WATCH_ONLY_WC_REFUSAL, walletConnectAddressFor } from './watch-only';
@@ -801,11 +802,13 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
         });
       } catch (e) {
         controller.release(item.key);
+        // The coin of the network the request was validated on ("test ETH"
+        // on a test network), never a hard-coded "ETH".
         const { title, detail } =
           describeAaError(e, {
             accountType: smart.accountType === 'kernel-v3.3' ? 'kernel-v3.3' : 'simple',
             deployed: txQuote?.status === 'ready-aa' ? txQuote.quote.deployed : null,
-          }) ?? describeSendError(e, 'ETH');
+          }) ?? describeSendError(e, evmProfileByCaip2(item.chain)?.displaySymbol ?? 'ETH');
         Alert.alert(title, detail);
       }
     },
@@ -1031,7 +1034,9 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
         });
       } catch (e) {
         controller.release(item.key);
-        const { title, detail } = describeSendError(e, 'ETH');
+        // The coin of the network the request was validated on ("test ETH"
+        // on a test network).
+        const { title, detail } = describeSendError(e, evmProfileByCaip2(item.chain)?.displaySymbol ?? 'ETH');
         Alert.alert(title, detail);
       }
     },

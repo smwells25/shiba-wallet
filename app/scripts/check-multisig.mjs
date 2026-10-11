@@ -1329,6 +1329,75 @@ console.log('check-multisig: the multisig as an account in the switcher (phase 1
       src.includes("{anyMultisig ? ` ${MULTISIG_LIST_HINT}` : ''}") && src.includes('const anyMultisig = multisigAccounts.length > 0;');
     check('the switcher passes the listed keyless kinds and adds the multisig sentence (source)', switcherOk(switcher));
     check('…the old call (imported only) fails the check', !switcherOk(switcher.replace('{accountsBackupHint(anyImported, { watchOnly: anyWatched, multisig: anyMultisig })}', '{accountsBackupHint(anyImported)}')));
+
+    // Emulator re-check of 2026-10-11, finding 1: the longer intro squeezed
+    // the list so a multisig row listed last was cut off with no scroll
+    // hint. The list is now the one scrolling area between the title and
+    // the buttons; the intro is a one-line "What is backed up?" expander in
+    // the list's header (closed by default; opened, it scrolls with the
+    // rows); a hint shows while rows are still below.
+    check('switcher expander and scroll hint (exact)',
+      wo.SWITCHER_INTRO_TOGGLE === 'What is backed up?' && wo.SWITCHER_SCROLL_HINT === 'More accounts below — scroll the list.');
+    const ov = wo.switcherListOverflows;
+    check('switcherListOverflows: content taller than the list and not at the end → true; at the end, shorter, or sizes unknown → false',
+      ov({ listHeight: 400, contentHeight: 520, scrollY: 0 }) === true &&
+        ov({ listHeight: 400, contentHeight: 520, scrollY: 119 }) === false &&
+        ov({ listHeight: 400, contentHeight: 520, scrollY: 118 }) === true &&
+        ov({ listHeight: 400, contentHeight: 380, scrollY: 0 }) === false &&
+        ov({ listHeight: 0, contentHeight: 520, scrollY: 0 }) === false &&
+        ov({ listHeight: 400, contentHeight: 0, scrollY: 0 }) === false &&
+        ov({ listHeight: Number.NaN, contentHeight: 520, scrollY: 0 }) === false);
+    const switcherLayoutProblems = (src) => {
+      const p = [];
+      const need = (what, ok) => { if (!ok) p.push(what); };
+      const modal = src.slice(src.indexOf('<Modal visible={open}'), src.indexOf('</Modal>'));
+      const titleAt = modal.indexOf('>Accounts</Text>');
+      const listAt = modal.indexOf('<FlatList');
+      const headerAt = modal.indexOf('ListHeaderComponent={');
+      const hintAt = modal.indexOf('{accountsBackupHint(anyImported, { watchOnly: anyWatched, multisig: anyMultisig })}');
+      const rowsAt = modal.indexOf('renderItem={');
+      const listEnd = modal.indexOf('/>', rowsAt);
+      const addAt = modal.indexOf('<Button title="Add account"');
+      need('title, then the list', titleAt >= 0 && listAt > titleAt);
+      need('nothing but a comment between the title and the list (no intro text squeezing it)',
+        !/<Text/.test(modal.slice(titleAt + '>Accounts</Text>'.length, listAt)));
+      need('the backup text sits in the list header, before the rows', headerAt > listAt && hintAt > headerAt && rowsAt > hintAt);
+      need('the backup text renders only when the expander is open', /\{introOpen \? \(\s*<Text style=\{\[styles\.hint/.test(modal));
+      need('the expander is one line with its label', modal.includes('numberOfLines={1}') && modal.includes('SWITCHER_INTRO_TOGGLE') &&
+        modal.includes('accessibilityState={{ expanded: introOpen }}') && modal.includes('onPress={() => setIntroOpen((v) => !v)}'));
+      need('the list grows and shrinks between the title and the buttons', modal.includes('style={styles.listArea}') &&
+        /listArea: \{\s*flexGrow: 1,\s*flexShrink: 1,\s*\}/.test(src));
+      need('a scrollbar that stays visible (a FlatList prop)', modal.indexOf('            persistentScrollbar\n') > listAt && modal.indexOf('            persistentScrollbar\n') < headerAt);
+      need('the sizes for the scroll hint are measured', modal.includes('onLayout={(e) => setListHeight(e.nativeEvent.layout.height)}') &&
+        modal.includes('onContentSizeChange={(_w, h) => setContentHeight(h)}') && modal.includes('onScroll={(e) => setScrollY(e.nativeEvent.contentOffset.y)}'));
+      need('the scroll hint sits between the list and the buttons',
+        modal.indexOf('switcherListOverflows({ listHeight, contentHeight, scrollY })') > listEnd &&
+          modal.indexOf('{SWITCHER_SCROLL_HINT}') > listEnd && modal.indexOf('{SWITCHER_SCROLL_HINT}') < addAt);
+      need('the expander closes each time the list opens', /setIntroOpen\(false\);\s*setScrollY\(0\);\s*setOpen\(true\);/.test(src));
+      return p;
+    };
+    const lp = switcherLayoutProblems(switcher);
+    check('the switcher list is the scrolling area; the intro is a one-line expander in its header; a scroll hint (source)', lp.length === 0, lp.join('; '));
+    for (const [name, from, to] of [
+      ['M-switcher-1 intro back above the list',
+        'ListHeaderComponent={\n              <View style={styles.introBlock}>',
+        'ListHeaderComponent={\n              <View style={styles.introBlock}>'],
+      ['M-switcher-2 no scroll hint', '{SWITCHER_SCROLL_HINT}', "{''}"],
+      ['M-switcher-3 intro always open', '{introOpen ? (\n                  <Text style={[styles.hint', '{true ? (\n                  <Text style={[styles.hint'],
+      ['M-switcher-4 scrollbar fades', '            persistentScrollbar\n', ''],
+    ]) {
+      check(`mutation anchor present (${name})`, switcher.includes(from));
+      if (name.startsWith('M-switcher-1')) {
+        // Moves the whole backup text back above the list (the old layout).
+        const moved = switcher.replace(
+          '          <FlatList\n',
+          '          <Text style={[styles.hint, { color: theme.textMuted }]}>{accountsBackupHint(anyImported, { watchOnly: anyWatched, multisig: anyMultisig })}</Text>\n          <FlatList\n',
+        );
+        check(`${name}: caught`, switcherLayoutProblems(moved).length > 0);
+      } else {
+        check(`${name}: caught`, switcherLayoutProblems(switcher.replace(from, to)).length > 0);
+      }
+    }
   }
 
   // --- Receive for a multisig: the address with its label and the co-signer sentence; nothing that signs.
@@ -1391,6 +1460,29 @@ console.log('check-multisig: Settings → Accounts lists multisigs read-only (ph
 // ===========================================================================
 {
   const read = (rel) => readFileSync(join(HERE, '..', rel), 'utf8');
+  // 2026-10-11 re-check, finding 7: with a multisig listed, Settings still
+  // said "One recovery phrase backs up ALL of your accounts", and the
+  // Accounts intro passed no keyless kinds to accountsBackupHint.
+  {
+    const accSrc = read('src/components/AccountsSection.tsx');
+    const settingsSrc = read('src/screens/SettingsScreen.tsx');
+    const backupOk = (acc, settings) =>
+      acc.includes('{accountsBackupHint(importedCount > 0, { watchOnly: watchOnlyAccounts.length > 0, multisig: multisigAccounts.length > 0 })}') &&
+      settings.includes('const keylessListed = watchOnlyAccounts.length > 0 || multisigAccounts.length > 0;') &&
+      settings.includes("{!keylessListed\n              ? 'One recovery phrase backs up ALL of your accounts") &&
+      settings.includes('{multisigAccounts.length > 0 ? (\n          <Text style={[styles.hint, { color: theme.textMuted }]}>{MULTISIG_LIST_HINT}</Text>');
+    check('Settings → Accounts passes the listed keyless kinds; the Backup text says "ALL" only without watch-only or multisig accounts and explains multisigs (source)',
+      backupOk(accSrc, settingsSrc));
+    check('…the old Accounts call (imported only) fails the check',
+      !backupOk(accSrc.replace('{accountsBackupHint(importedCount > 0, { watchOnly: watchOnlyAccounts.length > 0, multisig: multisigAccounts.length > 0 })}', '{accountsBackupHint(importedCount > 0)}'), settingsSrc));
+    check('…and the old Backup condition (watch-only only) fails it too',
+      !backupOk(accSrc, settingsSrc.replace('const keylessListed = watchOnlyAccounts.length > 0 || multisigAccounts.length > 0;', 'const keylessListed = watchOnlyAccounts.length > 0;')));
+    const ik = await import('../src/wallet/imported-keys.ts');
+    check('…what Settings → Accounts now says with a multisig and no imported key (exact)',
+      ik.accountsBackupHint(false, { watchOnly: false, multisig: true }) ===
+        'Every account here except the multi-signature ones comes from your one recovery phrase — backing up the phrase backs up all of those.');
+  }
+
   const ADDR = '0x944caA404e389b18b2fe251e969EdD7A220d0d38'; // the emulator's 2-of-3 of 2026-10-10
   check('heading and sentence (exact)', MULTISIG_ACCOUNTS_HEADING === 'Multi-signature accounts' &&
     MULTISIG_ACCOUNTS_LIST_HINT === 'Listed here for reference only. They are managed on the Multisig screen (Settings → Multi-signature accounts) and cannot be hidden here.');

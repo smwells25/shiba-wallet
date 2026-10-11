@@ -195,7 +195,9 @@ function TokenRow({
         <Text style={[styles.tokenName, { color: theme.text }]} numberOfLines={1}>
           {token.symbol}
         </Text>
-        <Text style={[styles.tokenKind, { color: theme.textMuted }]} numberOfLines={1}>
+        {/* Two lines: "Wrapped liquid staked Ether 2.0 · ERC-20" was cut off
+            on one (2026-10-11 re-check, finding 8). */}
+        <Text style={[styles.tokenKind, { color: theme.textMuted }]} numberOfLines={2}>
           {tokenRowSubtitle(token)}
         </Text>
         {onSend ? (

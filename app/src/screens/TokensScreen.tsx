@@ -294,7 +294,9 @@ export function TokensScreen({ navigation }: Props) {
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           ERC-20 balances shown on Home under {evmChain.label}. Each network
           keeps its own list. Tokens arrive at your address
-          {sendNote ? '.' : ', and Send starts a token transfer.'} {tokenSendFeeSentence(evmChain.caip2)}
+          {sendNote ? '.' : ', and Send starts a token transfer.'} {tokenSendFeeSentence(evmChain.caip2, {
+            keyless: activeAccount?.watchOnly === true || activeAccount?.multisig === true,
+          })}
           {evmChain.testnet
             ? ` ${testNetworkTokenValueSentence(evmChain.caip2)}`
             : ''}

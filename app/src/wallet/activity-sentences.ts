@@ -241,6 +241,15 @@ export interface SentenceRenderOptions {
    * in rather than imported because risk.ts imports this module.
    */
   stakingContractAt?: (address: string) => PinnedStakingContract | null;
+  /**
+   * The addresses that read "yourself" (activityAddressSets().self): the
+   * account whose Activity this is — its own address and, for a regular
+   * account, its own smart account. Every other wallet address in the
+   * decode (another account's smart account, a multisig) is then named by
+   * its label (accountLabels) instead. Absent, every wallet address reads
+   * "yourself" (the engine's original rule).
+   */
+  selfAddresses?: readonly string[];
 }
 
 /** One of the wallet's own accounts, for the sentences (activityAccountLabels). */
@@ -257,10 +266,19 @@ export interface AccountLabel {
  * Watch-only addresses are not the wallet's own and are not included.
  * Malformed addresses are skipped; an address listed twice keeps its first
  * label.
+ *
+ * With `aa` (the network's smart-account settings) and an account's
+ * `index`, the account's smart-account addresses known without a network
+ * request (walletAddressesFor: the Kernel counterfactual, a recovered
+ * account) are labelled "<name>’s smart account" — the wording of risk.ts
+ * ownWalletAddresses, which the risk card and the success screens use.
+ * They follow all the accounts' own addresses, before the multisigs.
+ * Without `aa` the result is exactly what it was before.
  */
 export function activityAccountLabels(
-  accounts: readonly { name: string; evmAddress: string | null }[],
+  accounts: readonly { name: string; evmAddress: string | null; index?: number }[],
   multisigs: readonly { address: string; label: string }[] = [],
+  aa: AaAddressFacts | null = null,
 ): AccountLabel[] {
   const out: AccountLabel[] = [];
   const seen = new Set<string>();
@@ -272,8 +290,84 @@ export function activityAccountLabels(
     out.push({ address, label });
   };
   for (const a of accounts) add(a.evmAddress, a.name);
+  if (aa) {
+    for (const a of accounts) {
+      if (!a.evmAddress || a.index === undefined || !/^0x[0-9a-fA-F]{40}$/.test(a.evmAddress)) continue;
+      for (const smart of walletAddressesFor(a.evmAddress, a.index, aa).slice(1)) add(smart, `${a.name}’s smart account`);
+    }
+  }
   for (const m of multisigs) add(m.address, m.label);
   return out;
+}
+
+/**
+ * The address sets one account's Activity is decoded and worded with
+ * (emulator re-check of 2026-10-11, findings 2 and 3):
+ *
+ *  - `self`: the addresses that read "yourself" — the account's own
+ *    address and, for a regular account, its own smart account
+ *    (walletAddressesFor without multisigs; a multisig or watch-only
+ *    account has no smart account of its own, so only its address);
+ *  - `wallet`: what the decoder treats as the wallet's own — `self`, then
+ *    every other account's smart-account addresses and every stored
+ *    multisig of the network. These are decoded as the wallet's (so a
+ *    top-up from Account 1's smart account to the multisig is described
+ *    with its amount instead of "from other accounts") but are NAMED in
+ *    the sentence ("Multisig 2 (2-of-3)", "Account 1’s smart account")
+ *    instead of "yourself". The other accounts' OWN addresses are not
+ *    added: a transfer from Account 2 to this account is someone else's
+ *    transaction ("Received … from Account 2"), not one this account sent;
+ *  - `labels`: activityAccountLabels for every account, smart account and
+ *    multisig.
+ */
+export function activityAddressSets(input: {
+  /** The active account's address on this network (a multisig's own address when one is active). */
+  eoa: string;
+  /** The active account's id (its smart-account salt comes from it). */
+  accountIndex: number;
+  aa: AaAddressFacts | null;
+  /** The accounts the wallet holds a key for (WalletContext accountList). */
+  accounts: readonly { name: string; evmAddress: string | null; index: number }[];
+  /** The network's stored multisigs (multisig.ts ownMultisigAddresses). */
+  multisigs: readonly { address: string; label: string }[];
+}): { self: string[]; wallet: string[]; labels: AccountLabel[] } {
+  const self = walletAddressesFor(input.eoa, input.accountIndex, input.aa);
+  const others: string[] = [];
+  if (input.aa) {
+    for (const a of input.accounts) {
+      if (!a.evmAddress || !/^0x[0-9a-fA-F]{40}$/.test(a.evmAddress)) continue;
+      others.push(...walletAddressesFor(a.evmAddress, a.index, input.aa).slice(1));
+    }
+  }
+  for (const m of input.multisigs) {
+    if (/^0x[0-9a-fA-F]{40}$/.test(m.address)) others.push(m.address);
+  }
+  return {
+    self,
+    wallet: dedupe([...self, ...others]),
+    labels: activityAccountLabels(input.accounts, input.multisigs, input.aa),
+  };
+}
+
+/**
+ * The one smart-account address whose history the Activity screen lists
+ * next to the account's own (smart-account-history.ts), known without a
+ * network request: the recovered account attached to this owner if any
+ * (the wallet's smart-account sends then use it), else the Kernel v3.3
+ * counterfactual when Kernel is the network's account type with a factory.
+ * Null without settings, for an owner upgraded with EIP-7702 (its smart
+ * account is its own address, already listed), for a SimpleAccount (its
+ * address needs a factory call), and for a multisig or watch-only id
+ * (walletAddressesFor adds nothing for them).
+ */
+export function historySmartAccountFor(eoa: string, accountIndex: number, aa: AaAddressFacts | null): string | null {
+  if (!aa) return null;
+  const lower = eoa.toLowerCase();
+  if ((aa.eip7702Owners ?? []).some((owner) => owner.toLowerCase() === lower)) return null;
+  const recovered = aa.recoveredAccounts?.find((l) => l.owner.toLowerCase() === lower)?.account ?? null;
+  if (recovered && /^0x[0-9a-fA-F]{40}$/.test(recovered)) return recovered;
+  const addresses = walletAddressesFor(eoa, accountIndex, aa);
+  return addresses.length > 1 ? addresses[1]! : null;
 }
 
 /** "Lido wstETH contract 0xB823…067b": how a sentence names a pinned staking contract. */
@@ -357,6 +451,7 @@ export function renderActivitySentence(decoded: DecodedActivity, options: Senten
     nameFor,
     maskAmount: (text) => maskAmount(text, options.hidden),
     ...(describeCall ? { describeCall } : {}),
+    ...(options.selfAddresses ? { selfAddresses: options.selfAddresses } : {}),
   });
 }
 
@@ -367,6 +462,8 @@ export interface AaAddressFacts {
   factoryImplementation: string | null;
   kernelValidator: string | null;
   recoveredAccounts?: { owner: string; account: string }[];
+  /** Owners upgraded with EIP-7702 on this network (their smart account is their own address). */
+  eip7702Owners?: string[];
 }
 
 /**
@@ -383,12 +480,12 @@ export interface AaAddressFacts {
  * `multisigs` (phase 18 item 3) are the wallet's own multi-signature
  * accounts on this network, as multisig.ts ownMultisigAddresses returns them
  * ({ address, label: "Multisig 1 (2-of-3)" }). Every one is added, so a
- * transfer to or from a multisig reads as the wallet's own (the engine's
- * sentence names every wallet address "yourself"; the label is not used in
- * the sentence) and a multisig's operations inside an EntryPoint bundle are
- * described as the wallet's operations with the multisig as their sender,
- * exactly as the risk card already treats them as "one of your own
- * accounts". Malformed addresses are skipped.
+ * multisig's operations inside an EntryPoint bundle are described as the
+ * wallet's operations with the multisig as their sender. Malformed
+ * addresses are skipped. The Activity screen no longer passes them here: it
+ * uses activityAddressSets, which adds them to the decode set but keeps
+ * them out of the "yourself" set, so a send to a multisig reads "to
+ * Multisig 2 (2-of-3)" (emulator re-check of 2026-10-11, finding 2).
  */
 export function walletAddressesFor(
   eoa: string,

@@ -146,12 +146,17 @@ export const KNOWN_STAKING_TOKEN_TAG = 'KNOWN STAKING TOKEN';
 /** The tag every other discovered token gets. */
 export const UNTRACKED_TOKEN_TAG = 'UNTRACKED TOKEN';
 
+/**
+ * "This is the wstETH contract this wallet pins from Lido's published list
+ * of deployed contracts." — said on the row and in the Track confirmation.
+ */
+export function knownStakingPinnedSentence(known: { protocol: string; symbol: string }): string {
+  return `This is the ${known.symbol} contract this wallet pins from ${known.protocol}'s published list of deployed contracts.`;
+}
+
 /** The one sentence under a pinned liquid-staking token in "Find my tokens". */
 export function knownStakingTokenSentence(known: { protocol: string; symbol: string }): string {
-  return (
-    `This is the ${known.symbol} contract this wallet pins from ${known.protocol}'s published list of ` +
-    `deployed contracts. It is tracked only if you choose Track ${known.symbol}.`
-  );
+  return `${knownStakingPinnedSentence(known)} It is tracked only if you choose Track ${known.symbol}.`;
 }
 
 /**
@@ -175,16 +180,20 @@ export function knownStakingTokenAt(
  * The one-tap confirmation before a discovered token is tracked (the manual
  * add flow also shows the full contract before adding). The contract is
  * shown in full because a look-alike token copies the symbol and name, never
- * the address; a look-alike gets the warning again.
+ * the address; a look-alike gets the warning again. A pinned liquid-staking
+ * token (knownStaking) gets the same pinned-contract sentence as its row
+ * (2026-10-11 re-check, finding 6: the dialog did not say it).
  */
 export function trackDiscoveredPrompt(
-  found: Pick<DiscoveredToken, 'contract' | 'lookalikeOf'> & { asset: Pick<FungibleAsset, 'symbol'> },
+  found: Pick<DiscoveredToken, 'contract' | 'lookalikeOf'> &
+    Partial<Pick<DiscoveredToken, 'knownStaking'>> & { asset: Pick<FungibleAsset, 'symbol'> },
   networkLabel: string,
 ): { title: string; message: string; confirm: string } {
   return {
     title: `Track ${found.asset.symbol}?`,
     message:
       `Contract ${found.contract} on ${networkLabel}.` +
+      (found.knownStaking ? ` ${knownStakingPinnedSentence(found.knownStaking)}` : '') +
       (found.lookalikeOf
         ? ` Warning: its symbol equals the ${found.lookalikeOf} you track or the wallet knows, but the contract is DIFFERENT. It may be a fake.`
         : '') +

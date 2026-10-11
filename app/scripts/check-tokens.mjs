@@ -677,8 +677,21 @@ console.log('\nFind my tokens: pinned liquid-staking tokens are labelled (nothin
     by(FAKE_STETH)?.knownStaking === null && by(FAKE_STETH)?.lookalikeOf === 'stETH');
   check('an unrelated token is not labelled', by(OTHER)?.knownStaking === null && by(OTHER)?.lookalikeOf === null);
   check('…and nothing was tracked automatically', (await listTokens(SEPOLIA, st)).every((t) => ![SEP_STETH, SEP_WSTETH].includes(t.assetId.reference)) && st.mem.get(tokenStoreKey(SEPOLIA)) === undefined);
-  check('the Track confirmation is unchanged for a pinned token ("Track stETH?", the full contract)',
+  check('the Track confirmation for a pinned token keeps its title, the full contract and the confirm button',
     (() => { const p = trackDiscoveredPrompt({ ...by(SEP_STETH), asset: by(SEP_STETH).asset }, 'Ethereum Sepolia'); return p.title === 'Track stETH?' && p.message.startsWith(`Contract ${SEP_STETH} on Ethereum Sepolia.`) && p.confirm === 'Track stETH'; })());
+  // 2026-10-11 re-check, finding 6: "Track wstETH?" did not say what the row
+  // says — that this is the contract the wallet pins from Lido's list.
+  const wst = trackDiscoveredPrompt({ ...by(SEP_WSTETH), asset: by(SEP_WSTETH).asset }, 'Ethereum Sepolia');
+  check('…and says it is the pinned contract (exact message for wstETH)',
+    wst.title === 'Track wstETH?' && wst.message ===
+      `Contract ${by(SEP_WSTETH).contract} on Ethereum Sepolia. This is the wstETH contract this wallet pins from Lido's published list of deployed contracts. ` +
+        'Anyone can create a token with any name and symbol; track it only if this is the contract you expect.', wst.message);
+  check('…the same sentence as the row starts with (one source of the wording)',
+    td.knownStakingTokenSentence({ protocol: 'Lido', symbol: 'wstETH' }).startsWith(td.knownStakingPinnedSentence({ protocol: 'Lido', symbol: 'wstETH' })));
+  const fakePrompt = trackDiscoveredPrompt({ ...by(FAKE_STETH), asset: by(FAKE_STETH).asset }, 'Ethereum Sepolia');
+  check('…a look-alike or an unrelated token never gets the pinned sentence',
+    !/pins from/.test(fakePrompt.message) && /may be a fake/.test(fakePrompt.message) &&
+      !/pins from/.test(trackDiscoveredPrompt({ ...by(OTHER), asset: by(OTHER).asset }, 'Ethereum Sepolia').message));
   const hoodiReth = ROCKET_POOL_DEPLOYMENTS['eip155:560048'].rETH;
   check('knownStakingTokenAt: Hoodi rETH is Rocket Pool; the Sepolia stETH address on Hoodi is nothing; a lowercase address matches',
     JSON.stringify(td.knownStakingTokenAt('eip155:560048', hoodiReth)) === JSON.stringify({ protocol: 'Rocket Pool', symbol: 'rETH' }) &&
@@ -737,6 +750,25 @@ console.log('\nDust display in Activity and Swap (phase 12 follow-up):');
 }
 
 // Track from "Find my tokens": a one-tap confirm with the full contract
+// 2026-10-11 re-check, finding 7: with a multisig or watch-only account
+// active, the Tokens intro still offered "a smart-account send can pay it in
+// USDC instead"; neither has a smart-account send on the Send screen.
+{
+  const tg = await import('../src/wallet/token-gas.ts');
+  const BASE_SEPOLIA = 'eip155:84532';
+  const regular = tg.tokenSendFeeSentence(BASE_SEPOLIA);
+  const keyless = tg.tokenSendFeeSentence(BASE_SEPOLIA, { keyless: true });
+  check('Tokens fee sentence for a regular account keeps the USDC clause where a token paymaster exists (unchanged)',
+    regular === 'The network fee for a token send is normally paid in test ETH, not in the token. On Base Sepolia, a smart-account send can pay it in USDC instead when the Send screen offers that choice.', regular);
+  check('…for a multisig or watch-only account it stops after the first sentence (exact)',
+    keyless === 'The network fee for a token send is normally paid in test ETH, not in the token.', keyless);
+  check('…and on a network without a token paymaster both read the same',
+    tg.tokenSendFeeSentence('eip155:560048', { keyless: true }) === tg.tokenSendFeeSentence('eip155:560048'));
+  const screen = readFileSync(new URL('../src/screens/TokensScreen.tsx', import.meta.url), 'utf8');
+  const wired = (src) => /\{tokenSendFeeSentence\(evmChain\.caip2, \{\s*keyless: activeAccount\?\.watchOnly === true \|\| activeAccount\?\.multisig === true,\s*\}\)\}/.test(src);
+  check('the Tokens screen passes the account kind (source)', wired(screen));
+  check('…the old call fails the check', !wired(screen.replace(/\{tokenSendFeeSentence\(evmChain\.caip2, \{[\s\S]*?\}\)\}/, '{tokenSendFeeSentence(evmChain.caip2)}')));
+}
 // (2026-10-04 emulator run: Track added the token at once).
 {
   const CONTRACT = '0x08210F9170F89Ab7658F0B5E3fF39b0E03C594D4';
