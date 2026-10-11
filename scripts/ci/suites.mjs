@@ -85,6 +85,8 @@ export const APP_SCRIPTS = {
   'check-storage.mjs': { kind: 'offline', summary: 'counts' },
   // Phase 12 item 2: subscription grants on Kernel session keys (fakes only).
   'check-subscriptions.mjs': { kind: 'offline', summary: 'counts' },
+  // Phase 18 item 2: staking on test networks (Lido, Rocket Pool; fakes only).
+  'check-staking.mjs': { kind: 'offline', summary: 'counts' },
   'check-swap.mjs': { kind: 'offline', summary: 'counts' },
   'check-token-send.mjs': { kind: 'offline', summary: 'counts' },
   // Phase 13 item 2: paying the network fee in USDC through Circle's paymaster (fakes only).

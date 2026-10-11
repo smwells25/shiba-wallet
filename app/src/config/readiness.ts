@@ -80,7 +80,9 @@ export type FeatureId =
   | 'imported-key'
   | 'inheritance'
   | 'dapp-browser'
-  | 'multisig';
+  | 'multisig'
+  // Phase 18 item 2: liquid staking (Lido, Rocket Pool) on test networks.
+  | 'staking';
 
 export interface FeatureReadiness {
   id: FeatureId;
@@ -400,13 +402,40 @@ export const FEATURE_READINESS: readonly FeatureReadiness[] = [
     evidence: ['C1', 'C2', 'C3', 'W9', 'F-21', 'F-62', 'T-70'],
     enforced: true,
   },
+  // Phase 18 item 2 (features 57 and 58, docs/STAKING.md): liquid staking
+  // with Lido and Rocket Pool. Appended at the end of the table on purpose
+  // (another slice edits this file for new profiles); the CTO merges.
+  {
+    id: 'staking',
+    title: 'Staking (Lido and Rocket Pool)',
+    status: 'testnet-only',
+    reason:
+      'Staking hands your ETH to Lido’s or Rocket Pool’s contracts, whose own audits cover the protocols but not how ' +
+      'this wallet builds, previews and sends these calls, and that path has not been tested as a real build on real ' +
+      'phones. This wallet offers staking only on test networks, where the staked tokens have no value.',
+    // W1 / W2: the device conditions every send shares (the staking calls
+    // go through the regular send and smart-account paths); W9: the
+    // switchboard that enforces this row; W13: the balance-change preview
+    // that shows the stETH or rETH received comes from a single provider.
+    // The protocols' audits are theirs, not this wallet's; no threat-model
+    // entry of its own exists yet (the CTO's to add at the refresh).
+    evidence: ['W1', 'W2', 'W9', 'W13'],
+    enforced: true,
+  },
 ];
 
 /**
  * The CAIP-2 ids this wallet treats as test networks: exactly the
  * test-network profiles in config/evm-chain.ts (EVM_TEST_PROFILES —
- * Ethereum Sepolia eip155:11155111 and, since phase 10 item 3, Base Sepolia
- * eip155:84532). A profile is listed there only with `testnet: true`
+ * Ethereum Sepolia eip155:11155111; since phase 10 item 3, Base Sepolia
+ * eip155:84532; since phase 14, Arbitrum Sepolia eip155:421614; since
+ * phase 18 item 1, Hoodi eip155:560048 and OP Sepolia eip155:11155420).
+ * The rows describe the network's FUNDS, not which contracts exist on it:
+ * on Hoodi, which has no Kernel v3.3 deployment, the smart-account rows are
+ * allowed like on any test network, and the features are stopped by the
+ * deployment checks instead (no factory pre-fill, the on-chain verification
+ * when a factory is saved, the delegate code read, the multisig network
+ * check). A profile is listed there only with `testnet: true`
  * (scripts/check-readiness.mjs asserts both). Any other id, including an
  * unknown or malformed one and Base MAINNET eip155:8453, counts as a main
  * network, so a new chain is gated until it is added deliberately.

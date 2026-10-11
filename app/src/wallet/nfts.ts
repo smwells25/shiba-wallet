@@ -533,12 +533,21 @@ export function groupNftsByCollection(nfts: OwnedNft[]): NftCollectionGroup[] {
  * Etherscan-family convention Arbiscan shares; Arbitrum does not document
  * it, and it has not been checked against a real indexed Arbitrum Sepolia
  * NFT.
+ *
+ * Hoodi and OP Sepolia (phase 18 item 1): the hosts are the profiles'
+ * explorers (config/evm-chain.ts EVM_HOODI: hoodi.etherscan.io, from the
+ * network's homepage; EVM_OP_SEPOLIA: sepolia-optimism.etherscan.io, the
+ * chain registry's EIP-3091 explorer). The /nft/{contract}/{token id} path
+ * is ASSUMED from the Etherscan-family convention for both; neither was
+ * checked against a real indexed NFT.
  */
 const NFT_EXPLORER_BASE: Record<string, string> = {
   'eip155:1': 'https://etherscan.io/nft/',
   'eip155:11155111': 'https://sepolia.etherscan.io/nft/',
   'eip155:84532': 'https://sepolia.basescan.org/nft/',
   'eip155:421614': 'https://sepolia.arbiscan.io/nft/',
+  'eip155:560048': 'https://hoodi.etherscan.io/nft/',
+  'eip155:11155420': 'https://sepolia-optimism.etherscan.io/nft/',
 };
 
 export function nftExplorerUrl(chainId: string, nft: Pick<OwnedNft, 'contract' | 'tokenId'>): string | null {

@@ -41,6 +41,7 @@ import {
   activeTokenChain,
   addToken,
   defaultTokensForChain,
+  isTokenChain,
   knownTokensForChain,
   listTokens,
   loadTokenRegistry,
@@ -280,6 +281,24 @@ console.log('\nPer-chain defaults (phase 13 item 1):');
       'USDC/USD Coin/6@0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d',
     JSON.stringify(arb),
   );
+  // Phase 18 item 1: Circle's OP Sepolia USDC (Circle's USDC page fetched
+  // 2026-10-11 UTC; live symbol/name/decimals reads on two endpoints); no
+  // EURC listed there. Hoodi has no known tokens (Circle lists no USDC on
+  // Ethereum Hoodi; the staking tokens belong to the staking slice).
+  const op = await listTokens('eip155:11155420', fresh);
+  check(
+    'fresh OP Sepolia list = Circle test USDC only (name "USDC", 6 decimals)',
+    op.map((t) => `${t.symbol}/${t.name}/${t.decimals}@${t.assetId.reference}`).join(',') ===
+      'USDC/USDC/6@0x5fd84259d66Cd46123540766Be93DFE6D43130D7',
+    JSON.stringify(op),
+  );
+  check('…and it is a per-chain list: the OP Sepolia USDC is on eip155:11155420 only',
+    op[0]?.assetId.chainId === 'eip155:11155420' && !(await listTokens(BASE_SEPOLIA, fresh)).some((t) => t.assetId.reference === op[0].assetId.reference));
+  const hoodi = await listTokens('eip155:560048', fresh);
+  check('fresh Hoodi list is empty (no known tokens), and Hoodi is a token chain (a token can be tracked there)',
+    hoodi.length === 0 && knownTokensForChain('eip155:560048').length === 0 && isTokenChain('eip155:560048'), JSON.stringify(hoodi));
+  check('the known test-network token chains are exactly Sepolia, Base Sepolia, Arbitrum Sepolia and OP Sepolia',
+    Object.keys(KNOWN_TEST_NETWORK_TOKENS).join() === 'eip155:11155111,eip155:84532,eip155:421614,eip155:11155420');
   check('every known test token has 6 decimals and its own CAIP-2 chain', Object.entries(KNOWN_TEST_NETWORK_TOKENS).every(([c, l]) => l.every((t) => t.decimals === 6 && t.assetId.chainId === c)));
   check('mainnet default is USDC only; unknown chains have none', defaultTokensForChain(MAINNET).length === 1 && defaultTokensForChain('eip155:137').length === 0);
   check('reading defaults writes nothing (missing key stays missing)', fresh.mem.size === 0);

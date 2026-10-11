@@ -170,6 +170,7 @@ const ROUTE_FEATURES: Record<string, string> = {
   // Multi-signature accounts (phase 17 item 1): a watch-only address is not
   // a signer, so it can neither create nor approve nor submit.
   Multisig: 'Multi-signature accounts',
+  Staking: 'Staking',
   // The in-app browser (feature 79) connects sites to an account and asks
   // it to sign, so it stays OFF the allow list above.
   Apps: 'The in-app browser (Apps)',

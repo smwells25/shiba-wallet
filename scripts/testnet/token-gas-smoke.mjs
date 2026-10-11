@@ -11,7 +11,11 @@
  * whose entryPoint() reverts and whose EntryPoint v0.7 deposit is zero, so
  * the Circle path of this script runs on Base Sepolia (chain 84532, the
  * default) and Arbitrum Sepolia (CHAIN_ID=421614); with CHAIN_ID=11155111 it
- * prints that on-chain evidence and runs the Pimlico section instead.
+ * prints that on-chain evidence and runs the Pimlico section instead. OP
+ * Sepolia (11155420) and Hoodi (560048) are known and REFUSED before any
+ * network request: Circle's v0.7 paymaster has no code on either (read
+ * 2026-10-11 UTC), and Hoodi has no Kernel v3.3 deployment
+ * (app/src/config/evm-chain.ts EVM_OP_SEPOLIA, EVM_HOODI).
  *
  * DRY RUN (default; read-only, anyone can run it, nothing is broadcast):
  *   One eth_simulateV1 request per case against the REAL contracts of the
@@ -132,8 +136,33 @@ const NODE_URL =
     : CHAIN_ID === 421614n
       ? 'https://arbitrum-sepolia-rpc.publicnode.com'
       : 'https://base-sepolia-rpc.publicnode.com');
-const CHAIN_NAMES = { '84532': 'Base Sepolia', '421614': 'Arbitrum Sepolia', '11155111': 'Ethereum Sepolia' };
+const CHAIN_NAMES = {
+  '84532': 'Base Sepolia',
+  '421614': 'Arbitrum Sepolia',
+  '11155111': 'Ethereum Sepolia',
+  '11155420': 'OP Sepolia',
+  '560048': 'Hoodi',
+};
 const CHAIN_NAME = CHAIN_NAMES[CHAIN_ID.toString()] ?? `chain ${CHAIN_ID}`;
+/**
+ * Test networks the app has a profile for where this smoke has nothing to
+ * run, with the reason (refused before any network request; pinned offline
+ * by app/scripts/check-devmode.mjs).
+ */
+const NOT_SUPPORTED_HERE = {
+  '11155420':
+    'OP Sepolia: Circle documents its EntryPoint v0.7 paymaster for Arbitrum Sepolia and Base Sepolia only ' +
+    '(developers.circle.com/paymaster/addresses-and-events.md), and 0x31BE08D380A21fc740883c0BC434FcFc88740b58 ' +
+    'has no code on OP Sepolia (read 2026-10-11 UTC); Circle\'s v0.8 paymaster there uses EntryPoint v0.8, which ' +
+    'this wallet does not use. Nothing was read, signed or sent.',
+  '560048':
+    'Hoodi: Kernel v3.3 is not deployed there (the KernelFactory and the Kernel implementation have no code) and ' +
+    'Circle\'s paymaster has no code there (read 2026-10-11 UTC). Nothing was read, signed or sent.',
+};
+if (Object.hasOwn(NOT_SUPPORTED_HERE, CHAIN_ID.toString())) {
+  console.error(NOT_SUPPORTED_HERE[CHAIN_ID.toString()]);
+  process.exit(2);
+}
 const PAYMASTER = CIRCLE_TOKEN_PAYMASTER_V07.testnetAddress;
 // Circle's chains (Base Sepolia, Arbitrum Sepolia); on Ethereum Sepolia the
 // Pimlico section below uses its own constant.

@@ -342,8 +342,9 @@ console.log('check-home: the Multisig link only where the multisig contracts are
   check('the note (exact)', MULTISIG_UNVERIFIED_NETWORK_NOTE ===
     "Multi-signature accounts need the Kernel v3.3 contracts and ZeroDev's weighted signer module on this network; the wallet has not verified them here.");
   check('built-in profiles (Kernel v3.3 verified) are offered', [EVM_SEPOLIA, EVM_BASE_SEPOLIA].every((p) => multisigNetworkVerified(p)));
-  const hoodi = { ...EVM_SEPOLIA, caip2: 'eip155:560048', chainIdDecimal: '560048', label: 'Hoodi', kernelV33Verified: false,
-    custom: { rpcUrl: 'https://rpc.hoodi.example', nativeSymbol: 'ETH', explorerBase: null, blockTimeMs: null, testnetRequested: true } };
+  // A network the user added (Holesky; Hoodi became a built-in profile in phase 18 item 1).
+  const hoodi = { ...EVM_SEPOLIA, caip2: 'eip155:17000', chainIdDecimal: '17000', label: 'Holesky', kernelV33Verified: false,
+    custom: { rpcUrl: 'https://rpc.holesky.example', nativeSymbol: 'ETH', explorerBase: null, blockTimeMs: null, testnetRequested: true } };
   setCustomEvmProfiles([hoodi]);
   check('a network the user added is NOT offered before a check passed', multisigNetworkVerified(hoodi) === false);
   recordMultisigNetworkCheck(hoodi.caip2, ['The weighted signer module 0x… has no code on this network.']);

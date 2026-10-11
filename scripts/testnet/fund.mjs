@@ -5,15 +5,19 @@
  *
  * Usage: TO=0x... ETH=0.0015 [NODE_URL=...] node scripts/testnet/fund.mjs
  *   NODE_URL may point at Ethereum Sepolia (default), Base Sepolia
- *   (https://base-sepolia-rpc.publicnode.com) or Arbitrum Sepolia
- *   (https://arbitrum-sepolia-rpc.publicnode.com); other chains, mainnets in
- *   particular, are refused.
+ *   (https://base-sepolia-rpc.publicnode.com), Arbitrum Sepolia
+ *   (https://arbitrum-sepolia-rpc.publicnode.com), Hoodi
+ *   (https://ethereum-hoodi-rpc.publicnode.com) or OP Sepolia
+ *   (https://optimism-sepolia-rpc.publicnode.com) — the first default
+ *   candidate of each app profile (app/src/config/evm-chain.ts); other
+ *   chains, mainnets in particular, are refused.
  *
  * The gas limit is eth_estimateGas + 20%. On Arbitrum that estimate already
  * contains the parent-chain (L1) cost as extra gas units
  * (docs.arbitrum.io/arbitrum-essentials/how-to-estimate-gas), so the worst
  * case printed below (gas limit × max fee per gas) is the whole fee. On Base
- * (OP stack) the L1 data fee is charged on top and is not in that figure.
+ * and OP Sepolia (OP stack) the L1 data fee is charged on top and is not in
+ * that figure. Hoodi is a layer 1 network like Ethereum Sepolia.
  */
 import { readFileSync } from 'node:fs';
 import { ChainRegistry, HdKeyring, evmKeyProvider } from '../../packages/core/dist/index.js';
@@ -36,10 +40,10 @@ function parseEth(text) {
 const node = httpTransport(NODE_URL);
 const nodeClient = new NodeClient(node);
 const chainId = await nodeClient.chainId();
-// Test networks only: Ethereum Sepolia by default, Base Sepolia or Arbitrum
-// Sepolia when the node reports them. Anything else (a mainnet in
-// particular) is refused.
-const ALLOWED_TEST_CHAINS = [11155111n, 84532n, 421614n];
+// Test networks only: Ethereum Sepolia by default; Base Sepolia, Arbitrum
+// Sepolia, Hoodi (560048) or OP Sepolia (11155420) when the node reports
+// them. Anything else (a mainnet in particular) is refused.
+const ALLOWED_TEST_CHAINS = [11155111n, 84532n, 421614n, 560048n, 11155420n];
 if (!ALLOWED_TEST_CHAINS.includes(chainId)) throw new Error(`Not a supported test network: chain id ${chainId}`);
 
 const mnemonic = readFileSync(new URL('../../.dev-wallet/mnemonic.txt', import.meta.url), 'utf8').trim();

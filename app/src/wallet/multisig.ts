@@ -2051,6 +2051,8 @@ const FILE_CHAIN_LABELS: Readonly<Record<string, string>> = {
   'eip155:11155111': 'sepolia',
   'eip155:84532': 'base-sepolia',
   'eip155:421614': 'arbitrum-sepolia',
+  'eip155:560048': 'hoodi',
+  'eip155:11155420': 'op-sepolia',
 };
 
 export const MULTISIG_FILE_NAME_PATTERN =

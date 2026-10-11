@@ -1616,7 +1616,7 @@ await (async () => {
   await checkRejects(
     'mainnet paymaster save refused',
     () => setAaPaymaster(EVM_CHAIN_ID, 'https://pm.example', '', { store: gateStore, transportFor: counting }),
-    'Turn on a test network (Ethereum Sepolia, Base Sepolia or Arbitrum Sepolia)',
+    'Turn on a test network (Ethereum Sepolia, Base Sepolia, Arbitrum Sepolia, Hoodi or OP Sepolia)',
   );
   const after = await getAaConfig(EVM_CHAIN_ID, gateStore);
   check(

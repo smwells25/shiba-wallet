@@ -103,6 +103,8 @@ const EXPECTED_IDS = [
   'eoa-send', 'tokens', 'nft', 'swap', 'walletconnect', 'dogecoin-send', 'simple-account',
   'kernel-smart-account', 'eip7702-upgrade', 'session-keys', 'passkeys', 'guardians',
   'owner-rotation', 'paymaster', 'token-gas', 'imported-key', 'inheritance', 'dapp-browser', 'multisig',
+  // Phase 18 item 2: staking on test networks (gate in wallet/staking.ts).
+  'staking',
 ];
 const ids = FEATURE_READINESS.map((f) => f.id);
 check('every expected feature id is present exactly once', EXPECTED_IDS.every((id) => ids.filter((x) => x === id).length === 1) && ids.length === EXPECTED_IDS.length, ids.join());
@@ -193,7 +195,7 @@ check('walletconnect names W11 and W12 (permit decoding, dApp identity)', ['W11'
       /tested offline/.test(wc) && /live app over the WalletConnect relay/.test(wc) && /not yet cleared for real funds/.test(wc), wc);
 }
 // Every enforced feature has a gate in the app modules (static check).
-const gateSources = ['aa.ts', 'delegation.ts', 'sessions.ts', 'passkeys.ts', 'recovery.ts', 'token-gas.ts', 'inheritance.ts', 'browser-bridge.ts', 'multisig.ts']
+const gateSources = ['aa.ts', 'delegation.ts', 'sessions.ts', 'passkeys.ts', 'recovery.ts', 'token-gas.ts', 'inheritance.ts', 'browser-bridge.ts', 'multisig.ts', 'staking.ts']
   .map((f) => readFileSync(join(HERE, '..', 'src', 'wallet', f), 'utf8'))
   .join('\n');
 for (const f of FEATURE_READINESS.filter((x) => x.enforced)) {
@@ -203,7 +205,21 @@ for (const f of FEATURE_READINESS.filter((x) => x.enforced)) {
 // ---------------------------------------------------------------------------
 console.log('check-readiness: helpers');
 // ---------------------------------------------------------------------------
-check('exactly Sepolia, Base Sepolia and Arbitrum Sepolia are test networks (Arbitrum One is not)', TEST_NETWORK_CHAINS.length === 3 && isTestNetwork(SEPOLIA) && isTestNetwork(BASE_SEPOLIA) && isTestNetwork('eip155:421614') && !isTestNetwork('eip155:42161') && !isTestNetwork(MAINNET), TEST_NETWORK_CHAINS.join());
+check('exactly Sepolia, Base Sepolia, Arbitrum Sepolia, Hoodi and OP Sepolia are test networks (Arbitrum One and OP Mainnet are not)',
+  TEST_NETWORK_CHAINS.join() === 'eip155:11155111,eip155:84532,eip155:421614,eip155:560048,eip155:11155420' &&
+    isTestNetwork(SEPOLIA) && isTestNetwork(BASE_SEPOLIA) && isTestNetwork('eip155:421614') && isTestNetwork('eip155:560048') && isTestNetwork('eip155:11155420') &&
+    !isTestNetwork('eip155:42161') && !isTestNetwork('eip155:10') && !isTestNetwork('eip155:17000') && !isTestNetwork(MAINNET), TEST_NETWORK_CHAINS.join());
+// Phase 18 item 1: the switchboard is about the network's FUNDS, so on Hoodi
+// every testnet-only row is allowed exactly as on the other test networks.
+// Hoodi has no Kernel v3.3 deployment; the smart-account features are
+// stopped there by the deployment checks (aaKernelPrefillFor null, the
+// on-chain verification on save, the delegate code read, the multisig
+// network check), not by readiness. Pinned so neither layer is mistaken for
+// the other.
+check('Hoodi and OP Sepolia: every feature is allowed (test networks), the gate is clear',
+  FEATURE_READINESS.every((f) => isFeatureAllowed(f.id, 'eip155:560048') && isFeatureAllowed(f.id, 'eip155:11155420')) &&
+    readinessGate('kernel-smart-account', 'eip155:560048') === null && aaReadinessBlock('eip155:560048', 'kernel-v3.3') === null &&
+    aaReadinessBlock('eip155:11155420', 'kernel-7702') === null);
 check('Base Sepolia is eip155:84532', BASE_SEPOLIA === 'eip155:84532');
 check('the test-network list is exactly the test profiles in evm-chain.ts', TEST_NETWORK_CHAINS.join() === EVM_TEST_PROFILES.map((p) => p.caip2).join());
 check('every test profile is flagged testnet (and mainnet is not)', EVM_TEST_PROFILES.every((p) => p.testnet === true) && EVM_MAINNET.testnet === false);
@@ -217,10 +233,10 @@ check('isFeatureAllowed: blocked feature allowed on Sepolia, not cleared on main
 check('isFeatureAllowed accepts a testnet flag', isFeatureAllowed('passkeys', true) && !isFeatureAllowed('passkeys', false));
 check('readinessReason returns the table text', readinessReason('session-keys') === featureReadiness('session-keys').reason);
 check('readinessRefusal = reason + the test-mode hint', readinessRefusal('passkeys') === `${featureReadiness('passkeys').reason} ${READINESS_TESTNET_HINT}`);
-check('the hint points at Settings → Developer, naming every test profile and a test network the user added', READINESS_TESTNET_HINT === 'Turn on a test network (Ethereum Sepolia, Base Sepolia or Arbitrum Sepolia), or a test network you added, in Settings → Developer to use this feature.', READINESS_TESTNET_HINT);
+check('the hint points at Settings → Developer, naming every test profile and a test network the user added', READINESS_TESTNET_HINT === 'Turn on a test network (Ethereum Sepolia, Base Sepolia, Arbitrum Sepolia, Hoodi or OP Sepolia), or a test network you added, in Settings → Developer to use this feature.', READINESS_TESTNET_HINT);
 check('the hint names Base Sepolia as well', READINESS_TESTNET_HINT.includes('Base Sepolia'));
 check('the Settings intro names the built-in test networks and any test network the user added (exact clause)',
-  READINESS_INTRO.includes('switched off outside the test networks (Ethereum Sepolia, Base Sepolia and Arbitrum Sepolia, and any test network you added) and cannot be switched on.'), READINESS_INTRO);
+  READINESS_INTRO.includes('switched off outside the test networks (Ethereum Sepolia, Base Sepolia, Arbitrum Sepolia, Hoodi and OP Sepolia, and any test network you added) and cannot be switched on.'), READINESS_INTRO);
 const thrown = await caught(() => assertFeatureAllowed('kernel-smart-account', MAINNET));
 check('assertFeatureAllowed throws FeatureNotAllowedError with the feature id', thrown instanceof FeatureNotAllowedError && thrown.featureId === 'kernel-smart-account' && isRefusal(thrown));
 check('assertFeatureAllowed is silent where allowed', (await caught(() => assertFeatureAllowed('kernel-smart-account', SEPOLIA))) === null);

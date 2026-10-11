@@ -58,6 +58,7 @@ export type RootStackParamList = {
   /** Inheritance switch (phase 14 item 4), a test-network demonstration on the guardian modules. */
   Inheritance: undefined;
   Multisig: undefined;
+  Staking: undefined;
   /** Passkey signer (phase 8 item 3) for the active account's deployed Kernel account, active EVM chain. */
   Passkey: undefined;
   /**
