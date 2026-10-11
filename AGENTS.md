@@ -4694,3 +4694,83 @@ DEMO step 24 rewritten for a non-built-in custom network.
       under a stETH row; the Accounts list layout; the silent banner with
       a multisig active; the Polygon Amoy walk-through; the Holesky
       refusal on screen.
+- [x] Fix slices RE-CHECKED ON THE EMULATOR (2026-10-11; Expo Go, Metro
+      worktree at 5eb9dd1 with the engine built inside it — the app
+      reported 2,232 modules against 2,333 at 4f9c946 while a non-lazy
+      export of the same entry gave 2,411 and held the new strings; cause
+      unknown; no repo files edited; 2 prompts in total, one per stake;
+      no dev-EOA spending; every hash read on publicnode; notes in the
+      scratchpad p18d). PASSED: (A) Home token rows titled USDC / EURC /
+      stETH / wstETH with "ERC-20" or "<name> · ERC-20" under them, the
+      whole symbol in the badge ("wstETH" fits; the pill is a wider oval),
+      the rebasing note under stETH only; (B) the switcher intro exactly
+      as pinned plus "To watch an address, use Manage accounts."; (C) with
+      Multisig 2 active: Receive "Receive test ETH" / "Only send test ETH
+      on the Ethereum Sepolia network to this address…", NFTs "…this
+      multi-signature account's address, 0x944c…", Tokens with no Send and
+      the multisig sentence, the Apps refusal with the new signer hint and
+      the button opening the list, the list reading "… · deployed" at
+      once, the detail without "New operation (send)", Activity titled
+      "Ethereum Sepolia activity" with "Received 0.0006 test ETH from
+      Account 1" / "…sent 0.0001 test ETH to Account 2"; 0 prompts each
+      way; (D) a watch-only account: Tokens with no Send and the watch-only
+      sentence; (E a) regular stake 0.0001 → stETH: the pinned Lido line
+      only, prompt "Stake 0.0001 test ETH with Lido for stETH", success
+      with the "on this screen and on Home" note and the note field; tx
+      0x80c0327f210313eba9cdfb5440d6e6dde31182888ab9219e3a1ecafa6325acc8,
+      block 11889750, status 0x1, minted 99,999,999,999,999; Activity
+      "Staked 0.0001 test ETH with Lido (stETH contract 0x3e3F…40Af):
+      received 0.000099999999999999 stETH" with "Note: p18d regular stake
+      note" on all three rows; the older stake, wrap, unwrap, approve and
+      stake-to-wstETH rows carry their pinned Lido labels; (E b)
+      smart-account stake 0.0001: holder line "Balances of your smart
+      account 0xD31c…D8FA" / "…regular account 0x772e…F44F" with the
+      toggle each way, prompt "…from your smart account", "Bundling…
+      waiting for the UserOperation receipt." then "Included on-chain —
+      succeeded." about 35 s later, the bundle hash as text, the explorer
+      button, the smart-account note and the note field; userOp
+      0xf73d109cb563190df3d441f807771871ca04b6724ffe655b2795e0deeed8341f,
+      bundle tx 0x65d23913c0c8af86e779f529f335d9b833d223fbfe7461a876beabe92ddf7204,
+      block 11889779, success, nonce 32, actualGasCost 0.000778 ETH,
+      Deposited 747,174,110,161,719 (= the displayed top-up), stETH
+      +99,999,999,999,999; (E c) an unaffordable stake: "Insufficient
+      funds: sending 1000000000000000000 wei plus a worst-case fee of at
+      least 21000672000 wei exceeds the balance of 2318893341920775 wei."
+      and no ZERO_DEPOSIT; (F) no guardian-recovery footer on Hoodi, back
+      on Ethereum Sepolia; (G) "For example Polygon Amoy" / "For example
+      80002"; (H) wstETH removed and found again as "KNOWN STAKING TOKEN"
+      with the pinned-contract sentence, re-tracked; (I) the three Tokens
+      sentences (Ethereum Sepolia USDC and EURC; OP Sepolia USDC; Hoodi
+      none); (J) the Developer hint without Hoodi. Funds reconciled:
+      Account 1 ETH 0.002419 → 0.002319, stETH 0.001215; Kernel ETH
+      0.012300 → 0.011452, deposit 0.000447 → 0.000416, stETH 0.0006.
+      FINDINGS (fix slice dispatched): (1) the longer switcher intro
+      squeezes the list so the multisig row is cut off until the list is
+      scrolled, with no scroll hint; (2) from Account 1's side, its sends
+      to the multisig read "Sent 0.0006 test ETH to yourself" — the
+      multisig address counts as the wallet's own, so it should be
+      labelled "Multisig 2 (2-of-3)", not "yourself"; (3) in the
+      multisig's Activity, top-ups from Account 1's smart account read
+      "Smart-account bundle with 1 operation from other accounts" with no
+      label for the wallet's own smart account; (4) GAP — the smart
+      account's bundle transactions are not listed in Activity at all
+      (the route takes a chain id and lists the active account's own
+      address), so a smart-account note and its move to the bundle hash
+      cannot be seen in the UI; (5) the unaffordable-stake title reads
+      "Not enough ETH…" on a test network ("test ETH" elsewhere); (6) the
+      "Track wstETH?" dialog does not say it is the pinned Lido contract
+      (the row does); (7) copy with a multisig or watch-only account
+      active: the Tokens intro still says "a smart-account send can pay
+      it in USDC instead…", and Settings → Accounts' backup text still
+      says "One recovery phrase backs up ALL of your accounts" while a
+      multisig exists; (8) cosmetic: the wstETH subtitle is ellipsised on
+      Home; wrap / unwrap / approve rows show "−0 test ETH" and each
+      transaction appears as two or three rows (one "no amount") —
+      pre-existing; (9) NOT RE-TESTED: the list flipping to "deployed" on
+      focus (the record was already stored deployed); (10) the
+      smart-account stake of 0.0001 cost 0.000778 ETH in fees (the
+      headroom economics); (11) the module count; (12) dev only: the
+      "Cannot connect to Expo CLI… Error: undefined" toast once. End
+      state: Home, Ethereum Sepolia, Account 1, light mode, Google IME,
+      protection ON, no watch-only account, the Staking amount field
+      still holding "1"; Metro at 5eb9dd1.
