@@ -182,7 +182,9 @@ server (Expo's, Apple's or Google's) is contacted for them. The wallet
 never asks for a push token: it loads only the scheduling parts of the
 expo-notifications library, not the part that registers a device with
 Expo's push service (checked in the installed library's source,
-version 57.0.22).
+version 57.0.22). The iOS app carries Apple's push entitlement
+(aps-environment) because the library's build plugin adds it; the wallet
+never registers for push messages, so no push token exists to use it.
 
 The Android app nevertheless contains Google's Firebase Cloud Messaging
 library, because expo-notifications depends on it. In the wallet's own

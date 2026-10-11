@@ -118,4 +118,7 @@ export const APP_SCRIPTS = {
   'check-history.mjs': { kind: 'live', summary: 'exit' },
 
   'fakes-kernel.mjs': { kind: 'helper' },
+  // Phase 18 item 0: draws app/assets/notification-icon.png; imported by
+  // check-notifications.mjs, which compares the checked-in file with it.
+  'make-notification-icon.mjs': { kind: 'helper' },
 };

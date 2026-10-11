@@ -50,7 +50,6 @@ readiness conditions C1–C3 and W1–W20).
 | Privacy policy URL and support URL | Both stores | `docs/STORE_LISTING.md` section 1 |
 | Export-compliance answer for encryption | Every App Store submission | Section 6 |
 | A real website for the WalletConnect metadata | dApps display it as the wallet's identity | `app/src/wallet/walletconnect.ts` currently uses the placeholder `https://shiba-wallet.example` |
-| The Android notification icon (an all-white image on a transparent background) and its tint colour | The small icon of the local reminders in the status bar and the shade | An `expo-notifications` entry in `app/app.json` `plugins`; see "Notification icon" in section 3. Until then reminders show a placeholder |
 
 ### Step 2. Install the development client
 
@@ -138,6 +137,7 @@ generated Info.plist, entitlements and AndroidManifest.
 | `expo-camera` plugin | `cameraPermission` text kept; **`microphonePermission: false`, `recordAudioAndroid: false`** (new) | The app only scans QR codes. The plugin's types allow `string \| false`; `false` deletes `NSMicrophoneUsageDescription` (`@expo/config-plugins` `applyPermissions`: `if (permissions[permission] === false) delete infoPlist[permission]`), and `recordAudioAndroid` defaults to `true` (camera docs, config plugin table). Introspection confirms no microphone string |
 | `expo-secure-store` plugin | **`faceIDPermission`** set (new) | Writes `NSFaceIDUsageDescription` (securestore docs, plugin table). Needed for `requireAuthentication` on iOS (the protected phrase class) |
 | `expo-local-authentication` plugin | Listed explicitly with the same `faceIDPermission` (new) | The plugin also writes `NSFaceIDUsageDescription` and adds `USE_BIOMETRIC` and `USE_FINGERPRINT`. It was already applied automatically as a "legacy" plugin (`@expo/prebuild-config` `withDefaultPlugins.js` `legacyExpoPlugins`), but with Expo's default text; listing it makes the text explicit and identical. Docs: without `NSFaceIDUsageDescription`, "the module will authenticate using device passcode" |
+| `expo-notifications` plugin | **`icon: ./assets/notification-icon.png`, `color: #a65d13`** (phase 18) | The Android notification small icon and tint for the local reminders; see "Notification icon" below. The plugin also sets the iOS `aps-environment` entitlement, which it already did automatically before the entry was listed (accepted by the Chairperson on 2026-10-11) |
 | `ios.associatedDomains` | `webcredentials:passkey-domain-not-configured.invalid` (unchanged) | Placeholder for passkeys, as recorded in `AGENTS.md` and `docs/DEVICE_BUILDS.md`. Note: the v57 app-config page documents entries in the `applinks:` form; the `webcredentials:` form comes from the passkey library's README |
 | `ios.supportsTablet` | `true` (unchanged) | A product decision: if it stays `true` the app is offered on iPad, and the iPad layout and screenshots must be checked |
 | `ios.config.usesNonExemptEncryption` | Not set | Section 6 |
@@ -189,52 +189,110 @@ Findings:
   covers both cloud backup with `adb shell bmgr backupnow` and the
   device-to-device test mode `backup_enable_d2d_test_mode`).
 
-**Notification icon (placeholder today).** The local reminders (phase 17
-item 2) show a placeholder in the status bar: no notification icon is
-configured, so the library falls back to the app's launcher icon
-(`expo-notifications` 57.0.22, `ExpoNotificationBuilder.kt`, property
-`icon`: the manifest meta-data `expo.modules.notifications.default_notification_icon`
-if present, else `context.applicationInfo.icon`), and Android draws a
-small icon only from its transparency, so a full-colour square becomes a
-plain shape (seen as a ring on the emulator on 2026-10-10). The fix needs
-an icon the Chairperson has not chosen yet, so nothing was added. The
-exact entry to add to `expo.plugins` in `app/app.json` once the artwork
-exists (paths and colour are examples):
+**Notification icon (done in phase 18 item 0; the push entitlement
+accepted).** The local reminders (phase 17 item 2) used to show a
+placeholder in the status bar: with no icon configured, the library falls
+back to the app's launcher icon (`expo-notifications` 57.0.22,
+`android/src/main/java/expo/modules/notifications/notifications/presentation/builders/ExpoNotificationBuilder.kt`
+lines 342–362: the manifest meta-data
+`expo.modules.notifications.default_notification_icon` if present, else
+`context.applicationInfo.icon`), and Android draws a small icon only from
+its transparency, so the full-colour launcher square became a plain shape
+(seen as a ring on the emulator on 2026-10-10). On 2026-10-11 the
+Chairperson decided to add the icon through the `expo-notifications`
+config plugin and to accept the iOS push entitlement that comes with it.
+The entry in `expo.plugins` in `app/app.json` is:
 
 ```json
 [
   "expo-notifications",
   {
     "icon": "./assets/notification-icon.png",
-    "color": "#E6F4FE"
+    "color": "#a65d13"
   }
 ]
 ```
 
-What it does, from the installed plugin
-(`plugin/src/withNotificationsAndroid.ts`) and the SDK 57 documentation
-(docs.expo.dev/versions/v57.0.0/sdk/notifications, "Configurable
-properties"): `icon` is a "Local path to an image to use as the icon for
-push notifications. 96x96 all-white png with transparency" (Android only;
-the plugin resizes it into `drawable-mdpi` … `drawable-xxxhdpi` as
-`notification_icon.png`, 24 px times the density scale, and writes the
-meta-data `expo.modules.notifications.default_notification_icon`, which
-local notifications read, and `com.google.firebase.messaging.default_notification_icon`);
-`color` is the "Tint color for the push notification image when it
-appears in the notification tray", default `#ffffff` (written as
-`@color/notification_icon_color` with the matching `default_notification_color`
-meta-data). Two consequences to decide with it:
-
-- The same plugin ALWAYS adds the iOS push entitlement: `withNotificationsIOS.ts`
-  sets `aps-environment` to its `mode` (default `development`) when the
-  entitlements do not have one. The wallet uses no push notifications, so
-  either accept an unused push entitlement on iOS (and set `"mode":
-  "production"` for store builds) or add the Android meta-data and
-  drawables another way. `app/scripts/check-notifications.mjs` currently
-  pins that the plugin is absent; that check must be updated in the same
-  change.
-- A new native build is needed (the icon is a resource); Expo Go cannot
-  show it.
+- **The artwork.** `app/assets/notification-icon.png` is a 96 × 96 PNG,
+  every pixel white with only the alpha channel varying: a Shiba Inu head
+  seen from the front (a wide face, two upright pointed ears with a V
+  notch between them, a pointed ruff on each cheek) with transparent
+  cut-outs for the two eyes and the nose, inside an 8-pixel transparent
+  border (2 dp at the 24 dp icon size). It is drawn from source by
+  `app/scripts/make-notification-icon.mjs` (run it from `app/` to
+  regenerate the file; no design tool or download is involved), and
+  `app/scripts/check-notifications.mjs` checks that the checked-in file is
+  exactly what that script draws, that it is 96 × 96, and that every
+  pixel is white. Final store artwork remains a design input; replacing
+  the drawing in the script and re-running it is enough.
+- **`icon`.** Documentation (docs.expo.dev/versions/v57.0.0/sdk/notifications,
+  "Configurable properties", Android only): "Local path to an image to use
+  as the icon for push notifications. 96x96 all-white png with
+  transparency", and under "Custom notification icon and colors": "the
+  icon must be all white with a transparent background" (otherwise "it may
+  not be displayed as intended"). The installed plugin
+  (`plugin/src/withNotificationsAndroid.ts`) resizes the image with
+  `resizeMode: 'cover'` on a transparent background (lines 175–206) into
+  `android/app/src/main/res/drawable-{mdpi,hdpi,xhdpi,xxhdpi,xxxhdpi}/notification_icon.png`
+  at 24 px times the density scale — 24, 36, 48, 72 and 96 px (lines
+  20–27 and 33) — and adds two `<meta-data>` entries pointing at
+  `@drawable/notification_icon` (lines 124–136):
+  `expo.modules.notifications.default_notification_icon`, which local
+  notifications read, and `com.google.firebase.messaging.default_notification_icon`,
+  which only Firebase push messages would read. The plugin's own resizer
+  (`@expo/image-utils` `generateImageAsync`, run on 2026-10-11 with the
+  arguments the plugin passes) kept every one of the five sizes pure white.
+- **`color`.** Documentation: "Tint color for the push notification image
+  when it appears in the notification tray", default `#ffffff`, Android
+  only. The plugin writes it to `res/values/colors.xml` as
+  `notification_icon_color` (lines 66–75 and 98–106) and adds the
+  meta-data `expo.modules.notifications.default_notification_color` and
+  `com.google.firebase.messaging.default_notification_color` pointing at
+  `@color/notification_icon_color` (lines 141–153). The library applies it
+  to every notification that does not carry its own colour
+  (`ExpoNotificationBuilder.kt` lines 364–396 and 111); the wallet's
+  reminders carry none. The value `#a65d13` is the light theme's accent
+  (`app/src/theme-palette.ts`, `lightTheme.accent`), the app's orange
+  darkened for contrast in phase 11.
+- **Left unset, on purpose.** `defaultChannel` is the "Default channel for
+  FCMv1 notifications" (documentation); the plugin writes it only as
+  `com.google.firebase.messaging.default_notification_channel_id` (lines
+  159–171), which concerns Firebase push messages, and the reminders name
+  their own channels. `sounds` copies sound files into `res/raw` (Android,
+  lines 221–259) and into the Xcode project (iOS,
+  `withNotificationsIOS.ts` lines 62–113); the reminders use the system
+  sound. `enableBackgroundRemoteNotifications` (iOS, default `false`) adds
+  `remote-notification` to `UIBackgroundModes` (lines 32–60), which only a
+  push service would need. `mode` (iOS, in the plugin's types,
+  `plugin/src/withNotifications.ts` lines 31–36, but not in the v57
+  documentation table) is left at its default. `check-notifications.mjs`
+  pins that the entry carries exactly `icon` and `color`.
+- **The iOS push entitlement (accepted).** `withNotificationsIOS.ts`
+  lines 20–25 set `aps-environment` in the app's entitlements to `mode`
+  (default `development`) when the entitlements do not already have one.
+  The documentation adds: "The iOS APNs entitlement is always set to
+  'development'. Xcode automatically changes this to 'production' in the
+  archive generated by a release build." The wallet uses no push
+  notifications. FINDING (2026-10-11): the entitlement was already present
+  before this entry was added. `@expo/prebuild-config` 57.0.17 applies
+  `expo-notifications`' own plugin automatically, with no properties,
+  whenever the package is installed (`build/plugins/withDefaultPlugins.js`
+  line 171, `versionedExpoSDKPackages`, applied from
+  `build/getPrebuildConfig.js` line 56 through
+  `build/plugins/unversioned/createLegacyPlugin.js`), and
+  `npx expo config --type introspect` on the previous `app.json` already
+  showed `"aps-environment": "development"`. The explicit entry therefore
+  adds only the Android icon and colour; it does not change the iOS
+  entitlements. The Chairperson accepted the entitlement on 2026-10-11;
+  Firebase Cloud Messaging is noted as the likely longer-term push option
+  (feature 93 in full). An App Store reviewer may ask why a wallet without
+  push carries the entitlement; the answer is the library's plugin, and
+  the alternative (a custom plugin that removes it) is not built.
+- **A new native build is needed** (the icon and colour are Android
+  resources and manifest entries); Expo Go cannot show them, and the
+  existing local development build keeps showing the placeholder until it
+  is rebuilt (`docs/DEVICE_BUILDS.md`, "Rebuild after native
+  configuration changes").
 
 **Local reminders: what the notification library adds to the Android
 manifest.** Seen in the merged manifest of the local debug development
@@ -538,8 +596,10 @@ Every item must be checked for the exact commit being built.
       privacy-policy URL with its open items closed.
 - [ ] No placeholder remains in a shipped feature: passkey rpId (or
       passkeys hidden), the WalletConnect metadata URL, the publisher
-      contact in `docs/PRIVACY.md`, the Android notification icon and
-      colour (section 3, "Notification icon").
+      contact in `docs/PRIVACY.md`.
+- [x] The Android notification icon and colour (section 3, "Notification
+      icon"; done in phase 18 item 0). Still to confirm on the build being
+      released: the icon in the status bar and the shade.
 
 **Build hygiene**
 

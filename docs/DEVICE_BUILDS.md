@@ -51,6 +51,44 @@ An Android development build can also be made locally without any account
 docs.expo.dev/develop/development-builds/introduction), which this machine
 can do with the Android SDK installed for the emulator work.
 
+### Rebuild after native configuration changes
+
+A development build carries the native configuration it was built with;
+reloading JavaScript from Metro does not change it. After a change to a
+config plugin entry in `app/app.json` the build must be made again (the
+SDK 57 notifications documentation: these settings "cannot be set at
+runtime and require building a new app binary to take effect"). Locally,
+run `npx expo prebuild --platform android --clean` and then
+`npx expo run:android`: `run:android` generates the native project only
+when the `android/` folder is missing (`@expo/cli` 57.0.28,
+`build/src/run/ensureNativeProject.js`, `ensureNativeProjectAsync`), so a
+folder left by an earlier build would otherwise keep the old
+configuration.
+
+The current case is the Android notification icon (phase 18 item 0,
+`docs/RELEASE.md` section 3, "Notification icon"): the
+`expo-notifications` entry now names `./assets/notification-icon.png` and
+the tint `#a65d13`. The local debug development build made in phase 17
+predates it and keeps showing the launcher-icon placeholder in the status
+bar until it is rebuilt. What only a rebuilt build can confirm:
+
+- the merged manifest carries the meta-data
+  `expo.modules.notifications.default_notification_icon` →
+  `@drawable/notification_icon` and
+  `expo.modules.notifications.default_notification_color` →
+  `@color/notification_icon_color`, and `res/drawable-*/notification_icon.png`
+  exists at 24, 36, 48, 72 and 96 px;
+- a reminder shows the white Shiba head in the status bar and in the
+  shade, with `#a65d13` used as the notification's colour wherever the
+  Android version applies one (the exact rendering depends on the Android
+  version and is not verified), in light and dark mode;
+- nothing else in the reminders changed (channels, sound, the tap into
+  Sessions).
+
+`app/scripts/check-notifications.mjs` checks the entry and the image
+offline; `npx expo config --type introspect` shows the plugin's effect on
+the generated manifest without a prebuild.
+
 ## What to re-validate on the first device builds
 
 In priority order. The W-numbers are the mainnet-readiness conditions in
