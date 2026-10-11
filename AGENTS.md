@@ -4577,8 +4577,17 @@ rebasing note on Home. Built and verified offline: the notification icon
 through the expo-notifications plugin, the staking engine with the Hoodi
 claim flow and Rocket Pool, the polish list (notes on Swap and Sessions
 success views, the Firebase questions answered from source), and the
-fixes from both passes. Engine: 913 tests. App: 51 offline suites, 7,491
-checks at 1b6b322. The shareable page is at version 19 (46 proven live,
+fixes from both passes. After the status was first written, five more
+slices landed and were each re-checked on the emulator (entries below
+this section): the WalletConnect sent view with its note field (proven
+live through the in-app browser), the read-only multisig list under
+Settings → Accounts, Holesky retired from the custom allow-list, the
+smart account's own history in Activity through a time-ordered merge of
+four one-sided indexer streams, a React-free history controller, the
+EIP-7708 protocol logs reconciled in the indexer path, reverted incoming
+transfers shown as failed, and null receipts retried on an alternate
+endpoint. Engine: 936 tests. App: 51 offline suites, 7,739 checks at
+5bc71e5. The shareable page is at version 19 (46 proven live,
 18 built, 1 designed, 34 not started); DEMO.md has steps 25 to 27;
 THREAT_MODEL.md has T-77 and F-70 to F-73.
 
@@ -4601,15 +4610,16 @@ with a bundler saved); the review of docs/DISCLOSURE_FINDINGS.md and the
 disclosure decision; a decision on Firebase Cloud Messaging as the
 longer-term push option (feature 93 in full).
 
-Follow-ups (no inputs): an emulator re-check of the two fix slices
-(9290864, 1b6b322); wiring WcSentView into WalletConnectContext so the
-WalletConnect success view carries a note field; the preview's rebasing
-note in BalanceChangePreview; Settings → Accounts listing multisigs
-read-only; RecurringDueBanner / NotificationScheduler skipping a
-multisig; dropping Holesky from the custom allow-list once its sunset
-is confirmed from an Ethereum Foundation source; a TalkBack pass; the
-reminders fixes re-run in the development build with the new icon;
-DEMO step 24 rewritten for a non-built-in custom network.
+Follow-ups (no inputs): a diagnostic line for rows whose receipt is
+unavailable on every endpoint (the first-load retry did not recover the
+five oldest rows; a refresh did); the "−0 test ETH" line on zero-value
+approve rows; "Not enough ETH to pay the network fee." still hard-codes
+ETH (a symbol argument across about 30 callers); the doubled rebasing
+sentence on a stETH stake confirm; the Multisig list's deployment
+refresh on focus (never observed: the emulator's record is already
+deployed); a TalkBack pass; the reminders fixes re-run in the
+development build with the new icon; the Polygon Amoy walk-through of
+DEMO step 24; reading the exported CSV in a development build.
 - [x] Phase 18 follow-ups, no inputs (commit c7400ee; check-wc 298 (was
       272), check-simulation 75 (62), check-multisig 282 (273),
       check-recurring 185 (174), check-custom-networks 199 (188); offline
@@ -5195,3 +5205,53 @@ DEMO step 24 rewritten for a non-built-in custom network.
       "internal" (if it misses one, the matching log becomes a native
       row — reasoned); a live page boundary splitting a transaction; how
       many of the 35 sentence-less rows the retry recovers.
+- [x] History fixes PROVEN ON THE EMULATOR (2026-10-11; Expo Go, Metro
+      worktree at ace3451 with the engine built inside it, 2,360 modules;
+      0 prompts; nothing sent; no repo files edited; masked row lists in
+      the scratchpad p18h). (1) EIP-7708 DUPLICATES GONE: Activity as
+      Account 1 lists 83 + 32 = 115 entries (was 59 / 107 / 139) and the
+      "no amount" rows fell from 34 of 139 to 9 of 115 — diffed against
+      the previous list, every protocol-log duplicate is gone (stakes,
+      the swap, multisig fundings, the 0.004 / 0.012 receipts, the
+      recurring payments, the 9 Oct ops now reading only as their
+      EntryPoint deposit rows); plain sends and receives carry no extra
+      row; the nine left are the zero-ETH legs of pre-fork token
+      transactions ("Unwrapped wstETH …", "Wrapped stETH …", "Sent 4 USDC
+      to your smart account", "Swapped 1 USDC for …", the Permit2 one) and
+      the reverted transfer. (2) THE REVERTED INCOMING TRANSFER (row 100):
+      title "Failed — nothing was received", no amount, sentence "Failed:
+      an incoming transaction from 0x16DA…aC5C to your smart account
+      (0.003 test ETH) was reverted, so nothing was received", chips
+      "smart account" and "failed"; label "…. Failed — nothing was
+      received, no amount, 1 Oct 2026, smart account, failed"; the
+      separate successful 0.003 receipt unchanged. (3) SENTENCES: 5 rows
+      without one after the first full load (the 27–28 Sep swap legs and
+      a Permit2 approve), the same 5 after 30 s and a scroll back, and 0
+      after a pull-to-refresh and a second full load ("Swapped 1 USDC for
+      test ETH on Uniswap.", "Approved USDC for Permit2 (unlimited).",
+      "Received 0.001 test ETH from 0xdB56…7898.") — the refresh path
+      works; time order non-increasing in every pass; tx 0x341db91c once
+      (row 78, "with smart account", matched by amount, date and
+      direction against the indexer). The footer: onEndReached prefetched
+      during slow scrolls; a fast fling stopped at "Load more", one tap
+      → 115 and "End of history.". MULTISIG 2 (0 prompts each way): 8
+      entries (was 16), 0 "no amount" (was 8), the deposit row and the
+      two "by Account 1's smart account" rows intact. Export chooser
+      shows shiba-activity_eip155-11155111_0x772e-F44F_2026-10-11.csv.
+      Endpoints: Sepolia "default (1 of 4:
+      ethereum-sepolia-rpc.publicnode.com)" — the balanced reth backend
+      that answers null receipts is still the primary. FINDINGS
+      (follow-ups, no slice): (1) the five oldest rows were recovered
+      only by the refresh, not by the one-time alternate-endpoint retry
+      on first load — whether they went "unavailable" or the alternate
+      answered null too is not visible in the UI (a diagnostic line
+      would tell); (2) a zero-value approve with no token movement shows
+      "−0 test ETH" (rows 21 and 112) while wrap / unwrap / swap zero legs
+      show "no amount"; (3) a fling into the top of the list triggers a
+      pull-to-refresh (expected RN behaviour, easy to set off); (4)
+      emulator: Expo Go's LauncherActivity hit an ANR on the first launch
+      ("Input dispatching timed out … FocusEvent", process at 0% CPU;
+      cleared by Close app + relaunch); Expo Go's Tools bubble covers the
+      Privacy switch and opened the dev menu once; uiautomator dumps take
+      14–17 s. End state: Home, Ethereum Sepolia, Account 1, light mode,
+      Google IME, protection ON; Metro at ace3451.
