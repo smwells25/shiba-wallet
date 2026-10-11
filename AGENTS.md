@@ -4958,3 +4958,99 @@ DEMO step 24 rewritten for a non-built-in custom network.
       Ethereum Sepolia, Account 1, light mode, Google IME, protection ON,
       indexer restored and verified, no browser connection, wstETH
       tracked; Metro at b80b19d.
+- [x] Merged-history findings FIXED (commit 22d625c; engine 920 — chains-evm
+      658, +4 — check-activity 188 (was 138), check-notes 204 (191);
+      offline runner ALL GREEN in the CTO's isolated worktree on HEAD plus
+      the slice: app 7,698 across 51 suites, lint 0/0, tsc clean; 25 of 26
+      hand mutants caught — the 26th, "dispose publishes", is equivalent
+      to the original because dispose already bumps the generation; every
+      old file fails its suite from a scratch copy; not seen on a device).
+      (F1 + F2) THE MERGE RULE: engine indexerHistoryProvider gains
+      direction 'both' | 'sent' | 'received' (default 'both' unchanged)
+      and HistoryEntry an optional counterparty (declared in
+      core/history/types.ts); the app's history.ts indexerHistoryStreams
+      opens FOUR one-sided streams (own sent / received, smart sent /
+      received — the two-sided provider pages its two queries
+      independently, which is why one page already mixed time ranges),
+      each in block order with a buffer, a cursor and a FRONTIER (the
+      block of the oldest entry fetched; +∞ before the first fetch); the
+      bound is the HIGHEST frontier among streams that still have pages;
+      an entry is listed only when its block is STRICTLY ABOVE the bound
+      (a page boundary can split a block and one transaction yields
+      several entries — the agent's deviation from the CTO's "at or
+      after", accepted); while fewer than 50 entries are listable the
+      stream(s) at the bound are fetched, at most 8 rounds per page (both
+      judgements); once no stream has more, everything left is listed;
+      newest block first, within a block the account's own rows first.
+      SAME TRANSACTION IN BOTH STREAMS: the account's own entries are the
+      provider's objects, recorded in a WeakSet involvesSmartAccount when
+      the smart account has an entry with that hash (chip "with smart
+      account", spoken "with your smart account"); the smart account's
+      mirror entries are dropped; its other entries are marked copies
+      (smartAccount: true, uid prefix smart-account:); a self-transfer is
+      listed once. FAILURES: an own-stream failure fails the page (rounds
+      already done are kept; the retry neither repeats nor skips); a
+      smart-stream failure drops both smart streams and their buffers,
+      reports 'failed', and stops until a reload. LIVE CASE 0x341db91c:
+      listed once as Account 1's own −0.0015 row with the chip, sentence
+      "Sent 0.0015 test ETH to your smart account" (selfNames names the
+      active account's own smart account; was "to yourself"); the smart
+      account's own operations still read "Smart-account operation: …".
+      createMergedHistoryFeed replaces withSmartAccountHistory /
+      freshHistoryEntries / mergeSmartAccountEntries; useHistory
+      openHistorySession; the cursor path and its failover serve only
+      the non-indexer sources; request volume 4 on the first page, up to
+      8 per skewed page. Pinned with fakes: own pages ending earlier and
+      the reverse, one stream ending first, an empty stream, a smart
+      stream failing mid-way, an own failure then retry, the live case
+      with the smart page a page earlier, within-block order, request
+      counts through the real engine provider, the CSV in list order with
+      no duplicate hash + direction + amount rows. (F3) THE RACE, from
+      the installed ReactFabric-dev.js 6966–6971 (React 19.2.3 / RN
+      0.86.3): a setState updater runs eagerly only with no other update
+      pending; Activity updates constantly while scrolling, so the old
+      loadMore's cursor read inside an updater was deferred, the load
+      returned early with no cursor, and the deferred updater then set
+      loadingMore true with nothing to clear it (reasoned, not
+      reproduced). New React-free app/src/wallet/history-controller.ts
+      (useHistory a thin wrapper): the cursor and buffers live in the
+      session, an in-flight flag allows one load-more at a time, a
+      generation counter drops answers from an old session after a
+      reload, each page races a 60 s timeout, a timed-out load keeps
+      running and the retry joins it or takes its result; footer states
+      spinner → "Could not load more — tap to retry" (tappable, with the
+      technical line; HISTORY_PAGE_TIMEOUT_MESSAGE "The history endpoint
+      did not answer within 60 seconds.") / "Load more" / "End of
+      history."; a first page that times out shows the existing error
+      screen with Retry. NOT addressed: the "VirtualizedList … slow to
+      update" warning (a performance signal). (F4)
+      entryPointRowSentence for native rows of a smart account's history
+      (smart-account rows, and every row while a multisig is active)
+      whose counterparty is EntryPoint v0.7: out "EntryPoint deposit:
+      <exact amount> test ETH set aside for this smart account's network
+      fees", in "EntryPoint payout: <amount> test ETH paid to this smart
+      account by the EntryPoint" (WORDING DECISION, accepted: from
+      v0.7.0 StakeManager.sol / EntryPoint.sol, ETH sent to the
+      EntryPoint is credited to the deposit, unused prefund returns to
+      the deposit and is not sent, and ETH leaves only through
+      withdrawTo, withdrawStake or the beneficiary payment, so an
+      incoming transfer cannot be named more precisely without guessing);
+      the row sentence wins over the transaction sentence, so the staking
+      bundle's −0.000747 row no longer reads "staked …"; pinned with
+      747,174,110,161,719 wei and the rounded 0.000923 (its exact wei is
+      not on record). (F5) a row whose sentence may still arrive gets the
+      label "Transaction, details loading. " + the short label
+      (decoder.mayDecode; stops once a decode is cached or failed); the
+      EntryPoint sentence is computed synchronously; the last decoder
+      setup is memoised (8 kept) so a return to the screen shows earlier
+      sentences at once. (F6) CAUSE: no note view set
+      keyboardShouldPersistTaps, so RN's default 'never' swallowed the
+      first tap to dismiss the keyboard — on EVERY note view;
+      TransactionNoteField exports NOTE_VIEW_SCROLL_PROPS ('handled') and
+      dismissKeyboardThenClose (notes.ts closeNoteView: dismiss, then
+      close), applied to Send ×2, Swap ×2, Staking, the Sessions progress
+      view and WcSentView. THREAT_MODEL 7.4 counts updated. UNVERIFIED
+      (device): the chip, footer, labels and TalkBack; the dismiss-then-
+      close order incl. whether the keyboard stays open after popToTop;
+      the real Alchemy answers for one-sided queries on a Kernel account;
+      "Load more" after an empty 8-round page.
