@@ -4215,3 +4215,102 @@ emulator passes; 3 — item 3; 4 last. Subagents on Opus.
       label for multisigs; whether subscriptions / spending limits /
       approvals list the staking tokens. Emulator checklist (9 steps) in
       the switcher builder's report.
+- [x] Items 1 and 2 PROVEN LIVE IN-APP (2026-10-11; emulator, Expo Go,
+      Metro at a004ba0, 2,356 modules; one prompt per operation; no
+      dev-EOA funding; every hash checked on publicnode). PROFILES: the
+      Developer chips "Off (mainnet) / Ethereum Sepolia / Base Sepolia /
+      Arbitrum Sepolia / Hoodi / OP Sepolia", the hint naming five
+      networks with chain ids and explorers, the pre-fill sentence
+      excluding Hoodi; HOODI: banner, "Test mode is ON (Hoodi)…", no
+      layer-2 note, endpoints "Hoodi — default (1 of 3:
+      ethereum-hoodi-rpc.publicnode.com)", Home "Hoodi" 0 test ETH with
+      links Send / Activity / NFTs / Approvals / Apps / Staking (no Swap,
+      Upgrade, Multisig, Sessions, Guardians, Passkey, no token rows); the
+      Staking screen on Hoodi (Lido's four quotes with source and date,
+      Rocket Pool's two FAQ quotes with the "no risk page" sentence, the
+      no-smart-account note, 0 balances, "Minimum deposit 0.01 test ETH;
+      deposit fee 0.05% (both read just now)", the below-minimum and
+      more-than-held refusals, "Nothing to claim…"); a 0.001 send refused
+      for funds; the AA row "incomplete" with the NEW checked-and-found-
+      none sentence and the pasted factory refused "has no code on this
+      chain"; the readiness intro naming five networks; OP SEPOLIA: banner
+      + the L1 note "(0x does not support OP Sepolia)", Home with the
+      USDC row and Upgrade / Multisig links (no Staking), "Tokens · OP
+      Sepolia" USDC 0x5fd8…30D7, the Kernel pre-fill VERIFIED ✓ and SAVED
+      on the device, a send refused for funds; the custom form refuses
+      560048 as "already built in as Hoodi" and the tick note lists the
+      four remaining networks. STAKING ON SEPOLIA (Account 1): the
+      deprecation sentence and Lido's quotes; STAKE → stETH 0.001:
+      confirm "You send 0.001 test ETH / You receive ≈ 0.001 stETH /
+      Simulated: 0.000999999999999999 stETH…", the rebasing note, fee
+      0.00100003 gwei × 219,081 gas, the preview (stETH labelled
+      "untracked token"), the generic risk lines, "Pre-flight simulation
+      passed"; prompt "Stake 0.001 test ETH with Lido for stETH"; tx
+      0x757548c10fbd15b66fda0fcad88fbfeaaf9e4484e940a73ca87f5517d4cb8bc9,
+      block 11889090, input 0xa1903eab, value 1e15, gas 208,421, Submitted
+      (sender Account 1, referral 0), minted 999,999,999,999,999 stETH /
+      963,653,100,270,615 shares; the screen balance updated. STAKE →
+      wstETH 0.0005 ("LIDO WSTETH CONTRACT (STAKE AND WRAP IN ONE
+      STEP)", "You receive ≈ 0.000481826550135307 wstETH"): tx
+      0x81e32fd5da0c5a4aec5a9312fd06877ff45f2acbe612f47eb853eea40df82d26,
+      block 11889104, empty input (a plain transfer), 481,826,550,135,307
+      wstETH minted = the simulated figure. WRAP 0.0005 stETH: step 1
+      "approves exactly 0.0005 stETH, never more…" (prompt "Approve
+      exactly 0.0005 stETH for Lido wstETH contract (wrap)"; tx
+      0xdca94e499c145bebfa33c5bb4337fa24b059122900567e38e326dd07c22cae72,
+      block 11889114, Approval 5e14), step 2 re-quoted after the approval
+      with "Approval revoked" in the preview (prompt "Wrap 0.0005 stETH
+      into wstETH"; tx
+      0x9538b9f207ecaaf8e9fef59ecc3a84b49ccaf5a8c99cb86ecc79bd49e2a228f2,
+      block 11889119, input 0xea598cb0, 481,826,550,135,307 wstETH;
+      allowance 0 afterwards). UNWRAP 0.0004 wstETH: tx
+      0x963909e560daa5b580852b51c6e2ddb26ad213bf62097b99c2898f6d4f0b1a74,
+      block 11889130, input 0xde0e9a3e, event 415,087,130,304,122 stETH,
+      the balance 1 wei less (the rebasing note's case). UNSTAKE: "…paused
+      on Sepolia: its withdrawal queue reports that it is paused (read
+      just now) and has never accepted a request…", Review disabled.
+      CLAIM: "Nothing to claim…". SMART-ACCOUNT STAKE 0.0005 from
+      0xD31c…D8FA: confirm with the bundler estimate 0.001454470713777846
+      and the deposit row with its top-up, "Bundler gas estimate passed";
+      prompt "Stake 0.0005 test ETH with Lido for stETH from your smart
+      account"; userOpHash
+      0x3a09d92df9b4a92d767a57cd7ac6db04f11a7572e069d4200bd1e65ed285cc5b,
+      bundle tx 0x594a9399e71325cd63d023cc2560cfe683df9c9f615131263b7e88df4a7311f0
+      (found via the EntryPoint logs), block 11889151, success, nonce 31,
+      actualGasCost 0.0010078 ETH (the bundler's 2.04 gwei vs 0.001 gwei
+      for the EOA sends — the headroom economics again), the deposit
+      topped up to exactly the displayed figure, the Kernel received
+      499,999,999,999,999 stETH. Amount 0 → "Enter an amount greater than
+      zero."; on Base / Arbitrum / mainnet there is no Staking link, so
+      the "No staking protocol…" sentence and the mainnet card are not
+      reachable (by design). Funds after: Account 1 0.002619 ETH +
+      0.000915 stETH + 0.000564 wstETH; Kernel 0.0123 ETH + 0.000447
+      deposit + 0.0005 stETH. FINDINGS (fix slice dispatched): (1) BUG —
+      a stake the account cannot afford shows the contract's revert
+      ("execution reverted: ZERO_DEPOSIT"; for rETH "The deposited amount
+      is less than the minimum deposit size") instead of "not enough
+      ETH": prepareEvmSend (send.ts 538–546) retries estimateGas with
+      value 0 when the first estimate fails, valid for plain transfers
+      but wrong for payable calls; (2) the success copy says "The stETH
+      balance on Home and here is read from the token itself…" while Home
+      has no stETH row (the tracking step landed in item 3 after this
+      pass; re-check); (3) the risk card on staking calls was generic
+      (fixed in item 3 after this pass; re-check); (4) the smart-account
+      success screen shows only the userOpHash, no bundle tx; (5) Hoodi's
+      Home footer still offers "Recover an account with guardians"
+      although Hoodi has no Kernel or RecoveryAction; (6) the custom
+      form's placeholders "For example Hoodi" / "For example 560048" are
+      now refused as built in; (7) copy — OP Sepolia's Tokens text
+      mentions EURC (none there), the Developer hint says each test
+      network's "smart-account path" runs (not Hoodi), the staking
+      balances block does not say which account it shows when the toggle
+      is on; (8) economics — the smart-account stake cost 0.0010078 ETH
+      in fees for 0.0005 staked (bundler price ~2,000× the base fee).
+      Emulator note: Expo Go's floating Tools button overlaps the Privacy
+      switch at the bottom — scroll it up before tapping. End state:
+      Home, Ethereum Sepolia, Account 1, light mode, Google IME,
+      protection ON; the OP Sepolia Kernel factory saved on the device;
+      Metro at a004ba0. UNVERIFIED: a live Hoodi transaction or Rocket
+      Pool deposit (0 Hoodi ETH); the OP Sepolia smart-account path (no
+      bundler saved there); whether the Hoodi Upgrade link flickers
+      before the delegate read; TalkBack, dark mode.
