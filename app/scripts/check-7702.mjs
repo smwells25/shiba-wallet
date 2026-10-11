@@ -614,8 +614,10 @@ const HOODI_ID = 560048n;
     screen.includes("{status?.kind === 'kernel-v3.3' && !optedIn && upgradeOffered ? (") &&
       screen.includes("{status?.kind === 'kernel-v3.3' || status?.kind === 'other' ? ("));
   const home = readFileSync(new URL('../src/screens/HomeScreen.tsx', import.meta.url), 'utf8');
+  // noKey = watchOnly || multisig (phase 18 item 3: a multisig account is
+  // never offered the upgrade either).
   check('Home: the Upgrade link follows upgradeLinkShown for the active chain',
-    home.includes('{upgradeLinkShown({ delegateDeployed: walletDelegateDeployed(evmChain.chainIdDecimal), status: delegation.status }) ? (\n            <>\n              {isEvm && !watchOnly\n                ? cardLink(\n                    \'upgrade\','));
+    home.includes('{upgradeLinkShown({ delegateDeployed: walletDelegateDeployed(evmChain.chainIdDecimal), status: delegation.status }) ? (\n            <>\n              {isEvm && !noKey\n                ? cardLink(\n                    \'upgrade\','));
 }
 
 // Mutation: prepareSetCodeTx without the delegate-code check must be caught.

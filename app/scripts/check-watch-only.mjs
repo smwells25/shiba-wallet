@@ -38,6 +38,7 @@ import {
   IMPORTED_ACCOUNT_ID_BASE,
   MAX_IMPORTED_SLOT,
   MAX_WATCH_ONLY_SLOT,
+  MULTISIG_SIGN_REFUSAL,
   WATCH_ONLY_ACCOUNT_ID_BASE,
   WATCH_ONLY_NAME_SUFFIX,
   WATCH_ONLY_NOTICE,
@@ -144,16 +145,18 @@ function receiveWatchOnlyProblems(receive) {
   const problems = [];
   const need = (what, ok) => { if (!ok) problems.push(what); };
   need('watchOnly from the active account', receive.includes('const watchOnly = activeAccount?.watchOnly === true;'));
+  // Phase 18 item 3: a multisig account shares the read-only form (noKey).
+  need('noKey covers watch-only (and multisig) accounts', receive.includes('const noKey = watchOnly || multisig;'));
   need('the notice and the watched-address sentence',
     receive.includes('<WatchOnlyNotice show={watchOnly} />') && receive.includes('{WATCHED_ADDRESS_RECEIVE_NOTE}'));
   need('the QR code and the address stay', receive.includes('<QRCode value={account.address}') && receive.includes('{account.address}'));
-  need('Send hidden', receive.includes('{watchOnly ? null : (\n        <Button\n          title={`Send ${account.symbol}`}'));
-  need('payment request hidden', receive.includes('account && !watchOnly ? familyForSlot(account.chainId) : null'));
-  need('proof of ownership hidden', receive.includes("account.chainId === EVM_CHAIN_ID && !watchOnly ? (") && (receive.match(/navigate\('ProveOwnership'\)/g) ?? []).length === 1);
-  need('smart-account box hidden and never read', receive.includes('{smartInfo && !watchOnly ? (') && receive.includes('const smartOwner = evmOwnAddress;') &&
-    receive.includes("const evmOwnAddress = route.params.chainId === EVM_CHAIN_ID && !watchOnly ? (account?.address ?? null) : null;"));
-  need('no upgrade or recovery reads', receive.includes('useAccountDelegation(evmOwnAddress)') && receive.includes('useRecoveryInfo(evmOwnAddress, watchOnly ? null'));
-  need('no raw "watch-only" path label', receive.includes('{watchOnly ? null : (\n        <Text style={[styles.path'));
+  need('Send hidden', receive.includes('{noKey ? null : (\n        <Button\n          title={`Send ${account.symbol}`}'));
+  need('payment request hidden', receive.includes('account && !watchOnly && !multisig ? familyForSlot(account.chainId) : null'));
+  need('proof of ownership hidden', receive.includes("account.chainId === EVM_CHAIN_ID && !noKey ? (") && (receive.match(/navigate\('ProveOwnership'\)/g) ?? []).length === 1);
+  need('smart-account box hidden and never read', receive.includes('{smartInfo && !noKey ? (') && receive.includes('const smartOwner = evmOwnAddress;') &&
+    receive.includes("const evmOwnAddress = route.params.chainId === EVM_CHAIN_ID && !noKey ? (account?.address ?? null) : null;"));
+  need('no upgrade or recovery reads', receive.includes('useAccountDelegation(evmOwnAddress)') && receive.includes('useRecoveryInfo(evmOwnAddress, noKey ? null'));
+  need('no raw "watch-only" path label', receive.includes('{noKey ? null : (\n        <Text style={[styles.path'));
   return problems;
 }
 
@@ -457,9 +460,9 @@ function extractSignWith(ctxSource) {
   if (start < 0 || body < 0 || end < 0) throw new Error('signWith not found in WalletContext.tsx');
   return ctxSource.slice(body, end).replace(/,\s*$/, '');
 }
-async function loadSignWith(ctxSource) {
+async function loadSignWith(ctxSource, accountIdsHref = null) {
   const fnText = extractSignWith(ctxSource);
-  const accountIdsUrl = pathToFileURL(join(HERE, '..', 'src', 'wallet', 'account-ids.ts')).href;
+  const accountIdsUrl = accountIdsHref ?? pathToFileURL(join(HERE, '..', 'src', 'wallet', 'account-ids.ts')).href;
   const module = `import { assertAccountCanSign, isImportedAccountId, importedSlotOf, IMPORTED_KEY_EVM_ONLY } from '${accountIdsUrl}';
 type DerivedAccount = unknown;
 export function makeSignWith(deps: any) {
@@ -524,6 +527,11 @@ async function signingHarness(makeSignWith, activeIndex) {
   check('phrase account: the expected-address refusal is unchanged', /active account changed/.test(p1.error?.message ?? ''));
   const im = await signedBy(importedAccountId(0), 'eip155:1', ADDR_A);
   check('imported account still signs with its own key', im.error === null && im.address === ADDR_A && im.fnCalls === 1);
+  // Phase 18 item 3: a multisig can be the active account; signing refuses
+  // it the same way, before any secure-store read.
+  const ms = await signedBy(0xd0000000, 'eip155:1', WATCHED);
+  check('multisig (EVM): refused with the multisig sentence, ZERO secure-store reads, the callback never runs',
+    ms.error?.message === MULTISIG_SIGN_REFUSAL && ms.reads === 0 && ms.writes === 0 && ms.fnCalls === 0, JSON.stringify({ ...ms, error: ms.error?.message }));
   const gap = await signedBy(IMPORTED_ACCOUNT_ID_BASE + MAX_IMPORTED_SLOT + 1, 'eip155:1', PHRASE_0);
   check('a malformed id between the ranges is refused before any read', /Invalid account index/.test(gap.error?.message ?? '') && gap.reads === 0);
 
@@ -532,6 +540,19 @@ async function signingHarness(makeSignWith, activeIndex) {
   check('signWith: the guard is the FIRST statement, before the chain lookup and every secure-store read',
     /^async <T,>\([\s\S]*?\): Promise<T> => \{\s*(\/\/[^\n]*\n\s*)*assertAccountCanSign\(activeIndexRef\.current\);/.test(sw) &&
       sw.indexOf('assertAccountCanSign(') < sw.indexOf('chainByCaip2(') && sw.indexOf('assertAccountCanSign(') < sw.indexOf('readPhrase(') && sw.indexOf('assertAccountCanSign(') < sw.indexOf('importedKeyVault.read('));
+
+  // M-ms: an account-ids.ts whose assertAccountCanSign lets a multisig id
+  // through ("a multisig that can sign"): the REAL signWith then opens the
+  // phrase for it before anything else refuses.
+  {
+    await importMutant('src/wallet/account-ids.ts', '  if (isMultisigAccountId(id)) throw new Error(MULTISIG_SIGN_REFUSAL);\n', '  if (isMultisigAccountId(id)) return;\n');
+    const mutantIds = pathToFileURL(join(MUTANT_DIR, `m${mutants}-account-ids.ts`)).href;
+    const msSign = await loadSignWith(CTX_SRC, mutantIds);
+    const { signWith: mw, calls: mc } = await signingHarness(msSign, 0xd0000000);
+    const me = await rejects(() => mw('eip155:1', WATCHED, async () => 'signed'));
+    check('M-ms caught: a multisig that passes the signing guard opens the phrase (secure-store read) before failing',
+      mc.get >= 1 && me instanceof Error && me.message !== MULTISIG_SIGN_REFUSAL, `${mc.get} reads; ${me?.message}`);
+  }
 
   // M1: without the guard line the watch-only account reaches the phrase.
   const broken = await loadSignWith(CTX_SRC.replace('assertAccountCanSign(activeIndexRef.current);', ''));
@@ -596,13 +617,13 @@ console.log('check-watch-only: the audit list (modules other screens use)');
   const keyed = [{ index: 0, name: 'Account 1', evmAddress: PHRASE_0 }];
   const own = ownWalletAddresses(keyed, null);
   check('risk card: a watched address is NOT "one of your own accounts"', own.length === 1 && !own.some((o) => o.address.toLowerCase() === WATCHED.toLowerCase()));
-  check('WalletContext: accountList filters watch-only accounts out; they live in watchOnlyAccounts',
-    /\(accountsState\?\.accounts \?\? \[\]\)\.filter\(\(a\) => !a\.watchOnly\)\.map\(/.test(CTX_SRC) && /const watchOnlyAccounts = useMemo/.test(CTX_SRC) && /\.filter\(\(a\) => a\.watchOnly\)/.test(CTX_SRC));
+  check('WalletContext: accountList filters watch-only (and multisig) accounts out; they live in watchOnlyAccounts',
+    /\(accountsState\?\.accounts \?\? \[\]\)\.filter\(\(a\) => !a\.watchOnly && !a\.multisig\)\.map\(/.test(CTX_SRC) && /const watchOnlyAccounts = useMemo/.test(CTX_SRC) && /\.filter\(\(a\) => a\.watchOnly\)/.test(CTX_SRC));
   check('WalletContext: accountForEvmAddress searches accountList only (WalletConnect labels and bindings, recovery screens)',
     /return accountList\.find\(\(a\) => a\.evmAddress\?\.toLowerCase\(\) === lower\) \?\? null;/.test(CTX_SRC));
   check('WalletContext: watch-only ids are never derived from the phrase nor read from the imported-key vault',
-    /return state\.accounts\.filter\(\(a\) => !a\.imported && !a\.watchOnly\)\.map\(\(a\) => a\.index\);/.test(CTX_SRC) &&
-      /!isImportedAccountId\(i\) && !isWatchOnlyAccountId\(i\) && derivedRef\.current\[i\] === undefined/.test(CTX_SRC) &&
+    /return state\.accounts\.filter\(\(a\) => !a\.imported && !a\.watchOnly && !a\.multisig\)\.map\(\(a\) => a\.index\);/.test(CTX_SRC) &&
+      /!isImportedAccountId\(i\) && !isWatchOnlyAccountId\(i\) && !isMultisigAccountId\(i\) && derivedRef\.current\[i\] === undefined/.test(CTX_SRC) &&
       /watchOnlyRowsFrom\(await loadAccounts\(\)\)/.test(CTX_SRC));
   check('WalletContext: the public-account cache is written only for phrase indices (cachePublic(fresh) from derivePublic)',
     !/cachePublic\(\{[^}]*watchOnly/.test(CTX_SRC) && !/savePublicAccount\([^)]*watch/i.test(CTX_SRC));
@@ -639,22 +660,25 @@ console.log('check-watch-only: honesty and the screens (source checks)');
   check('WatchOnlyNotice renders WATCH_ONLY_NOTICE', /<WarningBox>\{WATCH_ONLY_NOTICE\}<\/WarningBox>/.test(src('components.tsx')));
   const home = src('screens/HomeScreen.tsx');
   check('Home: the notice under the switcher', /<WatchOnlyNotice show=\{watchOnly\} \/>/.test(home) && /const watchOnly = activeAccount\?\.watchOnly === true;/.test(home));
+  // noKey = watchOnly || multisig (phase 18 item 3: a multisig account gets
+  // the same read-only Home).
+  check('Home: noKey covers a watch-only account', /const noKey = watchOnly \|\| multisig;/.test(home));
   check('Home: no Send link on chain cards or token rows for a watch-only account',
-    /\{watchOnly\s*\?\s*null\s*:\s*cardLink\('send'/.test(home) && /\.\.\.\(watchOnly\s*\?\s*\{\}\s*:\s*\{ onSend:/.test(home));
+    /\{noKey\s*\?\s*null\s*:\s*cardLink\('send'/.test(home) && /\.\.\.\(noKey\s*\?\s*\{\}\s*:\s*\{ onSend:/.test(home));
   check('Home: no Swap or Upgrade link for a watch-only account',
-    /isEvm && evmChain\.swapsOffered && !watchOnly/.test(home) && /\{isEvm && !watchOnly\s*\?\s*cardLink\(\s*'upgrade'/.test(home));
+    /isEvm && evmChain\.swapsOffered && !noKey/.test(home) && /\{isEvm && !noKey\s*\?\s*cardLink\(\s*'upgrade'/.test(home));
   // Approvals is read-only for a watch-only account: the list renders, and
   // neither the Revoke button nor its handler is reachable.
   {
     const approvals = src('screens/ApprovalsScreen.tsx');
-    check('Approvals: no Revoke button for a watch-only account',
-      /\{withRevoke && !activeAccount\?\.watchOnly \? \(/.test(approvals));
-    check('Approvals: the revoke handler refuses a watch-only account first',
-      /const onRevokePress = async \(item: ApprovalItem\) => \{\s*if \(activeAccount\?\.watchOnly\) return;/.test(approvals));
+    check('Approvals: no Revoke button for a watch-only (or multisig) account',
+      /\{withRevoke && !activeAccount\?\.watchOnly && !activeAccount\?\.multisig \? \(/.test(approvals));
+    check('Approvals: the revoke handler refuses a watch-only (or multisig) account first',
+      /const onRevokePress = async \(item: ApprovalItem\) => \{\s*(\/\/[^\n]*\n\s*)*if \(activeAccount\?\.watchOnly \|\| activeAccount\?\.multisig\) return;/.test(approvals));
   }
   check('Home: Activity and NFTs stay linked', /cardLink\('activity'/.test(home) && /cardLink\('nfts'/.test(home));
   check('Home: Sessions, Guardians and Passkey are never offered (the checks get no owner or index)',
-    /const tools = isEvm && !watchOnly/.test(home) && /const toolsOwner = watchOnly \? null : evmAccount\?\.address;/.test(home));
+    /const tools = isEvm && !noKey/.test(home) && /const toolsOwner = noKey \? null : evmAccount\?\.address;/.test(home));
   check('Home: the address opens Receive for a watch-only account too (its read-only form)',
     !/disabled=\{watchOnly\}/.test(home) && /accessibilityHint=\{\s*watchOnly \? 'Opens the watched address and its QR code'/.test(home) &&
       /onPress=\{\(\) => navigation\.navigate\('Receive', \{ chainId: item\.chainId \}\)\}/.test(home));
@@ -665,9 +689,9 @@ console.log('check-watch-only: honesty and the screens (source checks)');
     check('Receive for a watch-only account: address, QR and notice only; Send, request, proof and smart box hidden; no smart/upgrade/recovery reads',
       problems.length === 0, problems.join('; '));
     for (const [name, from, to] of [
-      ['M-r1 Send shown', '{watchOnly ? null : (\n        <Button\n          title={`Send ${account.symbol}`}', '{false ? null : (\n        <Button\n          title={`Send ${account.symbol}`}'],
-      ['M-r2 request card shown', 'account && !watchOnly ? familyForSlot(account.chainId) : null', 'account ? familyForSlot(account.chainId) : null'],
-      ['M-r3 proof shown', "account.chainId === EVM_CHAIN_ID && !watchOnly ? (", 'account.chainId === EVM_CHAIN_ID ? ('],
+      ['M-r1 Send shown', '{noKey ? null : (\n        <Button\n          title={`Send ${account.symbol}`}', '{false ? null : (\n        <Button\n          title={`Send ${account.symbol}`}'],
+      ['M-r2 request card shown', 'account && !watchOnly && !multisig ? familyForSlot(account.chainId) : null', 'account ? familyForSlot(account.chainId) : null'],
+      ['M-r3 proof shown', "account.chainId === EVM_CHAIN_ID && !noKey ? (", 'account.chainId === EVM_CHAIN_ID ? ('],
       ['M-r4 smart-account read for the watched address', 'const smartOwner = evmOwnAddress;', "const smartOwner = route.params.chainId === EVM_CHAIN_ID ? (account?.address ?? null) : null;"],
       ['M-r5 notice dropped', '<WatchOnlyNotice show={watchOnly} />', ''],
     ]) {
@@ -679,8 +703,8 @@ console.log('check-watch-only: honesty and the screens (source checks)');
         WATCHED_ADDRESS_TITLE === 'Watched address');
   }
   check('Home: Bitcoin, Dogecoin and Solana shown as not available', /<UnavailableChains accounts=\{accounts\} sentence=\{WATCH_ONLY_NO_CHAIN\} \/>/.test(home));
-  check('Home: no guardian-recovery link for a watch-only account', /\{watchOnly \? null : \(\s*<>\s*\{activeAccount\?\.imported \? null : \(/.test(home));
-  check('Home: the delegation lines (which link to Upgrade) are not read for a watch-only account', /useAccountDelegation\(watchOnly \? undefined : evmAccount\?\.address\)/.test(home));
+  check('Home: no guardian-recovery link for a watch-only account', /\{noKey \? null : \(\s*<>\s*\{activeAccount\?\.imported \? null : \(/.test(home));
+  check('Home: the delegation lines (which link to Upgrade) are not read for a watch-only account', /useAccountDelegation\(noKey \? undefined : evmAccount\?\.address\)/.test(home));
   check('Home footer for a watch-only account', watchOnlyFooterText('Treasury (watch-only)').startsWith('Treasury (watch-only) is an address you watch; this wallet holds no key for it, so it cannot send, swap or sign for it.') && /watchOnlyFooterText\(activeAccount\.name\)/.test(home));
   const acc = src('components/AccountsSection.tsx');
   check('Settings → Accounts: a "Watch an address" form with paste, scan, name and the privacy note',
@@ -692,10 +716,11 @@ console.log('check-watch-only: honesty and the screens (source checks)');
     REMOVE_WATCH_ONLY_TITLE === 'Stop watching this address?' && removeWatchOnlyMessage('W', WATCHED) === `W (${WATCHED}) is removed from this wallet. Nothing secret is deleted, because the wallet never held a key for it, and nothing on-chain changes. You can watch it again at any time.`);
   check('Settings → Accounts: no Hide for a watch-only account', /!account\.imported && !account\.watchOnly && account\.index !== 0 && !active/.test(acc));
   const sw = src('components/AccountSwitcher.tsx');
-  check('the switcher lists watch-only accounts with a label', /\.\.\.watchOnlyAccounts\]/.test(sw) && /Watch-only — the wallet holds no key; it cannot send or sign/.test(sw));
+  check('the switcher lists watch-only accounts with a label', /\.\.\.watchOnlyAccounts, \.\.\.multisigAccounts\]/.test(sw) && /Watch-only — the wallet holds no key; it cannot send or sign/.test(sw));
   const gate = src('components/WatchOnlyGate.tsx');
   check('the route gate refuses through watchOnlyRouteRefusal and renders the notice instead of the screen',
-    /activeAccount\?\.watchOnly \? watchOnlyRouteRefusal\(routeName\) : null/.test(gate) && /if \(refusal === null\) return <>\{children\}<\/>;/.test(gate) && /<WatchOnlyNotice \/>/.test(gate));
+    /const refusal = activeAccount\?\.watchOnly\s*\? watchOnlyRouteRefusal\(routeName\)\s*: multisig\s*\? multisigRouteRefusal\(routeName\)\s*: null;/.test(gate) &&
+      /if \(refusal === null\) return <>\{children\}<\/>;/.test(gate) && /<WatchOnlyNotice \/>/.test(gate));
   const app = readFileSync(join(HERE, '..', 'App.tsx'), 'utf8');
   if (/screenLayout=\{watchOnlyScreenLayout\}/.test(app)) {
     check('App.tsx wires the route gate into the navigator', true);
@@ -755,9 +780,9 @@ console.log('check-watch-only: mutation checks (broken copies must be caught)');
   const m7 = await importMutant('src/wallet/watch-only.ts', "  'Home',\n  'Activity',", "  'Home',\n  'Send',\n  'Activity',");
   check('M7 caught: an allow list that admits Send is detected', m7.watchOnlyRouteRefusal('Send') === null && watchOnlyRouteRefusal('Send') !== null);
   // M8: accountList stops filtering (source pin).
-  const mutatedCtx = CTX_SRC.replace('.filter((a) => !a.watchOnly).map((a) => ({', '.map((a) => ({');
+  const mutatedCtx = CTX_SRC.replace('.filter((a) => !a.watchOnly && !a.multisig).map((a) => ({', '.map((a) => ({');
   check('M8 caught: an accountList that includes watch-only accounts fails the pin',
-    mutatedCtx !== CTX_SRC && !/\(accountsState\?\.accounts \?\? \[\]\)\.filter\(\(a\) => !a\.watchOnly\)\.map\(/.test(mutatedCtx));
+    mutatedCtx !== CTX_SRC && !/\(accountsState\?\.accounts \?\? \[\]\)\.filter\(\(a\) => !a\.watchOnly && !a\.multisig\)\.map\(/.test(mutatedCtx));
 }
 
 console.log(`\ncheck-watch-only: ${passed} passed, ${failed} failed`);

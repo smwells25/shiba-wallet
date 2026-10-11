@@ -11,9 +11,15 @@ import * as Clipboard from 'expo-clipboard';
 import QRCode from 'react-native-qrcode-svg';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation';
-import { Button, ImportedKeyNotice, WatchOnlyNotice, screenStyle } from '../components';
-import { IMPORTED_KEY_NO_CHAIN, IMPORTED_KEY_PATH, WATCH_ONLY_NO_CHAIN } from '../wallet/account-ids';
-import { WATCHED_ADDRESS_RECEIVE_NOTE, WATCHED_ADDRESS_TITLE } from '../wallet/watch-only';
+import { Button, ImportedKeyNotice, WarningBox, WatchOnlyNotice, screenStyle } from '../components';
+import { IMPORTED_KEY_NO_CHAIN, IMPORTED_KEY_PATH, MULTISIG_NO_CHAIN, WATCH_ONLY_NO_CHAIN } from '../wallet/account-ids';
+import {
+  MULTISIG_RECEIVE_NOTE,
+  WATCHED_ADDRESS_RECEIVE_NOTE,
+  WATCHED_ADDRESS_TITLE,
+  multisigOtherNetworkNote,
+} from '../wallet/watch-only';
+import { evmProfileByCaip2 } from '../config/evm-chain';
 import { useTheme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
 import { EVM_CHAIN_ID } from '../wallet/send';
@@ -47,7 +53,16 @@ export function ReceiveScreen({ route, navigation }: Props) {
   // that sends, signs, requests a payment or reads smart-account, upgrade or
   // recovery state is rendered or read for it (the hooks below get null).
   const watchOnly = activeAccount?.watchOnly === true;
-  const evmOwnAddress = route.params.chainId === EVM_CHAIN_ID && !watchOnly ? (account?.address ?? null) : null;
+  // A multi-signature account (feature 24; phase 18 item 3) gets the same
+  // plain view with its own label and sentence: the multisig address, its
+  // QR code and that moving anything out needs the co-signers. No Send,
+  // payment request, proof of ownership or smart-account box; nothing about
+  // upgrades or recovery is read for it (no owner key exists for it).
+  const multisig = activeAccount?.multisig === true;
+  const multisigInfo = multisig ? (activeAccount?.multisigInfo ?? null) : null;
+  // No key of this wallet signs alone for the active account.
+  const noKey = watchOnly || multisig;
+  const evmOwnAddress = route.params.chainId === EVM_CHAIN_ID && !noKey ? (account?.address ?? null) : null;
   const [copied, setCopied] = useState(false);
   const [smartCopied, setSmartCopied] = useState(false);
   const { evmChain } = usePrefs();
@@ -56,7 +71,7 @@ export function ReceiveScreen({ route, navigation }: Props) {
   const delegation = useAccountDelegation(evmOwnAddress);
   // A recovered Kernel account (phase 8 item 4) attached to this account:
   // named here so the user knows its address is not this EOA's.
-  const recovery = useRecoveryInfo(evmOwnAddress, watchOnly ? null : (activeAccount?.index ?? null));
+  const recovery = useRecoveryInfo(evmOwnAddress, noKey ? null : (activeAccount?.index ?? null));
   // Sized for phone screens: fill the width minus the padding, capped so
   // tablets don't render a poster. The 16px white padding around the code
   // is the QR quiet zone, kept white in dark mode too so scanners lock on.
@@ -71,7 +86,7 @@ export function ReceiveScreen({ route, navigation }: Props) {
   // read, the row is simply not shown. The state carries the key it was
   // read for, so a switched account or network never shows a stale address.
   const smartOwner = evmOwnAddress;
-  const smartIndex = watchOnly ? null : (activeAccount?.index ?? null);
+  const smartIndex = noKey ? null : (activeAccount?.index ?? null);
   const smartKey =
     smartOwner && smartIndex !== null ? `${evmChain.chainIdDecimal}|${smartIndex}|${smartOwner}` : null;
   const [smart, setSmart] = useState<{ key: string; info: SmartAccountAddressInfo } | null>(null);
@@ -117,13 +132,21 @@ export function ReceiveScreen({ route, navigation }: Props) {
   // No payment request for a watched address: the wallet cannot receive
   // into it on the user's behalf in any useful sense, and the card would
   // present the address as the user's own.
-  const requestFamily = account && !watchOnly ? familyForSlot(account.chainId) : null;
+  // Not for a multisig either: a request names the active network, and the
+  // multisig's record (and the Multisig screen) belongs to one network.
+  const requestFamily = account && !watchOnly && !multisig ? familyForSlot(account.chainId) : null;
 
   if (!account) {
     return (
       <View style={[screenStyle(theme), styles.center]}>
         <Text style={{ color: theme.textMuted }}>
-          {watchOnly ? WATCH_ONLY_NO_CHAIN : activeAccount?.imported ? IMPORTED_KEY_NO_CHAIN : 'Unknown chain.'}
+          {watchOnly
+            ? WATCH_ONLY_NO_CHAIN
+            : multisig
+              ? MULTISIG_NO_CHAIN
+              : activeAccount?.imported
+                ? IMPORTED_KEY_NO_CHAIN
+                : 'Unknown chain.'}
         </Text>
       </View>
     );
@@ -150,6 +173,12 @@ export function ReceiveScreen({ route, navigation }: Props) {
       {watchOnly ? (
         <Text style={[styles.note, { color: theme.text }]}>{WATCHED_ADDRESS_RECEIVE_NOTE}</Text>
       ) : null}
+      {multisig ? <Text style={[styles.note, { color: theme.text }]}>{MULTISIG_RECEIVE_NOTE}</Text> : null}
+      {multisigInfo && multisigInfo.chain !== evmChain.caip2 ? (
+        <WarningBox>
+          {multisigOtherNetworkNote(multisigInfo.label, evmProfileByCaip2(multisigInfo.chain)?.label ?? multisigInfo.chain, evmChain.label)}
+        </WarningBox>
+      ) : null}
       {/*
         The default QR payload is the plain address, nothing else: a bare
         address is what every major wallet's scanner accepts for all four
@@ -161,7 +190,13 @@ export function ReceiveScreen({ route, navigation }: Props) {
         style={styles.qrBox}
         accessible
         accessibilityRole="image"
-        accessibilityLabel={watchOnly ? `QR code of the watched ${account.name} address` : `QR code of your ${account.name} address`}
+        accessibilityLabel={
+          watchOnly
+            ? `QR code of the watched ${account.name} address`
+            : multisig
+              ? `QR code of the multi-signature account's ${account.name} address`
+              : `QR code of your ${account.name} address`
+        }
       >
         <QRCode value={account.address} size={qrSize} backgroundColor="#ffffff" color="#000000" />
       </View>
@@ -172,7 +207,7 @@ export function ReceiveScreen({ route, navigation }: Props) {
           {account.address}
         </Text>
       </View>
-      {watchOnly ? null : (
+      {noKey ? null : (
         <Text style={[styles.path, { color: theme.textMuted }]}>
           {account.path === IMPORTED_KEY_PATH
             ? 'Imported private key — no derivation path, not part of your recovery phrase'
@@ -234,7 +269,7 @@ export function ReceiveScreen({ route, navigation }: Props) {
           qrSize={Math.min(qrSize, 220)}
         />
       ) : null}
-      {smartInfo && !watchOnly ? (
+      {smartInfo && !noKey ? (
         <View
           style={[
             styles.addressBox,
@@ -285,14 +320,14 @@ export function ReceiveScreen({ route, navigation }: Props) {
           ) : null}
         </View>
       ) : null}
-      {watchOnly ? null : (
+      {noKey ? null : (
         <Button
           title={`Send ${account.symbol}`}
           variant="secondary"
           onPress={() => navigation.navigate('Send', { chainId: account.chainId })}
         />
       )}
-      {account.chainId === EVM_CHAIN_ID && !watchOnly ? (
+      {account.chainId === EVM_CHAIN_ID && !noKey ? (
         <Button
           title="Prove you own this address"
           variant="secondary"

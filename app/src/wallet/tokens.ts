@@ -76,7 +76,10 @@ export function isTokenChain(chainCaip2: string): boolean {
 
 /**
  * The list a chain starts with before the user edits it: USDC on mainnet,
- * the known test-network tokens on a test network, nothing elsewhere.
+ * Circle's test stablecoins on a test network (knownTokensForChain), nothing
+ * elsewhere. The staking tokens (KNOWN_STAKING_TOKENS) are known too but
+ * deliberately NOT default-tracked: most users of a test network never
+ * stake, and a row for a token they do not hold would only add noise.
  */
 export function defaultTokensForChain(chainCaip2: string): FungibleAsset[] {
   if (chainCaip2 === EVM_MAINNET.caip2) return [USDC_MAINNET];
@@ -266,12 +269,11 @@ export async function removeToken(
  *    day through optimism-sepolia-rpc.publicnode.com and sepolia.optimism.io
  *    (both eth_chainId 0xaa37dc): symbol() "USDC", name() "USDC",
  *    decimals() 6. Circle's EURC page (fetched the same day) lists no OP
- *    Sepolia or Hoodi EURC, so none is known there. Hoodi has NO known
- *    tokens: Circle's USDC page lists no USDC on Ethereum Hoodi (its "Morph
- *    Hoodi Testnet" row is Morph's own network, a different chain), and the
- *    liquid-staking tokens there (stETH, wstETH, rETH; docs/STAKING.md
- *    section 4.1) belong to the staking slice, which decides how a rebasing
- *    token is shown.
+ *    Sepolia or Hoodi EURC, so none is known there. Hoodi has no Circle
+ *    token: Circle's USDC page lists no USDC on Ethereum Hoodi (its "Morph
+ *    Hoodi Testnet" row is Morph's own network, a different chain). The
+ *    liquid-staking tokens on Sepolia and Hoodi are listed separately in
+ *    KNOWN_STAKING_TOKENS below (known, not default-tracked).
  */
 export const KNOWN_TEST_NETWORK_TOKENS: Readonly<Record<string, readonly FungibleAsset[]>> = {
   'eip155:11155111': [
@@ -351,6 +353,129 @@ export const KNOWN_TEST_NETWORK_TOKENS: Readonly<Record<string, readonly Fungibl
 };
 
 /**
+ * A known token, optionally marked as REBASING: its balance changes without
+ * any transfer (Lido's stETH), so the wallet shows REBASING_TOKEN_NOTE beside
+ * it. The flag lives only in this read-only table; a stored tracked entry
+ * never carries it, so isRebasingToken looks the (chain, contract) pair up
+ * here and a stored list cannot switch the note on or off.
+ */
+export type KnownToken = FungibleAsset & { readonly rebasing?: true };
+
+/**
+ * The liquid-staking tokens the wallet KNOWS on the test networks it offers
+ * staking on (phase 18; features 57/58): Lido's stETH and wstETH on Ethereum
+ * Sepolia and Hoodi, Rocket Pool's rETH on Hoodi. They are kept OUT of
+ * knownTokensForChain on purpose: that list is also the test networks'
+ * default tracked list and the token choices of subscriptions and spending
+ * limits, and a rebasing token as a subscription asset is a product
+ * decision for those owners. The risk card adds them itself (risk.ts,
+ * knownStakingTokensForChain), so a stETH transfer is described by its
+ * recipient and the first-interaction search covers them.
+ *
+ * Sources: the addresses are the engine's pinned staking deployments
+ * (packages/chains-evm/src/staking.ts LIDO_DEPLOYMENTS and
+ * ROCKET_POOL_DEPLOYMENTS: lidofinance/docs 140c583d sepolia.md / hoodi.md
+ * and rocket-pool/smartnode 8c1dad70 networks-default.yml; docs/STAKING.md
+ * section 4.1); scripts/check-tokens.mjs pins each entry equal to the
+ * engine's table. symbol(), name() and decimals() were read live on
+ * 2026-10-11 UTC through two endpoints per chain (Sepolia:
+ * ethereum-sepolia-rpc.publicnode.com and 0xrpc.io/sep, eth_chainId
+ * 0xaa36a7; Hoodi: ethereum-hoodi-rpc.publicnode.com and
+ * rpc.hoodi.ethpandaops.io, eth_chainId 0x88bb0): "stETH" / "Liquid staked
+ * Ether 2.0" / 18, "wstETH" / "Wrapped liquid staked Ether 2.0" / 18 on
+ * both chains, and "rETH" / "Rocket Pool ETH" / 18 on Hoodi.
+ *
+ * Only stETH rebases (Lido's integration guide, quoted in docs/STAKING.md
+ * 5.3: balances "get recalculated daily when the Lido oracle reports";
+ * transfers can arrive "1-2 wei less than expected"). wstETH and rETH do not
+ * rebase: their value per token changes instead.
+ */
+export const KNOWN_STAKING_TOKENS: Readonly<Record<string, readonly KnownToken[]>> = {
+  'eip155:11155111': [
+    {
+      kind: 'fungible',
+      assetId: {
+        chainId: 'eip155:11155111',
+        namespace: 'erc20',
+        reference: '0x3e3FE7dBc6B4C189E7128855dD526361c49b40Af',
+      },
+      symbol: 'stETH',
+      name: 'Liquid staked Ether 2.0',
+      decimals: 18,
+      rebasing: true,
+    },
+    {
+      kind: 'fungible',
+      assetId: {
+        chainId: 'eip155:11155111',
+        namespace: 'erc20',
+        reference: '0xB82381A3fBD3FaFA77B3a7bE693342618240067b',
+      },
+      symbol: 'wstETH',
+      name: 'Wrapped liquid staked Ether 2.0',
+      decimals: 18,
+    },
+  ],
+  'eip155:560048': [
+    {
+      kind: 'fungible',
+      assetId: {
+        chainId: 'eip155:560048',
+        namespace: 'erc20',
+        reference: '0x3508A952176b3c15387C97BE809eaffB1982176a',
+      },
+      symbol: 'stETH',
+      name: 'Liquid staked Ether 2.0',
+      decimals: 18,
+      rebasing: true,
+    },
+    {
+      kind: 'fungible',
+      assetId: {
+        chainId: 'eip155:560048',
+        namespace: 'erc20',
+        reference: '0x7E99eE3C66636DE415D2d7C880938F2f40f94De4',
+      },
+      symbol: 'wstETH',
+      name: 'Wrapped liquid staked Ether 2.0',
+      decimals: 18,
+    },
+    {
+      kind: 'fungible',
+      assetId: {
+        chainId: 'eip155:560048',
+        namespace: 'erc20',
+        reference: '0x7322c24752f79c05FFD1E2a6FCB97020C1C264F1',
+      },
+      symbol: 'rETH',
+      name: 'Rocket Pool ETH',
+      decimals: 18,
+    },
+  ],
+};
+
+/** The one-line note shown beside a rebasing token (Home row, preview). */
+export const REBASING_TOKEN_NOTE =
+  'Rebasing token: the balance changes by itself; the preview can be off by a wei or two.';
+
+/**
+ * True when the token at `contract` on `chainCaip2` is a known rebasing
+ * token (KNOWN_STAKING_TOKENS with rebasing: true). The whole address must
+ * match (case-insensitively) on that exact chain.
+ */
+export function isRebasingToken(chainCaip2: string, contract: string): boolean {
+  const lower = contract.toLowerCase();
+  return (KNOWN_STAKING_TOKENS[chainCaip2] ?? []).some(
+    (t) => t.rebasing === true && t.assetId.reference.toLowerCase() === lower,
+  );
+}
+
+/** REBASING_TOKEN_NOTE for a known rebasing token, else null (the Home row's and the preview's one line). */
+export function rebasingTokenNote(chainCaip2: string, contract: string): string | null {
+  return isRebasingToken(chainCaip2, contract) ? REBASING_TOKEN_NOTE : null;
+}
+
+/**
  * Deletes the tracked-token list of a network the user added (feature 33),
  * when that network is removed: its key, shiba-wallet.tokens.v1.<CAIP-2>, is
  * removed (or, for a store without removeItem, set to an empty list — the
@@ -373,7 +498,16 @@ export async function forgetTokensForChain(
   return true;
 }
 
-/** The known tokens on one CAIP-2 chain (empty for mainnet and unknown chains). */
+/**
+ * The known tokens on one CAIP-2 chain (empty for mainnet and unknown
+ * chains): Circle's test stablecoins (KNOWN_TEST_NETWORK_TOKENS). The
+ * staking tokens are listed by knownStakingTokensForChain.
+ */
 export function knownTokensForChain(chainCaip2: string): FungibleAsset[] {
   return [...(KNOWN_TEST_NETWORK_TOKENS[chainCaip2] ?? [])];
+}
+
+/** The known liquid-staking tokens on one CAIP-2 chain (KNOWN_STAKING_TOKENS; empty elsewhere). */
+export function knownStakingTokensForChain(chainCaip2: string): KnownToken[] {
+  return [...(KNOWN_STAKING_TOKENS[chainCaip2] ?? [])];
 }

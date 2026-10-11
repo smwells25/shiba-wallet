@@ -94,6 +94,7 @@ import {
 import { PREVIEW_AA_NOTE } from '../wallet/simulation';
 import { Eip7702QuoteNotice } from '../components/DelegationViews';
 import { AaDepositNote } from '../components/AaDepositNote';
+import { TransactionNoteField } from '../components/TransactionNoteField';
 import { usePrices } from '../wallet/usePrices';
 import { fiatLine, formatFiat, nativePriceAssetId, tokenPriceAssetId } from '../wallet/prices';
 
@@ -232,6 +233,10 @@ export function SwapScreen({ navigation }: Props) {
     success: boolean | null;
     txHash: string | null;
   } | null>(null);
+  // CAIP-2 id of the network the swap was sent on, captured at sending so a
+  // note typed on the success view is saved for that network even if the
+  // active network changes while the view is open.
+  const [sentNetwork, setSentNetwork] = useState<string | null>(null);
 
   useEffect(() => {
     navigation.setOptions({ title: 'Swap' });
@@ -864,6 +869,7 @@ export function SwapScreen({ navigation }: Props) {
       const sent = await signWith(EVM_CHAIN_ID, preparedFrom.current ?? '', (signer) =>
         sendEvm(swapUrl, signer, sendQuote, evmChain.explorerTxBase),
       );
+      setSentNetwork(evmChain.caip2);
       setResult(sent);
       setPhase('success');
     } catch (e) {
@@ -970,6 +976,7 @@ export function SwapScreen({ navigation }: Props) {
       const { userOpHash } = await signWith(EVM_CHAIN_ID, preparedFrom.current ?? '', (signer) =>
         sendAa(bundle, signer, aaQuote),
       );
+      setSentNetwork(evmChain.caip2);
       setAaResult({ userOpHash, receiptState: 'pending', success: null, txHash: null });
       setPhase('success');
       void waitForAaReceipt(bundle, userOpHash, { timeoutMs: 120_000, pollMs: 3_000 }).then(
@@ -1053,6 +1060,9 @@ export function SwapScreen({ navigation }: Props) {
             variant="secondary"
             onPress={() => void Linking.openURL(`${evmChain.explorerTxBase}${aaResult.txHash}`)}
           />
+        ) : null}
+        {sentNetwork ? (
+          <TransactionNoteField network={sentNetwork} txid={aaResult.txHash} userOpHash={aaResult.userOpHash} />
         ) : null}
         <Button title="Done" onPress={() => navigation.popToTop()} />
       </ScrollView>
@@ -1233,6 +1243,7 @@ export function SwapScreen({ navigation }: Props) {
             onPress={() => void Linking.openURL(result.explorerUrl!)}
           />
         ) : null}
+        {sentNetwork ? <TransactionNoteField network={sentNetwork} txid={result.txid} userOpHash={null} /> : null}
         <Button title="Done" onPress={() => navigation.popToTop()} />
       </ScrollView>
     );

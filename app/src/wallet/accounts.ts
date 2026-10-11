@@ -96,9 +96,9 @@ export {
  * counts toward MAX_ACCOUNTS or nextIndex, is never hidden (it is removed
  * from the Multisig screen, which deletes nothing secret and changes nothing
  * on-chain), and its slot is never reused (the multisig store's high-water
- * mark). Nothing writes such an entry until WalletContext calls
- * reconcileMultisigAccounts: until then a multisig lives only on the
- * Multisig screen.
+ * mark). WalletContext calls reconcileStoredMultisigAccounts at launch and
+ * after every write of the multisig store (phase 18 item 3), so every
+ * stored multisig is listed in the account switcher.
  */
 
 const ACCOUNTS_KEY = 'shiba-wallet.accounts.v1';
@@ -669,7 +669,7 @@ export interface MultisigListEntry {
  * store's list, or null when it could not be read (then nothing changes):
  * a record without an entry gets one, an entry whose record is gone is
  * dropped (Account 1 becomes active if it was active), and an entry whose
- * address differs from its record's is corrected from the record.
+ * address or name differs from its record's is corrected from the record.
  */
 export function reconcileMultisigAccounts(
   state: AccountsState,
@@ -693,9 +693,14 @@ export function reconcileMultisigAccounts(
       changed = true;
       continue;
     }
-    if (a.address !== r.address) {
+    // The record is the source of truth for the address and (since the
+    // account switcher lists multisigs, phase 18 item 3) the name, which the
+    // Multisig screen renames.
+    const recordName = sanitizeAccountName(r.name);
+    const name = recordName.ok ? recordName.name : a.name;
+    if (a.address !== r.address || a.name !== name) {
       changed = true;
-      kept.push({ ...a, address: r.address });
+      kept.push({ ...a, address: r.address, name });
     } else {
       kept.push(a);
     }

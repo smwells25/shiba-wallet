@@ -14,21 +14,29 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { formatAssetId } from '@shiba-wallet/core';
 import type { FungibleAsset } from '@shiba-wallet/core';
 import type { RootStackParamList } from '../navigation';
-import { ImportedKeyNotice, WatchOnlyNotice, screenStyle } from '../components';
+import { ImportedKeyNotice, WarningBox, WatchOnlyNotice, screenStyle } from '../components';
 import { CHAINS } from '../wallet/chains';
-import { IMPORTED_KEY_NO_CHAIN, WATCH_ONLY_NO_CHAIN } from '../wallet/account-ids';
+import { IMPORTED_KEY_NO_CHAIN, MULTISIG_NO_CHAIN, WATCH_ONLY_NO_CHAIN } from '../wallet/account-ids';
 import { useTheme } from '../theme';
 import { EVM_CHAIN_ID, addSendAcceptedListener } from '../wallet/send';
 import { addAaSentListener } from '../wallet/aa';
 import { createSendRefreshTracker, reloadNowAndLater } from '../wallet/home-refresh';
 import { ChainAccount, useWallet } from '../wallet/WalletContext';
 import { AccountSwitcher } from '../components/AccountSwitcher';
-import { watchOnlyFooterText } from '../wallet/watch-only';
+import {
+  MULTISIG_ACCOUNT_NOTICE,
+  multisigFooterText,
+  multisigOtherNetworkNote,
+  watchOnlyFooterText,
+} from '../wallet/watch-only';
+import { httpTransport } from '@shiba-wallet/chains-evm';
+import { MULTISIG_DEPOSIT_ROW_LABEL, readMultisigFunds } from '../wallet/multisig';
+import { getEndpoint } from '../config/networks';
 import { OfflineNotice } from '../wallet/connectivity';
 import { usePrefs } from '../wallet/PrefsContext';
 import { maskAmount } from '../config/prefs';
 import { BalanceState, useBalances } from '../wallet/useBalances';
-import { spokenAmount } from '../wallet/balances';
+import { formatBalanceDisplay, spokenAmount } from '../wallet/balances';
 import { useTokenBalances } from '../wallet/useTokenBalances';
 import { useAccountDelegation } from '../wallet/useDelegation';
 import { useSessionEligibility } from '../wallet/useSessionEligibility';
@@ -38,9 +46,10 @@ import { shortAccountAddress } from '../wallet/accounts';
 import { delegationLabelSuffix, FOREIGN_DELEGATE_WARNING, upgradeLinkShown, walletDelegateDeployed } from '../wallet/delegation';
 import { isFeatureAllowed } from '../config/readiness';
 import { stakingOfferFor } from '../wallet/staking';
-import { multisigNetworkVerified } from '../config/evm-chain';
+import { evmProfileByCaip2, multisigNetworkVerified } from '../config/evm-chain';
 import { usePrices } from '../wallet/usePrices';
 import { tokenSendFeeSentence } from '../wallet/token-gas';
+import { rebasingTokenNote } from '../wallet/tokens';
 import {
   formatFiat,
   nativePriceAssetId,
@@ -247,6 +256,13 @@ export function HomeScreen({ navigation }: Props) {
   // Upgrade, Approvals' revoke, Sessions, Guardians, Passkey, Receive's
   // Send and proof of ownership, the guardian recovery link).
   const watchOnly = activeAccount?.watchOnly === true;
+  // Multi-signature accounts (feature 24; listed since phase 18 item 3): no
+  // single key of this wallet signs for it, so Home offers the same
+  // read-only links as for a watch-only account plus the Multisig screen,
+  // where its operations are built and the co-signers' approvals collected.
+  const multisig = activeAccount?.multisig === true;
+  // No key of this wallet signs alone for the active account.
+  const noKey = watchOnly || multisig;
   const { hideAmounts, setHideAmounts, evmChain, sepolia, showFiat } = usePrefs();
   // The active EVM chain is passed so a mode flip (mainnet <-> Sepolia)
   // re-fetches the EVM row (useBalances handles it).
@@ -263,14 +279,16 @@ export function HomeScreen({ navigation }: Props) {
   // EIP-7702 status of the active account on the active EVM chain (phase 8
   // item 1): shown under the account switcher so the user always knows
   // which code runs at the address.
-  const delegation = useAccountDelegation(watchOnly ? undefined : evmAccount?.address);
+  const delegation = useAccountDelegation(noKey ? undefined : evmAccount?.address);
   // Session keys (phase 8 item 2): linked only when the active account has
   // a deployed Kernel account or an active EIP-7702 upgrade.
   // The three account-tool checks are not run at all for a watch-only
   // account (null owner and index): no smart-account bundle is built for an
   // address the wallet cannot sign for.
-  const toolsOwner = watchOnly ? null : evmAccount?.address;
-  const toolsIndex = watchOnly ? null : (activeAccount?.index ?? null);
+  // The same for a multisig account: its smart account is not built from
+  // an owner key and index (createAaClientFromConfig refuses its id).
+  const toolsOwner = noKey ? null : evmAccount?.address;
+  const toolsIndex = noKey ? null : (activeAccount?.index ?? null);
   const sessionsEligible = useSessionEligibility(toolsOwner, toolsIndex, toolsRefresh);
   // Guardians (phase 8 item 4): linked only for a deployed Kernel v3.3
   // account the active account owns; a recovered account gets a label; a
@@ -358,6 +376,35 @@ export function HomeScreen({ navigation }: Props) {
     }, []),
   );
 
+  // A multisig's EntryPoint deposit (it pays network fees first), read with
+  // the Multisig screen's own reader on the active network; re-read on every
+  // focus and pull-to-refresh (toolsRefresh). null = could not be read.
+  const multisigAddress = multisig ? (evmAccount?.address ?? null) : null;
+  const [multisigDeposit, setMultisigDeposit] = useState<{ key: string; deposit: bigint | null } | null>(null);
+  const multisigDepositKey = multisigAddress ? `${evmChain.caip2}|${multisigAddress}` : null;
+  useEffect(() => {
+    if (!multisigDepositKey || !multisigAddress) return undefined;
+    let cancelled = false;
+    void (async () => {
+      const endpoint = await getEndpoint(EVM_CHAIN_ID);
+      const funds = endpoint?.url ? await readMultisigFunds(httpTransport(endpoint.url), multisigAddress) : null;
+      if (!cancelled) setMultisigDeposit({ key: multisigDepositKey, deposit: funds?.deposit ?? null });
+    })().catch(() => {
+      if (!cancelled) setMultisigDeposit({ key: multisigDepositKey, deposit: null });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [multisigDepositKey, multisigAddress, toolsRefresh]);
+  const shownDeposit = multisigDeposit && multisigDeposit.key === multisigDepositKey ? multisigDeposit : null;
+  const multisigInfo = multisig ? (activeAccount?.multisigInfo ?? null) : null;
+  // The record's network, when it is not the active one: the Multisig
+  // screen lists and builds its operations only there.
+  const multisigNetworkNote =
+    multisigInfo && multisigInfo.chain !== evmChain.caip2
+      ? multisigOtherNetworkNote(multisigInfo.label, evmProfileByCaip2(multisigInfo.chain)?.label ?? multisigInfo.chain, evmChain.label)
+      : null;
+
   /** One text link in a chain card's link rows. */
   const cardLink = (key: string, label: string, text: string, onPress: () => void, hint?: string) => (
     <Pressable
@@ -390,7 +437,7 @@ export function HomeScreen({ navigation }: Props) {
     // height reserved from the start, so nothing above or below moves when
     // they appear (finding F11: a tap aimed at Approvals once opened
     // Guardians because a link was inserted before it).
-    const tools = isEvm && !watchOnly
+    const tools = isEvm && !noKey
       ? [
           sessionsEligible
             ? cardLink('sessions', 'Sessions', 'Sessions', () => navigation.navigate('Sessions'))
@@ -473,7 +520,7 @@ export function HomeScreen({ navigation }: Props) {
           />
         </View>
         <View style={styles.linkRow}>
-          {watchOnly
+          {noKey
             ? null
             : cardLink('send', `Send ${item.symbol}`, 'Send ↗', () =>
                 navigation.navigate('Send', { chainId: item.chainId }),
@@ -485,7 +532,7 @@ export function HomeScreen({ navigation }: Props) {
               itself explains and stays off until a key is configured. Not
               linked on profiles where swaps are not offered (Base Sepolia:
               config/evm-chain.ts swapsOffered). */}
-          {isEvm && evmChain.swapsOffered && !watchOnly
+          {isEvm && evmChain.swapsOffered && !noKey
             ? cardLink('swap', 'Swap', 'Swap', () => navigation.navigate('Swap'))
             : null}
           {/* NFT gallery (phase 7 item 4) for the active EVM chain; the
@@ -497,7 +544,7 @@ export function HomeScreen({ navigation }: Props) {
               unless the account has a delegation to review or undo. */}
           {upgradeLinkShown({ delegateDeployed: walletDelegateDeployed(evmChain.chainIdDecimal), status: delegation.status }) ? (
             <>
-              {isEvm && !watchOnly
+              {isEvm && !noKey
                 ? cardLink(
                     'upgrade',
                     delegation.status?.kind === 'kernel-v3.3' ? 'Account upgraded' : 'Upgrade this account',
@@ -514,7 +561,36 @@ export function HomeScreen({ navigation }: Props) {
           {isEvm
             ? cardLink('approvals', 'Token approvals', 'Approvals', () => navigation.navigate('Approvals'))
             : null}
+          {/* A multisig account's operations (sends included) are built on
+              the Multisig screen, where the co-signers' approvals are
+              collected; it is the only route to them. */}
+          {isEvm && multisig
+            ? cardLink('multisig-operations', 'Multisig operations', 'Multisig', () => navigation.navigate('Multisig'))
+            : null}
         </View>
+        {isEvm && multisig ? (
+          <Text
+            style={[styles.address, { color: theme.textMuted }]}
+            accessibilityLabel={
+              hideAmounts
+                ? `${MULTISIG_DEPOSIT_ROW_LABEL}: hidden`
+                : `${MULTISIG_DEPOSIT_ROW_LABEL}: ${
+                    shownDeposit === null
+                      ? 'loading'
+                      : shownDeposit.deposit === null
+                        ? 'could not be read'
+                        : `${spokenAmount(formatBalanceDisplay(shownDeposit.deposit, 18))} ${evmChain.displaySymbol}`
+                  }`
+            }
+          >
+            {MULTISIG_DEPOSIT_ROW_LABEL}:{' '}
+            {shownDeposit === null
+              ? 'loading…'
+              : shownDeposit.deposit === null
+                ? 'could not be read'
+                : `${maskAmount(formatBalanceDisplay(shownDeposit.deposit, 18), hideAmounts)} ${evmChain.displaySymbol}`}
+          </Text>
+        ) : null}
         {/* Session keys (phase 8 item 2: a deployed Kernel account or an
             EIP-7702 upgrade), guardians (phase 8 item 4: a deployed Kernel
             v3.3 account, never a 7702 upgrade) and the passkey signer
@@ -551,18 +627,27 @@ export function HomeScreen({ navigation }: Props) {
               tokenState?.status === 'ok' && tokenState.networkChainId === evmChain.caip2
                 ? tokenPriceAssetId(token, evmChain.caip2)
                 : null;
+            // A rebasing token (stETH) changes balance by itself; the note is
+            // decided by tokens.ts's own table, never by a stored entry.
+            const rebasing = rebasingTokenNote(evmChain.caip2, token.assetId.reference);
             return (
-              <TokenRow
-                key={id}
-                token={token}
-                state={tokenBalances[id]}
-                onRetry={() => void refreshToken(id)}
-                {...(watchOnly
-                  ? {}
-                  : { onSend: () => navigation.navigate('Send', { chainId: EVM_CHAIN_ID, tokenId: id }) })}
-                hidden={hideAmounts}
-                fiat={fiatFor(tokenState, priceId)}
-              />
+              <View key={id}>
+                <TokenRow
+                  token={token}
+                  state={tokenBalances[id]}
+                  onRetry={() => void refreshToken(id)}
+                  {...(noKey
+                    ? {}
+                    : { onSend: () => navigation.navigate('Send', { chainId: EVM_CHAIN_ID, tokenId: id }) })}
+                  hidden={hideAmounts}
+                  fiat={fiatFor(tokenState, priceId)}
+                />
+                {rebasing ? (
+                  <Text style={[styles.manageTokens, { color: theme.textMuted }]} accessibilityLabel={`Note: ${rebasing}`}>
+                    {rebasing}
+                  </Text>
+                ) : null}
+              </View>
             );
           })}
           <Pressable
@@ -599,6 +684,10 @@ export function HomeScreen({ navigation }: Props) {
             {/* Feature 10: a watch-only account says, every time it is
                 shown, that the wallet holds no key for it. */}
             <WatchOnlyNotice show={watchOnly} />
+            {/* A multisig account says, every time it is shown, that its
+                operations need the co-signers (and where it is recorded). */}
+            {multisig ? <WarningBox>{MULTISIG_ACCOUNT_NOTICE}</WarningBox> : null}
+            {multisigNetworkNote ? <WarningBox>{multisigNetworkNote}</WarningBox> : null}
             <OfflineNotice />
             {activeAccount && delegation.status?.kind === 'kernel-v3.3' ? (
               <Pressable
@@ -703,13 +792,15 @@ export function HomeScreen({ navigation }: Props) {
             <UnavailableChains accounts={accounts} sentence={IMPORTED_KEY_NO_CHAIN} />
           ) : watchOnly ? (
             <UnavailableChains accounts={accounts} sentence={WATCH_ONLY_NO_CHAIN} />
+          ) : multisig ? (
+            <UnavailableChains accounts={accounts} sentence={MULTISIG_NO_CHAIN} />
           ) : null}
           {/* Not offered from an imported account: a recovery onto an
               imported key is refused (recovery.ts
               RECOVERY_IMPORTED_OWNER_REFUSAL), so the link would lead to a
               refusal. Not offered from a watch-only account either (no key
               to become the new owner). */}
-          {watchOnly ? null : (
+          {noKey ? null : (
             <>
           {activeAccount?.imported ? null : (
             <Pressable
@@ -728,6 +819,11 @@ export function HomeScreen({ navigation }: Props) {
           {watchOnly && activeAccount ? (
             <Text style={[styles.footer, { color: theme.textMuted }]}>
               {watchOnlyFooterText(activeAccount.name)}
+              {showFiat ? ' USD values are indicative prices from CoinGecko (Settings → Prices).' : ''}
+            </Text>
+          ) : multisig && activeAccount ? (
+            <Text style={[styles.footer, { color: theme.textMuted }]}>
+              {multisigFooterText(activeAccount.name)}
               {showFiat ? ' USD values are indicative prices from CoinGecko (Settings → Prices).' : ''}
             </Text>
           ) : (

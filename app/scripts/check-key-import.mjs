@@ -83,6 +83,7 @@ import {
   IMPORTED_KEY_NO_CHAIN,
   IMPORTED_KEY_PATH,
   IMPORTED_NAME_SUFFIX,
+  approvalTargetFor,
   importedAccountId,
   importedSlotOf,
   isBip32Path,
@@ -715,8 +716,14 @@ console.log('check-key-import: signing selection (the signWith half) and refusal
       /importedSignerFor\(chain\.provider, keyBytes, expectAddress\)/.test(sw) && /finally \{\s*keyBytes\.fill\(0\);/.test(sw));
   check('signWith: a non-EVM chain is refused before the imported key is read', sw.indexOf('throw new Error(IMPORTED_KEY_EVM_ONLY)') < sw.indexOf('importedKeyVault.read('));
   check('signWith: phrase accounts still go through readPhrase(PROMPTS.signFallback) and deriveSignerFor', /readPhrase\(PROMPTS\.signFallback\)/.test(sw) && /deriveSignerFor\(chain\.provider, seed, index, expectAddress\)/.test(sw));
+  // Since phase 18 item 3 the choice is account-ids.ts approvalTargetFor
+  // (imported → its key, phrase → the phrase, anything else → nothing),
+  // checked by value below and in check-multisig.mjs.
   check('the approval target follows the active account (commitAccounts; nothing for a watch-only account)',
-    /setApprovalTarget\(\s*isImportedAccountId\(active\)\s*\? \{ kind: 'imported', slot: importedSlotOf\(active\) \}\s*: isWatchOnlyAccountId\(active\)\s*\? \{ kind: 'none' \}\s*: \{ kind: 'phrase' \},?\s*\)/.test(ctx));
+    /setApprovalTarget\(approvalTargetFor\(active\)\);/.test(ctx) &&
+      JSON.stringify(approvalTargetFor(importedAccountId(3))) === JSON.stringify({ kind: 'imported', slot: 3 }) &&
+      JSON.stringify(approvalTargetFor(0)) === JSON.stringify({ kind: 'phrase' }) &&
+      JSON.stringify(approvalTargetFor(0xc0000000)) === JSON.stringify({ kind: 'none' }));
   const wipe = ctx.slice(ctx.indexOf('const wipe = useCallback('));
   check('wipe deletes imported keys FIRST, before the phrase', wipe.indexOf('await importedKeyVault.removeAll()') >= 0 && wipe.indexOf('await importedKeyVault.removeAll()') < wipe.indexOf('await deleteMnemonic()'));
   check('launch derives only phrase indices (imported ids never reach derivePublic)', /derivePublic\(mnemonic, derivedIndices\(state\)\)/.test(ctx) && /for \(const index of derivedIndices\(state\)\)/.test(ctx));

@@ -1287,6 +1287,17 @@ console.log('\n== Hoodi and OP Sepolia profiles (phase 18) ==');
     settingsSrc.includes("watchOnlyAccounts.length === 0\n              ? 'One recovery phrase backs up ALL of your accounts") &&
       settingsSrc.includes('that this wallet holds a key for') &&
       settingsSrc.includes('Watch-only addresses have no key in this wallet, so the recovery phrase does not back them up'));
+  // Phase 16 browser re-check finding: the Settings button that opens the
+  // Connections screen read "Open connections" while the screen is titled
+  // "Connected apps"; the label now equals the title.
+  const connSrc = read('../src/screens/ConnectionsScreen.tsx');
+  const connectedTitle = /export const CONNECTIONS_SCREEN_TITLE = '([^']+)';/.exec(connSrc)?.[1];
+  const buttonToConnections = /<Button\s+title="([^"]+)"\s+variant="secondary"\s+onPress=\{\(\) => navigation\.navigate\('Connections'\)\}\s*\/>/.exec(settingsSrc)?.[1];
+  check('Settings: the button that opens the Connections screen carries the screen\'s title ("Connected apps")',
+    connectedTitle === 'Connected apps' && buttonToConnections === connectedTitle && !settingsSrc.includes('Open connections'),
+    `${buttonToConnections} vs ${connectedTitle}`);
+  check('Settings Apps blurb names that button by its new label',
+    settingsSrc.replace(/\s+/g, ' ').includes('(open it with the &quot;Connected apps&quot; button in the WalletConnect section above, or with &quot;Manage connections&quot; in Apps)'));
   const sendSrc = read('../src/screens/SendScreen.tsx');
   check('Send: the recipient placeholder offers ENS names only where the profile looks them up',
     sendSrc.includes('const namesOffered = route.params.chainId === EVM_CHAIN_ID && nameRegistry.ok;') &&

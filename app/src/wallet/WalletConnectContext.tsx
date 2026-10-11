@@ -27,6 +27,7 @@ import { getEndpoint, withEndpoint } from '../config/networks';
 import { spendingGateForQuote } from '../components/SpendingPolicyViews';
 import { requireLocalAuth } from './biometric';
 import { WATCH_ONLY_WC_REFUSAL, walletConnectAddressFor } from './watch-only';
+import { isMultisigAccountId } from './account-ids';
 import { usePrefs } from './PrefsContext';
 import { useWallet } from './WalletContext';
 import { accountLabel } from './accounts';
@@ -267,6 +268,11 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
    */
   const loadAaBundle = useCallback<AaBundleLoader>(
     async (accountIndex: number) => {
+      // A multi-signature account is never offered as a session account
+      // (feature 24; phase 18 item 3): apps ask for message signatures it
+      // cannot give honestly, and its bundle is built only by the Multisig
+      // screen. Refused before any configuration read or request.
+      if (isMultisigAccountId(accountIndex)) return null;
       const config = await getAaConfig(evmChain.caip2);
       if (!isAaConfigured(config)) return null;
       const endpoint = await getEndpoint(EVM_CHAIN_ID);

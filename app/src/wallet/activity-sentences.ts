@@ -247,10 +247,28 @@ export interface AaAddressFacts {
  * and a recovered account attached to this owner. SimpleAccount addresses
  * need a factory call and are not included, so their operations read as
  * "from other accounts".
+ *
+ * `multisigs` (phase 18 item 3) are the wallet's own multi-signature
+ * accounts on this network, as multisig.ts ownMultisigAddresses returns them
+ * ({ address, label: "Multisig 1 (2-of-3)" }). Every one is added, so a
+ * transfer to or from a multisig reads as the wallet's own (the engine's
+ * sentence names every wallet address "yourself"; the label is not used in
+ * the sentence) and a multisig's operations inside an EntryPoint bundle are
+ * described as the wallet's operations with the multisig as their sender,
+ * exactly as the risk card already treats them as "one of your own
+ * accounts". Malformed addresses are skipped.
  */
-export function walletAddressesFor(eoa: string, accountIndex: number, aa: AaAddressFacts | null): string[] {
+export function walletAddressesFor(
+  eoa: string,
+  accountIndex: number,
+  aa: AaAddressFacts | null,
+  multisigs: readonly { address: string; label: string }[] = [],
+): string[] {
   const out = [eoa];
-  if (!aa) return out;
+  for (const m of multisigs) {
+    if (/^0x[0-9a-fA-F]{40}$/.test(m.address)) out.push(m.address);
+  }
+  if (!aa) return dedupe(out);
   if (aa.accountType === 'kernel-v3.3' && aa.factory) {
     try {
       out.push(
@@ -269,5 +287,18 @@ export function walletAddressesFor(eoa: string, accountIndex: number, aa: AaAddr
   }
   const recovered = aa.recoveredAccounts?.find((l) => l.owner.toLowerCase() === eoa.toLowerCase());
   if (recovered) out.push(recovered.account);
-  return [...new Set(out)];
+  return dedupe(out);
+}
+
+/** Addresses without repeats, compared over the 20 bytes (first spelling kept). */
+function dedupe(addresses: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const a of addresses) {
+    const key = a.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(a);
+  }
+  return out;
 }

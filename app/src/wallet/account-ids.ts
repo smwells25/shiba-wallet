@@ -312,3 +312,31 @@ export const MULTISIG_NO_SMART_ACCOUNT =
 /** Thrown by derivationArgsFor for a multi-signature id. */
 export const MULTISIG_NO_DERIVATION =
   'A multi-signature account has no key and no derivation path; nothing can be derived for it.';
+
+/** Shown where a non-Ethereum chain would be for a multi-signature account. */
+export const MULTISIG_NO_CHAIN =
+  'Not available for a multi-signature account. A multisig is an Ethereum smart account; it has no address on ' +
+  'this network.';
+
+// ---------------------------------------------------------------------------
+// The approval gate's target for the active account
+// ---------------------------------------------------------------------------
+
+/**
+ * Whose secret a device check opens while account `id` is active (the
+ * structural twin of storage.ts ApprovalTarget; WalletContext.commitAccounts
+ * passes this to setApprovalTarget):
+ *  - a recovery-phrase account: the phrase;
+ *  - an imported account: its own key in the imported-key vault;
+ *  - a watch-only or multi-signature account, or any malformed id: NOTHING.
+ *    The device check then uses the ordinary system prompt and never opens
+ *    the recovery phrase, because no key of this wallet can sign for such an
+ *    account (signWith refuses it first anyway).
+ */
+export function approvalTargetFor(
+  id: number,
+): { kind: 'phrase' } | { kind: 'imported'; slot: number } | { kind: 'none' } {
+  if (isImportedAccountId(id)) return { kind: 'imported', slot: importedSlotOf(id) };
+  if (isPhraseAccountId(id)) return { kind: 'phrase' };
+  return { kind: 'none' };
+}

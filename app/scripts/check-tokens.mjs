@@ -35,9 +35,15 @@ import {
   fetchErc20Metadata,
   validateErc20ContractAddress,
 } from '../src/wallet/erc20.ts';
+import { LIDO_DEPLOYMENTS, ROCKET_POOL_DEPLOYMENTS } from '@shiba-wallet/chains-evm';
 import {
+  KNOWN_STAKING_TOKENS,
   KNOWN_TEST_NETWORK_TOKENS,
   MAINNET_TOKENS_KEY,
+  REBASING_TOKEN_NOTE,
+  knownStakingTokensForChain,
+  isRebasingToken,
+  rebasingTokenNote,
   activeTokenChain,
   addToken,
   defaultTokensForChain,
@@ -295,8 +301,52 @@ console.log('\nPer-chain defaults (phase 13 item 1):');
   check('…and it is a per-chain list: the OP Sepolia USDC is on eip155:11155420 only',
     op[0]?.assetId.chainId === 'eip155:11155420' && !(await listTokens(BASE_SEPOLIA, fresh)).some((t) => t.assetId.reference === op[0].assetId.reference));
   const hoodi = await listTokens('eip155:560048', fresh);
-  check('fresh Hoodi list is empty (no known tokens), and Hoodi is a token chain (a token can be tracked there)',
-    hoodi.length === 0 && knownTokensForChain('eip155:560048').length === 0 && isTokenChain('eip155:560048'), JSON.stringify(hoodi));
+  check('fresh Hoodi list is empty (no DEFAULT tokens), and Hoodi is a token chain (a token can be tracked there)',
+    hoodi.length === 0 && defaultTokensForChain('eip155:560048').length === 0 && isTokenChain('eip155:560048'), JSON.stringify(hoodi));
+
+  // Phase 18: the liquid-staking tokens are KNOWN on Sepolia and Hoodi but
+  // never default-tracked.
+  const HOODI = 'eip155:560048';
+  const sym = (list) => list.map((t) => t.symbol).join(',');
+  check('known staking tokens on Hoodi: stETH, wstETH, rETH', sym(knownStakingTokensForChain(HOODI)) === 'stETH,wstETH,rETH', sym(knownStakingTokensForChain(HOODI)));
+  check('known staking tokens on Sepolia: stETH, wstETH', sym(knownStakingTokensForChain(SEPOLIA)) === 'stETH,wstETH', sym(knownStakingTokensForChain(SEPOLIA)));
+  check('knownTokensForChain is unchanged (Circle\'s stablecoins only; it also feeds subscriptions and spending limits)',
+    sym(knownTokensForChain(SEPOLIA)) === 'USDC,EURC' && knownTokensForChain(HOODI).length === 0);
+  check('the Sepolia DEFAULT list is unchanged: USDC and EURC only (stETH is not default-tracked)', sym(defaultTokensForChain(SEPOLIA)) === 'USDC,EURC');
+  check('a fresh Sepolia store lists USDC and EURC only', sym(await listTokens(SEPOLIA, fresh)) === 'USDC,EURC');
+  check('no staking token on mainnet, Base Sepolia, Arbitrum Sepolia or OP Sepolia',
+    Object.keys(KNOWN_STAKING_TOKENS).join() === 'eip155:11155111,eip155:560048' &&
+      [MAINNET, BASE_SEPOLIA, 'eip155:421614', 'eip155:11155420'].every((c) => knownStakingTokensForChain(c).length === 0));
+  const stakingRefs = Object.values(KNOWN_STAKING_TOKENS).flat();
+  const engineAddress = (t) => {
+    const chain = t.assetId.chainId;
+    if (t.symbol === 'stETH') return LIDO_DEPLOYMENTS[chain]?.stETH;
+    if (t.symbol === 'wstETH') return LIDO_DEPLOYMENTS[chain]?.wstETH;
+    if (t.symbol === 'rETH') return ROCKET_POOL_DEPLOYMENTS[chain]?.rETH;
+    return undefined;
+  };
+  check('every staking token equals the engine\'s pinned address byte for byte (EIP-55)',
+    stakingRefs.length === 5 && stakingRefs.every((t) => engineAddress(t) === t.assetId.reference),
+    stakingRefs.map((t) => `${t.symbol}@${t.assetId.chainId}`).join(', '));
+  check('the staking tokens carry the live-read metadata (18 decimals; Lido / Rocket Pool names)',
+    stakingRefs.every((t) => t.decimals === 18 && t.kind === 'fungible' && t.assetId.namespace === 'erc20') &&
+      stakingRefs.filter((t) => t.symbol === 'stETH').every((t) => t.name === 'Liquid staked Ether 2.0') &&
+      stakingRefs.filter((t) => t.symbol === 'wstETH').every((t) => t.name === 'Wrapped liquid staked Ether 2.0') &&
+      stakingRefs.filter((t) => t.symbol === 'rETH').every((t) => t.name === 'Rocket Pool ETH'));
+  check('only stETH is flagged rebasing', stakingRefs.every((t) => (t.rebasing === true) === (t.symbol === 'stETH')));
+  const sepSteth = LIDO_DEPLOYMENTS[SEPOLIA].stETH;
+  check('isRebasingToken: stETH on its own chain (any case)', isRebasingToken(SEPOLIA, sepSteth) && isRebasingToken(SEPOLIA, sepSteth.toLowerCase()) && isRebasingToken(HOODI, LIDO_DEPLOYMENTS[HOODI].stETH));
+  check('isRebasingToken: false for wstETH, rETH, USDC', !isRebasingToken(SEPOLIA, LIDO_DEPLOYMENTS[SEPOLIA].wstETH) && !isRebasingToken(HOODI, ROCKET_POOL_DEPLOYMENTS[HOODI].rETH) && !isRebasingToken(SEPOLIA, '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238'));
+  check('isRebasingToken: false for Sepolia stETH\'s address on Hoodi and for a look-alike', !isRebasingToken(HOODI, sepSteth) && !isRebasingToken(SEPOLIA, sepSteth.slice(0, -1) + '0'));
+  check('the rebasing note is the one-line sentence', REBASING_TOKEN_NOTE === 'Rebasing token: the balance changes by itself; the preview can be off by a wei or two.' &&
+    rebasingTokenNote(SEPOLIA, sepSteth) === REBASING_TOKEN_NOTE && rebasingTokenNote(SEPOLIA, LIDO_DEPLOYMENTS[SEPOLIA].wstETH) === null);
+  // A stored entry cannot switch the note on: tracking a token that claims
+  // rebasing: true at another address changes nothing.
+  const spoof = memStore();
+  const spoofToken = { ...fakeToken, assetId: { chainId: SEPOLIA, namespace: 'erc20', reference: '0x' + '44'.repeat(20) }, symbol: 'stETH', rebasing: true };
+  await addToken(spoofToken, spoof);
+  const spoofed = (await listTokens(SEPOLIA, spoof)).find((t) => t.assetId.reference === spoofToken.assetId.reference);
+  check('a stored entry claiming rebasing does not make it rebasing', spoofed !== undefined && !isRebasingToken(SEPOLIA, spoofed.assetId.reference));
   check('the known test-network token chains are exactly Sepolia, Base Sepolia, Arbitrum Sepolia and OP Sepolia',
     Object.keys(KNOWN_TEST_NETWORK_TOKENS).join() === 'eip155:11155111,eip155:84532,eip155:421614,eip155:11155420');
   check('every known test token has 6 decimals and its own CAIP-2 chain', Object.entries(KNOWN_TEST_NETWORK_TOKENS).every(([c, l]) => l.every((t) => t.decimals === 6 && t.assetId.chainId === c)));

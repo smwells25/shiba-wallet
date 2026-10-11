@@ -36,13 +36,16 @@ import {
   IMPORTED_KEY_EVM_ONLY,
   IMPORTED_KEY_PATH,
   IMPORTED_NAME_SUFFIX,
+  MULTISIG_PATH,
   WATCH_ONLY_NAME_SUFFIX,
   WATCH_ONLY_PATH,
+  approvalTargetFor,
   assertAccountCanSign,
   defaultImportedName,
   importedAccountId,
   importedSlotOf,
   isImportedAccountId,
+  isMultisigAccountId,
   isWatchOnlyAccountId,
 } from './account-ids';
 import { checkWatchAddress, type KnownAccount } from './watch-only';
@@ -53,7 +56,12 @@ import { addAaSentListener } from './aa';
 import { recoveryRecordListener, wipeRecoveryData } from './recovery';
 import { forgetBrowserConnections } from './browser-sites';
 import { wipeTransactionNotes } from './notes';
-import { resetMultisigRecords } from './multisig';
+import {
+  addMultisigStoreListener,
+  multisigListEntries,
+  resetMultisigRecords,
+  type MultisigAccountEntry,
+} from './multisig';
 import { resetPasskeys } from './passkeys';
 import { installSpendingRecorder, resetSpendingLimits } from './spending-policy';
 import {
@@ -64,7 +72,9 @@ import {
   addWatchOnlyAccountEntry,
   removeWatchOnlyAccountEntry,
   reconcileImportedAccounts,
+  reconcileMultisigAccounts,
   reconcileStoredImportedAccounts,
+  reconcileStoredMultisigAccounts,
   removeImportedAccountEntry,
   sanitizeAccountName,
   defaultAccountsState,
@@ -117,10 +127,34 @@ export interface AccountView {
    */
   watchOnly: boolean;
   /**
+   * True for a multi-signature account (feature 24; listed since phase 18
+   * item 3): a Kernel account no single key of this wallet controls. Like a
+   * watch-only account it is never in `accountList` (only in
+   * `multisigAccounts`), can be the active account, and every signing path
+   * refuses it; its operations are built on the Multisig screen.
+   */
+  multisig: boolean;
+  /**
+   * For a multisig account: its record's network, this wallet's signer for
+   * it and its shape label; null for every other account. `name` is the
+   * shape label too ("Multisig 2 (2-of-3)").
+   */
+  multisigInfo: MultisigAccountInfo | null;
+  /**
    * The account's EVM address (m/44'/60'/0'/0/index for a phrase account,
    * the imported key's address otherwise), or null if not known yet.
    */
   evmAddress: string | null;
+}
+
+/** What the account views know about a multisig account (public data from its record). */
+export interface MultisigAccountInfo {
+  /** CAIP-2 network the record belongs to; the Multisig screen builds its operations only there. */
+  chain: string;
+  /** This wallet's signer for it (a recovery-phrase account's EVM address). */
+  localSigner: string;
+  /** "Multisig 2 (2-of-3)". */
+  label: string;
 }
 
 /** What importPrivateKey did. */
@@ -152,6 +186,12 @@ interface WalletContextValue {
   accountList: AccountView[];
   /** The watch-only accounts (feature 10), ascending by id; no key exists for any of them. */
   watchOnlyAccounts: AccountView[];
+  /**
+   * The multi-signature accounts (feature 24), ascending by id, one per
+   * record of the multisig store; no single key of this wallet signs for
+   * any of them, so they are never in `accountList`.
+   */
+  multisigAccounts: AccountView[];
   /** The account (from `accountList`, never a watch-only one) whose EVM address this is, or null. */
   accountForEvmAddress: (address: string) => AccountView | null;
   /** Makes a visible account the active one (persisted). */
@@ -309,9 +349,9 @@ function importedRowsFrom(keys: readonly ImportedKeyInfo[]): Record<number, Chai
   return out;
 }
 
-/** Phrase-derived indices of a list (imported and watch-only ids are never derived). */
+/** Phrase-derived indices of a list (imported, watch-only and multisig ids are never derived). */
 function derivedIndices(state: AccountsState): number[] {
-  return state.accounts.filter((a) => !a.imported && !a.watchOnly).map((a) => a.index);
+  return state.accounts.filter((a) => !a.imported && !a.watchOnly && !a.multisig).map((a) => a.index);
 }
 
 /**
@@ -342,6 +382,59 @@ function watchOnlyRowsFrom(state: AccountsState): Record<number, ChainAccount[]>
   return out;
 }
 
+/**
+ * The row of a multi-signature account: its Ethereum address only (from the
+ * account store, which mirrors the multisig store), labelled with
+ * MULTISIG_PATH instead of a derivation path. Home shows Bitcoin, Dogecoin
+ * and Solana as not available for it.
+ */
+function multisigRows(address: string): ChainAccount[] {
+  const evm = CHAINS.find((c) => c.provider.chainId === EVM_SLOT)!;
+  return [
+    {
+      chainId: EVM_SLOT,
+      name: evm.provider.name,
+      symbol: evm.symbol,
+      accent: evm.accent,
+      address,
+      path: MULTISIG_PATH,
+    },
+  ];
+}
+
+/** The multisig accounts' rows from the account store (public data; no prompt, no secure storage). */
+function multisigRowsFrom(state: AccountsState): Record<number, ChainAccount[]> {
+  const out: Record<number, ChainAccount[]> = {};
+  for (const a of state.accounts) {
+    if (a.multisig && a.address) out[a.index] = multisigRows(a.address);
+  }
+  return out;
+}
+
+/** The account views' facts per multisig id, from the multisig store's entries. */
+function multisigInfoFrom(entries: readonly MultisigAccountEntry[] | null): Record<number, MultisigAccountInfo> {
+  const out: Record<number, MultisigAccountInfo> = {};
+  for (const e of entries ?? []) out[e.id] = { chain: e.chain, localSigner: e.localSigner, label: e.label };
+  return out;
+}
+
+/**
+ * The account list brought in step with the multisig store (a record always
+ * has an entry; an entry whose record is gone is dropped). An unreadable
+ * multisig store leaves the list as it is. The result is computed from
+ * `state` (so a list reconciled in memory only, e.g. after a failed write,
+ * is kept) and persisted only when something changed; a failed write costs
+ * nothing but a repeat at the next launch. Never throws.
+ */
+async function withStoredMultisigs(
+  state: AccountsState,
+): Promise<{ state: AccountsState; entries: MultisigAccountEntry[] | null }> {
+  const entries = await multisigListEntries().catch(() => null);
+  const next = reconcileMultisigAccounts(state, entries);
+  if (next.changed) await reconcileStoredMultisigAccounts(entries).catch(() => undefined);
+  return { state: next.state, entries };
+}
+
 /** Every index the cache can hold (accounts are hidden, never deleted, so indices stay below MAX_ACCOUNTS). */
 const ALL_CACHE_INDICES = Array.from({ length: MAX_ACCOUNTS }, (_, i) => i);
 
@@ -355,23 +448,30 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   // Public data only (see derivePublic); keyed by account index.
   const [derived, setDerived] = useState<Record<number, ChainAccount[]>>({});
   const [pendingMnemonic, setPendingMnemonic] = useState<string | null>(null);
+  // Facts per multisig account id (record network, signer, shape label).
+  const [multisigInfo, setMultisigInfo] = useState<Record<number, MultisigAccountInfo>>({});
+  // The multisig store listener reconciles only while a wallet is open.
+  const statusRef = useRef<WalletStatus>('loading');
+  useLayoutEffect(() => {
+    statusRef.current = status;
+  });
 
   // signWith reads the active index through a ref so a signing call made
   // after a switch can never use a stale closure's index.
   const activeIndexRef = useRef(0);
+  // The last committed list (the multisig store listener skips a commit
+  // that would change nothing).
+  const accountsRef = useRef<AccountsState | null>(null);
   const commitAccounts = useCallback((state: AccountsState | null) => {
     const active = state?.activeIndex ?? 0;
     activeIndexRef.current = active;
+    accountsRef.current = state;
     // The approval gate opens the secret of the account that will sign
     // (./storage.ts): the phrase, the active imported account's key, or
-    // nothing for a watch-only account (it has no key; signWith refuses it).
-    setApprovalTarget(
-      isImportedAccountId(active)
-        ? { kind: 'imported', slot: importedSlotOf(active) }
-        : isWatchOnlyAccountId(active)
-          ? { kind: 'none' }
-          : { kind: 'phrase' },
-    );
+    // nothing for a watch-only or multi-signature account (no key of this
+    // wallet signs for it; signWith refuses it), so a device check while one
+    // is active never opens the recovery phrase.
+    setApprovalTarget(approvalTargetFor(active));
     setAccountsState(state);
   }, []);
 
@@ -420,9 +520,13 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
      */
     const loadAccountsWithImported = async () => {
       const list = await importedKeyVault.list().catch(() => ({ keys: [] as ImportedKeyInfo[], damaged: true }));
-      const state = await reconcileStoredImportedAccounts(list.damaged ? null : list.keys.map((k) => k.slot)).catch(
+      const withImported = await reconcileStoredImportedAccounts(list.damaged ? null : list.keys.map((k) => k.slot)).catch(
         async () => reconcileImportedAccounts(await loadAccounts(), list.damaged ? null : list.keys.map((k) => k.slot)).state,
       );
+      // Multi-signature accounts (phase 18 item 3): every stored multisig is
+      // listed as an account; public data only, no prompt.
+      const { state, entries } = await withStoredMultisigs(withImported);
+      setMultisigInfo(multisigInfoFrom(entries));
       return { state, imported: importedRowsFrom(list.keys) };
     };
     (async () => {
@@ -443,7 +547,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           const { state, imported } = await loadAccountsWithImported();
           if (cancelled) return;
           const fresh = derivePublic(mnemonic, derivedIndices(state));
-          setDerived({ ...fresh, ...imported, ...watchOnlyRowsFrom(state) });
+          setDerived({ ...fresh, ...imported, ...watchOnlyRowsFrom(state), ...multisigRowsFrom(state) });
           commitAccounts(state);
           setStatus('ready');
           void cachePublic(fresh);
@@ -451,7 +555,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         }
         const { state, imported } = await loadAccountsWithImported();
         if (cancelled) return;
-        const fromCache: Record<number, ChainAccount[]> = { ...imported, ...watchOnlyRowsFrom(state) };
+        const fromCache: Record<number, ChainAccount[]> = {
+          ...imported,
+          ...watchOnlyRowsFrom(state),
+          ...multisigRowsFrom(state),
+        };
         const missing: number[] = [];
         for (const index of derivedIndices(state)) {
           const rows = hydratePublic(await loadPublicAccount(index));
@@ -523,11 +631,16 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       // wipe) are listed again rather than silently deleted, because the
       // phrase cannot bring them back.
       const list = await importedKeyVault.list().catch(() => ({ keys: [] as ImportedKeyInfo[], damaged: true }));
-      const state =
+      const withImported =
         list.damaged || list.keys.length === 0
           ? reset
           : await reconcileStoredImportedAccounts(list.keys.map((k) => k.slot)).catch(() => reset);
-      setDerived({ ...fresh, ...importedRowsFrom(list.keys) });
+      // Multisig records are public bookkeeping; a wipe removes them, so
+      // normally there are none here. Any left (an interrupted wipe) are
+      // listed again, as on the Multisig screen.
+      const { state, entries } = await withStoredMultisigs(withImported);
+      setMultisigInfo(multisigInfoFrom(entries));
+      setDerived({ ...fresh, ...importedRowsFrom(list.keys), ...multisigRowsFrom(state) });
       commitAccounts(state);
       setPendingMnemonic(null);
       setStatus('ready');
@@ -595,8 +708,18 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       setDerived((prev) => ({ ...prev, ...rows }));
       derivedRef.current = { ...derivedRef.current, ...rows };
     }
+    // Multisig accounts come from the account store too (their address,
+    // mirrored from the multisig store), never from the phrase.
+    const multisigMissing = indices.filter((i) => isMultisigAccountId(i) && derivedRef.current[i] === undefined);
+    if (multisigMissing.length > 0) {
+      const all = multisigRowsFrom(await loadAccounts());
+      const rows: Record<number, ChainAccount[]> = {};
+      for (const i of multisigMissing) if (all[i]) rows[i] = all[i];
+      setDerived((prev) => ({ ...prev, ...rows }));
+      derivedRef.current = { ...derivedRef.current, ...rows };
+    }
     let missing = indices.filter(
-      (i) => !isImportedAccountId(i) && !isWatchOnlyAccountId(i) && derivedRef.current[i] === undefined,
+      (i) => !isImportedAccountId(i) && !isWatchOnlyAccountId(i) && !isMultisigAccountId(i) && derivedRef.current[i] === undefined,
     );
     if (missing.length === 0) return;
     // The public cache first (no prompt), then the phrase for the rest.
@@ -626,6 +749,38 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     [serialized, ensureDerived, commitAccounts],
   );
 
+  // The multisig store changed (a create, import, rename, removal or an
+  // operation's progress on the Multisig screen): bring the account list and
+  // the multisig rows in step. Public data only; no prompt. A removed
+  // multisig that was active hands over to Account 1 (reconcile).
+  const refreshMultisigAccounts = useCallback(
+    () =>
+      serialized(async () => {
+        if (statusRef.current !== 'ready') return;
+        const { state, entries } = await withStoredMultisigs(await loadAccounts());
+        if (statusRef.current !== 'ready') return;
+        const info = multisigInfoFrom(entries);
+        setMultisigInfo((prev) => (JSON.stringify(prev) === JSON.stringify(info) ? prev : info));
+        if (JSON.stringify(state) === JSON.stringify(accountsRef.current)) return;
+        const rows = multisigRowsFrom(state);
+        setDerived((prev) => {
+          const next: Record<number, ChainAccount[]> = {};
+          for (const [key, value] of Object.entries(prev)) {
+            if (!isMultisigAccountId(Number(key))) next[Number(key)] = value;
+          }
+          return { ...next, ...rows };
+        });
+        const kept: Record<number, ChainAccount[]> = {};
+        for (const [key, value] of Object.entries(derivedRef.current)) {
+          if (!isMultisigAccountId(Number(key))) kept[Number(key)] = value;
+        }
+        derivedRef.current = { ...kept, ...rows };
+        commitAccounts(state);
+      }),
+    [serialized, commitAccounts],
+  );
+  useEffect(() => addMultisigStoreListener(() => void refreshMultisigAccounts().catch(() => undefined)), [refreshMultisigAccounts]);
+
   const addAccount = useCallback(
     (name: string | null = null) =>
       serialized(async () => {
@@ -641,6 +796,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           hidden: account.hidden,
           imported: false,
           watchOnly: false,
+          multisig: false,
+          multisigInfo: null,
           evmAddress,
         };
       }),
@@ -712,7 +869,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         const list = await importedKeyVault.list();
         const existing = [
           ...state.accounts
-            .filter((a) => !a.imported && !a.watchOnly)
+            .filter((a) => !a.imported && !a.watchOnly && !a.multisig)
             .map((a) => ({
               name: a.name,
               imported: false,
@@ -759,6 +916,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
             hidden: false,
             imported: true,
             watchOnly: false,
+            multisig: false,
+            multisigInfo: null,
             evmAddress: saved.info.address,
           },
           protectionDetail: saved.protectionDetail,
@@ -816,6 +975,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
             known.push({ name: `${a.name}${WATCH_ONLY_NAME_SUFFIX}`, evmAddress: a.address ?? null, kind: 'watch-only' });
             continue;
           }
+          if (a.multisig) {
+            known.push({ name: multisigInfo[a.index]?.label ?? a.name, evmAddress: a.address ?? null, kind: 'multisig' });
+            continue;
+          }
           if (a.imported) {
             const info = list.keys.find((k) => importedAccountId(k.slot) === a.index);
             known.push({ name: `${a.name}${IMPORTED_NAME_SUFFIX}`, evmAddress: info?.address ?? null, kind: 'imported' });
@@ -843,10 +1006,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           hidden: false,
           imported: false,
           watchOnly: true,
+          multisig: false,
+          multisigInfo: null,
           evmAddress: checked.address,
         };
       }),
-    [serialized, commitAccounts],
+    [serialized, commitAccounts, multisigInfo],
   );
 
   const removeWatchOnly = useCallback(
@@ -950,22 +1115,26 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     await deletePublicAccounts(ALL_CACHE_INDICES);
     await resetAccounts().catch(() => undefined);
     setDerived({});
+    setMultisigInfo({});
     commitAccounts(null);
     setPendingMnemonic(null);
     setStatus('no-wallet');
   }, [commitAccounts]);
 
-  // Accounts the wallet holds a key for. Watch-only accounts are filtered
-  // out here on purpose (see the `accountList` doc comment above).
+  // Accounts the wallet holds a key for. Watch-only and multi-signature
+  // accounts are filtered out here on purpose (see the `accountList` doc
+  // comment above).
   const accountList = useMemo<AccountView[]>(
     () =>
-      (accountsState?.accounts ?? []).filter((a) => !a.watchOnly).map((a) => ({
+      (accountsState?.accounts ?? []).filter((a) => !a.watchOnly && !a.multisig).map((a) => ({
         index: a.index,
         name: a.imported ? `${a.name}${IMPORTED_NAME_SUFFIX}` : a.name,
         storedName: a.name,
         hidden: a.hidden,
         imported: a.imported === true,
         watchOnly: false,
+        multisig: false,
+        multisigInfo: null,
         evmAddress: derived[a.index]?.find((c) => c.chainId === EVM_SLOT)?.address ?? null,
       })),
     [accountsState, derived],
@@ -984,9 +1153,35 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           hidden: false,
           imported: false,
           watchOnly: true,
+          multisig: false,
+          multisigInfo: null,
           evmAddress: a.address ?? null,
         })),
     [accountsState],
+  );
+
+  // Multi-signature accounts (feature 24): named as every screen names them
+  // ("Multisig 2 (2-of-3)", from the record), the address from the account
+  // store (mirrored from the multisig store).
+  const multisigAccounts = useMemo<AccountView[]>(
+    () =>
+      (accountsState?.accounts ?? [])
+        .filter((a) => a.multisig)
+        .map((a) => {
+          const info = multisigInfo[a.index] ?? null;
+          return {
+            index: a.index,
+            name: info?.label ?? a.name,
+            storedName: a.name,
+            hidden: false,
+            imported: false,
+            watchOnly: false,
+            multisig: true,
+            multisigInfo: info,
+            evmAddress: a.address ?? null,
+          };
+        }),
+    [accountsState, multisigInfo],
   );
 
   const activeIndex = accountsState?.activeIndex ?? 0;
@@ -995,9 +1190,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       accountsState
         ? (accountList.find((a) => a.index === activeIndex) ??
           watchOnlyAccounts.find((a) => a.index === activeIndex) ??
+          multisigAccounts.find((a) => a.index === activeIndex) ??
           null)
         : null,
-    [accountsState, accountList, watchOnlyAccounts, activeIndex],
+    [accountsState, accountList, watchOnlyAccounts, multisigAccounts, activeIndex],
   );
   const accounts = useMemo(() => derived[activeIndex] ?? [], [derived, activeIndex]);
 
@@ -1018,6 +1214,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       activeAccount,
       accountList,
       watchOnlyAccounts,
+      multisigAccounts,
       accountForEvmAddress,
       switchAccount,
       addAccount,
@@ -1044,6 +1241,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       activeAccount,
       accountList,
       watchOnlyAccounts,
+      multisigAccounts,
       accountForEvmAddress,
       switchAccount,
       addAccount,

@@ -1021,10 +1021,11 @@ console.log('check-browser: live-pass findings — the lock, the notice, the tit
       conn.includes('>WalletConnect connections</Text>') && conn.includes('>WalletConnect is off</Text>') && !conn.includes('>Active connections</Text>'));
   const settings = flat(readFileSync(join(SRC, 'screens', 'SettingsScreen.tsx'), 'utf8'));
   check('the Settings Apps blurb names the real buttons and the screen',
-    settings.includes('Their connections are listed on the Connected apps screen (the &quot;Open connections&quot; button in the WalletConnect section above, or &quot;Manage connections&quot; in Apps), and a site that is open can be disconnected from the Connection button on its browser bar.') &&
+    settings.includes('Their connections are listed on the Connected apps screen (open it with the &quot;Connected apps&quot; button in the WalletConnect section above, or with &quot;Manage connections&quot; in Apps), and a site that is open can be disconnected from the Connection button on its browser bar.') &&
       !settings.includes('listed and disconnected under Open connections'));
-  check('…and those buttons exist: Settings "Open connections" → Connections, Apps "Manage connections" → Connections, the bar\'s "Connection"',
-    /title="Open connections" variant="secondary" onPress=\{\(\) => navigation\.navigate\('Connections'\)\}/.test(settings) &&
+  check('…and those buttons exist: Settings "Connected apps" (the screen\'s own title) → Connections, Apps "Manage connections" → Connections, the bar\'s "Connection"',
+    /title="Connected apps" variant="secondary" onPress=\{\(\) => navigation\.navigate\('Connections'\)\}/.test(settings) &&
+      !settings.includes('Open connections') &&
       SCREEN_SRC.includes(`<Button title="Manage connections" variant="secondary" onPress={() => navigation.navigate('Connections')} />`) &&
       SCREEN_SRC.includes('title="Connection"'));
 }

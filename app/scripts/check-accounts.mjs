@@ -552,6 +552,50 @@ console.log('check-accounts: WalletConnect session binding');
 
 seed.fill(0);
 
+// ------------------------------------------------------------- multisig accounts (phase 18 item 3)
+
+console.log('check-accounts: multi-signature accounts in the list');
+{
+  const acc = await import('../src/wallet/accounts.ts');
+  const { multisigAccountId, MULTISIG_NO_DERIVATION } = await import('../src/wallet/account-ids.ts');
+  const M0 = multisigAccountId(0);
+  const M1 = multisigAccountId(1);
+  const A = ethers.getAddress('0x' + '12'.repeat(20));
+  const B = ethers.getAddress('0x' + '34'.repeat(20));
+  const store = memoryStore();
+  await acc.addAccount(null, store);
+  const plain = store.map.get('shiba-wallet.accounts.v1');
+  await acc.reconcileStoredMultisigAccounts([], store);
+  check('a list without multisigs is stored byte-identically after a reconcile with none', store.map.get('shiba-wallet.accounts.v1') === plain);
+  await acc.reconcileStoredMultisigAccounts(null, store);
+  check('an unreadable multisig store (null) changes nothing', store.map.get('shiba-wallet.accounts.v1') === plain);
+  const listed = await acc.reconcileStoredMultisigAccounts(
+    [
+      { id: M1, address: B, name: 'Treasury' },
+      { id: M0, address: A, name: 'Multisig 1' },
+    ],
+    store,
+  );
+  check('every stored multisig becomes an account, ascending by id, after the phrase accounts',
+    JSON.stringify(listed.accounts.map((a) => a.index)) === JSON.stringify([0, 1, M0, M1]) && listed.accounts.filter((a) => a.multisig).every((a) => a.hidden === false));
+  check('…named from the record and carrying its address', listed.accounts.find((a) => a.index === M1)?.name === 'Treasury' && listed.accounts.find((a) => a.index === M1)?.address === B);
+  const renamed = await acc.reconcileStoredMultisigAccounts(
+    [
+      { id: M1, address: B, name: 'Payroll' },
+      { id: M0, address: A, name: 'Multisig 1' },
+    ],
+    store,
+  );
+  check('a rename on the Multisig screen reaches the list', renamed.accounts.find((a) => a.index === M1)?.name === 'Payroll');
+  check('"Add account" is unaffected (index 2, multisigs not counted)', (await acc.addAccount(null, store)).account.index === 2);
+  const active = await acc.setActiveAccount(M0, store);
+  check('a multisig can be the active account', active.activeIndex === M0);
+  const removed = await acc.reconcileStoredMultisigAccounts([{ id: M1, address: B, name: 'Payroll' }], store);
+  check('removing the active multisig\'s record hands over to Account 1', removed.activeIndex === 0 && !removed.accounts.some((a) => a.index === M0));
+  checkThrows('a multisig id is never derived from the phrase', () => acc.deriveChainAccounts(seed, M1), MULTISIG_NO_DERIVATION);
+  await checkRejects('a multisig cannot be hidden', () => acc.hideAccount(M1, store), 'cannot be hidden');
+}
+
 console.log('');
 console.log('Verification vectors (standard test mnemonic):');
 for (const [k, v] of Object.entries(vectors)) console.log(`  ${k.padEnd(6)} ${v}`);
