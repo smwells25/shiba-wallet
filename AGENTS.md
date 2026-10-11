@@ -5785,3 +5785,63 @@ non-zero; then the emulator passes one at a time (0a, 1, 2's app half,
       "Send again" live; a non-publicnode node's treatment of a fee cap
       below the base fee; the "nonce too low" wording from a real node;
       whether ZeroDev accepts a user-operation replacement.
+- [x] Item 4 — the no-input follow-ups, first half (commit 88fa5af;
+      check-activity 261 (was 225), check-staking 115 (108),
+      check-simulation 81 (75); offline runner ALL GREEN in the CTO's
+      isolated worktree with only the eleven files on HEAD 8bd03c1:
+      engine 981, app 7,962 across 52 suites, lint 0/0, tsc clean; 16
+      hand mutants caught; every old file fails its suite; the CTO
+      applied the SendScreen call-site line (877) the agent could not
+      touch; not seen on a device). (1) UNAVAILABLE RECEIPTS: the row line
+      "Details could not be loaded from the network endpoints; pull down
+      to try again." (also at the end of the label), the footer "N rows
+      without details — pull down to retry" and its technical line ("No
+      other endpoint to ask: a; other endpoints answered without it: b;
+      other endpoints did not answer: c; other failed decodes: d."); the
+      decoder gained isUnavailable, diagnostics() (reasons no-alternate /
+      alternate-missing / alternate-failed) and revision(), and the
+      screen re-renders when a row becomes unavailable (a batch finishing
+      after the visible rows changed was never re-rendered before —
+      fixed, pinned). WHY THE RETRY DID NOT RECOVER THE OLDEST ROWS: not
+      the hypothesised per-page limit (a row 20 pages old decodes on the
+      old code too; no retry budget); a read-only probe today on the four
+      Sepolia defaults with the Permit2-approve and swap-leg fixtures
+      (believed to be the pass's oldest rows, not confirmed against the
+      emulator's hashes): publicnode's reth backend null; THE ALTERNATE
+      THE WALLET PICKS, POCKET, IS ITSELF LOAD-BALANCED and its
+      reth/erigon backends answered null receipts in 5 of 8 reads while
+      returning the transaction; 0xrpc.io/sep (geth) served 8 of 8 (head
+      freshness not re-checked; recorded frozen in F-66), 1rpc 6 of 7.
+      FIXED AND PINNED: up to MAX_ALTERNATE_ASKS = 3 asks moving to the
+      next healthy default each time (a new exclude argument to the
+      finder) else re-asking one that answered (R2, R2b); a "no other
+      endpoint" answer re-probed after ALTERNATE_REFIND_AFTER_MS = 60,000
+      instead of cached for the decoder's life (R3); cost: a null row can
+      take up to 8 reads instead of 4; which mechanism hit the emulator
+      is unverified — the footer's technical line will show it. (2)
+      hidesZeroNativeAmount(entry, tokenTxIds, decoded?) also hides the
+      amount when the decoded transaction has value 0 and is not a plain
+      native transfer (pinned with "Approved stETH for Lido wstETH
+      contract 0xB823…067b (up to 0.0005 stETH)" and "Approved USDC for
+      Permit2 (unlimited)"); amountSign(entry) gives an exact zero no
+      sign (behaviour change: a zero-value transfer or an approve row
+      before its decode reads "0 test ETH"). (3) describeSendError(error,
+      symbol, feeSymbol = 'ETH') builds "Not enough <feeSymbol> to pay
+      the network fee."; the five StakingScreen calls and SendScreen's
+      line 877 pass evmChain.displaySymbol ("Not enough test ETH to pay
+      the network fee." pinned on Sepolia; check-nfts / check-token-send
+      unchanged); STILL HARD-CODED: send-nft.ts 337 and the detail texts
+      in send-erc20, send-nft and delegation, plus ~25 other screen
+      callers — follow-up. (4) BalanceChangePreview rowNotes (default
+      true) / describeAssetChanges rowNotes: both Staking confirm previews
+      pass rowNotes={!plan.rebasing}, so the stETH confirm shows the
+      rebasing caveat once; a check asserts no other screen passes
+      rowNotes. REMAINING from the phase 18 list: the Multisig list
+      refresh on focus with a fresh record; the TalkBack and dark-mode
+      pass; the reminders re-run in the development build; the Polygon
+      Amoy walk-through; the CSV read in a development build; the
+      describeSendError rollout. UNVERIFIED (emulator): the row line and
+      footer; whether the oldest rows now recover on first load (depends
+      on the live backends); approve rows switching from "0 test ETH" to
+      no amount once decoded; the single rebasing note; the staking fee
+      title (hard to trigger live).
