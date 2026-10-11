@@ -1324,6 +1324,23 @@ export interface ActivitySentenceContext {
   nameFor?: (address: string) => string | null;
   /** Masks an amount string (Hide amounts); identity by default. */
   maskAmount?: (text: string) => string;
+  /**
+   * Optional wording for a call the caller recognises, for example a
+   * staking contract it pins. Consulted only for a plain value transfer
+   * (`selector` null) and for a contract call the decoder has no wording
+   * for ('contract-call'); every other decoded call keeps its own wording.
+   * Return a lowercase phrase that starts with a past-tense verb listed in
+   * ACTIVITY_CALL_VERBS (so a failed transaction can say "tried to …"), or
+   * null for the default wording. `format.native` renders a native amount
+   * with the native symbol and Hide amounts applied. When a phrase is
+   * returned, what the logs show the caller sent or received follows it
+   * after a colon, as for any contract call. Absent (the default), every
+   * sentence is exactly what it was before this option existed.
+   */
+  describeCall?: (
+    call: { to: string; selector: string | null; value: bigint },
+    format: { native: (amount: bigint) => string; nativeSymbol: string },
+  ) => string | null;
 }
 
 /** Every token contract whose metadata a sentence for `desc` may need (lowercase). */
@@ -1428,9 +1445,12 @@ class SentenceWriter {
         return this.desc.contractAddress
           ? `deployed a contract at ${shortActivityAddress(this.desc.contractAddress)}`
           : 'deployed a contract';
-      case 'native-transfer':
+      case 'native-transfer': {
+        const custom = this.customPhrase(call.to, null, call.value, caller);
+        if (custom) return custom;
         if (call.value === 0n) return `sent an empty transaction to ${this.party(call.to)}`;
         return `sent ${this.native(call.value)} to ${this.party(call.to)}`;
+      }
       case 'erc20-transfer': {
         const logged = this.desc.movements.find(
           (m) =>
@@ -1487,12 +1507,34 @@ class SentenceWriter {
       case 'handle-ops':
         return `submitted a bundle of ${call.opCount} smart-account operation${call.opCount === 1 ? '' : 's'}`;
       case 'contract-call': {
+        const custom = this.customPhrase(call.to, call.selector, call.value, caller);
+        if (custom) return custom;
         const moved = this.movementPhrase(caller);
         const base = `called ${this.party(call.to)}`;
         const withValue = call.value > 0n ? `${base} with ${this.native(call.value)}` : base;
         return moved ? `${withValue}: ${moved}` : withValue;
       }
     }
+  }
+
+  /**
+   * The caller's own wording (ctx.describeCall) for a call, followed by
+   * what the logs show `caller` sent or received; null when there is no
+   * hook or it has no wording for this call. A phrase that does not start
+   * with one of ACTIVITY_CALL_VERBS is ignored, so a failed transaction can
+   * always say "tried to …" in the present tense.
+   */
+  customPhrase(to: string, selector: string | null, value: bigint, caller: string): string | null {
+    if (!this.ctx.describeCall) return null;
+    const phrase = this.ctx.describeCall(
+      { to, selector, value },
+      { native: (amount) => this.native(amount), nativeSymbol: this.ctx.nativeSymbol },
+    );
+    if (!phrase) return null;
+    const verb = /^(\w+)/.exec(phrase)?.[1] ?? '';
+    if (!Object.prototype.hasOwnProperty.call(PAST_TO_PRESENT, verb)) return null;
+    const moved = this.movementPhrase(caller);
+    return moved ? `${phrase}: ${moved}` : phrase;
   }
 
   /** "sent A and B" / "received C" from the logs, for `account`. */
@@ -1672,7 +1714,20 @@ const PAST_TO_PRESENT: Record<string, string> = {
   allowed: 'allow',
   cleared: 'clear',
   submitted: 'submit',
+  // Verbs for ActivitySentenceContext.describeCall phrases (staking).
+  staked: 'stake',
+  wrapped: 'wrap',
+  unwrapped: 'unwrap',
+  requested: 'request',
+  claimed: 'claim',
+  burned: 'burn',
 };
+
+/**
+ * The past-tense verbs an ActivitySentenceContext.describeCall phrase may
+ * start with (each has a present-tense form for "Failed: tried to …").
+ */
+export const ACTIVITY_CALL_VERBS: readonly string[] = Object.keys(PAST_TO_PRESENT);
 
 /** Turns the leading past-tense verb of a phrase into its base form ("sent X" → "send X"). */
 function toPresent(phrase: string): string {

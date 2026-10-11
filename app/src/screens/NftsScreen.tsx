@@ -19,6 +19,7 @@ import { useWallet } from '../wallet/WalletContext';
 import { OfflineNotice, TechnicalDetail, describeNetworkError } from '../wallet/connectivity';
 import { usePrefs } from '../wallet/PrefsContext';
 import { EVM_CHAIN_ID } from '../wallet/send';
+import { nftsOwnerSentence } from '../wallet/watch-only';
 import { NftImage } from '../components/NftImage';
 import { getEndpoint } from '../config/networks';
 import {
@@ -73,6 +74,11 @@ export function NftsScreen({ navigation }: Props) {
   const { evmChain, hideAmounts } = usePrefs();
   const owner = accounts.find((a) => a.chainId === EVM_CHAIN_ID)?.address ?? null;
   const accountIndex = activeAccount?.index ?? null;
+  // A watch-only address and a multi-signature account have no "regular
+  // address" with a smart account beside it: the gallery is simply that
+  // address's NFTs, and no smart-account address is looked up for them.
+  const watchOnly = activeAccount?.watchOnly === true;
+  const multisig = activeAccount?.multisig === true;
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -91,7 +97,7 @@ export function NftsScreen({ navigation }: Props) {
   // state carries the key it was read for, so a switched account or network
   // never shows a stale address.
   const smartKey =
-    owner && accountIndex !== null ? `${evmChain.chainIdDecimal}|${accountIndex}|${owner}` : null;
+    owner && accountIndex !== null && !watchOnly && !multisig ? `${evmChain.chainIdDecimal}|${accountIndex}|${owner}` : null;
   const [smart, setSmart] = useState<{ key: string; info: SmartAccountAddressInfo } | null>(null);
   useEffect(() => {
     if (!smartKey || !owner || accountIndex === null) return;
@@ -226,7 +232,7 @@ export function NftsScreen({ navigation }: Props) {
       </Text>
       {owner ? (
         <Text selectable style={[styles.hint, { color: theme.textMuted }]}>
-          Shows the NFTs held by this account&apos;s regular address, {owner}.
+          {nftsOwnerSentence({ watchOnly, multisig }, owner)}
           {smartInfo
             ? ` Your ${lowerFirst(smartAccountAddressLabel(smartInfo))}, ` +
               `${smartInfo.address}, is not included: NFTs held there do not appear in this gallery.`

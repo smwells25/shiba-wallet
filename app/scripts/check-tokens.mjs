@@ -637,6 +637,93 @@ console.log('\nFind my tokens (fake indexer + fake chain reads):');
   check('the Sepolia indexer is never used for mainnet discovery', mainnetNone.status === 'unavailable' && /Ethereum/.test(mainnetNone.note));
 }
 
+// Phase 18 item 3 emulator finding 5: "Find my tokens" listed stETH and
+// wstETH as plain UNTRACKED TOKEN rows, with no sign the wallet pins them.
+console.log('\nFind my tokens: pinned liquid-staking tokens are labelled (nothing tracked automatically):');
+{
+  const td = await import('../src/wallet/token-discovery.ts');
+  const OWNER = '0x9858EfFD232B4033E47d90003D41EC34EcaEda94';
+  const IDX = 'https://indexer.example/v2/KEY';
+  const RPC = 'https://rpc.example';
+  const w = (v) => `0x${v.toString(16).padStart(64, '0')}`;
+  const SEP_STETH = LIDO_DEPLOYMENTS['eip155:11155111'].stETH;
+  const SEP_WSTETH = LIDO_DEPLOYMENTS['eip155:11155111'].wstETH;
+  const FAKE_STETH = '0x' + '5e'.repeat(20);
+  const OTHER = '0x' + '6f'.repeat(20);
+  const meta = {
+    [SEP_STETH.toLowerCase()]: { decimals: 18, symbol: 'stETH', name: 'Liquid staked Ether 2.0', note: null },
+    [SEP_WSTETH.toLowerCase()]: { decimals: 18, symbol: 'wstETH', name: 'Wrapped liquid staked Ether 2.0', note: null },
+    [FAKE_STETH]: { decimals: 18, symbol: 'stETH', name: 'Liquid staked Ether 2.0', note: null },
+    [OTHER]: { decimals: 18, symbol: 'DAI', name: 'Dai', note: null },
+  };
+  const st = memStore();
+  st.mem.set('shiba-wallet.evm-indexer.v1', JSON.stringify({ [SEPOLIA]: { url: IDX, verifiedAt: '2026-10-04T00:00:00.000Z' } }));
+  const out = await td.discoverUntrackedTokens({
+    chainCaip2: SEPOLIA,
+    owner: OWNER,
+    rpc: { url: RPC, chainId: SEPOLIA },
+    store: st,
+    fetchMetadata: async (_u, c) => meta[c.toLowerCase()],
+    transportFor: () => async (method) => {
+      if (method === 'eth_chainId') return '0xaa36a7';
+      return { address: OWNER.toLowerCase(), tokenBalances: [SEP_STETH, SEP_WSTETH, FAKE_STETH, OTHER].map((c) => ({ contractAddress: c.toLowerCase(), tokenBalance: w(10n ** 15n) })) };
+    },
+  });
+  const by = (c) => (out.status === 'ok' ? out.tokens.find((t) => t.contract.toLowerCase() === c.toLowerCase()) : undefined);
+  check('the pinned Sepolia stETH and wstETH are labelled as known staking tokens (Lido)',
+    JSON.stringify(by(SEP_STETH)?.knownStaking) === JSON.stringify({ protocol: 'Lido', symbol: 'stETH' }) &&
+      JSON.stringify(by(SEP_WSTETH)?.knownStaking) === JSON.stringify({ protocol: 'Lido', symbol: 'wstETH' }), JSON.stringify(by(SEP_STETH)?.knownStaking));
+  check('a token copying stETH\'s symbol and name on another contract is NOT labelled, and is flagged as a look-alike',
+    by(FAKE_STETH)?.knownStaking === null && by(FAKE_STETH)?.lookalikeOf === 'stETH');
+  check('an unrelated token is not labelled', by(OTHER)?.knownStaking === null && by(OTHER)?.lookalikeOf === null);
+  check('…and nothing was tracked automatically', (await listTokens(SEPOLIA, st)).every((t) => ![SEP_STETH, SEP_WSTETH].includes(t.assetId.reference)) && st.mem.get(tokenStoreKey(SEPOLIA)) === undefined);
+  check('the Track confirmation is unchanged for a pinned token ("Track stETH?", the full contract)',
+    (() => { const p = trackDiscoveredPrompt({ ...by(SEP_STETH), asset: by(SEP_STETH).asset }, 'Ethereum Sepolia'); return p.title === 'Track stETH?' && p.message.startsWith(`Contract ${SEP_STETH} on Ethereum Sepolia.`) && p.confirm === 'Track stETH'; })());
+  const hoodiReth = ROCKET_POOL_DEPLOYMENTS['eip155:560048'].rETH;
+  check('knownStakingTokenAt: Hoodi rETH is Rocket Pool; the Sepolia stETH address on Hoodi is nothing; a lowercase address matches',
+    JSON.stringify(td.knownStakingTokenAt('eip155:560048', hoodiReth)) === JSON.stringify({ protocol: 'Rocket Pool', symbol: 'rETH' }) &&
+      td.knownStakingTokenAt('eip155:560048', SEP_STETH) === null && td.knownStakingTokenAt(SEPOLIA, SEP_STETH.toLowerCase())?.symbol === 'stETH');
+  check('a look-alike of the pinned address (last digit changed) is nothing', td.knownStakingTokenAt(SEPOLIA, SEP_STETH.slice(0, -1) + '0') === null);
+  check('the tag and the sentence (exact)',
+    td.KNOWN_STAKING_TOKEN_TAG === 'KNOWN STAKING TOKEN' && td.UNTRACKED_TOKEN_TAG === 'UNTRACKED TOKEN' &&
+      td.knownStakingTokenSentence({ protocol: 'Lido', symbol: 'stETH' }) ===
+        "This is the stETH contract this wallet pins from Lido's published list of deployed contracts. It is tracked only if you choose Track stETH.");
+  const screen = readFileSync(new URL('../src/screens/TokensScreen.tsx', import.meta.url), 'utf8');
+  const tagProblems = (src) => [
+    src.includes('{found.knownStaking ? KNOWN_STAKING_TOKEN_TAG : UNTRACKED_TOKEN_TAG}') || 'the tag',
+    src.includes('{found.knownStaking ? (\n                  <Text style={[styles.hint, { color: theme.text }]}>{knownStakingTokenSentence(found.knownStaking)}</Text>') || 'the sentence',
+    !src.includes('>UNTRACKED TOKEN<') || 'the old fixed tag',
+  ].filter((x) => x !== true);
+  check('the Tokens screen shows the tag and the sentence for a pinned token (source)', tagProblems(screen).length === 0, tagProblems(screen).join('; '));
+  check('…the old fixed "UNTRACKED TOKEN" tag fails the check',
+    tagProblems(screen.replace('{found.knownStaking ? KNOWN_STAKING_TOKEN_TAG : UNTRACKED_TOKEN_TAG}', 'UNTRACKED TOKEN')).length > 0);
+}
+
+// Phase 18 item 3 emulator finding 2: the Tokens screen offered Send per
+// token while a multisig (or a watch-only account) was active.
+console.log('\nTokens screen: no Send buttons for a multisig or watch-only account:');
+{
+  const wo = await import('../src/wallet/watch-only.ts');
+  check('tokensSendNote: none for an account with a key; the multisig and watch-only sentences (exact)',
+    wo.tokensSendNote({ watchOnly: false, multisig: false }) === null && wo.tokensSendNote(null) === null &&
+      wo.tokensSendNote({ watchOnly: false, multisig: true }) === 'Token sends from a multi-signature account are signing requests for its co-signers; build one on the Multisig screen.' &&
+      wo.tokensSendNote({ watchOnly: true, multisig: false }) === 'This is a watch-only address: the wallet holds no key for it, so it cannot send these tokens.' &&
+      wo.tokensSendNote({ watchOnly: false }) === null);
+  const screen = readFileSync(new URL('../src/screens/TokensScreen.tsx', import.meta.url), 'utf8');
+  const sendProblems = (src) => [
+    src.includes('const sendNote = tokensSendNote(activeAccount);') || 'sendNote from the active account',
+    /\{sendNote === null \? \(\s*<Button\s*title="Send"/.test(src) || 'Send rendered only when sendNote is null',
+    (src.match(/title="Send"/g) ?? []).length === 1 || 'exactly one Send button in the source',
+    src.includes('{sendNote ? <Text style={[styles.hint, { color: theme.text }]}>{sendNote}</Text> : null}') || 'the sentence instead',
+    src.includes("{sendNote ? '.' : ', and Send starts a token transfer.'}") || 'the intro does not promise Send',
+  ].filter((x) => x !== true);
+  check('Tokens screen: Send hidden and the sentence shown for a keyless account (source)', sendProblems(screen).length === 0, sendProblems(screen).join('; '));
+  check('…mutant: Send always rendered is caught', sendProblems(screen.replace(/\{sendNote === null \? \(/, '{true ? (')).length > 0);
+  const gate = readFileSync(new URL('../src/wallet/watch-only.ts', import.meta.url), 'utf8');
+  check('the route gate still refuses Send for a multisig and a watch-only account (second line of defence)',
+    wo.multisigRouteRefusal('Send') === wo.MULTISIG_SEND_REFUSAL && wo.watchOnlyRouteRefusal('Send') !== null && !/'Send',\n/.test(gate.slice(gate.indexOf('MULTISIG_ALLOWED_ROUTES'), gate.indexOf('MULTISIG_ALLOWED_ROUTES') + 400)));
+}
+
 console.log('\nDust display in Activity and Swap (phase 12 follow-up):');
 {
   check('signed dust: "+<0.000001" and "−<0.000001"', signedDisplay('+', formatBalanceDisplay(5n, 18)) === '+<0.000001' && signedDisplay('−', formatBalanceDisplay(5n, 18)) === '−<0.000001');

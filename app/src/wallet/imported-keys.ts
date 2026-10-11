@@ -187,9 +187,30 @@ export const ACCOUNTS_WITH_IMPORTED_HINT =
  * Accounts (finding 2 of the 2026-10-04 private-key run: Settings opened
  * with "Every account comes from your one recovery phrase" and only then
  * appended the exception).
+ *
+ * `keyless` names the accounts without a key of their own that the list
+ * also shows (the account switcher lists watch-only addresses and
+ * multi-signature accounts; phase 18 item 3 emulator finding 7a: with a
+ * multisig listed the switcher still said "Every account comes from your one
+ * recovery phrase"). With any of them the sentence names every exception, so
+ * it stays true as one statement; without them (the default, Settings →
+ * Accounts) it is exactly what it was.
  */
-export function accountsBackupHint(anyImported: boolean): string {
-  return anyImported ? ACCOUNTS_WITH_IMPORTED_HINT : ACCOUNTS_PHRASE_ONLY_HINT;
+export function accountsBackupHint(
+  anyImported: boolean,
+  keyless: { watchOnly?: boolean; multisig?: boolean } = {},
+): string {
+  const others = [keyless.watchOnly ? 'watch-only' : null, keyless.multisig ? 'multi-signature' : null].filter(
+    (k): k is string => k !== null,
+  );
+  if (others.length === 0) return anyImported ? ACCOUNTS_WITH_IMPORTED_HINT : ACCOUNTS_PHRASE_ONLY_HINT;
+  const kinds = [...(anyImported ? ['imported'] : []), ...others];
+  const listed = kinds.length === 1 ? kinds[0] : `${kinds.slice(0, -1).join(', ')} and ${kinds[kinds.length - 1]}`;
+  return anyImported
+    ? `Every account here except the ${listed} ones comes from your one recovery phrase. Imported accounts are ` +
+        'NOT backed up by the phrase: keep their private keys yourself.'
+    : `Every account here except the ${listed} ones comes from your one recovery phrase — backing up the ` +
+        'phrase backs up all of those.';
 }
 
 export const IMPORT_KEY_INTRO =

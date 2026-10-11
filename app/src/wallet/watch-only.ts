@@ -262,6 +262,29 @@ export const MULTISIG_ALLOWED_ROUTES: readonly string[] = [
 export const MULTISIG_SEND_REFUSAL =
   'Sends from a multi-signature account are signing requests for the co-signers; build one on the Multisig screen.';
 
+/**
+ * The Tokens screen's sentence in place of its per-token Send buttons while
+ * a multisig is the active account (the route gate still refuses Send).
+ */
+export const MULTISIG_TOKENS_SEND_NOTE =
+  'Token sends from a multi-signature account are signing requests for its co-signers; build one on the Multisig screen.';
+
+/** The same for a watch-only account. */
+export const WATCH_ONLY_TOKENS_SEND_NOTE =
+  'This is a watch-only address: the wallet holds no key for it, so it cannot send these tokens.';
+
+/**
+ * Whether the Tokens screen offers Send for the active account: null when it
+ * does, else the sentence it shows instead (a watch-only or multisig account;
+ * no key of this wallet sends alone for either).
+ */
+export function tokensSendNote(account: { watchOnly: boolean; multisig?: boolean } | null): string | null {
+  if (!account) return null;
+  if (account.watchOnly) return WATCH_ONLY_TOKENS_SEND_NOTE;
+  if (account.multisig === true) return MULTISIG_TOKENS_SEND_NOTE;
+  return null;
+}
+
 /** The button under every multisig refusal. */
 export const MULTISIG_OPEN_SCREEN_BUTTON = 'Open the Multisig screen';
 
@@ -338,6 +361,19 @@ export const MULTISIG_RECEIVE_NOTE =
   'This is the multi-signature account’s own address. Anyone can send to it, but every operation that moves ' +
   'anything out of it needs its co-signers’ approvals, built on the Multisig screen.';
 
+/**
+ * The account switcher's sentence when multi-signature accounts are listed
+ * (next to accountsBackupHint and WATCH_ONLY_LIST_HINT): what the recovery
+ * phrase does and does not cover for them. A multisig's signer in this
+ * wallet is always a recovery-phrase account (multisig.ts
+ * MULTISIG_PHRASE_SIGNER_ONLY), and the record is restored with "Add a
+ * multisig from a record" on the Multisig screen.
+ */
+export const MULTISIG_LIST_HINT =
+  'Multi-signature accounts have no key of their own: this wallet holds one of their signers, a recovery-phrase ' +
+  'account, and every operation also needs the co-signers. On another phone, add one again from its record on ' +
+  'the Multisig screen.';
+
 /** The switcher's line under a multisig row and under the header while one is active. */
 export const MULTISIG_SWITCHER_LINE = 'Multisig — operations need co-signers; Ethereum networks only';
 
@@ -356,14 +392,31 @@ export function multisigOtherNetworkNote(label: string, recordNetwork: string, a
 /**
  * Which account builds a multisig's operations: the Multisig screen submits
  * and co-signs with this wallet's signer, so that account must be active.
- * `signerName` is null when the signer is not listed in this wallet.
+ * `signerName` is null when the signer is not listed in this wallet. The
+ * route gate shows this beside its "Open the Multisig screen" button, which
+ * works while the multisig is active but only to look at it (phase 18 item
+ * 3 emulator finding 7d: the hint used to say "switch …, then open the
+ * Multisig screen" right above a button that opened it without switching).
  */
 export function multisigSignerHint(label: string, signerName: string | null, signerAddress: string): string {
   const who = signerName ? `${signerName} (${signerAddress})` : signerAddress;
   return (
-    `This wallet’s signer for ${label} is ${who}. Switch to that account on Home, then open the Multisig screen ` +
-    'to build, approve or submit its operations.'
+    `This wallet’s signer for ${label} is ${who}. While ${label} is the active account, the Multisig screen only ` +
+    'shows it; to build, approve or submit its operations, switch to that account on Home first.'
   );
+}
+
+/**
+ * The NFT gallery's sentence about whose NFTs it shows (phase 18 item 3
+ * emulator finding 7c: it said "this account's regular address" for a
+ * multisig). A watch-only address and a multisig have no regular address
+ * with a smart account beside it; for any other account the sentence is
+ * the one the gallery always showed.
+ */
+export function nftsOwnerSentence(account: { watchOnly: boolean; multisig?: boolean }, address: string): string {
+  if (account.watchOnly) return `Shows the NFTs held by the watched address, ${address}.`;
+  if (account.multisig === true) return `Shows the NFTs held by this multi-signature account's address, ${address}.`;
+  return `Shows the NFTs held by this account's regular address, ${address}.`;
 }
 
 /** Home's footer for a multisig account. */

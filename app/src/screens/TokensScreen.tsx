@@ -28,14 +28,18 @@ import {
 } from '../wallet/erc20';
 import { addToken, listTokens, removeToken, testNetworkTokenValueSentence } from '../wallet/tokens';
 import { tokenSendFeeSentence } from '../wallet/token-gas';
+import { tokensSendNote } from '../wallet/watch-only';
 import {
   FIND_TOKENS_WARNING,
+  KNOWN_STAKING_TOKEN_TAG,
   TOKEN_NAME_MAX,
   TOKEN_SYMBOL_MAX,
   cleanTokenText,
   discoverUntrackedTokens,
   discoverySummary,
+  knownStakingTokenSentence,
   trackDiscoveredPrompt,
+  UNTRACKED_TOKEN_TAG,
   type DiscoveredToken,
   type DiscoveryOutcome,
 } from '../wallet/token-discovery';
@@ -83,8 +87,12 @@ interface Preview {
 export function TokensScreen({ navigation }: Props) {
   const theme = useTheme();
   const { evmChain, hideAmounts } = usePrefs();
-  const { accounts } = useWallet();
+  const { accounts, activeAccount } = useWallet();
   const owner = accounts.find((a) => a.chainId === EVM_CHAIN_ID)?.address ?? null;
+  // No Send buttons for a watch-only or multi-signature account (Home hides
+  // its Send links the same way); one sentence says why. The route gate
+  // still refuses the Send screen for them (components/WatchOnlyGate.tsx).
+  const sendNote = tokensSendNote(activeAccount);
   const [tokens, setTokens] = useState<FungibleAsset[]>([]);
   const [address, setAddress] = useState('');
   const [lookingUp, setLookingUp] = useState(false);
@@ -285,12 +293,13 @@ export function TokensScreen({ navigation }: Props) {
         <Text style={[styles.sectionTitle, { color: theme.text }]}>Tracked tokens on {evmChain.label}</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           ERC-20 balances shown on Home under {evmChain.label}. Each network
-          keeps its own list. Tokens arrive at your address, and Send starts
-          a token transfer. {tokenSendFeeSentence(evmChain.caip2)}
+          keeps its own list. Tokens arrive at your address
+          {sendNote ? '.' : ', and Send starts a token transfer.'} {tokenSendFeeSentence(evmChain.caip2)}
           {evmChain.testnet
             ? ` ${testNetworkTokenValueSentence(evmChain.caip2)}`
             : ''}
         </Text>
+        {sendNote ? <Text style={[styles.hint, { color: theme.text }]}>{sendNote}</Text> : null}
         {tokens.length === 0 ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
             No tokens tracked. Add one below.
@@ -311,17 +320,19 @@ export function TokensScreen({ navigation }: Props) {
                 </Text>
               </View>
               <View style={styles.rowButtons}>
-                <Button
-                  title="Send"
-                  accessibilityLabel={`Send ${token.symbol}`}
-                  onPress={() =>
-                    navigation.navigate('Send', {
-                      chainId: EVM_CHAIN_ID,
-                      tokenId: formatAssetId(token.assetId),
-                    })
-                  }
-                  style={styles.removeButton}
-                />
+                {sendNote === null ? (
+                  <Button
+                    title="Send"
+                    accessibilityLabel={`Send ${token.symbol}`}
+                    onPress={() =>
+                      navigation.navigate('Send', {
+                        chainId: EVM_CHAIN_ID,
+                        tokenId: formatAssetId(token.assetId),
+                      })
+                    }
+                    style={styles.removeButton}
+                  />
+                ) : null}
                 <Button
                   title="Remove"
                   accessibilityLabel={`Remove ${token.symbol} from tracked tokens`}
@@ -377,7 +388,9 @@ export function TokensScreen({ navigation }: Props) {
                 key={found.contract}
                 style={[styles.previewCard, { backgroundColor: theme.card, borderColor: theme.border }]}
               >
-                <Text style={[styles.untrackedTag, { color: theme.textMuted }]}>UNTRACKED TOKEN</Text>
+                <Text style={[styles.untrackedTag, { color: theme.textMuted }]}>
+                  {found.knownStaking ? KNOWN_STAKING_TOKEN_TAG : UNTRACKED_TOKEN_TAG}
+                </Text>
                 <Text style={[styles.previewTitle, { color: theme.text }]}>
                   {found.symbol ?? 'Symbol unavailable'}
                   {found.name && found.name !== found.symbol ? ` — ${found.name}` : ''}
@@ -391,6 +404,9 @@ export function TokensScreen({ navigation }: Props) {
                 <Text style={[styles.tokenAddress, { color: theme.textMuted }]}>
                   Contract {found.contract}
                 </Text>
+                {found.knownStaking ? (
+                  <Text style={[styles.hint, { color: theme.text }]}>{knownStakingTokenSentence(found.knownStaking)}</Text>
+                ) : null}
                 {found.lookalikeOf ? (
                   <Text style={[styles.error, { color: theme.danger }]}>
                     Warning: this token uses the symbol {found.lookalikeOf} but its contract is

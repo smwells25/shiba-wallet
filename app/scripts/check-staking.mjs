@@ -871,6 +871,54 @@ console.log('check-staking: success notes, the balances holder line and the smar
   check('…the receipt is polled with waitForAaReceipt and the bundle transaction shown as text, not only as a button',
     screen.includes('void waitForAaReceipt(bundle, userOpHash, { timeoutMs: 120_000, pollMs: 3_000 })') &&
       /\{aaResult\.txHash\}\s*<\/Text>/.test(screen));
+
+  // Item 3 emulator finding 1: the private note on both success views, as on
+  // Send and Swap (TransactionNoteField, the network captured at sending).
+  const noteProblems = (src) => {
+    const p = [];
+    const need = (what, ok) => { if (!ok) p.push(what); };
+    const success = src.slice(src.indexOf("if (phase === 'success' && (result || aaResult) && plan) {"), src.indexOf('// ------------------------------------------------- approve (EOA, step 1)'));
+    const done = success.indexOf('title="Done"');
+    const aaField = '<TransactionNoteField network={sentNetwork} txid={aaResult.txHash} userOpHash={aaResult.userOpHash} />';
+    const eoaField = '<TransactionNoteField network={sentNetwork} txid={result.txid} userOpHash={null} />';
+    need('the component is imported', src.includes("import { TransactionNoteField } from '../components/TransactionNoteField';"));
+    need('smart-account view: the UserOperation hash first, the bundle hash when it arrives', success.includes('{sentNetwork && aaResult ? (') && success.includes(aaField));
+    need('regular-account view: the transaction id', success.includes('{sentNetwork && !aaResult && result ? (') && success.includes(eoaField));
+    need('both above Done', done > 0 && success.indexOf(aaField) > 0 && success.indexOf(aaField) < done && success.indexOf(eoaField) > 0 && success.indexOf(eoaField) < done);
+    need('the network captured when each path sent', (src.match(/setSentNetwork\(caip2\);/g) ?? []).length === 2 &&
+      /sendEvm\(sendUrl, signer, eoaQuote, evmChain\.explorerTxBase\),\s*\);\s*setSentNetwork\(caip2\);/.test(src) &&
+      /sendAa\(bundle, signer, aaQuote\)\);\s*setSentNetwork\(caip2\);/.test(src));
+    need('Done clears it', success.includes('setSentNetwork(null);'));
+    return p;
+  };
+  const np = noteProblems(screen);
+  check('the Staking success views render the private note above Done (both paths; the network captured at sending)', np.length === 0, np.join('; '));
+  for (const [name, from, to] of [
+    ['the smart-account field removed', '<TransactionNoteField network={sentNetwork} txid={aaResult.txHash} userOpHash={aaResult.userOpHash} />', ''],
+    ['the regular-account field removed', '<TransactionNoteField network={sentNetwork} txid={result.txid} userOpHash={null} />', ''],
+    ['the smart-account field without the UserOperation hash', 'txid={aaResult.txHash} userOpHash={aaResult.userOpHash}', 'txid={aaResult.txHash} userOpHash={null}'],
+  ]) {
+    check(`mutant (${name}) is caught`, noteProblems(screen.replace(from, to)).length > 0);
+  }
+  check('the old screen (no note field) fails the check', noteProblems(screen.replaceAll(/\{sentNetwork && (?:!aaResult && result|aaResult) \? \([\s\S]*?\) : null\}/g, '')).length > 0);
+  // The component itself moves a note saved under the UserOperation hash to
+  // the bundle transaction once its hash is known.
+  const field = readFileSync(join(APP_ROOT, 'src/components/TransactionNoteField.tsx'), 'utf8');
+  check('TransactionNoteField links the UserOperation note to the bundle transaction when the hash arrives',
+    field.includes('linkUserOperation(network, userOpHash, txid)') && /if \(!txid \|\| !userOpHash \|\| savedCount === 0\) return;/.test(field));
+  // …and that move works on the note store (the same functions, a memory store).
+  const notes = await import('../src/wallet/notes.ts');
+  const mem = new Map();
+  const store = { getItem: async (k) => mem.get(k) ?? null, setItem: async (k, v) => { mem.set(k, v); }, removeItem: async (k) => { mem.delete(k); } };
+  const OP = '0x' + '3a'.repeat(32);
+  const TX = '0x' + '59'.repeat(32);
+  await notes.saveNote(STAKING_SEPOLIA, { txid: null, userOpHash: OP }, 'staked for the demo', { store });
+  const before = await notes.loadNotes(store);
+  const linked = await notes.linkUserOperation(STAKING_SEPOLIA, OP, TX, store);
+  const after = await notes.loadNotes(store);
+  check('a note saved under the UserOperation hash is moved to the bundle transaction (linkUserOperation)',
+    before.notes.length === 1 && before.notes[0].txid === null && linked === 'moved' &&
+      after.notes.length === 1 && after.notes[0].txid === TX && after.notes[0].userOpHash === OP && after.notes[0].text === 'staked for the demo', JSON.stringify(after.notes));
 }
 
 // ---------------------------------------------------------------------------

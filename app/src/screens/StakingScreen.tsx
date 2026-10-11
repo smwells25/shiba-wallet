@@ -14,6 +14,7 @@ import { BalanceChangePreview } from '../components/BalanceChangePreview';
 import { RiskWarnings } from '../components/RiskWarnings';
 import { SpendingPolicyNotice, spendingGateForQuote } from '../components/SpendingPolicyViews';
 import { AaDepositNote } from '../components/AaDepositNote';
+import { TransactionNoteField } from '../components/TransactionNoteField';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
 import { requireLocalAuth } from '../wallet/biometric';
@@ -230,6 +231,10 @@ export function StakingScreen({ navigation }: Props) {
   const [eoaQuote, setEoaQuote] = useState<EvmSendQuote | null>(null);
   const [quotedUrl, setQuotedUrl] = useState<string | null>(null);
   const [result, setResult] = useState<SendResult | null>(null);
+  // The network the transaction went out on, captured when it was sent, so
+  // the private note is filed under that network even if the mode changes
+  // while the success view is open (as on the Send and Swap screens).
+  const [sentNetwork, setSentNetwork] = useState<string | null>(null);
   const [approveTxid, setApproveTxid] = useState<string | null>(null);
   // After a send whose plan involves stETH: is stETH tracked now (so Home
   // lists it)? null until known or when the list could not be read.
@@ -574,6 +579,7 @@ export function StakingScreen({ navigation }: Props) {
       const sent = await signWith(EVM_CHAIN_ID, preparedFrom.current ?? '', (signer) =>
         sendEvm(sendUrl, signer, eoaQuote, evmChain.explorerTxBase),
       );
+      setSentNetwork(caip2);
       setResult(sent);
       setStethTracked(null);
       setPhase('success');
@@ -624,6 +630,7 @@ export function StakingScreen({ navigation }: Props) {
     setPhase('aa-sending');
     try {
       const { userOpHash } = await signWith(EVM_CHAIN_ID, preparedFrom.current ?? '', (signer) => sendAa(bundle, signer, aaQuote));
+      setSentNetwork(caip2);
       setAaResult({ userOpHash, receiptState: 'pending', success: null, txHash: null });
       setStethTracked(null);
       setPhase('success');
@@ -724,11 +731,22 @@ export function StakingScreen({ navigation }: Props) {
             {stakingSuccessBalanceNote({ smartAccount: aaResult !== null, stethTracked })}
           </Text>
         ) : null}
+        {/* The private note (feature 87), as on the Send and Swap success
+            views: a smart-account note is kept under the UserOperation hash
+            and moved to the bundle transaction when its hash arrives
+            (TransactionNoteField calls linkUserOperation). */}
+        {sentNetwork && aaResult ? (
+          <TransactionNoteField network={sentNetwork} txid={aaResult.txHash} userOpHash={aaResult.userOpHash} />
+        ) : null}
+        {sentNetwork && !aaResult && result ? (
+          <TransactionNoteField network={sentNetwork} txid={result.txid} userOpHash={null} />
+        ) : null}
         <Button
           title="Done"
           onPress={() => {
             setResult(null);
             setAaResult(null);
+            setSentNetwork(null);
             setStethTracked(null);
             setApproveTxid(null);
             setPlan(null);

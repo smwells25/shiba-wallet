@@ -527,3 +527,114 @@ describe('EIP-7708 ETH-transfer logs in receipts', () => {
     expect(activitySentence(after, ctx())).toBe(activitySentence(before, ctx()));
   });
 });
+
+// ---------------------------------------------------------------------------
+// ActivitySentenceContext.describeCall: the app's own wording for calls it
+// recognises (phase 18 item 3 emulator finding 4: a stake read "Called
+// 0x3e3F…40Af with 0.0002 test ETH: received … stETH").
+// ---------------------------------------------------------------------------
+
+describe('describeCall (wording supplied by the caller)', () => {
+  const STETH_LIKE = OTHER;
+  const SUBMIT = '0xa1903eab';
+  const submitInput = SUBMIT + '00'.repeat(32);
+  const stethMeta = { [STETH_LIKE.toLowerCase()]: { symbol: 'stETH', decimals: 18, tracked: true } };
+  const mint = transferLog(STETH_LIKE, '0x0000000000000000000000000000000000000000', ACCOUNT_1, 199_999_999_999_999n);
+  const staking: NonNullable<ActivitySentenceContext['describeCall']> = (call, format) =>
+    call.to.toLowerCase() === STETH_LIKE.toLowerCase() && call.selector === SUBMIT && call.value > 0n
+      ? `staked ${format.native(call.value)} with Lido (stETH contract 0x1111…1111)`
+      : call.to.toLowerCase() === STETH_LIKE.toLowerCase() && call.selector === null && call.value > 0n
+        ? `staked ${format.native(call.value)} with Lido and wrapped it into wstETH`
+        : null;
+
+  it('without the option, and with an option that answers null or an unlisted verb, every sentence is unchanged', () => {
+    const prefixes = ['0x5396', '0x5ab4', '0x3c55', '0xa41d', '0xe189', '0xbd14', '0x1287', '0x0293'];
+    const synthetic = [
+      describe1(syntheticTx({ value: '0x2386f26fc10000' }), syntheticReceipt([])),
+      describe1(syntheticTx({ input: submitInput, value: '0xb5e620f48000' }), syntheticReceipt([mint])),
+      describe1(syntheticTx({ input: submitInput, value: '0xb5e620f48000' }), syntheticReceipt([], '0x0')),
+    ];
+    const all = [...prefixes.map((p) => describeFixture(p, [ACCOUNT_1, KERNEL_OF_ACCOUNT_1])), ...synthetic];
+    for (const d of all) {
+      const plain = activitySentence(d, ctx({ tokens: { ...TOKENS, ...stethMeta } }));
+      expect(activitySentence(d, ctx({ tokens: { ...TOKENS, ...stethMeta }, describeCall: () => null }))).toBe(plain);
+      expect(activitySentence(d, ctx({ tokens: { ...TOKENS, ...stethMeta }, describeCall: () => 'frobbed the contract' }))).toBe(plain);
+    }
+    expect(activitySentence(synthetic[1]!, ctx({ tokens: stethMeta }))).toBe('Called 0x1111…1111 with 0.0002 ETH: received 0.000199999999999999 stETH');
+  });
+
+  it('a recognised contract call uses the phrase, followed by what the logs show', () => {
+    const d = describe1(syntheticTx({ input: submitInput, value: '0xb5e620f48000' }), syntheticReceipt([mint]));
+    expect(d.call.kind).toBe('contract-call');
+    expect(activitySentence(d, ctx({ tokens: stethMeta, describeCall: staking }))).toBe(
+      'Staked 0.0002 ETH with Lido (stETH contract 0x1111…1111): received 0.000199999999999999 stETH',
+    );
+    // Hide amounts reaches the phrase through format.native.
+    expect(activitySentence(d, ctx({ tokens: stethMeta, describeCall: staking, maskAmount: () => '••••' }))).toBe(
+      'Staked •••• ETH with Lido (stETH contract 0x1111…1111): received •••• stETH',
+    );
+  });
+
+  it('a plain value transfer can be described too (the logs follow), and a phrase-less answer keeps "Sent …"', () => {
+    const wstethMint = transferLog(STETH_LIKE, '0x0000000000000000000000000000000000000000', ACCOUNT_1, 481_826_550_135_307n);
+    const d = describe1(syntheticTx({ value: '0x1c6bf52634000' }), syntheticReceipt([wstethMint]));
+    expect(d.call.kind).toBe('native-transfer');
+    const meta = { [STETH_LIKE.toLowerCase()]: { symbol: 'wstETH', decimals: 18, tracked: true } };
+    expect(activitySentence(d, ctx({ tokens: meta, describeCall: staking }))).toBe(
+      'Staked 0.0005 ETH with Lido and wrapped it into wstETH: received 0.000481826550135307 wstETH',
+    );
+    expect(activitySentence(d, ctx({ tokens: meta }))).toBe('Sent 0.0005 ETH to 0x1111…1111');
+  });
+
+  it('a failed call says "tried to stake" in the present tense', () => {
+    const d = describe1(syntheticTx({ input: submitInput, value: '0xb5e620f48000' }), syntheticReceipt([], '0x0'));
+    expect(activitySentence(d, ctx({ describeCall: staking }))).toBe(
+      'Failed: tried to stake 0.0002 ETH with Lido (stETH contract 0x1111…1111); only the network fee was paid',
+    );
+    const present = { staked: 'stake', wrapped: 'wrap', unwrapped: 'unwrap', requested: 'request', claimed: 'claim', burned: 'burn' };
+    for (const [past, base] of Object.entries(present)) {
+      expect(activitySentence(d, ctx({ describeCall: () => `${past} something` }))).toBe(
+        `Failed: tried to ${base} something; only the network fee was paid`,
+      );
+    }
+  });
+
+  it('is consulted only for plain transfers and calls the decoder has no wording for', () => {
+    const seen: (string | null)[] = [];
+    const spy: NonNullable<ActivitySentenceContext['describeCall']> = (call) => {
+      seen.push(call.selector);
+      return null;
+    };
+    const transfer = describe1(syntheticTx({ to: USDC, input: erc20.encodeFunctionData('transfer', [BURN, 5_000_000n]) }), syntheticReceipt([]));
+    const approve = describe1(syntheticTx({ to: USDC, input: erc20.encodeFunctionData('approve', [ROUTER, 7_000_000n]) }), syntheticReceipt([]));
+    activitySentence(transfer, ctx({ describeCall: spy }));
+    activitySentence(approve, ctx({ describeCall: spy }));
+    expect(seen).toEqual([]);
+    activitySentence(describe1(syntheticTx({ input: submitInput, value: '0x1' }), syntheticReceipt([])), ctx({ describeCall: spy }));
+    activitySentence(describe1(syntheticTx({ value: '0x1' }), syntheticReceipt([])), ctx({ describeCall: spy }));
+    expect(seen).toEqual([SUBMIT, null]);
+  });
+
+  it('applies to the calls inside a smart-account operation', () => {
+    const calls = [{ to: STETH_LIKE, value: 5n * 10n ** 14n, data: Uint8Array.from(Buffer.from(submitInput.slice(2), 'hex')) }];
+    const callData = toHex(encodeKernelExecute(calls));
+    const sender = KERNEL_OF_ACCOUNT_1;
+    const op = [sender, 7n, '0x', callData, '0x' + '00'.repeat(32), 0n, '0x' + '00'.repeat(32), '0x', '0x'];
+    const input = entryPoint.encodeFunctionData('handleOps', [[op], OTHER]);
+    const event = {
+      address: ENTRYPOINT_V07,
+      topics: [USER_OPERATION_EVENT_TOPIC, '0x' + '77'.repeat(32), topicOf(sender), topicOf('0x0000000000000000000000000000000000000000')],
+      data: coder.encode(['uint256', 'bool', 'uint256', 'uint256'], [7n, true, 1234n, 99n]),
+    };
+    const smartMint = transferLog(STETH_LIKE, '0x0000000000000000000000000000000000000000', sender, 499_999_999_999_999n);
+    const d = describe1(syntheticTx({ from: STRANGER, to: ENTRYPOINT_V07, input }), syntheticReceipt([smartMint, event]), [ACCOUNT_1, sender]);
+    expect(activitySentence(d, ctx({ tokens: stethMeta, describeCall: staking }))).toBe(
+      'Smart-account operation: staked 0.0005 ETH with Lido (stETH contract 0x1111…1111): received 0.000499999999999999 stETH',
+    );
+  });
+
+  it('lists its verbs', async () => {
+    const { ACTIVITY_CALL_VERBS } = await import('../src/activity-decode.js');
+    expect(ACTIVITY_CALL_VERBS).toEqual(expect.arrayContaining(['staked', 'wrapped', 'unwrapped', 'requested', 'claimed', 'burned', 'sent', 'called']));
+  });
+});

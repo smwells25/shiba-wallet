@@ -5,12 +5,13 @@ import {
   TokenDiscoveryUnsupportedError,
   collectTokenBalances,
   indexerTokenBalanceProvider,
+  rocketPoolDeploymentFor,
   type JsonRpcTransport,
 } from '@shiba-wallet/chains-evm';
 // Explicit .ts extensions: scripts/check-tokens.mjs loads this module under
 // Node's type stripping, which resolves relative specifiers literally.
 import { getIndexerConfig } from './indexer.ts';
-import { knownTokensForChain, listTokens, type KeyValueStore } from './tokens.ts';
+import { knownStakingTokensForChain, knownTokensForChain, listTokens, type KeyValueStore } from './tokens.ts';
 import { Erc20NotATokenError, fetchErc20Metadata, type Erc20Metadata } from './erc20.ts';
 import { simulationTransport } from './simulation.ts';
 import { formatBalanceDisplay } from './balances.ts';
@@ -129,6 +130,45 @@ export interface DiscoveredToken {
   asset: FungibleAsset | null;
   /** Why symbol/name are missing (from fetchErc20Metadata), or null. */
   note: string | null;
+  /**
+   * Set when the contract is one of the liquid-staking tokens the wallet
+   * pins on this chain (tokens.ts knownStakingTokensForChain: Lido's stETH
+   * and wstETH, Rocket Pool's rETH): the protocol and the symbol from the
+   * wallet's own table (never the contract's answer). Null otherwise. It
+   * only labels the result; nothing is tracked until the user confirms.
+   */
+  knownStaking: { protocol: 'Lido' | 'Rocket Pool'; symbol: string } | null;
+}
+
+/** The tag a pinned liquid-staking token gets in "Find my tokens" (instead of "UNTRACKED TOKEN"). */
+export const KNOWN_STAKING_TOKEN_TAG = 'KNOWN STAKING TOKEN';
+
+/** The tag every other discovered token gets. */
+export const UNTRACKED_TOKEN_TAG = 'UNTRACKED TOKEN';
+
+/** The one sentence under a pinned liquid-staking token in "Find my tokens". */
+export function knownStakingTokenSentence(known: { protocol: string; symbol: string }): string {
+  return (
+    `This is the ${known.symbol} contract this wallet pins from ${known.protocol}'s published list of ` +
+    `deployed contracts. It is tracked only if you choose Track ${known.symbol}.`
+  );
+}
+
+/**
+ * The pinned liquid-staking token at `contract` on `chainCaip2`, or null.
+ * The whole address must equal an entry of knownStakingTokensForChain on
+ * that exact chain (case-insensitively); the protocol is Rocket Pool for its
+ * pinned rETH and Lido for the others (the only two protocols in the table).
+ */
+export function knownStakingTokenAt(
+  chainCaip2: string,
+  contract: string,
+): { protocol: 'Lido' | 'Rocket Pool'; symbol: string } | null {
+  const lower = contract.toLowerCase();
+  const known = knownStakingTokensForChain(chainCaip2).find((t) => t.assetId.reference.toLowerCase() === lower);
+  if (!known) return null;
+  const rETH = rocketPoolDeploymentFor(chainCaip2)?.rETH.toLowerCase() ?? null;
+  return { protocol: rETH === lower ? 'Rocket Pool' : 'Lido', symbol: known.symbol };
 }
 
 /**
@@ -239,8 +279,9 @@ export async function discoverUntrackedTokens(options: {
   const tracked = await listTokens(chainCaip2, store);
   const trackedContracts = new Set(tracked.map((t) => t.assetId.reference.toLowerCase()));
   // Symbols a look-alike would imitate: the tracked list and the tokens the
-  // wallet knows on this chain (they are on this chain by construction).
-  const referenceTokens = [...tracked, ...knownTokensForChain(chainCaip2)];
+  // wallet knows on this chain, its pinned liquid-staking tokens included
+  // (they are on this chain by construction).
+  const referenceTokens = [...tracked, ...knownTokensForChain(chainCaip2), ...knownStakingTokensForChain(chainCaip2)];
 
   const untracked = collected.holdings.filter((h) => !trackedContracts.has(h.contract.toLowerCase()));
   const alreadyTracked = collected.holdings.length - untracked.length;
@@ -302,6 +343,7 @@ export async function discoverUntrackedTokens(options: {
               decimals: metadata.decimals,
             },
       note: metadata.note,
+      knownStaking: knownStakingTokenAt(chainCaip2, holding.contract),
     });
   }
 

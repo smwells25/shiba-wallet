@@ -31,6 +31,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { getAddress } from 'ethers';
 import { KERNEL_V3_3, encodeFunctionCall, toHex } from '@shiba-wallet/chains-evm';
 import {
+  activityAccountLabels,
   ACTIVITY_CACHE_LIMIT,
   MAX_DECODES_PER_CALL,
   activeEndpointRunner,
@@ -541,6 +542,132 @@ installFakeNode();
   }
 }
 
+console.log('Pinned staking contracts and account labels (phase 18 item 3 emulator findings 4 and 7e):');
+reset();
+installFakeNode();
+{
+  const TRANSFER = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+  const pad = (a) => '0x' + '0'.repeat(24) + a.slice(2).toLowerCase();
+  const word = (v) => '0x' + v.toString(16).padStart(64, '0');
+  const ZERO = '0x0000000000000000000000000000000000000000';
+  const SEP_STETH = '0x3e3FE7dBc6B4C189E7128855dD526361c49b40Af';
+  const SEP_WSTETH = '0xB82381A3fBD3FaFA77B3a7bE693342618240067b';
+  const SEP_QUEUE = '0x1583C7b3f4C3B008720E6BcE5726336b0aB25fdd';
+  const LOOK_ALIKE = SEP_STETH.slice(0, -1) + 'e';
+  const MULTISIG = getAddress('0x944caa404e389b18b2fe251e969edd7a220d0d38');
+  const transfer = (token, from, to, amount) => ({ address: token, topics: [TRANSFER, pad(from), pad(to)], data: word(amount) });
+  let n = 0;
+  const synth = new Map();
+  const add = ({ from = ACCOUNT_1, to, input = '0x', value = 0n, logs = [], status = '0x1' }) => {
+    n += 1;
+    const hash = '0x' + n.toString(16).padStart(2, '0').repeat(32);
+    synth.set(hash, {
+      transaction: { hash, from: from.toLowerCase(), to, input, value: '0x' + value.toString(16), nonce: '0x1', type: '0x2', chainId: '0xaa36a7', blockNumber: '0x10', blockHash: '0x' + 'cd'.repeat(32) },
+      receipt: { transactionHash: hash, blockNumber: '0x10', blockHash: '0x' + 'cd'.repeat(32), status, logs },
+    });
+    return hash;
+  };
+  const sel = (sig) => toHex(encodeFunctionCall(sig, [])).slice(0, 10);
+  const SUBMIT = sel('submit(address)') + '00'.repeat(32);
+  const WRAP = toHex(encodeFunctionCall('wrap(uint256)', [{ kind: 'uint256', value: 5n * 10n ** 14n }]));
+  const UNWRAP = toHex(encodeFunctionCall('unwrap(uint256)', [{ kind: 'uint256', value: 4n * 10n ** 14n }]));
+  const APPROVE = toHex(encodeFunctionCall('approve(address,uint256)', [{ kind: 'address', value: SEP_WSTETH }, { kind: 'uint256', value: 5n * 10n ** 14n }]));
+  const CLAIM = toHex(encodeFunctionCall('claimWithdrawal(uint256)', [{ kind: 'uint256', value: 7n }]));
+  const stake = add({ to: SEP_STETH, input: SUBMIT, value: 2n * 10n ** 14n, logs: [transfer(SEP_STETH, ZERO, ACCOUNT_1, 199_999_999_999_999n)] });
+  const shortcut = add({ to: SEP_WSTETH, value: 5n * 10n ** 14n, logs: [transfer(SEP_WSTETH, ZERO, ACCOUNT_1, 481_826_550_135_307n)] });
+  const wrap = add({ to: SEP_WSTETH, input: WRAP, logs: [transfer(SEP_STETH, ACCOUNT_1, SEP_WSTETH, 5n * 10n ** 14n), transfer(SEP_WSTETH, ZERO, ACCOUNT_1, 481_826_550_135_307n)] });
+  const unwrap = add({ to: SEP_WSTETH, input: UNWRAP, logs: [transfer(SEP_WSTETH, ACCOUNT_1, ZERO, 4n * 10n ** 14n), transfer(SEP_STETH, SEP_WSTETH, ACCOUNT_1, 415_087_130_304_122n)] });
+  const approve = add({ to: SEP_STETH, input: APPROVE });
+  const claim = add({ to: SEP_QUEUE, input: CLAIM });
+  const lookAlike = add({ to: LOOK_ALIKE, input: SUBMIT, value: 2n * 10n ** 14n });
+  const wrongSelector = add({ to: SEP_STETH, input: '0xdeadbeef', value: 2n * 10n ** 14n });
+  const failedStake = add({ to: SEP_STETH, input: SUBMIT, value: 2n * 10n ** 14n, status: '0x0' });
+  const fromMultisig = add({ from: MULTISIG, to: ACCOUNT_1, value: 10n ** 14n });
+  mode.extraTx = (h) => synth.get(h) ?? null;
+
+  const { knownStakingTokensForChain } = await import('../src/wallet/tokens.ts');
+  const { stakingContractAt } = await import('../src/wallet/risk.ts');
+  const decodeAll = async (wallet, ids) => {
+    clearActivityCache();
+    const decoder = createActivityDecoder({ chainCaip2: SEPOLIA, evmChainId: SEPOLIA_ID, wallet, trackedTokens: knownStakingTokensForChain(SEPOLIA), run: fixedRun, maxPerCall: 20 });
+    return decoder.decodeEntries(ids);
+  };
+  const out = await decodeAll([ACCOUNT_1], [stake, shortcut, wrap, unwrap, approve, claim, lookAlike, wrongSelector, failedStake]);
+  const pinned = { stakingContractAt: (a) => stakingContractAt(SEPOLIA, a) };
+  const exact = (name, id, want, over = pinned) => check(name, render(out.get(id), over) === want, render(out.get(id), over));
+  exact('stake → stETH: "Staked … with Lido (stETH contract …): received … stETH"', stake,
+    'Staked 0.0002 test ETH with Lido (stETH contract 0x3e3F…40Af): received 0.000199999999999999 stETH');
+  exact('…without the lookup the old generic sentence (the emulator pass\'s wording)', stake,
+    'Called 0x3e3F…40Af with 0.0002 test ETH: received 0.000199999999999999 stETH', {});
+  exact('stake → wstETH (the plain transfer to the wstETH contract)', shortcut,
+    'Staked 0.0005 test ETH with Lido and wrapped it into wstETH (wstETH contract 0xB823…067b): received 0.000481826550135307 wstETH');
+  exact('wrap', wrap, 'Wrapped stETH into wstETH with Lido (wstETH contract 0xB823…067b): sent 0.0005 stETH, received 0.000481826550135307 wstETH');
+  exact('unwrap', unwrap, 'Unwrapped wstETH into stETH with Lido (wstETH contract 0xB823…067b): sent 0.0004 wstETH, received 0.000415087130304122 stETH');
+  exact('the exact approval before a wrap names the pinned spender', approve, 'Approved stETH for Lido wstETH contract 0xB823…067b (up to 0.0005 stETH)');
+  exact('claim from the withdrawal queue', claim, 'Claimed withdrawn test ETH from Lido (withdrawal queue contract 0x1583…5fdd)');
+  exact('a look-alike address (last digit changed) keeps the generic sentence', lookAlike, 'Called 0x3E3F…40AE with 0.0002 test ETH');
+  exact('an unpinned selector on the pinned contract keeps the generic wording (the contract still named)', wrongSelector,
+    'Called Lido stETH contract 0x3e3F…40Af with 0.0002 test ETH');
+  exact('a failed stake: "tried to stake"', failedStake,
+    'Failed: tried to stake 0.0002 test ETH with Lido (stETH contract 0x3e3F…40Af); only the network fee was paid');
+  exact('the pinned address on another network (Hoodi lookup) is not described', stake,
+    'Called 0x3e3F…40Af with 0.0002 test ETH: received 0.000199999999999999 stETH', { stakingContractAt: (a) => stakingContractAt('eip155:560048', a) });
+  exact('Hide amounts masks the staked amount too', stake,
+    'Staked •••• test ETH with Lido (stETH contract 0x3e3F…40Af): received •••• stETH', { ...pinned, hidden: true });
+
+  // Finding 7e: a multisig's Activity named Account 1 by its short address.
+  const labels = activityAccountLabels(
+    [{ name: 'Account 1', evmAddress: ACCOUNT_1 }, { name: 'Imported 1 (imported key)', evmAddress: ACCOUNT_2 }, { name: 'Watched? no address', evmAddress: null }],
+    [{ address: MULTISIG, label: 'Multisig 2 (2-of-3)' }, { address: '0x1234', label: 'bad' }],
+  );
+  check('activityAccountLabels: phrase and imported accounts, then multisigs; null and malformed addresses skipped',
+    JSON.stringify(labels) === JSON.stringify([
+      { address: ACCOUNT_1, label: 'Account 1' },
+      { address: ACCOUNT_2, label: 'Imported 1 (imported key)' },
+      { address: MULTISIG, label: 'Multisig 2 (2-of-3)' },
+    ]), labels);
+  check('…an address listed twice keeps its first label',
+    activityAccountLabels([{ name: 'Account 1', evmAddress: ACCOUNT_1 }], [{ address: ACCOUNT_1.toLowerCase(), label: 'Multisig X' }]).length === 1);
+  const ms = await decodeAll([MULTISIG], [fromMultisig]);
+  check('the multisig\'s send to Account 1 names Account 1 with the labels', render(ms.get(fromMultisig), { accountLabels: labels }) === 'Sent 0.0001 test ETH to Account 1',
+    render(ms.get(fromMultisig), { accountLabels: labels }));
+  check('…and the short address without them (the old wording)', render(ms.get(fromMultisig)) === 'Sent 0.0001 test ETH to 0x772e…F44F', render(ms.get(fromMultisig)));
+  check('…a contact saved for that address is still used first',
+    render(ms.get(fromMultisig), { accountLabels: labels, contacts: [contact('Main wallet', ACCOUNT_1)] }) === 'Sent 0.0001 test ETH to Main wallet');
+  check('…the decoded account itself still reads "yourself" (its label is not used for it)',
+    render((await decodeAll([ACCOUNT_1], [fromMultisig])).get(fromMultisig), { accountLabels: labels }) === 'Received 0.0001 test ETH from Multisig 2 (2-of-3)');
+
+  // Mutations of activity-sentences.ts: each must change a pinned sentence.
+  const srcPath = join(here, '..', 'src', 'wallet', 'activity-sentences.ts');
+  const original = readFileSync(srcPath, 'utf8');
+  const mutantDir = join(here, `.mutants-activity-staking-${process.pid}`);
+  mkdirSync(mutantDir, { recursive: true });
+  let k = 0;
+  const mutant = async (from, to) => {
+    if (!original.includes(from)) throw new Error(`mutation anchor not found: ${from}`);
+    k += 1;
+    const file = join(mutantDir, `m${k}-activity-sentences.ts`);
+    writeFileSync(file, original.replace(from, to).replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolvePath(dirname(srcPath), spec)).href}'`));
+    return import(pathToFileURL(file).href);
+  };
+  try {
+    const m1 = await mutant("if (is('lidoSubmit') && call.value > 0n)", 'if (call.value > 0n)');
+    check('M-stake-1 caught: without the selector check an unknown call to stETH reads "Staked"',
+      /^Staked/.test(m1.renderActivitySentence(out.get(wrongSelector), { nativeSymbol: 'test ETH', hidden: false, contacts: [], networkId: SEPOLIA, ...pinned })));
+    const m2 = await mutant('    if (own) return own.label;\n', '');
+    check('M-labels caught: without the account labels the multisig\'s send names a short address',
+      m2.renderActivitySentence(ms.get(fromMultisig), { nativeSymbol: 'test ETH', hidden: false, contacts: [], networkId: SEPOLIA, accountLabels: labels }) === 'Sent 0.0001 test ETH to 0x772e…F44F');
+    const m3 = await mutant("    if (call.value !== 0n) return null;\n    if (is('wstethWrap'))", "    if (is('wstethWrap'))");
+    const valued = await decodeAll([ACCOUNT_1], [add({ to: SEP_WSTETH, input: WRAP, value: 1n })]);
+    const valuedId = [...valued.keys()][0];
+    check('M-stake-2 caught: a wrap carrying a value (cannot happen on the real contract) keeps the generic sentence; the mutant calls it a wrap',
+      /^Called/.test(render(valued.get(valuedId), pinned)) &&
+        /^Wrapped/.test(m3.renderActivitySentence(valued.get(valuedId), { nativeSymbol: 'test ETH', hidden: false, contacts: [], networkId: SEPOLIA, ...pinned })));
+  } finally {
+    rmSync(mutantDir, { recursive: true, force: true });
+  }
+}
+
 console.log('ActivityScreen source:');
 {
   const screen = readFileSync(join(here, '..', 'src', 'screens', 'ActivityScreen.tsx'), 'utf8');
@@ -557,6 +684,10 @@ console.log('ActivityScreen source:');
   );
   check('the amount/fee line is still rendered', /fee \{maskAmount\(formatUnits\(entry\.fee, decimals, decimals\), hidden\)\}/.test(screen));
   check('screen readers hear the sentence first', /\(sentence \? `\$\{sentence\}\. ` : ''\)/.test(screen));
+  check('the screen passes the account labels and the pinned-staking lookup for the active network, and names the EVM slot by the network (findings 4, 7e, 7f)',
+    /accountLabels,\n\s*stakingContractAt: pinnedStakingAt,/.test(screen) && screen.includes('activityAccountLabels(accountList, sentences.multisigs)') &&
+      screen.includes('(address: string) => stakingContractAt(evmChain.caip2, address)') &&
+      screen.includes('title: account ? `${isEvmSlot ? evmChain.label : account.name} activity` : \'Activity\''));
   check("the decoder's wallet set includes the network's stored multisigs (phase 18 item 3)",
     /ownMultisigAddresses\(chainCaip2\),/.test(screen) && /wallet: walletAddressesFor\(eoa, accountIndex, aa, multisigs\),/.test(screen));
 }

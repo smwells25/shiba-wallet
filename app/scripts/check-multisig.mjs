@@ -178,6 +178,7 @@ import {
   readMultisigOnChain,
   recordMultisigOutcome,
   refreshMultisigDeployment,
+  refreshMultisigListDeployments,
   removeMultisigRecord,
   resetMultisigRecords,
   reviewMultisigRequestAsCosigner,
@@ -837,6 +838,43 @@ console.log('check-multisig: deployment refresh, deposit, own addresses (finding
     /reload\(\)\.then\(/.test(backHandler) && /openDetail\(list\.find\(\(r\) => r\.id === id\) \?\? selected\)/.test(backHandler) &&
       /refreshChainNote\(list\?\.find\(\(r\) => r\.id === submitted\.id\) \?\? submitted\)/.test(screenSrc) && /refreshMultisigDeployment\(node, record\)/.test(screenSrc) && !/readMultisigOnChain/.test(screenSrc));
 
+  // Item 3 emulator finding 3: the LIST said "not deployed yet" for a
+  // deployed multisig until its detail was opened.
+  {
+    const ls = memoryStore();
+    const a = await createMultisigRecord({ chain: SEPOLIA, config: CONFIG_2_OF_3, localSigner: S0.address }, ls);
+    const b = await createMultisigRecord({ chain: SEPOLIA, config: { ...CONFIG_2_OF_3, threshold: 3 }, localSigner: S0.address }, ls);
+    const counter = { n: 0 };
+    const node = multisigNode({ deployed: new Set([a.address]), counter });
+    const changed = await refreshMultisigListDeployments(node, await listMultisigRecords(SEPOLIA, ls), ls);
+    const after = await listMultisigRecords(SEPOLIA, ls);
+    check('list refresh: a record stored undeployed whose address has code on the node reads "deployed" afterwards; the other stays undeployed',
+      JSON.stringify(changed) === JSON.stringify([a.id]) && after.find((r) => r.id === a.id).deployed.deployed === true && after.find((r) => r.id === b.id).deployed.deployed === false);
+    check('…one eth_getCode read per undeployed record and nothing else', counter.n === 2);
+    counter.n = 0;
+    await refreshMultisigListDeployments(node, after, ls);
+    check('…a record already stored as deployed is not read again', counter.n === 1);
+    const failing = async () => { throw new TypeError('fetch failed: Unable to resolve host'); };
+    const fs = memoryStore();
+    const c = await createMultisigRecord({ chain: SEPOLIA, config: CONFIG_2_OF_3, localSigner: S0.address }, fs);
+    const before = JSON.stringify(await listMultisigRecords(SEPOLIA, fs));
+    const none = await refreshMultisigListDeployments(failing, await listMultisigRecords(SEPOLIA, fs), fs);
+    check('…a failed read keeps the stored facts, throws nothing and changes nothing',
+      none.length === 0 && JSON.stringify(await listMultisigRecords(SEPOLIA, fs)) === before && (await listMultisigRecords(SEPOLIA, fs))[0].id === c.id);
+    const emptyCode = async (method) => (method === 'eth_getCode' ? '0x' : null);
+    check('…an address without code stays "not deployed yet"', (await refreshMultisigListDeployments(emptyCode, await listMultisigRecords(SEPOLIA, fs), fs)).length === 0);
+    const screen = readFileSync(join(HERE, '..', 'src', 'screens', 'MultisigScreen.tsx'), 'utf8');
+    const focus = screen.slice(screen.indexOf('useFocusEffect('), screen.indexOf('useFocusEffect(') + 1100);
+    check('screen: on focus the list is read, every undeployed record on the active network is refreshed, and the list re-read when one changed',
+      /reload\(\)\s*\.then\(async \(list\) => \{/.test(focus) && focus.includes('const changed = await refreshMultisigListDeployments(node, list);') &&
+        focus.includes('if (changed.length > 0 && active) await reload();') && focus.includes('[reload, setError, node]'));
+    const mList = await importMutant('src/wallet/multisig.ts', '      await markMultisigDeployed(record.id, {}, store);\n      changed.push(record.id);\n', '');
+    const ms = memoryStore();
+    const m0 = await mList.createMultisigRecord({ chain: SEPOLIA, config: CONFIG_2_OF_3, localSigner: S0.address }, ms);
+    await mList.refreshMultisigListDeployments(multisigNode({ deployed: new Set([m0.address]) }), await listMultisigRecords(SEPOLIA, ms), ms);
+    check('M-list caught: without the write the list still says "not deployed yet"', (await listMultisigRecords(SEPOLIA, ms))[0].deployed.deployed === false);
+  }
+
   // (6) Errors render above the actions, never after Back.
   check('screen: the shell no longer renders the error after the phase (below Back); every phase places {errorBox} itself',
     !/\{children\}\s*\{errorBox\}/.test(screenSrc) && (screenSrc.match(/\{errorBox\}/g) ?? []).length >= 13);
@@ -1240,11 +1278,55 @@ console.log('check-multisig: the multisig as an account in the switcher (phase 1
       gate.includes("onOpenMultisig: () => navigation.navigate('Multisig')"));
   check('the signer hint and the button (exact)', wo.MULTISIG_OPEN_SCREEN_BUTTON === 'Open the Multisig screen' &&
     wo.multisigSignerHint('Multisig 2 (2-of-3)', 'Account 1', S0.address) ===
-      `This wallet’s signer for Multisig 2 (2-of-3) is Account 1 (${S0.address}). Switch to that account on Home, then open the Multisig screen to build, approve or submit its operations.`);
+      `This wallet’s signer for Multisig 2 (2-of-3) is Account 1 (${S0.address}). While Multisig 2 (2-of-3) is the active account, the Multisig screen only shows it; to build, approve or submit its operations, switch to that account on Home first.`);
+  check('…the hint no longer tells the user to switch and THEN open the screen the button beside it opens (finding 7d)',
+    !/then open the Multisig screen/.test(wo.multisigSignerHint('M', null, S0.address)));
+  {
+    const screen = read('src/screens/MultisigScreen.tsx');
+    const detail = screen.slice(screen.indexOf("if (phase === 'detail' && selected) {"), screen.indexOf('title="Remove from this wallet"'));
+    const newOpOk = (src) =>
+      /\{selected\.localSigner\.toLowerCase\(\) === \(phraseSigner \?\? ''\)\.toLowerCase\(\) \? \(\s*<Button\s*title="New operation \(send\)"/.test(src) &&
+      /title="New operation \(send\)"[\s\S]{0,400}disabled=\{readiness !== null\}\s*\/>\s*\) : null\}/.test(src);
+    check('detail: "New operation (send)" is shown only while this wallet\'s signer is the active account (finding 7d)', newOpOk(detail));
+    check('…the old always-shown, disabled button fails the check',
+      !newOpOk(detail.replace(/\{selected\.localSigner\.toLowerCase\(\) === \(phraseSigner \?\? ''\)\.toLowerCase\(\) \? \(/, '{true ? (')));
+    // Finding 7c: the NFT gallery's sentence for a multisig.
+    check('NFTs: the gallery names a multisig\'s and a watched address as such; other accounts keep the old sentence (exact)',
+      wo.nftsOwnerSentence({ watchOnly: false, multisig: true }, S0.address) === `Shows the NFTs held by this multi-signature account's address, ${S0.address}.` &&
+        wo.nftsOwnerSentence({ watchOnly: true, multisig: false }, S0.address) === `Shows the NFTs held by the watched address, ${S0.address}.` &&
+        wo.nftsOwnerSentence({ watchOnly: false, multisig: false }, S0.address) === `Shows the NFTs held by this account's regular address, ${S0.address}.`);
+    const nfts = read('src/screens/NftsScreen.tsx');
+    check('NFTs: the screen uses the sentence and reads no smart-account address for a multisig or watched address (source)',
+      nfts.includes('{nftsOwnerSentence({ watchOnly, multisig }, owner)}') && !nfts.includes('regular address, {owner}') &&
+        nfts.includes('owner && accountIndex !== null && !watchOnly && !multisig ?'));
+  }
   const mApps = await importMutant('src/wallet/watch-only.ts', "  'Receive',\n  'Multisig',\n];", "  'Receive',\n  'Multisig',\n  'Apps',\n];");
   check('M19 caught: an allow list that offers Apps to a multisig is detected', mApps.multisigRouteRefusal('Apps') === null && multisigRouteRefusal('Apps') !== null);
   const mSend = await importMutant('src/wallet/watch-only.ts', "  'Receive',\n  'Multisig',\n];", "  'Receive',\n  'Multisig',\n  'Send',\n];");
   check('M20 caught: an allow list that lets a multisig open Send (no refusal) is detected', mSend.multisigRouteRefusal('Send') === null && multisigRouteRefusal('Send') === wo.MULTISIG_SEND_REFUSAL);
+
+  // --- Item 3 emulator finding 7a: the switcher's backup sentence with a multisig (and watch-only) listed.
+  {
+    const ik = await import('../src/wallet/imported-keys.ts');
+    check('switcher backup sentence: unchanged without keyless accounts (Settings → Accounts passes none)',
+      ik.accountsBackupHint(false) === 'Every account comes from your one recovery phrase — backing up the phrase backs up all of them.' &&
+        ik.accountsBackupHint(false, {}) === ik.accountsBackupHint(false) && ik.accountsBackupHint(true, { watchOnly: false, multisig: false }) === ik.accountsBackupHint(true));
+    check('…with a multisig listed it names the exception (exact)',
+      ik.accountsBackupHint(false, { multisig: true }) === 'Every account here except the multi-signature ones comes from your one recovery phrase — backing up the phrase backs up all of those.');
+    check('…with watch-only, multisig and imported accounts listed (exact)',
+      ik.accountsBackupHint(true, { watchOnly: true, multisig: true }) ===
+        'Every account here except the imported, watch-only and multi-signature ones comes from your one recovery phrase. Imported accounts are NOT backed up by the phrase: keep their private keys yourself.' &&
+      ik.accountsBackupHint(false, { watchOnly: true }) === 'Every account here except the watch-only ones comes from your one recovery phrase — backing up the phrase backs up all of those.');
+    check('…never "Every account comes from your one recovery phrase" while a multisig or watch-only account is listed',
+      [[false, { multisig: true }], [true, { multisig: true }], [false, { watchOnly: true }], [true, { watchOnly: true, multisig: true }]].every(([i, k]) => !ik.accountsBackupHint(i, k).startsWith('Every account comes from') && !ik.accountsBackupHint(i, k).startsWith('Every account except')));
+    check('the multisig list sentence (exact)', wo.MULTISIG_LIST_HINT ===
+      'Multi-signature accounts have no key of their own: this wallet holds one of their signers, a recovery-phrase account, and every operation also needs the co-signers. On another phone, add one again from its record on the Multisig screen.');
+    const switcher = read('src/components/AccountSwitcher.tsx');
+    const switcherOk = (src) => src.includes('{accountsBackupHint(anyImported, { watchOnly: anyWatched, multisig: anyMultisig })}') &&
+      src.includes("{anyMultisig ? ` ${MULTISIG_LIST_HINT}` : ''}") && src.includes('const anyMultisig = multisigAccounts.length > 0;');
+    check('the switcher passes the listed keyless kinds and adds the multisig sentence (source)', switcherOk(switcher));
+    check('…the old call (imported only) fails the check', !switcherOk(switcher.replace('{accountsBackupHint(anyImported, { watchOnly: anyWatched, multisig: anyMultisig })}', '{accountsBackupHint(anyImported)}')));
+  }
 
   // --- Receive for a multisig: the address with its label and the co-signer sentence; nothing that signs.
   const receive = read('src/screens/ReceiveScreen.tsx');
@@ -1273,6 +1355,17 @@ console.log('check-multisig: the multisig as an account in the switcher (phase 1
     check(`mutation anchor present (${name})`, receive.includes(from));
     check(`${name}: caught`, receiveProblems(receive.replace(from, to)).length > 0);
   }
+  // Item 3 emulator finding 7b: Receive said "Ethereum" / "Only send ETH on the Ethereum network" on Sepolia.
+  const receiveNetworkOk = (src) =>
+    src.includes('const networkName = account ? (isEvmSlot ? evmChain.label : account.name) : \'\';') &&
+    src.includes('const coinSymbol = account ? (isEvmSlot ? evmChain.displaySymbol : account.symbol) : \'\';') &&
+    src.includes('<Text style={[styles.chainName, { color: theme.text }]}>{networkName}</Text>') &&
+    /Only send \{coinSymbol\} on the \{networkName\} network to this/.test(src) &&
+    !/Only send \{account\.symbol\} on the \{account\.name\} network/.test(src) &&
+    src.includes("title: watchOnly ? WATCHED_ADDRESS_TITLE : account ? `Receive ${coinSymbol}` : 'Receive'");
+  check('Receive names the active network and its coin (every account, multisig included)', receiveNetworkOk(receive));
+  check('…the old "Only send {account.symbol} on the {account.name} network" fails the check',
+    !receiveNetworkOk(receive.replace('Only send {coinSymbol} on the {networkName} network to this', 'Only send {account.symbol} on the {account.name} network to this')));
 
   // --- The switcher, the Multisig screen's signer, Approvals read-only.
   const sw = read('src/components/AccountSwitcher.tsx');

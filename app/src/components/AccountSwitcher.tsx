@@ -19,6 +19,7 @@ import {
 } from '../wallet/imported-keys';
 import { useWallet, type AccountView } from '../wallet/WalletContext';
 import {
+  MULTISIG_LIST_HINT,
   MULTISIG_SWITCHER_LINE,
   PHRASE_ACCOUNT_WAS_WATCHED_TITLE,
   WATCH_ONLY_LIST_HINT,
@@ -54,6 +55,7 @@ export function AccountSwitcher({ onManage, onImportKey }: { onManage: () => voi
   const visible = [...accountList.filter((a) => !a.hidden), ...watchOnlyAccounts, ...multisigAccounts];
   const anyImported = accountList.some((a) => a.imported);
   const anyWatched = watchOnlyAccounts.length > 0;
+  const anyMultisig = multisigAccounts.length > 0;
 
   const choose = async (account: AccountView) => {
     if (account.index === activeAccount.index) {
@@ -126,8 +128,9 @@ export function AccountSwitcher({ onManage, onImportKey }: { onManage: () => voi
         <View style={[styles.modal, { backgroundColor: theme.background }]}>
           <Text style={[styles.modalTitle, { color: theme.text }]}>Accounts</Text>
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            {accountsBackupHint(anyImported)}
-            {anyWatched ? ` ${WATCH_ONLY_LIST_HINT}` : ''} To watch an address, use Manage accounts.
+            {accountsBackupHint(anyImported, { watchOnly: anyWatched, multisig: anyMultisig })}
+            {anyWatched ? ` ${WATCH_ONLY_LIST_HINT}` : ''}
+            {anyMultisig ? ` ${MULTISIG_LIST_HINT}` : ''} To watch an address, use Manage accounts.
           </Text>
           <FlatList
             data={visible}

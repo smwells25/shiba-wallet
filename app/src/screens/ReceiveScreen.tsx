@@ -113,9 +113,17 @@ export function ReceiveScreen({ route, navigation }: Props) {
   }, [smartKey, smartOwner, smartIndex, evmChain.chainIdDecimal]);
   const smartInfo = smart && smart.key === smartKey ? smart.info : null;
 
+  // The EVM slot is named after the ACTIVE network and its coin ("Ethereum
+  // Sepolia", "test ETH"), as on Home; the key provider's own "Ethereum" /
+  // "ETH" would tell the user to send mainnet ETH to a Sepolia address
+  // (phase 18 item 3 emulator finding 7b, seen on a multisig's Receive).
+  const isEvmSlot = route.params.chainId === EVM_CHAIN_ID;
+  const networkName = account ? (isEvmSlot ? evmChain.label : account.name) : '';
+  const coinSymbol = account ? (isEvmSlot ? evmChain.displaySymbol : account.symbol) : '';
+
   useEffect(() => {
-    navigation.setOptions({ title: watchOnly ? WATCHED_ADDRESS_TITLE : account ? `Receive ${account.symbol}` : 'Receive' });
-  }, [navigation, account, watchOnly]);
+    navigation.setOptions({ title: watchOnly ? WATCHED_ADDRESS_TITLE : account ? `Receive ${coinSymbol}` : 'Receive' });
+  }, [navigation, account, watchOnly, coinSymbol]);
 
   useEffect(() => {
     if (!copied) return;
@@ -161,7 +169,7 @@ export function ReceiveScreen({ route, navigation }: Props) {
       >
         <Text style={styles.badgeText}>{account.symbol}</Text>
       </View>
-      <Text style={[styles.chainName, { color: theme.text }]}>{account.name}</Text>
+      <Text style={[styles.chainName, { color: theme.text }]}>{networkName}</Text>
       {activeAccount ? (
         <Text style={[styles.accountName, { color: theme.textMuted }]}>
           {activeAccount.name}
@@ -192,10 +200,10 @@ export function ReceiveScreen({ route, navigation }: Props) {
         accessibilityRole="image"
         accessibilityLabel={
           watchOnly
-            ? `QR code of the watched ${account.name} address`
+            ? `QR code of the watched ${networkName} address`
             : multisig
-              ? `QR code of the multi-signature account's ${account.name} address`
-              : `QR code of your ${account.name} address`
+              ? `QR code of the multi-signature account's ${networkName} address`
+              : `QR code of your ${networkName} address`
         }
       >
         <QRCode value={account.address} size={qrSize} backgroundColor="#ffffff" color="#000000" />
@@ -335,7 +343,7 @@ export function ReceiveScreen({ route, navigation }: Props) {
         />
       ) : null}
       <Text style={[styles.note, { color: theme.textMuted }]}>
-        Only send {account.symbol} on the {account.name} network to this
+        Only send {coinSymbol} on the {networkName} network to this
         address. Assets sent on other networks may be lost.
       </Text>
     </ScrollView>

@@ -527,3 +527,14 @@ export function testNetworkTokenValueSentence(chainCaip2: string): string {
 export function knownStakingTokensForChain(chainCaip2: string): KnownToken[] {
   return [...(KNOWN_STAKING_TOKENS[chainCaip2] ?? [])];
 }
+
+/**
+ * The token row's second line: the token's name (when it is not just the
+ * symbol again) and "ERC-20". The symbol is the row's title on every row, as
+ * USDC and EURC read; a long name such as Lido's "Liquid staked Ether 2.0"
+ * goes here, on one line (HomeScreen's token rows; phase 18 item 3 emulator
+ * finding 6).
+ */
+export function tokenRowSubtitle(token: Pick<FungibleAsset, 'symbol' | 'name'>): string {
+  return token.name && token.name !== token.symbol ? `${token.name} · ERC-20` : 'ERC-20';
+}

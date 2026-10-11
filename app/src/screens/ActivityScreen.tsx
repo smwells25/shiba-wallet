@@ -37,6 +37,7 @@ import { useWallet } from '../wallet/WalletContext';
 import { OfflineNotice, TechnicalDetail } from '../wallet/connectivity';
 import { sanitizeEndpointMessage } from '../config/endpoint-probe';
 import {
+  activityAccountLabels,
   createActivityDecoder,
   renderActivitySentence,
   walletAddressesFor,
@@ -47,6 +48,7 @@ import { listContacts, type Contact } from '../wallet/contacts';
 import { listTokens } from '../wallet/tokens';
 import { getAaConfig } from '../wallet/aa';
 import { ownMultisigAddresses } from '../wallet/multisig';
+import { stakingContractAt } from '../wallet/risk';
 import {
   ACTIVITY_CSV_MIME_TYPE,
   ACTIVITY_CSV_UTI,
@@ -365,11 +367,18 @@ function useActivitySentences(options: {
   /** Changes whenever new decodes arrived (for memoization). */
   version: number;
   onViewableItemsChanged: (info: { viewableItems: ViewToken[] }) => void;
+  /** The wallet's stored multisigs on this network, with their labels (for the account labels). */
+  multisigs: { address: string; label: string }[];
 } {
   const { enabled, chainCaip2, chainIdDecimal, eoa, accountIndex, refreshing } = options;
   const setupKey =
     enabled && eoa && accountIndex !== null ? `${chainCaip2}|${chainIdDecimal}|${eoa}|${accountIndex}` : null;
-  const [setup, setSetup] = useState<{ key: string; decoder: ActivityDecoder; contacts: Contact[] } | null>(null);
+  const [setup, setSetup] = useState<{
+    key: string;
+    decoder: ActivityDecoder;
+    contacts: Contact[];
+    multisigs: { address: string; label: string }[];
+  } | null>(null);
   const [version, setVersion] = useState(0);
   const [visibleIds, setVisibleIds] = useState<string[]>([]);
   // A decoder built for another chain/account is never used.
@@ -393,6 +402,7 @@ function useActivitySentences(options: {
         setSetup({
           key: setupKey,
           contacts: savedContacts,
+          multisigs,
           decoder: createActivityDecoder({
             chainCaip2,
             evmChainId: BigInt(chainIdDecimal),
@@ -445,10 +455,17 @@ function useActivitySentences(options: {
     (id: string) => (decoder ? decoder.cachedFor([id]).get(id) : undefined),
     [decoder],
   );
-  return { lookup, contacts: current?.contacts ?? EMPTY_CONTACTS, version, onViewableItemsChanged };
+  return {
+    lookup,
+    contacts: current?.contacts ?? EMPTY_CONTACTS,
+    version,
+    onViewableItemsChanged,
+    multisigs: current?.multisigs ?? EMPTY_MULTISIGS,
+  };
 }
 
 const EMPTY_CONTACTS: Contact[] = [];
+const EMPTY_MULTISIGS: { address: string; label: string }[] = [];
 
 /**
  * The muted technical line for a history failure. useHistory keeps only the
@@ -468,7 +485,7 @@ function historyTechnicalText(message: string | null | undefined): string | null
 export function ActivityScreen({ navigation, route }: Props) {
   const theme = useTheme();
   const { chainId } = route.params;
-  const { accounts, activeAccount } = useWallet();
+  const { accounts, activeAccount, accountList } = useWallet();
   const { hideAmounts, evmChain } = usePrefs();
   const account = accounts.find((a) => a.chainId === chainId);
   const network = networkDefaultFor(chainId);
@@ -489,11 +506,26 @@ export function ActivityScreen({ navigation, route }: Props) {
   });
   // Rendered on every render (cheap: cached decodes only), so Hide amounts
   // and contact names apply at once.
+  // The wallet's own accounts are named by their labels ("Account 1",
+  // "Multisig 2 (2-of-3)") where a sentence mentions one that is not the
+  // decoded account itself, and calls to the staking contracts the wallet
+  // pins on this network are described by what they do (phase 18 item 3
+  // emulator findings 4 and 7e).
+  const accountLabels = useMemo(
+    () => activityAccountLabels(accountList, sentences.multisigs),
+    [accountList, sentences.multisigs],
+  );
+  const pinnedStakingAt = useCallback(
+    (address: string) => stakingContractAt(evmChain.caip2, address),
+    [evmChain.caip2],
+  );
   const sentenceOptions = {
     nativeSymbol: evmChain.displaySymbol,
     hidden: hideAmounts,
     contacts: sentences.contacts,
     networkId: evmChain.caip2,
+    accountLabels,
+    stakingContractAt: pinnedStakingAt,
   };
   const sentenceFor = (id: string): string | null => {
     const decoded = sentences.lookup(id);
@@ -506,8 +538,10 @@ export function ActivityScreen({ navigation, route }: Props) {
   };
 
   useEffect(() => {
-    navigation.setOptions({ title: account ? `${account.name} activity` : 'Activity' });
-  }, [navigation, account]);
+    // The EVM slot is named after the active network ("Ethereum Sepolia
+    // activity"), as on Home; the other slots by their chain.
+    navigation.setOptions({ title: account ? `${isEvmSlot ? evmChain.label : account.name} activity` : 'Activity' });
+  }, [navigation, account, isEvmSlot, evmChain.label]);
 
   // Transaction notes (feature 87, wallet/notes.ts) are keyed by the network
   // the transaction is on: the active EVM profile for the EVM slot (as the
