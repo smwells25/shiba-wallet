@@ -26,8 +26,8 @@
  *                 EVM_BASE_SEPOLIA, EVM_ARBITRUM_SEPOLIA).
  *   BUNDLER_URL   endpoint for CHAIN_ID serving the eth_sendUserOperation
  *                 namespace (the dev Alchemy URL serves node and bundler
- *                 methods on Sepolia; for Base Sepolia and Arbitrum Sepolia
- *                 use the ZeroDev project URL
+ *                 methods on Sepolia; for Base Sepolia, Arbitrum Sepolia
+ *                 and OP Sepolia use the ZeroDev project URL
  *                 https://rpc.zerodev.app/api/v3/<project>/chain/<CHAIN_ID>,
  *                 which accepts Kernel deployment ops through the staked
  *                 meta factory). Probed with eth_supportedEntryPoints first.
@@ -60,8 +60,10 @@
  *     set -a; . .dev-wallet/env; set +a
  *     BUNDLER_URL="$ALCHEMY_SEPOLIA" NODE_URL="$ALCHEMY_SEPOLIA" \
  *       SELF_BUNDLE_ON_REJECT=1 node scripts/testnet/kernel-smoke.mjs
- *   Live on Base Sepolia (run 2026-10-03, phase 12) or Arbitrum Sepolia
- *   (CHAIN_ID=421614, phase 15 item 0):
+ *   Live on Base Sepolia (run 2026-10-03, phase 12), Arbitrum Sepolia
+ *   (CHAIN_ID=421614, phase 15 item 0) or OP Sepolia (CHAIN_ID=11155420,
+ *   phase 19 item 0a; the account can be funded beforehand with fund.mjs,
+ *   and KERNEL_FUND_ETH at or below its balance skips the funding step):
  *     set -a; . .dev-wallet/env; set +a
  *     CHAIN_ID=84532 KERNEL_FUND_ETH=0.004 \
  *       BUNDLER_URL="https://rpc.zerodev.app/api/v3/$ZERODEV_PROJECT_ID/chain/84532" \
@@ -70,7 +72,7 @@
  *   CHAIN_ID=11155420):
  *     KERNEL_SMOKE_DRY_RUN=1 node scripts/testnet/kernel-smoke.mjs
  *
- * Layer 2 fees. Base Sepolia is an OP-stack L2: each transaction also pays
+ * Layer 2 fees. Base Sepolia and OP Sepolia are OP-stack L2s: each transaction also pays
  * an L1 data fee from the sender's balance (docs.base.org/specifications/
  * transactions/network-fees), taken on top of the gas limit. Arbitrum
  * Sepolia is an Arbitrum Nitro rollup: the parent-chain cost is charged as
@@ -84,6 +86,13 @@
  * Arbitrum collects priority fees (ArbOwnerPublic.getCollectTips() read
  * true on 2026-10-04), so the 0.15 gwei priority floor below is actually
  * paid there; it is kept on every chain so the figures stay comparable.
+ *
+ * After each bundled operation the script re-reads the bundle transaction's
+ * receipt from NODE_URL and prints its status, block, the bundler EOA, the
+ * fee facts with the layer 2 receipt fields the node returned (on OP-stack
+ * chains the L1 data fee the BUNDLER paid, which the bundler prices into
+ * preVerificationGas) and every log by name (AccountDeployed, Deposited,
+ * OwnerRegistered, UserOperationEvent with actualGasCost / actualGasUsed).
  */
 import { readFileSync } from 'node:fs';
 import { keccak_256 } from '@noble/hashes/sha3.js';
@@ -111,6 +120,7 @@ import {
   verifyKernelDeployment,
 } from '../../packages/chains-evm/dist/index.js';
 import { SEPOLIA_RPC } from './config.mjs';
+import { describeReceiptFees, operatorFeeAt } from './l2-receipt.mjs';
 
 const DRY_RUN = process.env.KERNEL_SMOKE_DRY_RUN === '1';
 const BUNDLER_URL = process.env.BUNDLER_URL;
@@ -138,6 +148,13 @@ const CHAINS = {
       'chain 560048. Nothing was read, signed or sent.',
   },
 };
+/**
+ * The OP-stack chains above (the app profiles with l1DataFee, app/src/config/
+ * evm-chain.ts): their receipts carry an L1 data fee, and the bundle
+ * receipt's operator fee is read from the GasPriceOracle
+ * (scripts/testnet/l2-receipt.mjs).
+ */
+const OP_STACK_CHAINS = new Set(['84532', '11155420']);
 /** Explorer transaction links, as in the app's profiles (explorerTxBase). */
 const EXPLORER_TX = {
   '11155111': 'https://sepolia.etherscan.io/tx/',
@@ -234,6 +251,59 @@ function encodeHandleOps(op, beneficiary) {
     { kind: 'array', items: [packed] },
     { kind: 'address', value: beneficiary },
   ]);
+}
+
+/**
+ * Event names recognised in a bundle receipt. Each signature is only a
+ * candidate: a log is named when keccak256(signature) EQUALS its first
+ * topic, so a match on a real log confirms the signature; anything else is
+ * printed as an unrecognised topic with its emitter.
+ */
+const KNOWN_EVENTS = Object.fromEntries(
+  [
+    'UserOperationEvent(bytes32,address,address,uint256,bool,uint256,uint256)',
+    'AccountDeployed(bytes32,address,address,address)',
+    'Deposited(address,uint256)',
+    'BeforeExecution()',
+    'OwnerRegistered(address,address)',
+    'Transfer(address,address,uint256)',
+  ].map((sig) => [toHex(keccak_256(utf8ToBytes(sig))), sig.slice(0, sig.indexOf('('))]),
+);
+const word = (data, i) => BigInt('0x' + data.slice(2 + 64 * i, 2 + 64 * (i + 1)));
+const topicAddress = (t) => '0x' + t.slice(26);
+
+/**
+ * Prints the bundle transaction's receipt as the NODE reports it (the
+ * bundler's own receipt object may omit layer 2 fields): status, block, the
+ * bundler EOA, the fee facts incl. the OP-stack L1 data fee
+ * (scripts/testnet/l2-receipt.mjs), and every log by name.
+ */
+async function describeBundleReceipt(txHash) {
+  const receipt = await waitForTx(txHash);
+  const operatorFee = OP_STACK_CHAINS.has(CHAIN_ID_TEXT) ? await operatorFeeAt(node, receipt) : null;
+  console.log(
+    `  bundle tx ${txHash}: status ${receipt.status}, block ${BigInt(receipt.blockNumber)}, from (bundler) ${receipt.from}`,
+  );
+  console.log(`  bundle fees: ${describeReceiptFees(receipt, operatorFee)}`);
+  for (const log of receipt.logs ?? []) {
+    const name = KNOWN_EVENTS[log.topics?.[0]?.toLowerCase()];
+    let detail = '';
+    if (name === 'UserOperationEvent') {
+      detail =
+        ` sender ${topicAddress(log.topics[2])} paymaster ${topicAddress(log.topics[3])} nonce ${word(log.data, 0)}` +
+        ` success ${word(log.data, 1)} actualGasCost ${word(log.data, 2)} actualGasUsed ${word(log.data, 3)}`;
+    } else if (name === 'AccountDeployed') {
+      detail = ` sender ${topicAddress(log.topics[2])} factory 0x${log.data.slice(26, 66)} paymaster 0x${log.data.slice(90, 130)}`;
+    } else if (name === 'Deposited') {
+      detail = ` account ${topicAddress(log.topics[1])} totalDeposit ${word(log.data, 0)}`;
+    } else if (name === 'OwnerRegistered') {
+      detail = ` kernel ${topicAddress(log.topics[1])} owner ${topicAddress(log.topics[2])}`;
+    } else if (name === 'Transfer' && log.topics.length === 3) {
+      detail = ` from ${topicAddress(log.topics[1])} to ${topicAddress(log.topics[2])} amount ${word(log.data, 0)}`;
+    }
+    console.log(`    log ${log.address}: ${name ?? `unrecognised topic ${log.topics?.[0]}`}${detail}`);
+  }
+  return receipt;
 }
 
 /** Decodes the success flag of a UserOperationEvent log for `userOpHash`. */
@@ -533,7 +603,9 @@ async function sendWithPreflight(client, owner, calls, fees, { allowSelfBundle, 
     console.log(
       `  signed gas: preVerificationGas ${userOp.preVerificationGas}, verificationGasLimit ${userOp.verificationGasLimit}, ` +
         `callGasLimit ${userOp.callGasLimit}, maxFeePerGas ${userOp.maxFeePerGas}, maxPriorityFeePerGas ${userOp.maxPriorityFeePerGas}` +
-        `${userOp.factory ? `, factory ${userOp.factory}` : ''}`,
+        `${userOp.factory ? `, factory ${userOp.factory}` : ''}` +
+        `; worst-case prefund (vGL + cGL + pVG) × maxFee = ` +
+        `${(BigInt(userOp.verificationGasLimit) + BigInt(userOp.callGasLimit) + BigInt(userOp.preVerificationGas)) * BigInt(userOp.maxFeePerGas)} wei`,
     );
     const receipt = await client.waitForReceipt(userOpHash, { timeoutMs: 180_000, pollMs: 5_000 });
     const success = receipt?.success;
@@ -542,7 +614,10 @@ async function sendWithPreflight(client, owner, calls, fees, { allowSelfBundle, 
     if (receipt?.actualGasCost !== undefined) {
       console.log(`  actualGasCost ${BigInt(receipt.actualGasCost)} wei, actualGasUsed ${BigInt(receipt.actualGasUsed)}`);
     }
-    if (txHash) console.log(`  ${explorerTx(txHash)}`);
+    if (txHash) {
+      console.log(`  ${explorerTx(txHash)}`);
+      await describeBundleReceipt(txHash);
+    }
     if (success !== true && success !== '0x1') throw new Error('UserOperation did not succeed');
     return userOpHash;
   } catch (error) {
