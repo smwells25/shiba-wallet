@@ -71,9 +71,13 @@ import { NO_ANSWER_SENTENCE, sanitizeEndpointMessage } from '../config/endpoint-
  * (sessions.ts installSession / releaseSessionKey and subscriptions.ts
  * buildSubscriptionKeyExport refuse it).
  *
- * WHO SENDS. This app, and only while it is open: React Native in Expo Go
- * has no reliable background execution, so nothing is scheduled. When the
- * wallet comes to the foreground (components/RecurringDueBanner) or the
+ * WHO SENDS. This app, and only while it is open: React Native has no
+ * reliable background execution, so no payment is ever sent in the
+ * background. (Since phase 17 item 2 the wallet can REMIND the user when a
+ * payment falls due, with a local notification scheduled on the phone —
+ * notifications.ts, Settings → Privacy → Notifications, off by default,
+ * working in the wallet's own build but not inside Expo Go; a reminder
+ * never sends anything.) When the wallet comes to the foreground (components/RecurringDueBanner) or the
  * Sessions screen gains focus, it reads each recurring payment's on-chain
  * RateLimitPolicy / GasPolicy state (read-only eth_calls) and SHOWS the due
  * ones. A due payment is sent only after the user confirms it in a dialog:
@@ -97,12 +101,12 @@ import { NO_ANSWER_SENTENCE, sanitizeEndpointMessage } from '../config/endpoint-
  * account's whole balance of the token, to the payee only. The review
  * states it first.
  *
- * LATER SLICE (not built, deliberately): sending while the app is closed
- * needs background execution (expo-background-task / expo-task-manager) or
- * notifications (expo-notifications), which need a development build, an
+ * LATER SLICE (not built, deliberately): SENDING while the app is closed
+ * needs background execution (expo-background-task / expo-task-manager), an
  * OS-scheduled task whose timing the OS decides, and a product decision on
  * how a payment may be sent without the user present (today every payment
- * follows a confirmation). See RECURRING_LATER_SLICE_NOTE.
+ * follows a confirmation). Reminders exist (see WHO SENDS); sending does
+ * not. See RECURRING_LATER_SLICE_NOTE.
  */
 
 /** The SessionRecord source of a recurring payment. */
@@ -140,9 +144,17 @@ export const RECURRING_SPENDING_NOTE =
   'that would go over a limit is not sent. The network fee of a recurring payment is not counted against ' +
   'limits; the fee budget caps it on-chain.';
 
-/** The short form of RECURRING_WHILE_OPEN_NOTE on every card. */
+/**
+ * The short form of RECURRING_WHILE_OPEN_NOTE above the recurring cards.
+ * Finding 5 of the development-build pass (2026-10-10): it used to end
+ * "Nothing runs in the background.", which became false once reminders
+ * existed (a reminder can arrive while the wallet is closed); what stays
+ * true is that no payment is ever sent in the background.
+ */
 export const RECURRING_CARD_NOTE =
-  'Sent only while this wallet is open, and only after you confirm each payment. Nothing runs in the background.';
+  'Sent only while this wallet is open, and only after you confirm each payment; no payment is ever sent in ' +
+  'the background. With reminders on (Settings → Privacy → Notifications), this phone can remind you when a ' +
+  'payment falls due, even while the wallet is closed; the payment still waits for you.';
 
 export const RECURRING_START_NOTE =
   'The schedule starts when you tap Start recurring payment, not when this screen opened: the dates above ' +
@@ -161,11 +173,19 @@ export const RECURRING_AUDIT_NOTE =
   'RateLimitPolicy. No published security audit names these modules, so treat recurring payments as ' +
   'experimental with real funds.';
 
-/** Why nothing runs in the background (form note; the module header has the detail). */
+/**
+ * Reminders versus sending (form note; the module header has the detail).
+ * Finding 5 of the development-build pass: the old note said notifications
+ * would need a development build; reminders now exist and were proven in the
+ * wallet's own build, while Expo Go refuses their channels
+ * (notifications.ts NOTIFICATIONS_EXPO_GO_TEXT).
+ */
 export const RECURRING_LATER_SLICE_NOTE =
-  'Sending while the wallet is closed would need a background task or notifications, which need a ' +
-  'development build of the app and a decision on whether a payment may ever go out without you ' +
-  'confirming it. This version always asks you first.';
+  'Reminders: with "Remind me when something is due" on (Settings → Privacy → Notifications), this phone ' +
+  'shows a reminder when a payment falls due, even while the wallet is closed. Reminders need the wallet’s ' +
+  'own build of the app; they do not work inside Expo Go. A reminder never sends anything: sending while the ' +
+  'wallet is closed would need a decision on whether a payment may ever go out without you confirming it, so ' +
+  'this version always asks you first.';
 
 export function recurringFeeBudgetHint(nativeSymbol: string): string {
   return (
@@ -318,8 +338,14 @@ export function recurringReview(
     'Missed payments are not lost: a payment whose period passed while the wallet was closed can still be sent ' +
       'later, even right before the next one, until the end date.' +
       (graced
-        ? ' The end date is one period after the last payment falls due, so a late last payment can still be sent ' +
-          'too; this does not allow any extra payment.'
+        ? // The grant ends at start + (payments + 1) × period and the last
+          // payment falls due at start + (payments − 1) × period: the end is
+          // TWO periods after it (one the terms give every payment, one of
+          // grace). Finding 5 of the development-build pass: this said "one
+          // period", which disagreed with the dates shown.
+          ' The end date is two periods after the last payment falls due (one period more than the terms alone ' +
+          'would allow, as a grace period), so a late last payment can still be sent too; this does not allow any ' +
+          'extra payment.'
         : ''),
     'The payment key lives in this phone’s secure storage. Wiping the wallet or restoring it from the recovery ' +
       'phrase deletes it: payments then stop, while the permission stays on-chain until its end date. Revoke ' +
@@ -334,15 +360,23 @@ export function recurringReview(
  * Warning for terms shorter than ten minutes in total (the subscription
  * form's threshold, a judgement): every payment needs the wallet open and a
  * confirmation, so short terms can end before some payments are sent.
+ * The total is from the start to the end the set-up installs
+ * (recurringEndOf: start + (payments + 1) × period), and the sentence splits
+ * it the way the review does: (payments − 1) periods until the last payment
+ * falls due, then two periods in which it can still be sent. Finding 5 of the
+ * development-build pass: "8 minutes in total (3 payments of 2 minutes)" did
+ * not add up on its face.
  */
 export function recurringShortWindowWarning(sub: Pick<SubscriptionGrant, 'startAt' | 'validUntil' | 'periodSeconds'>): string | null {
   // From the start to the end the set-up installs (the grace period included).
   const total = recurringEndOf(sub) - sub.startAt;
   if (!(total < 600)) return null;
   const count = subscriptionPeriodCount(sub);
+  const untilLast = recurringEndOf(sub) - lastPaymentDueAt(sub);
   return (
-    `These terms last only ${describePeriod(total)} in total (${count} payment${count === 1 ? '' : 's'} of ` +
-    `${describePeriod(sub.periodSeconds)}). Payments are sent only while the wallet is open and after you ` +
+    `These terms last only ${describePeriod(total)} in total: ${count} payment${count === 1 ? '' : 's'}, one ` +
+    `every ${describePeriod(sub.periodSeconds)}, and the last one can still be sent for ` +
+    `${describePeriod(untilLast)} after it falls due. Payments are sent only while the wallet is open and after you ` +
     'confirm each one, so some may not be sent before the end date. Choose a longer period or more payments ' +
     'unless this is a quick test.'
   );

@@ -163,8 +163,8 @@ export function subscriptionShortWindowWarning(sub: Pick<SubscriptionGrant, 'sta
   if (!(total < SUBSCRIPTION_SHORT_WINDOW_SECONDS)) return null;
   const payments = subscriptionPeriodCount(sub);
   return (
-    `These terms last only ${describePeriod(total)} in total (${payments} payment${payments === 1 ? '' : 's'} ` +
-    `of ${describePeriod(sub.periodSeconds)}). Handing the key to the merchant and the merchant's first pull ` +
+    `These terms last only ${describePeriod(total)} in total (${payments} payment${payments === 1 ? '' : 's'}, ` +
+    `one every ${describePeriod(sub.periodSeconds)}). Handing the key to the merchant and the merchant's first pull ` +
     'happen inside the first period, so some payments may never be taken. Choose a longer period or more payments ' +
     'unless this is a quick test.'
   );
@@ -381,6 +381,26 @@ export function restartSubscriptionAt(sub: SubscriptionGrant, now: number): Subs
 export const SUBSCRIPTION_START_NOTE =
   'The subscription starts when you tap Start subscription, not when this screen opened: the dates above ' +
   'move forward by the time you spend here, and the final dates are shown once the bundler accepts the install.';
+
+/**
+ * The review's line in place of a permission id (finding 6 of the
+ * development-build pass, 2026-10-10: the review showed one id and Start
+ * installed another). Kernel's permission id is computed from the
+ * permission's policy data (engine kernel-permissions.ts computePermissionId),
+ * and Start restarts the terms at the moment it is tapped (restartSubscriptionAt
+ * → a new grant with the same session key), so the id is only known then.
+ * The success screen shows the id that was installed.
+ */
+export function permissionIdAtStartNote(startButton: string): string {
+  return (
+    `Kernel permission id: assigned when you tap ${startButton}. It is computed from the terms, which ` +
+    'restart at that moment, so the id that is installed is shown on the next screen. The session key above ' +
+    'stays the same.'
+  );
+}
+
+/** The success screen's label for the permission id that was installed. */
+export const INSTALLED_PERMISSION_ID_LABEL = 'Kernel permission id (installed)';
 
 /**
  * How much the re-quoted install's worst-case fee may exceed the reviewed one

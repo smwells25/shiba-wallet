@@ -182,11 +182,29 @@ server (Expo's, Apple's or Google's) is contacted for them. The wallet
 never asks for a push token: it loads only the scheduling parts of the
 expo-notifications library, not the part that registers a device with
 Expo's push service (checked in the installed library's source,
-version 57.0.22). A development build of the app does include Google's
-Firebase Cloud Messaging library because expo-notifications links it, but
-the app ships no Firebase configuration, so Firebase is not set up and,
-as far as we know, does not contact Google; this has not been confirmed
-on a device.
+version 57.0.22).
+
+The Android app nevertheless contains Google's Firebase Cloud Messaging
+library, because expo-notifications depends on it. In the wallet's own
+development build (2026-10-10) it added these entries to the app's
+Android manifest: the permissions WAKE_LOCK (keep the processor awake
+briefly) and com.google.android.c2dm.permission.RECEIVE (receive push
+messages); a receiver, FirebaseInstanceIdReceiver, that other apps can
+address but only when they hold the permission
+com.google.android.c2dm.permission.SEND; Firebase's messaging service;
+Firebase's internal registrars; and FirebaseInitProvider, which runs each
+time the app starts. The app ships no Firebase configuration file
+(google-services.json), and at every start the phone's log said "Default
+FirebaseApp failed to initialize because no default options were found",
+so Firebase does not start. Without it the app never gets a push
+registration token, and without a token no server can send a message to
+this app, so the receiver should never be used. Two things are not yet
+confirmed: that only Google Play services holds the permission that guards
+the receiver, and that the Firebase code makes no network request at all
+when it is not configured (a network capture of a fresh install would
+show it). Until then we describe this as "not set up, no contact expected"
+rather than "no contact verified"; `docs/RELEASE.md` section 3 has the
+technical detail.
 
 A notification can appear on the lock screen, so it says only what kind
 of event happened ("A recurring payment is due", "Someone started a
@@ -195,7 +213,9 @@ address, a name or a payee. The scheduled reminders are stored by the
 operating system in the app's own storage until they fire or are
 cancelled; their identifiers are short hashes, not addresses. Turning the
 setting off, or wiping the wallet, cancels every reminder the wallet
-scheduled. Android asks for permission to show notifications the first
+scheduled and removes the wallet's reminders that are still shown in the
+notification shade; revoking or forgetting a recurring payment does the
+same for that payment's reminder. Android asks for permission to show notifications the first
 time you turn this on.
 
 ---
