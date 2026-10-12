@@ -1610,6 +1610,25 @@ export function estimateRevertSentence(error: GasEstimateRevertError): string {
  * display symbol (evmChain.displaySymbol, "test ETH" on a test network);
  * it defaults to 'ETH' so callers that do not pass it read as before.
  */
+/**
+ * The coin a network's fee is paid in, as the screens name it (the
+ * profile's displaySymbol: "ETH" on mainnet, "test ETH" on the test
+ * networks, the coin a user-added network declared). 'ETH' for a chain the
+ * app has no profile for. Used by the fee-shortfall sentences of
+ * send-erc20.ts, send-nft.ts and delegation.ts (phase 20 item 3).
+ */
+export function feeSymbolForChain(chain: bigint | string): string {
+  const caip2 = typeof chain === 'bigint' ? `eip155:${chain.toString()}` : chain;
+  return evmProfileByCaip2(caip2)?.displaySymbol ?? 'ETH';
+}
+
+/**
+ * Matches the fee-shortfall sentence those modules throw ("Not enough
+ * <fee coin> to pay the network fee: …"), whatever the coin is called; the
+ * fee coin is at most a few words, never a sentence.
+ */
+const FEE_SHORTFALL = /not enough [^.:\n]{1,40}? to pay the network fee/i;
+
 export function describeSendError(
   error: unknown,
   symbol: string,
@@ -1625,7 +1644,7 @@ export function describeSendError(
   // shortfall must never be titled with the token's symbol. This also
   // covers nodes rejecting a broadcast with "insufficient funds for
   // gas * price + value" on a value-0 token transaction.
-  if (/not enough eth to pay the network fee/i.test(detail) || /insufficient funds for gas/i.test(detail)) {
+  if (FEE_SHORTFALL.test(detail) || /insufficient funds for gas/i.test(detail)) {
     return { title: `Not enough ${feeSymbol} to pay the network fee.`, detail };
   }
   if (/exceeds the token balance/i.test(detail)) {

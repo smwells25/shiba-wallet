@@ -186,7 +186,7 @@ export function UpgradeAccountScreen({ navigation }: Props) {
       setQuote(next);
       setPhase('confirm');
     } catch (e) {
-      const { title, detail } = describeSendError(e, evmChain.displaySymbol);
+      const { title, detail } = describeSendError(e, evmChain.displaySymbol, evmChain.displaySymbol);
       setError(`${title}\n${detail}`);
       setPhase('overview');
     }
@@ -247,7 +247,7 @@ export function UpgradeAccountScreen({ navigation }: Props) {
           setResult((prev) => (prev && prev.txid === sent.txid ? { ...prev, receipt: 'timeout' } : prev)),
       );
     } catch (e) {
-      const { title, detail } = describeSendError(e, evmChain.displaySymbol);
+      const { title, detail } = describeSendError(e, evmChain.displaySymbol, evmChain.displaySymbol);
       Alert.alert(title, detail);
       setPhase('confirm');
     }

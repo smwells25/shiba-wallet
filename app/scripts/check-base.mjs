@@ -641,13 +641,13 @@ scenario = defaultScenario('0x14a34');
 scenario.estimateGas = 90000n;
 scenario.balance = nftL2 + reserve - 1n;
 await checkRejects(
-  'NFT: ETH short of the L1 reserve → "Not enough ETH to pay the network fee"',
+  'NFT: ETH short of the L1 reserve → "Not enough test ETH to pay the network fee" (Base Sepolia names its coin)',
   () =>
     prepareNftSend({
       url: URL, from: FROM, to: TO, contract: NFT_CONTRACT, tokenId: 42n, standard: 'erc721', amount: 1n,
       expectedCaip2: EVM_BASE_SEPOLIA.caip2, nftCaip2: EVM_BASE_SEPOLIA.caip2,
     }),
-  /Not enough ETH to pay the network fee/,
+  /^Not enough test ETH to pay the network fee: .* but the test ETH balance is .* NFT sends pay gas in test ETH\.$/,
 );
 scenario = defaultScenario('0xaa36a7');
 scenario.estimateGas = 90000n;
@@ -695,7 +695,7 @@ check('ERC-20 refusal made no oracle call', oracleCalls().length === 0);
   await checkRejects(
     'ERC-20 Max on Base counts the L1 data fee (ETH one wei short of L2 + reserve is refused)',
     () => maxErc20Send(URL, FROM, BASE_USDC, TO, EVM_BASE_SEPOLIA.caip2),
-    /Not enough ETH to pay the network fee/,
+    /^Not enough test ETH to pay the network fee: .* but the test ETH balance is .* Token sends pay gas in test ETH\.$/,
   );
   check('… and the Max check asked the oracle', oracleCalls().some((r) => r.params[0].data.startsWith(GET_L1_FEE)));
   scenario = defaultScenario('0x14a34');

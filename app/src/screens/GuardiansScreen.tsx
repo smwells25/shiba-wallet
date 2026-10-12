@@ -260,7 +260,7 @@ export function GuardiansScreen({ navigation }: Props) {
   // ------------------------------------------------------------ actions
 
   const describe = (e: unknown) =>
-    (bundle ? describeAaError(e, { accountType: bundle.accountType, deployed: true }) : null) ?? describeSendError(e, symbol);
+    (bundle ? describeAaError(e, { accountType: bundle.accountType, deployed: true }) : null) ?? describeSendError(e, symbol, symbol);
 
   const onReview = async () => {
     if (!bundle || !account || !owner) return;

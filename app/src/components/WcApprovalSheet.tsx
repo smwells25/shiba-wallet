@@ -434,7 +434,7 @@ export function WcApprovalSheet({
       },
       (e) => {
         if (!cancelled) {
-          const { title, detail } = describeSendError(e, evmChain.displaySymbol);
+          const { title, detail } = describeSendError(e, evmChain.displaySymbol, evmChain.displaySymbol);
           setTxQuote({ status: 'error', message: `${title}\n${detail}` });
         }
       },
@@ -491,7 +491,7 @@ export function WcApprovalSheet({
         }
       } catch (e) {
         if (currentItemKey.current !== key) return;
-        const { title, detail } = describeSendError(e, evmChain.displaySymbol);
+        const { title, detail } = describeSendError(e, evmChain.displaySymbol, evmChain.displaySymbol);
         setOverrideSimulation(false);
         setTxQuote({
           status: 'error',

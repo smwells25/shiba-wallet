@@ -689,5 +689,17 @@ await checkRejects(
   /USDC exceeds the balance/,
 );
 
+// ---------------------------------------------------------------------------
+// Phase 20 item 3 (source): the smart-account swap goes to the pending
+// registry as 'swap', and every error wording names the network's fee coin.
+// ---------------------------------------------------------------------------
+{
+  const { readFileSync } = await import('node:fs');
+  const swapSrc = readFileSync(new URL('../src/screens/SwapScreen.tsx', import.meta.url), 'utf8');
+  check("Swap: the smart-account submit passes kind 'swap' to sendAa", swapSrc.includes("sendAa(bundle, signer, aaQuote, { kind: 'swap' })") && !/sendAa\(bundle, signer, aaQuote\)/.test(swapSrc));
+  check('Swap: all eight error wordings pass the fee coin (evmChain.displaySymbol)',
+    (swapSrc.match(/describeSendError\(e, sellSymbol, evmChain\.displaySymbol\)/g) ?? []).length === 8 && !/describeSendError\(e, sellSymbol\)/.test(swapSrc));
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

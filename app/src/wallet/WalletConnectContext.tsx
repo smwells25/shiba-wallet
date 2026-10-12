@@ -25,7 +25,6 @@ import {
   type TxQuoteState,
 } from '../components/WcApprovalSheet';
 import { getEndpoint, withEndpoint } from '../config/networks';
-import { evmProfileByCaip2 } from '../config/evm-chain';
 import { spendingGateForQuote } from '../components/SpendingPolicyViews';
 import { requireLocalAuth } from './biometric';
 import { WATCH_ONLY_WC_REFUSAL, walletConnectAddressFor } from './watch-only';
@@ -39,6 +38,7 @@ import {
   EVM_CHAIN_ID,
   QUOTE_ENDPOINT_CHANGED_TITLE,
   describeSendError,
+  feeSymbolForChain,
   quoteEndpointChange,
   sendEvm,
 } from './send';
@@ -54,6 +54,7 @@ import {
   sendAa,
   signHashAsSmartAccount,
   waitForAaReceipt,
+  type AaSendMeta,
 } from './aa';
 import {
   buildErc7715Response,
@@ -194,6 +195,15 @@ interface WalletConnectContextValue {
 }
 
 const WalletConnectContext = createContext<WalletConnectContextValue | null>(null);
+
+/**
+ * Where a connected app's smart-account operation comes from, for the
+ * pending-operation registry (phase 20 item 3): the in-app browser's
+ * synthetic sessions use browser: topics, everything else is WalletConnect.
+ */
+function aaSentMetaFor(topic: string): AaSendMeta {
+  return { kind: isBrowserTopic(topic) ? 'browser' : 'walletconnect' };
+}
 
 
 type LiveContext = ReturnType<WcController['getContext']> & { activeIndex: number | null };
@@ -565,7 +575,7 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
             sessionPrivateKey: null,
             store: AsyncStorage,
             vault: null,
-            submit: (q) => signWith(EVM_CHAIN_ID, smart.owner, (signer) => sendAa(bundle, signer, q)),
+            submit: (q) => signWith(EVM_CHAIN_ID, smart.owner, (signer) => sendAa(bundle, signer, q, aaSentMetaFor(item.event.topic))),
           });
           let finished: Awaited<ReturnType<typeof finalizeSessionInstall>> | null = null;
           try {
@@ -688,7 +698,7 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
             return;
           }
           const { userOpHash } = await signWith(EVM_CHAIN_ID, smart.owner, (signer) =>
-            sendAa(bundle, signer, quote),
+            sendAa(bundle, signer, quote, aaSentMetaFor(item.event.topic)),
           );
           // ERC-5792: the id is returned once the bundler accepted the
           // operation; inclusion is NOT awaited.
@@ -744,7 +754,7 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
         // the bundle transaction's hash — never with the userOpHash, which
         // eth_getTransactionReceipt would not find.
         const { userOpHash } = await signWith(EVM_CHAIN_ID, smart.owner, (signer) =>
-          sendAa(bundle, signer, quote),
+          sendAa(bundle, signer, quote, aaSentMetaFor(item.event.topic)),
         );
         let txHash: string | null = null;
         let included: boolean | null = null;
@@ -808,7 +818,7 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
           describeAaError(e, {
             accountType: smart.accountType === 'kernel-v3.3' ? 'kernel-v3.3' : 'simple',
             deployed: txQuote?.status === 'ready-aa' ? txQuote.quote.deployed : null,
-          }) ?? describeSendError(e, evmProfileByCaip2(item.chain)?.displaySymbol ?? 'ETH');
+          }) ?? describeSendError(e, feeSymbolForChain(item.chain), feeSymbolForChain(item.chain));
         Alert.alert(title, detail);
       }
     },
@@ -1036,7 +1046,7 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
         controller.release(item.key);
         // The coin of the network the request was validated on ("test ETH"
         // on a test network).
-        const { title, detail } = describeSendError(e, evmProfileByCaip2(item.chain)?.displaySymbol ?? 'ETH');
+        const { title, detail } = describeSendError(e, feeSymbolForChain(item.chain), feeSymbolForChain(item.chain));
         Alert.alert(title, detail);
       }
     },

@@ -89,6 +89,8 @@ import {
   tokenGasThroughPhrase,
 } from '../src/wallet/aa.ts';
 import { EVM_CHAIN_ID, describeSendError } from '../src/wallet/send.ts';
+import { addAaOperationSentListener } from '../src/wallet/aa.ts';
+import { loadPendingRegistry, pendingUserOpRecorder } from '../src/wallet/pending-transactions.ts';
 import { formatUnits, parseUnits } from '../src/wallet/balances.ts';
 import {
   flushSpendingWrites,
@@ -658,6 +660,67 @@ await flushSpendingWrites();
 }
 stopSpendRecorder();
 stopAaState();
+
+// ---------------------------------------------------------------------------
+// Phase 20 item 3: every operation the bundler accepted through sendAa fires
+// the operation-sent event exactly once (with the caller's kind), a refused
+// one never, and the recorder WalletContext registers stores it in the
+// pending registry (secret-free, no bundler URL).
+// ---------------------------------------------------------------------------
+{
+  const events = [];
+  const pendMem = new Map();
+  const pendStore = { getItem: async (k) => pendMem.get(k) ?? null, setItem: async (k, v) => void pendMem.set(k, v) };
+  const record = pendingUserOpRecorder(pendStore);
+  const stopOps = addAaOperationSentListener((e) => {
+    events.push(e);
+    return record(e);
+  });
+  const { bundle: okBundle } = makeBundle({}, { receipt: specReceipt, receiptAfterPolls: 2 });
+  const okQuote = await prepareAaSend(okBundle, owner.address, RECIPIENT, AMOUNT);
+  await sendAa(okBundle, owner, okQuote, { kind: 'swap' });
+  check('operation-sent: fired exactly once for an accepted sendAa', events.length === 1, String(events.length));
+  const e0 = events[0];
+  check(
+    'operation-sent: chain, hash, sender, owner, bundler transport, time and the caller\'s kind',
+    e0 && e0.chain === `eip155:${okBundle.chainId}` && e0.userOpHash === USEROP_HASH && same(e0.sender, okQuote.sender) &&
+      same(e0.owner, owner.address) && e0.bundler === okBundle.bundler && Number.isSafeInteger(e0.sentAt) && e0.kind === 'swap' && e0.resend === null,
+  );
+  const { bundle: plainBundle } = makeBundle({}, { receipt: specReceipt, receiptAfterPolls: 2 });
+  const plainQuote = await prepareAaSend(plainBundle, owner.address, RECIPIENT, AMOUNT);
+  await sendAa(plainBundle, owner, plainQuote);
+  check("operation-sent: a caller passing no kind is recorded as 'other'", events.length === 2 && events[1].kind === 'other');
+  const rejectNode2 = fakeNode({});
+  const accepting2 = fakeBundler({});
+  const rejecting2 = async (method, params) => {
+    if (method === 'eth_sendUserOperation') throw new Error("RPC error -32500: AA21 didn't pay prefund (eth_sendUserOperation)");
+    return accepting2(method, params);
+  };
+  const rejectBundle2 = createAaClient({
+    nodeUrl: 'https://node.example',
+    bundlerUrl: 'https://bundler.example',
+    factory: FACTORY_INPUT,
+    transportFor: (url) => (url === 'https://node.example' ? rejectNode2 : rejecting2),
+  });
+  const rejectQuote2 = await prepareAaSend(rejectBundle2, owner.address, RECIPIENT, AMOUNT);
+  const refused2 = await sendAa(rejectBundle2, owner, rejectQuote2, { kind: 'staking' }).then(() => null, (e) => e);
+  check('operation-sent: a refused submission fires nothing', refused2 !== null && events.length === 2, String(events.length));
+  await new Promise((r) => setTimeout(r, 10));
+  const reg = await loadPendingRegistry(pendStore);
+  const ops = reg.records.filter((r) => r.kind === 'userop');
+  check(
+    // Both fake operations share the fake bundler's hash: one record, and the
+    // later 'other' never overwrites the earlier specific origin.
+    'operation-sent → registry: one record per operation hash, its specific origin kept, under the owner',
+    ops.length === 1 && ops[0].origin === 'swap' && ops[0].userOpHash === USEROP_HASH.toLowerCase() && ops[0].owner === owner.address.toLowerCase(),
+    JSON.stringify(ops),
+  );
+  check('operation-sent → registry: no bundler URL or transport stored', !pendMem.get('shiba-wallet.pending-tx.v1')?.includes('bundler.example'));
+  stopOps();
+  const { bundle: afterStop } = makeBundle({}, { receipt: specReceipt, receiptAfterPolls: 2 });
+  await sendAa(afterStop, owner, await prepareAaSend(afterStop, owner.address, RECIPIENT, AMOUNT));
+  check('operation-sent: an unsubscribed listener hears nothing more', events.length === 2);
+}
 
 const op = sendBundlerT.lastOp;
 check('submitted op sender is the counterfactual account', same(op.sender, SENDER));
@@ -1560,7 +1623,7 @@ await (async () => {
       (send.match(/setQuote\(null\);\s*setQuotedUrl\(null\);\s*setPhase\('form'\);/g) ?? []).length >= 3 &&
         /if \(quote\.kind === 'aa'\) \{[\s\S]{0,400}setQuote\(null\);\s*setQuotedUrl\(null\);\s*setPhase\('form'\);\s*return;\s*\}\s*setPhase\('confirm'\);/.test(send));
     check('Swap (smart account): quote dropped, back to the review',
-      /describeSendError\(e, sellSymbol\);\s*Alert\.alert\(title, detail\);[\s\S]{0,300}setAaQuote\(null\);\s*setPhase\('review'\);/.test(read('../src/screens/SwapScreen.tsx')));
+      /describeSendError\(e, sellSymbol, evmChain\.displaySymbol\);\s*Alert\.alert\(title, detail\);[\s\S]{0,300}setAaQuote\(null\);\s*setPhase\('review'\);/.test(read('../src/screens/SwapScreen.tsx')));
     check('Guardians: operation dropped, back to where it was prepared',
       /setOperation\(null\);\s*setPhase\(op\.kind === 'install' \|\| op\.kind === 'renew' \? 'form' : 'overview'\);/.test(read('../src/screens/GuardiansScreen.tsx')));
     check('Change owner: rotation dropped, back to the overview',

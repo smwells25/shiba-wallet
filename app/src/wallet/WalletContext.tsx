@@ -52,11 +52,11 @@ import { checkWatchAddress, type KnownAccount } from './watch-only';
 import { duplicateImportError, importedKeyBytes, importedSignerFor, parsePrivateKeyInput } from './imported-keys';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { forgetAllSessions } from './sessions';
-import { addAaSentListener } from './aa';
+import { addAaOperationSentListener, addAaSentListener } from './aa';
 import { recoveryRecordListener, wipeRecoveryData } from './recovery';
 import { forgetBrowserConnections } from './browser-sites';
 import { wipeTransactionNotes } from './notes';
-import { resetPendingRegistry } from './pending-transactions';
+import { pendingUserOpRecorder, resetPendingRegistry } from './pending-transactions';
 import {
   addMultisigStoreListener,
   multisigListEntries,
@@ -489,6 +489,13 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   // started on its first accepted smart-account operation, whichever screen
   // sent it (aa.ts notifies after the bundler accepted; public data only).
   useEffect(() => addAaSentListener(recoveryRecordListener(AsyncStorage)), []);
+
+  // Stuck-operation coverage (phase 20 item 3): every smart-account
+  // operation the bundler accepted — from Send, Swap, Staking, Sessions
+  // (installs, revokes, payments, swaps), WalletConnect and the in-app
+  // browser, multisig submits — is recorded in the pending registry, so
+  // Activity shows its status and "Check status". Registered once here.
+  useEffect(() => addAaOperationSentListener(pendingUserOpRecorder(AsyncStorage)), []);
 
   // App-enforced spending limits (phase 12 item 3): record what left the
   // account, but only after the node (sendEvm) or the bundler (sendAa)

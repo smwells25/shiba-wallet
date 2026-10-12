@@ -19,6 +19,7 @@ import {
 import {
   chainHasL1DataFee,
   describeSendError,
+  feeSymbolForChain,
   opStackFeeTotal,
   quoteOpStackFees,
   sendEvm,
@@ -256,9 +257,10 @@ export async function prepareNftSend(request: NftSendRequest): Promise<NftSendQu
     : undefined;
   const fee = gasLimit * fees.maxFeePerGas + opStackFeeTotal(opStack);
   if (fee > ethBalance) {
+    const feeSymbol = feeSymbolForChain(chainId);
     throw new Error(
-      `Not enough ETH to pay the network fee: the worst-case fee is ${fee} wei ` +
-        `but the ETH balance is ${ethBalance} wei. NFT sends pay gas in ETH.`,
+      `Not enough ${feeSymbol} to pay the network fee: the worst-case fee is ${fee} wei ` +
+        `but the ${feeSymbol} balance is ${ethBalance} wei. NFT sends pay gas in ${feeSymbol}.`,
     );
   }
 
@@ -325,8 +327,12 @@ export async function sendNft(
   return sendEvm(url, signer, evmQuote, explorerTxBase);
 }
 
-/** Plain-language titles for NFT send failures (falls back to send.ts). */
-export function describeNftSendError(error: unknown): { title: string; detail: string } {
+/**
+ * Plain-language titles for NFT send failures (falls back to send.ts).
+ * `feeSymbol` is the network's fee coin as the screens name it
+ * (evmChain.displaySymbol, e.g. "test ETH"); an NFT send pays its fee in it.
+ */
+export function describeNftSendError(error: unknown, feeSymbol: string = 'ETH'): { title: string; detail: string } {
   const detail = error instanceof Error ? error.message : String(error);
   if (/no longer owns this NFT|holds \d+ of this item|did not report an owner/i.test(detail)) {
     return { title: 'This account cannot send this NFT right now.', detail };
@@ -334,5 +340,5 @@ export function describeNftSendError(error: unknown): { title: string; detail: s
   if (/This NFT is on /.test(detail)) {
     return { title: 'This NFT belongs to the other network mode.', detail };
   }
-  return describeSendError(error, 'ETH');
+  return describeSendError(error, feeSymbol, feeSymbol);
 }

@@ -881,9 +881,10 @@ console.log('check-staking: the unaffordable-stake title names the network\'s co
   const sheet = readFileSync(join(APP_ROOT, 'src/components/WcApprovalSheet.tsx'), 'utf8');
   const wcContext = readFileSync(join(APP_ROOT, 'src/wallet/WalletConnectContext.tsx'), 'utf8');
   check('the WalletConnect sheet and the smart-account WalletConnect path name the network\'s coin too (same bug)',
-    !sheet.includes("describeSendError(e, 'ETH')") && (sheet.match(/describeSendError\(e, evmChain\.displaySymbol\)/g) ?? []).length === 2 &&
+    !sheet.includes("describeSendError(e, 'ETH')") && (sheet.match(/describeSendError\(e, evmChain\.displaySymbol, evmChain\.displaySymbol\)/g) ?? []).length === 2 &&
       !wcContext.includes("describeSendError(e, 'ETH')") &&
-      (wcContext.match(/describeSendError\(e, evmProfileByCaip2\(item\.chain\)\?\.displaySymbol \?\? 'ETH'\)/g) ?? []).length === 2);
+      // Phase 20 item 3: the fee coin too, from the request's own network.
+      (wcContext.match(/describeSendError\(e, feeSymbolForChain\(item\.chain\), feeSymbolForChain\(item\.chain\)\)/g) ?? []).length === 2);
 }
 
 // ---------------------------------------------------------------------------
@@ -953,7 +954,7 @@ console.log('check-staking: success notes, the balances holder line and the smar
     need('both above Done', done > 0 && success.indexOf(aaField) > 0 && success.indexOf(aaField) < done && success.indexOf(eoaField) > 0 && success.indexOf(eoaField) < done);
     need('the network captured when each path sent', (src.match(/setSentNetwork\(caip2\);/g) ?? []).length === 2 &&
       /sendEvm\(sendUrl, signer, eoaQuote, evmChain\.explorerTxBase\),\s*\);\s*setSentNetwork\(caip2\);/.test(src) &&
-      /sendAa\(bundle, signer, aaQuote\)\);\s*setSentNetwork\(caip2\);/.test(src));
+      /sendAa\(bundle, signer, aaQuote, \{ kind: 'staking' \}\)\);\s*setSentNetwork\(caip2\);/.test(src));
     need('Done clears it', success.includes('setSentNetwork(null);'));
     return p;
   };

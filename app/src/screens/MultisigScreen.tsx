@@ -59,6 +59,7 @@ import {
   encodeMultisigRequestPayload,
   exportMultisigAccount,
   importMultisigRecord,
+  listMultisigCosignerApprovals,
   listMultisigRecords,
   multisigAddressFor,
   multisigDisplayName,
@@ -70,7 +71,9 @@ import {
   multisigFundsLine,
   multisigNotReadyHint,
   multisigOperationCalls,
+  multisigPreviewNote,
   multisigRequestShareText,
+  multisigRiskTarget,
   multisigShapeLabel,
   multisigSubmitApprovalsLine,
   multisigSubmitErrorText,
@@ -89,6 +92,7 @@ import {
   submitMultisigWithGate,
   type KnownToken,
   type MultisigConfigCheck,
+  type MultisigCosignedEntry,
   type MultisigCosignReview,
   type MultisigCosignerDraft,
   type MultisigFunds,
@@ -97,8 +101,11 @@ import {
   type MultisigRecord,
   type OwnAccount,
 } from '../wallet/multisig';
+import { BalanceChangePreview } from '../components/BalanceChangePreview';
+import { RiskWarnings } from '../components/RiskWarnings';
 import {
   MultisigCallsView,
+  MultisigCosignedHistory,
   MultisigFileExportButton,
   MultisigHonesty,
   MultisigPayloadQr,
@@ -179,6 +186,8 @@ export function MultisigScreen() {
 
   const [phase, setPhase] = useState<Phase>('list');
   const [records, setRecords] = useState<MultisigRecord[]>([]);
+  // Requests this phone approved as a co-signer on this network (History).
+  const [cosigned, setCosigned] = useState<MultisigCosignedEntry[]>([]);
   // Balance and EntryPoint deposit per multisig address (each null when unreadable).
   const [funds, setFunds] = useState<Record<string, MultisigFunds>>({});
   const [nodeUrl, setNodeUrl] = useState<string | null>(null);
@@ -249,6 +258,7 @@ export function MultisigScreen() {
   const reload = useCallback(async () => {
     const list = await listMultisigRecords(chain);
     setRecords(list);
+    setCosigned(await listMultisigCosignerApprovals({ chain }));
     if (node) {
       const entries = await Promise.all(list.map(async (r) => [r.address, await readMultisigFunds(node, r.address)] as const));
       setFunds(Object.fromEntries(entries));
@@ -577,6 +587,8 @@ export function MultisigScreen() {
       const { payload } = await cosignWithGate({ review: cosignReview, requireAuth: requireLocalAuth, signWith });
       setCosignPayload(payload);
       setPhase('cosign-done');
+      // History now lists it ("Approved as co-signer: …").
+      void reload().catch(() => undefined);
     } catch (e) {
       if (e instanceof MultisigAuthCancelledError) Alert.alert('Not approved', e.message);
       else fail(e);
@@ -757,6 +769,7 @@ export function MultisigScreen() {
     const exported = exportMultisigAccount(selected);
     const held = funds[selected.address];
     const finished = selected.operations.filter((o) => o.status !== 'collecting');
+    const cosignedHere = cosigned.filter((e) => e.chain === selected.chain && e.account.toLowerCase() === selected.address.toLowerCase());
     return shell(
       <>
         <Text style={[styles.title, { color: theme.text }]}>{multisigDisplayName(selected)}</Text>
@@ -831,9 +844,10 @@ export function MultisigScreen() {
         <MultisigPayloadQr payload={exported.json} caption="Multisig account record" />
         <ShareActions text={exported.shareText} shareTitle="Multisig account record" />
         <MultisigFileExportButton text={exported.json} fileName={multisigExportFileName('account', selected.chain, selected.address)} dialogTitle="Save the multisig record" />
-        {finished.length > 0 ? (
+        {finished.length > 0 || cosignedHere.length > 0 ? (
           <View style={[styles.card, { borderColor: theme.border }]}>
             <Text style={[styles.cardTitle, { color: theme.text }]}>History</Text>
+            <MultisigCosignedHistory entries={cosignedHere} />
             {finished.map((o, i) => (
               // Keyed by (index, request id, status): request ids are now
               // deduped at storage, but an operation can still change status
@@ -991,6 +1005,16 @@ export function MultisigScreen() {
         <Text style={[styles.title, { color: theme.text }]}>Submit the multisig operation</Text>
         <InfoRow label="From multi-signature account (co-signers approved)" value={q.sender} monoValue />
         <MultisigCallsView calls={q.calls} described={q.calls.map((c) => describeMultisigCall(c, nativeSymbol, tokens))} nativeSymbol={nativeSymbol} />
+        {/* Phase 20 item 3: the same balance-change preview and risk card as
+            the Send confirm, for the calls the co-signers approved, simulated
+            from the multisig's own address against the quote's endpoint. */}
+        <BalanceChangePreview
+          url={nodeUrl}
+          request={{ from: q.sender, to: q.calls[0]!.to, value: q.calls[0]!.value, data: q.calls[0]!.data }}
+          batch={q.calls.map((c) => ({ from: q.sender, to: c.to, value: c.value, data: c.data }))}
+          note={multisigPreviewNote(q.deployed)}
+        />
+        <RiskWarnings url={nodeUrl} wallet={q.sender} {...multisigRiskTarget(q.calls)} />
         <InfoRow
           label="Network fee (worst case, set by you as the submitter)"
           value={`${formatUnits(q.fee, 18, 18)} ${nativeSymbol}`}
@@ -1215,7 +1239,11 @@ export function MultisigScreen() {
     );
   }
 
-  // 'list' (and any phase whose data is gone).
+  // 'list' (and any phase whose data is gone). Co-signer approvals for an
+  // account with a record show in that record's History instead.
+  const cosignedElsewhere = cosigned.filter(
+    (e) => !records.some((r) => r.chain === e.chain && r.address.toLowerCase() === e.account.toLowerCase()),
+  );
   return shell(
     <>
       <Text style={[styles.title, { color: theme.text }]}>{MULTISIG_TITLE}</Text>
@@ -1241,6 +1269,12 @@ export function MultisigScreen() {
           </View>
         ))
       )}
+      {cosignedElsewhere.length > 0 ? (
+        <View style={[styles.card, { borderColor: theme.border }]}>
+          <Text style={[styles.cardTitle, { color: theme.text }]}>Approved as a co-signer (accounts not in this wallet)</Text>
+          <MultisigCosignedHistory entries={cosignedElsewhere} />
+        </View>
+      ) : null}
       {errorBox}
       {!networkVerified && readiness === null ? (
         <>

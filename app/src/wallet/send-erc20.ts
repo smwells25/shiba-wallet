@@ -13,6 +13,7 @@ import {
 import {
   EVM_CHAIN_ID,
   chainHasL1DataFee,
+  feeSymbolForChain,
   opStackFeeTotal,
   quoteOpStackFees,
   sendEvm,
@@ -232,9 +233,10 @@ export async function prepareErc20Send(request: Erc20SendRequest): Promise<Erc20
     : undefined;
   const fee = gasLimit * fees.maxFeePerGas + opStackFeeTotal(opStack);
   if (fee > ethBalance) {
+    const feeSymbol = feeSymbolForChain(chainId);
     throw new Error(
-      `Not enough ETH to pay the network fee: the worst-case fee is ${fee} wei ` +
-        `but the ETH balance is ${ethBalance} wei. Token sends pay gas in ETH, ` +
+      `Not enough ${feeSymbol} to pay the network fee: the worst-case fee is ${fee} wei ` +
+        `but the ${feeSymbol} balance is ${ethBalance} wei. Token sends pay gas in ${feeSymbol}, ` +
         `not in ${symbol}.`,
     );
   }
@@ -270,7 +272,7 @@ export async function prepareErc20Send(request: Erc20SendRequest): Promise<Erc20
  * in ETH, so it never reduces the token amount. What CAN refuse the max is
  * the ETH side: the worst-case fee for transferring the full balance is
  * checked against the ETH balance, and a shortfall throws the same
- * plain-language "Not enough ETH" error the quote uses. Gas is estimated
+ * plain-language "Not enough <fee coin>" error the quote uses. Gas is estimated
  * for transfer(recipient, fullBalance) when a validated recipient exists,
  * else for a self-transfer, whose calldata has the identical shape.
  */
@@ -317,9 +319,10 @@ export async function maxErc20Send(
     : undefined;
   const fee = gasLimit * fees.maxFeePerGas + opStackFeeTotal(opStack);
   if (fee > ethBalance) {
+    const feeSymbol = feeSymbolForChain(chainId);
     throw new Error(
-      `Not enough ETH to pay the network fee: the worst-case fee is ${fee} wei ` +
-        `but the ETH balance is ${ethBalance} wei. Token sends pay gas in ETH.`,
+      `Not enough ${feeSymbol} to pay the network fee: the worst-case fee is ${fee} wei ` +
+        `but the ${feeSymbol} balance is ${ethBalance} wei. Token sends pay gas in ${feeSymbol}.`,
     );
   }
   return tokenBalance;

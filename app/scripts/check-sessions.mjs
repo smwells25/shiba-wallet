@@ -40,7 +40,8 @@ import {
   validateSessionKeyGrant,
 } from '@shiba-wallet/chains-evm';
 import { ethers } from 'ethers';
-import { createAaClient, prepareAaCalls, sendAa } from '../src/wallet/aa.ts';
+import { addAaOperationSentListener, createAaClient, prepareAaCalls, sendAa } from '../src/wallet/aa.ts';
+import { sessionOperationKind } from '../src/wallet/sessions.ts';
 import {
   ERC7715_LIMITATION_NOTE,
   KERNEL_SESSION_RESPONSE_KEY,
@@ -504,7 +505,25 @@ console.log('check-sessions: session-signed operation (owner never involved)');
 {
   const allowed = sessionTestCall(grant.calls[0]);
   check('test call = target, 0 value, empty calldata for a plain-transfer entry', allowed.to === RECIPIENT && allowed.value === 0n && allowed.data.length === 0);
+  // Phase 20 item 3: the operation-sent event fires once per accepted
+  // session-key operation (owner = the session's owner, sender = the
+  // account), and never for the refusals below.
+  const opEvents = [];
+  const stopOpEvents = addAaOperationSentListener((e) => void opEvents.push(e));
   const { userOpHash } = await sendSessionCalls({ bundle, record: installRecord, calls: [allowed], vault, now: NOW });
+  check(
+    'operation-sent: fired exactly once for the accepted session operation, kind session-op',
+    opEvents.length === 1 && opEvents[0].userOpHash === userOpHash && opEvents[0].kind === 'session-op' &&
+      same(opEvents[0].sender, installRecord.account) && same(opEvents[0].owner, installRecord.owner) &&
+      opEvents[0].chain === installRecord.chain && opEvents[0].resend === null,
+    JSON.stringify(opEvents.map((e) => ({ ...e, bundler: undefined }))),
+  );
+  check(
+    'session operation kinds: dca → dca-swap, recurring / subscription → recurring-payment, manual / erc7715 → session-op',
+    sessionOperationKind('dca') === 'dca-swap' && sessionOperationKind('recurring') === 'recurring-payment' &&
+      sessionOperationKind('subscription') === 'recurring-payment' && sessionOperationKind('manual') === 'session-op' &&
+      sessionOperationKind('erc7715') === 'session-op',
+  );
   const op = fromRpcOp(bundler.lastOp);
   const pidKey = sessionNonceKey(installRecord.permissionId);
   check('op nonce uses the permission nonce key (key << 64), default mode', op.nonce >> 64n === pidKey && op.nonce >> 64n !== 0n);
@@ -531,6 +550,8 @@ console.log('check-sessions: session-signed operation (owner never involved)');
   check('value above the per-call cap refused locally', /exceeds the session's cap/.test(overCap?.message ?? ''), overCap?.message);
   const expired = await caught(() => sendSessionCalls({ bundle, record: installRecord, calls: [allowed], vault, now: grant.validUntil + 1 }));
   check('expired window refused locally', /expired/.test(expired?.message ?? ''));
+  check('operation-sent: no event for the three local refusals', opEvents.length === 1, String(opEvents.length));
+  stopOpEvents();
   check('refusals made ZERO node calls, ZERO bundler calls and read no key',
     node.calls.length === nodeBefore && bundler.calls.length === bundlerBefore && vault.loads === loadsBefore,
     `${node.calls.length - nodeBefore}/${bundler.calls.length - bundlerBefore}/${vault.loads - loadsBefore}`);
@@ -849,6 +870,13 @@ console.log('check-sessions: revoke and progress copy (phase 12 rehearsal findin
     sessionProgressTitle('subscription') === 'Subscription sent to the bundler' && sessionProgressTitle('install') === 'Session install sent to the bundler' &&
       sessionProgressTitle('revoke') === 'Revocation sent to the bundler' && sessionProgressTitle('test') === 'Session test operation sent to the bundler');
   const screen = readFileSync(new URL('../src/screens/SessionsScreen.tsx', import.meta.url), 'utf8');
+  // Phase 20 item 3: the owner-signed installs and revokes go to the pending
+  // registry as 'session-setup' (every sendAa on the screen names its kind).
+  check('Sessions: every owner-signed submit (installs, revokes) passes kind session-setup to sendAa',
+    (screen.match(/sendAa\(sendBundle, signer, q, \{ kind: 'session-setup' \}\)/g) ?? []).length === 4 && !/sendAa\([^)]*\bq\)\)/.test(screen));
+  const sessSrcK = readFileSync(new URL('../src/wallet/sessions.ts', import.meta.url), 'utf8');
+  check('sendSessionCalls announces the operation only after the bundler accepted it',
+    /const \{ userOpHash \} = await client\.sendCalls\(sessionAccount, args\.calls, fees\);\s*\/\/[^\n]*\n\s*\/\/[^\n]*\n\s*notifyAaOperationSent\(\{/.test(sessSrcK));
   const subInstall = screen.slice(screen.indexOf('const onSubInstall = async'), screen.indexOf('const onShowKey = async'));
   check('the subscription install reports progress kind "subscription"; the screen title comes from sessionProgressTitle',
     /setProgress\(\{\s*kind: p\.mode === 'recurring' \? 'recurring' : 'subscription',/.test(subInstall) && /\{sessionProgressTitle\(progress\.kind\)\}/.test(screen) && !/\{what\} sent to the bundler/.test(screen));

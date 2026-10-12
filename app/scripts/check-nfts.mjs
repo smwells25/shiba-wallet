@@ -19,6 +19,7 @@
 // The signing key derives from the standard BIP-39 test mnemonic
 // ("abandon ... about"), which is public knowledge.
 
+import { readFileSync } from 'node:fs';
 import { Interface, Transaction, AbiCoder, zeroPadValue, id as ethersId } from 'ethers';
 import { evmKeyProvider, mnemonicToSeed, formatAssetId, nonFungibleAssetId, nonFungibleTokenId } from '@shiba-wallet/core';
 import { toHex } from '@shiba-wallet/chains-evm';
@@ -576,6 +577,14 @@ console.log('quotes + sign/broadcast:');
   node = { ...defaultNode(), ethBalance: 1n };
   await rejects('ETH cannot cover the fee', () => prepareNftSend(base), /Not enough ETH to pay the network fee/);
   check('fee shortfall titled with ETH', describeNftSendError(new Error('Not enough ETH to pay the network fee: x')).title === 'Not enough ETH to pay the network fee.');
+  // Phase 20 item 3: the fee coin comes from the profile — the detail on a
+  // test network, and the title from the coin the screen passes.
+  node = { ...defaultNode(), chainId: '0xaa36a7', ethBalance: 1n };
+  const sepShort = await prepareNftSend({ ...base, expectedCaip2: SEPOLIA, nftCaip2: SEPOLIA }).then(() => null, (e) => e);
+  check('Sepolia: the NFT shortfall detail names "test ETH"', /^Not enough test ETH to pay the network fee: .* but the test ETH balance is 1 wei\. NFT sends pay gas in test ETH\.$/.test(sepShort?.message ?? ''), sepShort?.message);
+  check('Sepolia: describeNftSendError(…, "test ETH") titles it "Not enough test ETH to pay the network fee."', describeNftSendError(sepShort, 'test ETH').title === 'Not enough test ETH to pay the network fee.', describeNftSendError(sepShort, 'test ETH').title);
+  check('describeNftSendError passes the coin as the fee coin, not a hard-coded "ETH" (source)', /return describeSendError\(error, feeSymbol, feeSymbol\);/.test(readFileSync(new URL('../src/wallet/send-nft.ts', import.meta.url), 'utf8')) && !/describeSendError\(error, 'ETH'\)/.test(readFileSync(new URL('../src/wallet/send-nft.ts', import.meta.url), 'utf8')));
+  check('the Send screen passes the profile’s coin to the NFT error (source)', readFileSync(new URL('../src/screens/SendScreen.tsx', import.meta.url), 'utf8').includes('describeNftSendError(e, evmChain.displaySymbol)'));
   node = { ...defaultNode(), estimateGasError: 'execution reverted', transferError: 'execution reverted: ERC721: transfer to non ERC721Receiver implementer' };
   const fb = await prepareNftSend(base);
   check('estimation revert -> documented fallback gas', fb.gasIsFallback && fb.gasLimit === NFT_TRANSFER_GAS_FALLBACK);

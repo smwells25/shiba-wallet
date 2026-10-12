@@ -874,7 +874,7 @@ export function SendScreen({ route, navigation }: Props) {
   const aaType = aaConfig ? effectiveAaAccountType(aaConfig, account.address) : null;
   /** NFT sends get NFT-specific error titles; everything else is unchanged. */
   const describeError = (e: unknown) =>
-    nftMode ? describeNftSendError(e) : describeSendError(e, symbol, evmChain.displaySymbol);
+    nftMode ? describeNftSendError(e, evmChain.displaySymbol) : describeSendError(e, symbol, evmChain.displaySymbol);
   const aaActive = aaAvailable && aaEnabled;
   // The passkey signs only for a Kernel v3.3 smart account (not SimpleAccount,
   // not an EIP-7702 upgrade) whose passkey this device installed.
@@ -1423,6 +1423,16 @@ export function SendScreen({ route, navigation }: Props) {
   // phone (feature 95, wallet/pending-transactions.ts) so Activity can show
   // them while they wait, check their status and, once the bundler has
   // dropped one, offer "Send again". Best effort; never blocks the send.
+  // The sendAa path records through the listener WalletContext registers
+  // (aa.ts notifyAaOperationSent, with this pre-fill in sendAa's meta); the
+  // passkey path does not go through sendAa and records here.
+  const resendFor = (q: AaSendQuote) =>
+    userOpResendFor(q, {
+      nativeSymbol: evmChain.displaySymbol,
+      nativeDecimals,
+      tokenId: tokenId ?? null,
+      nft: nftMode,
+    });
   const rememberUserOperation = (q: AaSendQuote, userOpHash: string) => {
     if (!quotedFrom) return;
     void recordPendingUserOperation({
@@ -1430,12 +1440,8 @@ export function SendScreen({ route, navigation }: Props) {
       userOpHash,
       sender: q.sender,
       owner: quotedFrom,
-      resend: userOpResendFor(q, {
-        nativeSymbol: evmChain.displaySymbol,
-        nativeDecimals,
-        tokenId: tokenId ?? null,
-        nft: nftMode,
-      }),
+      resend: resendFor(q),
+      origin: 'send',
     });
   };
 
@@ -1575,10 +1581,9 @@ export function SendScreen({ route, navigation }: Props) {
           throw new Error('Smart-account session expired; go back and review again.');
         }
         const { userOpHash } = await signWith(route.params.chainId, quotedFrom, (signer) =>
-          sendAa(bundle, signer, quote),
+          sendAa(bundle, signer, quote, { kind: 'send', resend: resendFor(quote) }),
         );
         setAaResult({ userOpHash, receiptState: 'pending', success: null, txHash: null });
-        rememberUserOperation(quote, userOpHash);
         setPhase('success');
         // Poll for the receipt in the background; the success screen shows
         // "bundling…" until it lands (or the poll times out — the op may

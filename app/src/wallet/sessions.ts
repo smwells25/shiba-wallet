@@ -59,6 +59,8 @@ import {
   type AaSendQuote,
   AA_DEPOSIT_TOPUP_VERIFICATION_GAS,
   MULTISIG_CONFIG_BUNDLE_REFUSAL,
+  notifyAaOperationSent,
+  type AaOperationKind,
 } from './aa.ts';
 import { formatUnits, parseUnits } from './balances.ts';
 import { readAtInclusionBlock } from './recovery.ts';
@@ -1605,7 +1607,30 @@ export async function sendSessionCalls(args: {
     depositTopUpVerificationGas: AA_DEPOSIT_TOPUP_VERIFICATION_GAS,
   });
   const { userOpHash } = await client.sendCalls(sessionAccount, args.calls, fees);
+  // Accepted by the bundler: the pending-operation registry records it
+  // (phase 20 item 3), exactly once, never for a refused operation.
+  notifyAaOperationSent({
+    chain: record.chain,
+    userOpHash,
+    sender: record.account,
+    owner: record.owner,
+    bundler: bundle.bundler,
+    sentAt: Date.now(),
+    kind: sessionOperationKind(record.source),
+    resend: null,
+  });
   return { userOpHash, client };
+}
+
+/**
+ * Where an operation signed by a session key comes from, for the
+ * pending-operation registry: a recurring swap, a recurring payment, or any
+ * other session (a manual session's test operation).
+ */
+export function sessionOperationKind(source: SessionSource): AaOperationKind {
+  if (source === DCA_SOURCE) return 'dca-swap';
+  if (source === 'recurring' || source === 'subscription') return 'recurring-payment';
+  return 'session-op';
 }
 
 /** The uint192 EntryPoint nonce key a session's operations use (display / checks). */
