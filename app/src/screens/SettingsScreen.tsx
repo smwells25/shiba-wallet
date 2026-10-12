@@ -1813,7 +1813,7 @@ export function SettingsScreen({ navigation, route }: Props) {
         {authAvailable ? (
           <>
             <Text style={[styles.toggleLabel, { color: theme.text }]}>
-              Auto-lock after returning from background
+              Auto-lock
             </Text>
             <View style={styles.endpointButtons}>
               {AUTO_LOCK_CHOICES.map((choice) => (

@@ -141,9 +141,10 @@ export const NOTIFICATIONS_SECTION_TITLE = 'Notifications';
 export const NOTIFICATIONS_SWITCH_LABEL = 'Remind me when something is due';
 export const NOTIFICATIONS_WHAT_NOTE =
   'When this is on, this phone shows a reminder when one of your recurring payments falls due or one of your ' +
-  'recurring swaps does, and an alert when the takeover check on the Inheritance screen finds that a recovery of ' +
-  'one of your accounts was started. A reminder never sends anything: each payment or swap is still sent only ' +
-  'after you confirm it in the wallet.';
+  'recurring swaps does, a notice when a price alert on your watchlist is reached, and an alert when the takeover ' +
+  'check on the Inheritance screen finds that a recovery of one of your accounts was started. A reminder never ' +
+  'sends anything: each payment or swap is still sent only after you confirm it in the wallet, and a price alert ' +
+  'never buys, sells or sends.';
 export const NOTIFICATIONS_PRIVACY_NOTE =
   'The reminders are scheduled on this phone by the wallet itself. No notification service is used and ' +
   'nothing about them leaves the device. They say only what kind of event happened, never an amount, an ' +
