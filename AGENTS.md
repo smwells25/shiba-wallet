@@ -7079,3 +7079,125 @@ item 3's TalkBack pass after; 5 last. Subagents on Opus.
       keyless rate limiting under the poll. Emulator checklist (6 steps;
       the wallet holds mainnet dust only, so P&L can show only its gap
       sentences) in the builder's report.
+- [x] Item 0 — THE CARRY-OVER LIVE LEGS: DCA REVIEW-TIME STRINGS AND
+      HOODI STAKING THROUGH THE APP (2026-10-12 03:20–04:20 UTC; Expo Go,
+      Metro worktree at a104227, 2,365 modules; no repo files edited; 5
+      prompts, each expected; no dev-EOA spending beyond the CTO's two
+      fundings; every hash status 0x1 on two RPCs per chain; screen
+      protection OFF; notes in the scratchpad p20a). PART A — DCA on
+      Account 1's Kernel (Sepolia; 0 prompts, nothing installed, funds
+      unchanged at block 11896455): (1) UNDER-FUNDED BLOCK seen live —
+      auto budget 0.013860000036, quote 0.00001 → 0.436024 USDC, minimum
+      0.414222; Review returned to the form BLOCKED with exactly "This
+      plan cannot run: after the one-time set-up fee, only
+      0.002019496197358671 test ETH could be kept back for the swaps, but
+      one swap can cost up to 0.002310000006 test ETH at today's fee. Add
+      about 0.000290503808641329 test ETH to the smart account, or set a
+      larger fee budget. Nothing was signed." (kept back + shortfall = one
+      swap's fee); a second Review blocked the same way. (2) TYPED-TINY
+      WARNING seen live — budget 0.000001: Review OPENED with the WarningBox
+      "The fee budget you entered (0.000001 test ETH) is below one swap's
+      worst-case network fee (0.002310000004 test ETH) at today's fee, so
+      your account will probably refuse the first swap and the plan will
+      not run. Set a larger fee budget unless you are sure the fee will be
+      lower." and "Start recurring swap" still offered (not tapped); max
+      fee 0.021892399489908917 (estimate + 20%), "covers about 0 of the 3
+      swaps", "Bundler gas estimate passed". (3) 1-HOUR CADENCE — Custom →
+      1 → hours ("One swap at most every 1 hour."): the review reads
+      "Swaps 0.00001 test ETH for USDC every 1 hour, 3 times, until
+      2026-10-12 07:37 UTC…", "…the first from 03:37 UTC, then one more
+      every 1 hour.", "Rate limit: … one more becoming valid every 3600
+      s…", "The last swap falls due 05:37 UTC and can be sent until 07:37
+      UTC" (the two-period grace); the 8-minute warning gone; not started.
+      PART B — HOODI STAKING IN-APP (Account 1, regular account; Home
+      "Hoodi" 0.3 test ETH, no guardians footer): the Staking screen
+      (Lido's four quotes dated 2026-10-11, Rocket Pool's no-risk-page
+      sentence and two FAQ quotes, the no-smart-account note, "Minimum
+      deposit 0.01 test ETH; deposit fee 0.05% (both read just now)").
+      (4) LIDO STAKE 0.01 → stETH (1 prompt "Stake 0.01 test ETH with Lido
+      for stETH"): "You receive ≈ 0.01 stETH", "Simulated:
+      0.009999999999999999 stETH arrive", the rebasing note ONCE, max fee
+      0.000200308546682096 (1.923786968 gwei × 104,122), the pinned line
+      "This transaction goes to Lido's stETH contract on Hoodi
+      (0x3508A952176b3c15387C97BE809eaffB1982176a), pinned by this wallet
+      from Lido's published list of deployed contracts.", success with the
+      balance note and the note field (note "p20a hoodi stake"); tx
+      0x86a62634e324f7fc21d8428d28628421343129fd7e3a9be5512d1dde64d9810c,
+      block 3799786, input 0xa1903eab, value 1e16, gasUsed 94,167 (= the
+      script run), Submitted, minted 9,999,999,999,999,999 (1 wei short),
+      TransferShares 9,683,105,263,274,833. (5) ROCKET POOL DEPOSIT 0.01 →
+      rETH (1 prompt): the deposit pool "RESOLVED FROM ROCKETSTORAGE JUST
+      NOW" = 0x425E6f83e27f1676AD78BC39dA79C2C7b33d3Fd8, "You receive ≈
+      0.009640047229956784 rETH", fee line 0.000005, max fee
+      0.000346241647561316; tx
+      0x5cfb9386b42d05e02969a6a41e419a5362f866fb901598ef2a90e960fb588635,
+      block 3799804, input 0xd0e30db0, gas 177,986, DepositReceived 1e16,
+      TokensMinted 9,640,047,229,956,784 for net 9,995,000,000,000,000 =
+      getRethValue at block−1 on both RPCs = the preview to the wei
+      (rate 1.036820646369883687). (6) rETH BURN of half
+      (0.004820023614978392) TWENTY BLOCKS AFTER THE DEPOSIT — SUCCEEDED,
+      F-72 HOLDS LIVE AGAIN (1 prompt "Redeem … rETH with Rocket Pool";
+      the pinned rETH risk line; preview "≈ 0.004997499999999999 test
+      ETH"); tx
+      0x364285f8e8f1e2601e7effe21bd5eb2940221075976ebb717776d9f77688c3ed,
+      block 3799824, input 0x42966c68, gas 137,176, Transfer A1 → 0x0,
+      TokensBurned ETH 4,997,499,999,999,999 = getEthValue at block−1.
+      (7) UNSTAKE REQUEST 0.005 stETH (2 prompts: "Approve exactly 0.005
+      stETH for Lido withdrawal queue (request)" then "Request to unstake
+      0.005 stETH with Lido"; step 2 "Approval confirmed… quoted again…",
+      preview "You receive NFT #5329", "Approval revoked", the no-cancel
+      sentence, the pinned queue line): approve tx 0xd06911b1…690b (block
+      3799845, Approval 5e15); request tx
+      0x3077a85c7ef6bd2da0c9137c467ecfd3b29d67c273d262440ead7713e836d314,
+      block 3799852, input 0xd6681042, gas 215,959, WithdrawalRequested
+      REQUEST ID 5329 (owner A1, 5e15 stETH, 4,841,552,631,637,416
+      shares), NFT #5329 minted, allowance back to 0; the card "Lido
+      withdrawal requests / REQUEST 5329 / 0.005 stETH / Waiting in Lido's
+      queue." (8) CLAIM: "Nothing to claim yet: your request is still
+      waiting in Lido's queue." — read-only at 04:12 UTC on both RPCs
+      lastFinalizedRequestId 5327; 5328 (the dev EOA's) and 5329 (A1's)
+      both unfinalised; nothing claimed; the oracle's next report ~12:03
+      UTC (a one-shot wake-up at 12:23 UTC runs hoodi-claim for 5328; A1's
+      5329 is claimed in-app at the next pass). (9) ACTIVITY on Hoodi
+      (logs fallback): "Staked 0.01 test ETH with Lido (stETH contract
+      0x3508…176a): received 0.009999999999999999 stETH" with the note;
+      "Called 0x425E…3Fd8 with 0.01 test ETH: received 0.009640047229956784
+      rETH" (generic — finding 4); "Burned rETH for test ETH with Rocket
+      Pool (rETH contract 0x7322…64F1): sent 0.004820023614978392 rETH";
+      "Requested a withdrawal from Lido (withdrawal queue contract
+      0xfe56…9186): sent 0.005 stETH, received NFT #5329…"; the approval
+      not listed (no token movement); Home on Hoodi shows stETH 0.005
+      (rebasing note) and rETH 0.00482. FUNDS: Sepolia unchanged; Hoodi A1
+      0.3 → 0.284253499485668980 ETH (nonce 5), stETH 0.005, rETH
+      0.004820023614978392 — reconciled to the wei (−0.01 −0.01 +
+      0.0049975 − fees 0.000744000514331019 over five txs). FINDINGS (fix
+      slice dispatched): (1) after the auto-fit block the fee-budget
+      field is overwritten with the fitted keep-back while the hint still
+      says it follows the suggestion; clearing it refills the fitted
+      value (cosmetic / confusing, not unsafe); (2) THE DCA THRESHOLD MAY
+      BE TOO LOW — the block and warning use 1,000,000 gas per swap while
+      the same review says the two live swaps were charged ~1.3–1.5M, so
+      a budget between 1.0M and 1.5M × fee passes the check and can still
+      be refused on-chain at the first swap; (3) "…was fixed when the plan
+      was set up" is past tense on a review before set-up; (4) the Rocket
+      Pool deposit is not recognised — the pool is RESOLVED (not pinned),
+      so the risk card is generic ("goes to a contract (0x425E…)",
+      contract age "128 blocks", "first time sending… double-check every
+      character") and Activity reads "Called 0x425E…" — both could say the
+      address came from the pinned RocketStorage; (5) the Rocket Pool lock
+      copy is STALE ("can refuse moving or redeeming rETH for 5760 blocks
+      after a deposit") given F-72; (6) previews OMIT the outgoing staking
+      token (the burn lists only the ETH received, the request only the
+      NFT and "Approval revoked") though both receipts carry the Transfer;
+      (7) the stake preview calls stETH "untracked token 0x3508…176a"
+      although it is a pinned staking token; (8) EACH DCA REVIEW SHOWS A
+      NEW SESSION KEY ADDRESS (0x4780…F30A, then 0x6Bb3…E834) — whether
+      keys from reviews that were never started stay in secure storage is
+      unverified (a leak of unused keys if so); (9) driving notes: the
+      first tap after dismissing the keyboard often misses; uiautomator
+      reports a placeholder as a field's text; ADB_CLEAR_TEXT does not
+      clear a controlled field (DEL keyevents do). NOT EXERCISED: the
+      claim (oracle), the 60-second banner clear, the recurring-payment
+      variant of the block. END STATE: Home, Ethereum Sepolia, Account 1,
+      light mode, protection OFF, IME ADBKeyboard; Metro at a104227 (the
+      next pass moves to HEAD, which carries the lock-on-launch fix).
