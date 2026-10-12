@@ -22,3 +22,18 @@ export {
   parseSimplePriceBody,
 } from './coingecko.js';
 export type { CoinGeckoConfig } from './coingecko.js';
+export {
+  COINGECKO_HISTORY_MAX_DAYS,
+  HISTORY_POINT_TOLERANCE_MS,
+  documentedGranularity,
+  fetchMarketChartRange,
+  marketChartRangeUrl,
+  nearestPricePoint,
+  parseMarketChartBody,
+} from './history.js';
+export type {
+  HistoricalPricePoint,
+  HistoryGranularity,
+  MarketChartRangeConfig,
+  MarketChartRangeRequest,
+} from './history.js';

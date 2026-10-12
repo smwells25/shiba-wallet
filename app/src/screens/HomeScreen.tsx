@@ -791,6 +791,12 @@ export function HomeScreen({ navigation }: Props) {
         }
         ListFooterComponent={
           <View>
+          {/* Phase 20 item 1: the portfolio (net worth, profit and loss) and
+              the price alerts, read-only for every kind of account. */}
+          <View style={styles.linkRow}>
+            {cardLink('portfolio', 'Portfolio: net worth and profit and loss', 'Portfolio', () => navigation.navigate('Portfolio'))}
+            {cardLink('price-alerts', 'Price alerts and watchlist', 'Price alerts', () => navigation.navigate('PriceAlerts'))}
+          </View>
           {/* Feature 12 (ADR D9): an imported Ethereum key has no Bitcoin,
               Dogecoin or Solana address; those networks are shown as not
               available rather than left out silently. Feature 10: neither

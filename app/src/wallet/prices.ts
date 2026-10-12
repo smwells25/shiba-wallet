@@ -2,11 +2,18 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   COINGECKO_BASE_URL,
   COINGECKO_DEMO_KEY_HEADER,
+  COINGECKO_HISTORY_MAX_DAYS,
+  COINGECKO_NATIVE_IDS,
+  PriceError,
+  documentedGranularity,
+  fetchMarketChartRange,
   cachedPriceProvider,
   coinGeckoPriceProvider,
   fiatValue,
   type CachedPriceProvider,
   type FetchLike,
+  type HistoricalPricePoint,
+  type HistoryGranularity,
   type PriceQuote,
   type PriceResult,
 } from '@shiba-wallet/prices';
@@ -457,4 +464,99 @@ export function formatFiat(
 export function fiatLine(display: FiatDisplay | null): string | null {
   if (!display) return null;
   return display.staleNote ? `${display.text} · ${display.staleNote}` : display.text;
+}
+
+// ---------------------------------------------------------------------------
+// Historical prices (phase 20 item 1, feature 97: profit and loss)
+// ---------------------------------------------------------------------------
+
+/**
+ * How far back CoinGecko's free (Demo / Keyless) API serves history: 365 days
+ * ("Historical data via the Demo API is restricted to the past 365 days.",
+ * docs.coingecko.com/demo/reference/coins-id-market-chart-range.md, read
+ * 2026-10-12; a 400-day range was refused live with HTTP 401, error 10012).
+ */
+export const PRICE_HISTORY_MAX_DAYS = COINGECKO_HISTORY_MAX_DAYS;
+
+/** A fetched history is reused for this long (the endpoint's documented cache is 5 minutes). */
+export const PRICE_HISTORY_CACHE_MS = 5 * 60_000;
+
+/**
+ * The CoinGecko coin id for a MAINNET native coin's CAIP-19 id, or null.
+ * Only the four mainnet native coins have a history read (the same table
+ * the spot prices use); tokens and test-network assets never do.
+ */
+export function historyCoinIdFor(assetId: string): string | null {
+  return Object.prototype.hasOwnProperty.call(COINGECKO_NATIVE_IDS, assetId) ? COINGECKO_NATIVE_IDS[assetId]! : null;
+}
+
+export type PriceHistoryResult =
+  | {
+      status: 'ok';
+      points: HistoricalPricePoint[];
+      granularity: HistoryGranularity;
+      fromSec: number;
+      toSec: number;
+      /** Unix ms when the points were fetched. */
+      fetchedAtMs: number;
+    }
+  | { status: 'unavailable'; reason: 'fiat-off' | 'unsupported' | 'out-of-range' }
+  | { status: 'failed'; message: string };
+
+const historyCache = new Map<string, { at: number; result: PriceHistoryResult & { status: 'ok' } }>();
+
+/** Drops the cached histories (tests). */
+export function resetPriceHistoryCache(): void {
+  historyCache.clear();
+}
+
+/**
+ * The USD price history of one mainnet native coin from `fromSec` to
+ * `toSec`, in ONE request to CoinGecko's /coins/{id}/market_chart/range
+ * (through the same key store and key guard as the spot prices). Nothing is
+ * requested when "Show fiat values" is off, for an asset without a coin id,
+ * or for a range that starts more than PRICE_HISTORY_MAX_DAYS days ago (the
+ * free API refuses it; the caller reports those transactions as a gap). A
+ * result is reused for PRICE_HISTORY_CACHE_MS for the same coin and the same
+ * range rounded to the hour.
+ */
+export async function fetchPriceHistory(
+  assetId: string,
+  fromSec: number,
+  toSec: number,
+  options: { enabled: boolean; store?: KeyValueStore; fetchFn?: FetchLike; now?: () => number },
+): Promise<PriceHistoryResult> {
+  if (!options.enabled) return { status: 'unavailable', reason: 'fiat-off' };
+  const coinId = historyCoinIdFor(assetId);
+  if (!coinId) return { status: 'unavailable', reason: 'unsupported' };
+  const nowMs = (options.now ?? Date.now)();
+  const nowSec = Math.floor(nowMs / 1000);
+  const from = Math.floor(fromSec / 3600) * 3600;
+  const to = Math.min(nowSec, Math.ceil(toSec / 3600) * 3600);
+  if (from < nowSec - PRICE_HISTORY_MAX_DAYS * 86_400 || to <= from) return { status: 'unavailable', reason: 'out-of-range' };
+  const cacheKey = `${coinId}|${from}|${to}`;
+  const cached = historyCache.get(cacheKey);
+  if (cached && nowMs - cached.at < PRICE_HISTORY_CACHE_MS) return cached.result;
+  const config = await getPriceConfig(options.store ?? AsyncStorage);
+  try {
+    const points = await fetchMarketChartRange(
+      { coinId, currency: PRICE_CURRENCY, fromSec: from, toSec: to },
+      { fetchFn: guardedCoinGeckoFetch(options.fetchFn), ...(config.demoApiKey ? { demoApiKey: config.demoApiKey } : {}) },
+    );
+    const result = {
+      status: 'ok' as const,
+      points,
+      granularity: documentedGranularity(from, to, nowSec),
+      fromSec: from,
+      toSec: to,
+      fetchedAtMs: nowMs,
+    };
+    historyCache.set(cacheKey, { at: nowMs, result });
+    return result;
+  } catch (e) {
+    if (e instanceof PriceError && e.kind === 'rate-limited') {
+      return { status: 'failed', message: 'CoinGecko is rate-limiting price requests from this network right now; try again in a minute.' };
+    }
+    return { status: 'failed', message: e instanceof Error ? e.message : 'The price history could not be read.' };
+  }
 }

@@ -59,6 +59,10 @@ export type RootStackParamList = {
   Inheritance: undefined;
   Multisig: undefined;
   Staking: undefined;
+  /** Net worth across the wallet's accounts and networks, with profit and loss (phase 20 item 1, features 96 and 97). */
+  Portfolio: undefined;
+  /** Watchlist and price alerts (phase 20 item 1, feature 98). */
+  PriceAlerts: undefined;
   /** Passkey signer (phase 8 item 3) for the active account's deployed Kernel account, active EVM chain. */
   Passkey: undefined;
   /**

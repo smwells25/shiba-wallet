@@ -153,6 +153,10 @@ export const WATCH_ONLY_ALLOWED_ROUTES: readonly string[] = [
   'Contacts',
   'ImportKey',
   'Receive',
+  // Phase 20 item 1: read-only by design (balances, prices and the
+  // on-device watchlist); nothing on either screen can sign.
+  'Portfolio',
+  'PriceAlerts',
 ];
 
 /**
@@ -250,6 +254,9 @@ export const MULTISIG_ALLOWED_ROUTES: readonly string[] = [
   'Settings',
   'Contacts',
   'ImportKey',
+  // Phase 20 item 1: read-only (see WATCH_ONLY_ALLOWED_ROUTES).
+  'Portfolio',
+  'PriceAlerts',
   'Receive',
   'Multisig',
 ];

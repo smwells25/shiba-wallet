@@ -57,6 +57,7 @@ import { recoveryRecordListener, wipeRecoveryData } from './recovery';
 import { forgetBrowserConnections } from './browser-sites';
 import { wipeTransactionNotes } from './notes';
 import { pendingUserOpRecorder, resetPendingRegistry } from './pending-transactions';
+import { resetPriceAlerts } from './price-alerts';
 import {
   addMultisigStoreListener,
   multisigListEntries,
@@ -1121,6 +1122,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     // The pending-transaction registry holds only hashes, nonces and fees
     // of this wallet's own broadcasts; a wipe forgets them with the rest.
     await resetPendingRegistry(AsyncStorage).catch(() => undefined);
+    // The price-alert watchlist holds only asset ids and thresholds; a
+    // wipe forgets it with the rest (CTO, phase 20 item 1).
+    await resetPriceAlerts(AsyncStorage).catch(() => undefined);
     await deleteMnemonic();
     // The public account cache (addresses only) goes with the wallet.
     await deletePublicAccounts(ALL_CACHE_INDICES);
