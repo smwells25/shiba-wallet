@@ -6733,3 +6733,94 @@ item 3's TalkBack pass after; 5 last. Subagents on Opus.
       Hermes; whether a Keystore-bound record resists a file copy on real
       hardware; TalkBack / VoiceOver on a PIN pad; the iOS app-switcher
       cover.
+- [x] Item 4 — BRIDGING PROVIDERS, RESEARCH ONLY (commit deb7f8a;
+      docs/BRIDGING.md ~9,200 words; secret scan clean; nothing sent; facts
+      from documents fetched 2026-10-12 and read-only eth_getCode /
+      eth_getStorageAt / eth_call / eth_getLogs through the PublicNode and
+      Pocket endpoints between 03:20 and 03:40 UTC, vendor APIs queried
+      read-only with a placeholder address). RANKED RECOMMENDATION — the
+      CTO's hypothesis checked, confirmed with corrections: (1) CIRCLE
+      CCTP V2 FOR USDC, FIRST SLICE: permissionless contracts at the same
+      addresses on all four networks (Ethereum Sepolia TokenMessengerV2
+      0x8FE6…2DAA, MessageTransmitterV2 0xE737…E275, TokenMinterV2
+      0xb43d…F192; code byte-identical across the four, every checked
+      implementation a Sourcify exact match), all 12 routes registered and
+      unpaused, the Iris sandbox API keyless (fees, allowance, public keys,
+      an upfront-fee quote; documented 40 req/s), depositForBurn has 7
+      FIXED-SIZE ARGUMENTS so a CallPolicy can pin all of them — the only
+      provider where that is true; standard transfers no protocol fee,
+      fast transfers 1 bp from Sepolia / 1.3 bps from the rollups; the
+      recipient is in the attested message so the mint submitter cannot
+      redirect it; CORRECTION (a) the Circle-paymaster pairing holds only
+      on Base and Arbitrum Sepolia (no code on OP Sepolia; unusable on
+      Ethereum Sepolia per phase 13); CORRECTION (b) the paymaster cannot
+      pay for the FIRST mint on a destination — it takes its fee during
+      validation, before the mint runs — so someone with gas there, or
+      Circle's Forwarding Service, must submit it; TRUST: every mint needs
+      both of Circle's 2 attesters (2-of-2); on Sepolia and Ethereum
+      mainnet the proxy admins, owner, denylister, pausers and attester
+      manager hold no code (EOAs / off-chain keys); the denylist checks
+      tx.origin, which for a UserOperation is the bundler. (2) ACROSS FOR
+      ETH, SECOND: SpokePools on all four (Sourcify exact on the three
+      rollups, partial on Sepolia), a keyless testnet API returning routes
+      for USDC / ETH / WETH (a 5 USDC quote ~0.095%, ~10 s fill); CAVEATS:
+      testnet relayers cap ~8.0 USDC / 0.0031 ETH; Sepolia settlement is
+      a demonstration (HubPool 601 s challenge window, 1-wei bond, EOA
+      owner; mainnet a 3-of-5 Safe); the API returns an UNLIMITED approval
+      the wallet must replace with an exact one; `depositor` is a free
+      argument carrying refund and speed-up rights, so a CallPolicy must
+      pin depositor AND recipient to the account, and `message` cannot be
+      pinned; THE ERC-7683 HALF IS REFUTED FOR NOW — AcrossOriginSettler
+      has no code on any of the four testnets, is documented only on Base
+      and Arbitrum mainnet, and ERC-7683 is still Draft with a text that
+      replaces the interface Across implements → feature 36 stays Not
+      started. (3) NATIVE ROLLUP BRIDGES: trust-minimised for ETH between
+      Ethereum Sepolia and ONE rollup only (never rollup to rollup);
+      cannot carry Circle's USDC (the native USDC on Base / OP Sepolia
+      reverts on remoteToken() / l1Token(); Arbitrum's router maps Sepolia
+      USDC to a different bridged token 0x119f0E63…); OP Sepolia
+      withdrawals ≥ 7 days (proofMaturityDelaySeconds 604,800 —
+      contradicting OP's docs "shorter on test networks") plus a 3.5-day
+      finality delay; smart-account traps: OP's depositETH is onlyEOA (use
+      depositETHTo), Arbitrum's depositEth from a contract or a 7702
+      account credits an ALIASED address. (4) AGGREGATORS, LATER (price
+      comparison only until a decoder exists; calldata unpinnable, as
+      SCHEDULED_PAYMENTS §4.2 found for 0x): LI.FI serves all four
+      testnets keyless (75 quotes / 2 h; routed the test transfer through
+      Across inside 1,444 bytes of opaque calldata, +0.25% fee); Socket
+      lists no testnets and has no code on the four; Relay covers only
+      Sepolia and Base Sepolia, its deposit carries only an order id (the
+      receive is promised off-chain), screens addresses, no automatic
+      refund on a blocked fill. (5) STARGATE/LAYERZERO AND WORMHOLE: not a
+      fit (Stargate's security = its configured LayerZero verifier set and
+      its testnet pools hold their own test tokens, not Circle's USDC;
+      Wormhole a 13-of-19 guardian multisig). DOC GAP: Arbitrum's docs
+      list the Arbitrum Sepolia rollup as 0xd808…81C8, which reads PAUSED;
+      the Bridge and Outbox point to 0x042B…0Cf4 (confirms every 20
+      blocks). OTHER FACTS: Base Sepolia's portal and AnchorStateRegistry
+      delays read 0 with the real window in game type 621 (not read);
+      TokenMinterV2 burn limit 10M USDC, USDC isMinter true. LIVE PROOF
+      NEEDED (§11): 1–2 USDC per leg from the dev EOA's ~20 on each
+      network plus test ETH on the destination for the mint (none on OP
+      Sepolia at the time — now 0.0949 after item 0a); burn = exact
+      approve + depositForBurn(1e6, 3, self, USDC, 0, 0, 2000) on Base
+      Sepolia; attestation GET iris-api-sandbox …/v2/messages/6?
+      transactionHash=…; mint = receiveMessage on Arbitrum Sepolia; a
+      smart-account leg with the fee in USDC; negatives (a replayed mint
+      and a burn with maxFee ≥ amount must revert); verify events, exact
+      balance and supply deltas, attestation time. DECISIONS FOR THE
+      CHAIRPERSON: the provider; whether Circle's trust is acceptable for
+      bridging as for the paymaster; whether a keyed API is acceptable on
+      mainnet (CCTP needed none; Across, Relay, Socket need keys or
+      allow-listing in production); Fast Transfer / Forwarding Service vs
+      free slow Standard Transfers; verifying the mainnet addresses (only
+      Ethereum mainnet read); whether feature 36 waits for a settler on
+      the current draft. COULD NOT VERIFY (§14): how Circle secures its
+      EOA-held roles and which commits the CCTP audits cover; testnet
+      attestation times; whether the Across testnet dataworker runs
+      bundles (so whether testnet refunds execute); whether Kernel
+      implements handleV3AcrossMessage; the settler on Base / Arbitrum
+      mainnet; Base Sepolia's real withdrawal window; Arbitrum Sepolia's
+      proxy-admin owners; OP's isSenderEOA with a 7702 account; LI.FI's
+      facets and who can change them; Relay's Zellic audit (404);
+      docs.stargate.finance (connection reset; GitBook copy used).
