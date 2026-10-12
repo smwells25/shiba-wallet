@@ -1,11 +1,21 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { AppState, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, StyleSheet, Text, View } from 'react-native';
 import { Button } from '../components';
 import { useTheme } from '../theme';
 import { usePrefs } from '../wallet/PrefsContext';
 import { useWallet } from '../wallet/WalletContext';
 import { localAuthAvailable, requireLocalAuth } from '../wallet/biometric';
-import { INITIAL_LOCK_STATE, reduceLock, type LockState } from '../wallet/lock';
+import {
+  INITIAL_LOCK_GATE_STATE,
+  applyLockGateEvent,
+  attemptUnlock,
+  lockGateArmed,
+  lockGateView,
+  lockScreenHint,
+  reconcileLockGate,
+  type LockGateInputs,
+  type LockGateState,
+} from '../wallet/lock';
 
 /**
  * Whether the lock overlay is currently up. Consumers that can surface
@@ -32,12 +42,22 @@ export function useAppLock(): { locked: boolean } {
  * The gate only arms when ALL of these hold:
  *  - a wallet exists (status 'ready' — onboarding has nothing to protect),
  *  - the user chose a threshold in Settings (autoLockMs != null),
- *  - the device can actually prompt (localAuthAvailable — otherwise the
- *    setting is hidden in Settings and this gate stays inert).
+ *  - the device has not said it cannot prompt (localAuthAvailable —
+ *    otherwise the setting is hidden in Settings and this gate stays
+ *    inert; while the answer is still pending the gate counts as armed, so
+ *    it fails closed).
  *
- * The lock decision itself is the pure reducer in ../wallet/lock.ts,
- * exercised transition-by-transition in scripts/check-devmode.mjs; this
- * component only feeds it AppState events.
+ * LOCK ON LAUNCH (F-77(b)): with auto-lock on the wallet STARTS locked, so
+ * a swiped-away or killed app no longer reopens unlocked. The decision is
+ * taken once, while rendering, the first time the wallet status and the
+ * stored preferences are both known; until then a loaded wallet sits under
+ * a neutral cover, so no frame of a wallet screen is drawn first. See the
+ * rule and its reasons in ../wallet/lock.ts.
+ *
+ * Every decision is a pure function in ../wallet/lock.ts (reduceLock,
+ * reconcileLockGate, lockGateView, attemptUnlock), exercised in
+ * scripts/check-devmode.mjs; this component only feeds them AppState
+ * events and its inputs.
  *
  * NOTE: the OS biometric prompt itself fires 'inactive'/'background'
  * AppState events on some platforms. That is harmless here: the away
@@ -47,9 +67,10 @@ export function useAppLock(): { locked: boolean } {
 export function LockGate({ children }: { children: React.ReactNode }) {
   const theme = useTheme();
   const { status } = useWallet();
-  const { autoLockMs } = usePrefs();
-  const [available, setAvailable] = useState(false);
-  const [lock, setLock] = useState<LockState>(INITIAL_LOCK_STATE);
+  const { autoLockMs, ready: prefsReady } = usePrefs();
+  // null until the device has answered: the gate fails closed meanwhile.
+  const [available, setAvailable] = useState<boolean | null>(null);
+  const [gate, setGate] = useState<LockGateState>(INITIAL_LOCK_GATE_STATE);
   const [unlockError, setUnlockError] = useState<string | null>(null);
   const unlockBusy = useRef(false);
 
@@ -73,24 +94,25 @@ export function LockGate({ children }: { children: React.ReactNode }) {
     };
   }, [autoLockMs]);
 
-  const armed = status === 'ready' && available && autoLockMs !== null;
+  const inputs: LockGateInputs = { walletStatus: status, prefsReady, autoLockMs, available };
+  const armed = lockGateArmed(inputs);
 
-  // Disarming (threshold set to off, wallet wiped) also clears any pending
-  // timer so a later re-arm starts fresh. The reset runs while rendering
-  // whenever the arming inputs change and the gate ends up disarmed (React's
-  // "adjust state when a prop changes" pattern); the effect below only
-  // manages the AppState subscription.
-  const [armedFor, setArmedFor] = useState({ armed, autoLockMs });
-  if (armedFor.armed !== armed || armedFor.autoLockMs !== autoLockMs) {
-    setArmedFor({ armed, autoLockMs });
-    if (!armed) setLock(INITIAL_LOCK_STATE);
-  }
+  // Takes the launch decision (once) and, while disarmed (threshold set to
+  // off, wallet wiped, no biometrics), clears any lock and pending timer so
+  // a later re-arm starts fresh. It runs WHILE RENDERING (React's "adjust
+  // state when a prop changes" pattern): React re-renders with the new state
+  // before committing, so the render that first sees a loaded wallet with
+  // auto-lock on commits the lock screen, never the screens. The function
+  // returns the same object when nothing changes, so this cannot loop. The
+  // effect below only manages the AppState subscription.
+  const reconciled = reconcileLockGate(gate, inputs);
+  if (reconciled !== gate) setGate(reconciled);
 
   useEffect(() => {
     if (!armed) return;
     const subscription = AppState.addEventListener('change', (nextStatus) => {
-      setLock((prev) =>
-        reduceLock(prev, { type: 'app-state', status: nextStatus, now: Date.now() }, autoLockMs),
+      setGate((prev) =>
+        applyLockGateEvent(prev, { type: 'app-state', status: nextStatus, now: Date.now() }, autoLockMs),
       );
     });
     return () => subscription.remove();
@@ -101,13 +123,16 @@ export function LockGate({ children }: { children: React.ReactNode }) {
     unlockBusy.current = true;
     setUnlockError(null);
     try {
-      const outcome = await requireLocalAuth('Unlock Shiba Wallet');
-      if (outcome.ok) {
-        // gated:false means biometrics/enrollment vanished while locked;
-        // requireLocalAuth's documented matrix proceeds ungated there (the
-        // OS device lock remains the real protection), so the overlay
-        // lifts rather than bricking the wallet.
-        setLock((prev) => reduceLock(prev, { type: 'unlock' }, autoLockMs));
+      // One device prompt, with no approval-target override: the target is
+      // the one WalletContext set for the active account (never the phrase
+      // for a watch-only or multisig account).
+      const outcome = await attemptUnlock(requireLocalAuth);
+      if (outcome.unlocked) {
+        // A pass without a prompt (biometrics/enrollment vanished while
+        // locked) also lifts the overlay: requireLocalAuth's documented
+        // matrix proceeds ungated there (the OS device lock remains the real
+        // protection), rather than bricking the wallet.
+        setGate((prev) => applyLockGateEvent(prev, { type: 'unlock' }, autoLockMs));
       } else {
         setUnlockError(outcome.message);
       }
@@ -116,7 +141,11 @@ export function LockGate({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const locked = armed && lock.locked;
+  const view = lockGateView(reconciled, inputs);
+  // `locked` = anything covers the screens (the lock screen, or the neutral
+  // cover before the launch decision): the screens are hidden from view and
+  // from accessibility, and useAppLock holds approvals, in both cases.
+  const locked = view !== 'screens';
   const lockValue = React.useMemo(() => ({ locked }), [locked]);
 
   return (
@@ -162,17 +191,24 @@ export function LockGate({ children }: { children: React.ReactNode }) {
           {children}
         </View>
         {locked ? (
-          <View style={[styles.overlay, { backgroundColor: theme.background }]}>
-            <Text style={[styles.title, { color: theme.text }]}>Shiba Wallet is locked</Text>
-            <Text style={[styles.hint, { color: theme.textMuted }]}>
-              The app locked itself after being in the background. Your keys
-              never left the device&apos;s secure storage.
-            </Text>
-            <Button title="Unlock" onPress={() => void unlock()} style={styles.button} />
-            {unlockError ? (
-              <Text style={[styles.error, { color: theme.danger }]}>{unlockError}</Text>
-            ) : null}
-          </View>
+          view === 'lock' ? (
+            <View style={[styles.overlay, { backgroundColor: theme.background }]}>
+              <Text style={[styles.title, { color: theme.text }]}>Shiba Wallet is locked</Text>
+              <Text style={[styles.hint, { color: theme.textMuted }]}>
+                {lockScreenHint(reconciled.startedLocked)}
+              </Text>
+              <Button title="Unlock" onPress={() => void unlock()} style={styles.button} />
+              {unlockError ? (
+                <Text style={[styles.error, { color: theme.danger }]}>{unlockError}</Text>
+              ) : null}
+            </View>
+          ) : (
+            // The launch decision is pending (the stored auto-lock choice is
+            // not read yet): a neutral cover like the app's own loading view.
+            <View style={[styles.overlay, { backgroundColor: theme.background }]}>
+              <ActivityIndicator size="large" color={theme.accent} />
+            </View>
+          )
         ) : null}
       </View>
     </LockStateContext.Provider>

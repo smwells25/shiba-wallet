@@ -175,6 +175,289 @@ const at = (type, status, now) => ({ type, status, now });
 }
 
 // ---------------------------------------------------------------------------
+// 1b. Lock on launch (F-77(b); docs/DURESS_WALLET.md 5.2 Stage 0)
+// ---------------------------------------------------------------------------
+// With auto-lock on the wallet STARTS locked; with it off it starts unlocked.
+// The component's render is simulated with the same pure functions LockGate
+// calls while rendering (reconcileLockGate, then lockGateView on the result),
+// over every order in which the three launch inputs can arrive, and the
+// source pins below hold LockGate to exactly that use. Mutants of lock.ts are
+// written to a temporary directory and must each fail.
+{
+  const lockMod = await import('../src/wallet/lock.ts');
+  const { readFileSync: readLockFs, writeFileSync: writeLockFs, mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join: joinPath } = await import('node:path');
+  const { pathToFileURL } = await import('node:url');
+  const lockSource = readLockFs(new globalThis.URL('../src/wallet/lock.ts', import.meta.url), 'utf8');
+  const mutantDir = mkdtempSync(joinPath(tmpdir(), 'shiba-lock-mutants-'));
+  let mutantCount = 0;
+  const lockMutant = async (from, to) => {
+    if (!lockSource.includes(from)) throw new Error(`lock.ts mutation anchor missing: ${from}`);
+    mutantCount += 1;
+    const file = joinPath(mutantDir, `lock-${mutantCount}.ts`);
+    writeLockFs(file, lockSource.replace(from, to));
+    return import(pathToFileURL(file).href);
+  };
+
+  console.log('\nlock on launch:');
+  const LAUNCH_HINT = "Auto-lock is on, so the wallet starts locked. Your keys never left the device's secure storage.";
+  const BACKGROUND_HINT = "The app locked itself after being in the background. Your keys never left the device's secure storage.";
+  const base = { walletStatus: 'loading', prefsReady: false, autoLockMs: null, available: null };
+
+  // Every order of the three asynchronous arrivals at launch: the wallet's
+  // status ('ready'), the stored preferences (with the stored threshold) and
+  // the device's biometric answer. Returns the view of every render.
+  const ARRIVALS = ['wallet', 'prefs', 'device'];
+  const permutations = (xs) => (xs.length <= 1 ? [xs] : xs.flatMap((x, i) => permutations([...xs.slice(0, i), ...xs.slice(i + 1)]).map((rest) => [x, ...rest])));
+  const launch = (mod, { stored, device = true, wallet = 'ready' }, order) => {
+    let inputs = { ...base };
+    let gate = mod.INITIAL_LOCK_GATE_STATE;
+    const frames = [];
+    const render = () => {
+      gate = mod.reconcileLockGate(gate, inputs);
+      frames.push({ inputs: { ...inputs }, view: mod.lockGateView(gate, inputs), gate });
+    };
+    render();
+    for (const step of order) {
+      if (step === 'wallet') inputs = { ...inputs, walletStatus: wallet };
+      if (step === 'prefs') inputs = { ...inputs, prefsReady: true, autoLockMs: stored };
+      if (step === 'device') inputs = { ...inputs, available: device };
+      render();
+    }
+    return { frames, gate, inputs, final: frames[frames.length - 1].view };
+  };
+  const everyOrder = (mod, opts) => permutations(ARRIVALS).map((order) => ({ order, ...launch(mod, opts, order) }));
+
+  // The properties every correct gate has; mutants must break at least one.
+  const lockOnLaunchHolds = (mod) => {
+    const on = everyOrder(mod, { stored: 60_000 });
+    const neverScreensOn = on.every((r) => r.frames.every((f) => f.inputs.walletStatus !== 'ready' || f.view !== 'screens'));
+    const endsLocked = on.every((r) => r.final === 'lock' && r.gate.startedLocked === true);
+    // The first render that knows both the wallet and the stored choice is
+    // the lock screen, whether or not the device has answered yet.
+    const firstKnownIsLock = on.every((r) => {
+      const f = r.frames.find((x) => x.inputs.walletStatus === 'ready' && x.inputs.prefsReady);
+      return f?.view === 'lock';
+    });
+    const five = everyOrder(mod, { stored: 300_000 }).every((r) => r.final === 'lock');
+    return { neverScreensOn, endsLocked, firstKnownIsLock, five };
+  };
+  const unlockedWhenOffHolds = (mod) => {
+    const off = everyOrder(mod, { stored: null });
+    const endsScreens = off.every((r) => r.final === 'screens');
+    const neverLock = off.every((r) => r.frames.every((f) => f.view !== 'lock'));
+    // Off: the screens show as soon as wallet and preferences are known,
+    // without waiting for the device's answer.
+    const noWaitForDevice = off.every((r) => {
+      const f = r.frames.find((x) => x.inputs.walletStatus === 'ready' && x.inputs.prefsReady);
+      return f?.view === 'screens';
+    });
+    return { endsScreens, neverLock, noWaitForDevice };
+  };
+  const all = (o) => Object.values(o).every(Boolean);
+
+  {
+    const d = lockMod.launchLockDecision;
+    check('decision: still loading → pending', d({ ...base }) === 'pending');
+    check('decision: no wallet (onboarding) → unlocked, whatever the stored choice',
+      d({ ...base, walletStatus: 'no-wallet' }) === 'unlocked' && d({ ...base, walletStatus: 'no-wallet', prefsReady: true, autoLockMs: 60_000 }) === 'unlocked');
+    check('decision: wallet loaded but preferences not read yet → pending (never a guess)', d({ ...base, walletStatus: 'ready' }) === 'pending');
+    check('decision: auto-lock off → unlocked', d({ ...base, walletStatus: 'ready', prefsReady: true, autoLockMs: null, available: true }) === 'unlocked');
+    check('decision: auto-lock 1 min / 5 min → locked, whatever the device has answered so far',
+      [60_000, 300_000].every((ms) => [null, true, false].every((available) => d({ ...base, walletStatus: 'ready', prefsReady: true, autoLockMs: ms, available }) === 'locked')));
+    const armed = lockMod.lockGateArmed;
+    check('armed: fails closed while the device has not answered; disarmed when it says no biometrics',
+      armed({ ...base, walletStatus: 'ready', prefsReady: true, autoLockMs: 60_000, available: null }) === true &&
+        armed({ ...base, walletStatus: 'ready', prefsReady: true, autoLockMs: 60_000, available: false }) === false &&
+        armed({ ...base, walletStatus: 'ready', prefsReady: true, autoLockMs: null, available: true }) === false &&
+        armed({ ...base, walletStatus: 'no-wallet', prefsReady: true, autoLockMs: 60_000, available: true }) === false);
+    check('INITIAL_LOCK_STATE (auto-lock off, and after a disarm) is still unlocked', INITIAL_LOCK_STATE.locked === false && INITIAL_LOCK_STATE.backgroundedAt === null);
+  }
+
+  {
+    const onProps = lockOnLaunchHolds(lockMod);
+    check('auto-lock on: no render shows the screens once the wallet is loaded, in all 6 arrival orders', onProps.neverScreensOn);
+    check('auto-lock on: every launch ends on the lock screen with the launch sentence', onProps.endsLocked);
+    check('auto-lock on: the first render that knows the wallet and the stored choice IS the lock screen (even before the device answers)', onProps.firstKnownIsLock);
+    check('auto-lock 5 min: also starts locked (any duration)', onProps.five);
+    const first = launch(lockMod, { stored: 60_000 }, []);
+    // Everything known at the very first render (the fastest launch).
+    let g = lockMod.reconcileLockGate(lockMod.INITIAL_LOCK_GATE_STATE, { walletStatus: 'ready', prefsReady: true, autoLockMs: 60_000, available: null });
+    check('auto-lock on: with every input known at mount, the FIRST render is the lock screen',
+      lockMod.lockGateView(g, { walletStatus: 'ready', prefsReady: true, autoLockMs: 60_000, available: null }) === 'lock' && g.lock.locked === true && first.frames[0].view === 'screens');
+    const offProps = unlockedWhenOffHolds(lockMod);
+    check('auto-lock off: every launch ends on the screens, unlocked, in all 6 arrival orders', offProps.endsScreens);
+    check('auto-lock off: the lock screen never appears at launch', offProps.neverLock);
+    check('auto-lock off: the screens show as soon as wallet and preferences are known (no wait for the device)', offProps.noWaitForDevice);
+    check('while the stored choice is unknown, a loaded wallet sits under the neutral cover (not the screens, not the lock)',
+      launch(lockMod, { stored: null }, ['wallet']).final === 'cover' && launch(lockMod, { stored: 60_000 }, ['wallet', 'device']).final === 'cover');
+    check('no biometrics on the device: the gate stays inert (unlocked), as before',
+      everyOrder(lockMod, { stored: 60_000, device: false }).every((r) => r.final === 'screens' && r.gate.lock.locked === false));
+    const onboarding = launch(lockMod, { stored: 60_000, wallet: 'no-wallet' }, ['wallet', 'prefs', 'device']);
+    let created = { ...onboarding.inputs, walletStatus: 'ready' };
+    const afterCreate = lockMod.reconcileLockGate(onboarding.gate, created);
+    check('onboarding is never covered, and a wallet created in this session is not locked at once (the user is present)',
+      onboarding.frames.every((f) => f.view === 'screens') && lockMod.lockGateView(afterCreate, created) === 'screens');
+
+    // After the launch lock: AppState events and the unlock.
+    const on = launch(lockMod, { stored: 60_000 }, ['prefs', 'device', 'wallet']);
+    g = on.gate;
+    const inp = on.inputs;
+    g = lockMod.applyLockGateEvent(g, at('app-state', 'active', 1_000), 60_000);
+    g = lockMod.applyLockGateEvent(g, at('app-state', 'background', 2_000), 60_000);
+    g = lockMod.applyLockGateEvent(g, at('app-state', 'active', 2_500), 60_000);
+    check('the launch lock survives AppState changes (only the unlock lifts it)', lockMod.lockGateView(g, inp) === 'lock');
+    check('the lock screen sentence at launch is the launch sentence', lockMod.lockScreenHint(g.startedLocked) === LAUNCH_HINT);
+    g = lockMod.applyLockGateEvent(g, { type: 'unlock' }, 60_000);
+    check('unlock → the screens, the launch flag cleared', lockMod.lockGateView(g, inp) === 'screens' && g.startedLocked === false && g.launched === true);
+    check('…and reconciling again does not re-lock (the launch decision is taken once)', lockMod.reconcileLockGate(g, inp) === g);
+    g = lockMod.applyLockGateEvent(g, at('app-state', 'background', 10_000), 60_000);
+    g = lockMod.applyLockGateEvent(g, at('app-state', 'active', 70_000), 60_000);
+    check('a later background lock still works, with the background sentence (unchanged)',
+      lockMod.lockGateView(g, inp) === 'lock' && lockMod.lockScreenHint(g.startedLocked) === BACKGROUND_HINT);
+    const disarmed = lockMod.reconcileLockGate(on.gate, { ...inp, available: false });
+    check('a launch lock lifts if the device turns out unable to prompt (inert gate, as before)',
+      lockMod.lockGateView(disarmed, { ...inp, available: false }) === 'screens' && disarmed.lock.locked === false);
+    check('reconcile returns the same object when nothing changes (safe to call while rendering)',
+      lockMod.reconcileLockGate(on.gate, inp) === on.gate);
+  }
+
+  // The unlock: one device check, no approval-target override.
+  {
+    const calls = [];
+    const fake = (outcome) => async (...args) => {
+      calls.push(args);
+      return outcome;
+    };
+    const ok = await lockMod.attemptUnlock(fake({ ok: true, gated: true }));
+    check('unlock: exactly ONE device check, titled "Unlock Shiba Wallet", with no target argument',
+      ok.unlocked === true && calls.length === 1 && calls[0].length === 1 && calls[0][0] === 'Unlock Shiba Wallet' && lockMod.UNLOCK_PROMPT === 'Unlock Shiba Wallet', JSON.stringify(calls));
+    const cancelled = await lockMod.attemptUnlock(fake({ ok: false, message: 'Authentication cancelled.' }));
+    check('unlock: a cancel keeps the lock and shows the device check\'s message', cancelled.unlocked === false && cancelled.message === 'Authentication cancelled.');
+    const ungated = await lockMod.attemptUnlock(fake({ ok: true, gated: false }));
+    check('unlock: a pass without a prompt (biometrics vanished) still lifts the lock (unchanged)', ungated.unlocked === true);
+
+    // With the real key vault behind it: the target WalletContext set for
+    // the active account decides what the check opens. A watch-only or
+    // multisig account (target none) opens NOTHING; a phrase account reads
+    // the secure store (the comparison is meaningful).
+    const { createKeyVault } = await import('../src/wallet/storage.ts');
+    const { approvalTargetFor } = await import('../src/wallet/account-ids.ts');
+    const TEST_MNEMONIC = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+    const countingBackend = () => {
+      const items = new Map();
+      const counts = { get: 0 };
+      const key = (k, o) => `${o?.keychainService ?? 'default'}|${k}`;
+      return {
+        counts,
+        whenUnlockedThisDeviceOnly: 5,
+        async getItemAsync(k, o) { counts.get += 1; return items.has(key(k, o)) ? items.get(key(k, o)) : null; },
+        async setItemAsync(k, v, o) { items.set(key(k, o), v); },
+        async deleteItemAsync(k, o) { items.delete(key(k, o)); },
+        canUseBiometricAuthentication: () => false,
+      };
+    };
+    const unlockReads = async (mod, accountId) => {
+      const backend = countingBackend();
+      const vault = createKeyVault(backend, { policy: 'off' });
+      await vault.saveNewPhrase(TEST_MNEMONIC);
+      vault.setApprovalTarget(approvalTargetFor(accountId));
+      backend.counts.get = 0;
+      let deviceChecks = 0;
+      // The first step of requireLocalAuth (wallet/biometric.ts): the vault
+      // gate with the caller's arguments passed through unchanged.
+      const auth = async (prompt, ...rest) => {
+        deviceChecks += 1;
+        await vault.openPhraseForApproval(prompt, ...rest);
+        return { ok: true, gated: true };
+      };
+      const result = await mod.attemptUnlock(auth);
+      return { unlocked: result.unlocked, reads: backend.counts.get, deviceChecks };
+    };
+    const WATCH = 0xc0000000;
+    const MULTISIG = 0xd0000000;
+    const w = await unlockReads(lockMod, WATCH);
+    const m = await unlockReads(lockMod, MULTISIG);
+    const p = await unlockReads(lockMod, 0);
+    check('unlock while a watch-only account is active: ZERO secure-store reads (the phrase is not opened)', w.unlocked && w.reads === 0 && w.deviceChecks === 1, JSON.stringify(w));
+    check('unlock while a multisig is active: ZERO secure-store reads', m.unlocked && m.reads === 0 && m.deviceChecks === 1, JSON.stringify(m));
+    check('…while a phrase account\'s unlock reads the secure store (unchanged)', p.unlocked && p.reads >= 1 && p.deviceChecks === 1, JSON.stringify(p));
+
+    const phraseOverride = await lockMutant('  const outcome = await auth(UNLOCK_PROMPT);', "  const outcome = await (auth as any)(UNLOCK_PROMPT, { kind: 'phrase' });");
+    const mw = await unlockReads(phraseOverride, WATCH);
+    check('mutant caught: an unlock that forces the phrase target opens the phrase for a watch-only account', mw.reads >= 1, JSON.stringify(mw));
+    const twice = await lockMutant('  const outcome = await auth(UNLOCK_PROMPT);', '  await auth(UNLOCK_PROMPT);\n  const outcome = await auth(UNLOCK_PROMPT);');
+    const tw = await unlockReads(twice, 0);
+    check('mutant caught: an unlock that asks the device twice', tw.deviceChecks === 2);
+  }
+
+  // Mutants of the launch rule.
+  {
+    const DECISION = "  return inputs.autoLockMs !== null ? 'locked' : 'unlocked';";
+    const startsUnlocked = await lockMutant(DECISION, "  return 'unlocked';");
+    check('mutant caught: starting UNLOCKED with auto-lock on (the old behaviour)', !all(lockOnLaunchHolds(startsUnlocked)), JSON.stringify(lockOnLaunchHolds(startsUnlocked)));
+    const alwaysLockedSrc = lockSource
+      .replace(DECISION, "  return 'locked';")
+      .replace('inputs.walletStatus === \'ready\' && inputs.autoLockMs !== null && inputs.available !== false', "inputs.walletStatus === 'ready' && inputs.available !== false");
+    check('mutation anchors present (always-locked mutant)', alwaysLockedSrc !== lockSource && (alwaysLockedSrc.match(/return 'locked';/g) ?? []).length === 1);
+    mutantCount += 1;
+    const alwaysFile = joinPath(mutantDir, `lock-${mutantCount}.ts`);
+    writeLockFs(alwaysFile, alwaysLockedSrc);
+    const alwaysLocked = await import(pathToFileURL(alwaysFile).href);
+    check('mutant caught: starting LOCKED with auto-lock off (lock whatever the setting)', !all(unlockedWhenOffHolds(alwaysLocked)), JSON.stringify(unlockedWhenOffHolds(alwaysLocked)));
+    const stuckCover = await lockMutant(DECISION, "  return inputs.autoLockMs !== null ? 'locked' : 'pending';");
+    check('mutant caught: a launch with auto-lock off that stays covered', !all(unlockedWhenOffHolds(stuckCover)));
+    const noPrefsWait = await lockMutant("  if (!inputs.prefsReady) return 'pending';\n", '');
+    check('mutant caught: deciding before the stored choice is read (the wallet-before-preferences race shows Home)',
+      !all(lockOnLaunchHolds(noPrefsWait)), JSON.stringify(lockOnLaunchHolds(noPrefsWait)));
+    const noCover = await lockMutant("  if (!state.launched) return inputs.walletStatus === 'ready' ? 'cover' : 'screens';", "  if (!state.launched) return 'screens';");
+    check('mutant caught: no cover while the decision is pending (a frame of the screens)', !all(lockOnLaunchHolds(noCover)));
+    const needsDevice = await lockMutant('inputs.available !== false;', 'inputs.available === true;');
+    check('mutant caught: waiting for the device\'s answer before showing the lock (fails open meanwhile)', !all(lockOnLaunchHolds(needsDevice)));
+    const sticky = await lockMutant('    return { launched: true, lock, startedLocked: false };', '    return { ...state, lock: LAUNCH_LOCKED_STATE };');
+    const sg = sticky.applyLockGateEvent(launch(sticky, { stored: 60_000 }, ['wallet', 'prefs', 'device']).gate, { type: 'unlock' }, 60_000);
+    check('mutant caught: an unlock that does not lift the launch lock', sticky.lockGateView(sg, { walletStatus: 'ready', prefsReady: true, autoLockMs: 60_000, available: true }) === 'lock');
+  }
+  rmSync(mutantDir, { recursive: true, force: true });
+
+  // LockGate must apply exactly those functions, while rendering.
+  {
+    const gateSrc = readLockFs(new globalThis.URL('../src/components/LockGate.tsx', import.meta.url), 'utf8');
+    const renderPin = (src) => {
+      const reconcileAt = src.indexOf('  const reconciled = reconcileLockGate(gate, inputs);\n  if (reconciled !== gate) setGate(reconciled);\n');
+      const firstEffectAfter = src.indexOf('useEffect(', reconcileAt);
+      const lastEffectBefore = src.lastIndexOf('useEffect(', reconcileAt);
+      const closeBefore = src.lastIndexOf('}, [autoLockMs]);', reconcileAt);
+      return reconcileAt > 0 && firstEffectAfter > reconcileAt && closeBefore > lastEffectBefore &&
+        src.includes('const inputs: LockGateInputs = { walletStatus: status, prefsReady, autoLockMs, available };') &&
+        src.includes('const { autoLockMs, ready: prefsReady } = usePrefs();') &&
+        src.includes('useState<boolean | null>(null);') &&
+        src.includes('const view = lockGateView(reconciled, inputs);') &&
+        src.includes("const locked = view !== 'screens';") &&
+        src.includes('const lockValue = React.useMemo(() => ({ locked }), [locked]);') &&
+        /\{locked \? \(\s*view === 'lock' \? \(\s*<View[^>]*>\s*<Text[^>]*>Shiba Wallet is locked<\/Text>\s*<Text[^>]*>\s*\{lockScreenHint\(reconciled\.startedLocked\)\}/.test(src) &&
+        src.includes('applyLockGateEvent(prev, { type: \'app-state\', status: nextStatus, now: Date.now() }, autoLockMs)') &&
+        src.includes("applyLockGateEvent(prev, { type: 'unlock' }, autoLockMs)") &&
+        src.includes('const outcome = await attemptUnlock(requireLocalAuth);') &&
+        !/requireLocalAuth\(/.test(src) &&
+        !src.includes('INITIAL_LOCK_STATE');
+    };
+    check('LockGate: decides while rendering (not in an effect), from the wallet status, the stored preferences and the device answer', renderPin(gateSrc));
+    const oldRule = gateSrc.replace("const locked = view !== 'screens';", 'const locked = armed && reconciled.lock.locked;');
+    check('mutant caught: the old "locked = armed && lock.locked" rule (no cover, no hold before the decision)', oldRule !== gateSrc && !renderPin(oldRule));
+    const inEffect = gateSrc.replace('  const reconciled = reconcileLockGate(gate, inputs);\n  if (reconciled !== gate) setGate(reconciled);\n',
+      '  const reconciled = gate;\n  useEffect(() => {\n    setGate((g) => reconcileLockGate(g, inputs));\n  });\n');
+    check('mutant caught: deciding in an effect (one committed frame of the screens first)', inEffect !== gateSrc && !renderPin(inEffect));
+    const directPrompt = gateSrc.replace('const outcome = await attemptUnlock(requireLocalAuth);', "const outcome = await attemptUnlock((p) => requireLocalAuth(p, { kind: 'phrase' }));");
+    check('mutant caught: the lock screen overriding the approval target', directPrompt !== gateSrc && !renderPin(directPrompt));
+    const settingsSrc = readLockFs(new globalThis.URL('../src/screens/SettingsScreen.tsx', import.meta.url), 'utf8');
+    check('Settings: the auto-lock hint says the wallet also starts locked while auto-lock is on',
+      /While auto-lock is on,\s+the wallet also starts locked every time it is opened afresh\s+\(after it was closed, swiped away or stopped by the system\)\./.test(settingsSrc));
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 2. Preference store + privacy mask (src/config/prefs.ts)
 // ---------------------------------------------------------------------------
 
