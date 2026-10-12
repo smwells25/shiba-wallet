@@ -6967,3 +6967,115 @@ item 3's TalkBack pass after; 5 last. Subagents on Opus.
       10-minute retry line live; the preview from a real undeployed
       multisig; the new cards' layout and TalkBack. Emulator checklist
       (10 steps) in the builder's report.
+- [x] Item 1 — THE EVERYDAY PORTFOLIO LAYER: dashboard, profit and loss,
+      price alerts (commit a73ef6f; new check-portfolio 63, check-pnl 56,
+      check-price-alerts 70 registered in suites.mjs; engine 990 —
+      packages/prices +9 (history.test.ts); check-watch-only 179 and
+      check-multisig's allow-list pins updated (the route-list hunk the
+      polish commit filtered out lands here); offline runner ALL GREEN in
+      the CTO's isolated worktree on HEAD 9255bb5 plus the slice: app
+      8,447 across 56 suites, lint 0/0, tsc clean; 15 mutants caught; the
+      CTO added the wipe line (resetPriceAlerts in WalletContext) and its
+      pin; THE FIRST COMMIT WAS REFUSED by the pre-commit secret scan —
+      price-alerts.ts held 14 consecutive BIP-39 wordlist words
+      (push/alert/step/asset/price/quote… as ordinary identifiers); the
+      block was restructured (outcome / watched / firing) with the
+      scanner left strict, per the phase 14 rule; re-scanned clean,
+      check-price-alerts 70 and tsc re-run clean; not seen on a device).
+      FILES: new packages/prices/src/history.ts; app/src/wallet/
+      portfolio.ts, pnl.ts, price-alerts.ts; screens PortfolioScreen /
+      PortfolioViews (the P&L panel) / PriceAlertsScreen; components/
+      PriceAlertMonitor (the app-wide checker + banner, mounted after the
+      navigator in App.tsx because check-recurring pins the due banner's
+      position); additive: prices.ts (historyCoinIdFor, fetchPriceHistory,
+      PRICE_HISTORY_MAX_DAYS, a 5-min history cache), notifications.ts
+      (CHANNEL_PRICE_ALERTS, priceAlertContent, presentPriceAlert, the
+      'PriceAlerts' tap route), navigation / App / both watch-only allow
+      lists, a Home link row ("Portfolio", "Price alerts") atop the list
+      footer. COINGECKO FACTS (read 2026-10-12, keyless probes):
+      /coins/{id}/market_chart/range is on the Demo / keyless API;
+      granularity automatic (1 day → 5-min, 2–90 days → hourly, > 90
+      days → daily 00:00 UTC; cache 5 min); "Historical data via the
+      Demo API is restricted to the past 365 days" (a 400-day range →
+      HTTP 401 error 10012); Demo 100 calls/min, keyless per-IP and
+      shared, every request counts incl. 4xx/5xx; /coins/{id}/history is
+      one 00:00 UTC snapshot per date (not used). (96) PORTFOLIO: every
+      recovery-phrase account (hidden ones labelled), imported accounts,
+      each account's smart account (found as Activity does, no request),
+      multisigs on their record's network, watched addresses in their own
+      section and NEVER in net worth; on the active EVM network each
+      address read for the native coin and every tracked token;
+      BTC/DOGE/SOL only for phrase accounts whose addresses are already
+      in the public account cache (read without a prompt; a missing
+      account listed, not guessed); MORE THAN HOME READS, so bounded:
+      PORTFOLIO_MAX_READS 60 per refresh, 4 at a time, own funds first,
+      only on open or pull-to-refresh, through Home's loadNativeBalance /
+      loadTokenBalance with Home's failover rule; prices via usePrices
+      and the shared cache; amounts bigint, values exact fractions
+      (Money), net worth = the sums by asset / network / account
+      exactly, cents only for display (stated); test assets "test, no
+      value" guarded twice (null price id AND the testnet status
+      overriding any quote); a read answered by another network not used;
+      Hide amounts masks every amount, value and spoken label; copy "Net
+      worth (US dollars)", "Not complete: see what is not counted
+      below.", portfolioCountedNote, PORTFOLIO_NOT_COUNTED_NOTE (watched
+      addresses, test assets, untracked tokens, NFTs, EntryPoint deposits,
+      other networks, unpriced assets, unread balances),
+      PORTFOLIO_READS_NOTE, "Watched addresses (not your funds)", the
+      price-source line with the oldest price's age ("Indicative market
+      prices, not what a sale would fetch."), gap lines for bounded /
+      unread / unpriced. (97) P&L: a main network's native coin for the
+      active account, loaded after a chip tap, from useHistory (the
+      merged feed incl. the smart account) + one history request; AVERAGE
+      COST — a confirmed transfer IN from a non-wallet address is a
+      purchase, OUT to one a sale, valued at CoinGecko's price nearest
+      the transaction's time (within 3 h hourly / 36 h daily / 15 min
+      5-minute); NOT counted (each counted and reported): own-address
+      transfers, self-transfers, failed, pending; FEES (the indexer lists
+      none): if more coins were received than are held, the difference
+      is ASSUMED fees, removed at average cost, on its own line, out of
+      realised, assumption stated; TOKENS REFUSED (HistoryEntry has no
+      contract field — a look-alike could not be told apart; an engine
+      change needed); every gap a separate sentence with no figure
+      (incomplete history; "N transactions before <date> are older than
+      the 365 days…"; no counterparty — every BTC/DOGE/SOL provider
+      today, so P&L there always shows that gap; no amount / time / price
+      point; price read failed; fiat off; balance unread or larger than
+      the history explains; more sent than received; the smart account's
+      history failed; no price today); labels "Held now", "Value at
+      today's price", "Cost of what is held", "Average cost",
+      "Unrealised / Realised profit or loss", "Assumed network fees (not
+      in realised)", "Counted"; "These figures are estimates for your
+      information, not tax or accounting records." (98) ALERTS: assets
+      ETH, BTC, DOGE, SOL, mainnet USDC; store strict with exact key
+      sets, ≤ 20 alerts and 4 per asset, canonical thresholds, a damaged
+      store read-only and resettable; "above" strictly above / "below"
+      strictly below; one crossing fires once; re-arm only after a ≥ 1%
+      retrace; an alert created when the condition already holds starts
+      tripped and says why; only fresh quotes (not stale, ≤ 10 min);
+      PriceAlertMonitor checks on start, each foreground and every 5 min
+      in front, ONLY when ≥ 1 alert is stored, the wallet is ready and
+      Show fiat is on (else no timer, no request), asking only the
+      alerted assets; CHANNEL DECISION (CTO accepted): a NEW
+      "price-alerts" channel at DEFAULT importance (separately mutable;
+      neither a payment nor a security event; importance cannot change
+      after creation), created only when the first alert is presented;
+      NOTIFICATION TEXT DECISION (CTO accepted): generic — "Price alert"
+      / "One of your price alerts was reached. Open the wallet to see
+      which one. Alerts are advisory: nothing is bought, sold or sent." —
+      to keep NOTIFICATIONS_PRIVACY_NOTE's "never an amount…" promise;
+      the in-app banner names the alert ("Price alert: ETH above $3,000.
+      CoinGecko's price was $3,100.00, less than a minute ago…"); posted
+      only when reminders are on; a tap opens Price alerts; market prices
+      and thresholds NOT masked by Hide amounts (they reveal nothing
+      about holdings — CTO accepted); PRICE_ALERTS_EXPO_GO_NOTE states
+      Expo Go cannot post them. No readiness rows (informational,
+      read-only — CTO accepted). FOLLOW-UP: NOTIFICATIONS_WHAT_NOTE in
+      Settings does not yet mention price alerts. UNVERIFIED (device /
+      dev build): the notification and the channel in system settings; a
+      tap opening the screen warm and cold; the Expo Go behaviour;
+      TalkBack, dark-mode contrast, phone-width layout; the history
+      request under Hermes; the bounded reads against real endpoints and
+      keyless rate limiting under the poll. Emulator checklist (6 steps;
+      the wallet holds mainnet dust only, so P&L can show only its gap
+      sentences) in the builder's report.
