@@ -6664,3 +6664,72 @@ on disjoint files; the item-0 emulator passes one at a time alongside;
 item 3's TalkBack pass after; 5 last. Subagents on Opus.
 
 ## Phase 20 progress
+- [x] Item 2 — DURESS AND DECOY WALLET: DESIGN ONLY (commit 7e0316f;
+      docs/DURESS_WALLET.md ~5,100 words + THREAT_MODEL T-78 and F-77;
+      check-readiness 194 and the offline runner ALL GREEN in an isolated
+      worktree on HEAD a104227 + the two files; no code; the agent chose
+      (b) design only with reasons the CTO accepts). WHY NO SLICE: (1)
+      the app CANNOT tell which credential unlocked it —
+      expo-local-authentication 57.0.3 returns only {success}
+      (LocalAuthenticationModule.kt 155–161 drops the AuthenticationResult;
+      the Android SDK 36 class exposes only getAuthenticationType /
+      getCryptoObject; the Swift module returns success / error /
+      warning), so a duress credential must be an APP-LEVEL PIN, which
+      reverses the recorded no-app-PIN decision (lock.ts, T-09) — the
+      Chairperson's call; (2) a decoy that reads as a normal wallet needs
+      every per-wallet record behind ONE storage seam and there is none:
+      40 shiba-wallet.* keys are read/written directly by 30 files, the
+      WalletConnect SDK keeps its own storage, reminders live with the
+      OS, and the public-account / imported-key records hold real
+      addresses — a decoy scoping only the phrase would show the real
+      wallet's contacts, notes, connections, records, pending
+      transactions and reminders (a deception that gets caught is worse
+      than none); (3) secure-store key names are VISIBLE on Android
+      (expo-secure-store 57.0.4 keeps everything in SharedPreferences
+      "SecureStore" under plain "<service>-<key>" names with the
+      AES-GCM ciphertext as JSON — plaintext length and the
+      requireAuthentication flag visible), so two wallets are detectable
+      by anyone who copies the app's files; (4) PIN cost measured with
+      @noble/hashes 2.4.0 on Node (i7-9750H): scrypt N=2^15 128–141 ms,
+      N=2^17 (OWASP) 454–562 ms, PBKDF2-SHA256 600k 806 ms — the full
+      6-digit space at the OWASP setting is ~500,000 CPU-seconds (~half
+      a day on 12 threads), so no option makes two wallets
+      indistinguishable to a file copier; (5) other leaks: funding the
+      decoy from the real wallet links them on-chain; real-wallet
+      reminders fire under the decoy; WalletConnect sessions reconnect;
+      the "on-chain limits" defence in the feature text does not exist
+      with the deployed modules (phase 11). THE CURRENT LOCK SCREEN OPENS
+      THE PROTECTED REAL PHRASE (requireLocalAuth → openPhraseForApproval)
+      — any future decoy must change the lock screen's approval target.
+      HONEST CLAIM (§4.3): never "undetectable"; at most "someone looking
+      at the screen sees an ordinary wallet", with the file-copy and
+      on-chain-link caveats stated. STAGED PATH (§5.2): Stage 0 lock on
+      launch (small, independent — dispatched now, see below); Stage 1
+      one storage seam with a check that fails on any shiba-wallet. key
+      used outside it; Stage 2 the duress PIN per §6 (scrypt N fixed after
+      a device measurement; one fixed-shape record holding both PIN
+      hashes; both hashes computed on every attempt with a constant-time
+      compare; a wait from 5 wrong PINs at 30 s doubling to 1 h, no
+      auto-wipe; invariants / mutants listed; draft copy; an advisory
+      readiness row); Stage 3 an emulator pass on a THROWAWAY wallet only
+      (never the real AVD wallet, whose phrase is written nowhere).
+      SOURCES (read 2026-10-11): Coldcard Trick PINs, BlueWallet plausible
+      deniability, Ledger's passphrase on a second PIN, BIP-85 at bitcoin/
+      bips 927b6de9, OWASP's password-storage cheat sheet (Trezor's pages
+      404/403, not relied on). DECISIONS FOR THE CHAIRPERSON (§5.3): (1)
+      whether to reverse the no-app-PIN decision; (2) a freshly generated
+      decoy phrase or a BIP-85 child of the real seed; (3) whether
+      reminders and a duress PIN are mutually exclusive; (4) what "Remove
+      wallet" does under the decoy; (5) a passphrase as well as a PIN.
+      THE MOST ACTIONABLE RESULT — F-77(b), THE COLD-START LOCK GAP:
+      INITIAL_LOCK_STATE is unlocked, WalletContext reaches ready at
+      launch with no prompt, LockGate locks only on a return from the
+      background, so a swiped-away or killed app reopens UNLOCKED
+      whatever auto-lock is set to; affects every user with auto-lock on
+      (T-08 does not mention it). CONFIRMED BY THE RECORD, not just the
+      code: this AVD has auto-lock at 1 min and every force-stop relaunch
+      in phases 18–20 came up on Home with no prompt. A lock-on-launch fix
+      is dispatched (Stage 0). UNVERIFIED (device): scrypt cost under
+      Hermes; whether a Keystore-bound record resists a file copy on real
+      hardware; TalkBack / VoiceOver on a PIN pad; the iOS app-switcher
+      cover.
