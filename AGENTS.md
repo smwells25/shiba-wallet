@@ -130,7 +130,13 @@ examples/demo.mjs          Offline end-to-end engine demo
   live): turn Settings → Privacy → "Hide in the app switcher and block
   screenshots" OFF if a pass finds it on, and leave it OFF at the end;
   a pass that needs to prove the protection itself turns it on for that
-  step only and off again afterwards.
+  step only and off again afterwards. Since the lock-on-launch fix
+  (phase 20, 2026-10-12) a COLD RELAUNCH SHOWS "Shiba Wallet is locked"
+  whenever auto-lock is on (this AVD: 1 min) — after a force-stop, a
+  swipe-away plus `am kill`, or a Metro reload that restarts the JS; a
+  pass taps Unlock and answers with `adb emu finger touch 1` (the AVD's
+  enrolled fingerprint) before driving, or sets Auto-lock Off first and
+  restores it at the end.
 - Every slice is verified by the CTO in an isolated worktree with the
   offline runner before it is pushed, then recorded here, then CI is
   checked. When several agents work in the main checkout at once, a
@@ -6824,3 +6830,140 @@ item 3's TalkBack pass after; 5 last. Subagents on Opus.
       proxy-admin owners; OP's isSenderEOA with a 7702 account; LI.FI's
       facets and who can change them; Relay's Zellic audit (404);
       docs.stargate.finance (connection reset; GitBook copy used).
+- [x] F-77(b) FIXED — LOCK ON LAUNCH (commit e0ef6c2; check-devmode 351 (was
+      305); verified with the polish slice below as one snapshot in the
+      CTO's isolated worktree on HEAD 24d04cc: engine 981, app 8,256
+      across 53 suites, lint 0/0, tsc clean; 14 mutants caught; not seen
+      on a device). RULE (lock.ts launchLockDecision, decided once per
+      launch WHILE RENDERING via React's adjust-state-on-prop-change
+      pattern, so the first committed frame that knows both inputs is the
+      lock screen): wallet still loading → wait; no wallet (onboarding) →
+      unlocked; wallet ready but preferences unread → wait under a
+      neutral COVER (background + spinner, no wallet data, no Unlock
+      button — WalletContext and PrefsContext load separately);
+      auto-lock ON (1 or 5 min) → start LOCKED; OFF → unlocked; a wallet
+      created later in the session is not locked at once. The biometrics
+      availability is null until the device answers and the gate stays
+      armed meanwhile, so the lock shows without waiting; anything that
+      covers the screens counts as locked (view !== 'screens'), keeping
+      the accessibility hiding, the WalletConnect hold and the browser
+      hold unchanged. UNLOCK UNCHANGED: one device prompt "Unlock Shiba
+      Wallet" with no approval-target argument, so the vault uses the
+      target commitAccounts set (the phrase / an imported key / nothing
+      for watch-only or multisig — pinned with the real createKeyVault:
+      zero secure-store reads for those two); NO app PIN (the lock.ts
+      decision restated); App.tsx untouched (protect-first ordering
+      kept); a failed preference read falls back to auto-lock off →
+      starts unlocked (as before). COPY: the Settings hint "…While
+      auto-lock is on, the wallet also starts locked every time it is
+      opened afresh (after it was closed, swiped away or stopped by the
+      system). Screen state is kept — locking never discards what you
+      were doing."; the launch lock screen "Auto-lock is on, so the wallet
+      starts locked. Your keys never left the device's secure storage.";
+      the background sentence unchanged; the Settings LABEL "Auto-lock
+      after returning from background" is now narrower than the behaviour
+      (follow-up: retitle). THREAT_MODEL F-77 status: (a) and (c) open,
+      (b) fixed here. STANDING EMULATOR RULE amended above (a cold
+      relaunch now needs `adb emu finger touch 1`). UNVERIFIED (emulator):
+      no frame of Home before the lock on a cold start (force-stop and
+      swipe-away + kill); the cover then the lock; one prompt (plus the
+      phrase prompt when protected); no phrase prompt for watch-only /
+      multisig; a reminder tap cold-starting under the lock; a
+      WalletConnect request at launch held; TalkBack under the launch
+      lock. DURESS_WALLET.md §2.3 still describes the gap as open
+      (follow-up: a one-line note).
+- [x] Item 3, code half — THE POLISH BACKLOG (commit 21b9476; check-pending
+      147 (was 121), check-multisig 388 (364), check-aa 369 (362),
+      check-nfts 137 (133), check-token-send 78 (70), check-swap 95 (93),
+      check-wc 300 (298), check-sessions 144 (139), check-staking /
+      check-7702 / check-base pins updated to "test ETH"; verified in the
+      CTO's isolated worktree as one snapshot with the lock fix: engine
+      981, app 8,256 across 53 suites, lint 0/0, tsc clean; 25 of 25
+      mutants caught and ten old files each fail their new suite;
+      check-multisig.mjs STAGED FROM THE FILTERED VERIFIED COPY (the
+      portfolio agent's route-list hunk excluded — it lands with that
+      slice), per the standing rule; not seen on a device). (1) EVERY
+      SMART-ACCOUNT OPERATION RECORDED: aa.ts AaOperationKind (send |
+      swap | staking | session-setup | session-op | recurring-payment |
+      dca-swap | walletconnect | browser | multisig | other),
+      AaOperationSentEvent {chain, userOpHash, sender, owner, bundler —
+      never stored, sentAt, kind, resend}, addAaOperationSentListener /
+      notifyAaOperationSent; sendAa(bundle, owner, quote, meta) fires it
+      EXACTLY ONCE right after eth_sendUserOperation returns a hash
+      (deliberately separate from AaSentEvent, which carries the quote
+      for the spending recorder — firing that from the session path would
+      count payments twice); sendSessionCalls fires it with
+      sessionOperationKind(source) (dca → dca-swap; recurring /
+      subscription → recurring-payment; else session-op); WalletContext
+      registers pendingUserOpRecorder once; records gain an optional
+      origin (older records read as 'send'; strict parse: 7 or 8 keys,
+      origin ∈ USEROP_ORIGINS, else read-only; the "Send again" pre-fill
+      kept only for 'send'; a second record of the same hash never loses
+      a pre-fill or a specific origin; cap 64); call sites: SendScreen
+      {kind:'send', resend} (its passkey path records directly, since
+      sendPasskeyCalls bypasses sendAa), Swap 'swap', Staking 'staking',
+      Sessions' four owner-signed submits 'session-setup',
+      WalletConnectContext's three sendAa calls via aaSentMetaFor(topic)
+      ('browser' for browser: topics else 'walletconnect'),
+      submitMultisigWithGate 'multisig'; Guardians / OwnerRotation /
+      Passkey / Inheritance pass no kind → 'other'. Activity's pending
+      card: "Check status" for every recorded operation, the title from
+      userOpCardTitle ("Smart-account operation 0x… from Send / from Swap
+      / from Staking / from Sessions (setting up or revoking a key) /
+      signed by a session key from Sessions / a recurring payment signed
+      by its payment key / a recurring swap signed by its swap key /
+      requested by an app connected through WalletConnect / requested by
+      an app in the in-app browser / submitted for a multisig account"),
+      the status from userOpStatusSentence, "Send again" only when
+      userOpCanBeSentAgain (origin send with a pre-fill); after
+      USEROP_DROPPED_SENTENCE ("…no record of this operation for more than
+      10 minutes, so it was most likely dropped.") a per-kind retry
+      sentence (e.g. recurring-payment / dca-swap: "Open Sessions: it
+      reads from the chain whether the payment/swap counted and offers it
+      again while it is due. Nothing is resent from here."). (2) MULTISIG
+      CONFIRM: BalanceChangePreview (every call simulated from the
+      multisig's address) + RiskWarnings (multisigRiskTarget: the first
+      call; the recipient as counterparty only for an exact value-0
+      ERC-20 transfer) above "Approve and submit"; DEVIATION, CTO
+      ACCEPTED: an UNDEPLOYED multisig still previews (as Send does for
+      counterfactual accounts) with the note "The multisig is not deployed
+      yet: this operation deploys it first, which the simulation leaves
+      out (deploying it moves no funds apart from the network fee)." —
+      the brief's "unavailable until deployment" sentence did not exist
+      anywhere; CO-SIGNER HISTORY: the store gains cosigned[] of exactly
+      {kind:'approved-as-cosigner', chain, account, requestId, nonce,
+      summary, signer, approvedAt} (no signature, no on-chain claim;
+      strict revive, a malformed entry dropped, a non-array marks damage;
+      older stores load), MAX_MULTISIG_COSIGNED_HISTORY 50 newest first,
+      re-approving the same request replaces the entry, cosignWithGate
+      records only after signWith returned the approval (nothing on a
+      cancelled check or a refused signer; a store failure never withholds
+      the approval → recorded:false); shown in the record's History
+      ("Approved as co-signer: <summary> (request 0x…)" / "Nonce N ·
+      approved by 0x… on … UTC. Whether it was submitted is up to the
+      submitter; this phone does not track it.") and on the list for
+      accounts not in this wallet ("Approved as a co-signer (accounts not
+      in this wallet)"). (3) FEE SYMBOLS: send.ts feeSymbolForChain(chainId
+      | caip2) → the profile's displaySymbol else 'ETH';
+      describeSendError matches "Not enough <any coin> to pay the network
+      fee" (FEE_SHORTFALL regex); send-erc20 (quote and Max), send-nft
+      (quote) and delegation (7702 quote) build their shortfall text from
+      the profile; describeNftSendError(error, feeSymbol = 'ETH'); EVERY
+      describeSendError call in app/src passes the fee coin (Send incl.
+      the NFT error, all 8 Swap calls, Approvals, Upgrade, WcApprovalSheet,
+      WalletConnectContext via feeSymbolForChain(item.chain), OwnerRotation,
+      Guardians, Inheritance, Passkey, ApproveRecovery, RecoverAccount,
+      PendingTransactions); check-token-send's balanced-parentheses scan
+      fails if any call drops it; test networks read "Not enough test ETH
+      to pay the network fee: … but the test ETH balance is … wei. Token
+      sends pay gas in test ETH, not in USDC." REMAINING: recovery.ts
+      2357 "Not enough ETH for the network fee: …" (one literal); comments
+      only elsewhere. FOLLOW-UPS: sendPasskeyCalls outside Send (the
+      Passkey test op) and recovery.ts submitGuardianRecovery submit
+      through client.sendCalls directly and are not recorded (one
+      notifyAaOperationSent each); "Check status" asks the network's
+      currently configured bundler (the URL is not stored — it can carry
+      a project id). UNVERIFIED (device): a dropped bundler op and the
+      10-minute retry line live; the preview from a real undeployed
+      multisig; the new cards' layout and TalkBack. Emulator checklist
+      (10 steps) in the builder's report.
