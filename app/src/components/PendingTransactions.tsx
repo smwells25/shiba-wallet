@@ -50,6 +50,8 @@ import {
   resolvedSentence,
   settleNonce,
   shortHash,
+  userOpCanBeSentAgain,
+  userOpCardTitle,
   userOpStatusSentence,
   userOpsFor,
   type GroupStatus,
@@ -65,9 +67,12 @@ import {
  * Pending transactions on this phone (feature 95, wallet/pending-transactions.ts):
  * the regular account's transactions that are not yet included, with
  * "Speed up" and "Cancel"; what happened to a nonce that had a replacement;
- * and the smart-account operations sent from the Send screen, which the
- * wallet cannot replace ("Check status", and "Send again" once the bundler
- * has had no record of one for 10 minutes).
+ * and the smart-account operations the bundler accepted from any screen
+ * (phase 20 item 3: Send, Swap, Staking, Sessions, WalletConnect, the in-app
+ * browser, multisig submits), which the wallet cannot replace ("Check
+ * status" for all; "Send again" once the bundler has had no record of one
+ * for 10 minutes, only for the Send screen's own operations — the others'
+ * status line says where to try again).
  *
  * Shown at the top of Activity (EVM slot, regular accounts) and on the Send
  * success view for the transaction just sent (`onlyHash`). Re-read on focus
@@ -100,7 +105,7 @@ function describeReplacementError(e: unknown, symbol: string): { title: string; 
     const err = e as ReplacementRefusedError;
     return { title: 'Not replaced', detail: err.message, technical: err.technical ?? null };
   }
-  const d = describeSendError(e, symbol);
+  const d = describeSendError(e, symbol, symbol);
   return { title: d.title, detail: d.detail, technical: d.technical ?? null };
 }
 
@@ -437,15 +442,9 @@ export function PendingTransactionsSection({
       ))}
       {shownOps.map(({ record, status, checking, error }) => (
         <View key={record.userOpHash} style={card}>
-          <Text style={[styles.text, { color: theme.text }]}>
-            Smart-account operation {shortHash(record.userOpHash)}
-            {record.resend
-              ? `: ${formatUnits(BigInt(record.resend.amount), record.resend.decimals, record.resend.decimals)} ${record.resend.symbol} to ${record.resend.recipient}`
-              : ''}
-            .
-          </Text>
+          <Text style={[styles.text, { color: theme.text }]}>{userOpCardTitle(record)}</Text>
           <Text style={[styles.muted, { color: theme.textMuted }]}>{SMART_ACCOUNT_NO_REPLACEMENT_SENTENCE}</Text>
-          {status ? <Text style={[styles.text, { color: theme.text }]}>{userOpStatusSentence(status)}</Text> : null}
+          {status ? <Text style={[styles.text, { color: theme.text }]}>{userOpStatusSentence(status, record)}</Text> : null}
           <TechnicalDetail text={error} />
           <View style={styles.actions}>
             {checking ? (
@@ -453,7 +452,7 @@ export function PendingTransactionsSection({
             ) : (
               <Button title="Check status" variant="secondary" onPress={() => void checkOp(record)} />
             )}
-            {status?.state === 'unknown' && status.resendOffered && record.resend && onSendAgain ? (
+            {status?.state === 'unknown' && status.resendOffered && userOpCanBeSentAgain(record) && onSendAgain ? (
               <Button title="Send again" variant="secondary" onPress={() => void sendAgain(record)} />
             ) : null}
           </View>

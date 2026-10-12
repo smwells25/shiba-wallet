@@ -392,6 +392,36 @@ check(
   describeSendError(noEth, 'USDC').title === 'Not enough ETH to pay the network fee.',
   describeSendError(noEth, 'USDC').title,
 );
+check(
+  'mainnet: the shortfall detail names "ETH" (the mainnet profile’s coin)',
+  /^Not enough ETH to pay the network fee: .* but the ETH balance is 1000 wei\. Token sends pay gas in ETH, not in USDC\.$/.test(noEth?.message ?? ''),
+  noEth?.message,
+);
+// Phase 20 item 3: the fee coin comes from the network's profile, so on a
+// test network every shortfall reads "test ETH" (detail and title).
+scenario = defaultScenario();
+scenario.chainId = '0xaa36a7';
+scenario.ethBalance = 1000n;
+const noTestEth = await checkRejects(
+  'Sepolia: the token-send shortfall names the profile’s coin',
+  () =>
+    prepareErc20Send({ url: URL, from: FROM, to: TO, contract: CONTRACT, amount: 1000000n, symbol: SYMBOL, decimals: DECIMALS, chainCaip2: 'eip155:11155111' }),
+  /^Not enough test ETH to pay the network fee: .* but the test ETH balance is 1000 wei\. Token sends pay gas in test ETH, not in USDC\.$/,
+);
+check(
+  'Sepolia: describeSendError(…, "USDC", "test ETH") titles it "Not enough test ETH to pay the network fee."',
+  describeSendError(noTestEth, 'USDC', 'test ETH').title === 'Not enough test ETH to pay the network fee.',
+  describeSendError(noTestEth, 'USDC', 'test ETH').title,
+);
+await checkRejects(
+  'Sepolia: the Max shortfall names the profile’s coin too',
+  () => maxErc20Send(URL, FROM, CONTRACT, TO, 'eip155:11155111'),
+  /^Not enough test ETH to pay the network fee: .* Token sends pay gas in test ETH\.$/,
+);
+check(
+  'a custom coin name is matched too (the title never falls back to the generic one)',
+  describeSendError(new Error('Not enough test HOO to pay the network fee: the worst-case fee is 5 wei but the test HOO balance is 1 wei.'), 'USDC', 'test HOO').title === 'Not enough test HOO to pay the network fee.',
+);
 
 // ---------------------------------------------------------------------------
 // 5. Max = full token balance, refused when ETH cannot cover gas.
@@ -714,6 +744,66 @@ async function rejection(fn) {
   } catch (e) {
     return e;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 20 item 3: the fee-symbol rollout. Every describeSendError call in
+// the app passes the fee coin (a third argument), so no screen falls back to
+// the default "ETH" on a test network; describeNftSendError callers pass it
+// too. Source scan with balanced parentheses.
+// ---------------------------------------------------------------------------
+console.log('fee coin passed by every caller (source):');
+{
+  const { readdirSync, statSync } = await import('node:fs');
+  const SRC = join(dirname(fileURLToPath(import.meta.url)), '../src');
+  const files = [];
+  const walk = (d) => {
+    for (const f of readdirSync(d)) {
+      const full = join(d, f);
+      if (statSync(full).isDirectory()) walk(full);
+      else if (/\.tsx?$/.test(f)) files.push(full);
+    }
+  };
+  walk(SRC);
+  const argsOf = (text, at) => {
+    let depth = 0;
+    let i = text.indexOf('(', at);
+    const start = i + 1;
+    const parts = [];
+    let last = start;
+    for (; i < text.length; i += 1) {
+      const c = text[i];
+      if (c === '(' || c === '[' || c === '{') depth += 1;
+      else if (c === ')' || c === ']' || c === '}') {
+        depth -= 1;
+        if (depth === 0) break;
+      } else if (c === ',' && depth === 1) {
+        parts.push(text.slice(last, i).trim());
+        last = i + 1;
+      }
+    }
+    parts.push(text.slice(last, i).trim());
+    return parts.filter((x) => x.length > 0);
+  };
+  const missing = (name, minArgs) => {
+    const out = [];
+    for (const f of files) {
+      const text = readFileSync(f, 'utf8');
+      const re = new RegExp(`\\b${name}\\(`, 'g');
+      let m;
+      while ((m = re.exec(text))) {
+        const before = text.slice(Math.max(0, m.index - 16), m.index);
+        if (/function\s+$/.test(before)) continue;
+        if (argsOf(text, m.index).length < minArgs) out.push(`${f.slice(SRC.length + 1)}@${text.slice(0, m.index).split('\n').length}`);
+      }
+    }
+    return out;
+  };
+  const sendMissing = missing('describeSendError', 3);
+  check('every describeSendError call in app/src passes the fee coin', sendMissing.length === 0, sendMissing.join(', '));
+  const nftMissing = missing('describeNftSendError', 2);
+  check('every describeNftSendError call passes the fee coin', nftMissing.length === 0, nftMissing.join(', '));
+  check('…the scan sees the calls (sanity)', files.some((f) => readFileSync(f, 'utf8').includes('describeSendError(e, sellSymbol, evmChain.displaySymbol)')));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

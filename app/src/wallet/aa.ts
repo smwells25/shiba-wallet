@@ -3756,6 +3756,121 @@ function notifyAaSent(event: AaSentEvent): void {
 }
 
 /**
+ * Where a smart-account operation was submitted from (phase 20 item 3): the
+ * pending-operation registry (./pending-transactions.ts) records every
+ * operation the bundler accepted, so Activity can show its status and "Check
+ * status" whichever screen sent it, and say where to try again when the
+ * bundler dropped it ("Send again" exists only for 'send').
+ *  - 'send': the Send screen; 'swap': Swap; 'staking': Staking;
+ *  - 'session-setup': a session key installed or revoked by the OWNER key
+ *    (Sessions, subscriptions, recurring payments and swaps, and an
+ *    ERC-7715 grant requested by a dApp is 'walletconnect' / 'browser');
+ *  - 'session-op' / 'recurring-payment' / 'dca-swap': an operation signed by
+ *    a session key held on this phone (sessions.ts sendSessionCalls);
+ *  - 'walletconnect' / 'browser': a connected app's request, over
+ *    WalletConnect or from the in-app browser;
+ *  - 'multisig': a multi-signature account's operation this phone submitted;
+ *  - 'other': every other sendAa caller (guardians, passkeys, owner change,
+ *    inheritance), which passes no kind.
+ */
+export type AaOperationKind =
+  | 'send'
+  | 'swap'
+  | 'staking'
+  | 'session-setup'
+  | 'session-op'
+  | 'recurring-payment'
+  | 'dca-swap'
+  | 'walletconnect'
+  | 'browser'
+  | 'multisig'
+  | 'other';
+
+/** What the Send screen's "Send again" can pre-fill (public data only; see pending-transactions.ts). */
+export interface AaOperationResend {
+  recipient: string;
+  /** Decimal base units. */
+  amount: string;
+  decimals: number;
+  symbol: string;
+  /** CAIP-19 id of a tracked token; null for the network's coin. */
+  tokenId: string | null;
+}
+
+/** sendAa's optional fourth argument: where the operation comes from. */
+export interface AaSendMeta {
+  kind: AaOperationKind;
+  /** Only the Send screen passes a pre-fill; everything else null. */
+  resend?: AaOperationResend | null;
+}
+
+/**
+ * One operation the bundler accepted, from ANY submission path of this
+ * wallet: sendAa (Send, Swap, Staking, Sessions' installs and revokes,
+ * WalletConnect and the in-app browser, multisig submits, guardians,
+ * passkeys) and sessions.ts sendSessionCalls (operations signed by a
+ * session key on this phone). Public data only: no key, no signer object,
+ * no bundler URL (the URL can carry a project id). `bundler` is the
+ * transport the operation went through, for listeners that read its status
+ * at once; it is never stored.
+ *
+ * Unlike AaSentEvent (sendAa only, carrying the quote, which the spending
+ * recorder counts), this event carries no amounts, so firing it from the
+ * session-key path cannot count a payment twice.
+ */
+export interface AaOperationSentEvent {
+  /** CAIP-2 id of the operation's network. */
+  chain: string;
+  userOpHash: string;
+  /** The smart account (or upgraded EOA) that runs the operation. */
+  sender: string;
+  /** The account of this wallet the operation belongs to: the owner EOA, a session's owner, a multisig's local signer. */
+  owner: string;
+  bundler: JsonRpcTransport;
+  /** Unix milliseconds when the bundler accepted it. */
+  sentAt: number;
+  kind: AaOperationKind;
+  resend: AaOperationResend | null;
+}
+
+export type AaOperationSentListener = (event: AaOperationSentEvent) => void | Promise<unknown>;
+
+const operationSentListeners = new Set<AaOperationSentListener>();
+
+/**
+ * Subscribes to every smart-account operation the bundler accepted (see
+ * AaOperationSentEvent). WalletContext registers the pending-operation
+ * recorder once (pending-transactions.ts pendingUserOpRecorder). Returns the
+ * unsubscribe function.
+ */
+export function addAaOperationSentListener(listener: AaOperationSentListener): () => void {
+  operationSentListeners.add(listener);
+  return () => {
+    operationSentListeners.delete(listener);
+  };
+}
+
+/**
+ * Best-effort fan-out of an accepted operation: a failing listener never
+ * affects the operation, which the bundler already holds. Called by sendAa
+ * and sessions.ts sendSessionCalls, exactly once per accepted operation and
+ * never for a refused one (it runs only after eth_sendUserOperation
+ * returned a hash).
+ */
+export function notifyAaOperationSent(event: AaOperationSentEvent): void {
+  for (const listener of [...operationSentListeners]) {
+    try {
+      const result = listener(event);
+      if (result && typeof (result as Promise<void>).catch === 'function') {
+        (result as Promise<void>).catch(() => undefined);
+      }
+    } catch {
+      // Bookkeeping only.
+    }
+  }
+}
+
+/**
  * Refuses (TokenGasChargeAboveLimitError) any USDC permit the paymaster
  * transport asks for that is not exactly the grant the confirm screen
  * described: owner = the smart account, spender = the quoted paymaster,
@@ -3964,11 +4079,17 @@ export async function checkAaQuoteBeforeApproval(
  * AaFeeRoseError and nothing is signed. The quote's fees already carry
  * AA_FEE_FLOOR_HEADROOM_PERCENT over the floor, so a modest drift passes.
  * A quote can be submitted once (claimQuoteForSubmission).
+ *
+ * `meta` says where the operation comes from (AaOperationKind; 'other' when
+ * omitted). Once the bundler accepted the operation, both notifyAaSent and
+ * notifyAaOperationSent fire exactly once; a refused operation fires
+ * neither.
  */
 export async function sendAa(
   bundle: AaClientBundle,
   owner: DerivedAccount,
   quote: AaSendQuote,
+  meta: AaSendMeta = { kind: 'other' },
 ): Promise<{ userOpHash: string }> {
   if (quote.passkey) {
     throw new Error('This operation was prepared for the passkey signer. Nothing was signed; review it again.');
@@ -4030,6 +4151,16 @@ export async function sendAa(
     // The deploying operation changes "not deployed yet": re-read next time.
     forgetSmartAccountAddress(sender);
     notifyAaSent({ bundle, owner: { address: owner.address, path: owner.path }, quote, userOpHash });
+    notifyAaOperationSent({
+      chain: eip155Caip2(bundle.chainId),
+      userOpHash,
+      sender,
+      owner: owner.address,
+      bundler: bundle.bundler,
+      sentAt: Date.now(),
+      kind: meta.kind,
+      resend: meta.resend ?? null,
+    });
     return { userOpHash };
   } finally {
     if (bundle.eip7702) {

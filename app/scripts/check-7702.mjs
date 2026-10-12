@@ -441,7 +441,7 @@ const EXPLORER = 'https://sepolia.etherscan.io/tx/';
     const mstore = memoryStore();
     check('…but removing a mainnet upgrade record always works', (await setAccountEip7702(MAINNET, OWNER_0, false, mstore)).eip7702Owners.length === 0);
   }
-  await checkRejects('quote refused when ETH cannot cover the worst-case fee (not sponsorable)', () => prepareSetCodeTx({ url: NODE_URL, from: OWNER_0, action: 'upgrade', expectedChainId: 11155111n, transportFor: () => fake7702Node({ chainIdHex: '0xaa36a7', balance: 1000n }) }), 'Not enough ETH to pay the network fee');
+  await checkRejects('quote refused when ETH cannot cover the worst-case fee (not sponsorable)', () => prepareSetCodeTx({ url: NODE_URL, from: OWNER_0, action: 'upgrade', expectedChainId: 11155111n, transportFor: () => fake7702Node({ chainIdHex: '0xaa36a7', balance: 1000n }) }), 'Not enough test ETH to pay the network fee');
 }
 
 // ---------------------------------------------------------------------------
@@ -487,7 +487,7 @@ console.log('check-7702: set-code on an OP-stack network (Base Sepolia) pays the
     () => prepareSetCodeTx({ url: NODE_URL, from: OWNER_0, action: 'upgrade', expectedChainId: 84532n, transportFor: () => fake7702Node({ chainIdHex: '0x14a34', oracle: { fail: true, calls: [] } }) }),
     'Nothing was signed');
   const tight = fake7702Node({ chainIdHex: '0x14a34', oracle: { l1Fee: 6_000_000_000n, calls: [] }, balance: 86_000n * 3_000_000_000n });
-  await checkRejects('a balance that covers gas × maxFee but not the L1 reserve is refused', () => prepareSetCodeTx({ url: NODE_URL, from: OWNER_0, action: 'upgrade', expectedChainId: 84532n, transportFor: () => tight }), 'Not enough ETH');
+  await checkRejects('a balance that covers gas × maxFee but not the L1 reserve is refused', () => prepareSetCodeTx({ url: NODE_URL, from: OWNER_0, action: 'upgrade', expectedChainId: 84532n, transportFor: () => tight }), 'Not enough test ETH');
   const sep = fake7702Node({ chainIdHex: '0xaa36a7', nonce: 7n, oracle: { l1Fee: 1n, calls: [] } });
   const sepQuote = await prepareSetCodeTx({ url: NODE_URL, from: OWNER_0, action: 'upgrade', expectedChainId: 11155111n, transportFor: () => sep });
   check('Ethereum Sepolia: no oracle call, no opStack field, fee = gas × maxFee as before', !('opStack' in sepQuote) && sepQuote.fee === sepQuote.gasLimit * sepQuote.maxFeePerGas && !sep.calls.some((c) => c.method === 'eth_call'));

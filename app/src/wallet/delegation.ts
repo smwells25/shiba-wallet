@@ -25,6 +25,7 @@ import {
   L1_DATA_FEE_HEADROOM_PERCENT,
   OP_STACK_GAS_PRICE_ORACLE,
   chainHasL1DataFee,
+  feeSymbolForChain,
   notifySendAccepted,
   opStackFeeTotal,
   quoteEndpointChange,
@@ -680,7 +681,7 @@ export async function prepareSetCodeTx(options: {
   const fee = gasLimit * fees.maxFeePerGas + opStackFeeTotal(opStack);
   if (fee > balance) {
     throw new Error(
-      `Not enough ETH to pay the network fee: the worst-case fee is ${fee} wei and the account ` +
+      `Not enough ${feeSymbolForChain(chainId)} to pay the network fee: the worst-case fee is ${fee} wei and the account ` +
         `holds ${balance} wei. This transaction is sent by the account itself, so it cannot be ` +
         'sponsored.',
     );

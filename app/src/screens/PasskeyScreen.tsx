@@ -184,7 +184,7 @@ export function PasskeyScreen({ navigation }: Props) {
 
   const describe = (e: unknown) => {
     const { title, detail } =
-      describeAaError(e, { accountType: 'kernel-v3.3', deployed: true }) ?? describeSendError(e, symbol);
+      describeAaError(e, { accountType: 'kernel-v3.3', deployed: true }) ?? describeSendError(e, symbol, symbol);
     return `${title}\n${detail}`;
   };
 

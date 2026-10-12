@@ -394,7 +394,7 @@ export function ApprovalsScreen({ navigation }: Props) {
       setOverrideSimulation(false);
       setPhase('confirm');
     } catch (e) {
-      const { title, detail } = describeSendError(e, evmChain.displaySymbol);
+      const { title, detail } = describeSendError(e, evmChain.displaySymbol, evmChain.displaySymbol);
       Alert.alert(title, detail);
       setPhase('list');
     }
@@ -433,7 +433,7 @@ export function ApprovalsScreen({ navigation }: Props) {
       setResult(sent);
       setPhase('success');
     } catch (e) {
-      const { title, detail } = describeSendError(e, evmChain.displaySymbol);
+      const { title, detail } = describeSendError(e, evmChain.displaySymbol, evmChain.displaySymbol);
       Alert.alert(title, detail);
       setPhase('confirm');
     }

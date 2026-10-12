@@ -18,6 +18,8 @@ import {
   MULTISIG_SCAN_START_OVER_TITLE,
   MULTISIG_UNAUDITED_NOTE,
   acceptMultisigQrScan,
+  multisigCosignedHistoryDetail,
+  multisigCosignedHistoryLine,
   multisigCosignerBarLabel,
   multisigExposureLine,
   multisigFeatureRefusal,
@@ -27,6 +29,7 @@ import {
   multisigQrPartCaption,
   multisigQrProgressLine,
   splitMultisigQrParts,
+  type MultisigCosignedEntry,
   type MultisigQrScan,
   type MultisigWeightProgress,
 } from '../wallet/multisig';
@@ -100,6 +103,30 @@ export function MultisigRefusedFeatures() {
         ),
       )}
     </View>
+  );
+}
+
+/**
+ * The requests this phone approved as a co-signer (phase 20 item 3): one
+ * line each, "Approved as co-signer: <summary> (request 0x…)", with the
+ * nonce, the approving account and the time below. No claim about
+ * inclusion (the submitter's business).
+ */
+export function MultisigCosignedHistory({ entries }: { entries: readonly MultisigCosignedEntry[] }) {
+  const theme = useTheme();
+  return (
+    <>
+      {entries.map((e) => (
+        <View key={`${e.chain}:${e.account}:${e.requestId}:${e.signer}`}>
+          <Text selectable style={[styles.hint, { color: theme.text }]}>
+            {multisigCosignedHistoryLine(e)}
+          </Text>
+          <Text selectable style={[styles.hint, { color: theme.textMuted }]}>
+            {multisigCosignedHistoryDetail(e)}
+          </Text>
+        </View>
+      ))}
+    </>
   );
 }
 

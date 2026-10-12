@@ -634,7 +634,7 @@ export function StakingScreen({ navigation }: Props) {
     }
     setPhase('aa-sending');
     try {
-      const { userOpHash } = await signWith(EVM_CHAIN_ID, preparedFrom.current ?? '', (signer) => sendAa(bundle, signer, aaQuote));
+      const { userOpHash } = await signWith(EVM_CHAIN_ID, preparedFrom.current ?? '', (signer) => sendAa(bundle, signer, aaQuote, { kind: 'staking' }));
       setSentNetwork(caip2);
       setAaResult({ userOpHash, receiptState: 'pending', success: null, txHash: null });
       setStethTracked(null);

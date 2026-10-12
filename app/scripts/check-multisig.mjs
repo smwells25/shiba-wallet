@@ -173,6 +173,16 @@ import {
   checkMultisigNetwork,
   chooseMultisigIndex,
   cosignWithGate,
+  listMultisigCosignerApprovals,
+  recordMultisigCosignerApproval,
+  reviveCosignedEntry,
+  multisigCosignedHistoryLine,
+  multisigCosignedHistoryDetail,
+  multisigPreviewNote,
+  multisigRiskTarget,
+  MULTISIG_PREVIEW_NOTE,
+  MULTISIG_PREVIEW_UNDEPLOYED_NOTE,
+  MAX_MULTISIG_COSIGNED_HISTORY,
   createMultisigRecord,
   describeMultisigCall,
   encodeMultisigApprovalPayload,
@@ -486,6 +496,40 @@ console.log('check-multisig: honesty lines (exact text)');
   check('views: the honesty block shows the exposure (with this phone’s signer), fees, message refusal and audit lines', /multisigExposureLine\(config, localSigner\)/.test(views) && /MULTISIG_FEES_LINE/.test(views) && /MULTISIG_ERC1271_REFUSAL/.test(views) && /MULTISIG_UNAUDITED_NOTE/.test(views));
   check('screen: the list, the co-signer review and every record phase pass this phone’s signer to the exposure line',
     /multisigExposureLine\(multisigConfigOf\(r\), r\.localSigner\)/.test(screen) && /r\.config,\s*r\.signer\.address,/.test(screen) && (screen.match(/selected\.localSigner,\n\s*\);/g) ?? []).length >= 5 && /reviewed\.config,\s*phraseSigner,/.test(screen));
+  // Phase 20 item 3: the multisig confirm shows the balance-change preview
+  // (every call, simulated from the multisig's own address against the
+  // quote's endpoint) and the risk card, before "Approve and submit".
+  const confirm = screen.slice(screen.indexOf("if ((phase === 'confirm' || phase === 'sending') && selected && op && submission)"), screen.indexOf("if (phase === 'progress' && selected && progress)"));
+  const previewAt = confirm.indexOf('<BalanceChangePreview');
+  const riskAt = confirm.indexOf('<RiskWarnings url={nodeUrl} wallet={q.sender} {...multisigRiskTarget(q.calls)} />');
+  const approveAt = confirm.indexOf('title="Approve and submit"');
+  check('confirm: balance-change preview of every call from the multisig, with the multisig note (source)',
+    previewAt > 0 && /batch=\{q\.calls\.map\(\(c\) => \(\{ from: q\.sender, to: c\.to, value: c\.value, data: c\.data \}\)\)\}/.test(confirm) &&
+      /url=\{nodeUrl\}/.test(confirm.slice(previewAt, previewAt + 400)) && confirm.includes('note={multisigPreviewNote(q.deployed)}'));
+  check('confirm: the risk card for the first call (recipient as counterparty), both above Approve (source)', riskAt > previewAt && approveAt > riskAt);
+  check('preview note: deployed, exact', multisigPreviewNote(true) === 'Simulated as direct calls from the multisig account. The network fee the multisig pays through the EntryPoint is shown separately above and is not part of this list.');
+  check('preview note: not deployed adds the deployment sentence, exact',
+    multisigPreviewNote(false) === `${MULTISIG_PREVIEW_NOTE} The multisig is not deployed yet: this operation deploys it first, which the simulation leaves out (deploying it moves no funds apart from the network fee).` &&
+      MULTISIG_PREVIEW_UNDEPLOYED_NOTE.startsWith('The multisig is not deployed yet'));
+  {
+    const tokenAddr = '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238';
+    const recipient = '0x69f0b8c9b3a0d6b5f5e1fe8a2e5d3b0f2c17e8aa';
+    const transfer = ethers.getBytes(new ethers.Interface(['function transfer(address,uint256)']).encodeFunctionData('transfer', [recipient, 5n]));
+    const t1 = multisigRiskTarget([{ to: tokenAddr, value: 0n, data: transfer }]);
+    check('risk target: an exact ERC-20 transfer names its recipient as the counterparty (checksummed)', t1.to === tokenAddr && t1.counterparty === ethers.getAddress(recipient) && t1.data === transfer);
+    const t2 = multisigRiskTarget([{ to: recipient, value: 7n, data: new Uint8Array(0) }]);
+    check('risk target: a native send has no counterparty (the card checks the recipient itself)', t2.to === recipient && t2.counterparty === undefined);
+    check('risk target: a transfer that also sends ETH, or a longer calldata, keeps the generic card',
+      multisigRiskTarget([{ to: tokenAddr, value: 1n, data: transfer }]).counterparty === undefined &&
+        multisigRiskTarget([{ to: tokenAddr, value: 0n, data: new Uint8Array([...transfer, 0]) }]).counterparty === undefined);
+    check('risk target: only the first call is described (as the Send screen does)', multisigRiskTarget([{ to: recipient, value: 1n, data: new Uint8Array(0) }, { to: tokenAddr, value: 0n, data: transfer }]).to === recipient);
+  }
+  check('History: the detail renders this account’s co-signer approvals, the list the others (source)',
+    screen.includes('<MultisigCosignedHistory entries={cosignedHere} />') && screen.includes('<MultisigCosignedHistory entries={cosignedElsewhere} />') &&
+      /setCosigned\(await listMultisigCosignerApprovals\(\{ chain \}\)\)/.test(screen) && /multisigCosignedHistoryLine\(e\)/.test(views));
+  // Phase 20 item 3: a multisig submit goes to the pending registry as 'multisig'.
+  const msSrc = readFileSync(join(HERE, '..', 'src', 'wallet', 'multisig.ts'), 'utf8');
+  check("submitMultisigWithGate passes kind 'multisig' to sendAa (pending registry)", msSrc.includes("(signer) => sendAa(bundle, signer, quote, { kind: 'multisig' }));"));
   check('screen: keys only via signWith after requireLocalAuth (no key APIs, no readPhrase)', !/readPhrase|importedKeyVault|mnemonicToSeed|deriveAccount/.test(screen) && /requireAuth: requireLocalAuth/.test(screen));
 }
 
@@ -643,6 +687,60 @@ let approvalPayload;
   check('co-sign: the signature recovers to the co-signer over the EIP-712 Approve digest (ethers)', ethers.recoverAddress(digest, appr.signature) === S5.address);
   check('co-sign: signWith handing a different account is refused (nothing signed)', (await caught(() => cosignWithGate({ review, requireAuth: authOk([]), signWith: async (_c, _e, fn) => fn(S6) })))?.message.includes('must come from'));
   approvalPayload = out.payload;
+
+  // Phase 20 item 3: this phone's History records the approval it gave as a
+  // co-signer — secret-free, strict, after the signature exists, never on a
+  // cancelled check or a refused signer, and never withholding the approval.
+  {
+    const cs = memoryStore();
+    let t = 1_791_800_000_000;
+    const now = () => t;
+    const before = await caught(() => cosignWithGate({ review, requireAuth: authCancel([]), signWith: signWithAs(S5, []), store: cs, now }));
+    check('co-signer history: a cancelled device check records nothing', before instanceof MultisigAuthCancelledError && (await listMultisigCosignerApprovals({}, cs)).length === 0);
+    await caught(() => cosignWithGate({ review, requireAuth: authOk([]), signWith: async (_c, _e, fn) => fn(S6), store: cs, now }));
+    check('co-signer history: a refused signer records nothing', (await listMultisigCosignerApprovals({}, cs)).length === 0);
+    const rec = await cosignWithGate({ review, requireAuth: authOk([]), signWith: signWithAs(S5, []), store: cs, now });
+    const entries = await listMultisigCosignerApprovals({ chain: SEPOLIA, account: record.address }, cs);
+    check('co-signer history: one entry with request id, account, chain, nonce, summary, signer and time',
+      rec.recorded === true && entries.length === 1 && entries[0].kind === 'approved-as-cosigner' && entries[0].requestId === op.requestId &&
+        entries[0].account === record.address && entries[0].chain === SEPOLIA && entries[0].nonce === '0' &&
+        entries[0].summary === `Send 0.0001 test ETH (100000000000000 wei) to ${RECIPIENT}.` && entries[0].signer === S5.address && entries[0].approvedAt === t,
+      JSON.stringify(entries));
+    const raw = await cs.getItem('shiba-wallet.multisig.v1');
+    check('co-signer history: secret-free (no approval signature stored)', !raw.includes(JSON.parse(rec.payload).signature.slice(2, 40)));
+    check('History line, exact', multisigCosignedHistoryLine(entries[0]) === `Approved as co-signer: Send 0.0001 test ETH (100000000000000 wei) to ${RECIPIENT}. (request ${op.requestId.slice(0, 10)}…)`);
+    check('History detail: nonce, approving account, UTC time, and no claim about inclusion',
+      multisigCosignedHistoryDetail(entries[0]) === `Nonce 0 · approved by ${S5.address} on 2026-10-12 10:13 UTC. Whether it was submitted is up to the submitter; this phone does not track it.`,
+      multisigCosignedHistoryDetail(entries[0]));
+    t += 60_000;
+    await cosignWithGate({ review, requireAuth: authOk([]), signWith: signWithAs(S5, []), store: cs, now });
+    const again = await listMultisigCosignerApprovals({}, cs);
+    check('co-signer history: approving the same request again replaces the entry (newest time)', again.length === 1 && again[0].approvedAt === t);
+    check('co-signer history: filtered by network and account', (await listMultisigCosignerApprovals({ chain: 'eip155:84532' }, cs)).length === 0 && (await listMultisigCosignerApprovals({ account: S7.address }, cs)).length === 0);
+    // Cap.
+    for (let i = 0; i < MAX_MULTISIG_COSIGNED_HISTORY + 3; i += 1) {
+      await recordMultisigCosignerApproval({ ...review, request: { ...review.request, callDataAndNonceHash: '0x' + (i + 1).toString(16).padStart(64, '0') } }, t + i + 1, cs);
+    }
+    const capped = await listMultisigCosignerApprovals({}, cs);
+    check('co-signer history: capped, newest first', capped.length === MAX_MULTISIG_COSIGNED_HISTORY && capped[0].approvedAt === t + MAX_MULTISIG_COSIGNED_HISTORY + 3);
+    // Strict parse.
+    const good = capped[0];
+    check('strict entry parse: the stored shape revives', reviveCosignedEntry({ ...good }) !== null);
+    check('strict entry parse: an extra key, a bad request id, a bad kind or a zero time is refused',
+      reviveCosignedEntry({ ...good, signature: '0x00' }) === null && reviveCosignedEntry({ ...good, requestId: '0x12' }) === null &&
+        reviveCosignedEntry({ ...good, kind: 'submitted' }) === null && reviveCosignedEntry({ ...good, approvedAt: 0 }) === null && reviveCosignedEntry({ ...good, summary: 'x'.repeat(501) }) === null);
+    const doc = JSON.parse(await cs.getItem('shiba-wallet.multisig.v1'));
+    await cs.setItem('shiba-wallet.multisig.v1', JSON.stringify({ ...doc, cosigned: [{ ...good, extra: 1 }, good] }));
+    check('a malformed stored entry is dropped, the valid one kept', (await listMultisigCosignerApprovals({}, cs)).length === 1);
+    await cs.setItem('shiba-wallet.multisig.v1', JSON.stringify({ ...doc, cosigned: 'oops' }));
+    check('a non-list "cosigned" makes the store damaged (writes refused, approval still returned)',
+      (await caught(() => recordMultisigCosignerApproval(review, t, cs)))?.message === MULTISIG_STORE_DAMAGED &&
+        (await cosignWithGate({ review, requireAuth: authOk([]), signWith: signWithAs(S5, []), store: cs, now })).recorded === false);
+    const legacy = memoryStore();
+    await legacy.setItem('shiba-wallet.multisig.v1', JSON.stringify({ version: 1, nextSlot: doc.nextSlot, records: doc.records }));
+    check('a store written before phase 20 (no "cosigned") still loads its records and records approvals',
+      (await listMultisigRecords(undefined, legacy)).length === doc.records.length && (await recordMultisigCosignerApproval(review, t, legacy)).requestId === op.requestId);
+  }
 
   // The submitting side adds approvals.
   const p0 = multisigWeightProgress(record, op);

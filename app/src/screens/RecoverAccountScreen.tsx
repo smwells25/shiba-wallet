@@ -331,7 +331,7 @@ export function RecoverAccountScreen({ navigation, route }: Props) {
       setApproveQuote(await prepareApproveWithSig(node, { progress, from: owner }));
       setPhase('approve-confirm');
     } catch (e) {
-      const { title, detail } = describeSendError(e, symbol);
+      const { title, detail } = describeSendError(e, symbol, symbol);
       Alert.alert(title, detail);
     }
   };
@@ -359,7 +359,7 @@ export function RecoverAccountScreen({ navigation, route }: Props) {
         () => setTxNote(`Not included within two minutes (${txid}); it may still be. Refresh later.`),
       );
     } catch (e) {
-      const { title, detail } = describeSendError(e, symbol);
+      const { title, detail } = describeSendError(e, symbol, symbol);
       Alert.alert(title, detail);
       setPhase('approve-confirm');
     }

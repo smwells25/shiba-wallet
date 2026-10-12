@@ -1151,6 +1151,14 @@ console.log('check-wc: WalletConnect Verify (verifyContext, threat-model N-06)')
   check('the SDK core is created with telemetryEnabled: false (no init event to pulse.walletconnect.org)',
     /new Core\(\{\s*projectId,\s*telemetryEnabled:\s*false\s*\}\)/.test(glue));
   const provider = readFileSync(new URL('../src/wallet/WalletConnectContext.tsx', import.meta.url), 'utf8');
+  // Phase 20 item 3: every smart-account completion path (eth_sendTransaction,
+  // wallet_sendCalls, the ERC-7715 install) names where it came from, so the
+  // pending registry says "requested by an app …" and where to retry.
+  check('WalletConnect / browser: all three sendAa calls pass aaSentMetaFor(item.event.topic)',
+    (provider.match(/sendAa\(bundle, signer, (?:quote|q), aaSentMetaFor\(item\.event\.topic\)\)/g) ?? []).length === 3 &&
+      !/sendAa\(bundle, signer, (?:quote|q)\)/.test(provider));
+  check("…browser: topics are 'browser', everything else 'walletconnect'",
+    /function aaSentMetaFor\(topic: string\): AaSendMeta \{\s*return \{ kind: isBrowserTopic\(topic\) \? 'browser' : 'walletconnect' \};\s*\}/.test(provider));
   check('sheet renders the identity banner for every item', /<IdentityBanner identity=\{item\.identity\}/.test(sheet));
   check('sheet: the risk switch is the same Switch pattern as the simulation override', /requiresAcknowledgement \? \(\s*<View style=\{styles\.overrideRow\}>\s*<Switch value=\{acknowledged\}/.test(sheet));
   const approveButtons = [

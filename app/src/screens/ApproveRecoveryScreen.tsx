@@ -235,7 +235,7 @@ export function ApproveRecoveryScreen({ navigation, route }: Props) {
       );
       setPhase('submit-confirm');
     } catch (e) {
-      const { title, detail } = describeSendError(e, symbol);
+      const { title, detail } = describeSendError(e, symbol, symbol);
       Alert.alert(title, detail);
     }
   };
@@ -250,7 +250,7 @@ export function ApproveRecoveryScreen({ navigation, route }: Props) {
       await checkAaQuoteBeforeApproval(await bundlerFor(), submission);
     } catch (e) {
       const { title, detail } =
-        describeAaError(e, { accountType: 'kernel-v3.3', deployed: true }) ?? describeSendError(e, symbol);
+        describeAaError(e, { accountType: 'kernel-v3.3', deployed: true }) ?? describeSendError(e, symbol, symbol);
       Alert.alert(title, detail);
       setSubmission(null);
       setPhase('review');
@@ -284,7 +284,7 @@ export function ApproveRecoveryScreen({ navigation, route }: Props) {
       );
     } catch (e) {
       const { title, detail } =
-        describeAaError(e, { accountType: 'kernel-v3.3', deployed: true }) ?? describeSendError(e, symbol);
+        describeAaError(e, { accountType: 'kernel-v3.3', deployed: true }) ?? describeSendError(e, symbol, symbol);
       Alert.alert(title, detail);
       // The quote went out once and is used up (aa.ts
       // claimQuoteForSubmission): back to the review, whose "Submit the

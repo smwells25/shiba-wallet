@@ -656,7 +656,7 @@ export function SwapScreen({ navigation }: Props) {
       } catch (e) {
         const { title, detail } =
           (aaType ? describeAaError(e, { accountType: aaType, deployed: null }) : null) ??
-          describeSendError(e, sellSymbol);
+          describeSendError(e, sellSymbol, evmChain.displaySymbol);
         setFormError(`${title}\n${detail}`);
         setPhase('review');
       }
@@ -702,7 +702,7 @@ export function SwapScreen({ navigation }: Props) {
       setSendQuote(next.prepared);
       setPhase('confirm');
     } catch (e) {
-      const { title, detail } = describeSendError(e, sellSymbol);
+      const { title, detail } = describeSendError(e, sellSymbol, evmChain.displaySymbol);
       setFormError(`${title}\n${detail}`);
       setPhase('review');
     }
@@ -794,7 +794,7 @@ export function SwapScreen({ navigation }: Props) {
       );
       setPhase('confirm');
     } catch (e) {
-      const { title, detail } = describeSendError(e, sellSymbol);
+      const { title, detail } = describeSendError(e, sellSymbol, evmChain.displaySymbol);
       Alert.alert(title, detail);
       setPhase('approve');
     }
@@ -831,7 +831,7 @@ export function SwapScreen({ navigation }: Props) {
         );
         setPhase('confirm');
       } catch (e) {
-        const { title, detail } = describeSendError(e, sellSymbol);
+        const { title, detail } = describeSendError(e, sellSymbol, evmChain.displaySymbol);
         setFormError(`${title}\n${detail}`);
         setPhase('review');
       }
@@ -873,7 +873,7 @@ export function SwapScreen({ navigation }: Props) {
       setResult(sent);
       setPhase('success');
     } catch (e) {
-      const { title, detail } = describeSendError(e, sellSymbol);
+      const { title, detail } = describeSendError(e, sellSymbol, evmChain.displaySymbol);
       Alert.alert(title, detail);
       setPhase('confirm');
     }
@@ -924,7 +924,7 @@ export function SwapScreen({ navigation }: Props) {
       } catch (e) {
         const { title, detail } =
           describeAaError(e, { accountType: bundle.accountType, deployed: null }) ??
-          describeSendError(e, sellSymbol);
+          describeSendError(e, sellSymbol, evmChain.displaySymbol);
         setFormError(`${title}\n${detail}`);
         setPhase('review');
       }
@@ -947,7 +947,7 @@ export function SwapScreen({ navigation }: Props) {
     } catch (e) {
       const { title, detail } =
         describeAaError(e, { accountType: aaQuote.accountType, deployed: aaQuote.deployed }) ??
-        describeSendError(e, sellSymbol);
+        describeSendError(e, sellSymbol, evmChain.displaySymbol);
       Alert.alert(title, detail);
       setAaQuote(null);
       setPhase('review');
@@ -974,7 +974,7 @@ export function SwapScreen({ navigation }: Props) {
     setPhase('aa-sending');
     try {
       const { userOpHash } = await signWith(EVM_CHAIN_ID, preparedFrom.current ?? '', (signer) =>
-        sendAa(bundle, signer, aaQuote),
+        sendAa(bundle, signer, aaQuote, { kind: 'swap' }),
       );
       setSentNetwork(evmChain.caip2);
       setAaResult({ userOpHash, receiptState: 'pending', success: null, txHash: null });
@@ -994,7 +994,7 @@ export function SwapScreen({ navigation }: Props) {
     } catch (e) {
       const { title, detail } =
         describeAaError(e, { accountType: aaQuote.accountType, deployed: aaQuote.deployed }) ??
-        describeSendError(e, sellSymbol);
+        describeSendError(e, sellSymbol, evmChain.displaySymbol);
       Alert.alert(title, detail);
       // The smart-account quote went out once and is used up (aa.ts
       // claimQuoteForSubmission): back to the review, whose next step

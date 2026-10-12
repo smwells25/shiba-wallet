@@ -80,6 +80,7 @@ const {
   userOpsFor,
 } = pending;
 
+const shortHashOf = (h) => pending.shortHash(h);
 let passed = 0;
 let failed = 0;
 
@@ -571,6 +572,103 @@ console.log('check-pending: smart-account operations');
   const ok = await recordPendingUserOperation({ chain: CHAIN, userOpHash: H(77).toUpperCase().replace('0X', '0x'), sender: TO, owner: FROM, resend: native }, store, T0);
   const listed = userOpsFor((await loadPendingRegistry(store)).records, CHAIN, FROM);
   check('a smart-account operation is recorded under its owner (lower-case, time filled in)', ok && listed.length === 1 && listed[0].userOpHash === H(77) && listed[0].sentAt === T0);
+  check("a direct record (the Send screen's passkey path) defaults to origin 'send'", listed[0].origin === 'send');
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-pending: every smart-account path is recorded (phase 20 item 3)');
+// ---------------------------------------------------------------------------
+{
+  const {
+    USEROP_DROPPED_SENTENCE,
+    USEROP_ORIGINS,
+    USEROP_ORIGIN_PHRASES,
+    USEROP_RETRY_SENTENCES,
+    pendingUserOpRecorder,
+    userOpCanBeSentAgain,
+    userOpCardTitle,
+    userOpOrigin,
+  } = pending;
+  const native = { recipient: TO, amount: '5', decimals: 18, symbol: 'test ETH', tokenId: null };
+  const event = (n, kind, over = {}) => ({
+    chain: CHAIN,
+    userOpHash: H(n),
+    sender: TO,
+    owner: FROM,
+    bundler: async () => null,
+    sentAt: T0 + n,
+    kind,
+    resend: null,
+    ...over,
+  });
+
+  // The strict parse: a pre-phase-20 record (no origin) still reads, as 'send'.
+  const legacy = { kind: 'userop', chain: CHAIN, userOpHash: H(90), sender: TO, owner: FROM_L, sentAt: T0, resend: null };
+  const legacyReg = parseRegistry(JSON.stringify({ version: 1, records: [legacy] }));
+  check('a record stored before phase 20 (no origin) still parses, read as from Send', !legacyReg.readOnly && legacyReg.records.length === 1 && userOpOrigin(legacyReg.records[0]) === 'send');
+  for (const origin of USEROP_ORIGINS) {
+    const r = parseRegistry(JSON.stringify({ version: 1, records: [{ ...legacy, origin }] }));
+    if (r.readOnly || r.records.length !== 1) check(`origin ${origin} parses`, false);
+  }
+  check('every known origin parses', USEROP_ORIGINS.length === 11);
+  check('an unknown origin makes the registry read-only', parseRegistry(JSON.stringify({ version: 1, records: [{ ...legacy, origin: 'teleport' }] })).readOnly);
+  check('a non-string origin makes the registry read-only', parseRegistry(JSON.stringify({ version: 1, records: [{ ...legacy, origin: 7 }] })).readOnly);
+  check('an extra unknown key still makes it read-only', parseRegistry(JSON.stringify({ version: 1, records: [{ ...legacy, origin: 'swap', bundlerUrl: 'https://x' }] })).readOnly);
+
+  // The recorder WalletContext registers.
+  const store = memoryStore();
+  const recorder = pendingUserOpRecorder(store);
+  const kinds = ['swap', 'staking', 'session-setup', 'recurring-payment', 'dca-swap', 'session-op', 'walletconnect', 'browser', 'multisig', 'other'];
+  for (const [i, kind] of kinds.entries()) await recorder(event(200 + i, kind, { resend: native }));
+  let ops = userOpsFor((await loadPendingRegistry(store)).records, CHAIN, FROM);
+  check('the recorder stores one record per path, each with its origin', ops.length === kinds.length && kinds.every((k) => ops.some((o) => o.origin === k)), ops.map((o) => o.origin).join());
+  check('…and keeps a "Send again" pre-fill only for the Send screen (dropped for every other path)', ops.every((o) => o.resend === null));
+  check('…under the event owner, sentAt = the event time, no bundler stored', ops.every((o) => o.owner === FROM_L && o.sentAt === T0 + Number(BigInt(o.userOpHash))) && !store.map.get(PENDING_TX_KEY).includes('bundler'));
+  await recorder(event(300, 'send', { resend: native }));
+  ops = userOpsFor((await loadPendingRegistry(store)).records, CHAIN, FROM);
+  check("a Send operation keeps its pre-fill", ops.find((o) => o.userOpHash === H(300))?.resend?.amount === '5');
+
+  // Merge: whichever write lands last, the pre-fill and a specific origin survive.
+  const m1 = memoryStore();
+  await pendingUserOpRecorder(m1)(event(310, 'send', { resend: native }));
+  await recordPendingUserOperation({ chain: CHAIN, userOpHash: H(310), sender: TO, owner: FROM, resend: null, origin: 'other' }, m1, T0);
+  let merged = userOpsFor((await loadPendingRegistry(m1)).records, CHAIN, FROM);
+  check('a second record of the same operation never drops the pre-fill or the specific origin', merged.length === 1 && merged[0].resend?.amount === '5' && merged[0].origin === 'send');
+  await recordPendingUserOperation({ chain: CHAIN, userOpHash: H(310), sender: TO, owner: FROM, resend: null, origin: 'swap' }, m1, T0);
+  merged = userOpsFor((await loadPendingRegistry(m1)).records, CHAIN, FROM);
+  check('…but a later specific origin replaces an earlier one', merged.length === 1 && merged[0].origin === 'swap');
+
+  // The cap: the listener can never grow the registry past MAX_PENDING_RECORDS.
+  const capStore = memoryStore();
+  const capRecorder = pendingUserOpRecorder(capStore);
+  for (let i = 0; i < MAX_PENDING_RECORDS + 6; i += 1) await capRecorder(event(1000 + i, 'swap'));
+  const capped = (await loadPendingRegistry(capStore)).records;
+  check('the registry stays capped (oldest operations dropped first)', capped.length === MAX_PENDING_RECORDS && !capped.some((r) => r.userOpHash === H(1000)) && capped.some((r) => r.userOpHash === H(1000 + MAX_PENDING_RECORDS + 5)), String(capped.length));
+  check('a malformed event is not recorded', (await pendingUserOpRecorder(memoryStore())(event(5, 'swap', { userOpHash: '0x12' }))) === false);
+
+  // The card: Check status for all, Send again only where a re-quote exists.
+  const dropped = { state: 'unknown', resendOffered: true };
+  check('Send with a pre-fill: "Send again" and the old offer sentence', userOpCanBeSentAgain({ origin: 'send', resend: native }) && userOpStatusSentence(dropped, { origin: 'send', resend: native }) === USEROP_RESEND_OFFER);
+  check('legacy record with a pre-fill: still "Send again"', userOpCanBeSentAgain({ resend: native }));
+  for (const kind of kinds) {
+    const line = userOpStatusSentence(dropped, { origin: kind, resend: null });
+    if (userOpCanBeSentAgain({ origin: kind, resend: native }) || line !== `${USEROP_DROPPED_SENTENCE} ${USEROP_RETRY_SENTENCES[kind]}` || line.includes('Send screen opens')) {
+      check(`no Send again for ${kind}; the line says where to retry`, false, line);
+    }
+  }
+  check('no "Send again" for any non-Send path; each line names where to retry', true);
+  check('Send without a pre-fill (an NFT or a batch): no Send again, says to enter it again', !userOpCanBeSentAgain({ origin: 'send', resend: null }) && userOpStatusSentence(dropped, { origin: 'send', resend: null }).endsWith('open Send and enter it again; this operation cannot be filled in again automatically.'));
+  check('retry sentences exact (Swap, WalletConnect, browser, multisig)',
+    USEROP_RETRY_SENTENCES.swap === 'To try again, open Swap and get a new quote; nothing is resent from here.' &&
+    USEROP_RETRY_SENTENCES.walletconnect === 'To try again, ask the app to send the request again; this wallet cannot resend an app’s request from here.' &&
+    USEROP_RETRY_SENTENCES.browser === 'To try again, open the app in the in-app browser (Apps) and send it again from there; nothing is resent from here.' &&
+    USEROP_RETRY_SENTENCES.multisig === 'To try again, open Multisig and build the operation again; the co-signers approve the new request. Nothing is resent from here.');
+  check('pending / included lines are the same for every path', userOpStatusSentence({ state: 'in-bundler' }, { origin: 'swap', resend: null }) === 'The bundler still holds it and has not included it yet.' && userOpStatusSentence({ state: 'unknown', resendOffered: false }, { origin: 'browser', resend: null }).startsWith('The bundler has no record of it right now.'));
+  check('card title names the path', userOpCardTitle({ userOpHash: H(200), origin: 'swap', resend: null }) === `Smart-account operation ${shortHashOf(H(200))} from Swap.` &&
+    userOpCardTitle({ userOpHash: H(201), origin: 'browser', resend: null }) === `Smart-account operation ${shortHashOf(H(201))} requested by an app in the in-app browser.` &&
+    userOpCardTitle({ userOpHash: H(202), origin: 'other', resend: null }) === `Smart-account operation ${shortHashOf(H(202))}.`);
+  check('card title keeps the Send wording with a pre-fill', userOpCardTitle({ userOpHash: H(203), origin: 'send', resend: native }) === `Smart-account operation ${shortHashOf(H(203))}: 0.000000000000000005 test ETH to ${TO}.`);
+  check('every path has a phrase entry and a retry sentence', USEROP_ORIGINS.every((k) => typeof USEROP_ORIGIN_PHRASES[k] === 'string' && USEROP_RETRY_SENTENCES[k].length > 20));
 }
 
 // ---------------------------------------------------------------------------
@@ -598,12 +696,16 @@ console.log('check-pending: the screens wire the gates in order (source)');
   check('Send again asks the bundler once more first', /const sendAgain = async[\s\S]*checkUserOperation\([\s\S]*onSendAgain\?\.\(record\)/.test(view));
   const sendScreen = readFileSync(join(HERE, '../src/screens/SendScreen.tsx'), 'utf8');
   check('Send success view offers it for the transaction just sent', sendScreen.includes('<PendingTransactionsSection from={quotedFrom} onlyHash={result.txid} />'));
-  check('both smart-account submit paths remember the operation', (sendScreen.match(/rememberUserOperation\(quote, userOpHash\)/g) ?? []).length === 2);
+  check('the passkey submit path remembers the operation itself (origin send)', (sendScreen.match(/rememberUserOperation\(quote, userOpHash\)/g) ?? []).length === 1 && sendScreen.includes("origin: 'send',"));
+  check('the sendAa submit path hands its pre-fill to the shared listener', sendScreen.includes("sendAa(bundle, signer, quote, { kind: 'send', resend: resendFor(quote) })"));
+  check('Activity cards: the path title, the per-path status line, Send again only where a re-quote exists',
+    view.includes('{userOpCardTitle(record)}') && view.includes('userOpStatusSentence(status, record)') && view.includes('userOpCanBeSentAgain(record) && onSendAgain'));
   const activity = readFileSync(join(HERE, '../src/screens/ActivityScreen.tsx'), 'utf8');
   check('Activity shows the section in the list, the unavailable and the error states', (activity.match(/\{pendingSection\}/g) ?? []).length === 3 && activity.includes('replacementRowLine(pendingRecords'));
   // A wipe forgets the registry with the rest of the wallet's on-device state (CTO, phase 19 item 3).
   const walletContext = readFileSync(join(HERE, '../src/wallet/WalletContext.tsx'), 'utf8');
-  check('the wallet wipe resets the pending-transaction registry', walletContext.includes("import { resetPendingRegistry } from './pending-transactions';") && walletContext.includes('await resetPendingRegistry(AsyncStorage).catch(() => undefined);'));
+  check('WalletContext registers the pending recorder once on the operation-sent channel', (walletContext.match(/addAaOperationSentListener\(pendingUserOpRecorder\(AsyncStorage\)\)/g) ?? []).length === 1);
+  check('the wallet wipe resets the pending-transaction registry', walletContext.includes("import { pendingUserOpRecorder, resetPendingRegistry } from './pending-transactions';") && walletContext.includes('await resetPendingRegistry(AsyncStorage).catch(() => undefined);'));
 }
 
 console.log(`\ncheck-pending: ${passed} passed, ${failed} failed`);

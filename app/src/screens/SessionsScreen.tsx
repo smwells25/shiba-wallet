@@ -831,7 +831,7 @@ export function SessionsScreen({ navigation }: Props) {
         vault: sessionKeyVault,
         // The OWNER key signs the install (root validator), only for the
         // owner EOA the quote was prepared for.
-        submit: (q) => signWith(EVM_CHAIN_ID, owner, (signer) => sendAa(sendBundle, signer, q)),
+        submit: (q) => signWith(EVM_CHAIN_ID, owner, (signer) => sendAa(sendBundle, signer, q, { kind: 'session-setup' })),
       });
       discardPending();
       waitingFor.current.add(userOpHash);
@@ -1139,7 +1139,7 @@ export function SessionsScreen({ navigation }: Props) {
         store: AsyncStorage,
         vault: sessionKeyVault,
         // Same explicit, owner-signed install as every session.
-        submit: (q) => signWith(EVM_CHAIN_ID, owner, (signer) => sendAa(sendBundle, signer, q)),
+        submit: (q) => signWith(EVM_CHAIN_ID, owner, (signer) => sendAa(sendBundle, signer, q, { kind: 'session-setup' })),
       });
       const finalTerms =
         p.mode === 'recurring' ? recurringFinalDatesLine(p.subscription) : subscriptionFinalDatesLine(p.subscription);
@@ -1440,7 +1440,7 @@ export function SessionsScreen({ navigation }: Props) {
         sessionPrivateKey: p.privateKey,
         store: AsyncStorage,
         vault: sessionKeyVault,
-        submit: (q) => signWith(EVM_CHAIN_ID, owner, (signer) => sendAa(sendBundle, signer, q)),
+        submit: (q) => signWith(EVM_CHAIN_ID, owner, (signer) => sendAa(sendBundle, signer, q, { kind: 'session-setup' })),
       });
       const finalTerms = dcaFinalDatesLine(p.terms);
       discardPending();
@@ -1819,7 +1819,7 @@ export function SessionsScreen({ navigation }: Props) {
         quote: target.quote,
         store: AsyncStorage,
         vault: sessionKeyVault,
-        submit: (q) => signWith(EVM_CHAIN_ID, owner, (signer) => sendAa(sendBundle, signer, q)),
+        submit: (q) => signWith(EVM_CHAIN_ID, owner, (signer) => sendAa(sendBundle, signer, q, { kind: 'session-setup' })),
       });
       // Finding 3 of the development-build pass: the bundler accepted the
       // revocation and the record is now 'revoking', so its reminder is

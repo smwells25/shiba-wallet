@@ -188,7 +188,7 @@ export function OwnerRotationScreen({ navigation }: Props) {
   );
 
   const describe = (e: unknown) =>
-    (bundle ? describeAaError(e, { accountType: bundle.accountType, deployed: true }) : null) ?? describeSendError(e, symbol);
+    (bundle ? describeAaError(e, { accountType: bundle.accountType, deployed: true }) : null) ?? describeSendError(e, symbol, symbol);
 
   const nameOf = (address: string): string | null =>
     walletOwners.find((w) => w.address.toLowerCase() === address.toLowerCase())?.name ?? null;

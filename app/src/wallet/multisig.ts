@@ -586,9 +586,39 @@ export interface MultisigRecord {
   operations: MultisigOperationRecord[];
 }
 
+/**
+ * What this phone did as a CO-SIGNER of someone else's request (phase 20
+ * item 3): it approved the request with one of its accounts. Secret-free —
+ * the approval signature itself is not kept (it went to the submitter) —
+ * and it makes no on-chain claim: whether the operation was ever submitted
+ * or included is the submitter's, and this phone does not know it.
+ */
+export interface MultisigCosignedEntry {
+  kind: 'approved-as-cosigner';
+  /** CAIP-2 network of the request. */
+  chain: string;
+  /** EIP-55 address of the multisig account. */
+  account: string;
+  /** The request id (callDataAndNonceHash), lowercase 0x + 64 hex. */
+  requestId: string;
+  /** The EntryPoint nonce the request is bound to, decimal. */
+  nonce: string;
+  /** Plain description made by this wallet from the request's calls. */
+  summary: string;
+  /** EIP-55 address of this wallet's account that approved. */
+  signer: string;
+  /** Unix milliseconds. */
+  approvedAt: number;
+}
+
+/** Co-signer approvals kept on this phone (newest first; the oldest are dropped). */
+export const MAX_MULTISIG_COSIGNED_HISTORY = 50;
+
 interface StoreState {
   records: MultisigRecord[];
   nextSlot: number;
+  /** Requests this phone approved as a co-signer (any account, in this wallet or not). */
+  cosigned: MultisigCosignedEntry[];
 }
 
 export function multisigConfigOf(record: Pick<MultisigRecord, 'signers' | 'threshold'>): MultisigConfig {
@@ -658,6 +688,36 @@ function reviveOperation(v: unknown, record: Pick<MultisigRecord, 'address' | 'c
   } catch {
     return null;
   }
+}
+
+const COSIGNED_KEYS = ['kind', 'chain', 'account', 'requestId', 'nonce', 'summary', 'signer', 'approvedAt'];
+
+/**
+ * One stored co-signer entry, strictly: exactly these keys, each in its
+ * format; anything else is null (and dropped, like a damaged record).
+ */
+export function reviveCosignedEntry(v: unknown): MultisigCosignedEntry | null {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return null;
+  const e = v as Record<string, unknown>;
+  if (Object.keys(e).length !== COSIGNED_KEYS.length || !COSIGNED_KEYS.every((k) => k in e)) return null;
+  if (e.kind !== 'approved-as-cosigner') return null;
+  if (typeof e.chain !== 'string' || !/^eip155:[1-9][0-9]*$/.test(e.chain)) return null;
+  if (typeof e.account !== 'string' || !ADDRESS.test(e.account)) return null;
+  if (typeof e.requestId !== 'string' || !HASH.test(e.requestId)) return null;
+  if (typeof e.nonce !== 'string' || !/^(0|[1-9][0-9]{0,77})$/.test(e.nonce)) return null;
+  if (typeof e.summary !== 'string' || e.summary.length > 500) return null;
+  if (typeof e.signer !== 'string' || !ADDRESS.test(e.signer)) return null;
+  if (typeof e.approvedAt !== 'number' || !Number.isSafeInteger(e.approvedAt) || e.approvedAt <= 0) return null;
+  return {
+    kind: 'approved-as-cosigner',
+    chain: e.chain,
+    account: checksum(e.account),
+    requestId: e.requestId,
+    nonce: e.nonce,
+    summary: e.summary,
+    signer: checksum(e.signer),
+    approvedAt: e.approvedAt,
+  };
 }
 
 /**
@@ -737,12 +797,18 @@ async function readStore(store: KeyValueStore): Promise<{ state: StoreState; dam
   try {
     raw = await store.getItem(MULTISIG_STORE_KEY);
   } catch {
-    return { state: { records: [], nextSlot: 0 }, damaged: true };
+    return { state: { records: [], nextSlot: 0, cosigned: [] }, damaged: true };
   }
-  if (raw === null) return { state: { records: [], nextSlot: 0 }, damaged: false };
+  if (raw === null) return { state: { records: [], nextSlot: 0, cosigned: [] }, damaged: false };
   try {
-    const parsed = JSON.parse(raw) as { version?: unknown; records?: unknown; nextSlot?: unknown };
+    const parsed = JSON.parse(raw) as { version?: unknown; records?: unknown; nextSlot?: unknown; cosigned?: unknown };
     if (parsed.version !== STORE_VERSION || !Array.isArray(parsed.records)) throw new Error('shape');
+    // Absent in stores written before phase 20; when present it must be a list.
+    if (parsed.cosigned !== undefined && !Array.isArray(parsed.cosigned)) throw new Error('shape');
+    const cosigned = ((parsed.cosigned as unknown[] | undefined) ?? [])
+      .map(reviveCosignedEntry)
+      .filter((e): e is MultisigCosignedEntry => e !== null)
+      .slice(0, MAX_MULTISIG_COSIGNED_HISTORY);
     const records: MultisigRecord[] = [];
     const ids = new Set<number>();
     for (const v of parsed.records) {
@@ -756,14 +822,17 @@ async function readStore(store: KeyValueStore): Promise<{ state: StoreState; dam
       typeof parsed.nextSlot === 'number' && Number.isSafeInteger(parsed.nextSlot) && parsed.nextSlot >= 0
         ? Math.min(parsed.nextSlot, MAX_MULTISIG_SLOT + 1)
         : 0;
-    return { state: { records, nextSlot: Math.max(storedNext, maxSlot) }, damaged: false };
+    return { state: { records, nextSlot: Math.max(storedNext, maxSlot), cosigned }, damaged: false };
   } catch {
-    return { state: { records: [], nextSlot: 0 }, damaged: true };
+    return { state: { records: [], nextSlot: 0, cosigned: [] }, damaged: true };
   }
 }
 
 async function writeStore(state: StoreState, store: KeyValueStore): Promise<void> {
-  await store.setItem(MULTISIG_STORE_KEY, JSON.stringify({ version: STORE_VERSION, nextSlot: state.nextSlot, records: state.records }));
+  await store.setItem(
+    MULTISIG_STORE_KEY,
+    JSON.stringify({ version: STORE_VERSION, nextSlot: state.nextSlot, records: state.records, cosigned: state.cosigned }),
+  );
   notifyMultisigStoreChanged();
 }
 
@@ -811,6 +880,69 @@ export async function listMultisigRecords(chain?: string, store: KeyValueStore =
 export async function getMultisigRecord(id: number, store: KeyValueStore = AsyncStorage): Promise<MultisigRecord | null> {
   const { state } = await readStore(store);
   return state.records.find((r) => r.id === id) ?? null;
+}
+
+/**
+ * The requests this phone approved as a co-signer (newest first), optionally
+ * of one network and one account. Never throws: an unreadable store reads as
+ * empty.
+ */
+export async function listMultisigCosignerApprovals(
+  filter: { chain?: string; account?: string } = {},
+  store: KeyValueStore = AsyncStorage,
+): Promise<MultisigCosignedEntry[]> {
+  const { state } = await readStore(store);
+  return state.cosigned.filter(
+    (e) => (!filter.chain || e.chain === filter.chain) && (!filter.account || sameAddress(e.account, filter.account)),
+  );
+}
+
+/**
+ * Stores that this phone approved `review`'s request (after the signature
+ * was made). A second approval of the same request by the same account
+ * replaces the first entry (newest time); the list keeps the newest
+ * MAX_MULTISIG_COSIGNED_HISTORY. Throws MULTISIG_STORE_DAMAGED when the
+ * stored list cannot be read (cosignWithGate treats that as best effort).
+ */
+export async function recordMultisigCosignerApproval(
+  review: Pick<MultisigCosignReview, 'chain' | 'request' | 'described' | 'signer'>,
+  approvedAt: number,
+  store: KeyValueStore = AsyncStorage,
+): Promise<MultisigCosignedEntry> {
+  const entry = reviveCosignedEntry({
+    kind: 'approved-as-cosigner',
+    chain: review.chain,
+    account: review.request.account,
+    requestId: review.request.callDataAndNonceHash.toLowerCase(),
+    nonce: review.request.nonce,
+    summary: review.described.join(' ').slice(0, 500),
+    signer: review.signer.address,
+    approvedAt,
+  });
+  if (!entry) throw new Error('The co-signer approval could not be recorded (malformed fields).');
+  await mutate(store, (state) => {
+    state.cosigned = [
+      entry,
+      ...state.cosigned.filter(
+        (e) =>
+          !(e.chain === entry.chain && sameAddress(e.account, entry.account) && e.requestId === entry.requestId && sameAddress(e.signer, entry.signer)),
+      ),
+    ].slice(0, MAX_MULTISIG_COSIGNED_HISTORY);
+  });
+  return entry;
+}
+
+/** The History line for a co-signer approval: "Approved as co-signer: <summary> (request 0x12345678…)". */
+export function multisigCosignedHistoryLine(entry: Pick<MultisigCosignedEntry, 'summary' | 'requestId'>): string {
+  return `Approved as co-signer: ${entry.summary} (request ${entry.requestId.slice(0, 10)}…)`;
+}
+
+/** The detail under it: the nonce, the approving account and the time; no claim about inclusion. */
+export function multisigCosignedHistoryDetail(entry: Pick<MultisigCosignedEntry, 'nonce' | 'signer' | 'approvedAt'>): string {
+  return (
+    `Nonce ${entry.nonce} · approved by ${entry.signer} on ${new Date(entry.approvedAt).toISOString().slice(0, 16).replace('T', ' ')} UTC. ` +
+    'Whether it was submitted is up to the submitter; this phone does not track it.'
+  );
 }
 
 /** One stored multisig as the account list and the account switcher need it (public data only). */
@@ -1964,6 +2096,45 @@ export function multisigThresholdNotReached(weight: number, threshold: number): 
 }
 
 /**
+ * The multisig confirm's balance-change preview (phase 20 item 3): the
+ * operation's calls simulated with eth_simulateV1 as direct calls from the
+ * multisig account (BalanceChangePreview, as the Send screen does for a
+ * smart account). A multisig that is not deployed yet is simulated the same
+ * way — calls from an address with no code — and the note says the
+ * deployment itself is not part of the simulation.
+ */
+export const MULTISIG_PREVIEW_NOTE =
+  'Simulated as direct calls from the multisig account. The network fee the multisig pays through the ' +
+  'EntryPoint is shown separately above and is not part of this list.';
+
+export const MULTISIG_PREVIEW_UNDEPLOYED_NOTE =
+  'The multisig is not deployed yet: this operation deploys it first, which the simulation leaves out ' +
+  '(deploying it moves no funds apart from the network fee).';
+
+export function multisigPreviewNote(deployed: boolean): string {
+  return deployed ? MULTISIG_PREVIEW_NOTE : `${MULTISIG_PREVIEW_NOTE} ${MULTISIG_PREVIEW_UNDEPLOYED_NOTE}`;
+}
+
+/**
+ * What the multisig confirm's risk card checks: the first call's target and
+ * calldata, and — when that call is exactly an ERC-20 transfer(recipient,
+ * amount) — the recipient as the counterparty, as the Send screen passes it
+ * for a token send (risk.ts then describes the recipient only if the target
+ * is a tracked token with code; otherwise every generic warning stays).
+ */
+export function multisigRiskTarget(calls: readonly Call[]): { to: string; data: Uint8Array; counterparty?: string } {
+  const first = calls[0];
+  if (!first) throw new Error('The operation has no calls.');
+  const data = first.data;
+  const isTransfer =
+    data.length === 68 &&
+    toHex(data.slice(0, 4)).toLowerCase() === TRANSFER_SELECTOR &&
+    data.slice(4, 16).every((b) => b === 0);
+  if (!isTransfer || first.value !== 0n) return { to: first.to, data };
+  return { to: first.to, data, counterparty: checksum(toHex(data.slice(16, 36))) };
+}
+
+/**
  * Quotes the operation for submission: re-checks the threshold locally
  * (the spec checks again when it signs), builds the multisig bundle with
  * this wallet's signer as the submitter and the collected approvals, and
@@ -2045,7 +2216,7 @@ export async function submitMultisigWithGate(params: {
     `Approve submitting this multisig operation (${multisigWeightProgress(record, op).weight} of weight ${record.threshold})`,
   );
   if (!auth.ok) throw new MultisigAuthCancelledError(auth.message);
-  const { userOpHash } = await params.signWith(EVM_CHAIN_ID, record.localSigner, (signer) => sendAa(bundle, signer, quote));
+  const { userOpHash } = await params.signWith(EVM_CHAIN_ID, record.localSigner, (signer) => sendAa(bundle, signer, quote, { kind: 'multisig' }));
   await mutate(params.store ?? AsyncStorage, (state) => {
     const r = state.records.find((x) => x.id === record.id);
     const o = r?.operations.find((x) => x.requestId === op.requestId);
@@ -2226,11 +2397,26 @@ export async function cosignWithGate(params: {
   review: MultisigCosignReview;
   requireAuth: RequireAuth;
   signWith: SignWith;
-}): Promise<{ approval: MultisigApproval; payload: string }> {
+  store?: KeyValueStore;
+  now?: () => number;
+}): Promise<{ approval: MultisigApproval; payload: string; recorded: boolean }> {
   assertFeatureAllowed('multisig', params.review.chain);
   const auth = await params.requireAuth('Approve this multisig operation as a co-signer');
   if (!auth.ok) throw new MultisigAuthCancelledError(auth.message);
-  return params.signWith(EVM_CHAIN_ID, params.review.signer.address, async (signer) => approveMultisigAsCosigner(params.review, signer));
+  const out = await params.signWith(EVM_CHAIN_ID, params.review.signer.address, async (signer) =>
+    approveMultisigAsCosigner(params.review, signer),
+  );
+  // This phone's History records the approval (phase 20 item 3), only after
+  // the signature exists. Best effort: a damaged store never withholds an
+  // approval that was already made.
+  let recorded = false;
+  try {
+    await recordMultisigCosignerApproval(params.review, (params.now ?? Date.now)(), params.store ?? AsyncStorage);
+    recorded = true;
+  } catch {
+    recorded = false;
+  }
+  return { ...out, recorded };
 }
 
 /** The approval payload's QR value, or null when it would not fit one code. */

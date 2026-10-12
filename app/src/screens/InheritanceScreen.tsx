@@ -252,7 +252,7 @@ export function InheritanceScreen({ navigation }: Props) {
   }, [drafts, threshold, delaySeconds, account, owner]);
 
   const describe = (e: unknown) =>
-    (bundle ? describeAaError(e, { accountType: bundle.accountType, deployed: true }) : null) ?? describeSendError(e, symbol);
+    (bundle ? describeAaError(e, { accountType: bundle.accountType, deployed: true }) : null) ?? describeSendError(e, symbol, symbol);
 
   // ------------------------------------------------------------ actions
 

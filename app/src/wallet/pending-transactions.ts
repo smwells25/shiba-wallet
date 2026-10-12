@@ -6,7 +6,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // graph must stay a DAG).
 import type { KeyValueStore } from './tokens.ts';
 import type { EvmSendQuote } from './send.ts';
-import type { AaSendQuote } from './aa.ts';
+import type { AaOperationKind, AaOperationSentEvent, AaSendQuote } from './aa.ts';
 import { formatUnits } from './balances.ts';
 
 /**
@@ -129,7 +129,11 @@ export interface PendingTxRecord {
   replaces: string | null;
 }
 
-/** A smart-account operation the bundler accepted from this wallet's Send screen. */
+/**
+ * A smart-account operation the bundler accepted from this wallet: from the
+ * Send screen (since phase 19) and, since phase 20 item 3, from every other
+ * submission path (aa.ts AaOperationSentEvent).
+ */
 export interface PendingUserOpRecord {
   kind: 'userop';
   chain: string;
@@ -153,6 +157,32 @@ export interface PendingUserOpRecord {
     /** CAIP-19 id of a tracked token; null for the network's coin. */
     tokenId: string | null;
   } | null;
+  /**
+   * Where it was submitted from (aa.ts AaOperationKind). Absent in records
+   * stored before phase 20, which only the Send screen wrote: read as 'send'
+   * (userOpOrigin).
+   */
+  origin?: AaOperationKind;
+}
+
+/** Every submission path a stored record may name (the strict parse accepts only these). */
+export const USEROP_ORIGINS: readonly AaOperationKind[] = [
+  'send',
+  'swap',
+  'staking',
+  'session-setup',
+  'session-op',
+  'recurring-payment',
+  'dca-swap',
+  'walletconnect',
+  'browser',
+  'multisig',
+  'other',
+];
+
+/** Where a stored operation came from; records written before phase 20 came from Send. */
+export function userOpOrigin(record: Pick<PendingUserOpRecord, 'origin'>): AaOperationKind {
+  return record.origin ?? 'send';
 }
 
 /** What happened to a nonce that had a replacement, kept briefly for display. */
@@ -403,7 +433,13 @@ function validTx(r: Record<string, unknown>): PendingTxRecord | null {
 }
 
 function validUserOp(r: Record<string, unknown>): PendingUserOpRecord | null {
+  // Records stored before phase 20 have no `origin`; newer ones have exactly
+  // one more key, which must name a known submission path.
   const keys = ['kind', 'chain', 'userOpHash', 'sender', 'owner', 'sentAt', 'resend'];
+  if ('origin' in r) {
+    if (typeof r.origin !== 'string' || !(USEROP_ORIGINS as readonly string[]).includes(r.origin)) return null;
+    keys.push('origin');
+  }
   if (Object.keys(r).length !== keys.length || !keys.every((k) => k in r)) return null;
   if (typeof r.chain !== 'string' || !CHAIN.test(r.chain)) return null;
   if (typeof r.userOpHash !== 'string' || !HASH.test(r.userOpHash)) return null;
@@ -619,9 +655,15 @@ export async function recordPendingTransaction(
   }
 }
 
-/** Records a smart-account operation the bundler accepted (best effort, as above). */
+/**
+ * Records a smart-account operation the bundler accepted (best effort, as
+ * above). `origin` defaults to 'send' (the Send screen's own passkey path
+ * calls this directly). A second record of the same operation replaces the
+ * first but never loses what the first knew: a non-null "Send again"
+ * pre-fill and a specific origin are kept over null / 'other'.
+ */
 export async function recordPendingUserOperation(
-  record: Omit<PendingUserOpRecord, 'kind' | 'sentAt'> & { sentAt?: number },
+  record: Omit<PendingUserOpRecord, 'kind' | 'sentAt' | 'origin'> & { sentAt?: number; origin?: AaOperationKind },
   store: PendingStore = AsyncStorage,
   nowMs: number = Date.now(),
 ): Promise<boolean> {
@@ -633,21 +675,59 @@ export async function recordPendingUserOperation(
     owner: lower(record.owner),
     sentAt: record.sentAt ?? nowMs,
     resend: record.resend,
+    origin: record.origin ?? 'send',
   };
   if (!validateRecord(full)) return false;
   try {
     await update(
       store,
-      (records) => [
-        ...records.filter((r) => !(r.kind === 'userop' && r.chain === full.chain && r.userOpHash === full.userOpHash)),
-        full,
-      ],
+      (records) => {
+        const same = (r: PendingRecord): r is PendingUserOpRecord =>
+          r.kind === 'userop' && r.chain === full.chain && r.userOpHash === full.userOpHash;
+        const earlier = records.find(same);
+        const merged: PendingUserOpRecord = earlier
+          ? {
+              ...full,
+              resend: full.resend ?? earlier.resend,
+              origin: full.origin === 'other' ? userOpOrigin(earlier) : full.origin,
+            }
+          : full;
+        return [...records.filter((r) => !same(r)), merged];
+      },
       nowMs,
     );
     return true;
   } catch {
     return false;
   }
+}
+
+/**
+ * The listener WalletContext registers once with aa.ts
+ * addAaOperationSentListener: every smart-account operation the bundler
+ * accepted, from any screen, is recorded under the account it belongs to
+ * (the event's owner), so Activity's "Pending on this phone" shows its
+ * status. Secret-free: the bundler transport in the event is not stored
+ * (its URL may carry a project id); "Check status" asks the network's
+ * configured bundler. The registry's cap (MAX_PENDING_RECORDS) applies.
+ */
+export function pendingUserOpRecorder(
+  store: PendingStore = AsyncStorage,
+): (event: AaOperationSentEvent) => Promise<boolean> {
+  return (event) =>
+    recordPendingUserOperation(
+      {
+        chain: event.chain,
+        userOpHash: event.userOpHash,
+        sender: event.sender,
+        owner: event.owner,
+        sentAt: event.sentAt,
+        resend: event.kind === 'send' ? event.resend : null,
+        origin: event.kind,
+      },
+      store,
+      event.sentAt,
+    );
 }
 
 /** Removes every record of one nonce and, when given, stores its resolved notice. */
@@ -1018,17 +1098,84 @@ export async function checkUserOperation(
   return { state: 'unknown', resendOffered: nowMs - record.sentAt >= USEROP_UNKNOWN_AFTER_MS };
 }
 
-/** The status line for a smart-account operation. */
-export function userOpStatusSentence(status: UserOpStatus): string {
+/**
+ * The status line for a smart-account operation. For a dropped one, "Send
+ * again" is offered only for an operation from the Send screen with a
+ * pre-fill (userOpCanBeSentAgain); every other operation's line says where
+ * to try again instead (USEROP_RETRY_SENTENCES). Without `record` the old
+ * Send-screen wording is kept.
+ */
+export function userOpStatusSentence(
+  status: UserOpStatus,
+  record?: Pick<PendingUserOpRecord, 'origin' | 'resend'>,
+): string {
   if (status.state === 'included') {
     return status.success === false
       ? 'Included, but the operation reverted.'
       : `Included${status.txHash ? ` in transaction ${shortHash(status.txHash)}` : ''}.`;
   }
   if (status.state === 'in-bundler') return 'The bundler still holds it and has not included it yet.';
-  return status.resendOffered
-    ? USEROP_RESEND_OFFER
-    : 'The bundler has no record of it right now. That can mean it is still waiting or that it was dropped; check again in a few minutes.';
+  if (!status.resendOffered) {
+    return 'The bundler has no record of it right now. That can mean it is still waiting or that it was dropped; check again in a few minutes.';
+  }
+  if (!record || userOpCanBeSentAgain(record)) return USEROP_RESEND_OFFER;
+  return `${USEROP_DROPPED_SENTENCE} ${USEROP_RETRY_SENTENCES[userOpOrigin(record)]}`;
+}
+
+/** True only where a re-quote path exists: an operation from the Send screen that it can fill in again. */
+export function userOpCanBeSentAgain(record: Pick<PendingUserOpRecord, 'origin' | 'resend'>): boolean {
+  return userOpOrigin(record) === 'send' && record.resend !== null;
+}
+
+export const USEROP_DROPPED_SENTENCE =
+  'The bundler has had no record of this operation for more than 10 minutes, so it was most likely dropped.';
+
+/** Where to try again, per submission path (shown after USEROP_DROPPED_SENTENCE). */
+export const USEROP_RETRY_SENTENCES: Readonly<Record<AaOperationKind, string>> = {
+  send: 'To try again, open Send and enter it again; this operation cannot be filled in again automatically.',
+  swap: 'To try again, open Swap and get a new quote; nothing is resent from here.',
+  staking: 'To try again, open Staking and review it again; nothing is resent from here.',
+  'session-setup':
+    'To try again, open Sessions and check the key there before setting it up or revoking it again; nothing is resent from here.',
+  'session-op': 'To try again, open Sessions and send it again from the session; nothing is resent from here.',
+  'recurring-payment':
+    'Open Sessions: it reads from the chain whether the payment counted and offers it again while it is due. Nothing is resent from here.',
+  'dca-swap':
+    'Open Sessions: it reads from the chain whether the swap counted and offers it again while it is due. Nothing is resent from here.',
+  walletconnect: 'To try again, ask the app to send the request again; this wallet cannot resend an app’s request from here.',
+  browser: 'To try again, open the app in the in-app browser (Apps) and send it again from there; nothing is resent from here.',
+  multisig:
+    'To try again, open Multisig and build the operation again; the co-signers approve the new request. Nothing is resent from here.',
+  other: 'To try again, go back to the screen you sent it from and review it again; nothing is resent from here.',
+};
+
+/** How the card names where an operation came from (none for 'other'). */
+export const USEROP_ORIGIN_PHRASES: Readonly<Record<AaOperationKind, string>> = {
+  send: 'from Send',
+  swap: 'from Swap',
+  staking: 'from Staking',
+  'session-setup': 'from Sessions (setting up or revoking a key)',
+  'session-op': 'signed by a session key from Sessions',
+  'recurring-payment': 'a recurring payment signed by its payment key',
+  'dca-swap': 'a recurring swap signed by its swap key',
+  walletconnect: 'requested by an app connected through WalletConnect',
+  browser: 'requested by an app in the in-app browser',
+  multisig: 'submitted for a multisig account',
+  other: '',
+};
+
+/**
+ * The card's first line. An operation from Send with a pre-fill keeps the
+ * phase 19 wording ("…: 0.5 USDC to 0x…"); every other one names where it
+ * came from, e.g. "Smart-account operation 0x1234…abcd from Swap."
+ */
+export function userOpCardTitle(record: Pick<PendingUserOpRecord, 'userOpHash' | 'origin' | 'resend'>): string {
+  const head = `Smart-account operation ${shortHash(record.userOpHash)}`;
+  if (record.resend) {
+    return `${head}: ${formatUnits(BigInt(record.resend.amount), record.resend.decimals, record.resend.decimals)} ${record.resend.symbol} to ${record.resend.recipient}.`;
+  }
+  const phrase = USEROP_ORIGIN_PHRASES[userOpOrigin(record)];
+  return phrase ? `${head} ${phrase}.` : `${head}.`;
 }
 
 /**
