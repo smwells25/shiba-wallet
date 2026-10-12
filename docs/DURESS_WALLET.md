@@ -148,7 +148,7 @@ it is the Chairperson's to make.
 
 ### 2.3 What an app PIN changes in the lock model
 
-1. **The lock must cover a cold start.** Today it does not.
+1. **The lock must cover a cold start.** It did not when this was written; fixed on 2026-10-12 (commit `e0ef6c2`): with auto-lock on, the wallet now starts locked (threat-model row F-77, part b).
    `reduceLock` starts unlocked (`INITIAL_LOCK_STATE = { locked: false, … }`,
    `lock.ts`) and locks only when the app returns from the background after
    the threshold; `WalletContext.tsx` (lines 533–590) moves to `ready` at
@@ -387,7 +387,7 @@ Option (b). No slice is built in phase 20. The reasons, in order of weight:
    connections, smart-account records, pending transactions and reminders
    under the decoy. Under coercion a discovered deception is dangerous, so a
    leaky decoy is worse than none.
-2. **The lock does not cover a cold start** (2.3 item 1). A duress gate that
+2. **The lock did not cover a cold start** (2.3 item 1; fixed on 2026-10-12, commit `e0ef6c2`). A duress gate that
    swiping the app away skips is no gate, and fixing it changes the lock
    model that every emulator pass relies on.
 3. **It reverses a recorded decision** (2.2): the Chairperson's call.
