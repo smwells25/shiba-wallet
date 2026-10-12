@@ -48,6 +48,9 @@ import { StakingScreen } from './src/screens/StakingScreen';
 import { watchOnlyScreenLayout } from './src/components/WatchOnlyGate';
 import { RecurringDueBanner } from './src/components/RecurringDueBanner';
 import { NotificationScheduler } from './src/components/NotificationScheduler';
+import { PriceAlertMonitor } from './src/components/PriceAlertMonitor';
+import { PortfolioScreen } from './src/screens/PortfolioScreen';
+import { PriceAlertsScreen } from './src/screens/PriceAlertsScreen';
 import { appScreenProtection } from './src/wallet/screen-protection';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -230,9 +233,12 @@ function Root() {
             <Stack.Screen name="Apps" component={BrowserScreen} options={{ title: 'Apps (test networks)' }} />
             <Stack.Screen name="Multisig" component={MultisigScreen} options={{ title: 'Multi-signature accounts' }} />
             <Stack.Screen name="Staking" component={StakingScreen} options={{ title: 'Staking (test networks)' }} />
+            <Stack.Screen name="Portfolio" component={PortfolioScreen} options={{ title: 'Portfolio' }} />
+            <Stack.Screen name="PriceAlerts" component={PriceAlertsScreen} options={{ title: 'Price alerts' }} />
           </>
         )}
         </Stack.Navigator>
+        <PriceAlertMonitor />
         <NotificationScheduler />
         {/* Recurring payments (phase 15 item 1): on start and on every return to
             the foreground, shows which are due; never sends anything. */}

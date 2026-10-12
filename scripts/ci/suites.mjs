@@ -55,6 +55,11 @@ export const APP_SCRIPTS = {
   // 87): the note store, the UserOperation-to-transaction key rule, CSV
   // quoting and formula defusal, the export's row set (fakes only).
   'check-notes.mjs': { kind: 'offline', summary: 'counts' },
+  // Phase 20 item 1: the portfolio (feature 96), profit and loss with the
+  // historical-price read (feature 97), and price alerts (feature 98).
+  'check-portfolio.mjs': { kind: 'offline', summary: 'counts' },
+  'check-pnl.mjs': { kind: 'offline', summary: 'counts' },
+  'check-price-alerts.mjs': { kind: 'offline', summary: 'counts' },
   // Phase 17 item 1: multi-signature accounts in the app (feature 24): ids,
   // records, request / approval round trip, the submit pipeline recovered by
   // ethers, gate order, refusals, mainnet gating, mutations (fakes only).

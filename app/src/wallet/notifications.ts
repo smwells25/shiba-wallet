@@ -186,6 +186,19 @@ export const TAKEOVER_BODY =
  */
 export const CHANNEL_PAYMENTS = { id: 'payments-due', name: 'Payments due', importance: 'default' } as const;
 export const CHANNEL_SECURITY = { id: 'security-alerts', name: 'Security alerts', importance: 'high' } as const;
+/**
+ * Price alerts (phase 20 item 1, feature 98; wallet/price-alerts.ts) get a
+ * channel of their own, DEFAULT importance. Why not reuse one: Android lets
+ * the user mute or change each channel separately in the system settings,
+ * and a price alert is market information — neither a payment that falls due
+ * ("Payments due" would mislabel it) nor a security event ("Security alerts"
+ * pops up as a heads-up, which a price move does not warrant). Why DEFAULT:
+ * an app cannot raise or lower a channel's importance once created (see
+ * above), so the quieter level is chosen; the user can raise it in the
+ * system settings. It is created when the first price alert is presented,
+ * not when reminders are turned on, so the reminders' own flow is unchanged.
+ */
+export const CHANNEL_PRICE_ALERTS = { id: 'price-alerts', name: 'Price alerts', importance: 'default' } as const;
 
 /**
  * The foreground handler's answer for every notification of this wallet
@@ -229,12 +242,13 @@ export type NotificationChannelSpec = { id: string; name: string; importance: 'd
 export const NOTIFICATION_ID_PREFIX = 'shiba-wallet.';
 export const RECURRING_ID_PREFIX = 'shiba-wallet.recurring.';
 export const TAKEOVER_ID_PREFIX = 'shiba-wallet.takeover.';
+export const PRICE_ALERT_ID_PREFIX = 'shiba-wallet.price-alert.';
 /** This module's bookkeeping (seen takeover proposals as hashes; whether anything may be scheduled). */
 export const NOTIFICATIONS_STORE_KEY = 'shiba-wallet.notifications.v1';
 
 /** The screens a notification may open (an allow list; anything else is ignored). */
-export type NotificationScreen = 'Sessions' | 'Inheritance';
-export type NotificationKind = 'recurring-due' | 'takeover';
+export type NotificationScreen = 'Sessions' | 'Inheritance' | 'PriceAlerts';
+export type NotificationKind = 'recurring-due' | 'takeover' | 'price-alert';
 
 export interface NotificationContent {
   title: string;
@@ -292,11 +306,31 @@ export function takeoverContent(): NotificationContent {
   return { title: TAKEOVER_TITLE, body: TAKEOVER_BODY, data: { screen: 'Inheritance', kind: 'takeover' } };
 }
 
+export const PRICE_ALERT_TITLE = 'Price alert';
+/**
+ * Says only that an alert was reached — never the coin, the price or the
+ * threshold — so the promise of NOTIFICATIONS_PRIVACY_NOTE ("never an amount,
+ * an address or a name") holds for price alerts too: a notification can
+ * appear on the lock screen. The wallet's own banner names the alert.
+ */
+export const PRICE_ALERT_BODY =
+  'One of your price alerts was reached. Open the wallet to see which one. Alerts are advisory: nothing is bought, sold or sent.';
+
+/** The notification for a price alert that fired. Takes no alert: nothing from one reaches the lock screen. */
+export function priceAlertContent(): NotificationContent {
+  return { title: PRICE_ALERT_TITLE, body: PRICE_ALERT_BODY, data: { screen: 'PriceAlerts', kind: 'price-alert' } };
+}
+
+/** One identifier per alert, so a later firing of the same alert replaces the earlier notification. */
+export function priceAlertNotificationId(alertKey: string): string {
+  return `${PRICE_ALERT_ID_PREFIX}${shortTag(`price-alert|${alertKey}`)}`;
+}
+
 /** The screen a tapped notification asks for, from its data; only the allow-listed screens. */
 export function screenFromNotificationData(data: unknown): NotificationScreen | null {
   if (typeof data !== 'object' || data === null) return null;
   const screen = (data as Record<string, unknown>).screen;
-  return screen === 'Sessions' || screen === 'Inheritance' ? screen : null;
+  return screen === 'Sessions' || screen === 'Inheritance' || screen === 'PriceAlerts' ? screen : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -796,6 +830,13 @@ export interface NotificationCenter {
     found: readonly { chain: string; account: string; proposalHash: string }[];
     looking: boolean;
   }): Promise<void>;
+  /**
+   * Presents a fired price alert at once (phase 20 item 1). With `enabled`
+   * false (reminders off) it returns 'off' without loading the native module.
+   * Creates the "price-alerts" channel first (idempotent). Never changes the
+   * reminders' status line: a failure is returned, not shown under the switch.
+   */
+  presentPriceAlert(args: { enabled: boolean; alertKey: string }): Promise<'presented' | 'off' | 'failed'>;
   /** The permission as the system reports it now (for the Settings status). */
   permission(): Promise<NotificationPermission | null>;
   native(): Promise<NotificationsNative>;
@@ -992,6 +1033,27 @@ export function createNotificationCenter(deps: {
           }
         } catch (e) {
           setStatus({ state: 'failed', detail: describeNotificationError(e) });
+        }
+      }),
+
+    presentPriceAlert: ({ enabled, alertKey }) =>
+      serial(async () => {
+        if (!enabled) return 'off' as const;
+        try {
+          const n = await native();
+          await n.ensureChannels([CHANNEL_PRICE_ALERTS]);
+          const state = await readState(deps.store);
+          // Record first, so turning reminders off later cancels and dismisses it.
+          if (!state.mayHaveScheduled) await writeState(deps.store, { ...state, mayHaveScheduled: true });
+          await n.schedule({
+            identifier: priceAlertNotificationId(alertKey),
+            content: priceAlertContent(),
+            at: null,
+            channelId: CHANNEL_PRICE_ALERTS.id,
+          });
+          return 'presented' as const;
+        } catch {
+          return 'failed' as const;
         }
       }),
 

@@ -392,7 +392,7 @@ console.log('check-watch-only: which screens a watch-only account may open');
 // ===========================================================================
 {
   check('the allow list is exactly the read-only and wallet-management routes',
-    JSON.stringify(WATCH_ONLY_ALLOWED_ROUTES) === JSON.stringify(['Home', 'Activity', 'Nfts', 'NftDetail', 'Tokens', 'Approvals', 'Settings', 'Contacts', 'ImportKey', 'Receive']));
+    JSON.stringify(WATCH_ONLY_ALLOWED_ROUTES) === JSON.stringify(['Home', 'Activity', 'Nfts', 'NftDetail', 'Tokens', 'Approvals', 'Settings', 'Contacts', 'ImportKey', 'Receive', 'Portfolio', 'PriceAlerts']));
   for (const route of WATCH_ONLY_ALLOWED_ROUTES) check(`${route} is allowed`, watchOnlyRouteRefusal(route) === null);
   for (const route of ['Send', 'Swap', 'UpgradeAccount', 'Sessions', 'Guardians', 'Passkey', 'ProveOwnership', 'OwnerRotation', 'ApproveRecovery', 'RecoverAccount', 'Connections', 'SpendingLimits']) {
     check(`${route} is refused`, typeof watchOnlyRouteRefusal(route) === 'string');
