@@ -6605,3 +6605,62 @@ support horizon (C1–C3) plus on-chain verification of every mainnet
 address, before any mainnet profile; a real phone and an Expo account
 for the device-only checks (passkeys, hardware-backed storage, Face ID,
 screen readers); the ZeroDev disclosure decision.
+
+## Phase 20 plan (approved 2026-10-11 "sounds good, let's do it"): the everyday portfolio layer, a duress wallet, the carry-over live legs
+
+Approved by the Chairperson as proposed: item 0 first, lead with the
+portfolio layer, the duress wallet as the security slice. Fiat on-ramp
+(65) is ON HOLD by the Chairperson's decision. The Chairperson asked for
+bridging-provider options; item 4 is the verified answer (research only).
+
+0. Carry-over live legs (funds in hand, no new inputs): the Hoodi
+   withdrawal claim after Lido's oracle reports (STAKING_LIVE=hoodi-claim,
+   ~12:03 UTC 2026-10-12); Hoodi staking through the app (the emulator's
+   Account 1 funded on Hoodi from the dev EOA); the DCA review-time
+   strings live (the emulator's Kernel funded into the narrow band);
+   the OP Sepolia smart-account and multisig paths in-app; the
+   stuck-transaction screens in-app as far as the emulator allows (its
+   wallet's phrase is unknown to any script, so an under-priced send
+   cannot be forged for it — the pending card after a normal send and
+   the smart-account status sentence are what can be checked).
+1. The everyday portfolio layer (features 96, 97, 98; no outside input):
+   a unified portfolio dashboard (aggregate net worth across the chains
+   and accounts this wallet holds, from the balances and prices it
+   already fetches, with per-chain and per-account breakdowns and the
+   honesty rules of the existing price provider — unpriced test assets
+   shown as such); performance and profit/loss (cost basis and realised /
+   unrealised figures computed from the on-device activity history and
+   the price provider, with every assumption stated and nothing invented
+   where history or prices are missing); price alerts and watchlists
+   (local, polled while the app is open and through the phase-17
+   reminder infrastructure where a development build runs; no service).
+2. Duress and decoy wallet (feature 53): a design document first (the
+   app lock uses the device's own biometric / PIN prompt, so a duress
+   credential needs an app-level secondary secret; what a decoy must and
+   must not reveal; the threat model's T-row; what is honest to claim),
+   then the smallest safe slice if the design supports one.
+3. The polish backlog (no inputs): stuck-transaction coverage for smart-
+   account operations from Swap, Staking and WalletConnect (an
+   addAaSentListener in WalletContext); the multisig confirm's
+   balance-change preview and a co-signer History record; the fee-symbol
+   rollout to the remaining send callers; a TalkBack and dark-mode pass
+   over the phase 17–19 screens on the emulator.
+4. Bridging providers, research only (feature 35; a document, no code):
+   evaluate from documentation and read-only on-chain checks on the four
+   test networks the wallet already holds USDC on — Circle CCTP (v2),
+   Across (and its ERC-7683 intents, feature 36), the native rollup
+   bridges (OP Standard Bridge, Arbitrum), and the aggregators (LI.FI,
+   Socket/Bungee, Relay) — for non-custodial fit, testnet coverage,
+   permissionless vs keyed access, audits, trust assumptions, fees and
+   what the wallet could pin versus must take from an API; a
+   recommendation for the Chairperson's provider decision.
+5. Leadership refresh at the end.
+
+Waves: 1 — (A) item 1 (new Portfolio / Alerts screens, wallet modules
+for net worth, P&L and alerts, HomeScreen entry), (B) item 2's design +
+slice (lock / auth / storage files), (C) item 4 (docs only), (D) item 3's
+code half (WalletContext, Multisig*, the send-path screens) in parallel
+on disjoint files; the item-0 emulator passes one at a time alongside;
+item 3's TalkBack pass after; 5 last. Subagents on Opus.
+
+## Phase 20 progress
