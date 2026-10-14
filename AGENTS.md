@@ -157,6 +157,20 @@ examples/demo.mjs          Offline end-to-end engine demo
   main checkout's dist, i.e. whatever another agent was building).
 - Subagents run on Opus (the Chairperson's credit directive); one agent
   drives the emulator at a time.
+- THE SESSION SCRATCHPAD LIVES UNDER /private/tmp, WHICH macOS CLEANS
+  DAILY (files not touched for three days are deleted around 00:00
+  local time): on 2026-10-14 it deleted 269–270 tracked files and the
+  .git link of BOTH the Metro worktree wt-app and the verify worktree
+  wt-verify (restored with `git ls-files -d -z | xargs -0 git checkout
+  --` after recreating the `gitdir:` file), and the phase-15 page
+  builder. Before every verify or Metro run, check `git worktree list`
+  for "prunable" and `git ls-files -d`; keep helpers that must survive
+  in the git-ignored .local/ folder of the main checkout (.local/fu
+  holds the shareable-page builder and its base, .local/helpers the
+  co-signer helper and the emulator / dev-build scripts), never only
+  in the scratchpad; `find <scratchpad> -type f -exec touch {} +`
+  buys three more days for the rest (the JDK, Gradle caches and
+  node_modules clones).
 - Do not contact ZeroDev / Offchain Labs: the responsible-disclosure
   decision (the findings are collected, with their evidence and
   status, in docs/DISCLOSURE_FINDINGS.md) is the
@@ -7668,3 +7682,97 @@ item 3's TalkBack pass after; 5 last. Subagents on Opus.
       length), the foreground re-read and the monitor-fed quote in Expo
       Go, the Remove dialog, TalkBack on the new labels; which history
       source served mainnet in pass p20b's P&L step.
+- [x] EMULATOR PASS p20c — TALKBACK AND DARK MODE over the phase 17–20
+      screens (2026-10-14, finished ~04:21 UTC; Expo Go, Metro worktree at
+      7fa9a41 with the engine built inside it, 2,373 modules — tested
+      BEFORE the p20b fix slice 9aa1ffe; read-only: 2 prompts, both
+      "Unlock Shiba Wallet"; nothing signed, sent or submitted; funds
+      unchanged and read back equal to p20b's end figures; spoken-text
+      captures and screenshots in the scratchpad p20c). INCIDENT (see the
+      standing rule): around 00:00 local time the macOS temp cleaner
+      deleted 269 tracked files and the .git link of wt-app (the next
+      relaunch failed "Unable to resolve ./src/theme"); the driver
+      recreated the gitdir file, restored the deleted files, rebuilt the
+      engine inside the worktree and restarted Metro; the CTO repaired
+      wt-verify the same way (270 files), touched every scratchpad file,
+      and moved the helpers into the git-ignored .local/ (the page
+      builder recreated from the phase-15 original — it reproduces page
+      version 21 byte for byte). METHOD: TalkBack 14.2 is on the image;
+      enabled through `settings put secure`, its log level set to VERBOSE,
+      the spoken text read from logcat "TalkBackFeedbackProvider:
+      ttsOutput="; `adb shell input` bypasses TalkBack entirely, so focus
+      was moved with a `uinput` virtual keyboard sending TalkBack's Alt+
+      Right / Alt+Left / Alt+Enter shortcuts (helpers tbk / tbread in
+      p20c/env.sh; every uiautomator dump resets TalkBack's focus).
+      PASSED: nothing wallet-related is reachable under the LAUNCH LOCK
+      ("Shiba Wallet is locked", the auto-lock sentence, "Unlock. Button",
+      Expo Go's Tools bubble, then it wraps; the fingerprint prompt
+      reads its three items); no hidden content was read on any screen;
+      the switcher's expander ("collapsed. What is backed up?. Button" /
+      "expanded…"), Portfolio's headings and unmasked labels ("…: 0.02753
+      test ETH, test asset, no value"), the Price-alert headings, the
+      Activity rows ("Smart-account operation: sent 0.002 test ETH to
+      Multisig 2 (2-of-3). Sent transaction, −0.002 test ETH, 1 h ago,
+      smart account. Button. Opens the transaction in the block
+      explorer"; notes as "Note: …"), the Settings switches ("OFF. Hide in
+      the app switcher and block screenshots. Switch"), the network chips
+      ("selected. Ethereum Sepolia. Button. Chooses which network…"), the
+      multisig confirm's reading order (call → preview → risk → fee →
+      total → weight → "Approve and submit"). DARK MODE (`cmd uimode
+      night yes`): the app follows the system scheme and switches back
+      live; readable with no problem: the WarningBoxes, the switcher
+      modal, the multisig QR (white background), the Send confirm (red
+      "You send", green pre-flight line, the risk card), the lock screen.
+      FINDINGS (fix slice dispatched): TALKBACK — (1) EVERY TextInput's
+      visible label is ignored and the PLACEHOLDER is read instead
+      ("Price in US dollars, for example 3000. Edit box", "0.001. Edit
+      box", "95. Edit box", "3. Edit box" — on every form); (2) section
+      titles are not headings: Staking ("Lido", "Your staking balances",
+      "What to do"), Settings ("Privacy", "Swaps", "Developer"), the
+      switcher ("Accounts"), Apps ("Apps on Ethereum Sepolia"), the
+      multisig confirm's sections, "Shiba Wallet is locked"; (3) Home
+      token rows read the symbol twice (the badge is a separate item) and
+      wstETH's balance comes before Send unlike the other rows; (4) the
+      Hide amounts toggle is a plain button with no on/off state; (5) the
+      switcher reads "selected" AND the check mark, a multisig row reads
+      the full 42-character address and (at 7fa9a41) no network, and its
+      visible "operations need co-signers" line is not spoken; (6)
+      Staking's switch is read twice (the switch and its visible label),
+      "STETH"/"WSTETH" spelled in capitals, the source link read as a raw
+      URL, the full account address spoken; (7) Price alerts: activating
+      Remove made TalkBack announce "Alert set: ETH above $3,000." (the
+      stale notice — cleared by 9aa1ffe) and focus jumped to unrelated
+      text with nothing confirming the action (the confirm dialog of
+      9aa1ffe changes this — re-check); (8) the DCA form's refusal is not
+      announced when Review is activated (focus lands on "30 days.
+      Button") and the block text appears twice (hint + box); Review did
+      not open because the Kernel (0.0203 + 0.000219 deposit) cannot keep
+      back the set-up fee — unverified under TalkBack; (9) the multisig QR
+      code is unreachable (no label); the header "Multi-signature
+      accounts" read twice; (10) the Apps site cards read the URL raw
+      ("https: 2 Slashapp.uniswap.org") and the residuals box is one item
+      at the very end; (11) Settings' bare "Edit. Button" for the 0x key
+      has no context; (12) Activity's two-row USDC send reads the sentence
+      twice; (13) "Inheritance. Button" is shorter than the visible
+      "Inheritance (demonstration)". DARK MODE — (14) switches in the OFF
+      state are almost invisible (only the white thumb shows: D06, D11,
+      D14); (15) a WHITE system navigation-bar strip sits under the
+      TESTNET banner on every dark screen (D02, D04); (16) the BTC and
+      DOGE coin badges have low-contrast white text (D02b; probably in
+      light mode too); (17) muted grey text for the DCA refusal in the fee
+      hint (D07c) and the multisig exposure warning (D08); (18) faint
+      borders: the switcher scrollbar (D03), the price field (D05); (19)
+      clipped placeholders: the fee-budget field's second line ("…spend on
+      network f", D07c) and Send's recipient ("ETH address or ENS ı",
+      D14); (20) the selected Developer chip wraps to two left-aligned
+      lines while its neighbour sits top-aligned (D12). Side effect:
+      TalkBack's own "Allow notifications?" dialog was answered "Don't
+      allow". UNVERIFIED: the DCA Review under TalkBack; "Transaction,
+      details loading." and the "with smart account" chip under TalkBack;
+      TalkBack's touch gestures (shortcuts were used; the text came from
+      the log, not a speaker); whether creating an alert through TalkBack
+      announces the notice; iOS VoiceOver; the cleaner's exact rule and
+      whether wt-build's clones and the JDK lost files. END STATE: Home,
+      Ethereum Sepolia, Account 1, light mode, auto-lock 1 min, screen
+      protection OFF, TalkBack OFF (log level back to ERROR), IME
+      ADBKeyboard, Metro at 7fa9a41.
