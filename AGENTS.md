@@ -7867,6 +7867,74 @@ item 3's TalkBack pass after; 5 last. Subagents on Opus.
       heights, the Send hint line); the dark-mode switch and border
       colours on screen; VoiceOver / iOS.
 
+- [x] EMULATOR PASS p20d — THE ACCESSIBILITY SLICE RE-CHECKED (2026-10-14;
+      Expo Go, Metro worktree at fba49d2 with the engine built inside it,
+      2,374 modules; read-only: 3 prompts, all "Unlock Shiba Wallet";
+      nothing signed or sent; Account 1 2,118,597,450,239,771 wei nonce 27
+      and the Kernel 20,320,832,019,090,953 wei nonce 1 unchanged on two
+      RPCs; the emulator window left in place for the Chairperson;
+      captures in the scratchpad p20d). METHOD NOTE: TalkBack's log level
+      is its preference pref_log_level (6 = ERROR, 2 = VERBOSE), edited as
+      root through `su` with an inode-preserving write and set back to 6
+      afterwards; the p20d helpers also mask 32-hex strings because one
+      Settings dump showed the stored WalletConnect project id (masked in
+      every kept file; nothing committed). FIXED ON SCREEN (16 of 20):
+      labelled fields read "0.001. Edit box for Amount (test ETH)" /
+      "3. Edit box for Number of swaps (1–120; sets the end date)" /
+      "e.g. weekly USDC. Edit box for Name (optional)" — accessibilityLabelledBy
+      WORKS on this Android; Home token rows one element ("stETH, Liquid
+      staked Ether 2.0, ERC-20. Balance 0.001315 stETH. Button. Sends
+      stETH"), wstETH in order; "off. Hide amounts. Switch. Masks or
+      reveals…"; the switcher "Accounts. Heading", "selected. Account 1,
+      0x772e…F44F. Button" (no ✓), "Multisig 2 (2-of-3), multi-signature
+      account on Ethereum Sepolia: operations need co-signers; Ethereum
+      networks only, 0x944c…0d38. Button" (Multisig 3 "on Base Sepolia");
+      Staking's switch once ("OFF. Use the smart account. Switch"), its
+      four headings, the holder line short, the source link "Source: Lido
+      help centre, … help.lido.fi. Link. Opens the source in the browser";
+      the DCA refusal ANNOUNCED through the live region and shown once
+      (the cap note and hint hide); multisig QR codes labelled images, the
+      header spoken once, "Multisig 2 (2-of-3). Heading"; Apps' residuals
+      box read after the intro before the cards, "Open Uniswap. Button.
+      app.uniswap.org, opens in the wallet's browser"; Activity "Same
+      transaction as the row above. Sent transaction, no amount, 14 h ago.
+      Button…", "Pending on this phone. Heading"; "Privacy. Heading",
+      "Swaps. Heading", "Developer. Heading"; the lock screen "Shiba
+      Wallet is locked. Heading" with nothing wallet-related reachable;
+      Home links "Inheritance (demonstration). Button", "Apps. Button.
+      Opens the in-app browser", "Portfolio. Button. Net worth and profit
+      and loss"; "Edit the 0x API key. Button". DARK MODE fixed on screen:
+      the off-state switch tracks (Staking, both Privacy switches), the
+      Send form's one-line placeholder, hint line and visible borders, the
+      dark badge text on BTC / DOGE, the DCA cap note as a WarningBox and
+      the one-line fee-budget placeholder, the multisig exposure line in
+      the warning colour, the Developer chips centred, the Apps box above
+      the cards; the navigation-bar strip unchanged as expected (pixels
+      255,255,255 under the banner). LEFT (fix slice dispatched): (1) the
+      Price-alerts price field still reads its placeholder ("Price in US
+      dollars, for example 3000. Edit box") — it has NO visible label, so
+      fieldA11y has no labelId and its accessibilityLabel is ignored (the
+      slice's known gap: every label-less field needs a visible or
+      hidden label element to point at); (2) focus does NOT move to the
+      DCA refusal box when the refusal arrives after the asynchronous
+      review ("Reading the pool…" → focus lands on "Custom. Button" / "30
+      days. Button"); it moves only for the instant amount refusal; (3)
+      the Staking balance rows repeat the amount as a second focusable
+      item with "Actions available"; (4) the Privacy switch's label is
+      spoken twice (the visible text and the switch); (5) "0X API KEY"
+      spelled in capitals; (6) Send's hint "Sends ETH" on a test network
+      (elsewhere "test ETH"); (7) full 42-character addresses still spoken
+      for the multisig list address, each signer and the pending card's
+      title; (8) "More accounts below — scroll the list." is never spoken;
+      (9) the switcher scrollbar stays faint on Android (no colour prop —
+      accepted). UNVERIFIED: real touch gestures and audio (keyboard
+      shortcuts and the log were used); the recurring-payment and
+      subscription refusal boxes under TalkBack (only DCA tested); the
+      focus move with a faster or slower bundler answer; iOS VoiceOver.
+      END STATE: Home, Ethereum Sepolia, Account 1, light mode, TalkBack
+      OFF (log level 6), protection OFF, auto-lock 1 min, IME ADBKeyboard,
+      Metro at fba49d2.
+
 ## Phase 20 status (2026-10-14)
 
 Items 0 to 5 are landed and pushed. PROVEN LIVE this phase: the Hoodi
