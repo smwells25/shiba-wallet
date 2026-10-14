@@ -231,6 +231,45 @@ console.log('check-pnl: the historical price request (prices.ts fetchPriceHistor
 }
 
 // ===========================================================================
+console.log('check-pnl: an empty first page is not "older ones exist" (pass p20b finding 3)');
+// ===========================================================================
+{
+  const gap = (s) => `Profit and loss cannot be worked out for ETH: ${s}`;
+  check('0 entries with more to search: says nothing was found so far, not that older ones exist',
+    L.pnlHistoryLoadedLine(0, true) === 'No transactions were found in the history searched so far; older history has not been searched yet.', L.pnlHistoryLoadedLine(0, true));
+  check('0 entries and nothing more: the history is empty',
+    L.pnlHistoryLoadedLine(0, false) === 'No transactions were found: the history is empty.', L.pnlHistoryLoadedLine(0, false));
+  check('a loaded page keeps its wording byte for byte',
+    L.pnlHistoryLoadedLine(1, true) === '1 entry of history loaded; older ones exist.' &&
+      L.pnlHistoryLoadedLine(4, false) === '4 entries of history loaded, which is all of it.');
+  const emptyMore = reasonsOf({ ...base, entries: [], hasMore: true });
+  check('the gap with an empty first page says nothing was found yet, not "not loaded yet"',
+    emptyMore.includes(gap('no transactions were found in the history searched so far, and older history has not been searched yet. Load older history until it is complete.')) &&
+      !emptyMore.some((x) => x.includes('older transactions are not loaded yet')), JSON.stringify(emptyMore));
+  const panel = readFileSync(join(HERE, '..', 'src/screens/PortfolioViews.tsx'), 'utf8');
+  check('the P&L panel draws the line from pnlHistoryLoadedLine (no inline "older ones exist")',
+    panel.includes('{pnlHistoryLoadedLine(entries.length, hasMore)}') && !panel.includes("'; older ones exist'"));
+  // The no-counterparty gap needs at least one entry (the record's "always
+  // shows" was too strong): one confirmed Bitcoin transfer without the other
+  // address raises it.
+  const BTC = { priceId: 'bip122:000000000019d6689c085ae165831e93/slip44:0', symbol: 'BTC', decimals: 8 };
+  const btc = L.computeNativePnl({
+    ...base,
+    asset: BTC,
+    entries: [entry('btc1', t1, 'in', 100_000n, undefined)],
+    smartAccount: null,
+    ownAddresses: ['bc1qexample'],
+    balance: 100_000n,
+  });
+  check('one Bitcoin entry with no counterparty shows the no-counterparty gap',
+    btc.kind === 'gap' && btc.reasons.includes('Profit and loss cannot be worked out for BTC: 1 transaction does not name the other address, so transfers between your own accounts cannot be told apart from purchases and sales.'),
+    JSON.stringify(btc));
+  const btcEmpty = L.computeNativePnl({ ...base, asset: BTC, entries: [], smartAccount: null, ownAddresses: ['bc1qexample'], balance: 0n });
+  check('…and an empty Bitcoin history raises no such gap (nothing to tell apart)',
+    !(btcEmpty.kind === 'gap' && btcEmpty.reasons.some((x) => x.includes('do not name') || x.includes('does not name'))));
+}
+
+// ===========================================================================
 console.log('Mutation checks (scratch copies of pnl.ts)');
 // ===========================================================================
 const MUTANT_DIR = join(HERE, `.mutants-pnl-${process.pid}`);
@@ -266,6 +305,8 @@ async function importMutant(from, to) {
   const noCp = { ...base, entries: baseEntries.slice(1).map((e) => ({ ...e, counterparty: undefined })) };
   check('…the same input is a gap on the real module', L.computeNativePnl(noCp).kind === 'gap');
   check('mutant (entries without a counterparty treated as external) is caught', m5.computeNativePnl(noCp).kind === 'ok');
+  const m6 = await importMutant("  if (count === 0) {", "  if (false) {");
+  check('mutant (the old "0 entries … older ones exist" line) is caught', m6.pnlHistoryLoadedLine(0, true) === '0 entries of history loaded; older ones exist.');
 }
 
 console.log(`\nformatMoney sanity: ${formatMoney(usd(2500n), { hidden: false, signed: true })}`);

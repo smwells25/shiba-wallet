@@ -410,6 +410,7 @@ export function updatePriceAlerts<T>(
 /** Deletes the stored list (the reset of a damaged store, and the wallet wipe). */
 export async function resetPriceAlerts(store: KeyValueStore & { removeItem?: (k: string) => Promise<void> } = AsyncStorage): Promise<void> {
   const run = queue.then(async () => {
+    monitorQuotes.clear();
     if (store.removeItem) await store.removeItem(PRICE_ALERTS_KEY);
     else await store.setItem(PRICE_ALERTS_KEY, serializePriceAlertBook(EMPTY_BOOK));
     notifyChanged();
@@ -511,6 +512,8 @@ export function createPriceAlertMonitor(deps: {
     const book = await deps.load();
     if (!shouldCheckPriceAlerts(book)) return { requested: false, fired: [] };
     const quotes = await deps.fetchQuotes(alertPriceIds(book));
+    // The screen shows the newest price the app holds, including this one.
+    recordMonitorQuotes(quotes);
     const fired = await deps.update((current) => {
       const { book: next, fired: list } = evaluateAlerts(current, quotes, now());
       return { book: next, result: list };
@@ -525,6 +528,89 @@ export function createPriceAlertMonitor(deps: {
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// The newest prices the monitor received (pass p20b finding 5a)
+// ---------------------------------------------------------------------------
+//
+// The watchlist screen reads its prices through usePrices when it opens or is
+// pulled down; the monitor (components/PriceAlertMonitor.tsx) reads them on
+// its own schedule. The pass saw the screen keep $2,502.66 after the monitor
+// had fired an alert at $2,505.97, even after a return to the foreground. So
+// every check records what it received here, and the screen shows, per
+// asset, whichever of the two quotes is newer (newestQuote).
+
+const monitorQuotes = new Map<string, PriceQuote>();
+const monitorQuoteListeners = new Set<() => void>();
+
+/** When a quote's price was set (CoinGecko's time, else when it was fetched); 0 when neither is known. */
+function quoteTimeMs(quote: PriceQuote): number {
+  return quote.updatedAtMs ?? quote.fetchedAtMs ?? 0;
+}
+
+/** The newer of two quotes for one asset (the first on a tie or when neither is dated). */
+export function newestQuote(a: PriceQuote | null | undefined, b: PriceQuote | null | undefined): PriceQuote | null {
+  if (!a) return b ?? null;
+  if (!b) return a;
+  return quoteTimeMs(b) > quoteTimeMs(a) ? b : a;
+}
+
+/** Records the quotes a monitor check received; listeners hear only of a newer price. */
+export function recordMonitorQuotes(quotes: ReadonlyMap<string, PriceQuote>): void {
+  let changed = false;
+  for (const [id, quote] of quotes) {
+    const prev = monitorQuotes.get(id);
+    const next = newestQuote(prev, quote);
+    if (next !== prev && next) {
+      monitorQuotes.set(id, next);
+      changed = true;
+    }
+  }
+  if (!changed) return;
+  for (const l of [...monitorQuoteListeners]) {
+    try {
+      l();
+    } catch {
+      // A listener never breaks a check.
+    }
+  }
+}
+
+/** A copy of the newest quotes the monitor received, by CAIP-19 id. */
+export function latestMonitorQuotes(): Map<string, PriceQuote> {
+  return new Map(monitorQuotes);
+}
+
+/** Called whenever the monitor received a newer price for some asset. */
+export function subscribeMonitorQuotes(listener: () => void): () => void {
+  monitorQuoteListeners.add(listener);
+  return () => {
+    monitorQuoteListeners.delete(listener);
+  };
+}
+
+/** Forgets the monitor's quotes (the check scripts; a wipe resets the alerts through resetPriceAlerts). */
+export function resetMonitorQuotes(): void {
+  monitorQuotes.clear();
+}
+
+/**
+ * Asks before an alert is deleted (pass p20b finding 5c: Remove deleted at
+ * once). `show` is React Native's Alert.alert; `remove` runs only when the
+ * user taps Remove — never on Cancel or when the dialog is dismissed.
+ */
+export function confirmRemoveAlert(
+  show: (title: string, message: string, buttons: { text: string; style: 'cancel' | 'destructive'; onPress?: () => void }[]) => void,
+  rule: string,
+  remove: () => void,
+): void {
+  show(REMOVE_ALERT_TITLE, `The alert ${rule} is deleted from this phone and no longer checked.`, [
+    { text: 'Cancel', style: 'cancel' },
+    { text: 'Remove', style: 'destructive', onPress: remove },
+  ]);
+}
+
+export const REMOVE_ALERT_TITLE = 'Remove this alert?';
 
 // ---------------------------------------------------------------------------
 // Copy
@@ -580,13 +666,17 @@ export function alertStateText(alert: PriceAlert, symbol: string, nowMs: number)
       ? `Waiting to fire again (last fired ${describeAge(Math.max(60_000, nowMs - alert.firedAt))} at ${priceText(alert.firedPrice!)}).`
       : 'Waiting to fire.';
   }
-  const back =
-    alert.direction === 'above'
-      ? `${symbol} falls back below the price by ${PRICE_ALERT_REARM_PERCENT.toString()}%`
-      : `${symbol} rises back above the price by ${PRICE_ALERT_REARM_PERCENT.toString()}%`;
+  // The rule (rearmMet, then conditionMet): the alert re-arms only after the
+  // price moves back at least the re-arm band to the other side of the
+  // threshold, and then fires on the next crossing — the move back never
+  // fires it by itself (pass p20b finding 4). Worded like the note shown
+  // when an alert is created already past its price (addAlert).
+  const next =
+    `the next time ${symbol} crosses ${thresholdText(alert.threshold)} after first moving back ` +
+    `${PRICE_ALERT_REARM_PERCENT.toString()}% to the other side`;
   return alert.firedAt !== undefined
-    ? `Fired ${describeAge(Math.max(60_000, nowMs - alert.firedAt))} at ${priceText(alert.firedPrice!)}; it can fire again once ${back}.`
-    : `The price was already past this alert when you set it; it can fire once ${back}.`;
+    ? `Fired ${describeAge(Math.max(60_000, nowMs - alert.firedAt))} at ${priceText(alert.firedPrice!)}; it fires again ${next}.`
+    : `The price was already past this alert when you set it; it fires ${next}.`;
 }
 
 /** The in-wallet banner text for one fired alert. */

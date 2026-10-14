@@ -1829,10 +1829,13 @@ export function SettingsScreen({ navigation, route }: Props) {
             </View>
             <Text style={[styles.hint, { color: theme.textMuted }]}>
               When the app has been in the background at least this long, it
-              locks behind the same biometric prompt as sending (with your
-              device passcode as the system fallback). While auto-lock is on,
-              the wallet also starts locked every time it is opened afresh
-              (after it was closed, swiped away or stopped by the system).
+              locks behind the same biometric prompt as sending. While your
+              recovery phrase (or the active account&apos;s imported key) is
+              protected by biometrics, that prompt accepts only biometrics;
+              otherwise your device passcode is offered as a fallback.
+              While auto-lock is on, the wallet also starts locked every time
+              it is opened afresh (after it was closed, swiped away or stopped
+              by the system).
               Screen state is kept — locking never discards what you were
               doing.
             </Text>

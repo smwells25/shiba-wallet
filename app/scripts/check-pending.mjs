@@ -694,6 +694,19 @@ console.log('check-pending: the screens wire the gates in order (source)');
   check('the cancel confirm shows the "yourself" line, a speed-up the risk card', view.includes('cancelRiskLine(from)') && view.includes('<RiskWarnings url={s.url} wallet={from} to={q.to} data={q.data} />'));
   check('smart-account rows show the sentence and Check status, never a replacement', view.includes('{SMART_ACCOUNT_NO_REPLACEMENT_SENTENCE}') && view.includes('title="Check status"') && !/sendUserOperation/.test(view));
   check('Send again asks the bundler once more first', /const sendAgain = async[\s\S]*checkUserOperation\([\s\S]*onSendAgain\?\.\(record\)/.test(view));
+  // Pass p20b finding 10: after "Included in transaction …" the card kept
+  // the "cannot be sped up or cancelled…" paragraph, which only applies
+  // while the operation may still be pending.
+  const show = pending.userOpShowsNoReplacementSentence;
+  check('the no-replacement paragraph shows before a status read, while in the bundler and while unknown',
+    show(null) && show(undefined) && show({ state: 'in-bundler' }) && show({ state: 'unknown', resendOffered: false }) && show({ state: 'unknown', resendOffered: true }));
+  check('…and is dropped once the status reads "Included …" (succeeded or reverted)',
+    !show({ state: 'included', success: true, txHash: H(78) }) && !show({ state: 'included', success: false, txHash: null }));
+  const gatedOk = (src) => /\{userOpShowsNoReplacementSentence\(status\) \? \(\s*<Text[^>]*>\{SMART_ACCOUNT_NO_REPLACEMENT_SENTENCE\}<\/Text>\s*\) : null\}/.test(src) &&
+    (src.match(/\{SMART_ACCOUNT_NO_REPLACEMENT_SENTENCE\}/g) ?? []).length === 1;
+  check('the card renders the paragraph only through that rule (source)', gatedOk(view));
+  const oldView = view.replace(/\{userOpShowsNoReplacementSentence\(status\) \? \(\s*(<Text[^>]*>\{SMART_ACCOUNT_NO_REPLACEMENT_SENTENCE\}<\/Text>)\s*\) : null\}/, '$1');
+  check('mutant caught: the paragraph shown unconditionally (the old card)', oldView !== view && !gatedOk(oldView));
   const sendScreen = readFileSync(join(HERE, '../src/screens/SendScreen.tsx'), 'utf8');
   check('Send success view offers it for the transaction just sent', sendScreen.includes('<PendingTransactionsSection from={quotedFrom} onlyHash={result.txid} />'));
   check('the passkey submit path remembers the operation itself (origin send)', (sendScreen.match(/rememberUserOperation\(quote, userOpHash\)/g) ?? []).length === 1 && sendScreen.includes("origin: 'send',"));

@@ -194,6 +194,16 @@ console.log('check-portfolio: Hide amounts masks every figure');
   check('amountText is masked', P.amountText(123456789n, 6, 'USDC', true) === '•••• USDC');
   check('valueText is masked', P.valueText('priced', { n: 5n, d: 1n }, true) === '≈ ••••');
   check('the spoken label holds no digits', !/\d/.test(spoken) && spoken.includes('hidden'), spoken);
+  // Pass p20b finding 11: a test asset under Hide amounts read "amount
+  // hidden, value hidden" although it has no value.
+  const hiddenTest = P.holdingSpokenLabel({ label: 'Account 1, USDC on Ethereum Sepolia', amount: 41_089_603n, decimals: 6, symbol: 'USDC', status: 'test', value: null, quote: null, hidden: true, nowMs: 0 });
+  check('hidden test asset: "amount hidden, test asset, no value", never "value hidden"',
+    hiddenTest === 'Account 1, USDC on Ethereum Sepolia: USDC, amount hidden, test asset, no value', hiddenTest);
+  check('hidden unpriced asset: "amount hidden, no price"',
+    P.holdingSpokenLabel({ label: 'Account 1', amount: 5n, decimals: 0, symbol: 'XYZ', status: 'no-price', value: null, quote: null, hidden: true, nowMs: 0 }) === 'Account 1: XYZ, amount hidden, no price');
+  check('hidden priced asset keeps "amount hidden, value hidden" byte for byte',
+    P.holdingSpokenLabel({ label: 'Account 1', amount: 10_000_000n, decimals: 8, symbol: 'BTC', status: 'priced', value: P.moneyOf(10_000_000n, 8, '83250.90730785819'), quote: null, hidden: true, nowMs: 0 }) === 'Account 1: BTC, amount hidden, value hidden');
+  check('unmasked test asset unchanged', P.holdingSpokenLabel({ label: 'Account 1, USDC on Ethereum Sepolia', amount: 41_089_603n, decimals: 6, symbol: 'USDC', status: 'test', value: null, quote: null, hidden: false, nowMs: 0 }) === 'Account 1, USDC on Ethereum Sepolia: 41.089603 USDC, test asset, no value');
   check('unmasked, the spoken label says the amount and the value', P.holdingSpokenLabel({ label: 'Account 1', amount: 10_000_000n, decimals: 8, symbol: 'BTC', status: 'priced', value: P.moneyOf(10_000_000n, 8, '83250.90730785819'), quote: null, hidden: false, nowMs: 0 }) === 'Account 1: 0.1 BTC, about 8,325.09 US dollars');
 }
 
@@ -278,6 +288,9 @@ async function importMutant(from, to) {
   const tres = new Map(tplan.tasks.map((t) => [t.key, ok(5n, t.asset.decimals, t.asset.networkChainId)]));
   const s2 = m2.computePortfolio({ plan: tplan, results: tres, quotes: new Map() });
   check('mutant (test guard removed) is caught: test ETH no longer reads "test"', !s2.byAsset.some((a) => a.status === 'test'));
+  const mHidden = await importMutant("  if (args.hidden) return `${args.label}: ${args.symbol}, amount hidden, ${value}`;", "  if (args.hidden) return `${args.label}: ${args.symbol}, amount hidden, value hidden`;");
+  check('mutant (the old "amount hidden, value hidden" for every asset) is caught',
+    mHidden.holdingSpokenLabel({ label: 'A', amount: 1n, decimals: 0, symbol: 'USDC', status: 'test', value: null, quote: null, hidden: true, nowMs: 0 }) === 'A: USDC, amount hidden, value hidden');
   // 3. A rounding per holding instead of exact sums: the aggregate drifts from the parts.
   const m3 = await importMutant('export function moneyAdd(a: Money, b: Money): Money {\n  return moneyReduce({ n: a.n * b.d + b.n * a.d, d: a.d * b.d });', 'export function moneyAdd(a: Money, b: Money): Money {\n  return moneyReduce({ n: (a.n * 100n / a.d) + (b.n * 100n / b.d), d: 100n });');
   const s3 = m3.computePortfolio({ plan, results, quotes });

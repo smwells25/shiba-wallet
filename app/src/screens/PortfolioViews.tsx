@@ -13,7 +13,7 @@ import { getAaConfig } from '../wallet/aa';
 import { historySmartAccountFor } from '../wallet/activity-sentences';
 import { fetchPriceHistory, nativePriceAssetId, type PriceHistoryResult } from '../wallet/prices';
 import { EVM_CHAIN_ID } from '../wallet/send';
-import { computeNativePnl, pnlFigureLines, pnlPriceRange, type PnlPriceHistory } from '../wallet/pnl';
+import { computeNativePnl, pnlFigureLines, pnlHistoryLoadedLine, pnlPriceRange, type PnlPriceHistory } from '../wallet/pnl';
 import type { PortfolioSlot } from '../wallet/portfolio';
 
 /** The intro of the profit-and-loss section. */
@@ -216,7 +216,7 @@ function PnlPanel({
     <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
       {activeAccount.watchOnly ? <Text style={[styles.hint, { color: theme.warningText }]}>{PNL_WATCHED_NOTE}</Text> : null}
       <Text style={[styles.hint, { color: theme.textMuted }]}>
-        {entries.length} {entries.length === 1 ? 'entry' : 'entries'} of history loaded{hasMore ? '; older ones exist' : ', which is all of it'}.
+        {pnlHistoryLoadedLine(entries.length, hasMore)}
       </Text>
       {result === null ? <ActivityIndicator color={theme.textMuted} accessibilityLabel="Working out profit and loss" /> : null}
       {result?.kind === 'gap'

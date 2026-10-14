@@ -52,6 +52,7 @@ import {
   shortHash,
   userOpCanBeSentAgain,
   userOpCardTitle,
+  userOpShowsNoReplacementSentence,
   userOpStatusSentence,
   userOpsFor,
   type GroupStatus,
@@ -443,7 +444,9 @@ export function PendingTransactionsSection({
       {shownOps.map(({ record, status, checking, error }) => (
         <View key={record.userOpHash} style={card}>
           <Text style={[styles.text, { color: theme.text }]}>{userOpCardTitle(record)}</Text>
-          <Text style={[styles.muted, { color: theme.textMuted }]}>{SMART_ACCOUNT_NO_REPLACEMENT_SENTENCE}</Text>
+          {userOpShowsNoReplacementSentence(status) ? (
+            <Text style={[styles.muted, { color: theme.textMuted }]}>{SMART_ACCOUNT_NO_REPLACEMENT_SENTENCE}</Text>
+          ) : null}
           {status ? <Text style={[styles.text, { color: theme.text }]}>{userOpStatusSentence(status, record)}</Text> : null}
           <TechnicalDetail text={error} />
           <View style={styles.actions}>

@@ -8,6 +8,7 @@ import { Button, WarningBox, screenStyle } from '../components';
 import { useTheme } from '../theme';
 import { usePrefs } from '../wallet/PrefsContext';
 import { usePrices } from '../wallet/usePrices';
+import { useOnAppActive } from '../components/RecurringDueBanner';
 import { staleNoteFor } from '../wallet/prices';
 import { appNotifications, describeNotificationsStatus, type NotificationsStatus } from '../wallet/notifications';
 import {
@@ -26,12 +27,16 @@ import {
   addToWatchlist,
   alertRuleText,
   alertStateText,
+  confirmRemoveAlert,
+  latestMonitorQuotes,
   loadPriceAlerts,
+  newestQuote,
   parseThreshold,
   priceText,
   removeAlert,
   removeFromWatchlist,
   resetPriceAlerts,
+  subscribeMonitorQuotes,
   subscribePriceAlerts,
   updatePriceAlerts,
   watchAssetFor,
@@ -81,6 +86,23 @@ export function PriceAlertsScreen(_props: Props) {
       void refresh();
     }, [refresh]),
   );
+  // A return to the foreground reads the prices again (focus does not fire then).
+  useOnAppActive(() => {
+    setNow(Date.now());
+    void refresh();
+  });
+  // The monitor's checks may hold a newer price than this screen's own read
+  // (pass p20b finding 5a): each card shows the newer of the two.
+  const [monitorQuotes, setMonitorQuotes] = useState(() => latestMonitorQuotes());
+  useEffect(
+    () =>
+      subscribeMonitorQuotes(() => {
+        setMonitorQuotes(latestMonitorQuotes());
+        setNow(Date.now());
+      }),
+    [],
+  );
+  const quoteFor = (id: string): PriceQuote | null => (showFiat ? newestQuote(quotes.get(id), monitorQuotes.get(id)) : null);
 
   const [status, setStatus] = useState<NotificationsStatus | null>(() => appNotifications().status());
   useEffect(() => appNotifications().subscribe(() => setStatus(appNotifications().status())), []);
@@ -159,20 +181,29 @@ export function PriceAlertsScreen(_props: Props) {
               key={id}
               asset={asset}
               book={book}
-              quote={quotes.get(id) ?? null}
+              quote={quoteFor(id)}
               now={now}
               disabled={book.damaged}
               onAdd={async (direction, threshold) => {
                 const created = await apply((b) =>
-                  addAlert(b, { assetId: id, direction, threshold, quote: quotes.get(id) ?? null, nowMs: Date.now() }),
+                  addAlert(b, { assetId: id, direction, threshold, quote: quoteFor(id), nowMs: Date.now() }),
                 );
                 if (created) setNotice(created.note ?? `Alert set: ${alertRuleText(created.alert, asset.symbol)}.`);
                 return created !== null;
               }}
-              onRemoveAlert={(alertId) => void apply((b) => ({ book: removeAlert(b, alertId), result: null }))}
+              onRemoveAlert={(alertId, rule) =>
+                confirmRemoveAlert(Alert.alert, rule, () => {
+                  // A notice about an alert must not outlive it (pass p20b finding 5b).
+                  setNotice(null);
+                  void apply((b) => ({ book: removeAlert(b, alertId), result: null }));
+                })
+              }
               onUnwatch={() => {
                 const count = book.alerts.filter((a) => a.assetId === id).length;
-                const go = () => void apply((b) => ({ book: removeFromWatchlist(b, id), result: null }));
+                const go = () => {
+                  setNotice(null);
+                  void apply((b) => ({ book: removeFromWatchlist(b, id), result: null }));
+                };
                 if (count === 0) go();
                 else
                   Alert.alert(`Stop following ${asset.symbol}?`, `This also removes its ${count === 1 ? 'alert' : `${count} alerts`}.`, [
@@ -239,7 +270,7 @@ function WatchRow({
   now: number;
   disabled: boolean;
   onAdd: (direction: AlertDirection, threshold: string) => Promise<boolean>;
-  onRemoveAlert: (id: string) => void;
+  onRemoveAlert: (id: string, rule: string) => void;
   onUnwatch: () => void;
 }) {
   const theme = useTheme();
@@ -274,7 +305,7 @@ function WatchRow({
             variant="secondary"
             disabled={disabled}
             accessibilityLabel={`Remove the alert ${alertRuleText(a, asset.symbol)}`}
-            onPress={() => onRemoveAlert(a.id)}
+            onPress={() => onRemoveAlert(a.id, alertRuleText(a, asset.symbol))}
             style={styles.smallButton}
           />
         </View>

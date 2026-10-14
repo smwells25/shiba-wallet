@@ -18,6 +18,7 @@ import {
   phraseAccountSameAsImportedNote,
 } from '../wallet/imported-keys';
 import { useWallet, type AccountView } from '../wallet/WalletContext';
+import { multisigSwitcherA11yLabel, multisigSwitcherNetworkLine } from '../wallet/multisig';
 import {
   MULTISIG_LIST_HINT,
   MULTISIG_SWITCHER_LINE,
@@ -194,7 +195,7 @@ export function AccountSwitcher({ onManage, onImportKey }: { onManage: () => voi
                   {...(item.watchOnly
                     ? { accessibilityLabel: `${item.name}, watch-only, ${item.evmAddress ?? 'unknown address'}` }
                     : item.multisig
-                      ? { accessibilityLabel: `${item.name}, multi-signature account, ${item.evmAddress ?? 'unknown address'}` }
+                      ? { accessibilityLabel: multisigSwitcherA11yLabel(item) }
                       : {})}
                   onPress={() => void choose(item)}
                   style={({ pressed }) => [
@@ -232,6 +233,13 @@ export function AccountSwitcher({ onManage, onImportKey }: { onManage: () => voi
                     ) : null}
                     {item.multisig ? (
                       <Text style={[styles.headerAddress, { color: theme.warningText }]}>{MULTISIG_SWITCHER_LINE}</Text>
+                    ) : null}
+                    {item.multisig ? (
+                      // The same signer set has the same address on every
+                      // network, so the row names its network (pass p20b finding 9).
+                      <Text style={[styles.headerAddress, { color: theme.textMuted }]}>
+                        {multisigSwitcherNetworkLine(item.multisigInfo)}
+                      </Text>
                     ) : null}
                   </View>
                   {active ? <Text style={[styles.check, { color: theme.accent }]}>✓</Text> : null}
