@@ -3,7 +3,7 @@ import { Alert, Platform, ScrollView, StyleSheet, Switch, Text, TextInput, View 
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { FungibleAsset } from '@shiba-wallet/core';
 import type { RootStackParamList } from '../navigation';
-import { Button, WarningBox, screenStyle, switchColors, useFieldLabels, fieldA11y } from '../components';
+import { Button, WarningBox, screenStyle, switchColors, useFieldLabels, HiddenFieldLabel } from '../components';
 import { useTheme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
@@ -439,8 +439,9 @@ export function SpendingLimitsScreen({ navigation }: Props) {
           </View>
           {windowChoice === 'custom' ? (
             <>
+              <HiddenFieldLabel field={fieldLabel('custom-window', `Custom window length in ${customUnit}`)} />
               <TextInput
-                {...fieldA11y(`Custom window length in ${customUnit}`)}
+                {...fieldLabel('custom-window', `Custom window length in ${customUnit}`).input}
                 style={inputStyle}
                 value={customText}
                 onChangeText={(t) => {

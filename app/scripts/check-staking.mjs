@@ -1143,6 +1143,16 @@ console.log('\ncheck-staking: pass p20c finding 6 (what TalkBack says on the Sta
     !switchOk(screen.replace('accessibilityLabel="Use the smart account"', 'accessibilityLabel="Stake from the smart account"')));
   check('the From / Owner account rows speak the address short (source)',
     (screen.match(/spoken=\{`(From account|Owner account \(signs\)): \$\{activeAccount\?\.name \?\? 'unknown'\}, \$\{spokenShortAddress\(account\.address\)\}`\}/g) ?? []).length === 3);
+  // Pass p20d finding 3: TalkBack stopped a second time on the amount
+  // ("0.001315… stETH. Actions available"): a selectable Text is its own
+  // focusable, long-clickable node. With a spoken row label, the amount is
+  // hidden from screen readers and stays selectable for sight.
+  const rowValueOk = (src) =>
+    /<Text\s+selectable\s+\{\.\.\.\(spoken !== undefined \? \{ importantForAccessibility: 'no' as const, accessibilityElementsHidden: true \} : \{\}\)\}\s+style=\{\[styles\.rowValue,/.test(src) &&
+    src.includes("{...(spoken !== undefined ? { accessible: true, accessibilityLabel: spoken } : {})}");
+  check('p20d finding 3: a balance row is ONE element — its selectable amount is hidden from screen readers when the row has a spoken label (source)', rowValueOk(views));
+  check('…mutant caught: the amount exposed again as a second item',
+    !rowValueOk(views.replace("{...(spoken !== undefined ? { importantForAccessibility: 'no' as const, accessibilityElementsHidden: true } : {})}", '')));
 }
 
 console.log(`\ncheck-staking: ${passed} passed, ${failed} failed`);

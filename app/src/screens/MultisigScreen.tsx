@@ -3,7 +3,7 @@ import { ActivityIndicator, Alert, ScrollView, Text, TextInput, View } from 'rea
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { httpTransport, type JsonRpcTransport } from '@shiba-wallet/chains-evm';
 import { spokenShortAddress } from '../a11y';
-import { Button, TestNetworksOnlyCard, WarningBox, screenStyle, useFieldLabels, fieldA11y } from '../components';
+import { Button, TestNetworksOnlyCard, WarningBox, screenStyle, useFieldLabels, HiddenFieldLabel } from '../components';
 import {
   InfoRow,
   PasteOrScan,
@@ -681,8 +681,9 @@ export function MultisigScreen() {
               placeholder={`Co-signer ${i + 1}: Ethereum address`}
               rationale="Scan the co-signer’s Ethereum address QR code."
             />
+            <Text {...fieldLabel(`cosigner-${i}-weight`, `Co-signer ${i + 1} weight`).label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel(`cosigner-${i}-weight`, `Co-signer ${i + 1} weight`).text}</Text>
             <TextInput
-              {...fieldA11y(`Co-signer ${i + 1}: weight`)}
+              {...fieldLabel(`cosigner-${i}-weight`, `Co-signer ${i + 1} weight`).input}
               value={c.weight}
               onChangeText={(text) => setCosigners((prev) => prev.map((x, j) => (j === i ? { ...x, weight: text } : x)))}
               keyboardType="number-pad"
@@ -706,8 +707,9 @@ export function MultisigScreen() {
           keyboardType="number-pad"
           style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
         />
+        <HiddenFieldLabel field={fieldLabel('multisig-name', 'Name (optional)')} />
         <TextInput
-          {...fieldA11y('Name (optional)')}
+          {...fieldLabel('multisig-name', 'Name (optional)').input}
           value={nameInput}
           onChangeText={setNameInput}
           placeholder="Name (optional)"
@@ -748,6 +750,7 @@ export function MultisigScreen() {
             key={s.address}
             label={s.address.toLowerCase() === phraseSigner?.toLowerCase() ? 'This wallet’s signer' : 'Co-signer'}
             value={s.address}
+            spokenValue={spokenShortAddress(s.address)}
             sub={`weight ${s.weight}`}
             monoValue
           />
@@ -775,7 +778,7 @@ export function MultisigScreen() {
     return shell(
       <>
         <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>{multisigDisplayName(selected)}</Text>
-        <InfoRow label="Multisig address (receive here)" value={selected.address} monoValue />
+        <InfoRow label="Multisig address (receive here)" value={selected.address} spokenValue={spokenShortAddress(selected.address)} monoValue />
         <PayloadQr
           value={selected.address}
           caption="The multisig account’s address. Anyone can send to it; moving funds out needs the co-signers."
@@ -794,6 +797,7 @@ export function MultisigScreen() {
             key={s.address}
             label={s.address.toLowerCase() === selected.localSigner.toLowerCase() ? 'This wallet’s signer' : 'Co-signer'}
             value={s.address}
+            spokenValue={spokenShortAddress(s.address)}
             sub={`weight ${s.weight}`}
             monoValue
           />
@@ -914,8 +918,9 @@ export function MultisigScreen() {
             <Button key={key} title={symbolFor(key)} variant="secondary" selected={asset === key} onPress={() => setAsset(key)} />
           ))}
         </View>
+        <HiddenFieldLabel field={fieldLabel('op-recipient', 'Recipient address')} />
         <TextInput
-          {...fieldA11y('Recipient address')}
+          {...fieldLabel('op-recipient', 'Recipient address').input}
           value={recipient}
           onChangeText={setRecipient}
           placeholder="Recipient (0x…)"
@@ -924,8 +929,9 @@ export function MultisigScreen() {
           autoCorrect={false}
           style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
         />
+        <HiddenFieldLabel field={fieldLabel('op-amount', `Amount in ${symbolFor(asset)}`)} />
         <TextInput
-          {...fieldA11y(`Amount in ${symbolFor(asset)}`)}
+          {...fieldLabel('op-amount', `Amount in ${symbolFor(asset)}`).input}
           value={amount}
           onChangeText={setAmount}
           placeholder={`Amount (${symbolFor(asset)})`}
@@ -977,8 +983,9 @@ export function MultisigScreen() {
           onComplete={(text) => void onAddApproval(text)}
           onError={scanError}
         />
+        <HiddenFieldLabel field={fieldLabel('approval-paste', 'Paste a co-signer’s approval (or a 65-byte signature from another wallet)')} />
         <TextInput
-          {...fieldA11y('Paste a co-signer’s approval (or a 65-byte signature from another wallet)')}
+          {...fieldLabel('approval-paste', 'Paste a co-signer’s approval (or a 65-byte signature from another wallet)').input}
           value={approvalInput}
           onChangeText={setApprovalInput}
           placeholder="Paste a co-signer’s approval (or a 65-byte signature from another wallet)"
@@ -1112,8 +1119,9 @@ export function MultisigScreen() {
           onComplete={onReviewImport}
           onError={scanError}
         />
+        <HiddenFieldLabel field={fieldLabel('record-paste', 'Paste the multisig record')} />
         <TextInput
-          {...fieldA11y('Paste the multisig record')}
+          {...fieldLabel('record-paste', 'Paste the multisig record').input}
           value={importInput}
           onChangeText={setImportInput}
           placeholder="Paste the multisig record"
@@ -1166,8 +1174,9 @@ export function MultisigScreen() {
           onComplete={onReviewCosign}
           onError={scanError}
         />
+        <HiddenFieldLabel field={fieldLabel('request-paste', 'Paste the multisig signing request')} />
         <TextInput
-          {...fieldA11y('Paste the multisig signing request')}
+          {...fieldLabel('request-paste', 'Paste the multisig signing request').input}
           value={cosignInput}
           onChangeText={setCosignInput}
           placeholder="Paste the multisig signing request"
@@ -1199,7 +1208,7 @@ export function MultisigScreen() {
         <InfoRow label="Network" value={`${r.networkLabel} (chain id ${r.request.chainId})`} />
         <InfoRow label="Nonce" value={r.request.nonce} />
         <InfoRow label="Request id (call data and nonce)" value={r.request.callDataAndNonceHash} monoValue />
-        <InfoRow label="You approve as" value={r.signer.address} sub={`weight ${r.signer.weight} of the threshold ${r.config.threshold}`} monoValue />
+        <InfoRow label="You approve as" value={r.signer.address} spokenValue={spokenShortAddress(r.signer.address)} sub={`weight ${r.signer.weight} of the threshold ${r.config.threshold}`} monoValue />
         <MultisigCallsView calls={r.calls} described={r.described} nativeSymbol={nativeSymbol} />
         {r.warnings.map((w) => (
           <WarningBox key={w}>{w}</WarningBox>
@@ -1271,7 +1280,7 @@ export function MultisigScreen() {
         records.map((r) => (
           <View key={r.id} style={[styles.card, { borderColor: theme.border, backgroundColor: theme.card }]}>
             <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>{multisigDisplayName(r)}</Text>
-            <Text selectable style={[styles.mono, { color: theme.textMuted }]}>
+            <Text selectable accessibilityLabel={spokenShortAddress(r.address)} style={[styles.mono, { color: theme.textMuted }]}>
               {r.address}
             </Text>
             <Text style={[styles.hint, { color: theme.text }]}>

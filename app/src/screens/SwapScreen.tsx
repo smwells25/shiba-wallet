@@ -17,7 +17,7 @@ import { formatAssetId } from '@shiba-wallet/core';
 import type { FungibleAsset } from '@shiba-wallet/core';
 import type { SwapQuote } from '@shiba-wallet/chains-evm';
 import type { RootStackParamList } from '../navigation';
-import { Button, ImportedKeyNotice, WarningBox, screenStyle, switchColors, useFieldLabels, fieldA11y } from '../components';
+import { Button, ImportedKeyNotice, WarningBox, screenStyle, switchColors, useFieldLabels, HiddenFieldLabel } from '../components';
 import {
   callWithFailover,
   getEndpoint,
@@ -1753,8 +1753,9 @@ export function SwapScreen({ navigation }: Props) {
       </View>
       {slippageMode === 'custom' ? (
         <>
+          <HiddenFieldLabel field={fieldLabel('custom-slippage', 'Custom maximum slippage in basis points')} />
           <TextInput
-            {...fieldA11y('Custom maximum slippage in basis points')}
+            {...fieldLabel('custom-slippage', 'Custom maximum slippage in basis points').input}
             value={customBpsText}
             onChangeText={(t) => {
               setCustomBpsText(t);
@@ -1816,7 +1817,7 @@ function Row({
 }) {
   return (
     <View style={[styles.row, { borderColor: theme.border }]}>
-      <Text style={[styles.rowLabel, { color: theme.textMuted }]}>{label}</Text>
+      <Text accessibilityLabel={label} style={[styles.rowLabel, { color: theme.textMuted }]}>{label}</Text>
       <Text
         selectable
         style={[

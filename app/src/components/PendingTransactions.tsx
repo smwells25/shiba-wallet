@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { Button } from '../components';
+import { withShortAddresses } from '../a11y';
 import { useTheme } from '../theme';
 import { httpTransport } from '@shiba-wallet/chains-evm';
 import { getEndpoint } from '../config/networks';
@@ -379,7 +380,12 @@ export function PendingTransactionsSection({
         const latestIsCancel = group.latest.action === 'cancel';
         return (
           <View key={`${group.chain}:${group.nonce}`} style={card}>
-            <Text style={[styles.text, { color: theme.text }]}>{pendingGroupSentence(group, { nativeSymbol: symbol, nowMs })}</Text>
+            <Text
+              accessibilityLabel={withShortAddresses(pendingGroupSentence(group, { nativeSymbol: symbol, nowMs }))}
+              style={[styles.text, { color: theme.text }]}
+            >
+              {pendingGroupSentence(group, { nativeSymbol: symbol, nowMs })}
+            </Text>
             <Text style={[styles.muted, { color: theme.textMuted }]}>
               Newest version {shortHash(group.latest.hash)}
               {latestIsCancel ? ' (a cancellation)' : ''}: {feeLine(BigInt(group.latest.maxFeePerGas), BigInt(group.latest.maxPriorityFeePerGas))}.
@@ -443,7 +449,11 @@ export function PendingTransactionsSection({
       ))}
       {shownOps.map(({ record, status, checking, error }) => (
         <View key={record.userOpHash} style={card}>
-          <Text style={[styles.text, { color: theme.text }]}>{userOpCardTitle(record)}</Text>
+          {/* The title can carry a full recipient address (a multisig's, for
+              one); it is spoken short (pass p20d finding 7). */}
+          <Text accessibilityLabel={withShortAddresses(userOpCardTitle(record))} style={[styles.text, { color: theme.text }]}>
+            {userOpCardTitle(record)}
+          </Text>
           {userOpShowsNoReplacementSentence(status) ? (
             <Text style={[styles.muted, { color: theme.textMuted }]}>{SMART_ACCOUNT_NO_REPLACEMENT_SENTENCE}</Text>
           ) : null}

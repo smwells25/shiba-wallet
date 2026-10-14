@@ -19,7 +19,7 @@ import { CHAINS } from '../wallet/chains';
 import { IMPORTED_KEY_NO_CHAIN, MULTISIG_NO_CHAIN, WATCH_ONLY_NO_CHAIN } from '../wallet/account-ids';
 import { useTheme } from '../theme';
 import { textOnFill } from '../theme-palette';
-import { spokenLinkText, tokenRowSpokenLabel } from '../a11y';
+import { sendLinkHint, spokenLinkText, tokenRowSpokenLabel } from '../a11y';
 import { EVM_CHAIN_ID, addSendAcceptedListener } from '../wallet/send';
 import { addAaSentListener } from '../wallet/aa';
 import { createSendRefreshTracker, reloadNowAndLater } from '../wallet/home-refresh';
@@ -220,7 +220,7 @@ function TokenRow({
       {...(action
         ? {
             accessibilityRole: 'button' as const,
-            accessibilityHint: retry ? 'Asks the network endpoint for this balance again' : `Sends ${token.symbol}`,
+            accessibilityHint: retry ? 'Asks the network endpoint for this balance again' : sendLinkHint(token.symbol),
             accessibilityActions: [{ name: 'activate', label: retry ? 'Retry' : `Send ${token.symbol}` }],
             onAccessibilityAction: (e: { nativeEvent: { actionName: string } }) => {
               if (e.nativeEvent.actionName === 'activate') action();
@@ -583,7 +583,9 @@ export function HomeScreen({ navigation }: Props) {
             ? null
             : cardLink('send', 'Send ↗', () =>
                 navigation.navigate('Send', { chainId: item.chainId }),
-                `Sends ${item.symbol}`,
+                // The coin as this network names it ("test ETH" on a test
+                // network; pass p20d finding 6).
+                sendLinkHint(isEvm ? evmChain.displaySymbol : item.symbol),
               )}
           {cardLink('activity', 'Activity', () =>
             navigation.navigate('Activity', { chainId: item.chainId }),

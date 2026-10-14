@@ -4,7 +4,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { PriceQuote } from '@shiba-wallet/prices';
 import type { RootStackParamList } from '../navigation';
-import { Button, WarningBox, screenStyle, fieldA11y } from '../components';
+import { Button, WarningBox, screenStyle, useFieldLabels } from '../components';
 import { useTheme } from '../theme';
 import { usePrefs } from '../wallet/PrefsContext';
 import { usePrices } from '../wallet/usePrices';
@@ -274,6 +274,8 @@ function WatchRow({
   onUnwatch: () => void;
 }) {
   const theme = useTheme();
+  const fieldLabel = useFieldLabels();
+  const priceField = fieldLabel('price', `Alert price for ${asset.symbol} (US dollars)`);
   const [direction, setDirection] = useState<AlertDirection>('above');
   const [text, setText] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
@@ -323,15 +325,19 @@ function WatchRow({
           />
         ))}
       </View>
+      {/* A visible label for the price field (pass p20d finding 1): TalkBack
+          ignores a field's own accessibilityLabel while it shows a
+          placeholder, so the field is "labelled by" this caption. */}
+      <Text {...priceField.label} style={[styles.hint, { color: theme.textMuted }]}>{priceField.text}</Text>
       <TextInput
-        {...fieldA11y(`Alert price for ${asset.symbol} in US dollars`)}
+        {...priceField.input}
         value={text}
         onChangeText={(v) => {
           setText(v);
           setFormError(null);
         }}
         editable={!disabled}
-        placeholder="Price in US dollars, for example 3000"
+        placeholder="For example 3000"
         placeholderTextColor={theme.textMuted}
         keyboardType="decimal-pad"
         style={[styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.background }]}

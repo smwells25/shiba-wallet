@@ -8,7 +8,7 @@ import * as Clipboard from 'expo-clipboard';
 // round-trips through an independent decoder.
 import QRCode from 'react-native-qrcode-svg';
 import type { KernelGuardianSet } from '@shiba-wallet/chains-evm';
-import { Button, WarningBox, fieldA11y } from '../components';
+import { Button, WarningBox, HiddenFieldLabel, useFieldLabels } from '../components';
 import { payloadQrSpokenLabel } from '../a11y';
 import { useTheme } from '../theme';
 import { QrScanner } from './QrScanner';
@@ -38,23 +38,36 @@ export function RecoveryNetworkBadge({ label, testnet }: { label: string; testne
   );
 }
 
-/** Label / value row; values are selectable and shown in full. */
+/**
+ * Label / value row; values are selectable and shown in full.
+ *
+ * `spokenValue` (pass p20d finding 7): what a screen reader says for the
+ * value when it differs from the text, e.g. a signer's address as
+ * "0x944c…0d38" while the full 42 characters stay on screen. Left out on
+ * confirm screens, where a contract's address is read in full on purpose.
+ */
 export function InfoRow({
   label,
   value,
   sub = null,
   monoValue = false,
+  spokenValue,
 }: {
   label: string;
   value: string;
   sub?: string | null;
   monoValue?: boolean;
+  spokenValue?: string;
 }) {
   const theme = useTheme();
   return (
     <View style={[styles.row, { borderColor: theme.border }]}>
       <Text style={[styles.rowLabel, { color: theme.textMuted }]}>{label}</Text>
-      <Text selectable style={[styles.rowValue, { color: theme.text }, monoValue ? styles.mono : null]}>
+      <Text
+        selectable
+        {...(spokenValue !== undefined ? { accessibilityLabel: spokenValue } : {})}
+        style={[styles.rowValue, { color: theme.text }, monoValue ? styles.mono : null]}
+      >
         {value}
       </Text>
       {sub ? (
@@ -240,11 +253,13 @@ export function PasteOrScan({
   rationale: string;
 }) {
   const theme = useTheme();
+  const fieldLabel = useFieldLabels();
   const [scanning, setScanning] = useState(false);
   return (
     <View style={styles.stack}>
+      <HiddenFieldLabel field={fieldLabel('paste', placeholder)} />
       <TextInput
-        {...fieldA11y(placeholder)}
+        {...fieldLabel('paste', placeholder).input}
         value={value}
         onChangeText={onChange}
         placeholder={placeholder}

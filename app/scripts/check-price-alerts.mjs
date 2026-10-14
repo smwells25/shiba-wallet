@@ -430,10 +430,21 @@ async function importMutant(from, to) {
 console.log('\npass p20c: the alert price field');
 {
   const screen = readFileSync(join(HERE, '..', 'src', 'screens', 'PriceAlertsScreen.tsx'), 'utf8');
+  // Pass p20d finding 1: TalkBack ignores a field's own accessibilityLabel
+  // while it shows a placeholder, and this field had no label view to be
+  // "labelled by", so it read only "Price in US dollars, for example 3000".
+  // It now has a visible caption that its accessibilityLabelledBy points at.
   const fieldOk = (src) =>
-    src.includes('{...fieldA11y(`Alert price for ${asset.symbol} in US dollars`)}') &&
+    src.includes("const priceField = fieldLabel('price', `Alert price for ${asset.symbol} (US dollars)`);") &&
+    src.includes('<Text {...priceField.label} style={[styles.hint, { color: theme.textMuted }]}>{priceField.text}</Text>') &&
+    src.includes('{...priceField.input}') &&
+    src.includes('placeholder="For example 3000"') &&
     src.includes("style={[styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.background }]}");
-  check('the price field is named through fieldA11y and outlined with controlBorder (3:1 or more in both themes) (source)', fieldOk(screen));
+  check('the price field is labelled by its visible caption "Alert price for <asset> (US dollars)" (useFieldLabels), its placeholder an example, and outlined with controlBorder (3:1 or more in both themes) (source)', fieldOk(screen));
+  check('…mutant caught (p20d finding 1): the caption without its nativeID (nothing for the field to be labelled by)',
+    !fieldOk(screen.replace('<Text {...priceField.label} style=', '<Text style=')));
+  check('…the caption sits directly above the field (source)',
+    /<Text \{\.\.\.priceField\.label\}[^\n]*\n\s*<TextInput\s*\n\s*\{\.\.\.priceField\.input\}/.test(screen));
   check('…mutant caught: the old faint border', !fieldOk(screen.replace('borderColor: theme.controlBorder, backgroundColor: theme.background', 'borderColor: theme.border, backgroundColor: theme.background')));
 }
 

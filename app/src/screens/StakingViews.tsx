@@ -68,8 +68,18 @@ export function Row({
       style={[styles.row, { borderColor: theme.border }]}
       {...(spoken !== undefined ? { accessible: true, accessibilityLabel: spoken } : {})}
     >
-      <Text style={[styles.rowLabel, { color: theme.textMuted }]}>{label}</Text>
-      <Text selectable style={[styles.rowValue, { color: theme.text }, monoFont ? { fontFamily: mono, fontSize: 13 } : null]}>
+      <Text accessibilityLabel={label} style={[styles.rowLabel, { color: theme.textMuted }]}>{label}</Text>
+      {/* With a spoken label the row is ONE element. The amount stays
+          selectable for sight, but a selectable Text is its own focusable,
+          long-clickable node on Android, so TalkBack stopped on it a second
+          time ("0.001315… stETH. Actions available", pass p20d finding 3);
+          it is hidden from screen readers here, which hear the exact amount
+          in the row's label. */}
+      <Text
+        selectable
+        {...(spoken !== undefined ? { importantForAccessibility: 'no' as const, accessibilityElementsHidden: true } : {})}
+        style={[styles.rowValue, { color: theme.text }, monoFont ? { fontFamily: mono, fontSize: 13 } : null]}
+      >
         {value}
       </Text>
       {sub ? <Text style={[styles.rowSub, { color: theme.textMuted }]}>{sub}</Text> : null}

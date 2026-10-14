@@ -28,7 +28,7 @@ import {
   type SubscriptionGrant,
 } from '@shiba-wallet/chains-evm';
 import type { RootStackParamList } from '../navigation';
-import { Button, ImportedKeyNotice, screenStyle, TestNetworksOnlyCard, WarningBox, useFieldLabels, fieldA11y } from '../components';
+import { Button, ImportedKeyNotice, screenStyle, TestNetworksOnlyCard, WarningBox, useFieldLabels, HiddenFieldLabel } from '../components';
 import { ContactPicker, RecipientContactNotice } from '../components/Contacts';
 import { GrantReview } from '../components/SessionGrantViews';
 import { PayloadQr } from '../components/RecoveryViews';
@@ -2423,8 +2423,9 @@ export function SessionsScreen({ navigation }: Props) {
         </View>
         {subForm.periodCustom ? (
           <>
+            <HiddenFieldLabel field={fieldLabel('custom-period', 'Custom period length')} />
             <TextInput
-              {...fieldA11y('Custom period length')}
+              {...fieldLabel('custom-period', 'Custom period length').input}
               value={subForm.customCount}
               onChangeText={(t) => setSubForm((prev) => ({ ...prev, customCount: t }))}
               placeholder="How many"
@@ -2610,21 +2611,23 @@ export function SessionsScreen({ navigation }: Props) {
               <RecipientContactNotice match={draftMatches[i]!} address={d.target.trim()} />
             ) : null}
             <Button title="Pick from contacts" variant="secondary" onPress={() => setPickerFor(i)} />
+            <Text {...fieldLabel(`call-${i}-function`, `Call ${i + 1}: function (optional)`).label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel(`call-${i}-function`, `Call ${i + 1}: function (optional)`).text}</Text>
             <TextInput
-              {...fieldA11y(`Allowed call ${i + 1}: function (optional)`)}
+              {...fieldLabel(`call-${i}-function`, `Call ${i + 1}: function (optional)`).input}
               value={d.selector}
               onChangeText={(t) => setDrafts((prev) => prev.map((x, j) => (j === i ? { ...x, selector: t } : x)))}
-              placeholder="Function (optional): 0xa9059cbb or transfer(address,uint256)"
+              placeholder="0xa9059cbb or transfer(address,uint256)"
               placeholderTextColor={theme.textMuted}
               autoCapitalize="none"
               autoCorrect={false}
               style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
             />
+            <Text {...fieldLabel(`call-${i}-cap`, `Call ${i + 1}: most ${symbol} per call`).label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel(`call-${i}-cap`, `Call ${i + 1}: most ${symbol} per call`).text}</Text>
             <TextInput
-              {...fieldA11y(`Allowed call ${i + 1}: most ${symbol} per call`)}
+              {...fieldLabel(`call-${i}-cap`, `Call ${i + 1}: most ${symbol} per call`).input}
               value={d.valueCapEth}
               onChangeText={(t) => setDrafts((prev) => prev.map((x, j) => (j === i ? { ...x, valueCapEth: t } : x)))}
-              placeholder={`Max ${symbol} per call (empty = 0)`}
+              placeholder="Empty means 0"
               placeholderTextColor={theme.textMuted}
               keyboardType="decimal-pad"
               style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
@@ -2759,7 +2762,7 @@ export function SessionsScreen({ navigation }: Props) {
           <Button
             title="New recurring swap"
             variant="secondary"
-            accessibilityHint="Swap a fixed amount of test ETH for USDC once per period, each swap after you confirm it."
+            accessibilityHint={`Swap a fixed amount of ${symbol} for USDC once per period, each swap after you confirm it.`}
             onPress={() => onSubOpen('dca')}
             disabled={listFlags.unreadable || readiness !== null || dcaReadiness !== null || dcaNetworkNote !== null}
           />

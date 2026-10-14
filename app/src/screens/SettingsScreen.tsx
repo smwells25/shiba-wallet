@@ -4,7 +4,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
 import type { RootStackParamList, SettingsSectionId } from '../navigation';
 import { allowScreenCaptureAsync, preventScreenCaptureAsync } from 'expo-screen-capture';
-import { Button, WarningBox, WordGrid, screenStyle, switchColors, useFieldLabels, fieldA11y } from '../components';
+import { Button, WarningBox, WordGrid, screenStyle, switchColors, useFieldLabels, HiddenFieldLabel } from '../components';
 import { localDateLabel } from '../config/dates';
 import { AccountsSection } from '../components/AccountsSection';
 import { NotificationSettingsSection } from '../components/NotificationScheduler';
@@ -213,6 +213,7 @@ function EndpointRow({
   onChanged: () => void;
 }) {
   const theme = useTheme();
+  const fieldLabel = useFieldLabels();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
 
@@ -257,8 +258,9 @@ function EndpointRow({
       </View>
       {editing ? (
         <View style={styles.endpointEditor}>
+          <HiddenFieldLabel field={fieldLabel('endpoint-url', `${network.label} endpoint URL`)} />
           <TextInput
-            {...fieldA11y(`${network.label} endpoint URL`)}
+            {...fieldLabel('endpoint-url', `${network.label} endpoint URL`).input}
             value={draft}
             onChangeText={setDraft}
             placeholder="https://…"
@@ -395,7 +397,7 @@ function BlockbookRow({
       </View>
       {editing ? (
         <View style={styles.endpointEditor}>
-          <Text {...fieldLabel('blockbook-url', 'Blockbook base URL').label} style={[styles.aaFieldLabel, { color: theme.textMuted }]}>Blockbook base URL</Text>
+          <Text accessibilityLabel="Blockbook base URL" {...fieldLabel('blockbook-url', 'Blockbook base URL').label} style={[styles.aaFieldLabel, { color: theme.textMuted }]}>Blockbook base URL</Text>
           <TextInput
             {...fieldLabel('blockbook-url', 'Blockbook base URL').input}
             value={urlDraft}
@@ -410,7 +412,7 @@ function BlockbookRow({
               { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.background },
             ]}
           />
-          <Text {...fieldLabel('blockbook-key', 'API key (optional)').label} style={[styles.aaFieldLabel, { color: theme.textMuted }]}>
+          <Text accessibilityLabel="API key (optional)" {...fieldLabel('blockbook-key', 'API key (optional)').label} style={[styles.aaFieldLabel, { color: theme.textMuted }]}>
             API key (optional)
           </Text>
           <TextInput
@@ -630,7 +632,7 @@ function AaField({
 
   return (
     <View style={styles.aaField}>
-      <Text {...fieldLabel('aa', label).label} style={[styles.aaFieldLabel, { color: theme.textMuted }]}>{label}</Text>
+      <Text accessibilityLabel={label} {...fieldLabel('aa', label).label} style={[styles.aaFieldLabel, { color: theme.textMuted }]}>{label}</Text>
       {editing ? (
         <View style={styles.endpointEditor}>
           <TextInput
@@ -795,7 +797,7 @@ function AaChainRow({ network }: { network: NetworkDefault }) {
           reload();
         }}
       />
-      <Text style={[styles.aaFieldLabel, { color: theme.textMuted }]}>Smart-account type</Text>
+      <Text accessibilityLabel="Smart-account type" style={[styles.aaFieldLabel, { color: theme.textMuted }]}>Smart-account type</Text>
       <View style={styles.endpointButtons}>
         {AA_ACCOUNT_TYPES.map((t) => (
           <Button
@@ -1194,7 +1196,7 @@ function CustomNetworksSection({
 
   const field = (key: keyof typeof EMPTY_CUSTOM_FORM, label: string, placeholder: string, keyboard: 'default' | 'url' | 'number-pad' = 'default') => (
     <View style={styles.aaField}>
-      <Text {...fieldLabel(`custom-${String(key)}`, label).label} style={[styles.aaFieldLabel, { color: theme.textMuted }]}>{label}</Text>
+      <Text accessibilityLabel={label} {...fieldLabel(`custom-${String(key)}`, label).label} style={[styles.aaFieldLabel, { color: theme.textMuted }]}>{label}</Text>
       <TextInput
         {...fieldLabel(`custom-${String(key)}`, label).input}
         value={String(form[key])}
@@ -1367,7 +1369,7 @@ function CustomNetworksSection({
           {field('nativeDecimals', 'Coin decimals', '18', 'number-pad')}
           {field('explorerUrl', 'Block explorer (https, optional)', 'https://…', 'url')}
           <View style={styles.toggleRow}>
-            <Text style={[styles.toggleLabel, styles.readinessTitle, { color: theme.text }]}>This is a test network</Text>
+            <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.toggleLabel, styles.readinessTitle, { color: theme.text }]}>This is a test network</Text>
             <Switch {...switchColors(theme)}
               accessibilityLabel="This is a test network"
               accessibilityRole="switch"
@@ -1806,7 +1808,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       <View style={styles.section}>
         <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Privacy & security</Text>
         <View style={styles.toggleRow}>
-          <Text style={[styles.toggleLabel, { color: theme.text }]}>Hide amounts</Text>
+          <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.toggleLabel, { color: theme.text }]}>Hide amounts</Text>
           <Switch {...switchColors(theme)}
             accessibilityLabel="Hide amounts"
             accessibilityRole="switch"
@@ -1865,7 +1867,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       <View style={styles.section}>
         <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>{SCREEN_PROTECTION_TITLE}</Text>
         <View style={styles.toggleRow}>
-          <Text style={[styles.toggleLabel, { color: theme.text, flexShrink: 1, marginRight: 12 }]}>
+          <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.toggleLabel, { color: theme.text, flexShrink: 1, marginRight: 12 }]}>
             {SCREEN_PROTECTION_SWITCH_LABEL}
           </Text>
           <Switch {...switchColors(theme)}
@@ -1893,7 +1895,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       <View style={styles.section}>
         <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Prices</Text>
         <View style={styles.toggleRow}>
-          <Text style={[styles.toggleLabel, { color: theme.text }]}>Show fiat values (USD)</Text>
+          <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.toggleLabel, { color: theme.text }]}>Show fiat values (USD)</Text>
           <Switch {...switchColors(theme)}
             accessibilityLabel="Show fiat values (USD)"
             accessibilityRole="switch"

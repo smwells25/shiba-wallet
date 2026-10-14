@@ -964,10 +964,75 @@ console.log('check-dca: pass p20c findings 8 and 17 (the refusal announced once;
     (ss.match(/formFeeHintShown\(\{ feeEdited: subForm\.feeEdited, formError \}\)/g) ?? []).length === 2 &&
       (ss.match(/\{formError \? <WarningBox announce>\{formError\}<\/WarningBox> : null\}/g) ?? []).length === 2 &&
       !ss.includes('{formError ? <WarningBox>{formError}</WarningBox> : null}'));
+  check('p20d finding 6: the "New recurring swap" hint names the network\'s coin (displaySymbol), not a hard-coded "test ETH" (source)',
+    ss.includes('accessibilityHint={`Swap a fixed amount of ${symbol} for USDC once per period, each swap after you confirm it.`}') &&
+      !ss.includes('Swap a fixed amount of test ETH'));
   const comp = src('../src/components.tsx');
-  check('WarningBox announce: one accessible element, an Android polite live region, and a focus event on the box when it appears or its text changes (source)',
-    comp.includes("{...(announce ? { accessible: true, accessibilityLiveRegion: 'polite' as const } : {})}") &&
-      /if \(!announce \|\| !ref\.current\) return;\s*AccessibilityInfo\.sendAccessibilityEvent\(ref\.current, 'focus'\);\s*\}, \[announce, spoken\]\);/.test(comp));
+  // Pass p20d finding 2: the focus is no longer sent at commit time (it
+  // moved for an instant refusal but not for one arriving after the async
+  // review); it is sent after the box is laid out, then a settle delay.
+  check('WarningBox announce: one accessible element, an Android polite live region whose onLayout reports the layout, and the focus moved only through createAnnounceFocus (source)',
+    comp.includes("? { accessible: true, accessibilityLiveRegion: 'polite' as const, onLayout: () => focus.current?.laidOut() }") &&
+      /const controller = createAnnounceFocus\(\{\s*send: \(\) => \{\s*if \(ref\.current\) AccessibilityInfo\.sendAccessibilityEvent\(ref\.current, 'focus'\);\s*\},\s*schedule: \(run, ms\) => setTimeout\(run, ms\),\s*cancel: \(handle\) => clearTimeout\(handle as ReturnType<typeof setTimeout>\),\s*\}\);/.test(comp) &&
+      comp.includes("focus.current?.textChanged(announce ? (spoken ?? '') : null);") &&
+      (comp.match(/sendAccessibilityEvent\(/g) ?? []).length === 1);
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-dca: pass p20d finding 2 (focus moves to a refusal that arrives after the asynchronous review)');
+// ---------------------------------------------------------------------------
+{
+  const { createAnnounceFocus, ANNOUNCE_FOCUS_SETTLE_MS } = await import('../src/a11y.ts');
+  // Fake timers: schedule records, run() fires the due ones.
+  const makeTimers = () => {
+    const queue = [];
+    return {
+      queue,
+      schedule: (fn, ms) => { const h = { fn, ms, cancelled: false }; queue.push(h); return h; },
+      cancel: (h) => { if (h) h.cancelled = true; },
+      run: () => { for (const h of queue.splice(0)) if (!h.cancelled) h.fn(); },
+    };
+  };
+  // A fake form: the box is mounted only while `error` is set; the review
+  // awaits the network, then sets the refusal (as onDcaReview does after
+  // fitFeeBudgetToInstall), and the box lays out after the commit.
+  const fakeForm = (controllerFactory) => {
+    const t = makeTimers();
+    let sent = 0;
+    const box = controllerFactory({ send: () => { sent += 1; }, schedule: t.schedule, cancel: t.cancel });
+    return { t, box, sent: () => sent };
+  };
+  {
+    const f = fakeForm(createAnnounceFocus);
+    f.box.textChanged(null); // the box is not on screen while the review runs
+    await new Promise((resolve) => setTimeout(resolve, 0)); // the asynchronous review
+    f.box.textChanged('This plan cannot run: after the one-time set-up fee, …'); // the refusal is committed
+    check('async refusal: nothing is sent at commit time, before the box is laid out', f.sent() === 0 && f.t.queue.length === 0);
+    f.box.laidOut();
+    check('…once laid out, the focus is scheduled after the settle delay (not at once)', f.sent() === 0 && f.t.queue.length === 1 && f.t.queue[0].ms === ANNOUNCE_FOCUS_SETTLE_MS && ANNOUNCE_FOCUS_SETTLE_MS === 250);
+    f.t.run();
+    check('…and the focus event is sent exactly once', f.sent() === 1);
+    f.box.textChanged('This plan cannot run: … other figures');
+    check('…a second refusal on the laid-out box (no new onLayout) is focused again after the delay', f.t.queue.length === 1 && (f.t.run(), f.sent() === 2));
+    f.box.laidOut();
+    f.t.run();
+    check('…a later relayout with the same text sends nothing more', f.sent() === 2);
+  }
+  {
+    const f = fakeForm(createAnnounceFocus);
+    f.box.laidOut(); // layout may be reported before the effect sees the text
+    f.box.textChanged('Enter an amount greater than zero.');
+    f.t.run();
+    check('instant refusal, layout reported first: focused once after the delay', f.sent() === 1);
+  }
+  {
+    const f = fakeForm(createAnnounceFocus);
+    f.box.textChanged('refusal');
+    f.box.laidOut();
+    f.box.dispose(); // the box unmounts (the user typed, Review cleared it) before the delay ends
+    f.t.run();
+    check('a box that unmounts before the delay ends sends nothing', f.sent() === 0);
+  }
 }
 
 // ---------------------------------------------------------------------------

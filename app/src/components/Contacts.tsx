@@ -10,7 +10,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { Button, WarningBox, fieldA11y } from '../components';
+import { Button, WarningBox, HiddenFieldLabel, useFieldLabels } from '../components';
 import { useTheme } from '../theme';
 import {
   LookalikeContactError,
@@ -49,7 +49,7 @@ export function RecipientContactNotice({
   if (match.kind !== 'exact') return null;
   return (
     <View style={[styles.contactBox, { backgroundColor: theme.card, borderColor: theme.border }]}>
-      <Text style={[styles.contactLabel, { color: theme.textMuted }]}>Saved contact</Text>
+      <Text accessibilityLabel="Saved contact" style={[styles.contactLabel, { color: theme.textMuted }]}>Saved contact</Text>
       <Text style={[styles.contactName, { color: theme.text }]}>{match.contact.name}</Text>
       <Text selectable style={[styles.address, { color: theme.text }]}>
         {address}
@@ -134,6 +134,7 @@ export function SaveContactInline({
   onSaved: (contact: Contact) => void;
 }) {
   const theme = useTheme();
+  const fieldLabel = useFieldLabels();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -170,12 +171,13 @@ export function SaveContactInline({
   }
   return (
     <View style={[styles.contactBox, { backgroundColor: theme.card, borderColor: theme.border }]}>
-      <Text style={[styles.contactLabel, { color: theme.textMuted }]}>Save as contact</Text>
+      <Text accessibilityLabel="Save as contact" style={[styles.contactLabel, { color: theme.textMuted }]}>Save as contact</Text>
       <Text selectable style={[styles.address, { color: theme.text }]}>
         {address}
       </Text>
+      <HiddenFieldLabel field={fieldLabel('contact-name', 'Contact name')} />
       <TextInput
-        {...fieldA11y('Contact name')}
+        {...fieldLabel('contact-name', 'Contact name').input}
         value={name}
         onChangeText={(t) => {
           setName(t);

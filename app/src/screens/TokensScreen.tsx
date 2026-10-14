@@ -12,7 +12,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { formatAssetId } from '@shiba-wallet/core';
 import type { FungibleAsset } from '@shiba-wallet/core';
 import type { RootStackParamList } from '../navigation';
-import { Button, WarningBox, screenStyle, fieldA11y } from '../components';
+import { Button, WarningBox, screenStyle, HiddenFieldLabel, useFieldLabels } from '../components';
 import { NoEndpointError, withEndpoint } from '../config/networks';
 import { OfflineNotice, TechnicalDetail, describeNetworkError } from '../wallet/connectivity';
 import { useTheme } from '../theme';
@@ -86,6 +86,7 @@ interface Preview {
  */
 export function TokensScreen({ navigation }: Props) {
   const theme = useTheme();
+  const fieldLabel = useFieldLabels();
   const { evmChain, hideAmounts } = usePrefs();
   const { accounts, activeAccount } = useWallet();
   const owner = accounts.find((a) => a.chainId === EVM_CHAIN_ID)?.address ?? null;
@@ -454,8 +455,9 @@ export function TokensScreen({ navigation }: Props) {
           contract address from a source you trust.
         </Text>
         <OfflineNotice />
+        <HiddenFieldLabel field={fieldLabel('token-contract', 'Token contract address')} />
         <TextInput
-          {...fieldA11y('Token contract address')}
+          {...fieldLabel('token-contract', 'Token contract address').input}
           value={address}
           onChangeText={(text) => {
             setAddress(text);
@@ -500,8 +502,9 @@ export function TokensScreen({ navigation }: Props) {
                   {preview.metadata.note ??
                     'The contract did not return readable text metadata.'}
                 </Text>
+                <HiddenFieldLabel field={fieldLabel('token-symbol', 'Token symbol')} />
                 <TextInput
-                  {...fieldA11y('Token symbol')}
+                  {...fieldLabel('token-symbol', 'Token symbol').input}
                   value={manualSymbol}
                   onChangeText={setManualSymbol}
                   placeholder="Symbol (e.g. MKR)"
@@ -514,8 +517,9 @@ export function TokensScreen({ navigation }: Props) {
                     { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.background },
                   ]}
                 />
+                <HiddenFieldLabel field={fieldLabel('token-name', 'Token name (optional)')} />
                 <TextInput
-                  {...fieldA11y('Token name (optional)')}
+                  {...fieldLabel('token-name', 'Token name (optional)').input}
                   value={manualName}
                   onChangeText={setManualName}
                   placeholder="Name (optional)"
