@@ -647,6 +647,64 @@ installFakeNode();
   exact('Hide amounts masks the staked amount too', stake,
     'Staked •••• test ETH with Lido (stETH contract 0x3e3F…40Af): received •••• stETH', { ...pinned, hidden: true });
 
+  // Phase 20 follow-up: an UNTRACKED pinned staking token reads as the Send
+  // preview names it ("stETH (pinned staking token)", simulation.ts), not
+  // "stETH (untracked token 0x…)". The decoder's metadata comes from
+  // simulation.ts resolveTokenMeta, which sets `pinned` by exact address on
+  // the decoder's own network; the engine labels it.
+  {
+    const erc20Abi = new Interface(['function symbol() view returns (string)', 'function decimals() view returns (uint8)', 'function transfer(address,uint256)']);
+    const decodeWith = async (trackedTokens, ids, chainCaip2 = SEPOLIA) => {
+      clearActivityCache();
+      const decoder = createActivityDecoder({ chainCaip2, evmChainId: SEPOLIA_ID, wallet: [ACCOUNT_1], trackedTokens, run: fixedRun, maxPerCall: 20 });
+      return decoder.decodeEntries(ids);
+    };
+    const FOO = getAddress('0x4444444444444444444444444444444444444444');
+    const fooSend = add({ to: FOO, input: erc20Abi.encodeFunctionData('transfer', [BURN, 10n ** 18n]), logs: [transfer(FOO, ACCOUNT_1, BURN, 10n ** 18n)] });
+    const lookAlikeSend = add({ to: LOOK_ALIKE, input: erc20Abi.encodeFunctionData('transfer', [BURN, 10n ** 18n]), logs: [transfer(LOOK_ALIKE, ACCOUNT_1, BURN, 10n ** 18n)] });
+    // The look-alike contract answers symbol() "stETH" and decimals() 18, as a
+    // spoof would; so does the real address when it is read on-chain. FOO is
+    // an ordinary unknown token. (Sepolia USDC and EURC are not usable here:
+    // the engine names them from its own known-contract table.)
+    const fakeMeta = new Map([[LOOK_ALIKE.toLowerCase(), 'stETH'], [SEP_STETH.toLowerCase(), 'stETH'], [FOO.toLowerCase(), 'FOO']]);
+    mode.rpc = (method, params) => {
+      const symbol = method === 'eth_call' ? fakeMeta.get(String(params[0].to).toLowerCase()) : undefined;
+      if (symbol === undefined) return undefined;
+      const data = params[0].data;
+      if (data === SEL['symbol()']) return erc20Abi.encodeFunctionResult('symbol', [symbol]);
+      if (data === SEL['decimals()']) return erc20Abi.encodeFunctionResult('decimals', [18]);
+      return undefined;
+    };
+    try {
+      const untracked = await decodeWith([], [stake, fooSend, lookAlikeSend]);
+      check('PINNED, UNTRACKED: the decoder marks Sepolia stETH pinned (resolveTokenMeta, exact address on this network)',
+        untracked.get(stake).tokens[SEP_STETH.toLowerCase()]?.pinned === true && untracked.get(stake).tokens[SEP_STETH.toLowerCase()]?.tracked === false,
+        untracked.get(stake).tokens);
+      check('PINNED, UNTRACKED: "stETH (pinned staking token)", as the Send preview names it',
+        render(untracked.get(stake), pinned) === 'Staked 0.0002 test ETH with Lido (stETH contract 0x3e3F…40Af): received 0.000199999999999999 stETH (pinned staking token)',
+        render(untracked.get(stake), pinned));
+      check('…the same sentence never says "untracked token" for the pinned address',
+        !render(untracked.get(stake), pinned).includes('untracked token'), render(untracked.get(stake), pinned));
+      const tracked = await decodeWith(knownStakingTokensForChain(SEPOLIA), [stake]);
+      check('PINNED, TRACKED: the plain symbol "stETH" (tracking wins over the pinned tag)',
+        render(tracked.get(stake), pinned) === 'Staked 0.0002 test ETH with Lido (stETH contract 0x3e3F…40Af): received 0.000199999999999999 stETH',
+        render(tracked.get(stake), pinned));
+      check('NOT PINNED, UNTRACKED: an ordinary unknown token keeps "(untracked token 0x…)"',
+        render(untracked.get(fooSend)) === 'Sent 1 FOO (untracked token 0x4444…4444) to Burn', render(untracked.get(fooSend)));
+      check('…a look-alike contract answering symbol() "stETH" is never pinned by its symbol (one digit off the pinned address)',
+        untracked.get(lookAlikeSend).tokens[LOOK_ALIKE.toLowerCase()]?.pinned !== true &&
+          render(untracked.get(lookAlikeSend)) === 'Sent 1 stETH (untracked token 0x3E3F…40AE) to Burn',
+        render(untracked.get(lookAlikeSend)));
+      const otherNetwork = await decodeWith([], [stake], 'eip155:560048');
+      check('…the Sepolia stETH address is not pinned under another network\'s table (Hoodi): read on-chain, labelled untracked',
+        otherNetwork.get(stake).tokens[SEP_STETH.toLowerCase()]?.pinned !== true &&
+          render(otherNetwork.get(stake)).endsWith('received 0.000199999999999999 stETH (untracked token 0x3e3F…40Af)'),
+        render(otherNetwork.get(stake)));
+    } finally {
+      mode.rpc = null;
+    }
+  }
+
   // Finding 7e: a multisig's Activity named Account 1 by its short address.
   const labels = activityAccountLabels(
     [{ name: 'Account 1', evmAddress: ACCOUNT_1 }, { name: 'Imported 1 (imported key)', evmAddress: ACCOUNT_2 }, { name: 'Watched? no address', evmAddress: null }],

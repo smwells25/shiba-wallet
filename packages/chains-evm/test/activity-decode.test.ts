@@ -327,6 +327,30 @@ describe('synthetic paths', () => {
     expect(activitySentence(d, ctx({ tokens: {} }))).toBe('Sent 5000000 raw units of token 0x3333…3333 to Burn');
   });
 
+  it('a caller-pinned staking token: "(pinned staking token)" when untracked, plain when tracked, unchanged without the flag', () => {
+    // Lido's stETH on Ethereum Sepolia, pinned by the app from Lido's deployment list.
+    const stEth = '0x3e3fe7dbc6b4c189e7128855dd526361c49b40af';
+    const tx = syntheticTx({ to: stEth, input: erc20.encodeFunctionData('transfer', [BURN, 10n ** 15n]) });
+    const d = describe1(tx, syntheticReceipt([transferLog(stEth, ACCOUNT_1, BURN, 10n ** 15n)]));
+    expect(
+      activitySentence(d, ctx({ tokens: { [stEth]: { symbol: 'stETH', decimals: 18, tracked: false, pinned: true } } })),
+    ).toBe('Sent 0.001 stETH (pinned staking token) to Burn');
+    expect(
+      activitySentence(d, ctx({ tokens: { [stEth]: { symbol: 'stETH', decimals: 18, tracked: true, pinned: true } } })),
+    ).toBe('Sent 0.001 stETH to Burn');
+    expect(activitySentence(d, ctx({ tokens: { [stEth]: { symbol: 'stETH', decimals: 18, tracked: false } } }))).toBe(
+      'Sent 0.001 stETH (untracked token 0x3e3F…40Af) to Burn',
+    );
+    // pinned: false behaves exactly like an absent flag.
+    expect(
+      activitySentence(d, ctx({ tokens: { [stEth]: { symbol: 'stETH', decimals: 18, tracked: false, pinned: false } } })),
+    ).toBe('Sent 0.001 stETH (untracked token 0x3e3F…40Af) to Burn');
+    // A pinned flag with no readable symbol falls through to the raw label.
+    expect(
+      activitySentence(d, ctx({ tokens: { [stEth]: { symbol: null, decimals: 18, tracked: false, pinned: true } } })),
+    ).toBe('Sent 0.001 token 0x3e3F…40Af to Burn');
+  });
+
   it('incoming token transfer from someone else names the sender', () => {
     const d = describe1(
       syntheticTx({ from: STRANGER, to: USDC, input: erc20.encodeFunctionData('transfer', [ACCOUNT_1, 2_500_000n]) }),
