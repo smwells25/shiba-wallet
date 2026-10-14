@@ -523,5 +523,57 @@ console.log('check-simulation: the rebasing note under a stETH row (phase 18)');
   check('…no screen other than Staking passes rowNotes (everywhere else the row note stays)', offenders.length === 0, offenders);
 }
 
+// Phase 20 item 0 finding 7: the Hoodi stake preview called Lido's stETH
+// "untracked token 0x3508…176a" although the wallet pins it
+// (tokens.ts KNOWN_STAKING_TOKENS). Shapes of the live in-app stake (block
+// 3,799,786: 0.01 test ETH in, 9,999,999,999,999,999 stETH minted) and of the
+// withdrawal request (block 3,799,852: stETH to the queue, Approval to 0).
+console.log('check-simulation: pinned staking tokens are named by symbol (phase 20)');
+{
+  const { PINNED_STAKING_TOKEN_TAG, resolveTokenMeta } = await import('../src/wallet/simulation.ts');
+  const HOODI = 'eip155:560048';
+  const H_STETH = '0x3508A952176b3c15387C97BE809eaffB1982176a';
+  const H_QUEUE = '0xfe56573178f1bcdf53F01A6E9977670dcBBD9186';
+  const ZERO = '0x0000000000000000000000000000000000000000';
+  requests.length = 0;
+  installFakeNode(() => ({
+    result: block([okCall([
+      log(NATIVE_TRANSFER_PSEUDO_ADDRESS, [TRANSFER_EVENT_TOPIC, topicOf(ME), topicOf(H_STETH)], word(10_000_000_000_000_000n)),
+      log(H_STETH, [TRANSFER_EVENT_TOPIC, topicOf(ZERO), topicOf(ME)], word(9_999_999_999_999_999n)),
+    ])]),
+  }));
+  const state = await runBalancePreview({ url: URL, wallet: ME, calls: [{ from: ME, to: H_STETH, value: 10_000_000_000_000_000n }], chainCaip2: HOODI, trackedTokens: [] });
+  const lines = state.status === 'ok' ? texts(describeAssetChanges(state.changes, state.meta, { nativeSymbol: 'test ETH', hidden: false, chainCaip2: HOODI, rowNotes: false })) : [];
+  check('Hoodi stake: "You receive 0.009999999999999999 stETH (pinned staking token)", not "untracked token"',
+    JSON.stringify(lines) === JSON.stringify(['You send 0.01 test ETH', 'You receive 0.009999999999999999 stETH (pinned staking token)']), lines);
+  check('…its symbol and decimals come from the pinned table: no eth_call to the token', !requests.some((r) => r.body.method === 'eth_call'), requests.map((r) => r.body.method));
+  check('the tag text', PINNED_STAKING_TOKEN_TAG === '(pinned staking token)');
+  const reqChanges = [
+    { type: 'erc20-approval', callIndex: 0, token: H_STETH, owner: ME, spender: H_QUEUE, amount: 0n, unlimited: false },
+    { type: 'erc20', callIndex: 0, direction: 'out', token: H_STETH, from: ME, to: H_QUEUE, amount: 5_000_000_000_000_000n },
+    { type: 'erc721', callIndex: 0, direction: 'in', token: H_QUEUE, from: ZERO, to: ME, tokenId: 5329n },
+  ];
+  const reqMeta = await resolveTokenMeta(reqChanges, { url: URL, chainCaip2: HOODI, trackedTokens: [] });
+  const reqLines = texts(describeAssetChanges(reqChanges, reqMeta, { nativeSymbol: 'test ETH', hidden: false, chainCaip2: HOODI, rowNotes: false }));
+  check('Hoodi withdrawal request: the stETH sent, the NFT and the revoked approval name stETH as pinned',
+    JSON.stringify(reqLines) === JSON.stringify([
+      'You send 0.005 stETH (pinned staking token)',
+      `You receive NFT #5329 (${shortAddress(H_QUEUE)})`,
+      `Approval revoked: ${shortAddress(H_QUEUE)} may no longer spend stETH (pinned staking token)`,
+    ]), reqLines);
+  const tracked = await resolveTokenMeta(reqChanges, {
+    url: URL, chainCaip2: HOODI,
+    trackedTokens: [{ kind: 'fungible', assetId: { chainId: HOODI, namespace: 'erc20', reference: H_STETH }, symbol: 'stETH', name: 'Liquid staked Ether 2.0', decimals: 18 }],
+  });
+  check('a tracked stETH keeps the plain symbol (tracked wins)', tracked[H_STETH.toLowerCase()]?.tracked === true && !tracked[H_STETH.toLowerCase()]?.pinned &&
+    texts(describeAssetChanges([reqChanges[1]], tracked, { nativeSymbol: 'test ETH', hidden: false }))[0] === 'You send 0.005 stETH');
+  requests.length = 0;
+  const lookalike = `${H_STETH.slice(0, -1)}b`;
+  const other = await resolveTokenMeta([{ ...reqChanges[1], token: lookalike }], { url: URL, chainCaip2: HOODI, trackedTokens: [] });
+  check('a look-alike address (last digit changed) is not pinned', other[lookalike.toLowerCase()]?.pinned !== true && requests.some((r) => r.body.method === 'eth_call'));
+  const otherChain = await resolveTokenMeta([reqChanges[1]], { url: URL, chainCaip2: 'eip155:11155111', trackedTokens: [] });
+  check('Hoodi’s stETH address on another chain is not pinned there', otherChain[H_STETH.toLowerCase()]?.pinned !== true);
+}
+
 console.log(`\ncheck-simulation: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

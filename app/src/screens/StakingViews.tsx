@@ -7,6 +7,7 @@ import { formatUnits } from '../wallet/balances';
 import {
   STETH_REBASING_NOTE,
   previewStakingPlan,
+  stakeOutcomeSimulatedLines,
   stakingSummaryLines,
   type QuotedStatement,
   type StakingBalances,
@@ -197,16 +198,11 @@ export function StakeOutcomeCard({ url, plan, theme, nativeSymbol }: { url: stri
       {preview && preview !== 'unavailable' ? (
         preview.ok ? (
           <>
-            {preview.received.map((r) => (
-              <Text key={r.token} style={[styles.hint, { color: theme.textMuted }]}>
-                Simulated: {formatUnits(r.amount, r.decimals, r.decimals)} {r.symbol} arrive (token contract {r.token}).
+            {stakeOutcomeSimulatedLines(preview, nativeSymbol).map((line) => (
+              <Text key={line} style={[styles.hint, { color: theme.textMuted }]}>
+                {line}
               </Text>
             ))}
-            {preview.receivedNative > 0n ? (
-              <Text style={[styles.hint, { color: theme.textMuted }]}>
-                Simulated: {exact18(preview.receivedNative)} {nativeSymbol} arrive.
-              </Text>
-            ) : null}
             {preview.skippedLogs > 0 ? (
               <Text style={[styles.hint, { color: theme.textMuted }]}>
                 {preview.skippedLogs} event{preview.skippedLogs === 1 ? '' : 's'} could not be read, so this may be incomplete.

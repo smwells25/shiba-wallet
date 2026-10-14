@@ -64,6 +64,7 @@ import {
   finalizeSessionInstall,
   installSession,
   loadSessions,
+  newSessionKey,
   prepareSessionInstall,
   releaseSessionKey,
   revokeApprovalPrompt,
@@ -108,7 +109,11 @@ import {
   DCA_PAY_PROMPT_NOTE,
   DCA_POOL,
   DCA_REFUSED_TITLE,
+  DCA_FEE_BUDGET_CLEAR_NOTE,
+  DCA_FLOOR_FIXED_FUTURE,
+  DCA_FLOOR_FIXED_PAST,
   DCA_SWAP_GAS_ALLOWANCE,
+  DCA_SWAP_LARGEST_RECORDED_CHARGE_GAS,
   DCA_TOKEN_OUT,
   DCA_WHILE_OPEN_NOTE,
   bpsText,
@@ -116,7 +121,9 @@ import {
   dcaAttemptLine,
   dcaConfirmMessage,
   dcaFeeBudgetCapNote,
+  dcaFeeBudgetFormHint,
   dcaFeeBudgetPricingNote,
+  dcaFeeBudgetSuggestionHint,
   dcaFinalDatesLine,
   dcaGrantForTerms,
   dcaInstallFunding,
@@ -168,6 +175,7 @@ import {
   fromRpcOp,
   memoryStore,
 } from './fakes-kernel.mjs';
+import { createKeyVault } from '../src/wallet/storage.ts';
 
 let passed = 0;
 let failed = 0;
@@ -476,14 +484,14 @@ console.log('check-dca: review, market, funding and fee budget');
     !!warn && warn.includes(ACCOUNT) && warn.includes('0.01848 test ETH') &&
       dcaSetupFundingWarning({ maxFeePerGas: 2_310_000_000n, balance: 20_000_000_000_000_000n, deposit: 0n, account: ACCOUNT, nativeSymbol: 'test ETH' }) === null);
   const sug = suggestedFeeBudget({ payments: 3, maxFeePerGas: 2_310_000_000n, balance: null, nativeAmountPerPayment: AMOUNT, gasAllowance: DCA_SWAP_GAS_ALLOWANCE });
-  check('fee-budget suggestion: 3 swaps × 1,000,000 gas × 2.31 gwei × 2 = 0.01386 test ETH', sug.wei === 3n * 1_000_000n * 2_310_000_000n * 2n && sug.wei === 13_860_000_000_000_000n);
+  check('fee-budget suggestion: 3 swaps × 1,800,000 gas × 2.31 gwei × 2 = 0.024948 test ETH', sug.wei === 3n * 1_800_000n * 2_310_000_000n * 2n && sug.wei === 24_948_000_000_000_000n);
   const capped = suggestedFeeBudget({ payments: 3, maxFeePerGas: 2_310_000_000n, balance: 10_000_000_000_000_000n, nativeAmountPerPayment: AMOUNT, installFeeFromBalance: 1_000_000_000_000_000n, gasAllowance: DCA_SWAP_GAS_ALLOWANCE });
   check('capped at what is left after every swap’s amount and the set-up’s fee', capped.capped && capped.wei === 10_000_000_000_000_000n - 3n * AMOUNT - 1_000_000_000_000_000n);
   check('the cap note speaks of swaps', /usual budget for this many swaps/.test(dcaFeeBudgetCapNote(1n, 2n, 'test ETH', 3n)) && /set-up’s own worst-case network fee/.test(dcaFeeBudgetCapNote(1n, 2n, 'test ETH', 3n)));
   const pricing = dcaFeeBudgetPricingNote({ budgetWei: sug.wei, count: 3, maxFeePerGas: 2_310_000_000n, source: 'bundler', edited: false, nativeSymbol: 'test ETH' });
-  check('pricing note: the signed fee, 1,000,000 gas per swap doubled, covers all 3, and the recorded charge',
-    pricing.startsWith('Fee budget priced at 2.31 gwei per gas — the fee each swap is signed at today (the bundler’s current fee plus 100% headroom): 1,000,000 gas per swap (0.00231 test ETH), doubled because fees move; at 1,000,000 gas each it covers all 3 swaps.') &&
-      pricing.endsWith('each charged about 1.3 to 1.5 million gas against their budget.'), pricing);
+  check('pricing note: the signed fee, 1,800,000 gas per swap doubled, covers all 3, and the recorded signed-limit charges',
+    pricing.startsWith('Fee budget priced at 2.31 gwei per gas — the fee each swap is signed at today (the bundler’s current fee plus 100% headroom): 1,800,000 gas per swap (0.004158 test ETH), doubled because fees move; at 1,800,000 gas each it covers all 3 swaps.') &&
+      pricing.endsWith(' The three swaps run on 2026-10-11 were charged 1,420,113, 1,204,793 and 1,205,388 gas (their signed gas limits) against their budget.'), pricing);
   const quote = { amount: 0n, fee: 8_000_000_000_000_000n, senderBalance: 11_000_000_000_000_000n, deposit: 0n, sponsored: false, sender: ACCOUNT };
   const f = dcaInstallFunding(quote, { amountIn: AMOUNT, count: 3, feeBudgetWei: 13_860_000_000_000_000n }, 'test ETH');
   check('funding: Start offered, and a shortfall warning when the swaps plus the budget exceed what is left',
@@ -498,8 +506,41 @@ console.log('check-dca: review, market, funding and fee budget');
   // Start is withheld; a too-small TYPED budget is warned about, not blocked.
   const FEE = 2_310_000_004n;
   const swapMin = minimumViableFeeBudgetWei(FEE, DCA_SWAP_GAS_ALLOWANCE);
-  check('one swap’s worst-case fee = DCA_SWAP_GAS_ALLOWANCE (1,000,000 gas) × the signed fee',
-    DCA_SWAP_GAS_ALLOWANCE === 1_000_000n && swapMin === DCA_SWAP_GAS_ALLOWANCE * FEE && swapMin === 2_310_000_004_000_000n);
+  check('one swap’s worst-case fee = DCA_SWAP_GAS_ALLOWANCE (1,800,000 gas) × the signed fee',
+    DCA_SWAP_GAS_ALLOWANCE === 1_800_000n && swapMin === DCA_SWAP_GAS_ALLOWANCE * FEE && swapMin === 4_158_000_007_200_000n);
+  // Phase 20 item 0 finding 2: the allowance must cover what GasPolicy really
+  // charged the live swaps — (pVG + vGL + cGL) of the SIGNED limits × the
+  // signed maxFeePerGas — read back from the three bundle transactions'
+  // handleOps input: script swap 1 (block 11,893,108), script swap 2
+  // (11,893,119) and the in-app swap (11,894,126).
+  const LIVE_SWAPS = [
+    { vgl: 987_890n, cgl: 379_444n, pvg: 52_779n, maxFee: 1_155_000_004n, charged: 1_640_230_520_680_452n },
+    { vgl: 772_557n, cgl: 379_444n, pvg: 52_792n, maxFee: 1_155_000_003n, charged: 1_391_535_918_614_379n },
+    { vgl: 863_242n, cgl: 291_880n, pvg: 50_266n, maxFee: 2_310_000_004n, charged: 2_784_446_284_821_552n },
+  ];
+  const liveGas = LIVE_SWAPS.map((x) => x.vgl + x.cgl + x.pvg);
+  check('the recorded live swaps: signed limits × signed fee = the charge, 1,420,113 / 1,204,793 / 1,205,388 gas',
+    LIVE_SWAPS.every((x, i) => liveGas[i] * x.maxFee === x.charged) && liveGas.join() === '1420113,1204793,1205388' &&
+      DCA_SWAP_LARGEST_RECORDED_CHARGE_GAS === 1_420_113n);
+  check('the allowance exceeds the largest live per-swap charge (1,420,113 gas) with a stated margin (≥ 25%)',
+    DCA_SWAP_GAS_ALLOWANCE > DCA_SWAP_LARGEST_RECORDED_CHARGE_GAS && DCA_SWAP_GAS_ALLOWANCE * 100n >= DCA_SWAP_LARGEST_RECORDED_CHARGE_GAS * 125n);
+  check('the minimum-viable budget now exceeds the largest live-observed per-swap charge at the same fee (old 1,000,000 did not)',
+    swapMin > DCA_SWAP_LARGEST_RECORDED_CHARGE_GAS * FEE && 1_000_000n * FEE < DCA_SWAP_LARGEST_RECORDED_CHARGE_GAS * FEE);
+  {
+    // A plan whose keep-back is exactly one live swap's charge: it passed the
+    // old 1,000,000-gas check and could be refused on-chain at swap 1; it is
+    // now blocked before anything is signed.
+    const live = DCA_SWAP_LARGEST_RECORDED_CHARGE_GAS * FEE;
+    const q = { amount: 0n, fee: 1_000_000_000_000_000n, total: 1_000_000_000_000_000n, senderBalance: live, deposit: 10n ** 18n, sponsored: false, sender: ACCOUNT };
+    const between = await fitFeeBudgetToInstall({
+      payments: 3, maxFeePerGas: FEE, nativeAmountPerPayment: 0n, gasAllowance: DCA_SWAP_GAS_ALLOWANCE,
+      feeBudgetWei: defaultFeeBudgetWei(3, FEE, DCA_SWAP_GAS_ALLOWANCE), attempt: { quote: q }, requote: async () => ({ quote: q }),
+    });
+    check('a budget of one live swap’s charge (1,420,113 gas × fee) is blocked as too small (cannot-fit), not installed',
+      between.kind === 'cannot-fit' && between.reason === 'too-small' && between.fittedBudget === live, between.kind);
+    check('…and a typed budget of that size gets the too-small warning',
+      feeBudgetTooSmallWarning({ feeBudgetWei: live, edited: true, maxFeePerGas: FEE, gasAllowance: DCA_SWAP_GAS_ALLOWANCE, nativeSymbol: 'test ETH', word: 'swap' }) !== null);
+  }
   const quoteAt = (balance) => ({ amount: 0n, fee: 1_000_000_000_000_000n, total: 1_000_000_000_000_000n, senderBalance: balance, deposit: 10n ** 18n, sponsored: false, sender: ACCOUNT });
   const tinySwap = await fitFeeBudgetToInstall({
     payments: 3, maxFeePerGas: FEE, nativeAmountPerPayment: 0n, gasAllowance: DCA_SWAP_GAS_ALLOWANCE,
@@ -509,9 +550,9 @@ console.log('check-dca: review, market, funding and fee budget');
     tinySwap.kind === 'cannot-fit' && tinySwap.reason === 'too-small' && tinySwap.fittedBudget === 1_000_000_000_000_000n && tinySwap.minViable === swapMin);
   check('the DCA block and typed warning use the word "swap"',
     feeBudgetTooSmallBlock({ fittedBudget: tinySwap.fittedBudget, minViable: swapMin, nativeSymbol: 'test ETH', word: 'swap' }) ===
-      'This plan cannot run: after the one-time set-up fee, only 0.001 test ETH could be kept back for the swaps, but one swap can cost up to 0.002310000004 test ETH at today’s fee. Add about 0.001310000004 test ETH to the smart account, or set a larger fee budget. Nothing was signed.' &&
+      'This plan cannot run: after the one-time set-up fee, only 0.001 test ETH could be kept back for the swaps, but one swap can cost up to 0.0041580000072 test ETH at today’s fee. Add about 0.0031580000072 test ETH to the smart account, or set a larger fee budget. Nothing was signed.' &&
       feeBudgetTooSmallWarning({ feeBudgetWei: 1n, edited: true, maxFeePerGas: FEE, gasAllowance: DCA_SWAP_GAS_ALLOWANCE, nativeSymbol: 'test ETH', word: 'swap' })
-        === 'The fee budget you entered (0.000000000000000001 test ETH) is below one swap’s worst-case network fee (0.002310000004 test ETH) at today’s fee, so your account will probably refuse the first swap and the plan will not run. Set a larger fee budget unless you are sure the fee will be lower.');
+        === 'The fee budget you entered (0.000000000000000001 test ETH) is below one swap’s worst-case network fee (0.0041580000072 test ETH) at today’s fee, so your account will probably refuse the first swap and the plan will not run. Set a larger fee budget unless you are sure the fee will be lower.');
   // Well-funded: unchanged — no regression to the set-up keep-back.
   const richSwap = await fitFeeBudgetToInstall({
     payments: 3, maxFeePerGas: FEE, nativeAmountPerPayment: 0n, gasAllowance: DCA_SWAP_GAS_ALLOWANCE,
@@ -845,6 +886,110 @@ console.log('check-dca: mainnet');
   const e1 = await caught(() => planDcaSwap({ node, record: mainnetRecord, now: NOW + 1 }));
   check('planning on mainnet is refused before any request', e1 instanceof FeatureNotAllowedError);
   check('featureReadiness("dca") resolves', featureReadiness('dca').id === 'dca');
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-dca: phase 20 item 0 findings 1 and 3 (fee-budget hint, the floor clause tense)');
+// ---------------------------------------------------------------------------
+{
+  const { terms } = termsAt(Date.UTC(2026, 9, 11, 12, 0, 0) / 1000);
+  const onReview = dcaReview(terms, { nativeSymbol: 'test ETH', stage: 'review' });
+  const onCard = dcaReview(terms, { nativeSymbol: 'test ETH', stage: 'set-up' });
+  check('the review (before set-up) says the minimum "will be fixed when the plan is set up"',
+    onReview.caveats[0].startsWith('THE MINIMUM DOES NOT FOLLOW THE PRICE. 0.445076 USDC per swap will be fixed when the plan is set up. ') &&
+      !onReview.caveats[0].includes(DCA_FLOOR_FIXED_PAST), onReview.caveats[0]);
+  check('an installed plan’s card keeps the past tense ("was fixed when the plan was set up")',
+    onCard.caveats[0].startsWith('THE MINIMUM DOES NOT FOLLOW THE PRICE. 0.445076 USDC per swap was fixed when the plan was set up. ') &&
+      !onCard.caveats[0].includes(DCA_FLOOR_FIXED_FUTURE), onCard.caveats[0]);
+  check('only that clause changes; every other caveat is identical between the two stages',
+    onReview.caveats.slice(1).join('|') === onCard.caveats.slice(1).join('|') && onReview.batching === onCard.batching);
+  const dv = src('../src/screens/DcaViews.tsx');
+  check('the review screen asks for the review stage, the card for the set-up stage (source)',
+    dv.includes("dcaReview(terms, { nativeSymbol: symbol, stage: 'review' })") && dv.includes("dcaReview(dcaTermsOf(r), { nativeSymbol: symbol, stage: 'set-up' })"));
+
+  // Finding 1: after the auto-fit block the field shows the budget lowered to
+  // what can be kept back, and the hint must say so (it said it followed the
+  // suggestion for the number of swaps).
+  const symbol = 'test ETH';
+  const plain = dcaFeeBudgetFormHint({ source: 'bundler', suggestion: { capped: false, spare: 10n ** 18n, uncapped: 1n }, installKeptBack: null, nativeSymbol: symbol });
+  check('not capped: the suggestion hint, unchanged', plain === dcaFeeBudgetSuggestionHint('bundler') && /it follows that number until you type your own figure/.test(plain));
+  const spare = 1_000_000_000_000_000n;
+  const uncapped = 24_948_000_000_000_000n;
+  const kept = 3_000_000_000_000_000n;
+  const capped = dcaFeeBudgetFormHint({ source: 'bundler', suggestion: { capped: true, spare, uncapped }, installKeptBack: kept, nativeSymbol: symbol });
+  check('capped (after a blocked review): the hint names the lowered figure shown, the usual budget and the set-up fee kept back',
+    capped === `${dcaFeeBudgetCapNote(spare, uncapped, symbol, kept)} ${DCA_FEE_BUDGET_CLEAR_NOTE}` &&
+      capped.startsWith('Lowered to what your account can spare (0.001 test ETH); the usual budget for this many swaps would be 0.024948 test ETH.') &&
+      capped.includes('0.003 test ETH is kept back for the set-up’s own worst-case network fee.') &&
+      capped.endsWith('The field shows this lowered figure; clearing a figure you typed brings it back, not the usual budget.'), capped);
+  check('capped: the hint no longer claims the field follows the suggestion', !/it follows that number/.test(capped) && !capped.includes('Suggested from'));
+  const none = dcaFeeBudgetFormHint({ source: 'bundler', suggestion: { capped: true, spare: 0n, uncapped }, installKeptBack: kept, nativeSymbol: symbol });
+  check('nothing to spare: the cap note alone (the field is empty)', none === dcaFeeBudgetCapNote(0n, uncapped, symbol, kept) && /Fund the account first/.test(none));
+  const screen = src('../src/screens/SessionsScreen.tsx');
+  check('the form renders dcaFeeBudgetFormHint from the same suggestion the field shows, with the kept-back set-up fee (source)',
+    /dcaFeeBudgetFormHint\(\{\s*source: props\.feeFacts\.feeSource,\s*suggestion: props\.feeSuggestion,\s*installKeptBack: props\.installKeptBack,/.test(dv) &&
+      !/dcaFeeBudgetSuggestionHint\(/.test(dv) &&
+      /feeBudgetText=\{dcaFeeBudgetText\}\s*feeSuggestion=\{dcaFeeSuggestion\}\s*installKeptBack=\{subInstallKeepBack\}/.test(screen) &&
+      /const dcaFeeBudgetText = dcaForm\.feeEdited\s*\? dcaForm\.feeBudget\s*: dcaFeeSuggestion\.wei !== null/.test(screen));
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-dca: phase 20 item 0 finding 8 (a review never started leaves no key in secure storage)');
+// ---------------------------------------------------------------------------
+{
+  // The real key vault (storage.ts createKeyVault) over a fake expo-secure-store.
+  const items = new Map();
+  const shim = {
+    sets: 0,
+    whenUnlockedThisDeviceOnly: 7,
+    canUseBiometricAuthentication: () => true,
+    async getItemAsync(key, opts) { return items.get(`${opts?.keychainService ?? 'default'}|${key}`)?.value ?? null; },
+    async setItemAsync(key, value, opts) { shim.sets += 1; items.set(`${opts?.keychainService ?? 'default'}|${key}`, { value }); },
+    async deleteItemAsync(key, opts) { items.delete(`${opts?.keychainService ?? 'default'}|${key}`); },
+  };
+  const kv = createKeyVault(shim);
+  await kv.saveNewPhrase(TEST_MNEMONIC);
+  const baseline = items.size;
+  const setsBefore = shim.sets;
+  const n = fakeNode();
+  const b = fakeBundler({ receipt: { success: true, receipt: { transactionHash: TX_HASH } } });
+  const k = kernelBundle(n, b);
+  // What onDcaReview does before the confirm screen, twice (two Reviews,
+  // each with a new key, neither started): a fresh key, the terms, the grant
+  // and the bundler's quote of the set-up.
+  const reviews = [];
+  for (let i = 0; i < 2; i += 1) {
+    const key = newSessionKey();
+    const { terms } = termsAt(NOW);
+    const grant = dcaGrantForTerms(terms, key.address, NOW);
+    const { install, quote } = await prepareSessionInstall(k, OWNER_0, ACCOUNT, grant, { now: NOW });
+    reviews.push({ key, terms, grant, install, quote });
+  }
+  check('two reviews show two different session-key addresses (a new key per review, by design)', reviews[0].key.address !== reviews[1].key.address);
+  check('reviews never started leave ZERO new entries in secure storage (the key is held in memory only)', items.size === baseline && shim.sets === setsBefore, `${items.size} vs ${baseline}, ${shim.sets - setsBefore} writes`);
+  // Start on the second review: exactly one key is written, under the record's vault id.
+  const r = reviews[1];
+  const res = await installSession({
+    quote: r.quote, install: r.install, grant: r.grant, chain: M, account: ACCOUNT, owner: OWNER_0, accountIndex: 0, accountKind: 'kernel-v3.3',
+    label: `Recurring swap: ${r.terms.label}`, source: 'dca', dca: dcaMeta(r.terms, { nativeSymbol: 'test ETH', floorBps: 9500, quoteAtReview: QUOTE }),
+    sessionPrivateKey: r.key.privateKey, store: memoryStore(), vault: kv.sessionKeys, submit: async () => ({ userOpHash: '0x' + 'ee'.repeat(32) }),
+  });
+  check('a started review leaves exactly ONE new key, the started review’s, under its record’s vault id',
+    items.size === baseline + 1 && (await kv.sessionKeys.load(sessionVaultId(M, ACCOUNT, res.record.permissionId))) === ethers.hexlify(r.key.privateKey).toLowerCase());
+  const screen = code(src('../src/screens/SessionsScreen.tsx'));
+  const handler = (start, end) => body(screen, start, end);
+  const reviewBodies = [
+    handler('const onReview = async', 'const onInstall = async'),
+    handler('const onSubReview = async', 'const onSubInstall = async'),
+    handler('const onDcaReview = async', 'const onDcaInstall = async'),
+  ];
+  check('no review handler (session, subscription / recurring payment, recurring swap) touches the key vault or installs (source)',
+    reviewBodies.every((b2) => b2.length > 200 && !/sessionKeyVault|installSession\(|\.save\(/.test(b2)), reviewBodies.map((b2) => b2.length).join(','));
+  check('each review first discards (zeroes) any earlier unsubmitted key, and zeroes its own key on every early return (source)',
+    reviewBodies.every((b2) => /discardPending\(\);/.test(b2.slice(0, 400)) && /key\.privateKey\.fill\(0\)/.test(b2)));
+  check('discardPending zeroes all three pending keys and also runs when the screen unmounts (source)',
+    /const discardPending = useCallback\(\(\) => \{\s*pending\.current\?\.privateKey\.fill\(0\);[\s\S]{0,200}subPending\.current\?\.privateKey\.fill\(0\);[\s\S]{0,200}dcaPending\.current\?\.privateKey\.fill\(0\);/.test(screen) &&
+      /useEffect\(\(\) => discardPending, \[discardPending\]\);/.test(screen));
 }
 
 console.log(`check-dca: ${passed} passed, ${failed} failed`);

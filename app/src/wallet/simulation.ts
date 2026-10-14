@@ -15,7 +15,7 @@ import { formatUnits, groupThousands } from './balances.ts';
 import { fetchErc20Metadata, type Erc20Metadata } from './erc20.ts';
 import { maskAmount } from '../config/prefs.ts';
 import { isEndpointFailure } from '../config/endpoint-probe.ts';
-import { rebasingTokenNote } from './tokens.ts';
+import { knownStakingTokensForChain, rebasingTokenNote } from './tokens.ts';
 
 /**
  * Balance-change preview (asset-diff simulation) for the EVM confirm
@@ -147,6 +147,14 @@ export interface TokenMeta {
   decimals: number | null;
   /** True when the token is in the user's tracked list for this chain. */
   tracked: boolean;
+  /**
+   * True when the token is one of the liquid-staking tokens this wallet pins
+   * for this chain (tokens.ts KNOWN_STAKING_TOKENS: Lido's stETH and wstETH,
+   * Rocket Pool's rETH) and is not tracked: its symbol and decimals come from
+   * that table, never from the contract, and the preview names it
+   * "stETH (pinned staking token)" instead of "untracked token 0x…".
+   */
+  pinned?: boolean;
 }
 
 /** Keyed by lowercase contract address. */
@@ -205,8 +213,15 @@ export async function resolveTokenMeta(
         t.assetId.namespace === 'erc20' &&
         t.assetId.reference.toLowerCase() === contract,
     );
+    // A pinned staking token on exactly this chain (finding 7 of the phase 20
+    // item 0 pass: the stake preview called stETH "untracked token 0x3508…").
+    const pinned = tracked
+      ? undefined
+      : knownStakingTokensForChain(options.chainCaip2).find((t) => t.assetId.reference.toLowerCase() === contract);
     if (tracked) {
       meta[contract] = { symbol: sanitizeSymbol(tracked.symbol), decimals: tracked.decimals, tracked: true };
+    } else if (pinned) {
+      meta[contract] = { symbol: sanitizeSymbol(pinned.symbol), decimals: pinned.decimals, tracked: false, pinned: true };
     } else if (lookups.length < maxLookups) {
       lookups.push(contract);
     } else {
@@ -328,10 +343,14 @@ const EFFECTIVELY_UNLIMITED = 1n << 128n;
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
-/** "USDC", "PEPE (untracked token 0x1234…abcd)", or "token 0x1234…abcd". */
+/** Appended to a pinned staking token's symbol in the preview (TokenMeta.pinned). */
+export const PINNED_STAKING_TOKEN_TAG = '(pinned staking token)';
+
+/** "USDC", "stETH (pinned staking token)", "PEPE (untracked token 0x1234…abcd)", or "token 0x1234…abcd". */
 function tokenLabel(token: string, meta: TokenMeta | undefined): string {
   const short = shortAddress(token);
   if (meta?.tracked && meta.symbol) return meta.symbol;
+  if (meta?.pinned && meta.symbol) return `${meta.symbol} ${PINNED_STAKING_TOKEN_TAG}`;
   if (meta?.symbol) return `${meta.symbol} (untracked token ${short})`;
   return `token ${short}`;
 }

@@ -36,6 +36,7 @@ import {
   encodeFunctionCall,
   encodeKernelExecute,
   indexerHistoryProvider,
+  rocketContractAddressKey,
   toHex,
 } from '@shiba-wallet/chains-evm';
 import {
@@ -49,6 +50,8 @@ import {
   clearActivityCache,
   createActivityDecoder,
   renderActivitySentence,
+  rocketDepositPhrase,
+  rocketDepositPoolForDescription,
   walletAddressesFor,
 } from '../src/wallet/activity-sentences.ts';
 import * as sentencesModule from '../src/wallet/activity-sentences.ts';
@@ -123,6 +126,8 @@ function installFakeNode(url = URL) {
       const text = JSON.stringify({ jsonrpc: '2.0', id: body.id, error: { code: 3, message } });
       return { ok: true, status: 200, json: async () => JSON.parse(text), text: async () => text };
     };
+    const hooked = mode.rpc?.(body.method, body.params);
+    if (hooked !== undefined) return reply(hooked);
     switch (body.method) {
       case 'eth_chainId':
         return reply(mode.chainId);
@@ -154,7 +159,7 @@ function installFakeNode(url = URL) {
 }
 function reset(over = {}) {
   requests = [];
-  mode = { receiptNull: new Set(), dead: false, chainId: '0xaa36a7', extraTx: null, revertDecimals: false, ...over };
+  mode = { receiptNull: new Set(), dead: false, chainId: '0xaa36a7', extraTx: null, revertDecimals: false, rpc: null, ...over };
   clearActivityCache();
 }
 const count = (method) => requests.filter((r) => r.method === method).length;
@@ -690,6 +695,93 @@ installFakeNode();
     check('M-stake-2 caught: a wrap carrying a value (cannot happen on the real contract) keeps the generic sentence; the mutant calls it a wrap',
       /^Called/.test(render(valued.get(valuedId), pinned)) &&
         /^Wrapped/.test(m3.renderActivitySentence(valued.get(valuedId), { nativeSymbol: 'test ETH', hidden: false, contacts: [], networkId: SEPOLIA, ...pinned })));
+  } finally {
+    rmSync(mutantDir, { recursive: true, force: true });
+  }
+}
+
+console.log('Rocket Pool deposits read from the deposit pool RocketStorage names at the decode (phase 20 item 0 finding 4):');
+reset({ chainId: '0x88bb0' });
+installFakeNode();
+{
+  const HOODI = 'eip155:560048';
+  const RS = '0x594Fb75D3dc2DFa0150Ad03F99F97817747dd4E1';
+  const RETH = '0x7322c24752f79c05FFD1E2a6FCB97020C1C264F1';
+  const POOL = '0x425E6f83e27f1676AD78BC39dA79C2C7b33d3Fd8';
+  const SETTINGS = '0x86B455e24A9B5541D7703d07A8CE634f0309d2D2';
+  const OTHER_POOL = getAddress('0x' + '5a'.repeat(20));
+  const ZERO = '0x0000000000000000000000000000000000000000';
+  const TRANSFER = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+  const pad = (a) => '0x' + '0'.repeat(24) + a.slice(2).toLowerCase();
+  const word = (v) => '0x' + v.toString(16).padStart(64, '0');
+  const keyOf = (name) => toHex(rocketContractAddressKey(name)).slice(2).toLowerCase();
+  let registryPool = POOL;
+  let registryDown = false;
+  mode.rpc = (method, params) => {
+    if (method === 'eth_getCode' && [RS, RETH, POOL, SETTINGS, OTHER_POOL].some((a) => a.toLowerCase() === params[0].toLowerCase())) return '0x6080604052';
+    if (method === 'eth_call' && params[0].to.toLowerCase() === RS.toLowerCase()) {
+      if (registryDown) return undefined; // falls through to the fake's revert
+      const key = params[0].data.slice(10).toLowerCase();
+      const answer = key === keyOf('rocketDepositPool') ? registryPool : key === keyOf('rocketTokenRETH') ? RETH : key === keyOf('rocketDAOProtocolSettingsDeposit') ? SETTINGS : null;
+      return answer ? pad(answer) : undefined;
+    }
+    return undefined;
+  };
+  // The live in-app deposit (block 3,799,804): deposit() with 0.01 test ETH
+  // to the deposit pool, 9,640,047,229,956,784 rETH minted to the account.
+  const DEP = '0x' + 'd0'.repeat(32);
+  const depTx = {
+    transaction: { hash: DEP, from: ACCOUNT_1.toLowerCase(), to: POOL.toLowerCase(), input: '0xd0e30db0', value: '0x' + (10n ** 16n).toString(16), nonce: '0x1', type: '0x2', chainId: '0x88bb0', blockNumber: '0x10', blockHash: '0x' + 'cd'.repeat(32) },
+    receipt: { transactionHash: DEP, blockNumber: '0x10', blockHash: '0x' + 'cd'.repeat(32), status: '0x1', logs: [{ address: RETH, topics: [TRANSFER, pad(ZERO), pad(ACCOUNT_1)], data: word(9_640_047_229_956_784n) }] },
+  };
+  mode.extraTx = (h) => (h === DEP ? depTx : null);
+  const { knownStakingTokensForChain } = await import('../src/wallet/tokens.ts');
+  const { stakingContractAt } = await import('../src/wallet/risk.ts');
+  const decode = async () => {
+    clearActivityCache();
+    const decoder = createActivityDecoder({ chainCaip2: HOODI, evmChainId: 560048n, wallet: [ACCOUNT_1], trackedTokens: knownStakingTokensForChain(HOODI), run: fixedRun, maxPerCall: 5 });
+    return (await decoder.decodeEntries([DEP])).get(DEP);
+  };
+  const opts = { networkId: HOODI, contacts: [], stakingContractAt: (a) => stakingContractAt(HOODI, a) };
+  const WANT = 'Staked 0.01 test ETH with Rocket Pool (deposit pool 0x425E…3Fd8, resolved from RocketStorage): received 0.009640047229956784 rETH';
+  const live = await decode();
+  check('the decode records the deposit pool RocketStorage names now', live?.rocketDepositPool === POOL, live?.rocketDepositPool);
+  check('LIVE SENTENCE — the Hoodi deposit: "Staked 0.01 test ETH with Rocket Pool (deposit pool 0x425E…3Fd8, resolved from RocketStorage): received … rETH"',
+    render(live, opts) === WANT, render(live, opts));
+  check('…also without the pinned-contract lookup (the resolved pool alone names it)', render(live, { networkId: HOODI, contacts: [] }) === WANT);
+  registryPool = OTHER_POOL;
+  const moved = await decode();
+  check('control: RocketStorage names a DIFFERENT pool at the decode → no pool recorded, the generic "Called 0x425E…3Fd8" sentence',
+    moved?.rocketDepositPool === undefined && render(moved, opts) === 'Called 0x425E…3Fd8 with 0.01 test ETH: received 0.009640047229956784 rETH', render(moved, opts));
+  registryPool = POOL;
+  registryDown = true;
+  const down = await decode();
+  check('control: the registry unreadable → the generic sentence (never a remembered value)', down?.rocketDepositPool === undefined && /^Called 0x425E…3Fd8/.test(render(down, opts)));
+  registryDown = false;
+  check('rocketDepositPoolForDescription: null on a chain without a Rocket Pool deployment (no request)',
+    (await rocketDepositPoolForDescription(async () => { throw new Error('no request expected'); }, 'eip155:11155111', live.description)) === null);
+  const fmt = { native: (v) => `${v} wei` };
+  check('rocketDepositPhrase: only deposit() with a value to exactly that pool',
+    rocketDepositPhrase(POOL, { to: POOL.toLowerCase(), selector: '0xd0e30db0', value: 1n }, fmt) !== null &&
+      rocketDepositPhrase(POOL, { to: OTHER_POOL, selector: '0xd0e30db0', value: 1n }, fmt) === null &&
+      rocketDepositPhrase(POOL, { to: POOL, selector: '0xd0e30db1', value: 1n }, fmt) === null &&
+      rocketDepositPhrase(POOL, { to: POOL, selector: '0xd0e30db0', value: 0n }, fmt) === null &&
+      rocketDepositPhrase(null, { to: POOL, selector: '0xd0e30db0', value: 1n }, fmt) === null);
+  // Mutant: the phrase without its address comparison describes a deposit to
+  // a pool other than the one RocketStorage named.
+  const srcPath = join(here, '..', 'src', 'wallet', 'activity-sentences.ts');
+  const original = readFileSync(srcPath, 'utf8');
+  const from = 'if (!pool || call.to.toLowerCase() !== pool.toLowerCase() || call.value <= 0n) return null;';
+  check('mutation anchor present (deposit pool comparison)', original.includes(from));
+  const mutantDir = join(here, `.mutants-activity-rocket-${process.pid}`);
+  mkdirSync(mutantDir, { recursive: true });
+  try {
+    const file = join(mutantDir, 'activity-sentences.ts');
+    writeFileSync(file, original.replace(from, 'if (!pool || call.value <= 0n) return null;').replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolvePath(dirname(srcPath), spec)).href}'`));
+    const m = await import(pathToFileURL(file).href);
+    const stale = { ...live, rocketDepositPool: OTHER_POOL };
+    check('M-rocket caught: a pool other than the call target is not described (real) but is by the mutant',
+      /^Called 0x425E…3Fd8/.test(render(stale, opts)) && /^Staked/.test(m.renderActivitySentence(stale, { nativeSymbol: 'test ETH', hidden: false, ...opts })));
   } finally {
     rmSync(mutantDir, { recursive: true, force: true });
   }
