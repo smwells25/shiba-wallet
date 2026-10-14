@@ -11,3 +11,6 @@ scripts/testnet/runs/
 
 # Security advisories awaiting the disclosure decision (the repository is public)
 docs/private/
+
+# Session helpers copied out of the macOS temp directory (never committed)
+.local/
