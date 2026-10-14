@@ -192,11 +192,28 @@ export const SUBSCRIPTION_MAX_PAYMENTS = 120;
  * read-only eth_simulateV1 of handleOps for a native pull (2026-10-09,
  * public test mnemonic's account, scratchpad probe) used 429,439 / 331,519
  * gas after the fork against 445,795 / 347,887 on a node still at the last
- * block before it — no rise. 500,000 covers the largest recorded charge
- * (438,168) with about 14% to spare; defaultFeeBudgetWei then doubles it
- * because fees move. A default, shown and editable, not a guarantee.
+ * block before it — no rise in gas USED. But the SIGNED limits did rise: the
+ * two live recurring payments sent by the app after the fork (phase 15,
+ * 2026-10-10 UTC; native transfers on the same subscription template),
+ * their signed limits read back from each bundle transaction's handleOps
+ * input (read-only, 2026-10-13):
+ *  - payment 1 (tx 0xcdaaf988…3a47, block 11,881,383): vGL 670,981 + cGL
+ *    26,011 + pVG 48,181 = 745,173 gas (the permission's first operation);
+ *  - payment 2 (tx 0x51cb6ff0…bc14, block 11,881,417): 491,538 + 26,011 +
+ *    48,194 = 565,743 gas;
+ * and the phase 13 ERC-20 pull above re-read the same way: 311,208 + 75,708
+ * + 51,252 = 438,168 gas. The previous figure, 500,000, was below both
+ * post-fork payments, so a budget between 500,000 and 745,173 gas × the fee
+ * passed the one-period check (minimumViableFeeBudgetWei) and could still be
+ * refused on-chain at the first payment. 1,000,000 covers the largest
+ * recorded charge (745,173) with about 34% to spare; defaultFeeBudgetWei
+ * then doubles it because fees move. A default, shown and editable, not a
+ * guarantee. Merchant subscriptions share the template (and this figure).
  */
-export const SUBSCRIPTION_PULL_GAS_ALLOWANCE = 500_000n;
+export const SUBSCRIPTION_PULL_GAS_ALLOWANCE = 1_000_000n;
+
+/** The largest signed-limit sum a live payment or pull carried (see SUBSCRIPTION_PULL_GAS_ALLOWANCE). */
+export const SUBSCRIPTION_LARGEST_RECORDED_CHARGE_GAS = 745_173n;
 
 export const SUBSCRIPTION_KEY_EXPORT_TYPE = 'shiba-wallet:subscription-key';
 

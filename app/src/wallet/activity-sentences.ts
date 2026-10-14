@@ -8,9 +8,11 @@ import {
   formatExactUnits,
   httpTransport,
   predictKernelAddress,
+  resolveRocketPool,
+  rocketPoolDeploymentFor,
   shortActivityAddress,
 } from '@shiba-wallet/chains-evm';
-import type { ActivityDescription, ActivitySentenceContext, AssetChange } from '@shiba-wallet/chains-evm';
+import type { ActivityDescription, ActivitySentenceContext, AssetChange, JsonRpcTransport } from '@shiba-wallet/chains-evm';
 // Explicit .ts extensions: scripts/check-activity.mjs loads this module
 // under Node's type stripping, which resolves relative specifiers literally.
 import { getEndpoint, withEndpoint } from '../config/networks.ts';
@@ -89,6 +91,14 @@ export interface DecodedActivity {
   description: ActivityDescription;
   /** Token metadata by lowercase contract address. */
   tokens: TokenMetaMap;
+  /**
+   * Rocket Pool's deposit pool as RocketStorage named it WHEN THIS
+   * TRANSACTION WAS DECODED (rocketDepositPoolForDescription), set only when
+   * that address is the target of a deposit() call with a value in the
+   * transaction; absent otherwise. The pool is resolved, not pinned, so the
+   * sentence names it only through this field (stakingCallPhrase).
+   */
+  rocketDepositPool?: string;
 }
 
 const cache = new Map<string, DecodedActivity>();
@@ -334,7 +344,8 @@ export function createActivityDecoder(options: ActivityDecoderOptions): Activity
           ...(options.fetchMetadata ? { fetchMetadata: options.fetchMetadata } : {}),
         })
       : {};
-    return { description, tokens };
+    const rocketDepositPool = await rocketDepositPoolForDescription(httpTransport(url), options.chainCaip2, description);
+    return { description, tokens, ...(rocketDepositPool ? { rocketDepositPool } : {}) };
   }
 
   type Attempt = { kind: 'ok'; value: DecodedActivity } | { kind: 'missing' | 'other'; url: string };
@@ -743,6 +754,68 @@ export function historySmartAccountFor(eoa: string, accountIndex: number, aa: Aa
   return addresses.length > 1 ? addresses[1]! : null;
 }
 
+/**
+ * The targets of every deposit() call (STAKING_SELECTORS.rocketDeposit, the
+ * Rocket Pool deposit pool's payable entry point) with a value in a
+ * description: the top-level call and each of the wallet's smart-account
+ * operations' decoded calls.
+ */
+function depositCallTargets(description: ActivityDescription): string[] {
+  const selector = STAKING_SELECTORS.rocketDeposit.toLowerCase();
+  const out: string[] = [];
+  const consider = (call: ActivityDescription['call']) => {
+    if (call.kind === 'contract-call' && call.selector?.toLowerCase() === selector && call.value > 0n) out.push(call.to);
+  };
+  consider(description.call);
+  for (const op of description.userOps) for (const inner of op.calls ?? []) consider(inner.decoded);
+  return out;
+}
+
+/**
+ * Rocket Pool's deposit pool for a decoded transaction: when the chain has a
+ * Rocket Pool deployment and the transaction makes a deposit() call with a
+ * value, RocketStorage is read NOW through `transport` (engine
+ * resolveRocketPool, with its pinned-rETH and code checks) and the address
+ * it names is returned if it is one of those call targets (finding 4 of the
+ * phase 20 item 0 pass: the deposit read "Called 0x425E…3Fd8 with 0.01 test
+ * ETH"). Null otherwise, and on any failed read — never a value resolved
+ * earlier.
+ */
+export async function rocketDepositPoolForDescription(
+  transport: JsonRpcTransport,
+  chainCaip2: string,
+  description: ActivityDescription,
+): Promise<string | null> {
+  const deployment = rocketPoolDeploymentFor(chainCaip2);
+  if (!deployment) return null;
+  const targets = depositCallTargets(description);
+  if (targets.length === 0) return null;
+  try {
+    const { depositPool } = await resolveRocketPool(transport, deployment);
+    return targets.some((t) => t.toLowerCase() === depositPool.toLowerCase()) ? depositPool : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The phrase for a deposit() with a value to `pool` — the deposit pool
+ * RocketStorage named when the transaction was decoded
+ * (DecodedActivity.rocketDepositPool) — or null for anything else. "staked",
+ * like the Lido rows, because the engine's sentence verbs
+ * (ACTIVITY_CALL_VERBS) have no "deposited"; what the logs show (the rETH
+ * received) follows after a colon.
+ */
+export function rocketDepositPhrase(
+  pool: string | null | undefined,
+  call: { to: string; selector: string | null; value: bigint },
+  format: { native: (amount: bigint) => string },
+): string | null {
+  if (!pool || call.to.toLowerCase() !== pool.toLowerCase() || call.value <= 0n) return null;
+  if (call.selector === null || call.selector.toLowerCase() !== STAKING_SELECTORS.rocketDeposit.toLowerCase()) return null;
+  return `staked ${format.native(call.value)} with Rocket Pool (deposit pool ${shortActivityAddress(pool)}, resolved from RocketStorage)`;
+}
+
 /** "Lido wstETH contract 0xB823…067b": how a sentence names a pinned staking contract. */
 export function stakingContractLabel(contract: PinnedStakingContract): string {
   return `${contract.protocol} ${contract.name} contract ${shortActivityAddress(contract.address)}`;
@@ -758,8 +831,9 @@ export function stakingContractLabel(contract: PinnedStakingContract): string {
  * sent or received follows after a colon (added by the engine).
  *
  * A Rocket Pool deposit goes to the deposit pool, whose address the
- * wallet resolves from RocketStorage when it quotes and does not pin, so
- * it keeps the generic wording.
+ * wallet resolves from RocketStorage and does not pin, so it is not
+ * described here but by rocketDepositPhrase, from the address RocketStorage
+ * named when the transaction was decoded.
  */
 export function stakingCallPhrase(
   contract: PinnedStakingContract | null,
@@ -815,9 +889,12 @@ export function renderActivitySentence(decoded: DecodedActivity, options: Senten
     const pinned = pinnedAt ? pinnedAt(address) : null;
     return pinned ? stakingContractLabel(pinned) : null;
   };
-  const describeCall: ActivitySentenceContext['describeCall'] = pinnedAt
-    ? (call, format) => stakingCallPhrase(pinnedAt(call.to), call, format)
-    : undefined;
+  const pool = decoded.rocketDepositPool ?? null;
+  const describeCall: ActivitySentenceContext['describeCall'] =
+    pinnedAt || pool
+      ? (call, format) =>
+          (pinnedAt ? stakingCallPhrase(pinnedAt(call.to), call, format) : null) ?? rocketDepositPhrase(pool, call, format)
+      : undefined;
   return activitySentence(decoded.description, {
     nativeSymbol: options.nativeSymbol,
     tokens: decoded.tokens,

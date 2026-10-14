@@ -37,9 +37,11 @@ import {
   ROCKET_POOL_DEPLOYMENTS,
   rocketContractAddressKey,
   rocketProtocolSettingKey,
+  rethBurnCall,
   rocketUserDepositBlockKey,
   toHex,
 } from '@shiba-wallet/chains-evm';
+const rethBurnCallFor = (amount) => rethBurnCall(ROCKET_POOL_DEPLOYMENTS['eip155:560048'].rETH, amount);
 import {
   HOODI_NO_SMART_ACCOUNT,
   LIDO_RISK_STATEMENT,
@@ -63,6 +65,8 @@ import {
   stakingSmartAccountRefusal,
   stakingSuccessBalanceNote,
   stakingSummaryLines,
+  rethDepositLockNote,
+  stakeOutcomeSimulatedLines,
   utcDate,
 } from '../src/wallet/staking.ts';
 import { GasEstimateRevertError, describeSendError, sendEvm } from '../src/wallet/send.ts';
@@ -773,6 +777,57 @@ if (HOODI_BUILT_IN) {
   check('rETH burn: burn(amount) on rETH, the ETH value from getEthValue', same(burn.main.to, RP.rETH) && burn.youReceive.amount === (10n ** 15n * 100n) / 96n && burn.tokenOutflow.amount === 10n ** 15n);
   const balances = await readStakingBalances(node, STAKING_HOODI, EOA, rp);
   check('balances: stETH, rETH with its ETH value, the lock state', balances.lido.stETH === 10n ** 16n && balances.rETH === 10n ** 16n && balances.rethEthValue === (10n ** 16n * 100n) / 96n && balances.rethLock.locked === false);
+
+  // Phase 20 item 0 finding 5: the deposit confirm's lock sentence was stale
+  // given F-72 (the deployed Hoodi code never records a lock).
+  const LOCK_NOTE_HOODI =
+    'Rocket Pool’s rETH contract can refuse moving or redeeming rETH for up to 5,760 blocks after a deposit if a deposit lock is recorded for the address; in the deployed Hoodi code no lock was recorded in two live runs (a burn succeeded 20 blocks after the deposit), but the wallet still checks the stored lock before a burn.';
+  check('the deposit confirm’s lock sentence is the accurate, conservative form (exact)', dep.notes[1] === LOCK_NOTE_HOODI && rethDepositLockNote(5760n, STAKING_HOODI) === LOCK_NOTE_HOODI, dep.notes[1]);
+  check('…the stale "for 5760 blocks after a deposit; the wallet checks this before any redemption" form is gone',
+    !dep.notes.some((n) => /for 5760 blocks after a deposit;/.test(n) || /checks this before any redemption/.test(n)));
+  check('…elsewhere (no live record) it claims no Hoodi runs but still names the stored-lock check',
+    rethDepositLockNote(5760n, 'eip155:999') === 'Rocket Pool’s rETH contract can refuse moving or redeeming rETH for up to 5,760 blocks after a deposit if a deposit lock is recorded for the address. The wallet checks the stored lock before a burn.');
+
+  // Phase 20 item 0 finding 6: the outcome card listed only what ARRIVES.
+  // Shapes of the live receipts (Hoodi, Account 1 → here the test EOA):
+  // the burn (block 3,799,824: rETH Transfer holder → 0x0, then ETH from the
+  // rETH contract) and the withdrawal request (block 3,799,852: Approval to 0,
+  // stETH Transfer holder → queue, TransferShares, request NFT minted).
+  const T = ethers.id('Transfer(address,address,uint256)');
+  const A = ethers.id('Approval(address,address,uint256)');
+  const pad = (a) => ethers.zeroPadValue(a, 32);
+  const receiptNode = (logs) => async (method) => {
+    if (method === 'eth_simulateV1') return [{ calls: [{ status: '0x1', returnData: '0x', gasUsed: '0x1', logs }] }];
+    throw new Error(`unexpected ${method}`);
+  };
+  const BURN_RETH = 4_820_023_614_978_392n;
+  const BURN_ETH = 4_997_499_999_999_999n;
+  const burnLive = { ...burn, calls: [rethBurnCallFor(BURN_RETH)], main: rethBurnCallFor(BURN_RETH) };
+  const burnPreview = await previewStakingPlan(receiptNode([
+    { address: RP.rETH, topics: [T, pad(EOA), pad(ethers.ZeroAddress)], data: ethers.toBeHex(BURN_RETH, 32) },
+    { address: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', topics: [T, pad(RP.rETH), pad(EOA)], data: ethers.toBeHex(BURN_ETH, 32) },
+  ]), burnLive);
+  const burnLines = stakeOutcomeSimulatedLines(burnPreview, 'test ETH');
+  check('burn card: "Simulated: 0.004820023614978392 rETH leave (token contract 0x7322…)" first, then the ETH that arrives',
+    burnLines.length === 2 &&
+      burnLines[0] === `Simulated: 0.004820023614978392 rETH leave (token contract ${RP.rETH}).` &&
+      burnLines[1] === 'Simulated: 0.004997499999999999 test ETH arrive.', burnLines.join(' | '));
+  const REQ = 5n * 10n ** 15n;
+  const reqLive = { ...req, calls: [req.main], approval: null };
+  const reqPreview = await previewStakingPlan(receiptNode([
+    { address: HOO.stETH, topics: [A, pad(EOA), pad(HOO.withdrawalQueue)], data: ethers.toBeHex(0n, 32) },
+    { address: HOO.stETH, topics: [T, pad(EOA), pad(HOO.withdrawalQueue)], data: ethers.toBeHex(REQ, 32) },
+    { address: HOO.withdrawalQueue, topics: [T, pad(ethers.ZeroAddress), pad(EOA), ethers.toBeHex(5329n, 32)], data: '0x' },
+  ]), reqLive);
+  const reqLines = stakeOutcomeSimulatedLines(reqPreview, 'test ETH');
+  check('withdrawal-request card: "Simulated: 0.005 stETH leave (token contract 0x3508…)"',
+    reqLines.length === 1 && reqLines[0] === `Simulated: 0.005 stETH leave (token contract ${HOO.stETH}).`, reqLines.join(' | '));
+  const stakeLines = stakeOutcomeSimulatedLines({ ok: true, sent: 10n ** 16n, receivedNative: 0n, received: [{ token: HOO.stETH, symbol: 'stETH', decimals: 18, amount: 10n ** 16n - 1n }], spent: [], rebasingCaveat: true, skippedLogs: 0 }, 'test ETH');
+  check('stake card: the ETH that leaves, then the stETH that arrives (unchanged wording for arrivals)',
+    stakeLines.join(' | ') === `Simulated: 0.01 test ETH leave. | Simulated: 0.009999999999999999 stETH arrive (token contract ${HOO.stETH}).`, stakeLines.join(' | '));
+  const viewsSrc = readFileSync(join(APP_ROOT, 'src/screens/StakingViews.tsx'), 'utf8');
+  check('the outcome card renders stakeOutcomeSimulatedLines (no arrivals-only list left) (source)',
+    /stakeOutcomeSimulatedLines\(preview, nativeSymbol\)\.map\(/.test(viewsSrc) && !/preview\.received\.map\(/.test(viewsSrc));
 } else {
   const { e } = await hoodiAaAttempt({ prepareStakingAa });
   check('without a built-in Hoodi profile, a Hoodi smart-account plan is refused by the readiness gate', e?.name === 'FeatureNotAllowedError', String(e));

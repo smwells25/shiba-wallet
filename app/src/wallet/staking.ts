@@ -473,6 +473,35 @@ function requireLido(caip2: string): LidoDeployment {
   return lido;
 }
 
+/** "5760" → "5,760" (no Intl, which Hermes may lack). */
+function groupDigits(n: bigint): string {
+  return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+/**
+ * The Rocket Pool deposit confirm's sentence on the rETH deposit lock
+ * (finding 5 of the phase 20 item 0 pass, given F-72 in
+ * docs/THREAT_MODEL.md): RocketTokenRETH refuses a transfer or burn while
+ * block.number − the stored "user.deposit.block" is within
+ * "network.reth.deposit.delay" (`delayBlocks`, read from RocketStorage at
+ * every quote), but the deployed Hoodi deposit pool never writes that block
+ * (packages/chains-evm/src/staking.ts, the rETH deposit-lock note). On Hoodi
+ * two live runs recorded no lock: the phase 19 script burned 2 blocks after
+ * its deposit (block 3,797,198) and the phase 20 in-app pass 20 blocks after
+ * (block 3,799,824). Conservative: the lock is still described as possible
+ * (an upgrade could start writing it) and the wallet still reads the stored
+ * block before a burn (readRethDepositLock / rethBurnProblems).
+ */
+export function rethDepositLockNote(delayBlocks: bigint, caip2: string): string {
+  const head =
+    `Rocket Pool’s rETH contract can refuse moving or redeeming rETH for up to ${groupDigits(delayBlocks)} blocks ` +
+    'after a deposit if a deposit lock is recorded for the address';
+  return caip2 === 'eip155:560048'
+    ? `${head}; in the deployed Hoodi code no lock was recorded in two live runs (a burn succeeded 20 blocks after ` +
+        'the deposit), but the wallet still checks the stored lock before a burn.'
+    : `${head}. The wallet checks the stored lock before a burn.`;
+}
+
 /**
  * Builds the plan for one action, reading the live state that can refuse
  * it (paused staking or queue, the stake limit, Rocket Pool's minimum and
@@ -504,12 +533,7 @@ export async function planStakingAction(
     const notes = [
       `Rocket Pool keeps a deposit fee of ${formatUnits(fee, 18, 18)} ${nativeSymbol} from this amount (read from its settings just now).`,
     ];
-    if (rocket.state.depositDelayBlocks > 0n) {
-      notes.push(
-        `Rocket Pool’s rETH contract can refuse moving or redeeming rETH for ${rocket.state.depositDelayBlocks} blocks after a deposit; ` +
-          'the wallet checks this before any redemption.',
-      );
-    }
+    if (rocket.state.depositDelayBlocks > 0n) notes.push(rethDepositLockNote(rocket.state.depositDelayBlocks, caip2));
     return {
       ...base,
       protocol: 'rocket-pool',
@@ -766,6 +790,31 @@ export async function prepareStakingAa(bundle: AaClientBundle, ownerAddress: str
 /** The outcome preview (ETH out, stETH / wstETH / rETH in) for a plan, from the holder. */
 export async function previewStakingPlan(node: JsonRpcTransport, plan: StakingPlan): Promise<StakeOutcomePreview> {
   return stakeOutcomePreview(node, plan.holder, plan.calls, plan.previewTokens);
+}
+
+/**
+ * The outcome card's simulated lines (StakingViews StakeOutcomeCard), from
+ * the engine's stakeOutcomePreview: what LEAVES the holder first — each
+ * pinned staking token sent (the rETH a burn redeems, the stETH a Lido
+ * withdrawal request hands to the queue, the stETH a wrap gives up) and the
+ * ETH sent — then what ARRIVES. Before phase 20 the card listed only what
+ * arrives (finding 6 of the phase 20 item 0 pass: the burn's card showed
+ * only the ETH received although the simulation carried the rETH Transfer);
+ * the engine already returned `spent` and `sent`. Exact base units, never
+ * rounded.
+ */
+export function stakeOutcomeSimulatedLines(preview: StakeOutcomePreview, nativeSymbol: string): string[] {
+  const exact = (amount: bigint, decimals: number) => formatUnits(amount, decimals, decimals);
+  const lines: string[] = [];
+  for (const t of preview.spent) {
+    lines.push(`Simulated: ${exact(t.amount, t.decimals)} ${t.symbol} leave (token contract ${t.token}).`);
+  }
+  if (preview.sent > 0n) lines.push(`Simulated: ${exact(preview.sent, 18)} ${nativeSymbol} leave.`);
+  for (const t of preview.received) {
+    lines.push(`Simulated: ${exact(t.amount, t.decimals)} ${t.symbol} arrive (token contract ${t.token}).`);
+  }
+  if (preview.receivedNative > 0n) lines.push(`Simulated: ${exact(preview.receivedNative, 18)} ${nativeSymbol} arrive.`);
+  return lines;
 }
 
 /** "You send …" / "You receive ≈ …" lines (full precision; never rounded away). */

@@ -43,7 +43,7 @@ import {
   DCA_WHILE_OPEN_NOTE,
   dcaFeeBudgetHint,
   dcaFeeBudgetPricingNote,
-  dcaFeeBudgetSuggestionHint,
+  dcaFeeBudgetFormHint,
   dcaInstallFunding,
   dcaKeyStatusText,
   dcaLastSwapLines,
@@ -89,6 +89,9 @@ export function DcaFormView(props: {
   symbol: string;
   account: string;
   feeBudgetText: string;
+  /** The unedited suggestion behind feeBudgetText (subscriptions.ts suggestedFeeBudget) and the set-up fee kept back. */
+  feeSuggestion: { capped: boolean; spare: bigint | null; uncapped: bigint | null };
+  installKeptBack: bigint | null;
   feeFacts: { maxFeePerGas: bigint | null; feeSource: SubscriptionFeeSource | null; balance: bigint | null; deposit: bigint | null };
   /** The last live quote for the amount typed (null before one was read). */
   quote: { amountIn: bigint; amountOut: bigint } | null;
@@ -230,7 +233,14 @@ export function DcaFormView(props: {
       />
       <Text style={[styles.hint, { color: theme.textMuted }]}>{dcaFeeBudgetHint(props.symbol)}</Text>
       {!form.feeEdited ? (
-        <Text style={[styles.hint, { color: theme.textMuted }]}>{dcaFeeBudgetSuggestionHint(props.feeFacts.feeSource)}</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          {dcaFeeBudgetFormHint({
+            source: props.feeFacts.feeSource,
+            suggestion: props.feeSuggestion,
+            installKeptBack: props.installKeptBack,
+            nativeSymbol: props.symbol,
+          })}
+        </Text>
       ) : null}
       {props.feeFacts.balance !== null ? (
         <Text style={[styles.hint, { color: theme.textMuted }]}>
@@ -287,7 +297,7 @@ export function DcaReviewView(props: {
 }) {
   const theme = useTheme();
   const { terms, quote: q, symbol } = props;
-  const review = dcaReview(terms, { nativeSymbol: symbol });
+  const review = dcaReview(terms, { nativeSymbol: symbol, stage: 'review' });
   const shortWindow = dcaShortWindowWarning(terms);
   const startButton = 'Start recurring swap';
   // The displayed worst case includes Start's re-quote tolerance, and the funding lines use it too.
@@ -443,7 +453,7 @@ export function DcaCard(props: {
   const { record: r, status, due, symbol } = props;
   const settled = status !== undefined && status !== 'loading';
   const statusLine = settled ? sessionStatusText(status) : 'Reading status…';
-  const review = dcaReview(dcaTermsOf(r), { nativeSymbol: symbol });
+  const review = dcaReview(dcaTermsOf(r), { nativeSymbol: symbol, stage: 'set-up' });
   const live = cardShowsBatchingWarning(r, status, due?.kind === 'completed');
   return (
     <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>

@@ -145,13 +145,36 @@ export const DCA_DEFAULT_FLOOR_PERCENT = '95';
 export const DCA_SWAP_SLIPPAGE_BPS = 100;
 
 /**
- * Declared gas per swap for the fee-budget suggestion (the design note: about
- * 1,000,000 gas per swap, doubled by defaultFeeBudgetWei because fees move).
- * Recorded: GasPolicy charged the two live swaps of 2026-10-11 about 1.4 to
- * 1.64 × 10^15 wei at about 1.1 gwei, i.e. about 1.3 to 1.5 million declared
- * gas each — inside the doubled allowance.
+ * Declared gas per swap: the fee-budget suggestion (doubled by
+ * defaultFeeBudgetWei because fees move), the smallest budget a plan may
+ * keep back (subscriptions.ts minimumViableFeeBudgetWei: one swap's worst
+ * case, below which Review blocks an auto-fitted budget and warns on a typed
+ * one) and the review's coverage sentence.
+ *
+ * GasPolicy charges each operation (preVerificationGas +
+ * verificationGasLimit + callGasLimit) × maxFeePerGas — the SIGNED limits,
+ * not the gas used (packages/chains-evm/src/kernel-permissions.ts
+ * SessionKeyGrant.gasBudgetWei) — so this must be at least the largest
+ * signed-limit sum a swap has carried. The three live swaps on Ethereum
+ * Sepolia, their signed limits read back from each bundle transaction's
+ * handleOps input (read-only, 2026-10-13):
+ *  - script swap 1 (tx 0xb7a50c1c…a60f1, block 11,893,108): vGL 987,890 +
+ *    cGL 379,444 + pVG 52,779 = 1,420,113 gas, charged 1,640,230,520,680,452
+ *    wei at 1.155000004 gwei (the "~1.64e15" of AGENTS.md phase 19 item 2);
+ *  - script swap 2 (tx 0x93c17899…a7d7, block 11,893,119): 772,557 + 379,444
+ *    + 52,792 = 1,204,793 gas;
+ *  - in-app swap (tx 0x1f43c9aa…6ba9, block 11,894,126): 863,242 + 291,880 +
+ *    50,266 = 1,205,388 gas at 2.310000004 gwei.
+ * The previous figure, 1,000,000, was below all three, so a budget between
+ * 1.0 and 1.42 million gas × the fee passed the check and could still be
+ * refused on-chain at the first swap. 1,800,000 covers the largest recorded
+ * charge (1,420,113) with about 27% to spare — a margin, not a guarantee:
+ * the bundler's estimate (and so the signed limits) moves with the chain.
  */
-export const DCA_SWAP_GAS_ALLOWANCE = 1_000_000n;
+export const DCA_SWAP_GAS_ALLOWANCE = 1_800_000n;
+
+/** The largest signed-limit sum a live swap carried (see DCA_SWAP_GAS_ALLOWANCE). */
+export const DCA_SWAP_LARGEST_RECORDED_CHARGE_GAS = 1_420_113n;
 
 /** Gas the live install of 2026-10-11 used (AGENTS.md phase 19 item 2). */
 export const DCA_INSTALL_GAS_RECORDED = 7_015_028n;
@@ -350,6 +373,34 @@ export function dcaFeeBudgetCapNote(spare: bigint, uncapped: bigint, nativeSymbo
   );
 }
 
+/** Added to the form's capped-budget note: what clearing a typed figure brings back. */
+export const DCA_FEE_BUDGET_CLEAR_NOTE =
+  'The field shows this lowered figure; clearing a figure you typed brings it back, not the usual budget.';
+
+/**
+ * The hint under the recurring-swap form's fee-budget field while the user
+ * has not typed a budget (finding 1 of the phase 20 item 0 pass: after a
+ * review was blocked, the field showed the budget lowered to what the
+ * account could keep back while the hint still said it followed the
+ * suggestion for the number of swaps, and clearing the field brought the
+ * lowered figure back). Not capped: the suggestion hint
+ * (dcaFeeBudgetSuggestionHint). Capped: the cap note (dcaFeeBudgetCapNote,
+ * naming what can be spared, the usual budget and any set-up fee kept back)
+ * and DCA_FEE_BUDGET_CLEAR_NOTE, so the hint describes the figure actually
+ * shown.
+ */
+export function dcaFeeBudgetFormHint(p: {
+  source: SubscriptionFeeSource | null;
+  suggestion: { capped: boolean; spare: bigint | null; uncapped: bigint | null };
+  installKeptBack: bigint | null;
+  nativeSymbol: string;
+}): string {
+  const { capped, spare, uncapped } = p.suggestion;
+  if (!capped || spare === null || uncapped === null) return dcaFeeBudgetSuggestionHint(p.source);
+  const note = dcaFeeBudgetCapNote(spare, uncapped, p.nativeSymbol, p.installKeptBack ?? 0n);
+  return spare > 0n ? `${note} ${DCA_FEE_BUDGET_CLEAR_NOTE}` : note;
+}
+
 /** The review's sentence on what the fee budget is priced at and how many swaps it covers. */
 export function dcaFeeBudgetPricingNote(p: {
   budgetWei: bigint;
@@ -360,7 +411,8 @@ export function dcaFeeBudgetPricingNote(p: {
   nativeSymbol: string;
 }): string {
   const recorded =
-    ' The two swaps run on 2026-10-11 were each charged about 1.3 to 1.5 million gas against their budget.';
+    ' The three swaps run on 2026-10-11 were charged 1,420,113, 1,204,793 and 1,205,388 gas (their signed gas ' +
+    'limits) against their budget.';
   if (p.maxFeePerGas === null || p.source === null || p.maxFeePerGas <= 0n) {
     return (
       'The network fee could not be read, so the fee budget is not compared with what the swaps will cost. Each ' +
@@ -634,7 +686,34 @@ export function dcaKeyOnlyLine(account: string): string {
  * lines, caveats verbatim), arranged in the design note's order, plus the
  * key line, the grace sentence and where the key lives.
  */
-export function dcaReview(terms: DcaTerms, context: { nativeSymbol: string }): DcaReview {
+/** The engine's past-tense clause about the floor ("…per swap was fixed when the plan was set up."). */
+export const DCA_FLOOR_FIXED_PAST = 'was fixed when the plan was set up.';
+/** The same clause on the review, before the plan exists (finding 3 of the phase 20 item 0 pass). */
+export const DCA_FLOOR_FIXED_FUTURE = 'will be fixed when the plan is set up.';
+
+/**
+ * The engine's "THE MINIMUM DOES NOT FOLLOW THE PRICE" caveat in the tense of
+ * `stage`: unchanged once the plan is set up (the cards), and "will be fixed
+ * when the plan is set up" on the review before Start. Throws when the
+ * engine's wording no longer carries the clause, so a reworded caveat cannot
+ * silently keep the wrong tense.
+ */
+export function floorCaveatForStage(caveat: string, stage: 'review' | 'set-up'): string {
+  if (stage === 'set-up') return caveat;
+  if (!caveat.includes(DCA_FLOOR_FIXED_PAST)) {
+    throw new Error(`The engine's floor caveat no longer says "${DCA_FLOOR_FIXED_PAST}"`);
+  }
+  return caveat.replace(DCA_FLOOR_FIXED_PAST, DCA_FLOOR_FIXED_FUTURE);
+}
+
+export function dcaReview(
+  terms: DcaTerms,
+  context: {
+    nativeSymbol: string;
+    /** 'review' before Start (future tense); 'set-up' for an installed plan's card. Default 'set-up'. */
+    stage?: 'review' | 'set-up';
+  },
+): DcaReview {
   const d = describeDca(terms, {
     symbolIn: context.nativeSymbol,
     decimalsIn: 18,
@@ -653,7 +732,7 @@ export function dcaReview(terms: DcaTerms, context: { nativeSymbol: string }): D
         'can still be sent; this does not allow any extra swap.'
       : '');
   const caveats = [
-    engineCaveat(d.caveats, 'THE MINIMUM DOES NOT FOLLOW THE PRICE'),
+    floorCaveatForStage(engineCaveat(d.caveats, 'THE MINIMUM DOES NOT FOLLOW THE PRICE'), context.stage ?? 'set-up'),
     engineCaveat(d.caveats, 'There is no deadline'),
     engineCaveat(d.caveats, 'A swap that reverts still uses up its period'),
     ...d.caveats.filter((c) => c.includes('stays in the router')),

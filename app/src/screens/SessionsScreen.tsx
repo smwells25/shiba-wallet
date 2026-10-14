@@ -2313,6 +2313,8 @@ export function SessionsScreen({ navigation }: Props) {
           symbol={symbol}
           account={account}
           feeBudgetText={dcaFeeBudgetText}
+          feeSuggestion={dcaFeeSuggestion}
+          installKeptBack={subInstallKeepBack}
           feeFacts={subFeeFacts}
           quote={dcaQuote && dcaQuote.amountIn === dcaAmountWei ? dcaQuote : null}
           quoteError={dcaQuoteError}

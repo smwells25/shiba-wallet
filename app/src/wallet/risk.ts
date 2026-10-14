@@ -9,7 +9,9 @@ import {
   encodeErc20Transfer,
   findCodeDeploymentBlock,
   isFirstInteraction,
+  resolveRocketPool,
   riskSignals,
+  rocketPoolDeploymentFor,
   toBytes,
   toHex,
   type AssetChange,
@@ -90,9 +92,17 @@ import { knownStakingTokensForChain } from './tokens.ts';
  *    all 40 hex digits); a look-alike address or the same address on
  *    another chain keeps every generic line. Approval warnings decoded from
  *    the calldata are kept. Rocket Pool's deposit pool is NOT pinned (the
- *    wallet resolves it from RocketStorage at every quote), so a deposit
- *    keeps the generic lines; RocketStorage itself is never a transaction
- *    target of the wallet and is not listed.
+ *    wallet resolves it from RocketStorage at every quote), so it is
+ *    re-resolved HERE, at the check, from the pinned RocketStorage through
+ *    the same endpoint (engine resolveRocketPool, which also refuses a
+ *    registry whose rETH differs from the pinned one): only when `to`
+ *    equals the address RocketStorage names right now does the card say
+ *    "This transaction goes to Rocket Pool's deposit pool (0x…), resolved
+ *    just now from Rocket Pool's pinned RocketStorage contract on Hoodi."
+ *    (finding 4 of the phase 20 item 0 pass); a different address, a failed
+ *    read or another chain keeps every generic line, and nothing resolved
+ *    earlier is reused. RocketStorage itself is never a transaction target
+ *    of the wallet and is not listed.
  *
  * The look-alike-contact warning is NOT produced here; it stays in
  * ./contacts.ts and the send screens' RecipientContactNotice.
@@ -503,8 +513,14 @@ export interface PinnedStakingContract {
   /** The address as the engine's table lists it (EIP-55). */
   address: string;
   protocol: 'Lido' | 'Rocket Pool';
-  /** What the contract is: "stETH", "wstETH", "withdrawal queue" or "rETH". */
+  /** What the contract is: "stETH", "wstETH", "withdrawal queue", "rETH" or "deposit pool". */
   name: string;
+  /**
+   * Set only for Rocket Pool's deposit pool, which is not pinned: the pinned
+   * RocketStorage address it was resolved from at this check
+   * (resolvedRocketDepositPoolAt). Never set by pinnedStakingContracts.
+   */
+  resolvedFrom?: string;
 }
 
 /**
@@ -554,9 +570,46 @@ export function withStakingTokens(tokens: readonly RiskTokenRef[], chainCaip2: s
   return [...tokens, ...extra];
 }
 
+/**
+ * Rocket Pool's deposit pool at exactly `address` on `chainCaip2`, resolved
+ * NOW from the pinned RocketStorage through `transport` (engine
+ * resolveRocketPool: the registry's rocketDepositPool entry, with the
+ * pinned-rETH and code checks), or null — no Rocket Pool deployment on this
+ * chain, a malformed address, a failed or refused read, or a different
+ * address. Never cached: each call reads the registry again.
+ */
+export async function resolvedRocketDepositPoolAt(
+  transport: JsonRpcTransport,
+  chainCaip2: string,
+  address: string,
+): Promise<PinnedStakingContract | null> {
+  const deployment = rocketPoolDeploymentFor(chainCaip2);
+  if (!deployment || !ADDRESS.test(address)) return null;
+  let contracts: Awaited<ReturnType<typeof resolveRocketPool>>;
+  try {
+    contracts = await resolveRocketPool(transport, deployment);
+  } catch {
+    return null;
+  }
+  if (contracts.depositPool.toLowerCase() !== address.toLowerCase()) return null;
+  return {
+    chain: chainCaip2,
+    address: contracts.depositPool,
+    protocol: 'Rocket Pool',
+    name: 'deposit pool',
+    resolvedFrom: deployment.storage,
+  };
+}
+
 /** The card's one line for a pinned staking contract (RiskFacts.stakingContract). */
 export function stakingContractText(contract: PinnedStakingContract): string {
   const network = evmProfileByCaip2(contract.chain)?.label ?? contract.chain;
+  if (contract.resolvedFrom) {
+    return (
+      `This transaction goes to ${contract.protocol}'s ${contract.name} (${contract.address}), resolved just now ` +
+      `from ${contract.protocol}'s pinned RocketStorage contract on ${network}.`
+    );
+  }
   return (
     `This transaction goes to ${contract.protocol}'s ${contract.name} contract on ${network} ` +
     `(${contract.address}), pinned by this wallet from ${contract.protocol}'s published list of ` +
@@ -1139,7 +1192,12 @@ export async function gatherRiskFacts(options: GatherRiskOptions): Promise<RiskF
   // A staking contract the wallet pins for this chain (not a token transfer
   // through it, which tokenRef describes); confirmed below only if `to`
   // holds code.
-  const stakingRef = facts.ownRecipient || tokenRef ? null : stakingContractAt(options.chainCaip2, options.to);
+  let stakingRef = facts.ownRecipient || tokenRef ? null : stakingContractAt(options.chainCaip2, options.to);
+  // Rocket Pool's deposit pool is resolved, not pinned: read the registry
+  // again now (only on a chain with a Rocket Pool deployment).
+  if (!stakingRef && !facts.ownRecipient && !tokenRef && rocketPoolDeploymentFor(options.chainCaip2)) {
+    stakingRef = await resolvedRocketDepositPoolAt(transport, options.chainCaip2, options.to);
+  }
 
   // Class, delegation and age of `address`, recorded as the card's subject.
   const describeSubject = async (address: string, known?: RecipientClass) => {

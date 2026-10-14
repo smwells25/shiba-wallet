@@ -34,7 +34,7 @@ import { dirname, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Interface, Transaction, id as ethersId, zeroPadValue, getAddress } from 'ethers';
 import { evmKeyProvider, mnemonicToSeed } from '@shiba-wallet/core';
-import { LIDO_DEPLOYMENTS, MAX_UINT256, ROCKET_POOL_DEPLOYMENTS, STAKING_SELECTORS, toHex } from '@shiba-wallet/chains-evm';
+import { LIDO_DEPLOYMENTS, MAX_UINT256, ROCKET_POOL_DEPLOYMENTS, STAKING_SELECTORS, rocketContractAddressKey, toHex } from '@shiba-wallet/chains-evm';
 import {
   APPROVAL_WINDOW_BLOCKS,
   USDT_MAINNET,
@@ -87,6 +87,7 @@ import {
   ownWalletAddresses,
   searchNativeInteraction,
   pinnedStakingContracts,
+  resolvedRocketDepositPoolAt,
   stakingContractAt,
   stakingContractText,
   withStakingTokens,
@@ -1188,6 +1189,70 @@ console.log('pinned staking contracts on the risk card:');
   const m3Lines = m3.computeRiskLines(await m3.gatherRiskFacts({ transport, url: RPC, wallet: ME, to: SEP_STETH, data: submit, chainCaip2: SEPOLIA, trackedTokens: sepKnown, loadOwnMultisigs: null }));
   node.codes[SEP_STETH.toLowerCase()] = '0x6080604052';
   check('mutant (code not required) is caught', m3Lines.some((l) => /pinned by this wallet/.test(l.text)));
+
+  // Phase 20 item 0 finding 4: Rocket Pool's deposit pool is RESOLVED from
+  // the pinned RocketStorage, not pinned. The card re-reads the registry at
+  // the check and names the pool only when `to` is what it names now.
+  const RS = ROCKET_POOL_DEPLOYMENTS[HOODI].storage;
+  const POOL = '0x425E6f83e27f1676AD78BC39dA79C2C7b33d3Fd8'; // resolved live on 2026-10-11 and 2026-10-12
+  const SETTINGS = '0x86B455e24A9B5541D7703d07A8CE634f0309d2D2';
+  const OTHER_POOL = '0x' + '5a'.repeat(20);
+  for (const a of [RS, POOL, SETTINGS, OTHER_POOL]) {
+    node.codes[a.toLowerCase()] = '0x6080604052';
+    node.deployedAt[a.toLowerCase()] = HEAD - 128n;
+  }
+  const keyOf = (name) => toHex(rocketContractAddressKey(name)).slice(2).toLowerCase();
+  let registryReads = 0;
+  const withRegistry = (pool) => async (method, params) => {
+    if (method === 'eth_call' && params?.[0]?.to?.toLowerCase() === RS.toLowerCase()) {
+      registryReads += 1;
+      const key = params[0].data.slice(10).toLowerCase();
+      const answer = key === keyOf('rocketDepositPool') ? pool : key === keyOf('rocketTokenRETH') ? HOODI_RETH : key === keyOf('rocketDAOProtocolSettingsDeposit') ? SETTINGS : null;
+      if (!answer) throw new Error('unexpected registry key');
+      return zeroPadValue(answer, 32);
+    }
+    return transport(method, params);
+  };
+  const deposit = STAKING_SELECTORS.rocketDeposit;
+  node.chainId = '0x88bb0';
+  const POOL_LINE = `This transaction goes to Rocket Pool's deposit pool (${POOL}), resolved just now from Rocket Pool's pinned RocketStorage contract on Hoodi.`;
+  calls = [];
+  registryReads = 0;
+  const dep = computeRiskLines(await gatherRiskFacts({ transport: withRegistry(POOL), url: RPC, wallet: ME, to: POOL, data: deposit, chainCaip2: HOODI, trackedTokens: [], loadOwnMultisigs: null }));
+  check('Rocket Pool deposit on Hoodi: exactly one line naming the deposit pool as resolved just now from RocketStorage',
+    dep.length === 1 && dep[0].text === POOL_LINE && dep[0].tone === 'notice', dep.map((l) => l.text).join(' | '));
+  check('…no "goes to a contract", no contract-age line, no first-interaction line or search; the registry was read at the check',
+    !dep.some((l) => /goes to a contract \(/.test(l.text) || l.type === 'new-contract' || l.type === 'contract-age-unknown' || /^first-interaction/.test(l.type)) &&
+      !calls.some((c) => c.method === 'eth_getLogs') && registryReads === 3);
+  const lower = computeRiskLines(await gatherRiskFacts({ transport: withRegistry(POOL), url: RPC, wallet: ME, to: POOL.toLowerCase(), data: deposit, chainCaip2: HOODI, trackedTokens: [], loadOwnMultisigs: null }));
+  check('…a lower-case `to` matches the resolved address too', lower.length === 1 && lower[0].text === POOL_LINE);
+  // Mutant-style control: RocketStorage now names ANOTHER pool, so the old
+  // address must not be described as the deposit pool.
+  const moved = computeRiskLines(await gatherRiskFacts({ transport: withRegistry(OTHER_POOL), url: RPC, wallet: ME, to: POOL, data: deposit, chainCaip2: HOODI, trackedTokens: [], loadOwnMultisigs: null }));
+  check('control: when RocketStorage resolves a DIFFERENT pool, the card keeps the generic lines (never a stale value)',
+    moved.some((l) => l.text === `This transaction goes to a contract (${POOL}).`) && !moved.some((l) => /deposit pool/.test(l.text)), moved.map((l) => l.text).join(' | '));
+  const unread = computeRiskLines(await gatherRiskFacts({
+    transport: async (method, params) => { if (method === 'eth_call' && params?.[0]?.to?.toLowerCase() === RS.toLowerCase()) throw new Error('down'); return transport(method, params); },
+    url: RPC, wallet: ME, to: POOL, data: deposit, chainCaip2: HOODI, trackedTokens: [], loadOwnMultisigs: null,
+  }));
+  check('control: registry unreadable -> the generic lines, no deposit-pool line', !unread.some((l) => /deposit pool/.test(l.text)) && unread.some((l) => /goes to a contract \(/.test(l.text)));
+  const liar = await resolvedRocketDepositPoolAt(async (method, params) => {
+    if (method === 'eth_call' && params?.[0]?.to?.toLowerCase() === RS.toLowerCase() && params[0].data.slice(10).toLowerCase() === keyOf('rocketTokenRETH')) return zeroPadValue('0x' + '77'.repeat(20), 32);
+    return withRegistry(POOL)(method, params);
+  }, HOODI, POOL);
+  check('control: a registry whose rETH differs from the pinned one is not trusted for the pool', liar === null);
+  node.chainId = '0xaa36a7';
+  const onSepolia = await resolvedRocketDepositPoolAt(withRegistry(POOL), SEPOLIA, POOL);
+  check('control: no Rocket Pool deployment on Sepolia -> null, without reading anything', onSepolia === null);
+  // Mutant: the comparison with `to` removed, so anything on Hoodi would be called the deposit pool.
+  const m4 = await importRiskMutant(
+    'if (contracts.depositPool.toLowerCase() !== address.toLowerCase()) return null;',
+    '',
+  );
+  node.chainId = '0x88bb0';
+  const m4Lines = m4.computeRiskLines(await m4.gatherRiskFacts({ transport: withRegistry(OTHER_POOL), url: RPC, wallet: ME, to: POOL, data: deposit, chainCaip2: HOODI, trackedTokens: [], loadOwnMultisigs: null }));
+  node.chainId = '0xaa36a7';
+  check('mutant (resolved address not compared with `to`) is caught', m4Lines.some((l) => /deposit pool/.test(l.text)));
 }
 
 check('approximate durations', approxDuration(9000n) === 'about 30 hours' && approxDuration(72000n) === 'about 10 days' && approxDuration(1n) === 'about 1 minute' && approxDuration(64n) === 'about 13 minutes' && approxDuration(300n) === 'about 1 hour');

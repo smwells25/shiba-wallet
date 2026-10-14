@@ -54,6 +54,7 @@ import {
   forgetAllSessions,
   installSession,
   loadSessions,
+  newSessionKey,
   prepareSessionInstall,
   prepareSessionRevoke,
   releaseSessionKey,
@@ -78,6 +79,7 @@ import {
 import { NO_ANSWER_SENTENCE, isEndpointFailure, runWithEndpointFailover } from '../src/config/endpoint-probe.ts';
 import {
   RECURRING_KEY_NEVER_EXPORTED,
+  SUBSCRIPTION_LARGEST_RECORDED_CHARGE_GAS,
   SUBSCRIPTION_PULL_GAS_ALLOWANCE,
   buildSubscription,
   buildSubscriptionKeyExport,
@@ -575,14 +577,41 @@ console.log('check-recurring: the fee-budget keep-back cannot install an unusabl
 // ---------------------------------------------------------------------------
 {
   // Recurring payments use the shared keep-back at SUBSCRIPTION_PULL_GAS_ALLOWANCE
-  // (500,000 gas per payment). A budget auto-fitted below one payment's
-  // worst-case fee would install a plan whose very first payment the account
-  // refuses on-chain (GasPolicy); the fit now refuses that (too-small) and the
-  // word is "payment".
+  // (1,000,000 gas per payment since phase 20; it was 500,000). A budget
+  // auto-fitted below one payment's worst-case fee would install a plan whose
+  // very first payment the account refuses on-chain (GasPolicy); the fit now
+  // refuses that (too-small) and the word is "payment".
   const FEE = 2_310_000_004n;
   const minViable = minimumViableFeeBudgetWei(FEE);
-  check('one payment’s worst-case fee = 500,000 gas × the signed fee',
-    minViable === SUBSCRIPTION_PULL_GAS_ALLOWANCE * FEE && minViable === 1_155_000_002_000_000n);
+  check('one payment’s worst-case fee = 1,000,000 gas × the signed fee',
+    minViable === SUBSCRIPTION_PULL_GAS_ALLOWANCE * FEE && minViable === 2_310_000_004_000_000n);
+  // Phase 20 item 0 finding 2 (the DCA threshold), applied to payments:
+  // GasPolicy charges the SIGNED limits (pVG + vGL + cGL) × the signed
+  // maxFeePerGas. The two live recurring payments after Sepolia's fork,
+  // read back from their bundle transactions' handleOps input (blocks
+  // 11,881,383 and 11,881,417), carried 745,173 and 565,743 gas — both above
+  // the old 500,000, so the old one-payment check passed budgets the account
+  // would refuse at the first payment.
+  const LIVE_PAYMENTS = [
+    { vgl: 670_981n, cgl: 26_011n, pvg: 48_181n, maxFee: 2_310_000_004n, charged: 1_721_349_632_980_692n },
+    { vgl: 491_538n, cgl: 26_011n, pvg: 48_194n, maxFee: 2_310_000_004n, charged: 1_306_866_332_262_972n },
+  ];
+  const liveGas = LIVE_PAYMENTS.map((x) => x.vgl + x.cgl + x.pvg);
+  check('the recorded live payments: signed limits × signed fee = the charge, 745,173 / 565,743 gas',
+    LIVE_PAYMENTS.every((x, i) => liveGas[i] * x.maxFee === x.charged) && liveGas.join() === '745173,565743' &&
+      SUBSCRIPTION_LARGEST_RECORDED_CHARGE_GAS === 745_173n);
+  check('the allowance exceeds the largest live per-payment charge (745,173 gas) with a stated margin (≥ 25%); the old 500,000 did not',
+    SUBSCRIPTION_PULL_GAS_ALLOWANCE * 100n >= SUBSCRIPTION_LARGEST_RECORDED_CHARGE_GAS * 125n && 500_000n < SUBSCRIPTION_LARGEST_RECORDED_CHARGE_GAS);
+  {
+    const live = SUBSCRIPTION_LARGEST_RECORDED_CHARGE_GAS * FEE;
+    const q = { amount: 0n, fee: 1_000_000_000_000_000n, total: 1_000_000_000_000_000n, senderBalance: live, deposit: 10n ** 18n, sponsored: false, sender: ACCOUNT };
+    const between = await fitFeeBudgetToInstall({
+      payments: 3, maxFeePerGas: FEE, nativeAmountPerPayment: 0n, feeBudgetWei: defaultFeeBudgetWei(3, FEE),
+      attempt: { quote: q }, requote: async () => ({ quote: q }),
+    });
+    check('a keep-back of one live payment’s charge (745,173 gas × fee) is blocked as too small, not installed',
+      between.kind === 'cannot-fit' && between.reason === 'too-small' && between.fittedBudget === live && minViable > live, between.kind);
+  }
   const quoteAt = (balance) => ({ amount: 0n, fee: 1_000_000_000_000_000n, total: 1_000_000_000_000_000n, senderBalance: balance, deposit: 10n ** 18n, sponsored: false, sender: ACCOUNT });
   const tiny = await fitFeeBudgetToInstall({
     payments: 3, maxFeePerGas: FEE, nativeAmountPerPayment: 0n, feeBudgetWei: defaultFeeBudgetWei(3, FEE),
@@ -874,6 +903,52 @@ for (const protectedPhrase of [true, false]) {
   const rsrc = src('../src/wallet/recurring.ts');
   check('recurring.ts has no path to the phrase or the owner key (no storage, biometric, WalletContext import; no signWith)',
     !/from '\.\/storage|from '\.\/biometric|WalletContext|signWith\(|loadMnemonic|mnemonicToSeed|requireLocalAuth/.test(rsrc));
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-recurring: reviews never started leave no key in secure storage (phase 20 item 0 finding 8)');
+// ---------------------------------------------------------------------------
+{
+  const items = new Map();
+  const shim = {
+    sets: 0,
+    whenUnlockedThisDeviceOnly: 7,
+    canUseBiometricAuthentication: () => true,
+    async getItemAsync(key, opts) { return items.get(`${opts?.keychainService ?? 'default'}|${key}`)?.value ?? null; },
+    async setItemAsync(key, value, opts) { shim.sets += 1; items.set(`${opts?.keychainService ?? 'default'}|${key}`, { value }); },
+    async deleteItemAsync(key, opts) { items.delete(`${opts?.keychainService ?? 'default'}|${key}`); },
+  };
+  const kv = createKeyVault(shim);
+  await kv.saveNewPhrase(TEST_MNEMONIC);
+  const baseline = items.size;
+  const setsBefore = shim.sets;
+  const n6 = fakeNode();
+  const b6 = fakeBundler({ receipt: { success: true, receipt: { transactionHash: TX_HASH } } });
+  const k6 = kernelBundle(n6, b6);
+  // What onSubReview does before the confirm screen, for a recurring payment
+  // and for a merchant subscription: a fresh key, the terms, the grant and the
+  // bundler's quote of the install. Neither is started.
+  const reviewed = [];
+  for (const [mode, grantFor] of [['recurring', recurringGrantFor], ['subscription', subscriptionGrantFor]]) {
+    const key = newSessionKey();
+    const sub = buildSubscription(
+      { merchant: PAYEE, choice: native, amount: '0.0001', periodSeconds: DAY, payments: '3', feeBudget: '0.01', label: recurringNames('', PAYEE, null).termsLabel },
+      { now: NOW, account: ACCOUNT, testnet: true },
+    );
+    const grant = grantFor(sub, key.address, { account: ACCOUNT, now: NOW });
+    const { install, quote } = await prepareSessionInstall(k6, OWNER_0, ACCOUNT, grant, { now: NOW });
+    reviewed.push({ mode, key, sub, grant, install, quote });
+  }
+  check('recurring-payment and subscription reviews never started leave ZERO new entries in secure storage',
+    items.size === baseline && shim.sets === setsBefore, `${items.size} vs ${baseline}`);
+  const r = reviewed[0];
+  const res = await installSession({
+    quote: r.quote, install: r.install, grant: r.grant, chain: M, account: ACCOUNT, owner: OWNER_0, accountIndex: 0, accountKind: 'kernel-v3.3',
+    label: recurringNames('', PAYEE, null).recordLabel, source: 'recurring', subscription: recurringMeta(r.sub, native),
+    sessionPrivateKey: r.key.privateKey, store: memoryStore(), vault: kv.sessionKeys, submit: async () => ({ userOpHash: '0x' + '22'.repeat(32) }),
+  });
+  check('Start on the recurring review leaves exactly ONE new key, under its record’s vault id',
+    items.size === baseline + 1 && (await kv.sessionKeys.load(sessionVaultId(M, ACCOUNT, res.record.permissionId))) === ethers.hexlify(r.key.privateKey).toLowerCase());
 }
 
 // ---------------------------------------------------------------------------
