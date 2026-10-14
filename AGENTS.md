@@ -124,6 +124,17 @@ examples/demo.mjs          Offline end-to-end engine demo
   secrets only through the ADBKeyboard IME and redact every UI dump;
   never run a Gradle build while driving the AVD (2026-10-10: the
   watchdog killed system_server) — build first, close Gradle, then drive.
+  LAUNCH THE AVD WITH `emulator -avd shiba -gpu host` from a foreground
+  Terminal tab (osascript `do script`; the new tab may first need its
+  zsh compinit prompt answered): on 2026-10-14 the Chairperson saw only a
+  black emulator window while adb screenshots were normal, no window
+  carried the secure flag and protection was off — the AVD had been
+  running on the SwiftShader software renderer; the restart with the
+  host GPU booted in 24 s. AFTER ANY EMULATOR RESTART re-add `adb
+  reverse tcp:8081 tcp:8081` before relaunching Expo Go, or it shows
+  "Something went wrong" (the mapping is lost with the device); a
+  `touch` of the Metro worktree makes Metro demand a restart
+  ("Detected a change in metro.config.js").
   Since phase 17 item 0 the app blocks screenshots everywhere by default.
   ON THE EMULATOR IT STAYS OFF (the Chairperson's request, 2026-10-11:
   the secure flag blanks the emulator window for a human watching it
@@ -7776,3 +7787,137 @@ item 3's TalkBack pass after; 5 last. Subagents on Opus.
       Ethereum Sepolia, Account 1, light mode, auto-lock 1 min, screen
       protection OFF, TalkBack OFF (log level back to ERROR), IME
       ADBKeyboard, Metro at 7fa9a41.
+- [x] Pass p20c findings FIXED — the screen-reader and dark-mode slice
+      (commit b7b54ac; 69 files incl. the new app/src/a11y.ts; check-devmode
+      385 (was 354), check-home 104 (95), check-multisig 408 (396),
+      check-dca 163 (155), check-staking 130 (122), check-browser 305
+      (301), check-subscriptions 199 (195), check-activity 279 (277),
+      check-price-alerts 97 (95), check-payment-request and check-wc pins
+      updated; offline runner ALL GREEN in the CTO's isolated worktree on
+      HEAD 06f5edd plus the slice: engine 995, app 8,665 across 56 suites,
+      lint 0/0, tsc clean; every fix has a mutant its suite catches; built
+      by two agents — the first was cut by the session limit after 48
+      files, the second continued from that diff, repaired its one tsc
+      error, three broken pins and two misplaced doc comments, and added
+      every pin; not seen on a device). FACT that shaped (1): TalkBack
+      ignores a text field's accessibilityLabel whenever the field has
+      text or a placeholder (RN 0.86.3 ReactAccessibilityDelegate.kt
+      964–965, ReactEditText.kt 563–568), so all 72 TextInputs are tied to
+      their visible label with accessibilityLabelledBy through
+      useFieldLabels / fieldA11y (a11y.ts); a source pin fails on any
+      TextInput without one; fields with no visible label and the grouped
+      guardian / heir / co-signer / session-call fields still speak only
+      their placeholder (known gap). (2) every title-styled Text is a
+      heading or hidden (197 found; readiness row titles deliberately
+      not). (3) Home token rows are ONE accessible element ("wstETH,
+      Wrapped liquid staked Ether 2.0, ERC-20. Balance …") with Send /
+      Retry as the row's accessibility action. (4) Hide amounts is a
+      switch with its checked state. (5) switcher rows "Account 1,
+      0x772e…F44F" (the ✓ hidden), the multisig row "Multisig 2 (2-of-3),
+      multi-signature account on Ethereum Sepolia: operations need
+      co-signers; Ethereum networks only, 0x944c…0d38". (6) Staking: the
+      switch carries "Use the smart account" once; balance rows "Liquid
+      staked Ether 2.0 (stETH): …" (tokens.ts stakingTokenName); the
+      source link "Source: <source>, read <date>. docs.lido.fi" with the
+      hint "Opens the source in the browser"; holder / From / Owner rows
+      speak the short address; contract addresses on confirms still read
+      in full on purpose. (8) the refusal box on the DCA, recurring,
+      subscription and session-grant forms is announced (a polite live
+      region, Android only; focus moved with
+      AccessibilityInfo.sendAccessibilityEvent(ref, 'focus') —
+      setAccessibilityFocus is deprecated in 0.86.3); SessionsScreen's
+      feeBudgetTooSmallBlock is the one copy, the fee hint and cap note
+      hide while it shows. (9) every PayloadQr is a labelled image ("QR
+      code: Multisig signing request — part 1 of 2"; the address code "QR
+      code: the multisig account's address, 0x944c…0d38"); the header bar
+      is the one spoken title. (10) Apps: the origin line reads the host,
+      the Open button's hint "app.uniswap.org, opens in the wallet's
+      browser"; LAYOUT CHANGE (CTO accepted): the residuals box moved ABOVE
+      the site cards so it is seen and read before a site is chosen. (11)
+      "Edit the 0x API key" / "Edit the <network> endpoint" / "…Blockbook
+      endpoint". (12) a transaction's second row reads "Same transaction
+      as the row above." (13) Home links speak their visible text (no ↗ /
+      ✓) with the detail in hints ("Opens the in-app browser", "Sends
+      ETH", "Net worth and profit and loss", "Upgrades this account to a
+      smart account" / "This account is upgraded; opens its details"…);
+      "Inheritance (demonstration)" in full. DARK MODE: (14) every Switch
+      through switchColors (off track controlBorder, on track accent,
+      white thumb); (16) textOnFill picks white or #101216 per badge fill
+      — BTC 2.30:1 → 8.16:1, DOGE 2.39:1 → 7.85:1, ETH 3.69:1 → 5.08:1,
+      SOL 4.52:1 kept; (17) the DCA cap note is a WarningBox and the
+      multisig exposure line uses warningText; (18) field outlines use the
+      new controlBorder token (3.43:1 / 3.68:1 light, 3.92:1 / 3.49:1 dark
+      against background / cards, from 1.18:1 / 1.38:1), the thumb against
+      the off track 3.68:1 / 4.78:1; the switcher's scroll indicator is
+      white in dark mode on iOS only (Android exposes no scrollbar colour
+      prop — ReactScrollViewManager.kt); (19) fee-budget placeholders
+      "Total in test ETH", Send's recipient "0x… or ENS name" with the
+      hint line "Enter an Ethereum address (0x…) or an ENS name such as
+      nick.eth."; (20) Developer chips minHeight 56, centred. NOT FIXED
+      (15): the white navigation-bar strip in dark mode — RN sets the bar
+      once at window creation (WindowUtil.kt enableEdgeToEdge 164–190,
+      enforceNavigationBarContrast on) and app.json's androidNavigationBar
+      is deprecated with no effect (@expo/config-plugins SystemBars.js);
+      it needs expo-navigation-bar (SDK 57 pins ~57.0.3), not installed —
+      a dependency decision and a follow-up (whether Expo Go carries it
+      is unverified). UNVERIFIED (emulator re-check queued): that TalkBack
+      reads "Edit box for <label>" through labelled-by; the focus event
+      and live region; the row actions; the switch announcement; the
+      layout effects (the balance-cell wrapper, the residuals box, chip
+      heights, the Send hint line); the dark-mode switch and border
+      colours on screen; VoiceOver / iOS.
+
+## Phase 20 status (2026-10-14)
+
+Items 0 to 5 are landed and pushed. PROVEN LIVE this phase: the Hoodi
+withdrawal claim by script and then in-app, closing the full Lido cycle
+on Hoodi (stake, request, finalisation by the oracle, claim), plus Rocket
+Pool's deposit and burn in-app (F-72 confirmed live twice); the DCA
+review-time protections (the under-funded block, the typed-tiny warning,
+the 1-hour cadence) on the emulator; the lock on launch (zero Home
+frames on a cold start, one ordinary prompt for a watch-only account,
+nothing readable under the lock by a screen reader); the portfolio
+dashboard and price alerts on the emulator (a priced watched total, an
+alert banner at the 5-minute check, no requests once alerts are
+deleted); every smart-account operation recorded for the pending card;
+the multisig confirm's preview and risk card and the co-signer History;
+EIP-7702 after Glamsterdam on Sepolia (the limit kept, a self-paid
+upgrade and two revocations at exactly the new intrinsic cost). Built
+and verified offline: profit and loss (seen only with an empty history);
+the gas allowances raised above the live charges for DCA, recurring
+payments and subscriptions (a safety fix); the fee-symbol rollout; the
+pinned-staking-token Activity label; the fixes from passes p20a, p20b
+and p20c (the last one the screen-reader and dark-mode slice, not yet
+re-checked on the emulator). Designed: the duress wallet (no honest
+slice buildable today; its analysis found and fixed the cold-start lock
+gap) and bridging (CCTP V2 first, Across second, ERC-7683 refuted on the
+testnets). Engine: 995 tests. App: 56 offline suites, 8,665 checks. The
+shareable page is at version 21 (51 proven live, 18 built, 3 designed,
+27 not started); docs/MAINNET_READINESS.md is unchanged this phase.
+
+Findings for the Chairperson this phase: the gas policy charges the
+SIGNED gas limits, and both scheduled-plan allowances were below the
+live charges after Glamsterdam (fixed; F-79); the deployed lock never
+started the wallet locked on a cold start (fixed; F-77(b)); TalkBack
+reads a text field's placeholder instead of its label unless the field
+is tied to the label (fixed app-wide); the dark-mode navigation-bar
+strip needs a new dependency (expo-navigation-bar); the session
+scratchpad under /private/tmp is cleaned by macOS and deleted worktree
+files overnight (standing rule and the git-ignored .local/ folder);
+the emulator's black window was the software renderer, not the app
+(launch with -gpu host).
+
+Decisions for the Chairperson: the bridging provider (docs/BRIDGING.md
+§11 lists the live proof for CCTP); whether to reverse the no-app-PIN
+decision for a duress wallet (docs/DURESS_WALLET.md §5.3); whether to
+add expo-navigation-bar; the disclosure decision still pending.
+
+Follow-ups (no inputs): the emulator re-check of the accessibility slice
+(TalkBack and dark mode at HEAD); the in-app stuck-transaction Speed up
+/ Cancel (needs an under-priced send the emulator wallet can produce);
+the OP Sepolia smart-account path in-app; the multisig P&L / token P&L
+(needs a contract field on HistoryEntry); sendPasskeyCalls and
+submitGuardianRecovery recording for the pending card; the
+docs/DURESS_WALLET.md §2.3 note that the gap is fixed; the Auto-lock
+setting's label ("after returning from background" is narrower than
+the behaviour).
