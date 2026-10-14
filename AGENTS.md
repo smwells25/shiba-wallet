@@ -7393,3 +7393,26 @@ item 3's TalkBack pass after; 5 last. Subagents on Opus.
       authorization carried by a bundler (estimated 258,184, never sent);
       nethermind and besu; the in-app upgrade and revoke after the fork
       (script only; the screen text change not yet seen on a device).
+- [x] Follow-up — ACTIVITY LABELS A PINNED STAKING TOKEN LIKE THE PREVIEW
+      (commit 781a146; engine 995 — chains-evm 724, +1 — check-activity 277
+      (was 270); offline runner ALL GREEN in the CTO's isolated worktree
+      on HEAD 979f7a5 plus the slice: app 8,532 across 56 suites, lint
+      0/0, tsc clean; two hand mutants caught; not seen on a device). The
+      app side needed NO change: simulation.ts resolveTokenMeta has set
+      pinned: true for an untracked token at a knownStakingTokensForChain
+      address on its own network since 4ed6978, and Activity passes that
+      metadata into the engine, which ignored it. ENGINE (additive):
+      ActivityTokenMeta.pinned?; token() checks it after the tracked
+      symbol and before the known-contract / untracked / raw-address
+      branches → "stETH (pinned staking token)"; every label without the
+      flag byte-identical. Pinned: pinned+untracked, pinned+tracked (plain
+      "stETH"), no flag and pinned:false (the old "(untracked token
+      0x3e3F…40Af)"), pinned with no symbol ("token 0x…"); through the
+      real decoder and resolver an untracked stake reads "…received
+      0.000199999999999999 stETH (pinned staking token)", an ordinary
+      unknown token keeps "(untracked token …)", a look-alike one digit
+      off the pinned address is not pinned, Sepolia's stETH is not pinned
+      with the decoder on Hoodi. Docs were checked for the old 500,000 /
+      1,000,000 gas allowances: none quote them. UNVERIFIED: the label on
+      a device (the Sepolia emulator wallet tracks stETH and wstETH, so it
+      shows only for an untracked pinned token).
