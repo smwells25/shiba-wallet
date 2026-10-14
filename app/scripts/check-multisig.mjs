@@ -205,6 +205,8 @@ import {
   MULTISIG_ACCOUNTS_HEADING,
   MULTISIG_ACCOUNTS_LIST_HINT,
   multisigAccountListLine,
+  multisigSwitcherA11yLabel,
+  multisigSwitcherNetworkLine,
   multisigLocalSignsLine,
   multisigNotReadyHint,
   multisigShapeLabel,
@@ -507,6 +509,34 @@ console.log('check-multisig: honesty lines (exact text)');
     previewAt > 0 && /batch=\{q\.calls\.map\(\(c\) => \(\{ from: q\.sender, to: c\.to, value: c\.value, data: c\.data \}\)\)\}/.test(confirm) &&
       /url=\{nodeUrl\}/.test(confirm.slice(previewAt, previewAt + 400)) && confirm.includes('note={multisigPreviewNote(q.deployed)}'));
   check('confirm: the risk card for the first call (recipient as counterparty), both above Approve (source)', riskAt > previewAt && approveAt > riskAt);
+  // Pass p20b finding 7: the preview note says the fee "is shown separately
+  // above", so the fee and total rows must come BEFORE the preview — the Send
+  // confirm's order (fee, total, preview, risk; SendScreen's smart-account
+  // confirm, checked here too so the two cannot drift apart).
+  const feeOrderOk = (src) => {
+    const c = src.slice(src.indexOf("if ((phase === 'confirm' || phase === 'sending') && selected && op && submission)"), src.indexOf("if (phase === 'progress' && selected && progress)"));
+    const fee = c.indexOf('label="Network fee (worst case, set by you as the submitter)"');
+    const total = c.indexOf('<InfoRow label="Total (worst case)"');
+    const preview = c.indexOf('<BalanceChangePreview');
+    const risk = c.indexOf('<RiskWarnings url={nodeUrl}');
+    return fee > 0 && total > fee && preview > total && risk > preview;
+  };
+  check('confirm: the fee and total rows sit ABOVE the preview, whose note says "shown separately above" (source)', feeOrderOk(screen));
+  {
+    const sendSrc = readFileSync(join(HERE, '..', 'src', 'screens', 'SendScreen.tsx'), 'utf8');
+    const aaFee = sendSrc.indexOf("label={quote.sponsored ? 'Network fee' : 'Max network fee (bundler estimate)'}");
+    const aaPreview = sendSrc.indexOf('note={aaPreviewNote(quote)}');
+    check('…the Send confirm’s order it follows: the smart-account fee row above its preview (source)', aaFee > 0 && aaPreview > aaFee);
+  }
+  {
+    // Mutant: the old order (preview and risk card first, fee rows after).
+    const c0 = screen.indexOf("if ((phase === 'confirm' || phase === 'sending') && selected && op && submission)");
+    const feeStart = screen.indexOf('        <InfoRow\n          label="Network fee (worst case, set by you as the submitter)"', c0);
+    const feeEnd = screen.indexOf('\n', screen.indexOf('<InfoRow label="Total (worst case)"', feeStart)) + 1;
+    const riskEnd = screen.indexOf('\n', screen.indexOf('<RiskWarnings url={nodeUrl}', feeEnd)) + 1;
+    const oldOrder = screen.slice(0, feeStart) + screen.slice(feeEnd, riskEnd) + screen.slice(feeStart, feeEnd) + screen.slice(riskEnd);
+    check('mutant caught: the old order (preview above the fee rows its note points up to)', feeStart > c0 && oldOrder !== screen && !feeOrderOk(oldOrder));
+  }
   check('preview note: deployed, exact', multisigPreviewNote(true) === 'Simulated as direct calls from the multisig account. The network fee the multisig pays through the EntryPoint is shown separately above and is not part of this list.');
   check('preview note: not deployed adds the deployment sentence, exact',
     multisigPreviewNote(false) === `${MULTISIG_PREVIEW_NOTE} The multisig is not deployed yet: this operation deploys it first, which the simulation leaves out (deploying it moves no funds apart from the network fee).` &&
@@ -1695,6 +1725,30 @@ console.log('check-multisig: Settings → Accounts lists multisigs read-only (ph
   check('…a network no longer known shows its CAIP-2 id; no record facts fall back to the view name',
     multisigAccountListLine({ name: 'x', evmAddress: ADDR, multisigInfo: { chain: 'eip155:999999', label: 'Multisig 3 (2-of-2)' } }) === 'Multisig 3 (2-of-2) · 0x944c…0d38 · eip155:999999' &&
       multisigAccountListLine({ name: 'Multisig 4', evmAddress: null, multisigInfo: null }) === 'Multisig 4 · address not known yet · network unknown');
+  // Pass p20b finding 9: the switcher showed Multisig 2 (Sepolia) and
+  // Multisig 3 (Base Sepolia) with the same address 0x944c…0d38 and no
+  // network — the same signer set has the same CREATE2 address everywhere.
+  {
+    const sepolia = { name: 'Multisig 2 (2-of-3)', evmAddress: ADDR, multisigInfo: { chain: 'eip155:11155111', localSigner: ADDR, label: 'Multisig 2 (2-of-3)' } };
+    const base = { name: 'Multisig 3 (2-of-3)', evmAddress: ADDR, multisigInfo: { chain: 'eip155:84532', localSigner: ADDR, label: 'Multisig 3 (2-of-3)' } };
+    check('switcher: two multisigs at one address on two networks get different network lines',
+      multisigSwitcherNetworkLine(sepolia.multisigInfo) === 'On Ethereum Sepolia' && multisigSwitcherNetworkLine(base.multisigInfo) === 'On Base Sepolia');
+    check('…and different accessibility labels naming the network',
+      multisigSwitcherA11yLabel(sepolia) === `Multisig 2 (2-of-3), multi-signature account on Ethereum Sepolia, ${ADDR}` &&
+        multisigSwitcherA11yLabel(base) === `Multisig 3 (2-of-3), multi-signature account on Base Sepolia, ${ADDR}`);
+    check('…an unknown network shows its CAIP-2 id; no record says so',
+      multisigSwitcherNetworkLine({ chain: 'eip155:999999' }) === 'On eip155:999999' && multisigSwitcherNetworkLine(null) === 'On network unknown');
+    const switcherRowOk = (src) =>
+      src.includes('? { accessibilityLabel: multisigSwitcherA11yLabel(item) }') &&
+      src.includes('{multisigSwitcherNetworkLine(item.multisigInfo)}') &&
+      !src.includes('multi-signature account, ${item.evmAddress');
+    const sw = read('src/components/AccountSwitcher.tsx');
+    check('switcher: the multisig row renders the network line and the network-naming label (source)', switcherRowOk(sw));
+    const oldRow = sw
+      .replace('? { accessibilityLabel: multisigSwitcherA11yLabel(item) }', "? { accessibilityLabel: `${item.name}, multi-signature account, ${item.evmAddress ?? 'unknown address'}` }")
+      .replace('{multisigSwitcherNetworkLine(item.multisigInfo)}', '');
+    check('mutant caught: the old row (address only, no network)', oldRow !== sw && !switcherRowOk(oldRow));
+  }
   const section = read('src/components/AccountsSection.tsx');
   const listOk = (src) => {
     const start = src.indexOf('{multisigAccounts.length > 0 ? (');

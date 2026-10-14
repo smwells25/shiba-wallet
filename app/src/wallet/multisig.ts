@@ -159,9 +159,35 @@ export function multisigAccountListLine(account: {
 }): string {
   const label = account.multisigInfo?.label ?? account.name;
   const address = account.evmAddress ? shortAccountAddress(account.evmAddress) : 'address not known yet';
-  const chain = account.multisigInfo?.chain ?? null;
-  const network = chain ? (evmProfileByCaip2(chain)?.label ?? chain) : 'network unknown';
-  return `${label} · ${address} · ${network}`;
+  return `${label} · ${address} · ${multisigNetworkName(account.multisigInfo)}`;
+}
+
+/**
+ * The network a multisig record belongs to, from the profile table; a
+ * network no longer known shows its CAIP-2 id.
+ */
+export function multisigNetworkName(info: { chain: string } | null): string {
+  const chain = info?.chain ?? null;
+  return chain ? (evmProfileByCaip2(chain)?.label ?? chain) : 'network unknown';
+}
+
+/**
+ * The account switcher's network line under a multisig row (pass p20b
+ * finding 9): the same signer set gives the same CREATE2 address on every
+ * network, so two multisigs on two networks showed the same address and
+ * looked like duplicates. "On Ethereum Sepolia".
+ */
+export function multisigSwitcherNetworkLine(info: { chain: string } | null): string {
+  return `On ${multisigNetworkName(info)}`;
+}
+
+/** The switcher row's accessibility label for a multisig, naming its network. */
+export function multisigSwitcherA11yLabel(account: {
+  name: string;
+  evmAddress: string | null;
+  multisigInfo: { chain: string } | null;
+}): string {
+  return `${account.name}, multi-signature account on ${multisigNetworkName(account.multisigInfo)}, ${account.evmAddress ?? 'unknown address'}`;
 }
 
 /** Why a multisig is deployed fresh (shown on the create form and the overview). */

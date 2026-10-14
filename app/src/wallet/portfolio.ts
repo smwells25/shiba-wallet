@@ -695,14 +695,19 @@ export function holdingSpokenLabel(args: {
   hidden: boolean;
   nowMs: number;
 }): string {
-  if (args.hidden) return `${args.label}: ${args.symbol}, amount hidden, value hidden`;
-  const amount = `${spokenAmount(formatBalanceDisplay(args.amount, args.decimals))} ${args.symbol}`;
+  // A test asset has no value and an unpriced one no price, so Hide amounts
+  // hides only their amount: "value hidden" would suggest a value exists
+  // (pass p20b finding 11). Neither says anything about the holdings.
   const value =
     args.status === 'test'
       ? 'test asset, no value'
       : args.status === 'no-price' || !args.value
         ? 'no price'
-        : `about ${spokenMoney(args.value, { hidden: false })}`;
+        : args.hidden
+          ? 'value hidden'
+          : `about ${spokenMoney(args.value, { hidden: false })}`;
+  if (args.hidden) return `${args.label}: ${args.symbol}, amount hidden, ${value}`;
+  const amount = `${spokenAmount(formatBalanceDisplay(args.amount, args.decimals))} ${args.symbol}`;
   const stale = args.quote ? staleNoteFor(args.quote, args.nowMs) : null;
   return `${args.label}: ${amount}, ${value}${stale ? `, ${stale}` : ''}`;
 }

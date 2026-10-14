@@ -149,6 +149,22 @@ function moneyScale(m: Money, num: bigint, den: bigint): Money {
   return moneyReduce({ n: m.n * num * sign, d: m.d * den * sign });
 }
 
+/**
+ * The line above the P&L figures saying how much history is loaded.
+ * `hasMore` is the history source's own answer (a cursor or a stream with
+ * pages left): it says older entries CAN be searched, not that any exist —
+ * so a first page that found nothing must not claim "older ones exist"
+ * (pass p20b finding 3).
+ */
+export function pnlHistoryLoadedLine(count: number, hasMore: boolean): string {
+  if (count === 0) {
+    return hasMore
+      ? 'No transactions were found in the history searched so far; older history has not been searched yet.'
+      : 'No transactions were found: the history is empty.';
+  }
+  return `${count} ${count === 1 ? 'entry' : 'entries'} of history loaded${hasMore ? '; older ones exist' : ', which is all of it'}.`;
+}
+
 /** The cutoff of the free API's history window, in ms. */
 export function historyCutoffMs(nowMs: number): number {
   return nowMs - PRICE_HISTORY_MAX_DAYS * 86_400_000;
@@ -196,9 +212,11 @@ export function computeNativePnl(input: PnlInput): PnlResult {
     );
     reasons.push(
       gap(
-        oldest === null
-          ? 'older transactions are not loaded yet. Load older history until it is complete.'
-          : `transactions before ${utcDate(oldest * 1000)} are not in the loaded history. Load older history until it is complete.`,
+        input.entries.length === 0
+          ? 'no transactions were found in the history searched so far, and older history has not been searched yet. Load older history until it is complete.'
+          : oldest === null
+            ? 'older transactions are not loaded yet. Load older history until it is complete.'
+            : `transactions before ${utcDate(oldest * 1000)} are not in the loaded history. Load older history until it is complete.`,
       ),
     );
   }

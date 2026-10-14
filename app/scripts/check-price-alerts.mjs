@@ -284,6 +284,88 @@ console.log('check-price-alerts: the monitor and the screen (source pins)');
 }
 
 // ===========================================================================
+console.log('check-price-alerts: the tripped sentence states the rule (pass p20b finding 4)');
+// ===========================================================================
+{
+  const trippedAbove = { ...above, threshold: '2500', state: 'tripped' };
+  const trippedBelow = { ...below, threshold: '2510', state: 'tripped' };
+  check('"above", set already past: re-arms after moving back, then fires on the next crossing',
+    A.alertStateText(trippedAbove, 'ETH', NOW) === 'The price was already past this alert when you set it; it fires the next time ETH crosses $2,500 after first moving back 1% to the other side.',
+    A.alertStateText(trippedAbove, 'ETH', NOW));
+  check('"below" reads the same way',
+    A.alertStateText(trippedBelow, 'ETH', NOW) === 'The price was already past this alert when you set it; it fires the next time ETH crosses $2,510 after first moving back 1% to the other side.',
+    A.alertStateText(trippedBelow, 'ETH', NOW));
+  const firedOnce = { ...trippedAbove, firedAt: NOW - 60_000, firedPrice: '2505.97' };
+  check('after firing: "it fires again the next time … after first moving back 1% to the other side"',
+    A.alertStateText(firedOnce, 'ETH', NOW) === 'Fired 1 min ago at $2,505.97; it fires again the next time ETH crosses $2,500 after first moving back 1% to the other side.',
+    A.alertStateText(firedOnce, 'ETH', NOW));
+  check('no sentence says the move back itself fires it', ![trippedAbove, trippedBelow, firedOnce].some((a) => /can fire (again )?once|falls back below the price|rises back above the price/.test(A.alertStateText(a, 'ETH', NOW))));
+  check('…and the wording matches the note shown when the alert is created past its price',
+    A.addAlert(A.EMPTY_BOOK, { assetId: ETH, direction: 'above', threshold: '2500', quote: q('2600'), nowMs: NOW }).result.note.endsWith('fires the next time it crosses $2,500 after first moving back 1% to the other side.'));
+}
+
+// ===========================================================================
+console.log('check-price-alerts: the screen shows the newest price, clears its notice, asks before Remove (pass p20b finding 5)');
+// ===========================================================================
+{
+  A.resetMonitorQuotes();
+  const screenQuote = q('2502.66', { updatedAtMs: NOW - 6 * 60_000, fetchedAtMs: NOW - 6 * 60_000 });
+  const monitorQuote = q('2505.97', { updatedAtMs: NOW - 60_000, fetchedAtMs: NOW - 30_000 });
+  let heard = 0;
+  const off = A.subscribeMonitorQuotes(() => (heard += 1));
+  const monitor = A.createPriceAlertMonitor({
+    load: async () => ({ watchlist: [ETH], alerts: [{ ...above, threshold: '2503.5' }], nextId: 2, damaged: false }),
+    update: async (change) => change({ watchlist: [ETH], alerts: [{ ...above, threshold: '2503.5' }], nextId: 2, damaged: false }).result,
+    fetchQuotes: async () => new Map([[ETH, monitorQuote]]),
+    now: () => NOW,
+  });
+  const res = await monitor.check();
+  check('the monitor check fired at the newer price (the pass case)', res.fired.length === 1 && res.fired[0].price === '2505.97');
+  check('…recorded its quote, and told the screen', A.latestMonitorQuotes().get(ETH) === monitorQuote && heard === 1);
+  check('the card shows the monitor’s newer quote, not the screen’s older read',
+    A.newestQuote(screenQuote, A.latestMonitorQuotes().get(ETH)) === monitorQuote);
+  const fresher = q('2501', { updatedAtMs: NOW, fetchedAtMs: NOW });
+  check('a screen read newer than the monitor’s wins', A.newestQuote(fresher, monitorQuote) === fresher);
+  A.recordMonitorQuotes(new Map([[ETH, screenQuote]]));
+  check('an older quote never replaces a newer recorded one (and nobody is told)', A.latestMonitorQuotes().get(ETH) === monitorQuote && heard === 1);
+  check('either quote alone is shown; none is null', A.newestQuote(null, monitorQuote) === monitorQuote && A.newestQuote(screenQuote, undefined) === screenQuote && A.newestQuote(null, null) === null);
+  off();
+  await A.resetPriceAlerts(memoryStore());
+  check('a reset forgets the monitor’s quotes too', A.latestMonitorQuotes().size === 0);
+
+  const screen = readFileSync(join(HERE, '..', 'src', 'screens', 'PriceAlertsScreen.tsx'), 'utf8');
+  check('the screen subscribes to the monitor’s quotes and shows the newer one',
+    screen.includes('subscribeMonitorQuotes(') && screen.includes('newestQuote(quotes.get(id), monitorQuotes.get(id))') &&
+      screen.includes('quote={quoteFor(id)}') && !screen.includes('quote={quotes.get(id) ?? null}'));
+  check('…and reads the prices again on a return to the foreground', /useOnAppActive\(\(\) => \{\s+setNow\(Date\.now\(\)\);\s+void refresh\(\);\s+\}\);/.test(screen));
+  const removeBlock = /onRemoveAlert=\{\(alertId, rule\) =>[\s\S]*?\n {14}\}/.exec(screen)?.[0] ?? '';
+  const unwatchGo = /const go = \(\) => \{[\s\S]*?\};/.exec(screen)?.[0] ?? '';
+  check('Remove clears the "Alert set" notice', removeBlock.includes('setNotice(null);'), removeBlock);
+  check('Stop following clears it too', unwatchGo.includes('setNotice(null);') && unwatchGo.includes('removeFromWatchlist(b, id)'), unwatchGo);
+  {
+    const keepsNotice = screen.replace('                  // A notice about an alert must not outlive it (pass p20b finding 5b).\n                  setNotice(null);\n', '');
+    const block = /onRemoveAlert=\{\(alertId, rule\) =>[\s\S]*?\n {14}\}/.exec(keepsNotice)?.[0] ?? '';
+    check('mutant caught: Remove leaves the "Alert set" notice up (the old screen)', keepsNotice !== screen && !block.includes('setNotice(null);'));
+  }
+  check('Remove goes through the confirmation, never straight to the write',
+    removeBlock.includes('confirmRemoveAlert(Alert.alert, rule, () => {') && screen.includes('onPress={() => onRemoveAlert(a.id, alertRuleText(a, asset.symbol))}'));
+
+  // The confirmation itself, with a fake Alert.alert.
+  const shown = [];
+  let removed = 0;
+  A.confirmRemoveAlert((title, message, buttons) => shown.push({ title, message, buttons }), 'ETH above $2,503.5', () => (removed += 1));
+  check('one dialog: "Remove this alert?" with the rule, Cancel and Remove',
+    shown.length === 1 && shown[0].title === 'Remove this alert?' &&
+      shown[0].message === 'The alert ETH above $2,503.5 is deleted from this phone and no longer checked.' &&
+      JSON.stringify(shown[0].buttons.map((b) => [b.text, b.style])) === JSON.stringify([['Cancel', 'cancel'], ['Remove', 'destructive']]));
+  check('nothing is removed until Remove is tapped', removed === 0);
+  shown[0].buttons[0].onPress?.();
+  check('Cancel removes nothing', removed === 0);
+  shown[0].buttons[1].onPress();
+  check('Remove removes it once', removed === 1);
+}
+
+// ===========================================================================
 console.log('Mutation checks (scratch copies of price-alerts.ts)');
 // ===========================================================================
 const MUTANT_DIR = join(HERE, `.mutants-price-alerts-${process.pid}`);
@@ -323,6 +405,25 @@ async function importMutant(from, to) {
   check('mutant (old prices used) is caught', m4.stepAlert(above, q('9999', { stale: true }), NOW).fired === true);
   const m5 = await importMutant("return alert.direction === 'above' ? c > 0 : c < 0;", "return alert.direction === 'above' ? c >= 0 : c <= 0;");
   check('mutant (equal counts as a crossing) is caught', m5.stepAlert(above, q('3000'), NOW).fired === true);
+  const m6 = await importMutant(
+    "    `the next time ${symbol} crosses ${thresholdText(alert.threshold)} after first moving back ` +\n    `${PRICE_ALERT_REARM_PERCENT.toString()}% to the other side`;",
+    "    `once ${symbol} falls back below the price by ${PRICE_ALERT_REARM_PERCENT.toString()}%`;",
+  );
+  check('mutant (the old "can fire once ETH falls back below the price by 1%" wording) is caught',
+    m6.alertStateText({ ...above, threshold: '2500', state: 'tripped' }, 'ETH', NOW) !== 'The price was already past this alert when you set it; it fires the next time ETH crosses $2,500 after first moving back 1% to the other side.');
+  const m7 = await importMutant('    // The screen shows the newest price the app holds, including this one.\n    recordMonitorQuotes(quotes);\n', '');
+  const m7mon = m7.createPriceAlertMonitor({
+    load: async () => ({ watchlist: [ETH], alerts: [above], nextId: 2, damaged: false }),
+    update: async (change) => change({ watchlist: [ETH], alerts: [above], nextId: 2, damaged: false }).result,
+    fetchQuotes: async () => new Map([[ETH, q('3100')]]),
+    now: () => NOW,
+  });
+  await m7mon.check();
+  check('mutant (the monitor keeps its price to itself, so the card stays stale) is caught', m7.latestMonitorQuotes().size === 0);
+  const m8 = await importMutant("    { text: 'Remove', style: 'destructive', onPress: remove },\n  ]);", "    { text: 'Remove', style: 'destructive', onPress: remove },\n  ]);\n  remove();");
+  let m8removed = 0;
+  m8.confirmRemoveAlert(() => undefined, 'ETH above $1', () => (m8removed += 1));
+  check('mutant (Remove deletes before the dialog is answered) is caught', m8removed === 1);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

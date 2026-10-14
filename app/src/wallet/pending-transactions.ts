@@ -382,6 +382,16 @@ export const SMART_ACCOUNT_NO_REPLACEMENT_SENTENCE =
   'the same bundler to accept a new operation with the same nonce and fees at least 10% higher, which this ' +
   'wallet does not attempt.';
 
+/**
+ * Whether the card still shows SMART_ACCOUNT_NO_REPLACEMENT_SENTENCE: only
+ * while the operation may still be pending. Once the status reads
+ * "Included …" there is nothing left to speed up or cancel (pass p20b
+ * finding 10).
+ */
+export function userOpShowsNoReplacementSentence(status: Pick<UserOpStatus, 'state'> | null | undefined): boolean {
+  return status?.state !== 'included';
+}
+
 export const USEROP_RESEND_OFFER =
   'The bundler has had no record of this operation for more than 10 minutes, so it was most likely dropped. ' +
   'You can send it again: the Send screen opens filled in and quotes it afresh; nothing is sent until you ' +

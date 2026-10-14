@@ -453,7 +453,31 @@ const at = (type, status, now) => ({ type, status, now });
     check('mutant caught: the lock screen overriding the approval target', directPrompt !== gateSrc && !renderPin(directPrompt));
     const settingsSrc = readLockFs(new globalThis.URL('../src/screens/SettingsScreen.tsx', import.meta.url), 'utf8');
     check('Settings: the auto-lock hint says the wallet also starts locked while auto-lock is on',
-      /While auto-lock is on,\s+the wallet also starts locked every time it is opened afresh\s+\(after it was closed, swiped away or stopped by the system\)\./.test(settingsSrc));
+      /While auto-lock is on,\s+the wallet also starts locked every time\s+it is opened afresh\s+\(after it was closed, swiped away or stopped\s+by the system\)\./.test(settingsSrc));
+    // Pass p20b finding 1: the hint promised "your device passcode as the
+    // system fallback", but while the approval target (the recovery phrase,
+    // or the active imported key) is in biometric-protected storage the
+    // unlock prompt is that item's own system prompt, which has no passcode
+    // fallback (biometric.ts requireLocalAuth returns as soon as
+    // openPhraseForApproval reports 'authenticated'); only the ordinary
+    // prompt (standard storage, watch-only, multisig) offers the passcode.
+    const autoLockHint = (src) => {
+      const m = /<Text[^>]*>\s*(When the app has been in the background at least this long[\s\S]*?)<\/Text>/.exec(src);
+      return m ? m[1].replace(/&apos;/g, "'").replace(/\s+/g, ' ').trim() : '';
+    };
+    const lockHintTrue = (src) => {
+      const hint = autoLockHint(src);
+      return hint.includes("locks behind the same biometric prompt as sending. While your recovery phrase (or the active account's imported key) is protected by biometrics, that prompt accepts only biometrics; otherwise your device passcode is offered as a fallback.") &&
+        !hint.includes('system fallback');
+    };
+    check('Settings: the auto-lock hint says the passcode fallback exists only when the active secret is not biometric-protected', lockHintTrue(settingsSrc));
+    const biometricSrc = readLockFs(new globalThis.URL('../src/wallet/biometric.ts', import.meta.url), 'utf8');
+    check('…which is what requireLocalAuth does: an opened protected secret ends the gate before the ordinary prompt',
+      /const vault = await openPhraseForApproval\(promptMessage, target\);\s+if \(vault\.kind === 'authenticated'\) return \{ ok: true, gated: true \};/.test(biometricSrc) &&
+        biometricSrc.indexOf("vault.kind === 'authenticated'") < biometricSrc.indexOf('disableDeviceFallback: false'));
+    const oldHint = settingsSrc.replace(/locks behind the same biometric prompt as sending\.[\s\S]*?offered as a fallback\./,
+      'locks behind the same biometric prompt as sending (with your\n              device passcode as the system fallback).');
+    check('mutant caught: the old "device passcode as the system fallback" hint', oldHint !== settingsSrc && !lockHintTrue(oldHint));
   }
 }
 

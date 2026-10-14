@@ -1005,6 +1005,15 @@ export function MultisigScreen() {
         <Text style={[styles.title, { color: theme.text }]}>Submit the multisig operation</Text>
         <InfoRow label="From multi-signature account (co-signers approved)" value={q.sender} monoValue />
         <MultisigCallsView calls={q.calls} described={q.calls.map((c) => describeMultisigCall(c, nativeSymbol, tokens))} nativeSymbol={nativeSymbol} />
+        {/* The fee rows come BEFORE the preview, in the Send confirm's order
+            (fee, total, preview, risk): the preview's note says the fee "is
+            shown separately above" (pass p20b finding 7). */}
+        <InfoRow
+          label="Network fee (worst case, set by you as the submitter)"
+          value={`${formatUnits(q.fee, 18, 18)} ${nativeSymbol}`}
+          sub={q.deposit !== undefined && q.deposit > 0n ? `The account’s EntryPoint deposit of ${formatUnits(q.deposit, 18, 18)} ${nativeSymbol} pays first.` : 'Paid from the multisig’s own balance.'}
+        />
+        <InfoRow label="Total (worst case)" value={`${formatUnits(q.total, 18, 18)} ${nativeSymbol}`} />
         {/* Phase 20 item 3: the same balance-change preview and risk card as
             the Send confirm, for the calls the co-signers approved, simulated
             from the multisig's own address against the quote's endpoint. */}
@@ -1015,12 +1024,6 @@ export function MultisigScreen() {
           note={multisigPreviewNote(q.deployed)}
         />
         <RiskWarnings url={nodeUrl} wallet={q.sender} {...multisigRiskTarget(q.calls)} />
-        <InfoRow
-          label="Network fee (worst case, set by you as the submitter)"
-          value={`${formatUnits(q.fee, 18, 18)} ${nativeSymbol}`}
-          sub={q.deposit !== undefined && q.deposit > 0n ? `The account’s EntryPoint deposit of ${formatUnits(q.deposit, 18, 18)} ${nativeSymbol} pays first.` : 'Paid from the multisig’s own balance.'}
-        />
-        <InfoRow label="Total (worst case)" value={`${formatUnits(q.total, 18, 18)} ${nativeSymbol}`} />
         {!q.deployed ? <WarningBox>This operation also deploys the multisig account (its first operation).</WarningBox> : null}
         <Text style={[styles.hint, { color: theme.text }]}>{multisigSubmitApprovalsLine(multisigWeightProgress(selected, op))}</Text>
         {errorBox}
