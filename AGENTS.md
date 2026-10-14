@@ -7565,3 +7565,44 @@ item 3's TalkBack pass after; 5 last. Subagents on Opus.
       2 holds an unsubmitted in-app operation at nonce 3 (with dev 5's
       approval) and this wallet's unsubmitted co-signer approval of dev
       5's nonce-3 request.
+- [x] Item 5 — LEADERSHIP REFRESH, document half (docs commit 17cd874;
+      check-readiness 194; docs only; the secret scan clean).
+      FEATURE_UNIVERSE section 15: rows 96 (portfolio dashboard) and 98
+      (price alerts and watchlists) → Proven live (partial, limits stated:
+      the wallet's own net worth was ≈ $0.00 and the priced total was
+      seen only on a watched mainnet address; the alert banner fired at
+      the 5-minute check, the system notification needs the development
+      build); row 97 (profit and loss) → Built, verified offline (the
+      panel was seen live only with an EMPTY history); rows 53 (duress
+      wallet) and 35 (bridging) → Designed; row 36 (ERC-7683) keeps Not
+      started with the refutation; rows 23, 24, 52, 57, 58, 63 and 95
+      extended with the phase 20 live runs (the full Lido cycle incl. the
+      claim in-app on Hoodi; Rocket Pool deposit and burn in-app; the
+      multisig confirm's preview and the co-signer History; the lock on
+      launch; the DCA review-time protections and the raised gas
+      allowances; every smart-account operation recorded; the
+      post-Glamsterdam 7702 check). TALLY: Proven live 49 → 51 (T1 29, T2
+      22), Built 17 → 18 (9/9), Designed 1 → 3 (1/2), Not started 32 → 27
+      (1/11/15); every count sentence agrees with the table (the CTO
+      re-counted the status column: 51/18/3/27). DEMO.md: steps 33 (the
+      launch lock), 34 (portfolio and price alerts), 35 (claiming a Lido
+      withdrawal on Hoodi), 36 (the multisig confirm's preview and the
+      co-signer History); a fourth warning (screen protection stays OFF on
+      the emulator; the launch lock needs Unlock + `adb emu finger touch
+      1`); the rehearsal status of the existing steps. THREAT_MODEL.md:
+      T-79 (the portfolio layer), F-79 (the gas policy charges the signed
+      limits; the allowances raised above the live charges), F-77(b)
+      proven on the emulator, F-78 corrected (the Upgrade screen already
+      renders the schedule-aware sentence); section 7.4's counts are
+      updated with the pending fix slice. THE SHAREABLE PAGE was rebuilt
+      with the phase-15 builder (scratchpad/fu/build-fu.py; counts
+      51/18/3/27 asserted in the tiles, the table and the header; one
+      Google-Fonts stylesheet and the one benign filter script, no
+      secrets — the CTO scanned the output) and PUBLISHED as VERSION 21 of
+      https://claude.ai/artifact/JEfyMuPcMJ8YW5x3ZKitsw; the built file is
+      the new base at scratchpad/fu/feature-universe.html. Not
+      established from the record: who funded Account 1's 0.3 Hoodi ETH
+      (the CTO, from the dev EOA, before pass p20a — the funding
+      transaction was not recorded); DEMO step 34 paraphrases the P&L
+      empty-history and alert re-arm sentences because the running fix
+      slice changes both.
