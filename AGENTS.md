@@ -7201,3 +7201,28 @@ item 3's TalkBack pass after; 5 last. Subagents on Opus.
       variant of the block. END STATE: Home, Ethereum Sepolia, Account 1,
       light mode, protection OFF, IME ADBKeyboard; Metro at a104227 (the
       next pass moves to HEAD, which carries the lock-on-launch fix).
+- [x] Item 0 — THE HOODI WITHDRAWAL CLAIM, PROVEN LIVE BY SCRIPT
+      (2026-10-13; the scheduled 12:23 UTC wake-up of 2026-10-12 never
+      fired — the session was cut by the weekly Opus limit that night —
+      so the CTO ran it by hand after the limit reset: Lido's Hoodi
+      oracle had reported at 2026-10-13 12:03:24 UTC, lastFinalizedRequestId
+      5333, requests 5328 (the dev EOA's) and 5329 (Account 1's) both
+      finalised and unclaimed; STAKING_LIVE=hoodi-claim; the dry runs on
+      Sepolia and Hoodi passed first). claimWithdrawals (0xe3afe0a3) tx
+      0x4ee1e57b452f69d8f9b2186e0b8539411a2f2724041baf44a7e8abee80d891be, Hoodi block 3811689, status 0x1 on publicnode (Geth 1.17.7) AND
+      rpc.hoodi.ethpandaops.io (ethrex 29.0.1 — the pass's third client);
+      nonce 10, gasLimit 90,388, gasUsed 74,510, effectiveGasPrice
+      963,469,628, fee 71,788,121,982,280 wei (the quoted worst case
+      189,918,786,784,212); findCheckpointHints → hint 1035 against
+      lastCheckpointIndex 1036; getClaimableEther 30,000,000,000,000,000 =
+      WithdrawalClaimed's amount = paid; the request NFT burned
+      (Transfer); the dev EOA's ETH 32.519532161412709615 →
+      32.549460373290727335 (delta 29,928,211,878,017,720 = 0.03 − the
+      fee, exact); stETH, shares, wstETH, rETH and both allowances
+      unchanged (the request's stETH was taken at request time). THE
+      WHOLE HOODI LIDO CYCLE IS NOW PROVEN LIVE: stake, wrap, unwrap,
+      request, finalisation by the oracle, claim. Account 1's request 5329
+      is claimed in-app in the running emulator pass. Dry-run note: the
+      Sepolia dev-owner stake simulates at 110,501 gas today (the public
+      test account at 208,421 — the first-stake shares slot), consistent
+      with the STAKING.md §4.3 resolution.
