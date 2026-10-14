@@ -166,6 +166,13 @@ examples/demo.mjs          Offline end-to-end engine demo
   entries point at the worktree's packages (lesson of 2026-10-09: with
   a plain symlinked app/node_modules the app checks ran against the
   main checkout's dist, i.e. whatever another agent was building).
+  A VERIFY RUN IS VALID ONLY IF ITS APPLY STEP SUCCEEDED: before the
+  checkout run `git reset --hard` AND `git clean -fd -e node_modules`
+  (an untracked file from a previous apply blocks the checkout and the
+  runner then silently tests the OLD tree — 2026-10-14, twice: the
+  printed counts equalled HEAD's), print the checkout and apply exit
+  codes and the changed-file count, and compare the touched suites'
+  counts with the agent's report before trusting ALL GREEN.
 - Subagents run on Opus (the Chairperson's credit directive); one agent
   drives the emulator at a time.
 - THE SESSION SCRATCHPAD LIVES UNDER /private/tmp, WHICH macOS CLEANS
@@ -7935,6 +7942,61 @@ item 3's TalkBack pass after; 5 last. Subagents on Opus.
       OFF (log level 6), protection OFF, auto-lock 1 min, IME ADBKeyboard,
       Metro at fba49d2.
 
+- [x] Pass p20d leftovers FIXED (commit 245328b; 36 files; check-devmode 399
+      (was 385), check-price-alerts 99 (97), check-dca 171 (163),
+      check-staking 132 (130), check-home 107 (104), check-multisig 413
+      (408), check-pending 154 (151); offline runner ALL GREEN in the
+      CTO's isolated worktree on HEAD dd6ec2c plus the slice: engine 995,
+      app 8,702 across 56 suites, lint 0/0, tsc clean; one hand mutant
+      per fix caught; not seen on a device). (1) all 34 fieldA11y calls
+      without a labelId now have a label element: 8 VISIBLE CAPTIONS
+      ("Alert price for ETH (US dollars)", "Guardian 1 label (optional)" /
+      "Guardian 1 weight", the heir and co-signer weights, "Call 1:
+      function (optional)" / "Call 1: most test ETH per call") with
+      shortened placeholders ("For example 3000", "Stored in the recovery
+      record", "1 or more", "0xa9059cbb or transfer(address,uint256)",
+      "Empty means 0"), and 26 HIDDEN LABELS (HiddenFieldLabel: a real
+      1×1 Text out of the layout flow, clipped, transparent, alpha 1 and
+      VISIBLE, importance left default) — from RN 0.86.3 source:
+      ReactAccessibilityDelegate.kt 91–97 resolves labelled_by with
+      findView over every child regardless of visibility
+      (ReactFindViewUtil.kt 48–62), Text is never flattened
+      (ParagraphShadowNode.h 42–57), display:none → INVISIBLE
+      (SurfaceMountingManager.kt 863–864); whether TalkBack honours a
+      hidden or zero-size labelling view could not be read (no Android
+      framework source on this machine) — hence the real 1×1 node, which
+      on Android behaves like a visible label read before its field; the
+      source scan fails on any fieldA11y call without a label source.
+      (2) WarningBox announce sends the focus after the box's onLayout
+      plus ANNOUNCE_FOCUS_SETTLE_MS = 250 (a judgement; createAnnounceFocus
+      in a11y.ts, all four forms), re-focusing at once on a text change
+      of a laid-out box; cause reasoned, not observed: the forms replace
+      Review with a spinner during the review, so TalkBack re-places its
+      focus and overtook a focus sent at commit time; pinned with fake
+      timers and an awaited review. (3) the Staking balance rows' amount
+      Text is hidden from accessibility (still selectable). (4) eleven
+      switch rows whose visible text equals the switch's label no longer
+      read it twice (Settings Hide amounts / Privacy / Show fiat / test
+      network, Notifications, Guardians ×2, Inheritance, Send's smart
+      account / USDC fee / passkey). (5) every uppercase-styled Text (29)
+      carries a natural-case accessibilityLabel ("0x API key"). (6)
+      sendLinkHint(displaySymbol) → "Sends test ETH"; the DCA hint uses
+      the symbol. (7) multisig list / receive / signer / "You approve as"
+      lines and the pending card's title and sentence speak the short
+      address (InfoRow spokenValue); confirm-screen contract addresses
+      stay full in speech. (8) "More accounts below — scroll the list."
+      is a polite live region in an always-mounted zero-size wrapper (a
+      focusable item at the list's end would be reached only after the
+      list had scrolled to its end, making it false). LEFT by decision:
+      switch rows whose visible text differs from the label (Swap
+      "(experimental)", owner change, the spending-limit rows, "Send
+      anyway…", the NFT spam row, the Approvals revoked row); the Staking
+      withdrawal-request rows as separate items; the Android scrollbar
+      colour. UNVERIFIED (device): TalkBack with a hidden label view and
+      whether the 1×1 node is an extra swipe stop; the 250 ms settle; the
+      live region on appearance; the natural-case label through
+      labelled-by; the captions' layout at phone width; iOS.
+
 ## Phase 20 status (2026-10-14)
 
 Items 0 to 5 are landed and pushed. PROVEN LIVE this phase: the Hoodi
@@ -7955,11 +8017,12 @@ and verified offline: profit and loss (seen only with an empty history);
 the gas allowances raised above the live charges for DCA, recurring
 payments and subscriptions (a safety fix); the fee-symbol rollout; the
 pinned-staking-token Activity label; the fixes from passes p20a, p20b
-and p20c (the last one the screen-reader and dark-mode slice, not yet
-re-checked on the emulator). Designed: the duress wallet (no honest
+and p20c (the screen-reader and dark-mode slice, re-checked on the
+emulator in pass p20d with 16 of 20 fixed on screen, and its eight
+leftovers fixed offline afterwards). Designed: the duress wallet (no honest
 slice buildable today; its analysis found and fixed the cold-start lock
 gap) and bridging (CCTP V2 first, Across second, ERC-7683 refuted on the
-testnets). Engine: 995 tests. App: 56 offline suites, 8,665 checks. The
+testnets). Engine: 995 tests. App: 56 offline suites, 8,702 checks. The
 shareable page is at version 21 (51 proven live, 18 built, 3 designed,
 27 not started); docs/MAINNET_READINESS.md is unchanged this phase.
 
@@ -7980,8 +8043,8 @@ Decisions for the Chairperson: the bridging provider (docs/BRIDGING.md
 decision for a duress wallet (docs/DURESS_WALLET.md §5.3); whether to
 add expo-navigation-bar; the disclosure decision still pending.
 
-Follow-ups (no inputs): the emulator re-check of the accessibility slice
-(TalkBack and dark mode at HEAD); the in-app stuck-transaction Speed up
+Follow-ups (no inputs): an emulator re-check of the p20d leftovers
+(hidden field labels, the focus settle, the live region); the in-app stuck-transaction Speed up
 / Cancel (needs an under-priced send the emulator wallet can produce);
 the OP Sepolia smart-account path in-app; the multisig P&L / token P&L
 (needs a contract field on HistoryEntry); sendPasskeyCalls and
