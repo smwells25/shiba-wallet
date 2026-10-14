@@ -12,6 +12,7 @@ import {
   rlpEncode,
   readDelegationStatus,
   selfSponsoredAuthorizationNonce,
+  selfSponsoredSetCodeCharges,
   setCodeIntrinsicGas,
   signEip7702Authorization,
   signEip7702Transaction,
@@ -49,6 +50,9 @@ import { suggestFeesRetryingOnce } from './fee-read.ts';
  *    tuple carried by the EOA's own transaction must name tx nonce + 1; the
  *    intrinsic cost adds PER_EMPTY_ACCOUNT_COST (25,000) per tuple. The
  *    engine's eip7702.ts quotes each of these lines.
+ *  - Glamsterdam (EIP-7773; on Ethereum Sepolia since 2026-10-06) reprices
+ *    the tuple through EIP-2780 / EIP-8037 / EIP-8038 without changing
+ *    EIP-7702's text: see SET_CODE_EXECUTION_GAS and setCodeGasRulesFor.
  *  - The delegate is KERNEL_V3_3_7702_DELEGATE, the Kernel v3.3
  *    implementation 0xd6CEDDe84be40893d153Be9d467CD6aD37875b28 (engine
  *    kernel-account.ts, cross-checked there against the ZeroDev SDK's
@@ -403,15 +407,108 @@ export function delegationLabelSuffix(status: AccountDelegation | null | undefin
 // ---------------------------------------------------------------------------
 
 /**
- * Gas above the intrinsic cost for the call the set-code transaction makes
- * to the EOA itself (empty data; after the tuple is processed it runs the
- * new code's receive path for a delegation, nothing for a revocation). The
- * same 40,000 the proven smoke test uses (scripts/testnet/eip7702-smoke.mjs
+ * Gas above EIP-7702's intrinsic cost for the call the set-code transaction
+ * makes to the EOA itself (empty data; after the tuple is processed it runs
+ * the new code's receive path for a delegation, nothing for a revocation).
+ * The same 40,000 the proven smoke test uses (scripts/testnet/eip7702-smoke.mjs
  * buildSelfSponsoredSetCode); its live revocation used 36,800 gas in total
  * (AGENTS.md phase 8). Unused gas is refunded, so the confirm screen's fee is
  * a worst case.
+ *
+ * The resulting fixed limit, setCodeIntrinsicGas(1) + 40,000 = 86,000, is
+ * kept under BOTH gas schedules (checked 2026-10-13; scripts/testnet/
+ * eip7702-smoke.mjs dry run and live run, app/scripts/check-7702.mjs):
+ *  - EIP-7702's own (mainnet, Hoodi; Sepolia before 2026-10-06 13:53:36 UTC):
+ *    46,000 intrinsic; eth_estimateGas on Hoodi (pre-Glamsterdam, Kernel
+ *    code overridden) asked 47,725 for an upgrade and 46,382 for a
+ *    revocation; the live phase 8 revocation used 36,800 after its refund.
+ *  - Glamsterdam's (Ethereum Sepolia since then): an upgrade from a plain
+ *    account is charged 12,000 (EIP-2780 TX_BASE_COST; a self-transfer adds
+ *    nothing) + 7,816 (EIP-8037 EXECUTION_PER_AUTH_BASE_COST) intrinsic,
+ *    then 35,190 state gas for the 23-byte indicator (23 × CPSB 1530) and
+ *    3,000 to load the Kernel code cold (EIP-8038), before Kernel's empty
+ *    call runs: the live upgrade 0xb0be116c…10f8 (block 11909825) used 59,393
+ *    = 58,006 + 1,387; a revocation is charged the 19,816 intrinsic only
+ *    (the live revocations 0xa1de173a…1114 and 0x1b9f8b6c…e079 used exactly
+ *    19,816); re-delegating an account that already holds an indicator pays
+ *    no state gas (estimate 24,542).
+ * Why not a tighter limit: under Glamsterdam a set-code transaction that
+ * passes the intrinsic check but runs out of gas before its first frame is
+ * still included and paid for while its delegation is reverted (EIP-2780
+ * "Runtime gas costs"), so the limit keeps a margin (about 26,600 gas for an
+ * upgrade on Sepolia) against CPSB being re-derived before Glamsterdam
+ * reaches other networks (EIP-8037: "The values are not yet final").
+ * eth_estimateGas is not used at quote time: the tuple is signed only after
+ * the biometric gate (D6), and a stand-in tuple recovers to an unrelated
+ * authority, which Glamsterdam prices very differently (a relayed tuple for
+ * an empty authority was estimated at 258,184 gas).
  */
 export const SET_CODE_EXECUTION_GAS = 40_000n;
+
+/**
+ * Glamsterdam activation per chain, from EIP-7773's Activation table
+ * (ethereum/EIPs master at 9be3a7ec, fetched 2026-10-13): Sepolia 1791294816
+ * (2026-10-06 13:53:36 UTC); Hoodi and mainnet have no time yet. Add a row
+ * when EIP-7773 fills one in.
+ */
+export const SET_CODE_AMSTERDAM_ACTIVATION: ReadonlyMap<bigint, bigint> = new Map([[11155111n, 1791294816n]]);
+
+/**
+ * Chains known to price authorizations by EIP-7702's own schedule today
+ * (Ethereum mainnet and Hoodi: no Glamsterdam time in EIP-7773; Hoodi's
+ * eth_config reported forkId 0x23aa1351 and its estimates matched the
+ * EIP-7702 schedule on 2026-10-13). Layer-2 and custom networks follow their
+ * own upgrade schedules, which were not checked, so they are 'unknown'.
+ */
+const SET_CODE_EIP7702_RULES_CHAINS: ReadonlySet<bigint> = new Set([1n, 560048n]);
+
+/**
+ * The gas schedule that prices this chain's authorization at `nowSeconds`
+ * (the device clock; the confirm screen's text only — the gas limit is the
+ * same fixed 86,000 everywhere).
+ */
+export function setCodeGasRulesFor(chainId: bigint, nowSeconds: number = Math.floor(Date.now() / 1000)): 'eip7702' | 'amsterdam' | 'unknown' {
+  const activation = SET_CODE_AMSTERDAM_ACTIVATION.get(chainId);
+  if (activation !== undefined) return BigInt(nowSeconds) >= activation ? 'amsterdam' : 'eip7702';
+  return SET_CODE_EIP7702_RULES_CHAINS.has(chainId) ? 'eip7702' : 'unknown';
+}
+
+/**
+ * The "Worst case: … gas (…)" part of the confirm screen's fee line, true
+ * under the chain's gas schedule. Under EIP-7702's own schedule it is
+ * byte-identical to the sentence the Upgrade screen has shown since phase 10;
+ * after Glamsterdam it no longer says "incl. 25,000 for the authorization",
+ * which stopped being true on Ethereum Sepolia on 2026-10-06.
+ */
+export function setCodeWorstCaseGasText(
+  quote: Pick<SetCodeQuote, 'gasLimit' | 'chainId' | 'action' | 'statusBefore'>,
+  nowSeconds?: number,
+): string {
+  const rules = setCodeGasRulesFor(quote.chainId, nowSeconds);
+  if (rules === 'eip7702') {
+    return (
+      `Worst case: ${quote.gasLimit} gas (intrinsic ${quote.gasLimit - SET_CODE_EXECUTION_GAS} incl. 25,000 for ` +
+      `the authorization, plus ${SET_CODE_EXECUTION_GAS} for the call)`
+    );
+  }
+  if (rules === 'unknown') {
+    return `Worst case: ${quote.gasLimit} gas (a fixed limit for the authorization and the call to your own address)`;
+  }
+  const charges = selfSponsoredSetCodeCharges({
+    rules: 'amsterdam',
+    action: quote.action,
+    delegatedAtStart: quote.statusBefore.kind !== 'plain',
+  });
+  const parts =
+    quote.action === 'revoke'
+      ? `${charges.intrinsic} for the transaction and the authorization; removing the delegation adds nothing`
+      : charges.runtimeState > 0n
+        ? `${charges.intrinsic} for the transaction and the authorization, ${charges.runtimeState} to store the ` +
+          `delegation and ${charges.runtimeExecution} to load the Kernel code, plus what the Kernel code itself uses`
+        : `${charges.intrinsic} for the transaction and the authorization and ${charges.runtimeExecution} to load ` +
+          `the Kernel code, plus what the Kernel code itself uses`;
+  return `Worst case: ${quote.gasLimit} gas, a fixed limit (this network's current gas rules charge ${parts})`;
+}
 
 export type SetCodeAction = 'upgrade' | 'revoke';
 

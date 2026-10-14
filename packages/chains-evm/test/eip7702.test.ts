@@ -31,6 +31,16 @@ import {
   signEip7702Authorization,
   signEip7702Transaction,
   toRpcEip7702Auth,
+  toRpcEip7702AuthQuantities,
+  relayedAuthorizationGas,
+  selfSponsoredSetCodeCharges,
+  EIP2780_TX_BASE_COST,
+  EIP8037_CPSB,
+  EIP8037_EXECUTION_PER_AUTH_BASE_COST,
+  EIP8037_STATE_BYTES_PER_AUTH_BASE,
+  EIP8037_STATE_BYTES_PER_NEW_ACCOUNT,
+  EIP8038_ACCOUNT_WRITE,
+  EIP8038_COLD_ACCOUNT_ACCESS,
   type Eip7702Transaction,
   type SignedEip7702Authorization,
 } from '../src/eip7702.js';
@@ -404,5 +414,57 @@ describe('Kernel v3.3 as an EIP-7702 delegate', () => {
     expect('eip7702Auth' in toRpcUserOperation(base)).toBe(false);
     const auth = signEip7702Authorization({ chainId: SEPOLIA, address: KERNEL_V3_3.implementation, nonce: 0n }, owner);
     expect(toRpcUserOperation({ ...base, eip7702Auth: auth }).eip7702Auth).toEqual(toRpcEip7702Auth(auth));
+  });
+});
+
+// Glamsterdam (EIP-2780 / EIP-8037 / EIP-8038 at ethereum/EIPs 9be3a7ec; the
+// values go-ethereum v1.17.8 activated on Sepolia on 2026-10-06). Live figures
+// from Sepolia, 2026-10-13: a self-sponsored upgrade used 59,393 gas (block
+// 11909825) and two revocations exactly 19,816 (blocks 11909823, 11909830).
+describe('set-code gas under EIP-7702 and Glamsterdam', () => {
+  it('pins the Glamsterdam parameters to the activated client values', () => {
+    expect(EIP2780_TX_BASE_COST).toBe(12_000n);
+    expect(EIP8037_EXECUTION_PER_AUTH_BASE_COST).toBe(7_816n);
+    expect(EIP8037_CPSB).toBe(1_530n);
+    expect(EIP8037_STATE_BYTES_PER_AUTH_BASE * EIP8037_CPSB).toBe(35_190n);
+    expect(EIP8037_STATE_BYTES_PER_NEW_ACCOUNT * EIP8037_CPSB).toBe(183_600n);
+    expect(EIP8038_COLD_ACCOUNT_ACCESS).toBe(3_000n);
+    expect(EIP8038_ACCOUNT_WRITE).toBe(9_000n);
+  });
+
+  it('self-sponsored charges match the live Sepolia receipts', () => {
+    const up = selfSponsoredSetCodeCharges({ rules: 'amsterdam', action: 'upgrade', delegatedAtStart: false });
+    expect(up).toEqual({ intrinsic: 19_816n, runtimeExecution: 3_000n, runtimeState: 35_190n, beforeCode: 58_006n, authorizationRefund: 0n });
+    expect(59_393n - up.beforeCode).toBe(1_387n); // Kernel v3.3's empty call
+    const rv = selfSponsoredSetCodeCharges({ rules: 'amsterdam', action: 'revoke', delegatedAtStart: true });
+    expect(rv.beforeCode).toBe(19_816n);
+    expect(selfSponsoredSetCodeCharges({ rules: 'amsterdam', action: 'upgrade', delegatedAtStart: true }).runtimeState).toBe(0n);
+    const pre = selfSponsoredSetCodeCharges({ rules: 'eip7702', action: 'revoke', delegatedAtStart: true });
+    expect(pre.intrinsic).toBe(setCodeIntrinsicGas(1));
+    expect(pre.authorizationRefund).toBe(12_500n);
+  });
+
+  it('prices a relayed tuple (a bundle) under both schedules', () => {
+    expect(relayedAuthorizationGas({ rules: 'eip7702', authorityExists: true, delegatedAtStart: false })).toEqual({ charged: 25_000n, refund: 12_500n });
+    expect(relayedAuthorizationGas({ rules: 'eip7702', authorityExists: false, delegatedAtStart: false })).toEqual({ charged: 25_000n, refund: 0n });
+    expect(relayedAuthorizationGas({ rules: 'amsterdam', authorityExists: true, delegatedAtStart: false }).charged).toBe(52_006n);
+    expect(relayedAuthorizationGas({ rules: 'amsterdam', authorityExists: false, delegatedAtStart: false }).charged).toBe(235_606n);
+    expect(relayedAuthorizationGas({ rules: 'amsterdam', authorityExists: true, delegatedAtStart: true }).charged).toBe(16_816n);
+    expect(relayedAuthorizationGas({ rules: 'amsterdam', authorityExists: true, delegatedAtStart: false, revoke: true }).charged).toBe(16_816n);
+  });
+
+  it('encodes authorizations as JSON-RPC quantities for node methods', () => {
+    const seed = mnemonicToSeed('abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about');
+    const account = evmKeyProvider.deriveAccount(seed, 0, 0);
+    for (let n = 0n; n < 8n; n++) {
+      const auth = signEip7702Authorization({ chainId: 11155111n, address: ZERO_ADDRESS, nonce: n }, account);
+      const q = toRpcEip7702AuthQuantities(auth);
+      expect(q.yParity).toBe(auth.yParity === 0 ? '0x0' : '0x1');
+      for (const v of [q.chainId, q.nonce, q.r, q.s]) expect(v).toMatch(/^0x(0|[1-9a-f][0-9a-f]*)$/);
+      const padded = toRpcEip7702Auth(auth);
+      expect(BigInt(q.r)).toBe(BigInt(padded.r));
+      expect(BigInt(q.s)).toBe(BigInt(padded.s));
+      expect(q.nonce).toBe('0x' + n.toString(16));
+    }
   });
 });

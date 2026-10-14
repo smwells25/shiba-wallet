@@ -287,6 +287,191 @@ export function setCodeIntrinsicGas(authorizationCount: number, data: Uint8Array
 }
 
 // ---------------------------------------------------------------------------
+// Glamsterdam (Amsterdam) repricing of set-code transactions
+// ---------------------------------------------------------------------------
+
+/*
+ * EIP-7702's own text is unchanged since bbc3f958 (the commit cited above;
+ * the file's latest commit on ethereum/EIPs master, checked 2026-10-13). What
+ * changed its COSTS is the Glamsterdam upgrade, activated on Ethereum Sepolia
+ * at timestamp 1791294816 (2026-10-06 13:53:36 UTC) per EIP-7773 "Hardfork
+ * Meta - Glamsterdam" (ethereum/EIPs master at 9be3a7ec, Activation table; no
+ * Hoodi or mainnet time is set there). Three of its scheduled EIPs reprice an
+ * authorization (all three at 9be3a7ec, status Last Call):
+ *
+ *  - EIP-2780 "Resource-based intrinsic transaction gas": TX_BASE_COST
+ *    12,000; a self-transfer (tx.to == sender) adds nothing for the
+ *    recipient; a zero value adds nothing; "each EIP-7702 authorization is
+ *    charged EXECUTION_PER_AUTH_BASE_COST in execution gas", and "These
+ *    charges replace ... EIP-7702's flat PER_EMPTY_ACCOUNT_COST ×
+ *    authorization_list_length intrinsic charge". At runtime, at most once
+ *    per authority: STATE_BYTES_PER_NEW_ACCOUNT × CPSB if the authority does
+ *    not exist; ACCOUNT_WRITE unless the authority is tx.sender (covered by
+ *    TX_BASE_COST), was written by an earlier authorization, or is tx.to of a
+ *    value-bearing transaction; STATE_BYTES_PER_AUTH_BASE × CPSB if the
+ *    authorization sets a non-zero target and the authority had no
+ *    indicator at transaction start. A delegated tx.to then pays the
+ *    delegation-target access (COLD_ACCOUNT_ACCESS if cold). The EIP-7702
+ *    refund of PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST is gone.
+ *    "If the transaction goes out-of-gas in this pre-execution phase, the
+ *    sender pays for all gas consumed, and all pre-execution state changes
+ *    are reverted, including any EIP-7702 delegations."
+ *  - EIP-8037 "State Creation Gas Cost Increase": CPSB 1530,
+ *    STATE_BYTES_PER_AUTH_BASE 23, STATE_BYTES_PER_NEW_ACCOUNT 120,
+ *    EXECUTION_PER_AUTH_BASE_COST 7,816 (the EIP still says "The values are
+ *    not yet final").
+ *  - EIP-8038 "State-access gas cost update": COLD_ACCOUNT_ACCESS 2,600 →
+ *    3,000, ACCOUNT_WRITE 9,000.
+ *
+ * The values below are the ones the clients ACTIVATED on Sepolia, read from
+ * go-ethereum v1.17.8 params/protocol_params.go (ExecutionPerAuthBaseCost
+ * 7816, TxBaseCost2780 12000, TxValueCost2780 6000,
+ * ColdAccountAccessAmsterdam 3000, AccountWriteAmsterdam 9000,
+ * AuthorizationCreationSize 23, CostPerStateByte 1530) and
+ * core/state_transition.go (IntrinsicGas, intrinsicBaseGasEIP2780,
+ * applyAuthorization, chargeCallRecipientEIP2780), and matched by
+ * eth_estimateGas answers from geth 1.17.7, reth 2.7.0 and erigon 3.7.1 on
+ * 2026-10-13. If CPSB is re-derived for mainnet, these change.
+ */
+
+/** EIP-2780 TX_BASE_COST (Glamsterdam). */
+export const EIP2780_TX_BASE_COST = 12_000n;
+/** EIP-2780 TX_VALUE_COST (Glamsterdam): recipient write + EIP-7708 log of a value transfer. */
+export const EIP2780_TX_VALUE_COST = 6_000n;
+/** EIP-8038 COLD_ACCOUNT_ACCESS (Glamsterdam; was 2,600). */
+export const EIP8038_COLD_ACCOUNT_ACCESS = 3_000n;
+/** EIP-8038 ACCOUNT_WRITE (Glamsterdam). */
+export const EIP8038_ACCOUNT_WRITE = 9_000n;
+/** EIP-8037 EXECUTION_PER_AUTH_BASE_COST (Glamsterdam; replaces PER_EMPTY_ACCOUNT_COST in intrinsic gas). */
+export const EIP8037_EXECUTION_PER_AUTH_BASE_COST = 7_816n;
+/** EIP-8037 CPSB, the gas cost per new state byte (Glamsterdam). */
+export const EIP8037_CPSB = 1_530n;
+/** EIP-8037 STATE_BYTES_PER_AUTH_BASE: the 23-byte delegation indicator. */
+export const EIP8037_STATE_BYTES_PER_AUTH_BASE = 23n;
+/** EIP-8037 STATE_BYTES_PER_NEW_ACCOUNT. */
+export const EIP8037_STATE_BYTES_PER_NEW_ACCOUNT = 120n;
+
+/**
+ * Which gas schedule prices an authorization: 'eip7702' = EIP-7702's own
+ * (Pectra through Osaka: 25,000 intrinsic per tuple, 12,500 refunded for an
+ * existing authority); 'amsterdam' = EIP-2780 / EIP-8037 / EIP-8038.
+ */
+export type SetCodeGasRules = 'eip7702' | 'amsterdam';
+
+export interface SetCodeGasCharges {
+  /** Intrinsic gas: the transaction-validity floor. */
+  intrinsic: bigint;
+  /** Runtime execution gas before the first frame (account write, delegation-target access). */
+  runtimeExecution: bigint;
+  /** Runtime state gas (EIP-8037): new account leaf, net-new delegation indicator. */
+  runtimeState: bigint;
+  /** intrinsic + runtimeExecution + runtimeState: gas consumed before the delegate's own code runs. */
+  beforeCode: bigint;
+  /**
+   * Refund credited for the authorization (EIP-7702 rules only; capped by
+   * the protocol at one fifth of the gas used). 0 under 'amsterdam'.
+   */
+  authorizationRefund: bigint;
+}
+
+/**
+ * Gas charges of the wallet's SELF-SPONSORED set-code transaction (one
+ * tuple, tx.to = sender = authority, value 0, empty data, no access list),
+ * excluding what the delegate's own code then uses (Kernel v3.3's empty-call
+ * path; measured live, not derivable from the EIPs). The sender always
+ * exists (it pays the fee), so no new-account charge applies.
+ *  - delegatedAtStart: the account already holds a delegation indicator
+ *    (a revocation, or re-delegating).
+ *  - action 'upgrade' sets the non-zero target; 'revoke' sets the zero address.
+ */
+export function selfSponsoredSetCodeCharges(options: {
+  rules: SetCodeGasRules;
+  action: 'upgrade' | 'revoke';
+  delegatedAtStart: boolean;
+}): SetCodeGasCharges {
+  const upgrade = options.action === 'upgrade';
+  if (options.rules === 'eip7702') {
+    // EIP-7702: intrinsic 21,000 + PER_EMPTY_ACCOUNT_COST; refund
+    // PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST (the authority exists); a
+    // delegated destination's target is added to accessed_addresses with no
+    // charge.
+    const intrinsic = setCodeIntrinsicGas(1);
+    return {
+      intrinsic,
+      runtimeExecution: 0n,
+      runtimeState: 0n,
+      beforeCode: intrinsic,
+      authorizationRefund: EIP7702_PER_EMPTY_ACCOUNT_COST - EIP7702_PER_AUTH_BASE_COST,
+    };
+  }
+  // EIP-2780: self-transfer and zero value add nothing to TX_BASE_COST.
+  const intrinsic = EIP2780_TX_BASE_COST + EIP8037_EXECUTION_PER_AUTH_BASE_COST;
+  // The authority is tx.sender: no ACCOUNT_WRITE. Net-new indicator bytes
+  // only when setting a target on an account with no indicator at start.
+  const runtimeState = upgrade && !options.delegatedAtStart ? EIP8037_STATE_BYTES_PER_AUTH_BASE * EIP8037_CPSB : 0n;
+  // After the tuple is applied, tx.to (the account) is delegated only for an
+  // upgrade: its target is loaded cold (nothing in this transaction warmed it).
+  const runtimeExecution = upgrade ? EIP8038_COLD_ACCOUNT_ACCESS : 0n;
+  return {
+    intrinsic,
+    runtimeExecution,
+    runtimeState,
+    beforeCode: intrinsic + runtimeExecution + runtimeState,
+    authorizationRefund: 0n,
+  };
+}
+
+/**
+ * Gas one authorization adds when SOMEONE ELSE's transaction carries it (a
+ * bundler's type-0x04 handleOps bundle, a relayer), the authority being
+ * neither tx.sender nor a value-bearing tx.to. Under 'eip7702' it is the
+ * PER_EMPTY_ACCOUNT_COST intrinsic charge, with PER_AUTH_BASE_COST's
+ * complement refunded when the authority exists; under 'amsterdam' it is
+ * EXECUTION_PER_AUTH_BASE_COST + ACCOUNT_WRITE, plus the new-account and
+ * indicator state gas when they apply.
+ */
+export function relayedAuthorizationGas(options: {
+  rules: SetCodeGasRules;
+  authorityExists: boolean;
+  delegatedAtStart: boolean;
+  /** The tuple's target is the zero address (a revocation). */
+  revoke?: boolean;
+}): { charged: bigint; refund: bigint } {
+  if (options.rules === 'eip7702') {
+    return {
+      charged: EIP7702_PER_EMPTY_ACCOUNT_COST,
+      refund: options.authorityExists ? EIP7702_PER_EMPTY_ACCOUNT_COST - EIP7702_PER_AUTH_BASE_COST : 0n,
+    };
+  }
+  let charged = EIP8037_EXECUTION_PER_AUTH_BASE_COST + EIP8038_ACCOUNT_WRITE;
+  if (!options.authorityExists) charged += EIP8037_STATE_BYTES_PER_NEW_ACCOUNT * EIP8037_CPSB;
+  if (!options.revoke && !options.delegatedAtStart) charged += EIP8037_STATE_BYTES_PER_AUTH_BASE * EIP8037_CPSB;
+  return { charged, refund: 0n };
+}
+
+/**
+ * The authorization in the JSON-RPC QUANTITY form that node methods
+ * (eth_estimateGas, eth_call, eth_simulateV1) parse: chainId, nonce,
+ * yParity, r and s as minimal hex ("0x0", no leading zero digits).
+ * go-ethereum 1.17 and erigon 3.7 reject toRpcEip7702Auth's
+ * "0x00"/"0x01" yParity and zero-padded r/s ("cannot unmarshal hex number
+ * with leading zero digits", observed 2026-10-13); reth accepts both.
+ * toRpcEip7702Auth stays as it is for the bundlers' eip7702Auth field,
+ * where it was accepted live.
+ */
+export function toRpcEip7702AuthQuantities(auth: SignedEip7702Authorization): RpcEip7702Auth {
+  const quantity = (value: bigint) => '0x' + value.toString(16);
+  return {
+    address: auth.address,
+    chainId: quantity(auth.chainId),
+    nonce: quantity(auth.nonce),
+    r: quantity(BigInt(toHex(auth.r))),
+    s: quantity(BigInt(toHex(auth.s))),
+    yParity: auth.yParity === 0 ? '0x0' : '0x1',
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Delegation status
 // ---------------------------------------------------------------------------
 

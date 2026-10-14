@@ -151,6 +151,20 @@ export {
   signEip7702Transaction,
   toRpcEip7702Auth,
 } from './eip7702.js';
+export {
+  EIP2780_TX_BASE_COST,
+  EIP2780_TX_VALUE_COST,
+  EIP8037_CPSB,
+  EIP8037_EXECUTION_PER_AUTH_BASE_COST,
+  EIP8037_STATE_BYTES_PER_AUTH_BASE,
+  EIP8037_STATE_BYTES_PER_NEW_ACCOUNT,
+  EIP8038_ACCOUNT_WRITE,
+  EIP8038_COLD_ACCOUNT_ACCESS,
+  relayedAuthorizationGas,
+  selfSponsoredSetCodeCharges,
+  toRpcEip7702AuthQuantities,
+} from './eip7702.js';
+export type { SetCodeGasCharges, SetCodeGasRules } from './eip7702.js';
 export type {
   DelegationStatus,
   Eip7702Authorization,
