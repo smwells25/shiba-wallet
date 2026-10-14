@@ -7226,3 +7226,170 @@ item 3's TalkBack pass after; 5 last. Subagents on Opus.
       Sepolia dev-owner stake simulates at 110,501 gas today (the public
       test account at 208,421 — the first-stake shares slot), consistent
       with the STAKING.md §4.3 resolution.
+- [x] Item-0 pass findings FIXED, incl. the gas allowances behind every
+      scheduled plan (commit 4ed6978; check-dca 155 (was 135),
+      check-recurring 197 (192), check-staking 122 (115), check-activity
+      270 (261), check-simulation 88 (81), check-approvals 228 (220);
+      offline runner ALL GREEN in the CTO's isolated worktree with only
+      the sixteen files on HEAD b4fd034: engine 990, app 8,503 across 56
+      suites, lint 0/0, tsc clean; 13 mutants caught; this slice was
+      rebuilt after its first agent was cut by the weekly Opus limit; not
+      seen on a device). (2, SAFETY) GAS ALLOWANCES: GasPolicy charges the
+      SIGNED limits (vGL + cGL + pVG) × the signed maxFee, not the gas
+      used — read back from each bundle's handleOps input (Sepolia,
+      2026-10-13): DCA script swap 1 987,890 + 379,444 + 52,779 =
+      1,420,113 (× 1.155 gwei = the recorded 1.64e15 wei), swap 2
+      1,204,793, the in-app swap 1,205,388; recurring payment 1 670,981 +
+      26,011 + 48,181 = 745,173, payment 2 565,743; the phase-13 ERC-20
+      pull 438,168 (matches) — so BOTH allowances were below live charges
+      after Glamsterdam: DCA_SWAP_GAS_ALLOWANCE 1,000,000 → 1,800,000
+      (27% above 1,420,113; DCA_SWAP_LARGEST_RECORDED_CHARGE_GAS) and
+      SUBSCRIPTION_PULL_GAS_ALLOWANCE 500,000 → 1,000,000 (34% above
+      745,173; SUBSCRIPTION_LARGEST_RECORDED_CHARGE_GAS — shared by
+      recurring payments AND merchant subscriptions, whose default budget
+      therefore doubles); pinned: the minimum-viable budget exceeds the
+      largest live charge × the fee, and a keep-back equal to one live
+      charge is now blocked as too small (it was "fitted" before); the
+      pricing note cites the figures. (8) SESSION KEYS: NO LEAK — a review
+      creates its key in memory only (a new address per review by design);
+      the only vault write is inside installSession after Start's device
+      check; discardPending zeroes all three pending keys at the start of
+      every review and on unmount; pinned with the real createKeyVault
+      over a fake secure store (two DCA reviews, and a recurring plus a
+      subscription review, leave ZERO entries; Start leaves exactly one
+      under its record's vault id; a source pin forbids any vault or
+      install call in the three review handlers); residual by design: a
+      record that failed after Start keeps its key until Forget (the wipe
+      removes it). (6) the gap was in the staking OUTCOME card, not the
+      Balance-changes card: "Simulated: 0.004820023614978392 rETH leave
+      (token contract 0x…)." / "Simulated: 0.005 stETH leave …" before
+      the arrive lines; a stake shows "Simulated: 0.01 test ETH leave."
+      (7) the preview labels an untracked pinned staking token "stETH
+      (pinned staking token)" from the token table (no eth_call). (5) the
+      Rocket Pool confirm: "…can refuse moving or redeeming rETH for up to
+      5,760 blocks after a deposit if a deposit lock is recorded for the
+      address; in the deployed Hoodi code no lock was recorded in two live
+      runs (a burn succeeded 20 blocks after the deposit), but the wallet
+      still checks the stored lock before a burn." (4) risk card: "This
+      transaction goes to Rocket Pool's deposit pool (0x…), resolved just
+      now from Rocket Pool's pinned RocketStorage contract on Hoodi."
+      (RocketStorage re-read at every check; a different resolved address,
+      a failed read, or a registry whose rETH is not the pinned one keeps
+      the generic lines); Activity "Staked 0.01 test ETH with Rocket Pool
+      (deposit pool 0x425E…3Fd8, resolved from RocketStorage): received …
+      rETH" — "Staked", not "Deposited", because the engine's verb list
+      (activity-decode.ts, not this slice's file) has no "deposited"
+      (follow-up: add it). (1) the form hint after a cap: "The field shows
+      this lowered figure; clearing a figure you typed brings it back, not
+      the usual budget." (3) before set-up "X USDC per swap will be fixed
+      when the plan is set up."; the card keeps the past tense. NOT DONE:
+      docs that still quote 500,000 / 1,000,000 per operation need the
+      refresh; Activity still reads an untracked pinned staking token as
+      "(untracked token …)" (the engine's label function would need the
+      preview's rule). UNVERIFIED (device): the new copy; a plan funded
+      under the higher thresholds running its first operation; the
+      deposit-pool risk line and sentence against live RocketStorage; the
+      outcome card's new lines on a real burn or request.
+- [x] EIP-7702 AFTER GLAMSTERDAM ON SEPOLIA — checked at the Chairperson's
+      question, nothing broken (commit 44d0148; engine 994 — chains-evm 723,
+      +4 — check-7702 179 (was 157); offline runner ALL GREEN in the CTO's
+      isolated worktree on top of 4ed6978: app 8,525 across 56 suites, lint
+      0/0, tsc clean; the eip7702-smoke dry run passed there; the CTO
+      wired setCodeWorstCaseGasText into UpgradeAccountScreen (the one line
+      outside the agent's files) and pinned it; the dev EOA spent ~0.00034
+      Sepolia ETH). FACTS (fetched 2026-10-13): EIP-7702 shipped with
+      Pectra — Sepolia epoch 222464 = 2025-03-05 07:29:36 UTC (EIP-7600 at
+      ethereum/EIPs 9be3a7ec; the Pectra testnet blog post agrees); its
+      text unchanged since bbc3f958 (2025-10-07); GLAMSTERDAM (EIP-7773)
+      activated on Sepolia 2026-10-06 13:53:36 UTC (epoch 353024), Hoodi
+      and mainnet undated; of its 18 EIPs only 2780, 8037 and 8038 change
+      7702 costs (7928 mentions it for access-list bookkeeping; 7997 and
+      8282 in passing). EIP-2780 "replace[s] … EIP-7702's flat
+      PER_EMPTY_ACCOUNT_COST × authorization_list_length intrinsic
+      charge": each authorization 7,816 (EXECUTION_PER_AUTH_BASE_COST) at
+      the intrinsic stage, then once per authority before any code runs
+      120 × CPSB = 183,600 state gas if the authority does not exist,
+      ACCOUNT_WRITE 9,000 unless the authority is the sender, 23 × CPSB =
+      35,190 for a new delegation indicator, 3,000 to load a delegate's
+      code (EIP-8038's cold access 2,600 → 3,000); the 12,500 refund is
+      gone; NEW FAILURE MODE: "If the transaction goes out-of-gas in this
+      pre-execution phase, the sender pays for all gas consumed, and all
+      pre-execution state changes are reverted, including any EIP-7702
+      delegations." go-ethereum v1.17.8 params/protocol_params.go carries
+      ExecutionPerAuthBaseCost 7816, TxBaseCost2780 12000,
+      ColdAccountAccessAmsterdam 3000, AccountWriteAmsterdam 9000,
+      AuthorizationCreationSize 23, CostPerStateByte 1530 (applied in
+      IntrinsicGas / applyAuthorization / chargeCallRecipientEIP2780);
+      EIP-8037 still says "The values are not yet final". THE WALLET'S
+      OWN TRANSACTION (one authorization, to itself, value 0, no data):
+      intrinsic 46,000 → 19,816 (12,000 + 7,816); an upgrade 46,000 →
+      58,006 before Kernel's code runs; a revocation 36,800 (after the old
+      refund) → 19,816; re-delegating an already delegated account →
+      22,816. THE QUOTE: delegation.ts's fixed limit 46,000 + 40,000 =
+      86,000 is NOT understated — eth_estimateGas on the exact shape
+      (geth 1.17.7, reth 2.7.0, erigon 3.7.1 agreeing; a throwaway key,
+      balance override, nothing sent): upgrade 60,212, revocation 19,980,
+      re-upgrade 24,542; someone else's transaction carrying the tuple
+      (the bundler shape) 72,259 if the account exists, 258,184 if empty;
+      Hoodi (old rules, forkId 0x23aa1351) 47,725 / 46,382. KEPT at 86,000
+      (CTO agrees): the ~26,600 headroom now matters because running
+      short reverts the delegation but charges the fee; the authorization
+      is signed only after the biometric gate (D6) so it cannot be
+      estimated at quote time; a stand-in authorization recovers to an
+      unrelated account the new rules price very differently. FINDING: for
+      node methods geth 1.17 and erigon 3.7 REJECT the engine's
+      toRpcEip7702Auth format ("0x00"/"0x01" yParity, zero-padded r/s);
+      reth accepts it; the app never sends an authorization to a node and
+      ZeroDev accepts the format for bundled ops, so it stays —
+      toRpcEip7702AuthQuantities added for node methods. LIVE on Sepolia
+      (dev index 7 0xFDF5…2F14; every status 0x1 on publicnode and Pocket):
+      funding 0x8217b859…5599 (block 11909821); a BUNDLER-CARRIED UPGRADE
+      through ZeroDev — userOp 0xfcc11fd4…796f, bundle tx
+      0xdec3d0afe469f7adfce3057e43777532c69ddb9f603a9c1bb5cea6175935b411,
+      block 11909822, type 0x4 carrying the authorization, code →
+      0xef0100d6ce…5b28, bundle gas 170,592 of 216,850, the op's pVG
+      81,367 vs 52,492 without an authorization, 3 EIP-7708 logs from the
+      op's own ETH moves; while delegated entrypoint() = v0.7,
+      isValidSignature 0x1626ba7e, a third-party initialize() reverted;
+      REVOCATION 1 0xa1de173a…1114 (block 11909823) gas used EXACTLY 19,816
+      of 86,000, no logs, code 0x; THE WALLET'S OWN SELF-PAID UPGRADE —
+      the first self-paid delegation (not only a revocation) sent live —
+      0xb0be116c48d7a43b93f2b304283b0e0a7945dce74ac53d389a1a6bebdbfd10f8,
+      block 11909825, estimate 60,212, gas used 59,393 = 58,006 + 1,387
+      for Kernel's empty call, code = the designator, one Received log, no
+      7708 log (value 0), fee 59,393 × 1,000,002 wei; operations from the
+      delegated account with no authorization (bundle txs 0xe5f091c1…271f
+      block 11909826 and 0xcfb8016f…f459 block 11909829); REVOCATION 2
+      0x1b9f8b6c…e079 (block 11909830) 19,816 gas, code 0x; sweep back
+      0xf731db2a…eb70 (block 11909832); the dev EOA 0.044095 → 0.043755.
+      CHANGES: packages/chains-evm/src/eip7702.ts gains the Glamsterdam
+      constants (each sourced), selfSponsoredSetCodeCharges,
+      relayedAuthorizationGas and toRpcEip7702AuthQuantities (additions
+      only; 4 tests); delegation.ts keeps the limit, documents both
+      schedules with the live figures, SET_CODE_AMSTERDAM_ACTIVATION from
+      EIP-7773, setCodeGasRulesFor (mainnet and Hoodi old rules; Sepolia
+      new after activation; layer-2 and custom networks 'unknown'),
+      setCodeWorstCaseGasText (byte-identical to the old text under the
+      old rules); the Upgrade screen now renders it instead of "incl.
+      25,000 for the authorization" (pinned); eip7702-smoke.mjs estimates
+      every set-code tx against the limit and refuses one above it, reports
+      each set-code receipt on two RPCs against the predicted charges,
+      re-reads each bundle receipt on both, and estimates the funding
+      transfer's gas (a fixed 21,000 fails for a never-used address after
+      the fork); THREAT_MODEL T-36 updated, F-78 added. OTHER RECENT
+      SEPOLIA CHANGES (geth 1.17.6–1.17.8, reth 2.6–2.7 notes, EIP-7773,
+      the blog): none changes delegated-account behaviour — geth 1.17.6
+      rejects setcode call arguments without `to` (the wallet always sets
+      it) and dropped a per-authorization guard in eth_createAccessList
+      (unused); geth 1.17.8's eth_call no longer applies the tx gas limit
+      after the fork; reth returns null for 7702-caused nonce gaps in MEV
+      bundle methods only. INFERENCE, not documented: ZeroDev's pVG rose
+      ~28,900 for an op carrying an authorization (≈ the old 25,000) while
+      the authorization now costs the bundle ~52,000 — the bundler's cost
+      today, which ZeroDev could reprice or refuse later. SIDE OBSERVATION:
+      0xrpc.io/sep (frozen in F-66) now serves the head (geth 1.17.8).
+      UNVERIFIED: mainnet's and Hoodi's eventual Glamsterdam values; the
+      layer-2 gas schedules; ZeroDev's pVG formula; an empty account's
+      authorization carried by a bundler (estimated 258,184, never sent);
+      nethermind and besu; the in-app upgrade and revoke after the fork
+      (script only; the screen text change not yet seen on a device).
