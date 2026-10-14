@@ -36,6 +36,9 @@
  *                     eth_estimateUserOperationGas with the tuple attached,
  *                     to record whether it accepts eip7702Auth.
  *   NODE_URL          optional; defaults to the public Sepolia RPC.
+ *   VERIFY_NODE_URL   optional second RPC on which every receipt and
+ *                     eth_getCode result is re-read; defaults to Pocket
+ *                     Network's keyless Sepolia endpoint.
  *   EIP7702_INDEX     address index of the test EOA, m/44'/60'/0'/0/{index};
  *                     default 7 (never the main dev EOA at index 0).
  *   EIP7702_FUND_ETH  live funding target for the test EOA; default 0.0015,
@@ -43,6 +46,19 @@
  *   EIP7702_MODE      'bundler' (default) or 'self'.
  *   EIP7702_NO_SWEEP=1  keep the leftover test ETH on the test EOA instead of
  *                     returning it to the dev EOA after revocation.
+ *
+ * Glamsterdam (2026-10-13): Sepolia activated Glamsterdam at 1791294816
+ * (2026-10-06 13:53:36 UTC, EIP-7773), whose EIP-2780 / EIP-8037 / EIP-8038
+ * reprice an authorization (engine eip7702.ts selfSponsoredSetCodeCharges /
+ * relayedAuthorizationGas). Every self-sponsored set-code transaction is now
+ * estimated with eth_estimateGas on its exact fields before it is sent and
+ * refused when the estimate exceeds the wallet's fixed 86,000-gas limit (the
+ * app's delegation.ts quote); every receipt is reported with the charges the
+ * rules predict, the gas the delegate's code used, the worst case the quote
+ * would have shown, and any EIP-7708 transfer log, and re-read on a second
+ * RPC. The dry run estimates the wallet's shapes with a throwaway key. The
+ * funding transfer's gas is estimated (+20%) instead of a fixed 21,000:
+ * after EIP-8037 a transfer to a never-used address needs about 204,600.
  *
  * Run from the repository root after `npm run build`:
  *   Dry run (anyone, read-only):
@@ -75,14 +91,19 @@ import {
   readDelegationStatus,
   revokeDelegationAuthorization,
   selfSponsoredAuthorizationNonce,
+  selfSponsoredSetCodeCharges,
+  relayedAuthorizationGas,
   setCodeIntrinsicGas,
   signEip1559,
   signEip7702Authorization,
   signEip7702Transaction,
   toBytes,
   toHex,
+  toRpcEip7702AuthQuantities,
   verifyKernelDeployment,
 } from '../../packages/chains-evm/dist/index.js';
+import { evmAccountFromPrivateKey } from '../../packages/core/dist/index.js';
+import { randomBytes } from 'node:crypto';
 import { SEPOLIA_RPC } from './config.mjs';
 
 const CHAIN_ID = 11155111n;
@@ -90,6 +111,13 @@ const DRY_RUN = process.env.EIP7702_SMOKE_DRY_RUN === '1';
 const BUNDLER_URL = process.env.BUNDLER_URL;
 const PROBE_BUNDLER_URL = process.env.PROBE_BUNDLER_URL;
 const NODE_URL = process.env.NODE_URL ?? SEPOLIA_RPC;
+const VERIFY_NODE_URL = process.env.VERIFY_NODE_URL ?? 'https://eth-sepolia-testnet.api.pocket.network';
+/** Glamsterdam activation on Sepolia (EIP-7773 Activation table, ethereum/EIPs 9be3a7ec). */
+const SEPOLIA_AMSTERDAM_TIME = 1791294816n;
+/** The wallet's fixed set-code gas limit (app/src/wallet/delegation.ts: setCodeIntrinsicGas(1) + SET_CODE_EXECUTION_GAS). */
+const WALLET_SET_CODE_GAS = setCodeIntrinsicGas(1) + 40_000n;
+/** The system address EIP-7708 transfer logs come from. */
+const EIP7708_SYSTEM = '0xfffffffffffffffffffffffffffffffffffffffe';
 const INDEX = Number(process.env.EIP7702_INDEX ?? '7');
 const MODE = process.env.EIP7702_MODE ?? 'bundler';
 const NO_SWEEP = process.env.EIP7702_NO_SWEEP === '1';
@@ -111,7 +139,7 @@ if (MODE !== 'bundler' && MODE !== 'self') {
 }
 
 /** Removes every configured URL and key from text before it is printed. */
-const SECRETS = [BUNDLER_URL, PROBE_BUNDLER_URL, process.env.NODE_URL, process.env.ZERODEV_PROJECT_ID, process.env.ALCHEMY_KEY]
+const SECRETS = [BUNDLER_URL, PROBE_BUNDLER_URL, process.env.NODE_URL, process.env.VERIFY_NODE_URL, process.env.ZERODEV_PROJECT_ID, process.env.ALCHEMY_KEY]
   .filter((s) => typeof s === 'string' && s.length >= 8);
 function redact(text) {
   let out = String(text);
@@ -123,6 +151,65 @@ const log = (...parts) => console.log(redact(parts.join(' ')));
 
 const node = httpTransport(NODE_URL);
 const nodeClient = new NodeClient(node);
+const verifyNode = httpTransport(VERIFY_NODE_URL);
+
+/** 'amsterdam' once the latest block is at or after Sepolia's Glamsterdam time. */
+async function gasRules() {
+  const block = await node('eth_getBlockByNumber', ['latest', false]);
+  return BigInt(block.timestamp) >= SEPOLIA_AMSTERDAM_TIME ? 'amsterdam' : 'eip7702';
+}
+
+/**
+ * eth_estimateGas for a signed set-code transaction's exact fields (the
+ * authorization in quantity form, which go-ethereum requires). Refuses when
+ * the estimate exceeds the transaction's gas limit: under EIP-2780 a set-code
+ * transaction that runs out of gas before its first frame is still included
+ * and paid for, but its delegation is reverted.
+ */
+async function estimateSetCode(owner, fields, auth, label) {
+  const tx = {
+    from: owner.address,
+    to: fields.to,
+    value: '0x0',
+    data: '0x',
+    nonce: '0x' + fields.nonce.toString(16),
+    authorizationList: [toRpcEip7702AuthQuantities(auth)],
+  };
+  const estimate = BigInt(await node('eth_estimateGas', [tx, 'latest']));
+  log(`${label}: eth_estimateGas on the exact fields = ${estimate} (gas limit ${fields.gasLimit}; the wallet's quote uses ${WALLET_SET_CODE_GAS})`);
+  if (estimate > fields.gasLimit) throw new Error(`${label}: estimate ${estimate} exceeds the gas limit ${fields.gasLimit}; not sent`);
+  return estimate;
+}
+
+/** Reports a set-code receipt on both RPCs against the gas rules. */
+async function reportSetCode(label, hash, { action, delegatedAtStart, rules, expectCode }) {
+  const charges = selfSponsoredSetCodeCharges({ rules, action, delegatedAtStart });
+  for (const [host, transport] of [[hostOf(NODE_URL), node], [hostOf(VERIFY_NODE_URL), verifyNode]]) {
+    let receipt = null;
+    for (let i = 0; i < 30 && !receipt; i++) {
+      receipt = await transport('eth_getTransactionReceipt', [hash]);
+      if (!receipt) await new Promise((r) => setTimeout(r, 3000));
+    }
+    if (!receipt) throw new Error(`${label}: no receipt on ${host}`);
+    const tx = await transport('eth_getTransactionByHash', [hash]);
+    const block = BigInt(receipt.blockNumber);
+    const code = await transport('eth_getCode', [tx.from, '0x' + block.toString(16)]);
+    const gasUsed = BigInt(receipt.gasUsed);
+    const price = BigInt(receipt.effectiveGasPrice);
+    const systemLogs = (receipt.logs ?? []).filter((l) => l.address.toLowerCase() === EIP7708_SYSTEM);
+    log(`${label} on ${host}: block ${block}, status ${receipt.status}, type ${receipt.type ?? tx.type}, gas limit ${BigInt(tx.gas)}, gasUsed ${gasUsed}, effectiveGasPrice ${price}, fee ${gasUsed * price} wei; ` +
+      `authorizationList ${JSON.stringify((tx.authorizationList ?? []).map((a) => ({ address: a.address, chainId: a.chainId, nonce: a.nonce })))}; ` +
+      `logs ${receipt.logs?.length ?? 0} (EIP-7708 transfer logs ${systemLogs.length}); eth_getCode(sender) at that block = ${code}`);
+    if (receipt.status !== '0x1') throw new Error(`${label}: status ${receipt.status} on ${host}`);
+    if ((code === '0x' ? '0x' : code.toLowerCase()) !== expectCode) throw new Error(`${label}: unexpected code ${code} on ${host}`);
+    if (host === hostOf(NODE_URL)) {
+      log(`${label}: rules ${rules} predict intrinsic ${charges.intrinsic} + runtime execution ${charges.runtimeExecution} + runtime state ${charges.runtimeState} = ${charges.beforeCode} before the delegate's code` +
+        (rules === 'eip7702' ? ` (then refund ${charges.authorizationRefund}, capped at gas used / 5)` : '') +
+        `; gasUsed - that = ${gasUsed - charges.beforeCode} (the delegate's code${rules === 'eip7702' ? ' net of the refund' : ''}); ` +
+        `the wallet's ${WALLET_SET_CODE_GAS}-gas limit ${gasUsed <= WALLET_SET_CODE_GAS ? 'COVERED' : 'DID NOT COVER'} it (used ${(Number(gasUsed) / Number(WALLET_SET_CODE_GAS) * 100).toFixed(1)}% of the limit).`);
+    }
+  }
+}
 
 const HANDLE_OPS_SIG =
   'handleOps((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes)[],address)';
@@ -240,8 +327,13 @@ async function userOpFees(bundler) {
   return { ...fees, source: 'node suggestFees + 0.15 gwei priority floor' };
 }
 
-/** Self-sponsored type-0x04 transaction: tuple nonce = tx nonce + 1. */
-async function buildSelfSponsoredSetCode(owner, delegate, fees, txNonce) {
+/**
+ * Self-sponsored type-0x04 transaction: tuple nonce = tx nonce + 1. The
+ * same shape and gas limit as the app's delegation.ts quote. With
+ * `estimate`, the exact fields are first run through eth_estimateGas (live
+ * only; refused when the estimate exceeds the limit).
+ */
+async function buildSelfSponsoredSetCode(owner, delegate, fees, txNonce, { estimate = false, label = 'Set-code' } = {}) {
   const nonce = txNonce ?? (await nodeClient.getTransactionCount(owner.address));
   const auth = signEip7702Authorization(
     { chainId: CHAIN_ID, address: delegate, nonce: selfSponsoredAuthorizationNonce(nonce) },
@@ -249,19 +341,19 @@ async function buildSelfSponsoredSetCode(owner, delegate, fees, txNonce) {
   );
   // To self, empty data: after the tuple is processed the call runs the new
   // code (Kernel's receive() for a delegation, nothing for a revocation).
-  return signEip7702Transaction(
-    {
-      chainId: CHAIN_ID,
-      nonce,
-      maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
-      maxFeePerGas: fees.maxFeePerGas,
-      gasLimit: setCodeIntrinsicGas(1) + 40_000n,
-      to: owner.address,
-      value: 0n,
-      authorizationList: [auth],
-    },
-    owner,
-  );
+  const fields = {
+    chainId: CHAIN_ID,
+    nonce,
+    maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+    maxFeePerGas: fees.maxFeePerGas,
+    gasLimit: WALLET_SET_CODE_GAS,
+    to: owner.address,
+    value: 0n,
+    authorizationList: [auth],
+  };
+  if (estimate) await estimateSetCode(owner, fields, auth, label);
+  log(`${label}: worst-case fee ${fields.gasLimit} gas x ${fields.maxFeePerGas} wei = ${fields.gasLimit * fields.maxFeePerGas} wei`);
+  return signEip7702Transaction(fields, owner);
 }
 
 /** Decodes a raw type-0x04 transaction with ethers and checks sender, tuple and authority. */
@@ -421,6 +513,32 @@ async function main() {
     checkWithEthers(setCode.rawHex, eoa, delegate, 'Self-sponsored delegation tx');
     const revoke = await buildSelfSponsoredSetCode(eoa, '0x0000000000000000000000000000000000000000', fees1559, pending);
     checkWithEthers(revoke.rawHex, eoa, '0x0000000000000000000000000000000000000000', 'Revocation tx');
+    // The wallet's own set-code shapes under the network's current rules,
+    // estimated with a THROWAWAY key as sender and authority (never sent;
+    // a balance override makes it an existing account, a code override a
+    // delegated one). Each must fit the wallet's fixed gas limit.
+    const rules = await gasRules();
+    let raw;
+    do { raw = randomBytes(32); } while (raw[0] === 0);
+    const throwaway = evmAccountFromPrivateKey(new Uint8Array(raw), 'throwaway (dry run)');
+    for (const [label, action, delegatedAtStart] of [['upgrade', 'upgrade', false], ['revoke', 'revoke', true], ['re-upgrade', 'upgrade', true]]) {
+      const auth = signEip7702Authorization(
+        { chainId: CHAIN_ID, address: action === 'upgrade' ? delegate : '0x0000000000000000000000000000000000000000', nonce: 1n },
+        throwaway,
+      );
+      const override = { [throwaway.address]: { balance: '0xde0b6b3a7640000', ...(delegatedAtStart ? { code: indicator } : {}) } };
+      const estimate = BigInt(await node('eth_estimateGas', [
+        { from: throwaway.address, to: throwaway.address, value: '0x0', data: '0x', nonce: '0x0', authorizationList: [toRpcEip7702AuthQuantities(auth)] },
+        'latest',
+        override,
+      ]));
+      const charges = selfSponsoredSetCodeCharges({ rules, action, delegatedAtStart });
+      log(`Self-sponsored ${label} (${rules} rules): eth_estimateGas ${estimate}; charges before the delegate's code ${charges.beforeCode} ` +
+        `(intrinsic ${charges.intrinsic}, runtime execution ${charges.runtimeExecution}, runtime state ${charges.runtimeState}); wallet limit ${WALLET_SET_CODE_GAS}`);
+      if (estimate > WALLET_SET_CODE_GAS) throw new Error(`The wallet's ${WALLET_SET_CODE_GAS}-gas set-code limit no longer covers a ${label} (${estimate})`);
+      if (estimate < charges.beforeCode) throw new Error(`The ${label} estimate ${estimate} is below the ${rules} charges ${charges.beforeCode}: the gas rules changed`);
+    }
+
     log('\nDRY RUN PASSED: the engine-built 7702 UserOperation validates and executes against the real');
     log('EntryPoint v0.7 and Kernel v3.3 on Sepolia (delegation simulated by state override); the');
     log('delegation and revocation transactions decode correctly with ethers. Nothing was broadcast.');
@@ -437,13 +555,17 @@ async function main() {
   if (target > MAX_FUND_WEI) throw new Error('EIP7702_FUND_ETH above the 0.002 ETH cap');
   const balance = await nodeClient.getBalance(eoa.address);
   if (balance < target) {
+    // Estimated, not a fixed 21,000: after Glamsterdam (EIP-8037) a transfer
+    // to a never-used address needs about 204,600 gas.
+    const fundGas = BigInt(await node('eth_estimateGas', [{ from: funder.address, to: eoa.address, value: '0x' + (target - balance).toString(16) }, 'latest']));
+    log(`Funding transfer estimate ${fundGas} gas (limit set to estimate + 20%)`);
     const fund = signEip1559(
       {
         chainId: CHAIN_ID,
         nonce: await nodeClient.getTransactionCount(funder.address),
         maxPriorityFeePerGas: txFees.maxPriorityFeePerGas,
         maxFeePerGas: txFees.maxFeePerGas,
-        gasLimit: 21_000n,
+        gasLimit: (fundGas * 120n + 99n) / 100n,
         to: eoa.address,
         value: target - balance,
       },
@@ -516,6 +638,30 @@ async function main() {
   if (!event || event.sender.toLowerCase() !== eoa.address.toLowerCase() || event.success !== true) {
     throw new Error('UserOperationEvent does not show a successful op from the EOA');
   }
+  {
+    const rules = await gasRules();
+    const tupleCarried = (bundleTx.authorizationList ?? []).length;
+    const opPvg = BigInt(userOp.preVerificationGas);
+    log(`Bundle tx gas limit ${BigInt(bundleTx.gas)}, gasUsed ${BigInt(bundleReceipt.gasUsed)}, effectiveGasPrice ${BigInt(bundleReceipt.effectiveGasPrice)}; ` +
+      `the op's preVerificationGas ${opPvg}, verificationGasLimit ${userOp.verificationGasLimit}, callGasLimit ${userOp.callGasLimit}; tuples in the bundle ${tupleCarried}`);
+    if (tupleCarried > 0) {
+      const relayed = relayedAuthorizationGas({ rules, authorityExists: true, delegatedAtStart: initial.kind === 'delegated' });
+      const old = relayedAuthorizationGas({ rules: 'eip7702', authorityExists: true, delegatedAtStart: false });
+      log(`Under the ${rules} rules the bundle paid ${relayed.charged} gas for the tuple (EIP-7702's own rules: ${old.charged} - ${old.refund} refund); ` +
+        `on both RPCs the receipt is re-read below.`);
+    }
+    for (const [host, transport] of [[hostOf(NODE_URL), node], [hostOf(VERIFY_NODE_URL), verifyNode]]) {
+      let r = null;
+      for (let i = 0; i < 30 && !r; i++) {
+        r = await transport('eth_getTransactionReceipt', [bundleTxHash]);
+        if (!r) await new Promise((resolve) => setTimeout(resolve, 3000));
+      }
+      if (!r) throw new Error(`No bundle receipt on ${host}`);
+      const c = await transport('eth_getCode', [eoa.address, r.blockNumber]);
+      const sys = (r.logs ?? []).filter((l) => l.address.toLowerCase() === EIP7708_SYSTEM).length;
+      log(`Bundle tx on ${host}: block ${BigInt(r.blockNumber)}, status ${r.status}, type ${r.type}, gasUsed ${BigInt(r.gasUsed)}, logs ${r.logs.length} (EIP-7708 ${sys}); eth_getCode(EOA) at that block ${c}`);
+    }
+  }
   const code = await node('eth_getCode', [eoa.address, 'latest']);
   log(`eth_getCode(EOA) = ${code} (${code.toLowerCase() === indicator ? 'equals 0xef0100 || Kernel v3.3 implementation' : 'UNEXPECTED'})`);
   if (code.toLowerCase() !== indicator) throw new Error('Delegation indicator not found');
@@ -550,29 +696,15 @@ async function main() {
   // 6. Revoke: self-sponsored type-0x04 with a zero-address tuple.
   const revokeNonce = await nodeClient.getTransactionCount(eoa.address);
   const revokeFees = await nodeClient.suggestFees();
-  const revokeAuth = signEip7702Authorization(
-    revokeDelegationAuthorization(CHAIN_ID, selfSponsoredAuthorizationNonce(revokeNonce)),
-    eoa,
-  );
-  const revokeTx = signEip7702Transaction(
-    {
-      chainId: CHAIN_ID,
-      nonce: revokeNonce,
-      maxPriorityFeePerGas: revokeFees.maxPriorityFeePerGas,
-      maxFeePerGas: revokeFees.maxFeePerGas,
-      gasLimit: setCodeIntrinsicGas(1) + 40_000n,
-      to: eoa.address,
-      value: 0n,
-      authorizationList: [revokeAuth],
-    },
-    eoa,
-  );
+  const revokeAuthCheck = revokeDelegationAuthorization(CHAIN_ID, selfSponsoredAuthorizationNonce(revokeNonce));
+  const revokeTx = await buildSelfSponsoredSetCode(eoa, revokeAuthCheck.address, revokeFees, revokeNonce, { estimate: true, label: 'Revocation' });
   const revokeHash = await nodeClient.sendRawTransaction(revokeTx.rawHex);
-  log(`Revocation tx (tuple -> 0x0, nonce ${revokeAuth.nonce} = tx nonce ${revokeNonce} + 1): ${revokeHash}`);
+  log(`Revocation tx (tuple -> 0x0, nonce ${revokeAuthCheck.nonce} = tx nonce ${revokeNonce} + 1): ${revokeHash}`);
   const revokeReceipt = await waitForTx(revokeHash);
   const after = await node('eth_getCode', [eoa.address, 'latest']);
   log(`Revocation status ${revokeReceipt.status}, block ${BigInt(revokeReceipt.blockNumber)}, gas used ${BigInt(revokeReceipt.gasUsed)}; eth_getCode(EOA) now ${after}`);
   if (revokeReceipt.status !== '0x1' || (after !== '0x' && after !== '0x0')) throw new Error('Revocation did not clear the code');
+  await reportSetCode('Revocation', revokeHash, { action: 'revoke', delegatedAtStart: true, rules: await gasRules(), expectCode: '0x' });
 
   // 7. Return leftover test ETH to the funding EOA.
   if (!NO_SWEEP) {
@@ -606,11 +738,18 @@ async function main() {
 }
 
 async function sendSelfSponsoredDelegation(eoa, delegate, fees) {
-  const tx = await buildSelfSponsoredSetCode(eoa, delegate, fees);
+  const before = await readDelegationStatus(node, eoa.address);
+  const tx = await buildSelfSponsoredSetCode(eoa, delegate, fees, undefined, { estimate: true, label: 'Self-sponsored delegation' });
   const hash = await nodeClient.sendRawTransaction(tx.rawHex);
   log(`Self-sponsored delegation tx: ${hash}`);
   const receipt = await waitForTx(hash);
   if (receipt.status !== '0x1') throw new Error('Delegation transaction failed');
+  await reportSetCode('Self-sponsored delegation', hash, {
+    action: 'upgrade',
+    delegatedAtStart: before.kind === 'delegated',
+    rules: await gasRules(),
+    expectCode: indicatorFor(delegate),
+  });
   const status = await readDelegationStatus(node, eoa.address);
   log(`Delegation status after the type-0x04 tx: ${JSON.stringify(status)}`);
   if (status.kind !== 'delegated') throw new Error('Delegation not visible after the set-code transaction');

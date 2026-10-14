@@ -30,7 +30,7 @@ import {
   FOREIGN_DELEGATE_WARNING,
   PENDING_UPGRADE_UNAVAILABLE_WARNING,
   REVOKE_NOTE,
-  SET_CODE_EXECUTION_GAS,
+ 
   SET_CODE_NO_SIMULATION_NOTE,
   SET_CODE_WARNING,
   UPGRADE_EXPLANATION,
@@ -45,8 +45,7 @@ import {
   waitForSetCode,
   walletDelegateDeployed,
   type SetCodeAction,
-  type SetCodeQuote,
-} from '../wallet/delegation';
+  type SetCodeQuote, setCodeWorstCaseGasText } from '../wallet/delegation';
 import { useAccountDelegation } from '../wallet/useDelegation';
 import { readinessGate } from '../config/readiness';
 
@@ -346,7 +345,7 @@ export function UpgradeAccountScreen({ navigation }: Props) {
         <Row
           label="Max network fee"
           value={`${exact(quote.fee, 18)} ${evmChain.displaySymbol}`}
-          sub={`Worst case: ${quote.gasLimit} gas (intrinsic ${quote.gasLimit - SET_CODE_EXECUTION_GAS} incl. 25,000 for the authorization, plus ${SET_CODE_EXECUTION_GAS} for the call) × ${exact(quote.maxFeePerGas, 9)} gwei${quote.opStack ? ', plus the layer 1 data fee below' : ''}. Unused gas is refunded.`}
+          sub={`${setCodeWorstCaseGasText(quote)} × ${exact(quote.maxFeePerGas, 9)} gwei${quote.opStack ? ', plus the layer 1 data fee below' : ''}. Unused gas is refunded.`}
           theme={theme}
         />
         {quote.opStack ? (

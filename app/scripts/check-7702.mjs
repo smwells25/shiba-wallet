@@ -20,7 +20,12 @@ import {
   KERNEL_V3_3_7702_DELEGATE,
   ZERO_ADDRESS,
   getUserOpHash,
+  relayedAuthorizationGas,
+  selfSponsoredSetCodeCharges,
   setCodeIntrinsicGas,
+  signEip7702Authorization,
+  toRpcEip7702Auth,
+  toRpcEip7702AuthQuantities,
 } from '@shiba-wallet/chains-evm';
 import { ethers } from 'ethers';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -44,6 +49,7 @@ import {
 } from '../src/wallet/aa.ts';
 import {
   FOREIGN_DELEGATE_WARNING,
+  SET_CODE_AMSTERDAM_ACTIVATION,
   SET_CODE_EXECUTION_GAS,
   SET_CODE_L1_FEE_STUB_R,
   SET_CODE_L1_FEE_STUB_S,
@@ -59,6 +65,8 @@ import {
   readAccountDelegation,
   sendSetCodeTx,
   serializeUnsignedSetCode,
+  setCodeGasRulesFor,
+  setCodeWorstCaseGasText,
   subscribeDelegation,
   upgradeActionsOffered,
   upgradeAvailabilityUnknownText,
@@ -751,6 +759,66 @@ console.log('check-7702: delegated-eoa risk signal');
   check('a foreign-delegated recipient → warning stays', has(strangerForeign));
 }
 
+// ---------------------------------------------------------------------------
+console.log('check-7702: the set-code gas limit under EIP-7702 and Glamsterdam (Sepolia, 2026-10-06)');
+// ---------------------------------------------------------------------------
+// Sources: EIP-7773 (Sepolia activation 1791294816), EIP-2780 / EIP-8037 /
+// EIP-8038 at ethereum/EIPs 9be3a7ec, go-ethereum v1.17.8 params and
+// core/state_transition.go; the figures below were measured on Sepolia on
+// 2026-10-13 (scripts/testnet/eip7702-smoke.mjs, dev index 7).
+{
+  const LIMIT = setCodeIntrinsicGas(1) + SET_CODE_EXECUTION_GAS;
+  // EIP-7702's own schedule (mainnet, Hoodi; Sepolia before the fork).
+  const pre = selfSponsoredSetCodeCharges({ rules: 'eip7702', action: 'upgrade', delegatedAtStart: false });
+  check('EIP-7702 rules: intrinsic 46,000 (21,000 + PER_EMPTY_ACCOUNT_COST 25,000), refund 12,500, no runtime charges', pre.intrinsic === 46_000n && pre.authorizationRefund === 12_500n && pre.beforeCode === 46_000n);
+  check('EIP-7702 rules (recorded): the phase 8 revocation used 36,800 = 46,000 - min(12,500, 46,000 / 5)', 46_000n - (46_000n / 5n < 12_500n ? 46_000n / 5n : 12_500n) === 36_800n);
+  // Glamsterdam: EIP-2780 TX_BASE_COST 12,000 (self-transfer, zero value add
+  // nothing) + EIP-8037 EXECUTION_PER_AUTH_BASE_COST 7,816.
+  const up = selfSponsoredSetCodeCharges({ rules: 'amsterdam', action: 'upgrade', delegatedAtStart: false });
+  const rv = selfSponsoredSetCodeCharges({ rules: 'amsterdam', action: 'revoke', delegatedAtStart: true });
+  const reup = selfSponsoredSetCodeCharges({ rules: 'amsterdam', action: 'upgrade', delegatedAtStart: true });
+  check('Glamsterdam upgrade: intrinsic 19,816, + 35,190 indicator state gas (23 x CPSB 1530), + 3,000 cold Kernel load = 58,006', up.intrinsic === 19_816n && up.runtimeState === 35_190n && up.runtimeExecution === 3_000n && up.beforeCode === 58_006n && up.authorizationRefund === 0n);
+  check('Glamsterdam revocation: the 19,816 intrinsic only', rv.beforeCode === 19_816n && rv.runtimeState === 0n && rv.runtimeExecution === 0n);
+  check('Glamsterdam re-delegation (indicator present at start): no state gas, 22,816', reup.beforeCode === 22_816n && reup.runtimeState === 0n);
+  // Live, Sepolia, 2026-10-13 (re-read on publicnode and Pocket).
+  const LIVE_UPGRADE_GAS_USED = 59_393n; // 0xb0be116c48d7a43b93f2b304283b0e0a7945dce74ac53d389a1a6bebdbfd10f8, block 11909825
+  const LIVE_REVOKE_GAS_USED = 19_816n; // 0xa1de173a…1114 (block 11909823) and 0x1b9f8b6c…e079 (block 11909830)
+  check('live upgrade: gasUsed 59,393 = 58,006 + 1,387 for Kernel v3.3\'s empty call', LIVE_UPGRADE_GAS_USED - up.beforeCode === 1_387n);
+  check('live revocation: gasUsed = the Glamsterdam intrinsic exactly', LIVE_REVOKE_GAS_USED === rv.beforeCode);
+  check('the fixed 86,000 limit covers the live upgrade with >= 26,000 gas to spare (a pre-execution out-of-gas would revert the delegation but keep the fee)', LIMIT === 86_000n && LIMIT - LIVE_UPGRADE_GAS_USED >= 26_000n);
+  check('the fixed 86,000 limit covers the estimates under both schedules (Sepolia 60,212 / 19,980 / 24,542; Hoodi pre-fork 47,725 / 46,382)', [60_212n, 19_980n, 24_542n, 47_725n, 46_382n].every((g) => g <= LIMIT));
+  // Someone else's transaction carrying the tuple (a bundler's bundle).
+  const relayed = relayedAuthorizationGas({ rules: 'amsterdam', authorityExists: true, delegatedAtStart: false });
+  const relayedEmpty = relayedAuthorizationGas({ rules: 'amsterdam', authorityExists: false, delegatedAtStart: false });
+  const relayedOld = relayedAuthorizationGas({ rules: 'eip7702', authorityExists: true, delegatedAtStart: false });
+  check('a relayed tuple costs 52,006 under Glamsterdam (7,816 + ACCOUNT_WRITE 9,000 + 35,190), was 25,000 - 12,500', relayed.charged === 52_006n && relayed.refund === 0n && relayedOld.charged === 25_000n && relayedOld.refund === 12_500n);
+  check('a relayed tuple for an EMPTY authority adds 183,600 state gas (120 x 1530): 235,606', relayedEmpty.charged === 235_606n);
+  // Which schedule the confirm text describes.
+  const ACT = 1_791_294_816;
+  check('activation table: Sepolia 1791294816 (EIP-7773), nothing else', SET_CODE_AMSTERDAM_ACTIVATION.size === 1 && SET_CODE_AMSTERDAM_ACTIVATION.get(11155111n) === 1_791_294_816n);
+  check('rules: Sepolia one second before / at activation', setCodeGasRulesFor(11155111n, ACT - 1) === 'eip7702' && setCodeGasRulesFor(11155111n, ACT) === 'amsterdam');
+  check('rules: mainnet and Hoodi EIP-7702; Base, OP and Arbitrum Sepolia and custom ids unknown', setCodeGasRulesFor(1n, ACT) === 'eip7702' && setCodeGasRulesFor(560048n, ACT) === 'eip7702' && [84532n, 11155420n, 421614n, 99999n].every((c) => setCodeGasRulesFor(c, ACT) === 'unknown'));
+  const q = (chainId, action) => ({ gasLimit: LIMIT, chainId, action, statusBefore: action === 'upgrade' ? { kind: 'plain' } : { kind: 'kernel-v3.3', delegate: PINNED } });
+  const OLD_TEXT = `Worst case: 86000 gas (intrinsic 46000 incl. 25,000 for the authorization, plus 40000 for the call)`;
+  check('text, EIP-7702 schedule: byte-identical to the phase 10 confirm sentence', setCodeWorstCaseGasText(q(1n, 'upgrade'), ACT) === OLD_TEXT && setCodeWorstCaseGasText(q(11155111n, 'revoke'), ACT - 1) === OLD_TEXT);
+  const tUp = setCodeWorstCaseGasText(q(11155111n, 'upgrade'), ACT + 600_000);
+  const tRv = setCodeWorstCaseGasText(q(11155111n, 'revoke'), ACT + 600_000);
+  check('text, Sepolia after Glamsterdam: no "25,000 for the authorization"', !tUp.includes('25,000') && !tRv.includes('25,000'), tUp);
+  check('text, Sepolia upgrade names 19816, 35190 and 3000', tUp === 'Worst case: 86000 gas, a fixed limit (this network\'s current gas rules charge 19816 for the transaction and the authorization, 35190 to store the delegation and 3000 to load the Kernel code, plus what the Kernel code itself uses)', tUp);
+  check('text, Sepolia revocation names 19816 only', tRv === 'Worst case: 86000 gas, a fixed limit (this network\'s current gas rules charge 19816 for the transaction and the authorization; removing the delegation adds nothing)', tRv);
+  check('text, unchecked network: neutral', setCodeWorstCaseGasText(q(84532n, 'upgrade'), ACT) === 'Worst case: 86000 gas (a fixed limit for the authorization and the call to your own address)');
+  // Node methods need quantities (geth 1.17 / erigon 3.7 refused 0x00 / 0x01 and zero-padded r, s).
+  let a;
+  for (let n = 0n; ; n++) {
+    a = signEip7702Authorization({ chainId: 11155111n, address: PINNED, nonce: n }, owner);
+    if (a.yParity === 0) break;
+  }
+  const qa = toRpcEip7702AuthQuantities(a);
+  const qhex = /^0x(0|[1-9a-f][0-9a-f]*)$/;
+  check('quantity form: yParity 0x0, no leading zero digits in chainId / nonce / r / s', qa.yParity === '0x0' && [qa.chainId, qa.nonce, qa.r, qa.s].every((v) => qhex.test(v)) && BigInt(qa.r) === BigInt(toRpcEip7702Auth(a).r) && BigInt(qa.s) === BigInt(toRpcEip7702Auth(a).s));
+  check('bundler form unchanged: yParity 0x00, 32-byte r / s', toRpcEip7702Auth(a).yParity === '0x00' && toRpcEip7702Auth(a).r.length === 66);
+}
+
 // Phase 11 item 2 (bug A): the 7702 quote shares prepareAaCalls, so an
 // unfunded EOA gets the wallet's funding message before any bundler call.
 {
@@ -767,5 +835,11 @@ console.log('check-7702: delegated-eoa risk signal');
 }
 
 console.log('');
+// The Upgrade screen's worst-case sentence comes from the schedule-aware helper, not a hard-coded 25,000 (CTO, phase 20).
+{
+  const upgradeScreen = readFileSync(new URL('../src/screens/UpgradeAccountScreen.tsx', import.meta.url), 'utf8');
+  check('the Upgrade screen renders setCodeWorstCaseGasText(quote) and no hard-coded authorization figure', upgradeScreen.includes('${setCodeWorstCaseGasText(quote)}') && !upgradeScreen.includes('incl. 25,000 for the authorization'));
+}
+
 console.log(`check-7702: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
