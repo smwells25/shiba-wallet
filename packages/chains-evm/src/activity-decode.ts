@@ -1313,6 +1313,12 @@ export interface ActivityTokenMeta {
   symbol: string | null;
   decimals: number | null;
   tracked: boolean;
+  /**
+   * Set by the caller for a token it pins from a published deployment
+   * list, e.g. Lido's stETH; labelled "SYM (pinned staking token)" when
+   * not tracked. Absent means the token is not pinned.
+   */
+  pinned?: boolean;
 }
 
 export interface ActivitySentenceContext {
@@ -1482,10 +1488,15 @@ class SentenceWriter {
     return this.party(address);
   }
 
-  /** Token label: tracked symbol, else pinned symbol, else "SYM (untracked token 0x…)". */
+  /**
+   * Token label: tracked symbol, else "SYM (pinned staking token)" for a
+   * token the caller pins, else a known contract's symbol, else
+   * "SYM (untracked token 0x…)".
+   */
   token(address: string): string {
     const meta = this.ctx.tokens[address.toLowerCase()];
     if (meta?.tracked && meta.symbol) return meta.symbol;
+    if (meta?.pinned && meta.symbol) return `${meta.symbol} (pinned staking token)`;
     const known = knownContract(this.desc.chainId, address);
     if (known?.kind === 'token' && known.symbol) return known.symbol;
     const short = shortActivityAddress(address);
