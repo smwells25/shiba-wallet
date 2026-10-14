@@ -227,7 +227,7 @@ export function ProveOwnershipScreen({ navigation }: Props) {
         refuses them unless you type the site yourself.
       </WarningBox>
 
-      <Text style={[styles.label, { color: theme.textMuted }]}>Prove ownership of</Text>
+      <Text accessibilityLabel="Prove ownership of" style={[styles.label, { color: theme.textMuted }]}>Prove ownership of</Text>
       <View style={styles.choiceRow}>
         <Button
           title={mode === 'eoa' ? '✓ This account' : 'This account'}
@@ -257,7 +257,7 @@ export function ProveOwnershipScreen({ navigation }: Props) {
         </Text>
       ) : null}
 
-      <Text {...fieldLabel('challenge', 'Challenge').label} style={[styles.label, { color: theme.textMuted }]}>Challenge</Text>
+      <Text accessibilityLabel="Challenge" {...fieldLabel('challenge', 'Challenge').label} style={[styles.label, { color: theme.textMuted }]}>Challenge</Text>
       <TextInput
         {...fieldLabel('challenge', 'Challenge').input}
         value={challenge}
@@ -294,7 +294,7 @@ export function ProveOwnershipScreen({ navigation }: Props) {
         />
       </View>
 
-      <Text {...fieldLabel('site', 'Site (only for a website sign-in message)').label} style={[styles.label, { color: theme.textMuted }]}>Site (only for a website sign-in message)</Text>
+      <Text accessibilityLabel="Site (only for a website sign-in message)" {...fieldLabel('site', 'Site (only for a website sign-in message)').label} style={[styles.label, { color: theme.textMuted }]}>Site (only for a website sign-in message)</Text>
       <TextInput
         {...fieldLabel('site', 'Site (only for a website sign-in message)').input}
         value={site}
@@ -346,7 +346,7 @@ function Row({
 }) {
   return (
     <View style={[styles.row, { borderColor: theme.border }]}>
-      <Text style={[styles.label, { color: theme.textMuted }]}>{label}</Text>
+      <Text accessibilityLabel={label} style={[styles.label, { color: theme.textMuted }]}>{label}</Text>
       <Text selectable style={[styles.value, { color: theme.text }, monoValue ? { fontFamily: mono, fontSize: 13 } : null]}>
         {value}
       </Text>

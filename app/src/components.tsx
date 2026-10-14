@@ -12,6 +12,7 @@ import {
 import { Theme, useTheme } from './theme';
 import type { FeatureReadiness } from './config/readiness';
 import { IMPORTED_KEY_NOT_BACKED_UP, WATCH_ONLY_NOTICE } from './wallet/account-ids';
+import { createAnnounceFocus, HIDDEN_FIELD_LABEL_STYLE, type AnnounceFocus } from './a11y';
 
 /** Primary / secondary / destructive button built from plain components. */
 export function Button({
@@ -87,20 +88,45 @@ export function Button({
  * takes the view itself, so no findNodeHandle is needed), so a person who
  * activated Review hears why nothing happened instead of staying on the
  * button.
+ *
+ * The focus is sent only once the box has been laid out, after a short
+ * settle delay (a11y.ts createAnnounceFocus; pass p20d finding 2): sent at
+ * commit time it moved the focus for a refusal shown at once but not for
+ * one that arrived after the asynchronous review, when the form had
+ * swapped Review for a spinner and the screen reader was placing its focus
+ * again. The same rule serves the DCA, recurring-payment, subscription and
+ * session-grant forms, which all render their refusal through this box.
  */
 export function WarningBox({ children, announce = false }: { children: React.ReactNode; announce?: boolean }) {
   const theme = useTheme();
   const ref = useRef<View>(null);
+  const focus = useRef<AnnounceFocus | null>(null);
   // Re-focus when the text changes (a second refusal with other figures).
   const spoken = typeof children === 'string' ? children : null;
   useEffect(() => {
-    if (!announce || !ref.current) return;
-    AccessibilityInfo.sendAccessibilityEvent(ref.current, 'focus');
+    if (!announce) return;
+    const controller = createAnnounceFocus({
+      send: () => {
+        if (ref.current) AccessibilityInfo.sendAccessibilityEvent(ref.current, 'focus');
+      },
+      schedule: (run, ms) => setTimeout(run, ms),
+      cancel: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+    });
+    focus.current = controller;
+    return () => {
+      controller.dispose();
+      if (focus.current === controller) focus.current = null;
+    };
+  }, [announce]);
+  useEffect(() => {
+    focus.current?.textChanged(announce ? (spoken ?? '') : null);
   }, [announce, spoken]);
   return (
     <View
       ref={ref}
-      {...(announce ? { accessible: true, accessibilityLiveRegion: 'polite' as const } : {})}
+      {...(announce
+        ? { accessible: true, accessibilityLiveRegion: 'polite' as const, onLayout: () => focus.current?.laidOut() }
+        : {})}
       style={[
         styles.warning,
         { backgroundColor: theme.warningSurface, borderColor: theme.warningBorder },
@@ -198,6 +224,35 @@ export function useFieldLabels(): (key: string, label: string, hint?: string) =>
       };
     },
     [base],
+  );
+}
+
+/**
+ * A field's label for screen readers when the layout has no visible label
+ * for it (pass p20d finding 1). TalkBack ignores a text field's
+ * accessibilityLabel whenever the field has a placeholder or text (see
+ * FieldA11y above), so a field needs a label VIEW to be "labelled by"; this
+ * is that view, present in the native hierarchy (so Android's nativeID
+ * lookup finds it) but not drawn: a11y.ts HIDDEN_FIELD_LABEL_STYLE (a 1×1
+ * clipped box out of the layout flow with transparent text — not opacity 0,
+ * zero size or display "none", which may count as not shown to the user).
+ * It changes no layout: it is absolutely positioned, so a parent's gap and
+ * flow ignore it. Hidden from VoiceOver (accessibilityElementsHidden, iOS
+ * only), which names the field by its accessibilityLabel instead. On
+ * Android it stays an ordinary text node, exactly like a visible label, so
+ * swiping reads it just before its field, as with every visible label.
+ *
+ * Usage, with the same key and text as the field:
+ *   <HiddenFieldLabel field={fieldLabel('key', 'Label')} />
+ *   <TextInput {...fieldLabel('key', 'Label').input} … />
+ * Prefer a visible label (the label's <Text> spreading `.label`) wherever
+ * the design has room for one.
+ */
+export function HiddenFieldLabel({ field }: { field: FieldLabel }) {
+  return (
+    <Text {...field.label} accessibilityElementsHidden style={HIDDEN_FIELD_LABEL_STYLE}>
+      {field.text}
+    </Text>
   );
 }
 

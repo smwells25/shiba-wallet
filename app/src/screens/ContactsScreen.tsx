@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation';
-import { Button, WarningBox, screenStyle, fieldA11y } from '../components';
+import { Button, WarningBox, screenStyle, HiddenFieldLabel, useFieldLabels } from '../components';
 import { QrScanner } from '../components/QrScanner';
 import { resolveActiveNetworks } from '../config/defaults';
 import { useTheme } from '../theme';
@@ -52,6 +52,7 @@ interface NetworkSection {
  */
 export function ContactsScreen(_props: Props) {
   const theme = useTheme();
+  const fieldLabel = useFieldLabels();
   const { sepolia, testNetwork, evmChain } = usePrefs();
   const networks = useMemo(() => resolveActiveNetworks(testNetwork), [testNetwork]);
 
@@ -245,8 +246,9 @@ export function ContactsScreen(_props: Props) {
                 >
                   {isRenaming ? (
                     <>
+                      <HiddenFieldLabel field={fieldLabel(`rename-${contact.address}`, `New name for ${contact.name}`)} />
                       <TextInput
-                        {...fieldA11y(`New name for ${contact.name}`)}
+                        {...fieldLabel(`rename-${contact.address}`, `New name for ${contact.name}`).input}
                         value={renameText}
                         onChangeText={(t) => {
                           setRenameText(t);
@@ -342,8 +344,9 @@ export function ContactsScreen(_props: Props) {
             />
           ))}
         </View>
+        <HiddenFieldLabel field={fieldLabel('contact-name', 'Contact name')} />
         <TextInput
-          {...fieldA11y('Contact name')}
+          {...fieldLabel('contact-name', 'Contact name').input}
           value={name}
           onChangeText={(t) => {
             setName(t);
@@ -356,8 +359,9 @@ export function ContactsScreen(_props: Props) {
           style={inputStyle}
         />
         <View style={styles.addressRow}>
+          <HiddenFieldLabel field={fieldLabel('contact-address', `${addNetwork?.network.label ?? ''} address`)} />
           <TextInput
-            {...fieldA11y(`${addNetwork?.network.label ?? ''} address`)}
+            {...fieldLabel('contact-address', `${addNetwork?.network.label ?? ''} address`).input}
             value={address}
             onChangeText={(t) => {
               setAddress(t);

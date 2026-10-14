@@ -4,7 +4,7 @@ import { ActivityIndicator, Alert, Linking, ScrollView, Switch, Text, TextInput,
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { KernelGuardianSet } from '@shiba-wallet/chains-evm';
 import type { RootStackParamList } from '../navigation';
-import { Button, TestNetworksOnlyCard, WarningBox, screenStyle, switchColors, useFieldLabels, fieldA11y } from '../components';
+import { Button, TestNetworksOnlyCard, WarningBox, screenStyle, switchColors, useFieldLabels } from '../components';
 import { localDateLabel } from '../config/dates';
 import { ContactPicker, RecipientContactNotice } from '../components/Contacts';
 import {
@@ -656,19 +656,21 @@ export function GuardiansScreen({ navigation }: Props) {
               variant="secondary"
               onPress={() => setPickerFor(i)}
             />
+            <Text {...fieldLabel(`guardian-${i}-label`, `Guardian ${i + 1} label (optional)`).label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel(`guardian-${i}-label`, `Guardian ${i + 1} label (optional)`).text}</Text>
             <TextInput
-              {...fieldA11y(`Guardian ${i + 1} label, optional`)}
+              {...fieldLabel(`guardian-${i}-label`, `Guardian ${i + 1} label (optional)`).input}
               value={d.label}
               onChangeText={(t) => setDrafts((p) => p.map((x, j) => (j === i ? { ...x, label: t } : x)))}
-              placeholder="Label (optional, stored in the recovery record)"
+              placeholder="Stored in the recovery record"
               placeholderTextColor={theme.textMuted}
               style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
             />
+            <Text {...fieldLabel(`guardian-${i}-weight`, `Guardian ${i + 1} weight`).label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel(`guardian-${i}-weight`, `Guardian ${i + 1} weight`).text}</Text>
             <TextInput
-              {...fieldA11y(`Guardian ${i + 1} weight`)}
+              {...fieldLabel(`guardian-${i}-weight`, `Guardian ${i + 1} weight`).input}
               value={d.weight}
               onChangeText={(t) => setDrafts((p) => p.map((x, j) => (j === i ? { ...x, weight: t } : x)))}
-              placeholder="Weight (1 or more)"
+              placeholder="1 or more"
               placeholderTextColor={theme.textMuted}
               keyboardType="number-pad"
               style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
@@ -708,7 +710,7 @@ export function GuardiansScreen({ navigation }: Props) {
         ))}
         {delaySeconds === 0 ? (
           <View style={styles.toggleRow}>
-            <Text style={[styles.toggleLabel, { color: theme.text }]}>{NO_VETO_ACK_TEXT}</Text>
+            <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.toggleLabel, { color: theme.text }]}>{NO_VETO_ACK_TEXT}</Text>
             <Switch {...switchColors(theme)} accessibilityLabel={NO_VETO_ACK_TEXT} value={noVetoAck} onValueChange={setNoVetoAck} />
           </View>
         ) : null}
@@ -724,7 +726,7 @@ export function GuardiansScreen({ navigation }: Props) {
           <>
             <WarningBox>{GUARDIANS_MAINNET_CONDITION}</WarningBox>
             <View style={styles.toggleRow}>
-              <Text style={[styles.toggleLabel, { color: theme.text }]}>{GUARDIANS_MAINNET_ACK}</Text>
+              <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.toggleLabel, { color: theme.text }]}>{GUARDIANS_MAINNET_ACK}</Text>
               <Switch {...switchColors(theme)} accessibilityLabel={GUARDIANS_MAINNET_ACK} value={mainnetAck} onValueChange={setMainnetAck} />
             </View>
           </>

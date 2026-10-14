@@ -265,9 +265,27 @@ export function AccountSwitcher({ onManage, onImportKey }: { onManage: () => voi
               );
             }}
           />
-          {switcherListOverflows({ listHeight, contentHeight, scrollY }) ? (
-            <Text style={[styles.scrollHint, { color: theme.textMuted }]}>{SWITCHER_SCROLL_HINT}</Text>
-          ) : null}
+          {/* "More accounts below" is spoken when it appears (pass p20d
+              finding 8: TalkBack never reached it — swiping through the rows
+              scrolls the list to its end, which removes the line first). An
+              always-mounted polite live region (Android; RN 0.86.3
+              ViewAccessibility.d.ts:245) whose content changes from nothing
+              to the line, so the change is announced; collapsable={false}
+              keeps the wrapper a real native view (Fabric flattens a plain
+              View, ViewShadowNode.cpp:49), and while empty it is taken out of
+              the flow so the modal's gap does not open around it. A focusable
+              line at the list's end was not chosen: a person would reach it
+              only after every row, when "more below" is no longer true. */}
+          {(() => {
+            const overflows = switcherListOverflows({ listHeight, contentHeight, scrollY });
+            return (
+              <View collapsable={false} accessibilityLiveRegion="polite" style={overflows ? null : styles.liveRegionIdle}>
+                {overflows ? (
+                  <Text style={[styles.scrollHint, { color: theme.textMuted }]}>{SWITCHER_SCROLL_HINT}</Text>
+                ) : null}
+              </View>
+            );
+          })()}
           <Button title="Add account" onPress={() => void add()} disabled={busy} />
           <Button
             title="Import a private key"
@@ -354,6 +372,12 @@ const styles = StyleSheet.create({
   scrollHint: {
     fontSize: 12,
     textAlign: 'center',
+  },
+  // The empty live region: out of the flow (no gap around it), no size.
+  liveRegionIdle: {
+    position: 'absolute',
+    width: 0,
+    height: 0,
   },
   row: {
     flexDirection: 'row',

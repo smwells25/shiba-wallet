@@ -2456,7 +2456,7 @@ export function SendScreen({ route, navigation }: Props) {
               onValueChange={setAaEnabled}
               disabled={!url}
             />
-            <Text style={[styles.overrideLabel, { color: theme.text }]}>
+            <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.overrideLabel, { color: theme.text }]}>
               Send from smart account
             </Text>
             <View style={[styles.aaTag, { borderColor: theme.accent }]}>
@@ -2540,7 +2540,7 @@ export function SendScreen({ route, navigation }: Props) {
                   }}
                   disabled={!url}
                 />
-                <Text style={[styles.overrideLabel, { color: theme.text }]}>Pay the network fee in USDC</Text>
+                <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.overrideLabel, { color: theme.text }]}>Pay the network fee in USDC</Text>
               </View>
               <Text style={[styles.hint, { color: theme.textMuted }]}>
                 {tokenGasOfferNow.source.kind === 'erc7677'
@@ -2563,7 +2563,7 @@ export function SendScreen({ route, navigation }: Props) {
               onValueChange={setPasskeySigner}
               disabled={!url}
             />
-            <Text style={[styles.overrideLabel, { color: theme.text }]}>Sign with passkey</Text>
+            <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.overrideLabel, { color: theme.text }]}>Sign with passkey</Text>
           </View>
           <Text style={[styles.hint, { color: theme.textMuted }]}>
             Signs with this phone{'\u2019'}s passkey instead of your account key. The smart account (the
@@ -2816,7 +2816,7 @@ function Row({
 }) {
   return (
     <View style={[styles.row, { borderColor: theme.border }]}>
-      <Text style={[styles.rowLabel, { color: theme.textMuted }]}>{label}</Text>
+      <Text accessibilityLabel={label} style={[styles.rowLabel, { color: theme.textMuted }]}>{label}</Text>
       <Text
         selectable
         // "—" is a visual placeholder; screen readers hear "not available".

@@ -586,7 +586,7 @@ export function WcSentView({ result, onDone }: { result: WcSentResult; onDone: (
           {result.detail ? <Text style={[styles.hint, { color: theme.text }]}>{result.detail}</Text> : null}
           {result.txid ? (
             <>
-              <Text style={[styles.fieldLabel, { color: theme.textMuted }]}>Transaction</Text>
+              <Text accessibilityLabel="Transaction" style={[styles.fieldLabel, { color: theme.textMuted }]}>Transaction</Text>
               <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border }]}>
                 <Text selectable style={[styles.monoText, { color: theme.text }]}>
                   {result.txid}
@@ -596,7 +596,7 @@ export function WcSentView({ result, onDone }: { result: WcSentResult; onDone: (
           ) : null}
           {result.userOpHash ? (
             <>
-              <Text style={[styles.fieldLabel, { color: theme.textMuted }]}>UserOperation hash</Text>
+              <Text accessibilityLabel="UserOperation hash" style={[styles.fieldLabel, { color: theme.textMuted }]}>UserOperation hash</Text>
               <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border }]}>
                 <Text selectable style={[styles.monoText, { color: theme.text }]}>
                   {result.userOpHash}
@@ -719,7 +719,7 @@ function ProposalBody({
         <Text style={[styles.hint, { color: theme.textMuted }]}>Checking for a smart account…</Text>
       ) : smart ? (
         <>
-          <Text style={[styles.fieldLabel, { color: theme.textMuted }]}>Connect as</Text>
+          <Text accessibilityLabel="Connect as" style={[styles.fieldLabel, { color: theme.textMuted }]}>Connect as</Text>
           <Button
             title={connectAs === 'eoa' ? '✓ Regular account (EOA)' : 'Regular account (EOA)'}
             variant={connectAs === 'eoa' ? 'primary' : 'secondary'}
@@ -913,7 +913,7 @@ function RequestBody({
         <Field label="From dApp" value={dappName} theme={theme} />
         {accountLabel ? <Field label="Signing account" value={accountLabel} theme={theme} /> : null}
         <TypedDataSummaryCard typedData={typedData} signer={item.address} evmChain={evmChain} theme={theme} />
-        <Text style={[styles.fieldLabel, { color: theme.textMuted }]}>Exactly what is signed</Text>
+        <Text accessibilityLabel="Exactly what is signed" style={[styles.fieldLabel, { color: theme.textMuted }]}>Exactly what is signed</Text>
         {typedData.domain.name ? (
           <Field label="Signing domain" value={typedData.domain.name} theme={theme} />
         ) : null}
@@ -926,7 +926,7 @@ function RequestBody({
           />
         ) : null}
         <Field label="Type" value={typedData.primaryType} theme={theme} />
-        <Text style={[styles.fieldLabel, { color: theme.textMuted }]}>Message</Text>
+        <Text accessibilityLabel="Message" style={[styles.fieldLabel, { color: theme.textMuted }]}>Message</Text>
         <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border }]}>
           <Text selectable style={[styles.monoText, { color: theme.text }]}>
             {JSON.stringify(typedData.message, null, 2)}
@@ -1171,7 +1171,7 @@ function PasskeySignerChoice({
   if (!available) return null;
   return (
     <View style={{ gap: 6 }}>
-      <Text style={[styles.fieldLabel, { color: theme.textMuted }]}>Sign with</Text>
+      <Text accessibilityLabel="Sign with" style={[styles.fieldLabel, { color: theme.textMuted }]}>Sign with</Text>
       <Button
         title={signer === 'owner' ? '✓ Account key (default)' : 'Account key (default)'}
         variant={signer === 'owner' ? 'primary' : 'secondary'}
@@ -1244,7 +1244,7 @@ function PersonalSignBody({
       {accountLabel ? <Field label="Signing account" value={accountLabel} theme={theme} /> : null}
       {siwe.kind === 'siwe' ? <SiweSummaryCard state={siwe} theme={theme} /> : null}
       {siwe.kind === 'malformed' ? siwe.warnings.map((w) => <WarningBox key={w}>{w}</WarningBox>) : null}
-      <Text style={[styles.fieldLabel, { color: theme.textMuted }]}>
+      <Text accessibilityLabel={parsed.messageText !== null ? 'Message (exactly what is signed)' : 'Message (hex — not printable text)'} style={[styles.fieldLabel, { color: theme.textMuted }]}>
         {parsed.messageText !== null ? 'Message (exactly what is signed)' : 'Message (hex — not printable text)'}
       </Text>
       <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border }]}>
@@ -1287,7 +1287,7 @@ function SiweSummaryCard({
       <Text accessibilityRole="header" style={[styles.summaryTitle, { color: theme.text }]}>Sign-In with Ethereum (EIP-4361)</Text>
       {summary.rows.map((row) => (
         <View key={row.label} style={[styles.fieldRow, { borderColor: theme.border }]}>
-          <Text style={[styles.fieldLabel, { color: theme.textMuted }]}>{row.label}</Text>
+          <Text accessibilityLabel={row.label} style={[styles.fieldLabel, { color: theme.textMuted }]}>{row.label}</Text>
           <Text
             selectable
             style={[styles.fieldValue, { color: theme.text }, row.mono ? { fontFamily: mono, fontSize: 13 } : null]}
@@ -1298,7 +1298,7 @@ function SiweSummaryCard({
       ))}
       {summary.resources.length > 0 ? (
         <View style={[styles.fieldRow, { borderColor: theme.border }]}>
-          <Text style={[styles.fieldLabel, { color: theme.textMuted }]}>
+          <Text accessibilityLabel={`Resources (${summary.resources.length})`} style={[styles.fieldLabel, { color: theme.textMuted }]}>
             Resources ({summary.resources.length})
           </Text>
           {summary.resources.map((r, i) => (
@@ -1594,7 +1594,7 @@ function PermissionRequestBody({
       />
       {parsed.isAdjustmentAllowed ? (
         <>
-          <Text style={[styles.fieldLabel, { color: theme.textMuted }]}>Narrow this grant (optional)</Text>
+          <Text accessibilityLabel="Narrow this grant (optional)" style={[styles.fieldLabel, { color: theme.textMuted }]}>Narrow this grant (optional)</Text>
           {requested.calls.map((c, i) => (
             <Button
               key={`k${i}`}
@@ -1809,7 +1809,7 @@ function TypedDataSummaryCard({
       <Text style={[styles.hint, { color: theme.text }]}>{summary.explanation}</Text>
       {summary.rows.map((row, i) => (
         <View key={`${i}-${row.label}`} style={[styles.fieldRow, { borderColor: theme.border }]}>
-          <Text style={[styles.fieldLabel, { color: theme.textMuted }]}>{row.label}</Text>
+          <Text accessibilityLabel={row.label} style={[styles.fieldLabel, { color: theme.textMuted }]}>{row.label}</Text>
           <Text
             selectable
             style={[
@@ -1854,7 +1854,7 @@ function Field({
 }) {
   return (
     <View style={[styles.fieldRow, { borderColor: theme.border }]}>
-      <Text style={[styles.fieldLabel, { color: theme.textMuted }]}>{label}</Text>
+      <Text accessibilityLabel={label} style={[styles.fieldLabel, { color: theme.textMuted }]}>{label}</Text>
       <Text
         selectable
         style={[

@@ -2143,6 +2143,27 @@ console.log('check-multisig: pass p20c (TalkBack and dark mode) findings 5, 9 an
   const exposureOk = (src) => src.includes('<Text style={[styles.hint, { color: theme.warningText }]}>{multisigExposureLine(multisigConfigOf(r), r.localSigner)}</Text>');
   check('finding 17: the multisig list card draws the exposure warning in the warning text colour, not muted grey (source)', exposureOk(ms));
   check('…mutant caught: the old muted line', !exposureOk(ms.replace('{ color: theme.warningText }]}>{multisigExposureLine', '{ color: theme.textMuted }]}>{multisigExposureLine')));
+
+  // Pass p20d finding 7: the list address, the receive address and every
+  // signer line are SPOKEN short (0x944c…0d38) while the full 42 characters
+  // stay on screen; InfoRow's spokenValue carries the spoken form.
+  const spokenOk = (src) =>
+    src.includes('<Text selectable accessibilityLabel={spokenShortAddress(r.address)} style={[styles.mono, { color: theme.textMuted }]}>') &&
+    (src.match(/value=\{s\.address\}\s+spokenValue=\{spokenShortAddress\(s\.address\)\}/g) ?? []).length === 2 &&
+    src.includes('<InfoRow label="Multisig address (receive here)" value={selected.address} spokenValue={spokenShortAddress(selected.address)} monoValue />') &&
+    src.includes('<InfoRow label="You approve as" value={r.signer.address} spokenValue={spokenShortAddress(r.signer.address)}');
+  check('p20d finding 7: the multisig list address, the receive address and each signer line are spoken in the short form (source)', spokenOk(ms));
+  check('…mutant caught: a signer line spoken in full again', !spokenOk(ms.replace('spokenValue={spokenShortAddress(s.address)}', '')));
+  check('…InfoRow speaks spokenValue for the value when given and the value itself otherwise (source)',
+    /<Text\s+selectable\s+\{\.\.\.\(spokenValue !== undefined \? \{ accessibilityLabel: spokenValue \} : \{\}\)\}\s+style=\{\[styles\.rowValue,/.test(rv));
+  // Pass p20d finding 8: "More accounts below" was never spoken; it is now
+  // announced when it appears, by an always-mounted polite live region.
+  const liveOk = (src) =>
+    /<View collapsable=\{false\} accessibilityLiveRegion="polite" style=\{overflows \? null : styles\.liveRegionIdle\}>\s*\{overflows \? \(\s*<Text style=\{\[styles\.scrollHint, \{ color: theme\.textMuted \}\]\}>\{SWITCHER_SCROLL_HINT\}<\/Text>\s*\) : null\}\s*<\/View>/.test(src) &&
+    /liveRegionIdle: \{\s*position: 'absolute',\s*width: 0,\s*height: 0,\s*\}/.test(src);
+  check('p20d finding 8: the scroll hint sits in an always-mounted polite live region (a real native view; out of the flow while empty), so it is announced when it appears (source)', liveOk(sw));
+  check('…mutant caught: the hint mounted on its own again (nothing for Android to announce a change of)',
+    !liveOk(sw.replace('<View collapsable={false} accessibilityLiveRegion="polite" style={overflows ? null : styles.liveRegionIdle}>', '<View>')));
 }
 
 // ===========================================================================

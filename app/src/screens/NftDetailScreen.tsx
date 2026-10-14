@@ -135,7 +135,7 @@ export function NftDetailScreen({ route, navigation }: Props) {
       <Row label="Network" value={`${evmChain.label}${evmChain.testnet ? ' (TESTNET)' : ''}`} theme={theme} />
       {description ? (
         <View style={[styles.row, { borderColor: theme.border }]}>
-          <Text style={[styles.rowLabel, { color: theme.textMuted }]}>Description</Text>
+          <Text accessibilityLabel="Description" style={[styles.rowLabel, { color: theme.textMuted }]}>Description</Text>
           <Text style={[styles.description, { color: theme.text }]}>{description}</Text>
         </View>
       ) : null}
@@ -197,7 +197,7 @@ function Row({
 }) {
   return (
     <View style={[styles.row, { borderColor: theme.border }]}>
-      <Text style={[styles.rowLabel, { color: theme.textMuted }]}>{label}</Text>
+      <Text accessibilityLabel={label} style={[styles.rowLabel, { color: theme.textMuted }]}>{label}</Text>
       <Text
         selectable
         style={[styles.rowValue, { color: theme.text }, monoFont ? { fontFamily: mono, fontSize: 13 } : null]}

@@ -9,7 +9,7 @@ import {
   TextInput,
 } from 'react-native';
 import { isValidMnemonic } from '@shiba-wallet/core';
-import { Button, WarningBox, screenStyle, fieldA11y } from '../components';
+import { Button, WarningBox, screenStyle, HiddenFieldLabel, useFieldLabels } from '../components';
 import { useTheme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
 
@@ -23,6 +23,7 @@ export function ImportScreen() {
   // screen-protection.ts).
   usePreventScreenCapture('import-phrase');
   const theme = useTheme();
+  const fieldLabel = useFieldLabels();
   const { importExisting } = useWallet();
   const [input, setInput] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -67,8 +68,9 @@ export function ImportScreen() {
           Only enter a recovery phrase on a device you trust. Shiba Wallet
           stores it in the device keychain and never sends it anywhere.
         </WarningBox>
+        <HiddenFieldLabel field={fieldLabel('phrase', 'Recovery phrase')} />
         <TextInput
-          {...fieldA11y('Recovery phrase', { hint: 'Enter your 12 to 24 word recovery phrase, separated by spaces.' })}
+          {...fieldLabel('phrase', 'Recovery phrase', 'Enter your 12 to 24 word recovery phrase, separated by spaces.').input}
           style={[
             styles.input,
             { backgroundColor: theme.card, borderColor: theme.controlBorder, color: theme.text },

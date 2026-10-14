@@ -1703,8 +1703,11 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
   // accessibilityLabelledBy on Android) or fieldA11y (no visible label).
   // A bare accessibilityLabel on a TextInput is refused: TalkBack read the
   // placeholder or value instead of it (finding 1).
+  // Pass p20d finding 1: fieldA11y counts only WITH a labelId (a label view
+  // to be "labelled by"); a field without a visible label gets a
+  // HiddenFieldLabel through useFieldLabels instead.
   const inputProblems = (all) => all.flatMap(({ f, src }) =>
-    tags(src, 'TextInput').filter((t) => !/\.input\}|\.\.\.fieldA11y\(/.test(t) || /\baccessibilityLabel=/.test(t)).map(() => f));
+    tags(src, 'TextInput').filter((t) => !/\.input\}|\.\.\.fieldA11y\([^)]*labelId/.test(t) || /\baccessibilityLabel=/.test(t)).map(() => f));
   const inputCount = files.reduce((n, { src }) => n + tags(src, 'TextInput').length, 0);
   check('finding 1: every TextInput in app/src is named through useFieldLabels or fieldA11y, none with a bare accessibilityLabel (allow-list empty)',
     inputProblems(files).length === 0 && inputCount >= 65, `${inputCount} inputs; problems: ${inputProblems(files).join(', ')}`);
@@ -1712,11 +1715,24 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
     inputProblems([...files, { f: 'mutant.tsx', src: '<TextInput value={x} placeholder="0.001" />' }]).length === 1);
   check('…mutant caught: a TextInput with the old bare accessibilityLabel',
     inputProblems([...files, { f: 'mutant.tsx', src: '<TextInput value={x} accessibilityLabel="Fee budget" />' }]).length === 1);
+  check('…mutant caught (p20d finding 1): a TextInput named by fieldA11y with no label view to point at',
+    inputProblems([...files, { f: 'mutant.tsx', src: "<TextInput {...fieldA11y('Alert price')} value={x} />" }]).length === 1);
+  // Every fieldA11y call outside components.tsx (where useFieldLabels calls it
+  // with its nativeID) names a labelId: on Android a field with a placeholder
+  // is named only by the view it is labelled by.
+  const fieldA11yProblems = (all) => all.flatMap(({ f, src }) =>
+    f === 'components.tsx' ? [] : [...src.matchAll(/\bfieldA11y\(/g)].filter((m) => !/^fieldA11y\([^)]*labelId/.test(src.slice(m.index))).map(() => f));
+  check('p20d finding 1: no fieldA11y call in app/src lacks a labelId — every field is labelled by a visible or hidden label view (allow-list empty)',
+    fieldA11yProblems(files).length === 0, fieldA11yProblems(files).join(', '));
+  check('…mutant caught: a label-less fieldA11y call (the old Price-alerts field)',
+    fieldA11yProblems([...files, { f: 'mutant.tsx', src: '{...fieldA11y(`Alert price for ${asset.symbol} in US dollars`)}' }]).length === 1);
   // Every fieldLabel(KEY, …).input has its fieldLabel(KEY, …).label in the
   // same file, so the field is "labelled by" a visible label that exists.
   const pairProblems = (all) => all.flatMap(({ f, src }) => {
     const keys = (suffix) => [...src.matchAll(new RegExp(`fieldLabel\\(\\s*('[^']*'|\`[^\`]*\`),(?:(?!fieldLabel\\()[^])*?\\)\\.${suffix}\\}`, 'g'))].map((m) => m[1]);
-    const labels = new Set(keys('label'));
+    // A HiddenFieldLabel (p20d finding 1) is a label view too.
+    const hidden = [...src.matchAll(/<HiddenFieldLabel field=\{fieldLabel\(\s*('[^']*'|`[^`]*`),/g)].map((m) => m[1]);
+    const labels = new Set([...keys('label'), ...hidden]);
     return keys('input').filter((k) => !labels.has(k)).map((k) => `${f} ${k}`);
   });
   check('…every fieldLabel(key).input has a fieldLabel(key).label on a visible label in the same file',
@@ -1729,6 +1745,91 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
       comps.includes('input: fieldA11y(label, { labelId: nativeID, ...(hint !== undefined ? { hint } : {}) }),'));
   const pairMutant = files.map((x) => (x.f === 'screens/ImportKeyScreen.tsx' ? { ...x, src: x.src.replace("{...fieldLabel('key', 'Ethereum private key').label} ", '') } : x));
   check('…mutant caught: a labelled field whose visible label lost its nativeID', pairProblems(pairMutant).length === 1);
+  const hiddenMutant = files.map((x) => (x.f === 'screens/ConnectionsScreen.tsx' ? { ...x, src: x.src.replace("<HiddenFieldLabel field={fieldLabel('pairing-link', 'WalletConnect pairing link')} />", '') } : x));
+  check('…mutant caught (p20d finding 1): a field whose hidden label view was dropped', pairProblems(hiddenMutant).length === 1);
+
+  // Pass p20d finding 1: the hidden label view. It must exist as a native
+  // view for Android's nativeID lookup, so it is not display "none", not
+  // opacity 0 and not of zero size; hidden by a 1×1 clip and transparent text.
+  {
+    const { HIDDEN_FIELD_LABEL_STYLE: hiddenStyle } = await import('../src/a11y.ts');
+    check('p20d finding 1: HIDDEN_FIELD_LABEL_STYLE is absolute, 1×1, clipped, transparent text, never opacity 0 or display none (exact)',
+      JSON.stringify(hiddenStyle) === JSON.stringify({ position: 'absolute', width: 1, height: 1, overflow: 'hidden', color: 'transparent' }));
+    check('…HiddenFieldLabel spreads the field label (its nativeID), hides itself from VoiceOver only and draws field.text with that style (source)',
+      /export function HiddenFieldLabel\(\{ field \}: \{ field: FieldLabel \}\) \{\s*return \(\s*<Text \{\.\.\.field\.label\} accessibilityElementsHidden style=\{HIDDEN_FIELD_LABEL_STYLE\}>\s*\{field\.text\}\s*<\/Text>/.test(comps) &&
+        !/<Text \{\.\.\.field\.label\}[^>]*importantForAccessibility/.test(comps));
+    const priceSrc = files.find((x) => x.f === 'screens/PriceAlertsScreen.tsx').src;
+    check('…the Price-alerts price field has a VISIBLE label it is labelled by: "Alert price for <asset> (US dollars)" (source)',
+      priceSrc.includes("const priceField = fieldLabel('price', `Alert price for ${asset.symbol} (US dollars)`);") &&
+        priceSrc.includes('<Text {...priceField.label} style={[styles.hint, { color: theme.textMuted }]}>{priceField.text}</Text>') &&
+        priceSrc.includes('{...priceField.input}'));
+    const grouped = [
+      ['screens/GuardiansScreen.tsx', 'fieldLabel(`guardian-${i}-label`, `Guardian ${i + 1} label (optional)`)'],
+      ['screens/GuardiansScreen.tsx', 'fieldLabel(`guardian-${i}-weight`, `Guardian ${i + 1} weight`)'],
+      ['screens/InheritanceScreen.tsx', 'fieldLabel(`heir-${i}-label`, `Heir ${i + 1} label (optional)`)'],
+      ['screens/InheritanceScreen.tsx', 'fieldLabel(`heir-${i}-weight`, `Heir ${i + 1} weight`)'],
+      ['screens/MultisigScreen.tsx', 'fieldLabel(`cosigner-${i}-weight`, `Co-signer ${i + 1} weight`)'],
+      ['screens/SessionsScreen.tsx', 'fieldLabel(`call-${i}-function`, `Call ${i + 1}: function (optional)`)'],
+      ['screens/SessionsScreen.tsx', 'fieldLabel(`call-${i}-cap`, `Call ${i + 1}: most ${symbol} per call`)'],
+    ];
+    check('…the grouped guardian / heir / co-signer label-and-weight fields and the session-call function and cap fields have visible labels (source)',
+      grouped.every(([f, call]) => {
+        const src = files.find((x) => x.f === f).src;
+        return src.includes(`<Text {...${call}.label} style={[styles.hint, { color: theme.textMuted }]}>{${call}.text}</Text>`) && src.includes(`{...${call}.input}`);
+      }));
+  }
+
+  // Pass p20d finding 4: a switch row whose visible text is exactly the
+  // switch's accessibilityLabel hides that text from screen readers, so the
+  // label is spoken once (by the switch, with its state).
+  const switchRowProblems = (all) => all.flatMap(({ f, src }) => {
+    const out = [];
+    for (const sw of tags(src, 'Switch')) {
+      const lab = /accessibilityLabel=(\{[^}]*\}|"[^"]*")/.exec(sw)?.[1];
+      if (!lab) continue;
+      const content = lab.startsWith('"') ? lab.slice(1, -1) : lab;
+      const at = src.indexOf(sw);
+      const win = src.slice(Math.max(0, at - 500), at + sw.length + 500);
+      for (const m of win.matchAll(/<Text\b((?:[^>{]|\{[^}]*\})*)>([^<]*)<\/Text>/g)) {
+        if (m[2].trim().replace(/\s+/g, ' ') === content && !(m[1].includes('importantForAccessibility="no"') && m[1].includes('accessibilityElementsHidden'))) out.push(`${f} ${content}`);
+      }
+    }
+    return out;
+  });
+  const switchLabelCount = files.reduce((n, { src }) => n + tags(src, 'Switch').filter((sw) => {
+    const lab = /accessibilityLabel=(\{[^}]*\}|"[^"]*")/.exec(sw)?.[1];
+    if (!lab) return false;
+    const content = lab.startsWith('"') ? lab.slice(1, -1) : lab;
+    const at = src.indexOf(sw);
+    return [...src.slice(Math.max(0, at - 500), at + sw.length + 500).matchAll(/<Text\b(?:[^>{]|\{[^}]*\})*>([^<]*)<\/Text>/g)].some((m) => m[1].trim().replace(/\s+/g, ' ') === content);
+  }).length, 0);
+  check('p20d finding 4: every switch row whose visible text repeats the switch label hides that text from screen readers (allow-list empty)',
+    switchRowProblems(files).length === 0 && switchLabelCount >= 12, `${switchLabelCount} rows; problems: ${switchRowProblems(files).join(', ')}`);
+  const settingsHidden = '<Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.toggleLabel, { color: theme.text, flexShrink: 1, marginRight: 12 }]}>';
+  check('…the Privacy switch row (the one the pass heard twice) is one of them (source)', files.find((x) => x.f === 'screens/SettingsScreen.tsx').src.includes(settingsHidden));
+  check('…mutant caught: the Privacy switch label spoken again',
+    switchRowProblems(files.map((x) => (x.f === 'screens/SettingsScreen.tsx' ? { ...x, src: x.src.replace(settingsHidden, '<Text style={[styles.toggleLabel, { color: theme.text, flexShrink: 1, marginRight: 12 }]}>') } : x))).length === 1);
+
+  // Pass p20d finding 5: text drawn with textTransform 'uppercase' is spoken
+  // from its own case ("0x API key", not "0X API KEY"): every Text using an
+  // uppercase-transform style carries an accessibilityLabel (or is hidden).
+  const upperProblems = (all) => all.flatMap(({ f, src }) => {
+    const sheet = src.slice(src.indexOf('StyleSheet.create('));
+    const names = [...sheet.matchAll(/\n {2}(\w+): \{([^}]*)\}/g)].filter((m) => m[2].includes("textTransform: 'uppercase'")).map((m) => m[1]);
+    if (names.length === 0) return [];
+    return tags(src, 'Text').filter((t) => names.some((n) => new RegExp(`styles\\.${n}\\b`).test(t)) && !/\baccessibilityLabel=/.test(t) && !t.includes('importantForAccessibility="no"')).map(() => f);
+  });
+  const upperCount = files.reduce((n, { src }) => {
+    const sheet = src.slice(src.indexOf('StyleSheet.create('));
+    const names = [...sheet.matchAll(/\n {2}(\w+): \{([^}]*)\}/g)].filter((m) => m[2].includes("textTransform: 'uppercase'")).map((m) => m[1]);
+    return n + tags(src, 'Text').filter((t) => names.some((nm) => new RegExp(`styles\\.${nm}\\b`).test(t))).length;
+  }, 0);
+  check('p20d finding 5: every Text drawn in capitals by textTransform carries an accessibilityLabel in its own case (allow-list empty)',
+    upperProblems(files).length === 0 && upperCount >= 25, `${upperCount} texts; problems: ${upperProblems(files).join(', ')}`);
+  check('…the 0x API key label (and every Account Abstraction field label) is spoken "0x API key", not "0X API KEY" (source)',
+    files.find((x) => x.f === 'screens/SettingsScreen.tsx').src.includes("<Text accessibilityLabel={label} {...fieldLabel('aa', label).label} style={[styles.aaFieldLabel, { color: theme.textMuted }]}>{label}</Text>"));
+  check('…mutant caught: the AA field label without its spoken label',
+    upperProblems(files.map((x) => (x.f === 'screens/SettingsScreen.tsx' ? { ...x, src: x.src.replace("<Text accessibilityLabel={label} {...fieldLabel('aa', label).label}", "<Text {...fieldLabel('aa', label).label}") } : x))).length === 1);
 
   // (2) Section titles are headings: every Text drawn with a title style
   // carries accessibilityRole="header" (or is hidden because the screen's

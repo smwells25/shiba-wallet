@@ -535,6 +535,19 @@ console.log('Home: one spoken element per token row, the Hide amounts switch, li
     linksOk(home) && calls.length >= 14, `${calls.length} calls`);
   check('…mutant caught: the old Inheritance link spoken "Inheritance"',
     !linksOk(home.replace("cardLink('inheritance', 'Inheritance (demonstration)',", "cardLink('inheritance', 'Inheritance', 'Inheritance (demonstration)',")));
+  // Pass p20d finding 6: the chain card's Send hint said "Sends ETH" on a
+  // test network; it names the coin as the network does ("test ETH").
+  const { sendLinkHint } = await import('../src/a11y.ts');
+  const { EVM_TEST_PROFILES: testProfiles } = await import('../src/config/evm-chain.ts');
+  const sepoliaProfile = testProfiles.find((p) => p.caip2 === 'eip155:11155111');
+  check('p20d finding 6: sendLinkHint names the coin it is given: "Sends test ETH" with Sepolia\'s displaySymbol, "Sends ETH" on mainnet (exact)',
+    sendLinkHint(sepoliaProfile.displaySymbol) === 'Sends test ETH' && sendLinkHint('ETH') === 'Sends ETH' && sendLinkHint('stETH') === 'Sends stETH');
+  const hintOk = (src) =>
+    src.includes('sendLinkHint(isEvm ? evmChain.displaySymbol : item.symbol),') &&
+    src.includes(": sendLinkHint(token.symbol),") && !/`Sends \$\{/.test(src);
+  check('…Home: the chain card\'s Send link takes the profile\'s displaySymbol on the EVM card; token rows their own symbol; no hint is built from a hard-coded "Sends ${…}" (source)', hintOk(home));
+  check('…mutant caught: the old hint from the chain row\'s symbol',
+    !hintOk(home.replace('sendLinkHint(isEvm ? evmChain.displaySymbol : item.symbol),', '`Sends ${item.symbol}`,')));
 }
 
 console.log(`\ncheck-home: ${passed} passed, ${failed} failed`);

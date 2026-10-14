@@ -5,7 +5,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { KernelGuardianSet } from '@shiba-wallet/chains-evm';
 import type { RootStackParamList } from '../navigation';
-import { Button, WarningBox, screenStyle, switchColors, useFieldLabels, fieldA11y } from '../components';
+import { Button, WarningBox, screenStyle, switchColors, useFieldLabels } from '../components';
 import { localDateLabel } from '../config/dates';
 import { ContactPicker, RecipientContactNotice } from '../components/Contacts';
 import { GuardianSetView, InfoRow, PasteOrScan, RecoveryNetworkBadge, recoveryLayout as styles } from '../components/RecoveryViews';
@@ -527,19 +527,21 @@ export function InheritanceScreen({ navigation }: Props) {
             />
             {draftMatches[i] && draftMatches[i]!.kind !== 'none' ? <RecipientContactNotice match={draftMatches[i]!} address={d.address.trim()} /> : null}
             <Button title="Pick from contacts" accessibilityLabel={`Pick heir ${i + 1} from contacts`} variant="secondary" onPress={() => setPickerFor(i)} />
+            <Text {...fieldLabel(`heir-${i}-label`, `Heir ${i + 1} label (optional)`).label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel(`heir-${i}-label`, `Heir ${i + 1} label (optional)`).text}</Text>
             <TextInput
-              {...fieldA11y(`Heir ${i + 1} label, optional`)}
+              {...fieldLabel(`heir-${i}-label`, `Heir ${i + 1} label (optional)`).input}
               value={d.label}
               onChangeText={(t) => setDrafts((p) => p.map((x, j) => (j === i ? { ...x, label: t } : x)))}
-              placeholder="Label (optional, stored in the recovery record)"
+              placeholder="Stored in the recovery record"
               placeholderTextColor={theme.textMuted}
               style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
             />
+            <Text {...fieldLabel(`heir-${i}-weight`, `Heir ${i + 1} weight`).label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel(`heir-${i}-weight`, `Heir ${i + 1} weight`).text}</Text>
             <TextInput
-              {...fieldA11y(`Heir ${i + 1} weight`)}
+              {...fieldLabel(`heir-${i}-weight`, `Heir ${i + 1} weight`).input}
               value={d.weight}
               onChangeText={(t) => setDrafts((p) => p.map((x, j) => (j === i ? { ...x, weight: t } : x)))}
-              placeholder="Weight (1 or more)"
+              placeholder="1 or more"
               placeholderTextColor={theme.textMuted}
               keyboardType="number-pad"
               style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
@@ -586,7 +588,7 @@ export function InheritanceScreen({ navigation }: Props) {
         ))}
         <Text style={[styles.hint, { color: theme.textMuted }]}>{GUARDIANS_AUDIT_NOTE}</Text>
         <View style={styles.toggleRow}>
-          <Text style={[styles.toggleLabel, { color: theme.text }]}>{INHERITANCE_ACK_TEXT}</Text>
+          <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.toggleLabel, { color: theme.text }]}>{INHERITANCE_ACK_TEXT}</Text>
           <Switch {...switchColors(theme)} accessibilityLabel={INHERITANCE_ACK_TEXT} value={ack} onValueChange={setAck} />
         </View>
         {formError ? <WarningBox>{formError}</WarningBox> : null}

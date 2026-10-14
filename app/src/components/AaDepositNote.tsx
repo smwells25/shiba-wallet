@@ -31,7 +31,7 @@ export function AaDepositNote({
   const format = (wei: bigint) => `${formatUnits(wei, 18, 18)} ${symbol}`;
   return (
     <View style={[styles.row, { borderColor: theme.border }]}>
-      <Text style={[styles.label, { color: theme.textMuted }]}>{AA_DEPOSIT_ROW_LABEL}</Text>
+      <Text accessibilityLabel={AA_DEPOSIT_ROW_LABEL} style={[styles.label, { color: theme.textMuted }]}>{AA_DEPOSIT_ROW_LABEL}</Text>
       <Text selectable style={[styles.value, { color: theme.text }]}>
         {format(deposit)}
       </Text>

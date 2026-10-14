@@ -305,7 +305,7 @@ export function NotificationSettingsSection() {
         {NOTIFICATIONS_SECTION_TITLE}
       </Text>
       <View style={styles.toggleRow}>
-        <Text style={[styles.toggleLabel, { color: theme.text }]}>{NOTIFICATIONS_SWITCH_LABEL}</Text>
+        <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.toggleLabel, { color: theme.text }]}>{NOTIFICATIONS_SWITCH_LABEL}</Text>
         <Switch {...switchColors(theme)}
           accessibilityLabel={NOTIFICATIONS_SWITCH_LABEL}
           accessibilityRole="switch"

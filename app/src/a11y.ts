@@ -113,3 +113,122 @@ export function activityRowSpokenLead(p: {
   if (p.sentence) return `${p.sentence}. `;
   return p.loading ? `${p.loadingLabel}. ` : '';
 }
+
+/**
+ * The style of a field label that is present for screen readers but not
+ * drawn (pass p20d finding 1): the "visually hidden" pattern — a 1×1 box out
+ * of the layout flow (absolutely positioned, so a parent's gap ignores it), clipping its text,
+ * with transparent text.
+ *
+ * Why not opacity 0, zero size or display "none": Android resolves a
+ * field's accessibilityLabelledBy by searching the native view hierarchy
+ * for the view whose nativeID matches (RN 0.86.3
+ * ReactAccessibilityDelegate.kt:91–97 → ReactFindViewUtil.kt findView,
+ * :48–62, which walks every child whatever its visibility) and hands that
+ * view to AccessibilityNodeInfo.setLabeledBy, so the label must exist as a
+ * native view — a Text always forms one (ConcreteViewShadowNode.h:73 sets
+ * FormsView and ParagraphShadowNode.h:42–57 keeps it, so Fabric never
+ * flattens it away), and nativeID is stored on it by
+ * BaseViewManager.setNativeId (:309–314). What TalkBack then does with the
+ * labelling view is Android's and TalkBack's code, not React Native's: RN
+ * maps display "none" to View.INVISIBLE (SurfaceMountingManager.kt:863–864), and a
+ * view that is invisible, fully transparent (alpha 0, BaseViewManager.setOpacity
+ * :268–271 sets View.alpha) or of zero size may be treated as not shown to
+ * the user. Keeping alpha 1, a real 1×1 size and VISIBLE is the
+ * conservative choice; the text is hidden by the clip and the transparent
+ * colour instead. (That the label is then honoured is to be confirmed on
+ * the emulator.)
+ */
+export const HIDDEN_FIELD_LABEL_STYLE = {
+  position: 'absolute',
+  width: 1,
+  height: 1,
+  overflow: 'hidden',
+  color: 'transparent',
+} as const;
+
+/**
+ * When a refusal box should take the screen reader's focus (pass p20d
+ * finding 2). The pass found the focus moved for a refusal shown at once
+ * (the Review button stays on screen) but not for one shown after the
+ * asynchronous review: while the review runs the form replaces Review with
+ * a spinner, the screen reader's focus is lost with it, and a focus event
+ * sent the moment the box is committed is overtaken by the screen reader
+ * placing its focus again. So the focus is sent only after the box has
+ * been laid out (its onLayout), and then after a short settle delay
+ * (ANNOUNCE_FOCUS_SETTLE_MS, a judgement, not a documented figure), never
+ * at commit time. A text change on a box that is already laid out (a second
+ * refusal with other figures; the size may not change, so no new onLayout)
+ * schedules the focus at once.
+ *
+ * Pure (no React Native): `send` moves the focus, `schedule` / `cancel`
+ * wrap setTimeout, so the checks drive it with fakes.
+ */
+export const ANNOUNCE_FOCUS_SETTLE_MS = 250;
+
+export interface AnnounceFocus {
+  /** The box's spoken text is now `text` (null: the box is gone). */
+  textChanged(text: string | null): void;
+  /** The box has been laid out (its onLayout ran). */
+  laidOut(): void;
+  /** The box unmounts: nothing more is sent. */
+  dispose(): void;
+}
+
+export function createAnnounceFocus(deps: {
+  send: () => void;
+  schedule: (run: () => void, ms: number) => unknown;
+  cancel: (handle: unknown) => void;
+  settleMs?: number;
+}): AnnounceFocus {
+  const settle = deps.settleMs ?? ANNOUNCE_FOCUS_SETTLE_MS;
+  let text: string | null = null;
+  let laidOutOnce = false;
+  let pending = false;
+  let handle: unknown = null;
+  let disposed = false;
+  const clear = () => {
+    if (handle !== null) deps.cancel(handle);
+    handle = null;
+  };
+  const fire = () => {
+    clear();
+    pending = false;
+    handle = deps.schedule(() => {
+      handle = null;
+      if (!disposed && text !== null) deps.send();
+    }, settle);
+  };
+  return {
+    textChanged(next) {
+      if (disposed || next === text) return;
+      text = next;
+      if (next === null) {
+        pending = false;
+        laidOutOnce = false;
+        clear();
+        return;
+      }
+      if (laidOutOnce) fire();
+      else pending = true;
+    },
+    laidOut() {
+      if (disposed) return;
+      laidOutOnce = true;
+      if (pending && text !== null) fire();
+    },
+    dispose() {
+      disposed = true;
+      clear();
+    },
+  };
+}
+
+/**
+ * The hint of a chain card's Send link on Home (pass p20d finding 6): the
+ * coin as the wallet names it on that network — "Sends test ETH" on a test
+ * network, never a hard-coded "ETH".
+ */
+export function sendLinkHint(displaySymbol: string): string {
+  return `Sends ${displaySymbol}`;
+}

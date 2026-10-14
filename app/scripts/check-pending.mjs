@@ -713,6 +713,20 @@ console.log('check-pending: the screens wire the gates in order (source)');
   check('the sendAa submit path hands its pre-fill to the shared listener', sendScreen.includes("sendAa(bundle, signer, quote, { kind: 'send', resend: resendFor(quote) })"));
   check('Activity cards: the path title, the per-path status line, Send again only where a re-quote exists',
     view.includes('{userOpCardTitle(record)}') && view.includes('userOpStatusSentence(status, record)') && view.includes('userOpCanBeSentAgain(record) && onSendAgain'));
+  // Pass p20d finding 7: a card title can carry a full 42-character
+  // recipient (a multisig's address); it is spoken short, shown in full.
+  const { withShortAddresses } = await import('../src/a11y.ts');
+  const { userOpCardTitle: cardTitle } = await import('../src/wallet/pending-transactions.ts');
+  const MULTISIG = '0x944caA404e389b18b2fe251e969EdD7A220d0d38';
+  const multisigTitle = cardTitle({ userOpHash: H(204), origin: 'send', resend: { recipient: MULTISIG, amount: '5', decimals: 18, symbol: 'test ETH', tokenId: null } });
+  check('the card title with a multisig recipient is spoken with the short address and nothing else changed (exact)',
+    withShortAddresses(multisigTitle) === `Smart-account operation ${shortHashOf(H(204))}: 0.000000000000000005 test ETH to 0x944c…0d38.` && multisigTitle.includes(MULTISIG));
+  const spokenOk = (src) =>
+    src.includes('<Text accessibilityLabel={withShortAddresses(userOpCardTitle(record))} style={[styles.text, { color: theme.text }]}>') &&
+    src.includes('accessibilityLabel={withShortAddresses(pendingGroupSentence(group, { nativeSymbol: symbol, nowMs }))}');
+  check('the user-operation card title and the pending-transaction sentence are spoken through withShortAddresses (source)', spokenOk(view));
+  check('…mutant caught: the title spoken in full again',
+    !spokenOk(view.replace('<Text accessibilityLabel={withShortAddresses(userOpCardTitle(record))} style=', '<Text style=')));
   const activity = readFileSync(join(HERE, '../src/screens/ActivityScreen.tsx'), 'utf8');
   check('Activity shows the section in the list, the unavailable and the error states', (activity.match(/\{pendingSection\}/g) ?? []).length === 3 && activity.includes('replacementRowLine(pendingRecords'));
   // A wipe forgets the registry with the rest of the wallet's on-device state (CTO, phase 19 item 3).
