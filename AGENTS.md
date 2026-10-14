@@ -7416,3 +7416,152 @@ item 3's TalkBack pass after; 5 last. Subagents on Opus.
       1,000,000 gas allowances: none quote them. UNVERIFIED: the label on
       a device (the Sepolia emulator wallet tracks stETH and wstETH, so it
       shows only for an untracked pinned token).
+- [x] EMULATOR PASS p20b — LOCK ON LAUNCH, THE HOODI CLAIM IN-APP, THE
+      PORTFOLIO LAYER AND THE POLISH CARDS (2026-10-14 00:50–03:05 UTC;
+      Expo Go, Metro worktree at 8402891 with the engine built inside it,
+      2,373 modules; no repo files edited; 9 prompts, each expected; no
+      dev-EOA spending; every hash status 0x1 on two RPCs per chain and
+      the three key receipts re-read by the CTO on publicnode; screen
+      protection OFF; notes, frames and dumps in the scratchpad p20b).
+      (A) LOCK ON LAUNCH — PASS, by an on-device screencap loop (~0.33 s
+      per frame, ~87 frames per launch, each changed frame viewed):
+      force-stop + relaunch → splash → the neutral cover (background +
+      spinner, no data, no button, ~1.2 s) → the lock, ZERO Home frames;
+      unlock = exactly ONE prompt (logcat handleAuthenticate 1) "Unlock
+      Shiba Wallet" with only Cancel; recents swipe + `am kill` (process
+      gone) → the same sequence, eight uiautomator dumps from launch hold
+      only the splash then the lock texts ("Auto-lock is on, so the wallet
+      starts locked. Your keys never left the device's secure storage."),
+      no wallet text in any dump; auto-lock OFF → splash, a blank frame,
+      the cover (~1 s), Home, 0 prompts (then set back to 1 min);
+      WATCH-ONLY active ("Watched 3", 0xd8dA…6045) → the lock, unlock =
+      ONE ORDINARY prompt with "Use PIN", THE PHRASE PROMPT NEVER
+      APPEARED; removed afterwards. The Settings hint reads exactly as
+      pinned. (B) THE HOODI CLAIM OF REQUEST 5329 — PASS, IN-APP (Account
+      1): before, on both RPCs lastFinalized 5333, 5329 finalised and
+      unclaimed, getClaimableEther([5329], hint 1035) = 5e15; the card
+      "REQUEST 5329 / 0.005 stETH / Finalized: ready to claim."; confirm
+      "You receive 0.005 test ETH", "Simulated: 0.005 test ETH arrive.",
+      the queue address in full, max fee 0.00017672762226262 (1.955211115
+      gwei × 90,388), "Claims request 5329; the ETH is paid to this
+      account.", preview "You send NFT #5329" / "You receive 0.005 test
+      ETH", the pinned queue risk line, "Pre-flight simulation passed";
+      ONE prompt "Claim finished Lido withdrawals"; tx
+      0xf7baf501cf09b0a30604215e8a8546aea5f23d38032ca041c1ff8b9ccf1e2f78,
+      block 3811831, input 0xe3afe0a3, gas 74,510, WithdrawalClaimed
+      (request 5329, owner and receiver Account 1, 5e15 wei), NFT 5329
+      burned; balance 284,253,499,485,668,980 → 289,179,697,600,991,260 =
+      +0.005 − fee 73,801,884,677,720, exact; the requests section gone
+      afterwards; 5328 untouched. THE WHOLE LIDO CYCLE IS NOW PROVEN
+      THROUGH THE APP ON HOODI (stake, request, finalisation, claim; wrap
+      / unwrap on Sepolia). (C) PORTFOLIO — PASS for the screens; THE
+      WALLET HOLDS NO MAINNET DUST (0 ETH on mainnet for every account on
+      two RPCs, 0 BTC, 0 SOL, no Dogecoin endpoint): Sepolia "Net worth
+      (US dollars) ≈ $0.00", "Not complete: see what is not counted
+      below.", "3 balances could not be read because no endpoint is
+      configured for their network (for example Dogecoin…)", "test ETH,
+      USDC, EURC, stETH and wstETH are test-network assets: test, no
+      value.", "Multisig 3 (2-of-3) is recorded for another network and
+      was not read.", by asset / network ("Ethereum Sepolia ≈ $0.00 (11
+      not valued)") / account (Account 1, its smart account, Account 2,
+      Account 3's smart account, Multisig 2); Hide amounts "••••"
+      everywhere with spoken "Net worth: hidden, not complete"; a11y
+      "Account 1, USDC on Ethereum Sepolia: 41.089603 USDC, test asset,
+      no value"; mainnet "By asset: No balances found yet."; with the
+      watched address: the price-source line ("…the oldest price used is
+      from less than a minute ago. Indicative market prices…") and
+      "Watched total (not counted in your net worth): ≈ $14,501.52" (ETH
+      5.769653 ≈ $14,464.34, USDC 37.192124) with net worth still $0.00.
+      P&L ETH: "0 entries of history loaded; older ones exist." then
+      after one load "…which is all of it.", every figure $0.00, "Average
+      cost: nothing held", "Counted: 0 purchases, 0 sales", the method,
+      nearest-price and estimate notes; BTC the same (the no-counterparty
+      gap does not appear with an EMPTY history — the record's "always
+      shows that gap" was too strong). (D) PRICE ALERTS — PASS: "Follow
+      Ethereum (ETH)" $2,504.97; "Above $2,500" created tripped with the
+      sentence; "Below $2,510" ALSO created tripped BY DESIGN ("ETH is
+      already below $2,510 ($2,502.66 now), so this alert fires the next
+      time it crosses $2,510 after first moving back 1% to the other
+      side."); an untripped "above $2,503.5" ("Waiting to fire.") fired at
+      the next 5-minute check: the banner "Price alert: ETH above
+      $2,503.5. CoinGecko's price was $2,505.97, 1 min ago. Alerts are
+      advisory: nothing is bought, sold or sent." with "Open price alerts"
+      / "Dismiss", then the card "Fired 1 min ago at $2,505.97"; no
+      notification (Expo Go note shown, reminders off); NO COINGECKO
+      TRAFFIC for 2 min 19 s after every alert was deleted and ETH
+      unfollowed (nettop on the host's netsimd flow; the positive control
+      opened a flow to api.coingecko.com). (E) POLISH: E1 a smart-account
+      stake of 0.0001 → stETH (ONE prompt) userOp
+      0xbffb221c6e4317326e07e1f8f2beb43a954e08a5f14631b0254d7ab5f5355e0e,
+      bundle tx
+      0xff30070c0f82c2d38cdf30c45c46bbe39e26864cff91ffa3287cf71c16ee09ca,
+      block 11910307, minted 99,999,999,999,999, actualGasCost
+      726,899,083,068,328 from the deposit; Activity "Pending on this
+      phone / Smart-account operation 0xbffb…5e0e from Staking." with
+      "Check status" → "Included in transaction 0xff30…09ca." (EVERY
+      SMART-ACCOUNT OPERATION IS RECORDED, seen live). E2 the multisig
+      confirm: dev 5's approval accepted (request 0x786b567e…, nonce 3);
+      the first Review refused with the multisig AA21 text (balance
+      506,657,538,030,260 + deposit 697,166,493,513,196 wei); funded
+      0.002 from Account 1's Kernel (ONE prompt; userOp 0xc56f70f2…1dda7,
+      tx 0x8934a91e43dbd89458c9c1af9222e8b9b62b7123309a655fd155363aa5c3cb99,
+      block 11910363); "Continue the operation being approved" →
+      "Review and submit" shows the call, "Balance changes (preview)" /
+      "You send 0.0001 test ETH" / "Simulated as direct calls from the
+      multisig account…", "Risk checks" / "…one of your own accounts in
+      this wallet: Account 2 (0xb699…81fE).", fee 0.00095898897580392,
+      deposit-first, total, the weight sentence, "Approve and submit" —
+      NOT submitted; mirror: dev 5's request pasted → the co-signer
+      review → ONE prompt → "Approval ready"; History "Approved as
+      co-signer: Send 0.0001 test ETH (100000000000000 wei) to
+      0xb699…81fE. (request 0x786b567e…)" / "Nonce 3 · approved by
+      0x772e…F44F on 2026-10-14 02:56 UTC. Whether it was submitted is up
+      to the submitter; this phone does not track it." E3 the fee symbol
+      on the regular path: 0.01 USDC sent to Account 3's EOA (0 ETH; tx
+      0x37912b612b194d14ed01971083ad397d6210d6978497b5421af7dc1b9524fb71,
+      block 11910439), then as Account 3 a 0.005 USDC send → "Not enough
+      test ETH to pay the network fee." / "…the worst-case fee is
+      54645092880 wei but the test ETH balance is 0 wei. Token sends pay
+      gas in test ETH, not in USDC." (the smart-account variant not
+      exercised). FUNDS: Hoodi Account 1 0.289179697600991260 ETH (nonce
+      6); Sepolia Kernel 0.022837 → 0.020321 ETH, deposit 0.001105 →
+      0.000219, +0.0001 stETH; Account 1 EOA USDC 41.089603 → 41.079603;
+      Multisig 2 0.000507 → 0.002507 (+ deposit 0.000697); Account 3 EOA
+      0.01 USDC (stranded without test ETH). FINDINGS (fix slice
+      dispatched): (1) COPY — the Auto-lock hint promises "your device
+      passcode as the system fallback" but Account 1's unlock prompt (the
+      protected-phrase target) offers only Cancel; only the watch-only
+      prompt offers "Use PIN"; (2) the portfolio brief's "mainnet dust"
+      does not exist (no finding against the app); (3) P&L COPY with zero
+      history: "0 entries of history loaded; older ones exist." and
+      "cannot be worked out … older transactions are not loaded yet"
+      before the first load, then "which is all of it"; the BTC
+      no-counterparty gap needs at least one entry; (4) ALERTS COPY — "it
+      can fire once ETH falls back below the price by 1%" reads as if the
+      fall itself fires it (the rule is retrace then a fresh crossing);
+      (5) ALERTS STALE DISPLAY — the watchlist card kept $2,502.66 after
+      the monitor fired at $2,505.97, even after a foreground return; the
+      "Alert set: ETH above $2,503.5." notice outlived every alert's
+      removal; Remove deletes with no confirmation; (6) a "below" alert
+      set above the price starts tripped by design (no change); (7)
+      MULTISIG CONFIRM COPY — the preview says the fee "is shown
+      separately above" while the fee rows sit BELOW it; (8) Multisig 2
+      needed ~0.002 of top-up for one operation at 2.31 gwei (the headroom
+      economics; no change); (9) ACCOUNT SWITCHER — "Multisig 2 (2-of-3)"
+      and "Multisig 3 (2-of-3)" show the same address 0x944c…0d38 with no
+      network (Sepolia vs Base Sepolia; the same CREATE2 address) and look
+      like duplicates; (10) the pending card keeps the "cannot be sped up
+      or cancelled…" paragraph after "Included in transaction …"; (11)
+      Hide amounts turns test assets' spoken labels into "amount hidden,
+      value hidden" although they have no value. DRIVING NOTES: launch
+      the AVD through osascript into a Terminal tab (the tab must first
+      answer zsh's compinit prompt); recents swipes do not remove the task
+      (`am kill` does); "Manage accounts" lands near "Show recovery
+      phrase"; the network chips are ~56 slow swipes down Settings; BACK
+      from Home leaves the app and can trip auto-lock; emulator traffic is
+      visible on the host through netsimd (nettop). END STATE: Home,
+      Ethereum Sepolia, Account 1, light mode, protection OFF, auto-lock 1
+      min, no watched account, IME ADBKeyboard, Metro at 8402891; Multisig
+      2 holds an unsubmitted in-app operation at nonce 3 (with dev 5's
+      approval) and this wallet's unsubmitted co-signer approval of dev
+      5's nonce-3 request.
