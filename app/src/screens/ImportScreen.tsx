@@ -9,7 +9,7 @@ import {
   TextInput,
 } from 'react-native';
 import { isValidMnemonic } from '@shiba-wallet/core';
-import { Button, WarningBox, screenStyle } from '../components';
+import { Button, WarningBox, screenStyle, fieldA11y } from '../components';
 import { useTheme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
 
@@ -62,15 +62,16 @@ export function ImportScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <Text style={[styles.heading, { color: theme.text }]}>Import a wallet</Text>
+        <Text accessibilityRole="header" style={[styles.heading, { color: theme.text }]}>Import a wallet</Text>
         <WarningBox>
           Only enter a recovery phrase on a device you trust. Shiba Wallet
           stores it in the device keychain and never sends it anywhere.
         </WarningBox>
         <TextInput
+          {...fieldA11y('Recovery phrase', { hint: 'Enter your 12 to 24 word recovery phrase, separated by spaces.' })}
           style={[
             styles.input,
-            { backgroundColor: theme.card, borderColor: theme.border, color: theme.text },
+            { backgroundColor: theme.card, borderColor: theme.controlBorder, color: theme.text },
           ]}
           multiline
           autoCapitalize="none"

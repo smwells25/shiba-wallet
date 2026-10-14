@@ -337,7 +337,7 @@ console.log('check-home: the Multisig link only where the multisig contracts are
 {
   const home = source('../src/screens/HomeScreen.tsx');
   check('Home: the Multisig link needs a test network AND multisigNetworkVerified(evmChain)',
-    home.includes("evmChain.testnet && multisigNetworkVerified(evmChain)\n            ? cardLink('multisig', 'Multi-signature accounts', 'Multisig', () => navigation.navigate('Multisig'))") &&
+    home.includes("evmChain.testnet && multisigNetworkVerified(evmChain)\n            ? cardLink('multisig', 'Multisig', () => navigation.navigate('Multisig'), 'Opens the multi-signature accounts')") &&
       /import \{[^}]*\bmultisigNetworkVerified\b[^}]*\} from '\.\.\/config\/evm-chain';/.test(home));
   const { multisigNetworkVerified, recordMultisigNetworkCheck, setCustomEvmProfiles, MULTISIG_UNVERIFIED_NETWORK_NOTE } = evmChainModule;
   check('the note (exact)', MULTISIG_UNVERIFIED_NETWORK_NOTE ===
@@ -384,8 +384,8 @@ function homeMultisigProblems(home) {
   need('the tool checks get no owner or index', home.includes('const toolsOwner = noKey ? null') && home.includes('const toolsIndex = noKey ? null'));
   need('no delegation read', home.includes('useAccountDelegation(noKey ? undefined'));
   need('the Multisig operations link',
-    home.includes("{isEvm && multisig\n            ? cardLink('multisig-operations', 'Multisig operations', 'Multisig', () => navigation.navigate('Multisig'))"));
-  need('Activity, NFTs and Approvals stay linked', /cardLink\('activity'/.test(home) && /isEvm \? cardLink\('nfts'/.test(home) && /cardLink\('approvals', 'Token approvals'/.test(home));
+    home.includes("{isEvm && multisig\n            ? cardLink('multisig-operations', 'Multisig', () => navigation.navigate('Multisig'), 'Opens this multisig’s operations')"));
+  need('Activity, NFTs and Approvals stay linked', /cardLink\('activity'/.test(home) && /isEvm \? cardLink\('nfts'/.test(home) && /cardLink\('approvals', 'Approvals'/.test(home));
   need('the EntryPoint deposit read with the Multisig screen\'s reader', home.includes('readMultisigFunds(httpTransport(endpoint.url), multisigAddress)'));
   need('the deposit row', home.includes("{MULTISIG_DEPOSIT_ROW_LABEL}:{' '}") && home.includes('maskAmount(formatBalanceDisplay(shownDeposit.deposit, 18), hideAmounts)'));
   need('the notice under the switcher', home.includes('{multisig ? <WarningBox>{MULTISIG_ACCOUNT_NOTICE}</WarningBox> : null}'));
@@ -470,7 +470,7 @@ console.log('Home token rows: symbol as the title, the name below, the whole sym
   check('subtitle: just "ERC-20" when the name is the symbol again (Sepolia USDC and EURC) or empty',
     knownTokensForChain('eip155:11155111').every((t) => tokenRowSubtitle(t) === 'ERC-20') && tokenRowSubtitle({ symbol: 'X', name: '' }) === 'ERC-20');
   const home = source('../src/screens/HomeScreen.tsx');
-  const row = home.slice(home.indexOf('function TokenRow('), home.indexOf('function TokenRow(') + 2200);
+  const row = home.slice(home.indexOf('function TokenRow('), home.indexOf('function UnavailableChains('));
   const rowProblems = (src) => [
     /<Text style=\{\[styles\.tokenName, \{ color: theme\.text \}\]\} numberOfLines=\{1\}>\s*\{token\.symbol\}\s*<\/Text>/.test(src) || 'the title is the symbol',
     // Two lines since the 2026-10-11 re-check (finding 8: the wstETH name was cut off).
@@ -480,13 +480,61 @@ console.log('Home token rows: symbol as the title, the name below, the whole sym
     !/\{token\.name\}/.test(src) || 'the name is not the title',
   ].filter((x) => x !== true);
   check('TokenRow: symbol title, name subtitle, the whole symbol in the badge (source)', rowProblems(row).length === 0, rowProblems(row).join('; '));
-  check('…mutant: the old four-character badge is caught', rowProblems(row.replace(/\{token\.symbol\}(\s*<\/Text>\s*<\/View>\s*<View style=\{styles\.cardBody\}>)/, '{token.symbol.slice(0, 4)}$1')).length > 0);
+  check('…mutant: the old four-character badge is caught', rowProblems(row.replace(/\{token\.symbol\}(\s*<\/Text>\s*<\/View>\s*<View style=\{styles\.cardBody\})/, '{token.symbol.slice(0, 4)}$1')).length > 0);
   check('…mutant: the old one-line subtitle is caught',
     rowProblems(row.replace(/(styles\.tokenKind, \{ color: theme\.textMuted \}\]\} )numberOfLines=\{2\}/, '$1numberOfLines={1}')).length > 0);
   check('…mutant: the old name title is caught', rowProblems(row.replace(/(styles\.tokenName[^>]*>\s*)\{token\.symbol\}/, '$1{token.name}')).length > 0);
   const badge = home.slice(home.indexOf('  tokenBadge: {'), home.indexOf('  tokenBadgeText: {'));
   check('the badge is a pill from 36 to 72 px wide with side padding, 36 px high (fits "wstETH")',
     /minWidth: 36,/.test(badge) && /maxWidth: 72,/.test(badge) && /height: 36,/.test(badge) && /paddingHorizontal: 5,/.test(badge) && !/\bwidth: 36,/.test(badge.replace('minWidth', 'min')));
+}
+
+// Pass p20c (TalkBack, 2026-10-14) findings 3, 4 and 13.
+console.log('Home: one spoken element per token row, the Hide amounts switch, links spoken as shown (pass p20c):');
+{
+  const { tokenRowSpokenLabel, spokenLinkText } = await import('../src/a11y.ts');
+  const home = source('../src/screens/HomeScreen.tsx');
+  const row = home.slice(home.indexOf('function TokenRow('), home.indexOf('function UnavailableChains('));
+  // (3) The label: symbol, second line, balance — the same order on every row.
+  check('finding 3: a token row is spoken symbol → second line → balance (exact)',
+    tokenRowSpokenLabel({ symbol: 'wstETH', subtitle: 'Wrapped liquid staked Ether 2.0 · ERC-20', balance: 'Balance 0.000564 wstETH' }) ===
+      'wstETH, Wrapped liquid staked Ether 2.0, ERC-20. Balance 0.000564 wstETH' &&
+      tokenRowSpokenLabel({ symbol: 'USDC', subtitle: 'ERC-20', balance: 'Balance hidden' }) === 'USDC, ERC-20. Balance hidden');
+  const rowOk = (src) =>
+    /<View\s+style=\{\[styles\.tokenRow, [^\]]*\]\}\s+accessible\s+accessibilityLabel=\{tokenRowSpokenLabel\(\{/.test(src) &&
+    src.includes('balance: balanceSpokenText(state, hidden, fiat),') &&
+    src.includes("const hideChildren = { importantForAccessibility: 'no-hide-descendants' as const, accessibilityElementsHidden: true };") &&
+    src.includes('<View style={[styles.tokenBadge, { borderColor: theme.border }]} {...hideChildren}>') &&
+    src.includes('<View style={styles.cardBody} {...hideChildren}>') &&
+    /<View \{\.\.\.hideChildren\}>\s*<BalanceCell /.test(src) &&
+    src.includes("accessibilityActions: [{ name: 'activate', label: retry ? 'Retry' : `Send ${token.symbol}` }],") &&
+    src.includes("if (e.nativeEvent.actionName === 'activate') action();");
+  check('…the row is ONE accessible element: badge, text and balance hidden from screen readers, Send (or Retry) its action (source)', rowOk(row));
+  check('…mutant caught: the badge spoken again as its own item',
+    !rowOk(row.replace('<View style={[styles.tokenBadge, { borderColor: theme.border }]} {...hideChildren}>', '<View style={[styles.tokenBadge, { borderColor: theme.border }]}>')));
+  check('…BalanceCell and the row share one balance sentence (balanceSpokenText), the ok case unchanged ("Balance 0.5 ETH, about $1,234.56")',
+    home.includes('accessibilityLabel={balanceSpokenText(state, hidden, fiat)}') &&
+      home.includes('return `Balance ${spokenAmount(state.display)} ${state.symbol}${spokenFiat}${spokenStale}`;') &&
+      home.includes("if (hidden) return 'Balance hidden';"));
+  // (4) Hide amounts: a switch with its state.
+  const toggleOk = (src) =>
+    /accessibilityRole="switch"\s+accessibilityLabel="Hide amounts"\s+accessibilityState=\{\{ checked: hideAmounts \}\}/.test(src) &&
+    !src.includes("accessibilityLabel={hideAmounts ? 'Show amounts' : 'Hide amounts'}");
+  check('finding 4: the Hide amounts toggle is a switch named "Hide amounts" with checked = hideAmounts (source)', toggleOk(home));
+  check('…mutant caught: the old plain button', !toggleOk(home.replace(/accessibilityRole="switch"\s+accessibilityLabel="Hide amounts"\s+accessibilityState=\{\{ checked: hideAmounts \}\}/, "accessibilityRole=\"button\"\n                accessibilityLabel={hideAmounts ? 'Show amounts' : 'Hide amounts'}")));
+  // (13) Links: the spoken name is the visible text.
+  check('finding 13: spokenLinkText drops only the decorative arrow and check mark (exact)',
+    spokenLinkText('Send ↗') === 'Send' && spokenLinkText('Passkey ✓') === 'Passkey' && spokenLinkText('Upgraded ✓') === 'Upgraded' &&
+      spokenLinkText('Inheritance (demonstration)') === 'Inheritance (demonstration)');
+  const calls = [...home.matchAll(/cardLink\(\s*'([^']+)',\s*('[^']*'|[^,]+\?[^,]+),/g)].map((m) => [m[1], m[2]]);
+  const linksOk = (src) =>
+    src.includes('const cardLink = (key: string, text: string, onPress: () => void, hint?: string) => (') &&
+    src.includes('accessibilityLabel={spokenLinkText(text)}') &&
+    src.includes("cardLink('inheritance', 'Inheritance (demonstration)', () => navigation.navigate('Inheritance'))");
+  check('…every Home link is spoken as its visible text: cardLink takes the text once and speaks spokenLinkText(text); Inheritance reads "Inheritance (demonstration)" (source)',
+    linksOk(home) && calls.length >= 14, `${calls.length} calls`);
+  check('…mutant caught: the old Inheritance link spoken "Inheritance"',
+    !linksOk(home.replace("cardLink('inheritance', 'Inheritance (demonstration)',", "cardLink('inheritance', 'Inheritance', 'Inheritance (demonstration)',")));
 }
 
 console.log(`\ncheck-home: ${passed} passed, ${failed} failed`);

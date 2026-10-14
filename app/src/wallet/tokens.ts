@@ -454,6 +454,20 @@ export const KNOWN_STAKING_TOKENS: Readonly<Record<string, readonly KnownToken[]
   ],
 };
 
+/**
+ * A pinned staking token's full name by its symbol ("stETH" → "Liquid
+ * staked Ether 2.0"), from KNOWN_STAKING_TOKENS on any chain; null for a
+ * symbol the table does not hold. Used for what screen readers say (pass
+ * p20c finding 6: TalkBack spelled "STETH" and "WSTETH" letter by letter).
+ */
+export function stakingTokenName(symbol: string): string | null {
+  for (const tokens of Object.values(KNOWN_STAKING_TOKENS)) {
+    const t = tokens.find((x) => x.symbol === symbol);
+    if (t) return t.name;
+  }
+  return null;
+}
+
 /** The one-line note shown beside a rebasing token (Home row, preview). */
 export const REBASING_TOKEN_NOTE =
   'Rebasing token: the balance changes by itself; the preview can be off by a wei or two.';

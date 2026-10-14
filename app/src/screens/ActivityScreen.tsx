@@ -19,7 +19,8 @@ import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { HistoryEntry } from '@shiba-wallet/core';
 import type { RootStackParamList } from '../navigation';
-import { Button, screenStyle } from '../components';
+import { Button, screenStyle, useFieldLabels } from '../components';
+import { activityRowSpokenLead } from '../a11y';
 import { Theme, useTheme } from '../theme';
 import { networkDefaultFor } from '../config/defaults';
 import { maskAmount } from '../config/prefs';
@@ -137,6 +138,7 @@ function EntryRow({
   loading = false,
   unavailable = false,
   replacementLine = null,
+  sameAsAbove = false,
 }: {
   entry: HistoryEntry;
   chainId: string;
@@ -185,6 +187,12 @@ function EntryRow({
    * replacementRowLine): "Speed-up of transaction 0x…", "Cancellation of …".
    */
   replacementLine?: string | null;
+  /**
+   * True when the row above is another row of the same transaction (a token
+   * transfer and its native leg): the spoken label then says so instead of
+   * repeating the transaction's sentence (pass p20c finding 12).
+   */
+  sameAsAbove?: boolean;
 }) {
   const theme = useTheme();
   const url = explorerTxUrl(chainId, entry.id, evmExplorerTxBase);
@@ -251,7 +259,7 @@ function EntryRow({
     <Pressable
       accessibilityRole={url ? 'button' : undefined}
       accessibilityLabel={
-        (sentence ? `${sentence}. ` : loading ? `${ROW_DETAILS_LOADING_LABEL}. ` : '') +
+        activityRowSpokenLead({ sentence, loading, sameAsAbove, loadingLabel: ROW_DETAILS_LOADING_LABEL }) +
         (replacementLine ? `${replacementLine} ` : '') +
         (failedIncoming ? `${title}, ` : `${title} transaction, `) +
         `${spokenAmount}, ${timestampLabel(entry)}` +
@@ -353,6 +361,7 @@ function NoteEditor({
   onSaved: () => void;
 }) {
   const theme = useTheme();
+  const fieldLabel = useFieldLabels();
   // The parent mounts a fresh editor per transaction (key), so the field
   // starts from that transaction's note.
   const [text, setText] = useState(target?.current?.text ?? '');
@@ -388,8 +397,9 @@ function NoteEditor({
           <Text accessibilityRole="header" style={titleStyle}>
             {target?.current ? 'Edit note' : 'Add note'}
           </Text>
-          <Text style={labelStyle}>Note (private, this phone only)</Text>
+          <Text {...fieldLabel('note', 'Note (private, this phone only)').label} style={labelStyle}>Note (private, this phone only)</Text>
           <TextInput
+            {...fieldLabel('note', 'Note (private, this phone only)').input}
             value={text}
             onChangeText={setText}
             editable={!busy}
@@ -397,10 +407,9 @@ function NoteEditor({
             autoFocus
             placeholder="For example: rent for October"
             placeholderTextColor={theme.textMuted}
-            accessibilityLabel="Note (private, this phone only)"
             style={[
               styles.noteInput,
-              { color: theme.text, borderColor: theme.border, backgroundColor: theme.card },
+              { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card },
             ]}
           />
           <Text style={[styles.modalHint, { color: cleaned.ok ? theme.textMuted : theme.danger }]}>
@@ -1035,7 +1044,7 @@ export function ActivityScreen({ navigation, route }: Props) {
         // uid distinguishes several entries born from one EVM transaction
         // (e.g. a token transfer plus an internal native movement).
         keyExtractor={(entry) => entry.uid ?? entry.id}
-        renderItem={({ item: listed }) => {
+        renderItem={({ item: listed, index }) => {
           // The row with its decoded receipt's status (a reverted
           // transaction moved nothing).
           const item = isEvmSlot ? entryWithReceiptStatus(listed, sentences.lookup(listed.id)) : listed;
@@ -1052,6 +1061,7 @@ export function ActivityScreen({ navigation, route }: Props) {
             loading={rowText.loading}
             unavailable={rowText.unavailable}
             replacementLine={isEvmSlot ? replacementRowLine(pendingRecords, evmChain.caip2, item.id) : null}
+            sameAsAbove={index > 0 && state.entries[index - 1]?.id === listed.id}
             noAmount={hidesZeroNativeAmount(item, tokenTxIds, sentences.lookup(item.id)?.description)}
             note={noteFor(item.id)}
             onEditNote={

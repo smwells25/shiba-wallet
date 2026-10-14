@@ -162,7 +162,7 @@ export function RiskWarnings({
 
   return (
     <View style={styles.block}>
-      <Text style={[styles.title, { color: theme.text }]}>{RISK_TITLE}</Text>
+      <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>{RISK_TITLE}</Text>
       {lines.map((line, i) =>
         line.tone === 'warning' ? (
           // Same visible warning style as BalanceChangePreview's warning lines.

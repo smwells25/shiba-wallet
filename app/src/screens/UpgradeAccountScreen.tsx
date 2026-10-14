@@ -264,7 +264,7 @@ export function UpgradeAccountScreen({ navigation }: Props) {
   if (phase === 'success' && result) {
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
-        <Text style={[styles.successTitle, { color: theme.success }]}>Sent ✓</Text>
+        <Text accessibilityRole="header" style={[styles.successTitle, { color: theme.success }]}>Sent ✓</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           {result.action === 'upgrade'
             ? 'Upgrade transaction broadcast. Smart-account sends from this account now use it at its own address.'
@@ -324,7 +324,7 @@ export function UpgradeAccountScreen({ navigation }: Props) {
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
-        <Text style={[styles.title, { color: theme.text }]}>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>
           {upgrade ? 'Upgrade now with a transaction' : 'Revoke upgrade'}
         </Text>
         {upgrade ? <WarningBox>{SET_CODE_WARNING}</WarningBox> : null}

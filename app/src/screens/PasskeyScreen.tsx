@@ -431,7 +431,7 @@ export function PasskeyScreen({ navigation }: Props) {
     const what = progress.kind === 'install' ? 'Passkey install' : progress.kind === 'remove' ? 'Passkey removal' : 'Passkey test operation';
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
-        <Text style={[styles.title, { color: theme.success }]}>{what} sent to the bundler</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.success }]}>{what} sent to the bundler</Text>
         <Text style={[styles.label, { color: theme.textMuted }]}>UserOperation hash</Text>
         <Text selectable style={[styles.monoText, { color: theme.text }]}>{progress.userOpHash}</Text>
         {progress.kind === 'test' ? (
@@ -500,7 +500,7 @@ export function PasskeyScreen({ navigation }: Props) {
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
-        <Text style={[styles.title, { color: theme.text }]}>Add this passkey to your smart account?</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Add this passkey to your smart account?</Text>
         {header}
         <Text style={[styles.hint, { color: theme.text }]}>{PASSKEY_EXPLANATION}</Text>
         <WarningBox>{PASSKEY_SELF_CALL_RISK}</WarningBox>
@@ -558,7 +558,7 @@ export function PasskeyScreen({ navigation }: Props) {
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
-        <Text style={[styles.title, { color: theme.text }]}>Test the passkey</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Test the passkey</Text>
         {header}
         <Row
           label="Test operation"
@@ -591,7 +591,7 @@ export function PasskeyScreen({ navigation }: Props) {
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
-        <Text style={[styles.title, { color: theme.text }]}>Remove the passkey</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Remove the passkey</Text>
         {header}
         <Row
           label="Operation"
@@ -624,7 +624,7 @@ export function PasskeyScreen({ navigation }: Props) {
   return (
     <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
       {readiness ? <TestNetworksOnlyCard feature={readiness.feature} hint={readiness.hint} /> : null}
-      <Text style={[styles.title, { color: theme.text }]}>Passkey (device biometrics signer)</Text>
+      <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Passkey (device biometrics signer)</Text>
       <Text style={[styles.hint, { color: theme.text }]}>{PASSKEY_EXPLANATION}</Text>
       {gate && !gate.ok ? <WarningBox>{gate.reason}</WarningBox> : null}
       {header}
@@ -645,7 +645,7 @@ export function PasskeyScreen({ navigation }: Props) {
       ) : null}
       {resolution?.ok && phase === 'main' ? (
         <>
-          <Text style={[styles.sectionTitle, { color: theme.text }]}>Status</Text>
+          <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Status</Text>
           <Text style={[styles.status, { color: installedHere ? theme.success : theme.text }]}>
             {status ? passkeyStatusText(status) : 'Reading status…'}
           </Text>

@@ -1175,5 +1175,25 @@ console.log('check-browser: mutation checks (the origin comparison and the frame
   }
 }
 
+// Pass p20c (TalkBack, 2026-10-14) finding 10.
+console.log('\ncheck-browser: pass p20c finding 10 (the Apps cards and the residuals box)');
+{
+  const { appSiteCardSpokenLabel, spokenSiteName } = await import('../src/a11y.ts');
+  check('a site card names the host and what activating it does (exact)',
+    appSiteCardSpokenLabel('https://app.uniswap.org') === "app.uniswap.org, opens in the wallet's browser" &&
+      spokenSiteName('https://app.ens.dev') === 'app.ens.dev', appSiteCardSpokenLabel('https://app.uniswap.org'));
+  const cardOk = (src) =>
+    src.includes('<Text accessibilityLabel={spokenSiteName(s.origin)} style={[styles.cardLine, { color: theme.textMuted }]}>') &&
+    src.includes('<Button title={`Open ${s.name}`} accessibilityHint={appSiteCardSpokenLabel(s.origin)} onPress={() => setSite(s)} />');
+  check('the origin line is spoken as the host, and the Open button says where it opens (source)', cardOk(SCREEN_SRC));
+  check('…mutant caught: the raw origin read out ("https: 2 Slashapp.uniswap.org")',
+    !cardOk(SCREEN_SRC.replace('<Text accessibilityLabel={spokenSiteName(s.origin)} style', '<Text style')));
+  const order = (src) => {
+    const box = src.indexOf('<WarningBox>{BROWSER_RESIDUALS}</WarningBox>');
+    return box > 0 && box < src.indexOf('{BROWSER_SITES.map((s) => {') && src.indexOf('<WarningBox>{BROWSER_RESIDUALS}</WarningBox>', box + 1) < 0;
+  };
+  check('the residuals box comes before the sites (read and shown before a site is chosen), once (source)', order(SCREEN_SRC));
+}
+
 console.log(`\ncheck-browser: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

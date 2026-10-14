@@ -426,5 +426,16 @@ async function importMutant(from, to) {
   check('mutant (Remove deletes before the dialog is answered) is caught', m8removed === 1);
 }
 
+// Pass p20c (TalkBack and dark mode, 2026-10-14) findings 1 and 18 on this screen.
+console.log('\npass p20c: the alert price field');
+{
+  const screen = readFileSync(join(HERE, '..', 'src', 'screens', 'PriceAlertsScreen.tsx'), 'utf8');
+  const fieldOk = (src) =>
+    src.includes('{...fieldA11y(`Alert price for ${asset.symbol} in US dollars`)}') &&
+    src.includes("style={[styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.background }]}");
+  check('the price field is named through fieldA11y and outlined with controlBorder (3:1 or more in both themes) (source)', fieldOk(screen));
+  check('…mutant caught: the old faint border', !fieldOk(screen.replace('borderColor: theme.controlBorder, backgroundColor: theme.background', 'borderColor: theme.border, backgroundColor: theme.background')));
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

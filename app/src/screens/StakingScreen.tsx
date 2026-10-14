@@ -5,7 +5,8 @@ import { formatAssetId } from '@shiba-wallet/core';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { httpTransport as evmHttpTransport } from '@shiba-wallet/chains-evm';
 import type { RootStackParamList } from '../navigation';
-import { Button, ImportedKeyNotice, TestNetworksOnlyCard, WarningBox, screenStyle } from '../components';
+import { spokenShortAddress } from '../a11y';
+import { Button, ImportedKeyNotice, TestNetworksOnlyCard, WarningBox, screenStyle, switchColors, useFieldLabels } from '../components';
 import { callWithFailover, getEndpoint, reportEndpointFailure, withEndpoint, type NetworkEndpoint, type UsableEndpoint } from '../config/networks';
 import { readinessGate } from '../config/readiness';
 import { sanitizeEndpointMessage } from '../config/endpoint-probe';
@@ -217,6 +218,7 @@ async function isStethTracked(chainCaip2: string): Promise<boolean | null> {
 
 export function StakingScreen({ navigation }: Props) {
   const theme = useTheme();
+  const fieldLabel = useFieldLabels();
   const { accounts, signWith, activeAccount } = useWallet();
   const { evmChain, hideAmounts } = usePrefs();
   const account = accounts.find((a) => a.chainId === EVM_CHAIN_ID);
@@ -655,7 +657,7 @@ export function StakingScreen({ navigation }: Props) {
     }
   };
 
-  const inputStyle = [styles.input, { color: theme.text, borderColor: theme.border, backgroundColor: theme.card }];
+  const inputStyle = [styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }];
   const sendingView = (text: string) => (
     <View style={styles.center}>
       <ActivityIndicator size="large" color={theme.accent} />
@@ -674,7 +676,7 @@ export function StakingScreen({ navigation }: Props) {
   if (phase === 'success' && (result || aaResult) && plan) {
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content} {...NOTE_VIEW_SCROLL_PROPS}>
-        <Text style={[styles.successTitle, { color: theme.success }]}>{aaResult ? 'Sent to the bundler ✓' : 'Sent ✓'}</Text>
+        <Text accessibilityRole="header" style={[styles.successTitle, { color: theme.success }]}>{aaResult ? 'Sent to the bundler ✓' : 'Sent ✓'}</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>{stakingActionTitle(plan.action, symbol)}.</Text>
         {approveTxid ? <Text style={[styles.hint, { color: theme.textMuted }]}>Approval transaction: {approveTxid}</Text> : null}
         <Text style={[styles.label, { color: theme.textMuted }]}>{aaResult ? 'UserOperation hash' : 'Transaction id'}</Text>
@@ -771,8 +773,8 @@ export function StakingScreen({ navigation }: Props) {
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
-        <Text style={[styles.stepTitle, { color: theme.text }]}>Step 1 of 2 — Approve</Text>
-        <Row label="From account" value={activeAccount?.name ?? '—'} sub={account.address} theme={theme} />
+        <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}>Step 1 of 2 — Approve</Text>
+        <Row label="From account" value={activeAccount?.name ?? '—'} sub={account.address} spoken={`From account: ${activeAccount?.name ?? 'unknown'}, ${spokenShortAddress(account.address)}`} theme={theme} />
         <ImportedKeyNotice show={activeAccount?.imported === true} />
         <Text style={[styles.hint, { color: theme.text }]}>
           {plan.contractLabel} pulls the {plan.approval.symbol} with a token approval. This approves exactly{' '}
@@ -804,9 +806,9 @@ export function StakingScreen({ navigation }: Props) {
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
-        {plan.approval ? <Text style={[styles.stepTitle, { color: theme.text }]}>Step 2 of 2</Text> : null}
+        {plan.approval ? <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}>Step 2 of 2</Text> : null}
         {notice ? <Text style={[styles.notice, { color: theme.accent }]}>{notice}</Text> : null}
-        <Row label="From account" value={activeAccount?.name ?? '—'} sub={account.address} theme={theme} />
+        <Row label="From account" value={activeAccount?.name ?? '—'} sub={account.address} spoken={`From account: ${activeAccount?.name ?? 'unknown'}, ${spokenShortAddress(account.address)}`} theme={theme} />
         <ImportedKeyNotice show={activeAccount?.imported === true} />
         <StakeOutcomeCard url={quotedUrl} plan={plan} theme={theme} nativeSymbol={symbol} />
         <Row label={plan.contractLabel} value={eoaQuote.to} mono theme={theme} />
@@ -855,8 +857,8 @@ export function StakingScreen({ navigation }: Props) {
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
-        <Text style={[styles.stepTitle, { color: theme.text }]}>Smart account · {aaAccountTypeLabel(aaQuote.accountType)}</Text>
-        <Row label="Owner account (signs)" value={activeAccount?.name ?? '—'} sub={account.address} theme={theme} />
+        <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}>Smart account · {aaAccountTypeLabel(aaQuote.accountType)}</Text>
+        <Row label="Owner account (signs)" value={activeAccount?.name ?? '—'} sub={account.address} spoken={`Owner account (signs): ${activeAccount?.name ?? 'unknown'}, ${spokenShortAddress(account.address)}`} theme={theme} />
         <ImportedKeyNotice show={activeAccount?.imported === true} />
         <Row label={aaSenderLabel(aaQuote)} value={aaQuote.sender} mono theme={theme} />
         <StakeOutcomeCard url={url} plan={plan} theme={theme} nativeSymbol={symbol} />
@@ -940,7 +942,7 @@ export function StakingScreen({ navigation }: Props) {
 
       {lidoOffered ? (
         <>
-          <Text style={[styles.stepTitle, { color: theme.text }]}>Lido</Text>
+          <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}>Lido</Text>
           {lido?.honestyLine ? <WarningBox>{lido.honestyLine}</WarningBox> : null}
           {lido && lido.problems.length > 0 ? <WarningBox>{lido.stakeRefusal}</WarningBox> : null}
           <QuotedStatementCard statement={LIDO_RISK_STATEMENT} theme={theme} />
@@ -948,7 +950,7 @@ export function StakingScreen({ navigation }: Props) {
       ) : null}
       {rocketOffered ? (
         <>
-          <Text style={[styles.stepTitle, { color: theme.text }]}>Rocket Pool</Text>
+          <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}>Rocket Pool</Text>
           <QuotedStatementCard statement={ROCKET_POOL_RISK_STATEMENT} theme={theme} />
         </>
       ) : null}
@@ -958,12 +960,16 @@ export function StakingScreen({ navigation }: Props) {
       ) : null}
       {aaOffered ? (
         <View style={styles.toggleRow}>
-          <Switch
-            accessibilityLabel="Stake from the smart account"
+          {/* Read once (pass p20c finding 6): the switch carries the visible
+              label, and the label text itself is hidden from screen readers. */}
+          <Switch {...switchColors(theme)}
+            accessibilityLabel="Use the smart account"
             value={aaEnabled}
             onValueChange={setAaEnabled}
           />
-          <Text style={[styles.toggleLabel, { color: theme.text }]}>Use the smart account</Text>
+          <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.toggleLabel, { color: theme.text }]}>
+            Use the smart account
+          </Text>
         </View>
       ) : null}
 
@@ -985,7 +991,7 @@ export function StakingScreen({ navigation }: Props) {
         />
       ) : null}
 
-      <Text style={[styles.label, { color: theme.textMuted }]}>What to do</Text>
+      <Text accessibilityRole="header" style={[styles.label, { color: theme.textMuted }]}>What to do</Text>
       <View style={styles.choiceRow}>
         {choices.map((c) => (
           <Button
@@ -1011,9 +1017,9 @@ export function StakingScreen({ navigation }: Props) {
       ) : null}
       {unit !== 'none' ? (
         <>
-          <Text style={[styles.label, { color: theme.textMuted }]}>Amount ({unit})</Text>
+          <Text {...fieldLabel('amount', `Amount (${unit})`).label} style={[styles.label, { color: theme.textMuted }]}>Amount ({unit})</Text>
           <TextInput
-            accessibilityLabel={`Amount in ${unit}`}
+            {...fieldLabel('amount', `Amount (${unit})`).input}
             style={inputStyle}
             value={amountText}
             onChangeText={setAmountText}

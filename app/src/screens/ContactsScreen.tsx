@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation';
-import { Button, WarningBox, screenStyle } from '../components';
+import { Button, WarningBox, screenStyle, fieldA11y } from '../components';
 import { QrScanner } from '../components/QrScanner';
 import { resolveActiveNetworks } from '../config/defaults';
 import { useTheme } from '../theme';
@@ -195,7 +195,7 @@ export function ContactsScreen(_props: Props) {
 
   const inputStyle = [
     styles.input,
-    { color: theme.text, borderColor: theme.border, backgroundColor: theme.card },
+    { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card },
   ];
 
   return (
@@ -231,7 +231,7 @@ export function ContactsScreen(_props: Props) {
 
       {sections.map((section) => (
         <View key={section.networkId} style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: theme.text }]}>{section.label}</Text>
+          <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>{section.label}</Text>
           {section.contacts.length === 0 ? (
             <Text style={[styles.hint, { color: theme.textMuted }]}>No contacts.</Text>
           ) : (
@@ -246,8 +246,8 @@ export function ContactsScreen(_props: Props) {
                   {isRenaming ? (
                     <>
                       <TextInput
+                        {...fieldA11y(`New name for ${contact.name}`)}
                         value={renameText}
-                        accessibilityLabel={`New name for ${contact.name}`}
                         onChangeText={(t) => {
                           setRenameText(t);
                           setRenameError(null);
@@ -258,7 +258,7 @@ export function ContactsScreen(_props: Props) {
                           styles.input,
                           {
                             color: theme.text,
-                            borderColor: theme.border,
+                            borderColor: theme.controlBorder,
                             backgroundColor: theme.background,
                           },
                         ]}
@@ -326,7 +326,7 @@ export function ContactsScreen(_props: Props) {
       ))}
 
       <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>Add a contact</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Add a contact</Text>
         <View style={styles.chainRow}>
           {networks.map(({ slot, network }) => (
             <Button
@@ -343,12 +343,12 @@ export function ContactsScreen(_props: Props) {
           ))}
         </View>
         <TextInput
+          {...fieldA11y('Contact name')}
           value={name}
           onChangeText={(t) => {
             setName(t);
             setAddError(null);
           }}
-          accessibilityLabel="Contact name"
           placeholder="Name"
           placeholderTextColor={theme.textMuted}
           autoCorrect={false}
@@ -357,12 +357,12 @@ export function ContactsScreen(_props: Props) {
         />
         <View style={styles.addressRow}>
           <TextInput
+            {...fieldA11y(`${addNetwork?.network.label ?? ''} address`)}
             value={address}
             onChangeText={(t) => {
               setAddress(t);
               setAddError(null);
             }}
-            accessibilityLabel={`${addNetwork?.network.label ?? ''} address`}
             placeholder={`${addNetwork?.network.label ?? ''} address`}
             placeholderTextColor={theme.textMuted}
             autoCapitalize="none"

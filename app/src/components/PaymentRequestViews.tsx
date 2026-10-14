@@ -4,7 +4,7 @@ import * as Clipboard from 'expo-clipboard';
 import QRCode from 'react-native-qrcode-svg';
 import { formatAssetId } from '@shiba-wallet/core';
 import type { FungibleAsset } from '@shiba-wallet/core';
-import { Button } from '../components';
+import { Button, useFieldLabels } from '../components';
 import { useTheme } from '../theme';
 import { parseUnits } from '../wallet/balances';
 import {
@@ -33,7 +33,7 @@ export function PaymentRequestNotice({ lines }: { lines: readonly string[] }) {
       accessibilityLabel={lines.join(' ')}
       style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border }]}
     >
-      <Text style={[styles.title, { color: theme.text }]}>Payment request</Text>
+      <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Payment request</Text>
       {lines.map((line, i) => (
         <Text key={i} selectable style={[styles.line, { color: i === 0 ? theme.textMuted : theme.text }]}>
           {line}
@@ -62,7 +62,7 @@ export function EnsNameStatus({ view, privacyNote }: { view: EnsNameView; privac
         <Text style={[styles.line, { color: theme.textMuted }]}>Looking up {view.name}…</Text>
       ) : view.status === 'resolved' ? (
         <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border }]}>
-          <Text style={[styles.title, { color: theme.text }]}>{view.name} {'→'}</Text>
+          <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>{view.name} {'→'}</Text>
           <Text selectable style={[styles.address, { color: theme.text }]}>
             {view.address}
           </Text>
@@ -116,6 +116,7 @@ export function RequestAmountCard({
   qrSize: number;
 }) {
   const theme = useTheme();
+  const fieldLabel = useFieldLabels();
   const [open, setOpen] = useState(false);
   const [amountText, setAmountText] = useState('');
   const [label, setLabel] = useState('');
@@ -189,7 +190,7 @@ export function RequestAmountCard({
     }
   }
 
-  const inputStyle = [styles.input, { color: theme.text, borderColor: theme.border, backgroundColor: theme.card }];
+  const inputStyle = [styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }];
 
   if (!open) {
     return (
@@ -205,7 +206,7 @@ export function RequestAmountCard({
 
   return (
     <View style={[styles.box, styles.stretch, { backgroundColor: theme.card, borderColor: theme.border }]}>
-      <Text style={[styles.title, { color: theme.text }]}>Request an amount</Text>
+      <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Request an amount</Text>
       <Text style={[styles.line, { color: theme.textMuted }]}>
         Builds a standard payment request ({STANDARD_BY_FAMILY[family]}) that other wallets can
         scan. The plain address code above stays available.
@@ -223,11 +224,11 @@ export function RequestAmountCard({
           ))}
         </View>
       ) : null}
-      <Text style={[styles.label, { color: theme.textMuted }]}>Amount ({asset.symbol})</Text>
+      <Text {...fieldLabel('amount', `Amount (${asset.symbol})`).label} style={[styles.label, { color: theme.textMuted }]}>Amount ({asset.symbol})</Text>
       <TextInput
+        {...fieldLabel('amount', `Amount (${asset.symbol})`).input}
         value={amountText}
         onChangeText={setAmountText}
-        accessibilityLabel={`Requested amount in ${asset.symbol}`}
         placeholder="0.0"
         placeholderTextColor={theme.textMuted}
         keyboardType="decimal-pad"
@@ -235,22 +236,22 @@ export function RequestAmountCard({
       />
       {family !== 'evm' ? (
         <>
-          <Text style={[styles.label, { color: theme.textMuted }]}>
+          <Text {...fieldLabel('label', 'Label (optional, for example your name)').label} style={[styles.label, { color: theme.textMuted }]}>
             Label (optional, for example your name)
           </Text>
           <TextInput
+            {...fieldLabel('label', 'Label (optional, for example your name)').input}
             value={label}
             onChangeText={setLabel}
-            accessibilityLabel="Label, optional"
             maxLength={MAX_REQUEST_TEXT_LENGTH}
             placeholderTextColor={theme.textMuted}
             style={inputStyle}
           />
-          <Text style={[styles.label, { color: theme.textMuted }]}>Note (optional)</Text>
+          <Text {...fieldLabel('note', 'Note (optional)').label} style={[styles.label, { color: theme.textMuted }]}>Note (optional)</Text>
           <TextInput
+            {...fieldLabel('note', 'Note (optional)').input}
             value={note}
             onChangeText={setNote}
-            accessibilityLabel="Note, optional"
             maxLength={MAX_REQUEST_TEXT_LENGTH}
             placeholderTextColor={theme.textMuted}
             style={inputStyle}

@@ -62,7 +62,7 @@ export function ImportedKeyReveal({
   return (
     <Modal visible animationType="slide" onRequestClose={close}>
       <ScrollView contentContainerStyle={[styles.content, { backgroundColor: theme.background }]}>
-        <Text style={[styles.title, { color: theme.text }]}>{accountName}</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>{accountName}</Text>
         <Text style={[styles.address, { color: theme.textMuted }]}>{address}</Text>
         <ImportedKeyNotice />
         <WarningBox>

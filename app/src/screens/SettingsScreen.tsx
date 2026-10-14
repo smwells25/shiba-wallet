@@ -4,7 +4,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
 import type { RootStackParamList, SettingsSectionId } from '../navigation';
 import { allowScreenCaptureAsync, preventScreenCaptureAsync } from 'expo-screen-capture';
-import { Button, WarningBox, WordGrid, screenStyle } from '../components';
+import { Button, WarningBox, WordGrid, screenStyle, switchColors, useFieldLabels, fieldA11y } from '../components';
 import { localDateLabel } from '../config/dates';
 import { AccountsSection } from '../components/AccountsSection';
 import { NotificationSettingsSection } from '../components/NotificationScheduler';
@@ -258,6 +258,7 @@ function EndpointRow({
       {editing ? (
         <View style={styles.endpointEditor}>
           <TextInput
+            {...fieldA11y(`${network.label} endpoint URL`)}
             value={draft}
             onChangeText={setDraft}
             placeholder="https://…"
@@ -267,7 +268,7 @@ function EndpointRow({
             keyboardType="url"
             style={[
               styles.endpointInput,
-              { color: theme.text, borderColor: theme.border, backgroundColor: theme.background },
+              { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.background },
             ]}
           />
           <View style={styles.endpointButtons}>
@@ -310,7 +311,7 @@ function EndpointRow({
           {fallbackNote ? (
             <Text style={[styles.endpointNote, { color: theme.textMuted }]}>{fallbackNote}</Text>
           ) : null}
-          <Button title="Edit" variant="secondary" onPress={beginEdit} />
+          <Button title="Edit" variant="secondary" accessibilityLabel={`Edit the ${network.label} endpoint`} onPress={beginEdit} />
         </View>
       )}
     </View>
@@ -337,6 +338,7 @@ function BlockbookRow({
   onChanged: () => void;
 }) {
   const theme = useTheme();
+  const fieldLabel = useFieldLabels();
   const { network } = endpoint;
   const [config, setConfig] = useState<BlockbookConfig | null>(null);
   const [editing, setEditing] = useState(false);
@@ -393,8 +395,9 @@ function BlockbookRow({
       </View>
       {editing ? (
         <View style={styles.endpointEditor}>
-          <Text style={[styles.aaFieldLabel, { color: theme.textMuted }]}>Blockbook base URL</Text>
+          <Text {...fieldLabel('blockbook-url', 'Blockbook base URL').label} style={[styles.aaFieldLabel, { color: theme.textMuted }]}>Blockbook base URL</Text>
           <TextInput
+            {...fieldLabel('blockbook-url', 'Blockbook base URL').input}
             value={urlDraft}
             onChangeText={setUrlDraft}
             placeholder="https://…"
@@ -404,13 +407,14 @@ function BlockbookRow({
             keyboardType="url"
             style={[
               styles.endpointInput,
-              { color: theme.text, borderColor: theme.border, backgroundColor: theme.background },
+              { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.background },
             ]}
           />
-          <Text style={[styles.aaFieldLabel, { color: theme.textMuted }]}>
+          <Text {...fieldLabel('blockbook-key', 'API key (optional)').label} style={[styles.aaFieldLabel, { color: theme.textMuted }]}>
             API key (optional)
           </Text>
           <TextInput
+            {...fieldLabel('blockbook-key', 'API key (optional)').input}
             value={keyDraft}
             onChangeText={setKeyDraft}
             placeholder="Provider API key, if required"
@@ -419,7 +423,7 @@ function BlockbookRow({
             autoCorrect={false}
             style={[
               styles.endpointInput,
-              { color: theme.text, borderColor: theme.border, backgroundColor: theme.background },
+              { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.background },
             ]}
           />
           <Text style={[styles.endpointNote, { color: theme.textMuted }]}>
@@ -463,7 +467,7 @@ function BlockbookRow({
             <Text style={[styles.endpointNote, { color: theme.textMuted }]}>{network.note}</Text>
           ) : null}
           <View style={styles.endpointButtons}>
-            <Button title="Edit" variant="secondary" onPress={beginEdit} style={styles.endpointButton} />
+            <Button title="Edit" variant="secondary" accessibilityLabel={`Edit the ${network.label} Blockbook endpoint`} onPress={beginEdit} style={styles.endpointButton} />
             {config?.url || config?.ignoredUrlReason ? (
               <Button
                 title="Clear"
@@ -604,6 +608,7 @@ function AaField({
   locked?: boolean;
 }) {
   const theme = useTheme();
+  const fieldLabel = useFieldLabels();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [verifying, setVerifying] = useState(false);
@@ -625,10 +630,11 @@ function AaField({
 
   return (
     <View style={styles.aaField}>
-      <Text style={[styles.aaFieldLabel, { color: theme.textMuted }]}>{label}</Text>
+      <Text {...fieldLabel('aa', label).label} style={[styles.aaFieldLabel, { color: theme.textMuted }]}>{label}</Text>
       {editing ? (
         <View style={styles.endpointEditor}>
           <TextInput
+            {...fieldLabel('aa', label).input}
             value={draft}
             onChangeText={setDraft}
             placeholder={placeholder}
@@ -637,7 +643,7 @@ function AaField({
             autoCorrect={false}
             style={[
               styles.endpointInput,
-              { color: theme.text, borderColor: theme.border, backgroundColor: theme.background },
+              { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.background },
             ]}
           />
           {prefill && draft === prefill && prefillNote ? (
@@ -676,6 +682,8 @@ function AaField({
             <Button
               title="Edit"
               variant="secondary"
+              // "Edit the 0x API key", not a bare "Edit" (pass p20c finding 11).
+              accessibilityLabel={`Edit the ${label}`}
               disabled={locked}
               onPress={() => {
                 // Start from the stored value, else the pinned prefill
@@ -1163,6 +1171,7 @@ function CustomNetworksSection({
   onChoose: (choice: EvmNetworkChoice | null) => Promise<void>;
 }) {
   const theme = useTheme();
+  const fieldLabel = useFieldLabels();
   const [records, setRecords] = useState<CustomNetworkRecord[]>([]);
   const [readOnly, setReadOnly] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -1185,8 +1194,9 @@ function CustomNetworksSection({
 
   const field = (key: keyof typeof EMPTY_CUSTOM_FORM, label: string, placeholder: string, keyboard: 'default' | 'url' | 'number-pad' = 'default') => (
     <View style={styles.aaField}>
-      <Text style={[styles.aaFieldLabel, { color: theme.textMuted }]}>{label}</Text>
+      <Text {...fieldLabel(`custom-${String(key)}`, label).label} style={[styles.aaFieldLabel, { color: theme.textMuted }]}>{label}</Text>
       <TextInput
+        {...fieldLabel(`custom-${String(key)}`, label).input}
         value={String(form[key])}
         onChangeText={(text) => setForm((f) => ({ ...f, [key]: text }))}
         placeholder={placeholder}
@@ -1194,8 +1204,7 @@ function CustomNetworksSection({
         autoCapitalize="none"
         autoCorrect={false}
         keyboardType={keyboard}
-        accessibilityLabel={label}
-        style={[styles.endpointInput, { color: theme.text, borderColor: theme.border, backgroundColor: theme.background }]}
+        style={[styles.endpointInput, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.background }]}
       />
     </View>
   );
@@ -1359,7 +1368,7 @@ function CustomNetworksSection({
           {field('explorerUrl', 'Block explorer (https, optional)', 'https://…', 'url')}
           <View style={styles.toggleRow}>
             <Text style={[styles.toggleLabel, styles.readinessTitle, { color: theme.text }]}>This is a test network</Text>
-            <Switch
+            <Switch {...switchColors(theme)}
               accessibilityLabel="This is a test network"
               accessibilityRole="switch"
               accessibilityState={{ checked: form.testnet }}
@@ -1699,7 +1708,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       <AccountsSection onImportKey={() => navigation.navigate('ImportKey')} />
 
       <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>Backup</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Backup</Text>
         {importedAccounts.length === 0 ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
             {/* "ALL" only while the list above holds nothing but phrase
@@ -1771,7 +1780,7 @@ export function SettingsScreen({ navigation, route }: Props) {
 
       {protectionView?.text ? (
         <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: theme.text }]}>Recovery phrase protection</Text>
+          <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Recovery phrase protection</Text>
           {protectionView.warning ? (
             <WarningBox>{protectionView.text}</WarningBox>
           ) : (
@@ -1795,10 +1804,10 @@ export function SettingsScreen({ navigation, route }: Props) {
       ) : null}
 
       <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>Privacy & security</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Privacy & security</Text>
         <View style={styles.toggleRow}>
           <Text style={[styles.toggleLabel, { color: theme.text }]}>Hide amounts</Text>
-          <Switch
+          <Switch {...switchColors(theme)}
             accessibilityLabel="Hide amounts"
             accessibilityRole="switch"
             accessibilityState={{ checked: hideAmounts }}
@@ -1854,12 +1863,12 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>{SCREEN_PROTECTION_TITLE}</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>{SCREEN_PROTECTION_TITLE}</Text>
         <View style={styles.toggleRow}>
           <Text style={[styles.toggleLabel, { color: theme.text, flexShrink: 1, marginRight: 12 }]}>
             {SCREEN_PROTECTION_SWITCH_LABEL}
           </Text>
-          <Switch
+          <Switch {...switchColors(theme)}
             accessibilityLabel={SCREEN_PROTECTION_SWITCH_LABEL}
             accessibilityRole="switch"
             accessibilityState={{ checked: screenProtection }}
@@ -1882,10 +1891,10 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>Prices</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Prices</Text>
         <View style={styles.toggleRow}>
           <Text style={[styles.toggleLabel, { color: theme.text }]}>Show fiat values (USD)</Text>
-          <Switch
+          <Switch {...switchColors(theme)}
             accessibilityLabel="Show fiat values (USD)"
             accessibilityRole="switch"
             accessibilityState={{ checked: showFiat }}
@@ -1938,7 +1947,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section} onLayout={(e) => onSectionLayout('network-endpoints', e.nativeEvent.layout.y)}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>Network endpoints</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Network endpoints</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Where balances are fetched from and where transactions are
           broadcast. Endpoint URLs are public configuration; Dogecoin&apos;s
@@ -1971,7 +1980,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section} onLayout={(e) => onSectionLayout('history-indexer', e.nativeEvent.layout.y)}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>
           Ethereum history indexer
         </Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
@@ -1995,7 +2004,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section} onLayout={(e) => onSectionLayout('nft-indexer', e.nativeEvent.layout.y)}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>NFT indexer</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>NFT indexer</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           The NFTs screen needs an indexer that lists the NFTs an address
           owns (ERC-721 and ERC-1155). Paste the base URL of an endpoint that
@@ -2021,7 +2030,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>Mainnet readiness</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Mainnet readiness</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>{READINESS_INTRO}</Text>
         {FEATURE_READINESS.map((f) => (
           <ReadinessRow key={f.id} feature={f} phrase={phraseState} theme={theme} />
@@ -2034,7 +2043,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>
           Account Abstraction (experimental)
         </Text>
         <Text style={[styles.hint, { color: theme.warningText }]}>
@@ -2061,7 +2070,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>
           Upgrade this account (EIP-7702)
         </Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
@@ -2078,7 +2087,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>Session keys</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Session keys</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Let a separate key on this device (or a dApp, over WalletConnect) make only the calls you
           list, until a deadline you choose. Your Kernel account enforces the limits on-chain, and you
@@ -2094,7 +2103,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>Guardians (social recovery)</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Guardians (social recovery)</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Let people you choose replace the key of your deployed Kernel smart account if you lose your
           recovery phrase. This is a trade-off, not a safety guarantee: enough guardians together could
@@ -2125,7 +2134,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>Passkey (device biometrics signer)</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Passkey (device biometrics signer)</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>{PASSKEY_EXPLANATION}</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>{PASSKEY_SELF_CALL_RISK}</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
@@ -2139,7 +2148,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>WalletConnect</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>WalletConnect</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           {`Lets external dApps connect to this wallet on the active EVM chain (${EVM_MAINNET.label} mainnet, or ${testNetworkLabelsOr()} while test mode is on). `}
           Requires a relay project id — create one for free at
@@ -2171,7 +2180,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>Apps (in-app browser)</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Apps (in-app browser)</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           A short, fixed list of apps that open inside the wallet, on test networks only. They connect through the same
           approval sheet as WalletConnect. Their connections are listed on the Connected apps screen (open it with the
@@ -2182,13 +2191,13 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>Multi-signature accounts</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Multi-signature accounts</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>{MULTISIG_SETTINGS_BLURB}</Text>
         <Button title="Multi-signature accounts" variant="secondary" onPress={() => navigation.navigate('Multisig')} />
       </View>
 
       <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>Contacts</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Contacts</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Named addresses for each chain, picked from the Send screen. A name
           is shown only for an exact address match, always with the full
@@ -2202,7 +2211,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>Prove address ownership</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Prove address ownership</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Sign a challenge you were given (or your own statement) with this account or its smart
           account, and share a proof anyone can check. Website logins are not signed here — they go
@@ -2216,7 +2225,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>Tokens</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Tokens</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Track ERC-20 tokens on the Home screen: balances, and sending
           them. {settingsTokensFeeSentence()} Each network has its own list
@@ -2231,7 +2240,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>{SPENDING_SECTION_TITLE}</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>{SPENDING_SECTION_TITLE}</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>{SPENDING_SETTINGS_HINT}</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>{SPENDING_HONESTY_SENTENCE}</Text>
         <Button
@@ -2242,7 +2251,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>Token approvals</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Token approvals</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           See which contracts may move your tracked tokens and NFT collections
           without asking you again, and revoke them. Revoking is an ordinary
@@ -2256,7 +2265,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>Swaps</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Swaps</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Swapping (the Swap link on the Home screen) is priced by the 0x
           aggregator and needs your own API key — create one for free at
@@ -2293,7 +2302,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>Developer</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Developer</Text>
         <Text style={[styles.toggleLabel, { color: theme.text }]}>Test network</Text>
         <View style={styles.choiceChips}>
           {[
@@ -2350,7 +2359,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>Danger zone</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Danger zone</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Wiping removes the recovery phrase from this device&apos;s secure
           storage. Your written backup remains the only way to restore the
@@ -2454,6 +2463,13 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     flexBasis: '40%',
     minWidth: 140,
+    // Pass p20c finding 20: a chip whose label wraps to two lines made its
+    // row taller and the neighbour (stretched to the row) kept its label at
+    // the top. Every chip now has one minimum height and centres its label
+    // vertically, so chips in one row line up whatever their label length
+    // (the label itself is centred horizontally in components.tsx).
+    minHeight: 56,
+    justifyContent: 'center',
   },
   aaField: {
     gap: 8,

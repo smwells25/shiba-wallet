@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useState } from 'react';
 import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation';
-import { Button, WarningBox, screenStyle } from '../components';
+import { Button, WarningBox, screenStyle, fieldA11y } from '../components';
 import { QrScanner } from '../components/QrScanner';
 import { useTheme } from '../theme';
 import { usePrefs } from '../wallet/PrefsContext';
@@ -111,7 +111,7 @@ export function ConnectionsScreen({ navigation }: Props) {
   const browserSection =
     browserSessions.length > 0 ? (
       <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>In-app browser connections</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>In-app browser connections</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Sites opened from Apps (test networks only). Each is connected for one account on one network; disconnecting
           stops it from seeing your address until you connect again. A site that is open in Apps can also be
@@ -127,7 +127,7 @@ export function ConnectionsScreen({ navigation }: Props) {
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
         {browserSection}
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>WalletConnect is off</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>WalletConnect is off</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Connecting to dApps uses the WalletConnect relay network, which
           requires a project id. Create one for free at dashboard.reown.com
@@ -182,7 +182,7 @@ export function ConnectionsScreen({ navigation }: Props) {
       {wc.client ? (
         <>
           <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: theme.text }]}>Connect a dApp with WalletConnect</Text>
+            <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Connect a dApp with WalletConnect</Text>
             <Text style={[styles.hint, { color: theme.textMuted }]}>
               In the dApp, choose WalletConnect, then scan its QR code — or
               copy the pairing link (wc:…) and paste it here. The wallet
@@ -201,16 +201,16 @@ export function ConnectionsScreen({ navigation }: Props) {
               disabled={pairBusy}
             />
             <TextInput
+              {...fieldA11y('WalletConnect pairing link')}
               value={uri}
               onChangeText={setUri}
-              accessibilityLabel="WalletConnect pairing link"
               placeholder="wc:…"
               placeholderTextColor={theme.textMuted}
               autoCapitalize="none"
               autoCorrect={false}
               style={[
                 styles.input,
-                { color: theme.text, borderColor: theme.border, backgroundColor: theme.card },
+                { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card },
               ]}
             />
             <Button
@@ -221,7 +221,7 @@ export function ConnectionsScreen({ navigation }: Props) {
           </View>
 
           <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: theme.text }]}>WalletConnect connections</Text>
+            <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>WalletConnect connections</Text>
             {wcSessions.length === 0 ? (
               <Text style={[styles.hint, { color: theme.textMuted }]}>
                 No dApps are connected through WalletConnect.
@@ -235,7 +235,7 @@ export function ConnectionsScreen({ navigation }: Props) {
 
           {wc.notices.length > 0 ? (
             <View style={styles.section}>
-              <Text style={[styles.sectionTitle, { color: theme.text }]}>Recent activity</Text>
+              <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Recent activity</Text>
               {wc.notices.map((n) => (
                 <Text key={n.id} style={[styles.hint, { color: theme.textMuted }]}>
                   {n.text}
@@ -273,7 +273,7 @@ function SessionCard({
   const theme = useTheme();
   return (
     <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-      <Text style={[styles.cardTitle, { color: theme.text }]}>{session.name}</Text>
+      <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>{session.name}</Text>
       {session.url ? (
         <Text style={[styles.cardLine, { color: theme.textMuted }]} numberOfLines={1}>
           {session.url}

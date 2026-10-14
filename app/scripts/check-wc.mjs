@@ -1160,7 +1160,7 @@ console.log('check-wc: WalletConnect Verify (verifyContext, threat-model N-06)')
   check("…browser: topics are 'browser', everything else 'walletconnect'",
     /function aaSentMetaFor\(topic: string\): AaSendMeta \{\s*return \{ kind: isBrowserTopic\(topic\) \? 'browser' : 'walletconnect' \};\s*\}/.test(provider));
   check('sheet renders the identity banner for every item', /<IdentityBanner identity=\{item\.identity\}/.test(sheet));
-  check('sheet: the risk switch is the same Switch pattern as the simulation override', /requiresAcknowledgement \? \(\s*<View style=\{styles\.overrideRow\}>\s*<Switch value=\{acknowledged\}/.test(sheet));
+  check('sheet: the risk switch is the same Switch pattern as the simulation override', /requiresAcknowledgement \? \(\s*<View style=\{styles\.overrideRow\}>\s*<Switch \{\.\.\.switchColors\(theme\)\} value=\{acknowledged\}/.test(sheet));
   const approveButtons = [
     /disabled=\{smart === undefined \|\| approveLocked\}/,
     /<Button title="Sign" onPress=\{onApprove\} disabled=\{approveLocked\} \/>[\s\S]*<Button title="Sign" onPress=\{onApprove\} disabled=\{approveLocked\} \/>/,

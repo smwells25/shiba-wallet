@@ -15,7 +15,7 @@ import {
   type RecipientClass,
   type SessionKeyGrant,
 } from '@shiba-wallet/chains-evm';
-import { Button, ImportedKeyNotice, WarningBox } from '../components';
+import { Button, ImportedKeyNotice, WarningBox, switchColors } from '../components';
 import { BalanceChangePreview } from './BalanceChangePreview';
 import { AaDepositNote } from './AaDepositNote';
 import { NOTE_VIEW_SCROLL_PROPS, TransactionNoteField, dismissKeyboardThenClose } from './TransactionNoteField';
@@ -581,7 +581,7 @@ export function WcSentView({ result, onDone }: { result: WcSentResult; onDone: (
     <View style={styles.backdrop}>
       <View style={[styles.card, { backgroundColor: theme.background, borderColor: theme.border }]}>
         <ScrollView key={result.key} contentContainerStyle={styles.content} {...NOTE_VIEW_SCROLL_PROPS}>
-          <Text style={[styles.modalTitle, { color: theme.success }]}>{result.title}</Text>
+          <Text accessibilityRole="header" style={[styles.modalTitle, { color: theme.success }]}>{result.title}</Text>
           <Text style={[styles.hint, { color: theme.textMuted }]}>Sent for {result.dappName}.</Text>
           {result.detail ? <Text style={[styles.hint, { color: theme.text }]}>{result.detail}</Text> : null}
           {result.txid ? (
@@ -697,7 +697,7 @@ function ProposalBody({
   );
   return (
     <>
-      <Text style={[styles.modalTitle, { color: theme.text }]}>Connection request</Text>
+      <Text accessibilityRole="header" style={[styles.modalTitle, { color: theme.text }]}>Connection request</Text>
       <Field label="dApp" value={summary.name} theme={theme} />
       {summary.url ? <Field label="URL" value={summary.url} theme={theme} /> : null}
       {summary.description ? (
@@ -909,7 +909,7 @@ function RequestBody({
     const { typedData } = parsed;
     return (
       <>
-        <Text style={[styles.modalTitle, { color: theme.text }]}>Sign typed data</Text>
+        <Text accessibilityRole="header" style={[styles.modalTitle, { color: theme.text }]}>Sign typed data</Text>
         <Field label="From dApp" value={dappName} theme={theme} />
         {accountLabel ? <Field label="Signing account" value={accountLabel} theme={theme} /> : null}
         <TypedDataSummaryCard typedData={typedData} signer={item.address} evmChain={evmChain} theme={theme} />
@@ -982,7 +982,7 @@ function RequestBody({
     : null;
   return (
     <>
-      <Text style={[styles.modalTitle, { color: theme.text }]}>Transaction request</Text>
+      <Text accessibilityRole="header" style={[styles.modalTitle, { color: theme.text }]}>Transaction request</Text>
       {evmChain.testnet ? (
         <View style={[styles.mainnetBadge, { backgroundColor: theme.testnetFill, borderColor: theme.testnetFill }]}>
           <Text style={[styles.mainnetBadgeText, { color: theme.onTestnetFill }]}>
@@ -1064,7 +1064,7 @@ function RequestBody({
                 cost the fee.
               </WarningBox>
               <View style={styles.overrideRow}>
-                <Switch value={overrideSimulation} onValueChange={setOverrideSimulation} />
+                <Switch {...switchColors(theme)} value={overrideSimulation} onValueChange={setOverrideSimulation} />
                 <Text style={[styles.overrideLabel, { color: theme.text }]}>
                   Send anyway (I understand it will probably fail)
                 </Text>
@@ -1237,7 +1237,7 @@ function PersonalSignBody({
   );
   return (
     <>
-      <Text style={[styles.modalTitle, { color: theme.text }]}>
+      <Text accessibilityRole="header" style={[styles.modalTitle, { color: theme.text }]}>
         {siwe.kind === 'siwe' ? siwe.summary.title : 'Sign message'}
       </Text>
       <Field label="From dApp" value={dappName} theme={theme} />
@@ -1284,7 +1284,7 @@ function SiweSummaryCard({
   const { summary } = state;
   return (
     <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border, gap: 10 }]}>
-      <Text style={[styles.summaryTitle, { color: theme.text }]}>Sign-In with Ethereum (EIP-4361)</Text>
+      <Text accessibilityRole="header" style={[styles.summaryTitle, { color: theme.text }]}>Sign-In with Ethereum (EIP-4361)</Text>
       {summary.rows.map((row) => (
         <View key={row.label} style={[styles.fieldRow, { borderColor: theme.border }]}>
           <Text style={[styles.fieldLabel, { color: theme.textMuted }]}>{row.label}</Text>
@@ -1369,7 +1369,7 @@ function SmartAccountTxBody({
   const ready = txQuote?.status === 'ready-aa' ? txQuote : null;
   return (
     <>
-      <Text style={[styles.modalTitle, { color: theme.text }]}>
+      <Text accessibilityRole="header" style={[styles.modalTitle, { color: theme.text }]}>
         {batch ? `Batch request (${txs.length} call${txs.length === 1 ? '' : 's'})` : 'Transaction request'}
       </Text>
       {evmChain.testnet ? (
@@ -1564,7 +1564,7 @@ function PermissionRequestBody({
   };
   return (
     <>
-      <Text style={[styles.modalTitle, { color: theme.text }]}>Session permission request</Text>
+      <Text accessibilityRole="header" style={[styles.modalTitle, { color: theme.text }]}>Session permission request</Text>
       {evmChain.testnet ? (
         <View style={[styles.mainnetBadge, { backgroundColor: theme.testnetFill, borderColor: theme.testnetFill }]}>
           <Text style={[styles.mainnetBadgeText, { color: theme.onTestnetFill }]}>
@@ -1708,7 +1708,7 @@ function IdentityBanner({
       {identity.siweGate ? <WarningBox>{identity.siweGate}</WarningBox> : null}
       {identity.requiresAcknowledgement ? (
         <View style={styles.overrideRow}>
-          <Switch value={acknowledged} onValueChange={setAcknowledged} />
+          <Switch {...switchColors(theme)} value={acknowledged} onValueChange={setAcknowledged} />
           <Text style={[styles.overrideLabel, { color: theme.text }]}>{IDENTITY_RISK_SWITCH_LABEL}</Text>
         </View>
       ) : null}
@@ -1805,7 +1805,7 @@ function TypedDataSummaryCard({
   const networkWarnings = spenderRiskWarnings(summary.spenders, classes);
   return (
     <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border, gap: 10 }]}>
-      <Text style={[styles.summaryTitle, { color: theme.text }]}>{summary.title}</Text>
+      <Text accessibilityRole="header" style={[styles.summaryTitle, { color: theme.text }]}>{summary.title}</Text>
       <Text style={[styles.hint, { color: theme.text }]}>{summary.explanation}</Text>
       {summary.rows.map((row, i) => (
         <View key={`${i}-${row.label}`} style={[styles.fieldRow, { borderColor: theme.border }]}>

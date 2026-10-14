@@ -142,7 +142,7 @@ export function BalanceChangePreview({
 
   return (
     <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-      <Text style={[styles.title, { color: theme.text }]}>{PREVIEW_TITLE}</Text>
+      <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>{PREVIEW_TITLE}</Text>
       {state === null ? (
         <View style={styles.loading}>
           <ActivityIndicator size="small" color={theme.accent} />

@@ -193,7 +193,7 @@ export function SpendingPolicyNotice({
   if (!owner || (!damaged && (!readouts || readouts.length === 0))) return null;
   return (
     <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-      <Text style={[styles.title, { color: theme.text }]}>{SPENDING_SECTION_TITLE}</Text>
+      <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>{SPENDING_SECTION_TITLE}</Text>
       {damaged ? (
         <Text style={[styles.line, { color: theme.danger }]}>
           Your spending limits could not be read; this send will not be signed until they are

@@ -18,6 +18,8 @@ import { ImportedKeyNotice, WarningBox, WatchOnlyNotice, screenStyle } from '../
 import { CHAINS } from '../wallet/chains';
 import { IMPORTED_KEY_NO_CHAIN, MULTISIG_NO_CHAIN, WATCH_ONLY_NO_CHAIN } from '../wallet/account-ids';
 import { useTheme } from '../theme';
+import { textOnFill } from '../theme-palette';
+import { spokenLinkText, tokenRowSpokenLabel } from '../a11y';
 import { EVM_CHAIN_ID, addSendAcceptedListener } from '../wallet/send';
 import { addAaSentListener } from '../wallet/aa';
 import { createSendRefreshTracker, reloadNowAndLater } from '../wallet/home-refresh';
@@ -80,6 +82,23 @@ function shortAddress(address: string): string {
  * The fiat value (phase 6 item 2) is secondary text under the exact crypto
  * amount; when there is no price, nothing is rendered in its place.
  */
+/**
+ * What a screen reader says for a balance (BalanceCell, and the token rows'
+ * one composed label): "Balance 0.5 ETH, about $1,234.56", "Balance hidden",
+ * "Loading balance", "Balance unavailable…", "Balance could not be loaded".
+ */
+function balanceSpokenText(state: BalanceState | undefined, hidden: boolean, fiat: FiatDisplay | null): string {
+  if (!state || state.status === 'loading') return 'Loading balance';
+  if (state.status === 'ok') {
+    if (hidden) return 'Balance hidden';
+    const spokenFiat = fiat ? `, about ${fiat.text.replace(/^≈\s*/, '')}` : '';
+    const spokenStale = fiat?.staleNote ? `, ${fiat.staleNote}` : '';
+    return `Balance ${spokenAmount(state.display)} ${state.symbol}${spokenFiat}${spokenStale}`;
+  }
+  if (state.status === 'unavailable') return 'Balance unavailable: no endpoint is configured for this chain';
+  return 'Balance could not be loaded';
+}
+
 function BalanceCell({
   state,
   onRetry,
@@ -101,15 +120,11 @@ function BalanceCell({
   if (state.status === 'ok') {
     // Read as one element: "Balance 0.5 ETH, about $1,234.56" (or "Balance
     // hidden" under Hide amounts, where the fiat line is masked too).
-    const spokenFiat = fiat && !hidden ? `, about ${fiat.text.replace(/^≈\s*/, '')}` : '';
-    const spokenStale = fiat?.staleNote && !hidden ? `, ${fiat.staleNote}` : '';
     return (
       <View
         style={styles.balanceCell}
         accessible
-        accessibilityLabel={
-          hidden ? 'Balance hidden' : `Balance ${spokenAmount(state.display)} ${state.symbol}${spokenFiat}${spokenStale}`
-        }
+        accessibilityLabel={balanceSpokenText(state, hidden, fiat)}
       >
         <Text style={[styles.balance, { color: theme.text }]} numberOfLines={1}>
           {maskAmount(state.display, hidden)}
@@ -181,17 +196,47 @@ function TokenRow({
   fiat: FiatDisplay | null;
 }) {
   const theme = useTheme();
+  // One accessible element per row (pass p20c finding 3): the symbol, the
+  // second line and the balance in that order, then the row's action — Send
+  // on a double tap, or Retry when the balance failed to load. TalkBack used
+  // to read the badge's symbol as its own item and, on the two-line wstETH
+  // row, the balance before Send. The visible pieces below are hidden from
+  // screen readers (importantForAccessibility "no-hide-descendants",
+  // Android; accessibilityElementsHidden, iOS — RN 0.86.3
+  // Libraries/Components/View/ViewAccessibility.d.ts :258–275 and :287–291),
+  // so they are not reached a second time.
+  const retry = state?.status === 'error';
+  const action = retry ? onRetry : onSend;
+  const hideChildren = { importantForAccessibility: 'no-hide-descendants' as const, accessibilityElementsHidden: true };
   return (
-    <View style={[styles.tokenRow, { backgroundColor: theme.card, borderColor: theme.border }]}>
+    <View
+      style={[styles.tokenRow, { backgroundColor: theme.card, borderColor: theme.border }]}
+      accessible
+      accessibilityLabel={tokenRowSpokenLabel({
+        symbol: token.symbol,
+        subtitle: tokenRowSubtitle(token),
+        balance: balanceSpokenText(state, hidden, fiat),
+      })}
+      {...(action
+        ? {
+            accessibilityRole: 'button' as const,
+            accessibilityHint: retry ? 'Asks the network endpoint for this balance again' : `Sends ${token.symbol}`,
+            accessibilityActions: [{ name: 'activate', label: retry ? 'Retry' : `Send ${token.symbol}` }],
+            onAccessibilityAction: (e: { nativeEvent: { actionName: string } }) => {
+              if (e.nativeEvent.actionName === 'activate') action();
+            },
+          }
+        : {})}
+    >
       {/* The whole symbol, on one line: the badge grows from a 36-px circle
           into a pill (up to 72 px) instead of cutting "wstETH" to "wstE";
           a symbol longer than that ends in an ellipsis. */}
-      <View style={[styles.tokenBadge, { borderColor: theme.border }]}>
+      <View style={[styles.tokenBadge, { borderColor: theme.border }]} {...hideChildren}>
         <Text style={[styles.tokenBadgeText, { color: theme.textMuted }]} numberOfLines={1}>
           {token.symbol}
         </Text>
       </View>
-      <View style={styles.cardBody}>
+      <View style={styles.cardBody} {...hideChildren}>
         <Text style={[styles.tokenName, { color: theme.text }]} numberOfLines={1}>
           {token.symbol}
         </Text>
@@ -211,7 +256,9 @@ function TokenRow({
           </Pressable>
         ) : null}
       </View>
-      <BalanceCell state={state} onRetry={onRetry} hidden={hidden} fiat={fiat} />
+      <View {...hideChildren}>
+        <BalanceCell state={state} onRetry={onRetry} hidden={hidden} fiat={fiat} />
+      </View>
     </View>
   );
 }
@@ -234,7 +281,7 @@ function UnavailableChains({ accounts, sentence }: { accounts: ChainAccount[]; s
         >
           <View style={styles.cardTop}>
             <View style={[styles.badge, { backgroundColor: c.accent, opacity: 0.4 }]}>
-              <Text style={styles.badgeText}>{c.symbol}</Text>
+              <Text style={[styles.badgeText, { color: textOnFill(c.accent) }]}>{c.symbol}</Text>
             </View>
             <View style={styles.cardBody}>
               <Text style={[styles.chainName, { color: theme.text }]}>{c.provider.name}</Text>
@@ -412,12 +459,17 @@ export function HomeScreen({ navigation }: Props) {
       ? multisigOtherNetworkNote(multisigInfo.label, evmProfileByCaip2(multisigInfo.chain)?.label ?? multisigInfo.chain, evmChain.label)
       : null;
 
-  /** One text link in a chain card's link rows. */
-  const cardLink = (key: string, label: string, text: string, onPress: () => void, hint?: string) => (
+  /**
+   * One text link in a chain card's link rows. Its spoken name is its
+   * visible text (pass p20c finding 13: "Inheritance" was spoken for the
+   * visible "Inheritance (demonstration)"), with only the decorative ↗ and ✓
+   * left out (spokenLinkText, ../a11y.ts); anything more goes in the hint.
+   */
+  const cardLink = (key: string, text: string, onPress: () => void, hint?: string) => (
     <Pressable
       key={key}
       accessibilityRole="button"
-      accessibilityLabel={label}
+      accessibilityLabel={spokenLinkText(text)}
       {...(hint !== undefined ? { accessibilityHint: hint } : {})}
       onPress={onPress}
       hitSlop={8}
@@ -447,22 +499,22 @@ export function HomeScreen({ navigation }: Props) {
     const tools = isEvm && !noKey
       ? [
           sessionsEligible
-            ? cardLink('sessions', 'Sessions', 'Sessions', () => navigation.navigate('Sessions'))
+            ? cardLink('sessions', 'Sessions', () => navigation.navigate('Sessions'))
             : null,
           recovery.guardiansEligible
-            ? cardLink('guardians', 'Guardians', 'Guardians', () => navigation.navigate('Guardians'))
+            ? cardLink('guardians', 'Guardians', () => navigation.navigate('Guardians'))
             : null,
           // Inheritance is a test-network demonstration built on the guardian
           // module, so it is offered under the same eligibility, on test
           // networks only.
           recovery.guardiansEligible && evmChain.testnet
-            ? cardLink('inheritance', 'Inheritance', 'Inheritance (demonstration)', () => navigation.navigate('Inheritance'))
+            ? cardLink('inheritance', 'Inheritance (demonstration)', () => navigation.navigate('Inheritance'))
             : null,
           // The in-app browser (feature 79): test networks only, enforced
           // by its readiness row; never for a watch-only account (this list
           // is empty for one).
           evmChain.testnet
-            ? cardLink('apps', 'Apps, the in-app browser', 'Apps', () => navigation.navigate('Apps'))
+            ? cardLink('apps', 'Apps', () => navigation.navigate('Apps'), 'Opens the in-app browser')
             : null,
           // Multi-signature accounts (feature 24): test networks only,
           // enforced by the readiness row `multisig`, and only where the
@@ -470,20 +522,20 @@ export function HomeScreen({ navigation }: Props) {
           // exist (config/evm-chain.ts multisigNetworkVerified: a built-in
           // test network, or a network the multisig check passed on).
           evmChain.testnet && multisigNetworkVerified(evmChain)
-            ? cardLink('multisig', 'Multi-signature accounts', 'Multisig', () => navigation.navigate('Multisig'))
+            ? cardLink('multisig', 'Multisig', () => navigation.navigate('Multisig'), 'Opens the multi-signature accounts')
             : null,
           // Staking (features 57/58): test networks only, and only where a
           // staking protocol is set up for the active chain (Lido on
           // Ethereum Sepolia and Hoodi; Rocket Pool on Hoodi).
           isFeatureAllowed('staking', evmChain.caip2) && stakingOfferFor(evmChain.caip2).unavailable === null
-            ? cardLink('staking', 'Staking', 'Staking', () => navigation.navigate('Staking'))
+            ? cardLink('staking', 'Staking', () => navigation.navigate('Staking'))
             : null,
           passkey.eligible
             ? cardLink(
                 'passkey',
-                passkey.record ? 'Passkey, added' : 'Passkey',
                 passkey.record ? 'Passkey ✓' : 'Passkey',
                 () => navigation.navigate('Passkey'),
+                passkey.record ? 'A passkey is added to this smart account' : undefined,
               )
             : null,
         ].filter((link) => link !== null)
@@ -505,7 +557,7 @@ export function HomeScreen({ navigation }: Props) {
             style={({ pressed }) => [styles.receiveArea, { opacity: pressed ? 0.7 : 1 }]}
           >
             <View style={[styles.badge, { backgroundColor: item.accent }]}>
-              <Text style={styles.badgeText}>{item.symbol}</Text>
+              <Text style={[styles.badgeText, { color: textOnFill(item.accent) }]}>{item.symbol}</Text>
             </View>
             <View style={styles.cardBody}>
               <Text style={[styles.chainName, { color: theme.text }]}>{title}</Text>
@@ -529,22 +581,24 @@ export function HomeScreen({ navigation }: Props) {
         <View style={styles.linkRow}>
           {noKey
             ? null
-            : cardLink('send', `Send ${item.symbol}`, 'Send ↗', () =>
+            : cardLink('send', 'Send ↗', () =>
                 navigation.navigate('Send', { chainId: item.chainId }),
+                `Sends ${item.symbol}`,
               )}
-          {cardLink('activity', `${title} activity`, 'Activity', () =>
+          {cardLink('activity', 'Activity', () =>
             navigation.navigate('Activity', { chainId: item.chainId }),
+            `Opens the ${title} activity`,
           )}
           {/* Swaps are an EVM feature (0x, phase 5 item 1); the screen
               itself explains and stays off until a key is configured. Not
               linked on profiles where swaps are not offered (Base Sepolia:
               config/evm-chain.ts swapsOffered). */}
           {isEvm && evmChain.swapsOffered && !noKey
-            ? cardLink('swap', 'Swap', 'Swap', () => navigation.navigate('Swap'))
+            ? cardLink('swap', 'Swap', () => navigation.navigate('Swap'))
             : null}
           {/* NFT gallery (phase 7 item 4) for the active EVM chain; the
               screen explains itself until an NFT indexer is configured. */}
-          {isEvm ? cardLink('nfts', 'NFTs', 'NFTs', () => navigation.navigate('Nfts')) : null}
+          {isEvm ? cardLink('nfts', 'NFTs', () => navigation.navigate('Nfts')) : null}
           {/* EIP-7702 account upgrade (phase 8 item 1) for the active
               account on the active EVM chain. Hidden where the Kernel v3.3
               delegate is known to have no code (a network the user added)
@@ -554,9 +608,9 @@ export function HomeScreen({ navigation }: Props) {
               {isEvm && !noKey
                 ? cardLink(
                     'upgrade',
-                    delegation.status?.kind === 'kernel-v3.3' ? 'Account upgraded' : 'Upgrade this account',
                     delegation.status?.kind === 'kernel-v3.3' ? 'Upgraded ✓' : 'Upgrade',
                     () => navigation.navigate('UpgradeAccount'),
+                    delegation.status?.kind === 'kernel-v3.3' ? 'This account is upgraded; opens its details' : 'Upgrades this account to a smart account',
                   )
                 : null}
             </>
@@ -566,13 +620,13 @@ export function HomeScreen({ navigation }: Props) {
           {/* Linked for a watch-only account too: the Approvals screen is
               read-only there (no Revoke buttons). */}
           {isEvm
-            ? cardLink('approvals', 'Token approvals', 'Approvals', () => navigation.navigate('Approvals'))
+            ? cardLink('approvals', 'Approvals', () => navigation.navigate('Approvals'), 'Opens the token approvals')
             : null}
           {/* A multisig account's operations (sends included) are built on
               the Multisig screen, where the co-signers' approvals are
               collected; it is the only route to them. */}
           {isEvm && multisig
-            ? cardLink('multisig-operations', 'Multisig operations', 'Multisig', () => navigation.navigate('Multisig'))
+            ? cardLink('multisig-operations', 'Multisig', () => navigation.navigate('Multisig'), 'Opens this multisig’s operations')
             : null}
         </View>
         {isEvm && multisig ? (
@@ -762,9 +816,14 @@ export function HomeScreen({ navigation }: Props) {
                 Settings -> Privacy & security); the eye glyph masks every
                 amount on this screen and on Activity as ••••. */}
             <View style={styles.privacyRow}>
+              {/* A switch for screen readers (pass p20c finding 4: it was a plain
+                  button with no on/off state): "Hide amounts, switch, on/off"
+                  (accessibilityRole "switch" and accessibilityState.checked,
+                  RN 0.86.3 ViewAccessibility.d.ts :44 and :48). */}
               <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={hideAmounts ? 'Show amounts' : 'Hide amounts'}
+                accessibilityRole="switch"
+                accessibilityLabel="Hide amounts"
+                accessibilityState={{ checked: hideAmounts }}
                 accessibilityHint="Masks or reveals every amount on this screen and on Activity"
                 onPress={() => void setHideAmounts(!hideAmounts)}
                 hitSlop={8}
@@ -794,8 +853,8 @@ export function HomeScreen({ navigation }: Props) {
           {/* Phase 20 item 1: the portfolio (net worth, profit and loss) and
               the price alerts, read-only for every kind of account. */}
           <View style={styles.linkRow}>
-            {cardLink('portfolio', 'Portfolio: net worth and profit and loss', 'Portfolio', () => navigation.navigate('Portfolio'))}
-            {cardLink('price-alerts', 'Price alerts and watchlist', 'Price alerts', () => navigation.navigate('PriceAlerts'))}
+            {cardLink('portfolio', 'Portfolio', () => navigation.navigate('Portfolio'), 'Net worth and profit and loss')}
+            {cardLink('price-alerts', 'Price alerts', () => navigation.navigate('PriceAlerts'), 'Price alerts and watchlist')}
           </View>
           {/* Feature 12 (ADR D9): an imported Ethereum key has no Bitcoin,
               Dogecoin or Solana address; those networks are shown as not
@@ -898,8 +957,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  // The colour comes from textOnFill (theme-palette.ts), chosen per fill.
   badgeText: {
-    color: '#ffffff',
     fontWeight: '700',
     fontSize: 12,
   },

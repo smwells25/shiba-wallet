@@ -94,7 +94,7 @@ export function MultisigRefusedFeatures() {
   const theme = useTheme();
   return (
     <View style={[styles.card, { borderColor: theme.border, backgroundColor: theme.card }]}>
-      <Text style={[styles.cardTitle, { color: theme.text }]}>Not available for a multi-signature account</Text>
+      <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>Not available for a multi-signature account</Text>
       {(['walletconnect', 'browser', 'guardians', 'inheritance', 'passkeys', 'session-keys', 'eip7702', 'owner-rotation'] as const).map(
         (f) => (
           <Text key={f} style={[styles.hint, { color: theme.textMuted }]}>
@@ -143,7 +143,7 @@ export function MultisigCallsView({
   const theme = useTheme();
   return (
     <View style={[styles.card, { borderColor: theme.border, backgroundColor: theme.card }]}>
-      <Text style={[styles.cardTitle, { color: theme.text }]}>
+      <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>
         {calls.length === 1 ? 'The call' : `The ${calls.length} calls (one atomic operation)`}
       </Text>
       {calls.map((c, i) => (

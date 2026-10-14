@@ -13,7 +13,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { OwnedNft } from '@shiba-wallet/chains-evm';
 import type { RootStackParamList } from '../navigation';
-import { Button, screenStyle } from '../components';
+import { Button, screenStyle, switchColors } from '../components';
 import { useTheme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
 import { OfflineNotice, TechnicalDetail, describeNetworkError } from '../wallet/connectivity';
@@ -250,7 +250,7 @@ export function NftsScreen({ navigation }: Props) {
       ) : null}
       {state.status === 'ok' && spamItems > 0 ? (
         <View style={styles.spamToggle}>
-          <Switch
+          <Switch {...switchColors(theme)}
             accessibilityLabel="Show items flagged as spam"
             value={showSpam}
             onValueChange={setShowSpam}
@@ -308,7 +308,7 @@ export function NftsScreen({ navigation }: Props) {
       const g = item.group;
       return (
         <View style={styles.groupHeader}>
-          <Text style={[styles.groupTitle, { color: theme.text }]} numberOfLines={2}>
+          <Text accessibilityRole="header" style={[styles.groupTitle, { color: theme.text }]} numberOfLines={2}>
             {g.title}
           </Text>
           <Text style={[styles.groupMeta, { color: theme.textMuted }]}>

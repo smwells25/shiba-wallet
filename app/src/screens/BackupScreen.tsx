@@ -30,7 +30,7 @@ export function BackupScreen({ navigation }: Props) {
       style={screenStyle(theme)}
       contentContainerStyle={styles.content}
     >
-      <Text style={[styles.heading, { color: theme.text }]}>
+      <Text accessibilityRole="header" style={[styles.heading, { color: theme.text }]}>
         Your recovery phrase
       </Text>
       <WarningBox>

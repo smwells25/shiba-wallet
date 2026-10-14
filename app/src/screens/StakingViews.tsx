@@ -3,6 +3,8 @@ import { Linking, Platform, Pressable, StyleSheet, Text, View } from 'react-nati
 import { httpTransport as evmHttpTransport, type StakeOutcomePreview } from '@shiba-wallet/chains-evm';
 import type { Theme } from '../theme';
 import { WarningBox } from '../components';
+import { spokenSiteName, spokenTokenName, withShortAddresses } from '../a11y';
+import { stakingTokenName } from '../wallet/tokens';
 import { formatUnits } from '../wallet/balances';
 import {
   STETH_REBASING_NOTE,
@@ -50,16 +52,22 @@ export function Row({
   value,
   sub = null,
   mono: monoFont,
+  spoken,
   theme,
 }: {
   label: string;
   value: string;
   sub?: string | null;
   mono?: boolean;
+  /** When set, the row is read as this one sentence (a token's full name instead of its spelled-out symbol). */
+  spoken?: string;
   theme: Theme;
 }) {
   return (
-    <View style={[styles.row, { borderColor: theme.border }]}>
+    <View
+      style={[styles.row, { borderColor: theme.border }]}
+      {...(spoken !== undefined ? { accessible: true, accessibilityLabel: spoken } : {})}
+    >
       <Text style={[styles.rowLabel, { color: theme.textMuted }]}>{label}</Text>
       <Text selectable style={[styles.rowValue, { color: theme.text }, monoFont ? { fontFamily: mono, fontSize: 13 } : null]}>
         {value}
@@ -73,13 +81,19 @@ export function Row({
 export function QuotedStatementCard({ statement, theme }: { statement: QuotedStatement; theme: Theme }) {
   return (
     <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-      <Text style={[styles.cardTitle, { color: theme.text }]}>{statement.intro}</Text>
+      <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>{statement.intro}</Text>
       {statement.sentences.map((s) => (
         <Text key={s} style={[styles.quote, { color: theme.text, borderColor: theme.border }]}>
           “{s}”
         </Text>
       ))}
-      <Pressable accessibilityRole="link" onPress={() => void Linking.openURL(statement.url)}>
+      {/* Spoken with the site's name, not the raw URL (pass p20c finding 6). */}
+      <Pressable
+        accessibilityRole="link"
+        accessibilityLabel={`Source: ${statement.source}, read ${statement.read}. ${spokenSiteName(statement.url)}`}
+        accessibilityHint="Opens the source in the browser"
+        onPress={() => void Linking.openURL(statement.url)}
+      >
         <Text style={[styles.hint, { color: theme.accent }]}>
           Source: {statement.source}, read {statement.read}. {statement.url}
         </Text>
@@ -104,33 +118,32 @@ export function StakingBalancesCard({
   theme: Theme;
 }) {
   const show = (amount: bigint, symbol: string) => (hidden ? `•••• ${symbol}` : `${exact18(amount)} ${symbol}`);
-  const lines: { label: string; value: string; sub?: string | null }[] = [];
+  // What a screen reader says for a balance row: the token's full name with
+  // its symbol ("Liquid staked Ether 2.0 (stETH)"), the amount, the note.
+  const say = (amount: bigint, symbol: string, sub: string | null) =>
+    `${spokenTokenName(symbol, stakingTokenName(symbol))}: ${hidden ? 'amount hidden' : exact18(amount)}${sub ? `. ${sub}` : ''}`;
+  const lines: { label: string; value: string; sub?: string | null; spoken: string }[] = [];
   if (balances.lido) {
-    lines.push({ label: 'stETH', value: show(balances.lido.stETH, 'stETH'), sub: 'Rebasing: the balance changes when Lido’s oracle reports.' });
-    lines.push({
-      label: 'wstETH',
-      value: show(balances.lido.wstETH, 'wstETH'),
-      sub: balances.lido.wstETH > 0n && !hidden ? `Worth ${exact18(balances.lido.wstETHInStETH)} stETH at Lido’s rate now.` : null,
-    });
+    const stSub = 'Rebasing: the balance changes when Lido’s oracle reports.';
+    lines.push({ label: 'stETH', value: show(balances.lido.stETH, 'stETH'), sub: stSub, spoken: say(balances.lido.stETH, 'stETH', stSub) });
+    const wstSub = balances.lido.wstETH > 0n && !hidden ? `Worth ${exact18(balances.lido.wstETHInStETH)} stETH at Lido’s rate now.` : null;
+    lines.push({ label: 'wstETH', value: show(balances.lido.wstETH, 'wstETH'), sub: wstSub, spoken: say(balances.lido.wstETH, 'wstETH', wstSub) });
   }
   if (balances.rETH !== null) {
-    lines.push({
-      label: 'rETH',
-      value: show(balances.rETH, 'rETH'),
-      sub:
-        balances.rETH > 0n && balances.rethEthValue !== null && !hidden
-          ? `Worth ${exact18(balances.rethEthValue)} ${nativeSymbol} at Rocket Pool’s rate now.`
-          : null,
-    });
+    const rSub =
+      balances.rETH > 0n && balances.rethEthValue !== null && !hidden
+        ? `Worth ${exact18(balances.rethEthValue)} ${nativeSymbol} at Rocket Pool’s rate now.`
+        : null;
+    lines.push({ label: 'rETH', value: show(balances.rETH, 'rETH'), sub: rSub, spoken: say(balances.rETH, 'rETH', rSub) });
   }
   return (
     <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-      <Text style={[styles.cardTitle, { color: theme.text }]}>Your staking balances</Text>
-      <Text selectable style={[styles.hint, { color: theme.textMuted }]}>
+      <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>Your staking balances</Text>
+      <Text selectable accessibilityLabel={withShortAddresses(holderLine)} style={[styles.hint, { color: theme.textMuted }]}>
         {holderLine}
       </Text>
       {lines.map((l) => (
-        <Row key={l.label} label={l.label} value={l.value} sub={l.sub ?? null} theme={theme} />
+        <Row key={l.label} label={l.label} value={l.value} sub={l.sub ?? null} spoken={l.spoken} theme={theme} />
       ))}
       {balances.rethLock?.locked ? (
         <Text style={[styles.hint, { color: theme.textMuted }]}>
@@ -139,7 +152,7 @@ export function StakingBalancesCard({
       ) : null}
       {balances.requests.length > 0 ? (
         <>
-          <Text style={[styles.cardTitle, { color: theme.text }]}>Lido withdrawal requests</Text>
+          <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>Lido withdrawal requests</Text>
           {balances.requests.map((r) => (
             <Row
               key={String(r.requestId)}

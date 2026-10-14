@@ -1,5 +1,14 @@
-import React from 'react';
-import { Pressable, StyleSheet, Text, TextStyle, View, ViewStyle } from 'react-native';
+import React, { useCallback, useEffect, useId, useRef } from 'react';
+import {
+  AccessibilityInfo,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextStyle,
+  View,
+  ViewStyle,
+  type SwitchProps,
+} from 'react-native';
 import { Theme, useTheme } from './theme';
 import type { FeatureReadiness } from './config/readiness';
 import { IMPORTED_KEY_NOT_BACKED_UP, WATCH_ONLY_NOTICE } from './wallet/account-ids';
@@ -64,11 +73,34 @@ export function Button({
   );
 }
 
-/** Prominent warning panel used for every seed-phrase security notice. */
-export function WarningBox({ children }: { children: React.ReactNode }) {
+/**
+ * Prominent warning panel used for every seed-phrase security notice.
+ *
+ * `announce` (pass p20c finding 8) is for a box that appears because an
+ * action was refused (a form's Review blocked by a funding check): the box
+ * becomes one accessible element, Android announces later changes of its
+ * text (accessibilityLiveRegion "polite"; Android only — RN 0.86.3
+ * Libraries/Components/View/ViewAccessibility.d.ts:245, "Works for Android
+ * API >= 19 only"), and the screen reader's focus is moved onto it when it
+ * appears or its text changes (AccessibilityInfo.sendAccessibilityEvent with
+ * "focus", AccessibilityInfo.d.ts:174–177 and the event types at :41; it
+ * takes the view itself, so no findNodeHandle is needed), so a person who
+ * activated Review hears why nothing happened instead of staying on the
+ * button.
+ */
+export function WarningBox({ children, announce = false }: { children: React.ReactNode; announce?: boolean }) {
   const theme = useTheme();
+  const ref = useRef<View>(null);
+  // Re-focus when the text changes (a second refusal with other figures).
+  const spoken = typeof children === 'string' ? children : null;
+  useEffect(() => {
+    if (!announce || !ref.current) return;
+    AccessibilityInfo.sendAccessibilityEvent(ref.current, 'focus');
+  }, [announce, spoken]);
   return (
     <View
+      ref={ref}
+      {...(announce ? { accessible: true, accessibilityLiveRegion: 'polite' as const } : {})}
       style={[
         styles.warning,
         { backgroundColor: theme.warningSurface, borderColor: theme.warningBorder },
@@ -76,6 +108,96 @@ export function WarningBox({ children }: { children: React.ReactNode }) {
     >
       <Text style={[styles.warningText, { color: theme.warningText }]}>{children}</Text>
     </View>
+  );
+}
+
+/**
+ * The colours of every Switch in the app (pass p20c finding 14: in dark
+ * mode a switch that was off showed only its white thumb, because the
+ * platform's default off track nearly matches the dark background). The
+ * off track uses the palette's controlBorder (at least 3:1 against the
+ * background and a card), the on track the accent. Props from RN 0.86.3
+ * Libraries/Components/Switch/Switch.d.ts: thumbColor (:55), trackColor
+ * {false, true} (:62–67) and ios_backgroundColor (:103, the colour shown
+ * behind an iOS switch that is off). scripts/check-devmode.mjs fails on any
+ * <Switch in app/src that does not spread this.
+ */
+export function switchColors(
+  theme: Theme,
+): Required<Pick<SwitchProps, 'trackColor' | 'thumbColor' | 'ios_backgroundColor'>> {
+  return {
+    trackColor: { false: theme.controlBorder, true: theme.accent },
+    thumbColor: theme.switchThumb,
+    ios_backgroundColor: theme.controlBorder,
+  };
+}
+
+/**
+ * What a screen reader needs to name a text field (pass p20c finding 1).
+ *
+ * TalkBack read every field's PLACEHOLDER (or, once filled, its value) and
+ * never its visible label, even where an accessibilityLabel was set: React
+ * Native gives the placeholder to Android as the EditText's hint
+ * (ReactEditText.kt setPlaceholder, `hint = placeholder`, :563–568) and its
+ * own accessibility code notes that an EditText's text wins over a content
+ * description (ReactAccessibilityDelegate.kt :964–965). Android's way to
+ * name a field after a visible label is "labeled by": TextInput passes
+ * accessibilityLabelledBy to the native view (TextInput.js :729–730, :770),
+ * BaseViewManager stores it (BaseViewManager.java :315–327) and the
+ * delegate calls AccessibilityNodeInfo.setLabeledBy with the view whose
+ * nativeID matches (ReactAccessibilityDelegate.kt :91–97). The typing says
+ * "When the assistive technology focuses on the component with this
+ * props, the text is read aloud" (ViewAccessibility.d.ts :221–227,
+ * Android only). accessibilityLabel stays the name for VoiceOver on iOS.
+ * accessibilityHint becomes the Android tooltip (ReactAccessibilityDelegate.kt
+ * :86–89) and the iOS hint.
+ */
+export interface FieldA11y {
+  accessibilityLabel: string;
+  accessibilityLabelledBy?: string;
+  accessibilityHint?: string;
+}
+
+/** The field props for a label; `labelId` is the nativeID of the visible label, when there is one. */
+export function fieldA11y(label: string, opts: { labelId?: string; hint?: string } = {}): FieldA11y {
+  return {
+    accessibilityLabel: label,
+    ...(opts.labelId !== undefined ? { accessibilityLabelledBy: opts.labelId } : {}),
+    ...(opts.hint !== undefined ? { accessibilityHint: opts.hint } : {}),
+  };
+}
+
+/**
+ * Ties visible labels to their fields: `field(key, label, hint?)` returns
+ * the props for the label's <Text> (a nativeID unique to this mounted
+ * screen, from React's useId, so a second copy of the same screen further
+ * down the stack cannot be found instead — Android looks the id up from the
+ * window's root view, depth first, and takes the first match —
+ * ReactAccessibilityDelegate.kt :93, ReactFindViewUtil.kt :48–60) and for the
+ * <TextInput>. `key` only has to be unique within the component (for
+ * example `guardian-${i}-weight`). Adds no view, so the layout is unchanged.
+ */
+export interface FieldLabel {
+  /** The visible label text (render it inside the label's <Text>). */
+  text: string;
+  /** Spread on the visible label's <Text>. */
+  label: { nativeID: string };
+  /** Spread on the <TextInput>. */
+  input: FieldA11y;
+}
+
+export function useFieldLabels(): (key: string, label: string, hint?: string) => FieldLabel {
+  const base = useId();
+  return useCallback(
+    (key: string, label: string, hint?: string): FieldLabel => {
+      const nativeID = `field-${base}-${key}`;
+      return {
+        text: label,
+        label: { nativeID },
+        input: fieldA11y(label, { labelId: nativeID, ...(hint !== undefined ? { hint } : {}) }),
+      };
+    },
+    [base],
   );
 }
 
@@ -137,7 +259,7 @@ export function TestNetworksOnlyCard({
         { backgroundColor: theme.card, borderColor: theme.border },
       ]}
     >
-      <Text style={[titleStyle ?? styles.readinessTitle, { color: theme.text }]}>
+      <Text accessibilityRole="header" style={[titleStyle ?? styles.readinessTitle, { color: theme.text }]}>
         {feature.title}: test networks only
       </Text>
       <Text style={[bodyStyle ?? styles.readinessBody, { color: theme.text }]}>{feature.reason}</Text>
@@ -179,6 +301,10 @@ const styles = StyleSheet.create({
   buttonLabel: {
     fontSize: 16,
     fontWeight: '600',
+    // A label that wraps (a long choice chip at phone width) stays centred
+    // like a one-line label, instead of two left-aligned lines (pass p20c
+    // finding 20).
+    textAlign: 'center',
   },
   warning: {
     borderRadius: 12,

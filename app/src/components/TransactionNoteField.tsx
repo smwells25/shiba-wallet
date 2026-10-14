@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Keyboard, StyleSheet, Text, TextInput } from 'react-native';
+import { useFieldLabels } from '../components';
 import { useTheme } from '../theme';
 import { closeNoteView, linkUserOperation, NOTE_PRIVACY_LINE, sanitizeNote, saveNote } from '../wallet/notes';
 
@@ -53,6 +54,7 @@ export function TransactionNoteField({
   userOpHash: string | null;
 }) {
   const theme = useTheme();
+  const fieldLabel = useFieldLabels();
   const [text, setText] = useState('');
   const [status, setStatus] = useState<{ kind: 'idle' | 'saved' } | { kind: 'error'; message: string }>({
     kind: 'idle',
@@ -103,8 +105,9 @@ export function TransactionNoteField({
 
   return (
     <>
-      <Text style={[styles.label, { color: theme.textMuted }]}>Note (private, this phone only)</Text>
+      <Text {...fieldLabel('note', 'Note (private, this phone only)').label} style={[styles.label, { color: theme.textMuted }]}>Note (private, this phone only)</Text>
       <TextInput
+        {...fieldLabel('note', 'Note (private, this phone only)').input}
         value={text}
         onChangeText={(value) => {
           setText(value);
@@ -116,8 +119,7 @@ export function TransactionNoteField({
         submitBehavior="blurAndSubmit"
         placeholder="For example: rent for October"
         placeholderTextColor={theme.textMuted}
-        accessibilityLabel="Note (private, this phone only)"
-        style={[styles.input, { color: theme.text, borderColor: theme.border, backgroundColor: theme.card }]}
+        style={[styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }]}
       />
       {status.kind === 'saved' ? (
         <Text accessibilityLiveRegion="polite" style={[styles.hint, { color: theme.success }]}>

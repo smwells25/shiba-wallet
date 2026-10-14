@@ -256,6 +256,20 @@ export default function App() {
         <ScreenProtection />
         <WalletProvider>
           <StatusBar style="auto" />
+          {/* Android navigation bar (pass p20c finding 15: a white strip under
+              the TESTNET banner in dark mode). The app is edge to edge, so the
+              banner already paints behind the bar (its bottom padding is the
+              inset). The strip is the system contrast scrim: React Native sets
+              the bar appearance once, when the window is created, from the
+              theme at that moment (react-native 0.86.3 ReactAndroid
+              views/view/WindowUtil.kt enableEdgeToEdge, lines 164-190, with
+              enforceNavigationBarContrast on by default), and a theme switched
+              while the app runs does not change it. Nothing installed can set
+              it from JavaScript, and app.json androidNavigationBar is
+              deprecated with no effect (@expo/config-plugins SystemBars.js).
+              Following the theme at run time needs the expo-navigation-bar
+              module (Expo SDK 57 pins ~57.0.3 in expo/bundledNativeModules.json;
+              not a dependency yet). */}
           {/* LockGate sits inside both providers (it needs wallet status and
               the auto-lock preference) and wraps the whole navigator so the
               lock overlay covers every screen without resetting navigation. */}

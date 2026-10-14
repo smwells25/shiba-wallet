@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
-import { Button, WatchOnlyNotice } from '../components';
+import { Button, WatchOnlyNotice, fieldA11y } from '../components';
 import { useTheme } from '../theme';
 import { MAX_ACCOUNT_NAME_LENGTH, shortAccountAddress } from '../wallet/accounts';
 import { importedSlotOf } from '../wallet/account-ids';
@@ -294,6 +294,7 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
         {isEditing ? (
           <View style={styles.editor}>
             <TextInput
+              {...fieldA11y('Account name')}
               value={draft}
               onChangeText={setDraft}
               autoFocus
@@ -302,7 +303,7 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
               placeholderTextColor={theme.textMuted}
               style={[
                 styles.input,
-                { color: theme.text, borderColor: theme.border, backgroundColor: theme.background },
+                { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.background },
               ]}
             />
             <View style={styles.buttons}>
@@ -384,7 +385,7 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
 
   return (
     <View style={styles.section}>
-      <Text style={[styles.sectionTitle, { color: theme.text }]}>Accounts</Text>
+      <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Accounts</Text>
       <Text style={[styles.hint, { color: theme.textMuted }]}>
         {accountsBackupHint(importedCount > 0, { watchOnly: watchOnlyAccounts.length > 0, multisig: multisigAccounts.length > 0 })} Account addresses from the
         phrase follow the common conventions: Ethereum m/44&apos;/60&apos;/0&apos;/0/N (as
@@ -397,6 +398,7 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
       {visible.map(renderRow)}
       <View style={styles.editor}>
         <TextInput
+          {...fieldA11y('New account name (optional)')}
           value={newName}
           onChangeText={setNewName}
           maxLength={MAX_ACCOUNT_NAME_LENGTH * 2}
@@ -404,7 +406,7 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
           placeholderTextColor={theme.textMuted}
           style={[
             styles.input,
-            { color: theme.text, borderColor: theme.border, backgroundColor: theme.card },
+            { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card },
           ]}
         />
         <Button title="Add account" onPress={() => void onAdd()} disabled={busy} />
@@ -418,7 +420,7 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
       </View>
       {watchOnlyAccounts.length > 0 ? (
         <>
-          <Text style={[styles.subTitle, { color: theme.text }]}>Watch-only accounts</Text>
+          <Text accessibilityRole="header" style={[styles.subTitle, { color: theme.text }]}>Watch-only accounts</Text>
           <Text style={[styles.hint, { color: theme.textMuted }]}>{WATCH_ONLY_LIST_HINT}</Text>
           <WatchOnlyNotice />
           {watchOnlyAccounts.map(renderRow)}
@@ -429,7 +431,7 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
           is shown when there are none. */}
       {multisigAccounts.length > 0 ? (
         <>
-          <Text style={[styles.subTitle, { color: theme.text }]}>{MULTISIG_ACCOUNTS_HEADING}</Text>
+          <Text accessibilityRole="header" style={[styles.subTitle, { color: theme.text }]}>{MULTISIG_ACCOUNTS_HEADING}</Text>
           <Text style={[styles.hint, { color: theme.textMuted }]}>{MULTISIG_ACCOUNTS_LIST_HINT}</Text>
           {multisigAccounts.map((account) => (
             <Text key={account.index} style={[styles.address, { color: theme.textMuted }]}>
@@ -440,10 +442,11 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
       ) : null}
       {watchOpen ? (
         <View style={styles.editor}>
-          <Text style={[styles.subTitle, { color: theme.text }]}>Watch an address</Text>
+          <Text accessibilityRole="header" style={[styles.subTitle, { color: theme.text }]}>Watch an address</Text>
           <Text style={[styles.hint, { color: theme.textMuted }]}>{WATCH_ADDRESS_INTRO}</Text>
           <Text style={[styles.hint, { color: theme.textMuted }]}>{WATCH_ADDRESS_PRIVACY_NOTE}</Text>
           <TextInput
+            {...fieldA11y('Ethereum address to watch')}
             value={watchAddress}
             onChangeText={setWatchAddress}
             autoCapitalize="none"
@@ -451,10 +454,9 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
             spellCheck={false}
             placeholder="Ethereum address (0x…)"
             placeholderTextColor={theme.textMuted}
-            accessibilityLabel="Ethereum address to watch"
             style={[
               styles.input,
-              { color: theme.text, borderColor: theme.border, backgroundColor: theme.card },
+              { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card },
             ]}
           />
           <View style={styles.buttons}>
@@ -462,15 +464,15 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
             <Button title="Scan QR" variant="secondary" onPress={() => setWatchScanning(true)} style={styles.flex} />
           </View>
           <TextInput
+            {...fieldA11y('Name for the watched address')}
             value={watchName}
             onChangeText={setWatchName}
             maxLength={MAX_ACCOUNT_NAME_LENGTH * 2}
             placeholder="Name (optional)"
             placeholderTextColor={theme.textMuted}
-            accessibilityLabel="Name for the watched address"
             style={[
               styles.input,
-              { color: theme.text, borderColor: theme.border, backgroundColor: theme.card },
+              { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card },
             ]}
           />
           <Button

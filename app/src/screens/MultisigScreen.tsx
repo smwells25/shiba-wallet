@@ -2,7 +2,8 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, ScrollView, Text, TextInput, View } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { httpTransport, type JsonRpcTransport } from '@shiba-wallet/chains-evm';
-import { Button, TestNetworksOnlyCard, WarningBox, screenStyle } from '../components';
+import { spokenShortAddress } from '../a11y';
+import { Button, TestNetworksOnlyCard, WarningBox, screenStyle, useFieldLabels, fieldA11y } from '../components';
 import {
   InfoRow,
   PasteOrScan,
@@ -157,6 +158,7 @@ const NATIVE = 'native';
  */
 export function MultisigScreen() {
   const theme = useTheme();
+  const fieldLabel = useFieldLabels();
   const navigation = useNavigation();
   const { accounts, activeAccount, accountList, signWith } = useWallet();
   const { evmChain } = usePrefs();
@@ -655,24 +657,24 @@ export function MultisigScreen() {
   if (phase === 'create') {
     return shell(
       <>
-        <Text style={[styles.title, { color: theme.text }]}>New multi-signature account</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>New multi-signature account</Text>
         <Text style={[styles.hint, { color: theme.text }]}>{MULTISIG_FRESH_DEPLOY_NOTE}</Text>
         {phraseSigner ? (
           <InfoRow label="This wallet’s signer (the active account)" value={phraseSigner} sub={activeAccount?.name ?? null} monoValue />
         ) : (
           <WarningBox>{MULTISIG_PHRASE_SIGNER_ONLY}</WarningBox>
         )}
-        <Text style={[styles.hint, { color: theme.textMuted }]}>Weight of this wallet’s signer</Text>
+        <Text {...fieldLabel('local-weight', 'Weight of this wallet’s signer').label} style={[styles.hint, { color: theme.textMuted }]}>Weight of this wallet’s signer</Text>
         <TextInput
+          {...fieldLabel('local-weight', 'Weight of this wallet’s signer').input}
           value={localWeight}
           onChangeText={setLocalWeight}
           keyboardType="number-pad"
-          accessibilityLabel="Weight of this wallet’s signer"
-          style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+          style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
         />
         {cosigners.map((c, i) => (
           <View key={i} style={[styles.card, { borderColor: theme.border }]}>
-            <Text style={[styles.cardTitle, { color: theme.text }]}>Co-signer {i + 1}</Text>
+            <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>Co-signer {i + 1}</Text>
             <PasteOrScan
               value={c.address}
               onChange={(text) => setCosigners((prev) => prev.map((x, j) => (j === i ? { ...x, address: text.replace(/^ethereum:/i, '').split(/[@?]/)[0]!.trim() } : x)))}
@@ -680,13 +682,13 @@ export function MultisigScreen() {
               rationale="Scan the co-signer’s Ethereum address QR code."
             />
             <TextInput
+              {...fieldA11y(`Co-signer ${i + 1}: weight`)}
               value={c.weight}
               onChangeText={(text) => setCosigners((prev) => prev.map((x, j) => (j === i ? { ...x, weight: text } : x)))}
               keyboardType="number-pad"
-              accessibilityLabel={`Co-signer ${i + 1}: weight`}
               placeholder="Weight"
               placeholderTextColor={theme.textMuted}
-              style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+              style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
             />
             {cosigners.length > 1 ? (
               <Button title={`Remove co-signer ${i + 1}`} variant="secondary" onPress={() => setCosigners((prev) => prev.filter((_, j) => j !== i))} />
@@ -696,21 +698,21 @@ export function MultisigScreen() {
         {cosigners.length < MAX_MULTISIG_COSIGNERS ? (
           <Button title="Add a co-signer" variant="secondary" onPress={() => setCosigners((prev) => [...prev, { address: '', weight: '1' }])} />
         ) : null}
-        <Text style={[styles.hint, { color: theme.textMuted }]}>Threshold: the combined weight every operation needs (at least two signers).</Text>
+        <Text {...fieldLabel('threshold', 'Threshold: the combined weight every operation needs (at least two signers).').label} style={[styles.hint, { color: theme.textMuted }]}>Threshold: the combined weight every operation needs (at least two signers).</Text>
         <TextInput
+          {...fieldLabel('threshold', 'Threshold: the combined weight every operation needs (at least two signers).').input}
           value={threshold}
           onChangeText={setThreshold}
           keyboardType="number-pad"
-          accessibilityLabel="Threshold"
-          style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+          style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
         />
         <TextInput
+          {...fieldA11y('Name (optional)')}
           value={nameInput}
           onChangeText={setNameInput}
-          accessibilityLabel="Name (optional)"
           placeholder="Name (optional)"
           placeholderTextColor={theme.textMuted}
-          style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+          style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
         />
         {errorBox}
         <Button title="Review" onPress={onReviewCreate} disabled={readiness !== null || !phraseSigner} />
@@ -730,7 +732,7 @@ export function MultisigScreen() {
     }
     return shell(
       <>
-        <Text style={[styles.title, { color: theme.text }]}>Review the new multisig ({multisigShapeLabel(reviewed.config)})</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Review the new multisig ({multisigShapeLabel(reviewed.config)})</Text>
         <Text style={[styles.hint, { color: theme.text }]}>{MULTISIG_FRESH_DEPLOY_NOTE}</Text>
         {preview ? (
           <InfoRow
@@ -772,9 +774,13 @@ export function MultisigScreen() {
     const cosignedHere = cosigned.filter((e) => e.chain === selected.chain && e.account.toLowerCase() === selected.address.toLowerCase());
     return shell(
       <>
-        <Text style={[styles.title, { color: theme.text }]}>{multisigDisplayName(selected)}</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>{multisigDisplayName(selected)}</Text>
         <InfoRow label="Multisig address (receive here)" value={selected.address} monoValue />
-        <PayloadQr value={selected.address} caption="The multisig account’s address. Anyone can send to it; moving funds out needs the co-signers." />
+        <PayloadQr
+          value={selected.address}
+          caption="The multisig account’s address. Anyone can send to it; moving funds out needs the co-signers."
+          label={`the multisig account’s address, ${spokenShortAddress(selected.address)}`}
+        />
         <ShareActions text={selected.address} shareTitle="Multisig address" />
         <InfoRow label="Balance" value={held === undefined ? 'Loading…' : held.balance === null ? 'Could not be read' : formatNative(held.balance)} />
         <InfoRow
@@ -837,7 +843,7 @@ export function MultisigScreen() {
             disabled={readiness !== null}
           />
         ) : null}
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>Share the account with the co-signers</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Share the account with the co-signers</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           A co-signer adds the same account on their phone from this record (it contains no secrets).
         </Text>
@@ -846,7 +852,7 @@ export function MultisigScreen() {
         <MultisigFileExportButton text={exported.json} fileName={multisigExportFileName('account', selected.chain, selected.address)} dialogTitle="Save the multisig record" />
         {finished.length > 0 || cosignedHere.length > 0 ? (
           <View style={[styles.card, { borderColor: theme.border }]}>
-            <Text style={[styles.cardTitle, { color: theme.text }]}>History</Text>
+            <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>History</Text>
             <MultisigCosignedHistory entries={cosignedHere} />
             {finished.map((o, i) => (
               // Keyed by (index, request id, status): request ids are now
@@ -898,7 +904,7 @@ export function MultisigScreen() {
   if (phase === 'send-form' && selected) {
     return shell(
       <>
-        <Text style={[styles.title, { color: theme.text }]}>New operation from {multisigDisplayName(selected)}</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>New operation from {multisigDisplayName(selected)}</Text>
         <Text style={[styles.hint, { color: theme.text }]}>
           This builds a signing request for the co-signers; nothing is signed or sent until enough of them approve and you
           submit.{selected.deployed.deployed ? '' : ` ${MULTISIG_DEPLOY_NOTE}`}
@@ -909,23 +915,23 @@ export function MultisigScreen() {
           ))}
         </View>
         <TextInput
+          {...fieldA11y('Recipient address')}
           value={recipient}
           onChangeText={setRecipient}
-          accessibilityLabel="Recipient address"
           placeholder="Recipient (0x…)"
           placeholderTextColor={theme.textMuted}
           autoCapitalize="none"
           autoCorrect={false}
-          style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+          style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
         />
         <TextInput
+          {...fieldA11y(`Amount in ${symbolFor(asset)}`)}
           value={amount}
           onChangeText={setAmount}
-          accessibilityLabel={`Amount in ${symbolFor(asset)}`}
           placeholder={`Amount (${symbolFor(asset)})`}
           placeholderTextColor={theme.textMuted}
           keyboardType="decimal-pad"
-          style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+          style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
         />
         {errorBox}
         {busy ? <ActivityIndicator color={theme.accent} /> : <Button title="Build the signing request" onPress={() => void onBuildRequest()} disabled={readiness !== null || !node} />}
@@ -941,7 +947,7 @@ export function MultisigScreen() {
     const payload = encodeMultisigRequestPayload(selected, op);
     return shell(
       <>
-        <Text style={[styles.title, { color: theme.text }]}>Collect approvals · {multisigDisplayName(selected)}</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Collect approvals · {multisigDisplayName(selected)}</Text>
         <InfoRow label="Request id (call data and nonce)" value={op.requestId} monoValue />
         <InfoRow label="Nonce" value={op.nonce} />
         <MultisigCallsView
@@ -956,11 +962,11 @@ export function MultisigScreen() {
             ✓ {a.address} (weight {a.weight})
           </Text>
         ))}
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>1. Send this request to the co-signers</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>1. Send this request to the co-signers</Text>
         <MultisigPayloadQr payload={payload} caption="Multisig signing request" />
         <ShareActions text={multisigRequestShareText(selected, op)} shareTitle="Multisig signing request" />
         <MultisigFileExportButton text={payload} fileName={multisigExportFileName('request', selected.chain, selected.address)} dialogTitle="Save the signing request" />
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>2. Add each approval you receive</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>2. Add each approval you receive</Text>
         {/* Finding 6: the error sits ABOVE the scan / paste / file inputs, so
             it is not pushed off-screen below them when the keyboard is open. */}
         {errorBox}
@@ -972,19 +978,19 @@ export function MultisigScreen() {
           onError={scanError}
         />
         <TextInput
+          {...fieldA11y('Paste a co-signer’s approval (or a 65-byte signature from another wallet)')}
           value={approvalInput}
           onChangeText={setApprovalInput}
-          accessibilityLabel="Paste a co-signer’s approval (or a 65-byte signature from another wallet)"
           placeholder="Paste a co-signer’s approval (or a 65-byte signature from another wallet)"
           placeholderTextColor={theme.textMuted}
           multiline
           autoCapitalize="none"
           autoCorrect={false}
-          style={[styles.input, { color: theme.text, borderColor: theme.border, backgroundColor: theme.card }]}
+          style={[styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }]}
         />
         <Button title="Add approval" variant="secondary" disabled={!approvalInput.trim()} onPress={() => void onAddApproval(approvalInput)} />
         <Button title="Add an approval from a file" variant="secondary" onPress={() => void onPickApprovalFile()} />
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>3. Submit</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>3. Submit</Text>
         {busy ? (
           <ActivityIndicator color={theme.accent} />
         ) : (
@@ -1002,7 +1008,7 @@ export function MultisigScreen() {
     const q = submission.quote;
     return shell(
       <>
-        <Text style={[styles.title, { color: theme.text }]}>Submit the multisig operation</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Submit the multisig operation</Text>
         <InfoRow label="From multi-signature account (co-signers approved)" value={q.sender} monoValue />
         <MultisigCallsView calls={q.calls} described={q.calls.map((c) => describeMultisigCall(c, nativeSymbol, tokens))} nativeSymbol={nativeSymbol} />
         {/* The fee rows come BEFORE the preview, in the Send confirm's order
@@ -1051,7 +1057,7 @@ export function MultisigScreen() {
   if (phase === 'progress' && selected && progress) {
     return shell(
       <>
-        <Text style={[styles.title, { color: theme.text }]}>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>
           {progress.state === 'pending'
             ? 'Submitted — waiting for inclusion…'
             : progress.state === 'timeout'
@@ -1094,7 +1100,7 @@ export function MultisigScreen() {
   if (phase === 'import') {
     return shell(
       <>
-        <Text style={[styles.title, { color: theme.text }]}>Add a multisig from its record</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Add a multisig from its record</Text>
         <Text style={[styles.hint, { color: theme.text }]}>
           Scan the account record on another signer’s phone, paste the text they shared, or open its file. The wallet
           checks that the address follows from the signer set and that one of your recovery-phrase accounts is a signer.
@@ -1107,15 +1113,15 @@ export function MultisigScreen() {
           onError={scanError}
         />
         <TextInput
+          {...fieldA11y('Paste the multisig record')}
           value={importInput}
           onChangeText={setImportInput}
-          accessibilityLabel="Paste the multisig record"
           placeholder="Paste the multisig record"
           placeholderTextColor={theme.textMuted}
           multiline
           autoCapitalize="none"
           autoCorrect={false}
-          style={[styles.input, { color: theme.text, borderColor: theme.border, backgroundColor: theme.card }]}
+          style={[styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }]}
         />
         {errorBox}
         <Button title="Check the record" disabled={!importInput.trim()} onPress={() => onReviewImport(importInput)} />
@@ -1128,7 +1134,7 @@ export function MultisigScreen() {
   if (phase === 'import-review' && importParsed) {
     return shell(
       <>
-        <Text style={[styles.title, { color: theme.text }]}>Add this multisig ({multisigShapeLabel(importParsed.config)})?</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Add this multisig ({multisigShapeLabel(importParsed.config)})?</Text>
         <InfoRow label="Account" value={importParsed.facts.account} sub={`Chain id ${importParsed.facts.chainId} · CREATE2 index ${importParsed.facts.index}`} monoValue />
         {importParsed.config.signers.map((s) => {
           const own = ownAccounts.find((a) => a.address.toLowerCase() === s.address.toLowerCase());
@@ -1147,7 +1153,7 @@ export function MultisigScreen() {
   if (phase === 'cosign-input') {
     return shell(
       <>
-        <Text style={[styles.title, { color: theme.text }]}>Approve a request (as a co-signer)</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Approve a request (as a co-signer)</Text>
         <Text style={[styles.hint, { color: theme.text }]}>
           Scan the signing request on the submitter’s phone (a long request comes in several QR codes; scan each one),
           paste the text they shared, or open its file. You will see the account, the network, the nonce and every call in
@@ -1161,15 +1167,15 @@ export function MultisigScreen() {
           onError={scanError}
         />
         <TextInput
+          {...fieldA11y('Paste the multisig signing request')}
           value={cosignInput}
           onChangeText={setCosignInput}
-          accessibilityLabel="Paste the multisig signing request"
           placeholder="Paste the multisig signing request"
           placeholderTextColor={theme.textMuted}
           multiline
           autoCapitalize="none"
           autoCorrect={false}
-          style={[styles.input, { color: theme.text, borderColor: theme.border, backgroundColor: theme.card }]}
+          style={[styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }]}
         />
         {errorBox}
         <Button title="Review the request" disabled={!cosignInput.trim()} onPress={() => onReviewCosign(cosignInput)} />
@@ -1183,7 +1189,7 @@ export function MultisigScreen() {
     const r = cosignReview;
     return shell(
       <>
-        <Text style={[styles.title, { color: theme.text }]}>Review before you approve</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Review before you approve</Text>
         <InfoRow
           label="Multisig account"
           value={r.request.account}
@@ -1214,7 +1220,7 @@ export function MultisigScreen() {
   if (phase === 'cosign-done' && cosignReview && cosignPayload) {
     return shell(
       <>
-        <Text style={[styles.title, { color: theme.text }]}>Approval ready — give it to the submitter</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Approval ready — give it to the submitter</Text>
         <Text style={[styles.hint, { color: theme.text }]}>
           Show the QR code to the submitter, or share the text or file. It approves only this request (these calls at nonce{' '}
           {cosignReview.request.nonce}); it is useless for anything else.
@@ -1249,7 +1255,12 @@ export function MultisigScreen() {
   );
   return shell(
     <>
-      <Text style={[styles.title, { color: theme.text }]}>{MULTISIG_TITLE}</Text>
+      {/* The screen's title is already in the header bar (navigation.setOptions
+          above), so this visible copy is hidden from screen readers: TalkBack
+          read "Multi-signature accounts" twice (pass p20c finding 9). */}
+      <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.title, { color: theme.text }]}>
+        {MULTISIG_TITLE}
+      </Text>
       <Text style={[styles.hint, { color: theme.text }]}>
         An account that needs several signers for every operation: this wallet’s account plus co-signers on other phones,
         each with a weight, and a threshold. {MULTISIG_FRESH_DEPLOY_NOTE}
@@ -1259,7 +1270,7 @@ export function MultisigScreen() {
       ) : (
         records.map((r) => (
           <View key={r.id} style={[styles.card, { borderColor: theme.border, backgroundColor: theme.card }]}>
-            <Text style={[styles.cardTitle, { color: theme.text }]}>{multisigDisplayName(r)}</Text>
+            <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>{multisigDisplayName(r)}</Text>
             <Text selectable style={[styles.mono, { color: theme.textMuted }]}>
               {r.address}
             </Text>
@@ -1267,14 +1278,15 @@ export function MultisigScreen() {
               {multisigFundsLine(funds[r.address], formatNative)} · {r.deployed.deployed ? 'deployed' : 'not deployed yet'}
               {r.operations.some((o) => o.status === 'collecting') ? ' · an operation is collecting approvals' : ''}
             </Text>
-            <Text style={[styles.hint, { color: theme.textMuted }]}>{multisigExposureLine(multisigConfigOf(r), r.localSigner)}</Text>
+            {/* A warning, so never in the muted hint grey (pass p20c finding 17). */}
+            <Text style={[styles.hint, { color: theme.warningText }]}>{multisigExposureLine(multisigConfigOf(r), r.localSigner)}</Text>
             <Button title={`Open ${r.name}`} variant="secondary" onPress={() => openDetail(r)} />
           </View>
         ))
       )}
       {cosignedElsewhere.length > 0 ? (
         <View style={[styles.card, { borderColor: theme.border }]}>
-          <Text style={[styles.cardTitle, { color: theme.text }]}>Approved as a co-signer (accounts not in this wallet)</Text>
+          <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>Approved as a co-signer (accounts not in this wallet)</Text>
           <MultisigCosignedHistory entries={cosignedElsewhere} />
         </View>
       ) : null}

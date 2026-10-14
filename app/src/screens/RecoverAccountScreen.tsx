@@ -3,7 +3,7 @@ import { ActivityIndicator, Alert, ScrollView, Text, TextInput, View } from 'rea
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { httpTransport, type JsonRpcTransport, type KernelGuardianSet, type KernelRecoveryMetadata } from '@shiba-wallet/chains-evm';
 import type { RootStackParamList } from '../navigation';
-import { Button, TestNetworksOnlyCard, WarningBox, screenStyle } from '../components';
+import { Button, TestNetworksOnlyCard, WarningBox, screenStyle, fieldA11y } from '../components';
 import {
   GuardianSetView,
   InfoRow,
@@ -469,7 +469,7 @@ export function RecoverAccountScreen({ navigation, route }: Props) {
     const exp = attachedMeta ? recordExport(attachedMeta) : null;
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
-        <Text style={[styles.title, { color: theme.success }]}>Recovered account attached</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.success }]}>Recovered account attached</Text>
         <WarningBox>{RECOVERED_NOT_DERIVABLE_NOTE}</WarningBox>
         {exp ? (
           <>
@@ -499,7 +499,7 @@ export function RecoverAccountScreen({ navigation, route }: Props) {
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <RecoveryNetworkBadge label={evmChain.label} testnet={evmChain.testnet} />
-        <Text style={[styles.title, { color: theme.text }]}>Send the guardians’ approvals on-chain?</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Send the guardians’ approvals on-chain?</Text>
         <Text style={[styles.hint, { color: theme.text }]}>{NEW_WALLET_PAYS_NOTE}</Text>
         <InfoRow label="From (pays the fee)" value={ownerName} sub={approveQuote.from} />
         <InfoRow label="To (guardian contract)" value={approveQuote.to} monoValue />
@@ -535,7 +535,7 @@ export function RecoverAccountScreen({ navigation, route }: Props) {
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         {readinessCard}
-        <Text style={[styles.title, { color: theme.text }]}>Recovering {progress.account}</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Recovering {progress.account}</Text>
         {ownerRow}
         <InfoRow label="Proposal id" value={progress.request.callDataAndNonceHash} monoValue />
         <GuardianSetView set={progress.set} labelFor={labelFor} />
@@ -553,13 +553,13 @@ export function RecoverAccountScreen({ navigation, route }: Props) {
               guardian showed you (optional).
             </Text>
             <TextInput
+              {...fieldA11y('UserOperation or transaction hash, optional')}
               value={hashInput}
               onChangeText={setHashInput}
-              accessibilityLabel="UserOperation or transaction hash, optional"
               placeholder="UserOperation or transaction hash (optional)"
               placeholderTextColor={theme.textMuted}
               autoCapitalize="none"
-              style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+              style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
             />
             <Button title="Use this recovered account" onPress={() => void onAttach()} disabled={readiness !== null} />
           </>
@@ -573,14 +573,14 @@ export function RecoverAccountScreen({ navigation, route }: Props) {
                 ✓ {labelFor(g.address)} {g.address} (weight {g.weight})
               </Text>
             ))}
-            <Text style={[styles.sectionTitle, { color: theme.text }]}>1. Send this request to your guardians</Text>
+            <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>1. Send this request to your guardians</Text>
             <Text style={[styles.hint, { color: theme.textMuted }]}>
               Show the QR code in person, or share the text on a channel your guardians trust. They check the new owner
               address with you and approve in their wallet.
             </Text>
             <PayloadQr value={utf8Length(payload) <= QR_MAX_BYTES ? payload : null} caption="Recovery request (with the approvals so far)" />
             <ShareActions text={recoveryRequestShareText(progress.request, progress.approvals)} shareTitle="Recovery request" />
-            <Text style={[styles.sectionTitle, { color: theme.text }]}>2. Add each approval you receive</Text>
+            <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>2. Add each approval you receive</Text>
             <PasteOrScan
               value={approvalInput}
               onChange={setApprovalInput}
@@ -593,7 +593,7 @@ export function RecoverAccountScreen({ navigation, route }: Props) {
 
         {stage?.kind === 'ready-to-approve' ? (
           <>
-            <Text style={[styles.sectionTitle, { color: theme.text }]}>3. Send the approvals on-chain</Text>
+            <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>3. Send the approvals on-chain</Text>
             <Text style={[styles.hint, { color: theme.textMuted }]}>{NEW_WALLET_PAYS_NOTE}</Text>
             <Button title="Review the approval transaction" onPress={() => void onApproveQuote()} disabled={readiness !== null} />
           </>
@@ -601,7 +601,7 @@ export function RecoverAccountScreen({ navigation, route }: Props) {
 
         {stage?.kind === 'ready-to-submit' ? (
           <>
-            <Text style={[styles.sectionTitle, { color: theme.text }]}>
+            <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>
               {progress.set.delaySeconds > 0 ? '4.' : '3.'} A guardian submits the recovery
             </Text>
             <Text style={[styles.hint, { color: theme.text }]}>{GUARDIAN_SUBMITS_NOTE}</Text>
@@ -635,7 +635,7 @@ export function RecoverAccountScreen({ navigation, route }: Props) {
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
         {readinessCard}
-        <Text style={[styles.title, { color: theme.text }]}>Restore from a recovery record</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Restore from a recovery record</Text>
         <InfoRow label="Account" value={importReview.metadata.account} monoValue />
         <InfoRow label="Owner on-chain" value={ownerAccount ? `${ownerAccount.name} (this wallet)` : 'unknown'} sub={importReview.onChainOwner} />
         <InfoRow label="Owners recorded" value={String(importReview.metadata.owners.length)} />
@@ -660,7 +660,7 @@ export function RecoverAccountScreen({ navigation, route }: Props) {
       return (
         <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
           {readinessCard}
-          <Text style={[styles.title, { color: theme.text }]}>This account is already yours</Text>
+          <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>This account is already yours</Text>
           <Text style={[styles.hint, { color: theme.text }]}>
             {ownerName} already owns {candidate.account} on-chain (checked: Kernel v3.3 proxy, owner validator, owner).
             No recovery is needed; attach it to use it in this wallet.
@@ -687,7 +687,7 @@ export function RecoverAccountScreen({ navigation, route }: Props) {
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
         {readinessCard}
         <RecoveryNetworkBadge label={evmChain.label} testnet={evmChain.testnet} />
-        <Text style={[styles.title, { color: theme.text }]}>Recover this account?</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Recover this account?</Text>
         <InfoRow label="Account to recover" value={candidate.account} monoValue />
         <InfoRow
           label={(() => {
@@ -724,7 +724,7 @@ export function RecoverAccountScreen({ navigation, route }: Props) {
   return (
     <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
       {readinessCard}
-      <Text style={[styles.title, { color: theme.text }]}>Recover an account with guardians</Text>
+      <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Recover an account with guardians</Text>
       <Text style={[styles.hint, { color: theme.text }]}>
         For a Kernel smart account whose recovery phrase is lost: its guardians can make a key of THIS wallet the new
         owner. (If you still have the old phrase, import it instead — no guardians needed.)
@@ -741,16 +741,16 @@ export function RecoverAccountScreen({ navigation, route }: Props) {
           disabled={readiness !== null}
         />
       )}
-      <Text style={[styles.sectionTitle, { color: theme.text }]}>The lost account</Text>
+      <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>The lost account</Text>
       <TextInput
+        {...fieldA11y('Lost account address')}
         value={accountInput}
         onChangeText={setAccountInput}
-        accessibilityLabel="Lost account address"
         placeholder="Account address (0x…)"
         placeholderTextColor={theme.textMuted}
         autoCapitalize="none"
         autoCorrect={false}
-        style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+        style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
       />
       <Text style={[styles.hint, { color: theme.textMuted }]}>Or its recovery record (recommended — it keeps the history):</Text>
       <PasteOrScan
@@ -769,14 +769,14 @@ export function RecoverAccountScreen({ navigation, route }: Props) {
         No record? Optional: the account’s ORIGINAL owner address, so the wallet can rebuild its record.
       </Text>
       <TextInput
+        {...fieldA11y('Original owner address, optional')}
         value={originalOwnerInput}
         onChangeText={setOriginalOwnerInput}
-        accessibilityLabel="Original owner address, optional"
         placeholder="Original owner address (optional)"
         placeholderTextColor={theme.textMuted}
         autoCapitalize="none"
         autoCorrect={false}
-        style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+        style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
       />
       {error ? <WarningBox>{error}</WarningBox> : null}
       {phase === 'checking' ? (
@@ -791,7 +791,7 @@ export function RecoverAccountScreen({ navigation, route }: Props) {
           onPress={() => void onCheck(recordInput)}
         />
       )}
-      <Text style={[styles.sectionTitle, { color: theme.text }]}>Already recovered elsewhere?</Text>
+      <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Already recovered elsewhere?</Text>
       <Text style={[styles.hint, { color: theme.textMuted }]}>
         Search recent blocks for Kernel accounts whose owner is {ownerName} (each result is verified on-chain).
       </Text>

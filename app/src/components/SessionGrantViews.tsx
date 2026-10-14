@@ -48,7 +48,7 @@ export function GrantReview({
             key={`${call.target}-${call.selector ?? 'none'}-${i}`}
             style={[styles.call, { backgroundColor: theme.card, borderColor: theme.border }]}
           >
-            <Text style={[styles.callTitle, { color: theme.text }]}>
+            <Text accessibilityRole="header" style={[styles.callTitle, { color: theme.text }]}>
               {i + 1}. {d.title}
             </Text>
             {d.details.map((line) => (
