@@ -16,7 +16,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { formatAssetId, nonFungibleTokenId, parseAssetId } from '@shiba-wallet/core';
 import type { FungibleAsset } from '@shiba-wallet/core';
 import type { RootStackParamList } from '../navigation';
-import { Button, ImportedKeyNotice, WarningBox, screenStyle } from '../components';
+import { Button, ImportedKeyNotice, WarningBox, screenStyle, switchColors, useFieldLabels } from '../components';
 import { IMPORTED_KEY_NO_CHAIN } from '../wallet/account-ids';
 import {
   callWithFailover,
@@ -145,6 +145,8 @@ import {
   lookUpRecipientName,
   recheckRecipientName,
   resolvedNameLine,
+  SEND_RECIPIENT_NAMES_HINT,
+  sendRecipientPlaceholder,
 } from '../wallet/ens-names';
 import { simulationTransport } from '../wallet/simulation';
 import {
@@ -249,6 +251,7 @@ function NetworkBadge({ label, testnet, theme }: { label: string; testnet: boole
  */
 export function SendScreen({ route, navigation }: Props) {
   const theme = useTheme();
+  const field = useFieldLabels();
   const { accounts, signWith, activeAccount } = useWallet();
   // The active EVM chain profile (config/evm-chain.ts): chain-id checks,
   // explorer links, badges and the AA config key all come from it, so
@@ -811,6 +814,17 @@ export function SendScreen({ route, navigation }: Props) {
   // EVM native amounts are labeled per the active profile ("test ETH" on
   // Sepolia) so a test send can never read like a real one.
   const symbol = token ? token.symbol : isEvmKind ? evmChain.displaySymbol : account.symbol;
+  // The form's visible labels, tied to their fields for screen readers
+  // (pass p20c finding 1; components.tsx useFieldLabels).
+  const recipientField = field(
+    'recipient',
+    'Recipient',
+    namesOffered ? SEND_RECIPIENT_NAMES_HINT : undefined,
+  );
+  const amountField = field(
+    'amount',
+    nft ? `Amount (copies — you hold ${hideAmounts ? '••••' : nft.indexedBalance.toString()})` : `Amount (${symbol})`,
+  );
   // For displaying the ETH fee of a token send (EVM native decimals).
   const nativeDecimals = network?.decimals ?? 18;
   const utxoNetwork = route.params.chainId === BITCOIN_CHAIN_ID ? BITCOIN : DOGECOIN;
@@ -1679,14 +1693,14 @@ export function SendScreen({ route, navigation }: Props) {
 
   const inputStyle = [
     styles.input,
-    { color: theme.text, borderColor: theme.border, backgroundColor: theme.card },
+    { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card },
   ];
 
   // ------------------------------------------------ success (smart account)
   if (phase === 'success' && aaResult) {
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content} {...NOTE_VIEW_SCROLL_PROPS}>
-        <Text style={[styles.successTitle, { color: theme.success }]}>Sent to bundler ✓</Text>
+        <Text accessibilityRole="header" style={[styles.successTitle, { color: theme.success }]}>Sent to bundler ✓</Text>
         <Text style={[styles.label, { color: theme.textMuted }]}>UserOperation hash</Text>
         <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border }]}>
           <Text selectable style={[styles.monoText, { color: theme.text }]}>
@@ -1770,7 +1784,7 @@ export function SendScreen({ route, navigation }: Props) {
   if (phase === 'success' && result) {
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content} {...NOTE_VIEW_SCROLL_PROPS}>
-        <Text style={[styles.successTitle, { color: theme.success }]}>Sent ✓</Text>
+        <Text accessibilityRole="header" style={[styles.successTitle, { color: theme.success }]}>Sent ✓</Text>
         <Text style={[styles.label, { color: theme.textMuted }]}>Transaction id</Text>
         <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border }]}>
           <Text selectable style={[styles.monoText, { color: theme.text }]}>
@@ -2112,7 +2126,7 @@ export function SendScreen({ route, navigation }: Props) {
                   'would cost the full fee and move no tokens.'}
             </WarningBox>
             <View style={styles.overrideRow}>
-              <Switch
+              <Switch {...switchColors(theme)}
                 accessibilityLabel="Send anyway, although the pre-flight simulation failed"
                 value={overrideSimulation}
                 onValueChange={setOverrideSimulation}
@@ -2215,7 +2229,7 @@ export function SendScreen({ route, navigation }: Props) {
               This transaction would very likely fail on-chain and still cost the fee.
             </WarningBox>
             <View style={styles.overrideRow}>
-              <Switch
+              <Switch {...switchColors(theme)}
                 accessibilityLabel="Send anyway, although the pre-flight simulation failed"
                 value={overrideSimulation}
                 onValueChange={setOverrideSimulation}
@@ -2332,7 +2346,7 @@ export function SendScreen({ route, navigation }: Props) {
                 the fee.
               </WarningBox>
               <View style={styles.overrideRow}>
-                <Switch
+                <Switch {...switchColors(theme)}
                 accessibilityLabel="Send anyway, although the pre-flight simulation failed"
                 value={overrideSimulation}
                 onValueChange={setOverrideSimulation}
@@ -2436,7 +2450,7 @@ export function SendScreen({ route, navigation }: Props) {
           style={[styles.aaToggleBox, { backgroundColor: theme.card, borderColor: theme.border }]}
         >
           <View style={styles.overrideRow}>
-            <Switch
+            <Switch {...switchColors(theme)}
               accessibilityLabel="Send from smart account"
               value={aaEnabled}
               onValueChange={setAaEnabled}
@@ -2515,7 +2529,7 @@ export function SendScreen({ route, navigation }: Props) {
           ) : (
             <>
               <View style={styles.overrideRow}>
-                <Switch
+                <Switch {...switchColors(theme)}
                   accessibilityLabel="Pay the network fee in USDC"
                   value={feeInUsdc}
                   onValueChange={(v) => {
@@ -2543,7 +2557,7 @@ export function SendScreen({ route, navigation }: Props) {
           style={[styles.aaToggleBox, { backgroundColor: theme.card, borderColor: theme.border }]}
         >
           <View style={styles.overrideRow}>
-            <Switch
+            <Switch {...switchColors(theme)}
               accessibilityLabel="Sign with passkey"
               value={passkeySigner}
               onValueChange={setPasskeySigner}
@@ -2560,9 +2574,10 @@ export function SendScreen({ route, navigation }: Props) {
       ) : null}
 
       {requestLines ? <PaymentRequestNotice lines={requestLines} /> : null}
-      <Text style={[styles.label, { color: theme.textMuted }]}>Recipient</Text>
+      <Text {...recipientField.label} style={[styles.label, { color: theme.textMuted }]}>{recipientField.text}</Text>
       <View style={styles.amountRow}>
         <TextInput
+          {...recipientField.input}
           value={recipient}
           onChangeText={(t) => {
             setFormError(null);
@@ -2584,11 +2599,7 @@ export function SendScreen({ route, navigation }: Props) {
             setRequestError(null);
             setRecipient(t);
           }}
-          accessibilityLabel={namesOffered ? 'Recipient address or ENS name' : 'Recipient address'}
-          placeholder={
-            (token || nftMode ? 'Ethereum address' : `${account.symbol} address`) +
-            (namesOffered ? ' or ENS name' : '')
-          }
+          placeholder={sendRecipientPlaceholder({ namesOffered, ethereum: Boolean(token || nftMode), symbol: account.symbol })}
           placeholderTextColor={theme.textMuted}
           autoCapitalize="none"
           autoCorrect={false}
@@ -2608,6 +2619,9 @@ export function SendScreen({ route, navigation }: Props) {
           style={styles.maxButton}
         />
       </View>
+      {namesOffered ? (
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{SEND_RECIPIENT_NAMES_HINT}</Text>
+      ) : null}
       {/*
         Scanned payloads go through extractScannedAddress (strips only the
         ACTIVE chain's own payment-URI scheme, conservatively — see
@@ -2700,19 +2714,17 @@ export function SendScreen({ route, navigation }: Props) {
 
       {nft && nft.standard === 'erc721' ? null : (
         <>
-          <Text style={[styles.label, { color: theme.textMuted }]}>
-            {nft
-              ? `Amount (copies — you hold ${hideAmounts ? '••••' : nft.indexedBalance.toString()})`
-              : `Amount (${symbol})`}
+          <Text {...amountField.label} style={[styles.label, { color: theme.textMuted }]}>
+            {amountField.text}
           </Text>
           <View style={styles.amountRow}>
             <TextInput
+              {...amountField.input}
               value={amountText}
               onChangeText={(t) => {
                 setAmountText(t);
                 setFormError(null);
               }}
-              accessibilityLabel={nft ? 'Number of copies' : `Amount in ${symbol}`}
               placeholder={nft ? '1' : '0.0'}
               placeholderTextColor={theme.textMuted}
               keyboardType={nft ? 'number-pad' : 'decimal-pad'}

@@ -1234,7 +1234,7 @@ export function ConnectedAppsNotice({
       ]}
       accessibilityLiveRegion="polite"
     >
-      <Text style={[styles.noticeTitle, { color: theme.text }]}>Connected apps</Text>
+      <Text accessibilityRole="header" style={[styles.noticeTitle, { color: theme.text }]}>Connected apps</Text>
       <Text style={[styles.noticeText, { color: theme.text }]}>{text}</Text>
       <Pressable accessibilityRole="button" onPress={onDismiss} hitSlop={8}>
         <Text style={[styles.noticeDismiss, { color: theme.accent }]}>Dismiss</Text>

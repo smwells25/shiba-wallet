@@ -8,7 +8,8 @@ import * as Clipboard from 'expo-clipboard';
 // round-trips through an independent decoder.
 import QRCode from 'react-native-qrcode-svg';
 import type { KernelGuardianSet } from '@shiba-wallet/chains-evm';
-import { Button, WarningBox } from '../components';
+import { Button, WarningBox, fieldA11y } from '../components';
+import { payloadQrSpokenLabel } from '../a11y';
 import { useTheme } from '../theme';
 import { QrScanner } from './QrScanner';
 import {
@@ -121,7 +122,7 @@ export function GuardianSetView({
   const total = set.guardians.reduce((s, g) => s + g.weight, 0);
   return (
     <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-      <Text style={[styles.cardTitle, { color: theme.text }]}>{title}</Text>
+      <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>{title}</Text>
       {set.guardians.map((g) => {
         const label = labelFor?.(g.address) ?? null;
         return (
@@ -147,7 +148,7 @@ export function GuardianSetView({
  * A payload as a QR code (white quiet zone kept white in dark mode), or a
  * note when it is too large for one code (the share text still works).
  */
-export function PayloadQr({ value, caption }: { value: string | null; caption: string }) {
+export function PayloadQr({ value, caption, label }: { value: string | null; caption: string; label?: string }) {
   const theme = useTheme();
   const { width } = useWindowDimensions();
   const [failed, setFailed] = useState(false);
@@ -161,7 +162,15 @@ export function PayloadQr({ value, caption }: { value: string | null; caption: s
   }
   return (
     <View style={styles.stack}>
-      <View style={styles.qrBox}>
+      {/* A labelled image for screen readers (pass p20c finding 9: the
+          multisig codes could not be reached at all). Without a separate
+          label the caption is the code's name and is not read twice. */}
+      <View
+        style={styles.qrBox}
+        accessible
+        accessibilityRole="image"
+        accessibilityLabel={payloadQrSpokenLabel(caption, label)}
+      >
         <QRCode
           value={value}
           size={size}
@@ -171,7 +180,12 @@ export function PayloadQr({ value, caption }: { value: string | null; caption: s
           onError={() => setFailed(true)}
         />
       </View>
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{caption}</Text>
+      <Text
+        {...(label === undefined ? { importantForAccessibility: 'no' as const, accessibilityElementsHidden: true } : {})}
+        style={[styles.hint, { color: theme.textMuted }]}
+      >
+        {caption}
+      </Text>
     </View>
   );
 }
@@ -230,15 +244,15 @@ export function PasteOrScan({
   return (
     <View style={styles.stack}>
       <TextInput
+        {...fieldA11y(placeholder)}
         value={value}
         onChangeText={onChange}
-        accessibilityLabel={placeholder}
         placeholder={placeholder}
         placeholderTextColor={theme.textMuted}
         multiline
         autoCapitalize="none"
         autoCorrect={false}
-        style={[styles.input, { color: theme.text, borderColor: theme.border, backgroundColor: theme.card }]}
+        style={[styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }]}
       />
       <Button
         title="Scan QR code"

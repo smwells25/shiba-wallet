@@ -45,6 +45,7 @@ import {
   multisigAccountId,
 } from './account-ids.ts';
 import { sanitizeAccountName, shortAccountAddress } from './accounts.ts';
+import { MULTISIG_SWITCHER_LINE } from './watch-only.ts';
 import { QR_MAX_BYTES, extractFirstJsonObject, utf8Length } from './recovery.ts';
 import {
   AA_DEPOSIT_ROW_LABEL,
@@ -187,7 +188,12 @@ export function multisigSwitcherA11yLabel(account: {
   evmAddress: string | null;
   multisigInfo: { chain: string } | null;
 }): string {
-  return `${account.name}, multi-signature account on ${multisigNetworkName(account.multisigInfo)}, ${account.evmAddress ?? 'unknown address'}`;
+  // Pass p20c finding 5: the row's visible line ("operations need
+  // co-signers; Ethereum networks only") is spoken too, and the address in
+  // the short form the row shows (TalkBack read all 42 characters).
+  const line = MULTISIG_SWITCHER_LINE.replace(/^Multisig — /, '');
+  const address = account.evmAddress ? shortAccountAddress(account.evmAddress) : 'unknown address';
+  return `${account.name}, multi-signature account on ${multisigNetworkName(account.multisigInfo)}: ${line}, ${address}`;
 }
 
 /** Why a multisig is deployed fresh (shown on the create form and the overview). */

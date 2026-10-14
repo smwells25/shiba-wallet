@@ -395,10 +395,27 @@ export function dcaFeeBudgetFormHint(p: {
   installKeptBack: bigint | null;
   nativeSymbol: string;
 }): string {
+  return dcaFeeBudgetFormNote(p).text;
+}
+
+/**
+ * dcaFeeBudgetFormHint with how to show it (pass p20c findings 8 and 17):
+ * the cap note says the account cannot fund the usual budget, so the form
+ * shows it as a warning (the warning colours of a WarningBox), never in the
+ * muted hint grey; the plain suggestion stays a muted hint. While Review's
+ * own refusal is on screen the form shows neither (formFeeHintShown), so
+ * the shortfall is stated once, by the refusal.
+ */
+export function dcaFeeBudgetFormNote(p: {
+  source: SubscriptionFeeSource | null;
+  suggestion: { capped: boolean; spare: bigint | null; uncapped: bigint | null };
+  installKeptBack: bigint | null;
+  nativeSymbol: string;
+}): { text: string; warning: boolean } {
   const { capped, spare, uncapped } = p.suggestion;
-  if (!capped || spare === null || uncapped === null) return dcaFeeBudgetSuggestionHint(p.source);
+  if (!capped || spare === null || uncapped === null) return { text: dcaFeeBudgetSuggestionHint(p.source), warning: false };
   const note = dcaFeeBudgetCapNote(spare, uncapped, p.nativeSymbol, p.installKeptBack ?? 0n);
-  return spare > 0n ? `${note} ${DCA_FEE_BUDGET_CLEAR_NOTE}` : note;
+  return { text: spare > 0n ? `${note} ${DCA_FEE_BUDGET_CLEAR_NOTE}` : note, warning: true };
 }
 
 /** The review's sentence on what the fee budget is priced at and how many swaps it covers. */

@@ -1109,5 +1109,41 @@ console.log('check-staking: mutation checks (each mutant must be caught)');
   check('M4 caught: an unlimited approval is detected', !(await approvalIsExact(m4)));
 }
 
+// Pass p20c (TalkBack, 2026-10-14) finding 6.
+console.log('\ncheck-staking: pass p20c finding 6 (what TalkBack says on the Staking screen)');
+{
+  const { spokenTokenName, spokenSiteName, withShortAddresses } = await import('../src/a11y.ts');
+  const { stakingTokenName } = await import('../src/wallet/tokens.ts');
+  const readSrc = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8');
+  check('token symbols are spoken with the full name from tokens.ts, not spelled out (exact)',
+    spokenTokenName('stETH', stakingTokenName('stETH')) === 'Liquid staked Ether 2.0 (stETH)' &&
+      spokenTokenName('wstETH', stakingTokenName('wstETH')) === 'Wrapped liquid staked Ether 2.0 (wstETH)' &&
+      spokenTokenName('rETH', stakingTokenName('rETH')) === 'Rocket Pool ETH (rETH)' &&
+      stakingTokenName('USDC') === null && spokenTokenName('USDC', null) === 'USDC');
+  check('the source link is spoken as the site, not the raw URL (exact)',
+    spokenSiteName('https://docs.lido.fi/guides/steth-integration-guide') === 'docs.lido.fi' &&
+      spokenSiteName('https://www.example.org/x?y') === 'example.org' && spokenSiteName('not a url') === 'not a url');
+  check('the holder line speaks the account address short (exact)',
+    withShortAddresses('Balances of your regular account 0x772eF8c0b0A9E1d3b2C4D5e6F7a8B9c0d1E2F44F') === 'Balances of your regular account 0x772e…F44F');
+  const views = readSrc('../src/screens/StakingViews.tsx');
+  const screen = readSrc('../src/screens/StakingScreen.tsx');
+  const viewsOk = (src) =>
+    src.includes('accessibilityLabel={`Source: ${statement.source}, read ${statement.read}. ${spokenSiteName(statement.url)}`}') &&
+    src.includes('`${spokenTokenName(symbol, stakingTokenName(symbol))}: ${hidden ? \'amount hidden\' : exact18(amount)}${sub ? `. ${sub}` : \'\'}`') &&
+    src.includes('<Row key={l.label} label={l.label} value={l.value} sub={l.sub ?? null} spoken={l.spoken} theme={theme} />') &&
+    src.includes('accessibilityLabel={withShortAddresses(holderLine)}');
+  check('StakingViews: balance rows read as one sentence with the full token name; the source link and holder line as above (source)', viewsOk(views));
+  check('…mutant caught: the old source link read as the raw URL',
+    !viewsOk(views.replace('accessibilityLabel={`Source: ${statement.source}, read ${statement.read}. ${spokenSiteName(statement.url)}`}', '')));
+  const switchOk = (src) =>
+    /<Switch \{\.\.\.switchColors\(theme\)\}\s+accessibilityLabel="Use the smart account"/.test(src) &&
+    /<Text importantForAccessibility="no" accessibilityElementsHidden style=\{\[styles\.toggleLabel, \{ color: theme\.text \}\]\}>\s*Use the smart account\s*<\/Text>/.test(src);
+  check('the smart-account switch is read once: it carries the visible label, the label text is hidden (source)', switchOk(screen));
+  check('…mutant caught: the old pair (switch "Stake from the smart account" + a spoken label)',
+    !switchOk(screen.replace('accessibilityLabel="Use the smart account"', 'accessibilityLabel="Stake from the smart account"')));
+  check('the From / Owner account rows speak the address short (source)',
+    (screen.match(/spoken=\{`(From account|Owner account \(signs\)): \$\{activeAccount\?\.name \?\? 'unknown'\}, \$\{spokenShortAddress\(account\.address\)\}`\}/g) ?? []).length === 3);
+}
+
 console.log(`\ncheck-staking: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

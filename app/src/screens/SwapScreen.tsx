@@ -17,7 +17,7 @@ import { formatAssetId } from '@shiba-wallet/core';
 import type { FungibleAsset } from '@shiba-wallet/core';
 import type { SwapQuote } from '@shiba-wallet/chains-evm';
 import type { RootStackParamList } from '../navigation';
-import { Button, ImportedKeyNotice, WarningBox, screenStyle } from '../components';
+import { Button, ImportedKeyNotice, WarningBox, screenStyle, switchColors, useFieldLabels, fieldA11y } from '../components';
 import {
   callWithFailover,
   getEndpoint,
@@ -164,6 +164,7 @@ function NetworkBadge({ label, testnet, theme }: { label: string; testnet: boole
  */
 export function SwapScreen({ navigation }: Props) {
   const theme = useTheme();
+  const fieldLabel = useFieldLabels();
   const { accounts, signWith, activeAccount } = useWallet();
   const { evmChain, hideAmounts } = usePrefs();
   const account = accounts.find((a) => a.chainId === EVM_CHAIN_ID);
@@ -1006,14 +1007,14 @@ export function SwapScreen({ navigation }: Props) {
 
   const inputStyle = [
     styles.input,
-    { color: theme.text, borderColor: theme.border, backgroundColor: theme.card },
+    { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card },
   ];
 
   // ------------------------------------------- success (smart account)
   if (phase === 'success' && aaResult) {
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content} {...NOTE_VIEW_SCROLL_PROPS}>
-        <Text style={[styles.successTitle, { color: theme.success }]}>Swap sent to bundler ✓</Text>
+        <Text accessibilityRole="header" style={[styles.successTitle, { color: theme.success }]}>Swap sent to bundler ✓</Text>
         {quote ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
             Selling {exact(quote.sellAmount, sellDecimals)} {sellSymbol} from your smart account
@@ -1075,7 +1076,7 @@ export function SwapScreen({ navigation }: Props) {
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
-        <Text style={[styles.stepTitle, { color: theme.text }]}>
+        <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}>
           Smart-account swap · {aaAccountTypeLabel(aaQuote.accountType)}
         </Text>
         {notice ? <Text style={[styles.notice, { color: theme.accent }]}>{notice}</Text> : null}
@@ -1217,7 +1218,7 @@ export function SwapScreen({ navigation }: Props) {
   if (phase === 'success' && result) {
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content} {...NOTE_VIEW_SCROLL_PROPS}>
-        <Text style={[styles.successTitle, { color: theme.success }]}>Swap sent ✓</Text>
+        <Text accessibilityRole="header" style={[styles.successTitle, { color: theme.success }]}>Swap sent ✓</Text>
         {quote ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
             Sold {exact(quote.sellAmount, sellDecimals)} {sellSymbol} for at least{' '}
@@ -1256,7 +1257,7 @@ export function SwapScreen({ navigation }: Props) {
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
-        <Text style={[styles.stepTitle, { color: theme.text }]}>Step 1 of 2 — Approve</Text>
+        <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}>Step 1 of 2 — Approve</Text>
         <Row
           label="From account"
           value={activeAccount?.name ?? '—'}
@@ -1312,7 +1313,7 @@ export function SwapScreen({ navigation }: Props) {
               transaction would very likely fail on-chain and still cost the fee.
             </WarningBox>
             <View style={styles.overrideRow}>
-              <Switch
+              <Switch {...switchColors(theme)}
                 accessibilityLabel="Send anyway, although the pre-flight simulation failed"
                 value={overrideSimulation}
                 onValueChange={setOverrideSimulation}
@@ -1355,7 +1356,7 @@ export function SwapScreen({ navigation }: Props) {
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
         {sellAsset !== 'native' ? (
-          <Text style={[styles.stepTitle, { color: theme.text }]}>Step 2 of 2 — Swap</Text>
+          <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}>Step 2 of 2 — Swap</Text>
         ) : null}
         <Row
           label="From account"
@@ -1438,7 +1439,7 @@ export function SwapScreen({ navigation }: Props) {
               transaction would very likely fail on-chain and still cost the fee.
             </WarningBox>
             <View style={styles.overrideRow}>
-              <Switch
+              <Switch {...switchColors(theme)}
                 accessibilityLabel="Send anyway, although the pre-flight simulation failed"
                 value={overrideSimulation}
                 onValueChange={setOverrideSimulation}
@@ -1591,7 +1592,7 @@ export function SwapScreen({ navigation }: Props) {
       {aaAvailable && aaConfig ? (
         <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border, gap: 8 }]}>
           <View style={styles.overrideRow}>
-            <Switch
+            <Switch {...switchColors(theme)}
               accessibilityLabel="Swap from smart account"
               value={aaEnabled}
               onValueChange={(v) => {
@@ -1705,14 +1706,14 @@ export function SwapScreen({ navigation }: Props) {
         ))}
       </View>
 
-      <Text style={[styles.label, { color: theme.textMuted }]}>Amount ({sellSymbol})</Text>
+      <Text {...fieldLabel('amount', `Amount (${sellSymbol})`).label} style={[styles.label, { color: theme.textMuted }]}>Amount ({sellSymbol})</Text>
       <TextInput
+        {...fieldLabel('amount', `Amount (${sellSymbol})`).input}
         value={amountText}
         onChangeText={(t) => {
           setAmountText(t);
           setFormError(null);
         }}
-        accessibilityLabel={`Amount of ${sellSymbol} to sell`}
         placeholder="0.0"
         placeholderTextColor={theme.textMuted}
         keyboardType="decimal-pad"
@@ -1753,12 +1754,12 @@ export function SwapScreen({ navigation }: Props) {
       {slippageMode === 'custom' ? (
         <>
           <TextInput
+            {...fieldA11y('Custom maximum slippage in basis points')}
             value={customBpsText}
             onChangeText={(t) => {
               setCustomBpsText(t);
               setFormError(null);
             }}
-            accessibilityLabel="Custom maximum slippage in basis points"
             placeholder="basis points, e.g. 75 (= 0.75%)"
             placeholderTextColor={theme.textMuted}
             keyboardType="number-pad"

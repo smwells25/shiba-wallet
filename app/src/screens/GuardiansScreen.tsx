@@ -4,7 +4,7 @@ import { ActivityIndicator, Alert, Linking, ScrollView, Switch, Text, TextInput,
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { KernelGuardianSet } from '@shiba-wallet/chains-evm';
 import type { RootStackParamList } from '../navigation';
-import { Button, TestNetworksOnlyCard, WarningBox, screenStyle } from '../components';
+import { Button, TestNetworksOnlyCard, WarningBox, screenStyle, switchColors, useFieldLabels, fieldA11y } from '../components';
 import { localDateLabel } from '../config/dates';
 import { ContactPicker, RecipientContactNotice } from '../components/Contacts';
 import {
@@ -104,6 +104,7 @@ interface Progress {
  */
 export function GuardiansScreen({ navigation }: Props) {
   const theme = useTheme();
+  const fieldLabel = useFieldLabels();
   const { accounts, activeAccount, signWith } = useWallet();
   const { evmChain } = usePrefs();
   const evm = accounts.find((a) => a.chainId === EVM_CHAIN_ID) ?? null;
@@ -444,7 +445,7 @@ export function GuardiansScreen({ navigation }: Props) {
     const exp = recordExport(entry.metadata);
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
-        <Text style={[styles.title, { color: theme.text }]}>Back up the recovery record</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Back up the recovery record</Text>
         <Text style={[styles.hint, { color: theme.text }]}>{RECOVERY_RECORD_NOTE}</Text>
         <PayloadQr value={exp.qrValue} caption={`Recovery record for ${entry.metadata.account} (${exp.bytes} bytes)`} />
         <RecordFileExportButton metadata={entry.metadata} />
@@ -477,7 +478,7 @@ export function GuardiansScreen({ navigation }: Props) {
             : 'Veto';
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
-        <Text style={[styles.title, { color: theme.success }]}>{what} sent to the bundler</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.success }]}>{what} sent to the bundler</Text>
         <InfoRow label="UserOperation hash" value={progress.userOpHash} monoValue />
         {progress.state === 'pending' ? (
           <View style={styles.center}>
@@ -556,7 +557,7 @@ export function GuardiansScreen({ navigation }: Props) {
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <RecoveryNetworkBadge label={evmChain.label} testnet={evmChain.testnet} />
-        <Text style={[styles.title, { color: theme.text }]}>{title}</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>{title}</Text>
         {header}
         {operation.set ? (
           <>
@@ -626,7 +627,7 @@ export function GuardiansScreen({ navigation }: Props) {
   if ((phase === 'form' || phase === 'quoting') && account) {
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <Text style={[styles.title, { color: theme.text }]}>{renewing ? 'Change guardians' : 'Set up guardians'}</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>{renewing ? 'Change guardians' : 'Set up guardians'}</Text>
         {header}
         <Text style={[styles.hint, { color: theme.text }]}>{GUARDIANS_TRADE_OFF}</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
@@ -635,16 +636,16 @@ export function GuardiansScreen({ navigation }: Props) {
         </Text>
         {drafts.map((d, i) => (
           <View key={i} style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-            <Text style={[styles.hint, { color: theme.textMuted }]}>Guardian {i + 1}</Text>
+            <Text {...fieldLabel(`guardian-${i}`, `Guardian ${i + 1} address`).label} style={[styles.hint, { color: theme.textMuted }]}>Guardian {i + 1}</Text>
             <TextInput
+              {...fieldLabel(`guardian-${i}`, `Guardian ${i + 1} address`).input}
               value={d.address}
               onChangeText={(t) => setDrafts((p) => p.map((x, j) => (j === i ? { ...x, address: t } : x)))}
-              accessibilityLabel={`Guardian ${i + 1} address`}
               placeholder="Guardian address (0x…)"
               placeholderTextColor={theme.textMuted}
               autoCapitalize="none"
               autoCorrect={false}
-              style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+              style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
             />
             {draftMatches[i] && draftMatches[i]!.kind !== 'none' ? (
               <RecipientContactNotice match={draftMatches[i]!} address={d.address.trim()} />
@@ -656,21 +657,21 @@ export function GuardiansScreen({ navigation }: Props) {
               onPress={() => setPickerFor(i)}
             />
             <TextInput
+              {...fieldA11y(`Guardian ${i + 1} label, optional`)}
               value={d.label}
               onChangeText={(t) => setDrafts((p) => p.map((x, j) => (j === i ? { ...x, label: t } : x)))}
-              accessibilityLabel={`Guardian ${i + 1} label, optional`}
               placeholder="Label (optional, stored in the recovery record)"
               placeholderTextColor={theme.textMuted}
-              style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+              style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
             />
             <TextInput
+              {...fieldA11y(`Guardian ${i + 1} weight`)}
               value={d.weight}
               onChangeText={(t) => setDrafts((p) => p.map((x, j) => (j === i ? { ...x, weight: t } : x)))}
-              accessibilityLabel={`Guardian ${i + 1} weight`}
               placeholder="Weight (1 or more)"
               placeholderTextColor={theme.textMuted}
               keyboardType="number-pad"
-              style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+              style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
             />
             {drafts.length > 1 ? (
               <Button
@@ -683,13 +684,13 @@ export function GuardiansScreen({ navigation }: Props) {
           </View>
         ))}
         <Button title="Add another guardian" variant="secondary" onPress={() => setDrafts((p) => [...p, { ...EMPTY_GUARDIAN_DRAFT }])} />
-        <Text style={[styles.hint, { color: theme.textMuted }]}>Threshold (total weight needed to recover)</Text>
+        <Text {...fieldLabel('threshold', 'Threshold (total weight needed to recover)').label} style={[styles.hint, { color: theme.textMuted }]}>Threshold (total weight needed to recover)</Text>
         <TextInput
+          {...fieldLabel('threshold', 'Threshold (total weight needed to recover)').input}
           value={threshold}
           onChangeText={setThreshold}
-          accessibilityLabel="Threshold (total weight needed to recover)"
           keyboardType="number-pad"
-          style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+          style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
         />
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Delay between the guardians’ on-chain approval and the change of owner. During the delay you can veto
@@ -708,7 +709,7 @@ export function GuardiansScreen({ navigation }: Props) {
         {delaySeconds === 0 ? (
           <View style={styles.toggleRow}>
             <Text style={[styles.toggleLabel, { color: theme.text }]}>{NO_VETO_ACK_TEXT}</Text>
-            <Switch accessibilityLabel={NO_VETO_ACK_TEXT} value={noVetoAck} onValueChange={setNoVetoAck} />
+            <Switch {...switchColors(theme)} accessibilityLabel={NO_VETO_ACK_TEXT} value={noVetoAck} onValueChange={setNoVetoAck} />
           </View>
         ) : null}
         {draftSet ? (
@@ -724,7 +725,7 @@ export function GuardiansScreen({ navigation }: Props) {
             <WarningBox>{GUARDIANS_MAINNET_CONDITION}</WarningBox>
             <View style={styles.toggleRow}>
               <Text style={[styles.toggleLabel, { color: theme.text }]}>{GUARDIANS_MAINNET_ACK}</Text>
-              <Switch accessibilityLabel={GUARDIANS_MAINNET_ACK} value={mainnetAck} onValueChange={setMainnetAck} />
+              <Switch {...switchColors(theme)} accessibilityLabel={GUARDIANS_MAINNET_ACK} value={mainnetAck} onValueChange={setMainnetAck} />
             </View>
           </>
         ) : null}
@@ -788,7 +789,7 @@ export function GuardiansScreen({ navigation }: Props) {
       ) : null}
       {resolution?.ok ? (
         <>
-          <Text style={[styles.sectionTitle, { color: theme.text }]}>Guardians</Text>
+          <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Guardians</Text>
           {status === null ? <ActivityIndicator color={theme.accent} /> : null}
           {status && !configured ? (
             <>
@@ -830,7 +831,7 @@ export function GuardiansScreen({ navigation }: Props) {
             </>
           ) : null}
 
-          <Text style={[styles.sectionTitle, { color: theme.text }]}>Recovery proposals (veto)</Text>
+          <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Recovery proposals (veto)</Text>
           <Text style={[styles.hint, { color: theme.textMuted }]}>{PROPOSAL_DISCOVERY_NOTE}</Text>
           {proposals.length === 0 ? <Text style={[styles.hint, { color: theme.textMuted }]}>None watched.</Text> : null}
           {proposals.map((p) => {
@@ -868,7 +869,7 @@ export function GuardiansScreen({ navigation }: Props) {
           />
           <Button title="Watch this proposal" variant="secondary" disabled={!watchInput.trim() || !entry} onPress={onWatch} />
 
-          <Text style={[styles.sectionTitle, { color: theme.text }]}>Recovery record</Text>
+          <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Recovery record</Text>
           <Text style={[styles.hint, { color: theme.textMuted }]}>{RECOVERY_RECORD_NOTE}</Text>
           {entry ? (
             <>
@@ -912,12 +913,12 @@ export function GuardiansScreen({ navigation }: Props) {
         // key are refused (recovery.ts OWNER_ROTATION_IMPORTED_REFUSAL), so
         // the button is not offered at all.
         <>
-          <Text style={[styles.sectionTitle, { color: theme.text }]}>Owner key</Text>
+          <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Owner key</Text>
           <Text style={[styles.hint, { color: theme.textMuted }]}>{OWNER_ROTATION_IMPORTED_NOT_OFFERED}</Text>
         </>
       ) : owner ? (
         <>
-          <Text style={[styles.sectionTitle, { color: theme.text }]}>Owner key</Text>
+          <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Owner key</Text>
           <Text style={[styles.hint, { color: theme.textMuted }]}>
             {resolution?.ok && resolution.kind === 'recovered'
               ? 'This recovered account is controlled by this account’s key. You can hand it to another of your accounts (for example the one you normally use); the address stays the same.'

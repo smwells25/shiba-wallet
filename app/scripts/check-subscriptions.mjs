@@ -1052,5 +1052,26 @@ console.log('\ncheck-subscriptions: fixes from the 2026-10-09 recurring-payments
       !screenSrc.includes('{review.caveats[0] ? <WarningBox>{review.caveats[0]}</WarningBox> : null}'));
 }
 
+// Pass p20c (TalkBack and dark mode, 2026-10-14) finding 19, and the
+// once-only refusal of finding 8 for the subscription and recurring forms.
+console.log('\ncheck-subscriptions: pass p20c findings 8 and 19');
+{
+  const { feeBudgetPlaceholder, formFeeHintShown } = await import('../src/wallet/subscriptions.ts');
+  check('finding 19: the fee-budget placeholder only names the unit, short enough for one line (exact)',
+    feeBudgetPlaceholder('test ETH') === 'Total in test ETH' && feeBudgetPlaceholder('ETH').length <= 20);
+  const sessions = readFileSync(new URL('../src/screens/SessionsScreen.tsx', import.meta.url), 'utf8');
+  const dcaViews = readFileSync(new URL('../src/screens/DcaViews.tsx', import.meta.url), 'utf8');
+  const placeholdersOk = (s1, s2) =>
+    (s1.match(/placeholder=\{feeBudgetPlaceholder\(symbol\)\}/g) ?? []).length === 2 &&
+    s2.includes('placeholder={feeBudgetPlaceholder(props.symbol)}') &&
+    !/may spend on network fees|may spend on fees/.test(s1 + s2);
+  check('…the subscription / recurring form, the session gas budget and the recurring-swap form all use it; the long placeholders are gone (source)',
+    placeholdersOk(sessions, dcaViews));
+  check('…mutant caught: the old clipped placeholder',
+    !placeholdersOk(sessions.replace('placeholder={feeBudgetPlaceholder(symbol)}', 'placeholder={`Total ${symbol} the payments may spend on network fees`}'), dcaViews));
+  check('finding 8: the suggestion and cap note are hidden while a refusal is shown (formFeeHintShown)',
+    formFeeHintShown({ feeEdited: false, formError: null }) && !formFeeHintShown({ feeEdited: false, formError: 'x' }) && !formFeeHintShown({ feeEdited: true, formError: null }));
+}
+
 console.log(`\ncheck-subscriptions: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

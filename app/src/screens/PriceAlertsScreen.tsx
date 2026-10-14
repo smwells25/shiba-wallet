@@ -4,7 +4,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { PriceQuote } from '@shiba-wallet/prices';
 import type { RootStackParamList } from '../navigation';
-import { Button, WarningBox, screenStyle } from '../components';
+import { Button, WarningBox, screenStyle, fieldA11y } from '../components';
 import { useTheme } from '../theme';
 import { usePrefs } from '../wallet/PrefsContext';
 import { usePrices } from '../wallet/usePrices';
@@ -324,6 +324,7 @@ function WatchRow({
         ))}
       </View>
       <TextInput
+        {...fieldA11y(`Alert price for ${asset.symbol} in US dollars`)}
         value={text}
         onChangeText={(v) => {
           setText(v);
@@ -333,8 +334,7 @@ function WatchRow({
         placeholder="Price in US dollars, for example 3000"
         placeholderTextColor={theme.textMuted}
         keyboardType="decimal-pad"
-        accessibilityLabel={`Alert price for ${asset.symbol} in US dollars`}
-        style={[styles.input, { color: theme.text, borderColor: theme.border, backgroundColor: theme.background }]}
+        style={[styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.background }]}
       />
       {formError ? <Text style={[styles.hint, { color: theme.danger }]}>{formError}</Text> : null}
       <Button

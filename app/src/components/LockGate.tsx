@@ -193,7 +193,7 @@ export function LockGate({ children }: { children: React.ReactNode }) {
         {locked ? (
           view === 'lock' ? (
             <View style={[styles.overlay, { backgroundColor: theme.background }]}>
-              <Text style={[styles.title, { color: theme.text }]}>Shiba Wallet is locked</Text>
+              <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Shiba Wallet is locked</Text>
               <Text style={[styles.hint, { color: theme.textMuted }]}>
                 {lockScreenHint(reconciled.startedLocked)}
               </Text>

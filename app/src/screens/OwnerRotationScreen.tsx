@@ -4,7 +4,7 @@ import { ActivityIndicator, Alert, Linking, ScrollView, Switch, Text, View } fro
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { KernelRecoveryMetadata } from '@shiba-wallet/chains-evm';
 import type { RootStackParamList } from '../navigation';
-import { Button, TestNetworksOnlyCard, WarningBox, screenStyle } from '../components';
+import { Button, TestNetworksOnlyCard, WarningBox, screenStyle, switchColors } from '../components';
 import {
   GuardianSetView,
   InfoRow,
@@ -320,7 +320,7 @@ export function OwnerRotationScreen({ navigation }: Props) {
     const exp = recordExport(backupMeta);
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
-        <Text style={[styles.title, { color: theme.text }]}>Back up the updated recovery record</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Back up the updated recovery record</Text>
         <Text style={[styles.hint, { color: theme.text }]}>{RECOVERY_RECORD_NOTE}</Text>
         <PayloadQr value={exp.qrValue} caption={`Recovery record for ${backupMeta.account} (${exp.bytes} bytes)`} />
         <RecordFileExportButton metadata={backupMeta} />
@@ -344,7 +344,7 @@ export function OwnerRotationScreen({ navigation }: Props) {
     const newName = progress.rotation.newOwner.name;
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
-        <Text style={[styles.title, { color: theme.success }]}>Owner change sent to the bundler</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.success }]}>Owner change sent to the bundler</Text>
         <InfoRow label="UserOperation hash" value={progress.userOpHash} monoValue />
         {progress.recordError ? (
           <WarningBox>
@@ -430,7 +430,7 @@ export function OwnerRotationScreen({ navigation }: Props) {
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <RecoveryNetworkBadge label={evmChain.label} testnet={evmChain.testnet} />
-        <Text style={[styles.title, { color: theme.text }]}>Change the owner key?</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Change the owner key?</Text>
         {header}
         <InfoRow label="Current owner (stops working for this account)" value={rotation.currentOwner} sub={nameOf(rotation.currentOwner)} monoValue />
         <InfoRow
@@ -512,7 +512,7 @@ export function OwnerRotationScreen({ navigation }: Props) {
   return (
     <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
       {readiness ? <TestNetworksOnlyCard feature={readiness.feature} hint={readiness.hint} style={styles.card} titleStyle={styles.ok} bodyStyle={styles.hint} hintStyle={styles.hint} /> : null}
-      <Text style={[styles.title, { color: theme.text }]}>Change the owner key</Text>
+      <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Change the owner key</Text>
       {header}
       {OWNER_ROTATION_EXPLANATION.map((line) => (
         <Text key={line} style={[styles.hint, { color: theme.text }]}>
@@ -526,7 +526,7 @@ export function OwnerRotationScreen({ navigation }: Props) {
 
       {pending.length > 0 ? (
         <>
-          <Text style={[styles.sectionTitle, { color: theme.text }]}>Unfinished owner changes</Text>
+          <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Unfinished owner changes</Text>
           <Text style={[styles.hint, { color: theme.textMuted }]}>
             The app was closed before these were confirmed. Check reads the owner on-chain and finishes the change (or
             tells you it is still pending).
@@ -567,7 +567,7 @@ export function OwnerRotationScreen({ navigation }: Props) {
 
       {resolution?.ok ? (
         <>
-          <Text style={[styles.sectionTitle, { color: theme.text }]}>New owner</Text>
+          <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>New owner</Text>
           <Text style={[styles.hint, { color: theme.textMuted }]}>Choose which of your accounts’ keys will own this account.</Text>
           {walletOwners.map((w) => {
             const refusal = refusalFor(w);
@@ -575,7 +575,7 @@ export function OwnerRotationScreen({ navigation }: Props) {
             const isCurrent = owner !== null && w.address.toLowerCase() === owner.toLowerCase();
             return (
               <View key={w.index} style={[styles.card, { backgroundColor: theme.card, borderColor: chosen ? theme.accent : theme.border }]}>
-                <Text style={[styles.cardTitle, { color: theme.text }]}>
+                <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>
                   {chosen ? '✓ ' : ''}
                   {w.name}
                   {isCurrent ? ' (current owner)' : ''}
@@ -608,7 +608,7 @@ export function OwnerRotationScreen({ navigation }: Props) {
                 Also remove the guardians in the same operation (otherwise they stay unchanged and can still replace the
                 new owner)
               </Text>
-              <Switch
+              <Switch {...switchColors(theme)}
                 accessibilityLabel="Also remove the guardians in the same operation"
                 value={removeGuardians}
                 onValueChange={setRemoveGuardians}

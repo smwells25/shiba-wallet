@@ -307,7 +307,7 @@ export function ApproveRecoveryScreen({ navigation, route }: Props) {
   if (phase === 'submitted' && submitted) {
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
-        <Text style={[styles.title, { color: theme.success }]}>Recovery submitted to the bundler</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.success }]}>Recovery submitted to the bundler</Text>
         <InfoRow label="UserOperation hash (send this to the account holder)" value={submitted.userOpHash} monoValue />
         {submitted.state === 'pending' ? (
           <View style={styles.center}>
@@ -342,7 +342,7 @@ export function ApproveRecoveryScreen({ navigation, route }: Props) {
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <RecoveryNetworkBadge label={evmChain.label} testnet={evmChain.testnet} />
-        <Text style={[styles.title, { color: theme.text }]}>Submit the recovery?</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Submit the recovery?</Text>
         <WarningBox>{APPROVER_WARNING}</WarningBox>
         {guardianRow}
         <InfoRow label="Account" value={review.request.account} monoValue />
@@ -379,7 +379,7 @@ export function ApproveRecoveryScreen({ navigation, route }: Props) {
     const p = localProgressFor(review);
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
-        <Text style={[styles.title, { color: theme.success }]}>Approval signed</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.success }]}>Approval signed</Text>
         <Text style={[styles.hint, { color: theme.text }]}>
           Give this approval to the account holder (show the QR code, or share the text). It approves only proposal{' '}
           {review.request.callDataAndNonceHash}.
@@ -414,7 +414,7 @@ export function ApproveRecoveryScreen({ navigation, route }: Props) {
         {readiness ? <TestNetworksOnlyCard feature={readiness.feature} hint={readiness.hint} style={styles.card} titleStyle={styles.ok} bodyStyle={styles.hint} hintStyle={styles.hint} /> : null}
         {heirNote}
         <RecoveryNetworkBadge label={evmChain.label} testnet={evmChain.testnet} />
-        <Text style={[styles.title, { color: theme.text }]}>{heir ? 'Takeover request' : 'Recovery request'}</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>{heir ? 'Takeover request' : 'Recovery request'}</Text>
         <WarningBox>{APPROVER_WARNING}</WarningBox>
         {guardianRow}
         <InfoRow label="Account to be recovered" value={review.request.account} monoValue />
@@ -491,7 +491,7 @@ export function ApproveRecoveryScreen({ navigation, route }: Props) {
     <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
       {readiness ? <TestNetworksOnlyCard feature={readiness.feature} hint={readiness.hint} style={styles.card} titleStyle={styles.ok} bodyStyle={styles.hint} hintStyle={styles.hint} /> : null}
       {heirNote}
-      <Text style={[styles.title, { color: theme.text }]}>{heir ? 'Approve a takeover (as the heir)' : 'Approve a recovery (as a guardian)'}</Text>
+      <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>{heir ? 'Approve a takeover (as the heir)' : 'Approve a recovery (as a guardian)'}</Text>
       <Text style={[styles.hint, { color: theme.text }]}>
         Someone who named you as a guardian lost access to their account and asks you to make a new key its owner. Paste
         or scan their request. Nothing is signed until you review it and tap Approve.
@@ -516,7 +516,7 @@ export function ApproveRecoveryScreen({ navigation, route }: Props) {
       )}
       {local.length > 0 ? (
         <>
-          <Text style={[styles.sectionTitle, { color: theme.text }]}>Recoveries in progress on this device</Text>
+          <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Recoveries in progress on this device</Text>
           {local.map((p) => (
             <Button
               key={`${p.chain}|${p.newOwner}`}

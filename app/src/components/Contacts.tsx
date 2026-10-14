@@ -10,7 +10,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { Button, WarningBox } from '../components';
+import { Button, WarningBox, fieldA11y } from '../components';
 import { useTheme } from '../theme';
 import {
   LookalikeContactError,
@@ -79,7 +79,7 @@ export function ContactPicker({
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <View style={[styles.modal, { backgroundColor: theme.background }]}>
-        <Text style={[styles.modalTitle, { color: theme.text }]}>{networkLabel} contacts</Text>
+        <Text accessibilityRole="header" style={[styles.modalTitle, { color: theme.text }]}>{networkLabel} contacts</Text>
         <ScrollView contentContainerStyle={styles.list}>
           {contacts.length === 0 ? (
             <Text style={[styles.hint, { color: theme.textMuted }]}>
@@ -175,19 +175,19 @@ export function SaveContactInline({
         {address}
       </Text>
       <TextInput
+        {...fieldA11y('Contact name')}
         value={name}
         onChangeText={(t) => {
           setName(t);
           setError(null);
         }}
-        accessibilityLabel="Contact name"
         placeholder="Name"
         placeholderTextColor={theme.textMuted}
         autoCorrect={false}
         maxLength={MAX_CONTACT_NAME_LENGTH * 2}
         style={[
           styles.input,
-          { color: theme.text, borderColor: theme.border, backgroundColor: theme.background },
+          { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.background },
         ]}
       />
       {error ? <Text style={[styles.hint, { color: theme.danger }]}>{error}</Text> : null}

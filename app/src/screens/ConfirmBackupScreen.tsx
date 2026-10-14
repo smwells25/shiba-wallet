@@ -81,7 +81,7 @@ export function ConfirmBackupScreen() {
 
   return (
     <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
-      <Text style={[styles.heading, { color: theme.text }]}>Confirm your backup</Text>
+      <Text accessibilityRole="header" style={[styles.heading, { color: theme.text }]}>Confirm your backup</Text>
       <Text style={[styles.subtitle, { color: theme.textMuted }]}>
         Pick the correct word for each position to prove the backup was
         written down.

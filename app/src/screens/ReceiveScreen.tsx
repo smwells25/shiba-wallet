@@ -285,7 +285,7 @@ export function ReceiveScreen({ route, navigation }: Props) {
             { backgroundColor: theme.card, borderColor: theme.border },
           ]}
         >
-          <Text style={[styles.smartTitle, { color: theme.text }]}>
+          <Text accessibilityRole="header" style={[styles.smartTitle, { color: theme.text }]}>
             {smartAccountAddressLabel(smartInfo)}
           </Text>
           <Text style={[styles.note, { color: theme.textMuted }]}>

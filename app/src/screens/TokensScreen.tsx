@@ -12,7 +12,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { formatAssetId } from '@shiba-wallet/core';
 import type { FungibleAsset } from '@shiba-wallet/core';
 import type { RootStackParamList } from '../navigation';
-import { Button, WarningBox, screenStyle } from '../components';
+import { Button, WarningBox, screenStyle, fieldA11y } from '../components';
 import { NoEndpointError, withEndpoint } from '../config/networks';
 import { OfflineNotice, TechnicalDetail, describeNetworkError } from '../wallet/connectivity';
 import { useTheme } from '../theme';
@@ -290,7 +290,7 @@ export function TokensScreen({ navigation }: Props) {
   return (
     <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
       <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>Tracked tokens on {evmChain.label}</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Tracked tokens on {evmChain.label}</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           ERC-20 balances shown on Home under {evmChain.label}. Each network
           keeps its own list. Tokens arrive at your address
@@ -349,7 +349,7 @@ export function TokensScreen({ navigation }: Props) {
       </View>
 
       <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>Find my tokens</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Find my tokens</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Lists tokens your address holds on {evmChain.label} that you do not
           track yet, using the history indexer in Settings. Their details are
@@ -393,7 +393,7 @@ export function TokensScreen({ navigation }: Props) {
                 <Text style={[styles.untrackedTag, { color: theme.textMuted }]}>
                   {found.knownStaking ? KNOWN_STAKING_TOKEN_TAG : UNTRACKED_TOKEN_TAG}
                 </Text>
-                <Text style={[styles.previewTitle, { color: theme.text }]}>
+                <Text accessibilityRole="header" style={[styles.previewTitle, { color: theme.text }]}>
                   {found.symbol ?? 'Symbol unavailable'}
                   {found.name && found.name !== found.symbol ? ` — ${found.name}` : ''}
                 </Text>
@@ -446,7 +446,7 @@ export function TokensScreen({ navigation }: Props) {
       </View>
 
       <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>Add a token</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Add a token</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Paste the token&apos;s contract address on {evmChain.label}. Its symbol, name
           and decimals are read from the contract itself; confirm before it
@@ -455,6 +455,7 @@ export function TokensScreen({ navigation }: Props) {
         </Text>
         <OfflineNotice />
         <TextInput
+          {...fieldA11y('Token contract address')}
           value={address}
           onChangeText={(text) => {
             setAddress(text);
@@ -462,14 +463,13 @@ export function TokensScreen({ navigation }: Props) {
             setLookupError(null);
             setLookupTechnical(null);
           }}
-          accessibilityLabel="Token contract address"
           placeholder="0x…"
           placeholderTextColor={theme.textMuted}
           autoCapitalize="none"
           autoCorrect={false}
           style={[
             styles.input,
-            { color: theme.text, borderColor: theme.border, backgroundColor: theme.card },
+            { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card },
           ]}
         />
         {lookupError ? (
@@ -486,7 +486,7 @@ export function TokensScreen({ navigation }: Props) {
 
         {preview && previewChain === evmChain.caip2 ? (
           <View style={[styles.previewCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
-            <Text style={[styles.previewTitle, { color: theme.text }]}>
+            <Text accessibilityRole="header" style={[styles.previewTitle, { color: theme.text }]}>
               {fetchedSymbol !== '' ? fetchedSymbol : 'Symbol unavailable'}
               {fetchedName !== '' ? ` — ${fetchedName}` : ''}
             </Text>
@@ -501,9 +501,9 @@ export function TokensScreen({ navigation }: Props) {
                     'The contract did not return readable text metadata.'}
                 </Text>
                 <TextInput
+                  {...fieldA11y('Token symbol')}
                   value={manualSymbol}
                   onChangeText={setManualSymbol}
-                  accessibilityLabel="Token symbol"
                   placeholder="Symbol (e.g. MKR)"
                   placeholderTextColor={theme.textMuted}
                   autoCapitalize="characters"
@@ -511,20 +511,20 @@ export function TokensScreen({ navigation }: Props) {
                   maxLength={MAX_SYMBOL_LENGTH}
                   style={[
                     styles.input,
-                    { color: theme.text, borderColor: theme.border, backgroundColor: theme.background },
+                    { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.background },
                   ]}
                 />
                 <TextInput
+                  {...fieldA11y('Token name (optional)')}
                   value={manualName}
                   onChangeText={setManualName}
-                  accessibilityLabel="Token name (optional)"
                   placeholder="Name (optional)"
                   placeholderTextColor={theme.textMuted}
                   autoCorrect={false}
                   maxLength={MAX_NAME_LENGTH}
                   style={[
                     styles.input,
-                    { color: theme.text, borderColor: theme.border, backgroundColor: theme.background },
+                    { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.background },
                   ]}
                 />
               </View>

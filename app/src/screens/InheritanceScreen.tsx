@@ -5,7 +5,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { KernelGuardianSet } from '@shiba-wallet/chains-evm';
 import type { RootStackParamList } from '../navigation';
-import { Button, WarningBox, screenStyle } from '../components';
+import { Button, WarningBox, screenStyle, switchColors, useFieldLabels, fieldA11y } from '../components';
 import { localDateLabel } from '../config/dates';
 import { ContactPicker, RecipientContactNotice } from '../components/Contacts';
 import { GuardianSetView, InfoRow, PasteOrScan, RecoveryNetworkBadge, recoveryLayout as styles } from '../components/RecoveryViews';
@@ -102,6 +102,7 @@ function localTimeLabel(ms: number): string {
  */
 export function InheritanceScreen({ navigation }: Props) {
   const theme = useTheme();
+  const fieldLabel = useFieldLabels();
   const { accounts, activeAccount, signWith } = useWallet();
   const { evmChain } = usePrefs();
   const evm = accounts.find((a) => a.chainId === EVM_CHAIN_ID) ?? null;
@@ -392,7 +393,7 @@ export function InheritanceScreen({ navigation }: Props) {
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
         {risk}
-        <Text style={[styles.title, { color: theme.success }]}>{what} sent to the bundler</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.success }]}>{what} sent to the bundler</Text>
         <InfoRow label="UserOperation hash" value={progress.userOpHash} monoValue />
         {progress.state === 'pending' ? (
           <View style={styles.center}>
@@ -445,7 +446,7 @@ export function InheritanceScreen({ navigation }: Props) {
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
         {risk}
         <RecoveryNetworkBadge label={evmChain.label} testnet={evmChain.testnet} />
-        <Text style={[styles.title, { color: theme.text }]}>{title}</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>{title}</Text>
         {header}
         {operation.set ? (
           <>
@@ -505,7 +506,7 @@ export function InheritanceScreen({ navigation }: Props) {
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         {risk}
-        <Text style={[styles.title, { color: theme.text }]}>Add heirs</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Add heirs</Text>
         {header}
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Each heir is an Ethereum address held by the person you choose. A takeover needs heirs whose weights add up to
@@ -513,35 +514,35 @@ export function InheritanceScreen({ navigation }: Props) {
         </Text>
         {drafts.map((d, i) => (
           <View key={i} style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-            <Text style={[styles.hint, { color: theme.textMuted }]}>Heir {i + 1}</Text>
+            <Text {...fieldLabel(`heir-${i}`, `Heir ${i + 1} address`).label} style={[styles.hint, { color: theme.textMuted }]}>Heir {i + 1}</Text>
             <TextInput
+              {...fieldLabel(`heir-${i}`, `Heir ${i + 1} address`).input}
               value={d.address}
               onChangeText={(t) => setDrafts((p) => p.map((x, j) => (j === i ? { ...x, address: t } : x)))}
-              accessibilityLabel={`Heir ${i + 1} address`}
               placeholder="Heir address (0x…)"
               placeholderTextColor={theme.textMuted}
               autoCapitalize="none"
               autoCorrect={false}
-              style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+              style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
             />
             {draftMatches[i] && draftMatches[i]!.kind !== 'none' ? <RecipientContactNotice match={draftMatches[i]!} address={d.address.trim()} /> : null}
             <Button title="Pick from contacts" accessibilityLabel={`Pick heir ${i + 1} from contacts`} variant="secondary" onPress={() => setPickerFor(i)} />
             <TextInput
+              {...fieldA11y(`Heir ${i + 1} label, optional`)}
               value={d.label}
               onChangeText={(t) => setDrafts((p) => p.map((x, j) => (j === i ? { ...x, label: t } : x)))}
-              accessibilityLabel={`Heir ${i + 1} label, optional`}
               placeholder="Label (optional, stored in the recovery record)"
               placeholderTextColor={theme.textMuted}
-              style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+              style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
             />
             <TextInput
+              {...fieldA11y(`Heir ${i + 1} weight`)}
               value={d.weight}
               onChangeText={(t) => setDrafts((p) => p.map((x, j) => (j === i ? { ...x, weight: t } : x)))}
-              accessibilityLabel={`Heir ${i + 1} weight`}
               placeholder="Weight (1 or more)"
               placeholderTextColor={theme.textMuted}
               keyboardType="number-pad"
-              style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+              style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
             />
             {drafts.length > 1 ? (
               <Button title="Remove this heir" accessibilityLabel={`Remove heir ${i + 1}`} variant="secondary" onPress={() => setDrafts((p) => p.filter((_, j) => j !== i))} />
@@ -551,13 +552,13 @@ export function InheritanceScreen({ navigation }: Props) {
         {drafts.length < MAX_HEIRS ? (
           <Button title="Add another heir" variant="secondary" onPress={() => setDrafts((p) => [...p, { ...EMPTY_GUARDIAN_DRAFT }])} />
         ) : null}
-        <Text style={[styles.hint, { color: theme.textMuted }]}>Threshold (total weight a takeover needs)</Text>
+        <Text {...fieldLabel('threshold', 'Threshold (total weight a takeover needs)').label} style={[styles.hint, { color: theme.textMuted }]}>Threshold (total weight a takeover needs)</Text>
         <TextInput
+          {...fieldLabel('threshold', 'Threshold (total weight a takeover needs)').input}
           value={threshold}
           onChangeText={setThreshold}
-          accessibilityLabel="Threshold (total weight a takeover needs)"
           keyboardType="number-pad"
-          style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+          style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
         />
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Delay between the heir’s on-chain approval and the takeover. During it, and until the takeover executes, you
@@ -586,7 +587,7 @@ export function InheritanceScreen({ navigation }: Props) {
         <Text style={[styles.hint, { color: theme.textMuted }]}>{GUARDIANS_AUDIT_NOTE}</Text>
         <View style={styles.toggleRow}>
           <Text style={[styles.toggleLabel, { color: theme.text }]}>{INHERITANCE_ACK_TEXT}</Text>
-          <Switch accessibilityLabel={INHERITANCE_ACK_TEXT} value={ack} onValueChange={setAck} />
+          <Switch {...switchColors(theme)} accessibilityLabel={INHERITANCE_ACK_TEXT} value={ack} onValueChange={setAck} />
         </View>
         {formError ? <WarningBox>{formError}</WarningBox> : null}
         {phase === 'quoting' ? (
@@ -634,7 +635,7 @@ export function InheritanceScreen({ navigation }: Props) {
       {loadError ? <WarningBox>{loadError}</WarningBox> : null}
       {resolution?.ok ? (
         <>
-          <Text style={[styles.sectionTitle, { color: theme.text }]}>Heirs</Text>
+          <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Heirs</Text>
           {status === null ? <ActivityIndicator color={theme.accent} /> : null}
           {conflict ? (
             <>
@@ -658,7 +659,7 @@ export function InheritanceScreen({ navigation }: Props) {
               <GuardianSetView set={set} labelFor={labelFor} title="Heirs" memberNoun="Heir" />
               <WarningBox>{describeHeirExposure(set, labelFor)}</WarningBox>
 
-              <Text style={[styles.sectionTitle, { color: theme.text }]}>Takeover attempts</Text>
+              <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Takeover attempts</Text>
               {check ? (
                 <>
                   <Text style={[styles.ok, { color: pending.length > 0 ? theme.danger : theme.text }]}>
@@ -710,7 +711,7 @@ export function InheritanceScreen({ navigation }: Props) {
         </>
       ) : null}
 
-      <Text style={[styles.sectionTitle, { color: theme.text }]}>How this works</Text>
+      <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>How this works</Text>
       {INHERITANCE_HOW_IT_WORKS.map((line) => (
         <Text key={line} style={[styles.hint, { color: theme.textMuted }]}>
           • {line}
@@ -719,7 +720,7 @@ export function InheritanceScreen({ navigation }: Props) {
       <Text style={[styles.hint, { color: theme.textMuted }]}>{INHERITANCE_PRODUCTION_NEEDS}</Text>
       <Text style={[styles.hint, { color: theme.textMuted }]}>{GUARDIANS_AUDIT_NOTE}</Text>
 
-      <Text style={[styles.sectionTitle, { color: theme.text }]}>If you are an heir</Text>
+      <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>If you are an heir</Text>
       <Text style={[styles.hint, { color: theme.textMuted }]}>
         Start a takeover from the account that should become the owner, then approve and submit it with your heir address.
       </Text>

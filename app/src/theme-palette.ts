@@ -44,6 +44,18 @@ export interface Theme {
   text: string;
   textMuted: string;
   border: string;
+  /**
+   * The outline of text fields and the track of a switch that is off
+   * (pass p20c findings 14 and 18). Unlike `border`, which only separates
+   * cards and rows (about 1.2–1.4:1), this marks a control a person has to
+   * find, so it keeps WCAG 2.2 success criterion 1.4.11 "Non-text Contrast"
+   * (https://www.w3.org/TR/WCAG22/#non-text-contrast): at least 3:1 against
+   * both the screen background and a card. scripts/check-devmode.mjs
+   * recomputes the ratios (light 3.43 / 3.68, dark 3.92 / 3.49).
+   */
+  controlBorder: string;
+  /** The thumb (knob) of every switch, in both states. */
+  switchThumb: string;
   accent: string;
   /** Text and icons drawn ON an accent fill (primary buttons, selected chips). */
   onAccent: string;
@@ -78,6 +90,8 @@ export const lightTheme: Theme = {
   text: '#16181d',
   textMuted: '#5c6470',
   border: '#e2e5ea',
+  controlBorder: '#7d8693',
+  switchThumb: '#ffffff',
   // #d97a1a with HSL lightness lowered from 0.476 to 0.363 (hue 30° kept).
   accent: '#a65d13',
   onAccent: '#ffffff',
@@ -99,6 +113,8 @@ export const darkTheme: Theme = {
   text: '#eceef2',
   textMuted: '#9aa3b0',
   border: '#2a2e36',
+  controlBorder: '#6b7380',
+  switchThumb: '#ffffff',
   accent: '#f0942f',
   onAccent: '#101216',
   danger: '#ef5350',
@@ -128,4 +144,20 @@ export function contrastRatio(a: string, b: string): number {
   const la = relativeLuminance(a);
   const lb = relativeLuminance(b);
   return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+}
+
+/** The dark text used on light fills (the dark theme's background). */
+export const TEXT_ON_LIGHT_FILL = '#101216';
+
+/**
+ * The text colour for a label drawn on a fixed brand fill (the coin badges
+ * on Home: ETH #627eea, BTC #f7931a, DOGE #c2a633, SOL #9945ff): white or
+ * TEXT_ON_LIGHT_FILL, whichever contrasts more with the fill. The fills do
+ * not change with the theme, so the result holds in both. Pass p20c finding
+ * 16: white on Bitcoin's orange was 2.30:1 and on Dogecoin's gold 2.39:1
+ * (WCAG 2.2 SC 1.4.3 asks 4.5:1 for 12-px bold text); now 8.16:1 and
+ * 7.85:1. scripts/check-devmode.mjs checks every chain's fill.
+ */
+export function textOnFill(fill: string): string {
+  return contrastRatio('#ffffff', fill) >= contrastRatio(TEXT_ON_LIGHT_FILL, fill) ? '#ffffff' : TEXT_ON_LIGHT_FILL;
 }

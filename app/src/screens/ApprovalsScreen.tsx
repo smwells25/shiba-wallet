@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation';
-import { Button, ImportedKeyNotice, WarningBox, screenStyle } from '../components';
+import { Button, ImportedKeyNotice, WarningBox, screenStyle, switchColors } from '../components';
 import { callWithFailover, getEndpoint, withEndpoint, type NetworkEndpoint } from '../config/networks';
 import { endpointHost, findAlternateDefaultUrl, otherDefaultCandidates } from '../config/endpoint-probe';
 import { OfflineNotice, TechnicalDetail, describeNetworkError } from '../wallet/connectivity';
@@ -445,7 +445,7 @@ export function ApprovalsScreen({ navigation }: Props) {
   if (phase === 'success' && result) {
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
-        <Text style={[styles.successTitle, { color: theme.success }]}>Revoke sent ✓</Text>
+        <Text accessibilityRole="header" style={[styles.successTitle, { color: theme.success }]}>Revoke sent ✓</Text>
         <Text style={[styles.label, { color: theme.textMuted }]}>Transaction id</Text>
         <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border }]}>
           <Text selectable style={[styles.monoText, { color: theme.text }]}>
@@ -548,7 +548,7 @@ export function ApprovalsScreen({ navigation }: Props) {
                   'and leave the allowance unchanged.'}
             </WarningBox>
             <View style={styles.overrideRow}>
-              <Switch
+              <Switch {...switchColors(theme)}
                 accessibilityLabel="Send anyway, although the pre-flight simulation failed"
                 value={overrideSimulation}
                 onValueChange={setOverrideSimulation}
@@ -667,7 +667,7 @@ export function ApprovalsScreen({ navigation }: Props) {
     const unlimited = isUnlimitedNow(item);
     return (
       <View key={item.key} style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-        <Text style={[styles.cardTitle, { color: theme.text }]}>
+        <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>
           {item.kind === 'erc20' ? item.symbol : item.title}
           <Text style={[styles.kind, { color: theme.textMuted }]}>
             {item.kind === 'erc20' ? '  ERC-20 allowance' : '  NFT operator (whole collection)'}
@@ -739,7 +739,7 @@ export function ApprovalsScreen({ navigation }: Props) {
         </Text>
       ) : null}
 
-      <Text style={[styles.sectionTitle, { color: theme.text }]}>Active approvals</Text>
+      <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Active approvals</Text>
       {active.length === 0 ? (
         <Text style={[styles.body, { color: theme.textMuted }]}>
           No active approvals found in the searched range.
@@ -750,7 +750,7 @@ export function ApprovalsScreen({ navigation }: Props) {
 
       {unconfirmed.length > 0 ? (
         <>
-          <Text style={[styles.sectionTitle, { color: theme.text }]}>Could not confirm</Text>
+          <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Could not confirm</Text>
           <Text style={[styles.hint, { color: theme.textMuted }]}>
             The current state of these approvals could not be read, so they are shown neither as
             active nor as revoked. You can still revoke them.
@@ -770,7 +770,7 @@ export function ApprovalsScreen({ navigation }: Props) {
 
       {revoked.length > 0 ? (
         <View style={styles.revokedToggle}>
-          <Switch
+          <Switch {...switchColors(theme)}
             accessibilityLabel="Show revoked or used-up approvals"
             value={showRevoked}
             onValueChange={setShowRevoked}

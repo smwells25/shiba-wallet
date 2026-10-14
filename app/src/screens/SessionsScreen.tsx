@@ -28,7 +28,7 @@ import {
   type SubscriptionGrant,
 } from '@shiba-wallet/chains-evm';
 import type { RootStackParamList } from '../navigation';
-import { Button, ImportedKeyNotice, screenStyle, TestNetworksOnlyCard, WarningBox } from '../components';
+import { Button, ImportedKeyNotice, screenStyle, TestNetworksOnlyCard, WarningBox, useFieldLabels, fieldA11y } from '../components';
 import { ContactPicker, RecipientContactNotice } from '../components/Contacts';
 import { GrantReview } from '../components/SessionGrantViews';
 import { PayloadQr } from '../components/RecoveryViews';
@@ -123,6 +123,8 @@ import {
   customPeriodSeconds,
   cardShowsBatchingWarning,
   feeBudgetCapNote,
+  feeBudgetPlaceholder,
+  formFeeHintShown,
   feeBudgetPricingNote,
   feeBudgetSuggestionHint,
   feeBudgetTooSmallBlock,
@@ -370,6 +372,7 @@ interface Progress {
  */
 export function SessionsScreen({ navigation }: Props) {
   const theme = useTheme();
+  const fieldLabel = useFieldLabels();
   const { accounts, activeAccount, signWith } = useWallet();
   const { evmChain } = usePrefs();
   const owner = accounts.find((a) => a.chainId === EVM_CHAIN_ID)?.address ?? null;
@@ -1967,7 +1970,7 @@ export function SessionsScreen({ navigation }: Props) {
   if (phase === 'progress' && progress) {
     return (
       <ScrollView key="progress" style={screenStyle(theme)} contentContainerStyle={styles.content} {...NOTE_VIEW_SCROLL_PROPS}>
-        <Text style={[styles.title, { color: theme.success }]}>{sessionProgressTitle(progress.kind)}</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.success }]}>{sessionProgressTitle(progress.kind)}</Text>
         <Text style={[styles.label, { color: theme.textMuted }]}>UserOperation hash</Text>
         <Text selectable style={[styles.monoText, { color: theme.text }]}>
           {progress.userOpHash}
@@ -2043,7 +2046,7 @@ export function SessionsScreen({ navigation }: Props) {
     return (
       <ScrollView key="confirm" style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
-        <Text style={[styles.title, { color: theme.text }]}>Grant this session?</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Grant this session?</Text>
         {header}
         <GrantReview
           grant={pendingView.grant}
@@ -2097,7 +2100,7 @@ export function SessionsScreen({ navigation }: Props) {
     const terms = termsOf(keyExport.record);
     return (
       <ScrollView key="key-export" style={screenStyle(theme)} contentContainerStyle={styles.content}>
-        <Text style={[styles.title, { color: theme.text }]}>Hand the key to the merchant</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Hand the key to the merchant</Text>
         <WarningBox>{SUBSCRIPTION_KEY_WARNING}</WarningBox>
         <Row label="Subscription" value={subscriptionSummary(keyExport.record, nameFor(terms.merchant))} theme={theme} />
         <PayloadQr value={keyExport.text} caption="Subscription key and terms (JSON) for the merchant's keeper." />
@@ -2179,7 +2182,7 @@ export function SessionsScreen({ navigation }: Props) {
     return (
       <ScrollView key="sub-confirm" style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
-        <Text style={[styles.title, { color: theme.text }]}>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>
           {recurring ? 'Start this recurring payment?' : 'Start this subscription?'}
         </Text>
         {header}
@@ -2344,7 +2347,7 @@ export function SessionsScreen({ navigation }: Props) {
     const recurringForm = subMode === 'recurring';
     return (
       <ScrollView key="sub-form" style={screenStyle(theme)} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <Text style={[styles.title, { color: theme.text }]}>{recurringForm ? 'New recurring payment' : 'New subscription'}</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>{recurringForm ? 'New recurring payment' : 'New subscription'}</Text>
         {header}
         {recurringForm ? (
           <>
@@ -2359,18 +2362,18 @@ export function SessionsScreen({ navigation }: Props) {
             revoke. A new key is created for the merchant; your account enforces the limits on-chain.
           </Text>
         )}
-        <Text style={[styles.label, { color: theme.textMuted }]}>
+        <Text {...fieldLabel('merchant', recurringForm ? 'Pay to (receives the payments)' : 'Merchant (receives the payments)').label} style={[styles.label, { color: theme.textMuted }]}>
           {recurringForm ? 'Pay to (receives the payments)' : 'Merchant (receives the payments)'}
         </Text>
         <TextInput
+          {...fieldLabel('merchant', recurringForm ? 'Pay to (receives the payments)' : 'Merchant (receives the payments)').input}
           value={subForm.merchant}
           onChangeText={(t) => setSubForm((prev) => ({ ...prev, merchant: t }))}
           placeholder={recurringForm ? 'Recipient address (0x…)' : 'Merchant address (0x…)'}
           placeholderTextColor={theme.textMuted}
           autoCapitalize="none"
           autoCorrect={false}
-          accessibilityLabel={recurringForm ? 'Recipient address' : 'Merchant address'}
-          style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+          style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
         />
         {merchantMatch && merchantMatch.kind !== 'none' ? (
           <RecipientContactNotice match={merchantMatch} address={subForm.merchant.trim()} />
@@ -2387,15 +2390,15 @@ export function SessionsScreen({ navigation }: Props) {
             />
           ))}
         </View>
-        <Text style={[styles.label, { color: theme.textMuted }]}>Most per payment</Text>
+        <Text {...fieldLabel('most', 'Most per payment').label} style={[styles.label, { color: theme.textMuted }]}>Most per payment</Text>
         <TextInput
+          {...fieldLabel('most', 'Most per payment').input}
           value={subForm.amount}
           onChangeText={(t) => setSubForm((prev) => ({ ...prev, amount: t }))}
           placeholder={`Amount in ${choice?.symbol ?? ''}`}
           placeholderTextColor={theme.textMuted}
           keyboardType="decimal-pad"
-          accessibilityLabel="Most per payment"
-          style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+          style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
         />
         <Text style={[styles.label, { color: theme.textMuted }]}>Once every</Text>
         <View style={styles.rowButtons}>
@@ -2421,13 +2424,13 @@ export function SessionsScreen({ navigation }: Props) {
         {subForm.periodCustom ? (
           <>
             <TextInput
+              {...fieldA11y('Custom period length')}
               value={subForm.customCount}
               onChangeText={(t) => setSubForm((prev) => ({ ...prev, customCount: t }))}
               placeholder="How many"
               placeholderTextColor={theme.textMuted}
               keyboardType="number-pad"
-              accessibilityLabel="Custom period length"
-              style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+              style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
             />
             <View style={styles.rowButtons}>
               {SUBSCRIPTION_PERIOD_UNITS.map((u) => (
@@ -2443,29 +2446,25 @@ export function SessionsScreen({ navigation }: Props) {
             <Text style={[styles.hint, { color: theme.textMuted }]}>{customPeriodHint}</Text>
           </>
         ) : null}
-        <Text style={[styles.label, { color: theme.textMuted }]}>Number of payments (1–{SUBSCRIPTION_MAX_PAYMENTS}; sets the expiry)</Text>
+        <Text {...fieldLabel('payments', `Number of payments (1–${SUBSCRIPTION_MAX_PAYMENTS}; sets the expiry)`).label} style={[styles.label, { color: theme.textMuted }]}>Number of payments (1–{SUBSCRIPTION_MAX_PAYMENTS}; sets the expiry)</Text>
         <TextInput
+          {...fieldLabel('payments', `Number of payments (1–${SUBSCRIPTION_MAX_PAYMENTS}; sets the expiry)`).input}
           value={subForm.payments}
           onChangeText={(t) => setSubForm((prev) => ({ ...prev, payments: t }))}
           keyboardType="number-pad"
-          accessibilityLabel="Number of payments"
-          style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+          style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
         />
-        <Text style={[styles.label, { color: theme.textMuted }]}>Fee budget ({symbol}, all payments together)</Text>
+        <Text {...fieldLabel('fee-budget', `Fee budget (${symbol}, all payments together)`).label} style={[styles.label, { color: theme.textMuted }]}>Fee budget ({symbol}, all payments together)</Text>
         <TextInput
+          {...fieldLabel('fee-budget', `Fee budget (${symbol}, all payments together)`).input}
           value={subFeeBudgetText}
           // Typing makes the figure the user's own; clearing the field goes
           // back to the suggestion that follows the payment count.
           onChangeText={(t) => setSubForm((prev) => ({ ...prev, feeBudget: t, feeEdited: t.trim() !== '' }))}
-          placeholder={
-            recurringForm
-              ? `Total ${symbol} the payments may spend on network fees`
-              : `Total ${symbol} the merchant's payments may spend on network fees`
-          }
+          placeholder={feeBudgetPlaceholder(symbol)}
           placeholderTextColor={theme.textMuted}
           keyboardType="decimal-pad"
-          accessibilityLabel="Fee budget"
-          style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+          style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
         />
         {recurringForm ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>{recurringFeeBudgetHint(symbol)}</Text>
@@ -2475,10 +2474,12 @@ export function SessionsScreen({ navigation }: Props) {
             could pay itself high fees from your {symbol}.
           </Text>
         )}
-        {!subForm.feeEdited ? (
+        {/* Hidden while Review's refusal is on screen, so a shortfall is
+            stated once, by the announced refusal (pass p20c finding 8). */}
+        {formFeeHintShown({ feeEdited: subForm.feeEdited, formError }) ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>{feeBudgetSuggestionHint(subFeeFacts.feeSource)}</Text>
         ) : null}
-        {!subForm.feeEdited && feeSuggestion.capped && feeSuggestion.spare !== null && feeSuggestion.uncapped !== null ? (
+        {formFeeHintShown({ feeEdited: subForm.feeEdited, formError }) && feeSuggestion.capped && feeSuggestion.spare !== null && feeSuggestion.uncapped !== null ? (
           <WarningBox>
             {feeBudgetCapNote(
               feeSuggestion.spare,
@@ -2498,16 +2499,17 @@ export function SessionsScreen({ navigation }: Props) {
               ' (read just now).'}
           </Text>
         ) : null}
-        <Text style={[styles.label, { color: theme.textMuted }]}>Name (optional)</Text>
+        <Text {...fieldLabel('name', 'Name (optional)').label} style={[styles.label, { color: theme.textMuted }]}>Name (optional)</Text>
         <TextInput
+          {...fieldLabel('name', 'Name (optional)').input}
           value={subForm.label}
           onChangeText={(t) => setSubForm((prev) => ({ ...prev, label: t }))}
           placeholder={recurringForm ? 'e.g. rent' : 'e.g. the service’s name'}
           placeholderTextColor={theme.textMuted}
           maxLength={64}
-          style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+          style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
         />
-        {formError ? <WarningBox>{formError}</WarningBox> : null}
+        {formError ? <WarningBox announce>{formError}</WarningBox> : null}
         {phase === 'sub-quoting' ? (
           <View style={styles.center}>
             <ActivityIndicator color={theme.accent} />
@@ -2547,7 +2549,7 @@ export function SessionsScreen({ navigation }: Props) {
     return (
       <ScrollView key="revoke-confirm" style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
-        <Text style={[styles.title, { color: theme.text }]}>{revokeCopy.heading}</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>{revokeCopy.heading}</Text>
         {header}
         <Row label="Permission id" value={revokeTarget.record.permissionId} mono theme={theme} />
         <Row
@@ -2585,7 +2587,7 @@ export function SessionsScreen({ navigation }: Props) {
   if ((phase === 'form' || phase === 'quoting') && account) {
     return (
       <ScrollView key="form" style={screenStyle(theme)} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <Text style={[styles.title, { color: theme.text }]}>Grant a session</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Grant a session</Text>
         {header}
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           A session key is a new key on this device that may make ONLY the calls you list, until it
@@ -2593,36 +2595,39 @@ export function SessionsScreen({ navigation }: Props) {
         </Text>
         {drafts.map((d, i) => (
           <View key={i} style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-            <Text style={[styles.label, { color: theme.textMuted }]}>Allowed call {i + 1}</Text>
+            <Text {...fieldLabel(`call-${i}`, `Allowed call ${i + 1}: target address`).label} style={[styles.label, { color: theme.textMuted }]}>Allowed call {i + 1}</Text>
             <TextInput
+              {...fieldLabel(`call-${i}`, `Allowed call ${i + 1}: target address`).input}
               value={d.target}
               onChangeText={(t) => setDrafts((prev) => prev.map((x, j) => (j === i ? { ...x, target: t } : x)))}
               placeholder="Target address (0x…)"
               placeholderTextColor={theme.textMuted}
               autoCapitalize="none"
               autoCorrect={false}
-              style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+              style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
             />
             {draftMatches[i] && draftMatches[i]!.kind !== 'none' ? (
               <RecipientContactNotice match={draftMatches[i]!} address={d.target.trim()} />
             ) : null}
             <Button title="Pick from contacts" variant="secondary" onPress={() => setPickerFor(i)} />
             <TextInput
+              {...fieldA11y(`Allowed call ${i + 1}: function (optional)`)}
               value={d.selector}
               onChangeText={(t) => setDrafts((prev) => prev.map((x, j) => (j === i ? { ...x, selector: t } : x)))}
               placeholder="Function (optional): 0xa9059cbb or transfer(address,uint256)"
               placeholderTextColor={theme.textMuted}
               autoCapitalize="none"
               autoCorrect={false}
-              style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+              style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
             />
             <TextInput
+              {...fieldA11y(`Allowed call ${i + 1}: most ${symbol} per call`)}
               value={d.valueCapEth}
               onChangeText={(t) => setDrafts((prev) => prev.map((x, j) => (j === i ? { ...x, valueCapEth: t } : x)))}
               placeholder={`Max ${symbol} per call (empty = 0)`}
               placeholderTextColor={theme.textMuted}
               keyboardType="decimal-pad"
-              style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+              style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
             />
             {drafts.length > 1 ? (
               <Button
@@ -2645,16 +2650,17 @@ export function SessionsScreen({ navigation }: Props) {
             />
           ))}
         </View>
-        <Text style={[styles.label, { color: theme.textMuted }]}>Gas budget (optional)</Text>
+        <Text {...fieldLabel('gas-budget', 'Gas budget (optional)').label} style={[styles.label, { color: theme.textMuted }]}>Gas budget (optional)</Text>
         <TextInput
+          {...fieldLabel('gas-budget', 'Gas budget (optional)').input}
           value={gasBudgetEth}
           onChangeText={setGasBudgetEth}
-          placeholder={`Total ${symbol} the session may spend on fees`}
+          placeholder={feeBudgetPlaceholder(symbol)}
           placeholderTextColor={theme.textMuted}
           keyboardType="decimal-pad"
-          style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+          style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
         />
-        {formError ? <WarningBox>{formError}</WarningBox> : null}
+        {formError ? <WarningBox announce>{formError}</WarningBox> : null}
         {phase === 'quoting' ? (
           <View style={styles.center}>
             <ActivityIndicator color={theme.accent} />
@@ -2776,7 +2782,7 @@ export function SessionsScreen({ navigation }: Props) {
               Some saved sessions could not be read and are not shown.
             </Text>
           ) : null}
-          <Text style={[styles.sectionTitle, { color: theme.text }]}>Recurring payments</Text>
+          <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Recurring payments</Text>
           {recurringList.length === 0 ? (
             <Text style={[styles.hint, { color: theme.textMuted }]}>None on this device.</Text>
           ) : (
@@ -2797,7 +2803,7 @@ export function SessionsScreen({ navigation }: Props) {
             const statusLine = settled ? sessionStatusText(status) : 'Reading status…';
             return (
               <View key={key} style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-                <Text style={[styles.cardTitle, { color: theme.text }]}>{r.label}</Text>
+                <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>{r.label}</Text>
                 <Text style={[styles.hint, { color: theme.text }]}>{recurringSummary(r, nameFor(terms.merchant))}</Text>
                 <Text style={[styles.status, { color: settled && status.kind === 'active' ? theme.success : theme.text }]}>
                   {statusLine}
@@ -2883,7 +2889,7 @@ export function SessionsScreen({ navigation }: Props) {
               )}
             />
           ))}
-          <Text style={[styles.sectionTitle, { color: theme.text }]}>Subscriptions</Text>
+          <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Subscriptions</Text>
           {records.filter((r) => r.source === 'subscription').length === 0 ? (
             <Text style={[styles.hint, { color: theme.textMuted }]}>None on this device.</Text>
           ) : null}
@@ -2905,7 +2911,7 @@ export function SessionsScreen({ navigation }: Props) {
               const handover = subscriptionHandoverOffer(r, status);
               return (
                 <View key={key} style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-                  <Text style={[styles.cardTitle, { color: theme.text }]}>{title}</Text>
+                  <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>{title}</Text>
                   <Text style={[styles.hint, { color: theme.text }]}>{subscriptionSummary(r, nameFor(terms.merchant))}</Text>
                   <Text style={[styles.status, { color: settled && status.kind === 'active' ? theme.success : theme.text }]}>
                     {settled ? sessionStatusText(status) : 'Reading status…'}
@@ -2959,7 +2965,7 @@ export function SessionsScreen({ navigation }: Props) {
               );
             },
           )}
-          <Text style={[styles.sectionTitle, { color: theme.text }]}>Sessions on this account</Text>
+          <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Sessions on this account</Text>
           {records.filter((r) => !sessionIsScheduled(r.source)).length === 0 ? (
             <Text style={[styles.hint, { color: theme.textMuted }]}>None on this device.</Text>
           ) : null}
@@ -2971,7 +2977,7 @@ export function SessionsScreen({ navigation }: Props) {
             const usable = active && !(status as { expired: boolean }).expired;
             return (
               <View key={key} style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-                <Text style={[styles.cardTitle, { color: theme.text }]}>
+                <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>
                   {r.label}
                   {r.source === 'erc7715' ? ' · requested over WalletConnect (ERC-7715)' : ''}
                 </Text>

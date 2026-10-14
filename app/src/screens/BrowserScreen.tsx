@@ -10,6 +10,7 @@ import type {
   WebViewOpenWindowEvent,
 } from 'react-native-webview/lib/WebViewTypes';
 import type { RootStackParamList } from '../navigation';
+import { appSiteCardSpokenLabel, spokenSiteName } from '../a11y';
 import { Button, TestNetworksOnlyCard, WarningBox, screenStyle } from '../components';
 import { useAppLock } from '../components/LockGate';
 import { useTheme } from '../theme';
@@ -137,20 +138,29 @@ export function BrowserScreen({ navigation, route }: Props) {
 
   return (
     <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
-      <Text style={[styles.title, { color: theme.text }]}>Apps on {describeChain(evmChain.caip2)}</Text>
+      <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Apps on {describeChain(evmChain.caip2)}</Text>
       <Text style={[styles.hint, { color: theme.textMuted }]}>
         A short, fixed list of apps that work on test networks. They open inside the wallet and connect through the
         same approval sheet as WalletConnect: nothing is signed or sent without the sheet and your device check. There
         is no address field: only the sites below can be opened here.
       </Text>
+      {/* The residuals come before the sites (pass p20c finding 10): it was
+          one long item at the very end, after every Open button, so a screen
+          reader user met it only after choosing a site. It is the warning
+          about what a site opened here can do, so it is read (and shown)
+          before the choice. */}
+      <WarningBox>{BROWSER_RESIDUALS}</WarningBox>
       {BROWSER_SITES.map((s) => {
         const served = browser.servedAccounts(s.origin)[0] ?? null;
         const owner = served ? (browser.records.get(s.origin)?.owner ?? served) : null;
         const label = owner ? (accountForEvmAddress(owner)?.name ?? null) : null;
         return (
           <View key={s.origin} style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-            <Text style={[styles.cardTitle, { color: theme.text }]}>{s.name}</Text>
-            <Text style={[styles.cardLine, { color: theme.textMuted }]}>{s.origin}</Text>
+            <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>{s.name}</Text>
+            {/* Spoken as the host, not "https: 2 Slashapp.uniswap.org" (pass p20c finding 10). */}
+            <Text accessibilityLabel={spokenSiteName(s.origin)} style={[styles.cardLine, { color: theme.textMuted }]}>
+              {s.origin}
+            </Text>
             <Text style={[styles.cardLine, { color: theme.text }]}>{s.description}</Text>
             <Text style={[styles.cardLine, { color: theme.textMuted }]}>Why it is listed: {s.reason}</Text>
             {served ? (
@@ -158,12 +168,11 @@ export function BrowserScreen({ navigation, route }: Props) {
                 Connected: {label ? accountLabel(label, served) : served}
               </Text>
             ) : null}
-            <Button title={`Open ${s.name}`} onPress={() => setSite(s)} />
+            <Button title={`Open ${s.name}`} accessibilityHint={appSiteCardSpokenLabel(s.origin)} onPress={() => setSite(s)} />
           </View>
         );
       })}
       <Button title="Manage connections" variant="secondary" onPress={() => navigation.navigate('Connections')} />
-      <WarningBox>{BROWSER_RESIDUALS}</WarningBox>
     </ScrollView>
   );
 }

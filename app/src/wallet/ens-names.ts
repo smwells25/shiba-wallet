@@ -146,6 +146,21 @@ export function nameProblemSentence(problem: EnsNameProblem): string {
   }
 }
 
+/**
+ * The Send screen's recipient placeholder (pass p20c finding 19). The field
+ * shares its row with the Scan and Contacts buttons, so at phone width only
+ * about 19 characters show: "ETH address or ENS name" was cut to "ETH
+ * address or ENS ı". The placeholder stays short and the rest moves into
+ * SEND_RECIPIENT_NAMES_HINT, a line under the row.
+ */
+export function sendRecipientPlaceholder(p: { namesOffered: boolean; ethereum: boolean; symbol: string }): string {
+  if (p.namesOffered) return '0x… or ENS name';
+  return p.ethereum ? 'Ethereum address' : `${p.symbol} address`;
+}
+
+/** The line under the Send recipient row where ENS names are looked up. */
+export const SEND_RECIPIENT_NAMES_HINT = 'Enter an Ethereum address (0x…) or an ENS name such as nick.eth.';
+
 /** The privacy sentence shown with every name lookup. */
 export function ensPrivacyNote(endpointUrl: string | null): string {
   const where = endpointUrl ? `your network endpoint (${endpointHost(endpointUrl)})` : 'your network endpoint';

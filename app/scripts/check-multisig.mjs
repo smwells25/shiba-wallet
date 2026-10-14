@@ -1733,9 +1733,13 @@ console.log('check-multisig: Settings → Accounts lists multisigs read-only (ph
     const base = { name: 'Multisig 3 (2-of-3)', evmAddress: ADDR, multisigInfo: { chain: 'eip155:84532', localSigner: ADDR, label: 'Multisig 3 (2-of-3)' } };
     check('switcher: two multisigs at one address on two networks get different network lines',
       multisigSwitcherNetworkLine(sepolia.multisigInfo) === 'On Ethereum Sepolia' && multisigSwitcherNetworkLine(base.multisigInfo) === 'On Base Sepolia');
-    check('…and different accessibility labels naming the network',
-      multisigSwitcherA11yLabel(sepolia) === `Multisig 2 (2-of-3), multi-signature account on Ethereum Sepolia, ${ADDR}` &&
-        multisigSwitcherA11yLabel(base) === `Multisig 3 (2-of-3), multi-signature account on Base Sepolia, ${ADDR}`);
+    // Pass p20c finding 5: the label also carries the row's visible line and
+    // the short address the row shows (TalkBack read all 42 characters).
+    const shortAddr = `${ADDR.slice(0, 6)}…${ADDR.slice(-4)}`;
+    check('…and different accessibility labels naming the network, the visible co-signer line and the short address (exact)',
+      multisigSwitcherA11yLabel(sepolia) === `Multisig 2 (2-of-3), multi-signature account on Ethereum Sepolia: operations need co-signers; Ethereum networks only, ${shortAddr}` &&
+        multisigSwitcherA11yLabel(base) === `Multisig 3 (2-of-3), multi-signature account on Base Sepolia: operations need co-signers; Ethereum networks only, ${shortAddr}`,
+      multisigSwitcherA11yLabel(sepolia));
     check('…an unknown network shows its CAIP-2 id; no record says so',
       multisigSwitcherNetworkLine({ chain: 'eip155:999999' }) === 'On eip155:999999' && multisigSwitcherNetworkLine(null) === 'On network unknown');
     const switcherRowOk = (src) =>
@@ -2091,6 +2095,54 @@ console.log('check-multisig: phase 19 item 1 — QR codes in parts, scanning, fi
   check('submitted: the operation\'s first 65 bytes are the other wallet\'s signature (v 27/28), recovered by ethers over the FINAL op\'s Approve digest',
     sent.signature.slice(2, 132) === extSig.slice(2).toLowerCase() && ethers.recoverAddress(digest, '0x' + sent.signature.slice(2, 132)) === EXT.address &&
       ethers.verifyMessage(getUserOpHash(fromRpcOp(sent), ENTRYPOINT_V07, 11155111n), '0x' + sent.signature.slice(132)) === S0.address);
+}
+
+// ===========================================================================
+console.log('check-multisig: pass p20c (TalkBack and dark mode) findings 5, 9 and 17');
+// ===========================================================================
+{
+  const read = (rel) => readFileSync(join(HERE, '..', rel), 'utf8');
+  const { switcherRowSpokenLabel, SWITCHER_IMPORTED_LINE, payloadQrSpokenLabel } = await import('../src/a11y.ts');
+  const ADDR5 = '0x772eF8c0b0A9E1d3b2C4D5e6F7a8B9c0d1E2F44F';
+  // (5) The switcher's rows: explicit labels, short addresses, no ✓.
+  check('finding 5: a phrase row is spoken "name, 0x772e…F44F"; an imported row adds its visible warning line (exact)',
+    switcherRowSpokenLabel({ name: 'Account 1', evmAddress: ADDR5 }) === 'Account 1, 0x772e…F44F' &&
+      switcherRowSpokenLabel({ name: 'Imported 1 (imported key)', evmAddress: ADDR5, imported: true }) ===
+        `Imported 1 (imported key), 0x772e…F44F, ${SWITCHER_IMPORTED_LINE}` &&
+      SWITCHER_IMPORTED_LINE === 'Imported key, Ethereum only — not backed up by your recovery phrase');
+  const sw = read('src/components/AccountSwitcher.tsx');
+  const rowsOk = (src) =>
+    src.includes(': { accessibilityLabel: switcherRowSpokenLabel(item) })}') &&
+    src.includes("accessibilityLabel: `${item.name}, watch-only, ${item.evmAddress ? spokenShortAddress(item.evmAddress) : 'unknown address'}`") &&
+    /<Text\s+importantForAccessibility="no"\s+accessibilityElementsHidden\s+style=\{\[styles\.check, \{ color: theme\.accent \}\]\}\s*>\s*✓\s*<\/Text>/.test(src) &&
+    src.includes('{SWITCHER_IMPORTED_LINE}');
+  check('…the switcher labels every row, speaks the watch-only address short and hides the ✓ (selected comes from accessibilityState) (source)', rowsOk(sw));
+  check('…mutant caught: the old phrase row (no label: the ✓ and the children were read)', !rowsOk(sw.replace(': { accessibilityLabel: switcherRowSpokenLabel(item) })}', ': {})}')));
+  check('…the multisig row label speaks its visible line (MULTISIG_SWITCHER_LINE) and no 42-character address (source)',
+    read('src/wallet/multisig.ts').includes("const line = MULTISIG_SWITCHER_LINE.replace(/^Multisig — /, '');") &&
+      !multisigSwitcherA11yLabel({ name: 'M', evmAddress: ADDR5, multisigInfo: { chain: 'eip155:11155111' } }).includes(ADDR5));
+  check('finding 18: the switcher list asks for a light scroll indicator in dark mode (iOS; Android has no such prop) (source)',
+    sw.includes("indicatorStyle={theme.dark ? 'white' : 'black'}"));
+  // (9) QR codes are labelled images; the screen title is spoken once.
+  const rv = read('src/components/RecoveryViews.tsx');
+  const qrOk = (src) =>
+    /<View\s+style=\{styles\.qrBox\}\s+accessible\s+accessibilityRole="image"\s+accessibilityLabel=\{payloadQrSpokenLabel\(caption, label\)\}/.test(src);
+  check('finding 9: every PayloadQr (multisig request / approval / record parts, recovery records) is a labelled image (source)', qrOk(rv));
+  check('…mutant caught: the old unlabelled code', !qrOk(rv.replace('accessibilityLabel={payloadQrSpokenLabel(caption, label)}', '')));
+  check('…the label (exact): "QR code: Multisig signing request — part 1 of 2"; with its own label the caption is read as well',
+    payloadQrSpokenLabel('Multisig signing request — part 1 of 2') === 'QR code: Multisig signing request — part 1 of 2' &&
+      payloadQrSpokenLabel('long caption', 'the multisig account’s address, 0x944c…0d38') === 'QR code: the multisig account’s address, 0x944c…0d38' &&
+      rv.includes("{...(label === undefined ? { importantForAccessibility: 'no' as const, accessibilityElementsHidden: true } : {})}"));
+  const ms = read('src/screens/MultisigScreen.tsx');
+  check('…the multisig address QR names the address in its short form (source)',
+    ms.includes('label={`the multisig account’s address, ${spokenShortAddress(selected.address)}`}'));
+  check('…"Multi-signature accounts" is spoken once: the header bar keeps it, the in-screen copy is hidden from screen readers (source)',
+    ms.includes('navigation.setOptions({ title: MULTISIG_TITLE });') &&
+      /<Text importantForAccessibility="no" accessibilityElementsHidden style=\{\[styles\.title, \{ color: theme\.text \}\]\}>\s*\{MULTISIG_TITLE\}/.test(ms));
+  // (17) The exposure warning is drawn as a warning.
+  const exposureOk = (src) => src.includes('<Text style={[styles.hint, { color: theme.warningText }]}>{multisigExposureLine(multisigConfigOf(r), r.localSigner)}</Text>');
+  check('finding 17: the multisig list card draws the exposure warning in the warning text colour, not muted grey (source)', exposureOk(ms));
+  check('…mutant caught: the old muted line', !exposureOk(ms.replace('{ color: theme.warningText }]}>{multisigExposureLine', '{ color: theme.textMuted }]}>{multisigExposureLine')));
 }
 
 // ===========================================================================

@@ -10,6 +10,7 @@ import {
   View,
 } from 'react-native';
 import { Button } from '../components';
+import { SWITCHER_IMPORTED_LINE, spokenShortAddress, switcherRowSpokenLabel } from '../a11y';
 import { useTheme } from '../theme';
 import { shortAccountAddress } from '../wallet/accounts';
 import {
@@ -140,7 +141,7 @@ export function AccountSwitcher({ onManage, onImportKey }: { onManage: () => voi
 
       <Modal visible={open} animationType="slide" onRequestClose={() => setOpen(false)}>
         <View style={[styles.modal, { backgroundColor: theme.background }]}>
-          <Text style={[styles.modalTitle, { color: theme.text }]}>Accounts</Text>
+          <Text accessibilityRole="header" style={[styles.modalTitle, { color: theme.text }]}>Accounts</Text>
           {/*
             The account list is the one scrolling area between the title and
             the buttons (FlatList, flex 1). The intro used to sit above it
@@ -159,6 +160,13 @@ export function AccountSwitcher({ onManage, onImportKey }: { onManage: () => voi
             style={styles.listArea}
             contentContainerStyle={styles.list}
             persistentScrollbar
+            // A light scroll indicator on the dark background (pass p20c
+            // finding 18). indicatorStyle is iOS-only (RN 0.86.3
+            // ScrollView.d.ts :433, in ScrollViewPropsIOS); Android has no
+            // prop for the scrollbar colour (ReactScrollViewManager.kt lists
+            // none), so there it stays the platform default and the scroll
+            // hint below says when rows are hidden.
+            indicatorStyle={theme.dark ? 'white' : 'black'}
             onLayout={(e) => setListHeight(e.nativeEvent.layout.height)}
             onContentSizeChange={(_w, h) => setContentHeight(h)}
             onScroll={(e) => setScrollY(e.nativeEvent.contentOffset.y)}
@@ -192,11 +200,15 @@ export function AccountSwitcher({ onManage, onImportKey }: { onManage: () => voi
                 <Pressable
                   accessibilityRole="button"
                   accessibilityState={{ selected: active }}
+                  // Every row has an explicit label (pass p20c finding 5):
+                  // the selected state is spoken from accessibilityState, so
+                  // the visible ✓ is not read again, and addresses are spoken
+                  // in the short form the row shows.
                   {...(item.watchOnly
-                    ? { accessibilityLabel: `${item.name}, watch-only, ${item.evmAddress ?? 'unknown address'}` }
+                    ? { accessibilityLabel: `${item.name}, watch-only, ${item.evmAddress ? spokenShortAddress(item.evmAddress) : 'unknown address'}` }
                     : item.multisig
                       ? { accessibilityLabel: multisigSwitcherA11yLabel(item) }
-                      : {})}
+                      : { accessibilityLabel: switcherRowSpokenLabel(item) })}
                   onPress={() => void choose(item)}
                   style={({ pressed }) => [
                     styles.row,
@@ -222,9 +234,7 @@ export function AccountSwitcher({ onManage, onImportKey }: { onManage: () => voi
                       </Text>
                     ) : null}
                     {item.imported ? (
-                      <Text style={[styles.headerAddress, { color: theme.warningText }]}>
-                        Imported key, Ethereum only — not backed up by your recovery phrase
-                      </Text>
+                      <Text style={[styles.headerAddress, { color: theme.warningText }]}>{SWITCHER_IMPORTED_LINE}</Text>
                     ) : null}
                     {item.watchOnly ? (
                       <Text style={[styles.headerAddress, { color: theme.warningText }]}>
@@ -242,7 +252,15 @@ export function AccountSwitcher({ onManage, onImportKey }: { onManage: () => voi
                       </Text>
                     ) : null}
                   </View>
-                  {active ? <Text style={[styles.check, { color: theme.accent }]}>✓</Text> : null}
+                  {active ? (
+                    <Text
+                      importantForAccessibility="no"
+                      accessibilityElementsHidden
+                      style={[styles.check, { color: theme.accent }]}
+                    >
+                      ✓
+                    </Text>
+                  ) : null}
                 </Pressable>
               );
             }}

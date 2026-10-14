@@ -16,7 +16,7 @@ export function WelcomeScreen({ navigation }: Props) {
     <View style={[screenStyle(theme), styles.container]}>
       <View style={styles.hero}>
         <Text style={styles.logo}>🐕</Text>
-        <Text style={[styles.title, { color: theme.text }]}>Shiba Wallet</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Shiba Wallet</Text>
         <Text style={[styles.subtitle, { color: theme.textMuted }]}>
           A non-custodial multi-chain wallet. One seed phrase, generated and
           stored only on this device, controls Ethereum, Bitcoin, Dogecoin and

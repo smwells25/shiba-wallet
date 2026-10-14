@@ -3,6 +3,7 @@ import { AppState, StyleSheet, Switch, Text, View } from 'react-native';
 import { NavigationContainerRefContext, useFocusEffect, type NavigationContainerRef } from '@react-navigation/native';
 import type { RootStackParamList } from '../navigation';
 import { useTheme } from '../theme';
+import { switchColors } from '../components';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
 import { EVM_CHAIN_ID } from '../wallet/send';
@@ -305,7 +306,7 @@ export function NotificationSettingsSection() {
       </Text>
       <View style={styles.toggleRow}>
         <Text style={[styles.toggleLabel, { color: theme.text }]}>{NOTIFICATIONS_SWITCH_LABEL}</Text>
-        <Switch
+        <Switch {...switchColors(theme)}
           accessibilityLabel={NOTIFICATIONS_SWITCH_LABEL}
           accessibilityRole="switch"
           accessibilityState={{ checked: notifications, busy }}

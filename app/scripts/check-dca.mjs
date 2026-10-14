@@ -122,6 +122,7 @@ import {
   dcaConfirmMessage,
   dcaFeeBudgetCapNote,
   dcaFeeBudgetFormHint,
+  dcaFeeBudgetFormNote,
   dcaFeeBudgetPricingNote,
   dcaFeeBudgetSuggestionHint,
   dcaFinalDatesLine,
@@ -926,11 +927,47 @@ console.log('check-dca: phase 20 item 0 findings 1 and 3 (fee-budget hint, the f
   const none = dcaFeeBudgetFormHint({ source: 'bundler', suggestion: { capped: true, spare: 0n, uncapped }, installKeptBack: kept, nativeSymbol: symbol });
   check('nothing to spare: the cap note alone (the field is empty)', none === dcaFeeBudgetCapNote(0n, uncapped, symbol, kept) && /Fund the account first/.test(none));
   const screen = src('../src/screens/SessionsScreen.tsx');
-  check('the form renders dcaFeeBudgetFormHint from the same suggestion the field shows, with the kept-back set-up fee (source)',
-    /dcaFeeBudgetFormHint\(\{\s*source: props\.feeFacts\.feeSource,\s*suggestion: props\.feeSuggestion,\s*installKeptBack: props\.installKeptBack,/.test(dv) &&
+  check('the form renders dcaFeeBudgetFormNote (the hint with how to show it) from the same suggestion the field shows, with the kept-back set-up fee (source)',
+    /dcaFeeBudgetFormNote\(\{\s*source: props\.feeFacts\.feeSource,\s*suggestion: props\.feeSuggestion,\s*installKeptBack: props\.installKeptBack,/.test(dv) &&
       !/dcaFeeBudgetSuggestionHint\(/.test(dv) &&
       /feeBudgetText=\{dcaFeeBudgetText\}\s*feeSuggestion=\{dcaFeeSuggestion\}\s*installKeptBack=\{subInstallKeepBack\}/.test(screen) &&
       /const dcaFeeBudgetText = dcaForm\.feeEdited\s*\? dcaForm\.feeBudget\s*: dcaFeeSuggestion\.wei !== null/.test(screen));
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-dca: pass p20c findings 8 and 17 (the refusal announced once; the cap note never in muted grey)');
+// ---------------------------------------------------------------------------
+{
+  const { formFeeHintShown } = await import('../src/wallet/subscriptions.ts');
+  const symbol = 'test ETH';
+  const plainNote = dcaFeeBudgetFormNote({ source: 'bundler', suggestion: { capped: false, spare: 10n ** 18n, uncapped: 1n }, installKeptBack: null, nativeSymbol: symbol });
+  const capNote = dcaFeeBudgetFormNote({ source: 'bundler', suggestion: { capped: true, spare: 10n ** 15n, uncapped: 2n * 10n ** 16n }, installKeptBack: 3n * 10n ** 15n, nativeSymbol: symbol });
+  const noneNote = dcaFeeBudgetFormNote({ source: 'bundler', suggestion: { capped: true, spare: 0n, uncapped: 2n * 10n ** 16n }, installKeptBack: 3n * 10n ** 15n, nativeSymbol: symbol });
+  check('the plain suggestion is a hint (warning false); its text equals dcaFeeBudgetFormHint',
+    plainNote.warning === false && plainNote.text === dcaFeeBudgetSuggestionHint('bundler'));
+  check('the cap note (the account cannot fund the usual budget) is a WARNING, with and without anything to spare',
+    capNote.warning === true && noneNote.warning === true && /Fund the account first/.test(noneNote.text));
+  check('formFeeHintShown: shown while the suggestion is used and no refusal is on screen; hidden once the user typed a budget or Review refused',
+    formFeeHintShown({ feeEdited: false, formError: null }) === true &&
+      formFeeHintShown({ feeEdited: true, formError: null }) === false &&
+      formFeeHintShown({ feeEdited: false, formError: 'This plan cannot run: …' }) === false);
+  const dv = src('../src/screens/DcaViews.tsx');
+  check('DcaViews: the cap note renders in a WarningBox, the plain suggestion in the muted hint style (source)',
+    /return note\.warning \? \(\s*<WarningBox>\{note\.text\}<\/WarningBox>\s*\) : \(\s*<Text style=\{\[styles\.hint, \{ color: theme\.textMuted \}\]\}>\{note\.text\}<\/Text>/.test(dv) &&
+      !dv.includes('dcaFeeBudgetFormHint('));
+  check('DcaViews: the note is shown only through formFeeHintShown with the form error, so the shortfall is said once (source)',
+    dv.includes('formFeeHintShown({ feeEdited: form.feeEdited, formError: props.error })'));
+  check('DcaViews: the Review refusal is an announced WarningBox (live region + focus) (source)',
+    dv.includes('{props.error ? <WarningBox announce>{props.error}</WarningBox> : null}'));
+  const ss = src('../src/screens/SessionsScreen.tsx');
+  check('Sessions (subscription and recurring forms, and the session-grant form): the suggestion and the cap note follow formFeeHintShown, and every Review refusal is announced (source)',
+    (ss.match(/formFeeHintShown\(\{ feeEdited: subForm\.feeEdited, formError \}\)/g) ?? []).length === 2 &&
+      (ss.match(/\{formError \? <WarningBox announce>\{formError\}<\/WarningBox> : null\}/g) ?? []).length === 2 &&
+      !ss.includes('{formError ? <WarningBox>{formError}</WarningBox> : null}'));
+  const comp = src('../src/components.tsx');
+  check('WarningBox announce: one accessible element, an Android polite live region, and a focus event on the box when it appears or its text changes (source)',
+    comp.includes("{...(announce ? { accessible: true, accessibilityLiveRegion: 'polite' as const } : {})}") &&
+      /if \(!announce \|\| !ref\.current\) return;\s*AccessibilityInfo\.sendAccessibilityEvent\(ref\.current, 'focus'\);\s*\}, \[announce, spoken\]\);/.test(comp));
 }
 
 // ---------------------------------------------------------------------------

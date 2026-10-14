@@ -12,7 +12,7 @@ import {
 import * as Clipboard from 'expo-clipboard';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation';
-import { Button, WarningBox, screenStyle } from '../components';
+import { Button, WarningBox, screenStyle, useFieldLabels } from '../components';
 import { useTheme, type Theme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
@@ -64,6 +64,7 @@ interface SmartOption {
  */
 export function ProveOwnershipScreen({ navigation }: Props) {
   const theme = useTheme();
+  const fieldLabel = useFieldLabels();
   const { accounts, activeAccount, signWith } = useWallet();
   const { evmChain } = usePrefs();
   const eoa = accounts.find((a) => a.chainId === EVM_CHAIN_ID)?.address ?? null;
@@ -123,7 +124,7 @@ export function ProveOwnershipScreen({ navigation }: Props) {
   const useSmart = mode === 'smart' && smart != null;
   const proving = useSmart ? smart.address : eoa;
   const network = { caip2: evmChain.caip2, chainId: evmChain.chainIdDecimal, name: evmChain.label };
-  const inputStyle = [styles.input, { color: theme.text, borderColor: theme.border, backgroundColor: theme.card }];
+  const inputStyle = [styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }];
 
   const onSign = async () => {
     setError(null);
@@ -165,7 +166,7 @@ export function ProveOwnershipScreen({ navigation }: Props) {
     const text = formatProofText(proof);
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
-        <Text style={[styles.title, { color: theme.text }]}>Your proof</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Your proof</Text>
         <Row label="Address" value={proof.address} mono theme={theme} />
         <Row label="Network" value={`${proof.network.name} (chain ID ${proof.network.chainId})`} theme={theme} />
         <Row
@@ -214,7 +215,7 @@ export function ProveOwnershipScreen({ navigation }: Props) {
 
   return (
     <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-      <Text style={[styles.title, { color: theme.text }]}>Prove you own an address</Text>
+      <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Prove you own an address</Text>
       <Text style={[styles.note, { color: theme.text }]}>
         Sign a challenge that someone gave you — a code from a support desk, an exchange or a
         verifier — or write your own statement. Anyone can then check the signature against your
@@ -256,14 +257,14 @@ export function ProveOwnershipScreen({ navigation }: Props) {
         </Text>
       ) : null}
 
-      <Text style={[styles.label, { color: theme.textMuted }]}>Challenge</Text>
+      <Text {...fieldLabel('challenge', 'Challenge').label} style={[styles.label, { color: theme.textMuted }]}>Challenge</Text>
       <TextInput
+        {...fieldLabel('challenge', 'Challenge').input}
         value={challenge}
         onChangeText={(t) => {
           setChallenge(t);
           setError(null);
         }}
-        accessibilityLabel="Challenge to sign"
         placeholder="Paste or type the challenge"
         placeholderTextColor={theme.textMuted}
         autoCapitalize="none"
@@ -293,14 +294,14 @@ export function ProveOwnershipScreen({ navigation }: Props) {
         />
       </View>
 
-      <Text style={[styles.label, { color: theme.textMuted }]}>Site (only for a website sign-in message)</Text>
+      <Text {...fieldLabel('site', 'Site (only for a website sign-in message)').label} style={[styles.label, { color: theme.textMuted }]}>Site (only for a website sign-in message)</Text>
       <TextInput
+        {...fieldLabel('site', 'Site (only for a website sign-in message)').input}
         value={site}
         onChangeText={(t) => {
           setSite(t);
           setError(null);
         }}
-        accessibilityLabel="Site domain"
         placeholder="example.com"
         placeholderTextColor={theme.textMuted}
         autoCapitalize="none"

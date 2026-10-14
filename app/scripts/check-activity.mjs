@@ -1598,9 +1598,21 @@ console.log('ActivityScreen source:');
     /const url = explorerTxUrl\(chainId, entry\.id, evmExplorerTxBase\);/.test(screen) && /if \(url\) void Linking\.openURL\(url\);/.test(screen),
   );
   check('the amount/fee line is still rendered', /fee \{maskAmount\(formatUnits\(entry\.fee, decimals, decimals\), hidden\)\}/.test(screen));
-  const loadingLabel = (src) => src.includes("(sentence ? `${sentence}. ` : loading ? `${ROW_DETAILS_LOADING_LABEL}. ` : '') +");
+  // Since pass p20c finding 12 the lead is built by activityRowSpokenLead
+  // (../a11y.ts), which also says "Same transaction as the row above." for
+  // the second row of one transaction.
+  const { activityRowSpokenLead } = await import('../src/a11y.ts');
+  const lead = (sentence, loading, sameAsAbove = false) => activityRowSpokenLead({ sentence, loading, sameAsAbove, loadingLabel: 'Transaction, details loading' });
+  const loadingLabel = (src) =>
+    src.includes('activityRowSpokenLead({ sentence, loading, sameAsAbove, loadingLabel: ROW_DETAILS_LOADING_LABEL }) +') &&
+    lead('Sent 1 USDC to Account 2', true) === 'Sent 1 USDC to Account 2. ' &&
+    lead(null, true) === 'Transaction, details loading. ' && lead(null, false) === '';
   check('screen readers hear the sentence first, or "Transaction, details loading" while it may still come (finding F5)', loadingLabel(screen));
-  check('…a row label without the loading placeholder is caught', !loadingLabel(screen.replace(' : loading ? `${ROW_DETAILS_LOADING_LABEL}. ` : ', ' : ')));
+  check('…a row label without the lead is caught', !loadingLabel(screen.replace('activityRowSpokenLead({ sentence, loading, sameAsAbove, loadingLabel: ROW_DETAILS_LOADING_LABEL }) +', "(sentence ? `${sentence}. ` : '') +")));
+  check('pass p20c finding 12: the second row of one transaction says "Same transaction as the row above." instead of the sentence again (exact)',
+    lead('Sent 1 USDC to Account 2', false, true) === 'Same transaction as the row above. ' && lead(null, true, true) === 'Same transaction as the row above. ');
+  check('…and the list marks a row whose previous row has the same transaction id (source)',
+    screen.includes('sameAsAbove={index > 0 && state.entries[index - 1]?.id === listed.id}') && screen.includes('renderItem={({ item: listed, index }) => {'));
   const memo = (src) =>
     src.includes('setup && setup.key === setupKey ? setup : setupKey ? (DECODER_SETUPS.get(setupKey) ?? null) : null;') &&
     src.includes('rememberDecoderSetup(built);') && src.includes('if (!cancelled) setSetupFailedKey(setupKey);');

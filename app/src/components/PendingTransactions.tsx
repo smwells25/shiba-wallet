@@ -501,7 +501,7 @@ function ReplacementConfirm({
   const fmt = (wei: bigint) => formatUnits(wei, 18, 18);
   return (
     <View style={styles.confirm}>
-      <Text style={[styles.heading, { color: theme.text }]}>{draft.action === 'speed-up' ? 'Speed up' : 'Cancel the transaction'}</Text>
+      <Text accessibilityRole="header" style={[styles.heading, { color: theme.text }]}>{draft.action === 'speed-up' ? 'Speed up' : 'Cancel the transaction'}</Text>
       <Text style={[styles.muted, { color: theme.textMuted }]}>{cancel ? CANCEL_EXPLAINER : SPEED_UP_EXPLAINER}</Text>
       <Text style={[styles.text, { color: theme.text }]}>
         Replaces {shortHash(r.replaces)} (nonce {q.nonce.toString()}).

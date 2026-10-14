@@ -13,7 +13,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as Clipboard from 'expo-clipboard';
 import { allowScreenCaptureAsync, preventScreenCaptureAsync } from 'expo-screen-capture';
 import type { RootStackParamList } from '../navigation';
-import { Button, ImportedKeyNotice, WarningBox, screenStyle } from '../components';
+import { Button, ImportedKeyNotice, WarningBox, screenStyle, useFieldLabels } from '../components';
 import { QrScanner } from '../components/QrScanner';
 import { useTheme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
@@ -48,6 +48,7 @@ const CAPTURE_KEY = 'import-private-key';
  */
 export function ImportKeyScreen({ navigation }: Props) {
   const theme = useTheme();
+  const fieldLabel = useFieldLabels();
   const { importPrivateKey } = useWallet();
   const [input, setInput] = useState('');
   const [name, setName] = useState('');
@@ -125,23 +126,25 @@ export function ImportKeyScreen({ navigation }: Props) {
   return (
     <KeyboardAvoidingView style={screenStyle(theme)} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <Text style={[styles.heading, { color: theme.text }]}>Import a private key</Text>
+        <Text accessibilityRole="header" style={[styles.heading, { color: theme.text }]}>Import a private key</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>{IMPORT_KEY_INTRO}</Text>
         <ImportedKeyNotice />
         <WarningBox>{IMPORT_KEY_TRUST_WARNING}</WarningBox>
 
-        <Text style={[styles.label, { color: theme.text }]}>Account name (optional)</Text>
+        <Text {...fieldLabel('name', 'Account name (optional)').label} style={[styles.label, { color: theme.text }]}>Account name (optional)</Text>
         <TextInput
+          {...fieldLabel('name', 'Account name (optional)').input}
           value={name}
           onChangeText={setName}
           maxLength={MAX_ACCOUNT_NAME_LENGTH * 2}
           placeholder="Imported N"
           placeholderTextColor={theme.textMuted}
-          style={[styles.input, { color: theme.text, borderColor: theme.border, backgroundColor: theme.card }]}
+          style={[styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }]}
         />
 
-        <Text style={[styles.label, { color: theme.text }]}>Ethereum private key</Text>
+        <Text {...fieldLabel('key', 'Ethereum private key').label} style={[styles.label, { color: theme.text }]}>Ethereum private key</Text>
         <TextInput
+          {...fieldLabel('key', 'Ethereum private key').input}
           value={input}
           onChangeText={(text) => {
             setInput(text);
@@ -156,9 +159,8 @@ export function ImportKeyScreen({ navigation }: Props) {
           textContentType="none"
           placeholder="64 hexadecimal characters, with or without 0x"
           placeholderTextColor={theme.textMuted}
-          accessibilityLabel="Ethereum private key"
           accessibilityHint="Hidden while typing. Paste or scan the key; the address it controls appears below."
-          style={[styles.input, { color: theme.text, borderColor: theme.border, backgroundColor: theme.card }]}
+          style={[styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }]}
         />
         <View style={styles.row}>
           <Button title="Paste" variant="secondary" onPress={() => void onPaste()} style={styles.flex} />

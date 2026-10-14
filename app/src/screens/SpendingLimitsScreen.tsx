@@ -3,7 +3,7 @@ import { Alert, Platform, ScrollView, StyleSheet, Switch, Text, TextInput, View 
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { FungibleAsset } from '@shiba-wallet/core';
 import type { RootStackParamList } from '../navigation';
-import { Button, WarningBox, screenStyle } from '../components';
+import { Button, WarningBox, screenStyle, switchColors, useFieldLabels, fieldA11y } from '../components';
 import { useTheme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
@@ -53,6 +53,7 @@ const UNITS: WindowUnit[] = ['minutes', 'hours', 'days'];
  */
 export function SpendingLimitsScreen({ navigation }: Props) {
   const theme = useTheme();
+  const fieldLabel = useFieldLabels();
   const { accounts, activeAccount } = useWallet();
   const { evmChain, hideAmounts } = usePrefs();
   const owner = accounts.find((a) => a.chainId === EVM_CHAIN_ID)?.address ?? null;
@@ -303,7 +304,7 @@ export function SpendingLimitsScreen({ navigation }: Props) {
 
   const inputStyle = [
     styles.input,
-    { color: theme.text, borderColor: theme.border, backgroundColor: theme.card },
+    { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card },
   ];
 
   if (!scope) {
@@ -339,7 +340,7 @@ export function SpendingLimitsScreen({ navigation }: Props) {
         </View>
       ) : null}
 
-      <Text style={[styles.sectionTitle, { color: theme.text }]}>Limits on {evmChain.label}</Text>
+      <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Limits on {evmChain.label}</Text>
       {loaded && readouts.length === 0 && !damaged ? (
         <Text style={[styles.body, { color: theme.textMuted }]}>
           No spending limits for this account on this network.
@@ -350,7 +351,7 @@ export function SpendingLimitsScreen({ navigation }: Props) {
           key={r.policy.id}
           style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}
         >
-          <Text style={[styles.cardTitle, { color: theme.text }]}>{policySummary(r.policy, hideAmounts)}</Text>
+          <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>{policySummary(r.policy, hideAmounts)}</Text>
           <Text style={[styles.body, { color: theme.text }]}>{spentReadoutText(r, hideAmounts)}</Text>
           {r.policy.token !== NATIVE_TOKEN ? (
             <Text style={[styles.mono, { color: theme.textMuted }]}>Token contract {r.policy.token}</Text>
@@ -380,7 +381,7 @@ export function SpendingLimitsScreen({ navigation }: Props) {
 
       {formOpen ? (
         <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-          <Text style={[styles.cardTitle, { color: theme.text }]}>
+          <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>
             {editingId ? 'Edit limit' : 'New limit'}
           </Text>
 
@@ -402,8 +403,9 @@ export function SpendingLimitsScreen({ navigation }: Props) {
             ))}
           </View>
 
-          <Text style={[styles.label, { color: theme.textMuted }]}>Limit ({chosen.symbol})</Text>
+          <Text {...fieldLabel('limit', `Limit (${chosen.symbol})`).label} style={[styles.label, { color: theme.textMuted }]}>Limit ({chosen.symbol})</Text>
           <TextInput
+            {...fieldLabel('limit', `Limit (${chosen.symbol})`).input}
             style={inputStyle}
             value={capText}
             onChangeText={(t) => {
@@ -413,7 +415,6 @@ export function SpendingLimitsScreen({ navigation }: Props) {
             placeholder={`Maximum ${chosen.symbol} per window`}
             placeholderTextColor={theme.textMuted}
             keyboardType="decimal-pad"
-            accessibilityLabel={`Limit in ${chosen.symbol}`}
           />
 
           <Text style={[styles.label, { color: theme.textMuted }]}>Time window</Text>
@@ -439,6 +440,7 @@ export function SpendingLimitsScreen({ navigation }: Props) {
           {windowChoice === 'custom' ? (
             <>
               <TextInput
+                {...fieldA11y(`Custom window length in ${customUnit}`)}
                 style={inputStyle}
                 value={customText}
                 onChangeText={(t) => {
@@ -448,7 +450,6 @@ export function SpendingLimitsScreen({ navigation }: Props) {
                 placeholder="Number"
                 placeholderTextColor={theme.textMuted}
                 keyboardType="number-pad"
-                accessibilityLabel={`Custom window length in ${customUnit}`}
               />
               <View style={styles.choiceRow}>
                 {UNITS.map((u) => (
@@ -474,7 +475,7 @@ export function SpendingLimitsScreen({ navigation }: Props) {
           )}
 
           <View style={styles.switchRow}>
-            <Switch
+            <Switch {...switchColors(theme)}
               value={allowOverride}
               onValueChange={setAllowOverride}
               accessibilityLabel="Allow Send anyway when this limit is reached"
@@ -486,7 +487,7 @@ export function SpendingLimitsScreen({ navigation }: Props) {
           </View>
           {chosen.token === NATIVE_TOKEN ? (
             <View style={styles.switchRow}>
-              <Switch
+              <Switch {...switchColors(theme)}
                 value={countFees}
                 onValueChange={setCountFees}
                 accessibilityLabel="Count network fees in this limit"
@@ -520,7 +521,7 @@ export function SpendingLimitsScreen({ navigation }: Props) {
 
       {elsewhere.length > 0 ? (
         <>
-          <Text style={[styles.sectionTitle, { color: theme.text }]}>Limits elsewhere</Text>
+          <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Limits elsewhere</Text>
           {elsewhere.map((s) => (
             <Text key={`${s.scope.chain}|${s.scope.owner}`} style={[styles.body, { color: theme.text }]}>
               {s.scope.owner.slice(0, 6)}…{s.scope.owner.slice(-4)} on{' '}

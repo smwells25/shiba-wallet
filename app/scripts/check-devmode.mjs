@@ -1609,9 +1609,22 @@ console.log('\n== Hoodi and OP Sepolia profiles (phase 18) ==');
   const sendSrc = read('../src/screens/SendScreen.tsx');
   check('Send: the recipient placeholder offers ENS names only where the profile looks them up',
     sendSrc.includes('const namesOffered = route.params.chainId === EVM_CHAIN_ID && nameRegistry.ok;') &&
-      sendSrc.includes("(namesOffered ? ' or ENS name' : '')") &&
+      sendSrc.includes('placeholder={sendRecipientPlaceholder({ namesOffered, ethereum: Boolean(token || nftMode), symbol: account.symbol })}') &&
       !/'Ethereum address or ENS name'|address or ENS name`/.test(sendSrc));
-  const { ensRegistryFor } = await import('../src/wallet/ens-names.ts');
+  const { ensRegistryFor, sendRecipientPlaceholder, SEND_RECIPIENT_NAMES_HINT } = await import('../src/wallet/ens-names.ts');
+  // Pass p20c finding 19: "ETH address or ENS name" was cut to "ETH address
+  // or ENS ı" at phone width; the placeholder is now short enough for one
+  // line beside the Scan and Contacts buttons and the long text is a hint
+  // line under the row (and the field's accessibility hint).
+  check('Send: the recipient placeholders are short (at most 19 characters) and name ENS only where names are offered (exact)',
+    sendRecipientPlaceholder({ namesOffered: true, ethereum: false, symbol: 'ETH' }) === '0x… or ENS name' &&
+      sendRecipientPlaceholder({ namesOffered: false, ethereum: true, symbol: 'ETH' }) === 'Ethereum address' &&
+      sendRecipientPlaceholder({ namesOffered: false, ethereum: false, symbol: 'ETH' }) === 'ETH address' &&
+      ['0x… or ENS name', 'Ethereum address', 'ETH address'].every((t) => t.length <= 19));
+  check('Send: the long text is the hint line under the recipient row, shown only where names are offered (exact)',
+    SEND_RECIPIENT_NAMES_HINT === 'Enter an Ethereum address (0x…) or an ENS name such as nick.eth.' &&
+      /\{namesOffered \? \(\s*<Text style=\{\[styles\.hint, \{ color: theme\.textMuted \}\]\}>\{SEND_RECIPIENT_NAMES_HINT\}<\/Text>\s*\) : null\}/.test(sendSrc) &&
+      sendSrc.includes("namesOffered ? SEND_RECIPIENT_NAMES_HINT : undefined,"));
   check('…which is false on Base Sepolia, Arbitrum Sepolia, Hoodi and OP Sepolia (no ENS contracts there), true on mainnet and Sepolia',
     EVM_PROFILES.map((p) => `${p.caip2}=${ensRegistryFor(p).ok}`).join(',') ===
       'eip155:1=true,eip155:11155111=true,eip155:84532=false,eip155:421614=false,eip155:560048=false,eip155:11155420=false');
@@ -1649,6 +1662,163 @@ console.log('\n# Developer hint: the smart-account clause follows kernelV33Verif
   const flippedClause = /smart-account path on ([^(]+) \(/.exec(hintFor(flipped))?.[1] ?? '';
   check('mutation: with Hoodi marked Kernel-verified the clause would name it (the clause is built from the table)',
     flippedClause.includes('Hoodi'), flippedClause);
+}
+
+// ---------------------------------------------------------------------------
+// Pass p20c (TalkBack and dark mode, 2026-10-14): the app-wide patterns.
+// Every rule below is a scan over app/src (comments removed) with an empty
+// allow-list, plus an in-suite mutant showing the scan catches the old shape.
+// ---------------------------------------------------------------------------
+console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
+{
+  const { readFileSync: readFs, readdirSync, statSync } = await import('node:fs');
+  const root = new globalThis.URL('../src/', import.meta.url).pathname;
+  const walk = (d) => readdirSync(d).flatMap((f) => {
+    const full = `${d}/${f}`;
+    return statSync(full).isDirectory() ? walk(full) : /\.tsx$/.test(f) ? [full] : [];
+  });
+  const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' ')).replace(/(^|[^:'"`])\/\/[^\n]*/g, '$1');
+  const files = walk(root.replace(/\/$/, '')).map((f) => ({ f: f.slice(root.length), src: stripComments(readFs(f, 'utf8')) }));
+  // The opening tag of every <Name …> element (brace depth aware).
+  const tags = (src, name) => {
+    const out = [];
+    const re = new RegExp(`<${name}\\b`, 'g');
+    let m;
+    while ((m = re.exec(src))) {
+      let i = m.index + name.length + 1;
+      let depth = 0;
+      for (; i < src.length; i++) {
+        const c = src[i];
+        if (c === '{') depth++;
+        else if (c === '}') depth--;
+        else if (c === '>' && depth === 0) break;
+      }
+      out.push(src.slice(m.index, i + 1));
+    }
+    return out;
+  };
+
+  // (1) Every TextInput is named through components.tsx: useFieldLabels
+  // (".input}", which also ties it to its visible label with
+  // accessibilityLabelledBy on Android) or fieldA11y (no visible label).
+  // A bare accessibilityLabel on a TextInput is refused: TalkBack read the
+  // placeholder or value instead of it (finding 1).
+  const inputProblems = (all) => all.flatMap(({ f, src }) =>
+    tags(src, 'TextInput').filter((t) => !/\.input\}|\.\.\.fieldA11y\(/.test(t) || /\baccessibilityLabel=/.test(t)).map(() => f));
+  const inputCount = files.reduce((n, { src }) => n + tags(src, 'TextInput').length, 0);
+  check('finding 1: every TextInput in app/src is named through useFieldLabels or fieldA11y, none with a bare accessibilityLabel (allow-list empty)',
+    inputProblems(files).length === 0 && inputCount >= 65, `${inputCount} inputs; problems: ${inputProblems(files).join(', ')}`);
+  check('…mutant caught: a TextInput named only by its placeholder',
+    inputProblems([...files, { f: 'mutant.tsx', src: '<TextInput value={x} placeholder="0.001" />' }]).length === 1);
+  check('…mutant caught: a TextInput with the old bare accessibilityLabel',
+    inputProblems([...files, { f: 'mutant.tsx', src: '<TextInput value={x} accessibilityLabel="Fee budget" />' }]).length === 1);
+  // Every fieldLabel(KEY, …).input has its fieldLabel(KEY, …).label in the
+  // same file, so the field is "labelled by" a visible label that exists.
+  const pairProblems = (all) => all.flatMap(({ f, src }) => {
+    const keys = (suffix) => [...src.matchAll(new RegExp(`fieldLabel\\(\\s*('[^']*'|\`[^\`]*\`),(?:(?!fieldLabel\\()[^])*?\\)\\.${suffix}\\}`, 'g'))].map((m) => m[1]);
+    const labels = new Set(keys('label'));
+    return keys('input').filter((k) => !labels.has(k)).map((k) => `${f} ${k}`);
+  });
+  check('…every fieldLabel(key).input has a fieldLabel(key).label on a visible label in the same file',
+    pairProblems(files).length === 0, pairProblems(files).join(', '));
+  const comps = files.find((x) => x.f === 'components.tsx').src;
+  check('…the helpers: fieldA11y sets accessibilityLabel (+ labelledBy and hint when given); useFieldLabels gives the label a useId nativeID and the input accessibilityLabelledBy to it (source)',
+    comps.includes('accessibilityLabel: label,') &&
+      comps.includes("...(opts.labelId !== undefined ? { accessibilityLabelledBy: opts.labelId } : {}),") &&
+      comps.includes('const base = useId();') && comps.includes('const nativeID = `field-${base}-${key}`;') &&
+      comps.includes('input: fieldA11y(label, { labelId: nativeID, ...(hint !== undefined ? { hint } : {}) }),'));
+  const pairMutant = files.map((x) => (x.f === 'screens/ImportKeyScreen.tsx' ? { ...x, src: x.src.replace("{...fieldLabel('key', 'Ethereum private key').label} ", '') } : x));
+  check('…mutant caught: a labelled field whose visible label lost its nativeID', pairProblems(pairMutant).length === 1);
+
+  // (2) Section titles are headings: every Text drawn with a title style
+  // carries accessibilityRole="header" (or is hidden because the screen's
+  // header bar already says it).
+  const TITLE_STYLE = /styles\.(sectionTitle|cardTitle|modalTitle|title|stepTitle|subTitle|heading|successTitle|previewTitle|summaryTitle|smartTitle|noticeTitle|groupTitle|callTitle)\b/;
+  const headingProblems = (all) => all.flatMap(({ f, src }) =>
+    tags(src, 'Text').filter((t) => TITLE_STYLE.test(t) && !t.includes('accessibilityRole="header"') && !t.includes('importantForAccessibility="no"')).map(() => f));
+  const headingCount = files.reduce((n, { src }) => n + tags(src, 'Text').filter((t) => TITLE_STYLE.test(t)).length, 0);
+  check('finding 2: every title-styled Text in app/src is a heading (allow-list empty)',
+    headingProblems(files).length === 0 && headingCount >= 190, `${headingCount} titles; problems: ${headingProblems(files).join(', ')}`);
+  check('…mutant caught: a section title without the heading role',
+    headingProblems([...files, { f: 'mutant.tsx', src: '<Text style={[styles.sectionTitle, { color: theme.text }]}>Privacy</Text>' }]).length === 1);
+  const named = (f, text) => files.find((x) => x.f === f).src.includes(text);
+  check('…the titles the pass named are headings (lock screen, switcher, Apps, Staking, Settings Privacy / Swaps / Developer)',
+    named('components/LockGate.tsx', '<Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Shiba Wallet is locked</Text>') &&
+      named('components/AccountSwitcher.tsx', '<Text accessibilityRole="header" style={[styles.modalTitle, { color: theme.text }]}>Accounts</Text>') &&
+      named('screens/BrowserScreen.tsx', '<Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Apps on {describeChain(evmChain.caip2)}</Text>') &&
+      named('screens/StakingScreen.tsx', '<Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}>Lido</Text>') &&
+      named('screens/StakingScreen.tsx', '<Text accessibilityRole="header" style={[styles.label, { color: theme.textMuted }]}>What to do</Text>') &&
+      named('screens/StakingViews.tsx', '<Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>Your staking balances</Text>') &&
+      named('screens/SettingsScreen.tsx', '<Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>{SCREEN_PROTECTION_TITLE}</Text>') &&
+      named('screens/SettingsScreen.tsx', '<Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Swaps</Text>') &&
+      named('screens/SettingsScreen.tsx', '<Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Developer</Text>'));
+
+  // (14) Every Switch takes its colours from switchColors(theme): the off
+  // track is the palette's controlBorder, not the platform default that
+  // nearly vanished on the dark background.
+  const switchProblems = (all) => all.flatMap(({ f, src }) =>
+    tags(src, 'Switch').filter((t) => !t.startsWith('<Switch {...switchColors(theme)}')).map(() => f));
+  const switchCount = files.reduce((n, { src }) => n + tags(src, 'Switch').length, 0);
+  check('finding 14: every Switch in app/src spreads switchColors(theme) (allow-list empty)',
+    switchProblems(files).length === 0 && switchCount >= 25, `${switchCount} switches; problems: ${switchProblems(files).join(', ')}`);
+  check('…mutant caught: a Switch with the platform colours', switchProblems([...files, { f: 'mutant.tsx', src: '<Switch value={on} onValueChange={setOn} />' }]).length === 1);
+  check('…switchColors: off track controlBorder, on track accent, thumb switchThumb, iOS background controlBorder (source)',
+    comps.includes('trackColor: { false: theme.controlBorder, true: theme.accent },') && comps.includes('thumbColor: theme.switchThumb,') &&
+      comps.includes('ios_backgroundColor: theme.controlBorder,'));
+
+  // (14, 18) The control token: WCAG 2.2 SC 1.4.11 asks 3:1 for the parts
+  // of a control a person must find (a field's outline, a switch's track).
+  for (const [name, t] of [['light', lightTheme], ['dark', darkTheme]]) {
+    const bg = contrastRatio(t.controlBorder, t.background);
+    const card = contrastRatio(t.controlBorder, t.card);
+    check(`findings 14 and 18 (${name}): controlBorder ${t.controlBorder} is at least 3:1 against the background and a card`,
+      bg >= 3 && card >= 3, `${bg.toFixed(2)}:1 / ${card.toFixed(2)}:1`);
+    const old = contrastRatio(t.border, t.background);
+    check(`…(${name}) the old border token was far below that (the faint price-field border the pass saw)`, old < 1.5, `${old.toFixed(2)}:1`);
+    const thumb = contrastRatio(t.switchThumb, t.controlBorder);
+    check(`…(${name}) the white thumb stands out from the off track at 3:1 or more`, thumb >= 3, `${thumb.toFixed(2)}:1`);
+  }
+  // (18) Every text field's outline uses controlBorder: no TextInput draws
+  // theme.border, and every shared input style is built with controlBorder.
+  const borderProblems = (all) => all.flatMap(({ f, src }) => [
+    ...tags(src, 'TextInput').filter((t) => /borderColor: theme\.border\b/.test(t)).map(() => `${f} (tag)`),
+    ...[...src.matchAll(/const (?:input|inputStyle) = \[[^\]]*\]/g)].filter((m) => !m[0].includes('theme.controlBorder')).map(() => `${f} (style)`),
+  ]);
+  check('finding 18: every text field outline in app/src uses controlBorder (allow-list empty)', borderProblems(files).length === 0, borderProblems(files).join(', '));
+  check('…mutant caught: a field drawn with the old faint border',
+    borderProblems([...files, { f: 'mutant.tsx', src: 'const inputStyle = [styles.input, { color: theme.text, borderColor: theme.border }];' }]).length === 1);
+
+  // (16) Coin badges: the label colour is chosen per fill by textOnFill.
+  const { textOnFill, TEXT_ON_LIGHT_FILL } = await import('../src/theme-palette.ts');
+  const { CHAINS } = await import('../src/wallet/chains.ts');
+  for (const c of CHAINS) {
+    const r = contrastRatio(textOnFill(c.accent), c.accent);
+    check(`finding 16: the ${c.symbol} badge label on ${c.accent} is at least 4.5:1 (fixed fill, so in both themes)`, r >= 4.5, `${textOnFill(c.accent)}: ${r.toFixed(2)}:1`);
+  }
+  const btc = CHAINS.find((c) => c.symbol === 'BTC').accent;
+  const doge = CHAINS.find((c) => c.symbol === 'DOGE').accent;
+  check('…the finding reproduced: white on BTC and DOGE was 2.30:1 and 2.39:1; both now take the dark label',
+    contrastRatio('#ffffff', btc).toFixed(2) === '2.30' && contrastRatio('#ffffff', doge).toFixed(2) === '2.39' &&
+      textOnFill(btc) === TEXT_ON_LIGHT_FILL && textOnFill(doge) === TEXT_ON_LIGHT_FILL);
+  const homeSrc = files.find((x) => x.f === 'screens/HomeScreen.tsx').src;
+  check('…Home draws both badge kinds with textOnFill and the badge style no longer forces white (source)',
+    homeSrc.includes('<Text style={[styles.badgeText, { color: textOnFill(item.accent) }]}>{item.symbol}</Text>') &&
+      homeSrc.includes('<Text style={[styles.badgeText, { color: textOnFill(c.accent) }]}>{c.symbol}</Text>') &&
+      !/badgeText: \{\s*color: '#ffffff'/.test(homeSrc));
+
+  // (20) The Developer chips: one minimum height, the label centred both ways.
+  const settings = files.find((x) => x.f === 'screens/SettingsScreen.tsx').src;
+  const chip = settings.slice(settings.indexOf('  choiceChip: {'), settings.indexOf('  },', settings.indexOf('  choiceChip: {')));
+  check('finding 20: Developer chips keep flexBasis 40% / minWidth 140 and gain minHeight 56 with the label centred vertically (source)',
+    chip.includes("flexBasis: '40%',") && chip.includes('minWidth: 140,') && chip.includes('minHeight: 56,') && chip.includes("justifyContent: 'center',"));
+  check('…and a wrapped button label is centred horizontally (components.tsx buttonLabel textAlign center)',
+    /buttonLabel: \{[^}]*textAlign: 'center',/.test(comps));
+
+  // (11) Settings' Edit buttons name what they edit.
+  check('finding 11: the AA-field Edit button is spoken "Edit the <field>", so the 0x key reads "Edit the 0x API key" (source)',
+    settings.includes('accessibilityLabel={`Edit the ${label}`}') && settings.includes('label="0x API key"') &&
+      settings.includes('accessibilityLabel={`Edit the ${network.label} endpoint`}') &&
+      settings.includes('accessibilityLabel={`Edit the ${network.label} Blockbook endpoint`}'));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

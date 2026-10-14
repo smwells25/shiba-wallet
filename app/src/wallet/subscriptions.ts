@@ -339,6 +339,27 @@ export function minimumViableFeeBudgetWei(
 }
 
 /**
+ * The fee-budget field's placeholder on the subscription, recurring-payment
+ * and recurring-swap forms (pass p20c finding 19): "Total test ETH the
+ * swaps may spend on network fees" wrapped to two lines and the second was
+ * cut off in the middle. The label above the field already says what the
+ * budget is for and the hint below it explains it, so the placeholder only
+ * names the unit.
+ */
+export function feeBudgetPlaceholder(nativeSymbol: string): string {
+  return `Total in ${nativeSymbol}`;
+}
+
+/**
+ * Whether a form shows its fee-budget suggestion or cap note (pass p20c
+ * finding 8): not while Review's refusal (the form error) is on screen, so
+ * the shortfall is said once, in the refusal box that is announced.
+ */
+export function formFeeHintShown(p: { feeEdited: boolean; formError: string | null }): boolean {
+  return !p.feeEdited && p.formError === null;
+}
+
+/**
  * The block shown (and Start withheld) when the fee budget that could be
  * kept back after the install is below one period's worst-case fee
  * (minimumViableFeeBudgetWei): the plan would install but the account would
