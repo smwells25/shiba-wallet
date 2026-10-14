@@ -7606,3 +7606,65 @@ item 3's TalkBack pass after; 5 last. Subagents on Opus.
       transaction was not recorded); DEMO step 34 paraphrases the P&L
       empty-history and alert re-arm sentences because the running fix
       slice changes both.
+- [x] Pass p20b findings FIXED, and the DEMO.md pin the docs refresh broke
+      restored (commit 9aa1ffe; check-devmode 354 (was 351), check-pnl 64
+      (56), check-portfolio 68 (63), check-price-alerts 95 (70),
+      check-multisig 396 (388), check-pending 151 (147),
+      check-screen-protection 87; offline runner ALL GREEN in the CTO's
+      isolated worktree on HEAD 3375d1a plus the slice: engine 995, app
+      8,585 across 56 suites, lint 0/0, tsc clean; one hand mutant per
+      fix caught; not seen on a device). CI NOTE: the docs refresh
+      17cd874 reworded the DEMO.md sentence check-screen-protection pins
+      ("turn it **off** before" screenshots or recordings), so CI on
+      17cd874 and the record commit 3375d1a fails that one check (caught
+      by the fix agent's suite run, not by the CTO's docs-only verify —
+      check-readiness alone is not enough for a DEMO.md edit; lesson: run
+      check-screen-protection and check-devmode on any docs change too);
+      this commit restores the sentence for a real phone beside the
+      emulator's stays-off rule. (1) AUTO-LOCK HINT, from biometric.ts:
+      requireLocalAuth first opens the protected secret through its own
+      system prompt (storage.ts requireAuthentication), which has no
+      passcode fallback on either platform; the ordinary prompt
+      (disableDeviceFallback false) runs only for standard storage,
+      watch-only and multisig, or after a protected read fails for a
+      reason other than a cancel — the hint now reads "…it locks behind
+      the same biometric prompt as sending. While your recovery phrase (or
+      the active account's imported key) is protected by biometrics, that
+      prompt accepts only biometrics; otherwise your device passcode is
+      offered as a fallback. While auto-lock is on, the wallet also starts
+      locked…". (3) P&L: hasMore means "older entries can still be
+      searched", not that any exist; pnlHistoryLoadedLine → "No
+      transactions were found in the history searched so far; older
+      history has not been searched yet." / "No transactions were found:
+      the history is empty."; the matching gap reason; the
+      no-counterparty gap pinned with one confirmed BTC entry ("1
+      transaction does not name the other address…"); wording with ≥ 1
+      entry byte-identical. (4) alertStateText: "The price was already
+      past this alert when you set it; it fires the next time ETH crosses
+      $2,500 after first moving back 1% to the other side." / "Fired 1 min
+      ago at $2,505.97; it fires again the next time ETH crosses $2,500
+      after first moving back 1% to the other side." (5a) each monitor
+      check records its quotes (recordMonitorQuotes, cleared by
+      resetPriceAlerts); the screen shows the newer of its own quote and
+      the monitor's per coin (newestQuote by updatedAtMs else
+      fetchedAtMs), feeds the same quote to the already-past check, and
+      re-reads on a return to the foreground (useOnAppActive); (5b)
+      Remove and Stop following clear the notice; (5c) confirmRemoveAlert
+      "Remove this alert?" / "The alert ETH above $2,503.5 is deleted from
+      this phone and no longer checked." / Cancel / Remove (destructive;
+      nothing removed on show or Cancel). (7) the multisig confirm orders
+      fee, total, preview, risk card like Send's smart-account confirm
+      (the note byte-identical; a pin keeps Send's fee row above its
+      preview so the two cannot drift). (9) each multisig switcher row
+      gains "On Ethereum Sepolia" (an unknown network shows its CAIP-2 id)
+      and the label "Multisig 2 (2-of-3), multi-signature account on
+      Ethereum Sepolia, 0x944c…"; pinned with two multisigs at the same
+      address on two chains. (10) userOpShowsNoReplacementSentence: the
+      paragraph shows only while the status is not "included". (11)
+      holdingSpokenLabel under Hide amounts: a test asset "…, amount
+      hidden, test asset, no value", an unpriced asset "…, amount hidden,
+      no price", a priced asset unchanged. UNVERIFIED (device): the new
+      layouts (the network line, the fee rows above the preview, the hint
+      length), the foreground re-read and the monitor-fed quote in Expo
+      Go, the Remove dialog, TalkBack on the new labels; which history
+      source served mainnet in pass p20b's P&L step.
