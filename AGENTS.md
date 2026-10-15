@@ -9014,3 +9014,39 @@ Opus.
       1 wei. END STATE: Home, Ethereum Sepolia, Account 1, light mode, the
       switch OFF, protection OFF, TalkBack OFF, IME ADBKeyboard, Metro at
       4b5c6de.
+- [x] Item 3 — THE REHEARSAL PRICED BELOW THE BASE FEE (commit 626c76e;
+      send.ts, SendScreen.tsx, check-pending 195 (was 187); offline runner
+      ALL GREEN in the CTO's isolated worktree on HEAD 45506f2: engine
+      1,046, app 9,164 across 59 suites, lint 0/0, tsc clean; two in-suite
+      and two hand mutants caught; not seen on a device). EIP-1559 (ethereum/EIPs
+      eip-1559.md at ba6c342c, lines 211–212: `assert
+      transaction.max_fee_per_gas >= block.base_fee_per_gas`): a 1-wei max
+      fee cannot be included while the base fee is above 1 wei (the
+      spec's decrease formula floors an L1 base fee at 7 wei — used only
+      in reasoning). MINIMUM_FEE_MAX_FEE_WEI = 1n, MINIMUM_FEE_PRIORITY_WEI
+      = 1n (the phase-19 figures that stayed pending ≥ 2 min); the base
+      fee is still read, for the sentence only: "Priced at the minimum
+      fee: a max fee of 1 wei and a priority fee of 1 wei per gas, below
+      the latest block's base fee (16 wei), so no block can include it
+      until you speed it up or cancel it." (an honest variant when the
+      base fee is ≤ 1 wei: "…is not above that, so a block may include it
+      at once and it may never show as pending."); WarningBox
+      "Minimum-fee rehearsal: this transaction offers a max fee of only 1
+      wei per gas, so while the network's base fee is above that it stays
+      pending until you speed it up or cancel it from Activity. The node
+      may also refuse it outright."; the Developer hint reworded (the
+      inclusion rule, the replacement priced at the node's suggestion,
+      the "transaction underpriced" sentence kept, the old Arbitrum
+      tip sentence removed, "On the layer-2 test networks the transaction
+      goes to the network's sequencer, which may refuse it rather than
+      hold it; that has not been tried."); token sends re-priced the same.
+      SPEED UP / CANCEL NEEDED NO CHANGE: prepareEvmReplacement →
+      replacementFees(pooled, suggested) takes per field the larger of
+      the bumped minimum and NodeClient.suggestFees (max fee = 2 × base
+      + tip, rpc.ts ~347), so a replacement of a 1/1 original is priced
+      at the suggestion (pinned 1,000,036 / 1,000,004 against a 16-wei
+      base; 32 / 2 with a tipless node) and the bare 2/2 minimum is never
+      used alone. UNVERIFIED: that publicnode's backends accept the 1/1
+      send (phase 19 saw "transaction underpriced" and "gas tip cap 0,
+      minimum needed 1" on some); a real speed-up / cancel from the card;
+      the layer-2 sequencers; the longer warning's layout.
