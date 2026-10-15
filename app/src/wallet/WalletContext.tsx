@@ -90,6 +90,8 @@ import { recoveryRecordListener, wipeRecoveryData } from './recovery';
 import { forgetBrowserConnections } from './browser-sites';
 import { wipeTransactionNotes } from './notes';
 import { pendingUserOpRecorder, resetPendingRegistry } from './pending-transactions';
+import { walletConnectFollowProfile } from './walletconnect';
+import { resetBridgeTransfers } from './bridge';
 import { resetPriceAlerts } from './price-alerts';
 import {
   addMultisigStoreListener,
@@ -753,6 +755,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         // The other wallet's opened secret must never serve this one.
         dropPhraseTicket();
         setActiveStoreProfile(profile);
+        // The SDK keeps one client per wallet (./walletconnect.ts): the other
+        // wallet's stops listening to the relay while this one is open.
+        void walletConnectFollowProfile(profile);
+        // The Bridge screen's list in memory belongs to the other wallet.
+        void resetBridgeTransfers();
         setProfileKey((k) => k + 1);
         await reloadWallet();
       }
@@ -1357,6 +1364,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         await resetMultisigRecords(store).catch(() => undefined);
         await resetPendingRegistry(store).catch(() => undefined);
         await resetPriceAlerts(store).catch(() => undefined);
+        await resetBridgeTransfers(store).catch(() => undefined);
         await resetAccounts(store).catch(() => undefined);
       };
       await wipeBothWallets({
@@ -1408,6 +1416,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     // The price-alert watchlist holds only asset ids and thresholds; a
     // wipe forgets it with the rest (CTO, phase 20 item 1).
     await resetPriceAlerts(AsyncStorage).catch(() => undefined);
+    // Bridge transfers (./bridge.ts) are public records of this wallet's
+    // sends; a wipe forgets them with the rest.
+    await resetBridgeTransfers(AsyncStorage).catch(() => undefined);
     await deleteMnemonic();
     // The public account cache (addresses only) goes with the wallet.
     await deletePublicAccounts(ALL_CACHE_INDICES);

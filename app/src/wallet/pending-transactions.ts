@@ -177,6 +177,7 @@ export const USEROP_ORIGINS: readonly AaOperationKind[] = [
   'walletconnect',
   'browser',
   'multisig',
+  'bridge',
   'other',
 ];
 
@@ -1156,6 +1157,7 @@ export const USEROP_RETRY_SENTENCES: Readonly<Record<AaOperationKind, string>> =
   browser: 'To try again, open the app in the in-app browser (Apps) and send it again from there; nothing is resent from here.',
   multisig:
     'To try again, open Multisig and build the operation again; the co-signers approve the new request. Nothing is resent from here.',
+  bridge: 'To try again, open Bridge and get a new quote; nothing is resent from here.',
   other: 'To try again, go back to the screen you sent it from and review it again; nothing is resent from here.',
 };
 
@@ -1171,6 +1173,7 @@ export const USEROP_ORIGIN_PHRASES: Readonly<Record<AaOperationKind, string>> = 
   walletconnect: 'requested by an app connected through WalletConnect',
   browser: 'requested by an app in the in-app browser',
   multisig: 'submitted for a multisig account',
+  bridge: 'from Bridge',
   other: '',
 };
 

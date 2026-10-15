@@ -421,7 +421,9 @@ Option (b). No slice is built in phase 20. The reasons, in order of weight:
 - **Stage 1 — one storage seam. DONE for the app's own keys in
   `app/src/wallet`** (phase 21 item 2, 2026-10-14). `app/src/wallet/store-keys.ts`
   declares every storage key with its scope — 39 names: 21 per-wallet
-  (`wallet`), 9 device-wide (`device`) and 9 secure-store items (`secret`)
+  (`wallet`), 9 device-wide (`device`) and 9 secure-store items (`secret`);
+  41 since phase 21 added the app-lock record (`secret`) and the Bridge
+  screen's transfer list (`wallet`): 22 / 9 / 10
   — plus the protected keychain service and the four notification-identifier
   prefixes. It holds the only functions that read, write, delete or list a
   key (`readStoreItem`, `writeStoreItem`, `removeStoreItem`,
@@ -440,25 +442,86 @@ Option (b). No slice is built in phase 20. The reasons, in order of weight:
   `app/scripts/check-storage-seam.mjs` fails on any key literal, any import
   of the AsyncStorage package, any AsyncStorage / SecureStore call, and any
   `getItem` / `setItem` / `removeItem` / `…ItemAsync` call outside the seam,
-  apart from an exact allow-list. **What Stage 1 still leaves**, each in
-  that allow-list or named here, to move before Stage 2 relies on it:
-  `app/src/wallet/recovery.ts` (the recovery records and progress: two keys,
-  six calls — being edited by another slice this wave, so left alone);
-  `app/src/config/prefs.ts` and `app/src/config/networks.ts` (preferences
-  and endpoint overrides, both device-wide); five screens and
-  `WalletConnectContext.tsx`, which import the AsyncStorage package only to
-  pass it on as the store argument; the WalletConnect SDK's own storage
-  (`customStoragePrefix` in `@walletconnect/types` 2.25.0's core options,
-  effect still unverified); the reminder identifiers, which are declared in
-  the seam but not scoped (section 7.4 makes that moot by turning OS
-  notifications off while an app PIN is on); and `shiba-wallet.aa-config.v1`,
-  which mixes device-like bundler settings with per-wallet recovered
-  accounts and is declared per-wallet until Stage 2 splits it.
+  apart from an exact allow-list. **The remainders it left were closed in
+  phase 21** (the storage-seam follow-up slice, 2026-10-15; built and
+  checked offline only, not yet seen on a device):
+  - `app/src/wallet/recovery.ts` (the recovery records and recoveries in
+    progress, per wallet), `app/src/config/prefs.ts` and
+    `app/src/config/networks.ts` (the preferences and the endpoint
+    overrides, device-wide) now read and write through the seam with keys
+    declared in `store-keys.ts`, and the five screens and
+    `WalletConnectContext.tsx` take the default store from the seam's
+    re-export. The allow-list of `check-storage-seam.mjs` is EMPTY; the one
+    exception it pins is `WalletContext.tsx`'s value import of
+    `expo-secure-store`, which binds the native module once and calls
+    nothing. A check drives each migrated module with a store bound to a
+    second profile: the preferences and endpoint overrides stay on their
+    shared keys, the recovery records move under the second profile's
+    prefix.
+  - `shiba-wallet.aa-config.v1` stays declared per wallet (it holds the
+    real wallet's EIP-7702 owners and recovered accounts, which identify
+    it), but its device fields — the bundler, factory and paymaster
+    endpoints with their verification records (`aa.ts`
+    `AA_ENDPOINT_FIELDS`) — are read from and written to the PRIMARY
+    profile's copy whichever wallet is open. The decoy therefore shows the
+    same bundler and factory rows as the real wallet from the moment it is
+    created, keeps its own 7702 owners and recovered accounts under its
+    own prefix, and a bundler change made in either wallet applies to
+    both, like the other device settings. Nothing is migrated: for the
+    primary wallet the record is read and written exactly as before. This
+    was chosen over splitting the key in two (which would have moved the
+    real wallet's stored fields and changed every suite that pins the
+    record) and over copying the settings into the decoy once at creation
+    (which would drift as soon as either wallet changed its bundler).
+    `check-aa.mjs` pins that the decoy sees the same bundler row right
+    after creation and none of the real wallet's links, and that a decoy
+    write never overwrites a primary copy it cannot read.
+  - The WalletConnect SDK keeps pairings, sessions, keys and pending
+    requests in its own AsyncStorage keys, outside the seam:
+    `wc@2:core:` or `wc@2:client:` + a version + `customStoragePrefix` +
+    `//` + a name (`@walletconnect/core` 2.25.0, read from the installed
+    package's source map: `src/core.ts` line 99 makes the prefix `:` plus
+    the option, or empty; `controllers/store.ts` lines 77–78 and the other
+    controllers use it in every key). The wallet now creates one SDK
+    client per wallet: the primary wallet's with no prefix (its stored
+    sessions keep their keys) and the second wallet's with its profile
+    prefix (`w2`), so the decoy never reads the real wallet's sessions and
+    the reverse; the SDK also keeps one process-wide core per prefix
+    (`core.ts` lines 235–268), so the two clients share no relay
+    connection or keychain. When the PIN opens the other wallet, the
+    previous wallet's client closes its relay connection (`relayer.
+    transportClose`) and reopens it when its wallet is opened again
+    (`walletconnect.ts` `createWcClientCache`, `walletConnectFollowProfile`;
+    `check-wc.mjs`). Two SDK keys carry no prefix, and neither is written
+    by this app: `WALLETCONNECT_CLIENT_ID` (written only by `Core.init`,
+    which the app does not call) and `WALLETCONNECT_LINK_MODE_APPS`
+    (written only for link-mode peers, which needs the wallet's own
+    `metadata.redirect.linkMode`; the app sets no redirect).
+  - The reminder identifiers carry the open wallet's profile:
+    unchanged for the primary wallet, `shiba-wallet.profile-w2.recurring.…`
+    (and `.takeover.`, `.price-alert.`) for the second, so each wallet's
+    planner schedules, cancels and dismisses only its own reminders
+    (`store-keys.ts` `notificationIdNames`; `check-notifications.mjs`).
+    This is moot today: with an app PIN on, the wallet posts no
+    notifications for either wallet (section 7.4), and a decoy cannot exist
+    without an app PIN. It matters only if that rule ever changes.
+    Turning reminders off and the wipe still cancel by the one root
+    `shiba-wallet.`, which covers both wallets.
+  - **What remains:** the WalletConnect SDK's relay pause is best effort
+    (the SDK reopens a closed connection by itself when the phone's network
+    comes back, `controllers/relayer.ts` lines 632–646, so the real
+    wallet's client could reconnect while the decoy is open; it would
+    receive requests but no screen listens to it). Neither "Remove wallet"
+    nor removing the duress PIN deletes the SDK's own keys (this was
+    already so for the ordinary wipe); a decoy created again later is the
+    same BIP-85 child, so it finds only its own earlier sessions. None of
+    this has been seen on a device.
 - **Stage 2 — the app PIN, then the duress PIN. BUILT OFFLINE** (phase 21,
   2026-10-14; section 7.7 says piece by piece what was built and section
-  7.10 what is left). Stage 1's remainders listed above were NOT moved in
-  this slice (they belong to other files), so the decoy does not yet
-  satisfy rule 2 for the recovery records and the WalletConnect sessions.
+  7.10 what is left). Stage 1's remainders were not moved in that slice;
+  the follow-up slice above moved them (2026-10-15), so the decoy now
+  satisfies rule 2 for the recovery records and the WalletConnect
+  sessions, as far as offline checks can show.
 - **Stage 3 — an emulator pass on a throwaway wallet** (section 6.7).
 
 ### 5.3 Decisions for the Chairperson
@@ -944,18 +1007,16 @@ was built, for the Chairperson to confirm or change:
 
 ### 7.10 Left before the Stage 3 pass, and not verified
 
-- **Stage 1 remainders still leak the real wallet into the decoy** (rule
-  2): `app/src/wallet/recovery.ts` reads and writes the recovery records and
-  recoveries in progress under their unscoped names (allow-listed in
-  `check-storage-seam.mjs`), so the Guardians and recovery screens under the
-  decoy would show the real wallet's records; the WalletConnect SDK keeps
-  its sessions in its own storage and its client in memory
-  (`walletconnect.ts` caches the initialised client), so the decoy's
-  Connections screen could list and reconnect the real wallet's sessions;
-  `shiba-wallet.aa-config.v1` is per wallet, so the decoy starts with no
-  bundler or factory configured (a visible difference, not a leak). These
-  must be finished (section 7.7 piece 1) before the feature is offered.
-- **Readiness row `duress-pin`** to add (above).
+- **Stage 1 remainders: closed offline** (section 5.2, the follow-up slice
+  of 2026-10-15): the recovery records are per wallet through the seam,
+  the WalletConnect SDK has one client and one storage namespace per
+  wallet, the decoy shows the real wallet's bundler and factory settings
+  without its account links, and the reminder identifiers carry the
+  wallet's profile. Left: the SDK's relay pause is best effort, and the
+  SDK's own keys are not deleted by either removal (section 5.2). Not yet
+  seen on a device.
+- **Readiness row `duress-pin`**: added with the Bridge screen slice
+  (commit `fe34deb`; advisory, every network).
 - **Hermes cost of scrypt** at N = 2^16, twice per attempt: unmeasured. If
   an attempt takes several seconds on a phone, N must come down and the
   claim say so.

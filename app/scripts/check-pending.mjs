@@ -776,7 +776,7 @@ console.log('check-pending: every smart-account path is recorded (phase 20 item 
     const r = parseRegistry(JSON.stringify({ version: 1, records: [{ ...legacy, origin }] }));
     if (r.readOnly || r.records.length !== 1) check(`origin ${origin} parses`, false);
   }
-  check('every known origin parses', USEROP_ORIGINS.length === 11);
+  check('every known origin parses (12, incl. phase 21\'s bridge)', USEROP_ORIGINS.length === 12 && USEROP_ORIGINS.includes('bridge'));
   check('an unknown origin makes the registry read-only', parseRegistry(JSON.stringify({ version: 1, records: [{ ...legacy, origin: 'teleport' }] })).readOnly);
   check('a non-string origin makes the registry read-only', parseRegistry(JSON.stringify({ version: 1, records: [{ ...legacy, origin: 7 }] })).readOnly);
   check('an extra unknown key still makes it read-only', parseRegistry(JSON.stringify({ version: 1, records: [{ ...legacy, origin: 'swap', bundlerUrl: 'https://x' }] })).readOnly);
@@ -784,7 +784,7 @@ console.log('check-pending: every smart-account path is recorded (phase 20 item 
   // The recorder WalletContext registers.
   const store = memoryStore();
   const recorder = pendingUserOpRecorder(store);
-  const kinds = ['swap', 'staking', 'session-setup', 'recurring-payment', 'dca-swap', 'session-op', 'walletconnect', 'browser', 'multisig', 'other'];
+  const kinds = ['swap', 'staking', 'session-setup', 'recurring-payment', 'dca-swap', 'session-op', 'walletconnect', 'browser', 'multisig', 'bridge', 'other'];
   for (const [i, kind] of kinds.entries()) await recorder(event(200 + i, kind, { resend: native }));
   let ops = userOpsFor((await loadPendingRegistry(store)).records, CHAIN, FROM);
   check('the recorder stores one record per path, each with its origin', ops.length === kinds.length && kinds.every((k) => ops.some((o) => o.origin === k)), ops.map((o) => o.origin).join());
@@ -833,6 +833,10 @@ console.log('check-pending: every smart-account path is recorded (phase 20 item 
   check('card title names the path', userOpCardTitle({ userOpHash: H(200), origin: 'swap', resend: null }) === `Smart-account operation ${shortHashOf(H(200))} from Swap.` &&
     userOpCardTitle({ userOpHash: H(201), origin: 'browser', resend: null }) === `Smart-account operation ${shortHashOf(H(201))} requested by an app in the in-app browser.` &&
     userOpCardTitle({ userOpHash: H(202), origin: 'other', resend: null }) === `Smart-account operation ${shortHashOf(H(202))}.`);
+  check('a bridge operation (Bridge screen, phase 21): its title and its retry sentence (exact)',
+    userOpCardTitle({ userOpHash: H(204), origin: 'bridge', resend: null }) === `Smart-account operation ${shortHashOf(H(204))} from Bridge.` &&
+      USEROP_RETRY_SENTENCES.bridge === 'To try again, open Bridge and get a new quote; nothing is resent from here.' &&
+      userOpStatusSentence(dropped, { origin: 'bridge', resend: null }) === `${USEROP_DROPPED_SENTENCE} To try again, open Bridge and get a new quote; nothing is resent from here.`);
   check('card title keeps the Send wording with a pre-fill', userOpCardTitle({ userOpHash: H(203), origin: 'send', resend: native }) === `Smart-account operation ${shortHashOf(H(203))}: 0.000000000000000005 test ETH to ${TO}.`);
   check('every path has a phrase entry and a retry sentence', USEROP_ORIGINS.every((k) => typeof USEROP_ORIGIN_PHRASES[k] === 'string' && USEROP_RETRY_SENTENCES[k].length > 20));
 }

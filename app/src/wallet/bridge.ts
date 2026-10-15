@@ -36,6 +36,16 @@ import {
 // under Node's type stripping, which resolves relative specifiers literally
 // (the staking.ts / swap.ts precedent).
 import { L1_DATA_FEE_HEADROOM_PERCENT, prepareEvmSend, type EvmSendQuote } from './send.ts';
+import {
+  AsyncStorage,
+  readStoreItem,
+  removeStoreItem,
+  storeProfileOf,
+  writeStoreItem,
+  STORE_KEYS,
+  type KeyValueStore,
+  type RemovableKeyValueStore,
+} from './store-keys.ts';
 import { prepareAaCalls, type AaClientBundle, type AaSendQuote } from './aa.ts';
 import { formatUnits } from './balances.ts';
 import { assertFeatureAllowed } from '../config/readiness.ts';
@@ -71,12 +81,17 @@ import { isEndpointFailure } from '../config/endpoint-probe.ts';
  *    in the pool for a retryReceiveToken. When the regular address itself
  *    holds code on the receiving network, the confirm says so, and the
  *    tracking panel offers the retry call when the chain shows the cache.
- *  - Transfer records are kept IN MEMORY for this app session only. The
- *    persistent store needs a key declared in the storage seam
- *    (store-keys.ts), which another slice owns; it lands with the next
- *    slice. The source transaction itself is recorded by the existing
- *    pending registry (sendEvm's listener, or sendAa's operation listener),
- *    so Speed up / Cancel already cover a stuck bridge send.
+ *  - Transfer records are STORED on the phone (shiba-wallet.bridge-
+ *    transfers.v1, a per-wallet key of the storage seam, store-keys.ts), the
+ *    newest 64, so tracking survives a restart: what was sent and, once
+ *    known, the final status (delivered or failed). A status that is not
+ *    final is not stored; the screen asks again. The store is parsed
+ *    strictly: a damaged document is read-only (the valid records are
+ *    shown, nothing is written, "Reset the transfer list" clears it), as
+ *    for the pending-transaction registry. The source transaction itself is
+ *    recorded by the existing pending registry (sendEvm's listener, or
+ *    sendAa's operation listener, kind 'bridge'), so Speed up / Cancel
+ *    cover a stuck bridge send.
  *
  * Every entry point calls assertFeatureAllowed('bridge', chain) before any
  * network request (readiness row 'bridge', test networks only, enforced).
@@ -202,10 +217,15 @@ export const BRIDGE_TIME_NOT_PROMISE =
 /** Shown under a provider row before a live quote exists. */
 export const BRIDGE_FEE_BEFORE_QUOTE = 'Fee: quoted live from the provider’s contracts when you tap Get quotes or Review.';
 
-/** The in-memory record note. */
+/** The record note. */
 export const BRIDGE_RECORDS_NOTE =
-  'Transfers sent from this screen are followed here until the app is closed; they are not stored on the phone yet. ' +
+  'Transfers sent from this screen are kept on this phone (the newest 64) and followed here whenever this screen is open. ' +
   'The sending transaction also appears in Activity.';
+
+/** Shown when the stored transfer list could not be read (it is then read-only). */
+export const BRIDGE_RECORDS_READ_ONLY_MESSAGE =
+  'The list of bridge transfers on this phone could not be read in full, so it is not changed: transfers sent now are followed only until the app is closed. ' +
+  'Reset the transfer list to start a new one; nothing on the network changes.';
 
 // ---------------------------------------------------------------------------
 // The registry (providers in registration order: LayerZero, then CCTP)
@@ -919,7 +939,7 @@ export function bridgeConfirmModel(plan: BridgePlan): BridgeConfirmModel {
     `Amount: ${exactNative(q.amountIn)} ${sym}; at least ${exactNative(q.minAmountOut)} ${sym} must arrive, or the transfer reverts on this network and nothing leaves.`,
     `Messaging fee: ${exactNative(plan.messagingFee)} ${sym}, paid with this transaction; any part not used is refunded to ${plan.sender}.`,
     'No extra options and no compose message: the transfer cannot run code of its own on the receiving network.',
-    `All of these are fixed words of the call (${q.calls[q.calls.length - 1]!.pins.length} of them), so the wallet checked each one before showing this screen.`,
+    `All of these are fixed words of the call (${q.calls[q.calls.length - 1]!.pins.length} of them). Before showing this screen the wallet re-read the receiving network, the recipient, the amount, the fee and the refund address from the call itself, with the value sent; the other words are fixed by how it builds the call.`,
   ];
   const approvalLine =
     q.approvals.length === 0
@@ -947,7 +967,7 @@ export function bridgeConfirmModel(plan: BridgePlan): BridgeConfirmModel {
 }
 
 // ---------------------------------------------------------------------------
-// Transfer records (in memory for this app session; see the module comment)
+// Transfer records (stored per wallet; see the module comment)
 // ---------------------------------------------------------------------------
 
 export interface BridgeTransferRecord {
@@ -976,9 +996,18 @@ export interface BridgeTransferRecord {
   retryTxHash: string | null;
 }
 
+/** The storage key (store-keys.ts; per wallet). */
+export const BRIDGE_TRANSFERS_KEY = STORE_KEYS.bridgeTransfers.name;
+const BRIDGE_STORE_VERSION = 1;
+/** At most this many transfers are kept (judgement, as the pending registry's 64); the oldest finished ones go first. */
+export const MAX_BRIDGE_TRANSFERS = 64;
+
 const records = new Map<string, BridgeTransferRecord>();
 const recordListeners = new Set<() => void>();
 let recordCounter = 0;
+/** Where records are written: the store the last load read (null before a load), and whether it is read-only. */
+let attached: { store: KeyValueStore; profileId: string; readOnly: boolean } | null = null;
+let writeQueue: Promise<void> = Promise.resolve();
 
 function notifyRecords(): void {
   for (const l of [...recordListeners]) {
@@ -998,7 +1027,266 @@ export function subscribeBridgeTransfers(listener: () => void): () => void {
   };
 }
 
-/** Records a transfer the screen just sent (in memory). `sentAt` defaults to now. */
+// ----- the stored form ------------------------------------------------------
+
+const HEX_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+const HEX_HASH = /^0x[0-9a-fA-F]{64}$/;
+const DECIMAL = /^(0|[1-9][0-9]{0,77})$/;
+const RECORD_ID = /^bridge-[0-9]{1,16}-[0-9]{1,9}$/;
+const CAIP2 = /^eip155:[1-9][0-9]{0,15}$/;
+const LABEL_MAX = 80;
+const DETAIL_MAX = 4000;
+const STORED_KEYS = [
+  'id', 'providerId', 'providerLabel', 'route', 'sourceCaip2', 'sourceLabel', 'destinationCaip2', 'destinationLabel',
+  'amountIn', 'recipient', 'sender', 'senderKind', 'sourceTxHash', 'userOpHash', 'destinationFromBlock', 'sentAt',
+  'retryTxHash', 'final',
+] as const;
+
+/** A finished transfer's status as stored (only delivered or failed are kept). */
+interface StoredFinal {
+  state: 'delivered' | 'failed';
+  detail: string;
+  destinationTxHash: string | null;
+  checkedAt: number;
+}
+
+function finalOf(record: BridgeTransferRecord): StoredFinal | null {
+  const st = record.status;
+  if (!st || (st.state !== 'delivered' && st.state !== 'failed') || record.checkedAt === null) return null;
+  return { state: st.state, detail: st.detail, destinationTxHash: st.destinationTxHash ?? null, checkedAt: record.checkedAt };
+}
+
+function assetToStored(a: BridgeRoute['sourceAsset']): Record<string, unknown> {
+  return a.kind === 'native'
+    ? { kind: 'native', symbol: a.symbol, decimals: a.decimals }
+    : { kind: 'erc20', address: a.address, symbol: a.symbol, decimals: a.decimals };
+}
+
+/** The JSON form of one record (bigints as decimal strings; no status that is not final). */
+export function bridgeRecordToStored(record: BridgeTransferRecord): Record<string, unknown> {
+  return {
+    id: record.id,
+    providerId: record.providerId,
+    providerLabel: record.providerLabel,
+    route: {
+      providerId: record.route.providerId,
+      sourceChainId: record.route.sourceChainId,
+      destinationChainId: record.route.destinationChainId,
+      sourceAsset: assetToStored(record.route.sourceAsset),
+      destinationAsset: assetToStored(record.route.destinationAsset),
+    },
+    sourceCaip2: record.sourceCaip2,
+    sourceLabel: record.sourceLabel,
+    destinationCaip2: record.destinationCaip2,
+    destinationLabel: record.destinationLabel,
+    amountIn: record.amountIn.toString(),
+    recipient: record.recipient,
+    sender: record.sender,
+    senderKind: record.senderKind,
+    sourceTxHash: record.sourceTxHash,
+    userOpHash: record.userOpHash,
+    destinationFromBlock: record.destinationFromBlock === null ? null : record.destinationFromBlock.toString(),
+    sentAt: record.sentAt,
+    retryTxHash: record.retryTxHash,
+    final: finalOf(record),
+  };
+}
+
+function isObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+function exactKeys(o: Record<string, unknown>, keys: readonly string[]): boolean {
+  const own = Object.keys(o);
+  return own.length === keys.length && keys.every((k) => Object.prototype.hasOwnProperty.call(o, k));
+}
+
+function text(v: unknown, max = LABEL_MAX): v is string {
+  return typeof v === 'string' && v.length > 0 && v.length <= max;
+}
+
+function hashOrNull(v: unknown): v is string | null {
+  return v === null || (typeof v === 'string' && HEX_HASH.test(v));
+}
+
+function timestamp(v: unknown): v is number {
+  return typeof v === 'number' && Number.isSafeInteger(v) && v > 0;
+}
+
+function storedAsset(v: unknown): BridgeRoute['sourceAsset'] | null {
+  if (!isObject(v)) return null;
+  const decimalsOk = typeof v.decimals === 'number' && Number.isInteger(v.decimals) && v.decimals >= 0 && v.decimals <= 36;
+  if (!decimalsOk || !text(v.symbol, 20)) return null;
+  if (v.kind === 'native' && exactKeys(v, ['kind', 'symbol', 'decimals'])) {
+    return { kind: 'native', symbol: v.symbol as string, decimals: v.decimals as number };
+  }
+  if (v.kind === 'erc20' && exactKeys(v, ['kind', 'address', 'symbol', 'decimals']) && typeof v.address === 'string' && HEX_ADDRESS.test(v.address)) {
+    return { kind: 'erc20', address: v.address, symbol: v.symbol as string, decimals: v.decimals as number };
+  }
+  return null;
+}
+
+/**
+ * One stored record, checked field by field (exact key sets, formats,
+ * chain ids that agree with the CAIP-2 ids); null when anything is off.
+ */
+export function bridgeRecordFromStored(value: unknown): BridgeTransferRecord | null {
+  if (!isObject(value) || !exactKeys(value, STORED_KEYS)) return null;
+  const v = value;
+  if (typeof v.id !== 'string' || !RECORD_ID.test(v.id)) return null;
+  if (!text(v.providerId, 40) || !/^[a-z0-9-]{2,40}$/.test(v.providerId) || !text(v.providerLabel)) return null;
+  const route = v.route;
+  if (!isObject(route) || !exactKeys(route, ['providerId', 'sourceChainId', 'destinationChainId', 'sourceAsset', 'destinationAsset'])) return null;
+  if (route.providerId !== v.providerId) return null;
+  const chainOk = (n: unknown): n is number => typeof n === 'number' && Number.isSafeInteger(n) && n > 0;
+  if (!chainOk(route.sourceChainId) || !chainOk(route.destinationChainId) || route.sourceChainId === route.destinationChainId) return null;
+  const sourceAsset = storedAsset(route.sourceAsset);
+  const destinationAsset = storedAsset(route.destinationAsset);
+  if (!sourceAsset || !destinationAsset) return null;
+  if (typeof v.sourceCaip2 !== 'string' || !CAIP2.test(v.sourceCaip2) || v.sourceCaip2 !== `eip155:${route.sourceChainId}`) return null;
+  if (typeof v.destinationCaip2 !== 'string' || !CAIP2.test(v.destinationCaip2) || v.destinationCaip2 !== `eip155:${route.destinationChainId}`) return null;
+  if (!text(v.sourceLabel) || !text(v.destinationLabel)) return null;
+  if (typeof v.amountIn !== 'string' || !DECIMAL.test(v.amountIn) || v.amountIn === '0') return null;
+  if (typeof v.recipient !== 'string' || !HEX_ADDRESS.test(v.recipient)) return null;
+  if (typeof v.sender !== 'string' || !HEX_ADDRESS.test(v.sender)) return null;
+  if (v.senderKind !== 'regular' && v.senderKind !== 'smart-account') return null;
+  if (!hashOrNull(v.sourceTxHash) || !hashOrNull(v.userOpHash) || !hashOrNull(v.retryTxHash)) return null;
+  // A regular send always knows its transaction; a smart-account one its operation.
+  if (v.senderKind === 'regular' ? v.sourceTxHash === null || v.userOpHash !== null : v.userOpHash === null) return null;
+  if (v.destinationFromBlock !== null && (typeof v.destinationFromBlock !== 'string' || !DECIMAL.test(v.destinationFromBlock))) return null;
+  if (!timestamp(v.sentAt)) return null;
+  let status: BridgeTransferStatus | null = null;
+  let checkedAt: number | null = null;
+  if (v.final !== null) {
+    const f = v.final;
+    if (!isObject(f) || !exactKeys(f, ['state', 'detail', 'destinationTxHash', 'checkedAt'])) return null;
+    if (f.state !== 'delivered' && f.state !== 'failed') return null;
+    if (!text(f.detail, DETAIL_MAX) || !hashOrNull(f.destinationTxHash) || !timestamp(f.checkedAt)) return null;
+    status = { state: f.state, detail: f.detail, ...(f.destinationTxHash ? { destinationTxHash: f.destinationTxHash } : {}) };
+    checkedAt = f.checkedAt;
+  }
+  return {
+    id: v.id,
+    providerId: v.providerId,
+    providerLabel: v.providerLabel,
+    route: {
+      providerId: v.providerId,
+      sourceChainId: route.sourceChainId,
+      destinationChainId: route.destinationChainId,
+      sourceAsset,
+      destinationAsset,
+    },
+    sourceCaip2: v.sourceCaip2,
+    sourceLabel: v.sourceLabel,
+    destinationCaip2: v.destinationCaip2,
+    destinationLabel: v.destinationLabel,
+    amountIn: BigInt(v.amountIn),
+    recipient: v.recipient,
+    sender: v.sender,
+    senderKind: v.senderKind,
+    sourceTxHash: v.sourceTxHash,
+    userOpHash: v.userOpHash,
+    destinationFromBlock: v.destinationFromBlock === null ? null : BigInt(v.destinationFromBlock),
+    sentAt: v.sentAt,
+    status,
+    checkedAt,
+    checkError: null,
+    retryTxHash: v.retryTxHash,
+  };
+}
+
+export interface BridgeTransferStore {
+  records: BridgeTransferRecord[];
+  /** True when the stored document could not be fully read; nothing is written then. */
+  readOnly: boolean;
+}
+
+/** Parses the stored document: the valid records and whether anything was unreadable. */
+export function parseBridgeTransfers(raw: string | null): BridgeTransferStore {
+  if (raw === null) return { records: [], readOnly: false };
+  let doc: unknown;
+  try {
+    doc = JSON.parse(raw);
+  } catch {
+    return { records: [], readOnly: true };
+  }
+  if (!isObject(doc) || doc.version !== BRIDGE_STORE_VERSION || !Array.isArray(doc.records) || Object.keys(doc).length !== 2) {
+    return { records: [], readOnly: true };
+  }
+  const out: BridgeTransferRecord[] = [];
+  const seen = new Set<string>();
+  let dropped = 0;
+  for (const item of doc.records) {
+    const r = bridgeRecordFromStored(item);
+    if (!r || seen.has(r.id)) {
+      dropped += 1;
+      continue;
+    }
+    seen.add(r.id);
+    out.push(r);
+  }
+  if (out.length > MAX_BRIDGE_TRANSFERS) return { records: out.slice(0, MAX_BRIDGE_TRANSFERS), readOnly: true };
+  return { records: out, readOnly: dropped > 0 };
+}
+
+/** The records to keep: newest first; over the cap, the oldest finished ones go first, then the oldest. */
+export function pruneBridgeTransfers(list: readonly BridgeTransferRecord[]): BridgeTransferRecord[] {
+  const newestFirst = [...list].sort((a, b) => b.sentAt - a.sentAt);
+  if (newestFirst.length <= MAX_BRIDGE_TRANSFERS) return newestFirst;
+  const drop = new Set<BridgeTransferRecord>();
+  for (const r of [...newestFirst].reverse()) {
+    if (newestFirst.length - drop.size <= MAX_BRIDGE_TRANSFERS) break;
+    if (bridgeTransferFinal(r)) drop.add(r);
+  }
+  const kept = newestFirst.filter((r) => !drop.has(r));
+  return kept.slice(0, MAX_BRIDGE_TRANSFERS);
+}
+
+function persist(): Promise<void> {
+  const target = attached;
+  if (!target || target.readOnly) return writeQueue;
+  // Only records the strict parse would accept are written, so the wallet
+  // never makes its own list read-only; any other stays in memory.
+  const stored = listBridgeTransfers()
+    .map(bridgeRecordToStored)
+    .filter((r) => bridgeRecordFromStored(r) !== null);
+  const doc = JSON.stringify({ version: BRIDGE_STORE_VERSION, records: stored });
+  // One queue: writes land in the order the changes were made. A failed
+  // write is not retried (the next change writes the whole list again).
+  writeQueue = writeQueue.then(() => writeStoreItem(target.store, BRIDGE_TRANSFERS_KEY, doc)).catch(() => undefined);
+  return writeQueue;
+}
+
+/**
+ * Reads the open wallet's stored transfers into the screen's list (the
+ * Bridge screen calls it when it opens). Records already in memory for the
+ * SAME wallet are kept (they are the newest), stored ones are added; when
+ * the list in memory belongs to another wallet (the PIN opened the other
+ * one) it is replaced. Returns whether the stored list is read-only.
+ */
+export async function loadBridgeTransfers(store: KeyValueStore = AsyncStorage): Promise<{ readOnly: boolean }> {
+  await writeQueue;
+  const profileId = storeProfileOf(store).id;
+  const parsed = parseBridgeTransfers(await readStoreItem(store, BRIDGE_TRANSFERS_KEY));
+  if (attached?.profileId !== profileId) records.clear();
+  for (const r of parsed.records) if (!records.has(r.id)) records.set(r.id, r);
+  for (const r of pruneRecordsMap()) records.delete(r);
+  attached = { store, profileId, readOnly: parsed.readOnly };
+  notifyRecords();
+  return { readOnly: parsed.readOnly };
+}
+
+function pruneRecordsMap(): string[] {
+  const keep = new Set(pruneBridgeTransfers([...records.values()]).map((r) => r.id));
+  return [...records.keys()].filter((id) => !keep.has(id));
+}
+
+/** Whether the stored list could not be read (writes are then skipped). */
+export function bridgeTransfersReadOnly(): boolean {
+  return attached?.readOnly === true;
+}
+
+/** Records a transfer the screen just sent and stores the list. `sentAt` defaults to now. */
 export function recordBridgeTransfer(
   plan: BridgePlan,
   sentIn: { sourceTxHash: string | null; userOpHash: string | null; sentAt?: number },
@@ -1028,29 +1316,49 @@ export function recordBridgeTransfer(
     retryTxHash: null,
   };
   records.set(record.id, record);
+  for (const id of pruneRecordsMap()) records.delete(id);
   notifyRecords();
+  void persist();
   return record;
 }
 
-/** Updates fields of a record (unknown ids are ignored). */
+/** Updates fields of a record and stores the list (unknown ids are ignored). */
 export function updateBridgeTransfer(id: string, patch: Partial<Omit<BridgeTransferRecord, 'id'>>): BridgeTransferRecord | null {
   const current = records.get(id);
   if (!current) return null;
   const next = { ...current, ...patch };
   records.set(id, next);
   notifyRecords();
+  void persist();
   return next;
 }
 
-/** Every record of this session, newest first. */
+/** Every record of the open wallet, newest first. */
 export function listBridgeTransfers(): BridgeTransferRecord[] {
   return [...records.values()].sort((a, b) => b.sentAt - a.sentAt);
 }
 
-/** For the checks: forget every record. */
-export function resetBridgeTransfers(): void {
+/** Resolves when every write queued so far has finished (for the checks). */
+export function bridgeTransfersWritten(): Promise<void> {
+  return writeQueue;
+}
+
+/**
+ * Forgets every record: the list in memory at once, and, with a store,
+ * the stored list too (the wipe, "Reset the transfer list"). Nothing on the
+ * network changes. Afterwards the store is writable again.
+ */
+export async function resetBridgeTransfers(store?: RemovableKeyValueStore): Promise<void> {
   records.clear();
   notifyRecords();
+  if (!store) {
+    attached = null;
+    return;
+  }
+  await writeQueue;
+  if (store.removeItem) await removeStoreItem(store, BRIDGE_TRANSFERS_KEY);
+  else await writeStoreItem(store, BRIDGE_TRANSFERS_KEY, JSON.stringify({ version: BRIDGE_STORE_VERSION, records: [] }));
+  if (attached && attached.store === store) attached = { ...attached, readOnly: false };
 }
 
 /** True when a record needs no more polling. */
@@ -1133,7 +1441,7 @@ export function bridgeRetryCall(record: Pick<BridgeTransferRecord, 'status' | 'r
 /** Why the retry cannot be sent from here right now, or null when it can. */
 export function bridgeRetryBlocker(activeCaip2: string, record: Pick<BridgeTransferRecord, 'destinationCaip2' | 'destinationLabel'>): string | null {
   if (activeCaip2 !== record.destinationCaip2) {
-    return `Anyone can send this delivery transaction on ${record.destinationLabel}, paying the gas there. To send it from this wallet, switch to ${record.destinationLabel} (Settings → Developer) and come back to this screen; transfers stay listed until the app is closed.`;
+    return `Anyone can send this delivery transaction on ${record.destinationLabel}, paying the gas there. To send it from this wallet, switch to ${record.destinationLabel} (Settings → Developer) and come back to this screen; this transfer stays listed here.`;
   }
   return null;
 }

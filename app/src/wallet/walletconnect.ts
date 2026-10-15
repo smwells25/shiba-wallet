@@ -1,4 +1,11 @@
-import { AsyncStorage, readStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
+import {
+  AsyncStorage,
+  activeStoreProfile,
+  readStoreItem,
+  writeStoreItem,
+  STORE_KEYS,
+  type StoreProfile,
+} from './store-keys.ts';
 import { buildApprovedNamespaces, getSdkError, normalizeNamespaces } from '@walletconnect/utils';
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
@@ -2620,68 +2627,161 @@ export function callsStatusFromReceipt(record: WcCallsRecord, receipt: unknown):
 }
 
 // ---------------------------------------------------------------------------
-// SDK lifecycle (app side only; never runs under scripts/check-wc.mjs)
+// SDK lifecycle (the client factory is app side only and never runs under
+// scripts/check-wc.mjs; the per-wallet cache around it is pure and checked there)
 // ---------------------------------------------------------------------------
 
-let cachedInit: { projectId: string; promise: Promise<WcClient> } | null = null;
+/*
+ * ONE SDK CLIENT PER WALLET (duress wallet, docs/DURESS_WALLET.md section
+ * 5.2). The SDK keeps pairings, sessions, keys and pending requests in its
+ * OWN storage, outside the storage seam: @walletconnect/core 2.25.0 builds
+ * every key as "wc@2:core:" (or "wc@2:client:" in the sign client) + a
+ * version + core.customStoragePrefix + "//" + a name (src/controllers/
+ * store.ts:77–78, keychain.ts:41–42, messages.ts:61–70, subscriber.ts:73–75,
+ * history.ts:48–49, expirer.ts:48–49, verify.ts:53, events.ts:40–42), and
+ * customStoragePrefix is ":" + the option when given, else "" (src/core.ts:99),
+ * in AsyncStorage (core.ts:132–134 → @walletconnect/keyvaluestorage 1.1.1's
+ * react-native build, which calls AsyncStorage with the key unchanged). Read
+ * from the installed package's source map (dist/index.js.map). So:
+ *  - the PRIMARY wallet's client passes no prefix: its keys stay exactly as
+ *    before (no migration, existing sessions keep working);
+ *  - another profile's client (the decoy) passes the profile's prefix
+ *    (keys "…:0.3:w2//session"), so it never reads the real wallet's
+ *    sessions, and the real wallet never reads its;
+ *  - the SDK also keeps a process-wide core per prefix (core.ts:235–268,
+ *    globalThis["_walletConnectCore_" + prefix]), so the two clients never
+ *    share a relay connection or a keychain.
+ * Two keys carry no prefix (core.ts:65 WALLETCONNECT_CLIENT_ID, written only
+ * by Core.init, which this app does not call; core.ts:169 / 224
+ * WALLETCONNECT_LINK_MODE_APPS, written only for link-mode peers, which needs
+ * the wallet's own metadata.redirect.linkMode — this app sets no redirect).
+ * When the open wallet changes, the other wallet's client closes its relay
+ * connection (relayer.transportClose), so it stops receiving requests while
+ * the other wallet is open; it reopens when its wallet is opened again.
+ */
+
+/** The SDK's customStoragePrefix for a storage profile: none for the primary wallet, the profile's prefix otherwise. */
+export function wcStoragePrefixFor(profile: StoreProfile): string | undefined {
+  return profile.keyPrefix === null ? undefined : profile.keyPrefix;
+}
+
+/** The part of a running SDK client that the cache pauses and resumes (WalletKit's core.relayer). */
+export interface WcRelayControl {
+  transportClose(): Promise<void>;
+  transportOpen(): Promise<void>;
+}
+
+interface WcCacheEntry<C> {
+  projectId: string;
+  promise: Promise<{ client: C; relay: WcRelayControl | null }>;
+  paused: boolean;
+}
 
 /**
- * Initializes (once) and returns the WalletKit client. The compat shim and
- * the SDK are dynamically imported here, in the order the RN usage docs
- * require ("@walletconnect/react-native-compat must be imported before any
- * @reown/* dependencies"), so app startup and the Node check script never
- * evaluate them. WalletKit persists pairings/sessions itself through
- * AsyncStorage (via @walletconnect/core), so sessions survive app restarts
- * without this module storing anything beyond the project id.
+ * The per-wallet client cache (pure, injectable for scripts/check-wc.mjs).
+ * `create(projectId, storagePrefix)` starts one SDK client.
+ */
+export function createWcClientCache<C>(
+  create: (projectId: string, storagePrefix: string | undefined) => Promise<{ client: C; relay: WcRelayControl | null }>,
+) {
+  const entries = new Map<string, WcCacheEntry<C>>();
+
+  /** Closes every other wallet's relay connection and reopens this wallet's (best effort). */
+  async function follow(profile: StoreProfile): Promise<void> {
+    for (const [id, entry] of entries) {
+      const mine = id === profile.id;
+      if (mine === !entry.paused) continue;
+      entry.paused = !mine;
+      try {
+        const { relay } = await entry.promise;
+        if (relay) await (mine ? relay.transportOpen() : relay.transportClose());
+      } catch {
+        // A client that failed to start or a relay that cannot be reached:
+        // nothing to pause, and a reopen is retried by the SDK's heartbeat.
+      }
+    }
+  }
+
+  async function get(projectId: string, profile: StoreProfile): Promise<C> {
+    for (const entry of entries.values()) {
+      if (entry.projectId !== projectId) {
+        throw new Error('WalletConnect was already started with a different project id. ' + 'Restart the app to apply the new one.');
+      }
+    }
+    // The entry is created before the first await, so two callers in the
+    // same tick share one client (the SDK's own warning: "Init() was called
+    // 2 times").
+    let entry = entries.get(profile.id);
+    if (!entry) {
+      entry = { projectId, promise: create(projectId, wcStoragePrefixFor(profile)), paused: false };
+      entries.set(profile.id, entry);
+    }
+    const current = entry;
+    await follow(profile);
+    try {
+      return (await current.promise).client;
+    } catch (e) {
+      // Failed init (bad project id, no network) must not poison retries.
+      if (entries.get(profile.id) === current) entries.delete(profile.id);
+      throw e;
+    }
+  }
+
+  return { get, follow, size: () => entries.size };
+}
+
+const wcClients = createWcClientCache<WcClient>(async (projectId, storagePrefix) => {
+  await import('@walletconnect/react-native-compat');
+  const [{ WalletKit }, { Core }] = await Promise.all([import('@reown/walletkit'), import('@walletconnect/core')]);
+  // telemetryEnabled defaults to true in @walletconnect/core 2.25.0, in
+  // which case the core posts an init event (client id, user agent,
+  // project id) to pulse.walletconnect.org. The wallet makes no analytics
+  // calls of its own, so the SDK's are switched off too; docs/PRIVACY.md
+  // relies on this line. customStoragePrefix: one SDK storage namespace
+  // per wallet (see above); undefined for the primary wallet.
+  const core = new Core({ projectId, telemetryEnabled: false, customStoragePrefix: storagePrefix });
+  const kit = await WalletKit.init({
+    core,
+    metadata: {
+      name: 'Shiba Wallet',
+      description: 'Non-custodial multi-chain wallet with account abstraction',
+      // Placeholder until the product has a real site (RFC 2606 reserves
+      // .example): dApps display this URL as the wallet's identity.
+      url: 'https://shiba-wallet.example',
+      icons: [],
+      // No `redirect` deep link: app.json defines no URL scheme yet, so
+      // dApp-initiated returns (mobile linking) are a later, additive
+      // step. Pairing still works by pasting the URI.
+    },
+  });
+  // IWalletKit satisfies WcClient structurally; the cast bridges the
+  // SDK's generic event typing to the narrow surface this app consumes.
+  return { client: kit as unknown as WcClient, relay: core.relayer };
+});
+
+/**
+ * Initializes (once per wallet) and returns the WalletKit client of the OPEN
+ * wallet (the active storage profile). The compat shim and the SDK are
+ * dynamically imported, in the order the RN usage docs require
+ * ("@walletconnect/react-native-compat must be imported before any @reown/*
+ * dependencies"), so app startup and the Node check script never evaluate
+ * them. WalletKit persists pairings/sessions itself through AsyncStorage
+ * (via @walletconnect/core), so sessions survive app restarts without this
+ * module storing anything beyond the project id.
  *
  * A project id change after a successful init requires an app restart: the
  * relay connection is a singleton by SDK design, and tearing it down
  * mid-flight would orphan live sessions. The Settings screen says so.
  */
 export async function initWalletConnect(projectId: string): Promise<WcClient> {
-  if (cachedInit && cachedInit.projectId === projectId) return cachedInit.promise;
-  if (cachedInit && cachedInit.projectId !== projectId) {
-    throw new Error(
-      'WalletConnect was already started with a different project id. ' +
-        'Restart the app to apply the new one.',
-    );
-  }
-  const promise = (async (): Promise<WcClient> => {
-    await import('@walletconnect/react-native-compat');
-    const [{ WalletKit }, { Core }] = await Promise.all([
-      import('@reown/walletkit'),
-      import('@walletconnect/core'),
-    ]);
-    // telemetryEnabled defaults to true in @walletconnect/core 2.25.0, in
-    // which case the core posts an init event (client id, user agent,
-    // project id) to pulse.walletconnect.org. The wallet makes no analytics
-    // calls of its own, so the SDK's are switched off too; docs/PRIVACY.md
-    // relies on this line.
-    const core = new Core({ projectId, telemetryEnabled: false });
-    const kit = await WalletKit.init({
-      core,
-      metadata: {
-        name: 'Shiba Wallet',
-        description: 'Non-custodial multi-chain wallet with account abstraction',
-        // Placeholder until the product has a real site (RFC 2606 reserves
-        // .example): dApps display this URL as the wallet's identity.
-        url: 'https://shiba-wallet.example',
-        icons: [],
-        // No `redirect` deep link: app.json defines no URL scheme yet, so
-        // dApp-initiated returns (mobile linking) are a later, additive
-        // step. Pairing still works by pasting the URI.
-      },
-    });
-    // IWalletKit satisfies WcClient structurally; the cast bridges the
-    // SDK's generic event typing to the narrow surface this app consumes.
-    return kit as unknown as WcClient;
-  })();
-  cachedInit = { projectId, promise };
-  try {
-    return await promise;
-  } catch (e) {
-    // Failed init (bad project id, no network) must not poison retries.
-    cachedInit = null;
-    throw e;
-  }
+  return wcClients.get(projectId, activeStoreProfile());
+}
+
+/**
+ * Called by WalletContext when the PIN opened another wallet: the other
+ * wallet's SDK client (if one runs) closes its relay connection, and this
+ * wallet's reopens. Never throws.
+ */
+export function walletConnectFollowProfile(profile: StoreProfile): Promise<void> {
+  return wcClients.follow(profile);
 }

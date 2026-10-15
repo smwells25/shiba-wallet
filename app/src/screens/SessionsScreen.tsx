@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AsyncStorage } from '../wallet/store-keys';
 import {
   ActivityIndicator,
   Alert,
