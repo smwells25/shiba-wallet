@@ -8970,3 +8970,47 @@ Opus.
       inputs; the Activity row for 0x1e9f4593… reading "Bridged …" after a
       fresh decode; the new sent-time stamp within seconds of the source
       block.
+- [x] EMULATOR PASS p21c — THE MINIMUM-FEE REHEARSAL DID NOT STICK
+      (2026-10-15 UTC; Expo Go on emulator 37.1.11, Metro at 4b5c6de; 2
+      prompts, one per send; no repo files edited; every hash status 0x1 on
+      publicnode and sepolia.drpc.org; captures in the scratchpad p21c).
+      The Developer option renders with its exact label and hint; with it
+      ON, a 0.00001 test ETH send to Account 2 showed "MAX NETWORK FEE
+      0.000000000000357 test ETH", "Worst case at 0.000000017 gwei max fee
+      × 21000 gas…", the WarningBox, "Priced at the minimum fee: a priority
+      fee of 1 wei and a max fee of 17 wei per gas (the latest block's base
+      fee, 16 wei, plus 1 wei).", "TOTAL (WORST CASE) 0.000010000000357
+      test ETH", the own-account risk line, "Pre-flight simulation passed";
+      ONE prompt; tx
+      0x14c3ba92811ae1087412934a1321da2886cbd5625f6378d1d8a20ad8544985e9
+      (nonce 28, maxFee 17 / tip 1, gas 21,000) was MINED IN THE VERY NEXT
+      BLOCK 11919111 (effective price 17) — it never sat pending, Activity
+      showed no pending section; the option turned itself off (a fresh
+      Review priced normally at 0.001000032 gwei; the switch read
+      unchecked) and was re-armed; SEND 2 (same terms, tx
+      0x59dc1fb6a0c7656e031d854496cbd9c557d9b58dd1c13b3f3be0ac00a5725179,
+      nonce 29) entered the pool ~35 s after the prompt (the same delay as
+      p21b — signWith's seed derivation), the Send success view showed the
+      pending block exactly as designed ("Waiting to be included:
+      transaction 0x59dc…5179 (nonce 29) sends 0.00001 test ETH to 0xb699…
+      sent less than a minute ago.", "Newest version 0x59dc…5179: max fee
+      0.000000017 gwei per gas, priority fee 0.000000001 gwei.", "The
+      network endpoint lists it as waiting in its pool.", buttons "Speed
+      up" / "Cancel" — NOT tapped) and both RPCs returned null, then it was
+      mined in block 11919214 about 3 blocks later. THE NODE NEVER REFUSED
+      EITHER. WHY: Sepolia's base fee held at 16 wei with blocks 29–37%
+      full (57–74M of 200M gas, blocks 11919110–111 and 11919208–214), so
+      any transaction paying ≥ the base fee is included at once; the
+      phase-19 script's stuck transaction paid a MAX FEE OF 1 WEI, BELOW
+      the base fee, which no block can include until the base fee falls
+      below it. Balances: Account 1 1,816,233,898,769,515 →
+      1,796,233,898,055,515 wei (2 × 1e13 + 2 × 21,000 × 17, exact; nonce
+      28 → 30), Account 2 +2e13. NOT REACHED: Speed up / Cancel confirms,
+      prompts, notices, the replacement checks, the "underpriced" refusal
+      path, the Activity pending card. FIX DISPATCHED: price the rehearsal
+      BELOW the base fee (max fee 1 wei, priority fee 1 wei, the phase-19
+      figures), keep the "node may refuse" sentence, and say on the confirm
+      that the transaction cannot be included while the base fee is above
+      1 wei. END STATE: Home, Ethereum Sepolia, Account 1, light mode, the
+      switch OFF, protection OFF, TalkBack OFF, IME ADBKeyboard, Metro at
+      4b5c6de.
