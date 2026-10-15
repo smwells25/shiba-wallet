@@ -8904,3 +8904,69 @@ Opus.
       changed. END STATE: Home, Ethereum Sepolia, Account 1, light mode,
       TalkBack OFF (level 6), protection OFF, IME ADBKeyboard, auto-lock 1
       min, Metro at 4b5c6de; logcat buffer 16 MiB.
+- [x] Pass p21b findings FIXED (commit 8da86a6; 24 files; check-bridge 201
+      (was 180; 13 module mutants), check-devmode 412 (407), check-activity
+      292 (281); the engine verb table +1 (activity-decode tests
+      extended); offline runner ALL GREEN in the CTO's isolated worktree
+      on HEAD 9a726bf: engine 1,046, app 9,156 across 59 suites, lint 0/0,
+      tsc clean; every mutant caught; not seen on a device). (1) HIDDEN
+      LABELS, the fallback: HiddenFieldLabel keeps the DEFAULT importance
+      (TalkBack reads nothing from an unimportant labelling node) and
+      carries the field's name as its own accessibilityLabel so the stop
+      reads as a caption ("Contact name", then "Name. Edit box for Contact
+      name"); 24 fields became VISIBLE CAPTIONS (Contacts "Contact name" /
+      "New name for <name>" / "<network> address"; Accounts "Account name"
+      / "New account name (optional)" / "Ethereum address to watch" /
+      "Name for the watched address"; "<network> endpoint URL"; Tokens
+      "Token contract address" / "Token symbol" / "Token name (optional)";
+      Recover "UserOperation or transaction hash, optional" / "Lost account
+      address" / "Original owner address, optional"; "WalletConnect pairing
+      link"; Import "Recovery phrase"; Multisig "Name (optional)" /
+      "Recipient address" / "Amount in <symbol>"; Swap "Custom maximum
+      slippage in basis points"; Spending limits "Custom window length in
+      <unit>"; DCA and Sessions "Custom period length"); 4 keep a hidden
+      caption (PasteOrScan and Multisig's three paste boxes, whose
+      placeholders show the same words); the check-devmode scan requires
+      each remaining hidden label to be the FIRST child of the View holding
+      its field (the absolute positioning made order follow position).
+      (2) chosenBridgeProvider returns only the user's choice, never a
+      default — both radios "not checked", Get quotes / Review disabled
+      until a tap; "One provider serves this route; choose it to
+      continue." (3) the radio control is the card's head
+      (providerRowSpokenLabel "LayerZero (Stargate), moves test ETH[, fee
+      X]" / "Circle CCTP (USDC), moves USDC, not available" — no final
+      period); the note, the three trust sentences, the fee and the
+      measured time are separate stops in a non-focusable, non-clickable
+      body (ReactViewManager.kt 95–98, 377–397; Pressable.js 252, 258)
+      that still selects the row on touch. (4) each Bridge view has its
+      own ScrollView key (bridge-form / -confirm / -aa-confirm / -success)
+      so React does not reuse the scrolled one (Send and Staking have the
+      same latent behaviour — follow-up). (5) ACTIVITY: an OFT send
+      (0xc7c7f5b3) whose top-level `to` is a pinned Stargate native pool
+      on that chain reads "Bridged 0.0002 test ETH to OP Sepolia through
+      LayerZero (Stargate's native ETH pool 0x9Cc7…0706); messaging fee
+      0.000102050140082558 test ETH" (one extra eth_getTransactionByHash;
+      dstEid and amountLD at the OFT_SEND_LAYOUT offsets; the canonical
+      0x80 head required; fee = value − amountLD) and "Failed: tried to
+      bridge … only the network fee was paid"; the engine's verb table
+      gains bridged → bridge; a smart-account bridge keeps the generic
+      operation sentence (inner calldata not described — follow-up). (6)
+      GAS: NO CHANGE — prepareEvmSend uses the node's estimate as the
+      limit for Send, Staking, ERC-20 and the bridge alike (no padding
+      rule exists; p19a's "limit = estimate = 21,000" agrees); pinned
+      equal. (7) bridgeFormInputsShown hides the chips and the amount
+      field where no provider serves the network (leftover: the LayerZero
+      row on Base still names "→ Arbitrum Sepolia"). (8) SENT TIME: it was
+      ALREADY stamped after the broadcast; the ~40 s gap is signWith's
+      mnemonicToSeed (BIP-39's 2,048 PBKDF2 rounds in JavaScript,
+      WalletContext.tsx 1337) plus signing — reasoned from the code, not
+      measured; broadcastStamped() now stamps inside the signing callback
+      on both paths, pinned with a fake clock. (9) the amount placeholder
+      "Amount, for example 0.0002". NEXT EMULATOR CHECK: the captions at
+      phone width (the Settings endpoint row, the Contacts address row,
+      the custom-period rows); the hidden captions spoken before their
+      field; the provider rows under TalkBack and the single-provider
+      sentence; the views opening at the top; Base Sepolia without the
+      inputs; the Activity row for 0x1e9f4593… reading "Bridged …" after a
+      fresh decode; the new sent-time stamp within seconds of the source
+      block.
