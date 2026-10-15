@@ -8379,3 +8379,63 @@ Opus.
       (UnreceivedTokenCached / retryReceiveToken), bus mode, an ERC-20
       OFT, mainnet security, the flat fee at other amounts (§15.13 steps
       2–4 remain).
+- [x] Item 1, adapter follow-ups from the live run (commit bbc21d7;
+      packages/chains-evm/src/bridge/types.ts + layerzero-oft.ts +
+      test/bridge.test.ts 27 → 40; offline runner ALL GREEN in the CTO's
+      isolated worktree on HEAD 051b8f1: engine 1,035 — chains-evm 764 —
+      app 8,795 across 57 suites; eight hand mutants caught; the existing
+      27 tests unchanged; sources: the cited Stargate / LayerZero
+      Solidity files from the scratchpad copies (StargateBase.sol
+      UnreceivedTokenCached 95–102, retryReceiveToken 295–313,
+      receiveTokenTaxi 345, _isTaxiMode 644; StargatePoolNative.sol
+      _safeOutflow 47–50 — unlimited gas on retry; not re-hashed against
+      the commits, no network)). TRACK() BY THE CHAINS' OWN EVENTS: two
+      injected readers (BridgeReceiptLogReader for the source receipt,
+      BridgeEventLogReader with eth_getLogs semantics for the
+      destination; the constructor refuses one without the other; with
+      neither, track() behaves as before) — findLayerZeroSend needs
+      exactly one OFTSent (source pool, the route's dstEid) paired with
+      one PacketSent (same srcEid / dstEid / OApps / GUID), else "cannot
+      be followed"; the destination is asked for [OFT_RECEIVED_TOPIC,
+      guid] on the target pool and "delivered" needs the same GUID,
+      source eid, recipient and amountReceivedLD (a mismatch → unknown),
+      else on Stargate targets for UnreceivedTokenCached filtered by the
+      GUID in its data; OFTReceived wins over a cache; the result is
+      additive as BridgeTransferStatus.onChain {status delivered |
+      cached-needs-retry | in-flight | source-reverted | unknown, guid,
+      destinationTx, amountReceived, apiStatus} mapped to state
+      (cached → 'awaiting-destination-action' with the retry call in
+      destinationCalls); Scan is SUPPORTING EVIDENCE ONLY (DELIVERED with
+      no event stays in-flight; a non-"on its way" status with nothing
+      on-chain → state unknown; a Scan error swallowed on this path);
+      bus mode → unknown (a passenger's delivery GUID needs the
+      TokenMessaging source, not read); encodeStargateRetryReceiveToken
+      pinned byte for byte against ethers (target = the receiving pool,
+      value 0; refused for a cached transfer carrying a compose message).
+      QUOTES: BridgeTimeEstimate.measured {seconds, date, description}
+      from the deployment's measuredDelivery (90 s Sepolia → OP Sepolia,
+      30 s OP Sepolia → Arbitrum Sepolia, 2026-10-15; min/max stay null —
+      one measurement is not a range), the confirmation count singular
+      or plural; BridgeQuoteRequest.nativeSymbol (default "ETH"; 1–20
+      letters, digits, spaces, dots or hyphens; the fee lines use it,
+      route assets keep "ETH"; CCTP ignores it); BridgeQuote.gasEstimate
+      from an injected estimateGas (null when absent, when an approval
+      must be mined first, or when the estimator throws — each with a
+      note; a non-positive result refused); liveNotes on the three
+      native pools: Stargate's own lzReceive gas option (type 3, 150,000)
+      on every message while the wallet's extraOptions stay empty, and
+      the flat 10^12-wei pool fee quoted at 0.0001 and 0.0002 ETH on the
+      routes that charge one ("an observation, not a promise"). STRINGS
+      pinned incl. the cached case ("The message arrived, but Stargate
+      could not hand over the ETH with its 2,300-gas transfer (a deployed
+      smart account cannot accept one), so the funds wait in the
+      receiving network's pool … Anyone can deliver them by calling
+      retryReceiveToken there…") and the four Scan suffixes. DOC
+      FOLLOW-UPS (with the Bridge-screen slice): BRIDGE_PROVIDERS.md's
+      new fields, injections and comparison rows (time, fee, tracking);
+      BRIDGING.md §15.6 / §15.9 / §15.15 / §15.16 pointers. UNVERIFIED:
+      the decoders against the raw live receipts (tested on
+      ethers-encoded logs from the §15.16 values; the run record could
+      become a fixture); UnreceivedTokenCached and the retry live; bus
+      GUIDs; a UserOperation sender's gas (a plain eth_estimateGas from
+      the account address does not reflect the operation).
