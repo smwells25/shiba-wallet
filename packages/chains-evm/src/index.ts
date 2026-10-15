@@ -923,3 +923,6 @@ export type {
   SerializedDcaTerms,
   UniswapV3Deployment,
 } from './kernel-dca.js';
+
+// Bridge provider adapters (phase 21 item 1; docs/BRIDGE_PROVIDERS.md).
+export * from './bridge/index.js';
