@@ -136,8 +136,20 @@ examples/demo.mjs          Offline end-to-end engine demo
   Chairperson). A renderer change discards the quick-boot snapshot
   (cold boot, the PIN keyguard, `adb reverse` lost). CLOSING THE WINDOW
   IS A GRACEFUL SHUTDOWN (snapshot saved) and is fine; a pass relaunches
-  it. The emulator package is updated to 37.2.12 with the previous
-  directory kept beside it for rollback (phase 21 item 0). A JDK for
+  it. The emulator package is 37.2.12 since 2026-10-14 (installed BY
+  HAND: sdkmanager 21.0 fails to unzip the archive — "Error reading Zip
+  content from a SeekableByteChannel" — so the official archive
+  emulator-darwin_x64-16428233.zip was downloaded from
+  dl.google.com/android/repository, its SHA-1 0c08fc22…e30b checked
+  against repository2-3.xml, unzipped and swapped in; package.xml
+  rewritten with the new revision); ROLLBACK = stop the emulator and
+  put ~/Library/Android/emulator-37.1.11.bak (or
+  ~/Library/Android/emulator-dl/emulator-37.1.11-removed) back as
+  sdk/emulator; the version change discarded the quick-boot snapshot
+  once (cold boot, PIN keyguard). With the ANGLE renderer the window is
+  confirmed visible to the Chairperson on 37.1.11; the first 37.2.12
+  launch rendered the wallet on Home for adb (window visibility to be
+  confirmed by the Chairperson). A JDK for
   sdkmanager and dev builds lives in the git-ignored .local/jdk
   (env.sh sets JAVA_HOME; the scratchpad copy was deleted by the temp
   cleaner). AFTER ANY EMULATOR RESTART re-add `adb
@@ -8126,3 +8138,9 @@ first, then the p20d re-check; 2 — item 1's live leg and app slice, item
 Opus.
 
 ## Phase 21 progress
+- [x] Item 0 — the emulator window and package (2026-10-14): the ANGLE
+      launch rule recorded; emulator 37.2.12 installed by hand (see the
+      standing rule) with the 37.1.11 directory kept for rollback; the
+      wallet relaunched on Home after each restart (keyguard PIN, `adb
+      reverse`, the launch lock with the fingerprint); the p20d leftovers
+      re-check is still to run.
