@@ -8144,3 +8144,86 @@ Opus.
       wallet relaunched on Home after each restart (keyguard PIN, `adb
       reverse`, the launch lock with the fingerprint); the p20d leftovers
       re-check is still to run.
+- [x] Wave 1, items 2 (Stage 1) and 4 + the item-3 Developer option (one
+      commit, f87142d, because the two slices share check scripts and the
+      tree; verified as one snapshot in the CTO's isolated worktree on
+      HEAD b712f64: engine 995, app 8,795 across 57 suites — new
+      check-storage-seam 47; check-aa 371 (was 369), check-devmode 401
+      (399), check-pending 186 (154), check-passkeys 138 (133),
+      check-recovery 269 (264); the vault suites check-storage 269,
+      check-key-import 247 and check-settings-protection 51 UNCHANGED —
+      lint 0/0, tsc clean; every mutant caught; not seen on a device).
+      STAGE 1 — THE STORAGE SEAM (app/src/wallet/store-keys.ts; named so
+      because check-passkeys / check-sessions pin imports starting
+      "./storage"): INVENTORY at 0ca6e8a = 42 shiba-wallet.* names in 30
+      files (39 keys or families, the keychain service, 4 notification-id
+      prefixes; the design doc said 40) — 21 wallet-scoped, 9 device, 9
+      secret; STORE_KEYS declares each with scope, family flag and
+      backend (an undeclared key throws UndeclaredStoreKeyError);
+      readStoreItem / writeStoreItem / removeStoreItem / listStoreKeys /
+      readSecureItem / writeSecureItem / deleteSecureItem / lazyAppStore
+      return the underlying call's own promise (no async, no catch —
+      same value, same error object, synchronous throws stay
+      synchronous); storage.ts's 45 secure-store calls go through the
+      wrappers with the same keys, options and order; 21 wallet modules
+      migrated; scopedStoreKey(key, profile = PRIMARY) is the IDENTITY
+      today (pinned) and a second profile would prefix wallet and secret
+      keys with shiba-wallet.profile-<prefix>. (device keys untouched;
+      no setter exists). check-storage-seam scans 159 files + App.tsx for
+      key literals, AsyncStorage / SecureStore imports and raw calls
+      outside the seam, with an EXACT per-file allow-list that must not
+      go stale: recovery.ts (import, 2 literals, 1 get, 5 set),
+      config/prefs.ts and config/networks.ts (import, literal, 1 get, 1
+      set each — outside the agent's paths), and six files that only
+      pass the store along (Guardians, Inheritance, OwnerRotation,
+      Passkey, Sessions screens, WalletConnectContext); WalletContext
+      keeps one value import of expo-secure-store to bind the native
+      module (pinned as the only one); 7 in-suite mutants + a hand
+      mutant caught. DURESS_WALLET.md: §2.3 fixed (F-77(b)), §3.1
+      counts re-verified, §5.2 Stages 0–1 done with Stage 1's remainders
+      (the allow-list, the WalletConnect SDK's own storage prefix, the
+      notification ids, splitting aa-config), new §7 with the
+      Chairperson's decisions — app PIN first then the duress PIN, a
+      BIP-85 child at a FIXED index 0 (recovery = the phrase + index 0,
+      nothing written down), "Remove wallet" removes both, a backup
+      required before a duress PIN — and the REMINDERS ANSWER: rule (b)
+      triggered by the APP PIN (reminders and alert notifications off
+      while an app PIN is on, because a Notifications section that
+      differs only on wallets with a duress PIN would give the decoy
+      away; rule (a) fails because coercion usually starts while the
+      real wallet was the last opened); OPEN: the agent read
+      "passphrase" as the lock-screen secret — the CTO reads the
+      Chairperson's "passphrase probably good option" as a BIP-39
+      passphrase (a hidden wallet from the same phrase, the Ledger
+      pattern) and has asked; no BIP-85 implementation is installed
+      (must be built over @scure/@noble against BIP-85's vectors).
+      ITEM 4: submitGuardianRecovery fires notifyAaOperationSent once
+      after client.sendCalls (kind 'other', sender = the recovered
+      account, owner = the submitting guardian); the Passkey screen's
+      test operation fires it after sendPasskeyCalls (in the screen, not
+      the function, because SendScreen's passkey path already records
+      its own — firing inside would double it); refused submits announce
+      0 (pinned). The Auto-lock title was ALREADY "Auto-lock" (651ee5d);
+      a pin added. ITEM 3 — THE MINIMUM-FEE REHEARSAL (send.ts, in
+      memory, gated by isTestNetwork, reset on restart): Developer switch
+      "Send the next regular-account transaction at the minimum fee (to
+      rehearse Speed up / Cancel)" (rendered only where offered; arming
+      refused on a main network); prepareEvmSend(…, { minimumFee })
+      re-checks the endpoint's chain and prices a priority fee of exactly
+      1 wei and a max fee of the latest base fee + 1 (the ordinary quote
+      key for key anywhere else); token sends re-priced by
+      repriceTokenQuoteAtMinimumFee incl. the OP-stack L1 fee; only the
+      regular-account native and token branches read it (smart-account
+      and NFT never); the confirm shows the WarningBox "Minimum-fee
+      rehearsal: this transaction will probably sit pending until you
+      speed it up or cancel it from Activity." and e.g. "Priced at the
+      minimum fee: a priority fee of 1 wei and a max fee of 15 wei per
+      gas (the latest block's base fee, 14 wei, plus 1 wei)."; the option
+      turns off after a successful send only; the Developer note states
+      the node may answer "transaction underpriced" and that Arbitrum
+      ignores the tip; the 516c023 replacement rule unchanged (a 1 / 15
+      wei send speeds up at ≥ 2 / 17). UNVERIFIED: a live under-priced
+      send on Sepolia (whether it sits pending or is refused); the
+      guardian / passkey operations on the real pending card; the base
+      fee read a second time separately from suggestFees (may differ by
+      a block); layouts.
