@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, Pressable, StyleSheet, Text, View } from 'react-native';
+import { usePreventScreenCapture } from 'expo-screen-capture';
 import { Button } from '../components';
 import { useTheme } from '../theme';
 import { usePrefs } from '../wallet/PrefsContext';
@@ -10,12 +11,16 @@ import {
   applyLockGateEvent,
   attemptUnlock,
   lockGateArmed,
+  lockGateAvailable,
+  lockGateWalletStatus,
   lockGateView,
   lockScreenHint,
   reconcileLockGate,
   type LockGateInputs,
   type LockGateState,
 } from '../wallet/lock';
+import { PIN_LENGTH } from '../wallet/pin';
+import { PIN_PAD_TITLE } from '../wallet/duress';
 
 /**
  * Whether the lock overlay is currently up. Consumers that can surface
@@ -59,6 +64,19 @@ export function useAppLock(): { locked: boolean } {
  * scripts/check-devmode.mjs; this component only feeds them AppState
  * events and its inputs.
  *
+ * APP PIN (opt-in; docs/DURESS_WALLET.md section 7.1). While an app PIN is
+ * set, the lock screen takes the PIN on the PinPad below instead of the
+ * device prompt (which is not a fallback for it), at launch and after
+ * auto-lock alike (the same lock view). The wallet status and the device
+ * answer this component feeds the pure functions are adjusted by
+ * ../wallet/lock.ts lockGateWalletStatus / lockGateAvailable: a wallet that
+ * loads behind the PIN counts as ready (so the launch locks and the lock
+ * stays up until the PIN was accepted and the opened wallet is loaded), and
+ * the gate never depends on biometrics. WalletContext.unlockWithPin decides
+ * which wallet the PIN opens; when it opens a different one, `profileKey`
+ * changes and the whole tree below is remounted, so no screen keeps state
+ * of the other wallet.
+ *
  * NOTE: the OS biometric prompt itself fires 'inactive'/'background'
  * AppState events on some platforms. That is harmless here: the away
  * timer those events start is cleared on the next 'active', and a lock
@@ -66,10 +84,15 @@ export function useAppLock(): { locked: boolean } {
  */
 export function LockGate({ children }: { children: React.ReactNode }) {
   const theme = useTheme();
-  const { status } = useWallet();
+  const { status: walletStatus, awaitingPin, unlockWithPin, profileKey } = useWallet();
   const { autoLockMs, ready: prefsReady } = usePrefs();
+  const { appPinOn } = usePrefs();
   // null until the device has answered: the gate fails closed meanwhile.
-  const [available, setAvailable] = useState<boolean | null>(null);
+  const [deviceAvailable, setAvailable] = useState<boolean | null>(null);
+  // With an app PIN: a wallet loading behind the PIN counts as ready, and
+  // the gate does not depend on biometrics (../wallet/lock.ts).
+  const status = lockGateWalletStatus(walletStatus, appPinOn);
+  const available = lockGateAvailable(deviceAvailable, appPinOn);
   const [gate, setGate] = useState<LockGateState>(INITIAL_LOCK_GATE_STATE);
   const [unlockError, setUnlockError] = useState<string | null>(null);
   const unlockBusy = useRef(false);
@@ -141,6 +164,23 @@ export function LockGate({ children }: { children: React.ReactNode }) {
     }
   };
 
+  // The app PIN's unlock (the lock view with a PinPad): WalletContext checks
+  // the PIN, opens (and loads) the wallet it belongs to, and only then the
+  // lock is lifted. Returns the sentence to show, or null on success; the
+  // PinPad has already dropped the typed digits.
+  const unlockWithAppPin = async (pin: string): Promise<string | null> => {
+    if (unlockBusy.current) return null;
+    unlockBusy.current = true;
+    try {
+      const outcome = await unlockWithPin(pin);
+      if (!outcome.ok) return outcome.message;
+      setGate((prev) => applyLockGateEvent(prev, { type: 'unlock' }, autoLockMs));
+      return null;
+    } finally {
+      unlockBusy.current = false;
+    }
+  };
+
   const view = lockGateView(reconciled, inputs);
   // `locked` = anything covers the screens (the lock screen, or the neutral
   // cover before the launch decision): the screens are hidden from view and
@@ -150,7 +190,7 @@ export function LockGate({ children }: { children: React.ReactNode }) {
 
   return (
     <LockStateContext.Provider value={lockValue}>
-      <View style={styles.fill}>
+      <View key={`profile-${profileKey}`} style={styles.fill}>
         {/*
           The screens stay MOUNTED under the lock (their state survives), but
           while locked they are removed from the accessibility tree, so a
@@ -197,10 +237,18 @@ export function LockGate({ children }: { children: React.ReactNode }) {
               <Text style={[styles.hint, { color: theme.textMuted }]}>
                 {lockScreenHint(reconciled.startedLocked)}
               </Text>
-              <Button title="Unlock" onPress={() => void unlock()} style={styles.button} />
-              {unlockError ? (
-                <Text style={[styles.error, { color: theme.danger }]}>{unlockError}</Text>
-              ) : null}
+              {appPinOn ? (
+                // The same words and the same pad whichever wallet the PIN
+                // would open (docs/DURESS_WALLET.md section 6.5).
+                <PinPad key={awaitingPin ? 'launch' : 'return'} prompt={PIN_PAD_TITLE} onComplete={unlockWithAppPin} />
+              ) : (
+                <>
+                  <Button title="Unlock" onPress={() => void unlock()} style={styles.button} />
+                  {unlockError ? (
+                    <Text style={[styles.error, { color: theme.danger }]}>{unlockError}</Text>
+                  ) : null}
+                </>
+              )}
             </View>
           ) : (
             // The launch decision is pending (the stored auto-lock choice is
@@ -212,6 +260,121 @@ export function LockGate({ children }: { children: React.ReactNode }) {
         ) : null}
       </View>
     </LockStateContext.Provider>
+  );
+}
+
+/**
+ * The app PIN pad (duress wallet Stage 2): ten digit keys and a delete key
+ * drawn by the app — never the system keyboard, which third-party keyboards
+ * may learn from (docs/DURESS_WALLET.md section 2.3 item 6). Used by the
+ * lock screen and by Settings → Privacy (set, change and remove a PIN).
+ *
+ *  - The typed digits are held only while they are being typed: when the
+ *    sixth digit is entered they are copied into the call and the state is
+ *    cleared BEFORE `onComplete` runs; nothing else keeps or logs them.
+ *  - Screen capture is blocked while a pad is shown, whatever the app-wide
+ *    Privacy switch says (expo-screen-capture 57.0.4
+ *    usePreventScreenCapture, which takes an optional key string,
+ *    build/ScreenCapture.d.ts:43,
+ *    with its own key 'pin-pad', so the app-wide key and the seed screens'
+ *    keys are not affected).
+ *  - Screen readers: every key is a button named "Digit N" / "Delete the
+ *    last digit" (Pressable accessibilityRole / accessibilityLabel /
+ *    accessibilityState, react-native 0.86.3
+ *    Libraries/Components/View/ViewAccessibility.d.ts:33, :44, :48); the
+ *    progress line is spoken as "N of 6 digits entered" (never the digits),
+ *    and the message line is a polite live region on Android
+ *    (accessibilityLiveRegion, ViewAccessibility.d.ts:245). Nothing it
+ *    says depends on which wallet a PIN would open.
+ */
+export function PinPad({
+  prompt,
+  onComplete,
+}: {
+  prompt: string;
+  /** Called with the 6 digits; returns the sentence to show (null = accepted). */
+  onComplete: (pin: string) => Promise<string | null>;
+}) {
+  usePreventScreenCapture('pin-pad');
+  const theme = useTheme();
+  const [digits, setDigits] = useState('');
+  const [message, setMessage] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  const press = (key: string) => {
+    if (busy) return;
+    if (key === 'delete') {
+      setDigits((d) => d.slice(0, -1));
+      return;
+    }
+    const next = (digits + key).slice(0, PIN_LENGTH);
+    if (next.length < PIN_LENGTH) {
+      setDigits(next);
+      return;
+    }
+    // Sixth digit: the state forgets the PIN before the check runs.
+    setDigits('');
+    setBusy(true);
+    setMessage(null);
+    onComplete(next).then(
+      (result) => {
+        if (!mounted.current) return;
+        setBusy(false);
+        setMessage(result);
+      },
+      () => {
+        if (!mounted.current) return;
+        setBusy(false);
+        setMessage('The PIN could not be checked. Try again.');
+      },
+    );
+  };
+
+  const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', 'delete'];
+  const dots = Array.from({ length: PIN_LENGTH }, (_, i) => (i < digits.length ? '●' : '○')).join(' ');
+  return (
+    <View style={styles.pad}>
+      <Text style={[styles.padPrompt, { color: theme.text }]}>{prompt}</Text>
+      <Text
+        accessibilityLabel={`${digits.length} of ${PIN_LENGTH} digits entered`}
+        style={[styles.padDots, { color: theme.text }]}
+      >
+        {dots}
+      </Text>
+      <View style={styles.padGrid}>
+        {keys.map((k, i) =>
+          k === '' ? (
+            <View key={`blank-${i}`} style={styles.padKey} importantForAccessibility="no" accessibilityElementsHidden />
+          ) : (
+            <Pressable
+              key={k}
+              accessibilityRole="button"
+              accessibilityLabel={k === 'delete' ? 'Delete the last digit' : `Digit ${k}`}
+              accessibilityState={{ disabled: busy }}
+              disabled={busy}
+              onPress={() => press(k)}
+              style={({ pressed }) => [
+                styles.padKey,
+                { borderColor: theme.controlBorder, backgroundColor: pressed ? theme.border : theme.card },
+              ]}
+            >
+              <Text style={[styles.padKeyText, { color: theme.text }]}>{k === 'delete' ? '⌫' : k}</Text>
+            </Pressable>
+          ),
+        )}
+      </View>
+      {busy ? <ActivityIndicator color={theme.accent} accessibilityLabel="Checking the PIN" /> : null}
+      <Text accessibilityLiveRegion="polite" style={[styles.error, { color: theme.danger }]}>
+        {message ?? ''}
+      </Text>
+    </View>
   );
 }
 
@@ -251,5 +414,39 @@ const styles = StyleSheet.create({
   error: {
     fontSize: 13,
     textAlign: 'center',
+  },
+  pad: {
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    gap: 12,
+  },
+  padPrompt: {
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  padDots: {
+    fontSize: 22,
+    letterSpacing: 4,
+  },
+  padGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    width: 264,
+    gap: 12,
+  },
+  padKey: {
+    width: 72,
+    height: 56,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'transparent',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  padKeyText: {
+    fontSize: 22,
+    fontWeight: '600',
   },
 });

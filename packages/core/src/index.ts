@@ -36,3 +36,15 @@ export type { AssetId } from './assets/caip19.js';
 export { AssetRegistry, nonFungibleAssetId, nonFungibleTokenId } from './assets/assets.js';
 export type { Asset, FungibleAsset, NftNamespace, NonFungibleAsset } from './assets/assets.js';
 export type { HistoryEntry, HistoryPage, HistoryProvider } from './history/types.js';
+export {
+  BIP85_APP_BIP39,
+  BIP85_HMAC_KEY,
+  BIP85_LANGUAGE_ENGLISH,
+  BIP85_PURPOSE,
+  bip85Bip39Path,
+  bip85ChildMnemonic,
+  bip85Entropy,
+  bip85MnemonicFromRoot,
+  mnemonicWordCount,
+} from './bip85.js';
+export type { Bip85WordCount } from './bip85.js';

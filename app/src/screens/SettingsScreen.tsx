@@ -150,6 +150,50 @@ import {
   listSpendingScopes,
 } from '../wallet/spending-policy';
 import { MULTISIG_SETTINGS_BLURB } from '../wallet/multisig';
+import { PinPad } from '../components/LockGate';
+import { NOTIFICATIONS_SECTION_TITLE, appNotifications } from '../wallet/notifications';
+import {
+  PIN_FORMAT_MESSAGE,
+  PIN_MISMATCH_MESSAGE,
+  PIN_NOT_USABLE_MESSAGE,
+  isTriviallyGuessed,
+  pinFormatError,
+} from '../wallet/pin';
+import {
+  APP_PIN_BACKUP_NOTE,
+  APP_PIN_COSTS_NOTE,
+  APP_PIN_LIMITS_NOTE,
+  APP_PIN_OFF_STATUS,
+  APP_PIN_ON_STATUS,
+  APP_PIN_SECTION_TITLE,
+  APP_PIN_SWITCH_LABEL,
+  APP_PIN_WHAT_NOTE,
+  AUTO_LOCK_WITH_PIN_NOTE,
+  DURESS_BACKUP_NOTE,
+  DURESS_EXPLANATION,
+  DURESS_FUNDING_NOTE,
+  DURESS_HONEST_CLAIM,
+  DURESS_MUST_DIFFER,
+  DURESS_NEEDS_PIN,
+  DURESS_NOT_SET_STATUS,
+  DURESS_SECTION_TITLE,
+  DURESS_SET_STATUS,
+  NOTIFICATIONS_OFF_WITH_PIN,
+  PIN_BACKUP_MISMATCH,
+  PIN_BACKUP_PROMPT,
+  PIN_PROMPTS,
+  PIN_RESULTS,
+  REMOVE_DURESS_CONFIRM_BODY,
+  REMOVE_DURESS_CONFIRM_TITLE,
+  REMOVE_PIN_CONFIRM_BODY,
+  REMOVE_PIN_CONFIRM_TITLE,
+  REMOVE_PIN_WITH_DURESS_BODY,
+  SCREEN_PROTECTION_WITH_PIN_NOTE,
+  WIPE_WITH_PIN_NOTE,
+  backupCheckLabel,
+  backupCheckPositions,
+  backupWordsMatch,
+} from '../wallet/duress';
 
 /** "A, B and C" / "A, B or C". */
 function listJoin(items: string[], conjunction: 'and' | 'or'): string {
@@ -1414,6 +1458,275 @@ function CustomNetworksSection({
   );
 }
 
+/**
+ * Settings → Privacy → "App PIN" and "Duress PIN" (duress wallet Stage 2;
+ * docs/DURESS_WALLET.md sections 6.5 and 7). Every PIN is typed on the
+ * app's own PinPad (components/LockGate.tsx), never the system keyboard.
+ * A PIN typed in one step is held in a ref only until the flow's last step
+ * runs, then dropped; the recovery phrase read for the backup check (and,
+ * for a duress PIN, to derive the second wallet) is held the same way.
+ *
+ * Under the second wallet this section reads exactly as it does in a
+ * wallet with an app PIN and no duress PIN (section 6.4): the app PIN is
+ * on, "Change PIN" changes the PIN that opened this wallet, and no duress
+ * PIN is shown as set. Adding a duress PIN or removing the PIN there runs
+ * the same steps and ends with PIN_ACTION_NOT_COMPLETED (section 7.9).
+ */
+type PinFlow = 'pin-on' | 'pin-change' | 'pin-off' | 'duress-add' | 'duress-change' | 'duress-remove';
+type PinStep =
+  | { kind: 'idle' }
+  | { kind: 'backup'; flow: PinFlow; positions: [number, number] }
+  | { kind: 'pad'; flow: PinFlow; stage: 'current' | 'new' | 'confirm' };
+
+function AppPinSection() {
+  const theme = useTheme();
+  const fieldLabel = useFieldLabels();
+  const {
+    revealMnemonic,
+    turnOnAppPin,
+    changeAppPin,
+    turnOffAppPin,
+    duressPinSet,
+    addDuressPin,
+    changeDuressPin,
+    removeDuressPin,
+  } = useWallet();
+  const { appPinOn, setNotifications } = usePrefs();
+  const [step, setStep] = useState<PinStep>({ kind: 'idle' });
+  const [words, setWords] = useState<[string, string]>(['', '']);
+  const [result, setResult] = useState<{ text: string; error: boolean } | null>(null);
+  const [duressSet, setDuressSet] = useState(false);
+  // The typed PINs and the phrase of the running flow; dropped when it ends.
+  const held = useRef<{ phrase: string | null; current: string | null; next: string | null }>({ phrase: null, current: null, next: null });
+  const dropHeld = () => {
+    held.current = { phrase: null, current: null, next: null };
+  };
+
+  const refreshDuress = useCallback(() => {
+    duressPinSet().then(setDuressSet, () => setDuressSet(false));
+  }, [duressPinSet]);
+  useFocusEffect(refreshDuress);
+  useEffect(() => refreshDuress(), [refreshDuress, appPinOn]);
+  // Leaving Settings in the middle of a flow forgets what it held.
+  useEffect(() => () => dropHeld(), []);
+
+  const end = (text: string, error: boolean) => {
+    dropHeld();
+    setWords(['', '']);
+    setStep({ kind: 'idle' });
+    setResult({ text, error });
+    refreshDuress();
+  };
+
+  /** Reads the open wallet's phrase through the approval gate, then asks for two of its words. */
+  const startBackupCheck = async (flow: PinFlow) => {
+    setResult(null);
+    const auth = await requireLocalAuth(PIN_BACKUP_PROMPT, { kind: 'phrase' });
+    if (!auth.ok) {
+      end(auth.message, true);
+      return;
+    }
+    const phrase = await revealMnemonic();
+    if (!phrase) {
+      end('The recovery phrase could not be opened. Nothing was changed.', true);
+      return;
+    }
+    held.current.phrase = phrase;
+    const count = phrase.trim().split(/\s+/).length;
+    setWords(['', '']);
+    setStep({ kind: 'backup', flow, positions: backupCheckPositions(count, (n) => globalThis.crypto.getRandomValues(new Uint8Array(n))) });
+  };
+
+  const submitBackupWords = () => {
+    if (step.kind !== 'backup') return;
+    const phrase = held.current.phrase;
+    if (!phrase || !backupWordsMatch(phrase, step.positions, words)) {
+      end(PIN_BACKUP_MISMATCH, true);
+      return;
+    }
+    setWords(['', '']);
+    if (step.flow === 'pin-on') {
+      // The phrase is not needed after the check.
+      held.current.phrase = null;
+      setStep({ kind: 'pad', flow: 'pin-on', stage: 'new' });
+    } else {
+      setStep({ kind: 'pad', flow: step.flow, stage: 'current' });
+    }
+  };
+
+  const finish = async (flow: PinFlow, current: string | null, next: string | null) => {
+    try {
+      if (flow === 'pin-on') {
+        // Notifications go off before the PIN goes on (section 7.4): the
+        // stored choice is cleared and everything scheduled or shown is
+        // removed; with the PIN on they are forced off anyway.
+        await setNotifications(false).catch(() => undefined);
+        await appNotifications().disable().catch(() => undefined);
+        await turnOnAppPin(next!);
+        end(PIN_RESULTS.on, false);
+      } else if (flow === 'pin-change') {
+        await changeAppPin(current!, next!);
+        end(PIN_RESULTS.changed, false);
+      } else if (flow === 'pin-off') {
+        await turnOffAppPin(current!);
+        end(PIN_RESULTS.off, false);
+      } else if (flow === 'duress-add') {
+        const phrase = held.current.phrase;
+        if (!phrase) throw new Error('The recovery phrase is no longer open. Nothing was changed.');
+        await addDuressPin(current!, next!, phrase);
+        end(PIN_RESULTS.duressSet, false);
+      } else if (flow === 'duress-change') {
+        await changeDuressPin(current!, next!);
+        end(PIN_RESULTS.duressChanged, false);
+      } else {
+        await removeDuressPin(current!);
+        end(PIN_RESULTS.duressRemoved, false);
+      }
+    } catch (e) {
+      end(e instanceof Error ? e.message : String(e), true);
+    }
+    return null;
+  };
+
+  /** One PinPad step: returns the sentence to show on the pad (null = moved on). */
+  const onPad = async (pin: string): Promise<string | null> => {
+    if (step.kind !== 'pad') return null;
+    const { flow, stage } = step;
+    const needsNew = flow !== 'pin-off' && flow !== 'duress-remove';
+    if (stage === 'current') {
+      held.current.current = pin;
+      if (!needsNew) return finish(flow, pin, null);
+      setStep({ kind: 'pad', flow, stage: 'new' });
+      return null;
+    }
+    if (stage === 'new') {
+      if (pinFormatError(pin)) return PIN_FORMAT_MESSAGE;
+      if (isTriviallyGuessed(pin)) return PIN_NOT_USABLE_MESSAGE;
+      if (flow.startsWith('duress') && pin === held.current.current) return DURESS_MUST_DIFFER;
+      held.current.next = pin;
+      setStep({ kind: 'pad', flow, stage: 'confirm' });
+      return null;
+    }
+    if (pin !== held.current.next) {
+      end(PIN_MISMATCH_MESSAGE, true);
+      return null;
+    }
+    return finish(flow, held.current.current, pin);
+  };
+
+  const start = (flow: PinFlow) => {
+    setResult(null);
+    dropHeld();
+    if (flow === 'pin-on' || flow === 'duress-add') {
+      void startBackupCheck(flow);
+    } else if (flow === 'pin-off' || flow === 'duress-remove') {
+      const title = flow === 'pin-off' ? REMOVE_PIN_CONFIRM_TITLE : REMOVE_DURESS_CONFIRM_TITLE;
+      const body = flow === 'duress-remove' ? REMOVE_DURESS_CONFIRM_BODY : duressSet ? REMOVE_PIN_WITH_DURESS_BODY : REMOVE_PIN_CONFIRM_BODY;
+      Alert.alert(title, body, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Continue', style: 'destructive', onPress: () => setStep({ kind: 'pad', flow, stage: 'current' }) },
+      ]);
+    } else {
+      setStep({ kind: 'pad', flow, stage: 'current' });
+    }
+  };
+
+  const padPrompt = (s: Extract<PinStep, { kind: 'pad' }>): string => {
+    if (s.stage === 'current') return PIN_PROMPTS.current;
+    const duress = s.flow.startsWith('duress');
+    if (s.stage === 'new') return duress ? PIN_PROMPTS.chooseDuress : PIN_PROMPTS.choose;
+    return duress ? PIN_PROMPTS.chooseDuressAgain : PIN_PROMPTS.chooseAgain;
+  };
+  const busy = step.kind !== 'idle';
+
+  return (
+    <View style={styles.section}>
+      <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>{APP_PIN_SECTION_TITLE}</Text>
+      <View style={styles.toggleRow}>
+        <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.toggleLabel, { color: theme.text, flexShrink: 1, marginRight: 12 }]}>{APP_PIN_SWITCH_LABEL}</Text>
+        <Switch {...switchColors(theme)}
+          accessibilityLabel={APP_PIN_SWITCH_LABEL}
+          accessibilityRole="switch"
+          accessibilityState={{ checked: appPinOn, disabled: busy }}
+          value={appPinOn}
+          disabled={busy}
+          onValueChange={(v) => start(v ? 'pin-on' : 'pin-off')}
+        />
+      </View>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{appPinOn ? APP_PIN_ON_STATUS : APP_PIN_OFF_STATUS}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{APP_PIN_WHAT_NOTE}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{APP_PIN_LIMITS_NOTE}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{APP_PIN_COSTS_NOTE}</Text>
+      {!appPinOn ? <Text style={[styles.hint, { color: theme.textMuted }]}>{APP_PIN_BACKUP_NOTE}</Text> : null}
+      {appPinOn && !busy ? <Button title="Change PIN" variant="secondary" onPress={() => start('pin-change')} /> : null}
+
+      <Text accessibilityRole="header" style={[styles.subTitle, { color: theme.text }]}>{DURESS_SECTION_TITLE}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{DURESS_EXPLANATION}</Text>
+      <WarningBox>{DURESS_HONEST_CLAIM}</WarningBox>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{DURESS_FUNDING_NOTE}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{DURESS_BACKUP_NOTE}</Text>
+      {appPinOn ? (
+        <>
+          <Text style={[styles.hint, { color: theme.text }]}>{duressSet ? DURESS_SET_STATUS : DURESS_NOT_SET_STATUS}</Text>
+          {!busy ? (
+            duressSet ? (
+              <View style={styles.endpointButtons}>
+                <Button title="Change duress PIN" variant="secondary" onPress={() => start('duress-change')} style={styles.endpointButton} />
+                <Button title="Remove duress PIN" variant="destructive" onPress={() => start('duress-remove')} style={styles.endpointButton} />
+              </View>
+            ) : (
+              <Button title="Add a duress PIN" variant="secondary" onPress={() => start('duress-add')} />
+            )
+          ) : null}
+        </>
+      ) : (
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{DURESS_NEEDS_PIN}</Text>
+      )}
+
+      {step.kind === 'backup' ? (
+        <View style={styles.endpointEditor}>
+          <Text style={[styles.hint, { color: theme.text }]}>
+            {`Type ${backupCheckLabel(step.positions)} of your recovery phrase, from your written backup.`}
+          </Text>
+          {step.positions.map((p, i) => {
+            const f = fieldLabel(`backup-word-${i}`, `Word ${p + 1} of your recovery phrase`);
+            return (
+              <View key={`w-${p}`} style={styles.endpointEditor}>
+                <Text {...f.label} style={[styles.hint, { color: theme.textMuted }]}>{f.text}</Text>
+                <TextInput
+                  {...f.input}
+                  value={words[i]}
+                  onChangeText={(t) => setWords((w) => (i === 0 ? [t, w[1]] : [w[0], t]))}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  autoComplete="off"
+                  spellCheck={false}
+                  importantForAutofill="no"
+                  secureTextEntry
+                  style={[styles.endpointInput, { backgroundColor: theme.card, borderColor: theme.controlBorder, color: theme.text }]}
+                />
+              </View>
+            );
+          })}
+          <View style={styles.endpointButtons}>
+            <Button title="Check" onPress={submitBackupWords} style={styles.endpointButton} />
+            <Button title="Cancel" variant="secondary" onPress={() => end('Nothing was changed.', false)} style={styles.endpointButton} />
+          </View>
+        </View>
+      ) : null}
+      {step.kind === 'pad' ? (
+        <View style={styles.endpointEditor}>
+          <PinPad key={`${step.flow}-${step.stage}`} prompt={padPrompt(step)} onComplete={onPad} />
+          <Button title="Cancel" variant="secondary" onPress={() => end('Nothing was changed.', false)} />
+        </View>
+      ) : null}
+      {result ? (
+        <Text accessibilityLiveRegion="polite" style={[styles.hint, { color: result.error ? theme.danger : theme.textMuted }]}>{result.text}</Text>
+      ) : null}
+    </View>
+  );
+}
+
 export function SettingsScreen({ navigation, route }: Props) {
   const theme = useTheme();
 
@@ -1461,6 +1774,7 @@ export function SettingsScreen({ navigation, route }: Props) {
     setAutoLockMs,
     showFiat,
     setShowFiat,
+    appPinOn,
   } = usePrefs();
   // Settings → Privacy (phase 17 item 0): the app-wide screen protection.
   const { screenProtection, setScreenProtection } = usePrefs();
@@ -1683,7 +1997,8 @@ export function SettingsScreen({ navigation, route }: Props) {
         'they expire — revoke them first (Settings → Session keys) if you still can. Recovery records ' +
         'and recovered-account links are deleted from this device; guardians stay installed on-chain. ' +
         'Passkey details are deleted from this device too, but an installed passkey stays installed in ' +
-        'your smart account — remove it first (Settings → Passkey) if you no longer want it.',
+        'your smart account — remove it first (Settings → Passkey) if you no longer want it.' +
+        (appPinOn ? ` ${WIPE_WITH_PIN_NOTE}` : ''),
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -1834,22 +2149,25 @@ export function SettingsScreen({ navigation, route }: Props) {
           Masks every balance and activity amount as •••• (also toggleable
           with the eye on the Home screen). Addresses stay visible.
         </Text>
-        {authAvailable ? (
+        {authAvailable || appPinOn ? (
           <>
             <Text style={[styles.toggleLabel, { color: theme.text }]}>
               Auto-lock
             </Text>
             <View style={styles.endpointButtons}>
-              {AUTO_LOCK_CHOICES.map((choice) => (
-                <Button
-                  key={choice.label}
-                  title={autoLockMs === choice.ms ? `✓ ${choice.label}` : choice.label}
-                  variant={autoLockMs === choice.ms ? 'primary' : 'secondary'}
-                  selected={autoLockMs === choice.ms}
-                  onPress={() => void setAutoLockMs(choice.ms)}
-                  style={styles.endpointButton}
-                />
-              ))}
+              {AUTO_LOCK_CHOICES.map((choice) =>
+                // With an app PIN, "Off" is not offered (docs/DURESS_WALLET.md 2.3 item 7).
+                appPinOn && choice.ms === null ? null : (
+                  <Button
+                    key={choice.label}
+                    title={autoLockMs === choice.ms ? `✓ ${choice.label}` : choice.label}
+                    variant={autoLockMs === choice.ms ? 'primary' : 'secondary'}
+                    selected={autoLockMs === choice.ms}
+                    onPress={() => void setAutoLockMs(choice.ms)}
+                    style={styles.endpointButton}
+                  />
+                ),
+              )}
             </View>
             <Text style={[styles.hint, { color: theme.textMuted }]}>
               When the app has been in the background at least this long, it
@@ -1863,16 +2181,17 @@ export function SettingsScreen({ navigation, route }: Props) {
               Screen state is kept — locking never discards what you were
               doing.
             </Text>
+            {appPinOn ? <Text style={[styles.hint, { color: theme.textMuted }]}>{AUTO_LOCK_WITH_PIN_NOTE}</Text> : null}
           </>
         ) : authAvailable === false ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            Auto-lock is unavailable on this device: no biometric hardware or
-            enrollment was found, so the unlock prompt could not appear. The
-            wallet deliberately does not substitute its own PIN screen — an
-            in-app PIN would be weaker than your device&apos;s own lock screen,
-            which already protects the secure storage holding your recovery
-            phrase. Set up a device passcode and biometrics to enable
-            auto-lock.
+            Auto-lock with the device prompt is unavailable on this device:
+            no biometric hardware or enrollment was found, so the unlock
+            prompt could not appear. Set up a device passcode and biometrics
+            to enable it, or turn on the app PIN below (it works without
+            biometrics, but it is weaker than your device&apos;s own lock
+            screen, which already protects the secure storage holding your
+            recovery phrase).
           </Text>
         ) : null}
       </View>
@@ -1886,11 +2205,13 @@ export function SettingsScreen({ navigation, route }: Props) {
           <Switch {...switchColors(theme)}
             accessibilityLabel={SCREEN_PROTECTION_SWITCH_LABEL}
             accessibilityRole="switch"
-            accessibilityState={{ checked: screenProtection }}
+            accessibilityState={{ checked: screenProtection, disabled: appPinOn }}
             value={screenProtection}
+            disabled={appPinOn}
             onValueChange={(v) => void setScreenProtection(v)}
           />
         </View>
+        {appPinOn ? <Text style={[styles.hint, { color: theme.textMuted }]}>{SCREEN_PROTECTION_WITH_PIN_NOTE}</Text> : null}
         <Text style={[styles.hint, { color: theme.textMuted }]}>{SCREEN_PROTECTION_PLATFORM_NOTE}</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>{SCREEN_PROTECTION_ALWAYS_NOTE}</Text>
         <Text
@@ -1901,9 +2222,20 @@ export function SettingsScreen({ navigation, route }: Props) {
         >
           {describeScreenProtectionStatus(screenProtectionStatus)}
         </Text>
-        {/* Privacy → Notifications (phase 17 item 2): local reminders, off by default. */}
-        <NotificationSettingsSection />
+        {/* Privacy → Notifications (phase 17 item 2): local reminders, off by default.
+            While an app PIN is on, no notification is posted at all and the
+            section says why in one sentence (docs/DURESS_WALLET.md 7.4). */}
+        {appPinOn ? (
+          <View style={styles.section}>
+            <Text accessibilityRole="header" style={[styles.subTitle, { color: theme.text }]}>{NOTIFICATIONS_SECTION_TITLE}</Text>
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{NOTIFICATIONS_OFF_WITH_PIN}</Text>
+          </View>
+        ) : (
+          <NotificationSettingsSection />
+        )}
       </View>
+
+      <AppPinSection />
 
       <View style={styles.section}>
         <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Prices</Text>
@@ -2420,6 +2752,10 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     fontSize: 18,
+    fontWeight: '700',
+  },
+  subTitle: {
+    fontSize: 16,
     fontWeight: '700',
   },
   revealBlock: {

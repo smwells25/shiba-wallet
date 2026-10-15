@@ -5,18 +5,22 @@
  * AppState changes and renders an overlay while `locked` is true — an
  * overlay, not a navigation reset, so all screen state survives a lock.
  *
- * DELIBERATE NO-PIN DECISION: there is no custom in-app PIN pad. Unlocking
- * goes through requireLocalAuth (wallet/biometric.ts), whose
- * disableDeviceFallback:false means the OS itself falls back to the device
- * passcode after failed biometric attempts. A homemade PIN pad would be
- * strictly weaker than that OS credential path: it would need its own
- * secret storage, its own rate limiting, and its own lockout policy, all
- * re-implemented in JS and all easier to bypass than the platform
- * keyguard. On devices without biometric hardware or enrollment the
- * auto-lock setting is hidden entirely (with an explanatory note in
- * Settings) instead of being backed by a weaker homemade gate — the OS
- * device lock remains the protection there, exactly as in the
- * requireLocalAuth behavior matrix.
+ * THE PIN DECISION, REVISED (phase 21, docs/DURESS_WALLET.md section 7.1).
+ * By default there is no in-app PIN pad: unlocking goes through
+ * requireLocalAuth (wallet/biometric.ts), whose disableDeviceFallback:false
+ * means the OS itself falls back to the device passcode after failed
+ * biometric attempts, and on devices without biometric hardware or
+ * enrollment the auto-lock setting is hidden (the OS device lock remains the
+ * protection there, exactly as in the requireLocalAuth behavior matrix).
+ * The original reasoning still holds — an app PIN is weaker than the
+ * platform keyguard, with its own storage, rate limiting and lockout in JS —
+ * so the app PIN is OPT-IN (Settings → Privacy → "Use a PIN to unlock";
+ * wallet/pin.ts) and exists because a duress PIN needs a secret the app can
+ * check itself: the device prompt cannot tell the app which credential
+ * passed. While an app PIN is set, the lock screen takes the PIN (the
+ * device prompt is not a fallback for it), auto-lock is forced on, the
+ * gate works on devices without biometrics, and signing still asks for the
+ * device prompt. Users who never turn it on see no change.
  *
  * Semantics:
  *  - 'inactive' and 'background' both start the away-timer (iOS reports
@@ -225,6 +229,28 @@ export function lockScreenHint(startedLocked: boolean): string {
   return startedLocked
     ? "Auto-lock is on, so the wallet starts locked. Your keys never left the device's secure storage."
     : "The app locked itself after being in the background. Your keys never left the device's secure storage.";
+}
+
+/**
+ * The wallet status LockGate feeds the functions above (its `inputs`).
+ * With an app PIN set, a wallet that is still loading counts as 'ready':
+ * at launch nothing is loaded until the PIN pad has decided which wallet
+ * opens, and after a PIN opened the other wallet the reload happens behind
+ * the lock — so the launch decision locks (auto-lock is forced on with a
+ * PIN) and the lock stays up until the PIN was accepted and the wallet is
+ * loaded. Without an app PIN the status is passed through unchanged.
+ */
+export function lockGateWalletStatus(walletStatus: WalletStatusLike, appPinOn: boolean): WalletStatusLike {
+  return appPinOn && walletStatus === 'loading' ? 'ready' : walletStatus;
+}
+
+/**
+ * Whether the device can show its prompt, as LockGate feeds it: with an
+ * app PIN set the gate never depends on biometrics (the PIN pad works on a
+ * phone without them), so the answer counts as yes.
+ */
+export function lockGateAvailable(deviceAnswer: boolean | null, appPinOn: boolean): boolean | null {
+  return appPinOn ? true : deviceAnswer;
 }
 
 /** The device prompt's title for the lock screen (unchanged since phase 4). */

@@ -7,11 +7,11 @@
 // files that move in a later slice).
 //
 // Why a seam: a decoy wallet (feature 53) must never show the real wallet's
-// records. Today there is one wallet, and every key resolves to itself
-// (scopedStoreKey is the identity for the primary profile, pinned by the
-// check). A later stage can give a second profile its own copy of every
-// per-wallet record by passing a profile to scopedStoreKey, without
-// touching any caller.
+// records. The primary profile's keys resolve to themselves (scopedStoreKey
+// is the identity for the primary profile, pinned by the check). Since
+// Stage 2 a second profile (the decoy of a duress PIN, wallet/duress.ts) has
+// its own copy of every per-wallet record: the active profile (memory only)
+// scopes every key, without touching any caller.
 //
 // Behaviour is byte-identical to the direct calls this module replaced: the
 // same key strings, the same values (callers still build their own JSON),
@@ -175,6 +175,18 @@ export const STORE_KEYS = Object.freeze({
   importedKeysMeta: declare('shiba-wallet.imported-keys.v1', 'secret', 'exact', 'secure-store'),
   importedKey: declare('shiba-wallet.imported-key.v1.', 'secret', 'prefix', 'secure-store'),
   protectedImportedKey: declare('shiba-wallet.imported-key.v2.', 'secret', 'prefix', 'secure-store'),
+  /**
+   * The app-lock PIN record (duress wallet Stage 2, wallet/pin.ts): one
+   * fixed-shape record holding the primary and the duress PIN slots and the
+   * wrong-PIN counter. Declared 'secret' (it lives in the secure store), but
+   * it belongs to the DEVICE, not to one wallet: it must be read before any
+   * profile is chosen and must be the same record whichever PIN is typed,
+   * so wallet/pin.ts always addresses it through a store bound to the
+   * PRIMARY profile (profileBoundSecureBackend), never the active one. A
+   * neutral name ("app-lock"), so a listing of key names does not say
+   * "duress".
+   */
+  appLock: declare('shiba-wallet.app-lock.v1', 'secret', 'exact', 'secure-store'),
 });
 
 /**
@@ -231,11 +243,11 @@ export function storeKeyScope(key: string): StoreKeyScope {
 // ---------------------------------------------------------------------------
 
 /**
- * Whose records a key addresses. Stage 1 has exactly one profile, the
- * primary one, whose keys are the names above unchanged (no migration).
- * Nothing in the app passes another profile yet, and this module offers no
- * way to make another profile the default: Stage 2 (the duress PIN) adds
- * that, decided before any wallet data is loaded.
+ * Whose records a key addresses. The primary profile's keys are the names
+ * above unchanged (no migration). Stage 2 (the duress PIN, wallet/duress.ts)
+ * adds a second profile for the decoy wallet; which one is active is
+ * decided by the PIN pad before any wallet data is loaded (see the active
+ * profile below).
  */
 export interface StoreProfile {
   readonly id: string;
@@ -248,22 +260,125 @@ export const PRIMARY_STORE_PROFILE: StoreProfile = Object.freeze({ id: 'primary'
 /** The reserved segment a non-primary profile's keys carry (no declared key uses it). */
 export const PROFILE_KEY_SEGMENT = 'profile-';
 
+const PROFILE_PREFIX = /^[a-z0-9]{1,16}$/;
+
+function assertProfile(profile: StoreProfile): StoreProfile {
+  if (profile.keyPrefix !== null && !PROFILE_PREFIX.test(profile.keyPrefix)) {
+    throw new Error('A storage profile prefix is 1 to 16 lower-case letters or digits.');
+  }
+  return profile;
+}
+
+/*
+ * THE ACTIVE PROFILE (duress wallet Stage 2; docs/DURESS_WALLET.md sections
+ * 5.2 and 7.7 item 2). Every key a caller reads or writes through this
+ * module is scoped by the active profile unless the store it passes is bound
+ * to a profile (profileBoundStore / profileBoundSecureBackend). The active
+ * profile is held in MEMORY ONLY: it is never written to any store (the
+ * check-duress suite scans for that), so nothing on the phone records which
+ * wallet was opened last. It starts as the primary profile at every launch;
+ * WalletContext changes it only after the app PIN pad decided which wallet
+ * the typed PIN opens (wallet/duress.ts), before it loads anything, and
+ * resets it to the primary profile when the wallet is removed.
+ */
+let activeProfile: StoreProfile = PRIMARY_STORE_PROFILE;
+
+/** The profile every unbound read and write uses now. */
+export function activeStoreProfile(): StoreProfile {
+  return activeProfile;
+}
+
 /**
- * The key actually used in the store for `key` under `profile`.
+ * Makes `profile` the active one (memory only). Only WalletContext calls it,
+ * from the PIN unlock and the wipe; a malformed prefix is refused.
+ */
+export function setActiveStoreProfile(profile: StoreProfile): void {
+  assertProfile(profile);
+  activeProfile = profile.keyPrefix === null ? PRIMARY_STORE_PROFILE : Object.freeze({ ...profile });
+}
+
+/**
+ * The key actually used in the store for `key` under `profile` (the active
+ * profile when omitted).
  *
- * Primary profile (the only one in use): the key unchanged, for every scope.
+ * Primary profile: the key unchanged, for every scope.
  * Another profile: 'device' keys unchanged (shared settings); 'wallet' and
  * 'secret' keys become shiba-wallet.profile-<prefix>.<rest of the key>, a
  * name no declared key can have, so the two profiles can never read each
  * other's records. Throws for an undeclared key in either case.
  */
-export function scopedStoreKey(key: string, profile: StoreProfile = PRIMARY_STORE_PROFILE): string {
+export function scopedStoreKey(key: string, profile: StoreProfile = activeProfile): string {
   const scope = storeKeyScope(key);
   if (profile.keyPrefix === null || scope === 'device') return key;
-  if (!/^[a-z0-9]{1,16}$/.test(profile.keyPrefix)) {
-    throw new Error('A storage profile prefix is 1 to 16 lower-case letters or digits.');
-  }
+  assertProfile(profile);
   return `${STORE_KEY_ROOT}${PROFILE_KEY_SEGMENT}${profile.keyPrefix}.${key.slice(STORE_KEY_ROOT.length)}`;
+}
+
+/**
+ * The inverse of scopedStoreKey for a name found in a store (a listing):
+ * which profile prefix it carries (null = the primary profile) and the
+ * declared key it stands for. null for a name that is not one of the app's
+ * keys under any profile.
+ */
+export function parseStoredKeyName(raw: string): { keyPrefix: string | null; key: string } | null {
+  if (!raw.startsWith(STORE_KEY_ROOT)) return null;
+  const rest = raw.slice(STORE_KEY_ROOT.length);
+  let keyPrefix: string | null = null;
+  let key = raw;
+  if (rest.startsWith(PROFILE_KEY_SEGMENT)) {
+    const dot = rest.indexOf('.', PROFILE_KEY_SEGMENT.length);
+    if (dot < 0) return null;
+    keyPrefix = rest.slice(PROFILE_KEY_SEGMENT.length, dot);
+    if (!PROFILE_PREFIX.test(keyPrefix)) return null;
+    key = `${STORE_KEY_ROOT}${rest.slice(dot + 1)}`;
+  }
+  try {
+    const scope = storeKeyScope(key);
+    // A device key never carries a prefix, and a prefixed name must be one
+    // scopedStoreKey would produce.
+    if (keyPrefix !== null && scope === 'device') return null;
+  } catch {
+    return null;
+  }
+  return { keyPrefix, key };
+}
+
+/** A store or backend that carries its own profile (see profileBoundStore). */
+interface ProfileBound {
+  readonly storeProfile?: StoreProfile;
+}
+
+function profileOf(target: object): StoreProfile {
+  return (target as ProfileBound).storeProfile ?? activeProfile;
+}
+
+/**
+ * A view of `store` whose every key, through the functions below, is scoped
+ * by `profile` whatever the active profile is. Used to set up and remove the
+ * second wallet from the first, and to address the device's PIN record.
+ * Its methods call the store's own methods (as methods of the store).
+ */
+export function profileBoundStore<S extends KeyValueStore>(store: S, profile: StoreProfile): KeyValueStore & RemovableKeyValueStore & ProfileBound {
+  const bound: KeyValueStore & RemovableKeyValueStore & ProfileBound = {
+    storeProfile: Object.freeze({ ...assertProfile(profile) }),
+    getItem: (k) => store.getItem(k),
+    setItem: (k, v) => store.setItem(k, v),
+  };
+  const removable = store as RemovableKeyValueStore;
+  if (removable.removeItem) bound.removeItem = (k) => removable.removeItem!(k);
+  return bound;
+}
+
+/** The secure-store counterpart of profileBoundStore. */
+export function profileBoundSecureBackend(backend: SecureStoreBackend, profile: StoreProfile): SecureStoreBackend & ProfileBound {
+  return {
+    storeProfile: Object.freeze({ ...assertProfile(profile) }),
+    getItemAsync: (k, o) => backend.getItemAsync(k, o),
+    setItemAsync: (k, v, o) => backend.setItemAsync(k, v, o),
+    deleteItemAsync: (k, o) => backend.deleteItemAsync(k, o),
+    canUseBiometricAuthentication: () => backend.canUseBiometricAuthentication(),
+    whenUnlockedThisDeviceOnly: backend.whenUnlockedThisDeviceOnly,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -272,12 +387,12 @@ export function scopedStoreKey(key: string, profile: StoreProfile = PRIMARY_STOR
 
 /** store.getItem for a declared key. */
 export function readStoreItem(store: KeyValueStore, key: string): Promise<string | null> {
-  return store.getItem(scopedStoreKey(key));
+  return store.getItem(scopedStoreKey(key, profileOf(store)));
 }
 
 /** store.setItem for a declared key. The value is written exactly as given. */
 export function writeStoreItem(store: KeyValueStore, key: string, value: string): Promise<void> {
-  return store.setItem(scopedStoreKey(key), value);
+  return store.setItem(scopedStoreKey(key, profileOf(store)), value);
 }
 
 /**
@@ -287,13 +402,14 @@ export function writeStoreItem(store: KeyValueStore, key: string, value: string)
  */
 export function removeStoreItem(store: RemovableKeyValueStore, key: string): Promise<void> {
   if (!store.removeItem) throw new Error('This store cannot remove items.');
-  return store.removeItem(scopedStoreKey(key));
+  return store.removeItem(scopedStoreKey(key, profileOf(store)));
 }
 
 /**
  * The app's keys present in a store that can list its keys (AsyncStorage's
- * getAllKeys), in the order the store returns them. Not used by the app yet;
- * Stage 2 needs it to find and wipe a profile's records.
+ * getAllKeys), in the order the store returns them, as stored (with any
+ * profile prefix; parseStoredKeyName reads them). Used by the wipe of a
+ * wallet that has an app PIN, which removes both profiles' records.
  */
 export async function listStoreKeys(store: { getAllKeys(): Promise<readonly string[]> }): Promise<string[]> {
   return (await store.getAllKeys()).filter((k) => k.startsWith(STORE_KEY_ROOT));
@@ -305,7 +421,7 @@ export function readSecureItem(
   key: string,
   options: SecureStoreItemOptions,
 ): Promise<string | null> {
-  return backend.getItemAsync(scopedStoreKey(key), options);
+  return backend.getItemAsync(scopedStoreKey(key, profileOf(backend)), options);
 }
 
 /** backend.setItemAsync for a declared secure-store key. */
@@ -315,7 +431,7 @@ export function writeSecureItem(
   value: string,
   options: SecureStoreItemOptions,
 ): Promise<void> {
-  return backend.setItemAsync(scopedStoreKey(key), value, options);
+  return backend.setItemAsync(scopedStoreKey(key, profileOf(backend)), value, options);
 }
 
 /** backend.deleteItemAsync for a declared secure-store key. */
@@ -324,7 +440,7 @@ export function deleteSecureItem(
   key: string,
   options: SecureStoreItemOptions,
 ): Promise<void> {
-  return backend.deleteItemAsync(scopedStoreKey(key), options);
+  return backend.deleteItemAsync(scopedStoreKey(key, profileOf(backend)), options);
 }
 
 /**

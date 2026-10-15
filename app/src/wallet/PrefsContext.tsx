@@ -5,8 +5,10 @@ import React, {
   useEffect,
   useMemo,
   useState,
+  useSyncExternalStore,
 } from 'react';
 import { AppPrefs, DEFAULT_PREFS, loadPrefs, savePrefs } from '../config/prefs';
+import { NOTIFICATIONS_OFF_WITH_PIN, appPinPresence, effectivePrefs } from './duress';
 import {
   customEvmProfiles,
   evmProfileFor,
@@ -54,8 +56,21 @@ interface PrefsContextValue {
    * app whatever this says.
    */
   screenProtection: boolean;
-  /** Local reminders (default off; wallet/notifications.ts). */
+  /**
+   * Local reminders (default off; wallet/notifications.ts). Always false
+   * while an app PIN is set (docs/DURESS_WALLET.md section 7.4): no
+   * notification of any kind is posted then, whatever is stored.
+   */
   notifications: boolean;
+  /**
+   * True while an app PIN is set (wallet/pin.ts; read from the PIN record at
+   * launch, before the wallet loads; null-as-false until then). While it is
+   * on: auto-lock is forced on (`autoLockMs` is never null), screen
+   * protection is forced on and notifications are forced off. The stored
+   * preferences are not changed by it, so turning the PIN off restores them
+   * (notifications stay off: turning the PIN on also switched them off).
+   */
+  appPinOn: boolean;
   /**
    * The active EVM chain profile — THE config source screens use for
    * chain-id verification, explorer links, badges and AA prefill
@@ -75,8 +90,12 @@ interface PrefsContextValue {
 
 const PrefsContext = createContext<PrefsContextValue | null>(null);
 
+/** Refusal of a setter that would undo what an app PIN forces (never reached from the screens). */
+export const APP_PIN_FORCES_MESSAGE = 'This cannot be changed while the app PIN is on.';
+
 export function PrefsProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
+  const appPinOn = useSyncExternalStore(appPinPresence.subscribe, () => appPinPresence.get() === true);
   const [prefs, setPrefs] = useState<AppPrefs>({ ...DEFAULT_PREFS });
   // The custom-network registry (config/evm-chain.ts) as React state. It is
   // hydrated by loadPrefs below before `ready`; afterwards every add,
@@ -120,16 +139,20 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
     setPrefs(next);
   }, []);
 
-  const value = useMemo<PrefsContextValue>(
-    () => ({
+  const value = useMemo<PrefsContextValue>(() => {
+    const forced = effectivePrefs(prefs, appPinOn);
+    return {
       ready,
       sepolia: evmProfileFor(prefs.testNetwork).testnet,
       testNetwork: prefs.testNetwork,
       hideAmounts: prefs.hideAmounts,
-      autoLockMs: prefs.autoLockMs,
+      autoLockMs: forced.autoLockMs,
       showFiat: prefs.showFiat,
-      screenProtection: prefs.screenProtection,
-      notifications: prefs.notifications,
+      // Forced on while an app PIN is set (effectivePrefs); the stored value
+      // is kept, so turning the PIN off restores the user's choice.
+      screenProtection: prefs.screenProtection || forced.screenProtection,
+      notifications: forced.notifications,
+      appPinOn,
       customNetworks,
       // customNetworks is in the dependency list so a change to a custom
       // network's profile re-resolves the active one.
@@ -137,13 +160,12 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
       setSepolia: (on) => patch({ sepolia: on }),
       setTestNetwork: (network) => patch({ testNetwork: network }),
       setHideAmounts: (on) => patch({ hideAmounts: on }),
-      setAutoLockMs: (ms) => patch({ autoLockMs: ms }),
+      setAutoLockMs: (ms) => (appPinOn && ms === null ? Promise.reject(new Error(APP_PIN_FORCES_MESSAGE)) : patch({ autoLockMs: ms })),
       setShowFiat: (on) => patch({ showFiat: on }),
       setScreenProtection: (on) => patch({ screenProtection: on }),
-      setNotifications: (on) => patch({ notifications: on }),
-    }),
-    [ready, prefs, patch, customNetworks],
-  );
+      setNotifications: (on) => (appPinOn && on ? Promise.reject(new Error(NOTIFICATIONS_OFF_WITH_PIN)) : patch({ notifications: on })),
+    };
+  }, [ready, prefs, patch, customNetworks, appPinOn]);
 
   return <PrefsContext.Provider value={value}>{children}</PrefsContext.Provider>;
 }

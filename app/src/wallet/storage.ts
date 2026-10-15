@@ -10,10 +10,12 @@ import {
   STORE_KEYS,
   deleteSecureItem,
   nativeSecureStoreAdapter,
+  profileBoundSecureBackend,
   readSecureItem,
   writeSecureItem,
   type SecureStoreBackend,
   type SecureStoreItemOptions,
+  type StoreProfile,
 } from './store-keys.ts';
 
 /**
@@ -1577,10 +1579,33 @@ export function createKeyVault(backend: SecureStoreBackend, options: KeyVaultOpt
 // ---------------------------------------------------------------------------
 
 let appVault: KeyVault | null = null;
+let appBackend: SecureStoreBackend | null = null;
 
 /** Called once at startup (WalletContext.tsx) with the native module. */
 export function bindSecureStore(backend: SecureStoreBackend, options: KeyVaultOptions = {}): void {
+  appBackend = backend;
   appVault = createKeyVault(backend, options);
+}
+
+/**
+ * The secure-store backend the app vault was bound with (the native module
+ * in the app; a fake in the checks). wallet/pin.ts reads the device's PIN
+ * record through it, bound to the primary profile.
+ */
+export function appSecureBackend(): SecureStoreBackend {
+  if (!appBackend) throw new Error('Secure storage is not initialised');
+  return appBackend;
+}
+
+/**
+ * A vault over the app's backend whose every key is scoped by `profile`,
+ * whatever profile is active (store-keys.ts profileBoundSecureBackend). The
+ * duress set-up (wallet/duress.ts) uses it to store the decoy wallet's
+ * phrase from the real wallet, and the wipe to remove both wallets. The app
+ * vault itself always follows the active profile.
+ */
+export function createProfileVault(profile: StoreProfile, options: KeyVaultOptions = {}): KeyVault {
+  return createKeyVault(profileBoundSecureBackend(appSecureBackend(), profile), options);
 }
 
 function vault(): KeyVault {

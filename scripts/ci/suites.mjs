@@ -99,6 +99,11 @@ export const APP_SCRIPTS = {
   // it with an exact allow-list, the key registry, the identity scope
   // function, wrapper behaviour, mutants (fakes only).
   'check-storage-seam.mjs': { kind: 'offline', summary: 'counts' },
+  // Phase 21 item 2, duress wallet Stage 2: the opt-in app PIN record and its
+  // wait schedule, both hashes on every attempt, the decoy wallet (BIP-85
+  // index 0) in its own storage profile, "Remove wallet" removing both, the
+  // reminders rule, the lock gate's PIN mode, mutants (fakes only).
+  'check-duress.mjs': { kind: 'offline', summary: 'counts' },
   // Phase 12 item 2: subscription grants on Kernel session keys (fakes only).
   'check-subscriptions.mjs': { kind: 'offline', summary: 'counts' },
   // Phase 18 item 2: staking on test networks (Lido, Rocket Pool; fakes only).

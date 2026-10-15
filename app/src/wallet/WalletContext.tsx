@@ -14,7 +14,9 @@ import { createMnemonic, isValidMnemonic, mnemonicToSeed } from '@shiba-wallet/c
 import type { DerivedAccount } from '@shiba-wallet/core';
 import { CHAINS, chainByCaip2 } from './chains';
 import {
+  appSecureBackend,
   bindSecureStore,
+  createProfileVault,
   deleteMnemonic,
   deletePublicAccounts,
   dropPhraseTicket,
@@ -50,7 +52,38 @@ import {
 } from './account-ids';
 import { checkWatchAddress, type KnownAccount } from './watch-only';
 import { duplicateImportError, importedKeyBytes, importedSignerFor, parsePrivateKeyInput } from './imported-keys';
-import { AsyncStorage } from './store-keys';
+import {
+  AsyncStorage,
+  activeStoreProfile,
+  profileBoundStore,
+  setActiveStoreProfile,
+  type RemovableKeyValueStore,
+} from './store-keys';
+import {
+  attemptPin,
+  clearDuressSlot,
+  deletePinRecord,
+  pinAttemptMessage,
+  readPinRecord,
+  setAppPin,
+  setPinSlot,
+  PIN_DAMAGED_MESSAGE,
+  PinRecordDamagedError,
+  type PinSlot,
+} from './pin';
+import {
+  DECOY_STORE_PROFILE,
+  DURESS_MUST_DIFFER,
+  PIN_ACTION_NOT_COMPLETED,
+  appPinPresence,
+  decoyWalletExists,
+  profileForSlot,
+  removeProfileRecords,
+  setUpDecoyWallet,
+  wipeBothWallets,
+  type ProfileVault,
+  type SweepableStore,
+} from './duress';
 import { forgetAllSessions } from './sessions';
 import { addAaOperationSentListener, addAaSentListener } from './aa';
 import { recoveryRecordListener, wipeRecoveryData } from './recovery';
@@ -264,6 +297,44 @@ interface WalletContextValue {
   ) => Promise<T>;
   /** Deletes the mnemonic from secure storage and resets to onboarding. */
   wipe: () => Promise<void>;
+  /**
+   * APP PIN (duress wallet Stage 2; ./pin.ts, ./duress.ts). True from launch
+   * until a PIN is accepted when an app PIN is set: nothing of either wallet
+   * is loaded before then (the PIN decides which wallet opens).
+   */
+  awaitingPin: boolean;
+  /**
+   * Checks a PIN typed on the lock screen. On success the wallet the PIN
+   * belongs to is open when this resolves (reloaded through the storage seam
+   * when it is not the one already open). The message is the same words
+   * whichever wallet a PIN would open.
+   */
+  unlockWithPin: (pin: string) => Promise<{ ok: true } | { ok: false; message: string }>;
+  /**
+   * Which PIN slot opened this session (memory only; null without an app
+   * PIN). Settings uses it to act on the open wallet's own PIN; no screen
+   * renders it.
+   */
+  pinSessionSlot: PinSlot | null;
+  /** Changes whenever a PIN opened a different wallet (LockGate remounts the screens on it). */
+  profileKey: number;
+  /** Turns the app PIN on (Settings, after the backup check). */
+  turnOnAppPin: (pin: string) => Promise<void>;
+  /** Changes the open wallet's PIN after checking its current PIN. */
+  changeAppPin: (currentPin: string, nextPin: string) => Promise<void>;
+  /** Turns the app PIN off after checking the current PIN (and removes a duress PIN and its wallet). */
+  turnOffAppPin: (currentPin: string) => Promise<void>;
+  /** True when a duress PIN is set and this session can know it (the real wallet); no prompt. */
+  duressPinSet: () => Promise<boolean>;
+  /**
+   * Adds a duress PIN: checks the app PIN, derives the second wallet from
+   * `realPhrase` (BIP-85 index 0), stores it in the second profile, then
+   * sets the duress slot. The caller read the phrase through the approval
+   * gate and drops it afterwards.
+   */
+  addDuressPin: (currentPin: string, duressPin: string, realPhrase: string) => Promise<void>;
+  changeDuressPin: (currentPin: string, nextDuressPin: string) => Promise<void>;
+  removeDuressPin: (currentPin: string) => Promise<void>;
 }
 
 const WalletContext = createContext<WalletContextValue | null>(null);
@@ -452,6 +523,17 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [pendingMnemonic, setPendingMnemonic] = useState<string | null>(null);
   // Facts per multisig account id (record network, signer, shape label).
   const [multisigInfo, setMultisigInfo] = useState<Record<number, MultisigAccountInfo>>({});
+  // App PIN (duress wallet Stage 2): whether the launch waits for a PIN,
+  // which slot opened this session (memory only), a key that changes when
+  // a PIN opened a different wallet, and the load requests the PIN unlock
+  // makes (the launch effect below runs again for each).
+  const [awaitingPin, setAwaitingPin] = useState(false);
+  const awaitingPinRef = useRef(false);
+  const [pinSessionSlot, setPinSessionSlot] = useState<PinSlot | null>(null);
+  const pinSessionSlotRef = useRef<PinSlot | null>(null);
+  const [profileKey, setProfileKey] = useState(0);
+  const [loadRequest, setLoadRequest] = useState(0);
+  const loadWaiters = useRef<(() => void)[]>([]);
   // The multisig store listener reconciles only while a wallet is open.
   const statusRef = useRef<WalletStatus>('loading');
   useLayoutEffect(() => {
@@ -540,6 +622,32 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     };
     (async () => {
       try {
+        if (loadRequest === 0) {
+          // APP PIN first (./pin.ts): when one is set, NOTHING of either
+          // wallet is read before the lock screen has checked a PIN, because
+          // the PIN decides which wallet (storage profile) opens. A record
+          // that cannot be read counts as set (fail closed).
+          let pinOn: boolean;
+          try {
+            pinOn = (await readPinRecord(appSecureBackend())) !== null;
+          } catch {
+            pinOn = true;
+          }
+          if (cancelled) return;
+          appPinPresence.set(pinOn);
+          if (pinOn) {
+            awaitingPinRef.current = true;
+            setAwaitingPin(true);
+            return;
+          }
+        } else {
+          // A PIN opened a wallet (./duress.ts profileForSlot set the active
+          // profile before this run): drop the other wallet's state first.
+          setStatus('loading');
+          setDerived({});
+          setMultisigInfo({});
+          commitAccounts(null);
+        }
         const location = await phraseLocation();
         if (cancelled) return;
         if (location === 'none') {
@@ -599,12 +707,152 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         // Secure storage unavailable (e.g. locked device edge case): fall
         // back to onboarding rather than crash. Nothing is deleted.
         if (!cancelled) setStatus('no-wallet');
+      } finally {
+        if (!cancelled) {
+          const waiters = loadWaiters.current;
+          loadWaiters.current = [];
+          for (const w of waiters) w();
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [commitAccounts]);
+  }, [commitAccounts, loadRequest]);
+
+  /** Runs the launch load again (for the active profile) and resolves when it finished. */
+  const reloadWallet = useCallback(
+    () =>
+      new Promise<void>((resolve) => {
+        loadWaiters.current.push(resolve);
+        setLoadRequest((n) => n + 1);
+      }),
+    [],
+  );
+
+  const setSessionSlot = useCallback((slot: PinSlot | null) => {
+    pinSessionSlotRef.current = slot;
+    setPinSessionSlot(slot);
+  }, []);
+
+  const unlockWithPin = useCallback(
+    async (pin: string): Promise<{ ok: true } | { ok: false; message: string }> => {
+      let outcome;
+      try {
+        outcome = await attemptPin(appSecureBackend(), pin);
+      } catch (e) {
+        return { ok: false, message: e instanceof PinRecordDamagedError ? PIN_DAMAGED_MESSAGE : 'The PIN could not be checked. Try again.' };
+      }
+      if (outcome.kind !== 'opened') {
+        return { ok: false, message: pinAttemptMessage(outcome, Date.now()) ?? 'Wrong PIN. Try again.' };
+      }
+      const profile = profileForSlot(outcome.slot);
+      const switching = awaitingPinRef.current || activeStoreProfile().id !== profile.id;
+      setSessionSlot(outcome.slot);
+      if (switching) {
+        // The other wallet's opened secret must never serve this one.
+        dropPhraseTicket();
+        setActiveStoreProfile(profile);
+        setProfileKey((k) => k + 1);
+        await reloadWallet();
+      }
+      awaitingPinRef.current = false;
+      setAwaitingPin(false);
+      return { ok: true };
+    },
+    [reloadWallet, setSessionSlot],
+  );
+
+  /** The current PIN of the OPEN wallet (Settings); throws the lock screen's sentence otherwise. */
+  const checkSessionPin = useCallback(async (pin: string): Promise<PinSlot> => {
+    const slot = pinSessionSlotRef.current ?? 'primary';
+    const outcome = await attemptPin(appSecureBackend(), pin, {}, slot);
+    if (outcome.kind !== 'opened') throw new Error(pinAttemptMessage(outcome, Date.now()) ?? 'Wrong PIN. Try again.');
+    return slot;
+  }, []);
+
+  const turnOnAppPin = useCallback(
+    async (pin: string) => {
+      await setAppPin(appSecureBackend(), pin);
+      setSessionSlot('primary');
+      appPinPresence.set(true);
+    },
+    [setSessionSlot],
+  );
+
+  const changeAppPin = useCallback(
+    async (currentPin: string, nextPin: string) => {
+      const slot = await checkSessionPin(currentPin);
+      await setPinSlot(appSecureBackend(), slot, nextPin);
+    },
+    [checkSessionPin],
+  );
+
+  const decoyVault = useCallback((): ProfileVault => createProfileVault(DECOY_STORE_PROFILE), []);
+
+  /** Removes the second wallet's keys and every record of its profile (the real wallet's are not touched). */
+  const removeDecoyWallet = useCallback(async () => {
+    const vault = decoyVault();
+    await vault.importedKeys.removeAll();
+    await forgetAllSessions(profileBoundStore(AsyncStorage, DECOY_STORE_PROFILE), vault.sessionKeys).catch(() => undefined);
+    await vault.removePhrase();
+    await vault.deletePublicAccounts(ALL_CACHE_INDICES);
+    await removeProfileRecords(AsyncStorage as unknown as SweepableStore, DECOY_STORE_PROFILE);
+  }, [decoyVault]);
+
+  const turnOffAppPin = useCallback(
+    async (currentPin: string) => {
+      const slot = await checkSessionPin(currentPin);
+      // Opened by the duress PIN: the PIN is not removed here, because doing
+      // so would leave the real wallet without its PIN (rule 4 of
+      // docs/DURESS_WALLET.md section 1.2). The sentence says nothing about
+      // which wallet is open (section 7.9).
+      if (slot !== 'primary') throw new Error(PIN_ACTION_NOT_COMPLETED);
+      if (await decoyWalletExists(decoyVault())) await removeDecoyWallet();
+      await deletePinRecord(appSecureBackend());
+      appPinPresence.set(false);
+      setSessionSlot(null);
+    },
+    [checkSessionPin, decoyVault, removeDecoyWallet, setSessionSlot],
+  );
+
+  const duressPinSet = useCallback(async () => {
+    if (pinSessionSlotRef.current !== 'primary') return false;
+    return decoyWalletExists(decoyVault());
+  }, [decoyVault]);
+
+  const addDuressPin = useCallback(
+    async (currentPin: string, duressPin: string, realPhrase: string) => {
+      const slot = await checkSessionPin(currentPin);
+      // Only the real wallet can add one (section 7.1); under the second
+      // wallet the steps run the same way and end with a neutral sentence.
+      if (slot !== 'primary') throw new Error(PIN_ACTION_NOT_COMPLETED);
+      if (duressPin === currentPin) throw new Error(DURESS_MUST_DIFFER);
+      await setUpDecoyWallet(realPhrase, decoyVault());
+      await setPinSlot(appSecureBackend(), 'duress', duressPin);
+    },
+    [checkSessionPin, decoyVault],
+  );
+
+  const changeDuressPin = useCallback(
+    async (currentPin: string, nextDuressPin: string) => {
+      const slot = await checkSessionPin(currentPin);
+      if (slot !== 'primary') throw new Error(PIN_ACTION_NOT_COMPLETED);
+      if (nextDuressPin === currentPin) throw new Error(DURESS_MUST_DIFFER);
+      await setPinSlot(appSecureBackend(), 'duress', nextDuressPin);
+    },
+    [checkSessionPin],
+  );
+
+  const removeDuressPin = useCallback(
+    async (currentPin: string) => {
+      const slot = await checkSessionPin(currentPin);
+      if (slot !== 'primary') throw new Error(PIN_ACTION_NOT_COMPLETED);
+      await clearDuressSlot(appSecureBackend());
+      await removeDecoyWallet();
+    },
+    [checkSessionPin, removeDecoyWallet],
+  );
 
   const beginCreate = useCallback(() => {
     // 128 bits = 12 words. Entropy comes from crypto.getRandomValues via the
@@ -1093,6 +1341,41 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   );
 
   const wipe = useCallback(async () => {
+    // With an app PIN (duress wallet Stage 2): "Remove wallet" removes BOTH
+    // wallets, whichever is open, every per-wallet record of both storage
+    // profiles and the PIN record (./duress.ts wipeBothWallets;
+    // docs/DURESS_WALLET.md section 7.3). The same resets as below run for
+    // each wallet, through stores and vaults bound to its profile.
+    if (appPinPresence.get()) {
+      const resetRecords = async (store: RemovableKeyValueStore, vault: ProfileVault) => {
+        await forgetAllSessions(store, vault.sessionKeys).catch(() => undefined);
+        await wipeRecoveryData(store).catch(() => undefined);
+        await resetPasskeys(store).catch(() => undefined);
+        await resetSpendingLimits(store).catch(() => undefined);
+        await forgetBrowserConnections(store).catch(() => undefined);
+        await wipeTransactionNotes(store).catch(() => undefined);
+        await resetMultisigRecords(store).catch(() => undefined);
+        await resetPendingRegistry(store).catch(() => undefined);
+        await resetPriceAlerts(store).catch(() => undefined);
+        await resetAccounts(store).catch(() => undefined);
+      };
+      await wipeBothWallets({
+        store: AsyncStorage as unknown as SweepableStore,
+        backend: appSecureBackend(),
+        vaultFor: (profile) => createProfileVault(profile),
+        resetRecords,
+        publicAccountIndices: ALL_CACHE_INDICES,
+      });
+      dropPhraseTicket();
+      setDerived({});
+      setMultisigInfo({});
+      commitAccounts(null);
+      setPendingMnemonic(null);
+      setSessionSlot(null);
+      setProfileKey((k) => k + 1);
+      setStatus('no-wallet');
+      return;
+    }
     // Imported private keys (feature 12) first: if deleting them fails, the
     // wipe stops before anything else is removed, so an imported key can
     // never outlive the wallet it belongs to unnoticed.
@@ -1134,7 +1417,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     commitAccounts(null);
     setPendingMnemonic(null);
     setStatus('no-wallet');
-  }, [commitAccounts]);
+  }, [commitAccounts, setSessionSlot]);
 
   // Accounts the wallet holds a key for. Watch-only and multi-signature
   // accounts are filtered out here on purpose (see the `accountList` doc
@@ -1249,6 +1532,17 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       revealMnemonic,
       signWith,
       wipe,
+      awaitingPin,
+      unlockWithPin,
+      pinSessionSlot,
+      profileKey,
+      turnOnAppPin,
+      changeAppPin,
+      turnOffAppPin,
+      duressPinSet,
+      addDuressPin,
+      changeDuressPin,
+      removeDuressPin,
     }),
     [
       status,
@@ -1276,6 +1570,17 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       revealMnemonic,
       signWith,
       wipe,
+      awaitingPin,
+      unlockWithPin,
+      pinSessionSlot,
+      profileKey,
+      turnOnAppPin,
+      changeAppPin,
+      turnOffAppPin,
+      duressPinSet,
+      addDuressPin,
+      changeDuressPin,
+      removeDuressPin,
     ],
   );
 

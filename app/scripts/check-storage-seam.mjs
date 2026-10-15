@@ -15,9 +15,10 @@
 //  2. Behavioural pins: each wrapper reaches the same underlying key with
 //     the same value and the same error behaviour as the direct call it
 //     replaced; the scope function is the identity for the primary profile
-//     (the only one in use); every key name equals the string the app
-//     stored before the seam (no migration); a second profile, which
-//     nothing uses yet, would move only per-wallet and secret keys.
+//     (the active one unless an app PIN's duress PIN opened the second
+//     wallet); every key name equals the string the app stored before the
+//     seam (no migration); a second profile (Stage 2's decoy wallet,
+//     exercised by check-duress) moves only per-wallet and secret keys.
 //
 // Mutants: a caller bypassing the seam, a new key literal, a new package
 // import, a stale allow-list entry and a scope function that is not the
@@ -270,13 +271,16 @@ const ORIGINAL_NAMES = {
 };
 {
   const reg = seam.STORE_KEYS;
-  check('the registry declares exactly the 39 key names the app used before the seam',
-    Object.keys(reg).length === 39 && Object.keys(ORIGINAL_NAMES).length === 39 &&
-      Object.entries(ORIGINAL_NAMES).every(([role, name]) => reg[role]?.name === name));
-  check('names are unique', new Set(Object.values(reg).map((d) => d.name)).size === 39);
+  // Stage 2 (the app PIN, wallet/pin.ts) added one key, the app-lock record;
+  // the 39 names the app used before the seam are unchanged.
+  check('the registry declares exactly the 39 key names the app used before the seam, plus the Stage 2 app-lock record (40)',
+    Object.keys(reg).length === 40 && Object.keys(ORIGINAL_NAMES).length === 39 &&
+      Object.entries(ORIGINAL_NAMES).every(([role, name]) => reg[role]?.name === name) &&
+      reg.appLock?.name === 'shiba-wallet.app-lock.v1' && reg.appLock.scope === 'secret' && reg.appLock.backing === 'secure-store');
+  check('names are unique', new Set(Object.values(reg).map((d) => d.name)).size === 40);
   const scopes = { wallet: 0, device: 0, secret: 0 };
   for (const d of Object.values(reg)) scopes[d.scope] += 1;
-  check('scopes: 21 wallet, 9 device, 9 secret', scopes.wallet === 21 && scopes.device === 9 && scopes.secret === 9, JSON.stringify(scopes));
+  check('scopes: 21 wallet, 9 device, 10 secret', scopes.wallet === 21 && scopes.device === 9 && scopes.secret === 10, JSON.stringify(scopes));
   check('every secret key lives in the secure store and every other key in AsyncStorage',
     Object.values(reg).every((d) => (d.scope === 'secret') === (d.backing === 'secure-store')));
   check('the protected keychain service and the notification identifiers keep their names',
@@ -340,8 +344,13 @@ function identityHolds(fn) {
   check('…also with the primary profile passed explicitly', identityHolds((k) => seam.scopedStoreKey(k, seam.PRIMARY_STORE_PROFILE)));
   check('mutant caught: a scope function that prefixes keys breaks the identity pin', !identityHolds((k) => `${k}.x`));
   check('the primary profile is frozen and has no prefix', Object.isFrozen(seam.PRIMARY_STORE_PROFILE) && seam.PRIMARY_STORE_PROFILE.keyPrefix === null);
-  check('the seam offers no way to switch the active profile in Stage 1 (no exported setter)',
-    !Object.keys(seam).some((k) => /^set|Profile$/.test(k) && typeof seam[k] === 'function'));
+  // Stage 2: the active profile exists (memory only) and starts as the
+  // primary one; setActiveStoreProfile is its only setter and refuses a
+  // malformed prefix (check-duress exercises the switch itself).
+  check('Stage 2: the active profile starts as the primary one, and its one setter refuses a malformed prefix',
+    seam.activeStoreProfile() === seam.PRIMARY_STORE_PROFILE &&
+      Object.keys(seam).filter((k) => /^set/.test(k) && typeof seam[k] === 'function').join(',') === 'setActiveStoreProfile' &&
+      (() => { try { seam.setActiveStoreProfile({ id: 'x', keyPrefix: 'Bad.Prefix' }); return false; } catch { return seam.activeStoreProfile() === seam.PRIMARY_STORE_PROFILE; } })());
 
   // The design for Stage 2, exercised as a pure function (nothing uses it).
   const decoy = { id: 'second', keyPrefix: 'd1' };
