@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AsyncStorage, readStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
 import {
   MAX_GUARDIAN_APPROVAL_SCAN_BLOCKS,
   encodeVetoCall,
@@ -338,7 +338,7 @@ export async function prepareHeirRemoveQuote(
 // Checking for takeover attempts
 // ---------------------------------------------------------------------------
 
-export const INHERITANCE_STORE_KEY = 'shiba-wallet.inheritance.v1';
+export const INHERITANCE_STORE_KEY = STORE_KEYS.inheritance.name;
 const STORE_VERSION = 1;
 
 /**
@@ -416,7 +416,7 @@ function reviveScanState(value: unknown): TakeoverScanState | null {
 }
 
 async function readScanMap(store: KeyValueStore): Promise<Record<string, unknown>> {
-  const text = await store.getItem(INHERITANCE_STORE_KEY);
+  const text = await readStoreItem(store, INHERITANCE_STORE_KEY);
   if (text === null) return {};
   try {
     const parsed = JSON.parse(text) as { version?: unknown; entries?: unknown };
@@ -441,7 +441,7 @@ async function writeScanState(chain: string, account: string, state: TakeoverSca
   const entries = await readScanMap(store);
   if (state) entries[scanKey(chain, account)] = state;
   else delete entries[scanKey(chain, account)];
-  await store.setItem(INHERITANCE_STORE_KEY, JSON.stringify({ version: STORE_VERSION, entries }));
+  await writeStoreItem(store, INHERITANCE_STORE_KEY, JSON.stringify({ version: STORE_VERSION, entries }));
 }
 
 /**

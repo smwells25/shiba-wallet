@@ -129,7 +129,15 @@ import {
   setBlockbookEndpoint,
   type BlockbookConfig,
 } from '../wallet/blockbook';
-import { EVM_CHAIN_ID } from '../wallet/send';
+import {
+  EVM_CHAIN_ID,
+  MINIMUM_FEE_REHEARSAL_HINT,
+  MINIMUM_FEE_REHEARSAL_SWITCH_LABEL,
+  minimumFeeRehearsalArmed,
+  minimumFeeRehearsalOffered,
+  setMinimumFeeRehearsal,
+  subscribeMinimumFeeRehearsal,
+} from '../wallet/send';
 import { exportAllRecordsText, loadRecoveryRecords } from '../wallet/recovery';
 import { passkeyGateNow } from '../wallet/passkey-native';
 import { PASSKEY_AUDIT_NOTE, PASSKEY_EXPLANATION, PASSKEY_SELF_CALL_RISK } from '../wallet/passkeys';
@@ -1460,6 +1468,11 @@ export function SettingsScreen({ navigation, route }: Props) {
     appScreenProtection().subscribe,
     appScreenProtection().status,
   );
+  // Settings → Developer (phase 21 item 3): the one-shot minimum-fee
+  // rehearsal, offered on test networks only (send.ts; memory only).
+  const minimumFeeArmed = React.useSyncExternalStore(subscribeMinimumFeeRehearsal, () =>
+    minimumFeeRehearsalArmed(evmChain.caip2),
+  );
   // A failed attempt is also retried whenever Settings comes into view.
   useFocusEffect(
     useCallback(() => {
@@ -2356,6 +2369,25 @@ export function SettingsScreen({ navigation, route }: Props) {
         ) : null}
         {evmChain.l1CostInGas ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>{l1CostInGasNote(evmChain)}</Text>
+        ) : null}
+        {/* Test networks only (readiness isTestNetwork): never rendered on
+            mainnet or on a network the user added as a main network. */}
+        {minimumFeeRehearsalOffered(evmChain.caip2) ? (
+          <>
+            <View style={styles.toggleRow}>
+              <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.toggleLabel, { color: theme.text, flexShrink: 1, marginRight: 12 }]}>
+                {MINIMUM_FEE_REHEARSAL_SWITCH_LABEL}
+              </Text>
+              <Switch {...switchColors(theme)}
+                accessibilityLabel={MINIMUM_FEE_REHEARSAL_SWITCH_LABEL}
+                accessibilityRole="switch"
+                accessibilityState={{ checked: minimumFeeArmed }}
+                value={minimumFeeArmed}
+                onValueChange={(v) => void setMinimumFeeRehearsal(evmChain.caip2, v)}
+              />
+            </View>
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{MINIMUM_FEE_REHEARSAL_HINT}</Text>
+          </>
         ) : null}
         <CustomNetworksSection customNetworks={customNetworks} choice={testNetwork} onChoose={setTestNetwork} />
       </View>

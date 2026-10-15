@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AsyncStorage, readStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
 import { BITCOIN, DOGECOIN, addressToScriptPubKey } from '@shiba-wallet/chains-utxo';
 // Explicit .ts extensions: this module is imported by scripts/check-contacts.mjs
 // under Node's type stripping, which resolves relative specifiers literally.
@@ -52,7 +52,7 @@ import { EVM_TEST_PROFILES, isCustomNetworkId } from '../config/evm-chain.ts';
  *    full address, never the name alone.
  */
 
-const CONTACTS_KEY = 'shiba-wallet.contacts.v1';
+const CONTACTS_KEY = STORE_KEYS.contacts.name;
 const STORE_VERSION = 1;
 
 /** Maximum contact-name length, in Unicode code points. */
@@ -301,7 +301,7 @@ type ReadResult =
 async function readRaw(store: KeyValueStore): Promise<ReadResult> {
   let text: string | null;
   try {
-    text = await store.getItem(CONTACTS_KEY);
+    text = await readStoreItem(store, CONTACTS_KEY);
   } catch {
     // Storage itself failed: behave as unreadable so nothing is written
     // over data that may well still be there.
@@ -426,7 +426,7 @@ async function writeNetwork(
     address: c.address,
     createdAt: c.createdAt,
   }));
-  await store.setItem(CONTACTS_KEY, JSON.stringify(raw));
+  await writeStoreItem(store, CONTACTS_KEY, JSON.stringify(raw));
 }
 
 function sameName(a: string, b: string): boolean {
@@ -564,7 +564,7 @@ export async function forgetContactsForNetwork(
   const count = Array.isArray(stored) ? stored.length : 1;
   const networks = { ...read.raw.networks };
   delete networks[networkId];
-  await store.setItem(CONTACTS_KEY, JSON.stringify({ version: STORE_VERSION, networks }));
+  await writeStoreItem(store, CONTACTS_KEY, JSON.stringify({ version: STORE_VERSION, networks }));
   return count;
 }
 
@@ -574,5 +574,5 @@ export async function forgetContactsForNetwork(
  * confirmation first.
  */
 export async function resetContacts(store: KeyValueStore = AsyncStorage): Promise<void> {
-  await store.setItem(CONTACTS_KEY, JSON.stringify({ version: STORE_VERSION, networks: {} }));
+  await writeStoreItem(store, CONTACTS_KEY, JSON.stringify({ version: STORE_VERSION, networks: {} }));
 }

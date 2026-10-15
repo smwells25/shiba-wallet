@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AsyncStorage, readStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
 import { toChecksumAddress as checksumBytes } from '@shiba-wallet/core';
 import type { FungibleAsset } from '@shiba-wallet/core';
 import {
@@ -227,8 +227,8 @@ export interface SpendingTokenOption {
 // Small helpers
 // ---------------------------------------------------------------------------
 
-const POLICIES_KEY = 'shiba-wallet.spending-policies.v1';
-const HISTORY_KEY = 'shiba-wallet.spending-history.v1';
+const POLICIES_KEY = STORE_KEYS.spendingPolicies.name;
+const HISTORY_KEY = STORE_KEYS.spendingHistory.name;
 const STORE_VERSION = 1;
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 
@@ -386,7 +386,7 @@ async function readBlob<T>(
 ): Promise<ReadOutcome<T>> {
   let raw: string | null;
   try {
-    raw = await store.getItem(key);
+    raw = await readStoreItem(store, key);
   } catch {
     return { ok: false, reason: 'unreadable' };
   }
@@ -446,7 +446,7 @@ async function writePolicyBlob(store: KeyValueStore, data: Record<string, Spendi
     if (list.length === 0) continue;
     entries[k] = list.map((p) => ({ ...p, cap: p.cap.toString() }));
   }
-  await store.setItem(POLICIES_KEY, JSON.stringify({ version: STORE_VERSION, entries }));
+  await writeStoreItem(store, POLICIES_KEY, JSON.stringify({ version: STORE_VERSION, entries }));
 }
 
 async function writeHistoryBlob(store: KeyValueStore, data: Record<string, SpendRecord[]>): Promise<void> {
@@ -455,7 +455,7 @@ async function writeHistoryBlob(store: KeyValueStore, data: Record<string, Spend
     if (list.length === 0) continue;
     entries[k] = list.map((r) => ({ ...r, amount: r.amount.toString() }));
   }
-  await store.setItem(HISTORY_KEY, JSON.stringify({ version: STORE_VERSION, entries }));
+  await writeStoreItem(store, HISTORY_KEY, JSON.stringify({ version: STORE_VERSION, entries }));
 }
 
 // Every write goes through one queue: two sends accepted back to back must
@@ -642,8 +642,8 @@ export async function removeSpendingPolicy(
 /** Clears every policy and the whole history (Settings "Reset", and the wallet wipe). */
 export async function resetSpendingLimits(store: KeyValueStore = AsyncStorage): Promise<void> {
   return serialized(async () => {
-    await store.setItem(POLICIES_KEY, JSON.stringify({ version: STORE_VERSION, entries: {} }));
-    await store.setItem(HISTORY_KEY, JSON.stringify({ version: STORE_VERSION, entries: {} }));
+    await writeStoreItem(store, POLICIES_KEY, JSON.stringify({ version: STORE_VERSION, entries: {} }));
+    await writeStoreItem(store, HISTORY_KEY, JSON.stringify({ version: STORE_VERSION, entries: {} }));
   });
 }
 

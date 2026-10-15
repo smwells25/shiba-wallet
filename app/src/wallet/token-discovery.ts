@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AsyncStorage } from './store-keys.ts';
 import type { FungibleAsset } from '@shiba-wallet/core';
 import {
   NodeClient,

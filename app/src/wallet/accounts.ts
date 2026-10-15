@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AsyncStorage, readStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
 import type { ChainKeyProvider, DerivedAccount } from '@shiba-wallet/core';
 import { toChecksumAddress } from '@shiba-wallet/core';
 // Explicit .ts extensions: this module is imported by scripts/check-accounts.mjs
@@ -101,7 +101,7 @@ export {
  * stored multisig is listed in the account switcher.
  */
 
-const ACCOUNTS_KEY = 'shiba-wallet.accounts.v1';
+const ACCOUNTS_KEY = STORE_KEYS.accounts.name;
 const STORE_VERSION = 1;
 
 /** Maximum account-name length, in Unicode code points. */
@@ -313,7 +313,7 @@ function reviveState(raw: unknown): AccountsState {
 export async function loadAccounts(store: KeyValueStore = AsyncStorage): Promise<AccountsState> {
   let raw: string | null;
   try {
-    raw = await store.getItem(ACCOUNTS_KEY);
+    raw = await readStoreItem(store, ACCOUNTS_KEY);
   } catch {
     return defaultAccountsState();
   }
@@ -326,7 +326,8 @@ export async function loadAccounts(store: KeyValueStore = AsyncStorage): Promise
 }
 
 async function saveAccounts(state: AccountsState, store: KeyValueStore): Promise<void> {
-  await store.setItem(
+  await writeStoreItem(
+    store,
     ACCOUNTS_KEY,
     JSON.stringify({
       version: STORE_VERSION,

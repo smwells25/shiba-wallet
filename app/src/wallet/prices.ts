@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AsyncStorage, readStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
 import {
   COINGECKO_BASE_URL,
   COINGECKO_DEMO_KEY_HEADER,
@@ -80,7 +80,7 @@ export const PRICE_MAX_STALE_MS = 30 * 60_000;
  */
 export const PRICE_OLD_AFTER_MS = 10 * 60_000;
 
-const PRICE_CONFIG_KEY = 'shiba-wallet.price-config.v1';
+const PRICE_CONFIG_KEY = STORE_KEYS.priceConfig.name;
 
 // ---------------------------------------------------------------------------
 // CAIP-19 ids
@@ -265,7 +265,7 @@ export interface PriceConfig {
 
 async function loadRawConfig(store: KeyValueStore): Promise<Record<string, unknown>> {
   try {
-    const raw = await store.getItem(PRICE_CONFIG_KEY);
+    const raw = await readStoreItem(store, PRICE_CONFIG_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as unknown;
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
@@ -338,7 +338,8 @@ export async function setPriceDemoKey(
     throw new Error('The price check could not run. Nothing was saved — try again.');
   }
   if (result.quotes.has(VERIFY_ASSET_ID)) {
-    await store.setItem(
+    await writeStoreItem(
+      store,
       PRICE_CONFIG_KEY,
       JSON.stringify({ demoApiKey: trimmed, verifiedAt: new Date().toISOString() }),
     );
@@ -388,7 +389,7 @@ export async function setPriceDemoKey(
 
 /** Removes the stored Demo key; prices go back to keyless requests. */
 export async function clearPriceDemoKey(store: KeyValueStore = AsyncStorage): Promise<void> {
-  await store.setItem(PRICE_CONFIG_KEY, JSON.stringify({}));
+  await writeStoreItem(store, PRICE_CONFIG_KEY, JSON.stringify({}));
   resetSharedPriceProvider();
 }
 

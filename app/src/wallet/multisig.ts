@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AsyncStorage, readStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
 // keccak256 for approval ids: @noble/hashes, an audited dependency the app
 // already uses directly in delegation.ts and walletconnect.ts.
 import { keccak_256 } from '@noble/hashes/sha3.js';
@@ -557,7 +557,7 @@ export function chooseMultisigIndex(config: MultisigConfig, chain: string, recor
 // Records (AsyncStorage, secret-free)
 // ---------------------------------------------------------------------------
 
-const MULTISIG_STORE_KEY = 'shiba-wallet.multisig.v1';
+const MULTISIG_STORE_KEY = STORE_KEYS.multisig.name;
 const STORE_VERSION = 1;
 /** Upper bound on multisig accounts listed at once. */
 export const MAX_MULTISIG_ACCOUNTS = 20;
@@ -827,7 +827,7 @@ export const MULTISIG_STORE_DAMAGED =
 async function readStore(store: KeyValueStore): Promise<{ state: StoreState; damaged: boolean }> {
   let raw: string | null;
   try {
-    raw = await store.getItem(MULTISIG_STORE_KEY);
+    raw = await readStoreItem(store, MULTISIG_STORE_KEY);
   } catch {
     return { state: { records: [], nextSlot: 0, cosigned: [] }, damaged: true };
   }
@@ -861,7 +861,8 @@ async function readStore(store: KeyValueStore): Promise<{ state: StoreState; dam
 }
 
 async function writeStore(state: StoreState, store: KeyValueStore): Promise<void> {
-  await store.setItem(
+  await writeStoreItem(
+    store,
     MULTISIG_STORE_KEY,
     JSON.stringify({ version: STORE_VERSION, nextSlot: state.nextSlot, records: state.records, cosigned: state.cosigned }),
   );
@@ -1013,7 +1014,7 @@ export async function multisigListEntries(store: KeyValueStore = AsyncStorage): 
 
 /** Removes every record (wallet wipe). Nothing on-chain changes. */
 export async function resetMultisigRecords(store: KeyValueStore = AsyncStorage): Promise<void> {
-  await store.setItem(MULTISIG_STORE_KEY, JSON.stringify({ version: STORE_VERSION, nextSlot: 0, records: [] }));
+  await writeStoreItem(store, MULTISIG_STORE_KEY, JSON.stringify({ version: STORE_VERSION, nextSlot: 0, records: [] }));
 }
 
 function duplicateRecordError(existing: MultisigRecord): string {

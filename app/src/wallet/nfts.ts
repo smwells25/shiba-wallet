@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AsyncStorage, readStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
 import { base64 } from '@scure/base';
 import {
   alchemyNftOwnershipProvider,
@@ -53,7 +53,7 @@ import { STRIPPED_NAME_CHARS } from './names.ts';
  * persists unless every check passes, so configured == verified.
  */
 
-const NFT_INDEXER_CONFIG_KEY = 'shiba-wallet.nft-indexer.v1';
+const NFT_INDEXER_CONFIG_KEY = STORE_KEYS.nftIndexer.name;
 
 export interface NftIndexerConfig {
   url: string | null;
@@ -89,7 +89,7 @@ type ConfigMap = Record<string, { url?: unknown; verifiedAt?: unknown; verifiedB
 
 async function loadConfigMap(store: KeyValueStore): Promise<ConfigMap> {
   try {
-    const raw = await store.getItem(NFT_INDEXER_CONFIG_KEY);
+    const raw = await readStoreItem(store, NFT_INDEXER_CONFIG_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as unknown;
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
@@ -227,7 +227,7 @@ export async function setNftIndexerUrl(
     verifiedAt: new Date().toISOString(),
     verifiedBlock: validAt.blockNumber.toString(),
   };
-  await store.setItem(NFT_INDEXER_CONFIG_KEY, JSON.stringify(map));
+  await writeStoreItem(store, NFT_INDEXER_CONFIG_KEY, JSON.stringify(map));
   clearNftCache();
 }
 
@@ -239,7 +239,7 @@ export async function clearNftIndexerUrl(
   const map = await loadConfigMap(store);
   if (map[chainId]) {
     delete map[chainId];
-    await store.setItem(NFT_INDEXER_CONFIG_KEY, JSON.stringify(map));
+    await writeStoreItem(store, NFT_INDEXER_CONFIG_KEY, JSON.stringify(map));
   }
   clearNftCache();
 }

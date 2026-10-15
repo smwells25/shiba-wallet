@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AsyncStorage, readStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
 // Explicit .ts extension: this module is imported by scripts/check-doge.mjs
 // under Node's type stripping, which resolves relative specifiers literally.
 import type { KeyValueStore } from './tokens.ts';
@@ -20,7 +20,7 @@ import { assertSecureEndpointUrl } from '../config/endpoint-url.ts';
  * only module touching the secure store, which holds only the mnemonic.
  */
 
-const BLOCKBOOK_CONFIG_KEY = 'shiba-wallet.blockbook.v1';
+const BLOCKBOOK_CONFIG_KEY = STORE_KEYS.blockbook.name;
 
 /**
  * The request-header name the API key is sent under. NOWNodes — the hosted
@@ -72,7 +72,7 @@ function checkStoredUrl(stored: string | null): { url: string | null; ignoredUrl
 
 async function loadConfigMap(store: KeyValueStore): Promise<ConfigMap> {
   try {
-    const raw = await store.getItem(BLOCKBOOK_CONFIG_KEY);
+    const raw = await readStoreItem(store, BLOCKBOOK_CONFIG_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as unknown;
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
@@ -87,7 +87,7 @@ async function loadConfigMap(store: KeyValueStore): Promise<ConfigMap> {
 }
 
 async function saveConfigMap(map: ConfigMap, store: KeyValueStore): Promise<void> {
-  await store.setItem(BLOCKBOOK_CONFIG_KEY, JSON.stringify(map));
+  await writeStoreItem(store, BLOCKBOOK_CONFIG_KEY, JSON.stringify(map));
 }
 
 /** The stored Blockbook configuration for one chain (nulls when unset). */

@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AsyncStorage, readStoreItem, writeStoreItem, removeStoreItem, STORE_KEYS } from './store-keys.ts';
 import type { HistoryEntry } from '@shiba-wallet/core';
 // Explicit .ts extensions: scripts/check-notes.mjs loads this module under
 // Node's type stripping, which resolves relative specifiers literally.
@@ -68,7 +68,7 @@ import { isSmartAccountEntry } from './smart-account-history.ts';
  * default store) so scripts/check-notes.mjs runs the exact code.
  */
 
-export const TX_NOTES_KEY = 'shiba-wallet.tx-notes.v1';
+export const TX_NOTES_KEY = STORE_KEYS.txNotes.name;
 const STORE_VERSION = 1;
 
 /** Maximum note length, in Unicode code points. */
@@ -253,7 +253,7 @@ function reviveRecord(network: string, key: string, value: unknown): Transaction
 async function readRaw(store: NotesStore): Promise<ReadResult> {
   let text: string | null;
   try {
-    text = await store.getItem(TX_NOTES_KEY);
+    text = await readStoreItem(store, TX_NOTES_KEY);
   } catch {
     // Storage itself failed: treat as unreadable so nothing is written over
     // data that may well still be there.
@@ -323,7 +323,7 @@ async function writeRaw(raw: RawStore, store: NotesStore): Promise<void> {
   for (const [network, records] of Object.entries(raw.networks)) {
     if (Object.keys(records).length === 0) delete raw.networks[network];
   }
-  await store.setItem(TX_NOTES_KEY, JSON.stringify(raw));
+  await writeStoreItem(store, TX_NOTES_KEY, JSON.stringify(raw));
 }
 
 /** Which transaction a note belongs to. At least one id is required. */
@@ -450,15 +450,15 @@ export function linkUserOperation(
 /** Replaces the store with an empty one (the explicit way out of a read-only store). */
 export function resetNotes(store: NotesStore = AsyncStorage): Promise<void> {
   return serialized(store, () =>
-    store.setItem(TX_NOTES_KEY, JSON.stringify({ version: STORE_VERSION, networks: {} })),
+    writeStoreItem(store, TX_NOTES_KEY, JSON.stringify({ version: STORE_VERSION, networks: {} })),
   );
 }
 
 /** Deletes every note (the wallet wipe). */
 export function wipeTransactionNotes(store: NotesStore = AsyncStorage): Promise<void> {
   return serialized(store, async () => {
-    if (store.removeItem) await store.removeItem(TX_NOTES_KEY);
-    else await store.setItem(TX_NOTES_KEY, JSON.stringify({ version: STORE_VERSION, networks: {} }));
+    if (store.removeItem) await removeStoreItem(store, TX_NOTES_KEY);
+    else await writeStoreItem(store, TX_NOTES_KEY, JSON.stringify({ version: STORE_VERSION, networks: {} }));
   });
 }
 

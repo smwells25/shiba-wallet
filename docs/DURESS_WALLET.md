@@ -1,11 +1,11 @@
-# Duress and Decoy Wallet (feature 53): Design
-
 Status: design document, phase 20 item 2, written 2026-10-11 against HEAD
-`a104227`. No code was changed for this item. The decision in section 5 is
-**design only for now**: no honest slice can be built until two
-prerequisites exist (a lock that also covers a cold start, and a single
-storage seam that every per-wallet record goes through). Section 6 specifies
-the slice so that it can be built as soon as they do.
+`a104227`, updated on 2026-10-14 (phase 21 item 2) with the Chairperson's
+decisions (section 7) and the first two prerequisites done: the lock now
+covers a cold start (Stage 0, commit `e0ef6c2`, threat-model row F-77(b)),
+and the app's own storage keys go through one seam (Stage 1, section 5.2,
+`app/src/wallet/store-keys.ts` with its check
+`app/scripts/check-storage-seam.mjs`). No app PIN or duress PIN exists yet.
+Section 6 specifies the slice; section 7.7 lists Stage 2's exact pieces.
 
 Every fact below names its source: the installed package sources under
 `app/node_modules` (with the version), this repository's own code (file and
@@ -148,17 +148,20 @@ it is the Chairperson's to make.
 
 ### 2.3 What an app PIN changes in the lock model
 
-1. **The lock must cover a cold start.** It did not when this was written; fixed on 2026-10-12 (commit `e0ef6c2`): with auto-lock on, the wallet now starts locked (threat-model row F-77, part b).
-   `reduceLock` starts unlocked (`INITIAL_LOCK_STATE = { locked: false, … }`,
-   `lock.ts`) and locks only when the app returns from the background after
-   the threshold; `WalletContext.tsx` (lines 533–590) moves to `ready` at
-   launch without any prompt; and `LockGate.tsx` arms only on AppState
-   changes. So an app that is killed (swiped away, or reclaimed by the system
-   while in the background) opens again **unlocked**, whatever the auto-lock
-   setting. The Settings label is honest ("Auto-lock after returning from
-   background"), but a duress gate that a coercer can skip by swiping the app
-   away is no gate. This is reasoned from the code, not yet observed on the
-   emulator with auto-lock on; see the checklist in section 6.7.
+1. **The lock must cover a cold start. FIXED on 2026-10-12** (commit
+   `e0ef6c2`, threat-model row F-77(b)). When this document was first
+   written, `reduceLock` started unlocked (`INITIAL_LOCK_STATE = { locked:
+   false, … }` in `lock.ts`), `WalletContext.tsx` reached `ready` at launch
+   without any prompt, and `LockGate.tsx` armed only on AppState changes, so
+   an app that had been swiped away or reclaimed by the system opened again
+   unlocked whatever the auto-lock setting said — and a duress gate that a
+   coercer can skip by swiping the app away is no gate. Since `e0ef6c2`,
+   `lock.ts` `launchLockDecision` starts the wallet LOCKED on every launch
+   while auto-lock is on (a neutral cover is shown until the preferences are
+   read), and the emulator showed zero frames of Home before the lock on a
+   cold start (phase 20 status in `AGENTS.md`). What remains for a duress
+   gate is item 7 below: today auto-lock can still be switched off, which a
+   duress PIN must not allow.
 2. **The PIN screen sits in front of everything, at every launch and every
    return**, before any wallet data is loaded. Under the current overlay
    design the screens are mounted underneath the lock (only hidden), and the
@@ -222,9 +225,13 @@ device-to-device transfer carries no key material, so reading it needs a
 rooted phone or a forensic extraction, not a backup.
 
 **AsyncStorage** is an unencrypted SQLite database (threat model section
-3.4). At HEAD, 40 distinct `shiba-wallet.*` key names or prefixes appear as
-literals in `app/src` (`grep -rhoE "'shiba-wallet\.[a-zA-Z0-9.-]+'" app/src`),
-read and written directly by 30 files that each import AsyncStorage
+3.4). When this was written (`a104227`), 40 distinct `shiba-wallet.*` key
+names or prefixes appeared as literals in `app/src` (`grep -rhoE
+"'shiba-wallet\.[a-zA-Z0-9.-]+'" app/src`); on 2026-10-14 the same command
+found 42 (the price-alert key and its notification prefix had been added),
+and 30 files imported AsyncStorage. Stage 1 (section 5.2) moved them into one
+registry; the rest of this paragraph describes the state before it. They
+were read and written directly by 30 files that each import AsyncStorage
 (accounts, prefs, contacts, tokens, notes, sessions, multisig, recovery,
 inheritance, passkeys, spending limits, pending transactions, browser
 connections, WalletConnect bindings, custom networks, notifications state and
@@ -367,8 +374,9 @@ section 6 can claim is:
 - **T-78** (section 4.2): coercion ("rubber-hose") of the user to open the
   wallet — no mitigation exists; the residual is everything in this section.
 - **F-77** (section 6.1): no duress protection exists; the lock does not
-  cover a cold start; the lock screen opens the protected phrase; any future
-  slice inherits the storage and offline-guessing limits of section 3.
+  cover a cold start (part b, fixed on 2026-10-12 in commit `e0ef6c2`); the
+  lock screen opens the protected phrase; any future slice inherits the
+  storage and offline-guessing limits of section 3.
 
 ---
 
@@ -401,23 +409,53 @@ Option (b). No slice is built in phase 20. The reasons, in order of weight:
 
 ### 5.2 The path to an honest slice
 
-- **Stage 0 — lock on launch (small; independent; recommended now).** When
-  auto-lock is set, the app also starts locked; the unlock is unchanged. This
-  closes the cold-start gap for every user, duress or not. It touches
-  `lock.ts`, `LockGate.tsx` and the Settings hint, and it changes emulator
-  passes (every relaunch needs an unlock).
-- **Stage 1 — one storage seam (a refactor; prerequisite).** A wallet-scope
-  module through which every per-wallet AsyncStorage key, every per-wallet
-  secure-store key, the WalletConnect SDK's storage prefix
-  (`customStoragePrefix` exists in `@walletconnect/types` 2.25.0's core
-  options; its effect is unverified) and every reminder identifier pass, with
-  the current names as the real wallet's scope (no migration) and a check
-  script that fails on any `shiba-wallet.` literal used outside the seam.
-  Useful beyond this feature (multiple wallets on one phone, a clean wipe).
-- **Stage 2 — the duress PIN itself**, specified in section 6.
+- **Stage 0 — lock on launch. DONE** (commit `e0ef6c2`, 2026-10-12). With
+  auto-lock set, the app also starts locked; the unlock is unchanged. This
+  closed the cold-start gap for every user, duress or not (section 2.3
+  item 1).
+- **Stage 1 — one storage seam. DONE for the app's own keys in
+  `app/src/wallet`** (phase 21 item 2, 2026-10-14). `app/src/wallet/store-keys.ts`
+  declares every storage key with its scope — 39 names: 21 per-wallet
+  (`wallet`), 9 device-wide (`device`) and 9 secure-store items (`secret`)
+  — plus the protected keychain service and the four notification-identifier
+  prefixes. It holds the only functions that read, write, delete or list a
+  key (`readStoreItem`, `writeStoreItem`, `removeStoreItem`,
+  `listStoreKeys`, `readSecureItem`, `writeSecureItem`,
+  `deleteSecureItem`), and the scope function `scopedStoreKey(key,
+  profile)`, which today returns every key unchanged (no migration; pinned).
+  A second profile, which nothing passes yet, would leave `device` keys
+  alone and move `wallet` and `secret` keys to
+  `shiba-wallet.profile-<prefix>.…`, names no declared key can have. Every
+  store module in `app/src/wallet` (22 modules, `WalletContext.tsx`, and
+  the vault in `storage.ts`, whose 45 secure-store calls now go through the
+  seam with the same keys, options and order) was moved onto these
+  functions with the same keys, values and error behaviour; every existing
+  check suite stayed green, with only pins on a key literal or on a call's
+  exact text updated (`check-home`, `check-key-import`).
+  `app/scripts/check-storage-seam.mjs` fails on any key literal, any import
+  of the AsyncStorage package, any AsyncStorage / SecureStore call, and any
+  `getItem` / `setItem` / `removeItem` / `…ItemAsync` call outside the seam,
+  apart from an exact allow-list. **What Stage 1 still leaves**, each in
+  that allow-list or named here, to move before Stage 2 relies on it:
+  `app/src/wallet/recovery.ts` (the recovery records and progress: two keys,
+  six calls — being edited by another slice this wave, so left alone);
+  `app/src/config/prefs.ts` and `app/src/config/networks.ts` (preferences
+  and endpoint overrides, both device-wide); five screens and
+  `WalletConnectContext.tsx`, which import the AsyncStorage package only to
+  pass it on as the store argument; the WalletConnect SDK's own storage
+  (`customStoragePrefix` in `@walletconnect/types` 2.25.0's core options,
+  effect still unverified); the reminder identifiers, which are declared in
+  the seam but not scoped (section 7.4 makes that moot by turning OS
+  notifications off while an app PIN is on); and `shiba-wallet.aa-config.v1`,
+  which mixes device-like bundler settings with per-wallet recovered
+  accounts and is declared per-wallet until Stage 2 splits it.
+- **Stage 2 — the app PIN, then the duress PIN** (section 6, with the
+  decisions and the exact pieces in section 7).
 - **Stage 3 — an emulator pass on a throwaway wallet** (section 6.7).
 
 ### 5.3 Decisions for the Chairperson
+
+All five were decided on 2026-10-14; section 7 records the answers.
 
 1. Reverse the no-app-PIN decision for users who set a duress PIN? (2.2)
 2. The decoy's phrase: freshly generated (two backups, nothing linked) or a
@@ -496,9 +534,9 @@ copy of the app's files resets it, and offline guessing ignores it.
 - Funding note: "Fund the second wallet from an exchange or another source
   that has never sent to or received from this wallet. A transfer between the
   two wallets links them permanently on the blockchain."
-- Backup note: "The second wallet has its own recovery phrase. Write it down
-  too; this wallet's phrase does not restore it." (or the BIP-85 wording,
-  depending on decision 2).
+- Backup note (BIP-85, decided on 2026-10-14; section 7.2): "The second
+  wallet is derived from this wallet's recovery phrase, so backing up that
+  one phrase backs up both. Its own phrase does not reveal this wallet's."
 - PIN screen: "Enter your PIN" and, after failures, "Wrong PIN. Try again in
   N seconds." — the same words whichever wallet the PIN would open.
 
@@ -537,7 +575,229 @@ behaviour of the app-switcher cover over the PIN screen.
 
 ---
 
-## 7. Sources
+## 7. The Chairperson's decisions of 2026-10-14 and what they set
+
+Recorded in `AGENTS.md` ("DECIDED by the Chairperson (2026-10-14)", item 2,
+and the phase 21 plan, item 2). They answer the five questions of section
+5.3. Where a decision leaves a detail open, this section says which reading
+it takes and marks it for confirmation.
+
+### 7.1 An opt-in app PIN comes first; the duress PIN only on top of it
+
+"A duress PIN only makes sense once an app PIN is enabled." So the order is:
+
+1. **App PIN, opt-in.** Settings → Privacy offers an app PIN. While it is
+   off, nothing changes: the lock stays the device's own biometric / PIN
+   prompt, as recorded in `lock.ts` and threat-model row T-09. While it is
+   on, the app's own PIN pad (section 2.3, items 5–8; section 6.2–6.3) is
+   the unlock, auto-lock cannot be switched off, app-wide screen protection
+   is forced on, and signing still asks for the device prompt
+   (`requireLocalAuth`). This reverses the no-app-PIN decision only for
+   users who opt in; `lock.ts`, T-09 and the Settings hint must be reworded
+   when it is built.
+2. **Duress PIN, only while the app PIN is on.** It can be set only from the
+   real wallet, after the app PIN exists, and must differ from it (section
+   6.2). Turning the app PIN off first removes the duress PIN and the decoy
+   wallet (with a confirmation that says so).
+
+### 7.2 The decoy is a BIP-85 child of the real seed
+
+The decoy's recovery phrase is derived from the real wallet's seed with
+BIP-85 (the BIP-39 application, path
+`m/83696968'/39'/{language}'/{words}'/{index}'`, quoted in section 3.3), the
+way COLDCARD derives its duress wallets. Consequences:
+
+- **One phrase backs up both.** Whoever holds the real phrase can always
+  re-derive the decoy; the decoy's own phrase cannot be turned back into the
+  real one (BIP-85's HMAC step, section 3.3), so revealing the decoy's phrase
+  under coercion gives away nothing of the real wallet.
+- **The recovery rule: the real recovery phrase plus the child index.**
+  Language is English (0) and the word count is the real phrase's (12 or 24),
+  so the only free number is the index. **Recommendation: a fixed index,
+  `0`, for every user, documented here and shown in the app's help text,
+  so that nothing extra has to be written down or stored to recover it.** A
+  restore asks for the real phrase (as it does today) and then, in the duress
+  set-up, re-derives index 0. Why fixed rather than chosen:
+  - an index that the user must write down beside the phrase is one more
+    thing to lose, and a backup sheet that says "duress wallet: 7" tells
+    whoever finds it that a decoy exists — while a fixed, published index
+    tells them nothing they could not try anyway;
+  - the index does not protect anything: anyone who has the real phrase
+    already has the real wallet, so a secret index would only hide the
+    decoy from someone who has already won;
+  - on the phone, the index is never stored at all — the decoy's derived
+    phrase is stored in the decoy profile's own secure-store slot exactly
+    like the real phrase (section 6.1), so the device holds no "index"
+    record whose presence would point at a decoy. (Its key names still show
+    that a second profile exists; section 3.2 and the honest claim in 4.3.)
+  - Choosing another index stays possible later (an advanced option), and a
+    user who does so must write it down; the default needs nothing.
+- **Unconfirmed, to check when building:** no BIP-85 implementation is
+  installed (`grep -ri "83696968\|bip85"` over `node_modules/@scure`,
+  `app/node_modules/@scure` and `packages/*/src` finds nothing on
+  2026-10-14), so the derivation must be written over `@scure/bip32` and
+  `@noble/hashes` (HMAC-SHA512, no new primitive) and validated against the
+  official test vectors in BIP-85 itself before any decoy is created.
+- The decoy phrase is created at set-up by reading the real phrase once
+  through the vault (one device prompt when the phrase is protected), deriving
+  the child, and storing it in the decoy profile; the real phrase is never
+  stored a second time and never read while the decoy is open (rule 3).
+
+### 7.3 "Remove wallet" removes both
+
+Whichever wallet is open, "Remove wallet from this device" removes **both**
+profiles' records and secrets, the PIN record and the throttle state (the
+wipe in `WalletContext.tsx` runs over both profiles through the seam's
+`listStoreKeys`). Under coercion this is the safe outcome: the coercer is
+left with nothing, and the user recovers both wallets from the one backed-up
+phrase (7.2). It also means the dialog text is the same in both wallets, so
+it reveals nothing (rule 5). The cost is stated in the dialog that already
+exists: a user who did not back up the phrase loses everything, which is why
+7.5 makes the backup a precondition.
+
+### 7.4 Reminders and price-alert notifications
+
+**The question** ("do we need to remind if we require a normal PIN?"):
+section 4.2 found that local notifications break the decoy. They are posted
+by the operating system and read on the lock screen and in the shade without
+any app PIN, they fire whichever wallet was last open, and the reminders
+exist only for records of the real wallet (a recurring payment, a recurring
+swap, a recovery started on a guardian-protected account, a price alert).
+A "Recurring payment due" while the decoy (which has no such plan) is open
+contradicts it; a coercer who sees one asks to be shown the plan.
+
+Two rules were proposed:
+
+- (a) a duress PIN disables OS notifications for the real wallet only while
+  the decoy is the last-unlocked profile;
+- (b) OS notifications are off entirely while a duress PIN exists.
+
+**Recommendation: (b), with one refinement — apply it whenever the app PIN
+is on, not only when a duress PIN exists.** The reasons:
+
+1. **(a) fails in the most likely sequence.** Coercion usually starts with
+   the phone as the user last left it — the real wallet was the last one
+   opened. Under (a), real-wallet reminders keep firing until the decoy has
+   been opened, which is exactly while the coercer first holds the phone.
+   Reminders that were already scheduled with the OS would also have to be
+   cancelled at the moment the decoy opens and re-armed when the real one
+   opens, and a notification already in the shade would have to be
+   dismissed in time; any slip contradicts the decoy.
+2. **(b) as literally written would itself reveal the duress PIN.** If
+   reminders worked with an app PIN alone but stopped when a duress PIN was
+   added, the Settings → Notifications section would read differently in a
+   wallet that has a duress PIN than in one that does not — and under the
+   decoy, the coercer would see "reminders unavailable" in a wallet that
+   (by its own Settings) has only an app PIN. Rule 1 (section 1.2) and the
+   last invariant of section 6.4 require the decoy's Settings to look
+   exactly like an app-PIN-only wallet.
+3. **So the trigger is the app PIN.** While the app PIN is on, the app
+   posts no OS notification of any kind — no reminders, no takeover alerts,
+   no price alerts — and turning the app PIN on cancels every scheduled
+   reminder and dismisses every shown one (the cleanup `notifications.ts`
+   already runs when reminders are switched off). The Notifications section
+   then says the same thing in every wallet with an app PIN: "Notifications
+   are off while the app PIN is on: a notification can be read on the lock
+   screen without your PIN." That sentence is true, reveals nothing about a
+   duress PIN, and answers the Chairperson's question: **with a PIN that
+   guards the wallet, reminders outside the app would undo part of what the
+   PIN protects, so they are not offered.**
+4. **What remains, inside the PIN.** The in-app checks keep working behind
+   the PIN: the "payment due" banner (`RecurringDueBanner`), the Sessions
+   screen's due state, the Inheritance takeover check and the price-alert
+   banner (`PriceAlertMonitor`) all run once the wallet is unlocked, and
+   each reads only the open profile's records through the seam. Nothing
+   leaks into the shade.
+
+**The UX cost, stated plainly.** A user who turns the app PIN on loses the
+reminders that tell them, while the wallet is closed, that a recurring
+payment or swap is due (they will see it the next time they open the
+wallet; RateLimitPolicy keeps a missed slot open and the grant's grace
+period gives the last payment one more period, so nothing is lost by a short
+delay), and — the larger cost — the immediate "Account recovery started"
+alert for a guardian or heir takeover, which is a security alert: the user
+learns of a takeover attempt only when they next open the wallet, and must
+veto within the guardian delay. The Settings text for the app PIN must say
+this before it is turned on. A user who values the reminders more than the
+PIN keeps the PIN off; nothing is taken from users who never opt in.
+
+### 7.5 The user must back up the seed phrase
+
+Setting a duress PIN is refused until the recovery phrase has been backed
+up and confirmed (the existing backup quiz), because the decoy and the real
+wallet are both recovered from that one phrase (7.2), and "Remove wallet"
+removes both (7.3). Turning on the app PIN alone shows the same reminder but
+does not require it.
+
+### 7.6 A passphrase is an option
+
+**Reading taken (to confirm with the Chairperson):** "a passphrase is a good
+option" refers to question 5 of section 5.3 — the secret typed on the app's
+own lock screen. Both the app PIN and the duress PIN may be either a PIN of
+at least 6 digits or a passphrase (letters and digits, at least 12
+characters — a judgement to confirm), entered on an app-drawn pad or a
+secure text field with suggestions, autocorrect and autofill off. Section
+3.4 is the reason: a 6-digit PIN can be guessed offline from a copy of the
+app's files in about half a day of CPU time at the OWASP scrypt setting,
+while a long passphrase moves that out of reach. The honest claim (4.3)
+then names which one the user chose. **Not the same thing:** a BIP-39
+passphrase (the "25th word") would change the wallet's seed and therefore
+every address and the BIP-85 child (7.2); it is not part of this plan, and
+offering one would need its own decision because existing users' backups
+would not restore a passphrase wallet without it.
+
+### 7.7 Stage 2, piece by piece
+
+In order; each piece is its own slice with its own check and emulator
+pass on a throwaway wallet (section 6.7):
+
+1. **Finish the seam (Stage 1 remainders, section 5.2).** Move
+   `recovery.ts`, `config/prefs.ts` and `config/networks.ts` onto the seam;
+   change the five screens and `WalletConnectContext.tsx` to import the
+   seam's `AsyncStorage` re-export; empty the allow-list in
+   `check-storage-seam.mjs`; split `shiba-wallet.aa-config.v1` into a
+   device part (bundler URLs, factories) and a wallet part (recovered
+   accounts, EIP-7702 owners); verify on the emulator what
+   `customStoragePrefix` does to the WalletConnect SDK's records and either
+   scope it or disconnect every WalletConnect session when a profile other
+   than the last one opens.
+2. **The active profile.** Add to `store-keys.ts` the single place that
+   holds the active profile (set once per launch by the lock screen, before
+   `WalletContext.tsx` loads anything), and make `scopedStoreKey` use it by
+   default; declare the PIN record and the throttle state as device-wide
+   secure-store keys (a fourth scope, `device-secret`, or `device` with
+   secure-store backing). `check-storage-seam.mjs` then runs the whole
+   key list with a second profile and asserts no key of one profile is read
+   while the other is active.
+3. **The app PIN (7.1).** The PIN record (section 6.2: scrypt with N fixed
+   after measuring under Hermes on the emulator, a random salt, one
+   fixed-shape record), the throttle (6.3), the PIN pad or passphrase field
+   with screen capture blocked, the lock screen asking for the PIN before
+   anything is loaded and with the approval target set to the open
+   profile's secret (section 2.3 item 4), auto-lock forced on, screen
+   protection forced on, the notifications rule (7.4), and the rewording of
+   `lock.ts`, T-09 and the Settings hint. A readiness row
+   (`app-pin`, advisory).
+4. **BIP-85 in the engine (7.2).** The derivation in `packages/core`,
+   checked against BIP-85's published test vectors.
+5. **The duress PIN and the decoy (7.1, 7.2, 7.5).** Set-up (backup
+   confirmed, a PIN or passphrase different from the app PIN, the decoy
+   derived at index 0 and stored in its own profile, the funding and backup
+   notes of section 6.5), verification that computes both hashes every
+   time with a constant-time compare (6.2), the decoy opening with the
+   same timing and prompts as the real wallet, "Remove wallet" removing
+   both (7.3), and the decoy's Settings showing the duress-PIN section
+   exactly as an app-PIN-only wallet does. The check-duress invariants of
+   section 6.4. A readiness row (`duress-wallet`, advisory; section 6.6).
+6. **The honest claim (4.3) on every screen** that sets up or describes the
+   feature, pinned by the check.
+
+Stage 3 (section 6.7) follows on a throwaway wallet only, never on the
+emulator's real test wallet.
+
+---
+
+## 8. Sources
 
 Read on 2026-10-11 unless stated.
 

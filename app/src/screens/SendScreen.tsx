@@ -33,8 +33,14 @@ import { parseUnits } from '../wallet/balances';
 import {
   BITCOIN_CHAIN_ID,
   EVM_CHAIN_ID,
+  MINIMUM_FEE_REHEARSAL_WARNING,
   QUOTE_ENDPOINT_CHANGED_TITLE,
+  consumeMinimumFeeRehearsal,
   describeSendError,
+  minimumFeeRehearsalArmed,
+  minimumFeeRehearsalFeeLine,
+  minimumFeeRehearsalOf,
+  repriceTokenQuoteAtMinimumFee,
   amountIsLastMax,
   maxAdjustmentSentence,
   maxEvmSend,
@@ -1369,8 +1375,13 @@ export function SendScreen({ route, navigation }: Props) {
         // ERC-20 token mode, EOA path. Quote checks the token balance,
         // checks the ETH balance against the fee, and pre-flights the
         // transfer calldata through eth_call.
-        const quoted = await viaFailover(start, (ep) =>
-          prepareErc20Send({
+        // Settings → Developer's minimum-fee rehearsal (test networks only,
+        // one-shot): the token quote is re-priced at a 1-wei priority fee and
+        // the base fee + 1 wei (send.ts repriceTokenQuoteAtMinimumFee, which
+        // returns the quote unchanged on any other network).
+        const rehearse = minimumFeeRehearsalArmed(evmChain.caip2);
+        const quoted = await viaFailover(start, async (ep) => {
+          const tokenQuote = await prepareErc20Send({
             url: ep.url,
             from: account.address,
             to: recipientAddress,
@@ -1379,8 +1390,11 @@ export function SendScreen({ route, navigation }: Props) {
             symbol: token.symbol,
             decimals: token.decimals,
             chainCaip2: token.assetId.chainId,
-          }),
-        );
+          });
+          return rehearse
+            ? repriceTokenQuoteAtMinimumFee(ep.url, tokenQuote, { to: tokenQuote.contract, value: 0n, data: tokenQuote.data })
+            : tokenQuote;
+        });
         next = quoted.value;
         quoteUrl = quoted.used.url;
       } else if (start.network.kind === 'evm-jsonrpc') {
@@ -1391,9 +1405,13 @@ export function SendScreen({ route, navigation }: Props) {
           from: account.address,
           chainId: route.params.chainId,
         });
+        // minimumFee: Settings → Developer's one-shot rehearsal (prepareEvmSend
+        // honours it only on a verified test network).
+        const minimumFee = minimumFeeRehearsalArmed(evmChain.caip2);
         const quoted = await viaFailover(start, (ep) =>
           prepareEvmSend(ep.url, account.address, recipientAddress, amount, undefined, evmChain.caip2, {
             fromMax,
+            ...(minimumFee ? { minimumFee } : {}),
           }),
         );
         next = quoted.value;
@@ -1649,6 +1667,9 @@ export function SendScreen({ route, navigation }: Props) {
         return sendUtxo(sendUrl, route.params.chainId, signer, quote, utxoOptions);
       });
       setResult(sent);
+      // One-shot: a minimum-fee rehearsal quote that was just sent turns the
+      // Developer option off (a cancelled confirm never gets here).
+      consumeMinimumFeeRehearsal(quote);
       // The gallery's cached list is stale once an NFT left the account.
       if (quote.kind === 'nft' && activeAccount) {
         invalidateNftCache(activeAccount.index, evmChain.caip2);
@@ -2085,6 +2106,12 @@ export function SendScreen({ route, navigation }: Props) {
             : ''}
         </Text>
         <OpStackFeeRows fees={quote.opStack} symbol={evmChain.displaySymbol} theme={theme} />
+        {minimumFeeRehearsalOf(quote) ? (
+          <>
+            <WarningBox>{MINIMUM_FEE_REHEARSAL_WARNING}</WarningBox>
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{minimumFeeRehearsalFeeLine(quote)}</Text>
+          </>
+        ) : null}
         <Row
           label={`${quote.symbol} balance`}
           value={`${exact(quote.tokenBalance, quote.decimals)} ${quote.symbol}`}
@@ -2313,6 +2340,12 @@ export function SendScreen({ route, navigation }: Props) {
         ) : null}
         {quote.kind === 'evm' ? (
           <OpStackFeeRows fees={quote.opStack} symbol={symbol} theme={theme} />
+        ) : null}
+        {quote.kind === 'evm' && minimumFeeRehearsalOf(quote) ? (
+          <>
+            <WarningBox>{MINIMUM_FEE_REHEARSAL_WARNING}</WarningBox>
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{minimumFeeRehearsalFeeLine(quote)}</Text>
+          </>
         ) : null}
         <Row
           label={quote.kind === 'evm' ? 'Total (worst case)' : 'Total'}

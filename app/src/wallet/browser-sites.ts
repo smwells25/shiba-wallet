@@ -1,5 +1,6 @@
 // Explicit .ts extensions: this module is imported by scripts/check-browser.mjs
 // under Node's type stripping, which resolves relative specifiers literally.
+import { readStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
 import type { KeyValueStore } from './tokens.ts';
 
 /**
@@ -267,7 +268,7 @@ export interface BrowserConnectionRecord {
   approvedAt: number;
 }
 
-export const BROWSER_CONNECTIONS_KEY = 'shiba-wallet.browser-connections.v1';
+export const BROWSER_CONNECTIONS_KEY = STORE_KEYS.browserConnections.name;
 
 function isAddress(value: unknown): value is string {
   return typeof value === 'string' && /^0x[0-9a-fA-F]{40}$/.test(value);
@@ -298,7 +299,7 @@ function reviveRecord(value: unknown): BrowserConnectionRecord | null {
 export async function loadBrowserConnections(store: KeyValueStore): Promise<BrowserConnectionRecord[]> {
   let raw: string | null = null;
   try {
-    raw = await store.getItem(BROWSER_CONNECTIONS_KEY);
+    raw = await readStoreItem(store, BROWSER_CONNECTIONS_KEY);
   } catch {
     return [];
   }
@@ -325,10 +326,10 @@ export async function saveBrowserConnections(
   records: readonly BrowserConnectionRecord[],
   store: KeyValueStore,
 ): Promise<void> {
-  await store.setItem(BROWSER_CONNECTIONS_KEY, JSON.stringify(records));
+  await writeStoreItem(store, BROWSER_CONNECTIONS_KEY, JSON.stringify(records));
 }
 
 /** Removes every record (wallet wipe). */
 export async function forgetBrowserConnections(store: KeyValueStore): Promise<void> {
-  await store.setItem(BROWSER_CONNECTIONS_KEY, '[]');
+  await writeStoreItem(store, BROWSER_CONNECTIONS_KEY, '[]');
 }

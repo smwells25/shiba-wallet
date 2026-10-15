@@ -49,7 +49,9 @@ import { parseUnits } from './balances.ts';
 import { endpointHost, isEndpointFailure, sanitizeEndpointMessage } from '../config/endpoint-probe.ts';
 // Pure data with no imports (see its file comment), so no cycle.
 import { evmProfileByCaip2 } from '../config/evm-chain.ts';
-import { suggestFeesRetryingOnce } from './fee-read.ts';
+import { isRetryableFeeReadError, suggestFeesRetryingOnce } from './fee-read.ts';
+// readiness.ts imports only config/evm-chain.ts, so no cycle.
+import { isTestNetwork } from '../config/readiness.ts';
 // pending-transactions.ts imports only types from this module, so the graph
 // stays a DAG (send.ts → pending-transactions.ts).
 import {
@@ -223,6 +225,13 @@ export interface EvmSendQuote {
    * other case, so quotes without an adjustment are unchanged.
    */
   maxAdjustment?: { requested: bigint };
+  /**
+   * Present only on a minimum-fee rehearsal quote (Settings → Developer, test
+   * networks only; see MINIMUM_FEE_REHEARSAL_SWITCH_LABEL below): the fees
+   * above are then exactly a priority fee of 1 wei and a max fee of this
+   * base fee + 1 wei. Absent on every other quote, which is unchanged.
+   */
+  minimumFee?: MinimumFeeRehearsal;
 }
 
 /** Options for prepareEvmSend beyond the positional arguments. */
@@ -239,6 +248,223 @@ export interface PrepareEvmSendOptions {
    * raised, and the balance check below still applies to the result.
    */
   fromMax?: boolean;
+  /**
+   * The Send screen's minimum-fee rehearsal (Settings → Developer): price
+   * this quote at a priority fee of 1 wei and a max fee of the latest base
+   * fee + 1 wei, so the transaction will probably wait in the pool and can
+   * be sped up or cancelled from Activity. Honoured only when the endpoint's
+   * VERIFIED chain is a test network (config/readiness.ts isTestNetwork); on
+   * any other network the option is ignored and the ordinary quote is
+   * returned, without the `minimumFee` marker. Only the Send screen's
+   * regular-account native send passes it; smart-account quotes (aa.ts)
+   * never read it.
+   */
+  minimumFee?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Minimum-fee rehearsal (phase 21 item 3): an under-priced send on purpose
+// ---------------------------------------------------------------------------
+
+/** The priority fee of a minimum-fee rehearsal quote: 1 wei. */
+export const MINIMUM_FEE_PRIORITY_WEI = 1n;
+
+/** What a minimum-fee rehearsal quote was priced from. */
+export interface MinimumFeeRehearsal {
+  /** The latest block's base fee read at quote time; the max fee is this + 1 wei. */
+  baseFeePerGas: bigint;
+}
+
+/** Settings → Developer: the switch's label. */
+export const MINIMUM_FEE_REHEARSAL_SWITCH_LABEL =
+  'Send the next regular-account transaction at the minimum fee (to rehearse Speed up / Cancel)';
+
+/** Settings → Developer: the note under the switch. */
+export const MINIMUM_FEE_REHEARSAL_HINT =
+  'Test networks only. The next native-coin or token send from the Send screen, with the smart account off, ' +
+  'is priced at a priority fee of 1 wei and a max fee of the latest base fee plus 1 wei, so it will probably ' +
+  'wait in the network’s pool until you speed it up or cancel it from Activity. The option turns itself off ' +
+  'once that transaction is sent; going back from the confirm screen leaves it on, and it is off again whenever ' +
+  'the app restarts. NFT sends, swaps, staking, app requests and smart-account operations are always priced ' +
+  'normally. The node may refuse such an under-priced transaction outright ("transaction underpriced"); that ' +
+  'is expected, because the nodes behind one endpoint address can apply different minimums, and the option ' +
+  'then stays on until a send goes through or you turn it off. On Arbitrum Sepolia the network ignores the ' +
+  'priority fee, so the transaction is likely to be included anyway.';
+
+/** The Send confirm's warning on a minimum-fee rehearsal quote. */
+export const MINIMUM_FEE_REHEARSAL_WARNING =
+  'Minimum-fee rehearsal: this transaction will probably sit pending until you speed it up or cancel it from Activity.';
+
+/** The network the rehearsal is armed for (CAIP-2), or null. Memory only: a restart turns it off. */
+let minimumFeeArmedFor: string | null = null;
+const minimumFeeListeners = new Set<() => void>();
+
+function notifyMinimumFeeListeners(): void {
+  for (const listener of [...minimumFeeListeners]) {
+    try {
+      listener();
+    } catch {
+      // Display refresh only.
+    }
+  }
+}
+
+/** True where the rehearsal may be offered: a test network (readiness isTestNetwork), never a main network. */
+export function minimumFeeRehearsalOffered(caip2: string): boolean {
+  return isTestNetwork(caip2);
+}
+
+/**
+ * Turns the rehearsal on (for `caip2`) or off. Refused on a network that is
+ * not a test network: the state stays off and false is returned. Returns
+ * whether the rehearsal is now armed for `caip2`.
+ */
+export function setMinimumFeeRehearsal(caip2: string, on: boolean): boolean {
+  // Off is off for every network; on is only ever for a test network.
+  const next = on && minimumFeeRehearsalOffered(caip2) ? caip2 : null;
+  if (next !== minimumFeeArmedFor) {
+    minimumFeeArmedFor = next;
+    notifyMinimumFeeListeners();
+  }
+  return minimumFeeRehearsalArmed(caip2);
+}
+
+/** True when the next regular-account send on `caip2` is to be priced at the minimum fee. */
+export function minimumFeeRehearsalArmed(caip2: string): boolean {
+  return minimumFeeArmedFor !== null && minimumFeeArmedFor === caip2 && minimumFeeRehearsalOffered(caip2);
+}
+
+/** For React's useSyncExternalStore. Returns the unsubscribe function. */
+export function subscribeMinimumFeeRehearsal(listener: () => void): () => void {
+  minimumFeeListeners.add(listener);
+  return () => {
+    minimumFeeListeners.delete(listener);
+  };
+}
+
+/** The rehearsal facts of a quote (EVM or ERC-20), or null for an ordinary quote. */
+export function minimumFeeRehearsalOf(quote: object | null | undefined): MinimumFeeRehearsal | null {
+  const facts = (quote as { minimumFee?: unknown } | null | undefined)?.minimumFee;
+  return facts && typeof facts === 'object' && typeof (facts as MinimumFeeRehearsal).baseFeePerGas === 'bigint'
+    ? (facts as MinimumFeeRehearsal)
+    : null;
+}
+
+/**
+ * One-shot: called by the Send screen once a quote was SENT (the node
+ * accepted it). A rehearsal quote turns the option off; an ordinary quote
+ * changes nothing. A cancelled confirm never calls this, so the option stays
+ * on. Returns true when it turned the option off.
+ */
+export function consumeMinimumFeeRehearsal(quote: object | null | undefined): boolean {
+  if (minimumFeeRehearsalOf(quote) === null || minimumFeeArmedFor === null) return false;
+  minimumFeeArmedFor = null;
+  notifyMinimumFeeListeners();
+  return true;
+}
+
+/** The confirm's fee line on a rehearsal quote (exact wei). */
+export function minimumFeeRehearsalFeeLine(quote: {
+  maxFeePerGas: bigint;
+  maxPriorityFeePerGas: bigint;
+  minimumFee?: MinimumFeeRehearsal;
+}): string {
+  const base = quote.minimumFee?.baseFeePerGas;
+  return (
+    `Priced at the minimum fee: a priority fee of ${quote.maxPriorityFeePerGas} wei and a max fee of ` +
+    `${quote.maxFeePerGas} wei per gas` +
+    (base === undefined ? '.' : ` (the latest block's base fee, ${base} wei, plus 1 wei).`)
+  );
+}
+
+/** The latest block's base fee, with fee-read.ts's single same-endpoint retry on HTTP 400. */
+async function readLatestBaseFee(transport: JsonRpcTransport): Promise<bigint> {
+  const read = async () => {
+    const block = (await transport('eth_getBlockByNumber', ['latest', false])) as { baseFeePerGas?: string } | null;
+    if (!block?.baseFeePerGas) throw new Error('Node returned no baseFeePerGas; chain may not support EIP-1559');
+    return BigInt(block.baseFeePerGas);
+  };
+  try {
+    return await read();
+  } catch (error) {
+    if (!isRetryableFeeReadError(error)) throw error;
+    return read();
+  }
+}
+
+/** The rehearsal's fees: priority 1 wei, max fee = base fee + 1 wei. */
+async function minimumFees(
+  transport: JsonRpcTransport,
+): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint; baseFeePerGas: bigint }> {
+  const baseFeePerGas = await readLatestBaseFee(transport);
+  return {
+    maxFeePerGas: baseFeePerGas + MINIMUM_FEE_PRIORITY_WEI,
+    maxPriorityFeePerGas: MINIMUM_FEE_PRIORITY_WEI,
+    baseFeePerGas,
+  };
+}
+
+/** The fields of a regular-account token quote (send-erc20.ts Erc20SendQuote) the rehearsal re-prices. */
+export interface MinimumFeeRepriceable {
+  chainId: bigint;
+  nonce: bigint;
+  gasLimit: bigint;
+  maxFeePerGas: bigint;
+  maxPriorityFeePerGas: bigint;
+  fee: bigint;
+  ethBalance: bigint;
+  opStack?: OpStackFees;
+}
+
+/**
+ * The token-send half of the rehearsal: re-prices a regular-account ERC-20
+ * quote (send-erc20.ts prepareErc20Send, which takes no options) at the
+ * minimum fee, for the exact unsigned transaction sendErc20 will sign (`tx`:
+ * the token contract, value 0, the transfer calldata). On a network that is
+ * not a test network (the quote's verified chain id) the quote is returned
+ * unchanged. The worst-case fee is recomputed (gas × the new max fee, plus
+ * the OP-stack layer 1 fee re-read for the re-priced bytes) and checked
+ * against the fee coin balance like the original.
+ */
+export async function repriceTokenQuoteAtMinimumFee<Q extends MinimumFeeRepriceable>(
+  url: string,
+  quote: Q,
+  tx: { to: string; value: bigint; data: Uint8Array },
+  options: { transport?: JsonRpcTransport } = {},
+): Promise<Q | (Q & { minimumFee: MinimumFeeRehearsal })> {
+  if (!minimumFeeRehearsalOffered(`eip155:${quote.chainId}`)) return quote;
+  const transport = options.transport ?? evmHttpTransport(url);
+  const fees = await minimumFees(transport);
+  const opStack = chainHasL1DataFee(quote.chainId)
+    ? await quoteOpStackFees(transport, {
+        chainId: quote.chainId,
+        nonce: quote.nonce,
+        maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+        maxFeePerGas: fees.maxFeePerGas,
+        gasLimit: quote.gasLimit,
+        to: tx.to,
+        value: tx.value,
+        ...(tx.data.length > 0 ? { data: tx.data } : {}),
+      })
+    : undefined;
+  const fee = quote.gasLimit * fees.maxFeePerGas + opStackFeeTotal(opStack);
+  if (fee > quote.ethBalance) {
+    const feeSymbol = feeSymbolForChain(quote.chainId);
+    throw new Error(
+      `Not enough ${feeSymbol} to pay the network fee: the worst-case fee is ${fee} wei ` +
+        `but the ${feeSymbol} balance is ${quote.ethBalance} wei.`,
+    );
+  }
+  const { opStack: _previous, ...rest } = quote;
+  void _previous;
+  return {
+    ...(rest as Q),
+    maxFeePerGas: fees.maxFeePerGas,
+    maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+    fee,
+    ...(opStack ? { opStack } : {}),
+    minimumFee: { baseFeePerGas: fees.baseFeePerGas },
+  };
 }
 
 /**
@@ -550,12 +776,13 @@ export async function prepareEvmSend(
   const transport = evmHttpTransport(url);
   const node = new NodeClient(transport);
 
-  const [chainId, balance, nonce, fees] = await Promise.all([
+  const [chainId, balance, nonce, suggestedFees] = await Promise.all([
     node.chainId(),
     node.getBalance(from),
     node.getTransactionCount(from),
     suggestFeesRetryingOnce(node),
   ]);
+  let fees = suggestedFees;
 
   const expected = BigInt(expectedCaip2.split(':')[1]!);
   if (chainId !== expected) {
@@ -570,6 +797,15 @@ export async function prepareEvmSend(
         `${expectedName ? ` (${expectedName})` : ''}. ` +
         'Check the RPC endpoint (and the test network choice under Settings → Developer) in Settings.',
     );
+  }
+
+  // The minimum-fee rehearsal (options.minimumFee): only on a VERIFIED test
+  // network; anywhere else the option is ignored and the quote is ordinary.
+  let minimumFee: MinimumFeeRehearsal | undefined;
+  if (options.minimumFee === true && minimumFeeRehearsalOffered(`eip155:${chainId}`)) {
+    const rehearsal = await minimumFees(transport);
+    fees = { maxFeePerGas: rehearsal.maxFeePerGas, maxPriorityFeePerGas: rehearsal.maxPriorityFeePerGas };
+    minimumFee = { baseFeePerGas: rehearsal.baseFeePerGas };
   }
 
   const dataHex = data && data.length > 0 ? toHex(data) : undefined;
@@ -674,6 +910,7 @@ export async function prepareEvmSend(
     ...(data && data.length > 0 ? { data } : {}),
     ...(opStack ? { opStack } : {}),
     ...(amount !== requested ? { maxAdjustment: { requested } } : {}),
+    ...(minimumFee ? { minimumFee } : {}),
   };
 }
 

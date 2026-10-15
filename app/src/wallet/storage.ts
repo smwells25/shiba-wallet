@@ -5,6 +5,16 @@
 import type * as ExpoSecureStore from 'expo-secure-store';
 import { isValidEvmPrivateKey, isValidMnemonic, publicKeyToEvmAddress } from '@shiba-wallet/core';
 import { MAX_IMPORTED_SLOT } from './account-ids.ts';
+import {
+  PROTECTED_SECURE_STORE_SERVICE,
+  STORE_KEYS,
+  deleteSecureItem,
+  nativeSecureStoreAdapter,
+  readSecureItem,
+  writeSecureItem,
+  type SecureStoreBackend,
+  type SecureStoreItemOptions,
+} from './store-keys.ts';
 
 /**
  * NON-CUSTODIAL INVARIANT — the single most important property of this
@@ -142,49 +152,31 @@ import { MAX_IMPORTED_SLOT } from './account-ids.ts';
 // Backend (the native module, or a test fake)
 // ---------------------------------------------------------------------------
 
-export interface SecureStoreItemOptions {
-  keychainService?: string;
-  requireAuthentication?: boolean;
-  authenticationPrompt?: string;
-  keychainAccessible?: number;
-}
-
-/** The subset of expo-secure-store this module uses. */
-export interface SecureStoreBackend {
-  getItemAsync(key: string, options: SecureStoreItemOptions): Promise<string | null>;
-  setItemAsync(key: string, value: string, options: SecureStoreItemOptions): Promise<void>;
-  deleteItemAsync(key: string, options: SecureStoreItemOptions): Promise<void>;
-  /** expo-secure-store canUseBiometricAuthentication() (synchronous). */
-  canUseBiometricAuthentication(): boolean;
-  /** The package's WHEN_UNLOCKED_THIS_DEVICE_ONLY constant. */
-  whenUnlockedThisDeviceOnly: number;
-}
+// The backend shapes and the native adapter live in the storage seam
+// (store-keys.ts), which also routes every key below; re-exported here so
+// existing imports keep working.
+export type { SecureStoreBackend, SecureStoreItemOptions } from './store-keys.ts';
 
 /** Adapts the real expo-secure-store module to SecureStoreBackend. */
 export function nativeSecureStoreBackend(mod: typeof ExpoSecureStore): SecureStoreBackend {
-  return {
-    getItemAsync: (key, options) => mod.getItemAsync(key, options),
-    setItemAsync: (key, value, options) => mod.setItemAsync(key, value, options),
-    deleteItemAsync: (key, options) => mod.deleteItemAsync(key, options),
-    canUseBiometricAuthentication: () => mod.canUseBiometricAuthentication(),
-    whenUnlockedThisDeviceOnly: mod.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-  };
+  return nativeSecureStoreAdapter(mod);
 }
 
 // ---------------------------------------------------------------------------
 // Constants and policy
 // ---------------------------------------------------------------------------
 
-export const MNEMONIC_KEY = 'shiba-wallet.mnemonic.v1';
-export const PROTECTED_MNEMONIC_KEY = 'shiba-wallet.mnemonic.v2';
-export const PROTECTED_KEYCHAIN_SERVICE = 'shiba-wallet.protected';
-export const VAULT_META_KEY = 'shiba-wallet.vault-meta.v1';
-export const PUBLIC_ACCOUNT_KEY_PREFIX = 'shiba-wallet.public-account.v1.';
-const SESSION_KEY_PREFIX = 'shiba-wallet.session-key.v1.';
-const PROTECTED_SESSION_KEY_PREFIX = 'shiba-wallet.session-key.v2.';
-export const IMPORTED_KEYS_META_KEY = 'shiba-wallet.imported-keys.v1';
-export const IMPORTED_KEY_PREFIX = 'shiba-wallet.imported-key.v1.';
-export const PROTECTED_IMPORTED_KEY_PREFIX = 'shiba-wallet.imported-key.v2.';
+// Key names (declared, with their scope, in store-keys.ts).
+export const MNEMONIC_KEY = STORE_KEYS.mnemonic.name;
+export const PROTECTED_MNEMONIC_KEY = STORE_KEYS.protectedMnemonic.name;
+export const PROTECTED_KEYCHAIN_SERVICE = PROTECTED_SECURE_STORE_SERVICE;
+export const VAULT_META_KEY = STORE_KEYS.vaultMeta.name;
+export const PUBLIC_ACCOUNT_KEY_PREFIX = STORE_KEYS.publicAccount.name;
+const SESSION_KEY_PREFIX = STORE_KEYS.sessionKey.name;
+const PROTECTED_SESSION_KEY_PREFIX = STORE_KEYS.protectedSessionKey.name;
+export const IMPORTED_KEYS_META_KEY = STORE_KEYS.importedKeysMeta.name;
+export const IMPORTED_KEY_PREFIX = STORE_KEYS.importedKey.name;
+export const PROTECTED_IMPORTED_KEY_PREFIX = STORE_KEYS.protectedImportedKey.name;
 
 /** Imported keys held at once (each one costs two prompts when the phrase is later protected). */
 export const MAX_IMPORTED_KEYS = 10;
@@ -777,14 +769,14 @@ export function createKeyVault(backend: SecureStoreBackend, options: KeyVaultOpt
 
   async function readMeta(): Promise<VaultMeta | null | 'corrupt'> {
     try {
-      return parseVaultMeta(await backend.getItemAsync(VAULT_META_KEY, STANDARD));
+      return parseVaultMeta(await readSecureItem(backend, VAULT_META_KEY, STANDARD));
     } catch {
       return 'corrupt';
     }
   }
 
   async function writeMeta(meta: VaultMeta): Promise<void> {
-    await backend.setItemAsync(VAULT_META_KEY, JSON.stringify(meta), STANDARD);
+    await writeSecureItem(backend, VAULT_META_KEY, JSON.stringify(meta), STANDARD);
   }
 
   async function patchMeta(patch: Partial<VaultMeta>): Promise<void> {
@@ -816,7 +808,7 @@ export function createKeyVault(backend: SecureStoreBackend, options: KeyVaultOpt
     meta: VaultMeta | null | 'corrupt';
   }> {
     const meta = await readMeta();
-    const standardCopy = await backend.getItemAsync(MNEMONIC_KEY, STANDARD);
+    const standardCopy = await readSecureItem(backend, MNEMONIC_KEY, STANDARD);
     if (meta && meta !== 'corrupt' && meta.phrase === 'protected') {
       return { location: 'protected', standardCopy, meta };
     }
@@ -850,7 +842,7 @@ export function createKeyVault(backend: SecureStoreBackend, options: KeyVaultOpt
   ): Promise<{ phrase: string; authenticated: boolean }> {
     let value: string | null;
     try {
-      value = await backend.getItemAsync(PROTECTED_MNEMONIC_KEY, protectedOptions(prompt));
+      value = await readSecureItem(backend, PROTECTED_MNEMONIC_KEY, protectedOptions(prompt));
     } catch (e) {
       if (isCancellation(e)) {
         throw new PhraseAccessError('cancelled', 'Authentication cancelled. Nothing was signed.');
@@ -884,7 +876,7 @@ export function createKeyVault(backend: SecureStoreBackend, options: KeyVaultOpt
       if (standardCopy === value) {
         // Finishes an interrupted migration: the protected copy was just
         // read back with the same content, so the standard copy can go.
-        await backend.deleteItemAsync(MNEMONIC_KEY, STANDARD).catch(() => undefined);
+        await deleteSecureItem(backend, MNEMONIC_KEY, STANDARD).catch(() => undefined);
       }
       // A DIFFERENT standard copy is left alone: when in doubt, never delete.
     }
@@ -944,11 +936,12 @@ export function createKeyVault(backend: SecureStoreBackend, options: KeyVaultOpt
     }
     const phrase = standardCopy;
     const cleanUp = async () => {
-      await backend.deleteItemAsync(PROTECTED_MNEMONIC_KEY, PROTECTED_NO_PROMPT).catch(() => undefined);
+      await deleteSecureItem(backend, PROTECTED_MNEMONIC_KEY, PROTECTED_NO_PROMPT).catch(() => undefined);
     };
     // S2
     try {
-      await backend.setItemAsync(
+      await writeSecureItem(
+        backend,
         PROTECTED_MNEMONIC_KEY,
         phrase,
         protectedOptions(opts.prompt ?? PROMPTS.protectWrite),
@@ -962,7 +955,8 @@ export function createKeyVault(backend: SecureStoreBackend, options: KeyVaultOpt
     // S3
     let readBack: string | null;
     try {
-      readBack = await backend.getItemAsync(
+      readBack = await readSecureItem(
+        backend,
         PROTECTED_MNEMONIC_KEY,
         protectedOptions(opts.checkPrompt ?? PROMPTS.protectCheckNewWallet),
       );
@@ -996,7 +990,7 @@ export function createKeyVault(backend: SecureStoreBackend, options: KeyVaultOpt
       return { outcome: 'failed', detail: errorText(e) };
     }
     // S5
-    await backend.deleteItemAsync(MNEMONIC_KEY, STANDARD).catch(() => undefined);
+    await deleteSecureItem(backend, MNEMONIC_KEY, STANDARD).catch(() => undefined);
     if (opts.holdForSigning) holdTicket(phrase);
     return { outcome: 'protected', detail: null };
   }
@@ -1007,14 +1001,14 @@ export function createKeyVault(backend: SecureStoreBackend, options: KeyVaultOpt
 
   async function readImportedMeta(): Promise<ImportedKeysMeta | null | 'corrupt'> {
     try {
-      return parseImportedKeysMeta(await backend.getItemAsync(IMPORTED_KEYS_META_KEY, STANDARD));
+      return parseImportedKeysMeta(await readSecureItem(backend, IMPORTED_KEYS_META_KEY, STANDARD));
     } catch {
       return 'corrupt';
     }
   }
 
   async function writeImportedMeta(meta: ImportedKeysMeta): Promise<void> {
-    await backend.setItemAsync(IMPORTED_KEYS_META_KEY, JSON.stringify(meta), STANDARD);
+    await writeSecureItem(backend, IMPORTED_KEYS_META_KEY, JSON.stringify(meta), STANDARD);
   }
 
   /** The record, or throws IMPORTED_KEYS_DAMAGED_MESSAGE: nothing that writes may run on a damaged record. */
@@ -1045,10 +1039,10 @@ export function createKeyVault(backend: SecureStoreBackend, options: KeyVaultOpt
     record: ImportedKeyInfo,
     prompt: string,
   ): Promise<{ key: string; authenticated: boolean }> {
-    const standardCopy = await backend.getItemAsync(standardImportedKey(record.slot), STANDARD);
+    const standardCopy = await readSecureItem(backend, standardImportedKey(record.slot), STANDARD);
     let value: string | null;
     try {
-      value = await backend.getItemAsync(protectedImportedKey(record.slot), protectedOptions(prompt));
+      value = await readSecureItem(backend, protectedImportedKey(record.slot), protectedOptions(prompt));
     } catch (e) {
       if (isCancellation(e)) {
         throw new ImportedKeyAccessError('cancelled', 'Authentication cancelled. Nothing was signed.');
@@ -1072,7 +1066,7 @@ export function createKeyVault(backend: SecureStoreBackend, options: KeyVaultOpt
       await patchImportedRecord(record.slot, { unreadableSince: null }).catch(() => undefined);
     }
     if (standardCopy !== null && standardCopy === value) {
-      await backend.deleteItemAsync(standardImportedKey(record.slot), STANDARD).catch(() => undefined);
+      await deleteSecureItem(backend, standardImportedKey(record.slot), STANDARD).catch(() => undefined);
     }
     return { key: value, authenticated: true };
   }
@@ -1091,7 +1085,7 @@ export function createKeyVault(backend: SecureStoreBackend, options: KeyVaultOpt
     if (held !== null) return held;
     const record = await findImportedRecord(slot);
     if (record.location === 'protected') return (await openProtectedImported(record, prompt)).key;
-    const value = await backend.getItemAsync(standardImportedKey(slot), STANDARD);
+    const value = await readSecureItem(backend, standardImportedKey(slot), STANDARD);
     if (value === null) throw new ImportedKeyAccessError('missing', IMPORTED_KEY_MISSING_MESSAGE);
     return value;
   }
@@ -1106,17 +1100,17 @@ export function createKeyVault(backend: SecureStoreBackend, options: KeyVaultOpt
     value: string,
   ): Promise<null | { cancelled: boolean; detail: string }> {
     const cleanUp = async () => {
-      await backend.deleteItemAsync(protectedImportedKey(slot), PROTECTED_NO_PROMPT).catch(() => undefined);
+      await deleteSecureItem(backend, protectedImportedKey(slot), PROTECTED_NO_PROMPT).catch(() => undefined);
     };
     try {
-      await backend.setItemAsync(protectedImportedKey(slot), value, protectedOptions(PROMPTS.importedKeyWrite));
+      await writeSecureItem(backend, protectedImportedKey(slot), value, protectedOptions(PROMPTS.importedKeyWrite));
     } catch (e) {
       await cleanUp();
       return { cancelled: isCancellation(e), detail: errorText(e) };
     }
     let readBack: string | null;
     try {
-      readBack = await backend.getItemAsync(protectedImportedKey(slot), protectedOptions(PROMPTS.importedKeyCheck));
+      readBack = await readSecureItem(backend, protectedImportedKey(slot), protectedOptions(PROMPTS.importedKeyCheck));
     } catch (e) {
       await cleanUp();
       return { cancelled: isCancellation(e), detail: errorText(e) };
@@ -1149,7 +1143,7 @@ export function createKeyVault(backend: SecureStoreBackend, options: KeyVaultOpt
     const pending = meta.keys.filter((k) => k.location === 'standard');
     let moved = 0;
     for (const record of pending) {
-      const value = await backend.getItemAsync(standardImportedKey(record.slot), STANDARD).catch(() => null);
+      const value = await readSecureItem(backend, standardImportedKey(record.slot), STANDARD).catch(() => null);
       if (value === null) {
         return { moved, remaining: pending.length - moved, detail: IMPORTED_KEY_MISSING_MESSAGE, cancelled: false };
       }
@@ -1160,10 +1154,10 @@ export function createKeyVault(backend: SecureStoreBackend, options: KeyVaultOpt
       try {
         await patchImportedRecord(record.slot, { location: 'protected', protectedSince: now(), unreadableSince: null });
       } catch (e) {
-        await backend.deleteItemAsync(protectedImportedKey(record.slot), PROTECTED_NO_PROMPT).catch(() => undefined);
+        await deleteSecureItem(backend, protectedImportedKey(record.slot), PROTECTED_NO_PROMPT).catch(() => undefined);
         return { moved, remaining: pending.length - moved, detail: errorText(e), cancelled: false };
       }
-      await backend.deleteItemAsync(standardImportedKey(record.slot), STANDARD).catch(() => undefined);
+      await deleteSecureItem(backend, standardImportedKey(record.slot), STANDARD).catch(() => undefined);
       moved += 1;
     }
     return { moved, remaining: 0, detail: null, cancelled: false };
@@ -1274,8 +1268,8 @@ export function createKeyVault(backend: SecureStoreBackend, options: KeyVaultOpt
         automaticAttemptDone = false;
         // A leftover protected copy belongs to a removed wallet (or is an
         // unreadable one); it must not shadow the new phrase.
-        await backend.deleteItemAsync(PROTECTED_MNEMONIC_KEY, PROTECTED_NO_PROMPT).catch(() => undefined);
-        await backend.setItemAsync(MNEMONIC_KEY, phrase, STANDARD);
+        await deleteSecureItem(backend, PROTECTED_MNEMONIC_KEY, PROTECTED_NO_PROMPT).catch(() => undefined);
+        await writeSecureItem(backend, MNEMONIC_KEY, phrase, STANDARD);
         await writeMeta({ v: 1, phrase: 'standard', protectedSince: null, attempt: null, unreadableSince: null });
       }),
 
@@ -1383,11 +1377,11 @@ export function createKeyVault(backend: SecureStoreBackend, options: KeyVaultOpt
     removePhrase: () =>
       serial(async () => {
         ticket = null;
-        await backend.deleteItemAsync(PROTECTED_MNEMONIC_KEY, PROTECTED_NO_PROMPT);
-        await backend.deleteItemAsync(MNEMONIC_KEY, STANDARD);
+        await deleteSecureItem(backend, PROTECTED_MNEMONIC_KEY, PROTECTED_NO_PROMPT);
+        await deleteSecureItem(backend, MNEMONIC_KEY, STANDARD);
         // Meta last: if a delete above failed, the record still says where
         // the remaining copy is.
-        await backend.deleteItemAsync(VAULT_META_KEY, STANDARD);
+        await deleteSecureItem(backend, VAULT_META_KEY, STANDARD);
       }),
 
     status: () => serial(statusInner),
@@ -1395,13 +1389,13 @@ export function createKeyVault(backend: SecureStoreBackend, options: KeyVaultOpt
     savePublicAccount: async (index, entries) => {
       const valid = validEntries(entries);
       if (!valid) throw new Error('Invalid public account data');
-      await backend.setItemAsync(publicAccountKey(index), JSON.stringify({ v: 1, index, chains: valid }), STANDARD);
+      await writeSecureItem(backend, publicAccountKey(index), JSON.stringify({ v: 1, index, chains: valid }), STANDARD);
     },
 
     loadPublicAccount: async (index) => {
       let raw: string | null;
       try {
-        raw = await backend.getItemAsync(publicAccountKey(index), STANDARD);
+        raw = await readSecureItem(backend, publicAccountKey(index), STANDARD);
       } catch {
         return null;
       }
@@ -1417,7 +1411,7 @@ export function createKeyVault(backend: SecureStoreBackend, options: KeyVaultOpt
 
     deletePublicAccounts: async (indices) => {
       for (const index of indices) {
-        await backend.deleteItemAsync(publicAccountKey(index), STANDARD).catch(() => undefined);
+        await deleteSecureItem(backend, publicAccountKey(index), STANDARD).catch(() => undefined);
       }
     },
 
@@ -1440,37 +1434,37 @@ export function createKeyVault(backend: SecureStoreBackend, options: KeyVaultOpt
           const { location } = await locate();
           if (location === 'protected' && canProtect()) {
             try {
-              await backend.setItemAsync(
+              await writeSecureItem(
+                backend,
                 PROTECTED_SESSION_KEY_PREFIX + id,
                 privateKeyHex,
                 protectedOptions(PROMPTS.sessionKeyWrite),
               );
-              await backend.deleteItemAsync(SESSION_KEY_PREFIX + id, STANDARD).catch(() => undefined);
+              await deleteSecureItem(backend, SESSION_KEY_PREFIX + id, STANDARD).catch(() => undefined);
               return;
             } catch (e) {
-              await backend
-                .deleteItemAsync(PROTECTED_SESSION_KEY_PREFIX + id, PROTECTED_NO_PROMPT)
-                .catch(() => undefined);
+              await deleteSecureItem(backend, PROTECTED_SESSION_KEY_PREFIX + id, PROTECTED_NO_PROMPT).catch(() => undefined);
               if (isCancellation(e)) throw new Error('Authentication cancelled. The session key was not created.');
             }
           }
-          await backend.setItemAsync(SESSION_KEY_PREFIX + id, privateKeyHex, STANDARD);
+          await writeSecureItem(backend, SESSION_KEY_PREFIX + id, privateKeyHex, STANDARD);
         }),
       load: (id) =>
         serial(async () => {
           checkSessionId(id);
-          const protectedKey = await backend.getItemAsync(
+          const protectedKey = await readSecureItem(
+            backend,
             PROTECTED_SESSION_KEY_PREFIX + id,
             protectedOptions(PROMPTS.sessionKeyRead),
           );
           if (protectedKey !== null) return protectedKey;
-          return backend.getItemAsync(SESSION_KEY_PREFIX + id, STANDARD);
+          return readSecureItem(backend, SESSION_KEY_PREFIX + id, STANDARD);
         }),
       remove: (id) =>
         serial(async () => {
           checkSessionId(id);
-          await backend.deleteItemAsync(PROTECTED_SESSION_KEY_PREFIX + id, PROTECTED_NO_PROMPT);
-          await backend.deleteItemAsync(SESSION_KEY_PREFIX + id, STANDARD);
+          await deleteSecureItem(backend, PROTECTED_SESSION_KEY_PREFIX + id, PROTECTED_NO_PROMPT);
+          await deleteSecureItem(backend, SESSION_KEY_PREFIX + id, STANDARD);
         }),
     },
 
@@ -1524,7 +1518,7 @@ export function createKeyVault(backend: SecureStoreBackend, options: KeyVaultOpt
             protectionDetail = 'This phone cannot hold biometric-protected items right now.';
           }
           if (location === 'standard') {
-            await backend.setItemAsync(standardImportedKey(slot), privateKeyHex, STANDARD);
+            await writeSecureItem(backend, standardImportedKey(slot), privateKeyHex, STANDARD);
           }
           // 3. The public record.
           const info: ImportedKeyInfo = {
@@ -1539,8 +1533,8 @@ export function createKeyVault(backend: SecureStoreBackend, options: KeyVaultOpt
             const fresh = await importedMetaForWrite();
             await writeImportedMeta({ ...fresh, nextSlot: Math.max(fresh.nextSlot, slot + 1), keys: [...fresh.keys, info] });
           } catch (e) {
-            await backend.deleteItemAsync(protectedImportedKey(slot), PROTECTED_NO_PROMPT).catch(() => undefined);
-            await backend.deleteItemAsync(standardImportedKey(slot), STANDARD).catch(() => undefined);
+            await deleteSecureItem(backend, protectedImportedKey(slot), PROTECTED_NO_PROMPT).catch(() => undefined);
+            await deleteSecureItem(backend, standardImportedKey(slot), STANDARD).catch(() => undefined);
             throw e;
           }
           return { info, protectionDetail };
@@ -1555,8 +1549,8 @@ export function createKeyVault(backend: SecureStoreBackend, options: KeyVaultOpt
           if (ticket?.target === `imported:${slot}`) ticket = null;
           // Both copies first; the record goes last, so a failed delete
           // leaves the record saying where the key still is.
-          await backend.deleteItemAsync(protectedImportedKey(slot), PROTECTED_NO_PROMPT);
-          await backend.deleteItemAsync(standardImportedKey(slot), STANDARD);
+          await deleteSecureItem(backend, protectedImportedKey(slot), PROTECTED_NO_PROMPT);
+          await deleteSecureItem(backend, standardImportedKey(slot), STANDARD);
           await writeImportedMeta({ ...meta, keys: meta.keys.filter((k) => k.slot !== slot) });
         }),
 
@@ -1568,10 +1562,10 @@ export function createKeyVault(backend: SecureStoreBackend, options: KeyVaultOpt
           // are swept (far more than MAX_IMPORTED_KEYS imports in practice).
           const upper = meta && meta !== 'corrupt' ? meta.nextSlot : 256;
           for (let slot = 0; slot < upper; slot++) {
-            await backend.deleteItemAsync(protectedImportedKey(slot), PROTECTED_NO_PROMPT);
-            await backend.deleteItemAsync(standardImportedKey(slot), STANDARD);
+            await deleteSecureItem(backend, protectedImportedKey(slot), PROTECTED_NO_PROMPT);
+            await deleteSecureItem(backend, standardImportedKey(slot), STANDARD);
           }
-          await backend.deleteItemAsync(IMPORTED_KEYS_META_KEY, STANDARD);
+          await deleteSecureItem(backend, IMPORTED_KEYS_META_KEY, STANDARD);
         }),
     },
   };

@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AsyncStorage, readStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
 import {
   NodeClient,
   httpTransport,
@@ -27,7 +27,7 @@ import type { TransportFactory } from './aa.ts';
  * store, which holds only the mnemonic.
  */
 
-const INDEXER_CONFIG_KEY = 'shiba-wallet.evm-indexer.v1';
+const INDEXER_CONFIG_KEY = STORE_KEYS.evmIndexer.name;
 
 export interface IndexerConfig {
   url: string | null;
@@ -61,7 +61,7 @@ function checkStoredUrl(stored: string | null): { url: string | null; ignoredUrl
 
 async function loadConfigMap(store: KeyValueStore): Promise<ConfigMap> {
   try {
-    const raw = await store.getItem(INDEXER_CONFIG_KEY);
+    const raw = await readStoreItem(store, INDEXER_CONFIG_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as unknown;
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
@@ -76,7 +76,7 @@ async function loadConfigMap(store: KeyValueStore): Promise<ConfigMap> {
 }
 
 async function saveConfigMap(map: ConfigMap, store: KeyValueStore): Promise<void> {
-  await store.setItem(INDEXER_CONFIG_KEY, JSON.stringify(map));
+  await writeStoreItem(store, INDEXER_CONFIG_KEY, JSON.stringify(map));
 }
 
 /** The stored indexer configuration for one chain (nulls when unset). */

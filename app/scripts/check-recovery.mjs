@@ -79,9 +79,11 @@ import {
   resolveAaSender,
   sendAa,
   AA_QUOTE_ALREADY_USED,
+  addAaOperationSentListener,
   setAccountEip7702,
   setRecoveredAccount,
 } from '../src/wallet/aa.ts';
+import { loadPendingRegistry, pendingUserOpRecorder } from '../src/wallet/pending-transactions.ts';
 import {
   DEFAULT_GUARDIAN_DELAY_SECONDS,
   DELAY_PRESETS,
@@ -817,7 +819,28 @@ console.log('check-recovery: recovery on a new wallet (no delay)');
   const quote = await prepareGuardianSubmission({ node, bundler, chainId: CHAIN_ID, request: progress.request, approvals: reviewB.approvals.map((a) => a.signature), submitter: gB.address });
   const engineAssembled = assembleGuardianApprovals(progress.request, start.set, [sigA], gB.address);
   check('approvals assembly equals the engine assembleGuardianApprovals', quote.approvals.length === 1 && toHex(quote.approvals[0]) === toHex(engineAssembled.approvals[0]));
+  // Phase 21 item 4: the guardian submit announces the accepted operation
+  // (aa.ts notifyAaOperationSent) exactly once, so Activity's pending card
+  // lists it; a submit the bundler refuses, or one refused locally, never does.
+  const opEvents = [];
+  const offOpEvents = addAaOperationSentListener((e) => opEvents.push(e));
+  const pendingStore = memoryStore();
+  const offRecorder = addAaOperationSentListener(pendingUserOpRecorder(pendingStore));
+  const refusingBundler = fakeBundler({ sendError: "AA21 didn't pay prefund" });
+  const refusedQuote = await prepareGuardianSubmission({ node, bundler: refusingBundler, chainId: CHAIN_ID, request: progress.request, approvals: reviewB.approvals.map((a) => a.signature), submitter: gB.address });
+  const refusedSubmit = await caught(() => submitGuardianRecovery({ quote: refusedQuote, node, bundler: refusingBundler, chainId: CHAIN_ID, signer: gB }));
+  check('a guardian submit the bundler refuses (eth_sendUserOperation error) announces nothing',
+    /AA21/.test(refusedSubmit?.message ?? '') && refusingBundler.calls.some((c) => c.method === 'eth_sendUserOperation') && opEvents.length === 0, refusedSubmit?.message);
   const { userOpHash } = await submitGuardianRecovery({ quote, node, bundler, chainId: CHAIN_ID, signer: gB });
+  check('the accepted guardian submit announces the operation exactly once', opEvents.length === 1, String(opEvents.length));
+  const ev = opEvents[0];
+  check('…with the network, the userOpHash, the recovered account as sender, the submitting guardian as owner, kind "other", no pre-fill, the bundler it went through',
+    ev && ev.chain === M && ev.userOpHash === userOpHash && same(ev.sender, ACCOUNT) && same(ev.owner, gB.address) &&
+      ev.kind === 'other' && ev.resend === null && ev.bundler === bundler && typeof ev.sentAt === 'number');
+  await new Promise((r) => setTimeout(r, 0));
+  const pendingAfter = (await loadPendingRegistry(pendingStore)).records.filter((r) => r.kind === 'userop');
+  check('…and the pending recorder lists it under the guardian with origin "other" (Activity: "Check status")',
+    pendingAfter.length === 1 && pendingAfter[0].userOpHash === userOpHash.toLowerCase() && pendingAfter[0].owner === gB.address.toLowerCase() && pendingAfter[0].origin === 'other' && pendingAfter[0].resend === null);
   const op = bundler.lastOp;
   check('recovery op: sender = account, nonce = the approved guardian-lane nonce, callData = doRecovery (engine)', same(op.sender, ACCOUNT) && BigInt(op.nonce) === nonce && op.callData === progress.request.callData && !op.factory);
   const sig = ethers.getBytes(op.signature);
@@ -835,6 +858,9 @@ console.log('check-recovery: recovery on a new wallet (no delay)');
   const resubmit = await caught(() => submitGuardianRecovery({ quote, node, bundler, chainId: CHAIN_ID, signer: gB }));
   check('the submitted guardian quote cannot be sent a second time (re-quote first)',
     resubmit?.message === AA_QUOTE_ALREADY_USED && bundler.calls.filter((c) => c.method === 'eth_sendUserOperation').length === sendsBefore, resubmit?.message);
+  check('the wrong-signer and second-submit refusals announce nothing more (still exactly one event)', opEvents.length === 1, String(opEvents.length));
+  offOpEvents();
+  offRecorder();
 
   // After inclusion: attach only after the on-chain owner check.
   const aaStore = memoryStore();
