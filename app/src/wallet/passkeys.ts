@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AsyncStorage, readStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { toChecksumAddress } from '@shiba-wallet/core';
 import {
@@ -121,7 +121,7 @@ import { assertFeatureAllowed, eip155Caip2 } from '../config/readiness.ts';
  * until both exist; every entry point shows that note instead of acting.
  */
 
-export const PASSKEYS_KEY = 'shiba-wallet.passkeys.v1';
+export const PASSKEYS_KEY = STORE_KEYS.passkeys.name;
 const STORE_VERSION = 1;
 
 // ---------------------------------------------------------------------------
@@ -905,7 +905,7 @@ type RawRead = { state: 'empty' } | { state: 'ok'; records: Record<string, unkno
 async function readRaw(store: KeyValueStore): Promise<RawRead> {
   let text: string | null;
   try {
-    text = await store.getItem(PASSKEYS_KEY);
+    text = await readStoreItem(store, PASSKEYS_KEY);
   } catch {
     return { state: 'unreadable' };
   }
@@ -976,7 +976,7 @@ async function writeRecord(record: PasskeyRecord | null, key: string, store: Key
   const records = read.state === 'ok' ? { ...read.records } : {};
   if (record) records[key] = record;
   else delete records[key];
-  await store.setItem(PASSKEYS_KEY, JSON.stringify({ version: STORE_VERSION, records }));
+  await writeStoreItem(store, PASSKEYS_KEY, JSON.stringify({ version: STORE_VERSION, records }));
 }
 
 export async function savePasskeyRecord(record: PasskeyRecord, store: KeyValueStore = AsyncStorage): Promise<void> {
@@ -991,7 +991,7 @@ async function updateRecord(record: PasskeyRecord, patch: Partial<PasskeyRecord>
 
 /** Clears the local list (explicit user action, or the wallet wipe). On-chain passkeys are not affected. */
 export async function resetPasskeys(store: KeyValueStore = AsyncStorage): Promise<void> {
-  await store.setItem(PASSKEYS_KEY, JSON.stringify({ version: STORE_VERSION, records: {} }));
+  await writeStoreItem(store, PASSKEYS_KEY, JSON.stringify({ version: STORE_VERSION, records: {} }));
 }
 
 // ---------------------------------------------------------------------------

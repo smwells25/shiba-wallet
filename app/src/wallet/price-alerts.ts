@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AsyncStorage, readStoreItem, writeStoreItem, removeStoreItem, STORE_KEYS } from './store-keys.ts';
 import { parseDecimal, type PriceQuote } from '@shiba-wallet/prices';
 // Explicit .ts extensions: scripts/check-price-alerts.mjs loads this module
 // under Node's type stripping, which resolves relative specifiers literally.
@@ -43,7 +43,7 @@ import { groupThousands } from './balances.ts';
  * scripts/check-price-alerts.mjs runs the exact code.
  */
 
-export const PRICE_ALERTS_KEY = 'shiba-wallet.price-alerts.v1';
+export const PRICE_ALERTS_KEY = STORE_KEYS.priceAlerts.name;
 /** The most alerts stored (a judgement; the parse refuses more). */
 export const MAX_PRICE_ALERTS = 20;
 /** The most alerts on one asset (a judgement). */
@@ -357,7 +357,7 @@ export function serializePriceAlertBook(book: PriceAlertBook): string {
 }
 
 export async function loadPriceAlerts(store: KeyValueStore = AsyncStorage): Promise<PriceAlertBook> {
-  const text = await store.getItem(PRICE_ALERTS_KEY);
+  const text = await readStoreItem(store, PRICE_ALERTS_KEY);
   if (text === null) return EMPTY_BOOK;
   return parsePriceAlertBook(text) ?? { ...EMPTY_BOOK, damaged: true };
 }
@@ -398,7 +398,7 @@ export function updatePriceAlerts<T>(
     if (book.damaged) throw new Error(PRICE_ALERTS_DAMAGED_MESSAGE);
     const { book: next, result } = change(book);
     if (next !== book) {
-      await store.setItem(PRICE_ALERTS_KEY, serializePriceAlertBook(next));
+      await writeStoreItem(store, PRICE_ALERTS_KEY, serializePriceAlertBook(next));
       notifyChanged();
     }
     return result;
@@ -411,8 +411,8 @@ export function updatePriceAlerts<T>(
 export async function resetPriceAlerts(store: KeyValueStore & { removeItem?: (k: string) => Promise<void> } = AsyncStorage): Promise<void> {
   const run = queue.then(async () => {
     monitorQuotes.clear();
-    if (store.removeItem) await store.removeItem(PRICE_ALERTS_KEY);
-    else await store.setItem(PRICE_ALERTS_KEY, serializePriceAlertBook(EMPTY_BOOK));
+    if (store.removeItem) await removeStoreItem(store, PRICE_ALERTS_KEY);
+    else await writeStoreItem(store, PRICE_ALERTS_KEY, serializePriceAlertBook(EMPTY_BOOK));
     notifyChanged();
   });
   queue = run.catch(() => undefined);

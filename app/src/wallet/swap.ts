@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AsyncStorage, readStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
 import {
   NodeClient,
   decodeUint256,
@@ -45,7 +45,7 @@ import { suggestFeesRetryingOnce } from './fee-read.ts';
  * All amounts are bigints in base units end to end.
  */
 
-const SWAP_CONFIG_KEY = 'shiba-wallet.swap-config.v1';
+const SWAP_CONFIG_KEY = STORE_KEYS.swapConfig.name;
 
 /**
  * The 0x Swap API v2 placeholder address for the chain's NATIVE token
@@ -91,7 +91,7 @@ export interface SwapConfig {
 
 async function loadRawConfig(store: KeyValueStore): Promise<Record<string, unknown>> {
   try {
-    const raw = await store.getItem(SWAP_CONFIG_KEY);
+    const raw = await readStoreItem(store, SWAP_CONFIG_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as unknown;
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
@@ -183,7 +183,8 @@ export async function setSwapApiKey(
     );
   }
   // ok, or no-liquidity: either way the service accepted the key.
-  await store.setItem(
+  await writeStoreItem(
+    store,
     SWAP_CONFIG_KEY,
     JSON.stringify({ apiKey: trimmed, verifiedAt: new Date().toISOString() }),
   );
@@ -191,7 +192,7 @@ export async function setSwapApiKey(
 
 /** Removes the stored 0x API key. */
 export async function clearSwapApiKey(store: KeyValueStore = AsyncStorage): Promise<void> {
-  await store.setItem(SWAP_CONFIG_KEY, JSON.stringify({}));
+  await writeStoreItem(store, SWAP_CONFIG_KEY, JSON.stringify({}));
 }
 
 // ---------------------------------------------------------------------------

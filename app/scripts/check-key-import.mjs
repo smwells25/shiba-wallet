@@ -1091,7 +1091,7 @@ console.log('check-key-import: honesty and input hygiene in the screens (source 
     check(`${f}: no console logging, no AsyncStorage`, !/console\.\w+\(/.test(src(f)) && !/AsyncStorage/.test(src(f)));
   }
   const storageSrc = src('wallet/storage.ts');
-  check('only storage.ts names the imported-key secure-store entries', ['wallet/WalletContext.tsx', 'wallet/accounts.ts', 'wallet/imported-keys.ts', 'screens/ImportKeyScreen.tsx'].every((f) => !src(f).includes('shiba-wallet.imported-key')) && storageSrc.includes("'shiba-wallet.imported-key.v1.'"));
+  check('only storage.ts (through the storage seam, store-keys.ts) names the imported-key secure-store entries', ['wallet/WalletContext.tsx', 'wallet/accounts.ts', 'wallet/imported-keys.ts', 'screens/ImportKeyScreen.tsx'].every((f) => !src(f).includes('shiba-wallet.imported-key')) && src('wallet/store-keys.ts').includes("'shiba-wallet.imported-key.v1.'") && storageSrc.includes('export const IMPORTED_KEY_PREFIX = STORE_KEYS.importedKey.name;'));
   check('the account list in AsyncStorage holds no address or key for imported accounts', !/evmAddress|privateKey/.test(src('wallet/accounts.ts').slice(src('wallet/accounts.ts').indexOf('export async function addImportedAccountEntry'), src('wallet/accounts.ts').indexOf('export async function removeImportedAccountEntry'))));
   const ready = featureReadiness('imported-key');
   check('readiness: advisory row citing T-67', ready.status === 'blocked' && ready.enforced === false && ready.evidence.includes('T-67'));
@@ -1107,6 +1107,8 @@ console.log('check-key-import: mutation checks (broken copies of storage.ts must
   const dir = join(HERE, `.mutants-${process.pid}`);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'account-ids.ts'), readFileSync(idsPath, 'utf8'));
+  // storage.ts reaches the secure store through the storage seam (store-keys.ts).
+  writeFileSync(join(dir, 'store-keys.ts'), readFileSync(join(HERE, '..', 'src', 'wallet', 'store-keys.ts'), 'utf8'));
   let n = 0;
   const load = async (from, to) => {
     if (!original.includes(from)) throw new Error(`mutation anchor not found: ${from}`);
@@ -1151,7 +1153,7 @@ console.log('check-key-import: mutation checks (broken copies of storage.ts must
     }
     // M4: wipe forgets the record.
     {
-      const m = await load('await backend.deleteItemAsync(IMPORTED_KEYS_META_KEY, STANDARD);', 'void 0;');
+      const m = await load('await deleteSecureItem(backend, IMPORTED_KEYS_META_KEY, STANDARD);', 'void 0;');
       const shim = makeShim();
       const v = m.createKeyVault(shim);
       await v.saveNewPhrase(PHRASE);
@@ -1163,7 +1165,7 @@ console.log('check-key-import: mutation checks (broken copies of storage.ts must
     {
       const m = await load(
         'const failure = await writeProtectedImported(record.slot, value);',
-        'await backend.deleteItemAsync(standardImportedKey(record.slot), STANDARD);\n      const failure = await writeProtectedImported(record.slot, value);',
+        'await deleteSecureItem(backend, standardImportedKey(record.slot), STANDARD);\n      const failure = await writeProtectedImported(record.slot, value);',
       );
       const shim = makeShim();
       const v = m.createKeyVault(shim);

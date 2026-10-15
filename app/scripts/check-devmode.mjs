@@ -478,6 +478,15 @@ const at = (type, status, now) => ({ type, status, now });
     const oldHint = settingsSrc.replace(/locks behind the same biometric prompt as sending\.[\s\S]*?offered as a fallback\./,
       'locks behind the same biometric prompt as sending (with your\n              device passcode as the system fallback).');
     check('mutant caught: the old "device passcode as the system fallback" hint', oldHint !== settingsSrc && !lockHintTrue(oldHint));
+    // Phase 21 item 4: the control's title covers both a return from the
+    // background and a fresh start (its hint above says both); the old
+    // title named only the background case (retitled in 651ee5d).
+    const autoLockTitleOk = (src) =>
+      /<Text style=\{\[styles\.toggleLabel, \{ color: theme\.text \}\]\}>\s*Auto-lock\s*<\/Text>\s*<View style=\{styles\.endpointButtons\}>\s*\{AUTO_LOCK_CHOICES\.map/.test(src) &&
+      !src.includes('Auto-lock after returning from background');
+    check('Settings: the auto-lock control is titled "Auto-lock" (not "…after returning from background")', autoLockTitleOk(settingsSrc));
+    const oldTitle = settingsSrc.replace(/(<Text style=\{\[styles\.toggleLabel, \{ color: theme\.text \}\]\}>\s*)Auto-lock(\s*<\/Text>\s*<View style=\{styles\.endpointButtons\}>)/, '$1Auto-lock after returning from background$2');
+    check('mutant caught: the old background-only title', oldTitle !== settingsSrc && !autoLockTitleOk(oldTitle));
   }
 }
 

@@ -517,6 +517,172 @@ console.log('check-pending: every sendEvm broadcast is recorded');
 }
 
 // ---------------------------------------------------------------------------
+console.log('check-pending: the minimum-fee rehearsal (Settings → Developer, phase 21 item 3)');
+// ---------------------------------------------------------------------------
+{
+  const { mkdirSync, writeFileSync, rmSync } = await import('node:fs');
+  const { pathToFileURL } = await import('node:url');
+  const { resolve: resolvePath } = await import('node:path');
+  const evm = await import('../src/config/evm-chain.ts');
+  const HERE_M = dirname(fileURLToPath(import.meta.url));
+  const SEPOLIA = 'eip155:11155111';
+  const MAINNET = 'eip155:1';
+  const useNode = (node) => {
+    globalThis.fetch = async (_url, init) => {
+      const { method, params, id } = JSON.parse(init.body);
+      let body;
+      try {
+        body = { jsonrpc: '2.0', id, result: await node.transport(method, params) };
+      } catch (e) {
+        body = { jsonrpc: '2.0', id, error: { code: -32000, message: e.message } };
+      }
+      return { ok: true, status: 200, json: async () => body };
+    };
+  };
+  const json = (o) => JSON.stringify(o, (_k, v) => (typeof v === 'bigint' ? `${v}n` : v instanceof Uint8Array ? Array.from(v) : v));
+  // Custom networks the user added: one MAIN network, one allow-listed test network.
+  const customMain = { ...evm.EVM_SEPOLIA, caip2: 'eip155:59144', chainIdDecimal: '59144', label: 'My chain', testnet: false, kernelV33Verified: false,
+    custom: { rpcUrl: 'https://rpc.mychain.example', nativeSymbol: 'ETH', explorerBase: null, blockTimeMs: null, testnetRequested: false } };
+  const customTest = { ...evm.EVM_SEPOLIA, caip2: 'eip155:59141', chainIdDecimal: '59141', label: 'Linea Sepolia', testnet: true, kernelV33Verified: false,
+    custom: { rpcUrl: 'https://rpc.linea-sepolia.example', nativeSymbol: 'ETH', explorerBase: null, blockTimeMs: null, testnetRequested: true } };
+  evm.setCustomEvmProfiles([customMain, customTest]);
+
+  send.setMinimumFeeRehearsal(SEPOLIA, false);
+  let notified = 0;
+  const unsub = send.subscribeMinimumFeeRehearsal(() => { notified += 1; });
+  check('the switch is offered on test networks (Sepolia, a built-in L2 test network, an allow-listed network you added) only',
+    send.minimumFeeRehearsalOffered(SEPOLIA) && send.minimumFeeRehearsalOffered('eip155:84532') && send.minimumFeeRehearsalOffered(customTest.caip2) &&
+      !send.minimumFeeRehearsalOffered(MAINNET) && !send.minimumFeeRehearsalOffered(customMain.caip2) && !send.minimumFeeRehearsalOffered('eip155:8453'));
+  check('turning it on is refused on Ethereum mainnet (stays off)', send.setMinimumFeeRehearsal(MAINNET, true) === false && !send.minimumFeeRehearsalArmed(MAINNET) && notified === 0);
+  check('…and on a network the user added as a MAIN network (stays off)', send.setMinimumFeeRehearsal(customMain.caip2, true) === false && !send.minimumFeeRehearsalArmed(customMain.caip2) && notified === 0);
+  check('on Sepolia it arms, for Sepolia only (not for another network)', send.setMinimumFeeRehearsal(SEPOLIA, true) === true && send.minimumFeeRehearsalArmed(SEPOLIA) && !send.minimumFeeRehearsalArmed('eip155:84532') && notified === 1);
+
+  // The native quote at the minimum fee (fake node: base fee 14 wei, node priority 1,000,004).
+  const node = fakeNode({ estimate: 21_000n });
+  useNode(node);
+  const ordinary = await send.prepareEvmSend(URL, FROM, TO, 10n ** 14n, undefined, SEPOLIA);
+  const rehearsal = await send.prepareEvmSend(URL, FROM, TO, 10n ** 14n, undefined, SEPOLIA, { minimumFee: true });
+  check('an ordinary Sepolia quote is unchanged (2 × base + node priority, no marker)',
+    ordinary.maxFeePerGas === 2n * 14n + 1_000_004n && ordinary.maxPriorityFeePerGas === 1_000_004n && !('minimumFee' in ordinary));
+  check('the rehearsal quote: priority fee exactly 1 wei, max fee exactly base fee + 1 wei (15 wei)',
+    rehearsal.maxPriorityFeePerGas === 1n && rehearsal.maxFeePerGas === 15n && rehearsal.minimumFee?.baseFeePerGas === 14n, `${rehearsal.maxPriorityFeePerGas}/${rehearsal.maxFeePerGas}`);
+  check('…its worst-case fee and total follow (21,000 × 15 wei)', rehearsal.fee === 21_000n * 15n && rehearsal.total === 10n ** 14n + 21_000n * 15n && rehearsal.gasLimit === 21_000n);
+  check('…every other field equals the ordinary quote', json({ ...rehearsal, maxFeePerGas: 0, maxPriorityFeePerGas: 0, fee: 0, total: 0, minimumFee: 0 }) === json({ ...ordinary, maxFeePerGas: 0, maxPriorityFeePerGas: 0, fee: 0, total: 0, minimumFee: 0 }));
+  check('preparing (and so cancelling) a rehearsal quote leaves the option on', send.minimumFeeRehearsalArmed(SEPOLIA));
+  check('the confirm fee line (exact)', send.minimumFeeRehearsalFeeLine(rehearsal) ===
+    "Priced at the minimum fee: a priority fee of 1 wei and a max fee of 15 wei per gas (the latest block's base fee, 14 wei, plus 1 wei).");
+  check('the confirm warning (exact)', send.MINIMUM_FEE_REHEARSAL_WARNING ===
+    'Minimum-fee rehearsal: this transaction will probably sit pending until you speed it up or cancel it from Activity.');
+  check('the switch label (exact)', send.MINIMUM_FEE_REHEARSAL_SWITCH_LABEL ===
+    'Send the next regular-account transaction at the minimum fee (to rehearse Speed up / Cancel)');
+  check('the Developer note says a node may refuse it outright ("transaction underpriced") and that this is expected',
+    send.MINIMUM_FEE_REHEARSAL_HINT.includes('The node may refuse such an under-priced transaction outright ("transaction underpriced"); that is expected') &&
+      send.MINIMUM_FEE_REHEARSAL_HINT.startsWith('Test networks only.'));
+
+  // Refused on a main network: the option is ignored and the quote is the ordinary one.
+  for (const [label, caip2, chainId] of [['Ethereum mainnet', MAINNET, 1n], ['a network the user added as a main network', customMain.caip2, 59144n]]) {
+    useNode(fakeNode({ chainId, estimate: 21_000n }));
+    const plain = await send.prepareEvmSend(URL, FROM, TO, 10n ** 14n, undefined, caip2);
+    const asked = await send.prepareEvmSend(URL, FROM, TO, 10n ** 14n, undefined, caip2, { minimumFee: true });
+    check(`${label}: minimumFee is ignored — the quote is key-for-key the ordinary one, no marker`, json(asked) === json(plain) && !('minimumFee' in asked) && asked.maxPriorityFeePerGas === 1_000_004n);
+  }
+  // A token quote re-priced (send-erc20.ts prepareErc20Send takes no options).
+  useNode(node);
+  const tokenQuote = { kind: 'erc20', to: TO, contract: '0x1c7d4b196cb0c7b01d743fbc6116a902379c7238', symbol: 'USDC', decimals: 6, amount: 5n, tokenBalance: 10n,
+    ethBalance: 10n ** 18n, nonce: 7n, chainId: 11155111n, gasLimit: 45_000n, maxFeePerGas: 1_000_032n, maxPriorityFeePerGas: 1_000_004n, fee: 45_000n * 1_000_032n,
+    data: new Uint8Array([0xa9, 0x05, 0x9c, 0xbb]), simulation: { ok: true, returnData: '0x' }, returnedFalse: false, gasIsFallback: false };
+  const tokenRehearsal = await send.repriceTokenQuoteAtMinimumFee(URL, tokenQuote, { to: tokenQuote.contract, value: 0n, data: tokenQuote.data });
+  check('token send: priority 1 wei, max fee base + 1, fee = gas × 15, marker; every other field unchanged',
+    tokenRehearsal.maxPriorityFeePerGas === 1n && tokenRehearsal.maxFeePerGas === 15n && tokenRehearsal.fee === 45_000n * 15n &&
+      tokenRehearsal.minimumFee?.baseFeePerGas === 14n &&
+      json({ ...tokenRehearsal, maxFeePerGas: 0, maxPriorityFeePerGas: 0, fee: 0, minimumFee: 0 }) === json({ ...tokenQuote, maxFeePerGas: 0, maxPriorityFeePerGas: 0, fee: 0, minimumFee: 0 }));
+  const mainnetToken = { ...tokenQuote, chainId: 1n };
+  check('token send on mainnet: returned unchanged (the same object, no request made)',
+    (await send.repriceTokenQuoteAtMinimumFee(URL, mainnetToken, { to: tokenQuote.contract, value: 0n, data: tokenQuote.data })) === mainnetToken);
+
+  // One-shot.
+  check('an ORDINARY quote that was sent does not turn it off', send.consumeMinimumFeeRehearsal(ordinary) === false && send.minimumFeeRehearsalArmed(SEPOLIA));
+  const before = notified;
+  check('the rehearsal quote that was sent turns it off (once), and listeners hear it',
+    send.consumeMinimumFeeRehearsal(rehearsal) === true && !send.minimumFeeRehearsalArmed(SEPOLIA) && notified === before + 1 &&
+      send.consumeMinimumFeeRehearsal(rehearsal) === false);
+  send.setMinimumFeeRehearsal(SEPOLIA, true);
+  check('a sent token rehearsal quote turns it off too', send.consumeMinimumFeeRehearsal(tokenRehearsal) === true && !send.minimumFeeRehearsalArmed(SEPOLIA));
+  send.setMinimumFeeRehearsal(SEPOLIA, true);
+  check('switching it off from Settings works for any network', send.setMinimumFeeRehearsal(SEPOLIA, false) === false && !send.minimumFeeRehearsalArmed(SEPOLIA));
+
+  // The broadcast is recorded at those fees, and the replacement rule of
+  // 516c023 applies to it unchanged: max(old + 1, ceil(old × 1.1)) per field.
+  const store = memoryStore();
+  send.setPendingRecordStore(store);
+  const sent = await send.sendEvm(URL, signer, rehearsal, null);
+  const recorded = (await loadPendingRegistry(store)).records[0];
+  check('the rehearsal broadcast is recorded as pending with priority 1 wei and max fee 15 wei',
+    recorded?.hash === sent.txid.toLowerCase() && recorded.maxFeePerGas === '15' && recorded.maxPriorityFeePerGas === '1');
+  const speedUp = replacementFees(pooledFees([recorded]), { maxFeePerGas: 1n, maxPriorityFeePerGas: 1n });
+  check('…and its speed-up minimum is the unchanged rule: priority 2 wei, max fee 17 wei', speedUp.minimum.maxPriorityFeePerGas === 2n && speedUp.minimum.maxFeePerGas === 17n);
+  send.setPendingRecordStore(null);
+
+  // Mutant: a consume that never turns the option off must be caught.
+  const sendSrc = readFileSync(join(HERE_M, '../src/wallet/send.ts'), 'utf8');
+  const RESET = '  minimumFeeArmedFor = null;\n  notifyMinimumFeeListeners();\n  return true;';
+  // Inside scripts/ (as check-aa's mutants) so the copy resolves the app's packages.
+  const mutantDir = join(HERE_M, `.mutants-pending-${process.pid}`);
+  mkdirSync(mutantDir, { recursive: true });
+  try {
+    const rewritten = sendSrc.replace(RESET, '  notifyMinimumFeeListeners();\n  return true;')
+      .replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolvePath(join(HERE_M, '../src/wallet'), spec)).href}'`);
+    const file = join(mutantDir, 'send-mutant.ts');
+    writeFileSync(file, rewritten);
+    const mutant = await import(pathToFileURL(file).href);
+    mutant.setMinimumFeeRehearsal(SEPOLIA, true);
+    mutant.consumeMinimumFeeRehearsal(rehearsal);
+    check('mutant caught: the option left on after the rehearsal quote was sent', sendSrc.includes(RESET) && mutant.minimumFeeRehearsalArmed(SEPOLIA) === true);
+    mutant.setMinimumFeeRehearsal(SEPOLIA, false);
+  } finally {
+    rmSync(mutantDir, { recursive: true, force: true });
+  }
+
+  // Wiring (source): only the Send screen's regular-account native and token
+  // branches ask for it; the sent quote turns it off; the confirm shows the
+  // warning and the exact fees; Settings renders the switch on test networks only.
+  const sendScreen = readFileSync(join(HERE_M, '../src/screens/SendScreen.tsx'), 'utf8');
+  // The Review quote's branches (the Max handler above it has the same shape, so search from the AA branch on).
+  const aaAt = sendScreen.indexOf('      } else if (aaActive) {');
+  const tokenAt = sendScreen.indexOf('      } else if (token) {', aaAt);
+  const nativeAt = sendScreen.indexOf("      } else if (start.network.kind === 'evm-jsonrpc') {", tokenAt);
+  const solanaAt = sendScreen.indexOf("      } else if (start.network.kind === 'solana-jsonrpc') {", nativeAt);
+  const aaBranch = aaAt > 0 && tokenAt > aaAt ? sendScreen.slice(aaAt, tokenAt) : '';
+  const tokenBranch = nativeAt > tokenAt ? sendScreen.slice(tokenAt, nativeAt) : '';
+  const nativeBranch = solanaAt > nativeAt ? sendScreen.slice(nativeAt, solanaAt) : '';
+  check('Send: the native EOA quote passes minimumFee from the armed state for the active network',
+    nativeBranch.includes('const minimumFee = minimumFeeRehearsalArmed(evmChain.caip2);') && nativeBranch.includes('...(minimumFee ? { minimumFee } : {}),'));
+  check('Send: the token EOA quote is re-priced only when armed',
+    tokenBranch.includes('const rehearse = minimumFeeRehearsalArmed(evmChain.caip2);') && tokenBranch.includes('repriceTokenQuoteAtMinimumFee(ep.url, tokenQuote, { to: tokenQuote.contract, value: 0n, data: tokenQuote.data })'));
+  check('Send: the smart-account branch and the NFT branch never read the option',
+    aaBranch.length > 0 && !/minimumFee|MinimumFee/.test(aaBranch) && (sendScreen.match(/minimumFeeRehearsalArmed\(/g) ?? []).length === 2 && (sendScreen.match(/repriceTokenQuoteAtMinimumFee\(/g) ?? []).length === 1);
+  const successAt = sendScreen.indexOf('      setResult(sent);');
+  const consumeAt = sendScreen.indexOf('      consumeMinimumFeeRehearsal(quote);');
+  check('Send: the option is consumed exactly once, right after a regular-account send succeeded (never on the error path)',
+    (sendScreen.match(/consumeMinimumFeeRehearsal\(/g) ?? []).length === 1 && successAt > 0 && consumeAt > successAt && consumeAt < sendScreen.indexOf('    } catch (e) {', successAt));
+  check('Send: both regular-account confirms show the warning and the exact-fee line on a rehearsal quote',
+    (sendScreen.match(/<WarningBox>\{MINIMUM_FEE_REHEARSAL_WARNING\}<\/WarningBox>/g) ?? []).length === 2 &&
+      (sendScreen.match(/\{minimumFeeRehearsalFeeLine\(quote\)\}/g) ?? []).length === 2 &&
+      sendScreen.includes("{quote.kind === 'evm' && minimumFeeRehearsalOf(quote) ? (") && sendScreen.includes('{minimumFeeRehearsalOf(quote) ? ('));
+  const settingsSrc = readFileSync(join(HERE_M, '../src/screens/SettingsScreen.tsx'), 'utf8');
+  const gateOk = (src) => /\{minimumFeeRehearsalOffered\(evmChain\.caip2\) \? \(\s*<>\s*<View style=\{styles\.toggleRow\}>[\s\S]*?\{MINIMUM_FEE_REHEARSAL_SWITCH_LABEL\}[\s\S]*?onValueChange=\{\(v\) => void setMinimumFeeRehearsal\(evmChain\.caip2, v\)\}[\s\S]*?\{MINIMUM_FEE_REHEARSAL_HINT\}<\/Text>\s*<\/>\s*\) : null\}/.test(src) &&
+    (src.match(/MINIMUM_FEE_REHEARSAL_SWITCH_LABEL/g) ?? []).length === 3;
+  check('Settings → Developer renders the switch and its note only where minimumFeeRehearsalOffered (test networks)', gateOk(settingsSrc));
+  const ungated = settingsSrc.replace('{minimumFeeRehearsalOffered(evmChain.caip2) ? (', '{true ? (');
+  check('…mutant caught: the switch rendered on every network', ungated !== settingsSrc && !gateOk(ungated));
+  const aaSrc = readFileSync(join(HERE_M, '../src/wallet/aa.ts'), 'utf8');
+  check('aa.ts (every smart-account quote) never reads the rehearsal', !/MinimumFee|minimumFee/.test(aaSrc));
+
+  unsub();
+  evm.setCustomEvmProfiles([]);
+}
+
+// ---------------------------------------------------------------------------
 console.log('check-pending: spending limits count the fee, never the value');
 // ---------------------------------------------------------------------------
 {

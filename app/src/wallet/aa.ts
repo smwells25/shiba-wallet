@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AsyncStorage, readStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
 import type { DerivedAccount } from '@shiba-wallet/core';
 import { toChecksumAddress } from '@shiba-wallet/core';
 import {
@@ -131,7 +131,7 @@ import { suggestFeesRetryingOnce } from './fee-read.ts';
  * a Kernel account needs a bundler that accepts Kernel deployments.
  */
 
-const AA_CONFIG_KEY = 'shiba-wallet.aa-config.v1';
+const AA_CONFIG_KEY = STORE_KEYS.aaConfig.name;
 
 /** Builds a JSON-RPC transport for a URL; injectable for offline tests. */
 export type TransportFactory = (url: string) => JsonRpcTransport;
@@ -337,7 +337,7 @@ type ConfigMap = Record<string, Partial<AaChainConfig>>;
 
 async function loadConfigMap(store: KeyValueStore): Promise<ConfigMap> {
   try {
-    const raw = await store.getItem(AA_CONFIG_KEY);
+    const raw = await readStoreItem(store, AA_CONFIG_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as unknown;
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
@@ -352,7 +352,7 @@ async function loadConfigMap(store: KeyValueStore): Promise<ConfigMap> {
 }
 
 async function saveConfigMap(map: ConfigMap, store: KeyValueStore): Promise<void> {
-  await store.setItem(AA_CONFIG_KEY, JSON.stringify(map));
+  await writeStoreItem(store, AA_CONFIG_KEY, JSON.stringify(map));
   notifyAaConfigChanged();
 }
 

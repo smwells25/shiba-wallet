@@ -248,9 +248,10 @@ for (const [file, name] of [
   const save = aa.slice(aa.indexOf('async function saveConfigMap('), aa.indexOf('export type AaConfigChangedListener'));
   check(
     'every AA config write notifies after it succeeded (one write path)',
-    save.indexOf('await store.setItem(AA_CONFIG_KEY') !== -1 &&
-      save.indexOf('notifyAaConfigChanged();') > save.indexOf('await store.setItem(AA_CONFIG_KEY') &&
-      !/store\.setItem\(AA_CONFIG_KEY/.test(aa.replace(save, '')),
+    // The write goes through the storage seam (store-keys.ts writeStoreItem).
+    save.indexOf('await writeStoreItem(store, AA_CONFIG_KEY') !== -1 &&
+      save.indexOf('notifyAaConfigChanged();') > save.indexOf('await writeStoreItem(store, AA_CONFIG_KEY') &&
+      !/writeStoreItem\(store, AA_CONFIG_KEY|store\.setItem\(AA_CONFIG_KEY/.test(aa.replace(save, '')),
   );
 }
 

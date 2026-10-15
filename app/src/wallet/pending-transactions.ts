@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AsyncStorage, readStoreItem, writeStoreItem, removeStoreItem, STORE_KEYS } from './store-keys.ts';
 // Explicit .ts extensions: scripts/check-pending.mjs and the live scratch
 // script load this module under Node's type stripping, which resolves
 // relative specifiers literally. Type-only imports are erased, so this module
@@ -67,7 +67,7 @@ import { formatUnits } from './balances.ts';
  */
 
 /** AsyncStorage key of the registry. */
-export const PENDING_TX_KEY = 'shiba-wallet.pending-tx.v1';
+export const PENDING_TX_KEY = STORE_KEYS.pendingTx.name;
 const STORE_VERSION = 1;
 
 /**
@@ -549,7 +549,7 @@ export async function loadPendingRegistry(store: PendingStore = AsyncStorage): P
 
 /** The read itself, without waiting for the queue (used INSIDE queued writes, which must not wait for themselves). */
 async function readRegistry(store: PendingStore): Promise<PendingRegistry> {
-  return parseRegistry(await store.getItem(PENDING_TX_KEY));
+  return parseRegistry(await readStoreItem(store, PENDING_TX_KEY));
 }
 
 function serialized<T>(store: object, task: () => Promise<T>): Promise<T> {
@@ -596,7 +596,7 @@ async function update(
     const current = await readRegistry(store);
     if (current.readOnly) throw new Error(PENDING_READ_ONLY_MESSAGE);
     const next = pruneRecords(change(current.records), nowMs);
-    await store.setItem(PENDING_TX_KEY, JSON.stringify({ version: STORE_VERSION, records: next }));
+    await writeStoreItem(store, PENDING_TX_KEY, JSON.stringify({ version: STORE_VERSION, records: next }));
     return next;
   });
 }
@@ -773,8 +773,8 @@ export async function forgetUserOperation(
 /** Clears the whole registry (the "Reset the pending list" action and the wallet wipe). */
 export async function resetPendingRegistry(store: PendingStore = AsyncStorage): Promise<void> {
   await serialized(store, async () => {
-    if (store.removeItem) await store.removeItem(PENDING_TX_KEY);
-    else await store.setItem(PENDING_TX_KEY, JSON.stringify({ version: STORE_VERSION, records: [] }));
+    if (store.removeItem) await removeStoreItem(store, PENDING_TX_KEY);
+    else await writeStoreItem(store, PENDING_TX_KEY, JSON.stringify({ version: STORE_VERSION, records: [] }));
   });
 }
 

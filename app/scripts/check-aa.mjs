@@ -88,7 +88,7 @@ import {
   sendFormTokenFeeSentence,
   tokenGasThroughPhrase,
 } from '../src/wallet/aa.ts';
-import { EVM_CHAIN_ID, describeSendError } from '../src/wallet/send.ts';
+import { EVM_CHAIN_ID, describeSendError, minimumFeeRehearsalArmed, setMinimumFeeRehearsal } from '../src/wallet/send.ts';
 import { addAaOperationSentListener } from '../src/wallet/aa.ts';
 import { loadPendingRegistry, pendingUserOpRecorder } from '../src/wallet/pending-transactions.ts';
 import { formatUnits, parseUnits } from '../src/wallet/balances.ts';
@@ -561,6 +561,33 @@ check(
   `fee=${quote.fee} maxFeePerGas=${quote.maxFeePerGas}`,
 );
 check('total = amount + fee', quote.total === AMOUNT + quote.fee);
+
+// Phase 21 item 3: Settings → Developer's minimum-fee rehearsal touches only
+// the regular-account path. With it armed on Sepolia, a Sepolia smart-account
+// quote is key-for-key the quote made with it off.
+{
+  const sepoliaQuote = async () => {
+    const node = fakeNode({ chainId: '0xaa36a7' });
+    const bundler = fakeBundler();
+    const b = createAaClient({
+      nodeUrl: 'https://node.example',
+      bundlerUrl: 'https://bundler.example',
+      factory: FACTORY_INPUT,
+      chainId: 11155111n,
+      transportFor: (url) => (url === 'https://node.example' ? node : bundler),
+    });
+    return prepareAaSend(b, owner.address, RECIPIENT, AMOUNT);
+  };
+  const json = (o) => JSON.stringify(o, (_k, v) => (typeof v === 'bigint' ? `${v}n` : v instanceof Uint8Array ? Array.from(v) : v));
+  setMinimumFeeRehearsal(AA_CHAIN, false);
+  const off = await sepoliaQuote();
+  setMinimumFeeRehearsal(AA_CHAIN, true);
+  const on = await sepoliaQuote();
+  check('minimum-fee rehearsal armed on Sepolia: the Sepolia smart-account quote is key-for-key unchanged (and is not the 1-wei price)',
+    minimumFeeRehearsalArmed(AA_CHAIN) && json(on) === json(off) && Object.keys(on).join() === Object.keys(off).join() && on.maxPriorityFeePerGas > 1n);
+  check('…and the smart-account quote does not consume the option', minimumFeeRehearsalArmed(AA_CHAIN));
+  setMinimumFeeRehearsal(AA_CHAIN, false);
+}
 check(
   'estimation went to the bundler transport (eth_estimateUserOperationGas)',
   bundler.calls.some((c) => c.method === 'eth_estimateUserOperationGas'),

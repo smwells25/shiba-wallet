@@ -17,6 +17,7 @@ import {
   createAaClientFromConfig,
   describeAaError,
   getAaConfig,
+  notifyAaOperationSent,
   sendAa,
   summarizeAaReceipt,
   type AaClientBundle,
@@ -317,6 +318,22 @@ export function PasskeyScreen({ navigation }: Props) {
     setPhase('sending');
     try {
       const { userOpHash } = await sendPasskeyCalls(t.pbundle, t.quote);
+      // Accepted by the bundler: announce it once so Activity's pending card
+      // lists it with "Check status" (phase 21 item 4). sendPasskeyCalls does
+      // not go through aa.ts sendAa and announces nothing itself; the Send
+      // screen's passkey path records its own operation (with its "Send
+      // again" pre-fill), so the announcement lives here, not in
+      // sendPasskeyCalls. A refused submit throws above and never gets here.
+      notifyAaOperationSent({
+        chain: t.pbundle.passkey.record.chain,
+        userOpHash,
+        sender: t.quote.sender,
+        owner: t.pbundle.passkey.record.owner,
+        bundler: t.pbundle.bundler,
+        sentAt: Date.now(),
+        kind: 'other',
+        resend: null,
+      });
       setPendingTest(null);
       setProgress({ kind: 'test', userOpHash, state: 'pending', txHash: null, detail: null });
       setPhase('progress');

@@ -63,7 +63,7 @@ import { ethers } from 'ethers';
 // independent verifier next to Node's crypto.
 import { p256 } from '../../node_modules/@noble/curves/nist.js';
 import { keccak_256 } from '../../node_modules/@noble/hashes/sha3.js';
-import { AA_DEPOSIT_TOPUP_VERIFICATION_GAS, AA_QUOTE_ALREADY_USED, AaFeeRoseError, createAaClient, sendAa } from '../src/wallet/aa.ts';
+import { AA_DEPOSIT_TOPUP_VERIFICATION_GAS, AA_QUOTE_ALREADY_USED, AaFeeRoseError, addAaOperationSentListener, createAaClient, sendAa } from '../src/wallet/aa.ts';
 import { PASSKEY_RP_ID, PASSKEY_RP_ID_PLACEHOLDER } from '../src/config/passkey.ts';
 import {
   PASSKEYS_KEY,
@@ -435,6 +435,34 @@ console.log('check-passkeys: feature gate (Expo Go, rpId placeholder)');
       nativeSrc.indexOf('if (!preGate.ok) return') < nativeSrc.indexOf("await import('react-native-passkeys')"));
   const screenSrc = readFileSync(new URL('../src/screens/PasskeyScreen.tsx', import.meta.url), 'utf8');
   check('Passkey screen renders the gate reason before any passkey action', /gate && !gate\.ok/.test(screenSrc) && /gate\.reason/.test(screenSrc));
+  // Phase 21 item 4: the test operation (outside Send) is announced to the
+  // pending-operation registry exactly once, only after the bundler accepted
+  // it: the one notifyAaOperationSent sits after the awaited sendPasskeyCalls
+  // and before the catch, so a refused submit (which throws) never reaches it.
+  const announceOk = (src) => {
+    const start = src.indexOf('const onTest = async () => {');
+    const end = src.indexOf('const onRemoveQuote = async', start);
+    if (start < 0 || end < 0) return false;
+    const body = src.slice(start, end);
+    const sendAt = body.indexOf('await sendPasskeyCalls(t.pbundle, t.quote);');
+    const notifyAt = body.indexOf('notifyAaOperationSent({');
+    const catchAt = body.indexOf('} catch (e) {');
+    const literal = body.slice(notifyAt, body.indexOf('});', notifyAt));
+    return (
+      (src.match(/notifyAaOperationSent\(/g) ?? []).length === 1 &&
+      sendAt >= 0 && notifyAt > sendAt && catchAt > notifyAt &&
+      literal.includes('chain: t.pbundle.passkey.record.chain,') && literal.includes('userOpHash,') &&
+      literal.includes('sender: t.quote.sender,') && literal.includes('owner: t.pbundle.passkey.record.owner,') &&
+      literal.includes('bundler: t.pbundle.bundler,') && literal.includes("kind: 'other',") && literal.includes('resend: null,')
+    );
+  };
+  check('Passkey screen: the test operation is announced exactly once, after the bundler accepted it, kind "other" (source)', announceOk(screenSrc));
+  const notifyBlock = /\n\s*notifyAaOperationSent\(\{[\s\S]*?\n\s*\}\);/;
+  const noAnnounce = screenSrc.replace(notifyBlock, '');
+  check('…mutant caught: the announcement removed', noAnnounce !== screenSrc && !announceOk(noAnnounce));
+  const block = screenSrc.match(notifyBlock)?.[0] ?? '';
+  const beforeSubmit = noAnnounce.replace('      const { userOpHash } = await sendPasskeyCalls(t.pbundle, t.quote);', block + '\n      const { userOpHash } = await sendPasskeyCalls(t.pbundle, t.quote);');
+  check('…mutant caught: the announcement moved before the submit (would fire for a refused one)', beforeSubmit !== noAnnounce && !announceOk(beforeSubmit));
 }
 
 // ---------------------------------------------------------------------------
@@ -691,7 +719,13 @@ console.log('check-passkeys: passkey-signed operation (the owner key is never us
       quote.fee === (quote.callGasLimit + quote.verificationGasLimit + quote.preVerificationGas) * quote.maxFeePerGas);
   check('sendAa (owner path) refuses a passkey quote', /passkey signer/.test((await caught(() => sendAa(bundle, owner, quote)))?.message ?? ''));
 
+  // Phase 21 item 4: sendPasskeyCalls announces nothing itself (the Passkey
+  // screen's test operation announces once after it returns; the Send
+  // screen records its own). Counted here through the real listener API.
+  const passkeyOpEvents = [];
+  const offPasskeyOpEvents = addAaOperationSentListener((e) => passkeyOpEvents.push(e));
   const { userOpHash, signature } = await sendPasskeyCalls(pbundle, quote);
+  check('sendPasskeyCalls itself announces nothing (the caller announces exactly once)', passkeyOpEvents.length === 0, String(passkeyOpEvents.length));
   const op = fromRpcOp(bundler.lastOp);
   const hash = getUserOpHash(op, ENTRYPOINT_V07, CHAIN_ID);
   check('one prompt, one submission, bundler hash = recomputed userOpHash', auth.calls.get === getsBefore + 1 && bundler.sends() === sendsBefore + 1 && userOpHash === toHex(hash));
@@ -762,6 +796,8 @@ console.log('check-passkeys: passkey-signed operation (the owner key is never us
     check('a bundler fee floor above the quoted priority fee: AaFeeRoseError BEFORE the passkey prompt, nothing submitted',
       rose instanceof AaFeeRoseError && auth.calls.get === getsNow && bundler.sends() === before, rose?.message);
   }
+  check('no refused passkey submit announced anything (zero events across every refusal above)', passkeyOpEvents.length === 0, String(passkeyOpEvents.length));
+  offPasskeyOpEvents();
   check('self-call refused (the engine\'s client-side D1 guard)', /may not call the account itself/.test((await caught(() => preparePasskeyCalls(pbundle, [{ to: ACCOUNT, value: 0n, data: new Uint8Array(0) }])))?.message ?? ''));
   check('the passkey bundle refuses to quote for another address', /own smart account/.test((await caught(() => pbundle.client.getAddress({ ...owner })))?.message ?? ''));
   check('an owner-signed quote cannot be sent through the passkey path', /not prepared for the passkey/.test((await caught(() => sendPasskeyCalls(pbundle, { ...quote, passkey: undefined })))?.message ?? ''));

@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AsyncStorage, readStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
 // Explicit .ts extensions: scripts/check-custom-networks.mjs (and, through
 // config/prefs.ts, every suite that loads the preferences) imports this
 // module under Node's type stripping, which resolves relative specifiers
@@ -92,7 +92,7 @@ import { sanitizeDisplayName } from './names.ts';
  */
 
 /** The AsyncStorage key of the custom-network list. */
-export const CUSTOM_NETWORKS_KEY = 'shiba-wallet.custom-networks.v1';
+export const CUSTOM_NETWORKS_KEY = STORE_KEYS.customNetworks.name;
 const STORE_VERSION = 1;
 
 /** At most this many custom networks (a judgement: enough for a developer's networks, bounded storage and UI). */
@@ -632,7 +632,7 @@ function supersededEntry(value: unknown): SupersededCustomNetwork | null {
 async function readStore(store: CustomNetworkStore): Promise<ReadResult> {
   let text: string | null;
   try {
-    text = await store.getItem(CUSTOM_NETWORKS_KEY);
+    text = await readStoreItem(store, CUSTOM_NETWORKS_KEY);
   } catch {
     return { state: 'storage-error' };
   }
@@ -680,7 +680,8 @@ export async function loadCustomNetworks(store: CustomNetworkStore = AsyncStorag
 }
 
 async function writeStore(store: CustomNetworkStore, networks: readonly CustomNetworkRecord[]): Promise<void> {
-  await store.setItem(
+  await writeStoreItem(
+    store,
     CUSTOM_NETWORKS_KEY,
     JSON.stringify({
       version: STORE_VERSION,
@@ -1090,14 +1091,14 @@ export const CHAIN_DATA_REMOVERS: readonly ChainDataRemover[] = [
     label: 'in-app browser connections',
     async remove(chain, store) {
       const { BROWSER_CONNECTIONS_KEY } = await import('./browser-sites.ts');
-      const raw = await store.getItem(BROWSER_CONNECTIONS_KEY);
+      const raw = await readStoreItem(store, BROWSER_CONNECTIONS_KEY);
       if (!raw) return 0;
       const list = JSON.parse(raw) as unknown;
       if (!Array.isArray(list)) throw new Error('The saved browser connections could not be read.');
       // Filtered on the raw list so every other entry is written back as stored.
       const kept = list.filter((e) => !(e && typeof e === 'object' && (e as { chain?: unknown }).chain === chain));
       if (kept.length === list.length) return 0;
-      await store.setItem(BROWSER_CONNECTIONS_KEY, JSON.stringify(kept));
+      await writeStoreItem(store, BROWSER_CONNECTIONS_KEY, JSON.stringify(kept));
       return list.length - kept.length;
     },
   },
@@ -1238,7 +1239,7 @@ export async function resetCustomNetworks(store: CustomNetworkStore = AsyncStora
     // is empty, a stored custom choice would read as the legacy fallback.
     const before = await loadPrefs(store);
     const customChosen = before.testNetwork !== null && !EVM_PROFILES.some((p) => p.caip2 === before.testNetwork);
-    await store.setItem(CUSTOM_NETWORKS_KEY, JSON.stringify({ version: STORE_VERSION, networks: [] }));
+    await writeStoreItem(store, CUSTOM_NETWORKS_KEY, JSON.stringify({ version: STORE_VERSION, networks: [] }));
     await refreshRegistry(store);
     if (customChosen) await savePrefs({ testNetwork: null }, store);
   });

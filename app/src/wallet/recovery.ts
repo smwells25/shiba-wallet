@@ -71,6 +71,7 @@ import {
   assertQuoteFeesMeetBundlerFloor,
   bundlerFeeFloor,
   claimQuoteForSubmission,
+  notifyAaOperationSent,
   quoteFeesOverFloor,
   signedFeeGuard,
   clearAllRecoveredAccounts,
@@ -2735,6 +2736,22 @@ export async function submitGuardianRecovery(args: {
   });
   const { userOpHash } = await client.sendCalls(args.signer, [recoveryCall(args.quote.request)], fees, {
     beforeSign: signedFeeGuard(fees, args.quote.fee),
+  });
+  // Accepted by the bundler (eth_sendUserOperation returned a hash): the
+  // pending-operation registry records it under the guardian's own account,
+  // exactly once, so Activity's pending card lists it with "Check status".
+  // A refused operation never reaches this line. This path does not go
+  // through aa.ts sendAa, so it announces itself (kind 'other': no more
+  // specific AaOperationKind names a guardian recovery).
+  notifyAaOperationSent({
+    chain: eip155Caip2(args.chainId),
+    userOpHash,
+    sender: args.quote.request.account,
+    owner: args.signer.address,
+    bundler: args.bundler,
+    sentAt: Date.now(),
+    kind: 'other',
+    resend: null,
   });
   return { userOpHash, client };
 }

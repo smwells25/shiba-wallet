@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AsyncStorage, readStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
 import {
   ENTRYPOINT_V07,
   KERNEL_PERMISSION_MODULES,
@@ -128,7 +128,7 @@ import { suggestFeesRetryingOnce } from './fee-read.ts';
  * they stay active until they expire or are revoked (SESSIONS_WIPE_WARNING).
  */
 
-export const SESSIONS_KEY = 'shiba-wallet.sessions.v1';
+export const SESSIONS_KEY = STORE_KEYS.sessions.name;
 const STORE_VERSION = 1;
 
 /** Secure storage for session private keys (storage.ts provides the app's). */
@@ -580,7 +580,7 @@ type RawRead =
 async function readRaw(store: KeyValueStore): Promise<RawRead> {
   let text: string | null;
   try {
-    text = await store.getItem(SESSIONS_KEY);
+    text = await readStoreItem(store, SESSIONS_KEY);
   } catch {
     return { state: 'unreadable' };
   }
@@ -642,7 +642,7 @@ async function writeRecord(record: SessionRecord | null, key: string, store: Key
   const records = read.state === 'ok' ? { ...read.records } : {};
   if (record) records[key] = record;
   else delete records[key];
-  await store.setItem(SESSIONS_KEY, JSON.stringify({ version: STORE_VERSION, records }));
+  await writeStoreItem(store, SESSIONS_KEY, JSON.stringify({ version: STORE_VERSION, records }));
 }
 
 export async function saveSessionRecord(record: SessionRecord, store: KeyValueStore = AsyncStorage): Promise<void> {
@@ -661,7 +661,7 @@ async function updateRecord(
 
 /** Clears the whole local list (after an explicit confirmation on screen). */
 export async function resetSessions(store: KeyValueStore = AsyncStorage): Promise<void> {
-  await store.setItem(SESSIONS_KEY, JSON.stringify({ version: STORE_VERSION, records: {} }));
+  await writeStoreItem(store, SESSIONS_KEY, JSON.stringify({ version: STORE_VERSION, records: {} }));
 }
 
 /**

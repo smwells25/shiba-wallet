@@ -129,6 +129,7 @@ import { parseSessionKeyGrant } from '@shiba-wallet/chains-evm';
 import { RECURRING_SOURCE, recurringEndsAt, type RecurringDue } from './recurring.ts';
 import { DCA_SOURCE, type SessionRecord } from './sessions.ts';
 import { termsOf } from './subscriptions.ts';
+import { NOTIFICATION_ID_NAMES, STORE_KEYS, lazyAppStore, readStoreItem, writeStoreItem } from './store-keys.ts';
 import type { KeyValueStore } from './tokens.ts';
 // Type-only (erased under Node): the trigger shape of the installed package.
 import type { NotificationTriggerInput } from 'expo-notifications/build/Notifications.types';
@@ -240,12 +241,12 @@ export type NotificationChannelSpec = { id: string; name: string; importance: 'd
 // ---------------------------------------------------------------------------
 
 /** Every identifier this wallet schedules starts with this; nothing else is ever cancelled. */
-export const NOTIFICATION_ID_PREFIX = 'shiba-wallet.';
-export const RECURRING_ID_PREFIX = 'shiba-wallet.recurring.';
-export const TAKEOVER_ID_PREFIX = 'shiba-wallet.takeover.';
-export const PRICE_ALERT_ID_PREFIX = 'shiba-wallet.price-alert.';
+export const NOTIFICATION_ID_PREFIX = NOTIFICATION_ID_NAMES.root;
+export const RECURRING_ID_PREFIX = NOTIFICATION_ID_NAMES.recurring;
+export const TAKEOVER_ID_PREFIX = NOTIFICATION_ID_NAMES.takeover;
+export const PRICE_ALERT_ID_PREFIX = NOTIFICATION_ID_NAMES.priceAlert;
 /** This module's bookkeeping (seen takeover proposals as hashes; whether anything may be scheduled). */
-export const NOTIFICATIONS_STORE_KEY = 'shiba-wallet.notifications.v1';
+export const NOTIFICATIONS_STORE_KEY = STORE_KEYS.notifications.name;
 
 /** The screens a notification may open (an allow list; anything else is ignored). */
 export type NotificationScreen = 'Sessions' | 'Inheritance' | 'PriceAlerts';
@@ -773,7 +774,7 @@ function emptyState(): StoreState {
 
 async function readState(store: KeyValueStore): Promise<StoreState> {
   try {
-    const text = await store.getItem(NOTIFICATIONS_STORE_KEY);
+    const text = await readStoreItem(store, NOTIFICATIONS_STORE_KEY);
     if (!text) return emptyState();
     const parsed = JSON.parse(text) as Record<string, unknown>;
     if (parsed?.version !== 1) return { ...emptyState(), mayHaveScheduled: true };
@@ -792,7 +793,8 @@ async function readState(store: KeyValueStore): Promise<StoreState> {
 }
 
 async function writeState(store: KeyValueStore, state: StoreState): Promise<void> {
-  await store.setItem(
+  await writeStoreItem(
+    store,
     NOTIFICATIONS_STORE_KEY,
     JSON.stringify({ ...state, seenTakeovers: state.seenTakeovers.slice(-MAX_SEEN) }),
   );
@@ -1240,20 +1242,12 @@ export async function loadNotificationsNative(): Promise<NotificationsNative> {
 
 let appInstance: NotificationCenter | null = null;
 
-/** The single app-wide controller (created on first use; AsyncStorage is imported lazily). */
+/** The single app-wide controller (created on first use; AsyncStorage is imported lazily, by the storage seam). */
 export function appNotifications(): NotificationCenter {
   if (!appInstance) {
-    let storePromise: Promise<KeyValueStore> | null = null;
-    const store = (): Promise<KeyValueStore> => {
-      if (!storePromise) storePromise = import('@react-native-async-storage/async-storage').then((m) => m.default);
-      return storePromise;
-    };
     appInstance = createNotificationCenter({
       loadNative: loadNotificationsNative,
-      store: {
-        getItem: async (k) => (await store()).getItem(k),
-        setItem: async (k, v) => (await store()).setItem(k, v),
-      },
+      store: lazyAppStore(),
     });
   }
   return appInstance;

@@ -94,6 +94,11 @@ export const APP_SCRIPTS = {
   'check-spending-policy.mjs': { kind: 'offline', summary: 'counts' },
   'check-simulation.mjs': { kind: 'offline', summary: 'counts' },
   'check-storage.mjs': { kind: 'offline', summary: 'counts' },
+  // Phase 21 item 2, duress wallet Stage 1: the single storage seam
+  // (src/wallet/store-keys.ts): a source scan for raw storage access outside
+  // it with an exact allow-list, the key registry, the identity scope
+  // function, wrapper behaviour, mutants (fakes only).
+  'check-storage-seam.mjs': { kind: 'offline', summary: 'counts' },
   // Phase 12 item 2: subscription grants on Kernel session keys (fakes only).
   'check-subscriptions.mjs': { kind: 'offline', summary: 'counts' },
   // Phase 18 item 2: staking on test networks (Lido, Rocket Pool; fakes only).

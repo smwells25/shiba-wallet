@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AsyncStorage, readStoreItem, writeStoreItem, removeStoreItem, STORE_KEYS, type KeyValueStore } from './store-keys.ts';
 import { AssetRegistry, formatAssetId, parseAssetId } from '@shiba-wallet/core';
 import type { Asset, FungibleAsset } from '@shiba-wallet/core';
 // Explicit .ts extensions: this module is imported by scripts/check-tokens.mjs
@@ -51,18 +51,15 @@ import { loadPrefs } from '../config/prefs.ts';
  */
 
 /** The mainnet key: unchanged since phase 3, so existing lists stay as they are. */
-export const MAINNET_TOKENS_KEY = 'shiba-wallet.tokens.v1';
+export const MAINNET_TOKENS_KEY = STORE_KEYS.tokens.name;
 
 /** The AsyncStorage key holding one chain's tracked list. */
 export function tokenStoreKey(chainCaip2: string): string {
   return chainCaip2 === EVM_MAINNET.caip2 ? MAINNET_TOKENS_KEY : `${MAINNET_TOKENS_KEY}.${chainCaip2}`;
 }
 
-/** The subset of the AsyncStorage API the store needs (injectable). */
-export interface KeyValueStore {
-  getItem(key: string): Promise<string | null>;
-  setItem(key: string, value: string): Promise<void>;
-}
+/** The subset of the AsyncStorage API the store needs (injectable; declared in the storage seam). */
+export type { KeyValueStore } from './store-keys.ts';
 
 /**
  * True when the app has an EVM profile for this CAIP-2 id (only those chains
@@ -121,7 +118,7 @@ export async function loadTokenRegistry(
   const defaults = () => AssetRegistry.fromJSON(defaultTokensForChain(chainCaip2));
   let raw: string | null = null;
   try {
-    raw = await store.getItem(tokenStoreKey(chainCaip2));
+    raw = await readStoreItem(store, tokenStoreKey(chainCaip2));
   } catch {
     raw = null;
   }
@@ -142,7 +139,7 @@ async function saveTokenRegistry(
   registry: AssetRegistry,
   store: KeyValueStore,
 ): Promise<void> {
-  await store.setItem(tokenStoreKey(chainCaip2), JSON.stringify(registry.toJSON()));
+  await writeStoreItem(store, tokenStoreKey(chainCaip2), JSON.stringify(registry.toJSON()));
 }
 
 /**
@@ -506,9 +503,9 @@ export async function forgetTokensForChain(
     throw new Error(`The token list of a built-in network is never deleted (${chainCaip2}).`);
   }
   const key = tokenStoreKey(chainCaip2);
-  if ((await store.getItem(key)) === null) return false;
-  if (store.removeItem) await store.removeItem(key);
-  else await store.setItem(key, '[]');
+  if ((await readStoreItem(store, key)) === null) return false;
+  if (store.removeItem) await removeStoreItem(store, key);
+  else await writeStoreItem(store, key, '[]');
   return true;
 }
 

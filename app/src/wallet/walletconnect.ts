@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AsyncStorage, readStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
 import { buildApprovedNamespaces, getSdkError, normalizeNamespaces } from '@walletconnect/utils';
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
@@ -103,7 +103,7 @@ import {
 // Project id configuration (Settings), same store pattern as ./aa.ts
 // ---------------------------------------------------------------------------
 
-const WC_CONFIG_KEY = 'shiba-wallet.wc-config.v1';
+const WC_CONFIG_KEY = STORE_KEYS.wcConfig.name;
 
 /**
  * The relay project id is public client configuration (it identifies the
@@ -118,7 +118,7 @@ export const DEFAULT_WC_PROJECT_ID = 'a6d5afbd869df1713ca48fa14fb3fcf8';
 
 export async function getWcProjectId(store: KeyValueStore = AsyncStorage): Promise<string | null> {
   try {
-    const raw = await store.getItem(WC_CONFIG_KEY);
+    const raw = await readStoreItem(store, WC_CONFIG_KEY);
     if (!raw) return DEFAULT_WC_PROJECT_ID;
     const parsed = JSON.parse(raw) as unknown;
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
@@ -148,13 +148,13 @@ export async function setWcProjectId(
         'Copy it from your project page at dashboard.reown.com.',
     );
   }
-  await store.setItem(WC_CONFIG_KEY, JSON.stringify({ projectId: trimmed }));
+  await writeStoreItem(store, WC_CONFIG_KEY, JSON.stringify({ projectId: trimmed }));
   return trimmed;
 }
 
 /** Removes the stored project id (disables WalletConnect). */
 export async function clearWcProjectId(store: KeyValueStore = AsyncStorage): Promise<void> {
-  await store.setItem(WC_CONFIG_KEY, JSON.stringify({}));
+  await writeStoreItem(store, WC_CONFIG_KEY, JSON.stringify({}));
 }
 
 // ---------------------------------------------------------------------------
@@ -174,11 +174,11 @@ export async function clearWcProjectId(store: KeyValueStore = AsyncStorage): Pro
  * time the Connections screen opens (that starts the SDK, which reports
  * the session and sets the marker for later launches).
  */
-const WC_USED_KEY = 'shiba-wallet.wc-used.v1';
+const WC_USED_KEY = STORE_KEYS.wcUsed.name;
 
 export async function getWcUsed(store: KeyValueStore = AsyncStorage): Promise<boolean> {
   try {
-    const raw = await store.getItem(WC_USED_KEY);
+    const raw = await readStoreItem(store, WC_USED_KEY);
     if (!raw) return false;
     const parsed = JSON.parse(raw) as unknown;
     return (
@@ -192,7 +192,7 @@ export async function getWcUsed(store: KeyValueStore = AsyncStorage): Promise<bo
 }
 
 export async function setWcUsed(used: boolean, store: KeyValueStore = AsyncStorage): Promise<void> {
-  await store.setItem(WC_USED_KEY, JSON.stringify({ used }));
+  await writeStoreItem(store, WC_USED_KEY, JSON.stringify({ used }));
 }
 
 /**
@@ -2025,7 +2025,7 @@ export interface WcSmartBinding {
   factory: string;
 }
 
-const WC_SMART_BINDINGS_KEY = 'shiba-wallet.wc-smart-bindings.v1';
+const WC_SMART_BINDINGS_KEY = STORE_KEYS.wcSmartBindings.name;
 
 export function smartBindingKey(chain: string, address: string): string {
   return `${chain}:${address.toLowerCase()}`;
@@ -2064,7 +2064,7 @@ export async function loadSmartBindings(
   store: KeyValueStore = AsyncStorage,
 ): Promise<WcSmartBinding[]> {
   try {
-    const raw = await store.getItem(WC_SMART_BINDINGS_KEY);
+    const raw = await readStoreItem(store, WC_SMART_BINDINGS_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw) as unknown;
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return [];
@@ -2083,7 +2083,7 @@ export async function saveSmartBinding(
 ): Promise<void> {
   let map: Record<string, unknown> = {};
   try {
-    const raw = await store.getItem(WC_SMART_BINDINGS_KEY);
+    const raw = await readStoreItem(store, WC_SMART_BINDINGS_KEY);
     const parsed = raw ? (JSON.parse(raw) as unknown) : null;
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       map = parsed as Record<string, unknown>;
@@ -2092,7 +2092,7 @@ export async function saveSmartBinding(
     map = {};
   }
   map[smartBindingKey(binding.chain, binding.address)] = binding;
-  await store.setItem(WC_SMART_BINDINGS_KEY, JSON.stringify(map));
+  await writeStoreItem(store, WC_SMART_BINDINGS_KEY, JSON.stringify(map));
 }
 
 /**
@@ -2114,7 +2114,7 @@ export async function forgetWalletConnectChainData(
   for (const key of [WC_SMART_BINDINGS_KEY, WC_CALLS_KEY]) {
     let raw: string | null;
     try {
-      raw = await store.getItem(key);
+      raw = await readStoreItem(store, key);
     } catch {
       continue;
     }
@@ -2135,7 +2135,7 @@ export async function forgetWalletConnectChainData(
         removed += 1;
       }
     }
-    if (changed) await store.setItem(key, JSON.stringify(map));
+    if (changed) await writeStoreItem(store, key, JSON.stringify(map));
   }
   return removed;
 }
@@ -2469,7 +2469,7 @@ export interface WcCallsRecord {
   createdAt: number;
 }
 
-const WC_CALLS_KEY = 'shiba-wallet.wc-calls.v1';
+const WC_CALLS_KEY = STORE_KEYS.wcCalls.name;
 /**
  * Records are kept 7 days (the ERC asks for status "within 24 hours" at
  * least) and capped, newest kept.
@@ -2483,7 +2483,7 @@ function callsRecordKey(from: string, dappUrl: string, id: string): string {
 
 async function loadCallsMap(store: KeyValueStore): Promise<Record<string, WcCallsRecord>> {
   try {
-    const raw = await store.getItem(WC_CALLS_KEY);
+    const raw = await readStoreItem(store, WC_CALLS_KEY);
     const parsed = raw ? (JSON.parse(raw) as unknown) : null;
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
     const out: Record<string, WcCallsRecord> = {};
@@ -2531,7 +2531,7 @@ export async function saveCallsRecord(
     .filter(([, r]) => now - r.createdAt <= CALLS_RECORD_TTL_MS)
     .sort(([, a], [, b]) => b.createdAt - a.createdAt)
     .slice(0, MAX_CALLS_RECORDS);
-  await store.setItem(WC_CALLS_KEY, JSON.stringify(Object.fromEntries(kept)));
+  await writeStoreItem(store, WC_CALLS_KEY, JSON.stringify(Object.fromEntries(kept)));
 }
 
 /**

@@ -50,7 +50,7 @@ import {
 } from './account-ids';
 import { checkWatchAddress, type KnownAccount } from './watch-only';
 import { duplicateImportError, importedKeyBytes, importedSignerFor, parsePrivateKeyInput } from './imported-keys';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AsyncStorage } from './store-keys';
 import { forgetAllSessions } from './sessions';
 import { addAaOperationSentListener, addAaSentListener } from './aa';
 import { recoveryRecordListener, wipeRecoveryData } from './recovery';
