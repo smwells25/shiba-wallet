@@ -525,6 +525,8 @@ Quotes read on 2026-10-15 for 0.0001 ETH to the dev EOA (taxi / bus native fee; 
 
 For the mock-USDC pools the same fees applied per route, and 1 mock USDC arrived as 0.999399 on the fee-charging routes. On test networks the messaging fee is the same size as the amount; the protocol fee depends on path credit and changes over time.
 
+**Later correction (section 15.16).** The "1 % protocol fee" in the table is not a percentage: at both 0.0001 and 0.0002 ETH the fee-charging routes kept exactly 10^12 wei (one shared-decimal unit), so it looked like a percentage only at 0.0001 ETH. Stargate's fee library was not read, so this is an observation. The adapter carries it as a live note on every quote from these pools (`STARGATE_TESTNET_NATIVE_LIVE_NOTES` in `packages/chains-evm/src/bridge/layerzero-oft.ts`), and the fee lines always show what the pool quoted at that moment.
+
 ### 15.7 What a CallPolicy can pin in an OFT send
 
 Unlike `depositForBurn` (section 4.4), `send` takes a struct with three `bytes` fields, so the struct is dynamic: the head holds a pointer to it, and each `bytes` field is located through an offset the caller writes. A CallPolicy checks fixed words at fixed offsets and cannot follow pointers, so the call can be pinned **only if the wallet makes the layout unique** — which it can, by always writing `extraOptions` and `composeMsg` empty and `oftCmd` either empty (taxi) or exactly one zero byte (Stargate bus). Then every pointer and length has one possible value, and pinning those words forces the decoder to read the pinned fields. The byte offsets after the selector, verified against ethers' encoding in `packages/chains-evm/test/bridge.test.ts`:
@@ -564,6 +566,8 @@ This is the same 2,300-gas pattern as the rETH burn (`docs/THREAT_MODEL.md` F-73
 ### 15.9 Keys and tracking
 
 No key is needed for anything above: the endpoint and OFT calls are ordinary RPC, and the LayerZero Scan testnet API declares `security: []` in its OpenAPI document (`get-messagestx.md`) and answered `GET /v1/messages/latest?limit=2` with HTTP 200 and no credentials. Its message status values are `INFLIGHT`, `CONFIRMING`, `FAILED`, `DELIVERED`, `BLOCKED`, `PAYLOAD_STORED`, `APPLICATION_BURNED`, `APPLICATION_SKIPPED`, `UNRESOLVABLE_COMMAND` and `MALFORMED_COMMAND`. No rate-limit header was returned and none is documented on the page read. Tracking can also stay on-chain: the destination OFT emits `OFTReceived` (or Stargate's `UnreceivedTokenCached`) with the message GUID that `OFTSent` carried on the source. A delivered message does not by itself mean a Stargate ETH transfer reached a smart account (section 15.8). LayerZero also documents a "Value Transfer API" with quotes and status endpoints; it was not evaluated.
+
+**What was built (phase 21, after the live run).** The adapter's `track()` now decides from the chains' own events when the app supplies a source-receipt reader and a destination-log reader: the GUID from the one `OFTSent` / `PacketSent` pair in the source receipt, then `OFTReceived` (delivered, matched on GUID, source endpoint id, recipient and amount) or Stargate's `UnreceivedTokenCached` (the funds wait in the pool, with the `retryReceiveToken` call built) on the receiving chain. Scan is supporting evidence only: its status is reported beside the result and never overrides an event (`docs/BRIDGE_PROVIDERS.md` section 4.2). The app's Bridge screen supplies both readers and Scan, and follows a transfer every 15 seconds while it is open (`docs/BRIDGE_PROVIDERS.md` section 6).
 
 ### 15.10 Audits and licences
 
@@ -607,8 +611,8 @@ A `bridging-layerzero` row, `testnet-only` and enforced like `bridging-cctp` (se
 - Why the test-network default is a single LayerZero Labs DVN when the documentation's presets all have two required DVNs or a Dead DVN; whether main-network defaults differ (not read).
 - Which commits the LayerZero and Stargate audit reports cover; whether the deployed EndpointV2 and libraries match the pinned source exactly (Sourcify reports "match", not "exact match", for most; OP Sepolia's libraries are not on Sourcify).
 - The Sourcify status of the Arbitrum Sepolia and OP Sepolia "USDC" pools and of the three TokenMessaging contracts other than Sepolia's was not read.
-- Real delivery times, executor behaviour, bus wait times, and the Scan API's rate limits on the test networks (nothing was sent).
-- How an EIP-7702-delegated EOA fares as a Stargate ETH recipient; whether Kernel accepts `lzCompose` (not needed: the wallet never sends a compose message).
+- Real delivery times, executor behaviour, bus wait times, and the Scan API's rate limits on the test networks (nothing was sent). *Partly answered by section 15.16: one taxi delivery each was timed at 90 s (Sepolia → OP Sepolia) and 30 s (OP Sepolia → Arbitrum Sepolia), and the adapter now quotes these as measured once, not as a promise; the other four routes, bus waits and Scan's rate limits remain unmeasured.*
+- How an EIP-7702-delegated EOA fares as a Stargate ETH recipient; whether Kernel accepts `lzCompose` (not needed: the wallet never sends a compose message). *Still open. The Bridge screen sends to the regular account only and warns when that address has code on the receiving network; the retry call for a cached transfer is built and checked offline but has not run live.*
 - Stargate's main-network planner, owner and DVN configuration; Circle's Bridged USDC deployments on main networks.
 - LayerZero's Value Transfer API (keys, terms) and the gas cost of deploying the wallet's own OFT pair.
 
@@ -682,6 +686,8 @@ On 2026-10-15 between 03:04 and 03:11 UTC, `scripts/testnet/bridge-smoke.mjs` se
 - that an EOA recipient receives the exact amount with no destination action.
 
 It does not prove a smart-account sender or recipient (`UnreceivedTokenCached`, 15.8), bus mode, an ERC-20 OFT, or anything about main-network security. Steps 2–4 of 15.13 (the reverse direction in bus mode, a pinned session-rule refusal, the Kernel recipient and `retryReceiveToken`) remain to be run.
+
+**Follow-ups from this run, since built.** The adapter follow-ups (engine, offline, 40 tests): tracking by GUID from the chains' own events with the retry call (section 15.9 above), the measured times in quotes, the singular / plural confirmation count, the fee lines in the network profile's coin name (`nativeSymbol`), an optional gas estimate in the quote, and Stargate's own executor option and the observed pool fee as quote notes. The in-app slice (offline, not yet on a device): the Bridge screen with the provider choice, the wallet's own quote checks, the regular-account and smart-account send paths, and the tracking panel (`docs/BRIDGE_PROVIDERS.md` section 6). The decoders were tested on ethers-encoded logs built from this run's values, not on the raw receipts.
 
 ## 16. Updated recommendation (2026-10-15): two providers, the user chooses
 

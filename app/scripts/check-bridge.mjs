@@ -1,0 +1,995 @@
+// Exercises the Bridge screen's glue (src/wallet/bridge.ts, phase 21 item 1,
+// feature 35; docs/BRIDGE_PROVIDERS.md) entirely OFFLINE: fake nodes for
+// Ethereum Sepolia, Arbitrum Sepolia, OP Sepolia and Base Sepolia that answer
+// the Stargate pools' quoteOFT / quoteSend, the receipts and logs tracking
+// reads, and LayerZero Scan's keyless API, plus the fake Kernel node and
+// bundler of fakes-kernel.mjs and the REAL send paths (prepareEvmSend /
+// sendEvm and prepareAaCalls / sendAa). Covered: the readiness gate (mainnet
+// and a custom main network refused before any request), what is offered
+// on which network, the provider list (every provider, CCTP listed but not
+// offered), a quote equal to the engine's own figures, the wallet's own
+// quote checks (exact approvals only, value = amount + messaging fee, the
+// pinned words), the confirm strings, the prompt title, the smart-account
+// recipient handling (the regular account receives; the EIP-7702 variant),
+// tracking states and their sentences (incl. the retry call when Stargate
+// cached the transfer), the endpoint failover for other networks, the
+// in-memory records, source pins on the screen and the route gates, and
+// mutation checks (an unlimited approval, a value other than amount + fee,
+// the gate removed, the provider choice hidden, the recipient pin removed,
+// CCTP offered).
+//
+// Run from the app directory:
+//
+//   export PATH="$HOME/.nvm/versions/node/v24.21.0/bin:$PATH"
+//   node scripts/check-bridge.mjs
+//
+// The signing keys derive from the standard BIP-39 test mnemonic
+// ("abandon … about"), which is public knowledge.
+
+import { ethers } from 'ethers';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { evmKeyProvider, mnemonicToSeed } from '@shiba-wallet/core';
+import {
+  CCTP_V2_PROVIDER_ID,
+  CCTP_V2_TRUST,
+  KERNEL_V3_3,
+  LAYERZERO_OFT_PROVIDER_ID,
+  LAYERZERO_OFT_TRUST,
+  LAYERZERO_V2_TESTNET,
+  MAX_EXACT_APPROVAL,
+  OFT_QUOTE_OFT_SELECTOR,
+  OFT_QUOTE_SEND_SELECTOR,
+  OFT_SEND_LAYOUT,
+  OFT_SEND_SELECTOR,
+  STARGATE_RETRY_RECEIVE_TOKEN_SELECTOR,
+  STARGATE_V2_TESTNET_NATIVE_POOLS,
+  createLayerZeroOftProvider,
+  httpTransport,
+  oftTimeEstimate,
+  toHex,
+} from '@shiba-wallet/chains-evm';
+import {
+  BRIDGE_CHOICE_NOTE,
+  BRIDGE_FEATURE,
+  BRIDGE_INTRO,
+  BRIDGE_LOG_TOO_OLD,
+  BRIDGE_PROVIDER_STATUS,
+  BRIDGE_RECORDS_NOTE,
+  BRIDGE_TIME_NOT_PROMISE,
+  BRIDGE_TRACK_INTERVAL_MS,
+  BRIDGE_TRUST,
+  BridgeRefusal,
+  CCTP_COMING_NOTE,
+  LAYERZERO_APP_LABEL,
+  LAYERZERO_SCAN_TESTNET_API,
+  bridgeConfirmModel,
+  bridgeOfferFor,
+  bridgePromptTitle,
+  bridgeProviderRows,
+  bridgeRecipientNote,
+  bridgeRetryBlocker,
+  bridgeRetryCall,
+  bridgeRetryPromptTitle,
+  bridgeSourceFeeLines,
+  bridgeStatusHeading,
+  bridgeStatusSentence,
+  bridgeTransferFinal,
+  checkBridgeQuote,
+  createAppBridgeRegistry,
+  defaultChainTransport,
+  destinationLogReader,
+  layerZeroScanReader,
+  listBridgeTransfers,
+  measuredTimeLine,
+  noRouteNote,
+  prepareBridgeAa,
+  prepareBridgeRetry,
+  prepareBridgeSend,
+  quoteBridge,
+  recordBridgeTransfer,
+  regularRecipientNote,
+  resetBridgeTransfers,
+  smartAccountRecipientNote,
+  subscribeBridgeTransfers,
+  trackBridgeTransfer,
+  updateBridgeTransfer,
+  upgradedAccountRecipientNote,
+} from '../src/wallet/bridge.ts';
+import { sendEvm } from '../src/wallet/send.ts';
+import { createAaClientFromConfig, sendAa } from '../src/wallet/aa.ts';
+import { featureReadiness, isFeatureAllowed } from '../src/config/readiness.ts';
+import { EVM_SEPOLIA, evmProfileByCaip2, setCustomEvmProfiles } from '../src/config/evm-chain.ts';
+import { MULTISIG_ALLOWED_ROUTES, WATCH_ONLY_ALLOWED_ROUTES, multisigRouteRefusal, watchOnlyRouteRefusal } from '../src/wallet/watch-only.ts';
+import { KERNEL_ACCOUNT_0, OWNER_0, TEST_MNEMONIC, decodeKernelExecute, fakeBundler, fakeKernelNode } from './fakes-kernel.mjs';
+
+let passed = 0;
+let failed = 0;
+function check(name, condition, detail = '') {
+  if (condition) {
+    passed += 1;
+    console.log(`  ok   ${name}`);
+  } else {
+    failed += 1;
+    console.error(`  FAIL ${name}${detail ? ` — ${detail}` : ''}`);
+  }
+}
+async function rejection(fn) {
+  try {
+    await fn();
+    return null;
+  } catch (e) {
+    return e;
+  }
+}
+const same = (a, b) => typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase();
+const HERE = dirname(fileURLToPath(import.meta.url));
+const APP_ROOT = resolve(HERE, '..');
+const source = (rel) => readFileSync(join(APP_ROOT, rel), 'utf8');
+
+// Mutation checks load a deliberately broken copy of src/wallet/bridge.ts
+// from a scratch directory (relative imports rewritten to the real files,
+// so the copy shares every other module with this script), the
+// check-staking.mjs pattern. The directory is removed on exit.
+const MUTANT_DIR = join(HERE, `.mutants-bridge-${process.pid}`);
+let mutantCount = 0;
+process.on('exit', () => rmSync(MUTANT_DIR, { recursive: true, force: true }));
+const BRIDGE_SOURCE = source('src/wallet/bridge.ts');
+async function bridgeMutant(from, to, ...more) {
+  let mutated = BRIDGE_SOURCE;
+  const pairs = [[from, to]];
+  for (let i = 0; i < more.length; i += 2) pairs.push([more[i], more[i + 1]]);
+  for (const [a, b] of pairs) {
+    if (!mutated.includes(a)) throw new Error(`mutation anchor not found: ${a}`);
+    mutated = mutated.replace(a, b);
+  }
+  const originalDir = join(APP_ROOT, 'src/wallet');
+  const rewritten = mutated.replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolve(originalDir, spec)).href}'`);
+  mkdirSync(MUTANT_DIR, { recursive: true });
+  mutantCount += 1;
+  const file = join(MUTANT_DIR, `m${mutantCount}-bridge.ts`);
+  writeFileSync(file, rewritten);
+  return import(pathToFileURL(file).href);
+}
+
+// ---------------------------------------------------------------------------
+// Fake chains
+// ---------------------------------------------------------------------------
+
+const SEPOLIA = 11155111;
+const ARB = 421614;
+const OP = 11155420;
+const BASE = 84532;
+const HOODI = 560048;
+const caip = (id) => `eip155:${id}`;
+const pool = (chainId) => STARGATE_V2_TESTNET_NATIVE_POOLS.find((d) => d.chainId === chainId);
+const E18 = 10n ** 18n;
+const GWEI = 10n ** 9n;
+const AMOUNT = 200_000_000_000_000n; // 0.0002, the live leg's amount
+const NATIVE_FEE = 102_050_140_082_558n; // leg A's messaging fee (docs/BRIDGING.md 15.16)
+const GUID = '0x4da5481014f25b3326f100cb8d0cdb20979a9e1d9d6708b96347ef993580395c';
+const SOURCE_TX = '0xfb041691c102214d1da67f60b23b985a2e99a335fccf23423b8c722937986405';
+const DELIVERY_TX = '0xf0760a9ec2ba0e8f1b3a53e46e6e118cd749b66fb2040e6d7d7a04da041827f3';
+const CACHE_TX = '0x' + '77'.repeat(32);
+
+const SP = 'tuple(uint32 dstEid, bytes32 to, uint256 amountLD, uint256 minAmountLD, bytes extraOptions, bytes composeMsg, bytes oftCmd)';
+const oftIface = new ethers.Interface([
+  `function send(${SP} p, tuple(uint256 nativeFee, uint256 lzTokenFee) fee, address refundAddress) payable`,
+  `function quoteSend(${SP} p, bool payInLzToken) view returns (tuple(uint256,uint256))`,
+  `function quoteOFT(${SP} p) view returns (tuple(uint256,uint256), tuple(int256,string)[], tuple(uint256,uint256))`,
+  'function approve(address spender, uint256 amount)',
+]);
+const evIface = new ethers.Interface([
+  'event OFTSent(bytes32 indexed guid, uint32 dstEid, address indexed fromAddress, uint256 amountSentLD, uint256 amountReceivedLD)',
+  'event OFTReceived(bytes32 indexed guid, uint32 srcEid, address indexed toAddress, uint256 amountReceivedLD)',
+  'event PacketSent(bytes encodedPayload, bytes options, address sendLibrary)',
+  'event UnreceivedTokenCached(bytes32 guid, uint8 index, uint32 srcEid, address receiver, uint256 amountLD, bytes composeMsg)',
+  'function retryReceiveToken(bytes32 _guid, uint8 _index, uint32 _srcEid, address _receiver, uint256 _amountLD, bytes _composeMsg)',
+]);
+const word = (v) => ethers.toBeHex(v, 32);
+
+function chainState(chainId, over = {}) {
+  return {
+    chainId,
+    chainIdHex: ethers.toQuantity(chainId),
+    head: 1_000_000n,
+    nativeFee: NATIVE_FEE,
+    poolFee: 0n, // wei kept by the pool (quoteOFT's amountReceivedLD = sent − poolFee)
+    code: new Set(),
+    receipts: new Map(),
+    logs: [],
+    balance: E18,
+    raw: [],
+    calls: [],
+    ...over,
+  };
+}
+const chains = new Map();
+function resetChains() {
+  chains.clear();
+  for (const id of [SEPOLIA, ARB, OP, BASE, HOODI]) chains.set(id, chainState(id));
+}
+resetChains();
+
+function nodeFor(chainId) {
+  return async (method, params) => {
+    const s = chains.get(chainId);
+    s.calls.push({ method, params });
+    switch (method) {
+      case 'eth_chainId':
+        return s.chainIdHex;
+      case 'eth_getBalance':
+        return ethers.toQuantity(s.balance);
+      case 'eth_getTransactionCount':
+        return '0x5';
+      case 'eth_getBlockByNumber':
+        return { number: ethers.toQuantity(s.head), baseFeePerGas: ethers.toQuantity(GWEI), timestamp: '0x6a000000' };
+      case 'eth_maxPriorityFeePerGas':
+        return ethers.toQuantity(GWEI);
+      case 'eth_estimateGas':
+        return ethers.toQuantity(341_035n);
+      case 'eth_blockNumber':
+        return ethers.toQuantity(s.head);
+      case 'eth_getCode':
+        return s.code.has(String(params[0]).toLowerCase()) ? '0x6001' : '0x';
+      case 'eth_sendRawTransaction':
+        s.raw.push(params[0]);
+        return ethers.keccak256(params[0]);
+      case 'eth_getTransactionReceipt':
+        return s.receipts.get(String(params[0]).toLowerCase()) ?? null;
+      case 'eth_getLogs': {
+        const f = params[0];
+        const from = BigInt(f.fromBlock);
+        const to = BigInt(f.toBlock);
+        return s.logs.filter(
+          (l) =>
+            same(l.address, f.address) &&
+            BigInt(l.blockNumber) >= from &&
+            BigInt(l.blockNumber) <= to &&
+            (f.topics ?? []).every((t, i) => t === null || same(l.topics[i], t)),
+        );
+      }
+      case 'eth_call': {
+        const { to, data = '0x' } = params[0];
+        const p = pool(chainId);
+        if (p && same(to, p.address) && data.startsWith(OFT_QUOTE_OFT_SELECTOR)) {
+          const [sp] = oftIface.decodeFunctionData('quoteOFT', data);
+          return oftIface.encodeFunctionResult('quoteOFT', [[1n, 10n ** 21n], [], [sp[2], sp[2] - s.poolFee]]);
+        }
+        if (p && same(to, p.address) && data.startsWith(OFT_QUOTE_SEND_SELECTOR)) {
+          return ethers.AbiCoder.defaultAbiCoder().encode(['tuple(uint256,uint256)'], [[s.nativeFee, 0n]]);
+        }
+        if (p && same(to, p.address) && (data.startsWith(OFT_SEND_SELECTOR) || data.startsWith(STARGATE_RETRY_RECEIVE_TOKEN_SELECTOR))) return '0x';
+        if (same(to, '0x420000000000000000000000000000000000000F')) {
+          // GasPriceOracle (OP-stack): getL1Fee(bytes) → 268 wei; getOperatorFee(uint256) → 0.
+          return data.startsWith(ethers.id('getL1Fee(bytes)').slice(0, 10)) ? word(268n) : word(0n);
+        }
+        throw new Error(`fake chain ${chainId}: unexpected eth_call to ${to} ${data.slice(0, 10)}`);
+      }
+      case 'eth_simulateV1':
+        return [{ calls: params[0].blockStateCalls[0].calls.map(() => ({ status: '0x1', returnData: '0x', gasUsed: '0x1', logs: [] })) }];
+      default:
+        throw new Error(`fake chain ${chainId}: unexpected method ${method}`);
+    }
+  };
+}
+
+// URL routing for every fetch: the active endpoints, the profiles' built-in
+// defaults (the other networks), and LayerZero Scan.
+const ACTIVE_URL = (id) => `https://bridge-node.example/${id}`;
+const urlChain = new Map();
+for (const id of [SEPOLIA, ARB, OP, BASE, HOODI]) {
+  urlChain.set(ACTIVE_URL(id), id);
+  for (const u of evmProfileByCaip2(caip(id)).defaultRpcUrls) urlChain.set(u, id);
+}
+let fetchLog = [];
+let urlOverride = new Map(); // url → 'down' | chain id answered instead
+let scanAnswer = { status: 404 };
+globalThis.fetch = async (url, init) => {
+  fetchLog.push(String(url));
+  if (String(url).startsWith(LAYERZERO_SCAN_TESTNET_API)) {
+    const a = scanAnswer;
+    return { ok: a.status >= 200 && a.status < 300, status: a.status, headers: { get: () => null }, json: async () => a.body };
+  }
+  const override = urlOverride.get(String(url));
+  if (override === 'down') throw new TypeError('fetch failed');
+  const chainId = override ?? urlChain.get(String(url));
+  if (chainId === undefined) throw new Error(`no fake node at ${url}`);
+  const { method, params, id } = JSON.parse(init.body);
+  let body;
+  try {
+    body = { jsonrpc: '2.0', id, result: await nodeFor(chainId)(method, params) };
+  } catch (e) {
+    body = { jsonrpc: '2.0', id, error: { code: 3, message: e.message } };
+  }
+  return { ok: true, status: 200, json: async () => body };
+};
+
+/** The screen's readers: the active endpoint for the active network, the built-in defaults elsewhere. */
+function readersFor(activeChainId) {
+  return {
+    transportFor: (chainId) => (chainId === activeChainId ? httpTransport(ACTIVE_URL(activeChainId)) : defaultChainTransport(chainId)),
+  };
+}
+
+const seed = mnemonicToSeed(TEST_MNEMONIC);
+const owner = evmKeyProvider.deriveAccount(seed, 0, 0);
+seed.fill(0);
+const EOA = owner.address;
+check('the test owner is the fakes-kernel owner', same(EOA, OWNER_0), EOA);
+
+function quoteRequest(over = {}) {
+  return {
+    caip2: caip(SEPOLIA),
+    destinationChainId: OP,
+    providerId: LAYERZERO_OFT_PROVIDER_ID,
+    amount: AMOUNT,
+    sender: EOA,
+    senderKind: 'regular',
+    recipient: EOA,
+    nativeSymbol: 'test ETH',
+    readers: readersFor(SEPOLIA),
+    ...over,
+  };
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-bridge: readiness, and what is offered on which network');
+// ---------------------------------------------------------------------------
+{
+  const row = featureReadiness('bridge');
+  check('readiness row "bridge": test networks only, enforced', row.status === 'testnet-only' && row.enforced === true);
+  check('BRIDGE_FEATURE is the row id', BRIDGE_FEATURE === 'bridge');
+  check('bridging is refused on Ethereum mainnet and allowed on the four built-in bridge networks',
+    !isFeatureAllowed('bridge', 'eip155:1') && [SEPOLIA, ARB, OP, BASE].every((id) => isFeatureAllowed('bridge', caip(id))));
+
+  fetchLog = [];
+  const e = await rejection(() => bridgeOfferFor('eip155:1'));
+  check('mainnet: the offer is refused by the readiness gate (FeatureNotAllowedError), with zero requests',
+    e?.name === 'FeatureNotAllowedError' && fetchLog.length === 0, `${e?.name}: ${e?.message}`);
+  const q = await rejection(() => quoteBridge(quoteRequest({ caip2: 'eip155:1', readers: readersFor(1) })));
+  check('mainnet: a quote is refused by the gate before any request', q?.name === 'FeatureNotAllowedError' && fetchLog.length === 0, `${q?.name}: ${q?.message}`);
+
+  // A network the user added as a MAIN network: the gate refuses like on mainnet.
+  const lineaMain = {
+    ...EVM_SEPOLIA, caip2: 'eip155:59144', chainIdDecimal: '59144', label: 'Linea', testnet: false, kernelV33Verified: false,
+    custom: { rpcUrl: 'https://rpc.linea.example', nativeSymbol: 'ETH', explorerBase: null, blockTimeMs: null, testnetRequested: false },
+  };
+  const lineaTest = {
+    ...EVM_SEPOLIA, caip2: 'eip155:59141', chainIdDecimal: '59141', label: 'Linea Sepolia', testnet: true, kernelV33Verified: false,
+    custom: { rpcUrl: 'https://rpc.linea-sepolia.example', nativeSymbol: 'ETH', explorerBase: null, blockTimeMs: null, testnetRequested: true },
+  };
+  setCustomEvmProfiles([lineaMain, lineaTest]);
+  const custom = await rejection(() => bridgeOfferFor('eip155:59144'));
+  check('a custom MAIN network: refused by the gate (FeatureNotAllowedError), zero requests',
+    custom?.name === 'FeatureNotAllowedError' && !isFeatureAllowed('bridge', 'eip155:59144') && fetchLog.length === 0, `${custom?.name}`);
+  if (isFeatureAllowed('bridge', 'eip155:59141')) {
+    const o = bridgeOfferFor('eip155:59141');
+    check('a custom TEST network: allowed by readiness, but nothing is offered (no pinned bridge contracts), in plain words',
+      o.destinations.length === 0 &&
+        o.unavailable === 'No bridge provider in this wallet serves Linea Sepolia: bridging is offered only between the built-in test networks.',
+      o.unavailable);
+  } else {
+    check('a custom test network is not treated as a test network here (readiness decides)', true);
+  }
+  setCustomEvmProfiles([]);
+}
+{
+  const dests = (id) => bridgeOfferFor(caip(id)).destinations.map((d) => `${d.chainId}:${d.sendable ? 'send' : 'list'}`).sort().join(',');
+  check('Ethereum Sepolia → Arbitrum Sepolia and OP Sepolia sendable; Base Sepolia listed (CCTP only)', dests(SEPOLIA) === `${ARB}:send,${OP}:send,${BASE}:list`.split(',').sort().join(','), dests(SEPOLIA));
+  check('Arbitrum Sepolia → Ethereum Sepolia and OP Sepolia sendable; Base Sepolia listed', dests(ARB) === [`${SEPOLIA}:send`, `${OP}:send`, `${BASE}:list`].sort().join(','), dests(ARB));
+  check('OP Sepolia → Ethereum Sepolia and Arbitrum Sepolia sendable; Base Sepolia listed', dests(OP) === [`${SEPOLIA}:send`, `${ARB}:send`, `${BASE}:list`].sort().join(','), dests(OP));
+  const base = bridgeOfferFor(caip(BASE));
+  check('Base Sepolia: three destinations, none sendable (Stargate has no pool there)', base.destinations.length === 3 && base.destinations.every((d) => !d.sendable));
+  check('Base Sepolia: the unavailable sentence (exact)',
+    base.unavailable === 'No provider in this wallet can bridge test ETH from Base Sepolia: Stargate has no pool there. Circle CCTP is listed below for comparison but is not offered yet.', base.unavailable);
+  const hoodi = bridgeOfferFor(caip(HOODI));
+  check('Hoodi: no destination, "No bridge provider in this wallet serves Hoodi."', hoodi.destinations.length === 0 && hoodi.unavailable === 'No bridge provider in this wallet serves Hoodi.', hoodi.unavailable);
+  const sep = bridgeOfferFor(caip(SEPOLIA));
+  check('Sepolia: sendable destinations come first', sep.destinations[0].sendable && sep.destinations[1].sendable && !sep.destinations[2].sendable);
+  check('Sepolia: nothing unavailable', sep.unavailable === null);
+  check('the providers, in registration order: LayerZero (offered), then Circle CCTP (coming)',
+    sep.providers.map((p) => `${p.id}:${p.status}`).join() === `${LAYERZERO_OFT_PROVIDER_ID}:offered,${CCTP_V2_PROVIDER_ID}:coming` &&
+      sep.providers[0].label === LAYERZERO_APP_LABEL && LAYERZERO_APP_LABEL === 'LayerZero (Stargate)',
+    sep.providers.map((p) => `${p.id}:${p.status}:${p.label}`).join());
+  check('the trust statements are the engine’s, verbatim', sep.providers[0].trust === LAYERZERO_OFT_TRUST && sep.providers[1].trust === CCTP_V2_TRUST &&
+    BRIDGE_TRUST[LAYERZERO_OFT_PROVIDER_ID] === LAYERZERO_OFT_TRUST && BRIDGE_TRUST[CCTP_V2_PROVIDER_ID] === CCTP_V2_TRUST);
+  check('BRIDGE_PROVIDER_STATUS: only LayerZero is offered for sending', Object.entries(BRIDGE_PROVIDER_STATUS).map(([k, v]) => `${k}:${v}`).sort().join() === [`${CCTP_V2_PROVIDER_ID}:coming`, `${LAYERZERO_OFT_PROVIDER_ID}:offered`].sort().join());
+  check('the offer makes no request (pure)', true);
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-bridge: the provider rows (the choice)');
+// ---------------------------------------------------------------------------
+{
+  const offer = bridgeOfferFor(caip(SEPOLIA));
+  const toOp = bridgeProviderRows(offer, OP);
+  check('every registered provider is a row, LayerZero first', toOp.map((r) => r.id).join() === `${LAYERZERO_OFT_PROVIDER_ID},${CCTP_V2_PROVIDER_ID}`);
+  const lz = toOp[0];
+  const cctp = toOp[1];
+  check('LayerZero row: selectable, moves test ETH, no note', lz.selectable && lz.asset === 'test ETH' && lz.note === null);
+  const engineTime = oftTimeEstimate(pool(SEPOLIA), OP, pool(SEPOLIA).pathways[OP].confirmations);
+  check('LayerZero row Sepolia → OP Sepolia: the measured line (exact)',
+    lz.measured === 'Measured once on 2026-10-15: 90 s on this route, from the sending block to the delivery block.', lz.measured);
+  check('…and the engine’s own time sentence, which ends "not a promise"', lz.timeSource === engineTime.source && /Not a promise/.test(lz.timeSource), lz.timeSource);
+  check('CCTP row: listed, NOT selectable, moves USDC, with the coming note (exact)',
+    !cctp.selectable && cctp.asset === 'USDC' && cctp.note === CCTP_COMING_NOTE &&
+      CCTP_COMING_NOTE === 'Coming later, not offered yet. Circle CCTP moves USDC, not test ETH, and this wallet has not yet sent a CCTP transfer on the test networks, so it does not offer one. It is listed so you can compare who you would be trusting.',
+    `${cctp.asset} ${cctp.note}`);
+  const toArb = bridgeProviderRows(offer, ARB);
+  check('Sepolia → Arbitrum Sepolia: never measured — no measured line; the engine says this route was not measured',
+    toArb[0].measured === null && /This route was not measured\./.test(toArb[0].timeSource ?? ''), toArb[0].timeSource);
+  const toBase = bridgeProviderRows(offer, BASE);
+  check('Sepolia → Base Sepolia: LayerZero listed but not selectable, with the no-route sentence (exact)',
+    !toBase[0].selectable && toBase[0].note === 'Does not serve Ethereum Sepolia → Base Sepolia in this wallet.' && toBase[0].note === noRouteNote('Ethereum Sepolia', 'Base Sepolia'), toBase[0].note);
+  check('…and CCTP still listed with its coming note', !toBase[1].selectable && toBase[1].note === CCTP_COMING_NOTE);
+  check('measuredTimeLine is null without a measurement', measuredTimeLine({ minSeconds: null, maxSeconds: null, source: 'x' }) === null);
+  check('the screen copy: intro, choice note, records note (exact)',
+    BRIDGE_INTRO === 'Bridging moves test ETH from this network to another test network. A bridge provider carries the transfer, and you trust the provider’s contracts and verifiers while it is on its way, so each provider below says who that is. These are test networks: the coins have no value.' &&
+      BRIDGE_CHOICE_NOTE === 'You choose the provider. The wallet lists every provider it knows for this pair of networks and never picks one for you.' &&
+      BRIDGE_RECORDS_NOTE === 'Transfers sent from this screen are followed here until the app is closed; they are not stored on the phone yet. The sending transaction also appears in Activity.');
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-bridge: the quote equals the engine’s own figures, and the wallet checks it');
+// ---------------------------------------------------------------------------
+let planA;
+{
+  resetChains();
+  chains.get(OP).head = 50_115_500n;
+  fetchLog = [];
+  planA = await quoteBridge(quoteRequest());
+  // The engine's provider over the same fake chain, read directly.
+  const engineProvider = createLayerZeroOftProvider({
+    deployments: STARGATE_V2_TESTNET_NATIVE_POOLS,
+    label: LAYERZERO_APP_LABEL,
+    readContract: async ({ chainId, to, data }) => nodeFor(chainId)('eth_call', [{ to, data }, 'latest']),
+  });
+  const route = engineProvider.supportedRoutes().find((r) => r.sourceChainId === SEPOLIA && r.destinationChainId === OP);
+  const engineQuote = await engineProvider.quote({ route, amount: AMOUNT, sender: EOA, recipient: EOA, nativeSymbol: 'test ETH' });
+  const bridgeCall = engineQuote.calls[engineQuote.calls.length - 1];
+  check('the plan’s call is the engine’s call, byte for byte (to, value, data)',
+    same(planA.call.to, bridgeCall.to) && planA.call.value === bridgeCall.value && toHex(planA.call.data) === toHex(bridgeCall.data));
+  check('value = amount + messaging fee exactly, and the fee is the pool’s quoteSend answer',
+    planA.call.value === AMOUNT + NATIVE_FEE && planA.messagingFee === NATIVE_FEE && engineQuote.fees[0].amount === NATIVE_FEE);
+  check('expected / minimum to arrive and the fee lines equal the engine’s',
+    planA.quote.expectedAmountOut === engineQuote.expectedAmountOut && planA.quote.minAmountOut === engineQuote.minAmountOut &&
+      JSON.stringify(planA.quote.fees, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)) === JSON.stringify(engineQuote.fees, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)));
+  check('the call goes to the pinned Stargate pool on Ethereum Sepolia with the OFT send selector',
+    same(planA.call.to, '0x9Cc7e185162Aa5D1425ee924D97a87A0a34A0706') && toHex(planA.call.data).startsWith(OFT_SEND_SELECTOR));
+  const decoded = oftIface.decodeFunctionData('send', toHex(planA.call.data));
+  check('decoded with ethers: endpoint id 40232 (OP Sepolia), recipient and refund = the regular account, amount, empty options',
+    Number(decoded[0][0]) === 40232 && same(ethers.dataSlice(decoded[0][1], 12), EOA) && decoded[0][2] === AMOUNT &&
+      decoded[0][4] === '0x' && decoded[0][5] === '0x' && decoded[1][0] === NATIVE_FEE && decoded[1][1] === 0n && same(decoded[2], EOA));
+  check('no approval for a native pool', planA.quote.approvals.length === 0 && planA.quote.calls.length === 1);
+  check('the plan records the receiving chain’s head (tracking starts there) and that the recipient has no code there',
+    planA.destinationFromBlock === 50_115_500n && planA.recipientCode === 'none');
+  check('the source quote reads went to the active endpoint; the receiving network through its built-in defaults',
+    fetchLog.some((u) => u === ACTIVE_URL(SEPOLIA)) && fetchLog.some((u) => evmProfileByCaip2(caip(OP)).defaultRpcUrls.includes(u)));
+  check('the regular account’s quote carries the engine’s gas estimate', planA.quote.gasEstimate === 341_035n);
+
+  chains.get(OP).code.add(EOA.toLowerCase());
+  const coded = await quoteBridge(quoteRequest());
+  check('a recipient with code on the receiving network: recipientCode "code" and the warning in the confirm',
+    coded.recipientCode === 'code' && bridgeConfirmModel(coded).recipientLines[1] ===
+      'Your regular account has contract code on OP Sepolia (an account upgrade, for example). Stargate’s 2,300-gas delivery may not be accepted there; the ETH would then wait in Stargate’s pool, and the tracking below offers the transaction that delivers it.');
+  chains.get(OP).code.clear();
+
+  // A pool fee (Sepolia → Arbitrum Sepolia charges one unit at these sizes).
+  chains.get(SEPOLIA).poolFee = 10n ** 12n;
+  const toArb = await quoteBridge(quoteRequest({ destinationChainId: ARB }));
+  check('a pool fee: expected = amount − fee, a second fee line, value still amount + messaging fee',
+    toArb.quote.expectedAmountOut === AMOUNT - 10n ** 12n && toArb.quote.fees.length === 2 && toArb.call.value === AMOUNT + NATIVE_FEE);
+  chains.get(SEPOLIA).poolFee = 0n;
+}
+{
+  // Refusals, verbatim from the engine or this module, before anything is signed.
+  fetchLog = [];
+  const cctp = await rejection(() => quoteBridge(quoteRequest({ providerId: CCTP_V2_PROVIDER_ID, destinationChainId: BASE })));
+  check('Circle CCTP: refused with the coming note, zero requests', cctp instanceof BridgeRefusal && cctp.message === CCTP_COMING_NOTE && fetchLog.length === 0, cctp?.message);
+  const base = await rejection(() => quoteBridge(quoteRequest({ destinationChainId: BASE })));
+  check('LayerZero to Base Sepolia: refused with the no-route sentence, zero requests',
+    base instanceof BridgeRefusal && base.message === 'Does not serve Ethereum Sepolia → Base Sepolia in this wallet.' && fetchLog.length === 0, base?.message);
+  const dust = await rejection(() => quoteBridge(quoteRequest({ amount: AMOUNT + 1n })));
+  check('an amount that is not a whole step: the engine’s sentence, verbatim',
+    dust instanceof BridgeRefusal && dust.message === 'This token moves in steps of 1000000000000 base units; the amount has a remainder the OFT would not send. Round it first.', dust?.message);
+  const hoodiDest = await rejection(() => quoteBridge(quoteRequest({ destinationChainId: HOODI })));
+  check('a destination that is not a bridge network (Hoodi): refused', hoodiDest instanceof BridgeRefusal, hoodiDest?.message);
+}
+{
+  // The wallet's own checks on a tampered quote (checkBridgeQuote).
+  const expect = { sourceChainId: SEPOLIA, destinationChainId: OP, amount: AMOUNT, recipient: EOA, sender: EOA };
+  const clone = (q) => ({ ...q, calls: q.calls.map((c) => ({ ...c, data: new Uint8Array(c.data), pins: c.pins.map((p) => ({ ...p, rule: { ...p.rule, params: [...p.rule.params] } })) })), approvals: [...q.approvals], fees: [...q.fees] });
+  const refused = (q) => {
+    try {
+      checkBridgeQuote(q, expect);
+      return null;
+    } catch (e) {
+      return e;
+    }
+  };
+  check('the untouched quote passes', refused(clone(planA.quote)) === null);
+  const why = (e) => (e instanceof BridgeRefusal ? (/\((.*)\)\. Nothing was signed\.$/.exec(e.message)?.[1] ?? e.message) : String(e));
+
+  const unlimited = clone(planA.quote);
+  const token = '0x' + '11'.repeat(20);
+  unlimited.calls.unshift({ purpose: 'approve', chainId: SEPOLIA, to: token, value: 0n, data: ethers.getBytes(oftIface.encodeFunctionData('approve', [planA.call.to, ethers.MaxUint256])), pins: [], unpinnable: [], valueLimit: 0n });
+  unlimited.approvals.push({ chainId: SEPOLIA, token, spender: planA.call.to, amount: ethers.MaxUint256 });
+  check('an UNLIMITED approval is refused as not exact', why(refused(unlimited)) === 'an approval that is not exact', why(refused(unlimited)));
+  const above = clone(planA.quote);
+  above.calls.unshift({ purpose: 'approve', chainId: SEPOLIA, to: token, value: 0n, data: ethers.getBytes(oftIface.encodeFunctionData('approve', [planA.call.to, AMOUNT + 1n])), pins: [], unpinnable: [], valueLimit: 0n });
+  above.approvals.push({ chainId: SEPOLIA, token, spender: planA.call.to, amount: AMOUNT });
+  check('an approval one wei above the amount is refused as not exact', why(refused(above)) === 'an approval that is not exact', why(refused(above)));
+  check('MAX_EXACT_APPROVAL bounds every approval below "unlimited"', MAX_EXACT_APPROVAL < ethers.MaxUint256);
+  const exact = clone(planA.quote);
+  exact.calls.unshift({ purpose: 'approve', chainId: SEPOLIA, to: token, value: 0n, data: ethers.getBytes(oftIface.encodeFunctionData('approve', [planA.call.to, AMOUNT])), pins: [], unpinnable: [], valueLimit: 0n });
+  exact.approvals.push({ chainId: SEPOLIA, token, spender: planA.call.to, amount: AMOUNT });
+  check('even an exact approval is refused for a native pool (it takes the coin itself)', why(refused(exact)) === 'an approval for a pool that takes the coin itself', why(refused(exact)));
+
+  const plusOne = clone(planA.quote);
+  plusOne.calls[0].value += 1n;
+  plusOne.calls[0].valueLimit += 1n;
+  check('a value one wei above amount + messaging fee is refused', why(refused(plusOne)) === 'a value that is not the amount plus the messaging fee', why(refused(plusOne)));
+  const limit = clone(planA.quote);
+  limit.calls[0].valueLimit += 1n;
+  check('a value limit that differs from the value is refused', why(refused(limit)) === 'a value limit that differs from the value', why(refused(limit)));
+  const otherPool = clone(planA.quote);
+  otherPool.calls[0].to = pool(OP).address;
+  check('a call to another contract than the pinned pool is refused', why(refused(otherPool)) === 'a contract other than the pinned Stargate pool', why(refused(otherPool)));
+  const otherRecipient = clone(planA.quote);
+  otherRecipient.calls[0].data.set(ethers.getBytes(ethers.zeroPadValue(KERNEL_ACCOUNT_0, 32)), 4 + OFT_SEND_LAYOUT.to);
+  check('another recipient word in the calldata is refused', why(refused(otherRecipient)) === `the word at byte ${OFT_SEND_LAYOUT.to} of the call`, why(refused(otherRecipient)));
+  const otherRoute = clone(planA.quote);
+  otherRoute.route = { ...otherRoute.route, destinationChainId: ARB };
+  check('a quote for another route is refused', why(refused(otherRoute)) === 'another route');
+  const twoBridge = clone(planA.quote);
+  twoBridge.calls.push({ ...twoBridge.calls[0] });
+  check('two bridge calls are refused', why(refused(twoBridge)) === 'not exactly one bridge call, last');
+  const tooHighMin = clone(planA.quote);
+  tooHighMin.minAmountOut = tooHighMin.expectedAmountOut + 1n;
+  check('a minimum above what is expected to arrive is refused', why(refused(tooHighMin)) === 'a minimum above what is expected to arrive');
+  const cctpQuote = clone(planA.quote);
+  cctpQuote.providerId = CCTP_V2_PROVIDER_ID;
+  check('a quote from another provider is refused', why(refused(cctpQuote)) === 'a provider this screen does not send through');
+  check('every refusal ends "Nothing was signed."', /Nothing was signed\.$/.test(refused(plusOne).message));
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-bridge: the confirm, the prompt title, the regular-account send');
+// ---------------------------------------------------------------------------
+{
+  const m = bridgeConfirmModel(planA);
+  check('prompt title (exact): "Bridge 0.0002 test ETH to OP Sepolia through LayerZero (Stargate)"',
+    bridgePromptTitle(planA) === 'Bridge 0.0002 test ETH to OP Sepolia through LayerZero (Stargate)' && m.title === bridgePromptTitle(planA), bridgePromptTitle(planA));
+  check('you send / arrives / minimum (exact)',
+    m.youSend === 'You send 0.0002 test ETH from Ethereum Sepolia' &&
+      m.arrives === 'Expected to arrive on OP Sepolia: 0.0002 test ETH' &&
+      m.minimum === 'Least that may arrive (written into the call): 0.0002 test ETH', `${m.youSend} | ${m.arrives} | ${m.minimum}`);
+  check('the fee line in the network’s symbol, exact to the wei',
+    m.feeLines.length === 1 && m.feeLines[0].label === 'LayerZero messaging fee (paid in test ETH)' && m.feeLines[0].value === '0.000102050140082558 test ETH' &&
+      m.feeLines[0].note === 'LayerZero messaging fee (verifiers, executor and destination gas), paid in test ETH; any excess is refunded to your address.', JSON.stringify(m.feeLines));
+  check('the total = amount + fee (exact)',
+    m.total === '0.000302050140082558 test ETH (amount 0.0002 + messaging fee 0.000102050140082558), before this network’s own transaction fee', m.total);
+  check('time lines: the measured line, then the engine’s sentence (which already says "Not a promise"), no duplicate',
+    m.timeLines.length === 2 && m.timeLines[0] === 'Measured once on 2026-10-15: 90 s on this route, from the sending block to the delivery block.' &&
+      /Not a promise: the verifiers wait for 2 source-block confirmations, then the executor delivers, and either can take longer\.$/.test(m.timeLines[1]), m.timeLines.join(' | '));
+  const unmeasured = bridgeConfirmModel({ ...planA, quote: { ...planA.quote, time: { minSeconds: null, maxSeconds: null, source: 'A figure from somewhere.' } } });
+  check('a time sentence without "not a promise" gets the wallet’s sentence (exact)',
+    unmeasured.timeLines.join(' | ') === `A figure from somewhere. | ${BRIDGE_TIME_NOT_PROMISE}` &&
+      BRIDGE_TIME_NOT_PROMISE === 'A time measured once is not a promise: delivery waits for the verifiers and the executor, and either can take longer.');
+  check('the trust statement and the refund rule are the engine’s, verbatim', m.trust === LAYERZERO_OFT_TRUST && m.trust.refundRule === LAYERZERO_OFT_TRUST.refundRule);
+  check('no approval line (exact)', m.approvalLine === 'No token approval: the pool takes the test ETH sent with the call itself.', m.approvalLine);
+  check('the pinned fields in plain words (exact)',
+    m.pinnedSummary.join('\n') === [
+      'Receiving network: OP Sepolia (LayerZero endpoint id 40232).',
+      `Recipient: ${EOA}.`,
+      'Amount: 0.0002 test ETH; at least 0.0002 test ETH must arrive, or the transfer reverts on this network and nothing leaves.',
+      `Messaging fee: 0.000102050140082558 test ETH, paid with this transaction; any part not used is refunded to ${EOA}.`,
+      'No extra options and no compose message: the transfer cannot run code of its own on the receiving network.',
+      'All of these are fixed words of the call (14 of them), so the wallet checked each one before showing this screen.',
+    ].join('\n'), m.pinnedSummary.join('\n'));
+  check('the pinned-pool line (exact)',
+    m.pinnedPool === 'This transaction goes to Stargate’s native ETH pool on Ethereum Sepolia (0x9Cc7e185162Aa5D1425ee924D97a87A0a34A0706), pinned by this wallet from Stargate’s published test-network deployments and checked on-chain on 2026-10-15. The risk card below does not know Stargate’s pools by name.', m.pinnedPool);
+  check('the recipient line for the regular account (exact)',
+    m.recipientLines.length === 1 && m.recipientLines[0] === `The test ETH arrives at your regular account ${EOA} on OP Sepolia, the same address as on this network.` &&
+      m.recipientLines[0] === regularRecipientNote(EOA, 'OP Sepolia'));
+  check('the engine’s notes (verifiers, control, live notes, the 2,300-gas note) are carried', m.notes.some((n) => /required verifier/.test(n)) && m.notes.some((n) => /2,300-gas transfer/.test(n)));
+  check('the destination step is the engine’s', m.destinationStep === planA.quote.destination.description);
+
+  // The regular account's quote through the REAL prepareEvmSend.
+  fetchLog = [];
+  const q = await prepareBridgeSend(ACTIVE_URL(SEPOLIA), EOA, planA);
+  check('prepareEvmSend: to = the pool, value = amount + messaging fee exactly, data = the plan’s call',
+    same(q.to, planA.call.to) && q.amount === AMOUNT + NATIVE_FEE && toHex(q.data) === toHex(planA.call.data), `${q.amount}`);
+  check('the pre-flight eth_call passed', q.simulation.ok === true);
+  check('the quote total = value + worst-case fee', q.total === q.amount + q.fee);
+  const fees = bridgeSourceFeeLines(q, 'test ETH');
+  check('Sepolia: the worst-case sentence without a layer 1 line',
+    fees.rows.length === 0 && fees.note === null && fees.worstCase === 'Worst case at 3 gwei max fee × 341035 gas; the actual fee is usually lower.', fees.worstCase);
+  const wrongFrom = await rejection(() => prepareBridgeSend(ACTIVE_URL(SEPOLIA), KERNEL_ACCOUNT_0, planA));
+  check('a quote prepared for another account is refused', wrongFrom instanceof BridgeRefusal && wrongFrom.message === 'This quote was prepared for another account. Nothing was quoted.');
+  const aaPlanOnEoa = await rejection(() => prepareBridgeSend(ACTIVE_URL(SEPOLIA), EOA, { ...planA, senderKind: 'smart-account' }));
+  check('a smart-account plan cannot go through the regular send path', aaPlanOnEoa instanceof BridgeRefusal);
+
+  const sent = await sendEvm(ACTIVE_URL(SEPOLIA), owner, q, null);
+  const raw = ethers.Transaction.from(chains.get(SEPOLIA).raw.at(-1));
+  check('the signed transaction: to = the pool, value = amount + fee, data = the engine’s calldata, chain id Sepolia, from the account',
+    same(raw.to, planA.call.to) && raw.value === AMOUNT + NATIVE_FEE && raw.data === toHex(planA.call.data) && raw.chainId === BigInt(SEPOLIA) && same(raw.from, EOA));
+  check('sendEvm returned the hash the node took', same(sent.txid, ethers.keccak256(chains.get(SEPOLIA).raw.at(-1))));
+
+  // OP Sepolia as the source: the layer 1 data fee lines (OP-stack).
+  const planOp = await quoteBridge(quoteRequest({ caip2: caip(OP), destinationChainId: ARB, readers: readersFor(OP) }));
+  const qOp = await prepareBridgeSend(ACTIVE_URL(OP), EOA, planOp);
+  const opFees = bridgeSourceFeeLines(qOp, 'test ETH');
+  check('OP Sepolia: the worst-case sentence names the layer 1 fee, and its row and note follow (reserve = estimate + 50%)',
+    qOp.opStack && opFees.worstCase.endsWith('gas, plus the layer 1 data fee below; the actual fee is usually lower.') &&
+      opFees.rows.length === 1 && opFees.rows[0].label === 'Layer 1 data fee (estimate)' && opFees.rows[0].value === '0.000000000000000402 test ETH' &&
+      opFees.note === 'This is a layer-2 network: every transaction also pays for publishing its data on Ethereum. The network’s fee oracle estimates 0.000000000000000268 test ETH for this transaction; 50% more is reserved because this fee follows Ethereum’s fees and cannot be capped. It is included in the max network fee and the total.',
+    `${opFees.worstCase} | ${JSON.stringify(opFees.rows)} | ${opFees.note}`);
+  check('OP Sepolia → Arbitrum Sepolia: prompt title (exact)', bridgePromptTitle(planOp) === 'Bridge 0.0002 test ETH to Arbitrum Sepolia through LayerZero (Stargate)');
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-bridge: the smart account (the regular account receives)');
+// ---------------------------------------------------------------------------
+{
+  const kernelConfig = {
+    bundlerUrl: 'https://bundler.example',
+    bundlerVerifiedAt: 'x',
+    accountType: 'kernel-v3.3',
+    factory: KERNEL_V3_3.factory,
+    factoryImplementation: KERNEL_V3_3.implementation,
+    kernelMetaFactory: KERNEL_V3_3.metaFactory,
+    kernelValidator: KERNEL_V3_3.ecdsaValidator,
+    kernelAccountId: KERNEL_V3_3.accountId,
+    factoryVerifiedAt: 'x',
+    paymasterUrl: null,
+    paymasterContext: null,
+    paymasterVerifiedAt: null,
+    chain: caip(SEPOLIA),
+    eip7702Owners: [],
+    recoveredAccounts: [],
+    bundlerUrlIgnoredReason: null,
+    paymasterUrlIgnoredReason: null,
+  };
+  const kernel = fakeKernelNode({ chainIdHex: '0xaa36a7', balance: E18 });
+  const sepNode = nodeFor(SEPOLIA);
+  const node = async (method, params) =>
+    method === 'eth_call' && same(params[0].to, pool(SEPOLIA).address) ? sepNode(method, params) : kernel(method, params);
+  const bundler = fakeBundler();
+  const bundle = createAaClientFromConfig(kernelConfig, {
+    nodeUrl: 'https://node.example',
+    chainId: 11155111n,
+    accountIndex: 0,
+    ownerAddress: OWNER_0,
+    transportFor: (url) => (url === 'https://node.example' ? node : bundler),
+  });
+  const plan = await quoteBridge(quoteRequest({ sender: KERNEL_ACCOUNT_0, senderKind: 'smart-account', recipient: OWNER_0 }));
+  const sendArgs = oftIface.decodeFunctionData('send', toHex(plan.call.data));
+  check('smart account: the refund word is the smart account, the recipient word the regular account',
+    same(sendArgs[2], KERNEL_ACCOUNT_0) && same(ethers.dataSlice(sendArgs[0][1], 12), OWNER_0));
+  check('smart account: no gas estimate from the account address (a UserOperation is not a plain call)', plan.quote.gasEstimate === null);
+  const q = await prepareBridgeAa(bundle, OWNER_0, plan);
+  check('prepareAaCalls: ONE call, to the pool, value = amount + fee, sender = the Kernel account',
+    q.calls.length === 1 && same(q.calls[0].to, plan.call.to) && q.calls[0].value === AMOUNT + NATIVE_FEE && same(q.sender, KERNEL_ACCOUNT_0) && q.amount === AMOUNT + NATIVE_FEE);
+  await sendAa(bundle, owner, q, { kind: 'other' });
+  const exec = decodeKernelExecute(bundler.lastOp.callData);
+  check('the submitted UserOperation executes exactly the bridge call with its value',
+    exec.calls.length === 1 && same(exec.calls[0].to, plan.call.to) && exec.calls[0].value === AMOUNT + NATIVE_FEE && exec.calls[0].data === toHex(plan.call.data));
+  const regularOnAa = await rejection(() => prepareBridgeAa(bundle, OWNER_0, planA));
+  check('a regular-account plan cannot go through the smart-account path', regularOnAa instanceof BridgeRefusal && regularOnAa.message === 'This quote was prepared for the regular account. Nothing was quoted.');
+  const wrongSender = await rejection(() => prepareBridgeAa(bundle, OWNER_0, { ...plan, sender: OWNER_0 }));
+  check('a plan read for another address than the smart account is refused', wrongSender instanceof BridgeRefusal && /another address than the smart account/.test(wrongSender.message));
+
+  const m = bridgeConfirmModel(plan);
+  check('smart account: prompt title ends "from your smart account"', bridgePromptTitle(plan) === 'Bridge 0.0002 test ETH to OP Sepolia through LayerZero (Stargate) from your smart account');
+  check('smart account: the confirm says, before sending, that the REGULAR account receives and why (exact)',
+    m.recipientLines[0] === smartAccountRecipientNote(OWNER_0, 'OP Sepolia') &&
+      smartAccountRecipientNote(OWNER_0, 'OP Sepolia') ===
+        `Sent from your smart account, the test ETH arrives at your regular account ${OWNER_0} on OP Sepolia, not at the smart account. Stargate hands ETH over with a 2,300-gas transfer, which a deployed smart account cannot accept, so the ETH would wait in Stargate’s pool until someone sent a second transaction there. This wallet therefore offers only your regular account as the recipient.`,
+    m.recipientLines[0]);
+  check('an EIP-7702 account (sender = recipient): the same-address sentence, not "not at the smart account" (exact)',
+    bridgeRecipientNote('smart-account', OWNER_0, OWNER_0, 'OP Sepolia') === upgradedAccountRecipientNote(OWNER_0, 'OP Sepolia') &&
+      upgradedAccountRecipientNote(OWNER_0, 'OP Sepolia') ===
+        `Your smart account is this same address (upgraded with EIP-7702), so the test ETH arrives at ${OWNER_0} on OP Sepolia, the same address as on this network. An upgrade on this network does not carry over: whether the address has code there is read when you review.`);
+  check('bridgeRecipientNote: regular → the regular sentence; Kernel → the smart-account sentence',
+    bridgeRecipientNote('regular', OWNER_0, OWNER_0, 'OP Sepolia') === regularRecipientNote(OWNER_0, 'OP Sepolia') &&
+      bridgeRecipientNote('smart-account', KERNEL_ACCOUNT_0, OWNER_0, 'OP Sepolia') === smartAccountRecipientNote(OWNER_0, 'OP Sepolia'));
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-bridge: tracking (the chains’ own events) and the retry call');
+// ---------------------------------------------------------------------------
+function logOf(address, encoded, extra = {}) {
+  return { address, data: encoded.data, topics: [...encoded.topics], ...extra };
+}
+function oftSentLog(src, dst, guid = GUID, amount = AMOUNT, from = EOA) {
+  return logOf(pool(src).address, evIface.encodeEventLog('OFTSent', [guid, LAYERZERO_V2_TESTNET[dst].eid, from, amount, amount]));
+}
+function packetSentLog(src, dst, guid = GUID) {
+  const packet = ethers.solidityPacked(
+    ['uint8', 'uint64', 'uint32', 'bytes32', 'uint32', 'bytes32', 'bytes32', 'bytes'],
+    [1, 196n, LAYERZERO_V2_TESTNET[src].eid, ethers.zeroPadValue(pool(src).messagingOApp, 32), LAYERZERO_V2_TESTNET[dst].eid, ethers.zeroPadValue(pool(dst).messagingOApp, 32), guid, '0x01'],
+  );
+  return logOf(LAYERZERO_V2_TESTNET[src].endpoint, evIface.encodeEventLog('PacketSent', [packet, '0x0003010011010000000000000000000000000000000249f0', LAYERZERO_V2_TESTNET[src].sendUln302]));
+}
+{
+  resetChains();
+  resetBridgeTransfers();
+  chains.get(OP).head = 50_115_500n;
+  const plan = await quoteBridge(quoteRequest());
+  chains.get(OP).head = 50_115_600n; // the receiving chain moves on after the quote
+  let notified = 0;
+  const unsubscribe = subscribeBridgeTransfers(() => {
+    notified += 1;
+  });
+  const rec = recordBridgeTransfer(plan, { sourceTxHash: SOURCE_TX, userOpHash: null, sentAt: 1_791_900_000_000 });
+  check('a record is kept in memory, listed, and the listeners are told', listBridgeTransfers().length === 1 && listBridgeTransfers()[0].id === rec.id && notified === 1);
+
+  check('the record carries the route, amount, recipient and the receiving head', rec.amountIn === AMOUNT && same(rec.recipient, EOA) && rec.destinationFromBlock === 50_115_500n);
+  check('before any check: "Not checked yet" and its sentence (exact)',
+    bridgeStatusHeading(null, 'OP Sepolia') === 'Not checked yet' && bridgeStatusSentence(rec) === 'The wallet has not asked where this transfer is yet.');
+
+  const readers = readersFor(SEPOLIA);
+  // 1. No receipt yet.
+  let st = await trackBridgeTransfer(rec, readers);
+  check('no receipt yet → unknown, "The sending transaction has no receipt yet; it may still be pending." + Scan has no record',
+    st.state === 'unknown' && st.detail === 'The sending transaction has no receipt yet; it may still be pending. LayerZero Scan has no record of the message yet.', st.detail);
+  check('heading for unknown: "Not known yet"', bridgeStatusHeading(st, 'OP Sepolia') === 'Not known yet');
+  // 2. Reverted.
+  chains.get(SEPOLIA).receipts.set(SOURCE_TX, { status: '0x0', logs: [] });
+  st = await trackBridgeTransfer(rec, readers);
+  check('a reverted source → failed, heading "Failed", final', st.state === 'failed' && bridgeStatusHeading(st, 'OP Sepolia') === 'Failed' && bridgeTransferFinal({ status: st }) &&
+    /^The sending transaction reverted, so no message was sent and nothing was bridged; only its network fee was spent\./.test(st.detail), st.detail);
+  // 3. Sent, in flight (Scan INFLIGHT).
+  chains.get(SEPOLIA).receipts.set(SOURCE_TX, { status: '0x1', logs: [oftSentLog(SEPOLIA, OP), packetSentLog(SEPOLIA, OP)] });
+  scanAnswer = { status: 200, body: { data: [{ status: { name: 'INFLIGHT' } }] } };
+  fetchLog = [];
+  st = await trackBridgeTransfer(rec, readers);
+  check('sent, nothing on the receiving network → in-flight with the GUID; Scan agrees',
+    st.state === 'in-flight' && st.onChain?.guid === GUID && st.detail === `The message was sent (GUID ${GUID}); the receiving network shows no delivery for it yet. LayerZero Scan agrees (INFLIGHT).`, st.detail);
+  check('heading for in-flight: "On its way"; not final', bridgeStatusHeading(st, 'OP Sepolia') === 'On its way' && !bridgeTransferFinal({ status: st }));
+  check('Scan was asked at the keyless testnet API by source hash', fetchLog.includes(`${LAYERZERO_SCAN_TESTNET_API}/messages/tx/${SOURCE_TX}`));
+  const opGetLogs = chains.get(OP).calls.filter((c) => c.method === 'eth_getLogs');
+  check('the receiving network was searched from the head recorded at quote time', opGetLogs.length >= 1 && BigInt(opGetLogs[0].params[0].fromBlock) === 50_115_500n);
+  // 4. Delivered (OFTReceived for the GUID, to this recipient, for the amount).
+  chains.get(OP).logs.push(logOf(pool(OP).address, evIface.encodeEventLog('OFTReceived', [GUID, LAYERZERO_V2_TESTNET[SEPOLIA].eid, EOA, AMOUNT]), { transactionHash: DELIVERY_TX, blockNumber: ethers.toQuantity(50_115_531n) }));
+  scanAnswer = { status: 200, body: { data: [{ status: { name: 'DELIVERED' }, destination: { tx: { txHash: DELIVERY_TX } } }] } };
+  st = await trackBridgeTransfer(rec, readers);
+  check('delivered: state, destination hash, heading "Delivered on OP Sepolia", final',
+    st.state === 'delivered' && st.destinationTxHash === DELIVERY_TX && bridgeStatusHeading(st, 'OP Sepolia') === 'Delivered on OP Sepolia' && bridgeTransferFinal({ status: st }));
+  check('…the sentence names the GUID, the amount, the recipient and the transaction, and Scan agrees (exact)',
+    st.detail === `Delivered: the receiving network shows OFTReceived for this transfer's message (GUID ${GUID}), ${AMOUNT} base units to ${EOA} in transaction ${DELIVERY_TX}. LayerZero Scan agrees (DELIVERED).`, st.detail);
+  updateBridgeTransfer(rec.id, { status: st, checkedAt: 1 });
+  check('updateBridgeTransfer stores the status; bridgeStatusSentence shows the adapter’s detail verbatim', bridgeStatusSentence(listBridgeTransfers()[0]) === st.detail);
+  check('bridgeRetryCall: none for a delivered transfer', bridgeRetryCall({ status: st, route: rec.route }) === null);
+  // 5. Cached (UnreceivedTokenCached): the retry call.
+  chains.get(OP).logs = [];
+  chains.get(OP).logs.push(logOf(pool(OP).address, evIface.encodeEventLog('UnreceivedTokenCached', [GUID, 0, LAYERZERO_V2_TESTNET[SEPOLIA].eid, EOA, AMOUNT, '0x']), { transactionHash: CACHE_TX, blockNumber: ethers.toQuantity(50_115_531n) }));
+  scanAnswer = { status: 404 };
+  st = await trackBridgeTransfer(rec, readers);
+  check('cached by Stargate → awaiting-destination-action, heading "Waiting for a transaction on OP Sepolia"',
+    st.state === 'awaiting-destination-action' && st.onChain?.status === 'cached-needs-retry' && bridgeStatusHeading(st, 'OP Sepolia') === 'Waiting for a transaction on OP Sepolia' && !bridgeTransferFinal({ status: st }));
+  check('…the sentence says anyone can deliver with retryReceiveToken', /Anyone can deliver them by calling retryReceiveToken there, paying the gas on that network; the call below does that\. It fails while the pool is paused\./.test(st.detail), st.detail);
+  const cachedRec = updateBridgeTransfer(rec.id, { status: st });
+  const retry = bridgeRetryCall(cachedRec);
+  const retryDecoded = retry ? evIface.decodeFunctionData('retryReceiveToken', toHex(retry.data)) : null;
+  check('the retry call: to the RECEIVING network’s pinned pool, value 0, retryReceiveToken with the cached fields',
+    retry && same(retry.to, pool(OP).address) && retry.value === 0n && toHex(retry.data).startsWith(STARGATE_RETRY_RECEIVE_TOKEN_SELECTOR) &&
+      retryDecoded[0] === GUID && Number(retryDecoded[2]) === LAYERZERO_V2_TESTNET[SEPOLIA].eid && same(retryDecoded[3], EOA) && retryDecoded[4] === AMOUNT && retryDecoded[5] === '0x');
+  const forged = { ...cachedRec, status: { ...st, destinationCalls: [{ ...st.destinationCalls[0], to: pool(SEPOLIA).address }] } };
+  check('a retry call to any other contract is not offered', bridgeRetryCall(forged) === null);
+  const valued = { ...cachedRec, status: { ...st, destinationCalls: [{ ...st.destinationCalls[0], value: 1n }] } };
+  check('a retry call with a value is not offered', bridgeRetryCall(valued) === null);
+  check('retry from another active network: the switch sentence (exact)',
+    bridgeRetryBlocker(caip(SEPOLIA), cachedRec) === 'Anyone can send this delivery transaction on OP Sepolia, paying the gas there. To send it from this wallet, switch to OP Sepolia (Settings → Developer) and come back to this screen; transfers stay listed until the app is closed.' &&
+      bridgeRetryBlocker(caip(OP), cachedRec) === null);
+  check('the retry prompt title (exact)', bridgeRetryPromptTitle(cachedRec) === 'Deliver bridged test ETH waiting in Stargate’s pool on OP Sepolia');
+  const rq = await prepareBridgeRetry(ACTIVE_URL(OP), EOA, cachedRec);
+  check('the retry quote through prepareEvmSend on the receiving network: to the pool, value 0, the retry calldata',
+    same(rq.to, pool(OP).address) && rq.amount === 0n && toHex(rq.data) === toHex(retry.data) && rq.simulation.ok);
+  const noRetry = await rejection(() => prepareBridgeRetry(ACTIVE_URL(OP), EOA, { ...cachedRec, status: null }));
+  check('no retry call → refused in plain words', noRetry instanceof BridgeRefusal && noRetry.message === 'There is no delivery transaction to send for this transfer.');
+
+  // A smart-account transfer whose bundle transaction is not known yet: no request.
+  const aaRec = recordBridgeTransfer(plan, { sourceTxHash: null, userOpHash: '0x' + 'ab'.repeat(32), sentAt: 1_791_900_100_000 });
+  fetchLog = [];
+  const aaSt = await trackBridgeTransfer(aaRec, readers);
+  check('a smart-account transfer before its bundle transaction is known: the waiting sentence, zero requests',
+    aaSt.state === 'unknown' && aaSt.detail === 'Waiting for the bundle transaction that carries the smart-account operation; tracking starts once it is known.' && fetchLog.length === 0);
+  check('records are listed newest first', listBridgeTransfers()[0].id === aaRec.id);
+  check('a check error without a status (exact)', bridgeStatusSentence({ status: null, checkError: 'boom', destinationLabel: 'OP Sepolia' }) === 'The transfer could not be checked just now: boom');
+  check('the tracking interval is 15 seconds', BRIDGE_TRACK_INTERVAL_MS === 15_000);
+  const mainnetTrack = await rejection(() => trackBridgeTransfer({ ...rec, sourceCaip2: 'eip155:1' }, readers));
+  check('tracking is refused by the gate for a record whose source is not a test network', mainnetTrack?.name === 'FeatureNotAllowedError');
+  unsubscribe();
+  resetBridgeTransfers();
+  check('resetBridgeTransfers empties the list', listBridgeTransfers().length === 0);
+  const before = Date.now();
+  const stamped = recordBridgeTransfer(plan, { sourceTxHash: null, userOpHash: null });
+  check('sentAt defaults to the time of recording', stamped.sentAt >= before && stamped.sentAt <= Date.now());
+  resetBridgeTransfers();
+}
+{
+  // The readers on their own.
+  const scan = layerZeroScanReader();
+  scanAnswer = { status: 404 };
+  check('Scan reader: 404 → not indexed (null)', (await scan({ sourceChainId: SEPOLIA, sourceTxHash: SOURCE_TX })) === null);
+  scanAnswer = { status: 200, body: { data: [{ status: { name: 'bad name!' }, destination: { tx: { txHash: 'not a hash' } } }] } };
+  const odd = await scan({ sourceChainId: SEPOLIA, sourceTxHash: SOURCE_TX });
+  check('Scan reader: an unexpected status name → UNKNOWN, a malformed destination hash dropped', odd.status === 'UNKNOWN' && odd.destinationTxHash === undefined);
+  scanAnswer = { status: 500 };
+  check('Scan reader: HTTP 500 → an error', (await rejection(() => scan({ sourceChainId: SEPOLIA, sourceTxHash: SOURCE_TX })))?.message === 'LayerZero Scan answered HTTP 500');
+  check('Scan reader: a malformed hash is refused before any request', /32 bytes of hex/.test((await rejection(() => scan({ sourceChainId: SEPOLIA, sourceTxHash: '0x12' })))?.message ?? ''));
+  check('Scan reader: the fixed https host', LAYERZERO_SCAN_TESTNET_API === 'https://scan-testnet.layerzero-api.com/v1');
+
+  resetChains();
+  chains.get(OP).head = 1_020_000n;
+  const reader = destinationLogReader(readersFor(SEPOLIA), 1_000_000n);
+  chains.get(OP).calls = [];
+  await reader({ chainId: OP, address: pool(OP).address, topics: [null] });
+  const windows = chains.get(OP).calls.filter((c) => c.method === 'eth_getLogs').map((c) => `${BigInt(c.params[0].fromBlock)}-${BigInt(c.params[0].toBlock)}`);
+  check('destination logs: searched in windows of 9,000 blocks from the recorded head to the current head',
+    windows.join() === '1000000-1008999,1009000-1017999,1018000-1020000', windows.join());
+  const tooOld = destinationLogReader(readersFor(SEPOLIA), 1n);
+  const old = await rejection(() => tooOld({ chainId: OP, address: pool(OP).address, topics: [null] }));
+  check('a search older than 12 windows is refused with the plain sentence', old instanceof BridgeRefusal && old.message === BRIDGE_LOG_TOO_OLD);
+
+  // defaultChainTransport: the built-in defaults in order, chain id checked, failover on endpoint failures only.
+  resetChains();
+  const urls = evmProfileByCaip2(caip(OP)).defaultRpcUrls;
+  urlOverride = new Map([[urls[0], 'down']]);
+  fetchLog = [];
+  const t = defaultChainTransport(OP);
+  check('a dead first default endpoint → the next one answers', (await t('eth_blockNumber', [])) === ethers.toQuantity(chains.get(OP).head) && fetchLog.includes(urls[1]));
+  urlOverride = new Map([[urls[0], SEPOLIA]]);
+  fetchLog = [];
+  const t2 = defaultChainTransport(OP);
+  await t2('eth_blockNumber', []);
+  check('a default endpoint answering for another chain is skipped', fetchLog.filter((u) => u === urls[0]).length === 1 && fetchLog.includes(urls[1]));
+  urlOverride = new Map();
+  const t3 = defaultChainTransport(OP);
+  const reverted = await rejection(() => t3('eth_call', [{ to: '0x' + '22'.repeat(20), data: '0x12345678' }, 'latest']));
+  check('an answer (an RPC error) is returned, not failed over', reverted && !/No endpoint answered/.test(reverted.message) && fetchLog.length >= 0);
+  check('no built-in endpoints for a chain the wallet does not know', (await rejection(async () => defaultChainTransport(59144))) instanceof BridgeRefusal);
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-bridge: the screen, the route gates, Home and the navigator (source)');
+// ---------------------------------------------------------------------------
+{
+  const screen = source('src/screens/BridgeScreen.tsx');
+  const views = source('src/screens/BridgeViews.tsx');
+  const app = source('App.tsx');
+  const nav = source('src/navigation.ts');
+  const home = source('src/screens/HomeScreen.tsx');
+  check('the gate first: readinessGate("bridge", caip2) renders the test-networks-only card before anything else',
+    /const gate = readinessGate\('bridge', caip2\);/.test(screen) && /if \(gate\) \{\s*return \(\s*<ScrollView[^]*?<TestNetworksOnlyCard feature=\{gate\.feature\} hint=\{gate\.hint\} \/>/.test(screen));
+  check('watch-only and multisig accounts are refused by name on the screen too',
+    screen.includes("activeAccount?.watchOnly === true ? watchOnlyRouteRefusal('Bridge') : activeAccount?.multisig === true ? multisigRouteRefusal('Bridge') : null"));
+  check('the route gates name the feature (exact)',
+    watchOnlyRouteRefusal('Bridge') === 'Bridging is not available for a watch-only account: the wallet holds no key for this address, so it cannot sign or send anything for it. Switch to one of your own accounts to use it.' &&
+      multisigRouteRefusal('Bridge') === 'Bridging is not available for a multi-signature account: no single key in this wallet can sign for it. Build its operations on the Multisig screen, where the co-signers approve them, or switch to one of your own accounts.' &&
+      !WATCH_ONLY_ALLOWED_ROUTES.includes('Bridge') && !MULTISIG_ALLOWED_ROUTES.includes('Bridge'));
+  check('the provider choice: a radiogroup that renders EVERY row (none filtered out), each a radio with checked/disabled state',
+    /<View accessibilityRole="radiogroup"[^>]*>\s*\{rows\.map\(\(row\) =>/.test(screen) && !/rows\.filter\(\(r\) => r\.selectable\)\.map\(\(row\) =>\s*\{\s*const q/.test(screen) &&
+      views.includes('accessibilityRole="radio"') && views.includes('accessibilityState={{ checked: selected, disabled: !row.selectable }}'));
+  check('each provider row shows its label, the trust statement’s three parts, the fee once quoted and the measured time',
+    ['Who verifies: ', 'Who controls: ', 'If it does not arrive: ', 'Fee (quoted just now): ', '{row.measured}', '{row.timeSource}', '{row.note}'].every((s) => views.includes(s)));
+  check('both send paths ask the device with the prompt title, after the spending limits',
+    (screen.match(/const auth = await requireLocalAuth\(bridgePromptTitle\(plan\)\);/g) ?? []).length === 2 &&
+      screen.indexOf('spendingGateForQuote({ chain: caip2, owner: account.address, from: preparedFrom.current') < screen.indexOf('requireLocalAuth(bridgePromptTitle(plan))'));
+  check('the regular account sends through sendEvm with the quote from prepareBridgeSend; the smart account through sendAa with prepareBridgeAa',
+    /sendEvm\(sendUrl, signer, eoaQuote, evmChain\.explorerTxBase\)/.test(screen) && /sendAa\(bundle, signer, aaQuote, \{ kind: 'other' \}\)/.test(screen) &&
+      screen.includes('prepareBridgeSend(ep.url, account.address, p)') && screen.includes('prepareBridgeAa(bundle, account.address, p)'));
+  check('the smart account is checked against the bundler’s fee floor before the device prompt', screen.indexOf('checkAaQuoteBeforeApproval(bundle.bundler, aaQuote)') < screen.indexOf("sendAa(bundle, signer, aaQuote, { kind: 'other' })"));
+  check('the confirm: the preview (eth_simulateV1), the risk card, the spending notice and the pre-flight result',
+    (screen.match(/<BalanceChangePreview /g) ?? []).length === 2 && (screen.match(/<RiskWarnings /g) ?? []).length === 2 && screen.includes('Pre-flight simulation passed (eth_call).'));
+  check('the recipient is always the regular account (account.address), on both paths', (screen.match(/recipient: account\.address,/g) ?? []).length === 2);
+  check('the smart-account sentence is shown on the form before Review (Kernel), the EIP-7702 one for an upgraded account',
+    screen.includes("aaActive && aaType === 'kernel-v3.3' ? (\n              <WarningBox>{smartAccountRecipientNote(account.address, destinationLabel)}</WarningBox>") &&
+      screen.includes('upgradedAccountRecipientNote(account.address, destinationLabel)'));
+  check('a sent transfer is recorded and followed: the record, the note field, the 15-second tracking',
+    screen.includes('recordBridgeTransfer(plan, { sourceTxHash: sent.txid, userOpHash: null })') &&
+      screen.includes('recordBridgeTransfer(plan, { sourceTxHash: null, userOpHash })') &&
+      screen.includes('}, [trackingOn, chainIdDecimal, url]);') &&
+      screen.includes('<TransactionNoteField network={sentNetwork} txid={result.txid} userOpHash={null} />') &&
+      screen.includes('setInterval(tick, BRIDGE_TRACK_INTERVAL_MS)'));
+  check('the retry panel sends retryReceiveToken through prepareBridgeRetry with its own prompt', screen.includes('prepareBridgeRetry(ep.url, fromAddress, record)') && screen.includes('requireLocalAuth(bridgeRetryPromptTitle(record))'));
+  check('the OP-stack fee rows come from bridgeSourceFeeLines', screen.includes('bridgeSourceFeeLines(eoaQuote, symbol)'));
+  check('App.tsx registers Bridge with the title "Bridge (test networks)"; navigation.ts lists it',
+    app.includes("<Stack.Screen name=\"Bridge\" component={BridgeScreen} options={{ title: 'Bridge (test networks)' }} />") && /\n  Bridge: undefined;/.test(nav));
+  check('Home: the Bridge link only where readiness allows and a provider serves the network',
+    home.includes("isFeatureAllowed('bridge', evmChain.caip2) && bridgeOfferFor(evmChain.caip2).destinations.length > 0\n            ? cardLink('bridge', 'Bridge', () => navigation.navigate('Bridge'), 'Opens bridging between test networks')"));
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-bridge: mutation checks');
+// ---------------------------------------------------------------------------
+{
+  resetChains();
+  const expect = { sourceChainId: SEPOLIA, destinationChainId: OP, amount: AMOUNT, recipient: EOA, sender: EOA };
+  const run = (mod, q) => {
+    try {
+      mod.checkBridgeQuote(q, expect);
+      return null;
+    } catch (e) {
+      return e;
+    }
+  };
+  const base = await quoteBridge(quoteRequest());
+  const withApproval = (amount) => {
+    const token = '0x' + '11'.repeat(20);
+    return {
+      ...base.quote,
+      calls: [
+        { purpose: 'approve', chainId: SEPOLIA, to: token, value: 0n, data: ethers.getBytes(oftIface.encodeFunctionData('approve', [base.call.to, amount])), pins: [], unpinnable: [], valueLimit: 0n },
+        ...base.quote.calls,
+      ],
+      approvals: [{ chainId: SEPOLIA, token, spender: base.call.to, amount }],
+    };
+  };
+
+  // 1. An unlimited approval accepted as exact (both exactness checks removed:
+  // the listed approvals and the approve calldata).
+  const m1 = await bridgeMutant(
+    'if (a.amount <= 0n || a.amount > expect.amount || a.amount > MAX_EXACT_APPROVAL) fail(\'an approval that is not exact\');',
+    '// mutant: approval amounts not checked',
+    "if (!hex.startsWith('0x095ea7b3') || hex.length !== 2 + 8 + 128 || amountWord <= 0n || amountWord > expect.amount) {",
+    "if (!hex.startsWith('0x095ea7b3') || hex.length !== 2 + 8 + 128) {",
+  );
+  const r1 = run(m1, withApproval(ethers.MaxUint256));
+  check('MUTANT (approval exactness removed) is caught: the refusal no longer says "not exact"', !/an approval that is not exact/.test(r1?.message ?? ''), r1?.message);
+  // 1b. Only the calldata check kept: still refused (two independent layers).
+  const m1b = await bridgeMutant(
+    'if (a.amount <= 0n || a.amount > expect.amount || a.amount > MAX_EXACT_APPROVAL) fail(\'an approval that is not exact\');',
+    '// mutant: approval amounts not checked',
+  );
+  check('…and with only the listed-approval check removed, the calldata check still refuses an unlimited approval',
+    /an approval that is not exact/.test(run(m1b, withApproval(ethers.MaxUint256))?.message ?? ''));
+  check('…while the real module says it', /an approval that is not exact/.test(run({ checkBridgeQuote }, withApproval(ethers.MaxUint256))?.message ?? ''));
+
+  // 2. A value other than amount + fee accepted.
+  const m2 = await bridgeMutant(
+    "if (call.value !== expect.amount + messagingFee) fail('a value that is not the amount plus the messaging fee');",
+    '// mutant: value not checked',
+  );
+  const bumped = { ...base.quote, calls: [{ ...base.quote.calls[0], value: base.quote.calls[0].value + 1n, valueLimit: base.quote.calls[0].valueLimit + 1n }] };
+  check('MUTANT (value = amount + fee check removed) is caught: it passes a value one wei higher', run(m2, bumped) === null);
+  check('…while the real module refuses it', run({ checkBridgeQuote }, bumped) instanceof BridgeRefusal);
+
+  // 3. The readiness gate removed from quoteBridge.
+  const m3 = await bridgeMutant(
+    `export async function quoteBridge(request: BridgeQuoteRequestApp): Promise<BridgePlan> {
+  assertFeatureAllowed(BRIDGE_FEATURE, request.caip2);`,
+    `export async function quoteBridge(request: BridgeQuoteRequestApp): Promise<BridgePlan> {`,
+  );
+  const r3 = await rejection(() => m3.quoteBridge(quoteRequest({ caip2: 'eip155:1', readers: readersFor(1) })));
+  check('MUTANT (gate removed) is caught: a mainnet quote is no longer refused by readiness', r3?.name !== 'FeatureNotAllowedError', `${r3?.name}`);
+
+  // 4. The provider choice hidden (only offered providers listed).
+  const m4 = await bridgeMutant(
+    `  const destinationLabel = labelOfChain(destinationChainId);
+  return registry.list().map((p) => {`,
+    `  const destinationLabel = labelOfChain(destinationChainId);
+  return registry.list().filter((p) => BRIDGE_PROVIDER_STATUS[p.id] === 'offered').map((p) => {`,
+  );
+  const rows4 = m4.bridgeProviderRows(m4.bridgeOfferFor(caip(SEPOLIA)), OP);
+  check('MUTANT (CCTP hidden from the choice) is caught: the rows no longer list every provider', rows4.length !== 2);
+
+  // 5. The recipient word not checked.
+  const m5 = await bridgeMutant('[OFT_SEND_LAYOUT.to, addressToBytes32(expect.recipient).toLowerCase()],', '');
+  const redirected = { ...base.quote, calls: [{ ...base.quote.calls[0], data: new Uint8Array(base.quote.calls[0].data) }] };
+  redirected.calls[0].data.set(ethers.getBytes(ethers.zeroPadValue(KERNEL_ACCOUNT_0, 32)), 4 + OFT_SEND_LAYOUT.to);
+  check('MUTANT (recipient word not checked) is caught: a redirected recipient passes', run(m5, redirected) === null);
+  check('…while the real module refuses it', run({ checkBridgeQuote }, redirected) instanceof BridgeRefusal);
+
+  // 6. CCTP offered for sending.
+  const m6 = await bridgeMutant(`[CCTP_V2_PROVIDER_ID]: 'coming',`, `[CCTP_V2_PROVIDER_ID]: 'offered',`);
+  const r6 = await rejection(() => m6.quoteBridge(quoteRequest({ providerId: CCTP_V2_PROVIDER_ID, destinationChainId: BASE })));
+  check('MUTANT (CCTP offered) is caught: the refusal is no longer the coming note', r6?.message !== CCTP_COMING_NOTE, r6?.message);
+}
+
+console.log(`\ncheck-bridge: ${passed} passed, ${failed} failed (${mutantCount} mutants)`);
+process.exit(failed === 0 ? 0 : 1);

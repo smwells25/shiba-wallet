@@ -1,4 +1,9 @@
 import { EVM_TEST_PROFILES, isCustomTestNetwork } from './evm-chain.ts';
+// The duress-PIN row's reason lives with the feature (wallet/duress.ts), so
+// the Settings list and the PIN screens say the same thing. duress.ts loads
+// under Node type stripping too (scripts/check-duress.mjs), so the scripts
+// that load this file keep working.
+import { DURESS_READINESS_REASON } from '../wallet/duress.ts';
 
 /**
  * Chairperson decision (2026-10-02): the plain-feature rows ('blocked' but
@@ -13,7 +18,8 @@ import { EVM_TEST_PROFILES, isCustomTestNetwork } from './evm-chain.ts';
  *
  * One table says, for every user-facing feature, whether this build may use
  * it with real funds on a main network. It is pure data plus small helpers
- * with a single import of pure data (./evm-chain.ts), so Node scripts
+ * with two imports: pure data (./evm-chain.ts) and one sentence from
+ * ../wallet/duress.ts (the duress-PIN row's reason), so Node scripts
  * (scripts/check-readiness.mjs and the other app suites) load this exact
  * file under type stripping.
  *
@@ -32,9 +38,12 @@ import { EVM_TEST_PROFILES, isCustomTestNetwork } from './evm-chain.ts';
  *    but section 5.2 still lists unmet conditions that gate them ("For
  *    plain-account features, W1 to W6, W10 to W13 and W17 to W20 are the
  *    gating set"), so each is 'blocked' with its unmet items named.
- *  - Nothing is 'mainnet-ok' today, because every feature has at least one
- *    unmet blocking condition. A status may become 'mainnet-ok' only when
- *    the threat model's checklist shows no unmet blocking item for it.
+ *  - Only the duress PIN is 'mainnet-ok' (phase 21 Stage 2): it is a local
+ *    lock-screen feature that moves no funds and runs on no contract, so no
+ *    checklist item gates it; its reason states the narrow honest claim.
+ *    Every other feature has at least one unmet blocking condition. A
+ *    status may become 'mainnet-ok' only when the threat model's checklist
+ *    shows no unmet blocking item for it.
  *
  * WHAT THE STATUSES MEAN IN THIS BUILD.
  *  - 'testnet-only' features are ENFORCED: the wallet refuses to configure
@@ -84,7 +93,11 @@ export type FeatureId =
   // Phase 18 item 2: liquid staking (Lido, Rocket Pool) on test networks.
   | 'staking'
   // Phase 19 item 2: recurring swaps (dollar-cost averaging) on a session key.
-  | 'dca';
+  | 'dca'
+  // Phase 21 item 1: bridging between test networks (feature 35).
+  | 'bridge'
+  // Phase 21 item 2, Stage 2: the duress PIN and its second wallet (feature 53).
+  | 'duress-pin';
 
 export interface FeatureReadiness {
   id: FeatureId;
@@ -446,6 +459,47 @@ export const FEATURE_READINESS: readonly FeatureReadiness[] = [
     // DCA-specific threat-model row is the CTO's to add at the refresh).
     evidence: ['C1', 'C2', 'C3', 'W9', 'F-14', 'T-64', 'T-69'],
     enforced: true,
+  },
+  // Phase 21 item 1 (feature 35, docs/BRIDGE_PROVIDERS.md): bridging test ETH
+  // between test networks through a provider the user chooses. Appended at
+  // the end of the table, like the staking and dca rows. One row for every
+  // provider (the design document proposed one per provider; the brief for
+  // the in-app slice asked for one): Circle CCTP is listed on the screen
+  // but not offered for sending yet (wallet/bridge.ts).
+  {
+    id: 'bridge',
+    title: 'Bridging between networks',
+    status: 'testnet-only',
+    reason:
+      'A bridge provider’s contracts and verifiers hold your coins while they move: on the test networks each ' +
+      'LayerZero route through Stargate is checked by a single verifier operated by LayerZero Labs, and Stargate’s ' +
+      'test pools can be paused by a key whose private part is public. Circle’s USDC transfers would rest on Circle’s ' +
+      'own two attesters, and this wallet has not yet sent one. This wallet offers bridging only on test networks, and ' +
+      'its bridge path has not been tested as a real build on real phones.',
+    // C1: the Kernel account the smart-account path sends from has no
+    // published audit; W1 / W2: the device conditions every send shares (the
+    // bridge calls go through the regular send and smart-account paths); W9:
+    // the switchboard that enforces this row; W13: the balance-change preview
+    // of the bridge call comes from a single provider. A bridge-specific
+    // threat-model entry (docs/BRIDGE_PROVIDERS.md section 8) is the CTO's to
+    // add at the refresh.
+    evidence: ['C1', 'W1', 'W2', 'W9', 'W13'],
+    enforced: true,
+  },
+  // Phase 21 item 2, Stage 2 (feature 53, docs/DURESS_WALLET.md sections 6
+  // and 7): the opt-in app PIN's duress PIN, which opens a BIP-85 child
+  // wallet. ADVISORY and allowed on every network ('mainnet-ok', not
+  // enforced): it is a lock-screen feature that moves no funds and depends
+  // on no contract, so no checklist item gates it. The reason is the narrow
+  // honest claim, verbatim from wallet/duress.ts. Evidence: T-78 (coercion)
+  // and F-77 (the duress-wallet finding and its residuals).
+  {
+    id: 'duress-pin',
+    title: 'Duress PIN (a second wallet)',
+    status: 'mainnet-ok',
+    reason: DURESS_READINESS_REASON,
+    evidence: ['T-78', 'F-77'],
+    enforced: false,
   },
 ];
 

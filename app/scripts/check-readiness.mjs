@@ -43,6 +43,7 @@ import {
   readinessEvidenceLine,
 } from '../src/config/readiness.ts';
 import { EVM_BASE_SEPOLIA, EVM_MAINNET, EVM_SEPOLIA, EVM_TEST_PROFILES } from '../src/config/evm-chain.ts';
+import { DURESS_READINESS_REASON } from '../src/wallet/duress.ts';
 import {
   KERNEL_PREFILL,
   aaReadinessBlock,
@@ -107,6 +108,10 @@ const EXPECTED_IDS = [
   'staking',
   // Phase 19 item 2: recurring swaps (gate in wallet/sessions.ts and wallet/dca.ts).
   'dca',
+  // Phase 21 item 1: bridging between test networks (gate in wallet/bridge.ts).
+  'bridge',
+  // Phase 21 item 2, Stage 2: the duress PIN (advisory, every network).
+  'duress-pin',
 ];
 const ids = FEATURE_READINESS.map((f) => f.id);
 check('every expected feature id is present exactly once', EXPECTED_IDS.every((id) => ids.filter((x) => x === id).length === 1) && ids.length === EXPECTED_IDS.length, ids.join());
@@ -182,6 +187,32 @@ for (const id of ['eoa-send', 'tokens', 'nft', 'swap', 'walletconnect', 'dogecoi
   check('…and the protected-phrase substitution keeps it two sentences',
     readinessDisplayReason(f, 'protected').split('. ').length === 2 && !readinessDisplayReason(f, 'protected').includes(', and your recovery phrase'));
 }
+// Phase 21 item 1 (feature 35): bridging is testnet-only and enforced, and
+// its reason names the single verifier, the public pause key and Circle's
+// attesters (the honesty points of docs/BRIDGE_PROVIDERS.md).
+{
+  const f = featureReadiness('bridge');
+  check('bridge is testnet-only, enforced, cites C1 and W9',
+    f.status === 'testnet-only' && f.enforced === true && ['C1', 'W9'].every((i) => f.evidence.includes(i)), JSON.stringify(f));
+  check('bridge reason: a single verifier (LayerZero Labs), the public pause key, Circle’s two attesters, not yet sent',
+    /single verifier operated by LayerZero Labs/.test(f.reason) && /paused by a key whose private part is public/.test(f.reason) &&
+      /Circle’s\s+own two attesters/.test(f.reason) && /has not yet sent one/.test(f.reason), f.reason);
+  check('bridge is refused on mainnet and allowed on every built-in test network',
+    !isFeatureAllowed('bridge', MAINNET) && TEST_NETWORK_CHAINS.every((c) => isFeatureAllowed('bridge', c)));
+}
+// Phase 21 item 2, Stage 2 (the Stage 2 entry's deviation, added by the
+// bridge slice): the duress PIN is advisory and allowed everywhere — a
+// lock-screen feature that moves no funds — and its reason is the narrow
+// honest claim exported by wallet/duress.ts, verbatim.
+{
+  const f = featureReadiness('duress-pin');
+  check('duress-pin is mainnet-ok, NOT enforced, evidence exactly T-78 and F-77',
+    f.status === 'mainnet-ok' && f.enforced === false && f.evidence.join() === 'T-78,F-77', JSON.stringify(f));
+  check('duress-pin reason is DURESS_READINESS_REASON verbatim (three sentences, the file-copy and on-chain caveats)',
+    f.reason === DURESS_READINESS_REASON && /can tell that two wallets exist/.test(f.reason) && /links them on-chain/.test(f.reason), f.reason);
+  check('duress-pin is allowed on mainnet and on a test network (advisory, no gate)', isFeatureAllowed('duress-pin', MAINNET) && isFeatureAllowed('duress-pin', SEPOLIA));
+  check('duress-pin is the only mainnet-ok row', FEATURE_READINESS.filter((x) => x.status === 'mainnet-ok').map((x) => x.id).join() === 'duress-pin');
+}
 check('dogecoin-send names W6 (the one real broadcast)', featureReadiness('dogecoin-send').evidence.includes('W6'));
 check('swap names W7 (a live 0x quote)', featureReadiness('swap').evidence.includes('W7'));
 check('paymaster names W8 (live sponsorship)', featureReadiness('paymaster').evidence.includes('W8'));
@@ -197,7 +228,7 @@ check('walletconnect names W11 and W12 (permit decoding, dApp identity)', ['W11'
       /tested offline/.test(wc) && /live app over the WalletConnect relay/.test(wc) && /not yet cleared for real funds/.test(wc), wc);
 }
 // Every enforced feature has a gate in the app modules (static check).
-const gateSources = ['aa.ts', 'delegation.ts', 'sessions.ts', 'passkeys.ts', 'recovery.ts', 'token-gas.ts', 'inheritance.ts', 'browser-bridge.ts', 'multisig.ts', 'staking.ts']
+const gateSources = ['aa.ts', 'delegation.ts', 'sessions.ts', 'passkeys.ts', 'recovery.ts', 'token-gas.ts', 'inheritance.ts', 'browser-bridge.ts', 'multisig.ts', 'staking.ts', 'bridge.ts']
   .map((f) => readFileSync(join(HERE, '..', 'src', 'wallet', f), 'utf8'))
   .join('\n');
 for (const f of FEATURE_READINESS.filter((x) => x.enforced)) {

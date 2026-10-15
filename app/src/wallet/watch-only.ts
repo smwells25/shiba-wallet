@@ -187,6 +187,10 @@ const ROUTE_FEATURES: Record<string, string> = {
   // The in-app browser (feature 79) connects sites to an account and asks
   // it to sign, so it stays OFF the allow list above.
   Apps: 'The in-app browser (Apps)',
+  // Bridging (feature 35, phase 21 item 1) sends from an account with its
+  // key, so it stays OFF both allow lists: refused for a watch-only address
+  // and for a multi-signature account, by this name.
+  Bridge: 'Bridging',
 };
 
 /**
