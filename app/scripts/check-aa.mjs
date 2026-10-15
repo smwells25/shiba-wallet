@@ -2399,5 +2399,87 @@ await (async () => {
   check('pin: …the Kernel smart account keeps its own AA21 wording', kD?.title === aa.AA_FUNDING_TITLE && kD.detail.includes('(not the owner address)'));
 })();
 
+// ---------------------------------------------------------------------------
+// Duress wallet (docs/DURESS_WALLET.md section 5.2): the decoy wallet (a
+// second storage profile) shows the SAME bundler, factory and paymaster
+// rows as the real wallet — they are device settings, read from the primary
+// profile's copy of shiba-wallet.aa-config.v1 — but never the real wallet's
+// EIP-7702 owners or recovered accounts, which stay per wallet.
+// ---------------------------------------------------------------------------
+await (async () => {
+  const aa = await import('../src/wallet/aa.ts');
+  const seam = await import('../src/wallet/store-keys.ts');
+  const { ethers } = await import('ethers');
+  const KEY = 'shiba-wallet.aa-config.v1';
+  const DECOY_KEY = 'shiba-wallet.profile-w2.aa-config.v1';
+  const CHAIN = 'eip155:11155111';
+  const REAL_OWNER = '0x772e00000000000000000000000000000000F44F'.toLowerCase();
+  const DECOY_OWNER = '0x69f0000000000000000000000000000000007e8a';
+  const LINKED = '0x1d723b78e1d0d84fd0531e2686285fb1b6414106';
+  const map = new Map();
+  const store = {
+    map,
+    getItem: async (k) => (map.has(k) ? map.get(k) : null),
+    setItem: async (k, v) => {
+      map.set(k, v);
+    },
+  };
+  const realEntry = {
+    bundlerUrl: 'https://bundler.example/sepolia',
+    bundlerVerifiedAt: '2026-10-15T00:00:00.000Z',
+    bundlerChainIdVerified: '11155111',
+    accountType: 'kernel-v3.3',
+    factory: '0x2577507b78c2008Ff367261CB6285d44ba5eF2E9',
+    factoryImplementation: '0xd6CEDDe84be40893d153Be9d467CD6aD37875b28',
+    kernelMetaFactory: '0xd703aaE79538628d27099B8c4f621bE4CCd142d5',
+    kernelValidator: '0x845ADb2C711129d4f3966735eD98a9F09fC4cE57',
+    kernelAccountId: 'kernel.advanced.v0.3.3',
+    factoryVerifiedAt: '2026-10-15T00:00:00.000Z',
+    eip7702Owners: [ethers.getAddress(REAL_OWNER)],
+    recoveredAccounts: [{ owner: ethers.getAddress('0x' + '11'.repeat(20)), account: ethers.getAddress(LINKED), attachedAt: 'x' }],
+  };
+  const realText = JSON.stringify({ [CHAIN]: realEntry });
+  map.set(KEY, realText);
+  const rowOf = (c) => JSON.stringify([c.bundlerUrl, c.bundlerVerifiedAt, c.bundlerChainIdVerified, c.accountType, c.factory, c.factoryImplementation, c.kernelMetaFactory, c.kernelValidator, c.kernelAccountId, c.factoryVerifiedAt, c.paymasterUrl]);
+  const realView = await aa.getAaConfig(CHAIN, store);
+  try {
+    seam.setActiveStoreProfile({ id: 'second', keyPrefix: 'w2' });
+    const decoyView = await aa.getAaConfig(CHAIN, store);
+    check('decoy: right after it is created, it shows the SAME bundler / factory row as the real wallet (no missing bundler)',
+      rowOf(decoyView) === rowOf(realView) && decoyView.bundlerUrl === realEntry.bundlerUrl && aa.hasCompleteAaSettings(decoyView));
+    check('decoy: none of the real wallet\'s EIP-7702 owners or recovered accounts are visible',
+      decoyView.eip7702Owners.length === 0 && decoyView.recoveredAccounts.length === 0 && aa.recoveredAccountFor(decoyView, realEntry.recoveredAccounts[0].owner) === null);
+    // A per-wallet write in the decoy lands in the decoy's own copy only.
+    await aa.setAccountEip7702(CHAIN, DECOY_OWNER, true, store);
+    check('decoy: its own 7702 owner is stored under its prefix with ONLY per-wallet fields; the real wallet\'s record is byte for byte unchanged',
+      map.get(KEY) === realText && JSON.stringify(Object.keys(JSON.parse(map.get(DECOY_KEY))[CHAIN])) === JSON.stringify(['eip7702Owners']) &&
+        aa.isEip7702Owner(await aa.getAaConfig(CHAIN, store), DECOY_OWNER));
+    // A device-setting change made in the decoy applies to both wallets.
+    await aa.clearAaBundlerUrl(CHAIN, store);
+    const afterClear = JSON.parse(map.get(KEY))[CHAIN];
+    check('decoy: clearing the bundler clears the shared setting (in the primary copy) and keeps the real wallet\'s own links',
+      afterClear.bundlerUrl === undefined && afterClear.factory === realEntry.factory &&
+        JSON.stringify(afterClear.eip7702Owners) === JSON.stringify(realEntry.eip7702Owners) && afterClear.recoveredAccounts.length === 1 &&
+        !('bundlerUrl' in JSON.parse(map.get(DECOY_KEY))[CHAIN]));
+    // A primary copy that cannot be read is never overwritten from the decoy.
+    map.set(KEY, '{not json');
+    const refused = await aa.setAccountEip7702(CHAIN, DECOY_OWNER, false, store).then(() => null, (e) => e);
+    check('decoy: an unreadable primary copy refuses the write (the real wallet\'s links are never lost)',
+      refused?.message === aa.AA_SHARED_SETTINGS_UNREADABLE && map.get(KEY) === '{not json' &&
+        aa.AA_SHARED_SETTINGS_UNREADABLE === 'The smart-account settings stored on this phone could not be read, so nothing was saved.');
+  } finally {
+    seam.setActiveStoreProfile(seam.PRIMARY_STORE_PROFILE);
+  }
+  map.set(KEY, realText);
+  check('primary: reads exactly as before (both halves come from its own record)', rowOf(await aa.getAaConfig(CHAIN, store)) === rowOf(realView) &&
+    (await aa.getAaConfig(CHAIN, store)).eip7702Owners.length === 1);
+  await aa.setAccountEip7702(CHAIN, DECOY_OWNER, true, store);
+  const primaryAfter = JSON.parse(map.get(KEY))[CHAIN];
+  check('primary: a write keeps the whole entry in its one record (no split, key order kept)',
+    JSON.stringify(Object.keys(primaryAfter)) === JSON.stringify(Object.keys(realEntry)) && primaryAfter.eip7702Owners.length === 2);
+  check('the endpoint fields are exactly the device settings of an entry (no owner or account field among them)',
+    JSON.stringify(aa.AA_ENDPOINT_FIELDS) === JSON.stringify(['bundlerUrl', 'bundlerVerifiedAt', 'bundlerChainIdVerified', 'accountType', 'factory', 'factoryImplementation', 'kernelMetaFactory', 'kernelValidator', 'kernelAccountId', 'factoryVerifiedAt', 'paymasterUrl', 'paymasterContext', 'paymasterVerifiedAt']));
+})();
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

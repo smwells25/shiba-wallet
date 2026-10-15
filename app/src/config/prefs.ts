@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AsyncStorage, readStoreItem, writeStoreItem, STORE_KEYS } from '../wallet/store-keys.ts';
 // Explicit .ts extension: scripts/check-devmode.mjs loads this module under
 // Node's type stripping, which resolves relative specifiers literally.
 import { EVM_SEPOLIA, isCustomNetworkId, isTestProfileId, type EvmNetworkChoice, type TestNetworkId } from './evm-chain.ts';
@@ -26,7 +26,8 @@ export interface KeyValueStore {
   setItem(key: string, value: string): Promise<void>;
 }
 
-const PREFS_KEY = 'shiba-wallet.prefs.v1';
+/** Device-wide (shared by every wallet on the phone): wallet/store-keys.ts. */
+const PREFS_KEY = STORE_KEYS.prefs.name;
 
 export interface AppPrefs {
   /**
@@ -154,7 +155,7 @@ function sanitizeTestNetwork(p: Record<string, unknown>): EvmNetworkChoice | nul
 export async function loadPrefs(store: KeyValueStore = AsyncStorage): Promise<AppPrefs> {
   await ensureCustomNetworksLoaded(store);
   try {
-    const raw = await store.getItem(PREFS_KEY);
+    const raw = await readStoreItem(store, PREFS_KEY);
     if (!raw) return { ...DEFAULT_PREFS };
     return sanitize(JSON.parse(raw) as unknown);
   } catch {
@@ -176,7 +177,7 @@ export async function savePrefs(
   }
   // When both are given, testNetwork wins and `sepolia` is re-derived from it.
   const next = sanitize(merged);
-  await store.setItem(PREFS_KEY, JSON.stringify(next));
+  await writeStoreItem(store, PREFS_KEY, JSON.stringify(next));
   return next;
 }
 

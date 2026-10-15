@@ -79,6 +79,8 @@ import {
   siweOriginFor,
   siweSheetState,
   wcOpStackFeeLines,
+  createWcClientCache,
+  wcStoragePrefixFor,
 } from '../src/wallet/walletconnect.ts';
 import { forgetDefaultEndpointChoices } from '../src/config/networks.ts';
 import { DEFAULT_NETWORKS } from '../src/config/defaults.ts';
@@ -1148,8 +1150,53 @@ console.log('check-wc: WalletConnect Verify (verifyContext, threat-model N-06)')
   // UI wiring (source checks; the sheet is React Native and cannot run here).
   const sheet = readFileSync(new URL('../src/components/WcApprovalSheet.tsx', import.meta.url), 'utf8');
   const glue = readFileSync(new URL('../src/wallet/walletconnect.ts', import.meta.url), 'utf8');
-  check('the SDK core is created with telemetryEnabled: false (no init event to pulse.walletconnect.org)',
-    /new Core\(\{\s*projectId,\s*telemetryEnabled:\s*false\s*\}\)/.test(glue));
+  check('the SDK core is created with telemetryEnabled: false (no init event to pulse.walletconnect.org) and the wallet\'s own storage prefix',
+    /new Core\(\{\s*projectId,\s*telemetryEnabled:\s*false,\s*customStoragePrefix:\s*storagePrefix\s*\}\)/.test(glue));
+
+  // Duress wallet (docs/DURESS_WALLET.md section 5.2): one SDK client per
+  // wallet. @walletconnect/core 2.25.0 puts customStoragePrefix into every
+  // key it stores (src/core.ts:99; controllers/store.ts:77–78 and the
+  // others), so the decoy's client never reads the real wallet's sessions.
+  const PRIMARY = { id: 'primary', keyPrefix: null };
+  const DECOY = { id: 'second', keyPrefix: 'w2' };
+  check('the SDK storage prefix: none for the primary wallet (its stored sessions keep their keys), the profile prefix for the second',
+    wcStoragePrefixFor(PRIMARY) === undefined && wcStoragePrefixFor(DECOY) === 'w2');
+  const made = [];
+  const relayLog = [];
+  const cache = createWcClientCache(async (projectId, prefix) => {
+    const name = `client-${made.length}-${prefix ?? 'primary'}`;
+    made.push({ projectId, prefix });
+    if (projectId === 'fails') throw new Error('no network');
+    return {
+      client: { name },
+      relay: { transportClose: async () => { relayLog.push(`close ${name}`); }, transportOpen: async () => { relayLog.push(`open ${name}`); } },
+    };
+  });
+  const [p1, p2] = await Promise.all([cache.get('pid', PRIMARY), cache.get('pid', PRIMARY)]);
+  check('one client per wallet: two callers in the same tick share it (one SDK init), with no storage prefix', p1 === p2 && made.length === 1 && made[0].prefix === undefined);
+  const d1 = await cache.get('pid', DECOY);
+  check('the second wallet gets its OWN client, created with its prefix, and the first wallet\'s relay connection is closed',
+    d1 !== p1 && made.length === 2 && made[1].prefix === 'w2' && relayLog.join('|') === `close ${p1.name}`);
+  relayLog.length = 0;
+  const p3 = await cache.get('pid', PRIMARY);
+  check('back to the first wallet: the same client again (no new init), its relay reopened, the second one\'s closed',
+    p3 === p1 && made.length === 2 && relayLog.includes(`open ${p1.name}`) && relayLog.includes(`close ${d1.name}`) && relayLog.length === 2);
+  relayLog.length = 0;
+  await cache.follow(PRIMARY);
+  check('following the wallet already open changes nothing', relayLog.length === 0);
+  const other = await cache.get('pid-2', DECOY).then(() => null, (e) => e);
+  check('a different project id after a start still needs a restart (the old sentence)',
+    other?.message === 'WalletConnect was already started with a different project id. Restart the app to apply the new one.');
+  const failing = createWcClientCache(async (projectId) => {
+    if (projectId === 'bad') throw new Error('no network');
+    return { client: { ok: true }, relay: null };
+  });
+  const firstTry = await failing.get('bad', PRIMARY).then(() => null, (e) => e);
+  check('a failed init is not cached (a retry with another id can start)', firstTry?.message === 'no network' && failing.size() === 0 && (await failing.get('good', PRIMARY)).ok === true);
+  const walletCtx = readFileSync(new URL('../src/wallet/WalletContext.tsx', import.meta.url), 'utf8');
+  check('WalletContext moves WalletConnect to the opened wallet when the PIN opens another one',
+    /setActiveStoreProfile\(profile\);\n(?:\s*\/\/[^\n]*\n)*\s*void walletConnectFollowProfile\(profile\);/.test(walletCtx));
+  check('initWalletConnect asks the cache for the OPEN wallet\'s client', /return wcClients\.get\(projectId, activeStoreProfile\(\)\);/.test(glue));
   const provider = readFileSync(new URL('../src/wallet/WalletConnectContext.tsx', import.meta.url), 'utf8');
   // Phase 20 item 3: every smart-account completion path (eth_sendTransaction,
   // wallet_sendCalls, the ERC-7715 install) names where it came from, so the

@@ -10,7 +10,7 @@ import React, {
   useSyncExternalStore,
 } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AsyncStorage } from './store-keys';
 import { toHex } from '@shiba-wallet/chains-evm';
 import { useTheme } from '../theme';
 import { useAppLock } from '../components/LockGate';

@@ -280,7 +280,10 @@ console.log('check-notifications: the preference (default OFF)');
   await savePrefs({ notifications: false }, s);
   check('saved false reads back off', (await loadPrefs(s)).notifications === false);
   const prefsSrc = read('src/config/prefs.ts');
-  check('the prefs key used above is the real one', prefsSrc.includes("'shiba-wallet.prefs.v1'"));
+  // Since phase 21 prefs.ts declares its key through the storage seam
+  // (store-keys.ts STORE_KEYS.prefs, device scope) instead of a literal.
+  check('the prefs key used above is the real one (through the storage seam)',
+    prefsSrc.includes('STORE_KEYS.prefs.name') && !prefsSrc.includes("'shiba-wallet.prefs.v1'") && s.map.has('shiba-wallet.prefs.v1'));
 }
 
 // ---------------------------------------------------------------------------
@@ -433,6 +436,37 @@ console.log('check-notifications: planning recurring reminders');
   check('a merchant subscription never gets a reminder (that is the merchant’s job)', merchant.schedule.length === 0);
   const dup = planRecurringSync({ scheduled: [], records: [a], states: [{ record: a, due: recurringDueState(a, status(), now) }, { record: { ...a }, due: recurringDueState(a, status(), now) }], now });
   check('the same payment listed twice is planned once', dup.schedule.length === 1);
+
+  // Duress wallet (docs/DURESS_WALLET.md section 5.2): each wallet's
+  // reminders carry its own identifiers, so a second wallet's session never
+  // cancels or schedules the first one's (and the reverse).
+  const seam = await import('../src/wallet/store-keys.ts');
+  const { priceAlertNotificationId } = await import('../src/wallet/notifications.ts');
+  const DECOY = { id: 'second', keyPrefix: 'w2' };
+  const primaryIds = { rec: ida, take: takeoverNotificationId({ chain: M, account: ACCOUNT, proposalHash: `0x${'cd'.repeat(32)}` }), price: priceAlertNotificationId('eth|above|3000') };
+  check('primary wallet: the identifiers are exactly as before (no prefix added)',
+    primaryIds.rec.startsWith('shiba-wallet.recurring.') && primaryIds.take.startsWith('shiba-wallet.takeover.') && primaryIds.price.startsWith('shiba-wallet.price-alert.'));
+  let decoyIds;
+  let decoyPlan;
+  let decoyKeep;
+  try {
+    seam.setActiveStoreProfile(DECOY);
+    decoyIds = { rec: recurringNotificationId(a), take: takeoverNotificationId({ chain: M, account: ACCOUNT, proposalHash: `0x${'cd'.repeat(32)}` }), price: priceAlertNotificationId('eth|above|3000') };
+    // The decoy has no records: the primary's scheduled and shown reminders are not its own, so nothing is cancelled or dismissed.
+    decoyPlan = planRecurringSync({ scheduled: [ida, idb], presented: [ida], records: [], states: [], now });
+    decoyKeep = planRecurringSync({ scheduled: [decoyIds.rec], records: [], states: [], now });
+  } finally {
+    seam.setActiveStoreProfile(seam.PRIMARY_STORE_PROFILE);
+  }
+  check('second wallet: every identifier carries its profile (shiba-wallet.profile-w2.<kind>.), still under the one root the wallet ever cancels by',
+    decoyIds.rec === `shiba-wallet.profile-w2.recurring.${ida.slice('shiba-wallet.recurring.'.length)}` &&
+      decoyIds.take === `shiba-wallet.profile-w2.takeover.${primaryIds.take.slice('shiba-wallet.takeover.'.length)}` &&
+      decoyIds.price === `shiba-wallet.profile-w2.price-alert.${primaryIds.price.slice('shiba-wallet.price-alert.'.length)}` &&
+      Object.values(decoyIds).every((id) => id.startsWith(NOTIFICATION_ID_PREFIX)));
+  check('second wallet: its planner leaves the first wallet\'s scheduled and shown reminders alone', decoyPlan.cancel.length === 0 && decoyPlan.dismiss.length === 0 && decoyPlan.schedule.length === 0);
+  check('…and cancels its own reminder whose record is gone', JSON.stringify(decoyKeep.cancel) === JSON.stringify([decoyIds.rec]));
+  const primaryPlan = planRecurringSync({ scheduled: [ida, decoyIds.rec], presented: [decoyIds.rec], records: [a], states: [], now });
+  check('first wallet: its planner leaves the second wallet\'s reminders alone', !primaryPlan.cancel.includes(decoyIds.rec) && primaryPlan.dismiss.length === 0);
 }
 
 // ---------------------------------------------------------------------------

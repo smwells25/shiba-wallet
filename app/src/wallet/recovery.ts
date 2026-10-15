@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AsyncStorage, readStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
 import {
   BundlerClient,
   ECDSA_OWNER_REGISTERED_TOPIC,
@@ -182,8 +182,8 @@ import { suggestFeesRetryingOnce } from './fee-read.ts';
  * so scripts/check-recovery.mjs runs this exact code under Node.
  */
 
-export const RECOVERY_RECORDS_KEY = 'shiba-wallet.recovery-records.v1';
-export const RECOVERY_PROGRESS_KEY = 'shiba-wallet.recovery-progress.v1';
+export const RECOVERY_RECORDS_KEY = STORE_KEYS.recoveryRecords.name;
+export const RECOVERY_PROGRESS_KEY = STORE_KEYS.recoveryProgress.name;
 const STORE_VERSION = 1;
 
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
@@ -378,7 +378,7 @@ type RawRead = { state: 'empty' } | { state: 'ok'; entries: Record<string, unkno
 async function readRawMap(store: KeyValueStore, key: string): Promise<RawRead> {
   let text: string | null;
   try {
-    text = await store.getItem(key);
+    text = await readStoreItem(store, key);
   } catch {
     return { state: 'unreadable' };
   }
@@ -479,7 +479,7 @@ async function writeRecordEntry(entry: RecoveryRecordEntry | null, key: string, 
   } else {
     delete entries[key];
   }
-  await store.setItem(RECOVERY_RECORDS_KEY, JSON.stringify({ version: STORE_VERSION, entries }));
+  await writeStoreItem(store, RECOVERY_RECORDS_KEY, JSON.stringify({ version: STORE_VERSION, entries }));
 }
 
 /**
@@ -522,7 +522,7 @@ export async function markRecordExported(
 
 /** Clears an unreadable record store (after an explicit confirmation on screen). */
 export async function resetRecoveryRecords(store: KeyValueStore = AsyncStorage): Promise<void> {
-  await store.setItem(RECOVERY_RECORDS_KEY, JSON.stringify({ version: STORE_VERSION, entries: {} }));
+  await writeStoreItem(store, RECOVERY_RECORDS_KEY, JSON.stringify({ version: STORE_VERSION, entries: {} }));
 }
 
 /**
@@ -538,7 +538,7 @@ export async function wipeRecoveryData(
 ): Promise<{ recordsRemoved: number }> {
   const { entries } = await loadRecoveryRecords(store);
   await resetRecoveryRecords(store);
-  await store.setItem(RECOVERY_PROGRESS_KEY, JSON.stringify({ version: STORE_VERSION, entries: {} }));
+  await writeStoreItem(store, RECOVERY_PROGRESS_KEY, JSON.stringify({ version: STORE_VERSION, entries: {} }));
   await clearAllRecoveredAccounts(aaStore);
   return { recordsRemoved: entries.length };
 }
@@ -2039,7 +2039,7 @@ export async function saveRecoveryProgress(progress: RecoveryProgress, store: Ke
     ...next,
     metadata: next.metadata ? serializeRecoveryMetadata(next.metadata) : null,
   };
-  await store.setItem(RECOVERY_PROGRESS_KEY, JSON.stringify({ version: STORE_VERSION, entries }));
+  await writeStoreItem(store, RECOVERY_PROGRESS_KEY, JSON.stringify({ version: STORE_VERSION, entries }));
   return next;
 }
 
@@ -2049,7 +2049,7 @@ export async function removeRecoveryProgress(chain: string, newOwner: string, st
   if (read.state !== 'ok') return;
   const entries = { ...read.entries };
   delete entries[progressKey(chain, newOwner)];
-  await store.setItem(RECOVERY_PROGRESS_KEY, JSON.stringify({ version: STORE_VERSION, entries }));
+  await writeStoreItem(store, RECOVERY_PROGRESS_KEY, JSON.stringify({ version: STORE_VERSION, entries }));
 }
 
 /** A draft: the fresh account that will become the new owner, nothing checked yet. */

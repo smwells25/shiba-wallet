@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AsyncStorage } from '../wallet/store-keys';
 import { ActivityIndicator, Alert, Linking, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { KERNEL_WEBAUTHN_VALIDATOR } from '@shiba-wallet/chains-evm';

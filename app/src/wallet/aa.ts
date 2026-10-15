@@ -1,4 +1,12 @@
-import { AsyncStorage, readStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
+import {
+  AsyncStorage,
+  PRIMARY_STORE_PROFILE,
+  profileBoundStore,
+  readStoreItem,
+  storeProfileOf,
+  writeStoreItem,
+  STORE_KEYS,
+} from './store-keys.ts';
 import type { DerivedAccount } from '@shiba-wallet/core';
 import { toChecksumAddress } from '@shiba-wallet/core';
 import {
@@ -335,7 +343,58 @@ function normalizeRecoveredLinks(value: unknown): RecoveredAccountLink[] {
 
 type ConfigMap = Record<string, Partial<AaChainConfig>>;
 
-async function loadConfigMap(store: KeyValueStore): Promise<ConfigMap> {
+/**
+ * The fields of a chain's entry that are DEVICE settings, not wallet data:
+ * the bundler and paymaster endpoints, the factory and their verification
+ * records. They hold no address of the wallet's own accounts. Every other
+ * stored field (eip7702Owners, recoveredAccounts, and anything unknown) is
+ * per wallet.
+ *
+ * Duress wallet (docs/DURESS_WALLET.md section 5.2): the record is declared
+ * 'wallet' in the storage seam, so a second profile (the decoy) has its own
+ * copy and never sees the real wallet's EIP-7702 owners or recovered
+ * accounts. The endpoint fields, however, are read from and written to the
+ * PRIMARY profile's copy whichever profile is active, so the decoy shows the
+ * same bundler, factory and paymaster rows as the real wallet (a decoy that
+ * started with no bundler configured would look different), and a change
+ * made in either wallet applies to both, as for the other device settings.
+ * For the primary profile both halves are the same record, so what it
+ * stores is byte for byte what it stored before.
+ */
+export const AA_ENDPOINT_FIELDS = [
+  'bundlerUrl',
+  'bundlerVerifiedAt',
+  'bundlerChainIdVerified',
+  'accountType',
+  'factory',
+  'factoryImplementation',
+  'kernelMetaFactory',
+  'kernelValidator',
+  'kernelAccountId',
+  'factoryVerifiedAt',
+  'paymasterUrl',
+  'paymasterContext',
+  'paymasterVerifiedAt',
+] as const;
+
+const ENDPOINT_FIELD_SET: ReadonlySet<string> = new Set(AA_ENDPOINT_FIELDS);
+
+/** Refusal when another profile cannot read the shared settings it would write back. */
+export const AA_SHARED_SETTINGS_UNREADABLE =
+  'The smart-account settings stored on this phone could not be read, so nothing was saved.';
+
+function splitEntry(entry: Partial<AaChainConfig> | undefined): { endpoints: Record<string, unknown>; wallet: Record<string, unknown> } {
+  const endpoints: Record<string, unknown> = {};
+  const wallet: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(entry ?? {})) {
+    if (ENDPOINT_FIELD_SET.has(k)) endpoints[k] = v;
+    else wallet[k] = v;
+  }
+  return { endpoints, wallet };
+}
+
+/** Parses one stored copy; 'unreadable' for corrupt JSON, a wrong shape or a failed read. */
+async function readConfigMap(store: KeyValueStore): Promise<ConfigMap | 'unreadable'> {
   try {
     const raw = await readStoreItem(store, AA_CONFIG_KEY);
     if (!raw) return {};
@@ -343,16 +402,69 @@ async function loadConfigMap(store: KeyValueStore): Promise<ConfigMap> {
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       return parsed as ConfigMap;
     }
-    return {};
+    return 'unreadable';
   } catch {
-    // Corrupt JSON or unavailable storage: behave as unconfigured rather
-    // than break Settings or the send flow (same discipline as networks.ts).
-    return {};
+    return 'unreadable';
   }
 }
 
+/**
+ * The primary profile's copy of the record when `store` addresses another
+ * profile (where the shared endpoint fields live), else null.
+ */
+function sharedSettingsStore(store: KeyValueStore): KeyValueStore | null {
+  return storeProfileOf(store).keyPrefix === null ? null : profileBoundStore(store, PRIMARY_STORE_PROFILE);
+}
+
+async function loadConfigMap(store: KeyValueStore): Promise<ConfigMap> {
+  // Corrupt JSON or unavailable storage: behave as unconfigured rather than
+  // break Settings or the send flow (same discipline as networks.ts).
+  const own = await readConfigMap(store);
+  const ownMap = own === 'unreadable' ? {} : own;
+  const shared = sharedSettingsStore(store);
+  if (!shared) return ownMap;
+  const primary = await readConfigMap(shared);
+  const primaryMap = primary === 'unreadable' ? {} : primary;
+  const merged: ConfigMap = {};
+  for (const chain of new Set([...Object.keys(primaryMap), ...Object.keys(ownMap)])) {
+    const entry = { ...splitEntry(primaryMap[chain]).endpoints, ...splitEntry(ownMap[chain]).wallet };
+    if (Object.keys(entry).length > 0) merged[chain] = entry as Partial<AaChainConfig>;
+  }
+  return merged;
+}
+
 async function saveConfigMap(map: ConfigMap, store: KeyValueStore): Promise<void> {
-  await writeStoreItem(store, AA_CONFIG_KEY, JSON.stringify(map));
+  const shared = sharedSettingsStore(store);
+  if (!shared) {
+    await writeStoreItem(store, AA_CONFIG_KEY, JSON.stringify(map));
+    notifyAaConfigChanged();
+    return;
+  }
+  // Another profile: its own copy keeps only the per-wallet fields, and the
+  // endpoint fields go to the primary copy, whose per-wallet fields (the real
+  // wallet's accounts) are written back unchanged. A primary copy that cannot
+  // be read is never overwritten (that would lose the real wallet's links).
+  const primary = await readConfigMap(shared);
+  if (primary === 'unreadable') throw new Error(AA_SHARED_SETTINGS_UNREADABLE);
+  const nextPrimary: ConfigMap = {};
+  const nextOwn: ConfigMap = {};
+  for (const chain of new Set([...Object.keys(primary), ...Object.keys(map)])) {
+    const { endpoints, wallet } = splitEntry(map[chain]);
+    // The primary entry in its stored key order: its own per-wallet fields
+    // as they are, the endpoint fields as the decoy left them (so an
+    // unchanged entry is written back byte for byte, i.e. not at all).
+    const p: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(primary[chain] ?? {})) {
+      if (!ENDPOINT_FIELD_SET.has(k)) p[k] = v;
+      else if (k in endpoints) p[k] = endpoints[k];
+    }
+    for (const [k, v] of Object.entries(endpoints)) if (!(k in p)) p[k] = v;
+    if (Object.keys(p).length > 0 || chain in primary) nextPrimary[chain] = p as Partial<AaChainConfig>;
+    if (chain in map) nextOwn[chain] = wallet as Partial<AaChainConfig>;
+  }
+  const primaryText = JSON.stringify(nextPrimary);
+  if (primaryText !== JSON.stringify(primary)) await writeStoreItem(shared, AA_CONFIG_KEY, primaryText);
+  await writeStoreItem(store, AA_CONFIG_KEY, JSON.stringify(nextOwn));
   notifyAaConfigChanged();
 }
 
@@ -3770,6 +3882,7 @@ function notifyAaSent(event: AaSentEvent): void {
  *  - 'walletconnect' / 'browser': a connected app's request, over
  *    WalletConnect or from the in-app browser;
  *  - 'multisig': a multi-signature account's operation this phone submitted;
+ *  - 'bridge': a transfer sent from the Bridge screen (wallet/bridge.ts);
  *  - 'other': every other sendAa caller (guardians, passkeys, owner change,
  *    inheritance), which passes no kind.
  */
@@ -3784,6 +3897,7 @@ export type AaOperationKind =
   | 'walletconnect'
   | 'browser'
   | 'multisig'
+  | 'bridge'
   | 'other';
 
 /** What the Send screen's "Send again" can pre-fill (public data only; see pending-transactions.ts). */

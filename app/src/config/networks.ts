@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AsyncStorage, readStoreItem, writeStoreItem, STORE_KEYS } from '../wallet/store-keys.ts';
 // Explicit .ts extensions: scripts/check-failover.mjs loads this module
 // directly under Node's type stripping, which resolves relative specifiers
 // literally (Metro accepts both forms).
@@ -58,13 +58,14 @@ import {
 /** Session-lifetime, in-memory choice among each chain's default candidates. */
 const defaultResolver = createDefaultEndpointResolver();
 
-const OVERRIDES_KEY = 'shiba-wallet.rpc-endpoints.v1';
+/** Device-wide (shared by every wallet on the phone): wallet/store-keys.ts. */
+const OVERRIDES_KEY = STORE_KEYS.rpcEndpoints.name;
 
 type OverrideMap = Record<string, string>;
 
 async function loadOverrides(store: KeyValueStore = AsyncStorage): Promise<OverrideMap> {
   try {
-    const raw = await store.getItem(OVERRIDES_KEY);
+    const raw = await readStoreItem(store, OVERRIDES_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as unknown;
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
@@ -104,7 +105,7 @@ function checkStoredOverride(stored: string | undefined): { url?: string; ignore
 }
 
 async function saveOverrides(map: OverrideMap, store: KeyValueStore = AsyncStorage): Promise<void> {
-  await store.setItem(OVERRIDES_KEY, JSON.stringify(map));
+  await writeStoreItem(store, OVERRIDES_KEY, JSON.stringify(map));
 }
 
 /** Resolved endpoint state for one chain, ready for display or fetching. */

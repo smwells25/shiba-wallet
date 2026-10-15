@@ -129,7 +129,7 @@ import { parseSessionKeyGrant } from '@shiba-wallet/chains-evm';
 import { RECURRING_SOURCE, recurringEndsAt, type RecurringDue } from './recurring.ts';
 import { DCA_SOURCE, type SessionRecord } from './sessions.ts';
 import { termsOf } from './subscriptions.ts';
-import { NOTIFICATION_ID_NAMES, STORE_KEYS, lazyAppStore, readStoreItem, writeStoreItem } from './store-keys.ts';
+import { NOTIFICATION_ID_NAMES, STORE_KEYS, lazyAppStore, notificationIdNames, readStoreItem, writeStoreItem } from './store-keys.ts';
 import type { KeyValueStore } from './tokens.ts';
 // Type-only (erased under Node): the trigger shape of the installed package.
 import type { NotificationTriggerInput } from 'expo-notifications/build/Notifications.types';
@@ -242,6 +242,16 @@ export type NotificationChannelSpec = { id: string; name: string; importance: 'd
 
 /** Every identifier this wallet schedules starts with this; nothing else is ever cancelled. */
 export const NOTIFICATION_ID_PREFIX = NOTIFICATION_ID_NAMES.root;
+/*
+ * The per-kind prefixes of the PRIMARY wallet. The identifiers themselves
+ * are built with the OPEN wallet's names (store-keys.ts notificationIdNames):
+ * unchanged for the primary wallet, "shiba-wallet.profile-<prefix>.<kind>."
+ * for a second wallet (the duress PIN's decoy), so each wallet's planner
+ * schedules, cancels and dismisses only its own reminders. With an app PIN
+ * on, reminders are off for both wallets (duress.ts effectivePrefs), so this
+ * only matters if that rule ever changes; turning reminders off and the wipe
+ * still cancel by NOTIFICATION_ID_PREFIX, which covers both wallets.
+ */
 export const RECURRING_ID_PREFIX = NOTIFICATION_ID_NAMES.recurring;
 export const TAKEOVER_ID_PREFIX = NOTIFICATION_ID_NAMES.takeover;
 export const PRICE_ALERT_ID_PREFIX = NOTIFICATION_ID_NAMES.priceAlert;
@@ -281,7 +291,7 @@ export function recurringScopeTag(chain: string, owner: string): string {
  */
 export function recurringNotificationId(record: Pick<SessionRecord, 'chain' | 'account' | 'owner' | 'permissionId'>): string {
   const recordKey = `${record.chain}|${record.account.toLowerCase()}|${record.permissionId.toLowerCase()}`;
-  return `${RECURRING_ID_PREFIX}${recurringScopeTag(record.chain, record.owner)}.${shortTag(`recurring|${recordKey}`)}`;
+  return `${notificationIdNames().recurring}${recurringScopeTag(record.chain, record.owner)}.${shortTag(`recurring|${recordKey}`)}`;
 }
 
 /** The key of one found takeover proposal (network, account, proposal hash). */
@@ -290,7 +300,7 @@ export function takeoverKey(found: { chain: string; account: string; proposalHas
 }
 
 export function takeoverNotificationId(found: { chain: string; account: string; proposalHash: string }): string {
-  return `${TAKEOVER_ID_PREFIX}${takeoverKey(found)}`;
+  return `${notificationIdNames().takeover}${takeoverKey(found)}`;
 }
 
 /** The reminder for a due recurring payment. Takes no record: nothing from one can reach the lock screen. */
@@ -325,7 +335,7 @@ export function priceAlertContent(): NotificationContent {
 
 /** One identifier per alert, so a later firing of the same alert replaces the earlier notification. */
 export function priceAlertNotificationId(alertKey: string): string {
-  return `${PRICE_ALERT_ID_PREFIX}${shortTag(`price-alert|${alertKey}`)}`;
+  return `${notificationIdNames().priceAlert}${shortTag(`price-alert|${alertKey}`)}`;
 }
 
 /** The screen a tapped notification asks for, from its data; only the allow-listed screens. */
@@ -489,12 +499,14 @@ export function planRecurringSync(args: {
 }): RecurringSyncPlan {
   const eligibleRecords = args.records.filter(recurringReminderEligible);
   const eligible = new Set(eligibleRecords.map(recurringNotificationId));
-  const scheduled = new Set(args.scheduled.filter((id) => id.startsWith(RECURRING_ID_PREFIX)));
+  // Only the open wallet's reminders (store-keys.ts notificationIdNames).
+  const ownPrefix = notificationIdNames().recurring;
+  const scheduled = new Set(args.scheduled.filter((id) => id.startsWith(ownPrefix)));
   // Shown notifications: wallet identifier → the identifier the system listed.
   const shown = new Map<string, string>();
   for (const listed of args.presented ?? []) {
     const id = walletIdentifierOf(listed);
-    if (id !== null && id.startsWith(RECURRING_ID_PREFIX) && !shown.has(id)) shown.set(id, listed);
+    if (id !== null && id.startsWith(ownPrefix) && !shown.has(id)) shown.set(id, listed);
   }
   const cancel = new Set<string>();
   const dismiss = new Set<string>();
@@ -555,7 +567,7 @@ export function planTakeoverAlerts(args: {
     const key = takeoverKey(f);
     if (seen.has(key)) continue;
     seen.add(key);
-    if (!args.looking) fire.push({ identifier: `${TAKEOVER_ID_PREFIX}${key}`, key });
+    if (!args.looking) fire.push({ identifier: `${notificationIdNames().takeover}${key}`, key });
   }
   return { fire, seen: [...seen] };
 }

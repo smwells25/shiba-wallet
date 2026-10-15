@@ -3,8 +3,10 @@
 // every read, write, delete and listing of such a key goes through the
 // functions below. scripts/check-storage-seam.mjs fails on any key literal,
 // any AsyncStorage or expo-secure-store call, and any getItem / setItem /
-// removeItem call outside this module (apart from an explicit allow-list of
-// files that move in a later slice).
+// removeItem call outside this module; its allow-list is empty since every
+// remaining caller moved here (phase 21). The one exception it pins is
+// WalletContext.tsx's value import of expo-secure-store, which binds the
+// native module once and calls nothing.
 //
 // Why a seam: a decoy wallet (feature 53) must never show the real wallet's
 // records. The primary profile's keys resolve to themselves (scopedStoreKey
@@ -145,14 +147,24 @@ export const STORE_KEYS = Object.freeze({
   wcUsed: declare('shiba-wallet.wc-used.v1', 'wallet'),
   /**
    * Smart-account configuration. MIXED: per-chain bundler URLs and factory
-   * addresses (device-like) together with recovered accounts and EIP-7702
-   * owners (per wallet). Declared 'wallet' so a decoy never sees the real
-   * wallet's accounts; Stage 2 must split it or copy the device fields.
+   * addresses (device settings) together with recovered accounts and
+   * EIP-7702 owners (per wallet). Declared 'wallet' so a decoy never sees
+   * the real wallet's accounts. The endpoint fields are shared by every
+   * wallet on the phone all the same: aa.ts reads and writes them through
+   * the PRIMARY profile's copy of this record whichever profile is active
+   * (aa.ts AA_ENDPOINT_FIELDS), so the decoy shows the same bundler row as
+   * the real wallet, and keeps only its own account links under its prefix.
    */
   aaConfig: declare('shiba-wallet.aa-config.v1', 'wallet'),
   priceAlerts: declare('shiba-wallet.price-alerts.v1', 'wallet'),
   /** Reminder bookkeeping (seen takeover hashes, the "may have scheduled" flag). */
   notifications: declare('shiba-wallet.notifications.v1', 'wallet'),
+  /**
+   * Bridge transfers sent from the Bridge screen (wallet/bridge.ts): what
+   * was sent, by which provider, and the last final status, so tracking
+   * survives a restart. Public data only (hashes, addresses, amounts).
+   */
+  bridgeTransfers: declare('shiba-wallet.bridge-transfers.v1', 'wallet'),
 
   // --- AsyncStorage, device-wide ---------------------------------------------
   prefs: declare('shiba-wallet.prefs.v1', 'device'),
@@ -198,9 +210,13 @@ export const PROTECTED_SECURE_STORE_SERVICE = 'shiba-wallet.protected';
 
 /**
  * Identifiers of local notifications (expo-notifications), not storage keys.
- * Declared here so that every "shiba-wallet." name lives in one place; they
- * are per wallet (a reminder names a record of this wallet), which Stage 2
- * must take into account (docs/DURESS_WALLET.md section 7.4).
+ * Declared here so that every "shiba-wallet." name lives in one place. They
+ * are per wallet (a reminder names a record of this wallet): the PRIMARY
+ * profile's identifiers are these names unchanged, and another profile's
+ * carry its prefix (notificationIdNames below), so a decoy session plans,
+ * schedules and cancels only its own reminders (docs/DURESS_WALLET.md
+ * section 5.2). Every identifier of every profile still starts with `root`,
+ * the one prefix the wallet ever cancels by (turning reminders off, a wipe).
  */
 export const NOTIFICATION_ID_NAMES = Object.freeze({
   root: 'shiba-wallet.',
@@ -350,6 +366,35 @@ interface ProfileBound {
 
 function profileOf(target: object): StoreProfile {
   return (target as ProfileBound).storeProfile ?? activeProfile;
+}
+
+/**
+ * The profile a store's keys are scoped by: its own when it is bound
+ * (profileBoundStore), else the active one. Lets a store module tell
+ * whether it is reading the primary wallet's records.
+ */
+export function storeProfileOf(target: object): StoreProfile {
+  return profileOf(target);
+}
+
+/**
+ * The local-notification identifier names of `profile` (the active one when
+ * omitted): NOTIFICATION_ID_NAMES unchanged for the primary profile; for
+ * another profile every kind gains the profile's segment after the root
+ * (e.g. shiba-wallet.profile-w2.recurring.), so the two wallets' reminders
+ * never share an identifier and neither planner ever touches the other's.
+ */
+export function notificationIdNames(profile: StoreProfile = activeProfile): Readonly<Record<keyof typeof NOTIFICATION_ID_NAMES, string>> {
+  if (profile.keyPrefix === null) return NOTIFICATION_ID_NAMES;
+  assertProfile(profile);
+  const root = `${STORE_KEY_ROOT}${PROFILE_KEY_SEGMENT}${profile.keyPrefix}.`;
+  const kind = (name: string) => `${root}${name.slice(NOTIFICATION_ID_NAMES.root.length)}`;
+  return Object.freeze({
+    root,
+    recurring: kind(NOTIFICATION_ID_NAMES.recurring),
+    takeover: kind(NOTIFICATION_ID_NAMES.takeover),
+    priceAlert: kind(NOTIFICATION_ID_NAMES.priceAlert),
+  });
 }
 
 /**

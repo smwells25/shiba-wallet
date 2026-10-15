@@ -54,47 +54,17 @@ const SEAM_FILE = 'src/wallet/store-keys.ts';
 // ---------------------------------------------------------------------------
 // The allow-list: raw accesses that remain outside the seam, by file. Each
 // value is the exact multiset of findings the scan must report for that
-// file (signature → count). They move into the seam in the next slice:
-//
-//  - src/wallet/recovery.ts and src/wallet/send.ts are being edited by
-//    another slice this wave and were deliberately left alone. send.ts has
-//    no raw access (it only names AsyncStorage in a comment), so it has no
-//    entry; recovery.ts keeps its two key literals and six store calls.
-//  - src/config/prefs.ts and src/config/networks.ts (the preferences and
-//    the endpoint overrides, both 'device' scope) are outside the files
-//    this slice may edit.
-//  - Five screens and WalletConnectContext.tsx import the AsyncStorage
-//    package only to pass it on as the store argument (no key, no call);
-//    they are outside the files this slice may edit and should import the
-//    seam's re-export instead.
+// file (signature → count). EMPTY since phase 21: recovery.ts,
+// config/prefs.ts and config/networks.ts read and write through the seam
+// (their keys declared in store-keys.ts with their scopes: the recovery
+// records and progress 'wallet', the preferences and the endpoint
+// overrides 'device'), and the five screens and WalletConnectContext.tsx
+// that only pass the default store along import the seam's re-export. The
+// one remaining exception is WalletContext.tsx's value import of
+// expo-secure-store (it binds the native module once and calls nothing),
+// which the scan does not count as a finding and a check below pins.
 // ---------------------------------------------------------------------------
-export const ALLOW_LIST = {
-  'src/wallet/recovery.ts': {
-    'import @react-native-async-storage/async-storage': 1,
-    "key 'shiba-wallet.recovery-records.v1'": 1,
-    "key 'shiba-wallet.recovery-progress.v1'": 1,
-    'call .getItem(': 1,
-    'call .setItem(': 5,
-  },
-  'src/config/prefs.ts': {
-    'import @react-native-async-storage/async-storage': 1,
-    "key 'shiba-wallet.prefs.v1'": 1,
-    'call .getItem(': 1,
-    'call .setItem(': 1,
-  },
-  'src/config/networks.ts': {
-    'import @react-native-async-storage/async-storage': 1,
-    "key 'shiba-wallet.rpc-endpoints.v1'": 1,
-    'call .getItem(': 1,
-    'call .setItem(': 1,
-  },
-  'src/screens/GuardiansScreen.tsx': { 'import @react-native-async-storage/async-storage': 1 },
-  'src/screens/InheritanceScreen.tsx': { 'import @react-native-async-storage/async-storage': 1 },
-  'src/screens/OwnerRotationScreen.tsx': { 'import @react-native-async-storage/async-storage': 1 },
-  'src/screens/PasskeyScreen.tsx': { 'import @react-native-async-storage/async-storage': 1 },
-  'src/screens/SessionsScreen.tsx': { 'import @react-native-async-storage/async-storage': 1 },
-  'src/wallet/WalletConnectContext.tsx': { 'import @react-native-async-storage/async-storage': 1 },
-};
+export const ALLOW_LIST = {};
 
 // ---------------------------------------------------------------------------
 // The scanner
@@ -201,12 +171,19 @@ const tree = readTree();
   const { violations, allowListProblems } = evaluate(tree, ALLOW_LIST);
   check(`no raw storage access outside store-keys.ts and the allow-list (${Object.keys(tree).length} files scanned)`, violations.length === 0, violations.join('; '));
   check('the allow-list matches the remaining raw accesses exactly (none stale, none missing)', allowListProblems.length === 0, allowListProblems.join('; '));
-  check('the allow-list names only recovery.ts and the files outside this slice (config, five screens, WalletConnectContext)',
-    Object.keys(ALLOW_LIST).every((f) => f === 'src/wallet/recovery.ts' || f.startsWith('src/config/') || f.startsWith('src/screens/') || f === 'src/wallet/WalletConnectContext.tsx'));
+  check('the allow-list is empty: no file outside store-keys.ts touches a store directly', Object.keys(ALLOW_LIST).length === 0);
   check('send.ts (left alone this wave) has no raw storage access at all', Object.keys(scanSource(tree['src/wallet/send.ts'])).length === 0, JSON.stringify(scanSource(tree['src/wallet/send.ts'])));
-  check('every key literal left in an allow-listed file is declared in the registry, with the right scope',
+  check('the last migrated keys keep their scopes: recovery records and progress per wallet, preferences and endpoint overrides per device',
     seam.storeKeyScope('shiba-wallet.recovery-records.v1') === 'wallet' && seam.storeKeyScope('shiba-wallet.recovery-progress.v1') === 'wallet' &&
       seam.storeKeyScope('shiba-wallet.prefs.v1') === 'device' && seam.storeKeyScope('shiba-wallet.rpc-endpoints.v1') === 'device');
+  check('recovery.ts, prefs.ts and networks.ts name their keys through STORE_KEYS and import the seam, not the package',
+    tree['src/wallet/recovery.ts'].includes('STORE_KEYS.recoveryRecords.name') && tree['src/wallet/recovery.ts'].includes('STORE_KEYS.recoveryProgress.name') &&
+      tree['src/config/prefs.ts'].includes('STORE_KEYS.prefs.name') && tree['src/config/networks.ts'].includes('STORE_KEYS.rpcEndpoints.name') &&
+      ['src/wallet/recovery.ts', 'src/config/prefs.ts', 'src/config/networks.ts'].every((f) => /from '\.\.?\/(?:wallet\/)?store-keys\.ts';/.test(tree[f])));
+  check('the five screens and WalletConnectContext.tsx take the default store from the seam\'s re-export',
+    ['src/screens/GuardiansScreen.tsx', 'src/screens/InheritanceScreen.tsx', 'src/screens/OwnerRotationScreen.tsx', 'src/screens/PasskeyScreen.tsx', 'src/screens/SessionsScreen.tsx']
+      .every((f) => tree[f].includes("import { AsyncStorage } from '../wallet/store-keys';")) &&
+      tree['src/wallet/WalletConnectContext.tsx'].includes("import { AsyncStorage } from './store-keys';"));
   const seamSrc = tree[SEAM_FILE];
   check('store-keys.ts imports expo-secure-store as a TYPE only (Node-loadable; the native module is injected)',
     /import type \* as ExpoSecureStore from 'expo-secure-store'/.test(seamSrc) && !/^import (?!type)[^\n]*'expo-secure-store'/m.test(seamSrc));
@@ -238,8 +215,15 @@ console.log('check-storage-seam: mutants (each must be caught)');
   check('mutant anchor present in storage.ts', storage.includes(sAnchor));
   const m4 = caught(storage.replace(sAnchor, 'backend.getItemAsync(MNEMONIC_KEY, STANDARD)'), 'src/wallet/storage.ts');
   check('mutant caught: the vault reads the phrase with backend.getItemAsync (bypassing the seam)', m4.violations.some((v) => v.includes('getItemAsync(')), JSON.stringify(m4));
-  const m5 = caught(tree['src/wallet/recovery.ts'].replace("'shiba-wallet.recovery-records.v1'", "'shiba-wallet.recovery-records.v1'; const extra = 'shiba-wallet.extra.v1'"), 'src/wallet/recovery.ts');
-  check('mutant caught: an allow-listed file gains a new raw key (the allow-list is exact)', m5.allowListProblems.length > 0, JSON.stringify(m5));
+  const rec = tree['src/wallet/recovery.ts'];
+  const recAnchor = 'await writeStoreItem(store, RECOVERY_PROGRESS_KEY, ';
+  check('mutant anchor present in recovery.ts', rec.includes(recAnchor));
+  const m5 = caught(rec.replace(recAnchor, 'await store.setItem(RECOVERY_PROGRESS_KEY, '), 'src/wallet/recovery.ts');
+  check('mutant caught: recovery.ts writes its progress with store.setItem again (bypassing the seam)', m5.violations.some((v) => v.startsWith('src/wallet/recovery.ts: call .setItem(')), JSON.stringify(m5));
+  const m5b = caught(tree['src/config/prefs.ts'].replace('const PREFS_KEY = STORE_KEYS.prefs.name;', "const PREFS_KEY = 'shiba-wallet.prefs.v1';"), 'src/config/prefs.ts');
+  check('mutant caught: prefs.ts declares its key as a literal again', m5b.violations.some((v) => v.includes("key 'shiba-wallet.prefs.v1'")), JSON.stringify(m5b));
+  const m5c = caught(tree['src/screens/SessionsScreen.tsx'].replace("import { AsyncStorage } from '../wallet/store-keys';", "import AsyncStorage from '@react-native-async-storage/async-storage';"), 'src/screens/SessionsScreen.tsx');
+  check('mutant caught: a screen imports the AsyncStorage package again', m5c.violations.some((v) => v.includes('import @react-native-async-storage')), JSON.stringify(m5c));
   const m6 = evaluate(tree, { ...ALLOW_LIST, 'src/wallet/send.ts': { 'call .getItem(': 1 } });
   check('mutant caught: a stale allow-list entry (send.ts has no raw access)', m6.allowListProblems.some((p) => p.startsWith('src/wallet/send.ts')), JSON.stringify(m6.allowListProblems));
   const m7 = caught("export function f(s) { return s.setItem('k', 'v'); }", 'src/components/NewThing.tsx');
@@ -272,15 +256,17 @@ const ORIGINAL_NAMES = {
 {
   const reg = seam.STORE_KEYS;
   // Stage 2 (the app PIN, wallet/pin.ts) added one key, the app-lock record;
-  // the 39 names the app used before the seam are unchanged.
-  check('the registry declares exactly the 39 key names the app used before the seam, plus the Stage 2 app-lock record (40)',
-    Object.keys(reg).length === 40 && Object.keys(ORIGINAL_NAMES).length === 39 &&
+  // phase 21 added the Bridge screen's transfer list (wallet/bridge.ts). The
+  // 39 names the app used before the seam are unchanged.
+  check('the registry declares exactly the 39 key names the app used before the seam, plus the app-lock record and the bridge transfers (41)',
+    Object.keys(reg).length === 41 && Object.keys(ORIGINAL_NAMES).length === 39 &&
       Object.entries(ORIGINAL_NAMES).every(([role, name]) => reg[role]?.name === name) &&
-      reg.appLock?.name === 'shiba-wallet.app-lock.v1' && reg.appLock.scope === 'secret' && reg.appLock.backing === 'secure-store');
-  check('names are unique', new Set(Object.values(reg).map((d) => d.name)).size === 40);
+      reg.appLock?.name === 'shiba-wallet.app-lock.v1' && reg.appLock.scope === 'secret' && reg.appLock.backing === 'secure-store' &&
+      reg.bridgeTransfers?.name === 'shiba-wallet.bridge-transfers.v1' && reg.bridgeTransfers.scope === 'wallet' && reg.bridgeTransfers.backing === 'async-storage');
+  check('names are unique', new Set(Object.values(reg).map((d) => d.name)).size === 41);
   const scopes = { wallet: 0, device: 0, secret: 0 };
   for (const d of Object.values(reg)) scopes[d.scope] += 1;
-  check('scopes: 21 wallet, 9 device, 10 secret', scopes.wallet === 21 && scopes.device === 9 && scopes.secret === 10, JSON.stringify(scopes));
+  check('scopes: 22 wallet, 9 device, 10 secret', scopes.wallet === 22 && scopes.device === 9 && scopes.secret === 10, JSON.stringify(scopes));
   check('every secret key lives in the secure store and every other key in AsyncStorage',
     Object.values(reg).every((d) => (d.scope === 'secret') === (d.backing === 'secure-store')));
   check('the protected keychain service and the notification identifiers keep their names',
@@ -312,7 +298,7 @@ const ORIGINAL_NAMES = {
   ];
   const bad = pairs.filter(([a, b]) => a !== b);
   check(`the owning modules export the same key strings as before (${pairs.length} constants)`, bad.length === 0, JSON.stringify(bad));
-  check('recovery.ts (still raw) uses the same names the registry declares', mods.recovery.RECOVERY_RECORDS_KEY === reg.recoveryRecords.name && mods.recovery.RECOVERY_PROGRESS_KEY === reg.recoveryProgress.name);
+  check('recovery.ts (migrated) uses the same names the registry declares', mods.recovery.RECOVERY_RECORDS_KEY === reg.recoveryRecords.name && mods.recovery.RECOVERY_PROGRESS_KEY === reg.recoveryProgress.name);
   check('every literal name in the source tree is declared (or is a notification identifier / the keychain service)',
     [...new Set(Object.values(tree).flatMap((t) => [...stripComments(t).matchAll(/'(shiba-wallet\.[A-Za-z0-9.:-]*)'/g)].map((m) => m[1])))]
       .every((k) => Object.values(seam.NOTIFICATION_ID_NAMES).includes(k) || k === seam.PROTECTED_SECURE_STORE_SERVICE || (() => { try { seam.storeKeyDeclaration(k); return true; } catch { return false; } })()));
@@ -460,6 +446,46 @@ console.log('check-storage-seam: a real store module through the seam');
   const akeys = [];
   await loadAccounts({ getItem: async (k) => { akeys.push(k); return null; }, setItem: async (k) => { akeys.push(k); } });
   check('accounts.ts (migrated) reads only its own original key', akeys.length > 0 && akeys.every((k) => k === 'shiba-wallet.accounts.v1'), JSON.stringify(akeys));
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-storage-seam: the last migrated modules, per profile (phase 21)');
+// ---------------------------------------------------------------------------
+{
+  const { savePrefs, loadPrefs } = await import('../src/config/prefs.ts');
+  const { setEndpointOverride, resetEndpoint } = await import('../src/config/networks.ts');
+  const { resetRecoveryRecords, removeRecoveryProgress, loadRecoveryRecords } = await import('../src/wallet/recovery.ts');
+  const mem = new Map();
+  const keys = [];
+  const raw = {
+    getItem: async (k) => { keys.push(k); return mem.has(k) ? mem.get(k) : null; },
+    setItem: async (k, v) => { keys.push(k); mem.set(k, v); },
+  };
+  const decoy = seam.profileBoundStore(raw, { id: 'second', keyPrefix: 'w2' });
+  await savePrefs({ hideAmounts: true }, decoy);
+  check('prefs.ts through the seam: a second wallet reads and writes the SAME device key (shiba-wallet.prefs.v1), unprefixed',
+    keys.includes('shiba-wallet.prefs.v1') && mem.has('shiba-wallet.prefs.v1') && !keys.some((k) => k.includes('prefs') && k.includes('profile-')) &&
+      (await loadPrefs(raw)).hideAmounts === true);
+  keys.length = 0;
+  // The override setter and reset only read and write the store (no endpoint
+  // is resolved or probed, so the offline guard sees no request; getEndpoint
+  // without an override would probe the default endpoints).
+  await setEndpointOverride('eip155:1', 'https://rpc.example/mainnet', { store: decoy });
+  const savedFromDecoy = JSON.parse(mem.get('shiba-wallet.rpc-endpoints.v1') ?? '{}')['eip155:1'];
+  const resetFromPrimary = await resetEndpoint('eip155:1', { store: raw });
+  check('networks.ts through the seam: an override saved from a second wallet lands on the shared device key, and the first wallet sees and resets it',
+    savedFromDecoy === 'https://rpc.example/mainnet' && resetFromPrimary === true &&
+      keys.every((k) => !k.includes('rpc-endpoints') || k === 'shiba-wallet.rpc-endpoints.v1') && keys.includes('shiba-wallet.rpc-endpoints.v1'));
+  keys.length = 0;
+  await resetRecoveryRecords(decoy);
+  await removeRecoveryProgress('eip155:11155111', '0x' + '22'.repeat(20), decoy);
+  await loadRecoveryRecords(decoy);
+  check('recovery.ts through the seam: a second wallet\'s records are its own (profile-prefixed); the first wallet\'s keys are never touched',
+    mem.has('shiba-wallet.profile-w2.recovery-records.v1') && !mem.has('shiba-wallet.recovery-records.v1') && !mem.has('shiba-wallet.recovery-progress.v1') &&
+      keys.every((k) => !k.startsWith('shiba-wallet.recovery-')));
+  keys.length = 0;
+  await resetRecoveryRecords(raw);
+  check('…and the primary wallet keeps the original names (no migration)', mem.has('shiba-wallet.recovery-records.v1') && keys.includes('shiba-wallet.recovery-records.v1'));
 }
 
 console.log(`\ncheck-storage-seam: ${passed} passed, ${failed} failed`);

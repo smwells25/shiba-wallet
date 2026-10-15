@@ -57,6 +57,15 @@ import {
   BRIDGE_LOG_TOO_OLD,
   BRIDGE_PROVIDER_STATUS,
   BRIDGE_RECORDS_NOTE,
+  BRIDGE_RECORDS_READ_ONLY_MESSAGE,
+  BRIDGE_TRANSFERS_KEY,
+  MAX_BRIDGE_TRANSFERS,
+  bridgeRecordFromStored,
+  bridgeRecordToStored,
+  bridgeTransfersReadOnly,
+  bridgeTransfersWritten,
+  loadBridgeTransfers,
+  parseBridgeTransfers,
   BRIDGE_TIME_NOT_PROMISE,
   BRIDGE_TRACK_INTERVAL_MS,
   BRIDGE_TRUST,
@@ -428,7 +437,7 @@ console.log('check-bridge: the provider rows (the choice)');
   check('the screen copy: intro, choice note, records note (exact)',
     BRIDGE_INTRO === 'Bridging moves test ETH from this network to another test network. A bridge provider carries the transfer, and you trust the provider’s contracts and verifiers while it is on its way, so each provider below says who that is. These are test networks: the coins have no value.' &&
       BRIDGE_CHOICE_NOTE === 'You choose the provider. The wallet lists every provider it knows for this pair of networks and never picks one for you.' &&
-      BRIDGE_RECORDS_NOTE === 'Transfers sent from this screen are followed here until the app is closed; they are not stored on the phone yet. The sending transaction also appears in Activity.');
+      BRIDGE_RECORDS_NOTE === 'Transfers sent from this screen are kept on this phone (the newest 64) and followed here whenever this screen is open. The sending transaction also appears in Activity.');
 }
 
 // ---------------------------------------------------------------------------
@@ -587,7 +596,7 @@ console.log('check-bridge: the confirm, the prompt title, the regular-account se
       'Amount: 0.0002 test ETH; at least 0.0002 test ETH must arrive, or the transfer reverts on this network and nothing leaves.',
       `Messaging fee: 0.000102050140082558 test ETH, paid with this transaction; any part not used is refunded to ${EOA}.`,
       'No extra options and no compose message: the transfer cannot run code of its own on the receiving network.',
-      'All of these are fixed words of the call (14 of them), so the wallet checked each one before showing this screen.',
+      'All of these are fixed words of the call (14 of them). Before showing this screen the wallet re-read the receiving network, the recipient, the amount, the fee and the refund address from the call itself, with the value sent; the other words are fixed by how it builds the call.',
     ].join('\n'), m.pinnedSummary.join('\n'));
   check('the pinned-pool line (exact)',
     m.pinnedPool === 'This transaction goes to Stargate’s native ETH pool on Ethereum Sepolia (0x9Cc7e185162Aa5D1425ee924D97a87A0a34A0706), pinned by this wallet from Stargate’s published test-network deployments and checked on-chain on 2026-10-15. The risk card below does not know Stargate’s pools by name.', m.pinnedPool);
@@ -673,7 +682,7 @@ console.log('check-bridge: the smart account (the regular account receives)');
   const q = await prepareBridgeAa(bundle, OWNER_0, plan);
   check('prepareAaCalls: ONE call, to the pool, value = amount + fee, sender = the Kernel account',
     q.calls.length === 1 && same(q.calls[0].to, plan.call.to) && q.calls[0].value === AMOUNT + NATIVE_FEE && same(q.sender, KERNEL_ACCOUNT_0) && q.amount === AMOUNT + NATIVE_FEE);
-  await sendAa(bundle, owner, q, { kind: 'other' });
+  await sendAa(bundle, owner, q, { kind: 'bridge' });
   const exec = decodeKernelExecute(bundler.lastOp.callData);
   check('the submitted UserOperation executes exactly the bridge call with its value',
     exec.calls.length === 1 && same(exec.calls[0].to, plan.call.to) && exec.calls[0].value === AMOUNT + NATIVE_FEE && exec.calls[0].data === toHex(plan.call.data));
@@ -783,7 +792,7 @@ function packetSentLog(src, dst, guid = GUID) {
   const valued = { ...cachedRec, status: { ...st, destinationCalls: [{ ...st.destinationCalls[0], value: 1n }] } };
   check('a retry call with a value is not offered', bridgeRetryCall(valued) === null);
   check('retry from another active network: the switch sentence (exact)',
-    bridgeRetryBlocker(caip(SEPOLIA), cachedRec) === 'Anyone can send this delivery transaction on OP Sepolia, paying the gas there. To send it from this wallet, switch to OP Sepolia (Settings → Developer) and come back to this screen; transfers stay listed until the app is closed.' &&
+    bridgeRetryBlocker(caip(SEPOLIA), cachedRec) === 'Anyone can send this delivery transaction on OP Sepolia, paying the gas there. To send it from this wallet, switch to OP Sepolia (Settings → Developer) and come back to this screen; this transfer stays listed here.' &&
       bridgeRetryBlocker(caip(OP), cachedRec) === null);
   check('the retry prompt title (exact)', bridgeRetryPromptTitle(cachedRec) === 'Deliver bridged test ETH waiting in Stargate’s pool on OP Sepolia');
   const rq = await prepareBridgeRetry(ACTIVE_URL(OP), EOA, cachedRec);
@@ -810,6 +819,130 @@ function packetSentLog(src, dst, guid = GUID) {
   const stamped = recordBridgeTransfer(plan, { sourceTxHash: null, userOpHash: null });
   check('sentAt defaults to the time of recording', stamped.sentAt >= before && stamped.sentAt <= Date.now());
   resetBridgeTransfers();
+}
+// ---------------------------------------------------------------------------
+console.log('check-bridge: transfer records stored per wallet (phase 21)');
+// ---------------------------------------------------------------------------
+{
+  const { PRIMARY_STORE_PROFILE, profileBoundStore, STORE_KEYS, storeKeyScope } = await import('../src/wallet/store-keys.ts');
+  const memStore = (initial = {}) => {
+    const map = new Map(Object.entries(initial));
+    return {
+      map,
+      getItem: async (k) => (map.has(k) ? map.get(k) : null),
+      setItem: async (k, v) => {
+        map.set(k, v);
+      },
+      removeItem: async (k) => {
+        map.delete(k);
+      },
+    };
+  };
+  check('the key is declared in the storage seam, per wallet', BRIDGE_TRANSFERS_KEY === 'shiba-wallet.bridge-transfers.v1' &&
+    STORE_KEYS.bridgeTransfers.name === BRIDGE_TRANSFERS_KEY && storeKeyScope(BRIDGE_TRANSFERS_KEY) === 'wallet' && MAX_BRIDGE_TRANSFERS === 64);
+  resetChains();
+  await resetBridgeTransfers();
+  const plan = await quoteBridge(quoteRequest());
+  const store = memStore();
+  check('a fresh phone: nothing stored, writable', (await loadBridgeTransfers(store)).readOnly === false && listBridgeTransfers().length === 0);
+  const rec = recordBridgeTransfer(plan, { sourceTxHash: SOURCE_TX, userOpHash: null, sentAt: 1_791_900_000_000 });
+  await bridgeTransfersWritten();
+  const stored = JSON.parse(store.map.get(BRIDGE_TRANSFERS_KEY));
+  check('a sent transfer is written at once: version 1, one record, bigints as decimal strings, no final status yet',
+    stored.version === 1 && stored.records.length === 1 && stored.records[0].id === rec.id && stored.records[0].amountIn === AMOUNT.toString() &&
+      stored.records[0].destinationFromBlock === rec.destinationFromBlock.toString() && stored.records[0].final === null);
+  // A status that is not final is not stored; a final one is.
+  updateBridgeTransfer(rec.id, { status: { state: 'in-flight', detail: 'x' }, checkedAt: 5 });
+  await bridgeTransfersWritten();
+  check('an in-flight status is not stored (the screen asks again after a restart)', JSON.parse(store.map.get(BRIDGE_TRANSFERS_KEY)).records[0].final === null);
+  const delivered = { state: 'delivered', detail: 'Delivered: the receiving network shows OFTReceived.', destinationTxHash: DELIVERY_TX, onChain: { status: 'delivered' } };
+  updateBridgeTransfer(rec.id, { status: delivered, checkedAt: 1_791_900_090_000 });
+  await bridgeTransfersWritten();
+  check('a delivered status is stored as the final state with its detail and destination transaction (nothing else of the status)',
+    JSON.stringify(JSON.parse(store.map.get(BRIDGE_TRANSFERS_KEY)).records[0].final) ===
+      JSON.stringify({ state: 'delivered', detail: delivered.detail, destinationTxHash: DELIVERY_TX, checkedAt: 1_791_900_090_000 }));
+  // "Restart": memory forgotten, loaded again from the store.
+  await resetBridgeTransfers();
+  check('after a restart the list is empty until the screen loads it', listBridgeTransfers().length === 0);
+  const loaded = await loadBridgeTransfers(store);
+  const back = listBridgeTransfers()[0];
+  check('…and the load brings the transfer back with its route, amount, hashes and final status (tracking survives a restart)',
+    !loaded.readOnly && listBridgeTransfers().length === 1 && back.id === rec.id && back.amountIn === AMOUNT && back.sourceTxHash === SOURCE_TX &&
+      back.route.destinationChainId === OP && back.destinationFromBlock === rec.destinationFromBlock && back.status?.state === 'delivered' &&
+      back.status.destinationTxHash === DELIVERY_TX && bridgeTransferFinal(back) && back.checkedAt === 1_791_900_090_000);
+  const roundTrip = bridgeRecordFromStored(bridgeRecordToStored(rec));
+  check('a record round-trips through its stored form', roundTrip !== null && roundTrip.id === rec.id && roundTrip.amountIn === rec.amountIn && roundTrip.recipient === rec.recipient);
+  // Strict parse: one bad record makes the list read-only; nothing is written then.
+  const good = bridgeRecordToStored(rec);
+  const bad = (patch) => JSON.stringify({ version: 1, records: [good, { ...good, id: 'bridge-1-2', ...patch }] });
+  const variants = {
+    'an extra key': { extra: 1 },
+    'an amount that is not a decimal string': { amountIn: 12 },
+    'a CAIP-2 id that disagrees with the route': { sourceCaip2: 'eip155:1' },
+    'a regular send without its transaction': { sourceTxHash: null },
+    'a final state that is not final': { final: { state: 'in-flight', detail: 'x', destinationTxHash: null, checkedAt: 1 } },
+    'a malformed recipient': { recipient: '0x1234' },
+  };
+  const strict = Object.entries(variants).filter(([, patch]) => {
+    const r = parseBridgeTransfers(bad(patch));
+    return !(r.readOnly && r.records.length === 1);
+  });
+  check(`the parse is strict: ${Object.keys(variants).length} damaged records each make the list read-only, the valid one still shown`, strict.length === 0, strict.map(([k]) => k).join());
+  check('…and corrupt JSON, a wrong version or an extra top-level key do too',
+    parseBridgeTransfers('{').readOnly && parseBridgeTransfers(JSON.stringify({ version: 2, records: [] })).readOnly &&
+      parseBridgeTransfers(JSON.stringify({ version: 1, records: [], x: 1 })).readOnly && !parseBridgeTransfers(null).readOnly);
+  const damagedText = bad({ extra: 1 });
+  const damaged = memStore({ [BRIDGE_TRANSFERS_KEY]: damagedText });
+  await resetBridgeTransfers();
+  check('a damaged store loads read-only, with the valid record listed', (await loadBridgeTransfers(damaged)).readOnly && bridgeTransfersReadOnly() && listBridgeTransfers().length === 1);
+  recordBridgeTransfer(plan, { sourceTxHash: SOURCE_TX.replace(/.$/, '0'), userOpHash: null, sentAt: 1_791_900_200_000 });
+  await bridgeTransfersWritten();
+  check('…a transfer sent then is listed but the damaged document is NOT written over', listBridgeTransfers().length === 2 && damaged.map.get(BRIDGE_TRANSFERS_KEY) === damagedText);
+  check('the read-only sentence (exact)', BRIDGE_RECORDS_READ_ONLY_MESSAGE ===
+    'The list of bridge transfers on this phone could not be read in full, so it is not changed: transfers sent now are followed only until the app is closed. Reset the transfer list to start a new one; nothing on the network changes.');
+  await resetBridgeTransfers(damaged);
+  check('"Reset the transfer list" removes the stored list and makes it writable again',
+    !damaged.map.has(BRIDGE_TRANSFERS_KEY) && listBridgeTransfers().length === 0 && (await loadBridgeTransfers(damaged)).readOnly === false);
+  // The cap: the newest 64, the oldest finished ones first.
+  const capStore = memStore();
+  await resetBridgeTransfers();
+  await loadBridgeTransfers(capStore);
+  const capIds = [];
+  for (let i = 0; i < MAX_BRIDGE_TRANSFERS + 3; i += 1) {
+    const r = recordBridgeTransfer(plan, { sourceTxHash: SOURCE_TX, userOpHash: null, sentAt: 1_791_000_000_000 + i });
+    capIds.push(r.id);
+    if (i === 1) updateBridgeTransfer(r.id, { status: delivered, checkedAt: 1_791_000_000_100 });
+  }
+  await bridgeTransfersWritten();
+  const capped = JSON.parse(capStore.map.get(BRIDGE_TRANSFERS_KEY)).records;
+  check('the list is capped at 64: the finished one goes first, then the oldest',
+    listBridgeTransfers().length === 64 && capped.length === 64 && !capped.some((r) => r.id === capIds[1]) && !capped.some((r) => r.id === capIds[0]) &&
+      !capped.some((r) => r.id === capIds[2]) && capped.some((r) => r.id === capIds[3]) && capped[0].id === capIds[capIds.length - 1]);
+  // Per wallet: the decoy (a second storage profile) never sees the real wallet's transfers.
+  const shared = memStore();
+  const decoy = profileBoundStore(shared, { id: 'second', keyPrefix: 'w2' });
+  const real = profileBoundStore(shared, PRIMARY_STORE_PROFILE);
+  await resetBridgeTransfers();
+  await loadBridgeTransfers(real);
+  recordBridgeTransfer(plan, { sourceTxHash: SOURCE_TX, userOpHash: null, sentAt: 1_791_900_300_000 });
+  await bridgeTransfersWritten();
+  await loadBridgeTransfers(decoy);
+  check('a second wallet (the duress decoy) loads an empty list: the other wallet\'s records are dropped from memory, and its key is its own',
+    listBridgeTransfers().length === 0 && shared.map.has(BRIDGE_TRANSFERS_KEY) && !shared.map.has('shiba-wallet.profile-w2.bridge-transfers.v1'));
+  await resetBridgeTransfers();
+
+  // MUTANT: the read-only guard removed from the writer → a damaged list is overwritten.
+  const mr = await bridgeMutant('  if (!target || target.readOnly) return writeQueue;', '  if (!target) return writeQueue;');
+  const damaged2 = memStore({ [BRIDGE_TRANSFERS_KEY]: damagedText });
+  await mr.loadBridgeTransfers(damaged2);
+  mr.recordBridgeTransfer(plan, { sourceTxHash: SOURCE_TX, userOpHash: null, sentAt: 1_791_900_400_000 });
+  await mr.bridgeTransfersWritten();
+  check('MUTANT (read-only guard removed) is caught: the damaged list was written over', damaged2.map.get(BRIDGE_TRANSFERS_KEY) !== damagedText);
+  // MUTANT: the record parse no longer insists on its exact key set.
+  const mk = await bridgeMutant('  if (!isObject(value) || !exactKeys(value, STORED_KEYS)) return null;', '  if (!isObject(value)) return null;');
+  check('MUTANT (exact key set dropped) is caught: a record with an extra key is accepted', mk.parseBridgeTransfers(bad({ extra: 1 })).readOnly === false);
+  await mk.resetBridgeTransfers();
+  await mr.resetBridgeTransfers();
 }
 {
   // The readers on their own.
@@ -881,9 +1014,9 @@ console.log('check-bridge: the screen, the route gates, Home and the navigator (
     (screen.match(/const auth = await requireLocalAuth\(bridgePromptTitle\(plan\)\);/g) ?? []).length === 2 &&
       screen.indexOf('spendingGateForQuote({ chain: caip2, owner: account.address, from: preparedFrom.current') < screen.indexOf('requireLocalAuth(bridgePromptTitle(plan))'));
   check('the regular account sends through sendEvm with the quote from prepareBridgeSend; the smart account through sendAa with prepareBridgeAa',
-    /sendEvm\(sendUrl, signer, eoaQuote, evmChain\.explorerTxBase\)/.test(screen) && /sendAa\(bundle, signer, aaQuote, \{ kind: 'other' \}\)/.test(screen) &&
+    /sendEvm\(sendUrl, signer, eoaQuote, evmChain\.explorerTxBase\)/.test(screen) && /sendAa\(bundle, signer, aaQuote, \{ kind: 'bridge' \}\)/.test(screen) &&
       screen.includes('prepareBridgeSend(ep.url, account.address, p)') && screen.includes('prepareBridgeAa(bundle, account.address, p)'));
-  check('the smart account is checked against the bundler’s fee floor before the device prompt', screen.indexOf('checkAaQuoteBeforeApproval(bundle.bundler, aaQuote)') < screen.indexOf("sendAa(bundle, signer, aaQuote, { kind: 'other' })"));
+  check('the smart account is checked against the bundler’s fee floor before the device prompt', screen.indexOf('checkAaQuoteBeforeApproval(bundle.bundler, aaQuote)') < screen.indexOf("sendAa(bundle, signer, aaQuote, { kind: 'bridge' })"));
   check('the confirm: the preview (eth_simulateV1), the risk card, the spending notice and the pre-flight result',
     (screen.match(/<BalanceChangePreview /g) ?? []).length === 2 && (screen.match(/<RiskWarnings /g) ?? []).length === 2 && screen.includes('Pre-flight simulation passed (eth_call).'));
   check('the recipient is always the regular account (account.address), on both paths', (screen.match(/recipient: account\.address,/g) ?? []).length === 2);
@@ -896,6 +1029,15 @@ console.log('check-bridge: the screen, the route gates, Home and the navigator (
       screen.includes('}, [trackingOn, chainIdDecimal, url]);') &&
       screen.includes('<TransactionNoteField network={sentNetwork} txid={result.txid} userOpHash={null} />') &&
       screen.includes('setInterval(tick, BRIDGE_TRACK_INTERVAL_MS)'));
+  check('the screen loads the stored transfers when it opens, and offers "Reset the transfer list" with the read-only sentence when the list is damaged',
+    screen.includes('loadBridgeTransfers().then(') && screen.includes('<WarningBox>{BRIDGE_RECORDS_READ_ONLY_MESSAGE}</WarningBox>') &&
+      screen.includes('<Button title="Reset the transfer list" variant="secondary" onPress={onResetTransfers} />') && screen.includes('resetBridgeTransfers(AsyncStorage)'));
+  check('a smart-account operation that reverted is stored as failed (it carries the time it was learned)',
+    /updateBridgeTransfer\(record\.id, \{\n\s+sourceTxHash: summary\.txHash,\n\s+checkedAt: Date\.now\(\),\n\s+status: \{ state: 'failed'/.test(screen));
+  const walletCtx = source('src/wallet/WalletContext.tsx');
+  check('the wipe forgets the stored transfers on both paths (with an app PIN: for each wallet), and opening the other wallet clears the list in memory',
+    walletCtx.includes('await resetBridgeTransfers(store).catch(() => undefined);') && walletCtx.includes('await resetBridgeTransfers(AsyncStorage).catch(() => undefined);') &&
+      /setActiveStoreProfile\(profile\);[\s\S]{0,400}void resetBridgeTransfers\(\);/.test(walletCtx));
   check('the retry panel sends retryReceiveToken through prepareBridgeRetry with its own prompt', screen.includes('prepareBridgeRetry(ep.url, fromAddress, record)') && screen.includes('requireLocalAuth(bridgeRetryPromptTitle(record))'));
   check('the OP-stack fee rows come from bridgeSourceFeeLines', screen.includes('bridgeSourceFeeLines(eoaQuote, symbol)'));
   check('App.tsx registers Bridge with the title "Bridge (test networks)"; navigation.ts lists it',

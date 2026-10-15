@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AsyncStorage } from '../wallet/store-keys';
 import { ActivityIndicator, Alert, Linking, ScrollView, Switch, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { KernelRecoveryMetadata } from '@shiba-wallet/chains-evm';

@@ -17,6 +17,7 @@ import { NOTE_VIEW_SCROLL_PROPS, TransactionNoteField, dismissKeyboardThenClose 
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
 import { requireLocalAuth } from '../wallet/biometric';
+import { AsyncStorage } from '../wallet/store-keys';
 import { parseUnits } from '../wallet/balances';
 import { multisigRouteRefusal, watchOnlyRouteRefusal } from '../wallet/watch-only';
 import {
@@ -50,6 +51,7 @@ import {
   BRIDGE_CHOICE_NOTE,
   BRIDGE_INTRO,
   BRIDGE_RECORDS_NOTE,
+  BRIDGE_RECORDS_READ_ONLY_MESSAGE,
   BRIDGE_TRACK_INTERVAL_MS,
   BridgeRefusal,
   bridgeConfirmModel,
@@ -63,11 +65,13 @@ import {
   bridgeTransferFinal,
   defaultChainTransport,
   listBridgeTransfers,
+  loadBridgeTransfers,
   prepareBridgeAa,
   prepareBridgeRetry,
   prepareBridgeSend,
   quoteBridge,
   recordBridgeTransfer,
+  resetBridgeTransfers,
   regularRecipientNote,
   smartAccountRecipientNote,
   subscribeBridgeTransfers,
@@ -225,10 +229,38 @@ export function BridgeScreen({ navigation }: Props) {
   const [aaConfig, setAaConfig] = useState<AaChainConfig | null>(null);
   const [aaEnabled, setAaEnabled] = useState(false);
 
-  // Transfers of this session (in memory; wallet/bridge.ts), and which are being checked.
+  // Transfers sent from this screen (stored per wallet; wallet/bridge.ts), and which are being checked.
   const [records, setRecords] = useState<BridgeTransferRecord[]>(() => listBridgeTransfers());
+  const [recordsReadOnly, setRecordsReadOnly] = useState(false);
   const [checking, setChecking] = useState<Record<string, boolean>>({});
   useEffect(() => subscribeBridgeTransfers(() => setRecords(listBridgeTransfers())), []);
+  useEffect(() => {
+    let cancelled = false;
+    loadBridgeTransfers().then(
+      (r) => !cancelled && setRecordsReadOnly(r.readOnly),
+      () => !cancelled && setRecordsReadOnly(true),
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const onResetTransfers = () => {
+    Alert.alert('Reset the transfer list?', 'This forgets every bridge transfer listed on this phone. Nothing on the network changes.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Reset',
+        style: 'destructive',
+        onPress: () => {
+          void resetBridgeTransfers(AsyncStorage)
+            .then(() => loadBridgeTransfers())
+            .then(
+              (r) => setRecordsReadOnly(r.readOnly),
+              () => setRecordsReadOnly(true),
+            );
+        },
+      },
+    ]);
+  };
 
   useEffect(() => {
     navigation.setOptions({ title: 'Bridge (test networks)' });
@@ -543,7 +575,7 @@ export function BridgeScreen({ navigation }: Props) {
     }
     setPhase('aa-sending');
     try {
-      const { userOpHash } = await signWith(EVM_CHAIN_ID, preparedFrom.current ?? '', (signer) => sendAa(bundle, signer, aaQuote, { kind: 'other' }));
+      const { userOpHash } = await signWith(EVM_CHAIN_ID, preparedFrom.current ?? '', (signer) => sendAa(bundle, signer, aaQuote, { kind: 'bridge' }));
       const record = recordBridgeTransfer(plan, { sourceTxHash: null, userOpHash });
       setSentRecordId(record.id);
       setSentNetwork(caip2);
@@ -555,6 +587,7 @@ export function BridgeScreen({ navigation }: Props) {
           if (summary.success === false) {
             updateBridgeTransfer(record.id, {
               sourceTxHash: summary.txHash,
+              checkedAt: Date.now(),
               status: { state: 'failed', detail: 'The smart-account operation was included but reverted, so nothing was bridged; its network fee was still charged.' },
             });
           } else if (summary.txHash) {
@@ -632,6 +665,7 @@ export function BridgeScreen({ navigation }: Props) {
         <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}>Where the transfer is</Text>
         {transferCards(sentRecordId)}
         <Text style={[styles.hint, { color: theme.textMuted }]}>{BRIDGE_RECORDS_NOTE}</Text>
+        {recordsReadOnly ? <WarningBox>{BRIDGE_RECORDS_READ_ONLY_MESSAGE}</WarningBox> : null}
         {sentNetwork && aaResult ? <TransactionNoteField network={sentNetwork} txid={aaResult.txHash} userOpHash={aaResult.userOpHash} /> : null}
         {sentNetwork && !aaResult && result ? <TransactionNoteField network={sentNetwork} txid={result.txid} userOpHash={null} /> : null}
         <Button
@@ -866,10 +900,16 @@ export function BridgeScreen({ navigation }: Props) {
         </>
       )}
 
-      {records.length > 0 ? (
+      {records.length > 0 || recordsReadOnly ? (
         <>
           <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}>Transfers sent from this screen</Text>
           <Text style={[styles.hint, { color: theme.textMuted }]}>{BRIDGE_RECORDS_NOTE}</Text>
+          {recordsReadOnly ? (
+            <>
+              <WarningBox>{BRIDGE_RECORDS_READ_ONLY_MESSAGE}</WarningBox>
+              <Button title="Reset the transfer list" variant="secondary" onPress={onResetTransfers} />
+            </>
+          ) : null}
           {transferCards(null)}
         </>
       ) : null}
