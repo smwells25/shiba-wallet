@@ -8703,3 +8703,88 @@ Opus.
       ETH Sepolia → OP Sepolia from Account 1's regular account); layout,
       TalkBack, dark mode; UnreceivedTokenCached / the retry live; the
       decoders on raw receipts.
+- [x] Duress Stage 1 remainders CLOSED, bridge transfers PERSISTED, the
+      threat model's bridge rows (commit 2a1d2dc; 26 files; check-storage-seam
+      56 (was 47; its allow-list now EMPTY), check-wc 309 (300),
+      check-notifications 184 (179), check-bridge 180 (159; 9 mutants),
+      check-pending 187 (186), check-aa 379 (371); the vault suites
+      unchanged; offline runner ALL GREEN in the CTO's isolated worktree
+      on HEAD 4b5c6de: engine 1,046, app 9,119 across 59 suites, lint
+      0/0, tsc clean; one mutant per item caught; the first verify tripped
+      the runner's OFFLINE GUARD (two blocked attempts to
+      ethereum-rpc.publicnode.com / ethereum.publicnode.com) because the
+      suite's own new check called getEndpoint for a chain with no
+      override and so resolved and PROBED the mainnet default — the check
+      now saves and resets an override through the seam instead (the
+      guard untouched; lesson: a suite that runs green by hand can still
+      make network requests — the runner's guard is the test); the
+      secret scan clean; not seen on a device). SEAM: recovery.ts,
+      config/prefs.ts and config/networks.ts through store-keys.ts
+      (recovery records and progress wallet-scoped; prefs and
+      rpc-endpoints device); the six pass-along files import the seam's
+      re-export; 41 keys — 22 wallet, 9 device, 10 secret. AA-CONFIG
+      DECISION (neither option as written — the record holds
+      eip7702Owners and recoveredAccounts, the real wallet's addresses,
+      so it cannot be device-scoped; splitting the key would move stored
+      fields seven suites pin; a one-time copy would drift): the key stays
+      wallet-scoped and its DEVICE FIELDS (bundler, factory, paymaster and
+      their verification records — AA_ENDPOINT_FIELDS) are read from and
+      written to the PRIMARY profile's copy whichever wallet is open; the
+      primary wallet's path byte-for-byte unchanged, no migration; the
+      decoy shows the same bundler row from creation and a bundler change
+      in either wallet applies to both; a decoy write that cannot read
+      the primary copy refuses (AA_SHARED_SETTINGS_UNREADABLE "The
+      smart-account settings stored on this phone could not be read, so
+      nothing was saved."). WALLETCONNECT (@walletconnect/core 2.25.0
+      source map: every key is wc@2:core: / wc@2:client: + version +
+      customStoragePrefix + // + name — store.ts 77–78, keychain.ts 41–42,
+      messages.ts 61–70…; the prefix is ":" + option or "" — core.ts 99;
+      keyvaluestorage 1.1.1 writes AsyncStorage with the raw key; one
+      process-wide core per prefix — core.ts 235–268; the two unprefixed
+      keys WALLETCONNECT_CLIENT_ID (Core.init only; the app calls new
+      Core) and WALLETCONNECT_LINK_MODE_APPS (link-mode peers only; the
+      app sets no redirect) are never written): the primary client passes
+      no prefix (existing sessions keep their keys), the decoy's passes
+      "w2"; createWcClientCache per profile replaces the single
+      cachedInit; unlockWithPin → walletConnectFollowProfile closes the
+      other wallet's relay (relayer.transportClose) and reopens it on
+      return (best effort — the SDK reopens a closed connection by itself
+      when the network returns, relayer.ts 632–646); neither the wipe nor
+      removing the duress PIN deletes the SDK's own wc@2:* keys (already
+      true for the ordinary wipe; a re-created decoy is the same BIP-85
+      child and finds only its own sessions — stated in DURESS_WALLET
+      §5.2). NOTIFICATION IDS: notificationIdNames(profile) — unchanged
+      for the primary, shiba-wallet.profile-w2.{recurring,takeover,
+      price-alert}. for the decoy; moot today (a PIN forces
+      notifications off) and kept minimal; Off and the wipe still cancel
+      by the root prefix. BRIDGE RECORDS: shiba-wallet.bridge-transfers.v1
+      (wallet scope, version 1, exact key sets, cap 64 with finished
+      transfers dropped first, a damaged document read-only with "Reset
+      the transfer list" — "The list of bridge transfers on this phone
+      could not be read in full…"), only delivered or failed statuses
+      stored, anything else re-tracked after a restart, the writer writes
+      only what its parser accepts; BRIDGE_RECORDS_NOTE "Transfers sent
+      from this screen are kept on this phone (the newest 64) and followed
+      here whenever this screen is open…"; AaOperationKind 'bridge' with
+      the pending-card title "Smart-account operation 0x… from Bridge."
+      and the retry sentence "To try again, open Bridge and get a new
+      quote; nothing is resent from here."; the CTO corrected the
+      confirm's pinned-summary sentence, which overstated what the app
+      re-checks: "…(14 of them). Before showing this screen the wallet
+      re-read the receiving network, the recipient, the amount, the fee
+      and the refund address from the call itself, with the value sent;
+      the other words are fixed by how it builds the call." THREAT MODEL:
+      T-80 to T-87 (the BRIDGE_PROVIDERS §8 rows; T-83 states that
+      checkBridgeQuote re-checks only the endpoint-id, recipient, amount,
+      native-fee and refund words plus the value and minimum — the other
+      pins and the empty option / compose fields are enforced by the
+      engine's builder), F-80, T-09 reworded to the opt-in PIN, §3.4 the
+      bridge key and the shared-settings note. UNVERIFIED (device): the
+      SDK's per-prefix storage and two clients in one process under
+      Hermes; the relay pause / reopen; the Bridge reset dialog; stored
+      transfers across a real restart; a smart-account bridge whose
+      bundle hash was unknown before the app closed stays listed but
+      untrackable (resolve from the UserOperation receipt — follow-up); in
+      a decoy session a custom network's AA change removes that chain's
+      shared endpoint fields for both wallets (by design) but leaves the
+      real wallet's links.
