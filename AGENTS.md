@@ -124,13 +124,23 @@ examples/demo.mjs          Offline end-to-end engine demo
   secrets only through the ADBKeyboard IME and redact every UI dump;
   never run a Gradle build while driving the AVD (2026-10-10: the
   watchdog killed system_server) — build first, close Gradle, then drive.
-  LAUNCH THE AVD WITH `emulator -avd shiba -gpu host` from a foreground
-  Terminal tab (osascript `do script`; the new tab may first need its
-  zsh compinit prompt answered): on 2026-10-14 the Chairperson saw only a
-  black emulator window while adb screenshots were normal, no window
-  carried the secure flag and protection was off — the AVD had been
-  running on the SwiftShader software renderer; the restart with the
-  host GPU booted in 24 s. AFTER ANY EMULATOR RESTART re-add `adb
+  LAUNCH THE AVD WITH `emulator -avd shiba -gpu angle_indirect` from a
+  foreground Terminal tab (osascript `do script`; the new tab may first
+  need its zsh compinit prompt answered): on 2026-10-14 the Chairperson
+  saw only a BLACK EMULATOR WINDOW for days while adb screenshots were
+  normal, no window carried the secure flag and protection was off —
+  the window itself was not rendering on macOS 26.7.1 with emulator
+  37.1.11: the SwiftShader default and `-gpu host` were both black for
+  the Chairperson (their clicks were logged by Qt as "no target
+  window"), the ANGLE (Metal) renderer is VISIBLE (confirmed by the
+  Chairperson). A renderer change discards the quick-boot snapshot
+  (cold boot, the PIN keyguard, `adb reverse` lost). CLOSING THE WINDOW
+  IS A GRACEFUL SHUTDOWN (snapshot saved) and is fine; a pass relaunches
+  it. The emulator package is updated to 37.2.12 with the previous
+  directory kept beside it for rollback (phase 21 item 0). A JDK for
+  sdkmanager and dev builds lives in the git-ignored .local/jdk
+  (env.sh sets JAVA_HOME; the scratchpad copy was deleted by the temp
+  cleaner). AFTER ANY EMULATOR RESTART re-add `adb
   reverse tcp:8081 tcp:8081` before relaunching Expo Go, or it shows
   "Something went wrong" (the mapping is lost with the device); a
   `touch` of the Metro worktree makes Metro demand a restart
@@ -8052,3 +8062,67 @@ submitGuardianRecovery recording for the pending card; the
 docs/DURESS_WALLET.md §2.3 note that the gap is fixed; the Auto-lock
 setting's label ("after returning from background" is narrower than
 the behaviour).
+
+DECIDED by the Chairperson (2026-10-14): (1) bridging — LayerZero
+instead of CCTP, or better, OPTIONALITY: let the user choose the
+provider; (2) duress wallet — a duress PIN only makes sense once an app
+PIN is enabled (so the app PIN comes first, opt-in), the decoy as a
+BIP-85 child of the real seed, "Remove wallet" removes both, the user
+must back up the seed phrase, a passphrase is a good option, and the
+reminders question is open ("do we need to remind if we require a
+normal PIN?"); (3) dark mode is good as delivered; (4) the disclosure
+decision is on HOLD; (5) PHASE 21 APPROVED. The emulator window is
+visible again with the ANGLE renderer (recorded in the standing rules).
+
+## Phase 21 plan (approved 2026-10-14): bridging with a choice of provider, the duress wallet in stages, stuck transactions in-app
+
+0. Emulator: the ANGLE launch rule (done), the emulator update to
+   37.2.12 with the old directory kept for rollback, the p20d leftovers
+   re-checked (hidden field labels, the focus settle, the live region).
+1. Bridging with provider optionality (feature 35, requirement 4): a
+   BridgeProvider adapter interface in the engine (D3-style registry:
+   quote, build the source-chain calls the wallet can pin, track the
+   destination, refund rules, trust statement) so providers plug in
+   without rewrites; LayerZero V2 researched to the same depth as
+   docs/BRIDGING.md gave CCTP (the four test networks: endpoint and OFT /
+   Stargate V2 testnet deployments read on-chain, what a CallPolicy can
+   pin, the DVN / executor trust model stated honestly, keyless access,
+   fees, audits), with a go / no-go for a live testnet leg; CCTP V2 as
+   the second adapter (its live leg is already specified in BRIDGING.md
+   §11); the first adapter proven live by script on the test networks
+   where it exists; the in-app Bridge screen behind a test-networks-only
+   readiness row, showing the provider choice with each provider's trust
+   statement and fee, exact approvals only.
+2. Duress and decoy wallet (feature 53) per the decisions: Stage 1 the
+   single storage seam (every shiba-wallet.* key through one module, a
+   check that fails on any key used outside it); Stage 2 an OPT-IN app
+   PIN (the lock stays biometric by default; enabling the PIN makes it
+   the unlock, scrypt-hashed, the wait schedule from DURESS_WALLET.md §6)
+   and then the duress PIN that opens a BIP-85 child wallet (one phrase
+   backs up both; recovery = the phrase plus the duress PIN's index),
+   an optional passphrase, "Remove wallet" removing both, the reminders
+   rule decided in the design (proposal: a duress PIN disables reminders
+   and the price-alert notifications, because a reminder about the real
+   wallet under the decoy breaks the cover — the Chairperson's question
+   answered in the document); Stage 3 an emulator pass on a THROWAWAY
+   wallet only; the honest claim (§4.3) on every screen.
+3. Stuck transactions in-app (feature 95): a Developer-mode option on
+   test networks, "Send at the minimum fee (to rehearse speed-up)", so
+   the emulator wallet can produce an under-priced send itself; then
+   Speed up and Cancel proven through the Activity pending card.
+4. Polish (no inputs): sendPasskeyCalls and submitGuardianRecovery
+   recorded for the pending card; the Auto-lock setting retitled;
+   DURESS_WALLET.md §2.3 noting the fixed gap; the OP Sepolia
+   smart-account path in-app; the docs/BRIDGING.md and FEATURE_UNIVERSE
+   rows updated as the adapter lands.
+5. Leadership refresh at the end.
+
+Waves: 1 — (A) item 1's research + adapter interface (docs + engine,
+no app), (B) item 2 Stage 1 (app/src/wallet storage files only), (C)
+item 4's code half + item 3's Developer option (recovery.ts,
+PasskeyScreen, SettingsScreen, send.ts) in parallel; the emulator update
+first, then the p20d re-check; 2 — item 1's live leg and app slice, item
+2 Stage 2; 3 — item 3's rehearsal, item 2 Stage 3; 5 last. Subagents on
+Opus.
+
+## Phase 21 progress
