@@ -31,6 +31,7 @@ export const APP_SCRIPTS = {
   // rules, frame rule, method table, read proxy, the bridge through the real
   // WcController with the real provider script in a fake page; fakes only).
   'check-browser.mjs': { kind: 'offline', summary: 'counts' },
+  'check-bridge.mjs': { kind: 'offline', summary: 'counts' }, // Phase 21 item 1: the Bridge screen's glue (feature 35; fakes only).
   'check-accounts.mjs': { kind: 'offline', summary: 'counts' },
   'check-approvals.mjs': { kind: 'offline', summary: 'counts' },
   'check-contacts.mjs': { kind: 'offline', summary: 'counts' },

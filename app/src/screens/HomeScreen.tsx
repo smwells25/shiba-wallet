@@ -48,6 +48,7 @@ import { shortAccountAddress } from '../wallet/accounts';
 import { delegationLabelSuffix, FOREIGN_DELEGATE_WARNING, upgradeLinkShown, walletDelegateDeployed } from '../wallet/delegation';
 import { isFeatureAllowed } from '../config/readiness';
 import { stakingOfferFor } from '../wallet/staking';
+import { bridgeOfferFor } from '../wallet/bridge';
 import { evmProfileByCaip2, multisigNetworkVerified } from '../config/evm-chain';
 import { usePrices } from '../wallet/usePrices';
 import { tokenSendFeeSentence } from '../wallet/token-gas';
@@ -529,6 +530,14 @@ export function HomeScreen({ navigation }: Props) {
           // Ethereum Sepolia and Hoodi; Rocket Pool on Hoodi).
           isFeatureAllowed('staking', evmChain.caip2) && stakingOfferFor(evmChain.caip2).unavailable === null
             ? cardLink('staking', 'Staking', () => navigation.navigate('Staking'))
+            : null,
+          // Bridging (feature 35): test networks only (readiness row
+          // 'bridge', enforced), and only where a provider lists a route
+          // from the active network (Ethereum, Arbitrum, OP and Base
+          // Sepolia; on Base Sepolia only Circle CCTP, shown as not offered
+          // yet).
+          isFeatureAllowed('bridge', evmChain.caip2) && bridgeOfferFor(evmChain.caip2).destinations.length > 0
+            ? cardLink('bridge', 'Bridge', () => navigation.navigate('Bridge'), 'Opens bridging between test networks')
             : null,
           passkey.eligible
             ? cardLink(

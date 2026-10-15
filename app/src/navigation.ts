@@ -59,6 +59,8 @@ export type RootStackParamList = {
   Inheritance: undefined;
   Multisig: undefined;
   Staking: undefined;
+  /** Bridging test ETH between test networks through a provider the user chooses (feature 35, phase 21 item 1). */
+  Bridge: undefined;
   /** Net worth across the wallet's accounts and networks, with profit and loss (phase 20 item 1, features 96 and 97). */
   Portfolio: undefined;
   /** Watchlist and price alerts (phase 20 item 1, feature 98). */

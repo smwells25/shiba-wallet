@@ -45,6 +45,7 @@ import { ImportKeyScreen } from './src/screens/ImportKeyScreen';
 import { BrowserScreen } from './src/screens/BrowserScreen';
 import { MultisigScreen } from './src/screens/MultisigScreen';
 import { StakingScreen } from './src/screens/StakingScreen';
+import { BridgeScreen } from './src/screens/BridgeScreen';
 import { watchOnlyScreenLayout } from './src/components/WatchOnlyGate';
 import { RecurringDueBanner } from './src/components/RecurringDueBanner';
 import { NotificationScheduler } from './src/components/NotificationScheduler';
@@ -233,6 +234,7 @@ function Root() {
             <Stack.Screen name="Apps" component={BrowserScreen} options={{ title: 'Apps (test networks)' }} />
             <Stack.Screen name="Multisig" component={MultisigScreen} options={{ title: 'Multi-signature accounts' }} />
             <Stack.Screen name="Staking" component={StakingScreen} options={{ title: 'Staking (test networks)' }} />
+            <Stack.Screen name="Bridge" component={BridgeScreen} options={{ title: 'Bridge (test networks)' }} />
             <Stack.Screen name="Portfolio" component={PortfolioScreen} options={{ title: 'Portfolio' }} />
             <Stack.Screen name="PriceAlerts" component={PriceAlertsScreen} options={{ title: 'Price alerts' }} />
           </>
