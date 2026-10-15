@@ -8227,3 +8227,73 @@ Opus.
       guardian / passkey operations on the real pending card; the base
       fee read a second time separately from suggestFees (may differ by
       a block); layouts.
+- [x] Item 1, research + engine interface — LAYERZERO V2 ON THE TEST
+      NETWORKS AND THE BRIDGEPROVIDER ADAPTER (commit 72a56a8;
+      docs/BRIDGING.md §15–16, new docs/BRIDGE_PROVIDERS.md,
+      packages/chains-evm/src/bridge/ with 27 tests; offline runner ALL
+      GREEN in the CTO's isolated worktree on HEAD 99dea42 plus the
+      slice: engine 1,022 — chains-evm 751 — app 8,795 across 57 suites,
+      lint 0/0, tsc clean; four hand mutants caught; nothing sent; the
+      docs secret-scan clean). GO / NO-GO: GO for a live LayerZero leg
+      with NATIVE ETH on 3 of the 4 networks — Stargate V2 native pools
+      Sepolia 0x9Cc7e185162Aa5D1425ee924D97a87A0a34A0706, Arbitrum
+      Sepolia 0x6fddB6270F6c71f31B62AE0260cfa8E2e2d186E0, OP Sepolia
+      0xa31dCc5C71E25146b598bADA33E303627D7fC97e (the Stargate testnet
+      API and the stargate-v2 deployments JSON at 9f4f5c0f, matching
+      on-chain token() = 0x0 and sharedDecimals 6; StargatePoolNative a
+      Sourcify match; credit in every direction among the three; NONE on
+      Base Sepolia — credit to eid 40245 is 0 and quoteSend reverts); NO
+      OFT CARRIES CIRCLE'S USDC on any testnet (LayerZero's OFT list has
+      no testnet chain; Stargate's "USDC" test pools hold a MockStableCoin
+      with a public mint); a simulated Sepolia → OP send of 0.0001 ETH
+      from the dev EOA succeeded at 313,407 gas (PacketSent, OFTSent; one
+      wei short reverts Stargate_InvalidAmount 0x3442dd95); ~0.0001 ETH
+      messaging fee per leg; the wallet's own OFT pair not needed (no
+      Solidity toolchain in the repo). TRUST FACTS (read 2026-10-15 UTC):
+      EndpointV2 0x6EDCE65403992e310A62460808c4b910D972f10f on all four
+      (eids 40161 / 40245 / 40231 / 40232; 24,005 B; Sourcify match),
+      owner a 1-of-4 contract (OneSig inferred) on three, a 1-of-2 Safe
+      1.3.0 on Base Sepolia; EVERY default pathway uses exactly ONE
+      required DVN (LayerZero Labs) plus its executor, confirmations 2 /
+      2 / 5 / 1, SendUln302 3.0.2 — a docs-versus-chain gap (the
+      documented presets have two DVNs or a dead DVN); the Stargate test
+      pools' PLANNER (can pause) is 0xf39F…2266 = the first account of
+      Hardhat's published mnemonic (anyone could pause them; not
+      attempted), the owner 0x5e6e…89ed5 has no code; Stargate delivers
+      ETH with a 2,300-gas stipend — a deployed Kernel got
+      UnreceivedTokenCached in simulation and needs the permissionless
+      retryReceiveToken, an EOA and an empty address got OFTReceived;
+      approvalRequired() is always true in source and on-chain (docs say
+      false for native); the Scan testnet API is keyless; licences
+      LZBL-1.2 (endpoint, ULN), MIT (OApp/OFT), BUSL-1.1 (Stargate);
+      audits listed (commit coverage unchecked); "Bridged USDC via
+      LayerZero" = Stargate's StargateOFTUSDC for Circle's Bridged USDC
+      Standard, not native USDC. PINNABLE: CCTP depositForBurn all 7 fixed
+      words (offsets 0–192); OFT send(SendParam, MessagingFee, address)
+      is dynamic (three bytes fields) and pinnable ONLY because the
+      wallet always writes extraOptions and composeMsg empty and oftCmd
+      empty or 0x00 — then 14 words (15 in bus mode): the struct pointer,
+      nativeFee, lzTokenFee 0, refund, dstEid, `to` (whole word),
+      amountLD, minAmountLD, the three bytes offsets and lengths, the bus
+      byte; nativeFee / msg.value can only be capped, never fixed; both
+      layouts verified against ethers and the wallet's CallPolicy mirror.
+      ENGINE: BridgeProvider {id, label, trust statement,
+      supportedRoutes(), quote(), track()}; a quote carries fee lines, a
+      time estimate with its source, exact approvals, calls with pins /
+      unpinnable fields / value limits, the destination step, the refund
+      rule, the tracking method; BridgeRegistry keyed by id (refuses
+      malformed or duplicate ids, missing trust statements, bad routes;
+      no network); cctp-v2.ts (Standard Transfer only, Fast refused;
+      fetchAttestation injected; track() builds receiveMessage);
+      layerzero-oft.ts (quoteOFT then quoteSend through an injected
+      readContract; refuses dust, options, compose messages, lzToken fees
+      and any deployment without on-chain DVN facts; Scan status mapping);
+      util.ts (address, pin and exact-approval helpers); selectors pinned
+      0x8e0250ee, 0x57ecfd28, 0xc7c7f5b3, 0x3b6f743b, 0x0d35b415. COULD
+      NOT VERIFY: the endpoint-owner signers and whether it is OneSig;
+      why the testnet default is one DVN and the mainnet defaults; audit
+      commit coverage; exact bytecode-to-source on OP Sepolia; delivery
+      and bus times; a 7702-delegated recipient; Stargate mainnet roles;
+      the Value Transfer API. NEXT (wave 2): the live Sepolia → OP
+      Sepolia → Arbitrum Sepolia native-ETH legs by script per BRIDGING.md
+      §15.13, then the Bridge screen with the provider choice.
