@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation';
-import { Button, WarningBox, screenStyle, HiddenFieldLabel, useFieldLabels } from '../components';
+import { Button, WarningBox, screenStyle, useFieldLabels } from '../components';
 import { spokenShortAddress } from '../a11y';
 import { QrScanner } from '../components/QrScanner';
 import { resolveActiveNetworks } from '../config/defaults';
@@ -247,7 +247,7 @@ export function ContactsScreen(_props: Props) {
                 >
                   {isRenaming ? (
                     <>
-                      <HiddenFieldLabel field={fieldLabel(`rename-${contact.address}`, `New name for ${contact.name}`)} />
+                      <Text {...fieldLabel(`rename-${contact.address}`, `New name for ${contact.name}`).label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel(`rename-${contact.address}`, `New name for ${contact.name}`).text}</Text>
                       <TextInput
                         {...fieldLabel(`rename-${contact.address}`, `New name for ${contact.name}`).input}
                         value={renameText}
@@ -349,7 +349,7 @@ export function ContactsScreen(_props: Props) {
             />
           ))}
         </View>
-        <HiddenFieldLabel field={fieldLabel('contact-name', 'Contact name')} />
+        <Text {...fieldLabel('contact-name', 'Contact name').label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel('contact-name', 'Contact name').text}</Text>
         <TextInput
           {...fieldLabel('contact-name', 'Contact name').input}
           value={name}
@@ -363,8 +363,10 @@ export function ContactsScreen(_props: Props) {
           maxLength={MAX_CONTACT_NAME_LENGTH * 2}
           style={inputStyle}
         />
+        <Text {...fieldLabel('contact-address', `${addNetwork?.network.label ?? ''} address`).label} style={[styles.hint, { color: theme.textMuted }]}>
+          {fieldLabel('contact-address', `${addNetwork?.network.label ?? ''} address`).text}
+        </Text>
         <View style={styles.addressRow}>
-          <HiddenFieldLabel field={fieldLabel('contact-address', `${addNetwork?.network.label ?? ''} address`)} />
           <TextInput
             {...fieldLabel('contact-address', `${addNetwork?.network.label ?? ''} address`).input}
             value={address}

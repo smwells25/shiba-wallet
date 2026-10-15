@@ -1754,8 +1754,10 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
       comps.includes('input: fieldA11y(label, { labelId: nativeID, ...(hint !== undefined ? { hint } : {}) }),'));
   const pairMutant = files.map((x) => (x.f === 'screens/ImportKeyScreen.tsx' ? { ...x, src: x.src.replace("{...fieldLabel('key', 'Ethereum private key').label} ", '') } : x));
   check('…mutant caught: a labelled field whose visible label lost its nativeID', pairProblems(pairMutant).length === 1);
-  const hiddenMutant = files.map((x) => (x.f === 'screens/ConnectionsScreen.tsx' ? { ...x, src: x.src.replace("<HiddenFieldLabel field={fieldLabel('pairing-link', 'WalletConnect pairing link')} />", '') } : x));
+  const hiddenMutant = files.map((x) => (x.f === 'screens/MultisigScreen.tsx' ? { ...x, src: x.src.replace("<HiddenFieldLabel field={fieldLabel('record-paste', 'Paste the multisig record')} />", '') } : x));
   check('…mutant caught (p20d finding 1): a field whose hidden label view was dropped', pairProblems(hiddenMutant).length === 1);
+  const captionMutant = files.map((x) => (x.f === 'screens/ConnectionsScreen.tsx' ? { ...x, src: x.src.replace("<Text {...fieldLabel('pairing-link', 'WalletConnect pairing link').label}", '<Text') } : x));
+  check('…mutant caught (p21b finding 1): a field whose visible caption lost its nativeID', pairProblems(captionMutant).length === 1);
 
   // Pass p20d finding 1: the hidden label view. It must exist as a native
   // view for Android's nativeID lookup, so it is not display "none", not
@@ -1764,17 +1766,21 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
     const { HIDDEN_FIELD_LABEL_STYLE: hiddenStyle } = await import('../src/a11y.ts');
     check('p20d finding 1: HIDDEN_FIELD_LABEL_STYLE is absolute, 1×1, clipped, transparent text, never opacity 0 or display none (exact)',
       JSON.stringify(hiddenStyle) === JSON.stringify({ position: 'absolute', width: 1, height: 1, overflow: 'hidden', color: 'transparent' }));
-    // Pass p21a finding 1b: the 1×1 hidden label was an extra TalkBack swipe
-    // stop, read after its field or out of order. It is now
-    // importantForAccessibility "no" (Android) and accessibilityElementsHidden
-    // (iOS); the field still finds it through labelled-by (findView matches
-    // the nativeID only — RN 0.86.3 ReactFindViewUtil.kt:47–62).
+    // Pass p21a finding 1b made the 1×1 hidden label importantForAccessibility
+    // "no"; pass p21b found that TalkBack 14.2 then no longer reads it as the
+    // field's name ("Name. Edit box" instead of "…for Contact name"). So the
+    // label keeps the DEFAULT importance (a swipe stop) and its
+    // accessibilityLabel is the field's own name, so the stop reads as the
+    // field's caption; still hidden from VoiceOver (accessibilityElementsHidden).
     const hiddenComponentOk = (src) =>
-      /export function HiddenFieldLabel\(\{ field \}: \{ field: FieldLabel \}\) \{\s*return \(\s*<Text \{\.\.\.field\.label\} importantForAccessibility="no" accessibilityElementsHidden style=\{HIDDEN_FIELD_LABEL_STYLE\}>\s*\{field\.text\}\s*<\/Text>/.test(src);
-    check('…HiddenFieldLabel spreads the field label (its nativeID), is NOT important for accessibility on Android (not a swipe stop), hidden from VoiceOver, and draws field.text with that style (source)',
+      /export function HiddenFieldLabel\(\{ field \}: \{ field: FieldLabel \}\) \{\s*return \(\s*<Text \{\.\.\.field\.label\} accessibilityLabel=\{field\.text\} accessibilityElementsHidden style=\{HIDDEN_FIELD_LABEL_STYLE\}>\s*\{field\.text\}\s*<\/Text>/.test(src) &&
+      !/export function HiddenFieldLabel[^]*?importantForAccessibility[^]*?<\/Text>/.test(src);
+    check('p21b finding 1: HiddenFieldLabel spreads the field label (its nativeID), keeps the DEFAULT importance on Android (no importantForAccessibility — TalkBack does not read a not-important labelling node), speaks the field’s own name as its accessibilityLabel, is hidden from VoiceOver, and draws field.text with that style (source)',
       hiddenComponentOk(comps));
-    check('…mutant caught (p21a finding 1b): the hidden label with the default importance again (an extra swipe stop)',
-      !hiddenComponentOk(comps.replace(' importantForAccessibility="no" accessibilityElementsHidden style={HIDDEN_FIELD_LABEL_STYLE}', ' accessibilityElementsHidden style={HIDDEN_FIELD_LABEL_STYLE}')));
+    check('…mutant caught (p21b finding 1): the hidden label with importantForAccessibility "no" again (the field loses its name under TalkBack)',
+      !hiddenComponentOk(comps.replace(' accessibilityLabel={field.text} accessibilityElementsHidden', ' accessibilityLabel={field.text} importantForAccessibility="no" accessibilityElementsHidden')));
+    check('…mutant caught (p21b finding 1): the hidden label without the field’s name as its spoken label',
+      !hiddenComponentOk(comps.replace(' accessibilityLabel={field.text} accessibilityElementsHidden', ' accessibilityElementsHidden')));
     // The hidden style is drawn ONLY by HiddenFieldLabel, so every hidden
     // label in app/src carries the props above (no hand-rolled copy).
     const styleUsers = files.filter(({ f, src }) => f !== 'a11y.ts' && /HIDDEN_FIELD_LABEL_STYLE\b/.test(src.replace(/^import\b[^;]*HIDDEN_FIELD_LABEL_STYLE[^;]*;/gm, '')));
@@ -1797,19 +1803,73 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
         const rest = src.slice(m.index + m[0].length);
         const next = /^\s*<TextInput\s+\{\.\.\.(\w+)\(\s*('[^']*'|`[^`]*`),/.exec(rest);
         if (!next || next[1] !== m[1] || next[2] !== m[2]) out.push(`${f} ${m[2]}`);
+        // Pass p21b: the label is the FIRST child of a View (its absolute
+        // position is that View's top-left, i.e. the field's), so a screen
+        // reader that orders by position reads it just before the field.
+        const before = src.slice(0, m.index).replace(/\s*\{\/\*[^]*?\*\/\}\s*$/, '');
+        if (!/<View(?:\s+style=\{[^{}]*\})?>\s*$/.test(before)) out.push(`${f} ${m[2]} (not the first child of its View)`);
       }
       return out;
     });
     const hiddenCount = files.reduce((n, { f, src }) => n + (f === 'components.tsx' ? 0 : (src.match(/<HiddenFieldLabel\b/g) ?? []).length), 0);
-    check('p21a finding 1b: every HiddenFieldLabel call site renders the label IMMEDIATELY before the TextInput it names (same key), none elsewhere (source scan of app/src)',
-      hiddenOrderProblems(files).length === 0 && hiddenCount >= 26, `${hiddenCount} call sites; problems: ${hiddenOrderProblems(files).join(', ')}`);
-    const orderMutant = files.map((x) => (x.f === 'components/Contacts.tsx'
-      ? { ...x, src: x.src.replace("<HiddenFieldLabel field={fieldLabel('contact-name', 'Contact name')} />", '').replace('<Text selectable style={[styles.address, { color: theme.text }]}>', "<HiddenFieldLabel field={fieldLabel('contact-name', 'Contact name')} /><Text selectable style={[styles.address, { color: theme.text }]}>") }
+    check('p21a finding 1b / p21b finding 1: every HiddenFieldLabel call site renders the label as the first child of a View, IMMEDIATELY before the TextInput it names (same key), none elsewhere (source scan of app/src; 4 call sites left)',
+      hiddenOrderProblems(files).length === 0 && hiddenCount === 4, `${hiddenCount} call sites; problems: ${hiddenOrderProblems(files).join(', ')}`);
+    // Pass p21b: the fields that kept a hidden label (paste boxes whose
+    // placeholder already shows the same words) and the 22 that now have a
+    // small VISIBLE caption, spreading the field's .label and drawing its
+    // .text, in the file named.
+    const keptHidden = [
+      ['components/RecoveryViews.tsx', "fieldLabel('paste', placeholder)"],
+      ['screens/MultisigScreen.tsx', "fieldLabel('approval-paste', 'Paste a co-signer’s approval (or a 65-byte signature from another wallet)')"],
+      ['screens/MultisigScreen.tsx', "fieldLabel('record-paste', 'Paste the multisig record')"],
+      ['screens/MultisigScreen.tsx', "fieldLabel('request-paste', 'Paste the multisig signing request')"],
+    ];
+    check('p21b finding 1: the four fields that keep a hidden label (exact list)',
+      keptHidden.every(([f, e]) => files.find((x) => x.f === f)?.src.includes(`<HiddenFieldLabel field={${e}} />`)));
+    const captioned = [
+      ['components/Contacts.tsx', "fieldLabel('contact-name', 'Contact name')"],
+      ['screens/ContactsScreen.tsx', 'fieldLabel(`rename-${contact.address}`, `New name for ${contact.name}`)'],
+      ['screens/ContactsScreen.tsx', "fieldLabel('contact-name', 'Contact name')"],
+      ['screens/ContactsScreen.tsx', "fieldLabel('contact-address', `${addNetwork?.network.label ?? ''} address`)"],
+      ['components/AccountsSection.tsx', "fieldLabel(`account-name-${account.index}`, 'Account name')"],
+      ['components/AccountsSection.tsx', "fieldLabel('new-account-name', 'New account name (optional)')"],
+      ['components/AccountsSection.tsx', "fieldLabel('watch-address', 'Ethereum address to watch')"],
+      ['components/AccountsSection.tsx', "fieldLabel('watch-name', 'Name for the watched address')"],
+      ['screens/SettingsScreen.tsx', 'fieldLabel(\'endpoint-url\', `${network.label} endpoint URL`)'],
+      ['screens/TokensScreen.tsx', "fieldLabel('token-contract', 'Token contract address')"],
+      ['screens/TokensScreen.tsx', "fieldLabel('token-symbol', 'Token symbol')"],
+      ['screens/TokensScreen.tsx', "fieldLabel('token-name', 'Token name (optional)')"],
+      ['screens/RecoverAccountScreen.tsx', "fieldLabel('op-hash', 'UserOperation or transaction hash, optional')"],
+      ['screens/RecoverAccountScreen.tsx', "fieldLabel('lost-account', 'Lost account address')"],
+      ['screens/RecoverAccountScreen.tsx', "fieldLabel('original-owner', 'Original owner address, optional')"],
+      ['screens/ConnectionsScreen.tsx', "fieldLabel('pairing-link', 'WalletConnect pairing link')"],
+      ['screens/ImportScreen.tsx', "fieldLabel('phrase', 'Recovery phrase')"],
+      ['screens/MultisigScreen.tsx', "fieldLabel('multisig-name', 'Name (optional)')"],
+      ['screens/MultisigScreen.tsx', "fieldLabel('op-recipient', 'Recipient address')"],
+      ['screens/MultisigScreen.tsx', 'fieldLabel(\'op-amount\', `Amount in ${symbolFor(asset)}`)'],
+      ['screens/SwapScreen.tsx', "fieldLabel('custom-slippage', 'Custom maximum slippage in basis points')"],
+      ['screens/SpendingLimitsScreen.tsx', 'fieldLabel(\'custom-window\', `Custom window length in ${customUnit}`)'],
+      ['screens/DcaViews.tsx', "field('custom-period', 'Custom period length')"],
+      ['screens/SessionsScreen.tsx', "fieldLabel('custom-period', 'Custom period length')"],
+    ];
+    const captionMissing = captioned.filter(([f, e]) => {
+      const src = files.find((x) => x.f === f)?.src ?? '';
+      return !src.includes(`<Text {...${e}.label} style={[styles.`) || !src.includes(`{${e}.text}`);
+    });
+    check('p21b finding 1: 24 fields that had a hidden label now show a visible caption tied to the field (source)',
+      captioned.length === 24 && captionMissing.length === 0, captionMissing.map(([f, e]) => `${f} ${e}`).join(', '));
+    const orderMutant = files.map((x) => (x.f === 'screens/MultisigScreen.tsx'
+      ? { ...x, src: x.src.replace("<HiddenFieldLabel field={fieldLabel('record-paste', 'Paste the multisig record')} />", '').replace('<MultisigScanButton\n          title={MULTISIG_SCAN_RECORD_TITLE}', "<HiddenFieldLabel field={fieldLabel('record-paste', 'Paste the multisig record')} /><MultisigScanButton\n          title={MULTISIG_SCAN_RECORD_TITLE}") }
       : x));
-    check('…mutant caught: a hidden label moved away from its field (above the address line, as the Contacts dump showed)',
+    check('…mutant caught: a hidden label moved away from its field (above the scan button)',
       hiddenOrderProblems(orderMutant).length >= 1);
+    const unanchored = files.map((x) => (x.f === 'screens/MultisigScreen.tsx'
+      ? { ...x, src: x.src.replace("<View>\n          <HiddenFieldLabel field={fieldLabel('request-paste'", "<HiddenFieldLabel field={fieldLabel('request-paste'") }
+      : x));
+    check('…mutant caught (p21b finding 1): a hidden label that is not the first child of its own View (positioned at a far-away parent’s top-left)',
+      hiddenOrderProblems(unanchored).some((p) => /request-paste.*not the first child/.test(p)));
     check('…mutant caught: a hidden label naming another field than the one after it',
-      hiddenOrderProblems([...files, { f: 'mutant.tsx', src: "<HiddenFieldLabel field={fieldLabel('a', 'A')} />\n<TextInput {...fieldLabel('b', 'B').input} />" }]).length === 1);
+      hiddenOrderProblems([...files, { f: 'mutant.tsx', src: "<View>\n<HiddenFieldLabel field={fieldLabel('a', 'A')} />\n<TextInput {...fieldLabel('b', 'B').input} />" }]).length === 1);
     const priceSrc = files.find((x) => x.f === 'screens/PriceAlertsScreen.tsx').src;
     check('…the Price-alerts price field has a VISIBLE label it is labelled by: "Alert price for <asset> (US dollars)" (source)',
       priceSrc.includes("const priceField = fieldLabel('price', `Alert price for ${asset.symbol} (US dollars)`);") &&

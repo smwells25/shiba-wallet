@@ -1,7 +1,11 @@
 import type { FungibleAsset, HistoryEntry } from '@shiba-wallet/core';
 import {
   ENTRYPOINT_V07,
+  OFT_SEND_LAYOUT,
+  OFT_SEND_SELECTOR,
   STAKING_SELECTORS,
+  STARGATE_V2_TESTNET_NATIVE_POOLS,
+  chainIdForLayerZeroEid,
   activitySentence,
   activityTokenContracts,
   decodeActivity,
@@ -18,6 +22,7 @@ import type { ActivityDescription, ActivitySentenceContext, AssetChange, JsonRpc
 import { getEndpoint, withEndpoint } from '../config/networks.ts';
 import { findAlternateDefaultUrl } from '../config/endpoint-probe.ts';
 import { maskAmount } from '../config/prefs.ts';
+import { evmProfileByCaip2 } from '../config/evm-chain.ts';
 import { findExactContact, type Contact } from './contacts.ts';
 import { resolveTokenMeta, type TokenMetaMap } from './simulation.ts';
 import type { Erc20Metadata } from './erc20.ts';
@@ -99,6 +104,27 @@ export interface DecodedActivity {
    * sentence names it only through this field (stakingCallPhrase).
    */
   rocketDepositPool?: string;
+  /**
+   * A bridge send this wallet builds (pass p21b, finding 5): the OFT send()
+   * of one of Stargate's pinned native ETH pools on this transaction's
+   * network, decoded from the transaction's own calldata at the decode
+   * (bridgeSendForDescription). Absent for anything else.
+   */
+  bridgeSend?: BridgeSendFacts;
+}
+
+/** What a Stargate native-pool send carried, read from its calldata. */
+export interface BridgeSendFacts {
+  /** The pinned pool the call went to (EIP-55, from the pinned table). */
+  pool: string;
+  /** The receiving network's name ("OP Sepolia"), from the LayerZero endpoint id. */
+  destinationLabel: string;
+  /** SendParam.amountLD: what was sent to bridge, in wei. */
+  amount: bigint;
+  /** The transaction's value minus amountLD: the LayerZero messaging fee paid, in wei. */
+  fee: bigint;
+  /** The value the call carried (amount + fee), so the phrase is used only for exactly this call. */
+  value: bigint;
 }
 
 const cache = new Map<string, DecodedActivity>();
@@ -345,7 +371,8 @@ export function createActivityDecoder(options: ActivityDecoderOptions): Activity
         })
       : {};
     const rocketDepositPool = await rocketDepositPoolForDescription(httpTransport(url), options.chainCaip2, description);
-    return { description, tokens, ...(rocketDepositPool ? { rocketDepositPool } : {}) };
+    const bridgeSend = await bridgeSendForDescription(httpTransport(url), options.chainCaip2, description);
+    return { description, tokens, ...(rocketDepositPool ? { rocketDepositPool } : {}), ...(bridgeSend ? { bridgeSend } : {}) };
   }
 
   type Attempt = { kind: 'ok'; value: DecodedActivity } | { kind: 'missing' | 'other'; url: string };
@@ -816,6 +843,95 @@ export function rocketDepositPhrase(
   return `staked ${format.native(call.value)} with Rocket Pool (deposit pool ${shortActivityAddress(pool)}, resolved from RocketStorage)`;
 }
 
+/** Stargate's pinned native ETH pool on a network, from the engine's table (none for other networks). */
+function stargateNativePoolOn(chainCaip2: string): string | null {
+  const id = Number(chainCaip2.split(':')[1]);
+  return STARGATE_V2_TESTNET_NATIVE_POOLS.find((d) => d.chainId === id && d.kind === 'stargate-pool-native')?.address ?? null;
+}
+
+/**
+ * Decodes the calldata of an OFT send() to `pool` (pass p21b, finding 5):
+ * the receiving network from SendParam.dstEid and SendParam.amountLD, read
+ * at the fixed offsets of OFT_SEND_LAYOUT (relative to the arguments, after
+ * the 4-byte selector), with the messaging fee = value − amountLD. Null
+ * unless the selector is the OFT send (0xc7c7f5b3), the call is at least as
+ * long as the fixed head, the pointer to SendParam is the canonical 0x80
+ * the wallet writes, the endpoint id names a network the wallet knows and
+ * the value covers the amount. Pure.
+ */
+export function decodeBridgeSendCall(
+  chainCaip2: string,
+  call: { to: string; input: string; value: bigint },
+): BridgeSendFacts | null {
+  const pool = stargateNativePoolOn(chainCaip2);
+  if (!pool || call.to.toLowerCase() !== pool.toLowerCase()) return null;
+  const hex = call.input.toLowerCase();
+  if (!/^0x[0-9a-f]*$/.test(hex) || !hex.startsWith(OFT_SEND_SELECTOR.toLowerCase())) return null;
+  const args = hex.slice(10);
+  const wordAt = (offset: number): bigint | null => {
+    const w = args.slice(offset * 2, offset * 2 + 64);
+    return w.length === 64 ? BigInt(`0x${w}`) : null;
+  };
+  if (wordAt(OFT_SEND_LAYOUT.sendParamPointer) !== 0x80n) return null;
+  const eid = wordAt(OFT_SEND_LAYOUT.dstEid);
+  const amount = wordAt(OFT_SEND_LAYOUT.amountLD);
+  if (eid === null || amount === null || eid > 0xffffffffn || amount <= 0n || call.value < amount) return null;
+  const destinationChainId = chainIdForLayerZeroEid(Number(eid));
+  const destinationLabel = destinationChainId === undefined ? undefined : evmProfileByCaip2(`eip155:${destinationChainId}`)?.label;
+  if (!destinationLabel) return null;
+  return { pool, destinationLabel, amount, fee: call.value - amount, value: call.value };
+}
+
+/**
+ * The bridge send of a decoded transaction, or null: only when its
+ * top-level call goes to Stargate's pinned native pool on this network with
+ * the OFT send selector does it read the transaction once more
+ * (eth_getTransactionByHash through `transport`) for its calldata — the
+ * engine's description keeps the selector, not the arguments. A failed read
+ * gives null (the generic sentence), never a guess. A send made from the
+ * smart account sits inside the EntryPoint bundle's calldata and keeps the
+ * generic operation sentence.
+ */
+export async function bridgeSendForDescription(
+  transport: JsonRpcTransport,
+  chainCaip2: string,
+  description: ActivityDescription,
+): Promise<BridgeSendFacts | null> {
+  const call = description.call;
+  if (call.kind !== 'contract-call' || call.selector?.toLowerCase() !== OFT_SEND_SELECTOR.toLowerCase()) return null;
+  const pool = stargateNativePoolOn(chainCaip2);
+  if (!pool || call.to.toLowerCase() !== pool.toLowerCase()) return null;
+  try {
+    const tx = (await transport('eth_getTransactionByHash', [description.hash])) as { input?: unknown; to?: unknown; value?: unknown } | null;
+    if (!tx || typeof tx.input !== 'string' || typeof tx.to !== 'string' || typeof tx.value !== 'string') return null;
+    if (tx.to.toLowerCase() !== pool.toLowerCase() || BigInt(tx.value) !== call.value) return null;
+    return decodeBridgeSendCall(chainCaip2, { to: tx.to, input: tx.input, value: call.value });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * "bridged 0.0002 test ETH to OP Sepolia through LayerZero (Stargate's
+ * native ETH pool 0x9Cc7…0706); messaging fee 0.000102050140082558 test
+ * ETH" for exactly the call the facts were decoded from, else null. "bridged"
+ * is one of the engine's ACTIVITY_CALL_VERBS, so a reverted send reads
+ * "Failed: tried to bridge …". Arrival on the other network is not claimed:
+ * the delivery is the executor's transaction there, not this one.
+ */
+export function bridgeSendPhrase(
+  facts: BridgeSendFacts | null | undefined,
+  call: { to: string; selector: string | null; value: bigint },
+  format: { native: (amount: bigint) => string },
+): string | null {
+  if (!facts || call.to.toLowerCase() !== facts.pool.toLowerCase() || call.value !== facts.value) return null;
+  if (call.selector === null || call.selector.toLowerCase() !== OFT_SEND_SELECTOR.toLowerCase()) return null;
+  return (
+    `bridged ${format.native(facts.amount)} to ${facts.destinationLabel} through LayerZero ` +
+    `(Stargate’s native ETH pool ${shortActivityAddress(facts.pool)}); messaging fee ${format.native(facts.fee)}`
+  );
+}
+
 /** "Lido wstETH contract 0xB823…067b": how a sentence names a pinned staking contract. */
 export function stakingContractLabel(contract: PinnedStakingContract): string {
   return `${contract.protocol} ${contract.name} contract ${shortActivityAddress(contract.address)}`;
@@ -890,10 +1006,13 @@ export function renderActivitySentence(decoded: DecodedActivity, options: Senten
     return pinned ? stakingContractLabel(pinned) : null;
   };
   const pool = decoded.rocketDepositPool ?? null;
+  const bridge = decoded.bridgeSend ?? null;
   const describeCall: ActivitySentenceContext['describeCall'] =
-    pinnedAt || pool
+    pinnedAt || pool || bridge
       ? (call, format) =>
-          (pinnedAt ? stakingCallPhrase(pinnedAt(call.to), call, format) : null) ?? rocketDepositPhrase(pool, call, format)
+          (pinnedAt ? stakingCallPhrase(pinnedAt(call.to), call, format) : null) ??
+          rocketDepositPhrase(pool, call, format) ??
+          bridgeSendPhrase(bridge, call, format)
       : undefined;
   return activitySentence(decoded.description, {
     nativeSymbol: options.nativeSymbol,

@@ -10,7 +10,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { Button, WarningBox, HiddenFieldLabel, useFieldLabels } from '../components';
+import { Button, WarningBox, useFieldLabels } from '../components';
 import { contactRowSpokenLabel } from '../a11y';
 import { useTheme } from '../theme';
 import {
@@ -182,7 +182,7 @@ export function SaveContactInline({
       <Text selectable style={[styles.address, { color: theme.text }]}>
         {address}
       </Text>
-      <HiddenFieldLabel field={fieldLabel('contact-name', 'Contact name')} />
+      <Text {...fieldLabel('contact-name', 'Contact name').label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel('contact-name', 'Contact name').text}</Text>
       <TextInput
         {...fieldLabel('contact-name', 'Contact name').input}
         value={name}

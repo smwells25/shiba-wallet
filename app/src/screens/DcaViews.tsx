@@ -1,7 +1,7 @@
 import React from 'react';
 import { ActivityIndicator, StyleSheet, Text, TextInput, View } from 'react-native';
 import { describePeriod, type DcaTerms, type SessionKeyGrant } from '@shiba-wallet/chains-evm';
-import { Button, WarningBox, useFieldLabels, HiddenFieldLabel } from '../components';
+import { Button, WarningBox, useFieldLabels } from '../components';
 import { GrantReview } from '../components/SessionGrantViews';
 import { useTheme } from '../theme';
 import { formatUnits } from '../wallet/balances';
@@ -199,7 +199,7 @@ export function DcaFormView(props: {
       </View>
       {form.periodCustom ? (
         <>
-          <HiddenFieldLabel field={field('custom-period', 'Custom period length')} />
+          <Text {...field('custom-period', 'Custom period length').label} style={[styles.label, { color: theme.textMuted }]}>{field('custom-period', 'Custom period length').text}</Text>
           <TextInput
             {...field('custom-period', 'Custom period length').input}
             value={form.customCount}

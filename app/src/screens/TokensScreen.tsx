@@ -12,7 +12,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { formatAssetId } from '@shiba-wallet/core';
 import type { FungibleAsset } from '@shiba-wallet/core';
 import type { RootStackParamList } from '../navigation';
-import { Button, WarningBox, screenStyle, HiddenFieldLabel, useFieldLabels } from '../components';
+import { Button, WarningBox, screenStyle, useFieldLabels } from '../components';
 import { NoEndpointError, withEndpoint } from '../config/networks';
 import { OfflineNotice, TechnicalDetail, describeNetworkError } from '../wallet/connectivity';
 import { useTheme } from '../theme';
@@ -455,7 +455,7 @@ export function TokensScreen({ navigation }: Props) {
           contract address from a source you trust.
         </Text>
         <OfflineNotice />
-        <HiddenFieldLabel field={fieldLabel('token-contract', 'Token contract address')} />
+        <Text {...fieldLabel('token-contract', 'Token contract address').label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel('token-contract', 'Token contract address').text}</Text>
         <TextInput
           {...fieldLabel('token-contract', 'Token contract address').input}
           value={address}
@@ -502,7 +502,7 @@ export function TokensScreen({ navigation }: Props) {
                   {preview.metadata.note ??
                     'The contract did not return readable text metadata.'}
                 </Text>
-                <HiddenFieldLabel field={fieldLabel('token-symbol', 'Token symbol')} />
+                <Text {...fieldLabel('token-symbol', 'Token symbol').label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel('token-symbol', 'Token symbol').text}</Text>
                 <TextInput
                   {...fieldLabel('token-symbol', 'Token symbol').input}
                   value={manualSymbol}
@@ -517,7 +517,7 @@ export function TokensScreen({ navigation }: Props) {
                     { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.background },
                   ]}
                 />
-                <HiddenFieldLabel field={fieldLabel('token-name', 'Token name (optional)')} />
+                <Text {...fieldLabel('token-name', 'Token name (optional)').label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel('token-name', 'Token name (optional)').text}</Text>
                 <TextInput
                   {...fieldLabel('token-name', 'Token name (optional)').input}
                   value={manualName}

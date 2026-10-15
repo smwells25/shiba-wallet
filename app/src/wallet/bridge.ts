@@ -217,6 +217,92 @@ export const BRIDGE_TIME_NOT_PROMISE =
 /** Shown under a provider row before a live quote exists. */
 export const BRIDGE_FEE_BEFORE_QUOTE = 'Fee: quoted live from the provider’s contracts when you tap Get quotes or Review.';
 
+/**
+ * Shown under the provider list when exactly one provider can be chosen
+ * (emulator pass p21b, finding 2): the wallet still does not pick it, so
+ * the user is told why nothing is selected yet.
+ */
+export const BRIDGE_SINGLE_PROVIDER_NOTE = 'One provider serves this route; choose it to continue.';
+
+/**
+ * The amount field's placeholder (pass p21b, finding 9). Android gives a
+ * TextInput's placeholder to the EditText as its hint, and TalkBack reads
+ * the hint of an EMPTY field where a value would be ("0.0002. Edit box for
+ * Amount (test ETH)" sounded like a filled-in amount). A worded example
+ * cannot be mistaken for a value.
+ */
+export const BRIDGE_AMOUNT_PLACEHOLDER = 'Amount, for example 0.0002';
+
+/**
+ * The provider the form uses (pass p21b, finding 2): the user's own choice,
+ * and only while that provider can be chosen for the current pair of
+ * networks. NEVER a default — not even when a single provider is offered —
+ * because the screen says the wallet "never picks one for you". Null until
+ * the user taps a row; Get quotes and Review stay disabled until then.
+ */
+export function chosenBridgeProvider(
+  rows: readonly Pick<BridgeProviderRow, 'id' | 'selectable'>[],
+  picked: string | null,
+): string | null {
+  return picked !== null && rows.some((r) => r.id === picked && r.selectable) ? picked : null;
+}
+
+/** BRIDGE_SINGLE_PROVIDER_NOTE when exactly one row can be chosen and none is chosen yet, else null. */
+export function bridgeProviderChoiceHint(
+  rows: readonly Pick<BridgeProviderRow, 'selectable'>[],
+  chosen: string | null,
+): string | null {
+  return chosen === null && rows.filter((r) => r.selectable).length === 1 ? BRIDGE_SINGLE_PROVIDER_NOTE : null;
+}
+
+/**
+ * Whether the form shows the destination chips and the amount field (pass
+ * p21b, finding 7): only when some provider can send from this network.
+ * Where none can (Base Sepolia: Stargate has no pool there), the
+ * explanatory sentence and the disabled provider rows stay, so the user
+ * still sees every provider and who it would trust, but there is nothing to
+ * fill in.
+ */
+export function bridgeFormInputsShown(offer: Pick<BridgeOffer, 'unavailable'>): boolean {
+  return offer.unavailable === null;
+}
+
+/**
+ * What a screen reader says for a provider's radio control (pass p21b,
+ * findings 3 and the CCTP row's double period): the label, what it moves,
+ * and either "not available" or the fee once quoted. The trust statement,
+ * the reason a row cannot be chosen, the fee line and the measured time are
+ * separate text items right after the control (BridgeViews.tsx
+ * ProviderRadioRow), so they are reachable before Review. Never ends in a
+ * period: TalkBack adds its own pause before the role ("…, Radio button"),
+ * and a sentence ending in "." was read with a doubled period.
+ */
+export function providerRowSpokenLabel(
+  row: Pick<BridgeProviderRow, 'label' | 'asset' | 'selectable'>,
+  quote: { fee: string } | null,
+): string {
+  const head = `${row.label}${row.asset ? `, moves ${row.asset}` : ''}`;
+  const tail = !row.selectable ? ', not available' : quote ? `, fee ${quote.fee}` : '';
+  return `${head}${tail}`.replace(/[.\s]+$/, '');
+}
+
+/**
+ * Runs a broadcast and stamps the time it returned (pass p21b, finding 8).
+ * A transfer's "sent" time is the moment the network (or the bundler) took
+ * it, measured right where the broadcast resolves — inside the signing
+ * callback, before signWith zeroes the seed, before the screen re-renders
+ * and before any receipt wait (the smart account's waitForAaReceipt runs
+ * after the record is made). The time between the device prompt and this
+ * moment is spent BEFORE the broadcast: signWith turns the phrase into the
+ * seed (BIP-39's 2,048 PBKDF2 rounds, mnemonicToSeedSync, in JavaScript on
+ * the phone) and the transaction is signed; the recorded time cannot and
+ * should not include that.
+ */
+export async function broadcastStamped<T>(broadcast: () => Promise<T>, now: () => number = Date.now): Promise<{ value: T; sentAt: number }> {
+  const value = await broadcast();
+  return { value, sentAt: now() };
+}
+
 /** The record note. */
 export const BRIDGE_RECORDS_NOTE =
   'Transfers sent from this screen are kept on this phone (the newest 64) and followed here whenever this screen is open. ' +
