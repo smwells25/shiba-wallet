@@ -1604,7 +1604,7 @@ console.log('check-multisig: the multisig as an account in the switcher (phase 1
       need('the scroll hint sits between the list and the buttons',
         modal.indexOf('switcherListOverflows({ listHeight, contentHeight, scrollY })') > listEnd &&
           modal.indexOf('{SWITCHER_SCROLL_HINT}') > listEnd && modal.indexOf('{SWITCHER_SCROLL_HINT}') < addAt);
-      need('the expander closes each time the list opens', /setIntroOpen\(false\);\s*setScrollY\(0\);\s*setOpen\(true\);/.test(src));
+      need('the expander closes each time the list opens', /setIntroOpen\(false\);\s*setScrollY\(0\);(?:\s*\/\/[^\n]*)*\s*setListHeight\(0\);\s*setContentHeight\(0\);\s*setOpen\(true\);/.test(src));
       return p;
     };
     const lp = switcherLayoutProblems(switcher);
@@ -2164,6 +2164,84 @@ console.log('check-multisig: pass p20c (TalkBack and dark mode) findings 5, 9 an
   check('p20d finding 8: the scroll hint sits in an always-mounted polite live region (a real native view; out of the flow while empty), so it is announced when it appears (source)', liveOk(sw));
   check('…mutant caught: the hint mounted on its own again (nothing for Android to announce a change of)',
     !liveOk(sw.replace('<View collapsable={false} accessibilityLiveRegion="polite" style={overflows ? null : styles.liveRegionIdle}>', '<View>')));
+
+  // Pass p21a finding 7: the live region was not spoken when the switcher
+  // OPENED (its content arrives with the new window) nor on the expander;
+  // the line is now announced once per open with overflow
+  // (AccessibilityInfo.announceForAccessibility through
+  // createOverflowAnnouncer), the live region kept for its reappearance.
+  {
+    const a11y = await import('../src/a11y.ts');
+    const { SWITCHER_SCROLL_HINT: HINT } = await import('../src/wallet/watch-only.ts');
+    // A fake AccessibilityInfo counting announcements, with fake timers.
+    const harness = (create = a11y.createOverflowAnnouncer) => {
+      const said = [];
+      const timers = new Map();
+      let next = 1;
+      const announcer = create({
+        message: HINT,
+        announce: (m) => said.push(m),
+        schedule: (run, ms) => { const id = next++; timers.set(id, { run, ms }); return id; },
+        cancel: (id) => timers.delete(id),
+      });
+      const flush = () => { for (const [id, t] of [...timers]) { timers.delete(id); t.run(); } };
+      return { said, timers, announcer, flush };
+    };
+    const M = (overflows) => ({ measured: true, overflows });
+    const U = { measured: false, overflows: false };
+    // Without overflow: nothing, ever, in that open.
+    let h = harness();
+    h.announcer.opened(); h.announcer.update(U); h.announcer.update(M(false)); h.flush();
+    h.announcer.update(M(true)); h.flush();
+    check('p21a finding 7: the switcher opening WITHOUT overflow announces nothing (and a later overflow in the same open is the live region\'s job, not an announcement)',
+      h.said.length === 0);
+    // With overflow: exactly one, after the delay, with the hint's text.
+    h = harness();
+    h.announcer.opened(); h.announcer.update(U); h.announcer.update(M(true));
+    const scheduledOk = h.said.length === 0 && [...h.timers.values()].every((t) => t.ms === a11y.SWITCHER_OVERFLOW_ANNOUNCE_DELAY_MS) && h.timers.size === 1;
+    h.flush();
+    check('…opening WITH overflow announces "More accounts below — scroll the list." exactly once, after SWITCHER_OVERFLOW_ANNOUNCE_DELAY_MS (500 ms)',
+      scheduledOk && h.said.length === 1 && h.said[0] === 'More accounts below — scroll the list.' && a11y.SWITCHER_OVERFLOW_ANNOUNCE_DELAY_MS === 500);
+    // The expander toggled (content grows and shrinks, overflow stays) and a scroll: no repeat.
+    h.announcer.update(M(true)); h.announcer.update(M(true)); h.announcer.update(M(false)); h.announcer.update(M(true)); h.flush();
+    check('…not repeated on the expander toggle or a scroll within the same open', h.said.length === 1);
+    // Once per open: a second open with overflow announces again.
+    h.announcer.closed(); h.announcer.opened(); h.announcer.update(U); h.announcer.update(M(true)); h.flush();
+    check('…once per OPEN: reopening with overflow announces once more (2 in total)', h.said.length === 2);
+    // Closed, or scrolled to the end, before the delay: nothing.
+    h = harness();
+    h.announcer.opened(); h.announcer.update(M(true)); h.announcer.closed(); h.flush();
+    const closedQuiet = h.said.length === 0;
+    h = harness();
+    h.announcer.opened(); h.announcer.update(M(true)); h.announcer.update(M(false)); h.flush();
+    check('…nothing when the switcher closes, or the list no longer overflows, before the delay ends', closedQuiet && h.said.length === 0);
+    // A mutant that decides on every measured update (the expander toggle repeats it).
+    const everyUpdate = (deps) => {
+      let live = false;
+      return {
+        opened() { live = true; },
+        update({ measured, overflows }) { if (live && measured && overflows) deps.schedule(() => deps.announce(deps.message), 500); },
+        closed() { live = false; },
+        dispose() { live = false; },
+      };
+    };
+    h = harness(everyUpdate);
+    h.announcer.opened(); h.announcer.update(M(true)); h.flush(); h.announcer.update(M(true)); h.flush();
+    check('…mutant caught: an announcer that speaks on every overflowing update (the expander toggle would repeat it)', h.said.length !== 1);
+    // The wiring in AccountSwitcher.tsx.
+    const wireOk = (src) =>
+      src.includes('announce: (message) => AccessibilityInfo.announceForAccessibility(message),') &&
+      src.includes('message: SWITCHER_SCROLL_HINT,') &&
+      /if \(open\) announcer\.opened\(\);\s*else announcer\.closed\(\);/.test(src) &&
+      /announcer\.update\(\{\s*measured: listHeight > 0 && contentHeight > 0,\s*overflows: switcherListOverflows\(\{ listHeight, contentHeight, scrollY \}\),\s*\}\);/.test(src) &&
+      /setScrollY\(0\);[^]*?setListHeight\(0\);\s*setContentHeight\(0\);\s*setOpen\(true\);/.test(src) &&
+      liveOk(src);
+    check('…AccountSwitcher announces through AccessibilityInfo.announceForAccessibility, decides on the sizes measured after each open (reset on open), and keeps the live region (source)', wireOk(sw));
+    check('…mutant caught: the switcher without the announcement (the old behaviour)',
+      !wireOk(sw.replace('announce: (message) => AccessibilityInfo.announceForAccessibility(message),', 'announce: () => undefined,')));
+    check('…mutant caught: stale sizes from the previous open deciding the announcement',
+      !wireOk(sw.replace('setListHeight(0);\n          setContentHeight(0);\n', '')));
+  }
 }
 
 // ===========================================================================

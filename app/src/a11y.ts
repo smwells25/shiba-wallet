@@ -79,6 +79,15 @@ export function switcherRowSpokenLabel(account: { name: string; evmAddress: stri
 }
 
 /**
+ * A saved contact's row as a screen reader says it: the name, then the short
+ * address ("Burn, 0x0000…dEaD"); the row itself shows the full address
+ * (pass p21a: TalkBack read all 42 characters of the Burn contact).
+ */
+export function contactRowSpokenLabel(contact: { name: string; address: string }): string {
+  return `${contact.name}, ${spokenShortAddress(contact.address)}`;
+}
+
+/**
  * A sentence with every full Ethereum address in it shortened for speech
  * ("Balances of your regular account 0x772e…F44F"); TalkBack read the
  * 42-character address on the Staking screen (pass p20c finding 6).
@@ -136,8 +145,10 @@ export function activityRowSpokenLead(p: {
  * :268–271 sets View.alpha) or of zero size may be treated as not shown to
  * the user. Keeping alpha 1, a real 1×1 size and VISIBLE is the
  * conservative choice; the text is hidden by the clip and the transparent
- * colour instead. (That the label is then honoured is to be confirmed on
- * the emulator.)
+ * colour instead. (Pass p21a confirmed on the emulator that a field
+ * labelled by such a view reads "Edit box for <label>". Since then the view
+ * is also importantForAccessibility "no" so it is not a swipe stop of its
+ * own — components.tsx HiddenFieldLabel.)
  */
 export const HIDDEN_FIELD_LABEL_STYLE = {
   position: 'absolute',
@@ -231,4 +242,84 @@ export function createAnnounceFocus(deps: {
  */
 export function sendLinkHint(displaySymbol: string): string {
   return `Sends ${displaySymbol}`;
+}
+
+/**
+ * "More accounts below — scroll the list." spoken ONCE each time the account
+ * switcher opens with rows below the fold (pass p21a finding 7). The
+ * always-mounted live region under the list (AccountSwitcher.tsx) was not
+ * spoken when the switcher opened — its content arrives with the new
+ * window, so TalkBack reports it only as part of the window-state event —
+ * nor when the expander opened (the overflow state does not change); it was
+ * spoken only when the line reappeared after scrolling back up. The live
+ * region stays for that reappearance; this adds one announcement per open.
+ *
+ * The decision is taken at the first MEASURED state after `opened()` (the
+ * list's height and its content's height both known): with overflow, one
+ * announcement is scheduled after SWITCHER_OVERFLOW_ANNOUNCE_DELAY_MS, and
+ * sent only if the list still overflows and is still open then; without
+ * overflow, nothing — and nothing later in the same open either (the
+ * expander or a scroll changing the overflow is the live region's job).
+ * The delay is a judgement, not a documented figure: it lets the screen
+ * reader's own reading of the newly opened window start first.
+ *
+ * Pure (no React Native): `announce` is
+ * AccessibilityInfo.announceForAccessibility in the app, a counter in the
+ * checks; `schedule` / `cancel` wrap setTimeout.
+ */
+export const SWITCHER_OVERFLOW_ANNOUNCE_DELAY_MS = 500;
+
+export interface OverflowAnnouncer {
+  /** The switcher opened: the next measured state decides. */
+  opened(): void;
+  /** The latest sizes: `measured` once both heights are known. */
+  update(state: { measured: boolean; overflows: boolean }): void;
+  /** The switcher closed: a scheduled announcement is dropped. */
+  closed(): void;
+  /** The component unmounts. */
+  dispose(): void;
+}
+
+export function createOverflowAnnouncer(deps: {
+  message: string;
+  announce: (message: string) => void;
+  schedule: (run: () => void, ms: number) => unknown;
+  cancel: (handle: unknown) => void;
+  delayMs?: number;
+}): OverflowAnnouncer {
+  const delay = deps.delayMs ?? SWITCHER_OVERFLOW_ANNOUNCE_DELAY_MS;
+  let deciding = false;
+  let overflowsNow = false;
+  let handle: unknown = null;
+  let disposed = false;
+  const clear = () => {
+    if (handle !== null) deps.cancel(handle);
+    handle = null;
+  };
+  const close = () => {
+    deciding = false;
+    overflowsNow = false;
+    clear();
+  };
+  return {
+    opened() {
+      close();
+      deciding = !disposed;
+    },
+    update({ measured, overflows }) {
+      overflowsNow = measured && overflows;
+      if (!deciding || !measured) return;
+      deciding = false;
+      if (!overflows) return;
+      handle = deps.schedule(() => {
+        handle = null;
+        if (!disposed && overflowsNow) deps.announce(deps.message);
+      }, delay);
+    },
+    closed: close,
+    dispose() {
+      disposed = true;
+      close();
+    },
+  };
 }

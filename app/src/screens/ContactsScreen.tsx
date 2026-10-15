@@ -11,6 +11,7 @@ import {
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation';
 import { Button, WarningBox, screenStyle, HiddenFieldLabel, useFieldLabels } from '../components';
+import { spokenShortAddress } from '../a11y';
 import { QrScanner } from '../components/QrScanner';
 import { resolveActiveNetworks } from '../config/defaults';
 import { useTheme } from '../theme';
@@ -272,7 +273,11 @@ export function ContactsScreen(_props: Props) {
                   ) : (
                     <Text style={[styles.contactName, { color: theme.text }]}>{contact.name}</Text>
                   )}
-                  <Text selectable style={[styles.address, { color: theme.textMuted }]}>
+                  <Text
+                    selectable
+                    accessibilityLabel={spokenShortAddress(contact.address)}
+                    style={[styles.address, { color: theme.textMuted }]}
+                  >
                     {contact.address}
                   </Text>
                   <View style={styles.buttonRow}>

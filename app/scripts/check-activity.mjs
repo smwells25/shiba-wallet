@@ -2097,5 +2097,18 @@ reset();
       screen.includes('{!showAmount ? null : ('));
 }
 
+// Pass p21a (noted): the header read Account 1's full 42-character address.
+// The full address stays on screen; a screen reader hears the short form.
+{
+  const { spokenShortAddress } = await import('../src/a11y.ts');
+  const screen = readFileSync(join(here, '..', 'src', 'screens', 'ActivityScreen.tsx'), 'utf8');
+  const headerOk = (src) =>
+    /<Text\s+selectable\s+accessibilityLabel=\{spokenShortAddress\(account\.address\)\}\s+style=\{\[styles\.addressLine, \{ color: theme\.textMuted \}\]\}\s*>\s*\{account\.address\}\s*<\/Text>/.test(src);
+  check('p21a: the Activity header shows the full address and speaks the short one, "0x772e…F44F" (source + exact)',
+    headerOk(screen) && spokenShortAddress('0x772eF8c0b0A9E1d3b2C4D5e6F7a8B9c0d1E2F44F') === '0x772e…F44F');
+  check('…mutant caught: the header address spoken in full again (no label)',
+    !headerOk(screen.replace('accessibilityLabel={spokenShortAddress(account.address)}', '')));
+}
+
 console.log(`\ncheck-activity: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

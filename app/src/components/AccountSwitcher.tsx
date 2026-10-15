@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
+  AccessibilityInfo,
   ActivityIndicator,
   Alert,
   FlatList,
@@ -10,7 +11,13 @@ import {
   View,
 } from 'react-native';
 import { Button } from '../components';
-import { SWITCHER_IMPORTED_LINE, spokenShortAddress, switcherRowSpokenLabel } from '../a11y';
+import {
+  SWITCHER_IMPORTED_LINE,
+  createOverflowAnnouncer,
+  spokenShortAddress,
+  switcherRowSpokenLabel,
+  type OverflowAnnouncer,
+} from '../a11y';
 import { useTheme } from '../theme';
 import { shortAccountAddress } from '../wallet/accounts';
 import {
@@ -59,6 +66,35 @@ export function AccountSwitcher({ onManage, onImportKey }: { onManage: () => voi
   const [listHeight, setListHeight] = useState(0);
   const [contentHeight, setContentHeight] = useState(0);
   const [scrollY, setScrollY] = useState(0);
+  // "More accounts below" spoken once per open when the list opens with
+  // rows below the fold (pass p21a finding 7; a11y.ts
+  // createOverflowAnnouncer). AccessibilityInfo.announceForAccessibility
+  // sends a TYPE_ANNOUNCEMENT event on Android only while an accessibility
+  // service is on (RN 0.86.3 AccessibilityInfo.js:474–480 →
+  // AccessibilityInfoModule.kt:282–292) and posts a VoiceOver announcement
+  // on iOS. The live region below still covers the line reappearing.
+  const [announcer] = useState<OverflowAnnouncer>(() =>
+    createOverflowAnnouncer({
+      message: SWITCHER_SCROLL_HINT,
+      announce: (message) => AccessibilityInfo.announceForAccessibility(message),
+      schedule: (run, ms) => setTimeout(run, ms),
+      cancel: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+    }),
+  );
+  useEffect(() => {
+    if (open) announcer.opened();
+    else announcer.closed();
+  }, [announcer, open]);
+  useEffect(() => {
+    if (!open) return;
+    announcer.update({
+      measured: listHeight > 0 && contentHeight > 0,
+      overflows: switcherListOverflows({ listHeight, contentHeight, scrollY }),
+    });
+  }, [announcer, open, listHeight, contentHeight, scrollY]);
+  // Unmounting drops a scheduled announcement (closed, not disposed, so a
+  // development-mode effect re-run leaves the announcer usable).
+  useEffect(() => () => announcer.closed(), [announcer]);
 
   if (!activeAccount) return null;
   // Accounts with a key first, then the watch-only ones and the multisigs
@@ -109,6 +145,11 @@ export function AccountSwitcher({ onManage, onImportKey }: { onManage: () => voi
         onPress={() => {
           setIntroOpen(false);
           setScrollY(0);
+          // The list is mounted afresh (Android's Modal renders nothing while
+          // hidden — Modal.js:278–289), so the sizes are measured again; the
+          // old ones must not decide the announcement.
+          setListHeight(0);
+          setContentHeight(0);
           setOpen(true);
         }}
         style={({ pressed }) => [
