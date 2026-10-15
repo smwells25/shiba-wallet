@@ -8297,3 +8297,85 @@ Opus.
       the Value Transfer API. NEXT (wave 2): the live Sepolia → OP
       Sepolia → Arbitrum Sepolia native-ETH legs by script per BRIDGING.md
       §15.13, then the Bridge screen with the provider choice.
+- [x] Item 1, the live leg — THE FIRST LIVE BRIDGE: NATIVE TEST ETH
+      THROUGH STARGATE V2 ON THE LAYERZERO OFT ADAPTER, BY SCRIPT
+      (commit fec6c32; scripts/testnet/bridge-smoke.mjs + BRIDGING.md
+      §15.16; the offline runner ALL GREEN in the CTO's isolated
+      worktree on HEAD 110c5c8 (engine 1,022, app 8,795 across 57
+      suites); the dry run passes from the main checkout (92 checks; the
+      worktree cannot run it — no .dev-wallet by design); the CTO
+      re-read all four receipts on public RPCs: status 0x1 at the
+      recorded blocks, the sends' `to` = the engine's pool addresses; no
+      engine or app file edited; the two files secret-scan clean). THE
+      ENGINE'S CALLDATA WENT ON-CHAIN UNCHANGED (quote.calls[0] from
+      provider.quote(); the script adds only nonce, gas limit = estimate
+      + 20% and fees and signs with the engine's signEip1559; ethers
+      used only to check the engine's work). DRY RUN (read-only): for all
+      6 routes the live getSendLibrary / getUlnConfig / getExecutorConfig
+      match the adapter's facts (1 required DVN LayerZero Labs,
+      confirmations 2 Sepolia / 5 Arbitrum / 1 OP); ethers re-encodes
+      each call byte-identically (452 bytes), all 14 pins read their own
+      word, value = amount + native fee, an ethers-built quoteSend equals
+      the fee to the wei; eth_simulateV1 succeeded on each source chain
+      (313,407 gas Sepolia → OP, 257,755 OP → Arbitrum; PacketSent to the
+      destination TokenMessaging with the OFTSent GUID); engine refusals
+      (a wei below the pool's 10^12-wei minimum and dust → "moves in steps
+      of 1000000000000", a minimum-to-receive one wei above the quote,
+      non-empty extraOptions, Base Sepolia "No configured OFT serves this
+      route"); simulated refusals (value one wei short →
+      Stargate_InvalidAmount 0x3442dd95; minAmountLD one step higher →
+      Stargate_SlippageTooHigh 0xa1e86545). CORRECTION to §15.6: the "1%
+      protocol fee" is a FLAT 10^12 wei at 0.0001 and 0.0002 ETH (the fee
+      library not read). LEG A Sepolia → OP Sepolia 0.0002 ETH: native
+      fee 102,050,140,082,558 wei (executor 97,108,235,109,199 + DVN
+      4,941,904,973,359, no treasury share); tx
+      0xfb041691c102214d1da67f60b23b985a2e99a335fccf23423b8c722937986405,
+      block 11917629, gas 313,407 (= the simulation; estimate 341,035),
+      effective price 1,000,013 wei, same input on PublicNode (reth),
+      Pocket (erigon) and drpc; GUID
+      0x4da5481014f25b3326f100cb8d0cdb20979a9e1d9d6708b96347ef993580395c,
+      PacketSent nonce 196; source delta −302,363,551,156,849 wei = value
+      + gas exact; track(): not indexed +8 s, INFLIGHT +62 s, DELIVERED
+      +125 s; delivery tx
+      0xf0760a9ec2ba0e8f1b3a53e46e6e118cd749b66fb2040e6d7d7a04da041827f3,
+      OP block 50115531, OFTReceived with the same GUID 2e14 wei to the
+      dev EOA (own eth_getLogs = Scan's destination tx), destination
+      delta +200,000,000,000,000 exact; 90 s source block → destination
+      block. LEG B OP Sepolia → Arbitrum Sepolia 0.0002 ETH: native fee
+      130,249,623,732,558 (executor 117,010,613,659,199 + DVN
+      13,239,010,073,359); tx
+      0xfa79787a5ff824e6cc5e1aa61e06a97feb5987627f29010cee67dd57ad9fdf02,
+      block 50115550, gas 257,755 (= the simulation), L1 data fee 404
+      wei, operator fee 0; source delta −330,507,443,171,712 exact;
+      INFLIGHT +17 s, CONFIRMING +61 s, DELIVERED +72 s; delivery tx
+      0x27fa3f2e339e7e737daab8314fbb7787e640eec6d6b894dd134a27a287b632d8,
+      Arbitrum block 319288653, OFTReceived 2e14 to the dev EOA, delta
+      exact on sepolia-rollup.arbitrum.io and Pocket (PublicNode's
+      Arbitrum endpoint refuses historical balances); 30 s. ONE CHECK
+      FAILED DURING THE RUN: the first receipt read on
+      sepolia.optimism.io carried block hash 0x1f572c37… which no
+      endpoint later knew — a replaced unsafe-head block; all three now
+      agree on 0xfab31ffe… with an identical receipt; the script now
+      re-reads receipts on a block-hash disagreement (not yet exercised
+      live) and keeps chain ids apart from transaction details. TOTALS:
+      pool fee 0 on both routes; 0.000632870994328561 ETH left the dev
+      EOA (0.0004 bridged + 0.000232299763815116 LayerZero fees +
+      0.000000571230513445 gas and L1), 0.0004 arrived; net cost
+      0.000232870994328561 test ETH; balances now Sepolia
+      0.043452807449020349, OP 0.094769429541077557, Arbitrum
+      0.022084475390030001. OBSERVATIONS: both legs were delivered BEFORE
+      the source block was safe (the 2- and 1-confirmation settings), and
+      with a single verifier nothing covers a source reorganisation after
+      delivery; sepolia.optimism.io reported safe / finalized heads dated
+      2026-09-30 (read once). ADAPTER FOLLOW-UPS (slice dispatched):
+      track() cannot match a GUID or tell OFTReceived from
+      UnreceivedTokenCached from Scan's status alone; quote.time still
+      says "not measured"; "1 source-block confirmations"; the fee line
+      hard-codes "ETH"; no gas figure in the quote; Stargate's own
+      executor option (type 3, lzReceive gas 150,000) not surfaced. The
+      secret scan flags the run record's generic version-number line
+      (git-ignored) as matching a .dev-wallet file — a false positive
+      that also caught this record's first wording. UNVERIFIED: a smart-account sender or recipient
+      (UnreceivedTokenCached / retryReceiveToken), bus mode, an ERC-20
+      OFT, mainnet security, the flat fee at other amounts (§15.13 steps
+      2–4 remain).
