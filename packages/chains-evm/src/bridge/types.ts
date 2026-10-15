@@ -104,6 +104,12 @@ export interface BridgeTimeEstimate {
   maxSeconds: number | null;
   /** Where the figure comes from (document and date, or "not measured on test networks"). */
   source: string;
+  /**
+   * A single delivery time measured for this exact route, when one exists.
+   * One measurement is not a range, so minSeconds / maxSeconds stay as the
+   * provider can state them; this field is informational only.
+   */
+  measured?: { seconds: number; date: string; description: string };
 }
 
 /** What has to happen on the destination chain after the source transaction. */
@@ -154,6 +160,13 @@ export interface BridgeQuoteRequest {
    * `route.destinationAsset`. Providers refuse to quote below it.
    */
   minAmountOut?: bigint;
+  /**
+   * How the caller's network profile names the native coin (for example
+   * "test ETH" on a test network). Used in fee lines that are paid in the
+   * native coin. Optional; providers default to "ETH". Providers whose fees
+   * are not paid in the native coin ignore it.
+   */
+  nativeSymbol?: string;
 }
 
 /** A complete, reviewable quote. */
@@ -175,6 +188,13 @@ export interface BridgeQuote {
   tracking: BridgeTrackingMethod;
   /** Extra plain-English warnings for the confirm screen. */
   notes: string[];
+  /**
+   * eth_estimateGas for the bridge call, when the app injected an estimator
+   * and the call can be estimated on its own (no approval has to be mined
+   * first). Null otherwise. An estimate, not a limit: the app adds its own
+   * margin, as on every other send path.
+   */
+  gasEstimate?: bigint | null;
 }
 
 /** A transfer the app has sent and wants to follow. */
@@ -199,6 +219,72 @@ export interface BridgeTransferStatus {
   /** Calls the destination needs (CCTP mint, Stargate retry), when the provider can build them. */
   destinationCalls?: Call[];
   destinationTxHash?: string;
+  /**
+   * What the chains themselves say, read from event logs through the log
+   * readers the app injected. Present only when the provider was given
+   * them; then `state` follows this, and an off-chain API status is
+   * supporting evidence only.
+   */
+  onChain?: BridgeOnChainDelivery;
+}
+
+/** One event log as a node returns it in a receipt or from eth_getLogs (hex strings). */
+export interface BridgeLog {
+  address: string;
+  topics: readonly string[];
+  data: string;
+  /** The transaction that emitted the log (present in receipts and eth_getLogs answers). */
+  transactionHash?: string;
+  blockNumber?: string;
+  logIndex?: string;
+}
+
+/**
+ * Reads the receipt of one transaction on one chain, supplied by the app
+ * (failover and freshness are the app's job). Returns null while the
+ * transaction has no receipt. `status` is the receipt's status field.
+ */
+export type BridgeReceiptLogReader = (request: {
+  chainId: number;
+  txHash: string;
+}) => Promise<{ status: 'success' | 'reverted'; logs: readonly BridgeLog[] } | null>;
+
+/**
+ * eth_getLogs on one chain for one contract, supplied by the app. `topics`
+ * follows eth_getLogs: position by position, a value, a list of values (any
+ * of them) or null (anything). The app chooses the block range; it must
+ * start no later than the receiving chain's head at the time the source
+ * transaction was sent, and end at the current head.
+ */
+export type BridgeEventLogReader = (request: {
+  chainId: number;
+  address: string;
+  topics: readonly (string | readonly string[] | null)[];
+}) => Promise<readonly BridgeLog[]>;
+
+/** Where a transfer is, according to event logs on the two chains. */
+export type BridgeOnChainState =
+  /** The receiving contract emitted its "received" event for this message to this recipient. */
+  | 'delivered'
+  /** The message arrived but the funds could not be handed over; a permissionless retry call delivers them. */
+  | 'cached-needs-retry'
+  /** The source transaction sent the message and the receiving chain shows nothing for it yet. */
+  | 'in-flight'
+  /** The source transaction reverted: nothing was sent. */
+  | 'source-reverted'
+  /** The logs do not say (no receipt yet, no message in it, or events that do not match the transfer). */
+  | 'unknown';
+
+export interface BridgeOnChainDelivery {
+  status: BridgeOnChainState;
+  /** The provider's message id (LayerZero: the GUID carried by OFTSent and PacketSent), or null when not read. */
+  guid: string | null;
+  /** The transaction on the receiving chain that emitted the delivery (or caching) event. */
+  destinationTx: string | null;
+  /** Base units the recipient received, from the delivery event; null unless delivered. */
+  amountReceived: bigint | null;
+  /** The off-chain status (for LayerZero, Scan's), kept as supporting evidence; null when not asked or not found. */
+  apiStatus: string | null;
 }
 
 /** The adapter every bridge provider implements. */

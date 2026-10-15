@@ -1,14 +1,21 @@
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { encodeFunctionCall, type AbiValue } from '../abi.js';
-import { toBytes, toHex } from '../encoding.js';
+import { keccak, toBytes, toHex } from '../encoding.js';
+import type { Call } from '../smart-account.js';
 import type {
   BridgeAsset,
   BridgeCall,
+  BridgeEventLogReader,
   BridgeFeeLine,
+  BridgeLog,
+  BridgeOnChainDelivery,
   BridgePin,
   BridgeProvider,
   BridgeQuote,
   BridgeQuoteRequest,
+  BridgeReceiptLogReader,
   BridgeRoute,
+  BridgeTimeEstimate,
   BridgeTransfer,
   BridgeTransferStatus,
   BridgeTrustStatement,
@@ -121,6 +128,45 @@ export const OFT_QUOTE_OFT_SIGNATURE = 'quoteOFT((uint32,bytes32,uint256,uint256
 export const OFT_SEND_SELECTOR = '0xc7c7f5b3';
 export const OFT_QUOTE_SEND_SELECTOR = '0x3b6f743b';
 export const OFT_QUOTE_OFT_SELECTOR = '0x0d35b415';
+
+/**
+ * Event signatures, as declared in the pinned sources: OFTSent and
+ * OFTReceived in [S] IOFT.sol lines 59-71 (guid and the address indexed;
+ * the rest in data), PacketSent in [S] ILayerZeroEndpointV2.sol line 36
+ * (nothing indexed), and
+ * UnreceivedTokenCached in [SG] StargateBase.sol lines 95-102 (nothing
+ * indexed). Topics are keccak256 of the signature, computed here and
+ * pinned against ethers and the prefixes in docs/BRIDGING.md section 15.1
+ * in the tests.
+ */
+export const OFT_SENT_EVENT_SIGNATURE = 'OFTSent(bytes32,uint32,address,uint256,uint256)';
+export const OFT_RECEIVED_EVENT_SIGNATURE = 'OFTReceived(bytes32,uint32,address,uint256)';
+export const PACKET_SENT_EVENT_SIGNATURE = 'PacketSent(bytes,bytes,address)';
+export const UNRECEIVED_TOKEN_CACHED_EVENT_SIGNATURE = 'UnreceivedTokenCached(bytes32,uint8,uint32,address,uint256,bytes)';
+
+function eventTopic(signature: string): string {
+  return toHex(keccak(utf8ToBytes(signature)));
+}
+
+export const OFT_SENT_TOPIC = eventTopic(OFT_SENT_EVENT_SIGNATURE);
+export const OFT_RECEIVED_TOPIC = eventTopic(OFT_RECEIVED_EVENT_SIGNATURE);
+export const PACKET_SENT_TOPIC = eventTopic(PACKET_SENT_EVENT_SIGNATURE);
+export const UNRECEIVED_TOKEN_CACHED_TOPIC = eventTopic(UNRECEIVED_TOKEN_CACHED_EVENT_SIGNATURE);
+
+/**
+ * Stargate's permissionless delivery of a cached transfer, [SG]
+ * StargateBase.sol lines 295-313: retryReceiveToken(bytes32 _guid, uint8
+ * _index, uint32 _srcEid, address _receiver, uint256 _amountLD, bytes
+ * _composeMsg), external and nonReentrantAndNotPaused (no caller
+ * restriction). It recomputes keccak256(abi.encodePacked(_srcEid,
+ * _receiver, _amountLD, _composeMsg)), refuses with
+ * Stargate_UnreceivedTokenNotFound unless that equals the hash stored by
+ * receiveTokenTaxi / receiveTokenBus for (_guid, _index), deletes it, and
+ * sends the amount with unlimited gas (_safeOutflow, StargatePoolNative.sol
+ * lines 47-50). Selector recorded in docs/BRIDGING.md section 15.1.
+ */
+export const STARGATE_RETRY_RECEIVE_TOKEN_SIGNATURE = 'retryReceiveToken(bytes32,uint8,uint32,address,uint256,bytes)';
+export const STARGATE_RETRY_RECEIVE_TOKEN_SELECTOR = '0xa88835d7';
 
 /** The SendParam struct of IOFT.sol [S], restricted to what the wallet builds. */
 export interface OftSendParam {
@@ -239,6 +285,249 @@ export function decodeOftQuoteOftHead(result: string): OftQuoteOftHead {
   return { minAmountLD: words[0]!, maxAmountLD: words[1]!, amountSentLD: words[3]!, amountReceivedLD: words[4]! };
 }
 
+/** A 32-byte hex value, lower-cased; refuses anything else. */
+function bytes32Hex(value: string, what: string): string {
+  if (typeof value !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(value)) throw new Error(`The ${what} must be 32 bytes of hex.`);
+  return value.toLowerCase();
+}
+
+/** An address carried in a 32-byte word (a topic or an ABI word); refuses non-zero high bytes. */
+function wordAddress(word: bigint, what: string): string {
+  if (word >= 1n << 160n) throw new Error(`The ${what} is not an address: its high 12 bytes are not zero.`);
+  return checksumAddress('0x' + word.toString(16).padStart(40, '0'), what);
+}
+
+function sameAddress(a: string, b: string): boolean {
+  return a.toLowerCase() === b.toLowerCase();
+}
+
+function topicIs(log: BridgeLog, topic: string): boolean {
+  return typeof log.topics[0] === 'string' && log.topics[0].toLowerCase() === topic;
+}
+
+/** OFTSent as decoded from one log [S]. */
+export interface OftSentEvent {
+  emitter: string;
+  guid: string;
+  dstEid: number;
+  fromAddress: string;
+  amountSentLD: bigint;
+  amountReceivedLD: bigint;
+}
+
+export function decodeOftSentLog(log: BridgeLog): OftSentEvent {
+  if (!topicIs(log, OFT_SENT_TOPIC) || log.topics.length !== 3) throw new Error('This log is not an OFTSent event.');
+  const words = hexWords(log.data, 'OFTSent data');
+  if (words.length !== 3) throw new Error('OFTSent data must be exactly three words.');
+  if (words[0]! >= 1n << 32n) throw new Error('OFTSent carries a destination endpoint id that is not a uint32.');
+  return {
+    emitter: checksumAddress(log.address, 'OFTSent emitter'),
+    guid: bytes32Hex(log.topics[1]!, 'OFTSent GUID'),
+    dstEid: Number(words[0]!),
+    fromAddress: wordAddress(BigInt(bytes32Hex(log.topics[2]!, 'OFTSent sender')), 'OFTSent sender'),
+    amountSentLD: words[1]!,
+    amountReceivedLD: words[2]!,
+  };
+}
+
+/** OFTReceived as decoded from one log [S]. */
+export interface OftReceivedEvent {
+  emitter: string;
+  guid: string;
+  srcEid: number;
+  toAddress: string;
+  amountReceivedLD: bigint;
+}
+
+export function decodeOftReceivedLog(log: BridgeLog): OftReceivedEvent {
+  if (!topicIs(log, OFT_RECEIVED_TOPIC) || log.topics.length !== 3) throw new Error('This log is not an OFTReceived event.');
+  const words = hexWords(log.data, 'OFTReceived data');
+  if (words.length !== 2) throw new Error('OFTReceived data must be exactly two words.');
+  if (words[0]! >= 1n << 32n) throw new Error('OFTReceived carries a source endpoint id that is not a uint32.');
+  return {
+    emitter: checksumAddress(log.address, 'OFTReceived emitter'),
+    guid: bytes32Hex(log.topics[1]!, 'OFTReceived GUID'),
+    srcEid: Number(words[0]!),
+    toAddress: wordAddress(BigInt(bytes32Hex(log.topics[2]!, 'OFTReceived recipient')), 'OFTReceived recipient'),
+    amountReceivedLD: words[1]!,
+  };
+}
+
+/** Stargate's UnreceivedTokenCached as decoded from one log [SG]. Every field is in data. */
+export interface UnreceivedTokenCachedEvent {
+  emitter: string;
+  guid: string;
+  index: number;
+  srcEid: number;
+  receiver: string;
+  amountLD: bigint;
+  /** 0x-hex; empty ('0x') for every transfer this wallet sends. */
+  composeMsg: string;
+}
+
+export function decodeUnreceivedTokenCachedLog(log: BridgeLog): UnreceivedTokenCachedEvent {
+  if (!topicIs(log, UNRECEIVED_TOKEN_CACHED_TOPIC) || log.topics.length !== 1) {
+    throw new Error('This log is not an UnreceivedTokenCached event.');
+  }
+  const words = hexWords(log.data, 'UnreceivedTokenCached data');
+  if (words.length < 7) throw new Error('UnreceivedTokenCached data is too short.');
+  if (words[1]! >= 256n) throw new Error('UnreceivedTokenCached carries an index that is not a uint8.');
+  if (words[2]! >= 1n << 32n) throw new Error('UnreceivedTokenCached carries a source endpoint id that is not a uint32.');
+  if (words[5]! !== 192n) throw new Error('UnreceivedTokenCached has a compose-message offset other than the canonical 0xc0.');
+  const length = words[6]!;
+  if (length > 1n << 20n || words.length !== 7 + Math.ceil(Number(length) / 32)) {
+    throw new Error('UnreceivedTokenCached has a compose message whose length does not match its data.');
+  }
+  const body = log.data.slice(2 + 7 * 64);
+  return {
+    emitter: checksumAddress(log.address, 'UnreceivedTokenCached emitter'),
+    guid: '0x' + log.data.slice(2, 66).toLowerCase(),
+    index: Number(words[1]!),
+    srcEid: Number(words[2]!),
+    receiver: wordAddress(words[3]!, 'UnreceivedTokenCached receiver'),
+    amountLD: words[4]!,
+    composeMsg: '0x' + body.slice(0, Number(length) * 2).toLowerCase(),
+  };
+}
+
+/** PacketSent as decoded from one endpoint log, with the packet header read per PacketV1Codec [S]. */
+export interface PacketSentEvent {
+  emitter: string;
+  nonce: bigint;
+  srcEid: number;
+  /** The sending OApp (bytes32 in the packet, read as an address). */
+  sender: string;
+  dstEid: number;
+  /** The receiving OApp (bytes32 in the packet, read as an address). */
+  receiver: string;
+  guid: string;
+  /** The executor and DVN options the packet carried, 0x-hex. */
+  options: string;
+  sendLibrary: string;
+}
+
+function abiBytesAt(data: string, words: bigint[], offset: bigint, what: string): string {
+  if (offset % 32n !== 0n || offset / 32n >= BigInt(words.length)) throw new Error(`PacketSent has a malformed ${what} offset.`);
+  const length = words[Number(offset / 32n)]!;
+  const start = 2 + Number(offset) * 2 + 64;
+  if (length > 1n << 20n || start + Number(length) * 2 > data.length) throw new Error(`PacketSent has a ${what} longer than its data.`);
+  return '0x' + data.slice(start, start + Number(length) * 2).toLowerCase();
+}
+
+/**
+ * Decodes PacketSent(bytes encodedPayload, bytes options, address
+ * sendLibrary). The encoded packet is read with PacketV1Codec's offsets
+ * ([S] messagelib/libs/PacketV1Codec.sol lines 16-26):
+ * version (1 byte, must be 1), nonce (8), srcEid (4), sender (32), dstEid
+ * (4), receiver (32), then the GUID (32) at byte 81 and the message.
+ */
+export function decodePacketSentLog(log: BridgeLog): PacketSentEvent {
+  if (!topicIs(log, PACKET_SENT_TOPIC) || log.topics.length !== 1) throw new Error('This log is not a PacketSent event.');
+  const words = hexWords(log.data, 'PacketSent data');
+  if (words.length < 5) throw new Error('PacketSent data is too short.');
+  const packet = abiBytesAt(log.data, words, words[0]!, 'packet');
+  const options = abiBytesAt(log.data, words, words[1]!, 'options');
+  const sendLibrary = wordAddress(words[2]!, 'PacketSent send library');
+  const p = packet.slice(2);
+  if (p.length < 113 * 2) throw new Error('The LayerZero packet is shorter than its 113-byte header.');
+  if (p.slice(0, 2) !== '01') throw new Error('The LayerZero packet is not version 1.');
+  const hexAt = (start: number, end: number) => '0x' + p.slice(start * 2, end * 2);
+  return {
+    emitter: checksumAddress(log.address, 'PacketSent emitter'),
+    nonce: BigInt(hexAt(1, 9)),
+    srcEid: Number(BigInt(hexAt(9, 13))),
+    sender: wordAddress(BigInt(hexAt(13, 45)), 'packet sender'),
+    dstEid: Number(BigInt(hexAt(45, 49))),
+    receiver: wordAddress(BigInt(hexAt(49, 81)), 'packet receiver'),
+    guid: hexAt(81, 113),
+    options,
+    sendLibrary,
+  };
+}
+
+/** The one LayerZero send a source transaction carried for a route. */
+export interface LayerZeroSendInReceipt {
+  guid: string;
+  fromAddress: string;
+  amountSentLD: bigint;
+  amountReceivedLD: bigint;
+  /** The options the packet carried (for Stargate's pools, its own executor option). */
+  options: string;
+  nonce: bigint;
+}
+
+/**
+ * Finds the OFT send of one route in a source receipt's logs: an OFTSent
+ * from `oft` towards `dstEid`, and a PacketSent from `endpoint` whose packet
+ * goes from `sourceOApp` (srcEid) to `destinationOApp` (dstEid) with the
+ * same GUID. Logs from other contracts, and malformed logs, are ignored.
+ * Returns null unless exactly one such pair exists (a transaction with two
+ * matching sends is ambiguous, and the wallet does not guess which).
+ */
+export function findLayerZeroSend(
+  logs: readonly BridgeLog[],
+  expect: { oft: string; endpoint: string; srcEid: number; dstEid: number; sourceOApp: string; destinationOApp: string },
+): LayerZeroSendInReceipt | null {
+  const sent: OftSentEvent[] = [];
+  const packets: PacketSentEvent[] = [];
+  for (const log of logs) {
+    try {
+      if (topicIs(log, OFT_SENT_TOPIC) && sameAddress(log.address, expect.oft)) {
+        const e = decodeOftSentLog(log);
+        if (e.dstEid === expect.dstEid) sent.push(e);
+      } else if (topicIs(log, PACKET_SENT_TOPIC) && sameAddress(log.address, expect.endpoint)) {
+        const e = decodePacketSentLog(log);
+        if (
+          e.srcEid === expect.srcEid &&
+          e.dstEid === expect.dstEid &&
+          sameAddress(e.sender, expect.sourceOApp) &&
+          sameAddress(e.receiver, expect.destinationOApp)
+        ) {
+          packets.push(e);
+        }
+      }
+    } catch {
+      // A log that does not decode is not the send being looked for.
+    }
+  }
+  const pairs = sent.flatMap((e) => packets.filter((p) => p.guid === e.guid).map((p) => ({ e, p })));
+  if (pairs.length !== 1) return null;
+  const { e, p } = pairs[0]!;
+  return {
+    guid: e.guid,
+    fromAddress: e.fromAddress,
+    amountSentLD: e.amountSentLD,
+    amountReceivedLD: e.amountReceivedLD,
+    options: p.options,
+    nonce: p.nonce,
+  };
+}
+
+/**
+ * Calldata for Stargate's retryReceiveToken, built from a decoded
+ * UnreceivedTokenCached event. Refuses an event with a compose message: the
+ * wallet never sends one, and a retry would hand it to the endpoint to run
+ * code on the receiving network.
+ */
+export function encodeStargateRetryReceiveToken(cached: UnreceivedTokenCachedEvent): Uint8Array {
+  if (cached.composeMsg !== '0x') {
+    throw new Error('This cached transfer carries a compose message; the wallet does not build a retry that would run it.');
+  }
+  const receiver = checksumAddress(cached.receiver, 'receiver');
+  if (isZeroAddress(receiver)) throw new Error('The cached transfer has no receiver.');
+  if (!Number.isInteger(cached.index) || cached.index < 0 || cached.index > 255) throw new Error('The cached index must be a uint8.');
+  if (!Number.isInteger(cached.srcEid) || cached.srcEid < 0 || cached.srcEid >= 2 ** 32) throw new Error('The source endpoint id must be a uint32.');
+  assertUint(cached.amountLD, 256, 'cached amount');
+  return encodeFunctionCall(STARGATE_RETRY_RECEIVE_TOKEN_SIGNATURE, [
+    { kind: 'fixedBytes', value: toBytes(bytes32Hex(cached.guid, 'GUID')) },
+    { kind: 'uint256', value: BigInt(cached.index) },
+    { kind: 'uint256', value: BigInt(cached.srcEid) },
+    { kind: 'address', value: receiver },
+    { kind: 'uint256', value: cached.amountLD },
+    { kind: 'bytes', value: new Uint8Array() },
+  ]);
+}
+
 /**
  * Byte offsets (after the selector) of every word of an OFT send in the
  * canonical encoding this module produces (verified against ethers in the
@@ -335,6 +624,14 @@ export interface OftDeployment {
   controlNote: string;
   /** Security of each outbound pathway, keyed by destination chain id. A destination without an entry has no route. */
   pathways: Readonly<Record<number, OftPathwaySecurity>>;
+  /**
+   * Delivery times measured live from this deployment, if any: one summary
+   * sentence for the whole asset group, and the seconds per destination
+   * chain id that were measured. Shown with the quote's time estimate.
+   */
+  measuredDelivery?: { date: string; summary: string; seconds: Readonly<Record<number, number>> };
+  /** Facts observed in live runs, added to every quote from this deployment as notes. */
+  liveNotes?: readonly string[];
 }
 
 const READ_AT: Record<number, string> = {
@@ -360,6 +657,33 @@ const STARGATE_TESTNET_CONTROL =
   "Stargate's test pools are owned by an address with no contract code (0x5e6e4f234c7Ad525700fcF5B7862589950589ed5), and their 'planner' role, which can pause transfers, is 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, the first account of Hardhat's published development mnemonic, whose private key is public.";
 
 /**
+ * From the live run of 2026-10-15 (docs/BRIDGING.md section 15.16): one
+ * 0.0002 ETH taxi transfer per route, timed from the sending block to the
+ * delivery block. One measurement each; not a promise.
+ */
+const STARGATE_TESTNET_MEASURED_SUMMARY =
+  'Measured once on the test networks on 2026-10-15: 90 s Sepolia → OP Sepolia, 30 s OP Sepolia → Arbitrum Sepolia (from the sending block to the delivery block, one 0.0002 ETH transfer each).';
+
+function stargateTestnetMeasured(seconds: Record<number, number>) {
+  return Object.freeze({ date: '2026-10-15', summary: STARGATE_TESTNET_MEASURED_SUMMARY, seconds: Object.freeze(seconds) });
+}
+
+/**
+ * Observed on the native test pools (docs/BRIDGING.md section 15.16). The
+ * packets of both live transfers carried the options 0x0003 01 0011 01
+ * …0249f0: type 3, executor lzReceive gas 150,000, no value (LayerZero-v2
+ * 9c741e7f OptionsBuilder.sol line 22, ExecutorOptions.sol lines 10-12 and
+ * 85-86), although the wallet's extraOptions were empty, so the option is
+ * Stargate's own. The pool fee was read from quoteOFT at 0.0001 ETH
+ * (section 15.6) and 0.0002 ETH (section 15.16); Stargate's fee library was
+ * not read.
+ */
+export const STARGATE_TESTNET_NATIVE_LIVE_NOTES: readonly string[] = Object.freeze([
+  "Stargate attaches its own executor option to every message from these pools: an lzReceive gas limit of 150,000 (option type 3), seen in the packets of both live transfers on 2026-10-15. The wallet's own extraOptions stay empty.",
+  "Stargate's pool fee, as the pools quoted it on 2026-10-15: exactly 10^12 wei (0.000001 ETH, one shared-decimal unit) at both 0.0001 and 0.0002 ETH on the routes that charge one, and none on Sepolia → OP Sepolia or OP Sepolia → Arbitrum Sepolia. That looks like a flat one-unit fee at these sizes, but Stargate's fee library was not read, so it is an observation, not a promise; the fee lines above are what the pool quoted just now.",
+]);
+
+/**
  * Stargate V2's native-ETH pools on the test networks [D][C][SG]. Base
  * Sepolia has no Stargate deployment (not in Stargate's testnet metadata;
  * the pools report zero credit towards eid 40245 and quoteSend reverts).
@@ -377,6 +701,8 @@ export const STARGATE_V2_TESTNET_NATIVE_POOLS: readonly OftDeployment[] = Object
     messagingOApp: '0xfB112f7FC5725de9F630abB23E4916d6fd7526d3',
     controlNote: STARGATE_TESTNET_CONTROL,
     pathways: Object.freeze({ 421614: labsPathway(11155111, 2), 11155420: labsPathway(11155111, 2) }),
+    measuredDelivery: stargateTestnetMeasured({ 11155420: 90 }),
+    liveNotes: STARGATE_TESTNET_NATIVE_LIVE_NOTES,
   },
   {
     chainId: 421614,
@@ -388,6 +714,8 @@ export const STARGATE_V2_TESTNET_NATIVE_POOLS: readonly OftDeployment[] = Object
     messagingOApp: '0x657C13E8668B4eD33e524E3F8BD8559667E3Eb9b',
     controlNote: STARGATE_TESTNET_CONTROL,
     pathways: Object.freeze({ 11155111: labsPathway(421614, 5), 11155420: labsPathway(421614, 5) }),
+    measuredDelivery: stargateTestnetMeasured({}),
+    liveNotes: STARGATE_TESTNET_NATIVE_LIVE_NOTES,
   },
   {
     chainId: 11155420,
@@ -399,6 +727,8 @@ export const STARGATE_V2_TESTNET_NATIVE_POOLS: readonly OftDeployment[] = Object
     messagingOApp: '0xea461D9B1a3d1d45E2Aa3a358c3b8cB9bF2c7063',
     controlNote: STARGATE_TESTNET_CONTROL,
     pathways: Object.freeze({ 11155111: labsPathway(11155420, 1), 421614: labsPathway(11155420, 1) }),
+    measuredDelivery: stargateTestnetMeasured({ 421614: 30 }),
+    liveNotes: STARGATE_TESTNET_NATIVE_LIVE_NOTES,
   },
 ]);
 
@@ -446,11 +776,30 @@ export function layerZeroScanState(status: string): BridgeTransferStatus['state'
   }
 }
 
+/** Optional, supplied by the app: eth_estimateGas for one call. */
+export type OftGasEstimator = (request: { chainId: number; from: string; to: string; value: bigint; data: string }) => Promise<bigint>;
+
 export interface LayerZeroOftProviderOptions {
   /** Every deployment the provider may route through; each must carry on-chain-read pathway facts. */
   deployments: readonly OftDeployment[];
   readContract: OftChainReader;
+  /** LayerZero Scan (or another off-chain status). With the log readers below it is supporting evidence only. */
   fetchMessageStatus?: LayerZeroMessageStatusReader;
+  /**
+   * The source transaction's receipt, to read the GUID from OFTSent and
+   * PacketSent. Give both log readers or neither; with them, track() decides
+   * from the chains' own events.
+   */
+  readSourceReceipt?: BridgeReceiptLogReader;
+  /** eth_getLogs on the receiving chain, to find OFTReceived or UnreceivedTokenCached for the GUID. */
+  readDestinationLogs?: BridgeEventLogReader;
+  /**
+   * eth_estimateGas for the bridge call. When given, quotes carry
+   * gasEstimate. In the live run of 2026-10-15 the estimate was 341,035 for
+   * 313,407 gas used (Sepolia) and 266,841 for 257,755 (OP Sepolia), so it
+   * is not a limit: the app adds its usual margin.
+   */
+  estimateGas?: OftGasEstimator;
   /** Use Stargate's bus (batched, cheaper, slower) instead of taxi. Stargate pools only. */
   stargateBus?: boolean;
   id?: string;
@@ -477,6 +826,38 @@ function assertDeployment(d: OftDeployment): void {
   }
 }
 
+function plural(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+/** The quote's time estimate: the live measurement where there is one, never presented as a promise. */
+export function oftTimeEstimate(source: OftDeployment, destinationChainId: number, confirmations: number): BridgeTimeEstimate {
+  const wait = `the verifiers wait for ${plural(confirmations, 'source-block confirmation', 'source-block confirmations')}, then the executor delivers`;
+  const m = source.measuredDelivery;
+  if (!m) {
+    return { minSeconds: null, maxSeconds: null, source: `Not measured on the test networks. Not a promise: ${wait}.` };
+  }
+  const seconds = m.seconds[destinationChainId];
+  const estimate: BridgeTimeEstimate = {
+    minSeconds: null,
+    maxSeconds: null,
+    source: `${m.summary} ${seconds === undefined ? 'This route was not measured.' : `This route took ${seconds} s that once.`} Not a promise: ${wait}, and either can take longer.`,
+  };
+  if (seconds !== undefined) {
+    estimate.measured = { seconds, date: m.date, description: `Measured once on ${m.date}, from the sending block to the delivery block.` };
+  }
+  return estimate;
+}
+
+/** The native coin's name for fee lines, as the caller's network profile gives it (default "ETH"). */
+function nativeSymbolFor(symbol: string | undefined): string {
+  if (symbol === undefined) return 'ETH';
+  if (typeof symbol !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9 .-]{0,19}$/.test(symbol)) {
+    throw new Error('The native coin symbol must be 1 to 20 letters, digits, spaces, dots or hyphens.');
+  }
+  return symbol;
+}
+
 function describeVerifiers(sec: OftPathwaySecurity): string {
   const req = sec.requiredDvns.map((v) => v.operator).join(', ');
   const opt = sec.optionalDvns.length > 0 ? `; plus ${sec.optionalThreshold} of ${sec.optionalDvns.length} optional (${sec.optionalDvns.map((v) => v.operator).join(', ')})` : '';
@@ -484,6 +865,9 @@ function describeVerifiers(sec: OftPathwaySecurity): string {
 }
 
 export function createLayerZeroOftProvider(options: LayerZeroOftProviderOptions): BridgeProvider {
+  if ((options.readSourceReceipt === undefined) !== (options.readDestinationLogs === undefined)) {
+    throw new Error('Give the LayerZero provider both log readers (source receipt and destination logs) or neither.');
+  }
   const deployments = options.deployments.map((d) => {
     assertDeployment(d);
     return d;
@@ -572,7 +956,8 @@ export function createLayerZeroOftProvider(options: LayerZeroOftProviderOptions)
     );
     if (fee.lzTokenFee !== 0n) throw new Error('The OFT asked for a fee in the LayerZero token; the wallet pays in the native coin only.');
     if (fee.nativeFee === 0n) throw new Error('The OFT quoted no messaging fee, which no configured pathway should do; nothing was quoted.');
-    const native: BridgeAsset = { kind: 'native', symbol: 'ETH', decimals: 18 };
+    const nativeSymbol = nativeSymbolFor(request.nativeSymbol);
+    const native: BridgeAsset = { kind: 'native', symbol: nativeSymbol, decimals: 18 };
     const value = r.source.kind === 'stargate-pool-native' ? request.amount + fee.nativeFee : fee.nativeFee;
     const calls: BridgeCall[] = [];
     if (r.source.asset.kind === 'erc20' && r.source.kind !== 'oft') {
@@ -599,7 +984,7 @@ export function createLayerZeroOftProvider(options: LayerZeroOftProviderOptions)
     const fees: BridgeFeeLine[] = [
       {
         kind: 'messaging',
-        description: 'LayerZero messaging fee (verifiers, executor and destination gas), paid in the native coin; any excess is refunded to your address.',
+        description: `LayerZero messaging fee (verifiers, executor and destination gas), paid in ${nativeSymbol}; any excess is refunded to your address.`,
         amount: fee.nativeFee,
         asset: native,
         deductedFromAmount: false,
@@ -611,13 +996,13 @@ export function createLayerZeroOftProvider(options: LayerZeroOftProviderOptions)
         kind: 'pool',
         description: 'Fee the token contract takes from the amount (Stargate calls it a protocol fee).',
         amount: request.amount - head.amountReceivedLD,
-        asset: r.source.asset,
+        asset: r.source.asset.kind === 'native' ? native : r.source.asset,
         deductedFromAmount: true,
         chainId: r.sourceChainId,
       });
     }
     const pathway = r.source.pathways[r.destinationChainId]!;
-    const notes = [describeVerifiers(pathway), r.source.controlNote];
+    const notes = [describeVerifiers(pathway), r.source.controlNote, ...(r.source.liveNotes ?? [])];
     if (head.amountReceivedLD > request.amount) {
       notes.push(`The pool adds a reward: ${head.amountReceivedLD - request.amount} base units more than sent should arrive.`);
     }
@@ -626,6 +1011,31 @@ export function createLayerZeroOftProvider(options: LayerZeroOftProviderOptions)
         "Stargate delivers ETH with a 2,300-gas transfer. A deployed smart account cannot accept that, so for one the ETH stays in Stargate's pool until someone calls retryReceiveToken on the receiving network (anyone may, paying gas there).",
       );
     }
+    let gasEstimate: bigint | null = null;
+    if (options.estimateGas) {
+      const bridgeCall = calls[calls.length - 1]!;
+      if (calls.length > 1) {
+        notes.push('Gas for the send is not estimated here: the approval must be mined first, or the estimate fails.');
+      } else {
+        let estimated: unknown;
+        try {
+          estimated = await options.estimateGas({
+            chainId: r.sourceChainId,
+            from: sender,
+            to: bridgeCall.to,
+            value: bridgeCall.value,
+            data: toHex(bridgeCall.data),
+          });
+        } catch (e) {
+          const reason = e instanceof Error ? e.message : String(e);
+          notes.push(`The network could not estimate the gas for this send (${reason.slice(0, 200)}); it may fail if sent as quoted.`);
+        }
+        if (estimated !== undefined) {
+          if (typeof estimated !== 'bigint' || estimated <= 0n) throw new Error('The gas estimator returned something other than a positive amount of gas.');
+          gasEstimate = estimated;
+        }
+      }
+    }
     return {
       providerId: id,
       route: request.route,
@@ -633,11 +1043,7 @@ export function createLayerZeroOftProvider(options: LayerZeroOftProviderOptions)
       expectedAmountOut: head.amountReceivedLD,
       minAmountOut: minOut,
       fees,
-      time: {
-        minSeconds: null,
-        maxSeconds: null,
-        source: `Not measured on the test networks. The verifiers wait for ${pathway.confirmations} source-block confirmations, then the executor delivers.`,
-      },
+      time: oftTimeEstimate(r.source, r.destinationChainId, pathway.confirmations),
       approvals: calls
         .filter((c) => c.purpose === 'approve')
         .map((c) => ({ chainId: r.sourceChainId, token: c.to, spender: r.source.address, amount: request.amount })),
@@ -654,10 +1060,18 @@ export function createLayerZeroOftProvider(options: LayerZeroOftProviderOptions)
         needsApiKey: false,
       },
       notes,
+      gasEstimate,
     };
   }
 
   async function track(transfer: BridgeTransfer): Promise<BridgeTransferStatus> {
+    if (options.readSourceReceipt && options.readDestinationLogs) {
+      return trackOnChain(transfer, options.readSourceReceipt, options.readDestinationLogs);
+    }
+    return trackByScan(transfer);
+  }
+
+  async function trackByScan(transfer: BridgeTransfer): Promise<BridgeTransferStatus> {
     findRoute(transfer.route);
     if (!/^0x[0-9a-fA-F]{64}$/.test(transfer.sourceTxHash)) throw new Error('The source transaction hash must be 32 bytes of hex.');
     if (!options.fetchMessageStatus) {
@@ -679,6 +1093,180 @@ export function createLayerZeroOftProvider(options: LayerZeroOftProviderOptions)
     const status: BridgeTransferStatus = { state, detail };
     if (answer.destinationTxHash) status.destinationTxHash = answer.destinationTxHash;
     return status;
+  }
+
+  /**
+   * Tracking from the chains' own events. The source receipt gives the
+   * GUID (OFTSent and PacketSent must agree on it, on the route's endpoint
+   * ids and OApps); the receiving chain's logs then decide: OFTReceived for
+   * that GUID, to this recipient, from the source endpoint id and for the
+   * amount OFTSent promised, means delivered; Stargate's
+   * UnreceivedTokenCached for it means the funds wait in the pool for
+   * retryReceiveToken. Scan's status is reported beside the result and
+   * never overrides an event the chain shows.
+   */
+  async function trackOnChain(
+    transfer: BridgeTransfer,
+    readSourceReceipt: BridgeReceiptLogReader,
+    readDestinationLogs: BridgeEventLogReader,
+  ): Promise<BridgeTransferStatus> {
+    const r = findRoute(transfer.route);
+    const txHash = bytes32Hex(transfer.sourceTxHash, 'source transaction hash');
+    const recipient = checksumAddress(transfer.recipient, 'recipient');
+    let apiStatus: string | null = null;
+    let apiNote = '';
+    if (options.fetchMessageStatus) {
+      try {
+        const answer = await options.fetchMessageStatus({ sourceChainId: r.sourceChainId, sourceTxHash: transfer.sourceTxHash });
+        apiStatus = answer?.status ?? null;
+        apiNote = apiStatus === null ? ' LayerZero Scan has no record of the message yet.' : '';
+      } catch {
+        apiNote = ' LayerZero Scan could not be asked.';
+      }
+    }
+    const result = (
+      state: BridgeTransferStatus['state'],
+      onChain: Omit<BridgeOnChainDelivery, 'apiStatus'>,
+      detail: string,
+      extra: Partial<BridgeTransferStatus> = {},
+    ): BridgeTransferStatus => {
+      let scanSentence = apiNote;
+      if (apiStatus !== null) {
+        const agrees =
+          (onChain.status === 'delivered' && apiStatus === 'DELIVERED') ||
+          (onChain.status === 'in-flight' && layerZeroScanState(apiStatus) === 'in-flight');
+        scanSentence = agrees
+          ? ` LayerZero Scan agrees (${apiStatus}).`
+          : ` LayerZero Scan reports ${apiStatus}; the wallet goes by the chains' own events.`;
+      }
+      const status: BridgeTransferStatus = { state, detail: detail + scanSentence, onChain: { ...onChain, apiStatus }, ...extra };
+      if (onChain.destinationTx) status.destinationTxHash = onChain.destinationTx;
+      return status;
+    };
+    const none = { guid: null, destinationTx: null, amountReceived: null };
+
+    if (options.stargateBus === true) {
+      return result(
+        'unknown',
+        { status: 'unknown', ...none },
+        "On-chain tracking follows taxi transfers only: a bus passenger travels inside the bus's later message, whose GUID this wallet does not read.",
+      );
+    }
+    const receipt = await readSourceReceipt({ chainId: r.sourceChainId, txHash });
+    if (!receipt) {
+      return result('unknown', { status: 'unknown', ...none }, 'The sending transaction has no receipt yet; it may still be pending.');
+    }
+    if (receipt.status === 'reverted') {
+      return result(
+        'failed',
+        { status: 'source-reverted', ...none },
+        'The sending transaction reverted, so no message was sent and nothing was bridged; only its network fee was spent.',
+      );
+    }
+    const source = LAYERZERO_V2_TESTNET[r.sourceChainId]!;
+    const srcEid = source.eid;
+    const dstEid = layerZeroEidFor(r.destinationChainId);
+    const send = findLayerZeroSend(receipt.logs, {
+      oft: r.source.address,
+      endpoint: source.endpoint,
+      srcEid,
+      dstEid,
+      sourceOApp: r.source.messagingOApp,
+      destinationOApp: r.target.messagingOApp,
+    });
+    if (!send) {
+      return result(
+        'unknown',
+        { status: 'unknown', ...none },
+        'The sending transaction does not carry exactly one LayerZero send for this route (an OFTSent and a PacketSent with the same GUID), so it cannot be followed.',
+      );
+    }
+    const guid = send.guid;
+    if (send.amountSentLD !== transfer.amountIn) {
+      return result(
+        'unknown',
+        { status: 'unknown', ...none, guid },
+        `The LayerZero send in this transaction moved ${send.amountSentLD} base units, not the ${transfer.amountIn} this transfer records, so it is not followed as this transfer.`,
+      );
+    }
+    const target = checksumAddress(r.target.address);
+    const receivedLogs = await readDestinationLogs({ chainId: r.destinationChainId, address: target, topics: [OFT_RECEIVED_TOPIC, guid] });
+    let mismatched = false;
+    for (const log of receivedLogs) {
+      if (!sameAddress(log.address, target) || !topicIs(log, OFT_RECEIVED_TOPIC)) continue;
+      let event: OftReceivedEvent;
+      try {
+        event = decodeOftReceivedLog(log);
+      } catch {
+        continue;
+      }
+      if (event.guid !== guid) continue;
+      if (event.srcEid === srcEid && sameAddress(event.toAddress, recipient) && event.amountReceivedLD === send.amountReceivedLD) {
+        const destinationTx = typeof log.transactionHash === 'string' ? log.transactionHash : null;
+        return result(
+          'delivered',
+          { status: 'delivered', guid, destinationTx, amountReceived: event.amountReceivedLD },
+          `Delivered: the receiving network shows OFTReceived for this transfer's message (GUID ${guid}), ${event.amountReceivedLD} base units to ${recipient}${destinationTx ? ` in transaction ${destinationTx}` : ''}.`,
+        );
+      }
+      mismatched = true;
+    }
+    if (mismatched) {
+      return result(
+        'unknown',
+        { status: 'unknown', ...none, guid },
+        `The receiving network shows an OFTReceived event for GUID ${guid} that does not match this transfer (sender's endpoint, recipient or amount), so the wallet does not call it delivered.`,
+      );
+    }
+    if (r.target.kind === 'stargate-pool' || r.target.kind === 'stargate-pool-native') {
+      const cachedLogs = await readDestinationLogs({ chainId: r.destinationChainId, address: target, topics: [UNRECEIVED_TOKEN_CACHED_TOPIC] });
+      for (const log of cachedLogs) {
+        if (!sameAddress(log.address, target) || !topicIs(log, UNRECEIVED_TOKEN_CACHED_TOPIC)) continue;
+        let cached: UnreceivedTokenCachedEvent;
+        try {
+          cached = decodeUnreceivedTokenCachedLog(log);
+        } catch {
+          continue;
+        }
+        if (cached.guid !== guid) continue;
+        const destinationTx = typeof log.transactionHash === 'string' ? log.transactionHash : null;
+        const onChain = { status: 'cached-needs-retry' as const, guid, destinationTx, amountReceived: null };
+        if (cached.srcEid !== srcEid || !sameAddress(cached.receiver, recipient) || cached.amountLD !== send.amountReceivedLD) {
+          return result(
+            'unknown',
+            { ...onChain, status: 'unknown' },
+            `The receiving pool cached a transfer for GUID ${guid} that does not match this transfer (sender's endpoint, recipient or amount), so no retry call was built.`,
+          );
+        }
+        const why =
+          r.target.kind === 'stargate-pool-native'
+            ? "Stargate could not hand over the ETH with its 2,300-gas transfer (a deployed smart account cannot accept one)"
+            : 'Stargate could not hand over the tokens';
+        const where = `the receiving network's pool ${target}`;
+        if (cached.composeMsg !== '0x') {
+          return result(
+            'awaiting-destination-action',
+            onChain,
+            `The message arrived, but ${why}, so the funds wait in ${where} (UnreceivedTokenCached). The cached transfer carries a compose message, which this wallet never sends and will not replay, so no retry call was built.`,
+          );
+        }
+        const retry: Call = { to: target, value: 0n, data: encodeStargateRetryReceiveToken(cached) };
+        return result(
+          'awaiting-destination-action',
+          onChain,
+          `The message arrived, but ${why}, so the funds wait in ${where} (UnreceivedTokenCached${destinationTx ? `, transaction ${destinationTx}` : ''}). Anyone can deliver them by calling retryReceiveToken there, paying the gas on that network; the call below does that. It fails while the pool is paused.`,
+          { destinationCalls: [retry] },
+        );
+      }
+    }
+    if (apiStatus !== null && apiStatus !== 'DELIVERED' && layerZeroScanState(apiStatus) !== 'in-flight') {
+      return result(
+        'unknown',
+        { status: 'in-flight', ...none, guid },
+        `The message was sent (GUID ${guid}) and the receiving network shows no delivery for it yet; with LayerZero Scan reporting that it is not on its way, the wallet cannot tell whether it will arrive.`,
+      );
+    }
+    return result('in-flight', { status: 'in-flight', ...none, guid }, `The message was sent (GUID ${guid}); the receiving network shows no delivery for it yet.`);
   }
 
   return {

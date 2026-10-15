@@ -46,6 +46,31 @@ import {
   type SessionKeyGrant,
 } from '../src/index.js';
 import { toHex } from '../src/encoding.js';
+import { solidityPacked } from 'ethers';
+import {
+  decodeOftReceivedLog,
+  decodeOftSentLog,
+  decodePacketSentLog,
+  decodeUnreceivedTokenCachedLog,
+  encodeStargateRetryReceiveToken,
+  findLayerZeroSend,
+  OFT_RECEIVED_EVENT_SIGNATURE,
+  OFT_RECEIVED_TOPIC,
+  OFT_SENT_EVENT_SIGNATURE,
+  OFT_SENT_TOPIC,
+  oftTimeEstimate,
+  PACKET_SENT_EVENT_SIGNATURE,
+  PACKET_SENT_TOPIC,
+  STARGATE_RETRY_RECEIVE_TOKEN_SELECTOR,
+  STARGATE_RETRY_RECEIVE_TOKEN_SIGNATURE,
+  STARGATE_TESTNET_NATIVE_LIVE_NOTES,
+  UNRECEIVED_TOKEN_CACHED_EVENT_SIGNATURE,
+  UNRECEIVED_TOKEN_CACHED_TOPIC,
+  type BridgeEventLogReader,
+  type BridgeLog,
+  type BridgeReceiptLogReader,
+  type BridgeTransfer,
+} from '../src/index.js';
 
 const SEPOLIA = 11155111;
 const BASE_SEPOLIA = 84532;
@@ -608,5 +633,394 @@ describe('LayerZero OFT adapter: provider', () => {
     const status = await provider.track(transfer);
     expect(status).toMatchObject({ state: 'delivered', destinationTxHash: '0x' + 'ef'.repeat(32) });
     expect(status.detail).toContain('retryReceiveToken');
+  });
+});
+
+describe('LayerZero OFT adapter: follow-ups from the live run (docs/BRIDGING.md 15.16)', () => {
+  const evIface = new Interface([
+    'event OFTSent(bytes32 indexed guid, uint32 dstEid, address indexed fromAddress, uint256 amountSentLD, uint256 amountReceivedLD)',
+    'event OFTReceived(bytes32 indexed guid, uint32 srcEid, address indexed toAddress, uint256 amountReceivedLD)',
+    'event PacketSent(bytes encodedPayload, bytes options, address sendLibrary)',
+    'event UnreceivedTokenCached(bytes32 guid, uint8 index, uint32 srcEid, address receiver, uint256 amountLD, bytes composeMsg)',
+    'function retryReceiveToken(bytes32 _guid, uint8 _index, uint32 _srcEid, address _receiver, uint256 _amountLD, bytes _composeMsg)',
+  ]);
+  // Leg A of the live run: Ethereum Sepolia -> OP Sepolia, 0.0002 ETH, GUID and transactions from section 15.16.
+  const GUID_A = '0x4da5481014f25b3326f100cb8d0cdb20979a9e1d9d6708b96347ef993580395c';
+  const SOURCE_TX_A = '0xfb041691c102214d1da67f60b23b985a2e99a335fccf23423b8c722937986405';
+  const DELIVERY_TX_A = '0xf0760a9ec2ba0e8f1b3a53e46e6e118cd749b66fb2040e6d7d7a04da041827f3';
+  const AMOUNT = 200_000_000_000_000n;
+  const KERNEL = '0xc995E49acA5C888F4FF1E50E8467E9fFc31CC5AC';
+  const pool = (chainId: number) => STARGATE_V2_TESTNET_NATIVE_POOLS.find((d) => d.chainId === chainId)!;
+  // Stargate's own option seen in both live packets: type 3, executor lzReceive gas 150,000.
+  const STARGATE_OPTIONS = '0x0003010011010000000000000000000000000000000249f0';
+
+  function log(address: string, encoded: { data: string; topics: readonly string[] }, transactionHash?: string): BridgeLog {
+    return { address, data: encoded.data, topics: [...encoded.topics], ...(transactionHash ? { transactionHash } : {}) };
+  }
+  function oftSent(source: number, guid: string, dstEid: number, amount = AMOUNT, from = ME): BridgeLog {
+    return log(pool(source).address, evIface.encodeEventLog('OFTSent', [guid, dstEid, from, amount, amount]));
+  }
+  function packetSent(source: number, destination: number, guid: string, nonce = 196n): BridgeLog {
+    const packet = solidityPacked(
+      ['uint8', 'uint64', 'uint32', 'bytes32', 'uint32', 'bytes32', 'bytes32', 'bytes'],
+      [1, nonce, layerZeroEidFor(source), zeroPadValue(pool(source).messagingOApp, 32), layerZeroEidFor(destination), zeroPadValue(pool(destination).messagingOApp, 32), guid, '0x01'],
+    );
+    return log(LAYERZERO_V2_TESTNET[source]!.endpoint, evIface.encodeEventLog('PacketSent', [packet, STARGATE_OPTIONS, LAYERZERO_V2_TESTNET[source]!.sendUln302]));
+  }
+  function oftReceived(destination: number, guid: string, srcEid: number, to = ME, amount = AMOUNT, tx = DELIVERY_TX_A): BridgeLog {
+    return log(pool(destination).address, evIface.encodeEventLog('OFTReceived', [guid, srcEid, to, amount]), tx);
+  }
+  function cached(destination: number, guid: string, srcEid: number, receiver = KERNEL, amount = AMOUNT, compose = '0x'): BridgeLog {
+    return log(pool(destination).address, evIface.encodeEventLog('UnreceivedTokenCached', [guid, 0, srcEid, receiver, amount, compose]), '0x' + '77'.repeat(32));
+  }
+  /** eth_getLogs semantics over a fixed set of logs, recording each request. */
+  function destinationReader(logs: BridgeLog[]) {
+    const asked: Parameters<BridgeEventLogReader>[0][] = [];
+    const read: BridgeEventLogReader = async (req) => {
+      asked.push(req);
+      return logs.filter(
+        (l) =>
+          l.address.toLowerCase() === req.address.toLowerCase() &&
+          req.topics.every((t, i) => t === null || (Array.isArray(t) ? t.includes(l.topics[i]!) : l.topics[i] === t)),
+      );
+    };
+    return { asked, read };
+  }
+  const sourceReader =
+    (logs: BridgeLog[] | null, status: 'success' | 'reverted' = 'success'): BridgeReceiptLogReader =>
+    async () =>
+      logs === null ? null : { status, logs };
+  const legALogs = () => [
+    { address: '0xfffffffffffffffffffffffffffffffffffffffe', topics: [id('Transfer(address,address,uint256)')], data: '0x' }, // ignored
+    oftSent(SEPOLIA, GUID_A, 40232),
+    packetSent(SEPOLIA, OP_SEPOLIA, GUID_A),
+  ];
+  function provider(src: BridgeReceiptLogReader, dst: BridgeEventLogReader, scan?: string | null) {
+    return createLayerZeroOftProvider({
+      deployments: STARGATE_V2_TESTNET_NATIVE_POOLS,
+      readContract: async () => '0x',
+      readSourceReceipt: src,
+      readDestinationLogs: dst,
+      ...(scan !== undefined ? { fetchMessageStatus: async () => (scan === null ? null : { status: scan }) } : {}),
+    });
+  }
+  function transferAB(recipient = ME, amountIn = AMOUNT, route?: BridgeRoute): BridgeTransfer {
+    const r = route ?? createLayerZeroOftProvider({ deployments: STARGATE_V2_TESTNET_NATIVE_POOLS, readContract: async () => '0x' })
+      .supportedRoutes()
+      .find((x) => x.sourceChainId === SEPOLIA && x.destinationChainId === OP_SEPOLIA)!;
+    return { providerId: 'layerzero-oft', route: r, sourceTxHash: SOURCE_TX_A, amountIn, recipient };
+  }
+
+  it('computes the event topics and the retry selector from the cited signatures (ethers and the 15.1 prefixes agree)', () => {
+    expect(OFT_SENT_TOPIC).toBe(id(OFT_SENT_EVENT_SIGNATURE));
+    expect(OFT_RECEIVED_TOPIC).toBe(id(OFT_RECEIVED_EVENT_SIGNATURE));
+    expect(PACKET_SENT_TOPIC).toBe(id(PACKET_SENT_EVENT_SIGNATURE));
+    expect(UNRECEIVED_TOKEN_CACHED_TOPIC).toBe(id(UNRECEIVED_TOKEN_CACHED_EVENT_SIGNATURE));
+    expect([OFT_SENT_TOPIC, OFT_RECEIVED_TOPIC, PACKET_SENT_TOPIC, UNRECEIVED_TOKEN_CACHED_TOPIC]).toEqual([
+      '0x85496b760a4b7f8d66384b9df21b381f5d1b1e79f229a47aaf4c232edc2fe59a',
+      '0xefed6d3500546b29533b128a29e3a94d70788727f0507505ac12eaf2e578fd9c',
+      '0x1ab700d4ced0c005b164c0f789fd09fcbb0156d4c2041b8a3bfbcd961cd1567f',
+      '0x007c17198cd078035dc663f9a0961f84cb6265411d0b4c793f96d432f6af4b55',
+    ]);
+    expect(evIface.getEvent('OFTSent')!.topicHash).toBe(OFT_SENT_TOPIC);
+    expect(evIface.getEvent('UnreceivedTokenCached')!.topicHash).toBe(UNRECEIVED_TOKEN_CACHED_TOPIC);
+    expect(id(STARGATE_RETRY_RECEIVE_TOKEN_SIGNATURE).slice(0, 10)).toBe(STARGATE_RETRY_RECEIVE_TOKEN_SELECTOR);
+    expect(evIface.getFunction('retryReceiveToken')!.selector).toBe('0xa88835d7');
+  });
+
+  it('decodes ethers-encoded OFTSent, PacketSent, OFTReceived and UnreceivedTokenCached logs, and refuses malformed ones', () => {
+    const sent = decodeOftSentLog(oftSent(SEPOLIA, GUID_A, 40232));
+    expect(sent).toEqual({ emitter: pool(SEPOLIA).address, guid: GUID_A, dstEid: 40232, fromAddress: ME, amountSentLD: AMOUNT, amountReceivedLD: AMOUNT });
+    const packet = decodePacketSentLog(packetSent(SEPOLIA, OP_SEPOLIA, GUID_A));
+    expect(packet).toEqual({
+      emitter: LAYERZERO_V2_TESTNET[SEPOLIA]!.endpoint,
+      nonce: 196n,
+      srcEid: 40161,
+      sender: pool(SEPOLIA).messagingOApp,
+      dstEid: 40232,
+      receiver: pool(OP_SEPOLIA).messagingOApp,
+      guid: GUID_A,
+      options: STARGATE_OPTIONS,
+      sendLibrary: LAYERZERO_V2_TESTNET[SEPOLIA]!.sendUln302,
+    });
+    // The options word: type 3, executor (1), 17 bytes, lzReceive (1), gas 150,000.
+    expect(BigInt('0x' + packet.options.slice(-32))).toBe(150_000n);
+    expect(decodeOftReceivedLog(oftReceived(OP_SEPOLIA, GUID_A, 40161))).toEqual({
+      emitter: pool(OP_SEPOLIA).address,
+      guid: GUID_A,
+      srcEid: 40161,
+      toAddress: ME,
+      amountReceivedLD: AMOUNT,
+    });
+    expect(decodeUnreceivedTokenCachedLog(cached(OP_SEPOLIA, GUID_A, 40161))).toEqual({
+      emitter: pool(OP_SEPOLIA).address,
+      guid: GUID_A,
+      index: 0,
+      srcEid: 40161,
+      receiver: KERNEL,
+      amountLD: AMOUNT,
+      composeMsg: '0x',
+    });
+    expect(decodeUnreceivedTokenCachedLog(cached(OP_SEPOLIA, GUID_A, 40161, KERNEL, AMOUNT, '0xabcd')).composeMsg).toBe('0xabcd');
+    const s = oftSent(SEPOLIA, GUID_A, 40232);
+    expect(() => decodeOftSentLog({ ...s, data: s.data + '00'.repeat(32) })).toThrow('exactly three words');
+    expect(() => decodeOftSentLog({ ...s, topics: s.topics.slice(0, 2) })).toThrow('not an OFTSent');
+    expect(() => decodeOftReceivedLog(s)).toThrow('not an OFTReceived');
+    const badSender = { ...s, topics: [s.topics[0]!, s.topics[1]!, '0x' + 'ff'.repeat(32)] };
+    expect(() => decodeOftSentLog(badSender)).toThrow('high 12 bytes');
+    const c = cached(OP_SEPOLIA, GUID_A, 40161);
+    expect(() => decodeUnreceivedTokenCachedLog({ ...c, data: c.data + '00'.repeat(32) })).toThrow('length does not match');
+  });
+
+  it('finds exactly one send for the route in the source receipt, and refuses ambiguous or foreign ones', () => {
+    const expectA = {
+      oft: pool(SEPOLIA).address,
+      endpoint: LAYERZERO_V2_TESTNET[SEPOLIA]!.endpoint,
+      srcEid: 40161,
+      dstEid: 40232,
+      sourceOApp: pool(SEPOLIA).messagingOApp,
+      destinationOApp: pool(OP_SEPOLIA).messagingOApp,
+    };
+    expect(findLayerZeroSend(legALogs(), expectA)).toEqual({
+      guid: GUID_A,
+      fromAddress: ME,
+      amountSentLD: AMOUNT,
+      amountReceivedLD: AMOUNT,
+      options: STARGATE_OPTIONS,
+      nonce: 196n,
+    });
+    expect(findLayerZeroSend([oftSent(SEPOLIA, GUID_A, 40232)], expectA)).toBeNull(); // no PacketSent
+    const otherGuid = '0x' + '12'.repeat(32);
+    expect(findLayerZeroSend([oftSent(SEPOLIA, GUID_A, 40232), packetSent(SEPOLIA, OP_SEPOLIA, otherGuid)], expectA)).toBeNull();
+    expect(findLayerZeroSend([oftSent(SEPOLIA, GUID_A, 40231), packetSent(SEPOLIA, OP_SEPOLIA, GUID_A)], expectA)).toBeNull(); // other dstEid
+    const twice = [...legALogs(), oftSent(SEPOLIA, otherGuid, 40232), packetSent(SEPOLIA, OP_SEPOLIA, otherGuid, 197n)];
+    expect(findLayerZeroSend(twice, expectA)).toBeNull();
+    const fromElsewhere = { ...oftSent(SEPOLIA, GUID_A, 40232), address: OTHER };
+    expect(findLayerZeroSend([fromElsewhere, packetSent(SEPOLIA, OP_SEPOLIA, GUID_A)], expectA)).toBeNull();
+  });
+
+  it('track(): delivered only on OFTReceived for the source GUID; Scan is supporting evidence', async () => {
+    const dst = destinationReader([oftReceived(OP_SEPOLIA, GUID_A, 40161)]);
+    const status = await provider(sourceReader(legALogs()), dst.read, 'DELIVERED').track(transferAB());
+    expect(status.state).toBe('delivered');
+    expect(status.onChain).toEqual({ status: 'delivered', guid: GUID_A, destinationTx: DELIVERY_TX_A, amountReceived: AMOUNT, apiStatus: 'DELIVERED' });
+    expect(status.destinationTxHash).toBe(DELIVERY_TX_A);
+    expect(status.detail).toBe(
+      `Delivered: the receiving network shows OFTReceived for this transfer's message (GUID ${GUID_A}), 200000000000000 base units to ${ME} in transaction ${DELIVERY_TX_A}. LayerZero Scan agrees (DELIVERED).`,
+    );
+    expect(dst.asked[0]).toEqual({ chainId: OP_SEPOLIA, address: pool(OP_SEPOLIA).address, topics: [OFT_RECEIVED_TOPIC, GUID_A] });
+    // Without Scan the chain alone decides.
+    expect((await provider(sourceReader(legALogs()), dst.read).track(transferAB())).onChain!.apiStatus).toBeNull();
+  });
+
+  it('track(): Scan saying DELIVERED does not make a transfer delivered, and an OFTReceived for another GUID is ignored', async () => {
+    const otherGuid = '0x' + '34'.repeat(32);
+    // A reader that ignores the topic filter and returns another message's delivery.
+    const sloppy: BridgeEventLogReader = async (req) => (req.topics[0] === OFT_RECEIVED_TOPIC ? [oftReceived(OP_SEPOLIA, otherGuid, 40161)] : []);
+    const status = await provider(sourceReader(legALogs()), sloppy, 'DELIVERED').track(transferAB());
+    expect(status.state).toBe('in-flight');
+    expect(status.onChain).toEqual({ status: 'in-flight', guid: GUID_A, destinationTx: null, amountReceived: null, apiStatus: 'DELIVERED' });
+    expect(status.detail).toBe(
+      `The message was sent (GUID ${GUID_A}); the receiving network shows no delivery for it yet. LayerZero Scan reports DELIVERED; the wallet goes by the chains' own events.`,
+    );
+    const inflight = await provider(sourceReader(legALogs()), destinationReader([]).read, 'INFLIGHT').track(transferAB());
+    expect(inflight.detail).toContain('LayerZero Scan agrees (INFLIGHT).');
+    const blocked = await provider(sourceReader(legALogs()), destinationReader([]).read, 'BLOCKED').track(transferAB());
+    expect([blocked.state, blocked.onChain!.status]).toEqual(['unknown', 'in-flight']);
+    const notIndexed = await provider(sourceReader(legALogs()), destinationReader([]).read, null).track(transferAB());
+    expect(notIndexed.detail).toContain('LayerZero Scan has no record of the message yet.');
+  });
+
+  it('track(): UnreceivedTokenCached gives cached-needs-retry with the retryReceiveToken call, and a later OFTReceived wins', async () => {
+    const transfer = transferAB(KERNEL);
+    const status = await provider(sourceReader(legALogs()), destinationReader([cached(OP_SEPOLIA, GUID_A, 40161)]).read, 'DELIVERED').track(transfer);
+    expect(status.state).toBe('awaiting-destination-action');
+    expect(status.onChain).toMatchObject({ status: 'cached-needs-retry', guid: GUID_A, amountReceived: null, apiStatus: 'DELIVERED' });
+    expect(status.detail).toContain("Stargate could not hand over the ETH with its 2,300-gas transfer (a deployed smart account cannot accept one)");
+    expect(status.detail).toContain('Anyone can deliver them by calling retryReceiveToken there, paying the gas on that network; the call below does that. It fails while the pool is paused.');
+    const [retry] = status.destinationCalls!;
+    expect(retry!.to).toBe(pool(OP_SEPOLIA).address);
+    expect(retry!.value).toBe(0n);
+    expect(toHex(retry!.data)).toBe(evIface.encodeFunctionData('retryReceiveToken', [GUID_A, 0, 40161, KERNEL, AMOUNT, '0x']));
+    // After someone retries, the pool emits OFTReceived for the same GUID: delivered.
+    const both = destinationReader([cached(OP_SEPOLIA, GUID_A, 40161), oftReceived(OP_SEPOLIA, GUID_A, 40161, KERNEL)]);
+    expect((await provider(sourceReader(legALogs()), both.read).track(transfer)).onChain!.status).toBe('delivered');
+    // A cached transfer with a compose message is reported, but no retry is built.
+    const compose = await provider(sourceReader(legALogs()), destinationReader([cached(OP_SEPOLIA, GUID_A, 40161, KERNEL, AMOUNT, '0xab')]).read).track(transfer);
+    expect(compose.onChain!.status).toBe('cached-needs-retry');
+    expect(compose.destinationCalls).toBeUndefined();
+    expect(() => encodeStargateRetryReceiveToken(decodeUnreceivedTokenCachedLog(cached(OP_SEPOLIA, GUID_A, 40161, KERNEL, AMOUNT, '0xab')))).toThrow(
+      'compose message',
+    );
+  });
+
+  it('track(): refuses to call mismatched, reverted, missing or ambiguous sends delivered', async () => {
+    const t = transferAB();
+    const track = (logs: BridgeLog[] | null, dst: BridgeLog[], tr = t, status: 'success' | 'reverted' = 'success') =>
+      provider(sourceReader(logs, status), destinationReader(dst).read).track(tr);
+    const toOther = await track(legALogs(), [oftReceived(OP_SEPOLIA, GUID_A, 40161, OTHER)]);
+    expect([toOther.state, toOther.onChain!.status]).toEqual(['unknown', 'unknown']);
+    expect(toOther.detail).toContain('does not match this transfer');
+    expect((await track(legALogs(), [oftReceived(OP_SEPOLIA, GUID_A, 40161, ME, AMOUNT - 1n)])).onChain!.status).toBe('unknown');
+    expect((await track(legALogs(), [oftReceived(OP_SEPOLIA, GUID_A, 40231)])).onChain!.status).toBe('unknown'); // wrong srcEid
+    const reverted = await track(legALogs(), [], t, 'reverted');
+    expect([reverted.state, reverted.onChain!.status]).toEqual(['failed', 'source-reverted']);
+    expect(reverted.detail).toBe('The sending transaction reverted, so no message was sent and nothing was bridged; only its network fee was spent.');
+    expect((await track(null, [])).detail).toBe('The sending transaction has no receipt yet; it may still be pending.');
+    expect((await track([oftSent(SEPOLIA, GUID_A, 40232)], [])).onChain).toMatchObject({ status: 'unknown', guid: null });
+    const amountOff = await track(legALogs(), [oftReceived(OP_SEPOLIA, GUID_A, 40161)], transferAB(ME, AMOUNT * 2n));
+    expect(amountOff.onChain).toMatchObject({ status: 'unknown', guid: GUID_A });
+    const wrongCache = await track(legALogs(), [cached(OP_SEPOLIA, GUID_A, 40161, OTHER)], transferAB(KERNEL));
+    expect([wrongCache.onChain!.status, wrongCache.destinationCalls]).toEqual(['unknown', undefined]);
+    expect(() =>
+      createLayerZeroOftProvider({ deployments: STARGATE_V2_TESTNET_NATIVE_POOLS, readContract: async () => '0x', readSourceReceipt: sourceReader([]) }),
+    ).toThrow('both log readers');
+  });
+
+  it('track(): leg B (OP Sepolia -> Arbitrum Sepolia) reads its own route, endpoint and GUID', async () => {
+    const guidB = '0xe3d00cd678da00796ae04e89cd75c3e7a3cb62bd025e5bda502737af2150801c';
+    const deliveryB = '0x27fa3f2e339e7e737daab8314fbb7787e640eec6d6b894dd134a27a287b632d8';
+    const route = createLayerZeroOftProvider({ deployments: STARGATE_V2_TESTNET_NATIVE_POOLS, readContract: async () => '0x' })
+      .supportedRoutes()
+      .find((r) => r.sourceChainId === OP_SEPOLIA && r.destinationChainId === ARB_SEPOLIA)!;
+    const logs = [oftSent(OP_SEPOLIA, guidB, 40231), packetSent(OP_SEPOLIA, ARB_SEPOLIA, guidB, 588n)];
+    const dst = destinationReader([oftReceived(ARB_SEPOLIA, guidB, 40232, ME, AMOUNT, deliveryB)]);
+    const status = await provider(sourceReader(logs), dst.read).track({ ...transferAB(ME, AMOUNT, route), sourceTxHash: '0xfa79787a5ff824e6cc5e1aa61e06a97feb5987627f29010cee67dd57ad9fdf02' });
+    expect(status.onChain).toEqual({ status: 'delivered', guid: guidB, destinationTx: deliveryB, amountReceived: AMOUNT, apiStatus: null });
+    expect(dst.asked[0]!.chainId).toBe(ARB_SEPOLIA);
+  });
+
+  describe('quotes', () => {
+    const quoteOftAnswer = (sent: bigint, received: bigint) => oftIface.encodeFunctionResult('quoteOFT', [[1n, 10n ** 21n], [], [sent, received]]);
+    const read = async (req: { data: string }) => {
+      if (req.data.startsWith(OFT_QUOTE_OFT_SELECTOR)) {
+        const amount = oftIface.decodeFunctionData('quoteOFT', req.data)[0][2] as bigint;
+        return quoteOftAnswer(amount, amount - 1_000_000_000_000n);
+      }
+      return coder.encode(['tuple(uint256,uint256)'], [[102_050_140_082_558n, 0n]]);
+    };
+    const routeOf = (from: number, to: number) =>
+      createLayerZeroOftProvider({ deployments: STARGATE_V2_TESTNET_NATIVE_POOLS, readContract: read }).supportedRoutes().find((r) => r.sourceChainId === from && r.destinationChainId === to)!;
+
+    it('time: carries the one live measurement per route, never as a promise, with singular and plural confirmations', async () => {
+      const p = createLayerZeroOftProvider({ deployments: STARGATE_V2_TESTNET_NATIVE_POOLS, readContract: read });
+      const summary =
+        'Measured once on the test networks on 2026-10-15: 90 s Sepolia → OP Sepolia, 30 s OP Sepolia → Arbitrum Sepolia (from the sending block to the delivery block, one 0.0002 ETH transfer each).';
+      const a = (await p.quote({ route: routeOf(SEPOLIA, OP_SEPOLIA), amount: AMOUNT, sender: ME, recipient: ME })).time;
+      expect(a.source).toBe(
+        `${summary} This route took 90 s that once. Not a promise: the verifiers wait for 2 source-block confirmations, then the executor delivers, and either can take longer.`,
+      );
+      expect(a.measured).toEqual({ seconds: 90, date: '2026-10-15', description: 'Measured once on 2026-10-15, from the sending block to the delivery block.' });
+      expect([a.minSeconds, a.maxSeconds]).toEqual([null, null]);
+      const b = (await p.quote({ route: routeOf(OP_SEPOLIA, ARB_SEPOLIA), amount: AMOUNT, sender: ME, recipient: ME })).time;
+      expect(b.source).toBe(
+        `${summary} This route took 30 s that once. Not a promise: the verifiers wait for 1 source-block confirmation, then the executor delivers, and either can take longer.`,
+      );
+      const c = (await p.quote({ route: routeOf(ARB_SEPOLIA, SEPOLIA), amount: AMOUNT, sender: ME, recipient: ME })).time;
+      expect(c.source).toContain('This route was not measured. Not a promise: the verifiers wait for 5 source-block confirmations');
+      expect(c.measured).toBeUndefined();
+      const { measuredDelivery: _dropped, ...unmeasured } = pool(OP_SEPOLIA);
+      expect(oftTimeEstimate(unmeasured, ARB_SEPOLIA, 1).source).toBe(
+        'Not measured on the test networks. Not a promise: the verifiers wait for 1 source-block confirmation, then the executor delivers.',
+      );
+    });
+
+    it('fee lines name the native coin as the caller asks, "ETH" by default', async () => {
+      const p = createLayerZeroOftProvider({ deployments: STARGATE_V2_TESTNET_NATIVE_POOLS, readContract: read });
+      const route = routeOf(SEPOLIA, ARB_SEPOLIA);
+      const plain = await p.quote({ route, amount: AMOUNT, sender: ME, recipient: ME });
+      expect(plain.fees.map((f) => f.asset.symbol)).toEqual(['ETH', 'ETH']);
+      expect(plain.fees[0]!.description).toBe(
+        'LayerZero messaging fee (verifiers, executor and destination gas), paid in ETH; any excess is refunded to your address.',
+      );
+      const test = await p.quote({ route, amount: AMOUNT, sender: ME, recipient: ME, nativeSymbol: 'test ETH' });
+      expect(test.fees.map((f) => [f.kind, f.asset.symbol])).toEqual([
+        ['messaging', 'test ETH'],
+        ['pool', 'test ETH'],
+      ]);
+      expect(test.fees[0]!.description).toBe(
+        'LayerZero messaging fee (verifiers, executor and destination gas), paid in test ETH; any excess is refunded to your address.',
+      );
+      // The route itself still names the asset as the pool does.
+      expect(test.route.sourceAsset.symbol).toBe('ETH');
+      await expect(p.quote({ route, amount: AMOUNT, sender: ME, recipient: ME, nativeSymbol: '' })).rejects.toThrow('native coin symbol');
+      await expect(p.quote({ route, amount: AMOUNT, sender: ME, recipient: ME, nativeSymbol: 'ETH<script>' })).rejects.toThrow('native coin symbol');
+    });
+
+    it('gasEstimate: null without an estimator, the estimator\'s figure with one, null with a note when it fails', async () => {
+      const route = routeOf(SEPOLIA, OP_SEPOLIA);
+      const none = await createLayerZeroOftProvider({ deployments: STARGATE_V2_TESTNET_NATIVE_POOLS, readContract: read }).quote({ route, amount: AMOUNT, sender: ME, recipient: ME });
+      expect(none.gasEstimate).toBeNull();
+      const asked: unknown[] = [];
+      const p = createLayerZeroOftProvider({
+        deployments: STARGATE_V2_TESTNET_NATIVE_POOLS,
+        readContract: read,
+        estimateGas: async (req) => {
+          asked.push(req);
+          return 341_035n; // leg A's eth_estimateGas
+        },
+      });
+      const q = await p.quote({ route, amount: AMOUNT, sender: ME, recipient: ME });
+      expect(q.gasEstimate).toBe(341_035n);
+      expect(asked).toEqual([{ chainId: SEPOLIA, from: ME, to: pool(SEPOLIA).address, value: q.calls[0]!.value, data: toHex(q.calls[0]!.data) }]);
+      const failing = createLayerZeroOftProvider({
+        deployments: STARGATE_V2_TESTNET_NATIVE_POOLS,
+        readContract: read,
+        estimateGas: async () => {
+          throw new Error('insufficient funds for gas * price + value');
+        },
+      });
+      const f = await failing.quote({ route, amount: AMOUNT, sender: ME, recipient: ME });
+      expect(f.gasEstimate).toBeNull();
+      expect(f.notes).toContain(
+        'The network could not estimate the gas for this send (insufficient funds for gas * price + value); it may fail if sent as quoted.',
+      );
+      const zero = createLayerZeroOftProvider({ deployments: STARGATE_V2_TESTNET_NATIVE_POOLS, readContract: read, estimateGas: async () => 0n });
+      await expect(zero.quote({ route, amount: AMOUNT, sender: ME, recipient: ME })).rejects.toThrow('positive amount of gas');
+    });
+
+    it('gasEstimate: not estimated when an approval has to be mined first', async () => {
+      const token = '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238';
+      const pathway = pool(SEPOLIA).pathways[OP_SEPOLIA]!;
+      const adapter: OftDeployment = {
+        chainId: SEPOLIA,
+        address: '0x000000000000000000000000000000000000bEEF',
+        kind: 'oft-adapter',
+        assetGroup: 'test-group',
+        asset: { kind: 'erc20', address: token, symbol: 'TST', decimals: 6 },
+        sharedDecimals: 6,
+        messagingOApp: '0x000000000000000000000000000000000000bEEF',
+        controlNote: 'test',
+        pathways: { [OP_SEPOLIA]: pathway },
+      };
+      const peer: OftDeployment = { ...adapter, chainId: OP_SEPOLIA, kind: 'oft', pathways: { [SEPOLIA]: { ...pathway } } };
+      let called = 0;
+      const p = createLayerZeroOftProvider({
+        deployments: [adapter, peer],
+        readContract: async (req) => (req.data.startsWith(OFT_QUOTE_OFT_SELECTOR) ? quoteOftAnswer(1_000_000n, 1_000_000n) : read(req)),
+        estimateGas: async () => {
+          called += 1;
+          return 1n;
+        },
+      });
+      const route = p.supportedRoutes().find((r) => r.sourceChainId === SEPOLIA)!;
+      const q = await p.quote({ route, amount: 1_000_000n, sender: ME, recipient: ME });
+      expect([q.gasEstimate, called]).toEqual([null, 0]);
+      expect(q.notes).toContain('Gas for the send is not estimated here: the approval must be mined first, or the estimate fails.');
+      // A deployment without live notes adds none of the Stargate observations.
+      expect(q.notes.some((n) => n.includes('lzReceive gas limit'))).toBe(false);
+    });
+
+    it("notes: Stargate's own executor option and the observed pool fee, as observations", async () => {
+      const p = createLayerZeroOftProvider({ deployments: STARGATE_V2_TESTNET_NATIVE_POOLS, readContract: read });
+      const q = await p.quote({ route: routeOf(SEPOLIA, OP_SEPOLIA), amount: AMOUNT, sender: ME, recipient: ME });
+      expect(STARGATE_TESTNET_NATIVE_LIVE_NOTES).toEqual([
+        "Stargate attaches its own executor option to every message from these pools: an lzReceive gas limit of 150,000 (option type 3), seen in the packets of both live transfers on 2026-10-15. The wallet's own extraOptions stay empty.",
+        "Stargate's pool fee, as the pools quoted it on 2026-10-15: exactly 10^12 wei (0.000001 ETH, one shared-decimal unit) at both 0.0001 and 0.0002 ETH on the routes that charge one, and none on Sepolia → OP Sepolia or OP Sepolia → Arbitrum Sepolia. That looks like a flat one-unit fee at these sizes, but Stargate's fee library was not read, so it is an observation, not a promise; the fee lines above are what the pool quoted just now.",
+      ]);
+      for (const note of STARGATE_TESTNET_NATIVE_LIVE_NOTES) expect(q.notes).toContain(note);
+      // The wallet's own options stay empty in the call it builds.
+      expect(oftIface.decodeFunctionData('send', q.calls[0]!.data)[0][4]).toBe('0x');
+    });
   });
 });
