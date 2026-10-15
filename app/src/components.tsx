@@ -239,40 +239,46 @@ export function useFieldLabels(): (key: string, label: string, hint?: string) =>
  * It changes no layout: it is absolutely positioned, so a parent's gap and
  * flow ignore it.
  *
- * Not a swipe stop (pass p21a finding 1b): with the default importance the
- * 1×1 node was an extra TalkBack stop, read after its field or, being
- * absolutely positioned at its parent's top-left, out of order (Contacts:
- * "Contact name" before the network chips). It is now
- * importantForAccessibility "no" (Android; RN 0.86.3
- * BaseViewManager.java:472–483 sets View.IMPORTANT_FOR_ACCESSIBILITY_NO,
- * and both Text managers are BaseViewManagers — ReactTextViewManager.kt:51–57,
- * PreparedLayoutTextViewManager.kt:40 — so a Text takes the prop). The labelled-by lookup does not look at importance:
- * ReactAccessibilityDelegate.kt:91–97 resolves the field's labelled_by tag
- * with findView, which walks every child of the root view and matches only
- * the nativeID (ReactFindViewUtil.kt:47–62), then calls setLabeledBy. RN's
- * own mirror of the screen reader's rules treats a view that is not
- * important and has no children as not speaking
- * (ReactAccessibilityDelegate.kt:826–830, isSpeakingNode). Whether TalkBack
- * still reads the text of a NOT-important labelling node through
- * getLabeledBy is Android's and TalkBack's code, which is not on this
- * machine — to be confirmed on the emulator (the field must still read
- * "Edit box for <label>"). Hidden from VoiceOver too
+ * A swipe stop that reads as the field's caption (pass p21b finding 1):
+ * pass p21a made the 1×1 node importantForAccessibility "no" so it would
+ * not be an extra TalkBack stop, and the emulator then showed that TalkBack
+ * 14.2 does NOT read a not-important labelling node — the field read "Name.
+ * Edit box" instead of "…Edit box for Contact name". The field's name
+ * matters more than the extra stop, so the node is back at the default
+ * importance (RN 0.86.3 BaseViewManager.java:472–483 maps only "no" /
+ * "no-hide-descendants" to a lowered importance; without the prop the view
+ * keeps Android's auto importance, and a Text with text is a speaking
+ * node — ReactAccessibilityDelegate.kt:826–830). To make the stop harmless
+ * it now behaves like a visible label: its accessibilityLabel is the SAME
+ * text as the field's name, so TalkBack reads "Contact name", then "Name.
+ * Edit box for Contact name", as it does for a field with a caption on
+ * screen. The labelled-by lookup is unchanged
+ * (ReactAccessibilityDelegate.kt:91–97 → ReactFindViewUtil.kt:47–62 match
+ * the nativeID only). Still hidden from VoiceOver
  * (accessibilityElementsHidden, iOS only), which names the field by its
  * accessibilityLabel instead.
  *
- * Every call site renders it IMMEDIATELY before its field, so if a screen
- * reader ever does reach it, it is next to the field it names (the
- * check-devmode source scan fails otherwise).
+ * Order: the node is absolutely positioned, so it sits at its PARENT's
+ * top-left, and TalkBack placed such a node by its position (pass p21a:
+ * "Contact name" was read before the network chips above the field).
+ * Every call site therefore renders it as the FIRST child of a View whose
+ * first field is the one it names, IMMEDIATELY before that field, so the
+ * parent's top-left is the field's top-left (the check-devmode source scan
+ * fails otherwise). Most fields now have a visible caption instead (pass
+ * p21b); the ones that keep a hidden label are the paste boxes whose
+ * placeholder already shows the same words.
  *
  * Usage, with the same key and text as the field:
- *   <HiddenFieldLabel field={fieldLabel('key', 'Label')} />
- *   <TextInput {...fieldLabel('key', 'Label').input} … />
+ *   <View>
+ *     <HiddenFieldLabel field={fieldLabel('key', 'Label')} />
+ *     <TextInput {...fieldLabel('key', 'Label').input} … />
+ *   </View>
  * Prefer a visible label (the label's <Text> spreading `.label`) wherever
  * the design has room for one.
  */
 export function HiddenFieldLabel({ field }: { field: FieldLabel }) {
   return (
-    <Text {...field.label} importantForAccessibility="no" accessibilityElementsHidden style={HIDDEN_FIELD_LABEL_STYLE}>
+    <Text {...field.label} accessibilityLabel={field.text} accessibilityElementsHidden style={HIDDEN_FIELD_LABEL_STYLE}>
       {field.text}
     </Text>
   );

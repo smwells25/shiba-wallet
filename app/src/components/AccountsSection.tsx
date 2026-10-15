@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
-import { Button, WatchOnlyNotice, HiddenFieldLabel, useFieldLabels } from '../components';
+import { Button, WatchOnlyNotice, useFieldLabels } from '../components';
 import { useTheme } from '../theme';
 import { MAX_ACCOUNT_NAME_LENGTH, shortAccountAddress } from '../wallet/accounts';
 import { importedSlotOf } from '../wallet/account-ids';
@@ -294,7 +294,7 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
         ) : null}
         {isEditing ? (
           <View style={styles.editor}>
-            <HiddenFieldLabel field={fieldLabel(`account-name-${account.index}`, 'Account name')} />
+            <Text {...fieldLabel(`account-name-${account.index}`, 'Account name').label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel(`account-name-${account.index}`, 'Account name').text}</Text>
             <TextInput
               {...fieldLabel(`account-name-${account.index}`, 'Account name').input}
               value={draft}
@@ -399,7 +399,7 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
       </Text>
       {visible.map(renderRow)}
       <View style={styles.editor}>
-        <HiddenFieldLabel field={fieldLabel('new-account-name', 'New account name (optional)')} />
+        <Text {...fieldLabel('new-account-name', 'New account name (optional)').label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel('new-account-name', 'New account name (optional)').text}</Text>
         <TextInput
           {...fieldLabel('new-account-name', 'New account name (optional)').input}
           value={newName}
@@ -448,7 +448,7 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
           <Text accessibilityRole="header" style={[styles.subTitle, { color: theme.text }]}>Watch an address</Text>
           <Text style={[styles.hint, { color: theme.textMuted }]}>{WATCH_ADDRESS_INTRO}</Text>
           <Text style={[styles.hint, { color: theme.textMuted }]}>{WATCH_ADDRESS_PRIVACY_NOTE}</Text>
-          <HiddenFieldLabel field={fieldLabel('watch-address', 'Ethereum address to watch')} />
+          <Text {...fieldLabel('watch-address', 'Ethereum address to watch').label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel('watch-address', 'Ethereum address to watch').text}</Text>
           <TextInput
             {...fieldLabel('watch-address', 'Ethereum address to watch').input}
             value={watchAddress}
@@ -467,7 +467,7 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
             <Button title="Paste" variant="secondary" onPress={() => void onPasteWatchAddress()} style={styles.flex} />
             <Button title="Scan QR" variant="secondary" onPress={() => setWatchScanning(true)} style={styles.flex} />
           </View>
-          <HiddenFieldLabel field={fieldLabel('watch-name', 'Name for the watched address')} />
+          <Text {...fieldLabel('watch-name', 'Name for the watched address').label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel('watch-name', 'Name for the watched address').text}</Text>
           <TextInput
             {...fieldLabel('watch-name', 'Name for the watched address').input}
             value={watchName}

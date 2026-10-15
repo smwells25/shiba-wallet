@@ -3,7 +3,7 @@ import { ActivityIndicator, Alert, ScrollView, Text, TextInput, View } from 'rea
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { httpTransport, type JsonRpcTransport, type KernelGuardianSet, type KernelRecoveryMetadata } from '@shiba-wallet/chains-evm';
 import type { RootStackParamList } from '../navigation';
-import { Button, TestNetworksOnlyCard, WarningBox, screenStyle, HiddenFieldLabel, useFieldLabels } from '../components';
+import { Button, TestNetworksOnlyCard, WarningBox, screenStyle, useFieldLabels } from '../components';
 import {
   GuardianSetView,
   InfoRow,
@@ -553,7 +553,7 @@ export function RecoverAccountScreen({ navigation, route }: Props) {
               recovery transaction in recent blocks; if it is older, paste the transaction or UserOperation hash the
               guardian showed you (optional).
             </Text>
-            <HiddenFieldLabel field={fieldLabel('op-hash', 'UserOperation or transaction hash, optional')} />
+            <Text {...fieldLabel('op-hash', 'UserOperation or transaction hash, optional').label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel('op-hash', 'UserOperation or transaction hash, optional').text}</Text>
             <TextInput
               {...fieldLabel('op-hash', 'UserOperation or transaction hash, optional').input}
               value={hashInput}
@@ -744,7 +744,7 @@ export function RecoverAccountScreen({ navigation, route }: Props) {
         />
       )}
       <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>The lost account</Text>
-      <HiddenFieldLabel field={fieldLabel('lost-account', 'Lost account address')} />
+      <Text {...fieldLabel('lost-account', 'Lost account address').label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel('lost-account', 'Lost account address').text}</Text>
       <TextInput
         {...fieldLabel('lost-account', 'Lost account address').input}
         value={accountInput}
@@ -771,7 +771,7 @@ export function RecoverAccountScreen({ navigation, route }: Props) {
       <Text style={[styles.hint, { color: theme.textMuted }]}>
         No record? Optional: the account’s ORIGINAL owner address, so the wallet can rebuild its record.
       </Text>
-      <HiddenFieldLabel field={fieldLabel('original-owner', 'Original owner address, optional')} />
+      <Text {...fieldLabel('original-owner', 'Original owner address, optional').label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel('original-owner', 'Original owner address, optional').text}</Text>
       <TextInput
         {...fieldLabel('original-owner', 'Original owner address, optional').input}
         value={originalOwnerInput}

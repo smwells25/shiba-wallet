@@ -51,8 +51,15 @@ import {
   toHex,
 } from '@shiba-wallet/chains-evm';
 import {
+  BRIDGE_AMOUNT_PLACEHOLDER,
   BRIDGE_CHOICE_NOTE,
   BRIDGE_FEATURE,
+  BRIDGE_SINGLE_PROVIDER_NOTE,
+  broadcastStamped,
+  bridgeFormInputsShown,
+  bridgeProviderChoiceHint,
+  chosenBridgeProvider,
+  providerRowSpokenLabel,
   BRIDGE_INTRO,
   BRIDGE_LOG_TOO_OLD,
   BRIDGE_PROVIDER_STATUS,
@@ -106,7 +113,7 @@ import {
   updateBridgeTransfer,
   upgradedAccountRecipientNote,
 } from '../src/wallet/bridge.ts';
-import { sendEvm } from '../src/wallet/send.ts';
+import { prepareEvmSend, sendEvm } from '../src/wallet/send.ts';
 import { createAaClientFromConfig, sendAa } from '../src/wallet/aa.ts';
 import { featureReadiness, isFeatureAllowed } from '../src/config/readiness.ts';
 import { EVM_SEPOLIA, evmProfileByCaip2, setCustomEvmProfiles } from '../src/config/evm-chain.ts';
@@ -1024,8 +1031,8 @@ console.log('check-bridge: the screen, the route gates, Home and the navigator (
     screen.includes("aaActive && aaType === 'kernel-v3.3' ? (\n              <WarningBox>{smartAccountRecipientNote(account.address, destinationLabel)}</WarningBox>") &&
       screen.includes('upgradedAccountRecipientNote(account.address, destinationLabel)'));
   check('a sent transfer is recorded and followed: the record, the note field, the 15-second tracking',
-    screen.includes('recordBridgeTransfer(plan, { sourceTxHash: sent.txid, userOpHash: null })') &&
-      screen.includes('recordBridgeTransfer(plan, { sourceTxHash: null, userOpHash })') &&
+    screen.includes('recordBridgeTransfer(plan, { sourceTxHash: sent.txid, userOpHash: null, sentAt })') &&
+      screen.includes('recordBridgeTransfer(plan, { sourceTxHash: null, userOpHash, sentAt })') &&
       screen.includes('}, [trackingOn, chainIdDecimal, url]);') &&
       screen.includes('<TransactionNoteField network={sentNetwork} txid={result.txid} userOpHash={null} />') &&
       screen.includes('setInterval(tick, BRIDGE_TRACK_INTERVAL_MS)'));
@@ -1044,6 +1051,129 @@ console.log('check-bridge: the screen, the route gates, Home and the navigator (
     app.includes("<Stack.Screen name=\"Bridge\" component={BridgeScreen} options={{ title: 'Bridge (test networks)' }} />") && /\n  Bridge: undefined;/.test(nav));
   check('Home: the Bridge link only where readiness allows and a provider serves the network',
     home.includes("isFeatureAllowed('bridge', evmChain.caip2) && bridgeOfferFor(evmChain.caip2).destinations.length > 0\n            ? cardLink('bridge', 'Bridge', () => navigation.navigate('Bridge'), 'Opens bridging between test networks')"));
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-bridge: the emulator pass p21b findings (provider choice, spoken rows, scroll, gas, inputs, sent time, placeholder)');
+// ---------------------------------------------------------------------------
+{
+  resetChains();
+  const screen = source('src/screens/BridgeScreen.tsx');
+  const views = source('src/screens/BridgeViews.tsx');
+  const sep = bridgeOfferFor(caip(SEPOLIA));
+  const rows = bridgeProviderRows(sep, OP);
+  const lz = rows.find((r) => r.id === LAYERZERO_OFT_PROVIDER_ID);
+  const cctp = rows.find((r) => r.id === CCTP_V2_PROVIDER_ID);
+
+  // (2) No provider is pre-selected, not even the only one that can be chosen.
+  check('finding 2: nothing is chosen until the user taps a row (Sepolia → OP Sepolia, LayerZero the only selectable row)',
+    rows.filter((r) => r.selectable).length === 1 && chosenBridgeProvider(rows, null) === null);
+  check('…a tap on LayerZero chooses it; a tap on CCTP (not selectable) chooses nothing; a choice from another route is dropped',
+    chosenBridgeProvider(rows, LAYERZERO_OFT_PROVIDER_ID) === LAYERZERO_OFT_PROVIDER_ID && chosenBridgeProvider(rows, CCTP_V2_PROVIDER_ID) === null &&
+      chosenBridgeProvider(bridgeProviderRows(bridgeOfferFor(caip(BASE)), ARB), LAYERZERO_OFT_PROVIDER_ID) === null);
+  check('…the single-provider sentence (exact) while nothing is chosen, none once chosen or when no row can be chosen',
+    BRIDGE_SINGLE_PROVIDER_NOTE === 'One provider serves this route; choose it to continue.' &&
+      bridgeProviderChoiceHint(rows, null) === BRIDGE_SINGLE_PROVIDER_NOTE && bridgeProviderChoiceHint(rows, LAYERZERO_OFT_PROVIDER_ID) === null &&
+      bridgeProviderChoiceHint(bridgeProviderRows(bridgeOfferFor(caip(BASE)), ARB), null) === null);
+  check('…the screen: chosenProvider comes from chosenBridgeProvider (no fallback to the first row), the hint is drawn, Get quotes and Review are disabled while nothing is chosen, each row is checked only when chosen',
+    screen.includes('const chosenProvider = chosenBridgeProvider(rows, providerId);') && !/rows\.find\(\(r\) => r\.selectable\)\?\.id/.test(screen) &&
+      screen.includes('{providerChoiceHint ? <Text style={[styles.hint, { color: theme.text }]}>{providerChoiceHint}</Text> : null}') &&
+      (screen.match(/disabled=\{quoting \|\| chosenProvider === null\}/g) ?? []).length === 2 && screen.includes('selected={chosenProvider === row.id}'));
+  const m2b = await bridgeMutant(
+    'return picked !== null && rows.some((r) => r.id === picked && r.selectable) ? picked : null;',
+    'return picked !== null && rows.some((r) => r.id === picked && r.selectable) ? picked : (rows.find((r) => r.selectable)?.id ?? null);',
+  );
+  check('MUTANT (the old default: the first selectable row pre-checked) is caught', m2b.chosenBridgeProvider(rows, null) !== null);
+
+  // (3) The radio control speaks a short label; the trust lines are separate items.
+  check('finding 3: the radio labels (exact), never ending in a period (the CCTP row read "..")',
+    providerRowSpokenLabel(lz, null) === 'LayerZero (Stargate), moves test ETH' &&
+      providerRowSpokenLabel(lz, { fee: '0.000102050140082558 test ETH' }) === 'LayerZero (Stargate), moves test ETH, fee 0.000102050140082558 test ETH' &&
+      providerRowSpokenLabel(cctp, null) === 'Circle CCTP (USDC), moves USDC, not available' &&
+      providerRowSpokenLabel({ label: 'X.', asset: null, selectable: false }, null) === 'X., not available' &&
+      providerRowSpokenLabel({ label: 'Y', asset: null, selectable: true }, { fee: '1 test ETH.' }) === 'Y, fee 1 test ETH',
+    `${providerRowSpokenLabel(lz, null)} | ${providerRowSpokenLabel(cctp, null)}`);
+  const m3b = await bridgeMutant(
+    "const tail = !row.selectable ? ', not available' : quote ? `, fee ${quote.fee}` : '';\n  return `${head}${tail}`.replace(/[.\\s]+$/, '');",
+    "const tail = !row.selectable ? `, not available: ${row.note}` : quote ? `, fee ${quote.fee}` : '';\n  return `${head}${tail}`;",
+  );
+  check('MUTANT (the old spoken label with the reason and its final period) is caught', /\.$/.test(m3b.providerRowSpokenLabel(cctp, null)));
+  const rowStructureOk = (src) => {
+    const radio = /<Pressable\s+accessibilityRole="radio"\s+accessibilityState=\{\{ checked: selected, disabled: !row\.selectable \}\}\s+accessibilityLabel=\{providerRowSpokenLabel\(row, quote\)\}[^]*?<\/Pressable>/.exec(src);
+    const body = /<Pressable accessible=\{false\} focusable=\{false\} disabled=\{!row\.selectable\} onPress=\{onSelect\} style=\{styles\.radioBody\}>([^]*?)<\/Pressable>/.exec(src);
+    return !!radio && !/Who verifies/.test(radio[0]) && !!body && ['{row.note}', 'Who verifies: ', 'Who controls: ', 'If it does not arrive: ', 'Fee (quoted just now): ', '{row.measured}', '{row.timeSource}'].every((t) => body[1].includes(t));
+  };
+  check('…the row: the radio control holds only the head; the note, the three trust lines, the fee and the measured time sit in a body that is neither accessible nor focusable, so each Text is its own stop (source)',
+    rowStructureOk(views));
+  check('MUTANT (the body made one accessible node again) is caught',
+    !rowStructureOk(views.replace('<Pressable accessible={false} focusable={false} disabled={!row.selectable}', '<Pressable disabled={!row.selectable}')));
+
+  // (4) Each phase opens at the top: one ScrollView key per view.
+  const keys = [...screen.matchAll(/<ScrollView key="(bridge-[a-z-]+)"/g)].map((m) => m[1]);
+  check('finding 4: the form, both confirms and the success view each have their own ScrollView key, so a new view never inherits the form’s scroll position (React reuses a native view only for the same key and type)',
+    JSON.stringify(keys.sort()) === JSON.stringify(['bridge-aa-confirm', 'bridge-confirm', 'bridge-form', 'bridge-success']), keys.join());
+  const keyless = screen.replace('<ScrollView key="bridge-confirm" ', '<ScrollView ');
+  check('MUTANT (the confirm without its key) is caught', [...keyless.matchAll(/<ScrollView key="(bridge-[a-z-]+)"/g)].length !== 4);
+
+  // (6) The gas limit follows Send's rule: prepareEvmSend uses the node's estimate as the limit, with no padding, for Send and the bridge alike.
+  const planA = await quoteBridge(quoteRequest());
+  const q = await prepareBridgeSend(ACTIVE_URL(SEPOLIA), EOA, planA);
+  const plain = await prepareEvmSend(ACTIVE_URL(SEPOLIA), EOA, ethers.getAddress('0x' + '42'.repeat(20)), 1n, undefined, caip(SEPOLIA));
+  check('finding 6: the bridge send’s gas limit is the estimate exactly as Send’s is (prepareEvmSend has no padding rule: 341,035 = the node’s answer on both), and the worst case is that limit × the max fee',
+    q.gasLimit === 341_035n && plain.gasLimit === 341_035n && q.gasLimit === plain.gasLimit && q.fee === q.gasLimit * q.maxFeePerGas, `${q.gasLimit} / ${plain.gasLimit}`);
+  const m6b = await bridgeMutant(
+    '  const quote = await prepareEvmSend(url, from, plan.call.to, plan.call.value, plan.call.data, plan.sourceCaip2);',
+    '  const raw = await prepareEvmSend(url, from, plan.call.to, plan.call.value, plan.call.data, plan.sourceCaip2);\n  const quote = { ...raw, gasLimit: (raw.gasLimit * 12n) / 10n };',
+  );
+  const qm = await m6b.prepareBridgeSend(ACTIVE_URL(SEPOLIA), EOA, planA);
+  check('MUTANT (a bridge-only padding, diverging from Send) is caught', qm.gasLimit !== plain.gasLimit);
+
+  // (7) No chips and no amount where no provider can send.
+  check('finding 7: the destination chips and the amount field are shown on Ethereum Sepolia, hidden on Base Sepolia and Hoodi (nothing can be sent there)',
+    bridgeFormInputsShown(sep) && !bridgeFormInputsShown(bridgeOfferFor(caip(BASE))) && !bridgeFormInputsShown(bridgeOfferFor(caip(HOODI))));
+  const inputsGated = (src) =>
+    src.includes('{inputsShown && offer.destinations.length > 0 ? (') && /\{inputsShown \? \(\s*<>\s*<Text \{\.\.\.amountField\.label\}/.test(src) &&
+    src.includes('const inputsShown = offer !== null && bridgeFormInputsShown(offer);') && src.includes('{offer.unavailable ? <WarningBox>{offer.unavailable}</WarningBox> : null}');
+  check('…the screen gates the chips and the amount on it; the explanatory sentence and the provider rows stay (source)', inputsGated(screen));
+  check('MUTANT (the amount field shown regardless) is caught', !inputsGated(screen.replace('{inputsShown ? (\n        <>\n          <Text {...amountField.label}', '{true ? (\n        <>\n          <Text {...amountField.label}')));
+
+  // (8) The sent time is the broadcast's, whatever waits afterwards.
+  let clock = 1_000;
+  const stamped = await broadcastStamped(async () => {
+    clock = 5_000; // the node took the transaction
+    return { txid: SOURCE_TX };
+  }, () => clock);
+  clock = 45_000; // signWith's teardown, a receipt wait, a slow re-render
+  const rec = recordBridgeTransfer(planA, { sourceTxHash: stamped.value.txid, userOpHash: null, sentAt: stamped.sentAt });
+  check('finding 8: the record’s sent time is the moment the broadcast returned (5,000), not after the 40 s that follow it', rec.sentAt === 5_000 && stamped.sentAt === 5_000, `${rec.sentAt}`);
+  clock = 2_000;
+  const aaStamped = await broadcastStamped(async () => {
+    clock = 7_000; // eth_sendUserOperation answered
+    return { userOpHash: '0x' + 'ab'.repeat(32) };
+  }, () => clock);
+  const receiptWait = new Promise((r) => setTimeout(r, 30)).then(() => {
+    clock = 120_000; // waitForAaReceipt resolves much later
+  });
+  const aaRec = recordBridgeTransfer(planA, { sourceTxHash: null, userOpHash: aaStamped.value.userOpHash, sentAt: aaStamped.sentAt });
+  await receiptWait;
+  check('…the smart account: stamped when the bundler took the operation (7,000), unchanged by the receipt wait that ends later', aaRec.sentAt === 7_000 && clock === 120_000);
+  check('…the screen stamps inside the signing callback on both paths and records that time (source)',
+    screen.includes('broadcastStamped(() => sendEvm(sendUrl, signer, eoaQuote, evmChain.explorerTxBase)),') &&
+      screen.includes("broadcastStamped(() => sendAa(bundle, signer, aaQuote, { kind: 'bridge' }))") &&
+      screen.includes('recordBridgeTransfer(plan, { sourceTxHash: sent.txid, userOpHash: null, sentAt })') &&
+      screen.includes('recordBridgeTransfer(plan, { sourceTxHash: null, userOpHash, sentAt })'));
+  const m8b = await bridgeMutant('  const value = await broadcast();\n  return { value, sentAt: now() };', '  const sentAt = now();\n  const value = await broadcast();\n  return { value, sentAt };');
+  clock = 1_000;
+  const early = await m8b.broadcastStamped(async () => {
+    clock = 5_000;
+    return 1;
+  }, () => clock);
+  check('MUTANT (stamped before the broadcast) is caught', early.sentAt !== 5_000);
+
+  // (9) The placeholder cannot be mistaken for a value.
+  check('finding 9: the amount placeholder is a worded example (exact), the step hint unchanged',
+    BRIDGE_AMOUNT_PLACEHOLDER === 'Amount, for example 0.0002' && screen.includes('placeholder={BRIDGE_AMOUNT_PLACEHOLDER}') && !screen.includes('placeholder="0.0002"') &&
+      screen.includes('Stargate moves {symbol} in steps of 0.000001; an amount with more decimal places is refused, not rounded.'));
 }
 
 // ---------------------------------------------------------------------------

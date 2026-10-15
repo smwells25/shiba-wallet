@@ -4,7 +4,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
 import type { RootStackParamList, SettingsSectionId } from '../navigation';
 import { allowScreenCaptureAsync, preventScreenCaptureAsync } from 'expo-screen-capture';
-import { Button, WarningBox, WordGrid, screenStyle, switchColors, useFieldLabels, HiddenFieldLabel } from '../components';
+import { Button, WarningBox, WordGrid, screenStyle, switchColors, useFieldLabels } from '../components';
 import { localDateLabel } from '../config/dates';
 import { AccountsSection } from '../components/AccountsSection';
 import { NotificationSettingsSection } from '../components/NotificationScheduler';
@@ -310,7 +310,7 @@ function EndpointRow({
       </View>
       {editing ? (
         <View style={styles.endpointEditor}>
-          <HiddenFieldLabel field={fieldLabel('endpoint-url', `${network.label} endpoint URL`)} />
+          <Text {...fieldLabel('endpoint-url', `${network.label} endpoint URL`).label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel('endpoint-url', `${network.label} endpoint URL`).text}</Text>
           <TextInput
             {...fieldLabel('endpoint-url', `${network.label} endpoint URL`).input}
             value={draft}

@@ -2110,5 +2110,77 @@ reset();
     !headerOk(screen.replace('accessibilityLabel={spokenShortAddress(account.address)}', '')));
 }
 
+// Pass p21b finding 5: the first bridge through the app read "Called
+// 0x9Cc7…0706 with 0.000302… test ETH". A send to Stargate's pinned native
+// pool with the OFT send selector is now described from its own calldata.
+console.log('Bridge sends through Stargate’s pinned pool (pass p21b, finding 5):');
+reset();
+installFakeNode();
+{
+  const { encodeOftSend, OFT_SEND_SELECTOR } = await import('@shiba-wallet/chains-evm');
+  const POOL = getAddress('0x9cc7e185162aa5d1425ee924d97a87a0a34a0706');
+  const AMOUNT = 200_000_000_000_000n;
+  const FEE = 102_050_140_082_558n;
+  const VALUE = AMOUNT + FEE; // 302,050,140,082,558 wei, the live source transaction's value
+  // The live call's shape (tx 0x1e9f4593…37cee7, block 11,918,404): taxi
+  // (empty oftCmd), no options, OP Sepolia's endpoint id 40232, 452 bytes.
+  const input = toHex(encodeOftSend({ dstEid: 40232, to: ACCOUNT_1, amountLD: AMOUNT, minAmountLD: AMOUNT, extraOptions: '0x', composeMsg: '0x', oftCmd: '0x' }, { nativeFee: FEE, lzTokenFee: 0n }, ACCOUNT_1));
+  check('the fixture has the live calldata shape: selector 0xc7c7f5b3, 452 bytes', input.startsWith(OFT_SEND_SELECTOR) && (input.length - 2) / 2 === 452, (input.length - 2) / 2);
+  const BRIDGE = '0x' + 'b1'.repeat(32);
+  const FAILED = '0x' + 'b2'.repeat(32);
+  const tx = (hash, status) => ({
+    transaction: { hash, from: ACCOUNT_1.toLowerCase(), to: POOL.toLowerCase(), input, value: '0x' + VALUE.toString(16), nonce: '0x1b', type: '0x2', chainId: '0xaa36a7', blockNumber: '0xb5d944', blockHash: '0x' + 'cd'.repeat(32) },
+    // A successful send carries the EIP-7708 protocol log of the ETH it moved
+    // to the pool (Sepolia is on Glamsterdam), as the live receipt does.
+    receipt: { transactionHash: hash, blockNumber: '0xb5d944', blockHash: '0x' + 'cd'.repeat(32), status, logs: status === '0x1' ? [{ address: '0xfffffffffffffffffffffffffffffffffffffffe', topics: ['0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef', '0x' + '0'.repeat(24) + ACCOUNT_1.slice(2).toLowerCase(), '0x' + '0'.repeat(24) + POOL.slice(2).toLowerCase()], data: '0x' + VALUE.toString(16).padStart(64, '0') }] : [] },
+  });
+  mode.extraTx = (h) => (h === BRIDGE ? tx(BRIDGE, '0x1') : h === FAILED ? tx(FAILED, '0x0') : null);
+  const decoder = createActivityDecoder({ chainCaip2: SEPOLIA, evmChainId: SEPOLIA_ID, wallet: [ACCOUNT_1], trackedTokens: [], run: fixedRun, maxPerCall: 5 });
+  const out = await decoder.decodeEntries([BRIDGE, FAILED]);
+  const sent = out.get(BRIDGE);
+  check('the decode records the bridge send: the pinned pool, OP Sepolia, the amount and the fee = value − amountLD',
+    sent?.bridgeSend?.pool === POOL && sent.bridgeSend.destinationLabel === 'OP Sepolia' && sent.bridgeSend.amount === AMOUNT && sent.bridgeSend.fee === FEE, sent?.bridgeSend);
+  const WANT = 'Bridged 0.0002 test ETH to OP Sepolia through LayerZero (Stargate’s native ETH pool 0x9Cc7…0706); messaging fee 0.000102050140082558 test ETH';
+  check('LIVE SHAPE — "Bridged 0.0002 test ETH to OP Sepolia through LayerZero (Stargate’s native ETH pool 0x9Cc7…0706); messaging fee 0.000102050140082558 test ETH"',
+    render(sent) === WANT, render(sent));
+  check('…a reverted send says "tried to bridge" (the engine’s new verb)', render(out.get(FAILED)) === 'Failed: tried to bridge 0.0002 test ETH to OP Sepolia through LayerZero (Stargate’s native ETH pool 0x9Cc7…0706); messaging fee 0.000102050140082558 test ETH; only the network fee was paid', render(out.get(FAILED)));
+  check('…Hide amounts masks both figures', !/0\.0002|0\.000102/.test(render(sent, { hidden: true })), render(sent, { hidden: true }));
+  const { ACTIVITY_CALL_VERBS } = await import('@shiba-wallet/chains-evm');
+  check('the engine lists "bridged" among ACTIVITY_CALL_VERBS', ACTIVITY_CALL_VERBS.includes('bridged'));
+  const { decodeBridgeSendCall, bridgeSendPhrase } = sentencesModule;
+  const fmt = { native: (v) => `${v} wei` };
+  check('decodeBridgeSendCall: only the pinned pool ON THIS NETWORK, the OFT send selector, the canonical head and a value covering the amount',
+    decodeBridgeSendCall(SEPOLIA, { to: POOL, input, value: VALUE }) !== null &&
+      decodeBridgeSendCall('eip155:11155420', { to: POOL, input, value: VALUE }) === null &&
+      decodeBridgeSendCall(SEPOLIA, { to: ACCOUNT_2, input, value: VALUE }) === null &&
+      decodeBridgeSendCall(SEPOLIA, { to: POOL, input: '0xc7c7f5b4' + input.slice(10), value: VALUE }) === null &&
+      decodeBridgeSendCall(SEPOLIA, { to: POOL, input: input.slice(0, 200), value: VALUE }) === null &&
+      decodeBridgeSendCall(SEPOLIA, { to: POOL, input, value: AMOUNT - 1n }) === null);
+  const facts = decodeBridgeSendCall(SEPOLIA, { to: POOL, input, value: VALUE });
+  check('bridgeSendPhrase: only for exactly that call (same pool, selector and value)',
+    bridgeSendPhrase(facts, { to: POOL, selector: OFT_SEND_SELECTOR, value: VALUE }, fmt) !== null &&
+      bridgeSendPhrase(facts, { to: POOL, selector: OFT_SEND_SELECTOR, value: VALUE + 1n }, fmt) === null &&
+      bridgeSendPhrase(facts, { to: ACCOUNT_2, selector: OFT_SEND_SELECTOR, value: VALUE }, fmt) === null &&
+      bridgeSendPhrase(null, { to: POOL, selector: OFT_SEND_SELECTOR, value: VALUE }, fmt) === null);
+  check('control: the transaction read once more only for a bridge send (one extra eth_getTransactionByHash per bridge row)',
+    count('eth_getTransactionByHash') === 4, count('eth_getTransactionByHash'));
+  // Mutant: the pool check dropped — any contract with the OFT selector would be named as Stargate's pool.
+  const srcPath = join(here, '..', 'src', 'wallet', 'activity-sentences.ts');
+  const original = readFileSync(srcPath, 'utf8');
+  const from = "  if (!pool || call.to.toLowerCase() !== pool.toLowerCase()) return null;\n  const hex = call.input.toLowerCase();";
+  check('mutation anchor present (pinned pool comparison)', original.includes(from));
+  const mutantDir = join(here, `.mutants-activity-bridge-${process.pid}`);
+  mkdirSync(mutantDir, { recursive: true });
+  try {
+    const file = join(mutantDir, 'activity-sentences.ts');
+    writeFileSync(file, original.replace(from, '  if (!pool) return null;\n  const hex = call.input.toLowerCase();').replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolvePath(dirname(srcPath), spec)).href}'`));
+    const m = await import(pathToFileURL(file).href);
+    check('M-bridge caught: a look-alike contract with the OFT selector is not described (real) but is by the mutant',
+      decodeBridgeSendCall(SEPOLIA, { to: ACCOUNT_2, input, value: VALUE }) === null && m.decodeBridgeSendCall(SEPOLIA, { to: ACCOUNT_2, input, value: VALUE }) !== null);
+  } finally {
+    rmSync(mutantDir, { recursive: true, force: true });
+  }
+}
+
 console.log(`\ncheck-activity: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

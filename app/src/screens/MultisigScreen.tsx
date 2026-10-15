@@ -707,7 +707,7 @@ export function MultisigScreen() {
           keyboardType="number-pad"
           style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
         />
-        <HiddenFieldLabel field={fieldLabel('multisig-name', 'Name (optional)')} />
+        <Text {...fieldLabel('multisig-name', 'Name (optional)').label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel('multisig-name', 'Name (optional)').text}</Text>
         <TextInput
           {...fieldLabel('multisig-name', 'Name (optional)').input}
           value={nameInput}
@@ -918,7 +918,7 @@ export function MultisigScreen() {
             <Button key={key} title={symbolFor(key)} variant="secondary" selected={asset === key} onPress={() => setAsset(key)} />
           ))}
         </View>
-        <HiddenFieldLabel field={fieldLabel('op-recipient', 'Recipient address')} />
+        <Text {...fieldLabel('op-recipient', 'Recipient address').label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel('op-recipient', 'Recipient address').text}</Text>
         <TextInput
           {...fieldLabel('op-recipient', 'Recipient address').input}
           value={recipient}
@@ -929,7 +929,7 @@ export function MultisigScreen() {
           autoCorrect={false}
           style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
         />
-        <HiddenFieldLabel field={fieldLabel('op-amount', `Amount in ${symbolFor(asset)}`)} />
+        <Text {...fieldLabel('op-amount', `Amount in ${symbolFor(asset)}`).label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel('op-amount', `Amount in ${symbolFor(asset)}`).text}</Text>
         <TextInput
           {...fieldLabel('op-amount', `Amount in ${symbolFor(asset)}`).input}
           value={amount}
@@ -983,18 +983,21 @@ export function MultisigScreen() {
           onComplete={(text) => void onAddApproval(text)}
           onError={scanError}
         />
-        <HiddenFieldLabel field={fieldLabel('approval-paste', 'Paste a co-signer’s approval (or a 65-byte signature from another wallet)')} />
-        <TextInput
-          {...fieldLabel('approval-paste', 'Paste a co-signer’s approval (or a 65-byte signature from another wallet)').input}
-          value={approvalInput}
-          onChangeText={setApprovalInput}
-          placeholder="Paste a co-signer’s approval (or a 65-byte signature from another wallet)"
-          placeholderTextColor={theme.textMuted}
-          multiline
-          autoCapitalize="none"
-          autoCorrect={false}
-          style={[styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }]}
-        />
+        {/* Anchors the hidden label at the field's top-left (pass p21b, finding 1). */}
+        <View>
+          <HiddenFieldLabel field={fieldLabel('approval-paste', 'Paste a co-signer’s approval (or a 65-byte signature from another wallet)')} />
+          <TextInput
+            {...fieldLabel('approval-paste', 'Paste a co-signer’s approval (or a 65-byte signature from another wallet)').input}
+            value={approvalInput}
+            onChangeText={setApprovalInput}
+            placeholder="Paste a co-signer’s approval (or a 65-byte signature from another wallet)"
+            placeholderTextColor={theme.textMuted}
+            multiline
+            autoCapitalize="none"
+            autoCorrect={false}
+            style={[styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }]}
+          />
+        </View>
         <Button title="Add approval" variant="secondary" disabled={!approvalInput.trim()} onPress={() => void onAddApproval(approvalInput)} />
         <Button title="Add an approval from a file" variant="secondary" onPress={() => void onPickApprovalFile()} />
         <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>3. Submit</Text>
@@ -1119,18 +1122,21 @@ export function MultisigScreen() {
           onComplete={onReviewImport}
           onError={scanError}
         />
-        <HiddenFieldLabel field={fieldLabel('record-paste', 'Paste the multisig record')} />
-        <TextInput
-          {...fieldLabel('record-paste', 'Paste the multisig record').input}
-          value={importInput}
-          onChangeText={setImportInput}
-          placeholder="Paste the multisig record"
-          placeholderTextColor={theme.textMuted}
-          multiline
-          autoCapitalize="none"
-          autoCorrect={false}
-          style={[styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }]}
-        />
+        {/* Anchors the hidden label at the field's top-left (pass p21b, finding 1). */}
+        <View>
+          <HiddenFieldLabel field={fieldLabel('record-paste', 'Paste the multisig record')} />
+          <TextInput
+            {...fieldLabel('record-paste', 'Paste the multisig record').input}
+            value={importInput}
+            onChangeText={setImportInput}
+            placeholder="Paste the multisig record"
+            placeholderTextColor={theme.textMuted}
+            multiline
+            autoCapitalize="none"
+            autoCorrect={false}
+            style={[styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }]}
+          />
+        </View>
         {errorBox}
         <Button title="Check the record" disabled={!importInput.trim()} onPress={() => onReviewImport(importInput)} />
         <Button title="Open a record file" variant="secondary" onPress={() => void pickInto(reviewImport)} />
@@ -1174,18 +1180,21 @@ export function MultisigScreen() {
           onComplete={onReviewCosign}
           onError={scanError}
         />
-        <HiddenFieldLabel field={fieldLabel('request-paste', 'Paste the multisig signing request')} />
-        <TextInput
-          {...fieldLabel('request-paste', 'Paste the multisig signing request').input}
-          value={cosignInput}
-          onChangeText={setCosignInput}
-          placeholder="Paste the multisig signing request"
-          placeholderTextColor={theme.textMuted}
-          multiline
-          autoCapitalize="none"
-          autoCorrect={false}
-          style={[styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }]}
-        />
+        {/* Anchors the hidden label at the field's top-left (pass p21b, finding 1). */}
+        <View>
+          <HiddenFieldLabel field={fieldLabel('request-paste', 'Paste the multisig signing request')} />
+          <TextInput
+            {...fieldLabel('request-paste', 'Paste the multisig signing request').input}
+            value={cosignInput}
+            onChangeText={setCosignInput}
+            placeholder="Paste the multisig signing request"
+            placeholderTextColor={theme.textMuted}
+            multiline
+            autoCapitalize="none"
+            autoCorrect={false}
+            style={[styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }]}
+          />
+        </View>
         {errorBox}
         <Button title="Review the request" disabled={!cosignInput.trim()} onPress={() => onReviewCosign(cosignInput)} />
         <Button title="Open a request file" variant="secondary" onPress={() => void pickInto(reviewCosign)} />

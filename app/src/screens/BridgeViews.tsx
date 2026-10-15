@@ -8,6 +8,7 @@ import {
   bridgeStatusHeading,
   bridgeStatusSentence,
   exactNative,
+  providerRowSpokenLabel,
   type BridgeProviderRow,
   type BridgeTransferRecord,
 } from '../wallet/bridge';
@@ -53,6 +54,27 @@ export function TrustStatementCard({ trust, theme, title }: { trust: BridgeTrust
  * One provider as a radio row. A provider that cannot be chosen is shown
  * all the same (dimmed, with the reason), so the user sees every provider
  * the wallet knows and who each would trust.
+ *
+ * Screen readers (emulator pass p21b, finding 3): the card used to be ONE
+ * Pressable, which makes one accessibility node, so TalkBack read only its
+ * label ("LayerZero (Stargate), moves test ETH. Radio button") and the
+ * trust statement, fee and measured time inside it were never reached
+ * before Review. Now the radio control is the card's head only
+ * (accessibilityRole "radio", its checked / disabled state and
+ * providerRowSpokenLabel), and every line of the card body is its own Text,
+ * so TalkBack stops on each one right after the control: who verifies, who
+ * controls, the refund rule, the fee, the measured time. The choice decides
+ * which provider you trust, so those sentences are separate items you can
+ * hear one by one rather than one long label.
+ *
+ * The body stays tappable for sighted users through a second Pressable
+ * with accessible={false} and focusable={false}: on Android `accessible`
+ * sets View.isFocusable and `focusable` alone installs a click listener
+ * (RN 0.86.3 ReactViewManager.kt:95–98 and :377–397; Pressable.js :252
+ * and :258 default both to true), so with both false the body is neither a
+ * focusable nor a clickable node and does not swallow its Texts into one
+ * stop, while touches still reach it through React Native's own responder
+ * system.
  */
 export function ProviderRadioRow({
   row,
@@ -67,27 +89,26 @@ export function ProviderRadioRow({
   onSelect: () => void;
   theme: Theme;
 }) {
-  const spoken =
-    `${row.label}${row.asset ? `, moves ${row.asset}` : ''}` +
-    (row.selectable ? (quote ? `, fee ${quote.fee}` : '') : `, not available: ${row.note ?? ''}`);
   return (
-    <Pressable
-      accessibilityRole="radio"
-      accessibilityState={{ checked: selected, disabled: !row.selectable }}
-      accessibilityLabel={spoken}
-      disabled={!row.selectable}
-      onPress={onSelect}
-      style={({ pressed }) => [
+    <View
+      style={[
         styles.card,
         {
           backgroundColor: theme.card,
           borderColor: selected ? theme.accent : theme.border,
           borderWidth: selected ? 2 : 1,
-          opacity: row.selectable ? (pressed ? 0.8 : 1) : 0.6,
+          opacity: row.selectable ? 1 : 0.6,
         },
       ]}
     >
-      <View style={styles.radioHead}>
+      <Pressable
+        accessibilityRole="radio"
+        accessibilityState={{ checked: selected, disabled: !row.selectable }}
+        accessibilityLabel={providerRowSpokenLabel(row, quote)}
+        disabled={!row.selectable}
+        onPress={onSelect}
+        style={({ pressed }) => [styles.radioHead, { opacity: pressed ? 0.8 : 1 }]}
+      >
         <View style={[styles.radioOuter, { borderColor: row.selectable ? theme.accent : theme.textMuted }]}>
           {selected ? <View style={[styles.radioInner, { backgroundColor: theme.accent }]} /> : null}
         </View>
@@ -95,33 +116,35 @@ export function ProviderRadioRow({
           {row.label}
           {row.asset ? ` · moves ${row.asset}` : ''}
         </Text>
-      </View>
-      {row.note ? <Text style={[styles.body, { color: theme.textMuted }]}>{row.note}</Text> : null}
-      <Text style={[styles.body, { color: theme.text }]}>
-        <Text style={styles.strong}>Who verifies: </Text>
-        {row.trust.verification}
-      </Text>
-      <Text style={[styles.body, { color: theme.text }]}>
-        <Text style={styles.strong}>Who controls: </Text>
-        {row.trust.control}
-      </Text>
-      <Text style={[styles.body, { color: theme.text }]}>
-        <Text style={styles.strong}>If it does not arrive: </Text>
-        {row.trust.refundRule}
-      </Text>
-      {row.selectable ? (
-        quote ? (
-          <Text style={[styles.body, { color: theme.text }]}>
-            <Text style={styles.strong}>Fee (quoted just now): </Text>
-            {quote.fee}. {quote.arrives}
-          </Text>
-        ) : (
-          <Text style={[styles.body, { color: theme.textMuted }]}>{BRIDGE_FEE_BEFORE_QUOTE}</Text>
-        )
-      ) : null}
-      {row.measured ? <Text style={[styles.body, { color: theme.text }]}>{row.measured}</Text> : null}
-      {row.timeSource ? <Text style={[styles.body, { color: theme.textMuted }]}>{row.timeSource}</Text> : null}
-    </Pressable>
+      </Pressable>
+      <Pressable accessible={false} focusable={false} disabled={!row.selectable} onPress={onSelect} style={styles.radioBody}>
+        {row.note ? <Text style={[styles.body, { color: theme.textMuted }]}>{row.note}</Text> : null}
+        <Text style={[styles.body, { color: theme.text }]}>
+          <Text style={styles.strong}>Who verifies: </Text>
+          {row.trust.verification}
+        </Text>
+        <Text style={[styles.body, { color: theme.text }]}>
+          <Text style={styles.strong}>Who controls: </Text>
+          {row.trust.control}
+        </Text>
+        <Text style={[styles.body, { color: theme.text }]}>
+          <Text style={styles.strong}>If it does not arrive: </Text>
+          {row.trust.refundRule}
+        </Text>
+        {row.selectable ? (
+          quote ? (
+            <Text style={[styles.body, { color: theme.text }]}>
+              <Text style={styles.strong}>Fee (quoted just now): </Text>
+              {quote.fee}. {quote.arrives}
+            </Text>
+          ) : (
+            <Text style={[styles.body, { color: theme.textMuted }]}>{BRIDGE_FEE_BEFORE_QUOTE}</Text>
+          )
+        ) : null}
+        {row.measured ? <Text style={[styles.body, { color: theme.text }]}>{row.measured}</Text> : null}
+        {row.timeSource ? <Text style={[styles.body, { color: theme.textMuted }]}>{row.timeSource}</Text> : null}
+      </Pressable>
+    </View>
   );
 }
 
@@ -192,7 +215,8 @@ const styles = StyleSheet.create({
   card: { borderRadius: 12, borderWidth: 1, padding: 14, gap: 8 },
   cardTitle: { fontSize: 15, fontWeight: '700' },
   providerLabel: { fontSize: 16, fontWeight: '700', flexShrink: 1 },
-  radioHead: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  radioHead: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 44 },
+  radioBody: { gap: 8 },
   radioOuter: { width: 20, height: 20, borderRadius: 10, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
   radioInner: { width: 10, height: 10, borderRadius: 5 },
   body: { fontSize: 13, lineHeight: 19 },

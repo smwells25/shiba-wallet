@@ -28,7 +28,7 @@ import {
   type SubscriptionGrant,
 } from '@shiba-wallet/chains-evm';
 import type { RootStackParamList } from '../navigation';
-import { Button, ImportedKeyNotice, screenStyle, TestNetworksOnlyCard, WarningBox, useFieldLabels, HiddenFieldLabel } from '../components';
+import { Button, ImportedKeyNotice, screenStyle, TestNetworksOnlyCard, WarningBox, useFieldLabels } from '../components';
 import { ContactPicker, RecipientContactNotice } from '../components/Contacts';
 import { GrantReview } from '../components/SessionGrantViews';
 import { PayloadQr } from '../components/RecoveryViews';
@@ -2423,7 +2423,7 @@ export function SessionsScreen({ navigation }: Props) {
         </View>
         {subForm.periodCustom ? (
           <>
-            <HiddenFieldLabel field={fieldLabel('custom-period', 'Custom period length')} />
+            <Text {...fieldLabel('custom-period', 'Custom period length').label} style={[styles.label, { color: theme.textMuted }]}>{fieldLabel('custom-period', 'Custom period length').text}</Text>
             <TextInput
               {...fieldLabel('custom-period', 'Custom period length').input}
               value={subForm.customCount}

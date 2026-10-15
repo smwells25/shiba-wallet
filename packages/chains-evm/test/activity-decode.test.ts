@@ -615,7 +615,7 @@ describe('describeCall (wording supplied by the caller)', () => {
     expect(activitySentence(d, ctx({ describeCall: staking }))).toBe(
       'Failed: tried to stake 0.0002 ETH with Lido (stETH contract 0x1111…1111); only the network fee was paid',
     );
-    const present = { staked: 'stake', wrapped: 'wrap', unwrapped: 'unwrap', requested: 'request', claimed: 'claim', burned: 'burn' };
+    const present = { staked: 'stake', wrapped: 'wrap', unwrapped: 'unwrap', requested: 'request', claimed: 'claim', burned: 'burn', bridged: 'bridge' };
     for (const [past, base] of Object.entries(present)) {
       expect(activitySentence(d, ctx({ describeCall: () => `${past} something` }))).toBe(
         `Failed: tried to ${base} something; only the network fee was paid`,
@@ -659,7 +659,7 @@ describe('describeCall (wording supplied by the caller)', () => {
 
   it('lists its verbs', async () => {
     const { ACTIVITY_CALL_VERBS } = await import('../src/activity-decode.js');
-    expect(ACTIVITY_CALL_VERBS).toEqual(expect.arrayContaining(['staked', 'wrapped', 'unwrapped', 'requested', 'claimed', 'burned', 'sent', 'called']));
+    expect(ACTIVITY_CALL_VERBS).toEqual(expect.arrayContaining(['staked', 'wrapped', 'unwrapped', 'requested', 'claimed', 'burned', 'bridged', 'sent', 'called']));
   });
 });
 

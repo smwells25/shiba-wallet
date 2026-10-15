@@ -146,9 +146,10 @@ export function activityRowSpokenLead(p: {
  * the user. Keeping alpha 1, a real 1×1 size and VISIBLE is the
  * conservative choice; the text is hidden by the clip and the transparent
  * colour instead. (Pass p21a confirmed on the emulator that a field
- * labelled by such a view reads "Edit box for <label>". Since then the view
- * is also importantForAccessibility "no" so it is not a swipe stop of its
- * own — components.tsx HiddenFieldLabel.)
+ * labelled by such a view reads "Edit box for <label>". Pass p21b showed
+ * that marking the view importantForAccessibility "no" loses that name, so
+ * the view keeps the default importance and reads as the field's caption —
+ * components.tsx HiddenFieldLabel.)
  */
 export const HIDDEN_FIELD_LABEL_STYLE = {
   position: 'absolute',

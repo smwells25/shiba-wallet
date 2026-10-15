@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useState } from 'react';
 import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation';
-import { Button, WarningBox, screenStyle, HiddenFieldLabel, useFieldLabels } from '../components';
+import { Button, WarningBox, screenStyle, useFieldLabels } from '../components';
 import { QrScanner } from '../components/QrScanner';
 import { useTheme } from '../theme';
 import { usePrefs } from '../wallet/PrefsContext';
@@ -201,7 +201,7 @@ export function ConnectionsScreen({ navigation }: Props) {
               onPress={() => setScannerOpen(true)}
               disabled={pairBusy}
             />
-            <HiddenFieldLabel field={fieldLabel('pairing-link', 'WalletConnect pairing link')} />
+            <Text {...fieldLabel('pairing-link', 'WalletConnect pairing link').label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel('pairing-link', 'WalletConnect pairing link').text}</Text>
             <TextInput
               {...fieldLabel('pairing-link', 'WalletConnect pairing link').input}
               value={uri}

@@ -48,13 +48,18 @@ import {
 } from '../wallet/aa';
 import { PREVIEW_AA_NOTE } from '../wallet/simulation';
 import {
+  BRIDGE_AMOUNT_PLACEHOLDER,
   BRIDGE_CHOICE_NOTE,
   BRIDGE_INTRO,
   BRIDGE_RECORDS_NOTE,
   BRIDGE_RECORDS_READ_ONLY_MESSAGE,
   BRIDGE_TRACK_INTERVAL_MS,
   BridgeRefusal,
+  broadcastStamped,
   bridgeConfirmModel,
+  bridgeFormInputsShown,
+  bridgeProviderChoiceHint,
+  chosenBridgeProvider,
   bridgeOfferFor,
   bridgePromptTitle,
   bridgeProviderRows,
@@ -293,7 +298,10 @@ export function BridgeScreen({ navigation }: Props) {
   const sendableDestinations = offer ? offer.destinations.filter((d) => d.sendable) : [];
   const chosenDestination = destination ?? sendableDestinations[0]?.chainId ?? offer?.destinations[0]?.chainId ?? null;
   const rows = offer && chosenDestination !== null ? bridgeProviderRows(offer, chosenDestination) : [];
-  const chosenProvider = providerId !== null && rows.some((r) => r.id === providerId && r.selectable) ? providerId : (rows.find((r) => r.selectable)?.id ?? null);
+  // The user's own choice only (pass p21b, finding 2): no provider is selected until a row is tapped.
+  const chosenProvider = chosenBridgeProvider(rows, providerId);
+  const providerChoiceHint = bridgeProviderChoiceHint(rows, chosenProvider);
+  const inputsShown = offer !== null && bridgeFormInputsShown(offer);
   const destinationLabel = offer?.destinations.find((d) => d.chainId === chosenDestination)?.label ?? '';
 
   const url = endpoint?.url ?? null;
@@ -534,8 +542,11 @@ export function BridgeScreen({ navigation }: Props) {
     }
     setPhase('sending');
     try {
-      const sent = await signWith(EVM_CHAIN_ID, preparedFrom.current ?? '', (signer) => sendEvm(sendUrl, signer, eoaQuote, evmChain.explorerTxBase));
-      const record = recordBridgeTransfer(plan, { sourceTxHash: sent.txid, userOpHash: null });
+      // The sent time is stamped where the broadcast returns (pass p21b, finding 8; bridge.ts broadcastStamped).
+      const { value: sent, sentAt } = await signWith(EVM_CHAIN_ID, preparedFrom.current ?? '', (signer) =>
+        broadcastStamped(() => sendEvm(sendUrl, signer, eoaQuote, evmChain.explorerTxBase)),
+      );
+      const record = recordBridgeTransfer(plan, { sourceTxHash: sent.txid, userOpHash: null, sentAt });
       setSentRecordId(record.id);
       setSentNetwork(caip2);
       setResult(sent);
@@ -575,8 +586,11 @@ export function BridgeScreen({ navigation }: Props) {
     }
     setPhase('aa-sending');
     try {
-      const { userOpHash } = await signWith(EVM_CHAIN_ID, preparedFrom.current ?? '', (signer) => sendAa(bundle, signer, aaQuote, { kind: 'bridge' }));
-      const record = recordBridgeTransfer(plan, { sourceTxHash: null, userOpHash });
+      const {
+        value: { userOpHash },
+        sentAt,
+      } = await signWith(EVM_CHAIN_ID, preparedFrom.current ?? '', (signer) => broadcastStamped(() => sendAa(bundle, signer, aaQuote, { kind: 'bridge' })));
+      const record = recordBridgeTransfer(plan, { sourceTxHash: null, userOpHash, sentAt });
       setSentRecordId(record.id);
       setSentNetwork(caip2);
       setAaResult({ userOpHash, receiptState: 'pending', success: null, txHash: null });
@@ -635,7 +649,7 @@ export function BridgeScreen({ navigation }: Props) {
   // ------------------------------------------------------------ success
   if (phase === 'success' && plan && (result || aaResult)) {
     return (
-      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content} {...NOTE_VIEW_SCROLL_PROPS}>
+      <ScrollView key="bridge-success" style={screenStyle(theme)} contentContainerStyle={styles.content} {...NOTE_VIEW_SCROLL_PROPS}>
         <Text accessibilityRole="header" style={[styles.successTitle, { color: theme.success }]}>{aaResult ? 'Sent to the bundler ✓' : 'Sent ✓'}</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>{bridgePromptTitle(plan)}.</Text>
         <Text style={[styles.label, { color: theme.textMuted }]}>{aaResult ? 'UserOperation hash' : 'Transaction id (on this network)'}</Text>
@@ -728,7 +742,7 @@ export function BridgeScreen({ navigation }: Props) {
 
   if ((phase === 'confirm' || phase === 'sending') && plan && eoaQuote) {
     return (
-      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+      <ScrollView key="bridge-confirm" style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
         <Row label="From account" value={activeAccount?.name ?? '—'} sub={account.address} spoken={`From account: ${activeAccount?.name ?? 'unknown'}, ${spokenShortAddress(account.address)}`} theme={theme} />
         <ImportedKeyNotice show={activeAccount?.imported === true} />
@@ -770,7 +784,7 @@ export function BridgeScreen({ navigation }: Props) {
   if ((phase === 'aa-confirm' || phase === 'aa-sending') && plan && aaQuote) {
     const first = aaQuote.calls[0]!;
     return (
-      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+      <ScrollView key="bridge-aa-confirm" style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
         <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}>Smart account · {aaAccountTypeLabel(aaQuote.accountType)}</Text>
         <Row label="Owner account (signs)" value={activeAccount?.name ?? '—'} sub={account.address} spoken={`Owner account (signs): ${activeAccount?.name ?? 'unknown'}, ${spokenShortAddress(account.address)}`} theme={theme} />
@@ -806,7 +820,7 @@ export function BridgeScreen({ navigation }: Props) {
   const currentRowQuotes = rowQuotes && rowQuotes.key === rowQuoteKey ? rowQuotes.byProvider : {};
   const amountField = fieldLabel('amount', `Amount (${symbol})`);
   return (
-    <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+    <ScrollView key="bridge-form" style={screenStyle(theme)} contentContainerStyle={styles.content}>
       <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
       <Text style={[styles.hint, { color: theme.text }]}>{BRIDGE_INTRO}</Text>
       {offer.unavailable ? <WarningBox>{offer.unavailable}</WarningBox> : null}
@@ -822,7 +836,7 @@ export function BridgeScreen({ navigation }: Props) {
       ) : null}
       {aa.error ? <WarningBox>{aa.error}</WarningBox> : null}
 
-      {offer.destinations.length > 0 ? (
+      {inputsShown && offer.destinations.length > 0 ? (
         <>
           <Text accessibilityRole="header" style={[styles.label, { color: theme.textMuted }]}>Send to network</Text>
           <View style={styles.choiceRow}>
@@ -853,25 +867,33 @@ export function BridgeScreen({ navigation }: Props) {
         </>
       ) : null}
 
-      <Text {...amountField.label} style={[styles.label, { color: theme.textMuted }]}>{amountField.text}</Text>
-      <TextInput
-        {...amountField.input}
-        style={[styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }]}
-        value={amountText}
-        onChangeText={(t) => {
-          setAmountText(t);
-          setFormError(null);
-        }}
-        keyboardType="decimal-pad"
-        placeholder="0.0002"
-        placeholderTextColor={theme.textMuted}
-      />
-      <Text style={[styles.hint, { color: theme.textMuted }]}>
-        Stargate moves {symbol} in steps of 0.000001; an amount with more decimal places is refused, not rounded.
-      </Text>
+      {/* No destination chips and no amount where no provider can send from
+          this network (pass p21b, finding 7): the sentence above and the
+          disabled provider rows below say why. */}
+      {inputsShown ? (
+        <>
+          <Text {...amountField.label} style={[styles.label, { color: theme.textMuted }]}>{amountField.text}</Text>
+          <TextInput
+            {...amountField.input}
+            style={[styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }]}
+            value={amountText}
+            onChangeText={(t) => {
+              setAmountText(t);
+              setFormError(null);
+            }}
+            keyboardType="decimal-pad"
+            placeholder={BRIDGE_AMOUNT_PLACEHOLDER}
+            placeholderTextColor={theme.textMuted}
+          />
+          <Text style={[styles.hint, { color: theme.textMuted }]}>
+            Stargate moves {symbol} in steps of 0.000001; an amount with more decimal places is refused, not rounded.
+          </Text>
+        </>
+      ) : null}
 
       <Text accessibilityRole="header" style={[styles.label, { color: theme.textMuted }]}>Choose a provider</Text>
       <Text style={[styles.hint, { color: theme.textMuted }]}>{BRIDGE_CHOICE_NOTE}</Text>
+      {providerChoiceHint ? <Text style={[styles.hint, { color: theme.text }]}>{providerChoiceHint}</Text> : null}
       <View accessibilityRole="radiogroup" style={styles.content}>
         {rows.map((row) => {
           const q = currentRowQuotes[row.id];

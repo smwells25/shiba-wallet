@@ -1836,6 +1836,8 @@ const PAST_TO_PRESENT: Record<string, string> = {
   requested: 'request',
   claimed: 'claim',
   burned: 'burn',
+  // A bridge send (the app's Stargate pool phrase): "Failed: tried to bridge …".
+  bridged: 'bridge',
 };
 
 /**
