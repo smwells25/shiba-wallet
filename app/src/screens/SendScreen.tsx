@@ -1376,9 +1376,9 @@ export function SendScreen({ route, navigation }: Props) {
         // checks the ETH balance against the fee, and pre-flights the
         // transfer calldata through eth_call.
         // Settings → Developer's minimum-fee rehearsal (test networks only,
-        // one-shot): the token quote is re-priced at a 1-wei priority fee and
-        // the base fee + 1 wei (send.ts repriceTokenQuoteAtMinimumFee, which
-        // returns the quote unchanged on any other network).
+        // one-shot): the token quote is re-priced at a max fee and a priority
+        // fee of 1 wei, below the base fee (send.ts repriceTokenQuoteAtMinimumFee,
+        // which returns the quote unchanged on any other network).
         const rehearse = minimumFeeRehearsalArmed(evmChain.caip2);
         const quoted = await viaFailover(start, async (ep) => {
           const tokenQuote = await prepareErc20Send({

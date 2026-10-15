@@ -557,27 +557,52 @@ console.log('check-pending: the minimum-fee rehearsal (Settings → Developer, p
   check('…and on a network the user added as a MAIN network (stays off)', send.setMinimumFeeRehearsal(customMain.caip2, true) === false && !send.minimumFeeRehearsalArmed(customMain.caip2) && notified === 0);
   check('on Sepolia it arms, for Sepolia only (not for another network)', send.setMinimumFeeRehearsal(SEPOLIA, true) === true && send.minimumFeeRehearsalArmed(SEPOLIA) && !send.minimumFeeRehearsalArmed('eip155:84532') && notified === 1);
 
-  // The native quote at the minimum fee (fake node: base fee 14 wei, node priority 1,000,004).
-  const node = fakeNode({ estimate: 21_000n });
+  // The native quote at the minimum fee (fake node: base fee 16 wei — the
+  // live Sepolia figure of pass p21c — and node priority 1,000,004).
+  const BASE = 16n;
+  const PRIORITY = 1_000_004n;
+  const node = fakeNode({ estimate: 21_000n, baseFee: BASE });
   useNode(node);
   const ordinary = await send.prepareEvmSend(URL, FROM, TO, 10n ** 14n, undefined, SEPOLIA);
   const rehearsal = await send.prepareEvmSend(URL, FROM, TO, 10n ** 14n, undefined, SEPOLIA, { minimumFee: true });
   check('an ordinary Sepolia quote is unchanged (2 × base + node priority, no marker)',
-    ordinary.maxFeePerGas === 2n * 14n + 1_000_004n && ordinary.maxPriorityFeePerGas === 1_000_004n && !('minimumFee' in ordinary));
-  check('the rehearsal quote: priority fee exactly 1 wei, max fee exactly base fee + 1 wei (15 wei)',
-    rehearsal.maxPriorityFeePerGas === 1n && rehearsal.maxFeePerGas === 15n && rehearsal.minimumFee?.baseFeePerGas === 14n, `${rehearsal.maxPriorityFeePerGas}/${rehearsal.maxFeePerGas}`);
-  check('…its worst-case fee and total follow (21,000 × 15 wei)', rehearsal.fee === 21_000n * 15n && rehearsal.total === 10n ** 14n + 21_000n * 15n && rehearsal.gasLimit === 21_000n);
+    ordinary.maxFeePerGas === 2n * BASE + PRIORITY && ordinary.maxPriorityFeePerGas === PRIORITY && !('minimumFee' in ordinary));
+  // EIP-1559: a block may include a transaction only if max_fee_per_gas >= base_fee_per_gas.
+  const rehearsalPriced = (q) => q.maxPriorityFeePerGas === 1n && q.maxFeePerGas === 1n && q.minimumFee?.baseFeePerGas === BASE && q.maxFeePerGas < BASE;
+  check('the rehearsal quote: max fee exactly 1 wei and priority fee exactly 1 wei, BELOW the 16-wei base fee (no block can include it)',
+    rehearsalPriced(rehearsal) && send.MINIMUM_FEE_MAX_FEE_WEI === 1n && send.MINIMUM_FEE_PRIORITY_WEI === 1n, `${rehearsal.maxFeePerGas}/${rehearsal.maxPriorityFeePerGas}`);
+  check('…its worst-case fee and total follow (21,000 × 1 wei)', rehearsal.fee === 21_000n && rehearsal.total === 10n ** 14n + 21_000n && rehearsal.gasLimit === 21_000n);
   check('…every other field equals the ordinary quote', json({ ...rehearsal, maxFeePerGas: 0, maxPriorityFeePerGas: 0, fee: 0, total: 0, minimumFee: 0 }) === json({ ...ordinary, maxFeePerGas: 0, maxPriorityFeePerGas: 0, fee: 0, total: 0, minimumFee: 0 }));
   check('preparing (and so cancelling) a rehearsal quote leaves the option on', send.minimumFeeRehearsalArmed(SEPOLIA));
-  check('the confirm fee line (exact)', send.minimumFeeRehearsalFeeLine(rehearsal) ===
-    "Priced at the minimum fee: a priority fee of 1 wei and a max fee of 15 wei per gas (the latest block's base fee, 14 wei, plus 1 wei).");
+  check('the confirm fee line (exact, the base fee read live)', send.minimumFeeRehearsalFeeLine(rehearsal) ===
+    "Priced at the minimum fee: a max fee of 1 wei and a priority fee of 1 wei per gas, below the latest block's base fee (16 wei), so no block can include it until you speed it up or cancel it.",
+    send.minimumFeeRehearsalFeeLine(rehearsal));
+  {
+    // A base fee not above 1 wei: the line must not claim it cannot be included.
+    useNode(fakeNode({ estimate: 21_000n, baseFee: 1n }));
+    const lowBase = await send.prepareEvmSend(URL, FROM, TO, 10n ** 14n, undefined, SEPOLIA, { minimumFee: true });
+    check('…with a base fee of 1 wei the line says a block may include it at once (exact)',
+      lowBase.maxFeePerGas === 1n && send.minimumFeeRehearsalFeeLine(lowBase) ===
+        "Priced at the minimum fee: a max fee of 1 wei and a priority fee of 1 wei per gas. The latest block's base fee (1 wei) is not above that, so a block may include it at once and it may never show as pending.",
+      send.minimumFeeRehearsalFeeLine(lowBase));
+    useNode(node);
+  }
   check('the confirm warning (exact)', send.MINIMUM_FEE_REHEARSAL_WARNING ===
-    'Minimum-fee rehearsal: this transaction will probably sit pending until you speed it up or cancel it from Activity.');
+    'Minimum-fee rehearsal: this transaction offers a max fee of only 1 wei per gas, so while the network’s base fee is above that it stays pending until you speed it up or cancel it from Activity. The node may also refuse it outright.');
   check('the switch label (exact)', send.MINIMUM_FEE_REHEARSAL_SWITCH_LABEL ===
     'Send the next regular-account transaction at the minimum fee (to rehearse Speed up / Cancel)');
   check('the Developer note says a node may refuse it outright ("transaction underpriced") and that this is expected',
     send.MINIMUM_FEE_REHEARSAL_HINT.includes('The node may refuse such an under-priced transaction outright ("transaction underpriced"); that is expected') &&
       send.MINIMUM_FEE_REHEARSAL_HINT.startsWith('Test networks only.'));
+  check('the Developer note (exact)', send.MINIMUM_FEE_REHEARSAL_HINT ===
+    'Test networks only. The next native-coin or token send from the Send screen, with the smart account off, is priced at a max fee of 1 wei and a priority fee of 1 wei per gas. ' +
+    'A block can include a transaction only if its max fee is at least the block’s base fee, so while the base fee is above 1 wei this one stays in the network’s pool until you speed it up or cancel it from Activity; ' +
+    'the speed-up or cancellation is priced at the node’s normal fee suggestion, so a block can include it. The option turns itself off once that transaction is sent; going back from the confirm screen leaves it on, ' +
+    'and it is off again whenever the app restarts. NFT sends, swaps, staking, app requests and smart-account operations are always priced normally. ' +
+    'The node may refuse such an under-priced transaction outright ("transaction underpriced"); that is expected, because the nodes behind one endpoint address can apply different minimums, ' +
+    'and the option then stays on until a send goes through or you turn it off. On the layer-2 test networks the transaction goes to the network’s sequencer, which may refuse it rather than hold it; that has not been tried.');
+  check('…and no longer says the max fee is the base fee plus 1 wei, nor that Arbitrum includes it anyway',
+    !/plus 1 wei|base fee \+ 1|likely to be included/.test(send.MINIMUM_FEE_REHEARSAL_HINT + send.MINIMUM_FEE_REHEARSAL_WARNING));
 
   // Refused on a main network: the option is ignored and the quote is the ordinary one.
   for (const [label, caip2, chainId] of [['Ethereum mainnet', MAINNET, 1n], ['a network the user added as a main network', customMain.caip2, 59144n]]) {
@@ -592,9 +617,8 @@ console.log('check-pending: the minimum-fee rehearsal (Settings → Developer, p
     ethBalance: 10n ** 18n, nonce: 7n, chainId: 11155111n, gasLimit: 45_000n, maxFeePerGas: 1_000_032n, maxPriorityFeePerGas: 1_000_004n, fee: 45_000n * 1_000_032n,
     data: new Uint8Array([0xa9, 0x05, 0x9c, 0xbb]), simulation: { ok: true, returnData: '0x' }, returnedFalse: false, gasIsFallback: false };
   const tokenRehearsal = await send.repriceTokenQuoteAtMinimumFee(URL, tokenQuote, { to: tokenQuote.contract, value: 0n, data: tokenQuote.data });
-  check('token send: priority 1 wei, max fee base + 1, fee = gas × 15, marker; every other field unchanged',
-    tokenRehearsal.maxPriorityFeePerGas === 1n && tokenRehearsal.maxFeePerGas === 15n && tokenRehearsal.fee === 45_000n * 15n &&
-      tokenRehearsal.minimumFee?.baseFeePerGas === 14n &&
+  check('token send: max fee 1 wei and priority 1 wei (below the base fee), fee = gas × 1 wei, marker; every other field unchanged',
+    rehearsalPriced(tokenRehearsal) && tokenRehearsal.fee === 45_000n &&
       json({ ...tokenRehearsal, maxFeePerGas: 0, maxPriorityFeePerGas: 0, fee: 0, minimumFee: 0 }) === json({ ...tokenQuote, maxFeePerGas: 0, maxPriorityFeePerGas: 0, fee: 0, minimumFee: 0 }));
   const mainnetToken = { ...tokenQuote, chainId: 1n };
   check('token send on mainnet: returned unchanged (the same object, no request made)',
@@ -617,11 +641,32 @@ console.log('check-pending: the minimum-fee rehearsal (Settings → Developer, p
   send.setPendingRecordStore(store);
   const sent = await send.sendEvm(URL, signer, rehearsal, null);
   const recorded = (await loadPendingRegistry(store)).records[0];
-  check('the rehearsal broadcast is recorded as pending with priority 1 wei and max fee 15 wei',
-    recorded?.hash === sent.txid.toLowerCase() && recorded.maxFeePerGas === '15' && recorded.maxPriorityFeePerGas === '1');
+  check('the rehearsal broadcast is recorded as pending with max fee 1 wei and priority 1 wei',
+    recorded?.hash === sent.txid.toLowerCase() && recorded.maxFeePerGas === '1' && recorded.maxPriorityFeePerGas === '1');
   const speedUp = replacementFees(pooledFees([recorded]), { maxFeePerGas: 1n, maxPriorityFeePerGas: 1n });
-  check('…and its speed-up minimum is the unchanged rule: priority 2 wei, max fee 17 wei', speedUp.minimum.maxPriorityFeePerGas === 2n && speedUp.minimum.maxFeePerGas === 17n);
+  check('…the replacement rule alone would allow 2 / 2 wei — still below the base fee, so never used by itself',
+    speedUp.minimum.maxPriorityFeePerGas === 2n && speedUp.minimum.maxFeePerGas === 2n && speedUp.minimum.maxFeePerGas < BASE);
   send.setPendingRecordStore(null);
+
+  // Speed up and Cancel of that 1 / 1 wei broadcast are priced at the node's
+  // suggestion (base × 2 + priority), never below the base fee, and still
+  // clear the 10% / +1 wei rule against the original.
+  const rehearsalGroup = nonceGroups([recorded], SEPOLIA, FROM)[0];
+  const includable = (q, base, priority) =>
+    q.maxFeePerGas === 2n * base + priority && q.maxPriorityFeePerGas === (priority > 2n ? priority : 2n) &&
+    q.maxFeePerGas >= base && pending.meetsReplacementRule({ maxFeePerGas: 1n, maxPriorityFeePerGas: 1n }, q);
+  const speedUpQuote = await send.prepareEvmReplacement(URL, rehearsalGroup, 'speed-up', SEPOLIA, { transport: fakeNode({ baseFee: BASE }).transport });
+  check('Speed up of the 1 / 1 wei rehearsal: priced at the node suggestion (32 + 1,000,004 / 1,000,004 wei), ≥ the base fee and ≥ the rule',
+    includable(speedUpQuote, BASE, PRIORITY) && speedUpQuote.to === TO && speedUpQuote.amount === 10n ** 14n,
+    `${speedUpQuote.maxFeePerGas}/${speedUpQuote.maxPriorityFeePerGas}`);
+  const cancelQuote = await send.prepareEvmReplacement(URL, rehearsalGroup, 'cancel', SEPOLIA, { transport: fakeNode({ baseFee: BASE }).transport });
+  check('Cancel of the 1 / 1 wei rehearsal: likewise priced at the suggestion, 0 to the sender itself',
+    includable(cancelQuote, BASE, PRIORITY) && cancelQuote.to === FROM_L && cancelQuote.amount === 0n && cancelQuote.replacement.recordedAction === 'cancel',
+    `${cancelQuote.maxFeePerGas}/${cancelQuote.maxPriorityFeePerGas}`);
+  const tiplessQuote = await send.prepareEvmReplacement(URL, rehearsalGroup, 'speed-up', SEPOLIA, { transport: fakeNode({ baseFee: BASE, priority: 0n }).transport });
+  check('…with a node suggesting a 0 priority fee: max fee 2 × base (32 wei), priority the rule’s 2 wei',
+    includable(tiplessQuote, BASE, 0n) && tiplessQuote.maxFeePerGas === 32n && tiplessQuote.maxPriorityFeePerGas === 2n,
+    `${tiplessQuote.maxFeePerGas}/${tiplessQuote.maxPriorityFeePerGas}`);
 
   // Mutant: a consume that never turns the option off must be caught.
   const sendSrc = readFileSync(join(HERE_M, '../src/wallet/send.ts'), 'utf8');
@@ -639,6 +684,38 @@ console.log('check-pending: the minimum-fee rehearsal (Settings → Developer, p
     mutant.consumeMinimumFeeRehearsal(rehearsal);
     check('mutant caught: the option left on after the rehearsal quote was sent', sendSrc.includes(RESET) && mutant.minimumFeeRehearsalArmed(SEPOLIA) === true);
     mutant.setMinimumFeeRehearsal(SEPOLIA, false);
+
+    // Mutant: the first version's pricing (max fee = base fee + 1 wei), which
+    // Sepolia included in the next block (pass p21c).
+    const PRICED = '    maxFeePerGas: MINIMUM_FEE_MAX_FEE_WEI,\n';
+    const oldPricing = sendSrc.replace(PRICED, '    maxFeePerGas: baseFeePerGas + MINIMUM_FEE_PRIORITY_WEI,\n')
+      .replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolvePath(join(HERE_M, '../src/wallet'), spec)).href}'`);
+    const oldFile = join(mutantDir, 'send-mutant-base-plus-one.ts');
+    writeFileSync(oldFile, oldPricing);
+    const oldMutant = await import(pathToFileURL(oldFile).href);
+    useNode(node);
+    const oldQuote = await oldMutant.prepareEvmSend(URL, FROM, TO, 10n ** 14n, undefined, SEPOLIA, { minimumFee: true });
+    check('mutant caught: the old base fee + 1 wei pricing (17 wei, includable) fails the 1 / 1 wei pin',
+      sendSrc.includes(PRICED) && oldQuote.maxFeePerGas === BASE + 1n && !rehearsalPriced(oldQuote), `${oldQuote.maxFeePerGas}`);
+
+    // Mutant: a speed-up priced at the bare replacement minimum (2 / 2 wei),
+    // below the base fee — replacementFees ignoring the node's suggestion.
+    const pendingSrc = readFileSync(join(HERE_M, '../src/wallet/pending-transactions.ts'), 'utf8');
+    const CHOOSE = '  let maxFeePerGas = suggested.maxFeePerGas > minimum.maxFeePerGas ? suggested.maxFeePerGas : minimum.maxFeePerGas;';
+    const PRIORITY_CHOICE = /  const maxPriorityFeePerGas =\n    suggested\.maxPriorityFeePerGas > minimum\.maxPriorityFeePerGas\n      \? suggested\.maxPriorityFeePerGas\n      : minimum\.maxPriorityFeePerGas;/;
+    const toUrls = (src, dir) => src.replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolvePath(join(HERE_M, dir), spec)).href}'`);
+    const bareFile = join(mutantDir, 'pending-mutant-bare-minimum.ts');
+    writeFileSync(bareFile, toUrls(pendingSrc.replace(CHOOSE, '  let maxFeePerGas = minimum.maxFeePerGas;')
+      .replace(PRIORITY_CHOICE, '  const maxPriorityFeePerGas = minimum.maxPriorityFeePerGas;'), '../src/wallet'));
+    const bareSendFile = join(mutantDir, 'send-mutant-bare-minimum.ts');
+    writeFileSync(bareSendFile, toUrls(sendSrc, '../src/wallet').replace(
+      `'${pathToFileURL(resolvePath(join(HERE_M, '../src/wallet'), './pending-transactions.ts')).href}'`, `'${pathToFileURL(bareFile).href}'`));
+    const bareSend = await import(pathToFileURL(bareSendFile).href);
+    const bareQuote = await bareSend.prepareEvmReplacement(URL, rehearsalGroup, 'speed-up', SEPOLIA, { transport: fakeNode({ baseFee: BASE }).transport });
+    check('mutant caught: a speed-up at the bare minimum (2 / 2 wei, below the base fee) fails the suggestion pin',
+      pendingSrc.includes(CHOOSE) && PRIORITY_CHOICE.test(pendingSrc) &&
+        bareQuote.maxFeePerGas === 2n && bareQuote.maxPriorityFeePerGas === 2n && !includable(bareQuote, BASE, PRIORITY),
+      `${bareQuote.maxFeePerGas}/${bareQuote.maxPriorityFeePerGas}`);
   } finally {
     rmSync(mutantDir, { recursive: true, force: true });
   }

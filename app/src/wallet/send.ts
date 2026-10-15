@@ -228,8 +228,9 @@ export interface EvmSendQuote {
   /**
    * Present only on a minimum-fee rehearsal quote (Settings → Developer, test
    * networks only; see MINIMUM_FEE_REHEARSAL_SWITCH_LABEL below): the fees
-   * above are then exactly a priority fee of 1 wei and a max fee of this
-   * base fee + 1 wei. Absent on every other quote, which is unchanged.
+   * above are then exactly a max fee of 1 wei and a priority fee of 1 wei,
+   * and this records the base fee read at quote time for the confirm's
+   * sentence. Absent on every other quote, which is unchanged.
    */
   minimumFee?: MinimumFeeRehearsal;
 }
@@ -250,9 +251,9 @@ export interface PrepareEvmSendOptions {
   fromMax?: boolean;
   /**
    * The Send screen's minimum-fee rehearsal (Settings → Developer): price
-   * this quote at a priority fee of 1 wei and a max fee of the latest base
-   * fee + 1 wei, so the transaction will probably wait in the pool and can
-   * be sped up or cancelled from Activity. Honoured only when the endpoint's
+   * this quote at a max fee of 1 wei and a priority fee of 1 wei per gas,
+   * below the base fee, so no block can include it (EIP-1559) and it waits
+   * in the pool until it is sped up or cancelled from Activity. Honoured only when the endpoint's
    * VERIFIED chain is a test network (config/readiness.ts isTestNetwork); on
    * any other network the option is ignored and the ordinary quote is
    * returned, without the `minimumFee` marker. Only the Send screen's
@@ -265,13 +266,38 @@ export interface PrepareEvmSendOptions {
 // ---------------------------------------------------------------------------
 // Minimum-fee rehearsal (phase 21 item 3): an under-priced send on purpose
 // ---------------------------------------------------------------------------
+//
+// The rehearsal must produce a transaction that STAYS pending, so the
+// Activity card's Speed up and Cancel can be exercised. EIP-1559 (Final;
+// ethereum/EIPs EIPS/eip-1559.md, last changed at ba6c342c, read 2026-10-15)
+// makes a block invalid if it includes a transaction whose max fee is below
+// the block's base fee:
+//
+//     # ensure that the user was willing to at least pay the base fee
+//     assert transaction.max_fee_per_gas >= block.base_fee_per_gas
+//
+// The first version priced the max fee at the latest base fee + 1 wei, which
+// a block can include; on Sepolia (blocks about a third full, base fee 16
+// wei) such a send was mined in the next block (emulator pass p21c). A max
+// fee of 1 wei, below the base fee, cannot be included while the base fee is
+// above 1 wei (the phase-19 script's originals, at max fees of 1 and 7 wei
+// against a 14-wei base fee, stayed pending until replaced). The speed-up and the cancellation of such a transaction
+// are priced by prepareEvmReplacement at the node's current suggestion
+// (base fee × 2 + the node's priority fee), which is never below the base
+// fee and is far above the 10% / +1 wei replacement minimum of 2 / 2 wei.
 
-/** The priority fee of a minimum-fee rehearsal quote: 1 wei. */
+/** The max fee of a minimum-fee rehearsal quote: 1 wei per gas. */
+export const MINIMUM_FEE_MAX_FEE_WEI = 1n;
+
+/** The priority fee of a minimum-fee rehearsal quote: 1 wei per gas. */
 export const MINIMUM_FEE_PRIORITY_WEI = 1n;
 
 /** What a minimum-fee rehearsal quote was priced from. */
 export interface MinimumFeeRehearsal {
-  /** The latest block's base fee read at quote time; the max fee is this + 1 wei. */
+  /**
+   * The latest block's base fee read at quote time. The fees do not depend on
+   * it (always 1 / 1 wei); the confirm's sentence says whether 1 wei is below it.
+   */
   baseFeePerGas: bigint;
 }
 
@@ -282,18 +308,22 @@ export const MINIMUM_FEE_REHEARSAL_SWITCH_LABEL =
 /** Settings → Developer: the note under the switch. */
 export const MINIMUM_FEE_REHEARSAL_HINT =
   'Test networks only. The next native-coin or token send from the Send screen, with the smart account off, ' +
-  'is priced at a priority fee of 1 wei and a max fee of the latest base fee plus 1 wei, so it will probably ' +
-  'wait in the network’s pool until you speed it up or cancel it from Activity. The option turns itself off ' +
+  'is priced at a max fee of 1 wei and a priority fee of 1 wei per gas. A block can include a transaction only ' +
+  'if its max fee is at least the block’s base fee, so while the base fee is above 1 wei this one stays in the ' +
+  'network’s pool until you speed it up or cancel it from Activity; the speed-up or cancellation is priced at ' +
+  'the node’s normal fee suggestion, so a block can include it. The option turns itself off ' +
   'once that transaction is sent; going back from the confirm screen leaves it on, and it is off again whenever ' +
   'the app restarts. NFT sends, swaps, staking, app requests and smart-account operations are always priced ' +
   'normally. The node may refuse such an under-priced transaction outright ("transaction underpriced"); that ' +
   'is expected, because the nodes behind one endpoint address can apply different minimums, and the option ' +
-  'then stays on until a send goes through or you turn it off. On Arbitrum Sepolia the network ignores the ' +
-  'priority fee, so the transaction is likely to be included anyway.';
+  'then stays on until a send goes through or you turn it off. On the layer-2 test networks the transaction ' +
+  'goes to the network’s sequencer, which may refuse it rather than hold it; that has not been tried.';
 
 /** The Send confirm's warning on a minimum-fee rehearsal quote. */
 export const MINIMUM_FEE_REHEARSAL_WARNING =
-  'Minimum-fee rehearsal: this transaction will probably sit pending until you speed it up or cancel it from Activity.';
+  'Minimum-fee rehearsal: this transaction offers a max fee of only 1 wei per gas, so while the network’s base ' +
+  'fee is above that it stays pending until you speed it up or cancel it from Activity. The node may also ' +
+  'refuse it outright.';
 
 /** The network the rehearsal is armed for (CAIP-2), or null. Memory only: a restart turns it off. */
 let minimumFeeArmedFor: string | null = null;
@@ -363,17 +393,32 @@ export function consumeMinimumFeeRehearsal(quote: object | null | undefined): bo
   return true;
 }
 
-/** The confirm's fee line on a rehearsal quote (exact wei). */
+/**
+ * The confirm's fee line on a rehearsal quote (exact wei). It says the
+ * transaction cannot be included only when that is true of the base fee read
+ * at quote time (EIP-1559: a block may include it only if max fee >= base
+ * fee); when the base fee is not above the max fee it says a block may
+ * include it at once.
+ */
 export function minimumFeeRehearsalFeeLine(quote: {
   maxFeePerGas: bigint;
   maxPriorityFeePerGas: bigint;
   minimumFee?: MinimumFeeRehearsal;
 }): string {
   const base = quote.minimumFee?.baseFeePerGas;
+  const priced =
+    `Priced at the minimum fee: a max fee of ${quote.maxFeePerGas} wei and a priority fee of ` +
+    `${quote.maxPriorityFeePerGas} wei per gas`;
+  if (base === undefined) return `${priced}.`;
+  if (base > quote.maxFeePerGas) {
+    return (
+      `${priced}, below the latest block's base fee (${base} wei), so no block can include it until you ` +
+      'speed it up or cancel it.'
+    );
+  }
   return (
-    `Priced at the minimum fee: a priority fee of ${quote.maxPriorityFeePerGas} wei and a max fee of ` +
-    `${quote.maxFeePerGas} wei per gas` +
-    (base === undefined ? '.' : ` (the latest block's base fee, ${base} wei, plus 1 wei).`)
+    `${priced}. The latest block's base fee (${base} wei) is not above that, so a block may include it at once ` +
+    'and it may never show as pending.'
   );
 }
 
@@ -392,13 +437,17 @@ async function readLatestBaseFee(transport: JsonRpcTransport): Promise<bigint> {
   }
 }
 
-/** The rehearsal's fees: priority 1 wei, max fee = base fee + 1 wei. */
+/**
+ * The rehearsal's fees: max fee 1 wei and priority fee 1 wei, below the base
+ * fee on purpose (see the section comment). The base fee is read only for the
+ * confirm's sentence.
+ */
 async function minimumFees(
   transport: JsonRpcTransport,
 ): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint; baseFeePerGas: bigint }> {
   const baseFeePerGas = await readLatestBaseFee(transport);
   return {
-    maxFeePerGas: baseFeePerGas + MINIMUM_FEE_PRIORITY_WEI,
+    maxFeePerGas: MINIMUM_FEE_MAX_FEE_WEI,
     maxPriorityFeePerGas: MINIMUM_FEE_PRIORITY_WEI,
     baseFeePerGas,
   };
@@ -1553,7 +1602,11 @@ async function assertStillPending(transport: JsonRpcTransport, group: NonceGroup
  *  - Fees: per field, the larger of the 10% bumped minimum over the highest
  *    fees broadcast for this nonce (pending-transactions.ts replacementFees,
  *    the go-ethereum and reth replacement rules) and the node's current
- *    suggestion (suggestFeesRetryingOnce).
+ *    suggestion (suggestFeesRetryingOnce: the latest base fee × 2 + the
+ *    node's priority fee). The max fee is therefore never below the base fee
+ *    read here, so a block can include the replacement (EIP-1559) even when
+ *    the original was a minimum-fee rehearsal priced at 1 / 1 wei, below the
+ *    base fee, whose bumped minimum (2 / 2 wei) alone could not be included.
  *  - Speed-up: the NEWEST broadcast's recipient, value, calldata and gas
  *    limit, unchanged (so a speed-up of a cancellation stays a
  *    cancellation). Cancel: 0 to the sender's own address, no calldata, the
