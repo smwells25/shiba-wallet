@@ -8593,3 +8593,42 @@ Opus.
       Keychain keeping the record across a reinstall (may defeat the
       "reinstall to reset" advice); session-key deletion in the
       both-wallet wipe (pinned in source only).
+- [x] Pass p21a leftovers FIXED (commit 01ff157; check-devmode 407 (was 401),
+      check-multisig 422 (413), check-activity 281 (279), check-contacts
+      113 (110); offline runner ALL GREEN in the CTO's isolated worktree on
+      HEAD 7faccaf: engine 1,046, app 8,893 across 58 suites, lint 0/0, tsc
+      clean; four hand mutants caught; the CTO applied the one-line
+      ContactsScreen change the agent could not touch; not seen on a
+      device). (1b) HiddenFieldLabel carries importantForAccessibility
+      "no" + accessibilityElementsHidden (option a): from RN 0.86.3 source,
+      the labelled-by lookup (ReactAccessibilityDelegate.kt 91–97 →
+      ReactFindViewUtil.kt 47–62) matches only the nativeID and ignores
+      importance and visibility, "no" maps to IMPORTANT_FOR_ACCESSIBILITY_NO
+      (BaseViewManager.java 472–483), Text takes the prop
+      (ReactTextViewManager.kt 51–57; Text.js 138–143), and isSpeakingNode
+      (delegate 826–830) is false for a childless not-important view —
+      so the field keeps its name and the label is no longer a stop;
+      WHETHER TALKBACK STILL READS A NOT-IMPORTANT LABELLING NODE is
+      Android/TalkBack code not on this machine → the next emulator check
+      decides (regression fallback: the default importance, then option c);
+      every call site already renders the label directly before its field
+      (the out-of-order Contacts stop came from the absolute positioning),
+      pinned by a source scan over the 26 sites (+ mutants: a moved label,
+      a label naming another field, a hand-rolled copy of the style). (7)
+      createOverflowAnnouncer (a11y.ts): on open, the first measured state
+      decides; with overflow ONE announceForAccessibility after
+      SWITCHER_OVERFLOW_ANNOUNCE_DELAY_MS = 500 (a judgement) if the list
+      is still open and still overflows; never without overflow, on the
+      expander toggle or a scroll; the open button resets the measured
+      heights; the live region kept for the reappearance (AccessibilityInfo.js
+      474–480 → AccessibilityInfoModule.kt 282–292, a TYPE_ANNOUNCEMENT
+      only while a service is on); pinned with fake timers (0 / 1 / no
+      repeat / 2 on reopen / 0 if closed or no longer overflowing before
+      the delay). (Noted) the Activity header, the contact picker rows
+      ("Burn, 0x0000…dEaD") and the Contacts screen rows speak the short
+      address; the send confirm's RecipientContactNotice stays full on
+      purpose. NEXT EMULATOR CHECK must confirm: "Name. Edit box for
+      Contact name" still read; no hidden-label stop anywhere; the
+      switcher announcement once after "Accounts. Heading" (tune the 500 ms
+      if cut off), not on toggle, still spoken on reappearance; the short
+      addresses.
