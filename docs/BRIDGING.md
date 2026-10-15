@@ -2,6 +2,8 @@
 
 **Status:** Research only, written on 2026-10-11 (US Eastern; the on-chain reads ran between 03:20 and 03:40 UTC on 2026-10-12) against repository HEAD `551ec95`, for phase 20 item 4 (`AGENTS.md`, "Phase 20 plan"). Nothing here is built, no transaction was sent and no funds moved. Every on-chain fact is a read-only `eth_getCode`, `eth_getStorageAt`, `eth_call` or `eth_getLogs` made through the keyless endpoints the wallet already uses (`app/src/config/evm-chain.ts`): `ethereum-sepolia-rpc.publicnode.com` (fallback `eth-sepolia-testnet.api.pocket.network`), `base-sepolia-rpc.publicnode.com`, `arbitrum-sepolia-rpc.publicnode.com`, `optimism-sepolia-rpc.publicnode.com` and, for the mainnet comparisons, `ethereum-rpc.publicnode.com`. The newest blocks at the time were Ethereum Sepolia 11,896,211, Base Sepolia 48,003,776, Arbitrum Sepolia 318,286,397, OP Sepolia 49,986,650 and Ethereum mainnet 26,173,708. Vendor documents and APIs were fetched the same day from the URL cited beside each claim; API calls were read-only quote and metadata requests with a placeholder address (`0x…dEaD`), never with a wallet address. Section 14 lists what could not be verified.
 
+Sections 15 and 16 were added on 2026-10-14 (US Eastern; the reads ran between 02:25 and 02:50 UTC on 2026-10-15) for phase 21 item 1: LayerZero V2 and Stargate V2 on the same four networks, and the updated recommendation. The adapter design that lets the user choose a provider is in `docs/BRIDGE_PROVIDERS.md`.
+
 This file is plain technical prose for leadership and for the engineers who would build a slice. The persona and compression rules do not apply to it.
 
 ## 1. Summary
@@ -11,6 +13,7 @@ This file is plain technical prose for leadership and for the engineers who woul
 3. **The native rollup bridges are trust-minimised for ETH between Ethereum Sepolia and each rollup, but they are not a practical baseline for this wallet's USDC.** They move tokens only between a rollup and its parent chain (never rollup to rollup), and they cannot deliver Circle's native USDC: on Base Sepolia and OP Sepolia the native USDC contract does not implement the interface the OP Standard Bridge requires, and Arbitrum's gateway router maps Sepolia USDC to a different, bridged token. Withdrawals on OP Sepolia wait at least 7 days (read on-chain, which contradicts the OP documentation's "shorter on test networks"). Two smart-account traps were found: the OP bridge's plain `depositETH` refuses contract callers, and an Arbitrum `depositEth` from a contract or an EIP-7702 account credits an *aliased* address.
 4. **The aggregators (LI.FI, Socket/Bungee, Relay) should come later, if at all.** Their transactions are built by an API and cannot be pinned by a CallPolicy, which is the same finding `docs/SCHEDULED_PAYMENTS.md` section 4.2 made for 0x and the Universal Router. LI.FI unexpectedly serves all four test networks keylessly (75 quotes per two hours) and routed a testnet USDC transfer through Across with a 0.25 % LI.FI fee on top. Socket lists no test network at all. Relay serves only Ethereum Sepolia and Base Sepolia, and its on-chain deposit carries only an order identifier, so the amount the user will receive is a promise held off-chain.
 5. **LayerZero/Stargate and Wormhole do not fit a first slice.** Their security rests on an application-configured verifier set (LayerZero) or a 13-of-19 guardian multisignature (Wormhole), and Stargate's testnet USDC pools hold their own test tokens, not Circle's USDC.
+6. **Update, 2026-10-15 (phase 21): the Chairperson chose provider optionality, and LayerZero was researched to the same depth as CCTP (section 15).** The finding above about Stargate's USDC pools still holds (they hold a publicly mintable mock token, not Circle's USDC), but Stargate V2 also runs native-ETH pools on Ethereum Sepolia, Arbitrum Sepolia and OP Sepolia that the dev EOA can use with the test ETH it holds, so a live LayerZero leg is possible on three of the four networks (none on Base Sepolia). On every one of those pathways a single verifier operated by LayerZero Labs confirms each message. Section 16 replaces the recommendation in section 10 with a two-provider design.
 
 ## 2. Sources
 
@@ -359,7 +362,7 @@ The working hypothesis was: CCTP for USDC first, Across second for ETH and the i
 2. **Across for ETH — second, but not for the intents standard.** It works on all four networks and its deposit is mostly pinnable, provided `depositor` and `recipient` are pinned to the account and the API's unlimited approval is replaced. The ERC-7683 half of the hypothesis is refuted for now: no `AcrossOriginSettler` exists on any of the wallet's networks, and the standard is a Draft whose current text differs from what Across implements. Feature 36 should stay "Not started" until a settler for the current draft exists on a test network.
 3. **Native bridges — keep as the trust-minimised option for ETH between Ethereum Sepolia and a single rollup, not as the baseline for this wallet.** They cannot move Circle's USDC, cannot go rollup to rollup, take at least 7 days to leave OP Sepolia, and have two traps for smart accounts. A small slice ("deposit test ETH from Ethereum Sepolia to Base Sepolia / OP Sepolia / Arbitrum Sepolia") is cheap and honest if a trust-minimised path is wanted on screen.
 4. **Aggregators — later, and only for comparison until a decoder exists.** Unpinnable calldata, keyed production APIs, extra fees, and (Socket) no test networks or (Relay) two of four with off-chain terms.
-5. **LayerZero/Stargate and Wormhole — not recommended.**
+5. **LayerZero/Stargate and Wormhole — not recommended.** (Superseded for LayerZero by section 16 after the Chairperson's decision of 2026-10-14; Wormhole was not re-examined.)
 
 ## 11. What a live testnet proof of CCTP would need
 
@@ -405,3 +408,216 @@ An Across proof would mirror it: an exact approval and a `deposit` of at most 5 
 - Socket's behaviour on any test network (none is served); Relay's handling of a quote with a real wallet address, and its testnet fill times.
 - Stargate's mainnet DVN configuration; any Wormhole testnet deployment (not looked for).
 - The Stargate documentation home `https://docs.stargate.finance/` could not be fetched (connection reset); the GitBook copy was used instead.
+
+## 15. LayerZero V2 and Stargate V2 on the four test networks (phase 21)
+
+Written on 2026-10-14 (US Eastern) for phase 21 item 1 (`AGENTS.md`, "Phase 21 plan"), after the Chairperson's decision of 2026-10-14 to offer LayerZero alongside CCTP and let the user choose. As in sections 4 to 9, nothing was sent: every chain fact is a read-only `eth_getCode`, `eth_call` or `eth_simulateV1` through the keyless endpoints `ethereum-sepolia-rpc.publicnode.com`, `base-sepolia-rpc.publicnode.com`, `arbitrum-sepolia-rpc.publicnode.com` and `optimism-sepolia-rpc.publicnode.com` (Pocket fallbacks were configured but not needed), between 02:25 and 02:50 UTC on 2026-10-15. The first set of reads used Ethereum Sepolia block 11,917,458, Base Sepolia 48,131,585, Arbitrum Sepolia 319,280,105 and OP Sepolia 50,114,465; later reads in the same half hour used newer blocks, named where they matter. The engine interface built on these facts is described in `docs/BRIDGE_PROVIDERS.md`.
+
+### 15.1 Sources
+
+| Source | Pinned at / fetched | Used for |
+|---|---|---|
+| LayerZero documentation (Markdown export, index `https://docs.layerzero.network/llms.txt`) | fetched 2026-10-15 UTC: `/v2/deployments/chains/sepolia.md`, `base-sepolia.md`, `arbitrum-sepolia.md`, `optimism-sepolia.md`; `/v2/concepts/modular-security/security-stack-dvns.md`; `/v2/concepts/permissionless-execution/executors.md`; `/v2/concepts/protocol/layerzero-endpoint.md`; `/v2/concepts/protocol/transaction-pricing.md`; `/v2/concepts/message-options.md`; `/v2/concepts/technical-reference/oft-reference.md`; `/v2/developers/evm/technical-reference/transfer-ownership.md`; `/v2/developers/evm/stargate/overview.md`; `/v2/concepts/applications/stargate-finance.md`; `/v2/deployments/oft-ecosystem-stargate-assets.md`; `/v2/tools/layerzeroscan/testnet/messages/get-messagestx.md` | Endpoint ids, trust model, roles, fees, Stargate send modes, the Scan API |
+| LayerZero deployment metadata | `https://metadata.layerzero-api.com/v1/metadata/deployments` and `/v1/metadata/experiment/ofts/list`, fetched 2026-10-15 UTC (the chain pages render their tables from these) | Endpoint, library, executor and DVN addresses; the ecosystem OFT list |
+| `LayerZero-Labs/LayerZero-v2` | commit `9c741e7f9790639537b1710a203bcdfd73b0b9ac` (main on 2026-10-15) | `protocol/contracts/EndpointV2.sol`, `MessageLibManager.sol`; `messagelib/contracts/uln/UlnBase.sol`, `SendLibBase.sol`, `uln302/SendUln302.sol`, `ReceiveUln302.sol`; `oapp/contracts/oft/interfaces/IOFT.sol`, `OFTCore.sol`, `OFT.sol`, `OFTAdapter.sol`, `libs/OFTMsgCodec.sol`; `oapp/OAppCore.sol`, `OAppSender.sol`, `libs/OAppOptionsType3.sol` (all paths under `packages/layerzero-v2/evm/`) |
+| `stargate-protocol/stargate-v2` | commit `9f4f5c0fc3e1df570415e441523c82fd94173588` | `packages/stg-evm-v2/src/StargateBase.sol`, `StargatePoolNative.sol`, `StargatePool.sol`, `usdc/StargateOFTUSDC.sol`, `interfaces/IBridgedUSDCMinter.sol`, `libs/Transfer.sol`; `deployments/{sepolia,arbsep,optsep}-testnet/*.json`; `LICENSE`; the `audits/` folder |
+| Stargate testnet metadata | `https://testnet.stargate-api.com/v1/metadata?version=v2`, fetched 2026-10-15 UTC | Testnet pools and the tokens they hold |
+| `LayerZero-Labs/Audits` | commit `880c6e206f25870321303df0a428790ecb19572d` (the docs' "Audits" link redirects to its `audits/` folder) | Audit report list |
+| LayerZero Scan testnet API | `https://scan-testnet.layerzero-api.com/v1`, called 2026-10-15 UTC | Keyless message tracking |
+| Circle's Bridged USDC Standard | `circlefin/stablecoin-evm` `doc/bridged_USDC_standard.md` at commit `fc85788bc7c23cefe3df1a757133048bfddadeaa` | What "bridged USDC" means |
+| Sourcify | `https://sourcify.dev/server/v2/contract/<chainId>/<address>`, read 2026-10-15 UTC | Verification status, the mock token's source |
+| Hardhat network reference | `https://hardhat.org/hardhat-network/docs/reference`, fetched 2026-10-15 UTC | The default development mnemonic (not reproduced here) |
+
+Selectors and event topics were computed with ethers 6.17.0: `send((uint32,bytes32,uint256,uint256,bytes,bytes,bytes),(uint256,uint256),address)` = `0xc7c7f5b3`, `quoteSend(…,bool)` = `0x3b6f743b`, `quoteOFT(…)` = `0x0d35b415`, `retryReceiveToken(bytes32,uint8,uint32,address,uint256,bytes)` = `0xa88835d7`, `Stargate_InvalidAmount()` = `0x3442dd95`; events `OFTSent` `0x85496b76…`, `OFTReceived` `0xefed6d35…`, `UnreceivedTokenCached` `0x007c1719…`, `PacketSent` `0x1ab700d4…`.
+
+### 15.2 What it is and the trust model
+
+LayerZero describes its endpoint as "the immutable, permissionless protocol entrypoint for sending and receiving omnichain messages" (`layerzero-endpoint.md`). An application ("OApp"), such as an Omnichain Fungible Token (OFT), sends a message through the endpoint and a send library; on the destination, the message can be delivered only after the application's configured Decentralized Verifier Networks (DVNs) have confirmed its payload hash: "Once the required DVNs and optionally a sufficient number of optional DVNs have confirmed the `payloadHash`, any authorized caller (for example, an Executor) can commit the message nonce" (`security-stack-dvns.md`). An executor then calls `lzReceive`, but "Both methods are **permissionless** on the endpoint contract, meaning anyone can call them once the message has been marked as verified" (`executors.md`); the source agrees (`EndpointV2.sol` lines 172–183: `lzReceive` has no caller restriction).
+
+For a token, the OFT standard debits the sender on the source chain ("burns or locks") and the paired OFT "credits the recipient by minting new tokens or unlocking previously-held tokens" (`oft-reference.md`).
+
+What a user trusts, stated plainly:
+
+- **The verifiers the token's owner configured.** If the required DVNs (and the optional threshold) sign a false payload hash, the destination OFT mints or unlocks tokens that were never sent. There is no on-chain proof of the source chain's state in the default path.
+- **The token's owner and its delegate.** LayerZero's ownership page says the Owner controls "`setPeer()`, `setEnforcedOptions()`, `setDelegate()`" and the Delegate controls "`setConfig()` (DVNs, Executor, confirmations), `setSendLibrary()`, `setReceiveLibrary()`, plus message recovery `skip()` / `nilify()` / `burn()` / `clear()`" (`transfer-ownership.md`). Either can change the security of a route at any time, and the delegate can destroy a message in flight.
+- **The endpoint owner's defaults.** A pathway the OApp has not configured uses LayerZero's default configuration ("If you provide no configuration settings, the protocol will fallback to the default configuration", `security-stack-dvns.md`); the default send and receive libraries are set by the endpoint owner (`MessageLibManager.sol` `setDefaultSendLibrary` line 157 and `setDefaultReceiveLibrary` line 171, both `onlyOwner`) and the default DVN set by each library's owner (`UlnBase.sol` `setDefaultUlnConfigs`, `onlyOwner`).
+- **The executor for liveness.** "Today, every default Executor across every pathway in every preset network configuration is operated by LayerZero Labs" (`executors.md`), and LayerZero's own warning reads: "A single operator controls both verification and execution on every pathway whose default has a working DVN" (`security-stack-dvns.md`).
+
+### 15.3 The endpoint and libraries on the four networks
+
+The deployment metadata lists, and the chain confirms:
+
+| | Ethereum Sepolia | Base Sepolia | Arbitrum Sepolia | OP Sepolia |
+|---|---|---|---|---|
+| Endpoint id (`eid()` on-chain) | 40161 | 40245 | 40231 | 40232 |
+| EndpointV2 | `0x6EDCE65403992e310A62460808c4b910D972f10f` on all four; 24,005 bytes on each (the code hashes differ, consistent with the immutable endpoint id); Sourcify "match" (not exact) on all four, solc 0.8.22 | | | |
+| SendUln302 (`version()` 3.0.2 on all four) | `0xcc1ae8Cf5D3904Cef3360A9532B477529b177cCE` (Sourcify match) | `0xC1868e054425D378095A003EcbA3823a5D0135C9` (exact match) | `0x4f7cd4DA19ABB31b0eC98b9066B9e857B1bf9C0E` (match) | `0xB31D2cb502E25B30C651842C7C3293c51Fe6d16f` (not on Sourcify) |
+| ReceiveUln302 | `0xdAf00F5eE2158dD58E0d3857851c432E34A3A851` (match) | `0x12523de19dc41c91F7d2093E0CFbB76b17012C8d` | `0x75Db67CDab2824970131D5aa9CECfC9F69c69636` | `0x9284fd59B95b9143AF0b9795CAC16eb3C723C9Ca` (not on Sourcify) |
+| Default executor | `0x718B92b5CB0a5552039B593faF724D182A881eDA` (an `OptimizedTransparentUpgradeableProxy`, Sourcify exact) | `0x8A3D588D9f6AC041476b094f97FF94ec30169d3D` | `0x5Df3a1cEbBD9c8BA7F8dF51Fd632A9aef8308897` | `0xDc0D68899405673b932F0DB7f8A49191491A5bcB` |
+| Endpoint `owner()` | `0xc753bb48…63a5`: 7,197 bytes, `threshold()` 1, `getSigners()` 4 addresses, `VERSION()` "0.0.1" | `0x3c2E7425…195E`: a Safe 1.3.0 proxy, threshold 1 of 2 owners | `0x9f7cf878…0c62`: same shape as Sepolia's (1 of the same 4 signers) | `0x8F9e451e…09F4`: same shape (1 of the same 4 signers) |
+| `lzToken()` / `nativeToken()` | zero / zero (fees in ETH only) on all four | | | |
+
+The 7,197-byte owner contracts are not on Sourcify; their interface (`threshold()`, `getSigners()`, `VERSION()`) matches what LayerZero calls OneSig (the Audits repository has a "OneSig" folder), but the identification is an inference. The endpoint itself has no upgrade path (it is not a proxy), but its owner chooses the default libraries, and the libraries' owners (the same addresses, read with `owner()` on SendUln302) choose the default DVNs and executor.
+
+### 15.4 The default security on these test networks
+
+Read with `SendUln302.getUlnConfig(address(0), remoteEid)` and `getExecutorConfig`, and with `ReceiveUln302.getUlnConfig`, for every directed pathway among the four networks:
+
+| From | Required DVNs | Optional DVNs | Source confirmations | Executor | Max message size |
+|---|---|---|---|---|---|
+| Ethereum Sepolia | 1: `0x8eebf8b4…9193` | none | 2 | `0x718B…1eDA` | 10,000 bytes |
+| Base Sepolia | 1: `0xe1a12515…b2d6` | none | 2 | `0x8A3D…9d3D` | 10,000 |
+| Arbitrum Sepolia | 1: `0x53f488E9…E8a8` | none | 5 | `0x5Df3…8897` | 10,000 |
+| OP Sepolia | 1: `0xd680ec56…582C` | none | 1 | `0xDc0D…5bcB` | 10,000 |
+
+The deployment metadata names each of those four DVNs "LayerZero Labs", and the Sepolia one is a Sourcify-verified contract named `DVN`. The receive side mirrors the send side (for example, Ethereum Sepolia's receive library expects 5 confirmations from Arbitrum Sepolia and 1 from OP Sepolia), with the receiving chain's LayerZero Labs DVN required. **So every default pathway among the four test networks is verified by one verifier and executed by one executor, both operated by LayerZero Labs.** LayerZero's documentation lists four default presets, A to D, each with two required DVNs or a "Dead DVN" (`security-stack-dvns.md`, "Default Configuration"); the single-LayerZero-Labs-DVN default read here is not among them. It may be a test-network practice; the documentation does not say.
+
+### 15.5 OFTs and Stargate pools on the four networks
+
+**Ecosystem OFTs.** The OFT list the deployment pages read (`/v1/metadata/experiment/ofts/list`) contains 75 chain keys, none of them a test network, so it names no OFT on any of the four. No independent OFT was searched for beyond that list and Stargate's metadata.
+
+**Stargate V2.** Stargate's testnet metadata lists pools on Ethereum Sepolia, Arbitrum Sepolia and OP Sepolia, and **none on Base Sepolia**; the addresses agree with the `deployments/*-testnet/*.json` files at the pinned commit. Read on-chain:
+
+| Pool | Address | Token held (`token()`) | Shared decimals | Sourcify |
+|---|---|---|---|---|
+| ETH, Ethereum Sepolia | `0x9Cc7e185162Aa5D1425ee924D97a87A0a34A0706` | native (`address(0)`) | 6 | `StargatePoolNative`, match |
+| ETH, Arbitrum Sepolia | `0x6fddB6270F6c71f31B62AE0260cfa8E2e2d186E0` | native | 6 | match |
+| ETH, OP Sepolia | `0xa31dCc5C71E25146b598bADA33E303627D7fC97e` | native | 6 | match |
+| "USDC", Ethereum Sepolia | `0x4985b8fcEA3659FD801a5b857dA1D00e985863F0` | `0x2F6F07CDcf3588944Bf4C42aC74ff24bF56e7590` ("USDC", 6 decimals) | 6 | `StargatePoolUSDC`, match |
+| "USDC", Arbitrum Sepolia | `0x543BdA7c6cA4384FE90B1F5929bb851F52888983` | `0x3253a335E7bFfB4790Aa4C25C4250d206E9b9773` | 6 | not read |
+| "USDC", OP Sepolia | `0x314B753272a3C79646b92A87dbFDEE643237033a` | `0x488327236B65C61A6c083e8d811a4E0D3d1D4268` | 6 | not read |
+
+The three "USDC" tokens are **not Circle's USDC**: each is Sourcify-verified (solc 0.7.6; contract name `MockStableCoin` on Sepolia and `USDC` on the two rollups, all three built from `contracts/mocks/MockStableCoin.sol`), and that source says "remember this is a MOCK token - public mint is useful!" above `function mint(address _to, uint256 _qty) public`. An `eth_call` of `mint(0x…bEEF, 1000000)` from an arbitrary address succeeded on all three. Their total supplies are astronomically large (for example 1.0 × 10^54 base units on Sepolia), as expected of a token anyone can mint.
+
+The Stargate TokenMessaging contracts (the OApps registered with the endpoint; the pools are not) are `0xfB112f7F…26d3` (Sepolia), `0x657C13E8…Eb9b` (Arbitrum Sepolia) and `0xea461D9B…7063` (OP Sepolia). For every pathway among the three, `getAppUlnConfig` returns zeros (nothing set by the OApp) and `getSendLibrary` / `getReceiveLibrary` report the default libraries: **Stargate's testnet transfers use the single LayerZero Labs DVN above.**
+
+Who controls the testnet pools, read on-chain: `owner()` of all six pools and of the three TokenMessaging contracts is `0x5e6e4f234c7Ad525700fcF5B7862589950589ed5`, which has no code; the TokenMessaging delegates are `0x8563b504…5E6` on Sepolia (no code) and 7,197-byte contracts on Arbitrum Sepolia (`0x55A2D5A7…7A18`) and OP Sepolia (`0x93c6E990…5247`). The pools' `getAddressConfig()` names the **planner** as `0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266` on all three networks. That is the first account of Hardhat's documented default development mnemonic (derived locally with ethers from the mnemonic in Hardhat's network reference; the phrase is not reproduced here), whose private key is public. `setPause` is `onlyCaller(planner)` (`StargateBase.sol` lines 209–213), so anyone could pause Stargate's test pools. This was not attempted, and it concerns the test deployment only; Stargate's mainnet planner was not read.
+
+Path credit (how much each pool may send to each destination, `paths(eid)`, in shared-decimal units) for the ETH pools: Sepolia→Arbitrum 0.171884 ETH, Sepolia→OP 0.271030, Arbitrum→Sepolia 20.303051, Arbitrum→OP 0.286006, OP→Sepolia 18.895462, OP→Arbitrum 0.177014; every pool's credit towards Base Sepolia (eid 40245) is 0 and `quoteSend` to it reverts.
+
+### 15.6 The OFT interface, amounts and fees
+
+`IOFT.sol` (lines 10–18) defines
+
+```
+struct SendParam { uint32 dstEid; bytes32 to; uint256 amountLD; uint256 minAmountLD;
+                   bytes extraOptions; bytes composeMsg; bytes oftCmd; }
+```
+
+and `send(SendParam, MessagingFee {nativeFee, lzTokenFee}, address refundAddress)`, `quoteSend(SendParam, bool payInLzToken)` and `quoteOFT(SendParam)` (lines 113–148). The rules that matter for a wallet, from the pinned sources:
+
+- **Dust.** `OFTCore._debitView` floors the amount to a multiple of `10^(localDecimals − sharedDecimals)` and reverts with `SlippageExceeded` if the result is below `minAmountLD` (lines 349–363). With 18-decimal ETH and 6 shared decimals, an ETH amount moves in steps of 10^12 wei.
+- **Fee payment.** A standard OFT requires `msg.value` to equal the native fee exactly (`OAppSender._payNative`, line 105). A Stargate native pool requires `msg.value` of at least the fee plus the amount, treats any excess as fee, and the endpoint refunds the unused fee to `refundAddress` (`StargatePoolNative.sol` lines 57–66; `OAppSender.sol` line 81).
+- **Options.** If the OFT owner set enforced options for the pathway, an empty `extraOptions` uses them; with none set, the caller's options are passed through (`OAppOptionsType3.sol` lines 63–85). On Stargate's test pools `quoteSend` answered with empty `extraOptions`, so empty options work there.
+- **Stargate's modes.** "`oftCmd: ""`" is taxi (immediate) and "`oftCmd: new bytes(1)`" is bus (batched) (`stargate/overview.md`; `StargateBase._isTaxiMode`, lines 644–646). The documentation says `approvalRequired()` returns "`false` for mint/burn or native assets", but `StargateBase` returns `true` unconditionally (lines 513–515) and the native pools answer `true`: a documentation-versus-code gap; for a native pool no approval is actually used.
+- **Fees.** LayerZero's fee has four parts: source gas, "Security Stack Fees", "Executor Fees" and "Destination Gas Purchase" (`transaction-pricing.md`); `quoteSend` returns the last three as one `nativeFee`. Stargate pools may also take a protocol fee from the amount, reported by `quoteOFT` as a fee detail named "protocol fee".
+
+Quotes read on 2026-10-15 for 0.0001 ETH to the dev EOA (taxi / bus native fee; amount received per `quoteOFT`):
+
+| Route (ETH pools) | Native fee, taxi | Native fee, bus | Received for 0.0001 ETH |
+|---|---|---|---|
+| Sepolia → Arbitrum Sepolia | 0.000130249623732558 ETH | 0.000048162694911994 | 0.000099 (1 % protocol fee) |
+| Sepolia → OP Sepolia | 0.000102050140082558 | 0.000035742021545494 | 0.0001 (no fee) |
+| Arbitrum Sepolia → Sepolia | 0.000098985461402671 | 0.000020900268602753 | 0.000099 |
+| Arbitrum Sepolia → OP Sepolia | 0.000099319475196967 | 0.000034786288835538 | 0.000099 |
+| OP Sepolia → Sepolia | 0.000101716126288262 | 0.000021460581447106 | 0.000099 |
+| OP Sepolia → Arbitrum Sepolia | 0.000130249623732558 | 0.000048162694911994 | 0.0001 |
+
+For the mock-USDC pools the same fees applied per route, and 1 mock USDC arrived as 0.999399 on the fee-charging routes. On test networks the messaging fee is the same size as the amount; the protocol fee depends on path credit and changes over time.
+
+### 15.7 What a CallPolicy can pin in an OFT send
+
+Unlike `depositForBurn` (section 4.4), `send` takes a struct with three `bytes` fields, so the struct is dynamic: the head holds a pointer to it, and each `bytes` field is located through an offset the caller writes. A CallPolicy checks fixed words at fixed offsets and cannot follow pointers, so the call can be pinned **only if the wallet makes the layout unique** — which it can, by always writing `extraOptions` and `composeMsg` empty and `oftCmd` either empty (taxi) or exactly one zero byte (Stargate bus). Then every pointer and length has one possible value, and pinning those words forces the decoder to read the pinned fields. The byte offsets after the selector, verified against ethers' encoding in `packages/chains-evm/test/bridge.test.ts`:
+
+| Offset | Word | Pin |
+|---|---|---|
+| 0 | pointer to `SendParam` | equal `0x80` (static; makes the struct start at 128) |
+| 32 | `MessagingFee.nativeFee` | equal the quote; a standing rule can only cap it (it changes with every quote) |
+| 64 | `MessagingFee.lzTokenFee` | equal 0 |
+| 96 | `refundAddress` | equal the account |
+| 128 | `dstEid` | equal (one of 40161, 40245, 40231, 40232) |
+| 160 | `to` (bytes32) | equal the account, left-padded. The OFT converts it with `address(uint160(uint256(_b)))`, ignoring the high 12 bytes, so the whole word must be pinned, not just the low 20 bytes |
+| 192 | `amountLD` | equal, or a cap |
+| 224 | `minAmountLD` | equal the quoted arrival, or a floor (a static floor has the weakness of the DCA floor in `docs/SCHEDULED_PAYMENTS.md` section 4.1) |
+| 256, 288, 320 | offsets of `extraOptions`, `composeMsg`, `oftCmd` inside the struct | equal `0xe0`, `0x100`, `0x120` |
+| 352, 384, 416 | their lengths | equal 0, 0, and 0 (taxi) or 1 (bus) |
+| 448 | bus command byte (bus only) | equal 0 |
+
+The call's value (a CallPolicy `valueLimit`) is the native fee for an OFT, or the amount plus the fee for a Stargate native pool, so it too can only be capped by a standing rule. What cannot be pinned: a non-empty `extraOptions` whose content varies (for example a gas amount), any `composeMsg` (it runs code on the destination through `lzCompose`), and the security configuration itself, which is state on the endpoint and libraries, not calldata. With these pins, a session key cannot redirect the tokens, change the destination, add a compose call or pay the fee in another token; it can still spend up to the caps.
+
+The ERC-20 pools (and any `OFTAdapter`) pull tokens with `transferFrom`, so an exact `approve(pool, amount)` precedes the send; a plain OFT burns from the sender and needs none (`OFT.sol` line 68, `OFTAdapter.sol` line 82).
+
+### 15.8 Receiving on the destination, and smart accounts
+
+An OFT mints to (`OFT._credit`, line 85) or transfers to (`OFTAdapter._credit`, line 102) the recipient address; neither needs code there, so a counterfactual (not yet deployed) Kernel account receives tokens like an EOA, and an ERC-20 transfer to a deployed Kernel account runs no account code. A `to` of zero is redirected to `0xdead` (`OFT.sol` line 83).
+
+**Stargate's native-ETH pools are different.** `StargatePoolNative._outflow` sends ETH with a 2,300-gas stipend (`StargatePoolNative.sol` lines 37–39; `Transfer.sol` line 15, `transferGasLimit = 2300`). When that fails, `receiveTokenTaxi` does not revert: it stores the transfer and emits `UnreceivedTokenCached` (`StargateBase.sol` lines 345–375), and anyone can later call `retryReceiveToken`, which sends with unlimited gas (lines 295–313; it is `nonReentrantAndNotPaused` only). A read-only `eth_simulateV1` on OP Sepolia (block 50,114,598) called the pool's `receiveTokenTaxi` as its TokenMessaging contract for 100 shared units:
+
+| Recipient | Code | Result |
+|---|---|---|
+| The dev Kernel v3.3 account `0xc995E49acA5C888F4FF1E50E8467E9fFc31CC5AC` (deployed there in phase 19) | 61 bytes | `UnreceivedTokenCached`: the ETH stays in the pool |
+| The dev EOA `0x16DA…C5C` | none | `OFTReceived`: delivered |
+| An unused address `0x…c0ffee01` | none | `OFTReceived` |
+
+This is the same 2,300-gas pattern as the rETH burn (`docs/THREAT_MODEL.md` F-73). So: a deployed smart account can receive Stargate ETH only with a second, permissionless transaction on the destination; an EIP-7702-delegated EOA was not tested (F-73's trace suggests it depends on the delegate's receive path). Mock-USDC and other ERC-20 pools are not affected.
+
+### 15.9 Keys and tracking
+
+No key is needed for anything above: the endpoint and OFT calls are ordinary RPC, and the LayerZero Scan testnet API declares `security: []` in its OpenAPI document (`get-messagestx.md`) and answered `GET /v1/messages/latest?limit=2` with HTTP 200 and no credentials. Its message status values are `INFLIGHT`, `CONFIRMING`, `FAILED`, `DELIVERED`, `BLOCKED`, `PAYLOAD_STORED`, `APPLICATION_BURNED`, `APPLICATION_SKIPPED`, `UNRESOLVABLE_COMMAND` and `MALFORMED_COMMAND`. No rate-limit header was returned and none is documented on the page read. Tracking can also stay on-chain: the destination OFT emits `OFTReceived` (or Stargate's `UnreceivedTokenCached`) with the message GUID that `OFTSent` carried on the source. A delivered message does not by itself mean a Stargate ETH transfer reached a smart account (section 15.8). LayerZero also documents a "Value Transfer API" with quotes and status endpoints; it was not evaluated.
+
+### 15.10 Audits and licences
+
+The `LayerZero-Labs/Audits` repository (commit above) holds, for "Endpoint V2 - EVM / EndpointV2", reports by Blockian, C. Michel, Certora, OtterSec, Paladin (initial December 2023 and a diff of 11 June 2026), Windhustler and Zellic, plus Paladin reports on the message library and an OtterSec price-feed report; for OApp/OFT, Zellic (June 2024 and September 2025), ChainSecurity (January 2024) and Hexens (upgradeable variants, November 2024); and DVN reports. The Stargate V2 repository carries Zellic and OtterSec reports in `audits/`. Which commit each report covers, and whether it matches the deployed bytecode, was not checked. Licences: `EndpointV2.sol`, `MessageLibManager.sol` and the ULN libraries are `LZBL-1.2` (the repository's `LICENSE-LZBL-1.2`); the OApp and OFT contracts are `MIT`; Stargate V2 is `BUSL-1.1` (Business Source License). Whether a wallet that only calls these contracts is affected by either licence is a question for counsel, as with Circle's GPL paymaster (F-58).
+
+### 15.11 Circle's USDC through LayerZero
+
+No OFT on any of the four test networks carries Circle's USDC (section 15.5). The "Bridged USDC via LayerZero" that exists on some main networks is Stargate's `StargateOFTUSDC`, whose source says it is "designed for bridged USDC migration per https://github.com/circlefin/stablecoin-evm/blob/master/doc/bridged_USDC_standard.md" (`usdc/StargateOFTUSDC.sol` lines 8–9). Circle's document describes that standard as "a specification and process for deploying a bridged form of USDC on EVM blockchains with optionality for Circle to seamlessly upgrade to native issuance in the future". Until such an upgrade, that token is a bridged representation backed by Stargate's pools, not USDC issued by Circle; Circle's own path for native USDC is CCTP (section 4). No main-network deployment was read.
+
+### 15.12 The source leg, simulated
+
+Two read-only `eth_simulateV1` runs from the dev EOA (`0x16DA2CAeaDa26516F919C6872F6C38AB378CaC5C`), with the calldata built as in section 15.7:
+
+1. **ETH, Ethereum Sepolia → OP Sepolia, taxi** (block 11,917,488): `quoteSend` returned 102,050,140,082,558 wei; `send` with `amountLD` 0.0001 ETH, `minAmountLD` 0.000099 ETH and `value` = amount + fee succeeded using 313,407 gas and emitted `PacketSent` from the endpoint and `OFTSent` from the pool (plus the Glamsterdam ETH transfer logs). The same call with one wei less value reverted with `Stargate_InvalidAmount()` (`0x3442dd95`).
+2. **Mock USDC, Arbitrum Sepolia → Ethereum Sepolia** (block 319,281,525): the public `mint` of 1 mock USDC to the dev EOA, an exact `approve(pool, 1000000)` and `send` with the quoted fee all succeeded (276,810 gas for the send; `PacketSent` and `OFTSent`).
+
+The destination legs cannot be simulated: they need the DVN's verification.
+
+### 15.13 Go / no-go for a live testnet leg
+
+**Go, on three of the four networks, with ETH.** Stargate V2's native-ETH pools are live on Ethereum Sepolia, Arbitrum Sepolia and OP Sepolia, have credit in every direction among them, accept empty options, and quote fees the dev EOA can pay: it held 0.043755 ETH on Ethereum Sepolia, 0.021884 on Arbitrum Sepolia and 0.094900 on OP Sepolia at the reads above. A live leg of 0.0001 ETH costs about 0.0001 ETH in LayerZero fees plus about 313,000 gas on the source (section 15.12) and nothing on the destination (the executor pays), and it exercises the real endpoint, the LayerZero Labs DVN and executor, and Stargate's production-shaped contracts. A second leg with the mock USDC is possible too (anyone can mint it), and it would exercise the exact-approval path, but the token has no value and must never be shown as USDC.
+
+What a live leg would and would not prove: it proves the wallet's encoding, pins, quote and tracking against deployed contracts; it does **not** prove a Circle-USDC route (none exists on these networks), does not reach Base Sepolia (no Stargate pool and no OFT there), and says little about production security, because these test pathways run with one LayerZero Labs verifier and pools whose pause key is public.
+
+**The wallet's own test OFT pair is not needed for the first leg.** It would become useful to show a non-default security configuration (for example two required DVNs) or an ERC-20 OFT on Base Sepolia. It needs an OFT contract compiled from LayerZero's MIT-licensed OFT library, one deployment per network, and `setPeer` (and, if wanted, `setConfig` and `setEnforcedOptions`) on each side; its gas cost was not measured, and the repository has no Solidity toolchain today, so it is a separate, larger slice.
+
+Proposed live steps, mirroring section 11:
+
+1. Dry run with `eth_simulateV1` (as in 15.12), then from the dev EOA: ETH, Ethereum Sepolia → OP Sepolia, taxi, 0.0001 ETH to the dev EOA, `minAmountLD` and `value` from fresh `quoteOFT` / `quoteSend` reads. Verify `OFTSent` (amount sent and received), `PacketSent`, the source balance delta (amount + fee + gas, minus any refund to `refundAddress`), then `OFTReceived` on OP Sepolia with the same GUID and the exact destination balance delta; record the time.
+2. The reverse direction, OP Sepolia → Ethereum Sepolia, in bus mode, recording the bus wait.
+3. Negative checks: `value` one wei short (expect `0x3442dd95`), `minAmountLD` one step above the quoted arrival (expect a slippage revert), and a pinned session rule refusing a different `to` (the `CallViolatesParamRule` path).
+4. Optional: a send to a deployed Kernel account to see `UnreceivedTokenCached`, then `retryReceiveToken` from the dev EOA on the destination.
+
+### 15.14 Readiness switchboard
+
+A `bridging-layerzero` row, `testnet-only` and enforced like `bridging-cctp` (section 4.12). Its reason should say: who verifies (the verifiers the token's owner chose; on these test networks one verifier operated by LayerZero Labs), that the token's owner can change that at any time, that there is no automatic refund, and, for Stargate ETH, that a deployed smart account needs a second transaction to receive.
+
+### 15.15 Could not verify
+
+- Who holds the four signer keys of the 1-of-4 contracts that own the endpoints on Ethereum, Arbitrum and OP Sepolia, and whether those contracts are LayerZero's OneSig (inferred from the interface, not from verified source).
+- Why the test-network default is a single LayerZero Labs DVN when the documentation's presets all have two required DVNs or a Dead DVN; whether main-network defaults differ (not read).
+- Which commits the LayerZero and Stargate audit reports cover; whether the deployed EndpointV2 and libraries match the pinned source exactly (Sourcify reports "match", not "exact match", for most; OP Sepolia's libraries are not on Sourcify).
+- The Sourcify status of the Arbitrum Sepolia and OP Sepolia "USDC" pools and of the three TokenMessaging contracts other than Sepolia's was not read.
+- Real delivery times, executor behaviour, bus wait times, and the Scan API's rate limits on the test networks (nothing was sent).
+- How an EIP-7702-delegated EOA fares as a Stargate ETH recipient; whether Kernel accepts `lzCompose` (not needed: the wallet never sends a compose message).
+- Stargate's main-network planner, owner and DVN configuration; Circle's Bridged USDC deployments on main networks.
+- LayerZero's Value Transfer API (keys, terms) and the gas cost of deploying the wallet's own OFT pair.
+
+## 16. Updated recommendation (2026-10-15): two providers, the user chooses
+
+The Chairperson's decision of 2026-10-14 ("LayerZero instead of CCTP, or better, optionality: let the user choose the provider") replaces the single-provider recommendation of section 10. With both providers researched to the same depth:
+
+1. **Build the provider interface and registry first** (done in the engine for phase 21, `packages/chains-evm/src/bridge/`, design in `docs/BRIDGE_PROVIDERS.md`), so a provider is a registered adapter and adding or removing one changes no screen.
+2. **Register two adapters.** CCTP V2 for USDC on all twelve routes among the four networks (the only provider that moves Circle's USDC here; Circle verifies), and LayerZero OFT for ETH through Stargate V2 on the six routes among Ethereum Sepolia, Arbitrum Sepolia and OP Sepolia (LayerZero's verifiers; on these networks one LayerZero Labs verifier). Where both serve a pair of networks they move different assets, so the Bridge screen offers a choice of asset and, for each, the providers that carry it, each with its own trust statement.
+3. **Prove both live by script before any screen**, LayerZero first on the Chairperson's preference (section 15.13: Ethereum Sepolia → OP Sepolia, 0.0001 ETH, no attestation wait), then CCTP (section 11: Base Sepolia → Arbitrum Sepolia, 1 USDC).
+4. **Keep the earlier limits.** Exact approvals only; Standard Transfers only for CCTP; empty options and no compose messages for LayerZero; recipients pinned to the sending account; test networks only behind enforced readiness rows; and, on the screen, the plain statement of who verifies each transfer, read from the chain for the route being quoted, not assumed.
+5. **Across stays a candidate third adapter for ETH** (section 5), now that adding one is an adapter rather than a redesign; the aggregators and Wormhole stay out for the reasons in sections 7 and 8.
