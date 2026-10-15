@@ -8788,3 +8788,119 @@ Opus.
       a decoy session a custom network's AA change removes that chain's
       shared endpoint fields for both wallets (by design) but leaves the
       real wallet's links.
+- [x] EMULATOR PASS p21b — THE FIRST BRIDGE THROUGH THE APP, and the
+      accessibility follow-ups re-checked (2026-10-15; Expo Go on emulator
+      37.1.11 with ANGLE, Metro worktree at 4b5c6de with the engine built
+      inside it — Metro logged "1 module" for the bundle, unexplained; 3
+      prompts: the launch unlock, the bridge approval, an unlock after an
+      accidental trip to Chrome; no dev-EOA spending; every hash status
+      0x1 on two RPCs per chain and the CTO re-read both receipts and the
+      destination balance on publicnode; captures in the scratchpad p21b).
+      THE BRIDGE (Account 1's regular account, 0.0002 test ETH Ethereum
+      Sepolia → OP Sepolia through LayerZero (Stargate)): the form (the
+      intro, the switch "Send from the smart account" OFF, "Send to
+      network" chips, the recipient sentence, the amount hint "Stargate
+      moves test ETH in steps of 0.000001; an amount with more decimal
+      places is refused, not rounded.", the choice note, the two provider
+      rows with their Who verifies / Who controls / If it does not arrive
+      texts, CCTP disabled "Coming later…", after Get quotes "Fee (quoted
+      just now): 0.000102050140082558 test ETH. Expected to arrive on OP
+      Sepolia: 0.0002 test ETH."); the confirm exactly as designed (header
+      "Ethereum Sepolia → OP Sepolia through LayerZero (Stargate)", "You
+      send 0.0002 test ETH from Ethereum Sepolia", "Expected to arrive…",
+      "Least that may arrive (written into the call): 0.0002 test ETH",
+      the fee line and its explanation, "LEAVING YOUR ACCOUNT FOR THE
+      BRIDGE (AMOUNT + FEE) 0.000302050140082558 test ETH … before this
+      network's own transaction fee", "Measured once on 2026-10-15: 90 s on
+      this route…" + "Not a promise: the verifiers wait for 2 source-block
+      confirmations, then the executor delivers, and either can take
+      longer.", "Who you trust with LayerZero (Stargate)", the delivery /
+      refund rule, "No token approval…", the six pinned-summary bullets,
+      the pinned-pool line, the verifier facts ("Verified by 1 required
+      verifier (LayerZero Labs), after 2 block confirmations; delivered by
+      LayerZero Labs's executor… read ethereum-sepolia-rpc.publicnode.com
+      block 11917458"), the pool-roles sentence naming the Hardhat planner
+      key, the executor-option and pool-fee notes, the smart-account note,
+      "MAX NETWORK FEE ON ETHEREUM SEPOLIA (PAID IN TEST ETH)
+      0.000000341045572085 test ETH" (0.001000031 gwei × 341,035 gas — the
+      bare estimate, no padding), "TOTAL (WORST CASE) 0.000302391185654643
+      test ETH", the preview "You send 0.000302050140082558 test ETH", the
+      generic risk card (contract, age, first-transfer search), "Pre-flight
+      simulation passed (eth_call).", the button "Bridge 0.0002 test ETH to
+      OP Sepolia through LayerZero (Stargate)"); ONE prompt (its title not
+      captured — the driver's helper read the window behind it;
+      unverified); success "Sent ✓ / Bridge 0.0002 test ETH to OP Sepolia
+      through LayerZero (Stargate)." with the hash, the explorer button,
+      the tracking panel ("Where the transfer is", "0.0002 test ETH ·
+      Ethereum Sepolia → OP Sepolia", "Through LayerZero (Stargate), to
+      0x772e…F44F, sent 05:40:02 UTC."), the note "p21b bridge" saved with
+      ONE tap on Done. TRACKING TRANSCRIPT: "Not known yet" ("The sending
+      transaction has no receipt yet; it may still be pending. LayerZero
+      Scan has no record of the message yet.") → 05:41:04 "On its way"
+      ("The message was sent (GUID …); the receiving network shows no
+      delivery for it yet…") → 05:41:28 "…LayerZero Scan agrees
+      (INFLIGHT)." → 05:42:10 "Delivered on OP Sepolia" ("Delivered: the
+      receiving network shows OFTReceived for this transfer's message
+      (GUID …), 200000000000000 base units to 0x772e… in transaction 0x….
+      LayerZero Scan reports INFLIGHT; the wallet goes by the chains' own
+      events.") with "Receiving transaction" added and "Check now" gone.
+      ON-CHAIN: source tx
+      0x1e9f4593c04918a963dae8ab82370785eb4150d753d97a05d421af935d37cee7,
+      block 11918404 (05:40:12 UTC), nonce 27, to the pool 0x9Cc7…0706,
+      value 302,050,140,082,558, selector 0xc7c7f5b3, 452-byte input, gas
+      313,407 of 341,035 at 1,000,014 wei, 8 logs (four EIP-7708 moves,
+      the executor fee 97,108,235,109,199, PacketSent nonce 197 40161 →
+      40232, OFTSent 2e14 = received); GUID
+      0x8ddad419b2fbc297ff932deaf5ed7b473c68afde478291d790f14d9742fccfe0;
+      delivery tx
+      0xd1df943d45b2e5bf82b8c9171bb2fd57cfefdfbf46779ad55d36beaccb0e08e9,
+      OP block 50120179 (05:41:38 UTC), from the executor 0xf5e8…007a, gas
+      90,167, OFTReceived on the pool 0xa31d…c97e for the GUID to Account
+      1, 2e14; DELIVERY 86 s source block → destination block (the
+      script's leg A took 90 s); Account 1 Sepolia 2,118,597,450,239,771 →
+      1,816,233,898,769,515 wei (−302,363,551,470,256 = value + 313,407 ×
+      1,000,014, exact; nonce 27 → 28), OP Sepolia 49,978,994,749,720 →
+      249,978,994,749,720 (+2e14 exact). Activity: "Called 0x9Cc7…0706 with
+      0.000302050140082558 test ETH" with the note (no bridge sentence —
+      finding); the old pending card cleared by "Check status". NEGATIVES:
+      Base Sepolia shows the Bridge link and "No provider in this wallet
+      can bridge test ETH from Base Sepolia: Stargate has no pool there…",
+      the LayerZero row "not available: Does not serve Base Sepolia →
+      Arbitrum Sepolia in this wallet.", Get quotes and Review DISABLED
+      (the chips and amount field still shown); mainnet: no Bridge link,
+      the readiness row "Bridging between networks — Test networks only —
+      A bridge provider's contracts and verifiers hold your coins while
+      they move: on the test networks each LayerZero route through
+      Stargate is checked by a single verifier operated by LayerZero Labs,
+      and Stargate's test pools can be paused by a key whose private part
+      is public. Circle's USDC transfers would rest on Circle's own two
+      attesters, and this wallet has not yet sent one…". TALKBACK: (a)
+      REGRESSION — TalkBack 14.2 does NOT read a labelling node marked
+      importantForAccessibility "no": "Name. Edit box" (was "…for Contact
+      name"); the extra stop is gone, the name is lost; a visible-label
+      field still reads "0.0002. Edit box for Amount (test ETH)" (an EMPTY
+      field's placeholder is spoken as if it were the value); (b) the
+      switcher line is spoken ONCE on open, uncut, but BEFORE "Accounts"
+      (it came from the live region; the delayed announcement was dropped
+      by TalkBack as a duplicate); the reappearance after scrolling back
+      up is most likely cut off by the focus landing 175 ms later
+      (inferred); (c) the Activity header "0x772e…F44F" fixed; the Contacts
+      Burn row reads "Burn" then "0x0000…dEaD" as two stops; (d) the Bridge
+      radio rows read "checked. LayerZero (Stargate), moves test ETH. Radio
+      button" (PRE-CHECKED — against the "never picks one for you" copy)
+      and the CCTP row with a double period; THE TRUST STATEMENTS, FEE AND
+      MEASURED TIME INSIDE THE ROWS ARE NOT REACHABLE AS STOPS on the form
+      (a TalkBack user never hears them before Review; the confirm reads
+      them); the confirm headings read; a focus jump back to "Navigate up"
+      midway through the confirm; recipient and pool addresses spoken in
+      full (by design). OTHER FINDINGS: Review and the success view open
+      scrolled to the middle; the amount field resets to empty after Done
+      while showing "0.0002" as a placeholder; ~40 s between the prompt
+      and the recorded "sent" time (cause not established); the gas limit
+      is the bare estimate (313,407 used of 341,035). FIX SLICE
+      DISPATCHED. Driving incident: one adb tap under TalkBack landed on an
+      Activity row and opened the explorer in Chrome's first-run screen;
+      force-stopped; the wallet auto-locked and was unlocked; no state
+      changed. END STATE: Home, Ethereum Sepolia, Account 1, light mode,
+      TalkBack OFF (level 6), protection OFF, IME ADBKeyboard, auto-lock 1
+      min, Metro at 4b5c6de; logcat buffer 16 MiB.
