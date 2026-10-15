@@ -8439,3 +8439,68 @@ Opus.
       become a fixture); UnreceivedTokenCached and the retry live; bus
       GUIDs; a UserOperation sender's gas (a plain eth_estimateGas from
       the account address does not reflect the operation).
+- [x] Item 0 — EMULATOR PASS p21a: the p20d leftovers and the wave-1 app
+      slice re-checked (2026-10-14/15 UTC; Expo Go on emulator 37.2.12
+      with the ANGLE renderer, Metro worktree at 99dea42 with the engine
+      built inside it, 2,375 modules; read-only: 1 prompt (the launch
+      unlock), nothing signed or sent, Account 1 2,118,597,450,239,771 wei
+      nonce 27 and the Kernel 20,320,832,019,090,953 wei nonce 1 identical
+      before and after on two RPCs; the window left in place; captures in
+      the scratchpad p21a, dumps scanned for 64- and 32-hex strings).
+      FIXED ON THE DEVICE: (1a) the Price-alerts field reads "For example
+      3000. Edit box for Alert price for ETH (US dollars)" with the visible
+      caption as its own stop before it (normal); (2) the DCA refusal after
+      the asynchronous review is ANNOUNCED (TYPE_WINDOW_CONTENT_CHANGED)
+      and then FOCUSED (TYPE_VIEW_ACCESSIBILITY_FOCUSED on the full "Your
+      account cannot spare anything for fees…" text), shown once; the
+      instant empty-amount refusal likewise; (3) Staking balance rows read
+      once ("Liquid staked Ether 2.0 (stETH): 0.00131508713030412.
+      Rebasing: …", the wstETH row with its stETH worth), no separate
+      amount stop, no "Actions available"; (4) the Privacy switch once
+      ("OFF. Hide in the app switcher and block screenshots. Switch"), the
+      key label "0x API key" / "Not configured" / "Edit the 0x API key.
+      Button"; (5) "Send. Button. Sends test ETH"; (6) short addresses on
+      the multisig list ("0x944c…0d38"), the detail's signers (three stops
+      each: role, address, weight) and the pending card's title
+      ("Smart-account operation 0xc56f…dda7: 0.002 test ETH to
+      0x944c…0d38."). PARTLY FIXED: (1b) HIDDEN LABELS — the field names
+      work ("Name. Edit box for Contact name", "New account name
+      (optional). Edit box for New account name (optional)") BUT each 1×1
+      hidden label is an EXTRA SWIPE STOP, read after its field or out of
+      order where the node sits elsewhere in the tree (Contacts: "Contact
+      name" spoken after "Add a contact. Heading", before the network
+      chips, at [63,1383][66,1386]); (7) the switcher's "More accounts
+      below — scroll the list." is NOT spoken when the switcher opens
+      (only part of the window-state event) nor when the expander opens
+      (the overflow state does not change), IS spoken as a content change
+      when it reappears after scrolling back up, and is never a swipe stop.
+      WAVE-1 SLICE ON SCREEN: (8) the Developer switch "Send the next
+      regular-account transaction at the minimum fee (to rehearse Speed up
+      / Cancel)" and its "Test networks only…" note on Ethereum Sepolia,
+      ABSENT on mainnet (screen and accessibility tree); with it ON, a
+      0.00001 test ETH quote to Account 2 showed "Max network fee
+      0.000000000000315 test ETH", "Worst case at 0.000000015 gwei max fee
+      × 21000 gas; …", the WarningBox "Minimum-fee rehearsal: this
+      transaction will probably sit pending until you speed it up or cancel
+      it from Activity.", "Priced at the minimum fee: a priority fee of 1
+      wei and a max fee of 15 wei per gas (the latest block's base fee, 14
+      wei, plus 1 wei).", "Total (worst case) 0.000010000000315 test ETH",
+      the preview, the own-account risk line, "Pre-flight simulation
+      passed (eth_call)."; the confirm's button is "Back" (not "Cancel");
+      Back → the switch still ON; then turned OFF (nothing sent); (9)
+      "Auto-lock" with Off / 1 min (selected) / 5 min (read as text, not a
+      heading); (10) the pending card unchanged; (11) Home unchanged bar
+      the TESTNET banner sitting slightly higher with a white strip under
+      it above the gesture bar (cosmetic; the bottom inset). NOTED, out of
+      scope: Activity's header still reads Account 1's full 42-character
+      address; the Burn contact's full address on Contacts; TalkBack
+      rewrote its own prefs file while running (inode changed; the level
+      is back at 6). DRIVING NOTE: under TalkBack `adb input tap`
+      ACTIVATES the control it hits, so it cannot move focus — use the
+      uinput keyboard. FIX SLICE DISPATCHED for (1b) and (7) (+ the two
+      full addresses noted). UNVERIFIED: real touch gestures and audio;
+      the recurring-payment and subscription refusal boxes under TalkBack;
+      the minimum-fee send itself and Speed up / Cancel (deliberately not
+      sent); iOS. END STATE: Home, Ethereum Sepolia, Account 1, light mode,
+      TalkBack OFF, protection OFF, the minimum-fee switch OFF, auto-lock 1
+      min, IME ADBKeyboard, Metro at 99dea42 (CI mode, pid 68958).
