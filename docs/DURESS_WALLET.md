@@ -4,8 +4,13 @@ decisions (section 7) and the first two prerequisites done: the lock now
 covers a cold start (Stage 0, commit `e0ef6c2`, threat-model row F-77(b)),
 and the app's own storage keys go through one seam (Stage 1, section 5.2,
 `app/src/wallet/store-keys.ts` with its check
-`app/scripts/check-storage-seam.mjs`). No app PIN or duress PIN exists yet.
-Section 6 specifies the slice; section 7.7 lists Stage 2's exact pieces.
+`app/scripts/check-storage-seam.mjs`). Stage 2 — the opt-in app PIN, the
+duress PIN and the decoy wallet — is BUILT AND CHECKED OFFLINE (phase 21,
+2026-10-14; sections 7.7 to 7.10; `app/src/wallet/pin.ts`,
+`app/src/wallet/duress.ts`, `packages/core/src/bip85.ts`,
+`app/scripts/check-duress.mjs`). Nothing of Stage 2 has been seen on a device
+yet, and section 7.10 lists what must be finished or confirmed before the
+Stage 3 emulator pass on a throwaway wallet.
 
 Every fact below names its source: the installed package sources under
 `app/node_modules` (with the version), this repository's own code (file and
@@ -449,8 +454,11 @@ Option (b). No slice is built in phase 20. The reasons, in order of weight:
   notifications off while an app PIN is on); and `shiba-wallet.aa-config.v1`,
   which mixes device-like bundler settings with per-wallet recovered
   accounts and is declared per-wallet until Stage 2 splits it.
-- **Stage 2 — the app PIN, then the duress PIN** (section 6, with the
-  decisions and the exact pieces in section 7).
+- **Stage 2 — the app PIN, then the duress PIN. BUILT OFFLINE** (phase 21,
+  2026-10-14; section 7.7 says piece by piece what was built and section
+  7.10 what is left). Stage 1's remainders listed above were NOT moved in
+  this slice (they belong to other files), so the decoy does not yet
+  satisfy rule 2 for the recovery records and the WalletConnect sessions.
 - **Stage 3 — an emulator pass on a throwaway wallet** (section 6.7).
 
 ### 5.3 Decisions for the Chairperson
@@ -487,7 +495,10 @@ moves no funds by itself), with an advisory readiness row.
 - KDF: `scrypt` from `@noble/hashes/scrypt.js` with r=8, p=1, dkLen=32, a
   random 16-byte salt per record, and N chosen after measuring on the emulator
   and a device (OWASP's 2^17 if it costs under about one second there,
-  otherwise the largest power of two that does, stated). Never a plain hash;
+  otherwise the largest power of two that does, stated). *As built (section
+  7.7): a 32-byte salt per slot and N = 2^16, chosen from a Node
+  measurement against a 500 ms budget; the device measurement is still
+  owed.* Never a plain hash;
   never stored or logged in plain form; the typed digits are dropped from
   state as soon as the hash is computed.
 - One record in the standard secure store holding both entries in a fixed
@@ -543,7 +554,9 @@ copy of the app's files resets it, and offline guessing ignores it.
 ### 6.6 Readiness
 
 An advisory row (`duress-wallet`): the feature moves no funds, so it is not a
-mainnet gate, but the row states the forensic and on-chain limits.
+mainnet gate, but the row states the forensic and on-chain limits. *As
+built, the row is named `duress-pin` (the phase 21 brief) and is still to
+be added to the readiness table (section 7.7).*
 
 ### 6.7 Emulator checklist (throwaway wallet only)
 
@@ -638,6 +651,8 @@ way COLDCARD derives its duress wallets. Consequences:
   2026-10-14), so the derivation must be written over `@scure/bip32` and
   `@noble/hashes` (HMAC-SHA512, no new primitive) and validated against the
   official test vectors in BIP-85 itself before any decoy is created.
+  *Done in phase 21: `packages/core/src/bip85.ts`, every applicable official
+  vector passing (section 7.7).*
 - The decoy phrase is created at set-up by reading the real phrase once
   through the vault (one device prompt when the phrase is protected), deriving
   the child, and storing it in the decoy profile; the real phrase is never
@@ -795,6 +810,168 @@ pass on a throwaway wallet (section 6.7):
 Stage 3 (section 6.7) follows on a throwaway wallet only, never on the
 emulator's real test wallet.
 
+**What was built (phase 21, 2026-10-14), against this list:** piece 1 was
+NOT done (its files belong to other slices; section 7.10); pieces 2 to 6
+were built and checked offline, with these choices:
+
+- **The active profile (piece 2)** lives in `store-keys.ts`
+  (`activeStoreProfile` / `setActiveStoreProfile`), in memory only — never
+  written to a store (pinned) — and every unbound read and write is scoped
+  by it. Stores and secure-store backends can also be BOUND to a profile
+  (`profileBoundStore`, `profileBoundSecureBackend`), which the duress set-up
+  and the wipe use to reach the other wallet without switching. The decoy's
+  profile prefix is `w2` (`shiba-wallet.profile-w2.…`), a neutral name.
+  The PIN record is declared `secret` (it lives in the secure store) under
+  the neutral name `shiba-wallet.app-lock.v1` and is ALWAYS addressed through
+  a backend bound to the primary profile, so it is one device-wide record
+  read before any wallet is chosen (a fourth scope was not needed).
+- **The app PIN (piece 3)**: 6 digits on an app-drawn pad
+  (`components/LockGate.tsx` `PinPad`; never the system keyboard; screen
+  capture blocked with its own key `pin-pad`), scrypt from `@noble/hashes`
+  2.4.0 with r = 8, p = 1, dkLen = 32 and a **32-byte** salt per slot (the
+  phase 21 brief; section 6.2 said 16), **N = 2^16**, chosen by measurement
+  on 2026-10-14 under Node v24.21.0 on the Intel Core i7-9750H with the
+  installed noble: N = 2^16 took 240–313 ms per hash (11 runs, synchronous
+  and asynchronous), N = 2^17 took 479–589 ms, above the 500 ms budget the
+  brief set. Every attempt computes both slots' hashes, so an attempt costs
+  about twice that on Node. **The cost under Hermes on a phone is not
+  measured** (section 6.8): it must be before N is final. The record is one
+  fixed-shape JSON of 358 bytes whether or not a duress PIN exists (slot 0
+  primary, slot 1 duress, 64 random bytes in an unset slot; the counter
+  and the wait as fixed-width hex). The wait schedule of section 6.3, with
+  the counter written before the hashes are computed. The lock screen
+  takes the PIN at launch and after auto-lock (the same view); it does not
+  call the device prompt, which is not a fallback for the PIN (section 6
+  does not make it one). Auto-lock is forced on (one minute when the stored
+  choice is "off"; "Off" is not offered), screen protection is forced on,
+  and notifications are forced off (section 7.4) while the PIN is on; the
+  stored choices are kept for when it is turned off. `lock.ts` and the
+  Settings hint were reworded; threat-model row T-09 still states the old
+  decision and needs the same rewording (outside this slice's rows).
+  Turning the PIN on requires the backup check described below. No
+  readiness row `app-pin` was added (see `duress-pin` below).
+- **BIP-85 (piece 4)**: `packages/core/src/bip85.ts`, from bitcoin/bips
+  `bip-0085.mediawiki` at commit `6209768676bf85d7ef5ffb4055543d6286d79b96`
+  (sha256 `dcbeb977…d1cf7e`), checked in `packages/core/test/bip85.test.ts`
+  against every official vector of the parts it implements: the two
+  raw-entropy test cases (derived key and 64 bytes of entropy) and the 12-,
+  18- and 24-word BIP39 mnemonics.
+- **The duress PIN and the decoy (piece 5)**: set only from the real wallet,
+  only while the app PIN is on; the steps are the backup check, the current
+  app PIN, the duress PIN twice; the decoy's phrase (index 0, the parent's
+  word count) is stored in the decoy profile's standard secure storage
+  BEFORE the duress slot is set, so the slot never opens a missing wallet.
+  The PIN typed on the lock screen decides the profile; WalletContext then
+  drops any held secret, sets the profile, and reloads everything through
+  the seam behind the lock; LockGate remounts the whole tree when the
+  profile changes, so no screen keeps the other wallet's state. "Remove
+  wallet" with an app PIN removes both wallets (the decoy first), every
+  per-wallet AsyncStorage record of both profiles (device settings kept),
+  both wallets' secure-store items and the PIN record, and returns to the
+  primary profile; the dialog adds one sentence that is the same in both
+  wallets. Turning the app PIN off (from the real wallet) or removing the
+  duress PIN deletes the decoy's keys and records.
+- **The backup check (section 7.5)**: the app records nothing when the
+  backup quiz passes — a created wallet is stored only after
+  `ConfirmBackupScreen` passes (`confirmCreate`), an imported one was typed
+  in by the user — so turning the app PIN on and adding a duress PIN both
+  ask for two words of the open wallet's phrase, at random positions, from
+  the written backup (after one device prompt that opens the phrase). This
+  is stricter than section 7.5 asked for the app PIN alone (the phase 21
+  brief required it).
+- **Readiness**: the row `duress-pin` (advisory, every network) is not in
+  `app/src/config/readiness.ts` yet: that file and `check-readiness.mjs`
+  are a shared registry outside this slice's files. Its reason is ready in
+  `duress.ts` (`DURESS_READINESS_REASON`, three sentences as the readiness
+  rules require).
+- **The honest claim (piece 6)** is rendered in the Duress PIN section
+  (`DURESS_HONEST_CLAIM`) with the funding and backup notes, and pinned.
+
+### 7.8 A BIP-39 passphrase (design note only; not built)
+
+The Chairperson's "a passphrase is a good option" can also be read as a
+BIP-39 passphrase — the "25th word" of BIP-39, which changes the seed and
+therefore every address (the Ledger pattern quoted in section 1.1, "a
+passphrase … linked to a secondary PIN code"). As an ALTERNATIVE to the
+BIP-85 child, the hidden wallet would be the same recovery phrase plus a
+passphrase, and the wallet the duress PIN opens could be either side: the
+phrase alone as the decoy and phrase + passphrase as the real wallet, or
+the reverse. As an ADDITION, a passphrase could protect the real wallet on
+top of a BIP-85 decoy.
+
+- **Recovery rule.** Restoring needs the phrase AND the exact passphrase
+  (character for character; BIP-39 normalises it with NFKD). There is no
+  checksum: a mistyped passphrase opens a different, empty, valid-looking
+  wallet. Losing the passphrase loses that wallet ("If you forget your
+  passphrase, access to the associated hidden wallet is permanently lost",
+  Ledger, section 1.1). This is the opposite trade to the BIP-85 child,
+  whose recovery needs nothing written down (section 7.2).
+- **What it would buy.** A wallet whose existence the phone need not
+  record at all if the passphrase is typed at each use (option D of
+  section 3.2), at the cost of every saved record for that wallet.
+- **What it would cost.** Existing backups would not restore a passphrase
+  wallet without the passphrase; the derivation, the account cache, the
+  smart-account owners and every per-wallet record would have to carry the
+  passphrase's wallet as a third identity.
+- **Decision pending.** The choice between a BIP-39 passphrase and the
+  BIP-85 child (or both) is the Chairperson's; this slice builds the
+  BIP-85 child only, and no passphrase field exists anywhere in the app.
+  (Section 7.6's other reading — a passphrase as the lock-screen secret
+  instead of 6 digits — is also not built: the PIN is 6 digits.)
+
+### 7.9 What the second wallet's Settings do (a decision to confirm)
+
+Rule 1 (section 1.2) requires the second wallet's Settings to look exactly
+like a wallet with an app PIN and no duress PIN. With two slots and no
+third wallet, three actions cannot do there what they appear to do. What
+was built, for the Chairperson to confirm or change:
+
+- **Change PIN** changes the PIN that opened this wallet (the duress
+  slot). A new PIN equal to the other slot's PIN is refused with the same
+  sentence as a trivially guessed PIN ("This PIN cannot be used. Choose a
+  different 6-digit PIN."), and a "current PIN" typed there that belongs to
+  the other wallet counts as wrong without resetting the counter, so
+  neither the message nor the wait schedule can reveal the real PIN.
+- **Remove the PIN** and **Add a duress PIN** run the same steps (the
+  confirmation, the backup check, the PINs) and end with "This could not
+  be completed on this phone. Nothing was changed." Removing the PIN there
+  would leave the real wallet without its PIN (rule 4); a third wallet does
+  not exist. The sentence is true and does not name either wallet, but a
+  coercer who sees it may grow suspicious. Alternatives: pretend success
+  for the session only (the app asks for a PIN again at the next launch),
+  or hide the actions (the Settings would then differ from an
+  app-PIN-only wallet). Not decided.
+
+### 7.10 Left before the Stage 3 pass, and not verified
+
+- **Stage 1 remainders still leak the real wallet into the decoy** (rule
+  2): `app/src/wallet/recovery.ts` reads and writes the recovery records and
+  recoveries in progress under their unscoped names (allow-listed in
+  `check-storage-seam.mjs`), so the Guardians and recovery screens under the
+  decoy would show the real wallet's records; the WalletConnect SDK keeps
+  its sessions in its own storage and its client in memory
+  (`walletconnect.ts` caches the initialised client), so the decoy's
+  Connections screen could list and reconnect the real wallet's sessions;
+  `shiba-wallet.aa-config.v1` is per wallet, so the decoy starts with no
+  bundler or factory configured (a visible difference, not a leak). These
+  must be finished (section 7.7 piece 1) before the feature is offered.
+- **Readiness row `duress-pin`** to add (above).
+- **Hermes cost of scrypt** at N = 2^16, twice per attempt: unmeasured. If
+  an attempt takes several seconds on a phone, N must come down and the
+  claim say so.
+- **iOS**: the Keychain may keep the PIN record across an uninstall, so
+  "reinstall to reset a forgotten PIN" may not hold there (unverified);
+  the PIN pad with VoiceOver; the app-switcher cover over the PIN pad.
+- **Timing**: both wallets load through the same path, but the real
+  wallet usually loads from its public account cache (protected phrase)
+  while the decoy derives from its standard-storage phrase on first load;
+  the difference is small and unmeasured.
+- **Not seen on a device**: everything in Stage 2, including the PIN pad's
+  layout, TalkBack on it, screen capture blocked on it with the app-wide
+  switch off, the profile switch at a background lock, and "Remove wallet"
+  from the decoy.
+
+
 ---
 
 ## 8. Sources
@@ -806,7 +983,8 @@ Read on 2026-10-11 unless stated.
   <https://bluewallet.io/docs/plausible-deniability/>
 - Ledger Academy, passphrase: <https://www.ledger.com/academy/passphrase-an-advanced-security-feature>
 - BIP-85: <https://github.com/bitcoin/bips/blob/master/bip-0085.mediawiki>
-  (raw file at bitcoin/bips `927b6de9`)
+  (raw file at bitcoin/bips `927b6de9`); for the implementation and its test vectors,
+  re-read on 2026-10-14 at `6209768676bf85d7ef5ffb4055543d6286d79b96`
 - OWASP Password Storage Cheat Sheet:
   <https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html>
 - Installed packages: `expo-local-authentication` 57.0.3, `expo-secure-store`
