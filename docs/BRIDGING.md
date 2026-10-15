@@ -612,6 +612,77 @@ A `bridging-layerzero` row, `testnet-only` and enforced like `bridging-cctp` (se
 - Stargate's main-network planner, owner and DVN configuration; Circle's Bridged USDC deployments on main networks.
 - LayerZero's Value Transfer API (keys, terms) and the gas cost of deploying the wallet's own OFT pair.
 
+### 15.16 Live run: the first two legs (2026-10-15)
+
+On 2026-10-15 between 03:04 and 03:11 UTC, `scripts/testnet/bridge-smoke.mjs` sent the wallet's first live bridge transfers: native test ETH through Stargate V2's native pools, quoted and built by the engine's LayerZero OFT adapter (`packages/chains-evm/src/bridge/layerzero-oft.ts` at commit `110c5c8`). The sender and the recipient on every network were the dev EOA `0x16DA2CAeaDa26516F919C6872F6C38AB378CaC5C`. The public facts are in the git-ignored run record `scripts/testnet/runs/bridge-run.json`.
+
+**Method.** The script registers the adapter (and the CCTP V2 adapter) in the engine's `BridgeRegistry`. It takes each quote from `provider.quote()`, which calls `quoteOFT` and then `quoteSend` through an injected `eth_call` reader. It sends `quote.calls[0]` unchanged: the target, value and data come from the adapter, and the script adds only the nonce, the gas limit (`eth_estimateGas` + 20%) and the EIP-1559 fees before signing with the engine's `signEip1559`. ethers 6.17.0 is used only to check the engine's work: it re-encodes the call, decodes events, and re-reads `quoteSend` with its own calldata. Hard caps: at most 0.0005 ETH bridged per leg, at most 0.002 ETH spent in total (amount + LayerZero fee + worst-case gas), and at least 0.005 ETH left on the source. Each leg was 0.0002 ETH, taxi mode.
+
+**Dry run (read-only, every check passed).** Run immediately before the live legs:
+- Stargate's live pathway configuration matched the adapter's recorded facts on all six routes: `EndpointV2.getSendLibrary`, then `SendUln302.getUlnConfig` and `getExecutorConfig` for Stargate's TokenMessaging contracts. Each route had one required DVN (LayerZero Labs) and the recorded executor, with 2 confirmations from Ethereum Sepolia, 5 from Arbitrum Sepolia and 1 from OP Sepolia.
+- For all six routes, the adapter's call checked out three ways:
+  - ethers' encoding was byte-identical (452 bytes).
+  - All 14 pins read their own calldata word.
+  - The value was exactly amount + native fee, and the independently built `quoteSend` gave the same fee to the wei.
+- `eth_simulateV1` of the exact built call succeeded on each source chain. Simulated gas: Sepolia→Arbitrum 324,166; Sepolia→OP 313,407; Arbitrum→either 261,966; OP→Arbitrum 257,755; OP→Sepolia 261,314. In every simulation, `PacketSent` addressed the destination's TokenMessaging with the same GUID as `OFTSent`.
+- Refusals:
+  - An amount one wei below the pool's `quoteOFT` minimum (10^12 wei) and an amount with one wei of dust were both refused by the engine ("moves in steps of 1000000000000 base units").
+  - A minimum-to-receive one wei above the quote was refused by the engine.
+  - Non-empty `extraOptions` was refused by `encodeOftSend`.
+  - A route to Base Sepolia was refused by the engine ("No configured OFT serves this route"), and an on-chain `quoteSend` to eid 40245 reverts.
+  - In simulation, `value` one wei short reverted with `0x3442dd95` (`Stargate_InvalidAmount`), and `minAmountLD` raised by one shared-decimal step reverted with `0xa1e86545` (`Stargate_SlippageTooHigh()`, `StargateBase.sol` line 82 at `9f4f5c0f`).
+- **Correction to the table in 15.6.** The "protocol fee" on the fee-charging routes is not 1 %: at 0.0002 ETH it was again exactly 10^12 wei (0.000199 arrives), the same absolute amount seen at 0.0001 ETH. Two amounts suggest a flat one-shared-unit fee at these sizes, but Stargate's fee library was not read.
+
+**Leg A — Ethereum Sepolia → OP Sepolia** (no pool fee on this route):
+
+| | |
+|---|---|
+| Quote | native fee 102,050,140,082,558 wei; value 302,050,140,082,558 = 0.0002 ETH + fee; expected and minimum arrival 0.0002 ETH |
+| Source tx | `0xfb041691c102214d1da67f60b23b985a2e99a335fccf23423b8c722937986405`, block 11,917,629 (03:05:12 UTC), nonce 42, status 0x1 on `ethereum-sepolia-rpc.publicnode.com`, `eth-sepolia-testnet.api.pocket.network` and `sepolia.drpc.org` (same block hash), input equal to the engine's calldata on all three |
+| Gas | estimate 341,035 (limit 409,242); used 313,407 (= the simulation); effective price 1,000,013 wei |
+| Logs | `OFTSent` GUID `0x4da5481014f25b3326f100cb8d0cdb20979a9e1d9d6708b96347ef993580395c`, sent and to-receive both 2 × 10^14; `PacketSent` nonce 196, 40161 → 40232, TokenMessaging `0xfB11…26d3` → `0xea46…7063`; `ExecutorFeePaid` 97,108,235,109,199 to `0x718B…1eDA`; `DVNFeePaid` 4,941,904,973,359 to `0x8eeb…9193`; nothing left for a treasury share; four EIP-7708 transfer logs (the ETH path dev EOA → pool → TokenMessaging → endpoint → send library) |
+| Source delta | −302,363,551,156,849 wei on all three endpoints = value + gas, exact: no refund |
+| Tracking | Scan via the adapter's `track()`: not indexed at +8 s, `INFLIGHT` ("Ready for DVNs to verify") at +62 s, `DELIVERED` at +125 s (10-second polling); the DVN's verification on OP Sepolia was in block 50,115,514 (03:06:08 UTC) |
+| Delivery | tx `0xf0760a9ec2ba0e8f1b3a53e46e6e118cd749b66fb2040e6d7d7a04da041827f3`, OP Sepolia block 50,115,531 (03:06:42 UTC), from the executor EOA `0xf5e8…007a`, gas 90,155; `OFTReceived` with the same GUID, srcEid 40161, 2 × 10^14 wei to the dev EOA; Scan's destination tx equals it |
+| Destination delta | +200,000,000,000,000 wei on all three OP Sepolia endpoints, exact |
+| Time | 90 s from source block to destination block; at the re-verification about five minutes later, the source block was still above Sepolia's safe head (11,917,606) |
+
+**Leg B — OP Sepolia → Arbitrum Sepolia** (no pool fee on this route):
+
+| | |
+|---|---|
+| Quote | native fee 130,249,623,732,558 wei; value 330,249,623,732,558 |
+| Source tx | `0xfa79787a5ff824e6cc5e1aa61e06a97feb5987627f29010cee67dd57ad9fdf02`, block 50,115,550 (03:07:20 UTC), nonce 3, status 0x1, input equal to the engine's calldata |
+| Gas | estimate 266,841 (limit 320,209); used 257,755 (= the simulation); effective price 1,000,250 wei; L1 data fee 404 wei (estimated 563 over the signed bytes); operator fee 0 |
+| Logs | `OFTSent` GUID `0xe3d00cd678da00796ae04e89cd75c3e7a3cb62bd025e5bda502737af2150801c`; `PacketSent` nonce 588, 40232 → 40231; `ExecutorFeePaid` 117,010,613,659,199; `DVNFeePaid` 13,239,010,073,359 to `0xd680…582C` |
+| Source delta | −330,507,443,171,712 wei on three endpoints = value + gas + L1 data fee, exact |
+| Tracking | not indexed at +7 s, `INFLIGHT` at +17 s, `CONFIRMING` ("Executor waiting for finality") at +61 s, `DELIVERED` at +72 s; DVN verification on Arbitrum Sepolia block 319,288,608 |
+| Delivery | tx `0x27fa3f2e339e7e737daab8314fbb7787e640eec6d6b894dd134a27a287b632d8`, Arbitrum Sepolia block 319,288,653 (03:07:50 UTC), same executor EOA, gas 90,145, `OFTReceived` 2 × 10^14 wei to the dev EOA |
+| Destination delta | +200,000,000,000,000 wei on `sepolia-rollup.arbitrum.io` and `arb-sepolia-testnet.api.pocket.network`, exact (`arbitrum-sepolia-rpc.publicnode.com` refused the historical balance read: "historical state … is not available") |
+| Time | 30 s from source block to destination block |
+
+**Totals.**
+- 0.000632870994328561 ETH left the dev EOA's sources: 0.0004 ETH bridged, 0.000232299763815116 in LayerZero fees and 0.000000571230513445 in gas and L1 data fee.
+- 0.0004 arrived. The net cost of the two legs was **0.000232870994328561 test ETH**.
+- Stargate's native pools charged no fee on either route.
+- Balances afterwards: Sepolia 0.043452807449020349, OP Sepolia 0.094769429541077557, Arbitrum Sepolia 0.022084475390030001.
+
+**Observed during the run.**
+1. The first receipt read for leg B disagreed between endpoints. `sepolia.optimism.io` reported block 50,115,550 with hash `0x1f572c37…a8653`, a block that, minutes later, no endpoint knew by hash. All three OP Sepolia endpoints then reported `0xfab31ffe…1bda4` with an identical receipt. The OP Sepolia sequencer's unsafe head was evidently replaced, with the transaction re-included at the same height and index. The script stopped on this check, as designed. It now re-reads on disagreement, and the read-only re-verification (`BRIDGE_VERIFY=1`) passed on three endpoints per chain.
+2. The packets carried the options `0x0003 01 0011 01 …0249f0`: type 3, executor `lzReceive` gas 150,000, no value (`OptionsBuilder.sol` line 22 and `ExecutorOptions.sol` lines 10–12 and 85–86 at `9c741e7f`). The wallet's own `extraOptions` was empty, so this is Stargate's own option.
+3. The DVN fee went to the source chain's LayerZero Labs DVN contract. The verification on the destination was done by that chain's LayerZero Labs DVN, matching 15.4.
+4. Both legs were delivered well before the source block was safe: 2 confirmations on Sepolia, 1 on OP Sepolia, exactly as configured. On these test pathways, a source reorganisation after delivery is covered by nothing but the single verifier.
+5. `sepolia.optimism.io` answered `safe` and `finalized` with blocks from 2026-09-30, while PublicNode answered current ones. This was read once and not investigated.
+
+**What the run proves, and what it does not.** It proves several things against the deployed contracts:
+- the engine's encoding and pins for a Stargate native-pool send;
+- its quote (fee to the wei, arrival to the wei);
+- its route table, including the absence of Base Sepolia;
+- the mapping of Scan statuses to transfer states;
+- that an EOA recipient receives the exact amount with no destination action.
+
+It does not prove a smart-account sender or recipient (`UnreceivedTokenCached`, 15.8), bus mode, an ERC-20 OFT, or anything about main-network security. Steps 2–4 of 15.13 (the reverse direction in bus mode, a pinned session-rule refusal, the Kernel recipient and `retryReceiveToken`) remain to be run.
+
 ## 16. Updated recommendation (2026-10-15): two providers, the user chooses
 
 The Chairperson's decision of 2026-10-14 ("LayerZero instead of CCTP, or better, optionality: let the user choose the provider") replaces the single-provider recommendation of section 10. With both providers researched to the same depth:
