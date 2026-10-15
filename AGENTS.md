@@ -136,8 +136,11 @@ examples/demo.mjs          Offline end-to-end engine demo
   Chairperson). A renderer change discards the quick-boot snapshot
   (cold boot, the PIN keyguard, `adb reverse` lost). CLOSING THE WINDOW
   IS A GRACEFUL SHUTDOWN (snapshot saved) and is fine; a pass relaunches
-  it. The emulator package is 37.2.12 since 2026-10-14 (installed BY
-  HAND: sdkmanager 21.0 fails to unzip the archive — "Error reading Zip
+  it. NEVER SET AN APP PIN ON THE AVD'S REAL WALLET: with the PIN on,
+  screen protection is forced on (phase 21 item 2) and the window goes
+  black again; the duress stages run on a THROWAWAY wallet in the local
+  development build only. The emulator package: 37.2.12 was installed
+  on 2026-10-14 (BY HAND: sdkmanager 21.0 fails to unzip the archive — "Error reading Zip
   content from a SeekableByteChannel" — so the official archive
   emulator-darwin_x64-16428233.zip was downloaded from
   dl.google.com/android/repository, its SHA-1 0c08fc22…e30b checked
@@ -8504,3 +8507,89 @@ Opus.
       sent); iOS. END STATE: Home, Ethereum Sepolia, Account 1, light mode,
       TalkBack OFF, protection OFF, the minimum-fee switch OFF, auto-lock 1
       min, IME ADBKeyboard, Metro at 99dea42 (CI mode, pid 68958).
+- [x] Item 2, Stage 2 — THE APP PIN, THE DURESS PIN AND THE BIP-85 DECOY
+      (commit 39ca42a; packages/core/src/bip85.ts + test (core 29 → 40);
+      app/src/wallet/pin.ts + duress.ts, store-keys.ts, storage.ts,
+      lock.ts, WalletContext, PrefsContext, LockGate, SettingsScreen; new
+      check-duress 78 registered from a FILTERED suites.mjs (only its
+      line); check-storage-seam stays 47 with three pins replaced
+      one-for-one (40 keys; 21/9/10; the profile setter); offline runner
+      ALL GREEN in the CTO's isolated worktree on HEAD c9399ac: engine
+      1,046, app 8,873 across 58 suites, lint 0/0, tsc clean, bundle
+      smoke 2,259 modules; 14 in-suite mutants + 4 BIP-85 hand mutants
+      caught; the 17 files secret-scan clean; not seen on a device). TWO
+      INVALID VERIFY RUNS caught by the new rule (an empty patch: zsh does
+      not word-split an unquoted variable — use ${=F}; a registry filter
+      that assumed no comment above the new line). BIP-85: bitcoin/bips
+      bip-0085.mediawiki at 62097686 (sha256 dcbeb977…d1cf7e); path
+      m/83696968'/39'/{language}'/{words}'/{index}', HMAC-SHA512
+      "bip-entropy-from-k", the BIP-39 application; EVERY applicable
+      official vector passes (test cases 1–2, the 12/18/24-word
+      mnemonics); @scure/bip32, @scure/bip39, @noble/hashes only; the
+      official mnemonics pinned by entropy + a fingerprint of the spec
+      text because the secret scan refuses any checksum-valid phrase.
+      SCRYPT MEASURED (Node 24, i7-9750H, @noble/hashes 2.4.0, r = 8, p =
+      1, 32-byte salt): 2^15 133 ms, 2^16 240–313 ms, 2^17 479–589 ms →
+      N = 2^16 (2^17 exceeds the 500 ms budget); both slots per attempt
+      ≈ 0.5–0.6 s; NOT measured under Hermes. THE PIN RECORD
+      (shiba-wallet.app-lock.v1, scope secret, read through a backend
+      bound to the PRIMARY profile so it is one device-wide record read
+      before any wallet loads): one fixed-shape 358-byte JSON with two
+      64-byte slots (salt + hash; an unset slot = random bytes), a
+      fixed-width hex counter and lockout-until; every attempt computes
+      BOTH hashes and compares each in constant time (the equalBytes loop,
+      @noble/curves utils.js 379–388); the counter written BEFORE hashing;
+      5 free attempts then 30 s doubling to 1 h; no wipe; a "current PIN"
+      typed in Settings counts only for the open wallet. LOCK: with a PIN
+      set WalletContext reads the record first and loads nothing until a
+      PIN is accepted; LockGate's PinPad (capture key 'pin-pad', keys
+      "Digit N", "N of 6 digits entered", digits cleared before the
+      check) serves the launch and background locks; the PIN is the ONLY
+      unlock (no biometric fallback, per §6); signing still uses the
+      device prompt; unlockWithPin drops any held phrase, sets the
+      in-memory profile (never written), reloads through the seam behind
+      the lock, and LockGate remounts the tree keyed on the profile; with
+      a PIN on, PrefsContext forces auto-lock on ("Off" hidden; a stored
+      off → 1 min), SCREEN PROTECTION ON (switch disabled) and
+      notifications OFF ("Notifications are off while the app PIN is on: a
+      notification can be read on the lock screen without your PIN.").
+      DECOY: BIP-85 child index 0 with the parent's word count, created
+      and stored under profile prefix w2 (shiba-wallet.profile-w2.… for
+      wallet and secret keys; device keys shared) before the duress slot
+      is set; "Remove wallet" with a PIN removes BOTH profiles (decoy
+      first: imported keys, sessions, the resets, the phrase, the public
+      cache, every wallet-scoped record of any prefix) and the PIN
+      record, keeping device settings; turning the PIN off (real wallet
+      only) or removing the duress PIN deletes the decoy. BACKUP CHECK:
+      the app records nothing when the quiz passes, so enabling the PIN
+      or adding a duress PIN opens the phrase with one device prompt and
+      asks for 2 random words from the written backup. COPY (exact, in
+      the agent's report and the suite): "Use a PIN to unlock", the
+      what-it-does / does-not-protect paragraphs ("…someone who copies
+      this app's storage from the phone can try every 6-digit PIN on a
+      computer… There is no PIN reset…"), the honest duress claim
+      ("…someone looking at the screen sees an ordinary wallet. Anyone
+      who copies this app's files from the phone can tell that two wallets
+      exist, and a 6-digit PIN can be guessed from such a copy. Funding
+      the second wallet from this wallet links them on-chain."), "Fund
+      the second wallet from an exchange or another source that has never
+      sent to or received from this wallet…", the BIP-85 sentence, the
+      remove dialogs. DEVIATIONS / OPEN: readiness row `duress-pin` NOT
+      added (config/readiness.ts is a shared registry outside the slice —
+      the Bridge slice adds it: advisory, every network, reason
+      DURESS_READINESS_REASON, evidence T-78 F-77); THREAT_MODEL T-09
+      still states the no-PIN decision (reword at the refresh); STILL
+      LEAKS INTO THE DECOY before Stage 3: recovery.ts's raw records, the
+      WalletConnect SDK's own storage and cached client, aa-config (the
+      decoy starts with no bundler — a visible difference); §7.9
+      decoy-session Settings ("Change PIN" changes the duress slot;
+      "Remove PIN" / "Add a duress PIN" end "This could not be completed on
+      this phone. Nothing was changed.") needs the Chairperson's
+      confirmation; §7.8 documents the BIP-39 PASSPHRASE variant pending
+      the Chairperson's answer. UNVERIFIED: everything on a device (Stage
+      3 on a throwaway wallet in the dev build); scrypt under Hermes;
+      the PinPad under TalkBack; capture blocked on the pad; the profile
+      switch at a background lock; "Remove wallet" from the decoy; iOS
+      Keychain keeping the record across a reinstall (may defeat the
+      "reinstall to reset" advice); session-key deletion in the
+      both-wallet wipe (pinned in source only).
