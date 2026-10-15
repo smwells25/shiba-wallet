@@ -140,7 +140,10 @@ examples/demo.mjs          Offline end-to-end engine demo
   screen protection is forced on (phase 21 item 2) and the window goes
   black again; the duress stages run on a THROWAWAY wallet in the local
   development build only. The emulator package: 37.2.12 was installed
-  on 2026-10-14 (BY HAND: sdkmanager 21.0 fails to unzip the archive — "Error reading Zip
+  on 2026-10-14 and ROLLED BACK to 37.1.11 on 2026-10-15 — the
+  Chairperson saw a black window on 37.2.12 while adb was normal; 37.1.11
+  + ANGLE is the configuration confirmed visible (37.2.12 kept at
+  ~/Library/Android/emulator-dl/emulator-37.2.12-set-aside; it was installed BY HAND: sdkmanager 21.0 fails to unzip the archive — "Error reading Zip
   content from a SeekableByteChannel" — so the official archive
   emulator-darwin_x64-16428233.zip was downloaded from
   dl.google.com/android/repository, its SHA-1 0c08fc22…e30b checked
@@ -8632,3 +8635,71 @@ Opus.
       switcher announcement once after "Accounts. Heading" (tune the 500 ms
       if cut off), not on toggle, still spoken on reappearance; the short
       addresses.
+- [x] Item 1, the in-app slice — THE BRIDGE SCREEN WITH A CHOICE OF
+      PROVIDER + the duress-pin readiness row (commit fe34deb; new
+      app/src/wallet/bridge.ts, BridgeScreen.tsx, BridgeViews.tsx,
+      check-bridge 159 (7 in-suite mutants) registered from a
+      single-line suites.mjs diff; check-readiness 208 (was 194);
+      readiness.ts rows `bridge` (testnet-only, enforced) and `duress-pin`
+      (mainnet-ok, advisory — the first and only mainnet-ok row);
+      offline runner ALL GREEN in the CTO's isolated worktree on HEAD
+      c3c4f18: engine 1,046, app 9,066 across 59 suites, lint 0/0, tsc
+      clean; four hand mutants caught; built by two agents — the first
+      cut by the session limit, the second continued from its diff and
+      fixed its lint errors (React Compiler purity: the AA bundle memo,
+      the offer computation and tracking moved to module-level hooks);
+      the 13 files secret-scan clean; NOT seen on a device, no bridge
+      sent through the app yet). DECISIONS (CTO accepted): CCTP is LISTED
+      AS "COMING", not quoted or sent (never sent by this wallet; moves
+      USDC while the screen moves the native coin; the destination mint
+      flow is not built) — "Coming later, not offered yet. Circle CCTP
+      moves USDC, not test ETH, and this wallet has not yet sent a CCTP
+      transfer on the test networks, so it does not offer one. It is
+      listed so you can compare who you would be trusting."; THE
+      RECIPIENT IS ALWAYS THE REGULAR ACCOUNT, also from the smart account
+      (Stargate's 2,300-gas delivery cannot reach a deployed Kernel; the
+      form says so before Review; the confirm warns when the regular
+      address has code on the receiving network; an EIP-7702 account is
+      "this same address"); transfer records IN MEMORY until the storage
+      seam takes them ("…not stored on the phone yet. The sending
+      transaction also appears in Activity." — it lands in the pending
+      registry through sendEvm / sendAa, so Speed up / Cancel apply;
+      smart-account bridge ops recorded as kind 'other'); the pinned-pool
+      line sits beside the risk card, not in it ("…pinned by this wallet
+      from Stargate's published test-network deployments and checked
+      on-chain on 2026-10-15. The risk card below does not know
+      Stargate's pools by name." — risk.ts untouched). INJECTIONS:
+      eth_call with endpoint failover, the keyless Scan API (size limit by
+      content-length, a judgement), the source receipt and destination
+      eth_getLogs in 9,000-block windows (at most 12 — a judgement),
+      estimateGas, the profile's symbol; checkBridgeQuote re-checks exact
+      approvals, value = amount + fee and the 14 pins before anything is
+      shown. SCREEN: intro ("…you trust the provider's contracts and
+      verifiers while it is on its way, so each provider below says who
+      that is…"), "You choose the provider…never picks one for you.",
+      radio rows (label, trust statement, fee, measured time), refusals
+      (Base Sepolia "Stargate has no pool there", Hoodi, custom networks,
+      "Does not serve A → B in this wallet."), the recipient sentences,
+      the confirm (fee line "LayerZero messaging fee (paid in test ETH)",
+      total "…before this network's own transaction fee", the measured
+      time + the engine's "Not a promise" sentence, "No token approval:
+      the pool takes the test ETH sent with the call itself.", the OP-stack
+      L1 rows, the pinned summary ending "All of these are fixed words of
+      the call (14 of them), so the wallet checked each one before showing
+      this screen."), prompt "Bridge 0.0002 test ETH to OP Sepolia through
+      LayerZero (Stargate)" (+ " from your smart account"), the success
+      view with the note field, 15-second tracking with headings "Not
+      checked yet" / "On its way" / "Delivered on <network>" / "Waiting for
+      a transaction on <network>" / "Failed" / "Not known yet", the retry
+      flow (prompt "Deliver bridged test ETH waiting in Stargate's pool on
+      OP Sepolia"; sent from the regular account while that network is
+      active) and "…too long ago for the wallet to search…". Docs:
+      BRIDGE_PROVIDERS.md §2 / §4.2 / §4.3 / §5 / §6 / §7 / §10 and the
+      BRIDGING.md pointers (§15.6 the flat 10^12-wei fee, §15.9, §15.15,
+      §15.16). STILL TO DO: the THREAT_MODEL bridge rows (BRIDGE_PROVIDERS
+      §8) and T-09 at the refresh; aa.ts has no 'bridge' AaOperationKind;
+      persistence of transfer records through the seam. UNVERIFIED: a
+      bridge sent through the app (emulator pass dispatched: 0.0002 test
+      ETH Sepolia → OP Sepolia from Account 1's regular account); layout,
+      TalkBack, dark mode; UnreceivedTokenCached / the retry live; the
+      decoders on raw receipts.
