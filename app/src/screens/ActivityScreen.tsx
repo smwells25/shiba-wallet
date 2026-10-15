@@ -20,7 +20,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { HistoryEntry } from '@shiba-wallet/core';
 import type { RootStackParamList } from '../navigation';
 import { Button, screenStyle, useFieldLabels } from '../components';
-import { activityRowSpokenLead } from '../a11y';
+import { activityRowSpokenLead, spokenShortAddress } from '../a11y';
 import { Theme, useTheme } from '../theme';
 import { networkDefaultFor } from '../config/defaults';
 import { maskAmount } from '../config/prefs';
@@ -839,7 +839,14 @@ export function ActivityScreen({ navigation, route }: Props) {
         {networkLabel} · {testnet ? 'TESTNET' : 'Mainnet'}
         {activeAccount ? ` · ${activeAccount.name}` : ''}
       </Text>
-      <Text selectable style={[styles.addressLine, { color: theme.textMuted }]}>
+      {/* The full address stays on screen (and selectable); a screen reader
+          hears the short form, "0x772e…F44F", as on the multisig rows (pass
+          p21a: TalkBack read all 42 characters). */}
+      <Text
+        selectable
+        accessibilityLabel={spokenShortAddress(account.address)}
+        style={[styles.addressLine, { color: theme.textMuted }]}
+      >
         {account.address}
       </Text>
     </View>

@@ -237,10 +237,32 @@ export function useFieldLabels(): (key: string, label: string, hint?: string) =>
  * clipped box out of the layout flow with transparent text — not opacity 0,
  * zero size or display "none", which may count as not shown to the user).
  * It changes no layout: it is absolutely positioned, so a parent's gap and
- * flow ignore it. Hidden from VoiceOver (accessibilityElementsHidden, iOS
- * only), which names the field by its accessibilityLabel instead. On
- * Android it stays an ordinary text node, exactly like a visible label, so
- * swiping reads it just before its field, as with every visible label.
+ * flow ignore it.
+ *
+ * Not a swipe stop (pass p21a finding 1b): with the default importance the
+ * 1×1 node was an extra TalkBack stop, read after its field or, being
+ * absolutely positioned at its parent's top-left, out of order (Contacts:
+ * "Contact name" before the network chips). It is now
+ * importantForAccessibility "no" (Android; RN 0.86.3
+ * BaseViewManager.java:472–483 sets View.IMPORTANT_FOR_ACCESSIBILITY_NO,
+ * and both Text managers are BaseViewManagers — ReactTextViewManager.kt:51–57,
+ * PreparedLayoutTextViewManager.kt:40 — so a Text takes the prop). The labelled-by lookup does not look at importance:
+ * ReactAccessibilityDelegate.kt:91–97 resolves the field's labelled_by tag
+ * with findView, which walks every child of the root view and matches only
+ * the nativeID (ReactFindViewUtil.kt:47–62), then calls setLabeledBy. RN's
+ * own mirror of the screen reader's rules treats a view that is not
+ * important and has no children as not speaking
+ * (ReactAccessibilityDelegate.kt:826–830, isSpeakingNode). Whether TalkBack
+ * still reads the text of a NOT-important labelling node through
+ * getLabeledBy is Android's and TalkBack's code, which is not on this
+ * machine — to be confirmed on the emulator (the field must still read
+ * "Edit box for <label>"). Hidden from VoiceOver too
+ * (accessibilityElementsHidden, iOS only), which names the field by its
+ * accessibilityLabel instead.
+ *
+ * Every call site renders it IMMEDIATELY before its field, so if a screen
+ * reader ever does reach it, it is next to the field it names (the
+ * check-devmode source scan fails otherwise).
  *
  * Usage, with the same key and text as the field:
  *   <HiddenFieldLabel field={fieldLabel('key', 'Label')} />
@@ -250,7 +272,7 @@ export function useFieldLabels(): (key: string, label: string, hint?: string) =>
  */
 export function HiddenFieldLabel({ field }: { field: FieldLabel }) {
   return (
-    <Text {...field.label} accessibilityElementsHidden style={HIDDEN_FIELD_LABEL_STYLE}>
+    <Text {...field.label} importantForAccessibility="no" accessibilityElementsHidden style={HIDDEN_FIELD_LABEL_STYLE}>
       {field.text}
     </Text>
   );

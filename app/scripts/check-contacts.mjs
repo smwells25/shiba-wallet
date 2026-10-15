@@ -516,5 +516,24 @@ console.log('Rename / delete:');
   );
 }
 
+// Pass p21a (noted): TalkBack read the Burn contact's full 42-character
+// address. A contact row keeps the full address on screen and speaks the
+// name and the short form.
+{
+  const { readFileSync } = await import('node:fs');
+  const { contactRowSpokenLabel } = await import('../src/a11y.ts');
+  const BURN = '0x000000000000000000000000000000000000dEaD';
+  check('p21a: a contact row is spoken "Burn, 0x0000…dEaD" (exact), never the 42 characters',
+    contactRowSpokenLabel({ name: 'Burn', address: BURN }) === 'Burn, 0x0000…dEaD' &&
+      !contactRowSpokenLabel({ name: 'Burn', address: BURN }).includes(BURN));
+  const picker = readFileSync(new globalThis.URL('../src/components/Contacts.tsx', import.meta.url), 'utf8');
+  const pickerOk = (src) =>
+    /accessibilityRole="button"[^]*?accessibilityLabel=\{contactRowSpokenLabel\(contact\)\}\s*accessibilityHint="Uses this contact's address as the recipient"/.test(src) &&
+    src.includes('<Text style={[styles.address, { color: theme.textMuted }]}>{contact.address}</Text>');
+  check('…the contact picker rows speak that label while still SHOWING the full address (source)', pickerOk(picker));
+  check('…mutant caught: a picker row with no label (its children, the full address, read again)',
+    !pickerOk(picker.replace('accessibilityLabel={contactRowSpokenLabel(contact)}\n', '')));
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

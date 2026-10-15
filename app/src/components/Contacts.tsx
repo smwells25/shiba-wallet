@@ -11,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import { Button, WarningBox, HiddenFieldLabel, useFieldLabels } from '../components';
+import { contactRowSpokenLabel } from '../a11y';
 import { useTheme } from '../theme';
 import {
   LookalikeContactError,
@@ -90,6 +91,12 @@ export function ContactPicker({
               <Pressable
                 key={contact.address}
                 accessibilityRole="button"
+                // The row shows the full address; a screen reader hears the
+                // name and the short form, "Burn, 0x0000…dEaD", as on the
+                // multisig rows (pass p21a: TalkBack read all 42 characters).
+                // The recipient is still spoken in full on the confirm screen
+                // (RecipientContactNotice), where it is checked.
+                accessibilityLabel={contactRowSpokenLabel(contact)}
                 accessibilityHint="Uses this contact's address as the recipient"
                 onPress={() => onPick(contact)}
                 style={({ pressed }) => [

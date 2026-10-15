@@ -1764,9 +1764,52 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
     const { HIDDEN_FIELD_LABEL_STYLE: hiddenStyle } = await import('../src/a11y.ts');
     check('p20d finding 1: HIDDEN_FIELD_LABEL_STYLE is absolute, 1×1, clipped, transparent text, never opacity 0 or display none (exact)',
       JSON.stringify(hiddenStyle) === JSON.stringify({ position: 'absolute', width: 1, height: 1, overflow: 'hidden', color: 'transparent' }));
-    check('…HiddenFieldLabel spreads the field label (its nativeID), hides itself from VoiceOver only and draws field.text with that style (source)',
-      /export function HiddenFieldLabel\(\{ field \}: \{ field: FieldLabel \}\) \{\s*return \(\s*<Text \{\.\.\.field\.label\} accessibilityElementsHidden style=\{HIDDEN_FIELD_LABEL_STYLE\}>\s*\{field\.text\}\s*<\/Text>/.test(comps) &&
-        !/<Text \{\.\.\.field\.label\}[^>]*importantForAccessibility/.test(comps));
+    // Pass p21a finding 1b: the 1×1 hidden label was an extra TalkBack swipe
+    // stop, read after its field or out of order. It is now
+    // importantForAccessibility "no" (Android) and accessibilityElementsHidden
+    // (iOS); the field still finds it through labelled-by (findView matches
+    // the nativeID only — RN 0.86.3 ReactFindViewUtil.kt:47–62).
+    const hiddenComponentOk = (src) =>
+      /export function HiddenFieldLabel\(\{ field \}: \{ field: FieldLabel \}\) \{\s*return \(\s*<Text \{\.\.\.field\.label\} importantForAccessibility="no" accessibilityElementsHidden style=\{HIDDEN_FIELD_LABEL_STYLE\}>\s*\{field\.text\}\s*<\/Text>/.test(src);
+    check('…HiddenFieldLabel spreads the field label (its nativeID), is NOT important for accessibility on Android (not a swipe stop), hidden from VoiceOver, and draws field.text with that style (source)',
+      hiddenComponentOk(comps));
+    check('…mutant caught (p21a finding 1b): the hidden label with the default importance again (an extra swipe stop)',
+      !hiddenComponentOk(comps.replace(' importantForAccessibility="no" accessibilityElementsHidden style={HIDDEN_FIELD_LABEL_STYLE}', ' accessibilityElementsHidden style={HIDDEN_FIELD_LABEL_STYLE}')));
+    // The hidden style is drawn ONLY by HiddenFieldLabel, so every hidden
+    // label in app/src carries the props above (no hand-rolled copy).
+    const styleUsers = files.filter(({ f, src }) => f !== 'a11y.ts' && /HIDDEN_FIELD_LABEL_STYLE\b/.test(src.replace(/^import\b[^;]*HIDDEN_FIELD_LABEL_STYLE[^;]*;/gm, '')));
+    check('…HIDDEN_FIELD_LABEL_STYLE is applied only inside HiddenFieldLabel (components.tsx), once',
+      styleUsers.length === 1 && styleUsers[0].f === 'components.tsx' &&
+        (comps.match(/style=\{HIDDEN_FIELD_LABEL_STYLE\}/g) ?? []).length === 1,
+      styleUsers.map((x) => x.f).join(', '));
+    check('…mutant caught: a hand-rolled hidden label elsewhere (default importance, a swipe stop)',
+      [...files, { f: 'mutant.tsx', src: '<Text nativeID={id} style={HIDDEN_FIELD_LABEL_STYLE}>Name</Text>' }]
+        .filter(({ f, src }) => f !== 'a11y.ts' && /HIDDEN_FIELD_LABEL_STYLE\b/.test(src.replace(/^import\b[^;]*HIDDEN_FIELD_LABEL_STYLE[^;]*;/gm, ''))).length === 2);
+    // Every <HiddenFieldLabel field={fn(KEY, …)} /> is followed DIRECTLY by
+    // the <TextInput> it names, whose first prop spreads fn(KEY, …).input:
+    // if a screen reader ever reaches the label, it is next to its field.
+    const hiddenOrderProblems = (all) => all.flatMap(({ f, src }) => {
+      if (f === 'components.tsx') return [];
+      const out = [];
+      const re = /<HiddenFieldLabel\s+field=\{(\w+)\(\s*('[^']*'|`[^`]*`),[^]*?\/>/g;
+      let m;
+      while ((m = re.exec(src))) {
+        const rest = src.slice(m.index + m[0].length);
+        const next = /^\s*<TextInput\s+\{\.\.\.(\w+)\(\s*('[^']*'|`[^`]*`),/.exec(rest);
+        if (!next || next[1] !== m[1] || next[2] !== m[2]) out.push(`${f} ${m[2]}`);
+      }
+      return out;
+    });
+    const hiddenCount = files.reduce((n, { f, src }) => n + (f === 'components.tsx' ? 0 : (src.match(/<HiddenFieldLabel\b/g) ?? []).length), 0);
+    check('p21a finding 1b: every HiddenFieldLabel call site renders the label IMMEDIATELY before the TextInput it names (same key), none elsewhere (source scan of app/src)',
+      hiddenOrderProblems(files).length === 0 && hiddenCount >= 26, `${hiddenCount} call sites; problems: ${hiddenOrderProblems(files).join(', ')}`);
+    const orderMutant = files.map((x) => (x.f === 'components/Contacts.tsx'
+      ? { ...x, src: x.src.replace("<HiddenFieldLabel field={fieldLabel('contact-name', 'Contact name')} />", '').replace('<Text selectable style={[styles.address, { color: theme.text }]}>', "<HiddenFieldLabel field={fieldLabel('contact-name', 'Contact name')} /><Text selectable style={[styles.address, { color: theme.text }]}>") }
+      : x));
+    check('…mutant caught: a hidden label moved away from its field (above the address line, as the Contacts dump showed)',
+      hiddenOrderProblems(orderMutant).length >= 1);
+    check('…mutant caught: a hidden label naming another field than the one after it',
+      hiddenOrderProblems([...files, { f: 'mutant.tsx', src: "<HiddenFieldLabel field={fieldLabel('a', 'A')} />\n<TextInput {...fieldLabel('b', 'B').input} />" }]).length === 1);
     const priceSrc = files.find((x) => x.f === 'screens/PriceAlertsScreen.tsx').src;
     check('…the Price-alerts price field has a VISIBLE label it is labelled by: "Alert price for <asset> (US dollars)" (source)',
       priceSrc.includes("const priceField = fieldLabel('price', `Alert price for ${asset.symbol} (US dollars)`);") &&
