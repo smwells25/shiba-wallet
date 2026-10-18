@@ -37,6 +37,7 @@ import {
   createAaClientFromConfig,
   describeAaError,
   effectiveAaAccountType,
+  fetchUserOpReceipt,
   getAaConfig,
   isAaConfigured,
   resolveAaSender,
@@ -54,6 +55,7 @@ import {
   BRIDGE_RECORDS_NOTE,
   BRIDGE_RECORDS_READ_ONLY_MESSAGE,
   BRIDGE_TRACK_INTERVAL_MS,
+  BRIDGE_USEROP_REVERTED,
   BridgeRefusal,
   broadcastStamped,
   bridgeConfirmModel,
@@ -96,13 +98,24 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Bridge'>;
 /**
  * The readers the adapters need: the active network's endpoint for the
  * active network, the built-in default endpoints (with failover) for every
- * other network.
+ * other network, and the configured bundler of the sending network for a
+ * smart-account transfer whose bundle transaction is not known yet.
  */
 function bridgeReadersFor(activeChainIdDecimal: string, sourceUrl: string | null): BridgeReaders {
   return {
     transportFor: (chainId: number) =>
       sourceUrl !== null && String(chainId) === activeChainIdDecimal ? evmHttpTransport(sourceUrl) : defaultChainTransport(chainId),
+    userOpReceipt: async ({ chainId, userOpHash }) => {
+      const config = await getAaConfig(`eip155:${chainId}`);
+      if (!config.bundlerUrl) throw new Error('No bundler is configured for that network any more, so the smart-account operation’s receipt cannot be read.');
+      return fetchUserOpReceipt(config.bundlerUrl, userOpHash);
+    },
   };
+}
+
+/** Whether tracking can ask about a record: it has a source transaction, or an operation to resolve it from. */
+function bridgeRecordTrackable(record: BridgeTransferRecord): boolean {
+  return !bridgeTransferFinal(record) && (record.sourceTxHash !== null || record.userOpHash !== null);
 }
 
 /**
@@ -339,7 +352,7 @@ export function BridgeScreen({ navigation }: Props) {
     const tick = () => {
       const readers = bridgeReadersFor(chainIdDecimal, url);
       for (const r of listBridgeTransfers()) {
-        if (!bridgeTransferFinal(r) && r.sourceTxHash !== null) void checkBridgeRecord(r, readers, inFlight, busy);
+        if (bridgeRecordTrackable(r)) void checkBridgeRecord(r, readers, inFlight, busy);
       }
     };
     tick();
@@ -602,7 +615,7 @@ export function BridgeScreen({ navigation }: Props) {
             updateBridgeTransfer(record.id, {
               sourceTxHash: summary.txHash,
               checkedAt: Date.now(),
-              status: { state: 'failed', detail: 'The smart-account operation was included but reverted, so nothing was bridged; its network fee was still charged.' },
+              status: { state: 'failed', detail: BRIDGE_USEROP_REVERTED },
             });
           } else if (summary.txHash) {
             updateBridgeTransfer(record.id, { sourceTxHash: summary.txHash });
@@ -629,7 +642,7 @@ export function BridgeScreen({ navigation }: Props) {
       .filter((r) => only === null || r.id === only)
       .map((r) => (
         <TransferStatusCard key={r.id} record={r} symbol={symbol} checking={checking[r.id] === true} theme={theme}>
-          {!bridgeTransferFinal(r) && r.sourceTxHash !== null ? (
+          {bridgeRecordTrackable(r) ? (
             <Button title="Check now" variant="secondary" onPress={() => void checkTransfer(r)} disabled={checking[r.id] === true} />
           ) : null}
           {bridgeRetryCall(r) ? (

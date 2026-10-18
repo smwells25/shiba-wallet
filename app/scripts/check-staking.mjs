@@ -1155,5 +1155,24 @@ console.log('\ncheck-staking: pass p20c finding 6 (what TalkBack says on the Sta
     !rowValueOk(views.replace("{...(spoken !== undefined ? { importantForAccessibility: 'no' as const, accessibilityElementsHidden: true } : {})}", '')));
 }
 
+// Each Staking view opens at the top (the Bridge rule of pass p21b, finding 4,
+// applied to Staking): every phase view carries its own ScrollView key, so
+// React never reuses the scrolled form's native ScrollView for Review.
+{
+  console.log('\n— each Staking view has its own ScrollView key —');
+  const screen = readFileSync(join(APP_ROOT, 'src/screens/StakingScreen.tsx'), 'utf8');
+  const views = readFileSync(join(APP_ROOT, 'src/screens/StakingViews.tsx'), 'utf8');
+  const EXPECTED = ['staking-aa-confirm', 'staking-approve', 'staking-confirm', 'staking-form', 'staking-success'];
+  const keysOf = (src) => [...src.matchAll(/<ScrollView key="(staking-[a-z-]+)"/g)].map((m) => m[1]).sort();
+  const keys = keysOf(screen);
+  check('the form, the approval step, both confirms and the success view each have their own ScrollView key, so a new view never inherits the previous view’s scroll position (source)',
+    JSON.stringify(keys) === JSON.stringify(EXPECTED), keys.join());
+  check('…the keys are distinct, and the views file holds no ScrollView of its own', new Set(keys).size === keys.length && !/<ScrollView\b/.test(views));
+  const keyless = screen.replace('<ScrollView key="staking-confirm" ', '<ScrollView ');
+  check('MUTANT (the confirm without its key) is caught', JSON.stringify(keysOf(keyless)) !== JSON.stringify(EXPECTED));
+  const duplicate = screen.replace('<ScrollView key="staking-aa-confirm" ', '<ScrollView key="staking-confirm" ');
+  check('MUTANT (two views sharing one key) is caught', new Set(keysOf(duplicate)).size !== keysOf(duplicate).length);
+}
+
 console.log(`\ncheck-staking: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

@@ -1720,7 +1720,7 @@ export function SendScreen({ route, navigation }: Props) {
   // ------------------------------------------------ success (smart account)
   if (phase === 'success' && aaResult) {
     return (
-      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content} {...NOTE_VIEW_SCROLL_PROPS}>
+      <ScrollView key="send-aa-success" style={screenStyle(theme)} contentContainerStyle={styles.content} {...NOTE_VIEW_SCROLL_PROPS}>
         <Text accessibilityRole="header" style={[styles.successTitle, { color: theme.success }]}>Sent to bundler ✓</Text>
         <Text style={[styles.label, { color: theme.textMuted }]}>UserOperation hash</Text>
         <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border }]}>
@@ -1804,7 +1804,7 @@ export function SendScreen({ route, navigation }: Props) {
   // -------------------------------------------------------------- success
   if (phase === 'success' && result) {
     return (
-      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content} {...NOTE_VIEW_SCROLL_PROPS}>
+      <ScrollView key="send-success" style={screenStyle(theme)} contentContainerStyle={styles.content} {...NOTE_VIEW_SCROLL_PROPS}>
         <Text accessibilityRole="header" style={[styles.successTitle, { color: theme.success }]}>Sent ✓</Text>
         <Text style={[styles.label, { color: theme.textMuted }]}>Transaction id</Text>
         <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border }]}>
@@ -1849,7 +1849,7 @@ export function SendScreen({ route, navigation }: Props) {
         })
       : null;
     return (
-      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+      <ScrollView key="send-aa-confirm" style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={network.label} testnet={testnet} theme={theme} />
 
         <View style={[styles.aaTag, { borderColor: theme.accent }]}>
@@ -2074,7 +2074,7 @@ export function SendScreen({ route, navigation }: Props) {
     // would be mined, charge the full fee, and move no tokens.
     const blocked = (simulationFailed || quote.returnedFalse) && !overrideSimulation;
     return (
-      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+      <ScrollView key="send-erc20-confirm" style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={network.label} testnet={testnet} theme={theme} />
 
         <Row label="From account" value={fromName} sub={quotedFrom} theme={theme} />
@@ -2189,7 +2189,7 @@ export function SendScreen({ route, navigation }: Props) {
     const simulationFailed = !quote.simulation.ok;
     const blocked = simulationFailed && !overrideSimulation;
     return (
-      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+      <ScrollView key="send-nft-confirm" style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={network.label} testnet={testnet} theme={theme} />
 
         <Row label="From account" value={fromName} sub={quotedFrom} theme={theme} />
@@ -2295,7 +2295,7 @@ export function SendScreen({ route, navigation }: Props) {
     const simulationFailed = quote.kind === 'evm' && !quote.simulation.ok;
     const sendBlocked = simulationFailed && !overrideSimulation;
     return (
-      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+      <ScrollView key="send-confirm" style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={network.label} testnet={testnet} theme={theme} />
 
         <Row label="From account" value={fromName} sub={quotedFrom} theme={theme} />
@@ -2413,7 +2413,7 @@ export function SendScreen({ route, navigation }: Props) {
 
   // ----------------------------------------------------------------- form
   return (
-    <ScrollView
+    <ScrollView key="send-form"
       style={screenStyle(theme)}
       contentContainerStyle={styles.content}
       keyboardShouldPersistTaps="handled"

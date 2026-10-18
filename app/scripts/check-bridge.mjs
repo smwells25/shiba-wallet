@@ -76,6 +76,12 @@ import {
   BRIDGE_TIME_NOT_PROMISE,
   BRIDGE_TRACK_INTERVAL_MS,
   BRIDGE_TRUST,
+  BRIDGE_USEROP_NOT_INCLUDED,
+  BRIDGE_USEROP_RECEIPT_MALFORMED,
+  BRIDGE_USEROP_REVERTED,
+  BRIDGE_USEROP_WAITING,
+  bridgeUserOpRevertedDetail,
+  readBridgeUserOpReceipt,
   BridgeRefusal,
   CCTP_COMING_NOTE,
   LAYERZERO_APP_LABEL,
@@ -100,6 +106,7 @@ import {
   listBridgeTransfers,
   measuredTimeLine,
   noRouteNote,
+  noSourceRouteNote,
   prepareBridgeAa,
   prepareBridgeRetry,
   prepareBridgeSend,
@@ -951,6 +958,168 @@ console.log('check-bridge: transfer records stored per wallet (phase 21)');
   await mk.resetBridgeTransfers();
   await mr.resetBridgeTransfers();
 }
+// ---------------------------------------------------------------------------
+console.log('check-bridge: a smart-account transfer resolved from the bundler’s receipt (the app closed before it arrived)');
+// ---------------------------------------------------------------------------
+{
+  const memStore = () => {
+    const map = new Map();
+    return {
+      map,
+      getItem: async (k) => (map.has(k) ? map.get(k) : null),
+      setItem: async (k, v) => {
+        map.set(k, v);
+      },
+      removeItem: async (k) => {
+        map.delete(k);
+      },
+    };
+  };
+  resetChains();
+  await resetBridgeTransfers();
+  const aaPlan = await quoteBridge(quoteRequest({ sender: KERNEL_ACCOUNT_0, senderKind: 'smart-account', recipient: OWNER_0 }));
+  const store = memStore();
+  await loadBridgeTransfers(store);
+  const USEROP = '0x' + 'cd'.repeat(32);
+  const rec = recordBridgeTransfer(aaPlan, { sourceTxHash: null, userOpHash: USEROP, sentAt: 1_791_900_500_000 });
+  await bridgeTransfersWritten();
+  const storedBefore = store.map.get(BRIDGE_TRANSFERS_KEY);
+  const parsedBefore = parseBridgeTransfers(storedBefore);
+  check('the stored record of an unresolved smart-account transfer parses: version 1, the same exact key set, sourceTxHash null, the userOpHash kept (no new field, no version bump)',
+    JSON.parse(storedBefore).version === 1 && !parsedBefore.readOnly && parsedBefore.records.length === 1 &&
+      Object.keys(JSON.parse(storedBefore).records[0]).length === 18 && parsedBefore.records[0].sourceTxHash === null &&
+      parsedBefore.records[0].userOpHash === USEROP && parsedBefore.records[0].senderKind === 'smart-account');
+  check('the copy: the waiting, not-included, reverted and malformed sentences (exact)',
+    BRIDGE_USEROP_WAITING === 'Waiting for the bundle transaction that carries the smart-account operation; tracking starts once it is known.' &&
+      BRIDGE_USEROP_NOT_INCLUDED === 'The smart-account operation has not been included yet: the bundler has no receipt for it. Tracking starts once it is included in a bundle transaction.' &&
+      BRIDGE_USEROP_REVERTED === 'The smart-account operation was included but reverted, so nothing was bridged; its network fee was still charged.' &&
+      BRIDGE_USEROP_RECEIPT_MALFORMED === 'The bundler’s receipt for the smart-account operation was not in the expected shape, so the wallet did not use it and will ask again.');
+
+  let asks = [];
+  let answer = null;
+  const readers = { ...readersFor(SEPOLIA), userOpReceipt: async (req) => {
+    asks.push(req);
+    return typeof answer === 'function' ? answer() : answer;
+  } };
+  const findRec = (id) => listBridgeTransfers().find((r) => r.id === id);
+  const sepoliaCalls = () => chains.get(SEPOLIA).calls.length;
+
+  // 1. Not included yet: the record stays as it is.
+  fetchLog = [];
+  let callsBefore = sepoliaCalls();
+  const st0 = await trackBridgeTransfer(rec, readers);
+  await bridgeTransfersWritten();
+  check('a null receipt → "Not known yet" with the not-included sentence; the bundler was asked once for this operation on the sending network',
+    st0.state === 'unknown' && st0.detail === BRIDGE_USEROP_NOT_INCLUDED && asks.length === 1 && asks[0].chainId === SEPOLIA && asks[0].userOpHash === USEROP, st0.detail);
+  check('…the record is unchanged (no hash, stored document byte for byte the same) and nothing else was asked (no node request, no Scan request)',
+    findRec(rec.id).sourceTxHash === null && store.map.get(BRIDGE_TRANSFERS_KEY) === storedBefore && sepoliaCalls() === callsBefore && fetchLog.length === 0);
+
+  // 2. Included: the bundle hash is stored and tracking continues by it in the same pass.
+  chains.get(SEPOLIA).receipts.set(SOURCE_TX, { status: '0x1', logs: [oftSentLog(SEPOLIA, OP, GUID, AMOUNT, KERNEL_ACCOUNT_0), packetSentLog(SEPOLIA, OP)] });
+  scanAnswer = { status: 404 };
+  answer = { userOpHash: USEROP, sender: KERNEL_ACCOUNT_0, success: true, receipt: { transactionHash: SOURCE_TX, status: '0x1' } };
+  asks = [];
+  callsBefore = sepoliaCalls();
+  const st1 = await trackBridgeTransfer(rec, readers);
+  const sourceReads = chains.get(SEPOLIA).calls.slice(callsBefore).filter((c) => c.method === 'eth_getTransactionReceipt');
+  check('resolved on the first pass: the bundle transaction from the receipt is read on the sending network and the transfer is followed by it (in flight, with the GUID)',
+    st1.state === 'in-flight' && st1.onChain?.guid === GUID && sourceReads.length >= 1 && sourceReads[0].params[0] === SOURCE_TX && asks.length === 1, `${st1.state} ${st1.detail}`);
+  check('…the hash is stored on the record in memory', findRec(rec.id).sourceTxHash === SOURCE_TX && findRec(rec.id).userOpHash === USEROP);
+  await bridgeTransfersWritten();
+  const storedAfter = JSON.parse(store.map.get(BRIDGE_TRANSFERS_KEY));
+  const parsedAfter = parseBridgeTransfers(store.map.get(BRIDGE_TRANSFERS_KEY));
+  check('…and in the stored document, which still parses strictly: version 1, the same 18 keys, the hash, the operation, no final status yet',
+    storedAfter.version === 1 && Object.keys(storedAfter.records[0]).length === 18 && storedAfter.records[0].sourceTxHash === SOURCE_TX &&
+      storedAfter.records[0].userOpHash === USEROP && storedAfter.records[0].final === null && !parsedAfter.readOnly && parsedAfter.records[0].sourceTxHash === SOURCE_TX);
+  await resetBridgeTransfers();
+  await loadBridgeTransfers(store);
+  asks = [];
+  const back = findRec(rec.id);
+  const stBack = await trackBridgeTransfer(back, readers);
+  check('after a restart the resolved transfer is followed by its hash with no bundler request', back.sourceTxHash === SOURCE_TX && asks.length === 0 && stBack.state === 'in-flight');
+
+  // 3. A failed operation: failed, with the receipt's reason; nothing else asked.
+  const USEROP2 = '0x' + 'ce'.repeat(32);
+  const BUNDLE2 = '0x' + '5a'.repeat(32);
+  const REASON = '0x7b5812d4'; // CallViolatesValueRule(), a revert reason seen live (phase 19)
+  const rec2 = recordBridgeTransfer(aaPlan, { sourceTxHash: null, userOpHash: USEROP2, sentAt: 1_791_900_600_000 });
+  answer = { userOpHash: USEROP2, sender: KERNEL_ACCOUNT_0, success: false, reason: REASON, receipt: { transactionHash: BUNDLE2 } };
+  callsBefore = sepoliaCalls();
+  fetchLog = [];
+  const st2 = await trackBridgeTransfer(rec2, readers);
+  check('a reverted operation → failed, with the receipt’s reason quoted (exact), final',
+    st2.state === 'failed' && bridgeTransferFinal({ status: st2 }) &&
+      st2.detail === `The smart-account operation was included but reverted, so nothing was bridged; its network fee was still charged. The bundler reported this reason: ${REASON}.`, st2.detail);
+  check('…the bundle hash is kept on the record and nothing else was asked (no source receipt, no Scan)',
+    findRec(rec2.id).sourceTxHash === BUNDLE2 && sepoliaCalls() === callsBefore && fetchLog.length === 0);
+  updateBridgeTransfer(rec2.id, { status: st2, checkedAt: 1_791_900_600_500 }); // as the screen does with the answer
+  await bridgeTransfersWritten();
+  const failedBack = parseBridgeTransfers(store.map.get(BRIDGE_TRANSFERS_KEY));
+  const failedRec = failedBack.records.find((r) => r.id === rec2.id);
+  check('…stored as the final failed state, and the document still parses strictly',
+    !failedBack.readOnly && failedRec?.status?.state === 'failed' && failedRec.status.detail === st2.detail && failedRec.sourceTxHash === BUNDLE2);
+  check('a reverted operation without a usable reason: the plain sentence (no reason given; unprintable text dropped; "0x" alone dropped)',
+    bridgeUserOpRevertedDetail(null) === BRIDGE_USEROP_REVERTED &&
+      readBridgeUserOpReceipt({ success: false, reason: 'bad\u0007text', receipt: { transactionHash: BUNDLE2 } }, rec2).reason === null &&
+      readBridgeUserOpReceipt({ success: false, reason: '0x', receipt: { transactionHash: BUNDLE2 } }, rec2).reason === null &&
+      readBridgeUserOpReceipt({ success: false, reason: 'AA23 reverted', receipt: { transactionHash: BUNDLE2 } }, rec2).reason === 'AA23 reverted');
+
+  // 4. Malformed receipts are refused and change nothing.
+  const USEROP3 = '0x' + 'cf'.repeat(32);
+  const rec3 = recordBridgeTransfer(aaPlan, { sourceTxHash: null, userOpHash: USEROP3, sentAt: 1_791_900_700_000 });
+  const malformed = {
+    'a string': '0x1234',
+    'a list': [SOURCE_TX],
+    'no transaction hash': { userOpHash: USEROP3, success: true },
+    'a hash that is not 32 bytes': { userOpHash: USEROP3, success: true, receipt: { transactionHash: '0x12' } },
+    'no success flag': { userOpHash: USEROP3, receipt: { transactionHash: SOURCE_TX } },
+    'a success flag of another kind': { userOpHash: USEROP3, success: 'yes', receipt: { transactionHash: SOURCE_TX } },
+    'another operation': { userOpHash: USEROP, success: true, receipt: { transactionHash: SOURCE_TX } },
+    'another sender': { userOpHash: USEROP3, sender: OWNER_0, success: true, receipt: { transactionHash: SOURCE_TX } },
+  };
+  const accepted = [];
+  for (const [name, value] of Object.entries(malformed)) {
+    answer = value;
+    const e = await rejection(() => trackBridgeTransfer(rec3, readers));
+    if (!(e instanceof BridgeRefusal) || e.message !== BRIDGE_USEROP_RECEIPT_MALFORMED || findRec(rec3.id).sourceTxHash !== null) accepted.push(name);
+  }
+  check(`a malformed receipt is refused with the plain sentence and leaves the record unresolved (${Object.keys(malformed).length} shapes)`, accepted.length === 0, accepted.join(', '));
+  answer = () => {
+    throw new Error('bundler down');
+  };
+  const down = await rejection(() => trackBridgeTransfer(rec3, readers));
+  check('a bundler that does not answer: the error reaches the screen (shown as a check error) and the record is unchanged', down?.message === 'bundler down' && findRec(rec3.id).sourceTxHash === null);
+
+  // MUTANTS.
+  const mNo = await bridgeMutant(
+    '    if (record.userOpHash === null || !readers.userOpReceipt) return { state: \'unknown\', detail: BRIDGE_USEROP_WAITING };',
+    '    return { state: \'unknown\', detail: BRIDGE_USEROP_WAITING };',
+  );
+  answer = { userOpHash: USEROP, sender: KERNEL_ACCOUNT_0, success: true, receipt: { transactionHash: SOURCE_TX } };
+  const mSt = await mNo.trackBridgeTransfer({ ...rec, sourceTxHash: null }, readers);
+  check('MUTANT (no resolution from the bundler’s receipt) is caught', mSt.state !== 'in-flight', mSt.state);
+  const mHash = await bridgeMutant(
+    "  if (raw.userOpHash !== undefined && (typeof raw.userOpHash !== 'string' || raw.userOpHash.toLowerCase() !== (record.userOpHash ?? '').toLowerCase())) refuse();\n",
+    '',
+  );
+  const mOut = await rejection(async () => mHash.readBridgeUserOpReceipt(malformed['another operation'], rec3));
+  check('MUTANT (a receipt for another operation accepted) is caught', !(mOut instanceof Error));
+  await mNo.resetBridgeTransfers();
+  await mHash.resetBridgeTransfers();
+
+  // The screen asks the configured bundler through aa.ts and tracks transfers that have only an operation hash (source).
+  const screen = readFileSync(join(APP_ROOT, 'src/screens/BridgeScreen.tsx'), 'utf8');
+  const wired = (src) =>
+    src.includes('return fetchUserOpReceipt(config.bundlerUrl, userOpHash);') && src.includes('const config = await getAaConfig(`eip155:${chainId}`);') &&
+    src.includes('return !bridgeTransferFinal(record) && (record.sourceTxHash !== null || record.userOpHash !== null);') &&
+    src.includes('if (bridgeRecordTrackable(r)) void checkBridgeRecord(r, readers, inFlight, busy);') && src.includes('{bridgeRecordTrackable(r) ? (') &&
+    !src.includes('r.sourceTxHash !== null ? (');
+  check('the screen: the bundler reader is built from aa.ts fetchUserOpReceipt with the sending network’s configured bundler, and the timer and "Check now" include a transfer known only by its operation (source)', wired(screen));
+  check('MUTANT (the timer skipping transfers without a source hash, as before) is caught',
+    !wired(screen.replace('if (bridgeRecordTrackable(r)) void checkBridgeRecord', 'if (!bridgeTransferFinal(r) && r.sourceTxHash !== null) void checkBridgeRecord')));
+  await resetBridgeTransfers();
+  resetChains();
+}
 {
   // The readers on their own.
   const scan = layerZeroScanReader();
@@ -1136,6 +1305,26 @@ console.log('check-bridge: the emulator pass p21b findings (provider choice, spo
     src.includes('const inputsShown = offer !== null && bridgeFormInputsShown(offer);') && src.includes('{offer.unavailable ? <WarningBox>{offer.unavailable}</WarningBox> : null}');
   check('…the screen gates the chips and the amount on it; the explanatory sentence and the provider rows stay (source)', inputsGated(screen));
   check('MUTANT (the amount field shown regardless) is caught', !inputsGated(screen.replace('{inputsShown ? (\n        <>\n          <Text {...amountField.label}', '{true ? (\n        <>\n          <Text {...amountField.label}')));
+
+  // (7, leftover) Where the chips are hidden, a provider row's reason names
+  // only the source network: the form offers no destination to point at.
+  const baseOffer = bridgeOfferFor(caip(BASE));
+  const baseRowsAll = baseOffer.destinations.map((d) => bridgeProviderRows(baseOffer, d.chainId));
+  const lzNotes = baseRowsAll.map((rows) => rows.find((r) => r.label === LAYERZERO_APP_LABEL)?.note);
+  check('finding 7 leftover: on Base Sepolia (chips hidden) the LayerZero row says only "Does not serve Base Sepolia in this wallet." for every destination the screen could fall back to (exact)',
+    baseOffer.destinations.length > 0 && lzNotes.every((n) => n === 'Does not serve Base Sepolia in this wallet.') && noSourceRouteNote('Base Sepolia') === 'Does not serve Base Sepolia in this wallet.' &&
+      lzNotes.every((n) => !/→/.test(n ?? '')), lzNotes.join(' | '));
+  check('…the CCTP row on Base Sepolia keeps its coming note', baseRowsAll.every((rows) => rows.some((r) => !r.selectable && r.note === CCTP_COMING_NOTE)));
+  const sepToBase = bridgeProviderRows(bridgeOfferFor(caip(SEPOLIA)), BASE);
+  check('…where the chips are shown (Ethereum Sepolia), the destination variant stays: "Does not serve Ethereum Sepolia → Base Sepolia in this wallet." (exact)',
+    sepToBase[0].note === 'Does not serve Ethereum Sepolia → Base Sepolia in this wallet.', sepToBase[0].note);
+  const m7b = await bridgeMutant(
+    "const noRoute = bridgeFormInputsShown(offer) ? noRouteNote(offer.sourceLabel, destinationLabel) : noSourceRouteNote(offer.sourceLabel);",
+    'const noRoute = noRouteNote(offer.sourceLabel, destinationLabel);',
+  );
+  const mBase = m7b.bridgeOfferFor(caip(BASE));
+  const mNote = m7b.bridgeProviderRows(mBase, mBase.destinations[0].chainId)[0].note;
+  check('MUTANT (the old destination sentence on a network with the chips hidden) is caught', mNote !== 'Does not serve Base Sepolia in this wallet.', mNote);
 
   // (8) The sent time is the broadcast's, whatever waits afterwards.
   let clock = 1_000;
