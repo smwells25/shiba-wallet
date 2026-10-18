@@ -74,13 +74,18 @@ const STORE_VERSION = 1;
  * At most this many records are kept (judgement). go-ethereum guarantees an
  * account 16 executable pool slots by default (legacypool.go AccountSlots),
  * so 64 covers several accounts on several networks with room for their
- * replacements. Over the cap, the oldest RESOLVED notices go first, then the
+ * replacements. Over the cap, the oldest RESOLVED notices and replacement
+ * markers go first, then the
  * oldest pending records; dropping a pending record only removes the
  * wallet's ability to speed it up from Activity, it changes nothing on-chain.
  */
 export const MAX_PENDING_RECORDS = 64;
 
-/** A resolved notice ("Replaced by …", "Cancelled") stays this long (judgement: one day). */
+/**
+ * A resolved notice ("Replaced by …", "Cancelled") is shown this long
+ * (judgement: one day); after that it becomes a ReplacementMarker, which
+ * keeps the Activity row's line until the cap evicts it.
+ */
 export const RESOLVED_KEEP_MS = 24 * 60 * 60 * 1000;
 
 /** The pools' replacement bump (go-ethereum and reth default; see the file comment). */
@@ -209,7 +214,32 @@ export interface ResolvedRecord {
   resolvedAt: number;
 }
 
-export type PendingRecord = PendingTxRecord | PendingUserOpRecord | ResolvedRecord;
+/**
+ * What stays of a resolved nonce once its notice is no longer shown (the
+ * user tapped Dismiss, or the notice is older than RESOLVED_KEEP_MS): only
+ * the facts the Activity row of the included transaction needs for its
+ * "Speed-up of …" / "Cancellation of …" line (replacementRowLine). Before
+ * pass p21e the whole record was deleted on Dismiss, so that line vanished
+ * from Activity once the notice was dismissed. A marker shows no notice. It
+ * stays until the registry's cap (MAX_PENDING_RECORDS) evicts it — markers
+ * and notices go first, oldest first — or the pending list is reset or the
+ * wallet wiped; after that the row has no such line.
+ */
+export interface ReplacementMarker {
+  kind: 'marker';
+  chain: string;
+  from: string;
+  nonce: string;
+  outcome: ResolvedOutcome;
+  /** The hash a block included (the row the line belongs to). */
+  minedHash: string;
+  /** The wallet's original transaction for this nonce. */
+  original: string;
+  /** Unix milliseconds when the notice stopped being shown. */
+  markedAt: number;
+}
+
+export type PendingRecord = PendingTxRecord | PendingUserOpRecord | ResolvedRecord | ReplacementMarker;
 
 export interface PendingRegistry {
   records: PendingRecord[];
@@ -490,6 +520,19 @@ function validResolved(r: Record<string, unknown>): ResolvedRecord | null {
   return r as unknown as ResolvedRecord;
 }
 
+function validMarker(r: Record<string, unknown>): ReplacementMarker | null {
+  const keys = ['kind', 'chain', 'from', 'nonce', 'outcome', 'minedHash', 'original', 'markedAt'];
+  if (Object.keys(r).length !== keys.length || !keys.every((k) => k in r)) return null;
+  if (typeof r.chain !== 'string' || !CHAIN.test(r.chain)) return null;
+  if (typeof r.from !== 'string' || !ADDRESS.test(r.from)) return null;
+  if (typeof r.nonce !== 'string' || !DECIMAL.test(r.nonce)) return null;
+  if (r.outcome !== 'replaced' && r.outcome !== 'cancelled' && r.outcome !== 'original-first') return null;
+  if (typeof r.minedHash !== 'string' || !HASH.test(r.minedHash)) return null;
+  if (typeof r.original !== 'string' || !HASH.test(r.original)) return null;
+  if (!isTime(r.markedAt)) return null;
+  return r as unknown as ReplacementMarker;
+}
+
 /** Strict validation of one stored record; null when anything is off. */
 export function validateRecord(value: unknown): PendingRecord | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
@@ -497,6 +540,7 @@ export function validateRecord(value: unknown): PendingRecord | null {
   if (r.kind === 'tx') return validTx(r);
   if (r.kind === 'userop') return validUserOp(r);
   if (r.kind === 'resolved') return validResolved(r);
+  if (r.kind === 'marker') return validMarker(r);
   return null;
 }
 
@@ -534,6 +578,7 @@ export function parseRegistry(raw: string | null): PendingRegistry {
 function recordId(r: PendingRecord): string {
   if (r.kind === 'tx') return `tx:${r.chain}:${r.hash}`;
   if (r.kind === 'userop') return `op:${r.chain}:${r.userOpHash}`;
+  if (r.kind === 'marker') return `marker:${r.chain}:${r.minedHash}`;
   return `resolved:${r.chain}:${r.from}:${r.nonce}`;
 }
 
@@ -566,12 +611,32 @@ function serialized<T>(store: object, task: () => Promise<T>): Promise<T> {
   return next;
 }
 
-/** Drops expired notices, then enforces the cap (resolved first, then oldest pending). */
+/** The marker a resolved notice leaves behind when it is no longer shown. */
+export function markerFor(r: ResolvedRecord, nowMs: number): ReplacementMarker {
+  return {
+    kind: 'marker',
+    chain: r.chain,
+    from: r.from,
+    nonce: r.nonce,
+    outcome: r.outcome,
+    minedHash: r.minedHash,
+    original: r.original,
+    markedAt: nowMs,
+  };
+}
+
+/**
+ * Turns notices older than RESOLVED_KEEP_MS into markers (the notice stops
+ * showing; the Activity line stays), then enforces the cap: notices and
+ * markers go first, oldest first, then the oldest pending record.
+ */
 export function pruneRecords(records: readonly PendingRecord[], nowMs: number): PendingRecord[] {
-  let kept = records.filter((r) => r.kind !== 'resolved' || nowMs - r.resolvedAt <= RESOLVED_KEEP_MS);
+  let kept = records.map((r) => (r.kind === 'resolved' && nowMs - r.resolvedAt > RESOLVED_KEEP_MS ? markerFor(r, nowMs) : r));
   if (kept.length <= MAX_PENDING_RECORDS) return kept;
-  const timeOf = (r: PendingRecord) => (r.kind === 'resolved' ? r.resolvedAt : r.sentAt);
-  const resolvedOldestFirst = kept.filter((r) => r.kind === 'resolved').sort((a, b) => timeOf(a) - timeOf(b));
+  const timeOf = (r: PendingRecord) => (r.kind === 'resolved' ? r.resolvedAt : r.kind === 'marker' ? r.markedAt : r.sentAt);
+  const resolvedOldestFirst = kept
+    .filter((r) => r.kind === 'resolved' || r.kind === 'marker')
+    .sort((a, b) => timeOf(a) - timeOf(b));
   const drop = new Set<PendingRecord>();
   for (const r of resolvedOldestFirst) {
     if (kept.length - drop.size <= MAX_PENDING_RECORDS) break;
@@ -757,6 +822,30 @@ export async function settleNonce(
       ),
       ...(resolved ? [resolved] : []),
     ],
+    nowMs,
+  );
+}
+
+/**
+ * The notice's Dismiss: hides the notice but keeps the replacement fact
+ * (the notice becomes a ReplacementMarker), so the included transaction's
+ * Activity row keeps its "Speed-up of …" / "Cancellation of …" line.
+ */
+export async function dismissResolvedNotice(
+  key: { chain: string; from: string; nonce: string; minedHash: string },
+  store: PendingStore = AsyncStorage,
+  nowMs: number = Date.now(),
+): Promise<void> {
+  const from = lower(key.from);
+  const mined = lower(key.minedHash);
+  await update(
+    store,
+    (records) =>
+      records.map((r) =>
+        r.kind === 'resolved' && r.chain === key.chain && r.from === from && r.nonce === key.nonce && r.minedHash === mined
+          ? markerFor(r, nowMs)
+          : r,
+      ),
     nowMs,
   );
 }
@@ -1017,12 +1106,14 @@ export function resolvedSentence(r: ResolvedRecord): string {
 /**
  * The extra line an Activity row of an included replacement carries
  * ("Replaced by …" is said on the original's notice; the row itself, which
- * the history lists, says what it was). Null for any other row.
+ * the history lists, says what it was). Read from a shown notice or from the
+ * marker a dismissed or expired notice leaves, so it lasts until the
+ * registry's cap evicts the record. Null for any other row.
  */
 export function replacementRowLine(records: readonly PendingRecord[], chain: string, id: string): string | null {
   const h = lower(id);
   for (const r of records) {
-    if (r.kind !== 'resolved' || r.chain !== chain || r.minedHash !== h) continue;
+    if ((r.kind !== 'resolved' && r.kind !== 'marker') || r.chain !== chain || r.minedHash !== h) continue;
     if (r.outcome === 'replaced') return `Speed-up of transaction ${shortHash(r.original)} (nonce ${r.nonce}).`;
     if (r.outcome === 'cancelled') return `Cancellation of transaction ${shortHash(r.original)} (nonce ${r.nonce}).`;
     return `Included before its replacement (nonce ${r.nonce}); the replacement was rejected.`;

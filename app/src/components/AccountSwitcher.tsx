@@ -5,6 +5,7 @@ import {
   Alert,
   FlatList,
   Modal,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -67,12 +68,22 @@ export function AccountSwitcher({ onManage, onImportKey }: { onManage: () => voi
   const [contentHeight, setContentHeight] = useState(0);
   const [scrollY, setScrollY] = useState(0);
   // "More accounts below" spoken once per open when the list opens with
-  // rows below the fold (pass p21a finding 7; a11y.ts
-  // createOverflowAnnouncer). AccessibilityInfo.announceForAccessibility
-  // sends a TYPE_ANNOUNCEMENT event on Android only while an accessibility
-  // service is on (RN 0.86.3 AccessibilityInfo.js:474–480 →
-  // AccessibilityInfoModule.kt:282–292) and posts a VoiceOver announcement
-  // on iOS. The live region below still covers the line reappearing.
+  // rows below the fold (pass p21a finding 7). ONE path per platform (pass
+  // p21e finding B2c: on Android the line was spoken twice on open):
+  // - Android: the polite live region below ALONE. The sizes are reset when
+  //   the switcher opens (the onPress below), so the line is always absent
+  //   at first and appears once the list is measured; that appearance is a
+  //   content change the live region announces (passes p21b and p21e heard
+  //   it on open — p21a, before the reset existed, did not, because the
+  //   line was present from the window's first frame). The same live region
+  //   speaks the line when it reappears after scrolling back up. The
+  //   delayed announcement (a11y.ts createOverflowAnnouncer) is NOT used on
+  //   Android: it repeated the line 500 ms later, and TalkBack then did not
+  //   read "Accounts. Heading" on open (inferred from the p21e order).
+  // - iOS: accessibilityLiveRegion is Android-only, so VoiceOver gets the
+  //   announcement (AccessibilityInfo.announceForAccessibility posts a
+  //   VoiceOver announcement; RN 0.86.3 AccessibilityInfo.js:474–480).
+  const announceOnOpen = Platform.OS === 'ios';
   const [announcer] = useState<OverflowAnnouncer>(() =>
     createOverflowAnnouncer({
       message: SWITCHER_SCROLL_HINT,
@@ -82,16 +93,17 @@ export function AccountSwitcher({ onManage, onImportKey }: { onManage: () => voi
     }),
   );
   useEffect(() => {
+    if (!announceOnOpen) return;
     if (open) announcer.opened();
     else announcer.closed();
-  }, [announcer, open]);
+  }, [announcer, announceOnOpen, open]);
   useEffect(() => {
-    if (!open) return;
+    if (!announceOnOpen || !open) return;
     announcer.update({
       measured: listHeight > 0 && contentHeight > 0,
       overflows: switcherListOverflows({ listHeight, contentHeight, scrollY }),
     });
-  }, [announcer, open, listHeight, contentHeight, scrollY]);
+  }, [announcer, announceOnOpen, open, listHeight, contentHeight, scrollY]);
   // Unmounting drops a scheduled announcement (closed, not disposed, so a
   // development-mode effect re-run leaves the announcer usable).
   useEffect(() => () => announcer.closed(), [announcer]);

@@ -234,10 +234,9 @@ export function useFieldLabels(): (key: string, label: string, hint?: string) =>
  * FieldA11y above), so a field needs a label VIEW to be "labelled by"; this
  * is that view, present in the native hierarchy (so Android's nativeID
  * lookup finds it) but not drawn: a11y.ts HIDDEN_FIELD_LABEL_STYLE (a 1×1
- * clipped box out of the layout flow with transparent text — not opacity 0,
- * zero size or display "none", which may count as not shown to the user).
- * It changes no layout: it is absolutely positioned, so a parent's gap and
- * flow ignore it.
+ * clipped box with transparent text — not opacity 0, zero size or display
+ * "none", which may count as not shown to the user). Since pass p21e it is
+ * IN the layout flow: a 1-point line directly above its field.
  *
  * A swipe stop that reads as the field's caption (pass p21b finding 1):
  * pass p21a made the 1×1 node importantForAccessibility "no" so it would
@@ -258,15 +257,22 @@ export function useFieldLabels(): (key: string, label: string, hint?: string) =>
  * (accessibilityElementsHidden, iOS only), which names the field by its
  * accessibilityLabel instead.
  *
- * Order: the node is absolutely positioned, so it sits at its PARENT's
- * top-left, and TalkBack placed such a node by its position (pass p21a:
- * "Contact name" was read before the network chips above the field).
- * Every call site therefore renders it as the FIRST child of a View whose
- * first field is the one it names, IMMEDIATELY before that field, so the
- * parent's top-left is the field's top-left (the check-devmode source scan
+ * Order: TalkBack orders by position as well as by the view tree. Pass p21a
+ * found an absolutely positioned label read at its PARENT's top-left
+ * ("Contact name" before the network chips above the field); pass p21e
+ * found one anchored at the field's own top-left — inside the field's
+ * bounds — read AFTER the field ("Paste the multisig record. Edit box for
+ * Paste the multisig record", then "Paste the multisig record"). So the
+ * label is now in the flow, and every call site renders it as the FIRST
+ * child of a PLAIN View (no style, so no gap or row direction) that holds
+ * it and, IMMEDIATELY after it, the field it names: its bounds are a 1×1
+ * box above the field's, never inside them (the check-devmode source scan
  * fails otherwise). Most fields now have a visible caption instead (pass
  * p21b); the ones that keep a hidden label are the paste boxes whose
- * placeholder already shows the same words.
+ * placeholder is their only visible description, so the placeholder stays
+ * equal to the label and TalkBack still says the name more than once there
+ * (pass p21e; changing the placeholder would leave sighted users without
+ * the description — a visible caption is the alternative).
  *
  * Usage, with the same key and text as the field:
  *   <View>

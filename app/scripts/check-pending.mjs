@@ -320,11 +320,25 @@ const rec = (n, over = {}, replacement = null) =>
   // The cap: expired notices go, then resolved notices, then the oldest pending.
   const resolved = (i, at) => ({ kind: 'resolved', chain: CHAIN, from: FROM_L, nonce: String(500 + i), outcome: 'replaced', minedHash: H(2), block: '9', success: true, original: H(1), hashes: [H(1), H(2)], resolvedAt: at });
   const now = T0 + 10 * RESOLVED_KEEP_MS;
-  check('a notice older than a day is pruned', pruneRecords([resolved(1, now - RESOLVED_KEEP_MS - 1), resolved(2, now - 5)], now).length === 1);
+  const aged = pruneRecords([resolved(1, now - RESOLVED_KEEP_MS - 1), resolved(2, now - 5)], now);
+  check(
+    'a notice older than a day stops showing but leaves its marker (pass p21e A1)',
+    aged.length === 2 &&
+      aged.filter((x) => x.kind === 'resolved').length === 1 &&
+      aged.some((x) => x.kind === 'marker' && x.nonce === '501' && x.minedHash === H(2) && x.original === H(1) && x.markedAt === now),
+  );
   const many = [];
   for (let i = 0; i < MAX_PENDING_RECORDS; i++) many.push(rec(i, { hash: H(5000 + i), sentAt: now - 1000 + i }));
   const withNotice = pruneRecords([resolved(3, now - 10), ...many], now);
   check(`over the cap (${MAX_PENDING_RECORDS}) the resolved notice goes first`, withNotice.length === MAX_PENDING_RECORDS && withNotice.every((x) => x.kind === 'tx'));
+  const marker = { kind: 'marker', chain: CHAIN, from: FROM_L, nonce: '600', outcome: 'replaced', minedHash: H(2), original: H(1), markedAt: now - 10 };
+  const withMarker = pruneRecords([marker, ...many], now);
+  check('… and so does a replacement marker (eviction drops the row line)', withMarker.length === MAX_PENDING_RECORDS && withMarker.every((x) => x.kind === 'tx') && replacementRowLine(withMarker, CHAIN, H(2)) === null);
+  check('a marker is never aged out by itself', pruneRecords([{ ...marker, markedAt: now - 100 * RESOLVED_KEEP_MS }], now).length === 1);
+  check('the strict parse accepts a marker and refuses one with an extra or a missing key',
+    parseRegistry(JSON.stringify({ version: 1, records: [marker] })).records.length === 1 &&
+    parseRegistry(JSON.stringify({ version: 1, records: [{ ...marker, block: '9' }] })).readOnly &&
+    parseRegistry(JSON.stringify({ version: 1, records: [{ ...marker, original: undefined }] })).readOnly);
   const overflow = pruneRecords([...many, rec(999, { hash: H(9999), sentAt: now })], now);
   check('then the oldest pending record', overflow.length === MAX_PENDING_RECORDS && !overflow.some((x) => x.hash === H(5000)) && overflow.some((x) => x.hash === H(9999)));
 }
@@ -387,6 +401,23 @@ console.log('check-pending: where a nonce stands');
   check('cancelled sentence', resolvedSentence(notices[0]) === `Cancelled: the cancellation 0x0000…0003 was included in block 81, so transaction 0x0000…0001 (nonce 5) will never be included.`, resolvedSentence(notices[0]));
   check('the included cancellation\'s Activity row says what it was', replacementRowLine(after.records, CHAIN, H(3)) === 'Cancellation of transaction 0x0000…0001 (nonce 5).');
   check('other rows get no line', replacementRowLine(after.records, CHAIN, H(1)) === null && replacementRowLine(after.records, 'eip155:1', H(3)) === null);
+
+  // Pass p21e finding A1: Dismiss hides the notice only; the included
+  // transaction's Activity row keeps its line after Activity is reopened.
+  await pending.dismissResolvedNotice(notices[0], store, T0 + 6000);
+  const dismissed = await loadPendingRegistry(store);
+  check('after Dismiss the notice is gone', resolvedNotices(dismissed.records, CHAIN, FROM).length === 0 && !dismissed.readOnly);
+  check('after Dismiss the row line is still produced for the cancellation hash', replacementRowLine(dismissed.records, CHAIN, H(3)) === 'Cancellation of transaction 0x0000…0001 (nonce 5).');
+  check('the marker is compact: replacement hash, original hash, nonce, kind',
+    dismissed.records.length === 1 &&
+    JSON.stringify(dismissed.records[0]) === JSON.stringify({ kind: 'marker', chain: CHAIN, from: FROM_L, nonce: '5', outcome: 'cancelled', minedHash: H(3), original: H(1), markedAt: T0 + 6000 }));
+  const sped = { ...notices[0], outcome: 'replaced', minedHash: H(2) };
+  check('a dismissed speed-up keeps "Speed-up of …"', replacementRowLine([pending.markerFor(sped, T0)], CHAIN, H(2)) === 'Speed-up of transaction 0x0000…0001 (nonce 5).');
+  const pcs = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../src/components/PendingTransactions.tsx'), 'utf8');
+  check('the notice\'s Dismiss button keeps the marker (dismissResolvedNotice, not settleNonce)',
+    pcs.includes('onPress={() => void dismissResolvedNotice(n).then(refresh, refresh)}') && !pcs.includes('settleNonce(n, null)'));
+  await resetPendingRegistry(store);
+  check('reset drops the marker and its line', replacementRowLine((await loadPendingRegistry(store)).records, CHAIN, H(3)) === null);
 }
 
 // ---------------------------------------------------------------------------
@@ -980,6 +1011,53 @@ console.log('check-pending: the screens wire the gates in order (source)');
   const walletContext = readFileSync(join(HERE, '../src/wallet/WalletContext.tsx'), 'utf8');
   check('WalletContext registers the pending recorder once on the operation-sent channel', (walletContext.match(/addAaOperationSentListener\(pendingUserOpRecorder\(AsyncStorage\)\)/g) ?? []).length === 1);
   check('the wallet wipe resets the pending-transaction registry', walletContext.includes("import { pendingUserOpRecorder, resetPendingRegistry } from './pending-transactions';") && walletContext.includes('await resetPendingRegistry(AsyncStorage).catch(() => undefined);'));
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-pending: a broadcast refused for its fee is said plainly (pass p21e finding A2)');
+// ---------------------------------------------------------------------------
+{
+  const RAW = 'RPC error -32000: transaction underpriced (eth_sendRawTransaction)';
+  const sentence =
+    'The network endpoint refused this transaction because its fee is below what that node accepts ' +
+    '("transaction underpriced"). Nothing was sent. Try again, or review the transaction again for a fresh fee.';
+  const note =
+    'The minimum-fee rehearsal is still on and this screen still holds its quote: approve again to retry, ' +
+    'or go back and turn the rehearsal off in Settings → Developer to send at the usual fee.';
+  check('the exact sentences', send.TX_UNDERPRICED_TITLE === 'The network endpoint refused the fee.' && send.TX_UNDERPRICED_SENTENCE === sentence && send.TX_UNDERPRICED_REHEARSAL_NOTE === note);
+  const d = send.describeSendError(new Error(RAW), 'test ETH', 'test ETH');
+  check('the live p21e refusal: plain title, the sentence, then the technical line', d.title === send.TX_UNDERPRICED_TITLE && d.detail === `${sentence}\n\nTechnical detail: ${RAW}`, JSON.stringify(d));
+  const dr = send.describeSendError(new Error(RAW), 'test ETH', 'test ETH', { minimumFeeRehearsal: true });
+  check('a minimum-fee rehearsal adds that the option stays on', dr.detail === `${sentence} ${note}\n\nTechnical detail: ${RAW}`);
+  for (const raw of [
+    'transaction underpriced: gas tip cap 0, minimum needed 1',
+    'gas tip cap 0, minimum needed 1',
+    'max fee per gas less than block base fee: address 0x772e, maxFeePerGas: 1, baseFee: 15',
+  ]) {
+    check(`matched: "${raw}"`, send.describeSendError(new Error(raw), 'ETH').title === send.TX_UNDERPRICED_TITLE);
+  }
+  const REPL = 'RPC error -32000: replacement transaction underpriced (eth_sendRawTransaction)';
+  const rd = send.describeSendError(new Error(REPL), 'test ETH', 'test ETH', { minimumFeeRehearsal: true });
+  check('"replacement transaction underpriced" gets its own sentence (no rehearsal note)',
+    rd.title === 'Another transaction with the same nonce is waiting.' &&
+      rd.detail ===
+        'The network endpoint refused this transaction because it already holds a pending transaction from this ' +
+          "account with the same nonce, and this one's fee is not high enough to replace it (\"replacement " +
+          'transaction underpriced"). Nothing was sent. Wait for the pending transaction to be included, or speed it ' +
+          `up or cancel it from Activity.\n\nTechnical detail: ${REPL}`, JSON.stringify(rd));
+  // Every other error is worded exactly as before.
+  for (const raw of ['RPC error -32000: nonce too low (eth_sendRawTransaction)', 'RPC error -32000: already known', 'execution reverted', 'underpriced']) {
+    const x = send.describeSendError(new Error(raw), 'ETH');
+    check(`unchanged: "${raw}"`, x.title === 'The transaction could not be sent.' && x.detail === raw, JSON.stringify(x));
+  }
+  check('unchanged: an insufficient-funds refusal keeps its fee title', send.describeSendError(new Error('insufficient funds for gas * price + value'), 'test ETH', 'test ETH').title === 'Not enough test ETH to pay the network fee.');
+  const sendSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../src/screens/SendScreen.tsx'), 'utf8');
+  check('the Send screen passes the rehearsal flag at the broadcast catch (source)',
+    sendSrc.includes('?? describeError(e, minimumFeeRehearsalOf(quote) !== null);') &&
+      sendSrc.includes('describeSendError(e, symbol, evmChain.displaySymbol, { minimumFeeRehearsal })'));
+  const sendTs = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../src/wallet/send.ts'), 'utf8');
+  check('a replacement refused as underpriced keeps its own plain sentence (sendEvmReplacement)',
+    sendTs.includes('if (/underpriced/i.test(message)) throw new ReplacementRefusedError(REPLACEMENT_UNDERPRICED_SENTENCE, message);'));
 }
 
 console.log(`\ncheck-pending: ${passed} passed, ${failed} failed`);

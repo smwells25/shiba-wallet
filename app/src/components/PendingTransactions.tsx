@@ -35,6 +35,7 @@ import {
   USEROP_RESEND_LINE,
   cancelRiskLine,
   checkUserOperation,
+  dismissResolvedNotice,
   feeLine,
   forgetUserOperation,
   groupForHash,
@@ -443,7 +444,7 @@ export function PendingTransactionsSection({
           <Button
             title="Dismiss"
             variant="secondary"
-            onPress={() => void settleNonce(n, null).then(refresh, refresh)}
+            onPress={() => void dismissResolvedNotice(n).then(refresh, refresh)}
           />
         </View>
       ))}
