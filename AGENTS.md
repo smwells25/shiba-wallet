@@ -9265,3 +9265,90 @@ Opus.
       Account 1, light mode, TalkBack OFF (level 6), protection OFF,
       the minimum-fee switch OFF, auto-lock 1 min, IME ADBKeyboard,
       Metro at a9fe4d5.
+- [x] Pass p21e findings FIXED (commit 828cff1; 14 files; check-pending 218
+      (was 195), check-devmode 415 (412), check-bridge 227 (223),
+      check-multisig 424 (422); offline runner ALL GREEN in the CTO's
+      isolated worktree on HEAD 006dd43 with --skip-bundle: engine 1,046,
+      app 9,226 across 59 suites, lint 0/0, tsc clean; apply 0 / 14
+      files; five hand mutants and five new in-suite mutants caught; not
+      seen on a device). (A1) pending-transactions.ts gains the record
+      kind ReplacementMarker {kind 'marker', chain, from, nonce, outcome,
+      minedHash, original, markedAt} (exactly 8 keys, strict; id
+      marker:<chain>:<minedHash>); Dismiss calls dismissResolvedNotice,
+      which turns the resolved notice into its marker instead of deleting
+      the record (settleNonce(n, null) before), and pruneRecords turns a
+      notice older than 24 h into a marker rather than deleting it (the
+      old pin replaced) — so the "Speed-up of …" / "Cancellation of …"
+      row line (replacementRowLine reads notices AND markers;
+      resolvedNotices returns notices only) survives until the 64-record
+      cap evicts the marker (notices and markers first, oldest first),
+      the list is reset or the wallet is wiped; markers have no age limit;
+      the 'original-first' outcome keeps its marker too. (A2)
+      describeSendError(error, symbol, feeSymbol, { minimumFeeRehearsal })
+      matches, after the dust and blockhash checks and before the
+      endpoint-failure check, first /replacement transaction underpriced/i
+      → title "Another transaction with the same nonce is waiting." +
+      "The network endpoint refused this transaction because it already
+      holds a pending transaction from this account with the same nonce,
+      and this one's fee is not high enough to replace it (\"replacement
+      transaction underpriced\"). Nothing was sent. Wait for the pending
+      transaction to be included, or speed it up or cancel it from
+      Activity.", then /transaction underpriced|gas tip cap \d+, minimum
+      needed \d+|max fee per gas less than block base fee/i → title "The
+      network endpoint refused the fee." + "The network endpoint refused
+      this transaction because its fee is below what that node accepts
+      (\"transaction underpriced\"). Nothing was sent. Try again, or review
+      the transaction again for a fresh fee." (+ for a rehearsal quote
+      only, passed by SendScreen's broadcast catch: "The minimum-fee
+      rehearsal is still on and this screen still holds its quote:
+      approve again to retry, or go back and turn the rehearsal off in
+      Settings → Developer to send at the usual fee."), the raw text after
+      a blank line as "Technical detail: …"; every other error
+      byte-identical (pinned); the speed-up / cancel path already mapped
+      /underpriced/i to REPLACEMENT_UNDERPRICED_SENTENCE ("Not replaced")
+      — now pinned in source. (A3) NOT A DEFECT FOUND: sendEvm makes
+      exactly one sendRawTransaction on the quoted URL through the
+      engine's httpTransport (rpc.ts 15–38: a single fetch, no retry, NO
+      TIMEOUT — Expo's fetch uses RN's OkHttpClientProvider with connect /
+      read / write timeouts of 0, so a slow backend is waited for
+      indefinitely; OkHttp's retryOnConnectionFailure re-sends the same
+      bytes to the SAME URL only, harmless), no withEndpoint failover,
+      the endpoint pinned before the prompt; signWith's JavaScript PBKDF2
+      seed derivation (~35–40 s on this emulator) precedes the
+      broadcast; the 2-minute refusal is most likely a slow backend plus
+      that derivation plus the driver's dump timing (inferred) — a
+      bounded broadcast timeout would have to report "outcome unknown",
+      never "not sent" (a design decision, left). (B2a)
+      HIDDEN_FIELD_LABEL_STYLE is now in-flow {width 1, height 1,
+      overflow hidden, color transparent} (no absolute position): the
+      label is the first child of a PLAIN View holding only it and its
+      field, a 1-point line ABOVE the field, so it precedes the field in
+      the tree and on screen (each field moves down 1 pt); PasteOrScan
+      gained that wrapper; check-devmode pins the style, the plain wrapper
+      and the field closing it (mutants for each); the four placeholders
+      were deliberately NOT shortened (they are the only visible
+      description on those fields — TalkBack will still say the name
+      twice; a visible caption + short placeholder across ~9 screens is
+      the clean fix, the CTO's call). (B2b) CAUSE from RN 0.86.3: the
+      body Pressable's `disabled` prop became an accessibilityState, and
+      a view with a state but no text gets a content description made of
+      its children's text joined by ", " (ReactAccessibilityDelegate.kt
+      177–187, 944–1007, delimiter 578) with "disabled" spoken after it;
+      the body is now accessible={false} focusable={false} with onPress
+      only when selectable (a tap still selects) and NO disabled, and all
+      eight body sentences are their own accessible Text; pinned: no
+      state / role / label props on the body opener, exactly 8 accessible
+      Texts, the CCTP refund sentence exact, no ".." anywhere. (B2c)
+      DECISION: on Android the polite live region alone speaks the
+      overflow line (the switcher resets its measured sizes on open since
+      01ff157, so the line always APPEARS after measurement — a content
+      change the live region announces, heard uncut in p21b and p21e; the
+      500 ms announcement was the duplicate and most likely displaced
+      "Accounts. Heading" — inferred); on iOS, which has no live regions,
+      the delayed announcement; announceOnOpen = Platform.OS === 'ios';
+      pinned with fake timers and a mutant. UNVERIFIED (next emulator
+      pass): Activity after Dismiss and a reopen; the new alert text from
+      a real underpriced refusal; the caption read BEFORE the field and
+      the 1-point node still naming it; the separate provider stops and
+      no ". disabled"; one speech on open and whether "Accounts. Heading"
+      is read; iOS.
