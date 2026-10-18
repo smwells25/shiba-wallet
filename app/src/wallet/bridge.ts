@@ -46,7 +46,7 @@ import {
   type KeyValueStore,
   type RemovableKeyValueStore,
 } from './store-keys.ts';
-import { prepareAaCalls, type AaClientBundle, type AaSendQuote } from './aa.ts';
+import { prepareAaCalls, summarizeAaReceipt, type AaClientBundle, type AaSendQuote } from './aa.ts';
 import { formatUnits } from './balances.ts';
 import { assertFeatureAllowed } from '../config/readiness.ts';
 import { evmProfileByCaip2, isBuiltInEvmChain, type EvmChainProfile } from '../config/evm-chain.ts';
@@ -139,6 +139,16 @@ export const CCTP_COMING_NOTE =
 /** A provider that does not serve the chosen pair of networks. */
 export function noRouteNote(sourceLabel: string, destinationLabel: string): string {
   return `Does not serve ${sourceLabel} → ${destinationLabel} in this wallet.`;
+}
+
+/**
+ * A provider that does not serve this network at all, on a network where no
+ * destination can be chosen (Base Sepolia today: the destination chips are
+ * hidden, so a sentence naming a destination would point at something the
+ * user cannot see or pick).
+ */
+export function noSourceRouteNote(sourceLabel: string): string {
+  return `Does not serve ${sourceLabel} in this wallet.`;
 }
 
 /** The recipient sentence for a send from the regular account. */
@@ -323,6 +333,14 @@ export interface BridgeReaders {
   transportFor(chainId: number): JsonRpcTransport;
   /** fetch for LayerZero Scan's keyless testnet API; defaults to the global fetch. */
   fetchImpl?: typeof fetch;
+  /**
+   * The configured bundler's eth_getUserOperationReceipt for an operation
+   * sent on `chainId` (null while it is not included). Used only for a
+   * smart-account transfer whose bundle transaction is not known yet (the
+   * app closed before the receipt arrived); the screen builds it from
+   * aa.ts fetchUserOpReceipt. Without it such a transfer waits, as before.
+   */
+  userOpReceipt?: (request: { chainId: number; userOpHash: string }) => Promise<unknown>;
 }
 
 /** Whether a provider can be chosen for sending in this build. */
@@ -534,7 +552,10 @@ export function bridgeProviderRows(offer: BridgeOffer, destinationChainId: numbe
         timeSource = time.source;
       }
     }
-    const note = status === 'coming' ? CCTP_COMING_NOTE : route === null ? noRouteNote(offer.sourceLabel, destinationLabel) : null;
+    // Where the form hides the destination chips (no provider can send from
+    // this network), the reason names only the source network.
+    const noRoute = bridgeFormInputsShown(offer) ? noRouteNote(offer.sourceLabel, destinationLabel) : noSourceRouteNote(offer.sourceLabel);
+    const note = status === 'coming' ? CCTP_COMING_NOTE : route === null ? noRoute : null;
     const asset = route ? (route.sourceAsset.kind === 'native' ? 'test ETH' : route.sourceAsset.symbol) : null;
     return {
       id: p.id,
@@ -1459,24 +1480,98 @@ export function bridgeTransferFinal(record: Pick<BridgeTransferRecord, 'status'>
 /** How often the screen asks while it is open (the brief: every 15 s). */
 export const BRIDGE_TRACK_INTERVAL_MS = 15_000;
 
+/** A smart-account transfer whose bundle transaction is not known and no bundler can be asked. */
+export const BRIDGE_USEROP_WAITING =
+  'Waiting for the bundle transaction that carries the smart-account operation; tracking starts once it is known.';
+/** The bundler has no receipt for the operation yet (eth_getUserOperationReceipt answered null). */
+export const BRIDGE_USEROP_NOT_INCLUDED =
+  'The smart-account operation has not been included yet: the bundler has no receipt for it. Tracking starts once it is included in a bundle transaction.';
+/** The operation was included but reverted (the receipt's success flag is false). */
+export const BRIDGE_USEROP_REVERTED =
+  'The smart-account operation was included but reverted, so nothing was bridged; its network fee was still charged.';
+/** A receipt the wallet does not use (wrong shape, another operation or another sender). */
+export const BRIDGE_USEROP_RECEIPT_MALFORMED =
+  'The bundler’s receipt for the smart-account operation was not in the expected shape, so the wallet did not use it and will ask again.';
+/** The longest revert reason quoted from a receipt (characters; judgement). */
+const USEROP_REASON_MAX = 200;
+
+/** What a bundler's receipt says about a recorded smart-account bridge operation. */
+export type BridgeUserOpOutcome =
+  | { kind: 'not-included' }
+  | { kind: 'included'; txHash: string }
+  | { kind: 'reverted'; txHash: string; reason: string | null };
+
+/**
+ * Reads an eth_getUserOperationReceipt answer for a recorded transfer.
+ * null → not included yet. Otherwise the receipt must be an object whose
+ * success flag and bundle transaction hash summarizeAaReceipt (aa.ts) can
+ * read, and whose userOpHash and sender, when present, are this record's;
+ * anything else is refused with BRIDGE_USEROP_RECEIPT_MALFORMED and the
+ * record is left as it is. The revert reason is quoted only when it is
+ * short hex or short printable text.
+ */
+export function readBridgeUserOpReceipt(
+  raw: unknown,
+  record: Pick<BridgeTransferRecord, 'userOpHash' | 'sender'>,
+): BridgeUserOpOutcome {
+  if (raw === null || raw === undefined) return { kind: 'not-included' };
+  const refuse = (): never => {
+    throw new BridgeRefusal(BRIDGE_USEROP_RECEIPT_MALFORMED);
+  };
+  if (!isObject(raw)) return refuse();
+  if (raw.userOpHash !== undefined && (typeof raw.userOpHash !== 'string' || raw.userOpHash.toLowerCase() !== (record.userOpHash ?? '').toLowerCase())) refuse();
+  if (raw.sender !== undefined && (typeof raw.sender !== 'string' || raw.sender.toLowerCase() !== record.sender.toLowerCase())) refuse();
+  const summary = summarizeAaReceipt(raw);
+  if (summary.success === null || summary.txHash === null) return refuse();
+  if (summary.success) return { kind: 'included', txHash: summary.txHash };
+  let reason: string | null = null;
+  if (typeof raw.reason === 'string') {
+    const r = raw.reason.trim();
+    if (/^0x[0-9a-fA-F]+$/.test(r) && r.length > 2) reason = r.length <= USEROP_REASON_MAX ? r : `${r.slice(0, USEROP_REASON_MAX)}…`;
+    else if (!/^0x/i.test(r) && r.length > 0 && r.length <= USEROP_REASON_MAX && /^[\x20-\x7e]+$/.test(r)) reason = r;
+  }
+  return { kind: 'reverted', txHash: summary.txHash, reason };
+}
+
+/** The failed transfer's sentence for a reverted operation, with the receipt's reason when it gave one. */
+export function bridgeUserOpRevertedDetail(reason: string | null): string {
+  return reason === null ? BRIDGE_USEROP_REVERTED : `${BRIDGE_USEROP_REVERTED} The bundler reported this reason: ${reason.replace(/[.\s]+$/, '')}.`;
+}
+
 /**
  * Asks the provider where a recorded transfer is. The LayerZero adapter
  * decides from the chains' own events (the source receipt's OFTSent and
  * PacketSent, then OFTReceived or UnreceivedTokenCached for the GUID on
  * the receiving network); Scan's status is supporting evidence. Refused on
- * a network the switchboard does not allow; a smart-account transfer whose
- * bundle transaction is not known yet is reported without a request.
+ * a network the switchboard does not allow. A smart-account transfer whose
+ * bundle transaction is not known yet is first resolved through the
+ * bundler's receipt when `readers.userOpReceipt` is given, else reported
+ * without a request.
  */
 export async function trackBridgeTransfer(record: BridgeTransferRecord, readers: BridgeReaders): Promise<BridgeTransferStatus> {
   assertFeatureAllowed(BRIDGE_FEATURE, record.sourceCaip2);
-  if (record.sourceTxHash === null) {
-    return { state: 'unknown', detail: 'Waiting for the bundle transaction that carries the smart-account operation; tracking starts once it is known.' };
+  let sourceTxHash = record.sourceTxHash;
+  if (sourceTxHash === null) {
+    // A smart-account transfer whose bundle transaction was not known when
+    // the app closed: ask the configured bundler for the operation's
+    // receipt first. A found hash is stored through the record writer
+    // (only what the strict parse accepts reaches storage) and tracking
+    // continues by it in the same pass.
+    if (record.userOpHash === null || !readers.userOpReceipt) return { state: 'unknown', detail: BRIDGE_USEROP_WAITING };
+    const outcome = readBridgeUserOpReceipt(
+      await readers.userOpReceipt({ chainId: record.route.sourceChainId, userOpHash: record.userOpHash }),
+      record,
+    );
+    if (outcome.kind === 'not-included') return { state: 'unknown', detail: BRIDGE_USEROP_NOT_INCLUDED };
+    updateBridgeTransfer(record.id, { sourceTxHash: outcome.txHash });
+    if (outcome.kind === 'reverted') return { state: 'failed', detail: bridgeUserOpRevertedDetail(outcome.reason) };
+    sourceTxHash = outcome.txHash;
   }
   const registry = createAppBridgeRegistry(readers, { destinationFromBlock: record.destinationFromBlock });
   return registry.require(record.providerId).track({
     providerId: record.providerId,
     route: record.route,
-    sourceTxHash: record.sourceTxHash,
+    sourceTxHash,
     amountIn: record.amountIn,
     recipient: record.recipient,
   });

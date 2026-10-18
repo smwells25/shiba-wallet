@@ -806,5 +806,27 @@ console.log('fee coin passed by every caller (source):');
   check('…the scan sees the calls (sanity)', files.some((f) => readFileSync(f, 'utf8').includes('describeSendError(e, sellSymbol, evmChain.displaySymbol)')));
 }
 
+// ---------------------------------------------------------------------------
+// Each Send view opens at the top (the Bridge rule of pass p21b, finding 4,
+// applied to Send): React reuses a native ScrollView, and with it the scroll
+// offset, when the next view renders the same element type at the same place
+// without a different key. Every phase view therefore carries its own key.
+// ---------------------------------------------------------------------------
+{
+  console.log('\n— each Send view has its own ScrollView key —');
+  const screen = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../src/screens/SendScreen.tsx'), 'utf8');
+  const EXPECTED = ['send-aa-confirm', 'send-aa-success', 'send-confirm', 'send-erc20-confirm', 'send-form', 'send-nft-confirm', 'send-success'];
+  const keysOf = (src) => [...src.matchAll(/<ScrollView key="(send-[a-z0-9-]+)"/g)].map((m) => m[1]).sort();
+  const keys = keysOf(screen);
+  const total = (screen.match(/<ScrollView\b/g) ?? []).length;
+  check('the form, the four confirms (regular, smart account, ERC-20, NFT) and both success views each have their own ScrollView key, so a new view never inherits the previous view’s scroll position',
+    JSON.stringify(keys) === JSON.stringify(EXPECTED), keys.join());
+  check('…the keys are distinct and every ScrollView in the screen is keyed', new Set(keys).size === keys.length && keys.length === total, `${keys.length}/${total}`);
+  const keyless = screen.replace('<ScrollView key="send-confirm" ', '<ScrollView ');
+  check('MUTANT (the regular confirm without its key) is caught', JSON.stringify(keysOf(keyless)) !== JSON.stringify(EXPECTED));
+  const duplicate = screen.replace('<ScrollView key="send-aa-confirm" ', '<ScrollView key="send-confirm" ');
+  check('MUTANT (two views sharing one key) is caught', new Set(keysOf(duplicate)).size !== keysOf(duplicate).length);
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

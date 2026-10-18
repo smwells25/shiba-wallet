@@ -675,7 +675,7 @@ export function StakingScreen({ navigation }: Props) {
   // ------------------------------------------------------------ success
   if (phase === 'success' && (result || aaResult) && plan) {
     return (
-      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content} {...NOTE_VIEW_SCROLL_PROPS}>
+      <ScrollView key="staking-success" style={screenStyle(theme)} contentContainerStyle={styles.content} {...NOTE_VIEW_SCROLL_PROPS}>
         <Text accessibilityRole="header" style={[styles.successTitle, { color: theme.success }]}>{aaResult ? 'Sent to the bundler ✓' : 'Sent ✓'}</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>{stakingActionTitle(plan.action, symbol)}.</Text>
         {approveTxid ? <Text style={[styles.hint, { color: theme.textMuted }]}>Approval transaction: {approveTxid}</Text> : null}
@@ -771,7 +771,7 @@ export function StakingScreen({ navigation }: Props) {
   // ------------------------------------------------- approve (EOA, step 1)
   if ((phase === 'approve' || phase === 'approving') && plan?.approval && eoaQuote) {
     return (
-      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+      <ScrollView key="staking-approve" style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
         <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}>Step 1 of 2 — Approve</Text>
         <Row label="From account" value={activeAccount?.name ?? '—'} sub={account.address} spoken={`From account: ${activeAccount?.name ?? 'unknown'}, ${spokenShortAddress(account.address)}`} theme={theme} />
@@ -804,7 +804,7 @@ export function StakingScreen({ navigation }: Props) {
   // ------------------------------------------------------- confirm (EOA)
   if ((phase === 'confirm' || phase === 'sending') && plan && eoaQuote) {
     return (
-      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+      <ScrollView key="staking-confirm" style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
         {plan.approval ? <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}>Step 2 of 2</Text> : null}
         {notice ? <Text style={[styles.notice, { color: theme.accent }]}>{notice}</Text> : null}
@@ -855,7 +855,7 @@ export function StakingScreen({ navigation }: Props) {
   if ((phase === 'aa-confirm' || phase === 'aa-sending') && plan && aaQuote) {
     const batch = aaQuote.calls.length > 1;
     return (
-      <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+      <ScrollView key="staking-aa-confirm" style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
         <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}>Smart account · {aaAccountTypeLabel(aaQuote.accountType)}</Text>
         <Row label="Owner account (signs)" value={activeAccount?.name ?? '—'} sub={account.address} spoken={`Owner account (signs): ${activeAccount?.name ?? 'unknown'}, ${spokenShortAddress(account.address)}`} theme={theme} />
@@ -933,7 +933,7 @@ export function StakingScreen({ navigation }: Props) {
   const rocketRefusal = choice === 'rocket' ? rocket?.depositRefusal ?? null : null;
 
   return (
-    <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+    <ScrollView key="staking-form" style={screenStyle(theme)} contentContainerStyle={styles.content}>
       <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
       <Text style={[styles.hint, { color: theme.text }]}>
         Staking puts test ETH into a liquid-staking protocol and gives you a token for it. These are test networks: the
