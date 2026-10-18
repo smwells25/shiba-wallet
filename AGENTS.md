@@ -9135,3 +9135,133 @@ Opus.
       the Base Sepolia row, a real smart-account bridge resolved after a
       restart; ZeroDev's receipt shape (userOpHash, sender, reason
       wording) on this path.
+- [x] EMULATOR PASS p21e — SPEED UP AND CANCEL PROVEN LIVE IN-APP, and
+      the p21b fixes re-checked (2026-10-18 17:29–19:30 UTC; Expo Go on
+      emulator 37.1.11 with ANGLE, Metro at a9fe4d5 with the engine built
+      inside it; no repo files edited; 7 prompts — Unlock, four "Approve
+      sending 0.00001 test ETH" (the first refused, retried, then send 2),
+      "Approve speeding up the transaction", "Approve cancelling the
+      transaction" — EVERY PROMPT TITLE READ from a uiautomator dump
+      while the BiometricPrompt window had focus (the wp helper); every
+      hash status 0x1 on two RPCs and the two replacements plus both
+      balances RE-READ BY THE CTO on publicnode; nothing from the dev
+      EOA; screen protection OFF; notes and redacted dumps in the
+      scratchpad p21e, one stray screenshot showing the WalletConnect
+      project id deleted). PART A: the Developer hint exactly as 626c76e
+      wrote it; the confirm "MAX NETWORK FEE 0.000000000000021 test ETH",
+      the WarningBox, "Priced at the minimum fee: a max fee of 1 wei and a
+      priority fee of 1 wei per gas, below the latest block's base fee (15
+      wei), so no block can include it until you speed it up or cancel
+      it.", TOTAL 0.000010000000021; THE FIRST SEND WAS REFUSED about 2
+      minutes after the prompt with the RAW alert "The transaction could
+      not be sent." / "RPC error -32000: transaction underpriced
+      (eth_sendRawTransaction)" and the confirm stayed open with the
+      option ON (as designed); the retry was accepted 17 s after its
+      prompt: tx 0x1073f2f6…aa235, nonce 30, 1/1 wei, POOLED ≥ 112 s —
+      publicnode's Geth 1.17.7 backend and 0xrpc.io (Geth 1.17.8) listed
+      it with blockNumber null while publicnode's reth 2.7.0 backend and
+      drpc returned null (the reth backend is most likely the one that
+      refuses 1/1 as underpriced — inferred); the Send success view and
+      the Activity "Pending on this phone" card as designed ("Waiting to
+      be included: transaction 0x1073…a235 (nonce 30) sends 0.00001 test
+      ETH to 0xb699…, sent less than a minute ago.", "Newest version …:
+      max fee 0.000000001 gwei per gas, priority fee 0.000000001 gwei.",
+      the status line alternating between "…lists it as waiting in its
+      pool." and "…does not list it right now. It may still be waiting
+      elsewhere in the network, or it may have been dropped; a speed-up
+      sends it again with higher fees." as the two backends answered;
+      Speed up / Cancel). SPEED UP: the inline confirm ("Speeding up signs
+      the same transaction again — same nonce, recipient, amount, data
+      and gas limit — with higher fees…", "Replaces 0x1073…a235 (nonce
+      30).", "New fees: max fee 0.000000033 gwei per gas, priority fee
+      0.000000002 gwei (was … 1/1 …; the network requires at least max
+      fee 0.000000002 gwei per gas, priority fee 0.000000002 gwei)", the
+      worst case 0.000000000000693, the own-account risk line, the
+      spending-limits sentence, "Approve speed-up" / "Back"; NO stale-fee
+      sentence) — the replacement was priced at the NODE'S SUGGESTION,
+      which today is only 33 / 2 wei (eth_maxPriorityFeePerGas 0x1 on
+      reth, 0x4 on geth; base fee 17), not the ~1 gwei the record
+      expected — an environmental change, the rule max(old + 1, ceil(old
+      × 1.1)) = 2/2 cleared; prompt "Approve speeding up the
+      transaction"; alert "Speed-up sent" / "Replacement 0xc2a7…8434 was
+      accepted by the network endpoint…"; replacement tx
+      0xc2a7f4994a542fffd3541a16d33ecedca0d6ad19304db17f57526d7b6a4e8434,
+      nonce 30, 33 / 2, gas 21,000, block 11942687, effective price 19,
+      1 EIP-7708 log; the original null on publicnode, drpc and 0xrpc;
+      notice "Sped up: transaction 0x1073…a235 (nonce 30) was replaced by
+      0xc2a7…8434, included in block 11942687."; row "Speed-up of
+      transaction 0x1073…a235 (nonce 30)."; Dismiss. The switch turned
+      itself OFF after the accepted send (checked="false"), re-armed.
+      CANCEL: send 2 0x1cc61b01…b9731a (nonce 31, 1/1, accepted first
+      try, pooled ≥ 70 s); the confirm ("Cancel the transaction",
+      "Cancelling sends 0 to your own address with the same nonce and a
+      higher fee. If a block includes the cancellation first, the
+      original transaction can never be included… It can fail: if the
+      original is included first, the cancellation is rejected.", "Sends
+      0 test ETH to 0x772e…; gas limit 12000.", "New fees: max fee
+      0.000000037 gwei per gas, priority fee 0.000000002 gwei…", worst
+      case 0.000000000000444, in place of the risk card "This
+      cancellation sends 0 to yourself (0x772eAA1d3BEf14C0BD5cee980b90dB3FC680F44F),
+      the account it comes from. Only the network fee is paid.", "Approve
+      cancellation" / "Back"); prompt "Approve cancelling the
+      transaction"; alert "Cancellation sent"; cancellation tx
+      0x595808fae1890e48e25111d15558b1256279d8a79cdfece1271b57585dffbd19,
+      nonce 31, to self, value 0, 37 / 2, gas limit 12,000, block
+      11942774, gasUsed EXACTLY 12,000 (the EIP-2780 self-transfer),
+      effective price 20, no logs; the original null everywhere; notice
+      "Cancelled: the cancellation 0x5958…bd19 was included in block
+      11942774, so transaction 0x1cc6…731a (nonce 31) will never be
+      included."; rows "Sent an empty transaction to yourself" /
+      "Cancellation of transaction 0x1cc6…731a (nonce 31)."; Dismiss;
+      afterwards no pending section, no Speed up / Cancel offered, the
+      switch OFF. BALANCES to the wei on both RPCs: Account 1
+      1,796,233,898,055,515 → 1,786,233,897,416,515 (= −1e13 − 21,000 ×
+      19 − 12,000 × 20: ONE value transfer, the cancelled value never
+      moved; nonce 30 → 32); Account 2 +1e13; the 1-wei originals cost
+      nothing. FEATURE 95 (the transaction half) IS NOW PROVEN LIVE
+      IN-APP. PART B: B1 captions PASS where reached ("Ethereum Sepolia
+      endpoint URL", Contacts "Contact name" / "Ethereum Sepolia
+      address", "Custom period length", "Token contract address"; the
+      symbol / name captions render only for a contract without
+      readable metadata — not reached); B3 PASS (the Bridge confirm opens
+      at its top; Base Sepolia hides the chips, the amount field and the
+      smart-account switch with the refusal sentence; the "→ Arbitrum
+      Sepolia" leftover still shown at a9fe4d5 — fixed since in 71c5d50);
+      B4 PASS (the 15 Oct row reads "Bridged 0.0002 test ETH to OP
+      Sepolia through LayerZero (Stargate's native ETH pool 0x9Cc7…0706);
+      messaging fee 0.000102050140082558 test ETH" with its note); B5
+      PASS. FINDINGS (fix slice dispatched): (A1) the "Speed-up of …" /
+      "Cancellation of …" row lines DISAPPEAR once the notice is
+      dismissed and Activity reopened (they live only in the dismissed
+      registry record); (A2) the underpriced refusal is shown RAW ("RPC
+      error -32000: transaction underpriced (eth_sendRawTransaction)")
+      with no plain sentence; (A3) that refusal arrived about 2 minutes
+      after the prompt against 17 s for the accepted retry — cause not
+      established; (B2a) TALKBACK ORDER of the hidden captions on the
+      Multisig paste boxes is field THEN caption ("Paste the multisig
+      record. Edit box for Paste the multisig record", then "Paste the
+      multisig record") — the 1×1 node sits at the field's own top-left,
+      so TalkBack orders it second, and the name is spoken twice because
+      the placeholder equals it; Contacts' visible captions are in the
+      right order; (B2b) the Bridge provider BODY is ONE swipe stop whose
+      content description joins every sentence with ", " ("…sent., Who
+      controls: …, If it does not arrive: …, Fee: …, Measured once…"),
+      reachable before Review but not as separate stops; the CCTP body
+      ends "…at any time.. disabled"; the radio heads, the disabled
+      buttons, the body tap selecting the row and the fee suffix are as
+      designed; (B2c) the switcher's overflow line is spoken TWICE on open
+      (the live region before focus, then the 500 ms announcement) and
+      "Accounts. Heading" is not spoken on open (one swipe back); the
+      toggle is silent and the reappearance is spoken — as designed.
+      DRIVING NOTES: long Settings scroll loops run in the background
+      twice overshot (uiautomator dumps intermittently empty or slow) and
+      one ran on to the Danger zone — NOTHING TAPPED there, stopped and
+      scrolled back; run scroll loops in short foreground chunks; under
+      TalkBack `input tap` sometimes only focuses; a stale host
+      until-loop from an older session (pid 41557) is still running.
+      UNVERIFIED: the symbol / name captions; the RecoveryViews
+      PasteOrScan caption; real touch gestures and audio; iOS; the
+      broadcast stamp to the second. END STATE: Home, Ethereum Sepolia,
+      Account 1, light mode, TalkBack OFF (level 6), protection OFF,
+      the minimum-fee switch OFF, auto-lock 1 min, IME ADBKeyboard,
+      Metro at a9fe4d5.
