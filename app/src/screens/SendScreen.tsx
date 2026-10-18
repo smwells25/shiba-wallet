@@ -893,8 +893,10 @@ export function SendScreen({ route, navigation }: Props) {
   // else the chain's configured type.
   const aaType = aaConfig ? effectiveAaAccountType(aaConfig, account.address) : null;
   /** NFT sends get NFT-specific error titles; everything else is unchanged. */
-  const describeError = (e: unknown) =>
-    nftMode ? describeNftSendError(e, evmChain.displaySymbol) : describeSendError(e, symbol, evmChain.displaySymbol);
+  const describeError = (e: unknown, minimumFeeRehearsal = false) =>
+    nftMode
+      ? describeNftSendError(e, evmChain.displaySymbol)
+      : describeSendError(e, symbol, evmChain.displaySymbol, { minimumFeeRehearsal });
   const aaActive = aaAvailable && aaEnabled;
   // The passkey signs only for a Kernel v3.3 smart account (not SimpleAccount,
   // not an EIP-7702 upgrade) whose passkey this device installed.
@@ -1696,7 +1698,7 @@ export function SendScreen({ route, navigation }: Props) {
               sender: quote.sender,
               bundlerUrl: aaConfig?.bundlerUrl ?? null,
             })
-          : null) ?? describeError(e);
+          : null) ?? describeError(e, minimumFeeRehearsalOf(quote) !== null);
       Alert.alert(title, detail);
       if (quote.kind === 'aa') {
         // The smart-account quote was used up by this attempt (a bundler

@@ -1764,8 +1764,10 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
   // opacity 0 and not of zero size; hidden by a 1×1 clip and transparent text.
   {
     const { HIDDEN_FIELD_LABEL_STYLE: hiddenStyle } = await import('../src/a11y.ts');
-    check('p20d finding 1: HIDDEN_FIELD_LABEL_STYLE is absolute, 1×1, clipped, transparent text, never opacity 0 or display none (exact)',
-      JSON.stringify(hiddenStyle) === JSON.stringify({ position: 'absolute', width: 1, height: 1, overflow: 'hidden', color: 'transparent' }));
+    check('p20d finding 1 / p21e finding B2a: HIDDEN_FIELD_LABEL_STYLE is 1×1, clipped, transparent text, IN the layout flow (no absolute position — a node inside the field’s bounds was read after the field), never opacity 0 or display none (exact)',
+      JSON.stringify(hiddenStyle) === JSON.stringify({ width: 1, height: 1, overflow: 'hidden', color: 'transparent' }));
+    check('…mutant caught (p21e finding B2a): the style absolutely positioned again',
+      JSON.stringify({ position: 'absolute', ...hiddenStyle }) !== JSON.stringify({ width: 1, height: 1, overflow: 'hidden', color: 'transparent' }));
     // Pass p21a finding 1b made the 1×1 hidden label importantForAccessibility
     // "no"; pass p21b found that TalkBack 14.2 then no longer reads it as the
     // field's name ("Name. Edit box" instead of "…for Contact name"). So the
@@ -1803,11 +1805,17 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
         const rest = src.slice(m.index + m[0].length);
         const next = /^\s*<TextInput\s+\{\.\.\.(\w+)\(\s*('[^']*'|`[^`]*`),/.exec(rest);
         if (!next || next[1] !== m[1] || next[2] !== m[2]) out.push(`${f} ${m[2]}`);
-        // Pass p21b: the label is the FIRST child of a View (its absolute
-        // position is that View's top-left, i.e. the field's), so a screen
-        // reader that orders by position reads it just before the field.
+        // Pass p21b / p21e finding B2a: the label is the FIRST child of a
+        // PLAIN View (no style: no gap, no row direction) holding it and the
+        // field, so in the layout flow it is a 1×1 line directly ABOVE the
+        // field — before it in the view tree and on screen, never inside
+        // the field's bounds (where TalkBack read it after the field).
         const before = src.slice(0, m.index).replace(/\s*\{\/\*[^]*?\*\/\}\s*$/, '');
-        if (!/<View(?:\s+style=\{[^{}]*\})?>\s*$/.test(before)) out.push(`${f} ${m[2]} (not the first child of its View)`);
+        if (!/<View>\s*$/.test(before)) out.push(`${f} ${m[2]} (not the first child of a plain View)`);
+        // …and the field is the View's LAST child: nothing between or after
+        // them inside the wrapper.
+        const field = /^\s*<TextInput\b(?:(?!\/>)[^])*\/>\s*<\/View>/.exec(rest);
+        if (!field) out.push(`${f} ${m[2]} (the wrapper holds more than the label and its field)`);
       }
       return out;
     });
@@ -1868,8 +1876,18 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
       : x));
     check('…mutant caught (p21b finding 1): a hidden label that is not the first child of its own View (positioned at a far-away parent’s top-left)',
       hiddenOrderProblems(unanchored).some((p) => /request-paste.*not the first child/.test(p)));
+    const styledWrapper = files.map((x) => (x.f === 'components/RecoveryViews.tsx'
+      ? { ...x, src: x.src.replace("<View>\n        <HiddenFieldLabel field={fieldLabel('paste', placeholder)} />", "<View style={styles.stack}>\n        <HiddenFieldLabel field={fieldLabel('paste', placeholder)} />") }
+      : x));
+    check('…mutant caught (p21e finding B2a): a hidden label inside a styled View (a gap or row would move it off the line above its field)',
+      hiddenOrderProblems(styledWrapper).some((p) => /paste.*plain View/.test(p)));
+    const crowded = files.map((x) => (x.f === 'screens/MultisigScreen.tsx'
+      ? { ...x, src: x.src.replace("style={[styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }]}\n          />\n        </View>\n        {errorBox}\n        <Button title=\"Check the record\"", "style={[styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }]}\n          />\n          {errorBox}\n        </View>\n        <Button title=\"Check the record\"") }
+      : x));
+    check('…mutant caught (p21e finding B2a): something else inside the label’s wrapper after the field',
+      hiddenOrderProblems(crowded).some((p) => /record-paste.*more than the label/.test(p)));
     check('…mutant caught: a hidden label naming another field than the one after it',
-      hiddenOrderProblems([...files, { f: 'mutant.tsx', src: "<View>\n<HiddenFieldLabel field={fieldLabel('a', 'A')} />\n<TextInput {...fieldLabel('b', 'B').input} />" }]).length === 1);
+      hiddenOrderProblems([...files, { f: 'mutant.tsx', src: "<View>\n<HiddenFieldLabel field={fieldLabel('a', 'A')} />\n<TextInput {...fieldLabel('b', 'B').input} />\n</View>" }]).length === 1);
     const priceSrc = files.find((x) => x.f === 'screens/PriceAlertsScreen.tsx').src;
     check('…the Price-alerts price field has a VISIBLE label it is labelled by: "Alert price for <asset> (US dollars)" (source)',
       priceSrc.includes("const priceField = fieldLabel('price', `Alert price for ${asset.symbol} (US dollars)`);") &&

@@ -983,7 +983,7 @@ export function MultisigScreen() {
           onComplete={(text) => void onAddApproval(text)}
           onError={scanError}
         />
-        {/* Anchors the hidden label at the field's top-left (pass p21b, finding 1). */}
+        {/* A plain View: the hidden label is a 1-point line directly above the field (pass p21e, finding B2a). */}
         <View>
           <HiddenFieldLabel field={fieldLabel('approval-paste', 'Paste a co-signer’s approval (or a 65-byte signature from another wallet)')} />
           <TextInput
@@ -1122,7 +1122,7 @@ export function MultisigScreen() {
           onComplete={onReviewImport}
           onError={scanError}
         />
-        {/* Anchors the hidden label at the field's top-left (pass p21b, finding 1). */}
+        {/* A plain View: the hidden label is a 1-point line directly above the field (pass p21e, finding B2a). */}
         <View>
           <HiddenFieldLabel field={fieldLabel('record-paste', 'Paste the multisig record')} />
           <TextInput
@@ -1180,7 +1180,7 @@ export function MultisigScreen() {
           onComplete={onReviewCosign}
           onError={scanError}
         />
-        {/* Anchors the hidden label at the field's top-left (pass p21b, finding 1). */}
+        {/* A plain View: the hidden label is a 1-point line directly above the field (pass p21e, finding B2a). */}
         <View>
           <HiddenFieldLabel field={fieldLabel('request-paste', 'Paste the multisig signing request')} />
           <TextInput

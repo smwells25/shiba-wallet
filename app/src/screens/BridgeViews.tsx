@@ -72,9 +72,22 @@ export function TrustStatementCard({ trust, theme, title }: { trust: BridgeTrust
  * sets View.isFocusable and `focusable` alone installs a click listener
  * (RN 0.86.3 ReactViewManager.kt:95–98 and :377–397; Pressable.js :252
  * and :258 default both to true), so with both false the body is neither a
- * focusable nor a clickable node and does not swallow its Texts into one
- * stop, while touches still reach it through React Native's own responder
- * system.
+ * focusable nor a clickable node, while touches still reach it through
+ * React Native's own responder system.
+ *
+ * Pass p21e finding B2b: TalkBack still read the body as ONE stop, its
+ * sentences joined by ", " ("…sent., Who controls: …") and, on the CCTP
+ * row, ending "…at any time.. disabled". The cause was the body's
+ * `disabled` prop: Pressable turns any non-null `disabled` into an
+ * accessibilityState (Pressable.js :235–236), and RN's delegate gives a
+ * view that has an accessibilityState but no text a content description
+ * made of its non-focusable children's text joined by ", "
+ * (ReactAccessibilityDelegate.kt :177–187 and getTalkbackDescription
+ * :944–1007, delimiter ", " at :578) — and the state's "disabled" was
+ * spoken after it. So the body takes no `disabled` (a row that cannot be
+ * chosen gets no onPress instead), and every sentence is an `accessible`
+ * Text (screen-reader focusable), which that joining skips anyway
+ * (:993–996): each is its own stop, read exactly as written.
  */
 export function ProviderRadioRow({
   row,
@@ -117,32 +130,32 @@ export function ProviderRadioRow({
           {row.asset ? ` · moves ${row.asset}` : ''}
         </Text>
       </Pressable>
-      <Pressable accessible={false} focusable={false} disabled={!row.selectable} onPress={onSelect} style={styles.radioBody}>
-        {row.note ? <Text style={[styles.body, { color: theme.textMuted }]}>{row.note}</Text> : null}
-        <Text style={[styles.body, { color: theme.text }]}>
+      <Pressable accessible={false} focusable={false} onPress={row.selectable ? onSelect : undefined} style={styles.radioBody}>
+        {row.note ? <Text accessible style={[styles.body, { color: theme.textMuted }]}>{row.note}</Text> : null}
+        <Text accessible style={[styles.body, { color: theme.text }]}>
           <Text style={styles.strong}>Who verifies: </Text>
           {row.trust.verification}
         </Text>
-        <Text style={[styles.body, { color: theme.text }]}>
+        <Text accessible style={[styles.body, { color: theme.text }]}>
           <Text style={styles.strong}>Who controls: </Text>
           {row.trust.control}
         </Text>
-        <Text style={[styles.body, { color: theme.text }]}>
+        <Text accessible style={[styles.body, { color: theme.text }]}>
           <Text style={styles.strong}>If it does not arrive: </Text>
           {row.trust.refundRule}
         </Text>
         {row.selectable ? (
           quote ? (
-            <Text style={[styles.body, { color: theme.text }]}>
+            <Text accessible style={[styles.body, { color: theme.text }]}>
               <Text style={styles.strong}>Fee (quoted just now): </Text>
               {quote.fee}. {quote.arrives}
             </Text>
           ) : (
-            <Text style={[styles.body, { color: theme.textMuted }]}>{BRIDGE_FEE_BEFORE_QUOTE}</Text>
+            <Text accessible style={[styles.body, { color: theme.textMuted }]}>{BRIDGE_FEE_BEFORE_QUOTE}</Text>
           )
         ) : null}
-        {row.measured ? <Text style={[styles.body, { color: theme.text }]}>{row.measured}</Text> : null}
-        {row.timeSource ? <Text style={[styles.body, { color: theme.textMuted }]}>{row.timeSource}</Text> : null}
+        {row.measured ? <Text accessible style={[styles.body, { color: theme.text }]}>{row.measured}</Text> : null}
+        {row.timeSource ? <Text accessible style={[styles.body, { color: theme.textMuted }]}>{row.timeSource}</Text> : null}
       </Pressable>
     </View>
   );

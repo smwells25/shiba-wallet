@@ -1919,10 +1919,45 @@ export function feeSymbolForChain(chain: bigint | string): string {
  */
 const FEE_SHORTFALL = /not enough [^.:\n]{1,40}? to pay the network fee/i;
 
+/**
+ * A node refusing a broadcast for its fee (pass p21e finding A2: shown raw as
+ * "RPC error -32000: transaction underpriced (eth_sendRawTransaction)").
+ * Matched conservatively on the wordings recorded from the clients the
+ * wallet's endpoints run: go-ethereum and reth "transaction underpriced",
+ * go-ethereum's "… gas tip cap 0, minimum needed 1" (phase 19 record), and
+ * "max fee per gas less than block base fee" (go-ethereum core
+ * ErrFeeCapTooLow, reth's equivalent). "replacement transaction
+ * underpriced" (go-ethereum txpool.ErrReplaceUnderpriced) has its own
+ * sentence: it means another transaction with the same nonce is pooled.
+ */
+const REPLACEMENT_UNDERPRICED = /replacement transaction underpriced/i;
+const BROADCAST_UNDERPRICED =
+  /transaction underpriced|gas tip cap \d+, minimum needed \d+|max fee per gas less than block base fee/i;
+
+export const TX_UNDERPRICED_TITLE = 'The network endpoint refused the fee.';
+
+export const TX_UNDERPRICED_SENTENCE =
+  'The network endpoint refused this transaction because its fee is below what that node accepts ' +
+  '("transaction underpriced"). Nothing was sent. Try again, or review the transaction again for a fresh fee.';
+
+/** Added when the refused quote was the Developer minimum-fee rehearsal (Send screen). */
+export const TX_UNDERPRICED_REHEARSAL_NOTE =
+  'The minimum-fee rehearsal is still on and this screen still holds its quote: approve again to retry, ' +
+  'or go back and turn the rehearsal off in Settings → Developer to send at the usual fee.';
+
+export const TX_REPLACEMENT_UNDERPRICED_TITLE = 'Another transaction with the same nonce is waiting.';
+
+export const TX_REPLACEMENT_UNDERPRICED_SENTENCE =
+  'The network endpoint refused this transaction because it already holds a pending transaction from this ' +
+  "account with the same nonce, and this one's fee is not high enough to replace it (\"replacement " +
+  'transaction underpriced"). Nothing was sent. Wait for the pending transaction to be included, or speed it ' +
+  'up or cancel it from Activity.';
+
 export function describeSendError(
   error: unknown,
   symbol: string,
   feeSymbol: string = 'ETH',
+  options: { minimumFeeRehearsal?: boolean } = {},
 ): { title: string; detail: string; technical?: string } {
   // A reverted gas estimate is a quote-step failure (nothing was attempted),
   // explained in one plain sentence rather than the node's "RPC error 3".
@@ -1954,6 +1989,16 @@ export function describeSendError(
   }
   if (/blockhash/i.test(detail)) {
     return { title: 'The network quote expired. Please review and try again.', detail };
+  }
+  if (REPLACEMENT_UNDERPRICED.test(detail)) {
+    return {
+      title: TX_REPLACEMENT_UNDERPRICED_TITLE,
+      detail: `${TX_REPLACEMENT_UNDERPRICED_SENTENCE}\n\nTechnical detail: ${detail}`,
+    };
+  }
+  if (BROADCAST_UNDERPRICED.test(detail)) {
+    const rehearsal = options.minimumFeeRehearsal ? ` ${TX_UNDERPRICED_REHEARSAL_NOTE}` : '';
+    return { title: TX_UNDERPRICED_TITLE, detail: `${TX_UNDERPRICED_SENTENCE}${rehearsal}\n\nTechnical detail: ${detail}` };
   }
   if (isEndpointFailure(error)) {
     // Transport-level failure (no answer, refused, rate limited): say so

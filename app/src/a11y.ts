@@ -125,9 +125,9 @@ export function activityRowSpokenLead(p: {
 
 /**
  * The style of a field label that is present for screen readers but not
- * drawn (pass p20d finding 1): the "visually hidden" pattern — a 1×1 box out
- * of the layout flow (absolutely positioned, so a parent's gap ignores it), clipping its text,
- * with transparent text.
+ * drawn (pass p20d finding 1): the "visually hidden" pattern — a 1×1 box
+ * clipping its text, with transparent text. Since pass p21e it is in the
+ * layout flow, directly above its field (see the comment in the style).
  *
  * Why not opacity 0, zero size or display "none": Android resolves a
  * field's accessibilityLabelledBy by searching the native view hierarchy
@@ -152,7 +152,12 @@ export function activityRowSpokenLead(p: {
  * components.tsx HiddenFieldLabel.)
  */
 export const HIDDEN_FIELD_LABEL_STYLE = {
-  position: 'absolute',
+  // In the layout flow, NOT absolutely positioned (pass p21e finding B2a):
+  // an absolute node sat at its View's top-left, i.e. INSIDE the field's
+  // bounds, and TalkBack then read it AFTER the field. In the flow, as the
+  // first child of a plain View holding only it and the field, it is a 1×1
+  // line ABOVE the field (the field moves down by that one point), so both
+  // the view order and the on-screen position put it first.
   width: 1,
   height: 1,
   overflow: 'hidden',
@@ -246,6 +251,12 @@ export function sendLinkHint(displaySymbol: string): string {
 }
 
 /**
+ * iOS ONLY since pass p21e (finding B2c): on Android the switcher's polite
+ * live region already speaks the line when it appears on open (the sizes
+ * are reset on open, so it always appears after the first measurement), and
+ * this announcement repeated it; AccountSwitcher.tsx uses it only where no
+ * live region exists (VoiceOver).
+ *
  * "More accounts below — scroll the list." spoken ONCE each time the account
  * switcher opens with rows below the fold (pass p21a finding 7). The
  * always-mounted live region under the list (AccountSwitcher.tsx) was not

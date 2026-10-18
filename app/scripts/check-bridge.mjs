@@ -1269,13 +1269,36 @@ console.log('check-bridge: the emulator pass p21b findings (provider choice, spo
   check('MUTANT (the old spoken label with the reason and its final period) is caught', /\.$/.test(m3b.providerRowSpokenLabel(cctp, null)));
   const rowStructureOk = (src) => {
     const radio = /<Pressable\s+accessibilityRole="radio"\s+accessibilityState=\{\{ checked: selected, disabled: !row\.selectable \}\}\s+accessibilityLabel=\{providerRowSpokenLabel\(row, quote\)\}[^]*?<\/Pressable>/.exec(src);
-    const body = /<Pressable accessible=\{false\} focusable=\{false\} disabled=\{!row\.selectable\} onPress=\{onSelect\} style=\{styles\.radioBody\}>([^]*?)<\/Pressable>/.exec(src);
-    return !!radio && !/Who verifies/.test(radio[0]) && !!body && ['{row.note}', 'Who verifies: ', 'Who controls: ', 'If it does not arrive: ', 'Fee (quoted just now): ', '{row.measured}', '{row.timeSource}'].every((t) => body[1].includes(t));
+    const body = /<Pressable accessible=\{false\} focusable=\{false\} onPress=\{row\.selectable \? onSelect : undefined\} style=\{styles\.radioBody\}>([^]*?)<\/Pressable>/.exec(src);
+    if (!radio || /Who verifies/.test(radio[0]) || !body) return false;
+    // Pass p21e finding B2b: no accessibility prop on the body that would
+    // make RN join its children into one description (an accessibilityState
+    // — which a non-null `disabled` creates — a role, a label, actions or a
+    // labelled-by), and every top-level sentence an `accessible` Text.
+    const opener = /<Pressable accessible=\{false\}[^>]*>/.exec(src.slice(src.indexOf(body[0])))[0];
+    if (/disabled=|accessibilityState|accessibilityRole|accessibilityLabel|accessibilityActions|accessibilityLabelledBy|aria-/.test(opener)) return false;
+    const topTexts = body[1].match(/<Text\b[^>]*style=\{\[styles\.body[^>]*>/g) ?? [];
+    return ['{row.note}', 'Who verifies: ', 'Who controls: ', 'If it does not arrive: ', 'Fee (quoted just now): ', '{BRIDGE_FEE_BEFORE_QUOTE}', '{row.measured}', '{row.timeSource}'].every((t) => body[1].includes(t)) &&
+      topTexts.length === 8 && topTexts.every((t) => /^<Text accessible style=/.test(t));
   };
   check('…the row: the radio control holds only the head; the note, the three trust lines, the fee and the measured time sit in a body that is neither accessible nor focusable, so each Text is its own stop (source)',
     rowStructureOk(views));
   check('MUTANT (the body made one accessible node again) is caught',
-    !rowStructureOk(views.replace('<Pressable accessible={false} focusable={false} disabled={!row.selectable}', '<Pressable disabled={!row.selectable}')));
+    !rowStructureOk(views.replace('<Pressable accessible={false} focusable={false} onPress={row.selectable ? onSelect : undefined}', '<Pressable onPress={row.selectable ? onSelect : undefined}')));
+  check('MUTANT (p21e finding B2b: the body’s `disabled` back — Pressable turns it into an accessibilityState, and the delegate then joins every sentence into one ", "-separated stop ending "…. disabled") is caught',
+    !rowStructureOk(views.replace('<Pressable accessible={false} focusable={false} onPress={row.selectable ? onSelect : undefined}', '<Pressable accessible={false} focusable={false} disabled={!row.selectable} onPress={onSelect}')));
+  check('MUTANT (p21e finding B2b: one sentence not its own accessible Text) is caught',
+    !rowStructureOk(views.replace('<Text accessible style={[styles.body, { color: theme.text }]}>\n          <Text style={styles.strong}>Who controls: </Text>', '<Text style={[styles.body, { color: theme.text }]}>\n          <Text style={styles.strong}>Who controls: </Text>')));
+  // The sentences each Text speaks, exactly, and none with a doubled period
+  // (the CCTP row read "…at any time.. disabled").
+  const cctpRow = rows.find((r) => r.id === CCTP_V2_PROVIDER_ID);
+  const lzRow = rows.find((r) => r.id === LAYERZERO_OFT_PROVIDER_ID);
+  const spoken = (r) => [r.note, `Who verifies: ${r.trust.verification}`, `Who controls: ${r.trust.control}`, `If it does not arrive: ${r.trust.refundRule}`, r.measured, r.timeSource].filter(Boolean);
+  check('p21e finding B2b: the CCTP refund sentence is read exactly as written, ending in one period',
+    `If it does not arrive: ${cctpRow.trust.refundRule}` ===
+      'If it does not arrive: There is no refund: the USDC is burned on the sending network. Once Circle attests the burn, anyone with gas on the receiving network can complete the mint to your address, at any time.');
+  check('p21e finding B2b: no provider-row sentence has a doubled period or ends without one',
+    [...spoken(cctpRow), ...spoken(lzRow)].every((t) => !/\.\./.test(t) && /[.)]$/.test(t.trim())), [...spoken(cctpRow), ...spoken(lzRow)].filter((t) => /\.\./.test(t) || !/[.)]$/.test(t.trim())).join(' | '));
 
   // (4) Each phase opens at the top: one ScrollView key per view.
   const keys = [...screen.matchAll(/<ScrollView key="(bridge-[a-z-]+)"/g)].map((m) => m[1]);

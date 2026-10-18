@@ -2172,7 +2172,7 @@ console.log('check-multisig: pass p20c (TalkBack and dark mode) findings 5, 9 an
   // createOverflowAnnouncer), the live region kept for its reappearance.
   {
     const a11y = await import('../src/a11y.ts');
-    const { SWITCHER_SCROLL_HINT: HINT } = await import('../src/wallet/watch-only.ts');
+    const { SWITCHER_SCROLL_HINT: HINT, switcherListOverflows } = await import('../src/wallet/watch-only.ts');
     // A fake AccessibilityInfo counting announcements, with fake timers.
     const harness = (create = a11y.createOverflowAnnouncer) => {
       const said = [];
@@ -2229,18 +2229,44 @@ console.log('check-multisig: pass p20c (TalkBack and dark mode) findings 5, 9 an
     h.announcer.opened(); h.announcer.update(M(true)); h.flush(); h.announcer.update(M(true)); h.flush();
     check('…mutant caught: an announcer that speaks on every overflowing update (the expander toggle would repeat it)', h.said.length !== 1);
     // The wiring in AccountSwitcher.tsx.
+    // Pass p21e finding B2c: on Android the line was spoken TWICE on open
+    // (the live region when it appeared, then this announcement 500 ms
+    // later) and "Accounts. Heading" was skipped. One path per platform:
+    // Android the live region alone, iOS (no live regions) the announcement.
     const wireOk = (src) =>
+      src.includes("const announceOnOpen = Platform.OS === 'ios';") &&
       src.includes('announce: (message) => AccessibilityInfo.announceForAccessibility(message),') &&
       src.includes('message: SWITCHER_SCROLL_HINT,') &&
-      /if \(open\) announcer\.opened\(\);\s*else announcer\.closed\(\);/.test(src) &&
-      /announcer\.update\(\{\s*measured: listHeight > 0 && contentHeight > 0,\s*overflows: switcherListOverflows\(\{ listHeight, contentHeight, scrollY \}\),\s*\}\);/.test(src) &&
+      /if \(!announceOnOpen\) return;\s*if \(open\) announcer\.opened\(\);\s*else announcer\.closed\(\);/.test(src) &&
+      /if \(!announceOnOpen \|\| !open\) return;\s*announcer\.update\(\{\s*measured: listHeight > 0 && contentHeight > 0,\s*overflows: switcherListOverflows\(\{ listHeight, contentHeight, scrollY \}\),\s*\}\);/.test(src) &&
       /setScrollY\(0\);[^]*?setListHeight\(0\);\s*setContentHeight\(0\);\s*setOpen\(true\);/.test(src) &&
+      (src.match(/announceForAccessibility/g) ?? []).length === 2 && !/setTimeout|setInterval/.test(src.replace('schedule: (run, ms) => setTimeout(run, ms),', '').replace('cancel: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),', '')) &&
       liveOk(src);
-    check('…AccountSwitcher announces through AccessibilityInfo.announceForAccessibility, decides on the sizes measured after each open (reset on open), and keeps the live region (source)', wireOk(sw));
-    check('…mutant caught: the switcher without the announcement (the old behaviour)',
-      !wireOk(sw.replace('announce: (message) => AccessibilityInfo.announceForAccessibility(message),', 'announce: () => undefined,')));
-    check('…mutant caught: stale sizes from the previous open deciding the announcement',
+    check('p21e finding B2c: AccountSwitcher announces through AccessibilityInfo.announceForAccessibility on iOS ONLY (no live regions there); on Android the polite live region is the one path; the sizes are reset on open and no other timer or announcement exists (source)', wireOk(sw));
+    check('…mutant caught (p21e finding B2c): the announcement on Android too (the line spoken twice on open)',
+      !wireOk(sw.replace("const announceOnOpen = Platform.OS === 'ios';", 'const announceOnOpen = true;')));
+    check('…mutant caught: stale sizes from the previous open (the line present from the first frame, so the Android live region is silent on open — the p21a failure)',
       !wireOk(sw.replace('setListHeight(0);\n          setContentHeight(0);\n', '')));
+    // Why the live region speaks on every Android open: with the sizes reset
+    // the line is absent at first and appears once both are measured.
+    check('…the line is absent before the list is measured and present once it overflows, so it APPEARS on each open (one live-region speech)',
+      switcherListOverflows({ listHeight: 0, contentHeight: 0, scrollY: 0 }) === false &&
+        switcherListOverflows({ listHeight: 400, contentHeight: 0, scrollY: 0 }) === false &&
+        switcherListOverflows({ listHeight: 400, contentHeight: 900, scrollY: 0 }) === true);
+    // Fake timers, Android: the switcher's open-and-measure sequence schedules
+    // nothing and announces nothing when the announcer is not driven.
+    {
+      const hh = harness();
+      const androidDrive = (announceOnOpen) => {
+        if (announceOnOpen) hh.announcer.opened();
+        for (const st of [U, M(true)]) if (announceOnOpen) hh.announcer.update(st);
+        hh.flush();
+      };
+      androidDrive(false);
+      const quiet = hh.said.length === 0 && hh.timers.size === 0;
+      androidDrive(true);
+      check('…with fake timers: the Android sequence (announcer not driven) schedules and says nothing; driving it (the iOS path, or the mutant) says the line once', quiet && hh.said.length === 1);
+    }
   }
 }
 

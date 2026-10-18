@@ -257,18 +257,22 @@ export function PasteOrScan({
   const [scanning, setScanning] = useState(false);
   return (
     <View style={styles.stack}>
-      <HiddenFieldLabel field={fieldLabel('paste', placeholder)} />
-      <TextInput
-        {...fieldLabel('paste', placeholder).input}
-        value={value}
-        onChangeText={onChange}
-        placeholder={placeholder}
-        placeholderTextColor={theme.textMuted}
-        multiline
-        autoCapitalize="none"
-        autoCorrect={false}
-        style={[styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }]}
-      />
+      {/* A plain View: the hidden label is a 1-point line directly above the
+          field, outside the stack's gap (pass p21e, finding B2a). */}
+      <View>
+        <HiddenFieldLabel field={fieldLabel('paste', placeholder)} />
+        <TextInput
+          {...fieldLabel('paste', placeholder).input}
+          value={value}
+          onChangeText={onChange}
+          placeholder={placeholder}
+          placeholderTextColor={theme.textMuted}
+          multiline
+          autoCapitalize="none"
+          autoCorrect={false}
+          style={[styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }]}
+        />
+      </View>
       <Button
         title="Scan QR code"
         accessibilityLabel={`Scan QR code: ${placeholder}`}
