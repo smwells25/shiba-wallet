@@ -201,6 +201,13 @@ examples/demo.mjs          Offline end-to-end engine demo
   printed counts equalled HEAD's), print the checkout and apply exit
   codes and the changed-file count, and compare the touched suites'
   counts with the agent's report before trusting ALL GREEN.
+  RUN THE WORKTREE RUNNER WITH --skip-bundle: the expo-export bundle
+  smoke test passes only in the main checkout (Metro follows the
+  worktree's node_modules symlinks only into folders it watches, and
+  the worktree's workspace root is itself — 2026-10-18: "Unable to
+  resolve module expo" after an hour of cache and Watchman theories);
+  the bundle step is covered by `npm test` in the main checkout and by
+  CI.
 - Subagents run on Opus (the Chairperson's credit directive); one agent
   drives the emulator at a time.
 - THE SESSION SCRATCHPAD LIVES UNDER /private/tmp, WHICH macOS CLEANS
@@ -9050,3 +9057,40 @@ Opus.
       send (phase 19 saw "transaction underpriced" and "gas tip cap 0,
       minimum needed 1" on some); a real speed-up / cancel from the card;
       the layer-2 sequencers; the longer warning's layout.
+- [x] THE PHASE-21 DEVELOPMENT BUILD FOR DURESS STAGE 3, AND THE
+      TOOLCHAIN MOVED OUT OF THE SCRATCHPAD (2026-10-15; nothing committed
+      then; this record and the two doc lines are the docs commit below).
+      A debug dev-client APK was built from 45506f2 in the scratchpad
+      worktree wt-build with the phase-16 route (APFS-cloned node_modules,
+      the engine built inside the worktree, `expo prebuild`, Gradle direct
+      with `-PreactNativeArchitectures=x86_64 -PreactNativeDevServerPort=8082`,
+      Gradle stopped before any emulator input) and kept OUTSIDE the
+      scratchpad at .local/builds/shiba-devclient-45506f2-debug.apk
+      (84,803,531 bytes, sha256 9f7ae794…e564; applicationId
+      com.anonymous.shibawallet; it carries expo-notifications, the
+      storage seam, the app PIN, the duress PIN and the BIP-85 decoy of
+      39ca42a and 42b830f, so it is the build for the Stage 3 pass on a
+      THROWAWAY wallet). HOUSEKEEPING after the temp-cleaner incident: the
+      JDK (Temurin 17.0.20.1+1, 287 MB) now lives in .local/jdk and the
+      Gradle user home (4.7 GB) in .local/gradle-home; .local/helpers/p16c/
+      env.sh sets JAVA_HOME and GRADLE_USER_HOME to those paths (the
+      scratchpad copies had been deleted by the cleaner and were
+      re-downloaded during this build). MANIFEST FINDING (the merged debug
+      manifest at wt-build, 35 uses-permission entries): TWENTY launcher
+      badge and shortcut permissions not in RELEASE.md's list —
+      android.permission.READ_APP_BADGE, the four
+      com.android.launcher.permission.* shortcut/settings entries, and the
+      Samsung, HTC, Sony (two), Huawei (three), Oppo (two), Nova, Apex and
+      EverythingMe (two) badge entries — ALL from me.leolin:ShortcutBadger:
+      1.1.22 (its own AndroidManifest.xml declares exactly these 20; the
+      merger report attributes them to it), which expo-notifications 57.0.22
+      declares at android/build.gradle line 45; the wallet never sets a
+      badge (shouldSetBadge false, allowBadge false in notifications.ts);
+      recorded in RELEASE.md §10 and PRIVACY.md 2.8 (removal through
+      tools:node="remove" not tried; the release manifest not rebuilt).
+      The emulator agent dispatched afterwards for the Speed up / Cancel
+      rehearsal at a9fe4d5 was cut by the session limit after moving
+      wt-app to a9fe4d5 (engine built inside it; the dist carries the
+      8da86a6 verb table) and was relaunched on 2026-10-18 as pass p21e;
+      on 2026-10-18 all three scratchpad worktrees were intact (0 deleted
+      files) and every scratchpad file was touched.

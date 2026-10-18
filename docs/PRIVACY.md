@@ -214,6 +214,16 @@ Until then we describe this as "not set up, no contact expected" rather
 than "no contact verified"; `docs/RELEASE.md` section 3 has the technical
 detail and the sources.
 
+The same notification library also brings in a small helper library
+(ShortcutBadger) whose only job is to show an unread count on the app's
+icon on phones from Samsung, HTC, Sony, Huawei, Oppo and a few
+third-party launchers. It declares twenty launcher permissions in the
+Android app (seen in the wallet's own development build on 2026-10-15).
+The wallet never shows a badge count, these permissions let an app talk
+only to the phone's own launcher, and nothing in them sends data off the
+phone; they are listed here so the permission list of a real build is
+not a surprise.
+
 A notification can appear on the lock screen, so it says only what kind
 of event happened ("A recurring payment is due", "Someone started a
 recovery of one of your accounts"). It never contains an amount, an

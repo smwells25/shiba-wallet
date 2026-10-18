@@ -694,5 +694,25 @@ Every item must be checked for the exact commit being built.
   `com.google.android.c2dm.permission.SEND`, which Google's documentation
   says Google Play services holds). Still open: the permission's protection
   level read on a device, and a network capture of a fresh install.
+- Seen in a local debug development build's merged manifest on
+  2026-10-15 (commit 45506f2; the build is kept at
+  `.local/builds/shiba-devclient-45506f2-debug.apk`, git-ignored): twenty
+  launcher badge and shortcut permissions that are not in the list above
+  (`android.permission.READ_APP_BADGE`,
+  `com.android.launcher.permission.INSTALL_SHORTCUT` /
+  `UNINSTALL_SHORTCUT` / `READ_SETTINGS` / `WRITE_SETTINGS`, and the
+  Samsung, HTC, Sony, Huawei, Oppo, Nova (`com.anddoes`), Apex
+  (`com.majeur`) and EverythingMe badge permissions). All twenty come
+  from the library `me.leolin:ShortcutBadger:1.1.22`, which
+  `expo-notifications` 57.0.22 declares in its `android/build.gradle`
+  (line 45) so it can draw an unread count on the launcher icon. The
+  wallet never sets a badge count (`shouldSetBadge: false` and
+  `allowBadge: false` in `app/src/wallet/notifications.ts`), so the
+  permissions are declared but unused; they are normal-protection
+  launcher permissions that need no user prompt. Removing them would need
+  `tools:node="remove"` entries in the manifest through a config plugin,
+  which has not been tried. The debug manifest also carries the
+  dev-launcher's `CHANGE_WIFI_MULTICAST_STATE`; the release manifest was
+  not rebuilt on 2026-10-15.
 - App Store Connect's phased-release controls.
 - The export-compliance answer (legal input).
