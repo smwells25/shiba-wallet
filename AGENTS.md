@@ -9094,3 +9094,44 @@ Opus.
       8da86a6 verb table) and was relaunched on 2026-10-18 as pass p21e;
       on 2026-10-18 all three scratchpad worktrees were intact (0 deleted
       files) and every scratchpad file was touched.
+- [x] Pass p21b follow-ups, no emulator (commit 71c5d50; check-bridge 223
+      (was 201; 16 mutants), check-token-send 82 (78), check-staking 136
+      (132); offline runner ALL GREEN in the CTO's isolated worktree on
+      HEAD 1d0b762 with --skip-bundle: engine 1,046, app 9,194 across 59
+      suites, lint 0/0, tsc clean; apply 0 / 7 files; four hand mutants
+      caught; not seen on a device). (1) SCROLL KEYS: every ScrollView on
+      the Send screen (send-form / -confirm / -aa-confirm / -erc20-confirm
+      / -nft-confirm / -success / -aa-success) and the Staking screen
+      (staking-form / -approve / -confirm / -aa-confirm / -success; the
+      three guard views unkeyed like the Bridge screen's) carries its own
+      key, so a confirm or success view opens at its top; pinned as the
+      exact sorted key lists, distinct, and (Send) every ScrollView keyed.
+      (2) noSourceRouteNote: where bridgeFormInputsShown is false (Base
+      Sepolia; Hoodi and custom networks draw no rows at all) the provider
+      row reads "Does not serve Base Sepolia in this wallet." with the
+      destination variant kept elsewhere; BRIDGE_CHOICE_NOTE still says
+      "for this pair of networks" there (leftover). (3) A SMART-ACCOUNT
+      BRIDGE WITH NO STORED BUNDLE HASH: BridgeReaders.userOpReceipt
+      (injected; the screen wires aa.ts fetchUserOpReceipt on the chain's
+      configured bundler and parses with summarizeAaReceipt — no second
+      client) is asked first by trackBridgeTransfer for a record with a
+      userOpHash and no source hash: a receipt with a hash is stored
+      through updateBridgeTransfer (sourceTxHash was already nullable —
+      no format change, version 1, the same 18 keys parse) and tracking
+      continues by it in the same pass; a null receipt leaves the record
+      untouched ("The smart-account operation has not been included yet:
+      the bundler has no receipt for it. Tracking starts once it is
+      included in a bundle transaction."); a reverted op becomes failed
+      ("…was included but reverted, so nothing was bridged; its network fee
+      was still charged." + the bundler's reason when hex or ≤ 200
+      printable characters — a judgement); a malformed receipt (not an
+      object, bad hash or success flag, another userOpHash or sender) is
+      refused and asked again; no bundler configured → a plain refusal;
+      the 15-second timer and "Check now" now include such records
+      (bridgeRecordTrackable). Agent deviation: the runner's step 1
+      rebuilt the engine dist in the main checkout while Metro served
+      from its worktree (no package source changed — harmless). UNVERIFIED
+      (device): the scroll position at Review and on the success views,
+      the Base Sepolia row, a real smart-account bridge resolved after a
+      restart; ZeroDev's receipt shape (userOpHash, sender, reason
+      wording) on this path.
