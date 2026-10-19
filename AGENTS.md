@@ -10221,6 +10221,146 @@ Subagents on Opus.
       the wipe-and-restore and the decoy export; the real Expo Go wallet
       only read-only export and an idempotent restore) in the builder's
       report.
+- [x] Item 3 — COLD SIGNING FOR A WATCH-ONLY ACCOUNT, THE QR HALF (feature
+      11; commit 0b2d516; 17 files incl. the new app/src/wallet/cold-signing.ts,
+      qr-parts.ts, screens/ColdSignScreen.tsx + ColdSignViews.tsx,
+      scripts/testnet/cold-signer.mjs and check-cold-signing 96 (8 mutants +
+      a source mutant); engine 1,050 — chains-evm 768, +4; offline runner
+      ALL GREEN in the CTO's isolated worktree on HEAD 694070c with
+      --skip-bundle: app 9,575 across 61 suites, lint 0/0, tsc clean; the
+      agent's patch plus its two patches for files outside its allow-list
+      (the Home link, the pending card's Speed up / Cancel routing to the
+      screen for a watch-only account — applied by the CTO) verified as one
+      tree and staged from the verified diff; not seen on a device; no
+      live broadcast). SLIP, recorded: the agent's THREAT_MODEL row T-89
+      reached HEAD one commit early — the records-backup record commit
+      694070c staged the whole working-tree file, which held the cold
+      agent's row from the shared tree, instead of its 7.4 hunk alone
+      (the row text is the verified one; harmless; stage hunks, not
+      files, when agents share the tree). FLOW: a watch-only account
+      prepares a send with the Send screen's own pieces (validateRecipient,
+      prepareEvmSend / prepareErc20Send through withEndpoint, the preview,
+      the risk card, SpendingPolicyNotice, the pre-flight gate with its
+      override, the spending gate before the request is built; the
+      Developer minimum-fee rehearsal applies to native sends) → the
+      unsigned type-0x2 transaction as QR codes (a request that does not
+      fit one code becomes "SW-CS:n/total:" parts through the multisig
+      chunking lifted into qr-parts.ts, parameterised by prefix; the suite
+      proves the "SW-MS:" prefix splits and joins byte-identically to the
+      multisig functions; MultisigScreen / multisig.ts untouched) → the
+      signature scanned or pasted → verifyColdSignSignature(text,
+      storedRequest) checks IN ORDER the request id, the signing hash
+      recomputed from the STORED fields, EIP-2 low s, the stated signer,
+      and that the recovered signer equals the watched address; the raw
+      transaction is rebuilt from the stored request, never the scanned
+      text → send.ts sendEvmWithSignature rebuilds exactly as sendEvm,
+      recovers the signer and refuses a mismatch BEFORE any node request
+      (PRESIGNED_WRONG_SIGNER_SENTENCE), then notifies sendEvm's listeners
+      (the pending registry, the spending recorder, Home's refresh);
+      sendEvmReplacementWithSignature mirrors sendEvmReplacement (untouched)
+      for a cold-signed speed-up / cancellation reached from the pending
+      card (route param replace {hash, action}); NO SIGNING ON THIS PATH —
+      the screen never calls signWith, the device check or a vault; the
+      whole flow beside a vault on a counting backend holding the watched
+      key's own phrase records 0 reads and 0 writes; the import closure of
+      cold-signing.ts adds only itself and qr-parts.ts to send.ts's graph
+      (no storage.ts, WalletContext, biometric.ts or expo-secure-store);
+      watch-only.ts WATCH_ONLY_COLD_SIGN_ROUTES = ['ColdSign'] allowed by
+      watchOnlyRouteRefusal (the read-only allow list unchanged);
+      ROUTE_FEATURES.ColdSign. FORMAT DECISION — the wallet's own, NOT
+      EIP-4527 (ethereum/ERCs erc-4527.md at 20942ae7, Stagnant; BCR-2020-005
+      at 66578898; both read 2026-10-19): eth-sign-request REQUIRES a
+      derivation-path (crypto-keypath) a typed watch-only address does not
+      have, the EIP's CDDL tag notation is malformed so the tag numbers
+      cannot be read with certainty, and it has no vectors of its own
+      (compliance = the reference implementations' unit tests, the fountain
+      code in a separate guide); the screen states plainly that the format
+      is the wallet's own ("…not the EIP-4527 format some hardware signers
+      read, so the off-line signer must understand this format."); the
+      bytewords alphabet was NOT the blocker (126 of 256 are BIP-39 words,
+      longest run 7). PAYLOADS: request {type
+      "shiba-wallet/cold-sign-request", version 1, requestId (16 random
+      bytes), chainId, from, tx {type "0x2", nonce, maxPriorityFeePerGas,
+      maxFeePerGas, gasLimit, to, value, data, accessList []}, summary,
+      signingHash} — a type-0x04 request or an authorizationList key is
+      refused (D6); signature {type "shiba-wallet/cold-sign-signature",
+      version 1, requestId, signer, signingHash, yParity, r, s}; a native
+      request 696 B (one code), a USDC request 871 B (two parts). ENGINE
+      (additive): eoa-tx.ts Eip1559Signature, recoverEip1559Signer,
+      serializeSignedEip1559 (three generated cases byte-equal to ethers
+      Transaction.serialized, equality with signEip1559, tamper recovery,
+      high-s and malformed refusals). cold-signer.mjs (address / sign /
+      qr-png / an offline selftest; test chain ids only; never prints a
+      key) stands in for the air-gapped device with the dev seed. STRINGS
+      pinned: title and Home link "Send with an off-line signer" (hint
+      "Prepares a send for this watched address that an off-line signer
+      holding its key signs"), the intro, the QR-contents note ("…They
+      contain no key and no secret: anyone who sees them learns what you
+      plan to send, but cannot send it."), "Before signing, check on the
+      off-line signer that it shows the same recipient, amount, network and
+      fee as this screen. Sign only if they match.", the scan note, the
+      refusals (another request; the hash mismatch; "This signature was
+      made by X, not by the watched address Y, so it was refused. Nothing
+      was sent…"; the type refusal naming EIP-7702; the key-in-wallet
+      refusal for a phrase account), "Signature checked: made by the
+      watched address Y over exactly the transaction shown above.", the
+      buttons "Show for the off-line signer" / "Scan the signature" /
+      "Check the pasted signature" / "Broadcast the signed transaction".
+      MUTANTS caught: the request-id check removed, the hash cross-check
+      removed, trusting the stated signer, a type-0x04 request accepted, a
+      token transaction sent to the recipient instead of the contract,
+      sendEvmWithSignature without its signer check, the route gate
+      without the cold-signing list, the QR codec without its
+      contradiction check, a screen calling signWith. DECISIONS (CTO): NO
+      readiness row — a cold-signed send is an ordinary regular-account
+      transaction, offered wherever Send is, like Speed up; smart accounts
+      OUT OF SCOPE (the Kernel owner signs the EIP-191 form of the
+      userOpHash, kernel-account.ts ~511, but SmartAccountClient.sendCalls
+      re-estimates and signs inline with the fee-floor check just before —
+      a QR round trip needs a client change; the next slice); FEATURE row
+      11 → Built, verified offline (partial — no hardware signer reads the
+      format; the tally at the item-9 refresh); THREAT_MODEL T-89.
+      FOLLOW-UP: Home's watchOnlyFooterText still says the wallet "cannot
+      send … for it" (pinned by check-watch-only). UNVERIFIED: everything
+      on a device (layouts, QR legibility, multi-part scanning, the paste
+      field, TalkBack, dark mode); a live broadcast; a real signer other
+      than the script. Emulator checklist (9 steps, Sepolia, dev index 8 =
+      0x8E1dEaF5d88e60DBdabcC79d8EFA570f40fb0cDF watched, ~0.003 test ETH
+      from fund.mjs; the two-part USDC request; Speed up and Cancel
+      cold-signed under the minimum-fee rehearsal; the refusals) in the
+      builder's report.
+- [ ] EMULATOR PASS p22a — THE NATIVE SCRYPT IN THE DEBUG DEVELOPMENT
+      BUILD, CUT BY THE SESSION LIMIT AFTER PART A4 (2026-10-19 UTC; the
+      agent hit the Opus session limit — resets 2026-10-20 04:20
+      America/New_York — right after the measurements; PARTS A5–A7, B, C,
+      D and E NOT RUN; captures in the scratchpad p22a). DONE: the debug
+      dev-client APK shiba-devclient-b414989-qc-debug.apk installed
+      (com.anonymous.shibawallet) with Metro on 8082 serving wt-build2
+      (EXPO_NO_METRO_LAZY=1; pid 39895); a THROWAWAY wallet; Settings →
+      Developer reads EXACTLY "PIN hashing path: native scrypt
+      (react-native-quick-crypto), self-check passed" — THE NATIVE MODULE
+      LOADS AND PASSES THE RFC 7914 SELF-CHECK ON THE EMULATOR; "Measure the
+      PIN hashing cost" FIVE RUNS (ms per hash; platform line "android ·
+      Hermes: yes · development bundle (__DEV__): yes · Hashing: native
+      scrypt (react-native-quick-crypto)"): 2^12 61 / 33 / 41 / 71 / 108;
+      2^13 212 / 111 / 135 / 125 / 140; 2^14 323 / 277 / 431 / 349 / 314;
+      2^15 256 / 674 / 755 / 556 / 722; 2^16 630 / 1,735 / 1,437 / 1,238 /
+      1,360; totals 1,486 / 2,832 / 2,809 / 2,346 / 2,649 — ONE HASH AT
+      2^16 IS 0.6–1.7 s IN THE DEBUG BUILD (JavaScript: 245–258 s per
+      two-hash attempt in the debug build, 49–53 s per hash in the release
+      build), so an unlock (two hashes) should take about 1.5–3.5 s; Stop
+      acts between sizes ("N = 2^16: not measured (stopped by you)." after
+      2^15 825 ms). The qemu priority log (every 30 s from 05:35 UTC with
+      `caffeinate -i -w 91483` running): PRI 55 at the start, 97 later,
+      NEVER the demoted 4 over 1,925 samples (whether the window was
+      occluded meanwhile is not known). NOT YET: the PIN on / unlock /
+      wrong-PIN / duress timings on the native path (A5), dark mode and
+      TalkBack on the measurement card (A6), the throwaway removed (A7),
+      the release build and its measurement (B, C), the captions under
+      TalkBack in Expo Go at HEAD (D), the App Nap research (E). STATE
+      LEFT: the dev client in front on the throwaway wallet, Metro 8082
+      up, Expo Go untouched (Metro 8081 at d7f555a), the priority loop
+      running; the pass resumes from A5 after the reset.
 - [x] Item 5 — LEADERSHIP REFRESH (docs commit below; check-readiness 208,
       check-screen-protection 87, check-devmode 418, check-notifications
       184, check-duress 113, check-multisig 424 all green in the CTO's
