@@ -522,7 +522,37 @@ Option (b). No slice is built in phase 20. The reasons, in order of weight:
   the follow-up slice above moved them (2026-10-15), so the decoy now
   satisfies rule 2 for the recovery records and the WalletConnect
   sessions, as far as offline checks can show.
-- **Stage 3 — an emulator pass on a throwaway wallet** (section 6.7).
+- **Stage 3 — an emulator pass on a throwaway wallet. RUN ONCE, 2026-10-18
+  UTC** (`AGENTS.md`, phase 21, "EMULATOR PASS p21f"), in the wallet's own
+  debug development build on the Android emulator, on a throwaway wallet
+  deleted with the app afterwards; nothing was sent. What passed: the
+  backup check (a device prompt, then two words of the phrase) before the
+  PIN is turned on and before a duress PIN is added; the PIN pad at launch
+  and after auto-lock, with no wallet data loaded behind it and no
+  biometric prompt; auto-lock, screen protection and notifications forced
+  as section 7 says; a duress PIN equal to the app PIN refused; the
+  second wallet opening with its own Account 1 and none of the real
+  wallet's accounts, contacts or tokens (the network choice and a custom
+  network are shared device settings by design, and the WalletConnect row
+  showed the app's built-in project id as "Saved"), its Settings reading like a wallet with only an app PIN (section
+  7.9); the real PIN opening the real wallet again; the second wallet's
+  address equal, off the device, to the first account of the BIP-85 child
+  at index 0 of the throwaway phrase; the secure store holding the two
+  wallets under visibly different names (section 3.2), the PIN record a
+  fixed size; and "Remove wallet" with the PIN on clearing both wallets
+  and the PIN record. Two findings: (1) one PIN check (two scrypt hashes
+  at N = 2^16) took 245 to 258 seconds under Hermes in the debug build,
+  so the PIN is unusable as built; the release-build figure is pending
+  and the choice between a native scrypt and a lower N is the
+  Chairperson's (`docs/THREAT_MODEL.md` F-81; section 6.2 above); (2) the
+  wrong-PIN wait was stamped when an attempt started and so had always
+  run out before "Wrong PIN" appeared (F-82; fixed in commit `0bfb134`,
+  section 6.3 above, not yet seen on a device). What remains: the
+  doubling waits and the countdown on screen; changing the PIN inside the
+  second wallet; the WalletConnect separation (the development build
+  failed to load the WalletConnect code, so neither wallet had sessions);
+  a send's device prompt from either wallet; TalkBack; a real phone; iOS;
+  and the open question of a BIP-39 passphrase (section 7.8).
 
 ### 5.3 Decisions for the Chairperson
 
