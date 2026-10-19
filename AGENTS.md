@@ -9943,6 +9943,63 @@ Subagents on Opus.
       text was kept by instruction; follow-up: shorten it). UNVERIFIED
       (emulator): TalkBack reading the caption once in caption-then-field
       order; the layout, dark mode, font scaling; VoiceOver.
+- [x] Item 2, the passphrase design — docs/DURESS_WALLET.md §8 (commit 8adaff7;
+      about 7,950 words; the old §8 Sources renumbered §9; check-duress 113
+      / check-readiness 208 / check-devmode 432 / check-screen-protection
+      87 green with it on HEAD 7c07120; secret scan clean; no code). (a)
+      THE LOCK PASSPHRASE (the smaller slice, P1, after the native scrypt
+      lands): 15–128 Unicode code points counted as typed (NIST SP
+      800-63B-4's single-factor floor — replaces §7.6's 12; 128 = the
+      newer Trezor limit), NFKD through @scure/bip39's own function (one
+      rule for both passphrase kinds; refuses ill-formed Unicode), case and
+      inner spaces kept, edge spaces refused at set-up and stripped at
+      entry; the SAME fixed-size scrypt record as version 2 with one
+      3-character kind field ("pin" / "phr") for both slots (length never
+      stored; version 1 reads as PIN and every write converts); hashing
+      cost independent of input length (Node, 2^14: 56–78 ms at 6 chars,
+      55–62 at 128); MIXING KINDS REFUSED (the lock screen shows one input
+      before it knows the wallet; switching kinds rewrites both slots in
+      one write from the real wallet only; in the decoy "This could not be
+      completed on this phone."); refusals: ≥ 3 recovery-phrase words, one
+      repeated character, the other slot, a near copy of the app
+      passphrase (one shared sentence so nothing leaks; the near-copy rule
+      only at duress set-up); the field's props cited from RN 0.86.3
+      (secure entry, autofill and password managers OFF against NIST's
+      "SHALL allow", reasons given; no RN prop for Android's
+      no-personalised-learning flag — unverified); entropy stated
+      honestly (a 6-digit PIN ~19.9 bits ≈ 3.1 days for the whole space on
+      one thread at 0.27 s a guess; four dice words ~51.7 bits ≈ 31 million
+      years; a length rule cannot measure a made-up phrase). (b) THE
+      BIP-39 PASSPHRASE DECOY (P2, only after the Chairperson answers):
+      B1, a SEPARATE passphrase stored as its derived 64-byte seed under
+      the second profile (storing the passphrase or re-deriving from the
+      phrase plus the duress secret would READ THE REAL PHRASE while the
+      decoy is open — rule 3 forbids it; so the "nothing stored" variant
+      fails too), never empty (the empty passphrase IS the real wallet),
+      printable ASCII 1–50 (Trezor Model One), no edge spaces, the first
+      Ethereum address shown at set-up; B2 (the duress secret as the
+      passphrase) rejected: changing the duress secret would break
+      recovery, and a 6-digit duress PIN lets anyone holding the phrase
+      find the decoy in ~2.3 thread-hours (8.1 ms median per seed,
+      measured); THE REVEAL LIMITATION: a passphrase decoy has NO recovery
+      phrase of its own to show under coercion (only the real phrase plus
+      the passphrase restores it) while the BIP-85 decoy shows a child
+      phrase that restores it alone — Ledger's pattern is the REVERSE
+      (the decoy is the bare phrase, the real wallet behind the
+      passphrase; existing funds would have to move; recorded as an
+      alternative, not designed); BIP-85 stays the default choice at
+      set-up. Quoted: BIP-39 at 0d1b892d ("every passphrase generates a
+      valid seed … but only the correct one will make the desired wallet
+      available", the "mnemonic" + passphrase NFKD salt, 2048 iterations,
+      the TREZOR vectors), BIP-85, Trezor's knowledge base, NIST
+      SP 800-63B-4; code facts by file and line at 64d2a51; GAP: no
+      BIP-39 "TREZOR" passphrase vector is tested in packages/core today
+      (chains.test.ts 210–218 only checks that a passphrase changes the
+      address) — follow-up. OPEN QUESTIONS (§8.5): accept the reveal
+      limitation, build Ledger's orientation, or both; B1 over B2; ASCII
+      ≤ 50; the 15-character floor; autofill off against NIST; a third
+      "could not be completed" action in the decoy; a generated
+      suggestion or advice only; the rule thresholds.
 - [x] Item 5 — LEADERSHIP REFRESH (docs commit below; check-readiness 208,
       check-screen-protection 87, check-devmode 418, check-notifications
       184, check-duress 113, check-multisig 424 all green in the CTO's
