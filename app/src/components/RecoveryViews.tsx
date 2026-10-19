@@ -8,7 +8,7 @@ import * as Clipboard from 'expo-clipboard';
 // round-trips through an independent decoder.
 import QRCode from 'react-native-qrcode-svg';
 import type { KernelGuardianSet } from '@shiba-wallet/chains-evm';
-import { Button, WarningBox, HiddenFieldLabel, useFieldLabels } from '../components';
+import { Button, WarningBox, useFieldLabels } from '../components';
 import { payloadQrSpokenLabel } from '../a11y';
 import { useTheme } from '../theme';
 import { QrScanner } from './QrScanner';
@@ -240,15 +240,22 @@ export function ShareActions({ text, shareTitle, onShared }: { text: string; sha
   );
 }
 
-/** Multi-line paste box with a Scan button (the shared QR scanner modal). */
+/**
+ * Multi-line paste box with a Scan button (the shared QR scanner modal).
+ * `label` is the field's visible caption (and its name for screen readers);
+ * `placeholder` is a short hint that must not repeat the caption, or a
+ * screen reader says the field's name twice (phase 22).
+ */
 export function PasteOrScan({
   value,
   onChange,
+  label,
   placeholder,
   rationale,
 }: {
   value: string;
   onChange: (text: string) => void;
+  label: string;
   placeholder: string;
   rationale: string;
 }) {
@@ -257,25 +264,21 @@ export function PasteOrScan({
   const [scanning, setScanning] = useState(false);
   return (
     <View style={styles.stack}>
-      {/* A plain View: the hidden label is a 1-point line directly above the
-          field, outside the stack's gap (pass p21e, finding B2a). */}
-      <View>
-        <HiddenFieldLabel field={fieldLabel('paste', placeholder)} />
-        <TextInput
-          {...fieldLabel('paste', placeholder).input}
-          value={value}
-          onChangeText={onChange}
-          placeholder={placeholder}
-          placeholderTextColor={theme.textMuted}
-          multiline
-          autoCapitalize="none"
-          autoCorrect={false}
-          style={[styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }]}
-        />
-      </View>
+      <Text {...fieldLabel('paste', label).label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel('paste', label).text}</Text>
+      <TextInput
+        {...fieldLabel('paste', label).input}
+        value={value}
+        onChangeText={onChange}
+        placeholder={placeholder}
+        placeholderTextColor={theme.textMuted}
+        multiline
+        autoCapitalize="none"
+        autoCorrect={false}
+        style={[styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }]}
+      />
       <Button
         title="Scan QR code"
-        accessibilityLabel={`Scan QR code: ${placeholder}`}
+        accessibilityLabel={`Scan QR code: ${label}`}
         variant="secondary"
         onPress={() => setScanning(true)}
       />

@@ -374,7 +374,7 @@ export function ContactsScreen(_props: Props) {
               setAddress(t);
               setAddError(null);
             }}
-            placeholder={`${addNetwork?.network.label ?? ''} address`}
+            placeholder="Paste or type the address"
             placeholderTextColor={theme.textMuted}
             autoCapitalize="none"
             autoCorrect={false}
