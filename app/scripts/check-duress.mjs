@@ -37,6 +37,7 @@
 // No device, no network.
 
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { scrypt as nodeScryptCb, scryptSync } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { sha256, sha512 } from '@noble/hashes/sha2.js';
@@ -50,6 +51,7 @@ import { wordlist } from '@scure/bip39/wordlists/english.js';
 import * as seam from '../src/wallet/store-keys.ts';
 import * as pinMod from '../src/wallet/pin.ts';
 import * as pinCost from '../src/wallet/pin-cost.ts';
+import * as nativeMod from '../src/wallet/pin-native-scrypt.ts';
 import * as duressMod from '../src/wallet/duress.ts';
 import * as lockMod from '../src/wallet/lock.ts';
 import * as storage from '../src/wallet/storage.ts';
@@ -575,6 +577,195 @@ function fakeCostRun(pc, costs, { cancelAt = null } = {}) {
 }
 
 // ---------------------------------------------------------------------------
+console.log('check-duress: the native scrypt path (src/wallet/pin-native-scrypt.ts, react-native-quick-crypto)');
+// ---------------------------------------------------------------------------
+/** A stand-in for the native scrypt: Node's crypto.scrypt (OpenSSL's EVP_PBE_scrypt, the function react-native-quick-crypto calls). */
+function nodeNative({ corrupt = false, failAtN = null } = {}) {
+  const calls = [];
+  const derive = (input, salt, N, r, p, maxmem, dkLen) => {
+    calls.push({ input: Uint8Array.from(input), saltLength: salt.length, N, r, p, maxmem, dkLen });
+    if (failAtN !== null && N === failAtN) return Promise.reject(new Error('simulated native failure'));
+    return new Promise((resolve, reject) =>
+      nodeScryptCb(Buffer.from(input), Buffer.from(salt), dkLen, { N, r, p, maxmem }, (e, k) => {
+        if (e) return reject(e);
+        const out = new Uint8Array(k);
+        if (corrupt) out[0] ^= 1;
+        resolve(out);
+      }));
+  };
+  return { calls, loader: async () => ({ kind: 'loaded', derive }) };
+}
+/** Runs fn with console.warn captured; returns [result, warnings]. */
+async function withWarnings(fn) {
+  const warned = [];
+  const orig = console.warn;
+  console.warn = (...a) => warned.push(a.map(String).join(' '));
+  try {
+    return [await fn(), warned];
+  } finally {
+    console.warn = orig;
+  }
+}
+const RFC_VECTOR_3_HEX =
+  '7023bdcb3afd7348461c06cd81fd38ebfda8fbba904f8e3ea9b543f6545da1f2d5432955613f0fcf62d49705242a9af9e61e85dc0d651e40dfcf017b45575887';
+{
+  const salts = [detRandom(32), detRandom(32), detRandom(32), detRandom(32)];
+  const triples = [[PIN_A, salts[0], 12], ['000000', salts[1], 14], ['pïn-ünicode-é', salts[2], 10], [PIN_B, salts[3], 16]];
+  check('the oracle: Node\'s crypto.scryptSync equals noble\'s scrypt byte for byte for four (input, salt, N) triples, N = 2^10 … 2^16, r = 8, p = 1, dkLen = 32',
+    triples.every(([i, s, n]) => bytesToHex(new Uint8Array(scryptSync(i, s, 32, { N: 2 ** n, r: 8, p: 1, maxmem: nativeMod.pinScryptMaxmem(2 ** n, 8) }))) ===
+      bytesToHex(scrypt(i, s, { N: 2 ** n, r: 8, p: 1, dkLen: 32 }))));
+  const v = nativeMod.RFC7914_SELF_CHECK;
+  check('the self-check vector is RFC 7914 section 12\'s third (P = "pleaseletmein", S = "SodiumChloride", N = 16384, r = 8, p = 1, dkLen = 64), its digest as printed there',
+    v.password === 'pleaseletmein' && v.salt === 'SodiumChloride' && v.N === 16384 && v.r === 8 && v.p === 1 && v.dkLen === 64 && v.expectedHex === RFC_VECTOR_3_HEX);
+  check('…and Node\'s scrypt and noble\'s scrypt both reproduce that digest',
+    bytesToHex(new Uint8Array(scryptSync(v.password, v.salt, 64, { N: v.N, r: v.r, p: v.p }))) === RFC_VECTOR_3_HEX &&
+      bytesToHex(scrypt(v.password, v.salt, { N: v.N, r: v.r, p: v.p, dkLen: 64 })) === RFC_VECTOR_3_HEX);
+  const nodeAccepts = (maxmem) => {
+    try { scryptSync('x', 'y', 32, { N: 65536, r: 8, p: 1, maxmem }); return true; } catch { return false; }
+  };
+  check('maxmem = 128·r·N + 1 MiB = 68,157,440 bytes at N = 2^16, r = 8; OpenSSL accepts it, and refuses Node\'s 32 MiB default and the bare 128·r·N',
+    nativeMod.pinScryptMaxmem(65536, 8) === 68_157_440 && nodeAccepts(68_157_440) && !nodeAccepts(32 * 1024 * 1024) && !nodeAccepts(128 * 8 * 65536) &&
+      nodeAccepts(128 * 8 * (65536 + 2) + 128 * 8 * 1));
+
+  // Under Node the app's own loader finds no native module.
+  nativeMod.setNativeScryptLoaderForChecks(null);
+  const absent = await nativeMod.resolvePinHashPath();
+  check('under Node the app\'s loader reports the native module absent: JavaScript scrypt, and the Developer line says so',
+    absent.kind === 'javascript' && absent.reason === 'absent' &&
+      nativeMod.pinHashPathLine(absent) === 'PIN hashing path: JavaScript scrypt (@noble/hashes): the native module is not in this build');
+  check('the Developer line before the path is known, and with the native path',
+    nativeMod.pinHashPathLine(null) === 'PIN hashing path: checking…' &&
+      nativeMod.pinHashPathLine({ kind: 'native' }) === 'PIN hashing path: native scrypt (react-native-quick-crypto), self-check passed');
+
+  // The native path, with Node's scrypt standing in for the library.
+  const nat = nodeNative();
+  nativeMod.setNativeScryptLoaderForChecks(nat.loader);
+  const native = await nativeMod.resolvePinHashPath();
+  check('a native scrypt that passes the RFC 7914 self-check is used: the first call is the self-check vector with maxmem 128·r·N + 1 MiB',
+    native.kind === 'native' && nat.calls.length === 1 && nat.calls[0].N === 16384 && nat.calls[0].dkLen === 64 &&
+      nat.calls[0].maxmem === 128 * 8 * 16384 + 1_048_576 && new TextDecoder().decode(nat.calls[0].input) === 'pleaseletmein');
+  let allEqual = true;
+  for (const [i, s, n] of triples) {
+    const before = nat.calls.length;
+    const viaNative = await pinMod.pinScrypt(i, s, n);
+    const c = nat.calls.at(-1);
+    allEqual &&= nat.calls.length === before + 1 && c.N === 2 ** n && c.r === 8 && c.p === 1 && c.dkLen === 32 &&
+      c.maxmem === nativeMod.pinScryptMaxmem(2 ** n, 8) && bytesToHex(c.input) === bytesToHex(utf8ToBytes(i)) &&
+      bytesToHex(viaNative) === bytesToHex(scrypt(i, s, { N: 2 ** n, r: 8, p: 1, dkLen: 32 }));
+  }
+  check('pinScrypt through the native path equals noble byte for byte for the four triples (incl. N = 2^16 and a non-ASCII input as UTF-8), one native call each',
+    allEqual && (await nativeMod.resolvePinHashPath()).kind === 'native');
+  let progressCalls = 0;
+  await pinMod.pinScrypt('000000', salts[0], 12, () => { progressCalls += 1; });
+  check('on the native path the progress callback is never called (the native hash cannot be interrupted)', progressCalls === 0);
+
+  // A PIN set on one path opens on the other, both ways.
+  nativeMod.setNativeScryptLoaderForChecks(async () => ({ kind: 'absent' }));
+  const jsBackend = fakeSecureStore();
+  await pinMod.setAppPin(jsBackend, PIN_A, { random: detRandom });
+  nativeMod.setNativeScryptLoaderForChecks(nodeNative().loader);
+  const openedNative = await pinMod.attemptPin(jsBackend, PIN_A, { random: detRandom });
+  const wrongNative = await pinMod.attemptPin(jsBackend, PIN_B, { random: detRandom });
+  const natBackend = fakeSecureStore();
+  await pinMod.setAppPin(natBackend, PIN_B, { random: detRandom });
+  nativeMod.setNativeScryptLoaderForChecks(async () => ({ kind: 'absent' }));
+  const openedJs = await pinMod.attemptPin(natBackend, PIN_B, { random: detRandom });
+  check('a PIN set with the JavaScript scrypt opens with the native one (and another PIN is wrong), and a PIN set natively opens with JavaScript',
+    openedNative.kind === 'opened' && openedNative.slot === 'primary' && wrongNative.kind === 'wrong' && openedJs.kind === 'opened' && openedJs.slot === 'primary');
+
+  // A native scrypt that fails its self-check is not used.
+  const bad = nodeNative({ corrupt: true });
+  nativeMod.setNativeScryptLoaderForChecks(bad.loader);
+  const [badPath, badWarn] = await withWarnings(() => nativeMod.resolvePinHashPath());
+  const badOut = await pinMod.pinScrypt(PIN_A, salts[0], 12);
+  check('a native scrypt whose self-check output differs is not used: JavaScript path, the reason kept, the hash still correct, the native module not called again',
+    badPath.kind === 'javascript' && badPath.reason === 'self-check-failed' && bad.calls.length === 1 &&
+      bytesToHex(badOut) === bytesToHex(scrypt(PIN_A, salts[0], { N: 4096, r: 8, p: 1, dkLen: 32 })) &&
+      nativeMod.pinHashPathLine(badPath).startsWith('PIN hashing path: JavaScript scrypt (@noble/hashes): the native module failed its self-check against the RFC 7914 test vector, so it is not used.'));
+  check('…and the reason is logged once, naming no PIN, salt or hash',
+    badWarn.length === 1 && badWarn[0].includes('self-check-failed') && !badWarn[0].includes(PIN_A) && !/[0-9a-f]{32}/.test(badWarn[0]), JSON.stringify(badWarn));
+
+  // A native hash that fails later in the session.
+  const late = nodeNative({ failAtN: 2 ** 16 });
+  nativeMod.setNativeScryptLoaderForChecks(late.loader);
+  const [lateOut, lateWarn] = await withWarnings(() => pinMod.pinScrypt(PIN_A, salts[3], 16));
+  const lateCalls = late.calls.length;
+  await pinMod.pinScrypt(PIN_A, salts[0], 12);
+  const latePath = await nativeMod.resolvePinHashPath();
+  check('a native hash that fails mid-session falls back to JavaScript for that hash (same bytes) and for the rest of the session',
+    bytesToHex(lateOut) === bytesToHex(scrypt(PIN_A, salts[3], { N: 65536, r: 8, p: 1, dkLen: 32 })) && lateCalls === 2 && late.calls.length === 2 &&
+      latePath.kind === 'javascript' && latePath.reason === 'native-error' && lateWarn.length === 1 &&
+      nativeMod.pinHashPathLine(latePath).startsWith('PIN hashing path: JavaScript scrypt (@noble/hashes): the native module failed during a hash and is not used for the rest of this session.'));
+  nativeMod.setNativeScryptLoaderForChecks(async () => { throw new Error('boom'); });
+  const [failedPath] = await withWarnings(() => nativeMod.resolvePinHashPath());
+  check('a native module that cannot be loaded: JavaScript path with the reason',
+    failedPath.kind === 'javascript' && failedPath.reason === 'load-failed' &&
+      nativeMod.pinHashPathLine(failedPath) === 'PIN hashing path: JavaScript scrypt (@noble/hashes): the native module is in this build but could not be loaded. Technical detail: Error: boom');
+  nativeMod.setNativeScryptLoaderForChecks(null);
+
+  // The measurement on the native path.
+  const natPath = async () => ({ kind: 'native' });
+  let now = 0;
+  let cancel = false;
+  const nativeHash = (costs, cancelAt = null) => async (input, salt, log2N) => {
+    now += costs[log2N];
+    if (cancelAt === log2N) cancel = true;
+    return new Uint8Array(32);
+  };
+  const run = (costs, cancelAt = null) => {
+    now = 0;
+    cancel = false;
+    return pinCost.measurePinHashCost({ os: 'android', hermes: true, dev: false },
+      { now: () => now, random: detRandom, hash: nativeHash(costs, cancelAt), isCancelled: () => cancel, hashPath: natPath });
+  };
+  const nFast = await run({ 12: 1, 13: 2, 14: 4, 15: 8, 16: 16 });
+  check('the platform line names the path in use: native scrypt (react-native-quick-crypto)',
+    nFast.finished && pinCost.pinCostPlatformText(nFast.platform, nFast.hashPath) ===
+      'Platform: android · Hermes: yes · development bundle (__DEV__): no · Hashing: native scrypt (react-native-quick-crypto)');
+  check('…JavaScript scrypt (@noble/hashes) on the JavaScript path, and both when the native hash failed during the run',
+    pinCost.pinCostPlatformText(nFast.platform, { start: { kind: 'javascript', reason: 'absent', detail: null }, end: { kind: 'javascript', reason: 'absent', detail: null } }) ===
+      'Platform: android · Hermes: yes · development bundle (__DEV__): no · Hashing: JavaScript scrypt (@noble/hashes)' &&
+    pinCost.pinCostPlatformText(nFast.platform, { start: { kind: 'native' }, end: { kind: 'javascript', reason: 'native-error', detail: 'x' } }) ===
+      'Platform: android · Hermes: yes · development bundle (__DEV__): no · Hashing: native scrypt (react-native-quick-crypto) at the start, then JavaScript scrypt (@noble/hashes) after the native hash failed during the run');
+  const nCeil = await run({ 12: 1, 13: 130_000, 14: 1, 15: 1, 16: 1 });
+  check('native path: a size that finished after the 120-second limit stays measured and the larger sizes are skipped',
+    JSON.stringify(nCeil.rows.map((r) => r.status)) === '["measured","measured","skipped","skipped","skipped"]' && !nCeil.finished &&
+      pinCost.pinCostRowText(nCeil.rows[2]) === 'N = 2^14: skipped (a smaller size reached the 120-second limit).');
+  const nStop = await run({ 12: 1, 13: 2, 14: 4, 15: 8, 16: 16 }, 13);
+  check('native path: Stop pressed during a size takes effect after it (that size measured, the rest not measured)',
+    JSON.stringify(nStop.rows.map(pinCost.pinCostRowText)) === JSON.stringify(['N = 2^12: 1 ms', 'N = 2^13: 2 ms', 'N = 2^14: not measured (stopped by you).',
+      'N = 2^15: not measured (stopped by you).', 'N = 2^16: not measured (stopped by you).']));
+  check('the hint: unchanged on the JavaScript path, plus the between-sizes sentence on the native path',
+    pinCost.pinCostHint(null) === pinCost.PIN_COST_HINT && pinCost.pinCostHint({ kind: 'javascript', reason: 'absent', detail: null }) === pinCost.PIN_COST_HINT &&
+      pinCost.pinCostHint({ kind: 'native' }) === `${pinCost.PIN_COST_HINT} This build hashes with native scrypt (react-native-quick-crypto), which cannot be interrupted inside one hash: ` +
+        'Stop and the 120-second limit take effect between sizes, and a size already running finishes first.');
+
+  // Source pins.
+  const natSrc = read('wallet/pin-native-scrypt.ts');
+  const spec = readFileSync(join(HERE, '..', 'node_modules', 'react-native-quick-crypto', 'src', 'specs', 'scrypt.nitro.ts'), 'utf8');
+  const onLoad = readFileSync(join(HERE, '..', 'node_modules', 'react-native-quick-crypto', 'nitrogen', 'generated', 'android', 'QuickCryptoOnLoad.cpp'), 'utf8');
+  const appPkg = JSON.parse(readFileSync(join(HERE, '..', 'package.json'), 'utf8'));
+  const qcPkg = JSON.parse(readFileSync(join(HERE, '..', 'node_modules', 'react-native-quick-crypto', 'package.json'), 'utf8'));
+  check('the hybrid object and method the wallet calls are those of the installed react-native-quick-crypto 1.1.8, pinned exactly in package.json',
+    appPkg.dependencies['react-native-quick-crypto'] === '1.1.8' && qcPkg.version === '1.1.8' && nativeMod.NATIVE_SCRYPT_PACKAGE_VERSION === '1.1.8' &&
+      nativeMod.NATIVE_SCRYPT_HYBRID_NAME === 'Scrypt' && onLoad.includes('"Scrypt",') &&
+      /deriveKey\(\s*password: ArrayBuffer,\s*salt: ArrayBuffer,\s*N: number,\s*r: number,\s*p: number,\s*maxmem: number,\s*keylen: number,\s*\): Promise<ArrayBuffer>;/.test(spec) &&
+      natSrc.includes('deriveKey(password: ArrayBuffer, salt: ArrayBuffer, N: number, r: number, p: number, maxmem: number, keylen: number): Promise<ArrayBuffer>;') &&
+      natSrc.includes('hybrid.deriveKey(ownBuffer(input), ownBuffer(salt), N, r, p, maxmem, dkLen)'));
+  check('source: nothing native is imported at load (type-only import), and Nitro is required only after TurboModuleRegistry.get found it',
+    !/^import (?!type )[^;]*from '(react-native|react-native-nitro-modules|react-native-quick-crypto)'/m.test(natSrc) &&
+      natSrc.indexOf("rn.TurboModuleRegistry.get('NitroModules') == null") > 0 &&
+      natSrc.indexOf("rn.TurboModuleRegistry.get('NitroModules') == null") < natSrc.indexOf("require('react-native-nitro-modules')") &&
+      natSrc.indexOf('NitroModules.hasHybridObject(NATIVE_SCRYPT_HYBRID_NAME)') < natSrc.indexOf('NitroModules.createHybridObject'));
+  check('source: the one console call in the native module logs a path, never an input (pin.ts still logs nothing)',
+    (natSrc.match(/console\.\w+\(/g) ?? []).length === 1 && natSrc.includes('function warnFallback(path: PinHashPath): void {') && !/console\.\w+\(/.test(read('wallet/pin.ts')));
+  const viewSrc = read('components/PinCostMeasurement.tsx');
+  check('the Developer view shows the path line, the path-aware hint and the platform line with the path',
+    viewSrc.includes('{pinHashPathLine(hashPath)}') && viewSrc.includes('{pinCostHint(hashPath)}') &&
+      viewSrc.includes('{pinCostPlatformText(report.platform, report.hashPath)}') && viewSrc.includes('resolvePinHashPath().then('));
+}
+
+// ---------------------------------------------------------------------------
 console.log('check-duress: the storage profiles (store-keys.ts)');
 // ---------------------------------------------------------------------------
 {
@@ -963,6 +1154,35 @@ try {
     check('mutant caught: a measurement that does not use the PIN\'s own scrypt function', mutated !== cost && !sameScryptPin(read('wallet/pin.ts'), mutated));
     const pinMut = read('wallet/pin.ts').replace('const opts = { N: 2 ** log2N, r: PIN_SCRYPT.r,', 'const opts = { N: 2 ** log2N, r: 4,');
     check('mutant caught: the shared function with a different r than the PIN record states', !sameScryptPin(pinMut, cost));
+  }
+  {
+    const m = await mutant('pin-native-scrypt.ts', 'const problem = await nativeScryptSelfCheck(load.derive);', 'const problem = null;');
+    m.setNativeScryptLoaderForChecks(nodeNative({ corrupt: true }).loader);
+    check('mutant caught: a native scrypt used without its RFC 7914 self-check (a wrong native output would be trusted)',
+      (await m.resolvePinHashPath()).kind === 'native');
+  }
+  {
+    const m = await mutant('pin-native-scrypt.ts', 'return 128 * r * N + PIN_SCRYPT_MAXMEM_HEADROOM;', 'return 128 * r * N;');
+    let refused = false;
+    try { scryptSync('x', 'y', 32, { N: 65536, r: 8, p: 1, maxmem: m.pinScryptMaxmem(65536, 8) }); } catch { refused = true; }
+    check('mutant caught: a maxmem without headroom (OpenSSL refuses N = 2^16 at exactly 128·r·N)', refused);
+  }
+  {
+    const m = await mutant('pin.ts', '      noteNativeScryptFailure(e);\n', '      throw e;\n');
+    nativeMod.setNativeScryptLoaderForChecks(nodeNative({ failAtN: 2 ** 12 }).loader);
+    let threw = false;
+    try { await m.pinScrypt(PIN_A, detRandom(32), 12); } catch { threw = true; }
+    nativeMod.setNativeScryptLoaderForChecks(null);
+    check('mutant caught: a failed native hash that is not retried with the JavaScript scrypt (the PIN check would fail)', threw);
+  }
+  {
+    const m = await mutant('pin-cost.ts', "      if (ms > PIN_COST_CEILING_MS) stop = 'ceiling';\n", '');
+    let now = 0;
+    const r = await m.measurePinHashCost({ os: 'android', hermes: true, dev: false }, {
+      now: () => now, random: detRandom, hashPath: async () => ({ kind: 'native' }),
+      hash: async (i, s, n) => { now += n === 13 ? 130_000 : 1; return new Uint8Array(32); },
+    });
+    check('mutant caught: on the native path a size past the limit no longer stops the larger sizes', r.rows[2].status !== 'skipped');
   }
   {
     const m = await mutant('duress.ts', "return slot === 'primary' ? PRIMARY_STORE_PROFILE : DECOY_STORE_PROFILE;", 'return PRIMARY_STORE_PROFILE;');

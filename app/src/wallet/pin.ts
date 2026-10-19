@@ -23,13 +23,19 @@
  * it does not hide it from offline guessing (section 3.4) or from the
  * second wallet's own key names (section 3.2).
  *
- * THE KDF. scrypt from @noble/hashes 2.4.0 (scrypt.js; scryptAsync so the
- * JS thread yields while it runs), r = 8, p = 1, dkLen = 32, and
- * N = 2^PIN_SCRYPT_LOG2_N (see that constant for the measurements behind it
- * and why the value is still pending). Every attempt computes BOTH slots'
- * hashes, so an attempt costs about twice one hash. pinScrypt below is the
- * one function that computes it; the Developer-mode measurement
- * (./pin-cost.ts) calls the same function.
+ * THE KDF. scrypt with r = 8, p = 1, dkLen = 32 and N = 2^PIN_SCRYPT_LOG2_N
+ * (see that constant for the measurements behind it). pinScrypt below is the
+ * one function that computes it, by one of two paths that give the same
+ * bytes: the NATIVE scrypt of react-native-quick-crypto (OpenSSL's
+ * EVP_PBE_scrypt on a background thread; ./pin-native-scrypt.ts says how it
+ * is found, self-checked against RFC 7914 and given its maxmem) wherever the
+ * app binary carries it, else the JavaScript scrypt of @noble/hashes 2.4.0
+ * (scrypt.js; scryptAsync so the JS thread yields while it runs), which is
+ * what Expo Go and the check scripts use. The record format does not depend
+ * on the path: a PIN set through one path opens through the other. Every
+ * attempt computes BOTH slots' hashes, so an attempt costs about twice one
+ * hash. The Developer-mode measurement (./pin-cost.ts) calls the same
+ * function.
  *
  * EVERY ATTEMPT COMPUTES BOTH HASHES and compares each with a constant-time
  * comparison (equalBytesConstantTime below, the same loop as noble-curves'
@@ -63,7 +69,8 @@
  */
 
 import { scryptAsync } from '@noble/hashes/scrypt.js';
-import { bytesToHex, hexToBytes, randomBytes } from '@noble/hashes/utils.js';
+import { bytesToHex, hexToBytes, randomBytes, utf8ToBytes } from '@noble/hashes/utils.js';
+import { nativeScryptForPin, noteNativeScryptFailure, pinScryptMaxmem } from './pin-native-scrypt.ts';
 import {
   PRIMARY_STORE_PROFILE,
   STORE_KEYS,
@@ -92,11 +99,15 @@ export const PIN_LENGTH = 6;
  *    attemptPin (both hashes) took 245–258 s over 9 runs — about 400 times
  *    the Node figure, which makes 2^16 in pure JavaScript unusable there.
  *
- * PENDING: the value is not final. It waits for a measurement in a RELEASE
- * build (Hermes bytecode, no debugger) on the emulator and on a phone,
- * taken with Settings → Developer → "Measure the PIN hashing cost", and
- * then for the Chairperson's decision (a lower N, or a native scrypt).
- * Changing it makes every existing PIN record unreadable (the record
+ *  - The same emulator, the RELEASE build (Hermes bytecode, no debugger),
+ *    2026-10-18 (pass p21g), JavaScript scrypt: one hash at 2^16 took 49–53 s
+ *    over three runs, so an unlock took about 100 s.
+ *
+ * DECIDED (the Chairperson, 2026-10-19): N stays 2^16 and the hash moves to
+ * the native scrypt of react-native-quick-crypto behind pinScrypt (threat
+ * model F-81). The native path has not been measured on a device yet; Expo
+ * Go, which cannot carry it, keeps the JavaScript scrypt and its cost.
+ * Changing N makes every existing PIN record unreadable (the record
  * stores N), so a change must come with a way to re-create the record.
  */
 export const PIN_SCRYPT_LOG2_N = 16;
@@ -151,18 +162,38 @@ export function pinRecordBackend(backend: SecureStoreBackend): SecureStoreBacken
 /**
  * The PIN's scrypt: r = 8, p = 1, dkLen = 32 and N = 2^log2N (by default
  * the PIN's own N). The PIN check uses it with no progress callback; the
- * Developer-mode measurement passes other sizes and a progress callback,
- * which noble calls every 1/10,000 of the work and which may throw to stop
- * the hash (noble scrypt.js scryptInit: "onProgress is the only user code
- * that can throw mid-derivation"; the work buffers are wiped first).
+ * Developer-mode measurement passes other sizes and a progress callback.
+ *
+ * THE NATIVE PATH (./pin-native-scrypt.ts), when this session has one that
+ * passed its self-check: the input as UTF-8 bytes (what noble does with a
+ * string), the same salt and parameters, and maxmem = 128·r·N + 1 MiB. It
+ * cannot be interrupted inside one hash, so the progress callback is NOT
+ * called on this path (the measurement stops between sizes instead). If the
+ * native call fails, the rest of the session uses the JavaScript path and
+ * this hash is computed there; the result is the same bytes either way.
+ *
+ * THE JAVASCRIPT PATH: noble's scryptAsync. The progress callback is called
+ * every 1/10,000 of the work and may throw to stop the hash (noble
+ * scrypt.js scryptInit: "onProgress is the only user code that can throw
+ * mid-derivation"; the work buffers are wiped first).
  */
-export function pinScrypt(
+export async function pinScrypt(
   input: string,
   salt: Uint8Array,
   log2N: number = PIN_SCRYPT_LOG2_N,
   onProgress?: (fraction: number) => void,
 ): Promise<Uint8Array> {
   const opts = { N: 2 ** log2N, r: PIN_SCRYPT.r, p: PIN_SCRYPT.p, dkLen: PIN_SCRYPT.dkLen };
+  const native = await nativeScryptForPin();
+  if (native) {
+    try {
+      const out = await native(utf8ToBytes(input), salt, opts.N, opts.r, opts.p, pinScryptMaxmem(opts.N, opts.r), opts.dkLen);
+      if (out.length !== opts.dkLen) throw new Error(`The native scrypt returned ${out.length} bytes instead of ${opts.dkLen}.`);
+      return out;
+    } catch (e) {
+      noteNativeScryptFailure(e);
+    }
+  }
   return onProgress ? scryptAsync(input, salt, { ...opts, onProgress }) : scryptAsync(input, salt, opts);
 }
 

@@ -129,6 +129,51 @@ with lazy bundling switched off. Expo Go also loads a lazily bundled app
 from Metro, and Connected apps opened in it in earlier passes (phase 16);
 why only the development client failed was not established.
 
+### The native scrypt for the app PIN (phase 22 item 2)
+
+On the Chairperson's decision of 2026-10-19 (`docs/THREAT_MODEL.md` F-81),
+the app PIN's scrypt runs natively wherever the app binary allows it. Three
+native packages were added to `app/package.json` for this:
+
+- `react-native-quick-crypto` 1.1.8 (MIT), pinned to exactly that version
+  because the wallet calls its native `Scrypt` object directly
+  (`app/src/wallet/pin-native-scrypt.ts`);
+- `react-native-nitro-modules` 0.37.1 (MIT), the native runtime it is built
+  on;
+- `react-native-quick-base64` 3.0.1 (MIT), a required peer of the first.
+
+`npx expo install` also added the library's config plugin,
+`"react-native-quick-crypto"`, to `app/app.json`. With its default options
+it changes only the iOS project (it raises the iOS deployment target to
+16.4 wherever it is lower); the optional libsodium support stays off.
+
+What this means for builds:
+
+- Any development, preview or store build made before this change does not
+  contain the native scrypt. It must be rebuilt (`npx expo prebuild
+  --platform android --clean`, then the build), as for any other native
+  change (see "Rebuild after native configuration changes" above).
+- Building fetches a prebuilt OpenSSL: on Android the Maven artefact
+  `io.github.ronickg:openssl-static` 3.6.2-3, named in the library's
+  `android/build.gradle`; on iOS a prebuilt OpenSSL 3.6.2 archive that the
+  library's podspec downloads from its GitHub releases at `pod install`
+  time and checks against a pinned SHA-256. These are build-time downloads
+  only; the library makes no network request when the app runs.
+- Expo Go does not contain these modules. There the wallet keeps the
+  JavaScript scrypt of `@noble/hashes`, with the cost measured in phase 21
+  (about 100 seconds per unlock in the emulator's release build, and more
+  in Expo Go's development bundle). Both paths give the same bytes, so a PIN
+  set in one build opens in the other.
+- Settings → Developer (test networks only) shows which path the running
+  build uses: "PIN hashing path: native scrypt (react-native-quick-crypto),
+  self-check passed", or the JavaScript path with its reason. The self-check
+  hashes a test vector of RFC 7914 once per session before the native path
+  is trusted. The PIN hashing cost measurement on the same screen times
+  whichever path is in use and names it in its platform line.
+
+Not yet done: a rebuilt development build exercised on the emulator, and
+any measurement of the native path on the emulator or on a phone.
+
 ## What to re-validate on the first device builds
 
 In priority order. The W-numbers are the mainnet-readiness conditions in
