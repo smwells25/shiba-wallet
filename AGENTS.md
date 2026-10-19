@@ -10361,6 +10361,99 @@ Subagents on Opus.
       LEFT: the dev client in front on the throwaway wallet, Metro 8082
       up, Expo Go untouched (Metro 8081 at d7f555a), the priority loop
       running; the pass resumes from A5 after the reset.
+- [x] Item 2, P1 — THE LOCK PASSPHRASE (commit 9e3dfea; 8 files: pin.ts,
+      duress.ts, WalletContext.tsx, LockGate.tsx, SettingsScreen.tsx (the
+      PIN / duress section only), check-duress 199 (was 140; 16 new
+      mutants), DURESS_WALLET.md and THREAT_MODEL.md status lines; offline
+      runner ALL GREEN in the CTO's isolated worktree on HEAD 02b7b7d with
+      --skip-bundle: engine 1,050, app 9,634 across 61 suites, lint 0/0,
+      tsc clean; apply 0 / 8 files; the inbox agent's shared-tree hunks
+      excluded by the builder; staged with `git apply --cached` from the
+      verified patch; not seen on a device). RECORD v2, always 371 bytes
+      (= v1's 358 + 13 for the kind field; the expected Android ciphertext
+      387 with the tag — not measured): {v 2, kdf scrypt, N 65536, r 8,
+      p 1, kind pin | phr, slots[2 × 128 hex], fails, until}; a v1 record
+      (exactly 358 bytes) reads as a PIN and converts on its next write
+      (the counter write of the next attempt); a v1 record with a kind, a
+      v2 without one, or an unknown kind = damaged. RULES: lockSecretInput
+      strips edge whitespace at entry then NFKD — @scure/bip39 2.4.0 does
+      NOT export its nfkd (index.d.ts lists only the mnemonic functions),
+      so bip39Nfkd copies its well-formedness loop (index.js 11–26) +
+      normalize('NFKD'), pinned equal to mnemonicToSeedSync's own treatment
+      and both throwing on a lone surrogate; newLockSecretRefusal: 15–128
+      code points (an emoji or a combining sequence counted as typed; "A
+      passphrase has 15 to 128 characters."), no edge space, no control
+      characters (explicit ranges U+0000–001F / U+007F–009F, pinned equal
+      to Node's \p{Cc} over the BMP — Hermes's support for property
+      escapes unverified) or ill-formed text, one repeated character, ≥ 3
+      DISTINCT words of the wallet's own recovery phrase (the phrase opened
+      through the existing gate; a fixed 12-word test phrase built from
+      entropy and pinned by sha256, never a literal), the other slot and a
+      near copy of the app passphrase under one shared sentence ("This
+      passphrase cannot be used. Choose a different passphrase.");
+      isTriviallyGuessed stays for PINs. KINDS: setPinSlot follows the
+      record's kind (mixed kinds refused); setLockSlots switches kinds by
+      rewriting both slots in ONE write (a two-write switch is a caught
+      mutant), from the real wallet only — in the second wallet
+      switchAppLockKind ends with PIN_ACTION_NOT_COMPLETED before anything
+      is written; a switch with a second wallet and no new duress secret
+      refuses ("The duress secret must be chosen again together with the
+      app lock. Nothing was changed."); readLockKind = one read of
+      shiba-wallet.app-lock.v1 and nothing of either wallet, at launch
+      before anything loads (pinned). LOCK SCREEN: PassphraseField
+      (LockGate.tsx) with PinPad's contract, countdown and 'pin-pad'
+      capture key, state cleared before the check, labelled by its
+      visible prompt; props cited against react-native 0.86.3
+      TextInput.d.ts — secureTextEntry (:951; Android
+      TYPE_TEXT_VARIATION_PASSWORD, ReactTextInputManager.kt 687–699),
+      autoCorrect false (:744), spellCheck false (:211), autoComplete
+      "off" (:668 / :737), importantForAutofill "no" (:391),
+      textContentType "none" (:269), autoCapitalize "none" (:588),
+      contextMenuHidden (:794), maxLength 256 as a typing guard (:827); NO
+      RN prop for Android's IME_FLAG_NO_PERSONALIZED_LEARNING (none in
+      RN's text-input sources); no Show toggle (§8.2.8). SETTINGS: "Use a
+      PIN or passphrase to unlock" with the choice "6-digit PIN" /
+      "Passphrase (15 to 128 characters)" under "Unlock with"; "Change
+      passphrase" (opens the phrase with ONE device prompt "Check the new
+      passphrase against your recovery phrase", no word quiz, so the
+      recovery-word rule can run — a deviation from §8.2.4); "Use a
+      passphrase instead" / "Use a PIN instead" (the backup check, the
+      current secret, the new secret twice, then a new duress secret twice
+      when a second wallet exists); the duress flow in the lock's kind
+      ("Choose a duress passphrase" / "Type the duress passphrase again";
+      the near-copy rule also on a change); the strength note ("…a 6-digit
+      PIN is one of a million (about 20 bits), which one computer can try
+      in about 3 days. Four random words picked with dice are about 52
+      bits… the 15-character minimum cannot measure that."), the
+      same-kind note, the clipboard note, the §8.2.9 advice / keyboard /
+      limits notes and the honest claim verbatim; lock-screen strings
+      "Enter your passphrase", "Wrong passphrase. Try again[ in N
+      seconds].", "Too many wrong passphrases. Try again in N seconds.",
+      "You can enter your passphrase again.", "Checking the passphrase";
+      results "The app passphrase is on…", "The app lock now uses a
+      passphrase." / "…a 6-digit PIN."; the readiness reason kind-neutral
+      ("…a 6-digit PIN or a short passphrase can be guessed from such a
+      copy."). PrefsContext untouched (the forced settings depend on a
+      lock being set, not its kind — pinned). MUTANTS caught: NFC for
+      NFKD, no edge strip, edge whitespace accepted, UTF-16 counting, the
+      recovery-word rule never reading the phrase, mixed kinds, a
+      two-write switch, a distinct other-slot sentence, v1 refused, a fast
+      refusal of a malformed entry (it must still cost 2 hashes and
+      count), a repeated character accepted, a near copy accepted, a
+      passphrase lock saying "PIN", each hygiene prop removed, text kept
+      in state during the check, the kind read after the wallet loads;
+      cross-path: a real N = 2^16 passphrase record set by JavaScript opens
+      through the native stand-in; the same bytes for a non-ASCII
+      passphrase on noble, the stand-in and Node. FOLLOW-UP: the Auto-lock
+      hint, the screen-protection note, the notifications note, the wipe
+      note and WalletContext's fallback "The PIN could not be checked."
+      still say PIN while a passphrase is in use (those sections had to
+      stay byte-identical). UNVERIFIED (the dev-build pass on a THROWAWAY
+      wallet; a 10-step checklist in the builder's report): Hermes's
+      normalize('NFKD') on non-ASCII text; the keyboard over the centred
+      lock overlay; whether Gboard learns from, suggests in or pastes into
+      the secure field; Android's "show passwords" setting; TalkBack while
+      typing; maxLength counting on Android; the 387-byte ciphertext; iOS.
 - [x] Item 5 — LEADERSHIP REFRESH (docs commit below; check-readiness 208,
       check-screen-protection 87, check-devmode 418, check-notifications
       184, check-duress 113, check-multisig 424 all green in the CTO's
