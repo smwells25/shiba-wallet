@@ -47,6 +47,14 @@ import {
   disconnectWcSession,
   DEFAULT_WC_PROJECT_ID,
   getWcProjectId,
+  getWcProjectIdSetting,
+  wcProjectIdStatusLine,
+  WC_PROJECT_ID_SAVED_STATUS,
+  WC_PROJECT_ID_BUILT_IN_STATUS,
+  WC_PROJECT_ID_CLEAR_LABEL,
+  WC_PROJECT_ID_CLEAR_A11Y_LABEL,
+  WC_PROJECT_ID_CLEAR_CONFIRM_TITLE,
+  WC_PROJECT_ID_CLEAR_CONFIRM_MESSAGE,
   parseTypedDataV4,
   parseWcRequest,
   personalMessageDigest,
@@ -189,6 +197,87 @@ console.log('check-wc: project id store');
   check('clear restores the shipped default', (await getWcProjectId(store)) === DEFAULT_WC_PROJECT_ID);
   store._map.set('shiba-wallet.wc-config.v1', '{not json');
   check('corrupt JSON falls back to the shipped default', (await getWcProjectId(store)) === DEFAULT_WC_PROJECT_ID);
+}
+
+console.log('check-wc: project id status (saved vs built-in)');
+{
+  // The exact Settings wording (pass p21f investigation (b): a fresh install
+  // used to say "Saved" for the shipped default).
+  check('status string: saved', WC_PROJECT_ID_SAVED_STATUS === 'Saved — used to reach the WalletConnect relay.');
+  check('status string: built-in',
+    WC_PROJECT_ID_BUILT_IN_STATUS === 'Built-in project id — used to reach the WalletConnect relay. You can replace it with your own.');
+  check('status line is null only before the setting is read', wcProjectIdStatusLine(null) === null);
+
+  const store = memoryStore();
+  const fresh = await getWcProjectIdSetting(store);
+  check('fresh store: the built-in id, source built-in',
+    fresh.projectId === DEFAULT_WC_PROJECT_ID && fresh.source === 'built-in');
+  check('fresh store reads "Built-in…"', wcProjectIdStatusLine(fresh) === WC_PROJECT_ID_BUILT_IN_STATUS);
+
+  const saved = await setWcProjectId('0123456789abcdef0123456789abcdef', store);
+  const afterSave = await getWcProjectIdSetting(store);
+  check('saved value: source saved, the saved id in use', afterSave.source === 'saved' && afterSave.projectId === saved);
+  check('saved value reads "Saved…"', wcProjectIdStatusLine(afterSave) === WC_PROJECT_ID_SAVED_STATUS);
+
+  await clearWcProjectId(store);
+  const afterClear = await getWcProjectIdSetting(store);
+  check('cleared store: the built-in id again', afterClear.projectId === DEFAULT_WC_PROJECT_ID && afterClear.source === 'built-in');
+  check('cleared store reads "Built-in…" again', wcProjectIdStatusLine(afterClear) === WC_PROJECT_ID_BUILT_IN_STATUS);
+
+  // There is no "no id" state: every stored shape yields an id, and
+  // getWcProjectId always equals the setting's id.
+  const throwing = { getItem: async () => { throw new Error('storage unavailable'); }, setItem: async () => {} };
+  const cases = [
+    ['missing', null],
+    ['empty object', '{}'],
+    ['empty string id', '{"projectId":""}'],
+    ['non-string id', '{"projectId":42}'],
+    ['array', '[]'],
+    ['corrupt JSON', '{not json'],
+  ];
+  let noneImpossible = true;
+  let agree = true;
+  for (const [, raw] of cases) {
+    const s = memoryStore();
+    if (raw !== null) s._map.set('shiba-wallet.wc-config.v1', raw);
+    const setting = await getWcProjectIdSetting(s);
+    const id = await getWcProjectId(s);
+    if (!(setting.projectId === DEFAULT_WC_PROJECT_ID && setting.source === 'built-in')) noneImpossible = false;
+    if (id !== setting.projectId) agree = false;
+  }
+  const thrown = await getWcProjectIdSetting(throwing);
+  if (!(thrown.projectId === DEFAULT_WC_PROJECT_ID && thrown.source === 'built-in')) noneImpossible = false;
+  if ((await getWcProjectId(throwing)) !== DEFAULT_WC_PROJECT_ID) agree = false;
+  check('no "none" state: missing, empty, malformed and unreadable records all use the built-in id', noneImpossible);
+  check('getWcProjectId returns exactly the setting\'s id in every case', agree);
+
+  // The remove control's wording: it brings the built-in id back.
+  check('clear control wording',
+    WC_PROJECT_ID_CLEAR_LABEL === 'Use the built-in id' &&
+      WC_PROJECT_ID_CLEAR_A11Y_LABEL === 'Use the built-in WalletConnect project id instead of the saved one' &&
+      WC_PROJECT_ID_CLEAR_CONFIRM_TITLE === 'Use the built-in project id?' &&
+      WC_PROJECT_ID_CLEAR_CONFIRM_MESSAGE ===
+        "The project id you saved is removed from this phone, and the wallet's built-in project id is used again to reach the WalletConnect relay. If a connection was already opened this session, the change takes effect after the app restarts.");
+  const glueSrc = readFileSync(new URL('../src/wallet/walletconnect.ts', import.meta.url), 'utf8');
+  check('clearWcProjectId comment no longer claims it disables WalletConnect', !glueSrc.includes('disables WalletConnect'));
+
+  // Source pins: Settings renders the helper and the clear wording, and
+  // never hard-codes the "Saved" line.
+  const settingsSrc = readFileSync(new URL('../src/screens/SettingsScreen.tsx', import.meta.url), 'utf8');
+  const settingsWiringOk = (src) =>
+    src.includes('statusLine={wcProjectIdStatusLine(wcProject)}') &&
+    !src.includes('Saved — used to reach the WalletConnect relay.') &&
+    src.includes("clearable={wcProject?.source === 'saved'}") &&
+    src.includes('label: WC_PROJECT_ID_CLEAR_LABEL,') &&
+    src.includes('confirmMessage: WC_PROJECT_ID_CLEAR_CONFIRM_MESSAGE,') &&
+    src.includes('getWcProjectIdSetting().then(setWcProject, () => setWcProject(null));');
+  check('Settings renders wcProjectIdStatusLine and the built-in clear wording', settingsWiringOk(settingsSrc));
+  check('mutant caught: Settings hard-coding "Saved" for any id',
+    !settingsWiringOk(settingsSrc.replace(
+      'statusLine={wcProjectIdStatusLine(wcProject)}',
+      "statusLine={wcProject ? 'Saved — used to reach the WalletConnect relay.' : null}")));
+  check('mutant caught: the remove control offered with the built-in id in use',
+    !settingsWiringOk(settingsSrc.replace("clearable={wcProject?.source === 'saved'}", 'clearable={Boolean(wcProject)}')));
 }
 
 console.log('check-wc: namespaces + proposals');

@@ -102,7 +102,18 @@ import {
   type AaAccountType,
   type AaChainConfig,
 } from '../wallet/aa';
-import { clearWcProjectId, getWcProjectId, setWcProjectId, testNetworkLabelsOr } from '../wallet/walletconnect';
+import {
+  WC_PROJECT_ID_CLEAR_A11Y_LABEL,
+  WC_PROJECT_ID_CLEAR_CONFIRM_MESSAGE,
+  WC_PROJECT_ID_CLEAR_CONFIRM_TITLE,
+  WC_PROJECT_ID_CLEAR_LABEL,
+  clearWcProjectId,
+  getWcProjectIdSetting,
+  setWcProjectId,
+  testNetworkLabelsOr,
+  wcProjectIdStatusLine,
+  type WcProjectIdSetting,
+} from '../wallet/walletconnect';
 import {
   clearIndexerUrl,
   getIndexerConfig,
@@ -632,6 +643,8 @@ function AaField({
   onClear,
   saveLabel = 'Verify & save',
   locked = false,
+  clearable,
+  clearControl,
 }: {
   label: string;
   placeholder: string;
@@ -663,6 +676,23 @@ function AaField({
    * refuse too, so this is presentation only.
    */
   locked?: boolean;
+  /**
+   * Whether the remove button is offered. Defaults to "a value or an
+   * ignored value is stored"; set it when the shown value can be a
+   * built-in default that there is nothing to remove for.
+   */
+  clearable?: boolean;
+  /**
+   * Wording of the remove button and its confirmation, for a field whose
+   * removal brings back a built-in default rather than leaving nothing.
+   * Defaults to "Clear" and the shared confirmClear text.
+   */
+  clearControl?: {
+    label: string;
+    accessibilityLabel: string;
+    confirmTitle: string;
+    confirmMessage: string;
+  };
 }) {
   const theme = useTheme();
   const fieldLabel = useFieldLabels();
@@ -750,12 +780,19 @@ function AaField({
               }}
               style={styles.endpointButton}
             />
-            {value || ignoredReason ? (
+            {(clearable ?? Boolean(value || ignoredReason)) ? (
               <Button
-                title="Clear"
+                title={clearControl?.label ?? 'Clear'}
                 variant="secondary"
-                accessibilityLabel={`Clear ${label}`}
-                onPress={() => confirmClear(label, () => void onClear())}
+                accessibilityLabel={clearControl?.accessibilityLabel ?? `Clear ${label}`}
+                onPress={() =>
+                  clearControl
+                    ? Alert.alert(clearControl.confirmTitle, clearControl.confirmMessage, [
+                        { text: 'Cancel', style: 'cancel' },
+                        { text: clearControl.label, onPress: () => void onClear() },
+                      ])
+                    : confirmClear(label, () => void onClear())
+                }
                 style={styles.endpointButton}
               />
             ) : null}
@@ -1811,7 +1848,7 @@ export function SettingsScreen({ navigation, route }: Props) {
     return undefined;
   }, [revealed]);
   const [endpoints, setEndpoints] = useState<NetworkEndpoint[]>([]);
-  const [wcProjectId, setWcProjectIdState] = useState<string | null>(null);
+  const [wcProject, setWcProject] = useState<WcProjectIdSetting | null>(null);
   // Auto-lock is only offered when a local-auth prompt would actually
   // appear; see the note in the Privacy & security section below.
   const [authAvailable, setAuthAvailable] = useState<boolean | null>(null);
@@ -1851,7 +1888,7 @@ export function SettingsScreen({ navigation, route }: Props) {
   const evmEndpoints = endpoints.filter((e) => e.network.kind === 'evm-jsonrpc');
 
   const reloadWcProjectId = useCallback(() => {
-    getWcProjectId().then(setWcProjectIdState, () => setWcProjectIdState(null));
+    getWcProjectIdSetting().then(setWcProject, () => setWcProject(null));
   }, []);
 
   useEffect(reloadWcProjectId, [reloadWcProjectId]);
@@ -2516,9 +2553,18 @@ export function SettingsScreen({ navigation, route }: Props) {
         <AaField
           label="Reown / WalletConnect project id"
           placeholder="32-character id from dashboard.reown.com"
-          value={wcProjectId}
-          statusLine={wcProjectId ? 'Saved — used to reach the WalletConnect relay.' : null}
+          value={wcProject?.projectId ?? null}
+          statusLine={wcProjectIdStatusLine(wcProject)}
           saveLabel="Save"
+          // Removing is offered only for an id the user saved: with the
+          // built-in id in use there is nothing to remove.
+          clearable={wcProject?.source === 'saved'}
+          clearControl={{
+            label: WC_PROJECT_ID_CLEAR_LABEL,
+            accessibilityLabel: WC_PROJECT_ID_CLEAR_A11Y_LABEL,
+            confirmTitle: WC_PROJECT_ID_CLEAR_CONFIRM_TITLE,
+            confirmMessage: WC_PROJECT_ID_CLEAR_CONFIRM_MESSAGE,
+          }}
           onSave={async (draft) => {
             await setWcProjectId(draft);
             reloadWcProjectId();
