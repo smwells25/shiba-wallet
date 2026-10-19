@@ -608,6 +608,26 @@ check('mutant: SendScreen keeping its own copy is caught', !sendOk(SEND + '\nfun
 }
 
 // ---------------------------------------------------------------------------
+console.log('The privacy line names the records backup (phase 22 polish)');
+// ---------------------------------------------------------------------------
+const NOTE_PRIVACY_EXPECTED =
+  'Notes are kept on this phone and are not sent anywhere. They are deleted when the wallet is wiped. ' +
+  'A records backup (Settings → Records backup) includes them, and your recovery phrase restores them from it. ' +
+  'Hide amounts does not hide them.';
+const privacyLineOk = (line) => line === NOTE_PRIVACY_EXPECTED && !/not backed up/.test(line);
+check('NOTE_PRIVACY_LINE, exactly: not sent anywhere, deleted with the wallet, included in the records backup the phrase restores',
+  privacyLineOk(notes.NOTE_PRIVACY_LINE));
+{
+  // …and what it says is true: the records backup is the Settings section of
+  // that name, and it carries the transaction-notes key.
+  const rb = readFileSync(join(HERE, '..', 'src', 'wallet', 'records-backup.ts'), 'utf8');
+  const settingsSrc = readFileSync(join(HERE, '..', 'src', 'screens', 'SettingsScreen.tsx'), 'utf8');
+  check('…the records backup is a Settings section titled "Records backup" and includes the transaction notes',
+    rb.includes("export const RECORDS_BACKUP_SECTION_TITLE = 'Records backup';") && rb.includes('notes: STORE_KEYS.txNotes.name,') &&
+      rb.includes("notes: 'Transaction notes',") && settingsSrc.includes('<RecordsBackupSection />'));
+}
+
+// ---------------------------------------------------------------------------
 console.log('Mutation checks');
 // ---------------------------------------------------------------------------
 const MUTANT_DIR = join(HERE, `.mutants-notes-${process.pid}`);
@@ -664,6 +684,13 @@ async function importMutant(from, to) {
   await m5.saveNote(SEPOLIA, { userOpHash: OP_1 }, 'op note', { store: s5 });
   await m5.linkUserOperation(SEPOLIA, OP_1, TX_B, s5);
   check('mutant (link that does not move) is caught', m5.findNote(m5.indexNotes((await m5.loadNotes(s5)).notes), SEPOLIA, TX_B) === null);
+
+  // 6. The old privacy line ("not backed up by your recovery phrase") back.
+  const m6 = await importMutant(
+    "  'Notes are kept on this phone and are not sent anywhere. They are deleted when the wallet is wiped. ' +\n  'A records backup (Settings → Records backup) includes them, and your recovery phrase restores them from it. ' +\n  'Hide amounts does not hide them.';",
+    "  'Notes are kept only on this phone. They are not sent anywhere, not backed up by your ' +\n  'recovery phrase and are deleted when the wallet is wiped. Hide amounts does not hide them.';",
+  );
+  check('mutant (the old line saying notes are not backed up by the phrase) is caught', !privacyLineOk(m6.NOTE_PRIVACY_LINE));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

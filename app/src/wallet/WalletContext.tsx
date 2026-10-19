@@ -77,6 +77,7 @@ import {
   setPinSlot,
   PIN_DAMAGED_MESSAGE,
   PinRecordDamagedError,
+  lockCheckFailedMessage,
   type LockKind,
   type PinCountdown,
   type PinSlot,
@@ -779,7 +780,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       try {
         outcome = await attemptPin(appSecureBackend(), pin);
       } catch (e) {
-        return { ok: false, message: e instanceof PinRecordDamagedError ? PIN_DAMAGED_MESSAGE : 'The PIN could not be checked. Try again.' };
+        // The lock's own word: "The PIN could not be checked. Try again." or
+        // the passphrase form (the kind is the device fact read at launch).
+        return { ok: false, message: e instanceof PinRecordDamagedError ? PIN_DAMAGED_MESSAGE : lockCheckFailedMessage(appLockKind.get()) };
       }
       if (outcome.kind !== 'opened') {
         const message = pinAttemptMessage(outcome, Date.now()) ?? 'Wrong PIN. Try again.';

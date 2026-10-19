@@ -186,9 +186,20 @@ function fixtureProblems(table, fixture) {
   const known = new Set([...sections.flatMap((s) => Object.keys(fixture[s])), ...fixture.new]);
   for (const id of Object.keys(table)) if (!known.has(id)) p.push(`${id}: not in the fixture (neither migrated nor new)`);
   for (const id of known) if (!(id in table)) p.push(`${id}: in the fixture, not in the table`);
+  // A "changed" entry (reworded on purpose after the migration, with its
+  // reason) is compared with its new text, and its "before" must still be the
+  // record of the text at the base commit.
+  const changed = fixture.changed ?? {};
+  for (const [id, c] of Object.entries(changed)) {
+    const rec = sections.map((s) => fixture[s][id]).find(Boolean);
+    if (!rec) p.push(`${id}: changed, but not a migrated entry`);
+    else if (rec.en !== c.before) p.push(`${id}: its "before" is not the text at the base commit`);
+    if (typeof c.why !== 'string' || c.why.length < 20) p.push(`${id}: changed without a reason`);
+  }
   for (const s of sections) {
     for (const [id, f] of Object.entries(fixture[s])) {
-      if (table[id] !== undefined && table[id] !== f.en) p.push(`${id}: ${JSON.stringify(table[id])} is not the English before, ${JSON.stringify(f.en)}`);
+      const want = changed[id] ? changed[id].en : f.en;
+      if (table[id] !== undefined && table[id] !== want) p.push(`${id}: ${JSON.stringify(table[id])} is not the English ${changed[id] ? 'recorded as changed' : 'before'}, ${JSON.stringify(want)}`);
       if (s === 'template' && table[id] !== undefined && !partsMatch(partsOf(table[id]), f.old)) p.push(`${id}: its static parts are not the old ones`);
     }
   }
@@ -198,7 +209,14 @@ function fixtureProblems(table, fixture) {
   const p = fixtureProblems(en, FIXTURE);
   check(`every English entry is the text the app showed at ${FIXTURE.base} (${Object.keys(FIXTURE.literal).length} literals, ${Object.keys(FIXTURE.template).length} templates by their static parts, ${Object.keys(FIXTURE.composite).length} composites) or listed as new (${FIXTURE.new.length})`,
     p.length === 0, p.slice(0, 5).join('; '));
-  check('the new entries are exactly the Settings → Language ones', FIXTURE.new.every((id) => id.startsWith('settings.language.')));
+  // Phase 22 polish: the passphrase forms of the app-lock notes are new too.
+  const LOCK_KIND_NEW = ['inbox.passphraseNote', 'settings.autoLock.hintWithPassphrase', 'settings.autoLock.withPassphraseNote',
+    'settings.screenProtection.withPassphrase', 'settings.notifications.offWithPassphrase'];
+  check('the new entries are exactly the Settings → Language ones and the five passphrase forms of the app-lock notes',
+    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id)) && LOCK_KIND_NEW.every((id) => FIXTURE.new.includes(id)));
+  check('the one changed entry is the transaction-notes line, reworded for the records backup (with its reason)',
+    JSON.stringify(Object.keys(FIXTURE.changed ?? {})) === JSON.stringify(['activity.note.privacy']) &&
+      en['activity.note.privacy'] === 'Notes are kept on this phone and are not sent anywhere. They are deleted when the wallet is wiped. A records backup (Settings → Records backup) includes them, and your recovery phrase restores them from it. Hide amounts does not hide them.');
 }
 
 // The composites, assembled the old way from their pieces.
@@ -240,6 +258,11 @@ const CONSTANTS = {
   'settings.screenProtection.withPin': duress.SCREEN_PROTECTION_WITH_PIN_NOTE,
   'settings.autoLock.withPinNote': duress.AUTO_LOCK_WITH_PIN_NOTE,
   'settings.autoLock.hintWithPin': lock.AUTO_LOCK_HINT_WITH_PIN,
+  'settings.notifications.offWithPassphrase': duress.NOTIFICATIONS_OFF_WITH_PASSPHRASE,
+  'settings.screenProtection.withPassphrase': duress.SCREEN_PROTECTION_WITH_PASSPHRASE_NOTE,
+  'settings.autoLock.withPassphraseNote': duress.AUTO_LOCK_WITH_PASSPHRASE_NOTE,
+  'settings.autoLock.hintWithPassphrase': lock.AUTO_LOCK_HINT_WITH_PASSPHRASE,
+  'inbox.passphraseNote': inbox.INBOX_PASSPHRASE_NOTE,
   'lock.hint.startedLocked': lock.lockScreenHint(true), 'lock.hint.background': lock.lockScreenHint(false),
   'lock.pin.prompt': duress.PIN_PAD_TITLE, 'lock.phr.prompt': duress.lockCopy('phr').lockScreenPrompt,
   'lock.pin.checking': duress.lockCopy('pin').checking, 'lock.phr.checking': duress.lockCopy('phr').checking,
@@ -459,7 +482,9 @@ const isEntryOrDecorated = (text) => I.idOfEnglish(text) !== null || I.localizeI
   const tExpr = app.flatMap((s) => s.tExpr.map((v) => [s.f, v]));
   const allowedCalls = /^lockScreenHint\(reconciled\.startedLocked\)$/;
   const exportedNames = new Map(Object.entries({
-    INBOX_INTRO: 'inbox.intro', INBOX_PIN_NOTE: 'inbox.pinNote', INBOX_EMPTY: 'inbox.empty', INBOX_SCHEDULED_NOTE: 'inbox.scheduledNote',
+    INBOX_INTRO: 'inbox.intro', INBOX_PIN_NOTE: 'inbox.pinNote', INBOX_PASSPHRASE_NOTE: 'inbox.passphraseNote',
+    NOTIFICATIONS_OFF_WITH_PASSPHRASE: 'settings.notifications.offWithPassphrase', AUTO_LOCK_HINT_WITH_PASSPHRASE: 'settings.autoLock.hintWithPassphrase',
+    AUTO_LOCK_WITH_PASSPHRASE_NOTE: 'settings.autoLock.withPassphraseNote', SCREEN_PROTECTION_WITH_PASSPHRASE_NOTE: 'settings.screenProtection.withPassphrase', INBOX_EMPTY: 'inbox.empty', INBOX_SCHEDULED_NOTE: 'inbox.scheduledNote',
     NOTIFICATIONS_SECTION_TITLE: 'settings.notifications', NOTIFICATIONS_OFF_WITH_PIN: 'settings.notifications.offWithPin',
     AUTO_LOCK_HINT_WITH_PIN: 'settings.autoLock.hintWithPin', AUTO_LOCK_WITH_PIN_NOTE: 'settings.autoLock.withPinNote',
     SCREEN_PROTECTION_TITLE: 'settings.section.privacy', SCREEN_PROTECTION_SWITCH_LABEL: 'settings.screenProtection.switch',
@@ -469,8 +494,19 @@ const isEntryOrDecorated = (text) => I.idOfEnglish(text) !== null || I.localizeI
     ROW_DETAILS_UNAVAILABLE_LINE: 'activity.row.unavailable', LOAD_MORE_RETRY_FOOTER: 'activity.loadMoreRetry',
   }));
   // `text` is Home's cardLink (its callers pass English literals, scanned as literals below).
-  const tExprBad = tExpr.filter(([, v]) => !(v === 'text' || allowedCalls.test(v) || exportedNames.has(v)));
-  check(`every <T>{…}</T> is a known constant, lockScreenHint(…) or Home's link text (${tExpr.length} uses)`, tExprBad.length === 0, tExprBad.map((x) => x.join(': ')).join('; '));
+  // Phase 22 polish: an app-lock note picked by the lock's kind,
+  // `<kind> === 'phr' ? <passphrase constant> : <PIN constant>`, both known.
+  const lockKindPick = (v) => {
+    const m = /^(settingsLockKind|inboxLockKind) === 'phr' \? ([A-Z_]+) : ([A-Z_]+)$/.exec(v);
+    return m !== null && exportedNames.has(m[2]) && exportedNames.has(m[3]) && m[2].includes('PASSPHRASE') && m[3].includes('PIN');
+  };
+  const tExprBad = tExpr.filter(([, v]) => !(v === 'text' || allowedCalls.test(v) || exportedNames.has(v) || lockKindPick(v)));
+  check(`every <T>{…}</T> is a known constant, a PIN / passphrase pair picked by the lock's kind, lockScreenHint(…) or Home's link text (${tExpr.length} uses)`, tExprBad.length === 0, tExprBad.map((x) => x.join(': ')).join('; '));
+  const picks = tExpr.filter(([, v]) => lockKindPick(v));
+  check(`…the kind-picked app-lock notes: Settings' auto-lock hint and note, screen protection and notifications, and the inbox note (${picks.length})`,
+    picks.length === 5 && ['AUTO_LOCK_HINT_WITH_PASSPHRASE', 'AUTO_LOCK_WITH_PASSPHRASE_NOTE', 'SCREEN_PROTECTION_WITH_PASSPHRASE_NOTE', 'NOTIFICATIONS_OFF_WITH_PASSPHRASE', 'INBOX_PASSPHRASE_NOTE']
+      .every((n) => picks.some(([, v]) => v.includes(`? ${n} :`))));
+  check('…mutant caught (polish): a pair whose passphrase branch is a PIN constant', !lockKindPick("settingsLockKind === 'phr' ? AUTO_LOCK_HINT_WITH_PIN : AUTO_LOCK_HINT_WITH_PIN"));
   const { SPENDING_SECTION_TITLE } = await import('../src/wallet/spending-policy.ts');
   check('…and each of those constants is an entry with the same English (the spending title too)',
     [...exportedNames.values()].every((id) => id in en && (CONSTANTS[id] === undefined || CONSTANTS[id] === en[id])) && SPENDING_SECTION_TITLE === en['settings.section.spending']);
@@ -578,6 +614,22 @@ function memoryStore() {
   check('Settings offers System / English / Español from LANGUAGE_CHOICES through the controller, and says when a save failed',
     settings.includes('<LanguageSection />') && settings.includes('LANGUAGE_CHOICES.map((c) => {') && settings.includes("controller.choose(next).catch(() => setFailed(true));") &&
       settings.includes("t('settings.language.saveFailed')"));
+  // Phase 22 polish (the guardian share-text residual): texts prepared for
+  // someone else stay in English and name the English screens; the Language
+  // section says so instead of translating them (the reader's language is
+  // not the sender's).
+  const recoverySrc = read('src/wallet/recovery.ts');
+  const multisigSrc = read('src/wallet/multisig.ts');
+  const sharedNoteShown = (src) =>
+    /<Text style=\{\[styles\.hint, \{ color: theme\.textMuted \}\]\}>\{t\('settings\.language\.amounts'\)\}<\/Text>\s*<Text style=\{\[styles\.hint, \{ color: theme\.textMuted \}\]\}>\{t\('settings\.language\.shared'\)\}<\/Text>/.test(src);
+  check('Settings → Language says texts for someone else stay in English and name English screens (exact), after the amounts note',
+    en['settings.language.shared'] === 'Texts the wallet prepares for someone else to read, such as a recovery request for your guardians or a multisig signing request, stay in English in every language, and the screens they point to are named in English (for example Settings → Guardians (social recovery)).' &&
+      typeof es['settings.language.shared'] === 'string' && es['settings.language.shared'].includes('Settings → Guardians (social recovery)') && sharedNoteShown(settings));
+  check('…and that is true: the guardian and multisig share texts are built without the accessor, and the guardian one names the English path',
+    !/from '\.\.\/i18n|from '\.\.\/i18n\/index/.test(recoverySrc) && !/i18n/.test(multisigSrc.split('\n').filter((l) => l.startsWith('import')).join('\n')) &&
+      recoverySrc.includes("'Shiba Wallet: Settings → Guardians (social recovery) → Approve a recovery (as a guardian), then paste '"));
+  check('…mutant caught (polish): the shared-texts sentence dropped from the Language section',
+    !sharedNoteShown(settings.replace("{t('settings.language.shared')}", '')));
 }
 
 // ---------------------------------------------------------------------------
@@ -654,12 +706,14 @@ function caught(name, wasCaught) {
   const esMissing = { ...es };
   delete esMissing['inbox.empty'];
   caught('a Spanish table missing an id', EN_IDS.some((id) => typeof esMissing[id] !== 'string'));
+  const fixtureBadBefore = { ...FIXTURE, changed: { 'activity.note.privacy': { ...FIXTURE.changed['activity.note.privacy'], before: 'Notes are kept only on this phone.' } } };
+  caught('a changed entry whose "before" is not the text at the base commit (a silent rewrite of history)', fixtureProblems(en, fixtureBadBefore).length === 1);
   const enChanged = { ...en, 'home.manageTokens': 'Manage Tokens' };
   caught('an English entry changed by one character (no longer the text before)', fixtureProblems(enChanged, FIXTURE).length === 1);
   const enExtra = { ...en, 'home.unusedThing': 'A sentence no screen shows.' };
   caught('an unused id added to the table', unusedIds(enExtra, SCANS).includes('home.unusedThing') && fixtureProblems(enExtra, FIXTURE).length === 1);
 }
-check(`at least six mutants, all caught (${mutantsCaught} of ${mutants + 4} including the table mutants)`, mutants + 4 >= 6 && mutantsCaught === mutants + 4);
+check(`at least six mutants, all caught (${mutantsCaught} of ${mutants + 5} including the table mutants)`, mutants + 5 >= 6 && mutantsCaught === mutants + 5);
 
-console.log(`\ncheck-i18n: ${passed} passed, ${failed} failed (${mutants + 4} mutants)`);
+console.log(`\ncheck-i18n: ${passed} passed, ${failed} failed (${mutants + 5} mutants)`);
 if (failed > 0) process.exit(1);

@@ -88,8 +88,9 @@ export const NOTES_READ_ONLY_MESSAGE =
 
 /** Shown next to the note field on the success screens and the editor. */
 export const NOTE_PRIVACY_LINE =
-  'Notes are kept only on this phone. They are not sent anywhere, not backed up by your ' +
-  'recovery phrase and are deleted when the wallet is wiped. Hide amounts does not hide them.';
+  'Notes are kept on this phone and are not sent anywhere. They are deleted when the wallet is wiped. ' +
+  'A records backup (Settings → Records backup) includes them, and your recovery phrase restores them from it. ' +
+  'Hide amounts does not hide them.';
 
 // ---------------------------------------------------------------------------
 // Ids

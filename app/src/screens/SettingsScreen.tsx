@@ -171,7 +171,7 @@ import {
 } from '../wallet/spending-policy';
 import { MULTISIG_SETTINGS_BLURB } from '../wallet/multisig';
 import { PassphraseField, PinPad } from '../components/LockGate';
-import { AUTO_LOCK_HINT_WITH_PIN } from '../wallet/lock';
+import { AUTO_LOCK_HINT_WITH_PASSPHRASE, AUTO_LOCK_HINT_WITH_PIN } from '../wallet/lock';
 import { PinCostMeasurement } from '../components/PinCostMeasurement';
 import { pinCostMeasurementOffered } from '../wallet/pin-cost';
 import { NOTIFICATIONS_SECTION_TITLE, appNotifications } from '../wallet/notifications';
@@ -182,24 +182,27 @@ import {
   APP_LOCK_KIND_CHOICE_LABEL,
   APP_LOCK_OFF_STATUS,
   APP_LOCK_SWITCH_LABEL,
+  AUTO_LOCK_WITH_PASSPHRASE_NOTE,
   AUTO_LOCK_WITH_PIN_NOTE,
   DURESS_FUNDING_NOTE,
   DURESS_MUST_DIFFER,
   LOCK_SAME_KIND_NOTE,
   LOCK_STRENGTH_NOTE,
+  NOTIFICATIONS_OFF_WITH_PASSPHRASE,
   NOTIFICATIONS_OFF_WITH_PIN,
   PASSPHRASE_ADVICE,
   PASSPHRASE_KEYBOARD_NOTE,
   PASSPHRASE_NO_COPY_NOTE,
   PIN_BACKUP_MISMATCH,
   PIN_BACKUP_PROMPT,
+  SCREEN_PROTECTION_WITH_PASSPHRASE_NOTE,
   SCREEN_PROTECTION_WITH_PIN_NOTE,
-  WIPE_WITH_PIN_NOTE,
   appLockKind,
   backupCheckLabel,
   backupCheckPositions,
   backupWordsMatch,
   lockCopy,
+  wipeWithLockNote,
 } from '../wallet/duress';
 
 /** "A, B and C" / "A, B or C". */
@@ -1923,6 +1926,7 @@ function LanguageSection() {
       </Text>
       <Text style={[styles.hint, { color: theme.textMuted }]}>{t('settings.language.draft')}</Text>
       <Text style={[styles.hint, { color: theme.textMuted }]}>{t('settings.language.amounts')}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{t('settings.language.shared')}</Text>
       {failed ? <Text style={[styles.hint, { color: theme.danger }]}>{t('settings.language.saveFailed')}</Text> : null}
     </View>
   );
@@ -1983,6 +1987,9 @@ export function SettingsScreen({ navigation, route }: Props) {
     setShowFiat,
     appPinOn,
   } = usePrefs();
+  // The app lock's kind (a device fact read at launch): the notes below that
+  // name the lock say "PIN" or "passphrase" accordingly (phase 22 polish).
+  const settingsLockKind = React.useSyncExternalStore(appLockKind.subscribe, appLockKind.get);
   // Settings → Privacy (phase 17 item 0): the app-wide screen protection.
   const { screenProtection, setScreenProtection } = usePrefs();
   const screenProtectionStatus = React.useSyncExternalStore(
@@ -2205,7 +2212,7 @@ export function SettingsScreen({ navigation, route }: Props) {
         'and recovered-account links are deleted from this device; guardians stay installed on-chain. ' +
         'Passkey details are deleted from this device too, but an installed passkey stays installed in ' +
         'your smart account — remove it first (Settings → Passkey) if you no longer want it.' +
-        (appPinOn ? ` ${WIPE_WITH_PIN_NOTE}` : ''),
+        (appPinOn ? ` ${wipeWithLockNote(settingsLockKind)}` : ''),
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -2385,7 +2392,7 @@ export function SettingsScreen({ navigation, route }: Props) {
             {/* With the app PIN on, the lock is the PIN pad, not the device
                 prompt (pass p21f finding 5); without it, the sentence below. */}
             {appPinOn ? (
-              <Text style={[styles.hint, { color: theme.textMuted }]}><T>{AUTO_LOCK_HINT_WITH_PIN}</T></Text>
+              <Text style={[styles.hint, { color: theme.textMuted }]}><T>{settingsLockKind === 'phr' ? AUTO_LOCK_HINT_WITH_PASSPHRASE : AUTO_LOCK_HINT_WITH_PIN}</T></Text>
             ) : (
             <Text style={[styles.hint, { color: theme.textMuted }]}>
               <T>
@@ -2402,7 +2409,7 @@ export function SettingsScreen({ navigation, route }: Props) {
               </T>
             </Text>
             )}
-            {appPinOn ? <Text style={[styles.hint, { color: theme.textMuted }]}><T>{AUTO_LOCK_WITH_PIN_NOTE}</T></Text> : null}
+            {appPinOn ? <Text style={[styles.hint, { color: theme.textMuted }]}><T>{settingsLockKind === 'phr' ? AUTO_LOCK_WITH_PASSPHRASE_NOTE : AUTO_LOCK_WITH_PIN_NOTE}</T></Text> : null}
           </>
         ) : authAvailable === false ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
@@ -2434,7 +2441,7 @@ export function SettingsScreen({ navigation, route }: Props) {
             onValueChange={(v) => void setScreenProtection(v)}
           />
         </View>
-        {appPinOn ? <Text style={[styles.hint, { color: theme.textMuted }]}><T>{SCREEN_PROTECTION_WITH_PIN_NOTE}</T></Text> : null}
+        {appPinOn ? <Text style={[styles.hint, { color: theme.textMuted }]}><T>{settingsLockKind === 'phr' ? SCREEN_PROTECTION_WITH_PASSPHRASE_NOTE : SCREEN_PROTECTION_WITH_PIN_NOTE}</T></Text> : null}
         <Text style={[styles.hint, { color: theme.textMuted }]}><T>{SCREEN_PROTECTION_PLATFORM_NOTE}</T></Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}><T>{SCREEN_PROTECTION_ALWAYS_NOTE}</T></Text>
         <Text
@@ -2451,7 +2458,7 @@ export function SettingsScreen({ navigation, route }: Props) {
         {appPinOn ? (
           <View style={styles.section}>
             <Text accessibilityRole="header" style={[styles.subTitle, { color: theme.text }]}><T>{NOTIFICATIONS_SECTION_TITLE}</T></Text>
-            <Text style={[styles.hint, { color: theme.textMuted }]}><T>{NOTIFICATIONS_OFF_WITH_PIN}</T></Text>
+            <Text style={[styles.hint, { color: theme.textMuted }]}><T>{settingsLockKind === 'phr' ? NOTIFICATIONS_OFF_WITH_PASSPHRASE : NOTIFICATIONS_OFF_WITH_PIN}</T></Text>
           </View>
         ) : (
           <NotificationSettingsSection />

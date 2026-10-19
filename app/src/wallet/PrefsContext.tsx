@@ -8,7 +8,7 @@ import React, {
   useSyncExternalStore,
 } from 'react';
 import { AppPrefs, DEFAULT_PREFS, loadPrefs, savePrefs } from '../config/prefs';
-import { NOTIFICATIONS_OFF_WITH_PIN, appPinPresence, effectivePrefs } from './duress';
+import { appLockKind, appPinPresence, effectivePrefs, notificationsOffWithLock } from './duress';
 import {
   customEvmProfiles,
   evmProfileFor,
@@ -163,7 +163,7 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
       setAutoLockMs: (ms) => (appPinOn && ms === null ? Promise.reject(new Error(APP_PIN_FORCES_MESSAGE)) : patch({ autoLockMs: ms })),
       setShowFiat: (on) => patch({ showFiat: on }),
       setScreenProtection: (on) => patch({ screenProtection: on }),
-      setNotifications: (on) => (appPinOn && on ? Promise.reject(new Error(NOTIFICATIONS_OFF_WITH_PIN)) : patch({ notifications: on })),
+      setNotifications: (on) => (appPinOn && on ? Promise.reject(new Error(notificationsOffWithLock(appLockKind.get()))) : patch({ notifications: on })),
     };
   }, [ready, prefs, patch, customNetworks, appPinOn]);
 

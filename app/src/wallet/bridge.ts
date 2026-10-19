@@ -131,6 +131,21 @@ export const BRIDGE_INTRO =
 export const BRIDGE_CHOICE_NOTE =
   'You choose the provider. The wallet lists every provider it knows for this pair of networks and never picks one for you.';
 
+/**
+ * The note under the provider list for the network the form is on (the
+ * p21b follow-up): BRIDGE_CHOICE_NOTE where some provider can send from it
+ * (the destination chips are shown, so "this pair" exists); where none can
+ * (Base Sepolia: the chips are hidden and every row says why it cannot
+ * serve the network) a sentence naming only the source network; and no note
+ * where no provider is listed at all (Hoodi, a network the user added: the
+ * warning above already says no provider serves it).
+ */
+export function bridgeChoiceNote(offer: Pick<BridgeOffer, 'unavailable' | 'sourceLabel'>, rowCount: number): string | null {
+  if (rowCount === 0) return null;
+  if (bridgeFormInputsShown(offer)) return BRIDGE_CHOICE_NOTE;
+  return `The wallet lists every provider it knows, each with the reason it cannot send from ${offer.sourceLabel}, and never picks one for you.`;
+}
+
 /** Why Circle CCTP is listed but cannot be chosen (see the module comment). */
 export const CCTP_COMING_NOTE =
   'Coming later, not offered yet. Circle CCTP moves USDC, not test ETH, and this wallet has not yet sent a CCTP ' +

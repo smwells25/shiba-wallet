@@ -1,6 +1,6 @@
 {
  "base": "c5baff6",
- "about": "The English each migrated string-table entry had in the app at commit c5baff6, before the localisation groundwork (phase 22 item 6). Generated from that checkout: \"literal\" entries were found as a string literal, a folded string concatenation or a JSX text (whitespace collapsed as JSX does) at the places listed; \"template\" entries have their static parts (the text between placeholders) found in that order in a template literal, a string concatenation or a JSX element; \"composite\" entries were assembled from several pieces, described with their place; \"new\" entries did not exist (Settings → Language). scripts/check-i18n.mjs compares app/src/i18n/en.ts with this file.",
+ "about": "The English each migrated string-table entry had in the app at commit c5baff6, before the localisation groundwork (phase 22 item 6). Generated from that checkout: \"literal\" entries were found as a string literal, a folded string concatenation or a JSX text (whitespace collapsed as JSX does) at the places listed; \"template\" entries have their static parts (the text between placeholders) found in that order in a template literal, a string concatenation or a JSX element; \"composite\" entries were assembled from several pieces, described with their place; \"new\" entries did not exist (Settings → Language). scripts/check-i18n.mjs compares app/src/i18n/en.ts with this file. \"changed\" entries are migrated entries whose English was reworded on purpose after the migration: \"before\" is the text at c5baff6 (equal to the entry's own record above), \"en\" the text now, \"why\" the reason; the \"new\" list also holds the ids added since (the Settings → Language note on shared texts and the passphrase forms of the app-lock notes, phase 22 polish).",
  "literal": {
   "common.cancel": {
    "en": "Cancel",
@@ -2700,6 +2700,19 @@
   "settings.language.draft",
   "settings.language.amounts",
   "settings.language.saveFailed",
-  "settings.language.choose.hint"
- ]
+  "settings.language.choose.hint",
+  "settings.language.shared",
+  "inbox.passphraseNote",
+  "settings.autoLock.hintWithPassphrase",
+  "settings.autoLock.withPassphraseNote",
+  "settings.screenProtection.withPassphrase",
+  "settings.notifications.offWithPassphrase"
+ ],
+ "changed": {
+  "activity.note.privacy": {
+   "before": "Notes are kept only on this phone. They are not sent anywhere, not backed up by your recovery phrase and are deleted when the wallet is wiped. Hide amounts does not hide them.",
+   "en": "Notes are kept on this phone and are not sent anywhere. They are deleted when the wallet is wiped. A records backup (Settings → Records backup) includes them, and your recovery phrase restores them from it. Hide amounts does not hide them.",
+   "why": "Phase 22 polish: the records backup (phase 22 item 4) includes transaction notes and the recovery phrase restores them, so \"not backed up by your recovery phrase\" was no longer true."
+  }
+ }
 }

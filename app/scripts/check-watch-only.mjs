@@ -94,6 +94,7 @@ import {
   watchOnlyOwnAccountError,
   watchOnlyRouteRefusal,
 } from '../src/wallet/watch-only.ts';
+import { COLD_SIGN_HOME_LINK } from '../src/wallet/cold-signing.ts';
 import { duplicateImportError, importedKeyBytes, importedSignerFor } from '../src/wallet/imported-keys.ts';
 import { PROMPTS, createKeyVault } from '../src/wallet/storage.ts';
 import { chainByCaip2 } from '../src/wallet/chains.ts';
@@ -706,7 +707,22 @@ console.log('check-watch-only: honesty and the screens (source checks)');
   check('Home: Bitcoin, Dogecoin and Solana shown as not available', /<UnavailableChains accounts=\{accounts\} sentence=\{WATCH_ONLY_NO_CHAIN\} \/>/.test(home));
   check('Home: no guardian-recovery link for a watch-only account', /\{noKey \? null : \(\s*<>\s*\{activeAccount\?\.imported \? null : \(/.test(home));
   check('Home: the delegation lines (which link to Upgrade) are not read for a watch-only account', /useAccountDelegation\(noKey \? undefined : evmAccount\?\.address\)/.test(home));
-  check('Home footer for a watch-only account', watchOnlyFooterText('Treasury (watch-only)').startsWith('Treasury (watch-only) is an address you watch; this wallet holds no key for it, so it cannot send, swap or sign for it.') && /watchOnlyFooterText\(activeAccount\.name\)/.test(home));
+  // Phase 22 polish (the cold-signing follow-up): the footer no longer says
+  // the wallet cannot send for the watched address; it cannot SIGN, and a
+  // send can be prepared for an off-line signer from the Home link.
+  const footerOk = (fn) =>
+    fn('Treasury (watch-only)') ===
+      'Treasury (watch-only) is an address you watch; this wallet holds no key for it, so it cannot sign or swap for it. ' +
+        'A send on an Ethereum network can still be prepared here and signed by an off-line signer that holds its key: use ' +
+        '"Send with an off-line signer". Balances come from the RPC endpoints in Settings; pull down to refresh. Activity and ' +
+        'NFTs read this address from the indexers in Settings.' && !/cannot send/.test(fn('X'));
+  check('Home footer for a watch-only account (exact): cannot sign or swap; a send can be prepared for an off-line signer from "Send with an off-line signer"',
+    footerOk(watchOnlyFooterText) && /watchOnlyFooterText\(activeAccount\.name\)/.test(home));
+  check('…the footer names the Home link by its own words, shown for a watch-only account on an Ethereum network',
+    COLD_SIGN_HOME_LINK === 'Send with an off-line signer ↗' && watchOnlyFooterText('X').includes(`"${COLD_SIGN_HOME_LINK.replace(/\s+↗$/, '')}"`) &&
+      /\{watchOnly && isEvm\s*\?\s*cardLink\('cold-sign', COLD_SIGN_HOME_LINK, \(\) => navigation\.navigate\('ColdSign'\), COLD_SIGN_LINK_HINT\)/.test(home));
+  check('…mutant caught (polish): the old footer saying it cannot send',
+    !footerOk((name) => `${name} is an address you watch; this wallet holds no key for it, so it cannot send, swap or sign for it. Balances come from the RPC endpoints in Settings; pull down to refresh. Activity and NFTs read this address from the indexers in Settings.`));
   const acc = src('components/AccountsSection.tsx');
   check('Settings → Accounts: a "Watch an address" form with paste, scan, name and the privacy note',
     /title="Watch an address"/.test(acc) && /Clipboard\.getStringAsync\(\)/.test(acc) && /setWatchAddress\(watchAddressFromScan\(data\)\)/.test(acc) && /\{WATCH_ADDRESS_PRIVACY_NOTE\}/.test(acc));

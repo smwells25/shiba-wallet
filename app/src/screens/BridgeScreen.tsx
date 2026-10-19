@@ -50,7 +50,6 @@ import {
 import { PREVIEW_AA_NOTE } from '../wallet/simulation';
 import {
   BRIDGE_AMOUNT_PLACEHOLDER,
-  BRIDGE_CHOICE_NOTE,
   BRIDGE_INTRO,
   BRIDGE_RECORDS_NOTE,
   BRIDGE_RECORDS_READ_ONLY_MESSAGE,
@@ -59,6 +58,7 @@ import {
   BridgeRefusal,
   broadcastStamped,
   bridgeConfirmModel,
+  bridgeChoiceNote,
   bridgeFormInputsShown,
   bridgeProviderChoiceHint,
   chosenBridgeProvider,
@@ -315,6 +315,8 @@ export function BridgeScreen({ navigation }: Props) {
   const chosenProvider = chosenBridgeProvider(rows, providerId);
   const providerChoiceHint = bridgeProviderChoiceHint(rows, chosenProvider);
   const inputsShown = offer !== null && bridgeFormInputsShown(offer);
+  // The note under "Choose a provider", true for this network (p21b follow-up).
+  const choiceNote = offer !== null ? bridgeChoiceNote(offer, rows.length) : null;
   const destinationLabel = offer?.destinations.find((d) => d.chainId === chosenDestination)?.label ?? '';
 
   const url = endpoint?.url ?? null;
@@ -904,8 +906,12 @@ export function BridgeScreen({ navigation }: Props) {
         </>
       ) : null}
 
-      <Text accessibilityRole="header" style={[styles.label, { color: theme.textMuted }]}>Choose a provider</Text>
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{BRIDGE_CHOICE_NOTE}</Text>
+      {choiceNote ? (
+        <>
+          <Text accessibilityRole="header" style={[styles.label, { color: theme.textMuted }]}>Choose a provider</Text>
+          <Text style={[styles.hint, { color: theme.textMuted }]}>{choiceNote}</Text>
+        </>
+      ) : null}
       {providerChoiceHint ? <Text style={[styles.hint, { color: theme.text }]}>{providerChoiceHint}</Text> : null}
       <View accessibilityRole="radiogroup" style={styles.content}>
         {rows.map((row) => {

@@ -127,6 +127,10 @@ export const INBOX_INTRO =
 export const INBOX_PIN_NOTE =
   'The app PIN is on, so the wallet posts no phone notifications. The inbox still lists what the wallet showed you on ' +
   'its own screens, such as the recurring-payment banner, price alerts and sent transactions.';
+/** The same note while the app lock is a passphrase (phase 22 polish; the PIN form above unchanged). */
+export const INBOX_PASSPHRASE_NOTE =
+  'The app passphrase is on, so the wallet posts no phone notifications. The inbox still lists what the wallet showed you on ' +
+  'its own screens, such as the recurring-payment banner, price alerts and sent transactions.';
 export const INBOX_SCHEDULED_NOTE =
   'A phone reminder is listed at the time it was set to appear. Android may show one a little late, and after a ' +
   'force stop it does not show it at all until the wallet is opened again.';
