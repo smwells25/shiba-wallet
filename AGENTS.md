@@ -10554,6 +10554,114 @@ Subagents on Opus.
       'url' events to a running Expo Go; the Inbox screen, the Home unread
       count and the entries from a WalletConnect sent view, a price alert
       and a speed-up; TalkBack; Hermes.
+- [x] Item 6 — LOCALISATION GROUNDWORK (feature 91; commit 8dbf882; 37 files
+      incl. the new app/src/i18n/ (index.ts, T.tsx, en.ts, es.ts,
+      format.ts, app-language.ts) and check-i18n 79 (12 mutants) with the
+      fixture app/scripts/fixtures/i18n-english-before.json; offline runner
+      ALL GREEN in the CTO's isolated worktree on HEAD c5baff6 with
+      --skip-bundle: engine 1,050, app 9,800 across 63 suites, lint 0/0,
+      tsc clean; apply 0; every staged file byte-equal to the verified
+      tree; not seen on a device). INVENTORY (a TypeScript-AST upper
+      bound over 174 files): 9,015 candidate literals in 169 files — 917
+      JSX texts, 1,190 JSX attributes, 494 Alert arguments, 1,462 prose
+      constants, 4,952 other prose incl. error / technical text; largest
+      SettingsScreen 386, SessionsScreen 281, multisig.ts 277, SendScreen
+      268, aa.ts 249, recovery.ts 247. MIGRATED 412 ids (65 templates):
+      send 78, home 64, readiness 61 (every row × the 3 phrase states +
+      intro, hint, status, notes, evidence, card title), activity 57,
+      settings 55 (all 25 section titles, Privacy, the new Language
+      section), inbox 37, receive 26, lock 24 (the PIN and passphrase
+      messages in pin.ts), the shared Button / WarningBox / field labels /
+      TestNetworksOnlyCard / the imported-key and watch-only notices, the
+      TESTNET banner. DESIGN: en.ts (`as const`, the source of truth,
+      holding the previous English BYTE FOR BYTE — the fixture holds 328
+      literals with file and line, 58 templates by their static parts and
+      16 composites reassembled the old way, taken from the c5baff6
+      checkout; 85 entries also compared to the wallet modules' exported
+      constants) and es.ts; four forms of one accessor — t(id, params)
+      with typed ids and `{name}` placeholders, tx(englishLiteral) whose
+      parameter type is the union of the placeholder-free entries (tsc
+      refuses a literal that is not an entry), <T> rendering a string
+      child inside a <Text> (used where a suite reads the source), and
+      localize() for sinks that receive caller text (Button, WarningBox,
+      StatusChip, Send's Row, field labels, spokenLinkText — exact
+      English entries only, "✓ " / " ↗" decorations kept; amounts,
+      addresses and typed names pass through); a missing Spanish id falls
+      back to English, never the id; useI18n() through
+      useSyncExternalStore (the React Compiler is off at run time: no
+      experiments.reactCompiler in app.json; @expo/cli
+      ManifestMiddleware.js:146, metroOptions.js:120). LANGUAGE CHOICE:
+      the DEVICE-scoped key shiba-wallet.language.v1 ({v 1, language},
+      strict; anything malformed reads as system; 43 keys — 23 wallet, 10
+      device, 10 secret) so a duress decoy cannot show a different
+      language; the controller saves first then applies; the device
+      language is applied during App's first render, then the stored
+      choice (a choice made while loading wins); Settings → Language
+      (above Privacy & security): System / English / Español, "In use
+      now", the draft note, the amounts note, a save-failure line.
+      DEVICE LANGUAGE: expo-localization is NOT installed; Android RN
+      0.86.3 I18nManagerModule.kt 20–29 exports localeIdentifier; iOS
+      RCTI18nManager.mm 49–55 does not, so Intl.DateTimeFormat()
+      .resolvedOptions().locale is the fallback; read once per launch.
+      HERMES INTL (sources): built with Intl on Android
+      (ReactAndroid/hermes-engine/build.gradle.kts 356–358) and Apple
+      (build-apple-framework.sh:103); the prebuilt hermes-android
+      250829098.0.17 AAR carries Collator / DateTimeFormat / NumberFormat
+      with ICU- and Android-backed formatters; libhermesvm.so names
+      formatToParts, resolvedOptions, supportedLocalesOf,
+      getCanonicalLocales and NOT PluralRules / RelativeTimeFormat /
+      ListFormat / DisplayNames / Segmenter (none used). FORMATTING: only
+      the Activity row time follows the language (format.ts; English
+      delegates to history.ts timestampLabel unchanged; Spanish "hace N
+      min" / "hace N h" / "justo ahora" / "pendiente" / "bloque N" and
+      Intl.DateTimeFormat('es', day / short month / year) with a fixed
+      table as the fallback — Node with ICU 78.3 gives "1 oct 2026");
+      DECISION: AMOUNTS KEEP "." IN EVERY LANGUAGE (fields, payment
+      requests and pasted amounts accept only "."; decimalSeparatorsFor()
+      built and tested but not applied; said in Settings); the exact-
+      amount strings pinned byte-identical in English and in Spanish.
+      PINS CHANGED (minimal, each English text now also pinned in
+      check-i18n): check-storage-seam (43 keys, device 10), check-duress
+      (device count; the Notifications-with-PIN regex accepting <T>; the
+      passphrase-words mutant anchor), check-devmode (the LockGate render
+      regex; the auto-lock hint / title / variant regexes and mutants;
+      named() headings; the switch-row scan reading <T>X</T>, {tx('X')}
+      and {localize(X)} as X), check-screen-protection (section order
+      with <T>; the switch label), check-home (the balance template, the
+      token-row action label, the Hide-amounts label), check-watch-only
+      (the watched hint, the Receive Send title, mutant M-r1),
+      check-multisig (the Receive co-signer sentence and M23, the Send
+      title, the "Only send" call), check-key-import (the footer),
+      check-activity (the unavailable line + 2 mutants, the fee line, the
+      load-more footer, the title), check-recovery (the Guardians title).
+      MUTANTS caught: no English fallback, decorations dropped, the
+      language ignored, any stored language accepted, applying before
+      saving, English times not delegated, phrase clauses swapped, a
+      custom banner shown as built-in, a placeholder dropped, a Spanish id
+      missing, an English entry changed by one character, an unused id
+      added. STILL ENGLISH: the engine's Activity sentences, state notes,
+      export and diagnostic lines; Send's smart-account confirm and
+      success views (their receipt lines are pinned identical in Send and
+      Staking), send.ts / aa.ts errors, the minimum-fee WarningBoxes;
+      Home's delegation / recovered-account / multisig deposit /
+      watch-only and multisig footers / tokenSendFeeSentence; Receive's
+      RequestAmountCard; Settings outside the migrated parts (AppPinSection,
+      notifications, endpoints, accounts, developer, the danger zone,
+      dialogs); every other screen (WalletConnect, Swap, Staking, Bridge,
+      Multisig, Sessions…); biometric prompt titles, OS notification
+      texts, the CSV, the other routes' header titles. RESIDUALS (stated):
+      the sinks translate matching strings app-wide, so unmigrated screens
+      show mixed languages ("Cancelar" beside English); the guardian share
+      text names English UI paths; check-devmode's placeholder-repeat scan
+      no longer reads placeholder={tx(…)} (one Activity note field
+      uncovered); the Spanish draft needs a native reviewer ("contraseña"
+      for passphrase, "billetera" for wallet). DOCS not updated by the
+      slice (FEATURE_UNIVERSE row 91 at the refresh). UNVERIFIED
+      (emulator pass, Expo Go, read-only — a 14-step checklist in the
+      builder's report): Spanish rendering and layout length, <T> inside
+      <Text> on Android, the phone's ICU date strings, the I18nManager /
+      Intl locale values, a phone set to Spanish, TalkBack in Spanish;
+      iOS.
 - [x] Item 5 — LEADERSHIP REFRESH (docs commit below; check-readiness 208,
       check-screen-protection 87, check-devmode 418, check-notifications
       184, check-duress 113, check-multisig 424 all green in the CTO's
