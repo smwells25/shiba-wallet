@@ -10071,6 +10071,75 @@ Subagents on Opus.
       hash, Stop between sizes, the Developer line's layout / TalkBack /
       dark mode, the Expo Go fallback in practice, iOS and the
       deployment-target change, a release-build measurement.
+- [x] Item 8 — docs/FIAT_OFFRAMP.md, fiat off-ramp research only (commit b12f3f5;
+      about 8,840 words incl. tables; the secret scan clean; no other file
+      edited; nothing signed up for, no key, no funds; every claim fetched
+      2026-10-19 05:30–06:00 UTC with its URL and date, incl. keyless
+      public APIs — MoonPay v3/currencies and v3/countries, Transak's
+      currency lists, Ramp's production and demo asset / payout lists,
+      Mercuryo's currency list — and read-only test-network contract reads;
+      failed pages recorded with their status code; MoonPay's embedded test
+      key deliberately left out). FINDINGS: (1) a non-custodial sale is the
+      provider's KYC and payout plus an ORDINARY TRANSFER from the wallet to
+      a per-order deposit address — the ONE trust point, and it cannot be
+      pinned or re-read independently (it arrives through the widget, an
+      SDK event or a redirect), so the DAPP_BROWSER B2/B3 (a frame could
+      forge Ramp's SEND_CRYPTO message) and B5 (the KYC page gets the
+      camera silently) findings apply to a WebView route, and the
+      system-browser route needs a universal-link domain the wallet lacks
+      (redirects into the wallet are forgeable); (2) NO PROVIDER IS KEYLESS
+      as CCTP was — MoonPay (an unsigned URL), Ramp and Banxa's referral URL
+      run without a wallet server; Transak, Coinbase, Alchemy Pay and
+      Onramper need a backend holding a secret; Coinbase also requires the
+      seller to hold a Coinbase account with a linked bank; (3) ASSETS:
+      Ramp's public list covers ETH and USDC on Ethereum, Base, Arbitrum and
+      Optimism plus BTC, DOGE and SOL; Mercuryo the same bar USDC on Solana;
+      MoonPay sells nothing on Optimism; Transak lists no USDC on Optimism;
+      (4) SANDBOXES exist but every one needs a partner account — MoonPay
+      documents Sepolia ETH, Bitcoin testnet3, Solana devnet and a test
+      payout card; Transak's TRNSK test token verified on-chain on all four
+      EVM test networks; Ramp's keyless demo lists Sepolia ETH, a test token
+      reading "RMP" / "Ramp Test Token" on-chain (the API calls it "TEST")
+      and Circle's Base Sepolia USDC 0x036C…CF7e (no code on Base mainnet);
+      Banxa and Onramper sandboxes move nothing on-chain; Coinbase documents
+      no selling sandbox; (5) SMART ACCOUNTS: a token sale shows the Kernel
+      account as sender, but whether providers detect an INTERNAL native
+      transfer is undocumented and where they refund "the sender" (MoonPay's
+      FAQ, Transak, Coinbase) the bundler could be taken as the sender; a
+      session key cannot be pinned to a per-order address; gas in USDC stays
+      test-only (F-58); a multisig cannot give the ownership signatures some
+      providers ask for; (6) RANKED: Ramp Network first (the only public list
+      covering every wallet asset and network, a Native Flow for apps that
+      execute the transfer themselves, no wallet server, 0.99% bank payouts,
+      a stated Central Bank of Ireland CASP authorisation), MoonPay second
+      (the best selling sandbox, no server without a pre-filled address, the
+      broadest stated licensing; no Optimism, the highest fee ceiling, Canada
+      excluded), Transak third (TRNSK on all four test networks, 0.99% card
+      payouts; a mandatory backend secret, its mobile guide asks for
+      microphone and location); Coinbase later for existing Coinbase users;
+      Banxa / Mercuryo / Alchemy Pay later or not at all; aggregators wait;
+      a SellProvider registry like BridgeProvider fits, one provider in the
+      first slice; (7) the ON-RAMP HOLD does not block an off-ramp
+      technically (every provider sells as its own flow) but the same vendor
+      and compliance inputs are needed; (8) the smallest honest slice is
+      staged — inputs, a test-network rehearsal from the regular account
+      (deposit details re-checked against the chosen network, asset and
+      amount, then the existing Send confirm stating the destination came
+      from the provider's page), the smart account selling a token first,
+      then a mainnet pilot — behind a new readiness row fiat-offramp
+      (testnet-only, enforced, shown only with sandbox credentials). Also:
+      Apple 3.1.5 and 5.1.1(ix) quoted from the guidelines dated 2026-10-16,
+      Google Play's financial-services and crypto policies quoted, the
+      PRIVACY.md section a pilot would need, seven decisions for the
+      Chairperson, eight documentation-versus-API gaps (MoonPay's FAQ blocks
+      sell in LA / TX / NY / VI while its API blocks only VI; Mercuryo's
+      developer site is an unedited template with the real docs behind a
+      login) and a could-not-verify list. FEATURE row 66 → Designed at the
+      item-9 refresh (the agent's proposed status line is in its report;
+      Designed rather than Not started matches how BRIDGING.md and
+      DURESS_WALLET.md were counted). NOTHING IS BUILT; nothing can be
+      rehearsed until a sandbox account exists (INPUT: the provider choice
+      and its sandbox credentials).
 - [x] Item 5 — LEADERSHIP REFRESH (docs commit below; check-readiness 208,
       check-screen-protection 87, check-devmode 418, check-notifications
       184, check-duress 113, check-multisig 424 all green in the CTO's
