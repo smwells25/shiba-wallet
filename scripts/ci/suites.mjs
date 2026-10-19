@@ -78,6 +78,7 @@ export const APP_SCRIPTS = {
   // smart-account status (fakes only).
   'check-pending.mjs': { kind: 'offline', summary: 'counts' },
   'check-inbox.mjs': { kind: 'offline', summary: 'counts' }, // Phase 22 item 5: the notifications inbox and deep links (features 83 and 80; fakes only).
+  'check-i18n.mjs': { kind: 'offline', summary: 'counts' }, // Phase 22 item 6: localisation groundwork (feature 91): the tables, the accessor, byte identity, the language choice (fakes only).
   'check-cold-signing.mjs': { kind: 'offline', summary: 'counts' }, // Phase 22 item 3: cold signing for a watch-only account, the QR half (feature 11; fakes only).
   'check-passkeys.mjs': { kind: 'offline', summary: 'counts' },
   'check-proof.mjs': { kind: 'offline', summary: 'counts' },

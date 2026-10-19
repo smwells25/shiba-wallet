@@ -731,7 +731,8 @@ console.log('check-recovery: recovery on a new wallet (no delay)');
   const shareText = recoveryRequestShareText(start.request);
   check('share text points to Settings → Guardians (social recovery) → Approve a recovery (as a guardian), which exists',
     shareText.includes('Settings → Guardians (social recovery) → Approve a recovery (as a guardian)') &&
-      settingsSrc.includes('Guardians (social recovery)</Text>') &&
+      // Phase 22 item 6: the title may sit in the string-table marker <T>.
+      (settingsSrc.includes('Guardians (social recovery)</Text>') || settingsSrc.includes('<T>Guardians (social recovery)</T></Text>')) &&
       /title="Approve a recovery \(as a guardian\)"[\s\S]{0,120}navigate\('ApproveRecovery'\)/.test(settingsSrc));
   const tampered = JSON.parse(payload);
   tampered.request.callData = tampered.request.callData.slice(0, -2) + 'ff';

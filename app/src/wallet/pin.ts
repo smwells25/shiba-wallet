@@ -97,6 +97,7 @@ import {
   type SecureStoreBackend,
   type SecureStoreItemOptions,
 } from './store-keys.ts';
+import { t, type StringId } from '../i18n/index.ts';
 
 export const PIN_LENGTH = 6;
 /**
@@ -662,9 +663,10 @@ export function waitAfterFailures(fails: number): number {
 /** "Try again in N seconds." / "… N minutes." for a wait ending at `until`. */
 export function tryAgainSentence(until: number, now: number): string {
   const s = Math.max(1, Math.ceil((until - now) / 1000));
-  if (s < 120) return `Try again in ${s} second${s === 1 ? '' : 's'}.`;
+  // Through the string table (phase 22 item 6); English unchanged.
+  if (s < 120) return s === 1 ? t('lock.tryAgain.second') : t('lock.tryAgain.seconds', { count: s });
   const m = Math.ceil(s / 60);
-  return `Try again in ${m} minutes.`;
+  return t('lock.tryAgain.minutes', { count: m });
 }
 
 async function slotFor(pin: string, d: Required<PinDeps>): Promise<Uint8Array> {
@@ -849,9 +851,12 @@ export const PIN_WAIT_OVER_MESSAGE = 'You can enter your PIN again.';
 /** The passphrase field's form of the same sentence. */
 export const PASSPHRASE_WAIT_OVER_MESSAGE = 'You can enter your passphrase again.';
 
-const ATTEMPT_WORDS: Record<LockKind, { wrong: string; tooMany: string; over: string }> = {
-  pin: { wrong: 'Wrong PIN.', tooMany: 'Too many wrong PINs.', over: PIN_WAIT_OVER_MESSAGE },
-  phr: { wrong: 'Wrong passphrase.', tooMany: 'Too many wrong passphrases.', over: PASSPHRASE_WAIT_OVER_MESSAGE },
+// String-table ids (phase 22 item 6). In English: "Wrong PIN.", "Too many
+// wrong PINs.", PIN_WAIT_OVER_MESSAGE, and the passphrase forms
+// (scripts/check-i18n.mjs compares them with the constants above).
+const ATTEMPT_WORDS: Record<LockKind, { wrong: StringId; tooMany: StringId; over: StringId }> = {
+  pin: { wrong: 'lock.pin.wrong', tooMany: 'lock.pin.tooMany', over: 'lock.pin.waitOver' },
+  phr: { wrong: 'lock.phr.wrong', tooMany: 'lock.phr.tooMany', over: 'lock.phr.waitOver' },
 };
 
 /**
@@ -860,10 +865,10 @@ const ATTEMPT_WORDS: Record<LockKind, { wrong: string; tooMany: string; over: st
  * record's kind (outcome.lock; a PIN when absent).
  */
 export function pinAttemptMessage(outcome: PinAttemptOutcome, now: number): string | null {
-  const words = ATTEMPT_WORDS[outcome.kind !== 'no-pin' && outcome.lock === 'phr' ? 'phr' : 'pin'];
-  if (outcome.kind === 'wrong') return outcome.until > now ? `${words.wrong} ${tryAgainSentence(outcome.until, now)}` : `${words.wrong} Try again.`;
-  if (outcome.kind === 'wait') return outcome.until > now ? `${words.tooMany} ${tryAgainSentence(outcome.until, now)}` : words.over;
-  if (outcome.kind === 'no-pin') return 'No app PIN is set on this phone.';
+  const ids = ATTEMPT_WORDS[outcome.kind !== 'no-pin' && outcome.lock === 'phr' ? 'phr' : 'pin'];
+  if (outcome.kind === 'wrong') return outcome.until > now ? `${t(ids.wrong)} ${tryAgainSentence(outcome.until, now)}` : `${t(ids.wrong)} ${t('lock.tryAgain')}`;
+  if (outcome.kind === 'wait') return outcome.until > now ? `${t(ids.tooMany)} ${tryAgainSentence(outcome.until, now)}` : t(ids.over);
+  if (outcome.kind === 'no-pin') return t('lock.noPin');
   return null;
 }
 

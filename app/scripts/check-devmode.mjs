@@ -436,7 +436,7 @@ const at = (type, status, now) => ({ type, status, now });
         src.includes('const view = lockGateView(reconciled, inputs);') &&
         src.includes("const locked = view !== 'screens';") &&
         src.includes('const lockValue = React.useMemo(() => ({ locked }), [locked]);') &&
-        /\{locked \? \(\s*view === 'lock' \? \(\s*<View[^>]*>\s*<Text[^>]*>Shiba Wallet is locked<\/Text>\s*<Text[^>]*>\s*\{lockScreenHint\(reconciled\.startedLocked\)\}/.test(src) &&
+        /\{locked \? \(\s*view === 'lock' \? \(\s*<View[^>]*>\s*<Text[^>]*>(?:<T>)?Shiba Wallet is locked(?:<\/T>)?<\/Text>\s*<Text[^>]*>\s*(?:<T>)?\{lockScreenHint\(reconciled\.startedLocked\)\}/.test(src) &&
         src.includes('applyLockGateEvent(prev, { type: \'app-state\', status: nextStatus, now: Date.now() }, autoLockMs)') &&
         src.includes("applyLockGateEvent(prev, { type: 'unlock' }, autoLockMs)") &&
         src.includes('const outcome = await attemptUnlock(requireLocalAuth);') &&
@@ -462,7 +462,8 @@ const at = (type, status, now) => ({ type, status, now });
     // openPhraseForApproval reports 'authenticated'); only the ordinary
     // prompt (standard storage, watch-only, multisig) offers the passcode.
     const autoLockHint = (src) => {
-      const m = /<Text[^>]*>\s*(When the app has been in the background at least this long[\s\S]*?)<\/Text>/.exec(src);
+      // Phase 22 item 6: the sentence may sit in a <T> (the string-table marker).
+      const m = /<Text[^>]*>\s*(?:<T>\s*)?(When the app has been in the background at least this long[^<]*)(?:<\/T>\s*)?<\/Text>/.exec(src);
       return m ? m[1].replace(/&apos;/g, "'").replace(/\s+/g, ' ').trim() : '';
     };
     const lockHintTrue = (src) => {
@@ -482,10 +483,10 @@ const at = (type, status, now) => ({ type, status, now });
     // background and a fresh start (its hint above says both); the old
     // title named only the background case (retitled in 651ee5d).
     const autoLockTitleOk = (src) =>
-      /<Text style=\{\[styles\.toggleLabel, \{ color: theme\.text \}\]\}>\s*Auto-lock\s*<\/Text>\s*<View style=\{styles\.endpointButtons\}>\s*\{AUTO_LOCK_CHOICES\.map/.test(src) &&
+      /<Text style=\{\[styles\.toggleLabel, \{ color: theme\.text \}\]\}>\s*(?:<T>)?Auto-lock(?:<\/T>)?\s*<\/Text>\s*<View style=\{styles\.endpointButtons\}>\s*\{AUTO_LOCK_CHOICES\.map/.test(src) &&
       !src.includes('Auto-lock after returning from background');
     check('Settings: the auto-lock control is titled "Auto-lock" (not "…after returning from background")', autoLockTitleOk(settingsSrc));
-    const oldTitle = settingsSrc.replace(/(<Text style=\{\[styles\.toggleLabel, \{ color: theme\.text \}\]\}>\s*)Auto-lock(\s*<\/Text>\s*<View style=\{styles\.endpointButtons\}>)/, '$1Auto-lock after returning from background$2');
+    const oldTitle = settingsSrc.replace(/(<Text style=\{\[styles\.toggleLabel, \{ color: theme\.text \}\]\}>\s*(?:<T>)?)Auto-lock((?:<\/T>)?\s*<\/Text>\s*<View style=\{styles\.endpointButtons\}>)/, '$1Auto-lock after returning from background$2');
     check('mutant caught: the old background-only title', oldTitle !== settingsSrc && !autoLockTitleOk(oldTitle));
     // Pass p21f finding 5: with the app PIN on, the lock is the PIN pad, not
     // the device prompt, so the hint must not say "the same biometric prompt
@@ -498,11 +499,11 @@ const at = (type, status, now) => ({ type, status, now });
     check('Settings: the auto-lock hint with the app PIN on, exactly (the PIN pad; no "same biometric prompt as sending")',
       lockMod.AUTO_LOCK_HINT_WITH_PIN === PIN_HINT && !PIN_HINT.includes('biometric prompt as sending'));
     const hintVariants = (src) =>
-      /\{appPinOn \? \(\s*<Text style=\{\[styles\.hint, \{ color: theme\.textMuted \}\]\}>\{AUTO_LOCK_HINT_WITH_PIN\}<\/Text>\s*\) : \(\s*<Text style=\{\[styles\.hint, \{ color: theme\.textMuted \}\]\}>\s*When the app has been in the background at least this long/.test(src) &&
+      /\{appPinOn \? \(\s*<Text style=\{\[styles\.hint, \{ color: theme\.textMuted \}\]\}>(?:<T>)?\{AUTO_LOCK_HINT_WITH_PIN\}(?:<\/T>)?<\/Text>\s*\) : \(\s*<Text style=\{\[styles\.hint, \{ color: theme\.textMuted \}\]\}>\s*(?:<T>\s*)?When the app has been in the background at least this long/.test(src) &&
       src.includes("import { AUTO_LOCK_HINT_WITH_PIN } from '../wallet/lock';");
     check('Settings: the PIN variant while the app PIN is on, the unchanged biometric sentence otherwise (both captured)',
       hintVariants(settingsSrc) && lockHintTrue(settingsSrc));
-    const noPinVariant = settingsSrc.replace(/\{appPinOn \? \(\s*<Text style=\{\[styles\.hint, \{ color: theme\.textMuted \}\]\}>\{AUTO_LOCK_HINT_WITH_PIN\}<\/Text>\s*\) : \(/, '{(');
+    const noPinVariant = settingsSrc.replace(/\{appPinOn \? \(\s*<Text style=\{\[styles\.hint, \{ color: theme\.textMuted \}\]\}>(?:<T>)?\{AUTO_LOCK_HINT_WITH_PIN\}(?:<\/T>)?<\/Text>\s*\) : \(/, '{(');
     check('mutant caught: the biometric sentence shown while the app PIN is on', noPinVariant !== settingsSrc && !hintVariants(noPinVariant));
   }
 }
@@ -2069,7 +2070,13 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
   // Pass p20d finding 4: a switch row whose visible text is exactly the
   // switch's accessibilityLabel hides that text from screen readers, so the
   // label is spoken once (by the switch, with its state).
-  const switchRowProblems = (all) => all.flatMap(({ f, src }) => {
+  // Phase 22 item 6: the string-table forms read as what they show — a
+  // label `{tx('X')}` / `{localize(X)}` as the label X, and `<T>X</T>` as X.
+  const plainI18n = (src) => src
+    .replace(/<T>([^<]*)<\/T>/g, '$1')
+    .replace(/accessibilityLabel=\{tx\('([^']*)'\)\}/g, 'accessibilityLabel="$1"')
+    .replace(/accessibilityLabel=\{localize\(([A-Za-z_]+)\)\}/g, 'accessibilityLabel={$1}');
+  const switchRowProblems = (all) => all.map((x) => ({ ...x, src: plainI18n(x.src) })).flatMap(({ f, src }) => {
     const out = [];
     for (const sw of tags(src, 'Switch')) {
       const lab = /accessibilityLabel=(\{[^}]*\}|"[^"]*")/.exec(sw)?.[1];
@@ -2083,7 +2090,7 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
     }
     return out;
   });
-  const switchLabelCount = files.reduce((n, { src }) => n + tags(src, 'Switch').filter((sw) => {
+  const switchLabelCount = files.map((x) => ({ ...x, src: plainI18n(x.src) })).reduce((n, { src }) => n + tags(src, 'Switch').filter((sw) => {
     const lab = /accessibilityLabel=(\{[^}]*\}|"[^"]*")/.exec(sw)?.[1];
     if (!lab) return false;
     const content = lab.startsWith('"') ? lab.slice(1, -1) : lab;
@@ -2129,7 +2136,11 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
     headingProblems(files).length === 0 && headingCount >= 190, `${headingCount} titles; problems: ${headingProblems(files).join(', ')}`);
   check('…mutant caught: a section title without the heading role',
     headingProblems([...files, { f: 'mutant.tsx', src: '<Text style={[styles.sectionTitle, { color: theme.text }]}>Privacy</Text>' }]).length === 1);
-  const named = (f, text) => files.find((x) => x.f === f).src.includes(text);
+  // Phase 22 item 6: a title may carry the string-table marker <T>…</T> inside its Text.
+  const named = (f, text) => {
+    const src = files.find((x) => x.f === f).src;
+    return src.includes(text) || src.includes(text.replace(/>([^<>]+)<\/Text>$/, '><T>$1</T></Text>'));
+  };
   check('…the titles the pass named are headings (lock screen, switcher, Apps, Staking, Settings Privacy / Swaps / Developer)',
     named('components/LockGate.tsx', '<Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Shiba Wallet is locked</Text>') &&
       named('components/AccountSwitcher.tsx', '<Text accessibilityRole="header" style={[styles.modalTitle, { color: theme.text }]}>Accounts</Text>') &&

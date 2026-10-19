@@ -15,6 +15,9 @@ import { formatAssetId } from '@shiba-wallet/core';
 import type { FungibleAsset } from '@shiba-wallet/core';
 import type { RootStackParamList } from '../navigation';
 import { ImportedKeyNotice, WarningBox, WatchOnlyNotice, screenStyle } from '../components';
+import { T } from '../i18n/T';
+import { localize, t, tx } from '../i18n/index';
+import { useI18n } from '../i18n/useI18n';
 import { CHAINS } from '../wallet/chains';
 import { IMPORTED_KEY_NO_CHAIN, MULTISIG_NO_CHAIN, WATCH_ONLY_NO_CHAIN } from '../wallet/account-ids';
 import { useTheme } from '../theme';
@@ -91,16 +94,20 @@ function shortAddress(address: string): string {
  * one composed label): "Balance 0.5 ETH, about $1,234.56", "Balance hidden",
  * "Loading balance", "Balance unavailable…", "Balance could not be loaded".
  */
+// Through the string table (phase 22 item 6); in English exactly the old
+// sentences ("Balance 0.5 ETH, about $1,234.56", "Balance hidden", …),
+// checked by scripts/check-i18n.mjs. The fiat text and its stale note come
+// from the price module and stay as they are.
 function balanceSpokenText(state: BalanceState | undefined, hidden: boolean, fiat: FiatDisplay | null): string {
-  if (!state || state.status === 'loading') return 'Loading balance';
+  if (!state || state.status === 'loading') return tx('Loading balance');
   if (state.status === 'ok') {
-    if (hidden) return 'Balance hidden';
-    const spokenFiat = fiat ? `, about ${fiat.text.replace(/^≈\s*/, '')}` : '';
+    if (hidden) return tx('Balance hidden');
+    const spokenFiat = fiat ? t('home.balance.about', { fiat: fiat.text.replace(/^≈\s*/, '') }) : '';
     const spokenStale = fiat?.staleNote ? `, ${fiat.staleNote}` : '';
-    return `Balance ${spokenAmount(state.display)} ${state.symbol}${spokenFiat}${spokenStale}`;
+    return t('home.balance.spoken', { amount: spokenAmount(state.display), symbol: state.symbol, fiat: spokenFiat, stale: spokenStale });
   }
-  if (state.status === 'unavailable') return 'Balance unavailable: no endpoint is configured for this chain';
-  return 'Balance could not be loaded';
+  if (state.status === 'unavailable') return tx('Balance unavailable: no endpoint is configured for this chain');
+  return tx('Balance could not be loaded');
 }
 
 function BalanceCell({
@@ -117,6 +124,7 @@ function BalanceCell({
   fiat?: FiatDisplay | null;
 }) {
   const theme = useTheme();
+  useI18n();
 
   if (!state || state.status === 'loading') {
     return <ActivityIndicator size="small" color={theme.textMuted} />;
@@ -152,10 +160,10 @@ function BalanceCell({
       <View
         style={styles.balanceCell}
         accessible
-        accessibilityLabel="Balance unavailable: no endpoint is configured for this chain"
+        accessibilityLabel={tx('Balance unavailable: no endpoint is configured for this chain')}
       >
         <Text style={[styles.balance, { color: theme.textMuted }]}>—</Text>
-        <Text style={[styles.balanceSymbol, { color: theme.textMuted }]}>no endpoint</Text>
+        <Text style={[styles.balanceSymbol, { color: theme.textMuted }]}><T>no endpoint</T></Text>
       </View>
     );
   }
@@ -164,14 +172,14 @@ function BalanceCell({
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel="Balance could not be loaded. Retry"
-      accessibilityHint="Asks the network endpoint for this balance again"
+      accessibilityLabel={tx('Balance could not be loaded. Retry')}
+      accessibilityHint={tx('Asks the network endpoint for this balance again')}
       onPress={onRetry}
       hitSlop={8}
     >
       <View style={styles.balanceCell}>
         <Text style={[styles.balance, { color: theme.textMuted }]}>—</Text>
-        <Text style={[styles.balanceSymbol, { color: theme.danger }]}>retry</Text>
+        <Text style={[styles.balanceSymbol, { color: theme.danger }]}><T>retry</T></Text>
       </View>
     </Pressable>
   );
@@ -200,6 +208,7 @@ function TokenRow({
   fiat: FiatDisplay | null;
 }) {
   const theme = useTheme();
+  useI18n();
   // One accessible element per row (pass p20c finding 3): the symbol, the
   // second line and the balance in that order, then the row's action — Send
   // on a double tap, or Retry when the balance failed to load. TalkBack used
@@ -224,8 +233,8 @@ function TokenRow({
       {...(action
         ? {
             accessibilityRole: 'button' as const,
-            accessibilityHint: retry ? 'Asks the network endpoint for this balance again' : sendLinkHint(token.symbol),
-            accessibilityActions: [{ name: 'activate', label: retry ? 'Retry' : `Send ${token.symbol}` }],
+            accessibilityHint: retry ? tx('Asks the network endpoint for this balance again') : sendLinkHint(token.symbol),
+            accessibilityActions: [{ name: 'activate', label: retry ? tx('Retry') : t('home.token.send', { symbol: token.symbol }) }],
             onAccessibilityAction: (e: { nativeEvent: { actionName: string } }) => {
               if (e.nativeEvent.actionName === 'activate') action();
             },
@@ -252,11 +261,11 @@ function TokenRow({
         {onSend ? (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`Send ${token.symbol}`}
+            accessibilityLabel={t('home.token.send', { symbol: token.symbol })}
             onPress={onSend}
             hitSlop={8}
           >
-            <Text style={[styles.sendLink, { color: theme.accent }]}>Send ↗</Text>
+            <Text style={[styles.sendLink, { color: theme.accent }]}><T>Send ↗</T></Text>
           </Pressable>
         ) : null}
       </View>
@@ -272,8 +281,10 @@ function TokenRow({
  * address has an Ethereum address only), each shown as a muted card with
  * the plain reason instead of being left out silently.
  */
-function UnavailableChains({ accounts, sentence }: { accounts: ChainAccount[]; sentence: string }) {
+function UnavailableChains({ accounts, sentence: englishSentence }: { accounts: ChainAccount[]; sentence: string }) {
   const theme = useTheme();
+  const { localize } = useI18n();
+  const sentence = localize(englishSentence);
   return (
     <View style={styles.unavailableList}>
       {CHAINS.filter((c) => !accounts.some((a) => a.chainId === c.provider.chainId)).map((c) => (
@@ -301,6 +312,8 @@ function UnavailableChains({ accounts, sentence }: { accounts: ChainAccount[]; s
 /** The four launch chains: address, live native balance, tap to receive. */
 export function HomeScreen({ navigation }: Props) {
   const theme = useTheme();
+  // Localisation (phase 22 item 6): Home re-renders when the language changes.
+  useI18n();
   // The reserved account-tools row scales with the system text size, so a
   // larger font does not bring the layout shift back.
   const { fontScale } = useWindowDimensions();
@@ -476,11 +489,11 @@ export function HomeScreen({ navigation }: Props) {
       key={key}
       accessibilityRole="button"
       accessibilityLabel={spokenLinkText(text)}
-      {...(hint !== undefined ? { accessibilityHint: hint } : {})}
+      {...(hint !== undefined ? { accessibilityHint: localize(hint) } : {})}
       onPress={onPress}
       hitSlop={8}
     >
-      <Text style={[styles.sendLink, { color: theme.accent }]}>{text}</Text>
+      <Text style={[styles.sendLink, { color: theme.accent }]}><T>{text}</T></Text>
     </Pressable>
   );
 
@@ -563,9 +576,9 @@ export function HomeScreen({ navigation }: Props) {
               ownership or smart-account box). */}
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`${title}, ${watchOnly ? `watch-only address ${item.address}` : shortAddress(item.address)}`}
+            accessibilityLabel={`${title}, ${watchOnly ? t('home.card.watchedAddress', { address: item.address }) : shortAddress(item.address)}`}
             accessibilityHint={
-              watchOnly ? 'Opens the watched address and its QR code' : `Opens the ${title} receive screen`
+              watchOnly ? tx('Opens the watched address and its QR code') : t('home.card.receive.hint', { title })
             }
             onPress={() => navigation.navigate('Receive', { chainId: item.chainId })}
             style={({ pressed }) => [styles.receiveArea, { opacity: pressed ? 0.7 : 1 }]}
@@ -608,7 +621,7 @@ export function HomeScreen({ navigation }: Props) {
               )}
           {cardLink('activity', 'Activity', () =>
             navigation.navigate('Activity', { chainId: item.chainId }),
-            `Opens the ${title} activity`,
+            t('home.link.activity.hint', { title }),
           )}
           {/* Swaps are an EVM feature (0x, phase 5 item 1); the screen
               itself explains and stays off until a key is configured. Not
@@ -725,8 +738,8 @@ export function HomeScreen({ navigation }: Props) {
                   fiat={fiatFor(tokenState, priceId)}
                 />
                 {rebasing ? (
-                  <Text style={[styles.manageTokens, { color: theme.textMuted }]} accessibilityLabel={`Note: ${rebasing}`}>
-                    {rebasing}
+                  <Text style={[styles.manageTokens, { color: theme.textMuted }]} accessibilityLabel={t('home.note', { note: localize(rebasing) })}>
+                    {localize(rebasing)}
                   </Text>
                 ) : null}
               </View>
@@ -734,11 +747,11 @@ export function HomeScreen({ navigation }: Props) {
           })}
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Manage tokens"
+            accessibilityLabel={tx('Manage tokens')}
             onPress={() => navigation.navigate('Tokens')}
             hitSlop={8}
           >
-            <Text style={[styles.manageTokens, { color: theme.accent }]}>Manage tokens</Text>
+            <Text style={[styles.manageTokens, { color: theme.accent }]}><T>Manage tokens</T></Text>
           </Pressable>
         </View>
       </View>
@@ -824,12 +837,12 @@ export function HomeScreen({ navigation }: Props) {
             {activeAccount && recovery.recoveryInProgress ? (
               <Pressable
                 accessibilityRole="button"
-                accessibilityHint="Continues the recovery in progress"
+                accessibilityHint={tx('Continues the recovery in progress')}
                 onPress={() => navigation.navigate('RecoverAccount')}
                 hitSlop={8}
               >
                 <Text style={[styles.delegationLine, { color: theme.accent }]}>
-                  Recovering an account with guardians — tap to continue
+                  <T>Recovering an account with guardians — tap to continue</T>
                 </Text>
               </Pressable>
             ) : null}
@@ -843,14 +856,14 @@ export function HomeScreen({ navigation }: Props) {
                   RN 0.86.3 ViewAccessibility.d.ts :44 and :48). */}
               <Pressable
                 accessibilityRole="switch"
-                accessibilityLabel="Hide amounts"
+                accessibilityLabel={tx('Hide amounts')}
                 accessibilityState={{ checked: hideAmounts }}
-                accessibilityHint="Masks or reveals every amount on this screen and on Activity"
+                accessibilityHint={tx('Masks or reveals every amount on this screen and on Activity')}
                 onPress={() => void setHideAmounts(!hideAmounts)}
                 hitSlop={8}
               >
                 <Text style={[styles.privacyToggle, { color: theme.accent }]}>
-                  {hideAmounts ? '👁 Show amounts' : '👁 Hide amounts'}
+                  {hideAmounts ? tx('👁 Show amounts') : tx('👁 Hide amounts')}
                 </Text>
               </Pressable>
             </View>
@@ -905,12 +918,12 @@ export function HomeScreen({ navigation }: Props) {
           {activeAccount?.imported ? null : (
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Recover an account with guardians"
+              accessibilityLabel={tx('Recover an account with guardians')}
               onPress={() => navigation.navigate('RecoverAccount')}
               hitSlop={8}
             >
               <Text style={[styles.manageTokens, styles.recoverLink, { color: theme.accent }]}>
-                Lost a recovery phrase? Recover an account with guardians
+                <T>Lost a recovery phrase? Recover an account with guardians</T>
               </Text>
             </Pressable>
           )}
@@ -921,26 +934,22 @@ export function HomeScreen({ navigation }: Props) {
           {watchOnly && activeAccount ? (
             <Text style={[styles.footer, { color: theme.textMuted }]}>
               {watchOnlyFooterText(activeAccount.name)}
-              {showFiat ? ' USD values are indicative prices from CoinGecko (Settings → Prices).' : ''}
+              {showFiat ? ` ${t('home.footer.usd')}` : ''}
             </Text>
           ) : multisig && activeAccount ? (
             <Text style={[styles.footer, { color: theme.textMuted }]}>
               {multisigFooterText(activeAccount.name)}
-              {showFiat ? ' USD values are indicative prices from CoinGecko (Settings → Prices).' : ''}
+              {showFiat ? ` ${t('home.footer.usd')}` : ''}
             </Text>
           ) : (
           <Text style={[styles.footer, { color: theme.textMuted }]}>
             {activeAccount?.imported
-              ? `${activeAccount.name}'s Ethereum address comes from a private key you imported; your ` +
-                'recovery phrase does not back it up.'
-              : `${activeAccount ? `${activeAccount.name}'s` : 'Your'} addresses, derived on this device ` +
-                'from your recovery phrase (one phrase backs up every account from it).'}{' '}
-            Balances come from the RPC endpoints in Settings; pull
-            down to refresh. Tap a chain to receive, or use its Send link;
-            tokens have their own Send link. {tokenSendFeeSentence(evmChain.caip2)}
-            {showFiat
-              ? ' USD values are indicative prices from CoinGecko (Settings → Prices).'
-              : ''}
+              ? t('home.footer.imported', { name: activeAccount.name })
+              : activeAccount
+                ? t('home.footer.derived', { name: activeAccount.name })
+                : t('home.footer.derivedYours')}{' '}
+            {t('home.footer.balances')} {tokenSendFeeSentence(evmChain.caip2)}
+            {showFiat ? ` ${t('home.footer.usd')}` : ''}
           </Text>
           )}
           </View>

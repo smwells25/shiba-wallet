@@ -183,6 +183,12 @@ export const STORE_KEYS = Object.freeze({
   blockbook: declare('shiba-wallet.blockbook.v1', 'device'),
   evmIndexer: declare('shiba-wallet.evm-indexer.v1', 'device'),
   nftIndexer: declare('shiba-wallet.nft-indexer.v1', 'device'),
+  /**
+   * The app language (Settings → Language, phase 22 item 6; i18n/
+   * language-store.ts): 'system', 'en' or 'es'. Device-wide on purpose, so
+   * every wallet profile opens in the same language.
+   */
+  language: declare('shiba-wallet.language.v1', 'device'),
 
   // --- expo-secure-store -----------------------------------------------------
   mnemonic: declare('shiba-wallet.mnemonic.v1', 'secret', 'exact', 'secure-store'),

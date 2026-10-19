@@ -44,6 +44,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 // Explicit .ts extensions: loaded by the check scripts under Node's type stripping.
 import { STRIPPED_NAME_CHARS } from './names.ts';
+import { t, type StringId } from '../i18n/index.ts';
 import {
   AsyncStorage,
   STORE_KEYS,
@@ -137,35 +138,38 @@ export const INBOX_RESET_TITLE = 'Reset the inbox?';
 export const INBOX_RESET_BODY = 'Every entry in the inbox is deleted from this phone. Nothing else changes.';
 export const INBOX_MARK_ALL_READ = 'Mark all read';
 
-const KIND_LABEL: Record<InboxKind, string> = {
-  'recurring-due': 'Recurring payment',
-  'swap-due': 'Recurring swap',
-  takeover: 'Security alert',
-  'price-alert': 'Price alert',
-  sent: 'Sent',
-  replacement: 'Speed-up or cancellation',
+// The labels come from the string table (../i18n/en.ts, phase 22 item 6);
+// in English each is the text it was before ("Recurring payment",
+// "shown in the wallet", "Opens Activity" …), pinned by scripts/check-i18n.mjs.
+const KIND_LABEL: Record<InboxKind, StringId> = {
+  'recurring-due': 'inbox.kind.recurringDue',
+  'swap-due': 'inbox.kind.swapDue',
+  takeover: 'inbox.kind.takeover',
+  'price-alert': 'inbox.kind.priceAlert',
+  sent: 'inbox.kind.sent',
+  replacement: 'inbox.kind.replacement',
 };
-const VIA_LABEL: Record<InboxVia, string> = {
-  'in-app': 'shown in the wallet',
-  notification: 'phone notification',
-  scheduled: 'phone reminder set for this time',
+const VIA_LABEL: Record<InboxVia, StringId> = {
+  'in-app': 'inbox.via.inApp',
+  notification: 'inbox.via.notification',
+  scheduled: 'inbox.via.scheduled',
 };
 
 export function inboxKindLabel(kind: InboxKind): string {
-  return KIND_LABEL[kind];
+  return t(KIND_LABEL[kind]);
 }
 export function inboxViaLabel(via: InboxVia): string {
-  return VIA_LABEL[via];
+  return t(VIA_LABEL[via]);
 }
 
-const TARGET_LABEL: Record<InboxTarget, string> = {
-  Sessions: 'Opens the Sessions screen',
-  Inheritance: 'Opens the Inheritance screen',
-  PriceAlerts: 'Opens the price alerts',
-  Activity: 'Opens Activity',
+const TARGET_LABEL: Record<InboxTarget, StringId> = {
+  Sessions: 'inbox.target.sessions',
+  Inheritance: 'inbox.target.inheritance',
+  PriceAlerts: 'inbox.target.priceAlerts',
+  Activity: 'inbox.target.activity',
 };
 export function inboxTargetHint(target: InboxTarget): string {
-  return TARGET_LABEL[target];
+  return t(TARGET_LABEL[target]);
 }
 
 function pad2(n: number): string {
@@ -179,12 +183,12 @@ export function inboxTimeText(ms: number): string {
 }
 
 export function inboxUnreadText(count: number): string {
-  return count === 0 ? 'No unread entries.' : count === 1 ? '1 unread entry.' : `${count} unread entries.`;
+  return count === 0 ? t('inbox.unread.none') : count === 1 ? t('inbox.unread.one') : t('inbox.unread.many', { count });
 }
 
 /** The Home link's text: "Inbox" or "Inbox (3 unread)". */
 export function inboxLinkText(unread: number): string {
-  return unread > 0 ? `Inbox (${unread} unread)` : 'Inbox';
+  return unread > 0 ? t('inbox.link', { count: unread }) : t('inbox.title');
 }
 
 // ---------------------------------------------------------------------------

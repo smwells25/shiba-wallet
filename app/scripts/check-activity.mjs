@@ -1337,8 +1337,9 @@ console.log("The smart account's history next to the account's own, merged in ti
   const unavailableWired = (src) => {
     const flat = src.replace(/\s+/g, ' ');
     return (
-      flat.includes("(unavailable ? `. ${ROW_DETAILS_UNAVAILABLE_LINE}` : '')") &&
-      flat.includes(') : unavailable ? ( <Text style={[styles.rowSentence, { color: theme.textMuted }]}>{ROW_DETAILS_UNAVAILABLE_LINE}</Text> ) : null}') &&
+      // Phase 22 item 6: the line goes through the string table (localize / <T>), English unchanged.
+      flat.includes("(unavailable ? `. ${localize(ROW_DETAILS_UNAVAILABLE_LINE)}` : '')") &&
+      flat.includes(') : unavailable ? ( <Text style={[styles.rowSentence, { color: theme.textMuted }]}><T>{ROW_DETAILS_UNAVAILABLE_LINE}</T></Text> ) : null}') &&
       flat.includes('unavailable: sentences.isUnavailable(entry.id),') &&
       flat.includes('unavailable={rowText.unavailable}') &&
       flat.includes('const withoutDetailsFooter = rowsWithoutDetailsFooter(rowsWithoutDetails);') &&
@@ -1352,8 +1353,8 @@ console.log("The smart account's history next to the account's own, merged in ti
   };
   check('the screen draws the muted line under such a row, ends its label with it, counts the rows in the footer with the reasons, and re-renders when a row goes unavailable (source)',
     unavailableWired(screenSrc));
-  check('…mutant caught: the line left out of the label', !unavailableWired(screenSrc.replace("(unavailable ? `. ${ROW_DETAILS_UNAVAILABLE_LINE}` : '')", "''")));
-  check('…mutant caught: the row without the line', !unavailableWired(screenSrc.replace('{ROW_DETAILS_UNAVAILABLE_LINE}</Text>', '{null}</Text>')));
+  check('…mutant caught: the line left out of the label', !unavailableWired(screenSrc.replace("(unavailable ? `. ${localize(ROW_DETAILS_UNAVAILABLE_LINE)}` : '')", "''")));
+  check('…mutant caught: the row without the line', !unavailableWired(screenSrc.replace('<T>{ROW_DETAILS_UNAVAILABLE_LINE}</T></Text>', '{null}</Text>')));
   check('…mutant caught: the old re-render rule (only when something new was cached)',
     !unavailableWired(screenSrc.replace('if (decoded.size > 0 || decoder.revision() !== before) setVersion((v) => v + 1);', 'if (decoded.size > 0) setVersion((v) => v + 1);')));
 }
@@ -1597,7 +1598,7 @@ console.log('ActivityScreen source:');
     'tap-to-explorer unchanged',
     /const url = explorerTxUrl\(chainId, entry\.id, evmExplorerTxBase\);/.test(screen) && /if \(url\) void Linking\.openURL\(url\);/.test(screen),
   );
-  check('the amount/fee line is still rendered', /fee \{maskAmount\(formatUnits\(entry\.fee, decimals, decimals\), hidden\)\}/.test(screen));
+  check('the amount/fee line is still rendered', /(?:fee|\{tx\('fee'\)\}) \{maskAmount\(formatUnits\(entry\.fee, decimals, decimals\), hidden\)\}/.test(screen));
   // Since pass p20c finding 12 the lead is built by activityRowSpokenLead
   // (../a11y.ts), which also says "Same transaction as the row above." for
   // the second row of one transaction.
@@ -1624,8 +1625,8 @@ console.log('ActivityScreen source:');
   check('the account\'s own row of a transaction its smart account also lists shows "with smart account" (finding F1, source)', marker(screen));
   const footerOk = (src) =>
     /state\.loadingMore \? \(\s*<ActivityIndicator[^>]*\/>\s*\) : state\.loadMoreError \? \(/.test(src) &&
-    src.includes('accessibilityLabel={LOAD_MORE_RETRY_FOOTER}') &&
-    src.includes('{LOAD_MORE_RETRY_FOOTER}</Text>') &&
+    src.includes('accessibilityLabel={localize(LOAD_MORE_RETRY_FOOTER)}') &&
+    src.includes('{LOAD_MORE_RETRY_FOOTER}</T></Text>') &&
     src.includes(') : state.hasMore ? (') && !src.includes('state.nextCursor');
   check('the footer: spinner while loading, else "Could not load more — tap to retry", else Load more, else the end (finding F3, source)', footerOk(screen));
   check('…the old footer (spinner over the error, keyed on nextCursor) is caught',
@@ -1633,7 +1634,7 @@ console.log('ActivityScreen source:');
   check('the screen passes the account labels and the pinned-staking lookup for the active network, and names the EVM slot by the network (findings 4, 7e, 7f)',
     /accountLabels,\n\s*stakingContractAt: pinnedStakingAt,/.test(screen) && screen.includes('const accountLabels = sentences.labels;') &&
       screen.includes('(address: string) => stakingContractAt(evmChain.caip2, address)') &&
-      screen.includes('title: account ? `${isEvmSlot ? evmChain.label : account.name} activity` : \'Activity\''));
+      screen.includes("title: account ? t('activity.title.network', { network: isEvmSlot ? evmChain.label : account.name }) : tx('Activity'),"));
   // Emulator re-check of 2026-10-11, findings 2 and 3: the decode set holds
   // the wallet's other smart accounts and the network's multisigs, but only
   // the account's own addresses read "yourself".

@@ -150,7 +150,8 @@ function receiveWatchOnlyProblems(receive) {
   need('the notice and the watched-address sentence',
     receive.includes('<WatchOnlyNotice show={watchOnly} />') && receive.includes('{WATCHED_ADDRESS_RECEIVE_NOTE}'));
   need('the QR code and the address stay', receive.includes('<QRCode value={account.address}') && receive.includes('{account.address}'));
-  need('Send hidden', receive.includes('{noKey ? null : (\n        <Button\n          title={`Send ${account.symbol}`}'));
+  // Phase 22 item 6: the title through the string table ('Send {symbol}').
+  need('Send hidden', receive.includes("{noKey ? null : (\n        <Button\n          title={t('home.token.send', { symbol: account.symbol })}"));
   need('payment request hidden', receive.includes('account && !watchOnly && !multisig ? familyForSlot(account.chainId) : null'));
   need('proof of ownership hidden', receive.includes("account.chainId === EVM_CHAIN_ID && !noKey ? (") && (receive.match(/navigate\('ProveOwnership'\)/g) ?? []).length === 1);
   need('smart-account box hidden and never read', receive.includes('{smartInfo && !noKey ? (') && receive.includes('const smartOwner = evmOwnAddress;') &&
@@ -680,7 +681,7 @@ console.log('check-watch-only: honesty and the screens (source checks)');
   check('Home: Sessions, Guardians and Passkey are never offered (the checks get no owner or index)',
     /const tools = isEvm && !noKey/.test(home) && /const toolsOwner = noKey \? null : evmAccount\?\.address;/.test(home));
   check('Home: the address opens Receive for a watch-only account too (its read-only form)',
-    !/disabled=\{watchOnly\}/.test(home) && /accessibilityHint=\{\s*watchOnly \? 'Opens the watched address and its QR code'/.test(home) &&
+    !/disabled=\{watchOnly\}/.test(home) && /accessibilityHint=\{\s*watchOnly \? (?:tx\()?'Opens the watched address and its QR code'/.test(home) &&
       /onPress=\{\(\) => navigation\.navigate\('Receive', \{ chainId: item\.chainId \}\)\}/.test(home));
   // Receive (phase 14 integration): address, QR and the notice only.
   {
@@ -689,7 +690,7 @@ console.log('check-watch-only: honesty and the screens (source checks)');
     check('Receive for a watch-only account: address, QR and notice only; Send, request, proof and smart box hidden; no smart/upgrade/recovery reads',
       problems.length === 0, problems.join('; '));
     for (const [name, from, to] of [
-      ['M-r1 Send shown', '{noKey ? null : (\n        <Button\n          title={`Send ${account.symbol}`}', '{false ? null : (\n        <Button\n          title={`Send ${account.symbol}`}'],
+      ['M-r1 Send shown', "{noKey ? null : (\n        <Button\n          title={t('home.token.send', { symbol: account.symbol })}", "{false ? null : (\n        <Button\n          title={t('home.token.send', { symbol: account.symbol })}"],
       ['M-r2 request card shown', 'account && !watchOnly && !multisig ? familyForSlot(account.chainId) : null', 'account ? familyForSlot(account.chainId) : null'],
       ['M-r3 proof shown', "account.chainId === EVM_CHAIN_ID && !noKey ? (", 'account.chainId === EVM_CHAIN_ID ? ('],
       ['M-r4 smart-account read for the watched address', 'const smartOwner = evmOwnAddress;', "const smartOwner = route.params.chainId === EVM_CHAIN_ID ? (account?.address ?? null) : null;"],

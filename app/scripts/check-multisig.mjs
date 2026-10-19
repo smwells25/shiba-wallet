@@ -1638,11 +1638,12 @@ console.log('check-multisig: the multisig as an account in the switcher (phase 1
     const need = (what, ok) => { if (!ok) p.push(what); };
     need('multisig from the active account', src.includes('const multisig = activeAccount?.multisig === true;'));
     need('noKey covers multisig', src.includes('const noKey = watchOnly || multisig;'));
-    need('the co-signer sentence', src.includes('{multisig ? <Text style={[styles.note, { color: theme.text }]}>{MULTISIG_RECEIVE_NOTE}</Text> : null}'));
+    // Phase 22 item 6: the sentence sits in the string-table marker <T>.
+    need('the co-signer sentence', src.includes('{multisig ? <Text style={[styles.note, { color: theme.text }]}><T>{MULTISIG_RECEIVE_NOTE}</T></Text> : null}'));
     need('the label (the account name line)', src.includes('{activeAccount.name}\n          {delegationLabelSuffix(delegation.status)}'));
     need('the QR code of the address', src.includes('<QRCode value={account.address}'));
     need('no payment request', src.includes('account && !watchOnly && !multisig ? familyForSlot(account.chainId) : null'));
-    need('no Send button', src.includes('{noKey ? null : (\n        <Button\n          title={`Send ${account.symbol}`}'));
+    need('no Send button', src.includes("{noKey ? null : (\n        <Button\n          title={t('home.token.send', { symbol: account.symbol })}"));
     need('no proof of ownership', src.includes('account.chainId === EVM_CHAIN_ID && !noKey ? ('));
     need('no smart-account box or reads', src.includes('{smartInfo && !noKey ? (') && src.includes('const smartIndex = noKey ? null'));
     need('the other-network note', src.includes('multisigInfo && multisigInfo.chain !== evmChain.caip2 ? ('));
@@ -1653,7 +1654,7 @@ console.log('check-multisig: the multisig as an account in the switcher (phase 1
   for (const [name, from, to] of [
     ['M21 Send offered on Receive (noKey without multisig)', 'const noKey = watchOnly || multisig;', 'const noKey = watchOnly;'],
     ['M22 request card for a multisig', 'account && !watchOnly && !multisig ? familyForSlot', 'account && !watchOnly ? familyForSlot'],
-    ['M23 co-signer sentence dropped', '{multisig ? <Text style={[styles.note, { color: theme.text }]}>{MULTISIG_RECEIVE_NOTE}</Text> : null}', ''],
+    ['M23 co-signer sentence dropped', '{multisig ? <Text style={[styles.note, { color: theme.text }]}><T>{MULTISIG_RECEIVE_NOTE}</T></Text> : null}', ''],
   ]) {
     check(`mutation anchor present (${name})`, receive.includes(from));
     check(`${name}: caught`, receiveProblems(receive.replace(from, to)).length > 0);
@@ -1663,12 +1664,13 @@ console.log('check-multisig: the multisig as an account in the switcher (phase 1
     src.includes('const networkName = account ? (isEvmSlot ? evmChain.label : account.name) : \'\';') &&
     src.includes('const coinSymbol = account ? (isEvmSlot ? evmChain.displaySymbol : account.symbol) : \'\';') &&
     src.includes('<Text style={[styles.chainName, { color: theme.text }]}>{networkName}</Text>') &&
-    /Only send \{coinSymbol\} on the \{networkName\} network to this/.test(src) &&
+    // Phase 22 item 6: the sentence is the string-table template 'Only send {symbol} on the {network} network to this address. …'.
+    src.includes("{t('receive.onlySend', { symbol: coinSymbol, network: networkName })}") &&
     !/Only send \{account\.symbol\} on the \{account\.name\} network/.test(src) &&
-    src.includes("title: watchOnly ? WATCHED_ADDRESS_TITLE : account ? `Receive ${coinSymbol}` : 'Receive'");
+    src.includes("title: watchOnly ? localize(WATCHED_ADDRESS_TITLE) : account ? t('receive.title.coin', { symbol: coinSymbol }) : tx('Receive'),");
   check('Receive names the active network and its coin (every account, multisig included)', receiveNetworkOk(receive));
   check('…the old "Only send {account.symbol} on the {account.name} network" fails the check',
-    !receiveNetworkOk(receive.replace('Only send {coinSymbol} on the {networkName} network to this', 'Only send {account.symbol} on the {account.name} network to this')));
+    !receiveNetworkOk(receive.replace("{t('receive.onlySend', { symbol: coinSymbol, network: networkName })}", "{t('receive.onlySend', { symbol: account.symbol, network: account.name })}")));
 
   // --- The switcher, the Multisig screen's signer, Approvals read-only.
   const sw = read('src/components/AccountSwitcher.tsx');
