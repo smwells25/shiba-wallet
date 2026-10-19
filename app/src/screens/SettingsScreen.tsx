@@ -7,6 +7,7 @@ import { allowScreenCaptureAsync, preventScreenCaptureAsync } from 'expo-screen-
 import { Button, WarningBox, WordGrid, screenStyle, switchColors, useFieldLabels } from '../components';
 import { localDateLabel } from '../config/dates';
 import { AccountsSection } from '../components/AccountsSection';
+import { RecordsBackupSection } from './RecordsBackupSection';
 import { NotificationSettingsSection } from '../components/NotificationScheduler';
 import {
   NetworkEndpoint,
@@ -2147,6 +2148,8 @@ export function SettingsScreen({ navigation, route }: Props) {
           <Button title="Show recovery phrase" variant="secondary" onPress={onReveal} />
         )}
       </View>
+
+      <RecordsBackupSection />
 
       {protectionView?.text ? (
         <View style={styles.section}>

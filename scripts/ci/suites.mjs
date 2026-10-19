@@ -105,6 +105,10 @@ export const APP_SCRIPTS = {
   // index 0) in its own storage profile, "Remove wallet" removing both, the
   // reminders rule, the lock gate's PIN mode, mutants (fakes only).
   'check-duress.mjs': { kind: 'offline', summary: 'counts' },
+  // Phase 22 item 4: the encrypted backup of the wallet's records (feature 47;
+  // the format against Node's crypto, every kind through its own store, the
+  // merge rule, the key behind the approval gate, profile isolation; fakes only).
+  'check-records-backup.mjs': { kind: 'offline', summary: 'counts' },
   // Phase 12 item 2: subscription grants on Kernel session keys (fakes only).
   'check-subscriptions.mjs': { kind: 'offline', summary: 'counts' },
   // Phase 18 item 2: staking on test networks (Lido, Rocket Pool; fakes only).
