@@ -123,21 +123,85 @@ const WC_CONFIG_KEY = STORE_KEYS.wcConfig.name;
  */
 export const DEFAULT_WC_PROJECT_ID = 'a6d5afbd869df1713ca48fa14fb3fcf8';
 
-export async function getWcProjectId(store: KeyValueStore = AsyncStorage): Promise<string | null> {
+/**
+ * Where the project id in use comes from: 'saved' when a valid value was
+ * saved in Settings, 'built-in' when nothing valid is stored and the
+ * shipped DEFAULT_WC_PROJECT_ID is used. There is no third "no id" state:
+ * every path below ends in a project id (the default when the stored
+ * record is missing, empty, malformed or unreadable), so WalletConnect
+ * always has an id to start with.
+ */
+export type WcProjectIdSource = 'saved' | 'built-in';
+
+export interface WcProjectIdSetting {
+  /** The id the WalletConnect client is started with. */
+  projectId: string;
+  source: WcProjectIdSource;
+}
+
+const BUILT_IN_WC_PROJECT_ID: WcProjectIdSetting = {
+  projectId: DEFAULT_WC_PROJECT_ID,
+  source: 'built-in',
+};
+
+/**
+ * Reads the project id together with where it comes from. getWcProjectId
+ * returns exactly this setting's projectId, so the two can never disagree
+ * about which id is used.
+ */
+export async function getWcProjectIdSetting(
+  store: KeyValueStore = AsyncStorage,
+): Promise<WcProjectIdSetting> {
   try {
     const raw = await readStoreItem(store, WC_CONFIG_KEY);
-    if (!raw) return DEFAULT_WC_PROJECT_ID;
+    if (!raw) return BUILT_IN_WC_PROJECT_ID;
     const parsed = JSON.parse(raw) as unknown;
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       const id = (parsed as { projectId?: unknown }).projectId;
-      return typeof id === 'string' && id !== '' ? id : DEFAULT_WC_PROJECT_ID;
+      return typeof id === 'string' && id !== ''
+        ? { projectId: id, source: 'saved' }
+        : BUILT_IN_WC_PROJECT_ID;
     }
-    return DEFAULT_WC_PROJECT_ID;
+    return BUILT_IN_WC_PROJECT_ID;
   } catch {
     // Corrupt JSON or unavailable storage: behave as default-configured.
-    return DEFAULT_WC_PROJECT_ID;
+    return BUILT_IN_WC_PROJECT_ID;
   }
 }
+
+export async function getWcProjectId(store: KeyValueStore = AsyncStorage): Promise<string | null> {
+  return (await getWcProjectIdSetting(store)).projectId;
+}
+
+/** Settings status line for a project id the user saved. */
+export const WC_PROJECT_ID_SAVED_STATUS = 'Saved — used to reach the WalletConnect relay.';
+
+/** Settings status line while the shipped default id is in use. */
+export const WC_PROJECT_ID_BUILT_IN_STATUS =
+  'Built-in project id — used to reach the WalletConnect relay. You can replace it with your own.';
+
+/**
+ * The status line Settings shows under the project id. Null only while the
+ * setting has not been read yet (the screen then shows no status line).
+ */
+export function wcProjectIdStatusLine(setting: WcProjectIdSetting | null): string | null {
+  if (!setting) return null;
+  return setting.source === 'saved' ? WC_PROJECT_ID_SAVED_STATUS : WC_PROJECT_ID_BUILT_IN_STATUS;
+}
+
+/**
+ * Wording of the Settings control that removes a saved project id. It is
+ * offered only while a saved id is in use: with the built-in id in use
+ * there is nothing to remove.
+ */
+export const WC_PROJECT_ID_CLEAR_LABEL = 'Use the built-in id';
+export const WC_PROJECT_ID_CLEAR_A11Y_LABEL =
+  'Use the built-in WalletConnect project id instead of the saved one';
+export const WC_PROJECT_ID_CLEAR_CONFIRM_TITLE = 'Use the built-in project id?';
+export const WC_PROJECT_ID_CLEAR_CONFIRM_MESSAGE =
+  'The project id you saved is removed from this phone, and the wallet\'s built-in project id is ' +
+  'used again to reach the WalletConnect relay. If a connection was already opened this session, ' +
+  'the change takes effect after the app restarts.';
 
 /**
  * Saves the project id. Observed Reown project ids are 32-character hex
@@ -159,7 +223,13 @@ export async function setWcProjectId(
   return trimmed;
 }
 
-/** Removes the stored project id (disables WalletConnect). */
+/**
+ * Removes the project id saved in Settings, so the built-in
+ * DEFAULT_WC_PROJECT_ID is used again. It does not switch WalletConnect
+ * off: getWcProjectId always returns an id. The record is device-wide
+ * (shared by every wallet profile on this phone), so this applies to all
+ * of them.
+ */
 export async function clearWcProjectId(store: KeyValueStore = AsyncStorage): Promise<void> {
   await writeStoreItem(store, WC_CONFIG_KEY, JSON.stringify({}));
 }
