@@ -267,8 +267,10 @@ console.log('check-duress: the PIN record (src/wallet/pin.ts)');
 // ---------------------------------------------------------------------------
 {
   const shape = await recordShape(pinMod);
-  check('the record has the same byte length with and without a duress PIN: 358 bytes, pinned',
-    shape.lengthOnly === 358 && shape.lengthBoth === 358 && pinMod.PIN_RECORD_LENGTH === 358, JSON.stringify(shape));
+  // 371 = version 1's 358 + the 13 characters of `,"kind":"pin"` (version 2,
+  // docs/DURESS_WALLET.md section 8.2.5); the passphrase kind is pinned below.
+  check('the record has the same byte length with and without a duress PIN: 371 bytes (version 2), pinned',
+    shape.lengthOnly === 371 && shape.lengthBoth === 371 && pinMod.PIN_RECORD_LENGTH === 371 && pinMod.PIN_RECORD_LENGTH_V1 === 358, JSON.stringify(shape));
   check('…and the same keys, two 64-byte slots either way (128 hex characters each), while the content changed',
     shape.sameKeys && shape.slotLengths.join(',') === '128,128' && shape.differ);
   check('the KDF parameters: scrypt N = 2^16, r = 8, p = 1, 32-byte salt and hash (N fixed by the Node measurement in pin.ts)',
@@ -447,8 +449,8 @@ async function slowAttempts(pin) {
   check('the doubling, each from the end of its own slow attempt: 60 s after the sixth, 120 s after the seventh',
     slow.sixthWait === 60_000 && slow.seventhWait === 120_000, JSON.stringify([slow.sixthWait, slow.seventhWait]));
   check('a correct PIN after the wait opens and resets the counter and the wait', slow.ok === 'opened' && slow.resetFails === 0 && slow.resetUntil === 0);
-  check(`every value written in that run is exactly 358 bytes (${slow.lengths.length} writes: before, during and after the waits)`,
-    slow.lengths.length >= 10 && slow.lengths.every((l) => l === 358), JSON.stringify(slow.lengths));
+  check(`every value written in that run is exactly 371 bytes, version 2 (${slow.lengths.length} writes: before, during and after the waits)`,
+    slow.lengths.length >= 10 && slow.lengths.every((l) => l === 371), JSON.stringify(slow.lengths));
   check('pinCountdownOf: a wrong PIN that starts a wait and a refusal during one start a countdown; a plain wrong PIN or an opened one none',
     JSON.stringify(pinMod.pinCountdownOf({ kind: 'wrong', fails: 5, until: 9 })) === '{"kind":"wrong","until":9}' &&
       JSON.stringify(pinMod.pinCountdownOf({ kind: 'wait', until: 9 })) === '{"kind":"wait","until":9}' &&
@@ -986,7 +988,7 @@ function prefsRule(dm) {
   check('Settings: with an app PIN the Notifications section shows only that sentence (no switch); without one, the usual section',
     /\{appPinOn \? \(\s*<View style=\{styles\.section\}>\s*<Text accessibilityRole="header"[^>]*>\{NOTIFICATIONS_SECTION_TITLE\}<\/Text>\s*<Text[^>]*>\{NOTIFICATIONS_OFF_WITH_PIN\}<\/Text>\s*<\/View>\s*\) : \(\s*<NotificationSettingsSection \/>/.test(settings));
   check('Settings: turning the PIN on first switches notifications off and clears what was scheduled or shown',
-    /await setNotifications\(false\)[\s\S]{0,120}await appNotifications\(\)\.disable\(\)[\s\S]{0,80}await turnOnAppPin\(next!\)/.test(settings));
+    /await setNotifications\(false\)[\s\S]{0,120}await appNotifications\(\)\.disable\(\)[\s\S]{0,80}await turnOnAppPin\(next!, chosenKind\)/.test(settings));
   check('Settings: auto-lock "Off" is not offered while the PIN is on', /AUTO_LOCK_CHOICES\.map\(\(choice\) =>\s*\/\/[^\n]*\n\s*appPinOn && choice\.ms === null \? null : \(/.test(settings));
 }
 
@@ -1011,11 +1013,11 @@ function pinLaunch(lm) {
     lockMod.lockGateWalletStatus('loading', false) === 'loading' && lockMod.lockGateAvailable(false, false) === false && lockMod.lockGateAvailable(null, false) === null);
   const gate = read('components/LockGate.tsx');
   check('LockGate: the lock view shows the PinPad while a PIN is set, and the Unlock button otherwise; the same pad at launch and after auto-lock',
-    /\{appPinOn \? \(\s*\/\/[^\n]*\n\s*\/\/[^\n]*\n\s*<PinPad key=\{awaitingPin \? 'launch' : 'return'\} prompt=\{PIN_PAD_TITLE\} onComplete=\{unlockWithAppPin\} \/>/.test(gate) &&
+    /\) : appPinOn \? \(\s*\/\/[^\n]*\n\s*\/\/[^\n]*\n\s*<PinPad key=\{awaitingPin \? 'launch' : 'return'\} prompt=\{PIN_PAD_TITLE\} onComplete=\{unlockWithAppPin\} \/>/.test(gate) &&
       gate.includes('const status = lockGateWalletStatus(walletStatus, appPinOn);') && gate.includes('const available = lockGateAvailable(deviceAvailable, appPinOn);'));
   check('LockGate: the tree below is remounted when a PIN opened the other wallet (keyed on profileKey)', gate.includes('<View key={`profile-${profileKey}`} style={styles.fill}>'));
   const ctx = read('wallet/WalletContext.tsx');
-  const launchAt = ctx.indexOf('pinOn = (await readPinRecord(appSecureBackend())) !== null;');
+  const launchAt = ctx.indexOf('const lockRecord = await readPinRecord(appSecureBackend());');
   check('WalletContext: at launch the PIN record is read BEFORE the phrase location, and nothing loads while a PIN is set',
     launchAt > 0 && launchAt < ctx.indexOf('const location = await phraseLocation();') && /if \(pinOn\) \{\s*awaitingPinRef\.current = true;\s*setAwaitingPin\(true\);\s*return;\s*\}/.test(ctx));
   const unlock = ctx.slice(ctx.indexOf('const unlockWithPin = useCallback('), ctx.indexOf('const checkSessionPin = useCallback('));
@@ -1023,7 +1025,8 @@ function pinLaunch(lm) {
     unlock.indexOf('dropPhraseTicket();') < unlock.indexOf('setActiveStoreProfile(profile);') && unlock.indexOf('setActiveStoreProfile(profile);') < unlock.indexOf('await reloadWallet();') &&
       unlock.includes('const profile = profileForSlot(outcome.slot);'));
   check('WalletContext: only the real wallet can add a duress PIN or remove the PIN; under the second wallet the sentence is neutral',
-    (ctx.match(/if \(slot !== 'primary'\) throw new Error\(PIN_ACTION_NOT_COMPLETED\);/g) ?? []).length === 4 &&
+    // Five since the lock passphrase: switching kinds is the fifth such action.
+    (ctx.match(/if \(slot !== 'primary'\) throw new Error\(PIN_ACTION_NOT_COMPLETED\);/g) ?? []).length === 5 &&
       duressMod.PIN_ACTION_NOT_COMPLETED === 'This could not be completed on this phone. Nothing was changed.');
 }
 
@@ -1044,7 +1047,9 @@ console.log('check-duress: the honest claim on the duress screens (section 4.3)'
   check('the readiness reason (row duress-pin) is the same claim in at most three sentences', three(duressMod.DURESS_READINESS_REASON), duressMod.DURESS_READINESS_REASON);
   const settings = read('screens/SettingsScreen.tsx');
   check('Settings renders the claim in the duress section, with the funding and the backup notes',
-    settings.includes('<WarningBox>{DURESS_HONEST_CLAIM}</WarningBox>') && settings.includes('{DURESS_FUNDING_NOTE}') && settings.includes('{DURESS_BACKUP_NOTE}'));
+    // The claim and the backup note of the lock's kind (duress.ts LOCK_COPY; the PIN's are the constants).
+    settings.includes('<WarningBox>{copy.duressHonestClaim}</WarningBox>') && settings.includes('{DURESS_FUNDING_NOTE}') && settings.includes('{copy.duressBackupNote}') &&
+      duressMod.LOCK_COPY.pin.duressHonestClaim === duressMod.DURESS_HONEST_CLAIM && duressMod.LOCK_COPY.pin.duressBackupNote === duressMod.DURESS_BACKUP_NOTE);
   check('the backup check: two distinct positions, uniformly chosen, and the typed words compared case-insensitively',
     (() => {
       const pos = duressMod.backupCheckPositions(12, detRandom);
@@ -1052,6 +1057,422 @@ console.log('check-duress: the honest claim on the duress screens (section 4.3)'
         duressMod.backupWordsMatch(PARENT_12, [0, 11], ['Abandon ', 'ABOUT']) && !duressMod.backupWordsMatch(PARENT_12, [0, 11], ['abandon', 'abandon']) &&
         duressMod.backupCheckLabel([2, 8]) === 'word 3 and word 9';
     })());
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-duress: the lock passphrase (docs/DURESS_WALLET.md section 8.2, stage P1)');
+// ---------------------------------------------------------------------------
+// Passphrases used below (made-up test strings, never anyone's secret).
+const PHR_A = 'lantern orbit pickle 42 velvet';
+const PHR_B = 'quiet harbor ferns 9081 tulip';
+// A recovery phrase for the word rule, built from fixed entropy and never
+// printed: the repository's secret scan refuses checksum-valid phrases as
+// literals (see CHILD_12_SHA256 above).
+const WORD_RULE_PHRASE = entropyToMnemonic(sha256(utf8ToBytes('check-duress lock passphrase word rule')).slice(0, 16), wordlist);
+const WORD_RULE_SHA256 = sha256Hex(WORD_RULE_PHRASE);
+const RULE_WORDS = WORD_RULE_PHRASE.split(' ');
+
+/** A passphrase record with a fast counting KDF, optionally with a duress passphrase. */
+async function phrRecord(pin, { duress = null } = {}) {
+  const { kdf, calls } = countingKdf();
+  const backend = fakeSecureStore();
+  const deps = { kdf, random: detRandom, now: () => 1_000 };
+  await pin.setAppPin(backend, PHR_A, deps, 'phr');
+  if (duress) await pin.setPinSlot(backend, 'duress', duress, deps);
+  return { backend, deps, calls };
+}
+
+/** The refusals of a new passphrase, by rule, through the one function Settings and the setters use. */
+function refusalTable(pin, opts = {}) {
+  const r = (t, ctx = {}) => pin.newLockSecretRefusal('phr', t, ctx);
+  // n DIFFERENT emoji (one emoji repeated would be refused as one repeated character).
+  const emoji = (n) => Array.from({ length: n }, (_, i) => String.fromCodePoint(0x1f600 + i)).join('');
+  return {
+    len14: r('fourteen chars'),
+    len15: r('fifteen chars x'),
+    len128: r('a'.repeat(64) + 'b'.repeat(64)),
+    len129: r('a'.repeat(64) + 'b'.repeat(65)),
+    emoji14: r(emoji(14)),
+    emoji15: r(emoji(15)),
+    combining: pin.codePointLength('cafe\u0301') === 5 && pin.codePointLength('caf\u00e9') === 4 && pin.codePointLength(emoji(15)) === 15 && emoji(15).length === 30,
+    leading: r(` ${PHR_A}`),
+    trailing: r(`${PHR_A} `),
+    trailingNbsp: r(`${PHR_A}\u00a0`),
+    newline: r('lantern orbit\npickle velvet'),
+    tab: r('lantern orbit\tpickle velvet'),
+    illFormed: r('lantern orbit pickle \ud800 velvet'),
+    repeated: r('x'.repeat(20)),
+    threeWords: r(`${RULE_WORDS[2]} ${RULE_WORDS[5]} ${RULE_WORDS[9]} zq7 vv8`, { phrase: WORD_RULE_PHRASE }),
+    threeWordsUpper: r(`${RULE_WORDS[2].toUpperCase()} ${RULE_WORDS[5]} ${RULE_WORDS[9]} zq7 vv8`, { phrase: WORD_RULE_PHRASE }),
+    oneWordThrice: r(`${RULE_WORDS[2]} ${RULE_WORDS[2]} ${RULE_WORDS[2]} zq7 vv8`, { phrase: WORD_RULE_PHRASE }),
+    twoWords: r(`${RULE_WORDS[2]} ${RULE_WORDS[5]} zq7 vv8 kk9 pp0`, { phrase: WORD_RULE_PHRASE }),
+    threeWordsNoPhrase: r(`${RULE_WORDS[2]} ${RULE_WORDS[5]} ${RULE_WORDS[9]} zq7 vv8`),
+    nearSuffix: r(`${PHR_A}!`, { appSecret: PHR_A }),
+    nearCase: r(PHR_A.toUpperCase(), { appSecret: PHR_A }),
+    nearEdits: r('lantern orbit pickle 43 velvex', { appSecret: PHR_A }),
+    nearRun: r('zz orbit pickle 77 qq ww', { appSecret: PHR_A }),
+    far: r(PHR_B, { appSecret: PHR_A }),
+    ok: r(PHR_B),
+    ...opts,
+  };
+}
+
+/** NFKD, the edge strip at entry, and one record opened by equivalent typings. */
+async function canonicalOpens(pin) {
+  const fullWidth = 'ｌａｎｔｅｒｎ ｏｒｂｉｔ ｐｉｃｋｌｅ 42 ｖｅｌｖｅｔ';
+  const { backend, deps } = await phrRecord(pin);
+  const viaFullWidth = await pin.attemptPin(backend, fullWidth, deps);
+  const viaEdges = await pin.attemptPin(backend, `  ${PHR_A}\u00a0 `, deps);
+  // A precomposed "\u00e9" and "e" + a combining accent are the same passphrase.
+  const b2 = fakeSecureStore();
+  await pin.setAppPin(b2, 'caf\u00e9 orbit pickle velvet', deps, 'phr');
+  const viaCombining = await pin.attemptPin(b2, 'cafe\u0301 orbit pickle velvet', deps);
+  const b3 = fakeSecureStore();
+  await pin.setAppPin(b3, 'the \ufb01fteen \ufb01sh swam home', deps, 'phr');
+  const viaLigature = await pin.attemptPin(b3, 'the fifteen fish swam home', deps);
+  return { viaFullWidth: viaFullWidth.kind, viaEdges: viaEdges.kind, viaCombining: viaCombining.kind, viaLigature: viaLigature.kind };
+}
+
+/** The kind rule: a PIN cannot go into a passphrase lock and the reverse; switching rewrites both slots in ONE write. */
+async function kindRule(pin) {
+  const out = {};
+  const p = await phrRecord(pin);
+  try { await pin.setPinSlot(p.backend, 'duress', PIN_B, p.deps); out.pinIntoPhr = 'accepted'; } catch (e) { out.pinIntoPhr = e.message; }
+  const { kdf } = countingKdf();
+  const pinBackend = fakeSecureStore();
+  await pin.setAppPin(pinBackend, PIN_A, { kdf, random: detRandom });
+  try { await pin.setPinSlot(pinBackend, 'duress', PHR_B, { kdf, random: detRandom }); out.phrIntoPin = 'accepted'; } catch (e) { out.phrIntoPin = e.message; }
+  // Switch the PIN lock (with a duress PIN) to passphrases: one write.
+  await pin.setPinSlot(pinBackend, 'duress', PIN_B, { kdf, random: detRandom });
+  const writes = [];
+  const set = pinBackend.setItemAsync;
+  pinBackend.setItemAsync = async (k, v, o) => {
+    writes.push(v);
+    return set(k, v, o);
+  };
+  const before = [...pinBackend.items.values()][0];
+  try { await pin.setLockSlots(pinBackend, 'phr', PHR_A, `${PHR_A}!`, { kdf, random: detRandom }); out.nearRefused = 'accepted'; } catch (e) { out.nearRefused = e.message; }
+  try { await pin.setLockSlots(pinBackend, 'phr', PHR_A, PIN_B, { kdf, random: detRandom }); out.mixedRefused = 'accepted'; } catch (e) { out.mixedRefused = e.message; }
+  out.untouchedAfterRefusals = writes.length === 0 && [...pinBackend.items.values()][0] === before;
+  await pin.setLockSlots(pinBackend, 'phr', PHR_A, PHR_B, { kdf, random: detRandom });
+  out.switchWrites = writes.length;
+  out.switchedKind = writes.length > 0 ? JSON.parse(writes.at(-1)).kind : null;
+  out.switchedLength = writes.length > 0 ? writes.at(-1).length : null;
+  const deps = { kdf, random: detRandom, now: () => 1 };
+  out.oldPin = (await pin.attemptPin(pinBackend, PIN_A, deps)).kind;
+  const app = await pin.attemptPin(pinBackend, PHR_A, deps);
+  const duress = await pin.attemptPin(pinBackend, PHR_B, deps);
+  out.app = `${app.kind}:${app.slot}`;
+  out.duress = `${duress.kind}:${duress.slot}`;
+  // A crash during the one write leaves the old record whole.
+  const crash = fakeSecureStore();
+  await pin.setAppPin(crash, PIN_A, { kdf, random: detRandom });
+  const crashBefore = [...crash.items.values()][0];
+  crash.setItemAsync = async () => { throw new Error('app killed during the write'); };
+  await pin.setLockSlots(crash, 'phr', PHR_A, null, { kdf, random: detRandom }).catch(() => undefined);
+  out.crashKept = [...crash.items.values()][0] === crashBefore;
+  // The other slot's passphrase as the new app passphrase: the shared sentence.
+  try {
+    const q = await phrRecord(pin, { duress: PHR_B });
+    try { await pin.setPinSlot(q.backend, 'primary', PHR_B, q.deps); out.otherSlot = 'accepted'; } catch (e) { out.otherSlot = e.message; }
+  } catch (e) {
+    out.otherSlot = `set-up failed: ${e.message}`;
+  }
+  return out;
+}
+
+/** Pass p21f's slow-hash schedule, for a passphrase lock. */
+async function slowPassphrase(pin) {
+  const backend = fakeSecureStore();
+  let now = 2_000_000;
+  let hashes = 0;
+  const kdf = async (p, salt) => {
+    hashes += 1;
+    now += 125_000;
+    return sha256(concatBytes(salt, utf8ToBytes(p)));
+  };
+  const deps = { kdf, random: detRandom, now: () => now };
+  await pin.setAppPin(backend, PHR_A, { ...deps, kdf: countingKdf().kdf }, 'phr');
+  const outs = [];
+  for (let i = 1; i <= 5; i += 1) outs.push(await pin.attemptPin(backend, PHR_B, deps));
+  const fifth = outs[4];
+  const visible = pin.pinAttemptMessage(fifth, now);
+  now += 1_000;
+  hashes = 0;
+  const during = await pin.attemptPin(backend, PHR_A, deps);
+  const duringHashes = hashes;
+  const duringText = pin.pinAttemptMessage(during, now);
+  const countdown = pin.pinCountdownOf(during);
+  const over = countdown ? pin.pinCountdownText(countdown, during.until) : null;
+  // A malformed entry (too short) after the wait: both hashes, counted.
+  now = during.until;
+  hashes = 0;
+  const short = await pin.attemptPin(backend, 'short', deps);
+  const shortHashes = hashes;
+  now = short.until > now ? short.until : now;
+  const ok = await pin.attemptPin(backend, PHR_A, deps);
+  return {
+    first: pin.pinAttemptMessage(outs[0], now),
+    visible,
+    during: during.kind,
+    duringHashes,
+    duringText,
+    over,
+    countdownLock: countdown?.lock ?? null,
+    short: short.kind,
+    shortFails: short.fails,
+    shortHashes,
+    ok: ok.kind,
+  };
+}
+
+/** The kind is read before any wallet: one read, of the PIN record's name only. */
+async function kindDetection(pin) {
+  const backend = fakeSecureStore();
+  const none = await pin.readLockKind(backend);
+  const { kdf } = countingKdf();
+  await pin.setAppPin(backend, PHR_A, { kdf, random: detRandom }, 'phr');
+  backend.log.length = 0;
+  const kind = await pin.readLockKind(backend);
+  return { none, kind, reads: backend.log.map(([op, k]) => `${op}:${k}`) };
+}
+
+/** A version 1 record (written before passphrases) as stored text: the v2 text without `kind`, v = 1. */
+function asVersion1(v2text) {
+  const o = JSON.parse(v2text);
+  return JSON.stringify({ v: 1, kdf: o.kdf, N: o.N, r: o.r, p: o.p, slots: o.slots, fails: o.fails, until: o.until });
+}
+async function version1(pin) {
+  const { kdf } = countingKdf();
+  const deps = { kdf, random: detRandom, now: () => 1 };
+  const backend = fakeSecureStore();
+  await pin.setAppPin(backend, PIN_A, deps);
+  const id = [...backend.items.keys()][0];
+  const v1 = asVersion1(backend.items.get(id));
+  backend.items.set(id, v1);
+  const decoded = pin.decodePinRecord(v1);
+  const opened = await pin.attemptPin(backend, PIN_A, deps);
+  const after = backend.items.get(id);
+  const damaged = (text) => {
+    try { pin.decodePinRecord(text); return false; } catch (e) { return e instanceof pin.PinRecordDamagedError; }
+  };
+  const v2 = JSON.parse(after);
+  const v1WithKind = JSON.stringify({ ...JSON.parse(v1), kind: 'pin' });
+  const v2NoKind = JSON.stringify({ ...v2, v: 2, kind: undefined });
+  const v2Unknown = after.replace('"kind":"pin"', '"kind":"pix"');
+  return {
+    v1Length: v1.length,
+    decodedKind: decoded.kind,
+    decodedV: decoded.v,
+    opened: `${opened.kind}:${opened.slot}`,
+    afterLength: after.length,
+    afterV: v2.v,
+    afterKind: v2.kind,
+    sameSlots: JSON.stringify(v2.slots) === JSON.stringify(JSON.parse(v1).slots),
+    refused: [v1WithKind, v2NoKind, v2Unknown].map(damaged),
+  };
+}
+
+/** The LockGate / Settings / WalletContext sources of the passphrase path. */
+function passphraseSources(gate, settings, ctx) {
+  const field = gate.slice(gate.indexOf('export function PassphraseField('), gate.indexOf('const styles = StyleSheet.create('));
+  const props = ['secureTextEntry\n', 'autoCorrect={false}', 'spellCheck={false}', 'autoComplete="off"', 'importantForAutofill="no"', 'textContentType="none"', 'autoCapitalize="none"', 'contextMenuHidden\n', 'maxLength={256}'];
+  return {
+    props: props.every((p) => field.includes(p)),
+    capture: field.includes("usePreventScreenCapture('pin-pad');"),
+    clearedFirst: field.indexOf("setText('');") > 0 && field.indexOf("setText('');") < field.indexOf('onComplete(value)'),
+    noShowToggle: !/secureTextEntry=\{/.test(field),
+    named: field.includes("const field = fieldLabel('lock-passphrase', prompt);") && field.includes('{...field.input}') && field.includes('<Text {...field.label}'),
+    lockScreen: /\{appPinOn && lockKind === 'phr' \? \([\s\S]{0,300}<PassphraseField[\s\S]{0,120}prompt=\{lockCopy\('phr'\)\.lockScreenPrompt\}/.test(gate) &&
+      gate.includes('const lockKind = useSyncExternalStore(appLockKind.subscribe, appLockKind.get);'),
+    launchKind: ctx.indexOf('if (lockRecord) appLockKind.set(lockRecord.kind);') > 0 &&
+      ctx.indexOf('if (lockRecord) appLockKind.set(lockRecord.kind);') < ctx.indexOf('const location = await phraseLocation();'),
+    switchDecoy: /const switchAppLockKind = useCallback\([\s\S]{0,200}const slot = await checkSessionPin\(currentSecret\);[\s\S]{0,300}if \(slot !== 'primary'\) throw new Error\(PIN_ACTION_NOT_COMPLETED\);[\s\S]{0,400}await setLockSlots\(/.test(ctx),
+    settingsRule: settings.includes('const refusal = newLockSecretRefusal(kind, secret, { phrase: held.current.phrase, appSecret });') &&
+      settings.includes('await switchAppLockKind(current!, flowKind(flow), next!, held.current.duressNext);') &&
+      settings.includes('<PassphraseField key={`${step.flow}-${step.stage}`} prompt={padPrompt(step)} submitLabel="Continue" onComplete={onPad} />'),
+  };
+}
+
+{
+  // The record, version 2, byte for byte.
+  const fixed = { v: 2, kind: 'phr', slots: [new Uint8Array(64), new Uint8Array(64).fill(0xff)], fails: 3, until: 1000 };
+  const expected = `{"v":2,"kdf":"scrypt","N":65536,"r":8,"p":1,"kind":"phr","slots":["${'00'.repeat(64)}","${'ff'.repeat(64)}"],"fails":"00000003","until":"0000000003e8"}`;
+  const enc = pinMod.encodePinRecord(fixed);
+  check('version 2 byte for byte: v, kdf, N, r, p, then "kind" (3 characters), the two 64-byte slots, the fixed-width counter and wait',
+    enc === expected, enc);
+  check('…371 characters for "pin" and for "phr" alike (the kind\'s value has one width), with or without a duress slot',
+    enc.length === 371 && pinMod.encodePinRecord({ ...fixed, kind: 'pin' }).length === 371 && pinMod.PIN_RECORD_LENGTH === 371);
+  const ph = await phrRecord(pinMod, { duress: PHR_B });
+  const lens = [];
+  const set = ph.backend.setItemAsync;
+  ph.backend.setItemAsync = async (k, v, o) => { lens.push(v.length); return set(k, v, o); };
+  for (const t of [PHR_A, PHR_B, 'wrong passphrase here', 'x']) await pinMod.attemptPin(ph.backend, t, ph.deps);
+  await pinMod.setPinSlot(ph.backend, 'primary', 'a much longer passphrase than the first one, typed only for this check', ph.deps);
+  check(`a passphrase record is 371 bytes on every write, whatever the passphrases' lengths (${lens.length} writes)`,
+    lens.length === 9 && lens.every((l) => l === 371), JSON.stringify(lens));
+
+  const v = await version1(pinMod);
+  check('a version 1 record (358 bytes, no kind) reads as kind "pin" and opens with the same PIN',
+    v.v1Length === 358 && v.decodedKind === 'pin' && v.decodedV === 1 && v.opened === 'opened:primary', JSON.stringify(v));
+  check('…and the first write converts it: version 2, kind "pin", 371 bytes, the same slots',
+    v.afterLength === 371 && v.afterV === 2 && v.afterKind === 'pin' && v.sameSlots, JSON.stringify(v));
+  check('a version 1 record with a kind, a version 2 record without one, and an unknown kind are damaged (never read as "no lock")',
+    v.refused.every(Boolean), JSON.stringify(v.refused));
+
+  const t = refusalTable(pinMod);
+  check('length in code points as typed: 14 refused, 15 accepted, 128 accepted, 129 refused ("A passphrase has 15 to 128 characters.")',
+    t.len14 === 'A passphrase has 15 to 128 characters.' && t.len15 === null && t.len128 === null && t.len129 === pinMod.PASSPHRASE_LENGTH_MESSAGE, JSON.stringify(t));
+  check('…an emoji is one code point (14 refused, 15 accepted although 30 UTF-16 units); "e" + a combining accent is two, a precomposed "\u00e9" one',
+    t.emoji14 === pinMod.PASSPHRASE_LENGTH_MESSAGE && t.emoji15 === null && t.combining);
+  check('edge whitespace refused at set-up, leading, trailing and a no-break space ("A passphrase cannot begin or end with a space.")',
+    [t.leading, t.trailing, t.trailingNbsp].every((x) => x === 'A passphrase cannot begin or end with a space.'));
+  check('a line break or a tab inside refused ("A passphrase cannot contain line breaks or other control characters."); ill-formed Unicode refused with its own sentence',
+    t.newline === 'A passphrase cannot contain line breaks or other control characters.' && t.tab === pinMod.PASSPHRASE_CONTROL_MESSAGE &&
+      t.illFormed === 'This passphrase contains a character that is not valid text. Type it again.');
+  check('the control-character test is exactly Unicode category Cc: equal to Node\'s /\\p{Cc}/u over every BMP code point (65 of them)',
+    (() => {
+      let n = 0;
+      for (let cp = 0; cp <= 0xffff; cp += 1) {
+        if (cp >= 0xd800 && cp <= 0xdfff) continue;
+        const ch = String.fromCharCode(cp);
+        const want = /\p{Cc}/u.test(ch);
+        if (want) n += 1;
+        if (pinMod.hasControlCharacter(ch) !== want) return false;
+      }
+      return n === 65;
+    })());
+  check('one repeated character: the shared sentence ("This passphrase cannot be used. Choose a different passphrase.")',
+    t.repeated === 'This passphrase cannot be used. Choose a different passphrase.');
+  check('the test recovery phrase is the one built here from fixed entropy (never printed; pinned by its SHA-256)',
+    WORD_RULE_SHA256 === sha256Hex(entropyToMnemonic(sha256(utf8ToBytes('check-duress lock passphrase word rule')).slice(0, 16), wordlist)) && RULE_WORDS.length === 12);
+  check('three words of the open wallet\'s recovery phrase refused ("Do not use words from your recovery phrase in your passphrase."), in any case; two accepted; one word typed three times counts once',
+    t.threeWords === 'Do not use words from your recovery phrase in your passphrase.' && t.threeWordsUpper === pinMod.PASSPHRASE_PHRASE_WORDS_MESSAGE &&
+      t.twoWords === null && t.oneWordThrice === null, JSON.stringify([t.threeWords, t.twoWords, t.oneWordThrice]));
+  check('…the rule needs the phrase: without it the same passphrase passes the plaintext rules (so the flow must open the phrase)', t.threeWordsNoPhrase === null);
+  check('a duress passphrase too close to the app passphrase (a suffix, another case, 2 edits, a shared run of 12): the shared sentence; an unrelated one passes',
+    [t.nearSuffix, t.nearCase, t.nearEdits, t.nearRun].every((x) => x === pinMod.PASSPHRASE_NOT_USABLE_MESSAGE) && t.far === null && t.ok === null,
+    JSON.stringify([t.nearSuffix, t.nearCase, t.nearEdits, t.nearRun, t.far]));
+  check('the PIN rules are unchanged through the same function (6 digits; trivially guessed refused with the PIN\'s shared sentence)',
+    pinMod.newLockSecretRefusal('pin', '12345') === pinMod.PIN_FORMAT_MESSAGE && pinMod.newLockSecretRefusal('pin', '123456') === pinMod.PIN_NOT_USABLE_MESSAGE &&
+      pinMod.newLockSecretRefusal('pin', PIN_A) === null && pinMod.isTriviallyGuessed('000000'));
+
+  // NFKD: the same rule as @scure/bip39 (whose nfkd is not exported).
+  const samples = ['ｆｕｌｌ ｗｉｄｔｈ', '\ufb01sh', 'caf\u00e9', 'cafe\u0301', '\u{1F600} smile', 'plain ascii'];
+  check('bip39Nfkd is @scure/bip39\'s normalisation: mnemonicToSeedSync(m, p) equals mnemonicToSeedSync(m, bip39Nfkd(p)) for six samples (full width, a ligature, both forms of \u00e9, an emoji)',
+    samples.every((p) => bytesToHex(mnemonicToSeedSync(PARENT_12, p)) === bytesToHex(mnemonicToSeedSync(PARENT_12, pinMod.bip39Nfkd(p)))) &&
+      pinMod.bip39Nfkd('ｆｕｌｌ') === 'full' && pinMod.bip39Nfkd('\ufb01') === 'fi' && pinMod.bip39Nfkd('caf\u00e9') === pinMod.bip39Nfkd('cafe\u0301'));
+  check('…and both refuse ill-formed Unicode (a lone surrogate) where the library throws',
+    (() => {
+      let lib = false;
+      let ours = false;
+      try { mnemonicToSeedSync(PARENT_12, 'x\ud800'); } catch { lib = true; }
+      try { pinMod.bip39Nfkd('x\ud800'); } catch { ours = true; }
+      return lib && ours;
+    })());
+  const c = await canonicalOpens(pinMod);
+  check('one record opens with equivalent typings: full-width letters (NFKD, not NFC), edge spaces stripped at entry, "\u00e9" either way, the "\ufb01" ligature',
+    c.viaFullWidth === 'opened' && c.viaEdges === 'opened' && c.viaCombining === 'opened' && c.viaLigature === 'opened', JSON.stringify(c));
+
+  const k = await kindRule(pinMod);
+  check('mixed kinds refused: a PIN cannot be set into a passphrase lock, nor a passphrase into a PIN lock (each refused by the record\'s form)',
+    k.pinIntoPhr === pinMod.PASSPHRASE_LENGTH_MESSAGE && k.phrIntoPin === pinMod.PIN_FORMAT_MESSAGE, JSON.stringify(k));
+  check('switching kinds: a near-copy duress passphrase and a PIN-form duress secret are refused with nothing written',
+    k.nearRefused === pinMod.PASSPHRASE_NOT_USABLE_MESSAGE && k.mixedRefused === pinMod.PASSPHRASE_LENGTH_MESSAGE && k.untouchedAfterRefusals, JSON.stringify(k));
+  check('…and the switch rewrites BOTH slots in ONE write (kind "phr", 371 bytes): the old PIN is wrong, the new app passphrase opens the real wallet, the new duress passphrase the second',
+    k.switchWrites === 1 && k.switchedKind === 'phr' && k.switchedLength === 371 && k.oldPin === 'wrong' && k.app === 'opened:primary' && k.duress === 'opened:duress', JSON.stringify(k));
+  check('…a crash during that one write leaves the old record whole (never two kinds)', k.crashKept);
+  check('the other slot\'s passphrase as a new passphrase: refused by hash, with the shared sentence', k.otherSlot === pinMod.PASSPHRASE_NOT_USABLE_MESSAGE, k.otherSlot);
+
+  const s = await slowPassphrase(pinMod);
+  check('the lockout for a passphrase: "Wrong passphrase. Try again." then, after 5, "Wrong passphrase. Try again in 30 seconds." from the end of the attempt',
+    s.first === 'Wrong passphrase. Try again.' && s.visible === 'Wrong passphrase. Try again in 30 seconds.', JSON.stringify(s));
+  check('…during the wait refused at once with no hash ("Too many wrong passphrases. Try again in 29 seconds."), then "You can enter your passphrase again."',
+    s.during === 'wait' && s.duringHashes === 0 && s.duringText === 'Too many wrong passphrases. Try again in 29 seconds.' &&
+      s.over === 'You can enter your passphrase again.' && s.countdownLock === 'phr', JSON.stringify(s));
+  check('…a malformed entry (too short) still costs both hashes and counts as a wrong attempt; the right passphrase after the wait opens',
+    s.short === 'wrong' && s.shortHashes === 2 && s.shortFails === 6 && s.ok === 'opened', JSON.stringify(s));
+  check('a PIN lock\'s countdown carries no kind (byte-identical to before), a passphrase lock\'s carries "phr"',
+    JSON.stringify(pinMod.pinCountdownOf({ kind: 'wrong', fails: 5, until: 9, lock: 'pin' })) === '{"kind":"wrong","until":9}' &&
+      JSON.stringify(pinMod.pinCountdownOf({ kind: 'wait', until: 9, lock: 'phr' })) === '{"kind":"wait","until":9,"lock":"phr"}');
+
+  const d = await kindDetection(pinMod);
+  check('the lock screen learns the kind before any wallet: null with no record, "phr" from ONE read of the PIN record\'s name and nothing else',
+    d.none === null && d.kind === 'phr' && d.reads.join() === 'get:shiba-wallet.app-lock.v1', JSON.stringify(d));
+  check('appLockKind (memory only) starts as "pin", follows set, and notifies its subscribers once per change',
+    (() => {
+      let n = 0;
+      const un = duressMod.appLockKind.subscribe(() => { n += 1; });
+      const start = duressMod.appLockKind.get();
+      duressMod.appLockKind.set('phr');
+      duressMod.appLockKind.set('phr');
+      const mid = duressMod.appLockKind.get();
+      duressMod.appLockKind.set('pin');
+      un();
+      return start === 'pin' && mid === 'phr' && n === 2 && duressMod.appLockKind.get() === 'pin';
+    })());
+
+  // Both scrypt paths: the same bytes for a non-ASCII passphrase.
+  const salt = detRandom(32);
+  const input = pinMod.lockSecretInput('phr', '  ｃａｆ\u00e9 \ufb01sh \u{1F600} orbit pickle  ');
+  nativeMod.setNativeScryptLoaderForChecks(async () => ({ kind: 'absent' }));
+  const viaJs = await pinMod.pinScrypt(input, salt, 12);
+  const nat = nodeNative();
+  nativeMod.setNativeScryptLoaderForChecks(nat.loader);
+  const viaNative = await pinMod.pinScrypt(input, salt, 12);
+  nativeMod.setNativeScryptLoaderForChecks(null);
+  const viaNode = new Uint8Array(scryptSync(Buffer.from(utf8ToBytes(input)), salt, 32, { N: 4096, r: 8, p: 1 }));
+  check('a non-ASCII passphrase (full width, \u00e9, a ligature, an emoji) hashes to the same bytes through noble, through the native stand-in and through Node\'s scrypt over its UTF-8 bytes',
+    input === 'cafe\u0301 fish \u{1F600} orbit pickle' && bytesToHex(viaJs) === bytesToHex(viaNative) && bytesToHex(viaJs) === bytesToHex(viaNode) &&
+      nat.calls.length === 2 && bytesToHex(nat.calls[1].input) === bytesToHex(utf8ToBytes(input)), input);
+  // A real passphrase record (real scrypt, N = 2^16): set with JavaScript, opened natively.
+  nativeMod.setNativeScryptLoaderForChecks(async () => ({ kind: 'absent' }));
+  const realPhr = fakeSecureStore();
+  await pinMod.setAppPin(realPhr, PHR_A, { random: detRandom }, 'phr');
+  nativeMod.setNativeScryptLoaderForChecks(nodeNative().loader);
+  const realOpen = await pinMod.attemptPin(realPhr, `${PHR_A} `, { random: detRandom });
+  nativeMod.setNativeScryptLoaderForChecks(null);
+  const realSlot = (await pinMod.readPinRecord(realPhr)).slots[0];
+  check('a real passphrase slot is scrypt(NFKD passphrase, salt, N = 2^16), set with JavaScript and opened through the native path',
+    realOpen.kind === 'opened' && realOpen.slot === 'primary' &&
+      bytesToHex(realSlot.subarray(32)) === bytesToHex(scrypt(PHR_A, realSlot.subarray(0, 32), { N: 65536, r: 8, p: 1, dkLen: 32 })));
+
+  check('the forced settings take no kind: effectivePrefs is keyed only on "a lock is set", so a passphrase forces auto-lock, protection and notifications exactly as a PIN',
+    duressMod.effectivePrefs.length === 2 && /export function effectivePrefs\(\s*prefs: \{[^}]*\},\s*appPinOn: boolean,\s*\)/.test(read('wallet/duress.ts')));
+
+  const src = passphraseSources(read('components/LockGate.tsx'), read('screens/SettingsScreen.tsx'), read('wallet/WalletContext.tsx'));
+  check('PassphraseField: secure entry, autocorrect / spell-check / autocomplete / autofill / content type off, no capitalisation, no context menu, a typing guard (source scan)',
+    src.props, JSON.stringify(src));
+  check('…capture blocked with the pad\'s key, the text cleared BEFORE the check, no Show toggle, named by its visible prompt',
+    src.capture && src.clearedFirst && src.noShowToggle && src.named, JSON.stringify(src));
+  check('LockGate shows the field for a passphrase lock ("Enter your passphrase"), from the kind read with the record at launch, before the phrase location',
+    src.lockScreen && src.launchKind && duressMod.LOCK_COPY.phr.lockScreenPrompt === 'Enter your passphrase', JSON.stringify(src));
+  check('switching kinds checks the current secret and, in the second wallet, ends with the neutral sentence before anything is written',
+    src.switchDecoy, JSON.stringify(src));
+  check('Settings checks every new secret with newLockSecretRefusal, given the open phrase and the app secret of the same flow, and switches through switchAppLockKind',
+    src.settingsRule, JSON.stringify(src));
+
+  const copy = duressMod.LOCK_COPY;
+  check('the copy per kind: section 8.2.9\'s passphrase prompts, advice, keyboard note, limits note and honest claim verbatim; the PIN\'s copy is the existing constants',
+    copy.phr.prompts.choose === 'Choose a passphrase' && copy.phr.prompts.chooseAgain === 'Type the passphrase again' &&
+      copy.phr.prompts.chooseDuress === 'Choose a duress passphrase' && copy.phr.prompts.chooseDuressAgain === 'Type the duress passphrase again' &&
+      copy.phr.prompts.current === 'Type your current passphrase' &&
+      duressMod.PASSPHRASE_ADVICE.startsWith('A passphrase is typed on your keyboard each time the wallet opens. Use four or more random words') &&
+      duressMod.PASSPHRASE_KEYBOARD_NOTE === 'Unlike the PIN pad, your keyboard sees what you type. Use a keyboard you trust.' &&
+      copy.phr.limitsNote.startsWith("What the passphrase does not protect against: someone who copies this app's storage") &&
+      copy.pin.prompts.current === duressMod.PIN_PROMPTS.current && copy.pin.limitsNote === duressMod.APP_PIN_LIMITS_NOTE &&
+      duressMod.APP_LOCK_SWITCH_LABEL === 'Use a PIN or passphrase to unlock' &&
+      duressMod.APP_LOCK_KIND_CHOICES.pin === '6-digit PIN' && duressMod.APP_LOCK_KIND_CHOICES.phr === 'Passphrase (15 to 128 characters)');
+  const claimPhr = copy.phr.duressHonestClaim;
+  check('the passphrase\'s honest claim has the three parts and three sentences; the readiness reason is kind-neutral',
+    claimPhr.includes('someone looking at the screen sees an ordinary wallet.') && claimPhr.includes("Anyone who copies this app's files from the phone can tell that two wallets exist") &&
+      /Funding the second wallet from this wallet links them on-chain\.$/.test(claimPhr) && claimPhr.split(/(?<=\.)\s+/).length === 3 &&
+      duressMod.DURESS_READINESS_REASON.includes('a 6-digit PIN or a short passphrase can be guessed from such a copy'));
+  check('the strength stated honestly: a 6-digit PIN about 20 bits, four dice words about 52, and "the 15-character minimum cannot measure that"',
+    duressMod.LOCK_STRENGTH_NOTE.includes('a 6-digit PIN is one of a million (about 20 bits)') && duressMod.LOCK_STRENGTH_NOTE.includes('about 52 bits') &&
+      duressMod.LOCK_STRENGTH_NOTE.endsWith('the 15-character minimum cannot measure that.'));
+  check('…and no copy of either kind says "undetectable", "hidden" or "invisible"',
+    Object.values(copy).every((c) => JSON.stringify(c).match(/undetectable|hidden|invisible/i) === null));
 }
 
 // ---------------------------------------------------------------------------
@@ -1085,7 +1506,7 @@ try {
     check('mutant caught: the duress hash skipped when the primary matched (unequal work)', c.primary.calls !== 2);
   }
   {
-    const m = await mutant('pin.ts', 'const m = await matchSlots(record, pin, dd);\n  const slot', 'const m = { primary: false, duress: false };\n  const slot');
+    const m = await mutant('pin.ts', 'const m = await matchSlots(record, input, dd);\n  const slot', 'const m = { primary: false, duress: false };\n  const slot');
     // (The counter write before the hashes is the next mutant.)
     const c = await hashCounts(m);
     check('mutant caught: an attempt that computes no hash at all', c.primary.calls !== 2 || c.primary.kind !== 'opened');
@@ -1099,13 +1520,13 @@ try {
     check('mutant caught: the first wait after 4 wrong PINs instead of 5', JSON.stringify((await schedule(m)).seen) !== JSON.stringify(EXPECTED_SCHEDULE));
   }
   {
-    const m = await mutant('pin.ts', 'return { v: 1, slots: [await slotFor(pin, dd), randomSlot(dd)], fails: 0, until: 0 };',
-      'return { v: 1, slots: [await slotFor(pin, dd), new Uint8Array(64)], fails: 0, until: 0 };');
+    const m = await mutant('pin.ts', 'return { v: 2, kind, slots: [await slotFor(lockSecretInput(kind, pin), dd), randomSlot(dd)], fails: 0, until: 0 };',
+      'return { v: 2, kind, slots: [await slotFor(lockSecretInput(kind, pin), dd), new Uint8Array(64)], fails: 0, until: 0 };');
     const before = (await recordShape(m));
     // An all-zero unset slot gives a duress PIN away to anyone who reads the record.
     const raw = m.encodePinRecord(await m.createPinRecord(PIN_A, { kdf: countingKdf().kdf, random: detRandom }));
     check('mutant caught: an unset duress slot that is not random (all zeros) — its content would reveal "no duress PIN"',
-      JSON.parse(raw).slots[1] === '0'.repeat(128) && before.lengthOnly === 358 &&
+      JSON.parse(raw).slots[1] === '0'.repeat(128) && before.lengthOnly === 371 &&
         !(JSON.parse(pinMod.encodePinRecord(await pinMod.createPinRecord(PIN_A, { kdf: countingKdf().kdf, random: detRandom }))).slots[1] === '0'.repeat(128)));
   }
   {
@@ -1122,20 +1543,20 @@ try {
   {
     // Pass p21f: the wait stamped when the attempt STARTED (the old rule).
     const m = await mutant('pin.ts',
-      "  if (record.until > dd.now()) return { kind: 'wait', until: record.until };",
-      "  const startedAt = dd.now();\n  if (record.until > startedAt) return { kind: 'wait', until: record.until };",
+      "  if (record.until > dd.now()) return { kind: 'wait', until: record.until, lock };",
+      "  const startedAt = dd.now();\n  if (record.until > startedAt) return { kind: 'wait', until: record.until, lock };",
       ['const until = wait > 0 ? dd.now() + wait : 0;', 'const until = wait > 0 ? startedAt + wait : 0;']);
     const slow = await slowAttempts(m);
     check('mutant caught: the wait stamped when the attempt started (it has run out before "Wrong PIN" shows)',
       slow.visible !== 'Wrong PIN. Try again in 30 seconds.' || slow.during !== 'wait');
   }
   {
-    const m = await mutant('pin.ts', "  if (record.until > dd.now()) return { kind: 'wait', until: record.until };\n", '');
+    const m = await mutant('pin.ts', "  if (record.until > dd.now()) return { kind: 'wait', until: record.until, lock };\n", '');
     const slow = await slowAttempts(m);
     check('mutant caught: an attempt during the wait that is checked anyway (hashes computed)', slow.during !== 'wait' || slow.duringHashes !== 0);
   }
   {
-    const m = await mutant('pin.ts', "    await writePinRecord(backend, { ...record, fails: 0, until: 0 });\n    return { kind: 'opened', slot };", "    return { kind: 'opened', slot };");
+    const m = await mutant('pin.ts', "    await writePinRecord(backend, { ...record, fails: 0, until: 0 });\n    return { kind: 'opened', slot, lock };", "    return { kind: 'opened', slot, lock };");
     check('mutant caught: a correct PIN that does not reset the counter', (await slowAttempts(m)).resetFails !== 0);
   }
   {
@@ -1216,6 +1637,81 @@ try {
   {
     const m = await mutant('lock.ts', "return appPinOn && walletStatus === 'loading' ? 'ready' : walletStatus;", 'return walletStatus;');
     check('mutant caught: a PIN launch that would not show the lock (status passed through)', pinLaunch(m).view !== 'lock');
+  }
+  // --- the lock passphrase (section 8.2.11) ---
+  {
+    const m = await mutant('pin.ts', "return isWellFormedUnicode(stripped) ? stripped.normalize('NFKD') : stripped;", "return isWellFormedUnicode(stripped) ? stripped.normalize('NFC') : stripped;");
+    const c = await canonicalOpens(m);
+    check('mutant caught: NFC instead of NFKD (full-width letters and the "\ufb01" ligature no longer open the record)', c.viaFullWidth !== 'opened' || c.viaLigature !== 'opened');
+  }
+  {
+    const m = await mutant('pin.ts', "  if (kind === 'pin') return typed;\n  const stripped = typed.trim();", "  if (kind === 'pin') return typed;\n  const stripped = typed;");
+    check('mutant caught: no edge strip at entry (a stray space makes the right passphrase wrong)', (await canonicalOpens(m)).viaEdges !== 'opened');
+  }
+  {
+    const m = await mutant('pin.ts', "  if (/^\\s|\\s$/.test(typed)) return PASSPHRASE_EDGE_SPACE_MESSAGE;\n", '');
+    check('mutant caught: edge whitespace accepted at set-up (a passphrase with a trailing space could never be typed again)', refusalTable(m).trailing === null);
+  }
+  {
+    const m = await mutant('pin.ts', 'return [...text].length;', 'return text.length;');
+    const t = refusalTable(m);
+    check('mutant caught: length counted in UTF-16 units (14 emoji accepted)', t.emoji14 === null);
+  }
+  {
+    const m = await mutant('pin.ts', 'if (context.phrase && recoveryWordsIn(canonical, context.phrase) > PASSPHRASE_MAX_PHRASE_WORDS)', 'if (false && context.phrase)');
+    check('mutant caught: the recovery-word rule that never reads the phrase (three words accepted)', refusalTable(m).threeWords === null);
+  }
+  {
+    const m = await mutant('pin.ts', '  const kind = record.kind;\n  const form = newLockSecretFormatError(kind, newPin);', "  const kind: LockKind = 'pin';\n  const form = newLockSecretFormatError(kind, newPin);");
+    const k = await kindRule(m);
+    check('mutant caught: mixed kinds allowed (a duress PIN set into a passphrase lock)', k.pinIntoPhr === 'accepted');
+  }
+  {
+    const m = await mutant('pin.ts', '  await writePinRecord(backend, { ...record, kind, slots });\n}',
+      '  await writePinRecord(backend, { ...record, kind, slots: [slots[0], record.slots[1]] });\n  await writePinRecord(backend, { ...record, kind, slots });\n}');
+    const k = await kindRule(m);
+    check('mutant caught: a kind switch written in two writes (a crash between them leaves two kinds of secret)', k.switchWrites !== 1);
+  }
+  {
+    const m = await mutant('pin.ts', '  if (newLockSecretRefusal(kind, newPin) !== null || collides) throw new Error(notUsableMessage(kind));',
+      "  if (collides) throw new Error('This passphrase is already used for the other wallet.');\n  if (newLockSecretRefusal(kind, newPin) !== null) throw new Error(notUsableMessage(kind));");
+    check('mutant caught: a distinct sentence for the other-slot case (it would tell the second wallet\'s user the real passphrase)',
+      (await kindRule(m)).otherSlot !== pinMod.PASSPHRASE_NOT_USABLE_MESSAGE);
+  }
+  {
+    const m = await mutant('pin.ts', 'const v1 = p?.v === 1 &&', 'const v1 = false && p?.v === 1 &&');
+    check('mutant caught: version 1 records refused (every existing PIN would stop opening)', await version1(m).then((v) => v.opened !== 'opened:primary').catch(() => true));
+  }
+  {
+    const m = await mutant('pin.ts', '  const input = lockSecretInput(lock, pin);\n',
+      "  const input = lockSecretInput(lock, pin);\n  if (!lockEntryWellFormed(lock, pin)) return { kind: 'wrong', fails, until: 0, lock };\n");
+    const s = await slowPassphrase(m);
+    check('mutant caught: a fast refusal of a malformed passphrase (no hashes: the lock screen would reveal the minimum length by timing)', s.shortHashes !== 2);
+  }
+  {
+    const m = await mutant('pin.ts', "  if (isOneRepeatedCharacter(canonical)) return PASSPHRASE_NOT_USABLE_MESSAGE;\n", '');
+    check('mutant caught: one repeated character accepted', refusalTable(m).repeated === null);
+  }
+  {
+    const m = await mutant('pin.ts', "  if (context.appSecret && isNearCopy(context.appSecret, typed)) return PASSPHRASE_NOT_USABLE_MESSAGE;\n", '');
+    check('mutant caught: a near copy of the app passphrase accepted as the duress passphrase', refusalTable(m).nearSuffix === null);
+  }
+  {
+    const m = await mutant('pin.ts', "  phr: { wrong: 'Wrong passphrase.', tooMany: 'Too many wrong passphrases.', over: PASSPHRASE_WAIT_OVER_MESSAGE },",
+      "  phr: { wrong: 'Wrong PIN.', tooMany: 'Too many wrong PINs.', over: PIN_WAIT_OVER_MESSAGE },");
+    check('mutant caught: a passphrase lock that speaks of a PIN on the lock screen', (await slowPassphrase(m)).visible !== 'Wrong passphrase. Try again in 30 seconds.');
+  }
+  {
+    const gate = read('components/LockGate.tsx');
+    const settings = read('screens/SettingsScreen.tsx');
+    const ctx = read('wallet/WalletContext.tsx');
+    const props = ['        contextMenuHidden\n', '        importantForAutofill="no"\n', '        autoComplete="off"\n', '        secureTextEntry\n', '        spellCheck={false}\n'];
+    check(`mutant caught: each of ${props.length} input-hygiene props removed from the passphrase field (source scan)`,
+      props.every((p) => gate.includes(p) && !passphraseSources(gate.replace(p, ''), settings, ctx).props));
+    check('mutant caught: the passphrase kept in state while it is checked',
+      !passphraseSources(gate.replace("    setText('');\n    setBusy(true);", '    setBusy(true);'), settings, ctx).clearedFirst);
+    check('mutant caught: the kind read only after the wallet loaded (the lock screen could draw the wrong input first)',
+      !passphraseSources(gate, settings, ctx.replace('            if (lockRecord) appLockKind.set(lockRecord.kind);\n', '')).launchKind);
   }
 } finally {
   rmSync(MUTANT_DIR, { recursive: true, force: true });

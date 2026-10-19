@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Alert, Pressable, ScrollView, Share, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
@@ -162,52 +162,36 @@ import {
   listSpendingScopes,
 } from '../wallet/spending-policy';
 import { MULTISIG_SETTINGS_BLURB } from '../wallet/multisig';
-import { PinPad } from '../components/LockGate';
+import { PassphraseField, PinPad } from '../components/LockGate';
 import { AUTO_LOCK_HINT_WITH_PIN } from '../wallet/lock';
 import { PinCostMeasurement } from '../components/PinCostMeasurement';
 import { pinCostMeasurementOffered } from '../wallet/pin-cost';
 import { NOTIFICATIONS_SECTION_TITLE, appNotifications } from '../wallet/notifications';
+import { LOCK_KINDS, mismatchMessage, newLockSecretRefusal, sameLockSecret, type LockKind } from '../wallet/pin';
 import {
-  PIN_FORMAT_MESSAGE,
-  PIN_MISMATCH_MESSAGE,
-  PIN_NOT_USABLE_MESSAGE,
-  isTriviallyGuessed,
-  pinFormatError,
-} from '../wallet/pin';
-import {
-  APP_PIN_BACKUP_NOTE,
-  APP_PIN_COSTS_NOTE,
-  APP_PIN_LIMITS_NOTE,
-  APP_PIN_OFF_STATUS,
-  APP_PIN_ON_STATUS,
-  APP_PIN_SECTION_TITLE,
-  APP_PIN_SWITCH_LABEL,
-  APP_PIN_WHAT_NOTE,
+  APP_LOCK_BACKUP_NOTE,
+  APP_LOCK_KIND_CHOICES,
+  APP_LOCK_KIND_CHOICE_LABEL,
+  APP_LOCK_OFF_STATUS,
+  APP_LOCK_SWITCH_LABEL,
   AUTO_LOCK_WITH_PIN_NOTE,
-  DURESS_BACKUP_NOTE,
-  DURESS_EXPLANATION,
   DURESS_FUNDING_NOTE,
-  DURESS_HONEST_CLAIM,
   DURESS_MUST_DIFFER,
-  DURESS_NEEDS_PIN,
-  DURESS_NOT_SET_STATUS,
-  DURESS_SECTION_TITLE,
-  DURESS_SET_STATUS,
+  LOCK_SAME_KIND_NOTE,
+  LOCK_STRENGTH_NOTE,
   NOTIFICATIONS_OFF_WITH_PIN,
+  PASSPHRASE_ADVICE,
+  PASSPHRASE_KEYBOARD_NOTE,
+  PASSPHRASE_NO_COPY_NOTE,
   PIN_BACKUP_MISMATCH,
   PIN_BACKUP_PROMPT,
-  PIN_PROMPTS,
-  PIN_RESULTS,
-  REMOVE_DURESS_CONFIRM_BODY,
-  REMOVE_DURESS_CONFIRM_TITLE,
-  REMOVE_PIN_CONFIRM_BODY,
-  REMOVE_PIN_CONFIRM_TITLE,
-  REMOVE_PIN_WITH_DURESS_BODY,
   SCREEN_PROTECTION_WITH_PIN_NOTE,
   WIPE_WITH_PIN_NOTE,
+  appLockKind,
   backupCheckLabel,
   backupCheckPositions,
   backupWordsMatch,
+  lockCopy,
 } from '../wallet/duress';
 
 /** "A, B and C" / "A, B or C". */
@@ -1500,24 +1484,51 @@ function CustomNetworksSection({
 }
 
 /**
- * Settings → Privacy → "App PIN" and "Duress PIN" (duress wallet Stage 2;
- * docs/DURESS_WALLET.md sections 6.5 and 7). Every PIN is typed on the
- * app's own PinPad (components/LockGate.tsx), never the system keyboard.
- * A PIN typed in one step is held in a ref only until the flow's last step
- * runs, then dropped; the recovery phrase read for the backup check (and,
- * for a duress PIN, to derive the second wallet) is held the same way.
+ * Settings → Privacy → the app lock ("App PIN" / "App passphrase") and the
+ * duress secret (duress wallet Stage 2; docs/DURESS_WALLET.md sections 6.5,
+ * 7 and 8.2). A PIN is typed on the app's own PinPad and a passphrase in the
+ * PassphraseField (components/LockGate.tsx). A secret typed in one step is
+ * held in a ref only until the flow's last step runs, then dropped; the
+ * recovery phrase read for the backup check (and, for a duress secret, to
+ * derive the second wallet; for a new passphrase, to refuse one built from
+ * its words) is held the same way.
+ *
+ * The lock's KIND covers both slots (section 8.2.6): the duress secret is
+ * always the same kind as the app lock. Switching kinds (section 8.2.7) asks
+ * for the backup check, the current secret, the new app secret twice and —
+ * when a duress secret exists — a new duress secret of the new kind twice,
+ * and rewrites both slots in ONE record write.
+ *
+ * A NEW PASSPHRASE is refused (../wallet/pin.ts newLockSecretRefusal) for
+ * its form, for three or more words of the open wallet's recovery phrase,
+ * and — for a duress passphrase typed in the same flow as the app
+ * passphrase — for being a near copy of it. Every flow that sets a new
+ * passphrase therefore opens the recovery phrase through the approval gate
+ * first: turning the lock on, adding a duress secret and switching kinds
+ * already do so for the backup check; changing a passphrase opens it with
+ * one device prompt and no word check (DEVIATION from section 8.2.4, which
+ * assumed the phrase is always open: it is not when a secret is only
+ * changed).
  *
  * Under the second wallet this section reads exactly as it does in a
- * wallet with an app PIN and no duress PIN (section 6.4): the app PIN is
- * on, "Change PIN" changes the PIN that opened this wallet, and no duress
- * PIN is shown as set. Adding a duress PIN or removing the PIN there runs
- * the same steps and ends with PIN_ACTION_NOT_COMPLETED (section 7.9).
+ * wallet with an app lock and no duress secret (section 6.4): the lock is
+ * on, "Change …" changes the secret that opened this wallet, and no duress
+ * secret is shown as set. Adding a duress secret, removing the lock or
+ * switching kinds there runs the same steps and ends with
+ * PIN_ACTION_NOT_COMPLETED (sections 7.9 and 8.2.7).
  */
-type PinFlow = 'pin-on' | 'pin-change' | 'pin-off' | 'duress-add' | 'duress-change' | 'duress-remove';
+type PinFlow = 'pin-on' | 'pin-change' | 'pin-off' | 'duress-add' | 'duress-change' | 'duress-remove' | 'lock-switch';
+type PinStage = 'current' | 'new' | 'confirm' | 'duress-new' | 'duress-confirm';
 type PinStep =
   | { kind: 'idle' }
   | { kind: 'backup'; flow: PinFlow; positions: [number, number] }
-  | { kind: 'pad'; flow: PinFlow; stage: 'current' | 'new' | 'confirm' };
+  | { kind: 'pad'; flow: PinFlow; stage: PinStage };
+
+/** The other kind of lock. */
+const otherLockKind = (kind: LockKind): LockKind => (kind === 'pin' ? 'phr' : 'pin');
+
+/** The prompt opening the recovery phrase to check a changed passphrase against its words (no word check). */
+const PASSPHRASE_PHRASE_CHECK_PROMPT = 'Check the new passphrase against your recovery phrase';
 
 function AppPinSection() {
   const theme = useTheme();
@@ -1531,16 +1542,26 @@ function AppPinSection() {
     addDuressPin,
     changeDuressPin,
     removeDuressPin,
+    switchAppLockKind,
   } = useWallet();
   const { appPinOn, setNotifications } = usePrefs();
+  // The lock's kind (a device fact, read with the PIN record at launch).
+  const lockKind = useSyncExternalStore(appLockKind.subscribe, appLockKind.get);
+  // The kind chosen BEFORE the lock is turned on.
+  const [chosenKind, setChosenKind] = useState<LockKind>('pin');
   const [step, setStep] = useState<PinStep>({ kind: 'idle' });
   const [words, setWords] = useState<[string, string]>(['', '']);
   const [result, setResult] = useState<{ text: string; error: boolean } | null>(null);
   const [duressSet, setDuressSet] = useState(false);
-  // The typed PINs and the phrase of the running flow; dropped when it ends.
-  const held = useRef<{ phrase: string | null; current: string | null; next: string | null }>({ phrase: null, current: null, next: null });
+  // The typed secrets and the phrase of the running flow; dropped when it ends.
+  const held = useRef<{ phrase: string | null; current: string | null; next: string | null; duressNext: string | null }>({
+    phrase: null,
+    current: null,
+    next: null,
+    duressNext: null,
+  });
   const dropHeld = () => {
-    held.current = { phrase: null, current: null, next: null };
+    held.current = { phrase: null, current: null, next: null, duressNext: null };
   };
 
   const refreshDuress = useCallback(() => {
@@ -1551,6 +1572,16 @@ function AppPinSection() {
   // Leaving Settings in the middle of a flow forgets what it held.
   useEffect(() => () => dropHeld(), []);
 
+  /** The kind of secret typed at a step: the current lock's, or the new one's. */
+  const stageKind = (flow: PinFlow, stage: PinStage): LockKind => {
+    if (stage === 'current') return lockKind;
+    if (flow === 'pin-on') return chosenKind;
+    if (flow === 'lock-switch') return otherLockKind(lockKind);
+    return lockKind;
+  };
+  /** The kind a flow leaves the lock with. */
+  const flowKind = (flow: PinFlow): LockKind => stageKind(flow, 'new');
+
   const end = (text: string, error: boolean) => {
     dropHeld();
     setWords(['', '']);
@@ -1559,19 +1590,26 @@ function AppPinSection() {
     refreshDuress();
   };
 
-  /** Reads the open wallet's phrase through the approval gate, then asks for two of its words. */
-  const startBackupCheck = async (flow: PinFlow) => {
-    setResult(null);
-    const auth = await requireLocalAuth(PIN_BACKUP_PROMPT, { kind: 'phrase' });
+  /** Opens the open wallet's phrase through the approval gate (one device prompt); null when refused. */
+  const openPhrase = async (prompt: string): Promise<string | null> => {
+    const auth = await requireLocalAuth(prompt, { kind: 'phrase' });
     if (!auth.ok) {
       end(auth.message, true);
-      return;
+      return null;
     }
     const phrase = await revealMnemonic();
     if (!phrase) {
       end('The recovery phrase could not be opened. Nothing was changed.', true);
-      return;
+      return null;
     }
+    return phrase;
+  };
+
+  /** Reads the open wallet's phrase through the approval gate, then asks for two of its words. */
+  const startBackupCheck = async (flow: PinFlow) => {
+    setResult(null);
+    const phrase = await openPhrase(PIN_BACKUP_PROMPT);
+    if (!phrase) return;
     held.current.phrase = phrase;
     const count = phrase.trim().split(/\s+/).length;
     setWords(['', '']);
@@ -1586,42 +1624,43 @@ function AppPinSection() {
       return;
     }
     setWords(['', '']);
-    if (step.flow === 'pin-on') {
-      // The phrase is not needed after the check.
-      held.current.phrase = null;
-      setStep({ kind: 'pad', flow: 'pin-on', stage: 'new' });
-    } else {
-      setStep({ kind: 'pad', flow: step.flow, stage: 'current' });
-    }
+    // The phrase stays only while a flow still needs it: to derive the second
+    // wallet, or to check a new passphrase against its words.
+    if (step.flow !== 'duress-add' && flowKind(step.flow) !== 'phr') held.current.phrase = null;
+    setStep({ kind: 'pad', flow: step.flow, stage: step.flow === 'pin-on' ? 'new' : 'current' });
   };
 
   const finish = async (flow: PinFlow, current: string | null, next: string | null) => {
+    const copy = lockCopy(flowKind(flow));
     try {
       if (flow === 'pin-on') {
-        // Notifications go off before the PIN goes on (section 7.4): the
+        // Notifications go off before the lock goes on (section 7.4): the
         // stored choice is cleared and everything scheduled or shown is
-        // removed; with the PIN on they are forced off anyway.
+        // removed; with the lock on they are forced off anyway.
         await setNotifications(false).catch(() => undefined);
         await appNotifications().disable().catch(() => undefined);
-        await turnOnAppPin(next!);
-        end(PIN_RESULTS.on, false);
+        await turnOnAppPin(next!, chosenKind);
+        end(copy.results.on, false);
       } else if (flow === 'pin-change') {
         await changeAppPin(current!, next!);
-        end(PIN_RESULTS.changed, false);
+        end(copy.results.changed, false);
       } else if (flow === 'pin-off') {
         await turnOffAppPin(current!);
-        end(PIN_RESULTS.off, false);
+        end(copy.results.off, false);
       } else if (flow === 'duress-add') {
         const phrase = held.current.phrase;
         if (!phrase) throw new Error('The recovery phrase is no longer open. Nothing was changed.');
         await addDuressPin(current!, next!, phrase);
-        end(PIN_RESULTS.duressSet, false);
+        end(copy.results.duressSet, false);
       } else if (flow === 'duress-change') {
         await changeDuressPin(current!, next!);
-        end(PIN_RESULTS.duressChanged, false);
+        end(copy.results.duressChanged, false);
+      } else if (flow === 'lock-switch') {
+        await switchAppLockKind(current!, flowKind(flow), next!, held.current.duressNext);
+        end(copy.results.switched, false);
       } else {
         await removeDuressPin(current!);
-        end(PIN_RESULTS.duressRemoved, false);
+        end(copy.results.duressRemoved, false);
       }
     } catch (e) {
       end(e instanceof Error ? e.message : String(e), true);
@@ -1629,64 +1668,92 @@ function AppPinSection() {
     return null;
   };
 
-  /** One PinPad step: returns the sentence to show on the pad (null = moved on). */
-  const onPad = async (pin: string): Promise<string | null> => {
+  /** One PinPad / PassphraseField step: returns the sentence to show (null = moved on). */
+  const onPad = async (secret: string): Promise<string | null> => {
     if (step.kind !== 'pad') return null;
     const { flow, stage } = step;
+    const kind = stageKind(flow, stage);
     const needsNew = flow !== 'pin-off' && flow !== 'duress-remove';
+    const duressFlow = flow.startsWith('duress');
     if (stage === 'current') {
-      held.current.current = pin;
-      if (!needsNew) return finish(flow, pin, null);
+      held.current.current = secret;
+      if (!needsNew) return finish(flow, secret, null);
       setStep({ kind: 'pad', flow, stage: 'new' });
       return null;
     }
-    if (stage === 'new') {
-      if (pinFormatError(pin)) return PIN_FORMAT_MESSAGE;
-      if (isTriviallyGuessed(pin)) return PIN_NOT_USABLE_MESSAGE;
-      if (flow.startsWith('duress') && pin === held.current.current) return DURESS_MUST_DIFFER;
-      held.current.next = pin;
-      setStep({ kind: 'pad', flow, stage: 'confirm' });
+    if (stage === 'new' || stage === 'duress-new') {
+      // For a duress secret, the app secret typed in this same flow: the
+      // current one (adding or changing it) or the new one (switching kinds).
+      const appSecret = stage === 'duress-new' ? held.current.next : duressFlow ? held.current.current : null;
+      const refusal = newLockSecretRefusal(kind, secret, { phrase: held.current.phrase, appSecret });
+      if (refusal) return refusal;
+      if (kind === 'pin' && appSecret !== null && secret === appSecret) return DURESS_MUST_DIFFER;
+      if (stage === 'new') held.current.next = secret;
+      else held.current.duressNext = secret;
+      setStep({ kind: 'pad', flow, stage: stage === 'new' ? 'confirm' : 'duress-confirm' });
       return null;
     }
-    if (pin !== held.current.next) {
-      end(PIN_MISMATCH_MESSAGE, true);
+    const expected = stage === 'confirm' ? held.current.next : held.current.duressNext;
+    if (expected === null || !sameLockSecret(kind, secret, expected)) {
+      end(mismatchMessage(kind), true);
       return null;
     }
-    return finish(flow, held.current.current, pin);
+    // Switching kinds with a duress secret: its replacement of the new kind next.
+    if (flow === 'lock-switch' && stage === 'confirm' && duressSet) {
+      setStep({ kind: 'pad', flow, stage: 'duress-new' });
+      return null;
+    }
+    return finish(flow, held.current.current, held.current.next);
   };
 
   const start = (flow: PinFlow) => {
     setResult(null);
     dropHeld();
-    if (flow === 'pin-on' || flow === 'duress-add') {
+    const copy = lockCopy(lockKind);
+    if (flow === 'pin-on' || flow === 'duress-add' || flow === 'lock-switch') {
       void startBackupCheck(flow);
     } else if (flow === 'pin-off' || flow === 'duress-remove') {
-      const title = flow === 'pin-off' ? REMOVE_PIN_CONFIRM_TITLE : REMOVE_DURESS_CONFIRM_TITLE;
-      const body = flow === 'duress-remove' ? REMOVE_DURESS_CONFIRM_BODY : duressSet ? REMOVE_PIN_WITH_DURESS_BODY : REMOVE_PIN_CONFIRM_BODY;
+      const title = flow === 'pin-off' ? copy.removeTitle : copy.removeDuressTitle;
+      const body = flow === 'duress-remove' ? copy.removeDuressBody : duressSet ? copy.removeWithDuressBody : copy.removeBody;
       Alert.alert(title, body, [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Continue', style: 'destructive', onPress: () => setStep({ kind: 'pad', flow, stage: 'current' }) },
       ]);
+    } else if (lockKind === 'phr') {
+      // Changing a passphrase: the phrase is opened to refuse a new one built
+      // from its words (one device prompt, no word check).
+      void openPhrase(PASSPHRASE_PHRASE_CHECK_PROMPT).then((phrase) => {
+        if (!phrase) return;
+        held.current.phrase = phrase;
+        setStep({ kind: 'pad', flow, stage: 'current' });
+      });
     } else {
       setStep({ kind: 'pad', flow, stage: 'current' });
     }
   };
 
   const padPrompt = (s: Extract<PinStep, { kind: 'pad' }>): string => {
-    if (s.stage === 'current') return PIN_PROMPTS.current;
+    const prompts = lockCopy(stageKind(s.flow, s.stage)).prompts;
+    if (s.stage === 'current') return prompts.current;
+    if (s.stage === 'duress-new') return prompts.chooseDuress;
+    if (s.stage === 'duress-confirm') return prompts.chooseDuressAgain;
     const duress = s.flow.startsWith('duress');
-    if (s.stage === 'new') return duress ? PIN_PROMPTS.chooseDuress : PIN_PROMPTS.choose;
-    return duress ? PIN_PROMPTS.chooseDuressAgain : PIN_PROMPTS.chooseAgain;
+    if (s.stage === 'new') return duress ? prompts.chooseDuress : prompts.choose;
+    return duress ? prompts.chooseDuressAgain : prompts.chooseAgain;
   };
   const busy = step.kind !== 'idle';
+  // The words of the lock that is on, or of the kind chosen to turn on.
+  const shownKind: LockKind = appPinOn ? lockKind : chosenKind;
+  const copy = lockCopy(shownKind);
+  const settingPassphrase = step.kind === 'pad' && step.stage !== 'current' && stageKind(step.flow, step.stage) === 'phr';
 
   return (
     <View style={styles.section}>
-      <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>{APP_PIN_SECTION_TITLE}</Text>
+      <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>{copy.sectionTitle}</Text>
       <View style={styles.toggleRow}>
-        <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.toggleLabel, { color: theme.text, flexShrink: 1, marginRight: 12 }]}>{APP_PIN_SWITCH_LABEL}</Text>
+        <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.toggleLabel, { color: theme.text, flexShrink: 1, marginRight: 12 }]}>{APP_LOCK_SWITCH_LABEL}</Text>
         <Switch {...switchColors(theme)}
-          accessibilityLabel={APP_PIN_SWITCH_LABEL}
+          accessibilityLabel={APP_LOCK_SWITCH_LABEL}
           accessibilityRole="switch"
           accessibilityState={{ checked: appPinOn, disabled: busy }}
           value={appPinOn}
@@ -1694,34 +1761,64 @@ function AppPinSection() {
           onValueChange={(v) => start(v ? 'pin-on' : 'pin-off')}
         />
       </View>
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{appPinOn ? APP_PIN_ON_STATUS : APP_PIN_OFF_STATUS}</Text>
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{APP_PIN_WHAT_NOTE}</Text>
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{APP_PIN_LIMITS_NOTE}</Text>
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{APP_PIN_COSTS_NOTE}</Text>
-      {!appPinOn ? <Text style={[styles.hint, { color: theme.textMuted }]}>{APP_PIN_BACKUP_NOTE}</Text> : null}
-      {appPinOn && !busy ? <Button title="Change PIN" variant="secondary" onPress={() => start('pin-change')} /> : null}
+      {!appPinOn && !busy ? (
+        <>
+          <Text style={[styles.hint, { color: theme.text }]}>{APP_LOCK_KIND_CHOICE_LABEL}</Text>
+          <View style={styles.endpointButtons}>
+            {LOCK_KINDS.map((k) => (
+              <Button
+                key={k}
+                title={chosenKind === k ? `✓ ${APP_LOCK_KIND_CHOICES[k]}` : APP_LOCK_KIND_CHOICES[k]}
+                variant="secondary"
+                selected={chosenKind === k}
+                onPress={() => setChosenKind(k)}
+                style={styles.endpointButton}
+              />
+            ))}
+          </View>
+        </>
+      ) : null}
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{appPinOn ? copy.onStatus : APP_LOCK_OFF_STATUS}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{copy.whatNote}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{copy.limitsNote}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{LOCK_STRENGTH_NOTE}</Text>
+      {shownKind === 'phr' ? (
+        <>
+          <Text style={[styles.hint, { color: theme.textMuted }]}>{PASSPHRASE_ADVICE}</Text>
+          <Text style={[styles.hint, { color: theme.textMuted }]}>{PASSPHRASE_KEYBOARD_NOTE}</Text>
+        </>
+      ) : null}
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{copy.costsNote}</Text>
+      {!appPinOn ? <Text style={[styles.hint, { color: theme.textMuted }]}>{APP_LOCK_BACKUP_NOTE}</Text> : null}
+      {appPinOn && !busy ? (
+        <View style={styles.endpointButtons}>
+          <Button title={copy.changeButton} variant="secondary" onPress={() => start('pin-change')} style={styles.endpointButton} />
+          <Button title={copy.switchButton} variant="secondary" onPress={() => start('lock-switch')} style={styles.endpointButton} />
+        </View>
+      ) : null}
 
-      <Text accessibilityRole="header" style={[styles.subTitle, { color: theme.text }]}>{DURESS_SECTION_TITLE}</Text>
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{DURESS_EXPLANATION}</Text>
-      <WarningBox>{DURESS_HONEST_CLAIM}</WarningBox>
+      <Text accessibilityRole="header" style={[styles.subTitle, { color: theme.text }]}>{copy.duressTitle}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{copy.duressExplanation}</Text>
+      <WarningBox>{copy.duressHonestClaim}</WarningBox>
       <Text style={[styles.hint, { color: theme.textMuted }]}>{DURESS_FUNDING_NOTE}</Text>
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{DURESS_BACKUP_NOTE}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{copy.duressBackupNote}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{LOCK_SAME_KIND_NOTE}</Text>
       {appPinOn ? (
         <>
-          <Text style={[styles.hint, { color: theme.text }]}>{duressSet ? DURESS_SET_STATUS : DURESS_NOT_SET_STATUS}</Text>
+          <Text style={[styles.hint, { color: theme.text }]}>{duressSet ? copy.duressSetStatus : copy.duressNotSetStatus}</Text>
           {!busy ? (
             duressSet ? (
               <View style={styles.endpointButtons}>
-                <Button title="Change duress PIN" variant="secondary" onPress={() => start('duress-change')} style={styles.endpointButton} />
-                <Button title="Remove duress PIN" variant="destructive" onPress={() => start('duress-remove')} style={styles.endpointButton} />
+                <Button title={copy.changeDuressButton} variant="secondary" onPress={() => start('duress-change')} style={styles.endpointButton} />
+                <Button title={copy.removeDuressButton} variant="destructive" onPress={() => start('duress-remove')} style={styles.endpointButton} />
               </View>
             ) : (
-              <Button title="Add a duress PIN" variant="secondary" onPress={() => start('duress-add')} />
+              <Button title={copy.addDuressButton} variant="secondary" onPress={() => start('duress-add')} />
             )
           ) : null}
         </>
       ) : (
-        <Text style={[styles.hint, { color: theme.textMuted }]}>{DURESS_NEEDS_PIN}</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{copy.duressNeeds}</Text>
       )}
 
       {step.kind === 'backup' ? (
@@ -1757,7 +1854,12 @@ function AppPinSection() {
       ) : null}
       {step.kind === 'pad' ? (
         <View style={styles.endpointEditor}>
-          <PinPad key={`${step.flow}-${step.stage}`} prompt={padPrompt(step)} onComplete={onPad} />
+          {stageKind(step.flow, step.stage) === 'phr' ? (
+            <PassphraseField key={`${step.flow}-${step.stage}`} prompt={padPrompt(step)} submitLabel="Continue" onComplete={onPad} />
+          ) : (
+            <PinPad key={`${step.flow}-${step.stage}`} prompt={padPrompt(step)} onComplete={onPad} />
+          )}
+          {settingPassphrase ? <Text style={[styles.hint, { color: theme.textMuted }]}>{PASSPHRASE_NO_COPY_NOTE}</Text> : null}
           <Button title="Cancel" variant="secondary" onPress={() => end('Nothing was changed.', false)} />
         </View>
       ) : null}

@@ -43,7 +43,7 @@ import {
   type SecureStoreBackend,
   type StoreProfile,
 } from './store-keys.ts';
-import { deletePinRecord } from './pin.ts';
+import { deletePinRecord, type LockKind } from './pin.ts';
 
 /** The decoy wallet's storage profile. A neutral prefix: key names are visible on Android. */
 export const DECOY_STORE_PROFILE: StoreProfile = Object.freeze({ id: 'second', keyPrefix: 'w2' });
@@ -85,6 +85,34 @@ export const appPinPresence = {
     listeners.add(listener);
     return () => {
       listeners.delete(listener);
+    };
+  },
+};
+
+/**
+ * The KIND of the app lock — "pin" or "phr" (a passphrase;
+ * docs/DURESS_WALLET.md section 8.2) — as the lock screen must know it
+ * before any wallet is chosen. A device fact in memory only, read from the
+ * same PIN record read at launch (WalletContext) and set again whenever the
+ * lock is turned on, switched or removed. "pin" until known, so a damaged
+ * record shows the pad, as before passphrases existed.
+ */
+let lockKind: LockKind = 'pin';
+const kindListeners = new Set<Listener>();
+
+export const appLockKind = {
+  get(): LockKind {
+    return lockKind;
+  },
+  set(kind: LockKind): void {
+    if (lockKind === kind) return;
+    lockKind = kind;
+    for (const l of [...kindListeners]) l();
+  },
+  subscribe(listener: Listener): () => void {
+    kindListeners.add(listener);
+    return () => {
+      kindListeners.delete(listener);
     };
   },
 };
@@ -230,6 +258,7 @@ export async function wipeBothWallets(args: WipeBothArgs): Promise<void> {
   await deletePinRecord(args.backend);
   setActiveStoreProfile(PRIMARY_STORE_PROFILE);
   appPinPresence.set(false);
+  appLockKind.set('pin');
 }
 
 /** The secure-store keys a profile can hold, by name (for the checks and the design record). */
@@ -372,4 +401,163 @@ export const PIN_RESULTS = Object.freeze({
  * worded for a list of features.
  */
 export const DURESS_READINESS_REASON =
-  "A duress PIN opens a separate wallet instead of the real one, so someone looking at the screen sees an ordinary wallet. Anyone who copies this app's files from the phone can tell that two wallets exist, and a 6-digit PIN can be guessed from such a copy. Funding the second wallet from the real wallet links them on-chain.";
+  "A duress PIN or passphrase opens a separate wallet instead of the real one, so someone looking at the screen sees an ordinary wallet. Anyone who copies this app's files from the phone can tell that two wallets exist, and a 6-digit PIN or a short passphrase can be guessed from such a copy. Funding the second wallet from the real wallet links them on-chain.";
+
+// ---------------------------------------------------------------------------
+// The lock passphrase (docs/DURESS_WALLET.md section 8.2, stage P1): the copy
+// per kind. The PIN's entries are the constants above, unchanged; the
+// passphrase's quote section 8.2.9's draft where it gives one and are plain
+// sentences in the same style where it does not. Inside the second wallet
+// the same kind's words are shown, so its Settings read like any wallet with
+// that kind of lock.
+// ---------------------------------------------------------------------------
+
+/** The switch that turns the app lock on or off (section 8.2.9). */
+export const APP_LOCK_SWITCH_LABEL = 'Use a PIN or passphrase to unlock';
+/** The choice before the lock is turned on (section 8.2.9). */
+export const APP_LOCK_KIND_CHOICES: Readonly<Record<LockKind, string>> = Object.freeze({
+  pin: '6-digit PIN',
+  phr: 'Passphrase (15 to 128 characters)',
+});
+export const APP_LOCK_KIND_CHOICE_LABEL = 'Unlock with';
+export const APP_LOCK_OFF_STATUS =
+  'No app PIN or passphrase is set. The wallet unlocks with your fingerprint, face or device passcode.';
+export const APP_LOCK_BACKUP_NOTE =
+  'To turn the app PIN or passphrase on, first type two words of your recovery phrase from your written backup, to confirm you still have it.';
+/**
+ * How guessable each kind is from a copy of the app's files (section
+ * 8.2.2's table, at the Node figure of about 0.27 s a guess for one slot on
+ * one laptop thread; a faster attacker divides every figure by the same
+ * factor). The last sentence is the honest limit of a length rule.
+ */
+export const LOCK_STRENGTH_NOTE =
+  "How hard each is to guess from a copy of this app's files: a 6-digit PIN is one of a million (about 20 bits), which one computer can try in about 3 days. Four random words picked with dice are about 52 bits, millions of years for the same computer. A sentence you make up may be much easier to guess than its length suggests: the 15-character minimum cannot measure that.";
+/** Section 8.2.9, "Passphrase advice", verbatim. */
+export const PASSPHRASE_ADVICE =
+  'A passphrase is typed on your keyboard each time the wallet opens. Use four or more random words, for example picked with dice, not a sentence or quotation someone could guess. Do not use words from your recovery phrase. Do not save it in a password manager: this wallet turns autofill off for it.';
+/** Section 8.2.9, "Keyboard note", verbatim. */
+export const PASSPHRASE_KEYBOARD_NOTE = 'Unlike the PIN pad, your keyboard sees what you type. Use a keyboard you trust.';
+/** Section 8.2.6's consequence, stated in Settings. */
+export const LOCK_SAME_KIND_NOTE =
+  'The duress secret is always the same kind as the app lock: a duress PIN with an app PIN, a duress passphrase with an app passphrase.';
+/** Shown under the passphrase field when a passphrase is being chosen (section 8.2.8: no paste menu, but a keyboard may still paste). */
+export const PASSPHRASE_NO_COPY_NOTE = 'Type the passphrase; do not copy it to the clipboard, where other apps can read it.';
+
+export interface LockCopy {
+  sectionTitle: string;
+  whatNote: string;
+  limitsNote: string;
+  costsNote: string;
+  onStatus: string;
+  changeButton: string;
+  /** The button that switches to the OTHER kind. */
+  switchButton: string;
+  duressTitle: string;
+  duressExplanation: string;
+  duressHonestClaim: string;
+  duressBackupNote: string;
+  duressNeeds: string;
+  duressSetStatus: string;
+  duressNotSetStatus: string;
+  addDuressButton: string;
+  changeDuressButton: string;
+  removeDuressButton: string;
+  removeTitle: string;
+  removeBody: string;
+  removeWithDuressBody: string;
+  removeDuressTitle: string;
+  removeDuressBody: string;
+  lockScreenPrompt: string;
+  checking: string;
+  prompts: { current: string; choose: string; chooseAgain: string; chooseDuress: string; chooseDuressAgain: string };
+  results: { on: string; changed: string; off: string; duressSet: string; duressChanged: string; duressRemoved: string; switched: string };
+}
+
+export const LOCK_COPY: Readonly<Record<LockKind, LockCopy>> = Object.freeze({
+  pin: {
+    sectionTitle: APP_PIN_SECTION_TITLE,
+    whatNote: APP_PIN_WHAT_NOTE,
+    limitsNote: APP_PIN_LIMITS_NOTE,
+    costsNote: APP_PIN_COSTS_NOTE,
+    onStatus: APP_PIN_ON_STATUS,
+    changeButton: 'Change PIN',
+    switchButton: 'Use a passphrase instead',
+    duressTitle: DURESS_SECTION_TITLE,
+    duressExplanation: DURESS_EXPLANATION,
+    duressHonestClaim: DURESS_HONEST_CLAIM,
+    duressBackupNote: DURESS_BACKUP_NOTE,
+    duressNeeds: DURESS_NEEDS_PIN,
+    duressSetStatus: DURESS_SET_STATUS,
+    duressNotSetStatus: DURESS_NOT_SET_STATUS,
+    addDuressButton: 'Add a duress PIN',
+    changeDuressButton: 'Change duress PIN',
+    removeDuressButton: 'Remove duress PIN',
+    removeTitle: REMOVE_PIN_CONFIRM_TITLE,
+    removeBody: REMOVE_PIN_CONFIRM_BODY,
+    removeWithDuressBody: REMOVE_PIN_WITH_DURESS_BODY,
+    removeDuressTitle: REMOVE_DURESS_CONFIRM_TITLE,
+    removeDuressBody: REMOVE_DURESS_CONFIRM_BODY,
+    lockScreenPrompt: PIN_PAD_TITLE,
+    checking: 'Checking the PIN',
+    prompts: { ...PIN_PROMPTS },
+    results: { ...PIN_RESULTS, switched: 'The app lock now uses a 6-digit PIN.' },
+  },
+  phr: {
+    sectionTitle: 'App passphrase',
+    whatNote:
+      "With a passphrase, the wallet's own lock screen asks for your passphrase each time the wallet is opened and after auto-lock, instead of your fingerprint or face. The passphrase is an extra lock inside this app: your device's own lock still protects the secure storage that holds your recovery phrase, and sending still asks for your fingerprint, face or device passcode.",
+    // Section 8.2.9, "Limits note", verbatim.
+    limitsNote:
+      "What the passphrase does not protect against: someone who copies this app's storage from the phone can try passphrases on a computer. A long, random passphrase makes that impractical; a short or common one does not. After 5 wrong passphrases the lock screen waits 30 seconds, and the wait doubles with each further wrong passphrase up to 1 hour; it never wipes the wallet. There is no passphrase reset: if you forget it, clear the app's data or reinstall it, and restore the wallet from your recovery phrase.",
+    costsNote:
+      'While the app passphrase is on, auto-lock cannot be turned off, screen protection stays on, and the wallet posts no notifications: no reminders for recurring payments or swaps, no price alerts, and no alert when someone starts a recovery or takeover of one of your accounts. You see those the next time you open the wallet.',
+    onStatus: 'The app passphrase is on.',
+    changeButton: 'Change passphrase',
+    switchButton: 'Use a PIN instead',
+    duressTitle: 'Duress passphrase',
+    duressExplanation:
+      'A duress passphrase opens a separate wallet instead of this one, for when someone forces you to open your wallet. Keep a small amount in it and use it now and then so it looks lived in.',
+    // Section 8.2.9, "The honest claim, passphrase form", verbatim.
+    duressHonestClaim:
+      "The duress passphrase opens a separate wallet instead of this one, so someone looking at the screen sees an ordinary wallet. Anyone who copies this app's files from the phone can tell that two wallets exist and can try to guess both passphrases from such a copy: a long, random passphrase makes that impractical, a short or common one does not. Funding the second wallet from this wallet links them on-chain.",
+    duressBackupNote:
+      "The second wallet is derived from this wallet's recovery phrase (BIP-85, child index 0), so backing up that one phrase backs up both: restoring this phrase and setting a duress passphrase again brings the same second wallet back. Its own recovery phrase does not reveal this wallet's: someone shown it learns nothing of this wallet.",
+    duressNeeds: 'Turn the app passphrase on first: a duress passphrase works only on top of it.',
+    duressSetStatus: 'A duress passphrase is set.',
+    duressNotSetStatus: 'No duress passphrase is set.',
+    addDuressButton: 'Add a duress passphrase',
+    changeDuressButton: 'Change duress passphrase',
+    removeDuressButton: 'Remove duress passphrase',
+    removeTitle: 'Remove the app passphrase?',
+    removeBody: 'The wallet will unlock with your fingerprint, face or device passcode again, and notifications can be turned back on.',
+    removeWithDuressBody:
+      'The wallet will unlock with your fingerprint, face or device passcode again. Removing the app passphrase also removes the duress passphrase and deletes the second wallet from this phone; it can be brought back from this recovery phrase by setting a duress passphrase again. Move any funds you want to keep out of the second wallet first.',
+    removeDuressTitle: 'Remove the duress passphrase?',
+    removeDuressBody:
+      'The duress passphrase stops working and the second wallet is deleted from this phone. It can be brought back from this recovery phrase by setting a duress passphrase again. Move any funds you want to keep out of the second wallet first.',
+    lockScreenPrompt: 'Enter your passphrase',
+    checking: 'Checking the passphrase',
+    // Section 8.2.9, "Prompts", verbatim.
+    prompts: {
+      current: 'Type your current passphrase',
+      choose: 'Choose a passphrase',
+      chooseAgain: 'Type the passphrase again',
+      chooseDuress: 'Choose a duress passphrase',
+      chooseDuressAgain: 'Type the duress passphrase again',
+    },
+    results: {
+      on: 'The app passphrase is on. The wallet asks for it the next time it is opened or locks.',
+      changed: 'The passphrase was changed.',
+      off: 'The app passphrase is off.',
+      duressSet: 'The duress passphrase is set. It opens the second wallet.',
+      duressChanged: 'The duress passphrase was changed.',
+      duressRemoved: 'The duress passphrase was removed and the second wallet was deleted from this phone.',
+      switched: 'The app lock now uses a passphrase.',
+    },
+  },
+});
+
+/** The copy for a lock of `kind`. */
+export function lockCopy(kind: LockKind): LockCopy {
+  return LOCK_COPY[kind];
+}
