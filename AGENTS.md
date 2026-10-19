@@ -10000,6 +10000,77 @@ Subagents on Opus.
       ≤ 50; the 15-character floor; autofill off against NIST; a third
       "could not be completed" action in the decoy; a generated
       suggestion or advice only; the rule thresholds.
+- [x] Item 2, first slice — THE NATIVE SCRYPT FOR THE APP PIN (commit 8b4ed84;
+      10 files incl. the new app/src/wallet/pin-native-scrypt.ts;
+      check-duress 140 (was 113); offline runner ALL GREEN in the CTO's
+      isolated worktree on HEAD b0f3b7d with --skip-bundle and symlinks
+      for the new packages: engine 1,046, app 9,338 across 59 suites, lint
+      0/0, tsc clean; apply 0 / 10 files; four in-suite and five hand
+      mutants caught; not run on a device). DEPENDENCIES (expo install;
+      Expo pins none): react-native-quick-crypto 1.1.8 pinned EXACTLY
+      (the wallet calls its native Scrypt hybrid object directly — the
+      JS entry writes global.process.nextTick as a side effect and loads
+      the whole library; its wrapper only validates then calls the same
+      method; source pins on the library's scrypt spec file and generated
+      registration guard drift), react-native-nitro-modules ^0.37.1,
+      react-native-quick-base64 ^3.0.1, all MIT; the lockfile 934 → 944
+      entries (+ @craftzdog/react-native-buffer, util, readable-stream
+      with a nested buffer, string_decoder, process, is-arguments), no
+      existing version changed; expo install added the library's config
+      plugin to app.json (default options: only the iOS deployment target
+      to 16.4 where lower; libsodium off); the library compiles its C++
+      and links a static OpenSSL downloaded AT BUILD TIME (Android Maven
+      io.github.ronickg:openssl-static 3.6.2-3; iOS a prebuilt 3.6.2 zip
+      checked against a pinned SHA-256 at pod install); NO RUN-TIME
+      NETWORK USE (the three libraries' JS, C++, Android and iOS sources
+      read: no fetch / XMLHttpRequest / okhttp / NSURLSession; no
+      manifest permissions) — PRIVACY.md unchanged; npm audit unchanged at
+      26 (none names the library); RN 0.86.3 / SDK 57 run only on the New
+      Architecture quick-crypto 1.x needs; expo-doctor 20/21 (the one
+      failure: five Expo patch updates since the lockfile — left). CODE:
+      pin-native-scrypt.ts finds the module without throwing (no require
+      under Node → absent; else TurboModuleRegistry.get('NitroModules')
+      then NitroModules.hasHybridObject('Scrypt') then create), calls
+      deriveKey(password, salt, N, r, p, maxmem, keylen) = OpenSSL's
+      EVP_PBE_scrypt on a background thread; SELF-CHECK once per session
+      with RFC 7914 §12's third vector (P "pleaseletmein", S
+      "SodiumChloride", N 16384, r 8, p 1, dkLen 64, digest 7023bdcb…
+      45575887; the RFC text fetched from rfc-editor.org, file sha256
+      df55932f…f10b197) — a mismatch, a load failure or a later native
+      failure switches the session to noble with the reason kept for
+      Settings and logged once (never a PIN, salt or hash); maxmem =
+      128·r·N + 1 MiB = 68,157,440 bytes at 2^16 (OpenSSL's real minimum
+      128·r·(N+2) + 128·r·p = 67,111,936; Node 24 / OpenSSL 3.5.8 refuses
+      32 MiB and the bare 128·r·N, accepts both larger figures); pinScrypt
+      stays the single entry point (the native path when self-checked,
+      UTF-8 input bytes as noble, no progress callback natively, any
+      native error → noble for that hash and the session); a PIN set on
+      either path opens on the other (pinned: native == noble == Node's
+      scryptSync byte for byte at 2^10 / 2^12 / 2^14 / 2^16, one input
+      non-ASCII; a Node-backed stand-in for the native module with one
+      call per hash); pin-cost.ts reports the path ("· Hashing: native
+      scrypt (react-native-quick-crypto)" / "JavaScript scrypt
+      (@noble/hashes)"; on the native path Stop and the 120 s limit act
+      between sizes — stated in the hint); Settings → Developer line "PIN
+      hashing path: native scrypt (react-native-quick-crypto), self-check
+      passed" / "…JavaScript scrypt (@noble/hashes): the native module is
+      not in this build" (+ load-failed, self-check-failed, native-error
+      forms). DOCS: THREAT_MODEL F-81 status (decided, built, verified
+      offline, native cost unmeasured); DEVICE_BUILDS "The native scrypt
+      for the app PIN". BUILD (scratchpad worktree wt-build2 at b414989 +
+      the patch; wt-build untouched): prebuild autolinks
+      NitroModulesPackage, QuickCryptoPackage and the QuickBase64 C++
+      TurboModule; assembleDebug 6 min 59 s with no emulator input, Gradle
+      stopped; the APK carries lib/x86_64/libQuickCrypto.so (10.3 MB) and
+      libNitroModules.so, no new permissions →
+      .local/builds/shiba-devclient-b414989-qc-debug.apk (97,878,200
+      bytes, sha256 c06d4245…1f949), not installed; expo export succeeds
+      there with the new code. UNVERIFIED (the dev-build pass next): the
+      module loading and self-checking on the emulator, its cost at 2^16,
+      a JavaScript-set PIN opening natively, the JS thread free during the
+      hash, Stop between sizes, the Developer line's layout / TalkBack /
+      dark mode, the Expo Go fallback in practice, iOS and the
+      deployment-target change, a release-build measurement.
 - [x] Item 5 — LEADERSHIP REFRESH (docs commit below; check-readiness 208,
       check-screen-protection 87, check-devmode 418, check-notifications
       184, check-duress 113, check-multisig 424 all green in the CTO's
