@@ -10140,6 +10140,87 @@ Subagents on Opus.
       DURESS_WALLET.md were counted). NOTHING IS BUILT; nothing can be
       rehearsed until a sandbox account exists (INPUT: the provider choice
       and its sandbox credentials).
+- [x] Item 4 — THE ENCRYPTED RECORDS BACKUP (feature 47; commit 6e499df; 11
+      files incl. the new app/src/wallet/records-backup.ts,
+      screens/RecordsBackupSection.tsx and check-records-backup 141 (9
+      in-suite mutants); offline runner ALL GREEN in the CTO's isolated
+      worktree on HEAD a1a05d4 with --skip-bundle: engine 1,046, app 9,479
+      across 60 suites, lint 0/0, tsc clean; apply 0 / 11 files — the
+      agent's patch carried the cold-signing agent's suites.mjs line from
+      the shared tree, filtered out before the verify and the commit per
+      the standing rule; staged with `git apply --cached` from the verified
+      tracked diff plus the three new files (cmp-equal); not seen on a
+      device). FORMAT v1 (pinned against Node's pbkdf2Sync / hkdfSync /
+      aes-256-gcm with setAAD, each side opening the other's file, the
+      vector text's sha256 pinned): one line of padded base64 over magic
+      SWRB ‖ version 01 ‖ a random 32-byte HKDF salt ‖ a random 12-byte
+      nonce (the 49-byte header is the GCM additional data) ‖ AES-256-GCM
+      ciphertext + tag (@noble/ciphers 2.4.0, MIT, pinned exactly with
+      --save-exact; the top-level entry 1.3.0 → 2.4.0 with 1.3.0 nested
+      under @walletconnect/utils and ox unchanged; npm audit still 26);
+      the payload UTF-8 JSON {type "shiba-wallet-records-backup", version
+      1, createdAt, documents} mapping each declared wallet-scoped store
+      key to its stored text byte for byte; KEY = HKDF-SHA256(the 64-byte
+      BIP-39 seed, the file's salt, info
+      "shiba-wallet/records-backup/v1/aes-256-gcm-key") → 32 bytes, a
+      fresh salt per file so a nonce is never reused under a key;
+      REFUSALS before any key: not base64, wrong magic, version 0,
+      truncated, a newer version ("newer format"); a failed tag → "This
+      backup was made by a different recovery phrase, or the file is
+      damaged."; an extra, undeclared or secret payload key refused.
+      DERIVATION: storage.ts deriveRecordsBackupKey (additive) refuses any
+      non-phrase account (imported, watch-only, multisig) BEFORE any
+      secure-store read or prompt ("Records backups are made with your
+      recovery phrase. Switch to an account that comes from your recovery
+      phrase on Home first. Nothing was read."), then the gate with target
+      {kind:'phrase'} → readPhrase → mnemonicToSeed → HKDF, the seed
+      zeroed; one prompt ("Approve making an encrypted backup of your
+      records" / "Approve opening an encrypted backup of your records");
+      the decoy profile w2 exports only shiba-wallet.profile-w2.* records
+      and reads only its own secure-store names (pinned, plus a
+      seam-bypass mutant). CONTENTS and the restore through each store's
+      own strict reader and existing write: contacts (addContact, the
+      original createdAt kept), notes (saveNote), user-added networks
+      (addCustomNetwork — VERIFIED AGAIN through the RPC), tracked tokens
+      (addToken), guardian recovery records (saveRecoveryMetadata),
+      multisig records (export → importMultisigRecord → rename; needs one
+      of this wallet's phrase accounts as a signer; no operation history),
+      price alerts (tripped / fired state kept), spending limits
+      (saveSpendingPolicy), bridge transfers (a merged list through the
+      module's own bridgeRecordToStored + parseBridgeTransfers, written
+      through the seam); MERGE RULE: a record already on the phone is
+      NEVER overwritten; a failed step keeps earlier restores and names
+      the step; an unreadable store is left out of an export and named.
+      DELIBERATELY OUT (stated on screen): session keys (revoke and set up
+      again), imported keys (only the user's own copy), passkeys (the
+      phone's provider), WalletConnect bindings and browser connections,
+      pending transactions, spending history, recovery progress,
+      inheritance and notification state, account names and watched
+      addresses, aa-config links; the seed-in-cloud backup the feature
+      text describes is NOT built (row 47 → Built, verified offline,
+      partial — the tally lines at the item-9 refresh). Strings: the
+      section "Records backup", RECORDS_BACKUP_WHAT_NOTE ("…It contains
+      no private key, no recovery phrase and no PIN."), _KEY_NOTE ("…If
+      you lose the recovery phrase, this backup is lost with it."),
+      _NOT_INCLUDED_NOTE, _MERGE_NOTE, _FILE_NOTE (the temporary copy
+      deleted a minute after the share sheet closes; shareTextFile),
+      "Export records backup" / "Restore from a records backup", "This
+      file is not a Shiba Wallet records backup, or it is incomplete.
+      Nothing was restored." THREAT_MODEL T-88. MUTANTS caught: another
+      info string, the header dropped from the AAD, the version check
+      removed, a merge overwriting a note, the account guard removed, a
+      damaged document exported, undeclared keys accepted, the seam
+      bypassed, a tripped alert restored armed. FOLLOW-UPS: notes.ts
+      NOTE_PRIVACY_LINE still says notes are "not backed up by your
+      recovery phrase" (reword at the refresh); the picker (type */*,
+      the content:// rule of pickRecordFile) and the share sheet
+      (text/plain / public.plain-text) on a device — this AVD's chooser
+      could not save files on 2026-10-11; Hermes running pure-JS AES-GCM
+      and the restore's speed with many records; the decoy profile live.
+      Emulator checklist (5 steps; the dev build on a throwaway wallet for
+      the wipe-and-restore and the decoy export; the real Expo Go wallet
+      only read-only export and an idempotent restore) in the builder's
+      report.
 - [x] Item 5 — LEADERSHIP REFRESH (docs commit below; check-readiness 208,
       check-screen-protection 87, check-devmode 418, check-notifications
       184, check-duress 113, check-multisig 424 all green in the CTO's
