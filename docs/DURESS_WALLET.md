@@ -555,6 +555,13 @@ Option (b). No slice is built in phase 20. The reasons, in order of weight:
   failed to load the WalletConnect code, so neither wallet had sessions);
   a send's device prompt from either wallet; TalkBack; a real phone; iOS;
   and the open question of a BIP-39 passphrase (section 7.8).
+- **Stage P1 — a lock passphrase instead of the PIN. BUILT OFFLINE**
+  (phase 22, 2026-10-19; section 8.2): the record's version 2 with its
+  `kind` field (371 bytes for either kind; a version 1 record still opens
+  and is converted on the next write), the passphrase rules, the
+  passphrase field on the lock screen and in Settings, switching kinds in
+  one record write, pinned in `app/scripts/check-duress.mjs`. Not yet run
+  on the emulator; the BIP-39 passphrase decoy (Stage P2) is not built.
 
 ### 5.3 Decisions for the Chairperson
 
@@ -1087,7 +1094,7 @@ was built, for the Chairperson to confirm or change:
 
 ---
 
-## 8. Passphrases (decided 2026-10-19; design only, nothing built)
+## 8. Passphrases (decided 2026-10-19; the lock passphrase, stage P1, built offline 2026-10-19; the passphrase decoy, stage P2, not built)
 
 On 2026-10-19 the Chairperson answered the open passphrase question
 (section 5.3 item 5, sections 7.6 and 7.8) with "both" (`AGENTS.md`,
@@ -1868,6 +1875,18 @@ comes back with nothing typed.
   rule.
 
 ### 8.4 Staging, checks and the emulator pass
+
+**Status of P1 (2026-10-19): built and checked offline, not yet on the
+emulator.** Where the code departs from this section: `@scure/bip39`
+does not export its `nfkd`, so `pin.ts` mirrors its rule (the same
+well-formedness loop, then `normalize('NFKD')`) and the check pins the
+equivalence through `mnemonicToSeedSync`; changing a passphrase (no
+backup check) opens the recovery phrase with one device prompt so the
+recovery-word rule can run; the near-copy rule also runs when a duress
+passphrase is changed, because the app passphrase is typed first in that
+flow; the field has no "Show" toggle; and the Settings notes of other
+sections (auto-lock, screen protection, notifications) still say "app
+PIN" while a passphrase is in use.
 
 **Stage P1 — the lock passphrase (section 8.2). Smaller; lands first**,
 after phase 22 item 2's native scrypt is in, since both go through

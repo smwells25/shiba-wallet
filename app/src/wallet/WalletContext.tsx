@@ -66,13 +66,18 @@ import {
   attemptPin,
   clearDuressSlot,
   deletePinRecord,
+  isNearCopy,
+  notUsableMessage,
   pinAttemptMessage,
   pinCountdownOf,
   readPinRecord,
+  sameLockSecret,
   setAppPin,
+  setLockSlots,
   setPinSlot,
   PIN_DAMAGED_MESSAGE,
   PinRecordDamagedError,
+  type LockKind,
   type PinCountdown,
   type PinSlot,
 } from './pin';
@@ -80,6 +85,7 @@ import {
   DECOY_STORE_PROFILE,
   DURESS_MUST_DIFFER,
   PIN_ACTION_NOT_COMPLETED,
+  appLockKind,
   appPinPresence,
   decoyWalletExists,
   profileForSlot,
@@ -327,8 +333,17 @@ interface WalletContextValue {
   pinSessionSlot: PinSlot | null;
   /** Changes whenever a PIN opened a different wallet (LockGate remounts the screens on it). */
   profileKey: number;
-  /** Turns the app PIN on (Settings, after the backup check). */
-  turnOnAppPin: (pin: string) => Promise<void>;
+  /** Turns the app lock on (Settings, after the backup check): a PIN, or a passphrase when `kind` is "phr". */
+  turnOnAppPin: (pin: string, kind?: LockKind) => Promise<void>;
+  /**
+   * Switches the app lock between a PIN and a passphrase
+   * (docs/DURESS_WALLET.md section 8.2.7): checks the current secret, then
+   * rewrites BOTH slots in one write with the new app secret and — when a
+   * duress secret exists — the new duress secret of the same kind. Only the
+   * real wallet can; under the second wallet the steps end with the neutral
+   * sentence.
+   */
+  switchAppLockKind: (currentSecret: string, kind: LockKind, nextAppSecret: string, nextDuressSecret: string | null) => Promise<void>;
   /** Changes the open wallet's PIN after checking its current PIN. */
   changeAppPin: (currentPin: string, nextPin: string) => Promise<void>;
   /** Turns the app PIN off after checking the current PIN (and removes a duress PIN and its wallet). */
@@ -647,7 +662,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           // that cannot be read counts as set (fail closed).
           let pinOn: boolean;
           try {
-            pinOn = (await readPinRecord(appSecureBackend())) !== null;
+            const lockRecord = await readPinRecord(appSecureBackend());
+            pinOn = lockRecord !== null;
+            // The lock screen draws the pad or the passphrase field from the
+            // record's kind, read here with the record and before any wallet.
+            if (lockRecord) appLockKind.set(lockRecord.kind);
           } catch {
             pinOn = true;
           }
@@ -797,13 +816,21 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const turnOnAppPin = useCallback(
-    async (pin: string) => {
-      await setAppPin(appSecureBackend(), pin);
+    async (pin: string, kind: LockKind = 'pin') => {
+      await setAppPin(appSecureBackend(), pin, {}, kind);
       setSessionSlot('primary');
+      appLockKind.set(kind);
       appPinPresence.set(true);
     },
     [setSessionSlot],
   );
+
+  /** Whether a duress secret is the app secret again (a PIN) or a near copy of it (a passphrase), for the lock's kind. */
+  const duressTooClose = useCallback(async (appSecret: string, duressSecret: string): Promise<string | null> => {
+    const kind = (await readPinRecord(appSecureBackend()))?.kind ?? 'pin';
+    if (kind === 'pin') return sameLockSecret('pin', appSecret, duressSecret) ? DURESS_MUST_DIFFER : null;
+    return isNearCopy(appSecret, duressSecret) ? notUsableMessage('phr') : null;
+  }, []);
 
   const changeAppPin = useCallback(
     async (currentPin: string, nextPin: string) => {
@@ -836,6 +863,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       if (await decoyWalletExists(decoyVault())) await removeDecoyWallet();
       await deletePinRecord(appSecureBackend());
       appPinPresence.set(false);
+      appLockKind.set('pin');
       setSessionSlot(null);
     },
     [checkSessionPin, decoyVault, removeDecoyWallet, setSessionSlot],
@@ -852,21 +880,41 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       // Only the real wallet can add one (section 7.1); under the second
       // wallet the steps run the same way and end with a neutral sentence.
       if (slot !== 'primary') throw new Error(PIN_ACTION_NOT_COMPLETED);
-      if (duressPin === currentPin) throw new Error(DURESS_MUST_DIFFER);
+      // Checked BEFORE the second wallet is set up, in the lock's own form.
+      const tooClose = await duressTooClose(currentPin, duressPin);
+      if (tooClose) throw new Error(tooClose);
       await setUpDecoyWallet(realPhrase, decoyVault());
       await setPinSlot(appSecureBackend(), 'duress', duressPin);
     },
-    [checkSessionPin, decoyVault],
+    [checkSessionPin, decoyVault, duressTooClose],
   );
 
   const changeDuressPin = useCallback(
     async (currentPin: string, nextDuressPin: string) => {
       const slot = await checkSessionPin(currentPin);
       if (slot !== 'primary') throw new Error(PIN_ACTION_NOT_COMPLETED);
-      if (nextDuressPin === currentPin) throw new Error(DURESS_MUST_DIFFER);
+      const tooClose = await duressTooClose(currentPin, nextDuressPin);
+      if (tooClose) throw new Error(tooClose);
       await setPinSlot(appSecureBackend(), 'duress', nextDuressPin);
     },
-    [checkSessionPin],
+    [checkSessionPin, duressTooClose],
+  );
+
+  const switchAppLockKind = useCallback(
+    async (currentSecret: string, kind: LockKind, nextAppSecret: string, nextDuressSecret: string | null) => {
+      const slot = await checkSessionPin(currentSecret);
+      // Only the real wallet can rewrite both slots; under the second wallet
+      // the steps run the same way and end with the neutral sentence
+      // (docs/DURESS_WALLET.md section 8.2.7).
+      if (slot !== 'primary') throw new Error(PIN_ACTION_NOT_COMPLETED);
+      // A second wallet without a duress secret of the new kind would be
+      // left with no way to open it: refuse rather than orphan it.
+      const decoy = await decoyWalletExists(decoyVault());
+      if (decoy !== (nextDuressSecret !== null)) throw new Error('The duress secret must be chosen again together with the app lock. Nothing was changed.');
+      await setLockSlots(appSecureBackend(), kind, nextAppSecret, nextDuressSecret);
+      appLockKind.set(kind);
+    },
+    [checkSessionPin, decoyVault],
   );
 
   const removeDuressPin = useCallback(
@@ -1586,6 +1634,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       addDuressPin,
       changeDuressPin,
       removeDuressPin,
+      switchAppLockKind,
       deriveRecordsBackupKey,
     }),
     [
@@ -1625,6 +1674,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       addDuressPin,
       changeDuressPin,
       removeDuressPin,
+      switchAppLockKind,
       deriveRecordsBackupKey,
     ],
   );

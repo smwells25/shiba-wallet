@@ -1,7 +1,7 @@
-import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { ActivityIndicator, AppState, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { usePreventScreenCapture } from 'expo-screen-capture';
-import { Button } from '../components';
+import { Button, useFieldLabels } from '../components';
 import { useTheme } from '../theme';
 import { usePrefs } from '../wallet/PrefsContext';
 import { useWallet } from '../wallet/WalletContext';
@@ -20,7 +20,7 @@ import {
   type LockGateState,
 } from '../wallet/lock';
 import { PIN_LENGTH, pinCountdownText, type PinCountdown } from '../wallet/pin';
-import { PIN_PAD_TITLE } from '../wallet/duress';
+import { PIN_PAD_TITLE, appLockKind, lockCopy } from '../wallet/duress';
 
 /**
  * Whether the lock overlay is currently up. Consumers that can surface
@@ -75,7 +75,10 @@ export function useAppLock(): { locked: boolean } {
  * the gate never depends on biometrics. WalletContext.unlockWithPin decides
  * which wallet the PIN opens; when it opens a different one, `profileKey`
  * changes and the whole tree below is remounted, so no screen keeps state
- * of the other wallet.
+ * of the other wallet. When the app lock is a PASSPHRASE
+ * (docs/DURESS_WALLET.md section 8.2) the lock view shows the
+ * PassphraseField below instead of the pad, chosen from the lock's kind
+ * that WalletContext read with the PIN record at launch, before any wallet.
  *
  * NOTE: the OS biometric prompt itself fires 'inactive'/'background'
  * AppState events on some platforms. That is harmless here: the away
@@ -87,6 +90,9 @@ export function LockGate({ children }: { children: React.ReactNode }) {
   const { status: walletStatus, awaitingPin, unlockWithPin, profileKey } = useWallet();
   const { autoLockMs, ready: prefsReady } = usePrefs();
   const { appPinOn } = usePrefs();
+  // The app lock's kind (a PIN or a passphrase), known from the PIN record
+  // read at launch before any wallet loads (../wallet/duress.ts appLockKind).
+  const lockKind = useSyncExternalStore(appLockKind.subscribe, appLockKind.get);
   // null until the device has answered: the gate fails closed meanwhile.
   const [deviceAvailable, setAvailable] = useState<boolean | null>(null);
   // With an app PIN: a wallet loading behind the PIN counts as ready, and
@@ -238,7 +244,17 @@ export function LockGate({ children }: { children: React.ReactNode }) {
               <Text style={[styles.hint, { color: theme.textMuted }]}>
                 {lockScreenHint(reconciled.startedLocked)}
               </Text>
-              {appPinOn ? (
+              {appPinOn && lockKind === 'phr' ? (
+                // A passphrase lock (docs/DURESS_WALLET.md section 8.2.8): one
+                // text field instead of the pad, the same words whichever
+                // wallet the passphrase would open.
+                <PassphraseField
+                  key={awaitingPin ? 'launch' : 'return'}
+                  prompt={lockCopy('phr').lockScreenPrompt}
+                  submitLabel="Unlock"
+                  onComplete={unlockWithAppPin}
+                />
+              ) : appPinOn ? (
                 // The same words and the same pad whichever wallet the PIN
                 // would open (docs/DURESS_WALLET.md section 6.5).
                 <PinPad key={awaitingPin ? 'launch' : 'return'} prompt={PIN_PAD_TITLE} onComplete={unlockWithAppPin} />
@@ -417,6 +433,141 @@ export function PinPad({
 /** How often the PinPad re-reads a running wait. */
 export const PIN_COUNTDOWN_TICK_MS = 1000;
 
+/**
+ * The passphrase field (docs/DURESS_WALLET.md section 8.2.8): the lock
+ * screen's input when the app lock is a passphrase, and the Settings flows'
+ * input for a passphrase. The same contract as the PinPad: `onComplete`
+ * gets the typed text and returns the sentence to show, a wait to count
+ * down, or null (accepted).
+ *
+ *  - The text is held only while it is typed: on submit it is copied into
+ *    the call and the state is cleared BEFORE `onComplete` runs; nothing
+ *    else keeps or logs it.
+ *  - Screen capture is blocked with the PinPad's own key 'pin-pad',
+ *    whatever the app-wide switch says (expo-screen-capture 57.0.4
+ *    build/ScreenCapture.d.ts:43).
+ *  - Input hygiene — the same props as the private-key import
+ *    (screens/ImportKeyScreen.tsx), each in the installed react-native
+ *    0.86.3 Libraries/Components/TextInput/TextInput.d.ts:
+ *    secureTextEntry (:951; on Android the input type
+ *    TYPE_TEXT_VARIATION_PASSWORD, ReactAndroid … textinput/
+ *    ReactTextInputManager.kt:687–699), autoCorrect={false} (:744),
+ *    spellCheck={false} (:211), autoComplete="off" (:668, the value
+ *    'off' at :737), importantForAutofill="no" (:391), textContentType=
+ *    "none" (:269), autoCapitalize="none" (:588), contextMenuHidden (:794,
+ *    no paste menu; a keyboard's own clipboard strip may still insert text
+ *    — unverified), maxLength (:827) only as a typing guard set generously
+ *    (256), because whether React Native counts it in UTF-16 units or code
+ *    points on Android was not checked; the 128-code-point rule is enforced
+ *    in ../wallet/pin.ts. React Native 0.86.3 has NO prop for Android's
+ *    "no personalised learning" keyboard flag (IME_FLAG_NO_PERSONALIZED_LEARNING
+ *    appears nowhere in its Android text-input sources), so none is set:
+ *    whether a keyboard learns from a password field is the keyboard's
+ *    choice.
+ *  - No "Show" toggle: section 8.2.8 lists shoulder-surfing as a cost and
+ *    designs no way to show the text, and a shown field is no longer a
+ *    password field for the keyboard.
+ *  - The field is named by its visible prompt (useFieldLabels); the
+ *    countdown and the message line are the PinPad's.
+ */
+export function PassphraseField({
+  prompt,
+  submitLabel,
+  onComplete,
+}: {
+  prompt: string;
+  submitLabel: string;
+  onComplete: (passphrase: string) => Promise<PinPadAnswer>;
+}) {
+  usePreventScreenCapture('pin-pad');
+  const theme = useTheme();
+  const fieldLabel = useFieldLabels();
+  const field = fieldLabel('lock-passphrase', prompt);
+  const [text, setText] = useState('');
+  const [message, setMessage] = useState<string | null>(null);
+  const [countdown, setCountdown] = useState<PinCountdown | null>(null);
+  const [clock, setClock] = useState(0);
+  const [countdownFrom, setCountdownFrom] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  useEffect(() => {
+    if (!countdown) return undefined;
+    const timer = setInterval(() => {
+      const t = Date.now();
+      setClock(t);
+      if (t >= countdown.until) clearInterval(timer);
+    }, PIN_COUNTDOWN_TICK_MS);
+    return () => clearInterval(timer);
+  }, [countdown]);
+
+  const submit = () => {
+    if (busy || text.length === 0) return;
+    const value = text;
+    // The state forgets the passphrase before the check runs.
+    setText('');
+    setBusy(true);
+    setMessage(null);
+    setCountdown(null);
+    onComplete(value).then(
+      (result) => {
+        if (!mounted.current) return;
+        setBusy(false);
+        if (result !== null && typeof result === 'object') {
+          const t = Date.now();
+          setClock(t);
+          setCountdownFrom(t);
+          setCountdown(result.countdown);
+          setMessage(null);
+        } else {
+          setMessage(result);
+        }
+      },
+      () => {
+        if (!mounted.current) return;
+        setBusy(false);
+        setMessage('The passphrase could not be checked. Try again.');
+      },
+    );
+  };
+  const line = countdown ? pinCountdownText(countdown, clock) : message;
+  const ticking = countdown !== null && clock !== countdownFrom && clock < countdown.until;
+
+  return (
+    <View style={styles.pad}>
+      <Text {...field.label} style={[styles.padPrompt, { color: theme.text }]}>{field.text}</Text>
+      <TextInput
+        {...field.input}
+        value={text}
+        onChangeText={setText}
+        onSubmitEditing={submit}
+        returnKeyType="done"
+        editable={!busy}
+        secureTextEntry
+        autoCorrect={false}
+        spellCheck={false}
+        autoComplete="off"
+        importantForAutofill="no"
+        textContentType="none"
+        autoCapitalize="none"
+        contextMenuHidden
+        maxLength={256}
+        style={[styles.passphraseInput, { color: theme.text, backgroundColor: theme.card, borderColor: theme.controlBorder }]}
+      />
+      <Button title={submitLabel} onPress={submit} disabled={busy || text.length === 0} style={styles.button} />
+      {busy ? <ActivityIndicator color={theme.accent} accessibilityLabel={lockCopy('phr').checking} /> : null}
+      <Text accessibilityLiveRegion={ticking ? 'none' : 'polite'} style={[styles.error, { color: theme.danger }]}>
+        {line ?? ''}
+      </Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   fill: {
     flex: 1,
@@ -487,5 +638,13 @@ const styles = StyleSheet.create({
   padKeyText: {
     fontSize: 22,
     fontWeight: '600',
+  },
+  passphraseInput: {
+    alignSelf: 'stretch',
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 16,
   },
 });
