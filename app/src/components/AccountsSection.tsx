@@ -301,7 +301,7 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
               onChangeText={setDraft}
               autoFocus
               maxLength={MAX_ACCOUNT_NAME_LENGTH * 2}
-              placeholder="Account name"
+              placeholder="For example Savings"
               placeholderTextColor={theme.textMuted}
               style={[
                 styles.input,
@@ -405,7 +405,7 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
           value={newName}
           onChangeText={setNewName}
           maxLength={MAX_ACCOUNT_NAME_LENGTH * 2}
-          placeholder="New account name (optional)"
+          placeholder="For example Savings"
           placeholderTextColor={theme.textMuted}
           style={[
             styles.input,

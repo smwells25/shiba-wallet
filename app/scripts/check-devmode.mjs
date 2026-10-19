@@ -1771,8 +1771,16 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
       comps.includes('input: fieldA11y(label, { labelId: nativeID, ...(hint !== undefined ? { hint } : {}) }),'));
   const pairMutant = files.map((x) => (x.f === 'screens/ImportKeyScreen.tsx' ? { ...x, src: x.src.replace("{...fieldLabel('key', 'Ethereum private key').label} ", '') } : x));
   check('…mutant caught: a labelled field whose visible label lost its nativeID', pairProblems(pairMutant).length === 1);
-  const hiddenMutant = files.map((x) => (x.f === 'screens/MultisigScreen.tsx' ? { ...x, src: x.src.replace("<HiddenFieldLabel field={fieldLabel('record-paste', 'Paste the multisig record')} />", '') } : x));
-  check('…mutant caught (p20d finding 1): a field whose hidden label view was dropped', pairProblems(hiddenMutant).length === 1);
+  // Phase 22: no screen uses HiddenFieldLabel any more (the last four paste
+  // boxes got visible captions), so the pair rule's hidden-label branch is
+  // shown on a synthetic file; the component stays for future use.
+  const hiddenPair = { f: 'mutant.tsx', src: "<View>\n<HiddenFieldLabel field={fieldLabel('x', 'X')} />\n<TextInput {...fieldLabel('x', 'X').input} />\n</View>" };
+  check('…a HiddenFieldLabel still counts as the label view of the field it names (synthetic file)',
+    pairProblems([...files, hiddenPair]).length === 0);
+  check('…mutant caught (p20d finding 1): a field whose hidden label view was dropped',
+    pairProblems([...files, { ...hiddenPair, src: hiddenPair.src.replace(/<HiddenFieldLabel[^\n]*\n/, '') }]).length === 1);
+  const pasteCaptionMutant = files.map((x) => (x.f === 'screens/MultisigScreen.tsx' ? { ...x, src: x.src.replace("<Text {...fieldLabel('record-paste', 'Paste the multisig record').label}", '<Text') } : x));
+  check('…mutant caught (phase 22): a paste box whose visible caption lost its nativeID', pairProblems(pasteCaptionMutant).length === 1);
   const captionMutant = files.map((x) => (x.f === 'screens/ConnectionsScreen.tsx' ? { ...x, src: x.src.replace("<Text {...fieldLabel('pairing-link', 'WalletConnect pairing link').label}", '<Text') } : x));
   check('…mutant caught (p21b finding 1): a field whose visible caption lost its nativeID', pairProblems(captionMutant).length === 1);
 
@@ -1837,20 +1845,50 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
       return out;
     });
     const hiddenCount = files.reduce((n, { f, src }) => n + (f === 'components.tsx' ? 0 : (src.match(/<HiddenFieldLabel\b/g) ?? []).length), 0);
-    check('p21a finding 1b / p21b finding 1: every HiddenFieldLabel call site renders the label as the first child of a View, IMMEDIATELY before the TextInput it names (same key), none elsewhere (source scan of app/src; 4 call sites left)',
-      hiddenOrderProblems(files).length === 0 && hiddenCount === 4, `${hiddenCount} call sites; problems: ${hiddenOrderProblems(files).join(', ')}`);
-    // Pass p21b: the fields that kept a hidden label (paste boxes whose
-    // placeholder already shows the same words) and the 22 that now have a
-    // small VISIBLE caption, spreading the field's .label and drawing its
-    // .text, in the file named.
-    const keptHidden = [
-      ['components/RecoveryViews.tsx', "fieldLabel('paste', placeholder)"],
-      ['screens/MultisigScreen.tsx', "fieldLabel('approval-paste', 'Paste a co-signer’s approval (or a 65-byte signature from another wallet)')"],
-      ['screens/MultisigScreen.tsx', "fieldLabel('record-paste', 'Paste the multisig record')"],
-      ['screens/MultisigScreen.tsx', "fieldLabel('request-paste', 'Paste the multisig signing request')"],
+    check('p21a finding 1b / p21b finding 1: every HiddenFieldLabel call site renders the label as the first child of a plain View, IMMEDIATELY before the TextInput it names (same key), none elsewhere (source scan of app/src; since phase 22 no call site is left, which is accepted — the component is kept for future use)',
+      hiddenOrderProblems(files).length === 0, `${hiddenCount} call sites; problems: ${hiddenOrderProblems(files).join(', ')}`);
+    // The order rule itself, on a synthetic well-formed site and its mutants
+    // (the real sites it was written for are gone since phase 22).
+    const goodHidden = "<View>\n  <HiddenFieldLabel field={fieldLabel('a', 'A')} />\n  <TextInput {...fieldLabel('a', 'A').input} value={x} />\n</View>\n<Button title=\"Next\" />";
+    const hiddenSite = (src) => [{ f: 'mutant.tsx', src }];
+    check('…a well-formed hidden label site passes the order rule (synthetic file)', hiddenOrderProblems(hiddenSite(goodHidden)).length === 0);
+    // Pass p21b: 24 fields got a small VISIBLE caption, spreading the field's
+    // .label and drawing its .text, in the file named. Phase 22 (the
+    // Chairperson's decision of 2026-10-19): the four paste boxes that kept a
+    // hidden caption (its text equalled the placeholder, so TalkBack said the
+    // name twice) show the same text as a visible caption with a short
+    // placeholder, and no longer use HiddenFieldLabel.
+    const pasteBoxes = [
+      ['components/RecoveryViews.tsx', "fieldLabel('paste', label)", 'placeholder={placeholder}'],
+      ['screens/MultisigScreen.tsx', "fieldLabel('approval-paste', 'Paste a co-signer’s approval (or a 65-byte signature from another wallet)')", 'placeholder="Approval text or a 0x… signature"'],
+      ['screens/MultisigScreen.tsx', "fieldLabel('record-paste', 'Paste the multisig record')", 'placeholder="Record text"'],
+      ['screens/MultisigScreen.tsx', "fieldLabel('request-paste', 'Paste the multisig signing request')", 'placeholder="Request text"'],
     ];
-    check('p21b finding 1: the four fields that keep a hidden label (exact list)',
-      keptHidden.every(([f, e]) => files.find((x) => x.f === f)?.src.includes(`<HiddenFieldLabel field={${e}} />`)));
+    const pasteBoxProblems = (all) => pasteBoxes.filter(([f, e, ph]) => {
+      const src = all.find((x) => x.f === f)?.src ?? '';
+      const at = src.indexOf(`{...${e}.input}`);
+      const tag = at < 0 ? '' : src.slice(at, src.indexOf('/>', at));
+      return src.includes(`<HiddenFieldLabel field={${e}} />`) || !tag.includes(ph);
+    }).map(([f, e]) => `${f} ${e}`);
+    check('phase 22: the four paste boxes no longer use HiddenFieldLabel and carry their short placeholders (exact)',
+      pasteBoxProblems(files).length === 0, pasteBoxProblems(files).join(', '));
+    check('…mutant caught (phase 22): a paste box with its hidden caption back',
+      pasteBoxProblems(files.map((x) => (x.f === 'screens/MultisigScreen.tsx'
+        ? { ...x, src: x.src.replace("<TextInput\n          {...fieldLabel('request-paste'", "<HiddenFieldLabel field={fieldLabel('request-paste', 'Paste the multisig signing request')} />\n        <TextInput\n          {...fieldLabel('request-paste'") }
+        : x))).length === 1);
+    const pasteCallers = [
+      ['screens/RecoverAccountScreen.tsx', 'label="Paste a guardian\'s approval (or a 65-byte signature from another wallet)"', 'placeholder="Approval text or a 0x… signature"'],
+      ['screens/RecoverAccountScreen.tsx', 'label="Paste or scan the recovery record"', 'placeholder="Record text (JSON)"'],
+      ['screens/ApproveRecoveryScreen.tsx', 'label="Paste the recovery request"', 'placeholder="Request text"'],
+      ['screens/GuardiansScreen.tsx', 'label="Paste a recovery request or a proposal id (0x…)"', 'placeholder="Request text or a 0x… id"'],
+      ['screens/InheritanceScreen.tsx', 'label="Paste a takeover request or its id (0x…)"', 'placeholder="Request text or a 0x… id"'],
+      ['screens/MultisigScreen.tsx', 'label={`Co-signer ${i + 1}: Ethereum address`}', 'placeholder="0x…"'],
+    ];
+    const pasteOrScanTags = files.flatMap(({ f, src }) => tags(src, 'PasteOrScan').map((t) => ({ f, t })));
+    check('phase 22: every PasteOrScan caller passes the caption it had before as `label` and a short `placeholder` (exact; 6 callers)',
+      pasteOrScanTags.length === 6 &&
+        pasteCallers.every(([f, l, ph]) => pasteOrScanTags.some((x) => x.f === f && x.t.includes(l) && x.t.includes(ph))),
+      `${pasteOrScanTags.length} callers`);
     const captioned = [
       ['components/Contacts.tsx', "fieldLabel('contact-name', 'Contact name')"],
       ['screens/ContactsScreen.tsx', 'fieldLabel(`rename-${contact.address}`, `New name for ${contact.name}`)'],
@@ -1876,33 +1914,22 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
       ['screens/SpendingLimitsScreen.tsx', 'fieldLabel(\'custom-window\', `Custom window length in ${customUnit}`)'],
       ['screens/DcaViews.tsx', "field('custom-period', 'Custom period length')"],
       ['screens/SessionsScreen.tsx', "fieldLabel('custom-period', 'Custom period length')"],
+      ...pasteBoxes.map(([f, e]) => [f, e]),
     ];
     const captionMissing = captioned.filter(([f, e]) => {
       const src = files.find((x) => x.f === f)?.src ?? '';
       return !src.includes(`<Text {...${e}.label} style={[styles.`) || !src.includes(`{${e}.text}`);
     });
-    check('p21b finding 1: 24 fields that had a hidden label now show a visible caption tied to the field (source)',
-      captioned.length === 24 && captionMissing.length === 0, captionMissing.map(([f, e]) => `${f} ${e}`).join(', '));
-    const orderMutant = files.map((x) => (x.f === 'screens/MultisigScreen.tsx'
-      ? { ...x, src: x.src.replace("<HiddenFieldLabel field={fieldLabel('record-paste', 'Paste the multisig record')} />", '').replace('<MultisigScanButton\n          title={MULTISIG_SCAN_RECORD_TITLE}', "<HiddenFieldLabel field={fieldLabel('record-paste', 'Paste the multisig record')} /><MultisigScanButton\n          title={MULTISIG_SCAN_RECORD_TITLE}") }
-      : x));
-    check('…mutant caught: a hidden label moved away from its field (above the scan button)',
-      hiddenOrderProblems(orderMutant).length >= 1);
-    const unanchored = files.map((x) => (x.f === 'screens/MultisigScreen.tsx'
-      ? { ...x, src: x.src.replace("<View>\n          <HiddenFieldLabel field={fieldLabel('request-paste'", "<HiddenFieldLabel field={fieldLabel('request-paste'") }
-      : x));
+    check('p21b finding 1 / phase 22: all 28 fields that had a hidden label now show a visible caption tied to the field (source)',
+      captioned.length === 28 && captionMissing.length === 0, captionMissing.map(([f, e]) => `${f} ${e}`).join(', '));
+    check('…mutant caught: a hidden label moved away from its field (above a button)',
+      hiddenOrderProblems(hiddenSite(goodHidden.replace("  <TextInput", '  <Button title="Scan" />\n  <TextInput'))).length >= 1);
     check('…mutant caught (p21b finding 1): a hidden label that is not the first child of its own View (positioned at a far-away parent’s top-left)',
-      hiddenOrderProblems(unanchored).some((p) => /request-paste.*not the first child/.test(p)));
-    const styledWrapper = files.map((x) => (x.f === 'components/RecoveryViews.tsx'
-      ? { ...x, src: x.src.replace("<View>\n        <HiddenFieldLabel field={fieldLabel('paste', placeholder)} />", "<View style={styles.stack}>\n        <HiddenFieldLabel field={fieldLabel('paste', placeholder)} />") }
-      : x));
+      hiddenOrderProblems(hiddenSite(goodHidden.replace('<View>\n', '<Text>Intro</Text>\n'))).some((p) => /'a'.*not the first child/.test(p)));
     check('…mutant caught (p21e finding B2a): a hidden label inside a styled View (a gap or row would move it off the line above its field)',
-      hiddenOrderProblems(styledWrapper).some((p) => /paste.*plain View/.test(p)));
-    const crowded = files.map((x) => (x.f === 'screens/MultisigScreen.tsx'
-      ? { ...x, src: x.src.replace("style={[styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }]}\n          />\n        </View>\n        {errorBox}\n        <Button title=\"Check the record\"", "style={[styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }]}\n          />\n          {errorBox}\n        </View>\n        <Button title=\"Check the record\"") }
-      : x));
+      hiddenOrderProblems(hiddenSite(goodHidden.replace('<View>', '<View style={styles.stack}>'))).some((p) => /'a'.*plain View/.test(p)));
     check('…mutant caught (p21e finding B2a): something else inside the label’s wrapper after the field',
-      hiddenOrderProblems(crowded).some((p) => /record-paste.*more than the label/.test(p)));
+      hiddenOrderProblems(hiddenSite(goodHidden.replace('value={x} />\n</View>', 'value={x} />\n  {errorBox}\n</View>'))).some((p) => /'a'.*more than the label/.test(p)));
     check('…mutant caught: a hidden label naming another field than the one after it',
       hiddenOrderProblems([...files, { f: 'mutant.tsx', src: "<View>\n<HiddenFieldLabel field={fieldLabel('a', 'A')} />\n<TextInput {...fieldLabel('b', 'B').input} />\n</View>" }]).length === 1);
     const priceSrc = files.find((x) => x.f === 'screens/PriceAlertsScreen.tsx').src;
@@ -1924,6 +1951,119 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
         const src = files.find((x) => x.f === f).src;
         return src.includes(`<Text {...${call}.label} style={[styles.hint, { color: theme.textMuted }]}>{${call}.text}</Text>`) && src.includes(`{...${call}.input}`);
       }));
+    // Phase 22: no field's placeholder repeats its caption. TalkBack reads
+    // an empty field's placeholder as if it were the value, then the caption
+    // the field is labelled by, so a placeholder equal to the caption makes
+    // it say the field's name twice. For every TextInput with a placeholder,
+    // the caption is the label argument of the fieldLabel / field / fieldA11y
+    // call (or of the variable holding one) it spreads; the two are compared
+    // after lower-casing and dropping everything but letters, digits and "$"
+    // (so "hash, optional" and "hash (optional)" count as equal). String and
+    // template literals anywhere in either expression are compared with each
+    // other; two plain expressions are equal when their source text is. A
+    // component that passes both through (PasteOrScan, AaField, Settings'
+    // custom-network field()) is checked at each caller.
+    {
+      // Top-level arguments of the call whose "(" is at s[open].
+      const callArgs = (s, open) => {
+        const args = [];
+        let depth = 0;
+        let start = open + 1;
+        for (let i = open; i < s.length; i++) {
+          const c = s[i];
+          if (c === '"' || c === "'" || c === '`') {
+            for (i++; i < s.length && s[i] !== c; i++) {
+              if (s[i] === '\\') i++;
+              else if (c === '`' && s[i] === '$' && s[i + 1] === '{') {
+                let d = 0;
+                for (i++; i < s.length; i++) { if (s[i] === '{') d++; else if (s[i] === '}' && --d === 0) break; }
+              }
+            }
+          } else if ('([{'.includes(c)) depth++;
+          else if (')]}'.includes(c)) {
+            depth--;
+            if (depth === 0) { args.push(s.slice(start, i).trim()); return args; }
+          } else if (c === ',' && depth === 1) { args.push(s.slice(start, i).trim()); start = i + 1; }
+        }
+        return null;
+      };
+      const literals = (expr) => [...expr.matchAll(/'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)"|`((?:[^`\\]|\\.)*)`/g)].map((m) => m[1] ?? m[2] ?? m[3]);
+      const norm = (t) => t.toLowerCase().replace(/[^a-z0-9$]/g, '');
+      const same = (a, b) => {
+        const la = literals(a);
+        const lb = literals(b);
+        if (la.length === 0 && lb.length === 0) return a.replace(/\s+/g, '') === b.replace(/\s+/g, '');
+        return la.some((x) => norm(x) !== '' && lb.some((y) => norm(x) === norm(y)));
+      };
+      // The value of a JSX prop: "…", '…' or {…} (brace depth aware).
+      const prop = (tag, name) => {
+        const m = new RegExp(`\\s${name}=`).exec(tag);
+        if (!m) return null;
+        let i = m.index + m[0].length;
+        if (tag[i] === '"' || tag[i] === "'") return tag.slice(i, tag.indexOf(tag[i], i + 1) + 1);
+        if (tag[i] !== '{') return null;
+        let d = 0;
+        for (let j = i; j < tag.length; j++) { if (tag[j] === '{') d++; else if (tag[j] === '}' && --d === 0) return tag.slice(i + 1, j).trim(); }
+        return null;
+      };
+      // The caption of a TextInput: the label argument it spreads.
+      const caption = (src, tag) => {
+        const call = /\{\.\.\.\s*(\w+)\(/.exec(tag);
+        if (call) {
+          const args = callArgs(tag, call.index + call[0].length - 1);
+          return args?.[call[1] === 'fieldA11y' ? 0 : 1] ?? null;
+        }
+        const v = /\{\.\.\.\s*(\w+)\.input\s*\}/.exec(tag);
+        if (!v) return null;
+        const def = new RegExp(`const ${v[1]} = (\\w+)\\(`).exec(src);
+        return def ? callArgs(src, def.index + def[0].length - 1)?.[1] ?? null : null;
+      };
+      const placeholderProblems = (all) => all.flatMap(({ f, src }) => {
+        const out = [];
+        for (const t of tags(src, 'TextInput')) {
+          const ph = prop(t, 'placeholder');
+          if (ph === null) continue;
+          const cap = caption(src, t);
+          if (cap === null) out.push(`${f}: a TextInput with a placeholder whose caption could not be found`);
+          else if (same(cap, ph)) out.push(`${f}: placeholder ${ph} repeats the caption ${cap}`);
+        }
+        for (const name of ['PasteOrScan', 'AaField']) {
+          for (const t of tags(src, name)) {
+            const l = prop(t, 'label');
+            const ph = prop(t, 'placeholder');
+            if (l !== null && ph !== null && same(l, ph)) out.push(`${f}: <${name}> placeholder ${ph} repeats its label ${l}`);
+          }
+        }
+        if (f === 'screens/SettingsScreen.tsx') {
+          for (const m of src.matchAll(/\{field\(/g)) {
+            const args = callArgs(src, m.index + m[0].length - 1) ?? [];
+            if (args.length >= 3 && same(args[1], args[2])) out.push(`${f}: field(${args[0]}) placeholder ${args[2]} repeats its label ${args[1]}`);
+          }
+        }
+        return out;
+      });
+      const inputsWithPlaceholder = files.reduce((n, { src }) => n + tags(src, 'TextInput').filter((t) => prop(t, 'placeholder') !== null).length, 0);
+      check('phase 22: no field’s placeholder repeats its caption, ignoring case and punctuation (source scan of every TextInput with a placeholder in app/src, plus the PasteOrScan, AaField and custom-network field() callers; allow-list empty)',
+        placeholderProblems(files).length === 0 && inputsWithPlaceholder >= 60,
+        `${inputsWithPlaceholder} fields with a placeholder; ${placeholderProblems(files).join('; ')}`);
+      const withFile = (f, from, to) => files.map((x) => (x.f === f ? { ...x, src: x.src.replace(from, to) } : x));
+      check('…mutant caught (phase 22): a Multisig paste box whose placeholder is its caption again',
+        placeholderProblems(withFile('screens/MultisigScreen.tsx', 'placeholder="Record text"', 'placeholder="Paste the multisig record"')).length === 1);
+      check('…mutant caught (phase 22): PasteOrScan using its caption as the placeholder again',
+        placeholderProblems(withFile('components/RecoveryViews.tsx', 'placeholder={placeholder}', 'placeholder={label}')).length === 1);
+      check('…mutant caught (phase 22): a PasteOrScan caller whose placeholder repeats its label',
+        placeholderProblems(withFile('screens/ApproveRecoveryScreen.tsx', 'placeholder="Request text"', 'placeholder="Paste the recovery request"')).length === 1);
+      check('…mutant caught (phase 22): a placeholder that differs from its caption only in punctuation ("hash (optional)" against "hash, optional")',
+        placeholderProblems(withFile('screens/RecoverAccountScreen.tsx', 'placeholder="0x…"', 'placeholder="UserOperation or transaction hash (optional)"')).length === 1);
+      check('…mutant caught (phase 22): a template placeholder equal to its template caption (the old Contacts address field)',
+        placeholderProblems(withFile('screens/ContactsScreen.tsx', 'placeholder="Paste or type the address"', "placeholder={`${addNetwork?.network.label ?? ''} address`}")).length === 1);
+      check('…mutant caught (phase 22): a caption held in a variable whose placeholder repeats it',
+        placeholderProblems(withFile('screens/PriceAlertsScreen.tsx', 'placeholder="For example 3000"', 'placeholder={`Alert price for ${asset.symbol} (US dollars)`}')).length === 1);
+      check('…mutant caught (phase 22): a Settings field() whose placeholder repeats its label',
+        placeholderProblems(withFile('screens/SettingsScreen.tsx', "{field('rpcUrl', 'RPC endpoint (https)', 'https://…', 'url')}", "{field('rpcUrl', 'RPC endpoint (https)', 'RPC endpoint (https)', 'url')}")).length === 1);
+      check('…mutant caught (phase 22): an AaField whose placeholder repeats its label',
+        placeholderProblems(withFile('screens/SettingsScreen.tsx', 'placeholder="32-character id from dashboard.reown.com"', 'placeholder="Reown / WalletConnect project id"')).length === 1);
+    }
   }
 
   // Pass p20d finding 4: a switch row whose visible text is exactly the

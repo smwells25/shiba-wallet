@@ -866,7 +866,8 @@ export function GuardiansScreen({ navigation }: Props) {
           <PasteOrScan
             value={watchInput}
             onChange={setWatchInput}
-            placeholder="Paste a recovery request or a proposal id (0x…)"
+            label="Paste a recovery request or a proposal id (0x…)"
+            placeholder="Request text or a 0x… id"
             rationale="Scan the recovery request your guardian showed you."
           />
           <Button title="Watch this proposal" variant="secondary" disabled={!watchInput.trim() || !entry} onPress={onWatch} />

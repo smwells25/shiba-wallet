@@ -558,7 +558,7 @@ export function RecoverAccountScreen({ navigation, route }: Props) {
               {...fieldLabel('op-hash', 'UserOperation or transaction hash, optional').input}
               value={hashInput}
               onChangeText={setHashInput}
-              placeholder="UserOperation or transaction hash (optional)"
+              placeholder="0x…"
               placeholderTextColor={theme.textMuted}
               autoCapitalize="none"
               style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
@@ -586,7 +586,8 @@ export function RecoverAccountScreen({ navigation, route }: Props) {
             <PasteOrScan
               value={approvalInput}
               onChange={setApprovalInput}
-              placeholder="Paste a guardian's approval (or a 65-byte signature from another wallet)"
+              label="Paste a guardian's approval (or a 65-byte signature from another wallet)"
+              placeholder="Approval text or a 0x… signature"
               rationale="Scan the approval QR code your guardian shows you."
             />
             <Button title="Add approval" variant="secondary" disabled={!approvalInput.trim()} onPress={() => void onAddApproval()} />
@@ -759,7 +760,8 @@ export function RecoverAccountScreen({ navigation, route }: Props) {
       <PasteOrScan
         value={recordInput}
         onChange={setRecordInput}
-        placeholder="Paste or scan the recovery record"
+        label="Paste or scan the recovery record"
+        placeholder="Record text (JSON)"
         rationale="Scan the recovery record QR code you saved."
       />
       <Button
@@ -776,7 +778,7 @@ export function RecoverAccountScreen({ navigation, route }: Props) {
         {...fieldLabel('original-owner', 'Original owner address, optional').input}
         value={originalOwnerInput}
         onChangeText={setOriginalOwnerInput}
-        placeholder="Original owner address (optional)"
+        placeholder="0x…"
         placeholderTextColor={theme.textMuted}
         autoCapitalize="none"
         autoCorrect={false}

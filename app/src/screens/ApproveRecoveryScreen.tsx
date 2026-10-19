@@ -501,7 +501,8 @@ export function ApproveRecoveryScreen({ navigation, route }: Props) {
       <PasteOrScan
         value={input}
         onChange={setInput}
-        placeholder="Paste the recovery request"
+        label="Paste the recovery request"
+        placeholder="Request text"
         rationale="Scan the recovery request QR code on the account holder's new phone."
       />
       {error ? <WarningBox>{error}</WarningBox> : null}

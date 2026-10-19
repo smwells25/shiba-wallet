@@ -3,7 +3,7 @@ import { ActivityIndicator, Alert, ScrollView, Text, TextInput, View } from 'rea
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { httpTransport, type JsonRpcTransport } from '@shiba-wallet/chains-evm';
 import { spokenShortAddress } from '../a11y';
-import { Button, TestNetworksOnlyCard, WarningBox, screenStyle, useFieldLabels, HiddenFieldLabel } from '../components';
+import { Button, TestNetworksOnlyCard, WarningBox, screenStyle, useFieldLabels } from '../components';
 import {
   InfoRow,
   PasteOrScan,
@@ -678,7 +678,8 @@ export function MultisigScreen() {
             <PasteOrScan
               value={c.address}
               onChange={(text) => setCosigners((prev) => prev.map((x, j) => (j === i ? { ...x, address: text.replace(/^ethereum:/i, '').split(/[@?]/)[0]!.trim() } : x)))}
-              placeholder={`Co-signer ${i + 1}: Ethereum address`}
+              label={`Co-signer ${i + 1}: Ethereum address`}
+              placeholder="0x…"
               rationale="Scan the co-signer’s Ethereum address QR code."
             />
             <Text {...fieldLabel(`cosigner-${i}-weight`, `Co-signer ${i + 1} weight`).label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel(`cosigner-${i}-weight`, `Co-signer ${i + 1} weight`).text}</Text>
@@ -712,7 +713,7 @@ export function MultisigScreen() {
           {...fieldLabel('multisig-name', 'Name (optional)').input}
           value={nameInput}
           onChangeText={setNameInput}
-          placeholder="Name (optional)"
+          placeholder="For example Family vault"
           placeholderTextColor={theme.textMuted}
           style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
         />
@@ -983,21 +984,20 @@ export function MultisigScreen() {
           onComplete={(text) => void onAddApproval(text)}
           onError={scanError}
         />
-        {/* A plain View: the hidden label is a 1-point line directly above the field (pass p21e, finding B2a). */}
-        <View>
-          <HiddenFieldLabel field={fieldLabel('approval-paste', 'Paste a co-signer’s approval (or a 65-byte signature from another wallet)')} />
-          <TextInput
-            {...fieldLabel('approval-paste', 'Paste a co-signer’s approval (or a 65-byte signature from another wallet)').input}
-            value={approvalInput}
-            onChangeText={setApprovalInput}
-            placeholder="Paste a co-signer’s approval (or a 65-byte signature from another wallet)"
-            placeholderTextColor={theme.textMuted}
-            multiline
-            autoCapitalize="none"
-            autoCorrect={false}
-            style={[styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }]}
-          />
-        </View>
+        {/* A visible caption and a short placeholder (phase 22): the placeholder
+            no longer repeats the field's name, so a screen reader says it once. */}
+        <Text {...fieldLabel('approval-paste', 'Paste a co-signer’s approval (or a 65-byte signature from another wallet)').label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel('approval-paste', 'Paste a co-signer’s approval (or a 65-byte signature from another wallet)').text}</Text>
+        <TextInput
+          {...fieldLabel('approval-paste', 'Paste a co-signer’s approval (or a 65-byte signature from another wallet)').input}
+          value={approvalInput}
+          onChangeText={setApprovalInput}
+          placeholder="Approval text or a 0x… signature"
+          placeholderTextColor={theme.textMuted}
+          multiline
+          autoCapitalize="none"
+          autoCorrect={false}
+          style={[styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }]}
+        />
         <Button title="Add approval" variant="secondary" disabled={!approvalInput.trim()} onPress={() => void onAddApproval(approvalInput)} />
         <Button title="Add an approval from a file" variant="secondary" onPress={() => void onPickApprovalFile()} />
         <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>3. Submit</Text>
@@ -1122,21 +1122,20 @@ export function MultisigScreen() {
           onComplete={onReviewImport}
           onError={scanError}
         />
-        {/* A plain View: the hidden label is a 1-point line directly above the field (pass p21e, finding B2a). */}
-        <View>
-          <HiddenFieldLabel field={fieldLabel('record-paste', 'Paste the multisig record')} />
-          <TextInput
-            {...fieldLabel('record-paste', 'Paste the multisig record').input}
-            value={importInput}
-            onChangeText={setImportInput}
-            placeholder="Paste the multisig record"
-            placeholderTextColor={theme.textMuted}
-            multiline
-            autoCapitalize="none"
-            autoCorrect={false}
-            style={[styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }]}
-          />
-        </View>
+        {/* A visible caption and a short placeholder (phase 22): the placeholder
+            no longer repeats the field's name, so a screen reader says it once. */}
+        <Text {...fieldLabel('record-paste', 'Paste the multisig record').label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel('record-paste', 'Paste the multisig record').text}</Text>
+        <TextInput
+          {...fieldLabel('record-paste', 'Paste the multisig record').input}
+          value={importInput}
+          onChangeText={setImportInput}
+          placeholder="Record text"
+          placeholderTextColor={theme.textMuted}
+          multiline
+          autoCapitalize="none"
+          autoCorrect={false}
+          style={[styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }]}
+        />
         {errorBox}
         <Button title="Check the record" disabled={!importInput.trim()} onPress={() => onReviewImport(importInput)} />
         <Button title="Open a record file" variant="secondary" onPress={() => void pickInto(reviewImport)} />
@@ -1180,21 +1179,20 @@ export function MultisigScreen() {
           onComplete={onReviewCosign}
           onError={scanError}
         />
-        {/* A plain View: the hidden label is a 1-point line directly above the field (pass p21e, finding B2a). */}
-        <View>
-          <HiddenFieldLabel field={fieldLabel('request-paste', 'Paste the multisig signing request')} />
-          <TextInput
-            {...fieldLabel('request-paste', 'Paste the multisig signing request').input}
-            value={cosignInput}
-            onChangeText={setCosignInput}
-            placeholder="Paste the multisig signing request"
-            placeholderTextColor={theme.textMuted}
-            multiline
-            autoCapitalize="none"
-            autoCorrect={false}
-            style={[styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }]}
-          />
-        </View>
+        {/* A visible caption and a short placeholder (phase 22): the placeholder
+            no longer repeats the field's name, so a screen reader says it once. */}
+        <Text {...fieldLabel('request-paste', 'Paste the multisig signing request').label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel('request-paste', 'Paste the multisig signing request').text}</Text>
+        <TextInput
+          {...fieldLabel('request-paste', 'Paste the multisig signing request').input}
+          value={cosignInput}
+          onChangeText={setCosignInput}
+          placeholder="Request text"
+          placeholderTextColor={theme.textMuted}
+          multiline
+          autoCapitalize="none"
+          autoCorrect={false}
+          style={[styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }]}
+        />
         {errorBox}
         <Button title="Review the request" disabled={!cosignInput.trim()} onPress={() => onReviewCosign(cosignInput)} />
         <Button title="Open a request file" variant="secondary" onPress={() => void pickInto(reviewCosign)} />

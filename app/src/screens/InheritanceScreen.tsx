@@ -701,7 +701,8 @@ export function InheritanceScreen({ navigation }: Props) {
               <PasteOrScan
                 value={watchInput}
                 onChange={setWatchInput}
-                placeholder="Paste a takeover request or its id (0x…)"
+                label="Paste a takeover request or its id (0x…)"
+                placeholder="Request text or a 0x… id"
                 rationale="Scan the takeover request your heir showed you."
               />
               <Button title="Watch this takeover" variant="secondary" disabled={!watchInput.trim() || !entry} onPress={onWatch} />
