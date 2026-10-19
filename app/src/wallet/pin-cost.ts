@@ -15,9 +15,18 @@
  * stopped (a counter and a comparison per mixing step; negligible against
  * the hash itself).
  *
- * LIMITS. Each size may run for at most PIN_COST_CEILING_MS (120 s); a size
- * that reaches it is stopped and the larger sizes are skipped, with a note.
- * The user can stop the run at any time; it stops inside the current hash.
+ * WHICH SCRYPT. pinScrypt hashes with the native scrypt of
+ * react-native-quick-crypto where the app binary carries it and with the
+ * JavaScript scrypt of @noble/hashes otherwise (./pin-native-scrypt.ts);
+ * the report names the path in use at the start and at the end of the run
+ * (they differ only if a native hash failed during the run).
+ *
+ * LIMITS. Each size may run for at most PIN_COST_CEILING_MS (120 s). On the
+ * JavaScript path a size that reaches it is stopped inside the hash; the
+ * native hash cannot be interrupted, so there a size that finished after
+ * the limit is kept as measured. Either way the larger sizes are skipped,
+ * with a note. The user can stop the run at any time; on the JavaScript
+ * path it stops inside the current hash, on the native path between sizes.
  *
  * WHAT IT NEVER DOES. It never reads, writes or compares the PIN record or
  * any PIN, stores nothing (no store module is imported) and sends nothing
@@ -27,6 +36,7 @@
 import { randomBytes } from '@noble/hashes/utils.js';
 import { isTestNetwork } from '../config/readiness.ts';
 import { PIN_SALT_BYTES, PIN_SCRYPT_LOG2_N, pinScrypt } from './pin.ts';
+import { currentPinHashPath, pinHashPathLabel, resolvePinHashPath, type PinHashPath } from './pin-native-scrypt.ts';
 
 /** The sizes measured, as log2 N, in order. */
 export const PIN_COST_LOG2_SIZES: readonly number[] = Object.freeze([12, 13, 14, 15, 16]);
@@ -42,6 +52,15 @@ export const PIN_COST_HINT =
   `so the PIN's cost setting can be chosen from a real figure (the PIN uses N = 2^${PIN_SCRYPT_LOG2_N} today, and unlocking computes two hashes at that size). ` +
   'It uses a random salt and a throwaway input, never your PIN or its record; nothing is stored and nothing leaves this phone. ' +
   'A size that runs longer than 120 seconds is stopped and the larger sizes are skipped.';
+/** Added to the hint when this build hashes natively: the native hash cannot be interrupted. */
+export const PIN_COST_NATIVE_STOP_NOTE =
+  'This build hashes with native scrypt (react-native-quick-crypto), which cannot be interrupted inside one hash: ' +
+  'Stop and the 120-second limit take effect between sizes, and a size already running finishes first.';
+
+/** The hint for the path in use (PIN_COST_HINT, plus the native note on the native path). */
+export function pinCostHint(path: PinHashPath | null): string {
+  return path?.kind === 'native' ? `${PIN_COST_HINT} ${PIN_COST_NATIVE_STOP_NOTE}` : PIN_COST_HINT;
+}
 
 export type PinCostStop = 'ceiling' | 'cancelled';
 export type PinCostRow =
@@ -58,8 +77,16 @@ export interface PinCostPlatform {
   dev: boolean;
 }
 
+/** The hashing path at the start and at the end of a run. */
+export interface PinCostHashPath {
+  start: PinHashPath;
+  end: PinHashPath;
+}
+
 export interface PinCostReport {
   rows: PinCostRow[];
+  /** Which scrypt hashed (pinScrypt's path in this session). */
+  hashPath: PinCostHashPath;
   /** Wall-clock milliseconds from the start of the run to its end. */
   totalMs: number;
   platform: PinCostPlatform;
@@ -76,6 +103,8 @@ export interface PinCostDeps {
   isCancelled?: () => boolean;
   /** Called before each size starts (`current` = its log2 N) and once at the end (null). */
   onUpdate?: (rows: readonly PinCostRow[], current: number | null) => void;
+  /** This session's hashing path (the checks replace it). */
+  hashPath?: () => Promise<PinHashPath>;
 }
 
 /** Whether Settings → Developer offers the measurement: test networks only (readiness isTestNetwork). */
@@ -109,7 +138,9 @@ export async function measurePinHashCost(platform: PinCostPlatform, deps: PinCos
   const random = deps.random ?? ((n: number) => randomBytes(n));
   const hash = deps.hash ?? pinScrypt;
   const cancelled = deps.isCancelled ?? (() => false);
+  const readPath = deps.hashPath ?? resolvePinHashPath;
   const rows: PinCostRow[] = [];
+  const startPath = await readPath();
   const started = now();
   let stop: PinCostStop | null = null;
   for (const log2N of PIN_COST_LOG2_SIZES) {
@@ -129,6 +160,9 @@ export async function measurePinHashCost(platform: PinCostPlatform, deps: PinCos
       const ms = now() - t0;
       out.fill(0);
       rows.push({ log2N, status: 'measured', ms });
+      // The native hash cannot be stopped inside one hash: a size that
+      // finished after the limit stays measured and the larger sizes are skipped.
+      if (ms > PIN_COST_CEILING_MS) stop = 'ceiling';
     } catch (e) {
       if (!(e instanceof PinCostStopped)) throw e;
       rows.push({ log2N, status: e.why, ms: now() - t0 });
@@ -136,7 +170,9 @@ export async function measurePinHashCost(platform: PinCostPlatform, deps: PinCos
     }
   }
   deps.onUpdate?.(rows.slice(), null);
-  return { rows, totalMs: now() - started, platform, finished: stop === null };
+  const totalMs = now() - started;
+  const endPath = deps.hashPath ? await deps.hashPath() : (currentPinHashPath() ?? startPath);
+  return { rows, totalMs, platform, hashPath: { start: startPath, end: endPath }, finished: stop === null };
 }
 
 /** Whole milliseconds with thousands separators ("12,345"), independent of the phone's locale support. */
@@ -163,8 +199,14 @@ export function pinCostTotalText(ms: number): string {
   return `Total time: ${formatMs(ms)} ms (wall clock).`;
 }
 
-export function pinCostPlatformText(p: PinCostPlatform): string {
-  return `Platform: ${p.os} · Hermes: ${p.hermes ? 'yes' : 'no'} · development bundle (__DEV__): ${p.dev ? 'yes' : 'no'}`;
+export function pinCostPlatformText(p: PinCostPlatform, hashPath?: PinCostHashPath): string {
+  const base = `Platform: ${p.os} · Hermes: ${p.hermes ? 'yes' : 'no'} · development bundle (__DEV__): ${p.dev ? 'yes' : 'no'}`;
+  if (!hashPath) return base;
+  const start = pinHashPathLabel(hashPath.start);
+  const end = pinHashPathLabel(hashPath.end);
+  return start === end
+    ? `${base} · Hashing: ${start}`
+    : `${base} · Hashing: ${start} at the start, then ${end} after the native hash failed during the run`;
 }
 
 export const PIN_COST_RESULT_NOTE =

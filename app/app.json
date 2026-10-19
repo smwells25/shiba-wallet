@@ -56,7 +56,8 @@
           "icon": "./assets/notification-icon.png",
           "color": "#a65d13"
         }
-      ]
+      ],
+      "react-native-quick-crypto"
     ]
   }
 }
