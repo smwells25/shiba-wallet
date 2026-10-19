@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, StyleSheet, Text, View } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { RootStackParamList } from '../navigation';
 import { Button } from '../components';
 import { withShortAddresses } from '../a11y';
 import { useTheme } from '../theme';
@@ -130,7 +132,12 @@ export function PendingTransactionsSection({
 }) {
   const theme = useTheme();
   const { evmChain } = usePrefs();
-  const { signWith } = useWallet();
+  const { signWith, activeAccount } = useWallet();
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  // A watch-only account has no key in this wallet: its speed-up or
+  // cancellation is signed by its off-line signer on the cold-signing screen
+  // (phase 22 item 3), never here (signWith would refuse it anyway).
+  const coldReplace = activeAccount?.watchOnly === true;
   const chain = evmChain.caip2;
   const symbol = evmChain.displaySymbol;
   const [registry, setRegistry] = useState<PendingRegistry | null>(null);
@@ -416,7 +423,11 @@ export function PendingTransactionsSection({
                   title={latestIsCancel ? 'Speed up the cancellation' : 'Speed up'}
                   variant="secondary"
                   accessibilityHint="Prices the same transaction again with higher fees; nothing is signed until you approve"
-                  onPress={() => void startReplacement(group, 'speed-up')}
+                  onPress={() =>
+                    coldReplace
+                      ? navigation.navigate('ColdSign', { replace: { hash: group.latest.hash, action: 'speed-up' } })
+                      : void startReplacement(group, 'speed-up')
+                  }
                 />
                 {latestIsCancel ? null : (
                   <Button
@@ -424,7 +435,11 @@ export function PendingTransactionsSection({
                     variant="secondary"
                     accessibilityLabel="Cancel this transaction"
                     accessibilityHint="Prices a zero-value transfer to yourself with the same nonce; nothing is signed until you approve"
-                    onPress={() => void startReplacement(group, 'cancel')}
+                    onPress={() =>
+                    coldReplace
+                      ? navigation.navigate('ColdSign', { replace: { hash: group.latest.hash, action: 'cancel' } })
+                      : void startReplacement(group, 'cancel')
+                  }
                   />
                 )}
               </View>

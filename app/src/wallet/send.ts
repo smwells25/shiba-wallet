@@ -6,11 +6,14 @@ import {
   encodeFunctionCall,
   httpTransport as evmHttpTransport,
   minimalBytes,
+  recoverEip1559Signer,
   rlpEncode,
+  serializeSignedEip1559,
   signEip1559,
   simulateCall,
   toBytes,
   toHex,
+  type Eip1559Signature,
   type Eip1559Transaction,
   type JsonRpcTransport,
   type SimulationResult,
@@ -1483,6 +1486,55 @@ export async function sendEvm(
   return { txid, explorerUrl: explorerTxBase ? `${explorerTxBase}${txid}` : null };
 }
 
+/** The transaction sendEvm signs for a quote (one mapping, shared by the cold-signed path below). */
+function evmTxForQuote(quote: EvmSendQuote): Eip1559Transaction {
+  return {
+    chainId: quote.chainId,
+    nonce: quote.nonce,
+    maxPriorityFeePerGas: quote.maxPriorityFeePerGas,
+    maxFeePerGas: quote.maxFeePerGas,
+    gasLimit: quote.gasLimit,
+    to: quote.to,
+    value: quote.amount,
+    ...(quote.data && quote.data.length > 0 ? { data: quote.data } : {}),
+  };
+}
+
+/** The refusal when a signature made elsewhere was not made by the sending address. */
+export const PRESIGNED_WRONG_SIGNER_SENTENCE =
+  'The signature was not made by the sending address over this transaction, so nothing was sent.';
+
+/**
+ * Broadcasts a transaction signed ELSEWHERE (cold signing, phase 22 item 3:
+ * the watch-only account's off-line signer) through the same path as
+ * sendEvm: the transaction is rebuilt from the QUOTE exactly as sendEvm
+ * builds it, the signature is attached (chains-evm serializeSignedEip1559,
+ * pinned against ethers), the recovered signer must equal `from`, and an
+ * accepted broadcast notifies the same listeners as sendEvm (the pending
+ * registry, so Activity's card applies; the spending recorder; Home's
+ * refresh). No key is involved. sendEvm itself is unchanged; it cannot take
+ * a signature because it signs with a DerivedAccount.
+ */
+export async function sendEvmWithSignature(
+  url: string,
+  from: string,
+  quote: EvmSendQuote,
+  signature: Eip1559Signature,
+  explorerTxBase: string | null,
+  options: { transport?: JsonRpcTransport } = {},
+): Promise<SendResult> {
+  const tx = evmTxForQuote(quote);
+  if (recoverEip1559Signer(tx, signature).toLowerCase() !== from.toLowerCase()) {
+    throw new Error(PRESIGNED_WRONG_SIGNER_SENTENCE);
+  }
+  const signed = serializeSignedEip1559(tx, signature);
+  const node = new NodeClient(options.transport ?? evmHttpTransport(url));
+  const txid = await node.sendRawTransaction(signed.rawHex);
+  notifyEvmSent({ from, quote, txid });
+  notifySendAccepted();
+  return { txid, explorerUrl: explorerTxBase ? `${explorerTxBase}${txid}` : null };
+}
+
 /**
  * Signs the quoted BuiltTransfer and broadcasts it via the endpoint's
  * transport (Esplora by default, Blockbook for Dogecoin — same backend
@@ -1763,6 +1815,66 @@ export async function sendEvmReplacement(
     ...(quote.data && quote.data.length > 0 ? { data: quote.data } : {}),
   };
   const signed = signEip1559(tx, signer);
+  const node = new NodeClient(options.transport ?? evmHttpTransport(url));
+  let txid: string;
+  try {
+    txid = await node.sendRawTransaction(signed.rawHex);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/underpriced/i.test(message)) throw new ReplacementRefusedError(REPLACEMENT_UNDERPRICED_SENTENCE, message);
+    if (/nonce too low/i.test(message)) {
+      throw new ReplacementRefusedError(
+        `The network refused the replacement because nonce ${quote.nonce} was already used: a transaction ` +
+          'with this nonce was included in the meantime, so nothing more was sent. Activity shows which one ' +
+          'once it refreshes.',
+        message,
+      );
+    }
+    throw error;
+  }
+  await recordPendingTransaction(
+    txRecordFromQuote(quote.replacement.from, quote, txid, (options.now ?? Date.now)(), {
+      action: quote.replacement.recordedAction,
+      replaces: quote.replacement.replaces,
+    }),
+    options.store ?? pendingRecordStore ?? undefined,
+  );
+  notifySendAccepted();
+  return { txid, explorerUrl: explorerTxBase ? `${explorerTxBase}${txid}` : null };
+}
+
+/**
+ * The cold-signed counterpart of sendEvmReplacement (phase 22 item 3): a
+ * speed-up or cancellation of a WATCH-ONLY account's pending transaction,
+ * signed by its off-line signer. Same rules in the same order as
+ * sendEvmReplacement — the quote is claimed once, the sender must be the
+ * one that sent the original, the transaction is rebuilt from the quote,
+ * the node's refusals are translated with the same sentences, and the
+ * accepted replacement is recorded in the pending registry with its
+ * action and the hash it replaces — with the signature attached instead of
+ * made here, and the recovered signer required to equal that sender.
+ * sendEvmReplacement itself is unchanged.
+ */
+export async function sendEvmReplacementWithSignature(
+  url: string,
+  from: string,
+  quote: EvmReplacementQuote,
+  signature: Eip1559Signature,
+  explorerTxBase: string | null,
+  options: { transport?: JsonRpcTransport; store?: PendingStore; now?: () => number } = {},
+): Promise<SendResult> {
+  if (usedReplacementQuotes.has(quote)) throw new ReplacementRefusedError(REPLACEMENT_QUOTE_USED);
+  usedReplacementQuotes.add(quote);
+  if (from.toLowerCase() !== quote.replacement.from) {
+    throw new ReplacementRefusedError(
+      'The signing account is not the one that sent this transaction. Nothing was signed.',
+    );
+  }
+  const tx = evmTxForQuote(quote);
+  if (recoverEip1559Signer(tx, signature).toLowerCase() !== quote.replacement.from) {
+    throw new ReplacementRefusedError(PRESIGNED_WRONG_SIGNER_SENTENCE);
+  }
+  const signed = serializeSignedEip1559(tx, signature);
   const node = new NodeClient(options.transport ?? evmHttpTransport(url));
   let txid: string;
   try {

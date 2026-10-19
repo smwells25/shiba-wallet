@@ -31,6 +31,7 @@ import {
   multisigOtherNetworkNote,
   watchOnlyFooterText,
 } from '../wallet/watch-only';
+import { COLD_SIGN_HOME_LINK, COLD_SIGN_LINK_HINT } from '../wallet/cold-signing';
 import { httpTransport } from '@shiba-wallet/chains-evm';
 import { MULTISIG_DEPOSIT_ROW_LABEL, readMultisigFunds } from '../wallet/multisig';
 import { getEndpoint } from '../config/networks';
@@ -588,6 +589,11 @@ export function HomeScreen({ navigation }: Props) {
           />
         </View>
         <View style={styles.linkRow}>
+          {/* Cold signing (feature 11, phase 22 item 3): a watch-only account
+              sends only through an off-line signer that holds its key. */}
+          {watchOnly && isEvm
+            ? cardLink('cold-sign', COLD_SIGN_HOME_LINK, () => navigation.navigate('ColdSign'), COLD_SIGN_LINK_HINT)
+            : null}
           {noKey
             ? null
             : cardLink('send', 'Send ↗', () =>

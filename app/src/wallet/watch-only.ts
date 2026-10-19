@@ -160,6 +160,19 @@ export const WATCH_ONLY_ALLOWED_ROUTES: readonly string[] = [
 ];
 
 /**
+ * The one route that gives a watch-only account a SIGNING path (phase 22
+ * item 3, cold signing): ColdSign prepares a send for the watched address
+ * and shows it as QR codes for an OFF-LINE signer that holds the key; the
+ * wallet itself never signs (the screen never calls signWith or the device
+ * check) and broadcasts only a signature it verified against the watched
+ * address. Kept apart from WATCH_ONLY_ALLOWED_ROUTES so that list stays the
+ * read-only list; watchOnlyRouteRefusal allows both. For a multisig the
+ * route stays refused (MULTISIG_ALLOWED_ROUTES does not list it), and the
+ * screen itself refuses every account that holds a key in this wallet.
+ */
+export const WATCH_ONLY_COLD_SIGN_ROUTES: readonly string[] = ['ColdSign'];
+
+/**
  * Plain names for the refusal sentence; a route not named here is called
  * "This screen" (scripts/check-watch-only.mjs checks that every refused route
  * of App.tsx has a name here).
@@ -191,6 +204,9 @@ const ROUTE_FEATURES: Record<string, string> = {
   // key, so it stays OFF both allow lists: refused for a watch-only address
   // and for a multi-signature account, by this name.
   Bridge: 'Bridging',
+  // Cold signing (phase 22 item 3): allowed for a watch-only account through
+  // WATCH_ONLY_COLD_SIGN_ROUTES; named here for the multisig refusal.
+  ColdSign: 'Sending with an off-line signer',
 };
 
 /**
@@ -198,7 +214,7 @@ const ROUTE_FEATURES: Record<string, string> = {
  * is active, or null when the route is allowed.
  */
 export function watchOnlyRouteRefusal(routeName: string): string | null {
-  if (WATCH_ONLY_ALLOWED_ROUTES.includes(routeName)) return null;
+  if (WATCH_ONLY_ALLOWED_ROUTES.includes(routeName) || WATCH_ONLY_COLD_SIGN_ROUTES.includes(routeName)) return null;
   const feature = ROUTE_FEATURES[routeName] ?? 'This screen';
   return (
     `${feature} is not available for a watch-only account: the wallet holds no key for this address, ` +

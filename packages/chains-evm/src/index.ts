@@ -134,6 +134,7 @@ export type { SimulationRequest, SimulationResult } from './simulate.js';
 export { rlpEncode, minimalBytes } from './rlp.js';
 export type { RlpInput } from './rlp.js';
 export { eip1559SigningHash, signEip1559 } from './eoa-tx.js';
+export { recoverEip1559Signer, serializeSignedEip1559 } from './eoa-tx.js';
 export {
   EIP7702_AUTH_MAGIC,
   EIP7702_PER_AUTH_BASE_COST,
@@ -177,6 +178,7 @@ export type {
   Eip1559Transaction,
   SignedEip1559,
 } from './eoa-tx.js';
+export type { Eip1559Signature } from './eoa-tx.js';
 export {
   decodeAddress,
   decodeUint256,
