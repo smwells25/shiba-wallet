@@ -9469,3 +9469,81 @@ Opus.
       uninstalled, Metro 8082 stopped, the 8082 reverse removed, Metro
       8081 untouched, wt-build at 006dd43 with the prebuild edits
       restored, the emulator on the launcher.
+- [x] Pass p21f findings FIXED, and the PIN-cost measurement built (commit
+      0bfb134; check-duress 113 (was 78), check-devmode 418 (415); new
+      app/src/wallet/pin-cost.ts + components/PinCostMeasurement.tsx;
+      offline runner ALL GREEN in the CTO's isolated worktree on HEAD
+      f06c993 with --skip-bundle: engine 1,046, app 9,264 across 59
+      suites, lint 0/0, tsc clean; apply 0 / 10 files; seven in-suite and
+      four hand mutants caught; no dependency added; not seen on a
+      device). (1) LOCKOUT: attemptPin refuses at once while a wait runs
+      (nothing written, no hash), writes the incremented counter BEFORE
+      hashing with until 0, compares both slots in constant time, resets
+      on success, and on failure stamps until = now + wait AFTER the
+      hashes; pinWaitSeconds(fails) is a pure table (0 for 0–4, then 30 /
+      60 / 120 / 240 / 480 / 960 / 1920, capped at 3600); the record stays
+      358 bytes on every write (19 writes captured); unlockWithPin
+      returns a countdown and the PinPad re-reads "Too many wrong PINs.
+      Try again in N seconds." every second from the stamped time (live
+      region 'none' while ticking), ending "You can enter your PIN
+      again."; a fake-clock test with 125 s per hash shows the fifth wrong
+      PIN producing a visible 30 s wait, a PIN typed during it refused
+      with zero hashes, the 60 / 120 s waits each from the END of their
+      slow attempt, the reset on success; an attempt killed between the
+      hashes and the stamp counts but starts no wait (documented); the
+      Settings PIN flow still shows a static sentence (no countdown). (2)
+      PIN_SCRYPT_LOG2_N = 16 is the single constant (doc comment: Node
+      240–313 ms, emulator debug 245–258 s per two-hash attempt, pending
+      the release measurement; changing N makes existing records
+      unreadable because the record stores N); pinScrypt(input, salt,
+      log2N, onProgress?) is the one scrypt (r 8, p 1, dkLen 32) the PIN
+      and the measurement share (source-pinned); Settings → Developer on
+      test networks gains "Measure the PIN hashing cost" (PIN_COST_HINT;
+      N = 2^12…2^16 in order, a fresh random salt and the input "000000"
+      which isTriviallyGuessed refuses, a 120 s ceiling per size that
+      stops the hash through noble's onProgress and skips the larger
+      sizes, Stop and leaving the screen likewise; rows "N = 2^12: 50
+      ms" / "…stopped after 150,000 ms, at the 120-second limit…" /
+      "…skipped (a smaller size reached the 120-second limit)."; "Total
+      time: … (wall clock)."; "Platform: android · Hermes: yes ·
+      development bundle (__DEV__): no"; nothing stored — pinned by a
+      scan for store / secure-store / fetch / console use); Node figures
+      from the suite: 2^12 23 ms, 2^13 52, 2^14 96, 2^15 172, 2^16 311.
+      (3) AUTO_LOCK_HINT_WITH_PIN ("…it locks behind the app PIN pad: it
+      opens again only after you type your 6-digit PIN; the device's own
+      fingerprint, face or passcode prompt does not unlock it while the
+      PIN is on (sending and signing still ask for that prompt)…"); the
+      old sentence byte-identical without a PIN (pinned). INVESTIGATION:
+      (a) NO native scrypt or PBKDF2 anywhere in the installed modules
+      (expo-crypto 57.0.3 exports only random bytes, digests and AES;
+      RN / Hermes have no WebCrypto; uncrypto / iron-webcrypto wrap a
+      subtle Hermes lacks); react-native-quick-crypto 1.1.8 (MIT; npm view
+      only) needs react-native-nitro-modules and react-native-quick-base64
+      plus prebuild — a rebuilt development build, no Expo Go — its
+      README does not mention scrypt (coverage UNVERIFIED); Node's
+      crypto.scryptSync equals noble's output byte for byte at 2^16 / 8 /
+      1 (183 ms) but needs maxmem above its 32 MiB default; a native call
+      could not be stopped mid-hash. (b) THE "Saved" WALLETCONNECT ID on a
+      fresh install is the BUILT-IN DEFAULT_WC_PROJECT_ID
+      (walletconnect.ts:124; getWcProjectId 126–140 returns it whenever
+      nothing valid is stored; SettingsScreen 2511 says "Saved — …" for any
+      non-null value; the key shiba-wallet.wc-config.v1 is device-scoped;
+      clearWcProjectId writes {} which reads back as the default, so its
+      "disables WalletConnect" comment is wrong) — follow-up: a "Built-in
+      project id" status. (c) THE DEV-BUILD LAZY-MODULE FAILURES: "Unable
+      to determine the production URL" is a test-configuration matter —
+      Metro keeps lazy bundling for a production-mode bundle served by
+      the dev server (@expo/cli 57.0.28 metroOptions.js 85 / 131 / 174,
+      ManifestMiddleware.js 184 / 249, lazy: !env.EXPO_NO_METRO_LAZY) and
+      expo's async-require throws without a location; the release path
+      (export:embed) is non-lazy and single-bundle; fix: start Metro with
+      EXPO_NO_METRO_LAZY=1 for such tests or test a release APK; the
+      "Requiring unknown module 1892 / 1891" + "Cannot set property
+      'importedAll' of undefined" pair is asyncRequireModule.ts 88–94 then
+      metro-runtime require.js 156 on an id the fetched chunks never
+      defined in the dev client (the three walletconnect.ts:2734–2735
+      chunks WERE bundled) — root cause NOT established; the decisive test
+      is EXPO_NO_METRO_LAZY=1 on the dev client. UNVERIFIED (device): the
+      countdown on screen and under TalkBack, the measurement under debug
+      and release Hermes (whether the JS thread yields for Stop), __DEV__
+      and HermesInternal values, the hint's layout.
