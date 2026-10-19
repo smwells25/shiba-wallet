@@ -9866,7 +9866,7 @@ Subagents on Opus.
 
 ## Phase 22 progress
 - [x] Item 1 — docs/AUDIT_SCOPE.md, the audit scoping document (commit
-      below; 8,156 words incl. about 1,900 in six address tables;
+      17c6fab; 8,156 words incl. about 1,900 in six address tables;
       check-readiness 208, check-screen-protection 87, check-devmode
       green with it present; the secret scan clean; nothing from
       .dev-wallet or docs/private — the private classification is
