@@ -553,7 +553,7 @@ console.log('check-cold-signing: who may use it');
   check('…refused for a multisig, by name',
     wo.multisigRouteRefusal('ColdSign') === 'Sending with an off-line signer is not available for a multi-signature account: no single key in this wallet can sign for it. Build its operations on the Multisig screen, where the co-signers approve them, or switch to one of your own accounts.');
   check('the read-only allow list is unchanged, and the cold-signing list holds only ColdSign',
-    JSON.stringify(wo.WATCH_ONLY_ALLOWED_ROUTES) === JSON.stringify(['Home', 'Activity', 'Nfts', 'NftDetail', 'Tokens', 'Approvals', 'Settings', 'Contacts', 'ImportKey', 'Receive', 'Portfolio', 'PriceAlerts']) &&
+    JSON.stringify(wo.WATCH_ONLY_ALLOWED_ROUTES) === JSON.stringify(['Home', 'Activity', 'Nfts', 'NftDetail', 'Tokens', 'Approvals', 'Settings', 'Contacts', 'ImportKey', 'Receive', 'Portfolio', 'PriceAlerts', 'Inbox']) &&
       JSON.stringify(wo.WATCH_ONLY_COLD_SIGN_ROUTES) === JSON.stringify(['ColdSign']));
   check('Send itself stays refused for a watch-only account', wo.watchOnlyRouteRefusal('Send')?.startsWith('Sending is not available for a watch-only account') === true);
   const app = readFileSync(join(APP_ROOT, 'App.tsx'), 'utf8');

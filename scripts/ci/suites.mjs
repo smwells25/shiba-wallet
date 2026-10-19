@@ -77,6 +77,7 @@ export const APP_SCRIPTS = {
   // the 10% replacement bump, speed up / cancel, nonce outcomes, the
   // smart-account status (fakes only).
   'check-pending.mjs': { kind: 'offline', summary: 'counts' },
+  'check-inbox.mjs': { kind: 'offline', summary: 'counts' }, // Phase 22 item 5: the notifications inbox and deep links (features 83 and 80; fakes only).
   'check-cold-signing.mjs': { kind: 'offline', summary: 'counts' }, // Phase 22 item 3: cold signing for a watch-only account, the QR half (feature 11; fakes only).
   'check-passkeys.mjs': { kind: 'offline', summary: 'counts' },
   'check-proof.mjs': { kind: 'offline', summary: 'counts' },

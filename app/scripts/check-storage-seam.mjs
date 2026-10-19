@@ -256,17 +256,19 @@ const ORIGINAL_NAMES = {
 {
   const reg = seam.STORE_KEYS;
   // Stage 2 (the app PIN, wallet/pin.ts) added one key, the app-lock record;
-  // phase 21 added the Bridge screen's transfer list (wallet/bridge.ts). The
-  // 39 names the app used before the seam are unchanged.
-  check('the registry declares exactly the 39 key names the app used before the seam, plus the app-lock record and the bridge transfers (41)',
-    Object.keys(reg).length === 41 && Object.keys(ORIGINAL_NAMES).length === 39 &&
+  // phase 21 added the Bridge screen's transfer list (wallet/bridge.ts);
+  // phase 22 item 5 the notifications inbox (wallet/inbox.ts). The 39 names
+  // the app used before the seam are unchanged.
+  check('the registry declares exactly the 39 key names the app used before the seam, plus the app-lock record, the bridge transfers and the inbox (42)',
+    Object.keys(reg).length === 42 && Object.keys(ORIGINAL_NAMES).length === 39 &&
+      reg.inbox?.name === 'shiba-wallet.inbox.v1' && reg.inbox.scope === 'wallet' && reg.inbox.backing === 'async-storage' &&
       Object.entries(ORIGINAL_NAMES).every(([role, name]) => reg[role]?.name === name) &&
       reg.appLock?.name === 'shiba-wallet.app-lock.v1' && reg.appLock.scope === 'secret' && reg.appLock.backing === 'secure-store' &&
       reg.bridgeTransfers?.name === 'shiba-wallet.bridge-transfers.v1' && reg.bridgeTransfers.scope === 'wallet' && reg.bridgeTransfers.backing === 'async-storage');
-  check('names are unique', new Set(Object.values(reg).map((d) => d.name)).size === 41);
+  check('names are unique', new Set(Object.values(reg).map((d) => d.name)).size === 42);
   const scopes = { wallet: 0, device: 0, secret: 0 };
   for (const d of Object.values(reg)) scopes[d.scope] += 1;
-  check('scopes: 22 wallet, 9 device, 10 secret', scopes.wallet === 22 && scopes.device === 9 && scopes.secret === 10, JSON.stringify(scopes));
+  check('scopes: 23 wallet, 9 device, 10 secret', scopes.wallet === 23 && scopes.device === 9 && scopes.secret === 10, JSON.stringify(scopes));
   check('every secret key lives in the secure store and every other key in AsyncStorage',
     Object.values(reg).every((d) => (d.scope === 'secret') === (d.backing === 'secure-store')));
   check('the protected keychain service and the notification identifiers keep their names',

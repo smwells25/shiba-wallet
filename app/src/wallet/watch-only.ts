@@ -157,6 +157,9 @@ export const WATCH_ONLY_ALLOWED_ROUTES: readonly string[] = [
   // on-device watchlist); nothing on either screen can sign.
   'Portfolio',
   'PriceAlerts',
+  // Phase 22 item 5: the notifications inbox, read-only (a list of what the
+  // wallet showed; an entry opens a screen whose own gate still applies).
+  'Inbox',
 ];
 
 /**
@@ -277,6 +280,8 @@ export const MULTISIG_ALLOWED_ROUTES: readonly string[] = [
   // Phase 20 item 1: read-only (see WATCH_ONLY_ALLOWED_ROUTES).
   'Portfolio',
   'PriceAlerts',
+  // Phase 22 item 5: read-only (see WATCH_ONLY_ALLOWED_ROUTES).
+  'Inbox',
   'Receive',
   'Multisig',
 ];

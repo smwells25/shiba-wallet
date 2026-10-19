@@ -2384,6 +2384,7 @@ export function SettingsScreen({ navigation, route }: Props) {
         ) : (
           <NotificationSettingsSection />
         )}
+        <Button title="Open the inbox" variant="secondary" accessibilityHint="Lists the reminders, alerts and sent transactions the wallet has shown" onPress={() => navigation.navigate('Inbox')} />
       </View>
 
       <AppPinSection />

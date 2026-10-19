@@ -126,11 +126,12 @@ import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 // Explicit .ts extensions: scripts/check-notifications.mjs loads this module
 // under Node's type stripping, which resolves relative specifiers literally.
 import { parseSessionKeyGrant } from '@shiba-wallet/chains-evm';
-import { RECURRING_SOURCE, recurringEndsAt, type RecurringDue } from './recurring.ts';
+import { RECURRING_SOURCE, recurringEndsAt, scheduledDueHeadline, type RecurringDue } from './recurring.ts';
 import { DCA_SOURCE, type SessionRecord } from './sessions.ts';
 import { termsOf } from './subscriptions.ts';
 import { NOTIFICATION_ID_NAMES, STORE_KEYS, lazyAppStore, notificationIdNames, readStoreItem, writeStoreItem } from './store-keys.ts';
 import type { KeyValueStore } from './tokens.ts';
+import { appInbox, dueEventGroup, dueEventKey, type Inbox, type InboxEvent } from './inbox.ts';
 // Type-only (erased under Node): the trigger shape of the installed package.
 import type { NotificationTriggerInput } from 'expo-notifications/build/Notifications.types';
 
@@ -368,24 +369,88 @@ export function recurringReminderAt(record: SessionRecord, due: RecurringDue | n
   if (due.kind === 'later') return due.at > now ? due.at : null;
   if (due.kind !== 'due') return null;
   if (due.openSlots >= due.remaining) return null;
-  let period: number;
+  const period = recurringSlotPeriod(record);
   let end: number;
   try {
-    // A recurring swap's period is its grant's RateLimitPolicy interval (the
-    // engine's dcaGrantFor installs interval = the terms' period); a recurring
-    // payment's is its terms' period, which subscriptionGrantFor installs the
-    // same way.
-    period =
-      record.source === DCA_SOURCE
-        ? (parseSessionKeyGrant(record.grant).rateLimit?.intervalSeconds ?? 0)
-        : termsOf(record).periodSeconds;
     end = recurringEndsAt(record);
   } catch {
     return null;
   }
-  if (!Number.isFinite(period) || period <= 0) return null;
+  if (period === null) return null;
   const at = due.since + due.openSlots * period;
   return at > now && at <= end ? at : null;
+}
+
+/**
+ * The length of one payment slot of a recurring payment or swap, in seconds,
+ * or null when it cannot be read. A recurring swap's period is its grant's
+ * RateLimitPolicy interval (the engine's dcaGrantFor installs interval = the
+ * terms' period); a recurring payment's is its terms' period, which
+ * subscriptionGrantFor installs the same way.
+ */
+export function recurringSlotPeriod(record: SessionRecord): number | null {
+  let period: number;
+  try {
+    period =
+      record.source === DCA_SOURCE
+        ? (parseSessionKeyGrant(record.grant).rateLimit?.intervalSeconds ?? 0)
+        : termsOf(record).periodSeconds;
+  } catch {
+    return null;
+  }
+  return Number.isFinite(period) && period > 0 ? period : null;
+}
+
+/**
+ * The inbox entry (wallet/inbox.ts) for a recurring payment or swap the
+ * in-app banner announces as due. Its key is the reminder's identifier and
+ * the due time of the LATEST open slot (since + (openSlots − 1) × period):
+ * a reminder scheduled for that slot used the same key (its `at` is that
+ * slot's start, recurringReminderAt / recurringTermsReminderAt), so a slot
+ * announced by both the phone reminder and the banner is listed once. The
+ * sentence is the banner's own, for one record. Null when the period
+ * cannot be read.
+ */
+export function recurringBannerInboxEvent(
+  record: SessionRecord,
+  due: Extract<RecurringDue, { kind: 'due' }>,
+  nowMs: number,
+): InboxEvent | null {
+  const period = recurringSlotPeriod(record);
+  if (period === null) return null;
+  const identifier = recurringNotificationId(record);
+  const swap = record.source === DCA_SOURCE;
+  const slotAt = due.since + Math.max(0, due.openSlots - 1) * period;
+  const text = scheduledDueHeadline(swap ? 0 : 1, swap ? 1 : 0);
+  if (text === null) return null;
+  return {
+    key: dueEventKey(identifier, slotAt),
+    group: dueEventGroup(identifier),
+    kind: swap ? 'swap-due' : 'recurring-due',
+    via: 'in-app',
+    at: nowMs,
+    title: swap ? RECURRING_SWAP_DUE_TITLE : RECURRING_DUE_TITLE,
+    text,
+  };
+}
+
+/** The inbox entry for a phone reminder scheduled for `at` (unix seconds): shown in the inbox once that time comes. */
+export function scheduledReminderInboxEvent(identifier: string, at: number, swap: boolean): InboxEvent {
+  const content = swap ? recurringSwapDueContent() : recurringDueContent();
+  return {
+    key: dueEventKey(identifier, at),
+    group: dueEventGroup(identifier),
+    kind: swap ? 'swap-due' : 'recurring-due',
+    via: 'scheduled',
+    at: at * 1000,
+    title: content.title,
+    text: content.body,
+  };
+}
+
+/** The inbox entry for a takeover alert that was posted. */
+export function takeoverInboxEvent(key: string, nowMs: number): InboxEvent {
+  return { key: `takeover|${key}`, kind: 'takeover', via: 'notification', at: nowMs, title: TAKEOVER_TITLE, text: TAKEOVER_BODY };
 }
 
 /**
@@ -870,8 +935,25 @@ export function createNotificationCenter(deps: {
   store: KeyValueStore;
   /** Unix seconds. */
   now?: () => number;
+  /**
+   * The notifications inbox (wallet/inbox.ts, phase 22 item 5): a reminder
+   * is listed when it is scheduled (shown once its time comes) and dropped
+   * when it is cancelled before then; a takeover alert when it is posted.
+   * Optional (the check scripts' centers have none); never blocks a reminder.
+   */
+  inbox?: Pick<Inbox, 'record' | 'dropScheduled'>;
 }): NotificationCenter {
   const now = deps.now ?? (() => Math.floor(Date.now() / 1000));
+  const inbox = deps.inbox ?? null;
+  /** Inbox writes are best effort: a failure never stops or delays a reminder. */
+  const toInbox = async (task: (i: Pick<Inbox, 'record' | 'dropScheduled'>) => Promise<unknown>): Promise<void> => {
+    if (!inbox) return;
+    try {
+      await task(inbox);
+    } catch {
+      // The inbox is a list of what was shown; the reminders are what matter.
+    }
+  };
   let queue: Promise<unknown> = Promise.resolve();
   let lastStatus: NotificationsStatus | null = null;
   const listeners = new Set<() => void>();
@@ -1013,7 +1095,10 @@ export function createNotificationCenter(deps: {
             const state = await readState(deps.store);
             if (!state.mayHaveScheduled) await writeState(deps.store, { ...state, mayHaveScheduled: true });
           }
-          for (const id of plan.cancel) await n.cancel(id);
+          for (const id of plan.cancel) {
+            await n.cancel(id);
+            await toInbox((i) => i.dropScheduled(dueEventGroup(id)));
+          }
           await dismissAll(n, plan.dismiss);
           for (const s of plan.schedule) {
             await n.schedule({
@@ -1022,6 +1107,7 @@ export function createNotificationCenter(deps: {
               at: s.at,
               channelId: CHANNEL_PAYMENTS.id,
             });
+            await toInbox((i) => i.record(scheduledReminderInboxEvent(s.identifier, s.at, s.swap === true)));
           }
           if (lastStatus?.state !== 'blocked') setStatus({ state: 'on' });
         } catch (e) {
@@ -1042,6 +1128,7 @@ export function createNotificationCenter(deps: {
             await writeState(deps.store, { ...state, seenTakeovers: plan.seen, mayHaveScheduled: true });
             for (const f of plan.fire) {
               await n.schedule({ identifier: f.identifier, content: takeoverContent(), at: null, channelId: CHANNEL_SECURITY.id });
+              await toInbox((i) => i.record(takeoverInboxEvent(f.key, now() * 1000)));
             }
           } else {
             await writeState(deps.store, { ...state, seenTakeovers: plan.seen });
@@ -1260,6 +1347,7 @@ export function appNotifications(): NotificationCenter {
     appInstance = createNotificationCenter({
       loadNative: loadNotificationsNative,
       store: lazyAppStore(),
+      inbox: appInbox(),
     });
   }
   return appInstance;

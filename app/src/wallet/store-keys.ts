@@ -165,6 +165,13 @@ export const STORE_KEYS = Object.freeze({
    * survives a restart. Public data only (hashes, addresses, amounts).
    */
   bridgeTransfers: declare('shiba-wallet.bridge-transfers.v1', 'wallet'),
+  /**
+   * The notifications inbox (wallet/inbox.ts, phase 22 item 5): what the
+   * wallet has told the user (reminders, alerts, sent transactions), as
+   * the sentences shown at the time plus 16-hex tags. Per wallet, so a
+   * decoy keeps its own list. Secret-free (no key, no PIN, no long hex).
+   */
+  inbox: declare('shiba-wallet.inbox.v1', 'wallet'),
 
   // --- AsyncStorage, device-wide ---------------------------------------------
   prefs: declare('shiba-wallet.prefs.v1', 'device'),

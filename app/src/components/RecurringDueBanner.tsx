@@ -18,6 +18,8 @@ import {
   type NodeFailoverRunner,
 } from '../wallet/recurring';
 import { DCA_SOURCE, markNodeErrors, type SessionRecord } from '../wallet/sessions';
+import { appInbox } from '../wallet/inbox';
+import { recurringBannerInboxEvent } from '../wallet/notifications';
 
 /**
  * Runs a node operation on the active EVM endpoint under the shared failover
@@ -133,6 +135,12 @@ export function RecurringDueBanner() {
   const [result, setResult] = useState<{ key: string; payments: number; swaps: number } | null>(null);
   const [dismissed, setDismissed] = useState<string | null>(null);
   const checkKey = `${evmChain.caip2}|${owner ?? ''}|${generation}`;
+  // The inbox (phase 22 item 5) lists a due payment only when the banner is
+  // actually shown, not while the user has dismissed it for this check.
+  const dismissedRef = useRef<string | null>(null);
+  useEffect(() => {
+    dismissedRef.current = dismissed;
+  }, [dismissed]);
 
   useOnAppActive(useCallback(() => setGeneration((g) => g + 1), []));
 
@@ -159,6 +167,15 @@ export function RecurringDueBanner() {
         }
         const swaps = due.filter((d) => d.record.source === DCA_SOURCE).length;
         setResult({ key: checkKey, payments: due.length - swaps, swaps });
+        // One inbox entry per due slot (wallet/inbox.ts): the same key as the
+        // phone reminder for that slot, so a slot both announced is listed once.
+        if (dismissedRef.current !== checkKey) {
+          const at = Date.now();
+          for (const d of due) {
+            const event = recurringBannerInboxEvent(d.record, d.due, at);
+            if (event) void appInbox().record(event);
+          }
+        }
       },
       () => undefined,
     );

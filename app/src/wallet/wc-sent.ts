@@ -81,6 +81,37 @@ export const WC_SENT_REVERTED_LINE =
 
 export type WcSentKind = 'eoa-transaction' | 'smart-transaction' | 'batch' | 'not-included';
 
+/*
+ * The notifications inbox (wallet/inbox.ts, phase 22 item 5) lists every
+ * sent view once. wcSentResult is called exactly once per sent request, at
+ * the moment its view is shown (WalletConnectContext's four sent paths:
+ * the batch, the not-included operation, the smart-account transaction and
+ * the regular-account transaction), so it is where the view is announced to
+ * the listeners. None is registered by default (the check scripts build
+ * results without side effects); the app registers the inbox's recorder
+ * (App.tsx). A listener never affects the result or the dApp's answer.
+ */
+const sentListeners = new Set<(result: WcSentResult) => void>();
+
+/** Called with each sent view as it is shown. Returns the unsubscribe function. */
+export function onWcSentShown(listener: (result: WcSentResult) => void): () => void {
+  sentListeners.add(listener);
+  return () => {
+    sentListeners.delete(listener);
+  };
+}
+
+function announceSent(result: WcSentResult): WcSentResult {
+  for (const listener of [...sentListeners]) {
+    try {
+      listener(result);
+    } catch {
+      // A failing listener never affects the sent view.
+    }
+  }
+  return result;
+}
+
 /**
  * Builds the sent view's content for one completed request. `dappNotified`
  * is false when the reply to the dApp failed (the view then says so, as the
@@ -97,6 +128,10 @@ export function wcSentResult(args: {
   /** smart-transaction only: the receipt's success flag. */
   success?: boolean | null;
 }): WcSentResult {
+  return announceSent(buildWcSentResult(args));
+}
+
+function buildWcSentResult(args: Parameters<typeof wcSentResult>[0]): WcSentResult {
   const base = {
     key: args.key,
     dappName: args.dappName,

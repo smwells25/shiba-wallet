@@ -17,6 +17,7 @@ import { TechnicalDetail } from '../wallet/connectivity';
 import { evaluateBeforeSigning, recordAcceptedSpend } from '../wallet/spending-policy';
 import { confirmSpendingCheck } from './SpendingPolicyViews';
 import { RiskWarnings } from './RiskWarnings';
+import { appInbox, replacementNoticeInboxEvent, replacementSentInboxEvent } from '../wallet/inbox';
 import {
   EVM_CHAIN_ID,
   ReplacementRefusedError,
@@ -279,11 +280,13 @@ export function PendingTransactionsSection({
         ref: sent.txid,
       });
       if (mounted.current) setDraft(null);
-      Alert.alert(
-        action === 'speed-up' ? 'Speed-up sent' : 'Cancellation sent',
+      const sentTitle = action === 'speed-up' ? 'Speed-up sent' : 'Cancellation sent';
+      const sentText =
         `Replacement ${shortHash(sent.txid)} was accepted by the network endpoint. Activity shows which transaction ` +
-          'is included once a block includes one of them.',
-      );
+        'is included once a block includes one of them.';
+      Alert.alert(sentTitle, sentText);
+      // The inbox (wallet/inbox.ts) lists the alert once.
+      void appInbox().record(replacementSentInboxEvent({ chain, txid: sent.txid, title: sentTitle, text: sentText, nowMs: Date.now() }));
       void refresh();
     } catch (e) {
       fail(e);
@@ -342,6 +345,25 @@ export function PendingTransactionsSection({
     ? groups.filter((g) => g.group.txs.some((t) => t.hash === onlyHash.toLowerCase()))
     : groups;
   const shownNotices = onlyHash ? notices.filter((n) => n.hashes.includes(onlyHash.toLowerCase())) : notices;
+  // Each notice is listed in the inbox once (wallet/inbox.ts: a notice shown
+  // again on the next re-read, or on Activity and the Send success view,
+  // finds its entry and writes nothing).
+  useEffect(() => {
+    const listed = onlyHash ? notices.filter((n) => n.hashes.includes(onlyHash.toLowerCase())) : notices;
+    for (const n of listed) {
+      void appInbox().record(
+        replacementNoticeInboxEvent({
+          chain: n.chain,
+          from: n.from,
+          nonce: n.nonce,
+          minedHash: n.minedHash,
+          outcome: n.outcome,
+          resolvedAt: n.resolvedAt,
+          text: resolvedSentence(n),
+        }),
+      );
+    }
+  }, [notices, onlyHash]);
   const shownOps = onlyHash ? [] : userOps;
   if (!registry) return null;
   if (!registry.readOnly && shownGroups.length === 0 && shownNotices.length === 0 && shownOps.length === 0) return null;
