@@ -17,6 +17,8 @@ import {
   appSecureBackend,
   bindSecureStore,
   createProfileVault,
+  deriveRecordsBackupKey as deriveRecordsBackupKeyInVault,
+  RECORDS_BACKUP_PROMPTS,
   deleteMnemonic,
   deletePublicAccounts,
   dropPhraseTicket,
@@ -51,6 +53,7 @@ import {
   isWatchOnlyAccountId,
 } from './account-ids';
 import { checkWatchAddress, type KnownAccount } from './watch-only';
+import { requireLocalAuth } from './biometric';
 import { duplicateImportError, importedKeyBytes, importedSignerFor, parsePrivateKeyInput } from './imported-keys';
 import {
   AsyncStorage,
@@ -341,6 +344,15 @@ interface WalletContextValue {
   addDuressPin: (currentPin: string, duressPin: string, realPhrase: string) => Promise<void>;
   changeDuressPin: (currentPin: string, nextDuressPin: string) => Promise<void>;
   removeDuressPin: (currentPin: string) => Promise<void>;
+  /**
+   * RECORDS BACKUP (feature 47; ./records-backup.ts): the encryption key of
+   * one records-backup file, derived from the open wallet's recovery phrase
+   * behind ONE device prompt (./storage.ts deriveRecordsBackupKey). Refused
+   * before any read or prompt unless the active account comes from the
+   * phrase. The phrase and the seed never leave the vault's function; the
+   * caller zeroes the returned key after use.
+   */
+  deriveRecordsBackupKey: (salt: Uint8Array, purpose: 'export' | 'import') => Promise<Uint8Array>;
 }
 
 const WalletContext = createContext<WalletContextValue | null>(null);
@@ -1522,6 +1534,20 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     [accountList],
   );
 
+  // Records backup (feature 47): one device prompt opens the phrase for this
+  // derivation only (target 'phrase', whatever the active account's own
+  // approval target is); see ./storage.ts deriveRecordsBackupKey.
+  const deriveRecordsBackupKey = useCallback(
+    (salt: Uint8Array, purpose: 'export' | 'import') =>
+      deriveRecordsBackupKeyInVault({
+        activeAccountId: activeIndexRef.current,
+        prompt: RECORDS_BACKUP_PROMPTS[purpose],
+        salt,
+        gate: requireLocalAuth,
+      }),
+    [],
+  );
+
   const value = useMemo<WalletContextValue>(
     () => ({
       status,
@@ -1560,6 +1586,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       addDuressPin,
       changeDuressPin,
       removeDuressPin,
+      deriveRecordsBackupKey,
     }),
     [
       status,
@@ -1598,6 +1625,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       addDuressPin,
       changeDuressPin,
       removeDuressPin,
+      deriveRecordsBackupKey,
     ],
   );
 

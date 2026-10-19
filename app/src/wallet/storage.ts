@@ -3,8 +3,15 @@
 // expo-secure-store package cannot be evaluated outside React Native. The
 // native module is handed in once by WalletContext.tsx (bindSecureStore).
 import type * as ExpoSecureStore from 'expo-secure-store';
-import { isValidEvmPrivateKey, isValidMnemonic, publicKeyToEvmAddress } from '@shiba-wallet/core';
-import { MAX_IMPORTED_SLOT } from './account-ids.ts';
+import { isValidEvmPrivateKey, isValidMnemonic, mnemonicToSeed, publicKeyToEvmAddress } from '@shiba-wallet/core';
+// HKDF (RFC 5869) and SHA-256 for the records-backup key (feature 47), from
+// the installed @noble/hashes 2.4.0: hkdf(hash, ikm, salt, info, length)
+// per hkdf.d.ts ("HKDF (RFC 5869): derive keys from an initial input"),
+// sha256 per sha2.d.ts, utf8ToBytes per utils.d.ts.
+import { hkdf } from '@noble/hashes/hkdf.js';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { MAX_IMPORTED_SLOT, isPhraseAccountId } from './account-ids.ts';
 import {
   PROTECTED_SECURE_STORE_SERVICE,
   STORE_KEYS,
@@ -1715,3 +1722,98 @@ export const sessionKeyVault = {
   load: (id: string): Promise<string | null> => vault().sessionKeys.load(id),
   remove: (id: string): Promise<void> => vault().sessionKeys.remove(id),
 };
+
+// ---------------------------------------------------------------------------
+// Records backup key (feature 47; wallet/records-backup.ts)
+// ---------------------------------------------------------------------------
+
+/**
+ * The HKDF "info" string of the records-backup key, format 1. Versioned: a
+ * later format that needs another key uses another string, so a key of one
+ * format can never open a file of another. ASCII only (its UTF-8 bytes are
+ * its ASCII bytes).
+ */
+export const RECORDS_BACKUP_HKDF_INFO = 'shiba-wallet/records-backup/v1/aes-256-gcm-key';
+
+/** Bytes of the random HKDF salt stored in each backup file's header. */
+export const RECORDS_BACKUP_SALT_BYTES = 32;
+
+/** Bytes of the derived AES-256-GCM key. */
+export const RECORDS_BACKUP_KEY_BYTES = 32;
+
+/** The device prompts of the records backup (one per export, one per import). */
+export const RECORDS_BACKUP_PROMPTS = {
+  export: 'Approve making an encrypted backup of your records',
+  import: 'Approve opening an encrypted backup of your records',
+} as const;
+
+/**
+ * Refusal when the active account is not a recovery-phrase account (an
+ * imported key, a watched address or a multi-signature account): the backup
+ * belongs to the recovery phrase, so it is refused before anything is read
+ * from secure storage and before any prompt.
+ */
+export const RECORDS_BACKUP_PHRASE_ACCOUNT_ONLY =
+  'Records backups are made with your recovery phrase. Switch to an account that comes from your recovery phrase ' +
+  'on Home first. Nothing was read.';
+
+/**
+ * The records-backup key from a BIP-39 seed: HKDF-SHA256 (RFC 5869) with
+ * ikm = the 64-byte seed (BIP-39 mnemonicToSeed with the empty passphrase,
+ * the same seed every account of the phrase derives from), salt = the
+ * file's random 32-byte salt and info = RECORDS_BACKUP_HKDF_INFO; 32 bytes.
+ * The seed is not changed. Pure; scripts/check-records-backup.mjs pins it
+ * against Node's own crypto.hkdfSync.
+ */
+export function recordsBackupKeyFromSeed(seed: Uint8Array, salt: Uint8Array): Uint8Array {
+  if (seed.length !== 64) throw new Error('A BIP-39 seed is 64 bytes.');
+  if (salt.length !== RECORDS_BACKUP_SALT_BYTES) throw new Error(`The records-backup salt is ${RECORDS_BACKUP_SALT_BYTES} bytes.`);
+  return hkdf(sha256, seed, salt, utf8ToBytes(RECORDS_BACKUP_HKDF_INFO), RECORDS_BACKUP_KEY_BYTES);
+}
+
+/** The approval gate a records-backup key is derived behind (biometric.ts requireLocalAuth in the app). */
+export type RecordsBackupGate = (
+  prompt: string,
+  target: ApprovalTarget,
+) => Promise<{ ok: true } | { ok: false; message: string }>;
+
+/**
+ * Derives the records-backup key for one export or one import, behind the
+ * approval gate, without the phrase or the seed ever leaving this function:
+ *
+ *  1. the active account must be a recovery-phrase account — otherwise it
+ *     refuses with RECORDS_BACKUP_PHRASE_ACCOUNT_ONLY before any read or
+ *     prompt (an imported, watched or multi-signature account's approval
+ *     target is not the phrase);
+ *  2. the gate is asked with target 'phrase': when the phrase is protected,
+ *     its system prompt opens the phrase and the vault holds it for the
+ *     read below (one prompt in all); otherwise the gate shows the ordinary
+ *     device prompt and the read below needs none;
+ *  3. the phrase → the BIP-39 seed → HKDF → the key; the seed is zeroed
+ *     before this returns (the phrase string cannot be — threat model
+ *     N-03, the same limit as signing).
+ *
+ * The vault is the app's (it follows the active storage profile, so a decoy
+ * wallet derives from ITS phrase) unless one is given (the checks).
+ */
+export async function deriveRecordsBackupKey(args: {
+  activeAccountId: number;
+  prompt: string;
+  salt: Uint8Array;
+  gate: RecordsBackupGate;
+  vault?: KeyVault;
+}): Promise<Uint8Array> {
+  if (!isPhraseAccountId(args.activeAccountId)) throw new Error(RECORDS_BACKUP_PHRASE_ACCOUNT_ONLY);
+  if (args.salt.length !== RECORDS_BACKUP_SALT_BYTES) throw new Error(`The records-backup salt is ${RECORDS_BACKUP_SALT_BYTES} bytes.`);
+  const v = args.vault ?? vault();
+  const gate = await args.gate(args.prompt, { kind: 'phrase' });
+  if (!gate.ok) throw new Error(gate.message);
+  const mnemonic = await v.readPhrase(args.prompt);
+  if (!mnemonic) throw new Error('No wallet found in secure storage');
+  const seed = mnemonicToSeed(mnemonic);
+  try {
+    return recordsBackupKeyFromSeed(seed, args.salt);
+  } finally {
+    seed.fill(0);
+  }
+}
