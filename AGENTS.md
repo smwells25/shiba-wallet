@@ -163,6 +163,13 @@ examples/demo.mjs          Offline end-to-end engine demo
   "Something went wrong" (the mapping is lost with the device); a
   `touch` of the Metro worktree makes Metro demand a restart
   ("Detected a change in metro.config.js").
+  KEEP THE EMULATOR WINDOW IN FRONT DURING LONG PASSES: macOS throttles
+  qemu whenever its window is not frontmost (priority 4, "throttled",
+  about 2–3% JavaScript CPU — 2026-10-18 pass p21f: a PIN set-up did not
+  finish in 37 minutes behind Zoom and finished 36 s after the window
+  was brought forward; `taskpolicy -B` / `-t` / `-l` did not help; the
+  same demotion slowed pass p19a); a driver brings it forward with
+  osascript before any long wait.
   Since phase 17 item 0 the app blocks screenshots everywhere by default.
   ON THE EMULATOR IT STAYS OFF (the Chairperson's request, 2026-10-11:
   the secure flag blanks the emulator window for a human watching it
@@ -9352,3 +9359,113 @@ Opus.
       the 1-point node still naming it; the separate provider stops and
       no ". disabled"; one speech on open and whether "Accounts. Heading"
       is read; iOS.
+- [x] EMULATOR PASS p21f — DURESS STAGE 3 ON A THROWAWAY WALLET IN THE
+      DEVELOPMENT BUILD: THE DESIGN WORKS, THE PIN COST IS UNUSABLE
+      (2026-10-18 UTC; the debug dev-client APK built from 45506f2 with
+      Metro on 8082 serving wt-build moved to 006dd43 (engine built inside
+      it, 1,890 modules); a throwaway wallet, deleted with the app; Expo
+      Go never opened (firstInstallTime unchanged); no repo file edited;
+      nothing sent (the throwaway held 0 ETH); notes, redacted dumps and
+      key listings in the scratchpad p21f; the phrase files deleted with
+      rm -P; one slip — an unmasked quiz dump printed six answer choices
+      into the agent's working output, deleted, every kept file re-scanned
+      clean). FINDING 1 — THE PIN CHECK TAKES ABOUT 4 MINUTES: one
+      attemptPin (both scrypt hashes, N = 2^16) measured 245–258 s over 9
+      runs with the window in front and the DEBUG bundle; turning the PIN
+      on (one hash) was as slow and adding the duress PIN took ~10.7 min;
+      Node does the same hash in 240–313 ms (~400×); release Hermes on a
+      phone is unmeasured, but N = 2^16 in pure JavaScript is unusable —
+      a native scrypt or a far lower N is a DECISION (measurement slice
+      dispatched). FINDING 2 — macOS THROTTLES THE EMULATOR when its window
+      is not in front (standing rule added above). FINDING 3 — THE
+      WRONG-PIN WAIT NEVER SHOWS: five wrong PINs each answered "Wrong PIN.
+      Try again." with no "Too many wrong PINs" / "Try again in N
+      seconds" — pin.ts attemptPin stamps the wait when the attempt
+      STARTS, and the result shows after the two hashes (~4 min), by which
+      time the 30 / 60 / 120 / 240 s waits have run out (a logic bug
+      independent of the hash cost; fix dispatched). PASSED, exact
+      strings: the Settings notes ("With a PIN, the wallet's own lock
+      screen asks for a 6-digit PIN each time the wallet is opened and
+      after auto-lock, instead of your fingerprint or face. …", "What the
+      PIN does not protect against: someone who copies this app's storage
+      …", "While the PIN is on, auto-lock cannot be turned off, screen
+      protection stays on, and the wallet posts no notifications: …", "To
+      turn the PIN on, first type two words of your recovery phrase from
+      your written backup, to confirm you still have it."); the backup
+      check = a device prompt "Confirm your recovery phrase backup" (with
+      "Use PIN") then "Type word 7 and word 11 of your recovery phrase,
+      from your written backup." (fields "Word N of your recovery
+      phrase"; wrong words → "Those words do not match your recovery
+      phrase. Check your written backup; nothing was changed."); the pad
+      "Choose a 6-digit PIN" / "Type the new PIN again" / keys "Digit N",
+      "Delete the last digit", "N of 6 digits entered", "Checking the
+      PIN"; 123456 refused "This PIN cannot be used. Choose a different
+      6-digit PIN."; a short PIN cannot be submitted; afterwards "The app
+      PIN is on. The wallet asks for it the next time it is opened or
+      locks.", Auto-lock's Off chip gone with "While the app PIN is on,
+      auto-lock cannot be turned off: …", screen protection on and
+      disabled ("Screen protection stays on while the app PIN is on, so
+      the app switcher and screenshots never show the wallet."; screencap
+      0 bytes, SECURE, although it had been off), "Notifications are off
+      while the app PIN is on: a notification can be read on the lock
+      screen without your PIN." (reminders that were on read "Reminders
+      are off. Nothing is scheduled."); LOCK: after 75 s in the background
+      only the pad ("Shiba Wallet is locked / The app locked itself after
+      being in the background. Your keys never left the device's secure
+      storage. / Enter your PIN"), no biometric prompt, no system "Use
+      PIN"; a cold start → launcher, two blank frames, the pad ("Auto-lock
+      is on, so the wallet starts locked. …"), no wallet data in any dump;
+      signing still uses the device prompt (seen on the duress backup
+      check). DURESS PIN: DURESS_HONEST_CLAIM exactly, the funding and
+      BIP-85 notes, "No duress PIN is set."; steps prompt → two words →
+      "Type your current PIN" → "Choose a 6-digit duress PIN" → "Type the
+      duress PIN again"; the real PIN refused "The duress PIN must be
+      different from your app PIN. Nothing was changed."; success "The
+      duress PIN is set. It opens the second wallet." / "A duress PIN is
+      set." with Change / Remove. THE DECOY: Home Account 1 0x1A89…BB25
+      (one account, its own BTC / DOGE / SOL addresses); none of the real
+      wallet's data ("No contacts.", only the default USDC / EURC, no
+      Account 2); shared BY DESIGN as device settings: the Ethereum
+      Sepolia choice, the custom network "Polygon Amoy (test)", and a
+      WalletConnect project id shown as "Saved — used to reach the
+      WalletConnect relay." on a FRESH install (its source not
+      established — follow-up); its Settings read like a wallet with only
+      an app PIN ("No duress PIN is set." / "Add a duress PIN"), and Add
+      ends "This could not be completed on this phone. Nothing was
+      changed." (§7.9 as built); Remove PIN there shows "Remove the app
+      PIN?" with the no-duress body (result not captured — taps missed
+      off-screen keys); "Change PIN" untested. SWITCHING: the real PIN
+      reopened the real wallet with Account 2, wstETH, the BTC alert, the
+      contact and Polygon Amoy intact; the duress PIN again opened the
+      same 0x1A89…BB25. OFF-DEVICE PROOF: bip85ChildMnemonic(phrase, 0)
+      (12 words) → evmKeyProvider.deriveAccount(seed, 0, 0) =
+      0x1A89E8D56344038515b9988d6aefF9c900d5BB25, EQUAL to the decoy's
+      address; the same code reproduces the real address; the stored
+      decoy phrase is 75 bytes. KEY NAMES (SecureStore, names only):
+      key_v1-shiba-wallet.{vault-meta.v1, app-lock.v1, mnemonic.v1,
+      public-account.v1.0, public-account.v1.1} and
+      key_v1-shiba-wallet.profile-w2.{mnemonic.v1, vault-meta.v1,
+      public-account.v1.0} — two wallets detectable by name, as
+      DURESS_WALLET.md says; the PIN record's ciphertext 374 bytes before
+      and after (358 + the 16-byte tag) — fixed size; AsyncStorage never
+      held profile-w2.* or wc@2:* keys. REMOVE WALLET with the PIN on:
+      "Wipe wallet?" + "With the app PIN on, this removes everything the
+      wallet keeps on this phone, and the app PIN itself." → "Are you
+      absolutely sure? …" → SecureStore <map /> (both wallets and the PIN
+      record gone); AsyncStorage kept prefs.v1, custom-networks.v1, an
+      empty wallet key and browser-connections.v1; a cold start opened
+      onboarding with no pad; protection back to the stored off. OTHER
+      FINDINGS: (4) in the dev build the WalletConnect chunk fails with
+      "Requiring unknown module \"1892\"/\"1891\"" then "Cannot set
+      property 'importedAll' of undefined", and a production-mode bundle
+      served by Metro fails every lazily loaded module with "Unable to
+      determine the production URL…" (breaks WalletConnect and screen
+      protection's own message) — Connected apps and WalletConnect
+      separation UNVERIFIED (neither wallet had wc@2 keys); (5) the
+      Auto-lock hint still says "locks behind the same biometric prompt as
+      sending" while the PIN is on (copy). NOT TESTED: a Send confirm's
+      device prompt (no funds), the doubling waits, Change PIN in the
+      decoy, real-phone Hermes timing, TalkBack, iOS. CLEAN-UP: the app
+      uninstalled, Metro 8082 stopped, the 8082 reverse removed, Metro
+      8081 untouched, wt-build at 006dd43 with the prebuild edits
+      restored, the emulator on the launcher.
