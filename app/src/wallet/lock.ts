@@ -253,6 +253,20 @@ export function lockGateAvailable(deviceAnswer: boolean | null, appPinOn: boolea
   return appPinOn ? true : deviceAnswer;
 }
 
+/**
+ * Settings → Privacy → Auto-lock, the hint while the app PIN is on (pass
+ * p21f finding 5): the lock is then the app's own PIN pad, and the device
+ * prompt does not unlock the wallet (LockGate.tsx shows the PinPad instead
+ * of the Unlock button); signing still asks for the device prompt. Without
+ * a PIN, SettingsScreen keeps its own sentence ("…locks behind the same
+ * biometric prompt as sending…"), pinned word for word in check-devmode.
+ */
+export const AUTO_LOCK_HINT_WITH_PIN =
+  'When the app has been in the background at least this long, it locks behind the app PIN pad: it opens again only ' +
+  "after you type your 6-digit PIN; the device's own fingerprint, face or passcode prompt does not unlock it while the PIN " +
+  'is on (sending and signing still ask for that prompt). The wallet also starts locked every time it is opened afresh (after it was ' +
+  'closed, swiped away or stopped by the system). Screen state is kept — locking never discards what you were doing.';
+
 /** The device prompt's title for the lock screen (unchanged since phase 4). */
 export const UNLOCK_PROMPT = 'Unlock Shiba Wallet';
 

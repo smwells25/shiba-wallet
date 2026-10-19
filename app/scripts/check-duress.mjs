@@ -11,6 +11,12 @@
 //    timing), whichever PIN was typed, malformed ones included;
 //  - the wait schedule (5 free, 30 s, doubling to 1 h, no wipe), honoured
 //    after a restart, and the counter written BEFORE the hashes;
+//  - the wait measured from the END of a failed attempt (pass p21f: the
+//    hashes took ~4 minutes, longer than the first waits), refused at once
+//    with no hash while it runs, counted down by the lock screen's pad;
+//  - the Developer-mode PIN hashing cost measurement (src/wallet/pin-cost.ts):
+//    the PIN's own scrypt function and parameters, the sizes, the
+//    120-second ceiling, nothing stored, test networks only, its wording;
 //  - the real scrypt parameters (N = 2^16, r = 8, p = 1, 32-byte salt and
 //    hash), recomputed independently;
 //  - the profile prefix on wallet and secret keys and never on device keys;
@@ -43,6 +49,7 @@ import { wordlist } from '@scure/bip39/wordlists/english.js';
 
 import * as seam from '../src/wallet/store-keys.ts';
 import * as pinMod from '../src/wallet/pin.ts';
+import * as pinCost from '../src/wallet/pin-cost.ts';
 import * as duressMod from '../src/wallet/duress.ts';
 import * as lockMod from '../src/wallet/lock.ts';
 import * as storage from '../src/wallet/storage.ts';
@@ -345,6 +352,228 @@ const EXPECTED_SCHEDULE = [
       pinMod.pinAttemptMessage({ kind: 'wait', until: 3_600_000 }, 0) === 'Too many wrong PINs. Try again in 60 minutes.');
 }
 
+/**
+ * Pass p21f: each hash takes longer than the first wait (a fake clock moved
+ * by the KDF itself, 125 s per hash, 250 s per attempt — the emulator's
+ * debug build measured 245–258 s). Every stored value's length is recorded.
+ */
+async function slowAttempts(pin) {
+  const backend = fakeSecureStore();
+  const lengths = [];
+  const set = backend.setItemAsync;
+  backend.setItemAsync = async (k, v, o) => {
+    lengths.push(v.length);
+    return set(k, v, o);
+  };
+  let now = 1_000_000;
+  let hashes = 0;
+  const kdf = async (p, salt) => {
+    hashes += 1;
+    now += 125_000;
+    return sha256(concatBytes(salt, utf8ToBytes(p)));
+  };
+  const deps = { kdf, random: detRandom, now: () => now };
+  await pin.writePinRecord(backend, await pin.createPinRecord(PIN_A, { ...deps, kdf: countingKdf().kdf }));
+  const outs = [];
+  for (let i = 1; i <= 5; i += 1) {
+    const started = now;
+    const out = await pin.attemptPin(backend, '000001', deps);
+    outs.push({ out, started, ended: now });
+  }
+  const fifth = outs[4];
+  const visible = pin.pinAttemptMessage(fifth.out, fifth.ended);
+  // One second later, a sixth PIN (even the right one) is refused at once.
+  now = fifth.ended + 1_000;
+  const rawBefore = [...backend.items.values()][0];
+  hashes = 0;
+  const during = await pin.attemptPin(backend, PIN_A, deps);
+  const duringHashes = hashes;
+  const duringText = pin.pinAttemptMessage(during, now);
+  const unchanged = [...backend.items.values()][0] === rawBefore;
+  const countdown = pin.pinCountdownOf(fifth.out);
+  const at10 = countdown ? pin.pinCountdownText(countdown, fifth.ended + 10_000) : null;
+  const atEnd = countdown ? pin.pinCountdownText(countdown, fifth.out.until) : null;
+  const duringCountdown = pin.pinCountdownOf(during);
+  const waitOver = duringCountdown ? pin.pinCountdownText(duringCountdown, during.until) : null;
+  // After the wait: one more wrong PIN → 60 s from ITS end, then 120 s.
+  now = fifth.out.until;
+  const sixth = await pin.attemptPin(backend, '000001', deps);
+  const sixthWait = sixth.until - now;
+  now = sixth.until;
+  const seventh = await pin.attemptPin(backend, '000001', deps);
+  const seventhWait = seventh.until - now;
+  now = seventh.until;
+  const ok = await pin.attemptPin(backend, PIN_A, deps);
+  const after = await pin.readPinRecord(backend);
+  return {
+    kinds: outs.map((o) => o.out.kind).join(','),
+    firstFourUntil: outs.slice(0, 4).map((o) => o.out.until),
+    fifthWaitFromEnd: fifth.out.until - fifth.ended,
+    fifthAheadAtAnswer: fifth.out.until > fifth.ended,
+    visible,
+    during: during.kind,
+    duringHashes,
+    duringText,
+    unchanged,
+    at10,
+    atEnd,
+    waitOver,
+    sixthWait,
+    seventhWait,
+    ok: ok.kind,
+    resetFails: after.fails,
+    resetUntil: after.until,
+    lengths,
+  };
+}
+{
+  check('the wait schedule as a pure function, by table: wrong PINs in a row → seconds (5 free, 30 s doubling, 1-hour cap)',
+    JSON.stringify([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 400].map(pinMod.pinWaitSeconds)) ===
+      JSON.stringify([0, 0, 0, 0, 0, 30, 60, 120, 240, 480, 960, 1920, 3600, 3600, 3600, 3600]) &&
+      [0, 5, 6, 12, 400].every((n) => pinMod.waitAfterFailures(n) === pinMod.pinWaitSeconds(n) * 1000));
+  const slow = await slowAttempts(pinMod);
+  check('pass p21f: five wrong PINs whose hashes take 250 s each — the first four start no wait, the fifth a visible 30-second wait from the END of that attempt',
+    slow.kinds === 'wrong,wrong,wrong,wrong,wrong' && slow.firstFourUntil.every((u) => u === 0) &&
+      slow.fifthWaitFromEnd === 30_000 && slow.fifthAheadAtAnswer, JSON.stringify(slow));
+  check('…so the answer shown is "Wrong PIN. Try again in 30 seconds." (the old start-stamped wait had run out 220 s before)',
+    slow.visible === 'Wrong PIN. Try again in 30 seconds.', slow.visible);
+  check('a PIN typed during the wait (even the right one) is refused at once: zero hashes, the record unchanged, "Too many wrong PINs. Try again in 29 seconds."',
+    slow.during === 'wait' && slow.duringHashes === 0 && slow.unchanged && slow.duringText === 'Too many wrong PINs. Try again in 29 seconds.', JSON.stringify(slow));
+  check('the pad\'s countdown from the stamped time: 20 seconds left at +10 s, then "Wrong PIN. Try again." / the wait-over sentence at the end',
+    slow.at10 === 'Wrong PIN. Try again in 20 seconds.' && slow.atEnd === 'Wrong PIN. Try again.' &&
+      slow.waitOver === 'You can enter your PIN again.' && pinMod.PIN_WAIT_OVER_MESSAGE === slow.waitOver, JSON.stringify([slow.at10, slow.atEnd, slow.waitOver]));
+  check('the doubling, each from the end of its own slow attempt: 60 s after the sixth, 120 s after the seventh',
+    slow.sixthWait === 60_000 && slow.seventhWait === 120_000, JSON.stringify([slow.sixthWait, slow.seventhWait]));
+  check('a correct PIN after the wait opens and resets the counter and the wait', slow.ok === 'opened' && slow.resetFails === 0 && slow.resetUntil === 0);
+  check(`every value written in that run is exactly 358 bytes (${slow.lengths.length} writes: before, during and after the waits)`,
+    slow.lengths.length >= 10 && slow.lengths.every((l) => l === 358), JSON.stringify(slow.lengths));
+  check('pinCountdownOf: a wrong PIN that starts a wait and a refusal during one start a countdown; a plain wrong PIN or an opened one none',
+    JSON.stringify(pinMod.pinCountdownOf({ kind: 'wrong', fails: 5, until: 9 })) === '{"kind":"wrong","until":9}' &&
+      JSON.stringify(pinMod.pinCountdownOf({ kind: 'wait', until: 9 })) === '{"kind":"wait","until":9}' &&
+      pinMod.pinCountdownOf({ kind: 'wrong', fails: 1, until: 0 }) === null && pinMod.pinCountdownOf({ kind: 'opened', slot: 'primary' }) === null);
+  const ctx = read('wallet/WalletContext.tsx');
+  check('WalletContext.unlockWithPin returns the stamped wait with the sentence (pinCountdownOf)',
+    /const countdown = pinCountdownOf\(outcome\);\s*return countdown \? \{ ok: false, message, countdown \} : \{ ok: false, message \};/.test(ctx));
+  const gate = read('components/LockGate.tsx');
+  check('LockGate: the lock screen hands the wait to the PinPad, which counts it down once a second from the stamped time',
+    gate.includes('if (!outcome.ok) return outcome.countdown ? { countdown: outcome.countdown } : outcome.message;') &&
+      gate.includes('const line = countdown ? pinCountdownText(countdown, clock) : message;') &&
+      /setInterval\(\(\) => \{\s*const t = Date\.now\(\);\s*setClock\(t\);\s*if \(t >= countdown\.until\) clearInterval\(timer\);\s*\}, PIN_COUNTDOWN_TICK_MS\);/.test(gate) &&
+      gate.includes('export const PIN_COUNTDOWN_TICK_MS = 1000;') && gate.includes('{line ?? \'\'}'));
+  check('LockGate: a screen reader hears the wait when it starts and when it ends, not every second (live region off while it ticks)',
+    gate.includes("const ticking = countdown !== null && clock !== countdownFrom && clock < countdown.until;") &&
+      gate.includes("accessibilityLiveRegion={ticking ? 'none' : 'polite'}"));
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-duress: the PIN hashing cost measurement (src/wallet/pin-cost.ts, Settings → Developer)');
+// ---------------------------------------------------------------------------
+/** The PIN check and the measurement share pinScrypt and the PIN's parameters (source). */
+function sameScryptPin(pinSrc, costSrc) {
+  return /function defaultKdf\(pin: string, salt: Uint8Array\): Promise<Uint8Array> \{\s*return pinScrypt\(pin, salt\);\s*\}/.test(pinSrc) &&
+    pinSrc.includes('const opts = { N: 2 ** log2N, r: PIN_SCRYPT.r, p: PIN_SCRYPT.p, dkLen: PIN_SCRYPT.dkLen };') &&
+    pinSrc.includes('export const PIN_SCRYPT = Object.freeze({ N: 2 ** PIN_SCRYPT_LOG2_N, r: 8, p: 1, dkLen: 32 });') &&
+    costSrc.includes("import { PIN_SALT_BYTES, PIN_SCRYPT_LOG2_N, pinScrypt } from './pin.ts';") && costSrc.includes('const hash = deps.hash ?? pinScrypt;') &&
+    costSrc.includes('const salt = random(PIN_SALT_BYTES);') && costSrc.includes('const out = await hash(PIN_COST_INPUT, salt, log2N, () => {');
+}
+/** A fake hash on a fake clock: each size "costs" costs[log2N] ms, reported through onProgress in 10 steps. */
+function fakeCostRun(pc, costs, { cancelAt = null } = {}) {
+  let now = 0;
+  let cancel = false;
+  const calls = [];
+  const hash = async (input, salt, log2N, onProgress) => {
+    calls.push({ input, saltLength: salt.length, log2N, progress: typeof onProgress === 'function' });
+    for (let i = 1; i <= 10; i += 1) {
+      now += costs[log2N] / 10;
+      if (cancelAt !== null && log2N === cancelAt && i === 3) cancel = true;
+      onProgress(i / 10);
+    }
+    return new Uint8Array(32);
+  };
+  const updates = [];
+  return pc
+    .measurePinHashCost({ os: 'android', hermes: true, dev: false }, {
+      now: () => now,
+      random: detRandom,
+      hash,
+      isCancelled: () => cancel,
+      onUpdate: (rows, current) => updates.push(current),
+    })
+    .then((report) => ({ report, calls, updates }));
+}
+{
+  check('sizes N = 2^12 … 2^16 in order, a 120-second ceiling per size, and the PIN\'s N is the last size',
+    JSON.stringify(pinCost.PIN_COST_LOG2_SIZES) === '[12,13,14,15,16]' && pinCost.PIN_COST_CEILING_MS === 120_000 &&
+      pinCost.PIN_COST_LOG2_SIZES.at(-1) === pinMod.PIN_SCRYPT_LOG2_N && pinMod.PIN_SCRYPT_LOG2_N === 16 && pinMod.PIN_SCRYPT.N === 2 ** pinMod.PIN_SCRYPT_LOG2_N);
+  check('the throwaway input is refused as a PIN by the PIN rules, so it can never be anyone\'s PIN',
+    pinCost.PIN_COST_INPUT === '000000' && pinMod.isTriviallyGuessed(pinCost.PIN_COST_INPUT));
+  const pinSrc = read('wallet/pin.ts');
+  const costSrc = read('wallet/pin-cost.ts');
+  check('source: the PIN check and the measurement use the SAME function (pinScrypt) with the PIN\'s r, p and length',
+    sameScryptPin(pinSrc, costSrc));
+  const salt = detRandom(32);
+  check('pinScrypt at N = 2^12 equals scrypt(N = 4096, r = 8, p = 1, dkLen = 32) computed here independently',
+    bytesToHex(await pinMod.pinScrypt('000000', salt, 12)) === bytesToHex(scrypt('000000', salt, { N: 4096, r: 8, p: 1, dkLen: 32 })));
+  check('…and with a progress callback the result is the same (the callback only lets the run be stopped)',
+    bytesToHex(await pinMod.pinScrypt('000000', salt, 12, () => {})) === bytesToHex(scrypt('000000', salt, { N: 4096, r: 8, p: 1, dkLen: 32 })));
+  check('source: the measurement stores nothing and sends nothing (no store, secure store, network or log)',
+    !/store-keys|AsyncStorage|SecureStore|expo-secure-store|readPinRecord|writePinRecord|attemptPin|fetch\(|XMLHttpRequest|console\.\w+\(/.test(costSrc) &&
+      !/AsyncStorage|SecureStore|store-keys|fetch\(|console\.\w+\(/.test(read('components/PinCostMeasurement.tsx')));
+
+  const real = await pinCost.measurePinHashCost({ os: 'node', hermes: false, dev: true });
+  check(`the real run under Node: every size measured with the real hash (${real.rows.map((r) => `2^${r.log2N} ${Math.round(r.ms)} ms`).join(', ')})`,
+    real.finished && real.rows.length === 5 && real.rows.every((r, i) => r.status === 'measured' && r.log2N === 12 + i && r.ms > 0) && real.totalMs >= real.rows.reduce((a, r) => a + r.ms, 0) - 1);
+  console.log(`       ${real.rows.map(pinCost.pinCostRowText).join(' | ')}`);
+
+  const fast = await fakeCostRun(pinCost, { 12: 50, 13: 100, 14: 200, 15: 400, 16: 800 });
+  check('each size gets the throwaway input, a fresh 32-byte salt and a progress callback; updates before each size and at the end',
+    fast.calls.map((c) => c.log2N).join(',') === '12,13,14,15,16' && fast.calls.every((c) => c.input === '000000' && c.saltLength === 32 && c.progress) &&
+      JSON.stringify(fast.updates) === '[12,13,14,15,16,null]');
+  check('the result lines, exactly', JSON.stringify(fast.report.rows.map(pinCost.pinCostRowText)) ===
+    JSON.stringify(['N = 2^12: 50 ms', 'N = 2^13: 100 ms', 'N = 2^14: 200 ms', 'N = 2^15: 400 ms', 'N = 2^16: 800 ms']) &&
+    pinCost.pinCostTotalText(fast.report.totalMs) === 'Total time: 1,550 ms (wall clock).' &&
+    pinCost.pinCostPlatformText(fast.report.platform) === 'Platform: android · Hermes: yes · development bundle (__DEV__): no',
+    JSON.stringify(fast.report));
+  const ceil = await fakeCostRun(pinCost, { 12: 1_000, 13: 60_000, 14: 300_000, 15: 1, 16: 1 });
+  check('a size past 120 s is stopped at the ceiling and the larger sizes are skipped with a note',
+    JSON.stringify(ceil.report.rows.map((r) => r.status)) === '["measured","measured","ceiling","skipped","skipped"]' && !ceil.report.finished &&
+      ceil.calls.length === 3 &&
+      pinCost.pinCostRowText(ceil.report.rows[2]) === 'N = 2^14: stopped after 150,000 ms, at the 120-second limit for one size (it takes longer than that).' &&
+      pinCost.pinCostRowText(ceil.report.rows[3]) === 'N = 2^15: skipped (a smaller size reached the 120-second limit).',
+    JSON.stringify(ceil.report.rows.map(pinCost.pinCostRowText)));
+  const stopped = await fakeCostRun(pinCost, { 12: 10, 13: 10_000, 14: 1, 15: 1, 16: 1 }, { cancelAt: 13 });
+  check('Stop ends the run inside the current hash; the rest are not measured',
+    JSON.stringify(stopped.report.rows.map(pinCost.pinCostRowText)) ===
+      JSON.stringify(['N = 2^12: 10 ms', 'N = 2^13: stopped by you after 3,000 ms (not finished).', 'N = 2^14: not measured (stopped by you).',
+        'N = 2^15: not measured (stopped by you).', 'N = 2^16: not measured (stopped by you).']) && stopped.calls.length === 2,
+    JSON.stringify(stopped.report.rows.map(pinCost.pinCostRowText)));
+  check('the platform facts: the Hermes marker global.HermesInternal present or not, Platform.OS and __DEV__ as given',
+    pinCost.pinCostPlatform('android', { HermesInternal: {} }, false).hermes === true && pinCost.pinCostPlatform('ios', {}, true).hermes === false &&
+      pinCost.pinCostPlatform('ios', { HermesInternal: null }, true).hermes === false && pinCost.pinCostPlatform('ios', {}, true).dev === true);
+  check('test networks only (readiness isTestNetwork): offered on Ethereum Sepolia and Hoodi, never on Ethereum mainnet',
+    pinCost.pinCostMeasurementOffered('eip155:11155111') && pinCost.pinCostMeasurementOffered('eip155:560048') && !pinCost.pinCostMeasurementOffered('eip155:1'));
+  const settings = read('screens/SettingsScreen.tsx');
+  check('Settings → Developer renders it only where offered, after the minimum-fee rehearsal',
+    settings.includes('{pinCostMeasurementOffered(evmChain.caip2) ? <PinCostMeasurement /> : null}') &&
+      settings.indexOf('{MINIMUM_FEE_REHEARSAL_HINT}') < settings.indexOf('<PinCostMeasurement />') &&
+      settings.indexOf('<PinCostMeasurement />') < settings.indexOf('<CustomNetworksSection'));
+  check('the button and note wording, exactly',
+    pinCost.PIN_COST_BUTTON === 'Measure the PIN hashing cost' && pinCost.PIN_COST_STOP_BUTTON === 'Stop the measurement' &&
+      pinCost.PIN_COST_HINT === 'Test networks only. Times the scrypt hash the app PIN uses, on this phone: one hash at each size from N = 2^12 to N = 2^16, ' +
+        "so the PIN's cost setting can be chosen from a real figure (the PIN uses N = 2^16 today, and unlocking computes two hashes at that size). " +
+        'It uses a random salt and a throwaway input, never your PIN or its record; nothing is stored and nothing leaves this phone. ' +
+        'A size that runs longer than 120 seconds is stopped and the larger sizes are skipped.' &&
+      pinCost.PIN_COST_RESULT_NOTE === "Each figure is one hash. Unlocking with the app PIN computes two hashes at the PIN's size. Nothing was stored." &&
+      pinCost.pinCostRunningText(14) === 'Measuring N = 2^14…' &&
+      pinCost.pinCostFailedText('x') === 'The measurement could not be run. Nothing was stored. Technical detail: x');
+  const view = read('components/PinCostMeasurement.tsx');
+  check('the component: the platform from Platform.OS, the global object and __DEV__; Stop and leaving the screen cancel the run',
+    view.includes('const platform = pinCostPlatform(Platform.OS, globalThis, __DEV__);') && view.includes('isCancelled: () => cancel.current,') &&
+      /return \(\) => \{\s*mounted\.current = false;\s*cancel\.current = true;\s*\};/.test(view) &&
+      view.includes('<Button title={PIN_COST_STOP_BUTTON} variant="secondary" onPress={() => (cancel.current = true)} />') &&
+      view.includes('<Button title={PIN_COST_BUTTON} variant="secondary" onPress={start} />'));
+}
+
 // ---------------------------------------------------------------------------
 console.log('check-duress: the storage profiles (store-keys.ts)');
 // ---------------------------------------------------------------------------
@@ -641,11 +870,17 @@ const MUTANT_DIR = join(HERE, `.mutants-duress-${process.pid}`);
 mkdirSync(MUTANT_DIR, { recursive: true });
 let mutantNo = 0;
 /** Imports a copy of src/wallet/<file> with one replacement; relative imports point at the real modules. */
-async function mutant(file, from, to) {
+async function mutant(file, from, to, ...more) {
   const src = read(`wallet/${file}`);
-  if (!src.includes(from)) throw new Error(`mutant anchor missing in ${file}: ${from}`);
+  const pairs = [[from, to], ...more];
+  let text = src;
+  for (const [a, b] of pairs) {
+    if (!text.includes(a)) throw new Error(`mutant anchor missing in ${file}: ${a}`);
+    text = text.replace(a, b);
+  }
   const realDir = pathToFileURL(join(SRC, 'wallet')).href;
-  const text = src.replace(from, to).replace(/from '\.\/([^']+)'/g, (_, p) => `from '${realDir}/${p}'`);
+  const srcDir = pathToFileURL(SRC).href;
+  text = text.replace(/from '\.\/([^']+)'/g, (_, p) => `from '${realDir}/${p}'`).replace(/from '\.\.\/([^']+)'/g, (_, p) => `from '${srcDir}/${p}'`);
   mutantNo += 1;
   const out = join(MUTANT_DIR, `m${mutantNo}-${file}`);
   writeFileSync(out, text);
@@ -665,7 +900,7 @@ try {
     check('mutant caught: an attempt that computes no hash at all', c.primary.calls !== 2 || c.primary.kind !== 'opened');
   }
   {
-    const m = await mutant('pin.ts', "  await writePinRecord(backend, { ...record, fails, until });\n  // A malformed", '  // A malformed');
+    const m = await mutant('pin.ts', "  await writePinRecord(backend, { ...record, fails, until: 0 });\n  // A malformed", '  // A malformed');
     check('mutant caught: the counter written only after the hashes (an attempt killed mid-hash would not count)', (await preIncrement(m)) !== 1);
   }
   {
@@ -692,6 +927,42 @@ try {
     const m = await mutant('pin.ts', 'if (slot !== null && (expect === undefined || slot === expect)) {', 'if (slot !== null) {');
     const e = await expectSlot(m);
     check('mutant caught: the other wallet\'s PIN accepted as "current PIN" (and resetting the counter)', e.other !== 'wrong' || e.failsAfterOther !== 2);
+  }
+  {
+    // Pass p21f: the wait stamped when the attempt STARTED (the old rule).
+    const m = await mutant('pin.ts',
+      "  if (record.until > dd.now()) return { kind: 'wait', until: record.until };",
+      "  const startedAt = dd.now();\n  if (record.until > startedAt) return { kind: 'wait', until: record.until };",
+      ['const until = wait > 0 ? dd.now() + wait : 0;', 'const until = wait > 0 ? startedAt + wait : 0;']);
+    const slow = await slowAttempts(m);
+    check('mutant caught: the wait stamped when the attempt started (it has run out before "Wrong PIN" shows)',
+      slow.visible !== 'Wrong PIN. Try again in 30 seconds.' || slow.during !== 'wait');
+  }
+  {
+    const m = await mutant('pin.ts', "  if (record.until > dd.now()) return { kind: 'wait', until: record.until };\n", '');
+    const slow = await slowAttempts(m);
+    check('mutant caught: an attempt during the wait that is checked anyway (hashes computed)', slow.during !== 'wait' || slow.duringHashes !== 0);
+  }
+  {
+    const m = await mutant('pin.ts', "    await writePinRecord(backend, { ...record, fails: 0, until: 0 });\n    return { kind: 'opened', slot };", "    return { kind: 'opened', slot };");
+    check('mutant caught: a correct PIN that does not reset the counter', (await slowAttempts(m)).resetFails !== 0);
+  }
+  {
+    const m = await mutant('pin.ts', 'export const PIN_MAX_WAIT_SECONDS = 3_600;', 'export const PIN_MAX_WAIT_SECONDS = 7_200;');
+    check('mutant caught: a 2-hour cap', m.pinWaitSeconds(13) !== 3600);
+  }
+  {
+    const m = await mutant('pin-cost.ts', "        if (now() - t0 > PIN_COST_CEILING_MS) throw new PinCostStopped('ceiling');\n", '');
+    const r = await fakeCostRun(m, { 12: 1_000, 13: 60_000, 14: 300_000, 15: 1, 16: 1 });
+    check('mutant caught: no per-size ceiling (a 300-second size runs to the end and the larger ones still run)', r.report.rows[2].status !== 'ceiling');
+  }
+  {
+    // A measurement that times its own scrypt (here: noble's directly, with r = 4) instead of the PIN's function.
+    const cost = read('wallet/pin-cost.ts');
+    const mutated = cost.replace('const hash = deps.hash ?? pinScrypt;', "const hash = deps.hash ?? ((i, s, n) => scryptAsync(i, s, { N: 2 ** n, r: 4, p: 1 }));");
+    check('mutant caught: a measurement that does not use the PIN\'s own scrypt function', mutated !== cost && !sameScryptPin(read('wallet/pin.ts'), mutated));
+    const pinMut = read('wallet/pin.ts').replace('const opts = { N: 2 ** log2N, r: PIN_SCRYPT.r,', 'const opts = { N: 2 ** log2N, r: 4,');
+    check('mutant caught: the shared function with a different r than the PIN record states', !sameScryptPin(pinMut, cost));
   }
   {
     const m = await mutant('duress.ts', "return slot === 'primary' ? PRIMARY_STORE_PROFILE : DECOY_STORE_PROFILE;", 'return PRIMARY_STORE_PROFILE;');

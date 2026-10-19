@@ -487,6 +487,23 @@ const at = (type, status, now) => ({ type, status, now });
     check('Settings: the auto-lock control is titled "Auto-lock" (not "…after returning from background")', autoLockTitleOk(settingsSrc));
     const oldTitle = settingsSrc.replace(/(<Text style=\{\[styles\.toggleLabel, \{ color: theme\.text \}\]\}>\s*)Auto-lock(\s*<\/Text>\s*<View style=\{styles\.endpointButtons\}>)/, '$1Auto-lock after returning from background$2');
     check('mutant caught: the old background-only title', oldTitle !== settingsSrc && !autoLockTitleOk(oldTitle));
+    // Pass p21f finding 5: with the app PIN on, the lock is the PIN pad, not
+    // the device prompt, so the hint must not say "the same biometric prompt
+    // as sending" then; without a PIN the sentence above stays word for word.
+    const PIN_HINT =
+      "When the app has been in the background at least this long, it locks behind the app PIN pad: it opens again only " +
+      "after you type your 6-digit PIN; the device's own fingerprint, face or passcode prompt does not unlock it while the PIN " +
+      'is on (sending and signing still ask for that prompt). The wallet also starts locked every time it is opened afresh (after it was ' +
+      'closed, swiped away or stopped by the system). Screen state is kept — locking never discards what you were doing.';
+    check('Settings: the auto-lock hint with the app PIN on, exactly (the PIN pad; no "same biometric prompt as sending")',
+      lockMod.AUTO_LOCK_HINT_WITH_PIN === PIN_HINT && !PIN_HINT.includes('biometric prompt as sending'));
+    const hintVariants = (src) =>
+      /\{appPinOn \? \(\s*<Text style=\{\[styles\.hint, \{ color: theme\.textMuted \}\]\}>\{AUTO_LOCK_HINT_WITH_PIN\}<\/Text>\s*\) : \(\s*<Text style=\{\[styles\.hint, \{ color: theme\.textMuted \}\]\}>\s*When the app has been in the background at least this long/.test(src) &&
+      src.includes("import { AUTO_LOCK_HINT_WITH_PIN } from '../wallet/lock';");
+    check('Settings: the PIN variant while the app PIN is on, the unchanged biometric sentence otherwise (both captured)',
+      hintVariants(settingsSrc) && lockHintTrue(settingsSrc));
+    const noPinVariant = settingsSrc.replace(/\{appPinOn \? \(\s*<Text style=\{\[styles\.hint, \{ color: theme\.textMuted \}\]\}>\{AUTO_LOCK_HINT_WITH_PIN\}<\/Text>\s*\) : \(/, '{(');
+    check('mutant caught: the biometric sentence shown while the app PIN is on', noPinVariant !== settingsSrc && !hintVariants(noPinVariant));
   }
 }
 

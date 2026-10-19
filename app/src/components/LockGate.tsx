@@ -19,7 +19,7 @@ import {
   type LockGateInputs,
   type LockGateState,
 } from '../wallet/lock';
-import { PIN_LENGTH } from '../wallet/pin';
+import { PIN_LENGTH, pinCountdownText, type PinCountdown } from '../wallet/pin';
 import { PIN_PAD_TITLE } from '../wallet/duress';
 
 /**
@@ -166,14 +166,15 @@ export function LockGate({ children }: { children: React.ReactNode }) {
 
   // The app PIN's unlock (the lock view with a PinPad): WalletContext checks
   // the PIN, opens (and loads) the wallet it belongs to, and only then the
-  // lock is lifted. Returns the sentence to show, or null on success; the
-  // PinPad has already dropped the typed digits.
-  const unlockWithAppPin = async (pin: string): Promise<string | null> => {
+  // lock is lifted. Returns the sentence to show — or, when a wait runs, the
+  // wait for the pad to count down — or null on success; the PinPad has
+  // already dropped the typed digits.
+  const unlockWithAppPin = async (pin: string): Promise<PinPadAnswer> => {
     if (unlockBusy.current) return null;
     unlockBusy.current = true;
     try {
       const outcome = await unlockWithPin(pin);
-      if (!outcome.ok) return outcome.message;
+      if (!outcome.ok) return outcome.countdown ? { countdown: outcome.countdown } : outcome.message;
       setGate((prev) => applyLockGateEvent(prev, { type: 'unlock' }, autoLockMs));
       return null;
     } finally {
@@ -286,19 +287,32 @@ export function LockGate({ children }: { children: React.ReactNode }) {
  *    and the message line is a polite live region on Android
  *    (accessibilityLiveRegion, ViewAccessibility.d.ts:245). Nothing it
  *    says depends on which wallet a PIN would open.
+ *  - A wait after too many wrong PINs (../wallet/pin.ts) is counted down on
+ *    the message line, once a second, from the time stamped in the PIN
+ *    record when the failed attempt ended ("Wrong PIN. Try again in 30
+ *    seconds." … "Too many wrong PINs. Try again in 12 seconds."), until it
+ *    has run out. The keys stay usable: a PIN typed during the wait is
+ *    refused at once, with no hash computed and nothing counted.
  */
+export type PinPadAnswer = string | { countdown: PinCountdown } | null;
+
 export function PinPad({
   prompt,
   onComplete,
 }: {
   prompt: string;
-  /** Called with the 6 digits; returns the sentence to show (null = accepted). */
-  onComplete: (pin: string) => Promise<string | null>;
+  /** Called with the 6 digits; returns the sentence to show, or a wait to count down (null = accepted). */
+  onComplete: (pin: string) => Promise<PinPadAnswer>;
 }) {
   usePreventScreenCapture('pin-pad');
   const theme = useTheme();
   const [digits, setDigits] = useState('');
   const [message, setMessage] = useState<string | null>(null);
+  const [countdown, setCountdown] = useState<PinCountdown | null>(null);
+  // The clock the countdown is read against: set when an answer arrives and
+  // then once a second while the wait runs (never read during rendering).
+  const [clock, setClock] = useState(0);
+  const [countdownFrom, setCountdownFrom] = useState(0);
   const [busy, setBusy] = useState(false);
   const mounted = useRef(true);
   useEffect(() => {
@@ -307,6 +321,15 @@ export function PinPad({
       mounted.current = false;
     };
   }, []);
+  useEffect(() => {
+    if (!countdown) return undefined;
+    const timer = setInterval(() => {
+      const t = Date.now();
+      setClock(t);
+      if (t >= countdown.until) clearInterval(timer);
+    }, PIN_COUNTDOWN_TICK_MS);
+    return () => clearInterval(timer);
+  }, [countdown]);
 
   const press = (key: string) => {
     if (busy) return;
@@ -323,11 +346,20 @@ export function PinPad({
     setDigits('');
     setBusy(true);
     setMessage(null);
+    setCountdown(null);
     onComplete(next).then(
       (result) => {
         if (!mounted.current) return;
         setBusy(false);
-        setMessage(result);
+        if (result !== null && typeof result === 'object') {
+          const t = Date.now();
+          setClock(t);
+          setCountdownFrom(t);
+          setCountdown(result.countdown);
+          setMessage(null);
+        } else {
+          setMessage(result);
+        }
       },
       () => {
         if (!mounted.current) return;
@@ -336,6 +368,10 @@ export function PinPad({
       },
     );
   };
+  const line = countdown ? pinCountdownText(countdown, clock) : message;
+  // A screen reader hears the wait once when it starts and once when it has
+  // run out, not every second: the live region is off between the two.
+  const ticking = countdown !== null && clock !== countdownFrom && clock < countdown.until;
 
   const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', 'delete'];
   const dots = Array.from({ length: PIN_LENGTH }, (_, i) => (i < digits.length ? '●' : '○')).join(' ');
@@ -371,12 +407,15 @@ export function PinPad({
         )}
       </View>
       {busy ? <ActivityIndicator color={theme.accent} accessibilityLabel="Checking the PIN" /> : null}
-      <Text accessibilityLiveRegion="polite" style={[styles.error, { color: theme.danger }]}>
-        {message ?? ''}
+      <Text accessibilityLiveRegion={ticking ? 'none' : 'polite'} style={[styles.error, { color: theme.danger }]}>
+        {line ?? ''}
       </Text>
     </View>
   );
 }
+
+/** How often the PinPad re-reads a running wait. */
+export const PIN_COUNTDOWN_TICK_MS = 1000;
 
 const styles = StyleSheet.create({
   fill: {
