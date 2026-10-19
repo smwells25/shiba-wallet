@@ -1267,26 +1267,64 @@ console.log('check-bridge: the emulator pass p21b findings (provider choice, spo
     "const tail = !row.selectable ? `, not available: ${row.note}` : quote ? `, fee ${quote.fee}` : '';\n  return `${head}${tail}`;",
   );
   check('MUTANT (the old spoken label with the reason and its final period) is caught', /\.$/.test(m3b.providerRowSpokenLabel(cctp, null)));
+  // The body's opening tag, whatever its props, and its contents up to the
+  // first closing tag of the same element type (it holds only Text).
+  const BODY_RE = /<(View|Pressable)\b((?:[^>{]|\{[^}]*\})*?)\s*style=\{styles\.radioBody\}\s*>([^]*?)<\/\1>/;
+  // Pass p21g finding B2b (RN 0.86.3): the delegate gives a view with no
+  // text of its own a description joining its children's text whenever it
+  // has an accessibilityState, a role, actions or a labelled-by
+  // (ReactAccessibilityDelegate.kt :177–187), and a Pressable ALWAYS passes
+  // an accessibilityState object (Pressable.js :227–236, :257). So the body
+  // must be a plain View with none of those, its tap handled by the
+  // JavaScript responder props, and none at all on a row that cannot be
+  // chosen.
+  const bodyOpenerOk = (props) =>
+    !/\b(?:disabled|accessibilityState|accessibilityRole|accessibilityLabel|accessibilityLabelledBy|accessibilityActions|onAccessibilityAction|role|onPress|onLongPress|focusable)=|aria-|accessible(?!=\{false\})/.test(props) &&
+    /\baccessible=\{false\}/.test(props) &&
+    props.includes('onStartShouldSetResponder={row.selectable ? claimBodyTouch : undefined}') &&
+    props.includes('onResponderRelease={row.selectable ? onSelect : undefined}') &&
+    props.includes('onResponderTerminationRequest={allowBodyTouchTermination}');
   const rowStructureOk = (src) => {
     const radio = /<Pressable\s+accessibilityRole="radio"\s+accessibilityState=\{\{ checked: selected, disabled: !row\.selectable \}\}\s+accessibilityLabel=\{providerRowSpokenLabel\(row, quote\)\}[^]*?<\/Pressable>/.exec(src);
-    const body = /<Pressable accessible=\{false\} focusable=\{false\} onPress=\{row\.selectable \? onSelect : undefined\} style=\{styles\.radioBody\}>([^]*?)<\/Pressable>/.exec(src);
-    if (!radio || /Who verifies/.test(radio[0]) || !body) return false;
+    const m = BODY_RE.exec(src);
+    if (!radio || /Who verifies/.test(radio[0]) || !m || m[1] !== 'View') return false;
+    const body = [m[0], m[2], m[3]];
     // Pass p21e finding B2b: no accessibility prop on the body that would
     // make RN join its children into one description (an accessibilityState
     // — which a non-null `disabled` creates — a role, a label, actions or a
     // labelled-by), and every top-level sentence an `accessible` Text.
-    const opener = /<Pressable accessible=\{false\}[^>]*>/.exec(src.slice(src.indexOf(body[0])))[0];
-    if (/disabled=|accessibilityState|accessibilityRole|accessibilityLabel|accessibilityActions|accessibilityLabelledBy|aria-/.test(opener)) return false;
-    const topTexts = body[1].match(/<Text\b[^>]*style=\{\[styles\.body[^>]*>/g) ?? [];
-    return ['{row.note}', 'Who verifies: ', 'Who controls: ', 'If it does not arrive: ', 'Fee (quoted just now): ', '{BRIDGE_FEE_BEFORE_QUOTE}', '{row.measured}', '{row.timeSource}'].every((t) => body[1].includes(t)) &&
+    if (!bodyOpenerOk(body[1])) return false;
+    const topTexts = body[2].match(/<Text\b[^>]*style=\{\[styles\.body[^>]*>/g) ?? [];
+    return ['{row.note}', 'Who verifies: ', 'Who controls: ', 'If it does not arrive: ', 'Fee (quoted just now): ', '{BRIDGE_FEE_BEFORE_QUOTE}', '{row.measured}', '{row.timeSource}'].every((t) => body[2].includes(t)) &&
       topTexts.length === 8 && topTexts.every((t) => /^<Text accessible style=/.test(t));
   };
   check('…the row: the radio control holds only the head; the note, the three trust lines, the fee and the measured time sit in a body that is neither accessible nor focusable, so each Text is its own stop (source)',
     rowStructureOk(views));
+  const BODY_OPEN = [
+    '<View',
+    '        accessible={false}',
+    '        onStartShouldSetResponder={row.selectable ? claimBodyTouch : undefined}',
+    '        onResponderTerminationRequest={allowBodyTouchTermination}',
+    '        onResponderRelease={row.selectable ? onSelect : undefined}',
+    '        style={styles.radioBody}',
+    '      >',
+  ].join('\n');
+  const bodyClose = '{row.timeSource}</Text> : null}\n      </View>';
+  check('…the body opener and its closing tag are exactly as pinned (source)', views.includes(BODY_OPEN) && views.includes(bodyClose));
+  const swapBody = (opener, closeTag = '</View>') =>
+    views.replace(BODY_OPEN, opener).replace(bodyClose, `{row.timeSource}</Text> : null}\n      ${closeTag}`);
   check('MUTANT (the body made one accessible node again) is caught',
-    !rowStructureOk(views.replace('<Pressable accessible={false} focusable={false} onPress={row.selectable ? onSelect : undefined}', '<Pressable onPress={row.selectable ? onSelect : undefined}')));
-  check('MUTANT (p21e finding B2b: the body’s `disabled` back — Pressable turns it into an accessibilityState, and the delegate then joins every sentence into one ", "-separated stop ending "…. disabled") is caught',
-    !rowStructureOk(views.replace('<Pressable accessible={false} focusable={false} onPress={row.selectable ? onSelect : undefined}', '<Pressable accessible={false} focusable={false} disabled={!row.selectable} onPress={onSelect}')));
+    !rowStructureOk(views.replace(BODY_OPEN, BODY_OPEN.replace('        accessible={false}\n', ''))) &&
+      !rowStructureOk(views.replace(BODY_OPEN, BODY_OPEN.replace('accessible={false}', 'accessible'))));
+  check('MUTANT (p21g finding B2b: the body a Pressable again, as at 828cff1 — Pressable always passes an accessibilityState, so the delegate joins the sentences into one ", "-separated description) is caught',
+    !rowStructureOk(swapBody('<Pressable accessible={false} focusable={false} onPress={row.selectable ? onSelect : undefined} style={styles.radioBody}>', '</Pressable>')));
+  check('MUTANT (p21e finding B2b: an accessibilityState on the body — the old `disabled` — makes the delegate join every sentence and speak "disabled" after it) is caught',
+    !rowStructureOk(views.replace(BODY_OPEN, BODY_OPEN.replace('        accessible={false}\n', '        accessible={false}\n        accessibilityState={{ disabled: !row.selectable }}\n'))));
+  check('MUTANT (a role on the body — the delegate joins the sentences for a role too) is caught',
+    !rowStructureOk(views.replace(BODY_OPEN, BODY_OPEN.replace('        accessible={false}\n', '        accessible={false}\n        accessibilityRole="button"\n'))));
+  check('MUTANT (a row that cannot be chosen still claims the touch) is caught',
+    !rowStructureOk(views.replace('onStartShouldSetResponder={row.selectable ? claimBodyTouch : undefined}', 'onStartShouldSetResponder={claimBodyTouch}')) &&
+      !rowStructureOk(views.replace('onResponderRelease={row.selectable ? onSelect : undefined}', 'onResponderRelease={onSelect}')));
   check('MUTANT (p21e finding B2b: one sentence not its own accessible Text) is caught',
     !rowStructureOk(views.replace('<Text accessible style={[styles.body, { color: theme.text }]}>\n          <Text style={styles.strong}>Who controls: </Text>', '<Text style={[styles.body, { color: theme.text }]}>\n          <Text style={styles.strong}>Who controls: </Text>')));
   // The sentences each Text speaks, exactly, and none with a doubled period

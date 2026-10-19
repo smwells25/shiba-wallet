@@ -1060,5 +1060,188 @@ console.log('check-pending: a broadcast refused for its fee is said plainly (pas
     sendTs.includes('if (/underpriced/i.test(message)) throw new ReplacementRefusedError(REPLACEMENT_UNDERPRICED_SENTENCE, message);'));
 }
 
+// ---------------------------------------------------------------------------
+console.log('check-pending: the section after a replacement is sent (pass p21g: the card vanished until a pull-to-refresh)');
+// ---------------------------------------------------------------------------
+{
+  const { mkdirSync, writeFileSync, rmSync } = await import('node:fs');
+  const { pathToFileURL } = await import('node:url');
+  const { resolve: resolvePath } = await import('node:path');
+  const HERE_S = dirname(fileURLToPath(import.meta.url));
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+  const gate = () => {
+    let open;
+    const p = new Promise((r) => {
+      open = r;
+    });
+    return { p, open };
+  };
+  // A store whose next write can be made to fail (a settle that is not stored).
+  const flakyStore = () => {
+    const base = memoryStore();
+    return {
+      ...base,
+      failNext: false,
+      async setItem(k, v) {
+        if (this.failNext) {
+          this.failNext = false;
+          throw new Error('storage full');
+        }
+        return base.setItem(k, v);
+      },
+    };
+  };
+  // Neither a card nor a notice for nonce 5 while its records are stored is the gap.
+  const gapIn = (views) => views.filter((v) => v.groups.length === 0 && v.notices.length === 0 && v.registry.records.some((r) => r.kind === 'tx' && r.nonce === '5'));
+
+  const run = async (mod) => {
+    const store = flakyStore();
+    const ORIG = H(0x5001);
+    await mod.recordPendingTransaction(rec(5, { hash: ORIG }), store);
+    const node = fakeNode({ latestNonce: 5n, pendingNonce: 6n });
+    node.state.txs.set(ORIG, null);
+    const views = [];
+    let readerGate = null;
+    const refresher = mod.createPendingSectionRefresher({
+      chain: CHAIN,
+      from: FROM,
+      store,
+      now: () => T0 + 10_000,
+      reader: async () => {
+        if (readerGate) await readerGate.p;
+        return mod.nodeReader(node.transport);
+      },
+      apply: (v) => views.push(v),
+    });
+    await refresher.refresh();
+    const before = views.at(-1);
+    // Broadcast the speed-up through the real send path (it records it).
+    const group = mod.nonceGroups((await mod.loadPendingRegistry(store)).records, CHAIN, FROM)[0];
+    const quote = await send.prepareEvmReplacement(URL, group, 'speed-up', CHAIN, { transport: node.transport });
+    const sent = await send.sendEvmReplacement(URL, signer, quote, null, { transport: node.transport, store, now: () => T0 + 20_000 });
+    node.state.txs.set(sent.txid, null);
+    // The re-read right after the broadcast, with the network not answering yet.
+    readerGate = gate();
+    const drawnBefore = views.length;
+    const first = refresher.refresh();
+    for (let i = 0; i < 20 && views.length === drawnBefore; i++) await tick();
+    const atOnce = views.length > drawnBefore ? views.at(-1) : null;
+    readerGate.open();
+    readerGate = null;
+    await first;
+    const waiting = views.at(-1);
+    // The 15-second poll after a block included the replacement; the first
+    // poll's settle is not stored, the next one's is.
+    node.state.receipts.set(sent.txid, { block: 90n });
+    node.state.txs.set(sent.txid, 90n);
+    node.state.txs.delete(ORIG);
+    node.state.latestNonce = 6n;
+    store.failNext = true;
+    const polled = views.length;
+    await refresher.refresh();
+    const afterFailedSettle = views.slice(polled);
+    await refresher.refresh();
+    const final = views.at(-1);
+    return { before, sent, atOnce, waiting, afterFailedSettle, final, views, ORIG };
+  };
+
+  const r = await run(pending);
+  check('before the speed-up: one card, the original read as pending', r.before.groups.length === 1 && r.before.groups[0].status?.state === 'pending' && pending.replacementWaitingSentence(r.before.groups[0].group) === null);
+  const g = r.atOnce?.groups[0];
+  check('right after the broadcast, BEFORE the network answers, the card shows the replacement (both broadcasts, the new one newest, its status not read yet)',
+    r.atOnce !== null && r.atOnce.groups.length === 1 && g.group.txs.length === 2 && g.group.latest.hash === r.sent.txid && g.status === null && r.atOnce.notices.length === 0,
+    JSON.stringify(r.atOnce?.groups.map((x) => [x.group.txs.length, x.status])));
+  const line = g ? pending.replacementWaitingSentence(g.group) : null;
+  check('…with the waiting line naming both hashes and the nonce (exact)',
+    line === `Speed-up sent: ${shortHashOf(r.sent.txid)} replaces ${shortHashOf(r.ORIG)} (nonce 5). Waiting for a block to include one of them; this list checks again every 15 seconds and then says which one was included.`,
+    String(line));
+  check('…then the network answer: still pending, read for the replacement', r.waiting.groups.length === 1 && r.waiting.groups[0].status?.state === 'pending' && r.waiting.groups[0].group.latest.hash === r.sent.txid);
+  check('the poll that finds the replacement included but cannot store the result keeps the card (status "mined", its own line), never a view with neither card nor notice',
+    r.afterFailedSettle.length > 0 && r.afterFailedSettle.every((v) => v.groups.length === 1 || v.notices.length === 1) &&
+      r.afterFailedSettle.at(-1).groups[0]?.status?.state === 'mined' &&
+      pending.minedNotRecordedSentence(r.afterFailedSettle.at(-1).groups[0].status) === `A block included transaction ${shortHashOf(r.sent.txid)} (block 90). This list records the result on its next check.`,
+    JSON.stringify(r.afterFailedSettle.map((v) => [v.groups.length, v.notices.length])));
+  check('the next poll stores the result: the card leaves and the "Sped up" notice appears in the SAME draw, no reload',
+    r.final.groups.length === 0 && r.final.notices.length === 1 && r.final.notices[0].outcome === 'replaced' && r.final.notices[0].minedHash === r.sent.txid &&
+      resolvedSentence(r.final.notices[0]) === `Sped up: transaction ${shortHashOf(r.ORIG)} (nonce 5) was replaced by ${shortHashOf(r.sent.txid)}, included in block 90.`,
+    JSON.stringify([r.final.groups.length, r.final.notices.length]));
+  check('in the whole sequence there is no draw with neither the card nor the notice while the nonce is stored', gapIn(r.views).length === 0);
+
+  // Refreshes that overlap: an older network answer is never drawn over a newer one.
+  {
+    const store = memoryStore();
+    const ORIG = H(0x5101);
+    await recordPendingTransaction(rec(5, { hash: ORIG }), store);
+    const stale = fakeNode({ latestNonce: 5n });
+    stale.state.txs.set(ORIG, null);
+    const fresh = fakeNode({ latestNonce: 6n });
+    fresh.state.receipts.set(ORIG, { block: 91n });
+    const slow = gate();
+    const views = [];
+    let calls = 0;
+    const refresher = pending.createPendingSectionRefresher({
+      chain: CHAIN,
+      from: FROM,
+      store,
+      now: () => T0,
+      reader: async () => {
+        calls += 1;
+        if (calls === 1) {
+          // The first refresh's endpoint answers late, with what it saw before the block.
+          return nodeReader(async (m, params) => {
+            await slow.p;
+            return stale.transport(m, params);
+          });
+        }
+        return nodeReader(fresh.transport);
+      },
+      apply: (v) => views.push(v),
+    });
+    const a = refresher.refresh();
+    for (let i = 0; i < 20 && calls === 0; i++) await tick();
+    await refresher.refresh();
+    const drawnAfterB = views.length;
+    const bView = views.at(-1);
+    slow.open();
+    await a;
+    check('overlapping refreshes: the later one draws the included transaction (no card; a plain send keeps no notice)', bView.groups.length === 0 && bView.registry.records.length === 0);
+    check('…and the earlier one, answering late with "pending", draws nothing over it', views.length === drawnAfterB, `${views.length} vs ${drawnAfterB}`);
+  }
+
+  // The component draws through the refresher and renders the new lines (source).
+  const pcs = readFileSync(join(HERE_S, '../src/components/PendingTransactions.tsx'), 'utf8');
+  check('the section re-reads through createPendingSectionRefresher (no own copy of the old two-step refresh)',
+    pcs.includes('createPendingSectionRefresher({') && pcs.includes('const refresh = useCallback(() => refresher.refresh(), [refresher]);') &&
+      !pcs.includes('refreshAccountPending(') && !/results\.filter\(\(r\) => r\.status\.state !== 'mined'\)/.test(pcs));
+  check('the card renders the waiting line and the included-not-yet-recorded line',
+    pcs.includes("{replacementWaitingSentence(group) && status?.state !== 'mined' ? (") && pcs.includes('{minedNotRecordedSentence(status)}'));
+
+  // Mutants of pending-transactions.ts, run through the same sequence.
+  const pendingSrc = readFileSync(join(HERE_S, '../src/wallet/pending-transactions.ts'), 'utf8');
+  const toUrls = (src) => src.replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolvePath(join(HERE_S, '../src/wallet'), spec)).href}'`);
+  const mutantDir = join(HERE_S, `.mutants-pending-section-${process.pid}`);
+  mkdirSync(mutantDir, { recursive: true });
+  try {
+    const FINAL = '      draw(pendingSectionView(after, options.chain, options.from, results));';
+    const GAP = "      draw({ ...pendingSectionView(after, options.chain, options.from, results), groups: results.filter((x) => x.status.state !== 'mined').map((x) => ({ group: x.group, status: x.status })) });";
+    const gapFile = join(mutantDir, 'pending-gap.ts');
+    writeFileSync(gapFile, toUrls(pendingSrc.replace(FINAL, GAP)));
+    const gapMod = await import(pathToFileURL(gapFile).href);
+    const gr = await run(gapMod);
+    check('MUTANT caught: the old step order (drop "mined" groups, then read the notice) leaves a draw with neither card nor notice when the settle is not stored',
+      pendingSrc.includes(FINAL) && gapIn(gr.views).length > 0, String(gapIn(gr.views).length));
+
+    const FIRST = '        draw(pendingSectionView(registry, options.chain, options.from, shown));';
+    const lateFile = join(mutantDir, 'pending-no-first-draw.ts');
+    writeFileSync(lateFile, toUrls(pendingSrc.replace(FIRST, '        void shown;')));
+    const lateMod = await import(pathToFileURL(lateFile).href);
+    const lr = await run(lateMod);
+    check('MUTANT caught: without the first draw from the registry the replacement is not shown until the network answers',
+      pendingSrc.includes(FIRST) && lr.atOnce === null);
+  } finally {
+    rmSync(mutantDir, { recursive: true, force: true });
+  }
+}
+
 console.log(`\ncheck-pending: ${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

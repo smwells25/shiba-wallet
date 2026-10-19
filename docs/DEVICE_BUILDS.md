@@ -89,6 +89,46 @@ bar until it is rebuilt. What only a rebuilt build can confirm:
 offline; `npx expo config --type introspect` shows the plugin's effect on
 the generated manifest without a prebuild.
 
+### Lazy bundling and the development client
+
+When Metro serves the app, Expo's development server asks Metro for a
+lazily bundled app by default: the bundle URL it hands to the app carries
+`lazy` set to the opposite of `EXPO_NO_METRO_LAZY`, whatever the mode
+(`@expo/cli` 57.0.28, `build/src/start/server/middleware/ManifestMiddleware.js`,
+`_getBundleUrl`; the variable is read in `build/src/utils/env.js`). A
+module the wallet loads with a dynamic `import()` is then fetched from
+Metro as a separate chunk when it is first needed. Bundles made by
+`expo export` and by a release build are not lazy
+(`build/src/start/server/metro/MetroBundlerDevServer.js` sets `lazy: false`
+on its export paths).
+
+What the emulator passes established (phase 21, passes p21f and p21g):
+
+- Metro keeps lazy bundling both for the wallet's development client and
+  for a production-mode bundle served by the development server.
+- In the development client, the lazily loaded WalletConnect chunk failed
+  with "Requiring unknown module" (for example "1892"), followed by
+  "Cannot set property 'importedAll' of undefined", so Settings →
+  Connected apps did not open.
+- A production-mode bundle served by Metro failed every lazily loaded
+  module with "Unable to determine the production URL…", which broke
+  WalletConnect and the screen-protection setting's own message.
+- Starting Metro with lazy bundling switched off made the development
+  client load one bundle (2,392 modules on 2026-10-18), and Settings →
+  Connected apps then opened normally, with no "Requiring unknown module"
+  error:
+
+  ```sh
+  EXPO_NO_METRO_LAZY=1 CI=1 npx expo start --port 8082 --dev-client
+  ```
+
+- A release APK embeds one bundle that is not lazy, so it is not affected.
+
+Not yet tested: a real WalletConnect pairing in the development client
+with lazy bundling switched off. Expo Go also loads a lazily bundled app
+from Metro, and Connected apps opened in it in earlier passes (phase 16);
+why only the development client failed was not established.
+
 ## What to re-validate on the first device builds
 
 In priority order. The W-numbers are the mainnet-readiness conditions in
