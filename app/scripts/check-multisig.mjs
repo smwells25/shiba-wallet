@@ -1166,8 +1166,8 @@ console.log('check-multisig: refusals (WalletConnect, browser, ERC-1271, guardia
   check('route allow list for an active multisig: Multisig, Receive and (read-only) Approvals allowed; Send, Swap, Connections, Apps, Sessions, Guardians, Inheritance, Passkey, UpgradeAccount, Staking refused',
     multisigRouteRefusal('Multisig') === null && multisigRouteRefusal('Receive') === null && multisigRouteRefusal('Approvals') === null &&
       ['Send', 'Swap', 'Connections', 'Apps', 'Sessions', 'Guardians', 'Inheritance', 'Passkey', 'UpgradeAccount', 'OwnerRotation', 'ProveOwnership', 'SpendingLimits', 'Staking', 'SomeFutureRoute'].every((r) => multisigRouteRefusal(r) !== null) &&
-      MULTISIG_ALLOWED_ROUTES.length === 13 &&
-      JSON.stringify(MULTISIG_ALLOWED_ROUTES) === JSON.stringify(['Home', 'Activity', 'Nfts', 'NftDetail', 'Tokens', 'Approvals', 'Settings', 'Contacts', 'ImportKey', 'Portfolio', 'PriceAlerts', 'Receive', 'Multisig']));
+      MULTISIG_ALLOWED_ROUTES.length === 14 &&
+      JSON.stringify(MULTISIG_ALLOWED_ROUTES) === JSON.stringify(['Home', 'Activity', 'Nfts', 'NftDetail', 'Tokens', 'Approvals', 'Settings', 'Contacts', 'ImportKey', 'Portfolio', 'PriceAlerts', 'Inbox', 'Receive', 'Multisig']));
   check('…and a watch-only account is refused the Multisig screen by name', watchOnlyRouteRefusal('Multisig')?.startsWith('Multi-signature accounts is not available for a watch-only account'));
   check('aaTypeFeatures / aaReadinessBlock: the multisig row first, then Kernel', aaTypeFeatures('kernel-multisig').join() === 'multisig,kernel-smart-account' && aaReadinessBlock(MAINNET, 'kernel-multisig') === 'multisig' && aaReadinessBlock(SEPOLIA, 'kernel-multisig') === null);
 }

@@ -103,6 +103,7 @@ import { wipeTransactionNotes } from './notes';
 import { pendingUserOpRecorder, resetPendingRegistry } from './pending-transactions';
 import { walletConnectFollowProfile } from './walletconnect';
 import { resetBridgeTransfers } from './bridge';
+import { wipeInbox } from './inbox';
 import { resetPriceAlerts } from './price-alerts';
 import {
   addMultisigStoreListener,
@@ -1431,6 +1432,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         await resetPendingRegistry(store).catch(() => undefined);
         await resetPriceAlerts(store).catch(() => undefined);
         await resetBridgeTransfers(store).catch(() => undefined);
+        await wipeInbox(store).catch(() => undefined);
         await resetAccounts(store).catch(() => undefined);
       };
       await wipeBothWallets({
@@ -1485,6 +1487,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     // Bridge transfers (./bridge.ts) are public records of this wallet's
     // sends; a wipe forgets them with the rest.
     await resetBridgeTransfers(AsyncStorage).catch(() => undefined);
+    await wipeInbox(AsyncStorage).catch(() => undefined);
     await deleteMnemonic();
     // The public account cache (addresses only) goes with the wallet.
     await deletePublicAccounts(ALL_CACHE_INDICES);

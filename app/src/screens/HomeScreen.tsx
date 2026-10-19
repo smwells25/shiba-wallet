@@ -54,6 +54,8 @@ import { evmProfileByCaip2, multisigNetworkVerified } from '../config/evm-chain'
 import { usePrices } from '../wallet/usePrices';
 import { tokenSendFeeSentence } from '../wallet/token-gas';
 import { rebasingTokenNote, tokenRowSubtitle } from '../wallet/tokens';
+import { inboxLinkText } from '../wallet/inbox';
+import { useInboxUnreadCount } from './InboxScreen';
 import {
   formatFiat,
   nativePriceAssetId,
@@ -306,6 +308,8 @@ export function HomeScreen({ navigation }: Props) {
   // switching accounts remounts the navigator (App.tsx), so this screen
   // never shows one account's balances under another's name.
   const { accounts, activeAccount } = useWallet();
+  // The notifications inbox's unread count for its link (phase 22 item 5).
+  const inboxUnread = useInboxUnreadCount();
   // Watch-only accounts (feature 10): the wallet holds no key, so Home
   // offers only what reads public data by address (balances, tokens,
   // Activity, NFTs) and none of the links that lead to signing (Send, Swap,
@@ -872,6 +876,7 @@ export function HomeScreen({ navigation }: Props) {
           <View style={styles.linkRow}>
             {cardLink('portfolio', 'Portfolio', () => navigation.navigate('Portfolio'), 'Net worth and profit and loss')}
             {cardLink('price-alerts', 'Price alerts', () => navigation.navigate('PriceAlerts'), 'Price alerts and watchlist')}
+            {cardLink('inbox', inboxLinkText(inboxUnread), () => navigation.navigate('Inbox'), 'Reminders, alerts and sent transactions')}
           </View>
           {/* Feature 12 (ADR D9): an imported Ethereum key has no Bitcoin,
               Dogecoin or Solana address; those networks are shown as not

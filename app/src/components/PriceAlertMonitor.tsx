@@ -8,6 +8,7 @@ import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
 import { fetchPrices } from '../wallet/prices';
 import { appNotifications } from '../wallet/notifications';
+import { appInbox } from '../wallet/inbox';
 import {
   PRICE_ALERT_POLL_MS,
   createPriceAlertMonitor,
@@ -93,7 +94,20 @@ export function PriceAlertMonitor() {
     monitor.check().then(
       ({ fired: list }) => {
         if (list.length === 0) return;
-        setFiredAt(Date.now());
+        const at = Date.now();
+        setFiredAt(at);
+        // One inbox entry per firing (wallet/inbox.ts): the banner below and
+        // the phone notification are the same event, recorded here once.
+        for (const f of list) {
+          void appInbox().record({
+            key: `price-alert|${f.alert.id}|${f.alert.firedAt ?? at}`,
+            kind: 'price-alert',
+            via: 'in-app',
+            at,
+            title: 'Price alert',
+            text: firedAlertText(f, at),
+          });
+        }
         setFired((prev) => [...list, ...prev.filter((p) => !list.some((l) => l.alert.id === p.alert.id))].slice(0, 3));
         for (const f of list) {
           void appNotifications()

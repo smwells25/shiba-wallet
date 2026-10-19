@@ -6,7 +6,10 @@ import {
   DarkTheme,
   DefaultTheme,
   NavigationContainer,
+  NavigationContainerRefContext,
+  StackActions,
   Theme as NavTheme,
+  type NavigationContainerRef,
 } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import type { RootStackParamList } from './src/navigation';
@@ -54,6 +57,21 @@ import { PortfolioScreen } from './src/screens/PortfolioScreen';
 import { PriceAlertsScreen } from './src/screens/PriceAlertsScreen';
 import { ColdSignScreen } from './src/screens/ColdSignScreen';
 import { appScreenProtection } from './src/wallet/screen-protection';
+import { InboxScreen } from './src/screens/InboxScreen';
+import { Button } from './src/components';
+import { useAppLock } from './src/components/LockGate';
+import { appInbox, wcSentInboxEvent } from './src/wallet/inbox';
+import { onWcSentShown } from './src/wallet/wc-sent';
+import { listTokens } from './src/wallet/tokens';
+import { EVM_CHAIN_ID } from './src/wallet/send';
+import {
+  DEEP_LINK_NO_WALLET_SENTENCE,
+  DEEP_LINK_UNKNOWN_SENTENCE,
+  appDeepLinks,
+  deepLinkGate,
+  parseDeepLink,
+  planDeepLink,
+} from './src/wallet/deep-links';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -91,6 +109,98 @@ function TestnetBanner() {
   return (
     <View style={[styles.testnetBanner, { backgroundColor: theme.testnetFill, paddingBottom: Math.max(insets.bottom, 8) }]}>
       <Text style={[styles.testnetBannerText, { color: theme.onTestnetFill }]}>{text}</Text>
+    </View>
+  );
+}
+
+/**
+ * Deep links into the wallet's own screens (feature 80; src/wallet/deep-links.ts).
+ * Mounted once inside the navigation container, after the banners. A link
+ * waits in the app's link source (appDeepLinks, started in App below so a
+ * link arriving behind the PIN pad is not lost) until deepLinkGate allows
+ * acting on it: never while the wallet is loading or locked. Then it opens
+ * an allow-listed screen, or a NEW Send screen pre-filled from a payment
+ * request through the same parser as a scanned one; anything else gets a
+ * plain notice. Nothing here signs, prompts or makes a network request; the
+ * opened screen's own gates apply. React Navigation's `linking` option is
+ * not used: it builds the container's state synchronously from the path and
+ * dispatches a link the moment it arrives (@react-navigation/native 7.4.1
+ * src/useLinking.native.tsx lines 157-182 and 186-222), with no way to hold
+ * a link behind the lock or to read the tracked tokens a payment request is
+ * checked against, and it would read the launch link again on every
+ * remount of this keyed container (getInitialURL, lines 27-35).
+ */
+function DeepLinkHandler() {
+  const theme = useTheme();
+  const nav = React.useContext(NavigationContainerRefContext) as NavigationContainerRef<RootStackParamList> | undefined;
+  const { status, accounts } = useWallet();
+  const { evmChain } = usePrefs();
+  const { locked } = useAppLock();
+  const [notice, setNotice] = React.useState<string | null>(null);
+  const [arrivals, setArrivals] = React.useState(0);
+  const [navReady, setNavReady] = React.useState(false);
+
+  React.useEffect(() => appDeepLinks().subscribe(() => setArrivals((n) => n + 1)), []);
+  React.useEffect(() => {
+    if (!nav) return undefined;
+    const ready = () => setNavReady(nav.isReady());
+    ready();
+    return nav.addListener('ready', ready);
+  }, [nav]);
+
+  React.useEffect(() => {
+    if (!nav) return;
+    const gate = deepLinkGate({ status, locked, navReady });
+    if (gate === 'wait' || appDeepLinks().peek() === null) return;
+    const url = appDeepLinks().take();
+    const link = parseDeepLink(url);
+    if (gate === 'no-wallet') {
+      if (link.kind !== 'ignore') setNotice(DEEP_LINK_NO_WALLET_SENTENCE);
+      return;
+    }
+    void planDeepLink(link, {
+      evmProfile: evmChain,
+      trackedTokens: (caip2) => listTokens(caip2),
+      nativeFor: (slot) => {
+        const account = accounts.find((a) => a.chainId === slot);
+        return account ? { symbol: account.symbol, networkLabel: account.name } : null;
+      },
+      hasEvmAccount: accounts.some((a) => a.chainId === EVM_CHAIN_ID),
+    }).then(
+      (action) => {
+        if (!nav.isReady()) return;
+        switch (action.kind) {
+          case 'none':
+            return;
+          case 'notice':
+            setNotice(action.text);
+            return;
+          case 'home':
+            setNotice(null);
+            if (nav.getCurrentRoute()?.name !== 'Home') nav.dispatch(StackActions.popTo('Home'));
+            return;
+          case 'navigate':
+            setNotice(null);
+            if (action.params) nav.navigate(action.route as 'Activity', action.params);
+            else nav.navigate(action.route as 'Inbox');
+            return;
+          case 'send':
+            setNotice(null);
+            nav.dispatch(StackActions.push('Send', action.params));
+            return;
+        }
+      },
+      () => setNotice(DEEP_LINK_UNKNOWN_SENTENCE),
+    );
+  }, [nav, status, locked, navReady, arrivals, evmChain, accounts]);
+
+  if (!notice) return null;
+  return (
+    <View style={[styles.linkNotice, { backgroundColor: theme.card, borderColor: theme.accent }]}>
+      <Text accessibilityLiveRegion="polite" style={[styles.linkNoticeText, { color: theme.text }]}>
+        {notice}
+      </Text>
+      <Button title="Dismiss" variant="secondary" onPress={() => setNotice(null)} />
     </View>
   );
 }
@@ -239,6 +349,7 @@ function Root() {
             <Stack.Screen name="Portfolio" component={PortfolioScreen} options={{ title: 'Portfolio' }} />
             <Stack.Screen name="PriceAlerts" component={PriceAlertsScreen} options={{ title: 'Price alerts' }} />
             <Stack.Screen name="ColdSign" component={ColdSignScreen} options={{ title: 'Send with an off-line signer' }} />
+            <Stack.Screen name="Inbox" component={InboxScreen} options={{ title: 'Inbox' }} />
           </>
         )}
         </Stack.Navigator>
@@ -247,6 +358,7 @@ function Root() {
         {/* Recurring payments (phase 15 item 1): on start and on every return to
             the foreground, shows which are due; never sends anything. */}
         <RecurringDueBanner />
+        <DeepLinkHandler />
       </NavigationContainer>
       {sepolia && status === 'ready' ? <TestnetBanner /> : null}
     </View>
@@ -254,6 +366,14 @@ function Root() {
 }
 
 export default function App() {
+  // Deep links (src/wallet/deep-links.ts): listen from the first render, so a
+  // link that arrives while the PIN pad or the lock holds the wallet waits
+  // instead of being lost. The inbox (src/wallet/inbox.ts) lists every sent
+  // view of a WalletConnect or in-app-browser request once.
+  React.useEffect(() => {
+    appDeepLinks().start();
+    return onWcSentShown((result) => void appInbox().record(wcSentInboxEvent(result, Date.now())));
+  }, []);
   return (
     <SafeAreaProvider>
       <PrefsProvider>
@@ -301,6 +421,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     alignItems: 'center',
   },
+  linkNotice: { borderTopWidth: 2, paddingHorizontal: 16, paddingVertical: 10, gap: 8 },
+  linkNoticeText: { fontSize: 14, lineHeight: 20, fontWeight: '600' },
   testnetBannerText: {
     fontSize: 13,
     fontWeight: '700',

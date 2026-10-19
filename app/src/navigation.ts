@@ -65,6 +65,8 @@ export type RootStackParamList = {
   Portfolio: undefined;
   /** Watchlist and price alerts (phase 20 item 1, feature 98). */
   PriceAlerts: undefined;
+  /** What the wallet has told the user: reminders, alerts, sent transactions (phase 22 item 5, feature 83). */
+  Inbox: undefined;
   /**
    * Cold signing (feature 11, phase 22 item 3): a watch-only account's send,
    * signed by an off-line signer through QR codes. `tokenId` (a CAIP-19 id
