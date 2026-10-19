@@ -542,7 +542,9 @@ Option (b). No slice is built in phase 20. The reasons, in order of weight:
   fixed size; and "Remove wallet" with the PIN on clearing both wallets
   and the PIN record. Two findings: (1) one PIN check (two scrypt hashes
   at N = 2^16) took 245 to 258 seconds under Hermes in the debug build,
-  so the PIN is unusable as built; the release-build figure is pending
+  so the PIN is unusable as built; the release build on the same emulator
+  (pass p21g) measured 49 to 53 seconds per hash at N = 2^16, about 100
+  seconds per unlock, and about 3.5 seconds per hash even at N = 2^12,
   and the choice between a native scrypt and a lower N is the
   Chairperson's (`docs/THREAT_MODEL.md` F-81; section 6.2 above); (2) the
   wrong-PIN wait was stamped when an attempt started and so had always
@@ -593,9 +595,11 @@ moves no funds by itself), with an advisory readiness row.
   measurement against a 500 ms budget; the device measurement is still
   owed. Pass p21f measured 245–258 s for one attempt (two hashes) in the
   emulator's debug development build, so N is now one named constant,
-  PIN_SCRYPT_LOG2_N in app/src/wallet/pin.ts, pending a release-build
-  figure from Settings → Developer → "Measure the PIN hashing cost" (test
-  networks only), which times the same scrypt function at N = 2^12 to
+  PIN_SCRYPT_LOG2_N in app/src/wallet/pin.ts; the release-build figure
+  from Settings → Developer → "Measure the PIN hashing cost" (test
+  networks only; pass p21g, 2026-10-18) is 3.2–3.7 s at 2^12, 6.3–6.5 s
+  at 2^13, 12–13 s at 2^14, 22–26 s at 2^15 and 49–53 s at 2^16 per hash
+  on the emulator. The measurement times the same scrypt function at N = 2^12 to
   2^16.* Never a plain hash;
   never stored or logged in plain form; the typed digits are dropped from
   state as soon as the hash is computed.
