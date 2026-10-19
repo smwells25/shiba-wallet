@@ -10781,6 +10781,68 @@ Subagents on Opus.
       the duress and wrong-PIN timings in release (debug only); the
       off-device BIP-85 check (p21f proved it); typing PIN digits under
       TalkBack.
+- [x] Phase 22 follow-ups, one slice (commit 8afc671; 22 files; check-devmode
+      438 (was 432), check-duress 207 (199), check-i18n 86 (79), check-inbox
+      88 (86), check-notes 209 (206), check-watch-only 182 (180),
+      check-bridge 237 (231); offline runner ALL GREEN in the CTO's isolated
+      worktree on HEAD 72f84be with --skip-bundle: engine 1,050, app 9,834
+      across 63 suites, lint 0/0, tsc clean; apply 0 / 22 files, every
+      staged file byte-equal to the verified tree; one mutant per item
+      caught; not seen on a device). (1) KIND-AWARE LOCK NOTES: every PIN
+      wording byte-identical; new passphrase forms — lock.ts
+      AUTO_LOCK_HINT_WITH_PASSPHRASE ("…it locks behind the app passphrase:
+      it opens again only after you type your passphrase…"), duress.ts
+      AUTO_LOCK_WITH_PASSPHRASE_NOTE, SCREEN_PROTECTION_WITH_PASSPHRASE_NOTE,
+      NOTIFICATIONS_OFF_WITH_PASSPHRASE (+ notificationsOffWithLock(kind),
+      used by PrefsContext's refusal), WIPE_WITH_PASSPHRASE_NOTE (+
+      wipeWithLockNote(kind)), pin.ts lockCheckFailedMessage(kind)
+      replacing WalletContext's literal 'The PIN could not be checked. Try
+      again.' (English unchanged, now translated), INBOX_PASSPHRASE_NOTE;
+      SettingsScreen settingsLockKind / InboxScreen inboxLockKind read
+      appLockKind and render <T>{kind === 'phr' ? X_PASSPHRASE : X_PIN}</T>
+      (separate constants rather than LOCK_COPY fields because check-i18n's
+      <T> rule accepts only known constant names; exactly 5 such picks
+      asserted); five new i18n ids with Spanish lines ("contraseña");
+      APP_PIN_FORCES_MESSAGE left PIN-only (documented unreachable); the
+      wipe dialog stays English (not migrated). (2) NOTE_PRIVACY_LINE →
+      "Notes are kept on this phone and are not sent anywhere. They are
+      deleted when the wallet is wiped. A records backup (Settings →
+      Records backup) includes them, and your recovery phrase restores
+      them from it. Hide amounts does not hide them." — the first CHANGED
+      migrated entry: the fixture app/scripts/fixtures/i18n-english-
+      before.json gained a "changed" section {before = the c5baff6 text,
+      en = the new text, why}, check-i18n requires before == the base
+      record and a reason, and pins activity.note.privacy as the only
+      changed id. (3) the watch-only Home footer: "…so it cannot sign or
+      swap for it. A send on an Ethereum network can still be prepared here
+      and signed by an off-line signer that holds its key: use \"Send with
+      an off-line signer\"…" (named from COLD_SIGN_HOME_LINK minus " ↗").
+      (4) bridge.ts bridgeChoiceNote(offer, rowCount): the unchanged
+      BRIDGE_CHOICE_NOTE where the destination chips show; "The wallet lists
+      every provider it knows, each with the reason it cannot send from
+      Base Sepolia, and never picks one for you." where rows are listed
+      without chips; null (and no "Choose a provider" header) where no
+      rows exist (Hoodi, custom networks). (5) CORRECTION to the record:
+      check-devmode's placeholder-repeat scan DID read placeholder={tx(…)}
+      (proved by a mutant); the real gap was t('id') compared as text — the
+      scan now resolves t('id') through en.ts, reads tx / localize literals
+      and drops bare ids; the Activity note field is covered (caption "Note
+      (private, this phone only)", placeholder "For example: rent for
+      October"); the old scan missed the t('id') mutant (437/1). (6) the
+      smaller option for shared texts: a Language-section sentence
+      (settings.language.shared) "Texts the wallet prepares for someone
+      else to read, such as a recovery request for your guardians or a
+      multisig signing request, stay in English in every language, and the
+      screens they point to are named in English (for example Settings →
+      Guardians (social recovery))."; recovery.ts and multisig.ts build
+      their share texts without the accessor (pinned). LEFT: the shared
+      watch-only notice notice.watchOnly ("…It cannot send, sign or recover
+      anything for it.") still says "cannot send" — the p22a ColdSign
+      finding, next fix slice; WalletContext's unreachable 'Wrong PIN. Try
+      again.' fallback. UNVERIFIED (device): the passphrase notes, the
+      inbox note, the wipe dialog, the Bridge screen on Base Sepolia and
+      Hoodi without the header, the footer and the Language text at phone
+      width, TalkBack.
 - [x] Item 5 — LEADERSHIP REFRESH (docs commit below; check-readiness 208,
       check-screen-protection 87, check-devmode 418, check-notifications
       184, check-duress 113, check-multisig 424 all green in the CTO's
