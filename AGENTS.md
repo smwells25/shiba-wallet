@@ -9547,3 +9547,191 @@ Opus.
       countdown on screen and under TalkBack, the measurement under debug
       and release Hermes (whether the JS thread yields for Stop), __DEV__
       and HermesInternal values, the hint's layout.
+- [x] The built-in WalletConnect project id named as such (commit 906c9d9;
+      check-wc 325 (was 309); offline runner ALL GREEN in the CTO's
+      isolated worktree on HEAD 7244fd5 with --skip-bundle: engine 1,046,
+      app 9,280 across 59 suites, lint 0/0, tsc clean; apply 0 / 3 files;
+      two in-suite and two hand mutants caught; not seen on a device).
+      getWcProjectIdSetting(store) returns the id and its source ('saved'
+      | 'built-in'); getWcProjectId returns exactly that id (which id is
+      used, the key shiba-wallet.wc-config.v1 and its device-wide scope
+      unchanged); wcProjectIdStatusLine → "Saved — used to reach the
+      WalletConnect relay." / "Built-in project id — used to reach the
+      WalletConnect relay. You can replace it with your own." (null only
+      before the first read; THERE IS NO "none" STATE — a missing record,
+      {}, an empty or non-string id, an array, corrupt JSON and a throwing
+      store all yield the built-in id, pinned across seven shapes); the
+      shared AaField gained optional clearable / clearControl props, so
+      the WalletConnect row offers "Use the built-in id" (screen-reader
+      label "Use the built-in WalletConnect project id instead of the saved
+      one"; dialog "Use the built-in project id?" / "The project id you
+      saved is removed from this phone, and the wallet's built-in project
+      id is used again to reach the WalletConnect relay. If a connection
+      was already opened this session, the change takes effect after the
+      app restarts.") only while a saved id is in use (before, the shared
+      "Clear" with its paste-and-verify-again text showed for the
+      built-in id too); the clearWcProjectId comment corrected (it removes
+      the saved id; WalletConnect stays on; the record is shared by every
+      wallet profile); an id saved equal to the built-in one reads
+      "Saved" (it is stored). UNVERIFIED (device): the line, the hidden
+      control, the dialog, TalkBack on the button.
+- [x] Item 5 — LEADERSHIP REFRESH (docs commit below; check-readiness 208,
+      check-screen-protection 87, check-devmode 418, check-notifications
+      184, check-duress 113, check-multisig 424 all green in the CTO's
+      isolated worktree on HEAD 906c9d9 (the offline runner ALL GREEN: app
+      9,280); the five docs secret-scan clean). FEATURE_UNIVERSE section
+      15 (dated 2026-10-18): feature 35 (bridging) → Proven live with its
+      limits (native test ETH only; three networks, none on Base Sepolia;
+      one LayerZero Labs verifier; Stargate's test pools pausable by a
+      public key; the recipient always the regular account; no
+      smart-account bridge sent; CCTP "coming", never sent; the receipt
+      resolution offline only); feature 53 (duress / decoy wallet) → BUILT,
+      verified offline, exercised once on the emulator in the development
+      build (not counted as proven: about 4 minutes per PIN check on the
+      debug build, the release figure pending pass p21g, F-82 fixed but
+      not yet seen); feature 95 kept Proven live, its transaction half now
+      proven in full in-app (still "partial": no general support flow; a
+      bundler-dropped operation and "Send again" unseen); rows 8, 52, 92
+      (the false "No TalkBack run" corrected; kept Built — convention 2
+      could argue Proven live, partial: the CTO's call, left) and 93
+      extended; TALLY 52 proven live (T1 29, T2 23), 19 built (9/10), 1
+      designed, 27 not started (1/11/15), every count sentence agreeing.
+      DEMO.md: five warnings (the ANGLE launch, the window in front, never
+      an app PIN on the demo wallet), the launch command with -gpu
+      angle_indirect, steps 37 (the bridge, p21b), 38 (Speed up / Cancel
+      with the minimum-fee rehearsal, p21e — the node may refuse the 1-wei
+      send and the option stays on; the replacement fees are the higher of
+      the node's suggestion and the 10% minimum) and 39 (the app PIN and
+      the duress PIN in the development build on a THROWAWAY wallet only,
+      p21f), the pinned sentences untouched. THREAT_MODEL.md: F-81 (the
+      PIN's scrypt cost under Hermes: native scrypt vs a lower N, each
+      with its cost; release figure pending), F-82 (the lockout stamped at
+      attempt start, fixed in 0bfb134), T-09 / T-78 / F-77 updated (the
+      seam remainders closed in 2a1d2dc), F-80 (the in-app send recorded),
+      T-84 (receipt resolution offline only), T-86 (the raw live receipts
+      decoded in-app once). MAINNET_READINESS.md: the LayerZero / Stargate
+      addresses as test-network only, bridging on the enforced list, the
+      duress-pin row as the one every-network advisory row with F-81, two
+      limitations and the staged-path bullets. DURESS_WALLET.md §5.2: the
+      Stage 3 result. THE RECORD DOES NOT SETTLE (left open in the docs):
+      what "Remove PIN" does in the decoy; WalletConnect separation on a
+      device; the Stargate pool fee (the record says both a flat 10^12 wei
+      and "pool fee 0 on both routes" — the docs quote only the messaging
+      fee). THE SHAREABLE PAGE rebuilt with the phase-15 builder into
+      .local/fu/feature-universe.html (52/19/1/27 asserted; its static
+      "Of the N features proven live" paragraph corrected — it had said
+      session keys and guardians were proven by engine scripts only; no
+      32- or 64-hex strings, no project id, one inline script, one
+      Google-Fonts stylesheet; the previous base kept in the scratchpad)
+      and PUBLISHED as VERSION 22 of
+      https://claude.ai/artifact/JEfyMuPcMJ8YW5x3ZKitsw.
+
+## Phase 21 status (2026-10-18)
+
+Items 0 to 5 are landed and pushed; the shareable page is at version
+22 (52 proven live, 19 built, 1 designed, 27 not started).
+PROVEN LIVE this phase: the first bridge, native test ETH through
+LayerZero's Stargate V2 pools, by script on 2026-10-15 (Ethereum Sepolia
+→ OP Sepolia → Arbitrum Sepolia, the engine's calldata on-chain
+unchanged, each arrival exact to the wei) and the same day through the
+app's own Bridge screen (0.0002 test ETH Ethereum Sepolia → OP Sepolia,
+the provider chosen by the user, one prompt, delivered 86 s later and
+tracked to "Delivered" from the two chains' own events rather than
+LayerZero's status API); Speed up and Cancel through the app on
+2026-10-18 with the Developer-mode minimum-fee rehearsal (the
+replacement in block 11942687, the cancellation in block 11942774 at
+exactly 12,000 gas, neither original ever included, the balance exact
+to the wei), which completes the transaction half of feature 95.
+EXERCISED BUT NOT COUNTED AS PROVEN: the app PIN and the duress PIN, run
+once on the emulator in the wallet's own development build on a
+throwaway wallet (pass p21f): the backup check, the PIN pad at launch and
+after auto-lock with nothing loaded behind it, the second wallet opening
+with none of the real wallet's data and its address equal, off the
+device, to the BIP-85 child, and "Remove wallet" clearing both wallets
+and the PIN record — but one PIN check took about 4 minutes, so the
+feature is not usable as built. Built and verified offline: the
+BridgeProvider registry with LayerZero and Circle CCTP V2 adapters
+(CCTP listed as "coming", never sent); bridge transfers stored per
+wallet and a smart-account bridge resolved from its UserOperation
+receipt; the storage seam closing every duress remainder (41 declared
+keys, an empty allow-list, one WalletConnect client per wallet, the
+smart-account endpoints shared as device settings); the app PIN, the
+duress PIN and BIP-85 (every applicable official vector); the
+wrong-PIN wait fix and the Developer-mode PIN-cost measurement; the
+guardian recovery and Passkey test operations on the pending card; the
+screen-reader fixes from passes p21a, p21b and p21e. Researched: the
+LayerZero V2 deployments on the four test networks (BRIDGING.md §15–16,
+BRIDGE_PROVIDERS.md). Engine: 1,046 tests. App: 59 offline suites,
+9,280 checks at 906c9d9. The shareable page is rebuilt with 52 proven
+live, 19 built, 1 designed, 27 not started (FEATURE_UNIVERSE section
+15: feature 35 Designed → Proven live, 53 Designed → Built, 95 extended
+to the in-app speed-up and cancellation; rows 8, 52, 92 and 93
+extended); docs/MAINNET_READINESS.md updated.
+
+Findings for the Chairperson this phase: the app PIN's scrypt hashing
+(N = 2^16 in JavaScript) took 245–258 s per unlock under Hermes in the
+emulator's debug build, about 400 times Node (F-81; the release-build
+figure is pending, pass p21g); the wrong-PIN wait never showed because
+it was stamped when an attempt started (F-82, fixed in 0bfb134); macOS
+throttles the emulator whenever its window is not in front (a PIN
+set-up did not finish in 37 minutes behind another app and finished 36
+s after the window was brought forward), and the emulator window was
+black for days until the ANGLE renderer was used (emulator 37.2.12 was
+tried and rolled back to 37.1.11); in the development build, lazily
+loaded code failed ("Unable to determine the production URL" from
+Metro's lazy bundling of a production-mode bundle — use
+EXPO_NO_METRO_LAZY=1 or a release APK; the "Requiring unknown module"
+error's root cause is not established), so WalletConnect could not be
+checked there; on a fresh install the WalletConnect row reads "Saved"
+because the app falls back to its built-in project id, and clearing it
+does not disable WalletConnect as a code comment claimed (both fixed in 906c9d9: the status reads "Built-in project id" and the control says it returns to it); the
+notifications library adds twenty launcher-badge permissions
+(ShortcutBadger) to the Android manifest although the wallet never sets
+a badge; every LayerZero test pathway relies on ONE required verifier
+operated by LayerZero Labs (the documented presets have two verifiers or a dead one), Stargate's
+test pools can be paused by a key whose private part is public, and
+Stargate delivers ETH with a 2,300-gas transfer a deployed smart account
+cannot accept (so the wallet always bridges to the regular address); a
+node backend refused the 1-wei rehearsal send as underpriced (most
+likely publicnode's reth backend, inferred).
+
+Decisions for the Chairperson: (1) the PIN hashing cost — a native
+scrypt (a new native dependency, for example react-native-quick-crypto,
+whose scrypt coverage is unverified; it needs a rebuilt development
+build, cannot run in Expo Go, and a native call cannot be stopped
+mid-hash) or a far lower N in JavaScript (no new dependency, but the
+guess resistance against someone who copies the phone's files, already
+about half a day for all 6-digit PINs at N = 2^17, falls in proportion
+to N; existing PIN records become unreadable either way); best decided
+after the release-build figure; (2) the four paste boxes whose
+placeholder is their only visible description — add a visible caption
+and shorten the placeholder across about nine screens, or accept that
+TalkBack speaks the name twice; (3) whether to add expo-navigation-bar
+for the white navigation bar in dark mode; (4) the passphrase question
+is still open — a BIP-39 passphrase (a hidden wallet from the same
+phrase, docs/DURESS_WALLET.md §7.8) or a longer lock-screen secret;
+(5) confirm the second wallet's Settings behaviour (§7.9); (6) whether
+the app PIN stays opt-in for mainnet; the disclosure decision remains on
+hold.
+
+Inputs that would unlock more: a real phone and an Expo account (the PIN
+cost on real hardware, passkeys, hardware-backed storage, Face ID,
+VoiceOver); the PIN-cost decision; a 0x key; the ZeroDev gas policy;
+enabling Base Sepolia for the Alchemy key; a passkey rpId domain.
+
+Follow-ups (no inputs): the release-build PIN-cost measurement (pass
+p21g); an emulator re-check of the last fix slices (the speed-up and
+cancellation row lines after Dismiss, the plain "refused the fee"
+sentence, the hidden captions above their fields, the provider sentences
+as separate stops, the switcher line spoken once, the wrong-PIN
+countdown); a smart-account bridge and a stranded-transfer retry live; a
+CCTP live leg per docs/BRIDGING.md §11 if wanted; the WalletConnect
+separation of the two wallets retested in the development build with
+EXPO_NO_METRO_LAZY=1; removing the ShortcutBadger permissions with tools:node="remove" and
+rebuilding the release manifest; a bounded broadcast timeout that
+reports "outcome unknown" (a design question); the Bridge choice note's
+"for this pair of networks" leftover; an Activity sentence for a
+smart-account bridge; the layer-2 sequencers' treatment of a
+minimum-fee send; a countdown in the Settings PIN flow; the doubling
+waits and Change PIN in the second wallet; the multisig P&L and token
+P&L (a contract field on HistoryEntry).
