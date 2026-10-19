@@ -8,10 +8,12 @@ import { T } from '../i18n/T';
 import { useI18n } from '../i18n/useI18n';
 import { useTheme } from '../theme';
 import { usePrefs } from '../wallet/PrefsContext';
+import { appLockKind } from '../wallet/duress';
 import {
   INBOX_EMPTY,
   INBOX_INTRO,
   INBOX_MARK_ALL_READ,
+  INBOX_PASSPHRASE_NOTE,
   INBOX_PIN_NOTE,
   INBOX_READ_ONLY_MESSAGE,
   INBOX_RESET_BODY,
@@ -84,6 +86,8 @@ export function InboxScreen({ navigation }: Props) {
     navigation.setOptions({ title: t('inbox.title') });
   }, [navigation, language, t]);
   const { appPinOn } = usePrefs();
+  // The app lock's kind (a device fact): the note names the PIN or the passphrase.
+  const inboxLockKind = React.useSyncExternalStore(appLockKind.subscribe, appLockKind.get);
   const { state, now, loaded, reload } = useInbox();
   const entries = visibleInboxEntries(state.entries, now);
   const unread = inboxUnreadCount(state.entries, now);
@@ -110,7 +114,7 @@ export function InboxScreen({ navigation }: Props) {
       refreshControl={<RefreshControl refreshing={false} onRefresh={reload} tintColor={theme.textMuted} colors={[theme.accent]} />}
     >
       <Text style={[styles.body, { color: theme.text }]}><T>{INBOX_INTRO}</T></Text>
-      {appPinOn ? <Text style={[styles.hint, { color: theme.textMuted }]}><T>{INBOX_PIN_NOTE}</T></Text> : null}
+      {appPinOn ? <Text style={[styles.hint, { color: theme.textMuted }]}><T>{inboxLockKind === 'phr' ? INBOX_PASSPHRASE_NOTE : INBOX_PIN_NOTE}</T></Text> : null}
       {state.readOnly ? (
         <View style={styles.section}>
           <WarningBox>{INBOX_READ_ONLY_MESSAGE}</WarningBox>

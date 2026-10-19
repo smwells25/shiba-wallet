@@ -982,12 +982,44 @@ function prefsRule(dm) {
   check('the one sentence, exactly',
     duressMod.NOTIFICATIONS_OFF_WITH_PIN === 'Notifications are off while the app PIN is on: a notification can be read on the lock screen without your PIN.');
   const prefsCtx = read('wallet/PrefsContext.tsx');
-  check('PrefsContext: notifications are the forced value, and turning them on is refused with that sentence while a PIN exists',
+  check('PrefsContext: notifications are the forced value, and turning them on is refused with that sentence (in the lock\'s own word) while a PIN or passphrase exists',
     prefsCtx.includes('notifications: forced.notifications,') &&
-      prefsCtx.includes('setNotifications: (on) => (appPinOn && on ? Promise.reject(new Error(NOTIFICATIONS_OFF_WITH_PIN)) : patch({ notifications: on })),'));
+      prefsCtx.includes('setNotifications: (on) => (appPinOn && on ? Promise.reject(new Error(notificationsOffWithLock(appLockKind.get()))) : patch({ notifications: on })),'));
   const settings = read('screens/SettingsScreen.tsx');
-  check('Settings: with an app PIN the Notifications section shows only that sentence (no switch); without one, the usual section',
-    /\{appPinOn \? \(\s*<View style=\{styles\.section\}>\s*<Text accessibilityRole="header"[^>]*>(?:<T>)?\{NOTIFICATIONS_SECTION_TITLE\}(?:<\/T>)?<\/Text>\s*<Text[^>]*>(?:<T>)?\{NOTIFICATIONS_OFF_WITH_PIN\}(?:<\/T>)?<\/Text>\s*<\/View>\s*\) : \(\s*<NotificationSettingsSection \/>/.test(settings));
+  check('Settings: with an app lock the Notifications section shows only that sentence, PIN or passphrase by the lock\'s kind (no switch); without one, the usual section',
+    /\{appPinOn \? \(\s*<View style=\{styles\.section\}>\s*<Text accessibilityRole="header"[^>]*>(?:<T>)?\{NOTIFICATIONS_SECTION_TITLE\}(?:<\/T>)?<\/Text>\s*<Text[^>]*>(?:<T>)?\{settingsLockKind === 'phr' \? NOTIFICATIONS_OFF_WITH_PASSPHRASE : NOTIFICATIONS_OFF_WITH_PIN\}(?:<\/T>)?<\/Text>\s*<\/View>\s*\) : \(\s*<NotificationSettingsSection \/>/.test(settings));
+  // Phase 22 polish: the notes that name the app lock say "passphrase" while
+  // the lock is a passphrase; the PIN wording stays byte-identical.
+  const PHR = {
+    notifications: 'Notifications are off while the app passphrase is on: a notification can be read on the lock screen without your passphrase.',
+    screen: 'Screen protection stays on while the app passphrase is on, so the app switcher and screenshots never show the wallet.',
+    autoLock: 'While the app passphrase is on, auto-lock cannot be turned off: the wallet asks for the passphrase when it is opened and after this time in the background.',
+    wipe: 'With the app passphrase on, this removes everything the wallet keeps on this phone, and the app passphrase itself.',
+  };
+  check('the passphrase forms of the four app-lock notes, exactly (and none says PIN)',
+    duressMod.NOTIFICATIONS_OFF_WITH_PASSPHRASE === PHR.notifications && duressMod.SCREEN_PROTECTION_WITH_PASSPHRASE_NOTE === PHR.screen &&
+      duressMod.AUTO_LOCK_WITH_PASSPHRASE_NOTE === PHR.autoLock && duressMod.WIPE_WITH_PASSPHRASE_NOTE === PHR.wipe &&
+      Object.values(PHR).every((x) => !/\bPIN\b/.test(x)));
+  check('…the PIN forms unchanged, byte for byte',
+    duressMod.SCREEN_PROTECTION_WITH_PIN_NOTE === 'Screen protection stays on while the app PIN is on, so the app switcher and screenshots never show the wallet.' &&
+      duressMod.AUTO_LOCK_WITH_PIN_NOTE === 'While the app PIN is on, auto-lock cannot be turned off: the wallet asks for the PIN when it is opened and after this time in the background.' &&
+      duressMod.WIPE_WITH_PIN_NOTE === 'With the app PIN on, this removes everything the wallet keeps on this phone, and the app PIN itself.');
+  check('…picked by kind: notificationsOffWithLock and wipeWithLockNote give the PIN form for "pin", the passphrase form for "phr"',
+    duressMod.notificationsOffWithLock('pin') === duressMod.NOTIFICATIONS_OFF_WITH_PIN && duressMod.notificationsOffWithLock('phr') === PHR.notifications &&
+      duressMod.wipeWithLockNote('pin') === duressMod.WIPE_WITH_PIN_NOTE && duressMod.wipeWithLockNote('phr') === PHR.wipe);
+  check('…WalletContext\'s fallback when an attempt cannot be checked: "The PIN could not be checked. Try again." / "The passphrase could not be checked. Try again."',
+    pinMod.lockCheckFailedMessage('pin') === 'The PIN could not be checked. Try again.' && pinMod.lockCheckFailedMessage('phr') === 'The passphrase could not be checked. Try again.' &&
+      read('wallet/WalletContext.tsx').includes('message: e instanceof PinRecordDamagedError ? PIN_DAMAGED_MESSAGE : lockCheckFailedMessage(appLockKind.get()) };') &&
+      !read('wallet/WalletContext.tsx').includes("'The PIN could not be checked. Try again.'"));
+  const settingsLockNotes = (src) =>
+    src.includes('const settingsLockKind = React.useSyncExternalStore(appLockKind.subscribe, appLockKind.get);') &&
+    src.includes("(appPinOn ? ` ${wipeWithLockNote(settingsLockKind)}` : '')") &&
+    src.includes("<T>{settingsLockKind === 'phr' ? AUTO_LOCK_WITH_PASSPHRASE_NOTE : AUTO_LOCK_WITH_PIN_NOTE}</T>") &&
+    src.includes("<T>{settingsLockKind === 'phr' ? SCREEN_PROTECTION_WITH_PASSPHRASE_NOTE : SCREEN_PROTECTION_WITH_PIN_NOTE}</T>") &&
+    !/WIPE_WITH_PIN_NOTE|\{AUTO_LOCK_WITH_PIN_NOTE\}|\{SCREEN_PROTECTION_WITH_PIN_NOTE\}|\{NOTIFICATIONS_OFF_WITH_PIN\}/.test(src);
+  check('Settings: the wipe note, the auto-lock note and the screen-protection note follow the lock\'s kind (source)', settingsLockNotes(settings));
+  check('mutant caught (polish): the wipe dialog keeps the PIN note whatever the kind',
+    !settingsLockNotes(settings.replace('${wipeWithLockNote(settingsLockKind)}', '${WIPE_WITH_PIN_NOTE}')));
   check('Settings: turning the PIN on first switches notifications off and clears what was scheduled or shown',
     /await setNotifications\(false\)[\s\S]{0,120}await appNotifications\(\)\.disable\(\)[\s\S]{0,80}await turnOnAppPin\(next!, chosenKind\)/.test(settings));
   check('Settings: auto-lock "Off" is not offered while the PIN is on', /AUTO_LOCK_CHOICES\.map\(\(choice\) =>\s*\/\/[^\n]*\n\s*appPinOn && choice\.ms === null \? null : \(/.test(settings));
@@ -1714,6 +1746,14 @@ try {
       !passphraseSources(gate.replace("    setText('');\n    setBusy(true);", '    setBusy(true);'), settings, ctx).clearedFirst);
     check('mutant caught: the kind read only after the wallet loaded (the lock screen could draw the wrong input first)',
       !passphraseSources(gate, settings, ctx.replace('            if (lockRecord) appLockKind.set(lockRecord.kind);\n', '')).launchKind);
+  }
+  {
+    const m = await mutant('duress.ts', "  return kind === 'phr' ? NOTIFICATIONS_OFF_WITH_PASSPHRASE : NOTIFICATIONS_OFF_WITH_PIN;", '  return NOTIFICATIONS_OFF_WITH_PIN;');
+    check('mutant caught (polish): a passphrase lock whose notifications note says PIN', m.notificationsOffWithLock('phr') !== 'Notifications are off while the app passphrase is on: a notification can be read on the lock screen without your passphrase.');
+  }
+  {
+    const m = await mutant('pin.ts', "  return t(kind === 'phr' ? 'lock.phr.checkFailed' : 'lock.pin.checkFailed');", "  return t('lock.pin.checkFailed');");
+    check('mutant caught (polish): WalletContext\'s fallback saying PIN for a passphrase lock', m.lockCheckFailedMessage('phr') !== 'The passphrase could not be checked. Try again.');
   }
 } finally {
   rmSync(MUTANT_DIR, { recursive: true, force: true });

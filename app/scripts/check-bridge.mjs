@@ -56,6 +56,7 @@ import {
   BRIDGE_FEATURE,
   BRIDGE_SINGLE_PROVIDER_NOTE,
   broadcastStamped,
+  bridgeChoiceNote,
   bridgeFormInputsShown,
   bridgeProviderChoiceHint,
   chosenBridgeProvider,
@@ -1386,6 +1387,30 @@ console.log('check-bridge: the emulator pass p21b findings (provider choice, spo
   const mBase = m7b.bridgeOfferFor(caip(BASE));
   const mNote = m7b.bridgeProviderRows(mBase, mBase.destinations[0].chainId)[0].note;
   check('MUTANT (the old destination sentence on a network with the chips hidden) is caught', mNote !== 'Does not serve Base Sepolia in this wallet.', mNote);
+
+  // (7, the choice-note leftover; phase 22 polish) The note under "Choose a
+  // provider" spoke of "this pair of networks" where no pair can be chosen.
+  const BASE_CHOICE = 'The wallet lists every provider it knows, each with the reason it cannot send from Base Sepolia, and never picks one for you.';
+  const baseRows = bridgeProviderRows(baseOffer, baseOffer.destinations[0].chainId);
+  check('choice note: Ethereum Sepolia (chips shown) keeps "…for this pair of networks…" (exact)',
+    bridgeChoiceNote(sep, bridgeProviderRows(sep, OP).length) === BRIDGE_CHOICE_NOTE);
+  check('choice note: Base Sepolia (chips hidden) names only the source network and no pair (exact), and every row there does give its reason',
+    bridgeChoiceNote(baseOffer, baseRows.length) === BASE_CHOICE && !/pair of networks/.test(BASE_CHOICE) &&
+      baseRows.length > 0 && baseRows.every((r) => !r.selectable && typeof r.note === 'string' && r.note.length > 0), bridgeChoiceNote(baseOffer, baseRows.length));
+  const hoodiOffer = bridgeOfferFor(caip(HOODI));
+  check('choice note: none where no provider is listed (Hoodi: no destination, no rows; the warning above says why)',
+    hoodiOffer.destinations.length === 0 && bridgeChoiceNote(hoodiOffer, 0) === null && hoodiOffer.unavailable === 'No bridge provider in this wallet serves Hoodi.');
+  const choiceNoteWired = (src) =>
+    src.includes('const choiceNote = offer !== null ? bridgeChoiceNote(offer, rows.length) : null;') &&
+    /\{choiceNote \? \(\s*<>\s*<Text accessibilityRole="header" style=\{\[styles\.label, \{ color: theme\.textMuted \}\]\}>Choose a provider<\/Text>\s*<Text style=\{\[styles\.hint, \{ color: theme\.textMuted \}\]\}>\{choiceNote\}<\/Text>/.test(src) &&
+    !src.includes('{BRIDGE_CHOICE_NOTE}');
+  check('…the screen shows "Choose a provider" and that note only when there is one (source)', choiceNoteWired(screen));
+  check('MUTANT (the screen showing the pair sentence everywhere) is caught',
+    !choiceNoteWired(screen.replace('<Text style={[styles.hint, { color: theme.textMuted }]}>{choiceNote}</Text>', '<Text style={[styles.hint, { color: theme.textMuted }]}>{BRIDGE_CHOICE_NOTE}</Text>')));
+  const m7c = await bridgeMutant('  if (bridgeFormInputsShown(offer)) return BRIDGE_CHOICE_NOTE;', '  return BRIDGE_CHOICE_NOTE;');
+  const mBase7c = m7c.bridgeOfferFor(caip(BASE));
+  check('MUTANT (the pair sentence on Base Sepolia, where no pair can be chosen) is caught',
+    m7c.bridgeChoiceNote(mBase7c, m7c.bridgeProviderRows(mBase7c, mBase7c.destinations[0].chainId).length) !== BASE_CHOICE);
 
   // (8) The sent time is the broadcast's, whatever waits afterwards.
   let clock = 1_000;

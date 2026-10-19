@@ -338,6 +338,24 @@ export const SCREEN_PROTECTION_WITH_PIN_NOTE =
 export const AUTO_LOCK_WITH_PIN_NOTE =
   'While the app PIN is on, auto-lock cannot be turned off: the wallet asks for the PIN when it is opened and after this time in the background.';
 
+/**
+ * The same three sentences while the app lock is a passphrase (phase 22
+ * polish; the PIN forms above stay word for word). Settings, the inbox and
+ * PrefsContext pick the pair by the lock's kind (appLockKind below), which is
+ * a device fact, so both wallets show the same words.
+ */
+export const NOTIFICATIONS_OFF_WITH_PASSPHRASE =
+  'Notifications are off while the app passphrase is on: a notification can be read on the lock screen without your passphrase.';
+export const SCREEN_PROTECTION_WITH_PASSPHRASE_NOTE =
+  'Screen protection stays on while the app passphrase is on, so the app switcher and screenshots never show the wallet.';
+export const AUTO_LOCK_WITH_PASSPHRASE_NOTE =
+  'While the app passphrase is on, auto-lock cannot be turned off: the wallet asks for the passphrase when it is opened and after this time in the background.';
+
+/** The Notifications section's one sentence for a lock of `kind` (also PrefsContext's refusal). */
+export function notificationsOffWithLock(kind: LockKind): string {
+  return kind === 'phr' ? NOTIFICATIONS_OFF_WITH_PASSPHRASE : NOTIFICATIONS_OFF_WITH_PIN;
+}
+
 export const DURESS_SECTION_TITLE = 'Duress PIN';
 export const DURESS_EXPLANATION =
   'A duress PIN opens a separate wallet instead of this one, for when someone forces you to open your wallet. Keep a small amount in it and use it now and then so it looks lived in.';
@@ -374,6 +392,14 @@ export const PIN_PAD_TITLE = 'Enter your PIN';
 /** Appended to the "Wipe wallet?" dialog while an app PIN is on: the same words in both wallets. */
 export const WIPE_WITH_PIN_NOTE =
   'With the app PIN on, this removes everything the wallet keeps on this phone, and the app PIN itself.';
+/** The same note while the app lock is a passphrase. */
+export const WIPE_WITH_PASSPHRASE_NOTE =
+  'With the app passphrase on, this removes everything the wallet keeps on this phone, and the app passphrase itself.';
+
+/** The wipe dialog's note for a lock of `kind`. */
+export function wipeWithLockNote(kind: LockKind): string {
+  return kind === 'phr' ? WIPE_WITH_PASSPHRASE_NOTE : WIPE_WITH_PIN_NOTE;
+}
 
 /** Settings → Privacy prompts and results of the PIN flows. */
 export const PIN_PROMPTS = Object.freeze({

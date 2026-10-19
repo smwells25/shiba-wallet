@@ -557,8 +557,17 @@ console.log('check-inbox: routes, links and allow lists');
     (settings.match(/navigation\.navigate\('Inbox'\)/g) ?? []).length === 1 &&
       settings.indexOf("navigation.navigate('Inbox')") > settings.indexOf('<NotificationSettingsSection />') && settings.indexOf("navigation.navigate('Inbox')") < settings.indexOf('<AppPinSection />'));
   const screen = read('src/screens/InboxScreen.tsx');
-  check('the screen: intro, the app-PIN note, the read-only box with reset, Mark all read, the reminder note',
-    screen.includes('{appPinOn ? <Text') && screen.includes('{INBOX_PIN_NOTE}') && screen.includes('<WarningBox>{INBOX_READ_ONLY_MESSAGE}</WarningBox>') &&
+  // Phase 22 polish: the app-lock note names the PIN or the passphrase by the lock's kind.
+  const lockNotePicked = (src) =>
+    src.includes("{appPinOn ? <Text style={[styles.hint, { color: theme.textMuted }]}><T>{inboxLockKind === 'phr' ? INBOX_PASSPHRASE_NOTE : INBOX_PIN_NOTE}</T></Text> : null}") &&
+    src.includes('const inboxLockKind = React.useSyncExternalStore(appLockKind.subscribe, appLockKind.get);');
+  check('the inbox\'s app-lock note: the passphrase form exactly, the PIN form unchanged, picked by the lock\'s kind',
+    I.INBOX_PASSPHRASE_NOTE === 'The app passphrase is on, so the wallet posts no phone notifications. The inbox still lists what the wallet showed you on its own screens, such as the recurring-payment banner, price alerts and sent transactions.' &&
+      I.INBOX_PIN_NOTE === 'The app PIN is on, so the wallet posts no phone notifications. The inbox still lists what the wallet showed you on its own screens, such as the recurring-payment banner, price alerts and sent transactions.' &&
+      lockNotePicked(screen));
+  check('mutant caught (polish): the PIN note shown whatever the lock\'s kind', !lockNotePicked(screen.replace("inboxLockKind === 'phr' ? INBOX_PASSPHRASE_NOTE : INBOX_PIN_NOTE", 'INBOX_PIN_NOTE')));
+  check('the screen: intro, the app-lock note, the read-only box with reset, Mark all read, the reminder note',
+    screen.includes('{appPinOn ? <Text') && screen.includes('INBOX_PIN_NOTE}') && screen.includes('<WarningBox>{INBOX_READ_ONLY_MESSAGE}</WarningBox>') &&
       screen.includes('title="Reset the inbox"') && screen.includes('title={INBOX_MARK_ALL_READ}') && screen.includes('{INBOX_SCHEDULED_NOTE}'));
   check('exact strings', I.INBOX_PIN_NOTE.startsWith('The app PIN is on, so the wallet posts no phone notifications. The inbox still lists') &&
     I.INBOX_EMPTY === 'Nothing yet. Reminders, alerts and sent transactions will be listed here.' && I.inboxUnreadText(1) === '1 unread entry.' && I.inboxTimeText(Date.UTC(2026, 9, 19, 3, 30)) === '2026-10-19 03:30 UTC');

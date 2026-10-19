@@ -22,6 +22,7 @@
 import { evmKeyProvider, mnemonicToSeed, toChecksumAddress } from '@shiba-wallet/core';
 import { ENTRYPOINT_V07, encodeFunctionCall, toBytes, toHex } from '@shiba-wallet/chains-evm';
 import { INITIAL_LOCK_STATE, reduceLock } from '../src/wallet/lock.ts';
+import { en as EN_TABLE } from '../src/i18n/en.ts';
 import { contrastRatio, darkTheme, lightTheme, relativeLuminance } from '../src/theme-palette.ts';
 import {
   AUTO_LOCK_CHOICES,
@@ -498,13 +499,26 @@ const at = (type, status, now) => ({ type, status, now });
       'closed, swiped away or stopped by the system). Screen state is kept — locking never discards what you were doing.';
     check('Settings: the auto-lock hint with the app PIN on, exactly (the PIN pad; no "same biometric prompt as sending")',
       lockMod.AUTO_LOCK_HINT_WITH_PIN === PIN_HINT && !PIN_HINT.includes('biometric prompt as sending'));
+    // Phase 22 polish: with a passphrase as the app lock the same hint names
+    // the passphrase; the PIN sentence above stays word for word.
+    const PASSPHRASE_HINT =
+      'When the app has been in the background at least this long, it locks behind the app passphrase: it opens again only ' +
+      "after you type your passphrase; the device's own fingerprint, face or passcode prompt does not unlock it while the " +
+      'passphrase is on (sending and signing still ask for that prompt). The wallet also starts locked every time it is opened ' +
+      'afresh (after it was closed, swiped away or stopped by the system). Screen state is kept — locking never discards what you were doing.';
+    check('Settings: the auto-lock hint with an app passphrase, exactly (names the passphrase; no "PIN", no "same biometric prompt as sending")',
+      lockMod.AUTO_LOCK_HINT_WITH_PASSPHRASE === PASSPHRASE_HINT && !/\bPIN\b/.test(PASSPHRASE_HINT) && !PASSPHRASE_HINT.includes('biometric prompt as sending'));
+    const LOCK_HINT_EXPR = String.raw`\{settingsLockKind === 'phr' \? AUTO_LOCK_HINT_WITH_PASSPHRASE : AUTO_LOCK_HINT_WITH_PIN\}`;
     const hintVariants = (src) =>
-      /\{appPinOn \? \(\s*<Text style=\{\[styles\.hint, \{ color: theme\.textMuted \}\]\}>(?:<T>)?\{AUTO_LOCK_HINT_WITH_PIN\}(?:<\/T>)?<\/Text>\s*\) : \(\s*<Text style=\{\[styles\.hint, \{ color: theme\.textMuted \}\]\}>\s*(?:<T>\s*)?When the app has been in the background at least this long/.test(src) &&
-      src.includes("import { AUTO_LOCK_HINT_WITH_PIN } from '../wallet/lock';");
-    check('Settings: the PIN variant while the app PIN is on, the unchanged biometric sentence otherwise (both captured)',
+      new RegExp(String.raw`\{appPinOn \? \(\s*<Text style=\{\[styles\.hint, \{ color: theme\.textMuted \}\]\}>(?:<T>)?` + LOCK_HINT_EXPR + String.raw`(?:<\/T>)?<\/Text>\s*\) : \(\s*<Text style=\{\[styles\.hint, \{ color: theme\.textMuted \}\]\}>\s*(?:<T>\s*)?When the app has been in the background at least this long`).test(src) &&
+      src.includes("const settingsLockKind = React.useSyncExternalStore(appLockKind.subscribe, appLockKind.get);") &&
+      src.includes("import { AUTO_LOCK_HINT_WITH_PASSPHRASE, AUTO_LOCK_HINT_WITH_PIN } from '../wallet/lock';");
+    check('Settings: the PIN or passphrase variant (by the lock\'s kind) while the app lock is on, the unchanged biometric sentence otherwise (all captured)',
       hintVariants(settingsSrc) && lockHintTrue(settingsSrc));
-    const noPinVariant = settingsSrc.replace(/\{appPinOn \? \(\s*<Text style=\{\[styles\.hint, \{ color: theme\.textMuted \}\]\}>(?:<T>)?\{AUTO_LOCK_HINT_WITH_PIN\}(?:<\/T>)?<\/Text>\s*\) : \(/, '{(');
+    const noPinVariant = settingsSrc.replace(new RegExp(String.raw`\{appPinOn \? \(\s*<Text style=\{\[styles\.hint, \{ color: theme\.textMuted \}\]\}>(?:<T>)?` + LOCK_HINT_EXPR + String.raw`(?:<\/T>)?<\/Text>\s*\) : \(`), '{(');
     check('mutant caught: the biometric sentence shown while the app PIN is on', noPinVariant !== settingsSrc && !hintVariants(noPinVariant));
+    const pinOnlyVariant = settingsSrc.replace("settingsLockKind === 'phr' ? AUTO_LOCK_HINT_WITH_PASSPHRASE : AUTO_LOCK_HINT_WITH_PIN", 'AUTO_LOCK_HINT_WITH_PIN');
+    check('mutant caught (polish): the PIN hint shown whatever the lock\'s kind (a passphrase lock saying "PIN")', pinOnlyVariant !== settingsSrc && !hintVariants(pinOnlyVariant));
   }
 }
 
@@ -1989,10 +2003,26 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
         return null;
       };
       const literals = (expr) => [...expr.matchAll(/'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)"|`((?:[^`\\]|\\.)*)`/g)].map((m) => m[1] ?? m[2] ?? m[3]);
+      // Localisation (phase 22 item 6, the polish follow-up): a caption or a
+      // placeholder may now go through the string accessor. tx('…') and
+      // localize('…') carry the English itself (read as a literal above, and
+      // the literal must be an entry of the English table); t('id') carries
+      // an id, which is resolved to its English through app/src/i18n/en.ts,
+      // so a placeholder t('activity.note.field') is compared as "Note
+      // (private, this phone only)", not as the id.
+      const accessorTexts = (expr) => {
+        const out = [];
+        for (const m of expr.matchAll(/\b(t|tx|localize)\(\s*'((?:[^'\\]|\\.)*)'/g)) {
+          if (m[1] === 't') out.push((Object.hasOwn(EN_TABLE, m[2]) ? EN_TABLE[m[2]] : null) ?? `<unknown string id ${m[2]}>`);
+          else out.push(m[2]);
+        }
+        return out;
+      };
+      const texts = (expr) => [...new Set([...literals(expr).filter((x) => !Object.hasOwn(EN_TABLE, x)), ...accessorTexts(expr)])];
       const norm = (t) => t.toLowerCase().replace(/[^a-z0-9$]/g, '');
       const same = (a, b) => {
-        const la = literals(a);
-        const lb = literals(b);
+        const la = texts(a);
+        const lb = texts(b);
         if (la.length === 0 && lb.length === 0) return a.replace(/\s+/g, '') === b.replace(/\s+/g, '');
         return la.some((x) => norm(x) !== '' && lb.some((y) => norm(x) === norm(y)));
       };
@@ -2064,6 +2094,20 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
         placeholderProblems(withFile('screens/SettingsScreen.tsx', "{field('rpcUrl', 'RPC endpoint (https)', 'https://…', 'url')}", "{field('rpcUrl', 'RPC endpoint (https)', 'RPC endpoint (https)', 'url')}")).length === 1);
       check('…mutant caught (phase 22): an AaField whose placeholder repeats its label',
         placeholderProblems(withFile('screens/SettingsScreen.tsx', 'placeholder="32-character id from dashboard.reown.com"', 'placeholder="Reown / WalletConnect project id"')).length === 1);
+      // The localised Activity note field (the polish follow-up): its caption
+      // is a literal, its placeholder goes through tx(); both sides are read.
+      const activity = files.find((x) => x.f === 'screens/ActivityScreen.tsx').src;
+      const noteTag = tags(activity, 'TextInput').find((t) => /fieldLabel\('note'/.test(t));
+      check('…the Activity note field is in the scan: caption "Note (private, this phone only)", placeholder tx(\'For example: rent for October\') read as its English, an entry of the table',
+        noteTag !== undefined && texts(caption(activity, noteTag) ?? '').includes('Note (private, this phone only)') &&
+          JSON.stringify(texts(prop(noteTag, 'placeholder') ?? '')) === JSON.stringify(['For example: rent for October']) &&
+          EN_TABLE['activity.note.placeholder'] === 'For example: rent for October');
+      check('…mutant caught (polish): the Activity note placeholder through tx() equal to its caption',
+        placeholderProblems(withFile('screens/ActivityScreen.tsx', "placeholder={tx('For example: rent for October')}", "placeholder={tx('Note (private, this phone only)')}")).length === 1);
+      check('…mutant caught (polish): the Activity note placeholder through t(\'id\') whose English is its caption (resolved through the English table)',
+        placeholderProblems(withFile('screens/ActivityScreen.tsx', "placeholder={tx('For example: rent for October')}", "placeholder={t('activity.note.field')}")).length === 1);
+      check('…and a t(\'id\') placeholder whose English differs from the caption is not flagged (no false alarm from the id itself)',
+        placeholderProblems(withFile('screens/ActivityScreen.tsx', "placeholder={tx('For example: rent for October')}", "placeholder={t('activity.note.placeholder')}")).length === 0);
     }
   }
 

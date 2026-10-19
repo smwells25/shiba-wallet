@@ -860,6 +860,16 @@ const ATTEMPT_WORDS: Record<LockKind, { wrong: StringId; tooMany: StringId; over
 };
 
 /**
+ * The sentence when an attempt could not be checked at all (the record could
+ * not be read or written for a reason other than damage): WalletContext's
+ * fallback, in the lock's own word. The PIN form is the sentence it always
+ * showed ("The PIN could not be checked. Try again.").
+ */
+export function lockCheckFailedMessage(kind: LockKind): string {
+  return t(kind === 'phr' ? 'lock.phr.checkFailed' : 'lock.pin.checkFailed');
+}
+
+/**
  * The lock screen's sentence for an attempt's outcome (the same whichever
  * wallet a secret would open): it names a PIN or a passphrase after the
  * record's kind (outcome.lock; a PIN when absent).

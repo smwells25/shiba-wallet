@@ -372,9 +372,10 @@ export const WATCHED_ADDRESS_TITLE = 'Watched address';
 /** Home's footer for a watch-only account. */
 export function watchOnlyFooterText(name: string): string {
   return (
-    `${name} is an address you watch; this wallet holds no key for it, so it cannot send, swap or sign ` +
-    'for it. Balances come from the RPC endpoints in Settings; pull down to refresh. Activity and NFTs ' +
-    'read this address from the indexers in Settings.'
+    `${name} is an address you watch; this wallet holds no key for it, so it cannot sign or swap for it. ` +
+    'A send on an Ethereum network can still be prepared here and signed by an off-line signer that holds ' +
+    'its key: use "Send with an off-line signer". Balances come from the RPC endpoints in Settings; pull ' +
+    'down to refresh. Activity and NFTs read this address from the indexers in Settings.'
   );
 }
 

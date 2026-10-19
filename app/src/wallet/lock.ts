@@ -267,6 +267,18 @@ export const AUTO_LOCK_HINT_WITH_PIN =
   'is on (sending and signing still ask for that prompt). The wallet also starts locked every time it is opened afresh (after it was ' +
   'closed, swiped away or stopped by the system). Screen state is kept — locking never discards what you were doing.';
 
+/**
+ * The same hint while the app lock is a passphrase (phase 22 polish, the
+ * follow-up of the lock-passphrase slice): the passphrase field replaces the
+ * PIN pad. SettingsScreen picks one of the two by the lock's kind
+ * (wallet/duress.ts appLockKind); the PIN sentence above stays word for word.
+ */
+export const AUTO_LOCK_HINT_WITH_PASSPHRASE =
+  'When the app has been in the background at least this long, it locks behind the app passphrase: it opens again only ' +
+  "after you type your passphrase; the device's own fingerprint, face or passcode prompt does not unlock it while the " +
+  'passphrase is on (sending and signing still ask for that prompt). The wallet also starts locked every time it is opened ' +
+  'afresh (after it was closed, swiped away or stopped by the system). Screen state is kept — locking never discards what you were doing.';
+
 /** The device prompt's title for the lock screen (unchanged since phase 4). */
 export const UNLOCK_PROMPT = 'Unlock Shiba Wallet';
 
