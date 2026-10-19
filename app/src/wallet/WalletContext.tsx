@@ -64,11 +64,13 @@ import {
   clearDuressSlot,
   deletePinRecord,
   pinAttemptMessage,
+  pinCountdownOf,
   readPinRecord,
   setAppPin,
   setPinSlot,
   PIN_DAMAGED_MESSAGE,
   PinRecordDamagedError,
+  type PinCountdown,
   type PinSlot,
 } from './pin';
 import {
@@ -309,9 +311,11 @@ interface WalletContextValue {
    * Checks a PIN typed on the lock screen. On success the wallet the PIN
    * belongs to is open when this resolves (reloaded through the storage seam
    * when it is not the one already open). The message is the same words
-   * whichever wallet a PIN would open.
+   * whichever wallet a PIN would open. A wrong PIN that starts a wait, and
+   * a PIN refused because a wait runs, also return the wait's stamped end
+   * (`countdown`), which the lock screen's PinPad counts down.
    */
-  unlockWithPin: (pin: string) => Promise<{ ok: true } | { ok: false; message: string }>;
+  unlockWithPin: (pin: string) => Promise<{ ok: true } | { ok: false; message: string; countdown?: PinCountdown }>;
   /**
    * Which PIN slot opened this session (memory only; null without an app
    * PIN). Settings uses it to act on the open wallet's own PIN; no screen
@@ -738,7 +742,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const unlockWithPin = useCallback(
-    async (pin: string): Promise<{ ok: true } | { ok: false; message: string }> => {
+    async (pin: string): Promise<{ ok: true } | { ok: false; message: string; countdown?: PinCountdown }> => {
       let outcome;
       try {
         outcome = await attemptPin(appSecureBackend(), pin);
@@ -746,7 +750,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         return { ok: false, message: e instanceof PinRecordDamagedError ? PIN_DAMAGED_MESSAGE : 'The PIN could not be checked. Try again.' };
       }
       if (outcome.kind !== 'opened') {
-        return { ok: false, message: pinAttemptMessage(outcome, Date.now()) ?? 'Wrong PIN. Try again.' };
+        const message = pinAttemptMessage(outcome, Date.now()) ?? 'Wrong PIN. Try again.';
+        const countdown = pinCountdownOf(outcome);
+        return countdown ? { ok: false, message, countdown } : { ok: false, message };
       }
       const profile = profileForSlot(outcome.slot);
       const switching = awaitingPinRef.current || activeStoreProfile().id !== profile.id;

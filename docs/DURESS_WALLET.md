@@ -561,7 +561,12 @@ moves no funds by itself), with an advisory readiness row.
   otherwise the largest power of two that does, stated). *As built (section
   7.7): a 32-byte salt per slot and N = 2^16, chosen from a Node
   measurement against a 500 ms budget; the device measurement is still
-  owed.* Never a plain hash;
+  owed. Pass p21f measured 245–258 s for one attempt (two hashes) in the
+  emulator's debug development build, so N is now one named constant,
+  PIN_SCRYPT_LOG2_N in app/src/wallet/pin.ts, pending a release-build
+  figure from Settings → Developer → "Measure the PIN hashing cost" (test
+  networks only), which times the same scrypt function at N = 2^12 to
+  2^16.* Never a plain hash;
   never stored or logged in plain form; the typed digits are dropped from
   state as soon as the hash is computed.
 - One record in the standard secure store holding both entries in a fixed
@@ -584,6 +589,13 @@ automatic wipe: COLDCARD bricks after 13 failures, but on a phone an
 accidental wipe of an unbacked-up wallet is the likelier harm. Stated limits:
 this stops guessing at the screen only; an attacker who restores an earlier
 copy of the app's files resets it, and offline guessing ignores it.
+*As built after pass p21f (2026-10-18): the wait runs from the END of the
+failed attempt. The pass measured about 4 minutes per attempt in the
+emulator's debug build, so a wait stamped when the attempt started had
+always run out before "Wrong PIN" appeared, and no wait was ever seen. The
+counter is still written before the hashes; the wait is stamped after them,
+and an attempt typed while a wait runs is refused at once with no hash. The
+lock screen's pad counts the wait down from the stamped time.*
 
 ### 6.4 Invariants and their checks (check-duress)
 

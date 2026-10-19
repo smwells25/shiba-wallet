@@ -151,6 +151,9 @@ import {
 } from '../wallet/spending-policy';
 import { MULTISIG_SETTINGS_BLURB } from '../wallet/multisig';
 import { PinPad } from '../components/LockGate';
+import { AUTO_LOCK_HINT_WITH_PIN } from '../wallet/lock';
+import { PinCostMeasurement } from '../components/PinCostMeasurement';
+import { pinCostMeasurementOffered } from '../wallet/pin-cost';
 import { NOTIFICATIONS_SECTION_TITLE, appNotifications } from '../wallet/notifications';
 import {
   PIN_FORMAT_MESSAGE,
@@ -2169,6 +2172,11 @@ export function SettingsScreen({ navigation, route }: Props) {
                 ),
               )}
             </View>
+            {/* With the app PIN on, the lock is the PIN pad, not the device
+                prompt (pass p21f finding 5); without it, the sentence below. */}
+            {appPinOn ? (
+              <Text style={[styles.hint, { color: theme.textMuted }]}>{AUTO_LOCK_HINT_WITH_PIN}</Text>
+            ) : (
             <Text style={[styles.hint, { color: theme.textMuted }]}>
               When the app has been in the background at least this long, it
               locks behind the same biometric prompt as sending. While your
@@ -2181,6 +2189,7 @@ export function SettingsScreen({ navigation, route }: Props) {
               Screen state is kept — locking never discards what you were
               doing.
             </Text>
+            )}
             {appPinOn ? <Text style={[styles.hint, { color: theme.textMuted }]}>{AUTO_LOCK_WITH_PIN_NOTE}</Text> : null}
           </>
         ) : authAvailable === false ? (
@@ -2721,6 +2730,9 @@ export function SettingsScreen({ navigation, route }: Props) {
             <Text style={[styles.hint, { color: theme.textMuted }]}>{MINIMUM_FEE_REHEARSAL_HINT}</Text>
           </>
         ) : null}
+        {/* The PIN hashing cost (pass p21f): test networks only, like the
+            rehearsal above; it never touches a PIN or the PIN record. */}
+        {pinCostMeasurementOffered(evmChain.caip2) ? <PinCostMeasurement /> : null}
         <CustomNetworksSection customNetworks={customNetworks} choice={testNetwork} onChoose={setTestNetwork} />
       </View>
 

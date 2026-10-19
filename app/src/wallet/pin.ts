@@ -24,14 +24,12 @@
  * second wallet's own key names (section 3.2).
  *
  * THE KDF. scrypt from @noble/hashes 2.4.0 (scrypt.js; scryptAsync so the
- * JS thread yields while it runs), r = 8, p = 1, dkLen = 32, N = 2^16.
- * N was chosen by measurement on 2026-10-14 under Node v24.21.0 on the
- * development machine (Intel Core i7-9750H) with this installed noble
- * version, 32-byte salt, a 6-digit PIN: N = 2^16 took 240–313 ms per hash
- * (11 runs, synchronous and asynchronous), N = 2^17 took 479–589 ms
- * (above the 500 ms budget). Every attempt computes BOTH slots' hashes, so
- * an attempt costs about twice that. The cost under Hermes on a phone (no
- * JIT) is NOT measured and must be before release (section 6.8).
+ * JS thread yields while it runs), r = 8, p = 1, dkLen = 32, and
+ * N = 2^PIN_SCRYPT_LOG2_N (see that constant for the measurements behind it
+ * and why the value is still pending). Every attempt computes BOTH slots'
+ * hashes, so an attempt costs about twice one hash. pinScrypt below is the
+ * one function that computes it; the Developer-mode measurement
+ * (./pin-cost.ts) calls the same function.
  *
  * EVERY ATTEMPT COMPUTES BOTH HASHES and compares each with a constant-time
  * comparison (equalBytesConstantTime below, the same loop as noble-curves'
@@ -44,10 +42,20 @@
  * the hashes are computed, so killing the app during an attempt still
  * counts it; a correct PIN (either one) resets it. After 5 wrong PINs in a
  * row the next attempt waits 30 seconds, and the wait doubles with every
- * further wrong PIN up to 1 hour. The wait is stored as an absolute time,
- * so a restart honours it. There is no automatic wipe. Stated limits: this
- * stops guessing at the screen only; restoring an earlier copy of the
- * app's files resets the counter, and offline guessing ignores it.
+ * further wrong PIN up to 1 hour (pinWaitSeconds, a pure table). The wait
+ * is measured from the END of the failed attempt: it is stamped after both
+ * hashes, when the answer is known, because the hashes can take longer
+ * than the wait itself (pass p21f measured about 4 minutes per attempt in
+ * a debug build, so a wait stamped when the attempt started had always run
+ * out before "Wrong PIN" appeared). While a wait runs, an attempt is
+ * refused at once and no hash is computed. The wait is stored as an
+ * absolute time, so a restart honours it. An attempt killed after its
+ * hashes but before the wait is stamped still counts (the counter was
+ * written first) but starts no wait; it also showed no answer, so it gave
+ * the person at the screen nothing. There is no automatic wipe. Stated
+ * limits: this stops guessing at the screen only; restoring an earlier
+ * copy of the app's files resets the counter, and offline guessing ignores
+ * it.
  *
  * THE PIN ITSELF is never stored, logged or kept: it is passed to scrypt
  * and dropped; callers clear their own copy as soon as the attempt
@@ -68,14 +76,40 @@ import {
 } from './store-keys.ts';
 
 export const PIN_LENGTH = 6;
-/** scrypt parameters; N fixed by the measurement in the header. */
-export const PIN_SCRYPT = Object.freeze({ N: 2 ** 16, r: 8, p: 1, dkLen: 32 });
+/**
+ * log2 of scrypt's cost parameter N for the app PIN: N = 2^PIN_SCRYPT_LOG2_N.
+ * The one place N is set; pinScrypt (below) and the Developer-mode
+ * measurement (./pin-cost.ts) both read it, and the record stores N and
+ * refuses a record made with another N.
+ *
+ * MEASUREMENTS SO FAR (both for one hash unless stated):
+ *  - Node v24.21.0 on the development machine (Intel Core i7-9750H), the
+ *    installed @noble/hashes 2.4.0, 2026-10-14: N = 2^16 took 240–313 ms
+ *    (11 runs); N = 2^17 took 479–589 ms, above the 500 ms budget, which is
+ *    how 2^16 was chosen.
+ *  - The Android emulator, the wallet's own development build with its
+ *    DEBUG Hermes bundle, window in front, 2026-10-18 (pass p21f): one
+ *    attemptPin (both hashes) took 245–258 s over 9 runs — about 400 times
+ *    the Node figure, which makes 2^16 in pure JavaScript unusable there.
+ *
+ * PENDING: the value is not final. It waits for a measurement in a RELEASE
+ * build (Hermes bytecode, no debugger) on the emulator and on a phone,
+ * taken with Settings → Developer → "Measure the PIN hashing cost", and
+ * then for the Chairperson's decision (a lower N, or a native scrypt).
+ * Changing it makes every existing PIN record unreadable (the record
+ * stores N), so a change must come with a way to re-create the record.
+ */
+export const PIN_SCRYPT_LOG2_N = 16;
+/** scrypt parameters (N from PIN_SCRYPT_LOG2_N). */
+export const PIN_SCRYPT = Object.freeze({ N: 2 ** PIN_SCRYPT_LOG2_N, r: 8, p: 1, dkLen: 32 });
 export const PIN_SALT_BYTES = 32;
 export const PIN_HASH_BYTES = 32;
 /** Wrong PINs allowed in a row before the first wait. */
 export const PIN_FREE_ATTEMPTS = 5;
-export const PIN_FIRST_WAIT_MS = 30_000;
-export const PIN_MAX_WAIT_MS = 3_600_000;
+export const PIN_FIRST_WAIT_SECONDS = 30;
+export const PIN_MAX_WAIT_SECONDS = 3_600;
+export const PIN_FIRST_WAIT_MS = PIN_FIRST_WAIT_SECONDS * 1000;
+export const PIN_MAX_WAIT_MS = PIN_MAX_WAIT_SECONDS * 1000;
 export const PIN_RECORD_KEY = STORE_KEYS.appLock.name;
 
 export type PinSlot = 'primary' | 'duress';
@@ -114,8 +148,26 @@ export function pinRecordBackend(backend: SecureStoreBackend): SecureStoreBacken
   return profileBoundSecureBackend(backend, PRIMARY_STORE_PROFILE);
 }
 
+/**
+ * The PIN's scrypt: r = 8, p = 1, dkLen = 32 and N = 2^log2N (by default
+ * the PIN's own N). The PIN check uses it with no progress callback; the
+ * Developer-mode measurement passes other sizes and a progress callback,
+ * which noble calls every 1/10,000 of the work and which may throw to stop
+ * the hash (noble scrypt.js scryptInit: "onProgress is the only user code
+ * that can throw mid-derivation"; the work buffers are wiped first).
+ */
+export function pinScrypt(
+  input: string,
+  salt: Uint8Array,
+  log2N: number = PIN_SCRYPT_LOG2_N,
+  onProgress?: (fraction: number) => void,
+): Promise<Uint8Array> {
+  const opts = { N: 2 ** log2N, r: PIN_SCRYPT.r, p: PIN_SCRYPT.p, dkLen: PIN_SCRYPT.dkLen };
+  return onProgress ? scryptAsync(input, salt, { ...opts, onProgress }) : scryptAsync(input, salt, opts);
+}
+
 function defaultKdf(pin: string, salt: Uint8Array): Promise<Uint8Array> {
-  return scryptAsync(pin, salt, { ...PIN_SCRYPT });
+  return pinScrypt(pin, salt);
 }
 
 function deps(d: PinDeps = {}): Required<PinDeps> {
@@ -259,12 +311,22 @@ export function isTriviallyGuessed(pin: string): boolean {
   return /^(\d)\1{5}$/.test(pin) || pin === '123456' || pin === '654321';
 }
 
-/** The wait before the next attempt after `fails` wrong PINs in a row (ms). */
-export function waitAfterFailures(fails: number): number {
+/**
+ * The wait schedule as a pure function: wrong PINs in a row → seconds to
+ * wait before the next attempt. 0 for 0–4, then 30 s, doubling with every
+ * further wrong PIN, capped at 1 hour (pinned by table in check-duress).
+ */
+export function pinWaitSeconds(fails: number): number {
+  if (!Number.isFinite(fails)) return PIN_MAX_WAIT_SECONDS;
   if (fails < PIN_FREE_ATTEMPTS) return 0;
-  const doublings = fails - PIN_FREE_ATTEMPTS;
-  if (doublings >= 7) return PIN_MAX_WAIT_MS;
-  return Math.min(PIN_MAX_WAIT_MS, PIN_FIRST_WAIT_MS * 2 ** doublings);
+  const doublings = Math.floor(fails) - PIN_FREE_ATTEMPTS;
+  if (doublings >= 7) return PIN_MAX_WAIT_SECONDS;
+  return Math.min(PIN_MAX_WAIT_SECONDS, PIN_FIRST_WAIT_SECONDS * 2 ** doublings);
+}
+
+/** The same schedule in milliseconds. */
+export function waitAfterFailures(fails: number): number {
+  return pinWaitSeconds(fails) * 1000;
 }
 
 /** "Try again in N seconds." / "… N minutes." for a wait ending at `until`. */
@@ -331,11 +393,12 @@ export async function attemptPin(
   const dd = deps(d);
   const record = await readPinRecord(backend);
   if (!record) return { kind: 'no-pin' };
-  const now = dd.now();
-  if (record.until > now) return { kind: 'wait', until: record.until };
+  // While a wait runs: refused at once, nothing written, no hash computed.
+  if (record.until > dd.now()) return { kind: 'wait', until: record.until };
   const fails = record.fails + 1;
-  const until = waitAfterFailures(fails) > 0 ? now + waitAfterFailures(fails) : 0;
-  await writePinRecord(backend, { ...record, fails, until });
+  // The counter goes in BEFORE the hashes (section 6.3); the wait does not:
+  // it is stamped below, once this attempt has failed.
+  await writePinRecord(backend, { ...record, fails, until: 0 });
   // A malformed PIN still costs both hashes (no shortcut that answers faster).
   const m = await matchSlots(record, pin, dd);
   const slot: PinSlot | null = pinFormatError(pin) !== null ? null : m.primary ? 'primary' : m.duress ? 'duress' : null;
@@ -347,6 +410,11 @@ export async function attemptPin(
     await writePinRecord(backend, { ...record, fails: 0, until: 0 });
     return { kind: 'opened', slot };
   }
+  // Wrong: the wait runs from NOW, the end of this attempt, so it is still
+  // ahead when the answer is shown however long the two hashes took.
+  const wait = waitAfterFailures(fails);
+  const until = wait > 0 ? dd.now() + wait : 0;
+  await writePinRecord(backend, { ...record, fails, until });
   return { kind: 'wrong', fails, until };
 }
 
@@ -392,10 +460,36 @@ export async function clearDuressSlot(backend: SecureStoreBackend, d: PinDeps = 
   await writePinRecord(backend, { ...record, slots: [record.slots[0], randomSlot(dd)] });
 }
 
+/** Shown on the pad when a wait it was counting down has run out. */
+export const PIN_WAIT_OVER_MESSAGE = 'You can enter your PIN again.';
+
 /** The lock screen's sentence for an attempt's outcome (the same whichever wallet a PIN would open). */
 export function pinAttemptMessage(outcome: PinAttemptOutcome, now: number): string | null {
   if (outcome.kind === 'wrong') return outcome.until > now ? `Wrong PIN. ${tryAgainSentence(outcome.until, now)}` : 'Wrong PIN. Try again.';
-  if (outcome.kind === 'wait') return `Too many wrong PINs. ${tryAgainSentence(outcome.until, now)}`;
+  if (outcome.kind === 'wait') return outcome.until > now ? `Too many wrong PINs. ${tryAgainSentence(outcome.until, now)}` : PIN_WAIT_OVER_MESSAGE;
   if (outcome.kind === 'no-pin') return 'No app PIN is set on this phone.';
   return null;
+}
+
+/**
+ * A wait the PinPad counts down: the kind of answer that started it and the
+ * stamped time it ends. The pad re-reads pinCountdownText every second from
+ * this stamped time, so the figure shown always matches the record.
+ */
+export interface PinCountdown {
+  kind: 'wrong' | 'wait';
+  until: number;
+}
+
+/** The countdown an outcome starts, or null when it starts none. */
+export function pinCountdownOf(outcome: PinAttemptOutcome): PinCountdown | null {
+  if (outcome.kind === 'wait') return { kind: 'wait', until: outcome.until };
+  if (outcome.kind === 'wrong' && outcome.until > 0) return { kind: 'wrong', until: outcome.until };
+  return null;
+}
+
+/** The pad's line for a countdown at `now` ("… Try again in 29 seconds.", then the wait-over sentence). */
+export function pinCountdownText(c: PinCountdown, now: number): string {
+  const outcome: PinAttemptOutcome = c.kind === 'wait' ? { kind: 'wait', until: c.until } : { kind: 'wrong', fails: PIN_FREE_ATTEMPTS, until: c.until };
+  return pinAttemptMessage(outcome, now) ?? '';
 }
