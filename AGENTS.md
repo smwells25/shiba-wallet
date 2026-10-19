@@ -9575,6 +9575,94 @@ Opus.
       wallet profile); an id saved equal to the built-in one reads
       "Saved" (it is stored). UNVERIFIED (device): the line, the hidden
       control, the dialog, TalkBack on the button.
+- [x] EMULATOR PASS p21g — THE RELEASE-BUILD PIN COST, THE LOCKOUT
+      COUNTDOWN, AND THE p21e FIXES RE-CHECKED (2026-10-18/19 UTC; no repo
+      file edited; every hash status 0x1 on two RPCs and the replacement
+      re-read by the CTO on publicnode; the two throwaway phrases deleted
+      with rm -P; one slip — an unmasked quiz dump printed six answer
+      choices of the release throwaway into the agent's working output,
+      the wallet wiped, the file deleted, every kept file re-scanned
+      clean). PART 1 BUILDS (Gradle with nobody driving the AVD, then
+      --stop and no java process before adb): wt-build moved to 7244fd5
+      (prebuild edits kept; no prebuild needed — no native config change),
+      assembleRelease 8 min 56 s → .local/builds/shiba-release-7244fd5.apk
+      (53,359,829 bytes, sha256 f73133e0…a64e), assembleDebug 2 min 45 s →
+      shiba-devclient-7244fd5-debug.apk (84,803,531 bytes, ae3ec9c7…2731).
+      PART 2, THE RELEASE BUILD on a throwaway wallet: "Platform: android ·
+      Hermes: yes · development bundle (__DEV__): no"; PIN_COST_HINT
+      exactly; THREE RUNS (ms per hash): 2^12 3,603 / 3,669 / 3,185; 2^13
+      6,356 / 6,501 / 6,257; 2^14 12,904 / 13,157 / 12,214; 2^15 21,627 /
+      25,779 / 24,384; 2^16 53,479 / 51,280 / 49,195; totals 97,970 /
+      100,388 / 95,236 (run 1 lost the window to Zoom part-way and still
+      matched) — ONE HASH AT 2^16 IS 49–53 s, AN UNLOCK ABOUT 100 s (2.5×
+      faster than the debug build, ~160× Node); Stop responds mid-hash
+      ("N = 2^15: stopped by you after 16,575 ms (not finished).", "N =
+      2^16: not measured (stopped by you)."). THE PIN ON: the device
+      prompt, words 1 and 6, ~61 s to set; the forced auto-lock / screen
+      protection / notifications lines; AUTO_LOCK_HINT_WITH_PIN exactly as
+      pinned. THE LOCKOUT COUNTDOWN PROVEN (round 2, read from TalkBack's
+      log because screencap is blank under the forced secure flag and
+      uiautomator dumps appear to block while the pad re-renders each
+      second — inferred from round 1's 138.9 s fifth attempt): wrong PINs
+      1–4 95–102 s each, the fifth announced "Wrong PIN. Try again in 30
+      seconds." about 94 s after submission; the correct PIN typed inside
+      the wait REFUSED AT ONCE with no hash — "Too many wrong PINs. Try
+      again in 6 seconds." then "…in 5 seconds." — then "You can enter
+      your PIN again." and the correct PIN unlocked; not past the first
+      wait; a separate spoken announcement at the refusal's first
+      appearance not confirmed. Wipe ("…With the app PIN on, this removes
+      everything the wallet keeps on this phone, and the app PIN
+      itself.") and uninstall. PART 2c, THE DEV CLIENT WITH LAZY BUNDLING
+      OFF (EXPO_NO_METRO_LAZY=1 CI=1 expo start --port 8082 --dev-client:
+      one bundle of 2,392 modules): Settings → Connected apps opened
+      normally with NO "Requiring unknown module" / "importedAll" error —
+      the p21f failure was Metro's lazy chunking under the dev client
+      (a real pairing not exercised; recorded for DEVICE_BUILDS.md). PART
+      3, EXPO GO on the real wallet (wt-app moved to 7244fd5 with the
+      engine built inside it, Metro restarted on 8081 as pid 75561, 1,892
+      modules): (A2) THE FIRST THREE APPROVALS WERE REFUSED with the NEW
+      alert — title "The network endpoint refused the fee.", the sentence,
+      the rehearsal note and "Technical detail: RPC error -32000:
+      transaction underpriced (eth_sendRawTransaction)" — and the fourth
+      accepted: tx 0x06acdc8e…d63469, nonce 32, 1/1, pooled on
+      publicnode's Geth backend and 0xrpc.io, null on the reth backend and
+      drpc; Speed up (prompt "Approve speeding up the transaction"; fees
+      33 / 2 against the 2/2 minimum): replacement
+      0x447b8abbe5b88cba1facec71ee34884071053784ad14f9cfa02bb451aa71baed,
+      block 11945327, status 0x1, 21,000 gas at 19 wei, the original null;
+      (A1) after Dismiss, after leaving and reopening Activity, and after a
+      force-stop and unlock the row STILL reads "Speed-up of transaction
+      0x06ac…3469 (nonce 32)."; balances to the wei (Account 1
+      1,786,233,897,416,515 → 1,776,233,897,017,515 = −1e13 − 21,000 × 19,
+      nonce 32 → 33; Account 2 +1e13). TALKBACK: (B2a) PASS — "Paste the
+      multisig record" is read BEFORE "Paste the multisig record. Edit box
+      for Paste the multisig record" (the 1×1 caption at y 1162 above the
+      field); (B2b) MOSTLY PASS — in linear order each provider-body
+      sentence is its own stop (Who verifies / Who controls / If it does
+      not arrive / the fee line / the measured time; CCTP's note plus its
+      three sentences; no ".."), the radios as designed, a body tap selects
+      the row; NEW FINDING — the selectable LayerZero body is a
+      non-focusable ViewGroup that still carries a content description
+      joining its sentences with ", ", spoken once as a single stop when
+      focus wrapped past the top of a scrolled page (the CCTP body has
+      none; the disabled LayerZero body on Base Sepolia carries one too);
+      the LayerZero body showed no separate note or source sentence
+      (conditional); (B2c) PASS — the overflow line spoken ONCE per open
+      (the live region), "Accounts. Heading" one swipe back, the toggle
+      silent, the reappearance spoken. (3c) PASS — Base Sepolia's row reads
+      "Does not serve Base Sepolia in this wallet." OBSERVATION: after the
+      speed-up alert's OK the pending card vanished and the notice appeared
+      only after a pull-to-refresh about 40 s later. DRIVING NOTES: Zoom
+      keeps taking the front window — a keep-front loop (p21g/keepfront.sh)
+      held it during the measurements; the dev client's Tools bubble
+      opened the dev menu twice until dragged aside; one background scroll
+      loop was stopped before the Danger zone (seen once, nothing tapped).
+      UNVERIFIED: a real pairing in the non-lazy dev client; the spoken
+      announcement at the refusal's first appearance; real touch gestures;
+      iOS. END STATE: both builds uninstalled, Expo Go on Home, Ethereum
+      Sepolia, Account 1, light mode, TalkBack OFF, protection OFF, the
+      minimum-fee switch OFF, Metro on 8081 at 7244fd5 (pid 75561), no
+      Gradle daemon, the window in place.
 - [x] Item 5 — LEADERSHIP REFRESH (docs commit below; check-readiness 208,
       check-screen-protection 87, check-devmode 418, check-notifications
       184, check-duress 113, check-multisig 424 all green in the CTO's
@@ -9670,8 +9758,9 @@ extended); docs/MAINNET_READINESS.md updated.
 
 Findings for the Chairperson this phase: the app PIN's scrypt hashing
 (N = 2^16 in JavaScript) took 245–258 s per unlock under Hermes in the
-emulator's debug build, about 400 times Node (F-81; the release-build
-figure is pending, pass p21g); the wrong-PIN wait never showed because
+emulator's debug build, about 400 times Node (F-81; the release build on the same
+emulator measured 49–53 s per hash at 2^16, about 100 s per unlock, and
+about 3.5 s per hash even at 2^12 — pass p21g); the wrong-PIN wait never showed because
 it was stamped when an attempt started (F-82, fixed in 0bfb134); macOS
 throttles the emulator whenever its window is not in front (a PIN
 set-up did not finish in 37 minutes behind another app and finished 36
@@ -9702,8 +9791,9 @@ build, cannot run in Expo Go, and a native call cannot be stopped
 mid-hash) or a far lower N in JavaScript (no new dependency, but the
 guess resistance against someone who copies the phone's files, already
 about half a day for all 6-digit PINs at N = 2^17, falls in proportion
-to N; existing PIN records become unreadable either way); best decided
-after the release-build figure; (2) the four paste boxes whose
+to N; existing PIN records become unreadable either way); the release-build
+figure is in (about 100 s per unlock at 2^16; about 7 s at 2^12), so
+the CTO's recommendation is a native scrypt, verified first; (2) the four paste boxes whose
 placeholder is their only visible description — add a visible caption
 and shorten the placeholder across about nine screens, or accept that
 TalkBack speaks the name twice; (3) whether to add expo-navigation-bar
@@ -9719,12 +9809,9 @@ cost on real hardware, passkeys, hardware-backed storage, Face ID,
 VoiceOver); the PIN-cost decision; a 0x key; the ZeroDev gas policy;
 enabling Base Sepolia for the Alchemy key; a passkey rpId domain.
 
-Follow-ups (no inputs): the release-build PIN-cost measurement (pass
-p21g); an emulator re-check of the last fix slices (the speed-up and
-cancellation row lines after Dismiss, the plain "refused the fee"
-sentence, the hidden captions above their fields, the provider sentences
-as separate stops, the switcher line spoken once, the wrong-PIN
-countdown); a smart-account bridge and a stranded-transfer retry live; a
+Follow-ups (no inputs): the selectable provider body's joined content
+description (a second swipe stop when focus wraps; pass p21g); the
+pending card vanishing after a speed-up until a pull-to-refresh; a smart-account bridge and a stranded-transfer retry live; a
 CCTP live leg per docs/BRIDGING.md §11 if wanted; the WalletConnect
 separation of the two wallets retested in the development build with
 EXPO_NO_METRO_LAZY=1; removing the ShortcutBadger permissions with tools:node="remove" and
