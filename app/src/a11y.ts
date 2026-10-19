@@ -2,7 +2,12 @@
  * Pure helpers for what screen readers say (pass p20c, TalkBack findings).
  * No React Native imports, so scripts/check-devmode.mjs and the other
  * offline checks can load this file directly.
+ *
+ * Localisation (phase 22 item 6): the fixed words go through the string
+ * table (./i18n), so a spoken label follows Settings → Language; in English
+ * every function returns exactly what it did before.
  */
+import { localize, t } from './i18n/index.ts';
 
 /**
  * The spoken name of a text link: its visible text without the decorative
@@ -11,7 +16,7 @@
  * success criterion 2.5.3 "Label in Name"); anything more goes in the hint.
  */
 export function spokenLinkText(text: string): string {
-  return text.replace(/\s*[↗✓]\s*/g, ' ').replace(/\s+/g, ' ').trim();
+  return localize(text.replace(/\s*[↗✓]\s*/g, ' ').replace(/\s+/g, ' ').trim());
 }
 
 /**
@@ -118,7 +123,7 @@ export function activityRowSpokenLead(p: {
   sameAsAbove: boolean;
   loadingLabel: string;
 }): string {
-  if (p.sameAsAbove) return 'Same transaction as the row above. ';
+  if (p.sameAsAbove) return `${t('activity.row.sameAsAbove')} `;
   if (p.sentence) return `${p.sentence}. `;
   return p.loading ? `${p.loadingLabel}. ` : '';
 }
@@ -247,7 +252,7 @@ export function createAnnounceFocus(deps: {
  * network, never a hard-coded "ETH".
  */
 export function sendLinkHint(displaySymbol: string): string {
-  return `Sends ${displaySymbol}`;
+  return t('home.link.send.hint', { symbol: displaySymbol });
 }
 
 /**

@@ -12,6 +12,8 @@ import QRCode from 'react-native-qrcode-svg';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation';
 import { Button, ImportedKeyNotice, WarningBox, WatchOnlyNotice, screenStyle } from '../components';
+import { T } from '../i18n/T';
+import { useI18n } from '../i18n/useI18n';
 import { IMPORTED_KEY_NO_CHAIN, IMPORTED_KEY_PATH, MULTISIG_NO_CHAIN, WATCH_ONLY_NO_CHAIN } from '../wallet/account-ids';
 import {
   MULTISIG_RECEIVE_NOTE,
@@ -45,6 +47,8 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Receive'>;
 /** Scannable QR + full-size address for one chain, with a copy button. */
 export function ReceiveScreen({ route, navigation }: Props) {
   const theme = useTheme();
+  // Localisation (phase 22 item 6): the screen and its title follow the language.
+  const { language, t, tx, localize } = useI18n();
   const { width } = useWindowDimensions();
   const { accounts, activeAccount } = useWallet();
   const account = accounts.find((a) => a.chainId === route.params.chainId);
@@ -122,8 +126,10 @@ export function ReceiveScreen({ route, navigation }: Props) {
   const coinSymbol = account ? (isEvmSlot ? evmChain.displaySymbol : account.symbol) : '';
 
   useEffect(() => {
-    navigation.setOptions({ title: watchOnly ? WATCHED_ADDRESS_TITLE : account ? `Receive ${coinSymbol}` : 'Receive' });
-  }, [navigation, account, watchOnly, coinSymbol]);
+    navigation.setOptions({
+      title: watchOnly ? localize(WATCHED_ADDRESS_TITLE) : account ? t('receive.title.coin', { symbol: coinSymbol }) : tx('Receive'),
+    });
+  }, [navigation, account, watchOnly, coinSymbol, language, t, tx, localize]);
 
   useEffect(() => {
     if (!copied) return;
@@ -149,12 +155,12 @@ export function ReceiveScreen({ route, navigation }: Props) {
       <View style={[screenStyle(theme), styles.center]}>
         <Text style={{ color: theme.textMuted }}>
           {watchOnly
-            ? WATCH_ONLY_NO_CHAIN
+            ? localize(WATCH_ONLY_NO_CHAIN)
             : multisig
-              ? MULTISIG_NO_CHAIN
+              ? localize(MULTISIG_NO_CHAIN)
               : activeAccount?.imported
-                ? IMPORTED_KEY_NO_CHAIN
-                : 'Unknown chain.'}
+                ? localize(IMPORTED_KEY_NO_CHAIN)
+                : tx('Unknown chain.')}
         </Text>
       </View>
     );
@@ -179,9 +185,9 @@ export function ReceiveScreen({ route, navigation }: Props) {
       <ImportedKeyNotice show={activeAccount?.imported === true} />
       <WatchOnlyNotice show={watchOnly} />
       {watchOnly ? (
-        <Text style={[styles.note, { color: theme.text }]}>{WATCHED_ADDRESS_RECEIVE_NOTE}</Text>
+        <Text style={[styles.note, { color: theme.text }]}><T>{WATCHED_ADDRESS_RECEIVE_NOTE}</T></Text>
       ) : null}
-      {multisig ? <Text style={[styles.note, { color: theme.text }]}>{MULTISIG_RECEIVE_NOTE}</Text> : null}
+      {multisig ? <Text style={[styles.note, { color: theme.text }]}><T>{MULTISIG_RECEIVE_NOTE}</T></Text> : null}
       {multisigInfo && multisigInfo.chain !== evmChain.caip2 ? (
         <WarningBox>
           {multisigOtherNetworkNote(multisigInfo.label, evmProfileByCaip2(multisigInfo.chain)?.label ?? multisigInfo.chain, evmChain.label)}
@@ -200,10 +206,10 @@ export function ReceiveScreen({ route, navigation }: Props) {
         accessibilityRole="image"
         accessibilityLabel={
           watchOnly
-            ? `QR code of the watched ${networkName} address`
+            ? t('receive.qr.watched', { network: networkName })
             : multisig
-              ? `QR code of the multi-signature account's ${networkName} address`
-              : `QR code of your ${networkName} address`
+              ? t('receive.qr.multisig', { network: networkName })
+              : t('receive.qr.own', { network: networkName })
         }
       >
         <QRCode value={account.address} size={qrSize} backgroundColor="#ffffff" color="#000000" />
@@ -218,20 +224,22 @@ export function ReceiveScreen({ route, navigation }: Props) {
       {noKey ? null : (
         <Text style={[styles.path, { color: theme.textMuted }]}>
           {account.path === IMPORTED_KEY_PATH
-            ? 'Imported private key — no derivation path, not part of your recovery phrase'
+            ? tx('Imported private key — no derivation path, not part of your recovery phrase')
             : account.path}
         </Text>
       )}
       {recovery.recoveredAccount ? (
         <View style={[styles.addressBox, { backgroundColor: theme.card, borderColor: theme.border }]}>
           <Text style={[styles.note, { color: theme.text }]}>
+            <T>
             This account also controls a recovered smart account. The QR code above is this account’s own
             address, not the recovered one:
+            </T>
           </Text>
           <Text selectable style={[styles.address, { color: theme.text }]}>
             {recovery.recoveredAccount}
           </Text>
-          <Text style={[styles.note, { color: theme.textMuted }]}>{RECOVERED_NOT_DERIVABLE_NOTE}</Text>
+          <Text style={[styles.note, { color: theme.textMuted }]}><T>{RECOVERED_NOT_DERIVABLE_NOTE}</T></Text>
         </View>
       ) : null}
       {/*
@@ -255,7 +263,7 @@ export function ReceiveScreen({ route, navigation }: Props) {
       />
       {copied ? (
         <Text accessibilityLiveRegion="polite" style={[styles.note, { color: theme.textMuted }]}>
-          Copied — note that the clipboard can be read by other apps.
+          <T>Copied — note that the clipboard can be read by other apps.</T>
         </Text>
       ) : null}
       {/*
@@ -286,18 +294,14 @@ export function ReceiveScreen({ route, navigation }: Props) {
           ]}
         >
           <Text accessibilityRole="header" style={[styles.smartTitle, { color: theme.text }]}>
-            {smartAccountAddressLabel(smartInfo)}
+            {localize(smartAccountAddressLabel(smartInfo))}
           </Text>
-          <Text style={[styles.note, { color: theme.textMuted }]}>
-            A separate address controlled by this account{'\u2019'}s key. Funds sent here are
-            spent with {'\u201c'}Send from smart account{'\u201d'}, and the smart account pays
-            its own gas from them.
-          </Text>
+          <Text style={[styles.note, { color: theme.textMuted }]}>{t('receive.smart.note')}</Text>
           <View
             style={styles.qrBox}
             accessible
             accessibilityRole="image"
-            accessibilityLabel="QR code of your smart-account address"
+            accessibilityLabel={tx('QR code of your smart-account address')}
           >
             <QRCode
               value={smartInfo.address}
@@ -310,7 +314,7 @@ export function ReceiveScreen({ route, navigation }: Props) {
             {smartInfo.address}
           </Text>
           <Text style={[styles.note, { color: theme.textMuted }]}>
-            {smartAccountDeploymentNote(smartInfo.deployed)}
+            {localize(smartAccountDeploymentNote(smartInfo.deployed))}
           </Text>
           <Button
             title={smartCopied ? 'Copied ✓' : 'Copy smart-account address'}
@@ -323,14 +327,14 @@ export function ReceiveScreen({ route, navigation }: Props) {
           />
           {smartCopied ? (
             <Text accessibilityLiveRegion="polite" style={[styles.note, { color: theme.textMuted }]}>
-              Copied — note that the clipboard can be read by other apps.
+              <T>Copied — note that the clipboard can be read by other apps.</T>
             </Text>
           ) : null}
         </View>
       ) : null}
       {noKey ? null : (
         <Button
-          title={`Send ${account.symbol}`}
+          title={t('home.token.send', { symbol: account.symbol })}
           variant="secondary"
           onPress={() => navigation.navigate('Send', { chainId: account.chainId })}
         />
@@ -343,8 +347,7 @@ export function ReceiveScreen({ route, navigation }: Props) {
         />
       ) : null}
       <Text style={[styles.note, { color: theme.textMuted }]}>
-        Only send {coinSymbol} on the {networkName} network to this
-        address. Assets sent on other networks may be lost.
+        {t('receive.onlySend', { symbol: coinSymbol, network: networkName })}
       </Text>
     </ScrollView>
   );

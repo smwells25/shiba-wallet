@@ -276,7 +276,8 @@ console.log('dust balances (finding 3):');
     source('../src/wallet/useBalances.ts').includes('display: formatBalanceDisplay(load.amount, used.network.decimals),') &&
       source('../src/wallet/useTokenBalances.ts').includes('display: formatBalanceDisplay(load.amount, token.decimals),'),
   );
-  check('Home speaks the balance through spokenAmount', source('../src/screens/HomeScreen.tsx').includes('`Balance ${spokenAmount(state.display)} '));
+  // Phase 22 item 6: the sentence is the string-table template 'Balance {amount} {symbol}{fiat}{stale}'.
+  check('Home speaks the balance through spokenAmount', source('../src/screens/HomeScreen.tsx').includes("t('home.balance.spoken', { amount: spokenAmount(state.display), symbol: state.symbol,"));
 }
 
 // ---------------------------------------------------------------------------
@@ -508,21 +509,21 @@ console.log('Home: one spoken element per token row, the Hide amounts switch, li
     src.includes('<View style={[styles.tokenBadge, { borderColor: theme.border }]} {...hideChildren}>') &&
     src.includes('<View style={styles.cardBody} {...hideChildren}>') &&
     /<View \{\.\.\.hideChildren\}>\s*<BalanceCell /.test(src) &&
-    src.includes("accessibilityActions: [{ name: 'activate', label: retry ? 'Retry' : `Send ${token.symbol}` }],") &&
+    src.includes("accessibilityActions: [{ name: 'activate', label: retry ? tx('Retry') : t('home.token.send', { symbol: token.symbol }) }],") &&
     src.includes("if (e.nativeEvent.actionName === 'activate') action();");
   check('…the row is ONE accessible element: badge, text and balance hidden from screen readers, Send (or Retry) its action (source)', rowOk(row));
   check('…mutant caught: the badge spoken again as its own item',
     !rowOk(row.replace('<View style={[styles.tokenBadge, { borderColor: theme.border }]} {...hideChildren}>', '<View style={[styles.tokenBadge, { borderColor: theme.border }]}>')));
   check('…BalanceCell and the row share one balance sentence (balanceSpokenText), the ok case unchanged ("Balance 0.5 ETH, about $1,234.56")',
     home.includes('accessibilityLabel={balanceSpokenText(state, hidden, fiat)}') &&
-      home.includes('return `Balance ${spokenAmount(state.display)} ${state.symbol}${spokenFiat}${spokenStale}`;') &&
-      home.includes("if (hidden) return 'Balance hidden';"));
+      home.includes("return t('home.balance.spoken', { amount: spokenAmount(state.display), symbol: state.symbol, fiat: spokenFiat, stale: spokenStale });") &&
+      home.includes("if (hidden) return tx('Balance hidden');"));
   // (4) Hide amounts: a switch with its state.
   const toggleOk = (src) =>
-    /accessibilityRole="switch"\s+accessibilityLabel="Hide amounts"\s+accessibilityState=\{\{ checked: hideAmounts \}\}/.test(src) &&
+    /accessibilityRole="switch"\s+accessibilityLabel=(?:"Hide amounts"|\{tx\('Hide amounts'\)\})\s+accessibilityState=\{\{ checked: hideAmounts \}\}/.test(src) &&
     !src.includes("accessibilityLabel={hideAmounts ? 'Show amounts' : 'Hide amounts'}");
   check('finding 4: the Hide amounts toggle is a switch named "Hide amounts" with checked = hideAmounts (source)', toggleOk(home));
-  check('…mutant caught: the old plain button', !toggleOk(home.replace(/accessibilityRole="switch"\s+accessibilityLabel="Hide amounts"\s+accessibilityState=\{\{ checked: hideAmounts \}\}/, "accessibilityRole=\"button\"\n                accessibilityLabel={hideAmounts ? 'Show amounts' : 'Hide amounts'}")));
+  check('…mutant caught: the old plain button', !toggleOk(home.replace(/accessibilityRole="switch"\s+accessibilityLabel=(?:"Hide amounts"|\{tx\('Hide amounts'\)\})\s+accessibilityState=\{\{ checked: hideAmounts \}\}/, "accessibilityRole=\"button\"\n                accessibilityLabel={hideAmounts ? 'Show amounts' : 'Hide amounts'}")));
   // (13) Links: the spoken name is the visible text.
   check('finding 13: spokenLinkText drops only the decorative arrow and check mark (exact)',
     spokenLinkText('Send ↗') === 'Send' && spokenLinkText('Passkey ✓') === 'Passkey' && spokenLinkText('Upgraded ✓') === 'Upgraded' &&

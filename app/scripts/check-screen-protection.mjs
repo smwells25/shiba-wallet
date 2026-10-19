@@ -467,13 +467,15 @@ console.log('wiring:');
 
   const settings = read('src/screens/SettingsScreen.tsx');
   const privacyAt = settings.indexOf('{SCREEN_PROTECTION_TITLE}');
-  const securityAt = settings.indexOf('>Privacy & security</Text>');
-  const pricesAt = settings.indexOf('>Prices</Text>');
+  // Phase 22 item 6: section titles carry the string-table marker <T>…</T>.
+  const titleAt = (title) => Math.max(settings.indexOf(`>${title}</Text>`), settings.indexOf(`><T>${title}</T></Text>`));
+  const securityAt = titleAt('Privacy & security');
+  const pricesAt = titleAt('Prices');
   check('Settings → Privacy sits between "Privacy & security" and "Prices"', securityAt > 0 && privacyAt > securityAt && pricesAt > privacyAt);
   const block = settings.slice(privacyAt, pricesAt);
   check('the switch is bound to the preference and its setter',
     /value=\{screenProtection\}/.test(block) && /onValueChange=\{\(v\) => void setScreenProtection\(v\)\}/.test(block) &&
-      /accessibilityLabel=\{SCREEN_PROTECTION_SWITCH_LABEL\}/.test(block));
+      /accessibilityLabel=\{(?:localize\()?SCREEN_PROTECTION_SWITCH_LABEL\)?\}/.test(block));
   check('the block shows both notes and the status line',
     /\{SCREEN_PROTECTION_PLATFORM_NOTE\}/.test(block) && /\{SCREEN_PROTECTION_ALWAYS_NOTE\}/.test(block) &&
       /describeScreenProtectionStatus\(screenProtectionStatus\)/.test(block));

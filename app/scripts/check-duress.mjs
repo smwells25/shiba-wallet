@@ -774,7 +774,8 @@ console.log('check-duress: the storage profiles (store-keys.ts)');
   const { device, other } = profileKeys(seam);
   check(`the decoy profile prefix is applied to every wallet and secret key (${other.length})`,
     other.every((r) => r.scoped === `shiba-wallet.profile-w2.${r.k.slice('shiba-wallet.'.length)}`));
-  check(`…and to no device key (${device.length})`, device.length === 9 && device.every((r) => r.scoped === r.k));
+  // Phase 22 item 6 added the device-wide language choice (STORE_KEYS.language): 10 device keys.
+  check(`…and to no device key (${device.length})`, device.length === 10 && device.every((r) => r.scoped === r.k));
   check('parseStoredKeyName reverses it (and refuses a prefixed device key)',
     other.every((r) => { const p = seam.parseStoredKeyName(r.scoped); return p?.keyPrefix === 'w2' && p.key === r.k; }) &&
       seam.parseStoredKeyName('shiba-wallet.profile-w2.prefs.v1') === null && seam.parseStoredKeyName('shiba-wallet.accounts.v1')?.keyPrefix === null);
@@ -986,7 +987,7 @@ function prefsRule(dm) {
       prefsCtx.includes('setNotifications: (on) => (appPinOn && on ? Promise.reject(new Error(NOTIFICATIONS_OFF_WITH_PIN)) : patch({ notifications: on })),'));
   const settings = read('screens/SettingsScreen.tsx');
   check('Settings: with an app PIN the Notifications section shows only that sentence (no switch); without one, the usual section',
-    /\{appPinOn \? \(\s*<View style=\{styles\.section\}>\s*<Text accessibilityRole="header"[^>]*>\{NOTIFICATIONS_SECTION_TITLE\}<\/Text>\s*<Text[^>]*>\{NOTIFICATIONS_OFF_WITH_PIN\}<\/Text>\s*<\/View>\s*\) : \(\s*<NotificationSettingsSection \/>/.test(settings));
+    /\{appPinOn \? \(\s*<View style=\{styles\.section\}>\s*<Text accessibilityRole="header"[^>]*>(?:<T>)?\{NOTIFICATIONS_SECTION_TITLE\}(?:<\/T>)?<\/Text>\s*<Text[^>]*>(?:<T>)?\{NOTIFICATIONS_OFF_WITH_PIN\}(?:<\/T>)?<\/Text>\s*<\/View>\s*\) : \(\s*<NotificationSettingsSection \/>/.test(settings));
   check('Settings: turning the PIN on first switches notifications off and clears what was scheduled or shown',
     /await setNotifications\(false\)[\s\S]{0,120}await appNotifications\(\)\.disable\(\)[\s\S]{0,80}await turnOnAppPin\(next!, chosenKind\)/.test(settings));
   check('Settings: auto-lock "Off" is not offered while the PIN is on', /AUTO_LOCK_CHOICES\.map\(\(choice\) =>\s*\/\/[^\n]*\n\s*appPinOn && choice\.ms === null \? null : \(/.test(settings));
@@ -1697,8 +1698,9 @@ try {
     check('mutant caught: a near copy of the app passphrase accepted as the duress passphrase', refusalTable(m).nearSuffix === null);
   }
   {
-    const m = await mutant('pin.ts', "  phr: { wrong: 'Wrong passphrase.', tooMany: 'Too many wrong passphrases.', over: PASSPHRASE_WAIT_OVER_MESSAGE },",
-      "  phr: { wrong: 'Wrong PIN.', tooMany: 'Too many wrong PINs.', over: PIN_WAIT_OVER_MESSAGE },");
+    // Phase 22 item 6: the words are string-table ids now (English unchanged).
+    const m = await mutant('pin.ts', "  phr: { wrong: 'lock.phr.wrong', tooMany: 'lock.phr.tooMany', over: 'lock.phr.waitOver' },",
+      "  phr: { wrong: 'lock.pin.wrong', tooMany: 'lock.pin.tooMany', over: 'lock.pin.waitOver' },");
     check('mutant caught: a passphrase lock that speaks of a PIN on the lock screen', (await slowPassphrase(m)).visible !== 'Wrong passphrase. Try again in 30 seconds.');
   }
   {

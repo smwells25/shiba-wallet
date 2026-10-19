@@ -4,6 +4,8 @@ import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation';
 import { Button, WarningBox, screenStyle } from '../components';
+import { T } from '../i18n/T';
+import { useI18n } from '../i18n/useI18n';
 import { useTheme } from '../theme';
 import { usePrefs } from '../wallet/PrefsContext';
 import {
@@ -76,6 +78,11 @@ export function useInboxUnreadCount(): number {
  */
 export function InboxScreen({ navigation }: Props) {
   const theme = useTheme();
+  // Localisation (phase 22 item 6): the screen and its title follow the language.
+  const { language, t, tx, localize } = useI18n();
+  React.useLayoutEffect(() => {
+    navigation.setOptions({ title: t('inbox.title') });
+  }, [navigation, language, t]);
   const { appPinOn } = usePrefs();
   const { state, now, loaded, reload } = useInbox();
   const entries = visibleInboxEntries(state.entries, now);
@@ -91,9 +98,9 @@ export function InboxScreen({ navigation }: Props) {
   };
 
   const confirmReset = () =>
-    Alert.alert(INBOX_RESET_TITLE, INBOX_RESET_BODY, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Reset', style: 'destructive', onPress: () => void appInbox().reset().then(reload, reload) },
+    Alert.alert(localize(INBOX_RESET_TITLE), localize(INBOX_RESET_BODY), [
+      { text: tx('Cancel'), style: 'cancel' },
+      { text: tx('Reset'), style: 'destructive', onPress: () => void appInbox().reset().then(reload, reload) },
     ]);
 
   return (
@@ -102,8 +109,8 @@ export function InboxScreen({ navigation }: Props) {
       contentContainerStyle={styles.content}
       refreshControl={<RefreshControl refreshing={false} onRefresh={reload} tintColor={theme.textMuted} colors={[theme.accent]} />}
     >
-      <Text style={[styles.body, { color: theme.text }]}>{INBOX_INTRO}</Text>
-      {appPinOn ? <Text style={[styles.hint, { color: theme.textMuted }]}>{INBOX_PIN_NOTE}</Text> : null}
+      <Text style={[styles.body, { color: theme.text }]}><T>{INBOX_INTRO}</T></Text>
+      {appPinOn ? <Text style={[styles.hint, { color: theme.textMuted }]}><T>{INBOX_PIN_NOTE}</T></Text> : null}
       {state.readOnly ? (
         <View style={styles.section}>
           <WarningBox>{INBOX_READ_ONLY_MESSAGE}</WarningBox>
@@ -112,7 +119,7 @@ export function InboxScreen({ navigation }: Props) {
       ) : null}
       <View style={styles.section}>
         <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>
-          Messages
+          <T>Messages</T>
         </Text>
         <Text accessibilityLiveRegion="polite" style={[styles.hint, { color: theme.textMuted }]}>
           {inboxUnreadText(unread)}
@@ -120,9 +127,19 @@ export function InboxScreen({ navigation }: Props) {
         {unread > 0 && !state.readOnly ? (
           <Button title={INBOX_MARK_ALL_READ} variant="secondary" onPress={() => void appInbox().markAllRead()} />
         ) : null}
-        {loaded && entries.length === 0 ? <Text style={[styles.hint, { color: theme.textMuted }]}>{INBOX_EMPTY}</Text> : null}
+        {loaded && entries.length === 0 ? <Text style={[styles.hint, { color: theme.textMuted }]}><T>{INBOX_EMPTY}</T></Text> : null}
         {entries.map((entry) => {
-          const label = `${entry.read ? '' : 'Unread. '}${inboxKindLabel(entry.kind)}, ${inboxViaLabel(entry.via)}, ${inboxTimeText(entry.at)}. ${entry.title}. ${entry.text}`;
+          // An entry keeps the English sentence shown at the time; it is shown
+          // translated when it is exactly a table entry (localize).
+          const title = localize(entry.title);
+          const text = localize(entry.text);
+          const label = `${entry.read ? '' : `${t('inbox.entry.unread')} `}${t('inbox.entry.spoken', {
+            kind: inboxKindLabel(entry.kind),
+            via: inboxViaLabel(entry.via),
+            time: inboxTimeText(entry.at),
+            title,
+            text,
+          })}`;
           return (
             <Pressable
               key={entry.id}
@@ -136,13 +153,13 @@ export function InboxScreen({ navigation }: Props) {
                 {entry.read ? '' : '● '}
                 {inboxKindLabel(entry.kind)} · {inboxViaLabel(entry.via)} · {inboxTimeText(entry.at)}
               </Text>
-              <Text style={[styles.entryTitle, { color: theme.text }]}>{entry.title}</Text>
-              <Text style={[styles.entryText, { color: theme.text }]}>{entry.text}</Text>
+              <Text style={[styles.entryTitle, { color: theme.text }]}>{title}</Text>
+              <Text style={[styles.entryText, { color: theme.text }]}>{text}</Text>
             </Pressable>
           );
         })}
       </View>
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{INBOX_SCHEDULED_NOTE}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}><T>{INBOX_SCHEDULED_NOTE}</T></Text>
     </ScrollView>
   );
 }

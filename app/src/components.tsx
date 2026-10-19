@@ -10,19 +10,22 @@ import {
   type SwitchProps,
 } from 'react-native';
 import { Theme, useTheme } from './theme';
-import type { FeatureReadiness } from './config/readiness';
+import { READINESS_TESTNET_HINT, type FeatureReadiness } from './config/readiness';
 import { IMPORTED_KEY_NOT_BACKED_UP, WATCH_ONLY_NOTICE } from './wallet/account-ids';
 import { createAnnounceFocus, HIDDEN_FIELD_LABEL_STYLE, type AnnounceFocus } from './a11y';
+import { localizeIn } from './i18n/index.ts';
+import { useI18n } from './i18n/useI18n.ts';
+import { readinessCardTitleText, readinessHintText, readinessReasonText } from './i18n/readiness-text.ts';
 
 /** Primary / secondary / destructive button built from plain components. */
 export function Button({
-  title,
+  title: englishTitle,
   onPress,
   variant = 'primary',
   disabled = false,
   selected,
-  accessibilityLabel,
-  accessibilityHint,
+  accessibilityLabel: englishLabel,
+  accessibilityHint: englishHint,
   style,
 }: {
   title: string;
@@ -42,6 +45,14 @@ export function Button({
   style?: ViewStyle;
 }) {
   const theme = useTheme();
+  // Localisation (phase 22 item 6): a title, label or hint that is exactly an
+  // English table entry is shown in the chosen language; anything else (an
+  // amount, a name, an unmigrated sentence) is shown as given. A choice
+  // chip's leading "✓ " is kept and the rest translated (localizeIn).
+  const { language } = useI18n();
+  const title = localizeIn(language, englishTitle);
+  const accessibilityLabel = englishLabel === undefined ? undefined : localizeIn(language, englishLabel);
+  const accessibilityHint = englishHint === undefined ? undefined : localizeIn(language, englishHint);
   const background =
     variant === 'primary' ? theme.accent : variant === 'destructive' ? theme.danger : 'transparent';
   const color =
@@ -99,6 +110,9 @@ export function Button({
  */
 export function WarningBox({ children, announce = false }: { children: React.ReactNode; announce?: boolean }) {
   const theme = useTheme();
+  // A sentence that is exactly an English table entry is shown in the chosen
+  // language (phase 22 item 6); any other child is shown as given.
+  const { localize } = useI18n();
   const ref = useRef<View>(null);
   const focus = useRef<AnnounceFocus | null>(null);
   // Re-focus when the text changes (a second refusal with other figures).
@@ -132,7 +146,9 @@ export function WarningBox({ children, announce = false }: { children: React.Rea
         { backgroundColor: theme.warningSurface, borderColor: theme.warningBorder },
       ]}
     >
-      <Text style={[styles.warningText, { color: theme.warningText }]}>{children}</Text>
+      <Text style={[styles.warningText, { color: theme.warningText }]}>
+        {typeof children === 'string' ? localize(children) : children}
+      </Text>
     </View>
   );
 }
@@ -214,8 +230,14 @@ export interface FieldLabel {
 
 export function useFieldLabels(): (key: string, label: string, hint?: string) => FieldLabel {
   const base = useId();
+  // Localisation (phase 22 item 6): a label or hint that is exactly an
+  // English table entry is used in the chosen language, for the visible
+  // label and the field's spoken name alike; call sites keep their English.
+  const { language } = useI18n();
   return useCallback(
-    (key: string, label: string, hint?: string): FieldLabel => {
+    (key: string, englishLabel: string, englishHint?: string): FieldLabel => {
+      const label = localizeIn(language, englishLabel);
+      const hint = englishHint === undefined ? undefined : localizeIn(language, englishHint);
       const nativeID = `field-${base}-${key}`;
       return {
         text: label,
@@ -223,7 +245,7 @@ export function useFieldLabels(): (key: string, label: string, hint?: string) =>
         input: fieldA11y(label, { labelId: nativeID, ...(hint !== undefined ? { hint } : {}) }),
       };
     },
-    [base],
+    [base, language],
   );
 }
 
@@ -341,6 +363,7 @@ export function TestNetworksOnlyCard({
   hintStyle?: TextStyle;
 }) {
   const theme = useTheme();
+  const { localize } = useI18n();
   return (
     <View
       style={[
@@ -349,10 +372,10 @@ export function TestNetworksOnlyCard({
       ]}
     >
       <Text accessibilityRole="header" style={[titleStyle ?? styles.readinessTitle, { color: theme.text }]}>
-        {feature.title}: test networks only
+        {readinessCardTitleText(feature)}
       </Text>
-      <Text style={[bodyStyle ?? styles.readinessBody, { color: theme.text }]}>{feature.reason}</Text>
-      <Text style={[hintStyle ?? styles.readinessHint, { color: theme.textMuted }]}>{hint}</Text>
+      <Text style={[bodyStyle ?? styles.readinessBody, { color: theme.text }]}>{readinessReasonText(feature, 'unknown')}</Text>
+      <Text style={[hintStyle ?? styles.readinessHint, { color: theme.textMuted }]}>{hint === READINESS_TESTNET_HINT ? readinessHintText() : localize(hint)}</Text>
     </View>
   );
 }

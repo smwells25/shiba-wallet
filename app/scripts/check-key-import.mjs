@@ -987,7 +987,8 @@ console.log('check-key-import: findings 2–8 of the 2026-10-04 private-key run'
   // Finding 6: Home — the token fee sentence and the recover link.
   const home = src('screens/HomeScreen.tsx');
   check('Home footer: the corrected token-fee sentence, not "pay their network fee in ETH"',
-    /tokens have their own Send link\. \{tokenSendFeeSentence\(evmChain\.caip2\)\}/.test(home) && !/network fee in ETH/.test(home));
+    // Phase 22 item 6: the sentence before it is the string-table entry home.footer.balances.
+    /(?:tokens have their own Send link\.|\{t\('home\.footer\.balances'\)\}) \{tokenSendFeeSentence\(evmChain\.caip2\)\}/.test(home) && !/network fee in ETH/.test(home));
   check('Home: "Lost a recovery phrase? Recover an account with guardians" is not offered from an imported account',
     /\{activeAccount\?\.imported \? null : \(\s*<Pressable[\s\S]{0,600}Lost a recovery phrase\? Recover an account with guardians/.test(home));
 

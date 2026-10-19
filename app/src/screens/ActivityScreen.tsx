@@ -20,6 +20,9 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { HistoryEntry } from '@shiba-wallet/core';
 import type { RootStackParamList } from '../navigation';
 import { Button, screenStyle, useFieldLabels } from '../components';
+import { T } from '../i18n/T';
+import { useI18n } from '../i18n/useI18n';
+import { localTimestampLabel } from '../i18n/format';
 import { activityRowSpokenLead, spokenShortAddress } from '../a11y';
 import { Theme, useTheme } from '../theme';
 import { networkDefaultFor } from '../config/defaults';
@@ -35,7 +38,6 @@ import {
   directionLabel,
   explorerTxUrl,
   hidesZeroNativeAmount,
-  timestampLabel,
   transactionsWithTokenAmounts,
 } from '../wallet/history';
 import { EVM_CHAIN_ID } from '../wallet/send';
@@ -111,11 +113,18 @@ function DirectionBadge({ entry, theme }: { entry: HistoryEntry; theme: Theme })
 }
 
 function StatusChip({ label, color, theme }: { label: string; color: string; theme: Theme }) {
+  // The chip's English label is looked up in the string table (phase 22 item 6).
+  const { localize } = useI18n();
   return (
     <View style={[styles.chip, { borderColor: color, backgroundColor: theme.card }]}>
-      <Text style={[styles.chipText, { color }]}>{label}</Text>
+      <Text style={[styles.chipText, { color }]}>{localize(label)}</Text>
     </View>
   );
+}
+
+/** "Received transaction" / "Sent transaction" / "Self transaction" (the spoken row start), in the active language. */
+function directionTransactionText(direction: HistoryEntry['direction'], t: ReturnType<typeof useI18n>['t']): string {
+  return direction === 'in' ? t('activity.row.received') : direction === 'out' ? t('activity.row.sent') : t('activity.row.self');
 }
 
 /**
@@ -194,6 +203,8 @@ function EntryRow({
    */
   sameAsAbove?: boolean;
 }) {
+  // Localisation (phase 22 item 6): the row's own words follow the language.
+  const { t, tx, localize } = useI18n();
   const theme = useTheme();
   const url = explorerTxUrl(chainId, entry.id, evmExplorerTxBase);
   // A failed incoming row received nothing (entryWithReceiptStatus): it
@@ -234,9 +245,9 @@ function EntryRow({
   // the children's text), so it must carry the amount, time and status.
   const spokenAmount =
     !hasAmount || display === null
-      ? 'no amount'
+      ? tx('no amount')
       : hidden
-        ? 'amount hidden'
+        ? tx('amount hidden')
         : // The row's direction is already spoken; a dust amount reads
           // "less than 0.000001" without a sign in front of "less".
           `${display.startsWith('< ') ? '' : sign}${spokenDisplayAmount(display)} ${rowSymbol}`;
@@ -252,8 +263,13 @@ function EntryRow({
     entry.failed ? 'failed' : null,
     !entry.confirmed ? 'pending' : null,
   ]
-    .filter(Boolean)
+    .filter((word): word is string => word !== null)
+    .map((word) => localize(word))
     .join(', ');
+  // The row's title in the active language (the direction label and the
+  // failed-incoming title stay English in history.ts / activity-sentences.ts,
+  // which also feed the CSV export).
+  const shownTitle = localize(title);
   return (
     <View style={[styles.rowCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
     <Pressable
@@ -261,12 +277,12 @@ function EntryRow({
       accessibilityLabel={
         activityRowSpokenLead({ sentence, loading, sameAsAbove, loadingLabel: ROW_DETAILS_LOADING_LABEL }) +
         (replacementLine ? `${replacementLine} ` : '') +
-        (failedIncoming ? `${title}, ` : `${title} transaction, `) +
-        `${spokenAmount}, ${timestampLabel(entry)}` +
+        (failedIncoming ? `${shownTitle}, ` : `${directionTransactionText(entry.direction, t)}, `) +
+        `${spokenAmount}, ${localTimestampLabel(entry)}` +
         (spokenStatus ? `, ${spokenStatus}` : '') +
-        (unavailable ? `. ${ROW_DETAILS_UNAVAILABLE_LINE}` : '')
+        (unavailable ? `. ${localize(ROW_DETAILS_UNAVAILABLE_LINE)}` : '')
       }
-      accessibilityHint={url ? 'Opens the transaction in the block explorer' : undefined}
+      accessibilityHint={url ? tx('Opens the transaction in the block explorer') : undefined}
       disabled={!url}
       onPress={() => {
         if (url) void Linking.openURL(url);
@@ -276,22 +292,22 @@ function EntryRow({
       <DirectionBadge entry={entry} theme={theme} />
       <View style={styles.rowBody}>
         <Text style={[styles.rowTitle, { color: theme.text }]}>
-          {title}
+          {shownTitle}
         </Text>
         {sentence ? (
           <Text style={[styles.rowSentence, { color: theme.text }]}>{sentence}</Text>
         ) : unavailable ? (
-          <Text style={[styles.rowSentence, { color: theme.textMuted }]}>{ROW_DETAILS_UNAVAILABLE_LINE}</Text>
+          <Text style={[styles.rowSentence, { color: theme.textMuted }]}><T>{ROW_DETAILS_UNAVAILABLE_LINE}</T></Text>
         ) : null}
         {replacementLine ? (
           <Text style={[styles.rowSentence, { color: theme.textMuted }]}>{replacementLine}</Text>
         ) : null}
         <Text style={[styles.rowTime, { color: theme.textMuted }]}>
-          {timestampLabel(entry)}
+          {localTimestampLabel(entry)}
         </Text>
         {entry.fee !== undefined ? (
           <Text style={[styles.rowFee, { color: theme.textMuted }]}>
-            fee {maskAmount(formatUnits(entry.fee, decimals, decimals), hidden)} {symbol}
+            {tx('fee')} {maskAmount(formatUnits(entry.fee, decimals, decimals), hidden)} {symbol}
           </Text>
         ) : null}
       </View>
@@ -321,21 +337,21 @@ function EntryRow({
       <View style={[styles.noteBar, { borderTopColor: theme.border }]}>
         {note ? (
           <Text selectable style={[styles.noteText, { color: theme.text }]}>
-            <Text style={{ color: theme.textMuted }}>Note: </Text>
+            <Text style={{ color: theme.textMuted }}>{`${tx('Note:')} `}</Text>
             {note.text}
           </Text>
         ) : null}
         {onEditNote ? (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={note ? 'Edit note' : 'Add note'}
-            accessibilityHint="Opens a private note for this transaction, kept only on this phone"
+            accessibilityLabel={note ? tx('Edit note') : tx('Add note')}
+            accessibilityHint={tx('Opens a private note for this transaction, kept only on this phone')}
             onPress={onEditNote}
             hitSlop={8}
             style={styles.noteAction}
           >
             <Text style={[styles.noteActionText, { color: theme.accent }]}>
-              {note ? 'Edit note' : 'Add note'}
+              {note ? tx('Edit note') : tx('Add note')}
             </Text>
           </Pressable>
         ) : null}
@@ -361,6 +377,7 @@ function NoteEditor({
   onSaved: () => void;
 }) {
   const theme = useTheme();
+  const { tx, localize } = useI18n();
   const fieldLabel = useFieldLabels();
   // The parent mounts a fresh editor per transaction (key), so the field
   // starts from that transaction's note.
@@ -395,9 +412,9 @@ function NoteEditor({
       >
         <View style={[styles.modalSheet, { backgroundColor: theme.background, borderColor: theme.border }]}>
           <Text accessibilityRole="header" style={titleStyle}>
-            {target?.current ? 'Edit note' : 'Add note'}
+            {target?.current ? tx('Edit note') : tx('Add note')}
           </Text>
-          <Text {...fieldLabel('note', 'Note (private, this phone only)').label} style={labelStyle}>Note (private, this phone only)</Text>
+          <Text {...fieldLabel('note', 'Note (private, this phone only)').label} style={labelStyle}>{fieldLabel('note', 'Note (private, this phone only)').text}</Text>
           <TextInput
             {...fieldLabel('note', 'Note (private, this phone only)').input}
             value={text}
@@ -405,7 +422,7 @@ function NoteEditor({
             editable={!busy}
             multiline
             autoFocus
-            placeholder="For example: rent for October"
+            placeholder={tx('For example: rent for October')}
             placeholderTextColor={theme.textMuted}
             style={[
               styles.noteInput,
@@ -415,7 +432,7 @@ function NoteEditor({
           <Text style={[styles.modalHint, { color: cleaned.ok ? theme.textMuted : theme.danger }]}>
             {cleaned.ok ? `${length} / ${MAX_NOTE_LENGTH}` : cleaned.error}
           </Text>
-          <Text style={[styles.modalHint, { color: theme.textMuted }]}>{NOTE_PRIVACY_LINE}</Text>
+          <Text style={[styles.modalHint, { color: theme.textMuted }]}>{localize(NOTE_PRIVACY_LINE)}</Text>
           {error ? (
             <Text accessibilityLiveRegion="polite" style={[styles.modalHint, { color: theme.danger }]}>
               {error}
@@ -665,6 +682,8 @@ function historyTechnicalText(message: string | null | undefined): string | null
 /** Newest-first transaction list for one chain, entered from a Home row. */
 export function ActivityScreen({ navigation, route }: Props) {
   const theme = useTheme();
+  // Localisation (phase 22 item 6): the screen and its title follow the language.
+  const { language, t, tx, localize } = useI18n();
   const { chainId } = route.params;
   const { accounts, activeAccount, accountList } = useWallet();
   const { hideAmounts, evmChain } = usePrefs();
@@ -781,8 +800,10 @@ export function ActivityScreen({ navigation, route }: Props) {
   useEffect(() => {
     // The EVM slot is named after the active network ("Ethereum Sepolia
     // activity"), as on Home; the other slots by their chain.
-    navigation.setOptions({ title: account ? `${isEvmSlot ? evmChain.label : account.name} activity` : 'Activity' });
-  }, [navigation, account, isEvmSlot, evmChain.label]);
+    navigation.setOptions({
+      title: account ? t('activity.title.network', { network: isEvmSlot ? evmChain.label : account.name }) : tx('Activity'),
+    });
+  }, [navigation, account, isEvmSlot, evmChain.label, language, t, tx]);
 
   // Transaction notes (feature 87, wallet/notes.ts) are keyed by the network
   // the transaction is on: the active EVM profile for the EVM slot (as the
@@ -836,7 +857,7 @@ export function ActivityScreen({ navigation, route }: Props) {
   const networkHeader = account ? (
     <View style={styles.headerBlock}>
       <Text style={[styles.networkLine, { color: testnet ? theme.testnetFill : theme.textMuted }]}>
-        {networkLabel} · {testnet ? 'TESTNET' : 'Mainnet'}
+        {networkLabel} · {testnet ? tx('TESTNET') : tx('Mainnet')}
         {activeAccount ? ` · ${activeAccount.name}` : ''}
       </Text>
       {/* The full address stays on screen (and selectable); a screen reader
@@ -876,7 +897,7 @@ export function ActivityScreen({ navigation, route }: Props) {
   if (!account || !network) {
     return (
       <View style={[screenStyle(theme), styles.center]}>
-        <Text style={[styles.note, { color: theme.textMuted }]}>Unknown chain.</Text>
+        <Text style={[styles.note, { color: theme.textMuted }]}><T>Unknown chain.</T></Text>
       </View>
     );
   }
@@ -916,8 +937,10 @@ export function ActivityScreen({ navigation, route }: Props) {
         {pendingSection}
         <OfflineNotice />
         <Text accessibilityLiveRegion="polite" style={[styles.note, { color: theme.text }]}>
+          <T>
           The history could not be loaded right now. Check your connection
           and try again.
+          </T>
         </Text>
         <TechnicalDetail text={historyTechnicalText(state.message)} />
         <Button title="Retry" onPress={() => void reload()} style={styles.retry} />
@@ -952,28 +975,28 @@ export function ActivityScreen({ navigation, route }: Props) {
       contents: () => contents,
       mimeType: ACTIVITY_CSV_MIME_TYPE,
       UTI: ACTIVITY_CSV_UTI,
-      dialogTitle: 'Save the activity export',
-      unavailableMessage: 'Sharing files is not available on this device, so the activity could not be exported.',
+      dialogTitle: tx('Save the activity export'),
+      unavailableMessage: tx('Sharing files is not available on this device, so the activity could not be exported.'),
     }).then(
       () => setExporting(false),
       (e: unknown) => {
         setExporting(false);
-        Alert.alert('File not shared', e instanceof Error ? e.message : String(e));
+        Alert.alert(tx('File not shared'), e instanceof Error ? e.message : String(e));
       },
     );
   };
   const confirmResetNotes = () => {
     Alert.alert(
-      'Reset notes?',
-      'This deletes every transaction note on this phone, on every network, including the ones that could still be read. It cannot be undone.',
+      tx('Reset notes?'),
+      tx('This deletes every transaction note on this phone, on every network, including the ones that could still be read. It cannot be undone.'),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: tx('Cancel'), style: 'cancel' },
         {
-          text: 'Reset notes',
+          text: tx('Reset notes'),
           style: 'destructive',
           onPress: () => {
             resetNotes().then(reloadNotes, (e: unknown) =>
-              Alert.alert('Notes not reset', e instanceof Error ? e.message : String(e)),
+              Alert.alert(tx('Notes not reset'), e instanceof Error ? e.message : String(e)),
             );
           },
         },
@@ -1010,34 +1033,34 @@ export function ActivityScreen({ navigation, route }: Props) {
         </>
       ) : null}
       {state.loadingMore ? (
-        <ActivityIndicator size="small" color={theme.textMuted} accessibilityLabel="Loading older transactions" />
+        <ActivityIndicator size="small" color={theme.textMuted} accessibilityLabel={tx('Loading older transactions')} />
       ) : state.loadMoreError ? (
         <>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={LOAD_MORE_RETRY_FOOTER}
-            accessibilityHint="Tries again to load older transactions; the entries above are unchanged"
+            accessibilityLabel={localize(LOAD_MORE_RETRY_FOOTER)}
+            accessibilityHint={tx('Tries again to load older transactions; the entries above are unchanged')}
             accessibilityLiveRegion="polite"
             onPress={() => void loadMore()}
             hitSlop={8}
           >
-            <Text style={[styles.loadMore, { color: theme.accent }]}>{LOAD_MORE_RETRY_FOOTER}</Text>
+            <Text style={[styles.loadMore, { color: theme.accent }]}><T>{LOAD_MORE_RETRY_FOOTER}</T></Text>
           </Pressable>
           <TechnicalDetail text={historyTechnicalText(state.loadMoreError)} />
         </>
       ) : state.hasMore ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Load more transactions"
-          accessibilityHint="Loads older transactions"
+          accessibilityLabel={tx('Load more transactions')}
+          accessibilityHint={tx('Loads older transactions')}
           onPress={() => void loadMore()}
           hitSlop={8}
         >
-          <Text style={[styles.loadMore, { color: theme.accent }]}>Load more</Text>
+          <Text style={[styles.loadMore, { color: theme.accent }]}><T>Load more</T></Text>
         </Pressable>
       ) : state.entries.length > 0 ? (
         <Text style={[styles.note, { color: theme.textMuted }]}>
-          {rangeLimited ? 'End of the searched blocks (see the note above).' : 'End of history.'}
+          {rangeLimited ? tx('End of the searched blocks (see the note above).') : tx('End of history.')}
         </Text>
       ) : null}
     </View>
@@ -1118,8 +1141,10 @@ export function ActivityScreen({ navigation, route }: Props) {
             {noteBook?.readOnly ? (
               <View style={[styles.notesDamaged, { borderColor: theme.warningBorder, backgroundColor: theme.warningSurface }]}>
                 <Text style={[styles.notesDamagedText, { color: theme.warningText }]}>
+                  <T>
                   Some of your transaction notes could not be read. The notes that could be read are shown;
                   adding or changing notes is off until the notes are reset.
+                  </T>
                 </Text>
                 <Button title="Reset notes" variant="secondary" onPress={confirmResetNotes} />
               </View>
@@ -1142,10 +1167,10 @@ export function ActivityScreen({ navigation, route }: Props) {
         ListEmptyComponent={
           <Text style={[styles.note, { color: theme.textMuted }]}>
             {nothingAnswered
-              ? 'No blocks could be searched with the current endpoint.'
+              ? tx('No blocks could be searched with the current endpoint.')
               : coverage
-                ? 'No tracked-token transfers found in the searched blocks.'
-                : 'No transactions found for this address.'}
+                ? tx('No tracked-token transfers found in the searched blocks.')
+                : tx('No transactions found for this address.')}
           </Text>
         }
         ListFooterComponent={footer}

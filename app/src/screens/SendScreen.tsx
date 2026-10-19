@@ -17,6 +17,9 @@ import { formatAssetId, nonFungibleTokenId, parseAssetId } from '@shiba-wallet/c
 import type { FungibleAsset } from '@shiba-wallet/core';
 import type { RootStackParamList } from '../navigation';
 import { Button, ImportedKeyNotice, WarningBox, screenStyle, switchColors, useFieldLabels } from '../components';
+import { T } from '../i18n/T';
+import { localize, t, tx } from '../i18n/index';
+import { useI18n } from '../i18n/useI18n';
 import { IMPORTED_KEY_NO_CHAIN } from '../wallet/account-ids';
 import {
   callWithFailover,
@@ -215,11 +218,12 @@ function exact(amount: bigint, decimals: number): string {
  * replaces it, per phase 4 item 6.
  */
 function NetworkBadge({ label, testnet, theme }: { label: string; testnet: boolean; theme: Theme }) {
+  useI18n();
   if (testnet) {
     return (
       <View style={[styles.mainnetBadge, { backgroundColor: theme.testnetFill, borderColor: theme.testnetFill }]}>
         <Text style={[styles.mainnetBadgeText, { color: theme.onTestnetFill }]}>
-          {label} TESTNET — test funds only
+          {t('send.badge.testnet', { label })}
         </Text>
       </View>
     );
@@ -232,7 +236,7 @@ function NetworkBadge({ label, testnet, theme }: { label: string; testnet: boole
       ]}
     >
       <Text style={[styles.mainnetBadgeText, { color: theme.danger }]}>
-        {label} Mainnet — real funds
+        {t('send.badge.mainnet', { label })}
       </Text>
     </View>
   );
@@ -257,6 +261,8 @@ function NetworkBadge({ label, testnet, theme }: { label: string; testnet: boole
  */
 export function SendScreen({ route, navigation }: Props) {
   const theme = useTheme();
+  // Localisation (phase 22 item 6): the form and the confirm screens follow the language.
+  const { language } = useI18n();
   const field = useFieldLabels();
   const { accounts, signWith, activeAccount } = useWallet();
   // The active EVM chain profile (config/evm-chain.ts): chain-id checks,
@@ -403,14 +409,14 @@ export function SendScreen({ route, navigation }: Props) {
 
   useEffect(() => {
     const title = token
-      ? `Send ${token.symbol}`
+      ? t('home.token.send', { symbol: token.symbol })
       : nftMode
-        ? 'Send NFT'
+        ? tx('Send NFT')
         : account
-          ? `Send ${account.symbol}`
-          : 'Send';
+          ? t('home.token.send', { symbol: account.symbol })
+          : tx('Send');
     navigation.setOptions({ title });
-  }, [navigation, account, token, nftMode]);
+  }, [navigation, account, token, nftMode, language]);
 
   // Token mode: resolve the CAIP-19 id against the ACTIVE chain's tracked
   // list (tokens are per chain since phase 13 item 1). The store is the
@@ -751,7 +757,7 @@ export function SendScreen({ route, navigation }: Props) {
     return (
       <View style={[screenStyle(theme), styles.center]}>
         <Text style={{ color: theme.textMuted }}>
-          {activeAccount?.imported ? IMPORTED_KEY_NO_CHAIN : 'Unknown chain.'}
+          {activeAccount?.imported ? localize(IMPORTED_KEY_NO_CHAIN) : tx('Unknown chain.')}
         </Text>
       </View>
     );
@@ -767,9 +773,7 @@ export function SendScreen({ route, navigation }: Props) {
     return (
       <View style={[screenStyle(theme), styles.center]}>
         <Text style={{ color: theme.textMuted, textAlign: 'center', padding: 24 }}>
-          This token is not in your tracked list on {evmChain.label}. Tokens are
-          tracked per network: switch back to the token&apos;s network under
-          Settings → Developer, or add it under Manage tokens.
+          {t('send.token.notTracked', { network: evmChain.label })}
         </Text>
       </View>
     );
@@ -780,8 +784,10 @@ export function SendScreen({ route, navigation }: Props) {
     return (
       <View style={[screenStyle(theme), styles.center]}>
         <Text style={{ color: theme.textMuted, textAlign: 'center', padding: 24 }}>
+          <T>
           This token belongs to another network. Switch networks under
           Settings → Developer to send it.
+          </T>
         </Text>
       </View>
     );
@@ -791,7 +797,7 @@ export function SendScreen({ route, navigation }: Props) {
     return (
       <View style={[screenStyle(theme), styles.center]}>
         <Text style={{ color: theme.textMuted, textAlign: 'center', padding: 24 }}>
-          This NFT reference is not valid. Go back to the NFTs screen and try again.
+          <T>This NFT reference is not valid. Go back to the NFTs screen and try again.</T>
         </Text>
       </View>
     );
@@ -801,8 +807,10 @@ export function SendScreen({ route, navigation }: Props) {
     return (
       <View style={[screenStyle(theme), styles.center]}>
         <Text style={{ color: theme.textMuted, textAlign: 'center', padding: 24 }}>
+          <T>
           This NFT belongs to the other network mode. Switch Sepolia test
           mode in Settings → Developer to send it.
+          </T>
         </Text>
       </View>
     );
@@ -829,7 +837,9 @@ export function SendScreen({ route, navigation }: Props) {
   );
   const amountField = field(
     'amount',
-    nft ? `Amount (copies — you hold ${hideAmounts ? '••••' : nft.indexedBalance.toString()})` : `Amount (${symbol})`,
+    nft
+      ? t('send.field.copies', { held: hideAmounts ? '••••' : nft.indexedBalance.toString() })
+      : t('send.field.amount', { symbol }),
   );
   // For displaying the ETH fee of a token send (EVM native decimals).
   const nativeDecimals = network?.decimals ?? 18;
@@ -1807,8 +1817,8 @@ export function SendScreen({ route, navigation }: Props) {
   if (phase === 'success' && result) {
     return (
       <ScrollView key="send-success" style={screenStyle(theme)} contentContainerStyle={styles.content} {...NOTE_VIEW_SCROLL_PROPS}>
-        <Text accessibilityRole="header" style={[styles.successTitle, { color: theme.success }]}>Sent ✓</Text>
-        <Text style={[styles.label, { color: theme.textMuted }]}>Transaction id</Text>
+        <Text accessibilityRole="header" style={[styles.successTitle, { color: theme.success }]}><T>Sent ✓</T></Text>
+        <Text style={[styles.label, { color: theme.textMuted }]}><T>Transaction id</T></Text>
         <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border }]}>
           <Text selectable style={[styles.monoText, { color: theme.text }]}>
             {result.txid}
@@ -1822,8 +1832,10 @@ export function SendScreen({ route, navigation }: Props) {
           />
         ) : (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
+            <T>
             No verified block explorer is configured for this chain; look the
             transaction id up in an explorer you trust.
+            </T>
           </Text>
         )}
         {endpoint?.network.chainId ? (
@@ -2092,20 +2104,19 @@ export function SendScreen({ route, navigation }: Props) {
         />
         <Row label="Token contract" value={quote.contract} mono theme={theme} />
         <Row
-          label={`Max network fee (paid in ${evmChain.displaySymbol})`}
+          label={t('send.row.maxFeePaidIn', { symbol: evmChain.displaySymbol })}
           value={`${exact(quote.fee, nativeDecimals)} ${evmChain.displaySymbol}`}
           sub={fiatOf(nativePriceId, quote.fee, nativeDecimals)}
           theme={theme}
         />
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          Worst case at {exact(quote.maxFeePerGas, 9)} gwei max fee ×{' '}
-          {quote.gasLimit.toString()} gas
-          {quote.opStack ? ', plus the layer 1 data fee below' : ''}; the actual fee is usually lower,
-          and the unused part is not charged. The fee comes out of your{' '}
-          {evmChain.displaySymbol} balance — the full token amount reaches the recipient.
-          {quote.gasIsFallback
-            ? ' Gas estimation failed, so a conservative default gas limit is shown.'
-            : ''}
+          {t('send.worstCase.token', {
+            gwei: exact(quote.maxFeePerGas, 9),
+            gas: quote.gasLimit.toString(),
+            l1: quote.opStack ? t('send.worstCase.l1') : '',
+            symbol: evmChain.displaySymbol,
+          })}
+          {quote.gasIsFallback ? ` ${t('send.gasFallback')}` : ''}
         </Text>
         <OpStackFeeRows fees={quote.opStack} symbol={evmChain.displaySymbol} theme={theme} />
         {minimumFeeRehearsalOf(quote) ? (
@@ -2115,12 +2126,12 @@ export function SendScreen({ route, navigation }: Props) {
           </>
         ) : null}
         <Row
-          label={`${quote.symbol} balance`}
+          label={t('send.row.balanceOf', { symbol: quote.symbol })}
           value={`${exact(quote.tokenBalance, quote.decimals)} ${quote.symbol}`}
           theme={theme}
         />
         <Row
-          label={`${evmChain.displaySymbol} balance`}
+          label={t('send.row.balanceOf', { symbol: evmChain.displaySymbol })}
           value={`${exact(quote.ethBalance, nativeDecimals)} ${evmChain.displaySymbol}`}
           theme={theme}
         />
@@ -2140,28 +2151,23 @@ export function SendScreen({ route, navigation }: Props) {
 
         {!simulationFailed && !quote.returnedFalse ? (
           <Text style={[styles.simulationOk, { color: theme.success }]}>
-            Pre-flight simulation passed (eth_call).
+            <T>Pre-flight simulation passed (eth_call).</T>
           </Text>
         ) : (
           <View style={styles.simulationBlock}>
             <WarningBox>
               {simulationFailed
-                ? `Pre-flight simulation failed: ${
-                    quote.simulation.ok ? '' : quote.simulation.reason
-                  }. This transaction would very likely fail on-chain and still cost the fee.`
-                : 'The token contract reports the transfer would not go through: ' +
-                  'it returned false instead of reverting (some tokens do this ' +
-                  'when paused, blocklisted, or short of balance). Sending anyway ' +
-                  'would cost the full fee and move no tokens.'}
+                ? t('send.simulation.failed', { reason: quote.simulation.ok ? '' : quote.simulation.reason })
+                : tx('The token contract reports the transfer would not go through: it returned false instead of reverting (some tokens do this when paused, blocklisted, or short of balance). Sending anyway would cost the full fee and move no tokens.')}
             </WarningBox>
             <View style={styles.overrideRow}>
               <Switch {...switchColors(theme)}
-                accessibilityLabel="Send anyway, although the pre-flight simulation failed"
+                accessibilityLabel={tx('Send anyway, although the pre-flight simulation failed')}
                 value={overrideSimulation}
                 onValueChange={setOverrideSimulation}
               />
               <Text style={[styles.overrideLabel, { color: theme.text }]}>
-                Send anyway (I understand it will probably fail)
+                <T>Send anyway (I understand it will probably fail)</T>
               </Text>
             </View>
           </View>
@@ -2170,12 +2176,12 @@ export function SendScreen({ route, navigation }: Props) {
         {phase === 'sending' ? (
           <View style={styles.center}>
             <ActivityIndicator size="large" color={theme.accent} />
-            <Text style={[styles.hint, { color: theme.textMuted }]}>Signing and broadcasting…</Text>
+            <Text style={[styles.hint, { color: theme.textMuted }]}><T>Signing and broadcasting…</T></Text>
           </View>
         ) : (
           <>
             <Button
-              title={`Send ${quote.symbol}`}
+              title={t('home.token.send', { symbol: quote.symbol })}
               onPress={() => void onSend()}
               disabled={blocked}
             />
@@ -2206,30 +2212,27 @@ export function SendScreen({ route, navigation }: Props) {
         {quote.standard === 'erc1155' ? (
           <Row
             label="Copies to send"
-            value={`${quote.amount.toString()} of ${hideAmounts ? '••••' : quote.ownedBalance.toString()} held`}
+            value={t('send.row.copies', { count: quote.amount.toString(), held: hideAmounts ? '••••' : quote.ownedBalance.toString() })}
             theme={theme}
           />
         ) : null}
         <Row
-          label={`Max network fee (paid in ${evmChain.displaySymbol})`}
+          label={t('send.row.maxFeePaidIn', { symbol: evmChain.displaySymbol })}
           value={`${exact(quote.fee, nativeDecimals)} ${evmChain.displaySymbol}`}
           sub={fiatOf(nativePriceId, quote.fee, nativeDecimals)}
           theme={theme}
         />
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          Worst case at {exact(quote.maxFeePerGas, 9)} gwei max fee ×{' '}
-          {quote.gasLimit.toString()} gas
-          {quote.opStack ? ', plus the layer 1 data fee below' : ''}; the actual fee is usually lower,
-          and the unused part is not charged. Sent with safeTransferFrom: if
-          the recipient is a contract that cannot accept NFTs, the transfer
-          reverts instead of locking the NFT away.
-          {quote.gasIsFallback
-            ? ' Gas estimation failed, so a conservative default gas limit is shown.'
-            : ''}
+          {t('send.worstCase.nft', {
+            gwei: exact(quote.maxFeePerGas, 9),
+            gas: quote.gasLimit.toString(),
+            l1: quote.opStack ? t('send.worstCase.l1') : '',
+          })}
+          {quote.gasIsFallback ? ` ${t('send.gasFallback')}` : ''}
         </Text>
         <OpStackFeeRows fees={quote.opStack} symbol={evmChain.displaySymbol} theme={theme} />
         <Row
-          label={`${evmChain.displaySymbol} balance`}
+          label={t('send.row.balanceOf', { symbol: evmChain.displaySymbol })}
           value={`${exact(quote.ethBalance, nativeDecimals)} ${evmChain.displaySymbol}`}
           theme={theme}
         />
@@ -2249,22 +2252,21 @@ export function SendScreen({ route, navigation }: Props) {
 
         {!simulationFailed ? (
           <Text style={[styles.simulationOk, { color: theme.success }]}>
-            Pre-flight simulation passed (eth_call).
+            <T>Pre-flight simulation passed (eth_call).</T>
           </Text>
         ) : (
           <View style={styles.simulationBlock}>
             <WarningBox>
-              Pre-flight simulation failed: {quote.simulation.ok ? '' : quote.simulation.reason}.
-              This transaction would very likely fail on-chain and still cost the fee.
+              {t('send.simulation.failed', { reason: quote.simulation.ok ? '' : quote.simulation.reason })}
             </WarningBox>
             <View style={styles.overrideRow}>
               <Switch {...switchColors(theme)}
-                accessibilityLabel="Send anyway, although the pre-flight simulation failed"
+                accessibilityLabel={tx('Send anyway, although the pre-flight simulation failed')}
                 value={overrideSimulation}
                 onValueChange={setOverrideSimulation}
               />
               <Text style={[styles.overrideLabel, { color: theme.text }]}>
-                Send anyway (I understand it will probably fail)
+                <T>Send anyway (I understand it will probably fail)</T>
               </Text>
             </View>
           </View>
@@ -2273,7 +2275,7 @@ export function SendScreen({ route, navigation }: Props) {
         {phase === 'sending' ? (
           <View style={styles.center}>
             <ActivityIndicator size="large" color={theme.accent} />
-            <Text style={[styles.hint, { color: theme.textMuted }]}>Signing and broadcasting…</Text>
+            <Text style={[styles.hint, { color: theme.textMuted }]}><T>Signing and broadcasting…</T></Text>
           </View>
         ) : (
           <>
@@ -2322,22 +2324,26 @@ export function SendScreen({ route, navigation }: Props) {
         />
         {quote.kind === 'utxo' ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            {quote.feeRate} sat/vB (target: {quote.feeTarget} block
-            {quote.feeTarget === 1 ? '' : 's'})
+            {quote.feeTarget === 1
+              ? t('send.utxo.feeRate.one', { rate: quote.feeRate })
+              : t('send.utxo.feeRate', { rate: quote.feeRate, blocks: quote.feeTarget })}
           </Text>
         ) : null}
         {quote.kind === 'sol' && quote.feeIsFallback ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
+            <T>
             Estimated at the default 5000 lamports per signature — the RPC
             fee query returned no value.
+            </T>
           </Text>
         ) : null}
         {quote.kind === 'evm' ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            Worst case at {exact(quote.maxFeePerGas, 9)} gwei max fee ×{' '}
-            {quote.gasLimit.toString()} gas
-            {quote.opStack ? ', plus the layer 1 data fee below' : ''}; the actual fee is usually lower,
-            and the unused part is not charged.
+            {t('send.worstCase', {
+              gwei: exact(quote.maxFeePerGas, 9),
+              gas: quote.gasLimit.toString(),
+              l1: quote.opStack ? t('send.worstCase.l1') : '',
+            })}
           </Text>
         ) : null}
         {quote.kind === 'evm' ? (
@@ -2371,23 +2377,21 @@ export function SendScreen({ route, navigation }: Props) {
         {quote.kind === 'evm' ? (
           quote.simulation.ok ? (
             <Text style={[styles.simulationOk, { color: theme.success }]}>
-              Pre-flight simulation passed (eth_call).
+              <T>Pre-flight simulation passed (eth_call).</T>
             </Text>
           ) : (
             <View style={styles.simulationBlock}>
               <WarningBox>
-                Pre-flight simulation failed: {quote.simulation.reason}. This
-                transaction would very likely fail on-chain and still cost
-                the fee.
+                {t('send.simulation.failed', { reason: quote.simulation.reason })}
               </WarningBox>
               <View style={styles.overrideRow}>
                 <Switch {...switchColors(theme)}
-                accessibilityLabel="Send anyway, although the pre-flight simulation failed"
+                accessibilityLabel={tx('Send anyway, although the pre-flight simulation failed')}
                 value={overrideSimulation}
                 onValueChange={setOverrideSimulation}
               />
                 <Text style={[styles.overrideLabel, { color: theme.text }]}>
-                  Send anyway (I understand it will probably fail)
+                  <T>Send anyway (I understand it will probably fail)</T>
                 </Text>
               </View>
             </View>
@@ -2397,12 +2401,12 @@ export function SendScreen({ route, navigation }: Props) {
         {phase === 'sending' ? (
           <View style={styles.center}>
             <ActivityIndicator size="large" color={theme.accent} />
-            <Text style={[styles.hint, { color: theme.textMuted }]}>Signing and broadcasting…</Text>
+            <Text style={[styles.hint, { color: theme.textMuted }]}><T>Signing and broadcasting…</T></Text>
           </View>
         ) : (
           <>
             <Button
-              title={`Send ${symbol}`}
+              title={t('home.token.send', { symbol })}
               onPress={() => void onSend()}
               disabled={sendBlocked}
             />
@@ -2421,16 +2425,15 @@ export function SendScreen({ route, navigation }: Props) {
       keyboardShouldPersistTaps="handled"
     >
       <Text style={[styles.networkLine, { color: testnet ? theme.testnetFill : theme.textMuted }]}>
-        {network ? `${network.label} · ${testnet ? 'TESTNET' : 'Mainnet'}` : 'Unknown network'}{' '}
-        · from {activeAccount ? `${activeAccount.name} ` : ''}({account.address.slice(0, 10)}…)
+        {network ? `${network.label} · ${testnet ? tx('TESTNET') : tx('Mainnet')}` : tx('Unknown network')}{' '}
+        {t('send.from', { account: activeAccount ? `${activeAccount.name} ` : '', address: account.address.slice(0, 10) })}
       </Text>
 
       <OfflineNotice />
 
       {!url ? (
         <WarningBox>
-          Sending unavailable — no configured endpoint.
-          {network?.note ? ` ${network.note}` : ''}
+          {`${tx('Sending unavailable — no configured endpoint.')}${network?.note ? ` ${network.note}` : ''}`}
         </WarningBox>
       ) : null}
 
@@ -2439,9 +2442,11 @@ export function SendScreen({ route, navigation }: Props) {
           style={[styles.aaToggleBox, { backgroundColor: theme.card, borderColor: theme.border }]}
         >
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            Sending {token.symbol} (ERC-20 token, contract{' '}
-            {token.assetId.reference.slice(0, 10)}…{token.assetId.reference.slice(-8)}) from
-            {aaActive ? ' your smart account' : ` your address on ${evmChain.label}`}.{' '}
+            {t('send.token.intro', {
+              symbol: token.symbol,
+              contract: `${token.assetId.reference.slice(0, 10)}…${token.assetId.reference.slice(-8)}`,
+              from: aaActive ? t('send.token.fromSmart') : t('send.token.fromAddress', { network: evmChain.label }),
+            })}{' '}
             {sendFormTokenFeeSentence({
               nativeSymbol: evmChain.displaySymbol,
               tokenSymbol: token.symbol,
@@ -2452,10 +2457,7 @@ export function SendScreen({ route, navigation }: Props) {
                   ? { symbol: TOKEN_GAS_SYMBOL, throughPhrase: tokenGasThroughPhrase(tokenGasOfferNow.source) }
                   : null,
             })}
-            {aaAvailable
-              ? ' With "Send from smart account" on, the smart account sends its own ' +
-                `${token.symbol} in one transfer call (no approval needed).`
-              : ''}
+            {aaAvailable ? ` ${t('send.token.aaNote', { symbol: token.symbol })}` : ''}
           </Text>
         </View>
       ) : null}
@@ -2471,11 +2473,7 @@ export function SendScreen({ route, navigation }: Props) {
             {nft.tokenId.toString()}
           </Text>
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            Sending this NFT from your {evmChain.label} address with
-            safeTransferFrom. The network fee is paid in {evmChain.displaySymbol}.
-            Smart-account sends are not available for NFTs yet, so NFT sends
-            always go from your regular address. Ownership is re-checked
-            on-chain before you confirm.
+            {t('send.nft.intro', { network: evmChain.label, symbol: evmChain.displaySymbol })}
           </Text>
         </View>
       ) : null}
@@ -2486,42 +2484,32 @@ export function SendScreen({ route, navigation }: Props) {
         >
           <View style={styles.overrideRow}>
             <Switch {...switchColors(theme)}
-              accessibilityLabel="Send from smart account"
+              accessibilityLabel={tx('Send from smart account')}
               value={aaEnabled}
               onValueChange={setAaEnabled}
               disabled={!url}
             />
             <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.overrideLabel, { color: theme.text }]}>
-              Send from smart account
+              <T>Send from smart account</T>
             </Text>
             <View style={[styles.aaTag, { borderColor: theme.accent }]}>
-              <Text style={[styles.aaTagText, { color: theme.accent }]}>EXPERIMENTAL</Text>
+              <Text style={[styles.aaTagText, { color: theme.accent }]}><T>EXPERIMENTAL</T></Text>
             </View>
           </View>
           <Text style={[styles.hint, { color: theme.textMuted }]}>
             {aaType === 'kernel-7702'
-              ? 'Sends as an ERC-4337 UserOperation from this account itself, upgraded with ' +
-                'EIP-7702 to Kernel v3.3 (same address), through the bundler configured in ' +
-                'Settings. It pays the amount and its gas from its own balance unless a ' +
-                'paymaster sponsors the gas.' +
-                (delegation.status?.kind === 'plain'
-                  ? ' This account is not upgraded yet: the first such send carries the upgrade, ' +
-                    'and the confirm screen says so.'
-                  : '')
-              : `Sends as an ERC-4337 UserOperation from your smart account (${
-                  aaType ? aaAccountTypeLabel(aaType) : 'smart account'
-                }) — a separate address controlled by this account\u2019s key — through the ` +
-                'bundler configured in Settings. The smart account pays the amount' +
-                (token ? ` (its own ${token.symbol})` : '') +
-                ' and its gas from its own balance unless a paymaster sponsors the gas, so fund ' +
-                'the smart account address first. Max uses the smart account\u2019s balance.'}
+              ? t('send.aa.hint7702') + (delegation.status?.kind === 'plain' ? ` ${t('send.aa.hint7702.notUpgraded')}` : '')
+              : t('send.aa.hint', {
+                  type: aaType ? localize(aaAccountTypeLabel(aaType)) : tx('smart account'),
+                  own: token ? t('send.aa.hint.own', { symbol: token.symbol }) : '',
+                })}
           </Text>
           {aaAddressInfo ? (
             <>
               <Row
-                label={`${smartAccountAddressLabel(aaAddressInfo)} address`}
+                label={t('send.aa.addressLabel', { label: localize(smartAccountAddressLabel(aaAddressInfo)) })}
                 value={aaAddressInfo.address}
-                sub={smartAccountDeploymentNote(aaAddressInfo.deployed)}
+                sub={localize(smartAccountDeploymentNote(aaAddressInfo.deployed))}
                 mono
                 theme={theme}
               />
@@ -2535,13 +2523,13 @@ export function SendScreen({ route, navigation }: Props) {
               />
               {aaAddressCopied ? (
                 <Text accessibilityLiveRegion="polite" style={[styles.hint, { color: theme.textMuted }]}>
-                  Copied {'\u2014'} note that the clipboard can be read by other apps.
+                  <T>Copied — note that the clipboard can be read by other apps.</T>
                 </Text>
               ) : null}
             </>
           ) : aaAddressView?.error ? (
             <Text style={[styles.hint, { color: theme.textMuted }]}>
-              The smart-account address could not be read: {aaAddressView.error}
+              {t('send.aa.addressUnreadable', { error: aaAddressView.error })}
             </Text>
           ) : null}
         </View>
@@ -2565,7 +2553,7 @@ export function SendScreen({ route, navigation }: Props) {
             <>
               <View style={styles.overrideRow}>
                 <Switch {...switchColors(theme)}
-                  accessibilityLabel="Pay the network fee in USDC"
+                  accessibilityLabel={tx('Pay the network fee in USDC')}
                   value={feeInUsdc}
                   onValueChange={(v) => {
                     // A Max figure from one fee mode must not be trimmed by the other.
@@ -2575,7 +2563,7 @@ export function SendScreen({ route, navigation }: Props) {
                   }}
                   disabled={!url}
                 />
-                <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.overrideLabel, { color: theme.text }]}>Pay the network fee in USDC</Text>
+                <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.overrideLabel, { color: theme.text }]}><T>Pay the network fee in USDC</T></Text>
               </View>
               <Text style={[styles.hint, { color: theme.textMuted }]}>
                 {tokenGasOfferNow.source.kind === 'erc7677'
@@ -2593,17 +2581,15 @@ export function SendScreen({ route, navigation }: Props) {
         >
           <View style={styles.overrideRow}>
             <Switch {...switchColors(theme)}
-              accessibilityLabel="Sign with passkey"
+              accessibilityLabel={tx('Sign with passkey')}
               value={passkeySigner}
               onValueChange={setPasskeySigner}
               disabled={!url}
             />
-            <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.overrideLabel, { color: theme.text }]}>Sign with passkey</Text>
+            <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.overrideLabel, { color: theme.text }]}><T>Sign with passkey</T></Text>
           </View>
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            Signs with this phone{'\u2019'}s passkey instead of your account key. The smart account (the
-            sender) and its address stay the same, and it pays the gas from its own balance as
-            usual. Off by default; the account key signs otherwise.
+            {t('send.passkey.hint')}
           </Text>
         </View>
       ) : null}
@@ -2666,7 +2652,7 @@ export function SendScreen({ route, navigation }: Props) {
       */}
       <QrScanner
         visible={scannerOpen}
-        rationale={`Point the camera at a ${token || nftMode ? 'Ethereum' : account.name} address or payment-request QR code. The camera is only used to read the code.`}
+        rationale={t('send.scan.rationale', { network: token || nftMode ? 'Ethereum' : account.name })}
         onScanned={(data) => {
           setScannerOpen(false);
           setFormError(null);
@@ -2727,7 +2713,7 @@ export function SendScreen({ route, navigation }: Props) {
       ) : null}
       {validation?.ok && validation.note ? (
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          {validation.note} Will send to {validation.normalized}
+          {validation.note} {t('send.willSendTo', { address: validation.normalized })}
         </Text>
       ) : null}
       {validation?.ok && formMatch ? (
@@ -2786,15 +2772,17 @@ export function SendScreen({ route, navigation }: Props) {
       {phase === 'quoting' ? (
         <View style={styles.center}>
           <ActivityIndicator size="large" color={theme.accent} />
-          <Text style={[styles.hint, { color: theme.textMuted }]}>Fetching fee quote…</Text>
+          <Text style={[styles.hint, { color: theme.textMuted }]}><T>Fetching fee quote…</T></Text>
         </View>
       ) : (
         <Button title="Review" onPress={() => void onReview()} disabled={!url} />
       )}
 
       <Text style={[styles.hint, { color: theme.textMuted }]}>
+        <T>
         You will see the network fee and total on the next screen before
         anything is signed or sent.
+        </T>
       </Text>
     </ScrollView>
   );
@@ -2816,6 +2804,7 @@ function OpStackFeeRows({
   symbol: string;
   theme: ReturnType<typeof useTheme>;
 }) {
+  useI18n();
   if (!fees) return null;
   return (
     <>
@@ -2824,12 +2813,11 @@ function OpStackFeeRows({
         <Row label="Operator fee (worst case)" value={`${exact(fees.operatorFee, 18)} ${symbol}`} theme={theme} />
       ) : null}
       <Text style={[styles.hint, { color: theme.textMuted }]}>
-        This is a layer-2 network: every transaction also pays for publishing
-        its data on Ethereum. The network&apos;s fee oracle estimates{' '}
-        {exact(fees.l1DataFeeEstimate, 18)} {symbol} for this transaction;{' '}
-        {L1_DATA_FEE_HEADROOM_PERCENT.toString()}% more is reserved because
-        this fee follows Ethereum&apos;s fees and cannot be capped. It is
-        included in the max network fee and the total.
+        {t('send.l1.note', {
+          estimate: exact(fees.l1DataFeeEstimate, 18),
+          symbol,
+          percent: L1_DATA_FEE_HEADROOM_PERCENT.toString(),
+        })}
       </Text>
     </>
   );
@@ -2849,22 +2837,27 @@ function Row({
   mono?: boolean;
   theme: ReturnType<typeof useTheme>;
 }) {
+  // The label (and a value that is a table sentence, such as "Will deploy
+  // with this send") in the active language (phase 22 item 6); amounts,
+  // addresses and names are not table entries and are shown as given.
+  const { localize } = useI18n();
+  const shownLabel = localize(label);
   return (
     <View style={[styles.row, { borderColor: theme.border }]}>
-      <Text accessibilityLabel={label} style={[styles.rowLabel, { color: theme.textMuted }]}>{label}</Text>
+      <Text accessibilityLabel={shownLabel} style={[styles.rowLabel, { color: theme.textMuted }]}>{shownLabel}</Text>
       <Text
         selectable
         // "—" is a visual placeholder; screen readers hear "not available".
-        {...(value === '—' ? { accessibilityLabel: 'not available' } : {})}
+        {...(value === '—' ? { accessibilityLabel: localize('not available') } : {})}
         style={[
           styles.rowValue,
           { color: theme.text },
           monoFont ? { fontFamily: mono, fontSize: 13 } : null,
         ]}
       >
-        {value}
+        {localize(value)}
       </Text>
-      {sub ? <Text style={[styles.rowSub, { color: theme.textMuted }]}>{sub}</Text> : null}
+      {sub ? <Text style={[styles.rowSub, { color: theme.textMuted }]}>{localize(sub)}</Text> : null}
     </View>
   );
 }

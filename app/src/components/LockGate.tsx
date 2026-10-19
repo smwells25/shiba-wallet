@@ -2,6 +2,8 @@ import React, { createContext, useContext, useEffect, useRef, useState, useSyncE
 import { ActivityIndicator, AppState, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { usePreventScreenCapture } from 'expo-screen-capture';
 import { Button, useFieldLabels } from '../components';
+import { T } from '../i18n/T';
+import { useI18n } from '../i18n/useI18n';
 import { useTheme } from '../theme';
 import { usePrefs } from '../wallet/PrefsContext';
 import { useWallet } from '../wallet/WalletContext';
@@ -240,9 +242,9 @@ export function LockGate({ children }: { children: React.ReactNode }) {
         {locked ? (
           view === 'lock' ? (
             <View style={[styles.overlay, { backgroundColor: theme.background }]}>
-              <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Shiba Wallet is locked</Text>
+              <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}><T>Shiba Wallet is locked</T></Text>
               <Text style={[styles.hint, { color: theme.textMuted }]}>
-                {lockScreenHint(reconciled.startedLocked)}
+                <T>{lockScreenHint(reconciled.startedLocked)}</T>
               </Text>
               {appPinOn && lockKind === 'phr' ? (
                 // A passphrase lock (docs/DURESS_WALLET.md section 8.2.8): one
@@ -322,6 +324,9 @@ export function PinPad({
 }) {
   usePreventScreenCapture('pin-pad');
   const theme = useTheme();
+  // Localisation (phase 22 item 6): the same words in both wallets, in the
+  // device-wide language (i18n/language-store.ts).
+  const { t, tx, localize } = useI18n();
   const [digits, setDigits] = useState('');
   const [message, setMessage] = useState<string | null>(null);
   const [countdown, setCountdown] = useState<PinCountdown | null>(null);
@@ -380,7 +385,7 @@ export function PinPad({
       () => {
         if (!mounted.current) return;
         setBusy(false);
-        setMessage('The PIN could not be checked. Try again.');
+        setMessage(tx('The PIN could not be checked. Try again.'));
       },
     );
   };
@@ -393,9 +398,9 @@ export function PinPad({
   const dots = Array.from({ length: PIN_LENGTH }, (_, i) => (i < digits.length ? '●' : '○')).join(' ');
   return (
     <View style={styles.pad}>
-      <Text style={[styles.padPrompt, { color: theme.text }]}>{prompt}</Text>
+      <Text style={[styles.padPrompt, { color: theme.text }]}>{localize(prompt)}</Text>
       <Text
-        accessibilityLabel={`${digits.length} of ${PIN_LENGTH} digits entered`}
+        accessibilityLabel={t('lock.digitsEntered', { count: digits.length, total: PIN_LENGTH })}
         style={[styles.padDots, { color: theme.text }]}
       >
         {dots}
@@ -408,7 +413,7 @@ export function PinPad({
             <Pressable
               key={k}
               accessibilityRole="button"
-              accessibilityLabel={k === 'delete' ? 'Delete the last digit' : `Digit ${k}`}
+              accessibilityLabel={k === 'delete' ? tx('Delete the last digit') : t('lock.digit', { digit: k })}
               accessibilityState={{ disabled: busy }}
               disabled={busy}
               onPress={() => press(k)}
@@ -422,7 +427,7 @@ export function PinPad({
           ),
         )}
       </View>
-      {busy ? <ActivityIndicator color={theme.accent} accessibilityLabel="Checking the PIN" /> : null}
+      {busy ? <ActivityIndicator color={theme.accent} accessibilityLabel={tx('Checking the PIN')} /> : null}
       <Text accessibilityLiveRegion={ticking ? 'none' : 'polite'} style={[styles.error, { color: theme.danger }]}>
         {line ?? ''}
       </Text>
@@ -481,6 +486,7 @@ export function PassphraseField({
 }) {
   usePreventScreenCapture('pin-pad');
   const theme = useTheme();
+  const { tx, localize } = useI18n();
   const fieldLabel = useFieldLabels();
   const field = fieldLabel('lock-passphrase', prompt);
   const [text, setText] = useState('');
@@ -531,7 +537,7 @@ export function PassphraseField({
       () => {
         if (!mounted.current) return;
         setBusy(false);
-        setMessage('The passphrase could not be checked. Try again.');
+        setMessage(tx('The passphrase could not be checked. Try again.'));
       },
     );
   };
@@ -560,7 +566,7 @@ export function PassphraseField({
         style={[styles.passphraseInput, { color: theme.text, backgroundColor: theme.card, borderColor: theme.controlBorder }]}
       />
       <Button title={submitLabel} onPress={submit} disabled={busy || text.length === 0} style={styles.button} />
-      {busy ? <ActivityIndicator color={theme.accent} accessibilityLabel={lockCopy('phr').checking} /> : null}
+      {busy ? <ActivityIndicator color={theme.accent} accessibilityLabel={localize(lockCopy('phr').checking)} /> : null}
       <Text accessibilityLiveRegion={ticking ? 'none' : 'polite'} style={[styles.error, { color: theme.danger }]}>
         {line ?? ''}
       </Text>

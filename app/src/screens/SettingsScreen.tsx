@@ -5,6 +5,19 @@ import { useFocusEffect } from '@react-navigation/native';
 import type { RootStackParamList, SettingsSectionId } from '../navigation';
 import { allowScreenCaptureAsync, preventScreenCaptureAsync } from 'expo-screen-capture';
 import { Button, WarningBox, WordGrid, screenStyle, switchColors, useFieldLabels } from '../components';
+import { T } from '../i18n/T';
+import { useI18n } from '../i18n/useI18n';
+import { LANGUAGE_CHOICES, type LanguageChoice, type StringId } from '../i18n/index';
+import { appLanguage } from '../i18n/app-language';
+import {
+  readinessEnforcementText,
+  readinessEvidenceText,
+  readinessHintText,
+  readinessIntroText,
+  readinessReasonText,
+  readinessStatusText,
+  readinessTitleText,
+} from '../i18n/readiness-text';
 import { localDateLabel } from '../config/dates';
 import { AccountsSection } from '../components/AccountsSection';
 import { RecordsBackupSection } from './RecordsBackupSection';
@@ -53,11 +66,6 @@ import {
 
 import {
   FEATURE_READINESS,
-  READINESS_INTRO,
-  READINESS_STATUS_LABEL,
-  READINESS_TESTNET_HINT,
-  readinessDisplayReason,
-  readinessEvidenceLine,
   readinessGate,
   readinessRefusal,
   type FeatureReadiness,
@@ -560,6 +568,7 @@ function ReadinessRow({
 }) {
   // The checklist ids are for reviewers: collapsed behind one line.
   const [showDetails, setShowDetails] = useState(false);
+  const { t } = useI18n();
   const chip =
     feature.status === 'mainnet-ok'
       ? { color: theme.success, border: theme.success, background: theme.card }
@@ -569,32 +578,29 @@ function ReadinessRow({
   return (
     <View style={[styles.endpointRow, { backgroundColor: theme.card, borderColor: theme.border }]}>
       <View style={styles.endpointHeader}>
-        <Text style={[styles.endpointLabel, styles.readinessTitle, { color: theme.text }]}>{feature.title}</Text>
+        <Text style={[styles.endpointLabel, styles.readinessTitle, { color: theme.text }]}>{readinessTitleText(feature)}</Text>
         <View style={[styles.readinessChip, { borderColor: chip.border, backgroundColor: chip.background }]}>
-          <Text style={[styles.readinessChipText, { color: chip.color }]}>{READINESS_STATUS_LABEL[feature.status]}</Text>
+          <Text style={[styles.readinessChipText, { color: chip.color }]}>{readinessStatusText(feature.status)}</Text>
         </View>
       </View>
-      <Text style={[styles.hint, { color: theme.text }]}>{readinessDisplayReason(feature, phrase)}</Text>
-      <Text style={[styles.endpointNote, { color: theme.textMuted }]}>
-        {feature.status === 'mainnet-ok'
-          ? 'Cleared by the checklist.'
-          : feature.enforced
-            ? 'Switched off on main networks in this build; it works on the test networks.'
-            : 'Still works on mainnet in this build; not yet cleared for real funds.'}
-      </Text>
+      {/* Through the string table (phase 22 item 6): in English each line is
+          exactly what readinessDisplayReason, READINESS_STATUS_LABEL and
+          readinessEvidenceLine give (scripts/check-i18n.mjs). */}
+      <Text style={[styles.hint, { color: theme.text }]}>{readinessReasonText(feature, phrase)}</Text>
+      <Text style={[styles.endpointNote, { color: theme.textMuted }]}>{readinessEnforcementText(feature)}</Text>
       <Pressable
         accessibilityRole="button"
         accessibilityState={{ expanded: showDetails }}
-        accessibilityLabel="Details for reviewers"
+        accessibilityLabel={t('readiness.details')}
         onPress={() => setShowDetails((v) => !v)}
         hitSlop={8}
       >
         <Text style={[styles.endpointNote, { color: theme.accent }]}>
-          Details for reviewers {showDetails ? '(hide)' : '(show)'}
+          {showDetails ? t('readiness.details.hide') : t('readiness.details.show')}
         </Text>
       </Pressable>
       {showDetails ? (
-        <Text style={[styles.endpointNote, { color: theme.textMuted }]}>{readinessEvidenceLine(feature)}</Text>
+        <Text style={[styles.endpointNote, { color: theme.textMuted }]}>{readinessEvidenceText(feature)}</Text>
       ) : null}
     </View>
   );
@@ -1870,8 +1876,66 @@ function AppPinSection() {
   );
 }
 
+/**
+ * Settings → Language (phase 22 item 6): System, English or Español. The
+ * choice is stored device-wide through the storage seam
+ * (i18n/language-store.ts), so every wallet profile opens in the same
+ * language; it is saved first and applied only after the write succeeded.
+ */
+const LANGUAGE_LABEL_ID: Readonly<Record<LanguageChoice, StringId>> = {
+  system: 'settings.language.system',
+  en: 'settings.language.en',
+  es: 'settings.language.es',
+};
+
+function LanguageSection() {
+  const theme = useTheme();
+  const { language, t } = useI18n();
+  const controller = appLanguage();
+  const choice = useSyncExternalStore(controller.subscribe, controller.choice, controller.choice);
+  const [failed, setFailed] = useState(false);
+  const choose = (next: LanguageChoice) => {
+    setFailed(false);
+    controller.choose(next).catch(() => setFailed(true));
+  };
+  return (
+    <View style={styles.section}>
+      <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>{t('settings.language.title')}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{t('settings.language.intro')}</Text>
+      <View style={styles.endpointButtons}>
+        {LANGUAGE_CHOICES.map((c) => {
+          const label = t(LANGUAGE_LABEL_ID[c]);
+          return (
+            <Button
+              key={c}
+              title={choice === c ? `✓ ${label}` : label}
+              variant={choice === c ? 'primary' : 'secondary'}
+              selected={choice === c}
+              accessibilityHint={t('settings.language.choose.hint')}
+              onPress={() => choose(c)}
+              style={styles.endpointButton}
+            />
+          );
+        })}
+      </View>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>
+        {t('settings.language.inUse', { language: t(LANGUAGE_LABEL_ID[language]) })}
+      </Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{t('settings.language.draft')}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{t('settings.language.amounts')}</Text>
+      {failed ? <Text style={[styles.hint, { color: theme.danger }]}>{t('settings.language.saveFailed')}</Text> : null}
+    </View>
+  );
+}
+
 export function SettingsScreen({ navigation, route }: Props) {
   const theme = useTheme();
+  // Localisation (phase 22 item 6): the screen re-renders when the language
+  // changes; its title follows it (in English the route name it showed before).
+  const { language, t, tx, localize } = useI18n();
+  React.useLayoutEffect(() => {
+    navigation.setOptions({ title: t('settings.title') });
+  }, [navigation, language, t]);
 
   // Section anchors (F7): a screen can open Settings at a section
   // (route param `section`). Each anchored section reports its y offset in
@@ -2181,7 +2245,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       <AccountsSection onImportKey={() => navigation.navigate('ImportKey')} />
 
       <View style={styles.section}>
-        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Backup</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Backup</T></Text>
         {importedAccounts.length === 0 ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
             {/* "ALL" only while the list above holds nothing but phrase
@@ -2255,7 +2319,7 @@ export function SettingsScreen({ navigation, route }: Props) {
 
       {protectionView?.text ? (
         <View style={styles.section}>
-          <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Recovery phrase protection</Text>
+          <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Recovery phrase protection</T></Text>
           {protectionView.warning ? (
             <WarningBox>{protectionView.text}</WarningBox>
           ) : (
@@ -2278,12 +2342,14 @@ export function SettingsScreen({ navigation, route }: Props) {
         </View>
       ) : null}
 
+      <LanguageSection />
+
       <View style={styles.section}>
-        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Privacy & security</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Privacy & security</T></Text>
         <View style={styles.toggleRow}>
-          <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.toggleLabel, { color: theme.text }]}>Hide amounts</Text>
+          <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.toggleLabel, { color: theme.text }]}><T>Hide amounts</T></Text>
           <Switch {...switchColors(theme)}
-            accessibilityLabel="Hide amounts"
+            accessibilityLabel={tx('Hide amounts')}
             accessibilityRole="switch"
             accessibilityState={{ checked: hideAmounts }}
             value={hideAmounts}
@@ -2291,13 +2357,15 @@ export function SettingsScreen({ navigation, route }: Props) {
           />
         </View>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          Masks every balance and activity amount as •••• (also toggleable
-          with the eye on the Home screen). Addresses stay visible.
+          <T>
+            Masks every balance and activity amount as •••• (also toggleable
+            with the eye on the Home screen). Addresses stay visible.
+          </T>
         </Text>
         {authAvailable || appPinOn ? (
           <>
             <Text style={[styles.toggleLabel, { color: theme.text }]}>
-              Auto-lock
+              <T>Auto-lock</T>
             </Text>
             <View style={styles.endpointButtons}>
               {AUTO_LOCK_CHOICES.map((choice) =>
@@ -2317,9 +2385,10 @@ export function SettingsScreen({ navigation, route }: Props) {
             {/* With the app PIN on, the lock is the PIN pad, not the device
                 prompt (pass p21f finding 5); without it, the sentence below. */}
             {appPinOn ? (
-              <Text style={[styles.hint, { color: theme.textMuted }]}>{AUTO_LOCK_HINT_WITH_PIN}</Text>
+              <Text style={[styles.hint, { color: theme.textMuted }]}><T>{AUTO_LOCK_HINT_WITH_PIN}</T></Text>
             ) : (
             <Text style={[styles.hint, { color: theme.textMuted }]}>
+              <T>
               When the app has been in the background at least this long, it
               locks behind the same biometric prompt as sending. While your
               recovery phrase (or the active account&apos;s imported key) is
@@ -2330,12 +2399,14 @@ export function SettingsScreen({ navigation, route }: Props) {
               by the system).
               Screen state is kept — locking never discards what you were
               doing.
+              </T>
             </Text>
             )}
-            {appPinOn ? <Text style={[styles.hint, { color: theme.textMuted }]}>{AUTO_LOCK_WITH_PIN_NOTE}</Text> : null}
+            {appPinOn ? <Text style={[styles.hint, { color: theme.textMuted }]}><T>{AUTO_LOCK_WITH_PIN_NOTE}</T></Text> : null}
           </>
         ) : authAvailable === false ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
+            <T>
             Auto-lock with the device prompt is unavailable on this device:
             no biometric hardware or enrollment was found, so the unlock
             prompt could not appear. Set up a device passcode and biometrics
@@ -2343,18 +2414,19 @@ export function SettingsScreen({ navigation, route }: Props) {
             biometrics, but it is weaker than your device&apos;s own lock
             screen, which already protects the secure storage holding your
             recovery phrase).
+            </T>
           </Text>
         ) : null}
       </View>
 
       <View style={styles.section}>
-        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>{SCREEN_PROTECTION_TITLE}</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>{SCREEN_PROTECTION_TITLE}</T></Text>
         <View style={styles.toggleRow}>
           <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.toggleLabel, { color: theme.text, flexShrink: 1, marginRight: 12 }]}>
-            {SCREEN_PROTECTION_SWITCH_LABEL}
+            <T>{SCREEN_PROTECTION_SWITCH_LABEL}</T>
           </Text>
           <Switch {...switchColors(theme)}
-            accessibilityLabel={SCREEN_PROTECTION_SWITCH_LABEL}
+            accessibilityLabel={localize(SCREEN_PROTECTION_SWITCH_LABEL)}
             accessibilityRole="switch"
             accessibilityState={{ checked: screenProtection, disabled: appPinOn }}
             value={screenProtection}
@@ -2362,24 +2434,24 @@ export function SettingsScreen({ navigation, route }: Props) {
             onValueChange={(v) => void setScreenProtection(v)}
           />
         </View>
-        {appPinOn ? <Text style={[styles.hint, { color: theme.textMuted }]}>{SCREEN_PROTECTION_WITH_PIN_NOTE}</Text> : null}
-        <Text style={[styles.hint, { color: theme.textMuted }]}>{SCREEN_PROTECTION_PLATFORM_NOTE}</Text>
-        <Text style={[styles.hint, { color: theme.textMuted }]}>{SCREEN_PROTECTION_ALWAYS_NOTE}</Text>
+        {appPinOn ? <Text style={[styles.hint, { color: theme.textMuted }]}><T>{SCREEN_PROTECTION_WITH_PIN_NOTE}</T></Text> : null}
+        <Text style={[styles.hint, { color: theme.textMuted }]}><T>{SCREEN_PROTECTION_PLATFORM_NOTE}</T></Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}><T>{SCREEN_PROTECTION_ALWAYS_NOTE}</T></Text>
         <Text
           style={[
             styles.hint,
             { color: screenProtectionStatus.state === 'failed' ? theme.danger : theme.textMuted },
           ]}
         >
-          {describeScreenProtectionStatus(screenProtectionStatus)}
+          {localize(describeScreenProtectionStatus(screenProtectionStatus))}
         </Text>
         {/* Privacy → Notifications (phase 17 item 2): local reminders, off by default.
             While an app PIN is on, no notification is posted at all and the
             section says why in one sentence (docs/DURESS_WALLET.md 7.4). */}
         {appPinOn ? (
           <View style={styles.section}>
-            <Text accessibilityRole="header" style={[styles.subTitle, { color: theme.text }]}>{NOTIFICATIONS_SECTION_TITLE}</Text>
-            <Text style={[styles.hint, { color: theme.textMuted }]}>{NOTIFICATIONS_OFF_WITH_PIN}</Text>
+            <Text accessibilityRole="header" style={[styles.subTitle, { color: theme.text }]}><T>{NOTIFICATIONS_SECTION_TITLE}</T></Text>
+            <Text style={[styles.hint, { color: theme.textMuted }]}><T>{NOTIFICATIONS_OFF_WITH_PIN}</T></Text>
           </View>
         ) : (
           <NotificationSettingsSection />
@@ -2390,7 +2462,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       <AppPinSection />
 
       <View style={styles.section}>
-        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Prices</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Prices</T></Text>
         <View style={styles.toggleRow}>
           <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.toggleLabel, { color: theme.text }]}>Show fiat values (USD)</Text>
           <Switch {...switchColors(theme)}
@@ -2446,7 +2518,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section} onLayout={(e) => onSectionLayout('network-endpoints', e.nativeEvent.layout.y)}>
-        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Network endpoints</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Network endpoints</T></Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Where balances are fetched from and where transactions are
           broadcast. Endpoint URLs are public configuration; Dogecoin&apos;s
@@ -2480,7 +2552,7 @@ export function SettingsScreen({ navigation, route }: Props) {
 
       <View style={styles.section} onLayout={(e) => onSectionLayout('history-indexer', e.nativeEvent.layout.y)}>
         <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>
-          Ethereum history indexer
+          <T>Ethereum history indexer</T>
         </Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Transaction history on the Activity screen needs an indexer: a
@@ -2503,7 +2575,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section} onLayout={(e) => onSectionLayout('nft-indexer', e.nativeEvent.layout.y)}>
-        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>NFT indexer</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>NFT indexer</T></Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           The NFTs screen needs an indexer that lists the NFTs an address
           owns (ERC-721 and ERC-1155). Paste the base URL of an endpoint that
@@ -2529,21 +2601,23 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section}>
-        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Mainnet readiness</Text>
-        <Text style={[styles.hint, { color: theme.textMuted }]}>{READINESS_INTRO}</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Mainnet readiness</T></Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{readinessIntroText()}</Text>
         {FEATURE_READINESS.map((f) => (
           <ReadinessRow key={f.id} feature={f} phrase={phraseState} theme={theme} />
         ))}
         <Text style={[styles.hint, { color: theme.textMuted }]}>
+          <T>
           The ids under “Details for reviewers” (C1–C3, W1–W20 and the finding numbers) refer to the
-          project&apos;s threat model: its mainnet-readiness checklist and its list of findings.{' '}
-          {READINESS_TESTNET_HINT}
+          project&apos;s threat model: its mainnet-readiness checklist and its list of findings.
+          </T>{' '}
+          {readinessHintText()}
         </Text>
       </View>
 
       <View style={styles.section}>
         <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>
-          Account Abstraction (experimental)
+          <T>Account Abstraction (experimental)</T>
         </Text>
         <Text style={[styles.hint, { color: theme.warningText }]}>
           Smart accounts, their modules and gas sponsorship are limited to test networks (see
@@ -2570,7 +2644,7 @@ export function SettingsScreen({ navigation, route }: Props) {
 
       <View style={styles.section}>
         <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>
-          Upgrade this account (EIP-7702)
+          <T>Upgrade this account (EIP-7702)</T>
         </Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Turns the active account into a Kernel v3.3 smart account at the same
@@ -2586,7 +2660,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section}>
-        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Session keys</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Session keys</T></Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Let a separate key on this device (or a dApp, over WalletConnect) make only the calls you
           list, until a deadline you choose. Your Kernel account enforces the limits on-chain, and you
@@ -2602,7 +2676,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section}>
-        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Guardians (social recovery)</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Guardians (social recovery)</T></Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Let people you choose replace the key of your deployed Kernel smart account if you lose your
           recovery phrase. This is a trade-off, not a safety guarantee: enough guardians together could
@@ -2633,7 +2707,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section}>
-        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Passkey (device biometrics signer)</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Passkey (device biometrics signer)</T></Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>{PASSKEY_EXPLANATION}</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>{PASSKEY_SELF_CALL_RISK}</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
@@ -2647,7 +2721,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section}>
-        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>WalletConnect</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>WalletConnect</T></Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           {`Lets external dApps connect to this wallet on the active EVM chain (${EVM_MAINNET.label} mainnet, or ${testNetworkLabelsOr()} while test mode is on). `}
           Requires a relay project id — create one for free at
@@ -2688,7 +2762,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section}>
-        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Apps (in-app browser)</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Apps (in-app browser)</T></Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           A short, fixed list of apps that open inside the wallet, on test networks only. They connect through the same
           approval sheet as WalletConnect. Their connections are listed on the Connected apps screen (open it with the
@@ -2699,13 +2773,13 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section}>
-        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Multi-signature accounts</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Multi-signature accounts</T></Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>{MULTISIG_SETTINGS_BLURB}</Text>
         <Button title="Multi-signature accounts" variant="secondary" onPress={() => navigation.navigate('Multisig')} />
       </View>
 
       <View style={styles.section}>
-        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Contacts</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Contacts</T></Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Named addresses for each chain, picked from the Send screen. A name
           is shown only for an exact address match, always with the full
@@ -2719,7 +2793,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section}>
-        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Prove address ownership</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Prove address ownership</T></Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Sign a challenge you were given (or your own statement) with this account or its smart
           account, and share a proof anyone can check. Website logins are not signed here — they go
@@ -2733,7 +2807,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section}>
-        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Tokens</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Tokens</T></Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Track ERC-20 tokens on the Home screen: balances, and sending
           them. {settingsTokensFeeSentence()} Each network has its own list
@@ -2748,7 +2822,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section}>
-        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>{SPENDING_SECTION_TITLE}</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>{SPENDING_SECTION_TITLE}</T></Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>{SPENDING_SETTINGS_HINT}</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>{SPENDING_HONESTY_SENTENCE}</Text>
         <Button
@@ -2759,7 +2833,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section}>
-        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Token approvals</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Token approvals</T></Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           See which contracts may move your tracked tokens and NFT collections
           without asking you again, and revoke them. Revoking is an ordinary
@@ -2773,7 +2847,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section}>
-        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Swaps</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Swaps</T></Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Swapping (the Swap link on the Home screen) is priced by the 0x
           aggregator and needs your own API key — create one for free at
@@ -2810,7 +2884,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section}>
-        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Developer</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Developer</T></Text>
         <Text style={[styles.toggleLabel, { color: theme.text }]}>Test network</Text>
         <View style={styles.choiceChips}>
           {[
@@ -2889,7 +2963,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.section}>
-        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Danger zone</Text>
+        <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Danger zone</T></Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Wiping removes the recovery phrase from this device&apos;s secure
           storage. Your written backup remains the only way to restore the

@@ -57,6 +57,10 @@ import { PortfolioScreen } from './src/screens/PortfolioScreen';
 import { PriceAlertsScreen } from './src/screens/PriceAlertsScreen';
 import { ColdSignScreen } from './src/screens/ColdSignScreen';
 import { appScreenProtection } from './src/wallet/screen-protection';
+import { appLanguage } from './src/i18n/app-language';
+import { testnetBannerText } from './src/i18n/banner';
+import { tx } from './src/i18n/index';
+import { useI18n } from './src/i18n/useI18n';
 import { InboxScreen } from './src/screens/InboxScreen';
 import { Button } from './src/components';
 import { useAppLock } from './src/components/LockGate';
@@ -105,7 +109,10 @@ function TestnetBanner() {
   // (theme-palette.ts): the light palette's darker orange with white text,
   // and the dark palette's orange with dark text, both above 4.5:1.
   const theme = useTheme();
-  const text = evmChain.bannerText ?? 'TESTNET — Sepolia test mode is on. Amounts are test ETH, not real funds.';
+  // In the active language (phase 22 item 6; src/i18n/banner.ts reads the
+  // network name back out of the profile's English sentence).
+  useI18n();
+  const text = testnetBannerText(evmChain.bannerText ?? 'TESTNET — Sepolia test mode is on. Amounts are test ETH, not real funds.');
   return (
     <View style={[styles.testnetBanner, { backgroundColor: theme.testnetFill, paddingBottom: Math.max(insets.bottom, 8) }]}>
       <Text style={[styles.testnetBannerText, { color: theme.onTestnetFill }]}>{text}</Text>
@@ -213,6 +220,8 @@ function DeepLinkHandler() {
  */
 function Root() {
   const theme = useTheme();
+  // The header's Settings button label follows the language (phase 22 item 6).
+  useI18n();
   const { status, activeAccount } = useWallet();
   const { sepolia } = usePrefs();
 
@@ -286,7 +295,7 @@ function Root() {
                 headerRight: () => (
                   <Pressable
                     accessibilityRole="button"
-                    accessibilityLabel="Settings"
+                    accessibilityLabel={tx('Settings')}
                     onPress={() => navigation.navigate('Settings')}
                     hitSlop={8}
                   >
@@ -370,6 +379,12 @@ export default function App() {
   // link that arrives while the PIN pad or the lock holds the wallet waits
   // instead of being lost. The inbox (src/wallet/inbox.ts) lists every sent
   // view of a WalletConnect or in-app-browser request once.
+  // Localisation (phase 22 item 6): the device's language is applied during
+  // this first render, before any screen renders text, then the choice
+  // stored under Settings → Language (src/i18n/app-language.ts; one
+  // AsyncStorage read). start() runs once whatever React does with the
+  // initializer.
+  React.useState(() => appLanguage().start());
   React.useEffect(() => {
     appDeepLinks().start();
     return onWcSentShown((result) => void appInbox().record(wcSentInboxEvent(result, Date.now())));
