@@ -65,6 +65,14 @@ export type RootStackParamList = {
   Portfolio: undefined;
   /** Watchlist and price alerts (phase 20 item 1, feature 98). */
   PriceAlerts: undefined;
+  /**
+   * Cold signing (feature 11, phase 22 item 3): a watch-only account's send,
+   * signed by an off-line signer through QR codes. `tokenId` (a CAIP-19 id
+   * from the tracked-token store) sends that token instead of the native
+   * coin; `replace` speeds up or cancels the watched address's pending
+   * transaction with that hash (Activity's pending card), signed the same way.
+   */
+  ColdSign: { tokenId?: string; replace?: { hash: string; action: 'speed-up' | 'cancel' } } | undefined;
   /** Passkey signer (phase 8 item 3) for the active account's deployed Kernel account, active EVM chain. */
   Passkey: undefined;
   /**

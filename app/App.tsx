@@ -52,6 +52,7 @@ import { NotificationScheduler } from './src/components/NotificationScheduler';
 import { PriceAlertMonitor } from './src/components/PriceAlertMonitor';
 import { PortfolioScreen } from './src/screens/PortfolioScreen';
 import { PriceAlertsScreen } from './src/screens/PriceAlertsScreen';
+import { ColdSignScreen } from './src/screens/ColdSignScreen';
 import { appScreenProtection } from './src/wallet/screen-protection';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -237,6 +238,7 @@ function Root() {
             <Stack.Screen name="Bridge" component={BridgeScreen} options={{ title: 'Bridge (test networks)' }} />
             <Stack.Screen name="Portfolio" component={PortfolioScreen} options={{ title: 'Portfolio' }} />
             <Stack.Screen name="PriceAlerts" component={PriceAlertsScreen} options={{ title: 'Price alerts' }} />
+            <Stack.Screen name="ColdSign" component={ColdSignScreen} options={{ title: 'Send with an off-line signer' }} />
           </>
         )}
         </Stack.Navigator>
