@@ -10454,6 +10454,106 @@ Subagents on Opus.
       lock overlay; whether Gboard learns from, suggests in or pastes into
       the secure field; Android's "show passwords" setting; TalkBack while
       typing; maxLength counting on Android; the 387-byte ciphertext; iOS.
+- [x] Item 5 — THE NOTIFICATIONS INBOX (feature 83) AND DEEP LINKS (feature
+      80) (commit {h}; 23 files incl. the new app/src/wallet/inbox.ts,
+      deep-links.ts, screens/InboxScreen.tsx and check-inbox 86 (12
+      mutants); offline runner ALL GREEN in the CTO's isolated worktree on
+      HEAD c075f28 with --skip-bundle: engine 1,050, app 9,721 across 62
+      suites, lint 0/0, tsc clean; apply 0 / 22 files + the CTO's
+      WalletContext wipe lines (wipeInbox in both wipe paths) verified in
+      the same tree; staged from the verified diff; not seen on a device).
+      INBOX: one wallet-scoped key shiba-wallet.inbox.v1 (store-keys.ts; 42
+      keys — 23 wallet, 9 device, 10 secret; the decoy profile gets its own
+      copy); entries {id and group = sha256 tags of the event key, kind,
+      how shown (in-app / notification / scheduled), time, title, the
+      sentence shown at the time, read}; the screen follows the kind
+      (recurring payment or swap due → Sessions, takeover → Inheritance,
+      price alert → PriceAlerts, sent and replacement → Activity); strict
+      parse, a damaged store read-only with "Reset the inbox?", cap 200
+      (oldest evicted), any run of ≥ 32 hex characters shortened before
+      storing and refused on parse; ONE WRITE PER EVENT (a known id writes
+      nothing): notifications.ts syncRecurring records a reminder after
+      scheduling it (hidden until its time; a moved reminder replaces the
+      pending entry; a cancelled one is dropped) and RecurringDueBanner one
+      entry per due record while not dismissed — both keyed on the reminder
+      identifier + the due time of the latest open slot (recurringSlotPeriod
+      extracted; recurringReminderAt unchanged), so a slot announced by both
+      is listed once; the takeover alert in observeTakeovers after the
+      post; PriceAlertMonitor once per firing (alert id + firing time;
+      presentPriceAlert writes nothing, so banner + notification = one
+      entry); wc-sent.ts onWcSentShown fired exactly once per sent view at
+      the four WalletConnectContext sites (keyed on the tx / userOp hash —
+      browser queue keys are restarting counters), the recorder registered
+      once in App.tsx; PendingTransactions records the "Speed-up sent" /
+      "Cancellation sent" alert and each resolved notice (network, sender,
+      nonce, mined hash); the notification-tap code untouched. SCREEN:
+      intro, INBOX_PIN_NOTE ("The app PIN is on, so the wallet posts no
+      phone notifications. The inbox still lists what the wallet showed
+      you on its own screens…"), the read-only box, the unread count, "Mark
+      all read", entries newest first (a tap marks read and opens the
+      screen; times "2026-10-19 03:30 UTC"); Home "Inbox (N unread)" in
+      the Portfolio / Price alerts row (useInboxUnreadCount); Settings
+      "Open the inbox" at the end of the Privacy section; route Inbox in
+      both the watch-only and multisig allow-lists (check-watch-only 180,
+      check-multisig / check-cold-signing pins updated; the multisig list
+      places Inbox before 'Receive', 'Multisig' for the mutation anchor).
+      DEEP LINKS — FACTS (cited): app.json declares NO scheme
+      (@expo/config-plugins android/Scheme.js 40–45 adds intent filters
+      only for listed schemes); the development build's only scheme is
+      exp+shiba-wallet (expo-dev-client getDefaultScheme.js:25), ignored
+      by the parser; Expo Go's form is exp://<host>/--/<path> (the SDK 57
+      Linking page); expo-linking is not installed — react-native 0.86.3
+      Linking (getInitialURL :89, addEventListener :35) through a lazy
+      require; React Navigation's linking prop deliberately NOT used
+      (@react-navigation/native 7.4.1 useLinking.native.tsx 157–182 builds
+      the initial state synchronously so the tracked-token read a payment
+      link needs cannot happen, 186–222 dispatches a link the moment it
+      arrives with no way to hold it behind the lock, 27–35 re-reads
+      getInitialURL on every remount of the per-account NavigationContainer
+      so a launch link would replay after every account switch); Send
+      links PUSH a new screen (routers 7.6.4 StackRouter.tsx 385–395:
+      NAVIGATE to the current route only changes its params and the Send
+      form reads its params at mount); Home uses popTo. ALLOWED: shibawallet://
+      (or the exp form) home, activity, inbox, price-alerts, sessions,
+      receive (activity and receive take chain=ethereum|bitcoin|dogecoin|
+      solana) and send?uri=<encoded payment URI> with EXACTLY one parameter
+      — the URI goes through parsePaymentRequest / describeParsedRequest
+      with the same context Send uses (the slot, the active EVM profile,
+      the network's tracked tokens) and becomes the same pre-fill as a
+      scanned request with DEEP_LINK_PAY_LINE first ("This payment request
+      was opened from a link outside the wallet. Anyone can make such a
+      link; nothing is sent until you review and approve it."); every
+      parser refusal stays a refusal ("This payment link was not opened.
+      <reason>"; a Bitcoin link on an EVM account "…which the active
+      account cannot send from. Nothing was filled in."); calldata beside
+      uri, data=, authorizationList, approve, an untracked token, another
+      network, 18 unknown / malformed shapes → "This link does not open
+      anything in Shiba Wallet." (no wallet: "There is no wallet on this
+      phone yet, so this link was not opened."); App.tsx DeepLinkHandler
+      (mounted after RecurringDueBanner; the source started in App() so a
+      link behind the PIN pad is held, acted on only when the gate allows —
+      not loading, not locked, the navigator ready; the launch link taken
+      once per process; never signs, prompts or fetches; zero secure-store
+      calls on the whole link path, pinned with a counting fake). MUTANTS
+      caught: the duplicate check removed, the cap removed, long hex kept,
+      a lenient entry parse, a future reminder shown early, the banner keyed
+      on the next slot, a cancelled reminder kept, calldata allowed beside
+      uri, exp+ not ignored, the launch link replayed after a remount, the
+      lock ignored by the gate, a refused request opening Send. DOCS:
+      FEATURE_UNIVERSE rows 80 and 83 → Built, verified offline (the tally
+      sentences now disagree by rows 11, 47, 80, 83 — fixed at the item-9
+      refresh); THREAT_MODEL T-90. INPUT / DECISION: a scheme for the
+      store and dev builds ("scheme": "shibawallet" in app.json plus a
+      rebuild; Android lets any app claim a custom scheme and there are no
+      verified App Links — stated). UNVERIFIED (emulator pass next, Expo
+      Go): `adb shell am start -a android.intent.action.VIEW -d
+      "exp://127.0.0.1:8081/--/inbox" host.exp.exponent` and the other
+      routes, a send link with an EIP-681 URI, the two refusals, a link
+      under the lock and a launch link after a force-stop; what Expo Go's
+      getInitialURL returns at an ordinary launch; whether Android delivers
+      'url' events to a running Expo Go; the Inbox screen, the Home unread
+      count and the entries from a WalletConnect sent view, a price alert
+      and a speed-up; TalkBack; Hermes.
 - [x] Item 5 — LEADERSHIP REFRESH (docs commit below; check-readiness 208,
       check-screen-protection 87, check-devmode 418, check-notifications
       184, check-duress 113, check-multisig 424 all green in the CTO's
