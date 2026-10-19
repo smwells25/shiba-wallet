@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { Button } from '../components';
@@ -35,20 +35,21 @@ import {
   USEROP_RESEND_LINE,
   cancelRiskLine,
   checkUserOperation,
+  createPendingSectionRefresher,
   dismissResolvedNotice,
   feeLine,
   forgetUserOperation,
   groupForHash,
   loadPendingRegistry,
+  minedNotRecordedSentence,
   nodeReader,
   nonceGroups,
   pendingGroupSentence,
   poolSentence,
-  refreshAccountPending,
   replacementPromptTitle,
   replacementSpendingInput,
+  replacementWaitingSentence,
   resetPendingRegistry,
-  resolvedNotices,
   resolvedSentence,
   settleNonce,
   shortHash,
@@ -57,9 +58,10 @@ import {
   userOpShowsNoReplacementSentence,
   userOpStatusSentence,
   userOpsFor,
-  type GroupStatus,
   type NonceGroup,
+  type PendingGroupView,
   type PendingRegistry,
+  type PendingSectionView,
   type PendingUserOpRecord,
   type ReplacementAction,
   type ResolvedRecord,
@@ -91,7 +93,6 @@ import {
  * signing and broadcast (a quote goes out at most once).
  */
 
-type GroupView = { group: NonceGroup; status: GroupStatus | { state: 'error'; message: string } | null };
 
 interface ReplacementDraft {
   group: NonceGroup;
@@ -133,7 +134,7 @@ export function PendingTransactionsSection({
   const chain = evmChain.caip2;
   const symbol = evmChain.displaySymbol;
   const [registry, setRegistry] = useState<PendingRegistry | null>(null);
-  const [groups, setGroups] = useState<GroupView[]>([]);
+  const [groups, setGroups] = useState<PendingGroupView[]>([]);
   const [notices, setNotices] = useState<ResolvedRecord[]>([]);
   const [userOps, setUserOps] = useState<{ record: PendingUserOpRecord; status: UserOpStatus | null; checking: boolean; error: string | null }[]>([]);
   const [draft, setDraft] = useState<ReplacementDraft | null>(null);
@@ -148,49 +149,38 @@ export function PendingTransactionsSection({
     };
   }, []);
 
-  const refresh = useCallback(async () => {
-    let reg: PendingRegistry;
-    try {
-      reg = await loadPendingRegistry();
-    } catch {
-      reg = { records: [], readOnly: true };
-    }
-    if (!mounted.current) return;
-    setRegistry(reg);
-    setNowMs(Date.now());
-    const base = nonceGroups(reg.records, chain, from);
-    setGroups((prev) => base.map((group) => ({ group, status: prev.find((p) => p.group.nonce === group.nonce)?.status ?? null })));
-    setUserOps((prev) =>
-      userOpsFor(reg.records, chain, from).map((record) => {
-        const old = prev.find((p) => p.record.userOpHash === record.userOpHash);
-        return { record, status: old?.status ?? null, checking: false, error: old?.error ?? null };
+  // Pass p21g: every re-read draws from ONE registry snapshot (a card leaves
+  // only when its notice is stored), draws at once from the registry before
+  // asking the network (a replacement just sent shows with both hashes), and
+  // never draws an older answer over a newer one (pending-transactions.ts
+  // createPendingSectionRefresher).
+  const refresher = useMemo(
+    () =>
+      createPendingSectionRefresher({
+        chain,
+        from,
+        reader: async () => {
+          const url = (await getEndpoint(EVM_CHAIN_ID))?.url ?? null;
+          return url ? nodeReader(httpTransport(url)) : null;
+        },
+        apply: (view: PendingSectionView) => {
+          if (!mounted.current) return;
+          setRegistry(view.registry);
+          setNowMs(Date.now());
+          setGroups(view.groups);
+          setNotices(view.notices);
+          setUserOps((prev) =>
+            userOpsFor(view.registry.records, chain, from).map((record) => {
+              const old = prev.find((p) => p.record.userOpHash === record.userOpHash);
+              return { record, status: old?.status ?? null, checking: false, error: old?.error ?? null };
+            }),
+          );
+        },
+        onSettled: () => onChanged?.(),
       }),
-    );
-    if (base.length === 0) {
-      setNotices(resolvedNotices(reg.records, chain, from));
-      return;
-    }
-    let url: string | null = null;
-    try {
-      url = (await getEndpoint(EVM_CHAIN_ID))?.url ?? null;
-    } catch {
-      url = null;
-    }
-    if (!url) return;
-    const results = await refreshAccountPending({ reader: nodeReader(httpTransport(url)), chain, from });
-    if (!mounted.current) return;
-    setGroups(results.filter((r) => r.status.state !== 'mined').map((r) => ({ group: r.group, status: r.status })));
-    try {
-      const after = await loadPendingRegistry();
-      if (mounted.current) {
-        setRegistry(after);
-        setNotices(resolvedNotices(after.records, chain, from));
-        onChanged?.();
-      }
-    } catch {
-      // Keep the notices already shown.
-    }
-  }, [chain, from, onChanged]);
+    [chain, from, onChanged],
+  );
+  const refresh = useCallback(() => refresher.refresh(), [refresher]);
 
   useFocusEffect(
     useCallback(() => {
@@ -391,8 +381,13 @@ export function PendingTransactionsSection({
               Newest version {shortHash(group.latest.hash)}
               {latestIsCancel ? ' (a cancellation)' : ''}: {feeLine(BigInt(group.latest.maxFeePerGas), BigInt(group.latest.maxPriorityFeePerGas))}.
             </Text>
+            {replacementWaitingSentence(group) && status?.state !== 'mined' ? (
+              <Text style={[styles.text, { color: theme.text }]}>{replacementWaitingSentence(group)}</Text>
+            ) : null}
             {status === null ? (
               <Text style={[styles.muted, { color: theme.textMuted }]}>Checking with the network endpoint…</Text>
+            ) : status.state === 'mined' ? (
+              <Text style={[styles.muted, { color: theme.textMuted }]}>{minedNotRecordedSentence(status)}</Text>
             ) : status.state === 'pending' ? (
               <Text style={[styles.muted, { color: theme.textMuted }]}>{poolSentence(status, group)}</Text>
             ) : status.state === 'nonce-used' ? (

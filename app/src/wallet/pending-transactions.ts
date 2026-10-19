@@ -1077,6 +1077,157 @@ export function resolvedNotices(records: readonly PendingRecord[], chain: string
     .sort((a, b) => b.resolvedAt - a.resolvedAt);
 }
 
+// ---------------------------------------------------------------------------
+// The pending section's view (what Activity and the Send success view draw)
+// ---------------------------------------------------------------------------
+
+/** A nonce group's status as the section shows it (null while not read yet for its newest broadcast). */
+export type PendingCardStatus = GroupStatus | { state: 'error'; message: string } | null;
+
+/** One card: a nonce group and the status last read for it. */
+export interface PendingGroupView {
+  group: NonceGroup;
+  status: PendingCardStatus;
+}
+
+/** What the section draws, all from one registry snapshot. */
+export interface PendingSectionView {
+  registry: PendingRegistry;
+  groups: PendingGroupView[];
+  notices: ResolvedRecord[];
+}
+
+/**
+ * The cards and the notices of one account on one chain, BOTH taken from
+ * the same registry snapshot: a nonce whose records are stored has a card,
+ * a stored notice is shown, and nothing else. A status read earlier is kept
+ * only for the same nonce with the same newest broadcast, so after a
+ * replacement is recorded the card shows the replacement at once with its
+ * status "not read yet" rather than the original's old pool line.
+ *
+ * Pass p21g observation: after "Speed-up sent" the card vanished and the
+ * "Sped up: …" notice appeared only after a pull-to-refresh. The section
+ * used to drop every group whose fresh status was 'mined' from its cards
+ * and only then read the registry again for the notice, as two separate
+ * steps, so a 'mined' answer whose settle was not stored (its failure is
+ * swallowed in refreshAccountPending) could leave neither a card nor a
+ * notice. That is the only path in the code that hides the card of a nonce
+ * whose records are still stored, and the notice appearing only on a later
+ * refresh says the nonce was not yet settled while the card was gone
+ * (inferred from the code; not reproduced). Refreshes could also finish
+ * out of order and draw an older answer over a newer one. Now a group
+ * leaves the cards only when its records have left the registry, which is
+ * the same write that stores its notice.
+ */
+export function pendingSectionView(
+  registry: PendingRegistry,
+  chain: string,
+  from: string,
+  statuses: readonly PendingGroupView[],
+): PendingSectionView {
+  const groups = nonceGroups(registry.records, chain, from).map((group) => {
+    const known = statuses.find((s) => s.group.nonce === group.nonce && s.group.latest.hash === group.latest.hash);
+    return { group, status: known ? known.status : null };
+  });
+  return { registry, groups, notices: resolvedNotices(registry.records, chain, from) };
+}
+
+/**
+ * The line a card shows while a replacement this wallet sent waits to be
+ * included: both hashes and the nonce. Null when the nonce has no
+ * replacement.
+ */
+export function replacementWaitingSentence(group: NonceGroup): string | null {
+  if (group.txs.length < 2) return null;
+  const latest = group.latest;
+  const what = latest.action === 'cancel' ? 'Cancellation' : latest.action === 'speed-up' ? 'Speed-up' : 'Replacement';
+  const seconds = Math.round(PENDING_POLL_MS / 1000);
+  return (
+    `${what} sent: ${shortHash(latest.hash)} replaces ${shortHash(group.original.hash)} (nonce ${group.nonce}). ` +
+    `Waiting for a block to include one of them; this list checks again every ${seconds} seconds and then says which one was included.`
+  );
+}
+
+/** The line a card shows when a block included one of its broadcasts but the result is not stored yet. */
+export function minedNotRecordedSentence(status: Extract<GroupStatus, { state: 'mined' }>): string {
+  return `A block included transaction ${shortHash(status.hash)} (block ${status.block.toString()}). This list records the result on its next check.`;
+}
+
+/** Re-reads the pending section; see createPendingSectionRefresher. */
+export interface PendingSectionRefresher {
+  refresh(): Promise<void>;
+}
+
+/**
+ * The section's re-read, shared by its focus, its 15-second poll and the
+ * re-read after a replacement is broadcast. Each refresh draws twice: at
+ * once from the registry (so a replacement just recorded shows on its card
+ * with both hashes before any network answer), then again after the
+ * network was asked and the decided nonces settled, from the registry read
+ * AFTER the settles (pendingSectionView). Refreshes can overlap (an
+ * endpoint answer has no time limit) and finish in any order, so a
+ * refresh's network result is drawn only when no later-started refresh has
+ * drawn its own, and its first draw only when no later-started refresh has
+ * drawn anything: an old answer never overwrites a newer one.
+ */
+export function createPendingSectionRefresher(options: {
+  chain: string;
+  from: string;
+  /** The reader for the network endpoint in use now; null when none is configured. */
+  reader: () => Promise<ChainReader | null>;
+  /** Draws a view. */
+  apply: (view: PendingSectionView) => void;
+  /** Called after a network re-read that may have settled a nonce. */
+  onSettled?: () => void;
+  store?: PendingStore;
+  now?: () => number;
+}): PendingSectionRefresher {
+  const store = options.store ?? AsyncStorage;
+  const now = options.now ?? Date.now;
+  let started = 0;
+  let drawnFirst = 0;
+  let drawnFinal = 0;
+  let shown: PendingGroupView[] = [];
+  const draw = (view: PendingSectionView) => {
+    shown = view.groups;
+    options.apply(view);
+  };
+  return {
+    async refresh() {
+      const seq = ++started;
+      let registry: PendingRegistry;
+      try {
+        registry = await loadPendingRegistry(store);
+      } catch {
+        registry = { records: [], readOnly: true };
+      }
+      if (seq > drawnFinal && seq > drawnFirst) {
+        drawnFirst = seq;
+        draw(pendingSectionView(registry, options.chain, options.from, shown));
+      }
+      if (nonceGroups(registry.records, options.chain, options.from).length === 0) return;
+      let reader: ChainReader | null = null;
+      try {
+        reader = await options.reader();
+      } catch {
+        reader = null;
+      }
+      if (!reader) return;
+      const results = await refreshAccountPending({ reader, chain: options.chain, from: options.from, store, nowMs: now() });
+      let after: PendingRegistry;
+      try {
+        after = await loadPendingRegistry(store);
+      } catch {
+        return;
+      }
+      if (seq <= drawnFinal) return;
+      drawnFinal = seq;
+      draw(pendingSectionView(after, options.chain, options.from, results));
+      options.onSettled?.();
+    },
+  };
+}
+
 /** Short form of a hash for sentences ("0x1234…abcd"). */
 export function shortHash(hash: string): string {
   return `${hash.slice(0, 6)}…${hash.slice(-4)}`;

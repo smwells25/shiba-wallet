@@ -50,6 +50,15 @@ export function TrustStatementCard({ trust, theme, title }: { trust: BridgeTrust
   );
 }
 
+/** The provider row body's touch handlers (see ProviderRadioRow below). */
+function claimBodyTouch(): boolean {
+  return true;
+}
+
+function allowBodyTouchTermination(): boolean {
+  return true;
+}
+
 /**
  * One provider as a radio row. A provider that cannot be chosen is shown
  * all the same (dimmed, with the reason), so the user sees every provider
@@ -67,27 +76,48 @@ export function TrustStatementCard({ trust, theme, title }: { trust: BridgeTrust
  * which provider you trust, so those sentences are separate items you can
  * hear one by one rather than one long label.
  *
- * The body stays tappable for sighted users through a second Pressable
- * with accessible={false} and focusable={false}: on Android `accessible`
- * sets View.isFocusable and `focusable` alone installs a click listener
- * (RN 0.86.3 ReactViewManager.kt:95–98 and :377–397; Pressable.js :252
- * and :258 default both to true), so with both false the body is neither a
- * focusable nor a clickable node, while touches still reach it through
- * React Native's own responder system.
+ * The body stays tappable for sighted users, but it is NOT a Pressable
+ * (pass p21g finding B2b, below): it is a plain View that claims the touch
+ * through React Native's JavaScript responder system and selects the row
+ * on release. The responder props are no-ops on the native side
+ * (BaseViewManager.java :914–975), so they add nothing to the
+ * accessibility node; a row that cannot be chosen gets no responder
+ * handlers at all. Unlike Pressable, the release is not cancelled when the
+ * finger slides off the body before lifting; a scroll still cancels it,
+ * because the native scroll view cancels the JavaScript touch when it
+ * starts scrolling (NativeGestureUtil.kt :26).
  *
  * Pass p21e finding B2b: TalkBack still read the body as ONE stop, its
  * sentences joined by ", " ("…sent., Who controls: …") and, on the CCTP
- * row, ending "…at any time.. disabled". The cause was the body's
- * `disabled` prop: Pressable turns any non-null `disabled` into an
- * accessibilityState (Pressable.js :235–236), and RN's delegate gives a
- * view that has an accessibilityState but no text a content description
- * made of its non-focusable children's text joined by ", "
- * (ReactAccessibilityDelegate.kt :177–187 and getTalkbackDescription
- * :944–1007, delimiter ", " at :578) — and the state's "disabled" was
- * spoken after it. So the body takes no `disabled` (a row that cannot be
- * chosen gets no onPress instead), and every sentence is an `accessible`
- * Text (screen-reader focusable), which that joining skips anyway
- * (:993–996): each is its own stop, read exactly as written.
+ * row, ending "…at any time.. disabled". That body was a Pressable with a
+ * `disabled` prop, which Pressable turns into an accessibilityState with
+ * disabled set (Pressable.js :235–236), and the state's "disabled" was
+ * spoken after the joined text. Since then every sentence is an
+ * `accessible` Text, each its own stop, read exactly as written.
+ *
+ * Pass p21g finding B2b: with `disabled` gone, the selectable LayerZero
+ * body (and the disabled one on Base Sepolia) still carried a content
+ * description joining its sentences, spoken once as a single stop when
+ * focus wrapped past the top of a scrolled page. The cause was the
+ * Pressable itself, not any prop this file set: Pressable ALWAYS hands
+ * View an accessibilityState object, whose keys may all be undefined
+ * (Pressable.js :227–236 and :257), whereas a plain View sends one only
+ * when a state or an aria state prop is given (View.js :86–101). JSI drops
+ * the undefined keys (JSIDynamic.cpp :186), so Android receives an empty
+ * but non-null map, BaseViewManager.setViewState stores it as the view's
+ * accessibility_state tag (BaseViewManager.java :363–386), and the
+ * delegate's rule then applies: a view with no text and no content
+ * description of its own is given a description made of its children's
+ * text joined by ", " (getTalkbackDescription, ReactAccessibilityDelegate.kt
+ * :944–1007, delimiter at :578) whenever it has an accessibilityState, an
+ * accessibilityRole, accessibilityActions or an accessibilityLabelledBy
+ * (:177–187). The joining skips the children it counts as focusable, but a
+ * child scrolled off the screen is not visible to the user and so not
+ * focusable (:862–874), which is most likely why the description held the
+ * sentences once part of the card was scrolled away, and why the CCTP body,
+ * read with its sentences on the screen, showed none (inferred, not
+ * observed). So the body carries none of
+ * those four: no Pressable, no state, role, label, actions or labelled-by.
  */
 export function ProviderRadioRow({
   row,
@@ -130,7 +160,13 @@ export function ProviderRadioRow({
           {row.asset ? ` · moves ${row.asset}` : ''}
         </Text>
       </Pressable>
-      <Pressable accessible={false} focusable={false} onPress={row.selectable ? onSelect : undefined} style={styles.radioBody}>
+      <View
+        accessible={false}
+        onStartShouldSetResponder={row.selectable ? claimBodyTouch : undefined}
+        onResponderTerminationRequest={allowBodyTouchTermination}
+        onResponderRelease={row.selectable ? onSelect : undefined}
+        style={styles.radioBody}
+      >
         {row.note ? <Text accessible style={[styles.body, { color: theme.textMuted }]}>{row.note}</Text> : null}
         <Text accessible style={[styles.body, { color: theme.text }]}>
           <Text style={styles.strong}>Who verifies: </Text>
@@ -156,7 +192,7 @@ export function ProviderRadioRow({
         ) : null}
         {row.measured ? <Text accessible style={[styles.body, { color: theme.text }]}>{row.measured}</Text> : null}
         {row.timeSource ? <Text accessible style={[styles.body, { color: theme.textMuted }]}>{row.timeSource}</Text> : null}
-      </Pressable>
+      </View>
     </View>
   );
 }
