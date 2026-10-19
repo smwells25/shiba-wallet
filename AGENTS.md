@@ -9663,6 +9663,59 @@ Opus.
       Sepolia, Account 1, light mode, TalkBack OFF, protection OFF, the
       minimum-fee switch OFF, Metro on 8081 at 7244fd5 (pid 75561), no
       Gradle daemon, the window in place.
+- [x] Pass p21g findings FIXED (commit fbbdea9; check-bridge 231 (was 227),
+      check-pending 231 (218); offline runner ALL GREEN in the CTO's
+      isolated worktree on HEAD 936ce00 with --skip-bundle: engine 1,046,
+      app 9,297 across 59 suites, lint 0/0, tsc clean; apply 0 / 6 files;
+      two hand and seven in-suite mutants caught; not seen on a device).
+      (1) THE RN RULE (0.86.3 ReactAccessibilityDelegate.kt 177–187,
+      getTalkbackDescription 944–1007, delimiter ", " at 578): a view with
+      no text and no label gets a joined description of its children when
+      it carries an accessibilityState, a role, actions or labelled-by —
+      click and focusable flags are NOT in the condition — and Pressable
+      ALWAYS hands View an accessibilityState object even with every key
+      undefined (Pressable.js 227–236, 257; JSI drops the undefined keys,
+      so Android receives an empty non-null map and BaseViewManager
+      363–386 stores it as the tag); children scrolled off screen do not
+      count as focusable (862–874), which is most likely why the sentences
+      joined when focus wrapped on a scrolled page (inferred). FIX: the
+      provider body is a plain View accessible={false} with no state /
+      role / label / actions / labelled-by; a tap selects through the JS
+      responder props (onStartShouldSetResponder / onResponderRelease /
+      onResponderTerminationRequest — no-ops natively, BaseViewManager
+      914–975), a non-selectable row gets no handlers; Pressable's
+      slide-off cancel is lost (a native scroll still cancels the touch).
+      (2) THE VANISHING CARD (cause inferred from the code, not
+      reproduced): refresh() dropped every 'mined' group and only THEN
+      re-read the registry for the notice, while the settle that stores
+      the notice can fail silently (refreshAccountPending's catch), so a
+      mined answer whose settle was not stored left neither card nor
+      notice; overlapping refreshes (approve, focus, the 15 s poll) drew in
+      completion order with no endpoint timeout. FIX: pendingSectionView
+      builds cards and notices from ONE registry snapshot (a card leaves
+      only in the write that stores its notice; a status is kept only for
+      the same nonce and newest broadcast); createPendingSectionRefresher
+      draws twice per refresh (at once from the registry, then after the
+      network answer and settles) and never lets an older answer draw over
+      a newer one; replacementWaitingSentence "Speed-up sent: <new>
+      replaces <original> (nonce N). Waiting for a block to include one of
+      them; this list checks again every 15 seconds and then says which
+      one was included." (and the cancel form) plus
+      minedNotRecordedSentence; pinned through the real
+      prepareEvmReplacement / sendEvmReplacement against a fake node and
+      a store whose write can fail (no draw in the sequence has neither
+      card nor notice). (3) DEVICE_BUILDS.md "Lazy bundling and the
+      development client" (EXPO_NO_METRO_LAZY=1; @expo/cli 57.0.28
+      ManifestMiddleware.js _getBundleUrl lazy: !EXPO_NO_METRO_LAZY in
+      every mode, the export paths lazy: false; a release APK unaffected;
+      a real pairing untested). FACT ADDED TO F-81 (read 2026-10-19 from
+      the library's .docs/implementation-coverage.md on GitHub):
+      react-native-quick-crypto 1.1.8 lists crypto.scrypt, scryptSync,
+      pbkdf2 and pbkdf2Sync as implemented (✅ = implemented in Node and
+      RNQC); N = 2^16 with r = 8 and the maxmem option untested there.
+      UNVERIFIED (device): no joined description on any provider body,
+      scrolled or not; a body tap selecting on Android; the waiting line
+      and the notice within one poll after a real speed-up.
 - [x] Item 5 — LEADERSHIP REFRESH (docs commit below; check-readiness 208,
       check-screen-protection 87, check-devmode 418, check-notifications
       184, check-duress 113, check-multisig 424 all green in the CTO's
@@ -9792,8 +9845,11 @@ mid-hash) or a far lower N in JavaScript (no new dependency, but the
 guess resistance against someone who copies the phone's files, already
 about half a day for all 6-digit PINs at N = 2^17, falls in proportion
 to N; existing PIN records become unreadable either way); the release-build
-figure is in (about 100 s per unlock at 2^16; about 7 s at 2^12), so
-the CTO's recommendation is a native scrypt, verified first; (2) the four paste boxes whose
+figure is in (about 100 s per unlock at 2^16; about 7 s at 2^12), and
+react-native-quick-crypto's own coverage document lists scrypt as
+implemented, so the CTO's recommendation is the native scrypt behind
+the same pinScrypt signature, with a real-phone measurement first if
+one becomes possible; (2) the four paste boxes whose
 placeholder is their only visible description — add a visible caption
 and shorten the placeholder across about nine screens, or accept that
 TalkBack speaks the name twice; (3) whether to add expo-navigation-bar
