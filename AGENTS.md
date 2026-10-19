@@ -9716,6 +9716,68 @@ Opus.
       UNVERIFIED (device): no joined description on any provider body,
       scrolled or not; a body tap selecting on Android; the waiting line
       and the notice within one poll after a real speed-up.
+- [x] EMULATOR PASS p21h — THE p21g FIXES RE-CHECKED, BOTH PASS
+      (2026-10-19 03:30–04:16 UTC; Expo Go, Metro worktree moved to
+      d7f555a with the engine built inside it, 1,892 modules; no repo
+      files edited; 5 prompts read from the prompt window — Unlock, three
+      "Approve sending 0.00001 test ETH" (two refused with the new
+      "The network endpoint refused the fee." alert 9 s after the prompt,
+      the third accepted), two "Approve speeding up the transaction";
+      every hash on publicnode and drpc, both replacements RE-READ BY THE
+      CTO on publicnode; nothing from the dev EOA; protection OFF). PART A
+      (fbbdea9's provider body): in every Bridge-form dump on Ethereum
+      Sepolia (→ Arbitrum, → Base Sepolia) and with Base Sepolia as the
+      source, NO node carries a joined content description (the only
+      descriptions are the chips, the amount field, the two radio heads
+      and the buttons); the wrap test — the LayerZero head and "Who
+      verifies" scrolled off the top — entered at "Who controls: …" as its
+      own stop and wrapped through "Navigate up" / "Bridge (test
+      networks)" to "Measured once …" as its own stop; linear order both
+      ways: the choice note → the radio head ("not checked. LayerZero
+      (Stargate), moves test ETH. Radio button", hint "Press select to
+      toggle") → Who verifies → Who controls → If it does not arrive →
+      "Fee: quoted live from the provider's contracts when you tap Get
+      quotes or Review." → the measured-time sentence → the CCTP head; on
+      Base Sepolia "Does not serve Base Sepolia in this wallet." its own
+      stop and the disabled body with no description; a tap on the fee
+      line checked the radio and enabled Get quotes / Review. Side
+      observation: moving backward from the TESTNET banner at the top
+      skipped the row entirely below the fold (TalkBack's off-screen
+      handling; forward reached it with a scroll). PART B (the waiting
+      line): run 1 (original 0x2bacfa2f…b67b nonce 33, pooled on
+      publicnode's geth backend only; replacement
+      0x3cd07249131d70d1cafe608915e1759f6864a367d354427ddcef91812b1a4cec,
+      31 / 2, block 11945673, 21,000 gas at 17 wei) was mined 5 s before OK
+      and the driver's dumps were scrolled past the section (the notice
+      seen after a gentle scroll up); RUN 2 (original 0xa934341d…eb532
+      nonce 34, pooled on geth and 0xrpc.io; replacement
+      0x01d020b5fd83cff3e43a03801cec14237ea04a2a9e0edea80d8394a75b18d7d8,
+      33 / 2, block 11945735 at 04:14:00, 21,000 gas at 17 wei): at +2.8 s
+      and +7.8 s after OK the card read "Waiting to be included:
+      transaction 0xa934…b532 (nonce 34) sends 0.00001 test ETH to 0xb699…,
+      sent 1 minute ago. 1 replacement sent since.", "Newest version
+      0x01d0…d7d8: max fee 0.000000033 gwei per gas, priority fee
+      0.000000002 gwei.", "Speed-up sent: 0x01d0…d7d8 replaces
+      0xa934…b532 (nonce 34). Waiting for a block to include one of them;
+      this list checks again every 15 seconds and then says which one was
+      included.", "The network endpoint lists it as waiting in its pool.";
+      at +12.8 s the notice "Sped up: transaction 0xa934…b532 (nonce 34)
+      was replaced by 0x01d0…d7d8, included in block 11945735." (about 11
+      s after inclusion, within one poll) — NO dump had neither card nor
+      notice; after Dismiss and a reopen both rows read "Speed-up of
+      transaction … (nonce N)." (the nonce-34 row appeared on the reopen,
+      not before); the switch turned itself off after each accepted send.
+      BALANCES to the wei: Account 1 1,776,233,897,017,515 →
+      1,766,233,896,660,515 → 1,756,233,896,303,515 (1e13 + 21,000 × 17
+      per run; nonce 33 → 35); Account 2 +1e13 per run. DRIVING NOTES:
+      Expo Go's Tools bubble sits on the Developer switch at y ~1564–1632
+      (opened the dev menu once); the Activity confirm's scroll offset
+      hides the pending section after OK — a gentle 700 px gesture shows it
+      without a pull-to-refresh. UNVERIFIED: the spoken "checked" state;
+      the cancel form of the waiting line; a replacement pending longer
+      than one poll; real touch and audio; iOS. END STATE: Home, Ethereum
+      Sepolia, Account 1, light mode, TalkBack OFF, protection OFF, the
+      switch OFF, IME ADBKeyboard, Metro on 8081 at d7f555a.
 - [x] Item 5 — LEADERSHIP REFRESH (docs commit below; check-readiness 208,
       check-screen-protection 87, check-devmode 418, check-notifications
       184, check-duress 113, check-multisig 424 all green in the CTO's
@@ -9865,9 +9927,9 @@ cost on real hardware, passkeys, hardware-backed storage, Face ID,
 VoiceOver); the PIN-cost decision; a 0x key; the ZeroDev gas policy;
 enabling Base Sepolia for the Alchemy key; a passkey rpId domain.
 
-Follow-ups (no inputs): the selectable provider body's joined content
-description (a second swipe stop when focus wraps; pass p21g); the
-pending card vanishing after a speed-up until a pull-to-refresh; a smart-account bridge and a stranded-transfer retry live; a
+Follow-ups (no inputs): the cancel form of the replacement waiting line
+and a replacement that stays pending longer than one poll (not yet
+seen; pass p21h saw both replacements mined in the next block); a smart-account bridge and a stranded-transfer retry live; a
 CCTP live leg per docs/BRIDGING.md §11 if wanted; the WalletConnect
 separation of the two wallets retested in the development build with
 EXPO_NO_METRO_LAZY=1; removing the ShortcutBadger permissions with tools:node="remove" and
