@@ -9911,6 +9911,38 @@ Subagents on Opus.
       Base and Arbitrum Sepolia; F-46's details); a glossary. FOLLOW-UP:
       the stale threat-model rows above (N-09, T-27, F-70, §3.6) at the
       next refresh.
+- [x] Item 7 (first half) — VISIBLE CAPTIONS FOR THE PASTE BOXES (commit
+      6e41dec; 9 files; check-devmode 432 (was 418); offline runner ALL GREEN
+      in the CTO's isolated worktree on HEAD b414989 with --skip-bundle:
+      engine 1,046, app 9,311 across 59 suites, lint 0/0, tsc clean;
+      apply 0 / 9 files, staged from the verified patch with `git apply
+      --cached` because another agent's edits shared the working tree;
+      one hand mutant (a placeholder restored equal to its caption: 10
+      checks failed) and eight in-suite mutants caught; not seen on a
+      device). The Multisig paste boxes ("Paste the multisig record" /
+      "Paste the multisig signing request" / "Paste a co-signer's approval
+      (or a 65-byte signature from another wallet)") and PasteOrScan (a
+      new label prop; its six callers) show their caption text visibly
+      with short placeholders ("Record text", "Request text", "Approval
+      text or a 0x… signature", "Record text (JSON)", "Request text or a
+      0x… id", "0x…"); the Scan button still speaks "Scan QR code:
+      <label>"; HiddenFieldLabel kept with zero call sites (check-devmode
+      accepts zero and tests the order rules on a synthetic example); the
+      captioned-field list 24 → 28; a NEW PIN that no text field's
+      placeholder repeats its caption (63 fields scanned; case and
+      punctuation ignored) found FIVE more — Multisig "Name (optional)" →
+      "For example Family vault", AccountsSection "New account name
+      (optional)" / "Account name" → "For example Savings", Contacts
+      "<network> address" → "Paste or type the address", RecoverAccount's
+      hash and original-owner fields → "0x…" — (placeholders held in
+      constants or built by functions are not seen by the check; read by
+      hand, none repeats). Layout reasoned: each field moves down one or
+      two caption lines; the two long approval captions wrap on a 360-pt
+      phone; the co-signer card now shows "Co-signer 1" above "Co-signer
+      1: Ethereum address" (two stops, visually repetitive — the caption
+      text was kept by instruction; follow-up: shorten it). UNVERIFIED
+      (emulator): TalkBack reading the caption once in caption-then-field
+      order; the layout, dark mode, font scaling; VoiceOver.
 - [x] Item 5 — LEADERSHIP REFRESH (docs commit below; check-readiness 208,
       check-screen-protection 87, check-devmode 418, check-notifications
       184, check-duress 113, check-multisig 424 all green in the CTO's
