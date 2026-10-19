@@ -171,6 +171,11 @@ examples/demo.mjs          Offline end-to-end engine demo
   was brought forward; `taskpolicy -B` / `-t` / `-l` did not help; the
   same demotion slowed pass p19a); a driver brings it forward with
   osascript before any long wait.
+  START `caffeinate -i -w <qemu pid>` WITH EVERY AVD LAUNCH (2026-10-19
+  pass p22a: with it running, qemu's priority never dropped below 55 over
+  2,025 samples; Apple documents an app that holds a power assertion as
+  exempt from App Nap, and qemu has no bundle id for any defaults key —
+  NSAppSleepDisabled / LSAppNapIsDisabled are undocumented anyway).
   Since phase 17 item 0 the app blocks screenshots everywhere by default.
   ON THE EMULATOR IT STAYS OFF (the Chairperson's request, 2026-10-11:
   the secure flag blanks the emulator window for a human watching it
@@ -10329,8 +10334,9 @@ Subagents on Opus.
       from fund.mjs; the two-part USDC request; Speed up and Cancel
       cold-signed under the minimum-fee rehearsal; the refusals) in the
       builder's report.
-- [ ] EMULATOR PASS p22a — THE NATIVE SCRYPT IN THE DEBUG DEVELOPMENT
-      BUILD, CUT BY THE SESSION LIMIT AFTER PART A4 (2026-10-19 UTC; the
+- [x] EMULATOR PASS p22a, first half — THE NATIVE SCRYPT IN THE DEBUG
+      DEVELOPMENT BUILD, CUT BY THE SESSION LIMIT AFTER PART A4 (completed
+      below) (2026-10-19 UTC; the
       agent hit the Opus session limit — resets 2026-10-20 04:20
       America/New_York — right after the measurements; PARTS A5–A7, B, C,
       D and E NOT RUN; captures in the scratchpad p22a). DONE: the debug
@@ -10662,6 +10668,119 @@ Subagents on Opus.
       <Text> on Android, the phone's ICU date strings, the I18nManager /
       Intl locale values, a phone set to Spanish, TalkBack in Spanish;
       iOS.
+- [x] EMULATOR PASS p22a, second half — THE APP PIN IS USABLE WITH THE
+      NATIVE SCRYPT; the release build; the captions and the new screens in
+      Expo Go; the App Nap answer (2026-10-19 UTC; resumed by a second
+      driver from part A5; no repo file edited; the real Expo Go wallet got
+      no prompt but its unlocks; every kept capture scanned clean; timings
+      from streamed accessibility events stamped on the host — `uiautomator
+      events`, helpers p22a/evlog.sh, evparse.py, tunlock.sh — accurate to
+      a few hundred ms, because a dump takes ~3.5 s). HEADLINE: ONE UNLOCK
+      (two scrypt hashes at N = 2^16) TAKES ABOUT 2.5 s in both the debug
+      and the release build (JavaScript: ~100 s release, ~4 min debug);
+      adding a duress PIN went from 10.7 min to 14 s. TIMINGS (s; debug
+      native / release native / JavaScript p21f debug and p21g release):
+      one hash at 2^16 on the measurement card 0.63–1.74 (+1.36 in dark
+      mode) / 1.11, 1.00, 1.10 / ~125 and 49–53; PIN on (one hash) ≤ ~11
+      (a dump-bound upper figure) / 1.8–2.1 / ~4 min and ~61; unlock after
+      auto-lock 2.5–2.8 (3 samples) / 2.45 and 2.4 / 245–258 and ~100;
+      cold start: PIN accepted 3.2 and Home at 7.8 / 2.8 and 6.1 (the
+      wallet loads only after the PIN); one wrong PIN to "Wrong PIN. Try
+      again." 2.9 / 2.5 / ~4 min and 94–102; the current-PIN check inside
+      the duress flow < 4.0 (debug); adding the duress PIN 14.3 (debug;
+      9.5–12 on a rougher sample); the duress PIN to the decoy's Home 4.3
+      accepted / 8.3 Home; the decoy back to the real wallet ~3.2 / ~7.
+      RELEASE MEASUREMENT RUNS (ms per hash 2^12 / 2^13 / 2^14 / 2^15 /
+      2^16, total): 30 / 104 / 228 / 507 / 1,109 = 1,980; 32 / 130 / 247 /
+      537 / 1,000 = 1,948; 40 / 110 / 234 / 508 / 1,104 = 1,998; platform
+      line "Platform: android · Hermes: yes · development bundle (__DEV__):
+      no · Hashing: native scrypt (react-native-quick-crypto)"; the native
+      release figure at 2^16 (~1.0–1.1 s) is only slightly faster than
+      debug, as expected for native code. STRINGS: the Developer line
+      "PIN hashing path: native scrypt (react-native-quick-crypto),
+      self-check passed" in every build, inside the decoy too; the backup
+      prompt "Confirm your recovery phrase backup" (with "Use PIN") before
+      the two words; the PIN flow ("Choose a 6-digit PIN", "Type the new
+      PIN again", "The app PIN is on…"); the duress flow ("Type your
+      current PIN", "Choose a 6-digit duress PIN", "Type the duress PIN
+      again", "A duress PIN is set.", "The duress PIN is set. It opens the
+      second wallet."); "Remove the duress PIN?"; both lock sentences; the
+      decoy opened as Account 1 0x019d…303B (the real throwaway
+      0x5f67…3618); the wipe with the PIN on ("…and the app PIN itself." →
+      "Are you absolutely sure?") left SecureStore an empty map,
+      AsyncStorage only prefs.v1 and browser-connections.v1, and a cold
+      relaunch opened onboarding with no pad. A6: dark mode readable (the
+      capture through the emulator console `adb emu screenrecord
+      screenshot`, which bypasses the secure flag — the emulator host, not
+      an app defect); TalkBack reads every measurement row as its own
+      stop and the PIN pad in order ("Shiba Wallet is locked. Heading",
+      the sentence, "Enter your PIN", "0 of 6 digits entered", "Digit 1.
+      Button" … "Delete the last digit. Button"); findings: "__DEV__" is
+      spoken "2 Underscore DEV 2 Underscore", "Networks you added" below
+      it is not a heading. B: the RELEASE APK
+      .local/builds/shiba-release-8b4ed84-qc.apk (65,086,370 bytes, sha256
+      acbd14be…b233a; from wt-build2 = b414989 + the native-scrypt patch =
+      8b4ed84's content; BUILD SUCCESSFUL in 6 min 24 s with no adb during
+      it, Gradle stopped, no java process left; libQuickCrypto.so
+      10,066,720 B and libNitroModules.so 968,744 B; 31 permissions,
+      identical to shiba-release-7244fd5.apk — no new permission). D: EXPO
+      GO at 02b7b7d (wt-app checked out there, the engine built inside it,
+      nine symlinks added into main's app/node_modules for the new
+      packages — @craftzdog, is-arguments, process,
+      react-native-nitro-modules, react-native-quick-base64,
+      react-native-quick-crypto, readable-stream, string_decoder, util;
+      Metro restarted as pid 894, 1,921 modules; one Unlock prompt):
+      CAPTIONS ALL PASS under TalkBack — each caption its own single stop
+      right before its field, the field "…Edit box for <caption>", no
+      hidden-label stop (Add a multisig from a record, Create a multisig
+      "Co-signer 1. Heading" / "Co-signer 1: Ethereum address", Contacts
+      "Contact name" / "Ethereum Sepolia address", Manage accounts "Account
+      name" / "New account name (optional)", Guardians' PasteOrScan,
+      Multisig 2's collecting operation); the long approval caption wraps
+      to two clean lines at 1080 px; the Records backup section shows its
+      four notes and two buttons (nothing tapped); a watched address
+      ("Watched 5", 0xd8dA…6045, removed afterwards) shows Home's "Send
+      with an off-line signer ↗" and the ColdSign screen's intro and form
+      (nothing prepared). FINDINGS (fix slice next): (1) the ColdSign
+      screen opens with the watch-only box "It cannot send, sign or
+      recover anything for it." directly above "You can still prepare a
+      send here…" — contradictory (Home's notice has the same text; the
+      watch-only footer follow-up); (2) the ColdSign asset chips (test ETH /
+      USDC / EURC / stETH / wstETH) show no selected state although the
+      amount label says test ETH; (3) the Create-a-multisig weight field
+      reads "1. Edit box. Weight for Co-signer 1 weight" (redundant) and
+      "This wallet's signer" speaks the full 42-character address; (4) the
+      two TalkBack nits on the measurement card. E: APP NAP, from Apple's
+      Energy Efficiency Guide ("App Nap"): it applies when an app "isn't
+      the foreground app", "hasn't recently updated content in the visible
+      portion of a window", "isn't audible", "hasn't taken any IOKit
+      power management or NSProcessInfo assertions" or "isn't using
+      OpenGL", and it reduces priority and throttles timers and I/O; the
+      documented opt-out is NSProcessInfo beginActivityWithOptions: with
+      NSActivityUserInitiated ("Prioritize Work at the App Level"); NEITHER
+      NSAppSleepDisabled NOR LSAppNapIsDisabled appears in Apple's current
+      documentation (the LSAppNapIsDisabled reference page returns 404;
+      third-party forums only); qemu is a bare binary with no Info.plist,
+      no .app bundle, no embedded __info_plist (otool) and lsappinfo
+      bundleID NULL — so NO defaults domain exists and NOTHING WAS APPLIED.
+      THE PRIORITY LOG (2,025 samples 05:35–22:28 UTC with `caffeinate -i
+      -w 91483` up throughout): PRI 97 in 1,890 samples, 55 in 91, 61 in
+      44 — never below 55, never the demoted 4; `pmset -g assertions`
+      shows caffeinate holding PreventUserIdleSystemSleep "on behalf of
+      Process ID 91483", which matches Apple's "hasn't taken any …
+      assertions" condition — that the assertion counts as qemu's own is
+      an inference, and whether the window was ever occluded during the
+      log is not known. STANDING RULE (added above): start `caffeinate -i
+      -w <qemu pid>` with every AVD launch; keep the keep-front helper as
+      the fallback. END STATE: only Expo Go installed (both builds wiped
+      and uninstalled); Home, Ethereum Sepolia, Account 1, light mode,
+      protection OFF (screencap 253 KB, no SECURE), no watched address;
+      TalkBack OFF (level 6); IME ADBKeyboard; Metro 8081 (pid 894) at
+      02b7b7d; 8082 stopped and its reverse removed; the priority logger
+      (pid 39571) and both caffeinate processes still running. NOT DONE:
+      the duress and wrong-PIN timings in release (debug only); the
+      off-device BIP-85 check (p21f proved it); typing PIN digits under
+      TalkBack.
 - [x] Item 5 — LEADERSHIP REFRESH (docs commit below; check-readiness 208,
       check-screen-protection 87, check-devmode 418, check-notifications
       184, check-duress 113, check-multisig 424 all green in the CTO's
