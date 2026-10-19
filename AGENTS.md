@@ -70,6 +70,7 @@ docs/                      Plain-English documents for leadership & engineers
   SESSION_KEYS.md          Session-key evaluation
   SCHEDULED_PAYMENTS.md    Scheduled and recurring payments design
   THREAT_MODEL.md          Threat model and the mainnet-readiness checklist
+  AUDIT_SCOPE.md           The scope handed to outside security auditors (C1, C2)
   DEMO.md                  Presenter's walkthrough on the emulator
   RELEASE.md / STORE_LISTING.md / PRIVACY.md / DEVICE_BUILDS.md /
   CONTRIBUTING.md / HISTORY.md (phases 1–12 in full)
@@ -9864,6 +9865,52 @@ items 3 and 4 in parallel; 3 — items 5 and 6; 8 alongside; 9 last.
 Subagents on Opus.
 
 ## Phase 22 progress
+- [x] Item 1 — docs/AUDIT_SCOPE.md, the audit scoping document (commit
+      below; 8,156 words incl. about 1,900 in six address tables;
+      check-readiness 208, check-screen-protection 87, check-devmode
+      green with it present; the secret scan clean; nothing from
+      .dev-wallet or docs/private — the private classification is
+      referred to only as shareable at the Chairperson's discretion).
+      Written for an outside reader: a one-page summary; the conditions
+      — WITH THE CORRECTION that C1 and C2 as the threat model words them
+      concern the VENDOR'S contracts (Kernel v3.3, its modules, the
+      vendor's bounty), so an audit of the wallet's own code alone does
+      not meet C1 (section 9.2 gives the options: extend the engagement
+      to the v3.1→v3.3 difference and the modules, obtain the vendor's
+      reports, or defer) and the wallet's own bounty complements but does
+      not replace C2; what the auditor receives (a tag the Chairperson
+      creates — the repo has none yet — with the full hash, the documents
+      to read first, the offline runner with its guard and the secret
+      scan, the smoke scripts with the auditor's OWN .dev-wallet and
+      funds, the emulator route); the scope by package and path (the five
+      engine packages; the app's vault, seam, PIN, lock, gates, send and
+      replacement paths, smart-account guards, risk checks, browser and
+      WalletConnect; the guard scripts; the check scripts as executable
+      specifications; account ids live in app/src/wallet, not core);
+      out of scope with the recorded audit status of every pinned
+      third-party contract, the bundlers and RPCs, the platform; six
+      address tables (Kernel stack, paymasters, tokens and fixed
+      addresses, Uniswap, staking, bridges) each with its source files;
+      open findings, the honest module limits, inconsistencies in the
+      record (the engine comments and AA_STACK say the Kernel code was
+      read on mainnet on 2026-10-01 while MAINNET_READINESS §2 says the
+      mainnet deployment is unverified — labelled "read once" /
+      verification "not done"; N-09 / T-27 still say the bundler's chain
+      id is unchecked although the app refuses a wrong-chain bundler;
+      F-70 still reads "Fix in progress" though fixed in 9290864;
+      THREAT_MODEL 3.6 says no development build was ever built), the
+      never-on-a-device list; ten prioritised questions; a bug-bounty
+      proposal (tiers tied to the threat model's ratings, test networks
+      only, exclusions, placeholders for the contact and policy page, no
+      amounts); the decisions for the Chairperson (budget, the C1 scope
+      options, firm criteria without names, timing, sharing the private
+      classification, test funds, devices, publishing the bounty); what
+      could not be established (audit coverage of the deployed test
+      Lido / Rocket Pool / Uniswap code; which commits the LayerZero /
+      Stargate / CCTP reports cover; the module-by-module comparison on
+      Base and Arbitrum Sepolia; F-46's details); a glossary. FOLLOW-UP:
+      the stale threat-model rows above (N-09, T-27, F-70, §3.6) at the
+      next refresh.
 - [x] Item 5 — LEADERSHIP REFRESH (docs commit below; check-readiness 208,
       check-screen-protection 87, check-devmode 418, check-notifications
       184, check-duress 113, check-multisig 424 all green in the CTO's
