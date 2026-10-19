@@ -9778,6 +9778,92 @@ Opus.
       than one poll; real touch and audio; iOS. END STATE: Home, Ethereum
       Sepolia, Account 1, light mode, TalkBack OFF, protection OFF, the
       switch OFF, IME ADBKeyboard, Metro on 8081 at d7f555a.
+
+DECIDED by the Chairperson (2026-10-19): (1) the PIN cost — the native
+scrypt through react-native-quick-crypto behind the same pinScrypt
+function, N kept at 2^16 ("recommendation sounds reasonable"); (2) the
+four paste boxes — the CTO's call for the MVP: a visible caption and a
+short placeholder, matching the other 24 fields; (3) a dark navigation
+bar in dark mode is preferred but not a deal-breaker for the prototype
+(expo-navigation-bar, low priority); (4) PASSPHRASE — both: a BIP-39
+passphrase hidden wallet (DURESS_WALLET.md §7.8) AND a passphrase
+offered as an alternative to the PIN for the app lock; (5) PHASE 22
+APPROVED. Also: the Chairperson asks whether to limit other
+applications while the emulator is driven (macOS demotes the occluded
+emulator window — yes, keeping the window unobscured during a pass
+helps; a per-process exemption is a phase 22 item 0 investigation), and
+wants to engage auditors now ("auditor shibas") — the mainnet gate C1;
+an audit scoping document is phase 22 item 1. The emulator window: the
+Chairperson sees the boot screen but not the app on 37.1.11 + ANGLE;
+the device renders for adb (screencap 273 KB, no secure flag, awake,
+timeout never) while qemu sat demoted at priority 4 — relaunched
+gracefully from a foreground Terminal tab on 2026-10-19 (the first
+attempt lost its command's first character to the tab — prefix the
+command with " ; "); visibility to be confirmed by the Chairperson.
+
+## Phase 22 plan (approved 2026-10-19): the audit, the native PIN cost, cold signing, the records backup, the inbox, more languages
+
+0. Emulator and tooling: a per-process exemption from macOS's
+   background demotion for qemu (App Nap / NSAppSleepDisabled or an
+   equivalent — verified from Apple's documentation, not assumed),
+   else the keep-front helper documented; the window-visibility fact
+   recorded once the Chairperson confirms.
+1. The audit (C1, C2): docs/AUDIT_SCOPE.md — what an auditor receives
+   (the repository, the threat model, the readiness memo, the private
+   findings by the Chairperson's choice, the suites and how to run
+   them), the scope by package and by path (the engine's signing,
+   derivation, smart-account, session-key, multisig, bridge and staking
+   code; the app's key vault, storage seam, PIN, lock, approval gates
+   and simulation / risk checks), what is explicitly out of scope
+   (third-party contracts the wallet pins, which have their own audits
+   or none — listed with their status), the deployed addresses per
+   network, the known findings and open residuals, a bug-bounty
+   proposal (C2), and the questions the Chairperson decides (budget,
+   firms, timing against the remaining phases); written for an outside
+   reader.
+2. The PIN cost (F-81): react-native-quick-crypto's scrypt behind
+   pinScrypt with the noble fallback only where the native module is
+   absent (Expo Go), the measurement screen covering both, a rebuilt
+   development build, the release-build figure re-measured on the
+   emulator; then the passphrase options: a passphrase as an
+   alternative lock secret (the same record shape, scrypt over a longer
+   input, its own copy) and the BIP-39 passphrase hidden wallet as a
+   second decoy source (design first in DURESS_WALLET.md, then the
+   slice if the design supports one).
+3. Cold signing (feature 11, the QR half): an air-gapped signer flow —
+   an unsigned transaction or UserOperation exported as QR parts (the
+   multisig's multi-part scheme), a signature scanned back, verified and
+   broadcast; the watch-only account as the on-line half; a verified
+   standard (ERC-4527 / UR types) only if read from the specification.
+4. Encrypted backup of the wallet's RECORDS (feature 47, never the
+   seed): contacts, notes, custom networks, tokens, recovery and
+   multisig records, bridge transfers — exported as one file encrypted
+   under a key derived from the recovery phrase (so the phrase restores
+   them) through the storage seam, imported on a fresh install; no
+   service.
+5. The notifications inbox and deep links (features 83, 80): an in-app
+   list of what the wallet has told the user (reminders, alerts, sent
+   views), and the app's own deep links into its screens (verified
+   against Expo's linking configuration), keeping D6 and every gate.
+6. Localisation groundwork (feature 91): the string table extracted
+   behind one accessor with the check scripts' pins intact, one second
+   language as proof, formatting of amounts and dates per locale
+   without changing any exact-amount rule.
+7. Accessibility and polish carry-overs: the four paste boxes' captions,
+   expo-navigation-bar, the cancel form of the replacement waiting line
+   and a replacement pending across polls on the emulator.
+8. Research only: fiat off-ramp (feature 66) — the providers, what a
+   non-custodial wallet can offer, compliance inputs; a document.
+9. Leadership refresh and an updated mainnet-readiness memo at the end.
+
+Waves: 1 — (A) item 2's native scrypt (app, a native dependency), (B)
+item 1's document, (C) item 7's captions and navigation bar, (D) item
+2's passphrase design in DURESS_WALLET.md, in parallel on disjoint
+files; item 0 alongside; then the development-build pass for A; 2 —
+items 3 and 4 in parallel; 3 — items 5 and 6; 8 alongside; 9 last.
+Subagents on Opus.
+
+## Phase 22 progress
 - [x] Item 5 — LEADERSHIP REFRESH (docs commit below; check-readiness 208,
       check-screen-protection 87, check-devmode 418, check-notifications
       184, check-duress 113, check-multisig 424 all green in the CTO's
