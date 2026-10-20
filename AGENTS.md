@@ -11137,6 +11137,107 @@ Subagents on Opus.
       Language System, the Expo Go locale reset, protection OFF, the
       minimum-fee switch OFF, TalkBack never enabled, no watched account,
       IME ADBKeyboard, Metro on 8081 from wt-app, caffeinate running.
+- [x] Pass p22b findings FIXED (commit f297e8b; 30 files; check-inbox 104
+      (was 88), check-i18n 92 (88), check-storage-seam 59 (56),
+      check-pending 248 (231), check-cold-signing 105 (99),
+      check-watch-only 187 (184), check-records-backup 143 (141);
+      offline runner ALL GREEN in the CTO's isolated worktree on HEAD
+      4516695 with --skip-bundle: engine 1,050, app 9,906 across 63
+      suites, lint 0/0, tsc clean; checkout 0 / apply 0 / 30 of 30 files;
+      the staged patch id equals the verified one; every real-file mutant
+      caught; not seen on a device). FINDING 1 WITHDRAWN AS AN APP BUG:
+      the driver re-ran Metro from wt-app with APFS CLONES of both
+      node_modules (2 s + 15 s; the cloned @shiba-wallet/* entries are
+      relative symlinks that already resolve to the worktree's packages;
+      metro.config.js untouched) and Settings → Language → Español SAVED
+      ("En uso ahora: Español.", Spanish after a force-stop and relaunch
+      with Expo Go's per-app locale at []), so the symlink-farm worktree
+      plus its watchFolders tweak had broken the lazily imported chunk,
+      not the app; logcat showed no ReactNativeJS line. RULE: the Metro
+      and verify worktrees use APFS clones (.local/helpers/mkwt.sh
+      updated); the symlink farm is retired. The slice still hardens the
+      path: (1) store-keys.ts already imported AsyncStorage statically
+      (line 30), so lazyAppStore() now calls that binding per call (no
+      dynamic import, no chunk; a source pin forbids any dynamic import of
+      async-storage in app/src); inbox.ts keeps lastRecordFailure(), logs
+      one line per session (never the entry text) and notifies listeners
+      on a failed write; loadInboxView() never throws and reports a
+      rejected load as loadFailure; the Inbox screen shows "The inbox
+      stored on this phone could not be read just now, so its entries are
+      not shown. Nothing was deleted. Pull down to try again." with the
+      technical line and "Try again", and "A message could not be added
+      to the inbox on this phone, so this list may be missing it." on a
+      failed write; the Language failure line gains the technical detail.
+      (2) pending-transactions.ts minedOutcome() decides by WHICH
+      BROADCAST WAS MINED: the only broadcast of its nonce → mined; a
+      speed-up → replaced; a cancellation → cancelled; the original while
+      a speed-up or cancellation exists → original-first (unchanged); any
+      other plain send mined beside another plain send → the new outcome
+      "superseded" (CTO accepted the builder's extension to the original
+      mined beside plain sends — the losing send can never be included
+      and deserves a word): notice "Transaction A (nonce N) was superseded
+      by B, included in block M; A will never be included.", row line
+      "Sent in place of transaction A (nonce N), which will never be
+      included.", inbox title "Transaction superseded", a marker after
+      Dismiss; for replaced / cancelled the notice's original is the root
+      of the mined transaction's replaces chain (rootSendOf) instead of
+      the group's oldest send (which would misname a speed-up of a second
+      send); pinned with the live nonce-6 case. LEFT: before inclusion a
+      nonce with two plain sends still says "1 replacement sent since.".
+      (3) ActivityScreen shows "Pending on this phone" for a watch-only
+      account (only a multisig hides it); PendingTransactions already
+      routed a watched account's Speed up / Cancel to ColdSign's replace
+      mode (pinned). (4) describeColdError passes { minimumFeeRehearsal }
+      from the quote, so the cold refusal carries the Send screen's
+      rehearsal note. (5) THE BRIEF'S PREMISE WAS WRONG — the hot ERC-20
+      path records to: the contract, amount 0, data (send-erc20.ts
+      338–358) exactly like the cold path (cold-signing.ts 246–263), so
+      both read "calls <contract>"; pendingGroupSentence now decodes
+      exactly transfer(address,uint256) and, with the network's tracked
+      tokens, reads "sends 0.5 USDC to 0x… (token contract 0x…)" (an
+      untracked token in base units). (6) NO CODE CHANGE: none of the
+      four sites hides or groups its Text; the same DeepLinkHandler Text
+      WAS in the tree for the "does not open anything" and chain-id-1
+      refusals and missing for "authorizationList" and "approve" — the
+      four missing texts are exactly the ones containing a straight
+      double quote; uiautomator also logged "Skipping invisible child";
+      the decisive test is a TalkBack read (running in pass p22b's
+      addendum); if TalkBack cannot read them, typographic quotes are the
+      cheap fix (pinned strings — the CTO's call). (7) Max on the
+      cold-signing form through Send's own maxEvmSend / maxErc20Send
+      under withEndpoint, the same error sentences, a native Max
+      remembered so Review passes fromMax and shows the Max-trim sentence.
+      (8) deep-links.ts PayLinkContext.watchOnly and the action
+      'cold-sign': an Ethereum link with a watched account active gets
+      Send's exact pre-fill with DEEP_LINK_PAY_LINE first and App.tsx
+      pushes ColdSign (navigation params gain request); a refused request
+      stays a notice; another family is refused first. (9) expo-sharing
+      57.0.22 resolves shareAsync the same way whatever the user does
+      (SharingModule.kt 80–84 resolve null on any activity result;
+      SharingModule.swift 24–31), so the section reads "A backup of N
+      records was prepared and handed to the share sheet (…). Whether it
+      was saved depends on what you chose there; this wallet cannot
+      tell." (10) watch-only.ts: WATCH_ADDRESS_INTRO "…but the wallet
+      cannot sign, swap or recover anything for it. A send on an Ethereum
+      network can still be prepared here and signed by an off-line signer
+      that holds its key.", the switcher line "Watch-only — the wallet
+      holds no key; it cannot sign, but a send can be prepared for an
+      off-line signer", the Settings → Accounts row and the "Watch an
+      address" hint likewise; LEFT: tokens.ts TOKENS_SEND_NOTE ("…so it
+      cannot send these tokens.", pinned in check-tokens) is now untrue
+      since the cold-signing screen sends tokens — the next slice. (11)
+      Eight more entries in en.ts / es.ts (Accounts → Cuentas; Records
+      backup → Copia de seguridad de los registros; App PIN → PIN de la
+      aplicación; Use a PIN or passphrase to unlock → Usar un PIN o una
+      contraseña para desbloquear; Add a custom network → Añadir una red
+      personalizada; "0x… or ENS name" → "0x… o nombre ENS"; the ENS hint
+      line; Request an amount → Solicitar un importe), each English text
+      checked against c5baff6 and added to the fixture as a literal; LEFT
+      for the phase-23 localisation pass: "App passphrase", this slice's
+      new English, the rest of the 8dbf882 list. UNVERIFIED (device):
+      the inbox failure boxes, the pending card for a watched account,
+      Max's placement, the cold-signing pre-fill from a real link, the
+      item-6 TalkBack test, the Spanish lines.
 - [x] Item 5 — LEADERSHIP REFRESH (docs commit below; check-readiness 208,
       check-screen-protection 87, check-devmode 418, check-notifications
       184, check-duress 113, check-multisig 424 all green in the CTO's
