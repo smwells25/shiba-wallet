@@ -10843,6 +10843,71 @@ Subagents on Opus.
       inbox note, the wipe dialog, the Bridge screen on Base Sepolia and
       Hoodi without the header, the footer and the Language text at phone
       width, TalkBack.
+- [x] Pass p22a findings FIXED (commit 0645c6d; 20 files; check-i18n 88
+      (was 86), check-watch-only 184 (182), check-cold-signing 99 (96),
+      check-multisig 425 (424), check-devmode 444 (438), check-duress 214
+      (207); offline runner ALL GREEN in the CTO's isolated worktree on
+      HEAD 69980d0 with --skip-bundle: engine 1,050, app 9,855 across 63
+      suites, lint 0/0, tsc clean; checkout 0 / apply 0 / 20 files; the
+      staged patch id equals the verified patch id; eleven real-file
+      mutants caught; not seen on a device). SESSION NOTE: the machine
+      rebooted at about 00:34 UTC on 2026-10-20 and macOS wiped
+      /private/tmp — every scratchpad worktree, the Metro session and the
+      running Expo Go pass's captures were lost; the worktrees were
+      recreated at 659ab27 with a script now kept at
+      .local/helpers/mkwt.sh (symlink farms into the main checkout,
+      @shiba-wallet/* to the worktree's own packages, the engine built
+      inside). SLIP: the phase-23 plan commit 69980d0 was made with a
+      `-c core.hooksPath` override that pointed at a folder that does not
+      exist, so the pre-commit scan did not run for it; the whole HEAD
+      tree was scanned by hand afterwards (`npm run secret-scan`, 500
+      files, clean) — RULE: plain `git commit`, never a hooks-path
+      override. (1) The shared watch-only notice (notice.watchOnly /
+      account-ids.ts WATCH_ONLY_NOTICE, rendered by WatchOnlyNotice on
+      Home, Receive, Portfolio, Settings → Accounts, the route gate and
+      all three ColdSign phases) now reads "Watch-only: this wallet can
+      show this address but holds no key for it, so it cannot sign, swap
+      or recover anything for it. A send on an Ethereum network can still
+      be prepared with "Send with an off-line signer" and signed by an
+      off-line signer that holds its key." (one wording true everywhere —
+      a ColdSign-only box would have left the gate and the other screens
+      false); the Spanish line quotes the Spanish Home link; the i18n
+      fixture's "changed" section gains notice.watchOnly (before / en /
+      why) and check-i18n pins the changed set as exactly
+      activity.note.privacy + notice.watchOnly, the English quoting the
+      Home link and never "cannot send". LEFT (still "cannot send" for a
+      watched address): watch-only.ts WATCH_ADDRESS_INTRO, AccountsSection
+      ×2, AccountSwitcher (pinned). (2) ColdSign asset chips: "✓ <label>"
+      in the primary variant with selected from one condition (the
+      Settings → Developer chip pattern); Button already reported
+      accessibilityState selected and stripped the "✓" from speech. (3)
+      CAUSE CORRECTED: the multisig weight field had no second
+      accessibilityLabel — the extra "Weight" was its PLACEHOLDER, which
+      React Native hands Android as the EditText hint (ReactEditText.kt
+      563–568), spoken between "Edit box" and "for <caption>" (TalkBack's
+      order inferred from the spoken string); the placeholder is removed,
+      and check-devmode's placeholder scan now also flags a placeholder
+      whose every word is already in its caption (web-address examples
+      exempt), which found three more — Contacts "Name" → "For example
+      Alice" (Contacts.tsx and ContactsScreen.tsx), Tokens "Name
+      (optional)" → "For example Maker", the multisig amount "Amount
+      (<coin>)" → "0.0"; the create form's "This wallet's signer" row and
+      the add-from-record review's signer rows speak the short address
+      (the under-review account addresses stay full on purpose). (4)
+      pin-cost.ts pinCostPlatformSpokenText ("Platform: android. Hermes:
+      yes. Development bundle: no. Hashing: …") as the platform line's
+      accessibilityLabel, the visible text unchanged; "Networks you added"
+      and "Test network" are headers (toggleLabel-styled titles the
+      heading scan did not cover — a dedicated check). (5) pin.ts
+      pinRefusalMessage(outcome, now) holds the sentence logic;
+      pinAttemptMessage returns null only for "opened"; WalletContext
+      (app/src/wallet/, not contexts/) uses it at both sites with no
+      literal — the old fallbacks were unreachable and would have said
+      "PIN" under a passphrase lock. UNVERIFIED (device): the weight
+      field read once, the new placeholders, the short signer addresses,
+      the spoken platform line, the two headings, the "✓" chip, the
+      longer notice wrapping at phone width, dark mode, the Spanish
+      wording, VoiceOver.
 - [x] Item 5 — LEADERSHIP REFRESH (docs commit below; check-readiness 208,
       check-screen-protection 87, check-devmode 418, check-notifications
       184, check-duress 113, check-multisig 424 all green in the CTO's
