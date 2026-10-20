@@ -10908,6 +10908,235 @@ Subagents on Opus.
       the spoken platform line, the two headings, the "✓" chip, the
       longer notice wrapping at phone width, dark mode, the Spanish
       wording, VoiceOver.
+- [x] EMULATOR PASS p22b — RECORDS BACKUP, COLD SIGNING, DEEP LINKS AND
+      SPANISH IN EXPO GO; TWO BUGS (2026-10-20 02:40–05:00 UTC; Expo Go
+      on emulator 37.1.11 with ANGLE, Metro from the rebuilt wt-app at
+      659ab27 — Metro first failed "Unable to resolve expo from index.ts"
+      because the symlink farms point outside its watch folders; the
+      driver added the main checkout's two node_modules folders to the
+      worktree's metro.config.js watchFolders (worktree-only), 1,935
+      modules; no repo file edited; every hash re-read by the CTO on
+      publicnode and drpc; the dev EOA spent 120,000,005,910,049 wei net;
+      report and redacted captures in the scratchpad p22b, helpers kept in
+      .local/helpers/p22b). THE LOST RUN FIRST: the previous driver's pass
+      (started 2026-10-19 23:37 UTC at 72f84be) was cut by the machine's
+      reboot at about 00:34 UTC and its transcript is gone, but the chain
+      holds its legs — the watched dev index-8 account
+      0x8E1dEaF5d88e60DBdabcC79d8EFA570f40fb0cDF funded 0.003 from the dev
+      EOA (tx 0x1b03aa3c…4e011, block 11951472), cold-signed sends of
+      0.0001 test ETH (tx 0xe24289d2…9326, block 11951517, nonce 0), 0.5
+      USDC after Account 1 sent it 1 USDC (0x66ba47ac…aa97, block 11951534;
+      the cold USDC send 0xc567b5f4…f63e, block 11951568, nonce 1), a
+      speed-up at nonce 2 (the mined 0x2ce1f356…27a5, block 11951648 —
+      Activity still lists "Speed-up of transaction 0xce79…6ace (nonce
+      2).") and a sweep back (0x10946169…c6d9, block 11951675, nonce 3);
+      the wallet holds no key for that address and cold-signer.mjs cannot
+      broadcast, so those were the app's ColdSign screen. INVENTORY: a
+      "Cold 8 (watch-only)" account, two test files in /sdcard/Download
+      (a genuine records backup and a junk file) left by the lost run —
+      reused, then deleted; the minimum-fee switch off, Language English.
+      (A) RECORDS BACKUP — PASS: the five notes exact; Export (Account 1):
+      ONE prompt "Approve making an encrypted backup of your records", the
+      chooser "Sharing 1 file / shiba-records-backup_2026-10-20.txt"
+      (Nearby Share, Read aloud, Chrome, Drive, Messages; no account, so
+      nothing can save it — cancelled); RESTORE through the real picker
+      (content:// read): junk → "The file was not restored: This file is
+      not a Shiba Wallet records backup, or it is incomplete. Nothing was
+      restored."; format byte 2 → "…uses format 2, which this version of
+      the wallet cannot read. Update the app and try again…"; truncated →
+      the not-a-backup sentence (0 prompts each); a valid header with
+      random ciphertext → "Restore records from this backup?" → ONE prompt
+      "Approve opening an encrypted backup of your records" → "…This
+      backup was made by a different recovery phrase, or the file is
+      damaged."; the genuine backup with one bit flipped → the same; THE
+      GENUINE BACKUP ITSELF → one prompt → "Networks you added: 0 added, 0
+      already on this phone." / "Contacts: 0 added, 1 already…" / "Tracked
+      tokens: 0 added, 6 already…" / "Transaction notes: 0 added, 7
+      already…" / "Guardian recovery records: 0 added, 5 already…" /
+      "Multi-signature accounts: 0 added, 2 already…" / "Price alerts and
+      followed prices: 0 added, 0 already…" / "Spending limits: 0 added, 0
+      already…" — nothing added, nothing changed (the merge rule live);
+      with Multisig 2 active Export AND Restore refuse at once with
+      "Records backups are made with your recovery phrase. Switch to an
+      account that comes from your recovery phrase on Home first. Nothing
+      was read." (0 prompts, no chooser, no picker). (B) COLD SIGNING —
+      PROVEN LIVE WITH A TRANSCRIPT, 0 DEVICE PROMPTS ON THE WHOLE COLD
+      PATH: funded 0.002 (fund.mjs; tx
+      0x49a636db0c243a2b1b9b7d69a997346434ccd6a5e7f54c1ee232733ab277d8a1,
+      block 11952506); Home as the watched account shows the 0645c6d-
+      pending notice (the old "It cannot send…" wording at 659ab27), the
+      8afc671 footer, "Send with an off-line signer ↗"; the form, Review
+      (nonce 4, "Network fee (worst case) 0.000000000000777 test ETH",
+      the preview, the own-account risk line, "Pre-flight simulation
+      passed (eth_call)."), the for-the-signer screen (the summary, the
+      QR-contents note, the "Before signing…" sentence, the EIP-4527
+      sentence); the QR decoded (jsQR) to a 685-byte request that parsed;
+      REFUSALS exact (0 prompts): garbage → "This is not a Shiba Wallet
+      cold-signing signature. Nothing was sent. Scan the signature QR code
+      the off-line signer shows after it signs."; a dev-index-7 signature
+      (also one claiming the watched address as signer) → "This signature
+      was made by 0xFDF5b9520E15306980F660f6CC5DB90570B92F14, not by the
+      watched address 0x8E1d…, so it was refused. Nothing was sent. Sign
+      with the key of the watched address."; request 1's signature on
+      request 2 → "This signature belongs to another signing request, not
+      the one shown on this screen…"; the same with request 2's id swapped
+      in → "The off-line signer signed different transaction details from
+      the ones shown here (the signing hash differs)…"; Broadcast disabled
+      while refused. LIVE NATIVE SEND: "Signature checked: made by the
+      watched address 0x8E1d… over exactly the transaction shown above."
+      → "Sent ✓" → tx
+      0xe68c35421cf42350c25f91d386ff98f43f533f56cad34a514716b5ae2c62aec4,
+      block 11952552, status 0x1, nonce 4, 1e14 wei, 21,000 gas at 15
+      wei; the note "p22b cold send 1" in Activity. THE TWO-PART USDC
+      REQUEST (0.1 USDC to Account 2): "…shown as 2 codes… The order does
+      not matter.", "SW-CS:1/2:" 442 B + "SW-CS:2/2:" 441 B joined = 863 B
+      = the request; signed in reverse order; tx
+      0x71bfd3ab5b7bd25c1df1407e63a192061b63142cbebf2eb40d56b83cf14916d9,
+      block 11952572, status 0x1, 53,847 gas. THE MINIMUM-FEE REHEARSAL
+      APPLIES TO COLD SENDS (the WarningBox and the "below the latest
+      block's base fee (14 wei)" sentence): a 1/1-wei cold send at nonce 6
+      (0x23bf436e…3686, pooled on 0xrpc.io, null on publicnode / drpc) was
+      never included; a fresh cold send at nonce 6 (Review offered nonce 7
+      then 6 — the backends disagree on 'pending') at 50 / 22 wei was
+      mined (tx 0x9d6f9dc0b646efc99ae728283cbeef6e12118ce2f978d6847e6cd36e2cc5d9ac,
+      block 11952645, status 0x1); COLD SPEED-UP at nonce 7: three 1-wei
+      broadcasts refused "The network endpoint refused the fee." (the
+      technical line "RPC error -32000: transaction underpriced"), the
+      fourth accepted (0x9952481e…4955, never included), Speed up on the
+      success view routed to the ColdSign screen in replacement mode
+      ("Replaces 0x9952…4955 (nonce 7). New fees: max fee 0.000000056
+      gwei per gas, priority fee 0.000000022 gwei…"; the request summary
+      "Speed-up of transaction 0x9952481e… (same nonce)."), a second cold
+      signature broadcast with 0 prompts, the waiting line "Speed-up sent:
+      0xb12b…ca97 replaces 0x9952…4955 (nonce 7)…" then "Sped up:
+      transaction 0x9952…4955 (nonce 7) was replaced by 0xb12b…ca97,
+      included in block 11952702." (tx
+      0xb12bb88bff6e9a15a7046994b86c7e48806d304eddb99d8ef4747b66a0f6ca97,
+      status 0x1, 56 / 22 wei); SWEEP (typed amounts — no Max on the cold
+      form): 0.4 USDC (tx 0x349514cc6d9aef085c59b1dad2c3a28c3cedd95fb7b367df6e8225ad03d3c0ea,
+      block 11952723) and 0.001879999994467951 test ETH (tx
+      0xaa00ba635480a34c803b826a5940f4d4c196d5fbd3623f37fe85a7c7e72471b0,
+      block 11952735) to the dev EOA; the watched account ends at
+      1,302,000 wei, nonce 10, 0 USDC, reconciled to the wei; the dev EOA
+      43,132,807,435,832,795 wei + 20.4 USDC; Account 2 +1.2e14 wei and
+      +0.1 USDC; the switch turned itself off after each accepted send;
+      every request and signature file deleted with rm -P; the watched
+      account removed. (C) HOT CANCEL, the cancel form of the waiting line
+      SEEN FOR THE FIRST TIME: a 1-wei send from Account 1 (the first
+      approval refused with the rehearsal note, the second accepted —
+      0x989945c9…ab96, nonce 36, never included) → Activity → Cancel
+      (prompt "Approve cancelling the transaction") → "Cancellation sent:
+      0x2dc5…ef4e replaces 0x9899…ab96 (nonce 36). Waiting for a block to
+      include one of them; this list checks again every 15 seconds and
+      then says which one was included." → "Cancelled: the cancellation
+      0x2dc5…ef4e was included in block 11952813, so transaction
+      0x9899…ab96 (nonce 36) will never be included." (tx
+      0x2dc566efec7a615b8a0cf54515f040c7c0903b23cdf160d21fe122f14bdfef4e,
+      self-transfer, exactly 12,000 gas at 43 wei; Account 1
+      1,756,233,893,662,609 wei, nonce 37). (D) DEEP LINKS — PASS (Expo Go
+      exp://127.0.0.1:8081/--/…, 0 prompts): home, inbox, activity?chain=
+      bitcoin ("Bitcoin activity"), receive?chain=solana ("Receive SOL"),
+      price-alerts, sessions each open their screen; a payment link
+      (ethereum:…@11155111?value=1e13) opens "Send ETH" with "This payment
+      request was opened from a link outside the wallet. Anyone can make
+      such a link; nothing is sent until you review and approve it." FIRST
+      and then the EIP-681 box with the fields filled (not sent);
+      refusals: &data=0x beside uri, &authorizationList=0x01 beside uri
+      and an unknown path → "This link does not open anything in Shiba
+      Wallet."; authorizationList INSIDE the URI → "This payment link was
+      not opened. This payment request contains the parameter
+      "authorizationList", which the format does not define for a plain
+      payment, so it was refused rather than half-read."; an approve URI →
+      "…This request asks to call the contract function "approve". Only
+      plain payments and token transfers are supported…"; chain id 1 →
+      "…is for Ethereum (chain id 1), but the wallet is on Ethereum
+      Sepolia (chain id 11155111). The wallet never switches networks for
+      a request…"; a bitcoin: link with the watched account active →
+      "This payment link is for Bitcoin, which the active account cannot
+      send from. Nothing was filled in."; a link while LOCKED showed only
+      the lock and acted once after Unlock (one prompt); a launch link
+      after a force-stop → the lock → Unlock → "Receive BTC" once, not
+      replayed by a later account switch. (E) SPANISH: the Language
+      section exact (System / English / Español, "In use now: English.",
+      the draft note, the amounts note "(0.5)", the shared-texts
+      sentence) — BUT CHOOSING A LANGUAGE FAILS: "The language could not
+      be saved on this phone, so it was not changed." (finding 1); with
+      Expo Go's per-app locale set to es-ES instead (`cmd locale
+      set-app-locales`, reset afterwards): the lock screen "Shiba Wallet
+      está bloqueada" / "El bloqueo automático está activado, así que la
+      billetera se inicia bloqueada…" / "La app se bloqueó sola después de
+      estar en segundo plano…" / "Desbloquear" (the biometric prompt stays
+      English), the banner "RED DE PRUEBA: el modo de prueba Sepolia está
+      activado. Los importes son ETH de prueba, no fondos reales.", Home
+      "Ajustes" / "Ocultar importes" / "Saldo 0.001756 test ETH" /
+      "Enviar" / "Actividad" / "Puente" / "Bandeja de entrada", Send
+      "Enviar ETH" / "Destinatario" / "Importe (test ETH)" / "Máx.",
+      Activity "hace 15 min" / "hace 4 h" / "11 oct 2026" with amounts
+      keeping ".", "Recibir test ETH", the Inbox fully Spanish, 28 Settings
+      titles; still English: "Accounts", "Records backup", "App PIN", "Add
+      a custom network", the switcher row, the Send recipient placeholder
+      and hint, "Request an amount", the Activity export note, the engine
+      sentences and the second half of the Home footer. (F) THE 8afc671
+      COPY: the Bridge screen on Base Sepolia shows the refusal sentence,
+      "The wallet lists every provider it knows, each with the reason it
+      cannot send from Base Sepolia, and never picks one for you." and
+      "Does not serve Base Sepolia in this wallet." with no chips or
+      amount field (the Hoodi no-rows state is unreachable: Hoodi's Home
+      has no Bridge link); the Inbox shows no lock note without a PIN.
+      PROMPTS: Unlock 6, the backup prompts 1 + 3, "Approve sending
+      0.00001 test ETH" 2, "Approve cancelling the transaction" 1; every
+      title read from the prompt window. FINDINGS (fix slice dispatched):
+      (1) LANGUAGE CANNOT BE SAVED AND THE INBOX IS ALWAYS EMPTY — Home
+      reads plain "Inbox" and the screen "Nothing yet…" although two cold
+      notices, the lost run's speed-up, the hot "Cancellation sent" alert
+      and the "Cancelled" notice were recorded; both paths use
+      store-keys.ts lazyAppStore(), a dynamic
+      import('@react-native-async-storage/async-storage'), while every
+      static AsyncStorage import works; a rejected inbox load looks like
+      an empty one and record() hides failures; whether the worktree's
+      Metro set-up (symlink farms + the watchFolders tweak) caused it is
+      being re-tested with real node_modules copies; (2) WRONG OUTCOME
+      TEXT — after the fresh nonce-6 send the view read "The original
+      transaction was included before the replacement; the replacement
+      will be rejected by the network. Transaction 0x23bf…3686 (nonce 6)
+      was included in block 11952645." and the row "Included before its
+      replacement (nonce 6); the replacement was rejected." — the reverse
+      of the chain; pending-transactions.ts groupStatus labels the
+      outcome by the mined version's action, so a plain 'send' at a
+      pending nonce becomes 'original-first' and the sentence names the
+      group's original hash; (3) a stuck cold-signed transaction cannot be
+      sped up or cancelled once its success view is closed — ActivityScreen
+      (~879) hides "Pending on this phone" for a watch-only account (a
+      stale comment from before 0b2d516); (4) the cold path's underpriced
+      refusal lacks the rehearsal note the hot alert carries, and its body
+      is not in the accessibility tree; (5) TEXT DRAWN BUT ABSENT FROM THE
+      ACCESSIBILITY TREE: the watch-only Home footer, the two deep-link
+      refusal banners (authorizationList, approve) and the cold refusal
+      body; (6) the cold token send's pending line reads "…(nonce 5) calls
+      0x1c7d…7238…" (the contract, not the amount and recipient); (7) no
+      Max on the cold-signing form; (8) an ethereum: deep link with a
+      watched account active opens Send's refusal, not the off-line signer
+      screen; (9) after a cancelled share chooser the section says "Backed
+      up 28 records (…)" although the file went nowhere; (10) the switcher
+      row and the Settings → Accounts row still say a watch-only account
+      "cannot send or sign"; (11) the Spanish gaps above; OBSERVATIONS: a
+      bitcoin: deep link opens a mainnet "Send BTC" while the app is in
+      test mode (nothing moves without Review and the prompt); publicnode's
+      backends disagree on the 'pending' nonce and on 1-wei transactions
+      (the reth backend null, the geth backend pooled); publicnode
+      returned a null receipt for the USDC send at first. DRIVING NOTES:
+      Expo Go's per-app locale is a working stand-in for the in-app
+      setting; the lost run's helpers are gone — this pass's env.sh,
+      qr.cjs, bal.mjs, tx.mjs and wrongsig.mjs are in .local/helpers/p22b.
+      UNVERIFIED: inbox entries, times, "Mark all read" and tap-to-open
+      (no entry ever appeared); Spanish through the in-app setting;
+      TalkBack in Spanish; the Hoodi Bridge no-rows state; the inbox notes
+      under a PIN or passphrase; getInitialURL's value; saving a backup
+      through the chooser (no account on this AVD); a cold-path Cancel;
+      iOS. END STATE: Home, Ethereum Sepolia, Account 1, light mode,
+      Language System, the Expo Go locale reset, protection OFF, the
+      minimum-fee switch OFF, TalkBack never enabled, no watched account,
+      IME ADBKeyboard, Metro on 8081 from wt-app, caffeinate running.
 - [x] Item 5 — LEADERSHIP REFRESH (docs commit below; check-readiness 208,
       check-screen-protection 87, check-devmode 418, check-notifications
       184, check-duress 113, check-multisig 424 all green in the CTO's
