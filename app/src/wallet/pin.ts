@@ -875,11 +875,21 @@ export function lockCheckFailedMessage(kind: LockKind): string {
  * record's kind (outcome.lock; a PIN when absent).
  */
 export function pinAttemptMessage(outcome: PinAttemptOutcome, now: number): string | null {
-  const ids = ATTEMPT_WORDS[outcome.kind !== 'no-pin' && outcome.lock === 'phr' ? 'phr' : 'pin'];
-  if (outcome.kind === 'wrong') return outcome.until > now ? `${t(ids.wrong)} ${tryAgainSentence(outcome.until, now)}` : `${t(ids.wrong)} ${t('lock.tryAgain')}`;
-  if (outcome.kind === 'wait') return outcome.until > now ? `${t(ids.tooMany)} ${tryAgainSentence(outcome.until, now)}` : t(ids.over);
+  return outcome.kind === 'opened' ? null : pinRefusalMessage(outcome, now);
+}
+
+/**
+ * The same sentence for an attempt that did not open a wallet, typed so it
+ * always has one: WalletContext narrows the outcome to "not opened" and calls
+ * this, so it needs no fallback literal (it used to fall back to an English
+ * "Wrong PIN. Try again." that could never be reached and would have named a
+ * PIN under a passphrase lock).
+ */
+export function pinRefusalMessage(outcome: Exclude<PinAttemptOutcome, { kind: 'opened' }>, now: number): string {
   if (outcome.kind === 'no-pin') return t('lock.noPin');
-  return null;
+  const ids = ATTEMPT_WORDS[outcome.lock === 'phr' ? 'phr' : 'pin'];
+  if (outcome.kind === 'wrong') return outcome.until > now ? `${t(ids.wrong)} ${tryAgainSentence(outcome.until, now)}` : `${t(ids.wrong)} ${t('lock.tryAgain')}`;
+  return outcome.until > now ? `${t(ids.tooMany)} ${tryAgainSentence(outcome.until, now)}` : t(ids.over);
 }
 
 /**

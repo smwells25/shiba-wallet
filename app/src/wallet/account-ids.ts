@@ -212,10 +212,21 @@ export function defaultWatchOnlyName(slot: number): string {
  */
 export const WATCH_ONLY_NAME_SUFFIX = ' (watch-only)';
 
-/** The notice on Home and in the account lists while a watch-only account is shown. */
+/**
+ * The notice on Home and in the account lists while a watch-only account is
+ * shown (also Receive, Portfolio, the route gate's refusal and every phase of
+ * the off-line signer screen). Phase 22 pass p22a: it said the wallet "cannot
+ * send" for the address, which the off-line signer screen (cold signing,
+ * feature 11) made untrue — that screen showed it directly above "You can
+ * still prepare a send here". It now says what is true on every one of those
+ * screens: the wallet cannot SIGN, swap or recover for the address, and a send
+ * can be prepared for an off-line signer (named by the Home link's words, as
+ * watch-only.ts watchOnlyFooterText does).
+ */
 export const WATCH_ONLY_NOTICE =
-  'Watch-only: this wallet can show this address but holds no key for it. It cannot send, sign or ' +
-  'recover anything for it.';
+  'Watch-only: this wallet can show this address but holds no key for it, so it cannot sign, swap or ' +
+  'recover anything for it. A send on an Ethereum network can still be prepared with "Send with an ' +
+  'off-line signer" and signed by an off-line signer that holds its key.';
 
 /** Thrown by every signing path while a watch-only account is active (WalletContext.signWith). */
 export const WATCH_ONLY_SIGN_REFUSAL =

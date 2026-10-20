@@ -620,11 +620,29 @@ export function ColdSignScreen({ route, navigation }: Props) {
       {replace ? null : (
         <>
           <Text accessibilityRole="header" style={[styles.heading, { color: theme.text }]}>What to send</Text>
+          {/* Choice chips (pass p22a finding 2): the chosen asset is drawn
+              like every other chip row in the app (Settings → Developer's
+              network chips): a leading "✓" and the primary fill, with
+              accessibilityState selected for screen readers (Button drops
+              the "✓" from the spoken label). */}
           <View style={styles.row}>
-            <Button title={symbol} variant="secondary" selected={tokenId === null} onPress={() => setTokenId(null)} />
+            <Button
+              title={assetChipTitle(symbol, tokenId === null)}
+              variant={tokenId === null ? 'primary' : 'secondary'}
+              selected={tokenId === null}
+              onPress={() => setTokenId(null)}
+            />
             {tokens.map((t) => {
               const id = formatAssetId(t.assetId);
-              return <Button key={id} title={t.symbol} variant="secondary" selected={tokenId === id} onPress={() => setTokenId(id)} />;
+              return (
+                <Button
+                  key={id}
+                  title={assetChipTitle(t.symbol, tokenId === id)}
+                  variant={tokenId === id ? 'primary' : 'secondary'}
+                  selected={tokenId === id}
+                  onPress={() => setTokenId(id)}
+                />
+              );
             })}
           </View>
           {token ? (
@@ -685,6 +703,11 @@ export function ColdSignScreen({ route, navigation }: Props) {
     </ScrollView>
   );
 
+}
+
+/** A choice chip's visible title: "✓ " before the chosen one (as Settings' network chips). */
+function assetChipTitle(label: string, chosen: boolean): string {
+  return chosen ? `✓ ${label}` : label;
 }
 
 const styles = StyleSheet.create({

@@ -1383,7 +1383,9 @@ function CustomNetworksSection({
 
   return (
     <View style={styles.section}>
-      <Text style={[styles.toggleLabel, { color: theme.text }]}>Networks you added</Text>
+      {/* A sub-heading (pass p22a finding 4), like "Test network" above it
+          and the Notifications sub-heading in Privacy. */}
+      <Text accessibilityRole="header" style={[styles.toggleLabel, { color: theme.text }]}>Networks you added</Text>
       {customNetworks.length > 0 ? (
         <View style={styles.choiceChips}>
           {customNetworks.map((p) => {
@@ -2892,7 +2894,7 @@ export function SettingsScreen({ navigation, route }: Props) {
 
       <View style={styles.section}>
         <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Developer</T></Text>
-        <Text style={[styles.toggleLabel, { color: theme.text }]}>Test network</Text>
+        <Text accessibilityRole="header" style={[styles.toggleLabel, { color: theme.text }]}>Test network</Text>
         <View style={styles.choiceChips}>
           {[
             { label: 'Off (mainnet)', value: null },

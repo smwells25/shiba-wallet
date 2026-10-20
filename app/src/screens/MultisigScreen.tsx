@@ -660,7 +660,13 @@ export function MultisigScreen() {
         <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>New multi-signature account</Text>
         <Text style={[styles.hint, { color: theme.text }]}>{MULTISIG_FRESH_DEPLOY_NOTE}</Text>
         {phraseSigner ? (
-          <InfoRow label="This wallet’s signer (the active account)" value={phraseSigner} sub={activeAccount?.name ?? null} monoValue />
+          <InfoRow
+            label="This wallet’s signer (the active account)"
+            value={phraseSigner}
+            spokenValue={spokenShortAddress(phraseSigner)}
+            sub={activeAccount?.name ?? null}
+            monoValue
+          />
         ) : (
           <WarningBox>{MULTISIG_PHRASE_SIGNER_ONLY}</WarningBox>
         )}
@@ -688,8 +694,6 @@ export function MultisigScreen() {
               value={c.weight}
               onChangeText={(text) => setCosigners((prev) => prev.map((x, j) => (j === i ? { ...x, weight: text } : x)))}
               keyboardType="number-pad"
-              placeholder="Weight"
-              placeholderTextColor={theme.textMuted}
               style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
             />
             {cosigners.length > 1 ? (
@@ -935,7 +939,7 @@ export function MultisigScreen() {
           {...fieldLabel('op-amount', `Amount in ${symbolFor(asset)}`).input}
           value={amount}
           onChangeText={setAmount}
-          placeholder={`Amount (${symbolFor(asset)})`}
+          placeholder="0.0"
           placeholderTextColor={theme.textMuted}
           keyboardType="decimal-pad"
           style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
@@ -1151,7 +1155,16 @@ export function MultisigScreen() {
         <InfoRow label="Account" value={importParsed.facts.account} sub={`Chain id ${importParsed.facts.chainId} · CREATE2 index ${importParsed.facts.index}`} monoValue />
         {importParsed.config.signers.map((s) => {
           const own = ownAccounts.find((a) => a.address.toLowerCase() === s.address.toLowerCase());
-          return <InfoRow key={s.address} label={own ? `Signer: ${own.name} (this wallet)` : 'Signer'} value={s.address} sub={`weight ${s.weight}`} monoValue />;
+          return (
+            <InfoRow
+              key={s.address}
+              label={own ? `Signer: ${own.name} (this wallet)` : 'Signer'}
+              value={s.address}
+              spokenValue={spokenShortAddress(s.address)}
+              sub={`weight ${s.weight}`}
+              monoValue
+            />
+          );
         })}
         <InfoRow label="Threshold" value={String(importParsed.config.threshold)} />
         {errorBox}

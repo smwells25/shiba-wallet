@@ -190,7 +190,7 @@ export function SaveContactInline({
           setName(t);
           setError(null);
         }}
-        placeholder="Name"
+        placeholder="For example Alice"
         placeholderTextColor={theme.textMuted}
         autoCorrect={false}
         maxLength={MAX_CONTACT_NAME_LENGTH * 2}

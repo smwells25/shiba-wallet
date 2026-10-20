@@ -209,6 +209,21 @@ export function pinCostPlatformText(p: PinCostPlatform, hashPath?: PinCostHashPa
     : `${base} · Hashing: ${start} at the start, then ${end} after the native hash failed during the run`;
 }
 
+/**
+ * The platform line as a screen reader should say it (pass p22a finding 4):
+ * TalkBack spelled "(__DEV__)" as "2 Underscore DEV 2 Underscore", and the
+ * " · " separators are punctuation, not words. Same facts in plain words:
+ * "Platform: android. Hermes: yes. Development bundle: no. Hashing: native
+ * scrypt (react-native-quick-crypto)." The visible line is unchanged.
+ */
+export function pinCostPlatformSpokenText(p: PinCostPlatform, hashPath?: PinCostHashPath): string {
+  const parts = pinCostPlatformText(p, hashPath)
+    .replace(' development bundle (__DEV__): ', ' Development bundle: ')
+    .split(' · ')
+    .map((part) => part.trim());
+  return `${parts.join('. ')}.`;
+}
+
 export const PIN_COST_RESULT_NOTE =
   'Each figure is one hash. Unlocking with the app PIN computes two hashes at the PIN\'s size. Nothing was stored.';
 

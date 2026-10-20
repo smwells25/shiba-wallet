@@ -669,6 +669,33 @@ console.log('check-cold-signing: zero secure-store reads, no signing anywhere in
     screen.includes('...(minimumFeeRehearsalArmed(evmChain.caip2) ? { minimumFee: true } : {}),') && onBroadcast.includes('consumeMinimumFeeRehearsal(quote);') &&
       screen.includes('<WarningBox>{MINIMUM_FEE_REHEARSAL_WARNING}</WarningBox>'));
   check('the success view shows the pending card (Speed up / Cancel) and the note field', screen.includes('<PendingTransactionsSection from={from} onlyHash={result.txid} />') && screen.includes('<TransactionNoteField'));
+  // Pass p22a finding 2: the asset chips showed no chosen state although the
+  // amount label followed the chosen asset. Every chip in the "What to send"
+  // row is drawn like Settings' network chips: one condition decides the
+  // "✓" title, the primary fill and accessibilityState selected together.
+  const chipProblems = (raw) => {
+    const at = raw.indexOf('>What to send</Text>');
+    const row = at < 0 ? '' : raw.slice(at, raw.indexOf('</View>', at));
+    const buttons = [...row.matchAll(/<Button\b([\s\S]*?)\/>/g)].map((m) => m[1]);
+    const out = [];
+    if (buttons.length !== 2) out.push(`${buttons.length} chip Buttons in the row (want the native coin and the token map)`);
+    for (const b of buttons) {
+      const sel = /selected=\{([^}]+)\}/.exec(b)?.[1];
+      if (!sel) { out.push('a chip without selected'); continue; }
+      if (!b.includes(`variant={${sel} ? 'primary' : 'secondary'}`)) out.push(`chip ${sel}: its fill does not follow the choice`);
+      if (!new RegExp(`title=\\{assetChipTitle\\([^,]+, ${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)\\}`).test(b)) out.push(`chip ${sel}: its title has no "✓" for the choice`);
+    }
+    return out;
+  };
+  check('p22a finding 2: the asset chips mark the chosen one: a "✓" title, the primary fill and accessibilityState selected, from one condition (source)',
+    chipProblems(screen).length === 0 && screen.includes('return chosen ? `✓ ${label}` : label;'), chipProblems(screen).join('; '));
+  check('…mutant caught: the old chips, all secondary with no mark',
+    chipProblems(screen.replace("variant={tokenId === null ? 'primary' : 'secondary'}", 'variant="secondary"')).length === 1 &&
+      chipProblems(screen.replace('title={assetChipTitle(t.symbol, tokenId === id)}', 'title={t.symbol}')).length === 1);
+  const components = source('src/components.tsx');
+  check('…and Button reports selected to screen readers and leaves the "✓" out of the spoken label (components.tsx)',
+    components.includes('accessibilityState={{ disabled, ...(selected !== undefined ? { selected } : {}) }}') &&
+      components.includes("accessibilityLabel ?? (selected !== undefined ? title.replace(/^✓\\s*/, '') : undefined);"));
 }
 
 // ===========================================================================

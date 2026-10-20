@@ -2020,11 +2020,27 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
       };
       const texts = (expr) => [...new Set([...literals(expr).filter((x) => !Object.hasOwn(EN_TABLE, x)), ...accessorTexts(expr)])];
       const norm = (t) => t.toLowerCase().replace(/[^a-z0-9$]/g, '');
+      // Pass p22a: a placeholder whose every word is already a word of the
+      // caption repeats it too — the co-signer weight field ("Weight" under
+      // the caption "Co-signer 1 weight") was read "1. Edit box. Weight for
+      // Co-signer 1 weight": once filled, TalkBack read the value, then the
+      // placeholder (the EditText's hint, ReactEditText.kt :563–568), then
+      // the caption it is labelled by. Words are compared lower-cased, split
+      // on everything but letters, digits and "$".
+      const words = (t) => t.toLowerCase().split(/[^a-z0-9$]+/).filter(Boolean);
       const same = (a, b) => {
         const la = texts(a);
         const lb = texts(b);
         if (la.length === 0 && lb.length === 0) return a.replace(/\s+/g, '') === b.replace(/\s+/g, '');
-        return la.some((x) => norm(x) !== '' && lb.some((y) => norm(x) === norm(y)));
+        return la.some((x) => norm(x) !== '' && lb.some((y) => {
+          if (norm(x) === norm(y)) return true;
+          const capWords = new Set(words(x));
+          // A web-address example ("https://…" under "RPC endpoint (https)")
+          // shows a format, not the field's name, and is left alone.
+          if (y.includes('://')) return false;
+          const phWords = words(y);
+          return phWords.length > 0 && phWords.every((w) => capWords.has(w));
+        }));
       };
       // The value of a JSX prop: "…", '…' or {…} (brace depth aware).
       const prop = (tag, name) => {
@@ -2102,6 +2118,15 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
         noteTag !== undefined && texts(caption(activity, noteTag) ?? '').includes('Note (private, this phone only)') &&
           JSON.stringify(texts(prop(noteTag, 'placeholder') ?? '')) === JSON.stringify(['For example: rent for October']) &&
           EN_TABLE['activity.note.placeholder'] === 'For example: rent for October');
+      check('…mutant caught (p22a): the co-signer weight field\'s placeholder "Weight" again (every word already in its caption "Co-signer N weight")',
+        placeholderProblems(withFile('screens/MultisigScreen.tsx', "keyboardType=\"number-pad\"\n              style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}\n            />\n            {cosigners.length > 1",
+          "keyboardType=\"number-pad\"\n              placeholder=\"Weight\"\n              style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}\n            />\n            {cosigners.length > 1")).length === 1);
+      check('…mutant caught (p22a): the Contacts name field\'s placeholder "Name" again (a word of its caption "Contact name")',
+        placeholderProblems(withFile('screens/ContactsScreen.tsx', 'placeholder="For example Alice"', 'placeholder="Name"')).length === 1);
+      check('…mutant caught (p22a): the multisig amount placeholder `Amount (<coin>)` again under the caption `Amount in <coin>`',
+        placeholderProblems(withFile('screens/MultisigScreen.tsx', '          placeholder="0.0"\n', '          placeholder={`Amount (${symbolFor(asset)})`}\n')).length === 1);
+      check('…and a web-address example is not flagged although "https" is a word of its caption (Settings\' "https://…" under "RPC endpoint (https)")',
+        placeholderProblems(files).every((x) => !x.includes('https://')) && files.find((x) => x.f === 'screens/SettingsScreen.tsx').src.includes("{field('rpcUrl', 'RPC endpoint (https)', 'https://…', 'url')}"));
       check('…mutant caught (polish): the Activity note placeholder through tx() equal to its caption',
         placeholderProblems(withFile('screens/ActivityScreen.tsx', "placeholder={tx('For example: rent for October')}", "placeholder={tx('Note (private, this phone only)')}")).length === 1);
       check('…mutant caught (polish): the Activity note placeholder through t(\'id\') whose English is its caption (resolved through the English table)',
@@ -2195,6 +2220,17 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
       named('screens/SettingsScreen.tsx', '<Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>{SCREEN_PROTECTION_TITLE}</Text>') &&
       named('screens/SettingsScreen.tsx', '<Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Swaps</Text>') &&
       named('screens/SettingsScreen.tsx', '<Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Developer</Text>'));
+  // Pass p22a finding 4: inside Developer, "Networks you added" (just below
+  // the PIN-cost card) was not a heading while its neighbours were; it and
+  // "Test network" are sub-headings now (drawn in the toggle-label style,
+  // which the title-style scan above does not cover).
+  const devSubHeadings = (src) =>
+    src.includes('<Text accessibilityRole="header" style={[styles.toggleLabel, { color: theme.text }]}>Networks you added</Text>') &&
+    src.includes('<Text accessibilityRole="header" style={[styles.toggleLabel, { color: theme.text }]}>Test network</Text>');
+  const settingsSrcForHeadings = files.find((x) => x.f === 'screens/SettingsScreen.tsx').src;
+  check('p22a finding 4: Settings → Developer\'s "Test network" and "Networks you added" are headings (source)', devSubHeadings(settingsSrcForHeadings));
+  check('…mutant caught: "Networks you added" without the heading role',
+    !devSubHeadings(settingsSrcForHeadings.replace('<Text accessibilityRole="header" style={[styles.toggleLabel, { color: theme.text }]}>Networks you added', '<Text style={[styles.toggleLabel, { color: theme.text }]}>Networks you added')));
 
   // (14) Every Switch takes its colours from switchColors(theme): the off
   // track is the palette's controlBorder, not the platform default that

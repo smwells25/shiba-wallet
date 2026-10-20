@@ -22,7 +22,7 @@ export const es: Readonly<Partial<Record<StringId, string>>> = {
   'common.and': 'y',
   'card.testNetworksOnly.title': '{title}: solo redes de prueba',
   'notice.importedKey': 'Esta cuenta proviene de una clave privada importada. Tu frase de recuperación NO la respalda: si pierdes este teléfono o se elimina la billetera, la cuenta y sus fondos se pierden, salvo que hayas guardado tú mismo la clave privada.',
-  'notice.watchOnly': 'Solo lectura: esta billetera puede mostrar esta dirección, pero no tiene ninguna clave para ella. No puede enviar, firmar ni recuperar nada para ella.',
+  'notice.watchOnly': 'Solo lectura: esta billetera puede mostrar esta dirección, pero no tiene ninguna clave para ella, así que no puede firmar, intercambiar ni recuperar nada para ella. En una red de Ethereum aún se puede preparar un envío con «Enviar con un firmante sin conexión» y que lo firme un firmante sin conexión que tenga su clave.',
   // ---- App.tsx: the TESTNET banner and the header ----
   'banner.testnet': 'RED DE PRUEBA: el modo de prueba {network} está activado. Los importes son ETH de prueba, no fondos reales.',
   'banner.testnet.custom': 'RED DE PRUEBA: el modo de prueba {network} está activado (una red que añadiste). Los importes son {symbol} de prueba, no fondos reales.',

@@ -357,7 +357,7 @@ export function ContactsScreen(_props: Props) {
             setName(t);
             setAddError(null);
           }}
-          placeholder="Name"
+          placeholder="For example Alice"
           placeholderTextColor={theme.textMuted}
           autoCorrect={false}
           maxLength={MAX_CONTACT_NAME_LENGTH * 2}
