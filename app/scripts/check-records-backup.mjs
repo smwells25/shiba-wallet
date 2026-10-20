@@ -475,9 +475,20 @@ let exported;
     byKind.contacts === 3 && byKind.notes === 2 && byKind['custom-networks'] === 1 && byKind.tokens === 4 && byKind['recovery-records'] === 1 &&
       byKind.multisig === 1 && byKind['bridge-transfers'] === 1 && byKind['price-alerts'] === 4 && byKind['spending-limits'] === 1 && exported.total === 18,
     JSON.stringify(byKind));
-  check('the export summary sentence', rb.describeRecordsExport(exported) ===
-    'Backed up 18 records (Networks you added: 1; Contacts: 3; Tracked tokens: 4; Transaction notes: 2; Guardian recovery records: 1; ' +
-      'Multi-signature accounts: 1; Bridge transfers: 1; Price alerts and followed prices: 4; Spending limits: 1).', rb.describeRecordsExport(exported));
+  // Pass p22b: "Backed up 28 records" was shown after the share sheet was
+  // cancelled; shareAsync resolves either way, so the line says only that
+  // the file was prepared and handed to the sheet.
+  check('the export summary sentence (p22b: prepared and handed to the share sheet; whether it was saved is not known)', rb.describeRecordsExport(exported) ===
+    'A backup of 18 records was prepared and handed to the share sheet (Networks you added: 1; Contacts: 3; Tracked tokens: 4; Transaction notes: 2; Guardian recovery records: 1; ' +
+      'Multi-signature accounts: 1; Bridge transfers: 1; Price alerts and followed prices: 4; Spending limits: 1). Whether it was saved depends on what you chose there; this wallet cannot tell.', rb.describeRecordsExport(exported));
+  check('…never "Backed up" (the wallet cannot tell whether the file was saved)', !/Backed up/.test(rb.describeRecordsExport(exported)) &&
+    rb.describeRecordsExport({ summary: [], total: 1 }) === 'A backup of 1 record was prepared and handed to the share sheet. Whether it was saved depends on what you chose there; this wallet cannot tell.');
+  {
+    // The fact behind the wording, read from the installed expo-sharing.
+    const kt = readFileSync(join(APP, 'node_modules/expo-sharing/android/src/main/java/expo/modules/sharing/SharingModule.kt'), 'utf8');
+    check('…because expo-sharing resolves shareAsync on ANY activity result (Android: OnActivityResult resolves null without reading the result code)',
+      /OnActivityResult \{ _, \(requestCode\) ->\s*if \(requestCode == REQUEST_CODE && pendingPromise != null\) \{\s*pendingPromise\?\.resolve\(null\)/.test(kt));
+  }
   check('the file name carries the date only', exported.fileName === 'shiba-records-backup_2026-10-19.txt');
 
   // Restore on a fresh phone (same phrase).

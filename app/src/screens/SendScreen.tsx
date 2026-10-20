@@ -2620,7 +2620,7 @@ export function SendScreen({ route, navigation }: Props) {
             setRequestError(null);
             setRecipient(t);
           }}
-          placeholder={sendRecipientPlaceholder({ namesOffered, ethereum: Boolean(token || nftMode), symbol: account.symbol })}
+          placeholder={localize(sendRecipientPlaceholder({ namesOffered, ethereum: Boolean(token || nftMode), symbol: account.symbol }))}
           placeholderTextColor={theme.textMuted}
           autoCapitalize="none"
           autoCorrect={false}
@@ -2641,7 +2641,7 @@ export function SendScreen({ route, navigation }: Props) {
         />
       </View>
       {namesOffered ? (
-        <Text style={[styles.hint, { color: theme.textMuted }]}>{SEND_RECIPIENT_NAMES_HINT}</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}><T>{SEND_RECIPIENT_NAMES_HINT}</T></Text>
       ) : null}
       {/*
         Scanned payloads go through extractScannedAddress (strips only the

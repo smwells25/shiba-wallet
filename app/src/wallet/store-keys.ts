@@ -502,19 +502,30 @@ export function deleteSecureItem(
 }
 
 /**
- * The app's default store, loaded only on first use (for modules that do not
- * want AsyncStorage evaluated at import time, e.g. the notification
- * controller). Same calls as the store itself, so access still goes through
- * readStoreItem / writeStoreItem.
+ * The app's default store for modules that take it through this function
+ * (the inbox, the language choice, the notification controller). Same calls
+ * as the store itself, so access still goes through readStoreItem /
+ * writeStoreItem.
+ *
+ * Pass p22b: this used to load AsyncStorage through a dynamic
+ * `import('@react-native-async-storage/async-storage')`. On the device the
+ * language could not be saved and the inbox never listed anything, while
+ * every caller of the static AsyncStorage binding worked; the two failing
+ * paths were exactly the users of this function. A dynamic import is an
+ * asynchronous chunk in Metro (with lazy bundling it is fetched from the
+ * development server when first called), so it can fail where a static
+ * import cannot. Nothing was deferred by it either: this module already
+ * imports AsyncStorage statically (line 30 above), so the package is
+ * evaluated whenever this module is. The store is therefore the module's
+ * own static binding, read when each call is made — no asynchronous chunk,
+ * no `require` of a module this file already holds. The calls stay async so
+ * a synchronous throw from the native module still arrives as a rejection,
+ * as it did before. scripts/check-storage-seam.mjs forbids a dynamic import
+ * of the package anywhere in src.
  */
 export function lazyAppStore(): KeyValueStore {
-  let storePromise: Promise<KeyValueStore> | null = null;
-  const store = (): Promise<KeyValueStore> => {
-    if (!storePromise) storePromise = import('@react-native-async-storage/async-storage').then((m) => m.default);
-    return storePromise;
-  };
   return {
-    getItem: async (k) => (await store()).getItem(k),
-    setItem: async (k, v) => (await store()).setItem(k, v),
+    getItem: async (k) => AsyncStorage.getItem(k),
+    setItem: async (k, v) => AsyncStorage.setItem(k, v),
   };
 }

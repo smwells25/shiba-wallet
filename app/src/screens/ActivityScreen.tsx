@@ -873,12 +873,17 @@ export function ActivityScreen({ navigation, route }: Props) {
     </View>
   ) : null;
 
-  // Pending transactions on this phone (feature 95): a regular account on
-  // the EVM slot only (watch-only and multisig accounts send nothing from
-  // this phone through sendEvm). Shown above every state of the history,
-  // because a pending transaction is in no history yet.
+  // Pending transactions on this phone (feature 95): a regular or a
+  // watch-only account on the EVM slot (a multisig sends nothing from this
+  // phone through sendEvm). A watch-only account's sends are prepared on the
+  // cold-signing screen (phase 22 item 3) and recorded like every send; its
+  // card's Speed up / Cancel open that screen in replacement mode
+  // (PendingTransactions coldReplace), so a stuck cold-signed transaction can
+  // be replaced after its success view was closed (pass p22b: this section
+  // was hidden for watch-only accounts, so it could not). Shown above every
+  // state of the history, because a pending transaction is in no history yet.
   const pendingSection =
-    isEvmSlot && account && activeAccount?.watchOnly !== true && activeAccount?.multisig !== true ? (
+    isEvmSlot && account && activeAccount?.multisig !== true ? (
       <PendingTransactionsSection
         from={account.address}
         onChanged={reloadPendingRecords}

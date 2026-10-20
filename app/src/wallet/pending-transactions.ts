@@ -191,8 +191,18 @@ export function userOpOrigin(record: Pick<PendingUserOpRecord, 'origin'>): AaOpe
   return record.origin ?? 'send';
 }
 
-/** What happened to a nonce that had a replacement, kept briefly for display. */
-export type ResolvedOutcome = 'replaced' | 'cancelled' | 'original-first';
+/**
+ * What happened to a nonce that had more than one broadcast, kept briefly
+ * for display: a speed-up included ('replaced'), a cancellation included
+ * ('cancelled'), the original included although a speed-up or cancellation
+ * was sent ('original-first'), or — pass p22b — one ordinary send included
+ * while another ordinary send with the same nonce was never included
+ * ('superseded': for example a stuck minimum-fee rehearsal followed by a
+ * fresh send that reused its nonce).
+ */
+export type ResolvedOutcome = 'replaced' | 'cancelled' | 'original-first' | 'superseded';
+
+const RESOLVED_OUTCOMES: readonly ResolvedOutcome[] = ['replaced', 'cancelled', 'original-first', 'superseded'];
 
 export interface ResolvedRecord {
   kind: 'resolved';
@@ -206,7 +216,12 @@ export interface ResolvedRecord {
   block: string;
   /** False when the included transaction reverted; null when no receipt was returned. */
   success: boolean | null;
-  /** The wallet's original transaction for this nonce. */
+  /**
+   * The transaction the included one stands in for: for 'replaced' and
+   * 'cancelled' the ordinary send its replacement chain started from; for
+   * 'original-first' the original itself (= minedHash); for 'superseded' the
+   * ordinary send that will never be included.
+   */
   original: string;
   /** Every hash broadcast for this nonce, oldest first. */
   hashes: string[];
@@ -508,7 +523,7 @@ function validResolved(r: Record<string, unknown>): ResolvedRecord | null {
   if (typeof r.chain !== 'string' || !CHAIN.test(r.chain)) return null;
   if (typeof r.from !== 'string' || !ADDRESS.test(r.from)) return null;
   if (typeof r.nonce !== 'string' || !DECIMAL.test(r.nonce)) return null;
-  if (r.outcome !== 'replaced' && r.outcome !== 'cancelled' && r.outcome !== 'original-first') return null;
+  if (!RESOLVED_OUTCOMES.includes(r.outcome as ResolvedOutcome)) return null;
   if (typeof r.minedHash !== 'string' || !HASH.test(r.minedHash)) return null;
   if (typeof r.block !== 'string' || !DECIMAL.test(r.block)) return null;
   if (typeof r.success !== 'boolean' && r.success !== null) return null;
@@ -526,7 +541,7 @@ function validMarker(r: Record<string, unknown>): ReplacementMarker | null {
   if (typeof r.chain !== 'string' || !CHAIN.test(r.chain)) return null;
   if (typeof r.from !== 'string' || !ADDRESS.test(r.from)) return null;
   if (typeof r.nonce !== 'string' || !DECIMAL.test(r.nonce)) return null;
-  if (r.outcome !== 'replaced' && r.outcome !== 'cancelled' && r.outcome !== 'original-first') return null;
+  if (!RESOLVED_OUTCOMES.includes(r.outcome as ResolvedOutcome)) return null;
   if (typeof r.minedHash !== 'string' || !HASH.test(r.minedHash)) return null;
   if (typeof r.original !== 'string' || !HASH.test(r.original)) return null;
   if (!isTime(r.markedAt)) return null;
@@ -969,11 +984,63 @@ export type GroupStatus =
   | { state: 'nonce-used'; latestNonce: bigint };
 
 /**
+ * The ordinary send a broadcast stands for: a speed-up or cancellation's
+ * `replaces` chain followed back (within the group) to the first 'send'.
+ * Falls back to the group's original when the chain leaves the group.
+ */
+export function rootSendOf(group: NonceGroup, tx: PendingTxRecord): PendingTxRecord {
+  let current: PendingTxRecord = tx;
+  for (let i = 0; i <= group.txs.length && current.action !== 'send'; i += 1) {
+    const previous = current.replaces ? group.txs.find((t) => t.hash === current.replaces) : undefined;
+    if (!previous) return group.original;
+    current = previous;
+  }
+  return current.action === 'send' ? current : group.original;
+}
+
+/**
+ * What it means that a block included `mined`, decided by WHICH broadcast
+ * it was (pass p22b: the outcome used to follow only the included
+ * broadcast's action, so a fresh ordinary send that reused a stuck nonce was
+ * reported as "the original was included before the replacement", naming
+ * the stuck one — the reverse of the chain):
+ *  - the only broadcast of its nonce → 'mined' (nothing to say);
+ *  - a speed-up → 'replaced'; a cancellation → 'cancelled';
+ *  - the original (oldest ordinary send) while a speed-up or cancellation
+ *    was also sent → 'original-first';
+ *  - any other case of an ordinary send included while another ordinary
+ *    send of the same nonce exists → 'superseded' (the original itself
+ *    included with only other ordinary sends beside it too: those can then
+ *    never be included, which deserves the same notice).
+ */
+export function minedOutcome(group: NonceGroup, mined: PendingTxRecord): 'mined' | ResolvedOutcome {
+  if (group.txs.length < 2) return 'mined';
+  if (mined.action === 'speed-up') return 'replaced';
+  if (mined.action === 'cancel') return 'cancelled';
+  if (mined.hash === group.original.hash && group.txs.some((t) => t.action !== 'send')) return 'original-first';
+  return 'superseded';
+}
+
+/**
+ * The broadcast a resolved notice names besides the included one (its
+ * `original` field): see ResolvedRecord.original.
+ */
+export function resolvedOriginalFor(group: NonceGroup, mined: PendingTxRecord, outcome: ResolvedOutcome): string {
+  if (outcome === 'original-first') return group.original.hash;
+  if (outcome === 'superseded') {
+    if (mined.hash !== group.original.hash) return group.original.hash;
+    // The original was included: name the newest other ordinary send.
+    const others = group.txs.filter((t) => t.hash !== mined.hash && t.action === 'send');
+    return (others[others.length - 1] ?? group.txs.find((t) => t.hash !== mined.hash) ?? group.original).hash;
+  }
+  return rootSendOf(group, mined).hash;
+}
+
+/**
  * Where one nonce stands: a receipt for any of its broadcasts decides it
- * ('mined', with the outcome — 'original-first' when the original was
- * included although a replacement was sent); without one, a 'latest' nonce
- * above it means the nonce was used by something this wallet has no receipt
- * for ('nonce-used'); otherwise it is 'pending'.
+ * ('mined', with the outcome from minedOutcome); without one, a 'latest'
+ * nonce above it means the nonce was used by something this wallet has no
+ * receipt for ('nonce-used'); otherwise it is 'pending'.
  */
 export async function groupStatus(reader: ChainReader, group: NonceGroup): Promise<GroupStatus> {
   for (const tx of [...group.txs].reverse()) {
@@ -987,14 +1054,7 @@ export async function groupStatus(reader: ChainReader, group: NonceGroup): Promi
       if (listed && listed.blockNumber !== null) receipt = { blockNumber: listed.blockNumber, success: null };
     }
     if (receipt) {
-      const replaced = group.txs.length > 1;
-      const outcome: 'mined' | ResolvedOutcome = !replaced
-        ? 'mined'
-        : tx.action === 'speed-up'
-          ? 'replaced'
-          : tx.action === 'cancel'
-            ? 'cancelled'
-            : 'original-first';
+      const outcome = minedOutcome(group, tx);
       return { state: 'mined', hash: tx.hash, block: receipt.blockNumber, success: receipt.success, outcome, action: tx.action };
     }
   }
@@ -1016,16 +1076,18 @@ export function resolvedRecordFor(
   nowMs: number,
 ): ResolvedRecord | null {
   if (status.outcome === 'mined') return null;
+  const minedHash = lower(status.hash);
+  const mined = group.txs.find((t) => t.hash === minedHash) ?? group.original;
   return {
     kind: 'resolved',
     chain: group.chain,
     from: group.from,
     nonce: group.nonce,
     outcome: status.outcome,
-    minedHash: lower(status.hash),
+    minedHash,
     block: status.block.toString(),
     success: status.success,
-    original: group.original.hash,
+    original: resolvedOriginalFor(group, mined, status.outcome),
     hashes: group.txs.map((t) => t.hash),
     resolvedAt: nowMs,
   };
@@ -1248,6 +1310,12 @@ export function resolvedSentence(r: ResolvedRecord): string {
       `${shortHash(r.original)} (nonce ${r.nonce}) will never be included.${reverted}`
     );
   }
+  if (r.outcome === 'superseded') {
+    return (
+      `Transaction ${shortHash(r.original)} (nonce ${r.nonce}) was superseded by ${shortHash(r.minedHash)}, included in ` +
+      `block ${r.block}; ${shortHash(r.original)} will never be included.${reverted}`
+    );
+  }
   return (
     `${ORIGINAL_MINED_FIRST_SENTENCE} Transaction ${shortHash(r.original)} (nonce ${r.nonce}) was included in ` +
     `block ${r.block}.${reverted}`
@@ -1267,21 +1335,60 @@ export function replacementRowLine(records: readonly PendingRecord[], chain: str
     if ((r.kind !== 'resolved' && r.kind !== 'marker') || r.chain !== chain || r.minedHash !== h) continue;
     if (r.outcome === 'replaced') return `Speed-up of transaction ${shortHash(r.original)} (nonce ${r.nonce}).`;
     if (r.outcome === 'cancelled') return `Cancellation of transaction ${shortHash(r.original)} (nonce ${r.nonce}).`;
+    if (r.outcome === 'superseded') return `Sent in place of transaction ${shortHash(r.original)} (nonce ${r.nonce}), which will never be included.`;
     return `Included before its replacement (nonce ${r.nonce}); the replacement was rejected.`;
   }
   return null;
 }
 
-/** "Pending: …" line for a group, from the original transaction (amounts exact). */
+/** A token the pending line may name (the active network's tracked tokens). */
+export interface PendingLineToken {
+  /** The token contract (any case). */
+  contract: string;
+  symbol: string;
+  decimals: number;
+}
+
+/**
+ * transfer(address,uint256) calldata (selector 0xa9059cbb, exactly two
+ * words, the address word's top 12 bytes zero): its recipient and amount.
+ * Null for any other data.
+ */
+export function decodeTokenTransferData(data: string): { recipient: string; amount: bigint } | null {
+  const d = data.toLowerCase();
+  if (!/^0xa9059cbb[0-9a-f]{128}$/.test(d)) return null;
+  const addressWord = d.slice(10, 74);
+  if (!/^0{24}/.test(addressWord)) return null;
+  return { recipient: `0x${addressWord.slice(24)}`, amount: BigInt(`0x${d.slice(74)}`) };
+}
+
+/**
+ * "Pending: …" line for a group, from the original transaction (amounts exact).
+ *
+ * Pass p22b: a token send (an ERC-20 transfer, value 0) is described by its
+ * transfer — the amount and the recipient — instead of "calls <the token
+ * contract>". Every token send is recorded the same way, from the Send
+ * screen (send-erc20.ts sendErc20 → sendEvm) and from the cold-signing
+ * screen (sendEvmWithSignature): `to` is the token contract and `data` the
+ * transfer call, so the line is decoded here, for both, from the record
+ * itself. `tokens` (the network's tracked tokens) give the symbol and
+ * decimals; a token not among them is named by its contract and the amount
+ * in base units.
+ */
 export function pendingGroupSentence(
   group: NonceGroup,
-  options: { nativeSymbol: string; nowMs: number },
+  options: { nativeSymbol: string; nowMs: number; tokens?: readonly PendingLineToken[] },
 ): string {
   const tx = group.original;
   const minutes = Math.max(0, Math.floor((options.nowMs - tx.sentAt) / 60_000));
   const age = minutes === 0 ? 'less than a minute ago' : minutes === 1 ? '1 minute ago' : `${minutes} minutes ago`;
-  const what =
-    tx.data === '0x'
+  const transfer = BigInt(tx.value) === 0n ? decodeTokenTransferData(tx.data) : null;
+  const token = transfer ? (options.tokens ?? []).find((t) => t.contract.toLowerCase() === tx.to) : undefined;
+  const what = transfer
+    ? token
+      ? `sends ${formatUnits(transfer.amount, token.decimals, token.decimals)} ${token.symbol} to ${transfer.recipient} (token contract ${tx.to})`
+      : `sends ${transfer.amount.toString()} base units of the token at ${tx.to} to ${transfer.recipient}`
+    : tx.data === '0x'
       ? `sends ${formatUnits(BigInt(tx.value), 18, 18)} ${options.nativeSymbol} to ${tx.to}`
       : BigInt(tx.value) > 0n
         ? `calls ${tx.to} with ${formatUnits(BigInt(tx.value), 18, 18)} ${options.nativeSymbol}`

@@ -1650,7 +1650,7 @@ console.log('\n== Hoodi and OP Sepolia profiles (phase 18) ==');
   const sendSrc = read('../src/screens/SendScreen.tsx');
   check('Send: the recipient placeholder offers ENS names only where the profile looks them up',
     sendSrc.includes('const namesOffered = route.params.chainId === EVM_CHAIN_ID && nameRegistry.ok;') &&
-      sendSrc.includes('placeholder={sendRecipientPlaceholder({ namesOffered, ethereum: Boolean(token || nftMode), symbol: account.symbol })}') &&
+      sendSrc.includes('placeholder={localize(sendRecipientPlaceholder({ namesOffered, ethereum: Boolean(token || nftMode), symbol: account.symbol }))}') &&
       !/'Ethereum address or ENS name'|address or ENS name`/.test(sendSrc));
   const { ensRegistryFor, sendRecipientPlaceholder, SEND_RECIPIENT_NAMES_HINT } = await import('../src/wallet/ens-names.ts');
   // Pass p20c finding 19: "ETH address or ENS name" was cut to "ETH address
@@ -1664,7 +1664,7 @@ console.log('\n== Hoodi and OP Sepolia profiles (phase 18) ==');
       ['0x… or ENS name', 'Ethereum address', 'ETH address'].every((t) => t.length <= 19));
   check('Send: the long text is the hint line under the recipient row, shown only where names are offered (exact)',
     SEND_RECIPIENT_NAMES_HINT === 'Enter an Ethereum address (0x…) or an ENS name such as nick.eth.' &&
-      /\{namesOffered \? \(\s*<Text style=\{\[styles\.hint, \{ color: theme\.textMuted \}\]\}>\{SEND_RECIPIENT_NAMES_HINT\}<\/Text>\s*\) : null\}/.test(sendSrc) &&
+      /\{namesOffered \? \(\s*<Text style=\{\[styles\.hint, \{ color: theme\.textMuted \}\]\}><T>\{SEND_RECIPIENT_NAMES_HINT\}<\/T><\/Text>\s*\) : null\}/.test(sendSrc) &&
       sendSrc.includes("namesOffered ? SEND_RECIPIENT_NAMES_HINT : undefined,"));
   check('…which is false on Base Sepolia, Arbitrum Sepolia, Hoodi and OP Sepolia (no ENS contracts there), true on mainnet and Sepolia',
     EVM_PROFILES.map((p) => `${p.caip2}=${ensRegistryFor(p).ok}`).join(',') ===

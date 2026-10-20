@@ -73,8 +73,11 @@ export type RootStackParamList = {
    * from the tracked-token store) sends that token instead of the native
    * coin; `replace` speeds up or cancels the watched address's pending
    * transaction with that hash (Activity's pending card), signed the same way.
+   * `request` pre-fills the editable recipient and amount from a payment
+   * link opened while a watch-only account is active (pass p22b; the same
+   * pre-fill a Send screen gets, its lines shown in the "Payment request" box).
    */
-  ColdSign: { tokenId?: string; replace?: { hash: string; action: 'speed-up' | 'cancel' } } | undefined;
+  ColdSign: { tokenId?: string; replace?: { hash: string; action: 'speed-up' | 'cancel' }; request?: SendRequestPrefill } | undefined;
   /** Passkey signer (phase 8 item 3) for the active account's deployed Kernel account, active EVM chain. */
   Passkey: undefined;
   /**

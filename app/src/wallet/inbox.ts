@@ -138,6 +138,17 @@ export const INBOX_EMPTY = 'Nothing yet. Reminders, alerts and sent transactions
 export const INBOX_READ_ONLY_MESSAGE =
   'The inbox stored on this phone could not be read in full, so nothing new is added to it. The entries that could ' +
   'be read are shown. Reset the inbox to start a new, empty list.';
+/**
+ * Pass p22b: the inbox stored on this phone could not be read at all (the
+ * store rejected the read). Shown instead of the empty sentence, with the
+ * technical detail, so a storage failure never looks like an empty inbox.
+ */
+export const INBOX_LOAD_FAILED_MESSAGE =
+  'The inbox stored on this phone could not be read just now, so its entries are not shown. Nothing was deleted. ' +
+  'Pull down to try again.';
+/** Pass p22b: recording an entry failed in this session (the write was rejected); the list may be missing it. */
+export const INBOX_RECORD_FAILED_MESSAGE =
+  'A message could not be added to the inbox on this phone, so this list may be missing it.';
 export const INBOX_RESET_TITLE = 'Reset the inbox?';
 export const INBOX_RESET_BODY = 'Every entry in the inbox is deleted from this phone. Nothing else changes.';
 export const INBOX_MARK_ALL_READ = 'Mark all read';
@@ -365,14 +376,33 @@ export interface Inbox {
   /** Writes an empty inbox (also the way out of a damaged one). */
   reset(): Promise<void>;
   subscribe(listener: () => void): () => void;
+  /**
+   * The technical text of the last failed write of an entry in this session
+   * (null when none failed, or after a reset that succeeded). Pass p22b: a
+   * failed record() used to be silent; the screen shows this instead.
+   */
+  lastRecordFailure(): string | null;
 }
 
 /** Bumped by the wipe: every inbox forgets the ids it remembered (a new wallet starts empty). */
 let memoryEpoch = 0;
 
-export function createInbox(deps: { store: KeyValueStore; now?: () => number }): Inbox {
+export function createInbox(deps: { store: KeyValueStore; now?: () => number; log?: (message: string) => void }): Inbox {
   const now = deps.now ?? (() => Date.now());
+  const log = deps.log ?? ((message: string) => console.warn(message));
   const listeners = new Set<() => void>();
+  /** The last failed write of an entry (shown by the screen); logged once per session. */
+  let recordFailure: string | null = null;
+  let failureLogged = false;
+  const noteRecordFailure = (e: unknown) => {
+    recordFailure = inboxErrorText(e);
+    if (!failureLogged) {
+      failureLogged = true;
+      // Once per session, and never the entry itself: only the store's error.
+      log(`The inbox could not record an entry: ${recordFailure}`);
+    }
+    notify();
+  };
   let queue: Promise<unknown> = Promise.resolve();
   /** Ids known to be stored, per profile (skips a read for an event already listed). */
   const known = new Map<string, Set<string>>();
@@ -445,7 +475,9 @@ export function createInbox(deps: { store: KeyValueStore; now?: () => number }):
           await write(withEntry(state.entries, entry, now()));
           notify();
           return 'recorded' as const;
-        } catch {
+        } catch (e) {
+          // Pass p22b: no longer silent — kept for the screen, logged once.
+          noteRecordFailure(e);
           return 'failed' as const;
         }
       }),
@@ -481,6 +513,7 @@ export function createInbox(deps: { store: KeyValueStore; now?: () => number }):
     reset: () =>
       serial(async () => {
         await write([]);
+        recordFailure = null;
         notify();
       }),
     subscribe(listener) {
@@ -489,7 +522,38 @@ export function createInbox(deps: { store: KeyValueStore; now?: () => number }):
         listeners.delete(listener);
       };
     },
+    lastRecordFailure: () => recordFailure,
   };
+}
+
+/** The text of a storage error, for the screen's technical line and the one log line. */
+export function inboxErrorText(e: unknown): string {
+  if (e instanceof Error) return e.message || e.name;
+  return String(e);
+}
+
+/** What the inbox screen (and Home's unread count) draws. */
+export interface InboxView {
+  state: InboxState;
+  /** The technical text when the stored inbox could not be read at all; null when it was read. */
+  loadFailure: string | null;
+  /** Inbox.lastRecordFailure() at the time of the load. */
+  recordFailure: string | null;
+}
+
+/**
+ * Loads the inbox for a screen. Pass p22b: a rejected load used to leave the
+ * screen with an empty list and no word about why (useInbox swallowed it);
+ * it now comes back as `loadFailure` with the store's error, so the screen
+ * shows INBOX_LOAD_FAILED_MESSAGE instead of INBOX_EMPTY. Never throws.
+ */
+export async function loadInboxView(inbox: Inbox): Promise<InboxView> {
+  try {
+    const state = await inbox.load();
+    return { state, loadFailure: null, recordFailure: inbox.lastRecordFailure() };
+  } catch (e) {
+    return { state: { entries: [], readOnly: false }, loadFailure: inboxErrorText(e), recordFailure: inbox.lastRecordFailure() };
+  }
 }
 
 let appInstance: Inbox | null = null;
@@ -557,7 +621,14 @@ export function replacementNoticeInboxEvent(args: {
   resolvedAt: number;
   text: string;
 }): InboxEvent {
-  const title = args.outcome === 'replaced' ? 'Sped up' : args.outcome === 'cancelled' ? 'Cancelled' : 'Original transaction included';
+  const title =
+    args.outcome === 'replaced'
+      ? 'Sped up'
+      : args.outcome === 'cancelled'
+        ? 'Cancelled'
+        : args.outcome === 'superseded'
+          ? 'Transaction superseded'
+          : 'Original transaction included';
   return {
     key: `replacement|${args.chain}|${args.from.toLowerCase()}|${args.nonce}|${args.minedHash.toLowerCase()}`,
     kind: 'replacement',

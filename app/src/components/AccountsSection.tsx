@@ -31,13 +31,16 @@ import { QrScanner } from './QrScanner';
 import {
   PHRASE_ACCOUNT_WAS_WATCHED_TITLE,
   REMOVE_WATCH_ONLY_TITLE,
+  WATCH_ADDRESS_BUTTON_HINT,
   WATCH_ADDRESS_INTRO,
   WATCH_ADDRESS_PRIVACY_NOTE,
+  WATCH_ONLY_ACCOUNTS_ROW_NOTE,
   WATCH_ONLY_LIST_HINT,
   phraseAccountSameAsWatchedNote,
   removeWatchOnlyMessage,
   watchAddressFromScan,
 } from '../wallet/watch-only';
+import { T } from '../i18n/T';
 
 /**
  * Settings → Accounts (phase 6 item 3): list, add, rename, hide and show
@@ -280,7 +283,7 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
         </View>
         {account.watchOnly ? (
           <Text style={[styles.address, { color: theme.warningText }]}>
-            {account.evmAddress ?? 'unknown address'} · watch-only, no key in this wallet — it cannot send or sign
+            {account.evmAddress ?? 'unknown address'} · {WATCH_ONLY_ACCOUNTS_ROW_NOTE}
           </Text>
         ) : account.imported ? (
           <Text style={[styles.address, { color: theme.warningText }]}>
@@ -387,7 +390,7 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
 
   return (
     <View style={styles.section}>
-      <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Accounts</Text>
+      <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Accounts</T></Text>
       <Text style={[styles.hint, { color: theme.textMuted }]}>
         {accountsBackupHint(importedCount > 0, { watchOnly: watchOnlyAccounts.length > 0, multisig: multisigAccounts.length > 0 })} Account addresses from the
         phrase follow the common conventions: Ethereum m/44&apos;/60&apos;/0&apos;/0/N (as
@@ -501,7 +504,7 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
           variant="secondary"
           onPress={() => setWatchOpen(true)}
           disabled={busy}
-          accessibilityHint="Follows an Ethereum address without its key. The wallet cannot send or sign for it."
+          accessibilityHint={WATCH_ADDRESS_BUTTON_HINT}
         />
       )}
       <QrScanner

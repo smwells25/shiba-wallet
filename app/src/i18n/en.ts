@@ -439,4 +439,15 @@ export const en = {
   'send.explorer': 'View on block explorer',
   'send.noExplorer': 'No verified block explorer is configured for this chain; look the transaction id up in an explorer you trust.',
   'send.done': 'Done',
+  // Pass p22b: cheap migrations (section titles, the Send recipient
+  // placeholder and its hint, Receive's "Request an amount"). Each English
+  // text is the one the app showed at c5baff6 (the fixture's literal entries).
+  'accounts.title': 'Accounts',
+  'settings.section.recordsBackup': 'Records backup',
+  'settings.section.appPin': 'App PIN',
+  'settings.appLock.switch': 'Use a PIN or passphrase to unlock',
+  'settings.customNetworks.add': 'Add a custom network',
+  'send.recipient.placeholder.names': '0x… or ENS name',
+  'send.recipient.namesHint': 'Enter an Ethereum address (0x…) or an ENS name such as nick.eth.',
+  'receive.request.title': 'Request an amount',
 } as const;

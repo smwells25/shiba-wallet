@@ -745,7 +745,25 @@ console.log('check-watch-only: honesty and the screens (source checks)');
     REMOVE_WATCH_ONLY_TITLE === 'Stop watching this address?' && removeWatchOnlyMessage('W', WATCHED) === `W (${WATCHED}) is removed from this wallet. Nothing secret is deleted, because the wallet never held a key for it, and nothing on-chain changes. You can watch it again at any time.`);
   check('Settings → Accounts: no Hide for a watch-only account', /!account\.imported && !account\.watchOnly && account\.index !== 0 && !active/.test(acc));
   const sw = src('components/AccountSwitcher.tsx');
-  check('the switcher lists watch-only accounts with a label', /\.\.\.watchOnlyAccounts, \.\.\.multisigAccounts\]/.test(sw) && /Watch-only — the wallet holds no key; it cannot send or sign/.test(sw));
+  check('the switcher lists watch-only accounts with a label', /\.\.\.watchOnlyAccounts, \.\.\.multisigAccounts\]/.test(sw) && sw.includes('{WATCH_ONLY_SWITCHER_LINE}'));
+  // Pass p22b: the switcher row, the Settings → Accounts row and the "Watch
+  // an address" hint and intro still said "cannot send" after the off-line
+  // signer screen made a send for a watched address possible.
+  const WO = await import('../src/wallet/watch-only.ts');
+  const p22bLines = {
+    WATCH_ONLY_SWITCHER_LINE: 'Watch-only — the wallet holds no key; it cannot sign, but a send can be prepared for an off-line signer',
+    WATCH_ONLY_ACCOUNTS_ROW_NOTE: 'watch-only, no key in this wallet — it cannot sign; a send can be prepared for an off-line signer',
+    WATCH_ADDRESS_BUTTON_HINT: 'Follows an Ethereum address without its key. The wallet cannot sign for it; a send for it can be prepared for an off-line signer.',
+    WATCH_ADDRESS_INTRO:
+      'Follow any Ethereum address without its key: its balances, tokens, activity and NFTs appear like an account’s, but the wallet cannot sign, swap or recover anything for it. A send on an Ethereum network can still be prepared here and signed by an off-line signer that holds its key.',
+  };
+  const linesOk = (mod) => Object.entries(p22bLines).every(([k, v]) => mod[k] === v && !/cannot send/.test(mod[k]));
+  check('p22b: the watch-only lines say the wallet cannot SIGN and that a send can be prepared for an off-line signer (exact), never "cannot send"', linesOk(WO));
+  check('…mutant caught: the old intro that said it cannot send',
+    !linesOk({ ...WO, WATCH_ADDRESS_INTRO: 'Follow any Ethereum address without its key: its balances, tokens, activity and NFTs appear like an account’s, but the wallet cannot send, sign or recover anything for it.' }));
+  check('…and the screens use them (no "cannot send or sign" left in the switcher or Settings → Accounts)',
+    acc.includes("{account.evmAddress ?? 'unknown address'} · {WATCH_ONLY_ACCOUNTS_ROW_NOTE}") && acc.includes('accessibilityHint={WATCH_ADDRESS_BUTTON_HINT}') &&
+      acc.includes('{WATCH_ADDRESS_INTRO}') && !/cannot send or sign/.test(acc) && !/cannot send or sign/.test(sw));
   const gate = src('components/WatchOnlyGate.tsx');
   check('the route gate refuses through watchOnlyRouteRefusal and renders the notice instead of the screen',
     /const refusal = activeAccount\?\.watchOnly\s*\? watchOnlyRouteRefusal\(routeName\)\s*: multisig\s*\? multisigRouteRefusal\(routeName\)\s*: null;/.test(gate) &&

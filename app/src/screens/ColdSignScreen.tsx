@@ -11,6 +11,7 @@ import { BalanceChangePreview } from '../components/BalanceChangePreview';
 import { RiskWarnings } from '../components/RiskWarnings';
 import { SpendingPolicyNotice, confirmSpendingCheck, spendingGateForQuote } from '../components/SpendingPolicyViews';
 import { PendingTransactionsSection } from '../components/PendingTransactions';
+import { PaymentRequestNotice } from '../components/PaymentRequestViews';
 import { NOTE_VIEW_SCROLL_PROPS, TransactionNoteField, dismissKeyboardThenClose } from '../components/TransactionNoteField';
 import { getEndpoint, withEndpoint } from '../config/networks';
 import { useTheme, type Theme } from '../theme';
@@ -20,6 +21,9 @@ import { formatUnits, parseUnits } from '../wallet/balances';
 import {
   EVM_CHAIN_ID,
   MINIMUM_FEE_REHEARSAL_WARNING,
+  amountIsLastMax,
+  maxAdjustmentSentence,
+  maxEvmSend,
   checkReplacementBeforeApproval,
   consumeMinimumFeeRehearsal,
   minimumFeeRehearsalArmed,
@@ -36,9 +40,10 @@ import {
   ReplacementRefusedError,
   type EvmReplacementQuote,
   type EvmSendQuote,
+  type LastMaxResult,
   type SendResult,
 } from '../wallet/send';
-import { prepareErc20Send, type Erc20SendQuote } from '../wallet/send-erc20';
+import { maxErc20Send, prepareErc20Send, type Erc20SendQuote } from '../wallet/send-erc20';
 import { listTokens } from '../wallet/tokens';
 import { extractScannedAddress } from '../wallet/scan';
 import {
@@ -89,12 +94,24 @@ type ColdQuote = EvmSendQuote | Erc20SendQuote | EvmReplacementQuote;
 
 const mono = Platform.select({ ios: 'Menlo', default: 'monospace' });
 
-/** A failure as the screen shows it: a replacement refusal by its own sentence, anything else as the Send screen words it. */
-function describeColdError(e: unknown, sendSymbol: string, feeSymbol: string): { title: string; detail: string } {
+/**
+ * A failure as the screen shows it: a replacement refusal by its own
+ * sentence, anything else as the Send screen words it — including, for a
+ * broadcast of a minimum-fee rehearsal quote that the node refused as
+ * underpriced, the rehearsal note the Send screen adds (pass p22b:
+ * describeSendError's minimumFeeRehearsal option, which this screen did not
+ * pass).
+ */
+function describeColdError(
+  e: unknown,
+  sendSymbol: string,
+  feeSymbol: string,
+  options: { minimumFeeRehearsal?: boolean } = {},
+): { title: string; detail: string } {
   if (e instanceof ReplacementRefusedError || (e as { name?: unknown } | null)?.name === 'ReplacementRefusedError') {
     return { title: 'Not replaced', detail: (e as Error).message };
   }
-  const d = describeSendError(e, sendSymbol, feeSymbol);
+  const d = describeSendError(e, sendSymbol, feeSymbol, options);
   return { title: d.title, detail: d.detail };
 }
 
@@ -146,8 +163,19 @@ export function ColdSignScreen({ route, navigation }: Props) {
   const [tokens, setTokens] = useState<FungibleAsset[]>([]);
   const [tokenId, setTokenId] = useState<string | null>(route.params?.tokenId ?? null);
   const token = tokenId ? (tokens.find((t) => formatAssetId(t.assetId) === tokenId) ?? null) : null;
-  const [recipient, setRecipient] = useState('');
-  const [amountText, setAmountText] = useState('');
+  // A payment link opened while this watch-only account was active (pass
+  // p22b, deep-links.ts 'cold-sign'): its values only pre-fill the editable
+  // fields, and its lines (DEEP_LINK_PAY_LINE first) show in the "Payment
+  // request" box, as on the Send screen.
+  const requestPrefill = route.params?.request ?? null;
+  const [recipient, setRecipient] = useState(requestPrefill?.recipient ?? '');
+  const [amountText, setAmountText] = useState(requestPrefill?.amountText ?? '');
+  // The amount text Max last wrote (and for which address): Review passes
+  // fromMax to prepareEvmSend only while the form still holds exactly it, as
+  // on the Send screen (a fee rise lowers a Max amount with a note; a typed
+  // amount is never changed).
+  const lastMax = useRef<LastMaxResult | null>(null);
+  const [maxBusy, setMaxBusy] = useState(false);
   const [scannerOpen, setScannerOpen] = useState(false);
   const [error, setError] = useState<{ title: string; detail: string } | null>(null);
   const [quote, setQuote] = useState<ColdQuote | null>(null);
@@ -267,6 +295,7 @@ export function ColdSignScreen({ route, navigation }: Props) {
             // only; prepareEvmSend ignores it elsewhere), so a cold-signed send
             // can be left pending to rehearse a cold-signed Speed up / Cancel.
             prepareEvmSend(ep.url, from, validation.normalized, amount, undefined, evmChain.caip2, {
+              fromMax: amountIsLastMax(lastMax.current, { text: amountText, from, chainId: EVM_CHAIN_ID }),
               ...(minimumFeeRehearsalArmed(evmChain.caip2) ? { minimumFee: true } : {}),
             }),
       );
@@ -279,6 +308,40 @@ export function ColdSignScreen({ route, navigation }: Props) {
       if (!mounted.current) return;
       fail(e, sendSymbol);
       setPhase('form');
+    }
+  };
+
+  // Max, with the Send screen's own rule and functions (pass p22b): the
+  // native coin = the balance minus the worst-case fee (send.ts maxEvmSend);
+  // a token = its full balance, refused when the ETH balance cannot cover
+  // the fee (send-erc20.ts maxErc20Send). The recipient, when valid, is used
+  // for the estimate, as on the Send screen.
+  const onMax = async () => {
+    setError(null);
+    lastMax.current = null;
+    setMaxBusy(true);
+    try {
+      const validation = validateRecipient(EVM_CHAIN_ID, recipient);
+      const to = validation.ok ? validation.normalized : undefined;
+      let max: bigint;
+      if (token) {
+        max = (
+          await withEndpoint(EVM_CHAIN_ID, (ep) => maxErc20Send(ep.url, from, token.assetId.reference, to, token.assetId.chainId))
+        ).value;
+        if (max <= 0n) throw new Error(`Your ${token.symbol} balance is zero.`);
+      } else {
+        max = (await withEndpoint(EVM_CHAIN_ID, (ep) => maxEvmSend(ep.url, from, to))).value;
+      }
+      if (max <= 0n) throw new Error('Balance is too small to cover the network fee.');
+      const text = formatUnits(max, decimals, decimals);
+      if (!mounted.current) return;
+      if (!token) lastMax.current = { text, from, chainId: EVM_CHAIN_ID };
+      setAmountText(text);
+    } catch (e) {
+      if (!mounted.current) return;
+      fail(e, sendSymbol);
+    } finally {
+      if (mounted.current) setMaxBusy(false);
     }
   };
 
@@ -392,7 +455,7 @@ export function ColdSignScreen({ route, navigation }: Props) {
       setPhase('success');
     } catch (e) {
       if (!mounted.current) return;
-      fail(e, sendSymbol);
+      setError(describeColdError(e, sendSymbol, symbol, { minimumFeeRehearsal: minimumFeeRehearsalOf(quote) !== null }));
       setPhase('show');
     }
   };
@@ -540,6 +603,9 @@ export function ColdSignScreen({ route, navigation }: Props) {
             <Row label="Amount" value={`${fmt(quote.amount)} ${symbol}`} theme={theme} />
           </>
         )}
+        {quote.kind === 'evm' && quote.maxAdjustment ? (
+          <WarningBox>{maxAdjustmentSentence(quote, (v) => `${fmt(v)} ${symbol}`)}</WarningBox>
+        ) : null}
         <Row label="Nonce" value={quote.nonce.toString()} theme={theme} />
         <Row label="Network fee (worst case)" value={`${fmt(quote.fee)} ${symbol}`} theme={theme} />
         <Text style={[styles.hint, { color: theme.textMuted }]}>
@@ -614,6 +680,7 @@ export function ColdSignScreen({ route, navigation }: Props) {
     <ScrollView key="cold-form" style={screenStyle(theme)} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
       <WatchOnlyNotice />
       <Text style={[styles.body, { color: theme.text }]}>{COLD_SIGN_INTRO}</Text>
+      {requestPrefill && !replace ? <PaymentRequestNotice lines={requestPrefill.lines} /> : null}
       <Text style={[styles.hint, { color: theme.textMuted }]}>
         {evmChain.label} · from {activeAccount?.name ?? ''} ({from})
       </Text>
@@ -686,6 +753,12 @@ export function ColdSignScreen({ route, navigation }: Props) {
             placeholderTextColor={theme.textMuted}
             keyboardType="decimal-pad"
             style={[styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }]}
+          />
+          <Button
+            title={maxBusy ? '…' : 'Max'}
+            variant="secondary"
+            onPress={() => void onMax()}
+            disabled={maxBusy}
           />
         </>
       )}

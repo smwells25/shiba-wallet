@@ -16,6 +16,7 @@ import {
   type PaymentFamily,
 } from '../wallet/payment-request';
 import { listTokens } from '../wallet/tokens';
+import { T } from '../i18n/T';
 
 const mono = Platform.select({ ios: 'Menlo', default: 'monospace' });
 
@@ -206,7 +207,7 @@ export function RequestAmountCard({
 
   return (
     <View style={[styles.box, styles.stretch, { backgroundColor: theme.card, borderColor: theme.border }]}>
-      <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Request an amount</Text>
+      <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}><T>Request an amount</T></Text>
       <Text style={[styles.line, { color: theme.textMuted }]}>
         Builds a standard payment request ({STANDARD_BY_FAMILY[family]}) that other wallets can
         scan. The plain address code above stays available.

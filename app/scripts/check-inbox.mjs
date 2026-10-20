@@ -102,6 +102,7 @@ function memoryStore() {
 }
 
 const LONG_HEX_32 = /[0-9a-fA-F]{32}/;
+const memoryStoreInbox = (store) => I.createInbox({ store, now: () => T0 });
 const T0 = 1_800_000_000_000;
 const ev = (n, over = {}) => ({ key: `event-${n}`, kind: 'sent', via: 'in-app', at: T0 + n, title: 'Transaction sent', text: `Sent for app ${n}.`, ...over });
 
@@ -229,6 +230,62 @@ console.log('check-inbox: the store (src/wallet/inbox.ts)');
   await t.inbox.reset();
   const after = await t.inbox.load();
   check('reset writes an empty, writable inbox', !after.readOnly && after.entries.length === 0 && (await t.inbox.record(ev(78))) === 'recorded');
+
+  // Pass p22b: on the device the inbox never listed anything while the
+  // store behind it failed; a rejected load looked like an empty inbox and a
+  // failed write was silent. A store that throws (as the old lazy store did
+  // when its dynamic import failed) must be reported, never shown as empty.
+  const throwing = {
+    async getItem() {
+      throw new Error('AsyncStorage chunk could not be loaded');
+    },
+    async setItem() {
+      throw new Error('AsyncStorage chunk could not be loaded');
+    },
+  };
+  const logs = [];
+  const bi = I.createInbox({ store: throwing, now: () => T0, log: (m) => logs.push(m) });
+  const view = await I.loadInboxView(bi);
+  check('a store that throws on read: the screen gets a load FAILURE with the store\'s error, not an empty inbox',
+    view.loadFailure === 'AsyncStorage chunk could not be loaded' && view.state.entries.length === 0 && view.recordFailure === null);
+  let notified = 0;
+  bi.subscribe(() => (notified += 1));
+  const o1 = await bi.record(ev(1));
+  const o2 = await bi.record(ev(2));
+  check('…a write that throws: record() still never throws, reports "failed", keeps the error for the screen and tells the listeners',
+    o1 === 'failed' && o2 === 'failed' && bi.lastRecordFailure() === 'AsyncStorage chunk could not be loaded' && notified === 2 &&
+      (await I.loadInboxView(bi)).recordFailure === 'AsyncStorage chunk could not be loaded');
+  check('…logged once per session, with the store\'s error only (no entry text)',
+    logs.length === 1 && logs[0] === 'The inbox could not record an entry: AsyncStorage chunk could not be loaded' && !logs[0].includes('Sent for app'));
+  {
+    const flaky = memoryStore();
+    let fail = true;
+    const realSet = flaky.setItem;
+    flaky.setItem = async (k, v) => {
+      if (fail) throw new Error('disk full');
+      return realSet(k, v);
+    };
+    const fi = I.createInbox({ store: flaky, now: () => T0, log: () => undefined });
+    await fi.record(ev(1));
+    const before = fi.lastRecordFailure();
+    fail = false;
+    await fi.reset();
+    check('…a reset that succeeds clears the failure (the list starts over); the failure stays until then',
+      before === 'disk full' && fi.lastRecordFailure() === null && (await I.loadInboxView(memoryStoreInbox(flaky))).loadFailure === null);
+  }
+  const ok = await I.loadInboxView(I.createInbox({ store: memoryStore(), now: () => T0 }));
+  check('…and a store that works: no failure, the state as loaded', ok.loadFailure === null && ok.recordFailure === null && ok.state.readOnly === false);
+  {
+    const scr = read('src/screens/InboxScreen.tsx');
+    check('the screen loads through loadInboxView and shows the read failure (with the technical line and Try again) instead of the empty sentence',
+      scr.includes('void loadInboxView(appInbox()).then((view) => {') && !/\.load\(\)\s*\.then\(/.test(scr) &&
+        /<WarningBox>\{INBOX_LOAD_FAILED_MESSAGE\}<\/WarningBox>\s*<TechnicalDetail text=\{loadFailure\} \/>/.test(scr) &&
+        scr.includes('{loaded && loadFailure === null && entries.length === 0 ?') &&
+        /<WarningBox>\{INBOX_RECORD_FAILED_MESSAGE\}<\/WarningBox>\s*<TechnicalDetail text=\{recordFailure\} \/>/.test(scr));
+    check('…the two messages (exact)',
+      I.INBOX_LOAD_FAILED_MESSAGE === 'The inbox stored on this phone could not be read just now, so its entries are not shown. Nothing was deleted. Pull down to try again.' &&
+        I.INBOX_RECORD_FAILED_MESSAGE === 'A message could not be added to the inbox on this phone, so this list may be missing it.');
+  }
 
   // Profiles and the wipe.
   const ps = memoryStore();
@@ -475,6 +532,32 @@ const enc = encodeURIComponent;
   const noBtc = await D.planDeepLink(open(`shibawallet://send?uri=${enc('bitcoin:bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq')}`), ctx({ nativeFor: () => null }));
   check('…an account with no Bitcoin address: the plain sentence, nothing filled in', noBtc.kind === 'notice' && noBtc.text === 'This payment link is for Bitcoin, which the active account cannot send from. Nothing was filled in.');
 
+  // Pass p22b: an ethereum: link while a WATCH-ONLY account is active opened
+  // Send's refusal ("Sending is not available for a watch-only account…").
+  // It now opens the cold-signing screen with the same pre-fill.
+  const wo = (over = {}) => ctx({ watchOnly: true, nativeFor: () => null, ...over });
+  const cold = await D.planDeepLink(open(`shibawallet://send?uri=${enc(nativeUri)}`), wo());
+  check('p22b: watch-only active + a valid EIP-681 link → a NEW cold-signing screen with the SAME pre-fill (recipient, amount, the link line first, the scanned lines)',
+    cold.kind === 'cold-sign' && cold.params.tokenId === undefined && JSON.stringify(cold.params.request) === JSON.stringify(pay.params.request), JSON.stringify(cold));
+  const coldToken = await D.planDeepLink(open(`shibawallet://send?uri=${enc(tokenUri)}`), wo());
+  check('…a tracked ERC-20 transfer: the token id too',
+    coldToken.kind === 'cold-sign' && coldToken.params.tokenId === `eip155:11155111/erc20:${USDC}` && coldToken.params.request.amountText === '1.5' && coldToken.params.request.recipient === PAYEE);
+  const coldApprove = await D.planDeepLink(open(`shibawallet://send?uri=${enc(`ethereum:${USDC}@11155111/approve?address=${PAYEE}&uint256=1`)}`), wo());
+  check('…a refused request (approve) is still refused with the parser\'s sentence, never a cold-signing pre-fill', coldApprove.kind === 'notice' && coldApprove.text === approve.a.text);
+  const coldBtc = await D.planDeepLink(open(`shibawallet://send?uri=${enc('bitcoin:bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq?amount=0.0001')}`), wo({ nativeFor: (slot) => (slot === BTC_SLOT ? { symbol: 'BTC', networkLabel: 'Bitcoin' } : null) }));
+  check('…a bitcoin: link stays refused with the existing sentence (even if a Bitcoin account were listed)',
+    coldBtc.kind === 'notice' && coldBtc.text === 'This payment link is for Bitcoin, which the active account cannot send from. Nothing was filled in.');
+  {
+    const app = read('App.tsx');
+    check('…App.tsx passes whether the active account is watch-only and pushes ColdSign for a "cold-sign" action',
+      app.includes('const watchOnly = activeAccount?.watchOnly === true;') && /hasEvmAccount: accounts\.some\(\(a\) => a\.chainId === EVM_CHAIN_ID\),\s*watchOnly,/.test(app) &&
+        /case 'cold-sign':[\s\S]{0,200}nav\.dispatch\(StackActions\.push\('ColdSign', action\.params\)\);/.test(app));
+    const coldScreen = read('src/screens/ColdSignScreen.tsx');
+    check('…and the cold-signing screen pre-fills recipient and amount from route.params.request and shows its lines in the "Payment request" box',
+      coldScreen.includes("useState(requestPrefill?.recipient ?? '')") && coldScreen.includes("useState(requestPrefill?.amountText ?? '')") &&
+        coldScreen.includes('{requestPrefill && !replace ? <PaymentRequestNotice lines={requestPrefill.lines} /> : null}'));
+  }
+
   // The lock gate and the launch link.
   check('the gate: wait while loading (the PIN pad), locked, or before the navigator is ready; a notice with no wallet',
     D.deepLinkGate({ status: 'loading', locked: false, navReady: true }) === 'wait' && D.deepLinkGate({ status: 'ready', locked: true, navReady: true }) === 'wait' &&
@@ -649,6 +732,27 @@ console.log('check-inbox: mutants (each must be caught)');
     "if (parsed.kind === 'refused') return { kind: 'send', params: { chainId: link.slotChainId, request: { recipient: '', amountText: null, lines: [] } } };");
   const a12 = await m12.planDeepLink(m12.parseDeepLink(`shibawallet://send?uri=${enc(`ethereum:${PAYEE}@1?value=1e15`)}`), ctx());
   mutantCaught('M12 a refused request (another network) opening Send anyway', a12.kind !== 'notice');
+  // M13 (pass p22b): a failed write silent again (the old catch).
+  const m13 = await importMutant('src/wallet/inbox.ts', 'noteRecordFailure(e);', '');
+  {
+    const thr = { async getItem() { return null; }, async setItem() { throw new Error('x'); } };
+    const mi = m13.createInbox({ store: thr, now: () => T0, log: () => undefined });
+    await mi.record(ev(1));
+    mutantCaught('M13 a failed write of an entry silent again (no status for the screen)', mi.lastRecordFailure() === null);
+  }
+  // M14 (pass p22b): a rejected load shown as an empty inbox again.
+  const m14 = await importMutant('src/wallet/inbox.ts',
+    "return { state: { entries: [], readOnly: false }, loadFailure: inboxErrorText(e), recordFailure: inbox.lastRecordFailure() };",
+    "return { state: { entries: [], readOnly: false }, loadFailure: null, recordFailure: inbox.lastRecordFailure() };");
+  {
+    const thr = { async getItem() { throw new Error('x'); }, async setItem() {} };
+    const v = await m14.loadInboxView(m14.createInbox({ store: thr, now: () => T0, log: () => undefined }));
+    mutantCaught('M14 a rejected load looking like an empty inbox again', v.loadFailure === null);
+  }
+  // M15 (pass p22b): the watch-only flag ignored → Send's refusal again.
+  const m15 = await importMutant('src/wallet/deep-links.ts', 'if (ctx.watchOnly === true) {\n', 'if (false) {\n');
+  const a15 = await m15.planDeepLink(m15.parseDeepLink(`shibawallet://send?uri=${enc(`ethereum:${PAYEE}@11155111?value=1e15`)}`), ctx({ watchOnly: true, nativeFor: () => null }));
+  mutantCaught('M15 a watch-only account\'s payment link opening Send (its refusal) again', a15.kind !== 'cold-sign');
   check(`all ${mutants} mutants caught`, mutantsCaught === mutants);
 }
 

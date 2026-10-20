@@ -442,4 +442,13 @@ export const es: Readonly<Partial<Record<StringId, string>>> = {
   'send.explorer': 'Ver en el explorador de bloques',
   'send.noExplorer': 'No hay ningún explorador de bloques verificado configurado para esta cadena; busca el ID de la transacción en un explorador en el que confíes.',
   'send.done': 'Hecho',
+  // Pass p22b (see en.ts).
+  'accounts.title': 'Cuentas',
+  'settings.section.recordsBackup': 'Copia de seguridad de los registros',
+  'settings.section.appPin': 'PIN de la aplicación',
+  'settings.appLock.switch': 'Usar un PIN o una contraseña para desbloquear',
+  'settings.customNetworks.add': 'Añadir una red personalizada',
+  'send.recipient.placeholder.names': '0x… o nombre ENS',
+  'send.recipient.namesHint': 'Introduce una dirección de Ethereum (0x…) o un nombre ENS como nick.eth.',
+  'receive.request.title': 'Solicitar un importe',
 };
