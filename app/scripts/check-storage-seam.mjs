@@ -190,6 +190,27 @@ const tree = readTree();
   check('the only value import of expo-secure-store is WalletContext.tsx, which binds the native module once (no call)',
     Object.entries(tree).filter(([, t]) => /^import (?!type)[^\n]*from 'expo-secure-store'/m.test(t)).map(([f]) => f).join(',') === 'src/wallet/WalletContext.tsx' &&
       (tree['src/wallet/WalletContext.tsx'].match(/bindSecureStore\(nativeSecureStoreBackend\(SecureStore\)\)/g) ?? []).length === 1);
+  // Pass p22b: the language could not be saved and the inbox listed nothing
+  // on the device; both were the users of lazyAppStore(), which loaded
+  // AsyncStorage through a dynamic import (an asynchronous Metro chunk).
+  // No file in src — the seam included — may load the package that way.
+  const dynamicImports = (t) => (stripComments(t).match(/import\(\s*['"]@react-native-async-storage\/async-storage['"]\s*\)/g) ?? []).length;
+  const withDynamic = Object.entries(tree).filter(([, t]) => dynamicImports(t) > 0).map(([f]) => f);
+  check(`no dynamic import() of @react-native-async-storage/async-storage anywhere in src, store-keys.ts included (${Object.keys(tree).length} files)`,
+    withDynamic.length === 0, withDynamic.join(', '));
+  const lazyBody = seamSrc.slice(seamSrc.indexOf('export function lazyAppStore'), seamSrc.indexOf('\n}\n', seamSrc.indexOf('export function lazyAppStore')));
+  check('lazyAppStore() calls the seam\'s own static AsyncStorage binding (no chunk, no require)',
+    lazyBody.includes('getItem: async (k) => AsyncStorage.getItem(k)') && lazyBody.includes('setItem: async (k, v) => AsyncStorage.setItem(k, v)') && !/import\(|require\(/.test(stripComments(lazyBody)));
+  {
+    const OLD_LAZY =
+      "export function lazyAppStore(): KeyValueStore {\n  let storePromise: Promise<KeyValueStore> | null = null;\n  const store = (): Promise<KeyValueStore> => {\n" +
+      "    if (!storePromise) storePromise = import('@react-native-async-storage/async-storage').then((m) => m.default);\n    return storePromise;\n  };\n" +
+      '  return {\n    getItem: async (k) => (await store()).getItem(k),\n    setItem: async (k, v) => (await store()).setItem(k, v),\n  };\n}';
+    const start = seamSrc.indexOf('export function lazyAppStore');
+    const end = seamSrc.indexOf('\n}\n', start) + 2;
+    const mutant = seamSrc.slice(0, start) + OLD_LAZY + seamSrc.slice(end);
+    check('…mutant caught (p22b): the old lazyAppStore with its dynamic import', dynamicImports(mutant) === 1 && dynamicImports(seamSrc) === 0);
+  }
   check('the comment stripper keeps code: a key in a URL-bearing line is still found',
     scanSource("const u = 'https://x.example'; const k = 'shiba-wallet.x.v1'; // note")["key 'shiba-wallet.x.v1'"] === 1);
   check('…and drops prose: keys and calls named in comments are not findings',

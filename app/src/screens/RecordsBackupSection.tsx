@@ -33,6 +33,7 @@ import {
   importRecordsBackup,
   parseRecordsBackupFile,
 } from '../wallet/records-backup';
+import { T } from '../i18n/T';
 
 /** "The file was not restored: <sentence>" — every refusal is a plain sentence. */
 export const RECORDS_BACKUP_IMPORT_REFUSED_PREFIX = 'The file was not restored:';
@@ -158,7 +159,7 @@ export function RecordsBackupSection() {
 
   return (
     <View style={styles.section}>
-      <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>{RECORDS_BACKUP_SECTION_TITLE}</Text>
+      <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>{RECORDS_BACKUP_SECTION_TITLE}</T></Text>
       <Text style={[styles.hint, { color: theme.textMuted }]}>{RECORDS_BACKUP_WHAT_NOTE}</Text>
       <Text style={[styles.hint, { color: theme.textMuted }]}>{RECORDS_BACKUP_KEY_NOTE}</Text>
       <Text style={[styles.hint, { color: theme.textMuted }]}>{RECORDS_BACKUP_NOT_INCLUDED_NOTE}</Text>

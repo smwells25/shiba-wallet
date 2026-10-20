@@ -739,11 +739,26 @@ export async function exportRecordsBackup(options: {
   }
 }
 
-/** "Contacts: 3. Transaction notes: 12. …" — the export's plain summary (kinds with records only). */
+/**
+ * The line shown after Export: how many records the file holds, per kind
+ * (kinds with records only), and that it was handed to the share sheet.
+ *
+ * Pass p22b: it used to say "Backed up N records" although the share sheet
+ * had been cancelled and the file went nowhere. expo-sharing's shareAsync
+ * resolves the same way whatever the user does in the sheet: on Android
+ * SharingModule.kt resolves null in OnActivityResult for its request code
+ * without reading the result code (expo-sharing 57.0.22, lines 80–84), and
+ * on iOS the activity controller's completionWithItemsHandler resolves nil
+ * for every outcome (SharingModule.swift lines 24–31). So the wallet cannot
+ * know whether a backup was saved, and says so.
+ */
 export function describeRecordsExport(result: Pick<RecordsBackupExport, 'summary' | 'total'>): string {
   const parts = result.summary.filter((s) => s.records > 0).map((s) => `${s.label}: ${s.records}`);
   const left = result.summary.filter((s) => s.unreadableDocuments > 0).map((s) => s.label);
-  const head = `Backed up ${result.total} ${result.total === 1 ? 'record' : 'records'}` + (parts.length > 0 ? ` (${parts.join('; ')}).` : '.');
+  const head =
+    `A backup of ${result.total} ${result.total === 1 ? 'record' : 'records'} was prepared and handed to the share sheet` +
+    (parts.length > 0 ? ` (${parts.join('; ')}).` : '.') +
+    ' Whether it was saved depends on what you chose there; this wallet cannot tell.';
   return left.length === 0
     ? head
     : `${head} Left out because they could not be read on this phone: ${left.join(', ')}.`;

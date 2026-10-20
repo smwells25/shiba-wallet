@@ -9,13 +9,16 @@ import { useI18n } from '../i18n/useI18n';
 import { useTheme } from '../theme';
 import { usePrefs } from '../wallet/PrefsContext';
 import { appLockKind } from '../wallet/duress';
+import { TechnicalDetail } from '../wallet/connectivity';
 import {
   INBOX_EMPTY,
   INBOX_INTRO,
+  INBOX_LOAD_FAILED_MESSAGE,
   INBOX_MARK_ALL_READ,
   INBOX_PASSPHRASE_NOTE,
   INBOX_PIN_NOTE,
   INBOX_READ_ONLY_MESSAGE,
+  INBOX_RECORD_FAILED_MESSAGE,
   INBOX_RESET_BODY,
   INBOX_RESET_TITLE,
   INBOX_SCHEDULED_NOTE,
@@ -27,6 +30,7 @@ import {
   inboxUnreadCount,
   inboxUnreadText,
   inboxViaLabel,
+  loadInboxView,
   visibleInboxEntries,
   type InboxEntry,
   type InboxState,
@@ -40,29 +44,40 @@ const EMPTY_STATE: InboxState = { entries: [], readOnly: false };
  * The inbox's state for a screen: read on mount and after every write, and
  * again whenever the screen is focused (a scheduled reminder whose time has
  * come appears then). Shared by this screen and the Home link's unread count.
+ *
+ * Pass p22b: a load the store rejected used to look exactly like an empty
+ * inbox (the rejection only set `loaded`). It now comes back as
+ * `loadFailure` (loadInboxView), and a failed write of an entry as
+ * `recordFailure`, so the screen says so with the technical detail.
  */
-export function useInbox(): { state: InboxState; now: number; loaded: boolean; reload: () => void } {
+export function useInbox(): {
+  state: InboxState;
+  now: number;
+  loaded: boolean;
+  loadFailure: string | null;
+  recordFailure: string | null;
+  reload: () => void;
+} {
   const [state, setState] = useState<InboxState>(EMPTY_STATE);
   const [loaded, setLoaded] = useState(false);
+  const [loadFailure, setLoadFailure] = useState<string | null>(null);
+  const [recordFailure, setRecordFailure] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const reload = useCallback(() => {
-    appInbox()
-      .load()
-      .then(
-        (s) => {
-          setState(s);
-          setNow(Date.now());
-          setLoaded(true);
-        },
-        () => setLoaded(true),
-      );
+    void loadInboxView(appInbox()).then((view) => {
+      setState(view.state);
+      setLoadFailure(view.loadFailure);
+      setRecordFailure(view.recordFailure);
+      setNow(Date.now());
+      setLoaded(true);
+    });
   }, []);
   useEffect(() => {
     reload();
     return appInbox().subscribe(reload);
   }, [reload]);
   useFocusEffect(reload);
-  return { state, now, loaded, reload };
+  return { state, now, loaded, loadFailure, recordFailure, reload };
 }
 
 /** The unread count shown on Home's Inbox link. */
@@ -88,7 +103,7 @@ export function InboxScreen({ navigation }: Props) {
   const { appPinOn } = usePrefs();
   // The app lock's kind (a device fact): the note names the PIN or the passphrase.
   const inboxLockKind = React.useSyncExternalStore(appLockKind.subscribe, appLockKind.get);
-  const { state, now, loaded, reload } = useInbox();
+  const { state, now, loaded, loadFailure, recordFailure, reload } = useInbox();
   const entries = visibleInboxEntries(state.entries, now);
   const unread = inboxUnreadCount(state.entries, now);
 
@@ -115,6 +130,19 @@ export function InboxScreen({ navigation }: Props) {
     >
       <Text style={[styles.body, { color: theme.text }]}><T>{INBOX_INTRO}</T></Text>
       {appPinOn ? <Text style={[styles.hint, { color: theme.textMuted }]}><T>{inboxLockKind === 'phr' ? INBOX_PASSPHRASE_NOTE : INBOX_PIN_NOTE}</T></Text> : null}
+      {loadFailure !== null ? (
+        <View style={styles.section}>
+          <WarningBox>{INBOX_LOAD_FAILED_MESSAGE}</WarningBox>
+          <TechnicalDetail text={loadFailure} />
+          <Button title="Try again" variant="secondary" onPress={reload} />
+        </View>
+      ) : null}
+      {recordFailure !== null && loadFailure === null ? (
+        <View style={styles.section}>
+          <WarningBox>{INBOX_RECORD_FAILED_MESSAGE}</WarningBox>
+          <TechnicalDetail text={recordFailure} />
+        </View>
+      ) : null}
       {state.readOnly ? (
         <View style={styles.section}>
           <WarningBox>{INBOX_READ_ONLY_MESSAGE}</WarningBox>
@@ -131,7 +159,7 @@ export function InboxScreen({ navigation }: Props) {
         {unread > 0 && !state.readOnly ? (
           <Button title={INBOX_MARK_ALL_READ} variant="secondary" onPress={() => void appInbox().markAllRead()} />
         ) : null}
-        {loaded && entries.length === 0 ? <Text style={[styles.hint, { color: theme.textMuted }]}><T>{INBOX_EMPTY}</T></Text> : null}
+        {loaded && loadFailure === null && entries.length === 0 ? <Text style={[styles.hint, { color: theme.textMuted }]}><T>{INBOX_EMPTY}</T></Text> : null}
         {entries.map((entry) => {
           // An entry keeps the English sentence shown at the time; it is shown
           // translated when it is exactly a table entry (localize).

@@ -35,9 +35,11 @@ import {
   SWITCHER_INTRO_TOGGLE,
   SWITCHER_SCROLL_HINT,
   WATCH_ONLY_LIST_HINT,
+  WATCH_ONLY_SWITCHER_LINE,
   phraseAccountSameAsWatchedNote,
   switcherListOverflows,
 } from '../wallet/watch-only';
+import { T } from '../i18n/T';
 
 /**
  * Home-screen account switcher (phase 6 item 3): a header row showing the
@@ -194,7 +196,7 @@ export function AccountSwitcher({ onManage, onImportKey }: { onManage: () => voi
 
       <Modal visible={open} animationType="slide" onRequestClose={() => setOpen(false)}>
         <View style={[styles.modal, { backgroundColor: theme.background }]}>
-          <Text accessibilityRole="header" style={[styles.modalTitle, { color: theme.text }]}>Accounts</Text>
+          <Text accessibilityRole="header" style={[styles.modalTitle, { color: theme.text }]}><T>Accounts</T></Text>
           {/*
             The account list is the one scrolling area between the title and
             the buttons (FlatList, flex 1). The intro used to sit above it
@@ -290,9 +292,7 @@ export function AccountSwitcher({ onManage, onImportKey }: { onManage: () => voi
                       <Text style={[styles.headerAddress, { color: theme.warningText }]}>{SWITCHER_IMPORTED_LINE}</Text>
                     ) : null}
                     {item.watchOnly ? (
-                      <Text style={[styles.headerAddress, { color: theme.warningText }]}>
-                        Watch-only — the wallet holds no key; it cannot send or sign
-                      </Text>
+                      <Text style={[styles.headerAddress, { color: theme.warningText }]}>{WATCH_ONLY_SWITCHER_LINE}</Text>
                     ) : null}
                     {item.multisig ? (
                       <Text style={[styles.headerAddress, { color: theme.warningText }]}>{MULTISIG_SWITCHER_LINE}</Text>

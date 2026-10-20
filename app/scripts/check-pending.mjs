@@ -379,6 +379,98 @@ console.log('check-pending: where a nonce stands');
   st = await groupStatus(nodeReader(node.transport), single);
   check('a lone transaction included → plain "mined", no notice kept', st.state === 'mined' && st.outcome === 'mined' && resolvedRecordFor(single, st, T0) === null);
 
+  // Pass p22b: a FRESH ordinary send that reused a stuck nonce. Live facts:
+  // the watched address's cold-signed 1-wei rehearsal at nonce 6
+  // (0x23bf…3686) was never included; a second cold-signed send of 0.0001
+  // test ETH at nonce 6 (0x9d6f9dc0…) was included in block 11952645. The
+  // notice named the stuck one as "the original … included before the
+  // replacement" — the reverse of the chain. Rebuilt with full hashes that
+  // carry the reported prefixes and suffixes.
+  {
+    const WATCHED = '0x8E1dEaF5d88e60DBdabcC79d8EFA570f40fb0cDF';
+    const STUCK = `0x23bf${'1'.repeat(56)}3686`;
+    const FRESH = `0x9d6f9dc0${'2'.repeat(52)}abcd`;
+    const stuck = txRecordFromQuote(WATCHED, quoteLike({ nonce: 6n, amount: 10n ** 13n, maxFeePerGas: 1n, maxPriorityFeePerGas: 1n, gasLimit: 21_000n }), STUCK, T0);
+    const fresh = txRecordFromQuote(WATCHED, quoteLike({ nonce: 6n, amount: 10n ** 14n, maxFeePerGas: 33n, maxPriorityFeePerGas: 2n, gasLimit: 21_000n }), FRESH, T0 + 60_000);
+    const [g6] = nonceGroups([stuck, fresh], CHAIN, WATCHED);
+    const live = fakeNode();
+    live.state.receipts.set(FRESH, { block: 11952645n });
+    const st6 = await groupStatus(nodeReader(live.transport), g6);
+    check('p22b: a fresh ordinary send included at a stuck nonce → outcome "superseded" (not "original-first")',
+      g6.original.hash === STUCK && st6.state === 'mined' && st6.hash === FRESH && st6.outcome === 'superseded', JSON.stringify(st6, (k, v) => (typeof v === 'bigint' ? v.toString() : v)));
+    const n6 = resolvedRecordFor(g6, st6, T0 + 120_000);
+    check('…its notice names the included hash as the one that superseded the stuck one (exact)',
+      n6.original === STUCK && n6.minedHash === FRESH &&
+        resolvedSentence(n6) === 'Transaction 0x23bf…3686 (nonce 6) was superseded by 0x9d6f…abcd, included in block 11952645; 0x23bf…3686 will never be included.' &&
+        !resolvedSentence(n6).includes(ORIGINAL_MINED_FIRST_SENTENCE), resolvedSentence(n6));
+    check('…and the included row\'s Activity line says it was sent in place of the stuck one',
+      replacementRowLine([n6], CHAIN, FRESH) === 'Sent in place of transaction 0x23bf…3686 (nonce 6), which will never be included.' && replacementRowLine([n6], CHAIN, STUCK) === null);
+    const stored6 = memoryStore();
+    for (const r of [stuck, fresh]) await recordPendingTransaction(r, stored6);
+    await refreshAccountPending({ reader: nodeReader(live.transport), chain: CHAIN, from: WATCHED, store: stored6, nowMs: T0 + 120_000 });
+    const reg6 = await loadPendingRegistry(stored6);
+    check('…refresh stores it (the strict parse accepts "superseded"); Dismiss keeps a marker and the row line',
+      !reg6.readOnly && resolvedNotices(reg6.records, CHAIN, WATCHED)[0]?.outcome === 'superseded');
+    await pending.dismissResolvedNotice(resolvedNotices(reg6.records, CHAIN, WATCHED)[0], stored6, T0 + 130_000);
+    const after6 = await loadPendingRegistry(stored6);
+    check('…after Dismiss: no notice, the marker with outcome "superseded", the row line unchanged',
+      resolvedNotices(after6.records, CHAIN, WATCHED).length === 0 && after6.records.length === 1 && after6.records[0].kind === 'marker' &&
+        after6.records[0].outcome === 'superseded' && replacementRowLine(after6.records, CHAIN, FRESH) === 'Sent in place of transaction 0x23bf…3686 (nonce 6), which will never be included.');
+    const inbox6 = await import('../src/wallet/inbox.ts');
+    check('…the inbox lists it as "Transaction superseded"',
+      inbox6.replacementNoticeInboxEvent({ chain: CHAIN, from: WATCHED, nonce: '6', minedHash: FRESH, outcome: 'superseded', resolvedAt: T0, text: resolvedSentence(n6) }).title === 'Transaction superseded');
+    // The other way round: the stuck one (the original) included after all,
+    // beside only another ordinary send → the other is superseded.
+    const back = fakeNode();
+    back.state.receipts.set(STUCK, { block: 11952646n });
+    const stBack = await groupStatus(nodeReader(back.transport), g6);
+    const nBack = resolvedRecordFor(g6, stBack, T0);
+    check('…the original included beside only another ordinary send → "superseded", naming the other send',
+      stBack.outcome === 'superseded' && nBack.minedHash === STUCK && nBack.original === FRESH);
+    // A speed-up of the SECOND send names the second send, not the first.
+    const sp = txRecordFromQuote(WATCHED, quoteLike({ nonce: 6n, amount: 10n ** 14n, maxFeePerGas: 40n, maxPriorityFeePerGas: 3n, gasLimit: 21_000n }), H(0x6006), T0 + 90_000, { action: 'speed-up', replaces: FRESH });
+    const [g6b] = nonceGroups([stuck, fresh, sp], CHAIN, WATCHED);
+    const spNode = fakeNode();
+    spNode.state.receipts.set(H(0x6006), { block: 11952647n });
+    const stSp = await groupStatus(nodeReader(spNode.transport), g6b);
+    const nSp = resolvedRecordFor(g6b, stSp, T0);
+    check('…a speed-up of the second send included → "replaced", naming the send it replaced (its replaces chain), not the stuck one',
+      stSp.outcome === 'replaced' && nSp.original === FRESH && resolvedSentence(nSp).startsWith('Sped up: transaction 0x9d6f…abcd (nonce 6) was replaced by'));
+    check('…and the original with a real replacement beside it is still "original-first" (unchanged)', pending.minedOutcome(g6b, stuck) === 'original-first');
+  }
+
+  // Pass p22b: a pending token send read "calls 0x1c7d…7238" (the token
+  // contract). Both paths record a token send the same way — the Send
+  // screen's sendErc20 and the cold-signing screen's coldSignBroadcastQuote
+  // both hand sendEvm / sendEvmWithSignature a quote whose `to` is the
+  // contract, value 0 and data the transfer call — so the line decodes the
+  // transfer from the record, for both.
+  {
+    const erc20Src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../src/wallet/send-erc20.ts'), 'utf8');
+    const coldSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../src/wallet/cold-signing.ts'), 'utf8');
+    const mapping = /to: quote\.contract,\s*amount: 0n,[\s\S]{0,400}?data: quote\.data,/;
+    check('p22b: the hot token send (sendErc20) and the cold one (coldSignBroadcastQuote) record the same shape: to = contract, value 0, data = transfer',
+      mapping.test(erc20Src) && mapping.test(coldSrc));
+    const USDC = '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238';
+    const RECIP = '0xb6990A39A8B4cD6Fc6a0dC1d2E5dCE4dF27681fE';
+    const amountWord = (500_000n).toString(16).padStart(64, '0');
+    const data = `0xa9059cbb${'0'.repeat(24)}${RECIP.slice(2).toLowerCase()}${amountWord}`;
+    const tokenTx = txRecordFromQuote(FROM, quoteLike({ nonce: 5n, to: USDC, amount: 0n, data: Uint8Array.from(Buffer.from(data.slice(2), 'hex')) }), `0x71bf${'3'.repeat(56)}16d9`, T0);
+    const [tg] = nonceGroups([tokenTx], CHAIN, FROM);
+    const line = pending.pendingGroupSentence(tg, { nativeSymbol: 'test ETH', nowMs: T0, tokens: [{ contract: USDC, symbol: 'USDC', decimals: 6 }] });
+    check('…a pending USDC send reads as its transfer: amount, symbol, recipient, then the contract (exact)',
+      line === `Waiting to be included: transaction 0x71bf…16d9 (nonce 5) sends 0.5 USDC to ${RECIP.toLowerCase()} (token contract ${USDC.toLowerCase()}), sent less than a minute ago.`, line);
+    const unknown = pending.pendingGroupSentence(tg, { nativeSymbol: 'test ETH', nowMs: T0 });
+    check('…a token the network does not track: the amount in base units and the contract, never a guessed symbol',
+      unknown === `Waiting to be included: transaction 0x71bf…16d9 (nonce 5) sends 500000 base units of the token at ${USDC.toLowerCase()} to ${RECIP.toLowerCase()}, sent less than a minute ago.`, unknown);
+    check('…anything that is not exactly transfer(address,uint256) still reads as a call',
+      pending.decodeTokenTransferData(`${data}00`) === null && pending.decodeTokenTransferData(data.replace('a9059cbb', '095ea7b3')) === null &&
+        pending.decodeTokenTransferData(`0xa9059cbb${'f'.repeat(24)}${RECIP.slice(2)}${amountWord}`) === null);
+    const pcs22 = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../src/components/PendingTransactions.tsx'), 'utf8');
+    check('…the card passes the network\'s tracked tokens (listTokens) to the line, on screen and in the spoken label',
+      (pcs22.match(/pendingGroupSentence\(group, \{ nativeSymbol: symbol, nowMs, tokens: lineTokens \}\)/g) ?? []).length === 2 && pcs22.includes('listTokens(chain).then('));
+  }
+
   const nullReceipt = fakeNode();
   nullReceipt.state.txs.set(H(1), 80n);
   st = await groupStatus(nodeReader(nullReceipt.transport), single);
@@ -1001,12 +1093,27 @@ console.log('check-pending: the screens wire the gates in order (source)');
     withShortAddresses(multisigTitle) === `Smart-account operation ${shortHashOf(H(204))}: 0.000000000000000005 test ETH to 0x944c…0d38.` && multisigTitle.includes(MULTISIG));
   const spokenOk = (src) =>
     src.includes('<Text accessibilityLabel={withShortAddresses(userOpCardTitle(record))} style={[styles.text, { color: theme.text }]}>') &&
-    src.includes('accessibilityLabel={withShortAddresses(pendingGroupSentence(group, { nativeSymbol: symbol, nowMs }))}');
+    src.includes('accessibilityLabel={withShortAddresses(pendingGroupSentence(group, { nativeSymbol: symbol, nowMs, tokens: lineTokens }))}');
   check('the user-operation card title and the pending-transaction sentence are spoken through withShortAddresses (source)', spokenOk(view));
   check('…mutant caught: the title spoken in full again',
     !spokenOk(view.replace('<Text accessibilityLabel={withShortAddresses(userOpCardTitle(record))} style=', '<Text style=')));
   const activity = readFileSync(join(HERE, '../src/screens/ActivityScreen.tsx'), 'utf8');
   check('Activity shows the section in the list, the unavailable and the error states', (activity.match(/\{pendingSection\}/g) ?? []).length === 3 && activity.includes('replacementRowLine(pendingRecords'));
+  // Pass p22b: a stuck cold-signed transaction could not be sped up or
+  // cancelled once its success view was closed, because Activity hid this
+  // section for a watch-only account. It is shown for a watch-only account
+  // now (a multisig still sends nothing through sendEvm), and its Speed up /
+  // Cancel open the cold-signing screen in replacement mode — the same
+  // component and routing the cold success view uses.
+  const pendingCond = (src) => /const pendingSection =\s*isEvmSlot && account && activeAccount\?\.multisig !== true \? \(\s*<PendingTransactionsSection/.test(src);
+  check('p22b: Activity shows "Pending on this phone" for a watch-only account (only a multisig is left out)', pendingCond(activity));
+  check('…mutant caught: the old condition that hid it for a watch-only account',
+    !pendingCond(activity.replace('isEvmSlot && account && activeAccount?.multisig !== true ? (', 'isEvmSlot && account && activeAccount?.watchOnly !== true && activeAccount?.multisig !== true ? (')));
+  check('…its Speed up and Cancel route a watch-only account to the cold-signing screen in replacement mode (as the cold success view, the same component)',
+    view.includes('const coldReplace = activeAccount?.watchOnly === true;') &&
+      view.includes("? navigation.navigate('ColdSign', { replace: { hash: group.latest.hash, action: 'speed-up' } })") &&
+      view.includes("? navigation.navigate('ColdSign', { replace: { hash: group.latest.hash, action: 'cancel' } })") &&
+      readFileSync(join(HERE, '../src/screens/ColdSignScreen.tsx'), 'utf8').includes('<PendingTransactionsSection from={from} onlyHash={result.txid} />'));
   // A wipe forgets the registry with the rest of the wallet's on-device state (CTO, phase 19 item 3).
   const walletContext = readFileSync(join(HERE, '../src/wallet/WalletContext.tsx'), 'utf8');
   check('WalletContext registers the pending recorder once on the operation-sent channel', (walletContext.match(/addAaOperationSentListener\(pendingUserOpRecorder\(AsyncStorage\)\)/g) ?? []).length === 1);

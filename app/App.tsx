@@ -140,9 +140,10 @@ function TestnetBanner() {
 function DeepLinkHandler() {
   const theme = useTheme();
   const nav = React.useContext(NavigationContainerRefContext) as NavigationContainerRef<RootStackParamList> | undefined;
-  const { status, accounts } = useWallet();
+  const { status, accounts, activeAccount } = useWallet();
   const { evmChain } = usePrefs();
   const { locked } = useAppLock();
+  const watchOnly = activeAccount?.watchOnly === true;
   const [notice, setNotice] = React.useState<string | null>(null);
   const [arrivals, setArrivals] = React.useState(0);
   const [navReady, setNavReady] = React.useState(false);
@@ -173,6 +174,7 @@ function DeepLinkHandler() {
         return account ? { symbol: account.symbol, networkLabel: account.name } : null;
       },
       hasEvmAccount: accounts.some((a) => a.chainId === EVM_CHAIN_ID),
+      watchOnly,
     }).then(
       (action) => {
         if (!nav.isReady()) return;
@@ -195,11 +197,16 @@ function DeepLinkHandler() {
             setNotice(null);
             nav.dispatch(StackActions.push('Send', action.params));
             return;
+          case 'cold-sign':
+            // A watch-only account: the cold-signing screen (pass p22b).
+            setNotice(null);
+            nav.dispatch(StackActions.push('ColdSign', action.params));
+            return;
         }
       },
       () => setNotice(DEEP_LINK_UNKNOWN_SENTENCE),
     );
-  }, [nav, status, locked, navReady, arrivals, evmChain, accounts]);
+  }, [nav, status, locked, navReady, arrivals, evmChain, accounts, watchOnly]);
 
   if (!notice) return null;
   return (

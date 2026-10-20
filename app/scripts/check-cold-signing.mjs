@@ -699,6 +699,38 @@ console.log('check-cold-signing: zero secure-store reads, no signing anywhere in
 }
 
 // ===========================================================================
+console.log('check-cold-signing: pass p22b (the rehearsal note on a refused broadcast, Max)');
+{
+  const screen = source('src/screens/ColdSignScreen.tsx');
+  const onBroadcast = screen.slice(screen.indexOf('const onBroadcast = async'), screen.indexOf('// ---------------------------------------------------------------- success'));
+  const rehearsalNoteOk = (src, body) =>
+    body.includes('setError(describeColdError(e, sendSymbol, symbol, { minimumFeeRehearsal: minimumFeeRehearsalOf(quote) !== null }));') &&
+    src.includes('const d = describeSendError(e, sendSymbol, feeSymbol, options);');
+  check('finding 4: a refused broadcast of a minimum-fee rehearsal quote gets the Send screen\'s rehearsal note (describeSendError minimumFeeRehearsal, from the quote)',
+    rehearsalNoteOk(screen, onBroadcast));
+  check('…mutant caught: the old catch without the flag', !rehearsalNoteOk(screen, onBroadcast.replace('setError(describeColdError(e, sendSymbol, symbol, { minimumFeeRehearsal: minimumFeeRehearsalOf(quote) !== null }));', 'fail(e, sendSymbol);')));
+  const { describeSendError, TX_UNDERPRICED_REHEARSAL_NOTE } = await import('../src/wallet/send.ts');
+  const underpriced = new Error('RPC error -32000: transaction underpriced (eth_sendRawTransaction)');
+  check('…and that flag is what adds the note (send.ts, the live refusal text)',
+    describeSendError(underpriced, 'test ETH', 'test ETH', { minimumFeeRehearsal: true }).detail.includes(TX_UNDERPRICED_REHEARSAL_NOTE) &&
+      !describeSendError(underpriced, 'test ETH', 'test ETH').detail.includes(TX_UNDERPRICED_REHEARSAL_NOTE));
+  const onMax = screen.slice(screen.indexOf('const onMax = async'), screen.indexOf('const onShow = async'));
+  const maxOk = (body, src) =>
+    body.includes('maxErc20Send(ep.url, from, token.assetId.reference, to, token.assetId.chainId)') &&
+    body.includes('maxEvmSend(ep.url, from, to)') &&
+    body.includes("throw new Error('Balance is too small to cover the network fee.');") &&
+    body.includes('if (!token) lastMax.current = { text, from, chainId: EVM_CHAIN_ID };') &&
+    src.includes('fromMax: amountIsLastMax(lastMax.current, { text: amountText, from, chainId: EVM_CHAIN_ID }),') &&
+    src.includes('<WarningBox>{maxAdjustmentSentence(quote, (v) => `${fmt(v)} ${symbol}`)}</WarningBox>') &&
+    /title=\{maxBusy \? '…' : 'Max'\}[\s\S]{0,80}onPress=\{\(\) => void onMax\(\)\}/.test(src);
+  check('finding 7: Max with the Send screen\'s functions — native: maxEvmSend (balance less the worst-case fee), a token: maxErc20Send (its whole balance, refused when ETH cannot pay the fee); a native Max amount lowered at Review with the same sentence (fromMax, maxAdjustmentSentence)',
+    maxOk(onMax, screen));
+  check('…mutant caught: Review no longer told the amount came from Max',
+    !maxOk(onMax, screen.replace('fromMax: amountIsLastMax(lastMax.current, { text: amountText, from, chainId: EVM_CHAIN_ID }),', '')));
+  check('…no copy of the Max arithmetic on the screen (no balance or fee figures computed there)', !/getBalance|gasLimit \*|\* quote\.maxFeePerGas/.test(onMax));
+}
+
+// ===========================================================================
 console.log('check-cold-signing: the off-line half (scripts/testnet/cold-signer.mjs)');
 // ===========================================================================
 {

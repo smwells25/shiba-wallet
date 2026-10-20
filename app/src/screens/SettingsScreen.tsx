@@ -173,6 +173,7 @@ import { MULTISIG_SETTINGS_BLURB } from '../wallet/multisig';
 import { PassphraseField, PinPad } from '../components/LockGate';
 import { AUTO_LOCK_HINT_WITH_PASSPHRASE, AUTO_LOCK_HINT_WITH_PIN } from '../wallet/lock';
 import { PinCostMeasurement } from '../components/PinCostMeasurement';
+import { TechnicalDetail } from '../wallet/connectivity';
 import { pinCostMeasurementOffered } from '../wallet/pin-cost';
 import { NOTIFICATIONS_SECTION_TITLE, appNotifications } from '../wallet/notifications';
 import { LOCK_KINDS, mismatchMessage, newLockSecretRefusal, sameLockSecret, type LockKind } from '../wallet/pin';
@@ -1543,6 +1544,8 @@ const PASSPHRASE_PHRASE_CHECK_PROMPT = 'Check the new passphrase against your re
 
 function AppPinSection() {
   const theme = useTheme();
+  // Pass p22b: the section title and the switch label follow the language.
+  const { localize: localizeText } = useI18n();
   const fieldLabel = useFieldLabels();
   const {
     revealMnemonic,
@@ -1760,11 +1763,11 @@ function AppPinSection() {
 
   return (
     <View style={styles.section}>
-      <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>{copy.sectionTitle}</Text>
+      <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>{localizeText(copy.sectionTitle)}</Text>
       <View style={styles.toggleRow}>
-        <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.toggleLabel, { color: theme.text, flexShrink: 1, marginRight: 12 }]}>{APP_LOCK_SWITCH_LABEL}</Text>
+        <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.toggleLabel, { color: theme.text, flexShrink: 1, marginRight: 12 }]}>{localizeText(APP_LOCK_SWITCH_LABEL)}</Text>
         <Switch {...switchColors(theme)}
-          accessibilityLabel={APP_LOCK_SWITCH_LABEL}
+          accessibilityLabel={localizeText(APP_LOCK_SWITCH_LABEL)}
           accessibilityRole="switch"
           accessibilityState={{ checked: appPinOn, disabled: busy }}
           value={appPinOn}
@@ -1898,10 +1901,12 @@ function LanguageSection() {
   const { language, t } = useI18n();
   const controller = appLanguage();
   const choice = useSyncExternalStore(controller.subscribe, controller.choice, controller.choice);
-  const [failed, setFailed] = useState(false);
+  // The store's own error text when the last save failed (pass p22b: the
+  // device answered the failure sentence with no way to read its cause).
+  const [failed, setFailed] = useState<string | null>(null);
   const choose = (next: LanguageChoice) => {
-    setFailed(false);
-    controller.choose(next).catch(() => setFailed(true));
+    setFailed(null);
+    controller.choose(next).catch((e: unknown) => setFailed(e instanceof Error ? e.message || e.name : String(e)));
   };
   return (
     <View style={styles.section}>
@@ -1929,7 +1934,12 @@ function LanguageSection() {
       <Text style={[styles.hint, { color: theme.textMuted }]}>{t('settings.language.draft')}</Text>
       <Text style={[styles.hint, { color: theme.textMuted }]}>{t('settings.language.amounts')}</Text>
       <Text style={[styles.hint, { color: theme.textMuted }]}>{t('settings.language.shared')}</Text>
-      {failed ? <Text style={[styles.hint, { color: theme.danger }]}>{t('settings.language.saveFailed')}</Text> : null}
+      {failed !== null ? (
+        <>
+          <Text style={[styles.hint, { color: theme.danger }]}>{t('settings.language.saveFailed')}</Text>
+          <TechnicalDetail text={failed} />
+        </>
+      ) : null}
     </View>
   );
 }

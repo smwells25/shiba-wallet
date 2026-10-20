@@ -2110,6 +2110,44 @@
     "src/components/WcApprovalSheet.tsx:628 literal",
     "src/screens/ApprovalsScreen.tsx:467 literal"
    ]
+  },
+  "accounts.title": {
+   "en": "Accounts",
+   "where": [
+    "src/components/AccountsSection.tsx:390 jsx",
+    "src/components/AccountSwitcher.tsx:197 jsx"
+   ]
+  },
+  "settings.section.recordsBackup": {
+   "en": "Records backup",
+   "where": "src/wallet/records-backup.ts:176 literal"
+  },
+  "settings.section.appPin": {
+   "en": "App PIN",
+   "where": "src/wallet/duress.ts:319 literal"
+  },
+  "settings.appLock.switch": {
+   "en": "Use a PIN or passphrase to unlock",
+   "where": "src/wallet/duress.ts:416 literal"
+  },
+  "settings.customNetworks.add": {
+   "en": "Add a custom network",
+   "where": "src/screens/SettingsScreen.tsx:1480 literal"
+  },
+  "send.recipient.placeholder.names": {
+   "en": "0x… or ENS name",
+   "where": "src/wallet/ens-names.ts:157 literal"
+  },
+  "send.recipient.namesHint": {
+   "en": "Enter an Ethereum address (0x…) or an ENS name such as nick.eth.",
+   "where": "src/wallet/ens-names.ts:162 literal"
+  },
+  "receive.request.title": {
+   "en": "Request an amount",
+   "where": [
+    "src/components/PaymentRequestViews.tsx:198 literal",
+    "src/components/PaymentRequestViews.tsx:209 jsx"
+   ]
   }
  },
  "template": {

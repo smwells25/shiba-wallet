@@ -1582,7 +1582,8 @@ console.log('check-multisig: the multisig as an account in the switcher (phase 1
       const p = [];
       const need = (what, ok) => { if (!ok) p.push(what); };
       const modal = src.slice(src.indexOf('<Modal visible={open}'), src.indexOf('</Modal>'));
-      const titleAt = modal.indexOf('>Accounts</Text>');
+      // Pass p22b: the title goes through the string table (<T>Accounts</T>).
+      const titleAt = modal.indexOf('><T>Accounts</T></Text>');
       const listAt = modal.indexOf('<FlatList');
       const headerAt = modal.indexOf('ListHeaderComponent={');
       const hintAt = modal.indexOf('{accountsBackupHint(anyImported, { watchOnly: anyWatched, multisig: anyMultisig })}');
@@ -1591,7 +1592,7 @@ console.log('check-multisig: the multisig as an account in the switcher (phase 1
       const addAt = modal.indexOf('<Button title="Add account"');
       need('title, then the list', titleAt >= 0 && listAt > titleAt);
       need('nothing but a comment between the title and the list (no intro text squeezing it)',
-        !/<Text/.test(modal.slice(titleAt + '>Accounts</Text>'.length, listAt)));
+        !/<Text/.test(modal.slice(titleAt + '><T>Accounts</T></Text>'.length, listAt)));
       need('the backup text sits in the list header, before the rows', headerAt > listAt && hintAt > headerAt && rowsAt > hintAt);
       need('the backup text renders only when the expander is open', /\{introOpen \? \(\s*<Text style=\{\[styles\.hint/.test(modal));
       need('the expander is one line with its label', modal.includes('numberOfLines={1}') && modal.includes('SWITCHER_INTRO_TOGGLE') &&

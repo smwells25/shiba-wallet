@@ -12,6 +12,7 @@ import { requireLocalAuth } from '../wallet/biometric';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
 import { getAaConfig } from '../wallet/aa';
+import { listTokens } from '../wallet/tokens';
 import { formatUnits } from '../wallet/balances';
 import { TechnicalDetail } from '../wallet/connectivity';
 import { evaluateBeforeSigning, recordAcceptedSpend } from '../wallet/spending-policy';
@@ -63,6 +64,7 @@ import {
   userOpsFor,
   type NonceGroup,
   type PendingGroupView,
+  type PendingLineToken,
   type PendingRegistry,
   type PendingSectionView,
   type PendingUserOpRecord,
@@ -149,6 +151,24 @@ export function PendingTransactionsSection({
   const draftOpen = useRef(false);
   draftOpen.current = draft !== null;
   const [nowMs, setNowMs] = useState(Date.now());
+  // The network's tracked tokens, so a pending token send reads as its
+  // transfer ("sends 1 USDC to 0x…") rather than "calls <the contract>"
+  // (pass p22b; pendingGroupSentence decodes the transfer from the record).
+  const [lineTokens, setLineTokens] = useState<PendingLineToken[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    listTokens(chain).then(
+      (list) => {
+        if (!cancelled) setLineTokens(list.map((t) => ({ contract: t.assetId.reference, symbol: t.symbol, decimals: t.decimals })));
+      },
+      () => {
+        if (!cancelled) setLineTokens([]);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [chain]);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -401,10 +421,10 @@ export function PendingTransactionsSection({
         return (
           <View key={`${group.chain}:${group.nonce}`} style={card}>
             <Text
-              accessibilityLabel={withShortAddresses(pendingGroupSentence(group, { nativeSymbol: symbol, nowMs }))}
+              accessibilityLabel={withShortAddresses(pendingGroupSentence(group, { nativeSymbol: symbol, nowMs, tokens: lineTokens }))}
               style={[styles.text, { color: theme.text }]}
             >
-              {pendingGroupSentence(group, { nativeSymbol: symbol, nowMs })}
+              {pendingGroupSentence(group, { nativeSymbol: symbol, nowMs, tokens: lineTokens })}
             </Text>
             <Text style={[styles.muted, { color: theme.textMuted }]}>
               Newest version {shortHash(group.latest.hash)}

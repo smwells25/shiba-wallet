@@ -202,7 +202,14 @@ export type DeepLinkAction =
   | { kind: 'home' }
   | { kind: 'navigate'; route: Exclude<DeepLinkRoute, 'Home'>; params?: { chainId: string } }
   /** A NEW Send screen (push), pre-filled with editable values. */
-  | { kind: 'send'; params: { chainId: string; tokenId?: string; request: SendRequestPrefill } };
+  | { kind: 'send'; params: { chainId: string; tokenId?: string; request: SendRequestPrefill } }
+  /**
+   * Pass p22b: the same pre-fill on a NEW cold-signing screen (push), for an
+   * Ethereum payment link opened while a WATCH-ONLY account is active: the
+   * wallet holds no key for it, so Send would only refuse; the cold-signing
+   * screen prepares the send for its off-line signer.
+   */
+  | { kind: 'cold-sign'; params: { tokenId?: string; request: SendRequestPrefill } };
 
 export interface PayLinkContext {
   /** The ACTIVE EVM profile (the network is never switched). */
@@ -213,6 +220,12 @@ export interface PayLinkContext {
   nativeFor: (slotChainId: string) => { symbol: string; networkLabel: string } | null;
   /** Whether the active account has an EVM address (not, e.g., while none is derived yet). */
   hasEvmAccount: boolean;
+  /**
+   * Whether the active account is a watch-only address (pass p22b): an
+   * Ethereum payment link then opens the cold-signing screen instead of Send;
+   * a link for another network family is refused as before. Absent = false.
+   */
+  watchOnly?: boolean;
 }
 
 /**
@@ -236,6 +249,10 @@ export async function planDeepLink(link: ParsedDeepLink, ctx: PayLinkContext): P
         : { kind: 'navigate', route: link.route };
     case 'pay': {
       const isEvm = link.family === 'evm';
+      // A watched address exists only on the Ethereum networks: a link for
+      // another family is refused with the same sentence as any account
+      // without that network (never treated as the watched address).
+      if (ctx.watchOnly === true && !isEvm) return { kind: 'notice', text: deepLinkNoAccountSentence(link.family) };
       const native = isEvm
         ? ctx.hasEvmAccount
           ? { symbol: ctx.evmProfile.displaySymbol, networkLabel: ctx.evmProfile.label }
@@ -251,12 +268,17 @@ export async function planDeepLink(link: ParsedDeepLink, ctx: PayLinkContext): P
       if (parsed.kind === 'not-a-request') return { kind: 'notice', text: DEEP_LINK_UNKNOWN_SENTENCE };
       if (parsed.kind === 'refused') return { kind: 'notice', text: deepLinkPayRefusal(parsed.message) };
       const lines = [DEEP_LINK_PAY_LINE, ...describeParsedRequest(parsed, { nativeSymbol: native.symbol, networkLabel: native.networkLabel })];
+      const request = { recipient: parsed.recipient, amountText: parsed.amountText, lines };
+      if (ctx.watchOnly === true) {
+        // The same parsed, refused-or-accepted request; only the screen differs.
+        return { kind: 'cold-sign', params: { ...(parsed.token ? { tokenId: parsed.token.assetId } : {}), request } };
+      }
       return {
         kind: 'send',
         params: {
           chainId: link.slotChainId,
           ...(parsed.token ? { tokenId: parsed.token.assetId } : {}),
-          request: { recipient: parsed.recipient, amountText: parsed.amountText, lines },
+          request,
         },
       };
     }

@@ -64,6 +64,8 @@ import { COLD_SIGN_HOME_LINK, COLD_SIGN_LINK_HINT } from '../src/wallet/cold-sig
 import * as as from '../src/wallet/activity-sentences.ts';
 import { LOAD_MORE_RETRY_FOOTER } from '../src/wallet/history-controller.ts';
 import { NOTE_PRIVACY_LINE } from '../src/wallet/notes.ts';
+import { RECORDS_BACKUP_SECTION_TITLE } from '../src/wallet/records-backup.ts';
+import { SEND_RECIPIENT_NAMES_HINT, sendRecipientPlaceholder } from '../src/wallet/ens-names.ts';
 import { AUTO_LOCK_CHOICES } from '../src/config/prefs.ts';
 import { formatBalanceDisplay } from '../src/wallet/balances.ts';
 import { activityRowSpokenLead, sendLinkHint, spokenLinkText } from '../src/a11y.ts';
@@ -302,6 +304,11 @@ const CONSTANTS = {
   'readiness.blockers': R.PLAIN_BLOCKERS, 'readiness.blockers.protected': R.PLAIN_BLOCKERS_PROTECTED, 'readiness.blockers.unprotected': R.PLAIN_BLOCKERS_UNPROTECTED,
   'readiness.status.mainnetOk': R.READINESS_STATUS_LABEL['mainnet-ok'], 'readiness.status.testnetOnly': R.READINESS_STATUS_LABEL['testnet-only'],
   'readiness.status.blocked': R.READINESS_STATUS_LABEL.blocked,
+  // Pass p22b: the cheap migrations whose English a wallet module exports.
+  'settings.section.recordsBackup': RECORDS_BACKUP_SECTION_TITLE,
+  'settings.section.appPin': duress.APP_PIN_SECTION_TITLE, 'settings.appLock.switch': duress.APP_LOCK_SWITCH_LABEL,
+  'send.recipient.namesHint': SEND_RECIPIENT_NAMES_HINT,
+  'send.recipient.placeholder.names': sendRecipientPlaceholder({ namesOffered: true, ethereum: true, symbol: 'ETH' }),
   'settings.autoLock.off': AUTO_LOCK_CHOICES[0].label, 'settings.autoLock.1min': AUTO_LOCK_CHOICES[1].label, 'settings.autoLock.5min': AUTO_LOCK_CHOICES[2].label,
 };
 {
@@ -501,6 +508,7 @@ const isEntryOrDecorated = (text) => I.idOfEnglish(text) !== null || I.localizeI
     SCREEN_PROTECTION_ALWAYS_NOTE: 'settings.screenProtection.always', SPENDING_SECTION_TITLE: 'settings.section.spending',
     WATCHED_ADDRESS_RECEIVE_NOTE: 'receive.watched.note', MULTISIG_RECEIVE_NOTE: 'receive.multisig.note', RECOVERED_NOT_DERIVABLE_NOTE: 'receive.recovered.note',
     ROW_DETAILS_UNAVAILABLE_LINE: 'activity.row.unavailable', LOAD_MORE_RETRY_FOOTER: 'activity.loadMoreRetry',
+    RECORDS_BACKUP_SECTION_TITLE: 'settings.section.recordsBackup', SEND_RECIPIENT_NAMES_HINT: 'send.recipient.namesHint',
   }));
   // `text` is Home's cardLink (its callers pass English literals, scanned as literals below).
   // Phase 22 polish: an app-lock note picked by the lock's kind,
@@ -526,6 +534,36 @@ const isEntryOrDecorated = (text) => I.idOfEnglish(text) !== null || I.localizeI
   check(`every t('id') names an existing entry (${tIds.length} calls)`, tIds.length >= 80 && tIdBad.length === 0, tIdBad.slice(0, 3).map((x) => x.join(': ')).join('; '));
   const tables = FILES.filter((x) => !x.f.startsWith('src/i18n/') && /from '[^']*i18n\/(en|es)(\.ts)?'/.test(x.src)).map((x) => x.f);
   check('only the accessor reads the tables (no file outside src/i18n imports en.ts or es.ts)', tables.length === 0, tables.join(', '));
+}
+// Pass p22b: the cheap migrations. Each English text is the one the app
+// showed at the fixture's base (literal entries), each has a Spanish line,
+// and each call site goes through the accessor.
+{
+  const P22B = {
+    'accounts.title': 'Cuentas',
+    'settings.section.recordsBackup': 'Copia de seguridad de los registros',
+    'settings.section.appPin': 'PIN de la aplicación',
+    'settings.appLock.switch': 'Usar un PIN o una contraseña para desbloquear',
+    'settings.customNetworks.add': 'Añadir una red personalizada',
+    'send.recipient.placeholder.names': '0x… o nombre ENS',
+    'send.recipient.namesHint': 'Introduce una dirección de Ethereum (0x…) o un nombre ENS como nick.eth.',
+    'receive.request.title': 'Solicitar un importe',
+  };
+  check('p22b: eight more entries, each a literal of the base commit, each with its Spanish line',
+    Object.entries(P22B).every(([id, spanish]) => FIXTURE.literal[id] !== undefined && FIXTURE.literal[id].en === en[id] && es[id] === spanish && I.localizeIn('es', en[id]) === spanish));
+  const src = (rel) => read(rel);
+  const sites = {
+    accountsSection: src('src/components/AccountsSection.tsx').includes('<T>Accounts</T>'),
+    switcher: src('src/components/AccountSwitcher.tsx').includes('<T>Accounts</T>'),
+    recordsBackup: src('src/screens/RecordsBackupSection.tsx').includes('<T>{RECORDS_BACKUP_SECTION_TITLE}</T>'),
+    appPin: src('src/screens/SettingsScreen.tsx').includes('{localizeText(copy.sectionTitle)}') && (src('src/screens/SettingsScreen.tsx').match(/localizeText\(APP_LOCK_SWITCH_LABEL\)/g) ?? []).length === 2,
+    customNetwork: src('src/screens/SettingsScreen.tsx').includes('<Button title="Add a custom network"'),
+    sendPlaceholder: src('src/screens/SendScreen.tsx').includes('placeholder={localize(sendRecipientPlaceholder({'),
+    sendHint: src('src/screens/SendScreen.tsx').includes('<T>{SEND_RECIPIENT_NAMES_HINT}</T>'),
+    receive: src('src/components/PaymentRequestViews.tsx').includes('<T>Request an amount</T>') && src('src/components/PaymentRequestViews.tsx').includes('title="Request an amount"'),
+  };
+  check('…and every call site goes through the accessor (<T>, localize, or the Button sink)', Object.values(sites).every(Boolean), JSON.stringify(sites));
+  check('…mutant caught (p22b): a Spanish line missing for one of them', !(() => { const e2 = { ...es }; delete e2['accounts.title']; return Object.keys(P22B).every((id) => e2[id] !== undefined); })());
 }
 // No unused ids: every entry is reached from the app's source.
 function unusedIds(table, scans) {
@@ -621,8 +659,12 @@ function memoryStore() {
   const settings = read('src/screens/SettingsScreen.tsx');
   check('the app starts the controller during its first render (React.useState initializer)', app.includes('React.useState(() => appLanguage().start());'));
   check('Settings offers System / English / Español from LANGUAGE_CHOICES through the controller, and says when a save failed',
-    settings.includes('<LanguageSection />') && settings.includes('LANGUAGE_CHOICES.map((c) => {') && settings.includes("controller.choose(next).catch(() => setFailed(true));") &&
+    settings.includes('<LanguageSection />') && settings.includes('LANGUAGE_CHOICES.map((c) => {') && settings.includes("controller.choose(next).catch((e: unknown) => setFailed(e instanceof Error ? e.message || e.name : String(e)));") &&
       settings.includes("t('settings.language.saveFailed')"));
+  // Pass p22b: the device showed the failure sentence with no way to read its
+  // cause; the store's error is now shown under it as a technical line.
+  check('…and under the failure sentence, the store\'s own error as a technical line',
+    /\{t\('settings\.language\.saveFailed'\)\}<\/Text>\s*<TechnicalDetail text=\{failed\} \/>/.test(settings) && settings.includes('const [failed, setFailed] = useState<string | null>(null);'));
   // Phase 22 polish (the guardian share-text residual): texts prepared for
   // someone else stay in English and name the English screens; the Language
   // section says so instead of translating them (the reader's language is

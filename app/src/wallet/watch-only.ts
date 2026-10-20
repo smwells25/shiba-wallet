@@ -339,7 +339,21 @@ export function multisigRouteRefusal(routeName: string): string | null {
 /** The Settings → Accounts introduction to the add form. */
 export const WATCH_ADDRESS_INTRO =
   'Follow any Ethereum address without its key: its balances, tokens, activity and NFTs appear like an ' +
-  'account’s, but the wallet cannot send, sign or recover anything for it.';
+  'account’s, but the wallet cannot sign, swap or recover anything for it. A send on an Ethereum network can ' +
+  'still be prepared here and signed by an off-line signer that holds its key.';
+
+// Pass p22b: the short watch-only lines still said "cannot send" after the
+// off-line signer screen (cold signing, phase 22 item 3) made a send for a
+// watched address possible; like the notice reworded in pass p22a they now
+// say the wallet cannot SIGN, and that a send can be prepared for an
+// off-line signer. One place for each, pinned by scripts/check-watch-only.mjs.
+/** The account switcher's line under a watch-only account. */
+export const WATCH_ONLY_SWITCHER_LINE = 'Watch-only — the wallet holds no key; it cannot sign, but a send can be prepared for an off-line signer';
+/** Settings → Accounts: what follows the watched address on its row. */
+export const WATCH_ONLY_ACCOUNTS_ROW_NOTE = 'watch-only, no key in this wallet — it cannot sign; a send can be prepared for an off-line signer';
+/** Settings → Accounts: the hint of the "Watch an address" button. */
+export const WATCH_ADDRESS_BUTTON_HINT =
+  'Follows an Ethereum address without its key. The wallet cannot sign for it; a send for it can be prepared for an off-line signer.';
 
 /** Said once on the add form: watching an address is visible to the services that answer for it. */
 export const WATCH_ADDRESS_PRIVACY_NOTE =
