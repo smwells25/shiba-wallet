@@ -68,7 +68,7 @@ import {
   deletePinRecord,
   isNearCopy,
   notUsableMessage,
-  pinAttemptMessage,
+  pinRefusalMessage,
   pinCountdownOf,
   readPinRecord,
   sameLockSecret,
@@ -785,7 +785,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         return { ok: false, message: e instanceof PinRecordDamagedError ? PIN_DAMAGED_MESSAGE : lockCheckFailedMessage(appLockKind.get()) };
       }
       if (outcome.kind !== 'opened') {
-        const message = pinAttemptMessage(outcome, Date.now()) ?? 'Wrong PIN. Try again.';
+        const message = pinRefusalMessage(outcome, Date.now());
         const countdown = pinCountdownOf(outcome);
         return countdown ? { ok: false, message, countdown } : { ok: false, message };
       }
@@ -815,7 +815,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const checkSessionPin = useCallback(async (pin: string): Promise<PinSlot> => {
     const slot = pinSessionSlotRef.current ?? 'primary';
     const outcome = await attemptPin(appSecureBackend(), pin, {}, slot);
-    if (outcome.kind !== 'opened') throw new Error(pinAttemptMessage(outcome, Date.now()) ?? 'Wrong PIN. Try again.');
+    if (outcome.kind !== 'opened') throw new Error(pinRefusalMessage(outcome, Date.now()));
     return slot;
   }, []);
 

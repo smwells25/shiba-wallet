@@ -354,6 +354,22 @@ const EXPECTED_SCHEDULE = [
     pinMod.pinAttemptMessage({ kind: 'wrong', fails: 1, until: 0 }, 0) === 'Wrong PIN. Try again.' &&
       pinMod.pinAttemptMessage({ kind: 'wrong', fails: 5, until: 30_000 }, 0) === 'Wrong PIN. Try again in 30 seconds.' &&
       pinMod.pinAttemptMessage({ kind: 'wait', until: 3_600_000 }, 0) === 'Too many wrong PINs. Try again in 60 minutes.');
+  // Phase 22 follow-up: WalletContext narrows the outcome to "not opened" and
+  // uses pinRefusalMessage, which always has a sentence in the lock's own
+  // word, instead of an English 'Wrong PIN. Try again.' fallback literal.
+  const refusals = [
+    { kind: 'wrong', fails: 1, until: 0 }, { kind: 'wrong', fails: 5, until: 30_000 }, { kind: 'wait', until: 3_600_000 }, { kind: 'wait', until: -1 },
+    { kind: 'wrong', fails: 1, until: 0, lock: 'phr' }, { kind: 'wait', until: 29_000, lock: 'phr' }, { kind: 'no-pin' },
+  ];
+  check('pinRefusalMessage gives the same sentence as pinAttemptMessage for every outcome that did not open a wallet (PIN and passphrase), and pinAttemptMessage is null only for "opened"',
+    refusals.every((o) => typeof pinMod.pinRefusalMessage(o, 0) === 'string' && pinMod.pinRefusalMessage(o, 0) === pinMod.pinAttemptMessage(o, 0)) &&
+      pinMod.pinRefusalMessage({ kind: 'wrong', fails: 1, until: 0, lock: 'phr' }, 0) === 'Wrong passphrase. Try again.' &&
+      pinMod.pinAttemptMessage({ kind: 'opened', slot: 'primary' }, 0) === null);
+  const ctxSrc = read('wallet/WalletContext.tsx');
+  const noFallback = (src) => !src.includes("'Wrong PIN. Try again.'") && (src.match(/pinRefusalMessage\(outcome, Date\.now\(\)\)/g) ?? []).length === 2;
+  check('WalletContext holds no "Wrong PIN. Try again." fallback literal; both attempt paths use pinRefusalMessage (source)', noFallback(ctxSrc));
+  check('…mutant caught: the old fallback literal back in WalletContext',
+    !noFallback(ctxSrc.replace('const message = pinRefusalMessage(outcome, Date.now());', "const message = pinAttemptMessage(outcome, Date.now()) ?? 'Wrong PIN. Try again.';")));
 }
 
 /**
@@ -765,6 +781,22 @@ const RFC_VECTOR_3_HEX =
   check('the Developer view shows the path line, the path-aware hint and the platform line with the path',
     viewSrc.includes('{pinHashPathLine(hashPath)}') && viewSrc.includes('{pinCostHint(hashPath)}') &&
       viewSrc.includes('{pinCostPlatformText(report.platform, report.hashPath)}') && viewSrc.includes('resolvePinHashPath().then('));
+  // Pass p22a finding 4: TalkBack spelled "(__DEV__)" "2 Underscore DEV 2
+  // Underscore"; the platform line keeps its visible text and is spoken in
+  // plain words through an accessibilityLabel.
+  const spokenOk = (fn) => {
+    const plat = { os: 'android', hermes: true, dev: false };
+    return fn(plat) === 'Platform: android. Hermes: yes. Development bundle: no.' &&
+      fn({ ...plat, dev: true }, { start: { kind: 'native' }, end: { kind: 'native' } }) ===
+        'Platform: android. Hermes: yes. Development bundle: yes. Hashing: native scrypt (react-native-quick-crypto).' &&
+      !/__|·/.test(fn(plat, { start: { kind: 'native' }, end: { kind: 'javascript', reason: 'native-error', detail: 'x' } }));
+  };
+  check('p22a finding 4: the platform line is spoken "Platform: android. Hermes: yes. Development bundle: no. Hashing: …" (exact; no "__DEV__", no "·")',
+    spokenOk(pinCost.pinCostPlatformSpokenText));
+  check('…mutant caught: the visible line spoken as it is (with "(__DEV__)")', !spokenOk(pinCost.pinCostPlatformText));
+  const spokenView = (src) => /<Text\s+accessibilityLabel=\{pinCostPlatformSpokenText\(report\.platform, report\.hashPath\)\}\s+style=\{\[styles\.hint, \{ color: theme\.text \}\]\}\s*>\s*\{pinCostPlatformText\(report\.platform, report\.hashPath\)\}\s*<\/Text>/.test(src);
+  check('…the Developer view draws the visible line and gives the same Text the spoken label (source)', spokenView(viewSrc));
+  check('…mutant caught: the view without the spoken label', !spokenView(viewSrc.replace('accessibilityLabel={pinCostPlatformSpokenText(report.platform, report.hashPath)}', '')));
 }
 
 // ---------------------------------------------------------------------------

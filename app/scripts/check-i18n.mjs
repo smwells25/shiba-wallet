@@ -214,9 +214,18 @@ function fixtureProblems(table, fixture) {
     'settings.screenProtection.withPassphrase', 'settings.notifications.offWithPassphrase'];
   check('the new entries are exactly the Settings → Language ones and the five passphrase forms of the app-lock notes',
     FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id)) && LOCK_KIND_NEW.every((id) => FIXTURE.new.includes(id)));
-  check('the one changed entry is the transaction-notes line, reworded for the records backup (with its reason)',
-    JSON.stringify(Object.keys(FIXTURE.changed ?? {})) === JSON.stringify(['activity.note.privacy']) &&
+  check('the changed entries are exactly the transaction-notes line (reworded for the records backup) and the watch-only notice (reworded for the off-line signer), each with its reason',
+    JSON.stringify(Object.keys(FIXTURE.changed ?? {})) === JSON.stringify(['activity.note.privacy', 'notice.watchOnly']) &&
       en['activity.note.privacy'] === 'Notes are kept on this phone and are not sent anywhere. They are deleted when the wallet is wiped. A records backup (Settings → Records backup) includes them, and your recovery phrase restores them from it. Hide amounts does not hide them.');
+  // Pass p22a: the shared watch-only notice no longer says the wallet cannot
+  // send for the address (the off-line signer screen prepares sends for it,
+  // and showed the notice right above saying so); the Spanish line follows.
+  check('…the watch-only notice (exact): cannot sign, swap or recover; a send can be prepared with "Send with an off-line signer", in both languages, and never "cannot send"',
+    en['notice.watchOnly'] === 'Watch-only: this wallet can show this address but holds no key for it, so it cannot sign, swap or recover anything for it. A send on an Ethereum network can still be prepared with "Send with an off-line signer" and signed by an off-line signer that holds its key.' &&
+      en['notice.watchOnly'].includes(`"${en['home.link.coldSign']}"`) && !/cannot send/.test(en['notice.watchOnly']) &&
+      es['notice.watchOnly'].includes(`«${es['home.link.coldSign']}»`) && !/No puede enviar/i.test(es['notice.watchOnly']));
+  check('…mutant caught (p22a): the old notice that said it cannot send',
+    fixtureProblems({ ...en, 'notice.watchOnly': FIXTURE.changed['notice.watchOnly'].before }, FIXTURE).length === 1);
 }
 
 // The composites, assembled the old way from their pieces.
@@ -706,7 +715,7 @@ function caught(name, wasCaught) {
   const esMissing = { ...es };
   delete esMissing['inbox.empty'];
   caught('a Spanish table missing an id', EN_IDS.some((id) => typeof esMissing[id] !== 'string'));
-  const fixtureBadBefore = { ...FIXTURE, changed: { 'activity.note.privacy': { ...FIXTURE.changed['activity.note.privacy'], before: 'Notes are kept only on this phone.' } } };
+  const fixtureBadBefore = { ...FIXTURE, changed: { ...FIXTURE.changed, 'activity.note.privacy': { ...FIXTURE.changed['activity.note.privacy'], before: 'Notes are kept only on this phone.' } } };
   caught('a changed entry whose "before" is not the text at the base commit (a silent rewrite of history)', fixtureProblems(en, fixtureBadBefore).length === 1);
   const enChanged = { ...en, 'home.manageTokens': 'Manage Tokens' };
   caught('an English entry changed by one character (no longer the text before)', fixtureProblems(enChanged, FIXTURE).length === 1);

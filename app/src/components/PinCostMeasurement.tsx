@@ -10,6 +10,7 @@ import {
   pinCostFailedText,
   pinCostHint,
   pinCostPlatform,
+  pinCostPlatformSpokenText,
   pinCostPlatformText,
   pinCostRowText,
   pinCostRunningText,
@@ -112,7 +113,12 @@ export function PinCostMeasurement() {
       {report ? (
         <>
           <Text style={[styles.hint, { color: theme.text }]}>{pinCostTotalText(report.totalMs)}</Text>
-          <Text style={[styles.hint, { color: theme.text }]}>{pinCostPlatformText(report.platform, report.hashPath)}</Text>
+          <Text
+            accessibilityLabel={pinCostPlatformSpokenText(report.platform, report.hashPath)}
+            style={[styles.hint, { color: theme.text }]}
+          >
+            {pinCostPlatformText(report.platform, report.hashPath)}
+          </Text>
           <Text style={[styles.hint, { color: theme.textMuted }]}>{PIN_COST_RESULT_NOTE}</Text>
         </>
       ) : null}

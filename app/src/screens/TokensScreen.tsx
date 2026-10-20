@@ -522,7 +522,7 @@ export function TokensScreen({ navigation }: Props) {
                   {...fieldLabel('token-name', 'Token name (optional)').input}
                   value={manualName}
                   onChangeText={setManualName}
-                  placeholder="Name (optional)"
+                  placeholder="For example Maker"
                   placeholderTextColor={theme.textMuted}
                   autoCorrect={false}
                   maxLength={MAX_NAME_LENGTH}

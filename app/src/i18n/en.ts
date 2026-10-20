@@ -19,7 +19,7 @@ export const en = {
   'common.and': 'and',
   'card.testNetworksOnly.title': '{title}: test networks only',
   'notice.importedKey': 'This account comes from an imported private key. Your recovery phrase does NOT back it up: if this phone is lost or the wallet is removed, the account and its funds are lost unless you kept the private key yourself.',
-  'notice.watchOnly': 'Watch-only: this wallet can show this address but holds no key for it. It cannot send, sign or recover anything for it.',
+  'notice.watchOnly': 'Watch-only: this wallet can show this address but holds no key for it, so it cannot sign, swap or recover anything for it. A send on an Ethereum network can still be prepared with "Send with an off-line signer" and signed by an off-line signer that holds its key.',
   // ---- App.tsx: the TESTNET banner and the header ----
   'banner.testnet': 'TESTNET — {network} test mode is on. Amounts are test ETH, not real funds.',
   'banner.testnet.custom': 'TESTNET — {network} test mode is on (a network you added). Amounts are test {symbol}, not real funds.',

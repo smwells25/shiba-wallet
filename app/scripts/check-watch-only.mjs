@@ -655,7 +655,19 @@ console.log('check-watch-only: the audit list (modules other screens use)');
 console.log('check-watch-only: honesty and the screens (source checks)');
 // ===========================================================================
 {
-  check('the shared notice', WATCH_ONLY_NOTICE === 'Watch-only: this wallet can show this address but holds no key for it. It cannot send, sign or recover anything for it.');
+  // Pass p22a: the notice is also shown on every phase of the off-line signer
+  // screen (cold signing), so it may not say the wallet cannot send for the
+  // address; it names the Home link a send is prepared with.
+  const noticeOk = (n) =>
+    n === 'Watch-only: this wallet can show this address but holds no key for it, so it cannot sign, swap or recover anything for it. A send on an Ethereum network can still be prepared with "Send with an off-line signer" and signed by an off-line signer that holds its key.' &&
+    !/cannot send/.test(n) && n.includes(`"${COLD_SIGN_HOME_LINK.replace(/\s+↗$/, '')}"`);
+  check('the shared notice (exact): cannot sign, swap or recover; a send can be prepared with "Send with an off-line signer" (the Home link\'s words)', noticeOk(WATCH_ONLY_NOTICE));
+  check('…mutant caught (p22a): the old notice saying it cannot send',
+    !noticeOk('Watch-only: this wallet can show this address but holds no key for it. It cannot send, sign or recover anything for it.'));
+  const coldSrc = src('screens/ColdSignScreen.tsx');
+  check('…and it is the notice the off-line signer screen shows on its form, review and QR views (3 uses), above its own intro on the form',
+    (coldSrc.match(/<WatchOnlyNotice \/>/g) ?? []).length === 3 &&
+      /<WatchOnlyNotice \/>\s*<Text style=\{\[styles\.body, \{ color: theme\.text \}\]\}>\{COLD_SIGN_INTRO\}<\/Text>/.test(coldSrc));
   check('the not-available sentence', WATCH_ONLY_NO_CHAIN === 'Not available for a watch-only address. A watched Ethereum address has no address on this network.');
   check('the privacy note (said once on the add form)',
     WATCH_ADDRESS_PRIVACY_NOTE === 'Watching an address reveals your interest in it to the network endpoints and indexers this wallet uses (Settings → Network endpoints and the history and NFT indexers), because the wallet asks them about this address.');

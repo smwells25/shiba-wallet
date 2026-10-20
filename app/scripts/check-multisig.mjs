@@ -2151,11 +2151,15 @@ console.log('check-multisig: pass p20c (TalkBack and dark mode) findings 5, 9 an
   // stay on screen; InfoRow's spokenValue carries the spoken form.
   const spokenOk = (src) =>
     src.includes('<Text selectable accessibilityLabel={spokenShortAddress(r.address)} style={[styles.mono, { color: theme.textMuted }]}>') &&
-    (src.match(/value=\{s\.address\}\s+spokenValue=\{spokenShortAddress\(s\.address\)\}/g) ?? []).length === 2 &&
+    // Pass p22a: the add-from-a-record review's signer lines too (3), and the
+    // create form's "This wallet's signer" row.
+    (src.match(/value=\{s\.address\}\s+spokenValue=\{spokenShortAddress\(s\.address\)\}/g) ?? []).length === 3 &&
+    /label="This wallet’s signer \(the active account\)"\s+value=\{phraseSigner\}\s+spokenValue=\{spokenShortAddress\(phraseSigner\)\}/.test(src) &&
     src.includes('<InfoRow label="Multisig address (receive here)" value={selected.address} spokenValue={spokenShortAddress(selected.address)} monoValue />') &&
     src.includes('<InfoRow label="You approve as" value={r.signer.address} spokenValue={spokenShortAddress(r.signer.address)}');
   check('p20d finding 7: the multisig list address, the receive address and each signer line are spoken in the short form (source)', spokenOk(ms));
   check('…mutant caught: a signer line spoken in full again', !spokenOk(ms.replace('spokenValue={spokenShortAddress(s.address)}', '')));
+  check('…mutant caught (p22a): the create form\'s "This wallet\'s signer" row spoken in full again', !spokenOk(ms.replace('spokenValue={spokenShortAddress(phraseSigner)}', '')));
   check('…InfoRow speaks spokenValue for the value when given and the value itself otherwise (source)',
     /<Text\s+selectable\s+\{\.\.\.\(spokenValue !== undefined \? \{ accessibilityLabel: spokenValue \} : \{\}\)\}\s+style=\{\[styles\.rowValue,/.test(rv));
   // Pass p20d finding 8: "More accounts below" was never spoken; it is now
