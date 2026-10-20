@@ -11432,8 +11432,9 @@ P&L (a contract field on HistoryEntry).
 
 ## Phase 22 status (2026-10-20)
 
-Items 0 to 9 are landed and pushed; the shareable page is at version 23
-(58 proven live, 18 built, 2 designed, 21 not started). PROVEN LIVE
+Items 0 to 9 are landed and pushed; the shareable page is at version 24
+(58 proven live, 18 built, 2 designed, 21 not started; refresh commit
+209b22c, published 2026-10-20). PROVEN LIVE
 this phase, all through the app's own screens in Expo Go on the
 emulator: cold signing for a watched address (the QR request, the
 signature checked and broadcast, the refusals, a two-part token
