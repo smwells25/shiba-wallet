@@ -11005,3 +11005,107 @@ smart-account bridge; the layer-2 sequencers' treatment of a
 minimum-fee send; a countdown in the Settings PIN flow; the doubling
 waits and Change PIN in the second wallet; the multisig P&L and token
 P&L (a contract field on HistoryEntry).
+
+## Phase 23 plan (PROPOSED 2026-10-20, awaiting the Chairperson's approval): the audit pack, the release-candidate build, iOS in the simulator, USDC bridging, cold signing for smart accounts, a wallet handle
+
+The CTO's proposal, written before any code, following the phase 22
+status's open items and the Chairperson's standing directions (engage
+auditors now; emulate rather than wait for a phone; provider
+optionality for bridging; both passphrase forms). Every item needs no
+outside input unless marked INPUT. Nothing in wave 1 is hard to undo.
+
+0. Carry-overs from phase 22: the fix slice for the p22a / p22b
+   findings; item 7's second half (expo-navigation-bar for the dark
+   navigation bar — "preferred, not a deal-breaker"); the Spanish draft
+   kept as a draft until a native reviewer exists (INPUT).
+1. The audit pack (C1, the Chairperson's "auditor shibas"): a read-only
+   address-verification script (scripts/audit/verify-pins.mjs) that
+   re-reads EVERY address the wallet pins on ITS network — including the
+   Ethereum-mainnet Kernel stack, paymasters, Uniswap, ENS and token
+   addresses the readiness memo lists as "read once" or "not verified" —
+   and compares code hashes and Sourcify status to the pins, so the
+   AUDIT_SCOPE.md tables become machine-checked rather than copied; the
+   stale threat-model rows the audit document flagged (N-09, T-27, F-70,
+   section 3.6) corrected; the bug-bounty page text completed with its
+   placeholders named; a reproducible-build note (the exact commands
+   that produced each kept APK and their hashes). The git tag the
+   auditor receives is the Chairperson's to create (INPUT: the firm, the
+   budget, the C1 scope option from AUDIT_SCOPE.md section 9.2).
+2. The release-candidate build (Android): the app scheme "shibawallet"
+   in app.json so deep links work outside Expo Go (the custom-scheme
+   caveat stated; verified App Links need a domain — INPUT); the
+   ShortcutBadger launcher-badge permissions removed from the manifest
+   with tools:node="remove" and the merged release manifest re-read;
+   expo-navigation-bar; a release APK rebuilt and, on a throwaway
+   wallet in the development build, the records-backup export saved to
+   a file and restored after a wipe, the decoy's export holding only its
+   own records, and the WalletConnect separation of the two wallets with
+   EXPO_NO_METRO_LAZY=1 (every one of these is a phase 22 "unverified on
+   a device" item that Expo Go cannot show).
+3. iOS in the simulator (the first iOS build ever): Xcode 26.5 is
+   installed on this Mac with no iOS runtime and no CocoaPods yet —
+   install both, `expo prebuild --platform ios`, build for the iOS
+   Simulator, and run the first iOS pass on a THROWAWAY wallet: the
+   Keychain-backed vault, the lock and the app-switcher cover, the
+   secure-entry screenshot block, VoiceOver on the launch lock and the
+   PIN pad, the native scrypt's iOS build (its OpenSSL download at pod
+   install), the passphrase field's hygiene props, and the deep-link
+   scheme. Every "iOS unverified" line in the record is the checklist.
+   Expo Go for iOS is not available without a Mac-side simulator
+   anyway, so this is the only route to the iOS half of the product.
+4. USDC bridging through Circle CCTP V2, the second provider made real
+   (feature 35; provider optionality): the Standard Transfer proven
+   live by script per BRIDGING.md section 11 (an exact approve plus
+   depositForBurn on Base Sepolia, the attestation from Circle's sandbox
+   API, receiveMessage on Arbitrum Sepolia, the replay and the
+   maxFee-above-amount negatives, balances and USDC supply deltas exact);
+   then the adapter made sendable in the app — the Bridge screen offers
+   USDC with CCTP beside test ETH with LayerZero, the wallet submits the
+   destination mint itself from the regular account when it holds gas
+   there and otherwise states what is waiting; the smart-account leg
+   paying the source fee in USDC where Circle's paymaster exists; the
+   stranded-transfer retry for Stargate exercised live by sending to a
+   deployed Kernel account on purpose.
+5. Cold signing for smart accounts (feature 11, the second half): a
+   SmartAccountClient change so a UserOperation is built, estimated and
+   fee-checked on the on-line phone, exported as QR parts for the
+   off-line owner's EIP-191 signature of the userOpHash, scanned back,
+   re-checked against the fee floor just before submission (refused if
+   the floor moved past the signed fees — the signed op cannot be
+   repriced) and submitted; the watch-only account as the on-line half
+   of a counterfactual Kernel account; proven live on Sepolia with the
+   cold-signer script standing in for the off-line device.
+6. A wallet handle (feature 75): an ENS name registered from the app on
+   Ethereum Sepolia through the ETHRegistrarController's commit-reveal
+   flow (verified from ENS's sources and the deployed Sepolia
+   contracts; the two transactions and the wait between them shown
+   honestly; test networks only behind a readiness row), the reverse
+   record set so the name shows on Home and Receive and in other
+   wallets, and a sub-name for the smart account; attestations
+   (feature 77) researched only (EAS on Sepolia; a document).
+7. The BIP-39 passphrase decoy (DURESS_WALLET.md section 8, P2) if the
+   Chairperson answers section 8.5 (INPUT: accept the reveal limitation
+   or build the Ledger orientation; B1; the ASCII and length rules);
+   otherwise the engine half only (the BIP-39 "TREZOR" passphrase
+   vectors added to packages/core, which the record names as a gap).
+8. Engine and data hygiene: a contract field on HistoryEntry so token
+   and multisig profit-and-loss become possible; the ERC-20 subscription
+   pull measured post-Glamsterdam; a bounded broadcast timeout decided
+   and built (reporting "outcome unknown", never "not sent"); the
+   multisig co-signer caption shortened; the second localisation pass
+   over the smart-account confirm, Settings, Sessions, Swap, Staking,
+   Bridge and Multisig screens.
+9. Leadership refresh and the mainnet-readiness memo at the end.
+
+Waves: 1 — (A) item 1's verification script and docs, (B) item 4's
+script leg, (C) item 5's client change (engine), (D) item 6's engine
+half, in parallel on disjoint files; item 0's fix slice first; 2 — item
+2's build and dev-build pass, item 3's iOS toolchain and first build,
+items 4–6's app halves; 3 — the emulator and simulator passes one
+driver at a time, item 7, item 8; 9 last. Subagents on Opus.
+
+Decisions and inputs the plan depends on: the audit firm, budget and
+C1 scope (item 1); the app scheme (item 2); the section 8.5 answers
+(item 7); a native Spanish reviewer (item 0); the disclosure decision
+stays on hold; the fiat off-ramp provider and sandbox credentials
+(feature 66 stays Designed until they exist).
