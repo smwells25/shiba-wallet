@@ -353,9 +353,7 @@ Row identifiers refer to `docs/THREAT_MODEL.md`: **T-nn** is a threat (section 4
 
 ### 6.3 Inconsistencies in the record an auditor should not trip over
 
-- **N-09** ("Bundler save does not check the bundler's chain id") and **T-27** predate a later change: the app's bundler save refused a bundler serving another chain in the Arbitrum Sepolia pass (`AGENTS.md`, phase 15, "ARBITRUM SEPOLIA PROVEN LIVE THROUGH THE APP"). The rows were not updated.
-- **F-70** reads "Fix in progress"; `AGENTS.md` records the fix (phase 18, "Phase 18 pass findings FIXED", commit `9290864`).
-- **Section 3.6 of the threat model** says a development build was "never built"; local development and release builds have since been built and run on the emulator (`AGENTS.md`, phases 16, 17 and 21).
+- **N-09, T-27, F-70 and section 3.6 of the threat model** were stale when this document was first written (the bundler save had refused a wrong-chain bundler since phase 11, F-70 was fixed in `9290864`, and local development and release builds had been built and run on the emulator since phase 16); the phase 22 refresh of 2026-10-20 corrected all four rows in `docs/THREAT_MODEL.md`, so an auditor reading the current threat model sees the corrected text. The point stands as a caution: the threat model's rows can lag the record in `AGENTS.md`, which is the authoritative history.
 - **Mainnet verification of the Kernel stack:** see the note at the start of section 5.
 
 ### 6.4 Never observed on a real device

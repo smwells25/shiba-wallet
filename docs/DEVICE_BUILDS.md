@@ -37,14 +37,15 @@ preview or store build rather than Expo Go.
 
 1. An Expo account, the iOS bundle identifier and the Android package
    name (inputs from the Chairperson; `docs/RELEASE.md` section 2).
-2. `expo-dev-client`, which the development profiles require
-   (`npx expo install expo-dev-client` in `app/`).
-3. A post-install hook that builds the engine packages on EAS servers,
-   because their `dist/` folders are not committed (`docs/RELEASE.md`
-   section 2, step 3).
-4. For iOS device builds, a paid Apple Developer Program membership
+2. For iOS device builds, a paid Apple Developer Program membership
    (enrolled as an organization, which Apple requires of wallet apps) and
    each test iPhone registered with `npx eas-cli@latest device:create`.
+
+Two items once listed here are done: `expo-dev-client`, which the
+development profiles require, and the `eas-build-post-install` hook in
+`app/package.json`, which builds the engine packages on EAS servers because
+their `dist/` folders are not committed, were both added in commit
+`4bf76d2` (phase 9 item 3). No EAS build has been made yet.
 
 An Android development build can also be made locally without any account
 (`npx expo run:android --device` after installing `expo-dev-client`;
@@ -171,8 +172,16 @@ What this means for builds:
   is trusted. The PIN hashing cost measurement on the same screen times
   whichever path is in use and names it in its platform line.
 
-Not yet done: a rebuilt development build exercised on the emulator, and
-any measurement of the native path on the emulator or on a phone.
+Done on the Android emulator on 2026-10-19 UTC (`AGENTS.md`, phase 22,
+"EMULATOR PASS p22a"): a rebuilt debug development build and a release
+build with these modules (kept in the git-ignored `.local/builds/` folder
+as `shiba-devclient-b414989-qc-debug.apk` and
+`shiba-release-8b4ed84-qc.apk`; the release build adds no Android
+permission compared with the one before it) both loaded the module and
+passed the self-check; one hash at N = 2^16 took about 1.0 to 1.1 seconds
+in the release build (0.6 to 1.7 seconds in debug), and one unlock about
+2.5 seconds in both. Not yet done: a measurement on a phone, and any iOS
+build (the library's podspec download has never run).
 
 ## What to re-validate on the first device builds
 
@@ -213,9 +222,12 @@ that can be installed directly):
    developer.android.com/identity/data/testingbackup and confirm that
    neither the secure-store entries nor AsyncStorage (contacts, endpoint
    keys) are carried to the restored install.
-8. **W19, still open:** the Import screen (where the phrase is typed) has
-   no capture block, and there is no app-switcher privacy cover (findings
-   N-04, N-05). These need app changes before they can be re-validated.
+8. **W19:** the app changes it waited for exist since commit `6e1106f`
+   (phase 17): the Import screen and the backup quiz hold their own capture
+   keys, and app-wide screen protection (on by default) blanks the Android
+   app-switcher thumbnail and adds a cover on iOS (findings N-04, N-05). On
+   a preview build, confirm both on Android and, for the first time, on
+   iOS.
 
 ## Screenshot and screen-recording blocking in release builds
 
