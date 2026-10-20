@@ -11137,6 +11137,35 @@ Subagents on Opus.
       Language System, the Expo Go locale reset, protection OFF, the
       minimum-fee switch OFF, TalkBack never enabled, no watched account,
       IME ADBKeyboard, Metro on 8081 from wt-app, caffeinate running.
+      ADDENDUM (the same pass, on the cloned worktree): (1) THE INBOX
+      WORKS — a hot minimum-fee send from Account 1 (0xf4bd2951…827e,
+      nonce 37, never included) sped up from Activity's pending card
+      (prompt "Approve speeding up the transaction"; replacement
+      0x375a071ef43b2cdde73d086c32f6f5ef0ad7e6f74851faec3b1d1a679efe60a8,
+      block 11953168, status 0x1 on both RPCs, 21,000 gas at 22 wei;
+      Account 1 1,756,233,893,662,609 → 1,746,233,893,200,609 wei, nonce
+      38; Account 2 +1e13) → Home "Inbox (2 unread)", the Inbox "2 unread
+      entries." with "Mark all read", newest first: "● Speed-up or
+      cancellation · shown in the wallet · 2026-10-20 05:19 UTC / Sped up /
+      Sped up: transaction 0xf4bd…827e (nonce 37) was replaced by
+      0x375a…60a8, included in block 11953168." (spoken "Unread. Speed-up
+      or cancellation, shown in the wallet, …") and "● Sent · shown in the
+      wallet · … / Speed-up sent / Replacement 0x375a…60a8 was accepted by
+      the network endpoint…"; a tap on the first opened "Ethereum Sepolia
+      activity" and left "1 unread entry."; "Mark all read" → "No unread
+      entries.", the button gone, Home back to "Inbox" — finding 1
+      withdrawn entirely (the entry stamped 05:19 while the notice showed
+      at about 05:20 — not investigated). (2) TALKBACK: the long
+      watch-only Home footer IS spoken as its own stop in full (between
+      the Solana row and Expo Go's Tools bubble), and the approve-URI
+      deep-link refusal banner is announced as a content change AND is its
+      own stop before "Dismiss" — B1 and D1 were artefacts of uiautomator's
+      "Skipping invisible child", not TalkBack gaps; B5's body most likely
+      the same (not re-read); minor: the watched account's EVM card speaks
+      the full 42-character address. DRIVER NOTE: `sed -i` as root on
+      TalkBack's prefs file stripped its SELinux categories (restored with
+      chcon u:object_r:app_data_file:s0:c138,c256,c512,c768) — write that
+      file in place. End state unchanged.
 - [x] Pass p22b findings FIXED (commit f297e8b; 30 files; check-inbox 104
       (was 88), check-i18n 92 (88), check-storage-seam 59 (56),
       check-pending 248 (231), check-cold-signing 105 (99),
