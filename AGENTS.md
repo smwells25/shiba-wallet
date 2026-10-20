@@ -10461,7 +10461,7 @@ Subagents on Opus.
       the secure field; Android's "show passwords" setting; TalkBack while
       typing; maxLength counting on Android; the 387-byte ciphertext; iOS.
 - [x] Item 5 — THE NOTIFICATIONS INBOX (feature 83) AND DEEP LINKS (feature
-      80) (commit {h}; 23 files incl. the new app/src/wallet/inbox.ts,
+      80) (commit 3d2bde4; 23 files incl. the new app/src/wallet/inbox.ts,
       deep-links.ts, screens/InboxScreen.tsx and check-inbox 86 (12
       mutants); offline runner ALL GREEN in the CTO's isolated worktree on
       HEAD c075f28 with --skip-bundle: engine 1,050, app 9,721 across 62
@@ -11429,6 +11429,60 @@ smart-account bridge; the layer-2 sequencers' treatment of a
 minimum-fee send; a countdown in the Settings PIN flow; the doubling
 waits and Change PIN in the second wallet; the multisig P&L and token
 P&L (a contract field on HistoryEntry).
+
+## Phase 22 status (2026-10-20)
+
+Items 0 to 9 are landed and pushed; the shareable page is at version 23
+(58 proven live, 18 built, 2 designed, 21 not started). PROVEN LIVE
+this phase, all through the app's own screens in Expo Go on the
+emulator: cold signing for a watched address (the QR request, the
+signature checked and broadcast, the refusals, a two-part token
+request, a cold speed-up, a sweep — zero device prompts on the whole
+cold path; the first run's transcript was lost to a reboot and
+reconstructed from the chain, the second run recorded in full); the
+encrypted records backup (export to the share sheet, five refusals, an
+idempotent restore through the real picker, the refusal for a multisig
+account); deep links in Expo Go's form (every route, a payment link,
+every refusal, a link held behind the lock, a launch link acting once);
+the inbox (two entries from one speed-up, tap-to-open, mark all read);
+the app PIN and the duress PIN with the native scrypt in the wallet's
+own development and release builds on a throwaway wallet (about 2.5 s
+per unlock, against 4 minutes in JavaScript); transaction notes on
+every success view. Built and verified offline: the lock passphrase,
+localisation groundwork with a Spanish draft (seen on the device through
+the in-app setting), the audit scoping document, and the fixes from
+passes p22a and p22b. Designed: the fiat off-ramp (Ramp first). The App
+Nap question is answered from Apple's documentation (a power assertion
+is the documented exemption; the caffeinate rule). Engine: 1,050 tests.
+App: 63 offline suites, 9,906 checks at f297e8b.
+
+Findings for the Chairperson this phase: a macOS reboot wiped every
+scratchpad worktree and a running pass (the worktrees are rebuilt by a
+script kept in .local/helpers; passes write their reports as they go);
+a symlink-farm worktree broke Metro's lazily loaded chunk and looked
+like an app bug for an hour (the recipe is APFS clones now); a plain
+send mined at a pending nonce was reported as the reverse of what the
+chain did (fixed, F-83); the records-backup line claimed "Backed up"
+after a cancelled share sheet (fixed, F-84); uiautomator's dump drops
+some visible text that TalkBack reads fine, so an accessibility finding
+needs a TalkBack read before it counts; the native scrypt makes the
+app PIN usable; Xcode 26.5 is on this Mac and the app has never been
+built for iOS.
+
+Decisions for the Chairperson: phase 23 as proposed below; the app
+scheme "shibawallet" for deep links outside Expo Go; the DURESS_WALLET.md
+section 8.5 answers (the BIP-39 passphrase decoy); the audit firm,
+budget and C1 scope option (docs/AUDIT_SCOPE.md section 9.2); a native
+Spanish reviewer; the fiat off-ramp provider and its sandbox
+credentials; the disclosure decision stays on hold.
+
+Follow-ups (no inputs): tokens.ts TOKENS_SEND_NOTE still says a
+watch-only account "cannot send these tokens"; a nonce with two plain
+sends reads "1 replacement sent since." before inclusion; the cold
+path's Cancel never seen live; the Hoodi Bridge no-rows state; "App
+passphrase" and this phase's new English in Spanish; the misplaced
+phase 21 refresh entry in this file; the inbox entries for reminders,
+price alerts and sent views.
 
 ## Phase 23 plan (PROPOSED 2026-10-20, awaiting the Chairperson's approval): the audit pack, the release-candidate build, iOS in the simulator, USDC bridging, cold signing for smart accounts, a wallet handle
 

@@ -12,6 +12,18 @@ duress PIN and the decoy wallet — is BUILT AND CHECKED OFFLINE (phase 21,
 yet, and section 7.10 lists what must be finished or confirmed before the
 Stage 3 emulator pass on a throwaway wallet.
 
+**Status update (2026-10-20, phase 22 refresh):** Stage 3 has run twice on
+the Android emulator in the wallet's own development builds, on throwaway
+wallets only: on 2026-10-18 UTC with the JavaScript scrypt (pass p21f, one
+PIN check about 4 minutes) and on 2026-10-19 UTC with the native scrypt
+decided by the Chairperson (commit `8b4ed84`, `react-native-quick-crypto`,
+N kept at 2^16; pass p22a), where one unlock took about 2.5 seconds in both
+the debug and the release build (section 5.2). The lock passphrase (stage
+P1, section 8.2) is built and checked offline (commit `9e3dfea`), not yet
+run on the emulator. The BIP-39 passphrase decoy (stage P2, section 8.3) is
+not built and waits on the Chairperson's answers to section 8.5. No real
+phone and no iOS build have run any of it.
+
 Every fact below names its source: the installed package sources under
 `app/node_modules` (with the version), this repository's own code (file and
 line), a public product page read on 2026-10-11 (URL), or a measurement made
@@ -555,13 +567,30 @@ Option (b). No slice is built in phase 20. The reasons, in order of weight:
   failed to load the WalletConnect code, so neither wallet had sessions);
   a send's device prompt from either wallet; TalkBack; a real phone; iOS;
   and the open question of a BIP-39 passphrase (section 7.8).
+  **Run again on 2026-10-19 UTC with the native scrypt** (`AGENTS.md`,
+  phase 22, "EMULATOR PASS p22a"), in the debug and the release development
+  builds made from commit `8b4ed84`'s content, on throwaway wallets: the
+  module loaded and passed its RFC 7914 self-check in both builds; one hash
+  at N = 2^16 took about 1.0 to 1.1 seconds in the release build; one
+  unlock took about 2.5 seconds in both builds, one wrong PIN about 2.5 to
+  2.9 seconds, turning the PIN on about 2 seconds (release) and adding a
+  duress PIN about 14 seconds (debug); the duress PIN opened the second
+  wallet and the real PIN the real one; TalkBack read the PIN pad in order;
+  "Remove wallet" with the PIN on left the secure store empty and the app
+  on onboarding. The wrong-PIN countdown was seen in pass p21g (release
+  build, JavaScript scrypt). Still not tested: the doubling waits beyond
+  the first, changing the PIN inside the second wallet, the WalletConnect
+  separation, a send's device prompt from the second wallet, a real phone
+  and iOS; the builds used predate the lock passphrase.
 - **Stage P1 — a lock passphrase instead of the PIN. BUILT OFFLINE**
   (phase 22, 2026-10-19; section 8.2): the record's version 2 with its
   `kind` field (371 bytes for either kind; a version 1 record still opens
   and is converted on the next write), the passphrase rules, the
   passphrase field on the lock screen and in Settings, switching kinds in
-  one record write, pinned in `app/scripts/check-duress.mjs`. Not yet run
-  on the emulator; the BIP-39 passphrase decoy (Stage P2) is not built.
+  one record write, pinned in `app/scripts/check-duress.mjs` (commit
+  `9e3dfea`). Not yet run on the emulator; the BIP-39 passphrase decoy
+  (Stage P2) is not built and waits on the Chairperson's answers to section
+  8.5.
 
 ### 5.3 Decisions for the Chairperson
 
@@ -1876,8 +1905,13 @@ comes back with nothing typed.
 
 ### 8.4 Staging, checks and the emulator pass
 
-**Status of P1 (2026-10-19): built and checked offline, not yet on the
-emulator.** Where the code departs from this section: `@scure/bip39`
+**Status of P1 (2026-10-19; unchanged at the 2026-10-20 refresh): built
+and checked offline (commit `9e3dfea`), not yet on the emulator.** The
+native scrypt it depends on is in (commit `8b4ed84`) and was measured on the
+emulator on 2026-10-19 UTC at about 2.5 seconds per unlock for a PIN
+(section 5.2); a passphrase goes through the same `pinScrypt` at the same
+cost, which has not itself been timed on the emulator. **Status of P2
+(2026-10-20): not built; waiting on section 8.5.** Where the code departs from this section: `@scure/bip39`
 does not export its `nfkd`, so `pin.ts` mirrors its rule (the same
 well-formedness loop, then `normalize('NFKD')`) and the check pins the
 equivalence through `mnemonicToSeedSync`; changing a passphrase (no
