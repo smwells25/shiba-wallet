@@ -172,6 +172,15 @@ export const STORE_KEYS = Object.freeze({
    * decoy keeps its own list. Secret-free (no key, no PIN, no long hex).
    */
   inbox: declare('shiba-wallet.inbox.v1', 'wallet'),
+  /**
+   * The wallet handle's prepared registrations (wallet/handle.ts, phase 23
+   * item 6): what is needed between ENS's commit and register, INCLUDING the
+   * commitment's random secret (someone who learns it before register could
+   * take the name first). Per wallet, so a decoy keeps its own; never shown,
+   * never logged, not in the records backup (records-backup.ts lists its
+   * keys explicitly), and deleted once the name is registered.
+   */
+  handlePending: declare('shiba-wallet.handle-pending.v1', 'wallet'),
 
   // --- AsyncStorage, device-wide ---------------------------------------------
   prefs: declare('shiba-wallet.prefs.v1', 'device'),

@@ -210,6 +210,9 @@ const ROUTE_FEATURES: Record<string, string> = {
   // Cold signing (phase 22 item 3): allowed for a watch-only account through
   // WATCH_ONLY_COLD_SIGN_ROUTES; named here for the multisig refusal.
   ColdSign: 'Sending with an off-line signer',
+  // Wallet handles (phase 23 item 6): registering an ENS name signs from
+  // the account, so the route stays OFF both allow lists.
+  Handle: 'Wallet handles (ENS names)',
 };
 
 /**

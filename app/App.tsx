@@ -56,6 +56,7 @@ import { PriceAlertMonitor } from './src/components/PriceAlertMonitor';
 import { PortfolioScreen } from './src/screens/PortfolioScreen';
 import { PriceAlertsScreen } from './src/screens/PriceAlertsScreen';
 import { ColdSignScreen } from './src/screens/ColdSignScreen';
+import { HandleScreen } from './src/screens/HandleScreen';
 import { appScreenProtection } from './src/wallet/screen-protection';
 import { appLanguage } from './src/i18n/app-language';
 import { testnetBannerText } from './src/i18n/banner';
@@ -365,6 +366,7 @@ function Root() {
             <Stack.Screen name="Portfolio" component={PortfolioScreen} options={{ title: 'Portfolio' }} />
             <Stack.Screen name="PriceAlerts" component={PriceAlertsScreen} options={{ title: 'Price alerts' }} />
             <Stack.Screen name="ColdSign" component={ColdSignScreen} options={{ title: 'Send with an off-line signer' }} />
+            <Stack.Screen name="Handle" component={HandleScreen} options={{ title: 'Wallet handle (ENS)' }} />
             <Stack.Screen name="Inbox" component={InboxScreen} options={{ title: 'Inbox' }} />
           </>
         )}

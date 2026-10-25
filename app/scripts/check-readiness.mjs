@@ -114,6 +114,8 @@ const EXPECTED_IDS = [
   'duress-pin',
   // Phase 23 item 5: off-line signing for a watched owner's smart account (gate in wallet/aa.ts).
   'cold-aa',
+  // Phase 23 item 6: a wallet handle on Ethereum Sepolia (gate in wallet/handle.ts).
+  'wallet-handle',
 ];
 const ids = FEATURE_READINESS.map((f) => f.id);
 check('every expected feature id is present exactly once', EXPECTED_IDS.every((id) => ids.filter((x) => x === id).length === 1) && ids.length === EXPECTED_IDS.length, ids.join());
@@ -230,6 +232,19 @@ for (const id of ['eoa-send', 'tokens', 'nft', 'swap', 'walletconnect', 'dogecoi
   check('cold-aa is refused on mainnet and allowed on every built-in test network',
     !isFeatureAllowed('cold-aa', MAINNET) && TEST_NETWORK_CHAINS.every((c) => isFeatureAllowed('cold-aa', c)));
 }
+// Phase 23 item 6 (feature 75): a wallet handle (an ENS name on Ethereum
+// Sepolia's ENSv2 test contracts) is testnet-only and enforced, and its
+// reason names the redeploy risk, the single keys, mainnet's ENSv1 and USDC.
+{
+  const f = featureReadiness('wallet-handle');
+  check('wallet-handle is testnet-only, enforced, evidence C1 W1 W2 W9 W13',
+    f.status === 'testnet-only' && f.enforced === true && f.evidence.join() === 'C1,W1,W2,W9,W13', JSON.stringify(f));
+  check('wallet-handle reason: the ENSv2 test contracts redeployed before, single keys, not launched on mainnet, Sepolia only, test USDC',
+    /redeployed before/.test(f.reason) && /single keys can change there/.test(f.reason) && /has not launched on Ethereum mainnet/.test(f.reason) &&
+      /only on Ethereum Sepolia, paid in test USDC\.$/.test(f.reason), f.reason);
+  check('wallet-handle is refused on mainnet and allowed by readiness on every built-in test network (the screen allows only Sepolia)',
+    !isFeatureAllowed('wallet-handle', MAINNET) && TEST_NETWORK_CHAINS.every((c) => isFeatureAllowed('wallet-handle', c)));
+}
 check('dogecoin-send names W6 (the one real broadcast)', featureReadiness('dogecoin-send').evidence.includes('W6'));
 check('swap names W7 (a live 0x quote)', featureReadiness('swap').evidence.includes('W7'));
 check('paymaster names W8 (live sponsorship)', featureReadiness('paymaster').evidence.includes('W8'));
@@ -245,7 +260,7 @@ check('walletconnect names W11 and W12 (permit decoding, dApp identity)', ['W11'
       /tested offline/.test(wc) && /live app over the WalletConnect relay/.test(wc) && /not yet cleared for real funds/.test(wc), wc);
 }
 // Every enforced feature has a gate in the app modules (static check).
-const gateSources = ['aa.ts', 'delegation.ts', 'sessions.ts', 'passkeys.ts', 'recovery.ts', 'token-gas.ts', 'inheritance.ts', 'browser-bridge.ts', 'multisig.ts', 'staking.ts', 'bridge.ts']
+const gateSources = ['aa.ts', 'delegation.ts', 'sessions.ts', 'passkeys.ts', 'recovery.ts', 'token-gas.ts', 'inheritance.ts', 'browser-bridge.ts', 'multisig.ts', 'staking.ts', 'bridge.ts', 'handle.ts']
   .map((f) => readFileSync(join(HERE, '..', 'src', 'wallet', f), 'utf8'))
   .join('\n');
 for (const f of FEATURE_READINESS.filter((x) => x.enforced)) {

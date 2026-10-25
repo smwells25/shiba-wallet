@@ -216,8 +216,10 @@ function fixtureProblems(table, fixture) {
     'settings.screenProtection.withPassphrase', 'settings.notifications.offWithPassphrase'];
   // Phase 23 item 5: the readiness row of off-line signing for a smart account is new too.
   const COLD_AA_NEW = ['readiness.cold-aa.title', 'readiness.cold-aa.reason'];
-  check('the new entries are exactly the Settings → Language ones, the five passphrase forms of the app-lock notes and the cold-aa readiness row',
-    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id)) &&
+  // Phase 23 item 6: the wallet handle's screen and its readiness row are new too.
+  const handleNew = (id) => id.startsWith('handle.') || id === 'readiness.wallet-handle.title' || id === 'readiness.wallet-handle.reason';
+  check('the new entries are exactly the Settings → Language ones, the five passphrase forms of the app-lock notes, the cold-aa readiness row and the wallet handle\'s',
+    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id) || handleNew(id)) &&
       LOCK_KIND_NEW.every((id) => FIXTURE.new.includes(id)) && COLD_AA_NEW.every((id) => FIXTURE.new.includes(id)));
   check('the changed entries are exactly the transaction-notes line (reworded for the records backup), the watch-only notice (reworded for the off-line signer) and the bridge readiness reason (CCTP sent, phase 23), each with its reason',
     JSON.stringify(Object.keys(FIXTURE.changed ?? {})) === JSON.stringify(['activity.note.privacy', 'notice.watchOnly', 'readiness.bridge.reason']) &&

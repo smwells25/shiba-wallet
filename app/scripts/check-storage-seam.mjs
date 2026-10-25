@@ -279,19 +279,21 @@ const ORIGINAL_NAMES = {
   // Stage 2 (the app PIN, wallet/pin.ts) added one key, the app-lock record;
   // phase 21 added the Bridge screen's transfer list (wallet/bridge.ts);
   // phase 22 item 5 the notifications inbox (wallet/inbox.ts); phase 22
-  // item 6 the device-wide language choice (i18n/language-store.ts). The 39
-  // names the app used before the seam are unchanged.
-  check('the registry declares exactly the 39 key names the app used before the seam, plus the app-lock record, the bridge transfers, the inbox and the language (43)',
-    Object.keys(reg).length === 43 && Object.keys(ORIGINAL_NAMES).length === 39 &&
+  // item 6 the device-wide language choice (i18n/language-store.ts); phase 23
+  // item 6 the wallet handle's prepared registrations (wallet/handle.ts). The
+  // 39 names the app used before the seam are unchanged.
+  check('the registry declares exactly the 39 key names the app used before the seam, plus the app-lock record, the bridge transfers, the inbox, the language and the prepared handles (44)',
+    Object.keys(reg).length === 44 && Object.keys(ORIGINAL_NAMES).length === 39 &&
       reg.inbox?.name === 'shiba-wallet.inbox.v1' && reg.inbox.scope === 'wallet' && reg.inbox.backing === 'async-storage' &&
       reg.language?.name === 'shiba-wallet.language.v1' && reg.language.scope === 'device' && reg.language.backing === 'async-storage' &&
       Object.entries(ORIGINAL_NAMES).every(([role, name]) => reg[role]?.name === name) &&
       reg.appLock?.name === 'shiba-wallet.app-lock.v1' && reg.appLock.scope === 'secret' && reg.appLock.backing === 'secure-store' &&
-      reg.bridgeTransfers?.name === 'shiba-wallet.bridge-transfers.v1' && reg.bridgeTransfers.scope === 'wallet' && reg.bridgeTransfers.backing === 'async-storage');
-  check('names are unique', new Set(Object.values(reg).map((d) => d.name)).size === 43);
+      reg.bridgeTransfers?.name === 'shiba-wallet.bridge-transfers.v1' && reg.bridgeTransfers.scope === 'wallet' && reg.bridgeTransfers.backing === 'async-storage' &&
+      reg.handlePending?.name === 'shiba-wallet.handle-pending.v1' && reg.handlePending.scope === 'wallet' && reg.handlePending.backing === 'async-storage');
+  check('names are unique', new Set(Object.values(reg).map((d) => d.name)).size === 44);
   const scopes = { wallet: 0, device: 0, secret: 0 };
   for (const d of Object.values(reg)) scopes[d.scope] += 1;
-  check('scopes: 23 wallet, 10 device, 10 secret', scopes.wallet === 23 && scopes.device === 10 && scopes.secret === 10, JSON.stringify(scopes));
+  check('scopes: 24 wallet, 10 device, 10 secret', scopes.wallet === 24 && scopes.device === 10 && scopes.secret === 10, JSON.stringify(scopes));
   check('every secret key lives in the secure store and every other key in AsyncStorage',
     Object.values(reg).every((d) => (d.scope === 'secret') === (d.backing === 'secure-store')));
   check('the protected keychain service and the notification identifiers keep their names',

@@ -59,6 +59,8 @@ import { tokenSendFeeSentence } from '../wallet/token-gas';
 import { rebasingTokenNote, tokenRowSubtitle } from '../wallet/tokens';
 import { inboxLinkText } from '../wallet/inbox';
 import { useInboxUnreadCount } from './InboxScreen';
+import { usePrimaryNameLine } from './HandleViews';
+import { handleLinkShown } from '../wallet/handle';
 import {
   formatFiat,
   nativePriceAssetId,
@@ -341,6 +343,9 @@ export function HomeScreen({ navigation }: Props) {
   // re-fetches the EVM row (useBalances handles it).
   const { balances, refreshing, refreshAll, refreshOne } = useBalances(accounts, evmChain.caip2);
   const evmAccount = accounts.find((a) => a.chainId === EVM_CHAIN_ID);
+  // The EVM address's ENS primary name (phase 23 item 6): read on mainnet
+  // and Ethereum Sepolia only, re-read whenever Home gains focus.
+  const evmNameLine = usePrimaryNameLine(evmAccount?.address ?? null, evmChain.caip2);
   // Grows on every focus after the first and on every pull-to-refresh, so
   // the eligibility checks behind the account-tools row (sessions,
   // guardians, passkey) run again: an account deployed by a send from
@@ -557,6 +562,12 @@ export function HomeScreen({ navigation }: Props) {
           isFeatureAllowed('bridge', evmChain.caip2) && bridgeOfferFor(evmChain.caip2).destinations.length > 0
             ? cardLink('bridge', 'Bridge', () => navigation.navigate('Bridge'), 'Opens bridging between test networks')
             : null,
+          // A wallet handle (phase 23 item 6): an ENS name registered on
+          // Ethereum Sepolia only (readiness row 'wallet-handle', enforced;
+          // the screen refuses every other network too).
+          handleLinkShown(evmChain.caip2, activeAccount ?? null)
+            ? cardLink('handle', 'Wallet handle (ENS)', () => navigation.navigate('Handle'), 'Registers an ENS name for this account on Ethereum Sepolia')
+            : null,
           passkey.eligible
             ? cardLink(
                 'passkey',
@@ -576,7 +587,7 @@ export function HomeScreen({ navigation }: Props) {
               ownership or smart-account box). */}
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`${title}, ${watchOnly ? t('home.card.watchedAddress', { address: item.address }) : shortAddress(item.address)}`}
+            accessibilityLabel={`${title}, ${watchOnly ? t('home.card.watchedAddress', { address: item.address }) : shortAddress(item.address)}${isEvm && evmNameLine ? `, ${evmNameLine}` : ''}`}
             accessibilityHint={
               watchOnly ? tx('Opens the watched address and its QR code') : t('home.card.receive.hint', { title })
             }
@@ -591,6 +602,9 @@ export function HomeScreen({ navigation }: Props) {
               <Text style={[styles.address, { color: theme.textMuted }]}>
                 {shortAddress(item.address)}
               </Text>
+              {isEvm && evmNameLine ? (
+                <Text style={[styles.address, { color: theme.textMuted }]}>{evmNameLine}</Text>
+              ) : null}
             </View>
           </Pressable>
           <BalanceCell
