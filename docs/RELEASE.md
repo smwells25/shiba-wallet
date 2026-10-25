@@ -716,3 +716,141 @@ Every item must be checked for the exact commit being built.
   not rebuilt on 2026-10-15.
 - App Store Connect's phased-release controls.
 - The export-compliance answer (legal input).
+
+## 11. Reproducible builds: the kept Android APKs
+
+Written 2026-10-25 for phase 23 item 1 (the audit pack), so that an
+auditor can tell which source each kept build came from, how it was made
+and how it is signed. Every fact below is either read from the files on
+that date or quoted from the project's running record (`AGENTS.md`,
+phases 16, 21 and 22), which is named where it is the only source.
+
+**Two points first.** All five builds are signed with the **template
+debug keystore**, the one whose private key and password ship inside
+Expo's public project template; anyone can sign an APK with that key.
+**No release signing key exists yet**: creating one locally, or using
+EAS-managed credentials, waits on the package name and the other inputs
+in section 2, step 1. None of these builds may
+be distributed to users, and byte-for-byte reproducibility has **not**
+been tested: no build was ever made twice from the same tree and
+compared.
+
+### 11.1 The builds
+
+The files live in the git-ignored `.local/builds/` of the main checkout.
+Sizes from `ls -l`; hashes from `shasum -a 256`, both run 2026-10-25.
+
+| File | Bytes | SHA-256 | Variant | Source tree | Record |
+|---|---|---|---|---|---|
+| `shiba-devclient-45506f2-debug.apk` | 84,803,531 | `9f7ae79443b9bae7a22d02d9d5f41fe7fe4674cc8fe38670d17ccccad9eee564` | debug development client | commit `45506f2` | phase 21, "the phase-21 development build for duress Stage 3" |
+| `shiba-devclient-7244fd5-debug.apk` | 84,803,531 | `ae3ec9c7a74ae0e3711f94d267b38a103b4b36904c5951c3b3474d5daef62731` | debug development client | commit `7244fd5` (the `45506f2` prebuild output reused) | phase 21, pass p21g, "assembleDebug 2 min 45 s" |
+| `shiba-release-7244fd5.apk` | 53,359,829 | `f73133e089a3ceafcd6cd5a820fad943a5a7426183a7aa25577891333f65a64e` | release | commit `7244fd5` (same tree as above) | phase 21, pass p21g, "assembleRelease 8 min 56 s" |
+| `shiba-devclient-b414989-qc-debug.apk` | 97,878,200 | `c06d4245f69e4eb333005c16e6f9d764e366ae424e248565b818bc233321f949` | debug development client | commit `b414989` plus the native-scrypt patch that became commit `8b4ed84` | phase 22 item 2, "assembleDebug 6 min 59 s" |
+| `shiba-release-8b4ed84-qc.apk` | 65,086,370 | `acbd14be97ceb70dbebc94fa80222c94d28db44f0c9cf2fd8385c93fb69b233a` | release | the same tree as the line above | phase 22, pass p22a, "BUILD SUCCESSFUL in 6 min 24 s" |
+
+The two debug builds of `45506f2` and `7244fd5` have the same size and
+different hashes.
+
+**A correction to the record's naming.** The last two builds were made
+from `b414989` with the native-scrypt change applied as a patch, which
+the record describes as "8b4ed84's content". That is true of the change,
+not of the whole tree: commit `8b4ed84`'s parent is `b0f3b7d`, four
+commits after `b414989` (`6e41dec` visible captions for the paste boxes,
+`7c07120` and `b0f3b7d` records, `8adaff7` the passphrase design), and
+those commits change `app/src/components/AccountsSection.tsx`,
+`RecoveryViews.tsx` and six screens (`git diff --stat b414989 8b4ed84^`,
+read 2026-10-25). The `-qc` builds therefore contain the native scrypt
+but not those caption changes. The file names are kept as they are.
+
+The worktrees the builds were made in (`wt-build`, `wt-build2` in the
+session scratchpad) no longer exist (the scratchpad is cleaned by
+macOS), so the exact generated `android/` folders cannot be re-read; a
+rebuild starts again from the commit.
+
+### 11.2 Toolchain
+
+From the phase 16 record ("Item 3 — local development build on the
+emulator") and the commit lockfiles:
+
+- Expo SDK `expo` 57.0.27 and React Native 0.86.3 in `app/package-lock.json`
+  at all four commits; `react-native-quick-crypto` 1.1.8 at `8b4ed84`
+  only (absent at the other three).
+- JDK: Temurin 17.0.20.1+1, kept in the git-ignored `.local/jdk`.
+- Android SDK packages: `build-tools;36.0.0`, `platforms;android-36`,
+  `cmake;3.22.1`, `ndk;27.1.12297006`; the record names AGP 8.12.0 and
+  Gradle 9.3.1 from React Native's `libs.versions.toml`.
+- Gradle user home: the git-ignored `.local/gradle-home`. Gradle
+  downloads its dependencies at build time; with the native scrypt it
+  also downloads `io.github.ronickg:openssl-static` 3.6.2-3
+  (`docs/DEVICE_BUILDS.md`, "The native scrypt for the app PIN").
+
+### 11.3 The commands
+
+The record's route (phase 16, kept as the git-ignored helper
+`.local/helpers/p16c/build-devclient.sh`), run in a separate git
+worktree at the commit, never in the checkout Metro serves from, and
+never while the emulator is being driven:
+
+```sh
+git worktree add <worktree> <commit>
+cp -cR node_modules <worktree>/node_modules          # APFS clones, so Gradle's build folders stay out of the main checkout
+cp -cR app/node_modules <worktree>/app/node_modules  # then point app/node_modules/@shiba-wallet/* at <worktree>/packages/*
+(cd <worktree> && npm run build)
+(cd <worktree>/app && CI=1 EXPO_NO_TELEMETRY=1 npx expo prebuild --platform android --no-install)
+cd <worktree>/app/android
+./gradlew assembleDebug -PreactNativeArchitectures=x86_64 -PreactNativeDevServerPort=8082 --no-daemon   # development client
+./gradlew assembleRelease -PreactNativeArchitectures=x86_64 --no-daemon                                  # release
+# outputs: app/build/outputs/apk/<variant>/app-<variant>.apk
+```
+
+`-PreactNativeArchitectures=x86_64` builds for the emulator only; a phone
+build needs `arm64-v8a` (not made). `-PreactNativeDevServerPort=8082`
+keeps the development client off the port Expo Go's Metro uses. For the
+`-qc` builds `npx expo prebuild --platform android --clean` is the
+documented step after a native dependency change (`docs/DEVICE_BUILDS.md`,
+"Rebuild after native configuration changes"); the record says prebuild
+was run for them and that it autolinked the three new native modules,
+but not with which flags. When a development client is tested with the
+JavaScript served by Metro, start Metro with `EXPO_NO_METRO_LAZY=1`
+(`docs/DEVICE_BUILDS.md`, "Lazy bundling and the development client").
+
+### 11.4 Signing, as read from the files
+
+`apksigner verify --print-certs -v` (Android build-tools 36.0.0, run
+2026-10-25) on each of the five files: verified with APK Signature
+Scheme v2 only (not v1, v3, v3.1 or v4), one signer, certificate
+`CN=Android Debug, OU=Android, O=Unknown, L=Unknown, ST=Unknown, C=US`,
+certificate SHA-256
+`fac61745dc0903786fb9ede62a962b399f7348f0bb6f899b8332667591033b9c`.
+
+That is the certificate of the keystore inside Expo's project template:
+`app/node_modules/expo/template.tgz` (expo 57.0.27) contains
+`android/app/debug.keystore` with alias `androiddebugkey`, store and key
+password `android`, and the same SHA-256 fingerprint (read with
+`keytool -list -v`), and the template's `android/app/build.gradle` signs
+BOTH build types with it:
+
+```
+release {
+    // Caution! In production, you need to generate your own keystore file.
+    // see https://reactnative.dev/docs/signed-apk-android.
+    signingConfig signingConfigs.debug
+```
+
+So the "release" APKs are release-mode builds but are not
+release-signed. (The phase 16 record found Hermes bytecode and no
+development-menu classes in an earlier release APK made by the same
+route; these two files were not re-inspected for that.)
+Before any store or tester build, a release keystore must be created and
+kept outside the repository, or EAS-managed credentials used (section 2),
+and the passkey Digital Asset Links file must name that key's
+fingerprint, not this one (`docs/DEVICE_BUILDS.md`).
+
+### 11.5 What would make a build reproducible
+
+Not done; listed so the auditor knows what is missing: a pinned
+toolchain in the repository (the JDK, SDK packages and Gradle are set up
+by hand today), recorded prebuild output or a committed `android/`
+folder, a record of the Gradle dependency resolution, a second build
+from the same commit compared byte for byte (with the signature block
+excluded), and an `arm64-v8a` build for phones.

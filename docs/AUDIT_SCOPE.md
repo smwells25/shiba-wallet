@@ -1,6 +1,6 @@
 # Security audit scope: the Shiba Wallet prototype
 
-**Status:** First edition, dated 2026-10-19, written for phase 22 item 1 at repository commit `64d2a51` on the `main` branch of `https://github.com/smwells25/shiba-wallet`. Every fact in this document is taken from the repository's own code or documents and cites its path. Where the repository does not record something, this document says "not recorded" instead of guessing.
+**Status:** First edition, dated 2026-10-19, written for phase 22 item 1 at repository commit `64d2a51` on the `main` branch of `https://github.com/smwells25/shiba-wallet`. Updated 2026-10-25 for phase 23 item 1: the address tables of section 5 are now checked by a script (section 5.7), with the corrections that check produced, and the bug-bounty proposal (section 8) has its full structure with named placeholders. Every fact in this document is taken from the repository's own code or documents and cites its path. Where the repository does not record something, this document says "not recorded" instead of guessing.
 
 **Audience:** independent security auditors engaged (or being considered) by the project's Chairperson, and the Chairperson when deciding on the engagement. The reader is assumed to know Ethereum, ERC-4337 and mobile key storage, but not to have followed the project.
 
@@ -229,7 +229,7 @@ The blockchains' own consensus and fee markets; physical attacks on secure hardw
 
 Every address below is copied from the cited source file. "Test networks" means the address is used there today. For mainnet, three different states occur and are kept apart: **used** (the wallet acts on it today), **read once** (a source comment records that the same address and code were read on Ethereum mainnet, but no mainnet path uses it), and **documented, not verified** (taken from a vendor's documentation only).
 
-A note on the record: the engine's source comments say the Kernel v3.3 core, the permission modules, the weighted validator, RecoveryAction and the WebAuthn validator have identical code at the same address on Ethereum mainnet and Sepolia (read 2026-10-01, `packages/chains-evm/src/kernel-account.ts`, `kernel-permissions.ts`, `kernel-recovery.ts`, `kernel-webauthn.ts`; `docs/AA_STACK.md`), while `docs/MAINNET_READINESS.md` section 2 says the mainnet deployment "has not been verified on-chain by the wallet". The two are consistent only if "verified" means the full test-network standard (a deployment exercised through the wallet, modules installed and used). This document records the mainnet state as "read once" and the full verification as not done.
+A note on the record: the engine's source comments say the Kernel v3.3 core, the permission modules, the weighted validator, RecoveryAction and the WebAuthn validator have identical code at the same address on Ethereum mainnet and Sepolia (read 2026-10-01, `packages/chains-evm/src/kernel-account.ts`, `kernel-permissions.ts`, `kernel-recovery.ts`, `kernel-webauthn.ts`; `docs/AA_STACK.md`), while `docs/MAINNET_READINESS.md` section 2 says the mainnet deployment "has not been verified on-chain by the wallet". The two are consistent only if "verified" means the full test-network standard (a deployment exercised through the wallet, modules installed and used). This document records the mainnet state as "read once" and the full verification as not done. Since 2026-10-25 the read itself is repeatable: section 5.7 describes the script that re-reads every address below on its own network, including the Ethereum mainnet addresses, and gives the result. A repeatable read-only check is still not the full test-network standard (no mainnet deployment has been exercised through the wallet), so "read once" in the tables now means "read on-chain by the script, not exercised".
 
 Networks: Ethereum Sepolia (chain id 11155111), Base Sepolia (84532), Arbitrum Sepolia (421614), OP Sepolia (11155420), Hoodi (560048).
 
@@ -242,21 +242,21 @@ Networks: Ethereum Sepolia (chain id 11155111), Base Sepolia (84532), Arbitrum S
 | KernelFactory | `0x2577507b78c2008Ff367261CB6285d44ba5eF2E9` | Same four (no code on Hoodi) | Read once | same |
 | Kernel v3.3 implementation (also the EIP-7702 delegate) | `0xd6CEDDe84be40893d153Be9d467CD6aD37875b28` | Same four (no code on Hoodi) | Read once | same |
 | ECDSA validator | `0x845ADb2C711129d4f3966735eD98a9F09fC4cE57` | Same four | Read once | same |
-| ECDSASigner | `0x6A6F069E2a08c2468e7724Ab3250CdBFBA14D4FF` | Sepolia; OP Sepolia byte-identical (`docs/THREAT_MODEL.md` section 1.1) | Read once | `kernel-permissions.ts` |
+| ECDSASigner | `0x6A6F069E2a08c2468e7724Ab3250CdBFBA14D4FF` | Sepolia, Base, Arbitrum and OP Sepolia: byte-identical code on all four (section 5.7; previously recorded for OP Sepolia only, `docs/THREAT_MODEL.md` section 1.1) | Read once; byte-identical to the test networks | `kernel-permissions.ts` |
 | CallPolicy v0.0.4 | `0x9a52283276A0ec8740DF50bF01B28A80D880eaf2` | as above | Read once | same |
 | TimestampPolicy | `0xB9f8f524bE6EcD8C945b1b87f9ae5C192FdCE20F` | as above | Read once | same |
 | GasPolicy | `0xaeFC5AbC67FfD258abD0A3E54f65E70326F84b23` | as above | Read once | same |
 | RateLimitPolicy | `0xf63d4139B25c836334edD76641356c6b74C86873` | as above | Read once | same |
 | SudoPolicy (never used by the wallet's grants) | `0x67b436caD8a6D025DF6C82C5BB43fbF11fC5B9B7` | as above | Read once | same |
-| WeightedECDSAValidator (guardians, heirs, multisig root) | `0xeD89244160CfE273800B58b1B534031699dFeEEE` | Sepolia, Base, Arbitrum, OP Sepolia (code hashes pinned per network) | Read once (Sourcify full match on chain 1) | `kernel-recovery.ts`, `kernel-multisig.ts`, `app/src/config/evm-chain.ts` (`MULTISIG_VERIFIED_NETWORKS`) |
-| RecoveryAction | `0xe884C2868CC82c16177eC73a93f7D9E6F3A5DC6E` | Sepolia; OP Sepolia byte-identical | Read once | `kernel-recovery.ts` |
+| WeightedECDSAValidator (guardians, heirs, multisig root) | `0xeD89244160CfE273800B58b1B534031699dFeEEE` | Sepolia, Base, Arbitrum, OP Sepolia (code hashes pinned per network) | Read once. **Corrected 2026-10-25:** this table said "Sourcify full match on chain 1" (as the comment in `kernel-recovery.ts` does); Sourcify's API answered `"match"` for creation and runtime on chain 1 (its name for what was formerly called a partial match), not `"exact_match"` | `kernel-recovery.ts`, `kernel-multisig.ts`, `app/src/config/evm-chain.ts` (`MULTISIG_VERIFIED_NETWORKS`) |
+| RecoveryAction | `0xe884C2868CC82c16177eC73a93f7D9E6F3A5DC6E` | Sepolia, Base, Arbitrum and OP Sepolia, byte-identical on all four (section 5.7); not on Sourcify on any of them | Read once; byte-identical | `kernel-recovery.ts` |
 | WebAuthnValidator v0.0.3 | `0x7ab16Ff354AcB328452F1D445b3Ddee9a91e9e69` | Sepolia (bound by runtime code hash); OP Sepolia byte-identical | Read once (no Sourcify record on mainnet) | `kernel-webauthn.ts` |
 | Daimo P256Verifier (fallback when no P-256 precompile) | `0xc2b78104907F722DABAc4C69f826a522B2754De4` | Used by the validator | Not recorded separately | `kernel-webauthn.ts` |
 | ZeroDev SpendingLimit hook (pinned, not installed) | `0xb6D6B30C9E1A28E8044F4cCB48A63A423Ee3D70E` | Read for the finding only | Read once | `kernel-spending.ts` |
 | SimpleAccountFactory v0.7 (pre-fill) | `0x91E60e0613810449d098b0b5Ec8b51A0FE8c8985` | Sepolia | None | `app/src/config/evm-chain.ts` |
 | SimpleAccount implementation | `0x68641DE71cfEa5a5d0D29712449Ee254bb1400C2` | Sepolia | None | same |
 
-For Base Sepolia and Arbitrum Sepolia the record states that `verifyKernelDeployment` passed and that the weighted validator, factory, meta factory and implementation were compared on-chain (`evm-chain.ts`); a module-by-module comparison of the permission modules, RecoveryAction and the WebAuthn validator on those two networks is not recorded in the sources used here.
+For Base Sepolia and Arbitrum Sepolia the record states that `verifyKernelDeployment` passed and that the weighted validator, factory, meta factory and implementation were compared on-chain (`evm-chain.ts`). The module-by-module comparison that this paragraph first said was not recorded was made on 2026-10-25 by the script in section 5.7: the six permission modules, RecoveryAction, the WebAuthn validator v0.0.3, the ECDSA validator and Daimo's verifier have byte-identical code on Ethereum mainnet and all four test networks; the WebAuthn validator matches its pinned code hash on all five.
 
 ### 5.2 Paymasters
 
@@ -265,8 +265,8 @@ For Base Sepolia and Arbitrum Sepolia the record states that `verifyKernelDeploy
 | Circle token paymaster v0.7 (proxy) | `0x31BE08D380A21fc740883c0BC434FcFc88740b58` | Base Sepolia, Arbitrum Sepolia (no code on OP Sepolia; unusable on Ethereum Sepolia) | — | `packages/chains-evm/src/token-paymaster.ts` |
 | Circle paymaster implementation, Base Sepolia | `0x1E42055dECF050828AfE8bA0A374bC5F44CbFC8d` | Base Sepolia | — | same (comment) |
 | Circle paymaster implementation, Arbitrum Sepolia | `0xD9d18FD662B5B2F567545C13fd1e902008beD755` | Arbitrum Sepolia | — | same |
-| Circle paymaster, documented mainnet address | `0x6C973eBe80dCD8660841D4356bf15c32460271C9` | — | **Documented, not verified** | same |
-| Pimlico ERC-20 paymaster singleton | `0x777777777777AeC03fd955926DbF81597e66834C` | Used on Ethereum Sepolia; code hash read on Sepolia, Base and Arbitrum Sepolia | Source-verified on mainnet per `docs/MAINNET_READINESS.md`; not used | `erc7677-token-paymaster.ts` |
+| Circle paymaster, documented mainnet address | `0x6C973eBe80dCD8660841D4356bf15c32460271C9` | — | **Documented, not used.** Read-only on 2026-10-25 (section 5.7) on Base (8453) and Arbitrum One (42161), the two networks the source names: a 144-byte proxy with code on both, `entryPoint()` = EntryPoint v0.7, staked 0.25 ETH with an 86,400 s delay, Sourcify `exact_match` for the proxy and for each network's implementation. Not on Ethereum mainnet's list in the source; not exercised | same |
+| Pimlico ERC-20 paymaster singleton | `0x777777777777AeC03fd955926DbF81597e66834C` | Used on Ethereum Sepolia; code hash read on Sepolia, Base and Arbitrum Sepolia | Not used. On 2026-10-25 its code on Ethereum mainnet equalled the pinned code hash and Sourcify answered `exact_match` (section 5.7) | `erc7677-token-paymaster.ts` |
 
 ### 5.3 Tokens and other fixed addresses
 
@@ -323,6 +323,43 @@ From `packages/chains-evm/src/bridge/layerzero-oft.ts` (`LAYERZERO_V2_TESTNET`, 
 
 Circle CCTP V2 (same addresses on all four networks; listed as "coming" in the app and never sent): TokenMessengerV2 `0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA`, MessageTransmitterV2 `0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275`, TokenMinterV2 `0xb43db544E2c27092c107639Ad201b3dEfAbcF192`.
 
+### 5.7 The tables are machine-checked: `scripts/audit/verify-pins.mjs`
+
+Until phase 23 the tables above were copied from the source files. They are now checked by a read-only script that takes the addresses from the code itself and reads each one on its own network:
+
+```sh
+npm run build                                   # the script imports the engine's built modules
+node scripts/audit/verify-pins.mjs              # every network, live, read-only
+node scripts/audit/verify-pins.mjs --network 1  # one network (a chain id or a name such as sepolia)
+node scripts/audit/verify-pins.mjs --offline    # list the pins and their sources; no request
+node scripts/audit/verify-pins.mjs --json <file>  # also write every result as JSON
+```
+
+**What it collects.** It imports the tables that pin addresses (the engine's `KERNEL_V3_3`, `KERNEL_PERMISSION_MODULES`, `KERNEL_RECOVERY_MODULES`, `KERNEL_WEBAUTHN_VALIDATOR`, the SpendingLimit hook, `CIRCLE_TOKEN_PAYMASTER_V07`, `PIMLICO_ERC20_PAYMASTER_V07`, `UNISWAP_V3_SEPOLIA`, `DCA_PINNED_POOLS`, `DCA_REFUSED_ROUTERS`, `LIDO_DEPLOYMENTS`, `ROCKET_POOL_DEPLOYMENTS`, `LAYERZERO_V2_TESTNET`, `STARGATE_V2_TESTNET_NATIVE_POOLS`, `CCTP_V2_TESTNET`, `ENS_UNIVERSAL_RESOLVER`, `WRAPPED_NATIVE_TOKENS`, the activity labels' literal addresses; the app's `EVM_SEPOLIA.aaPrefill`, `MULTISIG_VERIFIED_NETWORKS`, `KNOWN_TEST_NETWORK_TOKENS`, `KNOWN_STAKING_TOKENS`, `USDC_MAINNET`, `PERMIT2_ADDRESS` and `OP_STACK_GAS_PRICE_ORACLE`) and cites, for every address, the file and line where it is written. It also lists the accounts the source describes as holding no contract (the Stargate test pools' owner and "planner", the EIP-7708 log emitter), which it expects to find empty. 177 (network, address) pairs come from 94 pins.
+
+**What it reads, per address.** `eth_getCode` (byte length and keccak-256), compared with a code hash only where the CODE pins one (`MULTISIG_VERIFIED_NETWORKS`, the WebAuthn validator's `runtimeCodeHash`, the SpendingLimit hook's and Pimlico's `runtimeCodeKeccak`); the ERC-1967 implementation slot; the fixed facts the source documents (for example `entrypoint()`, `accountId()`, `eip712Domain()`, `isModuleType(1)`, `approved(factory)`, `token()`, `localDomain()`, `eid()` with the default send and receive libraries, `isMinter(TokenMinterV2)`, `symbol()` and `decimals()`, the pool's factory, tokens and fee, and the engine's own `verifyKernelDeployment`, `verifyWebAuthnValidatorDeployment`, `verifyLidoDeployment`, `resolveRocketPool`, `readCirclePaymasterState` and `readPimlicoPaymasterState`); and Sourcify's public verification status (`GET https://sourcify.dev/server/v2/contract/{chain}/{address}`), printed in Sourcify's own words: `exact_match` (formerly "perfect"), `match` (formerly "partial") or none. Endpoints are the app's own keyless defaults (`app/src/config/evm-chain.ts`), each checked for its chain id; an endpoint more than 300 blocks behind the others is not used. A failed read is reported as "could not read", never as a pass. The script exits with status 1 on any missing code, hash mismatch or failed fact.
+
+**Statuses.** *verified*: code present, bound to source by a pinned hash or a Sourcify match (and, for an ERC-1967 proxy, its implementation bound too), every fact as stated; *verified-by-identity*: byte-identical to the same address on another network where it is verified; *present-unverified*: code present but nothing binds it to source; *missing*, *unreadable*, *hash-mismatch*, *fact-failed*: failures.
+
+**Result of 2026-10-25 (14:20 UTC, repository `16f5e72`), every network read live:**
+
+| Network | Verified | Verified by identity | Present, unverified | Missing | Unreadable | Stated non-contracts confirmed |
+|---|---|---|---|---|---|---|
+| Ethereum mainnet | 21 | 2 | 1 | 0 | 0 | 1 |
+| Ethereum Sepolia | 36 | 5 | 8 | 0 | 0 | 3 (one an EOA carrying an EIP-7702 delegation) |
+| Base Sepolia | 23 | 3 | 4 | 0 | 0 | 1 |
+| Arbitrum Sepolia | 21 | 3 | 4 | 0 | 0 | 3 |
+| OP Sepolia | 19 | 3 | 6 | 0 | 0 | 3 |
+| Hoodi | 3 | 0 | 2 | 0 | 0 | 0 |
+| Base and Arbitrum One (Circle's documented mainnet paymaster only) | 2 | 0 | 0 | 0 | 0 | 0 |
+| **All** | **125** | **16** | **25** | **0** | **0** | **11** |
+
+No address the wallet pins lacks code on its network, no pinned code hash differs from the chain, and no documented fact read differently. Every address in the tables above matched the code (none needed correcting); two claims did not match the chain and are corrected in place: the weighted validator's Sourcify status on chain 1 (section 5.1) and the module-by-module comparison that had not been recorded (paragraph after section 5.1). The Kernel v3.3 core on Ethereum mainnet: the meta factory, factory, ECDSA validator, permission modules, RecoveryAction, WebAuthn validator and Daimo's verifier are byte-identical to the test networks; the implementation and the weighted validator differ from Ethereum Sepolia's in 35 and 34 bytes respectively, all within about 100 bytes around the 32-byte word that holds the cached chain id (a separate read-only byte comparison on 2026-10-25; consistent with the cached chain id and EIP-712 domain separator recorded for the test networks, though the separator was not recomputed this time), and `verifyKernelDeployment` passed on mainnet (factory → implementation, `entrypoint()` = EntryPoint v0.7, `accountId()` = `kernel.advanced.v0.3.3`, the meta factory approving the factory and staked 0.1 ETH with an 86,400 s delay, the validator a module of type 1), which agrees with the 2026-10-01 read recorded in `docs/AA_STACK.md`.
+
+The 25 *present, unverified* rows are what an auditor still has to bind to source by other means: RecoveryAction on all five networks (no Sourcify record anywhere; the source comment records a byte-for-byte recompilation instead); on Ethereum Sepolia the SimpleAccount implementation, three of the four Uniswap pools (0.05%, 0.3%, 1%), Uniswap's v4 PoolManager (an activity label) and Circle's EURC, plus LayerZero Labs' executor (its ERC-1967 implementation has no Sourcify record); on Base Sepolia EURC, the executor and the OP-stack GasPriceOracle (implementation not on Sourcify); on Arbitrum Sepolia the receive library, the executor and the DVN; on OP Sepolia the send and receive libraries, the executor, the DVN and the GasPriceOracle; on Hoodi RocketStorage and the Lido withdrawal queue (implementation `0xD0a60e52…eCD5`, not on Sourcify, as `staking.ts` already states). Running the script prints every keccak, fact and Sourcify answer behind these counts.
+
+**What the check does not do.** It does not prove that verified source is safe, that a proxy's owner will not upgrade it tomorrow, or that the wallet's calls are correct; it does not detect proxies other than ERC-1967 (Lido's stETH is an Aragon proxy); Sourcify's `match` means the bytecode matches but the metadata hash does not; and "verified by identity" relies on the other network's verification. It reads `latest` state through public endpoints, so it trusts those endpoints for the answer it prints (on 2026-10-25 at least two endpoints answered with the right chain id on each of Ethereum mainnet and the five test networks, and one each on Base and Arbitrum One; Pocket's OP Sepolia endpoint was about 128,000 blocks behind the others and was not used).
+
 ---
 
 ## 6. Known findings and open residuals: where to start
@@ -354,7 +391,7 @@ Row identifiers refer to `docs/THREAT_MODEL.md`: **T-nn** is a threat (section 4
 ### 6.3 Inconsistencies in the record an auditor should not trip over
 
 - **N-09, T-27, F-70 and section 3.6 of the threat model** were stale when this document was first written (the bundler save had refused a wrong-chain bundler since phase 11, F-70 was fixed in `9290864`, and local development and release builds had been built and run on the emulator since phase 16); the phase 22 refresh of 2026-10-20 corrected all four rows in `docs/THREAT_MODEL.md`, so an auditor reading the current threat model sees the corrected text. The point stands as a caution: the threat model's rows can lag the record in `AGENTS.md`, which is the authoritative history.
-- **Mainnet verification of the Kernel stack:** see the note at the start of section 5.
+- **Mainnet verification of the Kernel stack:** see the note at the start of section 5. Since 2026-10-25 the mainnet read is repeatable and was repeated (section 5.7); the source comments in `kernel-permissions.ts` and `kernel-recovery.ts` that call the chain-1 Sourcify records of ECDSASigner, CallPolicy, GasPolicy, RateLimitPolicy, SudoPolicy and the weighted validator "full match" disagree with Sourcify's current answer (`match`, the former "partial"); those comments are engine files and are left for a separate correction.
 
 ### 6.4 Never observed on a real device
 
@@ -381,21 +418,77 @@ In priority order. Each names the files to start from.
 
 ## 8. Bug-bounty proposal (alongside C2)
 
-This is a proposal for the Chairperson; nothing is published yet, and no disclosure channel for the wallet exists today.
+This is a proposal for the Chairperson; nothing is published yet, and no disclosure channel for the wallet exists today. Every value the project has not decided is a named placeholder in square brackets; none is filled in here. The text below is written so that, once the placeholders are filled, sections 8.1 to 8.10 can be published as the programme page (for example a `SECURITY.md` at the root of the repository).
 
-- **Scope.** The same as the audit scope in section 3: the wallet's own code at the current `main` branch, the app as built from it, and the accuracy of the wallet's statements about third-party contracts. Reports against the deployed third-party contracts themselves are out of scope and should be reported to their vendors; the programme should say so and link the vendors' channels where they exist (the record found none for Kernel, `docs/DISCLOSURE_FINDINGS.md` section 8.6).
-- **Severity tiers**, tied to the threat model's ratings (`docs/THREAT_MODEL.md`, "How to read this document"):
-  - *Critical:* loss of funds for many users without any user mistake (for example signing without approval, a key leaving the device, a derivation error that sends funds to an address the phrase does not control).
-  - *High:* loss of all funds controlled by an affected key or account, or a way around a stated on-screen protection (for example an approval gate, a readiness refusal, the duress isolation).
-  - *Medium:* loss of some funds, exposure of linkable private data, or a stuck account.
-  - *Low:* inconvenience, privacy loss of public data, or a refused operation; misleading but non-exploitable text.
-  - Findings already listed in `docs/THREAT_MODEL.md` as open or accepted are not eligible unless the report shows a materially worse impact than recorded.
-- **Networks.** Test networks only until a mainnet profile exists. Researchers use their own test wallets and test funds. Mainnet funds of any user must never be touched.
-- **Excluded.** Third-party contracts and services (section 4); the test networks' own faucets, explorers and RPC providers; denial of service against public infrastructure; social engineering of the project's people; findings that need a rooted or jailbroken phone, a compromised operating system, or physical access to an unlocked phone with the app open (`docs/THREAT_MODEL.md` section 1.3); the project's development wallet and keys.
-- **Disclosure channel (to be set up).** A dedicated email address `[SECURITY CONTACT EMAIL — to be filled by the Chairperson]`, a policy page `[POLICY PAGE URL — to be filled by the Chairperson]` (for example a `SECURITY.md` in the repository and a GitHub private vulnerability report), a stated acknowledgement time, and a coordinated-disclosure window.
-- **Rewards.** No amounts are proposed here; they are the Chairperson's decision.
+### 8.1 Scope
 
----
+- The wallet's own code at the current `main` branch of `https://github.com/smwells25/shiba-wallet`: the engine packages under `packages/` and the app under `app/` (the files listed in section 3).
+- The app as built from that code (Expo Go on Android, and the wallet's own Android development and release builds made as in `docs/RELEASE.md`, "Reproducible builds").
+- The accuracy of the wallet's statements about third-party contracts: a screen, refusal or document sentence that tells the user something false about what a contract can or cannot do is in scope even though the contract itself is not.
+- The repository's guard scripts (`scripts/githooks/secret-scan.mjs`, `scripts/ci/offline-guard.mjs`, `scripts/audit/verify-pins.mjs`) where a weakness would let a secret or an unchecked address through.
+
+### 8.2 Out of scope
+
+- The deployed third-party contracts themselves (section 4.1) and the services in section 4.2. Reports about them go to their vendors; the programme page should link each vendor's channel where one exists (`[VENDOR CHANNELS — to be listed when published]`; the record found none for Kernel, `docs/DISCLOSURE_FINDINGS.md` section 8.6).
+- The test networks' own faucets, explorers and RPC providers; denial of service against public infrastructure; social engineering of the project's people; physical attacks.
+- Findings that need a rooted or jailbroken phone, a compromised operating system, or physical access to an unlocked phone with the app open (`docs/THREAT_MODEL.md` section 1.3).
+- The project's development wallet and keys, and any mainnet funds of anyone.
+- Findings already listed in `docs/THREAT_MODEL.md` as open or accepted, unless the report shows a materially worse impact than recorded (section 6 lists the main ones).
+
+### 8.3 Severity and rewards
+
+Severity follows the threat model's ratings (`docs/THREAT_MODEL.md`, "How to read this document"). The project decides the final severity after reproducing the report.
+
+| Severity | Meaning (examples) | Reward |
+|---|---|---|
+| Critical | Loss of funds for many users without any user mistake: signing without approval, a key leaving the device, a derivation error that sends funds to an address the phrase does not control | `[REWARD — CRITICAL — Chairperson]` |
+| High | Loss of all funds controlled by an affected key or account, or a way around a stated on-screen protection (an approval gate, a readiness refusal, the duress isolation) | `[REWARD — HIGH — Chairperson]` |
+| Medium | Loss of some funds, exposure of linkable private data, or a stuck account | `[REWARD — MEDIUM — Chairperson]` |
+| Low | Inconvenience, privacy loss of public data, a refused operation, or misleading but non-exploitable text | `[REWARD — LOW — Chairperson]` |
+
+`[REWARD CURRENCY AND PAYMENT METHOD — Chairperson]` · `[IDENTITY OR TAX CHECKS BEFORE PAYMENT, IF ANY — counsel]` · `[MAXIMUM TOTAL BUDGET PER PERIOD — Chairperson]`.
+
+### 8.4 What a report must contain
+
+- The commit hash the finding applies to, and the build (Expo Go, development build or release build, and its SHA-256 if it is one of the builds listed in `docs/RELEASE.md`).
+- The network (a test network only) and, for an on-chain effect, the transaction or UserOperation hashes.
+- Step-by-step reproduction from a fresh wallet the researcher created, with the exact screens, inputs and expected versus observed results; a script where the engine is involved.
+- The impact the researcher believes it has, mapped to section 8.3.
+- No real person's key, phrase or data; no secret of the project's.
+
+### 8.5 Rules of engagement
+
+- Test networks only (Ethereum Sepolia, Base Sepolia, Arbitrum Sepolia, OP Sepolia, Hoodi) until a mainnet profile exists; researchers use their own test wallets and test funds (`docs/AUDIT_SCOPE.md` section 2.4 describes the setup).
+- Never touch anyone's mainnet funds, never attack the project's development wallet, and stop and report as soon as a finding is demonstrated.
+- Do not run load against public endpoints, bundlers or relays.
+- Keep the finding confidential until the disclosure date agreed under section 8.7.
+
+### 8.6 Safe harbour
+
+`[SAFE-HARBOUR TEXT — counsel]`: the project's commitment not to pursue researchers who follow these rules in good faith. It must be written or approved by counsel; this document proposes none.
+
+### 8.7 Response and disclosure
+
+- Acknowledgement of a report within `[ACKNOWLEDGEMENT TIME — Chairperson]`.
+- A first assessment (reproduced or not, provisional severity) within `[ASSESSMENT TIME — Chairperson]`.
+- A fix or a mitigation plan within `[FIX TARGET PER SEVERITY — Chairperson]`.
+- Coordinated disclosure: public details after the fix ships or after `[DISCLOSURE WINDOW — Chairperson]`, whichever comes first, unless both sides agree otherwise. A finding that turns out to concern a third-party contract is passed to its vendor only with the reporter's consent and the Chairperson's decision (the project's standing rule on vendor disclosure, `AGENTS.md`).
+
+### 8.8 Duplicates and eligibility
+
+- The first complete report of a finding is eligible; later reports of the same root cause are duplicates.
+- Findings already public in this repository (the threat model, `docs/DISCLOSURE_FINDINGS.md`, `AGENTS.md`) are not new.
+- `[ELIGIBILITY EXCLUSIONS, FOR EXAMPLE PROJECT MEMBERS, CONTRACTORS AND AUDITORS UNDER CONTRACT — Chairperson]`.
+
+### 8.9 Disclosure channel (to be set up)
+
+- A dedicated address `[SECURITY CONTACT EMAIL — to be filled by the Chairperson]`, with `[PGP KEY OR OTHER ENCRYPTION — Chairperson]` if encrypted reports are wanted.
+- A policy page `[POLICY PAGE URL — to be filled by the Chairperson]`, for example a `SECURITY.md` in the repository, and optionally GitHub's private vulnerability reporting on the repository `[ENABLE: YES / NO — Chairperson]`.
+- `[THIRD-PARTY BOUNTY PLATFORM, IF ANY — Chairperson]`.
+
+### 8.10 Relation to C2
+
+The programme covers the wallet's own code. It does not answer condition C2, which asks for the Kernel vendor's bounty coverage (section 1.1); that still needs the vendor's written answer.
 
 ## 9. Decisions for the Chairperson
 
@@ -406,7 +499,7 @@ This is a proposal for the Chairperson; nothing is published yet, and no disclos
 5. **Whether the private classification is shared.** A private, CVE-style classification of the third-party findings exists and is shared at the Chairperson's discretion. Sharing it would save the auditors repeating that work for the out-of-scope contracts.
 6. **Test funds.** Whether the auditors receive test-network funds from the project's development account, or fund their own wallets from faucets. In either case they receive no key of the project's.
 7. **Devices.** Whether the engagement includes real-phone testing (W2, W3), which needs the Expo account and bundle identifiers that are still inputs (`docs/THREAT_MODEL.md` W5).
-8. **The bounty.** Whether to publish the programme in section 8, when, and its reward amounts.
+8. **The bounty.** Whether to publish the programme in section 8, when, and the values of its named placeholders (rewards, payment terms, response times, the disclosure window, the contact and the policy page); the safe-harbour text needs counsel.
 
 ---
 
@@ -414,8 +507,9 @@ This is a proposal for the Chairperson; nothing is published yet, and no disclos
 
 - Which audit, if any, covers the deployed test-network code of Lido, Rocket Pool and Uniswap v3: not recorded.
 - Which commits the LayerZero, Stargate and Circle CCTP audit reports cover: not recorded (`docs/BRIDGING.md` sections 14 and 15).
-- Module-by-module code comparison of the permission modules, RecoveryAction and the WebAuthn validator on Base Sepolia and Arbitrum Sepolia: not recorded in the sources used.
-- Whether the Kernel stack's mainnet code read of 2026-10-01 should count as "verified": the record disagrees with itself (section 5).
+- Module-by-module code comparison of the permission modules, RecoveryAction and the WebAuthn validator on Base Sepolia and Arbitrum Sepolia: first listed here as not recorded; made on 2026-10-25 (section 5.7): byte-identical.
+- Whether the Kernel stack's mainnet code read should count as "verified": the record disagreed with itself (section 5). The read is now repeatable (section 5.7) and agrees with the 2026-10-01 record; no mainnet deployment has been exercised, so the full test-network standard is still not met.
+- Why the source comments call several chain-1 Sourcify records "full match" while Sourcify answers `match` today (section 6.3): whether the records changed or the comments misread them is not known.
 - The exact suite counts at the commit to be tagged: they change with each slice; the runner prints them.
 - The details of finding F-46: not in the repository.
 
