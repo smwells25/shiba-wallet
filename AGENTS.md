@@ -11948,4 +11948,110 @@ to the Chairperson at once.
       (test networks only). UNVERIFIED: ERC-7677 paymaster data on the
       prepare path; owner-rotated accounts; a hardware signer's s values;
       the app half on a device.
+- [x] Item 6, engine half — A WALLET HANDLE ON SEPOLIA'S ENSv2 CONTRACTS,
+      DRY RUN ONLY, and the attestations research (commit bddb818; new
+      packages/chains-evm/src/ens-register.ts, test/ens-register.test.ts
+      (+31; chains-evm 785 → 816), scripts/testnet/ens-register-smoke.mjs,
+      docs/WALLET_HANDLES.md (~5,000 words), index.ts additive; offline
+      runner ALL GREEN in the CTO's isolated worktree on HEAD a1430ca with
+      --skip-bundle: engine 1,098, app 9,906 across 63 suites, check-names
+      61, lint 0/0, tsc clean; six hand mutants caught; the scan clean (a
+      test fixture field named `secret` with a fixed hex value tripped the
+      scanner and was renamed commitNonce — the scanner left strict);
+      nothing signed or sent; nothing read from .dev-wallet — every run
+      used the dev EOA's ADDRESS as the simulated sender). KEY FINDING,
+      read from ENS's docs at eb408b38 (learn/deployments.mdx, 2026-10-25)
+      and confirmed on-chain: SEPOLIA RUNS THE ENSv2 CONTRACTS, not the
+      classic ETHRegistrarController ("the ENSv1 contracts are no longer in
+      use"); the address list is pinned to contracts-v2 07e55a05 (the
+      2026-10-01 redeploy); the Universal Resolver proxy 0xeEeE… →
+      ManagedURP 0x6d80… → UniversalResolverV2 0x24E1…, its
+      ROOT_REGISTRY().getSubregistry("eth") = the ETHRegistry 0xD4eB…, the
+      ETHRegistrar 0xf633… holds REGISTRAR and RENEW and emitted
+      NameRegistered events today; all 14 contracts used have code on two
+      RPCs and a Sourcify match or exact_match. HOW ENSv2 DIFFERS: payment
+      is ERC-20 ONLY, never ETH — Circle's Sepolia USDC 0x1c7D…7238 is
+      accepted and five or more characters for the 28-day minimum cost
+      0.613701 USDC; records live on a per-account PermissionedResolver (a
+      UUPS proxy through the VerifiableFactory 0xDa70… with ENS's salt
+      keccak("OwnedResolver", owner, 0)) whose initialize() sets the
+      address record in the same transaction; the primary name still goes
+      through the ENSv1 ReverseRegistrar 0xA0a1… setName (the Universal
+      Resolver's reverse() forward-checks it); commit then register with
+      at least 60 s and less than 86,400 s between them (read on-chain).
+      STATED PLAINLY (WALLET_HANDLES §3.4): the registrar's verified source
+      matches the pin for its own files but five interface / library files
+      differ (read: the role bit values are unchanged); ENS's deploy
+      constants name a MockUSDC the oracle rejects, the live MockUSDC
+      0x240b…14aa is the one the wallet already flags as a look-alike
+      "USDC"; Sepolia's ENSv2 has been redeployed before, so a name may
+      not survive the next redeploy; the registrar owner and beneficiary
+      0x84D3… and both Universal Resolver proxy admins hold no code
+      (single keys on Sepolia); contracts-v2 has audit branches, not read.
+      ENGINE: ENS_V2_SEPOLIA + ENS_V2_SEPOLIA_USDC (the only payment token);
+      checkEnsHandleLabel (the phase-14 conservative normaliser, one .eth
+      label, ≥ 3 characters — the registrar itself does NOT normalise);
+      ensRegistrationCommitment and every encoder pinned against ethers,
+      error selectors against the source; ensRegisterPrice / ensLibHalving
+      / ensApplyDiscount reproduce StandardRentPriceOracle in bigint;
+      quoteEnsRegistration reads at one pinned block (chain, the
+      registrar's config, availability, the registrar's price = the
+      mirror, NO PREMIUM — premiums refused so the approval is exactly what
+      register pulls); readEnsOwnedResolver (code at the predicted address
+      must pass the factory's verifyContract and the owner must hold
+      ROLE_SET_ADDRESS); planEnsRegistration = two steps of {to, value,
+      data} — prepare (create the resolver with the record or setAddress,
+      the exact USDC approval, commit) and register (register, then v1
+      setName) — one transaction per call from a regular account, one
+      batch per step from a smart account; checkEnsRegisterReady /
+      ensRegisterWindow / ensRegisterTiming; planEnsSubname ('registered'
+      — the owner's UserRegistry, setSubregistry, register, the record —
+      or 'record-only'); readEnsPrimaryName (strict decode of reverse():
+      none / ok / unsupported / offchain). TESTS replay 26 recorded
+      JSON-RPC answers at block 11991433: three on-chain makeCommitment
+      answers, the factory's predictProxyAddress, 76 oracle answers incl.
+      ten premium-curve points and 6- and 18-decimal tokens, the refusals
+      (taken name, short duration, wrong token, wrong chain, a premium, a
+      price mismatch, a changed config, a foreign resolver, a zero secret,
+      an unlimited approval), the commit-window boundaries, both sub-name
+      shapes, captured reverse answers. SIMULATED END TO END (eth_simulateV1
+      with block-time overrides, which PublicNode accepts; 63 checks, run
+      twice): register reverts CommitmentTooNew at T+59 and succeeds at
+      T+60 — exactly 613,701 USDC base units from the sender to the
+      beneficiary, setName succeeds, forward and reverse resolution work,
+      allowance 0 after; gas for a first registration from a regular
+      account 2,454,956 (resolver deployment 1,133,999 + approve 137,757 +
+      commit 127,458 + register 682,685 + setName 373,057); negatives — a
+      never-committed secret CommitmentTooOld, an approval one unit short
+      reverts, a second register with the same commitment reverts; the
+      sub-name smart.<label>.eth → the dev Kernel 0xc995…C5AC resolves in
+      both shapes ('registered' ~1.59M gas more than 'record-only' 273k),
+      the Kernel's own setName makes reverse() return the sub-name; a
+      deployed Kernel can own a name (it accepts the ERC-1155 token).
+      FEATURE 77 (EAS on Sepolia): EAS 0xC267…815e v0.26 (no owner, no
+      upgrade function; 150 attestations in the last 10,000 blocks),
+      SchemaRegistry 0x0a7E…50D0, EIP712Proxy 0x9C9d…82BC (1.2.0), Indexer
+      0xaEF4…2B2a — all Sourcify match, MIT; a handle-ownership attestation
+      would be redundant (ENS is the proof), guardian attestations would
+      harm privacy, merchant receipts and reading attestations need a list
+      of trusted attesters (an input) — RECOMMENDATION: build nothing now.
+      DECISIONS (CTO) on the builder's questions: USDC only; the record-only
+      sub-name; the Sepolia-redeploy risk accepted for a test-network
+      handle; mainnet waits for the ENSv2 launch (no ENSv1 path built); a
+      read-only attestation view is deferred. THE LIVE STEP (`ENS_LIVE=1
+      ENS_LABEL=<label> ENS_LIVE_SUBNAME=record-only node
+      scripts/testnet/ens-register-smoke.mjs`: the full dry run first;
+      resolver, exact approval, commit, the 60 s wait with a readiness
+      re-check, register, setName, verification on two RPCs, the
+      record-only sub-name; caps 1 USDC fee, 28 days, 0.02 ETH gas; the
+      secret kept in the git-ignored run record until register is mined;
+      ENS_RESUME=1 continues after an interruption) is HELD until the CCTP
+      leg finishes, because both would sign from the dev EOA on Ethereum
+      Sepolia at once. UNVERIFIED: the live registration; which ENSv2-ready
+      library versions other wallets need to show the name; the ENSv2
+      audits and their commits; mainnet prices and governance. FOLLOW-UPS:
+      verify-pins.mjs gains the ENSv2 Sepolia pins; FEATURE_UNIVERSE rows 75
+      and 77 at the refresh; the app half (a readiness row, the commit
+      secret wallet-scoped until register, a two-step screen stating the
+      wait, Home and Receive showing the name through readEnsPrimaryName).
 
