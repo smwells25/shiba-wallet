@@ -12201,4 +12201,37 @@ to the Chairperson at once.
       record's hash fields, never its secret). The sub-name
       smart.shibawalletdemo.eth → the dev Kernel 0xc995…C5AC follows once
       the script is fixed.
+      ADDENDUM (the same day, commit f7bc29b): THE SUB-NAME IS LIVE —
+      smart.shibawalletdemo.eth → the dev Kernel 0xc995E49acA5C888F4FF1E50E8467E9fFc31CC5AC
+      (record-only; setAddress on the dev EOA's resolver 0x599A…6059; tx
+      0x819fcdb7dcdc4b929fc6539d789d40dcee535335ba9ef64554c70a3d742659ff,
+      block 11991646, status 0x1 on publicnode and drpc with the same
+      block hash, 273,152 gas at 153,612 wei; forward resolution on both
+      RPCs; the Kernel's own setName not run — it needs a UserOperation).
+      THE SCRIPT FIXES (scripts/testnet/ens-register-smoke.mjs only;
+      node --check, lint and the scan clean): readiness now also waits
+      until the LATEST block on BOTH endpoints is at least notBefore + 12
+      s (one Sepolia slot; READY_MARGIN_SECONDS); a resume whose record
+      says registered skips the dry-run quote and goes to a new
+      afterRegistration() (proves REGISTERED to the sender, the recorded
+      resolver, setName only if missing, resolution both ways, then the
+      sub-name step, which is idempotent); the pending-nonce check
+      re-reads latest and pending up to four more times 5 s apart.
+      CORRECTION to the CTO's diagnosis, from the agent: the failed
+      run's "now 1792940448" was NOT the wall clock — checkEnsRegisterReady
+      already reads the latest block's timestamp, and that block's time
+      was exactly notBefore; the pre-flight eth_simulateV1 against
+      "latest" on load-balanced PublicNode still saw CommitmentTooNew
+      (inferred: another backend's latest block was older, or its
+      simulated block took a time no later than the parent's) — one block
+      of margin on both endpoints covers both cases; the wait loop was
+      not exercised live again (this run started registered). NOTE FOR
+      THE ENGINE (not edited): checkEnsRegisterReady's "ready" means
+      "ready once the next block is mined" — the app half waits one more
+      slot before simulating and signing, re-reads on a CommitmentTooNew
+      pre-flight, and shows its countdown against notBefore + one slot
+      (passed to the item-6 app agent). Balances: the dev EOA Sepolia ETH
+      40,769,568,120,991,147 → 40,769,526,161,566,123 wei (= gas × price),
+      USDC 18.786299 (20.4 − 1 for the CCTP leg − 0.613701 for the name),
+      nonce 54.
 
