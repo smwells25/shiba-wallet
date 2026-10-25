@@ -1,6 +1,6 @@
 # Bridge providers: the adapter design
 
-**Status:** Design, plus the engine interface, registry and two adapter skeletons, written on 2026-10-14 (US Eastern) for phase 21 item 1 (`AGENTS.md`, "Phase 21 plan"). The engine code is in `packages/chains-evm/src/bridge/` with tests in `packages/chains-evm/test/bridge.test.ts`. No app screen, readiness row or live transaction exists yet. The research behind every provider fact is in `docs/BRIDGING.md`: Circle CCTP V2 in section 4 and the live plan in section 11; LayerZero V2 and Stargate V2 in section 15; the updated recommendation in section 16.
+**Status:** Design, plus the engine interface, registry and two adapter skeletons, written on 2026-10-14 (US Eastern) for phase 21 item 1 (`AGENTS.md`, "Phase 21 plan"). The engine code is in `packages/chains-evm/src/bridge/` with tests in `packages/chains-evm/test/bridge.test.ts`. No app screen, readiness row or live transaction existed when this file was first written; the later status is in sections 6 and 10. The research behind every provider fact is in `docs/BRIDGING.md`: Circle CCTP V2 in section 4, the live plan in section 11 and the live run in section 17 (2026-10-25); LayerZero V2 and Stargate V2 in section 15, with the live run in section 15.16; the updated recommendation in section 16.
 
 This file is plain technical prose for leadership and for the engineers who build the next slices. The persona and compression rules do not apply to it.
 
@@ -55,6 +55,7 @@ The registry never picks a provider. `routes()` returns every match from every p
 - **Refused rather than guessed:** Fast Transfers (their fee comes from Circle's API and is deducted at mint), a minimum above the amount, an unknown domain, a zero recipient, a mis-checksummed address, `maxFee ≥ amount` (TokenMessengerV2 reverts on it).
 - **Destination:** `mint-after-attestation`, submitter `anyone`: the recipient is fixed by the attested message, so any funded account may send `receiveMessage(message, attestation)` (selector `0x57ecfd28`) to MessageTransmitterV2 on the receiving network.
 - **Track:** the app supplies `fetchAttestation({sourceDomain, sourceTxHash})`, which wraps Circle's keyless Iris call `GET https://iris-api-sandbox.circle.com/v2/messages/{sourceDomain}?transactionHash=…`; when it returns the message and attestation, `track()` reports `awaiting-destination-action` with the mint call built. An optional `isMinted` reader turns that into `delivered`.
+- **Proven live by script (2026-10-25, `docs/BRIDGING.md` section 17):** two Standard Transfers of 1 USDC (Base Sepolia → Arbitrum Sepolia, Ethereum Sepolia → Base Sepolia) sent with the adapter's calls unchanged and carried to `delivered` by its `track()`, with `fetchAttestation` as the Iris GET above and `isMinted` as `MessageTransmitterV2.usedNonces(nonce)` on the receiving network. No adapter change was needed. Two engine follow-ups the run exposed, not made: the quote's time still says "not measured on the test networks" (it could carry `measured` like the LayerZero deployments: 996 s and 1,058 s burn block to mint block), and the Fast-Transfer refusal lives only in `quote()` (`encodeDepositForBurn` itself accepts finality 1000 with a non-zero `maxFee`).
 
 ### 4.2 LayerZero OFT (`layerzero-oft.ts`, id `layerzero-oft`)
 
@@ -75,12 +76,36 @@ The registry never picks a provider. `routes()` returns every match from every p
 | Destination step | Someone with gas on the receiving network submits the mint after the attestation | LayerZero's executor delivers; anyone may if it does not |
 | Smart account as recipient | Fine (an ERC-20 mint) | Fine for ERC-20 OFTs; Stargate ETH to a deployed smart account waits for a `retryReceiveToken` on the receiving network |
 | Assets here | Circle's USDC, all four networks | ETH among Sepolia, Arbitrum Sepolia and OP Sepolia; no route to Base Sepolia |
-| Fee | Standard: zero protocol fee, gas on both sides | Messaging fee in ETH, measured live at 102,050,140,082,558 wei (Sepolia → OP Sepolia) and 130,249,623,732,558 wei (OP Sepolia → Arbitrum Sepolia) on 2026-10-15; a pool fee of exactly 10^12 wei on the routes that charge one at 0.0001 and 0.0002 ETH (observed, Stargate's fee library not read), none on those two routes; source gas only |
-| Time | ~15–19 min documented for Standard (main networks); not measured on the test networks | Measured once: 90 s Sepolia → OP Sepolia, 30 s OP Sepolia → Arbitrum Sepolia (2026-10-15, sending block to delivery block); other routes not measured; 1 to 5 source confirmations, then delivery |
-| Tracking | Iris attestation, then the mint on the receiving network | The chains' own events by GUID (`OFTSent` / `PacketSent` on the source, `OFTReceived` or `UnreceivedTokenCached` on the receiving network); Scan only as supporting evidence |
+| Fee | Standard: zero protocol fee, measured live on 2026-10-25 (fee executed 0 in the attested message, `feeCollected` 0, balances and supply exactly ±1,000,000 on both sides); gas on both sides, measured at 0.000000987168000202 ETH (approve + burn, Base Sepolia), 0.000000039697997952 ETH (approve + burn, Ethereum Sepolia), 0.00000308766456 ETH (mint, Arbitrum Sepolia), 0.000000924594000292 ETH (mint, Base Sepolia) | Messaging fee in ETH, measured live at 102,050,140,082,558 wei (Sepolia → OP Sepolia) and 130,249,623,732,558 wei (OP Sepolia → Arbitrum Sepolia) on 2026-10-15; a pool fee of exactly 10^12 wei on the routes that charge one at 0.0001 and 0.0002 ETH (observed, Stargate's fee library not read), none on those two routes; source gas only |
+| Time | ~15–19 min documented for Standard (main networks); measured once per route on 2026-10-25: attestation 986–996 s and mint block 996 s after the burn block (Base Sepolia → Arbitrum Sepolia); 1,047–1,057 s and 1,058 s (Ethereum Sepolia → Base Sepolia), the latter within about 21 s of Sepolia's finalized head passing the burn block | Measured once: 90 s Sepolia → OP Sepolia, 30 s OP Sepolia → Arbitrum Sepolia (2026-10-15, sending block to delivery block); other routes not measured; 1 to 5 source confirmations, then delivery |
+| Tracking | Iris attestation (statuses `pending_confirmations` then `complete`), then the mint on the receiving network; delivery read on-chain as `usedNonces(nonce)` = 1 | The chains' own events by GUID (`OFTSent` / `PacketSent` on the source, `OFTReceived` or `UnreceivedTokenCached` on the receiving network); Scan only as supporting evidence |
 | Refund | None: the burn is final; the attested mint can be completed by anyone at any time | None automatic; a verified message can be executed by anyone; an unverified one stays until the token owner acts |
 | Pinning | Complete (seven fixed words) | Complete only because the wallet fixes the layout; the fee can only be capped by a standing rule |
 | Off-chain API | Iris (attestation), keyless | None needed for sending; Scan for tracking, keyless |
+
+### 4.4 LayerZero (Stargate) versus CCTP V2 as measured in this wallet
+
+Facts only, each from a live leg run by this wallet's scripts with the engine's own calls (`docs/BRIDGING.md` sections 15.16 and 17) or a read made for it; no recommendation. The two providers moved different assets (native test ETH and Circle's USDC), so the fee and time columns are not a like-for-like price comparison.
+
+| | LayerZero OFT through Stargate V2 (2026-10-15) | Circle CCTP V2, Standard Transfer (2026-10-25) |
+|---|---|---|
+| Legs run | Ethereum Sepolia → OP Sepolia, OP Sepolia → Arbitrum Sepolia; 0.0002 ETH each; dev EOA to itself | Base Sepolia → Arbitrum Sepolia, Ethereum Sepolia → Base Sepolia; 1 USDC each; dev EOA to itself |
+| Asset | Native test ETH; no pool on Base Sepolia | Circle's USDC on all four test networks (twelve routes listed) |
+| Source calls | One: `send(SendParam, MessagingFee, refund)`, 452 bytes, value = amount + messaging fee | Two: the exact `approve(TokenMessengerV2, amount)` (68 bytes), then `depositForBurn` (228 bytes), value 0 |
+| Pins re-checked live | 14 "equal" words, complete only because the wallet fixes the layout (empty options, compose and command) | 2 + 7 "equal" words; every argument is fixed-size; nothing unpinnable |
+| Byte-identical to an independent ethers encoding | Yes, all six routes | Yes, both legs, and the destination mint call (676 bytes) |
+| Protocol / messaging fee | 102,050,140,082,558 wei and 130,249,623,732,558 wei of test ETH (executor + DVN fee), paid on top of the amount; no pool fee on those two routes | 0: Standard Transfers are free (Circle's fees page; sandbox fee endpoint; fee executed 0 and `feeCollected` 0 on-chain) |
+| Network fees paid by the user | Source only: 313,407 and 257,755 gas | Source approve + burn (Base Sepolia 55,437 + 109,091 gas; Ethereum Sepolia 137,757 + 120,675 gas) **and** the destination mint (154,152 gas on Arbitrum Sepolia, 154,099 on Base Sepolia) |
+| Destination step | None: LayerZero Labs' executor delivered (90,155 and 90,145 gas, paid by the executor) | A `receiveMessage` transaction on the receiving network by someone with gas there; this run sent it from the dev EOA. Anyone may send it (destination caller 0); the recipient and amount are fixed by the attested message |
+| Time, source block → destination block | 90 s and 30 s | 996 s and 1,058 s (attestation available 986–996 s and 1,047–1,057 s after the burn block) |
+| What the time waits for | 2 (Sepolia) or 1 (OP Sepolia) source-block confirmations, then the DVN and the executor; delivered before the source block was safe | Hard finality of the burn block: from Ethereum Sepolia the attestation followed the finalized head within about 21 s |
+| Who verifies | One required DVN (LayerZero Labs), read live per route | Two Circle attesters (threshold 2, two enabled), recovered from the attestation and checked against `isEnabledAttester` on the receiving network |
+| Replay / tampering | Not tested live | A second `receiveMessage` reverts "Nonce already used" (simulated before, `eth_call` after the mint); a message with one changed byte reverts "Invalid signature: not attester" |
+| Off-chain API needed | None to send; LayerZero Scan (keyless) only as supporting evidence for tracking | Circle's Iris sandbox (keyless; `security: []`) to fetch the attestation; without it nothing can be minted |
+| Tracking in the adapter | The chains' own events by GUID (`OFTSent`/`PacketSent` → `OFTReceived`) | Iris `complete` → mint call built; delivery read as `usedNonces(nonce)` = 1 on the receiving network |
+| Smart-account recipient | Stargate's 2,300-gas native transfer cannot reach a deployed Kernel account (`UnreceivedTokenCached`, a retry needed; seen in simulation in phase 21, not yet live) | An ERC-20 mint; no gas-limited transfer (reasoned from the source; not yet live) |
+| Fee asset | Test ETH on the source | Test ETH on both networks (no protocol fee); Circle's USDC paymaster cannot pay for a first mint where the account holds no USDC (`docs/BRIDGING.md` section 4.10) |
+| Not covered by the live legs | Bus mode, ERC-20 OFTs, a smart-account sender or recipient, the retry | A smart-account sender or recipient, a session key's CallPolicy, Fast Transfers, the Forwarding Service, OP Sepolia routes |
 
 ## 5. What the app supplies
 
@@ -146,8 +171,8 @@ A new adapter must: implement `BridgeProvider`; take every network read through 
 
 Built (engine, offline): the types, the registry, `exactApprovalCall`, the CCTP V2 encoder, pins and provider (Standard Transfers), the LayerZero OFT encoders (`send`, `quoteSend`, `quoteOFT`), decoders, layout, pins and provider, the verified tables (`CCTP_V2_TESTNET*`, `LAYERZERO_V2_TESTNET`, `STARGATE_V2_TESTNET_NATIVE_POOLS`), and, after the adapter follow-ups, 40 tests in `packages/chains-evm/test/bridge.test.ts` (registry, byte-identical encoders against ethers, pins checked against the calldata and against the wallet's CallPolicy mirror, refusals, tracking from Scan and from the chains' events, the retry call, measured times, the native symbol, the gas estimate).
 
-Proven live by script: two native-ETH legs through Stargate on the LayerZero adapter (`docs/BRIDGING.md` section 15.16).
+Proven live by script: two native-ETH legs through Stargate on the LayerZero adapter (`docs/BRIDGING.md` section 15.16), and two 1-USDC Standard Transfers on the CCTP V2 adapter, Base Sepolia → Arbitrum Sepolia and Ethereum Sepolia → Base Sepolia (`scripts/testnet/cctp-smoke.mjs`, `docs/BRIDGING.md` section 17).
 
 Built in the app (offline, phase 21): the readers, the readiness row `bridge`, the Bridge screen with the provider choice and the tracking panel (section 6), pinned by `app/scripts/check-bridge.mjs`.
 
-Next, in order: the Bridge screen on the emulator; the persistent transfer records; the live CCTP leg (section 11) and then a CCTP send path with its mint; a smart-account recipient and the retry live; the risk-card and Activity wording; and the threat-model rows above.
+Next, in order: the Bridge screen on the emulator; the persistent transfer records; a CCTP send path in the app with its mint (the script leg of section 11 is done); a smart-account recipient and the retry live; the risk-card and Activity wording; and the threat-model rows above.
