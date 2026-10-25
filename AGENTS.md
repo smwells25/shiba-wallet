@@ -12431,3 +12431,247 @@ to the Chairperson at once.
       report. UNVERIFIED: QR legibility and multi-part scanning, layout,
       dark mode, TalkBack, ZeroDev accepting the app-built prepare path
       (the script leg proved the engine path), the expiry live, iOS.
+- [x] Item 4, app half — USDC BRIDGING THROUGH CIRCLE CCTP V2 IN THE BRIDGE
+      SCREEN (commit 0a5bc7f; 13 files incl. the new
+      packages/chains-evm/test/bridge-cctp.test.ts; engine 1,109 —
+      chains-evm 827, +11 — check-bridge 345 (was 237; 28 in-suite
+      mutants), check-i18n 94, check-records-backup back to 143; offline
+      runner ALL GREEN in the CTO's isolated worktree on HEAD 964fafb with
+      --skip-bundle: app 10,125 across 64 suites, lint 0/0, tsc clean;
+      checkout 0 / apply 0 / 13 files; the staged patch id equals the
+      verified worktree's; the scan clean; the agent's patch built from
+      the 964fafb copies of the shared files so the handle hunks stayed
+      out; nothing live, not seen on a device; the agent rebuilt
+      packages/chains-evm/dist in the main checkout once — harmless, no
+      Metro was serving). ENGINE (additions only): CCTP_V2_TESTNET_MEASURED
+      puts the two live legs' 996 s (Base → Arbitrum Sepolia) and 1,058 s
+      (Ethereum → Base Sepolia) on the quote as one measurement, not a
+      range, beside Circle's documented 15–19 minutes; assertDepositForBurnParams
+      (and so encodeDepositForBurn) accepts finality 2000 only — a Fast
+      Transfer is now refused by the encoder itself, not only by the
+      quote; tracking by the chains' own events when both log readers are
+      injected: findCctpBurn needs exactly one MessageSent and one
+      DepositForBurn matching route, recipient, amount, maxFee 0, finality
+      2000 and no hook data; the attestation (Circle's API or the stored
+      copy) must equal the burned message except Circle's four filled
+      fields, with a non-zero nonce, executed finality ≥ 2000, fee 0 and
+      whole 65-byte signatures; DELIVERED = MessageReceived for that nonce
+      (source domain and TokenMessengerV2 checked) plus MintAndWithdraw in
+      the same transaction to the recipient for amount − fee
+      (TokenMessengerV2.sol 373–377 at 63ab1f0a); else
+      awaiting-destination-action with onChain.status 'attested' and the
+      receiveMessage call; without the readers the old Iris + isMinted
+      path is unchanged (cctp-smoke.mjs still works); CCTP_V2_TRUST
+      reworded (2-of-2 attesters, the BRIDGING §4.2 roles held by
+      addresses with no code, no refund, about 17 minutes). APP: asset
+      chips "test ETH" / "USDC" with the providers filtered by asset
+      (LayerZero for test ETH, CCTP for USDC), the provider still never
+      pre-selected, the DEFAULT ASSET test ETH where a provider serves it
+      else USDC (so Base Sepolia opens on USDC — CTO accepted, the asset
+      treated as the user's input like the destination chip); test ETH
+      goes to the regular account only ("…2,300-gas…"), USDC may go to
+      "Your smart account" only for a Kernel v3.3 account on a
+      kernelV33Verified destination (no code needed at the recipient,
+      unlike Stargate's ETH); checkBridgeQuote's CCTP branch = exactly
+      [approve(TokenMessengerV2, exactly the amount) on the source USDC,
+      depositForBurn on the pinned TokenMessengerV2] with value and
+      valueLimit 0, the burn exactly 228 bytes, all 7 words and 7 pins
+      re-read, Circle's fee 0 and expected = minimum = the amount; a USDC
+      balance refusal before quoting ("You hold 5 USDC on Base Sepolia,
+      and this transfer needs 6 USDC. Nothing was quoted."); regular
+      account = two prompts (the exact approval view "Approve exactly 1
+      USDC for Circle's TokenMessengerV2", waitForAllowance, the burn
+      re-quoted and confirmed "Bridge 1 USDC to Arbitrum Sepolia through
+      Circle CCTP (USDC)"), smart account = one self-paid batch [approve,
+      burn] with a tokenSpend check and the note that the USDC fee through
+      Circle's paymaster is not offered on this path; the confirm shows the
+      two calls in words, the exact approval, the 7 pinned words, the
+      pinned-contract line, the mint step and the measured time; tracking
+      states "Burned on <source> (block N). Waiting for Circle's
+      attestation: it comes after the source chain's hard finality, about
+      17 minutes in the measured runs." → "Attested. The USDC can now be
+      minted on <destination>." → "Delivered on …"; the MINT PANEL offers
+      "Mint on <destination>" (prompt "Mint the bridged USDC on
+      <destination>"; prepareEvmSend with its pre-flight) only when the
+      receiving network is active and the regular account's balance there
+      is not 0, else a sentence that anyone with gas there can send it,
+      plus the expiry sentence (Circle's technical guide: an expiration
+      block 24 hours ahead is encoded in the message and an expired burn
+      must be re-signed through POST /v2/reattest/{nonce}, "no deadline";
+      on Arbitrum the block is an L1 block number; TokenMessengerV2.sol
+      415–420 `_expirationBlock == 0 || _expirationBlock > block.number`;
+      both live Standard Transfers carried expiration block 0, so the
+      sentence says the message stays valid until used); circleIrisReader
+      calls the sandbox host only and parses the documented
+      MessagesV2Response, refusing more than one message or another
+      transaction's answer; STORED RECORDS carry the checked attested
+      message so the mint is offered after a restart without asking
+      Circle (a stored message that no longer matches the burn is dropped
+      and Circle asked again); STORE VERSION KEPT AT 1 with two strict key
+      sets (the 18 old keys, or 18 + attested; every write includes
+      attested) — CTO accepted: records-backup.ts writes a restored list
+      in the backup's own version, so a bump would have changed it; an old
+      list still loads (pinned, a refusing mutant caught). SHARED HUNKS:
+      readiness.ts's bridge reason now says "this wallet has sent two
+      Circle CCTP Standard Transfers on the test networks, by script…"
+      (the LayerZero sentences kept); readiness.bridge.reason in en.ts /
+      es.ts with a "changed" fixture entry, check-i18n's changed list and
+      check-readiness's regex. DECISIONS (CTO accepted): the approval
+      step is not checked against spending limits (mirrors Staking; the
+      burn is); CCTP_COMING_NOTE → a generic BRIDGE_PROVIDER_COMING_NOTE no
+      provider uses today; Base Sepolia with test ETH shows no provider
+      rows and tells the user to choose USDC; KNOWN LIMIT: the destination
+      log search covers at most 12 × 9,000 blocks (~7.5 h on Arbitrum
+      Sepolia) — an older transfer gets BRIDGE_LOG_TOO_OLD_CCTP and no Mint
+      button. MUTANTS: 9 hand engine mutants (Fast accepted, no measured
+      time, attestation not compared, a fee accepted, delivered on
+      MessageReceived alone, a stored attestation trusted, recipient /
+      source domain not compared, one reader allowed) and the new
+      check-bridge mutants (each of the 7 burn words and 7 pins tampered,
+      the spender unchecked, a non-zero fee, the balance check removed,
+      the attestation dropped from trackedPatch, the mint not matched, Mint
+      offered from another network, old records refused, test ETH to the
+      smart account, CCTP not offered, the asset filter removed) all
+      caught. DOCS NOT UPDATED by the slice (BRIDGE_PROVIDERS, FEATURE
+      row 35, THREAT_MODEL — the refresh; CROSS_CHAIN_OPTIONS §5.2 item 6
+      listed the stale "never sent" sentences, of which readiness.ts's is
+      now fixed and bridge.ts's note is gone). EMULATOR CHECKLIST (9
+      steps; Base Sepolia → Arbitrum Sepolia 1 USDC from Account 1 —
+      about 1.5 USDC there per the record, UNVERIFIED by the agent; the
+      mint on Arbitrum needs about 0.0001 ETH at Account 1 there, ~1.19e12
+      wei per the phase-15 record against a live mint of ~3.09e12 — INPUT
+      for the pass: a top-up from the dev EOA; the restart test of an
+      attested record; the smart-account sender) in the builder's report.
+      UNVERIFIED: layouts, TalkBack, the real Iris answers and timing
+      through the app, a smart-account burn or mint, the Arbitrum mint gas,
+      any OP Sepolia route, iOS.
+- [x] Item 6, app half — THE WALLET HANDLE SCREEN (commit c7b43a6; 19
+      files incl. the new app/src/wallet/handle.ts, screens/HandleScreen.tsx
+      + HandleViews.tsx and app/scripts/check-handle.mjs (111 checks, 11
+      mutants); check-readiness 222 (was 215), check-storage-seam 59 (44
+      keys — 24 wallet, 10 device, 10 secret); offline runner ALL GREEN in
+      the CTO's isolated worktree on HEAD 0a5bc7f with --skip-bundle:
+      engine 1,109, app 10,243 across 65 suites, lint 0/0, tsc clean; the
+      staged patch id equals the verified worktree's; the scan clean; not
+      seen on a device; nothing live). THE MERGE: the builder's patch was
+      cut against f4b9339 and its agent's context filled before it could
+      rebase, so a fresh agent rebased it onto 964fafb (both slices'
+      hunks kept in readiness.ts, check-readiness.mjs, check-i18n.mjs,
+      the fixture's "new" list — cold-aa's two ids plus 120 handle ids —
+      and en.ts / es.ts; `git apply --3way` failed "lacks the necessary
+      blob", so --reject and hand resolution; its own baseline run on a
+      clean 964fafb reproduced the HEAD counts) and verified it green
+      (10,133 across 65 suites) before the CCTP slice landed; the CTO then
+      applied the rebased patch on 0a5bc7f, where exactly ONE hunk
+      rejected (check-i18n.mjs: the new-entries check's context, because
+      CCTP had extended the changed-entries line beside it), merged it by
+      hand keeping both, and verified the combined tree. DESIGN
+      (handle.ts, pure, loaded by the check under Node): handleOfferFor —
+      a main network gets the wallet-handle readiness refusal, any other
+      network "Wallet handles are registered only on Ethereum Sepolia…";
+      the Home link only on Ethereum Sepolia for phrase-derived or
+      imported accounts; watch-only and multisig refused by the route gate
+      by name and by handleAccountRefusal. OWNER: the regular account
+      always; the smart account only as a kernel-v3.3 account set up for
+      the network (factory-derived or recovered); refused as owner:
+      EIP-7702-upgraded, SimpleAccount, multisig. A regular owner sends
+      one transaction per call (the next quoted only after the previous
+      is included), a smart owner one operation per step; term always 28
+      days (the registrar minimum read on-chain by every quote); USDC
+      only; the reverse record always set. QUOTE (quoteHandle):
+      quoteEnsRegistration → readEnsOwnedResolver → the owner's USDC
+      balance; a shortfall refused with exact figures ("Not enough USDC:
+      the registration fee is 0.613701 USDC and Account 1 holds 0.5 USDC
+      (0.113701 USDC short). Nothing was sent."); taken name, premium,
+      wrong chain, deployment / price mismatch each a sentence. THE
+      COMMIT SECRET: one wallet-scoped key shiba-wallet.handle-pending.v1
+      through the seam, in AsyncStorage NOT the secure store (CTO
+      DECISION: acceptable for this test-network slice; someone with a
+      file copy could front-run inside the 60 s – 1 day window; the secure
+      store is the mainnet follow-up — the store-keys.ts comment says so);
+      one record per signer, at most 8; parsePendingHandle strict (exact
+      key set; the commitment rebuilt from the stored fields and compared);
+      a damaged document read-only with a Reset button; saved BEFORE
+      anything is quoted or sent; never rendered, logged or used in a
+      sentence; DELETED at done (registered and the reverse record set) or
+      on Forget — kept after register() until setName is mined (CTO
+      accepted: the commitment is consumed at register, and a restart
+      between the two transactions can still offer the reverse record);
+      not in the records backup (its keys are listed explicitly; no pin
+      — follow-up). RESUME from the chain only (readHandleProgress):
+      registered to the owner → reverse or done; to someone else → taken;
+      else the prepare calls checked in order (the resolver's code or the
+      stored setAddress receipt, allowance ≥ fee, commitmentAt), then the
+      wait read from the latest block. THE WAIT: ready only when the
+      latest block's timestamp on the sending endpoint ≥ notBefore + 12 s
+      (HANDLE_READY_MARGIN_SECONDS, the smoke script's margin from
+      f7bc29b); expired once that timestamp + 12 s reaches commit time +
+      86,400 s; the countdown against notBefore + 12, the card polling
+      every 6 s ("Registration prepared: X can be registered from block
+      time … (about N s from now) until …"). PRE-FLIGHT (preflightRegister):
+      an eth_call of register() from the owner against the latest block
+      through the app's simulationTransport (the engine's httpTransport
+      drops the JSON-RPC error data, so no revert could be classified):
+      CommitmentTooNew → wait, CommitmentTooOld → expired,
+      NameNotAvailable → taken. THE GATE (gateRegister): progress →
+      pre-flight → spending limits and the device prompt; a wait never
+      reaches the prompt and is never an error (back to the card,
+      "…reading it again"); run again at Approve. Forget warns that the
+      approval stays; an exact approve(registrar, 0) is offered whenever
+      an allowance is above 0 and no registration is in progress.
+      SUB-NAME: record-only (planHandleSubname wraps planEnsSubname after
+      checking the parent is registered to the owner); one setAddress from
+      the regular account, offered when the regular account's primary name
+      is a second-level .eth name and a Kernel smart account exists;
+      making the sub-name the smart account's own name (setName) is a
+      separate operation through the smart account's bundle. HOME AND
+      RECEIVE: usePrimaryNameLine through readEnsPrimaryName and
+      simulationTransport on mainnet and Sepolia only (CTO: keep mainnet —
+      read-only; the endpoint already sees the address), cached in memory
+      and re-read on every focus, a failed read keeping the previous
+      answer ("ENS name: x.eth"; short notes for off-chain or unsupported
+      names; nothing for none); the name added to Home's spoken label.
+      Pending card: regular-account transactions as before; smart-account
+      operations recorded as kind 'other' (a 'handle' AaOperationKind is a
+      follow-up — the CTO kept aa.ts out of this slice). STRINGS: 120 new
+      ids in en.ts / es.ts (Spanish a draft), receive.smart.label and
+      send.row.maxFeePaidIn reused; the Home link label, its hint and the
+      screen title stay English literals like the Bridge link. SHARED
+      HUNKS: App.tsx (the Stack.Screen), navigation.ts, readiness.ts (row
+      "wallet-handle", testnet-only, enforced, evidence C1 W1 W2 W9 W13;
+      the reason: the ENSv2 test contracts have been redeployed and single
+      keys can change them, not launched on mainnet, Sepolia only with
+      test USDC), store-keys.ts (handlePending), watch-only.ts
+      (ROUTE_FEATURES.Handle = "Wallet handles (ENS names)"; neither allow
+      list changes), check-readiness (EXPECTED_IDS, a block, handle.ts in
+      the gate sources), check-i18n, the fixture, check-storage-seam,
+      HomeScreen, ReceiveScreen, suites.mjs, WalletContext (the two
+      resetPendingHandles wipe lines — no pin, follow-up). CHECKS: the
+      quote and plan against the engine test's own Sepolia recording
+      (block 0xb6f989) byte for byte, fee 613,701, the exact approval
+      decoded by ethers, planFromPending rebuilding the same calls and
+      commitment; storage round-trip, the decoy prefix, strict-parse
+      refusals, the cap, Forget erasing the secret; readiness at
+      notBefore + 11 / + 12 and the expiry edge; every resume state; every
+      pre-flight revert classified incl. through simulationTransport; the
+      gate order; the secret absent from every sentence and read in
+      exactly 3 source lines; the live sub-name shape
+      smart.shibawalletdemo.eth equal to ethers and the engine; the name
+      line and cache; every t() id in both languages. MUTANTS caught:
+      readiness from Date.now, zero margin, prompt before pre-flight,
+      CommitmentTooNew as an error, allowance assumed, the network check
+      removed, 7702 accepted as owner, the stored commitment trusted, a
+      non-zero revoke, the USDC check removed, Forget keeping the secret.
+      KNOWN GAP: the first prepare transaction is quoted at once after
+      Prepare; if that quote fails the user is back on the card and
+      Continue reopens the next call. FOLLOW-UPS: a handle-specific
+      threat-model row; pins for the backup exclusion and the wipe lines;
+      a 'handle' operation kind. EMULATOR CHECKLIST (10 steps; Ethereum
+      Sepolia, Account 1, a fresh label of its own, about 0.62 USDC plus
+      gas; "shibawalletdemo" → the taken sentence; kill and relaunch during
+      the wait; Register tapped right at readiness must re-read, not
+      error; the smart owner; the sub-name; Forget then the zero approval;
+      TalkBack) in the builder's report. UNVERIFIED: layouts, the 6 s poll
+      under throttling, load-balanced RPC lag (afterStep re-reads up to 4 ×
+      4 s), the bundler accepting the prepare batch from an undeployed
+      Kernel, iOS.
