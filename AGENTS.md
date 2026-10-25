@@ -12151,4 +12151,54 @@ to the Chairperson at once.
       while the sandbox worked without one); the §4.2 trust roles beyond
       the threshold, attester count and pause flags; attestation time
       beyond one sample per route.
+- [x] Item 6 — THE FIRST WALLET HANDLE REGISTERED LIVE: shibawalletdemo.eth
+      ON SEPOLIA (2026-10-25, the CTO's own run of
+      scripts/testnet/ens-register-smoke.mjs with ENS_LIVE=1
+      ENS_LABEL=shibawalletdemo ENS_LIVE_SUBNAME=record-only; the dev EOA
+      0x16DA…C5C as owner; every receipt re-read by the CTO on publicnode
+      and drpc, status 0x1 at the recorded blocks with the recorded gas;
+      the label a CTO judgement on a test network; 0.613701 USDC and about
+      2.45M gas spent). The dry run passed first (63 checks). LIVE:
+      resolver creation through ENS's VerifiableFactory → the predicted
+      PermissionedResolver 0x599AE46486BC988C5bA9b98CdB1f7cF167dD6059 with
+      the address record (tx
+      0xd4ee8d2b3efdb0201733f9f3a3663687b28dc3a615aa8ddb573bf005bdce12ec,
+      block 11991612, 1,133,987 gas); the EXACT approval of 613,701 USDC
+      base units for the registrar (tx
+      0xe67fba53797d964b81316865274ad4b68255c95e0590a0b85322ca83fc71482b,
+      block 11991613, 137,757 gas); the commit (tx
+      0x41ab99b229c4e743389ae42a76b6e7e4108e3b92507eb5040490fe25627875f5,
+      block 11991614, 127,458 gas); register (tx
+      0x3a67134e418d679a4806db4b7c5078382264ef15ec695bf8b1b1ad7f49234021,
+      block 11991623, 682,372 gas; the .eth registry shows the name
+      REGISTERED to the dev EOA, expiry 1795359696 = 28 days); the primary
+      name through the v1 ReverseRegistrar setName (tx
+      0x1ad87a78d79b7a650b7f06ba1d9b94f5de574702abd4e02c873de84a81451ce5,
+      block 11991624, 373,045 gas); afterwards on both RPCs
+      shibawalletdemo.eth → 0x16DA…C5C and 0x16DA…C5C → shibawalletdemo.eth
+      through the Universal Resolver, and the engine's readEnsPrimaryName
+      returns {status ok, name shibawalletdemo.eth, resolver 0x599A…6059}
+      — what the app will show. TWO SCRIPT DEFECTS FOUND BY THE LIVE RUN
+      (nothing was sent wrongly; a fix is dispatched to the ENS agent): (1)
+      at exactly commit + 60 s the wait loop declared "ready" from the
+      WALL CLOCK while the register pre-flight (eth_simulateV1 against the
+      latest block) reverted CommitmentTooNew — the chain's check uses
+      block.timestamp, which lags the clock; the script stopped with
+      "Nothing was sent." and ENS_RESUME=1 registered on the next run;
+      RULE for the app half: readiness from the LATEST BLOCK's timestamp
+      with a block of margin, and a pre-flight before the prompt; (2) the
+      record-only sub-name step did not run — the first resume stopped
+      with "the sender has 1 pending transaction(s)" seconds after setName
+      (publicnode's backends disagree on the pending nonce for a few
+      seconds; all three RPCs read latest = pending = 53 moments later),
+      and the second resume re-ran the dry-run quote first, which stopped
+      with "[unavailable] shibawalletdemo.eth is not available" — the name
+      is now ours, and the resume path must skip the availability quote
+      once the record says registered. The CTO's masked logs are in the
+      scratchpad (ens-live.log, ens-live-resume.log, ens-live-subname.log;
+      the first two mask every 64-hex string, which also hid the
+      transaction hashes — they were read back from the git-ignored run
+      record's hash fields, never its secret). The sub-name
+      smart.shibawalletdemo.eth → the dev Kernel 0xc995…C5AC follows once
+      the script is fixed.
 
